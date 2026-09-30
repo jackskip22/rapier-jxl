@@ -1,0 +1,27 @@
+{
+  "type": "jpeg",
+  "seed": 20260930,
+  "index": 6510,
+  "source": "colour-sequential.jpg",
+  "kind": "entropy",
+  "path": "jpeg",
+  "entry": {
+    "key": "296bd5089b18ce1b679ab07c423d60bd4732864bfdc18b7382d2ac01c222d9aa",
+    "width": 33,
+    "height": 25,
+    "oxide": "26da1bcd69ad7511c8fd6b597a8d3267d25d132a88c6b28ebaf2075e53609b20",
+    "native": "bf15bc5f4f64dcab4ad58c88a2a3db31f6c04e2a56df34af82d8c00bafdf754e",
+    "oxideAlpha": "4ce097141e8900c765570c78a7b3b011b928a00a536a3b90f34a673e0067aef2",
+    "nativeAlpha": "4ce097141e8900c765570c78a7b3b011b928a00a536a3b90f34a673e0067aef2",
+    "maximum": 1,
+    "different": 1,
+    "channels": [
+      0,
+      1,
+      0,
+      0
+    ],
+    "alphaDifferent": 0
+  },
+  "file": "decoder-difference.jpg"
+}

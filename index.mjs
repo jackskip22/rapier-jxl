@@ -36,8 +36,8 @@ function guard(work) {
 }
 
 // Exact: every pixel comes back as it went in. An opaque alpha is dropped, a grey picture keeps one channel,
-// up to 512 colours may use a palette when its complete stream wins. Larger images sample reversible colour
-// transforms and predictors; the selected direct candidate is still compared with the palette by actual bytes.
+// up to 2048 colours may use a palette when its complete stream wins. Direct colour uses reversible YCoCg
+// with sampled gradient/average prediction; compare the complete direct and palette streams by actual bytes.
 export function encodeLosslessRGBA(data, width, height) {
   admitPixels(data, width, height);
   return guard(() => answer(encodeLossless(data, width, height, {shape: inspectPixels(data, width, height)})));

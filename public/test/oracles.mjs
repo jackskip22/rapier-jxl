@@ -34,7 +34,7 @@ export async function oracles() {
       if (exact) assert.deepEqual(rgba, exact, name + ': oxide changed lossless pixels');
       if (native) {
         const output = spawnSync(ffmpeg, ['-v', 'error', '-threads', '1', '-f', 'image2pipe', '-c:v', 'libjxl', '-i', 'pipe:0', '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-threads', '1', 'pipe:1'], {
-          input: bytes, maxBuffer: width * height * 4 + 65536, timeout: 30000,
+          input: bytes, maxBuffer: width * height * 4 + 65536, timeout: 30000, killSignal: 'SIGKILL',
         });
         assert.ifError(output.error);
         assert.equal(output.status, 0, name + ': libjxl refused output: ' + output.stderr.toString());

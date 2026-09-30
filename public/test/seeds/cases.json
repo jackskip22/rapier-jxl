@@ -81,5 +81,17 @@
     "width": 33,
     "height": 25,
     "samePixels": "colour-sequential.jpg"
+  },
+  {
+    "file": "decoder-difference.jpg",
+    "width": 33,
+    "height": 25,
+    "scaleSeed": false
+  },
+  {
+    "file": "reconstruction-difference.jpg",
+    "width": 33,
+    "height": 25,
+    "scaleSeed": false
   }
 ]

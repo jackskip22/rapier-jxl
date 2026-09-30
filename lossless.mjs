@@ -1,14 +1,14 @@
 // Rapier's JPEG XL encoder: lossless pictures. MIT (LICENSE).
 // The design of libjxl's fast lossless path, written for Rapier: 8-bit grey, grey+alpha, RGB or RGBA; an opaque
-// alpha is dropped and a grey picture keeps one channel; up to 512 colours try a palette against direct encoded
-// cost. Samples choose RGB/YCoCg and gradient/average prediction; each channel takes one prefix code, zero runs
+// alpha is dropped and a grey picture keeps one channel; up to 2048 colours try a palette against direct encoded
+// cost. YCoCg decorrelates colour; samples choose gradient/average prediction; each channel takes one prefix code, zero runs
 // as LZ77 copies; groups of 256x256 pixels, each an independent section.
 import {BitWriter} from './bits.mjs';
 import {writeImageHeader, writeModularFrameHeader, groupLayout, assembleCodestream, GROUP_DIM} from './frame.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
-import {PREDICTOR, ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
+import {AVERAGE_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
 
-const MAX_PALETTE = 512;
+const MAX_PALETTE = 2048;
 
 // What the picture is: which channels it needs and, when few colours, its palette.
 export function inspectPixels(rgba, width, height, {palette: wantPalette = true} = {}) {
@@ -61,9 +61,8 @@ function encodeLosslessPlan(rgba, width, height, shape) {
   const {channels, palette} = shape;
   const layout = groupLayout(width, height);
   const streamChannels = palette ? 2 : channels;  // the palette's meta channel and the index channel
-  const leaves = Array.from({length: streamChannels}, () => leaf(PREDICTOR.gradient));
+  const leaves = Array.from({length: streamChannels}, () => leaf(GRADIENT_PREDICTOR));
   const tree = channelTree(leaves);
-  let useRct = channels >= 3;
 
   // Channel planes of a group rectangle, computed straight from the pixels.
   const planes = Array.from({length: streamChannels}, () => new Int16Array(GROUP_DIM * GROUP_DIM));
@@ -75,7 +74,7 @@ function encodeLosslessPlan(rgba, width, height, shape) {
         if (channels >= 3) {
           const r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
           const co = r - b, tmp = b + (co >> 1), cg = g - tmp;
-          planes[0][at] = useRct ? tmp + (cg >> 1) : r; planes[1][at] = useRct ? co : g; planes[2][at] = useRct ? cg : b;
+          planes[0][at] = tmp + (cg >> 1); planes[1][at] = co; planes[2][at] = cg;
           if (channels === 4) planes[3][at] = rgba[i + 3];
         } else { planes[0][at] = rgba[i]; if (channels === 2) planes[1][at] = rgba[i + 3]; }
       }
@@ -100,9 +99,10 @@ function encodeLosslessPlan(rgba, width, height, shape) {
     }
   };
 
-  // Three small spatial samples choose RGB/YCoCg and gradient/average per channel. The same token code prices
-  // both the prefix header and raw residual bits. Sampling is bounded; tiny pictures avoid selection overhead.
-  if (!palette && width * height >= 4096) {
+  // Three small spatial samples choose gradient/average per channel. The same token code prices
+  // both the prefix header and raw residual bits. Fixed YCoCg avoids choosing RGB from a sparse corner
+  // that misrepresents a drawing; the measured corpus favours this smaller rule, including tiny pictures.
+  if (!palette) {
     const cost = freqs => {
       const code = buildCode(freqs), writer = new BitWriter(128);
       writePrefixCode(writer, code);
@@ -110,27 +110,20 @@ function encodeLosslessPlan(rgba, width, height, shape) {
       for (let s = 0; s < freqs.length; s++) if (freqs[s]) bits += freqs[s] * (code.lengths[s] + Math.max(0, s < 224 ? s - 1 : s - 236));
       return bits;
     };
-    let best = Infinity, chosenRct = useRct;
     const sw = Math.min(width, 32), sh = Math.min(height, 32);
-    for (const rct of useRct ? [true, false] : [false]) {
-      useRct = rct;
-      const candidates = [PREDICTOR.gradient, PREDICTOR.average0].map(predictor => ({predictor, freqs: leaves.map(() => new Uint32Array(ALPHABET))}));
-      for (const fraction of [0, 0.5, 1]) {
-        fill(Math.floor((width - sw) * fraction), Math.floor((height - sh) * fraction), sw, sh);
-        for (const candidate of candidates) for (let c = 0; c < channels; c++) codeChannel(null, candidate.freqs[c], planes[c], sw, sh, leaf(candidate.predictor));
-      }
-      let bits = 0;
-      const predictors = leaves.map((l, c) => {
-        const costs = candidates.map(candidate => cost(candidate.freqs[c])), choice = costs[1] < costs[0] ? 1 : 0;
-        bits += costs[choice]; return candidates[choice].predictor;
-      });
-      if (bits < best) { best = bits; chosenRct = rct; leaves.forEach((l, c) => { l.predictor = predictors[c]; }); }
+    const candidates = [GRADIENT_PREDICTOR, AVERAGE_PREDICTOR].map(predictor => ({predictor, freqs: leaves.map(() => new Uint32Array(ALPHABET))}));
+    for (const fraction of [0, 0.5, 1]) {
+      fill(Math.floor((width - sw) * fraction), Math.floor((height - sh) * fraction), sw, sh);
+      for (const candidate of candidates) for (let c = 0; c < channels; c++) codeChannel(null, candidate.freqs[c], planes[c], sw, sh, leaf(candidate.predictor));
     }
-    useRct = chosenRct;
+    leaves.forEach((l, c) => {
+      const costs = candidates.map(candidate => cost(candidate.freqs[c])), choice = costs[1] < costs[0] ? 1 : 0;
+      l.predictor = candidates[choice].predictor;
+    });
   }
   const transforms = palette
     ? [{type: 'palette', beginC: 0, numC: channels, nbColors: palette.colours.length}]
-    : useRct ? [{type: 'rct', beginC: 0, rctType: 6}] : [];
+    : channels >= 3 ? [{type: 'rct', beginC: 0, rctType: 6}] : [];
 
   // Pass one: token histograms per leaf.
   const freqs = leaves.map(() => new Uint32Array(ALPHABET)), freqOf = l => freqs[leaves.indexOf(l)];
@@ -152,17 +145,14 @@ function encodeLosslessPlan(rgba, width, height, shape) {
   const sections = [];
   if (layout.single) {
     forGroups((g, w, h) => { for (let c = 0; c < pictureChannels; c++) codeChannel(global, codeOf(pictureLeaf(c)), planes[c], w, h, pictureLeaf(c)); });
-    global.zeroPadToByte();
     sections.push(global.finish());
   } else {
-    global.zeroPadToByte();
     sections.push(global.finish());
     for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
     forGroups((g, w, h) => {
       const section = new BitWriter(w * h * pictureChannels + 64);
       writeModularHeader(section, {useGlobalTree: true, transforms: []});
       for (let c = 0; c < pictureChannels; c++) codeChannel(section, codeOf(pictureLeaf(c)), planes[c], w, h, pictureLeaf(c));
-      section.zeroPadToByte();
       sections.push(section.finish());
     });
   }

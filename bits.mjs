@@ -6,6 +6,9 @@
 // stream's bound stops there instead of filling memory first.
 export const LIMITS = Object.freeze({bytes: 16 * 1024 * 1024, pixels: 24_000_000, edge: 16384});
 
+// The hot writer reuses exact powers; unusual counts retain the range check's arithmetic.
+const POWERS = Array.from({length: 33}, (_, count) => 2 ** count);
+
 export class BitWriter {
   constructor(capacity = 4096) {
     this.bytes = new Uint8Array(capacity);
@@ -14,8 +17,8 @@ export class BitWriter {
     this.pending = 0;  // how many bits `acc` holds, always below 8 between calls
   }
   write(count, value) {
-    if (count > 32 || value < 0 || value >= 2 ** count) throw new Error('bit write out of range: ' + count + ' bits, ' + value);
-    let acc = this.acc + value * 2 ** this.pending, pending = this.pending + count;
+    if (count > 32 || value < 0 || value >= (POWERS[count] ?? 2 ** count)) throw new Error('bit write out of range: ' + count + ' bits, ' + value);
+    let acc = this.acc + value * (1 << this.pending), pending = this.pending + count;
     if (this.at + 5 >= this.bytes.length) this.grow();
     const bytes = this.bytes;
     while (pending >= 8) { bytes[this.at++] = acc & 255; acc = Math.floor(acc / 256); pending -= 8; }
@@ -50,8 +53,7 @@ export class BitWriter {
   }
   // The bytes so far, the last partial byte zero-padded.
   finish() {
-    const length = this.at + (this.pending ? 1 : 0), out = new Uint8Array(length);
-    out.set(this.bytes.subarray(0, this.at));
+    const length = this.at + (this.pending ? 1 : 0), out = this.bytes.slice(0, length);
     if (this.pending) out[this.at] = this.acc;
     return out;
   }

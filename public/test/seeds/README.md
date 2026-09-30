@@ -36,6 +36,49 @@ assertions in these tests. `JXL_FUZZ_FAILURE_DIR` saves a failing input and its 
 Retained pixel cases run even when the generated pixel-case count is zero. An optional `photo.mjs` is included
 automatically when present.
 
+The scale runner uses one persistent native libjxl process per worker. Install a C compiler and the libjxl
+development package (for example `apt-get install build-essential libjxl-dev`), then run:
+
+```sh
+node public/test/fuzz-shards.mjs --out fuzz-scale --workers 4 --jpegs 2000000 --pixels 32768 --seed 20260930
+```
+
+The ranges are disjoint deterministic indices. Repeating the same command resumes completed chunks; it does
+not credit a repeated index again. Every mutation executes the encoder. Only byte-identical returned streams
+reuse decoder evidence. `summary.json` separates mutations, unique inputs, returned streams, unique streams,
+actual new decoder executions, duplicate executions across workers, and cache hits. The per-input
+`outcomes.jsonl` journals retain named refusals and exact output hashes. `--against /path/to/baseline/modules`
+compares every input's result with that source, memoizing the baseline result for identical inputs; `--reuse
+/path/to/prior-run` admits only hash-identical codestream proofs from the same two decoder versions. A prior
+single-worker run supplies that cache; `node public/test/fuzz-cache.mjs completed-shards new-cache` also
+consolidates a completed shard run after checking its receipt and journal hashes, without decoding again.
+Source-module hashes, input-seed hashes, proof-cache hashes and the
+partition are recorded. `--lock /path/to/bench.lock` holds a shared `flock` lease only while a bounded chunk
+runs. Pixel mutations use compact block-edge cases, with the full group/strip dimensions every 256th case.
+
+`decoder-difference.jpg` retains a one-sample VarDCT decoder difference. The native float sample scaled to
+8-bit is exactly `140.5` in float32; native libjxl 0.7.0 returns 140 and jxl-oxide 0.12.6 returns 141. Their
+output conversion rules differ: [native uses `NearestInt`](https://github.com/libjxl/libjxl/blob/v0.7.0/lib/jxl/render_pipeline/stage_write.cc#L113-L133),
+while [oxide adds 0.5 before converting to an integer](https://github.com/tirr-c/jxl-oxide/blob/0.12.6/crates/jxl-oxide/src/fb.rs#L537-L568).
+`node public/test/decoder-differences.mjs` reproduces the actual byte and float outputs. Nonzero VarDCT
+differences are retained and counted for investigation, not hidden as exact agreement. Lossless, alpha and
+integer modular differences stop the run; a VarDCT difference greater than one sample also stops it.
+`photo-decoder-difference.rgba` is a 256-byte, 8-by-8 crop from the deterministic synthetic photograph
+`synthetic-photo-0005` (seed 1748439572, crop origin 72,24). Its quality-90 photo stream gives the same
+conversion discrepancy in blue: the float32 scaled value is 184.5, native returns 184 and oxide returns 185.
+Pass `public/test/seeds/photo-decoder-difference.json` to that diagnostic to reproduce it. Both examples
+remain in the ordinary retained conformance cases; their byte outputs are not described as identical.
+
+`reconstruction-difference.jpg` retains a distinct arithmetic case (seed 20260930, index 1008294).
+At pixel 16,23, blue is 7 in oxide and 6 in libjxl's normal CPU dispatch; the native float32 value scaled
+to bytes is 6.49999475479126. The same libjxl 0.7.0 library forced to Highway's scalar path returns 7,
+matching oxide. `../native-scalar.c` is an optional diagnostic wrapper to reproduce that CPU-path
+difference (its build needs the Highway development library too); it is never the normal batch oracle.
+The decoders use distinct floating reconstruction implementations: [oxide's inverse DCT](https://github.com/tirr-c/jxl-oxide/blob/0.12.6/crates/jxl-render/src/vardct/wasm32/dct.rs)
+and [native's floating colour conversion](https://github.com/libjxl/libjxl/blob/v0.7.0/lib/jxl/render_pipeline/stage_ycbcr.cc).
+The scale receipt distinguishes exact-half conversion ties from reconstruction-rounding cases. Every
+nonzero stream gets a native float decode, counted separately from the two 8-bit oracle executions.
+
 `../phone-benchmark.mjs` measures a photograph expanded to 4000 by 3000 before timing starts. `--node` reports
 unthrottled Node results. `--browser` requires a real Playwright Chromium session and applies CDP's 4x CPU rate
 to the page. The benchmark source shows the shared-lock command. Browser cancellation records the duration of

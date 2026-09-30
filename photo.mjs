@@ -11,6 +11,21 @@ const COSINES = Float64Array.from({length: 64}, (_, i) => (i < 8 ? Math.SQRT1_2 
 // frequency. Both chroma planes keep full resolution; their scale accounts for YCbCr's larger RGB error.
 const QUANT_SHAPE = Float64Array.from({length: 64}, (_, k) => 1.3 ** Math.max(0, Math.hypot(k & 7, k >> 3) * 5 / Math.sqrt(98) - 1));
 
+// Eight terms in the original accumulation order, including the initial zero. The two separable passes
+// share this fixed dot product without a loop or a changed floating-point sum.
+function dot8(data, at, step, basis) {
+  let sum = 0;
+  sum += data[at] * COSINES[basis];
+  sum += data[at + step] * COSINES[basis + 1];
+  sum += data[at + 2 * step] * COSINES[basis + 2];
+  sum += data[at + 3 * step] * COSINES[basis + 3];
+  sum += data[at + 4 * step] * COSINES[basis + 4];
+  sum += data[at + 5 * step] * COSINES[basis + 5];
+  sum += data[at + 6 * step] * COSINES[basis + 6];
+  sum += data[at + 7 * step] * COSINES[basis + 7];
+  return sum;
+}
+
 function photoCoefficients(data, width, height, quality) {
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), quantScale = 16;
   const distance = quality >= 30 ? 0.1 + (100 - quality) * 0.09 : 53 / 3000 * quality * quality - 23 / 20 * quality + 25;
@@ -29,15 +44,11 @@ function photoCoefficients(data, width, height, quality) {
     }
     for (let c = 0; c < 3; c++) {
       for (let y = 0; y < 8; y++) for (let u = 0; u < 8; u++) {
-        let sum = 0;
-        for (let x = 0; x < 8; x++) sum += block[c * 64 + y * 8 + x] * COSINES[u * 8 + x];
-        intermediate[y * 8 + u] = sum;
+        intermediate[y * 8 + u] = dot8(block, c * 64 + y * 8, 1, u * 8);
       }
       const {coeffs, quant} = components[c], offset = (by * stride + bx) * 64;
       for (let v = 0; v < 8; v++) for (let u = 0; u < 8; u++) {
-        let sum = 0;
-        for (let y = 0; y < 8; y++) sum += intermediate[y * 8 + u] * COSINES[v * 8 + y];
-        const k = v * 8 + u;
+        const sum = dot8(intermediate, u, 8, v * 8), k = v * 8 + u;
         coeffs[offset + k] = Math.round(sum * quantScale / quant[k]);
       }
     }

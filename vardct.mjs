@@ -4,11 +4,11 @@
 // (YCbCr, or RGB) and chroma subsampling kept, every block an 8x8 DCT, no filters, no smoothing, no chroma from
 // luma. Only the entropy coding changes: JPEG XL's contexts over the coefficients, with prefix codes.
 import {BitWriter, float16Bits, packSigned, ceilLog2} from './bits.mjs';
-import {writeImageHeader, assembleCodestream, GROUP_DIM} from './frame.mjs';
-import {PREDICTOR, ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
+import {writeImageHeader, writeFrameHeaderEnd, finishSections, assembleCodestream, GROUP_DIM} from './frame.mjs';
+import {ZERO_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
 import {writeContextMap, writeHistograms} from './prefix.mjs';
 import {TokenCounts, buildTokenCoding} from './entropy.mjs';
-import {parseJPEG, jpegError} from './jpeg.mjs';
+import {parseJPEG, jpegError, ZIGZAG} from './jpeg.mjs';
 
 const NONZERO_BUCKETS = 37, ZERO_DENSITY_CONTEXTS = 458, ORDERS = 13;
 const COEFF_FREQ_CONTEXT = [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 15, 16, 16, 17, 17, 18, 18, 19, 19, 20, 20, 21, 21, 22, 22,
@@ -19,18 +19,8 @@ const COEFF_NUM_NONZERO_CONTEXT = [0, 0, 31, 62, 62, 93, 93, 93, 93, 123, 123, 1
 
 // The frame's natural coefficient order for an 8x8 block (the zigzag over the frame's transposed layout), each
 // entry already turned into the JPEG's natural index of that coefficient.
-const SCAN = (() => {
-  const order = new Uint8Array(64);
-  let cur = 1;
-  for (let i = 0; i < 8; i++) for (let j = 0; j <= i; j++) {
-    let x = j, y = i - j;
-    if (i % 2) [x, y] = [y, x];
-    order[x < 1 && y < 1 ? 0 : cur++] = y * 8 + x;
-  }
-  for (let ip = 7; ip > 0; ip--) { const i = ip - 1; for (let j = 0; j <= i; j++) { let x = 7 - (i - j), y = 7 - j; if (i % 2) [x, y] = [y, x]; order[cur++] = y * 8 + x; } }
-  // frame index n = u*8 + v holds the JPEG's coefficient v*8 + u.
-  return order.map(n => ((n & 7) << 3) | (n >> 3));
-})();
+// This is the JPEG zigzag with each position transposed: frame index u*8 + v holds JPEG coefficient v*8 + u.
+const SCAN = ZIGZAG.map(n => ((n & 7) << 3) | (n >> 3));
 
 const zeroDensityContext = (left, k, prev) => (COEFF_NUM_NONZERO_CONTEXT[left] + COEFF_FREQ_CONTEXT[k]) * 2 + prev;
 
@@ -123,14 +113,7 @@ export function encodeVarDCT(jpeg) {
   if (ycbcr) for (let c = 0; c < 3; c++) header.write(2, rawH[c] === 0 && rawV[c] === 0 ? 0 : rawH[c] === 1 && rawV[c] === 1 ? 1 : rawH[c] === 1 ? 2 : 3);
   header.write(2, 0);  // no upsampling
   if (alpha) header.write(2, 0);  // no extra-channel upsampling
-  header.write(2, 0);  // one pass
-  header.write(1, 0);  // no custom size
-  header.write(2, 0);  // replace
-  if (alpha) header.write(2, 0);  // replace alpha
-  header.write(1, 1);  // the last frame
-  header.write(2, 0);  // no name
-  header.write(1, 0); header.write(1, 0); header.write(2, 0); header.write(2, 0);  // loop filter: no gaborish, no EPF, no extensions
-  header.write(2, 0);  // no extensions
+  writeFrameHeaderEnd(header, alpha);
 
   // The AC tokens of every group, counted first and written second.
   const nzeros = [0, 1, 2].map(() => new Int32Array(32 * 32));
@@ -193,7 +176,7 @@ export function encodeVarDCT(jpeg) {
   // which a 4:4:4 or grey frame would apply to its Cr. Colour factor 84, both bases zero, no DC correlation.
   dc.write(1, 0); dc.write(2, 0); dc.write(16, 0); dc.write(16, 0); dc.write(8, 128); dc.write(8, 128);
   dc.write(1, 0);
-  if (alpha) writeModularStream(dc, [single ? alphaPlane(0, 0) : {w: 0, h: 0, data: new Int32Array(0)}], PREDICTOR.gradient);
+  if (alpha) writeModularStream(dc, [single ? alphaPlane(0, 0) : {w: 0, h: 0, data: new Int32Array(0)}], GRADIENT_PREDICTOR);
 
   // DC groups: the DC coefficients as a modular image (luma first), then the AC metadata: all blocks 8x8 DCT at
   // quant one, no chroma-from-luma tiles, no sharpness.
@@ -210,14 +193,14 @@ export function encodeVarDCT(jpeg) {
       }
       return {w: pw, h: ph, data};
     });
-    writeModularStream(w, planes, PREDICTOR.gradient);
+    writeModularStream(w, planes, GRADIENT_PREDICTOR);
     const count = rw * rh, bits = ceilLog2(count);
     if (bits) w.write(bits, count - 1);
     const cw = (rw + 7) >> 3, ch = (rh + 7) >> 3;
     writeModularStream(w, [
       {w: cw, h: ch, data: new Int32Array(cw * ch)}, {w: cw, h: ch, data: new Int32Array(cw * ch)},
       {w: count, h: 2, data: new Int32Array(count * 2)}, {w: rw, h: rh, data: new Int32Array(count)},
-    ], PREDICTOR.zero);
+    ], ZERO_PREDICTOR);
   }
 
   // AC global: the JPEG's quantisation tables as the raw DCT8 matrices (transposed into the frame's layout), the
@@ -229,7 +212,7 @@ export function encodeVarDCT(jpeg) {
     const data = new Int32Array(64), quant = comps[c].quant;
     for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) data[8 * x + y] = quant[8 * y + x];
     return {w: 8, h: 8, data};
-  }), PREDICTOR.gradient);
+  }), GRADIENT_PREDICTOR);
   for (let i = 1; i < 17; i++) ac.write(3, 0);
   if (numGroups > 1) ac.write(ceilLog2(numGroups), 0);
   ac.write(2, 2);
@@ -238,7 +221,7 @@ export function encodeVarDCT(jpeg) {
   for (let g = 0; g < numGroups; g++) {
     const w = section(2 + numDcGroups + g);
     tokens(g, (ctx, value) => coding.write(w, ctx, value));
-    if (alpha && !single) writeModularStream(w, [alphaPlane(g % groupsX, Math.floor(g / groupsX))], PREDICTOR.gradient);
+    if (alpha && !single) writeModularStream(w, [alphaPlane(g % groupsX, Math.floor(g / groupsX))], GRADIENT_PREDICTOR);
   }
-  return assembleCodestream(header, writers.map(w => { const out = w || new BitWriter(16); out.zeroPadToByte(); return out.finish(); }));
+  return assembleCodestream(header, finishSections(writers));
 }

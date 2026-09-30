@@ -67,9 +67,9 @@ export function mutateJPEG(input, random, index) {
   return {kind, bytes: out};
 }
 
-export function pixelCase(seed, index) {
+export function pixelCase(seed, index, {compact = false} = {}) {
   const random = rng((seed ^ Math.imul(index + 1, 0x9e3779b1)) >>> 0);
-  const [width, height] = pick([[1, 1], [1, 17], [17, 1], [7, 9], [8, 8], [9, 9], [17, 31], [255, 17], [257, 19], [19, 257], [257, 255], [2049, 1], [1, 257]], random);
+  const [width, height] = pick(compact ? [[1, 1], [1, 17], [17, 1], [7, 9], [8, 8], [9, 9], [17, 3], [3, 17], [17, 17]] : [[1, 1], [1, 17], [17, 1], [7, 9], [8, 8], [9, 9], [17, 31], [255, 17], [257, 19], [19, 257], [257, 255], [2049, 1], [1, 257]], random);
   const kind = pick(['rgba', 'rgb', 'grey', 'grey-alpha', 'palette', 'stripes'], random), rgba = new Uint8Array(width * height * 4);
   const palette = Array.from({length: pick([1, 2, 5, 31, 257, 513], random)}, () => [byte(random), byte(random), byte(random), byte(random)]);
   for (let y = 0, at = 0; y < height; y++) for (let x = 0; x < width; x++, at += 4) {
@@ -78,4 +78,31 @@ export function pixelCase(seed, index) {
     rgba.set(colour, at);
   }
   return {width, height, rgba, kind, quality: pick([1, 60, 90, 99, 100], random)};
+}
+
+// The mutation grammar admits at most a 65-pixel edge and sampling factors at most four.
+// An oversized header must refuse before it can allocate an attacker-sized coefficient plane.
+export function guardJPEGPlanes(work) {
+  const Original = globalThis.Int16Array, samples = (Math.ceil(65 / 32) * 32) ** 2;
+  globalThis.Int16Array = new Proxy(Original, {construct(target, args) {
+    if (typeof args[0] === 'number' && args[0] > samples) throw new Error('JPEG mutation allocated beyond its admitted fixture dimensions');
+    return Reflect.construct(target, args);
+  }});
+  try { return work(); } finally { globalThis.Int16Array = Original; }
+}
+
+// Random access by index makes a stopped run resumable without replaying a mutable PRNG state.
+// Half the table/scan/entropy cases combine several edits at the original structural boundaries.
+export function scaleJPEG(input, seed, index) {
+  const random = rng((seed ^ Math.imul(index + 1, 0x9e3779b1)) >>> 0);
+  const result = mutateJPEG(input, random, index), bytes = result.bytes;
+  if (index % 16 < 8 && ['table', 'scan', 'entropy'].includes(result.kind)) {
+    const eligible = jpegParts(input).filter(p => result.kind === 'table' ? [196,219].includes(p.marker) : p.marker === 218);
+    for (let edits = 1 + Math.floor(random() * 3); edits > 0; edits--) {
+      const part = pick(eligible, random), start = result.kind === 'entropy' ? part.end : part.payload;
+      const end = result.kind === 'entropy' ? part.scanEnd : part.end;
+      if (end > start) bytes[start + Math.floor(random() * (end - start))] ^= 1 << Math.floor(random() * 8);
+    }
+  }
+  return result;
 }

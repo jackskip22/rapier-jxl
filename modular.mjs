@@ -3,14 +3,18 @@
 // through the tree leaf it lands on: prediction, then `PackSigned(residual)` as a hybrid-integer token; runs of
 // zero residuals of eight or more become one zero and an LZ77 copy of length run-1 at distance 1.
 import {packSigned} from './bits.mjs';
-import {buildCode, writeHistograms, uintConfig, countToken, hybridToken} from './prefix.mjs';
+import {buildCode, writeHistograms, uintConfig, countToken, writeHybrid} from './prefix.mjs';
 
-export const PREDICTOR = Object.freeze({zero: 0, left: 1, top: 2, average0: 3, select: 4, gradient: 5, weighted: 6,
+// Imported bindings keep the fixed choices in the encoder independent of the complete predictor dictionary.
+// The dictionary remains the readable module's frozen API; freezing this fresh literal has no outside effects.
+export const ZERO_PREDICTOR = 0, AVERAGE_PREDICTOR = 3, GRADIENT_PREDICTOR = 5;
+export const PREDICTOR = /*#__PURE__*/ Object.freeze({zero: ZERO_PREDICTOR, left: 1, top: 2, average0: AVERAGE_PREDICTOR, select: 4, gradient: GRADIENT_PREDICTOR, weighted: 6,
   topRight: 7, topLeft: 8, leftLeft: 9, average1: 10, average2: 11, average3: 12, average4: 13});
 
-export const LZ77 = Object.freeze({minSymbol: 224, minLength: 7, lengthConfig: uintConfig(4)});
+const MIN_RUN_SYMBOL = 224, MIN_RUN_LENGTH = 7, RUN_CONFIG = uintConfig(4);
+export const LZ77 = Object.freeze({minSymbol: MIN_RUN_SYMBOL, minLength: MIN_RUN_LENGTH, lengthConfig: RUN_CONFIG});
 export const RESIDUAL_CONFIG = uintConfig(0);
-export const ALPHABET = LZ77.minSymbol + 33;
+export const ALPHABET = MIN_RUN_SYMBOL + 33;
 
 export function leaf(predictor, offset = 0, multiplier = 1) { return {predictor, offset, multiplier, context: -1}; }
 export function split(property, splitval, left, right) { return {property, splitval, left, right}; }
@@ -40,8 +44,7 @@ export function writeTree(w, root) {
   for (const value of tokens) countToken(RESIDUAL_CONFIG, value, freqs);
   const code = buildCode(freqs);
   writeHistograms(w, {contextMap: new Uint8Array(6), histograms: [{config: RESIDUAL_CONFIG, code}]});
-  const t = [0, 0, 0];
-  for (const value of tokens) { hybridToken(RESIDUAL_CONFIG, value, t); w.write(code.lengths[t[0]], code.codes[t[0]]); if (t[1]) w.write(t[1], t[2]); }
+  for (const value of tokens) writeHybrid(w, code, RESIDUAL_CONFIG, value);
   return leaves;
 }
 
@@ -97,22 +100,18 @@ export function writeChannelHistograms(w, orderedLeaves, freqs, histogramOf = le
 // leaves (multiplier above one) replace the plane's values by the decoder's reconstruction as they go.
 export function codeChannel(w, target, plane, width, height, leaf) {
   const predictor = leaf.predictor, offset = leaf.offset, multiplier = leaf.multiplier;
-  const config = RESIDUAL_CONFIG, lengthConfig = LZ77.lengthConfig, t = [0, 0, 0];
-  const lengths = w ? target.lengths : null, codes = w ? target.codes : null;
+  const config = RESIDUAL_CONFIG, lengthConfig = RUN_CONFIG;
   let run = 0;
-  const emit = value => {
-    if (!w) { countToken(config, value, target); return; }
-    hybridToken(config, value, t);
-    w.write(lengths[t[0]], codes[t[0]]);
-    if (t[1]) w.write(t[1], t[2]);
+  const emit = (value, tokenConfig = config, base = 0) => {
+    if (w) writeHybrid(w, target, tokenConfig, value, base);
+    else countToken(tokenConfig, value, target, base);
   };
   const flush = () => {
     if (!run) return;
-    if (run >= LZ77.minLength + 1) {
+    if (run >= MIN_RUN_LENGTH + 1) {
       emit(0);
-      const count = run - LZ77.minLength - 1;
-      if (!w) countToken(lengthConfig, count, target, LZ77.minSymbol);
-      else { hybridToken(lengthConfig, count, t); const symbol = LZ77.minSymbol + t[0]; w.write(lengths[symbol], codes[symbol]); if (t[1]) w.write(t[1], t[2]); }
+      const count = run - MIN_RUN_LENGTH - 1;
+      emit(count, lengthConfig, MIN_RUN_SYMBOL);
     } else for (let i = 0; i < run; i++) emit(0);
     run = 0;
   };

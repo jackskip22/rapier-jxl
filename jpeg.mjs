@@ -65,6 +65,10 @@ export function parseJPEG(bytes) {
   const quant = [], huffman = [[], []], badDC = new Set(), icc = {count: 0, parts: []};
   let frame = null, restartInterval = 0, adobeTransform = -1, jfif = false, orientation = 1, pos = 2;
   const u16 = at => (bytes[at] << 8) | bytes[at + 1];
+  const signatureAt = (at, signature) => {
+    for (let i = 0; i < signature.length; i++) if (bytes[at + i] !== signature.charCodeAt(i)) return false;
+    return true;
+  };
   for (;;) {
     if (pos >= bytes.length) { if (frame && frame.scans) break; throw jpegError('truncated'); }
     if (bytes[pos] !== 0xFF) throw jpegError('marker expected');
@@ -157,17 +161,17 @@ export function parseJPEG(bytes) {
       pos = decodeScan(bytes, end, frame, scan, ss, se, ah, al, restartInterval);
       frame.scans++;
     } else if (marker === 0xE0) {
-      if (bytes[segment] === 0x4A && bytes[segment + 1] === 0x46 && bytes[segment + 2] === 0x49 && bytes[segment + 3] === 0x46) jfif = true;
+      if (signatureAt(segment, 'JFIF')) jfif = true;
     } else if (marker === 0xE1) {
-      if (orientation === 1 && bytes[segment] === 0x45 && bytes[segment + 1] === 0x78 && bytes[segment + 2] === 0x69 && bytes[segment + 3] === 0x66) orientation = exifOrientation(bytes, segment + 6, end);
+      if (orientation === 1 && signatureAt(segment, 'Exif')) orientation = exifOrientation(bytes, segment + 6, end);
     } else if (marker === 0xE2) {
-      if (length >= 16 && String.fromCharCode(...bytes.subarray(segment, segment + 11)) === 'ICC_PROFILE' && bytes[segment + 11] === 0) {
+      if (length >= 16 && signatureAt(segment, 'ICC_PROFILE\0')) {
         const seq = bytes[segment + 12], count = bytes[segment + 13];
         if (!seq || !count || seq > count || (icc.count && icc.count !== count) || icc.parts[seq]) throw jpegError('a colour profile cut short');
         icc.count = count; icc.parts[seq] = bytes.subarray(segment + 14, end);
       }
     } else if (marker === 0xEE) {
-      if (length >= 14 && bytes[segment] === 0x41 && bytes[segment + 1] === 0x64 && bytes[segment + 2] === 0x6F && bytes[segment + 3] === 0x62 && bytes[segment + 4] === 0x65) adobeTransform = bytes[segment + 11];
+      if (length >= 14 && signatureAt(segment, 'Adobe')) adobeTransform = bytes[segment + 11];
     }
   }
   if (!frame || !frame.scans) throw jpegError('no picture');
@@ -294,18 +298,7 @@ function decodeScan(bytes, start, frame, scan, ss, se, ah, al, restartInterval) 
   const single = scan.length === 1, progressive = frame.progressive;
   const baseline = (s, coeffs, at) => {
     coeffs[at] = dcValue(s, decode(s.dc));
-    for (let k = 1; k < 64;) {
-      const rs = decode(s.ac), r = rs >> 4, size = rs & 15;
-      if (!size) {
-        if (r === 15) { k += 16; if (k > 64) throw jpegError('coefficients past the block'); continue; }
-        if (r) throw jpegError('an end-of-band run in a sequential scan');
-        break;
-      }
-      k += r;
-      if (k > 63) throw jpegError('coefficients past the block');
-      coeffs[at + ZIGZAG[k]] = acValue(size, 0);
-      k++;
-    }
+    acFirst(s, coeffs, at);
   };
   const dcFirst = (s, coeffs, at) => {
     const value = dcValue(s, decode(s.dc)) * (1 << al);
@@ -313,16 +306,22 @@ function decodeScan(bytes, start, frame, scan, ss, se, ah, al, restartInterval) 
     coeffs[at] = value;
   };
   const dcRefine = (s, coeffs, at) => { if (receive(1)) coeffs[at] |= 1 << al; };
+  const pastBand = () => jpegError('coefficients past the ' + (progressive ? 'band' : 'block'));
+  // Sequential scans use this same first AC pass after their DC: admission fixes ss=0, se=63, al=0. Only a
+  // progressive scan may carry an end-of-band run across blocks; a sequential nonzero run still refuses here.
   const acFirst = (s, coeffs, at) => {
     if (eobrun > 0) { eobrun--; return; }
-    for (let k = ss; k <= se;) {
+    for (let k = ss || 1; k <= se;) {
       const rs = decode(s.ac), r = rs >> 4, size = rs & 15;
       if (!size) {
-        if (r < 15) { eobrun = (1 << r) - 1 + (r ? receive(r) : 0); break; }
-        k += 16; if (k > se + 1) throw jpegError('coefficients past the band'); continue;
+        if (r < 15) {
+          if (r && !progressive) throw jpegError('an end-of-band run in a sequential scan');
+          eobrun = (1 << r) - 1 + (r ? receive(r) : 0); break;
+        }
+        k += 16; if (k > se + 1) throw pastBand(); continue;
       }
       k += r;
-      if (k > se) throw jpegError('coefficients past the band');
+      if (k > se) throw pastBand();
       coeffs[at + ZIGZAG[k]] = acValue(size, al);
       k++;
     }

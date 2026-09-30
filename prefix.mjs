@@ -58,20 +58,19 @@ export function canonicalCodes(lengths) {
 export function buildCode(freqs) {
   const used = [];
   for (let i = 0; i < freqs.length; i++) if (freqs[i] > 0) used.push(i);
-  const count = used.length, alphabetSize = used[count - 1] + 1 || 1, lengths = new Uint8Array(alphabetSize);
+  const count = used.length, alphabetSize = used[count - 1] + 1 || 1;
+  const lengths = count <= 4 ? new Uint8Array(alphabetSize) : codeLengths(freqs, 15).subarray(0, alphabetSize);
+  let treeSelect = 0;
   if (count <= 4) {
     // Simple codes carry symbols in length order, then symbol order. The only choice is a four-symbol tree:
     // 1,2,3,3 beats 2,2,2,2 exactly when the largest frequency exceeds the two smallest together.
     used.sort((a, b) => freqs[b] - freqs[a] || a - b);
-    const treeSelect = count === 4 && freqs[used[0]] > freqs[used[2]] + freqs[used[3]] ? 1 : 0;
+    treeSelect = count === 4 && freqs[used[0]] > freqs[used[2]] + freqs[used[3]] ? 1 : 0;
     const depths = count < 2 ? [0] : count === 2 ? [1, 1] : count === 3 ? [1, 2, 2] : treeSelect ? [1, 2, 3, 3] : [2, 2, 2, 2];
     used.forEach((symbol, index) => { lengths[symbol] = depths[index]; });
     used.sort((a, b) => lengths[a] - lengths[b] || a - b);
-    return {alphabetSize, lengths, codes: canonicalCodes(lengths), simple: count ? used : null, treeSelect};
   }
-  const full = codeLengths(freqs.subarray ? freqs.subarray(0, alphabetSize) : freqs.slice(0, alphabetSize), 15);
-  lengths.set(full);
-  return {alphabetSize, lengths, codes: canonicalCodes(lengths), simple: null, treeSelect: 0};
+  return {alphabetSize, lengths, codes: canonicalCodes(lengths), simple: count && count <= 4 ? used : null, treeSelect};
 }
 
 // The code header. An alphabet of one symbol has no header at all (the decoder reads none).
@@ -93,15 +92,11 @@ export function writePrefixCode(w, code) {
     const value = lengths[i];
     let run = 1;
     while (i + run <= last && lengths[i + run] === value) run++;
-    if (value === 0) {
-      if (run < 3) for (let k = 0; k < run; k++) { tokens.push(0); extras.push(0); }
-      else pushRun(tokens, extras, 17, run - 3, 7, 3);
-    } else {
-      let repeats = run;
-      if (value !== previous) { tokens.push(value); extras.push(0); repeats--; previous = value; }
-      if (repeats < 3) for (let k = 0; k < repeats; k++) { tokens.push(value); extras.push(0); }
-      else pushRun(tokens, extras, 16, repeats - 3, 3, 2);
-    }
+    let repeats = run;
+    // Nonzero runs first establish the repeated length; zeros have their own run symbol and leave it unchanged.
+    if (value && value !== previous) { tokens.push(value); extras.push(0); repeats--; previous = value; }
+    if (repeats < 3) for (let k = 0; k < repeats; k++) { tokens.push(value); extras.push(0); }
+    else pushRun(tokens, extras, value ? 16 : 17, repeats - 3, value ? 3 : 7, value ? 2 : 3);
     i += run;
   }
   const freqs = new Uint32Array(18);
@@ -150,9 +145,11 @@ export function countToken(config, value, freqs, base = 0) {
 
 // Writes the value through a code and configuration (token bits, then the raw bits).
 const scratch = [0, 0, 0];
-export function writeHybrid(w, code, config, value) {
+// A length token shares the data code with an offset alphabet; its extra bits still follow the same rule.
+export function writeHybrid(w, code, config, value, base = 0) {
   hybridToken(config, value, scratch);
-  w.write(code.lengths[scratch[0]], code.codes[scratch[0]]);
+  const symbol = base + scratch[0];
+  w.write(code.lengths[symbol], code.codes[symbol]);
   if (scratch[1]) w.write(scratch[1], scratch[2]);
 }
 
@@ -187,10 +184,9 @@ export function writeContextMap(w, contextMap) {
   // No distance multiplier here, so the distance is the value plus one: the one distance symbol is 0.
   const distance = new Uint32Array(1); distance[0] = 1;
   writeHistograms(w, {lz77: {minSymbol, minLength, lengthConfig: length}, contextMap: new Uint8Array([1, 0]), histograms: [{config: uintConfig(0), code: buildCode(distance)}, {config, code}]});
-  const t = [0, 0, 0];
   for (const [index, copy] of pieces) {
     writeHybrid(w, code, config, index);
-    if (copy) { hybridToken(length, copy - minLength, t); const symbol = minSymbol + t[0]; w.write(code.lengths[symbol], code.codes[symbol]); if (t[1]) w.write(t[1], t[2]); }
+    if (copy) writeHybrid(w, code, length, copy - minLength, minSymbol);
   }
 }
 

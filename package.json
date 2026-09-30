@@ -1,20 +1,37 @@
 {
   "name": "rapier-jxl",
-  "version": "1.1.19",
-  "description": "A JPEG XL encoder in pure JavaScript: lossless, lossy, and a JPEG carried as its coefficients. One file of 40.3 kB, 15.9 kB gzipped. The encoder inside Rapier.",
+  "version": "1.1.20",
+  "description": "A JPEG XL encoder in pure JavaScript: lossless, lossy, and a JPEG carried as its coefficients. One file of 36.3 kB, 15.0 kB gzipped. The encoder inside Rapier.",
   "license": "MIT",
   "type": "module",
   "main": "./index.mjs",
+  "types": "./index.d.mts",
   "exports": {
-    ".": "./index.mjs",
-    "./min": "./rapier-jxl.min.mjs",
-    "./lossless": "./lossless.min.mjs",
-    "./jpeg": "./jpeg.min.mjs",
-    "./photo": "./photo.min.mjs",
+    ".": {
+      "types": "./index.d.mts",
+      "default": "./index.mjs"
+    },
+    "./min": {
+      "types": "./index.d.mts",
+      "default": "./rapier-jxl.min.mjs"
+    },
+    "./lossless": {
+      "types": "./lossless.d.mts",
+      "default": "./lossless.min.mjs"
+    },
+    "./jpeg": {
+      "types": "./jpeg.d.mts",
+      "default": "./jpeg.min.mjs"
+    },
+    "./photo": {
+      "types": "./photo.d.mts",
+      "default": "./photo.min.mjs"
+    },
     "./package.json": "./package.json"
   },
   "files": [
     "*.mjs",
+    "*.d.mts",
     "README.md",
     "AGENTS.md",
     "ENCODER-COMPARISON.md",
@@ -22,7 +39,8 @@
     "sizes.json",
     "public/encoders.json",
     "public/encoder-sizes.json",
-    "public/measure-encoders.mjs"
+    "public/measure-encoders.mjs",
+    "public/examples"
   ],
   "sideEffects": false,
   "engines": {
@@ -37,23 +55,13 @@
     "jpeg-xl",
     "jpegxl",
     "jxl",
-    "image-compression",
-    "image-encoder",
-    "javascript",
-    "browser",
-    "nodejs",
-    "web-worker",
-    "lossless-compression",
-    "lossy-compression",
-    "jpeg",
-    "transcoding",
-    "zero-dependencies",
     "encoder",
-    "markdown",
+    "image-compression",
     "rapier"
   ],
   "scripts": {
-    "test": "node --test \"public/test/*.test.mjs\""
+    "test": "node --test \"public/test/*.test.mjs\"",
+    "fuzz:scale": "node public/test/fuzz-shards.mjs"
   },
   "devDependencies": {
     "jxl-oxide-wasm": "0.12.6",

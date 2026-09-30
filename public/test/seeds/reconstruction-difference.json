@@ -1,0 +1,52 @@
+{
+  "type": "jpeg",
+  "seed": 20260930,
+  "index": 1008294,
+  "source": "colour-sequential.jpg",
+  "kind": "entropy",
+  "key": "78353029a38ebb0e45933ccd9ae2b694ab81aa0eb7239ed5270ed89d78da442f",
+  "file": "reconstruction-difference.jpg",
+  "path": "jpeg",
+  "entry": {
+    "key": "35b8de14261c9f3e9d6c68767df99a34338431562f182acd37b0e7edc4eff68f",
+    "width": 33,
+    "height": 25,
+    "oxide": "021df895f263bb81b0ca0c0e56bfb5b89241d68d62e123d458c59e8b49afb5d2",
+    "native": "72391aa7be708a48c0ae010bc45726ce73dfc23eee7a38c580fb78ae6de10b4c",
+    "oxideAlpha": "4ce097141e8900c765570c78a7b3b011b928a00a536a3b90f34a673e0067aef2",
+    "nativeAlpha": "4ce097141e8900c765570c78a7b3b011b928a00a536a3b90f34a673e0067aef2",
+    "maximum": 1,
+    "different": 1,
+    "channels": [
+      0,
+      0,
+      1,
+      0
+    ],
+    "alphaDifferent": 0,
+    "firstInput": {
+      "type": "jpeg",
+      "seed": 20260930,
+      "index": 1008294,
+      "source": "colour-sequential.jpg",
+      "kind": "entropy",
+      "key": "78353029a38ebb0e45933ccd9ae2b694ab81aa0eb7239ed5270ed89d78da442f"
+    },
+    "rounding": {
+      "integerTie": 0,
+      "reconstruction": 1,
+      "examples": [
+        {
+          "sample": 3102,
+          "oxide": 7,
+          "native": 6,
+          "nativeFloat": 0.025490175932645798,
+          "scaledFloat32": 6.49999475479126,
+          "halfUp": 6,
+          "nearestEven": 6,
+          "classification": "reconstruction"
+        }
+      ]
+    }
+  }
+}

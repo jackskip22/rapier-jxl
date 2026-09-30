@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {readFile, mkdir, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {encode, transcode} from '../../index.mjs';
-import {rng, mutateJPEG, mutationKinds, pixelCase} from './fuzz-cases.mjs';
+import {rng, mutateJPEG, mutationKinds, pixelCase, guardJPEGPlanes} from './fuzz-cases.mjs';
 import {oracles} from './oracles.mjs';
 
 const seedsURL = new URL('./seeds/', import.meta.url);
@@ -32,12 +32,7 @@ async function failure(name, bytes, error, description) {
 // Mutated admitted dimensions are at most 65; JPEG sampling factors are at most four. Even a malformed header
 // cannot make the fuzz runner allocate an attacker-sized plane while testing that pre-allocation refusal.
 function guardedTranscode(bytes) {
-  const Original = globalThis.Int16Array, samples = (Math.ceil(65 / 32) * 32) ** 2;
-  globalThis.Int16Array = new Proxy(Original, {construct(target, args) {
-    assert.ok(typeof args[0] !== 'number' || args[0] <= samples, 'JPEG mutation requested a plane larger than its admitted fixture dimensions');
-    return Reflect.construct(target, args);
-  }});
-  try { return transcode(bytes); } finally { globalThis.Int16Array = Original; }
+  return guardJPEGPlanes(() => transcode(bytes));
 }
 
 test('retained JPEG defects refuse lost coefficients; table reuse preserves the original component', t => {

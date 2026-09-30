@@ -1,0 +1,19 @@
+{
+  "type": "pixels",
+  "path": "photo",
+  "width": 8,
+  "height": 8,
+  "quality": 90,
+  "kind": "synthetic-photo-crop",
+  "source": "synthetic-photo-0005",
+  "sourceSeed": 1748439572,
+  "crop": {
+    "x": 72,
+    "y": 24
+  },
+  "entry": {
+    "width": 8,
+    "height": 8
+  },
+  "file": "photo-decoder-difference.rgba"
+}

@@ -4,9 +4,9 @@
 // carried as the multiplier of that channel's tree leaf so the decoder scales the residuals back. The finest
 // low-pass image is kept exact. Quality maps to libjxl's distance (90 is 1.0).
 import {BitWriter} from './bits.mjs';
-import {writeImageHeader, writeModularFrameHeader, groupLayout, assembleCodestream, GROUP_DIM, DC_GROUP_DIM} from './frame.mjs';
-import {PREDICTOR, ALPHABET, leaf, channelTree, streamTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
-import {forwardSqueeze} from './squeeze.mjs';
+import {writeImageHeader, writeModularFrameHeader, groupLayout, finishSections, assembleCodestream, GROUP_DIM, DC_GROUP_DIM} from './frame.mjs';
+import {ZERO_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, channelTree, streamTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
+import {forwardSqueeze, defaultSqueezeParams} from './squeeze.mjs';
 import {inspectPixels} from './lossless.mjs';
 
 const QUALITY_FACTOR = 0.35, LUMA_FACTOR = 1.1;
@@ -42,10 +42,12 @@ export function encodeLossy(rgba, width, height, {quality = 90, shape = inspectP
     if (alpha) planes[count - 1][p] = rgba[i + 3];
   }
   const channels = planes.map((data, c) => ({w: width, h: height, hshift: 0, vshift: 0, data, component: colour === 3 ? c : c === 0 ? 0 : 3}));
-  const squeezed = forwardSqueeze(channels);
-  const predictorOf = ch => ch.residual ? PREDICTOR.zero : PREDICTOR.gradient;
-  const quantiserOf = ch => quantiserFor(ch.component, ch.hshift, ch.vshift, distance);
-  const transforms = [...(colour === 3 ? [{type: 'rct', beginC: 0, rctType: 6}] : []), {type: 'squeeze', params: []}];
+  // Avoid empty chroma channels at the global/group boundary in a one-wide colour image.
+  const params = width === 1 && height > GROUP_DIM && colour === 3 ? defaultSqueezeParams(channels).filter(p => !p.horizontal) : [];
+  const squeezed = forwardSqueeze(channels, params.length ? params : undefined);
+  const predictorOf = ch => ch.residual ? ZERO_PREDICTOR : GRADIENT_PREDICTOR;
+  const quantiserOf = ch => quantiserFor(ch.component, ch.hshift + (params.length && ch.component > 0 && ch.component < 3 ? 1 : 0), ch.vshift, distance);
+  const transforms = [...(colour === 3 ? [{type: 'rct', beginC: 0, rctType: 6}] : []), {type: 'squeeze', params}];
 
   // The sections and the channel pieces each holds, in the decoder's order: the global section takes the channels
   // up to the first wider or taller than a group; DC groups take the rest with both shifts of three or more, AC
@@ -124,6 +126,5 @@ export function encodeLossy(rgba, width, height, {quality = 90, shape = inspectP
     }
     for (const piece of section.pieces) codeChannel(w, histograms[histogramOf.get(piece.c) + 1].code, dataOf(piece), piece.rect.w, piece.rect.h, piece.leaf);
   }
-  const out = writers.map(w => w || new BitWriter(16));
-  return assembleCodestream(header, out.map(w => { w.zeroPadToByte(); return w.finish(); }));
+  return assembleCodestream(header, finishSections(writers));
 }

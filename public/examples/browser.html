@@ -1,0 +1,37 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Rapier JXL in a page</title>
+<style>body{font:16px/1.5 system-ui;max-width:48em;margin:2em auto;padding:0 1em}img{max-width:100%;display:block;margin:1em 0}code{font-size:.9em}</style>
+<h1>Rapier JXL</h1>
+<p>Choose a picture. A JPEG is carried whole; anything else is drawn on a canvas and encoded from its pixels.
+The result shows only in a browser that decodes JPEG XL; the size is reported either way.</p>
+<p><input type="file" accept="image/*"> <label><input type="checkbox" id="lossy"> lossy, quality <input id="q" type="number" min="1" max="99" value="80" size="3"></label></p>
+<p id="out"></p>
+<img id="shown" alt="">
+<script type="module">
+import {encode, transcode} from '../../index.mjs';
+const out = document.getElementById('out'), shown = document.getElementById('shown');
+document.querySelector('input[type=file]').addEventListener('change', async event => {
+  const file = event.target.files[0];
+  if (!file) return;
+  const started = performance.now();
+  let bytes, note;
+  try {
+    if (file.type === 'image/jpeg') {
+      const jpeg = new Uint8Array(await file.arrayBuffer());
+      try { ({bytes} = transcode(jpeg)); note = 'carried whole'; }
+      catch (error) { if (error.code !== 'JXL_JPEG') throw error; }
+    }
+    if (!bytes) {
+      const image = await createImageBitmap(file), canvas = new OffscreenCanvas(image.width, image.height), context = canvas.getContext('2d');
+      context.drawImage(image, 0, 0);
+      const {data, width, height} = context.getImageData(0, 0, image.width, image.height);
+      const quality = document.getElementById('lossy').checked ? Number(document.getElementById('q').value) : 100;
+      bytes = encode(data, width, height, {quality}); note = quality >= 100 ? 'lossless' : 'lossy, quality ' + quality;
+    }
+    const ms = Math.round(performance.now() - started);
+    out.textContent = `${file.name}: ${file.size.toLocaleString()} bytes in, ${bytes.length.toLocaleString()} bytes of JPEG XL out (${note}, ${ms} ms).`;
+    shown.src = URL.createObjectURL(new Blob([bytes], {type: 'image/jxl'}));
+  } catch (error) { out.textContent = (error.code || 'error') + ': ' + error.message; }
+});
+</script>

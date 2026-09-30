@@ -8,6 +8,12 @@ on:
       seed:
         description: Deterministic mutation seed
         default: '20260930'
+      jpegs:
+        description: Structure-aware JPEG mutation budget
+        default: '2000000'
+      pixels:
+        description: Pixel mutation budget (three encoder paths each)
+        default: '32768'
   schedule:
     - cron: '23 4 * * 1'
 permissions:
@@ -21,7 +27,7 @@ jobs:
         with:
           node-version: '22.22.2'
       - run: npm install --ignore-scripts
-      - run: sudo apt-get update && sudo apt-get install --yes ffmpeg
+      - run: sudo apt-get update && sudo apt-get install --yes ffmpeg libjxl-dev build-essential
       - name: Decode every returned stream with both oracles
         env:
           JXL_FUZZ_REQUIRE_NATIVE: '1'
@@ -30,6 +36,24 @@ jobs:
           JXL_FUZZ_PIXELS: '128'
           JXL_FUZZ_FAILURE_DIR: fuzz-failures
         run: node --test "public/test/*.test.mjs"
+      - name: Fixed-budget scale run
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          JXL_SEED: ${{ inputs.seed || '20260930' }}
+          JXL_JPEGS: ${{ inputs.jpegs || '2000000' }}
+          JXL_PIXELS: ${{ inputs.pixels || '32768' }}
+        run: node public/test/fuzz-shards.mjs --out fuzz-scale --workers 2 --seed "$JXL_SEED" --jpegs "$JXL_JPEGS" --pixels "$JXL_PIXELS"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fuzz-scale-summary
+          path: |
+            fuzz-scale/summary.json
+            fuzz-scale/plan.json
+            fuzz-scale/shard-*/progress.json
+            fuzz-scale/shard-*/difference-*
+            fuzz-scale/shard-*/failure-*
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

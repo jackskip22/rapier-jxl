@@ -6,7 +6,11 @@
     "width": 2049,
     "height": 1,
     "kind": "rgba",
-    "qualities": [1, 80, 99],
+    "qualities": [
+      1,
+      80,
+      99
+    ],
     "reason": "2049x1 RGBA Squeeze leaves zero-height chroma channels; unused histogram headers shifted the bitstream."
   },
   {
@@ -18,5 +22,17 @@
     "kind": "rgba",
     "qualities": [1, 80, 99],
     "reason": "1x257 RGBA Squeeze leaves zero-width chroma channels between channels that own group pieces; histograms numbered by channel left a hole the decoder refuses. Quality 99 answers the exact palette stream."
+  },
+  {
+    "file": "photo-decoder-difference.rgba",
+    "seed": 1748439572,
+    "iteration": 5,
+    "width": 8,
+    "height": 8,
+    "kind": "synthetic-photo-crop",
+    "qualities": [
+      90
+    ],
+    "reason": "8x8 crop from deterministic synthetic-photo-0005 retains an investigated one-byte VarDCT output-rounding discrepancy."
   }
 ]
