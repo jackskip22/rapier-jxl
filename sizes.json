@@ -1,6 +1,6 @@
 {
   "package": "rapier-jxl",
-  "version": "1.1.21",
+  "version": "1.1.22",
   "measured": "exact bytes of the staged files; gzip level 9; Brotli quality 11, text mode",
   "node": "v22.22.2",
   "terser": "5.51.2",
@@ -41,8 +41,8 @@
       ],
       "bytes": 36284,
       "gzip": 14987,
-      "brotli": 13315,
-      "sha256": "ab003954f9d33375dddb1a86342f0ce80d1d0cd43133431fceae663383d31d0f",
+      "brotli": 13335,
+      "sha256": "e728018f7e2140a0121db41d39dc36d8cab7a2a2bf492c5f9913c5fa5221d326",
       "compress": {
         "passes": 2,
         "hoist_funs": true,
@@ -59,8 +59,8 @@
       ],
       "bytes": 13754,
       "gzip": 6131,
-      "brotli": 5401,
-      "sha256": "dcb99eb53fddda0524663408b205facf6ff076345085ded402ceaa17cb3a2c75",
+      "brotli": 5404,
+      "sha256": "71f2487064f15a6546ef0c1d94ce65f963ea00862551ccf5012966ebd64c9fb2",
       "compress": {
         "passes": 2,
         "hoist_funs": true,
@@ -78,7 +78,7 @@
       "bytes": 27750,
       "gzip": 11590,
       "brotli": 10217,
-      "sha256": "f6206ae33c35c3a7ff548e7f18588871d487587820684b59da959835723d8fe4",
+      "sha256": "3c3d0d5a42b25ebd7139b5af62b129b281a77b9c1e5198d39fa7977ec8b9d1d4",
       "compress": {
         "passes": 2,
         "hoist_funs": true,
@@ -95,8 +95,8 @@
       ],
       "bytes": 22563,
       "gzip": 9768,
-      "brotli": 8635,
-      "sha256": "3ae179c6544fa06612da6e22b211fe7edde0ebf0d4ccca927b4e75d27a0e58aa",
+      "brotli": 8632,
+      "sha256": "2c98e08d33c0e819b920ed42b6e7cd9b29c2b10a7e6753d54553fb57168e1bfa",
       "compress": {
         "passes": 2,
         "hoist_funs": true,
