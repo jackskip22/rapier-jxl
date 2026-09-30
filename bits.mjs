@@ -1,5 +1,10 @@
-// Rapier's JPEG XL encoder: the bit writer. MIT (LICENSE).
+// Rapier's JPEG XL encoder: the bit writer, and the limits every part keeps. MIT (LICENSE).
 // JPEG XL packs bits least-significant first; `write` takes up to 32 bits at a time.
+
+// What one call takes at most: the 16 MiB codestream, 24 million pixels, 16,384 on a side. The checked API refuses a
+// larger ask before any work, the JPEG reader before it allocates a plane, and a writer that would grow past the
+// stream's bound stops there instead of filling memory first.
+export const LIMITS = Object.freeze({bytes: 16 * 1024 * 1024, pixels: 24_000_000, edge: 16384});
 
 export class BitWriter {
   constructor(capacity = 4096) {
@@ -31,7 +36,9 @@ export class BitWriter {
   }
   get bitLength() { return this.at * 8 + this.pending; }
   grow(need = 0) {
-    const next = new Uint8Array(Math.max(this.bytes.length * 2, this.at + need + 16));
+    const cap = LIMITS.bytes + 64;
+    if (this.at + need + 16 > cap) throw Object.assign(new Error('The encoded picture exceeds 16 MiB.'), {code: 'JXL_SIZE'});
+    const next = new Uint8Array(Math.min(cap, Math.max(this.bytes.length * 2, this.at + need + 16)));
     next.set(this.bytes.subarray(0, this.at)); this.bytes = next;
   }
   // Appends another writer's bits at the current bit position.

@@ -93,9 +93,17 @@ export function transcodeJPEG(bytes, jpeg = parseJPEG(bytes)) {
   // A block's coefficients: the JPEG's block (bx, by) at the channel's scale; chroma of a grey picture is empty.
   const blockAt = (c, bx, by) => { const comp = comps[c]; if (grey && c !== 1) return -1; return ((by * comp.stride) + bx) * 64; };
 
-  // Every luma block's quantised DC, for the block context buckets.
+  // An RGB JPEG's level shift comes back through the DC: 128 in pixel units, 1024 in the coefficient's, as libjxl adds
+  // it; a YCbCr frame keeps its DC as it is (the decoder's YCbCr transform centres it). 1024 divided by the DC step
+  // is whole only when the step divides 1024, so the frame's DC step is the step's greatest power-of-two divisor of
+  // 1024 and the stored DC is the JPEG's times the step over that, plus the shift, whole: the decoder's dequantised DC
+  // is exact for every step (a step of 40 used to lift by 25 x 40 = 1000 for 1024, three levels dark on a flat field).
+  const gcd1024 = q => { let d = 1024; while (q % d) d >>= 1; return d; };
+  const dcScale = comps.map(c => ycbcr ? 1 : c.quant[0] / gcd1024(c.quant[0]));
+  const dcLift = comps.map(c => ycbcr ? 0 : 1024 / gcd1024(c.quant[0]));
+  // Every luma block's DC as the frame stores it, for the block context buckets.
   const lumaDc = new Int32Array(xsizeBlocks * ysizeBlocks);
-  for (let by = 0; by < ysizeBlocks; by++) for (let bx = 0; bx < xsizeBlocks; bx++) lumaDc[by * xsizeBlocks + bx] = comps[1].coeffs[blockAt(1, bx, by)];
+  for (let by = 0; by < ysizeBlocks; by++) for (let bx = 0; bx < xsizeBlocks; bx++) lumaDc[by * xsizeBlocks + bx] = comps[1].coeffs[blockAt(1, bx, by)] * dcScale[1] + dcLift[1];
   const lumaQuant = comps[1].quant, quantSum = lumaQuant[8] + lumaQuant[16] + lumaQuant[24] + lumaQuant[32] + lumaQuant[40];
   const blocksTotal = xsizeBlocks * ysizeBlocks;
   const wanted = blocksTotal < 256 ? 0 : Math.max(1, Math.min(7, ceilLog2(blocksTotal) - ceilLog2(quantSum) - 7));
@@ -156,8 +164,9 @@ export function transcodeJPEG(bytes, jpeg = parseJPEG(bytes)) {
   // chroma from luma, no global modular tree.
   const dc = section(0);
   dc.write(1, 0);
-  // The DC step of each channel in the frame's units (the JPEG's DC quant over 8 times 255), stored times 128.
-  for (let c = 0; c < 3; c++) dc.write(16, float16Bits(comps[c].quant[0] / (255 * 8) * 128));
+  // The DC step of each channel in the frame's units (the JPEG's DC quant, over the scale above, over 8 times 255),
+  // stored times 128.
+  for (let c = 0; c < 3; c++) dc.write(16, float16Bits(comps[c].quant[0] / dcScale[c] / (255 * 8) * 128));
   dc.write(2, 3); dc.write(16, 65536 - 8193);
   dc.write(2, 1); dc.write(5, 0);
   dc.write(1, 0); dc.write(4, 0);
@@ -176,13 +185,12 @@ export function transcodeJPEG(bytes, jpeg = parseJPEG(bytes)) {
     const w = section(1 + g), gx = g % dcGroupsX, gy = (g / dcGroupsX) | 0;
     const x0 = gx * 256, y0 = gy * 256, rw = Math.min(256, xsizeBlocks - x0), rh = Math.min(256, ysizeBlocks - y0);
     w.write(2, 0);
-    // An RGB JPEG's level shift comes back through the DC (128 in pixel units, as libjxl adds it); YCbCr keeps its
-    // DC as it is, luma already centred and chroma zero-centred in the frame.
+    // The DC of every block, scaled and lifted as above (an RGB frame), or the JPEG's own (YCbCr).
     const planes = [1, 0, 2].map(c => {
-      const pw = rw >> hshift(c), ph = rh >> vshift(c), data = new Int32Array(pw * ph), lift = ycbcr ? 0 : Math.trunc(1024 / comps[c].quant[0]);
+      const pw = rw >> hshift(c), ph = rh >> vshift(c), data = new Int32Array(pw * ph), scale = dcScale[c], lift = dcLift[c];
       for (let y = 0; y < ph; y++) for (let x = 0; x < pw; x++) {
         const at = blockAt(c, (x0 >> hshift(c)) + x, (y0 >> vshift(c)) + y);
-        data[y * pw + x] = at < 0 ? 0 : comps[c].coeffs[at] + lift;
+        data[y * pw + x] = at < 0 ? 0 : comps[c].coeffs[at] * scale + lift;
       }
       return {w: pw, h: ph, data};
     });

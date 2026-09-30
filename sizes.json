@@ -1,0 +1,87 @@
+{
+  "package": "rapier-jxl",
+  "version": "1.1.17",
+  "measured": "exact bytes of the staged files; gzip level 9; Brotli quality 11, text mode",
+  "node": "v22.22.2",
+  "terser": "5.51.2",
+  "source": {
+    "bytes": 94845,
+    "gzip": 28403,
+    "sha256": {
+      "bits.mjs": "d9b7973501ab8af068ec97c04552f538dbf19c2f77ac0b959c84a9a5c5cd2318",
+      "prefix.mjs": "df96b1f05ea6704008765cd591d1e503dffbf566a8f611ba5622342890f7aab0",
+      "modular.mjs": "b22879efd95a59e9c06f78f06f07ef191ebdc3c01e1aabda9f8329fdf44e768d",
+      "frame.mjs": "5753c296b1549bd7e7d812366c60a2df59d5249138eb4336e3dccfdf8a66ba49",
+      "squeeze.mjs": "ffd5494fea68da35283f899643eeaee989295257536365328da176edb627f6ba",
+      "lossless.mjs": "7157179338405ae108503abe09589704e8a217bb156188135015709bcf3586eb",
+      "lossy.mjs": "e164951d48e1f2c299b859c89716aae9aad9c47a6bfa090b6fca767deb980a74",
+      "jpeg.mjs": "7776ca57c65e8043cfda8a4a2eb960bb261b382f2f847216e94efa8bb1872a0a",
+      "entropy.mjs": "4fbd33b647b58d099f60a288e2559b7c9c627098be7fec10160c47abb05d1def",
+      "vardct.mjs": "425134cedd9529676035107a77151b97ddbcf037d3ba8a09eae065e1e83d7619",
+      "index.mjs": "460a0e5651c51e5e31a96eaacc22b3df896eb5e38cbf699eeeb328404c025b48"
+    }
+  },
+  "bundles": [
+    {
+      "file": "rapier-jxl.min.mjs",
+      "entry": "./min",
+      "exports": [
+        "encode",
+        "encodeLosslessRGBA",
+        "encodeLossyRGBA",
+        "transcode",
+        "LIMITS",
+        "encodeLossless",
+        "encodeLossy",
+        "transcodeJPEG",
+        "parseJPEG",
+        "inspectPixels"
+      ],
+      "bytes": 39447,
+      "gzip": 15417,
+      "brotli": 13651,
+      "sha256": "908db8b1ee84581124fd2693ec76013d7bba9f4c1de362069da61aa4836ad47f",
+      "compress": {
+        "passes": 2,
+        "hoist_funs": true,
+        "hoist_vars": true,
+        "module": true
+      }
+    },
+    {
+      "file": "lossless.min.mjs",
+      "entry": "./lossless",
+      "exports": [
+        "encodeLosslessRGBA",
+        "LIMITS"
+      ],
+      "bytes": 16028,
+      "gzip": 6637,
+      "brotli": 5842,
+      "sha256": "af6cc5bb8f646e8d8ad7c732dca06e5bf6ce6c0b66ad691b5af5a65a35eef0a8",
+      "compress": {
+        "passes": 2,
+        "hoist_funs": true,
+        "hoist_vars": true,
+        "module": true
+      }
+    },
+    {
+      "file": "jpeg.min.mjs",
+      "entry": "./jpeg",
+      "exports": [
+        "transcode",
+        "LIMITS"
+      ],
+      "bytes": 30185,
+      "gzip": 12042,
+      "brotli": 10637,
+      "sha256": "8f87338f9cf5d05e5873a9632269f154ea9dcfcae7abb65e862861c4975df7b0",
+      "compress": {
+        "passes": 2,
+        "inline": 1,
+        "module": true
+      }
+    }
+  ]
+}
