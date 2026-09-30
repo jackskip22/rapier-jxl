@@ -1,7 +1,7 @@
 {
   "name": "rapier-jxl",
-  "version": "1.1.18",
-  "description": "A JPEG XL encoder in pure JavaScript: lossless, lossy, and a JPEG carried as its coefficients. One file of 39.9 kB, 15.7 kB gzipped. The encoder inside Rapier.",
+  "version": "1.1.19",
+  "description": "A JPEG XL encoder in pure JavaScript: lossless, lossy, and a JPEG carried as its coefficients. One file of 40.3 kB, 15.9 kB gzipped. The encoder inside Rapier.",
   "license": "MIT",
   "type": "module",
   "main": "./index.mjs",

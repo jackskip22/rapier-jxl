@@ -8,5 +8,15 @@
     "kind": "rgba",
     "qualities": [1, 80, 99],
     "reason": "2049x1 RGBA Squeeze leaves zero-height chroma channels; unused histogram headers shifted the bitstream."
+  },
+  {
+    "file": "rgba-1x257.rgba",
+    "seed": 20260930,
+    "iteration": 13,
+    "width": 1,
+    "height": 257,
+    "kind": "rgba",
+    "qualities": [1, 80, 99],
+    "reason": "1x257 RGBA Squeeze leaves zero-width chroma channels between channels that own group pieces; histograms numbered by channel left a hole the decoder refuses. Quality 99 answers the exact palette stream."
   }
 ]

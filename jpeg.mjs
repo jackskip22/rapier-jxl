@@ -62,7 +62,7 @@ function profileIsSRGB(chunks) {
 
 export function parseJPEG(bytes) {
   if (!(bytes.length > 4) || bytes[0] !== 0xFF || bytes[1] !== 0xD8) throw jpegError('not a JPEG');
-  const quant = [], huffman = [[], []], icc = {count: 0, parts: []};
+  const quant = [], huffman = [[], []], badDC = new Set(), icc = {count: 0, parts: []};
   let frame = null, restartInterval = 0, adobeTransform = -1, jfif = false, orientation = 1, pos = 2;
   const u16 = at => (bytes[at] << 8) | bytes[at + 1];
   for (;;) {
@@ -97,7 +97,10 @@ export function parseJPEG(bytes) {
         let total = 0;
         for (const c of counts) total += c;
         if (total > 256 || at + 16 + total > end) throw jpegError('bad Huffman table');
-        huffman[tc][th] = buildHuffman(counts, bytes.subarray(at + 16, at + 16 + total));
+        const symbols = bytes.subarray(at + 16, at + 16 + total);
+        huffman[tc][th] = buildHuffman(counts, symbols);
+        // libjpeg refuses a DC table naming a symbol above 15 when a scan first reads DC through it, used or not.
+        if (tc === 0) { if (symbols.some(s => s > 15)) badDC.add(th); else badDC.delete(th); }
         at += 16 + total;
       }
     } else if (marker === 0xC0 || marker === 0xC1 || marker === 0xC2) {
@@ -147,9 +150,10 @@ export function parseJPEG(bytes) {
         // decoded each component, not whatever happens to occupy its slot at the end of the file.
         if (!component.quant) component.quant = quant[component.tq];
         if (!component.quant) throw jpegError('a scan without its quantisation table');
-        scan.push({component, dc: huffman[0][bytes[at + 1] >> 4], ac: huffman[1][bytes[at + 1] & 15]});
+        scan.push({component, dc: huffman[0][bytes[at + 1] >> 4], ac: huffman[1][bytes[at + 1] & 15], dcSlot: bytes[at + 1] >> 4});
       }
       const ss = bytes[at], se = bytes[at + 1], ah = bytes[at + 2] >> 4, al = bytes[at + 2] & 15;
+      if ((!frame.progressive || (ss === 0 && ah === 0)) && scan.some(s => badDC.has(s.dcSlot))) throw jpegError('bad Huffman table');
       pos = decodeScan(bytes, end, frame, scan, ss, se, ah, al, restartInterval);
       frame.scans++;
     } else if (marker === 0xE0) {

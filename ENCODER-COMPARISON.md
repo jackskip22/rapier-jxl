@@ -8,10 +8,10 @@ ICC profiles, animation, perceptual search and more compression tools.
 
 | Encoder / entry | Version | Minified JS + WASM bytes | gzip bytes | Included capability |
 | --- | --- | ---: | ---: | --- |
-| Rapier JXL core | this release | 39,892 | 15,748 | 8-bit lossless RGBA, lossy modular with exact alpha, JPEG coefficients |
+| Rapier JXL core | this release | 40,286 | 15,904 | 8-bit lossless RGBA, lossy modular with exact alpha, JPEG coefficients |
 | Rapier JXL lossless | this release | 16,085 | 6,747 | 8-bit exact RGBA |
-| Rapier JXL JPEG | this release | 30,450 | 12,187 | JPEG coefficients, orientation; no JPEG reconstruction |
-| Rapier JXL photo | this release | 25,418 | 10,408 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
+| Rapier JXL JPEG | this release | 30,624 | 12,274 | JPEG coefficients, orientation; no JPEG reconstruction |
+| Rapier JXL photo | this release | 25,418 | 10,409 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
 | [jSquash](https://github.com/jamsinclair/jSquash/tree/main/packages/jxl) | 1.3.0 | 1,388,572 | 525,782 | 8-bit lossless/lossy RGBA |
 | [Discourse's jSquash package](https://www.npmjs.com/package/@discourse/jxl) | 1.3.0 | 1,388,572 | 525,782 | Same measured encoder bytes as jSquash |
 | [Lacinak's jSquash fork](https://github.com/kelaci/jSquash) | 1.3.0-kelaci.0 | 2,071,514 | 844,866 | Additional high bit-depth input options |

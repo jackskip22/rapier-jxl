@@ -2,8 +2,8 @@
 
 A JPEG XL encoder in pure JavaScript. No WebAssembly, no build step, no dependency, nothing fetched at run
 time. It is the encoder inside [Rapier](https://rapier.website), the single-file Markdown editor, offered on its
-own so any app can write JPEG XL pictures with the bytes it can afford: one file of 39.9 kB,
-15.7 kB gzipped, MIT. The smallest JavaScript/WebAssembly JPEG XL encoder among the published
+own so any app can write JPEG XL pictures with the bytes it can afford: one file of 40.3 kB,
+15.9 kB gzipped, MIT. The smallest JavaScript/WebAssembly JPEG XL encoder among the published
 payloads [we measured](ENCODER-COMPARISON.md); the table explains the scope and how to reproduce it.
 
 - **Lossless.** Every pixel comes back as it went in. 8-bit grey, grey with alpha, RGB and RGBA.
@@ -91,11 +91,11 @@ invented; decode such a JPEG and encode its pixels instead. A checked call retur
 
 | file | bytes | gzip | Brotli |
 | --- | ---: | ---: | ---: |
-| `rapier-jxl.min.mjs`, core | 39,892 | 15,748 | 13,936 |
+| `rapier-jxl.min.mjs`, core | 40,286 | 15,904 | 14,096 |
 | `lossless.min.mjs`, `encodeLosslessRGBA` alone | 16,085 | 6,747 | 5,948 |
-| `jpeg.min.mjs`, `transcode` alone | 30,450 | 12,187 | 10,776 |
-| `photo.min.mjs`, photographic pixels | 25,418 | 10,408 | 9,197 |
-| all readable modules, including photo | 101,832 | 30,902 | |
+| `jpeg.min.mjs`, `transcode` alone | 30,624 | 12,274 | 10,866 |
+| `photo.min.mjs`, photographic pixels | 25,418 | 10,409 | 9,209 |
+| all readable modules, including photo | 103,193 | 31,376 | |
 
 Exact bytes of this release's files, measured by the script that stages this repository; `sizes.json` carries
 their hashes and the tools (terser 5.51.2, Node v22.22.2; gzip at level 9, Brotli at quality 11). A minified

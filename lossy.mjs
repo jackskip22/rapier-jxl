@@ -97,8 +97,13 @@ export function encodeLossy(rgba, width, height, {quality = 90, shape = inspectP
     for (let y = 0; y < rect.h; y++) scratch.set(ch.data.subarray((rect.y + y) * ch.w + rect.x, (rect.y + y) * ch.w + rect.x + rect.w), y * rect.w);
     return scratch;
   };
-  const freqs = squeezed.map(() => new Uint32Array(ALPHABET));
-  for (const section of sections) for (const piece of section.pieces) codeChannel(null, freqs[piece.c], dataOf(piece), piece.rect.w, piece.rect.h, piece.leaf);
+  // One histogram per channel that owns a piece, numbered densely in channel order. The decoder counts the
+  // histograms from the context map and refuses a hole in it; Squeeze of a one-wide picture leaves zero-width
+  // chroma residual channels that own no piece between channels that do.
+  const owners = [...new Set(sections.flatMap(section => section.pieces.map(piece => piece.c)))].sort((a, b) => a - b);
+  const histogramOf = new Map(owners.map((c, i) => [c, i]));
+  const freqs = owners.map(() => new Uint32Array(ALPHABET));
+  for (const section of sections) for (const piece of section.pieces) codeChannel(null, freqs[histogramOf.get(piece.c)], dataOf(piece), piece.rect.w, piece.rect.h, piece.leaf);
 
   const header = new BitWriter(256);
   writeImageHeader(header, width, height, colour, alpha);
@@ -109,7 +114,7 @@ export function encodeLossy(rgba, width, height, {quality = 90, shape = inspectP
   global.write(1, 1);  // default DC quantisation
   global.write(1, 1);  // a global tree
   const ordered = writeTree(global, tree);
-  const histograms = writeChannelHistograms(global, ordered, freqs, l => l.channel);
+  const histograms = writeChannelHistograms(global, ordered, freqs, l => histogramOf.get(l.channel));
   writeModularHeader(global, {useGlobalTree: true, transforms});
   for (const section of sections) {
     let w = writers[section.index];
@@ -117,7 +122,7 @@ export function encodeLossy(rgba, width, height, {quality = 90, shape = inspectP
       w = writers[section.index] = new BitWriter(4096);
       if (section.pieces.length) writeModularHeader(w, {useGlobalTree: true, transforms: []});
     }
-    for (const piece of section.pieces) codeChannel(w, histograms[piece.c + 1].code, dataOf(piece), piece.rect.w, piece.rect.h, piece.leaf);
+    for (const piece of section.pieces) codeChannel(w, histograms[histogramOf.get(piece.c) + 1].code, dataOf(piece), piece.rect.w, piece.rect.h, piece.leaf);
   }
   const out = writers.map(w => w || new BitWriter(16));
   return assembleCodestream(header, out.map(w => { w.zeroPadToByte(); return w.finish(); }));

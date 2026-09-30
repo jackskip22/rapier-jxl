@@ -1,12 +1,12 @@
 {
   "package": "rapier-jxl",
-  "version": "1.1.18",
+  "version": "1.1.19",
   "measured": "exact bytes of the staged files; gzip level 9; Brotli quality 11, text mode",
   "node": "v22.22.2",
   "terser": "5.51.2",
   "source": {
-    "bytes": 101832,
-    "gzip": 30902,
+    "bytes": 103193,
+    "gzip": 31376,
     "sha256": {
       "bits.mjs": "d9b7973501ab8af068ec97c04552f538dbf19c2f77ac0b959c84a9a5c5cd2318",
       "prefix.mjs": "e3350ef2e223a51b7dbd1c116b2163b30cf4cfd11fa21b94a406bcb1ab55c6a5",
@@ -14,11 +14,11 @@
       "frame.mjs": "5753c296b1549bd7e7d812366c60a2df59d5249138eb4336e3dccfdf8a66ba49",
       "squeeze.mjs": "ec01352dcf22b7346c7f0014e17e6ba2e4fe8243c358db77eee5fc830a3217e8",
       "lossless.mjs": "1fa54f0f240990f4fde06cdd129ee3aef52fb0a6bf0c49b993fb394d22df0885",
-      "lossy.mjs": "1ad5301cb4f5f3a2e7ec86ed9bb7e8a8fcfc979e7c2896662ca3f1bc7048c485",
-      "jpeg.mjs": "11c122a613c7a8250382e329860e84095abfa008952c134cbe8b620aef3559c4",
+      "lossy.mjs": "ea004cbf8be63fc0b4cee0948848690095db36b221d5feb5a0ee0a7f93f5153d",
+      "jpeg.mjs": "e4483b584b199b72ebb909dc85c2fa9c9b9f58fa572c22ca6fd91e2287fb74f1",
       "entropy.mjs": "639028e81f06933ea9ca9100f25f48964e0d39620140a0b0623f4a0e40ff1fa6",
       "vardct.mjs": "7a48cd807663a3a5d7b9ae7d57719c5fe5c4bc054efc6a79bc4c7a5507f43003",
-      "index.mjs": "085eff1c303696cd1c82479b8ff3410c86f3f84be6bd8c49e827cb728c9e9a68",
+      "index.mjs": "7d59b203d7df98f5e36d5d4db12b7bdabf09996519971eb33c3f5e922c6d6a37",
       "photo.mjs": "1f300c8dcbd5459332f610ae04752836aac7f0b8420989df3ca36d4d2961ce4f"
     }
   },
@@ -38,10 +38,10 @@
         "parseJPEG",
         "inspectPixels"
       ],
-      "bytes": 39892,
-      "gzip": 15748,
-      "brotli": 13936,
-      "sha256": "2b6cadaf5a6e085d6b4ce2ee84e589bd2587fe3fe6cae3ce946b416d561c6e57",
+      "bytes": 40286,
+      "gzip": 15904,
+      "brotli": 14096,
+      "sha256": "8abbd3a83a7dc21f0c4d47e3d6f89d53b70ae0713d6712af725b310227e590a5",
       "compress": {
         "passes": 2,
         "inline": 1,
@@ -58,7 +58,7 @@
       "bytes": 16085,
       "gzip": 6747,
       "brotli": 5948,
-      "sha256": "0ad4c7229bf3871a5513ac673904a38ed03a9594d455e48d6b1e57ee9e04aca2",
+      "sha256": "6860a87f82f4677b1215489a68b5061ffe922a8e966c804ba975ffc45059f135",
       "compress": {
         "passes": 2,
         "hoist_funs": true,
@@ -73,10 +73,10 @@
         "transcode",
         "LIMITS"
       ],
-      "bytes": 30450,
-      "gzip": 12187,
-      "brotli": 10776,
-      "sha256": "5267eacbf0c50202bdfa476ea30f890284c6150f467bcd520e485b71921ccc20",
+      "bytes": 30624,
+      "gzip": 12274,
+      "brotli": 10866,
+      "sha256": "2e5f6ab8232d0c5ade92db62dc958f43bbf2e7ccbd83d36514cbefecd56d8b11",
       "compress": {
         "passes": 2,
         "inline": 1,
@@ -91,9 +91,9 @@
         "LIMITS"
       ],
       "bytes": 25418,
-      "gzip": 10408,
-      "brotli": 9197,
-      "sha256": "1b25fd48e9dcea8d131a3eeaa05850314132324d02a70398871ea360dd06c293",
+      "gzip": 10409,
+      "brotli": 9209,
+      "sha256": "9723545c44ccf7045d5140978df1ee1a003a5c94358dcae89bbf673f59cc1eb3",
       "compress": {
         "passes": 2,
         "module": true

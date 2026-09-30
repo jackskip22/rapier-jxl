@@ -15,7 +15,9 @@ and scan bitstrings.
 | `quant-before-scan`, `quant-after-scan` | A later table definition cannot replace the table that decoded an earlier component. |
 | `quant-between-scans`, `quant-only-after-scan` | Quantization must exist when used and remain fixed during a component's progressive scans. |
 | `huffman-all-ones`, `bad-padding`, `trailing-restarts` | Padding cannot become a Huffman symbol, and scan boundaries cannot hide omitted or extra data. |
+| `huffman-dc-symbol-16` | A DC table naming a symbol above 15 is refused when a scan first reads DC through it, as libjpeg refuses it, even when no coefficient uses the symbol. |
 | `rgba-2049x1.rgba` | Squeeze's zero-height chroma channels must not introduce unused histogram headers. Retained at qualities 1, 80 and 99 in `pixels.json`. |
+| `rgba-1x257.rgba` | Squeeze's zero-width chroma channels of a one-wide picture own no group piece; the histograms are numbered over the channels that do, or the decoder finds a hole. Retained at qualities 1, 80 and 99 in `pixels.json`. |
 
 Run the public tests from the repository root:
 

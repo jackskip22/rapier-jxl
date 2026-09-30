@@ -9,6 +9,10 @@
     "code": "JXL_JPEG"
   },
   {
+    "file": "huffman-dc-symbol-16.jpg",
+    "code": "JXL_JPEG"
+  },
+  {
     "file": "sequential-zrl-overflow.jpg",
     "code": "JXL_JPEG"
   },

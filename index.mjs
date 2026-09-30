@@ -52,9 +52,14 @@ export function encodeLossyRGBA(data, width, height, quality = 90) {
   return guard(() => {
     const shape = inspectPixels(data, width, height);
     if (quality >= 100) return answer(encodeLossless(data, width, height, {shape}));
-    let bytes = encodeLossy(data, width, height, {quality, shape});
-    if (shape.palette) { const exact = encodeLossless(data, width, height, {shape}); if (exact.length <= bytes.length) bytes = exact; }
-    return answer(bytes);
+    if (!shape.palette) return answer(encodeLossy(data, width, height, {quality, shape}));
+    // The exact stream of a few-colour picture is cheap to make (256-pixel sections), so it is made first: a lossy
+    // attempt that runs out of memory (its planes and Squeeze copies cost eight bytes a pixel and more) still answers.
+    const exact = encodeLossless(data, width, height, {shape});
+    let bytes;
+    try { bytes = encodeLossy(data, width, height, {quality, shape}); }
+    catch (error) { if (!(error instanceof RangeError) || error.code) throw error; bytes = exact; }
+    return answer(exact.length <= bytes.length ? exact : bytes);
   });
 }
 

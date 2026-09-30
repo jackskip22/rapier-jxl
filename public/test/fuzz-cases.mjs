@@ -69,7 +69,7 @@ export function mutateJPEG(input, random, index) {
 
 export function pixelCase(seed, index) {
   const random = rng((seed ^ Math.imul(index + 1, 0x9e3779b1)) >>> 0);
-  const [width, height] = pick([[1, 1], [1, 17], [17, 1], [7, 9], [8, 8], [9, 9], [17, 31], [255, 17], [257, 19], [19, 257], [257, 255], [2049, 1]], random);
+  const [width, height] = pick([[1, 1], [1, 17], [17, 1], [7, 9], [8, 8], [9, 9], [17, 31], [255, 17], [257, 19], [19, 257], [257, 255], [2049, 1], [1, 257]], random);
   const kind = pick(['rgba', 'rgb', 'grey', 'grey-alpha', 'palette', 'stripes'], random), rgba = new Uint8Array(width * height * 4);
   const palette = Array.from({length: pick([1, 2, 5, 31, 257, 513], random)}, () => [byte(random), byte(random), byte(random), byte(random)]);
   for (let y = 0, at = 0; y < height; y++) for (let x = 0; x < width; x++, at += 4) {
