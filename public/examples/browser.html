@@ -9,7 +9,9 @@ The result shows only in a browser that decodes JPEG XL; the size is reported ei
 <p id="out"></p>
 <img id="shown" alt="">
 <script type="module">
-import {encode, transcode} from '../../index.mjs';
+import {encode} from '../../index.mjs';
+import {transcode} from '../../jpeg.mjs';
+import {encodePhoto} from '../../photo.mjs';
 const out = document.getElementById('out'), shown = document.getElementById('shown');
 document.querySelector('input[type=file]').addEventListener('change', async event => {
   const file = event.target.files[0];
@@ -27,7 +29,7 @@ document.querySelector('input[type=file]').addEventListener('change', async even
       context.drawImage(image, 0, 0);
       const {data, width, height} = context.getImageData(0, 0, image.width, image.height);
       const quality = document.getElementById('lossy').checked ? Number(document.getElementById('q').value) : 100;
-      bytes = encode(data, width, height, {quality}); note = quality >= 100 ? 'lossless' : 'lossy, quality ' + quality;
+      bytes = quality >= 100 ? encode(data, width, height) : encodePhoto(data, width, height, {quality}); note = quality >= 100 ? 'lossless' : 'lossy, quality ' + quality;
     }
     const ms = Math.round(performance.now() - started);
     out.textContent = `${file.name}: ${file.size.toLocaleString()} bytes in, ${bytes.length.toLocaleString()} bytes of JPEG XL out (${note}, ${ms} ms).`;

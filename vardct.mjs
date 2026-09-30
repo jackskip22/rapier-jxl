@@ -3,12 +3,12 @@
 // a JPEG: its quantisation tables as raw dequantisation matrices, its DC values as the DC image, its colour
 // (YCbCr, or RGB) and chroma subsampling kept, every block an 8x8 DCT, no filters, no smoothing, no chroma from
 // luma. Only the entropy coding changes: JPEG XL's contexts over the coefficients, with prefix codes.
-import {BitWriter, float16Bits, packSigned, ceilLog2} from './bits.mjs';
+import {BitWriter, float16Bits, packSigned, ceilLog2, complete} from './bits.mjs';
 import {writeImageHeader, writeFrameHeaderEnd, finishSections, assembleCodestream, GROUP_DIM} from './frame.mjs';
 import {ZERO_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
 import {writeContextMap, writeHistograms} from './prefix.mjs';
 import {TokenCounts, buildTokenCoding} from './entropy.mjs';
-import {parseJPEG, jpegError, ZIGZAG} from './jpeg.mjs';
+import {parseJPEG, jpegError, ZIGZAG} from './jfif.mjs';
 
 const NONZERO_BUCKETS = 37, ZERO_DENSITY_CONTEXTS = 458, ORDERS = 13;
 const COEFF_FREQ_CONTEXT = [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 15, 16, 16, 17, 17, 18, 18, 19, 19, 20, 20, 21, 21, 22, 22,
@@ -69,9 +69,17 @@ export function transcodeJPEG(bytes, jpeg = parseJPEG(bytes)) { return encodeVar
 
 // Shared coefficient writer. Pixel encoding supplies the same natural-order DCT8 planes as the JPEG reader;
 // quantScale lets its raw integer matrices carry fractional steps without a second entropy/frame writer.
-export function encodeVarDCT(jpeg) {
+export function encodeVarDCT(jpeg) { return complete(varDCTSteps(jpeg)); }
+
+// The same as steps: a group of each counting pass, a DC group, an AC group per step.
+export function* varDCTSteps(jpeg) {
   const {width, height, components, alpha} = jpeg, grey = components.length === 1;
   const quantScale = jpeg.quantScale || 1;
+  // The raw tables' denominator, 1 / (8 x 255 x quantScale), is a normal binary16: where it would be subnormal (the
+  // photo door's), it is doubled until it is not and every block's quantisation field doubled with it, so the decoder's
+  // dequantised coefficients are the same. A decoder that reads a subnormal wrong (jxl-rs 0.7.4 halves them) reads these.
+  let field = 1;
+  while (field / (8 * 255 * quantScale) < 1 / 16384) field *= 2;
   const ycbcr = jpeg.ycbcr || grey;
   const map = grey ? [0, 0, 0] : ycbcr ? [1, 0, 2] : [0, 1, 2];  // frame channel (X, Y, B) to JPEG component
   const comps = map.map(i => components[i]);
@@ -105,7 +113,7 @@ export function encodeVarDCT(jpeg) {
   let contexts = blockContexts(lumaDc, wanted, grey);
 
   const header = new BitWriter(256);
-  writeImageHeader(header, width, height, grey ? 1 : 3, !!alpha, {orientation: jpeg.orientation});
+  writeImageHeader(header, width, height, grey ? 1 : 3, !!alpha, {orientation: jpeg.orientation, colorSpace: jpeg.colorSpace});
   // The frame header: VarDCT, adaptive DC smoothing skipped, the colour and subsampling of the JPEG.
   header.write(1, 0); header.write(2, 0); header.write(1, 0);
   header.write(2, 2); header.write(8, 128 - 17);  // flags: kSkipAdaptiveDCSmoothing
@@ -140,10 +148,17 @@ export function encodeVarDCT(jpeg) {
     }
   };
   // Bucketed contexts win on photographs and lose on small or flat pictures: both are counted and the cheaper kept.
-  const countWith = chosen => { contexts = chosen; const counts = new TokenCounts(chosen.contexts); for (let g = 0; g < numGroups; g++) tokens(g, (ctx, value) => counts.add(ctx, value)); return buildTokenCoding(counts); };
-  let coding = countWith(contexts);
+  const total = (wanted > 0 ? 3 : 2) * numGroups + numDcGroups;
+  let done = 0;
+  const countWith = function* (chosen) {
+    contexts = chosen;
+    const counts = new TokenCounts(chosen.contexts);
+    for (let g = 0; g < numGroups; g++) { tokens(g, (ctx, value) => counts.add(ctx, value)); yield ++done / total; }
+    return buildTokenCoding(counts);
+  };
+  let coding = yield* countWith(contexts);
   if (wanted > 0) {
-    const bucketed = contexts, plain = blockContexts(lumaDc, 0, grey), plainCoding = countWith(plain);
+    const bucketed = contexts, plain = blockContexts(lumaDc, 0, grey), plainCoding = yield* countWith(plain);
     if (plainCoding.bits <= coding.bits) coding = plainCoding; else contexts = bucketed;
   }
 
@@ -197,17 +212,21 @@ export function encodeVarDCT(jpeg) {
     const count = rw * rh, bits = ceilLog2(count);
     if (bits) w.write(bits, count - 1);
     const cw = (rw + 7) >> 3, ch = (rh + 7) >> 3;
+    // Every block's strategy (DCT8, row 0) and quantisation field less one (row 1); a field above one is a constant row,
+    // which the gradient predictor codes as one residual.
+    const blocks = new Int32Array(count * 2).fill(field - 1, count);
     writeModularStream(w, [
       {w: cw, h: ch, data: new Int32Array(cw * ch)}, {w: cw, h: ch, data: new Int32Array(cw * ch)},
-      {w: count, h: 2, data: new Int32Array(count * 2)}, {w: rw, h: rh, data: new Int32Array(count)},
-    ], ZERO_PREDICTOR);
+      {w: count, h: 2, data: blocks}, {w: rw, h: rh, data: new Int32Array(count)},
+    ], field > 1 ? GRADIENT_PREDICTOR : ZERO_PREDICTOR);
+    yield ++done / total;
   }
 
   // AC global: the JPEG's quantisation tables as the raw DCT8 matrices (transposed into the frame's layout), the
   // other kinds from the library, one histogram set, the natural coefficient order, the AC histograms.
   const ac = section(1 + numDcGroups);
   ac.write(1, 0);
-  ac.write(3, 7); ac.write(16, float16Bits(1 / (8 * 255 * quantScale)));
+  ac.write(3, 7); ac.write(16, float16Bits(field / (8 * 255 * quantScale)));
   writeModularStream(ac, [0, 1, 2].map(c => {
     const data = new Int32Array(64), quant = comps[c].quant;
     for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) data[8 * x + y] = quant[8 * y + x];
@@ -222,6 +241,7 @@ export function encodeVarDCT(jpeg) {
     const w = section(2 + numDcGroups + g);
     tokens(g, (ctx, value) => coding.write(w, ctx, value));
     if (alpha && !single) writeModularStream(w, [alphaPlane(g % groupsX, Math.floor(g / groupsX))], GRADIENT_PREDICTOR);
+    yield ++done / total;
   }
   return assembleCodestream(header, finishSections(writers));
 }

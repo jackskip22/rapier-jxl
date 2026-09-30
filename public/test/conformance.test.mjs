@@ -6,8 +6,9 @@ import assert from 'node:assert/strict';
 import {readFile, mkdir, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {gunzipSync} from 'node:zlib';
-import {encode, transcode} from '../../index.mjs';
-import {rng, mutateJPEG, mutationKinds, pixelCase, guardJPEGPlanes} from './fuzz-cases.mjs';
+import {encode} from '../../index.mjs';
+import {transcode} from '../../jpeg.mjs';
+import {rng, mutateJPEG, mutationKinds, pixelCase, borderCase, guardJPEGPlanes} from './fuzz-cases.mjs';
 import {oracles} from './oracles.mjs';
 
 const seedsURL = new URL('./seeds/', import.meta.url);
@@ -77,9 +78,11 @@ test('structure-aware JPEG mutations return decodable streams or documented refu
 test('mutated pixel cases keep exact pixels and produce conformant lossless and lossy streams', async t => {
   const mutations = count('JXL_FUZZ_PIXELS', 24);
   let streams = 0;
-  // The optional photographic entry participates whenever it is present in this repository.
-  let photo;
-  try { ({encodePhotoRGBA: photo} = await import('../../photo.mjs')); }
+  // The optional photographic and effort doors participate whenever they are present in this repository.
+  let photo, effort;
+  try { ({encodePhoto: photo} = await import('../../photo.mjs')); }
+  catch (error) { if (error.code !== 'ERR_MODULE_NOT_FOUND') throw error; }
+  try { ({encode: effort} = await import('../../effort.mjs')); }
   catch (error) { if (error.code !== 'ERR_MODULE_NOT_FOUND') throw error; }
   const inputs = [...retainedPixels, ...Array.from({length: mutations}, (_, iteration) => ({seed, iteration}))];
   for (const input of inputs) {
@@ -94,7 +97,27 @@ test('mutated pixel cases keep exact pixels and produce conformant lossless and 
         const opaque = Uint8Array.from(rgba); for (let i = 3; i < opaque.length; i += 4) opaque[i] = 255;
         oracle.decode(photo(opaque, width, height, {quality: 90}), width, height, description + ' photo quality=90'); streams++;
       }
+      if (effort) for (const level of [2, 3]) { oracle.decode(effort(rgba, width, height, {effort: level}), width, height, description + ` effort=${level}`, rgba); streams++; }
     } catch (error) { await failure(`pixels-${input.seed}-${iteration}.rgba`, rgba, error, description); }
   }
-  t.diagnostic(JSON.stringify({seed, retainedPixels: retainedPixels.length, pixelMutations: mutations, streams, photo: Boolean(photo), oracles: oracle.names, nativeUnavailable: !oracle.native, jxlRsUnavailable: !oracle.jxlRs, jxlRsDifferences: oracle.jxlRsDifferences}));
+  t.diagnostic(JSON.stringify({seed, retainedPixels: retainedPixels.length, pixelMutations: mutations, streams, photo: Boolean(photo), effort: Boolean(effort), oracles: oracle.names, nativeUnavailable: !oracle.native, jxlRsUnavailable: !oracle.jxlRs, jxlRsDifferences: oracle.jxlRsDifferences}));
+});
+
+// Pictures the weighted predictor takes at efforts 2 and 3 in every channel layout, one group and several.
+test('the effort door\'s rungs keep grey, grey and alpha, colour and RGBA pictures exact', async t => {
+  let effort;
+  try { ({encode: effort} = await import('../../effort.mjs')); }
+  catch (error) { if (error.code !== 'ERR_MODULE_NOT_FOUND') throw error; }
+  if (!effort) return t.skip('no effort door in this repository');
+  let streams = 0;
+  for (const [width, height] of [[200, 100], [300, 200]]) {
+    const {rgba} = borderCase(width, height), grey = Uint8Array.from(rgba), greyAlpha = Uint8Array.from(rgba), withAlpha = Uint8Array.from(rgba);
+    for (let i = 0; i < rgba.length; i += 4) {
+      grey[i + 1] = grey[i + 2] = greyAlpha[i + 1] = greyAlpha[i + 2] = rgba[i];
+      greyAlpha[i + 3] = rgba[i + 1]; withAlpha[i + 3] = rgba[i + 2];
+    }
+    for (const [kind, pixels] of Object.entries({colour: rgba, grey, 'grey and alpha': greyAlpha, rgba: withAlpha}))
+      for (const level of [2, 3]) { oracle.decode(effort(pixels, width, height, {effort: level}), width, height, `${kind} ${width}x${height} effort=${level}`, pixels); streams++; }
+  }
+  t.diagnostic(JSON.stringify({streams, oracles: oracle.names, nativeUnavailable: !oracle.native}));
 });

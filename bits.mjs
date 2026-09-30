@@ -1,13 +1,20 @@
 // Rapier's JPEG XL encoder: the bit writer, and the limits every part keeps. MIT (LICENSE).
 // JPEG XL packs bits least-significant first; `write` takes up to 32 bits at a time.
 
-// What one call takes at most: the 16 MiB codestream, 24 million pixels, 16,384 on a side. The checked API refuses a
-// larger ask before any work, the JPEG reader before it allocates a plane, and a writer that would grow past the
-// stream's bound stops there instead of filling memory first.
+// What one call takes at most, door by door: the 16 MiB codestream, 16,384 pixels on a side, and as many pixels as the
+// door's memory allows within what the core's lossy path needs at its 24 million (a measured peak of 15.7 bytes a
+// pixel besides the input). The core and the effort door take 24 million; the photo door, 6.5 bytes a pixel at its
+// limit, 40 million; the JPEG carrier, 6.4 bytes a pixel at 4:4:4 and 3.3 at 4:2:0, 64 million. The checked API
+// refuses a larger ask before any work, the JPEG reader before it allocates a plane, and a writer that would grow past
+// the stream's bound stops there instead of filling memory first.
 export const LIMITS = Object.freeze({bytes: 16 * 1024 * 1024, pixels: 24_000_000, edge: 16384});
+export const PHOTO_LIMITS = /*#__PURE__*/ Object.freeze({bytes: 16 * 1024 * 1024, pixels: 40_000_000, edge: 16384});
+export const JPEG_LIMITS = /*#__PURE__*/ Object.freeze({bytes: 16 * 1024 * 1024, pixels: 64_000_000, edge: 16384});
 
-// The hot writer reuses exact powers; unusual counts retain the range check's arithmetic.
-const POWERS = Array.from({length: 33}, (_, count) => 2 ** count);
+// The hot writer's powers of two, made by doubling (`**` is not exact in every engine); a count outside 0 to 32 finds
+// none, so its value is out of range.
+const POWERS = [1];
+for (let count = 1; count <= 32; count++) POWERS.push(POWERS[count - 1] * 2);
 
 export class BitWriter {
   constructor(capacity = 4096) {
@@ -17,7 +24,7 @@ export class BitWriter {
     this.pending = 0;  // how many bits `acc` holds, always below 8 between calls
   }
   write(count, value) {
-    if (count > 32 || value < 0 || value >= (POWERS[count] ?? 2 ** count)) throw new Error('bit write out of range: ' + count + ' bits, ' + value);
+    if (!(value >= 0 && value < POWERS[count])) throw new Error('bit write out of range: ' + count + ' bits, ' + value);
     let acc = this.acc + value * (1 << this.pending), pending = this.pending + count;
     if (this.at + 5 >= this.bytes.length) this.grow();
     const bytes = this.bytes;
@@ -28,7 +35,7 @@ export class BitWriter {
   writeU32(choices, value) {
     for (let selector = 0; selector < 4; selector++) {
       const [bits, offset] = choices[selector];
-      if (value >= offset && value - offset < 2 ** bits) { this.write(2, selector); if (bits) this.write(bits, value - offset); return; }
+      if (value >= offset && value - offset < POWERS[bits]) { this.write(2, selector); if (bits) this.write(bits, value - offset); return; }
     }
     throw new Error('U32 value out of range: ' + value);
   }
@@ -59,6 +66,16 @@ export class BitWriter {
   }
 }
 
+// The work as steps: a stepped writer yields the fraction of its work done, counted in whole steps so the last is
+// exactly 1, receives whether its caller is in a hurry, and returns its bytes. `complete` runs one to the end; `part`
+// makes a nested one's fractions the index-th of `count` equal shares of its caller's.
+export function complete(steps) { let step; while (!(step = steps.next()).done); return step.value; }
+export function* part(steps, index, count) {
+  let step, hurry;
+  while (!(step = steps.next(hurry)).done) hurry = yield (index + step.value) / count;
+  return step.value;
+}
+
 // Residuals travel unsigned: 0, -1, 1, -2, 2 ... become 0, 1, 2, 3, 4 ...
 export function packSigned(value) { return value >= 0 ? value * 2 : -value * 2 - 1; }
 
@@ -71,9 +88,12 @@ export function float16Bits(value) {
   const sign = value < 0 ? 0x8000 : 0;
   value = Math.abs(value);
   if (!(value < 65520)) throw new Error('half float out of range: ' + value);
-  let exponent = Math.floor(Math.log2(value));
-  let mantissa = value / 2 ** exponent - 1;
-  if (exponent < -14) { mantissa = value / 2 ** -14; exponent = -15; }
+  // The exponent by halving and doubling, both exact (Math.log2 rounds differently in each engine).
+  let exponent = 0, mantissa = value;
+  while (mantissa >= 2) { mantissa /= 2; exponent++; }
+  while (mantissa < 1) { mantissa *= 2; exponent--; }
+  if (exponent < -14) { mantissa = value * 16384; exponent = -15; }
+  else mantissa -= 1;
   let m = Math.round(mantissa * 1024);
   if (m === 1024) { m = 0; exponent++; }
   return sign | ((exponent + 15) << 10) | m;

@@ -3,7 +3,9 @@
 // where it does not, and refused where it says it refuses. The decoder is jxl-oxide (a development dependency).
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {encode, transcode, encodeLosslessRGBA, encodeLossyRGBA, encodeLossless, inspectPixels, LIMITS} from '../../index.mjs';
+import {encode, LIMITS} from '../../index.mjs';
+import {transcode} from '../../jpeg.mjs';
+import {encodeLossless, inspectPixels} from '../../writer.mjs';
 import {writeJPEG} from './jpeg-writer.mjs';
 import {decoder} from './decoder.mjs';
 
@@ -25,15 +27,14 @@ const needs = decode ? undefined : 'jxl-oxide-wasm is not installed (npm install
 
 test('lossless: every pixel comes back, with and without alpha', {skip: needs}, () => {
 	for (const [w, h, options] of [[70, 50, {}], [300, 70, {alpha: true}], [257, 300, {colours: 5}], [64, 64, {colours: 500}]]) {
-		const data = picture(w, h, options), bytes = encodeLosslessRGBA(data, w, h), back = decode(bytes);
+		const data = picture(w, h, options), bytes = encode(data, w, h), back = decode(bytes);
 		assert.equal(back.width, w); assert.equal(back.height, h);
 		assert.deepEqual(rgbaOf(back), data, `${w}x${h} ${JSON.stringify(options)}`);
-		assert.deepEqual(encode(data, w, h), bytes, 'encode at quality 100 is the lossless answer');
 	}
 });
 test('lossy: at quality 90 the picture is close and smaller; at 70 smaller still; a palette picture is exact', {skip: needs}, () => {
-	const w = 200, h = 140, data = picture(w, h), exact = encodeLosslessRGBA(data, w, h);
-	const q90 = encodeLossyRGBA(data, w, h, 90), q70 = encodeLossyRGBA(data, w, h, 70);
+	const w = 200, h = 140, data = picture(w, h), exact = encode(data, w, h);
+	const q90 = encode(data, w, h, {quality: 90}), q70 = encode(data, w, h, {quality: 70});
 	assert.ok(q90.length < exact.length, 'lossy is smaller than lossless'); assert.ok(q70.length < q90.length, 'lower quality is smaller');
 	assert.ok(psnr(rgbaOf(decode(q90)), data) > 38, 'quality 90 stays above 38 dB on a soft picture');
 	const few = picture(120, 90, {colours: 6}); assert.deepEqual(rgbaOf(decode(encode(few, 120, 90, {quality: 60}))), few, 'few colours come back exact at any quality');
@@ -44,7 +45,7 @@ test('palette and direct streams preserve the same pixels; the cheaper direct re
 		for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
 			const n = Math.floor((x % colours) * 255 / (colours - 1)); data.set([n, 0, 255 - n, 255], (y * w + x) * 4);
 		}
-		const chosen = encodeLosslessRGBA(data, w, h), direct = encodeLossless(data, w, h, {shape: inspectPixels(data, w, h, {palette: false})});
+		const chosen = encode(data, w, h), direct = encodeLossless(data, w, h, {shape: inspectPixels(data, w, h, {palette: false})});
 		assert.ok(chosen.length <= direct.length, 'palette eligibility must not force a larger stream');
 		assert.deepEqual(rgbaOf(decode(chosen)), data); assert.deepEqual(rgbaOf(decode(direct)), data);
 	}
@@ -99,5 +100,5 @@ test('a valid palette survives a direct candidate above the stream limit', () =>
 	try { direct = encodeLossless(data, w, h, {shape: inspectPixels(data, w, h, {palette: false})}).length; }
 	catch (error) { assert.equal(error.code, 'JXL_SIZE'); direct = Infinity; }
 	assert.ok(direct > LIMITS.bytes, 'the rejected candidate crosses the real stream limit');
-	assert.ok(encodeLosslessRGBA(data, w, h).length < LIMITS.bytes, 'the palette remains a valid answer');
+	assert.ok(encode(data, w, h).length < LIMITS.bytes, 'the palette remains a valid answer');
 });

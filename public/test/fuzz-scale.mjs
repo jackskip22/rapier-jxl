@@ -8,8 +8,9 @@ import {resolve, join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
-import {encode, transcode} from '../../index.mjs';
-import {encodePhotoRGBA} from '../../photo.mjs';
+import {encode} from '../../index.mjs';
+import {transcode} from '../../jpeg.mjs';
+import {encodePhoto} from '../../photo.mjs';
 import {decoder} from './decoder.mjs';
 import {nativeDecoder} from './native-decoder.mjs';
 import {jxlRsDecoder, decoderDifference} from './jxl-rs-decoder.mjs';
@@ -52,12 +53,12 @@ let decodedHere=localRows.length;
 const usedStreams=new Set(existsSync(join(root,'used-streams.txt'))?readFileSync(join(root,'used-streams.txt'),'utf8').trim().split('\n').filter(Boolean):[]);
 const outcomes=new Map(rows(join(root,'outcomes.jsonl')).map(row=>[row.input,row]));
 const inputsFile=openSync(join(root,'inputs.txt'),'a'),streamsFile=openSync(join(root,'streams.jsonl'),'a'),usedFile=openSync(join(root,'used-streams.txt'),'a'),outcomesFile=openSync(join(root,'outcomes.jsonl'),'a');
-const sources = Object.fromEntries(['bits','prefix','modular','frame','squeeze','lossless','lossy','jpeg','entropy','vardct','index','photo'].map(name=>[name,hash(readFileSync(new URL('../../'+name+'.mjs',import.meta.url)))]));
+const sources = Object.fromEntries(['bits','prefix','modular','frame','squeeze','lossless','lossy','jfif','jpeg','entropy','vardct','admit','index','photo'].map(name=>[name,hash(readFileSync(new URL('../../'+name+'.mjs',import.meta.url)))]));
 const sourceHash=hash(JSON.stringify(sources));
 if(state.sources.at(-1)?.sha256!==sourceHash)state.sources.push({sha256:sourceHash,modules:sources,fromJPEG:state.jpeg,fromPixel:state.pixel});
 let against;
-if(options.against){const base=resolve(options.against);against={...await import(pathToFileURL(join(base,'index.mjs'))),...await import(pathToFileURL(join(base,'photo.mjs')))};
-  const baseline=Object.fromEntries(Object.keys(sources).map(name=>[name,hash(readFileSync(join(base,name+'.mjs')))]));
+if(options.against){const base=resolve(options.against);against={...await import(pathToFileURL(join(base,'index.mjs'))),...await import(pathToFileURL(join(base,'photo.mjs'))),...(existsSync(join(base,'jfif.mjs'))?await import(pathToFileURL(join(base,'jpeg.mjs'))):{})};against.encodePhoto||=against.encodePhotoRGBA;
+  const baseline=Object.fromEntries(Object.keys(sources).filter(name=>existsSync(join(base,name+'.mjs'))).map(name=>[name,hash(readFileSync(join(base,name+'.mjs')))]));
   const identity=hash(JSON.stringify(baseline));if(state.against)assert.equal(state.against.sha256,identity,'The differential baseline must not change');state.against={directory:base,sha256:identity,modules:baseline};
 }
 state.comparison ||= {identical:0,changed:0,refusalChanges:0};
@@ -137,7 +138,7 @@ function outcome() {
     if(active.type==='jpeg'){
       try{const value=guardJPEGPlanes(()=>against.transcode(active.bytes));baseline={outputs:[hash(value.bytes)]};}
       catch(error){if(!namedCodes.has(error.code))throw error;baseline={refusal:error.code,outputs:[]};}
-    }else baseline={outputs:[hash(against.encode(active.bytes,active.width,active.height)),hash(against.encode(active.bytes,active.width,active.height,{quality:active.quality})),hash(against.encodePhotoRGBA(active.bytes,active.width,active.height,{quality:active.quality}))]};
+    }else baseline={outputs:[hash(against.encode(active.bytes,active.width,active.height)),hash(against.encode(active.bytes,active.width,active.height,{quality:active.quality})),hash(against.encodePhoto(active.bytes,active.width,active.height,{quality:active.quality}))]};
   }
   const actual={outputs:active.outputs,...(active.refusal?{refusal:active.refusal}:{})};
   if(known)assert.deepEqual(known.actual,actual,'The same input must have a deterministic outcome');
@@ -179,7 +180,7 @@ try {
           active.key=rememberInput(Buffer.concat([Buffer.from(`${input.width},${input.height},${input.quality}:`),input.rgba]));
           await verify(encode(input.rgba,input.width,input.height),input.width,input.height,'lossless',input.rgba,input.rgba);
           await verify(encode(input.rgba,input.width,input.height,{quality:input.quality}),input.width,input.height,'modular',input.quality===100?input.rgba:null,input.rgba);
-          await verify(encodePhotoRGBA(input.rgba,input.width,input.height,{quality:input.quality}),input.width,input.height,'photo',input.quality===100?input.rgba:null,input.rgba);
+          await verify(encodePhoto(input.rgba,input.width,input.height,{quality:input.quality}),input.width,input.height,'photo',input.quality===100?input.rgba:null,input.rgba);
           outcome();state.pixelKinds[input.kind]=(state.pixelKinds[input.kind]||0)+1;state.pixel++;
         }
         state.mutatedInputs++;

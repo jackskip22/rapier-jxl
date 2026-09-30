@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT
 // What the module refuses, and what it keeps exact, on inputs that are not the happy path: a header naming a picture
-// past the limits costs no allocation; a JPEG cut short, with a scan out of order or a colour profile that is not
-// sRGB, is refused with JXL_JPEG, never answered with invented pixels; an RGB JPEG's flat field comes back at its own
+// past the limits costs no allocation; a JPEG cut short, with a scan out of order or a colour profile that is neither
+// sRGB nor Display P3 by what it does, is refused with JXL_JPEG, never answered with invented pixels; an RGB JPEG's flat field comes back at its own
 // level for every DC step; the options are read before any work. Run: node --test "public/test/*.test.mjs".
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {encode, transcode, LIMITS} from '../../index.mjs';
+import {encode, LIMITS} from '../../index.mjs';
+import {encode as encodeEffort} from '../../effort.mjs';
+import {transcode} from '../../jpeg.mjs';
 import {writeJPEG} from './jpeg-writer.mjs';
+import {iccProfile, displayProfile, descriptionTag, withProfile} from './icc.mjs';
 import {decoder} from './decoder.mjs';
 
 const decode = await decoder();
@@ -42,17 +45,6 @@ function rgbJPEG(width, height, step, dc) {
 	return jpeg;
 }
 const sosDataStart = jpeg => { for (let at = 2; at + 3 < jpeg.length; at += 2 + ((jpeg[at + 2] << 8) | jpeg[at + 3])) if (jpeg[at + 1] === 0xDA) return at + 2 + ((jpeg[at + 2] << 8) | jpeg[at + 3]); throw new Error('no scan'); };
-// An ICC profile of one tag, its description the given words, in an APP2 segment after the start of image.
-function tagged(jpeg, description) {
-	const ascii = text => [...text].map(c => c.charCodeAt(0));
-	const desc = [...ascii('desc'), 0, 0, 0, 0, ...[0, 0, 0, description.length + 1], ...ascii(description), 0];
-	const size = 128 + 4 + 12 + desc.length, header = new Array(128).fill(0);
-	[header[0], header[1], header[2], header[3]] = [size >>> 24, (size >> 16) & 255, (size >> 8) & 255, size & 255];
-	header.splice(16, 4, ...ascii('RGB ')); header.splice(36, 4, ...ascii('acsp'));
-	const profile = [...header, 0, 0, 0, 1, ...ascii('desc'), 0, 0, 0, 144, 0, 0, 0, desc.length, ...desc];
-	const payload = [...ascii('ICC_PROFILE'), 0, 1, 1, ...profile], length = payload.length + 2;
-	return Uint8Array.from([0xFF, 0xD8, 0xFF, 0xE2, length >> 8, length & 255, ...payload, ...jpeg.subarray(2)]);
-}
 
 test('a header past the limits is refused before any plane is allocated', () => {
 	const Original = globalThis.Int16Array, asked = [];
@@ -61,8 +53,16 @@ test('a header past the limits is refused before any plane is allocated', () => 
 		assert.throws(() => transcode(Uint8Array.from([255, 216, 255, 192, 0, 11, 8, 255, 255, 255, 255, 1, 1, 17, 0, 255, 217])), {code: 'JXL_DIMENSIONS'});
 		const wide = LIMITS.edge + 1;
 		assert.throws(() => transcode(Uint8Array.from([255, 216, 255, 192, 0, 11, 8, 0, 8, wide >> 8, wide & 255, 1, 1, 17, 0, 255, 217])), {code: 'JXL_DIMENSIONS'});
+		// The carrier's own limit, 64 million pixels: 8,000 x 8,001 is past it.
+		assert.throws(() => transcode(Uint8Array.from([255, 216, 255, 192, 0, 11, 8, 8001 >> 8, 8001 & 255, 8000 >> 8, 8000 & 255, 1, 1, 17, 0, 255, 217])), {code: 'JXL_DIMENSIONS'});
 	} finally { globalThis.Int16Array = Original; }
 	assert.deepEqual(asked, [], 'a coefficient plane was allocated for a picture the module refuses');
+});
+
+test('a phone\'s 24 megapixel JPEG, 5,712 x 4,284, is carried whole', () => {
+	const jpeg = writeJPEG({width: 5712, height: 4284, components: [component(1, 1, 5712, 4284, 1, 1, 8, 0)]});
+	const carried = transcode(jpeg);
+	assert.deepEqual([carried.width, carried.height], [5712, 4284]);
 });
 
 test('a JPEG cut short, or with bytes out of place, is refused rather than answered with invented pixels', () => {
@@ -85,11 +85,18 @@ test('a JPEG cut short, or with bytes out of place, is refused rather than answe
 	assert.throws(() => transcode(garbage), {code: 'JXL_JPEG'}, 'bytes left over after the scan were carried');
 });
 
-test('a colour profile other than sRGB is refused; an sRGB one changes nothing', () => {
-	const jpeg = colour(24, 16);
-	assert.throws(() => transcode(tagged(jpeg, 'Adobe RGB (1998)')), {code: 'JXL_JPEG'});
-	assert.throws(() => transcode(tagged(jpeg, 'Display P3')), {code: 'JXL_JPEG'});
-	assert.deepEqual(transcode(tagged(jpeg, 'sRGB IEC61966-2.1')).bytes, transcode(jpeg).bytes);
+test('a colour profile is read by what it does: sRGB changes nothing, Display P3 is declared, any other is refused', () => {
+	const jpeg = colour(24, 16), plain = transcode(jpeg).bytes;
+	for (const profile of [displayProfile(), displayProfile({curve: 'table', description: 'sRGB IEC61966-2.1'})]) assert.deepEqual(transcode(withProfile(jpeg, profile)).bytes, plain);
+	const p3 = transcode(withProfile(jpeg, displayProfile({colorants: 'display-p3', description: 'Display P3'}))).bytes;
+	assert.notDeepEqual(p3, plain, 'Display P3 is declared in the header');
+	if (decode) assert.deepEqual(decode(p3).data, decode(plain).data, 'and no sample changes');
+	for (const profile of [displayProfile({colorants: 'adobe-rgb', description: 'sRGB IEC61966-2.1'}), displayProfile({curve: 'gamma', description: 'Display P3'}),
+		displayProfile({extra: [['A2B0', [...'mft2'].map(c => c.charCodeAt(0)).concat(new Array(12).fill(0))]]}), iccProfile('RGB ', [['desc', descriptionTag('sRGB IEC61966-2.1')]])])
+		assert.throws(() => transcode(withProfile(jpeg, profile)), {code: 'JXL_JPEG'});
+	const grey = writeJPEG({width: 24, height: 16, components: [component(1, 1, 24, 16, 1, 1, 8)]});
+	assert.deepEqual(transcode(withProfile(grey, displayProfile({grey: true}))).bytes, transcode(grey).bytes, 'grey on the sRGB curve');
+	assert.throws(() => transcode(withProfile(grey, displayProfile({grey: true, curve: 'gamma'}))), {code: 'JXL_JPEG'});
 });
 
 test('an RGB JPEG\'s flat field comes back at its own level for every DC step', {skip: needs}, () => {
@@ -106,7 +113,12 @@ test('the options are read before any work', () => {
 	for (const quality of [0, 101, Infinity, NaN, '100', null]) assert.throws(() => encode(pixel, 1, 1, {quality}), {code: 'JXL_INPUT'}, `quality ${String(quality)}`);
 	assert.throws(() => encode(pixel, 1, 1, null), {code: 'JXL_INPUT'});
 	assert.throws(() => encode(pixel, 1, 1, 'lossless'), {code: 'JXL_INPUT'});
+	for (const colorSpace of ['rec2100-pq', 'Display P3', 'p3', null, 3]) assert.throws(() => encode(pixel, 1, 1, {colorSpace}), {code: 'JXL_INPUT'}, 'colour space ' + String(colorSpace));
+	for (const effort of [0, 10, 2.5, '3', null, NaN]) assert.throws(() => encodeEffort(pixel, 1, 1, {effort}), {code: 'JXL_INPUT'}, 'effort ' + String(effort));
 	assert.ok(encode(pixel, 1, 1, {quality: 100}).length > 0);
 	assert.ok(encode(pixel, 1, 1, {}).length > 0);
 	assert.ok(Object.isFrozen(LIMITS));
+	// The core's own limit, 24 million pixels: one row more is refused by size, the limit itself only by its bytes.
+	assert.throws(() => encode(pixel, 6000, 4001), {code: 'JXL_DIMENSIONS'});
+	assert.throws(() => encode(pixel, 6000, 4000), {code: 'JXL_INPUT'});
 });

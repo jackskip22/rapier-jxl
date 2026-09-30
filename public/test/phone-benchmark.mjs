@@ -75,11 +75,11 @@ if (report.mode === 'Node-unthrottled') {
       const timing = await page.evaluate(async ({entry, width, height}) => {
         const data = new Uint8Array(await (await fetch('/pixels.rgba')).arrayBuffer()), module = await import('/' + entry.file);
         const before = performance.memory?.usedJSHeapSize, start = performance.now();
-        const bytes = (entry.photo ? module.encodePhotoRGBA : module.encode)(data, width, height, {quality: entry.quality});
+        const bytes = (entry.photo ? module.encodePhoto : module.encode)(data, width, height, {quality: entry.quality});
         return {bytes: bytes.length, ms: performance.now() - start, heapBefore: before, heapAfter: performance.memory?.usedJSHeapSize};
       }, {entry, width, height});
       const cancellation = await page.evaluate(async ({entry, width, height}) => {
-        const source = `import * as module from ${JSON.stringify(location.origin + '/' + entry.file)}; onmessage=({data})=>{postMessage({started:true});const bytes=module.${entry.photo ? 'encodePhotoRGBA' : 'encode'}(data.rgba,data.width,data.height,{quality:data.quality});postMessage({bytes:bytes.length});};`;
+        const source = `import * as module from ${JSON.stringify(location.origin + '/' + entry.file)}; onmessage=({data})=>{postMessage({started:true});const bytes=module.${entry.photo ? 'encodePhoto' : 'encode'}(data.rgba,data.width,data.height,{quality:data.quality});postMessage({bytes:bytes.length});};`;
         const url = URL.createObjectURL(new Blob([source], {type: 'text/javascript'})), worker = new Worker(url, {type: 'module'});
         const rgba = new Uint8Array(await (await fetch('/pixels.rgba')).arrayBuffer());
         return await new Promise((done, reject) => {

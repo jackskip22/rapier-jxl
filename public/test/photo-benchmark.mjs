@@ -7,7 +7,7 @@ import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {join, resolve} from 'node:path';
-import {encodePhotoRGBA} from '../../photo.mjs';
+import {encodePhoto} from '../../photo.mjs';
 import {decoder} from './decoder.mjs';
 
 const args = Object.fromEntries(process.argv.slice(2).map(arg => { const [key, ...value] = arg.replace(/^--/, '').split('='); return [key, value.join('=') || true]; }));
@@ -22,7 +22,7 @@ const stats = (rgba, rgb, channels = 3) => {
 // An isolated encode measures the encoder's peak resident set, without the decoder's WebAssembly heap.
 if (args.encode) {
   const rgba = readFileSync(args.encode), start = performance.now();
-  const bytes = encodePhotoRGBA(rgba, +args.width, +args.height, {quality: +args.quality});
+  const bytes = encodePhoto(rgba, +args.width, +args.height, {quality: +args.quality});
   const ms = performance.now() - start;
   writeFileSync(args.encoded, bytes);
   // Linux's /proc high-water mark starts at exec; getrusage can include the parent's resident pages at fork.
@@ -71,7 +71,7 @@ for (const photo of manifest.photos) {
   let low = 1, high = 100, matched;
   for (let attempt = 0; attempt < 16; attempt++) {
     const quality = attempt === 0 ? 100 : attempt === 1 ? 1 : (low + high) / 2;
-    const bytes = encodePhotoRGBA(rgba, width, height, {quality}), psnr = readBack(bytes);
+    const bytes = encodePhoto(rgba, width, height, {quality}), psnr = readBack(bytes);
     const sample = {quality, bytes: bytes.length, psnr}; samples.push(sample);
     if (psnr >= referencePsnr) { high = quality; if (!matched || sample.bytes < matched.bytes) matched = sample; } else low = quality;
   }

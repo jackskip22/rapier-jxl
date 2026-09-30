@@ -27,6 +27,11 @@ jobs:
         with:
           node-version: '22.22.2'
       - run: npm install --ignore-scripts
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.11'
+      - name: The same bytes under JavaScriptCore
+        run: bun test --timeout 600000 ./public/test/bytes.test.mjs
       - run: sudo apt-get update && sudo apt-get install --yes ffmpeg libjxl-dev build-essential
       - name: Read the pinned optional jxl-rs source
         id: jxl_rs_source

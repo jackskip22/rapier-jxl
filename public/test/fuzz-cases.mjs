@@ -67,6 +67,14 @@ export function mutateJPEG(input, random, index) {
   return {kind, bytes: out};
 }
 
+// A picture made by integer arithmetic alone, (x + y, 3x + 7y, 13x + 19y, 255): at 2,049 x 257 the lossy stream whose
+// coarse Squeeze border crosses a DC group, which jxl-rs 0.7.4 read from the wrong origin (seeds/README.md).
+export function borderCase(width, height) {
+  const rgba = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) rgba.set([(x + y) & 255, (3 * x + 7 * y) & 255, (13 * x + 19 * y) & 255, 255], (y * width + x) * 4);
+  return {rgba, width, height};
+}
+
 export function pixelCase(seed, index, {compact = false} = {}) {
   const random = rng((seed ^ Math.imul(index + 1, 0x9e3779b1)) >>> 0);
   const [width, height] = pick(compact ? [[1, 1], [1, 17], [17, 1], [7, 9], [8, 8], [9, 9], [17, 3], [3, 17], [17, 17]] : [[1, 1], [1, 17], [17, 1], [7, 9], [8, 8], [9, 9], [17, 31], [255, 17], [257, 19], [19, 257], [257, 255], [2049, 1], [1, 257]], random);

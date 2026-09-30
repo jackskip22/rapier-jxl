@@ -5,8 +5,9 @@ import {readFileSync,existsSync} from 'node:fs';
 import {resolve,dirname,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
-import {transcode,encode} from '../../index.mjs';
-import {encodePhotoRGBA} from '../../photo.mjs';
+import {encode} from '../../index.mjs';
+import {transcode} from '../../jpeg.mjs';
+import {encodePhoto} from '../../photo.mjs';
 import {decoder} from './decoder.mjs';
 import {rgbaOf} from './oracles.mjs';
 import {nativeDecoder} from './native-decoder.mjs';
@@ -23,7 +24,7 @@ if(item.generated){
 let bytes,width,height;
 if(existsSync(stem+'.jxl')){bytes=new Uint8Array(readFileSync(stem+'.jxl'));({width,height}=item.entry);}
 else if(item.type==='jpeg')({bytes,width,height}=transcode(new Uint8Array(input)));
-else {({width,height}=item);bytes=(item.path==='photo'?encodePhotoRGBA:encode)(new Uint8Array(input),width,height,{quality:item.quality});}
+else {({width,height}=item);bytes=(item.path==='photo'?encodePhoto:encode)(new Uint8Array(input),width,height,{quality:item.quality});}
 if(item.stream&&createHash('sha256').update(bytes).digest('hex')!==item.stream)throw new Error('The reproduction no longer encodes the retained stream bytes');
 const oxide=await decoder(),native=await nativeDecoder(),float=await nativeDecoder({float:true});
 try{

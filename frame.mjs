@@ -8,8 +8,9 @@ function writeSize(w, size) {
   w.writeU32([[9, 1], [13, 1], [18, 1], [30, 1]], size);
 }
 
-// 8 bits per sample; `colour` 1 (grey) or 3 (sRGB); an 8-bit alpha channel when `alpha`. Frames start byte-aligned.
-export function writeImageHeader(w, width, height, colour, alpha, {xyb = false, orientation = 1} = {}) {
+// 8 bits per sample; `colour` 1 (grey) or 3 (sRGB, or Display P3 when `colorSpace` says so); an 8-bit alpha channel
+// when `alpha`. Frames start byte-aligned.
+export function writeImageHeader(w, width, height, colour, alpha, {xyb = false, orientation = 1, colorSpace} = {}) {
   w.write(16, 0x0AFF);
   w.write(1, 0);          // not the small size form
   writeSize(w, height);
@@ -23,7 +24,11 @@ export function writeImageHeader(w, width, height, colour, alpha, {xyb = false, 
   if (alpha) w.write(3, 0b1_01);  // one extra channel (2), all default (1): 8-bit alpha
   else w.write(2, 0);
   w.write(1, xyb ? 1 : 0);  // xyb_encoded
-  if (colour === 3) w.write(1, 1);  // colour encoding all default: sRGB
+  if (colour === 3 && colorSpace === 'display-p3') {
+    // Display P3, fields in reverse order as below: not default (1), no ICC (1), RGB (2), D65 (2), the P3 primaries
+    // (selector 2 and 11 - 2 in 4), no gamma (1), the sRGB curve (selector 2 and 13 - 2 in 4), relative intent (2).
+    w.write(21, 0b01_1011_10_0_1001_10_01_00_0_0);
+  } else if (colour === 3) w.write(1, 1);  // colour encoding all default: sRGB
   else {
     // Fixed grey encoding. Groups below are the fields in reverse order because the writer sends the low bits
     // first: not default (1), no ICC (1), grey (2), D65 (2), no gamma (1), sRGB selector (2) and enum (4), intent (2).
@@ -35,13 +40,14 @@ export function writeImageHeader(w, width, height, colour, alpha, {xyb = false, 
   w.zeroPadToByte();
 }
 
-// A lossless modular frame, the last frame, no filters, one pass, 256-pixel groups, replace blending.
-export function writeModularFrameHeader(w, {alpha}) {
+// A modular frame, the last frame, no filters, one pass, groups of 128 << shift pixels (256 unless asked), replace
+// blending.
+export function writeModularFrameHeader(w, {alpha, shift = 1}) {
   // Fixed beginning, low bits first: not all default (1), regular frame (2), modular (1), default flags (2),
   // not YCbCr (1), no upsampling (2).
   w.write(9, 0b00_0_00_1_00_0);
   if (alpha) w.write(2, 0);  // no extra-channel upsampling
-  w.write(2, 1);  // group size shift 1: 256
+  w.write(2, shift);  // the group size shift
   writeFrameHeaderEnd(w, alpha);
 }
 
@@ -61,9 +67,10 @@ export function writeTOC(w, sizes) {
   w.zeroPadToByte();
 }
 
-export function groupLayout(width, height) {
-  const groupsX = Math.ceil(width / GROUP_DIM), groupsY = Math.ceil(height / GROUP_DIM);
-  const dcGroupsX = Math.ceil(width / DC_GROUP_DIM), dcGroupsY = Math.ceil(height / DC_GROUP_DIM);
+// The groups of a frame whose groups are `dim` pixels on a side, its DC groups eight times that.
+export function groupLayout(width, height, dim = GROUP_DIM) {
+  const groupsX = Math.ceil(width / dim), groupsY = Math.ceil(height / dim);
+  const dcGroupsX = Math.ceil(width / (8 * dim)), dcGroupsY = Math.ceil(height / (8 * dim));
   return {groupsX, groupsY, dcGroupsX, dcGroupsY, single: groupsX === 1 && groupsY === 1};
 }
 

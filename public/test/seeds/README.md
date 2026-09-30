@@ -17,6 +17,7 @@ and scan bitstrings.
 | `huffman-all-ones`, `bad-padding`, `trailing-restarts` | Padding cannot become a Huffman symbol, and scan boundaries cannot hide omitted or extra data. |
 | `huffman-dc-symbol-16` | A DC table naming a symbol above 15 is refused when a scan first reads DC through it, as libjpeg refuses it, even when no coefficient uses the symbol. |
 | `rgba-2049x1.rgba` | Squeeze's zero-height chroma channels must not introduce unused histogram headers. Retained at qualities 1, 80 and 99 in `pixels.json`. |
+| `display-p3.jpg` | The colour pair's sequential JPEG with a Display P3 profile (`../icc.mjs`): carried and declared Display P3, its stream held in `bytes.json`. |
 | `rgba-1x257.rgba` | Squeeze's zero-width chroma channels of a one-wide picture own no group piece; the histograms are numbered over the channels that do, or the decoder finds a hole. Retained at qualities 1, 80 and 99 in `pixels.json`. |
 
 Run the public tests from the repository root:
@@ -33,8 +34,8 @@ are guarded before allocation, and admitted mutation dimensions remain small.
 
 `JXL_FUZZ_SEED`, `JXL_FUZZ_JPEGS` and `JXL_FUZZ_PIXELS` choose a reproducible run. There are no timing or size
 assertions in these tests. `JXL_FUZZ_FAILURE_DIR` saves a failing input and its reproduction coordinates.
-Retained pixel cases run even when the generated pixel-case count is zero. An optional `photo.mjs` is included
-automatically when present.
+Retained pixel cases run even when the generated pixel-case count is zero. An optional `photo.mjs` or `effort.mjs`
+is included automatically when present (the effort door at efforts 2 and 3).
 
 The scale runner uses one persistent native libjxl process per worker. Install a C compiler and the libjxl
 development package (for example `apt-get install build-essential libjxl-dev`), then run:

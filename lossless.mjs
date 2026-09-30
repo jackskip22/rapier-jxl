@@ -3,7 +3,7 @@
 // alpha is dropped and a grey picture keeps one channel; up to 2048 colours try a palette against direct encoded
 // cost. YCoCg decorrelates colour; samples choose gradient/average prediction; each channel takes one prefix code, zero runs
 // as LZ77 copies; groups of 256x256 pixels, each an independent section.
-import {BitWriter} from './bits.mjs';
+import {BitWriter, complete, part} from './bits.mjs';
 import {writeImageHeader, writeModularFrameHeader, groupLayout, assembleCodestream, GROUP_DIM} from './frame.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
 import {AVERAGE_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
@@ -33,7 +33,7 @@ export function inspectPixels(rgba, width, height, {palette: wantPalette = true}
   }
   if (wantPalette && seen.size < MAX_PALETTE) {
     const entries = [...seen.keys()];
-    const byte = (k, c) => Math.floor(k / 256 ** c) % 256;
+    const byte = (k, c) => (k >>> 8 * c) & 255;
     const weight = k => (0.299 * byte(k, 0) + 0.587 * byte(k, 1) + 0.114 * byte(k, 2) + 0.01) * (channels === 4 ? byte(k, 3) : 1);
     entries.sort((a, b) => weight(a) - weight(b));
     const index = new Map([[0, 0]]);
@@ -43,13 +43,17 @@ export function inspectPixels(rgba, width, height, {palette: wantPalette = true}
   return {colour, alpha, channels, palette};
 }
 
-export function encodeLossless(rgba, width, height, {shape = inspectPixels(rgba, width, height)} = {}) {
+export function encodeLossless(rgba, width, height, options) { return complete(losslessSteps(rgba, width, height, options)); }
+
+// The same, a group of one pass per step.
+export function* losslessSteps(rgba, width, height, {shape = inspectPixels(rgba, width, height), colorSpace} = {}) {
   // The complete stream cost includes the palette, tree, histograms and group headers. A candidate that reaches
   // the stream limit must not hide a smaller valid representation of the same pixels.
   let best, oversized;
-  for (const candidate of shape.palette ? [shape, {...shape, palette: null}] : [shape]) {
+  const candidates = shape.palette ? [shape, {...shape, palette: null}] : [shape];
+  for (let i = 0; i < candidates.length; i++) {
     try {
-      const bytes = encodeLosslessPlan(rgba, width, height, candidate);
+      const bytes = yield* part(planSteps(rgba, width, height, candidates[i], colorSpace), i, candidates.length);
       if (!best || bytes.length < best.length) best = bytes;
     } catch (error) { if (error.code !== 'JXL_SIZE') throw error; oversized = error; }
   }
@@ -57,7 +61,7 @@ export function encodeLossless(rgba, width, height, {shape = inspectPixels(rgba,
   return best;
 }
 
-function encodeLosslessPlan(rgba, width, height, shape) {
+function* planSteps(rgba, width, height, shape, colorSpace) {
   const {channels, palette} = shape;
   const layout = groupLayout(width, height);
   const streamChannels = palette ? 2 : channels;  // the palette's meta channel and the index channel
@@ -91,13 +95,14 @@ function encodeLosslessPlan(rgba, width, height, shape) {
   const pictureLeaf = c => leaves[palette ? (layout.single ? 1 : 0) : c];
   const pictureChannels = palette ? 1 : channels;
 
-  const forGroups = visit => {
-    for (let gy = 0; gy < layout.groupsY; gy++) for (let gx = 0; gx < layout.groupsX; gx++) {
-      const x0 = gx * GROUP_DIM, y0 = gy * GROUP_DIM, w = Math.min(GROUP_DIM, width - x0), h = Math.min(GROUP_DIM, height - y0);
-      fill(x0, y0, w, h);
-      visit(gy * layout.groupsX + gx, w, h);
-    }
+  // A group's planes filled, then visited; each group of each pass is one step, row by row.
+  const groups = layout.groupsX * layout.groupsY, total = 2 * groups;
+  const group = (g, visit) => {
+    const x0 = g % layout.groupsX * GROUP_DIM, y0 = (g / layout.groupsX | 0) * GROUP_DIM, w = Math.min(GROUP_DIM, width - x0), h = Math.min(GROUP_DIM, height - y0);
+    fill(x0, y0, w, h);
+    visit(w, h);
   };
+  let done = 0;
 
   // Three small spatial samples choose gradient/average per channel. The same token code prices
   // both the prefix header and raw residual bits. Fixed YCoCg avoids choosing RGB from a sparse corner
@@ -128,11 +133,14 @@ function encodeLosslessPlan(rgba, width, height, shape) {
   // Pass one: token histograms per leaf.
   const freqs = leaves.map(() => new Uint32Array(ALPHABET)), freqOf = l => freqs[leaves.indexOf(l)];
   if (paletteRows) codeChannel(null, freqOf(leaves[0]), paletteRows, palette.colours.length, channels, leaves[0]);
-  forGroups((g, w, h) => { for (let c = 0; c < pictureChannels; c++) codeChannel(null, freqOf(pictureLeaf(c)), planes[c], w, h, pictureLeaf(c)); });
+  for (let g = 0; g < groups; g++) {
+    group(g, (w, h) => { for (let c = 0; c < pictureChannels; c++) codeChannel(null, freqOf(pictureLeaf(c)), planes[c], w, h, pictureLeaf(c)); });
+    yield ++done / total;
+  }
 
   // Pass two: the sections.
   const header = new BitWriter(256);
-  writeImageHeader(header, width, height, shape.colour, shape.alpha);
+  writeImageHeader(header, width, height, shape.colour, shape.alpha, {colorSpace});
   writeModularFrameHeader(header, {alpha: shape.alpha});
   const global = new BitWriter(4096);
   global.write(1, 1);  // default DC quantisation
@@ -144,17 +152,21 @@ function encodeLosslessPlan(rgba, width, height, shape) {
   if (paletteRows) codeChannel(global, codeOf(leaves[0]), paletteRows, palette.colours.length, channels, leaves[0]);
   const sections = [];
   if (layout.single) {
-    forGroups((g, w, h) => { for (let c = 0; c < pictureChannels; c++) codeChannel(global, codeOf(pictureLeaf(c)), planes[c], w, h, pictureLeaf(c)); });
+    group(0, (w, h) => { for (let c = 0; c < pictureChannels; c++) codeChannel(global, codeOf(pictureLeaf(c)), planes[c], w, h, pictureLeaf(c)); });
+    yield 1;
     sections.push(global.finish());
   } else {
     sections.push(global.finish());
     for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
-    forGroups((g, w, h) => {
-      const section = new BitWriter(w * h * pictureChannels + 64);
-      writeModularHeader(section, {useGlobalTree: true, transforms: []});
-      for (let c = 0; c < pictureChannels; c++) codeChannel(section, codeOf(pictureLeaf(c)), planes[c], w, h, pictureLeaf(c));
-      sections.push(section.finish());
-    });
+    for (let g = 0; g < groups; g++) {
+      group(g, (w, h) => {
+        const section = new BitWriter(w * h * pictureChannels + 64);
+        writeModularHeader(section, {useGlobalTree: true, transforms: []});
+        for (let c = 0; c < pictureChannels; c++) codeChannel(section, codeOf(pictureLeaf(c)), planes[c], w, h, pictureLeaf(c));
+        sections.push(section.finish());
+      });
+      yield ++done / total;
+    }
   }
   return assembleCodestream(header, sections);
 }
