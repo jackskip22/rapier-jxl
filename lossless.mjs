@@ -1,10 +1,11 @@
 // Rapier's JPEG XL encoder: lossless pictures. MIT (LICENSE).
 // The design of libjxl's fast lossless path, written for Rapier: 8-bit grey, grey+alpha, RGB or RGBA; an opaque
-// alpha is dropped and a grey picture keeps one channel; up to 512 colours become a palette; colour goes through
-// the reversible YCoCg transform; every channel is predicted by the clamped gradient and coded with one prefix
-// code per channel, zero runs as LZ77 copies; groups of 256x256 pixels, each an independent section.
+// alpha is dropped and a grey picture keeps one channel; up to 512 colours try a palette against direct encoded
+// cost. Samples choose RGB/YCoCg and gradient/average prediction; each channel takes one prefix code, zero runs
+// as LZ77 copies; groups of 256x256 pixels, each an independent section.
 import {BitWriter} from './bits.mjs';
 import {writeImageHeader, writeModularFrameHeader, groupLayout, assembleCodestream, GROUP_DIM} from './frame.mjs';
+import {buildCode, writePrefixCode} from './prefix.mjs';
 import {PREDICTOR, ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
 
 const MAX_PALETTE = 512;
@@ -33,33 +34,39 @@ export function inspectPixels(rgba, width, height, {palette: wantPalette = true}
   if (wantPalette && seen.size < MAX_PALETTE) {
     const entries = [...seen.keys()];
     const byte = (k, c) => Math.floor(k / 256 ** c) % 256;
-    let lowest = 255, highest = 0;
-    for (const k of entries) { const g = byte(k, 1); if (g < lowest) lowest = g; if (g > highest) highest = g; }
-    // A grey ramp without holes gains nothing from a palette.
-    const ramp = colour === 1 && !alpha && (() => { let lo = 255, hi = 0; for (const k of entries) { if (k < lo) lo = k; if (k > hi) hi = k; } return hi - lo < entries.length * 1.4; })();
-    if (!ramp) {
-      const weight = k => (0.299 * byte(k, 0) + 0.587 * byte(k, 1) + 0.114 * byte(k, 2) + 0.01) * (channels === 4 ? byte(k, 3) : 1);
-      entries.sort((a, b) => weight(a) - weight(b));
-      const index = new Map([[0, 0]]);
-      entries.forEach((k, at) => index.set(k, at + 1));
-      palette = {colours: [0, ...entries], index, key, byte};
-    }
+    const weight = k => (0.299 * byte(k, 0) + 0.587 * byte(k, 1) + 0.114 * byte(k, 2) + 0.01) * (channels === 4 ? byte(k, 3) : 1);
+    entries.sort((a, b) => weight(a) - weight(b));
+    const index = new Map([[0, 0]]);
+    entries.forEach((k, at) => index.set(k, at + 1));
+    palette = {colours: [0, ...entries], index, key, byte};
   }
   return {colour, alpha, channels, palette};
 }
 
 export function encodeLossless(rgba, width, height, {shape = inspectPixels(rgba, width, height)} = {}) {
+  // The complete stream cost includes the palette, tree, histograms and group headers. A candidate that reaches
+  // the stream limit must not hide a smaller valid representation of the same pixels.
+  let best, oversized;
+  for (const candidate of shape.palette ? [shape, {...shape, palette: null}] : [shape]) {
+    try {
+      const bytes = encodeLosslessPlan(rgba, width, height, candidate);
+      if (!best || bytes.length < best.length) best = bytes;
+    } catch (error) { if (error.code !== 'JXL_SIZE') throw error; oversized = error; }
+  }
+  if (!best) throw oversized;
+  return best;
+}
+
+function encodeLosslessPlan(rgba, width, height, shape) {
   const {channels, palette} = shape;
   const layout = groupLayout(width, height);
   const streamChannels = palette ? 2 : channels;  // the palette's meta channel and the index channel
   const leaves = Array.from({length: streamChannels}, () => leaf(PREDICTOR.gradient));
   const tree = channelTree(leaves);
-  const transforms = palette
-    ? [{type: 'palette', beginC: 0, numC: channels, nbColors: palette.colours.length}]
-    : channels >= 3 ? [{type: 'rct', beginC: 0, rctType: 6}] : [];
+  let useRct = channels >= 3;
 
   // Channel planes of a group rectangle, computed straight from the pixels.
-  const planes = Array.from({length: streamChannels}, () => new Int32Array(GROUP_DIM * GROUP_DIM));
+  const planes = Array.from({length: streamChannels}, () => new Int16Array(GROUP_DIM * GROUP_DIM));
   const fill = (x0, y0, w, h) => {
     for (let y = 0; y < h; y++) {
       let i = ((y0 + y) * width + x0) * 4, at = y * w;
@@ -68,7 +75,7 @@ export function encodeLossless(rgba, width, height, {shape = inspectPixels(rgba,
         if (channels >= 3) {
           const r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
           const co = r - b, tmp = b + (co >> 1), cg = g - tmp;
-          planes[0][at] = tmp + (cg >> 1); planes[1][at] = co; planes[2][at] = cg;
+          planes[0][at] = useRct ? tmp + (cg >> 1) : r; planes[1][at] = useRct ? co : g; planes[2][at] = useRct ? cg : b;
           if (channels === 4) planes[3][at] = rgba[i + 3];
         } else { planes[0][at] = rgba[i]; if (channels === 2) planes[1][at] = rgba[i + 3]; }
       }
@@ -78,7 +85,7 @@ export function encodeLossless(rgba, width, height, {shape = inspectPixels(rgba,
   let paletteRows = null;
   if (palette) {
     const n = palette.colours.length;
-    paletteRows = new Int32Array(n * channels);
+    paletteRows = new Int16Array(n * channels);
     palette.colours.forEach((k, at) => { for (let c = 0; c < channels; c++) paletteRows[c * n + at] = palette.byte(k, c); });
   }
   // The image channels of a section: in the global section they follow the meta channel; in a group they start at 0.
@@ -92,6 +99,38 @@ export function encodeLossless(rgba, width, height, {shape = inspectPixels(rgba,
       visit(gy * layout.groupsX + gx, w, h);
     }
   };
+
+  // Three small spatial samples choose RGB/YCoCg and gradient/average per channel. The same token code prices
+  // both the prefix header and raw residual bits. Sampling is bounded; tiny pictures avoid selection overhead.
+  if (!palette && width * height >= 4096) {
+    const cost = freqs => {
+      const code = buildCode(freqs), writer = new BitWriter(128);
+      writePrefixCode(writer, code);
+      let bits = writer.bitLength;
+      for (let s = 0; s < freqs.length; s++) if (freqs[s]) bits += freqs[s] * (code.lengths[s] + Math.max(0, s < 224 ? s - 1 : s - 236));
+      return bits;
+    };
+    let best = Infinity, chosenRct = useRct;
+    const sw = Math.min(width, 32), sh = Math.min(height, 32);
+    for (const rct of useRct ? [true, false] : [false]) {
+      useRct = rct;
+      const candidates = [PREDICTOR.gradient, PREDICTOR.average0].map(predictor => ({predictor, freqs: leaves.map(() => new Uint32Array(ALPHABET))}));
+      for (const fraction of [0, 0.5, 1]) {
+        fill(Math.floor((width - sw) * fraction), Math.floor((height - sh) * fraction), sw, sh);
+        for (const candidate of candidates) for (let c = 0; c < channels; c++) codeChannel(null, candidate.freqs[c], planes[c], sw, sh, leaf(candidate.predictor));
+      }
+      let bits = 0;
+      const predictors = leaves.map((l, c) => {
+        const costs = candidates.map(candidate => cost(candidate.freqs[c])), choice = costs[1] < costs[0] ? 1 : 0;
+        bits += costs[choice]; return candidates[choice].predictor;
+      });
+      if (bits < best) { best = bits; chosenRct = rct; leaves.forEach((l, c) => { l.predictor = predictors[c]; }); }
+    }
+    useRct = chosenRct;
+  }
+  const transforms = palette
+    ? [{type: 'palette', beginC: 0, numC: channels, nbColors: palette.colours.length}]
+    : useRct ? [{type: 'rct', beginC: 0, rctType: 6}] : [];
 
   // Pass one: token histograms per leaf.
   const freqs = leaves.map(() => new Uint32Array(ALPHABET)), freqOf = l => freqs[leaves.indexOf(l)];

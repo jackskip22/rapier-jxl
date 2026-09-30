@@ -2,7 +2,7 @@
 // The AC coefficients of a VarDCT frame are coded in hundreds of contexts; the contexts are clustered into a few
 // dozen histograms by greedy merging (the cheapest entropy increase first), each histogram takes the hybrid
 // integer split that costs least on its own values, and a prefix code is built per histogram.
-import {buildCode, uintConfig, hybridToken} from './prefix.mjs';
+import {buildCode, uintConfig, hybridToken, writeHybrid} from './prefix.mjs';
 import {floorLog2} from './bits.mjs';
 
 const CONFIGS = [uintConfig(0), uintConfig(1), uintConfig(2), uintConfig(3), uintConfig(4), uintConfig(4, 1, 1), uintConfig(5, 1, 1), uintConfig(2, 0, 1), uintConfig(3, 0, 1)];
@@ -31,9 +31,7 @@ export class TokenCounts {
   // The bits a set of contexts costs under a configuration: token entropy plus the raw bits.
   cost(contexts, config) {
     const freqs = this.tokens(contexts, config);
-    let total = 0, bits = 0;
-    for (const f of freqs) total += f;
-    for (const f of freqs) if (f) bits += f * Math.log2(total / f);
+    let bits = entropyBits(freqs);
     for (const ctx of contexts) {
       const base = ctx * 64;
       for (let v = config.splitToken; v < 64; v++) if (this.small[base + v]) bits += this.small[base + v] * (floorLog2(v) - config.msb - config.lsb);
@@ -91,9 +89,7 @@ export function buildTokenCoding(counts, {maxClusters = 48, newClusterCost = 320
   });
   const write = (w, ctx, value) => {
     const histogram = histograms[contextMap[ctx]];
-    hybridToken(histogram.config, value, slots);
-    w.write(histogram.code.lengths[slots[0]], histogram.code.codes[slots[0]]);
-    if (slots[1]) w.write(slots[1], slots[2]);
+    writeHybrid(w, histogram.code, histogram.config, value);
   };
   return {contextMap, histograms, write, bits};
 }

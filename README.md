@@ -2,18 +2,21 @@
 
 A JPEG XL encoder in pure JavaScript. No WebAssembly, no build step, no dependency, nothing fetched at run
 time. It is the encoder inside [Rapier](https://rapier.website), the single-file Markdown editor, offered on its
-own so any app can write JPEG XL pictures with the bytes it can afford: one file of 39.4 kB,
-15.4 kB gzipped, MIT. The smallest JPEG XL encoder we know of; if you know a smaller one, tell us.
+own so any app can write JPEG XL pictures with the bytes it can afford: one file of 39.9 kB,
+15.7 kB gzipped, MIT. The smallest JavaScript/WebAssembly JPEG XL encoder among the published
+payloads [we measured](ENCODER-COMPARISON.md); the table explains the scope and how to reproduce it.
 
 - **Lossless.** Every pixel comes back as it went in. 8-bit grey, grey with alpha, RGB and RGBA.
 - **Lossy.** Quality 1 to 99, on libjxl's modular path (the Squeeze transform), for drawings, screenshots and
-  pictures of few colours; a picture of few colours is answered exact when that is fewer bytes.
+  pictures of few colours; alpha stays exact. A picture of few colours is answered exact when that is fewer bytes.
+- **Photographs, optionally.** Import `rapier-jxl/photo` for DCT8 photographic compression with exact alpha.
+  This separate module shares the JPEG carrier's VarDCT writer and adds no bytes to the core import.
 - **A JPEG carried as its coefficients.** A JPEG's quantised DCT coefficients, quantisation tables, subsampling
   and Exif orientation go into a JPEG XL frame the way libjxl transcodes them, so the picture decodes to the
   JPEG's own pixels at about a fifth fewer bytes, in one call, without decoding. Not carried: the JPEG
   reconstruction data (the JPEG file cannot be rebuilt from the stream), ICC, Exif beyond the orientation, XMP.
 
-Every stream is checked at each release against jxl-oxide and libjxl (below).
+The retained corpus and seeded fuzz cases are decoded through jxl-oxide and native libjxl (below).
 
 ## Use it
 
@@ -36,18 +39,27 @@ bytes and returns a `Uint8Array` holding a bare JPEG XL codestream (the `.jxl` f
 takes a JPEG's bytes and returns `{bytes, width, height, orientation}`; the width and height are the picture's as
 shown (swapped when the Exif orientation turns it), and the orientation is kept in the JPEG XL header.
 
-Three files to choose from, each a complete ES module with its MIT notice inside: `rapier-jxl.min.mjs`
-(everything; `rapier-jxl/min`), `lossless.min.mjs` (`encodeLosslessRGBA` and `LIMITS` alone; `rapier-jxl/lossless`)
-and `jpeg.min.mjs` (`transcode` and `LIMITS` alone; `rapier-jxl/jpeg`). The readable source is the eleven `.mjs`
-files beside them, `index.mjs` the entry (`rapier-jxl`): copy them into an app as they are, or install the
-package. The checked entries are `encode`, `encodeLosslessRGBA`, `encodeLossyRGBA` and `transcode`; the raw
+Four complete ES modules carry their MIT notice inside: `rapier-jxl.min.mjs` (core; `rapier-jxl/min`),
+`lossless.min.mjs` (`encodeLosslessRGBA`, `LIMITS`; `rapier-jxl/lossless`), `jpeg.min.mjs` (`transcode`, `LIMITS`;
+`rapier-jxl/jpeg`), and `photo.min.mjs` (`encodePhotoRGBA`, `LIMITS`; `rapier-jxl/photo`). The readable modules
+are beside them, `index.mjs` the core entry and `photo.mjs` the optional photo entry. Copy a complete bundle
+into an app, or install the package. The checked entries are `encode`, `encodeLosslessRGBA`,
+`encodeLossyRGBA`, `encodePhotoRGBA` and `transcode`; the raw
 `encodeLossless`, `encodeLossy`, `transcodeJPEG`, `parseJPEG` and `inspectPixels` beneath them take input the
 checked entries have already admitted and may throw plain errors on anything else.
 
+```js
+import {encodePhotoRGBA} from 'rapier-jxl/photo';
+const photo = encodePhotoRGBA(data, width, height, {quality: 90});
+```
+
+The photo entry defaults to quality 90; quality 100 is exact lossless. Its 1–99 range controls photographic
+quantisation, while `encode` retains its artwork-oriented modular path. Quality numbers do not promise
+identical PSNR between codecs or images. Neither lossy entry promises fewer bytes than lossless for every input.
+
 ### In a worker
 
-Encoding is synchronous and takes tens to hundreds of milliseconds on a large picture, so do it off the main
-thread. A complete worker is this:
+Encoding is synchronous; large pictures can take seconds, so run it off the main thread. A complete worker is this:
 
 ```js
 // jxl-worker.mjs
@@ -61,7 +73,10 @@ self.onmessage = ({data: {id, op, ...ask}}) => {
 ```
 
 Post `{id, op: 'encode', data, width, height, quality}` or `{id, op: 'transcode', jpeg}`; receive `{id, ok: true,
-bytes, ...}` or `{id, ok: false, code, message}`, the bytes transferred, never copied.
+bytes, ...}` or `{id, ok: false, code, message}`, the output bytes transferred. To cancel synchronous work,
+terminate that dedicated worker and discard its request ID. A queued abort message cannot interrupt a
+synchronous encode. Keep the input buffer in the caller if retry is needed; posting it without a transfer list
+copies it, while transferring it gives ownership to the worker.
 
 ### Limits and errors
 
@@ -76,10 +91,11 @@ invented; decode such a JPEG and encode its pixels instead. A checked call retur
 
 | file | bytes | gzip | Brotli |
 | --- | ---: | ---: | ---: |
-| `rapier-jxl.min.mjs`, everything | 39,447 | 15,417 | 13,651 |
-| `lossless.min.mjs`, `encodeLosslessRGBA` alone | 16,028 | 6,637 | 5,842 |
-| `jpeg.min.mjs`, `transcode` alone | 30,185 | 12,042 | 10,637 |
-| the eleven readable modules | 94,845 | 28,403 | |
+| `rapier-jxl.min.mjs`, core | 39,892 | 15,748 | 13,936 |
+| `lossless.min.mjs`, `encodeLosslessRGBA` alone | 16,085 | 6,747 | 5,948 |
+| `jpeg.min.mjs`, `transcode` alone | 30,450 | 12,187 | 10,776 |
+| `photo.min.mjs`, photographic pixels | 25,418 | 10,408 | 9,197 |
+| all readable modules, including photo | 101,832 | 30,902 | |
 
 Exact bytes of this release's files, measured by the script that stages this repository; `sizes.json` carries
 their hashes and the tools (terser 5.51.2, Node v22.22.2; gzip at level 9, Brotli at quality 11). A minified
@@ -88,11 +104,11 @@ encodes; the readable modules' gzip is of their concatenation.
 
 What it writes, so a decoder's author knows what to expect: bare codestreams (no container box), 8-bit only,
 prefix codes only (never ANS), one frame, no preview, no animation, no ICC profile (sRGB is declared, and a JPEG
-with another profile is refused), no XYB, no chroma-from-luma, no filters. Lossless pictures use the modular
-mode with a palette of up to 512 colours, the reversible YCoCg transform, the clamped-gradient predictor and one
-prefix code per channel, in groups of 256 by 256 pixels. Lossy pictures use the modular mode with the Squeeze
-transform. Carried JPEGs use the VarDCT mode with the JPEG's own quantisation tables as raw dequantisation
-matrices.
+with another profile is refused), no XYB, no chroma-from-luma, no filters. Lossless pictures use modular mode,
+comparing a palette of up to 512 colours with direct encoding by actual stream length, in groups of 256 by 256
+pixels. Measured prediction and colour-transform choices keep smooth artwork and independent channels small.
+Lossy artwork uses the Squeeze transform with exact alpha. Carried JPEGs use VarDCT with the JPEG's quantisation
+tables as raw dequantisation matrices. The photo entry produces DCT8 coefficients from pixels for the same writer.
 
 ## Why it exists
 
@@ -107,14 +123,14 @@ encoder is this one: tell your agent to add `rapier-jxl` (see `AGENTS.md`) and i
 
 ## How it is checked
 
-Rapier's own tree holds the tests: every stream this encoder writes is decoded again through
-[jxl-oxide](https://github.com/tirr-c/jxl-oxide) and compared pixel by pixel (exact where exactness is promised,
-above 38 dB where it is not, one stream for every JPEG form of one picture, an RGB JPEG's flat field at every DC
-step); what it refuses is tested too (a header past the limits, a JPEG cut short, a scan out of order, a colour
-profile other than sRGB); and the staged files are proved to encode what the source encodes. An independent
-audit of 30 September 2026 decoded 131 pixel cases and 36 JPEG forms through jxl-oxide 0.12.6 and libjxl 0.7;
-its findings are fixed in this release. This repository is republished from that tree at each release, so what is
-here has passed them.
+Tests and deterministic structure-aware fuzzing live in `public/test/`, with small JPEG seeds and generated pixel
+cases. Install the development dependencies and run `npm test`. The workflow requires both
+[jxl-oxide](https://github.com/tirr-c/jxl-oxide) 0.12.6 and FFmpeg's native libjxl decoder; a missing native oracle
+is explicitly reported locally and is a failure in CI. Cases compare exact pixels and alpha where promised,
+lossy fidelity where relevant, accepted JPEG content, and refusal of malformed inputs. Staging also proves each
+minified entry returns the same bytes as its readable source. The 30 September audit's 131 pixel cases and
+36 JPEG forms remain the acceptance baseline. These checks cover their inputs, not every possible codestream
+or every decoder implementation.
 
 ## Licence
 

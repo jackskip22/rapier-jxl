@@ -1,0 +1,12 @@
+[
+  {
+    "file": "rgba-2049x1.rgba",
+    "seed": 20260930,
+    "iteration": 21,
+    "width": 2049,
+    "height": 1,
+    "kind": "rgba",
+    "qualities": [1, 80, 99],
+    "reason": "2049x1 RGBA Squeeze leaves zero-height chroma channels; unused histogram headers shifted the bitstream."
+  }
+]

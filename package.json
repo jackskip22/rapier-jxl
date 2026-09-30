@@ -1,7 +1,7 @@
 {
   "name": "rapier-jxl",
-  "version": "1.1.17",
-  "description": "A JPEG XL encoder in pure JavaScript: lossless, lossy, and a JPEG carried as its coefficients. One file of 39.4 kB, 15.4 kB gzipped. The encoder inside Rapier.",
+  "version": "1.1.18",
+  "description": "A JPEG XL encoder in pure JavaScript: lossless, lossy, and a JPEG carried as its coefficients. One file of 39.9 kB, 15.7 kB gzipped. The encoder inside Rapier.",
   "license": "MIT",
   "type": "module",
   "main": "./index.mjs",
@@ -10,14 +10,19 @@
     "./min": "./rapier-jxl.min.mjs",
     "./lossless": "./lossless.min.mjs",
     "./jpeg": "./jpeg.min.mjs",
+    "./photo": "./photo.min.mjs",
     "./package.json": "./package.json"
   },
   "files": [
     "*.mjs",
     "README.md",
     "AGENTS.md",
+    "ENCODER-COMPARISON.md",
     "LICENSE",
-    "sizes.json"
+    "sizes.json",
+    "public/encoders.json",
+    "public/encoder-sizes.json",
+    "public/measure-encoders.mjs"
   ],
   "sideEffects": false,
   "engines": {
@@ -46,5 +51,12 @@
     "encoder",
     "markdown",
     "rapier"
-  ]
+  ],
+  "scripts": {
+    "test": "node --test \"public/test/*.test.mjs\""
+  },
+  "devDependencies": {
+    "jxl-oxide-wasm": "0.12.6",
+    "terser": "5.51.2"
+  }
 }

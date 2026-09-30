@@ -56,42 +56,22 @@ export function canonicalCodes(lengths) {
 // A prefix code for a token histogram: `lengths`/`codes` per symbol, `alphabetSize` past the last used symbol, and
 // the simple form's symbol order when four or fewer symbols are used. A histogram with no tokens has alphabet 1.
 export function buildCode(freqs) {
-  let last = -1, count = 0;
-  for (let i = 0; i < freqs.length; i++) if (freqs[i] > 0) { last = i; count++; }
-  const alphabetSize = last + 1 || 1, lengths = new Uint8Array(alphabetSize), codes = new Uint16Array(alphabetSize);
-  if (count === 0) return {alphabetSize, lengths, codes, simple: null, treeSelect: 0};
+  const used = [];
+  for (let i = 0; i < freqs.length; i++) if (freqs[i] > 0) used.push(i);
+  const count = used.length, alphabetSize = used[count - 1] + 1 || 1, lengths = new Uint8Array(alphabetSize);
   if (count <= 4) {
-    // The decoder derives the lengths from the symbol order: the first symbol written takes the shortest code.
-    const byWeight = [];
-    for (let i = 0; i < freqs.length; i++) if (freqs[i] > 0) byWeight.push(i);
-    byWeight.sort((a, b) => freqs[b] - freqs[a] || a - b);
-    let simple, treeSelect = 0;
-    const assign = (sym, length, index) => { lengths[sym] = length; codes[sym] = index; };
-    if (count === 1) { simple = byWeight; assign(byWeight[0], 0, 0); }
-    else if (count === 2) { simple = [...byWeight].sort((a, b) => a - b); assign(simple[0], 1, 0); assign(simple[1], 1, 1); }
-    else if (count === 3) {
-      const rest = byWeight.slice(1).sort((a, b) => a - b);
-      simple = [byWeight[0], ...rest];
-      assign(simple[0], 1, 0); assign(rest[0], 2, 1); assign(rest[1], 2, 3);
-    } else {
-      const flat = [...byWeight].sort((a, b) => a - b);
-      const flatCost = 2 * flat.reduce((sum, sym) => sum + freqs[sym], 0);
-      const deepRest = byWeight.slice(2).sort((a, b) => a - b);
-      const deepCost = freqs[byWeight[0]] + 2 * freqs[byWeight[1]] + 3 * (freqs[deepRest[0]] + freqs[deepRest[1]]);
-      if (deepCost < flatCost) {
-        treeSelect = 1; simple = [byWeight[0], byWeight[1], ...deepRest];
-        assign(simple[0], 1, 0); assign(simple[1], 2, 1); assign(deepRest[0], 3, 3); assign(deepRest[1], 3, 7);
-      } else {
-        simple = flat;
-        assign(flat[0], 2, 0); assign(flat[1], 2, 2); assign(flat[2], 2, 1); assign(flat[3], 2, 3);
-      }
-    }
-    return {alphabetSize, lengths, codes, simple, treeSelect};
+    // Simple codes carry symbols in length order, then symbol order. The only choice is a four-symbol tree:
+    // 1,2,3,3 beats 2,2,2,2 exactly when the largest frequency exceeds the two smallest together.
+    used.sort((a, b) => freqs[b] - freqs[a] || a - b);
+    const treeSelect = count === 4 && freqs[used[0]] > freqs[used[2]] + freqs[used[3]] ? 1 : 0;
+    const depths = count < 2 ? [0] : count === 2 ? [1, 1] : count === 3 ? [1, 2, 2] : treeSelect ? [1, 2, 3, 3] : [2, 2, 2, 2];
+    used.forEach((symbol, index) => { lengths[symbol] = depths[index]; });
+    used.sort((a, b) => lengths[a] - lengths[b] || a - b);
+    return {alphabetSize, lengths, codes: canonicalCodes(lengths), simple: count ? used : null, treeSelect};
   }
   const full = codeLengths(freqs.subarray ? freqs.subarray(0, alphabetSize) : freqs.slice(0, alphabetSize), 15);
   lengths.set(full);
-  codes.set(canonicalCodes(lengths));
-  return {alphabetSize, lengths, codes, simple: null, treeSelect: 0};
+  return {alphabetSize, lengths, codes: canonicalCodes(lengths), simple: null, treeSelect: 0};
 }
 
 // The code header. An alphabet of one symbol has no header at all (the decoder reads none).
@@ -124,7 +104,6 @@ export function writePrefixCode(w, code) {
     }
     i += run;
   }
-  code.tokens = tokens; code.extras = extras;
   const freqs = new Uint32Array(18);
   for (const token of tokens) freqs[token]++;
   let distinct = 0;
@@ -165,9 +144,8 @@ export function hybridToken(config, value, out) {
 
 // Counts a value into a token histogram (the same split as hybridToken), `base` symbols in (LZ77 lengths sit at 224).
 export function countToken(config, value, freqs, base = 0) {
-  if (value < config.splitToken) { freqs[base + value]++; return; }
-  const n = floorLog2(value), below = value - (1 << n);
-  freqs[base + config.splitToken + (((n - config.split) << (config.msb + config.lsb)) | ((below >> (n - config.msb)) << config.lsb) | (below & ((1 << config.lsb) - 1)))]++;
+  hybridToken(config, value, scratch);
+  freqs[base + scratch[0]]++;
 }
 
 // Writes the value through a code and configuration (token bits, then the raw bits).

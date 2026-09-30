@@ -75,8 +75,13 @@ function writeModularStream(w, planes, predictor) {
   planes.forEach((p, i) => codeChannel(w, histograms[i + 1].code, p.data, p.w, p.h, leaves[i]));
 }
 
-export function transcodeJPEG(bytes, jpeg = parseJPEG(bytes)) {
-  const {width, height, components} = jpeg, grey = components.length === 1;
+export function transcodeJPEG(bytes, jpeg = parseJPEG(bytes)) { return encodeVarDCT(jpeg); }
+
+// Shared coefficient writer. Pixel encoding supplies the same natural-order DCT8 planes as the JPEG reader;
+// quantScale lets its raw integer matrices carry fractional steps without a second entropy/frame writer.
+export function encodeVarDCT(jpeg) {
+  const {width, height, components, alpha} = jpeg, grey = components.length === 1;
+  const quantScale = jpeg.quantScale || 1;
   const ycbcr = jpeg.ycbcr || grey;
   const map = grey ? [0, 0, 0] : ycbcr ? [1, 0, 2] : [0, 1, 2];  // frame channel (X, Y, B) to JPEG component
   const comps = map.map(i => components[i]);
@@ -104,22 +109,24 @@ export function transcodeJPEG(bytes, jpeg = parseJPEG(bytes)) {
   // Every luma block's DC as the frame stores it, for the block context buckets.
   const lumaDc = new Int32Array(xsizeBlocks * ysizeBlocks);
   for (let by = 0; by < ysizeBlocks; by++) for (let bx = 0; bx < xsizeBlocks; bx++) lumaDc[by * xsizeBlocks + bx] = comps[1].coeffs[blockAt(1, bx, by)] * dcScale[1] + dcLift[1];
-  const lumaQuant = comps[1].quant, quantSum = lumaQuant[8] + lumaQuant[16] + lumaQuant[24] + lumaQuant[32] + lumaQuant[40];
+  const lumaQuant = comps[1].quant, quantSum = (lumaQuant[8] + lumaQuant[16] + lumaQuant[24] + lumaQuant[32] + lumaQuant[40]) / quantScale;
   const blocksTotal = xsizeBlocks * ysizeBlocks;
   const wanted = blocksTotal < 256 ? 0 : Math.max(1, Math.min(7, ceilLog2(blocksTotal) - ceilLog2(quantSum) - 7));
   let contexts = blockContexts(lumaDc, wanted, grey);
 
   const header = new BitWriter(256);
-  writeImageHeader(header, width, height, grey ? 1 : 3, false, {orientation: jpeg.orientation});
+  writeImageHeader(header, width, height, grey ? 1 : 3, !!alpha, {orientation: jpeg.orientation});
   // The frame header: VarDCT, adaptive DC smoothing skipped, the colour and subsampling of the JPEG.
   header.write(1, 0); header.write(2, 0); header.write(1, 0);
   header.write(2, 2); header.write(8, 128 - 17);  // flags: kSkipAdaptiveDCSmoothing
   header.write(1, ycbcr ? 1 : 0);
   if (ycbcr) for (let c = 0; c < 3; c++) header.write(2, rawH[c] === 0 && rawV[c] === 0 ? 0 : rawH[c] === 1 && rawV[c] === 1 ? 1 : rawH[c] === 1 ? 2 : 3);
   header.write(2, 0);  // no upsampling
+  if (alpha) header.write(2, 0);  // no extra-channel upsampling
   header.write(2, 0);  // one pass
   header.write(1, 0);  // no custom size
   header.write(2, 0);  // replace
+  if (alpha) header.write(2, 0);  // replace alpha
   header.write(1, 1);  // the last frame
   header.write(2, 0);  // no name
   header.write(1, 0); header.write(1, 0); header.write(2, 0); header.write(2, 0);  // loop filter: no gaborish, no EPF, no extensions
@@ -164,9 +171,17 @@ export function transcodeJPEG(bytes, jpeg = parseJPEG(bytes)) {
   // chroma from luma, no global modular tree.
   const dc = section(0);
   dc.write(1, 0);
+
+  // VarDCT's extra channels are modular and exact. A small alpha plane lives in DC global; larger ones are
+  // independent 256-pixel groups after their AC coefficients. Only one group's temporary plane is allocated.
+  const alphaPlane = (gx, gy) => {
+    const x0 = gx * GROUP_DIM, y0 = gy * GROUP_DIM, w = Math.min(GROUP_DIM, width - x0), h = Math.min(GROUP_DIM, height - y0), data = new Int32Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) data[y * w + x] = alpha[((y0 + y) * width + x0 + x) * 4 + 3];
+    return {w, h, data};
+  };
   // The DC step of each channel in the frame's units (the JPEG's DC quant, over the scale above, over 8 times 255),
   // stored times 128.
-  for (let c = 0; c < 3; c++) dc.write(16, float16Bits(comps[c].quant[0] / dcScale[c] / (255 * 8) * 128));
+  for (let c = 0; c < 3; c++) dc.write(16, float16Bits(comps[c].quant[0] / dcScale[c] / (255 * 8 * quantScale) * 128));
   dc.write(2, 3); dc.write(16, 65536 - 8193);
   dc.write(2, 1); dc.write(5, 0);
   dc.write(1, 0); dc.write(4, 0);
@@ -178,6 +193,7 @@ export function transcodeJPEG(bytes, jpeg = parseJPEG(bytes)) {
   // which a 4:4:4 or grey frame would apply to its Cr. Colour factor 84, both bases zero, no DC correlation.
   dc.write(1, 0); dc.write(2, 0); dc.write(16, 0); dc.write(16, 0); dc.write(8, 128); dc.write(8, 128);
   dc.write(1, 0);
+  if (alpha) writeModularStream(dc, [single ? alphaPlane(0, 0) : {w: 0, h: 0, data: new Int32Array(0)}], PREDICTOR.gradient);
 
   // DC groups: the DC coefficients as a modular image (luma first), then the AC metadata: all blocks 8x8 DCT at
   // quant one, no chroma-from-luma tiles, no sharpness.
@@ -208,7 +224,7 @@ export function transcodeJPEG(bytes, jpeg = parseJPEG(bytes)) {
   // other kinds from the library, one histogram set, the natural coefficient order, the AC histograms.
   const ac = section(1 + numDcGroups);
   ac.write(1, 0);
-  ac.write(3, 7); ac.write(16, float16Bits(1 / (8 * 255)));
+  ac.write(3, 7); ac.write(16, float16Bits(1 / (8 * 255 * quantScale)));
   writeModularStream(ac, [0, 1, 2].map(c => {
     const data = new Int32Array(64), quant = comps[c].quant;
     for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) data[8 * x + y] = quant[8 * y + x];
@@ -219,6 +235,10 @@ export function transcodeJPEG(bytes, jpeg = parseJPEG(bytes)) {
   ac.write(2, 2);
   writeHistograms(ac, {contextMap: coding.contextMap, histograms: coding.histograms});
 
-  for (let g = 0; g < numGroups; g++) { const w = section(2 + numDcGroups + g); tokens(g, (ctx, value) => coding.write(w, ctx, value)); }
+  for (let g = 0; g < numGroups; g++) {
+    const w = section(2 + numDcGroups + g);
+    tokens(g, (ctx, value) => coding.write(w, ctx, value));
+    if (alpha && !single) writeModularStream(w, [alphaPlane(g % groupsX, Math.floor(g / groupsX))], PREDICTOR.gradient);
+  }
   return assembleCodestream(header, writers.map(w => { const out = w || new BitWriter(16); out.zeroPadToByte(); return out.finish(); }));
 }

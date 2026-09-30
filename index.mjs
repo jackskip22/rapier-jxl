@@ -36,13 +36,15 @@ function guard(work) {
 }
 
 // Exact: every pixel comes back as it went in. An opaque alpha is dropped, a grey picture keeps one channel,
-// up to 512 colours become a palette, colour goes through the reversible YCoCg transform.
+// up to 512 colours may use a palette when its complete stream wins. Larger images sample reversible colour
+// transforms and predictors; the selected direct candidate is still compared with the palette by actual bytes.
 export function encodeLosslessRGBA(data, width, height) {
   admitPixels(data, width, height);
   return guard(() => answer(encodeLossless(data, width, height, {shape: inspectPixels(data, width, height)})));
 }
 
-// Lossy modular at a quality from 1 to 99 (90 is libjxl's distance 1.0); a picture of few colours is answered
+// Lossy modular at a quality from 1 to 99, using libjxl's quality-to-distance curve (not equivalent PSNR).
+// Alpha stays exact. A picture of few colours is answered
 // exact when that is fewer bytes. Quality 100 is the lossless answer.
 export function encodeLossyRGBA(data, width, height, quality = 90) {
   admitPixels(data, width, height);

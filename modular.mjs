@@ -2,7 +2,7 @@
 // Trees, transforms and channel residuals as the specification's modular decoder reads them. A channel is coded
 // through the tree leaf it lands on: prediction, then `PackSigned(residual)` as a hybrid-integer token; runs of
 // zero residuals of eight or more become one zero and an LZ77 copy of length run-1 at distance 1.
-import {packSigned, floorLog2} from './bits.mjs';
+import {packSigned} from './bits.mjs';
 import {buildCode, writeHistograms, uintConfig, countToken, hybridToken} from './prefix.mjs';
 
 export const PREDICTOR = Object.freeze({zero: 0, left: 1, top: 2, average0: 3, select: 4, gradient: 5, weighted: 6,
@@ -16,21 +16,21 @@ export function leaf(predictor, offset = 0, multiplier = 1) { return {predictor,
 export function split(property, splitval, left, right) { return {property, splitval, left, right}; }
 
 // One leaf per channel, split on the channel property (0): channels above the split value go left.
-export function channelTree(leaves) {
+function propertyTree(items, property) {
   const build = (lo, hi) => {
-    if (lo === hi) return leaves[lo];
+    if (lo === hi) return property ? items[lo].tree : items[lo];
     const mid = (lo + hi) >> 1;
-    return split(0, mid, build(mid + 1, hi), build(lo, mid));
+    return split(property, property ? items[mid].streamId : mid, build(mid + 1, hi), build(lo, mid));
   };
-  return build(0, leaves.length - 1);
+  return build(0, items.length - 1);
 }
+export function channelTree(leaves) { return propertyTree(leaves, 0); }
 
 // Writes the tree with its own histogram bundle (six contexts, one histogram) and numbers the leaves in the
 // decoder's order. Returns the leaves in that order.
 export function writeTree(w, root) {
   const queue = [root], tokens = [], leaves = [];
-  while (queue.length) {
-    const node = queue.shift();
+  for (const node of queue) {
     if (node.left) { tokens.push(node.property + 1, packSigned(node.splitval)); queue.push(node.left, node.right); continue; }
     node.context = leaves.length; leaves.push(node);
     const mulLog = node.multiplier === 1 ? 0 : 31 - Math.clz32(node.multiplier & -node.multiplier);
@@ -75,14 +75,7 @@ export function writeModularHeader(w, {useGlobalTree = true, transforms = []} = 
 
 // Splits on the stream property (1): one subtree per section, for sections whose channels differ. `sections` are
 // {streamId, tree} sorted by stream id; a stream above the split value goes left.
-export function streamTree(sections) {
-  const build = (lo, hi) => {
-    if (lo === hi) return sections[lo].tree;
-    const mid = (lo + hi) >> 1;
-    return split(1, sections[mid].streamId, build(mid + 1, hi), build(lo, mid));
-  };
-  return build(0, sections.length - 1);
-}
+export function streamTree(sections) { return propertyTree(sections, 1); }
 
 // The channel histogram bundle after a tree: histogram 0 holds the LZ77 distance (one symbol, 1: distance one);
 // histogram i+1 is `freqs[i]`, and every ordered leaf names its histogram through `histogramOf(leaf)`.
@@ -91,7 +84,10 @@ export function writeChannelHistograms(w, orderedLeaves, freqs, histogramOf = le
   for (const leaf of orderedLeaves) contextMap[leaf.context] = histogramOf(leaf) + 1;
   const distance = new Uint32Array(2); distance[1] = 1;
   const histograms = [{config: RESIDUAL_CONFIG, code: buildCode(distance)}];
-  for (const f of freqs) histograms.push({config: RESIDUAL_CONFIG, code: buildCode(f)});
+  // The decoder derives the histogram count from the map. Squeeze can leave trailing zero-width/height
+  // channels outside every section; writing their unreferenced histograms would shift the following stream.
+  const count = Math.max(...contextMap);
+  for (let i = 0; i < count; i++) histograms.push({config: RESIDUAL_CONFIG, code: buildCode(freqs[i])});
   writeHistograms(w, {lz77: LZ77, contextMap, histograms});
   return histograms;
 }
@@ -132,23 +128,22 @@ export function codeChannel(w, target, plane, width, height, leaf) {
   for (let y = 0, index = 0; y < height; y++) {
     for (let x = 0; x < width; x++, index++) {
       let pred;
-      if (predictor === 5) {
+      if (predictor === 0) pred = 0;
+      else {
         const left = x ? plane[index - 1] : y ? plane[index - width] : 0;
         const top = y ? plane[index - width] : left;
-        const topleft = x && y ? plane[index - width - 1] : left;
-        const grad = left + top - topleft, lo = left < top ? left : top, hi = left < top ? top : left;
-        pred = grad < lo ? lo : grad > hi ? hi : grad;
-      } else if (predictor === 0) pred = 0;
-      else if (predictor === 1) pred = x ? plane[index - 1] : y ? plane[index - width] : 0;
-      else if (predictor === 2) pred = y ? plane[index - width] : x ? plane[index - 1] : 0;
-      else if (predictor === 3) {
-        const left = x ? plane[index - 1] : y ? plane[index - width] : 0, top = y ? plane[index - width] : left;
-        pred = ((left + top) / 2) | 0;
-      } else if (predictor === 4) {
-        const left = x ? plane[index - 1] : y ? plane[index - width] : 0, top = y ? plane[index - width] : left;
-        const topleft = x && y ? plane[index - width - 1] : left, p = left + top - topleft;
-        pred = Math.abs(p - left) < Math.abs(p - top) ? left : top;
-      } else throw new Error('predictor ' + predictor + ' is not coded here');
+        if (predictor === 1) pred = left;
+        else if (predictor === 2) pred = top;
+        else if (predictor === 3) pred = ((left + top) / 2) | 0;
+        else {
+          const topleft = x && y ? plane[index - width - 1] : left, grad = left + top - topleft;
+          if (predictor === 5) {
+            const lo = left < top ? left : top, hi = left < top ? top : left;
+            pred = grad < lo ? lo : grad > hi ? hi : grad;
+          } else if (predictor === 4) pred = Math.abs(grad - left) < Math.abs(grad - top) ? left : top;
+          else throw new Error('predictor ' + predictor + ' is not coded here');
+        }
+      }
       residual(index, pred);
     }
   }

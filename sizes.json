@@ -1,24 +1,25 @@
 {
   "package": "rapier-jxl",
-  "version": "1.1.17",
+  "version": "1.1.18",
   "measured": "exact bytes of the staged files; gzip level 9; Brotli quality 11, text mode",
   "node": "v22.22.2",
   "terser": "5.51.2",
   "source": {
-    "bytes": 94845,
-    "gzip": 28403,
+    "bytes": 101832,
+    "gzip": 30902,
     "sha256": {
       "bits.mjs": "d9b7973501ab8af068ec97c04552f538dbf19c2f77ac0b959c84a9a5c5cd2318",
-      "prefix.mjs": "df96b1f05ea6704008765cd591d1e503dffbf566a8f611ba5622342890f7aab0",
-      "modular.mjs": "b22879efd95a59e9c06f78f06f07ef191ebdc3c01e1aabda9f8329fdf44e768d",
+      "prefix.mjs": "e3350ef2e223a51b7dbd1c116b2163b30cf4cfd11fa21b94a406bcb1ab55c6a5",
+      "modular.mjs": "26516034c70b3133503f344e94e4b43e7bb2056048b6070555fff3b819f76e5b",
       "frame.mjs": "5753c296b1549bd7e7d812366c60a2df59d5249138eb4336e3dccfdf8a66ba49",
-      "squeeze.mjs": "ffd5494fea68da35283f899643eeaee989295257536365328da176edb627f6ba",
-      "lossless.mjs": "7157179338405ae108503abe09589704e8a217bb156188135015709bcf3586eb",
-      "lossy.mjs": "e164951d48e1f2c299b859c89716aae9aad9c47a6bfa090b6fca767deb980a74",
-      "jpeg.mjs": "7776ca57c65e8043cfda8a4a2eb960bb261b382f2f847216e94efa8bb1872a0a",
-      "entropy.mjs": "4fbd33b647b58d099f60a288e2559b7c9c627098be7fec10160c47abb05d1def",
-      "vardct.mjs": "425134cedd9529676035107a77151b97ddbcf037d3ba8a09eae065e1e83d7619",
-      "index.mjs": "460a0e5651c51e5e31a96eaacc22b3df896eb5e38cbf699eeeb328404c025b48"
+      "squeeze.mjs": "ec01352dcf22b7346c7f0014e17e6ba2e4fe8243c358db77eee5fc830a3217e8",
+      "lossless.mjs": "1fa54f0f240990f4fde06cdd129ee3aef52fb0a6bf0c49b993fb394d22df0885",
+      "lossy.mjs": "1ad5301cb4f5f3a2e7ec86ed9bb7e8a8fcfc979e7c2896662ca3f1bc7048c485",
+      "jpeg.mjs": "11c122a613c7a8250382e329860e84095abfa008952c134cbe8b620aef3559c4",
+      "entropy.mjs": "639028e81f06933ea9ca9100f25f48964e0d39620140a0b0623f4a0e40ff1fa6",
+      "vardct.mjs": "7a48cd807663a3a5d7b9ae7d57719c5fe5c4bc054efc6a79bc4c7a5507f43003",
+      "index.mjs": "085eff1c303696cd1c82479b8ff3410c86f3f84be6bd8c49e827cb728c9e9a68",
+      "photo.mjs": "1f300c8dcbd5459332f610ae04752836aac7f0b8420989df3ca36d4d2961ce4f"
     }
   },
   "bundles": [
@@ -37,14 +38,13 @@
         "parseJPEG",
         "inspectPixels"
       ],
-      "bytes": 39447,
-      "gzip": 15417,
-      "brotli": 13651,
-      "sha256": "908db8b1ee84581124fd2693ec76013d7bba9f4c1de362069da61aa4836ad47f",
+      "bytes": 39892,
+      "gzip": 15748,
+      "brotli": 13936,
+      "sha256": "2b6cadaf5a6e085d6b4ce2ee84e589bd2587fe3fe6cae3ce946b416d561c6e57",
       "compress": {
         "passes": 2,
-        "hoist_funs": true,
-        "hoist_vars": true,
+        "inline": 1,
         "module": true
       }
     },
@@ -55,10 +55,10 @@
         "encodeLosslessRGBA",
         "LIMITS"
       ],
-      "bytes": 16028,
-      "gzip": 6637,
-      "brotli": 5842,
-      "sha256": "af6cc5bb8f646e8d8ad7c732dca06e5bf6ce6c0b66ad691b5af5a65a35eef0a8",
+      "bytes": 16085,
+      "gzip": 6747,
+      "brotli": 5948,
+      "sha256": "0ad4c7229bf3871a5513ac673904a38ed03a9594d455e48d6b1e57ee9e04aca2",
       "compress": {
         "passes": 2,
         "hoist_funs": true,
@@ -73,13 +73,29 @@
         "transcode",
         "LIMITS"
       ],
-      "bytes": 30185,
-      "gzip": 12042,
-      "brotli": 10637,
-      "sha256": "8f87338f9cf5d05e5873a9632269f154ea9dcfcae7abb65e862861c4975df7b0",
+      "bytes": 30450,
+      "gzip": 12187,
+      "brotli": 10776,
+      "sha256": "5267eacbf0c50202bdfa476ea30f890284c6150f467bcd520e485b71921ccc20",
       "compress": {
         "passes": 2,
         "inline": 1,
+        "module": true
+      }
+    },
+    {
+      "file": "photo.min.mjs",
+      "entry": "./photo",
+      "exports": [
+        "encodePhotoRGBA",
+        "LIMITS"
+      ],
+      "bytes": 25418,
+      "gzip": 10408,
+      "brotli": 9197,
+      "sha256": "1b25fd48e9dcea8d131a3eeaa05850314132324d02a70398871ea360dd06c293",
+      "compress": {
+        "passes": 2,
         "module": true
       }
     }

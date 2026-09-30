@@ -21,7 +21,8 @@ function buildHuffman(counts, symbols) {
   for (let length = 1; length <= 16; length++) {
     for (let i = 0; i < counts[length - 1]; i++) {
       const symbol = symbols[k++], start = code << (16 - length), n = 1 << (16 - length);
-      if (start + n > 65536) throw jpegError('bad Huffman table');
+      // An all-ones code would turn the required scan padding into a symbol.
+      if (start + n >= 65536) throw jpegError('bad Huffman table');
       lookup.fill((length << 8) | symbol, start, start + n);
       code++;
     }
@@ -71,7 +72,8 @@ export function parseJPEG(bytes) {
     const marker = bytes[pos++];
     if (marker === 0xD9) break;
     if (marker === 0xD8) throw jpegError('a second start');
-    if ((marker >= 0xD0 && marker <= 0xD7) || marker === 0x01) continue;
+    if (marker >= 0xD0 && marker <= 0xD7) throw jpegError('a restart marker outside a scan');
+    if (marker === 0x01) continue;
     if (pos + 2 > bytes.length) throw jpegError('truncated');
     const length = u16(pos), segment = pos + 2, end = pos + length;
     if (length < 2 || end > bytes.length) throw jpegError('bad segment');
@@ -83,6 +85,7 @@ export function parseJPEG(bytes) {
         at++;
         const table = new Int32Array(64);
         for (let k = 0; k < 64; k++) { table[ZIGZAG[k]] = pq ? u16(at) : bytes[at]; at += pq ? 2 : 1; if (!table[ZIGZAG[k]]) throw jpegError('a zero quantisation step'); }
+        if (frame?.progressive && frame.components.some(c => c.tq === tq && c.quant && c.coverage.some(v => v !== 0) && c.quant.some((v, k) => v !== table[k]))) throw jpegError('a quantisation table changed between progressive scans');
         quant[tq] = table;
       }
     } else if (marker === 0xC4) {
@@ -140,6 +143,10 @@ export function parseJPEG(bytes) {
         const component = frame.components.find(c => c.id === bytes[at]);
         if (!component) throw jpegError('a scan of an unknown component');
         if (scan.some(s => s.component === component)) throw jpegError('a component twice in one scan');
+        // A table may be reused for another component after this one's scans. Keep the table that actually
+        // decoded each component, not whatever happens to occupy its slot at the end of the file.
+        if (!component.quant) component.quant = quant[component.tq];
+        if (!component.quant) throw jpegError('a scan without its quantisation table');
         scan.push({component, dc: huffman[0][bytes[at + 1] >> 4], ac: huffman[1][bytes[at + 1] & 15]});
       }
       const ss = bytes[at], se = bytes[at + 1], ah = bytes[at + 2] >> 4, al = bytes[at + 2] & 15;
@@ -161,8 +168,6 @@ export function parseJPEG(bytes) {
   }
   if (!frame || !frame.scans) throw jpegError('no picture');
   for (const c of frame.components) {
-    if (!quant[c.tq]) throw jpegError('a component without its quantisation table');
-    c.quant = quant[c.tq];
     for (let k = 0; k < 64; k++) if (c.coverage[k] !== 0) throw jpegError(frame.progressive ? 'a progressive JPEG whose scans do not finish every coefficient' : 'a component without its scan');
   }
   if (icc.count && !profileIsSRGB(icc)) throw jpegError('a colour profile other than sRGB (decode the picture and encode its pixels)');
@@ -255,7 +260,10 @@ function decodeScan(bytes, start, frame, scan, ss, se, ah, al, restartInterval) 
   };
   // The bytes of an interval are consumed whole but for the last one's padding bits; then its marker, in order.
   const atMarker = () => {
-    if (count - pad >= 8) throw jpegError('bytes left over in a scan');
+    const remaining = count - pad;
+    if (remaining >= 8) throw jpegError('bytes left over in a scan');
+    if (eobrun) throw jpegError('an end-of-band run past its interval');
+    if (remaining && ((buffer >>> pad) & ((1 << remaining) - 1)) !== (1 << remaining) - 1) throw jpegError('bad scan padding');
     while (pos + 1 < bytes.length && bytes[pos] === 0xFF && bytes[pos + 1] === 0xFF) pos++;
   };
   const restart = index => {
@@ -284,14 +292,22 @@ function decodeScan(bytes, start, frame, scan, ss, se, ah, al, restartInterval) 
     coeffs[at] = dcValue(s, decode(s.dc));
     for (let k = 1; k < 64;) {
       const rs = decode(s.ac), r = rs >> 4, size = rs & 15;
-      if (!size) { if (r === 15) { k += 16; continue; } break; }
+      if (!size) {
+        if (r === 15) { k += 16; if (k > 64) throw jpegError('coefficients past the block'); continue; }
+        if (r) throw jpegError('an end-of-band run in a sequential scan');
+        break;
+      }
       k += r;
       if (k > 63) throw jpegError('coefficients past the block');
       coeffs[at + ZIGZAG[k]] = acValue(size, 0);
       k++;
     }
   };
-  const dcFirst = (s, coeffs, at) => { coeffs[at] = dcValue(s, decode(s.dc)) << al; };
+  const dcFirst = (s, coeffs, at) => {
+    const value = dcValue(s, decode(s.dc)) * (1 << al);
+    if (value > 2047 || value < -2048) throw jpegError('a DC value out of range');
+    coeffs[at] = value;
+  };
   const dcRefine = (s, coeffs, at) => { if (receive(1)) coeffs[at] |= 1 << al; };
   const acFirst = (s, coeffs, at) => {
     if (eobrun > 0) { eobrun--; return; }
@@ -299,10 +315,10 @@ function decodeScan(bytes, start, frame, scan, ss, se, ah, al, restartInterval) 
       const rs = decode(s.ac), r = rs >> 4, size = rs & 15;
       if (!size) {
         if (r < 15) { eobrun = (1 << r) - 1 + (r ? receive(r) : 0); break; }
-        k += 16; continue;
+        k += 16; if (k > se + 1) throw jpegError('coefficients past the band'); continue;
       }
       k += r;
-      if (k > 63) throw jpegError('coefficients past the block');
+      if (k > se) throw jpegError('coefficients past the band');
       coeffs[at + ZIGZAG[k]] = acValue(size, al);
       k++;
     }
@@ -322,7 +338,8 @@ function decodeScan(bytes, start, frame, scan, ss, se, ah, al, restartInterval) 
           if (coeffs[z] !== 0) { if (receive(1) && (coeffs[z] & p1) === 0) coeffs[z] += coeffs[z] >= 0 ? p1 : m1; }
           else if (--r < 0) break;
         }
-        if (value && k <= se) coeffs[at + ZIGZAG[k]] = value;
+        if (r >= 0 || (value && k > se)) throw jpegError('coefficients past the band');
+        if (value) coeffs[at + ZIGZAG[k]] = value;
       }
     }
     if (eobrun > 0) {
@@ -350,9 +367,13 @@ function decodeScan(bytes, start, frame, scan, ss, se, ah, al, restartInterval) 
       }
     }
   }
-  // The scan ends at a marker (a trailing restart marker is let pass), or at the end of the file.
+  // The scan ends at a marker or EOF. A final complete interval may carry its next restart marker, once.
   atMarker();
-  while (pos + 1 < bytes.length && bytes[pos] === 0xFF && bytes[pos + 1] >= 0xD0 && bytes[pos + 1] <= 0xD7) { pos += 2; while (pos + 1 < bytes.length && bytes[pos] === 0xFF && bytes[pos + 1] === 0xFF) pos++; }
+  if (bytes[pos] === 0xFF && bytes[pos + 1] >= 0xD0 && bytes[pos + 1] <= 0xD7) {
+    if (!restartInterval || total % restartInterval || bytes[pos + 1] !== 0xD0 + ((total / restartInterval - 1) & 7)) throw jpegError('a restart marker out of order');
+    pos += 2;
+    while (pos + 1 < bytes.length && bytes[pos] === 0xFF && bytes[pos + 1] === 0xFF) pos++;
+  }
   if (pos < bytes.length && !(bytes[pos] === 0xFF && pos + 1 < bytes.length && bytes[pos + 1] !== 0 && bytes[pos + 1] !== 0xFF)) throw jpegError('bytes left over after a scan');
   return pos;
 }

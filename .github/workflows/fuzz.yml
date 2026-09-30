@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: MIT
+name: JPEG XL conformance
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: Deterministic mutation seed
+        default: '20260930'
+  schedule:
+    - cron: '23 4 * * 1'
+permissions:
+  contents: read
+jobs:
+  conformance:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+      - run: npm install --ignore-scripts
+      - run: sudo apt-get update && sudo apt-get install --yes ffmpeg
+      - name: Decode every returned stream with both oracles
+        env:
+          JXL_FUZZ_REQUIRE_NATIVE: '1'
+          JXL_FUZZ_SEED: ${{ inputs.seed || '20260930' }}
+          JXL_FUZZ_JPEGS: '2048'
+          JXL_FUZZ_PIXELS: '128'
+          JXL_FUZZ_FAILURE_DIR: fuzz-failures
+        run: node --test "public/test/*.test.mjs"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-reproduction
+          path: fuzz-failures
+          if-no-files-found: ignore

@@ -9,8 +9,6 @@ import {PREDICTOR, ALPHABET, leaf, channelTree, streamTree, writeTree, writeModu
 import {forwardSqueeze} from './squeeze.mjs';
 import {inspectPixels} from './lossless.mjs';
 
-const LUMA_STEPS = [163.84, 81.92, 40.96, 20.48, 10.24, 5.12, 2.56, 1.28, 0.64, 0.32, 0.16, 0.08, 0.04, 0.02, 0.01, 0.005];
-const CHROMA_STEPS = [1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1, 0.5, 0.5, 0.5, 0.5, 0.5];
 const QUALITY_FACTOR = 0.35, LUMA_FACTOR = 1.1;
 
 // libjxl's JxlEncoderDistanceFromQuality.
@@ -22,9 +20,10 @@ export function distanceFromQuality(quality) {
 export function quantiserFor(component, hshift, vshift, distance) {
   let shift = Math.min(16, hshift + vshift);
   if (shift > 0) shift--;
-  // An extra channel (alpha) is quantised at half the colour steps: its edges fringe before colour does.
-  const base = component === 3 ? 0.125 * distance : 0.25 * distance ** 1.2;
-  const q = component === 1 || component === 2 ? base * QUALITY_FACTOR * CHROMA_STEPS[shift] : base * QUALITY_FACTOR * LUMA_FACTOR * LUMA_STEPS[shift];
+  // Alpha is authored coverage: quantising its Squeeze residuals changes compositing even when RGB is close.
+  if (component === 3) return 1;
+  const base = 0.25 * distance ** 1.2, scale = 2 ** shift;
+  const q = component === 1 || component === 2 ? base * QUALITY_FACTOR * Math.max(0.5, 1024 / scale) : base * QUALITY_FACTOR * LUMA_FACTOR * (163.84 / scale);
   return Math.max(1, Math.floor(q));
 }
 
