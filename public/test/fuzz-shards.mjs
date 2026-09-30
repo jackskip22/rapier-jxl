@@ -44,22 +44,23 @@ while(plan.ranges.some((_,i)=>!progress(i)?.complete)){
   await new Promise(resolve=>setTimeout(resolve,100));
 }
 const inputs=new Set(),used=new Set(),newProofs=new Map(),outcomes=new Map();
-const summary={plan,complete:true,failures:0,mutatedInputs:0,returnedStreams:0,cacheHits:0,decoderExecutions:{oxide:0,native:0},floatDecoderExecutions:0,refusals:{},paths:{},comparison:{identical:0,changed:0,refusalChanges:0},differences:{},receipts:[],maximumLeaseSeconds,wallSeconds:Math.max(previousWall,(Date.now()-began)/1000)};
+const summary={plan,complete:true,failures:0,mutatedInputs:0,returnedStreams:0,cacheHits:0,decoderExecutions:{oxide:0,native:0,jxlRs:0},floatDecoderExecutions:0,refusals:{},paths:{},comparison:{identical:0,changed:0,refusalChanges:0},differences:{},jxlRsDifferences:{},receipts:[],maximumLeaseSeconds,wallSeconds:Math.max(previousWall,(Date.now()-began)/1000)};
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 for(let i=0;i<workers;i++){
   const dir=join(root,'shard-'+i),p=progress(i),range=plan.ranges[i];
+  assert.deepEqual(p.oracles,progress(0).oracles,'Every shard uses identical decoder identities and optional availability');
   assert.equal(p.complete,true,'An incomplete shard cannot supply a successful receipt');
   assert.equal(p.failures,0,'A shard with recorded failures cannot supply a successful receipt');summary.failures+=p.failures;
   assert.equal(p.jpeg,range.jpegEnd);assert.equal(p.pixel,range.pixelEnd);assert.equal(p.mutatedInputs,range.jpegEnd-range.jpegStart+range.pixelEnd-range.pixelStart);
   assert.equal(p.returnedStreams,p.cacheHits+p.uniqueOracleDecodes.oxide,'Every stream is newly decoded or uses earlier exact-byte evidence');
   for(const key of ['mutatedInputs','returnedStreams','cacheHits'])summary[key]+=p[key];
   for(const key of ['refusals','paths','comparison'])for(const [name,value]of Object.entries(p[key]))summary[key][name]=(summary[key][name]||0)+value;
-  for(const oracle of ['oxide','native'])summary.decoderExecutions[oracle]+=p.uniqueOracleDecodes[oracle];
+  for(const oracle of ['oxide','native','jxlRs'])summary.decoderExecutions[oracle]+=p.uniqueOracleDecodes[oracle];
   summary.floatDecoderExecutions+=p.floatDecoderExecutions;
   for(const value of readFileSync(join(dir,'inputs.txt'),'utf8').trim().split('\n').filter(Boolean))inputs.add(value);
   for(const value of readFileSync(join(dir,'used-streams.txt'),'utf8').trim().split('\n').filter(Boolean))used.add(value);
   for(const line of readFileSync(join(dir,'streams.jsonl'),'utf8').trim().split('\n').filter(Boolean)){
-    const proof=JSON.parse(line),previous=newProofs.get(proof.key);if(previous){assert.equal(previous.oxide,proof.oxide);assert.equal(previous.native,proof.native);}else newProofs.set(proof.key,proof);
+    const proof=JSON.parse(line),previous=newProofs.get(proof.key);if(previous){assert.equal(previous.oxide,proof.oxide);assert.equal(previous.native,proof.native);assert.equal(previous.jxlRs,proof.jxlRs);}else newProofs.set(proof.key,proof);
   }
   for(const line of readFileSync(join(dir,'outcomes.jsonl'),'utf8').trim().split('\n').filter(Boolean)){
     const row=JSON.parse(line),previous=outcomes.get(row.input);if(previous)assert.deepEqual(previous,row,'Overlapping input bytes have identical outcomes');else outcomes.set(row.input,row);
@@ -70,10 +71,18 @@ for(let i=0;i<workers;i++){
 assert.equal(summary.mutatedInputs,jpegs+pixels);summary.uniqueInputs=inputs.size;summary.uniqueReturnedStreams=used.size;
 summary.uniqueNewlyDecodedStreams=newProofs.size;summary.duplicateDecoderExecutions=summary.decoderExecutions.oxide-newProofs.size;
 summary.priorEvidence=progress(0).initialEvidence;summary.oracles=progress(0).oracles;summary.sources=progress(0).sources;summary.against=progress(0).against;
+summary.jxlRsUnavailable=progress(0).jxlRsUnavailable;
 const allProofs=new Map(newProofs);
 if(plan.reuse)for(const line of readFileSync(join(plan.reuse,'streams.jsonl'),'utf8').trim().split('\n').filter(Boolean)){const row=JSON.parse(line);if(!allProofs.has(row.key))allProofs.set(row.key,row);}
 for(const key of used){
   const proof=allProofs.get(key);assert.ok(proof,'Every used stream has an exact-byte proof');
+  if(summary.oracles.jxlRs){
+    assert.ok(proof.jxlRs,'Every used stream has configured jxl-rs proof');
+    for(const [name,value]of Object.entries(proof.jxlRsDifferences)){
+      const group=summary.jxlRsDifferences[name]||={differingStreams:0,rgb:0,alpha:0,maximum:0};
+      group.differingStreams+=Number(value.rgb>0||value.alpha>0);group.rgb+=value.rgb;group.alpha+=value.alpha;group.maximum=Math.max(group.maximum,value.maximum);
+    }
+  }
   if(proof.different){
     const kind=proof.firstInput?.type==='pixels'?'photo':'jpeg',name=kind+':'+proof.maximum;
     const row=summary.differences[name]||={uniqueStreams:0,channels:[0,0,0,0],maximum:proof.maximum,integerTie:0,reconstruction:0,representativeStream:key};

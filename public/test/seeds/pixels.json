@@ -20,7 +20,11 @@
     "width": 1,
     "height": 257,
     "kind": "rgba",
-    "qualities": [1, 80, 99],
+    "qualities": [
+      1,
+      80,
+      99
+    ],
     "reason": "1x257 RGBA Squeeze leaves zero-width chroma channels between channels that own group pieces; histograms numbered by channel left a hole the decoder refuses. Quality 99 answers the exact palette stream."
   },
   {
@@ -34,5 +38,41 @@
       90
     ],
     "reason": "8x8 crop from deterministic synthetic-photo-0005 retains an investigated one-byte VarDCT output-rounding discrepancy."
+  },
+  {
+    "file": "jxl-rs-subnormal.rgba",
+    "width": 2,
+    "height": 1,
+    "seed": 0,
+    "iteration": 0,
+    "kind": "half-subnormal-quantization",
+    "qualities": [
+      90
+    ],
+    "reason": "The unmodified jxl-rs utility F16 reader halves subnormal raw quantization multipliers; retained 2x1 black/white photo q90 exposes the decoder defect."
+  },
+  {
+    "file": "jxl-rs-default-squeeze.rgba",
+    "width": 1,
+    "height": 8,
+    "seed": 296786255,
+    "iteration": 13,
+    "kind": "default-squeeze-empty-residual",
+    "qualities": [
+      50
+    ],
+    "reason": "Default chroma Squeeze includes both initial transforms even when a residual plane is empty; skipping it shifts the later residual channel indices."
+  },
+  {
+    "file": "jxl-rs-squeeze-border.rgba.gz",
+    "width": 2049,
+    "height": 257,
+    "seed": 0,
+    "iteration": 0,
+    "kind": "squeeze-coarse-border-crop",
+    "qualities": [
+      90
+    ],
+    "reason": "An average tile can span several output tiles; the neighboring border must use the current average rectangle origin along its unchanged axis."
   }
 ]

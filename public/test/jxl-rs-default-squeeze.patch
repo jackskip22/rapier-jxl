@@ -1,0 +1,24 @@
+--- a/jxl/src/frame/modular/transforms/squeeze.rs
++++ b/jxl/src/frame/modular/transforms/squeeze.rs
+@@ -62,15 +62,12 @@
+             begin_channel: num_meta_channels as u32 + 1,
+             num_channels: 2,
+         };
+-        if w > 1 {
+-            params.push(sp);
+-        }
+-        if h > 1 {
+-            params.push(SqueezeParams {
+-                horizontal: false,
+-                ..sp
+-            });
+-        }
++        // Empty residual planes still occupy channel slots in the default transform.
++        params.push(sp);
++        params.push(SqueezeParams {
++            horizontal: false,
++            ..sp
++        });
+     }
+ 
+     const MAX_FIRST_PREVIEW_SIZE: usize = 8;

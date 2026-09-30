@@ -1,0 +1,325 @@
+{
+  "file": "jxl-rs-squeeze-border.rgba.gz",
+  "width": 2049,
+  "height": 257,
+  "type": "pixels",
+  "path": "core",
+  "quality": 90,
+  "sourceSha256": "93c4d5352556f0e777f3a175a7db426d4994eb307cbe46e15f9c5f11156eae8a",
+  "sourceFormula": "RGBA(x,y) = [(x+y)&255, (3*x+7*y)&255, (13*x+19*y)&255, 255]",
+  "streamFile": "jxl-rs-squeeze-border.jxl.gz",
+  "stream": "ff8d890b3ff22d7f6d50c78442978792361afd3ef41b68c740a9879bd29fa73f",
+  "bytes": 325155,
+  "upstream": "jxl-rs 0.7.4 2e65fa59b43aebd13c0530d9dcfcf151b19567d3",
+  "repaired": "jxl-rs 0.7.4 2e65fa59b43aebd13c0530d9dcfcf151b19567d3+half-subnormals-squeeze",
+  "referenceSha256": "d929c854921e3b95d6d6699228eceb7bb899dd86228fe6ef13515b5faeff705f",
+  "upstreamSha256": "3cd36975a211cc84648f6b13b70f74281d808e148826e268bff0badd77f792d8",
+  "rgbDifferences": 43,
+  "alphaDifferences": 0,
+  "maximum": 3,
+  "differingCoordinates": [
+    {
+      "x": 2042,
+      "y": 252,
+      "channel": 0,
+      "native": 250,
+      "upstream": 249
+    },
+    {
+      "x": 2043,
+      "y": 252,
+      "channel": 0,
+      "native": 251,
+      "upstream": 250
+    },
+    {
+      "x": 2044,
+      "y": 253,
+      "channel": 0,
+      "native": 250,
+      "upstream": 249
+    },
+    {
+      "x": 2045,
+      "y": 253,
+      "channel": 2,
+      "native": 161,
+      "upstream": 162
+    },
+    {
+      "x": 2041,
+      "y": 254,
+      "channel": 2,
+      "native": 131,
+      "upstream": 130
+    },
+    {
+      "x": 2042,
+      "y": 254,
+      "channel": 2,
+      "native": 144,
+      "upstream": 143
+    },
+    {
+      "x": 2044,
+      "y": 254,
+      "channel": 0,
+      "native": 248,
+      "upstream": 247
+    },
+    {
+      "x": 2045,
+      "y": 254,
+      "channel": 2,
+      "native": 183,
+      "upstream": 184
+    },
+    {
+      "x": 2046,
+      "y": 254,
+      "channel": 0,
+      "native": 254,
+      "upstream": 253
+    },
+    {
+      "x": 2047,
+      "y": 254,
+      "channel": 2,
+      "native": 208,
+      "upstream": 209
+    },
+    {
+      "x": 2034,
+      "y": 255,
+      "channel": 2,
+      "native": 52,
+      "upstream": 51
+    },
+    {
+      "x": 2036,
+      "y": 255,
+      "channel": 0,
+      "native": 245,
+      "upstream": 244
+    },
+    {
+      "x": 2037,
+      "y": 255,
+      "channel": 0,
+      "native": 247,
+      "upstream": 246
+    },
+    {
+      "x": 2040,
+      "y": 255,
+      "channel": 0,
+      "native": 246,
+      "upstream": 247
+    },
+    {
+      "x": 2041,
+      "y": 255,
+      "channel": 2,
+      "native": 147,
+      "upstream": 146
+    },
+    {
+      "x": 2042,
+      "y": 255,
+      "channel": 2,
+      "native": 159,
+      "upstream": 158
+    },
+    {
+      "x": 2043,
+      "y": 255,
+      "channel": 0,
+      "native": 247,
+      "upstream": 248
+    },
+    {
+      "x": 2044,
+      "y": 255,
+      "channel": 0,
+      "native": 248,
+      "upstream": 249
+    },
+    {
+      "x": 2044,
+      "y": 255,
+      "channel": 2,
+      "native": 188,
+      "upstream": 189
+    },
+    {
+      "x": 2045,
+      "y": 255,
+      "channel": 0,
+      "native": 251,
+      "upstream": 250
+    },
+    {
+      "x": 2045,
+      "y": 255,
+      "channel": 1,
+      "native": 239,
+      "upstream": 238
+    },
+    {
+      "x": 2046,
+      "y": 255,
+      "channel": 2,
+      "native": 214,
+      "upstream": 215
+    },
+    {
+      "x": 2047,
+      "y": 255,
+      "channel": 0,
+      "native": 255,
+      "upstream": 254
+    },
+    {
+      "x": 2047,
+      "y": 255,
+      "channel": 1,
+      "native": 245,
+      "upstream": 246
+    },
+    {
+      "x": 2034,
+      "y": 256,
+      "channel": 0,
+      "native": 242,
+      "upstream": 243
+    },
+    {
+      "x": 2036,
+      "y": 256,
+      "channel": 2,
+      "native": 101,
+      "upstream": 102
+    },
+    {
+      "x": 2037,
+      "y": 256,
+      "channel": 2,
+      "native": 114,
+      "upstream": 115
+    },
+    {
+      "x": 2038,
+      "y": 256,
+      "channel": 2,
+      "native": 127,
+      "upstream": 128
+    },
+    {
+      "x": 2040,
+      "y": 256,
+      "channel": 0,
+      "native": 248,
+      "upstream": 249
+    },
+    {
+      "x": 2040,
+      "y": 256,
+      "channel": 2,
+      "native": 152,
+      "upstream": 151
+    },
+    {
+      "x": 2041,
+      "y": 256,
+      "channel": 0,
+      "native": 249,
+      "upstream": 251
+    },
+    {
+      "x": 2041,
+      "y": 256,
+      "channel": 2,
+      "native": 165,
+      "upstream": 164
+    },
+    {
+      "x": 2042,
+      "y": 256,
+      "channel": 0,
+      "native": 250,
+      "upstream": 252
+    },
+    {
+      "x": 2042,
+      "y": 256,
+      "channel": 2,
+      "native": 178,
+      "upstream": 177
+    },
+    {
+      "x": 2043,
+      "y": 256,
+      "channel": 0,
+      "native": 251,
+      "upstream": 252
+    },
+    {
+      "x": 2043,
+      "y": 256,
+      "channel": 2,
+      "native": 192,
+      "upstream": 191
+    },
+    {
+      "x": 2044,
+      "y": 256,
+      "channel": 2,
+      "native": 208,
+      "upstream": 210
+    },
+    {
+      "x": 2045,
+      "y": 256,
+      "channel": 0,
+      "native": 254,
+      "upstream": 253
+    },
+    {
+      "x": 2045,
+      "y": 256,
+      "channel": 1,
+      "native": 247,
+      "upstream": 246
+    },
+    {
+      "x": 2045,
+      "y": 256,
+      "channel": 2,
+      "native": 220,
+      "upstream": 223
+    },
+    {
+      "x": 2046,
+      "y": 256,
+      "channel": 2,
+      "native": 233,
+      "upstream": 236
+    },
+    {
+      "x": 2047,
+      "y": 256,
+      "channel": 0,
+      "native": 255,
+      "upstream": 253
+    },
+    {
+      "x": 2047,
+      "y": 256,
+      "channel": 2,
+      "native": 240,
+      "upstream": 241
+    }
+  ],
+  "owner": "libjxl/jxl-rs jxl/src/frame/modular/transforms/step.rs SqueezeInputs::in_next_border",
+  "reason": "An average tile can span several output tiles; the neighboring border must use the current average rectangle origin along its unchanged axis."
+}

@@ -66,10 +66,10 @@ cut short: decode it and encode the pixels instead).
 
 | file | bytes | gzip | Brotli |
 | --- | ---: | ---: | ---: |
-| `rapier-jxl.min.mjs`, core | 36,284 | 14,987 | 13,313 |
-| `lossless.min.mjs`, `encodeLosslessRGBA` alone | 13,754 | 6,131 | 5,405 |
-| `jpeg.min.mjs`, `transcode` alone | 27,750 | 11,590 | 10,243 |
-| `photo.min.mjs`, photographic pixels | 22,563 | 9,768 | 8,627 |
+| `rapier-jxl.min.mjs`, core | 36,284 | 14,987 | 13,315 |
+| `lossless.min.mjs`, `encodeLosslessRGBA` alone | 13,754 | 6,131 | 5,401 |
+| `jpeg.min.mjs`, `transcode` alone | 27,750 | 11,590 | 10,217 |
+| `photo.min.mjs`, photographic pixels | 22,563 | 9,768 | 8,635 |
 | all readable modules, including photo | 102,565 | 31,745 | |
 
 Exact bytes of this release's files, measured by the script that stages this repository; `sizes.json` carries

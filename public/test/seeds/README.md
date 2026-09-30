@@ -49,7 +49,7 @@ reuse decoder evidence. `summary.json` separates mutations, unique inputs, retur
 actual new decoder executions, duplicate executions across workers, and cache hits. The per-input
 `outcomes.jsonl` journals retain named refusals and exact output hashes. `--against /path/to/baseline/modules`
 compares every input's result with that source, memoizing the baseline result for identical inputs; `--reuse
-/path/to/prior-run` admits only hash-identical codestream proofs from the same two decoder versions. A prior
+/path/to/prior-run` admits only hash-identical codestream proofs from identical decoder identities and optional-oracle availability. A prior
 single-worker run supplies that cache; `node public/test/fuzz-cache.mjs completed-shards new-cache` also
 consolidates a completed shard run after checking its receipt and journal hashes, without decoding again.
 Source-module hashes, input-seed hashes, proof-cache hashes and the
@@ -84,3 +84,30 @@ unthrottled Node results. `--browser` requires a real Playwright Chromium sessio
 to the page. The benchmark source shows the shared-lock command. Browser cancellation records the duration of
 the worker termination call, not completion of worker memory reclamation; Node records the termination promise.
 CPU timings are observations, never conformance gates or phone-performance claims.
+# Third decoder's subnormal multiplier
+
+`jxl-rs-subnormal.rgba` (2 × 1 black/white) and its photo-q90 stream
+`jxl-rs-subnormal.jxl` retain an upstream decoder defect. At jxl-rs revision
+`2e65fa59b43aebd13c0530d9dcfcf151b19567d3`, `jxl/src/util/float16.rs` reads binary16
+subnormals at half value, so the raw AC quantization multiplier loses a factor of two.
+The stream is valid: jxl-oxide 0.12.6, native libjxl and the separately named decoder
+repair return the original pixels. Unmodified jxl-rs changes RGB by up to 111; alpha
+stays exact. `jxl-rs-subnormal.json` records bytes, hashes and returned samples.
+`../jxl-rs-half-subnormals.patch` repairs that owner, and `../JXL-RS.md` keeps the
+unmodified and repaired oracle builds distinct. No encoder workaround is used.
+
+
+`jxl-rs-default-squeeze.rgba` and its 66-byte core-q50 stream retain the default Squeeze
+channel-slot defect in that same upstream pin: both initial chroma transforms belong even
+when a residual is empty. Native and oxide agree on all samples; unmodified jxl-rs changes
+15 RGB samples by up to 140. The separate owner repair restores exact agreement.
+
+`jxl-rs-squeeze-border.rgba.gz` and `.jxl.gz` retain the average-border crop defect: a coarse
+average tile spans several output tiles, so its neighboring border needs the matching crop
+origin along the unchanged axis. The deterministic 2049 × 257 input has 43 changed RGB
+samples (maximum three) in upstream; the owner repair makes all samples exact. The JSON
+records the source formula, raw-byte hashes and every changed coordinate. Gzip only keeps
+these retained artifacts compact; the public check decodes the original RGBA before encoding.
+
+`../JXL-RS.md` explains optional availability and the explicitly patched diagnostic CI build.
+An unavailable third decoder is reported as unavailable; a configured broken decoder fails.

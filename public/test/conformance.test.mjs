@@ -5,13 +5,17 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile, mkdir, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
+import {gunzipSync} from 'node:zlib';
 import {encode, transcode} from '../../index.mjs';
 import {rng, mutateJPEG, mutationKinds, pixelCase, guardJPEGPlanes} from './fuzz-cases.mjs';
 import {oracles} from './oracles.mjs';
 
 const seedsURL = new URL('./seeds/', import.meta.url);
 const cases = await Promise.all(JSON.parse(await readFile(new URL('cases.json', seedsURL), 'utf8')).map(async seed => ({...seed, data: new Uint8Array(await readFile(new URL(seed.file, seedsURL)))})));
-const retainedPixels = await Promise.all(JSON.parse(await readFile(new URL('pixels.json', seedsURL), 'utf8')).map(async item => ({...item, rgba: new Uint8Array(await readFile(new URL(item.file, seedsURL)))})));
+const retainedPixels = await Promise.all(JSON.parse(await readFile(new URL('pixels.json', seedsURL), 'utf8')).map(async item => {
+  const bytes = await readFile(new URL(item.file, seedsURL));
+  return {...item, rgba: new Uint8Array(item.file.endsWith('.gz') ? gunzipSync(bytes) : bytes)};
+}));
 const oracle = await oracles();
 const seed = Number(process.env.JXL_FUZZ_SEED || 20260930) >>> 0;
 const count = (name, fallback) => {
@@ -49,7 +53,7 @@ test('retained JPEG defects refuse lost coefficients; table reuse preserves the 
     }
     returned++;
   }
-  t.diagnostic(JSON.stringify({retained: cases.length, rejected, returned, oracles: oracle.names, nativeUnavailable: !oracle.native}));
+  t.diagnostic(JSON.stringify({retained: cases.length, rejected, returned, oracles: oracle.names, nativeUnavailable: !oracle.native, jxlRsUnavailable: !oracle.jxlRs, jxlRsDifferences: oracle.jxlRsDifferences}));
 });
 
 test('structure-aware JPEG mutations return decodable streams or documented refusals', async t => {
@@ -67,7 +71,7 @@ test('structure-aware JPEG mutations return decodable streams or documented refu
     try { oracle.decode(output.bytes, output.width, output.height, description); tally[kind].returned++; }
     catch (error) { await failure(`jpeg-${seed}-${iteration}.jpg`, bytes, error, description); }
   }
-  t.diagnostic(JSON.stringify({seed, jpegMutations: mutations, tally, oracles: oracle.names, nativeUnavailable: !oracle.native}));
+  t.diagnostic(JSON.stringify({seed, jpegMutations: mutations, tally, oracles: oracle.names, nativeUnavailable: !oracle.native, jxlRsUnavailable: !oracle.jxlRs, jxlRsDifferences: oracle.jxlRsDifferences}));
 });
 
 test('mutated pixel cases keep exact pixels and produce conformant lossless and lossy streams', async t => {
@@ -92,5 +96,5 @@ test('mutated pixel cases keep exact pixels and produce conformant lossless and 
       }
     } catch (error) { await failure(`pixels-${input.seed}-${iteration}.rgba`, rgba, error, description); }
   }
-  t.diagnostic(JSON.stringify({seed, retainedPixels: retainedPixels.length, pixelMutations: mutations, streams, photo: Boolean(photo), oracles: oracle.names, nativeUnavailable: !oracle.native}));
+  t.diagnostic(JSON.stringify({seed, retainedPixels: retainedPixels.length, pixelMutations: mutations, streams, photo: Boolean(photo), oracles: oracle.names, nativeUnavailable: !oracle.native, jxlRsUnavailable: !oracle.jxlRs, jxlRsDifferences: oracle.jxlRsDifferences}));
 });

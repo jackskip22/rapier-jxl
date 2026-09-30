@@ -1,0 +1,30 @@
+--- a/jxl/src/util/float16.rs
++++ b/jxl/src/util/float16.rs
+@@ -54,7 +54,8 @@
+                     e += 1;
+                 }
+                 m &= 0x3FF; // Remove the implicit leading 1
+-                let new_exp = 127 - 15 - e; // Rebias: f16 bias=15, f32 bias=127
++                // Subnormals have exponent -14 before normalizing the significand.
++                let new_exp = 127 - 14 - e;
+                 (sign << 31) | (new_exp << 23) | (m << 13)
+             }
+         } else if exp == 31 {
+@@ -252,8 +253,15 @@
+         // Smallest positive denormal: 0x0001
+         let tiny = f16::from_bits(0x0001);
+         let val = tiny.to_f32();
+-        assert!(val > 0.0);
+-        assert!(val < 1e-6);
++        assert_eq!(val, 2f32.powi(-24));
++        for mantissa in 1..1024 {
++            for sign in [0, 0x8000] {
++                let bits = mantissa | sign;
++                let expected = (mantissa as f32) * 2f32.powi(-24)
++                    * if sign == 0 { 1.0 } else { -1.0 };
++                assert_eq!(f16::from_bits(bits).to_f32(), expected);
++            }
++        }
+         assert!(tiny.is_finite());
+     }
+ 

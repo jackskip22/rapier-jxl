@@ -28,7 +28,41 @@ jobs:
           node-version: '22.22.2'
       - run: npm install --ignore-scripts
       - run: sudo apt-get update && sudo apt-get install --yes ffmpeg libjxl-dev build-essential
-      - name: Decode every returned stream with both oracles
+      - name: Read the pinned optional jxl-rs source
+        id: jxl_rs_source
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: libjxl/jxl-rs
+          ref: 2e65fa59b43aebd13c0530d9dcfcf151b19567d3
+          path: .jxl-rs-source
+      - name: Build optional jxl-rs with three explicit upstream owner repairs
+        id: jxl_rs_build
+        if: steps.jxl_rs_source.outcome == 'success'
+        continue-on-error: true
+        env:
+          RAPIER_JXL_RS_REVISION: 2e65fa59b43aebd13c0530d9dcfcf151b19567d3
+          RAPIER_JXL_RS_PATCH: half-subnormals-squeeze
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          # The unmodified pin has three retained decoder defects; see public/test/JXL-RS.md.
+          sha256sum public/test/jxl-rs-*.patch
+          for patch in "$PWD"/public/test/jxl-rs-*.patch; do
+            git -C .jxl-rs-source apply "$patch"
+          done
+          mkdir -p .jxl-rs-source/jxl_cli/src/bin
+          cp public/test/jxl-rs-decoder.rs .jxl-rs-source/jxl_cli/src/bin/rapier_oracle.rs
+          cargo +1.98.1 build --locked --release --manifest-path .jxl-rs-source/Cargo.toml --bin jxl_cli --bin rapier_oracle
+          printf 'JXL_FUZZ_JXL_RS=%s\n' "$PWD/.jxl-rs-source/target/release/rapier_oracle" >> "$GITHUB_ENV"
+      - name: Report optional decoder availability
+        if: always()
+        run: |
+          if [ -n "$JXL_FUZZ_JXL_RS" ]; then
+            "$JXL_FUZZ_JXL_RS" --version
+          else
+            printf '%s\n' 'jxl-rs unavailable: third-oracle checks will be explicitly skipped.'
+          fi
+      - name: Decode returned streams with every available oracle
         env:
           JXL_FUZZ_REQUIRE_NATIVE: '1'
           JXL_FUZZ_SEED: ${{ inputs.seed || '20260930' }}

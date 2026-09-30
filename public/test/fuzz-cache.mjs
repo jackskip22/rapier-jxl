@@ -17,8 +17,9 @@ const add=bytes=>{
   for(const line of bytes.toString().trim().split('\n').filter(Boolean)){
     const proof=JSON.parse(line),previous=proofs.get(proof.key);
     if(previous){
-      for(const key of ['width','height','oxide','native','oxideAlpha','nativeAlpha','maximum','different'])
+      for(const key of ['width','height','oxide','native','oxideAlpha','nativeAlpha','jxlRs','jxlRsAlpha','maximum','different'])
         assert.equal(proof[key],previous[key],'Duplicate proofs disagree: '+proof.key);
+      assert.deepEqual(proof.jxlRsDifferences,previous.jxlRsDifferences,'Duplicate third-oracle comparisons disagree');
     }
     proofs.set(proof.key,proof);
   }
@@ -34,13 +35,14 @@ for(const receipt of summary.receipts){
     if(file==='progress.json'){
       const progress=JSON.parse(bytes);assert.equal(progress.complete,true,'An incomplete shard cannot supply proofs');
       assert.equal(progress.failures,0,'A shard with recorded failures cannot supply proofs');
+      assert.deepEqual(progress.oracles,summary.oracles,'Cached shards must have the same decoder identities and optional availability');
     }
     if(file==='streams.jsonl')add(bytes);
     if(file==='used-streams.txt')for(const hash of bytes.toString().trim().split('\n').filter(Boolean))used.add(hash);
   }
 }
 assert.equal(used.size,summary.uniqueReturnedStreams);
-const lines=[...used].sort().map(key=>{assert.ok(proofs.has(key),'A used stream lacks its proof');return JSON.stringify(proofs.get(key));});
+const lines=[...used].sort().map(key=>{assert.ok(proofs.has(key),'A used stream lacks its proof');const proof=proofs.get(key);if(summary.oracles.jxlRs)assert.ok(proof.jxlRs&&proof.jxlRsAlpha&&proof.jxlRsDifferences,'A used stream lacks configured third-oracle proof');return JSON.stringify(proof);});
 const bytes=Buffer.from(lines.join('\n')+(lines.length?'\n':''));
 const provenance={oracles:summary.oracles,failures:0,complete:true,sourceReceipt:{directory:root,sha256:digest(summaryBytes)},
   streams:used.size,sha256:digest(bytes),note:'Exact compressed-byte proofs; exporting a cache performs no decoder executions.'};

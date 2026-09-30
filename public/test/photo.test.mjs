@@ -8,8 +8,10 @@ import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {encodePhotoRGBA} from '../../photo.mjs';
 import {decoder} from './decoder.mjs';
+import {jxlRsDecoder} from './jxl-rs-decoder.mjs';
 
 const decode = await decoder(), needsOxide = decode ? undefined : 'jxl-oxide-wasm is not installed';
+const rust = jxlRsDecoder();
 let native = false;
 try { native = /\blibjxl\b/.test(execFileSync('ffmpeg', ['-hide_banner', '-decoders'], {encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']})); } catch {}
 function source(w, h) {
@@ -65,4 +67,9 @@ test('photographic entry rejects malformed asks before allocating coefficient pl
   assert.throws(() => encodePhotoRGBA(data, 6000, 6000), {code: 'JXL_DIMENSIONS'});
   assert.throws(() => encodePhotoRGBA(new Uint8Array(3), 1, 1), {code: 'JXL_INPUT'});
   assert.throws(() => encodePhotoRGBA([0, 0, 0, 255], 1, 1), {code: 'JXL_INPUT'});
+});
+test('photographic VarDCT: exact alpha, colour and partial groups through jxl-rs', {skip: rust ? undefined : 'jxl-rs is unavailable (set JXL_FUZZ_JXL_RS)'}, () => {
+  roundtrip((bytes, width, height) => rust.decode(bytes, width, height));
+  const data = source(17, 19);
+  assert.deepEqual(rust.decode(encodePhotoRGBA(data, 17, 19, {quality: 100}), 17, 19), data);
 });
