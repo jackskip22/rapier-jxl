@@ -1,0 +1,38 @@
+{
+  "name": "rapier-jxl",
+  "version": "1.1.15",
+  "description": "A JPEG XL encoder in pure JavaScript: lossless, lossy, and a JPEG carried whole. The encoder inside Rapier.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "*.mjs",
+    "README.md",
+    "AGENTS.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jackskip22/rapier-jxl.git"
+  },
+  "homepage": "https://rapier.website",
+  "keywords": [
+    "jpeg xl",
+    "jxl",
+    "encoder",
+    "image",
+    "lossless",
+    "jpeg",
+    "transcode",
+    "markdown",
+    "rapier"
+  ]
+}
