@@ -103,12 +103,14 @@ test('mutated pixel cases keep exact pixels and produce conformant lossless and 
   t.diagnostic(JSON.stringify({seed, retainedPixels: retainedPixels.length, pixelMutations: mutations, streams, photo: Boolean(photo), effort: Boolean(effort), oracles: oracle.names, nativeUnavailable: !oracle.native, jxlRsUnavailable: !oracle.jxlRs, jxlRsDifferences: oracle.jxlRsDifferences}));
 });
 
-// Pictures the weighted predictor takes at efforts 2 and 3 in every channel layout, one group and several.
+// Pictures the effort predictors take in every channel layout, one group and several. Direct candidates are
+// decoded too, so a regression cannot hide behind the smaller stream of an earlier rung.
 test('the effort door\'s rungs keep grey, grey and alpha, colour and RGBA pictures exact', async t => {
   let effort;
   try { ({encode: effort} = await import('../../effort.mjs')); }
   catch (error) { if (error.code !== 'ERR_MODULE_NOT_FOUND') throw error; }
   if (!effort) return t.skip('no effort door in this repository');
+  const {localSteps} = await import('../../local.mjs'), {inspectPixels} = await import('../../lossless.mjs'), {complete} = await import('../../bits.mjs');
   let streams = 0;
   for (const [width, height] of [[200, 100], [300, 200]]) {
     const {rgba} = borderCase(width, height), grey = Uint8Array.from(rgba), greyAlpha = Uint8Array.from(rgba), withAlpha = Uint8Array.from(rgba);
@@ -116,8 +118,36 @@ test('the effort door\'s rungs keep grey, grey and alpha, colour and RGBA pictur
       grey[i + 1] = grey[i + 2] = greyAlpha[i + 1] = greyAlpha[i + 2] = rgba[i];
       greyAlpha[i + 3] = rgba[i + 1]; withAlpha[i + 3] = rgba[i + 2];
     }
-    for (const [kind, pixels] of Object.entries({colour: rgba, grey, 'grey and alpha': greyAlpha, rgba: withAlpha}))
-      for (const level of [2, 3]) { oracle.decode(effort(pixels, width, height, {effort: level}), width, height, `${kind} ${width}x${height} effort=${level}`, pixels); streams++; }
+    for (const [kind, pixels] of Object.entries({colour: rgba, grey, 'grey and alpha': greyAlpha, rgba: withAlpha})) {
+      let previous = encode(pixels, width, height);
+      for (const level of [2, 3, 4, 5, 6]) {
+        const bytes = effort(pixels, width, height, {effort: level});
+        assert.ok(bytes.length <= previous.length, 'an effort adds candidates without losing the smaller stream');
+        if (level === 5) assert.deepEqual(bytes, previous, 'an effort without another rung keeps the previous bytes');
+        previous = bytes;
+        oracle.decode(bytes, width, height, `${kind} ${width}x${height} effort=${level}`, pixels); streams++;
+        const shape = inspectPixels(pixels, width, height);
+        if (level === 6 || level === 4 && shape.palette) {
+          const candidate = complete(localSteps(pixels, width, height, shape, 'srgb', level, level === 4));
+          oracle.decode(candidate, width, height, `${kind} ${width}x${height} local=${level}`, pixels); streams++;
+        }
+      }
+    }
   }
+  // Authored colour under zero alpha is part of the palette. One fixture crosses groups; the other's metadata
+  // is wider than its picture, so global meta-channel numbering cannot accidentally use the picture's geometry.
+  for (const [file, width, height] of [['local-palette.rgba', 600, 19], ['wide-palette.rgba', 17, 19]]) {
+    const rgba = new Uint8Array(await readFile(new URL(file, seedsURL))), shape = inspectPixels(rgba, width, height);
+    for (const level of [4, 6]) {
+      oracle.decode(effort(rgba, width, height, {effort: level}), width, height, file + ' effort=' + level, rgba); streams++;
+      const candidate = complete(localSteps(rgba, width, height, shape, 'srgb', level, true));
+      oracle.decode(candidate, width, height, file + ' local=' + level, rgba); streams++;
+    }
+    assert.deepEqual(effort(rgba, width, height, {effort: 5}), effort(rgba, width, height, {effort: 4}));
+  }
+  const width = 96, height = 64, rgba = new Uint8Array(await readFile(new URL('hurry-inner.rgba', seedsURL)));
+  const {encodeSteps} = await import('../../effort.mjs'), hurried = encodeSteps(rgba, width, height, {effort: 4});
+  for (const done of hurried) if (done > 0.9) hurried.hurry = true;
+  oracle.decode(hurried.bytes, width, height, 'hurried completed inner candidate', rgba); streams++;
   t.diagnostic(JSON.stringify({streams, oracles: oracle.names, nativeUnavailable: !oracle.native}));
 });

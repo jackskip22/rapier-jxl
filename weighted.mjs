@@ -23,8 +23,9 @@ const SINGLE = new Int32Array(WEIGHTED_CUTS.length + 1);
 // or more zero residuals as one zero and an LZ77 copy), each token through the target of its pixel's context:
 // `contextOf[k]` is the target of the k-th cut interval (all one target when absent). Counting when `w` is null
 // (targets are histograms), writing otherwise (targets are prefix codes). Exact planes only: the offset applies, the
-// multiplier is one.
-export function codeWeighted(w, targets, plane, width, height, offset = 0, contextOf = SINGLE) {
+// multiplier is one. The effort-only local modeller can request the raw unsigned residuals and signed property in
+// caller-owned arrays instead; it then owns tokenisation, while this one loop remains the predictor's state owner.
+export function codeWeighted(w, targets, plane, width, height, offset = 0, contextOf = SINGLE, residuals, properties) {
   const stride = width + 2;
   const errors0 = new Int32Array(2 * stride), errors1 = new Int32Array(2 * stride), errors2 = new Int32Array(2 * stride), errors3 = new Int32Array(2 * stride);
   const error = new Int32Array(2 * stride), runContexts = new Int32Array(8);
@@ -54,6 +55,7 @@ export function codeWeighted(w, targets, plane, width, height, offset = 0, conte
       if (Math.abs(teNW) > Math.abs(most)) most = teNW;
       if (Math.abs(teNE) > Math.abs(most)) most = teNE;
       const context = contextOf[BUCKET[most < -501 ? 0 : most > 501 ? 1002 : most + 501]];
+      if (properties) properties[index] = most;
       const p0 = W + NE - N, p1 = N - (((sumWN + teNE) * 16) >> 5), p2 = W - (((sumWN + teNW) * 10) >> 5);
       const p3 = N - ((teNW * 7 + teN * 7 + teNE * 7 + (NN - N) * 0 + (NW - W) * 0) >> 5);
       // The weighted average: the weights scaled to sum between 16 and 64, then a division by table.
@@ -66,7 +68,8 @@ export function codeWeighted(w, targets, plane, width, height, offset = 0, conte
         pred = pred < lo ? lo : pred > hi ? hi : pred;
       }
       const value = plane[index], r = value - ((pred + 3) >> 3) - offset;
-      if (r === 0) { if (run < 8) runContexts[run] = context; run++; }
+      if (residuals) residuals[index] = packSigned(r);
+      else if (r === 0) { if (run < 8) runContexts[run] = context; run++; }
       else { flush(); emit(context, packSigned(r)); }
       // The state the decoder keeps: the prediction's error, and each sub-prediction's, added into the next row's view.
       const v = value * 8, e0 = (Math.abs(p0 - v) + 3) >> 3, e1 = (Math.abs(p1 - v) + 3) >> 3, e2 = (Math.abs(p2 - v) + 3) >> 3, e3 = (Math.abs(p3 - v) + 3) >> 3;

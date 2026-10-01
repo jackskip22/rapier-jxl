@@ -29,8 +29,12 @@ export function admitPixels(data, width, height, limits) {
   if (data.length !== width * height * 4) throw fault('JXL_INPUT', 'Pixels are width * height * 4 bytes: straight (not premultiplied) RGBA, row by row.');
 }
 
+export function admitOutputSize(length) {
+  if (length > LIMITS.bytes) throw fault('JXL_SIZE', 'The encoded picture exceeds 16 MiB.');
+}
+
 export function answer(bytes) {
-  if (bytes.length > LIMITS.bytes) throw fault('JXL_SIZE', 'The encoded picture exceeds 16 MiB.');
+  admitOutputSize(bytes.length);
   return bytes;
 }
 

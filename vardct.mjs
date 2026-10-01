@@ -6,9 +6,10 @@
 import {BitWriter, float16Bits, packSigned, ceilLog2, complete} from './bits.mjs';
 import {writeImageHeader, writeFrameHeaderEnd, finishSections, assembleCodestream, GROUP_DIM} from './frame.mjs';
 import {ZERO_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
-import {writeContextMap, writeHistograms} from './prefix.mjs';
+import {writeContextMap, writeHistograms, buildCode, uintConfig, countToken, writeHybrid} from './prefix.mjs';
 import {TokenCounts, buildTokenCoding} from './entropy.mjs';
 import {parseJPEG, jpegError, ZIGZAG} from './jfif.mjs';
+import {admitOutputSize} from './admit.mjs';
 
 const NONZERO_BUCKETS = 37, ZERO_DENSITY_CONTEXTS = 458, ORDERS = 13;
 const COEFF_FREQ_CONTEXT = [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 15, 16, 16, 17, 17, 18, 18, 19, 19, 20, 20, 21, 21, 22, 22,
@@ -69,20 +70,21 @@ export function transcodeJPEG(bytes, jpeg = parseJPEG(bytes)) { return encodeVar
 
 // Shared coefficient writer. Pixel encoding supplies the same natural-order DCT8 planes as the JPEG reader;
 // quantScale lets its raw integer matrices carry fractional steps without a second entropy/frame writer.
-export function encodeVarDCT(jpeg) { return complete(varDCTSteps(jpeg)); }
+export function encodeVarDCT(jpeg, plan) { return complete(varDCTSteps(jpeg, plan)); }
 
 // The same as steps: a group of each counting pass, a DC group, an AC group per step.
-export function* varDCTSteps(jpeg) {
+export function* varDCTSteps(jpeg, plan = {}) {
   const {width, height, components, alpha} = jpeg, grey = components.length === 1;
   const quantScale = jpeg.quantScale || 1;
   // The raw tables' denominator, 1 / (8 x 255 x quantScale), is a normal binary16: where it would be subnormal (the
   // photo door's), it is doubled until it is not and every block's quantisation field doubled with it, so the decoder's
   // dequantised coefficients are the same. A decoder that reads a subnormal wrong (jxl-rs 0.7.4 halves them) reads these.
-  let field = 1;
+  let field = jpeg.quantFieldBase || 1;
   while (field / (8 * 255 * quantScale) < 1 / 16384) field *= 2;
   const ycbcr = jpeg.ycbcr || grey;
   const map = grey ? [0, 0, 0] : ycbcr ? [1, 0, 2] : [0, 1, 2];  // frame channel (X, Y, B) to JPEG component
   const comps = map.map(i => components[i]);
+  const orders = plan.orders ? map.map(i => plan.orders[i].map(k => SCAN[k])) : [SCAN, SCAN, SCAN];
   const log2 = v => v === 1 ? 0 : v === 2 ? 1 : -1;
   const rawH = comps.map(c => log2(c.h)), rawV = comps.map(c => log2(c.v));
   if (rawH.includes(-1) || rawV.includes(-1)) throw jpegError('sampling factors other than one or two');
@@ -141,7 +143,7 @@ export function* varDCTSteps(jpeg) {
       const offset = contexts.zeroDensityOffset(blockCtx);
       let prev = count > 4 ? 0 : 1, left = count;
       for (let k = 1; k < 64 && left; k++) {
-        const coeff = coeffs[at + SCAN[k]];
+        const coeff = coeffs[at + orders[c][k]];
         emit(offset + zeroDensityContext(left, k, prev), packSigned(coeff));
         prev = coeff ? 1 : 0; left -= prev;
       }
@@ -154,7 +156,7 @@ export function* varDCTSteps(jpeg) {
     contexts = chosen;
     const counts = new TokenCounts(chosen.contexts);
     for (let g = 0; g < numGroups; g++) { tokens(g, (ctx, value) => counts.add(ctx, value)); yield ++done / total; }
-    return buildTokenCoding(counts);
+    return buildTokenCoding(counts, plan.clusters);
   };
   let coding = yield* countWith(contexts);
   if (wanted > 0) {
@@ -164,6 +166,16 @@ export function* varDCTSteps(jpeg) {
 
   const writers = Array.from({length: single ? 1 : 2 + numDcGroups + numGroups}, () => null);
   const section = index => writers[single ? 0 : index] || (writers[single ? 0 : index] = new BitWriter(4096));
+  // Refuse as completed sections cross the whole-stream bound, before later groups or section copies allocate.
+  // A one-group frame shares its writer, so only its growth since the last checkpoint is charged again.
+  const sectionSizes = new Uint32Array(writers.length);
+  let sectionBytes = 0;
+  const checkSection = index => {
+    index = single ? 0 : index;
+    const size = Math.ceil(writers[index].bitLength / 8);
+    sectionBytes += size - sectionSizes[index]; sectionSizes[index] = size;
+    admitOutputSize(sectionBytes);
+  };
 
   // DC global: the DC quantisation of each channel, the quantizer at scale one, luma and chroma block contexts, no
   // chroma from luma, no global modular tree.
@@ -192,6 +204,7 @@ export function* varDCTSteps(jpeg) {
   dc.write(1, 0); dc.write(2, 0); dc.write(16, 0); dc.write(16, 0); dc.write(8, 128); dc.write(8, 128);
   dc.write(1, 0);
   if (alpha) writeModularStream(dc, [single ? alphaPlane(0, 0) : {w: 0, h: 0, data: new Int32Array(0)}], GRADIENT_PREDICTOR);
+  checkSection(0);
 
   // DC groups: the DC coefficients as a modular image (luma first), then the AC metadata: all blocks 8x8 DCT at
   // quant one, no chroma-from-luma tiles, no sharpness.
@@ -215,10 +228,12 @@ export function* varDCTSteps(jpeg) {
     // Every block's strategy (DCT8, row 0) and quantisation field less one (row 1); a field above one is a constant row,
     // which the gradient predictor codes as one residual.
     const blocks = new Int32Array(count * 2).fill(field - 1, count);
+    if (jpeg.quantFields) for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) blocks[count + y * rw + x] = jpeg.quantFields[(y0 + y) * xsizeBlocks + x0 + x] - 1;
     writeModularStream(w, [
       {w: cw, h: ch, data: new Int32Array(cw * ch)}, {w: cw, h: ch, data: new Int32Array(cw * ch)},
       {w: count, h: 2, data: blocks}, {w: rw, h: rh, data: new Int32Array(count)},
     ], field > 1 ? GRADIENT_PREDICTOR : ZERO_PREDICTOR);
+    checkSection(1 + g);
     yield ++done / total;
   }
 
@@ -234,13 +249,33 @@ export function* varDCTSteps(jpeg) {
   }), GRADIENT_PREDICTOR);
   for (let i = 1; i < 17; i++) ac.write(3, 0);
   if (numGroups > 1) ac.write(ceilLog2(numGroups), 0);
-  ac.write(2, 2);
+  if (plan.orders) {
+    // DCT8 is order 0. Permutations name positions in the natural scan and are carried as a Lehmer code,
+    // skipping DC. A prefix histogram may serve all eight permutation contexts.
+    ac.writeU32([[0, 95], [0, 19], [0, 0], [13, 0]], 1);
+    const values = [];
+    for (const c of map) {
+      const available = Array.from({length: 64}, (_, k) => k), lehmer = plan.orders[c].map(k => {
+        const at = available.indexOf(k); available.splice(at, 1); return at;
+      });
+      let end = 64;
+      while (end > 1 && !lehmer[end - 1]) end--;
+      values.push(end - 1, ...lehmer.slice(1, end));
+    }
+    const config = uintConfig(0), freqs = new Uint32Array(64);
+    for (const value of values) countToken(config, value, freqs);
+    const code = buildCode(freqs);
+    writeHistograms(ac, {contextMap: new Uint8Array(8), histograms: [{config, code}]});
+    for (const value of values) writeHybrid(ac, code, config, value);
+  } else ac.write(2, 2);
   writeHistograms(ac, {contextMap: coding.contextMap, histograms: coding.histograms});
+  checkSection(1 + numDcGroups);
 
   for (let g = 0; g < numGroups; g++) {
     const w = section(2 + numDcGroups + g);
     tokens(g, (ctx, value) => coding.write(w, ctx, value));
     if (alpha && !single) writeModularStream(w, [alphaPlane(g % groupsX, Math.floor(g / groupsX))], GRADIENT_PREDICTOR);
+    checkSection(2 + numDcGroups + g);
     yield ++done / total;
   }
   return assembleCodestream(header, finishSections(writers));

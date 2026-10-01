@@ -4,6 +4,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {encode, LIMITS} from '../../index.mjs';
+import {encode as encodeEffort} from '../../effort.mjs';
 import {transcode} from '../../jpeg.mjs';
 import {encodeLossless, inspectPixels} from '../../writer.mjs';
 import {writeJPEG} from './jpeg-writer.mjs';
@@ -100,5 +101,9 @@ test('a valid palette survives a direct candidate above the stream limit', () =>
 	try { direct = encodeLossless(data, w, h, {shape: inspectPixels(data, w, h, {palette: false})}).length; }
 	catch (error) { assert.equal(error.code, 'JXL_SIZE'); direct = Infinity; }
 	assert.ok(direct > LIMITS.bytes, 'the rejected candidate crosses the real stream limit');
-	assert.ok(encode(data, w, h).length < LIMITS.bytes, 'the palette remains a valid answer');
+	const first = encode(data, w, h);
+	assert.ok(first.length < LIMITS.bytes, 'the palette remains a valid answer');
+	assert.ok(encodeEffort(data, w, h, {effort: 2}).length <= first.length, 'optional search preserves the valid palette floor');
+	assert.ok(encode(data, w, h, {quality: 99.9}).length <= first.length, 'a lossy request preserves the valid palette floor');
+	assert.ok(encodeEffort(data, w, h, {quality: 99.9, effort: 2}).length <= first.length, 'the effort door preserves the same lossy-request floor');
 });

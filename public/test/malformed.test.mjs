@@ -11,6 +11,8 @@ import {transcode} from '../../jpeg.mjs';
 import {writeJPEG} from './jpeg-writer.mjs';
 import {iccProfile, displayProfile, descriptionTag, withProfile} from './icc.mjs';
 import {decoder} from './decoder.mjs';
+import {BitWriter} from '../../bits.mjs';
+import {assembleCodestream} from '../../frame.mjs';
 
 const decode = await decoder();
 const needs = decode ? undefined : 'jxl-oxide-wasm is not installed (npm install)';
@@ -121,4 +123,14 @@ test('the options are read before any work', () => {
 	// The core's own limit, 24 million pixels: one row more is refused by size, the limit itself only by its bytes.
 	assert.throws(() => encode(pixel, 6000, 4001), {code: 'JXL_DIMENSIONS'});
 	assert.throws(() => encode(pixel, 6000, 4000), {code: 'JXL_INPUT'});
+});
+
+test('sections that exceed the stream limit are refused before the aggregate allocation', () => {
+	const section = new Uint8Array(LIMITS.bytes / 2), header = new BitWriter(256), Original = globalThis.Uint8Array;
+	globalThis.Uint8Array = new Proxy(Original, {construct(target, args) {
+		if (args[0] > LIMITS.bytes) throw new RangeError('the test refuses an oversized aggregate allocation');
+		return Reflect.construct(target, args);
+	}});
+	try { assert.throws(() => assembleCodestream(header, [section, section]), {code: 'JXL_SIZE'}); }
+	finally { globalThis.Uint8Array = Original; }
 });

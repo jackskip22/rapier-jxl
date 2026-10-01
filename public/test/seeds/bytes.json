@@ -1,6 +1,8 @@
 {
   "about": "Stream SHA-256 per door, input and options; public/test/bytes.test.mjs checks them under Node and Bun.",
   "cases": [
+    {"door":"photo","input":{"seed":20260930,"index":13},"options":{"quality":90,"effort":4},"sha256":"048ba1482a2a5b2af068a74b3dbf8a3e979156c4481be82ad72883e14b397b91"},
+    {"door":"transcode","input":{"file":"photo-corpus/grace-hopper.jpg"},"options":{"effort":4},"sha256":"d1041a9706a5128bb5fc5acef745708827e68db23c332f212139397f727b279c"},
     {"door":"encode","input":{"seed":20260930,"index":0},"options":{"quality":100},"sha256":"cb135016ccc80b328c98c515beee47fbddcff79824480c6cbb412551ab9defd5"},
     {"door":"encode","input":{"seed":20260930,"index":0},"options":{"quality":90},"sha256":"c00800cb80e5452b606c18b04243b6fad3d31c6c72b63b72abca94012d23ebbf"},
     {"door":"encode","input":{"seed":20260930,"index":0},"options":{"quality":50},"sha256":"26f200b2c19976ff96bb6175ce810018199ca2dc3d95baf82c60c3fa487f9072"},
@@ -132,13 +134,23 @@
     {"door":"effort","input":{"seed":20260930,"index":169},"options":{"quality":100},"sha256":"958fa7e9061cbcde0f98cc99c0cd3ddbdacc009b7eb1e8a5c41ea9779a6fba28"},
     {"door":"effort","input":{"seed":20260930,"index":169},"options":{"quality":100,"effort":2},"sha256":"958fa7e9061cbcde0f98cc99c0cd3ddbdacc009b7eb1e8a5c41ea9779a6fba28"},
     {"door":"effort","input":{"seed":20260930,"index":169},"options":{"quality":100,"effort":3},"sha256":"b1c95e8f34a9591f17833a3855cba918497b61a0edfad915331a8a29a6c70036"},
-    {"door":"effort","input":{"seed":20260930,"index":169},"options":{"quality":100,"effort":9},"sha256":"b1c95e8f34a9591f17833a3855cba918497b61a0edfad915331a8a29a6c70036"},
+    {"door":"effort","input":{"seed":20260930,"index":169},"options":{"quality":100,"effort":9},"sha256":"2eaa86a8470726fbc0f70713c93b78f1f319b3478a057fc6a0fd227b238d1ef8"},
     {"door":"effort","input":{"seed":20260930,"index":169},"options":{"quality":100,"effort":3,"colorSpace":"display-p3"},"sha256":"f49053080e723cc72c9c5ffa0d2096c2ed8188f772dfd0a9302222bffedfa889"},
     {"door":"effort","input":{"border":true,"width":600,"height":300},"options":{"quality":100,"effort":2},"sha256":"1bce44243138e15bbc5fe1081983736ea13ba137118aac3bdd26c6c2d1caaf21"},
     {"door":"effort","input":{"border":true,"width":600,"height":300},"options":{"quality":100,"effort":3},"sha256":"bda0de1524130fec0a4a9fba4b19b11793421eef93bcdf91af8b885cc296c64b"},
     {"door":"encode","input":{"seed":20260930,"index":169},"options":{"quality":100,"effort":3},"sha256":"958fa7e9061cbcde0f98cc99c0cd3ddbdacc009b7eb1e8a5c41ea9779a6fba28"},
     {"door":"effort","input":{"seed":20260930,"index":24},"options":{"quality":100,"effort":3},"sha256":"6dbc58f5d6e4184da52fff39264fe6eeff069ea0d6504fc452664e7d40d593ae"},
     {"door":"encode","input":{"border":true,"width":600,"height":300},"options":{"quality":100},"sha256":"ee4a6b85ddd420e6c57bc72b9d8c8a276e4b76eb85fd86bc92c6aed6645729f9"},
-    {"door":"hurried","input":{"border":true,"width":600,"height":300},"options":{"quality":100,"effort":3},"sha256":"ee4a6b85ddd420e6c57bc72b9d8c8a276e4b76eb85fd86bc92c6aed6645729f9"}
+    {"door":"hurried","input":{"border":true,"width":600,"height":300},"options":{"quality":100,"effort":3},"sha256":"ee4a6b85ddd420e6c57bc72b9d8c8a276e4b76eb85fd86bc92c6aed6645729f9"},
+    {"door":"transcode","input":{"file":"photo-corpus/grace-hopper.jpg"},"options":{"effort":3},"sha256":"9c1d2fafb1c18fb878f60321994f0d32e49123db1b156df99b42e889e8059a3d"},
+    {"door":"photo","input":{"seed":20260930,"index":13},"options":{"quality":90,"effort":3},"sha256":"19fe376ed5d5aef62dbc62223074153009a44e170505f5235fc10f90465a54fc"},
+    {"door":"photo","input":{"border":true,"width":48,"height":36},"options":{"quality":90,"effort":5},"sha256":"e3632b43aa4dc7d0a69bf464db433a6b236bce8686d7bc99b7aacf82b4d4a25f"},
+    {"door":"photo","input":{"border":true,"width":48,"height":36},"options":{"quality":30,"effort":5,"colorSpace":"display-p3"},"sha256":"f3f44b539d955bff4aa9c61c1536c79bf134a90f99e2d01daa9da0d8eed13002"},
+    {"door":"photo","input":{"file":"seeds/rgba-1x257.rgba","width":1,"height":257},"options":{"quality":99,"effort":5},"sha256":"d444c06150c631d8ffe4d8b66cf2bc4de9b512587588552734050632c1325caa"},
+    {"door":"photo","input":{"seed":20260930,"index":4},"options":{"quality":90,"effort":5},"sha256":"39333ad1ee333eae4a0b54b2f26a3bc13ebe3584ccaa10c2806e57c37d2c1dbd"},
+    {"door":"effort","input":{"file":"seeds/local-palette.rgba","width":600,"height":19},"options":{"effort":4},"sha256":"114bc3ba909bed5bdf1198893ad855715cc4a7d0d1fafa265ccfdbe56ad86579"},
+    {"door":"effort","input":{"file":"seeds/local-palette.rgba","width":600,"height":19},"options":{"effort":5},"sha256":"114bc3ba909bed5bdf1198893ad855715cc4a7d0d1fafa265ccfdbe56ad86579"},
+    {"door":"effort","input":{"border":true,"width":300,"height":259},"options":{"effort":6},"sha256":"9d23c162530ffeb584f38d396edcd98b0f1f283c88ada0437b491e0e806efcb6"},
+    {"door":"effort","input":{"file":"seeds/local-palette.rgba","width":600,"height":19},"options":{"effort":6},"sha256":"d57b7cff92de7eb5f6bc8ae2359947106f612be8088d24de9d080a440374e391"}
   ]
 }

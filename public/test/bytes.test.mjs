@@ -23,7 +23,7 @@ const doors = {
   // The effort door's job hurried before its first step: the floor, effort 1's stream.
   hurried: async (input, options) => { const {rgba, width, height} = await pixels(input), job = effortSteps(rgba, width, height, options); job.hurry = true; for (const _ of job); return job.bytes; },
   photo: async (input, options) => { const {rgba, width, height} = await pixels(input); return encodePhoto(rgba, width, height, options); },
-  transcode: async input => transcode(await file(input.file)).bytes,
+  transcode: async (input, options) => transcode(await file(input.file), options).bytes,
 };
 
 test('every door writes the recorded bytes', async () => {

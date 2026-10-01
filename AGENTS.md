@@ -11,7 +11,8 @@
    `encodePhoto(rgba, width, height, {quality: 90})`. The answer is a `Uint8Array` of codestream bytes: save it
    as `.jxl` or in a `Blob` of type `image/jxl`.
 4. A JPEG: `transcode(jpegBytes)` gives `{bytes, width, height, orientation}` without decoding. On `JXL_JPEG`,
-   decode it and call `encodePhoto` on the pixels.
+   decode it and call `encodePhoto` on the pixels. Both doors accept `{effort: 4}` to try a smaller entropy
+   representation with identical reconstructed pixels; the default is 1.
 5. Anything larger than an icon runs in a worker. Calls are synchronous, so cancel by terminating the worker, or
    loop over the door's twin (`encodeSteps`, `transcodeSteps`, `encodePhotoSteps`) and leave the loop. A
    transferred buffer is gone from the sender: copy first if you may retry.

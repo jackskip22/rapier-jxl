@@ -1,6 +1,7 @@
 // Rapier's JPEG XL encoder: the codestream around a frame. MIT (LICENSE).
 // A bare codestream (no container): signature, size header, image metadata, one frame with its table of contents.
 import {BitWriter} from './bits.mjs';
+import {admitOutputSize} from './admit.mjs';
 
 export const GROUP_DIM = 256, DC_GROUP_DIM = 2048;
 
@@ -84,7 +85,9 @@ export function assembleCodestream(header, sections) {
   const sizes = sections.map(section => section.length);
   writeTOC(header, sizes);
   const head = header.finish();
-  const out = new Uint8Array(head.length + sizes.reduce((a, b) => a + b, 0));
+  const length = head.length + sizes.reduce((a, b) => a + b, 0);
+  admitOutputSize(length);
+  const out = new Uint8Array(length);
   out.set(head);
   let at = head.length;
   for (const section of sections) { out.set(section, at); at += section.length; }

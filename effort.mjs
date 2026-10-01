@@ -5,6 +5,8 @@
 // 2. the specification's self-correcting (weighted) predictor, one context per channel;
 // 3. the weighted predictor with its channel's tokens split by the predictor's own error, neighbouring intervals of
 //    libjxl's cut points merged wherever a shared prefix code costs less.
+// 4. palette indices with local trees and histograms, the predictor and error intervals learned per group;
+// 6. direct and palette planes with splits on the unclamped gradient and west-minus-northwest difference.
 // A lossy request is effort 1's. Above effort 1 an exact picture's job spends its first half (fractions up to 0.5)
 // writing effort 1's stream and its second searching, so a caller's clock can tell the search's own pace; `hurry`
 // ends the search at its next step with the smallest stream written so far. Every choice is integer arithmetic: the
@@ -17,6 +19,7 @@ import {inspectPixels, losslessSteps} from './lossless.mjs';
 import {lossySteps} from './lossy.mjs';
 import {WEIGHTED_PREDICTOR, WEIGHTED_PROPERTY, WEIGHTED_CUTS, codeWeighted} from './weighted.mjs';
 import {fault, admitOptions, admitPixels, job} from './admit.mjs';
+import {localSteps} from './local.mjs';
 
 export {LIMITS};
 
@@ -32,7 +35,7 @@ export function encodeSteps(data, width, height, options) {
 }
 
 // Effort 1 is the core's work (index.mjs), step for step; the rungs run after it and keep a smaller stream if they
-// find one. A search that runs out of memory leaves effort 1's stream standing.
+// find one. A search that runs out of memory leaves the smallest completed stream standing.
 function* effortSteps(data, width, height, quality, colorSpace, effort) {
   const shape = inspectPixels(data, width, height);
   if (quality < 100) {
@@ -40,15 +43,32 @@ function* effortSteps(data, width, height, quality, colorSpace, effort) {
     const exact = yield* part(losslessSteps(data, width, height, {shape, colorSpace}), 0, 2);
     let bytes;
     try { bytes = yield* part(lossySteps(data, width, height, {quality, shape, colorSpace}), 1, 2); }
-    catch (error) { if (!(error instanceof RangeError) || error.code) throw error; bytes = exact; }
+    catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; bytes = exact; }
     return exact.length <= bytes.length ? exact : bytes;
   }
   if (effort < 2) return yield* losslessSteps(data, width, height, {shape, colorSpace});
   let best = yield* part(losslessSteps(data, width, height, {shape, colorSpace}), 0, 2);
+  if (effort >= 4) {
+    const searches = [searchSteps(data, width, height, shape.palette ? {...shape, palette: null} : shape, colorSpace, 3)];
+    if (shape.palette) searches.push(localSteps(data, width, height, shape, colorSpace, 4, true));
+    if (effort >= 6) {
+      searches.push(localSteps(data, width, height, shape, colorSpace, 6));
+      if (shape.palette) searches.push(localSteps(data, width, height, shape, colorSpace, 6, true));
+    }
+    for (let i = 0; i < searches.length; i++) {
+      try {
+        let step, hurried = false;
+        while (!(step = searches[i].next(hurried)).done) hurried = yield 0.5 + (i + step.value) / (2 * searches.length);
+        if (step.value && step.value.length < best.length) best = step.value;
+        if (hurried) return best;
+      } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
+    }
+    return best;
+  }
   try {
     const bytes = yield* part(searchSteps(data, width, height, shape.palette ? {...shape, palette: null} : shape, colorSpace, effort), 1, 2);
     if (bytes && bytes.length < best.length) best = bytes;
-  } catch (error) { if (!(error instanceof RangeError) || error.code) throw error; }
+  } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
   return best;
 }
 

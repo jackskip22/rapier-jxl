@@ -32,10 +32,10 @@ function* pixelSteps(data, width, height, quality, colorSpace) {
   if (quality >= 100) return yield* losslessSteps(data, width, height, {shape, colorSpace});
   if (!shape.palette) return yield* lossySteps(data, width, height, {quality, shape, colorSpace});
   // The exact stream of a few-colour picture is cheap to make (256-pixel sections), so it is made first: a lossy
-  // attempt that runs out of memory (its planes and Squeeze copies cost eight bytes a pixel and more) still answers.
+  // attempt that runs out of memory or stream space still leaves that completed answer.
   const exact = yield* part(losslessSteps(data, width, height, {shape, colorSpace}), 0, 2);
   let bytes;
   try { bytes = yield* part(lossySteps(data, width, height, {quality, shape, colorSpace}), 1, 2); }
-  catch (error) { if (!(error instanceof RangeError) || error.code) throw error; bytes = exact; }
+  catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; bytes = exact; }
   return exact.length <= bytes.length ? exact : bytes;
 }
