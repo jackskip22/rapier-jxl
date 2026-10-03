@@ -19,6 +19,10 @@ test('the cluster rung retains the carrier pixels and the completed floor', asyn
   }
   const job = transcodeSteps(input, {effort: 3}); for (const _ of job);
   assert.deepEqual(job.bytes, searched.bytes);
+  const late = transcodeSteps(input, {effort: 3});
+  for (const done of late) if (done === 1) late.hurry = true;
+  assert.ok(late.bytes.length === searched.bytes.length && late.bytes.every((byte, i) => byte === searched.bytes[i]),
+    'hurry at the final group keeps the completed cluster candidate');
   for (const options of [null, 3, {effort: 0}, {effort: 10}, {effort: 1.5}, {effort: NaN}, {effort: '3'}]) {
     assert.throws(() => transcodeSteps(input, options), {code: 'JXL_INPUT'});
     assert.throws(() => encodePhotoSteps(new Uint8Array(4), 1, 1, options), {code: 'JXL_INPUT'});

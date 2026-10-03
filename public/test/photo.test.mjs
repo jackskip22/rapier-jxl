@@ -107,8 +107,10 @@ function spatialError(data, jpeg) {
 }
 
 test('per-block photo quantisation stays inside effort 1\'s reconstruction budget', () => {
+  // This quality admits a cheaper candidate for both full and partial blocks, so the budget check runs.
+  const quality = 85;
   for (const [width, height] of [[16, 16], [17, 19]]) {
-    const data = source(width, height), jpeg = complete(photoCoefficientSteps(data, width, height, 90, 'srgb'));
+    const data = source(width, height), jpeg = complete(photoCoefficientSteps(data, width, height, quality, 'srgb'));
     const dc = jpeg.components.map(c => c.coeffs.filter((_, i) => i % 64 === 0)), before = spatialError(data, jpeg);
     const candidate = complete(quantisationSteps(data, jpeg));
     assert.ok(candidate, 'the retained case enters the quantisation candidate');
@@ -118,6 +120,6 @@ test('per-block photo quantisation stays inside effort 1\'s reconstruction budge
     assert.ok(Math.abs(after - candidate.reconstructionError.candidate) < before * 1e-12);
     candidate.components.forEach((c, i) => assert.deepEqual(c.coeffs.filter((_, k) => k % 64 === 0), dc[i]));
     assert.equal(candidate.alpha, data);
-    assert.ok(encodePhoto(data, width, height, {effort: 5}).length <= encodePhoto(data, width, height).length);
+    assert.ok(encodePhoto(data, width, height, {quality, effort: 5}).length <= encodePhoto(data, width, height, {quality}).length);
   }
 });

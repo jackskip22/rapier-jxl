@@ -6,6 +6,8 @@ import {readFile} from 'node:fs/promises';
 import {spawnSync} from 'node:child_process';
 import {transcode, transcodeSteps} from '../../jpeg.mjs';
 import {encodePhoto, encodePhotoSteps} from '../../photo.mjs';
+import {transcode as transcodeAns} from '../../jpeg-ans.mjs';
+import {encodePhoto as encodePhotoAns} from '../../photo-ans.mjs';
 import {decoder} from './decoder.mjs';
 import {rgbaOf} from './oracles.mjs';
 import {nativeDecoder} from './native-decoder.mjs';
@@ -61,10 +63,12 @@ test('coefficient search keeps each decoder’s effort-1 pixels and the smaller 
     for (const file of ['photo-corpus/grace-hopper.jpg', 'seeds/grey-sequential.jpg', 'seeds/colour-progressive-restarts.jpg']) {
       const input = new Uint8Array(await readFile(new URL(file, import.meta.url))), first = transcode(input), searched = transcode(input, {effort: 4});
       cases.push({...first, first: first.bytes, searched: searched.bytes});
+      cases.push({...first, first: first.bytes, searched: transcodeAns(input, {effort: 2}).bytes});
     }
     for (const index of [0, 13, 44]) {
       const {rgba, width, height} = pixelCase(20260930, index);
       cases.push({width, height, first: encodePhoto(rgba, width, height), searched: encodePhoto(rgba, width, height, {effort: 4})});
+      cases.push({width, height, first: encodePhoto(rgba, width, height), searched: encodePhotoAns(rgba, width, height, {effort: 2})});
     }
     for (const {width, height, first, searched} of cases) {
       assert.ok(searched.length <= first.length);
@@ -92,6 +96,10 @@ test('coefficient jobs keep their floor when hurried and their bytes when comple
   }
   const job = transcodeSteps(jpeg, {effort: 4}); for (const _ of job);
   assert.deepEqual(job.bytes, searched.bytes);
+  const late = transcodeSteps(jpeg, {effort: 4});
+  for (const done of late) if (done === 1) late.hurry = true;
+  assert.ok(late.bytes.length === searched.bytes.length && late.bytes.every((byte, i) => byte === searched.bytes[i]),
+    'hurry at the final group keeps the completed coefficient-order candidate');
   assert.deepEqual([job.width, job.height, job.orientation], [searched.width, searched.height, searched.orientation]);
 });
 
@@ -109,6 +117,10 @@ test('photograph effort jobs keep the floor through counting and writing, with q
   }
   const completed = encodePhotoSteps(rgba, width, height, {effort: 4}); for (const _ of completed);
   assert.deepEqual(completed.bytes, searched);
+  const late = encodePhotoSteps(rgba, width, height, {effort: 4});
+  for (const done of late) if (done === 1) late.hurry = true;
+  assert.ok(late.bytes.length === searched.length && late.bytes.every((byte, i) => byte === searched[i]),
+    'hurry at the final group keeps the completed photo candidate');
   const exact = encodePhoto(rgba, width, height, {quality: 100}), exactJob = encodePhotoSteps(rgba, width, height, {quality: 100, effort: 4});
   exactJob.hurry = true; for (const _ of exactJob);
   assert.deepEqual(exactJob.bytes, exact);

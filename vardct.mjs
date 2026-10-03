@@ -156,7 +156,7 @@ export function* varDCTSteps(jpeg, plan = {}) {
     contexts = chosen;
     const counts = new TokenCounts(chosen.contexts);
     for (let g = 0; g < numGroups; g++) { tokens(g, (ctx, value) => counts.add(ctx, value)); yield ++done / total; }
-    return buildTokenCoding(counts, plan.clusters);
+    return (plan.coding || buildTokenCoding)(counts, plan.clusters);
   };
   let coding = yield* countWith(contexts);
   if (wanted > 0) {
@@ -268,12 +268,14 @@ export function* varDCTSteps(jpeg, plan = {}) {
     writeHistograms(ac, {contextMap: new Uint8Array(8), histograms: [{config, code}]});
     for (const value of values) writeHybrid(ac, code, config, value);
   } else ac.write(2, 2);
-  writeHistograms(ac, {contextMap: coding.contextMap, histograms: coding.histograms});
+  if (coding.writeHistograms) coding.writeHistograms(ac);
+  else writeHistograms(ac, {contextMap: coding.contextMap, histograms: coding.histograms});
   checkSection(1 + numDcGroups);
 
   for (let g = 0; g < numGroups; g++) {
     const w = section(2 + numDcGroups + g);
     tokens(g, (ctx, value) => coding.write(w, ctx, value));
+    if (coding.flush) coding.flush(w);
     if (alpha && !single) writeModularStream(w, [alphaPlane(g % groupsX, Math.floor(g / groupsX))], GRADIENT_PREDICTOR);
     checkSection(2 + numDcGroups + g);
     yield ++done / total;

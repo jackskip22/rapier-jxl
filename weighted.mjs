@@ -16,8 +16,12 @@ export const WEIGHTED_CUTS = [-500, -392, -255, -191, -127, -95, -63, -47, -31, 
 // The context of a property value: how many cut points lie below it.
 const BUCKET = Int8Array.from({length: 1003}, (_, i) => WEIGHTED_CUTS.filter(cut => cut < i - 501).length);
 const DIVISORS = Int32Array.from({length: 64}, (_, i) => Math.floor(16777216 / (i + 1)));
-const errorWeight = (sum, most) => { const shift = Math.max(0, 26 - Math.clz32(sum + 1)); return 4 + ((most * DIVISORS[sum >> shift]) >> shift); };
+const calculateWeight = (sum, most) => { const shift = Math.max(0, 26 - Math.clz32(sum + 1)); return 4 + ((most * DIVISORS[sum >> shift]) >> shift); };
+// Common error sums use the same fixed arithmetic, computed once. Larger sums take the original formula.
+const WEIGHTS = [12, 13].map(most => Int32Array.from({length: 2048}, (_, sum) => calculateWeight(sum, most)));
+const errorWeight = (sum, most) => sum < 2048 ? WEIGHTS[most - 12][sum] : calculateWeight(sum, most);
 const SINGLE = new Int32Array(WEIGHTED_CUTS.length + 1);
+let weightedScratch;
 
 // Codes one channel plane with the weighted predictor, as codeChannel codes the others (a residual per pixel, eight
 // or more zero residuals as one zero and an LZ77 copy), each token through the target of its pixel's context:
@@ -27,8 +31,11 @@ const SINGLE = new Int32Array(WEIGHTED_CUTS.length + 1);
 // caller-owned arrays instead; it then owns tokenisation, while this one loop remains the predictor's state owner.
 export function codeWeighted(w, targets, plane, width, height, offset = 0, contextOf = SINGLE, residuals, properties) {
   const stride = width + 2;
-  const errors0 = new Int32Array(2 * stride), errors1 = new Int32Array(2 * stride), errors2 = new Int32Array(2 * stride), errors3 = new Int32Array(2 * stride);
-  const error = new Int32Array(2 * stride), runContexts = new Int32Array(8);
+  // A call owns its state until it returns; a nested writer call gets a separate scratch allocation.
+  const state = weightedScratch && weightedScratch[0].length >= 2 * stride ? weightedScratch : Array.from({length: 6}, (_, i) => new Int32Array(i < 5 ? 2 * stride : 8));
+  weightedScratch = null;
+  for (const array of state) array.fill(0);
+  const [errors0, errors1, errors2, errors3, error, runContexts] = state;
   let run = 0;
   const emit = (context, value, config = RESIDUAL_CONFIG, base = 0) => { if (w) writeHybrid(w, targets[context], config, value, base); else countToken(config, value, targets[context], base); };
   // A run's first zero goes through its own pixel's context and the copy's length through the next pixel's, where the
@@ -43,12 +50,11 @@ export function codeWeighted(w, targets, plane, width, height, offset = 0, conte
     const cur = y & 1 ? 0 : stride, prev = y & 1 ? stride : 0;
     for (let x = 0; x < width; x++, index++) {
       const left = x ? plane[index - 1] : y ? plane[index - width] : 0, top = y ? plane[index - width] : left;
-      const topleft = x && y ? plane[index - width - 1] : left, topright = x + 1 < width && y ? plane[index - width + 1] : top;
-      const toptop = y > 1 ? plane[index - 2 * width] : top;
+      const topright = x + 1 < width && y ? plane[index - width + 1] : top;
       const n = prev + x, ne = x < width - 1 ? n + 1 : n, nw = x ? n - 1 : n;
       let w0 = errorWeight(errors0[n] + errors0[ne] + errors0[nw], 13), w1 = errorWeight(errors1[n] + errors1[ne] + errors1[nw], 12);
       let w2 = errorWeight(errors2[n] + errors2[ne] + errors2[nw], 12), w3 = errorWeight(errors3[n] + errors3[ne] + errors3[nw], 12);
-      const N = top * 8, W = left * 8, NE = topright * 8, NW = topleft * 8, NN = toptop * 8;
+      const N = top * 8, W = left * 8, NE = topright * 8;
       const teW = x ? error[cur + x - 1] : 0, teN = error[n], teNW = error[nw], teNE = error[ne], sumWN = teN + teW;
       let most = teW;
       if (Math.abs(teN) > Math.abs(most)) most = teN;
@@ -57,7 +63,7 @@ export function codeWeighted(w, targets, plane, width, height, offset = 0, conte
       const context = contextOf[BUCKET[most < -501 ? 0 : most > 501 ? 1002 : most + 501]];
       if (properties) properties[index] = most;
       const p0 = W + NE - N, p1 = N - (((sumWN + teNE) * 16) >> 5), p2 = W - (((sumWN + teNW) * 10) >> 5);
-      const p3 = N - ((teNW * 7 + teN * 7 + teNE * 7 + (NN - N) * 0 + (NW - W) * 0) >> 5);
+      const p3 = N - (((teNW + teN + teNE) * 7) >> 5);
       // The weighted average: the weights scaled to sum between 16 and 64, then a division by table.
       const shift = 27 - Math.clz32(w0 + w1 + w2 + w3);
       w0 >>= shift; w1 >>= shift; w2 >>= shift; w3 >>= shift;
@@ -79,4 +85,5 @@ export function codeWeighted(w, targets, plane, width, height, offset = 0, conte
     }
   }
   flush();
+  weightedScratch = state;
 }

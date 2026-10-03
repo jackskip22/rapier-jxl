@@ -4,8 +4,8 @@
 // written out as V8 computed it (the cosines of the larger angles carry their rounding, and a coefficient on a
 // rounding edge would move without it). The quantisation shape, 1.3 ** max(0, hypot(u, v) · 5 / √98 − 1) at
 // v · 8 + u, is the exponential series of its logarithm: libjxl 0.7's DCT8 luma distance bands
-// (lib/jxl/quant_weights.cc), the reciprocal weight growing with radial frequency; its integer steps are V8's at every
-// quality by 0.001. Both chroma planes keep full resolution; their scale accounts for YCbCr's larger RGB error.
+// (lib/jxl/quant_weights.cc), the reciprocal weight growing with radial frequency. Both chroma planes keep full
+// resolution; coarser chroma AC steps reserve bits for luma, while finer DC steps preserve smooth gradients.
 const COSINES = Float64Array.of(0.3535533905932738, 0.3535533905932738, 0.3535533905932738, 0.3535533905932738,
   0.3535533905932738, 0.3535533905932738, 0.3535533905932738, 0.3535533905932738, 0.4903926402016152,
   0.4157348061512726, 0.27778511650980114, 0.09754516100806417, -0.0975451610080641, -0.277785116509801,
@@ -67,7 +67,7 @@ export function* photoCoefficientSteps(data, width, height, quality, colorSpace)
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), quantScale = 16;
   const distance = quality >= 30 ? 0.1 + (100 - quality) * 0.09 : 53 / 3000 * quality * quality - 23 / 20 * quality + 25;
   const components = [0, 1, 2].map(c => ({h: 1, v: 1, stride, rows,
-    quant: Int32Array.from(QUANT_SHAPE, (shape, k) => Math.max(1, Math.round(quantScale * distance * (c ? 8 : 14) * (k ? shape : 0.5)))),
+    quant: Int32Array.from(QUANT_SHAPE, (shape, k) => Math.max(1, Math.round(quantScale * distance * (c ? 18 : 10) * (k ? shape : 0.25)))),
     coeffs: new Int16Array(stride * rows * 64)}));
   const transform = dctBlocks(data, width, height);
   const band = (from, to) => {

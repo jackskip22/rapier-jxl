@@ -13,6 +13,9 @@
 4. A JPEG: `transcode(jpegBytes)` gives `{bytes, width, height, orientation}` without decoding. On `JXL_JPEG`,
    decode it and call `encodePhoto` on the pixels. Both doors accept `{effort: 4}` to try a smaller entropy
    representation with identical reconstructed pixels; the default is 1.
+   For an additional ANS candidate, use the same API from `rapier-jxl/jpeg-ans` or `rapier-jxl/photo-ans` with
+   `{effort: 2}`. These optional imports cost about 1.1 kB gzip more than their ordinary door and keep the smaller
+   complete stream; benchmark the extra encode work for your use. Default effort 1 stays prefix-coded.
 5. Anything larger than an icon runs in a worker. Calls are synchronous, so cancel by terminating the worker, or
    loop over the door's twin (`encodeSteps`, `transcodeSteps`, `encodePhotoSteps`) and leave the loop. A
    transferred buffer is gone from the sender: copy first if you may retry.

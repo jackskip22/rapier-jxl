@@ -35,18 +35,25 @@ export function* coefficientEffortSteps(jpeg, effort, fallback) {
     const first = varDCTSteps(jpeg); let step, hurry;
     while (!(step = first.next()).done) {
       hurry = yield step.value / 2;
-      if (hurry && best) { first.return(); return best; }
+      if (hurry && best && step.value < 1) { first.return(); return best; }
     }
     if (!best || step.value.length < best.length) best = step.value;
     if (hurry || effort < 3) return best;
     const parts = effort < 4 ? 1 : 3, clustered = varDCTSteps(jpeg, {clusters: {maxClusters: 32, newClusterCost: 160}});
-    while (!(step = clustered.next()).done) if (yield 0.5 + step.value / (2 * parts)) { clustered.return(); return best; }
+    while (!(step = clustered.next()).done) {
+      hurry = yield 0.5 + step.value / (2 * parts);
+      // The final group has already been written. Finish its stream before honoring a late hurry.
+      if (hurry && step.value < 1) { clustered.return(); return best; }
+    }
     if (step.value.length < best.length) best = step.value;
-    if (effort < 4) return best;
+    if (hurry || effort < 4) return best;
     const learning = coefficientOrderSteps(jpeg.components);
     while (!(step = learning.next()).done) if (yield 0.5 + (1 + step.value) / 6) { learning.return(); return best; }
     const candidate = varDCTSteps(jpeg, {orders: step.value});
-    while (!(step = candidate.next()).done) if (yield 0.5 + (2 + step.value) / 6) { candidate.return(); return best; }
+    while (!(step = candidate.next()).done) {
+      hurry = yield 0.5 + (2 + step.value) / 6;
+      if (hurry && step.value < 1) { candidate.return(); return best; }
+    }
     return step.value.length < best.length ? step.value : best;
   } catch (error) {
     if (!best || !(error instanceof RangeError && !error.code) && error.code !== 'JXL_SIZE') throw error;

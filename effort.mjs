@@ -185,18 +185,21 @@ function* searchSteps(rgba, width, height, shape, colorSpace, effort) {
     const [a, b] = candidates.map(price), margin = 27 * (layout.single ? 1 : groups + 1) + 8;
     if (b + margin <= a) chosen = [candidates[1]];
     else if (a + margin <= b) chosen = [candidates[0]];
+    else if (b < a) chosen = [candidates[1], candidates[0]];
   }
-  let written = 0;
+  let written = 0, hurried = false;
   const next = () => 0.5 + ++written / (2 * chosen.length * groups);
   let smallest = null;
   for (const plans of chosen) {
     const bytes = yield* write(plans);
     if (!bytes) return smallest;
-    if (!smallest || bytes.length < smallest.length) smallest = bytes;
+    // Price the likely winner first, but retain rung 2's byte choice on an equal-length completed pair.
+    if (!smallest || bytes.length < smallest.length || (bytes.length === smallest.length && plans === candidates[0])) smallest = bytes;
+    if (hurried) return smallest;
   }
   return smallest;
 
-  // A plan's stream, a group per step; null when hurried.
+  // A plan's stream, a group per step; a hurry at its final group keeps the already-completed candidate.
   function* write(plans) {
     const {tree, leaves, freqs} = assemble(plans);
     const transforms = channels >= 3 ? [{type: 'rct', beginC: 0, rctType: 6}] : [];
@@ -217,7 +220,7 @@ function* searchSteps(rgba, width, height, shape, colorSpace, effort) {
     const sections = [];
     if (layout.single) {
       group(0, (w, h) => { for (let c = 0; c < channels; c++) code(global, c, w, h); });
-      if (yield next()) return null;
+      hurried = yield next();
       sections.push(global.finish());
     } else {
       sections.push(global.finish());
@@ -229,7 +232,7 @@ function* searchSteps(rgba, width, height, shape, colorSpace, effort) {
           for (let c = 0; c < channels; c++) code(section, c, w, h);
           sections.push(section.finish());
         });
-        if (yield next()) return null;
+        if ((hurried = yield next()) && g + 1 < groups) return null;
       }
     }
     return assembleCodestream(header, sections);

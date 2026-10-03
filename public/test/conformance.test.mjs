@@ -110,6 +110,7 @@ test('the effort door\'s rungs keep grey, grey and alpha, colour and RGBA pictur
   try { ({encode: effort} = await import('../../effort.mjs')); }
   catch (error) { if (error.code !== 'ERR_MODULE_NOT_FOUND') throw error; }
   if (!effort) return t.skip('no effort door in this repository');
+  const {encodeSteps} = await import('../../effort.mjs');
   const {localSteps} = await import('../../local.mjs'), {inspectPixels} = await import('../../lossless.mjs'), {complete} = await import('../../bits.mjs');
   let streams = 0;
   for (const [width, height] of [[200, 100], [300, 200]]) {
@@ -126,6 +127,13 @@ test('the effort door\'s rungs keep grey, grey and alpha, colour and RGBA pictur
         if (level === 5) assert.deepEqual(bytes, previous, 'an effort without another rung keeps the previous bytes');
         previous = bytes;
         oracle.decode(bytes, width, height, `${kind} ${width}x${height} effort=${level}`, pixels); streams++;
+        if (kind === 'colour' && level === 3) {
+          const late = encodeSteps(pixels, width, height, {effort: level});
+          for (const done of late) if (done === 1) late.hurry = true;
+          assert.ok(late.bytes.length === bytes.length && late.bytes.every((value, i) => value === bytes[i]),
+            'a hurry after the final group keeps the completed candidate');
+          oracle.decode(late.bytes, width, height, `late hurry ${width}x${height}`, pixels); streams++;
+        }
         const shape = inspectPixels(pixels, width, height);
         if (level === 6 || level === 4 && shape.palette) {
           const candidate = complete(localSteps(pixels, width, height, shape, 'srgb', level, level === 4));
@@ -146,7 +154,7 @@ test('the effort door\'s rungs keep grey, grey and alpha, colour and RGBA pictur
     assert.deepEqual(effort(rgba, width, height, {effort: 5}), effort(rgba, width, height, {effort: 4}));
   }
   const width = 96, height = 64, rgba = new Uint8Array(await readFile(new URL('hurry-inner.rgba', seedsURL)));
-  const {encodeSteps} = await import('../../effort.mjs'), hurried = encodeSteps(rgba, width, height, {effort: 4});
+  const hurried = encodeSteps(rgba, width, height, {effort: 4});
   for (const done of hurried) if (done > 0.9) hurried.hurry = true;
   oracle.decode(hurried.bytes, width, height, 'hurried completed inner candidate', rgba); streams++;
   t.diagnostic(JSON.stringify({streams, oracles: oracle.names, nativeUnavailable: !oracle.native}));
