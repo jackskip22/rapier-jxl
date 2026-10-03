@@ -112,13 +112,13 @@ New: `rapier-jxl/effort`, each door's twin in steps with `hurry`, `colorSpace: '
 | file | bytes | gzip | Brotli | added to the core, gzip |
 | --- | ---: | ---: | ---: | ---: |
 | `rapier-jxl.min.mjs`, the core: `encode` | 19,539 | 8,511 | 7,515 | |
-| `effort.min.mjs`: `encode` with effort | 29,900 | 12,253 | 10,773 | 3,742 |
+| `effort.min.mjs`: `encode` with effort | 29,900 | 12,253 | 10,763 | 3,742 |
 | `jpeg.min.mjs`: `transcode` | 32,066 | 13,382 | 11,816 | 8,451 |
-| `photo.min.mjs`: `encodePhoto` | 31,117 | 12,807 | 11,279 | 6,181 |
-| every door in one bundle | 57,790 | 22,880 | 20,058 | |
+| `photo.min.mjs`: `encodePhoto` | 31,117 | 12,807 | 11,315 | 6,181 |
+| every door in one bundle | 57,790 | 22,880 | 20,033 | |
 | all readable modules | 164,941 | 50,736 | | |
 
-Exact bytes of release 2.0.0's files, measured by the script that stages this repository; `sizes.json`
+Exact bytes of release 2.0.1's files, measured by the script that stages this repository; `sizes.json`
 carries their hashes and tools (terser 5.51.2, Node v22.22.2; gzip 9, Brotli 11). Each minified file stands alone
 and is proved at staging to write the same bytes as its readable source; the last column is what a door adds to a
 bundle that already holds the core. `effort`'s `encode` is the core's at effort 1, so it takes the core's place, in

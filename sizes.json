@@ -1,6 +1,6 @@
 {
   "package": "rapier-jxl",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "measured": "exact bytes of the staged files; gzip level 9; Brotli quality 11, text mode; added is a door bundled with the core less the core alone, or the door alone less the core where it covers the core (effort); every measured bundle loads as a module",
   "node": "v22.22.2",
   "terser": "5.51.2",
@@ -58,7 +58,7 @@
         "bytes": 19539,
         "gzip": 8511,
         "brotli": 7515,
-        "sha256": "a801ef2c1bfd23116b32edc4bc4c43c62eaa442f7ff85a2547d00bbe1915fd17",
+        "sha256": "dff7b30216b82e8257daa32f3a9f4e13ed8971ed60bc5cb958d975e0f205046c",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -99,7 +99,7 @@
         "bytes": 32066,
         "gzip": 13382,
         "brotli": 11816,
-        "sha256": "4a6fcd6bc63b22662a8b58e54251f50c7f74b0b08ac744bfaa5912197fa593db",
+        "sha256": "a1900f0440e479a53445f2e42dbcc17c276e12d430c1f9cfc8e7b09c2514a43d",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -109,7 +109,7 @@
       "added": {
         "bytes": 21701,
         "gzip": 8451,
-        "brotli": 7539
+        "brotli": 7495
       },
       "provedByteCases": 13
     },
@@ -141,8 +141,8 @@
       "alone": {
         "bytes": 31117,
         "gzip": 12807,
-        "brotli": 11279,
-        "sha256": "6f57543f8023231da7c63aadc8aea9a038329029225efe15fa506d4017e10426",
+        "brotli": 11315,
+        "sha256": "dcd967728528be761a6dfd6bd846006d68e1cfc1c31a980b34033d7138195047",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -153,7 +153,7 @@
       "added": {
         "bytes": 16496,
         "gzip": 6181,
-        "brotli": 5461
+        "brotli": 5482
       },
       "provedByteCases": 43
     },
@@ -182,8 +182,8 @@
       "alone": {
         "bytes": 29900,
         "gzip": 12253,
-        "brotli": 10773,
-        "sha256": "fa9ab11fc617d10a2d74f6178f63369e5a94c1198f8d67e54f22d5a979754d42",
+        "brotli": 10763,
+        "sha256": "e074aa25992da322fbc82854abb99f5873ce53de8d447813e42fd738a9136619",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -193,7 +193,7 @@
       "added": {
         "bytes": 10361,
         "gzip": 3742,
-        "brotli": 3258
+        "brotli": 3248
       },
       "provedByteCases": 98
     }
@@ -215,6 +215,6 @@
     ],
     "bytes": 57790,
     "gzip": 22880,
-    "brotli": 20058
+    "brotli": 20033
   }
 }

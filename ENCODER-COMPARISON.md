@@ -5,10 +5,10 @@ A bounded survey, not proof of a global minimum; the encoders differ in what the
 
 | Encoder / entry | Version | Minified JS + WASM bytes | gzip bytes | Included capability |
 | --- | --- | ---: | ---: | --- |
-| Rapier JXL core | 2.0.0 | 19,539 | 8,511 | 8-bit lossless RGBA, lossy modular with exact alpha |
-| Rapier JXL effort door | 2.0.0 | 29,900 | 12,253 | The core, and the weighted predictor searched for lossless |
-| Rapier JXL JPEG door | 2.0.0 | 32,066 | 13,382 | JPEG coefficients, orientation; no JPEG reconstruction |
-| Rapier JXL photo door | 2.0.0 | 31,117 | 12,807 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
+| Rapier JXL core | 2.0.1 | 19,539 | 8,511 | 8-bit lossless RGBA, lossy modular with exact alpha |
+| Rapier JXL effort door | 2.0.1 | 29,900 | 12,253 | The core, and the weighted predictor searched for lossless |
+| Rapier JXL JPEG door | 2.0.1 | 32,066 | 13,382 | JPEG coefficients, orientation; no JPEG reconstruction |
+| Rapier JXL photo door | 2.0.1 | 31,117 | 12,807 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
 | [jSquash](https://github.com/jamsinclair/jSquash/tree/main/packages/jxl) | 1.3.0 | 1,388,572 | 525,782 | 8-bit lossless/lossy RGBA |
 | [Discourse's jSquash package](https://www.npmjs.com/package/@discourse/jxl) | 1.3.0 | 1,388,572 | 525,782 | The same encoder bytes as jSquash |
 | [Lacinak's jSquash fork](https://github.com/kelaci/jSquash) | 1.3.0-kelaci.0 | 2,071,514 | 844,866 | High bit-depth input options |
