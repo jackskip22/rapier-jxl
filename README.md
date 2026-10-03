@@ -1,8 +1,23 @@
 # Rapier JXL
 
-A JPEG XL encoder in pure JavaScript: one file, 19.5 kB, 8.5 kB gzipped, no WebAssembly, no
-dependencies, MIT. The encoder inside [Rapier](https://rapier.website), published on its own. The smallest
-JavaScript or WebAssembly JPEG XL encoder among the payloads [we measured](ENCODER-COMPARISON.md).
+A JPEG XL encoder in pure JavaScript, for writing `.jxl` from canvas pixels or a JPEG in a browser, a worker, Node
+or Deno, with no WebAssembly and no server.
+
+- The core is one file of 19.5 kB, 8.5 kB gzipped: the smallest JavaScript or WebAssembly JPEG XL
+  encoder among the payloads [we measured](ENCODER-COMPARISON.md).
+- Lossless and lossy in one `encode` call; alpha stays exact at every quality.
+- Photographs, JPEGs carried without decoding, and smaller exact files at more time are optional doors, added
+  only when imported.
+- The same input writes the same bytes in every JavaScript engine; quality is measured against libjxl 0.12.0.
+- No dependencies, MIT. An agent adding it to an app reads `AGENTS.md`.
+
+```sh
+npm install rapier-jxl
+```
+
+The encoder inside [Rapier](https://rapier.website), published on its own.
+
+## What it does
 
 - **Lossless.** Every pixel back as it went in: 8-bit grey, grey with alpha, RGB, RGBA.
 - **Lossy**, quality 1 to 99, for flat-colour rasters (screenshots, pixel art, scanned line art). Alpha stays exact.

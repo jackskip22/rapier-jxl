@@ -1,7 +1,7 @@
 {
   "name": "rapier-jxl",
   "version": "2.1.0",
-  "description": "A JPEG XL encoder in pure JavaScript, lossless and lossy, in one file of 19.5 kB, 8.5 kB gzipped; JPEGs and photographs are their own doors. The encoder inside Rapier.",
+  "description": "A JPEG XL encoder in pure JavaScript for the browser, workers, Node and Deno: lossless and lossy, the core one file of 19.5 kB (8.5 kB gzipped); photographs and JPEGs are optional doors. No WebAssembly, no dependencies.",
   "license": "MIT",
   "type": "module",
   "main": "./index.mjs",
@@ -66,6 +66,17 @@
     "jxl",
     "encoder",
     "image-compression",
+    "image",
+    "lossless",
+    "lossy",
+    "jpeg",
+    "transcode",
+    "photo",
+    "canvas",
+    "browser",
+    "web-worker",
+    "javascript",
+    "no-dependencies",
     "rapier"
   ],
   "scripts": {
