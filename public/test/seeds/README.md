@@ -18,6 +18,8 @@ and scan bitstrings.
 | `huffman-dc-symbol-16` | A DC table naming a symbol above 15 is refused when a scan first reads DC through it, as libjpeg refuses it, even when no coefficient uses the symbol. |
 | `rgba-2049x1.rgba` | Squeeze's zero-height chroma channels must not introduce unused histogram headers. Retained at qualities 1, 80 and 99 in `pixels.json`. |
 | `display-p3.jpg` | The colour pair's sequential JPEG with a Display P3 profile (`../icc.mjs`): carried and declared Display P3, its stream held in `bytes.json`. |
+| `display-p3-table.jpg` | The same carrier samples and P3 colorants with table transfer curves: the whole table is recognised using deterministic arithmetic, and `bytes.json` requires the parametric profile's stream. |
+| `profile-table-plateau.jpg` | The colour pair's sequential JPEG with Display P3 colorants and a monotonic red transfer table that matches sRGB only at the old sampled knots. `malformed.test.mjs` refuses it: relabelling its changed transfer as sRGB would change the colours. |
 | `rgba-1x257.rgba` | Squeeze's zero-width chroma channels of a one-wide picture own no group piece; the histograms are numbered over the channels that do, or the decoder finds a hole. Retained at qualities 1, 80 and 99 in `pixels.json`. |
 
 Run the public tests from the repository root:

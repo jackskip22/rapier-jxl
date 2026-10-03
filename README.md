@@ -113,10 +113,10 @@ New: `rapier-jxl/effort`, each door's twin in steps with `hurry`, `colorSpace: '
 | --- | ---: | ---: | ---: | ---: |
 | `rapier-jxl.min.mjs`, the core: `encode` | 19,539 | 8,511 | 7,515 | |
 | `effort.min.mjs`: `encode` with effort | 29,900 | 12,253 | 10,773 | 3,742 |
-| `jpeg.min.mjs`: `transcode` | 31,848 | 13,317 | 11,749 | 8,378 |
+| `jpeg.min.mjs`: `transcode` | 32,066 | 13,382 | 11,816 | 8,451 |
 | `photo.min.mjs`: `encodePhoto` | 31,117 | 12,807 | 11,279 | 6,181 |
-| every door in one bundle | 57,572 | 22,798 | 19,950 | |
-| all readable modules | 164,232 | 50,491 | | |
+| every door in one bundle | 57,790 | 22,880 | 20,058 | |
+| all readable modules | 164,941 | 50,736 | | |
 
 Exact bytes of release 2.0.0's files, measured by the script that stages this repository; `sizes.json`
 carries their hashes and tools (terser 5.51.2, Node v22.22.2; gzip 9, Brotli 11). Each minified file stands alone

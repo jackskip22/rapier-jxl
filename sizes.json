@@ -6,8 +6,8 @@
   "terser": "5.51.2",
   "privateProperties": "^(alphabetSize|lengths|codes|simple|treeSelect|splitToken|msb|lsb|contextMap|histograms|predictor|multiplier|context|splitval|property|offset|left|right|channel|acc|pending|at|bitLength|grow|zeroPadToByte|writeU32|append|finish|write|small|large|totals|contexts|tokens|cost|bucketOf|contextOf|nonZero|zeroDensityOffset|thresholds|numDc|numCtxs|freqs|hshift|vshift|residual|component|inPlace|horizontal|beginC|numC|rctType|nbColors|nbDeltas|useGlobalTree|streamId|pieces|rect|minSymbol|minLength|lengthConfig|params|type|leaf|groupsX|groupsY|dcGroupsX|dcGroupsY|single|config|bits|sym|tree|count|parts|lz77|transforms)$",
   "source": {
-    "bytes": 164232,
-    "gzip": 50491,
+    "bytes": 164941,
+    "gzip": 50736,
     "sha256": {
       "admit.mjs": "ccdbee9f68a0e0125853d5d786b95075bc39807e9a6e95d8a185a6c0c7b2fca4",
       "bits.mjs": "aee959d6bf46344f38291b461e8c40c225a23b7f4f093b21848432d9223abf3a",
@@ -17,7 +17,7 @@
       "entropy.mjs": "9cb52a9d174d63dc2b694725267c5ab0e8d693f5366e76fa0134f87cc878fe3a",
       "frame.mjs": "f4c4bf0486b1942d65875661419b56c02371279a042004c4eaee304c4825a68b",
       "index.mjs": "adf5f0d4ca70ce3e88c67a718d057c5dcab5098bd07308f4bf9406c365d81efe",
-      "jfif.mjs": "430c4a7efbf53007c7084fc6da85f4de9a05caad050b17ec9439ab0d17645d5c",
+      "jfif.mjs": "6b9a59f0b81ce5063191d1da9f658727ef03535144cd92b3908b249dfc99ed17",
       "jpeg.mjs": "7f5db3d4e0a33889ea76ae84addf6fe0b7ac788e01ec6e706cbc205dfceecb4b",
       "local.mjs": "3ad6d5f1369f316fddd0a6ed4844fbc42e60ae897610fa6cfc542c152e252b6a",
       "lossless.mjs": "6260af5e685a94360ee7eb2c0f3e6ac94dc931ab0f199a7d5102ba13893f390c",
@@ -96,10 +96,10 @@
         "jpeg"
       ],
       "alone": {
-        "bytes": 31848,
-        "gzip": 13317,
-        "brotli": 11749,
-        "sha256": "b8d91ccd10fdb1b75369edf07dbe7628366a743f28fc1a7623a8b7bcc5b5c233",
+        "bytes": 32066,
+        "gzip": 13382,
+        "brotli": 11816,
+        "sha256": "4a6fcd6bc63b22662a8b58e54251f50c7f74b0b08ac744bfaa5912197fa593db",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -107,11 +107,11 @@
         }
       },
       "added": {
-        "bytes": 21483,
-        "gzip": 8378,
-        "brotli": 7465
+        "bytes": 21701,
+        "gzip": 8451,
+        "brotli": 7539
       },
-      "provedByteCases": 11
+      "provedByteCases": 13
     },
     {
       "entry": "./photo",
@@ -155,7 +155,7 @@
         "gzip": 6181,
         "brotli": 5461
       },
-      "provedByteCases": 42
+      "provedByteCases": 43
     },
     {
       "entry": "./effort",
@@ -213,8 +213,8 @@
       "./jpeg",
       "./photo"
     ],
-    "bytes": 57572,
-    "gzip": 22798,
-    "brotli": 19950
+    "bytes": 57790,
+    "gzip": 22880,
+    "brotli": 20058
   }
 }

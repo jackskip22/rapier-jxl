@@ -151,6 +151,9 @@
     {"door":"effort","input":{"file":"seeds/local-palette.rgba","width":600,"height":19},"options":{"effort":4},"sha256":"114bc3ba909bed5bdf1198893ad855715cc4a7d0d1fafa265ccfdbe56ad86579"},
     {"door":"effort","input":{"file":"seeds/local-palette.rgba","width":600,"height":19},"options":{"effort":5},"sha256":"114bc3ba909bed5bdf1198893ad855715cc4a7d0d1fafa265ccfdbe56ad86579"},
     {"door":"effort","input":{"border":true,"width":300,"height":259},"options":{"effort":6},"sha256":"9d23c162530ffeb584f38d396edcd98b0f1f283c88ada0437b491e0e806efcb6"},
-    {"door":"effort","input":{"file":"seeds/local-palette.rgba","width":600,"height":19},"options":{"effort":6},"sha256":"d57b7cff92de7eb5f6bc8ae2359947106f612be8088d24de9d080a440374e391"}
+    {"door":"effort","input":{"file":"seeds/local-palette.rgba","width":600,"height":19},"options":{"effort":6},"sha256":"d57b7cff92de7eb5f6bc8ae2359947106f612be8088d24de9d080a440374e391"},
+    {"door":"transcode","input":{"file":"seeds/display-p3-table.jpg"},"sha256":"ba8ac62cba2921bf895020ab1a4d3e1d6cf34524dbd22987db8c04dca55e34c4"},
+    {"door":"transcode","input":{"file":"photo-corpus/grace-hopper.jpg"},"options":{"effort":4},"sha256":"d1041a9706a5128bb5fc5acef745708827e68db23c332f212139397f727b279c"},
+    {"door":"photo","input":{"seed":20260930,"index":13},"options":{"quality":90,"effort":4},"sha256":"048ba1482a2a5b2af068a74b3dbf8a3e979156c4481be82ad72883e14b397b91"}
   ]
 }

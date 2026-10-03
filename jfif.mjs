@@ -42,6 +42,14 @@ const P3 = [0.5151, 0.2412, -0.001, 0.292, 0.6922, 0.0419, 0.1571, 0.0666, 0.784
 const CURVE = [0, 0.00516, 0.01435, 0.02934, 0.05088, 0.07958, 0.11602, 0.16068, 0.21404, 0.27652, 0.34851, 0.43039,
   0.52252, 0.62523, 0.73884, 0.86367, 1];
 const PARAMETERS = [2.4, 1 / 1.055, 0.055 / 1.055, 1 / 12.92, 0.04045];
+function srgbLinear(value) {
+  if (value <= 0.04045) return value / 12.92;
+  const base = (value + 0.055) / 1.055;
+  // base ** 2.4 as fixed arithmetic: the fifth root squared, times base squared. All engines round alike.
+  let root = 1;
+  for (let i = 0; i < 24; i++) root = (4 * root + base / (root * root * root * root)) / 5;
+  return base * base * root * root;
+}
 export function profileSpace(profile) {
   const size = profile.length;
   const u16 = at => (profile[at] << 8) | profile[at + 1];
@@ -64,6 +72,9 @@ export function profileSpace(profile) {
     }
     const n = sig(at) === 'curv' ? u32(at + 8) : 0;
     if (n < 2 || at + 12 + 2 * n > size) return false;
+    // Matching a few knots cannot identify a transfer curve: a monotonic table can differ between them.
+    // Check every stored value as well as the interpolated knots below, which also reject coarse linear tables.
+    for (let i = 0; i < n; i++) if (Math.abs(u16(at + 12 + 2 * i) / 65535 - srgbLinear(i / (n - 1))) > 0.001) return false;
     return CURVE.every((want, k) => {
       const p = k * (n - 1) / 16, i = Math.floor(p), j = Math.min(n - 1, i + 1), f = p - i;
       return Math.abs((u16(at + 12 + 2 * i) * (1 - f) + u16(at + 12 + 2 * j) * f) / 65535 - want) <= 0.001;

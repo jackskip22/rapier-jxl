@@ -5,6 +5,7 @@
 // level for every DC step; the options are read before any work. Run: node --test "public/test/*.test.mjs".
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {encode, LIMITS} from '../../index.mjs';
 import {encode as encodeEffort} from '../../effort.mjs';
 import {transcode} from '../../jpeg.mjs';
@@ -96,6 +97,8 @@ test('a colour profile is read by what it does: sRGB changes nothing, Display P3
 	for (const profile of [displayProfile({colorants: 'adobe-rgb', description: 'sRGB IEC61966-2.1'}), displayProfile({curve: 'gamma', description: 'Display P3'}),
 		displayProfile({extra: [['A2B0', [...'mft2'].map(c => c.charCodeAt(0)).concat(new Array(12).fill(0))]]}), iccProfile('RGB ', [['desc', descriptionTag('sRGB IEC61966-2.1')]])])
 		assert.throws(() => transcode(withProfile(jpeg, profile)), {code: 'JXL_JPEG'});
+	// A monotonic table agrees at the old sampled knots but changes the transfer between them.
+	assert.throws(() => transcode(new Uint8Array(readFileSync(new URL('seeds/profile-table-plateau.jpg', import.meta.url)))), {code: 'JXL_JPEG'});
 	const grey = writeJPEG({width: 24, height: 16, components: [component(1, 1, 24, 16, 1, 1, 8)]});
 	assert.deepEqual(transcode(withProfile(grey, displayProfile({grey: true}))).bytes, transcode(grey).bytes, 'grey on the sRGB curve');
 	assert.throws(() => transcode(withProfile(grey, displayProfile({grey: true, curve: 'gamma'}))), {code: 'JXL_JPEG'});
