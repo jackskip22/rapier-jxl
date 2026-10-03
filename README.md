@@ -162,7 +162,7 @@ headers, `npm run fuzz:scale -- --out fuzz-run --workers 4` repeats the fixed bu
 
 ## Why
 
-Rapier keeps pictures inside Markdown, and its standard says a raster picture in Markdown is JPEG XL: exact where
+Rapier keeps pictures inside Markdown, and its standard defaults to JPEG XL for raster pictures in Markdown: exact where
 it must be, small where it may be. Drawings stay SVG. An editor carrying an encoder offline in a small page needed
 one this size, and none existed. The standard is at [rapier.website](https://rapier.website); for an agent, see
 `AGENTS.md`.

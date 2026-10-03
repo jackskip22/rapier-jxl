@@ -117,7 +117,7 @@ and paint-0002 at q80 and q90.
 
 `transcode` against `cjxl --lossless_jpeg=1`. The contracts differ: Rapier carries the coefficients and the
 orientation and cannot rebuild the JPEG file; native also stores the reconstruction data and rebuilt every
-original exactly. So a smaller Rapier row is not a like-for-like win. Six inputs are tiny conformance fixtures;
+accepted original exactly. So a smaller Rapier row is not a like-for-like win. Seven inputs are tiny conformance fixtures;
 Grace is the one photograph.
 
 | JPEG input | Original bytes | Rapier carrier | Native reversible | JPEG rebuilt by native |
@@ -154,7 +154,7 @@ bundled Geist fonts and pinned `@napi-rs/canvas` 0.1.100. Grace is the public-do
 
 ```sh
 cjxl INPUT.pam OUTPUT.jxl --distance=D --effort=7 --num_threads=0 \
-  --alpha_distance=0 --keep_invisible=1 --premultiply=0 --container=0 \
+  --alpha_distance=0 --resampling=1 --ec_resampling=1 --keep_invisible=1 --premultiply=0 --container=0 \
   -x color_space=RGB_D65_SRG_Per_SRG --quiet
 djxl INPUT.jxl OUTPUT.pam --bits_per_sample=8 --color_space=RGB_D65_SRG_Per_SRG --num_threads=0 --quiet
 butteraugli_main REFERENCE.ppm DECODED.ppm --intensity_target 80
