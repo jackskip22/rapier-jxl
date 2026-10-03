@@ -1,7 +1,7 @@
 name: publish
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
@@ -9,31 +9,25 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    environment: npm
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
-      - name: the release names this version
-        if: github.event_name == 'release'
-        env:
-          TAG: ${{ github.event.release.tag_name }}
+      - name: an npm that speaks trusted publishing (11.5.1 or newer)
         run: |
-          version=$(node -p "require('./package.json').version")
-          named=$(printf '%s' "$TAG" | grep -oE '[0-9]+.[0-9]+.[0-9]+' | head -1 || true)
-          if [ -n "$named" ] && [ "$named" != "$version" ]; then
-            echo "the release tag $TAG names $named, package.json says $version" >&2; exit 1
-          fi
-      - name: publish unless the registry already has this version
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          npm install -g npm@latest
+          npm --version
+          node -e 'const [a, b, c] = require("child_process").execSync("npm --version").toString().trim().split(".").map(Number); if (a < 11 || (a === 11 && (b < 5 || (b === 5 && c < 1)))) { console.error("trusted publishing needs npm 11.5.1 or newer"); process.exit(1); }'
+      - name: publish unless the registry already has this version (trusted publishing through OIDC; no token, no secret)
         run: |
+          set -u
+          unset NODE_AUTH_TOKEN NPM_TOKEN NPM_CONFIG__AUTHTOKEN 2>/dev/null || true
+          npmrc="${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"; if [ -f "$npmrc" ]; then sed -i '/_authToken/d' "$npmrc"; fi
           name=$(node -p "require('./package.json').name")
           version=$(node -p "require('./package.json').version")
           if [ -n "$(npm view "$name@$version" version 2>/dev/null)" ]; then
             echo "$name@$version is already on the registry: nothing to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
           fi
-          npm publish --provenance --access public
+          npm publish --access public
           echo "published $name@$version" | tee -a "$GITHUB_STEP_SUMMARY"
