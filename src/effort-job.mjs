@@ -12,6 +12,7 @@ import {WEIGHTED_PREDICTOR, WEIGHTED_PROPERTY, WEIGHTED_CUTS, codeWeighted} from
 import {fault, admitOptions, admitPixels} from './admit.mjs';
 import {localSteps} from './local.mjs';
 import {rctSearchSteps} from './rct-search.mjs';
+import {screenEligible, screenSteps} from './screen-search.mjs';
 
 // The hurry in a step's reply: the caller's flag, or for a pooled pass a reply of null (ended) or {hurried}.
 const hurryOf = reply => reply === null || (typeof reply === 'object' ? reply.hurried : reply);
@@ -32,7 +33,9 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, pooled) 
   const shape = inspectPixels(data, width, height);
   if (quality < 100) {
     if (!shape.palette) return yield* lossySteps(data, width, height, {quality, shape, colorSpace});
-    const exact = yield* part(losslessSteps(data, width, height, {shape, colorSpace}), 0, 2);
+    // A palette picture's exact stream at this effort is the floor a lossy request must beat (a screen's is often far
+    // under effort 1's).
+    const exact = yield* part(effortSteps(data, width, height, 100, colorSpace, effort, false), 0, 2);
     let bytes;
     try { bytes = yield* part(lossySteps(data, width, height, {quality, shape, colorSpace}), 1, 2); }
     catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; bytes = exact; }
@@ -41,20 +44,25 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, pooled) 
   if (effort < 2) return yield* losslessSteps(data, width, height, {shape, colorSpace, pooled});
   let best = yield* part(losslessSteps(data, width, height, {shape, colorSpace, pooled}), 0, 2);
   const direct = shape.palette ? {...shape, palette: null} : shape;
-  if (effort >= 4) {
+  // A screen, a drawing or text (screen-search.mjs) also prices its palettes, residual runs and repeated glyphs from
+  // effort 3, first; at effort 3 a win of a quarter or more ends the search there.
+  const screen = effort >= 3 && screenEligible(data, width, height, shape), screenFloor = best.length;
+  if (effort >= 4 || screen) {
     const searches = [searchSteps(data, width, height, direct, colorSpace, 3, pooled)];
-    if (shape.palette) searches.push(localSteps(data, width, height, shape, colorSpace, 4, true, pooled));
+    if (effort >= 4 && shape.palette) searches.push(localSteps(data, width, height, shape, colorSpace, 4, true, pooled));
     if (effort >= 6) {
       searches.push(localSteps(data, width, height, shape, colorSpace, 6, false, pooled));
       if (shape.palette) searches.push(localSteps(data, width, height, shape, colorSpace, 6, true, pooled));
     }
-    searches.push(rctSearchSteps(data, width, height, shape, colorSpace, pooled));
+    if (effort >= 4) searches.push(rctSearchSteps(data, width, height, shape, colorSpace, pooled));
+    if (screen) searches.unshift(screenSteps(data, width, height, shape, colorSpace, {fastFloor: effort === 3 ? best.length : 0}));
     for (let i = 0; i < searches.length; i++) {
       try {
         let step, reply, hurried = false;
         while (!(step = searches[i].next(reply)).done) hurried = hurryOf(reply = yield scaled(step.value, done => 0.5 + (i + done) / (2 * searches.length)));
         if (step.value && step.value.length < best.length) best = step.value;
         if (hurried) return best;
+        if (screen && effort === 3 && i === 0 && step.value && step.value.length * 4 <= screenFloor * 3) return best;
       } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
     }
     return best;

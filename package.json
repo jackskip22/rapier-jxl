@@ -1,6 +1,6 @@
 {
   "name": "rapier-jxl",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "description": "A JPEG XL encoder in pure JavaScript for the browser, workers, Node and Deno: lossless and lossy, the core one file of 21.3 kB (9.3 kB gzipped); photographs and JPEGs are optional doors. Optional inlined WebAssembly SIMD kernels; no runtime dependencies.",
   "license": "MIT",
   "type": "module",

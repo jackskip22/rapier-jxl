@@ -5,6 +5,8 @@
 // 2. the specification's self-correcting (weighted) predictor, one context per channel;
 // 3. the weighted predictor with its channel's tokens split by the predictor's own error, neighbouring intervals of
 //    libjxl's cut points merged wherever a shared prefix code costs less.
+// Screens, drawings and text from rung 3 also price exact global and per-channel palettes, residual LZ77 and an
+// exact repeated-glyph dictionary (screen-search.mjs).
 // 4. palette indices with local trees and histograms, the predictor and error intervals learned per group;
 //    also a sampled search over all 42 reversible colour transforms, accepted only after a smaller complete stream;
 // 6. direct and palette planes with splits on the unclamped gradient and west-minus-northwest difference.
