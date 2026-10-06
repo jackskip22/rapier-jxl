@@ -1,0 +1,355 @@
+{
+  "asOf": "2026-09-30",
+  "node": "v22.22.2",
+  "terser": "5.51.2",
+  "scope": "Published executable JavaScript/WebAssembly encoder payloads found through npm jpeg-xl/jpegxl/jxl searches and upstream repositories; single-thread variants. Decoder-only packages are identified, not ranked. No claim of an exhaustive internet census or the minimum possible build.",
+  "method": "Sum of listed JavaScript and WASM resources. Terser compress passes=2, mangle=true, preserved license comments; WASM unchanged. gzip level9 per resource, summed, not npm archive size. No tree-shaking across resources, WASM optimization or invented rebuild. Factory-only entries omit optional convenience wrappers, workers, threaded variants and decoders; that favors competitors. Capability is documented upstream, not a conformance result from this size survey.",
+  "entries": [
+    {
+      "name": "@jsquash/jxl",
+      "version": "1.3.0",
+      "tarball": "https://registry.npmjs.org/@jsquash/jxl/-/jxl-1.3.0.tgz",
+      "integrity": "sha512-IVOPTneyOd9eBAuow+FnCYIP6wkIc7CjrCDnZGiqAPyJ63vMVxv3zoWiucGiZVh6u9vi/l40AkcS9QwkoVSAqA==",
+      "files": [
+        {
+          "path": "codec/enc/jxl_enc.js",
+          "bytes": 47073,
+          "gzip": 13132,
+          "minified": 24748,
+          "minifiedGzip": 8927,
+          "sha256": "5bb33d2a204f43035bfca2c581aff28669706aedae93188372c5d5c81532f8a8"
+        },
+        {
+          "path": "codec/enc/jxl_enc.wasm",
+          "bytes": 1363824,
+          "gzip": 516855,
+          "minified": 1363824,
+          "minifiedGzip": 516855,
+          "sha256": "3c6c02df45c0dededab146888789d541b23b9a299cb16d497dce412a3a4bc7d3"
+        }
+      ],
+      "capability": "8-bit lossless/lossy RGBA; single-thread encoder factory",
+      "encoder": true,
+      "source": "git+https://github.com/jamsinclair/jSquash.git",
+      "total": {
+        "bytes": 1410897,
+        "gzip": 529987,
+        "minified": 1388572,
+        "minifiedGzip": 525782
+      }
+    },
+    {
+      "name": "@discourse/jxl",
+      "version": "1.3.0",
+      "tarball": "https://registry.npmjs.org/@discourse/jxl/-/jxl-1.3.0.tgz",
+      "integrity": "sha512-Veu75DEDC7uKsCCsD94UIjFwvHE73+AATBQbBWb83QyJV34wmyxl2Ji+fiiM234mlNn4cpo3DUl0QFrXgRTcfA==",
+      "files": [
+        {
+          "path": "codec/enc/jxl_enc.js",
+          "bytes": 47073,
+          "gzip": 13132,
+          "minified": 24748,
+          "minifiedGzip": 8927,
+          "sha256": "5bb33d2a204f43035bfca2c581aff28669706aedae93188372c5d5c81532f8a8"
+        },
+        {
+          "path": "codec/enc/jxl_enc.wasm",
+          "bytes": 1363824,
+          "gzip": 516855,
+          "minified": 1363824,
+          "minifiedGzip": 516855,
+          "sha256": "3c6c02df45c0dededab146888789d541b23b9a299cb16d497dce412a3a4bc7d3"
+        }
+      ],
+      "capability": "jSquash fork; 8-bit lossless/lossy RGBA",
+      "encoder": true,
+      "source": "git+https://github.com/discourse/jSquash.git",
+      "total": {
+        "bytes": 1410897,
+        "gzip": 529987,
+        "minified": 1388572,
+        "minifiedGzip": 525782
+      }
+    },
+    {
+      "name": "@lacinak/jsquash-jxl",
+      "version": "1.3.0-kelaci.0",
+      "tarball": "https://registry.npmjs.org/@lacinak/jsquash-jxl/-/jsquash-jxl-1.3.0-kelaci.0.tgz",
+      "integrity": "sha512-LZp9O+iYDR2FtSFf4C2p5OQF9NofGOq7/mMUnLbMCMxPHTFLijugUI3iATyRHEwX8v4/br4swDru3TAffcORkw==",
+      "files": [
+        {
+          "path": "codec/enc/jxl_enc.js",
+          "bytes": 80759,
+          "gzip": 22481,
+          "minified": 47676,
+          "minifiedGzip": 16519,
+          "sha256": "e2d96af9e41f15457ffa6ed05f969774ab184fcbef23efbc20f0f4ad4b789066"
+        },
+        {
+          "path": "codec/enc/jxl_enc.wasm",
+          "bytes": 2023838,
+          "gzip": 828347,
+          "minified": 2023838,
+          "minifiedGzip": 828347,
+          "sha256": "42d1a5516bc238b7864f6919e064b679f89ba647b75d6bc7f0521672bb6d7cdd"
+        }
+      ],
+      "capability": "jSquash fork with 8/10/12/16/32-bit input options",
+      "encoder": true,
+      "source": "git+https://github.com/kelaci/jSquash.git",
+      "total": {
+        "bytes": 2104597,
+        "gzip": 850828,
+        "minified": 2071514,
+        "minifiedGzip": 844866
+      }
+    },
+    {
+      "name": "@squoosh-kit/jxl",
+      "version": "0.2.10",
+      "tarball": "https://registry.npmjs.org/@squoosh-kit/jxl/-/jxl-0.2.10.tgz",
+      "integrity": "sha512-yDYw4J0UbZm2+69NSm9IiNnccvUzzThFzlizAQ94vrIUkRfQHFe8l4g1avXui7YFNw80DdAfaZ3q+K026oKRRw==",
+      "files": [
+        {
+          "path": "dist/wasm/jxl-enc/jxl_enc.js",
+          "bytes": 50570,
+          "gzip": 13769,
+          "minified": 26112,
+          "minifiedGzip": 9334,
+          "sha256": "a0c239eb2d13554b51f5c6eec7c745ef5f76ee104727468278ff26e8bfedd1ca"
+        },
+        {
+          "path": "dist/wasm/jxl-enc/jxl_enc.wasm",
+          "bytes": 1345677,
+          "gzip": 502593,
+          "minified": 1345677,
+          "minifiedGzip": 502593,
+          "sha256": "98113980d99e49bdf5aba4bdc82eb5dd5ce4d3e34a90ac6e9fedcb3a84984223"
+        }
+      ],
+      "capability": "8-bit lossless/lossy RGBA; low-level single-thread factory, kit wrapper excluded",
+      "encoder": true,
+      "source": "git+https://github.com/bnowak008/squoosh-kit.git",
+      "total": {
+        "bytes": 1396247,
+        "gzip": 516362,
+        "minified": 1371789,
+        "minifiedGzip": 511927
+      }
+    },
+    {
+      "name": "icodec",
+      "version": "0.6.0",
+      "tarball": "https://registry.npmjs.org/icodec/-/icodec-0.6.0.tgz",
+      "integrity": "sha512-m9ptjNaqBTmnTOc7CkNgTXFrAY6QBjiyri6Ba66AGfGN1+OWPBej8cKgeZ+LwKH53zwDu36zukX2PaO8NTUMbw==",
+      "files": [
+        {
+          "path": "dist/jxl-enc.js",
+          "bytes": 36177,
+          "gzip": 10532,
+          "minified": 16747,
+          "minifiedGzip": 6920,
+          "sha256": "74f5e93abb0b887498c8f561c2d6e9554404d6c4f7040ff97f3ba85cbd42ec1c"
+        },
+        {
+          "path": "dist/jxl-enc.wasm",
+          "bytes": 2458207,
+          "gzip": 894037,
+          "minified": 2458207,
+          "minifiedGzip": 894037,
+          "sha256": "542df53d05fee3cef0696560474e8ceed6168db19bbc4d1154939ef75f72fc0b"
+        }
+      ],
+      "capability": "8–16-bit lossless/lossy pixels; low-level encoder factory",
+      "encoder": true,
+      "source": "git+https://github.com/Kaciras/icodec.git",
+      "total": {
+        "bytes": 2494384,
+        "gzip": 904569,
+        "minified": 2474954,
+        "minifiedGzip": 900957
+      }
+    },
+    {
+      "name": "@cornerstonejs/codec-libjxl",
+      "version": "1.1.1",
+      "tarball": "https://registry.npmjs.org/@cornerstonejs/codec-libjxl/-/codec-libjxl-1.1.1.tgz",
+      "integrity": "sha512-Gp5AXNDuqX9CggJ6VJzjEuPowL2IsKGkvUPo3I7ZmCaY1vNDTwOdJUFrHACl3RIMDm+EL9EUw0Lhsmbs5b0fvA==",
+      "files": [
+        {
+          "path": "dist/jpegxlwasm_encode.js",
+          "bytes": 50838,
+          "gzip": 13491,
+          "minified": 24288,
+          "minifiedGzip": 8788,
+          "sha256": "851bc93debf2e7ff0ecef5a83d4836035c14d43be0d2b88bb64dbec7fcec58c4"
+        },
+        {
+          "path": "dist/jpegxlwasm_encode.wasm",
+          "bytes": 2550720,
+          "gzip": 927454,
+          "minified": 2550720,
+          "minifiedGzip": 927454,
+          "sha256": "6eccfd6d5aa65149e6e8d4802849e0ca64149cbccd76dd31bcfecf836606114b"
+        }
+      ],
+      "capability": "1–16-bit grayscale/RGB lossless/lossy; DICOM-oriented API",
+      "encoder": true,
+      "source": "git+https://github.com/cornerstonejs/codecs.git",
+      "total": {
+        "bytes": 2601558,
+        "gzip": 940945,
+        "minified": 2575008,
+        "minifiedGzip": 936242
+      }
+    },
+    {
+      "name": "jxl-wasm",
+      "version": "0.7.0",
+      "tarball": "https://registry.npmjs.org/jxl-wasm/-/jxl-wasm-0.7.0.tgz",
+      "integrity": "sha512-SQJddwn5YR3fIJnXs9kZQgB7ZtbXzlDOfMdh37zEWGgYooSsXt5fuPRz59AxpozlR1AdScFg4u9+RnH7B/vgSg==",
+      "files": [
+        {
+          "path": "lib/cjxl.js",
+          "bytes": 100871,
+          "gzip": 26419,
+          "minified": 76394,
+          "minifiedGzip": 22328,
+          "sha256": "6cc9e6bb8c50096972a114776ce1f23f3224129bb792b37480e2bfa0f1308ee2"
+        },
+        {
+          "path": "lib/cjxl.wasm",
+          "bytes": 2457192,
+          "gzip": 939066,
+          "minified": 2457192,
+          "minifiedGzip": 939066,
+          "sha256": "537ee73c2f9a78c42c0828e5792b329533b40806f5aabe6604c057857c9043e4"
+        },
+        {
+          "path": "lib/cjxl-wrap.js",
+          "bytes": 209,
+          "gzip": 164,
+          "minified": 172,
+          "minifiedGzip": 144,
+          "sha256": "fcf7dedb4df50834005036a31e6b0f4812e398c66b04601a4ea582bc1c677389"
+        }
+      ],
+      "capability": "libjxl0.7 command-line interface; pixels and reversible JPEG",
+      "encoder": true,
+      "source": "git+https://github.com/saschanaz/jxl-wasm.git",
+      "total": {
+        "bytes": 2558272,
+        "gzip": 965649,
+        "minified": 2533758,
+        "minifiedGzip": 961538
+      }
+    },
+    {
+      "name": "jpeg-to-jxl",
+      "version": "0.2.0",
+      "tarball": "https://registry.npmjs.org/jpeg-to-jxl/-/jpeg-to-jxl-0.2.0.tgz",
+      "integrity": "sha512-e3m8iml/FAX3rsH0wXzRnxA6wuPIipRLi2lIucnvRyGSYCx4CVWjUSsK47x9J022uo7q/wRQ/Poa+mBl3rycHg==",
+      "files": [
+        {
+          "path": "dist/index.js",
+          "bytes": 5311,
+          "gzip": 1818,
+          "minified": 1913,
+          "minifiedGzip": 775,
+          "sha256": "1797f8e7245a6c868677b889075146d82296d8167e12650853e50f9c2d8b081f"
+        },
+        {
+          "path": "dist/transcode.js",
+          "bytes": 7886,
+          "gzip": 3757,
+          "minified": 7622,
+          "minifiedGzip": 3596,
+          "sha256": "7d83a717ab1b7c5625b67536d2019cf01dd70ff76f0f8ab202ff8e1e581479a5"
+        },
+        {
+          "path": "dist/transcode.wasm",
+          "bytes": 2723323,
+          "gzip": 1059035,
+          "minified": 2723323,
+          "minifiedGzip": 1059035,
+          "sha256": "ebe8e143df765233880a12caa23b4855f807e6cc64b7fb8fae017b370a85aaa6"
+        }
+      ],
+      "capability": "JPEG recompression with exact JPEG reconstruction; also includes decode/JPEG fallback",
+      "encoder": true,
+      "source": "git+https://github.com/ChefJulio/jpeg-to-jxl.git",
+      "total": {
+        "bytes": 2736520,
+        "gzip": 1064610,
+        "minified": 2732858,
+        "minifiedGzip": 1063406
+      }
+    },
+    {
+      "name": "@squoosh/lib",
+      "version": "0.5.3",
+      "tarball": "https://registry.npmjs.org/@squoosh/lib/-/lib-0.5.3.tgz",
+      "integrity": "sha512-d/yn6M0P5rk+L0QOl/hzvlHDqXCCmEvwdcYu7sXwhyYDNskg9oxlZtZTBaKKbX6Vq0rzajI9GZkDC0zXlz/oRw==",
+      "files": [
+        {
+          "path": "build/index.js",
+          "bytes": 497408,
+          "gzip": 124114,
+          "minified": 269919,
+          "minifiedGzip": 36617,
+          "sha256": "10b2ec36213aac1154a3a1fb7b3840ed30f134a31928123cdeb5c4041824edac"
+        },
+        {
+          "path": "build/jxl_node_enc-b8ea914c.wasm",
+          "bytes": 1345677,
+          "gzip": 502593,
+          "minified": 1345677,
+          "minifiedGzip": 502593,
+          "sha256": "98113980d99e49bdf5aba4bdc82eb5dd5ce4d3e34a90ac6e9fedcb3a84984223"
+        }
+      ],
+      "capability": "8-bit lossless/lossy pixels; shared multi-codec JS and JXL encoder WASM",
+      "encoder": true,
+      "source": "git+https://github.com/GoogleChromeLabs/squoosh.git",
+      "total": {
+        "bytes": 1843085,
+        "gzip": 626707,
+        "minified": 1615596,
+        "minifiedGzip": 539210
+      }
+    },
+    {
+      "name": "jxl-oxide-wasm",
+      "version": "0.12.6",
+      "tarball": "https://registry.npmjs.org/jxl-oxide-wasm/-/jxl-oxide-wasm-0.12.6.tgz",
+      "integrity": "sha512-nZlPNSJidFAjkTqNcxxqdac/DxY0oNqr/Q98xOb3UutQyvopHjyubnW7KCjvwFuAr3Lew6xRe+7/zZ8tkbFxug==",
+      "files": [
+        {
+          "path": "jxl_oxide_wasm.js",
+          "bytes": 19323,
+          "gzip": 4050,
+          "minified": 9266,
+          "minifiedGzip": 2960,
+          "sha256": "d9a314abc55d167e94e2d995ce6ab5276f86ef9de41f06df11fef3acf55ff6b7"
+        },
+        {
+          "path": "jxl_oxide_wasm_bg.wasm",
+          "bytes": 1698491,
+          "gzip": 609588,
+          "minified": 1698491,
+          "minifiedGzip": 609588,
+          "sha256": "3336f3abd4a04fccc437e7a84f12d4b63c12f302044110867f99be14c4c75a69"
+        }
+      ],
+      "capability": "Decoder only; excluded from encoder ranking",
+      "encoder": false,
+      "source": "git+https://github.com/tirr-c/jxl-oxide.git",
+      "total": {
+        "bytes": 1717814,
+        "gzip": 613638,
+        "minified": 1707757,
+        "minifiedGzip": 612548
+      }
+    }
+  ]
+}

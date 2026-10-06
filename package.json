@@ -1,0 +1,98 @@
+{
+  "name": "rapier-jxl",
+  "version": "2.2.1",
+  "description": "A JPEG XL encoder in pure JavaScript for the browser, workers, Node and Deno: lossless and lossy, the core one file of 21.3 kB (9.3 kB gzipped); photographs and JPEGs are optional doors. Optional inlined WebAssembly SIMD kernels; no runtime dependencies.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "types": "./src/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.mts",
+      "default": "./src/index.mjs"
+    },
+    "./min": {
+      "types": "./src/index.d.mts",
+      "default": "./dist/rapier-jxl.min.mjs"
+    },
+    "./jpeg": {
+      "types": "./src/jpeg.d.mts",
+      "default": "./src/jpeg.mjs"
+    },
+    "./photo": {
+      "types": "./src/photo.d.mts",
+      "default": "./src/photo.mjs"
+    },
+    "./jpeg-ans": {
+      "types": "./src/jpeg-ans.d.mts",
+      "default": "./src/jpeg-ans.mjs"
+    },
+    "./photo-ans": {
+      "types": "./src/photo-ans.d.mts",
+      "default": "./src/photo-ans.mjs"
+    },
+    "./effort": {
+      "types": "./src/effort.d.mts",
+      "default": "./src/effort.mjs"
+    },
+    "./writer": "./src/writer.mjs",
+    "./package.json": "./package.json",
+    "./kernels": {
+      "types": "./src/kernel-control.d.mts",
+      "default": "./src/kernels.mjs"
+    },
+    "./wasm": {
+      "types": "./src/wasm.d.mts",
+      "default": "./src/wasm.mjs"
+    }
+  },
+  "files": [
+    "src",
+    "dist",
+    "kernels",
+    "LICENSE",
+    "README.md",
+    "AGENTS.md"
+  ],
+  "sideEffects": [
+    "./src/wasm.mjs",
+    "./dist/wasm.min.mjs"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jackskip22/rapier-jxl.git"
+  },
+  "homepage": "https://rapier.website",
+  "keywords": [
+    "jpeg-xl",
+    "jpegxl",
+    "jxl",
+    "encoder",
+    "image-compression",
+    "image",
+    "lossless",
+    "lossy",
+    "jpeg",
+    "transcode",
+    "photo",
+    "canvas",
+    "browser",
+    "web-worker",
+    "javascript",
+    "no-dependencies",
+    "rapier"
+  ],
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "fuzz:scale": "node test/fuzz-shards.mjs",
+    "build:kernels": "node kernels/build.mjs"
+  },
+  "devDependencies": {
+    "jxl-oxide-wasm": "0.12.6",
+    "terser": "5.51.2",
+    "wabt": "1.0.37"
+  }
+}

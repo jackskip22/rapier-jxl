@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: MIT
+name: JPEG XL conformance
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: Deterministic mutation seed
+        default: '20260930'
+      jpegs:
+        description: Structure-aware JPEG mutation budget
+        default: '2000000'
+      pixels:
+        description: Pixel mutation budget (three encoder paths each)
+        default: '32768'
+  schedule:
+    - cron: '23 4 * * 1'
+permissions:
+  contents: read
+jobs:
+  conformance:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+      - run: npm install --ignore-scripts
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.11'
+      - name: The same bytes under JavaScriptCore
+        run: bun test --timeout 600000 ./test/bytes.test.mjs
+      - run: sudo apt-get update && sudo apt-get install --yes ffmpeg libjxl-dev build-essential
+      - name: Read the pinned optional jxl-rs source
+        id: jxl_rs_source
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: libjxl/jxl-rs
+          ref: 2e65fa59b43aebd13c0530d9dcfcf151b19567d3
+          path: .jxl-rs-source
+      - name: Build optional jxl-rs with three explicit upstream owner repairs
+        id: jxl_rs_build
+        if: steps.jxl_rs_source.outcome == 'success'
+        continue-on-error: true
+        env:
+          RAPIER_JXL_RS_REVISION: 2e65fa59b43aebd13c0530d9dcfcf151b19567d3
+          RAPIER_JXL_RS_PATCH: half-subnormals-squeeze
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          # The unmodified pin has three retained decoder defects; see test/JXL-RS.md.
+          sha256sum test/jxl-rs-*.patch
+          for patch in "$PWD"/test/jxl-rs-*.patch; do
+            git -C .jxl-rs-source apply "$patch"
+          done
+          mkdir -p .jxl-rs-source/jxl_cli/src/bin
+          cp test/jxl-rs-decoder.rs .jxl-rs-source/jxl_cli/src/bin/rapier_oracle.rs
+          cargo +1.98.1 build --locked --release --manifest-path .jxl-rs-source/Cargo.toml --bin jxl_cli --bin rapier_oracle
+          printf 'JXL_FUZZ_JXL_RS=%s\n' "$PWD/.jxl-rs-source/target/release/rapier_oracle" >> "$GITHUB_ENV"
+      - name: Report optional decoder availability
+        if: always()
+        run: |
+          if [ -n "$JXL_FUZZ_JXL_RS" ]; then
+            "$JXL_FUZZ_JXL_RS" --version
+          else
+            printf '%s\n' 'jxl-rs unavailable: third-oracle checks will be explicitly skipped.'
+          fi
+      - name: Decode returned streams with every available oracle
+        env:
+          JXL_FUZZ_REQUIRE_NATIVE: '1'
+          JXL_FUZZ_SEED: ${{ inputs.seed || '20260930' }}
+          JXL_FUZZ_JPEGS: '2048'
+          JXL_FUZZ_PIXELS: '128'
+          JXL_FUZZ_FAILURE_DIR: fuzz-failures
+        run: node --test "test/*.test.mjs"
+      - name: Fixed-budget scale run
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          JXL_SEED: ${{ inputs.seed || '20260930' }}
+          JXL_JPEGS: ${{ inputs.jpegs || '2000000' }}
+          JXL_PIXELS: ${{ inputs.pixels || '32768' }}
+        run: node test/fuzz-shards.mjs --out fuzz-scale --workers 2 --seed "$JXL_SEED" --jpegs "$JXL_JPEGS" --pixels "$JXL_PIXELS"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fuzz-scale-summary
+          path: |
+            fuzz-scale/summary.json
+            fuzz-scale/plan.json
+            fuzz-scale/shard-*/progress.json
+            fuzz-scale/shard-*/difference-*
+            fuzz-scale/shard-*/failure-*
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-reproduction
+          path: fuzz-failures
+          if-no-files-found: ignore

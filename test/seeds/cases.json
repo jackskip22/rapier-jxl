@@ -1,0 +1,97 @@
+[
+  {
+    "file": "grey-sequential.jpg",
+    "width": 8,
+    "height": 8
+  },
+  {
+    "file": "sequential-reserved-eob.jpg",
+    "code": "JXL_JPEG"
+  },
+  {
+    "file": "huffman-dc-symbol-16.jpg",
+    "code": "JXL_JPEG"
+  },
+  {
+    "file": "sequential-zrl-overflow.jpg",
+    "code": "JXL_JPEG"
+  },
+  {
+    "file": "progressive-band-overflow.jpg",
+    "code": "JXL_JPEG"
+  },
+  {
+    "file": "progressive-zrl-overflow.jpg",
+    "code": "JXL_JPEG"
+  },
+  {
+    "file": "progressive-eob-overflow.jpg",
+    "code": "JXL_JPEG"
+  },
+  {
+    "file": "progressive-refinement-overflow.jpg",
+    "code": "JXL_JPEG"
+  },
+  {
+    "file": "progressive-dc-overflow.jpg",
+    "code": "JXL_JPEG"
+  },
+  {
+    "file": "bad-padding.jpg",
+    "code": "JXL_JPEG"
+  },
+  {
+    "file": "trailing-restarts.jpg",
+    "code": "JXL_JPEG"
+  },
+  {
+    "file": "quant-before-scan.jpg",
+    "width": 8,
+    "height": 8
+  },
+  {
+    "file": "quant-after-scan.jpg",
+    "width": 8,
+    "height": 8,
+    "same": "quant-before-scan.jpg"
+  },
+  {
+    "file": "quant-between-scans.jpg",
+    "code": "JXL_JPEG"
+  },
+  {
+    "file": "quant-only-after-scan.jpg",
+    "code": "JXL_JPEG"
+  },
+  {
+    "file": "huffman-all-ones.jpg",
+    "code": "JXL_JPEG"
+  },
+  {
+    "file": "eob-across-restart.jpg",
+    "code": "JXL_JPEG"
+  },
+  {
+    "file": "colour-sequential.jpg",
+    "width": 33,
+    "height": 25
+  },
+  {
+    "file": "colour-progressive-restarts.jpg",
+    "width": 33,
+    "height": 25,
+    "samePixels": "colour-sequential.jpg"
+  },
+  {
+    "file": "decoder-difference.jpg",
+    "width": 33,
+    "height": 25,
+    "scaleSeed": false
+  },
+  {
+    "file": "reconstruction-difference.jpg",
+    "width": 33,
+    "height": 25,
+    "scaleSeed": false
+  }
+]

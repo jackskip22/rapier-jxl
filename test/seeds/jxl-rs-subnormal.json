@@ -1,0 +1,46 @@
+{
+  "file": "jxl-rs-subnormal.rgba",
+  "width": 2,
+  "height": 1,
+  "type": "pixels",
+  "path": "photo",
+  "quality": 90,
+  "stream": "c125f0f0504aefc4115391d48280091737cef81cc7d7151d397180d242d7361d",
+  "streamFile": "jxl-rs-subnormal.jxl",
+  "upstream": "jxl-rs 0.7.4 2e65fa59b43aebd13c0530d9dcfcf151b19567d3",
+  "repaired": "jxl-rs 0.7.4 2e65fa59b43aebd13c0530d9dcfcf151b19567d3+half-subnormals",
+  "oxide": [
+    0,
+    0,
+    0,
+    255,
+    255,
+    255,
+    255,
+    255
+  ],
+  "upstreamRGBA": [
+    110,
+    111,
+    111,
+    255,
+    242,
+    241,
+    241,
+    255
+  ],
+  "repairedRGBA": [
+    0,
+    0,
+    0,
+    255,
+    255,
+    255,
+    255,
+    255
+  ],
+  "owner": "libjxl/jxl-rs jxl/src/util/float16.rs",
+  "f16": "0x0202",
+  "expected": 0.00003063678741455078,
+  "upstreamValue": 0.00001531839370727539
+}

@@ -1,0 +1,390 @@
+{
+  "package": "rapier-jxl",
+  "version": "2.2.1",
+  "measured": "exact bytes of the staged files; gzip level 9; Brotli quality 11, text mode; added is a door bundled with the core less the core alone, or the door alone less the core where it covers the core (effort); every measured bundle loads as a module",
+  "node": "v22.22.2",
+  "terser": "5.51.2",
+  "privateProperties": "^(alphabetSize|lengths|codes|simple|treeSelect|splitToken|msb|lsb|contextMap|histograms|predictor|multiplier|context|splitval|property|offset|left|right|channel|acc|pending|at|bitLength|grow|zeroPadToByte|writeU32|append|finish|write|small|large|totals|contexts|tokens|cost|bucketOf|contextOf|nonZero|zeroDensityOffset|thresholds|numDc|numCtxs|freqs|hshift|vshift|residual|component|inPlace|horizontal|beginC|numC|rctType|nbColors|nbDeltas|useGlobalTree|streamId|pieces|rect|minSymbol|minLength|lengthConfig|params|type|leaf|groupsX|groupsY|dcGroupsX|dcGroupsY|single|config|bits|sym|tree|count|parts|lz77|transforms)$",
+  "source": {
+    "bytes": 211215,
+    "gzip": 67195,
+    "sha256": {
+      "admit.mjs": "ccdbee9f68a0e0125853d5d786b95075bc39807e9a6e95d8a185a6c0c7b2fca4",
+      "ans.mjs": "c604457516a86c8697810d9ded6af20f91b59650f0ed5aea6683fc9f2051f79e",
+      "bits.mjs": "8f63d88635518231f0ad3bd2155b263fe9c0fef737dc0f1f69befa40c0cd6750",
+      "coefficient-ans.mjs": "8b7a080f440bc1894d7d13f6ee76b3a85fce7bbd0cfadc53ad06e4b58ed81ed1",
+      "coefficient-effort.mjs": "2d55459c7b96f85d7a6d029d87f0e4c2905d5982aa64334e38c4a401c2beebfb",
+      "effort.mjs": "70336f2eb5325da470bfb60afb808acc3ac1e985f8919387d214c385e7bc9b36",
+      "effort-job.mjs": "e2c5a735757edc72f6f6992fe360e66a7ffc218873a6372381f9fa71d2613c74",
+      "effort-level.mjs": "fe46adf2e34546c65e821400804cbd51c17c5a6d04b769310567082581b64f5d",
+      "entropy.mjs": "9cb52a9d174d63dc2b694725267c5ab0e8d693f5366e76fa0134f87cc878fe3a",
+      "frame.mjs": "b921e8bddcd021d1a1fe3afffda2816b90af1f81121c27de78db5746c462e378",
+      "index.mjs": "adf5f0d4ca70ce3e88c67a718d057c5dcab5098bd07308f4bf9406c365d81efe",
+      "jfif.mjs": "6b9a59f0b81ce5063191d1da9f658727ef03535144cd92b3908b249dfc99ed17",
+      "jpeg.mjs": "41bf5579a99f1870bc219228eb649589d027c807bdaee5c8b128a7aaa6711c95",
+      "jpeg-ans.mjs": "4a9cafe6eaf83f7c37f87513cc42458d6c2997c420830b0449d591c103993072",
+      "jpeg-job.mjs": "61370ed45ebd8c15c8edb3d043139dcde8a8bf7bd1ea52d030f3f73de5d6fa60",
+      "kernel-hooks.mjs": "c7a8578d0f16b10c3598d527778c99d1dd80b9eb283dffe5ed969e44850b63d4",
+      "kernels.mjs": "fc54852d11d1fffa16e7b2f788006ccc23b4757ac0170c59d41ff35224d55391",
+      "kernels-bytes.mjs": "d76d121612ddc74ae72fe05f9f643ef08ad578b70e9de28afeb38aa7cd0c237a",
+      "local.mjs": "546b39e8bc88de97c5d1d170bf30da68452a6c2bf8fc86a8bd81eb943dfe16bf",
+      "lossless.mjs": "6a13093b568597f2500dbd2032558d08c792babac4bd439b0f5b56b9872e0759",
+      "lossless-coding.mjs": "1f3ff9c914f3594ab024231fdf06e291412bf0abea1fb211d91e5b768e9244b8",
+      "lossy.mjs": "e297311f5f2d304d17ea277fb156d2a575599aecb5d2473cbfbbd1be6b76ff6d",
+      "modular.mjs": "0481868e103552ab6adc315442e00cf625f308831f5356d091e9fbad8fb5a421",
+      "photo.mjs": "4da303eebca4f52d8fea265a76ca879a06ebe394c699615195067339206f6c98",
+      "photo-ans.mjs": "23e2af95d9ac6c80a9b3e1ce4bec7ab39a93ebd2575182f548a0213aa527e387",
+      "photo-dct.mjs": "cc7252d877389885baa1d9866489f58a55d0a4d00800f0b358b54904b3cf91ad",
+      "photo-job.mjs": "271452713a2c03fbb472f5050483748de5d0cc7b3a0e0589decd143b0f087a68",
+      "photo-quant.mjs": "94854a56333a1d5c1346117e576013472857662f2e01a3fa54852d5567256a00",
+      "pool.mjs": "14817df64c11d13e6d93da26028b3b20bada214808ee2033ceadd71fa1a81608",
+      "prefix.mjs": "ed51a5b6a3cf0a98b66fe54b3a1c050122ed312f7c47b136aa9fd5c84ac1a180",
+      "rct-search.mjs": "119e85e44e6bd259da144be4ac91e3c8aafe812291862a77b987a95e14398935",
+      "squeeze.mjs": "ec01352dcf22b7346c7f0014e17e6ba2e4fe8243c358db77eee5fc830a3217e8",
+      "vardct.mjs": "2befa3c606124fa6aa1f5ab7e856a4734217f0baefa5b3324fabbbbe13c04cd9",
+      "wasm.mjs": "00a51183d9bf8b1d8dbf3aded0e1b8a01531c3d77e6f3d9286f273a8d1f1efc6",
+      "weighted.mjs": "8f8ff41d572509987015eea0c9ead45d27492e4657db807ef1a12a612e19bf97",
+      "writer.mjs": "f8ec54c0d79cdf148f6be797d72f375cf9635cb00097897bdf1d570457d3fcc9"
+    }
+  },
+  "doors": [
+    {
+      "entry": ".",
+      "module": "index",
+      "file": "dist/rapier-jxl.min.mjs",
+      "exports": [
+        "LIMITS",
+        "encode",
+        "encodeSteps"
+      ],
+      "modules": [
+        "kernel-hooks",
+        "bits",
+        "admit",
+        "frame",
+        "prefix",
+        "modular",
+        "lossless-coding",
+        "lossless",
+        "squeeze",
+        "lossy",
+        "index"
+      ],
+      "alone": {
+        "bytes": 21326,
+        "gzip": 9271,
+        "brotli": 8233,
+        "sha256": "3a6707df3d9f45ad6c736a1bc8659aac47f09a7fbf92543df4ea75d242b6b7fe",
+        "compress": {
+          "passes": 2,
+          "inline": 1,
+          "module": true
+        }
+      },
+      "added": {
+        "bytes": 0,
+        "gzip": 0,
+        "brotli": 0
+      },
+      "provedByteCases": 98
+    },
+    {
+      "entry": "./jpeg",
+      "module": "jpeg",
+      "file": "dist/jpeg.min.mjs",
+      "exports": [
+        "LIMITS",
+        "transcode",
+        "transcodeSteps"
+      ],
+      "modules": [
+        "bits",
+        "jfif",
+        "admit",
+        "effort-level",
+        "jpeg-job",
+        "frame",
+        "kernel-hooks",
+        "prefix",
+        "modular",
+        "entropy",
+        "vardct",
+        "coefficient-effort",
+        "jpeg"
+      ],
+      "alone": {
+        "bytes": 32354,
+        "gzip": 13505,
+        "brotli": 11946,
+        "sha256": "889a97a98a22bb79e8aecc94cc896c2f5cb2726619e7eed0a39b9349ae547854",
+        "compress": {
+          "passes": 2,
+          "inline": 1,
+          "module": true
+        }
+      },
+      "added": {
+        "bytes": 21706,
+        "gzip": 8524,
+        "brotli": 7474
+      },
+      "provedByteCases": 13
+    },
+    {
+      "entry": "./photo",
+      "module": "photo",
+      "file": "dist/photo.min.mjs",
+      "exports": [
+        "LIMITS",
+        "encodePhoto",
+        "encodePhotoSteps"
+      ],
+      "modules": [
+        "bits",
+        "admit",
+        "effort-level",
+        "kernel-hooks",
+        "frame",
+        "prefix",
+        "modular",
+        "lossless-coding",
+        "lossless",
+        "photo-dct",
+        "photo-quant",
+        "photo-job",
+        "entropy",
+        "jfif",
+        "vardct",
+        "coefficient-effort",
+        "photo"
+      ],
+      "alone": {
+        "bytes": 33011,
+        "gzip": 13616,
+        "brotli": 12084,
+        "sha256": "d141bd23af55cbd78b6a4e13413451cd251ca7e8d8a9da7db5a64aa8ed5b3db3",
+        "compress": {
+          "passes": 2,
+          "hoist_funs": true,
+          "hoist_vars": true,
+          "module": true
+        }
+      },
+      "added": {
+        "bytes": 16576,
+        "gzip": 6249,
+        "brotli": 5481
+      },
+      "provedByteCases": 43
+    },
+    {
+      "entry": "./jpeg-ans",
+      "module": "jpeg-ans",
+      "file": "dist/jpeg-ans.min.mjs",
+      "exports": [
+        "LIMITS",
+        "transcode",
+        "transcodeSteps"
+      ],
+      "modules": [
+        "bits",
+        "jfif",
+        "admit",
+        "effort-level",
+        "jpeg-job",
+        "frame",
+        "kernel-hooks",
+        "prefix",
+        "modular",
+        "entropy",
+        "vardct",
+        "coefficient-effort",
+        "ans",
+        "coefficient-ans",
+        "jpeg-ans"
+      ],
+      "alone": {
+        "bytes": 35491,
+        "gzip": 14608,
+        "brotli": 12896,
+        "sha256": "74389c293cc6d07fa578b86ca8c3a98d185b861aae8d2de9ace8328312d50d39",
+        "compress": {
+          "passes": 2,
+          "inline": 1,
+          "module": true
+        }
+      },
+      "added": {
+        "bytes": 24689,
+        "gzip": 9580,
+        "brotli": 8480
+      },
+      "provedByteCases": 13
+    },
+    {
+      "entry": "./photo-ans",
+      "module": "photo-ans",
+      "file": "dist/photo-ans.min.mjs",
+      "exports": [
+        "LIMITS",
+        "encodePhoto",
+        "encodePhotoSteps"
+      ],
+      "modules": [
+        "bits",
+        "admit",
+        "effort-level",
+        "kernel-hooks",
+        "frame",
+        "prefix",
+        "modular",
+        "lossless-coding",
+        "lossless",
+        "photo-dct",
+        "photo-quant",
+        "photo-job",
+        "entropy",
+        "jfif",
+        "vardct",
+        "coefficient-effort",
+        "ans",
+        "coefficient-ans",
+        "photo-ans"
+      ],
+      "alone": {
+        "bytes": 35994,
+        "gzip": 14650,
+        "brotli": 12983,
+        "sha256": "73f6dee8d0067f40924edc6701dc643065ccf770907d2c2f6ae966f9ba5a0d40",
+        "compress": {
+          "passes": 2,
+          "hoist_funs": true,
+          "hoist_vars": true,
+          "module": true
+        }
+      },
+      "added": {
+        "bytes": 19559,
+        "gzip": 7315,
+        "brotli": 6426
+      },
+      "provedByteCases": 43
+    },
+    {
+      "entry": "./effort",
+      "module": "effort",
+      "file": "dist/effort.min.mjs",
+      "exports": [
+        "LIMITS",
+        "encode",
+        "encodeSteps"
+      ],
+      "modules": [
+        "bits",
+        "admit",
+        "frame",
+        "prefix",
+        "kernel-hooks",
+        "modular",
+        "lossless-coding",
+        "lossless",
+        "squeeze",
+        "lossy",
+        "weighted",
+        "local",
+        "rct-search",
+        "effort-job",
+        "effort"
+      ],
+      "alone": {
+        "bytes": 33584,
+        "gzip": 13793,
+        "brotli": 12205,
+        "sha256": "105c5be10bd7a803e228a400c728126d08cbb7d236a793883a94ac4235682c19",
+        "compress": {
+          "passes": 2,
+          "inline": 1,
+          "module": true
+        }
+      },
+      "added": {
+        "bytes": 12258,
+        "gzip": 4522,
+        "brotli": 3972
+      },
+      "provedByteCases": 98
+    },
+    {
+      "entry": "./wasm",
+      "module": "wasm",
+      "file": "dist/wasm.min.mjs",
+      "exports": [
+        "LIMITS",
+        "configureKernels",
+        "encode",
+        "encodeSteps",
+        "kernelMode"
+      ],
+      "modules": [
+        "kernel-hooks",
+        "bits",
+        "kernels-bytes",
+        "kernels",
+        "admit",
+        "frame",
+        "prefix",
+        "modular",
+        "lossless-coding",
+        "lossless",
+        "squeeze",
+        "lossy",
+        "weighted",
+        "local",
+        "rct-search",
+        "effort-job",
+        "effort",
+        "wasm"
+      ],
+      "alone": {
+        "bytes": 43535,
+        "gzip": 18533,
+        "brotli": 16233,
+        "sha256": "7120e389303d6db47e30bac0c41b61e7a5130e7b6aac1d95a9c0bfce0a1580a5",
+        "compress": {
+          "passes": 2,
+          "hoist_funs": true,
+          "hoist_vars": true,
+          "module": true
+        }
+      },
+      "added": {
+        "bytes": 22209,
+        "gzip": 9262,
+        "brotli": 8000
+      },
+      "provedByteCases": 98
+    }
+  ],
+  "all": {
+    "exports": [
+      "LIMITS",
+      "configureKernels",
+      "encode",
+      "encodePhoto",
+      "encodePhotoSteps",
+      "encodeSteps",
+      "kernelMode",
+      "transcode",
+      "transcodeSteps"
+    ],
+    "doors": [
+      "./effort",
+      "./jpeg-ans",
+      "./photo-ans",
+      "./wasm"
+    ],
+    "bytes": 74625,
+    "gzip": 30285,
+    "brotli": 26416
+  }
+}

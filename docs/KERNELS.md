@@ -1,0 +1,43 @@
+# Optional integer kernels
+
+`rapier-jxl/wasm` is the `effort` door with WebAssembly kernels under the lossless hot loops. It has the same API and
+writes the same bytes. It tries SIMD, and falls back to JavaScript if WebAssembly or SIMD is absent or blocked. The
+core and `effort` stay JavaScript. `dist/wasm.min.mjs` is the same door as one self-contained file. Both entry modules
+are marked side-effectful in `package.json`, so bundlers keep their automatic backend configuration.
+
+Readable modules share controls through `rapier-jxl/kernels`:
+
+```js
+import {encode, configureKernels, kernelMode} from 'rapier-jxl/wasm';
+configureKernels('auto'); // 'off', 'scalar' or 'simd' are explicit alternatives
+const bytes = encode(rgba, width, height, {effort: 3, quality: 100});
+console.log(kernelMode()); // the backend actually running, not the one requested
+```
+
+Configure once before an encode, not inside a progress callback. Controls are per JavaScript realm, and workers have
+independent arenas. Do not combine `wasm.min.mjs` with a separately bundled core: each bundle owns its own hooks. A
+second argument selects kernels for benchmarks, for example `{channel: true, weighted: false, fill: false}`; it moves
+where arithmetic runs, never its result.
+
+## What is in them
+
+`kernels/kernels-scalar.wat` implements prediction, weighted prediction and property extraction, token histograms and a
+bulk bit writer. `kernels/kernels-simd.wat` implements four-pixel average and gradient prediction and RGBA-to-planar
+conversion; rows and odd tails take a scalar path. Weighted prediction stays scalar because its west-error state is
+sequential. Both use bounded integer arithmetic. There is no floating-point WebAssembly, relaxed SIMD, import other than
+private memory, shared memory, threads or network access.
+
+The private arena is 3 MiB per enabled realm, reused synchronously; no views escape. Groups of at most 65,536 samples
+with Int16 planes, unit multipliers and bounded offsets are admitted; anything else, custom writers and big-endian
+hosts keep the JavaScript path. Input and output limits are unchanged. SIMD support is detected by validating
+`kernels/kernels-probe.wat`; failure never disables the encoder.
+
+## Rebuild
+
+`src/kernels-bytes.mjs` holds the generated base64 modules; edit the `.wat` files, never that file. Install
+**wabt 1.0.37** as a build tool (`WABT_MODULE` may point to its `index.js`), then:
+
+```sh
+npm run build:kernels            # regenerate src/kernels-bytes.mjs
+npm run build:kernels -- --check # fail if it differs from the sources
+```
