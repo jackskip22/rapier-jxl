@@ -1,13 +1,13 @@
 {
   "package": "rapier-jxl",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "measured": "exact bytes of the staged files; gzip level 9; Brotli quality 11, text mode; added is a door bundled with the core less the core alone, or the door alone less the core where it covers the core (effort); every measured bundle loads as a module",
   "node": "v22.22.2",
   "terser": "5.51.2",
   "privateProperties": "^(alphabetSize|lengths|codes|simple|treeSelect|splitToken|msb|lsb|contextMap|histograms|predictor|multiplier|context|splitval|property|offset|left|right|channel|acc|pending|at|bitLength|grow|zeroPadToByte|writeU32|append|finish|write|small|large|totals|contexts|tokens|cost|bucketOf|contextOf|nonZero|zeroDensityOffset|thresholds|numDc|numCtxs|freqs|hshift|vshift|residual|component|inPlace|horizontal|beginC|numC|rctType|nbColors|nbDeltas|useGlobalTree|streamId|pieces|rect|minSymbol|minLength|lengthConfig|params|type|leaf|groupsX|groupsY|dcGroupsX|dcGroupsY|single|config|bits|sym|tree|count|parts|lz77|transforms)$",
   "source": {
-    "bytes": 237783,
-    "gzip": 74443,
+    "bytes": 272908,
+    "gzip": 83507,
     "sha256": {
       "admit.mjs": "ccdbee9f68a0e0125853d5d786b95075bc39807e9a6e95d8a185a6c0c7b2fca4",
       "ans.mjs": "c604457516a86c8697810d9ded6af20f91b59650f0ed5aea6683fc9f2051f79e",
@@ -15,7 +15,7 @@
       "coefficient-ans.mjs": "8b7a080f440bc1894d7d13f6ee76b3a85fce7bbd0cfadc53ad06e4b58ed81ed1",
       "coefficient-effort.mjs": "2d55459c7b96f85d7a6d029d87f0e4c2905d5982aa64334e38c4a401c2beebfb",
       "effort.mjs": "dd3a4b5cb9c3cb690543369760048f8d5206d500fa4aa2948c5fc92c460b2931",
-      "effort-job.mjs": "d086a6e3082629a226bbaec9fe54cc1c660bf75b19a211556ad94ef9532f42c7",
+      "effort-job.mjs": "39ae0ecc455e3aa32765c987ef2812979884bd9c4457afb09498053e135103fb",
       "effort-level.mjs": "fe46adf2e34546c65e821400804cbd51c17c5a6d04b769310567082581b64f5d",
       "entropy.mjs": "9cb52a9d174d63dc2b694725267c5ab0e8d693f5366e76fa0134f87cc878fe3a",
       "frame.mjs": "b921e8bddcd021d1a1fe3afffda2816b90af1f81121c27de78db5746c462e378",
@@ -37,13 +37,14 @@
       "photo-dct.mjs": "cc7252d877389885baa1d9866489f58a55d0a4d00800f0b358b54904b3cf91ad",
       "photo-job.mjs": "271452713a2c03fbb472f5050483748de5d0cc7b3a0e0589decd143b0f087a68",
       "photo-quant.mjs": "94854a56333a1d5c1346117e576013472857662f2e01a3fa54852d5567256a00",
-      "pool.mjs": "14817df64c11d13e6d93da26028b3b20bada214808ee2033ceadd71fa1a81608",
+      "pool.mjs": "cbdbd1b50a25ee295d70e631acc9e4abbd1264059a54fe01c575d9b59928c79a",
       "prefix.mjs": "ed51a5b6a3cf0a98b66fe54b3a1c050122ed312f7c47b136aa9fd5c84ac1a180",
       "rct-search.mjs": "119e85e44e6bd259da144be4ac91e3c8aafe812291862a77b987a95e14398935",
-      "screen.mjs": "50773a96567f39e329e7280e4f5edc4b7edecd05e4b9f2e08dee8fbe2b8592a5",
-      "screen-lz77.mjs": "c8682bfce8481d7cde2002adbd80107e76303670110dd1414050b02191e33aa6",
-      "screen-patches.mjs": "c3c5b68664a878a2a500419c975b3933b9e91b38a40958ce4dea0fc2b2cf0fc9",
-      "screen-search.mjs": "21c45062a3cfe1f28dd54607be4da1f60e7a3670abca40ca1a904e609ffd4291",
+      "sampled.mjs": "499c7f6f99785f92b18d02af0077c617dd31dc48fd9d93b01610a7ba71c46128",
+      "screen.mjs": "04285fe046fd453e826e15cc136c627ed92ca4b3426f717499e43f7b6f483ec8",
+      "screen-lz77.mjs": "9b76d3d0c0945f0900d3ecd4d2087a5df0c7340ed6205b172807ecefa2cd2459",
+      "screen-patches.mjs": "7793f6d3f8b946d71d5226634cb255798baad506a7d7252dbcb0489803f03222",
+      "screen-search.mjs": "a9290f08d9fe81b69479591e5ec0b671354c9f74c1e6c41d5f6c1ad7158a330f",
       "squeeze.mjs": "ec01352dcf22b7346c7f0014e17e6ba2e4fe8243c358db77eee5fc830a3217e8",
       "vardct.mjs": "2befa3c606124fa6aa1f5ab7e856a4734217f0baefa5b3324fabbbbe13c04cd9",
       "wasm.mjs": "00a51183d9bf8b1d8dbf3aded0e1b8a01531c3d77e6f3d9286f273a8d1f1efc6",
@@ -78,7 +79,7 @@
         "bytes": 21326,
         "gzip": 9271,
         "brotli": 8228,
-        "sha256": "e93b9a7c2ed0318bfff0d792aeaaf4ed4d111b6e14773f0a970ca314f06136b1",
+        "sha256": "395e8cbf1647ab69fc763df62da9adaf885e586165e0dbc4184a565ac96b748e",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -90,7 +91,7 @@
         "gzip": 0,
         "brotli": 0
       },
-      "provedByteCases": 98
+      "provedByteCases": 99
     },
     {
       "entry": "./jpeg",
@@ -119,8 +120,8 @@
       "alone": {
         "bytes": 32354,
         "gzip": 13505,
-        "brotli": 11916,
-        "sha256": "d95e39ddf2f8e8dc12b20030d6aec23ea0fb6c38879bb46afa83846f1e56fae4",
+        "brotli": 11979,
+        "sha256": "127edd20d55b574fdb7949d0a1c6848da7b3d5e8300ef0fad270c19d733b2861",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -130,7 +131,7 @@
       "added": {
         "bytes": 21706,
         "gzip": 8525,
-        "brotli": 7497
+        "brotli": 7496
       },
       "provedByteCases": 13
     },
@@ -166,7 +167,7 @@
         "bytes": 33011,
         "gzip": 13616,
         "brotli": 12037,
-        "sha256": "f5078d77eb74f408f7036f8f5a4f3cb8f1fedf29adefead96c2301d7cf83d578",
+        "sha256": "755b0eae33c972c76d7a711b5cfa4d253b025f5619efeb855cfad8d060c07cea",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -211,7 +212,7 @@
         "bytes": 35491,
         "gzip": 14608,
         "brotli": 12896,
-        "sha256": "451753719aaaeba228ed0d70505c4bd7ce46e989e0d07a557cb37f24be216649",
+        "sha256": "fc65c0a5d54cb0d44d3bc80fd8e023ce8b1f57002acbc08e87f373c174cec19a",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -257,9 +258,9 @@
       ],
       "alone": {
         "bytes": 35994,
-        "gzip": 14649,
-        "brotli": 13005,
-        "sha256": "0da1e359e696e62796cf7b09862cc8c443f68eb36b1cd72acaea1a5c53a6c65d",
+        "gzip": 14650,
+        "brotli": 12975,
+        "sha256": "e50b3e851b47a8863fb4b900c00b2ce9d10ea3f7b82629f816f4847efa6c0cee",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -270,7 +271,7 @@
       "added": {
         "bytes": 19559,
         "gzip": 7316,
-        "brotli": 6427
+        "brotli": 6428
       },
       "provedByteCases": 43
     },
@@ -297,18 +298,19 @@
         "weighted",
         "local",
         "rct-search",
-        "screen",
         "screen-lz77",
+        "screen",
         "screen-patches",
         "screen-search",
+        "sampled",
         "effort-job",
         "effort"
       ],
       "alone": {
-        "bytes": 43792,
-        "gzip": 17571,
-        "brotli": 15488,
-        "sha256": "25f5c1139b7deacee394bdbd631a8210d6bff3eaac6f1ca0b0589cceb3e54c20",
+        "bytes": 58582,
+        "gzip": 23147,
+        "brotli": 20091,
+        "sha256": "f0972ff69e8ef921d938742419eff3e8647d11b61d2c264a2872e5b63e7c3a85",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -316,11 +318,11 @@
         }
       },
       "added": {
-        "bytes": 22466,
-        "gzip": 8300,
-        "brotli": 7260
+        "bytes": 37256,
+        "gzip": 13876,
+        "brotli": 11863
       },
-      "provedByteCases": 98
+      "provedByteCases": 99
     },
     {
       "entry": "./wasm",
@@ -349,31 +351,33 @@
         "weighted",
         "local",
         "rct-search",
-        "screen",
         "screen-lz77",
+        "screen",
         "screen-patches",
         "screen-search",
+        "sampled",
         "effort-job",
         "effort",
         "wasm"
       ],
       "alone": {
-        "bytes": 53759,
-        "gzip": 22372,
-        "brotli": 19547,
-        "sha256": "ffe04f058f0e0538fd5c6cc9e1e5c18288bd5375492d33effeb4b35a5e6ae49f",
+        "bytes": 68566,
+        "gzip": 27813,
+        "brotli": 24161,
+        "sha256": "5a5d7e6b1b1b6075bf92d7f5f90e342298ebfbde897d63ec411ca09b510d39ac",
         "compress": {
           "passes": 2,
-          "inline": 1,
+          "hoist_funs": true,
+          "hoist_vars": true,
           "module": true
         }
       },
       "added": {
-        "bytes": 32433,
-        "gzip": 13101,
-        "brotli": 11319
+        "bytes": 47240,
+        "gzip": 18542,
+        "brotli": 15933
       },
-      "provedByteCases": 98
+      "provedByteCases": 99
     }
   ],
   "all": {
@@ -394,8 +398,8 @@
       "./photo-ans",
       "./wasm"
     ],
-    "bytes": 84844,
-    "gzip": 34121,
-    "brotli": 29680
+    "bytes": 99765,
+    "gzip": 39793,
+    "brotli": 34291
   }
 }

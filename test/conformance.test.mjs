@@ -124,7 +124,6 @@ test('the effort door\'s rungs keep grey, grey and alpha, colour and RGBA pictur
       for (const level of [2, 3, 4, 5, 6]) {
         const bytes = effort(pixels, width, height, {effort: level});
         assert.ok(bytes.length <= previous.length, 'an effort adds candidates without losing the smaller stream');
-        if (level === 5) assert.deepEqual(bytes, previous, 'an effort without another rung keeps the previous bytes');
         previous = bytes;
         oracle.decode(bytes, width, height, `${kind} ${width}x${height} effort=${level}`, pixels); streams++;
         if (kind === 'colour' && level === 3) {
@@ -151,7 +150,9 @@ test('the effort door\'s rungs keep grey, grey and alpha, colour and RGBA pictur
       const candidate = complete(localSteps(rgba, width, height, shape, 'srgb', level, true));
       oracle.decode(candidate, width, height, file + ' local=' + level, rgba); streams++;
     }
-    assert.deepEqual(effort(rgba, width, height, {effort: 5}), effort(rgba, width, height, {effort: 4}));
+    const higher = effort(rgba, width, height, {effort: 5});
+    assert.ok(higher.length <= effort(rgba, width, height, {effort: 4}).length);
+    oracle.decode(higher, width, height, file + ' effort=5', rgba); streams++;
   }
   const width = 96, height = 64, rgba = new Uint8Array(await readFile(new URL('hurry-inner.rgba', seedsURL)));
   const hurried = encodeSteps(rgba, width, height, {effort: 4});

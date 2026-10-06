@@ -38,6 +38,10 @@ test('global and scalar screen transforms decode exactly, including hidden RGB',
    exact(bytes,p);assert.deepEqual(bytes,encodeScreen(p.rgba,width,height,shape,undefined,{mode}));
   }
  }
+ const p=screenFixture(1025,259,true),shape=inspectPixels(p.rgba,p.width,p.height);
+ for(const mode of ['global','frequency','scalar','direct']){
+  const bytes=encodeScreen(p.rgba,p.width,p.height,shape,undefined,{mode,search:{}});if(bytes)exact(bytes,p);
+ }
 });
 test('palette planning has a fixed bound and preserves actual zero colour',()=>{
  const p=screenFixture(64,64,true);p.rgba.fill(0,0,4);
@@ -64,4 +68,18 @@ test('effort 3 stops a large screen win while higher efforts keep the broader se
  const steps=[];
  for(const effort of [3,4]){let count=0;const j=encodeSteps(p.rgba,p.width,p.height,{effort});for(const progress of j){count++;assert.ok(progress>=0&&progress<=1);}steps.push(count);assert.ok(j.bytes.length<=floor.length);exact(j.bytes,p);}
  assert.ok(steps[0]<steps[1], 'effort 3 must skip redundant searches after a strong win');
+});
+
+test('higher screen effort keeps repeated pixels across group boundaries with fewer exact bytes', {skip:!decode},()=>{
+ for(const banner of [false,true]){
+  const p=screenFixture(513,300,true);
+  if(banner)for(let y=0;y<32;y++)for(let x=0;x<p.width;x++)p.rgba.set([x&255,((x>>8)*64+y)&255,211,255],(y*p.width+x)*4);
+  const before=p.rgba.slice(),floor=encode(p.rgba,p.width,p.height,{effort:4});
+  for(const effort of [5,9]){
+   const bytes=encode(p.rgba,p.width,p.height,{effort});
+   assert.ok(bytes.length<floor.length, `deeper screen effort ${effort}, banner ${banner}: ${bytes.length} must improve ${floor.length} bytes`);
+   exact(bytes,p);assert.deepEqual(bytes,encode(p.rgba,p.width,p.height,{effort}));
+  }
+  assert.deepEqual(p.rgba,before);
+ }
 });

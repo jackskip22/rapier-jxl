@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Build-time only: regenerates kernels-bytes.mjs from the kernels-*.wat sources. Needs wabt@1.0.37
-// (npm install --no-save wabt@1.0.37, or set WABT_MODULE to its index.js). Run with node; --check compares without writing.
+// Build-time only: regenerates kernels-bytes.mjs from the kernels-*.wat sources. Needs wabt@1.0.39
+// (npm install --no-save wabt@1.0.39, or set WABT_MODULE to its index.js). Run with node; --check compares without writing.
 import {readFile, writeFile} from 'node:fs/promises';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
@@ -11,7 +11,7 @@ const directory = flat ? new URL('jxl/', here) : here;
 const specifier = process.env.WABT_MODULE ? pathToFileURL(resolve(process.env.WABT_MODULE)).href : 'wabt';
 let factory;
 try { ({default: factory} = await import(specifier)); }
-catch (cause) { throw new Error('The kernel build needs build-time wabt@1.0.37. Set WABT_MODULE to its index.js when installed outside this tree.', {cause}); }
+catch (cause) { throw new Error('The kernel build needs build-time wabt@1.0.39. Set WABT_MODULE to its index.js when installed outside this tree.', {cause}); }
 const wabt = await factory();
 let text = '// Generated from kernels-*.wat. MIT. Do not edit.\n';
 for (const [name, symbol] of [['scalar','SCALAR'], ['simd','SIMD'], ['probe','SIMD_PROBE']]) {

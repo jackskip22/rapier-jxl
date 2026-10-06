@@ -4,6 +4,8 @@
 import {BitWriter, packSigned, complete} from './bits.mjs';
 import {writeImageHeader, writeModularFrameHeader, groupLayout, assembleCodestream, GROUP_DIM} from './frame.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
+import {screenModel, writeScreenModel} from './screen-lz77.mjs';
+import {admitOutputSize} from './admit.mjs';
 import {ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
 
 export function screenLike(rgba, width, height) {
@@ -36,22 +38,28 @@ export function screenLike(rgba, width, height) {
 const screenValueAt = (rgba, i, c, shape) => rgba[i + (shape.colour === 1 && c === 1 ? 3 : c)];
 const screenPacked = (rgba, i) => rgba[i] + rgba[i + 1] * 256 + rgba[i + 2] * 65536 + rgba[i + 3] * 16777216;
 
-// A whole-colour palette sorted with integer keys, including the actual zero
-// colour only when present; or sparse scalar palettes on individual channels.
+// A whole-colour palette in integer-key or frequency order, including the
+// actual zero colour only when present; or sparse scalar channel palettes.
 export function screenPlan(rgba, width, height, shape, mode = 'global') {
   const channels = shape.channels,
     meta = [],
     transforms = [];
-  if (mode === 'global') {
+  if (mode === 'global' || mode === 'frequency') {
     const seen = new Map();
-    for (let i = 0; i < rgba.length; i += 4) {
+    if (mode === 'frequency') {
+      for (let i = 0; i < rgba.length; i += 4) {
+        const k = screenPacked(rgba, i), count = seen.get(k) || 0;
+        if (!count && seen.size === 4096) return null;
+        seen.set(k, count + 1);
+      }
+    } else for (let i = 0; i < rgba.length; i += 4) {
       const k = screenPacked(rgba, i);
       if (!seen.has(k)) {
         if (seen.size === 4096) return null;
         seen.set(k, 0);
       }
     }
-    const colours = [...seen.keys()].sort((a, b) => a - b),
+    const colours = [...seen.keys()].sort(mode === 'frequency' ? (a, b) => seen.get(b) - seen.get(a) || a - b : (a, b) => a - b),
       n = colours.length;
     colours.forEach((k, i) => seen.set(k, i));
     const rows = new Int16Array(n * channels);
@@ -154,8 +162,9 @@ export function* screenFrameSteps(
   shape,
   colorSpace,
   plan,
-  {predictor = null, frameHeader = null, globalPrefix = null, imageHeader = true, tokenCodec = null} = {}
+  {predictor = null, frameHeader = null, globalPrefix = null, imageHeader = true, tokenCodec = null, search = null} = {}
 ) {
+  if (search) return yield* screenDetailedFrameSteps(rgba, width, height, shape, colorSpace, plan, {frameHeader, globalPrefix, imageHeader, ...search});
   const layout = groupLayout(width, height),
     groups = layout.groupsX * layout.groupsY;
   const count = layout.single ? plan.meta.length + plan.count : Math.max(plan.meta.length, plan.count);
@@ -246,6 +255,43 @@ export function* screenFrameSteps(
       sections.push(out.finish());
     });
     if (yield 0.5 + (g + 1) / (2 * groups)) return null;
+  }
+  return assembleCodestream(header, sections);
+}
+
+// Each large group chooses predictors after pricing copies and carries its
+// own model. The working set is one group, independent of the picture's area.
+function* screenDetailedFrameSteps(rgba, width, height, shape, colorSpace, plan,
+  {dim = 1024, depth = 4, frameHeader = null, globalPrefix = null, imageHeader = true}) {
+  const layout = groupLayout(width, height, dim), groups = layout.groupsX * layout.groupsY,
+    header = new BitWriter(256), global = new BitWriter(4096), sections = [],
+    planes = Array.from({length: plan.count}, () => new Int16Array(Math.min(width, dim) * Math.min(height, dim)));
+  if (imageHeader) writeImageHeader(header, width, height, shape.colour, shape.alpha, {colorSpace});
+  if (frameHeader) frameHeader(header);
+  else writeModularFrameHeader(header, {alpha: shape.alpha, shift: dim === 1024 ? 3 : dim === 512 ? 2 : 1});
+  if (globalPrefix) globalPrefix(global);
+  global.write(1, 1); global.write(1, 1);
+  const meta = plan.meta.map(m => screenModel(m.plane, m.width, m.height, depth));
+  let sectionBytes = 0;
+  const append = section => { sectionBytes += section.length; admitOutputSize(sectionBytes); sections.push(section); };
+  if (!layout.single) {
+    const write = writeScreenModel(global, meta.length ? meta : [screenModel(new Int16Array(1), 1, 1, depth)]);
+    writeModularHeader(global, {transforms: plan.transforms});
+    if (meta.length) write();
+    append(global.finish());
+    for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
+  }
+  for (let g = 0; g < groups; g++) {
+    const x = g % layout.groupsX * dim, y = ((g / layout.groupsX) | 0) * dim,
+      w = Math.min(dim, width - x), h = Math.min(dim, height - y);
+    plan.fill(planes, x, y, w, h);
+    const models = planes.map(plane => screenModel(plane, w, h, depth)),
+      section = layout.single ? global : new BitWriter(w * h * plan.count + 256);
+    if (!layout.single) writeModularHeader(section, {useGlobalTree: false});
+    const write = writeScreenModel(section, layout.single ? [...meta, ...models] : models);
+    if (layout.single) writeModularHeader(section, {transforms: plan.transforms});
+    write(); append(section.finish());
+    if (yield (g + 1) / groups) return null;
   }
   return assembleCodestream(header, sections);
 }

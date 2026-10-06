@@ -35,7 +35,7 @@ hosts keep the JavaScript path. Input and output limits are unchanged. SIMD supp
 ## Rebuild
 
 `src/kernels-bytes.mjs` holds the generated base64 modules; edit the `.wat` files, never that file. Install
-**wabt 1.0.37** as a build tool (`WABT_MODULE` may point to its `index.js`), then:
+**wabt 1.0.39** as a build tool (`WABT_MODULE` may point to its `index.js`), then:
 
 ```sh
 npm run build:kernels            # regenerate src/kernels-bytes.mjs

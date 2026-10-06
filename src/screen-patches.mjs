@@ -135,7 +135,7 @@ export function glyphDictionary(rgba, width, height) {
   return {groups, atlas, body, width: aw, height: ah, placements, covered};
 }
 
-export function writePatchFrameHeader(w, alpha, {reference = false, width = 0, height = 0} = {}) {
+export function writePatchFrameHeader(w, alpha, {reference = false, width = 0, height = 0, shift = 1} = {}) {
   w.write(1, 0);
   w.write(2, reference ? 2 : 0);
   w.write(1, 1);
@@ -147,7 +147,7 @@ export function writePatchFrameHeader(w, alpha, {reference = false, width = 0, h
   }
   w.write(3, 0);
   if (alpha) w.write(2, 0);
-  w.write(2, 1);
+  w.write(2, shift);
   if (!reference) {
     writeFrameHeaderEnd(w, alpha);
     return;
@@ -205,10 +205,11 @@ function* patchFraction(steps, start, span) {
   return step.value;
 }
 
-export function* patchSteps(rgba, width, height, shape, colorSpace, {tokenCodec = null, stats = null} = {}) {
+export function* patchSteps(rgba, width, height, shape, colorSpace, {tokenCodec = null, stats = null, search = null, limit = Infinity} = {}) {
   const dict = glyphDictionary(rgba, width, height);
   if (yield 0.05) return null;
   if (!dict) return null;
+  if (search) return yield* patchSearchSteps(dict, width, height, shape, colorSpace, search, limit, stats);
   const atlasPlan = screenPlan(dict.atlas, dict.width, dict.height, shape, 'global');
   const bodyPlan = screenPlan(dict.body, width, height, shape, 'global');
   if (!atlasPlan || !bodyPlan) return null;
@@ -254,6 +255,41 @@ export function* patchSteps(rgba, width, height, shape, colorSpace, {tokenCodec 
       covered: dict.covered
     });
   }
+  return bytes;
+}
+
+function* patchSearchSteps(dict, width, height, shape, colorSpace, search, limit, stats) {
+  const header = new BitWriter(256), dictionary = new BitWriter(256);
+  writeImageHeader(header, width, height, shape.colour, shape.alpha, {colorSpace});
+  writePatchDictionary(dictionary, dict, shape.alpha);
+  const head = header.finish(), dictionaryBytes = Math.floor(dictionary.bitLength / 8), frames = [];
+  // The dictionary and completed atlas are unavoidable bytes of this candidate.
+  if (head.length + dictionaryBytes >= limit) return null;
+  for (let stage = 0; stage < 2; stage++) {
+    const pixels = stage ? dict.body : dict.atlas, w = stage ? width : dict.width, h = stage ? height : dict.height;
+    let best = null;
+    for (const [i, mode] of ['global', 'frequency', 'scalar', 'direct'].entries()) {
+      const plan = screenPlan(pixels, w, h, shape, mode);
+      if (!plan) continue;
+      const bytes = yield* patchFraction(screenFrameSteps(pixels, w, h, shape, colorSpace, plan, {
+        imageHeader: false, search,
+        frameHeader: out => writePatchFrameHeader(out, shape.alpha, {reference: !stage, width: w, height: h,
+          shift: search.dim === 512 ? 2 : search.dim === 256 ? 1 : 3}),
+        globalPrefix: stage ? out => writePatchDictionary(out, dict, shape.alpha) : null
+      }), 0.05 + 0.95 * (stage * 4 + i) / 8, 0.95 / 8);
+      if (!bytes) return null;
+      if (!best || bytes.length < best.length) best = bytes;
+    }
+    if (!best) return null;
+    frames.push(best);
+    if (!stage && head.length + best.length + dictionaryBytes >= limit) return null;
+  }
+  const length = head.length + frames[0].length + frames[1].length;
+  admitOutputSize(length);
+  const bytes = new Uint8Array(length);
+  bytes.set(head); bytes.set(frames[0], head.length); bytes.set(frames[1], head.length + frames[0].length);
+  if (stats) Object.assign(stats, {atlasBytes: frames[0].length, bodyBytes: frames[1].length,
+    dictionaryBits: dictionary.bitLength, glyphs: dict.groups.length, placements: dict.placements, covered: dict.covered});
   return bytes;
 }
 export function encodePatches(rgba, width, height, shape, colorSpace, options) {

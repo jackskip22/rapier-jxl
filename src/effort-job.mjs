@@ -13,6 +13,7 @@ import {fault, admitOptions, admitPixels} from './admit.mjs';
 import {localSteps} from './local.mjs';
 import {rctSearchSteps} from './rct-search.mjs';
 import {screenEligible, screenSteps} from './screen-search.mjs';
+import {SAMPLE_RUNGS, sampledSteps} from './sampled.mjs';
 
 // The hurry in a step's reply: the caller's flag, or for a pooled pass a reply of null (ended) or {hurried}.
 const hurryOf = reply => reply === null || (typeof reply === 'object' ? reply.hurried : reply);
@@ -23,13 +24,15 @@ const hurryOf = reply => reply === null || (typeof reply === 'object' ? reply.hu
 export function effortJob(data, width, height, options, pool) {
   const {quality, colorSpace} = admitOptions(options), effort = options?.effort === undefined ? 1 : options.effort;
   if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fault('JXL_INPUT', 'Effort is a whole number from 1 to 9.');
+  const treeLearning = options?.treeLearning;
+  if (treeLearning !== undefined && treeLearning !== 'sampled') throw fault('JXL_INPUT', 'Tree learning must be sampled when specified.');
   admitPixels(data, width, height);
-  return effortSteps(data, width, height, quality, colorSpace, effort, pool && quality >= 100 && !groupLayout(width, height).single);
+  return effortSteps(data, width, height, quality, colorSpace, effort, pool && quality >= 100 && !groupLayout(width, height).single, treeLearning);
 }
 
 // Effort 1 is the core's work (index.mjs), step for step; the rungs run after it and keep a smaller stream if they
 // find one. A search that runs out of memory leaves the smallest completed stream standing.
-function* effortSteps(data, width, height, quality, colorSpace, effort, pooled) {
+function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, treeLearning) {
   const shape = inspectPixels(data, width, height);
   if (quality < 100) {
     if (!shape.palette) return yield* lossySteps(data, width, height, {quality, shape, colorSpace});
@@ -42,11 +45,12 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, pooled) 
     return exact.length <= bytes.length ? exact : bytes;
   }
   if (effort < 2) return yield* losslessSteps(data, width, height, {shape, colorSpace, pooled});
+  if (treeLearning === 'sampled') return yield* sampledSearch(data, width, height, shape, colorSpace, effort, pooled);
   let best = yield* part(losslessSteps(data, width, height, {shape, colorSpace, pooled}), 0, 2);
   const direct = shape.palette ? {...shape, palette: null} : shape;
   // A screen, a drawing or text (screen-search.mjs) also prices its palettes, residual runs and repeated glyphs from
   // effort 3, first; at effort 3 a win of a quarter or more ends the search there.
-  const screen = effort >= 3 && screenEligible(data, width, height, shape), screenFloor = best.length;
+  const screen = effort >= 3 && screenEligible(data, width, height, shape, effort), screenFloor = best.length;
   if (effort >= 4 || screen) {
     const searches = [searchSteps(data, width, height, direct, colorSpace, 3, pooled)];
     if (effort >= 4 && shape.palette) searches.push(localSteps(data, width, height, shape, colorSpace, 4, true, pooled));
@@ -55,7 +59,7 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, pooled) 
       if (shape.palette) searches.push(localSteps(data, width, height, shape, colorSpace, 6, true, pooled));
     }
     if (effort >= 4) searches.push(rctSearchSteps(data, width, height, shape, colorSpace, pooled));
-    if (screen) searches.unshift(screenSteps(data, width, height, shape, colorSpace, {fastFloor: effort === 3 ? best.length : 0}));
+    if (screen) searches.unshift(screenSteps(data, width, height, shape, colorSpace, {fastFloor: effort === 3 ? best.length : 0, effort}));
     for (let i = 0; i < searches.length; i++) {
       try {
         let step, reply, hurried = false;
@@ -71,6 +75,34 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, pooled) 
     const bytes = yield* part(searchSteps(data, width, height, direct, colorSpace, effort, pooled), 1, 2);
     if (bytes && bytes.length < best.length) best = bytes;
   } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
+  return best;
+}
+
+// Sampling changes only the explicit option. Keep effort 1 separately: any observed hurry, including on the last
+// group of a completed candidate, returns those bytes. Each rung chooses models before its independent group pass.
+function* sampledSearch(data, width, height, shape, colorSpace, effort, pooled) {
+  const first = losslessSteps(data, width, height, {shape, colorSpace, pooled});
+  let step, reply, hurried = false, last = 0;
+  while (!(step = first.next(reply)).done) {
+    reply = yield scaled(step.value, done => last = done / 2);
+    hurried ||= hurryOf(reply);
+  }
+  const floor = step.value;
+  if (hurried) return floor;
+  const rungs = effort < 4 ? [SAMPLE_RUNGS.cheap] : [SAMPLE_RUNGS.cheap, SAMPLE_RUNGS.rich];
+  let best = floor;
+  for (let i = 0; i < rungs.length; i++) {
+    try {
+      const steps = sampledSteps(data, width, height, shape, colorSpace, rungs[i], pooled);
+      reply = undefined;
+      while (!(step = steps.next(reply)).done) {
+        reply = yield scaled(step.value, done => last = 0.5 + (i + done) / (2 * rungs.length));
+        if (hurryOf(reply)) return floor;
+      }
+      if (step.value && step.value.length < best.length) best = step.value;
+    } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
+  }
+  if (last < 1 && hurryOf(yield 1)) return floor;
   return best;
 }
 

@@ -2,9 +2,9 @@
 // Bounded, exact LZ77 over modular residual values (not prefix-code tokens).
 // History is deliberately local to each plane. No dependency on an earlier
 // channel, group, worker, hash-table iteration order or floating-point price.
-import {packSigned} from './bits.mjs';
-import {buildCode, writeHistograms, uintConfig, countToken, writeHybrid} from './prefix.mjs';
-import {LZ77, RESIDUAL_CONFIG} from './modular.mjs';
+import {BitWriter, packSigned} from './bits.mjs';
+import {buildCode, writePrefixCode, writeHistograms, uintConfig, hybridToken, countToken, writeHybrid} from './prefix.mjs';
+import {ALPHABET, LZ77, RESIDUAL_CONFIG, leaf, channelTree, writeTree} from './modular.mjs';
 const SCREEN_DISTANCE_CONFIG = uintConfig(4),
   SCREEN_HASH_SIZE = 65536;
 
@@ -109,3 +109,94 @@ export const screenLZ77 = {
     };
   }
 };
+
+// Larger groups can retain a repeated row after short runs have buried it in
+// the hash chain. Rows are hints only: each copied value is still compared.
+// The fast matcher above does not build or consult this additional index.
+function screenRowMatches(values, width, emit, depth) {
+  const head = new Int32Array(SCREEN_HASH_SIZE).fill(-1),
+    previous = new Int32Array(values.length),
+    rows = new Int32Array(Math.ceil(values.length / width)).fill(-1),
+    seen = new Map();
+  for (let y = 0, start = 0; start < values.length; y++, start += width) {
+    let h = 0x811c9dc5;
+    for (let i = start; i < Math.min(values.length, start + width); i++) h = Math.imul(h ^ values[i], 16777619);
+    rows[y] = seen.get(h) ?? -1;
+    seen.set(h, start);
+  }
+  const hash = i =>
+    (Math.imul(values[i] + 1, 0x1e35a7bd) ^
+      Math.imul(values[i + 1] + 1, 0x6c8e9cf5) ^
+      Math.imul(values[i + 2] + 1, 0x2c1b3c6d)) >>> 16;
+  const insert = i => {
+    if (i + 2 >= values.length) return;
+    const h = hash(i);
+    previous[i] = head[h];
+    head[h] = i;
+  };
+  for (let i = 0; i < values.length; ) {
+    let length = 0, distance = 0;
+    if (i + LZ77.minLength <= values.length) {
+      const probe = at => {
+        if (at < 0 || at >= i || values[at] !== values[i] || (length && values[at + length - 1] !== values[i + length - 1])) return;
+        let n = 0;
+        while (i + n < values.length && values[at + n] === values[i + n]) n++;
+        if (n > length || (n === length && i - at < distance)) { length = n; distance = i - at; }
+      };
+      const row = rows[(i / width) | 0];
+      if (row >= 0) probe(row + i % width);
+      for (let at = head[hash(i)], n = 0; at >= 0 && n < depth && i + length < values.length; at = previous[at], n++) probe(at);
+    }
+    if (length >= LZ77.minLength) {
+      emit(0, length, distance);
+      for (let n = 0; n < length; n++) insert(i + n);
+      i += length;
+    } else { emit(values[i], 0, 0); insert(i++); }
+  }
+}
+
+// Score each plane's copied residuals and its own prefix headers. Distance
+// codes are merged across planes when writing; complete streams price that
+// coupling, the tree and framing. Plain residual entropy misses repeated rows.
+export function screenModel(plane, width, height, depth = 4) {
+  let best;
+  for (const predictor of [0, 1, 2, 5]) {
+    const pieces = [], freqs = new Uint32Array(ALPHABET), distances = new Uint32Array(64), token = [0, 0, 0];
+    let raw = 0;
+    const count = (config, value, target, base = 0) => {
+      hybridToken(config, value, token); target[base + token[0]]++; raw += token[1];
+    };
+    screenRowMatches(screenResiduals(plane, width, height, predictor), width, (value, length, distance) => {
+      if (length) {
+        pieces.push(length - LZ77.minLength, distance);
+        count(LZ77.lengthConfig, length - LZ77.minLength, freqs, LZ77.minSymbol);
+        count(SCREEN_DISTANCE_CONFIG, distance === 1 ? 1 : distance + 119, distances);
+      } else { pieces.push(value, 0); count(RESIDUAL_CONFIG, value, freqs); }
+    }, depth);
+    const code = buildCode(freqs), distance = buildCode(distances), writer = new BitWriter(256);
+    writePrefixCode(writer, code); writePrefixCode(writer, distance);
+    let bits = writer.bitLength + raw;
+    for (let s = 0; s < freqs.length; s++) if (freqs[s]) bits += freqs[s] * code.lengths[s];
+    for (let s = 0; s < distances.length; s++) if (distances[s]) bits += distances[s] * distance.lengths[s];
+    if (!best || bits < best.bits) best = {leaf: leaf(predictor), code, distances, pieces, bits};
+  }
+  return best;
+}
+
+export function writeScreenModel(writer, models) {
+  const leaves = models.map(model => model.leaf), ordered = writeTree(writer, channelTree(leaves)),
+    distances = new Uint32Array(64), contextMap = new Uint8Array(ordered.length + 1);
+  for (const model of models) for (let s = 0; s < distances.length; s++) distances[s] += model.distances[s];
+  for (const l of ordered) contextMap[l.context] = leaves.indexOf(l) + 1;
+  const distance = buildCode(distances);
+  writeHistograms(writer, {lz77: LZ77, contextMap, histograms: [
+    {config: SCREEN_DISTANCE_CONFIG, code: distance}, ...models.map(model => ({config: RESIDUAL_CONFIG, code: model.code}))
+  ]});
+  return () => {
+    for (const model of models) for (let i = 0; i < model.pieces.length; i += 2) {
+      const value = model.pieces[i], d = model.pieces[i + 1];
+      writeHybrid(writer, model.code, d ? LZ77.lengthConfig : RESIDUAL_CONFIG, value, d ? LZ77.minSymbol : 0);
+      if (d) writeHybrid(writer, distance, SCREEN_DISTANCE_CONFIG, d === 1 ? 1 : d + 119);
+    }
+  };
+}

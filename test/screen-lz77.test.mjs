@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {screenResiduals,screenMatches,screenLZ77} from '../src/screen-lz77.mjs';
+import {screenResiduals,screenMatches,screenLZ77,screenModel} from '../src/screen-lz77.mjs';
 import {encodeScreen} from '../src/screen.mjs';
 import {inspectPixels} from '../src/lossless.mjs';
 import {decoder} from './decoder.mjs';
@@ -22,6 +22,17 @@ test('screen residual boundaries agree with the modular predictors',()=>{
  assert.deepEqual([...screenResiduals(p,2,2,1)],[6,8,14,6]);
  assert.deepEqual([...screenResiduals(p,2,2,2)],[6,8,14,12]);
  assert.throws(()=>screenResiduals(p,2,2,6),/predictor/);
+});
+test('the screen model keeps a nearer equally long copy after a repeated row hint',()=>{
+ const pattern=Array.from({length:16},(_,i)=>i+1),values=[...pattern,...Array.from({length:8},(_,i)=>i+21),...pattern,...Array.from({length:8},(_,i)=>i+31),...pattern,...Array.from({length:16},(_,i)=>i+41)];
+ const plane=Int16Array.from(values,v=>v&1?-(v+1)/2:v/2),model=screenModel(plane,16,5),out=[],copies=[];
+ for(let i=0;i<model.pieces.length;i+=2){
+  const value=model.pieces[i],distance=model.pieces[i+1];
+  if(distance){const length=value+7;copies.push({at:out.length,length,distance});for(let n=0;n<length;n++)out.push(out[out.length-distance]);}
+  else out.push(value);
+ }
+ assert.deepEqual(Uint32Array.from(out),screenResiduals(plane,16,5,model.leaf.predictor));
+ assert.deepEqual(copies.find(copy=>copy.at===48),{at:48,length:16,distance:24});
 });
 test('LZ77 screen candidates decode exactly across groups and channel layouts', {skip:!decode},()=>{
  for(const [width,height] of [[1,1],[1,513],[513,1],[256,256],[257,259],[600,33]])for(const grey of [false,true])for(const alpha of [false,true]){

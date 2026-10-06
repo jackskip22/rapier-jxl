@@ -16,10 +16,11 @@ import {groupLayout, groupRect} from './frame.mjs';
 import {planGroup} from './lossless.mjs';
 import {colourTransform} from './rct-search.mjs';
 import {localGroup} from './local.mjs';
+import {sampledGroup} from './sampled.mjs';
 import {searchGroup, effortJob} from './effort-job.mjs';
 import {guard, answer} from './admit.mjs';
 
-const WORK = {plan: setup => planGroup(setup, setup.rct === undefined ? undefined : colourTransform(setup.rct, setup.channels)), search: searchGroup, local: localGroup};
+const WORK = {plan: setup => planGroup(setup, setup.rct === undefined ? undefined : colourTransform(setup.rct, setup.channels)), search: searchGroup, local: localGroup, sampled: sampledGroup};
 // A group's result: its counts (fresh, the pass's `sizes`), or its section.
 const work = (group, setup, rgba, stride, rect) => { const counts = setup.sizes?.map(n => new Uint32Array(n)); return group(rgba, stride, ...rect, counts) || counts; };
 

@@ -44,7 +44,7 @@ the loop to cancel, set `job.hurry = true` to finish with the smallest stream wr
 | --- | --- |
 | `rapier-jxl` | `encode`: 8-bit grey, grey with alpha, RGB and RGBA. Quality 100 is lossless; 1 to 99 is lossy, for flat-colour rasters. |
 | `rapier-jxl/min` | The core as one minified file. |
-| `rapier-jxl/effort` | The same `encode` with `{effort: 2, 3, 4 or 6}`: smaller exact files, more time, never larger than the effort below. Effort 1 is the core. From effort 3, screenshots, text and drawings also get exact palettes, repeated-run matching and a repeated-glyph dictionary, often half the size or less. See [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md). |
+| `rapier-jxl/effort` | The same `encode` with `{effort: 2}` through `{effort: 9}`: smaller exact files at more time, never larger than the effort below. Effort 1 is the core. Effort 3 adds screen palettes, repeated-run matching and a repeated-glyph dictionary. Efforts 5 through 9 also search larger groups, row matches and predictors priced after matching. |
 | `rapier-jxl/wasm` | The effort door with integer WebAssembly SIMD kernels; the same bytes, JavaScript when SIMD is unavailable. See [docs/KERNELS.md](docs/KERNELS.md). |
 | `rapier-jxl/photo` | `encodePhoto`: DCT compression for photographs, exact alpha. |
 | `rapier-jxl/jpeg` | `transcode`: a JPEG carried as its coefficients, no decode. The JPEG file itself cannot be rebuilt; ICC bytes, Exif beyond orientation and XMP are not carried. |
@@ -54,6 +54,20 @@ the loop to cancel, set `job.hurry = true` to finish with the smallest stream wr
 
 Each door is a readable module in `src/` (a bundler carries shared modules once) and, except `writer` and `kernels`,
 a single minified file in `dist/` that can be copied on its own.
+
+The effort door also offers sampled trees for lossless encoding:
+
+```js
+import {encode} from 'rapier-jxl/effort';
+const bytes = encode(rgba, width, height, {effort: 4, treeLearning: 'sampled'});
+```
+
+Efforts 2 and 3 share trees learned from up to 1,024 samples per channel across the image. Efforts 4 through 9
+also try richer trees learned from up to 2,048 samples per channel in each group. Complete streams compete against
+effort 1; the richer point also keeps the cheaper sampled result. The option leaves effort 1 and lossy requests
+unchanged. Sampling is deterministic and writes the same bytes on one thread or a worker pool. In this mode,
+**any `job.hurry` observed during encoding returns effort 1 exactly**, including at the last group; finish iterating
+the job before reading `job.bytes`. Omit `treeLearning` for the ordinary search.
 
 ## Limits
 
@@ -70,16 +84,16 @@ Quality numbers are not the same fidelity across encoders or pictures, and lossy
 | file in `dist/` | bytes | gzip | Brotli | added to the core, gzip |
 | --- | ---: | ---: | ---: | ---: |
 | `rapier-jxl.min.mjs`, the core: `encode` | 21,326 | 9,271 | 8,228 | |
-| `effort.min.mjs`: `encode` with effort | 43,792 | 17,571 | 15,488 | 8,300 |
-| `wasm.min.mjs`: accelerated effort, JS fallback | 53,759 | 22,372 | 19,547 | 13,101 |
-| `jpeg.min.mjs`: `transcode` | 32,354 | 13,505 | 11,916 | 8,525 |
+| `effort.min.mjs`: `encode` with effort | 58,582 | 23,147 | 20,091 | 13,876 |
+| `wasm.min.mjs`: accelerated effort, JS fallback | 68,566 | 27,813 | 24,161 | 18,542 |
+| `jpeg.min.mjs`: `transcode` | 32,354 | 13,505 | 11,979 | 8,525 |
 | `photo.min.mjs`: `encodePhoto` | 33,011 | 13,616 | 12,037 | 6,249 |
 | `jpeg-ans.min.mjs`: optional ANS carrier | 35,491 | 14,608 | 12,896 | 9,580 |
-| `photo-ans.min.mjs`: optional ANS photo | 35,994 | 14,649 | 13,005 | 7,316 |
-| every door in one bundle | 84,844 | 34,121 | 29,680 | |
-| all readable modules in `src/` | 237,783 | 74,443 | | |
+| `photo-ans.min.mjs`: optional ANS photo | 35,994 | 14,650 | 12,975 | 7,316 |
+| every door in one bundle | 99,765 | 39,793 | 34,291 | |
+| all readable modules in `src/` | 272,908 | 83,507 | | |
 
-Exact bytes of release 2.3.0, with hashes and tools in `dist/sizes.json` (terser 5.51.2, Node v22.22.2; gzip 9,
+Exact bytes of release 2.4.0, with hashes and tools in `dist/sizes.json` (terser 5.51.2, Node v22.22.2; gzip 9,
 Brotli 11). Each minified file stands alone and writes the same bytes as its readable source. The last column is what
 a door adds to a bundle that already holds the core; `effort`'s `encode` is the core's at effort 1, so it takes the
 core's place.

@@ -154,6 +154,7 @@
     {"door":"effort","input":{"file":"seeds/local-palette.rgba","width":600,"height":19},"options":{"effort":6},"sha256":"d57b7cff92de7eb5f6bc8ae2359947106f612be8088d24de9d080a440374e391"},
     {"door":"transcode","input":{"file":"seeds/display-p3-table.jpg"},"sha256":"ba8ac62cba2921bf895020ab1a4d3e1d6cf34524dbd22987db8c04dca55e34c4"},
     {"door":"transcode","input":{"file":"photo-corpus/grace-hopper.jpg"},"options":{"effort":4},"sha256":"d1041a9706a5128bb5fc5acef745708827e68db23c332f212139397f727b279c"},
-    {"door":"photo","input":{"seed":20260930,"index":13},"options":{"quality":90,"effort":4},"sha256":"d3f32eff698d204f4acfb45f08f4377dd546b9ca5f27f2656042c9b57af76d7b"}
+    {"door":"photo","input":{"seed":20260930,"index":13},"options":{"quality":90,"effort":4},"sha256":"d3f32eff698d204f4acfb45f08f4377dd546b9ca5f27f2656042c9b57af76d7b"},
+    {"door":"effort","input":{"file":"seeds/hurry-inner.rgba","width":96,"height":64},"options":{"effort":4,"treeLearning":"sampled"},"sha256":"842fa6deec02f9166dd90c18fde19c34a0bf55a7e2ee65c6c942a5e00dc63717"}
   ]
 }
