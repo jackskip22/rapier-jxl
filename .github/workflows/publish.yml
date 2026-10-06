@@ -6,6 +6,9 @@ on:
 permissions:
   contents: read
   id-token: write
+concurrency:
+  group: publish
+  cancel-in-progress: false
 jobs:
   publish:
     runs-on: ubuntu-latest
