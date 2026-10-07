@@ -2,7 +2,7 @@
 
 `rapier-jxl/wasm` is the `effort` door with WebAssembly kernels under the lossless hot loops. It has the same API and
 writes the same bytes. It tries SIMD, and falls back to JavaScript if WebAssembly or SIMD is absent or blocked. The
-core and `effort` stay JavaScript. `dist/wasm.min.mjs` is the same door as one self-contained file. Both entry modules
+core and `effort` do not initialise WebAssembly. `dist/wasm.min.mjs` is the same door as one self-contained file. Both entry modules
 are marked side-effectful in `package.json`, so bundlers keep their automatic backend configuration.
 
 Readable modules share controls through `rapier-jxl/kernels`:
@@ -14,8 +14,9 @@ const bytes = encode(rgba, width, height, {effort: 3, quality: 100});
 console.log(kernelMode()); // the backend actually running, not the one requested
 ```
 
-Configure once before an encode, not inside a progress callback. Controls are per JavaScript realm, and workers have
-independent arenas. Do not combine `wasm.min.mjs` with a separately bundled core: each bundle owns its own hooks. A
+Configure once before an encode, not inside a progress callback. Readable modules share controls within a JavaScript
+realm; workers and separately bundled modules have independent arenas and hooks. Configure a minified encoder through
+that same import. A
 second argument selects kernels for benchmarks, for example `{channel: true, weighted: false, fill: false}`; it moves
 where arithmetic runs, never its result.
 

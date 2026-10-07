@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-// A complete worker around Rapier JXL: post {id, op: 'encode' or 'photo', data, width, height, quality} or
-// {id, op: 'transcode', jpeg}; receive {id, progress} while it works, then {id, ok: true, bytes, width, height,
+// A complete worker around Rapier JXL: post {id, op: 'encode' or 'photo', data, width, height, quality, colorSpace, effort} or
+// {id, op: 'transcode', jpeg, effort}; receive {id, progress} while it works, then {id, ok: true, bytes, width, height,
 // orientation} or {id, ok: false, code, message}. {id, op: 'abort'} ends a request between steps. 'encode' takes an
 // effort (the effort door; 1, its default, writes the core's bytes) and a deadline in milliseconds: past it the search
 // is hurried and answers with the smallest stream written so far, never larger than effort 1's. Bytes are transferred.
@@ -15,11 +15,11 @@ self.onmessage = async event => {
   const ask = event.data || {}, {id, op} = ask;
   if (op === 'abort') { running.delete(id); return; }
   try {
-    const job = op === 'encode' ? encodeSteps(ask.data, ask.width, ask.height, {quality: ask.quality, effort: ask.effort})
-      : op === 'photo' ? encodePhotoSteps(ask.data, ask.width, ask.height, {quality: ask.quality})
-      : op === 'transcode' ? transcodeSteps(ask.jpeg)
+    const job = op === 'encode' ? encodeSteps(ask.data, ask.width, ask.height, {quality: ask.quality, colorSpace: ask.colorSpace, effort: ask.effort, treeLearning: ask.treeLearning})
+      : op === 'photo' ? encodePhotoSteps(ask.data, ask.width, ask.height, {quality: ask.quality, colorSpace: ask.colorSpace, effort: ask.effort})
+      : op === 'transcode' ? transcodeSteps(ask.jpeg, {effort: ask.effort})
       : null;
-    if (!job) throw Object.assign(new Error('unknown op ' + op), {code: 'JXL_INPUT'});
+    if (!job) throw Object.assign(new Error('Operation is encode, photo or transcode.'), {code: 'JXL_INPUT'});
     running.add(id);
     let shown = performance.now();
     const hurryAt = ask.deadline >= 0 ? shown + ask.deadline : Infinity;
@@ -37,6 +37,8 @@ self.onmessage = async event => {
     self.postMessage({id, ok: true, ...out}, [out.bytes.buffer]);
   } catch (error) {
     running.delete(id);
-    self.postMessage({id, ok: false, code: error.code || 'JXL_ERROR', message: String(error.message || error)});
+    const failure = {id, ok: false, message: String(error.message || error)};
+    if (error.code) failure.code = error.code;
+    self.postMessage(failure);
   }
 };

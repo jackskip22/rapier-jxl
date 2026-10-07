@@ -1,82 +1,58 @@
 # Exact coding for screenshots, text and drawings
 
-The effort door tries screen candidates at effort 3 and above. The core,
-JPEG carrier and photograph doors are unchanged; no new option or runtime
-library is required. All accepted candidates compete as complete JPEG XL
-codestreams against the existing effort-1 floor and the older effort searches.
+`rapier-jxl/effort` and `rapier-jxl/wasm` try exact screen candidates at effort 3 and above. Every candidate competes
+as a complete codestream against effort 1 and the other lossless searches. The core import excludes these modules;
+selecting effort 1 in the effort import skips their execution.
 
-## Routing and scope
+## Routing
 
-`screenEligible` first checks the palette already found by `inspectPixels`.
-Without that palette it does not read any additional image pixels or allocate
-scratch buffers. With one, it samples at most 256 fixed RGBA triples in a
-stratified grid. A triple is flat only when its centre, right and lower pixels
-agree in all four channels; at least 192 must be flat. A rejection preserves the
-old effort route. This is deliberately conservative: the default route does not
-handle more than the core's 2048 palette entries, noisy scanned paper, or every
-mixed screenshot. The standalone global planner supports at most 4096 entries.
+At efforts 3–4, screen admission requires the core's palette of at most 2,048 colours. A fixed 256-sample grid tests
+whether at least 192 centre/right/lower RGBA triples are flat. Images smaller than 32 pixels in either dimension do
+not enter this route. The admission test allocates no image-sized buffers.
+
+At effort 5 and above, the same flatness test also admits images without that palette. A second fixed sample admits
+some screens with gradients or antialiased text: at least 112 horizontal pairs must match exactly, with a bounded
+fraction of softly changing pairs. Admission chooses a search, never changes pixels.
 
 ## Candidates
 
-`screen.mjs` supplies exact global palettes without a gratuitous zero entry,
-sparse scalar channel palettes, and a reusable modular group writer. Palette
-values are numerically sorted, with exact RGBA membership; no quantization is
-performed. Scalar palettes with more than 192 values, or no gaps in their range,
-are skipped. Predictor selection samples the integer predictors 0, 1, 2 and 5
-and prices prefix headers plus payload bits. A candidate is accepted only on its
-actual complete byte length, not the sample price.
+`screen.mjs` writes exact global palettes, sparse channel palettes and modular groups. Global palettes hold at most
+4,096 colours and include zero only when present. Palette entries use numeric ordering or, in the deeper search,
+frequency ordering with numeric tie breaks. Sparse channel palettes are used only when their stored values save
+range. Predictor choices are 0, 1, 2 and 5, priced with prefix headers and payload bits.
 
-`screen-lz77.mjs` matches packed modular residual values, not Huffman symbols.
-A 65536-bucket integer hash and a maximum of four collision-chain probes find
-matches of at least seven values. Every copy is verified by full value equality.
-History resets per plane and per group; overlap is allowed. General distances
-use the modular stream's 120 spatial-distance-code convention. A dedicated
-distance histogram is included in the byte price. No inter-group dependency is
-introduced.
+`screen-lz77.mjs` matches packed modular residuals. Its fast matcher uses a 65,536-bucket hash and up to four chain
+probes per position. Every copied value is compared, including overlaps; history resets per plane and group.
+Distance histograms and the modular format's spatial-distance codes are part of the complete byte price.
 
-`screen-patches.mjs` finds 8-connected components against a sampled exact
-background. Width, height and an integer hash identify candidates; full RGBA
-rectangle equality proves every reuse. Components no larger than 64 by 64,
-repeated at least three times and clearing a fixed area threshold, are packed
-into a 256-pixel-wide atlas. That atlas is a real JPEG XL reference-only frame,
-saved before colour conversion. A standard patch dictionary places the original
-rectangles with replacement blending, including alpha and invisible RGB.
-The body is encoded after those rectangles are cleared. No image semantics,
-OCR, font recognition, private sidecar, or lossy background replacement is used.
-The total stream includes the atlas, dictionary, body and all headers.
+`screen-patches.mjs` finds repeated connected components against an exact sampled background. Dimensions and hashes
+find candidates; full RGBA rectangle equality verifies reuse. Repeated components form a reference-only frame and a
+standard patch dictionary with replacement blending. Alpha and RGB under transparency are preserved. The complete
+stream includes the atlas, dictionary, body and headers.
 
-The patch scan is capped at four million pixels, 32768 eligible components,
-2048 reused component classes and a 16384-pixel atlas height. Hash collisions
-always undergo full equality checks; excessive collision bookkeeping abandons
-the candidate. Detection and atlas work allocate image-sized buffers only after
-screen admission. Very large or unusual screenshots fall back rather than
-changing pixel values.
+The patch scan is limited to four million pixels, 32,768 eligible components, 2,048 repeated component classes and
+an atlas height of 16,384. Reused components are at most 64 by 64 pixels and occur at least three times. Exceeding
+these bounds abandons that candidate and retains the completed stream.
 
-The measured order is global-palette LZ77, glyph patches with LZ77, scalar
-palette LZ77, global palette only, scalar palettes only. At effort 3, after the
-first two trials, a completed candidate at most three quarters of the effort-1
-size ends the search. This deterministic actual-byte threshold avoids spending
-more time on low-value alternatives after a strong win. Smaller wins continue
-through all screen candidates and the old search. Efforts 4 and above always
-retain the broader search. The early exit kept the same bytes on all 21 measured
-fixtures; it is not a guarantee of matching an exhaustive search on every
-possible screenshot. The universal size floor is effort 1, as before.
+The first candidates are global-palette LZ77, glyph patches with LZ77, channel-palette LZ77 and the two palette forms
+without matching. At effort 3, the search can stop after the first two when the best stream is at most three quarters
+of effort 1's size. Effort 4 continues through those candidates and the broader lossless searches.
 
-## Progress, exactness and packaging
+Effort 5 and above also prices numeric and frequency palettes, patch atlases, channel palettes and direct channels
+with 1,024-pixel groups. Each group selects its predictor after matching, including row matches, and writes its own
+model. Complete streams decide whether any of these candidates replaces the current result.
 
-Effort 1 never imports or calls this route. An immediate hurry returns the
-original effort-1 bytes. Later hurry retains the smallest completed candidate,
-as required by the existing public `steps.test.mjs`; an incomplete atlas or body
-can never be published. No clock, randomness, transcendental function or
-engine-dependent sort comparison chooses a byte in the new modules.
+## Progress and exactness
 
-The four modules are separate from the small core. `codec-build.mjs` places
-them in dependency order in Rapier's flattened image worker. The normal package
-stager also follows them from the effort door. Reproduce the corpus, ablations,
-two-decoder checks and packaged/readable equality with
-`repo/tools/probes/jxl-screenshots/README.md`.
+A hurry observed between steps retains a completed stream. An incomplete atlas or body is never returned. Search
+choices are deterministic; hashes identify candidates but never establish equality. The same work is used by
+readable and one-file entries. [Job contract](reference/API.md#progress-and-cancellation).
 
-These are original MIT-licensed JavaScript implementations. Format grammar was
-checked against libjxl's BSD-3-Clause sources (`dec_ans.h`, `frame_header.cc`,
-`dec_patch_dictionary.cc`, `patch_dictionary_internal.h`, `dec_frame.cc`). No
-libjxl runtime code, fonts or new runtime dependency is shipped.
+The public checks cover decoded pixels, alpha, malformed streams and byte equality:
+
+```sh
+node --test test/screen.test.mjs test/screen-lz77.test.mjs test/screen-patches.test.mjs
+```
+
+The format uses ISO/IEC 18181 modular frames, LZ77 and patch dictionaries. These modules are MIT-licensed JavaScript;
+no fonts, OCR model or additional runtime dependency is required.

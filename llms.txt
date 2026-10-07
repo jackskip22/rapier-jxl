@@ -1,0 +1,43 @@
+# Rapier JXL
+
+> JPEG XL encoder. ES modules. MIT. No runtime dependencies, files read or network requests.
+
+Package: rapier-jxl
+Version: 2.5.0
+Install: npm install rapier-jxl
+Pixel input: Uint8Array or Uint8ClampedArray, straight 8-bit RGBA, width * height * 4 bytes, row-major.
+Pixel output: Uint8Array, bare JPEG XL codestream, extension .jxl, MIME image/jxl.
+Execution: synchronous; browser, module worker, Node, Deno.
+Core payload: 21,326 minified bytes; 9,271 gzip bytes.
+
+## Entry selection
+
+- rapier-jxl or rapier-jxl/core: encode(data, width, height, options?), encodeSteps, LIMITS. quality 100 by default; 1–99 lossy. Alpha exact. No bundled WebAssembly.
+- rapier-jxl/effort: core capabilities plus effort 1–9, default 1; optional treeLearning: 'sampled'. Lossless candidates compete by complete byte length.
+- rapier-jxl/wasm: effort API with inlined integer kernels; automatic SIMD or JavaScript; same output bytes. Also configureKernels and kernelMode.
+- rapier-jxl/jpeg: transcode(jpegBytes, options?), transcodeSteps, LIMITS. Returns {bytes, width, height, orientation}; keeps coefficients, orientation and an admitted colour-space declaration; omits reconstruction data and other metadata.
+- rapier-jxl/photo: encodePhoto(data, width, height, options?), encodePhotoSteps, LIMITS. VarDCT; quality 90 by default, 100 lossless.
+- rapier-jxl/jpeg-ans and rapier-jxl/photo-ans: corresponding JPEG/photo API; ANS search at effort 2 and above.
+- Append /min to each named encoding import for its self-contained file. rapier-jxl/min is the minified core.
+- rapier-jxl/writer: typed format primitives, readable source only. rapier-jxl/kernels: shared readable-module kernel controls.
+
+## Contracts
+
+- quality: number 1–100; lossless is quality: 100. Pixel colour space: colorSpace: 'srgb' (default) or 'display-p3'; declaration, no sample conversion.
+- effort: integer 1–9, default 1; supported by effort, wasm, JPEG and photo entries. Core has no effort option.
+- Limits: 16 MiB output, 16,384 pixels per side. Core/effort/wasm: 24 million pixels. Photo: 40 million. JPEG: 64 million and 16 MiB input.
+- Checked encoding entry error codes: JXL_INPUT, JXL_DIMENSIONS, JXL_SIZE, JXL_MEMORY, JXL_JPEG. Inspect error.code; diagnostic text is not the contract. Raw writer primitives have unchecked preconditions.
+- Jobs yield progress in (0, 1]. Read job.bytes only after iteration completes. Leaving the loop cancels; job.hurry requests a completed candidate. Sampled lossless hurry returns effort 1 exactly.
+- Output is deterministic: the same pixels and options write the same bytes in every JavaScript engine, with or without the WebAssembly kernels.
+- Input stays unmodified and must remain available until completion or cancellation. Input buffer transfer detaches it from the sender.
+- A carried JPEG cannot reconstruct the original JPEG file. Unsupported or malformed JPEGs raise JXL_JPEG; decode and encode pixels when appropriate.
+
+## References
+
+- [Exports and declaration paths](package.json)
+- [API, options, jobs and errors](docs/reference/API.md)
+- [Smallest import, one-file use, workers and shared source](docs/reference/ARCHITECTURE.md)
+- [Exact payload sizes, hashes and import graphs](dist/sizes.json)
+- [Encoder payload and quality comparisons](docs/ENCODER-COMPARISON.md)
+- [Pinned external payload measurements](bench/encoder-sizes.json)
+- [Worker example](examples/worker.mjs)

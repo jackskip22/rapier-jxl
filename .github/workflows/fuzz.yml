@@ -27,6 +27,10 @@ jobs:
         with:
           node-version: '22.22.2'
       - run: npm install --ignore-scripts
+      - name: Check the packed imports and the TypeScript consumer
+        run: |
+          npm run test:package
+          npm run test:types
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.3.11'

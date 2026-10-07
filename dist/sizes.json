@@ -1,13 +1,13 @@
 {
   "package": "rapier-jxl",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "measured": "exact bytes of the staged files; gzip level 9; Brotli quality 11, text mode; added is a door bundled with the core less the core alone, or the door alone less the core where it covers the core (effort); every measured bundle loads as a module",
   "node": "v22.22.2",
   "terser": "5.51.2",
   "privateProperties": "^(alphabetSize|lengths|codes|simple|treeSelect|splitToken|msb|lsb|contextMap|histograms|predictor|multiplier|context|splitval|property|offset|left|right|channel|acc|pending|at|bitLength|grow|zeroPadToByte|writeU32|append|finish|write|small|large|totals|contexts|tokens|cost|bucketOf|contextOf|nonZero|zeroDensityOffset|thresholds|numDc|numCtxs|freqs|hshift|vshift|residual|component|inPlace|horizontal|beginC|numC|rctType|nbColors|nbDeltas|useGlobalTree|streamId|pieces|rect|minSymbol|minLength|lengthConfig|params|type|leaf|groupsX|groupsY|dcGroupsX|dcGroupsY|single|config|bits|sym|tree|count|parts|lz77|transforms)$",
   "source": {
-    "bytes": 272908,
-    "gzip": 83507,
+    "bytes": 272956,
+    "gzip": 83503,
     "sha256": {
       "admit.mjs": "ccdbee9f68a0e0125853d5d786b95075bc39807e9a6e95d8a185a6c0c7b2fca4",
       "ans.mjs": "c604457516a86c8697810d9ded6af20f91b59650f0ed5aea6683fc9f2051f79e",
@@ -25,7 +25,7 @@
       "jpeg-ans.mjs": "4a9cafe6eaf83f7c37f87513cc42458d6c2997c420830b0449d591c103993072",
       "jpeg-job.mjs": "61370ed45ebd8c15c8edb3d043139dcde8a8bf7bd1ea52d030f3f73de5d6fa60",
       "kernel-hooks.mjs": "c7a8578d0f16b10c3598d527778c99d1dd80b9eb283dffe5ed969e44850b63d4",
-      "kernels.mjs": "fc54852d11d1fffa16e7b2f788006ccc23b4757ac0170c59d41ff35224d55391",
+      "kernels.mjs": "ed93392c550c324aee4dca0f4bfc073148df21fcb85d86a08a10226d94fc68e9",
       "kernels-bytes.mjs": "d76d121612ddc74ae72fe05f9f643ef08ad578b70e9de28afeb38aa7cd0c237a",
       "local.mjs": "546b39e8bc88de97c5d1d170bf30da68452a6c2bf8fc86a8bd81eb943dfe16bf",
       "lossless.mjs": "6a13093b568597f2500dbd2032558d08c792babac4bd439b0f5b56b9872e0759",
@@ -78,8 +78,8 @@
       "alone": {
         "bytes": 21326,
         "gzip": 9271,
-        "brotli": 8228,
-        "sha256": "395e8cbf1647ab69fc763df62da9adaf885e586165e0dbc4184a565ac96b748e",
+        "brotli": 8227,
+        "sha256": "7c63c64d98b78538b70d1a990d208fe310d1c66ad702029432d7113112664d1a",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -121,7 +121,7 @@
         "bytes": 32354,
         "gzip": 13505,
         "brotli": 11979,
-        "sha256": "127edd20d55b574fdb7949d0a1c6848da7b3d5e8300ef0fad270c19d733b2861",
+        "sha256": "d884649622d23b52541fda11ebceb88143c8f21cccce9c44afb672055d90f3cf",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -131,7 +131,7 @@
       "added": {
         "bytes": 21706,
         "gzip": 8525,
-        "brotli": 7496
+        "brotli": 7497
       },
       "provedByteCases": 13
     },
@@ -167,7 +167,7 @@
         "bytes": 33011,
         "gzip": 13616,
         "brotli": 12037,
-        "sha256": "755b0eae33c972c76d7a711b5cfa4d253b025f5619efeb855cfad8d060c07cea",
+        "sha256": "0c63392ce8be29de19a8f4e76be0142321caa96422d50746470cb3446e00fb27",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -178,7 +178,7 @@
       "added": {
         "bytes": 16576,
         "gzip": 6249,
-        "brotli": 5482
+        "brotli": 5483
       },
       "provedByteCases": 43
     },
@@ -212,7 +212,7 @@
         "bytes": 35491,
         "gzip": 14608,
         "brotli": 12896,
-        "sha256": "fc65c0a5d54cb0d44d3bc80fd8e023ce8b1f57002acbc08e87f373c174cec19a",
+        "sha256": "031aac1eb803e709bc850d98f87916dc9505248647ece19892df41331cf1cdce",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -222,7 +222,7 @@
       "added": {
         "bytes": 24689,
         "gzip": 9580,
-        "brotli": 8434
+        "brotli": 8435
       },
       "provedByteCases": 13
     },
@@ -259,8 +259,8 @@
       "alone": {
         "bytes": 35994,
         "gzip": 14650,
-        "brotli": 12975,
-        "sha256": "e50b3e851b47a8863fb4b900c00b2ce9d10ea3f7b82629f816f4847efa6c0cee",
+        "brotli": 13005,
+        "sha256": "46e15b0a6729e08bacd19312cb71e3d739bd67b36224396e0a966cd307494f6e",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -271,7 +271,7 @@
       "added": {
         "bytes": 19559,
         "gzip": 7316,
-        "brotli": 6428
+        "brotli": 6435
       },
       "provedByteCases": 43
     },
@@ -310,7 +310,7 @@
         "bytes": 58582,
         "gzip": 23147,
         "brotli": 20091,
-        "sha256": "f0972ff69e8ef921d938742419eff3e8647d11b61d2c264a2872e5b63e7c3a85",
+        "sha256": "b1e8dd74e85adb376de0b843bdfb12382c1804498d22c0adc0ee1fb08a7b19e9",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -320,7 +320,7 @@
       "added": {
         "bytes": 37256,
         "gzip": 13876,
-        "brotli": 11863
+        "brotli": 11864
       },
       "provedByteCases": 99
     },
@@ -338,9 +338,9 @@
       "modules": [
         "kernel-hooks",
         "bits",
+        "admit",
         "kernels-bytes",
         "kernels",
-        "admit",
         "frame",
         "prefix",
         "modular",
@@ -361,10 +361,10 @@
         "wasm"
       ],
       "alone": {
-        "bytes": 68566,
-        "gzip": 27813,
-        "brotli": 24161,
-        "sha256": "5a5d7e6b1b1b6075bf92d7f5f90e342298ebfbde897d63ec411ca09b510d39ac",
+        "bytes": 68580,
+        "gzip": 27810,
+        "brotli": 24129,
+        "sha256": "d15768f5f9171075e25df8f813d15735fc6fbf4f1f8868b2dd8209aa4e889615",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -373,9 +373,9 @@
         }
       },
       "added": {
-        "bytes": 47240,
-        "gzip": 18542,
-        "brotli": 15933
+        "bytes": 47254,
+        "gzip": 18539,
+        "brotli": 15902
       },
       "provedByteCases": 99
     }
@@ -398,8 +398,8 @@
       "./photo-ans",
       "./wasm"
     ],
-    "bytes": 99765,
-    "gzip": 39793,
-    "brotli": 34291
+    "bytes": 99778,
+    "gzip": 39787,
+    "brotli": 34278
   }
 }

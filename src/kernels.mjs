@@ -2,6 +2,7 @@
 // No fetch, runtime dependency, shared memory or floating-point byte decisions.
 import {kernelHooks} from './kernel-hooks.mjs';
 import {BitWriter, LIMITS} from './bits.mjs';
+import {fault} from './admit.mjs';
 import {SCALAR, SIMD, SIMD_PROBE} from './kernels-bytes.mjs';
 
 export const {configureKernels, kernelMode} = (() => {
@@ -115,7 +116,7 @@ function fill(rgba, imageWidth, x0, y0, w, h, channels, planes) {
  * Set it before an encode, never inside a progress callback.
  */
 function configureKernels(mode = 'auto', parts) {
-  if (!['off', 'auto', 'scalar', 'simd'].includes(mode)) throw new RangeError('Unknown JXL kernel mode: ' + mode);
+  if (!['off', 'auto', 'scalar', 'simd'].includes(mode)) throw fault('JXL_INPUT', 'Kernel mode is off, auto, scalar or simd.');
   kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = null; active = 'off';
   if (mode === 'off') return active;
   try {

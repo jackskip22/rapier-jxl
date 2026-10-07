@@ -19,6 +19,16 @@ const use = mode => assert.equal(configureKernels(mode), mode, 'backend actually
 let seed = 173;
 const random = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return seed >>> 0; };
 
+test('kernel configuration rejects invalid input with a stable code and keeps the active backend', () => {
+  const active = configureKernels('auto');
+  try {
+    for (const mode of ['unknown', null, 42, Symbol('mode')]) {
+      assert.throws(() => configureKernels(mode), {code: 'JXL_INPUT'});
+      assert.equal(kernelMode(), active);
+    }
+  } finally { configureKernels('off'); }
+});
+
 // Never let an absent feature silently turn an acceleration comparison into JS-vs-JS.
 test('the accelerated entry keeps its configuration through package tree shaking', () => {
   const manifest=JSON.parse(readFileSync(new URL('../package.json',import.meta.url)));
@@ -183,5 +193,5 @@ test('non-exact multipliers, non-Int16 planes and custom writers stay in JS', {s
   const writer=new BitWriter();writer.write=function(){throw new Error('custom writer reached')};
   assert.equal(kernelHooks.channel(writer,buildCode(new Uint32Array(257)),new Int16Array(16),4,4,leaf(5)),false);
   assert.throws(()=>codeChannel(writer,buildCode(new Uint32Array(257)),new Int16Array(16),4,4,leaf(5)),/custom writer reached/);
-  use('off');assert.equal(kernelMode(),'off');assert.throws(()=>configureKernels('oops'),RangeError);
+  use('off');assert.equal(kernelMode(),'off');
 });

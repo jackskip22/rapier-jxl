@@ -3,7 +3,7 @@
 <title>Rapier JXL in a page</title>
 <style>body{font:16px/1.5 system-ui;max-width:48em;margin:2em auto;padding:0 1em}img{max-width:100%;display:block;margin:1em 0}code{font-size:.9em}</style>
 <h1>Rapier JXL</h1>
-<p>Choose a picture. A JPEG is carried whole; anything else is drawn on a canvas and encoded from its pixels.
+<p>Choose a picture. JPEG coefficients and orientation are carried; anything else is drawn on a canvas and encoded from its pixels.
 The result shows only in a browser that decodes JPEG XL; the size is reported either way.</p>
 <p><input type="file" accept="image/*"> <label><input type="checkbox" id="lossy"> lossy, quality <input id="q" type="number" min="1" max="99" value="80" size="3"></label></p>
 <p id="out"></p>
@@ -21,7 +21,7 @@ document.querySelector('input[type=file]').addEventListener('change', async even
   try {
     if (file.type === 'image/jpeg') {
       const jpeg = new Uint8Array(await file.arrayBuffer());
-      try { ({bytes} = transcode(jpeg)); note = 'carried whole'; }
+      try { ({bytes} = transcode(jpeg)); note = 'JPEG coefficients carried'; }
       catch (error) { if (error.code !== 'JXL_JPEG') throw error; }
     }
     if (!bytes) {
