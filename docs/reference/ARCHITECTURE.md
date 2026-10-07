@@ -4,6 +4,9 @@ Choose one encoding import for the input and search required. `rapier-jxl` is th
 Effort and wasm contain the core's capabilities. JPEG coefficient carrying and photographic pixel encoding remain
 separate imports. ANS is optional within those two paths.
 
+Native precision shares the core's modular coding. File parsing is the optional `rapier-jxl/source` import;
+applications already holding typed samples do not import PNG or OpenEXR parsing.
+
 | Need | Readable import | One self-contained file |
 | --- | --- | --- |
 | RGBA, lossless or lossy | `rapier-jxl/core` | `dist/rapier-jxl.min.mjs` |
@@ -47,8 +50,9 @@ configure that same import. Readable imports share the controls in `rapier-jxl/k
 | Boundary | Modules and responsibility |
 | --- | --- |
 | Checked entry and jobs | `admit.mjs`, `index.mjs`, `effort-job.mjs`, `jpeg-job.mjs`, `photo-job.mjs`: inputs, limits, errors, progress and complete results. |
+| Source files | `source.mjs`: exact PNG16/OpenEXR words, channel layout, colour declarations and alpha association. No compression-quality policy. |
 | Shared format | `bits.mjs`, `prefix.mjs`, `frame.mjs`, `modular.mjs`: bit writing, entropy codes, headers and modular syntax. |
-| Pixel core | `lossless.mjs`, `lossy.mjs`, `squeeze.mjs`: RGBA to modular codestreams. |
+| Pixel core | `lossless.mjs`, `lossy.mjs`, `squeeze.mjs`: typed RGBA to modular codestreams. Native samples share the group planner, entropy writer and worker setup; source quantisation precedes reversible prediction. |
 | Lossless search | Weighted, local, sampled, colour-transform and screen modules, reached through `effort.mjs`. The core does not import them. |
 | JPEG and photo | JPEG parsing and photographic DCT feed shared coefficient and VarDCT writers. ANS has separate entries. |
 | Acceleration | `kernel-hooks.mjs` isolates optional integer kernels; `wasm.mjs` configures them and uses the effort encoder. |
@@ -57,20 +61,51 @@ Keep these optional paths out of the core import graph. Share admission, format 
 through their existing modules. Add codec-level extensions through the typed `rapier-jxl/writer` surface; use readable
 modules because minified builds rename internal format fields. [API](API.md), [kernels](../KERNELS.md), [screen coding](../SCREENSHOTS.md).
 
+## Complete candidates and exact pruning
+
+Search retains only complete streams. Once a stream is kept, only a smaller complete candidate replaces it. Neither
+a time estimate nor a partial stream decides which image bytes are kept. `hurry` finishes with a completed
+representation; a candidate that exceeds a size or allocation limit leaves any retained stream available. Native
+lossy search tries exact candidates first and can still complete a quantised candidate if no exact candidate fits.
+
+Local modelling stops when the sum of already-written section lengths reaches the best complete stream's length.
+Remaining sections, headers and the table of contents can only add bytes, so this lower bound cannot discard a
+winner. The worker pool counts each accepted group once, independent of completion order. Candidate pruning has a
+separate result from hurry: rejecting a local model does not cancel a later colour-transform candidate.
+
+Context classification follows emitted tokens. A long zero-residual copy needs a context for its literal and its
+length token; pixels skipped by that copy need no classification array. Palette inspection is shared within a
+screen search, and prediction requested as raw residuals omits unused weighted-context lookup. These reductions
+preserve the stream's tokens, candidate order, tie policy and final bytes.
+
+## Precision and memory
+
+The admitted source description owns bit depth, float representation, primaries, transfer, peak luminance and alpha
+association. It travels with worker tasks. Byte inputs keep their existing typed planes and kernels; native direct
+planes use signed 32-bit words. Palette indices remain small integer planes, while their colour table holds native
+words. Floating samples use raw IEEE representations, with modular residual arithmetic wrapping at 32 bits.
+
+Native planning counts hybrid tokens in bounded histograms instead of allocating a histogram indexed by every
+possible 32-bit value. Pixel planes belong to one group; source-domain quantisation runs during plane filling and
+does not allocate a second full quantised image. A worker owns a typed copy of its tiles, preserving offsets and IEEE
+words. Input arrays remain caller-owned. Wide inputs and additional workers increase input/tile memory; dimension
+limits are admission bounds, not a promise that every device can allocate the largest picture.
+
 ## Payload sizes
 
 | File in `dist/` | Bytes | gzip | Brotli |
 | --- | ---: | ---: | ---: |
-| `rapier-jxl.min.mjs` | 21,326 | 9,271 | 8,227 |
-| `effort.min.mjs` | 58,582 | 23,147 | 20,091 |
-| `wasm.min.mjs` | 68,580 | 27,810 | 24,129 |
-| `jpeg.min.mjs` | 32,354 | 13,505 | 11,979 |
-| `photo.min.mjs` | 33,011 | 13,616 | 12,037 |
-| `jpeg-ans.min.mjs` | 35,491 | 14,608 | 12,896 |
-| `photo-ans.min.mjs` | 35,994 | 14,650 | 13,005 |
-| Every encoding path in one bundle | 99,778 | 39,787 | 34,278 |
-| All readable modules in `src/` | 272,956 | 83,503 | |
+| `rapier-jxl.min.mjs` | 26,997 | 11,408 | 10,145 |
+| `effort.min.mjs` | 64,473 | 25,440 | 22,118 |
+| `wasm.min.mjs` | 74,463 | 30,127 | 26,099 |
+| `jpeg.min.mjs` | 33,019 | 13,762 | 12,167 |
+| `photo.min.mjs` | 38,361 | 15,573 | 13,801 |
+| `jpeg-ans.min.mjs` | 36,157 | 14,872 | 13,151 |
+| `photo-ans.min.mjs` | 41,341 | 16,638 | 14,713 |
+| Every encoding path in one bundle | 105,348 | 41,957 | 36,245 |
+| All readable modules in `src/` | 305,654 | 93,276 | |
 
-Release 2.5.0, Terser 5.51.2, Node v22.22.2, gzip 9 and Brotli 11. Byte counts, module graphs, hashes and
+Release 2.6.0, Terser 5.51.2, Node v22.22.2, gzip 9 and Brotli 11. Byte counts, module graphs, hashes and
 incremental bundle sizes are in [dist/sizes.json](../../dist/sizes.json). Each one-file build is checked against its readable
-entry on the public encoded-byte fixtures. [Other encoders](../ENCODER-COMPARISON.md).
+entry on the public encoded-byte fixtures and native integer/float cases with HDR and alpha declarations.
+[Other encoders](../ENCODER-COMPARISON.md).

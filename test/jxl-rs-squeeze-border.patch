@@ -27,12 +27,8 @@
      }
  
      fn out_prev_border(&self) -> Option<RawImageRect<'_>> {
-@@ -977,7 +990,7 @@
-                                 )?;
-                             }
+@@ -979,3 +992,3 @@
                              let inputs = info.borrow_inputs(buffers, vertical);
 -                            let in_next = inputs.in_next_border();
 +                            let in_next = inputs.in_next_border(avg_rect, storage, vertical);
                              let out_prev = inputs.out_prev_border();
-                             if vertical {
-                                 super::squeeze::do_vsqueeze_step(

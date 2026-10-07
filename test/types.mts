@@ -18,6 +18,7 @@ import {encodePhoto as photoMin} from 'rapier-jxl/photo/min';
 import {encodePhoto as photoANS} from 'rapier-jxl/photo-ans';
 import {encodePhoto as photoANSMin} from 'rapier-jxl/photo-ans/min';
 import * as writer from 'rapier-jxl/writer';
+import {readSource, type SourceImage} from 'rapier-jxl/source';
 
 const pixels = new Uint8ClampedArray([12, 34, 56, 78]);
 const space: ColorSpace = 'display-p3';
@@ -36,6 +37,15 @@ for (const entry of [effort, effortMin, wasm, wasmMin]) new Blob([entry(pixels, 
 const parts: KernelParts = {channel: true, weighted: true};
 const selected: KernelMode = configureKernels('auto', parts);
 const active: KernelMode = kernelMode();
+const wide = new Uint16Array([1, 1023, 2, 1023]);
+for (const entry of [encode, coreMin, effort, wasm]) new Blob([entry(wide, 1, 1, {bitDepth: 10, colorSpace: 'rec2020', transferFunction: 'pq', intensityTarget: 10000})]);
+new Blob([encode(new Float32Array([0.5, -0.125, 7, 1]), 1, 1, {transferFunction: 'linear', alphaPremultiplied: true})]);
+new Blob([encode(new Uint16Array([0x3c00, 0x4000, 0x3800, 0x3c00]), 1, 1, {sampleFormat: 'float16'})]);
+async function sourceFile(bytes: Uint8Array) {
+  const source: SourceImage = await readSource(bytes);
+  const {data, width, height, ...options} = source;
+  return new Blob([encode(data, width, height, options)], {type: 'image/jxl'});
+}
 
 const jpeg = new Uint8Array();
 for (const entry of [transcode, jpegMin, jpegANS, jpegANSMin]) {
@@ -88,6 +98,7 @@ writer.writeHybrid(bit, code, config, 1);
 writer.writeContextMap(bit, [0, 1]);
 writer.writeHistograms(bit, {contextMap: [0], histograms: [{config, code}], lz77: writer.LZ77});
 writer.writeImageHeader(bit, 1, 1, 3, true, {colorSpace: space, orientation: 1});
+writer.writeImageHeader(bit, 1, 1, 3, true, {bitDepth: 32, exponentBits: 8, transferFunction: 'linear', alphaPremultiplied: true});
 writer.writeModularFrameHeader(bit, {alpha: true});
 writer.writeFrameHeaderEnd(bit, true);
 writer.writeTOC(bit, [10]);
@@ -116,6 +127,7 @@ const squeezed = writer.forwardSqueeze(channels, writer.defaultSqueezeParams(cha
 const level: number = squeezed[0].level;
 const shape = writer.inspectPixels(pixels, 1, 1);
 new Blob([writer.encodeLossless(pixels, 1, 1, {shape, colorSpace: space})]);
+new Blob([writer.encodeLossless(wide, 1, 1, {bitDepth: 10, shape: writer.inspectPixels(wide, 1, 1, {bitDepth: 10})})]);
 new Blob([writer.complete(writer.losslessSteps(pixels, 1, 1))]);
 new Blob([writer.encodeLossy(pixels, 1, 1, {quality: 90})]);
 new Blob([writer.complete(writer.lossySteps(pixels, 1, 1))]);

@@ -1,0 +1,27 @@
+--- a/jxl/src/util/float16.rs
++++ b/jxl/src/util/float16.rs
+@@ -105,7 +105,7 @@
+             } else if unbiased < -14 {
+                 // Denormal f16
+                 let shift = (-14 - unbiased) as u32;
+-                let m = ((mant | 0x0080_0000) >> (shift + 14)) as u16;
++                let m = ((mant | 0x0080_0000) >> (shift + 13)) as u16;
+                 (sign << 15) | m
+             } else if unbiased > 15 {
+                 // Overflow to infinity
+@@ -268,4 +268,15 @@
+     #[test]
++    fn test_subnormal_from_f32() {
++        for mantissa in 1u16..1024 {
++            for sign in [0, 0x8000] {
++                let value = (mantissa as f32) * 2f32.powi(-24)
++                    * if sign == 0 { 1.0 } else { -1.0 };
++                assert_eq!(f16::from_f32(value).to_bits(), mantissa | sign);
++            }
++        }
++    }
++
++    #[test]
+     fn test_roundtrip_normal() {
+         let test_values: [f32; 8] = [0.5, 1.0, 2.0, 100.0, 0.001, -0.5, -1.0, -100.0];
+         for &v in &test_values {

@@ -8,6 +8,7 @@ import {encode} from '../src/effort.mjs';
 import {encodePhoto} from '../src/photo.mjs';
 import {transcode} from '../src/jpeg.mjs';
 import {pixelCase} from './fuzz-cases.mjs';
+import {integerFixture, floatFixture} from './high-depth-fixtures.mjs';
 
 test('the example worker preserves colour space and search options across the message boundary', async () => {
   const workerURL = new URL('../examples/worker.mjs', import.meta.url).href;
@@ -33,6 +34,12 @@ test('the example worker preserves colour space and search options across the me
       {op: 'photo', data: rgba, width, height, ...options, expected: encodePhoto(rgba, width, height, options)},
       {op: 'transcode', jpeg, effort: 4, expected: transcode(jpeg, {effort: 4}).bytes},
     ];
+    for (const fixture of [integerFixture(12), floatFixture({half: true}), floatFixture()]) {
+      const {data, width, height} = fixture, options = {...fixture.options, quality: 50, effort: 2,
+        colorSpace: 'rec2020', transferFunction: 'pq', intensityTarget: 10000, alphaPremultiplied: true};
+      for (const op of ['encode', 'photo']) cases.push({op, data, width, height, ...options,
+        expected: (op === 'encode' ? encode : encodePhoto)(data, width, height, options)});
+    }
     for (const [id, {expected, ...ask}] of cases.entries()) {
       const reply = next(value => value.id === id && Object.hasOwn(value, 'ok'));
       worker.postMessage({id, ...ask});

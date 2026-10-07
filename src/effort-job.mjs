@@ -6,10 +6,10 @@ import {BitWriter, part, scaled} from './bits.mjs';
 import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, groupPass, addCounts, assembleCodestream, GROUP_DIM} from './frame.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
 import {AVERAGE_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, split, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
-import {inspectPixels, losslessSteps, planeFill} from './lossless.mjs';
+import {inspectPixels, losslessSteps, planeFill, nativeSteps} from './lossless.mjs';
 import {lossySteps} from './lossy.mjs';
 import {WEIGHTED_PREDICTOR, WEIGHTED_PROPERTY, WEIGHTED_CUTS, codeWeighted} from './weighted.mjs';
-import {fault, admitOptions, admitPixels} from './admit.mjs';
+import {fault, admitOptions, admitPixels, admitSampleFormat} from './admit.mjs';
 import {localSteps} from './local.mjs';
 import {rctSearchSteps} from './rct-search.mjs';
 import {screenEligible, screenSteps} from './screen-search.mjs';
@@ -27,6 +27,8 @@ export function effortJob(data, width, height, options, pool) {
   const treeLearning = options?.treeLearning;
   if (treeLearning !== undefined && treeLearning !== 'sampled') throw fault('JXL_INPUT', 'Tree learning must be sampled when specified.');
   admitPixels(data, width, height);
+  const samples = admitSampleFormat(data, options);
+  if (!samples.native8) return nativeSteps(data, width, height, {quality, samples, effort, pooled: pool && !groupLayout(width, height).single});
   return effortSteps(data, width, height, quality, colorSpace, effort, pool && quality >= 100 && !groupLayout(width, height).single, treeLearning);
 }
 
@@ -52,18 +54,20 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, 
   // effort 3, first; at effort 3 a win of a quarter or more ends the search there.
   const screen = effort >= 3 && screenEligible(data, width, height, shape, effort), screenFloor = best.length;
   if (effort >= 4 || screen) {
-    const searches = [searchSteps(data, width, height, direct, colorSpace, 3, pooled)];
-    if (effort >= 4 && shape.palette) searches.push(localSteps(data, width, height, shape, colorSpace, 4, true, pooled));
+    // Start a candidate against the smallest complete stream already kept, including an earlier screen win.
+    const searches = [() => searchSteps(data, width, height, direct, colorSpace, 3, pooled)];
+    if (effort >= 4 && shape.palette) searches.push(() => localSteps(data, width, height, shape, colorSpace, 4, true, pooled, best.length));
     if (effort >= 6) {
-      searches.push(localSteps(data, width, height, shape, colorSpace, 6, false, pooled));
-      if (shape.palette) searches.push(localSteps(data, width, height, shape, colorSpace, 6, true, pooled));
+      searches.push(() => localSteps(data, width, height, shape, colorSpace, 6, false, pooled, best.length));
+      if (shape.palette) searches.push(() => localSteps(data, width, height, shape, colorSpace, 6, true, pooled, best.length));
     }
-    if (effort >= 4) searches.push(rctSearchSteps(data, width, height, shape, colorSpace, pooled));
-    if (screen) searches.unshift(screenSteps(data, width, height, shape, colorSpace, {fastFloor: effort === 3 ? best.length : 0, effort}));
+    if (effort >= 4) searches.push(() => rctSearchSteps(data, width, height, shape, colorSpace, pooled));
+    if (screen) searches.unshift(() => screenSteps(data, width, height, shape, colorSpace, {fastFloor: effort === 3 ? best.length : 0, effort}));
     for (let i = 0; i < searches.length; i++) {
       try {
+        const search = searches[i]();
         let step, reply, hurried = false;
-        while (!(step = searches[i].next(reply)).done) hurried = hurryOf(reply = yield scaled(step.value, done => 0.5 + (i + done) / (2 * searches.length)));
+        while (!(step = search.next(reply)).done) hurried = hurryOf(reply = yield scaled(step.value, done => 0.5 + (i + done) / (2 * searches.length)));
         if (step.value && step.value.length < best.length) best = step.value;
         if (hurried) return best;
         if (screen && effort === 3 && i === 0 && step.value && step.value.length * 4 <= screenFloor * 3) return best;

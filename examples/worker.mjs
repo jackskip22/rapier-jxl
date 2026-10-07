@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// A complete worker around Rapier JXL: post {id, op: 'encode' or 'photo', data, width, height, quality, colorSpace, effort} or
+// A complete worker around Rapier JXL: post {id, op: 'encode' or 'photo', data, width, height, ...options} or
 // {id, op: 'transcode', jpeg, effort}; receive {id, progress} while it works, then {id, ok: true, bytes, width, height,
 // orientation} or {id, ok: false, code, message}. {id, op: 'abort'} ends a request between steps. 'encode' takes an
 // effort (the effort door; 1, its default, writes the core's bytes) and a deadline in milliseconds: past it the search
@@ -15,8 +15,8 @@ self.onmessage = async event => {
   const ask = event.data || {}, {id, op} = ask;
   if (op === 'abort') { running.delete(id); return; }
   try {
-    const job = op === 'encode' ? encodeSteps(ask.data, ask.width, ask.height, {quality: ask.quality, colorSpace: ask.colorSpace, effort: ask.effort, treeLearning: ask.treeLearning})
-      : op === 'photo' ? encodePhotoSteps(ask.data, ask.width, ask.height, {quality: ask.quality, colorSpace: ask.colorSpace, effort: ask.effort})
+    const job = op === 'encode' ? encodeSteps(ask.data, ask.width, ask.height, ask)
+      : op === 'photo' ? encodePhotoSteps(ask.data, ask.width, ask.height, ask)
       : op === 'transcode' ? transcodeSteps(ask.jpeg, {effort: ask.effort})
       : null;
     if (!job) throw Object.assign(new Error('Operation is encode, photo or transcode.'), {code: 'JXL_INPUT'});

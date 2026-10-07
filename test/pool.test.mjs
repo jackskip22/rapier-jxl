@@ -8,6 +8,8 @@ import {readFile} from 'node:fs/promises';
 import {gunzipSync} from 'node:zlib';
 import {encode} from '../src/effort.mjs';
 import {encodePool} from '../src/pool.mjs';
+import {inspectPixels} from '../src/lossless.mjs';
+import {localSteps} from '../src/local.mjs';
 import {spawnNode} from './pool-node.mjs';
 
 const seed = async name => new Uint8Array(await readFile(new URL('seeds/' + name, import.meta.url)));
@@ -30,6 +32,23 @@ test('a pool writes the single thread\'s bytes for any number of workers', async
     const alone = encode(picture.rgba, picture.width, picture.height, {effort});
     for (const workers of [1, 2, 4]) assert.ok(same(await run(picture, {effort}, {spawn: spawnNode, workers}), alone), `${picture.width}x${picture.height} effort ${effort}, ${workers} workers`);
   }
+});
+
+test('a pruned local model leaves later colour-transform candidates eligible', async () => {
+  const width = 513, height = 259, rgba = new Uint8Array(width * height * 4);
+  let state = 17;
+  const next = () => { state = (Math.imul(state, 1664525) + 1013904223) >>> 0; return state >>> 24; };
+  for (let i = 0; i < rgba.length; i += 4) { const r = next(), g = next(); rgba.set([r, g, g, 255], i); }
+  const picture = {rgba, width, height}, source = rgba.slice();
+  const floor = encode(rgba, width, height, {effort: 3}), transformed = encode(rgba, width, height, {effort: 4});
+  assert.ok(transformed.length < floor.length);
+  const candidate = localSteps(rgba, width, height, inspectPixels(rgba, width, height), undefined, 6, false, false, floor.length);
+  let step;
+  while (!(step = candidate.next()).done);
+  assert.ok(step.value === null, 'a completed-section lower bound cannot return a losing or truncated stream');
+  assert.deepEqual(encode(rgba, width, height, {effort: 9}), transformed);
+  for (const workers of [1, 2, 4]) assert.deepEqual(await run(picture, {effort: 9}, {spawn: spawnNode, workers}), transformed);
+  assert.deepEqual(rgba, source);
 });
 
 test('a worker that fails, or none that starts, leaves its groups to this thread', async () => {

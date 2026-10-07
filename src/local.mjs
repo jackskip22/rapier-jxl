@@ -31,10 +31,17 @@ function residuals(plane, width, height, predictor, properties) {
   return out;
 }
 
-function tokens(values, contexts, count = 1) {
-  const freqs = Array.from({length: count}, () => new Uint32Array(ALPHABET)), pieces = [];
+function tokens(values, properties, cuts) {
+  const freqs = Array.from({length: cuts ? cuts.length + 1 : 1}, () => new Uint32Array(ALPHABET)), pieces = [];
   const emit = (i, value, base = 0) => {
-    const context = contexts ? contexts[i] : 0;
+    // A copied run reads contexts only for its literal and length token. Classifying the skipped pixels does
+    // not change a histogram or a byte; keep the decoder's two token positions as the context owners.
+    let context = 0;
+    if (cuts) {
+      const property = properties[i];
+      let hi = cuts.length;
+      while (context < hi) { const mid = (context + hi) >> 1; if (property > cuts[mid]) context = mid + 1; else hi = mid; }
+    }
     pieces.push(value, base, context); countToken(base ? LZ77.lengthConfig : RESIDUAL_CONFIG, value, freqs[context], base);
   };
   // A zero run can cross a tree leaf or row. Its first literal and copy use their own samples' contexts.
@@ -51,12 +58,7 @@ function tokens(values, contexts, count = 1) {
 }
 
 function intervalPlan(values, properties, predictor, property, cuts) {
-  const contexts = Uint8Array.from(properties, value => {
-    let lo = 0, hi = cuts.length;
-    while (lo < hi) { const mid = (lo + hi) >> 1; if (value > cuts[mid]) lo = mid + 1; else hi = mid; }
-    return lo;
-  });
-  const coded = tokens(values, contexts, cuts.length + 1), count = coded.freqs.length, filled = coded.freqs.map(freq => freq.some(n => n));
+  const coded = tokens(values, properties, cuts), count = coded.freqs.length, filled = coded.freqs.map(freq => freq.some(n => n));
   const costs = new Float64Array(count + 1).fill(Infinity), from = new Uint8Array(count + 1);
   costs[0] = 0;
   for (let end = 1; end <= count; end++) {
@@ -150,7 +152,7 @@ export function localGroup(setup) {
   };
 }
 
-export function* localSteps(rgba, width, height, shape, colorSpace, rung = 4, usePalette = false, pooled) {
+export function* localSteps(rgba, width, height, shape, colorSpace, rung = 4, usePalette = false, pooled, ceiling = Infinity) {
   const {channels} = shape, layout = groupLayout(width, height), groups = layout.groupsX * layout.groupsY;
   const palette = usePalette ? shape.palette : null;
   if (usePalette && !palette) return null;
@@ -172,6 +174,7 @@ export function* localSteps(rgba, width, height, shape, colorSpace, rung = 4, us
     // Refuse before retaining later groups of an oversized optional candidate.
     sectionBytes += bytes.length; admitOutputSize(sectionBytes);
     sections.push(bytes);
+    return bytes;
   };
   global.write(1, 1); global.write(1, 1);
   if (layout.single) {
@@ -182,6 +185,7 @@ export function* localSteps(rgba, width, height, shape, colorSpace, rung = 4, us
     writeModularHeader(global, {transforms});
     write(); appendSection(global.finish());
     if (yield 1) return null;
+    if (sectionBytes >= ceiling) return null;
     return assembleCodestream(header, sections);
   }
   let write;
@@ -193,9 +197,12 @@ export function* localSteps(rgba, width, height, shape, colorSpace, rung = 4, us
   writeModularHeader(global, {transforms});
   if (write) write();
   appendSection(global.finish());
+  // Completed sections are a lower bound on the final stream: its remaining sections, header and TOC add bytes.
+  // A candidate that already reaches the incumbent cannot replace it, including a tie.
+  if (sectionBytes >= ceiling) return null;
   for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
   const group = localGroup(setup);
-  if ((yield* groupPass({pooled, kind: 'local', setup, at: g => (g + 1) / groups, stop: () => true},
+  if ((yield* groupPass({pooled, kind: 'local', setup, at: g => (g + 1) / groups, stop: () => true, byteCeiling: ceiling - sectionBytes},
     groups, g => appendSection(group(rgba, width, ...groupRect(layout, width, height, g))), (g, bytes) => appendSection(bytes))) === null) return null;
   return assembleCodestream(header, sections);
 }

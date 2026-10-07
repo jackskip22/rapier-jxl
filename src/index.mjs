@@ -3,10 +3,10 @@
 // codestream out, exact or lossy, alpha exact. A JPEG is carried by jpeg.mjs and a photograph written by photo.mjs;
 // a module's author takes the layers from writer.mjs. No WebAssembly, no build step, no dependency, nothing read or
 // fetched at run time.
-import {inspectPixels, losslessSteps} from './lossless.mjs';
+import {inspectPixels, losslessSteps, nativeSteps} from './lossless.mjs';
 import {lossySteps} from './lossy.mjs';
 import {LIMITS, complete, part} from './bits.mjs';
-import {admitOptions, admitPixels, job} from './admit.mjs';
+import {admitOptions, admitPixels, admitSampleFormat, job} from './admit.mjs';
 
 // What one call takes at most (bits.mjs): the 16 MiB codestream, 24 million pixels, 16,384 on a side. Larger asks are
 // refused with a coded error before any work, the way a decoder would refuse them after it.
@@ -24,6 +24,8 @@ export function encode(data, width, height, options) { return complete(encodeSte
 export function encodeSteps(data, width, height, options) {
   const {quality, colorSpace} = admitOptions(options);
   admitPixels(data, width, height);
+  const samples = admitSampleFormat(data, options);
+  if (!samples.native8) return job(nativeSteps(data, width, height, {quality, samples}));
   return job(pixelSteps(data, width, height, quality, colorSpace));
 }
 

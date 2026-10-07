@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-import type {Pixels, Bytes, ColorSpace, Limits, EncodeOptions, EncoderError, ErrorCode, Job} from './index.mjs';
+import type {Pixels, Bytes, ColorSpace, SampleFormat, TransferFunction, Limits, EncodeOptions, EncoderError, ErrorCode, Job} from './index.mjs';
 import type {Orientation} from './jpeg.mjs';
-export type {Pixels, Bytes, ColorSpace, Limits, EncodeOptions, EncoderError, ErrorCode, Job} from './index.mjs';
+export type {Pixels, Bytes, ColorSpace, SampleFormat, TransferFunction, Limits, EncodeOptions, EncoderError, ErrorCode, Job} from './index.mjs';
 export type {Orientation} from './jpeg.mjs';
 
 /** Unchecked composition layers. Call the admission helpers before allocating or writing caller input. */
@@ -62,7 +62,11 @@ export function writeHistograms(w: BitWriter, bundle: Histograms): void;
 
 export const GROUP_DIM: 256;
 export const DC_GROUP_DIM: 2048;
-export interface ImageHeaderOptions { xyb?: boolean; orientation?: Orientation; colorSpace?: ColorSpace; }
+export interface ImageHeaderOptions {
+  xyb?: boolean; orientation?: Orientation; colorSpace?: ColorSpace;
+  bitDepth?: number; exponentBits?: number; transferFunction?: TransferFunction;
+  intensityTarget?: number; alphaPremultiplied?: boolean;
+}
 export interface GroupLayout { groupsX: number; groupsY: number; dcGroupsX: number; dcGroupsY: number; single: boolean; }
 export function writeImageHeader(w: BitWriter, width: number, height: number, colour: 1 | 3, alpha: boolean, options?: ImageHeaderOptions): void;
 export function writeModularFrameHeader(w: BitWriter, options: {alpha?: boolean; shift?: number}): void;
@@ -111,15 +115,17 @@ export interface SqueezeChannel { w: number; h: number; hshift: number; vshift: 
 export interface SqueezedChannel extends SqueezeChannel { level: number; residual: boolean; }
 export function defaultSqueezeParams(channels: readonly Pick<SqueezeChannel, 'w' | 'h'>[]): SqueezeParam[];
 export function forwardSqueeze(channels: readonly SqueezeChannel[], params?: readonly SqueezeParam[]): SqueezedChannel[];
-export interface PixelShape {
+export interface PixelShape<Key extends number | string = number> {
   colour: 1 | 3;
   alpha: boolean;
   channels: number;
-  palette: {colours: number[]; byte: (colour: number, channel: number) => number} | null;
+  palette: {colours: Key[]; byte: (colour: Key, channel: number) => number} | null;
 }
-export interface LosslessOptions { shape?: PixelShape; colorSpace?: ColorSpace; }
+export interface LosslessOptions extends EncodeOptions { shape?: PixelShape | PixelShape<string>; }
 export interface LossyOptions extends LosslessOptions { quality?: number; }
-export function inspectPixels(rgba: Pixels, width: number, height: number, options?: {palette?: boolean}): PixelShape;
+export function inspectPixels(rgba: Uint8Array | Uint8ClampedArray, width: number, height: number, options?: EncodeOptions & {palette?: boolean}): PixelShape;
+export function inspectPixels(rgba: Uint16Array | Float32Array, width: number, height: number, options?: EncodeOptions & {palette?: boolean}): PixelShape<string>;
+export function inspectPixels(rgba: Pixels, width: number, height: number, options?: EncodeOptions & {palette?: boolean}): PixelShape | PixelShape<string>;
 export function encodeLossless(rgba: Pixels, width: number, height: number, options?: LosslessOptions): Bytes;
 export function losslessSteps(rgba: Pixels, width: number, height: number, options?: LosslessOptions): Steps;
 export function distanceFromQuality(quality: number): number;
@@ -182,7 +188,7 @@ export function profileSpace(profile: Uint8Array): ColorSpace | null;
 export const ZIGZAG: number[];
 
 export function fault(code: ErrorCode, message: string): EncoderError;
-export function admitOptions(options?: EncodeOptions, quality?: number): Required<EncodeOptions>;
+export function admitOptions(options?: EncodeOptions, quality?: number): Required<Pick<EncodeOptions, 'quality' | 'colorSpace'>>;
 export function admitSize(width: number, height: number, limits?: Limits): void;
 export function admitPixels(data: unknown, width: number, height: number, limits?: Limits): asserts data is Pixels;
 export function answer<Output extends Uint8Array>(bytes: Output): Output;

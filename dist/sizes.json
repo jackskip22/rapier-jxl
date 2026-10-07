@@ -1,25 +1,25 @@
 {
   "package": "rapier-jxl",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "measured": "exact bytes of the staged files; gzip level 9; Brotli quality 11, text mode; added is a door bundled with the core less the core alone, or the door alone less the core where it covers the core (effort); every measured bundle loads as a module",
   "node": "v22.22.2",
   "terser": "5.51.2",
   "privateProperties": "^(alphabetSize|lengths|codes|simple|treeSelect|splitToken|msb|lsb|contextMap|histograms|predictor|multiplier|context|splitval|property|offset|left|right|channel|acc|pending|at|bitLength|grow|zeroPadToByte|writeU32|append|finish|write|small|large|totals|contexts|tokens|cost|bucketOf|contextOf|nonZero|zeroDensityOffset|thresholds|numDc|numCtxs|freqs|hshift|vshift|residual|component|inPlace|horizontal|beginC|numC|rctType|nbColors|nbDeltas|useGlobalTree|streamId|pieces|rect|minSymbol|minLength|lengthConfig|params|type|leaf|groupsX|groupsY|dcGroupsX|dcGroupsY|single|config|bits|sym|tree|count|parts|lz77|transforms)$",
   "source": {
-    "bytes": 272956,
-    "gzip": 83503,
+    "bytes": 305654,
+    "gzip": 93276,
     "sha256": {
-      "admit.mjs": "ccdbee9f68a0e0125853d5d786b95075bc39807e9a6e95d8a185a6c0c7b2fca4",
+      "admit.mjs": "1880adccc59a2cd2f0af9497d2763c81da1b4c63a0bc9e46558b5c96cd1e3e4a",
       "ans.mjs": "c604457516a86c8697810d9ded6af20f91b59650f0ed5aea6683fc9f2051f79e",
       "bits.mjs": "8f63d88635518231f0ad3bd2155b263fe9c0fef737dc0f1f69befa40c0cd6750",
       "coefficient-ans.mjs": "8b7a080f440bc1894d7d13f6ee76b3a85fce7bbd0cfadc53ad06e4b58ed81ed1",
       "coefficient-effort.mjs": "2d55459c7b96f85d7a6d029d87f0e4c2905d5982aa64334e38c4a401c2beebfb",
       "effort.mjs": "dd3a4b5cb9c3cb690543369760048f8d5206d500fa4aa2948c5fc92c460b2931",
-      "effort-job.mjs": "39ae0ecc455e3aa32765c987ef2812979884bd9c4457afb09498053e135103fb",
+      "effort-job.mjs": "2a78838aaaad8b592c9507161e07b807e195f72abd0d6bd7935317ced1be9571",
       "effort-level.mjs": "fe46adf2e34546c65e821400804cbd51c17c5a6d04b769310567082581b64f5d",
       "entropy.mjs": "9cb52a9d174d63dc2b694725267c5ab0e8d693f5366e76fa0134f87cc878fe3a",
-      "frame.mjs": "b921e8bddcd021d1a1fe3afffda2816b90af1f81121c27de78db5746c462e378",
-      "index.mjs": "adf5f0d4ca70ce3e88c67a718d057c5dcab5098bd07308f4bf9406c365d81efe",
+      "frame.mjs": "e839bf8752588300cd201bc9e99a69ba86e31a979a5b0021862e073ef1e6bdc7",
+      "index.mjs": "ecdd4757cdd78e50f063582bbef4949bd6ad312b30441e649d75ffe65544ae8e",
       "jfif.mjs": "6b9a59f0b81ce5063191d1da9f658727ef03535144cd92b3908b249dfc99ed17",
       "jpeg.mjs": "41bf5579a99f1870bc219228eb649589d027c807bdaee5c8b128a7aaa6711c95",
       "jpeg-ans.mjs": "4a9cafe6eaf83f7c37f87513cc42458d6c2997c420830b0449d591c103993072",
@@ -27,28 +27,29 @@
       "kernel-hooks.mjs": "c7a8578d0f16b10c3598d527778c99d1dd80b9eb283dffe5ed969e44850b63d4",
       "kernels.mjs": "ed93392c550c324aee4dca0f4bfc073148df21fcb85d86a08a10226d94fc68e9",
       "kernels-bytes.mjs": "d76d121612ddc74ae72fe05f9f643ef08ad578b70e9de28afeb38aa7cd0c237a",
-      "local.mjs": "546b39e8bc88de97c5d1d170bf30da68452a6c2bf8fc86a8bd81eb943dfe16bf",
-      "lossless.mjs": "6a13093b568597f2500dbd2032558d08c792babac4bd439b0f5b56b9872e0759",
+      "local.mjs": "09d78eb347667d530de82e94448ae8b127ce622abb0ed0824161c101a1928115",
+      "lossless.mjs": "0222944c2c0f6712aa7811d30cc50d97b4347a7f28cb71812fbfcc165e019bc0",
       "lossless-coding.mjs": "1f3ff9c914f3594ab024231fdf06e291412bf0abea1fb211d91e5b768e9244b8",
-      "lossy.mjs": "e297311f5f2d304d17ea277fb156d2a575599aecb5d2473cbfbbd1be6b76ff6d",
-      "modular.mjs": "0481868e103552ab6adc315442e00cf625f308831f5356d091e9fbad8fb5a421",
+      "lossy.mjs": "f4e3c2608bc04463197f13691d8b9ad18b64919c6be9e3366530674aa8fac916",
+      "modular.mjs": "ab96a088aaabe3e5b081c23d8bb830e175e2cd058980f8df33ae95c4410c475d",
       "photo.mjs": "4da303eebca4f52d8fea265a76ca879a06ebe394c699615195067339206f6c98",
       "photo-ans.mjs": "23e2af95d9ac6c80a9b3e1ce4bec7ab39a93ebd2575182f548a0213aa527e387",
       "photo-dct.mjs": "cc7252d877389885baa1d9866489f58a55d0a4d00800f0b358b54904b3cf91ad",
-      "photo-job.mjs": "271452713a2c03fbb472f5050483748de5d0cc7b3a0e0589decd143b0f087a68",
+      "photo-job.mjs": "b415bb79fde2ef898108a1c0abec51282d2cebfd5fb378659ae49d503ebc3a3e",
       "photo-quant.mjs": "94854a56333a1d5c1346117e576013472857662f2e01a3fa54852d5567256a00",
-      "pool.mjs": "cbdbd1b50a25ee295d70e631acc9e4abbd1264059a54fe01c575d9b59928c79a",
+      "pool.mjs": "7933948d3cc1185978c33c016bfda59eb8fb083c1ab96950152a0b0621dd5348",
       "prefix.mjs": "ed51a5b6a3cf0a98b66fe54b3a1c050122ed312f7c47b136aa9fd5c84ac1a180",
       "rct-search.mjs": "119e85e44e6bd259da144be4ac91e3c8aafe812291862a77b987a95e14398935",
       "sampled.mjs": "499c7f6f99785f92b18d02af0077c617dd31dc48fd9d93b01610a7ba71c46128",
       "screen.mjs": "04285fe046fd453e826e15cc136c627ed92ca4b3426f717499e43f7b6f483ec8",
       "screen-lz77.mjs": "9b76d3d0c0945f0900d3ecd4d2087a5df0c7340ed6205b172807ecefa2cd2459",
       "screen-patches.mjs": "7793f6d3f8b946d71d5226634cb255798baad506a7d7252dbcb0489803f03222",
-      "screen-search.mjs": "a9290f08d9fe81b69479591e5ec0b671354c9f74c1e6c41d5f6c1ad7158a330f",
+      "screen-search.mjs": "57db2380b670e5e681ecb8e30571cdba71eb8441cb20c7071be710e66009d168",
+      "source.mjs": "e0f029ea207803c9f52a742fa1ef4948eef3c65e9a82ca8773bc3e63498a448e",
       "squeeze.mjs": "ec01352dcf22b7346c7f0014e17e6ba2e4fe8243c358db77eee5fc830a3217e8",
       "vardct.mjs": "2befa3c606124fa6aa1f5ab7e856a4734217f0baefa5b3324fabbbbe13c04cd9",
       "wasm.mjs": "00a51183d9bf8b1d8dbf3aded0e1b8a01531c3d77e6f3d9286f273a8d1f1efc6",
-      "weighted.mjs": "8f8ff41d572509987015eea0c9ead45d27492e4657db807ef1a12a612e19bf97",
+      "weighted.mjs": "116369da2f6b7897599f7ab07678c6c11ec79a90e5dfb7eb91ad651cf0184556",
       "writer.mjs": "f8ec54c0d79cdf148f6be797d72f375cf9635cb00097897bdf1d570457d3fcc9"
     }
   },
@@ -76,13 +77,14 @@
         "index"
       ],
       "alone": {
-        "bytes": 21326,
-        "gzip": 9271,
-        "brotli": 8227,
-        "sha256": "7c63c64d98b78538b70d1a990d208fe310d1c66ad702029432d7113112664d1a",
+        "bytes": 26997,
+        "gzip": 11408,
+        "brotli": 10145,
+        "sha256": "da8e3632867cadade32c02414decda3664e936813617fe1dd4165a9671ffe8fc",
         "compress": {
           "passes": 2,
-          "inline": 1,
+          "hoist_funs": true,
+          "hoist_vars": true,
           "module": true
         }
       },
@@ -91,7 +93,8 @@
         "gzip": 0,
         "brotli": 0
       },
-      "provedByteCases": 99
+      "provedByteCases": 99,
+      "provedNativeCases": 10
     },
     {
       "entry": "./jpeg",
@@ -118,10 +121,10 @@
         "jpeg"
       ],
       "alone": {
-        "bytes": 32354,
-        "gzip": 13505,
-        "brotli": 11979,
-        "sha256": "d884649622d23b52541fda11ebceb88143c8f21cccce9c44afb672055d90f3cf",
+        "bytes": 33019,
+        "gzip": 13762,
+        "brotli": 12167,
+        "sha256": "0c0b6955de0e0a65910262e5d5c36ee8616d5d5b66647ab00e5e1d9cc974be16",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -129,11 +132,12 @@
         }
       },
       "added": {
-        "bytes": 21706,
-        "gzip": 8525,
-        "brotli": 7497
+        "bytes": 21526,
+        "gzip": 8373,
+        "brotli": 7347
       },
-      "provedByteCases": 13
+      "provedByteCases": 13,
+      "provedNativeCases": 0
     },
     {
       "entry": "./photo",
@@ -164,10 +168,10 @@
         "photo"
       ],
       "alone": {
-        "bytes": 33011,
-        "gzip": 13616,
-        "brotli": 12037,
-        "sha256": "0c63392ce8be29de19a8f4e76be0142321caa96422d50746470cb3446e00fb27",
+        "bytes": 38361,
+        "gzip": 15573,
+        "brotli": 13801,
+        "sha256": "5be5654cd00bf7cca0c34b04e3714ff1f801b092fa552687dcfed9d161236f4f",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -176,11 +180,12 @@
         }
       },
       "added": {
-        "bytes": 16576,
-        "gzip": 6249,
-        "brotli": 5483
+        "bytes": 16394,
+        "gzip": 6140,
+        "brotli": 5353
       },
-      "provedByteCases": 43
+      "provedByteCases": 43,
+      "provedNativeCases": 10
     },
     {
       "entry": "./jpeg-ans",
@@ -209,10 +214,10 @@
         "jpeg-ans"
       ],
       "alone": {
-        "bytes": 35491,
-        "gzip": 14608,
-        "brotli": 12896,
-        "sha256": "031aac1eb803e709bc850d98f87916dc9505248647ece19892df41331cf1cdce",
+        "bytes": 36157,
+        "gzip": 14872,
+        "brotli": 13151,
+        "sha256": "8778c60c00e2f3e79e7457d542fe4a053da4b1c28e846a0ec4f50252578ec4b7",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -220,11 +225,12 @@
         }
       },
       "added": {
-        "bytes": 24689,
-        "gzip": 9580,
-        "brotli": 8435
+        "bytes": 24509,
+        "gzip": 9453,
+        "brotli": 8348
       },
-      "provedByteCases": 13
+      "provedByteCases": 13,
+      "provedNativeCases": 0
     },
     {
       "entry": "./photo-ans",
@@ -257,10 +263,10 @@
         "photo-ans"
       ],
       "alone": {
-        "bytes": 35994,
-        "gzip": 14650,
-        "brotli": 13005,
-        "sha256": "46e15b0a6729e08bacd19312cb71e3d739bd67b36224396e0a966cd307494f6e",
+        "bytes": 41341,
+        "gzip": 16638,
+        "brotli": 14713,
+        "sha256": "94c7d04b52c1b9c8a95d4370cd04fce9e988747245d710bc2523c58ddcd9055f",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -269,11 +275,12 @@
         }
       },
       "added": {
-        "bytes": 19559,
-        "gzip": 7316,
-        "brotli": 6435
+        "bytes": 19377,
+        "gzip": 7181,
+        "brotli": 6291
       },
-      "provedByteCases": 43
+      "provedByteCases": 43,
+      "provedNativeCases": 10
     },
     {
       "entry": "./effort",
@@ -307,10 +314,10 @@
         "effort"
       ],
       "alone": {
-        "bytes": 58582,
-        "gzip": 23147,
-        "brotli": 20091,
-        "sha256": "b1e8dd74e85adb376de0b843bdfb12382c1804498d22c0adc0ee1fb08a7b19e9",
+        "bytes": 64473,
+        "gzip": 25440,
+        "brotli": 22118,
+        "sha256": "9f93ed61ce0f608f32aa406fb2fcb7956ba36c7bd8323a1ceb8c90a3806e431a",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -318,11 +325,12 @@
         }
       },
       "added": {
-        "bytes": 37256,
-        "gzip": 13876,
-        "brotli": 11864
+        "bytes": 37476,
+        "gzip": 14032,
+        "brotli": 11973
       },
-      "provedByteCases": 99
+      "provedByteCases": 99,
+      "provedNativeCases": 10
     },
     {
       "entry": "./wasm",
@@ -361,23 +369,23 @@
         "wasm"
       ],
       "alone": {
-        "bytes": 68580,
-        "gzip": 27810,
-        "brotli": 24129,
-        "sha256": "d15768f5f9171075e25df8f813d15735fc6fbf4f1f8868b2dd8209aa4e889615",
+        "bytes": 74463,
+        "gzip": 30127,
+        "brotli": 26099,
+        "sha256": "fe309f69b5727676222a288394a2f0235389dad5f0562673aa9cddc70fa04f63",
         "compress": {
           "passes": 2,
-          "hoist_funs": true,
-          "hoist_vars": true,
+          "inline": 1,
           "module": true
         }
       },
       "added": {
-        "bytes": 47254,
-        "gzip": 18539,
-        "brotli": 15902
+        "bytes": 47466,
+        "gzip": 18719,
+        "brotli": 15954
       },
-      "provedByteCases": 99
+      "provedByteCases": 99,
+      "provedNativeCases": 10
     }
   ],
   "all": {
@@ -398,8 +406,8 @@
       "./photo-ans",
       "./wasm"
     ],
-    "bytes": 99778,
-    "gzip": 39787,
-    "brotli": 34278
+    "bytes": 105348,
+    "gzip": 41957,
+    "brotli": 36245
   }
 }

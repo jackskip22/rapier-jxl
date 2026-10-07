@@ -21,6 +21,9 @@ export function screenEligible(rgba, width, height, shape, effort = 3) {
 
 export function* screenSteps(rgba, width, height, shape, colorSpace, {fastFloor = 0, effort = 3} = {}) {
   let best = null;
+  // A palette depends on the pixels and ordering alone. Its plain, LZ77 and deeper models share the same
+  // immutable plan, including a failed palette admission, while retaining their own complete-stream choices.
+  const plans = new Map();
   // Measured byte gains first: a short budget can keep a completed LZ77 or
   // glyph stream before spending time on smaller palette-only differences.
   const modes = ['global-lz', 'patch-lz', 'scalar-lz', 'global', 'scalar'];
@@ -31,7 +34,9 @@ export function* screenSteps(rgba, width, height, shape, colorSpace, {fastFloor 
     if (modes[i] === 'patch-lz') steps = patchSteps(rgba, width, height, shape, colorSpace, {tokenCodec: screenLZ77});
     else if (modes[i] === 'patch-deep') steps = patchSteps(rgba, width, height, shape, colorSpace, {search: {}, limit: best?.length ?? Infinity});
     else {
-      const plan = screenPlan(rgba, width, height, shape, modes[i].replace(/-(lz|deep)$/, ''));
+      const mode = modes[i].replace(/-(lz|deep)$/, '');
+      if (!plans.has(mode)) plans.set(mode, screenPlan(rgba, width, height, shape, mode));
+      const plan = plans.get(mode);
       if (!plan) continue;
       steps = screenFrameSteps(rgba, width, height, shape, colorSpace, plan, {
         tokenCodec: modes[i].endsWith('-lz') ? screenLZ77 : null,

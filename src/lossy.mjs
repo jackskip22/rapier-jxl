@@ -7,7 +7,8 @@ import {BitWriter, complete} from './bits.mjs';
 import {writeImageHeader, writeModularFrameHeader, groupLayout, finishSections, assembleCodestream} from './frame.mjs';
 import {ZERO_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, channelTree, streamTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
 import {forwardSqueeze, defaultSqueezeParams} from './squeeze.mjs';
-import {inspectPixels} from './lossless.mjs';
+import {inspectPixels, nativeSteps} from './lossless.mjs';
+import {admitSampleFormat} from './admit.mjs';
 
 const QUALITY_FACTOR = 0.35, LUMA_FACTOR = 1.1;
 // Groups of 1,024 pixels (group size shift 3), DC groups of 8,192: fewer sections and fewer bytes, and a picture up to
@@ -43,7 +44,10 @@ export function quantiserFor(component, hshift, vshift, distance) {
 export function encodeLossy(rgba, width, height, options) { return complete(lossySteps(rgba, width, height, options)); }
 
 // The same as steps: Squeeze and the plan one step, then a section of each pass per step.
-export function* lossySteps(rgba, width, height, {quality = 90, shape = inspectPixels(rgba, width, height, {palette: false}), colorSpace} = {}) {
+export function* lossySteps(rgba, width, height, options = {}) {
+  const samples = admitSampleFormat(rgba, options), quality = options.quality ?? 90;
+  if (!samples.native8) return yield* nativeSteps(rgba, width, height, {quality, samples});
+  const {shape = inspectPixels(rgba, width, height, {palette: false}), colorSpace} = options;
   const distance = distanceFromQuality(quality);
   if (!(distance > 0)) throw new Error('lossy encoding needs a quality below 100');
   const {colour, alpha, channels: count} = shape;

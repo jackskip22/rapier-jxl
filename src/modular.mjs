@@ -122,7 +122,7 @@ export function codeChannel(w, target, plane, width, height, leaf, raw = false) 
   const residual = (index, pred) => {
     const value = plane[index];
     let r;
-    if (multiplier === 1) r = value - pred - offset;
+    if (multiplier === 1) r = (value - pred - offset) | 0;
     else { r = Math.round((value - pred - offset) / multiplier); plane[index] = pred + offset + r * multiplier; }
     if (r === 0) { run++; return; }
     flush();

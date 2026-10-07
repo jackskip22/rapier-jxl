@@ -6,8 +6,10 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-export async function nativeDecoder({executable = process.env.JXL_FUZZ_NATIVE, timeout = 30000, float = false} = {}) {
+export async function nativeDecoder({executable = process.env.JXL_FUZZ_NATIVE, timeout = 30000, float = false, format = float ? 'float32' : 'uint8', source = false, metadata = false} = {}) {
   if (!Number.isSafeInteger(timeout) || timeout < 1) throw new Error('Native oracle timeout must be a positive integer');
+  if (!['uint8', 'uint16', 'float16', 'float32'].includes(format)) throw new Error('Unknown native oracle sample format');
+  const sampleBytes = format === 'float32' ? 4 : format === 'uint8' ? 1 : 2;
   let temporary;
   if (!executable) {
     temporary = await mkdtemp(join(tmpdir(), 'jxl-native-')); executable = join(temporary, 'decode');
@@ -16,7 +18,9 @@ export async function nativeDecoder({executable = process.env.JXL_FUZZ_NATIVE, t
       fileURLToPath(new URL('./native-decoder.c', import.meta.url)), library, '-o', executable], {encoding: 'utf8', timeout, killSignal: 'SIGKILL'});
     if (build.status !== 0) { await rm(temporary, {recursive: true, force: true}); throw new Error('Native oracle needs a C compiler and libjxl development headers/library: ' + (build.error || build.stderr)); }
   }
-  const child = spawn(executable, float ? ['--float'] : [], {stdio: ['pipe', 'pipe', 'pipe']});
+  const args = format === 'float32' ? ['--float'] : format === 'uint16' ? ['--uint16'] : format === 'float16' ? ['--float16'] : [];
+  if (source) args.push('--source'); if (metadata) args.push('--metadata');
+  const child = spawn(executable, args, {stdio: ['pipe', 'pipe', 'pipe']});
   let queued = [], available = 0, waiting, failure, stderr = '', closed = false, closing;
   const ended = new Promise(resolve => child.once('close', resolve));
   const stop = error => { failure ||= error; if (waiting) { waiting.reject(failure); waiting = null; } };
@@ -52,10 +56,11 @@ export async function nativeDecoder({executable = process.env.JXL_FUZZ_NATIVE, t
     if (greeting.readUInt32LE(0) !== 0x314c584a) throw new Error('Native decoder protocol mismatch');
   } catch (error) { await shutdown(true); throw error; }
   finally { clearTimeout(startupTimer); }
-  const version = greeting.readUInt32LE(4); let chain = Promise.resolve(), decodes = 0;
+  const version = greeting.readUInt32LE(4); let chain = Promise.resolve(), decodes = 0, lastMetadata;
   return {
     version: `${Math.floor(version / 1000000)}.${Math.floor(version / 1000) % 1000}.${version % 1000}`,
     get decodes() { return decodes; },
+    get metadata() { return lastMetadata; },
     decode(bytes, width, height) {
       if (closing) return Promise.reject(new Error('Native decoder is closing'));
       const run = async () => {
@@ -67,12 +72,20 @@ export async function nativeDecoder({executable = process.env.JXL_FUZZ_NATIVE, t
           const header = Buffer.allocUnsafe(12); header.writeUInt32LE(bytes.length, 0); header.writeUInt32LE(width, 4); header.writeUInt32LE(height, 8);
           child.stdin.write(header); child.stdin.write(bytes);
           const answer = await read(16), status = answer.readUInt32LE(0), w = answer.readUInt32LE(4), h = answer.readUInt32LE(8), length = answer.readUInt32LE(12);
-          const expected=width*height*4*(float?4:1);
-          if (length > Math.max(expected, 4096)) { child.kill('SIGKILL'); throw new Error('Native oracle returned an unbounded reply'); }
-          const data = await read(length); decodes++;
+          const expected=width*height*4*sampleBytes;
+          if (length > Math.max(expected + (metadata ? 4096 : 0), 4096)) { child.kill('SIGKILL'); throw new Error('Native oracle returned an unbounded reply'); }
+          let data = await read(length); decodes++;
           if (status) throw new Error(data.toString() + ': ' + stderr);
-          if (w !== width || h !== height || length !== expected) throw new Error('Native oracle returned different dimensions');
-          return float ? new Float32Array(data.buffer.slice(data.byteOffset,data.byteOffset+data.byteLength)) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+          if (metadata) {
+            if (data.length < 4) throw new Error('Native oracle omitted metadata');
+            const count = data.readUInt32LE(0);
+            if (count > 4092 || count + 4 > data.length) throw new Error('Native oracle metadata exceeds its reply');
+            lastMetadata = JSON.parse(data.subarray(4, count + 4).toString()); data = data.subarray(count + 4);
+          }
+          if (w !== width || h !== height || data.length !== expected) throw new Error('Native oracle returned different dimensions');
+          if (sampleBytes === 1) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+          const buffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+          return format === 'float32' ? new Float32Array(buffer) : new Uint16Array(buffer);
         } finally { clearTimeout(timer); }
       };
       const result = chain.then(run); chain = result.catch(() => {}); return result;

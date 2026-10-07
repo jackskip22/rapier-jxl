@@ -5,11 +5,11 @@ the other package versions below were measured on 2026-09-30. Their capabilities
 
 | Encoder / entry | Version | Minified JS + WASM bytes | gzip bytes | Included capability |
 | --- | --- | ---: | ---: | --- |
-| Rapier JXL core | 2.5.0 | 21,326 | 9,271 | 8-bit lossless RGBA, lossy modular with exact alpha |
-| Rapier JXL effort door | 2.5.0 | 58,582 | 23,147 | The core, plus lossless predictor, palette, colour-transform and screen searches |
-| Rapier JXL wasm door | 2.5.0 | 68,580 | 27,810 | Effort with inlined integer kernels; identical encoded bytes |
-| Rapier JXL JPEG door | 2.5.0 | 32,354 | 13,505 | JPEG coefficients, orientation; no JPEG reconstruction |
-| Rapier JXL photo door | 2.5.0 | 33,011 | 13,616 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
+| Rapier JXL core | 2.6.0 | 26,997 | 11,408 | 8-bit lossless RGBA, lossy modular with exact alpha |
+| Rapier JXL effort door | 2.6.0 | 64,473 | 25,440 | The core, plus lossless predictor, palette, colour-transform and screen searches |
+| Rapier JXL wasm door | 2.6.0 | 74,463 | 30,127 | Effort with inlined integer kernels; identical encoded bytes |
+| Rapier JXL JPEG door | 2.6.0 | 33,019 | 13,762 | JPEG coefficients, orientation; no JPEG reconstruction |
+| Rapier JXL photo door | 2.6.0 | 38,361 | 15,573 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
 | [jSquash](https://github.com/jamsinclair/jSquash/tree/main/packages/jxl) | 1.3.0 | 1,388,572 | 525,782 | 8-bit lossless/lossy RGBA |
 | [Discourse's jSquash package](https://www.npmjs.com/package/@discourse/jxl) | 1.3.0 | 1,388,572 | 525,782 | The same encoder bytes as jSquash |
 | [Lacinak's jSquash fork](https://github.com/kelaci/jSquash) | 1.3.0-kelaci.0 | 2,071,514 | 844,866 | High bit-depth input options |

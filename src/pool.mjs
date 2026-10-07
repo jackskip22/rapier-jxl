@@ -61,7 +61,9 @@ export function encodePool(data, width, height, options, {spawn, workers = 4} = 
       }
     } catch { fail(); return; }
     for (let g = 0; g < groups; g++) {
-      const [x0, y0, w, h] = groupRect(layout, width, height, g), rgba = new Uint8Array(w * h * 4);
+      const [x0, y0, w, h] = groupRect(layout, width, height, g);
+      const Sample = data instanceof Float32Array ? Float32Array : data instanceof Uint16Array ? Uint16Array : Uint8Array;
+      const rgba = new Sample(w * h * 4);
       for (let y = 0; y < h; y++) rgba.set(data.subarray(((y0 + y) * width + x0) * 4, ((y0 + y) * width + x0 + w) * 4), y * w * 4);
       if (!send(members[g % members.length], {pool: 'tile', g, w, h, rgba}, [rgba.buffer])) return;
     }
@@ -78,7 +80,7 @@ export function encodePool(data, width, height, options, {spawn, workers = 4} = 
   // a group at a time until it first answers (it may still be starting), then kept two ahead. This thread is not idle:
   // it takes the last unsent group of the longest queue, else a group sent to a worker that has not answered yet, and
   // only waits when every group left is with a working worker. A group answered twice counts once: it is the same.
-  async function* pass({kind, setup, at, stop}) {
+  async function* pass({kind, setup, at, stop, byteCeiling}) {
     if (!members) start();
     const id = live = ++serial, waiting = new Set(Array.from({length: groups}, (_, g) => g)), results = [];
     const queues = members.map((_, k) => [...waiting].filter(g => g % members.length === k));
@@ -97,7 +99,7 @@ export function encodePool(data, width, height, options, {spawn, workers = 4} = 
       if (k >= 0) return queues[k].pop();
       for (const g of waiting) if (!members[g % members.length].up) return g;
     };
-    let local, hurried = false;
+    let local, hurried = false, sectionBytes = 0;
     while (waiting.size) {
       let done = ready.shift();
       if (!done) {
@@ -110,9 +112,12 @@ export function encodePool(data, width, height, options, {spawn, workers = 4} = 
       if (!waiting.has(done.g)) continue;
       if (done.error) { live = 0; return Object.assign(new (done.error.name === 'RangeError' ? RangeError : Error)(done.error.message), done.error.code ? {code: done.error.code} : {}); }
       waiting.delete(done.g); results[done.g] = done.result;
+      if (byteCeiling !== undefined) sectionBytes += done.result.length;
       const g = groups - waiting.size - 1;
       yield last = at(g);
       hurried = it.hurry;
+      // A pruned candidate is not a hurried job. Later candidates still compete against the retained stream.
+      if (byteCeiling !== undefined && sectionBytes >= byteCeiling) { live = 0; return {pruned: true, hurried}; }
       if (hurried && stop(g)) { live = 0; return null; }
     }
     live = 0;

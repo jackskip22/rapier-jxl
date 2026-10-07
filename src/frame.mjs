@@ -1,6 +1,6 @@
 // Rapier's JPEG XL encoder: the codestream around a frame. MIT (LICENSE).
 // A bare codestream (no container): signature, size header, image metadata, one frame with its table of contents.
-import {BitWriter} from './bits.mjs';
+import {BitWriter, float16Bits} from './bits.mjs';
 import {admitOutputSize} from './admit.mjs';
 
 export const GROUP_DIM = 256, DC_GROUP_DIM = 2048;
@@ -9,23 +9,39 @@ function writeSize(w, size) {
   w.writeU32([[9, 1], [13, 1], [18, 1], [30, 1]], size);
 }
 
-// 8 bits per sample; `colour` 1 (grey) or 3 (sRGB, or Display P3 when `colorSpace` says so); an 8-bit alpha channel
-// when `alpha`. Frames start byte-aligned.
-export function writeImageHeader(w, width, height, colour, alpha, {xyb = false, orientation = 1, colorSpace} = {}) {
+// Precision belongs to each channel's metadata. Colour enumerations describe the stored samples; no display
+// conversion is part of writing a header. Frames start byte-aligned.
+export function writeImageHeader(w, width, height, colour, alpha, {xyb = false, orientation = 1, colorSpace, bitDepth = 8, exponentBits = 0, transferFunction = 'srgb', intensityTarget = 255, alphaPremultiplied = false} = {}) {
   w.write(16, 0x0AFF);
   w.write(1, 0);          // not the small size form
   writeSize(w, height);
   w.write(3, 0);          // no aspect ratio shortcut
   writeSize(w, width);
   w.write(1, 0);          // metadata not all default
-  const extra = orientation !== 1;
+  const extra = orientation !== 1 || intensityTarget !== 255;
   w.write(1, extra ? 1 : 0);  // extra fields: only an orientation (the Exif value, as a JPEG carried it)
   if (extra) w.write(6, orientation - 1);  // orientation (3), no intrinsic size, preview or animation (1 each)
-  w.write(4, 0b1_00_0);  // integer samples (1), 8 bits per sample (2), 16-bit buffers suffice (1)
-  if (alpha) w.write(3, 0b1_01);  // one extra channel (2), all default (1): 8-bit alpha
+  writeSampleDepth(w, bitDepth, exponentBits);
+  w.write(1, bitDepth <= 12 && !exponentBits ? 1 : 0);
+  if (alpha && bitDepth === 8 && !exponentBits && !alphaPremultiplied) w.write(3, 0b1_01);
+  else if (alpha) {
+    w.write(3, 0b0_01);  // one extra channel, nondefault channel metadata
+    w.write(2, 0);      // alpha enumeration
+    writeSampleDepth(w, bitDepth, exponentBits);
+    w.write(4, 0);      // no dimension shift (2), empty name (2)
+    w.write(1, alphaPremultiplied ? 1 : 0);
+  }
   else w.write(2, 0);
   w.write(1, xyb ? 1 : 0);  // xyb_encoded
-  if (colour === 3 && colorSpace === 'display-p3') {
+  if (transferFunction !== 'srgb' || colorSpace === 'rec2020') {
+    w.write(2, 0);  // explicit colour encoding, no ICC
+    writeColorEnum(w, colour === 3 ? 0 : 1);
+    writeColorEnum(w, 1);  // D65
+    if (colour === 3) writeColorEnum(w, colorSpace === 'rec2020' ? 9 : colorSpace === 'display-p3' ? 11 : 1);
+    w.write(1, 0);  // transfer-function enumeration, not a gamma
+    writeColorEnum(w, transferFunction === 'linear' ? 8 : transferFunction === 'pq' ? 16 : transferFunction === 'hlg' ? 18 : 13);
+    writeColorEnum(w, 1);  // relative rendering intent
+  } else if (colour === 3 && colorSpace === 'display-p3') {
     // Display P3, fields in reverse order as below: not default (1), no ICC (1), RGB (2), D65 (2), the P3 primaries
     // (selector 2 and 11 - 2 in 4), no gamma (1), the sRGB curve (selector 2 and 13 - 2 in 4), relative intent (2).
     w.write(21, 0b01_1011_10_0_1001_10_01_00_0_0);
@@ -35,11 +51,25 @@ export function writeImageHeader(w, width, height, colour, alpha, {xyb = false, 
     // first: not default (1), no ICC (1), grey (2), D65 (2), no gamma (1), sRGB selector (2) and enum (4), intent (2).
     w.write(15, 0b01_1011_10_0_01_01_0_0);
   }
-  if (extra) w.write(1, 1);  // default tone mapping
+  if (extra) {
+    w.write(1, intensityTarget === 255 ? 1 : 0);
+    if (intensityTarget !== 255) {
+      w.write(16, float16Bits(intensityTarget));
+      w.write(32, 0); w.write(1, 0);  // min nits, relative-to-display flag and linear-below, all zero
+    }
+  }
   w.write(2, 0);          // no extensions
   w.write(1, 1);          // default transform data
   w.zeroPadToByte();
 }
+
+function writeSampleDepth(w, bits, exponent) {
+  w.write(1, exponent ? 1 : 0);
+  w.writeU32(exponent ? [[0, 32], [0, 16], [0, 24], [6, 1]] : [[0, 8], [0, 10], [0, 12], [6, 1]], bits);
+  if (exponent) w.write(4, exponent - 1);
+}
+
+function writeColorEnum(w, value) { w.writeU32([[0, 0], [0, 1], [4, 2], [6, 18]], value); }
 
 // A modular frame, the last frame, no filters, one pass, groups of 128 << shift pixels (256 unless asked), replace
 // blending.
@@ -89,12 +119,17 @@ export function groupRect(layout, width, height, g) {
 export function* groupPass(request, groups, run, accept) {
   if (request.pooled) {
     const reply = yield request;
-    if (!reply) return null;
+    if (!reply || reply.pruned) return null;
     reply.results.forEach((result, g) => accept(g, result));
     return reply.hurried;
   }
-  let hurried = false;
-  for (let g = 0; g < groups; g++) { run(g); hurried = yield request.at(g); if (hurried && request.stop(g)) return null; }
+  let hurried = false, sectionBytes = 0;
+  for (let g = 0; g < groups; g++) {
+    const result = run(g);
+    if (request.byteCeiling !== undefined) sectionBytes += result.length;
+    hurried = yield request.at(g);
+    if (request.byteCeiling !== undefined && sectionBytes >= request.byteCeiling || hurried && request.stop(g)) return null;
+  }
   return hurried;
 }
 // A group's counts added into the picture's, histogram by histogram.

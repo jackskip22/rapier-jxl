@@ -11,6 +11,7 @@ import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {gzipSync} from 'node:zlib';
 import {pixelCase} from './fuzz-cases.mjs';
+import {integerFixture, png16Fixture, floatFixture} from './high-depth-fixtures.mjs';
 
 const stage = resolve(process.argv[2] || '.');
 const scratch = await mkdtemp(join(tmpdir(), 'rapier-jxl-package-'));
@@ -26,7 +27,7 @@ const require = createRequire(pathToFileURL(join(scratch, 'consumer.mjs')));
 const entry = name => import(pathToFileURL(require.resolve('rapier-jxl' + name)).href);
 
 test('the npm tarball includes references and a declaration for every executable entry', async () => {
-  for (const file of ['llms.txt', 'docs/reference/API.md', 'docs/reference/ARCHITECTURE.md', 'docs/ENCODER-COMPARISON.md', 'bench/encoder-sizes.json', '.github/CONTRIBUTING.md']) await access(join(root, file));
+  for (const file of ['llms.txt', 'docs/reference/API.md', 'docs/reference/ARCHITECTURE.md', 'docs/reference/DECODERS.md', 'docs/ENCODER-COMPARISON.md', 'bench/encoder-sizes.json', '.github/CONTRIBUTING.md']) await access(join(root, file));
   for (const [name, value] of Object.entries(manifest.exports)) {
     if (name === './package.json') continue;
     assert.equal(typeof value.types, 'string', name + ' has no declaration');
@@ -50,11 +51,26 @@ test('each named single-file entry loads alone and writes the readable entry byt
       : name.startsWith('photo') ? api.encodePhoto(pixels.rgba, pixels.width, pixels.height, {quality: 90, effort: 4})
       : api.encode(pixels.rgba, pixels.width, pixels.height, {quality: 100, colorSpace: 'display-p3', ...(name === 'core' ? {} : {effort: 4})});
     assert.equal(Buffer.compare(invoke(standalone), invoke(readable)), 0, name + ': encoded bytes');
+    if (!name.startsWith('jpeg')) for (const fixture of [integerFixture(12), floatFixture({half: true}), floatFixture({special: true})]) {
+      const {data, width, height, options} = fixture;
+      const encode = api => (api.encode || api.encodePhoto)(data, width, height, {...options, quality: 100, effort: 2});
+      assert.equal(Buffer.compare(encode(standalone), encode(readable)), 0, name + ': native sample bytes');
+    }
     if (standalone.configureKernels) assert.throws(() => standalone.configureKernels('gpu'), {code: 'JXL_INPUT'});
   }
   const encodeCore = api => api.encode(pixels.rgba, pixels.width, pixels.height);
   assert.equal(Buffer.compare(encodeCore(await entry('')), encodeCore(await entry('/core'))), 0);
   assert.equal(Buffer.compare(encodeCore(await entry('/min')), encodeCore(await entry('/core/min'))), 0);
+});
+
+test('the packed optional source import preserves PNG16 sample words and declarations', async () => {
+  const fixture = integerFixture(16), {readSource} = await entry('/source');
+  const source = await readSource(png16Fixture(fixture, {primaries: 9, transfer: 16}));
+  assert.deepEqual(source.data, fixture.data);
+  assert.equal(source.colorSpace, 'rec2020'); assert.equal(source.transferFunction, 'pq');
+  const {data, width, height, ...options} = source;
+  const encoder = await entry('/min');
+  assert.ok(encoder.encode(data, width, height, options).length > 0);
 });
 
 test('the published size receipt measures the packed encoder files', async () => {

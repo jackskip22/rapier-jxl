@@ -62,7 +62,6 @@ export function codeWeighted(w, targets, plane, width, height, offset = 0, conte
       if (Math.abs(teN) > Math.abs(most)) most = teN;
       if (Math.abs(teNW) > Math.abs(most)) most = teNW;
       if (Math.abs(teNE) > Math.abs(most)) most = teNE;
-      const context = contextOf[BUCKET[most < -501 ? 0 : most > 501 ? 1002 : most + 501]];
       if (properties) properties[index] = most;
       const p0 = W + NE - N, p1 = N - (((sumWN + teNE) * 16) >> 5), p2 = W - (((sumWN + teNW) * 10) >> 5);
       const p3 = N - (((teNW + teN + teNE) * 7) >> 5);
@@ -77,8 +76,11 @@ export function codeWeighted(w, targets, plane, width, height, offset = 0, conte
       }
       const value = plane[index], r = value - ((pred + 3) >> 3) - offset;
       if (residuals) residuals[index] = packSigned(r);
-      else if (r === 0) { if (run < 8) runContexts[run] = context; run++; }
-      else { flush(); emit(context, packSigned(r)); }
+      else {
+        const context = contextOf[BUCKET[most < -501 ? 0 : most > 501 ? 1002 : most + 501]];
+        if (r === 0) { if (run < 8) runContexts[run] = context; run++; }
+        else { flush(); emit(context, packSigned(r)); }
+      }
       // The state the decoder keeps: the prediction's error, and each sub-prediction's, added into the next row's view.
       const v = value * 8, e0 = (Math.abs(p0 - v) + 3) >> 3, e1 = (Math.abs(p1 - v) + 3) >> 3, e2 = (Math.abs(p2 - v) + 3) >> 3, e3 = (Math.abs(p3 - v) + 3) >> 3;
       error[cur + x] = pred - v;

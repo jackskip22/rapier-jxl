@@ -28,7 +28,7 @@ export function jxlRsDecoder({executable = process.env.JXL_FUZZ_JXL_RS} = {}) {
       return new Uint8Array(result.stdout.buffer, result.stdout.byteOffset, result.stdout.byteLength);
     },
     // Same bounded framing as native libjxl; every request executes the upstream decoder afresh.
-    persistent() { return nativeDecoder({executable}); },
+    persistent(options = {}) { return nativeDecoder({...options, executable}); },
   };
 }
 

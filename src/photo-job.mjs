@@ -2,14 +2,16 @@
 // One checked photograph job shared by the prefix and optional ANS doors.
 import {PHOTO_LIMITS, part} from './bits.mjs';
 import {admitEffort} from './effort-level.mjs';
-import {losslessSteps} from './lossless.mjs';
-import {admitOptions, admitPixels, job} from './admit.mjs';
+import {losslessSteps, nativeSteps} from './lossless.mjs';
+import {admitOptions, admitPixels, admitSampleFormat, job} from './admit.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
 import {quantisationSteps} from './photo-quant.mjs';
 
 export function photoJob(data, width, height, options, coefficients) {
   const {quality, colorSpace} = admitOptions(options, 90), effort = admitEffort(options);
   admitPixels(data, width, height, PHOTO_LIMITS);
+  const samples = admitSampleFormat(data, options);
+  if (!samples.native8) return job(nativeSteps(data, width, height, {quality, samples, effort}));
   return job(photoSteps(data, width, height, quality, colorSpace, effort, coefficients));
 }
 
