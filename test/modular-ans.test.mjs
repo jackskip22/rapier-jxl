@@ -36,7 +36,7 @@ test('Modular ANS decodes a maximum-group copy with symbol 255 and 19 raw bits',
   const frequencies = new Uint32Array(ALPHABET); frequencies[0] = frequencies[255] = 1;
   const write = writeModularAnsHistograms(global, writeTree(global, tree), [frequencies]);
   writeModularHeader(global);
-  write([{leaves: [tree], used: 2, token: new Uint16Array([0, 255]),
+  write([{leaves: [tree], freqs: [frequencies], used: 2, token: new Uint16Array([0, 255]),
     bits: new Uint8Array([0, 19]), extra: new Uint32Array([0, width * height - 8 - (1 << 19)]), context: new Uint8Array(2)}]);
   const decoded = decode(assembleCodestream(header, [global.finish()]));
   assert.equal(decoded.width, width); assert.equal(decoded.height, height); assert.equal(decoded.channels, 1);
