@@ -105,7 +105,7 @@ limits are admission bounds, not a promise that every device can allocate the la
 | Every encoding path in one bundle | 105,348 | 41,957 | 36,245 |
 | All readable modules in `src/` | 305,654 | 93,276 | |
 
-Release 2.6.0, Terser 5.51.2, Node v22.22.2, gzip 9 and Brotli 11. Byte counts, module graphs, hashes and
+Release 2.6.0, Terser 5.51.2, Node v22.23.3, gzip 9 and Brotli 11. Byte counts, module graphs, hashes and
 incremental bundle sizes are in [dist/sizes.json](../../dist/sizes.json). Each one-file build is checked against its readable
 entry on the public encoded-byte fixtures and native integer/float cases with HDR and alpha declarations.
 [Other encoders](../ENCODER-COMPARISON.md).
