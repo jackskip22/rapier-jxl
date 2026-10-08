@@ -118,6 +118,38 @@ test('raw histograms and every hybrid-integer configuration of the lossless code
   for (const mode of ['scalar', 'simd']) { assert.equal(tallies[mode].declined, 0, mode + ' declined a call it should take'); assert.ok(tallies[mode].took > 2000, mode + ' took ' + tallies[mode].took + ' calls'); }
 });
 
+test('large learned groups keep exact weighted residuals and properties through arena growth', {skip: !supportsSIMD}, () => {
+  try {
+    for (const [width, height] of [[257, 256], [512, 600], [1024, 1024], [16384, 64], [1, 65537], [256, 256]]) {
+      for (const pattern of ['random', 'full-int16', 'zeros']) {
+        const n = width * height, plane = Int16Array.from({length: n}, () => pattern === 'random'
+          ? (random() % 511) - 255 : pattern === 'full-int16' ? (random() & 65535) - 32768 : 0);
+        let expected;
+        for (const mode of modes) {
+          use(mode);
+          let accepted = 0;
+          if (mode !== 'off') {
+            const weighted = kernelHooks.weighted;
+            kernelHooks.weighted = (...args) => { const took = weighted(...args); accepted += took; return took; };
+          }
+          const residuals = new Uint32Array(n), properties = new Int32Array(n);
+          codeWeighted(null, null, plane, width, height, -3, undefined, residuals, properties);
+          if (mode === 'off') expected = {residuals, properties};
+          else {
+            assert.equal(accepted, 1, mode + ' must execute its weighted kernel');
+            for (const [name, actual] of Object.entries({residuals, properties})) {
+              const wanted = expected[name];
+              assert.ok(Buffer.from(actual.buffer, actual.byteOffset, actual.byteLength)
+                .equals(Buffer.from(wanted.buffer, wanted.byteOffset, wanted.byteLength)),
+                `${width}x${height}/${pattern}/${mode}/${name}`);
+            }
+          }
+        }
+      }
+    }
+  } finally { use('off'); }
+});
+
 test('zero-run thresholds and copies keep pixel contexts and every pending bit position', {skip: !supportsSIMD}, () => {
   const identity=Int32Array.from({length:34},(_,i)=>i);
   for(const n of [1,7,8,9,15,16,17,23,24,25,39,40,71,72,1031,65536]) {
@@ -179,6 +211,26 @@ test('unavailable SIMD, absent WASM and CSP rejection use the exact JavaScript s
     const child=spawnSync(process.execPath,['--input-type=module','-e',source],{encoding:'utf8',timeout:30000});
     assert.equal(child.status,0,scenario+': '+child.stderr);assert.match(child.stdout,/fallback exact/);
   }
+});
+
+test('refused weighted arena growth keeps exact JavaScript residuals', {skip: !supportsSIMD}, () => {
+  const source = `import assert from 'node:assert/strict';
+    import {configureKernels} from ${JSON.stringify(new URL('../src/kernels.mjs', import.meta.url).href)};
+    import {codeWeighted} from ${JSON.stringify(new URL('../src/weighted.mjs', import.meta.url).href)};
+    const width=512,height=600,n=width*height,plane=Int16Array.from({length:n},(_,i)=>(i*173%511)-255);
+    const run=()=>{const residuals=new Uint32Array(n),properties=new Int32Array(n);
+      codeWeighted(null,null,plane,width,height,0,undefined,residuals,properties);return {residuals,properties};};
+    configureKernels('off');const expected=run();assert.equal(configureKernels('scalar'),'scalar');
+    const grow=WebAssembly.Memory.prototype.grow;let attempts=0;
+    try {WebAssembly.Memory.prototype.grow=function(){attempts++;throw new RangeError('allocation refused');};
+      const actual=run();for(const name of ['residuals','properties']) {
+        const a=actual[name],b=expected[name];
+        assert.ok(Buffer.from(a.buffer,a.byteOffset,a.byteLength).equals(Buffer.from(b.buffer,b.byteOffset,b.byteLength)),
+          'allocation refusal: '+name);
+      }assert.equal(attempts,1);
+    } finally {WebAssembly.Memory.prototype.grow=grow;configureKernels('off');}`;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', source], {encoding: 'utf8', timeout: 30000});
+  assert.equal(child.status, 0, child.stderr);
 });
 
 test('non-exact multipliers, non-Int16 planes and custom writers stay in JS', {skip: !supportsSIMD}, () => {

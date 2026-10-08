@@ -1,0 +1,853 @@
+{
+  "date": "2026-10-08",
+  "rapierVersion": "3.1.0",
+  "worker": {
+    "sha256": "c8c328dbe1498903da0cfed5bd70b8e9212225d149ee8aa6ea4be1f97fb6276e",
+    "startupMs": 38.307045
+  },
+  "workerGzipBytes": 50021,
+  "libjxlVersion": "0.11.2",
+  "cpu": "AMD EPYC 9V74 80-Core Processor",
+  "node": "v22.23.3",
+  "platform": "linux",
+  "arch": "x64",
+  "osRelease": "6.18.44",
+  "affinity": "0",
+  "manifestSha256": "adb758c1b2ca06f5d4dcfc468b229c31099781a4d3d34a7a5a15204b865efba8",
+  "rapierWarmups": 0,
+  "rapierRepeats": 1,
+  "libjxlWarmups": 1,
+  "libjxlRepeats": 3,
+  "helperWorkers": 0,
+  "rapierMethod": "Exact published worker in one Node worker, optional WASM automatic. Encode time includes admission, factory/job and output production; excludes transport, input loading and decoding. Worker startup is recorded separately. No helper workers; no browser or phone extrapolation.",
+  "nativeMethod": "Persistent process; fresh encoder per run; one calling thread; encode includes encoder setup, allocations and output generation. Input I/O and exact RGBA decode are outside timing. All warmup and measured outputs are decoded, including hidden RGB.",
+  "nativeBuild": {
+    "compiler": "g++ (Debian 14.2.0-19) 14.2.0",
+    "flags": [
+      "-std=c++17",
+      "-O2",
+      "-Wall",
+      "-Wextra"
+    ],
+    "librarySha256": "744b133b96514aa4be6093450eac6ba775b20394a39932c8b75b0261078477f6",
+    "binarySha256": "33611a3685812206376667c8152820678a675cff871829cb2752a77871b962aa",
+    "sourceSha256": "7e16a9fe777eee10449686c4211b527e46853650cfc2714c96fd83089541c356"
+  },
+  "nativeOptions": {
+    "encoderVersion": 11002,
+    "decoderVersion": 11002,
+    "workerThreads": 0,
+    "callingThreads": 1,
+    "lossless": true,
+    "keepInvisible": true,
+    "format": "sRGB RGBA8 straight alpha"
+  },
+  "verification": {
+    "native": "0.11.2",
+    "oxide": "0.12.6",
+    "rows": [
+      {
+        "id": "ui-light",
+        "effort": 1,
+        "exactRGBA": true
+      },
+      {
+        "id": "ui-light",
+        "effort": 3,
+        "exactRGBA": true
+      },
+      {
+        "id": "ui-light",
+        "effort": 6,
+        "exactRGBA": true
+      },
+      {
+        "id": "ui-light",
+        "effort": 9,
+        "exactRGBA": true
+      },
+      {
+        "id": "drawing-labels",
+        "effort": 1,
+        "exactRGBA": true
+      },
+      {
+        "id": "drawing-labels",
+        "effort": 3,
+        "exactRGBA": true
+      },
+      {
+        "id": "drawing-labels",
+        "effort": 6,
+        "exactRGBA": true
+      },
+      {
+        "id": "drawing-labels",
+        "effort": 9,
+        "exactRGBA": true
+      },
+      {
+        "id": "control-paint-0001-512x384",
+        "effort": 1,
+        "exactRGBA": true
+      },
+      {
+        "id": "control-paint-0001-512x384",
+        "effort": 3,
+        "exactRGBA": true
+      },
+      {
+        "id": "control-paint-0001-512x384",
+        "effort": 6,
+        "exactRGBA": true
+      },
+      {
+        "id": "control-paint-0001-512x384",
+        "effort": 9,
+        "exactRGBA": true
+      },
+      {
+        "id": "grace-hopper",
+        "effort": 1,
+        "exactRGBA": true
+      },
+      {
+        "id": "grace-hopper",
+        "effort": 3,
+        "exactRGBA": true
+      },
+      {
+        "id": "grace-hopper",
+        "effort": 6,
+        "exactRGBA": true
+      },
+      {
+        "id": "grace-hopper",
+        "effort": 9,
+        "exactRGBA": true
+      },
+      {
+        "id": "terminal-code",
+        "effort": 1,
+        "exactRGBA": true
+      },
+      {
+        "id": "terminal-code",
+        "effort": 3,
+        "exactRGBA": true
+      },
+      {
+        "id": "terminal-code",
+        "effort": 6,
+        "exactRGBA": true
+      },
+      {
+        "id": "terminal-code",
+        "effort": 9,
+        "exactRGBA": true
+      }
+    ]
+  },
+  "rows": [
+    {
+      "id": "ui-light",
+      "kind": "screen",
+      "width": 640,
+      "height": 480,
+      "rgbaHash": "b92035c3fa4cdabec5c3bbc08e9aa6373fa3f74cb5248571017712d3d7ee309a",
+      "effort": 1,
+      "rapier": {
+        "effort": 1,
+        "bytes": 26612,
+        "bpp": 0.6930208333333333,
+        "sha256": "a25205681eff5c0721db7e7e53e78bd0b4db9edf31eb1272098083276771b1be",
+        "ms": 63.80317600000001,
+        "cpuMs": 64.534,
+        "samples": [
+          {
+            "ms": 63.80317600000001,
+            "cpuMs": 64.534
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 40313,
+        "sha256": "01d3d8e602618f8a41df0e3adcc943bb05b6cbd0dd01692eb7ad0624ab025fdd",
+        "medianMs": 0.820557,
+        "timesMs": [
+          0.803151,
+          0.857263,
+          0.820557
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 1.0498177083333333
+      }
+    },
+    {
+      "id": "ui-light",
+      "kind": "screen",
+      "width": 640,
+      "height": 480,
+      "rgbaHash": "b92035c3fa4cdabec5c3bbc08e9aa6373fa3f74cb5248571017712d3d7ee309a",
+      "effort": 3,
+      "rapier": {
+        "effort": 3,
+        "bytes": 13852,
+        "bpp": 0.36072916666666666,
+        "sha256": "ab58dbc676bf185f2e36322ee16a860f44612fb52c876204f2ab6ca351e067a3",
+        "ms": 286.409821,
+        "cpuMs": 286.397,
+        "samples": [
+          {
+            "ms": 286.409821,
+            "cpuMs": 286.397
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 34595,
+        "sha256": "d833388124a24c430e74382cd901570d2df4e62e8e0c75a462988107faaeeabf",
+        "medianMs": 41.627148,
+        "timesMs": [
+          41.627148,
+          42.101293,
+          41.311402
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 0.9009114583333333
+      }
+    },
+    {
+      "id": "ui-light",
+      "kind": "screen",
+      "width": 640,
+      "height": 480,
+      "rgbaHash": "b92035c3fa4cdabec5c3bbc08e9aa6373fa3f74cb5248571017712d3d7ee309a",
+      "effort": 6,
+      "rapier": {
+        "effort": 6,
+        "bytes": 11515,
+        "bpp": 0.29986979166666666,
+        "sha256": "b707f4beee236922e7ec4b2206bd91e35b9bc0b18b0fae39bf9cbc8e06b24708",
+        "ms": 1826.325285,
+        "cpuMs": 1826.021,
+        "samples": [
+          {
+            "ms": 1826.325285,
+            "cpuMs": 1826.021
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 13986,
+        "sha256": "61f075e8848fc1a345ea011e63e17a7b2cb93b28ee25e83b9a9ebf478095310a",
+        "medianMs": 136.818229,
+        "timesMs": [
+          136.818229,
+          132.614278,
+          145.055713
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 0.36421875
+      }
+    },
+    {
+      "id": "ui-light",
+      "kind": "screen",
+      "width": 640,
+      "height": 480,
+      "rgbaHash": "b92035c3fa4cdabec5c3bbc08e9aa6373fa3f74cb5248571017712d3d7ee309a",
+      "effort": 9,
+      "rapier": {
+        "effort": 9,
+        "bytes": 11515,
+        "bpp": 0.29986979166666666,
+        "sha256": "b707f4beee236922e7ec4b2206bd91e35b9bc0b18b0fae39bf9cbc8e06b24708",
+        "ms": 13937.646336,
+        "cpuMs": 13935.942,
+        "samples": [
+          {
+            "ms": 13937.646336,
+            "cpuMs": 13935.942
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 12687,
+        "sha256": "81c1e8ecd6692980ce1526a7bad35380f48817e24fa45d792822ed9b3125e923",
+        "medianMs": 406.943591,
+        "timesMs": [
+          409.779474,
+          382.143193,
+          406.943591
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 0.330390625
+      }
+    },
+    {
+      "id": "drawing-labels",
+      "kind": "drawing",
+      "width": 512,
+      "height": 384,
+      "rgbaHash": "d83a3c7d73f95eba1080a71c66c3be25b065ddf502a1402d6dd02b8aa0689a20",
+      "effort": 1,
+      "rapier": {
+        "effort": 1,
+        "bytes": 6083,
+        "bpp": 0.24751790364583334,
+        "sha256": "985f635c97043fe9c2ccdd61a7912109676047dd88f2b8f19ab466ee709a9a8d",
+        "ms": 16.62684900000022,
+        "cpuMs": 16.644,
+        "samples": [
+          {
+            "ms": 16.62684900000022,
+            "cpuMs": 16.644
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 7541,
+        "sha256": "005cdeeeb7f6560db6ff6cd9916240fb16b07f0945d51180d67f40bf020057b8",
+        "medianMs": 1.142113,
+        "timesMs": [
+          1.147381,
+          1.136765,
+          1.142113
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 0.3068440755208333
+      }
+    },
+    {
+      "id": "drawing-labels",
+      "kind": "drawing",
+      "width": 512,
+      "height": 384,
+      "rgbaHash": "d83a3c7d73f95eba1080a71c66c3be25b065ddf502a1402d6dd02b8aa0689a20",
+      "effort": 3,
+      "rapier": {
+        "effort": 3,
+        "bytes": 3554,
+        "bpp": 0.14461263020833334,
+        "sha256": "601d814792fd703bbd97274cb049a64c22467f1afd77dc7a7bc052b306f16b59",
+        "ms": 98.9124840000004,
+        "cpuMs": 98.935,
+        "samples": [
+          {
+            "ms": 98.9124840000004,
+            "cpuMs": 98.935
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 8324,
+        "sha256": "c1af762372fe7fa60dfa5ee462029b5c93870caaf7ba2bde5364233330d357b9",
+        "medianMs": 21.775284,
+        "timesMs": [
+          21.725039,
+          22.743705,
+          21.775284
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 0.3387044270833333
+      }
+    },
+    {
+      "id": "drawing-labels",
+      "kind": "drawing",
+      "width": 512,
+      "height": 384,
+      "rgbaHash": "d83a3c7d73f95eba1080a71c66c3be25b065ddf502a1402d6dd02b8aa0689a20",
+      "effort": 6,
+      "rapier": {
+        "effort": 6,
+        "bytes": 1644,
+        "bpp": 0.06689453125,
+        "sha256": "2383eb85fc812e998e9026c1759f23bb7bf3a1b2c8be495b6ab46bcb498d2178",
+        "ms": 528.1285549999993,
+        "cpuMs": 528.097,
+        "samples": [
+          {
+            "ms": 528.1285549999993,
+            "cpuMs": 528.097
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 2275,
+        "sha256": "517293a958d8c132d000dc9237e5424ee5d228fa23232bbd59686774f83b9d03",
+        "medianMs": 67.284709,
+        "timesMs": [
+          64.199144,
+          67.284709,
+          67.984764
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 0.09256998697916667
+      }
+    },
+    {
+      "id": "drawing-labels",
+      "kind": "drawing",
+      "width": 512,
+      "height": 384,
+      "rgbaHash": "d83a3c7d73f95eba1080a71c66c3be25b065ddf502a1402d6dd02b8aa0689a20",
+      "effort": 9,
+      "rapier": {
+        "effort": 9,
+        "bytes": 1644,
+        "bpp": 0.06689453125,
+        "sha256": "2383eb85fc812e998e9026c1759f23bb7bf3a1b2c8be495b6ab46bcb498d2178",
+        "ms": 7716.818180999999,
+        "cpuMs": 7715.871,
+        "samples": [
+          {
+            "ms": 7716.818180999999,
+            "cpuMs": 7715.871
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 2208,
+        "sha256": "7726387be531346a4bcf4d950a7c1d0d675f6fb5f079eed1b086ef44cc6a96b9",
+        "medianMs": 188.196425,
+        "timesMs": [
+          190.769857,
+          185.983658,
+          188.196425
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 0.08984375
+      }
+    },
+    {
+      "id": "control-paint-0001-512x384",
+      "kind": "paint",
+      "width": 512,
+      "height": 384,
+      "rgbaHash": "a3af498e21cade0969d0b3fa63118316a18601aa23bd1b35ffc561e70a123237",
+      "effort": 1,
+      "rapier": {
+        "effort": 1,
+        "bytes": 162479,
+        "bpp": 6.611287434895833,
+        "sha256": "f162e15e32144dc81e35ab5c2e4057ae3ebe7d12f689edd49b0394f7d2ab9efe",
+        "ms": 23.54756400000042,
+        "cpuMs": 23.565,
+        "samples": [
+          {
+            "ms": 23.54756400000042,
+            "cpuMs": 23.565
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 176744,
+        "sha256": "f95dc52ccc38722f0b159e3c1860efa87249488e9d7d369ef80d1636f9f27bc6",
+        "medianMs": 0.903072,
+        "timesMs": [
+          0.903072,
+          0.800828,
+          1.103275
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 7.191731770833333
+      }
+    },
+    {
+      "id": "control-paint-0001-512x384",
+      "kind": "paint",
+      "width": 512,
+      "height": 384,
+      "rgbaHash": "a3af498e21cade0969d0b3fa63118316a18601aa23bd1b35ffc561e70a123237",
+      "effort": 3,
+      "rapier": {
+        "effort": 3,
+        "bytes": 150434,
+        "bpp": 6.121175130208333,
+        "sha256": "2a84a5ca0de180892296c2e0afc3d5aa37710d5c7b8368a11423e79f791fd2b9",
+        "ms": 135.3624920000002,
+        "cpuMs": 135.327,
+        "samples": [
+          {
+            "ms": 135.3624920000002,
+            "cpuMs": 135.327
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 140851,
+        "sha256": "810564d10138e35c5e6abba7f7841b072ff3797dbef80b4139a3b033499008a1",
+        "medianMs": 44.123693,
+        "timesMs": [
+          44.123693,
+          44.291336,
+          44.050683
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 5.731241861979167
+      }
+    },
+    {
+      "id": "control-paint-0001-512x384",
+      "kind": "paint",
+      "width": 512,
+      "height": 384,
+      "rgbaHash": "a3af498e21cade0969d0b3fa63118316a18601aa23bd1b35ffc561e70a123237",
+      "effort": 6,
+      "rapier": {
+        "effort": 6,
+        "bytes": 135430,
+        "bpp": 5.510660807291667,
+        "sha256": "39496a917c71ae94837b6ae313dd51b7f8784908fedbb0d9a9f2b19d88a81986",
+        "ms": 758.244276999998,
+        "cpuMs": 758.164,
+        "samples": [
+          {
+            "ms": 758.244276999998,
+            "cpuMs": 758.164
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 127932,
+        "sha256": "61b9ffe50f6b9ed960bdfc4c10e3dce275e9ad86c4ea18e5a05f9b67b6795a7d",
+        "medianMs": 243.670356,
+        "timesMs": [
+          243.670356,
+          241.873356,
+          250.774671
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 5.20556640625
+      }
+    },
+    {
+      "id": "control-paint-0001-512x384",
+      "kind": "paint",
+      "width": 512,
+      "height": 384,
+      "rgbaHash": "a3af498e21cade0969d0b3fa63118316a18601aa23bd1b35ffc561e70a123237",
+      "effort": 9,
+      "rapier": {
+        "effort": 9,
+        "bytes": 119700,
+        "bpp": 4.87060546875,
+        "sha256": "4dda87ffa4fa69924b6410e9cedc17302e3614c57760264ecd80848dd00f86c4",
+        "ms": 28956.878665,
+        "cpuMs": 28953.07,
+        "samples": [
+          {
+            "ms": 28956.878665,
+            "cpuMs": 28953.07
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 121901,
+        "sha256": "d6e58223daf837ed9e3b0d717eca590e5f8ee3b9eec8c677bca3b824442a387e",
+        "medianMs": 1320.370165,
+        "timesMs": [
+          1320.370165,
+          1311.554145,
+          1348.665341
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 4.960164388020833
+      }
+    },
+    {
+      "id": "grace-hopper",
+      "kind": "photo",
+      "width": 512,
+      "height": 600,
+      "rgbaHash": "641777092e756cf7794f53e5c93d0132acc197f8a276040655e73ce078d4324b",
+      "effort": 1,
+      "rapier": {
+        "effort": 1,
+        "bytes": 297182,
+        "bpp": 7.7391145833333335,
+        "sha256": "8aa1f08cd6092762475c26bb48d4cda366cbfe6d08905ffc40236ccf62723397",
+        "ms": 26.864970000009635,
+        "cpuMs": 26.883,
+        "samples": [
+          {
+            "ms": 26.864970000009635,
+            "cpuMs": 26.883
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 313938,
+        "sha256": "820dfe226c0c74854e225e2c6d40a3d82e2eeda3cc31834d6849f24f7d521475",
+        "medianMs": 1.455575,
+        "timesMs": [
+          1.366171,
+          1.681607,
+          1.455575
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 8.17546875
+      }
+    },
+    {
+      "id": "grace-hopper",
+      "kind": "photo",
+      "width": 512,
+      "height": 600,
+      "rgbaHash": "641777092e756cf7794f53e5c93d0132acc197f8a276040655e73ce078d4324b",
+      "effort": 3,
+      "rapier": {
+        "effort": 3,
+        "bytes": 290619,
+        "bpp": 7.568203125,
+        "sha256": "e4ca8b2d0b10dcfe1d07ca153dc472273aedc033fc436f036a82c3bb3b024480",
+        "ms": 159.06153099999938,
+        "cpuMs": 159.012,
+        "samples": [
+          {
+            "ms": 159.06153099999938,
+            "cpuMs": 159.012
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 274218,
+        "sha256": "96f49ba8984b3578ea161211415175ae40cd6ed709084e98f0d72d12b8a13b9e",
+        "medianMs": 62.827685,
+        "timesMs": [
+          64.774831,
+          62.827685,
+          61.970812
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 7.14109375
+      }
+    },
+    {
+      "id": "grace-hopper",
+      "kind": "photo",
+      "width": 512,
+      "height": 600,
+      "rgbaHash": "641777092e756cf7794f53e5c93d0132acc197f8a276040655e73ce078d4324b",
+      "effort": 6,
+      "rapier": {
+        "effort": 6,
+        "bytes": 269774,
+        "bpp": 7.025364583333333,
+        "sha256": "7b20973a31d8e8e0e5118758a68259ddcf96588f3d39782f18e2d430620bf881",
+        "ms": 1158.1734060000017,
+        "cpuMs": 1158.029,
+        "samples": [
+          {
+            "ms": 1158.1734060000017,
+            "cpuMs": 1158.029
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 256427,
+        "sha256": "d2fea2f8a230e1b735757ba1785fa3f09e71d3446b985633fa6fefe2e37a5541",
+        "medianMs": 353.319412,
+        "timesMs": [
+          351.744849,
+          353.319412,
+          354.879815
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 6.677786458333333
+      }
+    },
+    {
+      "id": "grace-hopper",
+      "kind": "photo",
+      "width": 512,
+      "height": 600,
+      "rgbaHash": "641777092e756cf7794f53e5c93d0132acc197f8a276040655e73ce078d4324b",
+      "effort": 9,
+      "rapier": {
+        "effort": 9,
+        "bytes": 258681,
+        "bpp": 6.736484375,
+        "sha256": "cb74844690d0eb39d353e3401995c3be5ae93b74d3f1ee2afe556952a11e3923",
+        "ms": 32734.24785400001,
+        "cpuMs": 32728.9,
+        "samples": [
+          {
+            "ms": 32734.24785400001,
+            "cpuMs": 32728.9
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 254579,
+        "sha256": "87e754e8956438242598b5c78bd28ca9a44fd66099b594ca07d6cebf3e222b60",
+        "medianMs": 2132.307325,
+        "timesMs": [
+          2132.307325,
+          2149.984234,
+          2019.287188
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 6.6296614583333335
+      }
+    },
+    {
+      "id": "terminal-code",
+      "kind": "screen",
+      "width": 512,
+      "height": 384,
+      "rgbaHash": "ad47c90393a99241341958aee1ce86ac4f8701762c2baa139dd6b3d598668cce",
+      "effort": 1,
+      "rapier": {
+        "effort": 1,
+        "bytes": 35952,
+        "bpp": 1.462890625,
+        "sha256": "6296c52a38a32f7ca6a59ba751c675c28f2e1dbd797b77334ee3d0d82a4d7e54",
+        "ms": 19.274814999997034,
+        "cpuMs": 19.289,
+        "samples": [
+          {
+            "ms": 19.274814999997034,
+            "cpuMs": 19.289
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 70175,
+        "sha256": "d569845d09c77cb019cf070b323bd570d011400145ddbd7df5cdf872c50ad68d",
+        "medianMs": 0.964925,
+        "timesMs": [
+          0.957144,
+          0.964925,
+          0.974029
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 2.8554280598958335
+      }
+    },
+    {
+      "id": "terminal-code",
+      "kind": "screen",
+      "width": 512,
+      "height": 384,
+      "rgbaHash": "ad47c90393a99241341958aee1ce86ac4f8701762c2baa139dd6b3d598668cce",
+      "effort": 3,
+      "rapier": {
+        "effort": 3,
+        "bytes": 9799,
+        "bpp": 0.3987223307291667,
+        "sha256": "d64cc26196e8e05865d73419e6258927cf2e0e7bab85d3c461b88ef282a149d5",
+        "ms": 148.7457749999885,
+        "cpuMs": 148.737,
+        "samples": [
+          {
+            "ms": 148.7457749999885,
+            "cpuMs": 148.737
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 40983,
+        "sha256": "e47e85b6278f151cc87a1d7d5631499c1aa1c15f2210996fcef77906824a84e7",
+        "medianMs": 28.199724,
+        "timesMs": [
+          28.560338,
+          28.199724,
+          27.917608
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 1.6676025390625
+      }
+    },
+    {
+      "id": "terminal-code",
+      "kind": "screen",
+      "width": 512,
+      "height": 384,
+      "rgbaHash": "ad47c90393a99241341958aee1ce86ac4f8701762c2baa139dd6b3d598668cce",
+      "effort": 6,
+      "rapier": {
+        "effort": 6,
+        "bytes": 7814,
+        "bpp": 0.3179524739583333,
+        "sha256": "8cc8b3039ce5000dc55fb13a44a0c112e6c6e693b26dbad9950b09ba8e801aa6",
+        "ms": 529.7675170000002,
+        "cpuMs": 529.556,
+        "samples": [
+          {
+            "ms": 529.7675170000002,
+            "cpuMs": 529.556
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 12470,
+        "sha256": "0c0f0b657ceae3570e391a2ed07fd8fc70257b31e1694deb9da15e54a8c73d2f",
+        "medianMs": 80.977849,
+        "timesMs": [
+          80.977849,
+          82.511823,
+          79.373179
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 0.5074055989583334
+      }
+    },
+    {
+      "id": "terminal-code",
+      "kind": "screen",
+      "width": 512,
+      "height": 384,
+      "rgbaHash": "ad47c90393a99241341958aee1ce86ac4f8701762c2baa139dd6b3d598668cce",
+      "effort": 9,
+      "rapier": {
+        "effort": 9,
+        "bytes": 7814,
+        "bpp": 0.3179524739583333,
+        "sha256": "8cc8b3039ce5000dc55fb13a44a0c112e6c6e693b26dbad9950b09ba8e801aa6",
+        "ms": 13107.959279999995,
+        "cpuMs": 13106.978,
+        "samples": [
+          {
+            "ms": 13107.959279999995,
+            "cpuMs": 13106.978
+          }
+        ]
+      },
+      "libjxl": {
+        "bytes": 11729,
+        "sha256": "29ba0f554a2b50f9aa0c84b854a9dcdc510001e1b8e1346d3dbc8f12dacc613a",
+        "medianMs": 246.297581,
+        "timesMs": [
+          243.422835,
+          252.660788,
+          246.297581
+        ],
+        "rgbaExact": true,
+        "deterministic": true,
+        "bpp": 0.4772542317708333
+      }
+    }
+  ]
+}

@@ -21,8 +21,18 @@ import * as writer from 'rapier-jxl/writer';
 import {readSource, type SourceImage} from 'rapier-jxl/source';
 import {withMetadata, type MetadataOptions} from 'rapier-jxl/metadata';
 import {withMetadata as metadataMin} from 'rapier-jxl/metadata/min';
+import {createEncoder, installWorker, type Request, type Response, type Options as RapierOptions} from 'rapier-jxl/rapier';
+import {createEncoder as completeMin} from 'rapier-jxl/rapier/min';
 
 const pixels = new Uint8ClampedArray([12, 34, 56, 78]);
+const completeOptions: RapierOptions = {lossless: true, effort: 9, colorSpace: 'display-p3', photo: false};
+for (const encoder of [createEncoder(), completeMin()]) {
+  encoder.encode({data: pixels, width: 1, height: 1}, completeOptions).then(bytes => new Blob([bytes]));
+  encoder.transcode({bytes: new Uint8Array()}).then(result => new Blob([result.bytes]));
+}
+const request: Request = {id: 'picture', operation: 'encode', data: pixels, width: 1, height: 1, options: completeOptions};
+function receive(reply: Response) { return reply.ok ? new Blob([reply.bytes]) : reply.error.code; }
+const bootstrap: typeof installWorker = installWorker;
 const space: ColorSpace = 'display-p3';
 const encoded: Bytes = encode(pixels, 1, 1, {quality: 100, colorSpace: space});
 new Blob([encoded], {type: 'image/jxl'});

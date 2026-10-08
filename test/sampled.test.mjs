@@ -9,6 +9,7 @@ import {encode as coreEncode} from '../src/index.mjs';
 import {encode, encodeSteps} from '../src/effort.mjs';
 import {inspectPixels} from '../src/lossless.mjs';
 import {SAMPLE_RUNGS, sampledSteps} from '../src/sampled.mjs';
+import {groupLayout, groupRect} from '../src/frame.mjs';
 import {encodePool} from '../src/pool.mjs';
 import {spawnNode} from './pool-node.mjs';
 import {borderCase, pixelCase} from './fuzz-cases.mjs';
@@ -90,7 +91,7 @@ test('mixed predictor trees preserve pixels across large-group borders and hidde
   const alpha = borderCase(1031, 17);
   for (let i = 0; i < alpha.width * alpha.height; i++) alpha.rgba[i * 4 + 3] = i * 7 & 255;
   const pictures = [borderCase(1, 1025), borderCase(1025, 1), alpha, await painting()];
-  for (const p of pictures) for (const options of [SAMPLE_RUNGS.deep, SAMPLE_RUNGS.thorough, SAMPLE_RUNGS.exhaustive, SAMPLE_RUNGS.expanded, SAMPLE_RUNGS.maximum]) {
+  for (const p of pictures) for (const options of [SAMPLE_RUNGS.deep, SAMPLE_RUNGS.thorough, SAMPLE_RUNGS.exhaustive, SAMPLE_RUNGS.expanded, SAMPLE_RUNGS.maximum, SAMPLE_RUNGS.predictive, SAMPLE_RUNGS.precise, SAMPLE_RUNGS.colour]) {
     const {bytes} = runModel(p, options);
     assert.ok(same(rgbaOf(decode(bytes)), p.rgba), `${p.width}x${p.height}: exact pixels`);
     assert.ok(same(runModel(p, options).bytes, bytes), 'repeated model selection is deterministic');
@@ -104,5 +105,60 @@ test('mixed model pruning and hurry preserve completed-candidate ownership', () 
     for (let stop = 0; stop < count - 1; stop++) assert.equal(runModel(p, options, Infinity, stop).bytes, null, 'an earlier hurry ends the incomplete candidate');
     assert.equal(runModel(p, options, Math.floor(bytes.length / 2)).bytes, null, 'completed sections reject a losing candidate');
     assert.ok(same(runModel(p, options).bytes, bytes), 'pruning does not alter later model selection');
+  }
+});
+
+
+test('each Modular predictor preserves signed transforms and edge rounding', {skip: decode ? undefined : 'jxl-oxide-wasm is not installed'}, () => {
+  for (const [width, height] of [[1, 7], [2, 3], [3, 3], [7, 1]]) {
+    const p = borderCase(width, height);
+    for (let i = 0; i < width * height; i++) p.rgba[i * 4 + 3] = i * 43 & 255;
+    for (const rctType of [6, 13]) for (let predictor = 0; predictor < 14; predictor++) {
+      const options = {...SAMPLE_RUNGS.predictive, samples: width * height, leaves: 1, properties: [], references: false, predictors: [predictor], rctType};
+      const {bytes} = runModel(p, options);
+      assert.ok(same(rgbaOf(decode(bytes)), p.rgba), `${width}x${height}, RCT ${rctType}, predictor ${predictor}`);
+    }
+  }
+});
+
+async function runModelHelpers(p, options) {
+  const steps = sampledSteps(p.rgba, p.width, p.height, inspectPixels(p.rgba, p.width, p.height), 'srgb', options, true);
+  const workers = [spawnNode(), spawnNode()];
+  let step, reply, serial = 0, completed = 0;
+  try {
+    while (!(step = steps.next(reply)).done) {
+      const request = step.value;
+      if (typeof request === 'number') { reply = false; continue; }
+      const frame = groupLayout(p.width, p.height, request.dim), count = frame.groupsX * frame.groupsY, id = ++serial;
+      assert.equal(count, 2);
+      const results = await Promise.all(Array.from({length: count}, (_, g) => new Promise((resolve, reject) => {
+        const worker = workers[g], [x0, y0, w, h] = groupRect(frame, p.width, p.height, g, request.dim), rgba = new Uint8Array(w * h * 4);
+        for (let y = 0; y < h; y++) rgba.set(p.rgba.subarray(((y0 + y) * p.width + x0) * 4, ((y0 + y) * p.width + x0 + w) * 4), y * w * 4);
+        worker.onerror = reject;
+        worker.onmessage = ({data}) => {
+          if (data.id !== id || data.g !== g) return reject(new Error('Unexpected helper result'));
+          if (data.error) return reject(new Error(data.error.message));
+          completed++; resolve(data.result);
+        };
+        worker.postMessage({pool: 'reset'});
+        worker.postMessage({pool: 'tile', g, w, h, rgba}, [rgba.buffer]);
+        worker.postMessage({pool: 'pass', id, kind: request.kind, setup: request.setup});
+        worker.postMessage({pool: 'task', g});
+      })));
+      reply = {results, hurried: false};
+    }
+    assert.equal(completed, 2, 'both format groups were encoded by real helpers');
+    return step.value;
+  } finally { await Promise.all(workers.map(worker => worker.terminate())); }
+}
+
+test('predictive signed models preserve exact pixels and helper bytes across 1024-pixel groups', {skip: decode ? undefined : 'jxl-oxide-wasm is not installed'}, async () => {
+  for (const [width, height] of [[1031, 17], [17, 1031]]) {
+    const p = borderCase(width, height);
+    for (let i = 0; i < width * height; i++) p.rgba[i * 4 + 3] = i * 7 & 255;
+    const options = SAMPLE_RUNGS.colour;
+    const {bytes} = runModel(p, options), pooled = await runModelHelpers(p, options);
+    assert.ok(same(pooled, bytes), `${width}x${height}: actual helper output`);
+    assert.ok(same(rgbaOf(decode(bytes)), p.rgba), `${width}x${height}: exact hidden RGB and alpha`);
   }
 });

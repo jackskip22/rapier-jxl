@@ -187,7 +187,7 @@ export function writeModularAnsHistograms(w, orderedLeaves, freqs, histogramOf =
     const length = plans.reduce((total, plan) => total + plan.used, 0), emitted = new Uint16Array(length);
     let state = 0x13 * 65536, at = length, offset = histograms.length;
     for (let c = plans.length - 1; c >= 0; c--) {
-      const plan = plans[c]; offset -= plan.leaves.length;
+      const plan = plans[c]; offset -= plan.freqs.length;
       for (let i = plan.used - 1; i >= 0; i--) {
         const h = histograms[offset + plan.context[i]], symbol = plan.token[i], freq = h.counts[symbol];
         --at;

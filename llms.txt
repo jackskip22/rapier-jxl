@@ -14,6 +14,12 @@ through a Blob URL. [Copyable HTML](docs/reference/ARCHITECTURE.md#one-html-file
 
 Agent skills: [Single-file apps](skills/rapier-jxl-single-file-app/SKILL.md) · [Photography](skills/rapier-jxl-photography/SKILL.md).
 
+Complete Rapier system: `rapier-jxl/rapier/min` exports `createEncoder()` and `installWorker()`. The published
+`rapier-jxl/rapier/worker` is a self-starting classic worker, byte-identical to the app's encoder. It includes optional
+WASM, effort 1–9, Photo, JPEG transcoding and parallel lossless groups. Pixel defaults: effort 9, quality 90;
+`lossless: true` forces quality 100. JPEG uses effort 9. See [the complete API](docs/reference/API.md#complete-rapier-system)
+for typed requests, module-worker spawning and Blob URL lifetime. Complete worker: 50,021 gzip bytes.
+
 Choose an entry point:
 
 | Need | Entry point | Call |
@@ -30,9 +36,9 @@ Encoding entry points and `rapier-jxl/metadata` have self-contained `/min` build
 Import the complete file to access its public export names; minification renames local functions.
 Use readable imports when bundling several capabilities so they share code.
 
-Package: `rapier-jxl`. Version: 3.0.0. Install: `npm install rapier-jxl`.
+Package: `rapier-jxl`. Version: 3.1.0. Install: `npm install rapier-jxl`.
 ES modules with no automatic filesystem or network I/O.
-Core payload: 27,557 minified bytes; 11,642 gzip bytes.
+Core payload: 27,603 minified bytes; 11,670 gzip bytes.
 Runs in browsers, module workers, Node, and Deno. This package encodes JPEG XL; it does not include a JPEG XL decoder.
 
 ## Inputs and outputs
@@ -42,7 +48,7 @@ Runs in browsers, module workers, Node, and Deno. This package encodes JPEG XL; 
 - `quality`: 1–100. Default 100 for core/effort/wasm, 90 for photo. Quality 100 preserves every source sample, including RGB under zero alpha; alpha stays exact at every quality. A smaller exact stream may satisfy a lossy request.
 - `effort`: integer 1–9, default 1. The core has no `effort` option. Effort/wasm 1 writes core bytes; higher lossless efforts add candidates and keep only smaller complete streams. Ordinary 8-bit efforts 4–9 add learned trees; efforts 6–9 also compare prefix and ANS coding per group. Equal lengths keep the earlier candidate.
 - Input arrays stay unmodified; keep them available and unchanged until completion or cancellation.
-- Encoding is synchronous. `encodeSteps`, `encodePhotoSteps`, and `transcodeSteps` yield progress in (0,1]; finish iteration before reading `job.bytes`. A yielded 1 is not generator completion. Set `job.hurry = true` and continue to obtain a completed candidate; leaving the loop cancels. Use a worker to keep a page responsive.
+- Core, effort, photo and JPEG calls are synchronous; the complete Rapier encoder methods are asynchronous. `encodeSteps`, `encodePhotoSteps`, and `transcodeSteps` yield progress in (0,1]; finish iteration before reading `job.bytes`. A yielded 1 is not generator completion. Set `job.hurry = true` and continue to obtain a completed candidate; leaving the loop cancels. Use a worker to keep a page responsive.
 - The same input and options produce the same bytes across JavaScript engines, workers, and optional WASM kernels. A byte-limit prune rejects one candidate without hurrying the whole job.
 
 ## Precision and color

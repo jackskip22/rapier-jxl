@@ -59,7 +59,7 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, 
     // Higher efforts retain lower-budget models. Pruning uses completed section bytes as a lower bound.
     const learned = [SAMPLE_RUNGS.cheap, SAMPLE_RUNGS.rich, SAMPLE_RUNGS.deep, SAMPLE_RUNGS.thorough, SAMPLE_RUNGS.dense, SAMPLE_RUNGS.exhaustive];
     const rungs = learned.slice(0, effort - 3);
-    if (effort === 9) rungs.push(SAMPLE_RUNGS.expanded, SAMPLE_RUNGS.maximum);
+    if (effort === 9) rungs.push(SAMPLE_RUNGS.expanded, SAMPLE_RUNGS.maximum, SAMPLE_RUNGS.predictive, SAMPLE_RUNGS.precise, SAMPLE_RUNGS.colour);
     for (const rung of rungs) searches.push(() => sampledSteps(data, width, height, shape, colorSpace, rung, pooled, best.length));
     if (screen) searches.unshift(() => screenSteps(data, width, height, shape, colorSpace, {fastFloor: effort === 3 ? best.length : 0, effort, pooled}));
     for (let i = 0; i < searches.length; i++) {

@@ -10,11 +10,14 @@ or runtime dependencies.
 
 | Input and goal | Import | Function |
 | --- | --- | --- |
+| Complete Rapier system: effort 1–9, WASM, Photo, JPEG and parallel groups | `rapier-jxl/rapier/min` | `createEncoder`, `installWorker` |
 | Small encoder, lossless or lossy pixels | `rapier-jxl/min` | `encode` |
 | Smaller lossless files | `rapier-jxl/effort/min` | `encode` |
 | Compression search with optional WebAssembly | `rapier-jxl/wasm/min` | `encode` |
 | Lossy 8-bit photographs | `rapier-jxl/photo/min` | `encodePhoto` |
 | Existing JPEG coefficients | `rapier-jxl/jpeg/min` | `transcode` |
+
+The complete system also ships as self-starting `dist/rapier-worker.js`, the exact worker embedded by Rapier. Its pixel defaults are quality 90 and effort 9; `lossless: true` selects quality 100. Use it in a worker and keep its Blob URL available for helper workers. [Complete worker examples](../../docs/reference/ARCHITECTURE.md#complete-rapier-worker) and [request protocol](../../docs/reference/API.md#complete-rapier-system).
 
 ## Build an offline app
 

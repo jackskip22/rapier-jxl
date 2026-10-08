@@ -1,6 +1,6 @@
 {
   "name": "rapier-jxl",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "JavaScript JPEG XL encoder for single-file HTML apps and photography tools. Lossless and lossy RGBA, exact alpha, HDR, and optional WebAssembly. Offline, no runtime dependencies.",
   "license": "MIT",
   "type": "module",
@@ -91,6 +91,18 @@
     "./wasm/min": {
       "types": "./src/wasm.d.mts",
       "default": "./dist/wasm.min.mjs"
+    },
+    "./rapier": {
+      "types": "./src/rapier.d.mts",
+      "default": "./src/rapier.mjs"
+    },
+    "./rapier/min": {
+      "types": "./src/rapier.d.mts",
+      "default": "./dist/rapier.min.mjs"
+    },
+    "./rapier/worker": {
+      "types": "./src/rapier-worker.d.mts",
+      "default": "./dist/rapier-worker.js"
     }
   },
   "files": [
@@ -108,7 +120,8 @@
   ],
   "sideEffects": [
     "./src/wasm.mjs",
-    "./dist/wasm.min.mjs"
+    "./dist/wasm.min.mjs",
+    "./dist/rapier-worker.js"
   ],
   "engines": {
     "node": ">=18"

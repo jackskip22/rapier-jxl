@@ -6,9 +6,25 @@ import {encode} from '../src/index.mjs';
 import {admitSampleFormat} from '../src/admit.mjs';
 import {encodeLossless, inspectPixels} from '../src/lossless.mjs';
 import {assembleCodestream} from '../src/frame.mjs';
-import {BitWriter, LIMITS} from '../src/bits.mjs';
+import {BitWriter, LIMITS, float16Bits} from '../src/bits.mjs';
 import {integerFixture, floatFixture} from './high-depth-fixtures.mjs';
 import {djxlDecoder} from './djxl-decoder.mjs';
+
+test('binary16 fields preserve signs and round halfway values to the even significand', () => {
+  // Format goldens include underflow, subnormal/normal and exponent carries, and the finite ceiling.
+  const cases = [
+    [0, 0], [2 ** -25, 0], [2 ** -24, 1], [3 * 2 ** -25, 2],
+    [(1022.5) * 2 ** -24, 0x03fe], [(1023.5) * 2 ** -24, 0x0400],
+    [1 + 2 ** -11, 0x3c00], [1 + 3 * 2 ** -11, 0x3c02],
+    [2 - 2 ** -11, 0x4000], [255.0625, 0x5bf8], [255.1875, 0x5bfa],
+    [65504, 0x7bff], [65519, 0x7bff],
+  ];
+  for (const [value, word] of cases) {
+    assert.equal(float16Bits(value), word, String(value));
+    assert.equal(float16Bits(-value), word | 0x8000, String(-value));
+  }
+  for (const value of [65520, -65520, Infinity, -Infinity, NaN]) assert.throws(() => float16Bits(value));
+});
 
 function codestream(bytes, level) {
   if (level === 5) { assert.equal(bytes[0], 255); assert.equal(bytes[1], 10); return bytes; }

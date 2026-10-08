@@ -1,0 +1,52 @@
+[
+  {
+    "id": "ui-light",
+    "kind": "screen",
+    "width": 640,
+    "height": 480,
+    "rgbaHash": "b92035c3fa4cdabec5c3bbc08e9aa6373fa3f74cb5248571017712d3d7ee309a",
+    "pixels": "ui-light.rgba",
+    "sourceSha256": "b1f8f0f6f9ab4ea366fe2fb294ba6d8a67d51be52c1e81bc53accd15c2ec9d99",
+    "sourceHashMatches": true
+  },
+  {
+    "id": "drawing-labels",
+    "kind": "drawing",
+    "width": 512,
+    "height": 384,
+    "rgbaHash": "d83a3c7d73f95eba1080a71c66c3be25b065ddf502a1402d6dd02b8aa0689a20",
+    "pixels": "drawing-labels.rgba",
+    "sourceSha256": "26a8d97f71569a15ad3e2b4f101e874d82642ed5e8b697fe0a37ac665ec7a836",
+    "sourceHashMatches": true
+  },
+  {
+    "id": "control-paint-0001-512x384",
+    "kind": "paint",
+    "width": 512,
+    "height": 384,
+    "rgbaHash": "a3af498e21cade0969d0b3fa63118316a18601aa23bd1b35ffc561e70a123237",
+    "pixels": "control-paint-0001-512x384.rgba",
+    "sourceSha256": "bca10e1bc97c1a4eddd9f76e74363f56c6267b549580aab0fa1809ee1bc5487a",
+    "sourceHashMatches": true
+  },
+  {
+    "id": "grace-hopper",
+    "kind": "photo",
+    "width": 512,
+    "height": 600,
+    "rgbaHash": "641777092e756cf7794f53e5c93d0132acc197f8a276040655e73ce078d4324b",
+    "pixels": "grace-hopper.rgba",
+    "sourceSha256": "9aaa25c1001de86dcecd264c6d0168421f1f768116a1b76909b5d8ab280bcaf8",
+    "sourceHashMatches": true
+  },
+  {
+    "id": "terminal-code",
+    "kind": "screen",
+    "width": 512,
+    "height": 384,
+    "rgbaHash": "ad47c90393a99241341958aee1ce86ac4f8701762c2baa139dd6b3d598668cce",
+    "pixels": "terminal-code.rgba",
+    "sourceSha256": "91b637cecf74e94d39cbf01d4cfb341acb8165a251ea6955a3f1004322d485d0",
+    "sourceHashMatches": true
+  }
+]

@@ -2,15 +2,21 @@
 // Deterministic Modular tree learning from bounded spatial samples. Each group selects its tree before tokenizing.
 import {BitWriter, packSigned} from './bits.mjs';
 import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, groupPass, assembleCodestream, GROUP_DIM} from './frame.mjs';
-import {ALPHABET, RESIDUAL_CONFIG, leaf, split, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
+import {ALPHABET, LZ77, RESIDUAL_CONFIG, leaf, split, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {codeWeighted} from './weighted.mjs';
 import {admitOutputSize} from './admit.mjs';
 import {planeFill} from './lossless.mjs';
 import {writeModularAnsHistograms} from './ans.mjs';
 import {losslessCoding} from './lossless-coding.mjs';
 import {hybridToken} from './prefix.mjs';
+import {colourTransform} from './rct-search.mjs';
 
 const SAMPLE_SYMBOLS = 32, SAMPLE_Q = 4096;
+const TRAIN_CONFIG = Object.freeze({split: 4, splitToken: 16, msb: 1, lsb: 2});
+const PREDICTIVE = {samples: 65536, bins: 128, leaves: 64, depth: 12,
+    properties: Object.freeze([15, 9, 10, 11, 12, 13, 14, 4, 5, 6, 7, 8, 2, 3]),
+    predictors: Object.freeze([5, 3, 6, 1, 2, 4, 7, 8, 9, 10, 11, 12, 13, 0]), referenceKinds: Object.freeze([0, 1, 2, 3]),
+    weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true, sharing: Object.freeze([160, 320])};
 export const SAMPLE_RUNGS = Object.freeze({
   cheap: Object.freeze({samples: 1024, bins: 32, leaves: 8, depth: 5, properties: Object.freeze([9, 10, 11]), weighted: false, shared: true, references: false}),
   rich: Object.freeze({samples: 2048, bins: 48, leaves: 16, depth: 7, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true}),
@@ -19,7 +25,10 @@ export const SAMPLE_RUNGS = Object.freeze({
   dense: Object.freeze({samples: 8192, bins: 48, leaves: 32, depth: 9, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true}),
   exhaustive: Object.freeze({samples: 16384, bins: 64, leaves: 48, depth: 10, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true}),
   expanded: Object.freeze({samples: 32768, bins: 96, leaves: 48, depth: 12, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true}),
-  maximum: Object.freeze({samples: 65536, bins: 128, leaves: 64, depth: 12, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true})
+  maximum: Object.freeze({samples: 65536, bins: 128, leaves: 64, depth: 12, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true}),
+  predictive: Object.freeze(PREDICTIVE),
+  precise: Object.freeze({...PREDICTIVE, trainConfig: TRAIN_CONFIG}),
+  colour: Object.freeze({...PREDICTIVE, trainConfig: TRAIN_CONFIG, rctType: 13})
 });
 // Q12 log2, by exact integer squaring of a Q20 mantissa. All intermediates are below 2^42. No libm/logarithm,
 // elapsed time or random source can change a split. The lazily extended table is only a mathematical cache.
@@ -56,8 +65,39 @@ function samplePositions(length, cap) {
   }
   return positions;
 }
+
+function samplePrediction(p, plane, width, i, x, y, w, n, nw) {
+  if(p===0)return 0;if(p===1)return w;if(p===2)return n;if(p===3)return ((w+n)/2)|0;
+  if(p===4){const g=w+n-nw;return Math.abs(g-w)<Math.abs(g-n)?w:n;}
+  if(p===5)return sampleGradient(w,n,nw);
+  const ne=y&&x+1<width?plane[i-width+1]:n;
+  if(p===7)return ne;if(p===8)return nw;
+  const ww=x>1?plane[i-2]:w;
+  if(p===9)return ww;if(p===10)return ((w+nw)/2)|0;if(p===11)return ((nw+n)/2)|0;if(p===12)return ((n+ne)/2)|0;
+  const nn=y>1?plane[i-2*width]:n,nee=y&&x+2<width?plane[i-width+2]:ne;
+  if(p===13)return ((6*n-2*nn+7*w+ww+nee+3*ne+8)/16)|0;
+  throw new Error('Unsupported predictor '+p);
+}
+
 function samplePropertyValue(property, plane, width, index, x, y, w, n, nw, weighted, references) {
-  if (property >= 18) return references[(property - 18) >> 2][index];
+  if (property >= 16) {
+    const ref = references[(property - 16) >> 2], kind = (property - 16) & 3;
+    if(kind===0)return Math.abs(ref.plane[index]);if(kind===1)return ref.plane[index];if(kind===2)return ref[index];
+    const rp=ref.plane,rw=x?rp[index-1]:0,rn=y?rp[index-width]:rw,rnw=x&&y?rp[index-width-1]:rw;
+    return rp[index]-sampleGradient(rw,rn,rnw);
+  }
+  if (property === 2) return y;
+  if (property === 3) return x;
+  if (property === 4) return Math.abs(n);
+  if (property === 5) return Math.abs(w);
+  if (property === 6) return n;
+  if (property === 7) return w;
+  if (property === 8) {
+    if (!x) return w;
+    const pw = x > 1 ? plane[index-2] : y ? plane[index-width-1] : 0;
+    const pn = y ? plane[index-width-1] : pw, pnw = x > 1 && y ? plane[index-width-2] : pw;
+    return w - (pw+pn-pnw);
+  }
   if (property === 15) return weighted[index];
   if (property === 9) return w + n - nw;
   if (property === 10) return w - nw;
@@ -80,9 +120,9 @@ function sampleQuantize(values, bins) {
   }
   return {cuts, indices};
 }
-function sampleModelBits(tree, leaves, freqs) {
+function sampleModelBits(tree, leaves, freqs, config = RESIDUAL_CONFIG) {
   const writer = new BitWriter(256);
-  writeChannelHistograms(writer, writeTree(writer, tree), freqs, l => leaves.indexOf(l));
+  writeChannelHistograms(writer, writeTree(writer, tree), freqs, l => leaves.indexOf(l), () => config);
   return writer.bitLength;
 }
 function sampleFullFreq(sample) { const freq = new Uint32Array(ALPHABET); freq.set(sample); return freq; }
@@ -91,7 +131,7 @@ function sampleFullFreq(sample) { const freq = new Uint32Array(ALPHABET); freq.s
 // the two edge leaves are reserved within the model's budget.
 function sampleGuardReferences(model, predictor) {
   const nodes = [model.tree]; let references = false;
-  for (const node of nodes) if (node.left) { references ||= node.property >= 18; nodes.push(node.left, node.right); }
+  for (const node of nodes) if (node.left) { references ||= node.property >= 16; nodes.push(node.left, node.right); }
   if (!references) return model;
   const edgeX = leaf(predictor), edgeY = leaf(predictor); edgeX.slot = model.leaves.length; edgeY.slot = edgeX.slot + 1;
   return {tree: split(2, 0, split(3, 0, model.tree, edgeX), edgeY), leaves: [...model.leaves, edgeX, edgeY], interior: model.tree, edgeX: edgeX.slot, edgeY: edgeY.slot};
@@ -105,7 +145,8 @@ function learnSampleTree(columns, symbolSets, candidates, population, options) {
   let alphabet = 1; for (const symbols of symbolSets) for (const symbol of symbols) alphabet = Math.max(alphabet, symbol + 1);
   const quantized = columns.map(column => ({property: column.property, ...sampleQuantize(column.values, options.bins)}));
   const histograms = ids => candidates.map((_, c) => { const hist = new Uint32Array(alphabet); for (const id of ids) hist[symbolSets[c][id]]++; return hist; });
-  const cost = hist => { let bits = sampleEntropy(hist, table); for (let s = 2; s < hist.length; s++) bits += hist[s] * (s - 1) * SAMPLE_Q; return bits; };
+  const config = options.trainConfig, rawBits = symbol => config ? symbol < config.splitToken ? 0 : ((symbol - config.splitToken) >> (config.msb + config.lsb)) + config.split - config.msb - config.lsb : Math.max(0, symbol - 1);
+  const cost = hist => { let bits = sampleEntropy(hist, table); for (let s = 0; s < hist.length; s++) bits += hist[s] * rawBits(s) * SAMPLE_Q; return bits; };
   const cheapest = hist => { let selected = 0, bits = cost(hist[0]); for (let c = 1; c < hist.length; c++) { const next = cost(hist[c]); if (next < bits) { selected = c; bits = next; } } return {selected, bits}; };
   const ids = Uint32Array.from({length: count}, (_, i) => i), hist = histograms(ids), initial = cheapest(hist), predictor = candidates[initial.selected], root = leaf(predictor);
   let active = [{node: root, ids, hist, choice: initial, depth: 0}], leaves = 1;
@@ -117,8 +158,10 @@ function learnSampleTree(columns, symbolSets, candidates, population, options) {
       for (const id of item.ids) for (let c = 0; c < candidates.length; c++) buckets[c][column.indices[id] * alphabet + symbolSets[c][id]]++;
       const low = candidates.map(() => new Uint32Array(alphabet)), high = item.hist.map(h => h.slice()); let lowCount = 0;
       for (let b = 0; b < column.cuts.length; b++) {
+        const previousCount = lowCount;
         for (let c = 0; c < candidates.length; c++) for (let s = 0; s < alphabet; s++) { const value = buckets[c][b * alphabet + s]; low[c][s] += value; high[c][s] -= value; if (!c) lowCount += value; }
-        if (lowCount < 24 || item.ids.length - lowCount < 24) continue;
+        // Empty bins repeat the same histograms; strict ties already keep the earlier cut.
+        if (lowCount === previousCount || lowCount < 24 || item.ids.length - lowCount < 24) continue;
         const lo = cheapest(low), hi = cheapest(high), gain = item.choice.bits - lo.bits - hi.bits;
         if (!best || gain > best.gain) best = {gain, column, bin: b, lo, hi};
       }
@@ -130,12 +173,12 @@ function learnSampleTree(columns, symbolSets, candidates, population, options) {
     const branch = split(best.column.property, best.column.cuts[best.bin], left, right);
     // A standalone header delta estimates the split overhead. The complete candidate still competes by its
     // actual bytes, including LZ77, against the preceding stream.
-    const signal = Math.max(0, sampleModelBits(branch, [left, right], [sampleFullFreq(best.high[best.hi.selected]), sampleFullFreq(best.low[best.lo.selected])]) - sampleModelBits(one, [one], [sampleFullFreq(item.hist[item.choice.selected])]));
+    const signal = Math.max(0, sampleModelBits(branch, [left, right], [sampleFullFreq(best.high[best.hi.selected]), sampleFullFreq(best.low[best.lo.selected])], config) - sampleModelBits(one, [one], [sampleFullFreq(item.hist[item.choice.selected])], config));
     const score = best.gain * population - (signal + 32) * SAMPLE_Q * count * (options.signalRepeats || 1);
     return score > 0 ? {...best, score} : null;
   }
   active[0].proposal = propose(active[0]);
-  const reserve = columns.some(c => c.property >= 18) ? 2 : 0;
+  const reserve = columns.some(c => c.property >= 16) ? 2 : 0;
   while (leaves < options.leaves - reserve) {
     let chosen = -1;
     for (let i = 0; i < active.length; i++) if (active[i].proposal && (chosen < 0 || active[i].proposal.score > active[chosen].proposal.score)) chosen = i;
@@ -145,7 +188,7 @@ function learnSampleTree(columns, symbolSets, candidates, population, options) {
     const left = leaf(candidates[proposal.hi.selected]), right = leaf(candidates[proposal.lo.selected]);
     Object.assign(item.node, split(proposal.column.property, proposal.column.cuts[proposal.bin], left, right));
     const children = [{node: left, ids: Uint32Array.from(hi), hist: proposal.high, choice: proposal.hi, depth: item.depth + 1}, {node: right, ids: Uint32Array.from(lo), hist: proposal.low, choice: proposal.lo, depth: item.depth + 1}];
-    for (const child of children) child.proposal = propose(child);
+    if (leaves + 1 < options.leaves - reserve) for (const child of children) child.proposal = propose(child);
     active.splice(chosen, 1, ...children); leaves++;
   }
   const ordered = active.map((item, slot) => { item.node.slot = slot; return item.node; });
@@ -155,17 +198,20 @@ function learnSampleTree(columns, symbolSets, candidates, population, options) {
 function samplePlan(plane, width, height, options, shared, previous, referenceOutput) {
   if (shared) return sampleFinishPlan(sampleTokenize(plane, width, height, null, null, shared, previous, referenceOutput), shared.predictor);
   const length = width * height, positions = samplePositions(length, options.samples), table = sampleEntropyTable(positions.length);
-  const candidates = options.weighted ? [5, 3, 6] : [5, 3];
+  const candidates = options.predictors || (options.weighted ? [5, 3, 6] : [5, 3]);
   const weighted = options.weighted ? new Uint32Array(length) : null, errors = options.weighted ? new Int32Array(length) : null;
   if (weighted) codeWeighted(null, null, plane, width, height, 0, undefined, weighted, errors);
-  const symbols = candidates.map(() => new Uint8Array(positions.length)), histograms = candidates.map(() => new Uint32Array(SAMPLE_SYMBOLS)), extras = candidates.map(() => 0);
-  const properties = [...options.properties.filter(property => property !== 15 || options.weighted), ...(options.references ? previous.map((_, i) => 18 + 4 * i) : [])], columns = properties.map(property => ({property, values: new Int32Array(positions.length)}));
+  const scratchToken = new Int32Array(3);
+  const symbols = candidates.map(() => new Uint8Array(positions.length)), histograms = candidates.map(() => new Uint32Array(options.trainConfig ? ALPHABET : SAMPLE_SYMBOLS)), extras = candidates.map(() => 0);
+  const properties = [...options.properties.filter(property => property !== 15 || options.weighted), ...(options.references ? previous.flatMap((_, i) => (options.referenceKinds || [2]).map(kind => 16 + kind + 4 * i)) : [])], columns = properties.map(property => ({property, values: new Int32Array(positions.length)}));
   for (let k = 0; k < positions.length; k++) {
     const i = positions[k], y = (i / width) | 0, x = i - y * width;
     const w = x ? plane[i - 1] : y ? plane[i - width] : 0, n = y ? plane[i - width] : w, nw = x && y ? plane[i - width - 1] : w;
     for (let c = 0; c < candidates.length; c++) {
-      const predictor = candidates[c], value = predictor === 6 ? weighted[i] : packSigned(plane[i] - (predictor === 3 ? ((w + n) / 2) | 0 : sampleGradient(w, n, nw)));
-      const symbol = 32 - Math.clz32(value); symbols[c][k] = symbol; histograms[c][symbol]++; extras[c] += Math.max(0, symbol - 1);
+      const predictor = candidates[c], value = predictor === 6 ? weighted[i] : packSigned(plane[i] - samplePrediction(predictor,plane,width,i,x,y,w,n,nw));
+      let symbol = 32 - Math.clz32(value), rawBits = Math.max(0, symbol - 1);
+      if (options.trainConfig) { hybridToken(options.trainConfig, value, scratchToken); symbol = scratchToken[0]; rawBits = scratchToken[1]; }
+      symbols[c][k] = symbol; histograms[c][symbol]++; extras[c] += rawBits;
     }
     for (const column of columns) column.values[k] = samplePropertyValue(column.property, plane, width, i, x, y, w, n, nw, errors, previous);
   }
@@ -259,7 +305,7 @@ function sampleTokenize(plane, width, height, weighted, errors, learned, previou
       ctx = node.slot;
     }
     const leafPredictor = learned.leaves[ctx].predictor;
-    const value = leafPredictor === 6 ? weighted[i] : packSigned(plane[i] - (leafPredictor === 3 ? ((w + n) / 2) | 0 : sampleGradient(w, n, nw)));
+    const value = leafPredictor === 6 ? weighted[i] : packSigned(plane[i] - samplePrediction(leafPredictor,plane,width,i,x,y,w,n,nw));
     if (referenceOutput) referenceOutput[i] = leafPredictor === 5 ? (value + 1) >> 1 : Math.abs(plane[i] - sampleGradient(w, n, nw));
     if (!value) { if (run < 8) runContexts[run] = ctx; run++; }
     else {
@@ -272,19 +318,57 @@ function sampleTokenize(plane, width, height, weighted, errors, learned, previou
   return {...learned, freqs, token, extra, bits, context, used};
 }
 
-function sampleWriteModel(writer, plans, ans = false) {
-  const leaves = plans.flatMap(samplePlan => samplePlan.leaves), freqs = plans.flatMap(samplePlan => samplePlan.freqs);
-  const configs = plans.flatMap(plan => plan.leaves.map((_, i) => plan.configs?.[i] || RESIDUAL_CONFIG));
+function sampleClusterPlan(plan, penalty) {
+  const table = sampleEntropyTable(plan.used);
+  const key = c => [c.split,c.msb,c.lsb].join(',');
+  const groups = plan.freqs.map((freq, i) => {const config=plan.configs?.[i] || RESIDUAL_CONFIG;return {freq, ids:[i], config, key:key(config), slot:i, cost:sampleEntropy(freq,table)};});
+  // Stable slots retain unchanged pair costs; the scan order still resolves ties.
+  const count=groups.length,costs=new Float64Array(count*count).fill(NaN);
+  while(groups.length>1){
+    let best=null;
+    for(let i=0;i<groups.length;i++)for(let j=i+1;j<groups.length;j++){
+      const a=groups[i],b=groups[j];if(a.key!==b.key)continue;
+      const index=a.slot*count+b.slot;
+      let cost=costs[index];
+      if(Number.isNaN(cost)){const freq=a.freq.map((value,k)=>value+b.freq[k]);cost=costs[index]=sampleEntropy(freq,table);}
+      const delta=cost-a.cost-b.cost;
+      if(delta<penalty*SAMPLE_Q&&(!best||delta<best.delta))best={i,j,cost,delta};
+    }
+    if(!best)break;
+    const a=groups[best.i],b=groups[best.j],freq=a.freq.map((value,k)=>value+b.freq[k]);
+    groups[best.i]={...a,freq,cost:best.cost,ids:[...a.ids,...b.ids]};groups.splice(best.j,1);
+    for(let i=0;i<count;i++){costs[a.slot*count+i]=NaN;costs[i*count+a.slot]=NaN;}
+  }
+  const map=new Uint8Array(plan.leaves.length);groups.forEach((g,i)=>g.ids.forEach(id=>map[id]=i));
+  return {...plan,freqs:groups.map(g=>g.freq),configs:groups.map(g=>g.config),histogramMap:map,context:plan.context.map(i=>map[i])};
+}
+
+function sampleWriteModel(writer, plans, ans = false, price = false) {
+  const histogram = new Map(); let base = 0;
+  for (const plan of plans) {
+    plan.leaves.forEach((item, i) => histogram.set(item, base + (plan.histogramMap?.[i] ?? i)));
+    base += plan.freqs.length;
+  }
+
+  const freqs = plans.flatMap(samplePlan => samplePlan.freqs);
+  const configs = plans.flatMap(plan => plan.freqs.map((_, i) => plan.configs?.[i] || RESIDUAL_CONFIG));
   const ordered = writeTree(writer, channelTree(plans.map(samplePlan => samplePlan.tree)));
-  if (ans) { const write = writeModularAnsHistograms(writer, ordered, freqs, l => leaves.indexOf(l), i => configs[i]); return () => write(plans); }
-  const histograms = writeChannelHistograms(writer, ordered, freqs, l => leaves.indexOf(l), i => configs[i]);
-  return () => {
+  if (ans) { const write = writeModularAnsHistograms(writer, ordered, freqs, l => histogram.get(l), i => configs[i]); return {write: () => write(plans)}; }
+  const histograms = writeChannelHistograms(writer, ordered, freqs, l => histogram.get(l), i => configs[i]);
+  let dataBits = 0;
+  if (price) for (let c = 0; c < freqs.length; c++) for (let s = 0; s < freqs[c].length; s++) if (freqs[c][s]) {
+    const config = s >= LZ77.minSymbol ? LZ77.lengthConfig : configs[c];
+    const symbol = s >= LZ77.minSymbol ? s - LZ77.minSymbol : s;
+    const raw = symbol < config.splitToken ? 0 : config.split - config.msb - config.lsb + ((symbol - config.splitToken) >> (config.msb + config.lsb));
+    dataBits += freqs[c][s] * (histograms[c + 1].code.lengths[s] + raw);
+  }
+  return {dataBits, write: () => {
     let offset = 1;
     for (const samplePlan of plans) {
-      const codes = histograms.slice(offset, offset + samplePlan.leaves.length).map(h => h.code); offset += samplePlan.leaves.length;
+      const codes = histograms.slice(offset, offset + samplePlan.freqs.length).map(h => h.code); offset += samplePlan.freqs.length;
       for (let i = 0; i < samplePlan.used; i++) { const code = codes[samplePlan.context[i]], symbol = samplePlan.token[i]; const length = code.lengths[symbol]; writer.write(length + samplePlan.bits[i], code.codes[symbol] + samplePlan.extra[i] * (1 << length)); }
     }
-  };
+  }};
 }
 
 function sampleProjectIntegers(plans) {
@@ -336,30 +420,38 @@ function sampleImageModel(rgba, width, height, shape, options) {
 // Every group uses its own pixels and the pass's fixed setup. Shared trees are learned once before dispatch;
 // richer trees are learned from each group's pixels on whichever thread codes it.
 export function sampledGroup(setup) {
-  const {channels, options, shared} = setup, fill = planeFill(setup);
+  const {channels, options, shared} = setup, fill = planeFill(setup, options.rctType === undefined ? undefined : colourTransform(options.rctType, channels));
   let planes;
   return (rgba, stride, x0, y0, w, h, target) => {
     if (!planes || planes[0].length < w * h) planes = Array.from({length: channels}, () => new Int16Array(w * h));
     fill(planes, rgba, stride, x0, y0, w, h);
-    const references = options.references ? planes.map((_, c) => c + 1 < channels ? new Uint16Array(w * h) : null) : [];
+    const references = options.references ? planes.map((_, c) => c + 1 < channels ? Object.assign(new Uint16Array(w * h), {plane: planes[c]}) : null) : [];
     const plans = planes.map((plane, c) => samplePlan(plane, w, h, options, shared?.[c], references.slice(0, c).reverse(), references[c]));
-    const encode = (ans, section = new BitWriter(w * h * channels + 256)) => {
+    const prepare = (ans, section = new BitWriter(options.ans && !ans ? 256 : w * h * channels + 256), models = plans) => {
       if (!target) writeModularHeader(section, {useGlobalTree: false});
-      const write = sampleWriteModel(section, plans, ans);
-      if (target) writeModularHeader(section, {transforms: channels >= 3 ? [{type: 'rct', beginC: 0, rctType: 6}] : []});
-      write();
-      return section;
+      const model = sampleWriteModel(section, models, ans, options.ans && !ans);
+      if (target) writeModularHeader(section, {transforms: channels >= 3 ? [{type: 'rct', beginC: 0, rctType: options.rctType ?? 6}] : []});
+      return {section, ...model};
     };
-    if (!options.ans) { const section = encode(false, target); return target ? undefined : section.finish(); }
-    let section = encode(false);
-    const ans = encode(true), offset = target?.bitLength || 0;
-    if (Math.ceil((offset + ans.bitLength) / 8) < Math.ceil((offset + section.bitLength) / 8)) section = ans;
-    if (options.hybrid) {
-      sampleProjectIntegers(plans);
-      for (const entropy of [false, true]) {
-        const candidate = encode(entropy);
-        if (Math.ceil((offset + candidate.bitLength) / 8) < Math.ceil((offset + section.bitLength) / 8)) section = candidate;
+    if (!options.ans) { const model = prepare(false, target); model.write(); return target ? undefined : model.section.finish(); }
+    const offset = target?.bitLength || 0, bytes = bits => Math.ceil((offset + bits) / 8);
+    const choose = (best, models = plans) => {
+      const prefix = prepare(false, undefined, models), ans = prepare(true, undefined, models);
+      ans.write();
+      const prefixBytes = bytes(prefix.section.bitLength + prefix.dataBits), ansBytes = bytes(ans.section.bitLength);
+      const bestBytes = best ? bytes(best.bitLength) : Infinity;
+      // Exact histogram prices include raw bits and padding. Equal sizes keep the earlier prefix candidate.
+      if (prefixBytes < bestBytes && prefixBytes <= ansBytes) {
+        if (prefix.section.at + Math.ceil(prefix.dataBits / 8) + 5 >= prefix.section.bytes.length) prefix.section.grow(Math.ceil(prefix.dataBits / 8));
+        prefix.write(); return prefix.section;
       }
+      return ansBytes < bestBytes ? ans.section : best;
+    };
+    let section = choose(null);
+    for (const penalty of options.sharing || []) section = choose(section, plans.map(plan => sampleClusterPlan(plan, penalty)));
+    if (options.hybrid) {
+      sampleProjectIntegers(plans); section = choose(section);
+      for (const penalty of options.sharing || []) section = choose(section, plans.map(plan => sampleClusterPlan(plan, penalty)));
     }
     if (target) { target.append(section); return; }
     return section.finish();
@@ -373,7 +465,7 @@ export function* sampledSteps(rgba, width, height, shape, colorSpace, options, p
   if (options.leaves > maxLeaves) options = {...options, leaves: maxLeaves};
   const shared = options.shared ? sampleImageModel(rgba, width, height, shape, options) : null;
   const setup = {channels, alpha: shape.alpha, palette: null, options, shared, dim}, group = sampledGroup(setup);
-  const header = new BitWriter(128), global = new BitWriter(1024), sections = [], transforms = channels >= 3 ? [{type: 'rct', beginC: 0, rctType: 6}] : [];
+  const header = new BitWriter(128), global = new BitWriter(1024), sections = [], transforms = channels >= 3 ? [{type: 'rct', beginC: 0, rctType: options.rctType ?? 6}] : [];
   writeImageHeader(header, width, height, shape.colour, shape.alpha, {colorSpace}); writeModularFrameHeader(header, {alpha: shape.alpha, shift: dim === 1024 ? 3 : dim === 512 ? 2 : 1});
   let sectionBytes = 0;
   const append = bytes => { sectionBytes += bytes.length; admitOutputSize(sectionBytes); sections.push(bytes); return bytes; };

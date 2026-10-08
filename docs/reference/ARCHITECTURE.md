@@ -5,6 +5,8 @@ JPEG coefficient carrying, photographic pixel encoding, source-file parsing and 
 
 | Need | Entry point | Self-contained file |
 | --- | --- | --- |
+| Complete Rapier encoder and worker installer | `rapier-jxl/rapier` | `dist/rapier.min.mjs` |
+| Complete self-starting Rapier worker | `rapier-jxl/rapier/worker` | `dist/rapier-worker.js` |
 | RGBA, lossless or lossy | `rapier-jxl` or `rapier-jxl/core` | `dist/rapier-jxl.min.mjs` |
 | Lossless compression search | `rapier-jxl/effort` | `dist/effort.min.mjs` |
 | Same search with optional WASM | `rapier-jxl/wasm` | `dist/wasm.min.mjs` |
@@ -73,7 +75,7 @@ Use HTTP for relative browser module imports; the embedded example above also wo
 Each encoder can run in a module worker. The [worker example](../../examples/worker.mjs) imports readable modules
 from the package's `src/` directory; preserve those paths or adjust them when copying it.
 
-Calls and generator steps are synchronous. Workers keep encoding off the page thread; leaving a job's iteration
+Core calls and effort generator steps are synchronous. The complete Rapier factory returns promises. Workers keep encoding off the page thread; leaving a job's iteration
 cancels it, while `job.hurry = true` requests a completed candidate. Transferring an input buffer detaches it from the
 sender. [Jobs, inputs and cancellation](API.md#progress-and-cancellation).
 
@@ -112,6 +114,11 @@ or weighted prediction; neighbor differences, weighted errors and previous-chann
 Groups are up to 1,024 pixels on a side. Increasing effort adds larger sample and leaf budgets while retaining all
 lower-level candidates. [Effort levels](API.md#lossless-effort).
 
+Effort 9 also considers all 14 predictors, spatial coordinates, signed neighbor and previous-channel values,
+hybrid-integer training costs and another reversible color transform. Histogram sharing keeps the learned
+predictors and tree intact. Shared and separate histograms compete by complete prefix/ANS bytes. Every earlier
+candidate remains eligible; these additional models use at most 65,536 training samples per group.
+
 A group owns its model and token buffers. The selected model is written after sample-based decisions; full image
 pixels do not enter the split search. Worker results are placed in group order, independent of completion order.
 The explicit `treeLearning: 'sampled'` option selects the separate reduced search described in the API.
@@ -127,6 +134,7 @@ integer formats up to 12 bits use a bare codestream.
 
 Planes and token buffers belong to a group; learning uses bounded sample arrays. Larger groups, higher effort and
 additional workers use more memory. A worker keeps typed copies of its tiles, preserving offsets and IEEE words.
+The optional weighted-prediction WASM arena can retain about 17 MiB in each worker after a large group.
 Input arrays remain caller-owned. Dimension limits are admission bounds, not a guarantee that every device can
 allocate the largest image. [Precision, bounds and limits](API.md).
 
@@ -134,19 +142,57 @@ allocate the largest image. [Precision, bounds and limits](API.md).
 
 | File in `dist/` | Bytes | gzip | Brotli |
 | --- | ---: | ---: | ---: |
-| `rapier-jxl.min.mjs` | 27,557 | 11,642 | 10,376 |
-| `effort.min.mjs` | 73,716 | 28,614 | 24,921 |
-| `wasm.min.mjs` | 87,139 | 34,838 | 30,294 |
-| `jpeg.min.mjs` | 33,297 | 13,851 | 12,250 |
-| `photo.min.mjs` | 38,928 | 15,811 | 13,998 |
-| `jpeg-ans.min.mjs` | 36,636 | 15,046 | 13,319 |
-| `photo-ans.min.mjs` | 42,111 | 16,963 | 15,010 |
+| `rapier-worker.js` | 126,743 | 50,021 | 43,277 |
+| `rapier.min.mjs` | 126,888 | 50,075 | 43,323 |
+| `rapier-jxl.min.mjs` | 27,603 | 11,670 | 10,395 |
+| `effort.min.mjs` | 77,117 | 30,013 | 26,093 |
+| `wasm.min.mjs` | 90,861 | 36,336 | 31,470 |
+| `jpeg.min.mjs` | 33,343 | 13,882 | 12,276 |
+| `photo.min.mjs` | 38,974 | 15,837 | 14,028 |
+| `jpeg-ans.min.mjs` | 36,682 | 15,077 | 13,359 |
+| `photo-ans.min.mjs` | 42,157 | 16,987 | 15,042 |
 | `metadata.min.mjs` | 4,964 | 2,560 | 2,147 |
-| All self-contained entry points in one bundle | 119,721 | 47,462 | 40,976 |
-| All readable modules in `src/` | 324,498 | 98,010 | |
+| All self-contained entry points in one bundle | 141,450 | 55,841 | 47,919 |
+| All readable modules in `src/` | 339,780 | 102,804 | |
 
-Release 3.0.0, Terser 5.51.2, Node v22.23.3, gzip 9 and Brotli 11. Exact byte counts, import graphs, hashes
+Release 3.1.0, Terser 5.51.2, Node v22.23.3, gzip 9 and Brotli 11. Exact byte counts, import graphs, hashes
 and incremental sizes are in [dist/sizes.json](../../dist/sizes.json). Encoding builds are checked against their
 readable entries on encoded-byte fixtures and native integer/float cases with HDR and alpha declarations. The metadata
 build is checked against its readable entry for identical container bytes.
 [Measured encoder comparisons](../ENCODER-COMPARISON.md).
+
+## Complete Rapier worker
+
+`dist/rapier-worker.js` is the complete self-starting worker embedded by Rapier. The package and app use one builder
+and the same MIT modules. Its exact bytes, gzip size, source version and module graph are recorded in
+[dist/sizes.json](../../dist/sizes.json); the app records the same worker SHA-256 in its build receipt.
+
+Copy the file beside a served page and use `new Worker('./rapier-worker.js')`. For one offline HTML file:
+
+```html
+<script type="text/plain" id="rapier-jxl-worker">
+/* Paste the complete dist/rapier-worker.js here, including its MIT notice. */
+</script>
+<script type="module">
+const url = URL.createObjectURL(new Blob([
+  document.getElementById('rapier-jxl-worker').textContent
+], {type: 'text/javascript'}));
+const worker = new Worker(url);
+worker.onmessage = ({data}) => console.log(data);
+worker.postMessage({id: 1, operation: 'encode', width: 1, height: 1,
+  data: new Uint8Array([255, 0, 0, 255]), options: {lossless: true}});
+// Keep the URL available while the worker can create helpers.
+// After the final response: worker.terminate(); URL.revokeObjectURL(url);
+</script>
+```
+
+To add your own module-worker behavior, import the complete module in that worker:
+
+```js
+import {installWorker} from 'rapier-jxl/rapier/min';
+installWorker({spawn: () => new Worker(import.meta.url, {type: 'module'})});
+```
+
+Every helper must run the same worker bootstrap and build as its coordinator. Readable and independently minified
+builds do not share a pool protocol. The published classic worker handles this itself.
+[Requests, defaults, input custody and errors](API.md#complete-rapier-system).

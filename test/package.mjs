@@ -10,6 +10,7 @@ import {dirname, join, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {gzipSync} from 'node:zlib';
+import {Worker} from 'node:worker_threads';
 import {pixelCase} from './fuzz-cases.mjs';
 import {integerFixture, png16Fixture, floatFixture} from './high-depth-fixtures.mjs';
 
@@ -82,9 +83,77 @@ test('the standalone metadata entry preserves the readable container bytes', asy
   assert.deepEqual(standalone.withMetadata(bytes, options), readable.withMetadata(bytes, options));
 });
 
+test('the complete standalone entry and published worker preserve readable encoding results', {timeout: 60000}, async () => {
+  const readable = (await entry('/rapier')).createEncoder();
+  const moduleBytes = await readFile(require.resolve('rapier-jxl/rapier/min'));
+  const standalone = (await import('data:text/javascript;base64,' + moduleBytes.toString('base64'))).createEncoder();
+  const workerBytes = await readFile(require.resolve('rapier-jxl/rapier/worker'), 'utf8');
+  const worker = new Worker(`const {parentPort} = require('node:worker_threads');
+globalThis.postMessage = (...args) => parentPort.postMessage(...args);
+${workerBytes}
+parentPort.on('message', data => globalThis.onmessage({data}));`, {eval: true});
+  let serial = 0;
+  const ask = request => new Promise((resolve, reject) => {
+    const done = reply => { worker.off('error', fail); resolve(reply); };
+    const fail = error => { worker.off('message', done); reject(error); };
+    worker.once('message', done); worker.once('error', fail); worker.postMessage({...request, id: ++serial});
+  });
+  const width = 64, height = 33, data = new Uint8Array(width * height * 4);
+  for (let p = 0; p < width * height; p++) data.set([p & 255, p >> 8, p * 17 & 255, p % 3 ? 255 : 0], p * 4);
+  const native = integerFixture(12);
+  const cases = [
+    {image: {data, width, height}, options: {lossless: true, effort: 2, colorSpace: 'display-p3'}},
+    {image: {data, width, height}, options: {photo: true, quality: 90, effort: 1}},
+    {image: {data: native.data, width: native.width, height: native.height}, options: {...native.options, lossless: true, effort: 2, colorSpace: 'rec2020', transferFunction: 'pq', intensityTarget: 10000}},
+  ];
+  try {
+    for (const {image, options} of cases) {
+      const before = image.data.slice(), expected = await readable.encode(image, options);
+      assert.deepEqual(await standalone.encode(image, options), expected);
+      const reply = await ask({operation: 'encode', ...image, options});
+      assert.equal(reply.id, serial); assert.equal(reply.ok, true, JSON.stringify(reply.error));
+      assert.deepEqual(reply.bytes, expected); assert.deepEqual(image.data, before);
+    }
+    const jpeg = new Uint8Array(await readFile(new URL('seeds/colour-sequential.jpg', import.meta.url)));
+    const expected = await readable.transcode({bytes: jpeg});
+    assert.deepEqual(await standalone.transcode({bytes: jpeg}), expected);
+    const reply = await ask({operation: 'transcode', bytes: jpeg});
+    const {id, ok, ...carried} = reply;
+    assert.equal(id, serial); assert.equal(ok, true, JSON.stringify(reply.error)); assert.deepEqual(carried, expected);
+    const refused = await ask({operation: 'encode', width: 2, height: 1, data: new Uint8Array(4)});
+    assert.equal(refused.ok, false); assert.equal(refused.error.code, 'JXL_RGBA');
+    const image = {data: Uint8Array.of(91, 32, 11, 0), width: 1, height: 1}, options = {lossless: true, effort: 1};
+    const recovered = await ask({operation: 'encode', ...image, options});
+    assert.equal(recovered.ok, true); assert.deepEqual(recovered.bytes, await readable.encode(image, options));
+  } finally { await worker.terminate(); }
+});
+
+test('complete packed entries preserve serial bytes through real parallel groups', {timeout: 60000}, async () => {
+  const width = 2048, height = 1280, data = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) data.set([x & 255, y & 255, (x + y) & 255, x % 37 ? 255 : 0], (y * width + x) * 4);
+  const before = createHash('sha256').update(data).digest('hex');
+  const options = {lossless: true, effort: 1};
+  const expected = await (await entry('/rapier')).createEncoder().encode({data, width, height}, options);
+  for (const name of ['/rapier', '/rapier/min', '/rapier/worker']) {
+    const worker = new Worker(new URL('rapier-worker.mjs', import.meta.url), {workerData: {file: require.resolve('rapier-jxl' + name), classic: name.endsWith('/worker')}});
+    let helpers = 0;
+    try {
+      const reply = await new Promise((resolve, reject) => {
+        worker.once('error', reject);
+        worker.on('message', value => value.spawn ? helpers++ : resolve(value));
+        worker.postMessage({id: name, operation: 'encode', data, width, height, options});
+      });
+      assert.equal(reply.id, name); assert.equal(reply.ok, true, JSON.stringify(reply.error));
+      assert.ok(helpers >= 2, name + ' must use real helper workers'); assert.deepEqual(reply.bytes, expected, name);
+    } finally { await worker.terminate(); }
+  }
+  assert.equal(createHash('sha256').update(data).digest('hex'), before);
+});
+
 test('the published size receipt measures the packed encoder files', async () => {
   const receipt = JSON.parse(await readFile(join(root, 'dist/sizes.json'), 'utf8'));
-  for (const door of receipt.doors) {
+  const entries = [...receipt.doors, {entry: 'rapier/worker', file: receipt.rapierWorker.file, alone: receipt.rapierWorker}];
+  for (const door of entries) {
     const bytes = await readFile(join(root, door.file));
     assert.equal(bytes.length, door.alone.bytes, door.entry);
     assert.equal(gzipSync(bytes, {level: 9}).length, door.alone.gzip, door.entry);

@@ -82,8 +82,8 @@ export function ceilLog2(value) { return value <= 1 ? 0 : 32 - Math.clz32(value 
 
 // IEEE half precision, round to nearest even, as the specification's F16 fields.
 export function float16Bits(value) {
-  if (value === 0) return 0;
-  const sign = value < 0 ? 0x8000 : 0;
+  const sign = value < 0 || Object.is(value, -0) ? 0x8000 : 0;
+  if (value === 0) return sign;
   value = Math.abs(value);
   if (!(value < 65520)) throw new Error('half float out of range: ' + value);
   // The exponent by halving and doubling, both exact (Math.log2 rounds differently in each engine).
@@ -92,7 +92,10 @@ export function float16Bits(value) {
   while (mantissa < 1) { mantissa *= 2; exponent--; }
   if (exponent < -14) { mantissa = value * 16384; exponent = -15; }
   else mantissa -= 1;
-  let m = Math.round(mantissa * 1024);
+  const scaled = mantissa * 1024;
+  let m = Math.round(scaled);
+  // Halfway values choose the even significand, including the subnormal-to-normal carry.
+  if (m - scaled === 0.5 && (m & 1)) m--;
   if (m === 1024) { m = 0; exponent++; }
   return sign | ((exponent + 15) << 10) | m;
 }

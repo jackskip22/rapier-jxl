@@ -12,7 +12,7 @@ const DIV = 16, WEIGHTS = 272, BUCKET = 16656, MAP = 20672, ALPHABET = 257;
 const CUTS = [-500,-392,-255,-191,-127,-95,-63,-47,-31,-23,-15,-11,-7,-4,-3,-1,0,1,3,5,7,11,15,23,31,47,63,95,127,191,255,392,500];
 let engine, active = 'off';
 const decode = text => Uint8Array.from(atob(text), c => c.charCodeAt(0));
-const acceptablePlane = (p, w, h, offset) => p instanceof Int16Array && Number.isInteger(w) && Number.isInteger(h) && w > 0 && h > 0 && w <= 16384 && w * h <= 65536 && p.length >= w * h && Number.isInteger(offset) && Math.abs(offset) <= 32768;
+const acceptablePlane = (p, w, h, offset, limit = 65536) => p instanceof Int16Array && Number.isInteger(w) && Number.isInteger(h) && w > 0 && h > 0 && w <= 16384 && w * h <= limit && p.length >= w * h && Number.isInteger(offset) && Math.abs(offset) <= 32768;
 const acceptableWriter = w => !w || (w instanceof BitWriter && w.write === BitWriter.prototype.write && w.grow === BitWriter.prototype.grow);
 // A hybrid-integer configuration the kernels write: split up to 15, msb and lsb within it, and every token a residual below
 // 2^19 can take inside the 224 symbols below the LZ77 lengths. A raw histogram (lossless-coding.mjs) is bins for the
@@ -77,19 +77,30 @@ function channel(w, target, plane, width, height, leaf, raw) {
   return tokens(w, [target], n, 0, config, raw ? target.length : 0);
 }
 function weighted(w, targets, plane, width, height, offset, contextOf, residuals, properties) {
-  if (!acceptablePlane(plane, width, height, offset) || !acceptableWriter(w)) return false;
-  const n = width * height, {i32, scalar} = engine;
+  if (!acceptablePlane(plane, width, height, offset, residuals ? 1048576 : 65536) || !acceptableWriter(w)) return false;
+  const n = width * height;
   if (w && w.at + n * 8 + 32 > LIMITS.bytes) return false;
   if (residuals && (!(residuals instanceof Uint32Array) || residuals.length < n)) return false;
   if (properties && (!(properties instanceof Int32Array) || properties.length < n)) return false;
   if (contextOf.length !== 34 || contextOf.some(c => !Number.isInteger(c) || c < 0 || c >= 34)) return false;
   if (!residuals && contextOf.some(c => c >= targets.length)) return false;
+  // Learned 1024-pixel groups need residuals and properties, not the small token arena.
+  const large = n > 65536, residual = large ? P + n * 4 : R, property = large ? P + n * 8 : PROPERTY;
+  const context = large ? P + n * 12 : CONTEXT, state = large ? P + n * 16 : STATE;
+  const needed = state + (width + 2) * 40;
+  if (needed > engine.memory.buffer.byteLength) {
+    try { engine.memory.grow(Math.ceil((needed - engine.memory.buffer.byteLength) / 65536)); }
+    catch { return false; }
+    engine.u8 = new Uint8Array(engine.memory.buffer);
+    engine.i32 = new Int32Array(engine.memory.buffer);
+  }
+  const {i32, scalar} = engine;
   i32.set(plane.subarray(0, n), P >> 2); i32.set(contextOf, MAP >> 2);
-  i32.fill(0, STATE >> 2, (STATE >> 2) + (width + 2) * 10);
-  scalar.weighted(P, width, height, offset, R, PROPERTY, CONTEXT, MAP, BUCKET, DIV, WEIGHTS, STATE);
+  i32.fill(0, state >> 2, (state >> 2) + (width + 2) * 10);
+  scalar.weighted(P, width, height, offset, residual, property, context, MAP, BUCKET, DIV, WEIGHTS, state);
   if (residuals) {
-    residuals.set(i32.subarray(R >> 2, (R >> 2) + n));
-    if (properties) properties.set(i32.subarray(PROPERTY >> 2, (PROPERTY >> 2) + n));
+    residuals.set(i32.subarray(residual >> 2, (residual >> 2) + n));
+    if (properties) properties.set(i32.subarray(property >> 2, (property >> 2) + n));
     return true;
   }
   if (properties) properties.set(i32.subarray(PROPERTY >> 2, (PROPERTY >> 2) + n));

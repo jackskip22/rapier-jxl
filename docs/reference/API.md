@@ -75,7 +75,7 @@ result, so equal lengths keep the earlier candidate.
 | 6 | Joint context/predictor learning in groups up to 1,024 × 1,024 pixels, per-group prefix/ANS selection, and local gradient contexts. |
 | 7 | 4,096 samples and up to 32 leaves per channel in the joint model. |
 | 8 | 8,192 samples and up to 32 leaves per channel. |
-| 9 | Adds 16,384- and 32,768-sample models with up to 48 leaves per channel, then a 65,536-sample model with up to 64 leaves per channel (63 for RGBA). |
+| 9 | Adds models up to 65,536 samples and 64 leaves per channel (63 for RGBA), all 14 predictors, spatial and signed channel properties, hybrid-aware learning, another color transform and shared histograms. |
 
 Higher effort spends more time searching for smaller lossless files. There is no automatic deadline.
 Set `job.hurry` to finish with a completed result. [Screen coding](../SCREENSHOTS.md).
@@ -247,3 +247,40 @@ Raw writer primitives require their documented preconditions; their errors are n
 
 Kernel configuration uses the same `JXL_INPUT` code for an invalid mode. Missing or blocked WebAssembly selects
 JavaScript. [Kernel controls](../KERNELS.md).
+
+## Complete Rapier system
+
+`rapier-jxl/rapier` and `/rapier/min` expose the complete encoder used by Rapier. The self-starting classic worker is
+`rapier-jxl/rapier/worker` (`dist/rapier-worker.js`). It includes effort search, optional WASM with JavaScript fallback,
+photographic pixel encoding, JPEG coefficient transcoding and parallel lossless groups. There is no decoder.
+
+In a worker or Node:
+
+```js
+import {createEncoder} from 'rapier-jxl/rapier/min';
+const encoder = createEncoder();
+const bytes = await encoder.encode({data: rgba, width, height}, {lossless: true, effort: 9});
+const carried = await encoder.transcode({bytes: jpegBytes});
+```
+
+`encode(image, options)` accepts the typed RGBA formats and color declarations above. Defaults are quality 90 and
+effort 9. `lossless: true` forces quality 100. `photo: true` selects photographic coding for non-palette RGBA8 below
+quality 100; other inputs use the ordinary pixel encoder. The complete entry admits 24 million pixels,
+16,384 pixels per edge and 16 MiB output. JPEG input admits 16 MiB and 64 million pixels; transcoding uses effort 9,
+preserves admitted coefficients and orientation, and does not preserve the original JPEG file.
+
+The standard worker accepts one operation at a time:
+
+- `{id, operation: 'encode', data, width, height, options?}` returns `{id, ok: true, bytes}`.
+- `{id, operation: 'transcode', bytes}` returns `{id, ok: true, bytes, width, height, orientation}`.
+- A failure returns `{id, ok: false, error: {code, message, stage?, detail?}}`. A concurrent request returns `JXL_BUSY`.
+
+Use a string or number `id` whose string representation is at most 128 characters. Output buffers transfer to the
+caller. Passing an input buffer in `postMessage`'s transfer list detaches it from the sender. Terminate the worker to
+cancel the whole operation. The complete entry runs off the browser document thread; call it from a worker.
+
+`installWorker()` installs this protocol in a worker that imports the module. For a module-worker bootstrap, pass
+`{spawn: () => new Worker(import.meta.url, {type: 'module'})}` so helpers run the same bootstrap and build. The
+published classic worker needs no configuration. It uses up to four helpers, subject to hardware concurrency, for
+lossless images with at least 40 initial 256-pixel groups. Failed helpers fall back to the same local encoding.
+`kernelMode()` reports the selected kernel mode after the first encode. Input arrays passed to `encode` remain unchanged.
