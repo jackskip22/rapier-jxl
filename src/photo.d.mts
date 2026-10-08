@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT
 import type {Pixels, Bytes, EncodeOptions, Job, Limits} from './index.mjs';
 export type {Pixels, Bytes, ColorSpace, SampleFormat, TransferFunction, Limits, EncodeOptions, ErrorCode, EncoderError, Job} from './index.mjs';
-/** This door's limits, by its memory: the 16 MiB codestream, 40 million pixels, 16,384 on a side. */
+/** Limits: 16 MiB output, 40 million pixels, 16,384 pixels per side. */
 export const LIMITS: Limits;
 export interface PhotoOptions extends EncodeOptions {
-  /** Whole number 1 to 9; default 1. Higher efforts search for smaller photographic streams. */
+  /** Integer from 1 to 9; default 1. Higher efforts search for smaller photographic streams. */
   effort?: number | undefined;
 }
-/** Ordinary 8-bit photographs: DCT8 coefficients with exact alpha; quality 90 by default, 100 is exact.
- * Native precision and HDR declarations use the shared modular source path with source-domain quantisation.
- * Effort 1 is the default; 3 tries a cluster budget, 4 also a learned order, preserving reconstructed pixels.
- * Effort 5 adds per-block quantisation within effort 1's unclipped RGB sample reconstruction-error
- * model, retaining the preceding stream unless the complete candidate is smaller. Optional searches beyond their
- * memory estimate keep the preceding stream; this door's input limits do not change with effort. */
+/** Encode 8-bit photographs with DCT8 and exact alpha. Quality defaults to 90; 100 preserves all samples.
+ * Native precision and HDR use modular coding with source-domain quantization.
+ * Effort 3 adds clustering; 4 adds a learned coefficient order. Both preserve reconstructed pixels.
+ * Effort 5 adds per-block quantization within effort 1's unclipped RGB reconstruction-error model.
+ * Candidates replace the preceding stream only when smaller. Searches exceeding their memory estimate retain
+ * the preceding stream. Input limits do not depend on effort. */
 export function encodePhoto(data: Pixels, width: number, height: number, options?: PhotoOptions): Bytes;
-/** encodePhoto's work and bytes as steps; the call is admitted at once. */
+/** Incremental encodePhoto with immediate input validation. */
 export function encodePhotoSteps(data: Pixels, width: number, height: number, options?: PhotoOptions): Job;

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
-// A complete worker around Rapier JXL: post {id, op: 'encode' or 'photo', data, width, height, ...options} or
-// {id, op: 'transcode', jpeg, effort}; receive {id, progress} while it works, then {id, ok: true, bytes, width, height,
-// orientation} or {id, ok: false, code, message}. {id, op: 'abort'} ends a request between steps. 'encode' takes an
-// effort (the effort door; 1, its default, writes the core's bytes) and a deadline in milliseconds: past it the search
-// is hurried and answers with the smallest stream written so far, never larger than effort 1's. Bytes are transferred.
+// Requests: {id, op: 'encode' | 'photo', data, width, height, ...options} or {id, op: 'transcode', jpeg, effort}.
+// Responses: {id, progress}, then {id, ok: true, bytes, width, height, orientation} or {id, ok: false, code, message}.
+// {id, op: 'abort'} cancels between steps. The encode entry point defaults to effort 1. A deadline in milliseconds
+// ends search with the smallest completed stream, at most effort 1's size. Output buffers transfer to the caller.
 import {encodeSteps} from '../src/effort.mjs';
 import {transcodeSteps} from '../src/jpeg.mjs';
 import {encodePhotoSteps} from '../src/photo.mjs';
@@ -25,7 +24,7 @@ self.onmessage = async event => {
     const hurryAt = ask.deadline >= 0 ? shown + ask.deadline : Infinity;
     for (const done of job) {
       if (performance.now() >= hurryAt) job.hurry = true;
-      // Every 50 ms the worker takes its messages (an abort among them) and reports progress; leaving is the cancel.
+      // Yield every 50 ms to receive cancellation messages and report progress.
       if (performance.now() - shown < 50) continue;
       self.postMessage({id, progress: done});
       await turn();

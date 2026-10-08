@@ -19,11 +19,15 @@ import {encodePhoto as photoANS} from 'rapier-jxl/photo-ans';
 import {encodePhoto as photoANSMin} from 'rapier-jxl/photo-ans/min';
 import * as writer from 'rapier-jxl/writer';
 import {readSource, type SourceImage} from 'rapier-jxl/source';
+import {withMetadata, type MetadataOptions} from 'rapier-jxl/metadata';
+import {withMetadata as metadataMin} from 'rapier-jxl/metadata/min';
 
 const pixels = new Uint8ClampedArray([12, 34, 56, 78]);
 const space: ColorSpace = 'display-p3';
 const encoded: Bytes = encode(pixels, 1, 1, {quality: 100, colorSpace: space});
 new Blob([encoded], {type: 'image/jxl'});
+const metadata: MetadataOptions = {xmp: '<x:xmpmeta xmlns:x="adobe:ns:meta/"/>'};
+new Blob([withMetadata(encoded, metadata), metadataMin(encoded, metadata)], {type: 'image/jxl'});
 const owned: ArrayBuffer = encoded.buffer;
 const stepped: Job = encodeSteps(pixels, 1, 1);
 for (const fraction of stepped) {

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
-// Effort-only screen coding. A fixed 256-sample gate rejects textured pictures
-// without allocating an image-sized scratch buffer. The core never imports this.
+// Lossless screen models for the effort entry point. A fixed sample rejects textured images without image-sized scratch buffers.
 import {BitWriter, packSigned, complete} from './bits.mjs';
-import {writeImageHeader, writeModularFrameHeader, groupLayout, assembleCodestream, GROUP_DIM} from './frame.mjs';
+import {writeImageHeader, writeModularFrameHeader, groupLayout, groupPass, addCounts, assembleCodestream, GROUP_DIM} from './frame.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
-import {screenModel, writeScreenModel} from './screen-lz77.mjs';
+import {screenModel, writeScreenModel, screenLZ77} from './screen-lz77.mjs';
 import {admitOutputSize} from './admit.mjs';
 import {ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
 
@@ -38,6 +37,36 @@ export function screenLike(rgba, width, height) {
 const screenValueAt = (rgba, i, c, shape) => rgba[i + (shape.colour === 1 && c === 1 ? 3 : c)];
 const screenPacked = (rgba, i) => rgba[i] + rgba[i + 1] * 256 + rgba[i + 2] * 65536 + rgba[i + 3] * 16777216;
 
+// Palette order is learned once from the frame. The immutable mapping is also the worker setup; filling a tile
+// must use that same order rather than rebuilding a palette from its subset of colours.
+function screenFill(setup) {
+  const {mode, channels, colour, index, maps} = setup;
+  return (planes, rgba, stride, x0, y0, w, h) => {
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const p = ((y0 + y) * stride + x0 + x) * 4, at = y * w + x;
+      if (mode === 'global' || mode === 'frequency') planes[0][at] = index.get(screenPacked(rgba, p));
+      else if (mode === 'scalar') {
+        for (let c = 0; c < channels; c++) {
+          const value = rgba[p + (colour === 1 && c === 1 ? 3 : c)];
+          planes[c][at] = maps[c] ? maps[c][value] : value;
+        }
+      } else if (channels >= 3) {
+        const co = rgba[p] - rgba[p + 2], tmp = rgba[p + 2] + (co >> 1), cg = rgba[p + 1] - tmp;
+        planes[0][at] = tmp + (cg >> 1); planes[1][at] = co; planes[2][at] = cg;
+        if (channels === 4) planes[3][at] = rgba[p + 3];
+      } else {
+        planes[0][at] = rgba[p];
+        if (channels === 2) planes[1][at] = rgba[p + 3];
+      }
+    }
+  };
+}
+function screenPlanned(rgba, width, meta, transforms, setup) {
+  const fill = screenFill(setup);
+  return {mode: setup.mode, count: setup.count, meta, transforms, setup,
+    fill: (planes, x0, y0, w, h) => fill(planes, rgba, width, x0, y0, w, h)};
+}
+
 // A whole-colour palette in integer-key or frequency order, including the
 // actual zero colour only when present; or sparse scalar channel palettes.
 export function screenPlan(rgba, width, height, shape, mode = 'global') {
@@ -68,17 +97,7 @@ export function screenPlan(rgba, width, height, shape, mode = 'global') {
         rows[c * n + i] = (colours[i] >>> (8 * (shape.colour === 1 && c === 1 ? 3 : c))) & 255;
     meta.push({plane: rows, width: n, height: channels});
     transforms.push({type: 'palette', beginC: 0, numC: channels, nbColors: n});
-    return {
-      mode,
-      meta,
-      transforms,
-      count: 1,
-      fill: (planes, x0, y0, w, h) => {
-        for (let y = 0; y < h; y++)
-          for (let x = 0; x < w; x++)
-            planes[0][y * w + x] = seen.get(screenPacked(rgba, ((y0 + y) * width + x0 + x) * 4));
-      }
-    };
+    return screenPlanned(rgba, width, meta, transforms, {mode, count: 1, channels, colour: shape.colour, index: seen});
   }
   if (mode === 'scalar') {
     const maps = Array.from({length: channels}, () => new Int16Array(256).fill(-1));
@@ -98,51 +117,40 @@ export function screenPlan(rgba, width, height, shape, mode = 'global') {
       meta.unshift({plane: Int16Array.from(values), width: values.length, height: 1});
     }
     if (!meta.length) return null;
-    return {
-      mode,
-      meta,
-      transforms,
-      count: channels,
-      fill: (planes, x0, y0, w, h) => {
-        for (let y = 0; y < h; y++)
-          for (let x = 0; x < w; x++) {
-            const p = ((y0 + y) * width + x0 + x) * 4;
-            for (let c = 0; c < channels; c++) {
-              const v = screenValueAt(rgba, p, c, shape);
-              planes[c][y * w + x] = maps[c] ? maps[c][v] : v;
-            }
-          }
-      }
-    };
+    return screenPlanned(rgba, width, meta, transforms, {mode, count: channels, channels, colour: shape.colour, maps});
   }
-  return {
-    mode: 'direct',
-    meta,
-    transforms: channels >= 3 ? [{type: 'rct', beginC: 0, rctType: 6}] : [],
-    count: channels,
-    fill: (planes, x0, y0, w, h) => {
-      for (let y = 0; y < h; y++)
-        for (let x = 0; x < w; x++) {
-          const p = ((y0 + y) * width + x0 + x) * 4,
-            at = y * w + x;
-          if (channels >= 3) {
-            const co = rgba[p] - rgba[p + 2],
-              tmp = rgba[p + 2] + (co >> 1),
-              cg = rgba[p + 1] - tmp;
-            planes[0][at] = tmp + (cg >> 1);
-            planes[1][at] = co;
-            planes[2][at] = cg;
-            if (channels === 4) planes[3][at] = rgba[p + 3];
-          } else {
-            planes[0][at] = rgba[p];
-            if (channels === 2) planes[1][at] = rgba[p + 3];
-          }
-        }
+  return screenPlanned(rgba, width, meta, channels >= 3 ? [{type: 'rct', beginC: 0, rctType: 6}] : [],
+    {mode: 'direct', count: channels, channels, colour: shape.colour});
+}
+
+// A complete format group retains its prediction edges and LZ history on either thread. Deep groups own their
+// complete model; global-model groups return additive histograms or emit the coordinator's selected codes.
+export function screenGroup(setup) {
+  const fill = screenFill(setup.plan);
+  let planes;
+  return (rgba, stride, x0, y0, w, h, target) => {
+    if (!planes || planes[0].length < w * h) planes = Array.from({length: setup.plan.count}, () => new Int16Array(w * h));
+    fill(planes, rgba, stride, x0, y0, w, h);
+    if (setup.depth !== undefined) {
+      const models = planes.map(plane => screenModel(plane, w, h, setup.depth));
+      const section = new BitWriter(w * h * planes.length + 256);
+      writeModularHeader(section, {useGlobalTree: false});
+      writeScreenModel(section, models)();
+      return section.finish();
     }
+    const custom = setup.lz ? screenLZ77.create({distances: target?.at(-1), distanceCode: setup.distanceCode}) : null;
+    const writer = setup.codes ? new BitWriter(w * h * planes.length + 64) : null;
+    if (writer) writeModularHeader(writer);
+    for (let c = 0; c < planes.length; c++) {
+      const code = writer ? setup.codes[c] : target[c];
+      if (custom) custom.code(writer, code, planes[c], w, h, setup.leaves[c]);
+      else codeChannel(writer, code, planes[c], w, h, setup.leaves[c]);
+    }
+    return writer?.finish();
   };
 }
 
-// Count a code's real prefix header and payload, not entropy approximations.
+// Exact prefix-header and payload cost.
 function screenPrefixPrice(freq) {
   const code = buildCode(freq),
     w = new BitWriter(128);
@@ -153,8 +161,7 @@ function screenPrefixPrice(freq) {
   return bits;
 }
 
-// Optional header/global hooks belong only to the heavier screen/patch path.
-// They let a reference-only atlas and a patched frame reuse the same pixel coder.
+// Header hooks let a reference-only atlas and patched frame share the pixel coder.
 export function* screenFrameSteps(
   rgba,
   width,
@@ -162,9 +169,9 @@ export function* screenFrameSteps(
   shape,
   colorSpace,
   plan,
-  {predictor = null, frameHeader = null, globalPrefix = null, imageHeader = true, tokenCodec = null, search = null} = {}
+  {predictor = null, frameHeader = null, globalPrefix = null, imageHeader = true, tokenCodec = null, search = null, pooled = false} = {}
 ) {
-  if (search) return yield* screenDetailedFrameSteps(rgba, width, height, shape, colorSpace, plan, {frameHeader, globalPrefix, imageHeader, ...search});
+  if (search) return yield* screenDetailedFrameSteps(rgba, width, height, shape, colorSpace, plan, {frameHeader, globalPrefix, imageHeader, pooled, ...search});
   const layout = groupLayout(width, height),
     groups = layout.groupsX * layout.groupsY;
   const count = layout.single ? plan.meta.length + plan.count : Math.max(plan.meta.length, plan.count);
@@ -206,22 +213,28 @@ export function* screenFrameSteps(
     }
   }
   const freqs = leaves.map(() => new Uint32Array(ALPHABET));
-  const custom = tokenCodec?.create(leaves.length);
+  const distances = tokenCodec ? new Uint32Array(64) : null, custom = tokenCodec?.create({distances});
+  const parallel = pooled && !layout.single && (!tokenCodec || tokenCodec === screenLZ77);
+  const setup = {plan: plan.setup, leaves, lz: !!tokenCodec};
   const code = (writer, target, plane, w, h, l, s) =>
     custom ? custom.code(writer, target, plane, w, h, l, s) : codeChannel(writer, target, plane, w, h, l);
   for (let c = 0; c < plan.meta.length; c++) {
     const m = plan.meta[c];
     code(null, freqs[c], m.plane, m.width, m.height, leaves[c], c);
   }
-  for (let g = 0; g < groups; g++) {
+  if ((yield* groupPass({pooled: parallel, kind: 'screen', data: rgba, width, height,
+    setup: {...setup, sizes: [...freqs.map(freq => freq.length), ...(distances ? [64] : [])]},
+    at: g => (g + 1) / (2 * groups), stop: () => true}, groups, g => {
     visit(g, (w, h) => {
       for (let c = 0; c < plan.count; c++) {
         const s = slot(c);
         code(null, freqs[s], planes[c], w, h, leaves[s], s);
       }
     });
-    if (yield (g + 1) / (2 * groups)) return null;
-  }
+  }, (g, counts) => {
+    addCounts(freqs, counts);
+    if (distances) addCounts([distances], [counts.at(-1)]);
+  })) === null) return null;
   const header = new BitWriter(256);
   if (imageHeader) writeImageHeader(header, width, height, shape.colour, shape.alpha, {colorSpace});
   if (frameHeader) frameHeader(header);
@@ -244,7 +257,9 @@ export function* screenFrameSteps(
     sections.push(global.finish());
     for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
   }
-  for (let g = 0; g < groups; g++) {
+  if ((yield* groupPass({pooled: parallel, kind: 'screen', data: rgba, width, height,
+    setup: {...setup, codes: histograms.slice(1).map(histogram => histogram.code), distanceCode: custom ? histograms[0].code : undefined},
+    at: g => 0.5 + (g + 1) / (2 * groups), stop: () => true}, groups, g => {
     visit(g, (w, h) => {
       const out = layout.single ? global : new BitWriter(w * h * plan.count + 64);
       if (!layout.single) writeModularHeader(out);
@@ -254,18 +269,17 @@ export function* screenFrameSteps(
       }
       sections.push(out.finish());
     });
-    if (yield 0.5 + (g + 1) / (2 * groups)) return null;
-  }
+  }, (g, bytes) => sections.push(bytes))) === null) return null;
   return assembleCodestream(header, sections);
 }
 
-// Each large group chooses predictors after pricing copies and carries its
-// own model. The working set is one group, independent of the picture's area.
+// Each large group selects predictors after pricing copies and writes its own model.
+// Scratch memory is bounded by one group, independent of image area.
 function* screenDetailedFrameSteps(rgba, width, height, shape, colorSpace, plan,
-  {dim = 1024, depth = 4, frameHeader = null, globalPrefix = null, imageHeader = true}) {
+  {dim = 1024, depth = 4, frameHeader = null, globalPrefix = null, imageHeader = true, pooled = false}) {
   const layout = groupLayout(width, height, dim), groups = layout.groupsX * layout.groupsY,
-    header = new BitWriter(256), global = new BitWriter(4096), sections = [],
-    planes = Array.from({length: plan.count}, () => new Int16Array(Math.min(width, dim) * Math.min(height, dim)));
+    header = new BitWriter(256), global = new BitWriter(4096), sections = [];
+  let planes;
   if (imageHeader) writeImageHeader(header, width, height, shape.colour, shape.alpha, {colorSpace});
   if (frameHeader) frameHeader(header);
   else writeModularFrameHeader(header, {alpha: shape.alpha, shift: dim === 1024 ? 3 : dim === 512 ? 2 : 1});
@@ -281,9 +295,11 @@ function* screenDetailedFrameSteps(rgba, width, height, shape, colorSpace, plan,
     append(global.finish());
     for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
   }
-  for (let g = 0; g < groups; g++) {
+  if ((yield* groupPass({pooled: pooled && !layout.single, kind: 'screen', data: rgba, width, height, dim,
+    setup: {plan: plan.setup, depth}, at: g => (g + 1) / groups, stop: () => true}, groups, g => {
     const x = g % layout.groupsX * dim, y = ((g / layout.groupsX) | 0) * dim,
       w = Math.min(dim, width - x), h = Math.min(dim, height - y);
+    planes ||= Array.from({length: plan.count}, () => new Int16Array(Math.min(width, dim) * Math.min(height, dim)));
     plan.fill(planes, x, y, w, h);
     const models = planes.map(plane => screenModel(plane, w, h, depth)),
       section = layout.single ? global : new BitWriter(w * h * plan.count + 256);
@@ -291,8 +307,7 @@ function* screenDetailedFrameSteps(rgba, width, height, shape, colorSpace, plan,
     const write = writeScreenModel(section, layout.single ? [...meta, ...models] : models);
     if (layout.single) writeModularHeader(section, {transforms: plan.transforms});
     write(); append(section.finish());
-    if (yield (g + 1) / groups) return null;
-  }
+  }, (g, bytes) => append(bytes))) === null) return null;
   return assembleCodestream(header, sections);
 }
 

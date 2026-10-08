@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// File bytes to source samples. Compression, channel layout and colour declarations end at this boundary;
+// File bytes to source samples. Compression, channel layout and color declarations end at this boundary;
 // the encoder receives the same RGBA words as a caller supplying typed arrays directly.
 import {admitSize, fault} from './admit.mjs';
 
@@ -18,7 +18,7 @@ function colourFromChromaticities(values, tolerance) {
 }
 
 // The expected extent comes from admitted dimensions, never from the compressed stream. Reading through
-// a bounded destination refuses both incomplete data and a stream that expands beyond its declared picture.
+// a bounded destination refuses both incomplete data and a stream that expands beyond its declared image.
 async function inflate(parts, expected) {
   if (typeof DecompressionStream !== 'function') refuse('Reading compressed sources requires DecompressionStream (Node 22 or a supporting browser).');
   const output = new Uint8Array(expected);

@@ -68,7 +68,7 @@ test('photographic entry rejects malformed asks before allocating coefficient pl
   for (const effort of [null, '5', NaN, Infinity, 0, 10, 1.5]) assert.throws(() => encodePhoto(data, 1, 1, {effort}), {code: 'JXL_INPUT'});
   for (const [w, h] of [[0, 1], [1, 0], [1.5, 1], [NaN, 1]]) assert.throws(() => encodePhoto(data, w, h), {code: 'JXL_INPUT'});
   assert.throws(() => encodePhoto(data, 16385, 1), {code: 'JXL_DIMENSIONS'});
-  // The door's own limit, 40 million pixels: one row more is refused by size, the limit itself only by its bytes.
+  // Dimensions admit 40 million pixels; byte length independently validates the input buffer.
   assert.throws(() => encodePhoto(data, 8000, 5001), {code: 'JXL_DIMENSIONS'});
   assert.throws(() => encodePhoto(data, 8000, 5000), {code: 'JXL_INPUT'});
   assert.throws(() => encodePhoto(new Uint8Array(3), 1, 1), {code: 'JXL_INPUT'});

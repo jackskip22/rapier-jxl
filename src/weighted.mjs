@@ -1,17 +1,14 @@
 // Rapier's JPEG XL encoder: the self-correcting (weighted) predictor. MIT (LICENSE).
-// The specification's modular predictor 6 under the default header every Rapier stream writes (p1 16, p2 10, p3 7, 7,
-// 7, 0, 0; weights 13, 12, 12, 12): four sub-predictions in eighths of a level, each weighted by its error on the
-// pixels above and to the left, clamped to the neighbours when their errors disagree in sign. The decoder keeps the
-// same state for each channel of each group, so the encoder runs it over the plane it codes, and with it the
-// property it offers a tree (15: of the errors to the west, north, north-west and north-east, the one largest in
-// size). Integer arithmetic only: every engine predicts alike.
+// Modular predictor 6 with default parameters (16, 10, 7, 7, 7, 0, 0; weights 13, 12, 12, 12). Four predictions
+// in eighths use neighboring errors as weights. State resets per channel and group, matching the decoder.
+// Property 15 is the signed error with largest magnitude among W, N, NW, and NE. All arithmetic is integer.
 import {kernelHooks} from './kernel-hooks.mjs';
 import {packSigned} from './bits.mjs';
 import {countToken, writeHybrid} from './prefix.mjs';
 import {LZ77, RESIDUAL_CONFIG} from './modular.mjs';
 
 export const WEIGHTED_PREDICTOR = 6, WEIGHTED_PROPERTY = 15;
-// libjxl's cut points on that property for its fixed weighted tree: 34 contexts, from which a coder merges neighbours.
+// libjxl's cut points on that property for its fixed weighted tree: 34 contexts, from which a coder merges neighbors.
 export const WEIGHTED_CUTS = [-500, -392, -255, -191, -127, -95, -63, -47, -31, -23, -15, -11, -7, -4, -3, -1, 0, 1, 3, 5, 7, 11, 15, 23, 31, 47,
   63, 95, 127, 191, 255, 392, 500];
 // The context of a property value: how many cut points lie below it.
@@ -24,12 +21,9 @@ const errorWeight = (sum, most) => sum < 2048 ? WEIGHTS[most - 12][sum] : calcul
 const SINGLE = new Int32Array(WEIGHTED_CUTS.length + 1);
 let weightedScratch;
 
-// Codes one channel plane with the weighted predictor, as codeChannel codes the others (a residual per pixel, eight
-// or more zero residuals as one zero and an LZ77 copy), each token through the target of its pixel's context:
-// `contextOf[k]` is the target of the k-th cut interval (all one target when absent). Counting when `w` is null
-// (targets are histograms), writing otherwise (targets are prefix codes). Exact planes only: the offset applies, the
-// multiplier is one. The effort-only local modeller can request the raw unsigned residuals and signed property in
-// caller-owned arrays instead; it then owns tokenisation, while this one loop remains the predictor's state owner.
+// Count tokens when w is null; otherwise write them. contextOf maps error intervals to histogram/code targets.
+// Exact prediction uses offset with multiplier 1. Optional residual/property arrays bypass tokenization so local
+// models can reuse this predictor's state calculation. Zero runs use their literal and copy-token contexts.
 export function codeWeighted(w, targets, plane, width, height, offset = 0, contextOf = SINGLE, residuals, properties) {
   if (kernelHooks.weighted?.(w, targets, plane, width, height, offset, contextOf, residuals, properties)) return;
   const stride = width + 2;

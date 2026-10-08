@@ -1,18 +1,13 @@
-// Rapier's JPEG XL encoder: the bit writer, and the limits every part keeps. MIT (LICENSE).
-// JPEG XL packs bits least-significant first; `write` takes up to 32 bits at a time.
+// Bit writer and per-entry limits. MIT (LICENSE).
+// JPEG XL stores bits least-significant first; write accepts up to 32 bits.
 
-// What one call takes at most, door by door: the 16 MiB codestream, 16,384 pixels on a side, and as many pixels as the
-// door's memory allows within what the core's lossy path needs at its 24 million (a measured peak of 15.7 bytes a
-// pixel besides the input). The core and the effort door take 24 million; the photo door, 6.5 bytes a pixel at its
-// limit, 40 million; the JPEG carrier, 6.4 bytes a pixel at 4:4:4 and 3.3 at 4:2:0, 64 million. The checked API
-// refuses a larger ask before any work, the JPEG reader before it allocates a plane, and a writer that would grow past
-// the stream's bound stops there instead of filling memory first.
+// Pixel limits reflect default-path working memory, excluding input: core 15.7 bytes/pixel, photo 6.5,
+// JPEG 6.4 at 4:4:4 or 3.3 at 4:2:0. Validate dimensions before plane allocation and cap writer growth separately.
 export const LIMITS = Object.freeze({bytes: 16 * 1024 * 1024, pixels: 24_000_000, edge: 16384});
 export const PHOTO_LIMITS = /*#__PURE__*/ Object.freeze({bytes: 16 * 1024 * 1024, pixels: 40_000_000, edge: 16384});
 export const JPEG_LIMITS = /*#__PURE__*/ Object.freeze({bytes: 16 * 1024 * 1024, pixels: 64_000_000, edge: 16384});
 
-// The hot writer's powers of two, made by doubling (`**` is not exact in every engine); a count outside 0 to 32 finds
-// none, so its value is out of range.
+// Doubling avoids engine-dependent exponentiation rounding. An index outside 0..32 fails write validation.
 const POWERS = [1];
 for (let count = 1; count <= 32; count++) POWERS.push(POWERS[count - 1] * 2);
 

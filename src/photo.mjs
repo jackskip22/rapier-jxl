@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Photographic pixels through the carrier's VarDCT writer: sRGB to YCbCr, DCT8,
-// quantisation, then entropy coding. Quality 90 by default; 100 is exact, including
-// RGB below transparent alpha. Alpha is always exact, and the colour space is declared.
+// quantization, then entropy coding. Quality 90 by default; 100 is exact, including
+// RGB below transparent alpha. Alpha is always exact, and the color space is declared.
 import {PHOTO_LIMITS, complete} from './bits.mjs';
 import {photoJob} from './photo-job.mjs';
 import {coefficientEffortSteps} from './coefficient-effort.mjs';

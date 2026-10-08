@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Effort-only Modular modelling. Every group owns its tree and histograms; a bounded group of samples is the
-// working set, and the complete candidate competes against every lower rung at the door.
+// Per-group modular models. Each group owns its tree and histograms; complete streams compete by byte length.
 import {BitWriter, packSigned} from './bits.mjs';
 import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, groupPass, assembleCodestream, GROUP_DIM} from './frame.mjs';
 import {buildCode, writePrefixCode, countToken, writeHybrid} from './prefix.mjs';
@@ -31,30 +30,37 @@ function residuals(plane, width, height, predictor, properties) {
   return out;
 }
 
-function tokens(values, properties, cuts) {
-  const freqs = Array.from({length: cuts ? cuts.length + 1 : 1}, () => new Uint32Array(ALPHABET)), pieces = [];
-  const emit = (i, value, base = 0) => {
-    // A copied run reads contexts only for its literal and length token. Classifying the skipped pixels does
-    // not change a histogram or a byte; keep the decoder's two token positions as the context owners.
-    let context = 0;
-    if (cuts) {
-      const property = properties[i];
-      let hi = cuts.length;
-      while (context < hi) { const mid = (context + hi) >> 1; if (property > cuts[mid]) context = mid + 1; else hi = mid; }
-    }
-    pieces.push(value, base, context); countToken(base ? LZ77.lengthConfig : RESIDUAL_CONFIG, value, freqs[context], base);
-  };
+function visitTokens(values, emit) {
   // A zero run can cross a tree leaf or row. Its first literal and copy use their own samples' contexts.
   for (let i = 0; i < values.length;) {
     let run = 1;
     if (!values[i]) while (i + run < values.length && !values[i + run]) run++;
-    emit(i, values[i]);
+    emit(i, values[i], 0);
     if (run > LZ77.minLength) {
       emit(i + 1, run - 1 - LZ77.minLength, LZ77.minSymbol);
-    } else for (let n = 1; n < run; n++) emit(i + n, 0);
+    } else for (let n = 1; n < run; n++) emit(i + n, 0, 0);
     i += run;
   }
-  return {freqs, pieces};
+}
+
+function tokenContext(properties, cuts, i) {
+  let context = 0;
+  if (cuts) {
+    const property = properties[i];
+    let hi = cuts.length;
+    while (context < hi) { const mid = (context + hi) >> 1; if (property > cuts[mid]) context = mid + 1; else hi = mid; }
+  }
+  return context;
+}
+
+function tokens(values, properties, cuts) {
+  const freqs = Array.from({length: cuts ? cuts.length + 1 : 1}, () => new Uint32Array(ALPHABET));
+  // Search needs counts alone. Retain the bounded residual plane and replay only the winning model;
+  // losing models never allocate a token array. Contexts still belong to emitted tokens, including copies.
+  visitTokens(values, (i, value, base) => {
+    countToken(base ? LZ77.lengthConfig : RESIDUAL_CONFIG, value, freqs[tokenContext(properties, cuts, i)], base);
+  });
+  return {freqs, values, properties, cuts};
 }
 
 function intervalPlan(values, properties, predictor, property, cuts) {
@@ -78,13 +84,12 @@ function intervalPlan(values, properties, predictor, property, cuts) {
     for (let k = start; k < end; k++) { mapping[k] = index; for (let s = 0; s < ALPHABET; s++) freq[s] += coded.freqs[k][s]; }
     return freq;
   });
-  for (let i = 2; i < coded.pieces.length; i += 3) coded.pieces[i] = mapping[coded.pieces[i]];
   const tree = (lo, hi) => {
     if (lo === hi) return leaves[lo];
     const mid = (lo + hi) >> 1;
     return split(property, cuts[spans[mid][1] - 1], tree(mid + 1, hi), tree(lo, mid));
   };
-  return {leaves, tree: tree(0, spans.length - 1), freqs, pieces: coded.pieces};
+  return {leaves, tree: tree(0, spans.length - 1), freqs, values, properties, cuts, mapping};
 }
 
 const WEIGHTED_LOCAL_CUTS = [-127, -31, -7, -1, 0, 1, 7, 31, 127];
@@ -115,7 +120,7 @@ function plansOf(planes, width, height, rung) {
       const candidates = [{...tokens(values), leaves: [one], tree: one}];
       if (properties) candidates.push(intervalPlan(values, properties, predictor, 15, WEIGHTED_LOCAL_CUTS));
       // Property 9 is the unclamped gradient; property 10 is W - NW. Signed cuts let the latter separate both
-      // tails around a flat neighbourhood without treating a high-magnitude negative edge as a small one.
+      // tails around a flat neighborhood without treating a high-magnitude negative edge as a small one.
       if (rung >= 6 && predictor === 5) for (const property of [9, 10]) {
         const local = localProperties(plane, width, height, property), cuts = property === 9 ? GRADIENT_CUTS : WEIGHTED_LOCAL_CUTS;
         candidates.push(intervalPlan(values, local, predictor, property, cuts));
@@ -131,11 +136,11 @@ function writeModel(writer, plans) {
   const histograms = writeChannelHistograms(writer, writeTree(writer, channelTree(plans.map(plan => plan.tree))), plans.flatMap(plan => plan.freqs), l => leaves.indexOf(l));
   return () => {
     for (let c = 0; c < plans.length; c++) {
-      const {pieces} = plans[c], codes = plans[c].leaves.map(l => histograms[leaves.indexOf(l) + 1].code);
-      for (let i = 0; i < pieces.length; i += 3) {
-        const base = pieces[i + 1];
-        writeHybrid(writer, codes[pieces[i + 2]], base ? LZ77.lengthConfig : RESIDUAL_CONFIG, pieces[i], base);
-      }
+      const {values, properties, cuts, mapping} = plans[c], codes = plans[c].leaves.map(l => histograms[leaves.indexOf(l) + 1].code);
+      visitTokens(values, (i, value, base) => {
+        const context = tokenContext(properties, cuts, i);
+        writeHybrid(writer, codes[mapping ? mapping[context] : context], base ? LZ77.lengthConfig : RESIDUAL_CONFIG, value, base);
+      });
     }
   };
 }
@@ -161,7 +166,7 @@ export function* localSteps(rgba, width, height, shape, colorSpace, rung = 4, us
   writeImageHeader(header, width, height, shape.colour, shape.alpha, {colorSpace});
   writeModularFrameHeader(header, {alpha: shape.alpha});
   const transforms = palette ? [{type: 'palette', beginC: 0, numC: channels, nbColors: palette.colours.length}] : channels >= 3 ? [{type: 'rct', beginC: 0, rctType: 6}] : [];
-  // The palette's meta channel precedes the picture in the global section; local AC groups contain only indices.
+  // The palette's meta channel precedes the image in the global section; local AC groups contain only indices.
   let palettePlans;
   if (palette) {
     const count = palette.colours.length, values = new Int16Array(count * channels);
@@ -178,7 +183,7 @@ export function* localSteps(rgba, width, height, shape, colorSpace, rung = 4, us
   };
   global.write(1, 1); global.write(1, 1);
   if (layout.single) {
-    // One group: everything in the global section, the palette's plans before the picture's.
+    // One group: everything in the global section, the palette's plans before the image's.
     const planes = Array.from({length: palette ? 1 : channels}, () => new Int16Array(GROUP_DIM * GROUP_DIM));
     planeFill(setup)(planes, rgba, width, 0, 0, width, height);
     const write = writeModel(global, [...palettePlans || [], ...plansOf(planes, width, height, rung)]);

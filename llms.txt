@@ -1,50 +1,77 @@
 # Rapier JXL
 
-> JPEG XL encoder. ES modules. MIT. No runtime dependencies or automatic filesystem/network I/O.
+JavaScript JPEG XL encoder for single-file HTML apps and photography tools. Works offline with no runtime dependencies. MIT license.
+Install with `npm install rapier-jxl`, then import the self-contained core:
 
-Package: rapier-jxl
-Version: 2.6.0
-Install: npm install rapier-jxl
-Pixel input: Uint8Array/Uint8ClampedArray (8-bit), Uint16Array (10/12/16-bit integers or raw binary16), Float32Array (binary32); width * height * 4 RGBA samples, row-major.
-Pixel output: Uint8Array, bare JPEG XL codestream, extension .jxl, MIME image/jxl.
-Execution: synchronous; browser, module worker, Node, Deno.
-Core payload: 26,997 minified bytes; 11,408 gzip bytes.
+```js
+import {encode} from 'rapier-jxl/min';
+const rgba = new Uint8Array([255, 0, 0, 255]);
+const bytes = encode(rgba, 1, 1, {quality: 100});
+```
 
-## Entry selection
+For one offline HTML file, embed the complete `node_modules/rapier-jxl/dist/rapier-jxl.min.mjs` module and import it
+through a Blob URL. [Copyable HTML](docs/reference/ARCHITECTURE.md#one-html-file). Keep the exports and MIT notice.
 
-- rapier-jxl or rapier-jxl/core: encode(data, width, height, options?), encodeSteps, LIMITS. quality 100 by default; 1–99 lossy. Alpha exact. No bundled WebAssembly.
-- rapier-jxl/effort: core capabilities plus effort 1–9, default 1; optional treeLearning: 'sampled'. Lossless candidates compete by complete byte length.
-- rapier-jxl/wasm: effort API with inlined integer kernels; automatic SIMD or JavaScript; same output bytes. Also configureKernels and kernelMode.
-- rapier-jxl/jpeg: transcode(jpegBytes, options?), transcodeSteps, LIMITS. Returns {bytes, width, height, orientation}; keeps coefficients, orientation and an admitted colour-space declaration; omits reconstruction data and other metadata.
-- rapier-jxl/photo: encodePhoto(data, width, height, options?), encodePhotoSteps, LIMITS. Ordinary byte inputs use VarDCT below quality 100; native inputs use the shared modular path. Quality 90 by default, 100 lossless.
-- rapier-jxl/jpeg-ans and rapier-jxl/photo-ans: corresponding JPEG/photo API; ANS search at effort 2 and above.
-- Append /min to each named encoding import for its self-contained file. rapier-jxl/min is the minified core.
-- rapier-jxl/writer: typed format primitives, readable source only. rapier-jxl/kernels: shared readable-module kernel controls.
-- rapier-jxl/source: async readSource(Uint8Array | ArrayBuffer), PNG16 or supported scanline OpenEXR -> {data,width,height,bitDepth,sampleFormat,colorSpace,transferFunction,alphaPremultiplied,intensityTarget?}. Optional, no /min export.
+Agent skills: [Single-file apps](skills/rapier-jxl-single-file-app/SKILL.md) · [Photography](skills/rapier-jxl-photography/SKILL.md).
 
-## Contracts
+Choose an entry point:
 
-- quality: number 1–100; lossless is quality: 100. Pixel primaries: colorSpace: 'srgb' (default), 'display-p3' or 'rec2020'; declaration, no sample conversion.
-- bitDepth: 8 for bytes; Uint16Array integer code values use 10, 12 or 16 (default 16), never silently truncate. sampleFormat: 'float16' for raw half words; Float32Array infers 'float32'. Float formats fix bit depth at 16/32 and exponent width at 5/8.
-- transferFunction: 'srgb', 'linear', 'pq', 'hlg'; integer default srgb, float default linear. intensityTarget defaults to 10000 nits for PQ, 1000 for HLG, otherwise 255; stored as binary16. No tone mapping or HDR clipping.
-- alphaPremultiplied: boolean, default false; associated RGB remains associated, with no division. Source EXR with A sets true; PNG sets false. Alpha words stay exact at every quality.
-- Native lossless uses the shared modular group planner. Efforts 2–9 also price untransformed integer RGB; floats have no extra lossless rung. Native lossy rounds RGB source code values/mantissas before reversible coding; a smaller exact candidate may win. See API for numeric error bounds and decoder qualifications.
-- PNG16: all row filters, Adam7, gray/RGB with optional alpha, tRNS, supported cICP/sRGB/linear-gamma metadata. EXR: flat single-part scanlines, uniform HALF/FLOAT RGB or Y plus optional A, NONE/RLE/ZIPS/ZIP, square pixels, matching data/display windows. Unsupported profiles/layouts require another reader; no archival metadata round trip.
-- effort: integer 1–9, default 1; supported by effort, wasm, JPEG and photo entries. Core has no effort option.
-- Limits: 16 MiB output, 16,384 pixels per side. Core/effort/wasm: 24 million pixels. Photo: 40 million. JPEG: 64 million and 16 MiB input.
-- Checked encoding entry error codes: JXL_INPUT, JXL_DIMENSIONS, JXL_SIZE, JXL_MEMORY, JXL_JPEG. Inspect error.code; diagnostic text is not the contract. Raw writer primitives have unchecked preconditions.
-- Jobs yield progress in (0, 1]. Read job.bytes only after iteration completes. Leaving the loop cancels; job.hurry requests a completed candidate. Sampled lossless hurry returns effort 1 exactly.
-- Output is deterministic: the same pixels and options write the same bytes in every JavaScript engine, with or without the WebAssembly kernels.
-- Search candidates stop only when their completed section bytes already reach the retained complete stream size. Pruning does not signal hurry or cancel later candidates.
-- Input stays unmodified and must remain available until completion or cancellation. Input buffer transfer detaches it from the sender.
-- A carried JPEG cannot reconstruct the original JPEG file. Unsupported or malformed JPEGs raise JXL_JPEG; decode and encode pixels when appropriate.
+| Need | Entry point | Call |
+| --- | --- | --- |
+| Core pixel encoder | `rapier-jxl` | `encode(rgba, width, height, {quality: 100})` |
+| Lossless photos and artwork | `rapier-jxl/effort` | `encode(rgba, width, height, {quality: 100, effort: 6})` |
+| Same search with optional WASM | `rapier-jxl/wasm` | Same API; automatic JavaScript fallback |
+| Existing JPEG coefficients | `rapier-jxl/jpeg` | `transcode(jpegBytes, {effort: 4})` |
+| Lossy photographic pixels | `rapier-jxl/photo` | `encodePhoto(rgba, width, height, {quality: 90, effort: 5})` |
+| PNG16 or scanline OpenEXR | `rapier-jxl/source` | `await readSource(fileBytes)`; pass its samples and options to `encode` |
+| Attach, replace or remove Exif/XMP | `rapier-jxl/metadata` | `withMetadata(jxlBytes, {exif, xmp})` |
 
-## References
+Encoding entry points and `rapier-jxl/metadata` have self-contained `/min` builds; `rapier-jxl/min` selects the core.
+Import the complete file to access its public export names; minification renames local functions.
+Use readable imports when bundling several capabilities so they share code.
 
-- [Exports and declaration paths](package.json)
-- [API, options, jobs and errors](docs/reference/API.md)
-- [Smallest import, one-file use, workers and shared source](docs/reference/ARCHITECTURE.md)
-- [Exact payload sizes, hashes and import graphs](dist/sizes.json)
-- [Encoder payload and quality comparisons](docs/ENCODER-COMPARISON.md)
-- [Pinned external payload measurements](bench/encoder-sizes.json)
-- [Worker example](examples/worker.mjs)
+Package: `rapier-jxl`. Version: 3.0.0. Install: `npm install rapier-jxl`.
+ES modules with no automatic filesystem or network I/O.
+Core payload: 27,557 minified bytes; 11,642 gzip bytes.
+Runs in browsers, module workers, Node, and Deno. This package encodes JPEG XL; it does not include a JPEG XL decoder.
+
+## Inputs and outputs
+
+- Pixels: exactly `width * height * 4` RGBA samples, row-major. `Uint8Array` or `Uint8ClampedArray` for 8-bit; `Uint16Array` for 10/12/16-bit integers or raw binary16; `Float32Array` for binary32.
+- Pixel output: `Uint8Array` JPEG XL file bytes; extension `.jxl`, MIME `image/jxl`. Integer inputs up to 12 bits use a bare codestream; 16-bit integers and floats use a container with a level 10 declaration. JPEG transcode returns `{bytes, width, height, orientation}`.
+- `quality`: 1–100. Default 100 for core/effort/wasm, 90 for photo. Quality 100 preserves every source sample, including RGB under zero alpha; alpha stays exact at every quality. A smaller exact stream may satisfy a lossy request.
+- `effort`: integer 1–9, default 1. The core has no `effort` option. Effort/wasm 1 writes core bytes; higher lossless efforts add candidates and keep only smaller complete streams. Ordinary 8-bit efforts 4–9 add learned trees; efforts 6–9 also compare prefix and ANS coding per group. Equal lengths keep the earlier candidate.
+- Input arrays stay unmodified; keep them available and unchanged until completion or cancellation.
+- Encoding is synchronous. `encodeSteps`, `encodePhotoSteps`, and `transcodeSteps` yield progress in (0,1]; finish iteration before reading `job.bytes`. A yielded 1 is not generator completion. Set `job.hurry = true` and continue to obtain a completed candidate; leaving the loop cancels. Use a worker to keep a page responsive.
+- The same input and options produce the same bytes across JavaScript engines, workers, and optional WASM kernels. A byte-limit prune rejects one candidate without hurrying the whole job.
+
+## Precision and color
+
+- Integer `Uint16Array` defaults to 16-bit; set `bitDepth: 10` or `12` for unscaled code values. The encoder rejects out-of-range samples.
+- `sampleFormat: 'float16'` declares raw half words in `Uint16Array`; `Float32Array` infers `'float32'`. Floating-point lossless coding retains supplied IEEE words; decoder output formats can canonicalize NaNs.
+- `colorSpace`: `'srgb'` (default), `'display-p3'`, or `'rec2020'`. `transferFunction`: `'srgb'`, `'linear'`, `'pq'`, or `'hlg'`; integer default `'srgb'`, float default `'linear'`.
+- `intensityTarget`: peak nits; defaults 10000 for PQ, 1000 for HLG, otherwise 255. Stored as binary16.
+- `alphaPremultiplied`: boolean, default false. Associated samples remain associated. No color conversion, tone mapping, HDR clipping, or unpremultiplication.
+- Native integer effort 2 also prices untransformed RGB; float lossless has no extra effort search. Native lossy reconstructs integer RGB at quantization-bin midpoints or rounds floating-point mantissas, never alpha. [Numeric bounds and decoder qualifications](docs/reference/API.md#native-precision).
+- `readSource` returns `{data, width, height, bitDepth, sampleFormat, colorSpace, transferFunction, alphaPremultiplied, intensityTarget?}`. Spread the options into `encode`. PNG16 supports all filters and Adam7. OpenEXR supports single-part uniform HALF/FLOAT RGB or Y scanlines, optional A, NONE/RLE/ZIPS/ZIP. Uses the platform's `DecompressionStream`. [Exact source forms](docs/reference/API.md#reading-png16-and-openexr).
+
+## Exif and XMP
+
+- `withMetadata(jxlBytes, {exif, xmp})` returns a new `Uint8Array` with standard `Exif` and `xml ` boxes. It wraps a bare codestream when adding metadata and preserves image coding, color encoding, orientation and other boxes.
+- `exif`: raw TIFF `Uint8Array`, beginning with `II` or `MM`, without the `Exif\0\0` prefix or JPEG APP1 header. `xmp`: UTF-8 string or `Uint8Array`. Omitted or `undefined` fields retain existing metadata; `null` removes the field.
+- Supply metadata separately; this module does not extract it from source files, import ICC profiles or convert color. Keep Exif orientation consistent with the encoded image.
+- Requested edits reject containers with JPEG reconstruction data (`jbrd`). The output limit, including metadata, is 16 MiB. [Metadata API](docs/reference/API.md#exif-and-xmp).
+
+## Other entry points and contracts
+
+- `jpeg` preserves admitted coefficients and orientation, not the original JPEG file or archival metadata. `JXL_JPEG` means use another JPEG decoder and encode its pixels when appropriate.
+- `jpeg-ans` and `photo-ans` expose their corresponding APIs with ANS candidates from effort 2.
+- `wasm` exports `configureKernels` and `kernelMode`. Unavailable or blocked WASM falls back to JavaScript. Configure the same imported module before encoding; readable entry points share `rapier-jxl/kernels`.
+- `writer` exposes typed format primitives in readable source. `source`, `kernels`, and `writer` have no `/min` entry.
+- `treeLearning: 'sampled'` on effort/wasm selects a separate reduced search: shared trees at 2–3, group trees at 4–9; any observed hurry returns effort 1 exactly. Normally omit it to include all candidates.
+- Limits: 16 MiB output; 16,384 pixels per side. Core/effort/wasm 24 million pixels, photo 40 million, JPEG 64 million and 16 MiB JPEG input. Optional source reader uses core dimensions.
+- Checked encoder errors: `JXL_INPUT`, `JXL_DIMENSIONS`, `JXL_SIZE`, `JXL_MEMORY`, `JXL_JPEG`. Inspect `error.code`. Writer primitives have unchecked preconditions.
+
+[API, options, and errors](docs/reference/API.md) · [Entry points, embedding, and sizes](docs/reference/ARCHITECTURE.md) ·
+[Exports and types](package.json) · [Worker example](examples/worker.mjs) ·
+[Payload hashes and import graphs](dist/sizes.json) · [Measured comparisons](docs/ENCODER-COMPARISON.md)

@@ -83,9 +83,10 @@ test('a hurried higher effort keeps a complete candidate without losing its floo
 });
 
 test('hurry inside a later plan retains a completed inner candidate', async () => {
-  // Effort 4 writes effort 1's stream, the weighted plans, and last the reversible colour-transform candidate; a hurry
-  // past 0.9 lands inside that last candidate, which is dropped, while everything completed before it stays.
-  const late = job => { let inside = false; for (const done of job) if (done > 0.9) { job.hurry = true; inside ||= done < 1; } return inside; };
+  // For these direct pictures, effort 4 shares its second half between weighted, colour and learned searches.
+  // Hurry within the colour search, after its sampling and before its candidate completes.
+  const colourStart = 2 / 3, colourEnd = 5 / 6, stop = colourStart + (colourEnd - colourStart) * 0.6;
+  const late = job => { let inside = false; for (const done of job) if (done > stop) { job.hurry = true; inside ||= done > colourStart && done < colourEnd; } return inside; };
   const width = 512, height = 384, rgba = await painting();
   const first = encode(rgba, width, height), second = encodeEffort(rgba, width, height, {effort: 3});
   assert.ok(second.length < first.length, 'the first search plan improves the core floor');

@@ -1,5 +1,5 @@
 // Rapier's JPEG XL encoder: the codestream around a frame. MIT (LICENSE).
-// A bare codestream (no container): signature, size header, image metadata, one frame with its table of contents.
+// Signature, size header, image metadata and one frame; level 10 includes the required container declaration.
 import {BitWriter, float16Bits} from './bits.mjs';
 import {admitOutputSize} from './admit.mjs';
 
@@ -106,9 +106,9 @@ export function groupLayout(width, height, dim = GROUP_DIM) {
 }
 
 // Group g's rectangle in the picture: [x0, y0, width, height].
-export function groupRect(layout, width, height, g) {
-  const x0 = g % layout.groupsX * GROUP_DIM, y0 = (g / layout.groupsX | 0) * GROUP_DIM;
-  return [x0, y0, Math.min(GROUP_DIM, width - x0), Math.min(GROUP_DIM, height - y0)];
+export function groupRect(layout, width, height, g, dim = GROUP_DIM) {
+  const x0 = g % layout.groupsX * dim, y0 = (g / layout.groupsX | 0) * dim;
+  return [x0, y0, Math.min(dim, width - x0), Math.min(dim, height - y0)];
 }
 
 // A pass over a frame's groups. A group's work is a function of the pass's setup and the group's own pixels alone, so
@@ -141,15 +141,23 @@ export function finishSections(writers) { return writers.map(w => w ? w.finish()
 
 // Sections in the specification's order: DC global, the DC groups, AC global, the AC groups (one pass). A single
 // group frame has one section holding everything. Every section ends on a byte.
-export function assembleCodestream(header, sections) {
+export function assembleCodestream(header, sections, level = 5) {
   const sizes = sections.map(section => section.length);
   writeTOC(header, sizes);
   const head = header.finish();
-  const length = head.length + sizes.reduce((a, b) => a + b, 0);
+  const prefix = level === 10 ? 49 : 0;
+  const length = prefix + head.length + sizes.reduce((a, b) => a + b, 0);
   admitOutputSize(length);
   const out = new Uint8Array(length);
-  out.set(head);
-  let at = head.length;
+  if (prefix) {
+    // Signature, file type, level declaration, then one complete codestream box.
+    out.set([0,0,0,12,74,88,76,32,13,10,135,10,
+      0,0,0,20,102,116,121,112,106,120,108,32,0,0,0,0,106,120,108,32,
+      0,0,0,9,106,120,108,108,10,0,0,0,0,106,120,108,99]);
+    new DataView(out.buffer).setUint32(41, length - 41);
+  }
+  out.set(head, prefix);
+  let at = prefix + head.length;
   for (const section of sections) { out.set(section, at); at += section.length; }
   return out;
 }

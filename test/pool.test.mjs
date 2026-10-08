@@ -11,6 +11,7 @@ import {encodePool} from '../src/pool.mjs';
 import {inspectPixels} from '../src/lossless.mjs';
 import {localSteps} from '../src/local.mjs';
 import {spawnNode} from './pool-node.mjs';
+import {decoder} from './decoder.mjs';
 
 const seed = async name => new Uint8Array(await readFile(new URL('seeds/' + name, import.meta.url)));
 const pictures = async () => {
@@ -26,6 +27,69 @@ const run = async (picture, options, pool, hurryPast = 2) => {
   return job.bytes;
 };
 const same = (a, b) => Buffer.compare(a, b) === 0;
+
+// Repeated glyphs cross both 256- and 1024-pixel group edges. Hidden RGB differs from the background, so an atlas
+// or body tile reused for the wrong frame cannot pass an exact decode merely because it is transparent.
+function pooledScreen() {
+  const width = 1031, height = 65, rgba = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const ink = x % 19 >= 3 && x % 19 < 10 && y % 23 >= 5 && y % 23 < 16;
+    rgba.set(ink ? [40, 60, 80, 0] : [240, 240, 240, 200], (y * width + x) * 4);
+  }
+  return {rgba, width, height};
+}
+
+test('screen and learned format groups keep exact pixels when pool tiles change frames and dimensions', async () => {
+  const picture = pooledScreen(), before = picture.rgba.slice(), decode = await decoder();
+  const alone = encode(picture.rgba, picture.width, picture.height, {effort: 6});
+  for (const workers of [1, 2]) {
+    const bytes = await run(picture, {effort: 6}, {spawn: spawnNode, workers});
+    assert.deepEqual(bytes, alone);
+    if (decode) { const image = decode(bytes); assert.equal(image.channels, 4); assert.deepEqual(image.data, before); }
+  }
+  // Reject a frame replacement after the initial tiles have been accepted. The local fallback must use the
+  // requested frame's source and group geometry, not the original image's pixels and 256-pixel layout.
+  let resets = 0, injected = false;
+  const threads = [], spawn = () => {
+    const worker = spawnNode(), post = worker.postMessage;
+    threads.push(new Promise(ended => worker.thread.once('exit', ended)));
+    worker.postMessage = (message, transfer) => {
+      if (message.pool === 'reset' && ++resets === 2) { injected = true; throw new Error('frame replacement failed'); }
+      return post(message, transfer);
+    };
+    return worker;
+  };
+  assert.deepEqual(await run(picture, {effort: 6}, {spawn, workers: 1}), alone);
+  assert.ok(injected, 'the failure happens while replacing a live frame');
+  await Promise.all(threads);
+  assert.deepEqual(picture.rgba, before);
+});
+
+test('hurry and cancellation leave no partial pooled screen or retained workers', async () => {
+  const picture = pooledScreen(), decode = await decoder();
+  const floor = encode(picture.rgba, picture.width, picture.height);
+  for (const hurryPast of [0.53, 0.62]) {
+    const bytes = await run(picture, {effort: 6}, {spawn: spawnNode, workers: 2}, hurryPast);
+    assert.ok(bytes.length <= floor.length);
+    if (decode) { const image = decode(bytes); assert.equal(image.channels, 4); assert.deepEqual(image.data, picture.rgba); }
+  }
+  let reset = false, resets = 0;
+  const threads = [], job = encodePool(picture.rgba, picture.width, picture.height, {effort: 6}, {
+    workers: 1, spawn: () => {
+      const worker = spawnNode(), post = worker.postMessage;
+      threads.push(new Promise(ended => worker.thread.once('exit', ended)));
+      worker.postMessage = (message, transfer) => {
+        if (message.pool === 'reset' && ++resets > 1) reset = true;
+        return post(message, transfer);
+      };
+      return worker;
+    }
+  });
+  for await (const done of job) if (reset) break;
+  assert.ok(reset);
+  await Promise.all(threads);
+  assert.equal(job.bytes, null);
+});
 
 test('a pool writes the single thread\'s bytes for any number of workers', async () => {
   for (const picture of await pictures()) for (const effort of [1, 3, 4, 6]) {
@@ -46,8 +110,15 @@ test('a pruned local model leaves later colour-transform candidates eligible', a
   let step;
   while (!(step = candidate.next()).done);
   assert.ok(step.value === null, 'a completed-section lower bound cannot return a losing or truncated stream');
-  assert.deepEqual(encode(rgba, width, height, {effort: 9}), transformed);
-  for (const workers of [1, 2, 4]) assert.deepEqual(await run(picture, {effort: 9}, {spawn: spawnNode, workers}), transformed);
+  const full = encode(rgba, width, height, {effort: 9});
+  assert.ok(full.length <= transformed.length, 'later learned models may improve the completed colour-transform stream');
+  for (const workers of [1, 2, 4]) assert.deepEqual(await run(picture, {effort: 9}, {spawn: spawnNode, workers}), full);
+  const decode = await decoder();
+  if (decode) {
+    const image = decode(full);
+    assert.equal(image.width, width); assert.equal(image.height, height); assert.equal(image.channels, 3);
+    for (let i = 0; i < width * height; i++) for (let c = 0; c < 3; c++) assert.equal(image.data[i * 3 + c], rgba[i * 4 + c]);
+  }
   assert.deepEqual(rgba, source);
 });
 

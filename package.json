@@ -1,7 +1,7 @@
 {
   "name": "rapier-jxl",
-  "version": "2.6.0",
-  "description": "A JPEG XL encoder in pure JavaScript for the browser, workers, Node and Deno: lossless and lossy, the core one file of 27.0 kB (11.4 kB gzipped); photographs and JPEGs are optional doors. Optional inlined WebAssembly SIMD kernels; no runtime dependencies.",
+  "version": "3.0.0",
+  "description": "JavaScript JPEG XL encoder for single-file HTML apps and photography tools. Lossless and lossy RGBA, exact alpha, HDR, and optional WebAssembly. Offline, no runtime dependencies.",
   "license": "MIT",
   "type": "module",
   "main": "./src/index.mjs",
@@ -71,6 +71,14 @@
       "types": "./src/source.d.mts",
       "default": "./src/source.mjs"
     },
+    "./metadata": {
+      "types": "./src/metadata.d.mts",
+      "default": "./src/metadata.mjs"
+    },
+    "./metadata/min": {
+      "types": "./src/metadata.d.mts",
+      "default": "./dist/metadata.min.mjs"
+    },
     "./package.json": "./package.json",
     "./kernels": {
       "types": "./src/kernels.d.mts",
@@ -92,6 +100,7 @@
     "docs",
     "examples",
     "bench",
+    "skills",
     "LICENSE",
     "README.md",
     "llms.txt",
@@ -108,25 +117,29 @@
     "type": "git",
     "url": "git+https://github.com/jackskip22/rapier-jxl.git"
   },
-  "homepage": "https://rapier.website",
+  "homepage": "https://github.com/jackskip22/rapier-jxl#readme",
+  "bugs": {
+    "url": "https://github.com/jackskip22/rapier-jxl/issues"
+  },
   "keywords": [
     "jpeg-xl",
     "jpegxl",
     "jxl",
+    "javascript",
     "encoder",
     "image-compression",
-    "image",
     "lossless",
     "lossy",
-    "jpeg",
-    "transcode",
-    "photo",
-    "canvas",
+    "hdr",
+    "offline",
+    "single-file-html",
+    "webassembly",
+    "photography",
+    "exif",
+    "xmp",
     "browser",
-    "web-worker",
-    "javascript",
-    "no-dependencies",
-    "rapier"
+    "zero-dependency",
+    "agent-skills"
   ],
   "scripts": {
     "test": "node --test \"test/*.test.mjs\"",

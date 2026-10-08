@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-// The photo door's per-block AC quantisation candidate. DC and alpha keep their original coefficients/samples.
+// The photo entry point's per-block AC quantization candidate. DC and alpha keep their original coefficients/samples.
 // Eight block candidates: the original, three rate/error roundings at its field, and four coarser/finer fields.
-// An admitted candidate mutates the supplied coefficient planes, avoiding a second whole-picture allocation;
+// An admitted candidate mutates the supplied coefficient planes, avoiding a second whole-image allocation;
 // callers keep the already-written previous stream before entering this search.
 import {PHOTO_LIMITS, float16Bits} from './bits.mjs';
 import {dctBlocks} from './photo-dct.mjs';
@@ -24,7 +24,7 @@ function half(value) {
 }
 
 // Reconstruction model: squared RGB coefficient error across edge-replicated DCT8 blocks, before clipping and
-// output rounding. The stored half-precision matrix and the default quantisation bias are included. The transform
+// output rounding. The stored half-precision matrix and the default quantization bias are included. The transform
 // is orthonormal, so this is the full padded block's RGB sample error (Parseval); DC is unchanged. The source
 // samples are encoded sRGB or Display P3 values, not linear-light values.
 const rgbError = (y, cb, cr) => {
@@ -37,7 +37,7 @@ export function* quantisationSteps(data, jpeg, storedBytes = 0) {
   const count = stride * rows, choices = FIELDS.length;
   // Optional search stays inside the existing photo memory envelope. Account for its score tables, and reserve
   // two completed streams plus a writer's capacities, finished sections and assembly (six stream limits total),
-  // with 16 MiB for metadata. The original door's 40 MP admission is unchanged; larger searches keep their floor.
+  // with 16 MiB for metadata. The original entry point's 40 MP admission is unchanged; larger searches keep their floor.
   const pixelsBytes = data.byteLength + components.reduce((bytes, c) => bytes + c.coeffs.byteLength, 0);
   if (pixelsBytes + Math.max(count * (choices * 10 + 2) + storedBytes, 7 * PHOTO_LIMITS.bytes) > QUANT_MEMORY_BUDGET) return null;
   const errors = new Float64Array(count * choices), rates = new Uint16Array(count * choices);

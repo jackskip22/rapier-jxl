@@ -1,10 +1,7 @@
 // Rapier's JPEG XL encoder: lossless pictures. MIT (LICENSE).
-// The design of libjxl's fast lossless path, written for Rapier: 8-bit grey, grey+alpha, RGB or RGBA; an opaque
-// alpha is dropped and a grey picture keeps one channel; up to 2048 colours try a palette against direct encoded
-// cost. YCoCg decorrelates colour by default; samples choose gradient/average prediction; each channel takes one prefix
-// code whose hybrid-integer configuration is chosen by exact price, zero runs as LZ77 copies; groups of 256x256 pixels,
-// each an independent section. The effort door's colour-transform search supplies another reversible transform
-// through the private `rct` planner input.
+// Based on libjxl's fast lossless design: sampled prediction, prefix coding and LZ77 zero runs in 256x256 groups.
+// Palette and direct encodings compete by complete stream size. YCoCg is the default reversible color transform;
+// the effort entry point can supply another transform through `rct`.
 import {kernelHooks} from './kernel-hooks.mjs';
 import {BitWriter, complete, part} from './bits.mjs';
 import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, groupPass, addCounts, assembleCodestream, GROUP_DIM} from './frame.mjs';
@@ -15,12 +12,12 @@ import {admitSampleFormat} from './admit.mjs';
 
 const MAX_PALETTE = 2048;
 
-// A pixel's packed colour, channel c in byte c, as the palette rows are laid out.
+// Pack channel c in byte c to match the palette layout.
 export const paletteKey = (rgba, i, grey, alpha) => grey
   ? (alpha ? rgba[i] + rgba[i + 3] * 256 : rgba[i])
   : rgba[i] + rgba[i + 1] * 256 + rgba[i + 2] * 65536 + (alpha ? rgba[i + 3] * 16777216 : 0);
 
-// What the picture is: which channels it needs and, when few colours, its palette.
+// Identify required channels and a candidate palette.
 export function inspectPixels(rgba, width, height, {palette: wantPalette = true, samples, ...options} = {}) {
   if (!samples && (rgba instanceof Uint16Array || rgba instanceof Float32Array)) samples = admitSampleFormat(rgba, options);
   if (samples) return inspectNativePixels(rgba, width, height, samples, wantPalette);
@@ -50,9 +47,7 @@ export function inspectPixels(rgba, width, height, {palette: wantPalette = true,
   return {colour, alpha, channels, palette};
 }
 
-// Channel planes of a group rectangle, straight from the pixels (rows `stride` pixels apart, so the picture or one
-// group's own copy): a palette's indices, the planner's reversible colour transform, YCoCg, or grey and alpha as they
-// are. `palette` is the colours in index order.
+// Fill group planes from rows `stride` pixels apart. `palette` lists colors in index order.
 export function planeFill({channels, alpha, palette, samples}, rct) {
   const grey = channels - (alpha ? 1 : 0) === 1, index = palette && new Map(palette.map((k, at) => [k, at]));
   if (samples) return nativePlaneFill(channels, alpha, index, samples, rct);
@@ -74,9 +69,8 @@ export function planeFill({channels, alpha, palette, samples}, rct) {
   };
 }
 
-// A group of a plan, here or in a pool's worker: `picture` names each picture channel's leaf. Without codes it counts
-// the group into `target` (a raw histogram per leaf); with them it writes the group into `target`, or, when none, as
-// its own section, whose bytes it returns.
+// `picture` maps image channels to leaves. Without codes, count raw tokens into `target`.
+// With codes, write to `target` or return a complete group section when no target is supplied.
 export function planGroup(setup, rct) {
   const {leaves, picture, codes} = setup, fill = planeFill(setup, rct), Plane = setup.samples && !setup.palette ? Int32Array : Int16Array;
   const planes = picture.map(() => new Plane(GROUP_DIM * GROUP_DIM));
@@ -92,19 +86,18 @@ export function planGroup(setup, rct) {
 
 export function encodeLossless(rgba, width, height, options) { return complete(losslessSteps(rgba, width, height, options)); }
 
-// The same, a group of one pass per step; `pooled`, each pass of groups is one step for a pool (pool.mjs).
+// Yield one group per step, or one complete group pass when `pooled`.
 export function* losslessSteps(rgba, width, height, options = {}) {
-  const {colorSpace, rct, pooled} = options;
+  const {colorSpace, rct, pooled, analysis} = options;
   let {samples} = options;
   if (!samples) { const format = admitSampleFormat(rgba, options); if (!format.native8) samples = format; }
   const shape = options.shape || inspectPixels(rgba, width, height, {samples});
-  // The complete stream cost includes the palette, tree, histograms and group headers. A candidate that reaches
-  // the stream limit must not hide a smaller valid representation of the same pixels.
+  // An oversized candidate must not prevent a smaller representation from completing.
   let best, oversized;
   const candidates = shape.palette ? [shape, {...shape, palette: null}] : [shape];
   for (let i = 0; i < candidates.length; i++) {
     try {
-      const bytes = yield* part(planSteps(rgba, width, height, candidates[i], colorSpace, rct, pooled, samples), i, candidates.length);
+      const bytes = yield* part(planSteps(rgba, width, height, candidates[i], colorSpace, rct, pooled, samples, analysis), i, candidates.length);
       if (!best || bytes.length < best.length) best = bytes;
     } catch (error) { if (error.code !== 'JXL_SIZE') throw error; oversized = error; }
   }
@@ -112,14 +105,23 @@ export function* losslessSteps(rgba, width, height, options = {}) {
   return best;
 }
 
-function* planSteps(rgba, width, height, shape, colorSpace, rct, pooled, samples) {
+function* planSteps(rgba, width, height, shape, colorSpace, rct, pooled, samples, analysis) {
   const {channels, alpha, palette} = shape;
   const layout = groupLayout(width, height), groups = layout.groupsX * layout.groupsY;
   const streamChannels = palette ? 2 : channels;  // the palette's meta channel and the index channel
-  const leaves = Array.from({length: streamChannels}, () => leaf(GRADIENT_PREDICTOR));
+  const step = samples?.drop && !samples.exponentBits ? 1 << samples.drop : 1;
+  const leaves = Array.from({length: streamChannels}, (_, c) => {
+    let multiplier = 1;
+    if (!palette && step > 1 && c < channels - Number(alpha)) {
+      // Midpoint RGB bins are multiples of step/2. Reversible YCoCg leaves
+      // Y, Co and Cg on grids of step/4, step and step/2 respectively.
+      multiplier = channels >= 3 && rct?.type !== 0
+        ? [Math.max(1, step >> 2), step, Math.max(1, step >> 1)][c] : step >> 1;
+    }
+    return leaf(GRADIENT_PREDICTOR, 0, multiplier);
+  });
   const tree = channelTree(leaves);
-  // What a group of this plan needs, wherever it is coded: the image channels' leaves (in the global section they
-  // follow the palette's meta channel; in a group they start at 0).
+  // Image channel leaves follow the palette meta channel in the global section and start at 0 in groups.
   const setup = {channels, alpha, palette: palette && palette.colours, rct: rct?.type, samples, leaves, picture: palette ? [layout.single ? 1 : 0] : leaves.map((_, c) => c)};
   const Plane = samples ? Int32Array : Int16Array;
   const fill = planeFill(setup, rct), planes = Array.from({length: channels}, () => new Plane(32 * 32));
@@ -133,10 +135,7 @@ function* planSteps(rgba, width, height, shape, colorSpace, rct, pooled, samples
     palette.colours.forEach((k, at) => { for (let c = 0; c < channels; c++) paletteRows[c * n + at] = palette.byte(k, c); });
   }
 
-  // Three small spatial samples choose gradient/average per channel. The same token code prices
-  // both the prefix header and raw residual bits. Fixed YCoCg avoids choosing RGB from a sparse corner
-  // that misrepresents a drawing; the measured corpus favours this smaller rule, including tiny pictures. The
-  // higher-effort sampler (rct-search.mjs) ranks other transforms, but a complete alternate stream must be smaller.
+  // Choose predictors from three spatial samples, pricing prefix headers and residual bits together.
   if (!palette) {
     const cost = freqs => {
       const code = buildCode(freqs), writer = new BitWriter(128);
@@ -150,10 +149,16 @@ function* planSteps(rgba, width, height, shape, colorSpace, rct, pooled, samples
     const candidates = predictors.map(predictor => ({predictor, freqs: leaves.map(() => new Uint32Array(ALPHABET))}));
     for (const fraction of [0, 0.5, 1]) {
       fill(planes, rgba, width, Math.floor((width - sw) * fraction), Math.floor((height - sh) * fraction), sw, sh);
-      for (const candidate of candidates) for (let c = 0; c < channels; c++) codeChannel(null, candidate.freqs[c], planes[c], sw, sh, leaf(candidate.predictor));
+      for (const candidate of candidates) for (let c = 0; c < channels; c++) {
+        const multiplier = leaves[c].multiplier;
+        // Averaging two grid points can leave the grid; the other candidates
+        // preserve every quantized value during both counting and writing.
+        if (multiplier > 1 && candidate.predictor === AVERAGE_PREDICTOR) continue;
+        codeChannel(null, candidate.freqs[c], planes[c], sw, sh, leaf(candidate.predictor, 0, multiplier));
+      }
     }
     leaves.forEach((l, c) => {
-      const costs = candidates.map(candidate => cost(candidate.freqs[c]));
+      const costs = candidates.map(candidate => l.multiplier > 1 && candidate.predictor === AVERAGE_PREDICTOR ? Infinity : cost(candidate.freqs[c]));
       let choice = 0;
       for (let p = 1; p < costs.length; p++) if (costs[p] < costs[choice]) choice = p;
       l.predictor = candidates[choice].predictor;
@@ -163,7 +168,7 @@ function* planSteps(rgba, width, height, shape, colorSpace, rct, pooled, samples
     ? [{type: 'palette', beginC: 0, numC: channels, nbColors: palette.colours.length}]
     : channels >= 3 && !samples?.exponentBits && rct?.type !== 0 ? [{type: 'rct', beginC: 0, rctType: rct?.type ?? 6}] : [];
 
-  // Pass one: token histograms per leaf, a group a step.
+  // Count tokens per leaf.
   let freqs = leaves.map(() => new Uint32Array(samples ? ALPHABET : (palette ? 4096 : 1024) + 33));
   if (paletteRows) codeChannel(null, freqs[0], paletteRows, palette.colours.length, channels, leaves[0], !samples);
   const count = planGroup(setup, rct);
@@ -172,20 +177,22 @@ function* planSteps(rgba, width, height, shape, colorSpace, rct, pooled, samples
 
   if (!samples) {
   const pairs = freqs.map(losslessCoding);
+  // Weighted search reuses only this direct YCoCg/gray plan with 256-pixel groups.
+  // Retain the original integer projection even if this candidate selects another hybrid configuration.
+  if (analysis && !palette && !rct) analysis.direct = {first: leaves.map(l => l.predictor), freqs: pairs.map(pair => pair[0].freqs)};
   const saving = pairs.reduce((n, pair) => n + pair[0].bits - pair[1].bits, 0);
-  // Seven padding bits per section and at most twenty extra TOC bits: a smaller payload alone need not
-  // be a smaller complete stream. Inside that uncertainty interval keep the original representation.
+  // Allow seven padding bits per section and twenty extra TOC bits before accepting a smaller payload.
   const choice = saving > 27 * (layout.single ? 1 : groups + 1) + 8 ? 1 : 0;
   leaves.forEach((l, i) => { l.config = pairs[i][choice].config; });
   freqs = pairs.map(pair => pair[choice].freqs);
   }
 
-  // Pass two: the sections.
+  // Write sections.
   const header = new BitWriter(256);
   writeImageHeader(header, width, height, shape.colour, shape.alpha, samples || {colorSpace});
   writeModularFrameHeader(header, {alpha: shape.alpha});
   const global = new BitWriter(4096);
-  global.write(1, 1);  // default DC quantisation
+  global.write(1, 1);  // default DC quantization
   global.write(1, 1);  // a global tree
   const ordered = writeTree(global, tree);
   const histograms = writeChannelHistograms(global, ordered, freqs, l => leaves.indexOf(l), i => leaves[i].config || RESIDUAL_CONFIG);
@@ -204,11 +211,11 @@ function* planSteps(rgba, width, height, shape, colorSpace, rct, pooled, samples
     yield* groupPass({pooled, kind: 'plan', setup: written, at: g => (groups + g + 1) / (2 * groups), stop: () => false},
       groups, g => place(g, write(rgba, width, ...rect(g))), place);
   }
-  return assembleCodestream(header, sections);
+  return assembleCodestream(header, sections, samples && (samples.bitDepth > 12 || samples.exponentBits) ? 10 : 5);
 }
 
-// Native precision uses the same group planner and entropy writer as bytes. Quantisation is a source-domain
-// policy before reversible coding; alpha is never quantised. A smaller completed exact stream always stands.
+// Native samples use source-domain RGB quantization before reversible coding.
+// Alpha stays exact; complete exact and quantized streams compete by size.
 export function* nativeSteps(data, width, height, {samples, quality = 100, effort = 1, pooled} = {}) {
   const choices = [{samples}];
   if (effort >= 2 && !samples.exponentBits) choices.push({samples, rct: {type: 0}});
@@ -249,8 +256,7 @@ function nativeQuantizer(samples) {
   if (!samples.drop) return value => value;
   const step = 1 << samples.drop, mask = step - 1;
   if (!samples.exponentBits) {
-    const maximum = (1 << samples.bitDepth) - 1;
-    return value => Math.min(maximum, Math.round(value / step) * step);
+    return value => (value & ~mask) + step / 2;
   }
   const sign = samples.bitDepth === 32 ? 0x80000000 : 0x8000;
   const exponent = samples.bitDepth === 32 ? 0x7f800000 : 0x7c00;
@@ -259,7 +265,7 @@ function nativeQuantizer(samples) {
     if (magnitude >= exponent) return value;
     const low = magnitude & mask, base = magnitude - low;
     const rounded = base + (low > step / 2 || low === step / 2 && (base / step & 1) ? step : 0);
-    // Rounding a largest finite sample must not manufacture infinity.
+    // Finite samples must remain finite after rounding.
     return rounded >= exponent ? value : (value & sign) | rounded;
   };
 }

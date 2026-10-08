@@ -1,13 +1,6 @@
-// Rapier's JPEG XL encoder: reading a JPEG's coefficients. MIT (LICENSE).
-// A JPEG is not decoded to pixels here: its quantised DCT coefficients are recovered from the Huffman-coded scans
-// (baseline, extended sequential and progressive, 8-bit, grey or three components) so they can be carried into a
-// JPEG XL frame as they are. Anything else (arithmetic coding, 12-bit, lossless, hierarchical, four components, a
-// height left to a DNL marker, a colour profile other than sRGB or Display P3) is refused with JXL_JPEG and the
-// picture takes the ordinary path instead. So is a JPEG cut short, a scan with bytes missing or left over, a restart
-// marker out of order, or a progressive file whose scans do not finish every coefficient: nothing here invents pixels
-// a file lost.
-// The frame's dimensions are admitted against the carrier's limits (JPEG_LIMITS) before a coefficient plane is
-// allocated, so a header naming a picture the module would never carry costs nothing.
+// JPEG coefficient reader. MIT (LICENSE).
+// Supports 8-bit baseline, extended sequential, and progressive Huffman-coded gray or three-component JPEGs.
+// Unsupported forms and incomplete scans raise JXL_JPEG. Dimension limits apply before coefficient allocation.
 import {JPEG_LIMITS} from './bits.mjs';
 
 export const ZIGZAG = [0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28,
@@ -32,9 +25,9 @@ function buildHuffman(counts, symbols) {
   return lookup;
 }
 
-// The colour space an ICC profile gives a JPEG's samples, read from what the profile does, never from what it says:
+// The color space an ICC profile gives a JPEG's samples, read from what the profile does, never from what it says:
 // RGB into the XYZ connection space through three colorants within 0.004 of sRGB's or Display P3's (D50, Bradford) and
-// the sRGB curve on every channel, or grey on the sRGB curve (the same in both spaces). Lookup tables, another gamut or
+// the sRGB curve on every channel, or gray on the sRGB curve (the same in both spaces). Lookup tables, another gamut or
 // another curve name no space this module declares: null, and the JPEG is refused.
 const SRGB = [0.436, 0.2225, 0.0139, 0.3851, 0.7169, 0.0971, 0.143, 0.0606, 0.7139];
 const P3 = [0.5151, 0.2412, -0.001, 0.292, 0.6922, 0.0419, 0.1571, 0.0666, 0.7841];
@@ -242,7 +235,7 @@ function exifOrientation(bytes, start, end) {
 
 // What a scan may be, and what it leaves coded: sequential scans code a component whole at once; progressive scans
 // code the DC first, then AC bands, each bit plane once, from the top down. `coverage[k]` is the lowest bit plane
-// coefficient k has been coded to (-1 never), and the picture is complete only when every one reaches 0.
+// coefficient k has been coded to (-1 never), and the image is complete only when every one reaches 0.
 function admitScan(frame, scan, ss, se, ah, al) {
   const progressive = frame.progressive;
   if (!progressive) {

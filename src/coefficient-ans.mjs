@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The optional doors add ANS at effort 2; earlier completed streams remain the
+// The optional entry points add ANS at effort 2; earlier completed streams remain the
 // answer on a tie, hurry, allocation failure or candidate above the size limit.
 import {coefficientEffortSteps} from './coefficient-effort.mjs';
 import {varDCTSteps} from './vardct.mjs';

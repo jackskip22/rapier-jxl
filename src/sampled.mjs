@@ -1,17 +1,25 @@
 // SPDX-License-Identifier: MIT
-// Bounded, deterministic MA-tree learning for the effort door. Only samples enter the split search; each group's
-// pixels are predicted and tokenised once. The emitted tree is an ordinary Modular tree, not a decoder extension.
+// Deterministic Modular tree learning from bounded spatial samples. Each group selects its tree before tokenizing.
 import {BitWriter, packSigned} from './bits.mjs';
 import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, groupPass, assembleCodestream, GROUP_DIM} from './frame.mjs';
-import {ALPHABET, leaf, split, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
+import {ALPHABET, RESIDUAL_CONFIG, leaf, split, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {codeWeighted} from './weighted.mjs';
 import {admitOutputSize} from './admit.mjs';
 import {planeFill} from './lossless.mjs';
+import {writeModularAnsHistograms} from './ans.mjs';
+import {losslessCoding} from './lossless-coding.mjs';
+import {hybridToken} from './prefix.mjs';
 
 const SAMPLE_SYMBOLS = 32, SAMPLE_Q = 4096;
 export const SAMPLE_RUNGS = Object.freeze({
   cheap: Object.freeze({samples: 1024, bins: 32, leaves: 8, depth: 5, properties: Object.freeze([9, 10, 11]), weighted: false, shared: true, references: false}),
-  rich: Object.freeze({samples: 2048, bins: 48, leaves: 16, depth: 7, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true})
+  rich: Object.freeze({samples: 2048, bins: 48, leaves: 16, depth: 7, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true}),
+  deep: Object.freeze({samples: 2048, bins: 48, leaves: 16, depth: 7, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true}),
+  thorough: Object.freeze({samples: 4096, bins: 48, leaves: 32, depth: 9, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true}),
+  dense: Object.freeze({samples: 8192, bins: 48, leaves: 32, depth: 9, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true}),
+  exhaustive: Object.freeze({samples: 16384, bins: 64, leaves: 48, depth: 10, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true}),
+  expanded: Object.freeze({samples: 32768, bins: 96, leaves: 48, depth: 12, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true}),
+  maximum: Object.freeze({samples: 65536, bins: 128, leaves: 64, depth: 12, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true})
 });
 // Q12 log2, by exact integer squaring of a Q20 mantissa. All intermediates are below 2^42. No libm/logarithm,
 // elapsed time or random source can change a split. The lazily extended table is only a mathematical cache.
@@ -79,56 +87,6 @@ function sampleModelBits(tree, leaves, freqs) {
 }
 function sampleFullFreq(sample) { const freq = new Uint32Array(ALPHABET); freq.set(sample); return freq; }
 
-// Inputs are sampled property columns and residual-token symbols, not full image planes. The best positive split
-// is taken next, with deterministic property/cut/leaf ties. Prefix headers and the tree's own encoded header are
-// charged before accepting a split, in addition to token entropy. Extra residual bits do not change on a split.
-function learnSampleTree(columns, symbols, predictor, population, options) {
-  const table = sampleEntropyTable(symbols.length), quantized = columns.map(column => ({property: column.property, ...sampleQuantize(column.values, options.bins)}));
-  const histogram = ids => { const hist = new Uint32Array(SAMPLE_SYMBOLS); for (const id of ids) hist[symbols[id]]++; return hist; };
-  const ids = Uint32Array.from({length: symbols.length}, (_, i) => i), root = leaf(predictor);
-  let active = [{node: root, ids, hist: histogram(ids), depth: 0}], leaves = 1;
-  function propose(item) {
-    if (item.depth >= options.depth || item.ids.length < 64) return null;
-    const parent = sampleEntropy(item.hist, table), count = item.ids.length;
-    let best = null;
-    for (const column of quantized) {
-      const buckets = new Uint32Array((column.cuts.length + 1) * SAMPLE_SYMBOLS);
-      for (const id of item.ids) buckets[column.indices[id] * SAMPLE_SYMBOLS + symbols[id]]++;
-      const low = new Uint32Array(SAMPLE_SYMBOLS), high = item.hist.slice(); let lowCount = 0;
-      for (let b = 0; b < column.cuts.length; b++) {
-        for (let s = 0; s < SAMPLE_SYMBOLS; s++) { const value = buckets[b * SAMPLE_SYMBOLS + s]; low[s] += value; high[s] -= value; lowCount += value; }
-        if (lowCount < 24 || count - lowCount < 24) continue;
-        const gain = parent - sampleEntropy(low, table) - sampleEntropy(high, table);
-        if (!best || gain > best.gain) best = {gain, column, bin: b, low: low.slice(), high: high.slice()};
-      }
-    }
-    if (!best || best.gain <= 0) return null;
-    const one = leaf(predictor), left = leaf(predictor), right = leaf(predictor);
-    const branch = split(best.column.property, best.column.cuts[best.bin], left, right);
-    // A standalone split's exact header delta is a local signal estimate; the final whole model is
-    // priced again with ALL emitted tokens, including LZ77, and can collapse to its one-context alternative.
-    const signal = Math.max(0, sampleModelBits(branch, [left, right], [sampleFullFreq(best.high), sampleFullFreq(best.low)]) - sampleModelBits(one, [one], [sampleFullFreq(item.hist)]));
-    const score = best.gain * population - (signal + 32) * SAMPLE_Q * symbols.length * (options.signalRepeats || 1);
-    return score > 0 ? {...best, score} : null;
-  }
-  active[0].proposal = propose(active[0]);
-  const reserve = columns.some(c => c.property >= 18) ? 2 : 0;
-  while (leaves < options.leaves - reserve) {
-    let chosen = -1;
-    for (let i = 0; i < active.length; i++) if (active[i].proposal && (chosen < 0 || active[i].proposal.score > active[chosen].proposal.score)) chosen = i;
-    if (chosen < 0) break;
-    const item = active[chosen], proposal = item.proposal, lo = [], hi = [];
-    for (const id of item.ids) (proposal.column.indices[id] > proposal.bin ? hi : lo).push(id);
-    const left = leaf(predictor), right = leaf(predictor);
-    Object.assign(item.node, split(proposal.column.property, proposal.column.cuts[proposal.bin], left, right));
-    const children = [{node: left, ids: Uint32Array.from(hi), hist: proposal.high, depth: item.depth + 1}, {node: right, ids: Uint32Array.from(lo), hist: proposal.low, depth: item.depth + 1}];
-    for (const child of children) child.proposal = propose(child);
-    active.splice(chosen, 1, ...children); leaves++;
-  }
-  const ordered = active.map((item, slot) => { item.node.slot = slot; return item.node; });
-  return sampleGuardReferences({tree: root, leaves: ordered}, predictor);
-}
-
 // Reference-property splits apply only inside a group. Its first row and column use ordinary predictor leaves;
 // the two edge leaves are reserved within the model's budget.
 function sampleGuardReferences(model, predictor) {
@@ -139,8 +97,63 @@ function sampleGuardReferences(model, predictor) {
   return {tree: split(2, 0, split(3, 0, model.tree, edgeX), edgeY), leaves: [...model.leaves, edgeX, edgeY], interior: model.tree, edgeX: edgeX.slot, edgeY: edgeY.slot};
 }
 
+// Joint prediction and context learning: each side of a split chooses its own predictor. The residual raw bits
+// enter the sampled cost because they change when the predictor changes. Full pixels are tokenised only after
+// the bounded sample search has selected the complete tree.
+function learnSampleTree(columns, symbolSets, candidates, population, options) {
+  const count = symbolSets[0].length, table = sampleEntropyTable(count);
+  let alphabet = 1; for (const symbols of symbolSets) for (const symbol of symbols) alphabet = Math.max(alphabet, symbol + 1);
+  const quantized = columns.map(column => ({property: column.property, ...sampleQuantize(column.values, options.bins)}));
+  const histograms = ids => candidates.map((_, c) => { const hist = new Uint32Array(alphabet); for (const id of ids) hist[symbolSets[c][id]]++; return hist; });
+  const cost = hist => { let bits = sampleEntropy(hist, table); for (let s = 2; s < hist.length; s++) bits += hist[s] * (s - 1) * SAMPLE_Q; return bits; };
+  const cheapest = hist => { let selected = 0, bits = cost(hist[0]); for (let c = 1; c < hist.length; c++) { const next = cost(hist[c]); if (next < bits) { selected = c; bits = next; } } return {selected, bits}; };
+  const ids = Uint32Array.from({length: count}, (_, i) => i), hist = histograms(ids), initial = cheapest(hist), predictor = candidates[initial.selected], root = leaf(predictor);
+  let active = [{node: root, ids, hist, choice: initial, depth: 0}], leaves = 1;
+  function propose(item) {
+    if (item.depth >= options.depth || item.ids.length < 64) return null;
+    let best = null;
+    for (const column of quantized) {
+      const buckets = candidates.map(() => new Uint32Array((column.cuts.length + 1) * alphabet));
+      for (const id of item.ids) for (let c = 0; c < candidates.length; c++) buckets[c][column.indices[id] * alphabet + symbolSets[c][id]]++;
+      const low = candidates.map(() => new Uint32Array(alphabet)), high = item.hist.map(h => h.slice()); let lowCount = 0;
+      for (let b = 0; b < column.cuts.length; b++) {
+        for (let c = 0; c < candidates.length; c++) for (let s = 0; s < alphabet; s++) { const value = buckets[c][b * alphabet + s]; low[c][s] += value; high[c][s] -= value; if (!c) lowCount += value; }
+        if (lowCount < 24 || item.ids.length - lowCount < 24) continue;
+        const lo = cheapest(low), hi = cheapest(high), gain = item.choice.bits - lo.bits - hi.bits;
+        if (!best || gain > best.gain) best = {gain, column, bin: b, lo, hi};
+      }
+    }
+    if (!best || best.gain <= 0) return null;
+    best.low = histograms(item.ids.filter(id => best.column.indices[id] <= best.bin));
+    best.high = item.hist.map((hist, c) => hist.map((value, s) => value - best.low[c][s]));
+    const one = leaf(candidates[item.choice.selected]), left = leaf(candidates[best.hi.selected]), right = leaf(candidates[best.lo.selected]);
+    const branch = split(best.column.property, best.column.cuts[best.bin], left, right);
+    // A standalone header delta estimates the split overhead. The complete candidate still competes by its
+    // actual bytes, including LZ77, against the preceding stream.
+    const signal = Math.max(0, sampleModelBits(branch, [left, right], [sampleFullFreq(best.high[best.hi.selected]), sampleFullFreq(best.low[best.lo.selected])]) - sampleModelBits(one, [one], [sampleFullFreq(item.hist[item.choice.selected])]));
+    const score = best.gain * population - (signal + 32) * SAMPLE_Q * count * (options.signalRepeats || 1);
+    return score > 0 ? {...best, score} : null;
+  }
+  active[0].proposal = propose(active[0]);
+  const reserve = columns.some(c => c.property >= 18) ? 2 : 0;
+  while (leaves < options.leaves - reserve) {
+    let chosen = -1;
+    for (let i = 0; i < active.length; i++) if (active[i].proposal && (chosen < 0 || active[i].proposal.score > active[chosen].proposal.score)) chosen = i;
+    if (chosen < 0) break;
+    const item = active[chosen], proposal = item.proposal, lo = [], hi = [];
+    for (const id of item.ids) (proposal.column.indices[id] > proposal.bin ? hi : lo).push(id);
+    const left = leaf(candidates[proposal.hi.selected]), right = leaf(candidates[proposal.lo.selected]);
+    Object.assign(item.node, split(proposal.column.property, proposal.column.cuts[proposal.bin], left, right));
+    const children = [{node: left, ids: Uint32Array.from(hi), hist: proposal.high, choice: proposal.hi, depth: item.depth + 1}, {node: right, ids: Uint32Array.from(lo), hist: proposal.low, choice: proposal.lo, depth: item.depth + 1}];
+    for (const child of children) child.proposal = propose(child);
+    active.splice(chosen, 1, ...children); leaves++;
+  }
+  const ordered = active.map((item, slot) => { item.node.slot = slot; return item.node; });
+  return sampleGuardReferences({tree: root, leaves: ordered}, predictor);
+}
+
 function samplePlan(plane, width, height, options, shared, previous, referenceOutput) {
-  if (shared) return sampleFinishPlan(sampleTokenize(plane, width, height, shared.predictor, null, null, shared, previous, referenceOutput), shared.predictor);
+  if (shared) return sampleFinishPlan(sampleTokenize(plane, width, height, null, null, shared, previous, referenceOutput), shared.predictor);
   const length = width * height, positions = samplePositions(length, options.samples), table = sampleEntropyTable(positions.length);
   const candidates = options.weighted ? [5, 3, 6] : [5, 3];
   const weighted = options.weighted ? new Uint32Array(length) : null, errors = options.weighted ? new Int32Array(length) : null;
@@ -159,10 +172,10 @@ function samplePlan(plane, width, height, options, shared, previous, referenceOu
   let selected = 0, price = Infinity;
   for (let c = 0; c < candidates.length; c++) { const bits = sampleEntropy(histograms[c], table) + extras[c] * SAMPLE_Q; if (bits < price) { price = bits; selected = c; } }
   const predictor = candidates[selected];
-  // Property 15 forces the decoder to maintain weighted state even with another leaf predictor. Avoid buying that
-  // state for a non-weighted plan: the other properties are direct neighbour differences.
-  const learned = learnSampleTree(columns.filter(c => c.property !== 15 || predictor === 6), symbols[selected], predictor, length, options);
-  const result = sampleTokenize(plane, width, height, predictor, weighted, errors, learned, previous, referenceOutput);
+  // A uniform non-weighted tree avoids property 15 and its weighted state. Mixed trees may use that error
+  // property with any leaf predictor; its state is shared with the weighted leaves.
+  const learned = learnSampleTree(columns.filter(c => options.mixed || c.property !== 15 || predictor === 6), options.mixed ? symbols : [symbols[selected]], options.mixed ? candidates : [predictor], length, options);
+  const result = sampleTokenize(plane, width, height, weighted, errors, learned, previous, referenceOutput);
   return sampleFinishPlan(result, predictor);
 }
 function sampleFinishPlan(result, predictor) {
@@ -173,7 +186,8 @@ function sampleFinishPlan(result, predictor) {
     for (let c = 0; c < frequencies.length; c++) for (let s = 0; s < ALPHABET; s++) cost += frequencies[c][s] * (hist[c + 1].code.lengths[s] || 0);
     return cost;
   }
-  if (count > 1) {
+  // Merging contexts preserves the token values only when their predictors agree.
+  if (count > 1 && result.leaves.every(l => l.predictor === predictor)) {
     const merged = new Uint32Array(ALPHABET); for (const freq of freqs) for (let s = 0; s < ALPHABET; s++) merged[s] += freq[s];
     const one = leaf(predictor); one.slot = 0;
     if (pricePlan(one, [one], [merged]) <= pricePlan(result.tree, result.leaves, freqs)) { result.tree = one; result.leaves = [one]; result.freqs = [merged]; context.fill(0); }
@@ -210,7 +224,7 @@ function sampleCompileLookup(tree) {
   });
   return {table, p9: maps[0], p10: maps[1], p11: maps[2], p18: maps[3], p22: maps[4], p26: maps[5]};
 }
-function sampleTokenize(plane, width, height, predictor, weighted, errors, learned, previous, referenceOutput) {
+function sampleTokenize(plane, width, height, weighted, errors, learned, previous, referenceOutput) {
   const length = width * height, count = learned.leaves.length, freqs = Array.from({length: count}, () => new Uint32Array(ALPHABET));
   const token = new Uint16Array(length), extra = new Uint32Array(length), bits = new Uint8Array(length), context = new Uint8Array(length);
   let used = 0, run = 0; const runContexts = new Uint8Array(8);
@@ -244,8 +258,9 @@ function sampleTokenize(plane, width, height, predictor, weighted, errors, learn
       while (node.left) node = samplePropertyValue(node.property, plane, width, i, x, y, w, n, nw, errors, previous) > node.splitval ? node.left : node.right;
       ctx = node.slot;
     }
-    const value = predictor === 6 ? weighted[i] : packSigned(plane[i] - (predictor === 3 ? ((w + n) / 2) | 0 : sampleGradient(w, n, nw)));
-    if (referenceOutput) referenceOutput[i] = predictor === 5 ? (value + 1) >> 1 : Math.abs(plane[i] - sampleGradient(w, n, nw));
+    const leafPredictor = learned.leaves[ctx].predictor;
+    const value = leafPredictor === 6 ? weighted[i] : packSigned(plane[i] - (leafPredictor === 3 ? ((w + n) / 2) | 0 : sampleGradient(w, n, nw)));
+    if (referenceOutput) referenceOutput[i] = leafPredictor === 5 ? (value + 1) >> 1 : Math.abs(plane[i] - sampleGradient(w, n, nw));
     if (!value) { if (run < 8) runContexts[run] = ctx; run++; }
     else {
       if (run) flush();
@@ -257,9 +272,12 @@ function sampleTokenize(plane, width, height, predictor, weighted, errors, learn
   return {...learned, freqs, token, extra, bits, context, used};
 }
 
-function sampleWriteModel(writer, plans) {
+function sampleWriteModel(writer, plans, ans = false) {
   const leaves = plans.flatMap(samplePlan => samplePlan.leaves), freqs = plans.flatMap(samplePlan => samplePlan.freqs);
-  const histograms = writeChannelHistograms(writer, writeTree(writer, channelTree(plans.map(samplePlan => samplePlan.tree))), freqs, l => leaves.indexOf(l));
+  const configs = plans.flatMap(plan => plan.leaves.map((_, i) => plan.configs?.[i] || RESIDUAL_CONFIG));
+  const ordered = writeTree(writer, channelTree(plans.map(samplePlan => samplePlan.tree)));
+  if (ans) { const write = writeModularAnsHistograms(writer, ordered, freqs, l => leaves.indexOf(l), i => configs[i]); return () => write(plans); }
+  const histograms = writeChannelHistograms(writer, ordered, freqs, l => leaves.indexOf(l), i => configs[i]);
   return () => {
     let offset = 1;
     for (const samplePlan of plans) {
@@ -267,6 +285,29 @@ function sampleWriteModel(writer, plans) {
       for (let i = 0; i < samplePlan.used; i++) { const code = codes[samplePlan.context[i]], symbol = samplePlan.token[i]; const length = code.lengths[symbol]; writer.write(length + samplePlan.bits[i], code.codes[symbol] + samplePlan.extra[i] * (1 << length)); }
     }
   };
+}
+
+function sampleProjectIntegers(plans) {
+  const scratch = [0, 0, 0];
+  for (const plan of plans) {
+    const raw = plan.freqs.map(freq => {
+      let size = 1;
+      for (let symbol = 1; symbol < 32; symbol++) if (freq[symbol]) size = 2 * (1 << (symbol - 1));
+      return new Uint32Array(size + 33);
+    });
+    for (let i = 0; i < plan.used; i++) {
+      const symbol = plan.token[i], counts = raw[plan.context[i]];
+      if (symbol >= 224) counts[counts.length - 33 + symbol - 224]++;
+      else { const value = symbol ? (1 << (symbol - 1)) + plan.extra[i] : 0; counts[value]++; }
+    }
+    const selected = raw.map(counts => losslessCoding(counts)[1]);
+    plan.configs = selected.map(model => model.config); plan.freqs = selected.map(model => model.freqs);
+    for (let i = 0; i < plan.used; i++) if (plan.token[i] < 224) {
+      const symbol = plan.token[i], value = symbol ? (1 << (symbol - 1)) + plan.extra[i] : 0;
+      hybridToken(plan.configs[plan.context[i]], value, scratch);
+      plan.token[i] = scratch[0]; plan.bits[i] = scratch[1]; plan.extra[i] = scratch[2];
+    }
+  }
 }
 
 function sampleImageModel(rgba, width, height, shape, options) {
@@ -288,7 +329,7 @@ function sampleImageModel(rgba, width, height, shape, options) {
       for (const column of columns) column.values[k] = column.property === 9 ? w + n - nw : column.property === 10 ? w - nw : nw - n;
     }
     const selected = sampleEntropy(hist[1], table) + extra[1] * SAMPLE_Q < sampleEntropy(hist[0], table) + extra[0] * SAMPLE_Q ? 1 : 0, predictor = selected ? 3 : 5;
-    return {...learnSampleTree(columns, symbols[selected], predictor, length, {...options, signalRepeats: Math.ceil(width / GROUP_DIM) * Math.ceil(height / GROUP_DIM)}), predictor};
+    return {...learnSampleTree(columns, [symbols[selected]], [predictor], length, {...options, signalRepeats: Math.ceil(width / GROUP_DIM) * Math.ceil(height / GROUP_DIM)}), predictor};
   });
 }
 
@@ -296,39 +337,60 @@ function sampleImageModel(rgba, width, height, shape, options) {
 // richer trees are learned from each group's pixels on whichever thread codes it.
 export function sampledGroup(setup) {
   const {channels, options, shared} = setup, fill = planeFill(setup);
-  const planes = Array.from({length: channels}, () => new Int16Array(GROUP_DIM * GROUP_DIM));
+  let planes;
   return (rgba, stride, x0, y0, w, h, target) => {
+    if (!planes || planes[0].length < w * h) planes = Array.from({length: channels}, () => new Int16Array(w * h));
     fill(planes, rgba, stride, x0, y0, w, h);
     const references = options.references ? planes.map((_, c) => c + 1 < channels ? new Uint16Array(w * h) : null) : [];
     const plans = planes.map((plane, c) => samplePlan(plane, w, h, options, shared?.[c], references.slice(0, c).reverse(), references[c]));
-    const section = target || new BitWriter(w * h * channels + 256);
-    if (!target) writeModularHeader(section, {useGlobalTree: false});
-    const write = sampleWriteModel(section, plans);
-    if (target) writeModularHeader(section, {transforms: channels >= 3 ? [{type: 'rct', beginC: 0, rctType: 6}] : []});
-    write();
-    return target ? undefined : section.finish();
+    const encode = (ans, section = new BitWriter(w * h * channels + 256)) => {
+      if (!target) writeModularHeader(section, {useGlobalTree: false});
+      const write = sampleWriteModel(section, plans, ans);
+      if (target) writeModularHeader(section, {transforms: channels >= 3 ? [{type: 'rct', beginC: 0, rctType: 6}] : []});
+      write();
+      return section;
+    };
+    if (!options.ans) { const section = encode(false, target); return target ? undefined : section.finish(); }
+    let section = encode(false);
+    const ans = encode(true), offset = target?.bitLength || 0;
+    if (Math.ceil((offset + ans.bitLength) / 8) < Math.ceil((offset + section.bitLength) / 8)) section = ans;
+    if (options.hybrid) {
+      sampleProjectIntegers(plans);
+      for (const entropy of [false, true]) {
+        const candidate = encode(entropy);
+        if (Math.ceil((offset + candidate.bitLength) / 8) < Math.ceil((offset + section.bitLength) / 8)) section = candidate;
+      }
+    }
+    if (target) { target.append(section); return; }
+    return section.finish();
   };
 }
 
-export function* sampledSteps(rgba, width, height, shape, colorSpace, options, pooled) {
-  const {channels} = shape, layout = groupLayout(width, height), groups = layout.groupsX * layout.groupsY;
+export function* sampledSteps(rgba, width, height, shape, colorSpace, options, pooled, ceiling = Infinity) {
+  const {channels} = shape, dim = options.dim || GROUP_DIM, layout = groupLayout(width, height, dim), groups = layout.groupsX * layout.groupsY;
+  // Histogram IDs share an 8-bit context map with the distance histogram.
+  const maxLeaves = Math.floor(255 / channels);
+  if (options.leaves > maxLeaves) options = {...options, leaves: maxLeaves};
   const shared = options.shared ? sampleImageModel(rgba, width, height, shape, options) : null;
-  const setup = {channels, alpha: shape.alpha, palette: null, options, shared}, group = sampledGroup(setup);
+  const setup = {channels, alpha: shape.alpha, palette: null, options, shared, dim}, group = sampledGroup(setup);
   const header = new BitWriter(128), global = new BitWriter(1024), sections = [], transforms = channels >= 3 ? [{type: 'rct', beginC: 0, rctType: 6}] : [];
-  writeImageHeader(header, width, height, shape.colour, shape.alpha, {colorSpace}); writeModularFrameHeader(header, {alpha: shape.alpha});
+  writeImageHeader(header, width, height, shape.colour, shape.alpha, {colorSpace}); writeModularFrameHeader(header, {alpha: shape.alpha, shift: dim === 1024 ? 3 : dim === 512 ? 2 : 1});
   let sectionBytes = 0;
-  const append = bytes => { sectionBytes += bytes.length; admitOutputSize(sectionBytes); sections.push(bytes); };
+  const append = bytes => { sectionBytes += bytes.length; admitOutputSize(sectionBytes); sections.push(bytes); return bytes; };
   global.write(1, 1); global.write(1, 1);
   if (layout.single) {
     group(rgba, width, 0, 0, width, height, global); append(global.finish());
-    if (yield 1) return null;
+    yield 1;
+    if (sectionBytes >= ceiling) return null;
     return assembleCodestream(header, sections);
   }
   const leaves = Array.from({length: channels}, () => leaf(5));
   writeChannelHistograms(global, writeTree(global, channelTree(leaves)), leaves.map(() => new Uint32Array(ALPHABET)), l => leaves.indexOf(l));
   writeModularHeader(global, {transforms}); append(global.finish());
+  // Completed sections are a lower bound; the frame header and table of contents can only add bytes.
+  if (sectionBytes >= ceiling) return null;
   for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
-  if ((yield* groupPass({pooled, kind: 'sampled', setup, at: g => (g + 1) / groups, stop: () => true},
-    groups, g => append(group(rgba, width, ...groupRect(layout, width, height, g))), (g, bytes) => append(bytes))) === null) return null;
+  if ((yield* groupPass({pooled, kind: 'sampled', setup, dim, at: g => (g + 1) / groups, stop: g => g + 1 < groups, byteCeiling: ceiling - sectionBytes},
+    groups, g => append(group(rgba, width, ...groupRect(layout, width, height, g, dim))), (g, bytes) => append(bytes))) === null) return null;
   return assembleCodestream(header, sections);
 }

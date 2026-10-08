@@ -1,0 +1,260 @@
+{
+  "version": "2.6.0",
+  "native": "libjxl 0.12.0 official Linux x86-64 static tools",
+  "photo": {
+    "method": "Rapier photo quality 50/80/90/99 defines the byte budget. Native effort 7 distance is searched for the largest stream within that budget. Both decode through djxl to 8-bit sRGB. RGB SSIM uses an 11x11 Gaussian without downsampling. Alpha is exact. Butteraugli uses 80 nits.",
+    "rows": [
+      {
+        "Input \u00b7 Rapier q": "Wood grain \u00b7 50",
+        "Rapier bytes": "6,351",
+        "Native bytes": "6,335",
+        "Native d": "5.061",
+        "PSNR dB R / N \u2191": "33.459 / 37.501",
+        "RGB SSIM R / N \u2191": "0.833394 / 0.920358",
+        "Butteraugli R / N \u2193": "7.9959 / 3.8476"
+      },
+      {
+        "Input \u00b7 Rapier q": "Wood grain \u00b7 80",
+        "Rapier bytes": "11,640",
+        "Native bytes": "11,632",
+        "Native d": "2.246",
+        "PSNR dB R / N \u2191": "36.866 / 39.628",
+        "RGB SSIM R / N \u2191": "0.900685 / 0.942440",
+        "Butteraugli R / N \u2193": "4.0035 / 1.8251"
+      },
+      {
+        "Input \u00b7 Rapier q": "Wood grain \u00b7 90",
+        "Rapier bytes": "18,713",
+        "Native bytes": "18,713",
+        "Native d": "1.226",
+        "PSNR dB R / N \u2191": "38.910 / 40.727",
+        "RGB SSIM R / N \u2191": "0.929675 / 0.953458",
+        "Butteraugli R / N \u2193": "2.3318 / 1.5172"
+      },
+      {
+        "Input \u00b7 Rapier q": "Wood grain \u00b7 99",
+        "Rapier bytes": "76,863",
+        "Native bytes": "76,842",
+        "Native d": "0.327",
+        "PSNR dB R / N \u2191": "45.530 / 47.954",
+        "RGB SSIM R / N \u2191": "0.983684 / 0.991316",
+        "Butteraugli R / N \u2193": "0.9762 / 0.6128"
+      },
+      {
+        "Input \u00b7 Rapier q": "Landscape \u00b7 50",
+        "Rapier bytes": "4,729",
+        "Native bytes": "4,710",
+        "Native d": "4.944",
+        "PSNR dB R / N \u2191": "34.594 / 38.053",
+        "RGB SSIM R / N \u2191": "0.852275 / 0.908469",
+        "Butteraugli R / N \u2193": "8.5642 / 3.4545"
+      },
+      {
+        "Input \u00b7 Rapier q": "Landscape \u00b7 80",
+        "Rapier bytes": "7,932",
+        "Native bytes": "7,921",
+        "Native d": "2.438",
+        "PSNR dB R / N \u2191": "37.305 / 39.502",
+        "RGB SSIM R / N \u2191": "0.891356 / 0.921732",
+        "Butteraugli R / N \u2193": "4.1410 / 2.1015"
+      },
+      {
+        "Input \u00b7 Rapier q": "Landscape \u00b7 90",
+        "Rapier bytes": "12,725",
+        "Native bytes": "12,723",
+        "Native d": "1.508",
+        "PSNR dB R / N \u2191": "39.050 / 40.389",
+        "RGB SSIM R / N \u2191": "0.912417 / 0.931579",
+        "Butteraugli R / N \u2193": "3.1272 / 1.6892"
+      },
+      {
+        "Input \u00b7 Rapier q": "Landscape \u00b7 99",
+        "Rapier bytes": "64,221",
+        "Native bytes": "64,192",
+        "Native d": "0.377",
+        "PSNR dB R / N \u2191": "45.545 / 47.492",
+        "RGB SSIM R / N \u2191": "0.977931 / 0.986445",
+        "Butteraugli R / N \u2193": "1.0067 / 0.6164"
+      },
+      {
+        "Input \u00b7 Rapier q": "Folded texture \u00b7 50",
+        "Rapier bytes": "3,563",
+        "Native bytes": "3,552",
+        "Native d": "5.427",
+        "PSNR dB R / N \u2191": "35.334 / 38.643",
+        "RGB SSIM R / N \u2191": "0.839685 / 0.908679",
+        "Butteraugli R / N \u2193": "7.2341 / 4.0082"
+      },
+      {
+        "Input \u00b7 Rapier q": "Folded texture \u00b7 80",
+        "Rapier bytes": "6,525",
+        "Native bytes": "6,514",
+        "Native d": "2.468",
+        "PSNR dB R / N \u2191": "38.175 / 40.176",
+        "RGB SSIM R / N \u2191": "0.894762 / 0.927122",
+        "Butteraugli R / N \u2193": "3.6812 / 2.2637"
+      },
+      {
+        "Input \u00b7 Rapier q": "Folded texture \u00b7 90",
+        "Rapier bytes": "10,046",
+        "Native bytes": "10,046",
+        "Native d": "1.668",
+        "PSNR dB R / N \u2191": "39.618 / 40.820",
+        "RGB SSIM R / N \u2191": "0.917830 / 0.934923",
+        "Butteraugli R / N \u2193": "2.2918 / 1.6726"
+      },
+      {
+        "Input \u00b7 Rapier q": "Folded texture \u00b7 99",
+        "Rapier bytes": "57,111",
+        "Native bytes": "57,111",
+        "Native d": "0.412",
+        "PSNR dB R / N \u2191": "45.611 / 47.539",
+        "RGB SSIM R / N \u2191": "0.979148 / 0.986739",
+        "Butteraugli R / N \u2193": "0.9172 / 0.7164"
+      },
+      {
+        "Input \u00b7 Rapier q": "Lit surface \u00b7 50",
+        "Rapier bytes": "2,825",
+        "Native bytes": "2,825",
+        "Native d": "2.909",
+        "PSNR dB R / N \u2191": "38.241 / 40.292",
+        "RGB SSIM R / N \u2191": "0.891825 / 0.915090",
+        "Butteraugli R / N \u2193": "4.4182 / 2.4656"
+      },
+      {
+        "Input \u00b7 Rapier q": "Lit surface \u00b7 80",
+        "Rapier bytes": "4,107",
+        "Native bytes": "4,107",
+        "Native d": "2.314",
+        "PSNR dB R / N \u2191": "39.474 / 40.530",
+        "RGB SSIM R / N \u2191": "0.903290 / 0.918372",
+        "Butteraugli R / N \u2193": "3.1575 / 2.1072"
+      },
+      {
+        "Input \u00b7 Rapier q": "Lit surface \u00b7 90",
+        "Rapier bytes": "5,465",
+        "Native bytes": "5,453",
+        "Native d": "1.988",
+        "PSNR dB R / N \u2191": "40.214 / 40.738",
+        "RGB SSIM R / N \u2191": "0.912497 / 0.921402",
+        "Butteraugli R / N \u2193": "2.2827 / 1.9999"
+      },
+      {
+        "Input \u00b7 Rapier q": "Lit surface \u00b7 99",
+        "Rapier bytes": "47,155",
+        "Native bytes": "47,152",
+        "Native d": "0.466",
+        "PSNR dB R / N \u2191": "45.664 / 46.636",
+        "RGB SSIM R / N \u2191": "0.975682 / 0.980349",
+        "Butteraugli R / N \u2193": "0.9476 / 1.1255"
+      },
+      {
+        "Input \u00b7 Rapier q": "Grace Hopper \u00b7 50",
+        "Rapier bytes": "15,990",
+        "Native bytes": "15,982",
+        "Native d": "5.451",
+        "PSNR dB R / N \u2191": "29.546 / 30.676",
+        "RGB SSIM R / N \u2191": "0.778970 / 0.807254",
+        "Butteraugli R / N \u2193": "6.6973 / 4.5990"
+      },
+      {
+        "Input \u00b7 Rapier q": "Grace Hopper \u00b7 80",
+        "Rapier bytes": "34,419",
+        "Native bytes": "34,409",
+        "Native d": "2.338",
+        "PSNR dB R / N \u2191": "33.675 / 34.477",
+        "RGB SSIM R / N \u2191": "0.862229 / 0.899859",
+        "Butteraugli R / N \u2193": "3.8410 / 3.0344"
+      },
+      {
+        "Input \u00b7 Rapier q": "Grace Hopper \u00b7 90",
+        "Rapier bytes": "56,543",
+        "Native bytes": "56,519",
+        "Native d": "1.110",
+        "PSNR dB R / N \u2191": "38.605 / 38.944",
+        "RGB SSIM R / N \u2191": "0.950222 / 0.970007",
+        "Butteraugli R / N \u2193": "2.3300 / 1.4546"
+      },
+      {
+        "Input \u00b7 Rapier q": "Grace Hopper \u00b7 99",
+        "Rapier bytes": "110,542",
+        "Native bytes": "110,533",
+        "Native d": "0.173",
+        "PSNR dB R / N \u2191": "49.948 / 47.182",
+        "RGB SSIM R / N \u2191": "0.996348 / 0.995977",
+        "Butteraugli R / N \u2193": "0.4889 / 0.3406"
+      }
+    ]
+  },
+  "drawingsAndPaintings": {
+    "inputs": 6,
+    "qualities": [
+      50,
+      80,
+      90,
+      99
+    ],
+    "result": "Native has higher SSIM and lower Butteraugli in all 24 cases. Fourteen byte budgets match within 0.127%; ten native lossless streams fit in 3% to 51% fewer bytes. Rapier has higher PSNR on two paintings at qualities 80 and 90."
+  },
+  "jpeg": {
+    "method": "Rapier carries coefficients and orientation; native effort 7 additionally stores JPEG reconstruction data.",
+    "rows": [
+      {
+        "JPEG input": "grey-sequential.jpg",
+        "Original bytes": "141",
+        "Rapier carrier": "117",
+        "Native reversible": "177",
+        "JPEG rebuilt by native": "yes"
+      },
+      {
+        "JPEG input": "quant-before-scan.jpg",
+        "Original bytes": "141",
+        "Rapier carrier": "120",
+        "Native reversible": "181",
+        "JPEG rebuilt by native": "yes"
+      },
+      {
+        "JPEG input": "quant-after-scan.jpg",
+        "Original bytes": "210",
+        "Rapier carrier": "120",
+        "Native reversible": "refused",
+        "JPEG rebuilt by native": "no reconstruction data possible"
+      },
+      {
+        "JPEG input": "colour-sequential.jpg",
+        "Original bytes": "925",
+        "Rapier carrier": "499",
+        "Native reversible": "662",
+        "JPEG rebuilt by native": "yes"
+      },
+      {
+        "JPEG input": "colour-progressive-restarts.jpg",
+        "Original bytes": "1,367",
+        "Rapier carrier": "464",
+        "Native reversible": "820",
+        "JPEG rebuilt by native": "yes"
+      },
+      {
+        "JPEG input": "decoder-difference.jpg",
+        "Original bytes": "925",
+        "Rapier carrier": "499",
+        "Native reversible": "662",
+        "JPEG rebuilt by native": "yes"
+      },
+      {
+        "JPEG input": "reconstruction-difference.jpg",
+        "Original bytes": "925",
+        "Rapier carrier": "510",
+        "Native reversible": "676",
+        "JPEG rebuilt by native": "yes"
+      },
+      {
+        "JPEG input": "grace-hopper.jpg",
+        "Original bytes": "86,089",
+        "Rapier carrier": "60,543",
+        "Native reversible": "58,773",
+        "JPEG rebuilt by native": "yes"
+      }
+    ]
+  }
+}

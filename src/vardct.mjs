@@ -1,6 +1,6 @@
 // Rapier's JPEG XL encoder: a JPEG carried into a VarDCT frame. MIT (LICENSE).
-// The JPEG's quantised DCT coefficients become the frame's coefficients without loss, the way libjxl transcodes
-// a JPEG: its quantisation tables as raw dequantisation matrices, its DC values as the DC image, its colour
+// The JPEG's quantized DCT coefficients become the frame's coefficients without loss, the way libjxl transcodes
+// a JPEG: its quantization tables as raw dequantisation matrices, its DC values as the DC image, its color
 // (YCbCr, or RGB) and chroma subsampling kept, every block an 8x8 DCT, no filters, no smoothing, no chroma from
 // luma. Only the entropy coding changes: JPEG XL's contexts over the coefficients, with prefix codes.
 import {BitWriter, float16Bits, packSigned, ceilLog2, complete} from './bits.mjs';
@@ -25,8 +25,8 @@ const SCAN = ZIGZAG.map(n => ((n & 7) << 3) | (n >> 3));
 
 const zeroDensityContext = (left, k, prev) => (COEFF_NUM_NONZERO_CONTEXT[left] + COEFF_FREQ_CONTEXT[k]) * 2 + prev;
 
-// Block contexts as libjxl chooses them for a JPEG: luma blocks in up to eight buckets of their quantised DC (more
-// buckets for larger, finer pictures), chroma in about half as many, one chroma context for a grey picture.
+// Block contexts as libjxl chooses them for a JPEG: luma blocks in up to eight buckets of their quantized DC (more
+// buckets for larger, finer images), chroma in about half as many, one chroma context for a gray image.
 function blockContexts(luma, thresholdsWanted, grey) {
   const thresholds = [];
   if (thresholdsWanted > 0) {
@@ -77,7 +77,7 @@ export function* varDCTSteps(jpeg, plan = {}) {
   const {width, height, components, alpha} = jpeg, grey = components.length === 1;
   const quantScale = jpeg.quantScale || 1;
   // The raw tables' denominator, 1 / (8 x 255 x quantScale), is a normal binary16: where it would be subnormal (the
-  // photo door's), it is doubled until it is not and every block's quantisation field doubled with it, so the decoder's
+  // photo entry point's), it is doubled until it is not and every block's quantization field doubled with it, so the decoder's
   // dequantised coefficients are the same. A decoder that reads a subnormal wrong (jxl-rs 0.7.4 halves them) reads these.
   let field = jpeg.quantFieldBase || 1;
   while (field / (8 * 255 * quantScale) < 1 / 16384) field *= 2;
@@ -95,7 +95,7 @@ export function* varDCTSteps(jpeg, plan = {}) {
   const groupsX = Math.ceil(width / GROUP_DIM), groupsY = Math.ceil(height / GROUP_DIM), numGroups = groupsX * groupsY;
   const dcGroupsX = Math.ceil(xsizeBlocks / 256), dcGroupsY = Math.ceil(ysizeBlocks / 256), numDcGroups = dcGroupsX * dcGroupsY;
   const single = numGroups === 1;
-  // A block's coefficients: the JPEG's block (bx, by) at the channel's scale; chroma of a grey picture is empty.
+  // A block's coefficients: the JPEG's block (bx, by) at the channel's scale; chroma of a gray image is empty.
   const blockAt = (c, bx, by) => { const comp = comps[c]; if (grey && c !== 1) return -1; return ((by * comp.stride) + bx) * 64; };
 
   // An RGB JPEG's level shift comes back through the DC: 128 in pixel units, 1024 in the coefficient's, as libjxl adds
@@ -116,7 +116,7 @@ export function* varDCTSteps(jpeg, plan = {}) {
 
   const header = new BitWriter(256);
   writeImageHeader(header, width, height, grey ? 1 : 3, !!alpha, {orientation: jpeg.orientation, colorSpace: jpeg.colorSpace});
-  // The frame header: VarDCT, adaptive DC smoothing skipped, the colour and subsampling of the JPEG.
+  // The frame header: VarDCT, adaptive DC smoothing skipped, the color and subsampling of the JPEG.
   header.write(1, 0); header.write(2, 0); header.write(1, 0);
   header.write(2, 2); header.write(8, 128 - 17);  // flags: kSkipAdaptiveDCSmoothing
   header.write(1, ycbcr ? 1 : 0);
@@ -149,7 +149,7 @@ export function* varDCTSteps(jpeg, plan = {}) {
       }
     }
   };
-  // Bucketed contexts win on photographs and lose on small or flat pictures: both are counted and the cheaper kept.
+  // Bucketed contexts win on photographs and lose on small or flat images: both are counted and the cheaper kept.
   const total = (wanted > 0 ? 3 : 2) * numGroups + numDcGroups;
   let done = 0;
   const countWith = function* (chosen) {
@@ -177,7 +177,7 @@ export function* varDCTSteps(jpeg, plan = {}) {
     admitOutputSize(sectionBytes);
   };
 
-  // DC global: the DC quantisation of each channel, the quantizer at scale one, luma and chroma block contexts, no
+  // DC global: the DC quantization of each channel, the quantizer at scale one, luma and chroma block contexts, no
   // chroma from luma, no global modular tree.
   const dc = section(0);
   dc.write(1, 0);
@@ -200,7 +200,7 @@ export function* varDCTSteps(jpeg, plan = {}) {
   dc.write(4, 0); dc.write(4, 0);
   writeContextMap(dc, contexts.map);
   // Chroma from luma switched off in full: the default map carries a base luma-to-B ratio of one (meant for XYB),
-  // which a 4:4:4 or grey frame would apply to its Cr. Colour factor 84, both bases zero, no DC correlation.
+  // which a 4:4:4 or gray frame would apply to its Cr. Colour factor 84, both bases zero, no DC correlation.
   dc.write(1, 0); dc.write(2, 0); dc.write(16, 0); dc.write(16, 0); dc.write(8, 128); dc.write(8, 128);
   dc.write(1, 0);
   if (alpha) writeModularStream(dc, [single ? alphaPlane(0, 0) : {w: 0, h: 0, data: new Int32Array(0)}], GRADIENT_PREDICTOR);
@@ -225,7 +225,7 @@ export function* varDCTSteps(jpeg, plan = {}) {
     const count = rw * rh, bits = ceilLog2(count);
     if (bits) w.write(bits, count - 1);
     const cw = (rw + 7) >> 3, ch = (rh + 7) >> 3;
-    // Every block's strategy (DCT8, row 0) and quantisation field less one (row 1); a field above one is a constant row,
+    // Every block's strategy (DCT8, row 0) and quantization field less one (row 1); a field above one is a constant row,
     // which the gradient predictor codes as one residual.
     const blocks = new Int32Array(count * 2).fill(field - 1, count);
     if (jpeg.quantFields) for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) blocks[count + y * rw + x] = jpeg.quantFields[(y0 + y) * xsizeBlocks + x0 + x] - 1;
@@ -237,7 +237,7 @@ export function* varDCTSteps(jpeg, plan = {}) {
     yield ++done / total;
   }
 
-  // AC global: the JPEG's quantisation tables as the raw DCT8 matrices (transposed into the frame's layout), the
+  // AC global: the JPEG's quantization tables as the raw DCT8 matrices (transposed into the frame's layout), the
   // other kinds from the library, one histogram set, the natural coefficient order, the AC histograms.
   const ac = section(1 + numDcGroups);
   ac.write(1, 0);

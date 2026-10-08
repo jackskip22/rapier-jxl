@@ -150,11 +150,13 @@
     {"door":"photo","input":{"seed":20260930,"index":4},"options":{"quality":90,"effort":5},"sha256":"079f4883e3ffcfd4bc91605e01dfe5c68a5fd8e21b71c1c03385f85798edb8b2"},
     {"door":"effort","input":{"file":"seeds/local-palette.rgba","width":600,"height":19},"options":{"effort":4},"sha256":"114bc3ba909bed5bdf1198893ad855715cc4a7d0d1fafa265ccfdbe56ad86579"},
     {"door":"effort","input":{"file":"seeds/local-palette.rgba","width":600,"height":19},"options":{"effort":5},"sha256":"114bc3ba909bed5bdf1198893ad855715cc4a7d0d1fafa265ccfdbe56ad86579"},
-    {"door":"effort","input":{"border":true,"width":300,"height":259},"options":{"effort":6},"sha256":"8af0adc4620dded4b16d8697cbd948120d8e8b210ea68b768d2af93097136f09"},
+    {"door":"effort","input":{"border":true,"width":300,"height":259},"options":{"effort":6},"sha256":"0b0dc27437d7561aff83311fd9cac015ad8d583f8b4d582a0edc3ea3abe0be6e"},
     {"door":"effort","input":{"file":"seeds/local-palette.rgba","width":600,"height":19},"options":{"effort":6},"sha256":"d57b7cff92de7eb5f6bc8ae2359947106f612be8088d24de9d080a440374e391"},
     {"door":"transcode","input":{"file":"seeds/display-p3-table.jpg"},"sha256":"ba8ac62cba2921bf895020ab1a4d3e1d6cf34524dbd22987db8c04dca55e34c4"},
     {"door":"transcode","input":{"file":"photo-corpus/grace-hopper.jpg"},"options":{"effort":4},"sha256":"d1041a9706a5128bb5fc5acef745708827e68db23c332f212139397f727b279c"},
     {"door":"photo","input":{"seed":20260930,"index":13},"options":{"quality":90,"effort":4},"sha256":"d3f32eff698d204f4acfb45f08f4377dd546b9ca5f27f2656042c9b57af76d7b"},
-    {"door":"effort","input":{"file":"seeds/hurry-inner.rgba","width":96,"height":64},"options":{"effort":4,"treeLearning":"sampled"},"sha256":"842fa6deec02f9166dd90c18fde19c34a0bf55a7e2ee65c6c942a5e00dc63717"}
+    {"door":"effort","input":{"file":"seeds/hurry-inner.rgba","width":96,"height":64},"options":{"effort":4,"treeLearning":"sampled"},"sha256":"842fa6deec02f9166dd90c18fde19c34a0bf55a7e2ee65c6c942a5e00dc63717"},
+    {"door":"effort","input":{"file":"seeds/hurry-painting.rgba.gz","width":512,"height":384},"options":{"effort":6},"sha256":"6e44d2153dc5322aee3c507c3cfeeb332fec8307b32961d18eee194da5aa0f64"},
+    {"door":"effort","input":{"file":"seeds/hurry-painting.rgba.gz","width":512,"height":384},"options":{"effort":9},"sha256":"2e9f923535879b8fc04c6916e0079e4d4d94417340c2b9a9aae00b21e7c81ba9"}
   ]
 }

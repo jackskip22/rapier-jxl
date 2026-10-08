@@ -5,6 +5,7 @@
 import {BitWriter, packSigned} from './bits.mjs';
 import {buildCode, writePrefixCode, writeHistograms, uintConfig, hybridToken, countToken, writeHybrid} from './prefix.mjs';
 import {ALPHABET, LZ77, RESIDUAL_CONFIG, leaf, channelTree, writeTree} from './modular.mjs';
+import {kernelHooks} from './kernel-hooks.mjs';
 const SCREEN_DISTANCE_CONFIG = uintConfig(4),
   SCREEN_HASH_SIZE = 65536;
 
@@ -74,9 +75,10 @@ export function screenMatches(values, emit, depth = 4) {
 }
 
 export const screenLZ77 = {
-  create() {
-    const distances = new Uint32Array(64);
-    let distanceCode;
+  create(options = {}) {
+    const distances = options.distances instanceof Uint32Array && options.distances.length === 64
+      ? options.distances : new Uint32Array(64);
+    let distanceCode = options.distanceCode;
     return {
       code(writer, target, plane, width, height, leaf) {
         if (leaf.offset !== 0 || leaf.multiplier !== 1) throw new Error('screen LZ77 is lossless only');
@@ -113,6 +115,21 @@ export const screenLZ77 = {
 // Larger groups can retain a repeated row after short runs have buried it in
 // the hash chain. Rows are hints only: each copied value is still compared.
 // The fast matcher above does not build or consult this additional index.
+// How far two positions agree. Four comparisons per trip: the decision is the same as one-at-a-time.
+function matchSpan(values, i, at) {
+  const limit = values.length - i;
+  let n = 0;
+  while (n + 4 <= limit) {
+    if (values[at + n] !== values[i + n]) return n;
+    if (values[at + n + 1] !== values[i + n + 1]) return n + 1;
+    if (values[at + n + 2] !== values[i + n + 2]) return n + 2;
+    if (values[at + n + 3] !== values[i + n + 3]) return n + 3;
+    n += 4;
+  }
+  while (n < limit && values[at + n] === values[i + n]) n++;
+  return n;
+}
+
 function screenRowMatches(values, width, emit, depth) {
   const head = new Int32Array(SCREEN_HASH_SIZE).fill(-1),
     previous = new Int32Array(values.length),
@@ -134,17 +151,24 @@ function screenRowMatches(values, width, emit, depth) {
     previous[i] = head[h];
     head[h] = i;
   };
-  for (let i = 0; i < values.length; ) {
-    let length = 0, distance = 0;
+  // One probe closure serves every position in the plane.
+  let i = 0, length = 0, distance = 0;
+  const probe = at => {
+    if (at < 0 || at >= i || values[at] !== values[i]) return;
+    // Farther than the current match, and already shorter at the far end: it cannot win.
+    if (length && i - at >= distance) {
+      const end = i + length;
+      if (end > values.length || values[at + length - 1] !== values[i + length - 1]) return;
+      if (end < values.length && values[at + length] !== values[i + length]) return;
+    } else if (length && values[at + length - 1] !== values[i + length - 1] && i + length - 1 < values.length) return;
+    const n = matchSpan(values, i, at);
+    if (n > length || (n === length && i - at < distance)) { length = n; distance = i - at; }
+  };
+  for (; i < values.length; ) {
+    length = 0; distance = 0;
     if (i + LZ77.minLength <= values.length) {
-      const probe = at => {
-        if (at < 0 || at >= i || values[at] !== values[i] || (length && values[at + length - 1] !== values[i + length - 1])) return;
-        let n = 0;
-        while (i + n < values.length && values[at + n] === values[i + n]) n++;
-        if (n > length || (n === length && i - at < distance)) { length = n; distance = i - at; }
-      };
       const row = rows[(i / width) | 0];
-      if (row >= 0) probe(row + i % width);
+      if (row >= 0) probe(row + (i % width));
       for (let at = head[hash(i)], n = 0; at >= 0 && n < depth && i + length < values.length; at = previous[at], n++) probe(at);
     }
     if (length >= LZ77.minLength) {
@@ -166,13 +190,15 @@ export function screenModel(plane, width, height, depth = 4) {
     const count = (config, value, target, base = 0) => {
       hybridToken(config, value, token); target[base + token[0]]++; raw += token[1];
     };
-    screenRowMatches(screenResiduals(plane, width, height, predictor), width, (value, length, distance) => {
+    const emit = (value, length, distance) => {
       if (length) {
         pieces.push(length - LZ77.minLength, distance);
         count(LZ77.lengthConfig, length - LZ77.minLength, freqs, LZ77.minSymbol);
         count(SCREEN_DISTANCE_CONFIG, distance === 1 ? 1 : distance + 119, distances);
       } else { pieces.push(value, 0); count(RESIDUAL_CONFIG, value, freqs); }
-    }, depth);
+    };
+    if (!kernelHooks.screen?.(plane, width, height, predictor, depth, emit))
+      screenRowMatches(screenResiduals(plane, width, height, predictor), width, emit, depth);
     const code = buildCode(freqs), distance = buildCode(distances), writer = new BitWriter(256);
     writePrefixCode(writer, code); writePrefixCode(writer, distance);
     let bits = writer.bitLength + raw;

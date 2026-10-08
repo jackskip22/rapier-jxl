@@ -1,9 +1,9 @@
 # Encoder conformance seeds
 
-These small, authored JPEGs keep reproduced coefficient-reading failures. `cases.json` records whether a file
+These JPEG fixtures reproduce coefficient-reading failures. `cases.json` records whether a file
 must be refused or decoded. `same` means the stored coefficients and tables are identical; `samePixels` permits
 different unused edge padding while requiring identical decoded pixels. All files here use the repository's MIT
-license. The colour pair was authored with `../jpeg-writer.mjs`; the other JPEGs have deliberately minimal tables
+license. The color pair was generated with `../jpeg-writer.mjs`; the other JPEGs have deliberately minimal tables
 and scan bitstrings.
 
 | Case | Corruption prevented |
@@ -17,10 +17,10 @@ and scan bitstrings.
 | `huffman-all-ones`, `bad-padding`, `trailing-restarts` | Padding cannot become a Huffman symbol, and scan boundaries cannot hide omitted or extra data. |
 | `huffman-dc-symbol-16` | A DC table naming a symbol above 15 is refused when a scan first reads DC through it, as libjpeg refuses it, even when no coefficient uses the symbol. |
 | `rgba-2049x1.rgba` | Squeeze's zero-height chroma channels must not introduce unused histogram headers. Retained at qualities 1, 80 and 99 in `pixels.json`. |
-| `display-p3.jpg` | The colour pair's sequential JPEG with a Display P3 profile (`../icc.mjs`): carried and declared Display P3, its stream held in `bytes.json`. |
-| `display-p3-table.jpg` | The same carrier samples and P3 colorants with table transfer curves: the whole table is recognised using deterministic arithmetic, and `bytes.json` requires the parametric profile's stream. |
-| `profile-table-plateau.jpg` | The colour pair's sequential JPEG with Display P3 colorants and a monotonic red transfer table that matches sRGB only at the old sampled knots. `malformed.test.mjs` refuses it: relabelling its changed transfer as sRGB would change the colours. |
-| `rgba-1x257.rgba` | Squeeze's zero-width chroma channels of a one-wide picture own no group piece; the histograms are numbered over the channels that do, or the decoder finds a hole. Retained at qualities 1, 80 and 99 in `pixels.json`. |
+| `display-p3.jpg` | The color pair's sequential JPEG with a Display P3 profile (`../icc.mjs`): carried and declared Display P3, its stream held in `bytes.json`. |
+| `display-p3-table.jpg` | The same carrier samples and P3 colorants with table transfer curves: the whole table is recognized using deterministic arithmetic, and `bytes.json` requires the parametric profile's stream. |
+| `profile-table-plateau.jpg` | The color pair's sequential JPEG with Display P3 colorants and a monotonic red transfer table that matches sRGB only at the old sampled knots. `malformed.test.mjs` refuses it: relabeling its changed transfer as sRGB would change the colors. |
+| `rgba-1x257.rgba` | Squeeze's zero-width chroma channels in a one-pixel-wide image emit no group data. Histogram indices must exclude those channels. Retained at qualities 1, 80 and 99 in `pixels.json`. |
 
 Run the public tests from the repository root:
 
@@ -37,7 +37,7 @@ are guarded before allocation, and admitted mutation dimensions remain small.
 `JXL_FUZZ_SEED`, `JXL_FUZZ_JPEGS` and `JXL_FUZZ_PIXELS` choose a reproducible run. There are no timing or size
 assertions in these tests. `JXL_FUZZ_FAILURE_DIR` saves a failing input and its reproduction coordinates.
 Retained pixel cases run even when the generated pixel-case count is zero. An optional `photo.mjs` or `effort.mjs`
-is included automatically when present (the effort door at efforts 2 and 3).
+is tested automatically when present (the effort entry point at efforts 2 and 3).
 
 The scale runner uses one persistent native libjxl process per worker. Install a C compiler and the libjxl
 development package (for example `apt-get install build-essential libjxl-dev`), then run:
@@ -78,7 +78,7 @@ to bytes is 6.49999475479126. The same libjxl 0.7.0 library forced to Highway's 
 matching oxide. `../native-scalar.c` is an optional diagnostic wrapper to reproduce that CPU-path
 difference (its build needs the Highway development library too); it is never the normal batch oracle.
 The decoders use distinct floating reconstruction implementations: [oxide's inverse DCT](https://github.com/tirr-c/jxl-oxide/blob/0.12.6/crates/jxl-render/src/vardct/wasm32/dct.rs)
-and [native's floating colour conversion](https://github.com/libjxl/libjxl/blob/v0.7.0/lib/jxl/render_pipeline/stage_ycbcr.cc).
+and [native's floating color conversion](https://github.com/libjxl/libjxl/blob/v0.7.0/lib/jxl/render_pipeline/stage_ycbcr.cc).
 The scale receipt distinguishes exact-half conversion ties from reconstruction-rounding cases. Every
 nonzero stream gets a native float decode, counted separately from the two 8-bit oracle executions.
 
@@ -87,7 +87,8 @@ unthrottled Node results. `--browser` requires a real Playwright Chromium sessio
 to the page. The benchmark source shows the shared-lock command. Browser cancellation records the duration of
 the worker termination call, not completion of worker memory reclamation; Node records the termination promise.
 CPU timings are observations, never conformance gates or phone-performance claims.
-# Third decoder's subnormal multiplier
+
+## jxl-rs regression cases
 
 `jxl-rs-subnormal.rgba` (2 × 1 black/white) and its photo-q90 stream
 `jxl-rs-subnormal.jxl` retain an upstream decoder defect. At jxl-rs revision
@@ -96,62 +97,44 @@ subnormals at half value, so the raw AC quantization multiplier loses a factor o
 The stream is valid: jxl-oxide 0.12.6, native libjxl and the separately named decoder
 repair return the original pixels. Unmodified jxl-rs changes RGB by up to 111; alpha
 stays exact. `jxl-rs-subnormal.json` records bytes, hashes and returned samples.
-`../jxl-rs-half-subnormals.patch` repairs that owner, and `../JXL-RS.md` keeps the
-unmodified and repaired oracle builds distinct. No encoder workaround is used.
-
+`../jxl-rs-half-subnormals.patch` corrects the decoder. `../JXL-RS.md` identifies the
+unmodified and patched builds. The stored codestreams are unchanged.
 
 `jxl-rs-default-squeeze.rgba` and its 66-byte core-q50 stream retain the default Squeeze
 channel-slot defect in that same upstream pin: both initial chroma transforms belong even
 when a residual is empty. Native and oxide agree on all samples; unmodified jxl-rs changes
-15 RGB samples by up to 140. The separate owner repair restores exact agreement.
+15 RGB samples by up to 140. The decoder patch restores exact agreement.
 
 `jxl-rs-squeeze-border.rgba.gz` and `.jxl.gz` retain the average-border crop defect: a coarse
 average tile spans several output tiles, so its neighboring border needs the matching crop
 origin along the unchanged axis. The deterministic 2049 × 257 input has 43 changed RGB
-samples (maximum three) in upstream; the owner repair makes all samples exact. The JSON
-records the source formula, raw-byte hashes and every changed coordinate. Gzip only keeps
-these retained artifacts compact; the public check decodes the original RGBA before encoding.
+samples (maximum three) in upstream; the decoder patch restores every sample. The JSON
+records the source formula, raw-byte hashes, and every changed coordinate. The fixtures use gzip to reduce file size;
+tests decompress the original RGBA before encoding.
 
-`../JXL-RS.md` explains optional availability and the explicitly patched diagnostic CI build.
-An unavailable third decoder is reported as unavailable; a configured broken decoder fails.
+`../JXL-RS.md` describes the diagnostic CI build. Tests report a missing jxl-rs decoder;
+a configured decoder must pass the pixel checks.
 
 `local-palette.rgba` (600 × 19) and `wide-palette.rgba` (17 × 19) retain exact straight RGBA for the local-tree
 search. Both include nonzero RGB under zero alpha. The first crosses three groups with different index distributions;
-the second has palette metadata wider than its picture. The effort row decodes the independently written palette
-candidates as well as the door's selected streams. The byte cases retain the local palette and gradient streams and
+the second has palette metadata wider than its image. The effort tests decode both the palette
+candidates and the selected streams. The byte cases retain the local palette and gradient streams and
 the identical effort-4/5 answer. They are generated with the 32-bit recurrence `s = (1664525*s + 1013904223) mod 2^32`,
 seed 20261001. For `local-palette`, advance once per pixel: `n` is 1 for x below 256, the state's top six bits for
 x below 512, otherwise `(x+3*y) & 63`; RGBA is `[(73*n)&255, (151*n)&255, (199*n)&255, n%5 ? 255 : 0]`.
-For `wide-palette`, make 257 colours from successive top bytes for R, G and B, then one more for alpha except
-every ninth colour has zero alpha without advancing; pixel (x,y) uses colour `(7*x+13*y) % 257`.
+For `wide-palette`, make 257 colors from successive top bytes for R, G and B, then one more for alpha except
+every ninth color has zero alpha without advancing; pixel (x,y) uses color `(7*x+13*y) % 257`.
 
-`hurry-inner.rgba` is synthetic-photo-0004 from `tools/corpus/jxl-images.mjs`: 96 × 64, seed 3796584361,
+`hurry-inner.rgba` is a deterministic 96 × 64 synthetic image, seed 3796584361,
 RGBA SHA-256 `c205dcaad1f792296bd789964086ac1d4e2243e5d6b5a0aff268eb28df39fb42`. It writes a 9,665-byte
 core stream; the two close weighted plans write 9,668 and 9,666 bytes, so neither improves on it, and effort 4's
-colour-transform candidate writes 9,413. Hurrying inside that candidate must answer what was complete before it.
-(Before the lossless revision below the core wrote 9,956 bytes and the weighted plans improved on it.) The raw
-fixture pins the generated bytes independently of rasterizers.
+color-transform candidate writes 9,413. Hurrying inside that candidate must return the previous completed stream.
+The raw fixture fixes the input bytes independently of rasterizers.
 
-`hurry-painting.rgba.gz` is paint-0000 of the same corpus: 512 × 384, straight RGBA, a gzip wrapper without metadata,
+`hurry-painting.rgba.gz` is a deterministic 512 × 384 painting in straight RGBA, compressed with gzip,
 RGBA SHA-256 `ad9467838000b99434d7f7cb041111cd0bad8f64fe2511ce98d0d106ebd147a3`. It writes a 103,544-byte core
-stream and effort 3's weighted plan writes 97,211, which effort 4's colour-transform candidate does not improve.
-The hurried-search rows need a search that genuinely improves on effort 1: a gradient picture's no longer does
-once the core prices its hybrid-integer codes, and a hurry then answers effort 1's stream whether or not the search
-was cut short. Hurrying before the plan completes must answer effort 1's stream; hurrying inside the later
-colour-transform candidate must answer the completed weighted stream.
-These four authored fixtures are under this directory's MIT licence.
+stream and effort 3's weighted plan writes 97,211, which effort 4's color-transform candidate does not improve.
+Hurrying before the weighted plan completes must return effort 1's stream. Hurrying inside the later
+color-transform candidate must return the completed weighted stream.
 
-## Lossless byte revision
-
-Exact hybrid-integer selection (`lossless-coding.mjs`) and the effort door's colour-transform search (`rct-search.mjs`,
-effort 4 and above) change 27 of the 154 streams in `bytes.json`: 16 core, 10 effort and one hurried-floor case (the
-hurried job answers effort 1's stream, which moved). None grows; the other 127 hashes, every photographic and
-JPEG-carrier case among them, are unchanged. The hybrid selection alone changes the same 27; the colour search changes
-two of them further (seed 20260930 index 169 at effort 9, 24,602 to 5,018 bytes, and the 300 × 259 border picture at
-effort 6, 66,825 to 54,330). Case 69 (a quality-90 request on the 2,049 × 1 picture) answered a 1,526-byte lossy stream
-and now answers the exact 1,122-byte stream, which is smaller. Every new stream decodes to the exact input pixels
-through jxl-oxide 0.12.6 and native libjxl, and through Chrome 154's decoder where alpha is 255 (a Display P3 stream in a
-Display P3 canvas).
-
-Old byte-manifest SHA-256: `bc2899b85d08efd1ed34b3684d4e56223e2970b92db9ac21492e56baa5cf06aa`.
-New byte-manifest SHA-256: `e9c9dadbfbc1290d470a891e461764a0696c44e1a3a86e11be27f35f8d280fc5`.
+`bytes.json` records the current output hashes. All four authored RGBA fixtures use the MIT license.

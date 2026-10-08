@@ -1,8 +1,6 @@
-// Rapier's JPEG XL encoder: lossy pictures. MIT (LICENSE).
-// Lossy modular as libjxl encodes it: the reversible YCoCg transform, the Squeeze transform to its default
-// depth, then each squeezed channel quantised by a step that halves with every level (chroma coarser than luma),
-// carried as the multiplier of that channel's tree leaf so the decoder scales the residuals back. The finest
-// low-pass image is kept exact. Quality maps to libjxl's distance (90 is 1.0).
+// Lossy modular encoding. MIT (LICENSE).
+// Reversible YCoCg and Squeeze precede per-channel quantization. Tree leaf multipliers restore residual scale;
+// chroma uses coarser steps than luma, and the coarsest low-pass image stays exact. Quality 90 maps to distance 1.
 import {BitWriter, complete} from './bits.mjs';
 import {writeImageHeader, writeModularFrameHeader, groupLayout, finishSections, assembleCodestream} from './frame.mjs';
 import {ZERO_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, channelTree, streamTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
@@ -11,10 +9,8 @@ import {inspectPixels, nativeSteps} from './lossless.mjs';
 import {admitSampleFormat} from './admit.mjs';
 
 const QUALITY_FACTOR = 0.35, LUMA_FACTOR = 1.1;
-// Groups of 1,024 pixels (group size shift 3), DC groups of 8,192: fewer sections and fewer bytes, and a picture up to
-// 8,192 pixels on a side is one DC group, so no coarse Squeeze channel meets a DC group border inside it. A decoder
-// that reads such a border from the wrong origin (jxl-rs 0.7.4, where one coarse tile holds several finer ones) reads
-// these right. A picture within 256 pixels is one group either way and keeps the header of 256-pixel groups.
+// Use 1,024-pixel groups and 8,192-pixel DC groups to avoid interior coarse-Squeeze borders through 8,192 pixels.
+// This avoids the incorrect border origin in jxl-rs 0.7.4. Images within 256 pixels retain 256-pixel groups.
 const SQUEEZE_GROUP = 1024, SQUEEZE_DC_GROUP = 8 * SQUEEZE_GROUP;
 
 // libjxl's JxlEncoderDistanceFromQuality.
@@ -30,7 +26,7 @@ function distancePower(distance) {
   return distance * root;
 }
 
-// The quantisation step of a squeezed channel: `component` 0 luma, 1-2 chroma, 3 an extra channel.
+// The quantization step of a squeezed channel: `component` 0 luma, 1-2 chroma, 3 an extra channel.
 export function quantiserFor(component, hshift, vshift, distance) {
   let shift = Math.min(16, hshift + vshift);
   if (shift > 0) shift--;
@@ -52,7 +48,7 @@ export function* lossySteps(rgba, width, height, options = {}) {
   if (!(distance > 0)) throw new Error('lossy encoding needs a quality below 100');
   const {colour, alpha, channels: count} = shape;
   const pixels = width * height;
-  // Full planes in the transformed colour space.
+  // Full planes in the transformed color space.
   const planes = Array.from({length: count}, () => new Int16Array(pixels));
   for (let i = 0, p = 0; p < pixels; p++, i += 4) {
     if (colour === 3) {
@@ -62,7 +58,7 @@ export function* lossySteps(rgba, width, height, options = {}) {
     if (alpha) planes[count - 1][p] = rgba[i + 3];
   }
   const channels = planes.map((data, c) => ({w: width, h: height, hshift: 0, vshift: 0, data, component: colour === 3 ? c : c === 0 ? 0 : 3}));
-  // Avoid empty chroma channels at the global/group boundary in a one-wide colour image. Any other colour picture one
+  // Avoid empty chroma channels at the global/group boundary in a one-wide color image. Any other color image one
   // pixel wide or high names its Squeeze steps, the decoder's defaults, instead of leaving them to the decoder: one that
   // regenerates them (jxl-rs 0.7.4) leaves out the chroma steps an axis of one pixel makes empty, and misreads the rest.
   const thin = width === 1 && height > SQUEEZE_GROUP && colour === 3;
@@ -123,7 +119,7 @@ export function* lossySteps(rgba, width, height, options = {}) {
     return scratch;
   };
   // One histogram per channel that owns a piece, numbered densely in channel order. The decoder counts the
-  // histograms from the context map and refuses a hole in it; Squeeze of a one-wide picture leaves zero-width
+  // histograms from the context map and refuses a hole in it; Squeeze of a one-wide image leaves zero-width
   // chroma residual channels that own no piece between channels that do.
   const owners = [...new Set(sections.flatMap(section => section.pieces.map(piece => piece.c)))].sort((a, b) => a - b);
   const histogramOf = new Map(owners.map((c, i) => [c, i]));

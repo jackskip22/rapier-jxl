@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// One checked JPEG job shared by the prefix and optional ANS doors.
+// One checked JPEG job shared by the prefix and optional ANS entry points.
 import {parseJPEG} from './jfif.mjs';
 import {admitEffort} from './effort-level.mjs';
 import {JPEG_LIMITS, complete} from './bits.mjs';

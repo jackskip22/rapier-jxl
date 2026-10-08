@@ -2,7 +2,7 @@
 // Neither table comes from Math.cos, Math.hypot or `**`, which each engine rounds its own way; the same pixels must
 // give the same bytes everywhere. The DCT8 basis, (u ? 1 : √½) · cos((2x + 1) · u · π / 16) / 2 at u · 8 + x, is
 // written out as V8 computed it (the cosines of the larger angles carry their rounding, and a coefficient on a
-// rounding edge would move without it). The quantisation shape, 1.3 ** max(0, hypot(u, v) · 5 / √98 − 1) at
+// rounding edge would move without it). The quantization shape, 1.3 ** max(0, hypot(u, v) · 5 / √98 − 1) at
 // v · 8 + u, is the exponential series of its logarithm: libjxl 0.7's DCT8 luma distance bands
 // (lib/jxl/quant_weights.cc), the reciprocal weight growing with radial frequency. Both chroma planes keep full
 // resolution; coarser chroma AC steps reserve bits for luma, while finer DC steps preserve smooth gradients.
@@ -42,7 +42,7 @@ function dot8(data, at, step, basis) {
   return sum;
 }
 
-// Reused scratch for the baseline and the photographic quantisation search. A transform always visits its eight
+// Reused scratch for the baseline and the photographic quantization search. A transform always visits its eight
 // terms in the same order; edge replication agrees with the baseline's complete 8 by 8 blocks.
 export function dctBlocks(data, width, height) {
   const block = new Float64Array(192), intermediate = new Float64Array(64), sums = new Float64Array(192);

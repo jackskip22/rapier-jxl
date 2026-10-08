@@ -1,3 +1,3 @@
 // SPDX-License-Identifier: MIT
-// Same checked JPEG surface; effort 2 also compares a completed ANS candidate.
+// JPEG transcoding with an additional ANS candidate at effort 2.
 export * from './jpeg.mjs';

@@ -55,6 +55,6 @@ for (const entry of manifest.entries) {
   entries.push({...entry, files, total: {bytes: total('bytes'), gzip: total('gzip'), minified: total('minified'), minifiedGzip: total('minifiedGzip')}});
 }
 const receipt = {asOf: manifest.asOf, node: process.version, terser: manifest.terser, scope: manifest.scope,
-  method: 'Sum of listed JavaScript and WASM resources. Terser compress passes=2, mangle=true, preserved license comments; WASM unchanged. gzip level9 per resource, summed, not npm archive size. No tree-shaking across resources, WASM optimization or invented rebuild. Factory-only entries omit optional convenience wrappers, workers, threaded variants and decoders; that favors competitors. Capability is documented upstream, not a conformance result from this size survey.', entries};
+  method: 'Sum of listed JavaScript and WASM resources. JavaScript: Terser, two compression passes, mangling, retained license comments. WASM unchanged. gzip level 9 per resource, summed. No cross-resource tree shaking or additional WASM optimization. Factory entries omit optional wrappers, workers, threaded variants and decoders. Capabilities follow upstream documentation.', entries};
 await writeFile(resolve(process.argv[3] || 'encoder-sizes.json'), JSON.stringify(receipt, null, 2) + '\n');
 for (const r of entries) console.log(r.name + '@' + r.version + '\t' + r.total.minified + '\t' + r.total.minifiedGzip + '\t' + r.capability);

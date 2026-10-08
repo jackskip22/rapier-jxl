@@ -3,7 +3,7 @@
   "node": "v22.22.2",
   "terser": "5.51.2",
   "scope": "Published executable JavaScript/WebAssembly encoder payloads found through npm jpeg-xl/jpegxl/jxl searches and upstream repositories; single-thread variants. Decoder-only packages are identified, not ranked. No claim of an exhaustive internet census or the minimum possible build.",
-  "method": "Sum of listed JavaScript and WASM resources. Terser compress passes=2, mangle=true, preserved license comments; WASM unchanged. gzip level9 per resource, summed, not npm archive size. No tree-shaking across resources, WASM optimization or invented rebuild. Factory-only entries omit optional convenience wrappers, workers, threaded variants and decoders; that favors competitors. Capability is documented upstream, not a conformance result from this size survey.",
+  "method": "Sum of listed JavaScript and WASM resources. JavaScript: Terser, two compression passes, mangling, retained license comments. WASM unchanged. gzip level 9 per resource, summed. No cross-resource tree shaking or additional WASM optimization. Factory entries omit optional wrappers, workers, threaded variants and decoders. Capabilities follow upstream documentation.",
   "entries": [
     {
       "name": "@jsquash/jxl",

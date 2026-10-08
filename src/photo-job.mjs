@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// One checked photograph job shared by the prefix and optional ANS doors.
+// One checked photograph job shared by the prefix and optional ANS entry points.
 import {PHOTO_LIMITS, part} from './bits.mjs';
 import {admitEffort} from './effort-level.mjs';
 import {losslessSteps, nativeSteps} from './lossless.mjs';

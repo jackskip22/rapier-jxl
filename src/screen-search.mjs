@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
-// The fast route keeps the core's palette bound and allocation-free gate.
-// Higher efforts also admit flat screens with gradients or antialiased text.
+// Screen admission uses bounded sampling. Higher efforts also admit gradients and antialiased text.
 import {screenLike, screenPlan, screenFrameSteps} from './screen.mjs';
 import {screenLZ77} from './screen-lz77.mjs';
 import {patchSteps} from './screen-patches.mjs';
+import {scaled} from './bits.mjs';
 export function screenEligible(rgba, width, height, shape, effort = 3) {
   if ((shape.palette || effort >= 5) && screenLike(rgba, width, height)) return true;
   if (effort < 5 || width < 32 || height < 32) return false;
@@ -19,20 +19,19 @@ export function screenEligible(rgba, width, height, shape, effort = 3) {
   return flat >= 112 && soft * 3 <= 256 - flat;
 }
 
-export function* screenSteps(rgba, width, height, shape, colorSpace, {fastFloor = 0, effort = 3} = {}) {
+export function* screenSteps(rgba, width, height, shape, colorSpace, {fastFloor = 0, effort = 3, pooled = false} = {}) {
   let best = null;
   // A palette depends on the pixels and ordering alone. Its plain, LZ77 and deeper models share the same
   // immutable plan, including a failed palette admission, while retaining their own complete-stream choices.
   const plans = new Map();
-  // Measured byte gains first: a short budget can keep a completed LZ77 or
-  // glyph stream before spending time on smaller palette-only differences.
+  // Try LZ77 and glyph models first so hurry can retain their completed streams.
   const modes = ['global-lz', 'patch-lz', 'scalar-lz', 'global', 'scalar'];
   if (effort >= 5) modes.push('global-deep', 'frequency-deep', 'patch-deep', 'scalar-deep', 'direct-deep');
   for (let i = 0; i < modes.length; i++) {
     if (yield (i + 0.01) / modes.length) return best;
     let steps;
-    if (modes[i] === 'patch-lz') steps = patchSteps(rgba, width, height, shape, colorSpace, {tokenCodec: screenLZ77});
-    else if (modes[i] === 'patch-deep') steps = patchSteps(rgba, width, height, shape, colorSpace, {search: {}, limit: best?.length ?? Infinity});
+    if (modes[i] === 'patch-lz') steps = patchSteps(rgba, width, height, shape, colorSpace, {tokenCodec: screenLZ77, pooled});
+    else if (modes[i] === 'patch-deep') steps = patchSteps(rgba, width, height, shape, colorSpace, {search: {}, limit: best?.length ?? Infinity, pooled});
     else {
       const mode = modes[i].replace(/-(lz|deep)$/, '');
       if (!plans.has(mode)) plans.set(mode, screenPlan(rgba, width, height, shape, mode));
@@ -40,11 +39,14 @@ export function* screenSteps(rgba, width, height, shape, colorSpace, {fastFloor 
       if (!plan) continue;
       steps = screenFrameSteps(rgba, width, height, shape, colorSpace, plan, {
         tokenCodec: modes[i].endsWith('-lz') ? screenLZ77 : null,
-        search: modes[i].endsWith('-deep') ? {} : null
+        search: modes[i].endsWith('-deep') ? {} : null, pooled
       });
     }
-    let step, hurry;
-    while (!(step = steps.next(hurry)).done) hurry = yield (i + 0.01 + 0.99 * step.value) / modes.length;
+    let step, reply, hurry = false;
+    while (!(step = steps.next(reply)).done) {
+      reply = yield scaled(step.value, done => (i + 0.01 + 0.99 * done) / modes.length);
+      hurry = reply === null || (typeof reply === 'object' ? reply.hurried : reply);
+    }
     if (step.value && (!best || step.value.length < best.length)) best = step.value;
     if (hurry) return best;
     // After pricing both high-value tools, effort 3 can stop on a substantial

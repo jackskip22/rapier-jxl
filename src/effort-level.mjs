@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Only doors with a search read effort; keeping it here adds no work or bytes to the pixel core.
+// Only entry points with a search read effort; keeping it here adds no work or bytes to the pixel core.
 import {fault} from './admit.mjs';
 
 export function admitEffort(options = {}) {

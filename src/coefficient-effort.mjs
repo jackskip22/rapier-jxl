@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Entropy search shared by the JPEG and photograph doors; coefficients and quantisation never change here.
+// Entropy search shared by the JPEG and photograph entry points; coefficients and quantization never change here.
 import {varDCTSteps} from './vardct.mjs';
 import {ZIGZAG} from './jfif.mjs';
 import {complete} from './bits.mjs';
@@ -25,7 +25,7 @@ export function* coefficientOrderSteps(components) {
   return histograms.map(counts => [0, ...Array.from({length: 63}, (_, k) => k + 1).sort((a, b) => Math.floor(counts[b] / 8) - Math.floor(counts[a] / 8) || a - b)]);
 }
 
-// Rung 3 tries a 32-cluster budget at cost 160; rung 4 also tries one learned order. Complete earlier streams
+// Rung 3 tries a 32-cluster budget at cost 160; effort level 4 also tries one learned order. Complete earlier streams
 // remain available on a tie, hurry, memory failure or candidate above the stream limit. No input is mutated.
 // A supplied fallback is already written; it also makes the first writer interruptible for a lossy candidate.
 export function* coefficientEffortSteps(jpeg, effort, fallback) {

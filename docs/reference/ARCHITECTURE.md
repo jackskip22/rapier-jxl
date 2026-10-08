@@ -1,111 +1,152 @@
-# Imports and inlining
+# Entry points and embedding
 
-Choose one encoding import for the input and search required. `rapier-jxl` is the core; `/core` names it explicitly.
-Effort and wasm contain the core's capabilities. JPEG coefficient carrying and photographic pixel encoding remain
-separate imports. ANS is optional within those two paths.
+Choose an entry point. The core encodes pixels; effort adds compression search; wasm adds optional kernels to effort.
+JPEG coefficient carrying, photographic pixel encoding, source-file parsing and Exif/XMP metadata are optional modules.
 
-Native precision shares the core's modular coding. File parsing is the optional `rapier-jxl/source` import;
-applications already holding typed samples do not import PNG or OpenEXR parsing.
-
-| Need | Readable import | One self-contained file |
+| Need | Entry point | Self-contained file |
 | --- | --- | --- |
-| RGBA, lossless or lossy | `rapier-jxl/core` | `dist/rapier-jxl.min.mjs` |
-| Smaller exact streams through search | `rapier-jxl/effort` | `dist/effort.min.mjs` |
-| Effort with integer WebAssembly kernels | `rapier-jxl/wasm` | `dist/wasm.min.mjs` |
-| Existing JPEG coefficients | `rapier-jxl/jpeg` | `dist/jpeg.min.mjs` |
+| RGBA, lossless or lossy | `rapier-jxl` or `rapier-jxl/core` | `dist/rapier-jxl.min.mjs` |
+| Lossless compression search | `rapier-jxl/effort` | `dist/effort.min.mjs` |
+| Same search with optional WASM | `rapier-jxl/wasm` | `dist/wasm.min.mjs` |
+| Existing JPEGs, preserving coefficients | `rapier-jxl/jpeg` | `dist/jpeg.min.mjs` |
 | Photographic RGBA | `rapier-jxl/photo` | `dist/photo.min.mjs` |
 | JPEG with ANS search | `rapier-jxl/jpeg-ans` | `dist/jpeg-ans.min.mjs` |
 | Photographic RGBA with ANS search | `rapier-jxl/photo-ans` | `dist/photo-ans.min.mjs` |
+| Attach, replace or remove Exif/XMP | `rapier-jxl/metadata` | `dist/metadata.min.mjs` |
 
-Append `/min` to any import in the table for its one-file build through npm. `rapier-jxl/min` also selects the core.
-For a page without a build step, copy the selected file beside the app and import its exports:
+Append `/min` to an encoding or metadata entry point for its self-contained build through npm. `rapier-jxl/min` and
+`rapier-jxl/core/min` both select the core. `rapier-jxl/source` reads PNG16 and supported OpenEXR into typed samples;
+source, writer, and kernel-control entry points have no `/min` entry.
+
+Every minified file includes its dependencies and MIT notice. It performs no network or filesystem I/O, needs no
+initialization download, and includes no JPEG XL decoder. The wasm file also contains its kernels: automatic SIMD
+when available, otherwise JavaScript with identical output bytes. Explicit scalar WASM is available through
+`configureKernels('scalar')`.
+
+For photographs, use `/jpeg` to carry coefficients from an existing JPEG, `/photo` for lossy RGBA encoding, or `/effort`
+with `quality: 100` to preserve every pixel sample. `/source` reads supported PNG16/OpenEXR samples and their color
+declarations. Attach caller-supplied Exif/XMP afterward with `/metadata`; it preserves image coding and does not
+import ICC profiles or convert color. [Photography APIs](API.md#existing-jpegs) · [Metadata API](API.md#exif-and-xmp).
+
+Agent skills: [Single-file apps](../../skills/rapier-jxl-single-file-app/SKILL.md) · [Photography](../../skills/rapier-jxl-photography/SKILL.md).
+
+## One HTML file
+
+Paste the complete selected module into the inert script below, keeping its exports and license. The Blob import
+exposes public names such as `encode`, even though the minifier renames local functions. The complete HTML works
+offline without a server, build tool or separate encoder file.
+
+```html
+<!doctype html>
+<meta charset="utf-8">
+<output id="result"></output>
+
+<script type="text/plain" id="jxl-source">
+/* Paste the complete dist/rapier-jxl.min.mjs here. */
+</script>
+
+<script type="module">
+const source = document.getElementById('jxl-source').textContent;
+const url = URL.createObjectURL(new Blob([source], {type: 'text/javascript'}));
+const {encode} = await import(url);
+URL.revokeObjectURL(url);
+
+const rgba = new Uint8Array([255, 0, 0, 255]);
+const bytes = encode(rgba, 1, 1, {quality: 100});
+document.getElementById('result').textContent = `${bytes.length} JPEG XL bytes`;
+</script>
+```
+
+No export removal or function renaming is needed. A page that sets a content security policy must permit its inline
+script and Blob module. Displaying the encoded image requires JPEG XL browser support or a separate decoder.
+
+## Separate module or worker
+
+Copy one minified file beside a served page and import it directly:
 
 ```js
 import {encode} from './rapier-jxl.min.mjs';
 const bytes = encode(rgba, width, height);
 ```
 
-Each minified file contains its dependencies and MIT notice. No runtime fetch, decoder, external WASM file or
-initialisation download is needed. The wasm file contains its kernels and automatically uses JavaScript when
-WebAssembly or SIMD is unavailable.
+Use HTTP for relative browser module imports; the embedded example above also works when opening a local HTML file.
+Each encoder can run in a module worker. The [worker example](../../examples/worker.mjs) imports readable modules
+from the package's `src/` directory; preserve those paths or adjust them when copying it.
 
-For an app contained in one HTML file, embed the selected module's source as text and import a Blob URL:
+Calls and generator steps are synchronous. Workers keep encoding off the page thread; leaving a job's iteration
+cancels it, while `job.hurry = true` requests a completed candidate. Transferring an input buffer detaches it from the
+sender. [Jobs, inputs and cancellation](API.md#progress-and-cancellation).
 
-```js
-const url = URL.createObjectURL(new Blob([encoderSource], {type: 'text/javascript'}));
-const {encode} = await import(url);
-URL.revokeObjectURL(url);
-```
+## Shared code
 
-`encoderSource` is the complete selected minified file, including its exports and licence notice. The page's content
-security policy must allow that module URL. The same module can run in a module worker; scheduling, cancellation and
-input transfers belong to the app. [Worker example](../../examples/worker.mjs) and [job contract](API.md#progress-and-cancellation).
+Readable imports share common ES modules when bundled together. Separate minified files each include their own
+copy. A minified wasm module owns its kernel controls: configure the same import that performs the encode.
+Readable imports share `rapier-jxl/kernels`. Set controls before an encode. [Kernel controls](../KERNELS.md).
 
-## Shared source
-
-Use readable imports when bundling several capabilities: their ES module graph shares common code once. Separate
-minified files are self-contained and repeat shared code. A wasm bundle's kernel controls affect its own encoder;
-configure that same import. Readable imports share the controls in `rapier-jxl/kernels`. Set controls before an encode.
-
-| Boundary | Modules and responsibility |
+| Layer | Responsibility |
 | --- | --- |
-| Checked entry and jobs | `admit.mjs`, `index.mjs`, `effort-job.mjs`, `jpeg-job.mjs`, `photo-job.mjs`: inputs, limits, errors, progress and complete results. |
-| Source files | `source.mjs`: exact PNG16/OpenEXR words, channel layout, colour declarations and alpha association. No compression-quality policy. |
-| Shared format | `bits.mjs`, `prefix.mjs`, `frame.mjs`, `modular.mjs`: bit writing, entropy codes, headers and modular syntax. |
-| Pixel core | `lossless.mjs`, `lossy.mjs`, `squeeze.mjs`: typed RGBA to modular codestreams. Native samples share the group planner, entropy writer and worker setup; source quantisation precedes reversible prediction. |
-| Lossless search | Weighted, local, sampled, colour-transform and screen modules, reached through `effort.mjs`. The core does not import them. |
-| JPEG and photo | JPEG parsing and photographic DCT feed shared coefficient and VarDCT writers. ANS has separate entries. |
-| Acceleration | `kernel-hooks.mjs` isolates optional integer kernels; `wasm.mjs` configures them and uses the effort encoder. |
+| Checked entry points and jobs | Typed input, options, limits, errors, progress and complete results. |
+| Source reader | PNG16/OpenEXR sample words, channel layout and color/alpha declarations. |
+| Metadata | Exif/XMP container boxes without changing the image codestream. |
+| Format writer | Bits, prefix codes, frame headers and modular syntax. |
+| Pixel core | Typed RGBA to lossless or lossy modular streams. |
+| Lossless search | Weighted prediction, learned trees, local models, color transforms and screen matching. |
+| JPEG and photo | JPEG parsing or photographic DCT feeding shared coefficient and VarDCT writers. JPEG/photo ANS uses separate entry points. |
+| Kernels | Optional integer operations behind the same JavaScript encoding interface. |
 
-Keep these optional paths out of the core import graph. Share admission, format writing and coefficient handling
-through their existing modules. Add codec-level extensions through the typed `rapier-jxl/writer` surface; use readable
-modules because minified builds rename internal format fields. [API](API.md), [kernels](../KERNELS.md), [screen coding](../SCREENSHOTS.md).
+The core excludes the optional search, ANS, JPEG, photo, source-file parser, metadata and WASM modules. Native precision shares its
+modular planner and writer. `rapier-jxl/writer` exposes typed format primitives in readable source; minified builds
+rename internal format fields.
 
-## Complete candidates and exact pruning
+## Compression search
 
-Search retains only complete streams. Once a stream is kept, only a smaller complete candidate replaces it. Neither
-a time estimate nor a partial stream decides which image bytes are kept. `hurry` finishes with a completed
-representation; a candidate that exceeds a size or allocation limit leaves any retained stream available. Native
-lossy search tries exact candidates first and can still complete a quantised candidate if no exact candidate fits.
+Only a smaller complete stream replaces the retained result; ties keep the earlier candidate. A completed result
+survives a later candidate's size or allocation failure. Pruning stops a
+candidate when its already-written sections reach the retained stream's length: remaining sections, headers and
+the table of contents can only add bytes. Weighted search also uses exact Huffman data bounds. Pruning and hurry
+are separate, so later candidates can still compete.
 
-Local modelling stops when the sum of already-written section lengths reaches the best complete stream's length.
-Remaining sections, headers and the table of contents can only add bytes, so this lower bound cannot discard a
-winner. The worker pool counts each accepted group once, independent of completion order. Candidate pruning has a
-separate result from hurry: rejecting a local model does not cancel a later colour-transform candidate.
+Ordinary 8-bit lossless efforts 4–9 add learned trees to the predictor, palette and screen candidates. The learner
+uses deterministic spatial samples and integer costs. From effort 6, groups compare prefix and ANS coding, and each tree leaf can choose gradient, average,
+or weighted prediction; neighbor differences, weighted errors and previous-channel residuals select contexts.
+Groups are up to 1,024 pixels on a side. Increasing effort adds larger sample and leaf budgets while retaining all
+lower-level candidates. [Effort levels](API.md#lossless-effort).
 
-Context classification follows emitted tokens. A long zero-residual copy needs a context for its literal and its
-length token; pixels skipped by that copy need no classification array. Palette inspection is shared within a
-screen search, and prediction requested as raw residuals omits unused weighted-context lookup. These reductions
-preserve the stream's tokens, candidate order, tie policy and final bytes.
+A group owns its model and token buffers. The selected model is written after sample-based decisions; full image
+pixels do not enter the split search. Worker results are placed in group order, independent of completion order.
+The explicit `treeLearning: 'sampled'` option selects the separate reduced search described in the API.
 
 ## Precision and memory
 
-The admitted source description owns bit depth, float representation, primaries, transfer, peak luminance and alpha
-association. It travels with worker tasks. Byte inputs keep their existing typed planes and kernels; native direct
-planes use signed 32-bit words. Palette indices remain small integer planes, while their colour table holds native
-words. Floating samples use raw IEEE representations, with modular residual arithmetic wrapping at 32 bits.
+Typed input carries bit depth, float representation, primaries, transfer, peak luminance and alpha association.
+Integer samples use unscaled code values; floats retain raw IEEE words. Encoding does not convert color, tone-map
+or unpremultiply samples. Native lossy quantization occurs during group filling, before reversible prediction,
+without allocating a second full quantized image. Integer RGB uses bin midpoints; floating-point RGB rounds mantissa
+bits. Alpha remains exact. The 16-bit integer and floating-point formats use a container with a level 10 declaration;
+integer formats up to 12 bits use a bare codestream.
 
-Native planning counts hybrid tokens in bounded histograms instead of allocating a histogram indexed by every
-possible 32-bit value. Pixel planes belong to one group; source-domain quantisation runs during plane filling and
-does not allocate a second full quantised image. A worker owns a typed copy of its tiles, preserving offsets and IEEE
-words. Input arrays remain caller-owned. Wide inputs and additional workers increase input/tile memory; dimension
-limits are admission bounds, not a promise that every device can allocate the largest picture.
+Planes and token buffers belong to a group; learning uses bounded sample arrays. Larger groups, higher effort and
+additional workers use more memory. A worker keeps typed copies of its tiles, preserving offsets and IEEE words.
+Input arrays remain caller-owned. Dimension limits are admission bounds, not a guarantee that every device can
+allocate the largest image. [Precision, bounds and limits](API.md).
 
 ## Payload sizes
 
 | File in `dist/` | Bytes | gzip | Brotli |
 | --- | ---: | ---: | ---: |
-| `rapier-jxl.min.mjs` | 26,997 | 11,408 | 10,145 |
-| `effort.min.mjs` | 64,473 | 25,440 | 22,118 |
-| `wasm.min.mjs` | 74,463 | 30,127 | 26,099 |
-| `jpeg.min.mjs` | 33,019 | 13,762 | 12,167 |
-| `photo.min.mjs` | 38,361 | 15,573 | 13,801 |
-| `jpeg-ans.min.mjs` | 36,157 | 14,872 | 13,151 |
-| `photo-ans.min.mjs` | 41,341 | 16,638 | 14,713 |
-| Every encoding path in one bundle | 105,348 | 41,957 | 36,245 |
-| All readable modules in `src/` | 305,654 | 93,276 | |
+| `rapier-jxl.min.mjs` | 27,557 | 11,642 | 10,376 |
+| `effort.min.mjs` | 73,716 | 28,614 | 24,921 |
+| `wasm.min.mjs` | 87,139 | 34,838 | 30,294 |
+| `jpeg.min.mjs` | 33,297 | 13,851 | 12,250 |
+| `photo.min.mjs` | 38,928 | 15,811 | 13,998 |
+| `jpeg-ans.min.mjs` | 36,636 | 15,046 | 13,319 |
+| `photo-ans.min.mjs` | 42,111 | 16,963 | 15,010 |
+| `metadata.min.mjs` | 4,964 | 2,560 | 2,147 |
+| All self-contained entry points in one bundle | 119,721 | 47,462 | 40,976 |
+| All readable modules in `src/` | 324,498 | 98,010 | |
 
-Release 2.6.0, Terser 5.51.2, Node v22.23.3, gzip 9 and Brotli 11. Byte counts, module graphs, hashes and
-incremental bundle sizes are in [dist/sizes.json](../../dist/sizes.json). Each one-file build is checked against its readable
-entry on the public encoded-byte fixtures and native integer/float cases with HDR and alpha declarations.
-[Other encoders](../ENCODER-COMPARISON.md).
+Release 3.0.0, Terser 5.51.2, Node v22.23.3, gzip 9 and Brotli 11. Exact byte counts, import graphs, hashes
+and incremental sizes are in [dist/sizes.json](../../dist/sizes.json). Encoding builds are checked against their
+readable entries on encoded-byte fixtures and native integer/float cases with HDR and alpha declarations. The metadata
+build is checked against its readable entry for identical container bytes.
+[Measured encoder comparisons](../ENCODER-COMPARISON.md).

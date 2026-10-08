@@ -1,8 +1,6 @@
-// Rapier's JPEG XL encoder: prefix codes and histogram bundles. MIT (LICENSE).
-// The entropy code of every stream Rapier writes is a prefix (Huffman) code, never ANS: simpler, and within a
-// percent or two of ANS on the pictures Rapier keeps. The bit layout follows the specification's Brotli-derived
-// code header: a simple code for up to four symbols, else code lengths sent through a code-length code with the
-// 16 (repeat) and 17 (zeros) run symbols.
+// Prefix codes and histogram bundles. MIT (LICENSE).
+// Brotli-derived code headers: up to four symbols use a simple code; larger alphabets encode code lengths
+// with repeat symbols 16 and 17. Optional ANS coding is separate.
 import {floorLog2, ceilLog2} from './bits.mjs';
 
 const CODE_LENGTH_ORDER = [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15];
@@ -13,21 +11,29 @@ const CLCL_BITS = [2, 4, 3, 2, 2, 4], CLCL_CODE = [0, 7, 3, 2, 1, 15];
 export function codeLengths(freqs, limit) {
   const lengths = new Uint8Array(freqs.length), used = [];
   for (let i = 0; i < freqs.length; i++) if (freqs[i] > 0) used.push(i);
-  if (!used.length) return lengths;
-  if (used.length === 1) { lengths[used[0]] = 1; return lengths; }
+  const count = used.length;
+  if (!count) return lengths;
+  if (count === 1) { lengths[used[0]] = 1; return lengths; }
+  // Leaves precede inner nodes; equal weights select a leaf before an inner node.
+  const weights = new Array(count * 2 - 1), parents = new Array(count * 2 - 1);
   for (let floor = 1; ; floor *= 2) {
-    // Flattening the small frequencies shortens the longest codes; the loop ends at a balanced tree at the latest.
-    const leaves = used.map(sym => ({w: Math.max(freqs[sym], floor), sym, l: null, r: null})).sort((a, b) => a.w - b.w || a.sym - b.sym);
-    const inner = [];
-    let li = 0, ii = 0;
-    const pop = () => li < leaves.length && (ii >= inner.length || leaves[li].w <= inner[ii].w) ? leaves[li++] : inner[ii++];
-    while ((leaves.length - li) + (inner.length - ii) > 1) { const a = pop(), b = pop(); inner.push({w: a.w + b.w, sym: -1, l: a, r: b}); }
-    const stack = [[pop(), 0]];
+    // Flattening small frequencies shortens the longest codes. New ties use symbol order each time.
+    used.sort((a, b) => Math.max(freqs[a], floor) - Math.max(freqs[b], floor) || a - b);
+    for (let i = 0; i < count; i++) weights[i] = Math.max(freqs[used[i]], floor);
+    let li = 0, ii = count;
+    for (let next = count; next < weights.length; next++) {
+      const a = li < count && (ii >= next || weights[li] <= weights[ii]) ? li++ : ii++;
+      const b = li < count && (ii >= next || weights[li] <= weights[ii]) ? li++ : ii++;
+      weights[next] = weights[a] + weights[b]; parents[a] = next; parents[b] = next;
+    }
+    // Every parent follows its children, so descending indices replace parents with depths in place.
+    parents[parents.length - 1] = 0;
+    for (let i = parents.length - 2; i >= count; i--) parents[i] = parents[parents[i]] + 1;
     let deepest = 0;
-    while (stack.length) {
-      const [node, depth] = stack.pop();
-      if (node.sym >= 0) { lengths[node.sym] = depth; if (depth > deepest) deepest = depth; }
-      else stack.push([node.l, depth + 1], [node.r, depth + 1]);
+    for (let i = 0; i < count; i++) {
+      const depth = parents[parents[i]] + 1;
+      lengths[used[i]] = depth;
+      if (depth > deepest) deepest = depth;
     }
     if (deepest <= limit) return lengths;
   }
@@ -167,7 +173,8 @@ export function writeContextMap(w, contextMap) {
   w.write(1, 0); w.write(1, 0);
   const config = uintConfig(8), length = uintConfig(4), minLength = 7, minSymbol = 224;
   // A long map repeats itself: runs of one index of eight or more go out as the index and an LZ77 copy at distance one.
-  const runs = contextMap.length >= 64, freqs = new Uint32Array(runs ? minSymbol + 33 : widest + 1);
+  // Literal indices at or above minSymbol need the full alphabet without LZ77 copy symbols.
+  const runs = contextMap.length >= 64 && widest < minSymbol, freqs = new Uint32Array(runs ? minSymbol + 33 : widest + 1);
   const pieces = [];
   for (let i = 0; i < contextMap.length;) {
     let run = 1;

@@ -7,6 +7,8 @@ import {readFile} from 'node:fs/promises';
 import {gunzipSync} from 'node:zlib';
 import {encode as coreEncode} from '../src/index.mjs';
 import {encode, encodeSteps} from '../src/effort.mjs';
+import {inspectPixels} from '../src/lossless.mjs';
+import {SAMPLE_RUNGS, sampledSteps} from '../src/sampled.mjs';
 import {encodePool} from '../src/pool.mjs';
 import {spawnNode} from './pool-node.mjs';
 import {borderCase, pixelCase} from './fuzz-cases.mjs';
@@ -74,4 +76,33 @@ test('every sampled hurry boundary returns effort 1 exactly, also after a comple
   for (let live = true; live;) { const x = a.next(), y = b.next(); live = !x.done || !y.done; }
   assert.ok(same(a.bytes, encode(p.rgba, p.width, p.height, {...option, effort: 2})));
   assert.ok(same(b.bytes, completed.bytes));
+});
+
+
+const runModel = (p, options, ceiling = Infinity, stop = -1) => {
+  const steps = sampledSteps(p.rgba, p.width, p.height, inspectPixels(p.rgba, p.width, p.height), 'srgb', options, false, ceiling);
+  let step, reply, count = 0;
+  while (!(step = steps.next(reply)).done) reply = count++ === stop;
+  return {bytes: step.value, count};
+};
+
+test('mixed predictor trees preserve pixels across large-group borders and hidden RGB', {skip: decode ? undefined : 'jxl-oxide-wasm is not installed'}, async () => {
+  const alpha = borderCase(1031, 17);
+  for (let i = 0; i < alpha.width * alpha.height; i++) alpha.rgba[i * 4 + 3] = i * 7 & 255;
+  const pictures = [borderCase(1, 1025), borderCase(1025, 1), alpha, await painting()];
+  for (const p of pictures) for (const options of [SAMPLE_RUNGS.deep, SAMPLE_RUNGS.thorough, SAMPLE_RUNGS.exhaustive, SAMPLE_RUNGS.expanded, SAMPLE_RUNGS.maximum]) {
+    const {bytes} = runModel(p, options);
+    assert.ok(same(rgbaOf(decode(bytes)), p.rgba), `${p.width}x${p.height}: exact pixels`);
+    assert.ok(same(runModel(p, options).bytes, bytes), 'repeated model selection is deterministic');
+  }
+});
+
+test('mixed model pruning and hurry preserve completed-candidate ownership', () => {
+  for (const p of [borderCase(129, 31), borderCase(2057, 17)]) {
+    const options = SAMPLE_RUNGS.deep, {bytes, count} = runModel(p, options);
+    assert.ok(same(runModel(p, options, Infinity, count - 1).bytes, bytes), 'the final yield owns a complete candidate');
+    for (let stop = 0; stop < count - 1; stop++) assert.equal(runModel(p, options, Infinity, stop).bytes, null, 'an earlier hurry ends the incomplete candidate');
+    assert.equal(runModel(p, options, Math.floor(bytes.length / 2)).bytes, null, 'completed sections reject a losing candidate');
+    assert.ok(same(runModel(p, options).bytes, bytes), 'pruning does not alter later model selection');
+  }
 });

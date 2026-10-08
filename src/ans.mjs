@@ -5,6 +5,7 @@
 import {BitWriter, ceilLog2, floorLog2} from './bits.mjs';
 import {hybridToken, writeContextMap, writeUintConfig} from './prefix.mjs';
 import {buildTokenCoding} from './entropy.mjs';
+import {LZ77, RESIDUAL_CONFIG} from './modular.mjs';
 
 const LOG_LENGTHS = [5, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 6, 7];
 const LOG_CODES = [17, 11, 15, 3, 9, 7, 4, 2, 5, 6, 0, 33, 1];
@@ -42,7 +43,7 @@ function normalise(freqs) {
   return counts;
 }
 
-function writeDistribution(w, counts) {
+function writeDistribution(w, counts, runs = false) {
   const used = [];
   let omit = 0;
   for (let i = 0; i < counts.length; i++) {
@@ -60,16 +61,24 @@ function writeDistribution(w, counts) {
   w.write(3, 7); w.write(3, 5);
   varUint8(w, counts.length - 3);
   const logs = new Uint8Array(counts.length);
-  let omitLog = 0;
+  let omitLog = runs ? 10 : 0;
   for (let i = 0; i < counts.length; i++) if (i !== omit && counts[i]) {
     logs[i] = floorLog2(counts[i]) + 1;
     omitLog = Math.max(omitLog, logs[i] + (i < omit ? 1 : 0));
   }
   logs[omit] = omitLog;
-  for (const log of logs) w.write(LOG_LENGTHS[log], LOG_CODES[log]);
-  for (let i = 0; i < counts.length; i++) if (i !== omit && logs[i] > 1) {
-    const bits = logs[i] - 1;
-    w.write(bits, counts[i] - (1 << bits));
+  const repeats = runs ? new Uint16Array(counts.length) : null;
+  for (let i = 0; i < counts.length; i++) {
+    w.write(LOG_LENGTHS[logs[i]], LOG_CODES[logs[i]]);
+    if (runs && i !== omit) {
+      let end = i + 1;
+      while (end < counts.length && end !== omit && counts[end] === counts[i]) end++;
+      if (end - i >= 5) { repeats[i] = end - i; w.write(7, 65); varUint8(w, end - i - 5); i = end - 1; }
+    }
+  }
+  for (let i = 0; i < counts.length; i++) {
+    if (i !== omit && logs[i] > 1) { const bits = logs[i] - 1; w.write(bits, counts[i] - (1 << bits)); }
+    if (repeats?.[i]) i += repeats[i] - 1;
   }
 }
 
@@ -154,4 +163,45 @@ export function buildAnsCoding(counts, options) {
   };
   // Preserve the original bucket/context choice to isolate prefix versus ANS.
   return {bits: prefix.bits, write, flush, writeHistograms: w => w.append(header)};
+}
+
+// The Modular stream uses the same alias ANS as VarDCT. Residual tokens already contain
+// their hybrid split; run lengths share that alphabet, and distance one is an identity state transition.
+export function writeModularAnsHistograms(w, orderedLeaves, freqs, histogramOf = leaf => leaf.context, configOf = () => RESIDUAL_CONFIG) {
+  const contextMap = new Uint8Array(orderedLeaves.length + 1);
+  for (const leaf of orderedLeaves) contextMap[leaf.context] = histogramOf(leaf) + 1;
+  const distance = new Uint32Array(2); distance[1] = 1;
+  const histograms = [distance, ...freqs.slice(0, Math.max(...contextMap))].map(freq => ({counts: normalise(freq)}));
+  const logAlphabet = Math.max(5, ceilLog2(Math.max(...histograms.map(h => h.counts.length))));
+  if (logAlphabet > 8) throw new Error('Modular ANS alphabet exceeds 256');
+  for (const histogram of histograms) Object.assign(histogram, reverseAlias(histogram.counts, logAlphabet));
+  w.write(1, 1);
+  w.writeU32([[0, 224], [0, 512], [0, 4096], [15, 8]], LZ77.minSymbol);
+  w.writeU32([[0, 3], [0, 4], [2, 5], [8, 9]], LZ77.minLength);
+  writeUintConfig(w, LZ77.lengthConfig, 8);
+  if (contextMap.length > 1) writeContextMap(w, contextMap);
+  w.write(1, 0); w.write(2, logAlphabet - 5);
+  for (let i = 0; i < histograms.length; i++) writeUintConfig(w, i ? configOf(i - 1) : RESIDUAL_CONFIG, logAlphabet);
+  for (const histogram of histograms) writeDistribution(w, histogram.counts, true);
+  return plans => {
+    const length = plans.reduce((total, plan) => total + plan.used, 0), emitted = new Uint16Array(length);
+    let state = 0x13 * 65536, at = length, offset = histograms.length;
+    for (let c = plans.length - 1; c >= 0; c--) {
+      const plan = plans[c]; offset -= plan.leaves.length;
+      for (let i = plan.used - 1; i >= 0; i--) {
+        const h = histograms[offset + plan.context[i]], symbol = plan.token[i], freq = h.counts[symbol];
+        --at;
+        if ((state >>> 20) >= freq) {
+          emitted[at] = state & 65535; plan.bits[i] |= 64; state >>>= 16;
+        }
+        const q = Math.floor(state / freq);
+        state = q * 4096 + h.reverse[h.starts[symbol] + state - q * freq];
+      }
+    }
+    w.write(32, state); at = 0;
+    for (const plan of plans) for (let i = 0; i < plan.used; i++, at++) {
+      if (plan.bits[i] & 64) { w.write(16, emitted[at]); plan.bits[i] &= 63; }
+      if (plan.bits[i]) w.write(plan.bits[i], plan.extra[i]);
+    }
+  };
 }

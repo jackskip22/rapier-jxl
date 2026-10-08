@@ -1,32 +1,28 @@
 // SPDX-License-Identifier: MIT
-// Every core: the effort door's exact work over a pool of workers, the same bytes as one thread for any number of them.
-// A frame's groups are coded independently once its global choices are made, and every pass of the door over its
-// groups (the plan's counting and writing, the weighted search's, the local trees') is a function of the pass's setup
-// and the group's pixels alone (frame.mjs, groupPass). So each worker is given its groups' pixels once, by transfer, and
-// keeps them for every pass of the picture; a pass sends its setup and then group numbers; this thread, which has every
-// pixel, codes groups too while it waits. The counts come back per group and are added in group order, the sections
-// are placed in group order, and every choice between passes (predictors, codes, trees, which plan, which stream) stays
-// in this thread. Only the time changes.
+// Parallel group coding with byte-identical output. Tasks depend only on fixed pass setup and group pixels.
+// Workers retain transferred pixels until the frame or group dimensions change. The coordinator selects models,
+// combines counts and sections in group order, and codes groups while waiting for worker results.
 //
-// The workers are the caller's: `spawn()` returns a Worker (postMessage, onmessage, onerror, terminate) whose script
-// hands every message to `servePool` and posts back what it answers, with its transfer list. The pool ends its workers
-// when the job ends or is left. A worker that cannot start or fails leaves its groups to this thread, which runs the
-// same functions on the same pixels: the bytes stand. A picture of one group, or a lossy one, never starts a worker.
-import {groupLayout, groupRect} from './frame.mjs';
+// spawn() returns a Worker whose script calls servePool and posts its response with the returned transfer list.
+// Job completion and cancellation terminate all workers. Failed workers fall back to the same local group functions.
+// Lossy images and images with one group use no workers.
+import {groupLayout, groupRect, GROUP_DIM} from './frame.mjs';
 import {planGroup} from './lossless.mjs';
 import {colourTransform} from './rct-search.mjs';
 import {localGroup} from './local.mjs';
 import {sampledGroup} from './sampled.mjs';
+import {screenGroup} from './screen.mjs';
 import {searchGroup, effortJob} from './effort-job.mjs';
 import {guard, answer} from './admit.mjs';
 
-const WORK = {plan: setup => planGroup(setup, setup.rct === undefined ? undefined : colourTransform(setup.rct, setup.channels)), search: searchGroup, local: localGroup, sampled: sampledGroup};
-// A group's result: its counts (fresh, the pass's `sizes`), or its section.
+const WORK = {plan: setup => planGroup(setup, setup.rct === undefined ? undefined : colourTransform(setup.rct, setup.channels)), search: searchGroup, local: localGroup, sampled: sampledGroup, screen: screenGroup};
+// Counting returns fresh histograms of setup.sizes; writing returns a section.
 const work = (group, setup, rgba, stride, rect) => { const counts = setup.sizes?.map(n => new Uint32Array(n)); return group(rgba, stride, ...rect, counts) || counts; };
 
-// A worker's side. Its tiles: {rgba, w, h} by group; the pass it is working.
+// Worker-local tiles and active pass. Reset releases both before a frame or layout change.
 let tiles = [], current = null;
 export function servePool(message) {
+  if (message.pool === 'reset') { tiles = []; current = null; return null; }
   if (message.pool === 'tile') { tiles[message.g] = message; return null; }
   if (message.pool === 'pass') { current = {...message, group: WORK[message.kind](message.setup)}; return null; }
   const {g} = message, {rgba, w, h} = tiles[g];
@@ -36,20 +32,20 @@ export function servePool(message) {
   } catch (error) { return [{pool: 'done', id: current.id, g, error: {name: error.name, code: error.code, message: error.message}}, []]; }
 }
 
-// The effort door's encodeSteps (the same options, admitted at once) as an async job: `for await (const done of job)`,
-// `job.hurry` and `job.bytes` as the steps' job; leaving the loop ends the workers. `workers` is how many to start.
+// Async equivalent of encodeSteps: the same options, progress, hurry flag, and output bytes.
+// Leaving the async iterator terminates its workers.
 export function encodePool(data, width, height, options, {spawn, workers = 4} = {}) {
   const steps = effortJob(data, width, height, options, true), layout = groupLayout(width, height), groups = layout.groupsX * layout.groupsY;
   let members = null, failed = false, live = 0, serial = 0, ready = [], wake = () => {}, last = 0;
-  const end = () => { if (members) for (const worker of members) worker.terminate(); members = []; };
+  let tiledData, tiledWidth, tiledHeight, tiledDim;
+  const end = () => { if (members) for (const worker of members) worker.terminate(); members = []; tiledData = null; };
   const fail = () => { failed = true; end(); wake(); };
-  // Every message to a worker goes through here: a send that throws (a pixel buffer that cannot be transferred, a
-  // worker that is gone) is a failure of the pool like any other, and the groups come back to this thread.
+  // Transfer and dispatch failures use the same local fallback as worker failures.
   const send = (worker, message, transfer = []) => {
     if (failed) return false;
     try { worker.postMessage(message, transfer); return true; } catch { fail(); return false; }
   };
-  // The workers, and each one's groups' pixels.
+  // Start workers and transfer their initial groups.
   const start = () => {
     members = [];
     try {
@@ -60,28 +56,38 @@ export function encodePool(data, width, height, options, {spawn, workers = 4} = 
         worker.onerror = worker.onmessageerror = event => { event?.preventDefault?.(); if (members.includes(worker)) fail(); };
       }
     } catch { fail(); return; }
-    for (let g = 0; g < groups; g++) {
-      const [x0, y0, w, h] = groupRect(layout, width, height, g);
-      const Sample = data instanceof Float32Array ? Float32Array : data instanceof Uint16Array ? Uint16Array : Uint8Array;
-      const rgba = new Sample(w * h * 4);
-      for (let y = 0; y < h; y++) rgba.set(data.subarray(((y0 + y) * width + x0) * 4, ((y0 + y) * width + x0 + w) * 4), y * w * 4);
-      if (!send(members[g % members.length], {pool: 'tile', g, w, h, rgba}, [rgba.buffer])) return;
-    }
+    retile(data, width, height, GROUP_DIM);
   };
-  // A turn of the event loop, so that the workers' answers come in between this thread's own groups: a channel's
-  // message in a browser, which queues behind them, and setImmediate where there is one (Node drains a port's messages
-  // in one go, so a channel there would starve the workers' ports).
+  // A format-group change or a patch frame changes the owned pixels. Reset before replacing tiles so workers do
+  // not retain old atlas/body buffers or accidentally read a previous frame's tile at the same group number.
+  const retile = (source, imageWidth, imageHeight, dim) => {
+    if (failed || source === tiledData && imageWidth === tiledWidth && imageHeight === tiledHeight && dim === tiledDim) return;
+    try {
+      for (const worker of members) if (!send(worker, {pool: 'reset'})) return;
+      const frame = groupLayout(imageWidth, imageHeight, dim), count = frame.groupsX * frame.groupsY;
+      for (let g = 0; g < count; g++) {
+        const [x0, y0, w, h] = groupRect(frame, imageWidth, imageHeight, g, dim);
+        const Sample = source instanceof Float32Array ? Float32Array : source instanceof Uint16Array ? Uint16Array : Uint8Array;
+        const rgba = new Sample(w * h * 4);
+        for (let y = 0; y < h; y++) rgba.set(source.subarray(((y0 + y) * imageWidth + x0) * 4, ((y0 + y) * imageWidth + x0 + w) * 4), y * w * 4);
+        if (!send(members[g % members.length], {pool: 'tile', g, w, h, rgba}, [rgba.buffer])) return;
+      }
+      tiledData = source; tiledWidth = imageWidth; tiledHeight = imageHeight; tiledDim = dim;
+    } catch { fail(); }
+  };
+  // Yield between local groups so worker responses can arrive. Node drains each port's queue in one pass;
+  // setImmediate avoids starving worker ports with a repeatedly posted MessageChannel callback.
   let channel;
   const turn = () => new Promise(resolve => {
     if (typeof setImmediate === 'function') { setImmediate(resolve); return; }
     channel ||= new MessageChannel(); channel.port1.onmessage = resolve; channel.port2.postMessage(0);
   });
-  // One pass: every group's result, or null when a hurry ended it, or the error a group's work threw. A worker is sent
-  // a group at a time until it first answers (it may still be starting), then kept two ahead. This thread is not idle:
-  // it takes the last unsent group of the longest queue, else a group sent to a worker that has not answered yet, and
-  // only waits when every group left is with a working worker. A group answered twice counts once: it is the same.
-  async function* pass({kind, setup, at, stop, byteCeiling}) {
+  // Send one task until a worker first responds, then keep two in flight. The coordinator steals from the longest
+  // unsent queue or a worker that has not responded. Duplicate results are identical and count only once.
+  async function* pass({kind, setup, at, stop, byteCeiling, dim = GROUP_DIM, data: source = data, width: imageWidth = width, height: imageHeight = height}) {
     if (!members) start();
+    retile(source, imageWidth, imageHeight, dim);
+    const frame = groupLayout(imageWidth, imageHeight, dim), groups = frame.groupsX * frame.groupsY;
     const id = live = ++serial, waiting = new Set(Array.from({length: groups}, (_, g) => g)), results = [];
     const queues = members.map((_, k) => [...waiting].filter(g => g % members.length === k));
     ready = [];
@@ -105,8 +111,7 @@ export function encodePool(data, width, height, options, {spawn, workers = 4} = 
       if (!done) {
         const g = steal();
         if (g === undefined) { await new Promise(resolve => { wake = resolve; }); continue; }
-        local ||= WORK[kind](setup);
-        try { done = {g, result: work(local, setup, data, width, groupRect(layout, width, height, g))}; } catch (error) { live = 0; return error; }
+        try { local ||= WORK[kind](setup); done = {g, result: work(local, setup, source, imageWidth, groupRect(frame, imageWidth, imageHeight, g, dim))}; } catch (error) { live = 0; return error; }
         await turn();
       }
       if (!waiting.has(done.g)) continue;
@@ -126,7 +131,7 @@ export function encodePool(data, width, height, options, {spawn, workers = 4} = 
   const it = (async function* () {
     let step, reply;
     try {
-      // The workers start, and take their pixels, while this thread inspects the picture.
+      // Start workers while the coordinator inspects the image.
       if (!layout.single && (options?.quality ?? 100) >= 100) start();
       while (!(step = guard(() => reply instanceof Error ? steps.throw(reply) : steps.next(reply))).done) {
         if (typeof step.value === 'number') { yield last = step.value; reply = it.hurry; }

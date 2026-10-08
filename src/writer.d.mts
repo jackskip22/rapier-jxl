@@ -74,7 +74,7 @@ export function writeFrameHeaderEnd(w: BitWriter, alpha: boolean): void;
 export function writeTOC(w: BitWriter, sizes: Numbers): void;
 export function groupLayout(width: number, height: number, dim?: number): GroupLayout;
 export function finishSections(writers: readonly (BitWriter | null | undefined)[]): Bytes[];
-export function assembleCodestream(header: BitWriter, sections: readonly Uint8Array[]): Bytes;
+export function assembleCodestream(header: BitWriter, sections: readonly Uint8Array[], level?: 5 | 10): Bytes;
 
 export const PREDICTOR: Readonly<{
   zero: 0; left: 1; top: 2; average0: 3; select: 4; gradient: 5; weighted: 6;

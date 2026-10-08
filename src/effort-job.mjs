@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The effort door's work (effort.mjs): effort 1's stream, the rungs above it, and the group work of the weighted search
-// that a pool of workers shares (pool.mjs). Every choice is integer arithmetic: the same input and options write the
-// same bytes everywhere, on one thread or many.
+// Deterministic effort selection and weighted group coding, shared by sequential and worker execution.
 import {BitWriter, part, scaled} from './bits.mjs';
 import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, groupPass, addCounts, assembleCodestream, GROUP_DIM} from './frame.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
@@ -18,9 +16,7 @@ import {SAMPLE_RUNGS, sampledSteps} from './sampled.mjs';
 // The hurry in a step's reply: the caller's flag, or for a pooled pass a reply of null (ended) or {hurried}.
 const hurryOf = reply => reply === null || (typeof reply === 'object' ? reply.hurried : reply);
 
-// The door's options as every door reads them, and the effort, which this door alone reads (the core, one rung, does
-// not): a whole number from 1 to 9, 1 when absent. Admitted at once; the steps follow. With `pool` (pool.mjs drives
-// them), an exact picture of more than one group yields each pass over its groups as one request: the same bytes.
+// Validate before starting work. Pool requests preserve the encoder's format-group boundaries.
 export function effortJob(data, width, height, options, pool) {
   const {quality, colorSpace} = admitOptions(options), effort = options?.effort === undefined ? 1 : options.effort;
   if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fault('JXL_INPUT', 'Effort is a whole number from 1 to 9.');
@@ -32,14 +28,12 @@ export function effortJob(data, width, height, options, pool) {
   return effortSteps(data, width, height, quality, colorSpace, effort, pool && quality >= 100 && !groupLayout(width, height).single, treeLearning);
 }
 
-// Effort 1 is the core's work (index.mjs), step for step; the rungs run after it and keep a smaller stream if they
-// find one. A search that runs out of memory leaves the smallest completed stream standing.
+// Start with the core stream. Retain only smaller complete candidates, including after allocation failure.
 function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, treeLearning) {
   const shape = inspectPixels(data, width, height);
   if (quality < 100) {
     if (!shape.palette) return yield* lossySteps(data, width, height, {quality, shape, colorSpace});
-    // A palette picture's exact stream at this effort is the floor a lossy request must beat (a screen's is often far
-    // under effort 1's).
+    // Lossy palette encoding must beat the exact result at the requested effort.
     const exact = yield* part(effortSteps(data, width, height, 100, colorSpace, effort, false), 0, 2);
     let bytes;
     try { bytes = yield* part(lossySteps(data, width, height, {quality, shape, colorSpace}), 1, 2); }
@@ -48,21 +42,26 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, 
   }
   if (effort < 2) return yield* losslessSteps(data, width, height, {shape, colorSpace, pooled});
   if (treeLearning === 'sampled') return yield* sampledSearch(data, width, height, shape, colorSpace, effort, pooled);
-  let best = yield* part(losslessSteps(data, width, height, {shape, colorSpace, pooled}), 0, 2);
+  const analysis = {};
+  let best = yield* part(losslessSteps(data, width, height, {shape, colorSpace, pooled, analysis}), 0, 2);
   const direct = shape.palette ? {...shape, palette: null} : shape;
-  // A screen, a drawing or text (screen-search.mjs) also prices its palettes, residual runs and repeated glyphs from
-  // effort 3, first; at effort 3 a win of a quarter or more ends the search there.
-  const screen = effort >= 3 && screenEligible(data, width, height, shape, effort), screenFloor = best.length;
+  // Screen search runs first; the previous rung's weighted models still compete.
+  const screen = effort >= 3 && screenEligible(data, width, height, shape, effort);
   if (effort >= 4 || screen) {
     // Start a candidate against the smallest complete stream already kept, including an earlier screen win.
-    const searches = [() => searchSteps(data, width, height, direct, colorSpace, 3, pooled)];
+    const searches = [() => searchSteps(data, width, height, direct, colorSpace, 3, pooled, analysis, screen ? best.length : Infinity)];
     if (effort >= 4 && shape.palette) searches.push(() => localSteps(data, width, height, shape, colorSpace, 4, true, pooled, best.length));
     if (effort >= 6) {
       searches.push(() => localSteps(data, width, height, shape, colorSpace, 6, false, pooled, best.length));
       if (shape.palette) searches.push(() => localSteps(data, width, height, shape, colorSpace, 6, true, pooled, best.length));
     }
     if (effort >= 4) searches.push(() => rctSearchSteps(data, width, height, shape, colorSpace, pooled));
-    if (screen) searches.unshift(() => screenSteps(data, width, height, shape, colorSpace, {fastFloor: effort === 3 ? best.length : 0, effort}));
+    // Higher efforts retain lower-budget models. Pruning uses completed section bytes as a lower bound.
+    const learned = [SAMPLE_RUNGS.cheap, SAMPLE_RUNGS.rich, SAMPLE_RUNGS.deep, SAMPLE_RUNGS.thorough, SAMPLE_RUNGS.dense, SAMPLE_RUNGS.exhaustive];
+    const rungs = learned.slice(0, effort - 3);
+    if (effort === 9) rungs.push(SAMPLE_RUNGS.expanded, SAMPLE_RUNGS.maximum);
+    for (const rung of rungs) searches.push(() => sampledSteps(data, width, height, shape, colorSpace, rung, pooled, best.length));
+    if (screen) searches.unshift(() => screenSteps(data, width, height, shape, colorSpace, {fastFloor: effort === 3 ? best.length : 0, effort, pooled}));
     for (let i = 0; i < searches.length; i++) {
       try {
         const search = searches[i]();
@@ -70,20 +69,18 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, 
         while (!(step = search.next(reply)).done) hurried = hurryOf(reply = yield scaled(step.value, done => 0.5 + (i + done) / (2 * searches.length)));
         if (step.value && step.value.length < best.length) best = step.value;
         if (hurried) return best;
-        if (screen && effort === 3 && i === 0 && step.value && step.value.length * 4 <= screenFloor * 3) return best;
       } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
     }
     return best;
   }
   try {
-    const bytes = yield* part(searchSteps(data, width, height, direct, colorSpace, effort, pooled), 1, 2);
+    const bytes = yield* part(searchSteps(data, width, height, direct, colorSpace, effort, pooled, analysis), 1, 2);
     if (bytes && bytes.length < best.length) best = bytes;
   } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
   return best;
 }
 
-// Sampling changes only the explicit option. Keep effort 1 separately: any observed hurry, including on the last
-// group of a completed candidate, returns those bytes. Each rung chooses models before its independent group pass.
+// The explicit sampled option retains its original contract: any hurry returns the core stream.
 function* sampledSearch(data, width, height, shape, colorSpace, effort, pooled) {
   const first = losslessSteps(data, width, height, {shape, colorSpace, pooled});
   let step, reply, hurried = false, last = 0;
@@ -110,33 +107,46 @@ function* sampledSearch(data, width, height, shape, colorSpace, effort, pooled) 
   return best;
 }
 
-// A token's raw bits: a residual token s above zero carries s - 1 of them, an LZ77 length token above 235 s - 236.
-const raw = s => Math.max(0, s < 224 ? s - 1 : s - 236);
-// A histogram's complete cost in bits: its prefix code's header and every token's code and raw bits.
+// Ranking estimate; copy symbols 237–239 include a small penalty beyond their actual raw bits.
+const estimatedRawBits = s => Math.max(0, s < 224 ? s - 1 : s - 236);
+// Histogram and token estimates rank candidate plans; they are not pruning bounds.
 function cost(freqs) {
   const code = buildCode(freqs), writer = new BitWriter(128);
   writePrefixCode(writer, code);
   let bits = writer.bitLength;
-  for (let s = 0; s < freqs.length; s++) if (freqs[s]) bits += freqs[s] * (code.lengths[s] + raw(s));
+  for (let s = 0; s < freqs.length; s++) if (freqs[s]) bits += freqs[s] * (code.lengths[s] + estimatedRawBits(s));
+  return bits;
+}
+
+// Unconstrained Huffman data cost plus exact raw bits, excluding headers. A final prefix code restricted to
+// any partial histogram is still prefix-free, so adding tokens or merging intervals cannot lower this bound.
+export function minimumSearchDataBits(freqs) {
+  const leaves = []; let bits = 0;
+  for (let s = 0; s < freqs.length; s++) if (freqs[s]) {
+    leaves.push(freqs[s]); bits += freqs[s] * (s < 224 ? Math.max(0, s - 1) : s < 240 ? 0 : s - 236);
+  }
+  leaves.sort((a, b) => a - b);
+  const parents = []; let a = 0, b = 0;
+  const take = () => a < leaves.length && (b >= parents.length || leaves[a] <= parents[b]) ? leaves[a++] : parents[b++];
+  for (let i = 1; i < leaves.length; i++) { const weight = take() + take(); parents.push(weight); bits += weight; }
   return bits;
 }
 const sum = histograms => { const out = new Uint32Array(ALPHABET); for (const h of histograms) for (let s = 0; s < ALPHABET; s++) out[s] += h[s]; return out; };
 
 const CONTEXTS = WEIGHTED_CUTS.length + 1, IDENTITY = Int32Array.from({length: CONTEXTS}, (_, k) => k);
 
-// A group of the search, here or in a pool's worker. Counting, every channel goes into `target` twice: under effort 1's
-// predictor (`first`, one histogram per channel) and under the weighted one, its tokens kept by error interval
-// (CONTEXTS histograms per channel after those). Writing, each channel through its plan (`plans`: the leaf, its codes
-// and the intervals' contexts) into `target`, or, when none, as the group's own section, whose bytes it returns.
+// Count uncached baseline histograms and weighted error intervals, or write the selected channel plans.
+// Workers receive the same setup and group pixels as the caller.
 export function searchGroup(setup) {
-  const {channels, first, plans} = setup, fill = planeFill(setup), leaves = first?.map(p => leaf(p));
+  const {channels, first, plans, contexts = CONTEXTS, countFirst = true} = setup, fill = planeFill(setup), leaves = first?.map(p => leaf(p));
   const planes = Array.from({length: channels}, () => new Int16Array(GROUP_DIM * GROUP_DIM));
   return (rgba, stride, x0, y0, w, h, target) => {
     fill(planes, rgba, stride, x0, y0, w, h);
     if (!plans) {
       for (let c = 0; c < channels; c++) {
-        codeChannel(null, target[c], planes[c], w, h, leaves[c]);
-        codeWeighted(null, target.slice(channels + c * CONTEXTS, channels + (c + 1) * CONTEXTS), planes[c], w, h, 0, IDENTITY);
+        if (countFirst) codeChannel(null, target[c], planes[c], w, h, leaves[c]);
+        const base = (countFirst ? channels : 0) + c * contexts;
+        codeWeighted(null, target.slice(base, base + contexts), planes[c], w, h, 0, contexts === 1 ? undefined : IDENTITY);
       }
       return;
     }
@@ -150,29 +160,39 @@ export function searchGroup(setup) {
   };
 }
 
-// The direct plan of lossless.mjs (YCoCg, 256-pixel groups), every channel counted over the whole picture under effort
-// 1's predictor (chosen by samples, as the core chooses it) and under the weighted one; each rung's plan takes every
-// channel's cheapest, and the plans are written the cheapest way. Nothing written (null) when no plan leaves effort 1.
-function* searchSteps(rgba, width, height, shape, colorSpace, effort, pooled) {
+// Compare baseline and weighted prediction on direct YCoCg/grey planes with 256-pixel groups.
+export function* searchSteps(rgba, width, height, shape, colorSpace, effort, pooled, analysis, ceiling = Infinity) {
   const {channels} = shape, layout = groupLayout(width, height), groups = layout.groupsX * layout.groupsY;
   const setup = {channels, alpha: shape.alpha, palette: null}, fill = planeFill(setup);
   const planes = Array.from({length: channels}, () => new Int16Array(32 * 32));
   const rect = g => groupRect(layout, width, height, g);
   // Effort 1's predictor per channel: three 32-pixel samples priced under gradient and average, as the core does.
   const sw = Math.min(width, 32), sh = Math.min(height, 32);
-  const sampled = [GRADIENT_PREDICTOR, AVERAGE_PREDICTOR].map(predictor => ({predictor, freqs: planes.map(() => new Uint32Array(ALPHABET))}));
-  for (const fraction of [0, 0.5, 1]) {
-    fill(planes, rgba, width, Math.floor((width - sw) * fraction), Math.floor((height - sh) * fraction), sw, sh);
-    for (const candidate of sampled) for (let c = 0; c < channels; c++) codeChannel(null, candidate.freqs[c], planes[c], sw, sh, leaf(candidate.predictor));
+  const cached = analysis?.direct;
+  const sampled = !cached && [GRADIENT_PREDICTOR, AVERAGE_PREDICTOR].map(predictor => ({predictor, freqs: planes.map(() => new Uint32Array(ALPHABET))}));
+  if (!cached) {
+    for (const fraction of [0, 0.5, 1]) {
+      fill(planes, rgba, width, Math.floor((width - sw) * fraction), Math.floor((height - sh) * fraction), sw, sh);
+      for (const candidate of sampled) for (let c = 0; c < channels; c++) codeChannel(null, candidate.freqs[c], planes[c], sw, sh, leaf(candidate.predictor));
+    }
   }
-  const first = planes.map((_, c) => leaf(sampled[cost(sampled[1].freqs[c]) < cost(sampled[0].freqs[c]) ? 1 : 0].predictor));
-  // Every channel counted under effort 1's predictor and under the weighted one, its tokens kept by error interval.
-  // A step is a group of the counting pass (the first half of the search's fractions) or of a plan's writing (the
-  // second half, shared by the plans written), so the pace of the steps holds whether one plan is written or two.
-  const contexts = CONTEXTS;
-  const firstCounts = planes.map(() => new Uint32Array(ALPHABET)), intervals = planes.map(() => Array.from({length: contexts}, () => new Uint32Array(ALPHABET)));
-  const counts = [...firstCounts, ...intervals.flat()], counted = {...setup, first: first.map(l => l.predictor)}, count = searchGroup(counted);
-  if ((yield* groupPass({pooled, kind: 'search', setup: {...counted, sizes: counts.map(h => h.length)}, at: g => (g + 1) / (2 * groups), stop: () => true},
+  const first = cached ? cached.first.map(p => leaf(p)) : planes.map((_, c) => leaf(sampled[cost(sampled[1].freqs[c]) < cost(sampled[0].freqs[c]) ? 1 : 0].predictor));
+  // Counting uses the first half of progress; writing shares the second half across selected plans.
+  const contexts = effort < 3 ? 1 : CONTEXTS;
+  const firstCounts = cached?.freqs || planes.map(() => new Uint32Array(ALPHABET)), intervals = planes.map(() => Array.from({length: contexts}, () => new Uint32Array(ALPHABET)));
+  const counts = [...(cached ? [] : firstCounts), ...intervals.flat()];
+  const counted = {...setup, first: first.map(l => l.predictor), contexts, countFirst: !cached}, count = searchGroup(counted);
+  if (!pooled && Number.isFinite(ceiling)) {
+    const fixed = cached ? firstCounts.map(minimumSearchDataBits) : null;
+    for (let g = 0; g < groups; g++) {
+      count(rgba, width, ...rect(g), counts);
+      const baseline = fixed || firstCounts.map(minimumSearchDataBits);
+      // Each channel may keep its baseline or merge weighted intervals. Completed groups include flushed runs.
+      const bits = intervals.reduce((n, channel, c) => n + Math.min(baseline[c], channel.reduce((sum, hist) => sum + minimumSearchDataBits(hist), 0)), 0);
+      const hurried = yield (g + 1) / (2 * groups);
+      if (bits >= ceiling * 8 || hurried) return null;
+    }
+  } else if ((yield* groupPass({pooled, kind: 'search', setup: {...counted, sizes: counts.map(h => h.length)}, at: g => (g + 1) / (2 * groups), stop: () => true},
     groups, g => count(rgba, width, ...rect(g), counts), (g, partial) => addCounts(counts, partial))) === null) return null;
   // Rung 2: each channel's cheaper of effort 1's predictor and the weighted one in one context.
   const rung2 = planes.map((_, c) => {
@@ -180,9 +200,8 @@ function* searchSteps(rgba, width, height, shape, colorSpace, effort, pooled) {
     const whole = sum(intervals[c]), single = cost(whole);
     return single < plan.cost ? {cost: single, leaves: [leaf(WEIGHTED_PREDICTOR)], freqs: [whole], cuts: []} : plan;
   });
-  // Rung 3: or its intervals grouped into runs of neighbours, the grouping of least cost found exactly by dynamic
-  // programming. best[j] is the least cost of intervals 0..j-1 grouped, `from[j]` where its last group begins; an
-  // interval no token reaches leaves the merged cost as it was.
+  // Dynamic programming finds the cheapest adjacent interval groups. best[j] prices intervals [0,j);
+  // from[j] records the start of its final group. Empty intervals add no token cost.
   const rung3 = effort < 3 ? rung2 : rung2.map((plan, c) => {
     const filled = intervals[c].map(h => h.some(v => v));
     const best = new Float64Array(contexts + 1).fill(Infinity), from = new Int32Array(contexts + 1);
@@ -213,19 +232,19 @@ function* searchSteps(rgba, width, height, shape, colorSpace, effort, pooled) {
     return build(0, leaves.length - 1);
   };
   const assemble = plans => ({tree: channelTree(plans.map(plan => byError(plan.leaves, plan.cuts))), leaves: plans.flatMap(plan => plan.leaves), freqs: plans.flatMap(plan => plan.freqs)});
-  // A plan's price in bits: its tree and histograms as written, and every token's code and raw bits. Two plans' streams
-  // differ by their prices and at most 27 bits a section more (a section's padding, and its size's field in the table
-  // of contents, 12 to 32 bits) and a byte: a plan that far cheaper is written alone, closer plans both.
-  const price = plans => {
+  // Rank streams by their tree, histogram and token estimates. Allow 27 bits per section and one byte for
+  // padding and table-of-contents variation; write both candidates when their estimates are closer.
+  const model = plans => {
     const {tree, leaves, freqs} = assemble(plans), w = new BitWriter(4096);
     const histograms = writeChannelHistograms(w, writeTree(w, tree), freqs, l => leaves.indexOf(l));
     let bits = w.bitLength;
-    freqs.forEach((f, i) => { const {lengths} = histograms[i + 1].code; for (let s = 0; s < f.length; s++) if (f[s]) bits += f[s] * (lengths[s] + raw(s)); });
-    return bits;
+    freqs.forEach((f, i) => { const {lengths} = histograms[i + 1].code; for (let s = 0; s < f.length; s++) if (f[s]) bits += f[s] * (lengths[s] + estimatedRawBits(s)); });
+    return {bits, header: w, leaves, histograms};
   };
+  const models = new Map(candidates.map(plans => [plans, model(plans)]));
   let chosen = candidates;
   if (candidates.length > 1) {
-    const [a, b] = candidates.map(price), margin = 27 * (layout.single ? 1 : groups + 1) + 8;
+    const [a, b] = candidates.map(plans => models.get(plans).bits), margin = 27 * (layout.single ? 1 : groups + 1) + 8;
     if (b + margin <= a) chosen = [candidates[1]];
     else if (a + margin <= b) chosen = [candidates[0]];
     else if (b < a) chosen = [candidates[1], candidates[0]];
@@ -243,7 +262,7 @@ function* searchSteps(rgba, width, height, shape, colorSpace, effort, pooled) {
 
   // A plan's stream, a group per step; a hurry at its final group keeps the already-completed candidate.
   function* write(plans) {
-    const {tree, leaves, freqs} = assemble(plans);
+    const {header: modelHeader, leaves, histograms} = models.get(plans);
     const transforms = channels >= 3 ? [{type: 'rct', beginC: 0, rctType: 6}] : [];
     const header = new BitWriter(256);
     writeImageHeader(header, width, height, shape.colour, shape.alpha, {colorSpace});
@@ -251,7 +270,7 @@ function* searchSteps(rgba, width, height, shape, colorSpace, effort, pooled) {
     const global = new BitWriter(4096);
     global.write(1, 1);  // default DC quantisation
     global.write(1, 1);  // a global tree
-    const histograms = writeChannelHistograms(global, writeTree(global, tree), freqs, l => leaves.indexOf(l));
+    global.append(modelHeader);
     writeModularHeader(global, {useGlobalTree: true, transforms});
     const coded = {...setup, plans: plans.map(plan => ({leaf: plan.leaves[0], codes: plan.leaves.map(l => histograms[leaves.indexOf(l) + 1].code), contextOf: plan.contextOf}))};
     const group = searchGroup(coded), sections = [];

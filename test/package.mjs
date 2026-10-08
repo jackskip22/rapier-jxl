@@ -27,7 +27,7 @@ const require = createRequire(pathToFileURL(join(scratch, 'consumer.mjs')));
 const entry = name => import(pathToFileURL(require.resolve('rapier-jxl' + name)).href);
 
 test('the npm tarball includes references and a declaration for every executable entry', async () => {
-  for (const file of ['llms.txt', 'docs/reference/API.md', 'docs/reference/ARCHITECTURE.md', 'docs/reference/DECODERS.md', 'docs/ENCODER-COMPARISON.md', 'bench/encoder-sizes.json', '.github/CONTRIBUTING.md']) await access(join(root, file));
+  for (const file of ['llms.txt', 'skills/README.md', 'skills/rapier-jxl-single-file-app/SKILL.md', 'skills/rapier-jxl-photography/SKILL.md', 'docs/reference/API.md', 'docs/reference/ARCHITECTURE.md', 'docs/reference/DECODERS.md', 'docs/ENCODER-COMPARISON.md', 'bench/encoder-sizes.json', '.github/CONTRIBUTING.md']) await access(join(root, file));
   for (const [name, value] of Object.entries(manifest.exports)) {
     if (name === './package.json') continue;
     assert.equal(typeof value.types, 'string', name + ' has no declaration');
@@ -71,6 +71,15 @@ test('the packed optional source import preserves PNG16 sample words and declara
   const {data, width, height, ...options} = source;
   const encoder = await entry('/min');
   assert.ok(encoder.encode(data, width, height, options).length > 0);
+});
+
+test('the standalone metadata entry preserves the readable container bytes', async () => {
+  const core = await entry('/min'), readable = await entry('/metadata');
+  const source = await readFile(require.resolve('rapier-jxl/metadata/min'));
+  const standalone = await import('data:text/javascript;base64,' + source.toString('base64'));
+  const bytes = core.encode(Uint8Array.of(12, 34, 56, 78), 1, 1);
+  const options = {xmp: '<x:xmpmeta xmlns:x="adobe:ns:meta/"/>'};
+  assert.deepEqual(standalone.withMetadata(bytes, options), readable.withMetadata(bytes, options));
 });
 
 test('the published size receipt measures the packed encoder files', async () => {

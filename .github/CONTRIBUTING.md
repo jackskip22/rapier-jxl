@@ -1,10 +1,10 @@
 # Contributing
 
-Rapier JXL is an MIT-licensed JPEG XL encoder. By opening a pull request you offer your change under the same licence.
+Rapier JXL uses the MIT license. Submit contributions under the same license.
 
-- **A picture that encodes wrong, or a decoder that refuses the output:** open an issue with the smallest picture that
-  shows it, or a pull request that adds it to the test cases.
-- **A smaller or faster path:** measure it alone against `dist/sizes.json` and give the numbers in the pull request.
-- **A port, a binding or a tool that uses it:** welcome as its own project; link it from an issue.
+- **Encoding errors:** open an issue with an image that reproduces the error, or submit a regression test.
+- **Compression or speed changes:** report the inputs, output sizes, runtime, elapsed times, and measurement method.
+  Scope comparisons to the tested inputs and runtimes. For bundle changes, compare `dist/sizes.json`.
+- **Ports, bindings, and integrations:** develop them as separate projects and share a link in an issue.
 
-Run `npm test` before opening a pull request. Say if an AI tool helped.
+Run `npm test` before opening a pull request. Disclose any AI assistance.
