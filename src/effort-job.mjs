@@ -11,7 +11,7 @@ import {fault, admitOptions, admitPixels, admitSampleFormat} from './admit.mjs';
 import {localSteps} from './local.mjs';
 import {rctSearchSteps} from './rct-search.mjs';
 import {screenEligible, screenSteps} from './screen-search.mjs';
-import {SAMPLE_RUNGS, sampledSteps} from './sampled.mjs';
+import {SAMPLE_RUNGS, sampledSteps, sampleTransformRanking} from './sampled.mjs';
 
 // The hurry in a step's reply: the caller's flag, or for a pooled pass a reply of null (ended) or {hurried}.
 const hurryOf = reply => reply === null || (typeof reply === 'object' ? reply.hurried : reply);
@@ -51,16 +51,10 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, 
     // Start a candidate against the smallest complete stream already kept, including an earlier screen win.
     const searches = [() => searchSteps(data, width, height, direct, colorSpace, 3, pooled, analysis, screen ? best.length : Infinity)];
     if (effort >= 4 && shape.palette) searches.push(() => localSteps(data, width, height, shape, colorSpace, 4, true, pooled, best.length));
-    if (effort >= 6) {
-      searches.push(() => localSteps(data, width, height, shape, colorSpace, 6, false, pooled, best.length));
-      if (shape.palette) searches.push(() => localSteps(data, width, height, shape, colorSpace, 6, true, pooled, best.length));
-    }
+    if (effort >= 6 && shape.palette) searches.push(() => localSteps(data, width, height, shape, colorSpace, 6, true, pooled, best.length));
     if (effort >= 4) searches.push(() => rctSearchSteps(data, width, height, shape, colorSpace, pooled));
-    // Higher efforts retain lower-budget models. Pruning uses completed section bytes as a lower bound.
-    const learned = [SAMPLE_RUNGS.cheap, SAMPLE_RUNGS.rich, SAMPLE_RUNGS.deep, SAMPLE_RUNGS.thorough, SAMPLE_RUNGS.dense, SAMPLE_RUNGS.exhaustive];
-    const rungs = learned.slice(0, effort - 3);
-    if (effort === 9) rungs.push(SAMPLE_RUNGS.expanded, SAMPLE_RUNGS.maximum, SAMPLE_RUNGS.predictive, SAMPLE_RUNGS.precise, SAMPLE_RUNGS.colour);
-    for (const rung of rungs) searches.push(() => sampledSteps(data, width, height, shape, colorSpace, rung, pooled, best.length));
+    // Pruning uses completed section bytes as a lower bound.
+    for (const rung of learnedRungs(effort, data, width, height, shape)) searches.push(() => sampledSteps(data, width, height, shape, colorSpace, rung, pooled, best.length));
     if (screen) searches.unshift(() => screenSteps(data, width, height, shape, colorSpace, {fastFloor: effort === 3 ? best.length : 0, effort, pooled}));
     for (let i = 0; i < searches.length; i++) {
       try {
@@ -78,6 +72,28 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, 
     if (bytes && bytes.length < best.length) best = bytes;
   } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
   return best;
+}
+
+// The learned group models of each effort, likelier winner first. Effort 5 learns the three-predictor model under
+// YCoCg; from effort 6 the model is learned under the reversible colour transform that sampled gradient residuals rank
+// first (YCoCg for grey pictures); effort 9 also learns the precise model under the second-ranked transform, for
+// pictures the ranking misjudges. `ranked` is the rank of the transform to use.
+const LADDER = Object.freeze({
+  5: [{rung: 'maximum'}],
+  6: [{rung: 'maximum', ranked: 0}],
+  7: [{rung: 'broad', ranked: 0}],
+  8: [{rung: 'precise', ranked: 0}],
+  9: [{rung: 'precise', ranked: 0}, {rung: 'precise', ranked: 1}],
+});
+function learnedRungs(effort, data, width, height, shape) {
+  const steps = LADDER[effort] || [], ranking = shape.colour === 3 && steps.some(step => step.ranked !== undefined) ? sampleTransformRanking(data, width, height) : [6];
+  const rungs = [], types = [];
+  for (const step of steps) {
+    const base = SAMPLE_RUNGS[step.rung], type = step.ranked === undefined ? 6 : ranking[step.ranked] ?? 6;
+    if (types.some((t, i) => t === type && rungs[i].samples === base.samples && rungs[i].predictors === base.predictors)) continue;
+    types.push(type); rungs.push(type === 6 ? base : {...base, rctType: type});
+  }
+  return rungs;
 }
 
 // The explicit sampled option retains its original contract: any hurry returns the core stream.

@@ -10,9 +10,12 @@ export interface EffortOptions extends EncodeOptions {
   treeLearning?: 'sampled' | undefined;
 }
 /** Lossless encoding: effort 1 writes the core's bytes; 2 adds weighted prediction; 3 adds contexts and screen
- * coding; 4 adds learned image trees, local palettes and color transforms; 5 adds learned group trees and broader
- * screen matching; 6 jointly learns contexts and predictors and compares prefix/ANS coding; 7 to 9 expand the search.
- * Each level retains earlier candidates. Complete streams compete by size, with the earlier result winning ties.
+ * coding; 4 adds color-transform search and local palettes; 5 learns a predictor/context model per group with
+ * prefix/ANS selection and broader screen matching; 6 learns it under the color transform that sampled residuals rank
+ * first; 7 adds predictors and properties; 8 uses all 14 predictors; 9 also learns it under the second-ranked
+ * transform.
+ * Levels 1 to 4 accumulate; from 5 each level's learned model replaces the level below's. Complete streams compete
+ * by size, with the earlier result winning ties.
  * Native integer effort 2 also tries untransformed RGB; floats have no additional lossless search. */
 export function encode(data: Pixels, width: number, height: number, options?: EffortOptions): Bytes;
 /** Incremental encode. Above effort 1, lossless progress up to 0.5 writes effort 1's stream; the rest searches.

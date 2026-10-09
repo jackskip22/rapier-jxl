@@ -1,7 +1,7 @@
 {
   "name": "rapier-jxl",
-  "version": "3.1.0",
-  "description": "JavaScript JPEG XL encoder for single-file HTML apps and photography tools. Lossless and lossy RGBA, exact alpha, HDR, and optional WebAssembly. Offline, no runtime dependencies.",
+  "version": "3.2.0",
+  "description": "JPEG XL encoder in JavaScript, with optional WebAssembly. Lossless and lossy, exact alpha, HDR and JPEG transcoding, offline in browsers, Node or one HTML file. Built for photography tools and single-file apps. MIT, no dependencies.",
   "license": "MIT",
   "type": "module",
   "main": "./src/index.mjs",

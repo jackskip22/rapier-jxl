@@ -52,9 +52,6 @@ function sourceHashes() {
   return Object.fromEntries(Object.entries(hashes).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
 }
 const sources = sourceHashes(), programHash = hash(readFileSync(self));
-const {complete} = await import(pathToFileURL(join(source, 'bits.mjs')));
-const {photoCoefficientSteps} = await import(pathToFileURL(join(source, 'photo-dct.mjs')));
-const {quantisationSteps} = await import(pathToFileURL(join(source, 'photo-quant.mjs')));
 assert.ok(args.inputs || args.photos, 'Name --inputs or --photos');
 const work = resolve(args.work || '.photo-effort');
 mkdirSync(work, {recursive: true});
@@ -113,14 +110,6 @@ try {
     const baseline = run(1), previous = run(previousEffort), candidate = run(effort);
     assert.ok(candidate.bytes <= previous.bytes && previous.bytes <= baseline.bytes, id + ': effort cannot enlarge the stream');
     const row = {...input, rgbaHash: hash(data), baseline, previous, candidate, gain: 1 - candidate.bytes / baseline.bytes, incrementalGain: 1 - candidate.bytes / previous.bytes, cpuRatio: candidate.cpuMs / baseline.cpuMs};
-    if (effort === 5 && quality < 100) {
-      const proposal = complete(quantisationSteps(data, complete(photoCoefficientSteps(data, width, height, quality, 'srgb'))));
-      if (proposal) {
-        const selected = candidate.sha256 !== previous.sha256;
-        row.reconstructionError = {baseline: proposal.reconstructionError.baseline, candidate: selected ? proposal.reconstructionError.candidate : proposal.reconstructionError.baseline, selected};
-        assert.ok(row.reconstructionError.candidate <= row.reconstructionError.baseline, id + ': unclipped RGB sample error');
-      }
-    }
     if (native) {
       for (const result of [baseline, previous, candidate]) {
         const bytes = readFileSync(result.encoded), back = await native.decode(bytes, width, height);
@@ -143,7 +132,6 @@ const total = key => rows.reduce((sum, row) => sum + row[key].bytes, 0), cpu = k
 const receipt = {node: process.version, source, quality, effort, previousEffort, repeat, start, count: inputs.length, runtime: 'isolated Node processes; host CPU, no throttle',
   machine: {platform: platform(), arch: arch(), cpu: cpus()[0]?.model},
   sources, programHash,
-  model: 'The selector bounds edge-extended unclipped RGB sample AC reconstruction error before clipping and integer output; decoded byte RGB SSE is separately reported and may increase.',
   oracles: {native: native?.version || null, oxide: oxide?.version || null, rust: rust?.version || null},
   summary: {pictures: rows.length, baselineBytes: total('baseline'), previousBytes: total('previous'), candidateBytes: total('candidate'), gain: 1 - total('candidate') / total('baseline'), incrementalGain: 1 - total('candidate') / total('previous'),
     cpuRatio: cpu('candidate') / cpu('baseline'), incrementalCpuRatio: cpu('candidate') / cpu('previous'), baselinePeakRssKiB: Math.max(...rows.map(row => row.baseline.peakRssKiB)), candidatePeakRssKiB: Math.max(...rows.map(row => row.candidate.peakRssKiB)),

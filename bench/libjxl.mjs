@@ -35,7 +35,7 @@ const bytes=async count=>{while(buffer.length<count)await wait();const value=buf
 const send=async value=>{await new Promise((resolve,reject)=>child.stdin.write(value,error=>error?reject(error):resolve()));};
 const receipt={started:new Date().toISOString(),manifest,corpusSha256:sha(readFileSync(manifest)),binarySha256:sha(readFileSync(binary)),sourceSha256:sha(readFileSync(join(here,'libjxl.cc'))),
  method:'Persistent process; fresh encoder per run; one calling thread; encode includes encoder setup, allocations and output generation. Input I/O and exact RGBA decode are outside timing. All warmup and measured outputs are decoded, including hidden RGB.',
- platform:platform(),arch:arch(),osRelease:release(),cpu:cpus()[0]?.model,node:process.version,build:JSON.parse(readFileSync(join(here,'libjxl-build.json'),'utf8')),
+ platform:platform(),arch:arch(),osRelease:release(),cpu:cpus()[0]?.model,node:process.version,build:JSON.parse(readFileSync(join(dirname(binary),'libjxl-build.json'),'utf8')),
  affinity:readFileSync('/proc/self/status','utf8').match(/^Cpus_allowed_list:\s*(.+)$/m)?.[1],efforts,warmups,repeats,rows:[]};
 const save=()=>writeFileSync(join(out,'receipt.json'),JSON.stringify(receipt,null,2)+'\n');
 try {
@@ -44,7 +44,7 @@ try {
  for(let index=0;index<corpus.length;index++) {
   const item=corpus[index],order=efforts.slice(index%efforts.length).concat(efforts.slice(0,index%efforts.length));
   for(const effort of order) {
-   await send(Buffer.from([item.width,item.height,effort,warmups,repeats,item.pixels.byteLength].join(' ')+'\n'));await send(item.pixels);
+   await send(Buffer.from([item.width,item.height,effort,warmups,repeats,item.pixels.byteLength,0].join(' ')+'\n'));await send(item.pixels);
    const measured=await line();assert.equal(measured.ok,true);const output=await bytes(measured.bytes),file=item.id+'-e'+effort+'.jxl';
    writeFileSync(join(out,file),output);
    const row={id:item.id,kind:item.kind,width:item.width,height:item.height,rgbaHash:item.rgbaHash,effort,...measured,sha256:sha(output),output:file};

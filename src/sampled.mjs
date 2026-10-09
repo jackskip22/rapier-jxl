@@ -9,26 +9,23 @@ import {planeFill} from './lossless.mjs';
 import {writeModularAnsHistograms} from './ans.mjs';
 import {losslessCoding} from './lossless-coding.mjs';
 import {hybridToken} from './prefix.mjs';
-import {colourTransform} from './rct-search.mjs';
+import {colourTransform, transformKeys} from './rct-search.mjs';
 
 const SAMPLE_SYMBOLS = 32, SAMPLE_Q = 4096;
 const TRAIN_CONFIG = Object.freeze({split: 4, splitToken: 16, msb: 1, lsb: 2});
-const PREDICTIVE = {samples: 65536, bins: 128, leaves: 64, depth: 12,
+// The precise model: every predictor, the spatial, neighbour and previous-channel properties, learned in the hybrid
+// token split the stream is written in. `broad` keeps the eight predictors that trees select for nearly every pixel.
+const PRECISE = {samples: 65536, bins: 128, leaves: 64, depth: 12,
     properties: Object.freeze([15, 9, 10, 11, 12, 13, 14, 4, 5, 6, 7, 8, 2, 3]),
     predictors: Object.freeze([5, 3, 6, 1, 2, 4, 7, 8, 9, 10, 11, 12, 13, 0]), referenceKinds: Object.freeze([0, 1, 2, 3]),
-    weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true, sharing: Object.freeze([160, 320])};
+    weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true, sharing: Object.freeze([160, 320]), trainConfig: TRAIN_CONFIG};
 export const SAMPLE_RUNGS = Object.freeze({
   cheap: Object.freeze({samples: 1024, bins: 32, leaves: 8, depth: 5, properties: Object.freeze([9, 10, 11]), weighted: false, shared: true, references: false}),
   rich: Object.freeze({samples: 2048, bins: 48, leaves: 16, depth: 7, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true}),
   deep: Object.freeze({samples: 2048, bins: 48, leaves: 16, depth: 7, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true}),
-  thorough: Object.freeze({samples: 4096, bins: 48, leaves: 32, depth: 9, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true}),
-  dense: Object.freeze({samples: 8192, bins: 48, leaves: 32, depth: 9, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true}),
-  exhaustive: Object.freeze({samples: 16384, bins: 64, leaves: 48, depth: 10, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true}),
-  expanded: Object.freeze({samples: 32768, bins: 96, leaves: 48, depth: 12, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true}),
   maximum: Object.freeze({samples: 65536, bins: 128, leaves: 64, depth: 12, properties: Object.freeze([15, 9, 10, 11, 12, 13, 14]), weighted: true, shared: false, references: true, mixed: true, dim: 1024, ans: true, hybrid: true}),
-  predictive: Object.freeze(PREDICTIVE),
-  precise: Object.freeze({...PREDICTIVE, trainConfig: TRAIN_CONFIG}),
-  colour: Object.freeze({...PREDICTIVE, trainConfig: TRAIN_CONFIG, rctType: 13})
+  broad: Object.freeze({...PRECISE, predictors: Object.freeze([5, 3, 6, 1, 2, 4, 13, 0])}),
+  precise: Object.freeze(PRECISE)
 });
 // Q12 log2, by exact integer squaring of a Q20 mantissa. All intermediates are below 2^42. No libm/logarithm,
 // elapsed time or random source can change a split. The lazily extended table is only a mathematical cache.
@@ -64,6 +61,41 @@ function samplePositions(length, cap) {
     positions[i] = lo + (hash >>> 0) % (hi - lo);
   }
   return positions;
+}
+
+// The 42 reversible colour transforms ranked by the sampled price of gradient residuals in the precise rung's token
+// split: smallest first, equal prices in transform order. The transforms share 15 distinct planes (rct-search.mjs),
+// each priced once at stratified positions; a transform's price is the sum of its three planes'. Integer entropy from
+// the same table as the tree search keeps the ranking identical on every engine.
+export function sampleTransformRanking(rgba, width, height, samples = 32768) {
+  const length = width * height, positions = samplePositions(length, samples), count = positions.length, table = sampleEntropyTable(count);
+  // Plane `key` of the pixel at index i: a channel, a channel minus another, a channel minus the floor mean of the
+  // other two, or the luma of the YCoCg transform whose second channel is `key - 15`.
+  const value = (i, key) => {
+    const r = rgba[i * 4], g = rgba[i * 4 + 1], b = rgba[i * 4 + 2];
+    const ch = key === 0 || key === 12 || key === 15 ? r : key === 1 || key === 13 || key === 16 ? g : b;
+    if (key < 3) return ch;
+    if (key < 12) { const from = (key - 3) / 3 | 0, minus = (key - 3) % 3; return (from === 0 ? r : from === 1 ? g : b) - (minus === 0 ? r : minus === 1 ? g : b); }
+    const others = key === 12 || key === 15 ? g + b : key === 13 || key === 16 ? r + b : r + g, mean = others >> 1;
+    return key < 15 ? ch - mean : mean + ((ch - mean) >> 1);
+  };
+  const prices = new Float64Array(18), hist = new Uint32Array(64);
+  for (let key = 0; key < 18; key++) {
+    if (key === 3 || key === 7 || key === 11) continue;  // a channel minus itself: no transform uses it
+    hist.fill(0);
+    let raw = 0;
+    for (let k = 0; k < count; k++) {
+      const i = positions[k], y = (i / width) | 0, x = i - y * width;
+      const w = x ? value(i - 1, key) : y ? value(i - width, key) : 0, n = y ? value(i - width, key) : w, nw = x && y ? value(i - width - 1, key) : w;
+      const v = packSigned(value(i, key) - sampleGradient(w, n, nw));
+      if (v < TRAIN_CONFIG.splitToken) hist[v]++;
+      else { const top = 31 - Math.clz32(v), below = v - (1 << top); hist[TRAIN_CONFIG.splitToken + (((top - TRAIN_CONFIG.split) << 3) | ((below >> (top - 1)) << 2) | (below & 3))]++; raw += top - 3; }
+    }
+    prices[key] = sampleEntropy(hist, table) + raw * SAMPLE_Q;
+  }
+  const ranked = Array.from({length: 42}, (_, type) => ({type, price: transformKeys(type).reduce((n, key) => n + prices[key], 0)}));
+  ranked.sort((a, b) => a.price - b.price || a.type - b.type);
+  return ranked.map(entry => entry.type);
 }
 
 function samplePrediction(p, plane, width, i, x, y, w, n, nw) {
@@ -106,18 +138,41 @@ function samplePropertyValue(property, plane, width, index, x, y, w, n, nw, weig
   if (property === 13) return n - (y > 1 ? plane[index - 2 * width] : n);
   return w - (x > 1 ? plane[index - 2] : w); // property 14
 }
+// Quantiles of one property column. Cuts are the values at evenly spaced ranks; a value's bin is the number of cuts
+// below it. Property values span a few thousand integers, so ranks come from a counting pass, not a sort.
 function sampleQuantize(values, bins) {
-  const sorted = values.slice().sort(), cuts = [];
+  const length = values.length;
+  let low = values[0], high = values[0];
+  for (let i = 1; i < length; i++) { const v = values[i]; if (v < low) low = v; else if (v > high) high = v; }
+  const span = high - low + 1, cuts = [];
+  if (span > 1 << 20) {
+    const sorted = values.slice().sort();
+    for (let b = 1; b < bins; b++) {
+      const cut = sorted[Math.floor(b * length / bins) - 1];
+      if (cut < sorted[length - 1] && (!cuts.length || cut > cuts[cuts.length - 1])) cuts.push(cut);
+    }
+    const indices = new Uint8Array(length);
+    for (let i = 0; i < length; i++) {
+      let lo = 0, hi = cuts.length;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (values[i] > cuts[mid]) lo = mid + 1; else hi = mid; }
+      indices[i] = lo;
+    }
+    return {cuts, indices};
+  }
+  const counts = new Uint32Array(span);
+  for (let i = 0; i < length; i++) counts[values[i] - low]++;
+  let at = 0, seen = counts[0];  // seen: samples at values up to and including low + at
   for (let b = 1; b < bins; b++) {
-    const cut = sorted[Math.floor(b * sorted.length / bins) - 1];
-    if (cut < sorted[sorted.length - 1] && (!cuts.length || cut > cuts[cuts.length - 1])) cuts.push(cut);
+    const rank = Math.floor(b * length / bins) - 1;  // 0-based rank of the cut in sorted order
+    if (rank < 0) continue;
+    while (seen <= rank) seen += counts[++at];
+    const cut = low + at;
+    if (cut < high && (!cuts.length || cut > cuts[cuts.length - 1])) cuts.push(cut);
   }
-  const indices = new Uint8Array(values.length);
-  for (let i = 0; i < values.length; i++) {
-    let lo = 0, hi = cuts.length;
-    while (lo < hi) { const mid = (lo + hi) >> 1; if (values[i] > cuts[mid]) lo = mid + 1; else hi = mid; }
-    indices[i] = lo;
-  }
+  const binOf = new Uint8Array(span);
+  for (let o = 0, k = 0; o < span; o++) { while (k < cuts.length && cuts[k] < low + o) k++; binOf[o] = k; }
+  const indices = new Uint8Array(length);
+  for (let i = 0; i < length; i++) indices[i] = binOf[values[i] - low];
   return {cuts, indices};
 }
 function sampleModelBits(tree, leaves, freqs, config = RESIDUAL_CONFIG) {
@@ -150,24 +205,114 @@ function learnSampleTree(columns, symbolSets, candidates, population, options) {
   const cheapest = hist => { let selected = 0, bits = cost(hist[0]); for (let c = 1; c < hist.length; c++) { const next = cost(hist[c]); if (next < bits) { selected = c; bits = next; } } return {selected, bits}; };
   const ids = Uint32Array.from({length: count}, (_, i) => i), hist = histograms(ids), initial = cheapest(hist), predictor = candidates[initial.selected], root = leaf(predictor);
   let active = [{node: root, ids, hist, choice: initial, depth: 0}], leaves = 1;
+  // Split search over exact integer prices. A side's price is table[n] - sum(table[h]) + sum(h * rawBits * SAMPLE_Q) over
+  // its symbol counts h, so moving samples across a cut changes it only at the symbols moved: the running sums below
+  // equal the recomputed prices exactly (every term is an integer below 2^53) and the earliest best cut still wins.
+  const kinds = candidates.length, rawPrice = Float64Array.from({length: alphabet}, (_, s) => rawBits(s) * SAMPLE_Q);
+  const symbolsOf = new Uint8Array(count * kinds);  // symbolsOf[id * kinds + c]: the symbol of sample id under candidate c
+  for (let c = 0; c < kinds; c++) for (let id = 0; id < count; id++) symbolsOf[id * kinds + c] = symbolSets[c][id];
+  const lowCounts = candidates.map(() => new Uint32Array(alphabet)), highCounts = candidates.map(() => new Uint32Array(alphabet));
+  const lowTable = new Float64Array(kinds), highTable = new Float64Array(kinds), lowRaw = new Float64Array(kinds), highRaw = new Float64Array(kinds);
+  const baseTable = new Float64Array(kinds), baseRaw = new Float64Array(kinds);
+  let dense = new Uint32Array(0), order = new Uint32Array(0), offsets = new Uint32Array(0);
+  const slotOf = new Int16Array(alphabet);
   function propose(item) {
     if (item.depth >= options.depth || item.ids.length < 64) return null;
-    let best = null;
+    const members = item.ids, total = members.length;
+    for (let c = 0; c < kinds; c++) {
+      let t = 0, r = 0; const h = item.hist[c];
+      for (let s = 0; s < alphabet; s++) if (h[s]) { t += table[h[s]]; r += h[s] * rawPrice[s]; }
+      baseTable[c] = t; baseRaw[c] = r;
+    }
+    let best = null, sym = null, present = null, kept = 0;
     for (const column of quantized) {
-      const buckets = candidates.map(() => new Uint32Array((column.cuts.length + 1) * alphabet));
-      for (const id of item.ids) for (let c = 0; c < candidates.length; c++) buckets[c][column.indices[id] * alphabet + symbolSets[c][id]]++;
-      const low = candidates.map(() => new Uint32Array(alphabet)), high = item.hist.map(h => h.slice()); let lowCount = 0;
-      for (let b = 0; b < column.cuts.length; b++) {
+      const cuts = column.cuts.length, bins = cuts + 1, indices = column.indices;
+      if (!cuts) continue;
+      for (let c = 0; c < kinds; c++) { lowCounts[c].fill(0); highCounts[c].set(item.hist[c]); }
+      lowTable.fill(0); lowRaw.fill(0); highTable.set(baseTable); highRaw.set(baseRaw);
+      let lowCount = 0;
+      // Many samples: count (cut, candidate, symbol) triples once, then move whole counts. Few: move one sample at a time
+      // in cut order.
+      const useDense = total > bins * alphabet / 4;
+      let start = null;
+      if (useDense) {
+        // The counts of one candidate are bins * (symbols present in this node) words, small enough to stay in the
+        // first-level cache while its samples stream through. Symbols are renumbered and gathered once per node and the
+        // offsets once per column.
+        if (!sym) {
+          present = []; slotOf.fill(-1);
+          for (let s = 0; s < alphabet; s++) for (let c = 0; c < kinds; c++) if (item.hist[c][s]) { slotOf[s] = present.length; present.push(s); break; }
+          kept = present.length;
+          sym = new Uint8Array(total * kinds);
+          for (let c = 0; c < kinds; c++) { const symbols = symbolSets[c], at = c * total; for (let i = 0; i < total; i++) sym[at + i] = slotOf[symbols[members[i]]]; }
+        }
+        if (offsets.length < total) offsets = new Uint32Array(total);
+        for (let i = 0; i < total; i++) offsets[i] = indices[members[i]] * kept;
+        const size = bins * kinds * kept;
+        if (dense.length < size) dense = new Uint32Array(size); else dense.fill(0, 0, size);
+        let c = 0;
+        for (; c + 1 < kinds; c += 2) {
+          const base0 = c * bins * kept, base1 = base0 + bins * kept, at0 = c * total, at1 = at0 + total;
+          for (let i = 0; i < total; i++) { const o = offsets[i]; dense[base0 + o + sym[at0 + i]]++; dense[base1 + o + sym[at1 + i]]++; }
+        }
+        if (c < kinds) { const base = c * bins * kept, at = c * total; for (let i = 0; i < total; i++) dense[base + offsets[i] + sym[at + i]]++; }
+      } else {
+        if (order.length < total) order = new Uint32Array(total);
+        start = new Uint32Array(bins + 1);
+        for (let i = 0; i < total; i++) start[indices[members[i]] + 1]++;
+        for (let b = 0; b < bins; b++) start[b + 1] += start[b];
+        const next = start.slice(0, bins);
+        for (let i = 0; i < total; i++) { const id = members[i]; order[next[indices[id]]++] = id; }
+      }
+      for (let b = 0; b < cuts; b++) {
+        let moved = 0;
+        if (useDense) {
+          for (let c = 0; c < kinds; c++) {
+            const low = lowCounts[c], high = highCounts[c], row = (c * bins + b) * kept;
+            let t = 0, r = 0, u = 0, m = 0;
+            for (let q = 0; q < kept; q++) {
+              const v = dense[row + q];
+              if (!v) continue;
+              const s = present[q], l = low[s], h = high[s];
+              t += table[l + v] - table[l]; u += table[h - v] - table[h]; r += v * rawPrice[s]; m += v;
+              low[s] = l + v; high[s] = h - v;
+            }
+            lowTable[c] += t; highTable[c] += u; lowRaw[c] += r; highRaw[c] -= r;
+            if (!c) moved = m;
+          }
+        } else {
+          for (let i = start[b]; i < start[b + 1]; i++) {
+            const from = order[i] * kinds;
+            for (let c = 0; c < kinds; c++) {
+              const s = symbolsOf[from + c], low = lowCounts[c], high = highCounts[c], l = low[s]++, h = high[s]--;
+              lowTable[c] += table[l + 1] - table[l]; highTable[c] += table[h - 1] - table[h];
+              lowRaw[c] += rawPrice[s]; highRaw[c] -= rawPrice[s];
+            }
+          }
+          moved = start[b + 1] - start[b];
+        }
         const previousCount = lowCount;
-        for (let c = 0; c < candidates.length; c++) for (let s = 0; s < alphabet; s++) { const value = buckets[c][b * alphabet + s]; low[c][s] += value; high[c][s] -= value; if (!c) lowCount += value; }
+        lowCount += moved;
         // Empty bins repeat the same histograms; strict ties already keep the earlier cut.
-        if (lowCount === previousCount || lowCount < 24 || item.ids.length - lowCount < 24) continue;
-        const lo = cheapest(low), hi = cheapest(high), gain = item.choice.bits - lo.bits - hi.bits;
-        if (!best || gain > best.gain) best = {gain, column, bin: b, lo, hi};
+        if (lowCount === previousCount || lowCount < 24 || total - lowCount < 24) continue;
+        let loSelected = 0, hiSelected = 0, loBits = Infinity, hiBits = Infinity;
+        const lowBase = table[lowCount], highBase = table[total - lowCount];
+        for (let c = 0; c < kinds; c++) {
+          const l = lowBase - lowTable[c] + lowRaw[c], h = highBase - highTable[c] + highRaw[c];
+          if (l < loBits) { loBits = l; loSelected = c; }
+          if (h < hiBits) { hiBits = h; hiSelected = c; }
+        }
+        const gain = item.choice.bits - loBits - hiBits;
+        if (!best || gain > best.gain) best = {gain, column, bin: b, lo: {selected: loSelected, bits: loBits}, hi: {selected: hiSelected, bits: hiBits}};
       }
     }
     if (!best || best.gain <= 0) return null;
-    best.low = histograms(item.ids.filter(id => best.column.indices[id] <= best.bin));
+    // The samples on each side of the chosen cut keep their order.
+    const bin = best.column.indices; let below = 0;
+    for (let i = 0; i < total; i++) if (bin[members[i]] <= best.bin) below++;
+    best.lowIds = new Uint32Array(below); best.highIds = new Uint32Array(total - below);
+    for (let i = 0, l = 0, h = 0; i < total; i++) { const id = members[i]; if (bin[id] <= best.bin) best.lowIds[l++] = id; else best.highIds[h++] = id; }
+    best.low = histograms(best.lowIds);
     best.high = item.hist.map((hist, c) => hist.map((value, s) => value - best.low[c][s]));
     const one = leaf(candidates[item.choice.selected]), left = leaf(candidates[best.hi.selected]), right = leaf(candidates[best.lo.selected]);
     const branch = split(best.column.property, best.column.cuts[best.bin], left, right);
@@ -183,11 +328,10 @@ function learnSampleTree(columns, symbolSets, candidates, population, options) {
     let chosen = -1;
     for (let i = 0; i < active.length; i++) if (active[i].proposal && (chosen < 0 || active[i].proposal.score > active[chosen].proposal.score)) chosen = i;
     if (chosen < 0) break;
-    const item = active[chosen], proposal = item.proposal, lo = [], hi = [];
-    for (const id of item.ids) (proposal.column.indices[id] > proposal.bin ? hi : lo).push(id);
+    const item = active[chosen], proposal = item.proposal, lo = proposal.lowIds, hi = proposal.highIds;
     const left = leaf(candidates[proposal.hi.selected]), right = leaf(candidates[proposal.lo.selected]);
     Object.assign(item.node, split(proposal.column.property, proposal.column.cuts[proposal.bin], left, right));
-    const children = [{node: left, ids: Uint32Array.from(hi), hist: proposal.high, choice: proposal.hi, depth: item.depth + 1}, {node: right, ids: Uint32Array.from(lo), hist: proposal.low, choice: proposal.lo, depth: item.depth + 1}];
+    const children = [{node: left, ids: hi, hist: proposal.high, choice: proposal.hi, depth: item.depth + 1}, {node: right, ids: lo, hist: proposal.low, choice: proposal.lo, depth: item.depth + 1}];
     if (leaves + 1 < options.leaves - reserve) for (const child of children) child.proposal = propose(child);
     active.splice(chosen, 1, ...children); leaves++;
   }
@@ -195,25 +339,79 @@ function learnSampleTree(columns, symbolSets, candidates, population, options) {
   return sampleGuardReferences({tree: root, leaves: ordered}, predictor);
 }
 
-function samplePlan(plane, width, height, options, shared, previous, referenceOutput) {
-  if (shared) return sampleFinishPlan(sampleTokenize(plane, width, height, null, null, shared, previous, referenceOutput), shared.predictor);
+function samplePlan(plane, width, height, options, shared, previous, referenceOutput, byteDomain = true) {
+  if (shared) return sampleFinishPlan(sampleTokenize(plane, width, height, null, null, shared, previous, referenceOutput, byteDomain), shared.predictor);
   const length = width * height, positions = samplePositions(length, options.samples), table = sampleEntropyTable(positions.length);
   const candidates = options.predictors || (options.weighted ? [5, 3, 6] : [5, 3]);
   const weighted = options.weighted ? new Uint32Array(length) : null, errors = options.weighted ? new Int32Array(length) : null;
   if (weighted) codeWeighted(null, null, plane, width, height, 0, undefined, weighted, errors);
-  const scratchToken = new Int32Array(3);
   const symbols = candidates.map(() => new Uint8Array(positions.length)), histograms = candidates.map(() => new Uint32Array(options.trainConfig ? ALPHABET : SAMPLE_SYMBOLS)), extras = candidates.map(() => 0);
   const properties = [...options.properties.filter(property => property !== 15 || options.weighted), ...(options.references ? previous.flatMap((_, i) => (options.referenceKinds || [2]).map(kind => 16 + kind + 4 * i)) : [])], columns = properties.map(property => ({property, values: new Int32Array(positions.length)}));
-  for (let k = 0; k < positions.length; k++) {
+  // Each sampled position's neighbours are read once, then every predictor and property runs as its own loop.
+  const m = positions.length, X = new Int32Array(m), Y = new Int32Array(m), W = new Int32Array(m), N = new Int32Array(m), NW = new Int32Array(m);
+  const NE = new Int32Array(m), WW = new Int32Array(m), NN = new Int32Array(m), NEE = new Int32Array(m);
+  for (let k = 0; k < m; k++) {
     const i = positions[k], y = (i / width) | 0, x = i - y * width;
-    const w = x ? plane[i - 1] : y ? plane[i - width] : 0, n = y ? plane[i - width] : w, nw = x && y ? plane[i - width - 1] : w;
-    for (let c = 0; c < candidates.length; c++) {
-      const predictor = candidates[c], value = predictor === 6 ? weighted[i] : packSigned(plane[i] - samplePrediction(predictor,plane,width,i,x,y,w,n,nw));
-      let symbol = 32 - Math.clz32(value), rawBits = Math.max(0, symbol - 1);
-      if (options.trainConfig) { hybridToken(options.trainConfig, value, scratchToken); symbol = scratchToken[0]; rawBits = scratchToken[1]; }
-      symbols[c][k] = symbol; histograms[c][symbol]++; extras[c] += rawBits;
+    const w = x ? plane[i - 1] : y ? plane[i - width] : 0, n = y ? plane[i - width] : w, nw = x && y ? plane[i - width - 1] : w, ne = y && x + 1 < width ? plane[i - width + 1] : n;
+    X[k] = x; Y[k] = y; W[k] = w; N[k] = n; NW[k] = nw; NE[k] = ne;
+    WW[k] = x > 1 ? plane[i - 2] : w; NN[k] = y > 1 ? plane[i - 2 * width] : n; NEE[k] = y && x + 2 < width ? plane[i - width + 2] : ne;
+  }
+  const train = options.trainConfig;
+  for (let c = 0; c < candidates.length; c++) {
+    const predictor = candidates[c], symbolsOf = symbols[c], histogram = histograms[c];
+    let extra = 0;
+    for (let k = 0; k < m; k++) {
+      let value;
+      if (predictor === 6) value = weighted[positions[k]];
+      else {
+        const w = W[k], n = N[k], nw = NW[k];
+        let p;
+        switch (predictor) {
+          case 0: p = 0; break;
+          case 1: p = w; break;
+          case 2: p = n; break;
+          case 3: p = ((w + n) / 2) | 0; break;
+          case 4: { const g = w + n - nw; p = Math.abs(g - w) < Math.abs(g - n) ? w : n; break; }
+          case 5: p = sampleGradient(w, n, nw); break;
+          case 7: p = NE[k]; break;
+          case 8: p = nw; break;
+          case 9: p = WW[k]; break;
+          case 10: p = ((w + nw) / 2) | 0; break;
+          case 11: p = ((nw + n) / 2) | 0; break;
+          case 12: p = ((n + NE[k]) / 2) | 0; break;
+          case 13: p = ((6 * n - 2 * NN[k] + 7 * w + WW[k] + NEE[k] + 3 * NE[k] + 8) / 16) | 0; break;
+          default: throw new Error('Unsupported predictor ' + predictor);
+        }
+        value = packSigned(plane[positions[k]] - p);
+      }
+      let symbol, raw;
+      if (!train) { symbol = 32 - Math.clz32(value); raw = symbol > 1 ? symbol - 1 : 0; }
+      else if (value < train.splitToken) { symbol = value; raw = 0; }
+      else {  // hybridToken's token and raw-bit count
+        const top = 31 - Math.clz32(value), below = value - (1 << top), shift = train.msb + train.lsb;
+        symbol = train.splitToken + (((top - train.split) << shift) | ((below >> (top - train.msb)) << train.lsb) | (below & ((1 << train.lsb) - 1)));
+        raw = top - shift;
+      }
+      symbolsOf[k] = symbol; histogram[symbol]++; extra += raw;
     }
-    for (const column of columns) column.values[k] = samplePropertyValue(column.property, plane, width, i, x, y, w, n, nw, errors, previous);
+    extras[c] = extra;
+  }
+  for (const column of columns) {
+    const out = column.values, property = column.property;
+    if (property === 2) out.set(Y);
+    else if (property === 3) out.set(X);
+    else if (property === 4) for (let k = 0; k < m; k++) out[k] = Math.abs(N[k]);
+    else if (property === 5) for (let k = 0; k < m; k++) out[k] = Math.abs(W[k]);
+    else if (property === 6) out.set(N);
+    else if (property === 7) out.set(W);
+    else if (property === 9) for (let k = 0; k < m; k++) out[k] = W[k] + N[k] - NW[k];
+    else if (property === 10) for (let k = 0; k < m; k++) out[k] = W[k] - NW[k];
+    else if (property === 11) for (let k = 0; k < m; k++) out[k] = NW[k] - N[k];
+    else if (property === 12) for (let k = 0; k < m; k++) out[k] = N[k] - NE[k];
+    else if (property === 13) for (let k = 0; k < m; k++) out[k] = N[k] - NN[k];
+    else if (property === 14) for (let k = 0; k < m; k++) out[k] = W[k] - WW[k];
+    else if (property === 15) for (let k = 0; k < m; k++) out[k] = errors[positions[k]];
+    else for (let k = 0; k < m; k++) out[k] = samplePropertyValue(property, plane, width, positions[k], X[k], Y[k], W[k], N[k], NW[k], errors, previous);
   }
   let selected = 0, price = Infinity;
   for (let c = 0; c < candidates.length; c++) { const bits = sampleEntropy(histograms[c], table) + extras[c] * SAMPLE_Q; if (bits < price) { price = bits; selected = c; } }
@@ -221,7 +419,7 @@ function samplePlan(plane, width, height, options, shared, previous, referenceOu
   // A uniform non-weighted tree avoids property 15 and its weighted state. Mixed trees may use that error
   // property with any leaf predictor; its state is shared with the weighted leaves.
   const learned = learnSampleTree(columns.filter(c => options.mixed || c.property !== 15 || predictor === 6), options.mixed ? symbols : [symbols[selected]], options.mixed ? candidates : [predictor], length, options);
-  const result = sampleTokenize(plane, width, height, weighted, errors, learned, previous, referenceOutput);
+  const result = sampleTokenize(plane, width, height, weighted, errors, learned, previous, referenceOutput, byteDomain);
   return sampleFinishPlan(result, predictor);
 }
 function sampleFinishPlan(result, predictor) {
@@ -270,7 +468,7 @@ function sampleCompileLookup(tree) {
   });
   return {table, p9: maps[0], p10: maps[1], p11: maps[2], p18: maps[3], p22: maps[4], p26: maps[5]};
 }
-function sampleTokenize(plane, width, height, weighted, errors, learned, previous, referenceOutput) {
+function sampleTokenize(plane, width, height, weighted, errors, learned, previous, referenceOutput, byteDomain = true) {
   const length = width * height, count = learned.leaves.length, freqs = Array.from({length: count}, () => new Uint32Array(ALPHABET));
   const token = new Uint16Array(length), extra = new Uint32Array(length), bits = new Uint8Array(length), context = new Uint8Array(length);
   let used = 0, run = 0; const runContexts = new Uint8Array(8);
@@ -285,7 +483,7 @@ function sampleTokenize(plane, width, height, weighted, errors, learned, previou
     else for (let i = 0; i < run; i++) emit(runContexts[i], 0);
     run = 0;
   };
-  const interior = learned.interior || learned.tree, noTree = !interior.left, lookup = noTree ? null : sampleCompileLookup(interior);
+  const interior = learned.interior || learned.tree, noTree = !interior.left, lookup = noTree || !byteDomain ? null : sampleCompileLookup(interior);
   for (let y = 0, i = 0; y < height; y++) for (let x = 0; x < width; x++, i++) {
     const w = x ? plane[i - 1] : y ? plane[i - width] : 0, n = y ? plane[i - width] : w, nw = x && y ? plane[i - width - 1] : w;
     let ctx;
@@ -300,12 +498,31 @@ function sampleTokenize(plane, width, height, weighted, errors, learned, previou
       ctx = lookup.table[index];
     }
     else {
+      // The common properties inline; reference and rarer properties take the shared evaluator.
       let node = interior;
-      while (node.left) node = samplePropertyValue(node.property, plane, width, i, x, y, w, n, nw, errors, previous) > node.splitval ? node.left : node.right;
+      while (node.left) {
+        const property = node.property;
+        let v;
+        if (property === 9) v = w + n - nw;
+        else if (property === 10) v = w - nw;
+        else if (property === 11) v = nw - n;
+        else if (property === 15) v = errors[i];
+        else if (property === 12) v = n - (y && x + 1 < width ? plane[i - width + 1] : n);
+        else if (property === 13) v = n - (y > 1 ? plane[i - 2 * width] : n);
+        else if (property === 14) v = w - (x > 1 ? plane[i - 2] : w);
+        else if (property === 4) v = Math.abs(n);
+        else if (property === 5) v = Math.abs(w);
+        else if (property === 6) v = n;
+        else if (property === 7) v = w;
+        else if (property === 2) v = y;
+        else if (property === 3) v = x;
+        else v = samplePropertyValue(property, plane, width, i, x, y, w, n, nw, errors, previous);
+        node = v > node.splitval ? node.left : node.right;
+      }
       ctx = node.slot;
     }
     const leafPredictor = learned.leaves[ctx].predictor;
-    const value = leafPredictor === 6 ? weighted[i] : packSigned(plane[i] - samplePrediction(leafPredictor,plane,width,i,x,y,w,n,nw));
+    const value = leafPredictor === 6 ? weighted[i] : packSigned(plane[i] - (leafPredictor === 5 ? sampleGradient(w, n, nw) : samplePrediction(leafPredictor, plane, width, i, x, y, w, n, nw)));
     if (referenceOutput) referenceOutput[i] = leafPredictor === 5 ? (value + 1) >> 1 : Math.abs(plane[i] - sampleGradient(w, n, nw));
     if (!value) { if (run < 8) runContexts[run] = ctx; run++; }
     else {
@@ -417,6 +634,37 @@ function sampleImageModel(rgba, width, height, shape, options) {
   });
 }
 
+function sampleChooseModel(plans, options, prepare, offset = 0) {
+  const bytes = bits => Math.ceil((offset + bits) / 8);
+  const choose = (best, models = plans) => {
+    const prefix = prepare(false, undefined, models), ans = prepare(true, undefined, models);
+    ans.write();
+    const prefixBytes = bytes(prefix.section.bitLength + prefix.dataBits), ansBytes = bytes(ans.section.bitLength);
+    const bestBytes = best ? bytes(best.bitLength) : Infinity;
+    // Exact histogram prices include raw bits and padding. Equal sizes keep the earlier prefix candidate.
+    if (prefixBytes < bestBytes && prefixBytes <= ansBytes) {
+      if (prefix.section.at + Math.ceil(prefix.dataBits / 8) + 5 >= prefix.section.bytes.length) prefix.section.grow(Math.ceil(prefix.dataBits / 8));
+      prefix.write(); return prefix.section;
+    }
+    return ansBytes < bestBytes ? ans.section : best;
+  };
+  // Shared histograms at each penalty. A penalty that merges nothing, or repeats the previous penalty's groups, would
+  // write the section already priced, so it is not written again.
+  const withSharing = section => {
+    let previous = null;
+    for (const penalty of options.sharing || []) {
+      const clustered = plans.map(plan => sampleClusterPlan(plan, penalty)), key = clustered.map(plan => plan.histogramMap.join(',')).join(';');
+      if (clustered.every((plan, c) => plan.freqs.length === plans[c].freqs.length) || key === previous) continue;
+      previous = key;
+      section = choose(section, clustered);
+    }
+    return section;
+  };
+  let section = withSharing(choose(null));
+  if (options.hybrid) { sampleProjectIntegers(plans); section = withSharing(choose(section)); }
+  return section;
+}
+
 // Every group uses its own pixels and the pass's fixed setup. Shared trees are learned once before dispatch;
 // richer trees are learned from each group's pixels on whichever thread codes it.
 export function sampledGroup(setup) {
@@ -434,29 +682,31 @@ export function sampledGroup(setup) {
       return {section, ...model};
     };
     if (!options.ans) { const model = prepare(false, target); model.write(); return target ? undefined : model.section.finish(); }
-    const offset = target?.bitLength || 0, bytes = bits => Math.ceil((offset + bits) / 8);
-    const choose = (best, models = plans) => {
-      const prefix = prepare(false, undefined, models), ans = prepare(true, undefined, models);
-      ans.write();
-      const prefixBytes = bytes(prefix.section.bitLength + prefix.dataBits), ansBytes = bytes(ans.section.bitLength);
-      const bestBytes = best ? bytes(best.bitLength) : Infinity;
-      // Exact histogram prices include raw bits and padding. Equal sizes keep the earlier prefix candidate.
-      if (prefixBytes < bestBytes && prefixBytes <= ansBytes) {
-        if (prefix.section.at + Math.ceil(prefix.dataBits / 8) + 5 >= prefix.section.bytes.length) prefix.section.grow(Math.ceil(prefix.dataBits / 8));
-        prefix.write(); return prefix.section;
-      }
-      return ansBytes < bestBytes ? ans.section : best;
-    };
-    let section = choose(null);
-    for (const penalty of options.sharing || []) section = choose(section, plans.map(plan => sampleClusterPlan(plan, penalty)));
-    if (options.hybrid) {
-      sampleProjectIntegers(plans); section = choose(section);
-      for (const penalty of options.sharing || []) section = choose(section, plans.map(plan => sampleClusterPlan(plan, penalty)));
-    }
+    const section = sampleChooseModel(plans, options, prepare, target?.bitLength || 0);
     if (target) { target.append(section); return; }
     return section.finish();
   };
 }
+
+// Prepared independent planes can share their pixel model across palette representations. Only integer
+// projection mutates token storage; each writer owns that projection and leaves the prepared model reusable.
+export const sampledPlanes = Object.freeze({
+  prepare(plane, width, height, options) {
+    // Palette indices may exceed the byte-derived range of the Cartesian neighbour lookup.
+    return samplePlan(plane, width, height, options, null, [], null, false);
+  },
+  write(writer, plans, options, {transforms = [], global = false} = {}) {
+    const models = plans.map(plan => ({...plan, token: plan.token.slice(), bits: plan.bits.slice(), extra: plan.extra.slice()}));
+    const prepare = (ans, section = new BitWriter(256), chosen = models) => {
+      if (!global) writeModularHeader(section, {useGlobalTree: false, transforms});
+      const model = sampleWriteModel(section, chosen, ans, options.ans && !ans);
+      if (global) writeModularHeader(section, {transforms});
+      return {section, ...model};
+    };
+    if (options.ans) writer.append(sampleChooseModel(models, options, prepare, writer.bitLength));
+    else { const model = prepare(false); model.write(); writer.append(model.section); }
+  }
+});
 
 export function* sampledSteps(rgba, width, height, shape, colorSpace, options, pooled, ceiling = Infinity) {
   const {channels} = shape, dim = options.dim || GROUP_DIM, layout = groupLayout(width, height, dim), groups = layout.groupsX * layout.groupsY;

@@ -1,6 +1,6 @@
 # Rapier JXL
 
-Rapier's complete JPEG XL encoding system in **50,021 gzip bytes**: lossless and lossy encoding, native precision, HDR, exact alpha, JPEG transcoding, optional WASM and parallel workers. JavaScript, zero runtime dependencies, offline. [MIT license](LICENSE).
+Rapier's complete JPEG XL encoding system in **53,331 gzip bytes**: lossless and lossy encoding, native precision, HDR, exact alpha, JPEG transcoding, optional WASM and parallel workers. JavaScript, zero runtime dependencies, offline. [MIT license](LICENSE).
 
 This is the complete worker used by [Rapier](https://rapier.website). The separate core is
 **11,670 gzip bytes**. Both can be embedded in one HTML file.
@@ -13,12 +13,12 @@ npm install rapier-jxl
 
 | Build / import | Gzip bytes | Capabilities |
 | --- | ---: | --- |
-| **Rapier worker** · `rapier-jxl/rapier/worker` | 50,021 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel lossless groups. |
-| Rapier module · `rapier-jxl/rapier/min` | 50,075 | The same system with an encoder factory and worker installer. |
+| **Rapier worker** · `rapier-jxl/rapier/worker` | 53,331 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel lossless groups. |
+| Rapier module · `rapier-jxl/rapier/min` | 53,385 | The same system with an encoder factory and worker installer. |
 | Core · `rapier-jxl/min` | 11,670 | Lossless or lossy typed RGBA, native precision, HDR and exact alpha. |
-| Effort · `rapier-jxl/effort/min` | 30,013 | Core with lossless compression search, efforts 1–9. |
-| WASM · `rapier-jxl/wasm/min` | 36,336 | Effort with inlined WASM and JavaScript fallback. |
-| Photo · `rapier-jxl/photo/min` | 15,837 | Lossy photographs from RGBA pixels. |
+| Effort · `rapier-jxl/effort/min` | 33,916 | Core with lossless compression search, efforts 1–9. |
+| WASM · `rapier-jxl/wasm/min` | 40,174 | Effort with inlined WASM and JavaScript fallback. |
+| Photo · `rapier-jxl/photo/min` | 15,834 | Lossy photographs from RGBA pixels. |
 | JPEG · `rapier-jxl/jpeg/min` | 13,882 | Existing JPEGs, preserving admitted coefficients and orientation. |
 | Metadata · `rapier-jxl/metadata/min` | 2,560 | Attach, replace or remove caller-supplied Exif/XMP. |
 

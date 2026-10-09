@@ -1,6 +1,6 @@
 # Encoder comparisons
 
-The complete Rapier worker uses 50,021 gzip bytes: core encoding, effort search, optional WASM, Photo, JPEG transcoding and parallel workers. The separate core uses 11,670 gzip bytes. Both embed in one offline HTML file.
+The complete Rapier worker uses 53,331 gzip bytes: core encoding, effort search, optional WASM, Photo, JPEG transcoding and parallel workers. The separate core uses 11,670 gzip bytes. Both embed in one offline HTML file.
 
 ## Payload
 
@@ -8,12 +8,12 @@ Executable payload sizes. Rapier JXL uses this release; other rows use the pinne
 
 | Encoder / entry | Version | Minified JS + WASM bytes | gzip bytes | Included capability |
 | --- | --- | ---: | ---: | --- |
-| Rapier JXL complete worker | 3.1.0 | 126,743 | 50,021 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel workers |
-| Rapier JXL core | 3.1.0 | 27,603 | 11,670 | Lossless/lossy RGBA, native precision and HDR, exact alpha |
-| Rapier JXL effort | 3.1.0 | 77,117 | 30,013 | Core plus lossless predictor, learned-tree, entropy, color, and screen search |
-| Rapier JXL WASM | 3.1.0 | 90,861 | 36,336 | Effort with inlined kernels and JavaScript fallback |
-| Rapier JXL JPEG | 3.1.0 | 33,343 | 13,882 | JPEG coefficients, orientation; no JPEG reconstruction |
-| Rapier JXL photo | 3.1.0 | 38,974 | 15,837 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
+| Rapier JXL complete worker | 3.2.0 | 135,038 | 53,331 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel workers |
+| Rapier JXL core | 3.2.0 | 27,603 | 11,670 | Lossless/lossy RGBA, native precision and HDR, exact alpha |
+| Rapier JXL effort | 3.2.0 | 86,776 | 33,916 | Core plus lossless predictor, learned-tree, entropy, color, and screen search |
+| Rapier JXL WASM | 3.2.0 | 100,530 | 40,174 | Effort with inlined kernels and JavaScript fallback |
+| Rapier JXL JPEG | 3.2.0 | 33,343 | 13,882 | JPEG coefficients, orientation; no JPEG reconstruction |
+| Rapier JXL photo | 3.2.0 | 39,235 | 15,834 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
 | [jSquash](https://github.com/jamsinclair/jSquash/tree/main/packages/jxl) | 1.3.0 | 1,388,572 | 525,782 | 8-bit lossless/lossy RGBA |
 | [Discourse's jSquash package](https://www.npmjs.com/package/@discourse/jxl) | 1.3.0 | 1,388,572 | 525,782 | The same encoder bytes as jSquash |
 | [Lacinak's jSquash fork](https://github.com/kelaci/jSquash) | 1.3.0-kelaci.0 | 2,071,514 | 844,866 | High bit-depth input options |

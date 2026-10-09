@@ -10,7 +10,7 @@ import {inspectPixels, losslessSteps, planeFill} from '../src/lossless.mjs';
 import {groupLayout, groupRect, GROUP_DIM} from '../src/frame.mjs';
 import {ALPHABET, leaf, codeChannel} from '../src/modular.mjs';
 import {colourTransform} from '../src/rct-search.mjs';
-import {SAMPLE_RUNGS, sampledSteps} from '../src/sampled.mjs';
+import {SAMPLE_RUNGS, sampledSteps, sampleTransformRanking} from '../src/sampled.mjs';
 import {borderCase} from './fuzz-cases.mjs';
 import {integerFixture} from './high-depth-fixtures.mjs';
 import {decoder} from './decoder.mjs';
@@ -52,18 +52,20 @@ test('native samples and explicit colour transforms do not populate direct analy
 
 test('a pruned learned candidate leaves the later winning model eligible', async () => {
   const rgba = gunzipSync(await readFile(new URL('seeds/hurry-painting.rgba.gz', import.meta.url))), width = 512, height = 384;
-  const shape = inspectPixels(rgba, width, height), previous = encode(rgba, width, height, {effort: 4});
+  const shape = inspectPixels(rgba, width, height), previous = encode(rgba, width, height, {effort: 8});
   const run = (options, ceiling = Infinity) => complete(sampledSteps(rgba, width, height, shape, 'srgb', options, false, ceiling));
-  assert.equal(run(SAMPLE_RUNGS.cheap, previous.length), null, 'the incumbent rejects the completed sections of the cheap model');
-  const rich = run(SAMPLE_RUNGS.rich);
-  assert.ok(rich.length < previous.length, 'the independently completed later model improves the incumbent');
-  assert.ok(same(encode(rgba, width, height, {effort: 5}), rich), 'pruning preserves the later model and its complete bytes');
-  if (decode) assert.ok(same(rgbaOf(decode(rich)), rgba), 'the later winning model retains every pixel');
-  // Weighted, colour, cheap and rich models share the second half of this direct picture's effort-5 search.
-  for (const from of [7 / 8, 1]) {
-    const job = encodeSteps(rgba, width, height, {effort: 5});
+  assert.notEqual(sampleTransformRanking(rgba, width, height)[0], 6, 'this painting ranks another transform above YCoCg');
+  assert.equal(run(SAMPLE_RUNGS.maximum, previous.length), null, 'the incumbent rejects the completed sections of a weaker model');
+  const second = run({...SAMPLE_RUNGS.precise, rctType: sampleTransformRanking(rgba, width, height)[1]});
+  const final = encode(rgba, width, height, {effort: 9}), smallest = second.length < previous.length ? second : previous;
+  assert.ok(same(final, smallest), 'pruning preserves the later model and its complete bytes');
+  if (decode) assert.ok(same(rgbaOf(decode(final)), rgba), 'the winning model retains every pixel');
+  // The screen, weighted, colour-transform and two precise models share the second half of this picture's effort-9
+  // search; a hurry at the first-ranked model's completion keeps its stream, which is effort 8's.
+  for (const from of [0.85, 1]) {
+    const job = encodeSteps(rgba, width, height, {effort: 9});
     for (const done of job) if (from === 1 ? done === 1 : done > from) job.hurry = true;
-    assert.ok(same(job.bytes, from === 1 ? rich : previous), 'hurry retains exactly the last completed model');
+    assert.ok(same(job.bytes, from === 1 ? final : previous), 'hurry retains exactly the last completed model');
   }
 });
 

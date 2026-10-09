@@ -22,7 +22,8 @@ export function createJPEGXLEncoder({spawn} = {}) {
         return encodePhoto(data, width, height, options);
       const pooled = workers > 1 && quality >= 100 && Math.ceil(width / 256) * Math.ceil(height / 256) >= POOL_GROUPS;
       const job = pooled ? encodePool(data, width, height, options, {spawn: spawnWorker, workers}) : encodeSteps(data, width, height, options);
-      while (!(await job.next()).done);
+      // Each step reports how far the work is, from 0 to 1; a caller that asks (options.progress) is told.
+      for (let step; !(step = await job.next()).done;) if (typeof options.progress === 'function') options.progress(step.value);
       return job.bytes;
     },
     transcode: jpeg => transcode(jpeg, {effort: 9}),

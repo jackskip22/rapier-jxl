@@ -62,20 +62,21 @@ may answer a lossy pixel request with an exact palette candidate when that candi
 ### Lossless effort
 
 Effort and wasm default to 1 and write the core's bytes at that level. Ordinary 8-bit lossless search adds these
-candidates; each level includes the levels below it. Only a strictly smaller complete stream replaces the retained
-result, so equal lengths keep the earlier candidate.
+candidates. Levels 1 to 4 accumulate; from level 5 each level's learned group model replaces the level below's while
+the fixed candidates stay, so a level can be a few tenths of a percent larger than the level below on some pictures.
+Only a strictly smaller complete stream replaces the retained result, so equal lengths keep the earlier candidate.
 
-| Effort | Additional search |
-| ---: | --- |
-| 1 | Core encoding. |
-| 2 | Weighted prediction. |
-| 3 | Weighted error contexts, screen palettes, residual runs, and repeated glyphs. |
-| 4 | Shared learned image trees, local palette models, and reversible color transforms. |
-| 5 | Learned group trees and broader screen matching. |
-| 6 | Joint context/predictor learning in groups up to 1,024 × 1,024 pixels, per-group prefix/ANS selection, and local gradient contexts. |
-| 7 | 4,096 samples and up to 32 leaves per channel in the joint model. |
-| 8 | 8,192 samples and up to 32 leaves per channel. |
-| 9 | Adds models up to 65,536 samples and 64 leaves per channel (63 for RGBA), all 14 predictors, spatial and signed channel properties, hybrid-aware learning, another color transform and shared histograms. |
+| Effort | Additional search | Use |
+| ---: | --- | --- |
+| 1 | Core encoding: gradient or average prediction per channel, prefix codes, zero runs. | Live previews and working copies. |
+| 2 | Weighted prediction. | |
+| 3 | Weighted error contexts, screen palettes, residual runs, and repeated glyphs. | Screenshots, drawings and documents: their large wins arrive here. |
+| 4 | Reversible color-transform search and local palette models. | |
+| 5 | A learned model per group of up to 1,024 × 1,024 pixels: gradient, average, or weighted prediction and neighbor, weighted-error and previous-channel contexts from 65,536 samples, up to 64 leaves per channel (63 for RGBA), with prefix/ANS selection and histogram sharing. Broader screen matching. | Balanced: most of the final size in about a fifth of effort 9's time. |
+| 6 | The learned model under the reversible color transform that sampled gradient residuals rank first (YCoCg for grey pictures). | |
+| 7 | Eight predictors with spatial, signed neighbor and previous-channel properties, learned in the hybrid token split the stream is written in. | Within a few tenths of a percent of effort 9 at about half its time. |
+| 8 | All 14 predictors. | |
+| 9 | The effort-8 model under the second-ranked transform as a second candidate, for pictures the ranking misjudges. | Kept pictures where every byte counts. |
 
 Higher effort spends more time searching for smaller lossless files. There is no automatic deadline.
 Set `job.hurry` to finish with a completed result. [Screen coding](../SCREENSHOTS.md).
@@ -87,10 +88,9 @@ Any observed hurry in this mode returns effort 1 exactly.
 For non-palette lossy inputs the effort entry point uses the core's lossy path; palette inputs also price an exact
 candidate at the requested effort. Native precision uses the search described below.
 
-Photo and JPEG efforts 3 and 4 try alternative entropy models and coefficient orders. Photo effort 5 also tries
-per-block quantization under its RGB reconstruction-error bound; this can change reconstructed RGB while alpha stays
-exact. JPEG effort changes entropy coding while preserving the carried coefficients. The `-ans` imports also try
-ANS at effort 2 and above, retaining a completed candidate only when smaller.
+Photo and JPEG efforts 3 and 4 try alternative entropy models and coefficient orders. Photo effort 5 and above
+also tries ANS. These searches preserve coefficients and decoded samples. The `-ans` imports try ANS from effort 2.
+Only a strictly smaller completed stream replaces the retained result. Alpha stays exact at every quality.
 
 ## Native precision
 
@@ -271,7 +271,7 @@ preserves admitted coefficients and orientation, and does not preserve the origi
 
 The standard worker accepts one operation at a time:
 
-- `{id, operation: 'encode', data, width, height, options?}` returns `{id, ok: true, bytes}`.
+- `{id, operation: 'encode', data, width, height, options?, progress?}` returns `{id, ok: true, bytes}`. With `progress: true` the worker first sends `{id, progress}` replies, each a number above the last up to 1, at most about every hundredth and every 100 ms.
 - `{id, operation: 'transcode', bytes}` returns `{id, ok: true, bytes, width, height, orientation}`.
 - A failure returns `{id, ok: false, error: {code, message, stage?, detail?}}`. A concurrent request returns `JXL_BUSY`.
 

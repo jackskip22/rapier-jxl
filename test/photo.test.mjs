@@ -7,9 +7,6 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {encodePhoto} from '../src/photo.mjs';
-import {complete, float16Bits} from '../src/bits.mjs';
-import {dctBlocks, dct8Basis, photoCoefficientSteps} from '../src/photo-dct.mjs';
-import {quantisationSteps} from '../src/photo-quant.mjs';
 import {decoder} from './decoder.mjs';
 import {jxlRsDecoder} from './jxl-rs-decoder.mjs';
 
@@ -80,46 +77,16 @@ test('photographic VarDCT: exact alpha, colour and partial groups through jxl-rs
   assert.deepEqual(rust.decode(encodePhoto(data, 17, 19, {quality: 100}), 17, 19), data);
 });
 
-// Independently invert the AC error into spatial RGB samples. The candidate's declared model covers the full
-// edge-replicated blocks before clipping and integer rounding; DC is a constant shared with effort 1.
-function spatialError(data, jpeg) {
-  const {width, height, components, quantScale} = jpeg, {stride, rows} = components[0], transform = dctBlocks(data, width, height);
-  const basis = dct8Basis, biases = [0.9299455010825141, 0.945349926692846, 0.9500648966626563];
-  let base = jpeg.quantFieldBase || 1;
-  while (base / (2040 * quantScale) < 1 / 16384) base *= 2;
-  const bits = float16Bits(base / (2040 * quantScale)), scale = (1 + (bits & 1023) / 1024) * 2 ** ((bits >> 10) - 15) * 2040;
-  const errors = new Float64Array(192);
-  let error = 0;
-  for (let by = 0; by < rows; by++) for (let bx = 0; bx < stride; bx++) {
-    const block = by * stride + bx, source = transform(bx, by), field = jpeg.quantFields?.[block] || base;
-    for (let c = 0; c < 3; c++) for (let k = 1; k < 64; k++) {
-      const q = components[c].coeffs[block * 64 + k], adjusted = Math.abs(q) < 2 ? q * biases[c] : q - 0.145 / q;
-      errors[c * 64 + k] = adjusted * components[c].quant[k] * scale / field - source[c * 64 + k];
+test('photo effort reduces bytes without changing reconstruction', {skip: needsOxide}, () => {
+  const width = 17, height = 19, data = source(width, height);
+  for (const quality of [90, 75, 50]) {
+    let previous = encodePhoto(data, width, height, {quality, effort: 1});
+    const reconstruction = decode(previous).data;
+    for (const effort of [4, 5, 9]) {
+      const bytes = encodePhoto(data, width, height, {quality, effort});
+      assert.ok(bytes.length <= previous.length, 'more effort cannot enlarge the stream');
+      assert.deepEqual(decode(bytes).data, reconstruction, 'entropy search preserves every decoded sample');
+      previous = bytes;
     }
-    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
-      const channels = [0, 0, 0];
-      for (let c = 0; c < 3; c++) for (let v = 0; v < 8; v++) for (let u = 0; u < 8; u++) channels[c] += errors[c * 64 + v * 8 + u] * basis[u * 8 + x] * basis[v * 8 + y];
-      const [dy, dcb, dcr] = channels, dr = dy + 1.402 * dcr, dg = dy - 0.344136286 * dcb - 0.714136286 * dcr, db = dy + 1.772 * dcb;
-      error += dr * dr + dg * dg + db * db;
-    }
-  }
-  return error;
-}
-
-test('per-block photo quantisation stays inside effort 1\'s reconstruction budget', () => {
-  // This quality admits a cheaper candidate for both full and partial blocks, so the budget check runs.
-  const quality = 85;
-  for (const [width, height] of [[16, 16], [17, 19]]) {
-    const data = source(width, height), jpeg = complete(photoCoefficientSteps(data, width, height, quality, 'srgb'));
-    const dc = jpeg.components.map(c => c.coeffs.filter((_, i) => i % 64 === 0)), before = spatialError(data, jpeg);
-    const candidate = complete(quantisationSteps(data, jpeg));
-    assert.ok(candidate, 'the retained case enters the quantisation candidate');
-    const after = spatialError(data, candidate);
-    assert.ok(after <= before, 'the linear RGB reconstruction error cannot grow');
-    assert.ok(Math.abs(before - candidate.reconstructionError.baseline) < before * 1e-12);
-    assert.ok(Math.abs(after - candidate.reconstructionError.candidate) < before * 1e-12);
-    candidate.components.forEach((c, i) => assert.deepEqual(c.coeffs.filter((_, k) => k % 64 === 0), dc[i]));
-    assert.equal(candidate.alpha, data);
-    assert.ok(encodePhoto(data, width, height, {quality, effort: 5}).length <= encodePhoto(data, width, height, {quality}).length);
   }
 });

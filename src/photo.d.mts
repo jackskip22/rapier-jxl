@@ -9,8 +9,8 @@ export interface PhotoOptions extends EncodeOptions {
 }
 /** Encode 8-bit photographs with DCT8 and exact alpha. Quality defaults to 90; 100 preserves all samples.
  * Native precision and HDR use modular coding with source-domain quantization.
- * Effort 3 adds clustering; 4 adds a learned coefficient order. Both preserve reconstructed pixels.
- * Effort 5 adds per-block quantization within effort 1's unclipped RGB reconstruction-error model.
+ * For DCT8, effort 3 adds clustering; 4 adds a learned coefficient order; 5 through 9 also try ANS coding.
+ * These entropy searches preserve the coefficients and reconstructed pixels.
  * Candidates replace the preceding stream only when smaller. Searches exceeding their memory estimate retain
  * the preceding stream. Input limits do not depend on effort. */
 export function encodePhoto(data: Pixels, width: number, height: number, options?: PhotoOptions): Bytes;

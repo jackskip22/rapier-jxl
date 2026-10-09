@@ -91,7 +91,7 @@ test('mixed predictor trees preserve pixels across large-group borders and hidde
   const alpha = borderCase(1031, 17);
   for (let i = 0; i < alpha.width * alpha.height; i++) alpha.rgba[i * 4 + 3] = i * 7 & 255;
   const pictures = [borderCase(1, 1025), borderCase(1025, 1), alpha, await painting()];
-  for (const p of pictures) for (const options of [SAMPLE_RUNGS.deep, SAMPLE_RUNGS.thorough, SAMPLE_RUNGS.exhaustive, SAMPLE_RUNGS.expanded, SAMPLE_RUNGS.maximum, SAMPLE_RUNGS.predictive, SAMPLE_RUNGS.precise, SAMPLE_RUNGS.colour]) {
+  for (const p of pictures) for (const options of [SAMPLE_RUNGS.deep, SAMPLE_RUNGS.maximum, SAMPLE_RUNGS.broad, SAMPLE_RUNGS.precise, {...SAMPLE_RUNGS.precise, rctType: 13}]) {
     const {bytes} = runModel(p, options);
     assert.ok(same(rgbaOf(decode(bytes)), p.rgba), `${p.width}x${p.height}: exact pixels`);
     assert.ok(same(runModel(p, options).bytes, bytes), 'repeated model selection is deterministic');
@@ -114,7 +114,7 @@ test('each Modular predictor preserves signed transforms and edge rounding', {sk
     const p = borderCase(width, height);
     for (let i = 0; i < width * height; i++) p.rgba[i * 4 + 3] = i * 43 & 255;
     for (const rctType of [6, 13]) for (let predictor = 0; predictor < 14; predictor++) {
-      const options = {...SAMPLE_RUNGS.predictive, samples: width * height, leaves: 1, properties: [], references: false, predictors: [predictor], rctType};
+      const options = {...SAMPLE_RUNGS.precise, trainConfig: undefined, samples: width * height, leaves: 1, properties: [], references: false, predictors: [predictor], rctType};
       const {bytes} = runModel(p, options);
       assert.ok(same(rgbaOf(decode(bytes)), p.rgba), `${width}x${height}, RCT ${rctType}, predictor ${predictor}`);
     }
@@ -156,7 +156,7 @@ test('predictive signed models preserve exact pixels and helper bytes across 102
   for (const [width, height] of [[1031, 17], [17, 1031]]) {
     const p = borderCase(width, height);
     for (let i = 0; i < width * height; i++) p.rgba[i * 4 + 3] = i * 7 & 255;
-    const options = SAMPLE_RUNGS.colour;
+    const options = {...SAMPLE_RUNGS.precise, rctType: 13};
     const {bytes} = runModel(p, options), pooled = await runModelHelpers(p, options);
     assert.ok(same(pooled, bytes), `${width}x${height}: actual helper output`);
     assert.ok(same(rgbaOf(decode(bytes)), p.rgba), `${width}x${height}: exact hidden RGB and alpha`);

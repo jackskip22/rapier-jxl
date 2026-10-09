@@ -70,7 +70,15 @@ export function installJPEGXLWorker(configuration) {
     busy = true;
     try {
       if (request.operation === 'encode') {
-        const bytes = await codec.encode({width: request.width, height: request.height, data: request.data}, request.options);
+        // Asked for with `progress: true`: how far the encode is, from 0 to 1, a reply of its own each hundredth.
+        let reported = 0, at = 0;
+        const progress = request.progress === true ? value => {
+          const now = Date.now();
+          if (typeof value !== 'number' || !(value > reported) || value < 1 && (value - reported < 0.01 || now - at < 100)) return;
+          reported = value; at = now;
+          globalThis.postMessage({id, progress: value});
+        } : undefined;
+        const bytes = await codec.encode({width: request.width, height: request.height, data: request.data}, progress ? {...request.options, progress} : request.options);
         globalThis.postMessage({id, ok: true, bytes}, [bytes.buffer]);
       } else if (request.operation === 'transcode') {
         const carried = await codec.transcode({bytes: request.bytes});

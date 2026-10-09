@@ -93,7 +93,7 @@ Readable imports share `rapier-jxl/kernels`. Set controls before an encode. [Ker
 | Format writer | Bits, prefix codes, frame headers and modular syntax. |
 | Pixel core | Typed RGBA to lossless or lossy modular streams. |
 | Lossless search | Weighted prediction, learned trees, local models, color transforms and screen matching. |
-| JPEG and photo | JPEG parsing or photographic DCT feeding shared coefficient and VarDCT writers. JPEG/photo ANS uses separate entry points. |
+| JPEG and photo | JPEG parsing or photographic DCT feeding shared coefficient and VarDCT writers. Photo effort 5 adds ANS; separate ANS entry points start at effort 2. |
 | Kernels | Optional integer operations behind the same JavaScript encoding interface. |
 
 The core excludes the optional search, ANS, JPEG, photo, source-file parser, metadata and WASM modules. Native precision shares its
@@ -108,16 +108,17 @@ candidate when its already-written sections reach the retained stream's length: 
 the table of contents can only add bytes. Weighted search also uses exact Huffman data bounds. Pruning and hurry
 are separate, so later candidates can still compete.
 
-Ordinary 8-bit lossless efforts 4–9 add learned trees to the predictor, palette and screen candidates. The learner
-uses deterministic spatial samples and integer costs. From effort 6, groups compare prefix and ANS coding, and each tree leaf can choose gradient, average,
-or weighted prediction; neighbor differences, weighted errors and previous-channel residuals select contexts.
-Groups are up to 1,024 pixels on a side. Increasing effort adds larger sample and leaf budgets while retaining all
-lower-level candidates. [Effort levels](API.md#lossless-effort).
+Ordinary 8-bit lossless efforts 5–9 add one learned tree per group to the predictor, palette and screen candidates.
+The learner uses deterministic spatial samples and integer costs. Groups compare prefix and ANS coding, and each tree
+leaf can choose gradient, average, or weighted prediction; neighbor differences, weighted errors and previous-channel
+residuals select contexts. Groups are up to 1,024 pixels on a side. [Effort levels](API.md#lossless-effort).
 
-Effort 9 also considers all 14 predictors, spatial coordinates, signed neighbor and previous-channel values,
-hybrid-integer training costs and another reversible color transform. Histogram sharing keeps the learned
-predictors and tree intact. Shared and separate histograms compete by complete prefix/ANS bytes. Every earlier
-candidate remains eligible; these additional models use at most 65,536 training samples per group.
+From effort 6 the group model is learned under the reversible color transform that sampled gradient residuals rank
+first: the 42 transforms share 15 distinct planes, each priced once with the search's integer entropy table. Efforts 7
+and 8 add predictors, spatial coordinates, signed neighbor and previous-channel values and hybrid-integer training
+costs; effort 9 also learns the model under the second-ranked transform. Histogram sharing keeps the learned predictors and tree
+intact. Shared and separate histograms compete by complete prefix/ANS bytes. The fixed candidates remain eligible at
+every level; the learned models use at most 65,536 training samples per group.
 
 A group owns its model and token buffers. The selected model is written after sample-based decisions; full image
 pixels do not enter the split search. Worker results are placed in group order, independent of completion order.
@@ -142,20 +143,20 @@ allocate the largest image. [Precision, bounds and limits](API.md).
 
 | File in `dist/` | Bytes | gzip | Brotli |
 | --- | ---: | ---: | ---: |
-| `rapier-worker.js` | 126,743 | 50,021 | 43,277 |
-| `rapier.min.mjs` | 126,888 | 50,075 | 43,323 |
+| `rapier-worker.js` | 135,038 | 53,331 | 46,064 |
+| `rapier.min.mjs` | 135,183 | 53,385 | 46,016 |
 | `rapier-jxl.min.mjs` | 27,603 | 11,670 | 10,395 |
-| `effort.min.mjs` | 77,117 | 30,013 | 26,093 |
-| `wasm.min.mjs` | 90,861 | 36,336 | 31,470 |
+| `effort.min.mjs` | 86,776 | 33,916 | 29,455 |
+| `wasm.min.mjs` | 100,530 | 40,174 | 34,820 |
 | `jpeg.min.mjs` | 33,343 | 13,882 | 12,276 |
-| `photo.min.mjs` | 38,974 | 15,837 | 14,028 |
-| `jpeg-ans.min.mjs` | 36,682 | 15,077 | 13,359 |
-| `photo-ans.min.mjs` | 42,157 | 16,987 | 15,042 |
+| `photo.min.mjs` | 39,235 | 15,834 | 14,096 |
+| `jpeg-ans.min.mjs` | 36,682 | 15,077 | 13,321 |
+| `photo-ans.min.mjs` | 39,219 | 15,825 | 14,076 |
 | `metadata.min.mjs` | 4,964 | 2,560 | 2,147 |
-| All self-contained entry points in one bundle | 141,450 | 55,841 | 47,919 |
-| All readable modules in `src/` | 339,780 | 102,804 | |
+| All self-contained entry points in one bundle | 148,861 | 59,015 | 50,351 |
+| All readable modules in `src/` | 359,319 | 108,381 | |
 
-Release 3.1.0, Terser 5.51.2, Node v22.23.3, gzip 9 and Brotli 11. Exact byte counts, import graphs, hashes
+Release 3.2.0, Terser 5.51.2, Node v22.23.3, gzip 9 and Brotli 11. Exact byte counts, import graphs, hashes
 and incremental sizes are in [dist/sizes.json](../../dist/sizes.json). Encoding builds are checked against their
 readable entries on encoded-byte fixtures and native integer/float cases with HDR and alpha declarations. The metadata
 build is checked against its readable entry for identical container bytes.

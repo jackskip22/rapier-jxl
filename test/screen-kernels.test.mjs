@@ -74,7 +74,7 @@ test('screen copy ties keep the nearer distance and native planes fall back befo
   } finally { configureKernels('off'); }
 });
 
-test('screen kernel streams decode source RGB beneath zero alpha across full and partial groups', {skip: !decode || !supportsSIMD}, () => {
+test('deeper screen kernel streams decode source RGB beneath zero alpha across full and partial groups', {skip: !decode || !supportsSIMD}, () => {
   const width = 1025, height = 1024, rgba = new Uint8Array(width * height * 4);
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
     const ink = x % 19 >= 3 && x % 19 < 10 && y % 23 >= 5 && y % 23 < 16;
@@ -84,7 +84,7 @@ test('screen kernel streams decode source RGB beneath zero alpha across full and
   try {
     for (const mode of modes) {
       use(mode);
-      const bytes = encodeScreen(rgba, width, height, shape, undefined, {mode: 'direct', search: {}});
+      const bytes = encodeScreen(rgba, width, height, shape, undefined, {mode: 'direct', search: {depth: 64}});
       outputs.push(bytes);
       assert.deepEqual(rgbaOf(decode(bytes)), rgba, mode + ': exact source RGBA');
     }

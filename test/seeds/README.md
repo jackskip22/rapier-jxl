@@ -2,9 +2,9 @@
 
 These JPEG fixtures reproduce coefficient-reading failures. `cases.json` records whether a file
 must be refused or decoded. `same` means the stored coefficients and tables are identical; `samePixels` permits
-different unused edge padding while requiring identical decoded pixels. All files here use the repository's MIT
+different unused edge padding while requiring identical decoded pixels. The authored fixtures use the repository's MIT
 license. The color pair was generated with `../jpeg-writer.mjs`; the other JPEGs have deliberately minimal tables
-and scan bitstrings.
+and scan bitstrings. The source artwork crops below retain their separate licenses.
 
 | Case | Corruption prevented |
 | --- | --- |
@@ -118,8 +118,8 @@ a configured decoder must pass the pixel checks.
 `local-palette.rgba` (600 × 19) and `wide-palette.rgba` (17 × 19) retain exact straight RGBA for the local-tree
 search. Both include nonzero RGB under zero alpha. The first crosses three groups with different index distributions;
 the second has palette metadata wider than its image. The effort tests decode both the palette
-candidates and the selected streams. The byte cases retain the local palette and gradient streams and
-the identical effort-4/5 answer. They are generated with the 32-bit recurrence `s = (1664525*s + 1013904223) mod 2^32`,
+candidates and the selected streams. The byte cases retain the local palette, gradient and effort-selected streams.
+They are generated with the 32-bit recurrence `s = (1664525*s + 1013904223) mod 2^32`,
 seed 20261001. For `local-palette`, advance once per pixel: `n` is 1 for x below 256, the state's top six bits for
 x below 512, otherwise `(x+3*y) & 63`; RGBA is `[(73*n)&255, (151*n)&255, (199*n)&255, n%5 ? 255 : 0]`.
 For `wide-palette`, make 257 colors from successive top bytes for R, G and B, then one more for alpha except
@@ -138,3 +138,34 @@ Hurrying before the weighted plan completes must return effort 1's stream. Hurry
 color-transform candidate must return the completed weighted stream.
 
 `bytes.json` records the current output hashes. All four authored RGBA fixtures use the MIT license.
+
+
+## Palette source artwork crops
+
+`palette-globe.rgba.gz` and `palette-gamepad.rgba.gz` retain decoded straight RGBA8 crops with no color edits,
+resizing or alpha compositing. They are used by `../palette-search.test.mjs` to decode the complete palette streams,
+compare JavaScript and accelerated predictors on wide indices, and exercise real workers, fallback and hurry.
+Crop coordinates below are zero-based; each retained row is the stated horizontal range of the decoded source row.
+Gzip compression is deterministic with `mtime=0`.
+
+`palette-globe.rgba.gz` is a 259 × 129 crop at (253, 128) of
+[Noto Emoji's globe image](https://raw.githubusercontent.com/googlefonts/noto-emoji/e20cbc2bbec1926686be9f9bee7d1d2cfa1fea0e/2D/png/512/emoji_u1f30d.png).
+It contains 794 colors and crosses a 256-pixel group boundary, so both local palette indices and references to the
+global palette extend beyond one byte. Original PNG SHA-256:
+`46aeaf78257837d0a16f97c3cf160f99245e070dc93a66d56ab1fcd3b18daf29`;
+full decoded RGBA SHA-256: `c63cb21c8622fb193f7c858597ba5ad400ee097168b75e6c45389ddcac9676fa`;
+crop RGBA SHA-256: `34976a187c44e352eb6c532ee28b572038869396c732ba5190f9587067bedc90`.
+Noto Emoji image artwork, Copyright 2013 Google, Inc., Apache-2.0. The image-resource license is identified in the
+[pinned README](https://github.com/googlefonts/noto-emoji/blob/e20cbc2bbec1926686be9f9bee7d1d2cfa1fea0e/README.md#license),
+separately from the font license. The notice and license are retained in `palette-globe-LICENSE.txt`.
+
+`palette-gamepad.rgba.gz` is a 259 × 65 crop at (0, 0) of the
+[Godot Joypads diagram](https://raw.githubusercontent.com/godotengine/godot-demo-projects/b761b4cd5718a7118f2c95eb55f181d0a5f004f1/misc/joypads/diagram.png).
+It contains 106 colors and 10,018 pixels with nonzero RGB under zero alpha. Original PNG SHA-256:
+`30547fc9ede62ea714016fecad9cc0a10eed9920c58c06abfa2916fbd9a4fbfc`;
+full decoded RGBA SHA-256: `0acad8576b5ad140ff6fac90a6b478b19f328a9be49677c42336c9633c5d6310`;
+crop RGBA SHA-256: `f568f7224c708debc7a3df599ad3af4459f7772b02c5f6a3c6209980596f9a2f`.
+Godot Engine contributors, MIT; Joypads demo by Dana Olson. The
+[pinned project README](https://github.com/godotengine/godot-demo-projects/blob/b761b4cd5718a7118f2c95eb55f181d0a5f004f1/README.md#license)
+and `misc/joypads/joypads.gd` identify the license and demo author. The copyright and license notices are retained in
+`palette-gamepad-LICENSE.txt`.

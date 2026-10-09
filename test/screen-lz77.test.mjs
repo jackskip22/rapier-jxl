@@ -48,3 +48,17 @@ test('LZ77 screen candidates decode exactly across groups and channel layouts', 
   }
  }
 });
+
+test('screen copy distances retain RGBA when palette metadata is wider than the image', {skip: !decode}, () => {
+  for (const [width, height] of [[1, 513], [17, 55], [65, 33]]) {
+    const rgba = new Uint8Array(width * height * 4);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      const value = ((y / 3 | 0) % 11) * width + x;
+      rgba.set([value & 255, value * 43 & 255, value * 109 & 255, value % 7 ? value * 97 & 255 : 0], (y * width + x) * 4);
+    }
+    const bytes = encodeScreen(rgba, width, height, inspectPixels(rgba, width, height), undefined, {mode: 'global', search: {}});
+    const image = decode(bytes);
+    assert.equal(image.width, width); assert.equal(image.height, height);
+    assert.deepEqual(image.data, rgba);
+  }
+});

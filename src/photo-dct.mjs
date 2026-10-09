@@ -42,8 +42,7 @@ function dot8(data, at, step, basis) {
   return sum;
 }
 
-// Reused scratch for the baseline and the photographic quantization search. A transform always visits its eight
-// terms in the same order; edge replication agrees with the baseline's complete 8 by 8 blocks.
+// Reused DCT scratch. Each sum keeps its accumulation order; edge replication fills complete 8 by 8 blocks.
 export function dctBlocks(data, width, height) {
   const block = new Float64Array(192), intermediate = new Float64Array(64), sums = new Float64Array(192);
   return (bx, by) => {
@@ -66,14 +65,21 @@ export function dctBlocks(data, width, height) {
 export function* photoCoefficientSteps(data, width, height, quality, colorSpace) {
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), quantScale = 16;
   const distance = quality >= 30 ? 0.1 + (100 - quality) * 0.09 : 53 / 3000 * quality * quality - 23 / 20 * quality + 25;
+  // libjxl 0.12's Y deadzones (enc_group.cc) suppress weak AC values. Finer steps spend the saved bits on
+  // remaining coefficients. Fade this adjustment out between qualities 75 and 90, preserving high-quality detail.
+  const strength = Math.max(0, Math.min(1, (90 - quality) / 15)), stepScale = 1 - 0.1 * strength;
   const components = [0, 1, 2].map(c => ({h: 1, v: 1, stride, rows,
-    quant: Int32Array.from(QUANT_SHAPE, (shape, k) => Math.max(1, Math.round(quantScale * distance * (c ? 18 : 10) * (k ? shape : 0.25)))),
+    quant: Int32Array.from(QUANT_SHAPE, (shape, k) => Math.max(1, Math.round(quantScale * distance * stepScale * (c ? 18 : 10) * (k ? shape : 0.25)))),
     coeffs: new Int16Array(stride * rows * 64)}));
   const transform = dctBlocks(data, width, height);
   const band = (from, to) => {
     for (let by = from; by < to; by++) for (let bx = 0; bx < stride; bx++) {
       const sums = transform(bx, by), offset = (by * stride + bx) * 64;
-      for (let c = 0; c < 3; c++) for (let k = 0; k < 64; k++) components[c].coeffs[offset + k] = Math.round(sums[c * 64 + k] * quantScale / components[c].quant[k]);
+      for (let c = 0; c < 3; c++) for (let k = 0; k < 64; k++) {
+        const value = sums[c * 64 + k] * quantScale / components[c].quant[k];
+        const threshold = k && c === 0 ? 0.5 + strength * ((k & 7) >= 4 || (k >> 3) >= 4 ? 0.14 : 0.08) : 0.5;
+        components[c].coeffs[offset + k] = Math.abs(value) < threshold ? 0 : Math.round(value);
+      }
     }
   };
   for (let by = 0; by < rows; by += 32) { band(by, Math.min(rows, by + 32)); yield Math.min(rows, by + 32) / rows; }

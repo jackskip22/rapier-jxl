@@ -24,8 +24,10 @@ export interface Encoder {
   transcode(input: {bytes: Uint8Array | Uint8ClampedArray | ArrayBuffer}): Promise<Transcoded>;
   failure(error: unknown): Failure;
 }
-export type Request = {id: string | number; operation: 'encode'; width: number; height: number; data: Pixels | ArrayBuffer; options?: Options}
+export type Request = {id: string | number; operation: 'encode'; width: number; height: number; data: Pixels | ArrayBuffer; options?: Options; /** Ask for `Progress` replies while the encode runs. */ progress?: boolean}
   | {id: string | number; operation: 'transcode'; bytes: Uint8Array | Uint8ClampedArray | ArrayBuffer};
+/** How far an encode is, from 0 to 1, before its `Response`; sent only to a request that asked. */
+export type Progress = {id: string | number; progress: number};
 export type Response = {id: string | number; ok: true; bytes: Bytes; width?: number; height?: number; orientation?: number}
   | {id: string | number; ok: false; error: Failure};
 /** Complete encoder: optional WASM, effort search, photographic coding, JPEG and automatic parallel groups. */

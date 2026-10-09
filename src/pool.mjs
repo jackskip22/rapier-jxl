@@ -12,10 +12,11 @@ import {colourTransform} from './rct-search.mjs';
 import {localGroup} from './local.mjs';
 import {sampledGroup} from './sampled.mjs';
 import {screenGroup} from './screen.mjs';
+import {paletteGroup} from './palette-search.mjs';
 import {searchGroup, effortJob} from './effort-job.mjs';
 import {guard, answer} from './admit.mjs';
 
-const WORK = {plan: setup => planGroup(setup, setup.rct === undefined ? undefined : colourTransform(setup.rct, setup.channels)), search: searchGroup, local: localGroup, sampled: sampledGroup, screen: screenGroup};
+const WORK = {plan: setup => planGroup(setup, setup.rct === undefined ? undefined : colourTransform(setup.rct, setup.channels)), search: searchGroup, local: localGroup, sampled: sampledGroup, screen: screenGroup, palette: paletteGroup};
 // Counting returns fresh histograms of setup.sizes; writing returns a section.
 const work = (group, setup, rgba, stride, rect) => { const counts = setup.sizes?.map(n => new Uint32Array(n)); return group(rgba, stride, ...rect, counts) || counts; };
 

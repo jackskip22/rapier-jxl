@@ -30,7 +30,7 @@ export function colourTransform(type, channels) {
 // three differences from the other channels' rounded-down mean, and three weighted means. In transform 6,
 // third + ((first - third) >> 1) is exactly (first + third) >> 1. Equal planes have equal sampled residuals,
 // predictor choices and integer-code prices, regardless of their output channel or transform.
-function sampleKeys(type) {
+export function transformKeys(type) {
   const permutation = Math.floor(type / 7), custom = type % 7;
   const a = permutation % 3, b = (permutation + 1 + Math.floor(permutation / 3)) % 3;
   const c = (permutation + 2 - Math.floor(permutation / 3)) % 3;
@@ -47,7 +47,7 @@ export function* rctSearchSteps(rgba, width, height, shape, colorSpace, pooled) 
   const prices = [];
   let best;
   for (let k = 0; k < types.length; k++) {
-    const rct = colourTransform(types[k], shape.channels), keys = sampleKeys(rct.type);
+    const rct = colourTransform(types[k], shape.channels), keys = transformKeys(rct.type);
     const missing = [0, 1, 2].filter(c => prices[keys[c]] === undefined);
     if (missing.length) {
       const candidates = [5, 3].map(predictor => ({predictor, freqs: missing.map(() => new Uint32Array(1057))}));

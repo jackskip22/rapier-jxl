@@ -1,0 +1,65 @@
+{
+  "started": "2026-10-09T10:00:17.253Z",
+  "label": "tip, merged from full-quick-tip, libjxl-all, table, lossy, ab",
+  "node": "v22.23.3",
+  "platform": "linux",
+  "arch": "x64",
+  "release": "6.18.44-fc-v80",
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.30GHz",
+  "cores": 4,
+  "affinity": "2",
+  "gc": true,
+  "loadavg": [
+    19.75,
+    19.28,
+    18.62
+  ],
+  "rapier": {
+    "entry": "/home/user/jxl-work/tip/repo/images/jxl/rapier.mjs",
+    "sourceSha256": "97db3fd2ad73d676e9e8155b23e93e8732d270ac15f1d8f783699ddeb3c260e1"
+  },
+  "before": {
+    "entry": "/home/user/jxl-work/baseline/images/jxl/rapier.mjs",
+    "sourceSha256": "97db3fd2ad73d676e9e8155b23e93e8732d270ac15f1d8f783699ddeb3c260e1"
+  },
+  "tools": {
+    "cjxl": "cjxl v0.12.0 4128790 [_AVX2_,SSE4,SSE2] {Clang 18.1.3}",
+    "djxl": "djxl v0.12.0 4128790 [_AVX2_,SSE4,SSE2] {Clang 18.1.3}",
+    "oxide": "jxl-oxide-cli 0.12.6",
+    "ssimulacra2": "/home/user/jxl-work/libjxl-0.12.0/tools/ssimulacra2",
+    "butteraugli": "/home/user/jxl-work/libjxl-0.12.0/tools/butteraugli_main",
+    "helper": {
+      "encoderVersion": 12000,
+      "decoderVersion": 12000,
+      "workerThreads": 0,
+      "callingThreads": 1,
+      "keepInvisible": true,
+      "format": "sRGB RGBA8 straight alpha"
+    }
+  },
+  "options": {
+    "efforts": [
+      3,
+      7,
+      9
+    ],
+    "qualities": [
+      90,
+      75,
+      50
+    ],
+    "libjxlExtra": [],
+    "warmups": 1,
+    "warmupSeconds": 1,
+    "maxRepeats": 1,
+    "budgetSeconds": 30
+  },
+  "method": "One process, one calling thread, sequential. Rapier is timed in-process through the complete encoder (createEncoder); libjxl through a persistent helper that creates a fresh single-threaded encoder per call. Encode time excludes input loading and decoding. The first run is a cold call and is recorded separately; warmup runs follow until the engine has compiled the hot loops (about two seconds of runs, at most 25), then timing; the number of timed runs shrinks as a run gets longer so that every setting takes about the budget.",
+  "merged": [
+    "full-quick-tip",
+    "libjxl-all",
+    "table",
+    "lossy",
+    "ab"
+  ]
+}

@@ -52,7 +52,7 @@ test('palette planning has a fixed bound and preserves actual zero colour',()=>{
 });
 test('screen effort preserves effort 1, progresses monotonically and keeps an exact hurry floor', {skip:!decode},()=>{
  const p=screenFixture(),first=encode(p.rgba,p.width,p.height,{effort:1});
- for(const effort of [3,4,6]){
+ for(const effort of [3,4,6,9]){
   const full=encode(p.rgba,p.width,p.height,{effort});assert.ok(full.length<=first.length);exact(full,p);
   for(const from of [0,0.49,0.7,0.95]){
    const job=encodeSteps(p.rgba,p.width,p.height,{effort});let previous=0;

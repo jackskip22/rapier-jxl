@@ -9,7 +9,7 @@ import {encode, encodeSteps} from '../src/index.mjs';
 import {transcode, transcodeSteps} from '../src/jpeg.mjs';
 import {encodePhoto, encodePhotoSteps} from '../src/photo.mjs';
 import {encode as encodeEffort, encodeSteps as effortSteps} from '../src/effort.mjs';
-import {pixelCase, borderCase} from './fuzz-cases.mjs';
+import {pixelCase} from './fuzz-cases.mjs';
 
 test('interleaved jobs write their doors\' bytes, and every fraction ends at 1', async () => {
   const jpeg = new Uint8Array(await readFile(new URL('photo-corpus/grace-hopper.jpg', import.meta.url)));
@@ -56,15 +56,21 @@ test('a hurried search answers with effort 1\'s stream, whenever it is asked', a
 });
 
 
-test('the photo search keeps its completed stream when hurried during quantisation or writing', () => {
-  const {rgba, width, height} = borderCase(48, 36), first = encodePhoto(rgba, width, height), previous = encodePhoto(rgba, width, height, {effort: 4});
-  assert.notDeepEqual(encodePhoto(rgba, width, height, {effort: 5}), first, 'the retained case enters a smaller candidate');
-  for (const from of [0, 0.6, 0.8]) {
-    const job = encodePhotoSteps(rgba, width, height, {effort: 5});
-    let last = 0;
-    for (const done of job) { assert.ok(done >= last && done > 0 && done <= 1); last = done; if (done > from) job.hurry = true; }
-    assert.equal(last, 1);
-    assert.deepEqual(job.bytes, from ? previous : first, 'hurried past ' + from);
+test('the photo search keeps completed entropy candidates when hurried', () => {
+  // The learned coefficient order improves this narrow picture before the later ANS search starts.
+  const {rgba, width, height} = pixelCase(20260930, 13), first = encodePhoto(rgba, width, height), previous = encodePhoto(rgba, width, height, {effort: 4});
+  assert.ok(previous.length < first.length, 'the retained entropy candidate improves the effort-1 floor');
+  for (const effort of [5, 9]) {
+    const searched = encodePhoto(rgba, width, height, {effort});
+    assert.ok(searched.length <= previous.length, 'the later search retains the completed improvement');
+    // Stop before an improvement, at the completed order writer, during ANS, and at its final group.
+    for (const [from, expected] of [[0, first], [0.7, first], [0.75, previous], [0.8, previous], [1, searched]]) {
+      const job = encodePhotoSteps(rgba, width, height, {effort});
+      let last = 0;
+      for (const done of job) { assert.ok(done >= last && done > 0 && done <= 1); last = done; if (done >= from) job.hurry = true; }
+      assert.equal(last, 1);
+      assert.deepEqual(job.bytes, expected, `effort ${effort}, hurried at ${from}`);
+    }
   }
 });
 

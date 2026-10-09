@@ -3,7 +3,7 @@
 // History is deliberately local to each plane. No dependency on an earlier
 // channel, group, worker, hash-table iteration order or floating-point price.
 import {BitWriter, packSigned} from './bits.mjs';
-import {buildCode, writePrefixCode, writeHistograms, uintConfig, hybridToken, countToken, writeHybrid} from './prefix.mjs';
+import {buildCode, writePrefixCode, writeHistograms, uintConfig, hybridToken, countToken, writeHybrid, writeUintConfig} from './prefix.mjs';
 import {ALPHABET, LZ77, RESIDUAL_CONFIG, leaf, channelTree, writeTree} from './modular.mjs';
 import {kernelHooks} from './kernel-hooks.mjs';
 const SCREEN_DISTANCE_CONFIG = uintConfig(4),
@@ -204,25 +204,117 @@ export function screenModel(plane, width, height, depth = 4) {
     let bits = writer.bitLength + raw;
     for (let s = 0; s < freqs.length; s++) if (freqs[s]) bits += freqs[s] * code.lengths[s];
     for (let s = 0; s < distances.length; s++) if (distances[s]) bits += distances[s] * distance.lengths[s];
-    if (!best || bits < best.bits) best = {leaf: leaf(predictor), code, distances, pieces, bits};
+    if (!best || bits < best.bits) best = {leaf: leaf(predictor), code, distances, pieces, bits, width};
   }
   return best;
 }
 
+const SCREEN_INTEGER_CONFIGS = [
+  uintConfig(4), uintConfig(0), uintConfig(1), uintConfig(2), uintConfig(3), uintConfig(6), uintConfig(8),
+  uintConfig(4, 0, 1), uintConfig(4, 0, 2), uintConfig(4, 0, 3), uintConfig(4, 0, 4),
+  uintConfig(4, 1, 3), uintConfig(4, 1, 1), uintConfig(4, 2, 2), uintConfig(3, 0, 1)
+];
+// JPEG XL's fixed spatial distances. A stream uses its widest decoded channel as the row stride.
+const SCREEN_SPECIAL_DISTANCES = Int8Array.of(
+  0, 1, 1, 0, 1, 1, -1, 1, 0, 2, 2, 0, 1, 2, -1, 2,
+  2, 1, -2, 1, 2, 2, -2, 2, 0, 3, 3, 0, 1, 3, -1, 3,
+  3, 1, -3, 1, 2, 3, -2, 3, 3, 2, -3, 2, 0, 4, 4, 0,
+  1, 4, -1, 4, 4, 1, -4, 1, 3, 3, -3, 3, 2, 4, -2, 4,
+  4, 2, -4, 2, 0, 5, 3, 4, -3, 4, 4, 3, -4, 3, 5, 0,
+  1, 5, -1, 5, 5, 1, -5, 1, 2, 5, -2, 5, 5, 2, -5, 2,
+  4, 4, -4, 4, 3, 5, -3, 5, 5, 3, -5, 3, 0, 6, 6, 0,
+  1, 6, -1, 6, 6, 1, -6, 1, 2, 6, -2, 6, 6, 2, -6, 2,
+  4, 5, -4, 5, 5, 4, -5, 4, 3, 6, -3, 6, 6, 3, -6, 3,
+  0, 7, 7, 0, 1, 7, -1, 7, 5, 5, -5, 5, 7, 1, -7, 1,
+  4, 6, -4, 6, 6, 4, -6, 4, 2, 7, -2, 7, 7, 2, -7, 2,
+  3, 7, -3, 7, 7, 3, -7, 3, 5, 6, -5, 6, 6, 5, -6, 5,
+  8, 0, 4, 7, -4, 7, 7, 4, -7, 4, 8, 1, 8, 2, 6, 6,
+  -6, 6, 8, 3, 5, 7, -5, 7, 7, 5, -7, 5, 8, 4, 6, 7,
+  -6, 7, 7, 6, -7, 6, 8, 5, 7, 7, -7, 7, 8, 6, 8, 7
+);
+function screenDistanceMap(width) {
+  const map = new Map();
+  for (let i = SCREEN_SPECIAL_DISTANCES.length - 2; i >= 0; i -= 2)
+    map.set(Math.max(1, SCREEN_SPECIAL_DISTANCES[i] + width * SCREEN_SPECIAL_DISTANCES[i + 1]), i / 2);
+  return map;
+}
+
+// Price the complete prefix histogram and its payload, including configuration and alphabet headers.
+function screenIntegerPrice(freqs, config, raw) {
+  const code = buildCode(freqs), writer = new BitWriter(256);
+  writeHistograms(writer, {contextMap: new Uint8Array(1), histograms: [{config, code}]});
+  let bits = writer.bitLength + raw;
+  for (let s = 0; s < freqs.length; s++) if (freqs[s]) bits += freqs[s] * code.lengths[s];
+  return {code, bits};
+}
+
 export function writeScreenModel(writer, models) {
-  const leaves = models.map(model => model.leaf), ordered = writeTree(writer, channelTree(leaves)),
-    distances = new Uint32Array(64), contextMap = new Uint8Array(ordered.length + 1);
-  for (const model of models) for (let s = 0; s < distances.length; s++) distances[s] += model.distances[s];
-  for (const l of ordered) contextMap[l.context] = leaves.indexOf(l) + 1;
-  const distance = buildCode(distances);
-  writeHistograms(writer, {lz77: LZ77, contextMap, histograms: [
-    {config: SCREEN_DISTANCE_CONFIG, code: distance}, ...models.map(model => ({config: RESIDUAL_CONFIG, code: model.code}))
-  ]});
+  const ordered = writeTree(writer, channelTree(models.map(model => model.leaf))),
+    counts = [], distances = new Map(), token = [0, 0, 0];
+  // Keep raw copy values until choosing their integer configurations. A 1024-square group needs at most
+  // 512 prefix symbols under these configurations, including the reserved copy-length range.
+  for (const model of models) {
+    const literals = new Uint32Array(512), lengths = new Map();
+    let raw = 0;
+    for (let i = 0; i < model.pieces.length; i += 2) {
+      const value = model.pieces[i], distance = model.pieces[i + 1];
+      if (distance) {
+        lengths.set(value, (lengths.get(value) || 0) + 1);
+        distances.set(distance, (distances.get(distance) || 0) + 1);
+      } else {
+        hybridToken(RESIDUAL_CONFIG, value, token);
+        literals[token[0]]++; raw += token[1];
+      }
+    }
+    counts.push({literals, lengths, raw});
+  }
+  let length;
+  for (const config of distances.size ? SCREEN_INTEGER_CONFIGS : [LZ77.lengthConfig]) {
+    const codes = [], parameter = new BitWriter(16);
+    writeUintConfig(parameter, config, 8);
+    let bits = parameter.bitLength;
+    for (const count of counts) {
+      const freqs = count.literals.slice();
+      let raw = count.raw;
+      for (const [value, n] of count.lengths) {
+        hybridToken(config, value, token);
+        freqs[LZ77.minSymbol + token[0]] += n; raw += token[1] * n;
+      }
+      const price = screenIntegerPrice(freqs, RESIDUAL_CONFIG, raw);
+      bits += price.bits; codes.push(price.code);
+    }
+    if (!length || bits < length.bits) length = {config, codes, bits};
+  }
+  let distance;
+  const map = distances.size ? screenDistanceMap(Math.max(...models.map(model => model.width))) : null;
+  // Generic and spatial representations compete using their actual codes. Nearby distances do not always
+  // save bytes once a stream's histogram and repeating low bits are accounted for.
+  if (map) for (const spatial of [false, true]) for (const config of SCREEN_INTEGER_CONFIGS) {
+    const freqs = new Uint32Array(512);
+    let raw = 0;
+    for (const [d, n] of distances) {
+      const value = spatial ? (map.get(d) ?? d + 119) : d === 1 ? 1 : d + 119;
+      hybridToken(config, value, token);
+      freqs[token[0]] += n; raw += token[1] * n;
+    }
+    const price = screenIntegerPrice(freqs, config, raw);
+    if (!distance || price.bits < distance.bits) distance = {...price, config, spatial};
+  }
+  const offset = distance ? 1 : 0, contextMap = new Uint8Array(ordered.length + offset);
+  for (const leaf of ordered) contextMap[leaf.context] = models.findIndex(model => model.leaf === leaf) + offset;
+  writeHistograms(writer, {
+    lz77: distance ? {...LZ77, lengthConfig: length.config} : null,
+    contextMap,
+    histograms: [
+      ...(distance ? [{config: distance.config, code: distance.code}] : []),
+      ...length.codes.map(code => ({config: RESIDUAL_CONFIG, code}))
+    ]
+  });
   return () => {
-    for (const model of models) for (let i = 0; i < model.pieces.length; i += 2) {
-      const value = model.pieces[i], d = model.pieces[i + 1];
-      writeHybrid(writer, model.code, d ? LZ77.lengthConfig : RESIDUAL_CONFIG, value, d ? LZ77.minSymbol : 0);
-      if (d) writeHybrid(writer, distance, SCREEN_DISTANCE_CONFIG, d === 1 ? 1 : d + 119);
+    for (let m = 0; m < models.length; m++) for (let i = 0; i < models[m].pieces.length; i += 2) {
+      const value = models[m].pieces[i], d = models[m].pieces[i + 1];
+      writeHybrid(writer, length.codes[m], d ? length.config : RESIDUAL_CONFIG, value, d ? LZ77.minSymbol : 0);
+      if (d) writeHybrid(writer, distance.code, distance.config, distance.spatial ? (map.get(d) ?? d + 119) : d === 1 ? 1 : d + 119);
     }
   };
 }
