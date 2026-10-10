@@ -4,7 +4,7 @@ JPEG XL encoder for single-file HTML apps and photography tools. Pure JavaScript
 Deno. Lossless, lossy, native precision, HDR, exact alpha and JPEG transcoding. [MIT license](LICENSE), no runtime
 dependencies. Use it in an app or an agent's image workflow.
 
-The complete worker used by [Rapier](https://rapier.website) is **56,751 gzip bytes**, with optional
+The complete worker used by [Rapier](https://rapier.website) is **58,698 gzip bytes**, with optional
 WebAssembly and parallel workers. The separate core is **11,674 gzip bytes**. Both fit in one HTML file.
 
 ```sh
@@ -27,13 +27,13 @@ as one HTML file on Android, Web and Windows.
 
 | Build / import | Gzip bytes | Capabilities |
 | --- | ---: | --- |
-| **Rapier worker** · `rapier-jxl/rapier/worker` | 56,751 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel lossless groups. |
-| Rapier module · `rapier-jxl/rapier/min` | 56,805 | The same system with an encoder factory and worker installer. |
+| **Rapier worker** · `rapier-jxl/rapier/worker` | 58,698 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel lossless groups. |
+| Rapier module · `rapier-jxl/rapier/min` | 58,751 | The same system with an encoder factory and worker installer. |
 | Core · `rapier-jxl/min` | 11,674 | Lossless or lossy typed RGBA, native precision, HDR and exact alpha. |
-| Effort · `rapier-jxl/effort/min` | 34,353 | Core with lossless compression search, efforts 1–9. |
-| WASM · `rapier-jxl/wasm/min` | 42,913 | Effort with inlined WASM and JavaScript fallback. |
-| Photo · `rapier-jxl/photo/min` | 15,893 | Lossy photographs from RGBA pixels. |
-| JPEG · `rapier-jxl/jpeg/min` | 13,939 | Existing JPEGs, preserving admitted coefficients and orientation. |
+| Effort · `rapier-jxl/effort/min` | 35,515 | Core with lossless compression search, efforts 1–9. |
+| WASM · `rapier-jxl/wasm/min` | 43,885 | Effort with inlined WASM and JavaScript fallback. |
+| Photo · `rapier-jxl/photo/min` | 15,926 | Lossy photographs from RGBA pixels. |
+| JPEG · `rapier-jxl/jpeg/min` | 14,702 | Existing JPEGs, preserving admitted coefficients and orientation. |
 | Metadata · `rapier-jxl/metadata/min` | 2,560 | Attach, replace or remove caller-supplied Exif/XMP. |
 
 Each size measures a complete standalone file at gzip level 9. Readable imports such as `rapier-jxl/rapier` share
@@ -90,6 +90,25 @@ Keep the MIT notice. No network download or decoder is needed for encoding.
 The core and effort modules expose `encode(rgba, width, height, options)`. Quality 100 preserves every sample,
 including RGB under transparent pixels; 1–99 is lossy. Alpha stays exact. Core/effort default to quality 100,
 and the separate effort entry defaults to effort 1. [API and options](docs/reference/API.md).
+
+### Lossless efforts
+
+Each level retains the earlier candidates. Extra search costs depend on the picture; no level has a deadline.
+
+| Effort | What it adds and costs |
+| ---: | --- |
+| 1 | Channel prediction and zero runs; shortest search. |
+| 2 | Weighted prediction; another prediction family. |
+| 3 | Error contexts, screen palettes and repeated regions; additional image passes. |
+| 4 | Color transforms and local palettes; several candidates. |
+| 5 | Learned group trees and entropy-model selection; tree-learning work. |
+| 6 | The first-ranked color transform; another learned candidate. |
+| 7 | Broader predictor and context search; the complete worker default. |
+| 8 | Denser samples, wider trees and local screen transforms; more learned candidates. |
+| 9 | Another color transform and deeper trees; the longest search. |
+
+JPEG entry points also add order and entropy-model combinations at efforts 8 and 9, retaining the smaller complete
+stream without changing pixels. The complete worker's JPEG route remains at effort 7. [Effort details](docs/reference/API.md#lossless-effort).
 
 Native inputs include 8/10/12/16-bit integers, binary16/32 floats, PQ/HLG and Rec. 2020. `rapier-jxl/source` reads
 supported PNG16/OpenEXR files. Displaying encoded output requires JPEG XL support.

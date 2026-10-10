@@ -8,11 +8,8 @@ import {countToken, writeHybrid} from './prefix.mjs';
 import {LZ77, RESIDUAL_CONFIG} from './modular.mjs';
 
 export const WEIGHTED_PREDICTOR = 6, WEIGHTED_PROPERTY = 15;
-// libjxl's cut points on that property for its fixed weighted tree: 34 contexts, from which a coder merges neighbors.
-export const WEIGHTED_CUTS = [-500, -392, -255, -191, -127, -95, -63, -47, -31, -23, -15, -11, -7, -4, -3, -1, 0, 1, 3, 5, 7, 11, 15, 23, 31, 47,
-  63, 95, 127, 191, 255, 392, 500];
-// The context of a property value: how many cut points lie below it.
-const BUCKET = Int8Array.from({length: 1003}, (_, i) => WEIGHTED_CUTS.filter(cut => cut < i - 501).length);
+export {WEIGHTED_CUTS};
+import {WEIGHTED_CUTS, WEIGHTED_BUCKET} from './weighted-policy.mjs';
 const DIVISORS = Int32Array.from({length: 64}, (_, i) => Math.floor(16777216 / (i + 1)));
 const calculateWeight = (sum, most) => { const shift = Math.max(0, 26 - Math.clz32(sum + 1)); return 4 + ((most * DIVISORS[sum >> shift]) >> shift); };
 // Common error sums use the same fixed arithmetic, computed once. Larger sums take the original formula.
@@ -71,7 +68,7 @@ export function codeWeighted(w, targets, plane, width, height, offset = 0, conte
       const value = plane[index], r = value - ((pred + 3) >> 3) - offset;
       if (residuals) residuals[index] = packSigned(r);
       else {
-        const context = contextOf[BUCKET[most < -501 ? 0 : most > 501 ? 1002 : most + 501]];
+        const context = contextOf[WEIGHTED_BUCKET[most < -501 ? 0 : most > 501 ? 1002 : most + 501]];
         if (r === 0) { if (run < 8) runContexts[run] = context; run++; }
         else { flush(); emit(context, packSigned(r)); }
       }

@@ -88,24 +88,31 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, 
   return best;
 }
 
-// The learned group models of each effort, likelier winner first. Effort 5 learns the three-predictor model under
-// YCoCg; from effort 6 the model is learned under the reversible colour transform that sampled gradient residuals rank
-// first (YCoCg for grey pictures); effort 9 also learns the precise model under the second-ranked transform, for
-// pictures the ranking misjudges. `ranked` is the rank of the transform to use.
+// Each effort adds learned models while retaining every earlier complete-stream candidate.
+// `ranked` selects a reversible colour transform from sampled gradient residuals.
+// Wider trees share histograms only after learning. Independent complete-stream
+// measurements keep both the denser sample and broader predictor alternatives.
+const sharing = Object.freeze([160, 320, 640, 1280, 2560]);
+const SEARCH_RUNGS = Object.freeze({...SAMPLE_RUNGS,
+  sampled: Object.freeze({...SAMPLE_RUNGS.precise, clustered: true, samples: 131072, leaves: 192, depth: 24, sharing}),
+  branching: Object.freeze({...SAMPLE_RUNGS.broad, clustered: true, samples: 131072, leaves: 512, depth: 24, sharing}),
+  dense: Object.freeze({...SAMPLE_RUNGS.precise, clustered: true, samples: 262144, leaves: 192, depth: 24, sharing}),
+  deep: Object.freeze({...SAMPLE_RUNGS.precise, clustered: true, samples: 262144, leaves: 1024, depth: 24, sharing}),
+});
 const LADDER = Object.freeze({
   5: [{rung: 'maximum'}],
   6: [{rung: 'maximum', ranked: 0}],
   7: [{rung: 'broad', ranked: 0}],
-  8: [{rung: 'precise', ranked: 0}],
-  9: [{rung: 'precise', ranked: 0}, {rung: 'precise', ranked: 1}],
+  8: [{rung: 'precise', ranked: 0}, {rung: 'sampled', ranked: 0}, {rung: 'branching', ranked: 0}],
+  9: [{rung: 'precise', ranked: 1}, {rung: 'dense', ranked: 0}, {rung: 'deep', ranked: 0}],
 });
 function learnedRungs(effort, data, width, height, shape) {
-  const steps = LADDER[effort] || [], ranking = shape.colour === 3 && steps.some(step => step.ranked !== undefined) ? sampleTransformRanking(data, width, height) : [6];
-  const rungs = [], types = [];
+  const steps = Array.from({length: Math.max(0, effort - 4)}, (_, i) => LADDER[i + 5] || []).flat(), ranking = shape.colour === 3 && steps.some(step => step.ranked !== undefined) ? sampleTransformRanking(data, width, height) : [6];
+  const rungs = [], types = [], bases = [];
   for (const step of steps) {
-    const base = SAMPLE_RUNGS[step.rung], type = step.ranked === undefined ? 6 : ranking[step.ranked] ?? 6;
-    if (types.some((t, i) => t === type && rungs[i].samples === base.samples && rungs[i].predictors === base.predictors)) continue;
-    types.push(type); rungs.push(type === 6 ? base : {...base, rctType: type});
+    const base = SEARCH_RUNGS[step.rung], type = step.ranked === undefined ? 6 : ranking[step.ranked] ?? 6;
+    if (types.some((t, i) => t === type && bases[i] === base)) continue;
+    types.push(type); bases.push(base); rungs.push(type === 6 ? base : {...base, rctType: type});
   }
   return rungs;
 }
@@ -264,8 +271,7 @@ export function* searchSteps(rgba, width, height, shape, colorSpace, effort, poo
     return build(0, leaves.length - 1);
   };
   const assemble = plans => ({tree: channelTree(plans.map(plan => byError(plan.leaves, plan.cuts))), leaves: plans.flatMap(plan => plan.leaves), freqs: plans.flatMap(plan => plan.freqs)});
-  // Rank streams by their tree, histogram and token estimates. Allow 27 bits per section and one byte for
-  // padding and table-of-contents variation; write both candidates when their estimates are closer.
+  // Estimates order the candidates; complete bytes retain each earlier model.
   const model = plans => {
     const {tree, leaves, freqs} = assemble(plans), w = new BitWriter(4096);
     const histograms = writeChannelHistograms(w, writeTree(w, tree), freqs, l => leaves.indexOf(l));
@@ -276,10 +282,8 @@ export function* searchSteps(rgba, width, height, shape, colorSpace, effort, poo
   const models = new Map(candidates.map(plans => [plans, model(plans)]));
   let chosen = candidates;
   if (candidates.length > 1) {
-    const [a, b] = candidates.map(plans => models.get(plans).bits), margin = 27 * (layout.single ? 1 : groups + 1) + 8;
-    if (b + margin <= a) chosen = [candidates[1]];
-    else if (a + margin <= b) chosen = [candidates[0]];
-    else if (b < a) chosen = [candidates[1], candidates[0]];
+    const [a, b] = candidates.map(plans => models.get(plans).bits);
+    if (b < a) chosen = [candidates[1], candidates[0]];
   }
   let written = 0, hurried = false;
   let smallest = null;

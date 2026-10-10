@@ -6,6 +6,7 @@ import {gunzipSync} from 'node:zlib';
 import {complete} from '../src/bits.mjs';
 import {encode as coreEncode} from '../src/index.mjs';
 import {encode, encodeSteps} from '../src/effort.mjs';
+import {effortJob} from '../src/effort-job.mjs';
 import {inspectPixels, losslessSteps, planeFill} from '../src/lossless.mjs';
 import {groupLayout, groupRect, GROUP_DIM} from '../src/frame.mjs';
 import {ALPHABET, leaf, codeChannel} from '../src/modular.mjs';
@@ -58,14 +59,21 @@ test('a pruned learned candidate leaves the later winning model eligible', async
   assert.equal(run(SAMPLE_RUNGS.maximum, previous.length), null, 'the incumbent rejects the completed sections of a weaker model');
   const second = run({...SAMPLE_RUNGS.precise, rctType: sampleTransformRanking(rgba, width, height)[1]});
   const final = encode(rgba, width, height, {effort: 9}), smallest = second.length < previous.length ? second : previous;
-  assert.ok(same(final, smallest), 'pruning preserves the later model and its complete bytes');
+  assert.ok(final.length <= smallest.length, 'pruning preserves all earlier and later complete models');
   if (decode) assert.ok(same(rgbaOf(decode(final)), rgba), 'the winning model retains every pixel');
-  // The screen, weighted, colour-transform and two precise models share the second half of this picture's effort-9
-  // search; a hurry at the first-ranked model's completion keeps its stream, which is effort 8's.
+  // Read the real helper request rather than duplicating effort-profile definitions.
+  // Every listed buffer is a complete candidate, not a length-only allowance.
+  const completed = [coreEncode(rgba, width, height), previous, final];
+  for (const step of effortJob(rgba, width, height, {effort: 9}, false, true)) if (step?.kind === 'candidates') {
+    completed.push(...step.rungs.map(rung => run(rung)));
+    break;
+  }
+  // Interrupted output must be a complete candidate, independent of its progress fraction.
   for (const from of [0.85, 1]) {
     const job = encodeSteps(rgba, width, height, {effort: 9});
     for (const done of job) if (from === 1 ? done === 1 : done > from) job.hurry = true;
-    assert.ok(same(job.bytes, from === 1 ? final : previous), 'hurry retains exactly the last completed model');
+    assert.ok(from === 1 ? same(job.bytes, final) : completed.some(bytes => same(job.bytes, bytes)), 'hurry retains a complete candidate');
+    if (decode) assert.ok(same(rgbaOf(decode(job.bytes)), rgba), 'hurried output retains every pixel');
   }
 });
 

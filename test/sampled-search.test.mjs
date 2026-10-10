@@ -4,9 +4,11 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
-import {complete} from '../src/bits.mjs';
+import {BitWriter, complete} from '../src/bits.mjs';
+import {writeImageHeader, writeModularFrameHeader, assembleCodestream} from '../src/frame.mjs';
+import {leaf, split} from '../src/modular.mjs';
 import {inspectPixels} from '../src/lossless.mjs';
-import {sampledSteps, SAMPLE_RUNGS} from '../src/sampled.mjs';
+import {sampledSteps, sampledGroup, SAMPLE_RUNGS} from '../src/sampled.mjs';
 import {configureKernels} from '../src/kernels.mjs';
 import {kernelHooks} from '../src/kernel-hooks.mjs';
 import {decoder} from './decoder.mjs';
@@ -106,4 +108,42 @@ test('reference-guard trees preserve hidden RGBA in both decoders', async t => {
     const image = await native.decode(bytes, width, height);
     assert.deepEqual(rgbaOf({...image, data: Uint8Array.from(image.data, value => Math.round(value * 255))}), rgba);
   } finally { await native.close(); }
+});
+
+// The ramp selects slots 256–288 in a 512-leaf tree, including long zero runs.
+// A wrapped slot selects predictor zero instead of gradient and corrupts pixels.
+test('wide sampled leaf slots and zero-run contexts preserve exact grayscale', async t => {
+  const native = await djxlDecoder(), decode = await decoder();
+  if (!native || !decode) { await native?.close(); t.skip('Both stock decoders are required'); return; }
+  const width = 17, height = 17, rgba = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) rgba.set([x + y, x + y, x + y, 255], (y * width + x) * 4);
+  const source = rgba.slice();
+  try {
+    for (const sharing of [[], [0], [160, 320, 640, 1280, 2560]]) {
+      let expectedBytes;
+      for (const mode of ['off', 'scalar', 'simd']) {
+        if (configureKernels(mode) !== mode) { t.diagnostic(mode + ' unavailable; not verified'); continue; }
+        const leaves = Array.from({length: 512}, (_, slot) => Object.assign(leaf(slot < 256 ? 0 : 5), {slot}));
+        const build = (lo, hi) => {
+          if (lo === hi) return leaves[lo];
+          const mid = (lo + hi) >> 1;
+          return split(9, mid - 256, build(mid + 1, hi), build(lo, mid));
+        };
+        const model = {tree: build(0, 511), leaves, predictor: 5};
+        const options = {...SAMPLE_RUNGS.precise, clustered: true, leaves: 512, sharing};
+        const header = new BitWriter(), global = new BitWriter();
+        writeImageHeader(header, width, height, 1, false);
+        writeModularFrameHeader(header, {alpha: false, shift: 3});
+        global.write(1, 1); global.write(1, 1);
+        sampledGroup({channels: 1, alpha: false, palette: null, options, shared: [model], dim: 1024})(rgba, width, 0, 0, width, height, global);
+        const bytes = assembleCodestream(header, [global.finish()]);
+        if (expectedBytes) assert.deepEqual(bytes, expectedBytes);
+        else expectedBytes = bytes;
+        assert.deepEqual(rgba, source);
+      }
+      assert.deepEqual(rgbaOf(decode(expectedBytes)), source);
+      const image = await native.decode(expectedBytes, width, height);
+      assert.deepEqual(rgbaOf({...image, data: Uint8Array.from(image.data, value => Math.round(value * 255))}), source);
+    }
+  } finally { configureKernels('off'); await native.close(); }
 });

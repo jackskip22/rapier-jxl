@@ -157,6 +157,6 @@
     {"door":"photo","input":{"seed":20260930,"index":13},"options":{"quality":90,"effort":4},"sha256":"d3f32eff698d204f4acfb45f08f4377dd546b9ca5f27f2656042c9b57af76d7b"},
     {"door":"effort","input":{"file":"seeds/hurry-inner.rgba","width":96,"height":64},"options":{"effort":4,"treeLearning":"sampled"},"sha256":"842fa6deec02f9166dd90c18fde19c34a0bf55a7e2ee65c6c942a5e00dc63717"},
     {"door":"effort","input":{"file":"seeds/hurry-painting.rgba.gz","width":512,"height":384},"options":{"effort":6},"sha256":"df0e46e6cf38b1b3083afec13cbb23232717834d3dc1fa25282074bf4df38b6a"},
-    {"door":"effort","input":{"file":"seeds/hurry-painting.rgba.gz","width":512,"height":384},"options":{"effort":9},"sha256":"3f2ae41a2c2017b6d77922faa02d62a7c54a5f52a1c29a7d49e0f7f04b830931"}
+    {"door":"effort","input":{"file":"seeds/hurry-painting.rgba.gz","width":512,"height":384},"options":{"effort":9},"sha256":"d77fd04bb566557714af4f69e44c2aeef8aa9fb99955be9f7feed02c97713932"}
   ]
 }

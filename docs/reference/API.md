@@ -61,22 +61,21 @@ may answer a lossy pixel request with an exact palette candidate when that candi
 
 ### Lossless effort
 
-Effort and wasm default to 1 and write the core's bytes at that level. Ordinary 8-bit lossless search adds these
-candidates. Levels 1 to 4 accumulate; from level 5 each level's learned group model replaces the level below's while
-the fixed candidates stay, so a level can be a few tenths of a percent larger than the level below on some pictures.
-Only a strictly smaller complete stream replaces the retained result, so equal lengths keep the earlier candidate.
+Effort and wasm default to 1. Ordinary 8-bit lossless levels retain every earlier candidate.
+Only a strictly smaller complete stream replaces the result; equal lengths keep the earlier candidate.
+Search cost depends on the image and increases with each level.
 
-| Effort | Additional search | Use |
-| ---: | --- | --- |
-| 1 | Core encoding: gradient or average prediction per channel, prefix codes, zero runs. | Live previews and working copies. |
-| 2 | Weighted prediction. | |
-| 3 | Weighted error contexts, screen palettes, residual runs, and repeated glyphs. | Screenshots, drawings and documents: their large wins arrive here. |
-| 4 | Reversible color-transform search and local palette models. | |
-| 5 | A learned model per group of up to 1,024 × 1,024 pixels: gradient, average, or weighted prediction and neighbor, weighted-error and previous-channel contexts from 65,536 samples, up to 64 leaves per channel (63 for RGBA), with prefix/ANS selection and histogram sharing. Broader screen matching. | Balanced: most of the final size in about a fifth of effort 9's time. |
-| 6 | The learned model under the reversible color transform that sampled gradient residuals rank first (YCoCg for grey pictures). | |
-| 7 | Eight predictors with spatial, signed neighbor and previous-channel properties, learned in the hybrid token split the stream is written in. | Within a few tenths of a percent of effort 9 at about half its time. |
-| 8 | All 14 predictors. | |
-| 9 | The effort-8 model under the second-ranked transform as a second candidate, for pictures the ranking misjudges. | Kept pictures where every byte counts. |
+| Effort | Additional search and cost |
+| ---: | --- |
+| 1 | Core channel prediction, prefix codes and zero runs; shortest search. |
+| 2 | Weighted prediction; one additional prediction family. |
+| 3 | Weighted error contexts, screen palettes, residual runs and repeated glyphs; additional image passes. |
+| 4 | Reversible color transforms and local palettes; several complete candidates. |
+| 5 | Per-group learned trees from up to 65,536 samples, prefix/ANS selection and histogram sharing; tree-learning cost. |
+| 6 | The learned model under the first-ranked reversible color transform; another learned candidate. |
+| 7 | Eight predictors and broader spatial/channel properties; the complete worker's default search. |
+| 8 | All 14 predictors, denser samples, wider trees and local screen transforms; several additional learned candidates. |
+| 9 | A second-ranked transform, denser sampling and deeper trees; the longest search. |
 
 Higher effort spends more time searching for smaller lossless files. There is no automatic deadline.
 Set `job.hurry` to finish with a completed result. [Screen coding](../SCREENSHOTS.md).
@@ -90,6 +89,10 @@ candidate at the requested effort. Native precision uses the search described be
 
 Photo and JPEG efforts 3 and 4 try alternative entropy models and coefficient orders. Photo effort 5 and above
 also tries ANS. These searches preserve coefficients and decoded samples. The `-ans` imports try ANS from effort 2.
+JPEG effort 8 also combines learned orders with alternate histogram clustering. Effort 9 adds exact prefix-header
+pricing and exact-count order candidates. The optional JPEG ANS entry adds corresponding ANS combinations.
+These higher levels increase search time without changing decoded samples. The complete worker's JPEG route
+continues to use effort 7; use the JPEG entry points to select effort 8 or 9.
 Only a strictly smaller completed stream replaces the retained result. Alpha stays exact at every quality.
 
 ## Native precision

@@ -143,20 +143,20 @@ allocate the largest image. [Precision, bounds and limits](API.md).
 
 | File in `dist/` | Bytes | gzip | Brotli |
 | --- | ---: | ---: | ---: |
-| `rapier-worker.js` | 144,573 | 56,751 | 48,862 |
-| `rapier.min.mjs` | 144,718 | 56,805 | 48,910 |
-| `rapier-jxl.min.mjs` | 27,616 | 11,674 | 10,399 |
-| `effort.min.mjs` | 87,958 | 34,353 | 29,801 |
-| `wasm.min.mjs` | 107,878 | 42,913 | 36,982 |
-| `jpeg.min.mjs` | 33,484 | 13,939 | 12,326 |
-| `photo.min.mjs` | 39,376 | 15,893 | 14,144 |
-| `jpeg-ans.min.mjs` | 36,823 | 15,137 | 13,400 |
-| `photo-ans.min.mjs` | 39,360 | 15,884 | 14,113 |
+| `rapier-worker.js` | 150,636 | 58,698 | 50,333 |
+| `rapier.min.mjs` | 150,781 | 58,751 | 50,410 |
+| `rapier-jxl.min.mjs` | 27,616 | 11,674 | 10,398 |
+| `effort.min.mjs` | 91,535 | 35,515 | 30,827 |
+| `wasm.min.mjs` | 111,326 | 43,885 | 37,877 |
+| `jpeg.min.mjs` | 36,083 | 14,702 | 12,986 |
+| `photo.min.mjs` | 39,517 | 15,926 | 14,138 |
+| `jpeg-ans.min.mjs` | 40,344 | 16,096 | 14,220 |
+| `photo-ans.min.mjs` | 39,501 | 15,917 | 14,148 |
 | `metadata.min.mjs` | 4,964 | 2,560 | 2,147 |
-| All self-contained entry points in one bundle | 158,695 | 62,590 | 53,346 |
-| All readable modules in `src/` | 375,197 | 112,885 | |
+| All self-contained entry points in one bundle | 166,528 | 65,017 | 55,388 |
+| All readable modules in `src/` | 392,404 | 116,538 | |
 
-Release 3.3.0, Terser 5.51.2, Node v22.23.3, gzip 9 and Brotli 11. Exact byte counts, import graphs, hashes
+Release 3.4.0, Terser 5.51.2, Node v22.23.3, gzip 9 and Brotli 11. Exact byte counts, import graphs, hashes
 and incremental sizes are in [dist/sizes.json](../../dist/sizes.json). Encoding builds are checked against their
 readable entries on encoded-byte fixtures and native integer/float cases with HDR and alpha declarations. The metadata
 build is checked against its readable entry for identical container bytes.

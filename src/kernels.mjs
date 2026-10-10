@@ -1,6 +1,7 @@
 // Optional integer WebAssembly kernels. MIT (LICENSE).
 // No fetch, runtime dependency, shared memory or rounded byte decisions.
 import {kernelHooks} from './kernel-hooks.mjs';
+import {WEIGHTED_BUCKET} from './weighted-policy.mjs';
 import {BitWriter, LIMITS} from './bits.mjs';
 import {fault} from './admit.mjs';
 import {SCALAR, SIMD, SIMD_PROBE} from './kernels-bytes.mjs';
@@ -9,7 +10,6 @@ export const {configureKernels, kernelMode} = (() => {
 const P = 65536, R = 327680, PROPERTY = 589824, CONTEXT = 851968;
 const OUTPUT = 1114128, TABLE = 1642496, SOURCE = 1769472, STATE = 2097152;
 const DIV = 16, WEIGHTS = 272, BUCKET = 16656, MAP = 20672, ALPHABET = 257;
-const CUTS = [-500,-392,-255,-191,-127,-95,-63,-47,-31,-23,-15,-11,-7,-4,-3,-1,0,1,3,5,7,11,15,23,31,47,63,95,127,191,255,392,500];
 let engine, active = 'off';
 const decode = text => Uint8Array.from(atob(text), c => c.charCodeAt(0));
 const acceptablePlane = (p, w, h, offset, limit = 65536) => p instanceof Int16Array && Number.isInteger(w) && Number.isInteger(h) && w > 0 && h > 0 && w <= 16384 && w * h <= limit && p.length >= w * h && Number.isInteger(offset) && Math.abs(offset) <= 32768;
@@ -32,7 +32,7 @@ function createEngine() {
     const shift = Math.max(0, 26 - Math.clz32(sum + 1));
     i32[(WEIGHTS >> 2) + (most - 12) * 2048 + sum] = 4 + ((most * i32[(DIV >> 2) + (sum >> shift)]) >> shift);
   }
-  for (let i = 0; i < 1003; i++) i32[(BUCKET >> 2) + i] = CUTS.filter(cut => cut < i - 501).length;
+  i32.set(WEIGHTED_BUCKET, BUCKET >> 2);
   return {memory, scalar, simd: null, u8, i32};
 }
 

@@ -1,0 +1,198 @@
+[
+  {
+    "door": "prefix",
+    "file": "photo-corpus/grace-hopper.jpg",
+    "effort": 8,
+    "bytes": 59812,
+    "sha256": "27efa74cd408037121c6bd8f85b64059d087bc21b8c9a916cc21d6e792ebdb38"
+  },
+  {
+    "door": "prefix",
+    "file": "photo-corpus/grace-hopper.jpg",
+    "effort": 9,
+    "bytes": 59780,
+    "sha256": "a4095165d29e3490003303fb43bd5f7e0ea594fa2b32bcccecf0ea38bc95b918"
+  },
+  {
+    "door": "ans",
+    "file": "photo-corpus/grace-hopper.jpg",
+    "effort": 8,
+    "bytes": 58276,
+    "sha256": "3a52bba2d2c0d53d9a073ce1ff766347695845a1c26aca1d92da382cf66a4e2b"
+  },
+  {
+    "door": "ans",
+    "file": "photo-corpus/grace-hopper.jpg",
+    "effort": 9,
+    "bytes": 58260,
+    "sha256": "530f102385b6a7d1fce80690750cfdd0ae43732b5722c65ac550640da3044cef"
+  },
+  {
+    "door": "prefix",
+    "file": "seeds/grey-sequential.jpg",
+    "effort": 8,
+    "bytes": 117,
+    "sha256": "2f9ddc77e29c5b84303748f5fd62116f77b84db07f8e2e7aad2c2f7123e3eff1"
+  },
+  {
+    "door": "prefix",
+    "file": "seeds/grey-sequential.jpg",
+    "effort": 9,
+    "bytes": 117,
+    "sha256": "2f9ddc77e29c5b84303748f5fd62116f77b84db07f8e2e7aad2c2f7123e3eff1"
+  },
+  {
+    "door": "ans",
+    "file": "seeds/grey-sequential.jpg",
+    "effort": 8,
+    "bytes": 117,
+    "sha256": "2f9ddc77e29c5b84303748f5fd62116f77b84db07f8e2e7aad2c2f7123e3eff1"
+  },
+  {
+    "door": "ans",
+    "file": "seeds/grey-sequential.jpg",
+    "effort": 9,
+    "bytes": 117,
+    "sha256": "2f9ddc77e29c5b84303748f5fd62116f77b84db07f8e2e7aad2c2f7123e3eff1"
+  },
+  {
+    "door": "prefix",
+    "file": "seeds/colour-sequential.jpg",
+    "effort": 8,
+    "bytes": 499,
+    "sha256": "d7bae01730ea401d80eda3415a7370ae9d0e8e110b412ebc139b8ed0c40a0b33"
+  },
+  {
+    "door": "prefix",
+    "file": "seeds/colour-sequential.jpg",
+    "effort": 9,
+    "bytes": 499,
+    "sha256": "d7bae01730ea401d80eda3415a7370ae9d0e8e110b412ebc139b8ed0c40a0b33"
+  },
+  {
+    "door": "ans",
+    "file": "seeds/colour-sequential.jpg",
+    "effort": 8,
+    "bytes": 382,
+    "sha256": "ec2360f2ca4e686f56eb49cf1f5fb473a116d602094b2ab7f6e52c8f41fff6cb"
+  },
+  {
+    "door": "ans",
+    "file": "seeds/colour-sequential.jpg",
+    "effort": 9,
+    "bytes": 382,
+    "sha256": "ec2360f2ca4e686f56eb49cf1f5fb473a116d602094b2ab7f6e52c8f41fff6cb"
+  },
+  {
+    "door": "prefix",
+    "file": "seeds/colour-progressive-restarts.jpg",
+    "effort": 8,
+    "bytes": 464,
+    "sha256": "e910502a712afbf28e5e50d1928969612e16e87d365cbd544001717a8dbdbeeb"
+  },
+  {
+    "door": "prefix",
+    "file": "seeds/colour-progressive-restarts.jpg",
+    "effort": 9,
+    "bytes": 464,
+    "sha256": "e910502a712afbf28e5e50d1928969612e16e87d365cbd544001717a8dbdbeeb"
+  },
+  {
+    "door": "ans",
+    "file": "seeds/colour-progressive-restarts.jpg",
+    "effort": 8,
+    "bytes": 360,
+    "sha256": "27f4c1b1122240fe43201dcdd149c7654831dfba9900860fcdad248bf206f662"
+  },
+  {
+    "door": "ans",
+    "file": "seeds/colour-progressive-restarts.jpg",
+    "effort": 9,
+    "bytes": 360,
+    "sha256": "27f4c1b1122240fe43201dcdd149c7654831dfba9900860fcdad248bf206f662"
+  },
+  {
+    "door": "prefix",
+    "file": "seeds/display-p3.jpg",
+    "effort": 8,
+    "bytes": 502,
+    "sha256": "ba8ac62cba2921bf895020ab1a4d3e1d6cf34524dbd22987db8c04dca55e34c4"
+  },
+  {
+    "door": "prefix",
+    "file": "seeds/display-p3.jpg",
+    "effort": 9,
+    "bytes": 502,
+    "sha256": "ba8ac62cba2921bf895020ab1a4d3e1d6cf34524dbd22987db8c04dca55e34c4"
+  },
+  {
+    "door": "ans",
+    "file": "seeds/display-p3.jpg",
+    "effort": 8,
+    "bytes": 385,
+    "sha256": "7b9d9da86280dacf4ceed10622bd660f328f3a6ed4b9f5b30d6ee4d05ebff517"
+  },
+  {
+    "door": "ans",
+    "file": "seeds/display-p3.jpg",
+    "effort": 9,
+    "bytes": 385,
+    "sha256": "7b9d9da86280dacf4ceed10622bd660f328f3a6ed4b9f5b30d6ee4d05ebff517"
+  },
+  {
+    "door": "prefix",
+    "file": "seeds/decoder-difference.jpg",
+    "effort": 8,
+    "bytes": 499,
+    "sha256": "296bd5089b18ce1b679ab07c423d60bd4732864bfdc18b7382d2ac01c222d9aa"
+  },
+  {
+    "door": "prefix",
+    "file": "seeds/decoder-difference.jpg",
+    "effort": 9,
+    "bytes": 499,
+    "sha256": "296bd5089b18ce1b679ab07c423d60bd4732864bfdc18b7382d2ac01c222d9aa"
+  },
+  {
+    "door": "ans",
+    "file": "seeds/decoder-difference.jpg",
+    "effort": 8,
+    "bytes": 384,
+    "sha256": "3c3d3367ca3558edfeb20ee8f1b15a3292e4a4e0bf1679ee29d6f1a6a70037c5"
+  },
+  {
+    "door": "ans",
+    "file": "seeds/decoder-difference.jpg",
+    "effort": 9,
+    "bytes": 384,
+    "sha256": "3c3d3367ca3558edfeb20ee8f1b15a3292e4a4e0bf1679ee29d6f1a6a70037c5"
+  },
+  {
+    "door": "prefix",
+    "file": "seeds/reconstruction-difference.jpg",
+    "effort": 8,
+    "bytes": 510,
+    "sha256": "35b8de14261c9f3e9d6c68767df99a34338431562f182acd37b0e7edc4eff68f"
+  },
+  {
+    "door": "prefix",
+    "file": "seeds/reconstruction-difference.jpg",
+    "effort": 9,
+    "bytes": 509,
+    "sha256": "9589cadf8aff5484525a4d3f04e41396cda72dff3b57f16d9fbd8acaaa6a0b97"
+  },
+  {
+    "door": "ans",
+    "file": "seeds/reconstruction-difference.jpg",
+    "effort": 8,
+    "bytes": 410,
+    "sha256": "2aabab7364efbd1e1c1eea4edc4eb403e6ea323ac787e29b45996b208ce03338"
+  },
+  {
+    "door": "ans",
+    "file": "seeds/reconstruction-difference.jpg",
+    "effort": 9,
+    "bytes": 410,
+    "sha256": "2aabab7364efbd1e1c1eea4edc4eb403e6ea323ac787e29b45996b208ce03338"
+  }
+]

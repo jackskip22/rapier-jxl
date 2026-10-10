@@ -457,7 +457,9 @@ function sampleFinishPlan(result, predictor) {
     return cost;
   }
   // Merging contexts preserves the token values only when their predictors agree.
-  if (count > 1 && result.leaves.every(l => l.predictor === predictor)) {
+  // Wider trees defer this comparison to the clustered complete-stream search;
+  // an unclustered wide plan is not yet a legal histogram header.
+  if (count > 1 && count <= 255 && result.leaves.every(l => l.predictor === predictor)) {
     const merged = new Uint32Array(ALPHABET); for (const freq of freqs) for (let s = 0; s < ALPHABET; s++) merged[s] += freq[s];
     const one = leaf(predictor); one.slot = 0;
     if (pricePlan(one, [one], [merged]) <= pricePlan(result.tree, result.leaves, freqs)) { result.tree = one; result.leaves = [one]; result.freqs = [merged]; context.fill(0); }
@@ -479,7 +481,8 @@ function sampleCompileLookup(tree) {
   const strides = []; let size = 1;
   for (const list of cuts) { strides.push(size); size *= list.length + 1; }
   if (size > 65536) return null;
-  const table = new Uint8Array(size);
+  const Slot = nodes.some(node => !node.left && node.slot > 255) ? Uint16Array : Uint8Array;
+  const table = new Slot(size);
   for (let i = 0; i < size; i++) {
     let node = tree;
     while (node.left) { const p = properties.indexOf(node.property), bin = Math.floor(i / strides[p]) % (cuts[p].length + 1), value = bin ? cuts[p][bin - 1] + 1 : -768; node = value > node.splitval ? node.left : node.right; }
@@ -496,8 +499,9 @@ function sampleCompileLookup(tree) {
 }
 function sampleTokenize(plane, width, height, weighted, errors, learned, previous, referenceOutput, byteDomain = true) {
   const length = width * height, count = learned.leaves.length, freqs = Array.from({length: count}, () => new Uint32Array(ALPHABET));
-  const token = new Uint16Array(length), extra = new Uint32Array(length), bits = new Uint8Array(length), context = new Uint8Array(length);
-  let used = 0, run = 0; const runContexts = new Uint8Array(8);
+  const Context = count > 256 ? Uint16Array : Uint8Array;
+  const token = new Uint16Array(length), extra = new Uint32Array(length), bits = new Uint8Array(length), context = new Context(length);
+  let used = 0, run = 0; const runContexts = new Context(8);
   const emit = (ctx, value, copy = false) => {
     let symbol, nbits, payload;
     if (copy && value < 16) { symbol = 224 + value; nbits = 0; payload = 0; }
@@ -561,35 +565,44 @@ function sampleTokenize(plane, width, height, weighted, errors, learned, previou
   return {...learned, freqs, token, extra, bits, context, used};
 }
 
-function sampleClusterPlan(plan, penalty) {
-  const table = sampleEntropyTable(plan.used);
+function sampleClusterPlan(plan) {
+  const table = sampleEntropyTable(plan.used), count = plan.freqs.length;
   const key = c => [c.split,c.msb,c.lsb].join(',');
-  const groups = plan.freqs.map((freq, i) => {const config=plan.configs?.[i] || RESIDUAL_CONFIG;return {freq, ids:[i], config, key:key(config), slot:i, cost:sampleEntropy(freq,table)};});
-  // Stable slots retain unchanged pair costs; the scan order still resolves ties.
-  const count=groups.length,costs=new Float64Array(count*count).fill(NaN);
-  while(groups.length>1){
-    let best=null;
-    for(let i=0;i<groups.length;i++)for(let j=i+1;j<groups.length;j++){
-      const a=groups[i],b=groups[j];if(a.key!==b.key)continue;
-      const index=a.slot*count+b.slot;
-      let cost=costs[index];
-      if(Number.isNaN(cost)){
-        let total=0,terms=0;
-        for(let s=0;s<a.freq.length;s++){const n=a.freq[s]+b.freq[s];total+=n;terms+=table[n];}
-        cost=costs[index]=table[total]-terms;
-      }
-      const delta=cost-a.cost-b.cost;
-      if(delta<penalty*SAMPLE_Q&&(!best||delta<best.delta))best={i,j,cost,delta};
+  let groups, costs, previous;
+  return penalty => {
+    // Increasing penalties continue the same greedy merges: pair costs and their tie order do not depend on the
+    // penalty. Restart for any other order; each snapshot owns its map and contexts, and merges replace group records.
+    if (!groups || !(penalty > previous)) {
+      groups = plan.freqs.map((freq, i) => {const config=plan.configs?.[i] || RESIDUAL_CONFIG;return {freq, ids:[i], config, key:key(config), slot:i, cost:sampleEntropy(freq,table)};});
+      costs = new Float64Array(count*count).fill(NaN);
     }
-    if(!best)break;
-    const a=groups[best.i],b=groups[best.j],freq=a.freq.map((value,k)=>value+b.freq[k]);
-    groups[best.i]={...a,freq,cost:best.cost,ids:[...a.ids,...b.ids]};groups.splice(best.j,1);
-    for(let i=0;i<count;i++){costs[a.slot*count+i]=NaN;costs[i*count+a.slot]=NaN;}
-  }
-  const map=new Uint8Array(plan.leaves.length);groups.forEach((g,i)=>g.ids.forEach(id=>map[id]=i));
-  const context=new Uint8Array(plan.used);
-  for(let i=0;i<plan.used;i++)context[i]=map[plan.context[i]];
-  return {...plan,freqs:groups.map(g=>g.freq),configs:groups.map(g=>g.config),histogramMap:map,context};
+    previous = penalty;
+    // Stable slots retain unchanged pair costs; the scan order still resolves ties.
+    while(groups.length>1){
+      let best=null;
+      for(let i=0;i<groups.length;i++)for(let j=i+1;j<groups.length;j++){
+        const a=groups[i],b=groups[j];if(a.key!==b.key)continue;
+        const index=a.slot*count+b.slot;
+        let cost=costs[index];
+        if(Number.isNaN(cost)){
+          let total=0,terms=0;
+          for(let s=0;s<a.freq.length;s++){const n=a.freq[s]+b.freq[s];total+=n;terms+=table[n];}
+          cost=costs[index]=table[total]-terms;
+        }
+        const delta=cost-a.cost-b.cost;
+        if(delta<penalty*SAMPLE_Q&&(!best||delta<best.delta))best={i,j,cost,delta};
+      }
+      if(!best)break;
+      const a=groups[best.i],b=groups[best.j],freq=a.freq.map((value,k)=>value+b.freq[k]);
+      groups[best.i]={...a,freq,cost:best.cost,ids:[...a.ids,...b.ids]};groups.splice(best.j,1);
+      for(let i=0;i<count;i++){costs[a.slot*count+i]=NaN;costs[i*count+a.slot]=NaN;}
+    }
+    const Context=groups.length>256?Uint16Array:Uint8Array;
+    const map=new Context(plan.leaves.length);groups.forEach((g,i)=>g.ids.forEach(id=>map[id]=i));
+    const context=new Context(plan.used);
+    for(let i=0;i<plan.used;i++)context[i]=map[plan.context[i]];
+    return {...plan,freqs:groups.map(g=>g.freq),configs:groups.map(g=>g.config),histogramMap:map,context};
+  };
 }
 
 function sampleWriteModel(writer, plans, ans = false, price = false) {
@@ -669,6 +682,9 @@ function sampleImageModel(rgba, width, height, shape, options) {
 function sampleChooseModel(plans, options, prepare, offset = 0) {
   const bytes = bits => Math.ceil((offset + bits) / 8);
   const choose = (best, models = plans) => {
+    // Tree leaf slots may be wide, but the serialized histogram map also reserves
+    // one ID for the distance histogram. Never truncate or write an illegal plan.
+    if (models.reduce((count, model) => count + model.freqs.length, 0) > 255) return best;
     const prefix = prepare(false, undefined, models), ans = prepare(true, undefined, models);
     ans.write();
     const prefixBytes = bytes(prefix.section.bitLength + prefix.dataBits), ansBytes = bytes(ans.section.bitLength);
@@ -683,12 +699,20 @@ function sampleChooseModel(plans, options, prepare, offset = 0) {
   // Shared histograms at each penalty. A penalty that merges nothing, or repeats the previous penalty's groups, would
   // write the section already priced, so it is not written again.
   const withSharing = section => {
-    let previous = null;
+    let previous = null, searches;
     for (const penalty of options.sharing || []) {
-      const clustered = plans.map(plan => sampleClusterPlan(plan, penalty)), key = clustered.map(plan => plan.histogramMap.join(',')).join(';');
+      searches ||= plans.map(sampleClusterPlan);
+      const clustered = searches.map(search => search(penalty)), key = clustered.map(plan => plan.histogramMap.join(',')).join(';');
       if (clustered.every((plan, c) => plan.freqs.length === plans[c].freqs.length) || key === previous) continue;
       previous = key;
       section = choose(section, clustered);
+    }
+    if (!section) {
+      // A wide tree can exhaust the finite penalties before becoming legal.
+      // Continue compatible merges to retain a complete candidate; the initial
+      // residual configuration can always merge to one histogram per channel.
+      searches ||= plans.map(sampleClusterPlan);
+      section = choose(null, searches.map(search => search(Infinity)));
     }
     return section;
   };
@@ -742,8 +766,10 @@ export const sampledPlanes = Object.freeze({
 
 export function* sampledSteps(rgba, width, height, shape, colorSpace, options, pooled, ceiling = Infinity) {
   const {channels} = shape, dim = options.dim || GROUP_DIM, layout = groupLayout(width, height, dim), groups = layout.groupsX * layout.groupsY;
-  // Histogram IDs share an 8-bit context map with the distance histogram.
-  const maxLeaves = Math.floor(255 / channels);
+  // Ordinary rungs retain their original leaf budget and bytes. Explicitly
+  // clustered ANS searches may learn wider trees; only legal histogram maps
+  // survive sampleChooseModel, after leaf slots have been clustered.
+  const maxLeaves = options.clustered && options.ans ? 1024 : Math.floor(255 / channels);
   if (options.leaves > maxLeaves) options = {...options, leaves: maxLeaves};
   const shared = options.shared ? sampleImageModel(rgba, width, height, shape, options) : null;
   const setup = {channels, alpha: shape.alpha, palette: null, options, shared, dim}, group = sampledGroup(setup);

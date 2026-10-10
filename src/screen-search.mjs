@@ -5,10 +5,12 @@ import {screenLZ77} from './screen-lz77.mjs';
 import {patchSteps} from './screen-patches.mjs';
 import {scaled} from './bits.mjs';
 import {paletteSteps} from './palette-search.mjs';
+import {localScreenSteps} from './screen-local.mjs';
 export function screenEligible(rgba, width, height, shape, effort = 3) {
   // A bounded full-colour palette already identifies an exact screen representation.
   // Similar neighbouring colours do not make its repeated indices photographic noise.
   if (effort >= 5 && shape.palette) return true;
+  if (effort >= 8 && screenPlan(rgba, width, height, shape, 'global')) return true;
   if ((shape.palette || effort >= 5) && screenLike(rgba, width, height)) return true;
   if (effort < 5 || width < 32 || height < 32) return false;
   let flat = 0, soft = 0;
@@ -31,11 +33,13 @@ export function* screenSteps(rgba, width, height, shape, colorSpace, {fastFloor 
   // Try LZ77 and glyph models first so hurry can retain their completed streams.
   const modes = ['global-lz', 'patch-lz', 'scalar-lz', 'global', 'scalar'];
   if (effort >= 5) modes.push('global-deep', 'frequency-deep', 'patch-deep', 'scalar-deep', 'direct-deep');
-  if (effort === 9 && shape.palette) modes.push('palette');
+  if (effort >= 8) modes.push('palette');
   if (effort === 9) modes.push('global-deeper', 'frequency-deeper');
+  if (effort >= 8) modes.push('local-copy');
+  if (effort === 9) modes.push('local-fine', 'local-deeper');
   for (let i = 0; i < modes.length; i++) {
     if (yield (i + 0.01) / modes.length) return best;
-    const deeper = modes[i].endsWith('-deeper');
+    const deeper = modes[i].endsWith('-deeper') && !modes[i].startsWith('local-');
     if (deeper) {
       // Small palettes can still improve after a learned palette win. Richer palettes only retry when the
       // shallow copied indices remain best. Latch before the pair so either ordering can improve the floor.
@@ -43,7 +47,9 @@ export function* screenSteps(rgba, width, height, shape, colorSpace, {fastFloor 
       if (!deepen) continue;
     }
     let steps;
-    if (modes[i] === 'patch-lz') steps = patchSteps(rgba, width, height, shape, colorSpace, {tokenCodec: screenLZ77, pooled});
+    if (modes[i].startsWith('local-')) steps = localScreenSteps(rgba, width, height, shape, colorSpace,
+      {dim: modes[i] === 'local-fine' ? 512 : 1024, depths: modes[i] === 'local-copy' ? [64] : [64, 256], ceiling: best?.length ?? Infinity});
+    else if (modes[i] === 'patch-lz') steps = patchSteps(rgba, width, height, shape, colorSpace, {tokenCodec: screenLZ77, pooled});
     else if (modes[i] === 'patch-deep') steps = patchSteps(rgba, width, height, shape, colorSpace, {search: {}, limit: best?.length ?? Infinity, pooled});
     else if (modes[i] === 'palette') steps = paletteSteps(rgba, width, height, shape, colorSpace,
       {plan: plans.get('global'), pooled, ceiling: best?.length ?? Infinity});
