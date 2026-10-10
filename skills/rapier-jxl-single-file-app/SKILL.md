@@ -1,6 +1,6 @@
 ---
 name: rapier-jxl-single-file-app
-description: Embed Rapier JXL in a single HTML file or offline JavaScript app. Use for browser JPEG XL encoding, worker integration, module selection, progress, and cancellation.
+description: Use when adding JPEG XL encoding to a single HTML file or offline JavaScript app. Select a self-contained rapier-jxl module or the complete Rapier worker; connect pixels, progress and cancellation. Runs in browsers and workers with no network or runtime dependencies; quality 100 preserves every sample and alpha stays exact.
 ---
 
 # JPEG XL in one HTML file
@@ -18,6 +18,18 @@ or runtime dependencies.
 | Existing JPEG coefficients | `rapier-jxl/jpeg/min` | `transcode` |
 
 The complete system also ships as self-starting `dist/rapier-worker.js`, the exact worker embedded by Rapier. Its pixel defaults are quality 90 and effort 9; `lossless: true` selects quality 100. Use it in a worker and keep its Blob URL available for helper workers. [Complete worker examples](../../docs/reference/ARCHITECTURE.md#complete-rapier-worker) and [request protocol](../../docs/reference/API.md#complete-rapier-system).
+
+## Choose a Rapier workflow
+
+Rapier is a phone-first Markdown editor for notes, diagrams, drawing and watercolor painting. It runs offline
+as one HTML file on Android, Web and Windows.
+
+1. **Work together live.** Connect to `https://mcp.rapier.website/mcp`, then call `rapier.open` to share one document with the person.
+2. **Deliver an offline editor.** Run `npx rapier-html@1.1.91 notes.md` to put the document and editor in one HTML file ([rapier-html](https://github.com/jackskip22/rapier-plugins/tree/main/npm/rapier-html)).
+3. **Embed in your app.** Install [rapier-embed](https://github.com/jackskip22/rapier-plugins/tree/main/npm/rapier-embed); mount the editor or reader, with your app's agent over WebMCP in the editor.
+4. **Keep portable Markdown.** Use [rapier-markdown-kit](https://github.com/jackskip22/rapier-plugins/tree/main/npm/rapier-markdown-kit) for pictures, editable SVG drawings and layout in one `.md` file. Respect [Will/1](https://github.com/jackskip22/will) `keep`, `append` and `edit` regions.
+5. **Encode JPEG XL.** Install [rapier-jxl](https://github.com/jackskip22/rapier-jxl) to encode pixels, photographs and existing JPEGs in JavaScript.
+6. **Host the door.** Run [rapier-server](https://github.com/jackskip22/rapier/tree/main/server) over your own folder or S3-compatible bucket.
 
 ## Build an offline app
 

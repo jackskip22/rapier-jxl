@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Deterministic Modular tree learning from bounded spatial samples. Each group selects its tree before tokenizing.
 import {BitWriter, packSigned} from './bits.mjs';
+import {kernelHooks} from './kernel-hooks.mjs';
 import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, groupPass, assembleCodestream, GROUP_DIM} from './frame.mjs';
 import {ALPHABET, LZ77, RESIDUAL_CONFIG, leaf, split, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {codeWeighted} from './weighted.mjs';
@@ -188,6 +189,24 @@ function sampleGuardReferences(model, predictor) {
   const nodes = [model.tree]; let references = false;
   for (const node of nodes) if (node.left) { references ||= node.property >= 16; nodes.push(node.left, node.right); }
   if (!references) return model;
+  // Interior guards exclude row and column zero. Remove branches those guards make unreachable.
+  const prune = (node, xlo = 1, xhi = Infinity, ylo = 1, yhi = Infinity) => {
+    if (!node.left) return node;
+    const cut = node.splitval, axis = node.property;
+    if (axis === 2 && cut < ylo || axis === 3 && cut < xlo) return prune(node.left, xlo, xhi, ylo, yhi);
+    if (axis === 2 && cut >= yhi || axis === 3 && cut >= xhi) return prune(node.right, xlo, xhi, ylo, yhi);
+    const left = prune(node.left, axis === 3 ? cut + 1 : xlo, xhi, axis === 2 ? cut + 1 : ylo, yhi);
+    const right = prune(node.right, xlo, axis === 3 ? cut : xhi, ylo, axis === 2 ? cut : yhi);
+    return left === node.left && right === node.right ? node : {...node, left, right};
+  };
+  const tree = prune(model.tree);
+  if (tree !== model.tree) {
+    const reachable = new Set(), pending = [tree];
+    for (const node of pending) if (node.left) pending.push(node.left, node.right); else reachable.add(node);
+    const leaves = model.leaves.filter(node => reachable.has(node));
+    leaves.forEach((node, slot) => node.slot = slot);
+    model = {tree, leaves};
+  }
   const edgeX = leaf(predictor), edgeY = leaf(predictor); edgeX.slot = model.leaves.length; edgeY.slot = edgeX.slot + 1;
   return {tree: split(2, 0, split(3, 0, model.tree, edgeX), edgeY), leaves: [...model.leaves, edgeX, edgeY], interior: model.tree, edgeX: edgeX.slot, edgeY: edgeY.slot};
 }
@@ -209,8 +228,7 @@ function learnSampleTree(columns, symbolSets, candidates, population, options) {
   // its symbol counts h, so moving samples across a cut changes it only at the symbols moved: the running sums below
   // equal the recomputed prices exactly (every term is an integer below 2^53) and the earliest best cut still wins.
   const kinds = candidates.length, rawPrice = Float64Array.from({length: alphabet}, (_, s) => rawBits(s) * SAMPLE_Q);
-  const symbolsOf = new Uint8Array(count * kinds);  // symbolsOf[id * kinds + c]: the symbol of sample id under candidate c
-  for (let c = 0; c < kinds; c++) for (let id = 0; id < count; id++) symbolsOf[id * kinds + c] = symbolSets[c][id];
+  let symbolsOf = null;
   const lowCounts = candidates.map(() => new Uint32Array(alphabet)), highCounts = candidates.map(() => new Uint32Array(alphabet));
   const lowTable = new Float64Array(kinds), highTable = new Float64Array(kinds), lowRaw = new Float64Array(kinds), highRaw = new Float64Array(kinds);
   const baseTable = new Float64Array(kinds), baseRaw = new Float64Array(kinds);
@@ -219,91 +237,99 @@ function learnSampleTree(columns, symbolSets, candidates, population, options) {
   function propose(item) {
     if (item.depth >= options.depth || item.ids.length < 64) return null;
     const members = item.ids, total = members.length;
-    for (let c = 0; c < kinds; c++) {
-      let t = 0, r = 0; const h = item.hist[c];
-      for (let s = 0; s < alphabet; s++) if (h[s]) { t += table[h[s]]; r += h[s] * rawPrice[s]; }
-      baseTable[c] = t; baseRaw[c] = r;
-    }
-    let best = null, sym = null, present = null, kept = 0;
-    for (const column of quantized) {
-      const cuts = column.cuts.length, bins = cuts + 1, indices = column.indices;
-      if (!cuts) continue;
-      for (let c = 0; c < kinds; c++) { lowCounts[c].fill(0); highCounts[c].set(item.hist[c]); }
-      lowTable.fill(0); lowRaw.fill(0); highTable.set(baseTable); highRaw.set(baseRaw);
-      let lowCount = 0;
-      // Many samples: count (cut, candidate, symbol) triples once, then move whole counts. Few: move one sample at a time
-      // in cut order.
-      const useDense = total > bins * alphabet / 4;
-      let start = null;
-      if (useDense) {
-        // The counts of one candidate are bins * (symbols present in this node) words, small enough to stay in the
-        // first-level cache while its samples stream through. Symbols are renumbered and gathered once per node and the
-        // offsets once per column.
-        if (!sym) {
-          present = []; slotOf.fill(-1);
-          for (let s = 0; s < alphabet; s++) for (let c = 0; c < kinds; c++) if (item.hist[c][s]) { slotOf[s] = present.length; present.push(s); break; }
-          kept = present.length;
-          sym = new Uint8Array(total * kinds);
-          for (let c = 0; c < kinds; c++) { const symbols = symbolSets[c], at = c * total; for (let i = 0; i < total; i++) sym[at + i] = slotOf[symbols[members[i]]]; }
-        }
-        if (offsets.length < total) offsets = new Uint32Array(total);
-        for (let i = 0; i < total; i++) offsets[i] = indices[members[i]] * kept;
-        const size = bins * kinds * kept;
-        if (dense.length < size) dense = new Uint32Array(size); else dense.fill(0, 0, size);
-        let c = 0;
-        for (; c + 1 < kinds; c += 2) {
-          const base0 = c * bins * kept, base1 = base0 + bins * kept, at0 = c * total, at1 = at0 + total;
-          for (let i = 0; i < total; i++) { const o = offsets[i]; dense[base0 + o + sym[at0 + i]]++; dense[base1 + o + sym[at1 + i]]++; }
-        }
-        if (c < kinds) { const base = c * bins * kept, at = c * total; for (let i = 0; i < total; i++) dense[base + offsets[i] + sym[at + i]]++; }
-      } else {
-        if (order.length < total) order = new Uint32Array(total);
-        start = new Uint32Array(bins + 1);
-        for (let i = 0; i < total; i++) start[indices[members[i]] + 1]++;
-        for (let b = 0; b < bins; b++) start[b + 1] += start[b];
-        const next = start.slice(0, bins);
-        for (let i = 0; i < total; i++) { const id = members[i]; order[next[indices[id]]++] = id; }
+    let best = kernelHooks.sampled ? kernelHooks.sampled(members, item.hist, symbolSets, quantized, table, rawPrice, item.choice.bits) : false;
+    if (best === false) {
+      best = null;
+      if (!symbolsOf) {
+        symbolsOf = new Uint8Array(count * kinds);
+        for (let c = 0; c < kinds; c++) for (let id = 0; id < count; id++) symbolsOf[id * kinds + c] = symbolSets[c][id];
       }
-      for (let b = 0; b < cuts; b++) {
-        let moved = 0;
+      for (let c = 0; c < kinds; c++) {
+        let t = 0, r = 0; const h = item.hist[c];
+        for (let s = 0; s < alphabet; s++) if (h[s]) { t += table[h[s]]; r += h[s] * rawPrice[s]; }
+        baseTable[c] = t; baseRaw[c] = r;
+      }
+      let sym = null, present = null, kept = 0;
+      for (const column of quantized) {
+        const cuts = column.cuts.length, bins = cuts + 1, indices = column.indices;
+        if (!cuts) continue;
+        for (let c = 0; c < kinds; c++) { lowCounts[c].fill(0); highCounts[c].set(item.hist[c]); }
+        lowTable.fill(0); lowRaw.fill(0); highTable.set(baseTable); highRaw.set(baseRaw);
+        let lowCount = 0;
+        // Many samples: count (cut, candidate, symbol) triples once, then move whole counts. Few: move one sample at a time
+        // in cut order.
+        const useDense = total > bins * alphabet / 4;
+        let start = null;
         if (useDense) {
-          for (let c = 0; c < kinds; c++) {
-            const low = lowCounts[c], high = highCounts[c], row = (c * bins + b) * kept;
-            let t = 0, r = 0, u = 0, m = 0;
-            for (let q = 0; q < kept; q++) {
-              const v = dense[row + q];
-              if (!v) continue;
-              const s = present[q], l = low[s], h = high[s];
-              t += table[l + v] - table[l]; u += table[h - v] - table[h]; r += v * rawPrice[s]; m += v;
-              low[s] = l + v; high[s] = h - v;
-            }
-            lowTable[c] += t; highTable[c] += u; lowRaw[c] += r; highRaw[c] -= r;
-            if (!c) moved = m;
+          // The counts of one candidate are bins * (symbols present in this node) words, small enough to stay in the
+          // first-level cache while its samples stream through. Symbols are renumbered and gathered once per node and the
+          // offsets once per column.
+          if (!sym) {
+            present = []; slotOf.fill(-1);
+            for (let s = 0; s < alphabet; s++) for (let c = 0; c < kinds; c++) if (item.hist[c][s]) { slotOf[s] = present.length; present.push(s); break; }
+            kept = present.length;
+            sym = new Uint8Array(total * kinds);
+            for (let c = 0; c < kinds; c++) { const symbols = symbolSets[c], at = c * total; for (let i = 0; i < total; i++) sym[at + i] = slotOf[symbols[members[i]]]; }
           }
+          if (offsets.length < total) offsets = new Uint32Array(total);
+          for (let i = 0; i < total; i++) offsets[i] = indices[members[i]] * kept;
+          const size = bins * kinds * kept;
+          if (dense.length < size) dense = new Uint32Array(size); else dense.fill(0, 0, size);
+          let c = 0;
+          for (; c + 1 < kinds; c += 2) {
+            const base0 = c * bins * kept, base1 = base0 + bins * kept, at0 = c * total, at1 = at0 + total;
+            for (let i = 0; i < total; i++) { const o = offsets[i]; dense[base0 + o + sym[at0 + i]]++; dense[base1 + o + sym[at1 + i]]++; }
+          }
+          if (c < kinds) { const base = c * bins * kept, at = c * total; for (let i = 0; i < total; i++) dense[base + offsets[i] + sym[at + i]]++; }
         } else {
-          for (let i = start[b]; i < start[b + 1]; i++) {
-            const from = order[i] * kinds;
+          if (order.length < total) order = new Uint32Array(total);
+          start = new Uint32Array(bins + 1);
+          for (let i = 0; i < total; i++) start[indices[members[i]] + 1]++;
+          for (let b = 0; b < bins; b++) start[b + 1] += start[b];
+          const next = start.slice(0, bins);
+          for (let i = 0; i < total; i++) { const id = members[i]; order[next[indices[id]]++] = id; }
+        }
+        for (let b = 0; b < cuts; b++) {
+          let moved = 0;
+          if (useDense) {
             for (let c = 0; c < kinds; c++) {
-              const s = symbolsOf[from + c], low = lowCounts[c], high = highCounts[c], l = low[s]++, h = high[s]--;
-              lowTable[c] += table[l + 1] - table[l]; highTable[c] += table[h - 1] - table[h];
-              lowRaw[c] += rawPrice[s]; highRaw[c] -= rawPrice[s];
+              const low = lowCounts[c], high = highCounts[c], row = (c * bins + b) * kept;
+              let t = 0, r = 0, u = 0, m = 0;
+              for (let q = 0; q < kept; q++) {
+                const v = dense[row + q];
+                if (!v) continue;
+                const s = present[q], l = low[s], h = high[s];
+                t += table[l + v] - table[l]; u += table[h - v] - table[h]; r += v * rawPrice[s]; m += v;
+                low[s] = l + v; high[s] = h - v;
+              }
+              lowTable[c] += t; highTable[c] += u; lowRaw[c] += r; highRaw[c] -= r;
+              if (!c) moved = m;
             }
+          } else {
+            for (let i = start[b]; i < start[b + 1]; i++) {
+              const from = order[i] * kinds;
+              for (let c = 0; c < kinds; c++) {
+                const s = symbolsOf[from + c], low = lowCounts[c], high = highCounts[c], l = low[s]++, h = high[s]--;
+                lowTable[c] += table[l + 1] - table[l]; highTable[c] += table[h - 1] - table[h];
+                lowRaw[c] += rawPrice[s]; highRaw[c] -= rawPrice[s];
+              }
+            }
+            moved = start[b + 1] - start[b];
           }
-          moved = start[b + 1] - start[b];
+          const previousCount = lowCount;
+          lowCount += moved;
+          // Empty bins repeat the same histograms; strict ties already keep the earlier cut.
+          if (lowCount === previousCount || lowCount < 24 || total - lowCount < 24) continue;
+          let loSelected = 0, hiSelected = 0, loBits = Infinity, hiBits = Infinity;
+          const lowBase = table[lowCount], highBase = table[total - lowCount];
+          for (let c = 0; c < kinds; c++) {
+            const l = lowBase - lowTable[c] + lowRaw[c], h = highBase - highTable[c] + highRaw[c];
+            if (l < loBits) { loBits = l; loSelected = c; }
+            if (h < hiBits) { hiBits = h; hiSelected = c; }
+          }
+          const gain = item.choice.bits - loBits - hiBits;
+          if (!best || gain > best.gain) best = {gain, column, bin: b, lo: {selected: loSelected, bits: loBits}, hi: {selected: hiSelected, bits: hiBits}};
         }
-        const previousCount = lowCount;
-        lowCount += moved;
-        // Empty bins repeat the same histograms; strict ties already keep the earlier cut.
-        if (lowCount === previousCount || lowCount < 24 || total - lowCount < 24) continue;
-        let loSelected = 0, hiSelected = 0, loBits = Infinity, hiBits = Infinity;
-        const lowBase = table[lowCount], highBase = table[total - lowCount];
-        for (let c = 0; c < kinds; c++) {
-          const l = lowBase - lowTable[c] + lowRaw[c], h = highBase - highTable[c] + highRaw[c];
-          if (l < loBits) { loBits = l; loSelected = c; }
-          if (h < hiBits) { hiBits = h; hiSelected = c; }
-        }
-        const gain = item.choice.bits - loBits - hiBits;
-        if (!best || gain > best.gain) best = {gain, column, bin: b, lo: {selected: loSelected, bits: loBits}, hi: {selected: hiSelected, bits: hiBits}};
       }
     }
     if (!best || best.gain <= 0) return null;
@@ -547,7 +573,11 @@ function sampleClusterPlan(plan, penalty) {
       const a=groups[i],b=groups[j];if(a.key!==b.key)continue;
       const index=a.slot*count+b.slot;
       let cost=costs[index];
-      if(Number.isNaN(cost)){const freq=a.freq.map((value,k)=>value+b.freq[k]);cost=costs[index]=sampleEntropy(freq,table);}
+      if(Number.isNaN(cost)){
+        let total=0,terms=0;
+        for(let s=0;s<a.freq.length;s++){const n=a.freq[s]+b.freq[s];total+=n;terms+=table[n];}
+        cost=costs[index]=table[total]-terms;
+      }
       const delta=cost-a.cost-b.cost;
       if(delta<penalty*SAMPLE_Q&&(!best||delta<best.delta))best={i,j,cost,delta};
     }
@@ -557,7 +587,9 @@ function sampleClusterPlan(plan, penalty) {
     for(let i=0;i<count;i++){costs[a.slot*count+i]=NaN;costs[i*count+a.slot]=NaN;}
   }
   const map=new Uint8Array(plan.leaves.length);groups.forEach((g,i)=>g.ids.forEach(id=>map[id]=i));
-  return {...plan,freqs:groups.map(g=>g.freq),configs:groups.map(g=>g.config),histogramMap:map,context:plan.context.map(i=>map[i])};
+  const context=new Uint8Array(plan.used);
+  for(let i=0;i<plan.used;i++)context[i]=map[plan.context[i]];
+  return {...plan,freqs:groups.map(g=>g.freq),configs:groups.map(g=>g.config),histogramMap:map,context};
 }
 
 function sampleWriteModel(writer, plans, ans = false, price = false) {

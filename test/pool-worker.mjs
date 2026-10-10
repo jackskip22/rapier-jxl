@@ -7,6 +7,6 @@ import {servePool} from '../src/pool.mjs';
 let tasks = 0;
 parentPort.on('message', message => {
   if (message.pool === 'task' && ++tasks === workerData?.crashAt) process.exit(3);
-  const reply = servePool(message);
+  const reply = servePool(message, report => parentPort.postMessage(report));
   if (reply) parentPort.postMessage(...reply);
 });

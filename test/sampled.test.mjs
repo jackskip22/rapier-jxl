@@ -79,6 +79,32 @@ test('every sampled hurry boundary returns effort 1 exactly, also after a comple
   assert.ok(same(b.bytes, completed.bytes));
 });
 
+test('sampled terminal hurry retains the floor after worker cleanup and local fallback', async () => {
+  const p = await painting(), source = p.rgba.slice(), floor = coreEncode(p.rgba, p.width, p.height);
+  for (const {workers, crashAt} of [{workers: 0}, {workers: 1}, {workers: 2, crashAt: 1}]) {
+    let last = 0;
+    const exits = [], job = encodePool(p.rgba, p.width, p.height, {...option, effort: 4}, {
+      workers, spawn: () => {
+        const worker = spawnNode({crashAt});
+        exits.push(new Promise(ended => worker.thread.once('exit', ended)));
+        return worker;
+      }
+    });
+    for await (const done of job) {
+      assert.ok(done > last && done <= 1, 'progress increases to one terminal boundary');
+      last = done;
+      assert.equal(job.bytes, null, 'bytes publish only after iteration completes');
+      if (done === 1) {
+        job.hurry = true;
+      }
+    }
+    assert.equal(last, 1);
+    assert.ok(same(job.bytes, floor), 'terminal hurry returns the original effort-1 stream');
+    await Promise.all(exits);
+    assert.deepEqual(p.rgba, source);
+  }
+});
+
 
 const runModel = (p, options, ceiling = Infinity, stop = -1) => {
   const steps = sampledSteps(p.rgba, p.width, p.height, inspectPixels(p.rgba, p.width, p.height), 'srgb', options, false, ceiling);

@@ -127,6 +127,8 @@ export function* varDCTSteps(jpeg, plan = {}) {
 
   // The AC tokens of every group, counted first and written second.
   const nzeros = [0, 1, 2].map(() => new Int32Array(32 * 32));
+  const blockCounts = comps.map((comp, c) => grey && c !== 1 ? null : new Uint8Array(comp.coeffs.length / 64));
+  let counted = false;
   const tokens = (g, emit) => {
     const gx = g % groupsX, gy = (g / groupsX) | 0, bx0 = gx * 32, by0 = gy * 32;
     const bw = Math.min(32, xsizeBlocks - bx0), bh = Math.min(32, ysizeBlocks - by0);
@@ -135,7 +137,13 @@ export function* varDCTSteps(jpeg, plan = {}) {
       if ((sbx << hs) !== bx || (sby << vs) !== by) continue;
       const at = blockAt(c, (bx0 >> hs) + sbx, (by0 >> vs) + sby), coeffs = comps[c].coeffs;
       let count = 0;
-      if (at >= 0) for (let k = 1; k < 64; k++) if (coeffs[at + k]) count++;
+      if (at >= 0) {
+        if (counted) count = blockCounts[c][at / 64];
+        else {
+          for (let k = 1; k < 64; k++) if (coeffs[at + k]) count++;
+          blockCounts[c][at / 64] = count;
+        }
+      }
       const row = nzeros[c], predicted = sbx === 0 ? (sby === 0 ? 32 : row[(sby - 1) * 32]) : sby === 0 ? row[sby * 32 + sbx - 1] : (row[(sby - 1) * 32 + sbx] + row[sby * 32 + sbx - 1] + 1) >> 1;
       row[sby * 32 + sbx] = count;
       const blockCtx = contexts.contextOf(c, contexts.bucketOf(lumaDc[(by0 + by) * xsizeBlocks + bx0 + bx]));
@@ -156,6 +164,7 @@ export function* varDCTSteps(jpeg, plan = {}) {
     contexts = chosen;
     const counts = new TokenCounts(chosen.contexts);
     for (let g = 0; g < numGroups; g++) { tokens(g, (ctx, value) => counts.add(ctx, value)); yield ++done / total; }
+    counted = true;
     return (plan.coding || buildTokenCoding)(counts, plan.clusters);
   };
   let coding = yield* countWith(contexts);

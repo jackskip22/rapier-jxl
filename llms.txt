@@ -1,6 +1,23 @@
 # Rapier JXL
 
-JPEG XL encoder in JavaScript, with optional WebAssembly. Lossless and lossy, exact alpha, HDR and JPEG transcoding, offline in browsers, Node or one HTML file. Built for photography tools and single-file apps. MIT, no dependencies.
+> JPEG XL encoder for single-file HTML apps, photography tools and agent image workflows. Pure JavaScript, offline
+> in browsers, Node and Deno. Lossless, lossy, native precision, HDR, exact alpha and JPEG transcoding. MIT, no runtime
+> dependencies.
+
+## Choose a Rapier workflow
+
+Rapier is a phone-first Markdown editor for notes, diagrams, drawing and watercolor painting. It runs offline
+as one HTML file on Android, Web and Windows.
+
+1. **Work together live.** Connect to `https://mcp.rapier.website/mcp`, then call `rapier.open` to share one document with the person.
+2. **Deliver an offline editor.** Run `npx rapier-html notes.md` to put the document and editor in one HTML file ([rapier-html](https://github.com/jackskip22/rapier-plugins/tree/main/npm/rapier-html)).
+3. **Embed in your app.** Install [rapier-embed](https://github.com/jackskip22/rapier-plugins/tree/main/npm/rapier-embed); mount the editor or reader, with your app's agent over WebMCP in the editor.
+4. **Keep portable Markdown.** Use [rapier-markdown-kit](https://github.com/jackskip22/rapier-plugins/tree/main/npm/rapier-markdown-kit) for pictures, editable SVG drawings and layout in one `.md` file. Respect [Will/1](https://github.com/jackskip22/will) `keep`, `append` and `edit` regions.
+5. **Encode JPEG XL.** Install [rapier-jxl](https://github.com/jackskip22/rapier-jxl) to encode pixels, photographs and existing JPEGs in JavaScript.
+6. **Host the door.** Run [rapier-server](https://github.com/jackskip22/rapier/tree/main/server) over your own folder or S3-compatible bucket.
+
+## Start encoding
+
 Install with `npm install rapier-jxl`, then import the self-contained core:
 
 ```js
@@ -18,7 +35,7 @@ Complete Rapier system: `rapier-jxl/rapier/min` exports `createEncoder()` and `i
 `rapier-jxl/rapier/worker` is a self-starting classic worker, byte-identical to the app's encoder. It includes optional
 WASM, effort 1–9, Photo, JPEG transcoding and parallel lossless groups. Pixel defaults: effort 9, quality 90;
 `lossless: true` forces quality 100. JPEG uses effort 9. See [the complete API](docs/reference/API.md#complete-rapier-system)
-for typed requests, module-worker spawning and Blob URL lifetime. Complete worker: 53,331 gzip bytes.
+for typed requests, module-worker spawning and Blob URL lifetime. Complete worker: 56,751 gzip bytes.
 
 Choose an entry point:
 
@@ -36,9 +53,9 @@ Encoding entry points and `rapier-jxl/metadata` have self-contained `/min` build
 Import the complete file to access its public export names; minification renames local functions.
 Use readable imports when bundling several capabilities so they share code.
 
-Package: `rapier-jxl`. Version: 3.2.0. Install: `npm install rapier-jxl`.
+Package: `rapier-jxl`. Version: 3.3.0. Install: `npm install rapier-jxl`.
 ES modules with no automatic filesystem or network I/O.
-Core payload: 27,603 minified bytes; 11,670 gzip bytes.
+Core payload: 27,616 minified bytes; 11,674 gzip bytes.
 Runs in browsers, module workers, Node, and Deno. This package encodes JPEG XL; it does not include a JPEG XL decoder.
 
 ## Inputs and outputs

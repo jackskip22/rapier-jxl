@@ -12,6 +12,8 @@ import {inspectPixels} from '../src/lossless.mjs';
 import {localSteps} from '../src/local.mjs';
 import {spawnNode} from './pool-node.mjs';
 import {decoder} from './decoder.mjs';
+import {borderCase, pixelCase} from './fuzz-cases.mjs';
+import {createJPEGXLEncoder} from '../src/rapier-encoder.mjs';
 
 const seed = async name => new Uint8Array(await readFile(new URL('seeds/' + name, import.meta.url)));
 const pictures = async () => {
@@ -23,7 +25,13 @@ const pictures = async () => {
 };
 const run = async (picture, options, pool, hurryPast = 2) => {
   const job = encodePool(picture.rgba, picture.width, picture.height, options, pool);
-  for await (const done of job) if (done > hurryPast) job.hurry = true;
+  let previous = 0;
+  for await (const done of job) {
+    assert.ok(Number.isFinite(done) && done >= previous && done > 0 && done <= 1, 'completed work never moves backward');
+    previous = done;
+    if (done > hurryPast) job.hurry = true;
+  }
+  assert.equal(previous, 1);
   return job.bytes;
 };
 const same = (a, b) => Buffer.compare(a, b) === 0;
@@ -96,6 +104,31 @@ test('a pool writes the single thread\'s bytes for any number of workers', async
     const alone = encode(picture.rgba, picture.width, picture.height, {effort});
     for (const workers of [1, 2, 4]) assert.ok(same(await run(picture, {effort}, {spawn: spawnNode, workers}), alone), `${picture.width}x${picture.height} effort ${effort}, ${workers} workers`);
   }
+  // The two precise transforms of this small gradient tie at 141 bytes but encode different streams. Keep the
+  // original winner even if the later model answers first; RGBA also keeps colour samples and alpha unchanged.
+  for (const picture of [borderCase(32, 33), pixelCase(20260930, 0)]) {
+    const before = picture.rgba.slice(), alone = encode(picture.rgba, picture.width, picture.height, {effort: 9});
+    for (const workers of [1, 2, 3]) {
+      let held = null, secondDone = false;
+      const spawn = () => {
+        const worker = spawnNode();
+        let deliver;
+        Object.defineProperty(worker, 'onmessage', {
+          get: () => deliver && (message => {
+            if (workers > 1 && message.data.pool === 'candidate-done') {
+              if (message.data.k === 0 && !secondDone) { held = () => deliver(message); return; }
+              if (message.data.k === 1) { secondDone = true; deliver(message); held?.(); held = null; return; }
+            }
+            deliver(message);
+          }),
+          set: callback => { deliver = callback; }
+        });
+        return worker;
+      };
+      assert.deepEqual(await run(picture, {effort: 9}, {spawn, workers, groupWorkers: false}), alone);
+      assert.deepEqual(picture.rgba, before);
+    }
+  }
 });
 
 test('a pruned local model leaves later colour-transform candidates eligible', async () => {
@@ -129,6 +162,28 @@ test('a worker that fails, or none that starts, leaves its groups to this thread
   assert.ok(same(await run(painting, {effort: 4}, {spawn: crashing, workers: 3}), alone), 'one worker exits at its second group');
   assert.equal(await exited, 3, 'and it did exit there');
   assert.ok(same(await run(painting, {effort: 4}, {spawn: () => { throw new Error('no workers here'); }, workers: 3}), alone), 'no worker starts');
+  const picture = borderCase(32, 33), source = picture.rgba.slice(), precise = encode(picture.rgba, picture.width, picture.height, {effort: 9});
+  for (const failure of ['start', 'send', 'exit']) {
+    let injected = false;
+    const threads = [], spawn = () => {
+      if (failure === 'start') { injected = true; throw new Error('worker unavailable'); }
+      const worker = spawnNode(), post = worker.postMessage;
+      threads.push(new Promise(ended => worker.thread.once('exit', ended)));
+      worker.postMessage = (message, transfer) => {
+        if (message.pool === 'candidate' && !injected) {
+          injected = true;
+          if (failure === 'send') throw new Error('candidate transfer failed');
+          post(message, transfer); worker.thread.terminate(); return;
+        }
+        return post(message, transfer);
+      };
+      return worker;
+    };
+    assert.deepEqual(await run(picture, {effort: 9}, {spawn, workers: 2, groupWorkers: false}), precise, failure);
+    assert.ok(injected, failure + ' occurred during the helper candidate');
+    await Promise.all(threads);
+    assert.deepEqual(picture.rgba, source);
+  }
 });
 
 test('a hurried pool keeps effort 1\'s floor or a complete candidate', async () => {
@@ -139,6 +194,28 @@ test('a hurried pool keeps effort 1\'s floor or a complete candidate', async () 
     const bytes = await run(painting, {effort: 4}, {spawn: spawnNode, workers: 2}, from);
     assert.ok([first, third, encode(painting.rgba, 512, 384, {effort: 4})].some(candidate => same(candidate, bytes)), 'hurried past ' + from);
   }
+  const picture = borderCase(32, 33), source = picture.rgba.slice();
+  // The admitted screen model at effort 5 is complete before the helpers start, even when the later learned
+  // model at effort 8 beats it. A dispatch hurry can retain that earlier stream.
+  const candidates = [1, 3, 5, 8, 9].map(effort => encode(picture.rgba, picture.width, picture.height, {effort}));
+  let dispatched = false;
+  const threads = [], job = encodePool(picture.rgba, picture.width, picture.height, {effort: 9}, {
+    workers: 2, groupWorkers: false, spawn: () => {
+      const worker = spawnNode(), post = worker.postMessage;
+      threads.push(new Promise(ended => worker.thread.once('exit', ended)));
+      worker.postMessage = (message, transfer) => {
+        if (message.pool === 'candidate') { dispatched = true; job.hurry = true; }
+        return post(message, transfer);
+      };
+      return worker;
+    }
+  });
+  for await (const _ of job);
+  assert.ok(dispatched, 'hurry is requested while helper candidates are live');
+  assert.ok(candidates.some(bytes => same(bytes, job.bytes)), 'a hurried helper keeps a complete candidate');
+  assert.ok(job.bytes.length <= candidates[0].length);
+  await Promise.all(threads);
+  assert.deepEqual(picture.rgba, source);
 });
 
 test('leaving the job ends its workers', async () => {
@@ -148,6 +225,45 @@ test('leaving the job ends its workers', async () => {
   assert.equal(threads.length, 3);
   await Promise.all(threads);
   assert.equal(job.bytes, null);
+  const picture = borderCase(32, 33), source = picture.rgba.slice();
+  let dispatched = false;
+  const helpers = [], precise = encodePool(picture.rgba, picture.width, picture.height, {effort: 9}, {
+    workers: 2, groupWorkers: false, spawn: () => {
+      const worker = spawnNode(), post = worker.postMessage;
+      helpers.push(new Promise(ended => worker.thread.once('exit', ended)));
+      worker.postMessage = (message, transfer) => { if (message.pool === 'candidate') dispatched = true; return post(message, transfer); };
+      return worker;
+    }
+  });
+  for await (const _ of precise) if (dispatched) break;
+  assert.ok(dispatched, 'cancellation interrupts live helper candidates');
+  await Promise.all(helpers);
+  assert.equal(precise.bytes, null);
+  assert.deepEqual(picture.rgba, source);
+  const priorNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator'), callbackWorkers = [], callbackExits = [];
+  let callbackLive = false, cleanupTimer;
+  Object.defineProperty(globalThis, 'navigator', {configurable: true, value: {hardwareConcurrency: 3}});
+  try {
+    const encoder = createJPEGXLEncoder({spawn: () => {
+      const worker = spawnNode(), post = worker.postMessage;
+      callbackWorkers.push(worker); callbackExits.push(new Promise(ended => worker.thread.once('exit', ended)));
+      worker.postMessage = (message, transfer) => { if (message.pool === 'candidate') callbackLive = true; return post(message, transfer); };
+      return worker;
+    }});
+    const refusal = new Error('The progress consumer stopped');
+    await assert.rejects(encoder.encode(picture.rgba, picture.width, picture.height, {
+      quality: 100, effort: 9, progress: fraction => { if (callbackLive && fraction < 1) throw refusal; }
+    }), error => error === refusal);
+    assert.ok(callbackLive, 'the callback stops an encode with live helper work');
+    await Promise.race([Promise.all(callbackExits), new Promise((_, reject) => {
+      cleanupTimer = setTimeout(() => reject(new Error('The rejected encode retained helper workers')), 10000);
+    })]);
+    assert.deepEqual(picture.rgba, source);
+  } finally {
+    clearTimeout(cleanupTimer);
+    await Promise.all(callbackWorkers.map(worker => worker.terminate()));
+    if (priorNavigator) Object.defineProperty(globalThis, 'navigator', priorNavigator); else delete globalThis.navigator;
+  }
 });
 
 test('a send that throws, at the start, a pass or a task, leaves the groups to this thread and ends the workers', async () => {

@@ -14,7 +14,7 @@ export function createJPEGXLCodec({encoderFactory}) {
       const data = image.data instanceof Uint16Array || image.data instanceof Float32Array ? image.data : byteView(image.data);
       if (data.length !== width * height * 4) throw codecError('JXL_RGBA', 'JPEG XL encoding requires one RGBA value per pixel.');
       if (!options || typeof options !== 'object' || Array.isArray(options)) throw codecError('JXL_OPTIONS', 'JPEG XL options are invalid.');
-      const lossless = options.lossless === true, quality = lossless ? 100 : options.quality ?? 90, effort = options.effort ?? 9;
+      const lossless = options.lossless === true, quality = lossless ? 100 : options.quality ?? 90, effort = options.effort ?? 7;
       if (!Number.isFinite(quality) || quality < 1 || quality > 100 || !Number.isInteger(effort) || effort < 1 || effort > 9) throw codecError('JXL_OPTIONS', 'JPEG XL quality must be 1–100 and effort 1–9.');
       if (typeof encoderFactory !== 'function') throw codecError('JXL_UNAVAILABLE', 'The bundled JPEG XL codec is unavailable.');
       stage = 'starting encoder';
@@ -22,7 +22,7 @@ export function createJPEGXLCodec({encoderFactory}) {
       stage = 'encoding image';
       return encoder.encode(data, width, height, {...options, quality, effort, photo: options.photo === true});
     },
-    async transcode(input) {
+    async transcode(input, options = {}) {
       stage = 'checking image';
       const jpeg = byteView(input?.bytes);
       if (!jpeg.byteLength || jpeg.byteLength > JPEG_XL_LIMITS.bytes) throw codecError('JXL_INPUT', 'The JPEG is empty or exceeds 16 MiB.');
@@ -30,13 +30,13 @@ export function createJPEGXLCodec({encoderFactory}) {
       stage = 'starting encoder';
       encoder ||= encoderFactory();
       stage = 'carrying the JPEG';
-      return encoder.transcode(jpeg);
+      return encoder.transcode(jpeg, options);
     },
-    // Reply to a parallel group request using the shared encoder's transfer list.
-    serve(message) {
+    // Reply to a group or candidate request using the shared encoder's transfer list.
+    serve(message, report) {
       if (typeof encoderFactory !== 'function') return null;
       encoder ||= encoderFactory();
-      return encoder.serve(message);
+      return encoder.serve(message, report);
     },
     // No decode: browsers read JPEG XL themselves.
     failure(error) {
@@ -60,7 +60,7 @@ export function installJPEGXLWorker(configuration) {
   const codec = createJPEGXLCodec(configuration);
   let busy = false;
   globalThis.onmessage = async ({data: request}) => {
-    if (request?.pool) { const reply = codec.serve(request); if (reply) globalThis.postMessage(...reply); return; }
+    if (request?.pool) { const reply = codec.serve(request, message => globalThis.postMessage(message)); if (reply) globalThis.postMessage(...reply); return; }
     const id = request?.id;
     if ((typeof id !== 'number' && typeof id !== 'string') || String(id).length > 128) return;
     if (busy) {
@@ -69,19 +69,22 @@ export function installJPEGXLWorker(configuration) {
     }
     busy = true;
     try {
+      // Report forward progress for pixel encoding and JPEG coefficient carrying.
+      let reported = 0, at = 0;
+      const progress = request.progress === true ? value => {
+        const now = Date.now();
+        if (typeof value !== 'number' || !(value > reported) || value > 1 || value < 1 && (value - reported < 0.01 || now - at < 100)) return;
+        reported = value; at = now;
+        globalThis.postMessage({id, progress: value});
+      } : undefined;
+      const advance = progress ? value => { if (value < 1) progress(value); } : undefined;
       if (request.operation === 'encode') {
-        // Asked for with `progress: true`: how far the encode is, from 0 to 1, a reply of its own each hundredth.
-        let reported = 0, at = 0;
-        const progress = request.progress === true ? value => {
-          const now = Date.now();
-          if (typeof value !== 'number' || !(value > reported) || value < 1 && (value - reported < 0.01 || now - at < 100)) return;
-          reported = value; at = now;
-          globalThis.postMessage({id, progress: value});
-        } : undefined;
-        const bytes = await codec.encode({width: request.width, height: request.height, data: request.data}, progress ? {...request.options, progress} : request.options);
+        const bytes = await codec.encode({width: request.width, height: request.height, data: request.data}, progress ? {...request.options, progress: advance} : request.options);
+        progress?.(1);
         globalThis.postMessage({id, ok: true, bytes}, [bytes.buffer]);
       } else if (request.operation === 'transcode') {
-        const carried = await codec.transcode({bytes: request.bytes});
+        const carried = await codec.transcode({bytes: request.bytes}, {progress: advance});
+        progress?.(1);
         globalThis.postMessage({id, ok: true, ...carried}, [carried.bytes.buffer]);
       } else throw codecError('JXL_OPERATION', 'Unknown JPEG XL operation.');
     } catch (error) {

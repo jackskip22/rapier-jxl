@@ -17,7 +17,7 @@ import {SAMPLE_RUNGS, sampledSteps, sampleTransformRanking} from './sampled.mjs'
 const hurryOf = reply => reply === null || (typeof reply === 'object' ? reply.hurried : reply);
 
 // Validate before starting work. Pool requests preserve the encoder's format-group boundaries.
-export function effortJob(data, width, height, options, pool) {
+export function effortJob(data, width, height, options, pool, helpers = false, retainHurry) {
   const {quality, colorSpace} = admitOptions(options), effort = options?.effort === undefined ? 1 : options.effort;
   if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fault('JXL_INPUT', 'Effort is a whole number from 1 to 9.');
   const treeLearning = options?.treeLearning;
@@ -25,11 +25,11 @@ export function effortJob(data, width, height, options, pool) {
   admitPixels(data, width, height);
   const samples = admitSampleFormat(data, options);
   if (!samples.native8) return nativeSteps(data, width, height, {quality, samples, effort, pooled: pool && !groupLayout(width, height).single});
-  return effortSteps(data, width, height, quality, colorSpace, effort, pool && quality >= 100 && !groupLayout(width, height).single, treeLearning);
+  return effortSteps(data, width, height, quality, colorSpace, effort, pool && quality >= 100 && !groupLayout(width, height).single, treeLearning, helpers, retainHurry);
 }
 
 // Start with the core stream. Retain only smaller complete candidates, including after allocation failure.
-function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, treeLearning) {
+function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, treeLearning, helpers = false, retainHurry) {
   const shape = inspectPixels(data, width, height);
   if (quality < 100) {
     if (!shape.palette) return yield* lossySteps(data, width, height, {quality, shape, colorSpace});
@@ -41,7 +41,7 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, 
     return exact.length <= bytes.length ? exact : bytes;
   }
   if (effort < 2) return yield* losslessSteps(data, width, height, {shape, colorSpace, pooled});
-  if (treeLearning === 'sampled') return yield* sampledSearch(data, width, height, shape, colorSpace, effort, pooled);
+  if (treeLearning === 'sampled') return yield* sampledSearch(data, width, height, shape, colorSpace, effort, pooled, retainHurry);
   const analysis = {};
   let best = yield* part(losslessSteps(data, width, height, {shape, colorSpace, pooled, analysis}), 0, 2);
   const direct = shape.palette ? {...shape, palette: null} : shape;
@@ -53,17 +53,31 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, 
     if (effort >= 4 && shape.palette) searches.push(() => localSteps(data, width, height, shape, colorSpace, 4, true, pooled, best.length));
     if (effort >= 6 && shape.palette) searches.push(() => localSteps(data, width, height, shape, colorSpace, 6, true, pooled, best.length));
     if (effort >= 4) searches.push(() => rctSearchSteps(data, width, height, shape, colorSpace, pooled));
+    const rungs = learnedRungs(effort, data, width, height, shape), parallel = helpers && rungs.length > 1;
     // Pruning uses completed section bytes as a lower bound.
-    for (const rung of learnedRungs(effort, data, width, height, shape)) searches.push(() => sampledSteps(data, width, height, shape, colorSpace, rung, pooled, best.length));
+    if (!parallel) for (const rung of rungs) searches.push(() => sampledSteps(data, width, height, shape, colorSpace, rung, pooled, best.length));
     if (screen) searches.unshift(() => screenSteps(data, width, height, shape, colorSpace, {fastFloor: effort === 3 ? best.length : 0, effort, pooled}));
+    const count = searches.length + (parallel ? rungs.length : 0);
     for (let i = 0; i < searches.length; i++) {
       try {
         const search = searches[i]();
         let step, reply, hurried = false;
-        while (!(step = search.next(reply)).done) hurried = hurryOf(reply = yield scaled(step.value, done => 0.5 + (i + done) / (2 * searches.length)));
+        while (!(step = search.next(reply)).done) hurried = hurryOf(reply = yield scaled(step.value, done => 0.5 + (i + done) / (2 * count)));
         if (step.value && step.value.length < best.length) best = step.value;
         if (hurried) return best;
       } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
+    }
+    if (parallel) {
+      const reply = yield {kind: 'candidates', data, width, height, shape: {colour: shape.colour, alpha: shape.alpha, channels: shape.channels}, colorSpace, rungs, ceiling: best.length,
+        at: done => 0.5 + (searches.length + done * rungs.length) / (2 * count)};
+      // Fold in transform rank order. A common starting ceiling only permits more losing work, never a different tie.
+      for (const candidate of reply.results) {
+        if (!candidate) continue;
+        const {result, error} = candidate;
+        if (error && error.code !== 'JXL_SIZE' && !(error.name === 'RangeError' && !error.code))
+          throw Object.assign(new Error(error.message), error);
+        if (result && result.length < best.length) best = result;
+      }
     }
     return best;
   }
@@ -97,7 +111,7 @@ function learnedRungs(effort, data, width, height, shape) {
 }
 
 // The explicit sampled option retains its original contract: any hurry returns the core stream.
-function* sampledSearch(data, width, height, shape, colorSpace, effort, pooled) {
+function* sampledSearch(data, width, height, shape, colorSpace, effort, pooled, retainHurry) {
   const first = losslessSteps(data, width, height, {shape, colorSpace, pooled});
   let step, reply, hurried = false, last = 0;
   while (!(step = first.next(reply)).done) {
@@ -105,6 +119,8 @@ function* sampledSearch(data, width, height, shape, colorSpace, effort, pooled) 
     hurried ||= hurryOf(reply);
   }
   const floor = step.value;
+  // A pool reports completion after draining this generator; its last callback can still request hurry.
+  retainHurry?.(floor);
   if (hurried) return floor;
   const rungs = effort < 4 ? [SAMPLE_RUNGS.cheap] : [SAMPLE_RUNGS.cheap, SAMPLE_RUNGS.rich];
   let best = floor;

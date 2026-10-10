@@ -195,17 +195,17 @@ test('corpus efforts 1, 3, 4 and hurried jobs are byte-identical with accelerati
   use('off');
 });
 
-test('unavailable SIMD, absent WASM and CSP rejection use the exact JavaScript stream', () => {
+test('absent SIMD, absent WASM and CSP rejection keep the exact JavaScript stream', () => {
   const url=new URL('../src/kernels.mjs',import.meta.url).href, effortURL=new URL('../src/effort.mjs',import.meta.url).href;
   for(const scenario of ['no-simd','no-wasm','csp']) {
     const source=`import assert from 'node:assert/strict';import {encode} from ${JSON.stringify(effortURL)};import {configureKernels,kernelMode} from ${JSON.stringify(url)};
-    const d=Uint8Array.from({length:17*19*4},(_,i)=>(i*13)&255),before=[1,3,4].map(effort=>encode(d,17,19,{effort}));
+    const d=Uint8Array.from({length:17*19*4},(_,i)=>(i*13)&255),before=[1,3,4,9].map(effort=>encode(d,17,19,{effort}));
     // Scope the simulated platform to the encoder checks; queued host startup may still need WebAssembly.
     const wasm=WebAssembly,validate=wasm.validate,Module=wasm.Module;
     try {
     ${scenario==='no-simd'?'WebAssembly.validate=()=>false;':scenario==='no-wasm'?'globalThis.WebAssembly=undefined;':'WebAssembly.Module=function(){throw new Error("blocked by CSP")};'}
     assert.equal(configureKernels('auto'),'off');assert.equal(kernelMode(),'off');
-    for(const [i,effort]of [1,3,4].entries())assert.deepEqual(encode(d,17,19,{effort}),before[i]);
+    for(const [i,effort]of [1,3,4,9].entries())assert.deepEqual(encode(d,17,19,{effort}),before[i]);
     } finally {globalThis.WebAssembly=wasm;wasm.validate=validate;wasm.Module=Module;}
     console.log('fallback exact');`;
     const child=spawnSync(process.execPath,['--input-type=module','-e',source],{encoding:'utf8',timeout:30000});

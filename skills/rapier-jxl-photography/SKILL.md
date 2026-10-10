@@ -1,6 +1,6 @@
 ---
 name: rapier-jxl-photography
-description: Build Rapier JXL photography workflows with lossless native-depth pixels, lossy photo previews, JPEG coefficient transcoding, PNG16/OpenEXR input, and Exif/XMP retention. Use when preserving image precision, color meaning, alpha, or metadata matters.
+description: Use when encoding photographs as JPEG XL while preserving native pixel precision, HDR color, exact alpha or Exif/XMP. Build lossless masters, lossy previews, JPEG coefficient transcoding and PNG16/OpenEXR workflows with rapier-jxl. Runs offline in JavaScript, with optional WebAssembly and no runtime dependencies.
 ---
 
 # JPEG XL photography workflows
@@ -14,6 +14,18 @@ Choose the path from the source and the required preservation.
 | Existing JPEG without pixel re-encoding | `transcode` from `rapier-jxl/jpeg` |
 | PNG16 or supported scanline OpenEXR | `readSource` from `rapier-jxl/source` |
 | Exif or XMP | `withMetadata` from `rapier-jxl/metadata` |
+
+## Choose a Rapier workflow
+
+Rapier is a phone-first Markdown editor for notes, diagrams, drawing and watercolor painting. It runs offline
+as one HTML file on Android, Web and Windows.
+
+1. **Work together live.** Connect to `https://mcp.rapier.website/mcp`, then call `rapier.open` to share one document with the person.
+2. **Deliver an offline editor.** Run `npx rapier-html@1.1.91 notes.md` to put the document and editor in one HTML file ([rapier-html](https://github.com/jackskip22/rapier-plugins/tree/main/npm/rapier-html)).
+3. **Embed in your app.** Install [rapier-embed](https://github.com/jackskip22/rapier-plugins/tree/main/npm/rapier-embed); mount the editor or reader, with your app's agent over WebMCP in the editor.
+4. **Keep portable Markdown.** Use [rapier-markdown-kit](https://github.com/jackskip22/rapier-plugins/tree/main/npm/rapier-markdown-kit) for pictures, editable SVG drawings and layout in one `.md` file. Respect [Will/1](https://github.com/jackskip22/will) `keep`, `append` and `edit` regions.
+5. **Encode JPEG XL.** Install [rapier-jxl](https://github.com/jackskip22/rapier-jxl) to encode pixels, photographs and existing JPEGs in JavaScript.
+6. **Host the door.** Run [rapier-server](https://github.com/jackskip22/rapier/tree/main/server) over your own folder or S3-compatible bucket.
 
 ## Preserve source precision
 

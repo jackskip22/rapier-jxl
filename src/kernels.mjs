@@ -1,5 +1,5 @@
 // Optional integer WebAssembly kernels. MIT (LICENSE).
-// No fetch, runtime dependency, shared memory or floating-point byte decisions.
+// No fetch, runtime dependency, shared memory or rounded byte decisions.
 import {kernelHooks} from './kernel-hooks.mjs';
 import {BitWriter, LIMITS} from './bits.mjs';
 import {fault} from './admit.mjs';
@@ -25,7 +25,7 @@ function createEngine() {
   const memory = new WebAssembly.Memory({initial: 48, maximum: 272});
   const names = new Map(Object.entries(new WebAssembly.Instance(new WebAssembly.Module(decode(SCALAR)), {env: {memory}}).exports));
   // Lookup strings are ABI names, never JavaScript property-mangler candidates.
-  const scalar = {residual: names.get('residual'), tokens: names.get('tokens'), fill: names.get('fill'), weighted: names.get('weighted'), screen: names.get('screen')};
+  const scalar = {residual: names.get('residual'), tokens: names.get('tokens'), fill: names.get('fill'), weighted: names.get('weighted'), screen: names.get('screen'), sampled: names.get('sampled')};
   const u8 = new Uint8Array(memory.buffer), i32 = new Int32Array(memory.buffer);
   for (let i = 0; i < 64; i++) i32[(DIV >> 2) + i] = Math.floor(16777216 / (i + 1));
   for (let most = 12; most <= 13; most++) for (let sum = 0; sum < 2048; sum++) {
@@ -151,13 +151,64 @@ function screen(plane, width, height, predictor, depth, emit) {
   return true;
 }
 
+// One node crosses into the private arena; each column is counted and swept there.
+// Prices are exact integer f64 values, bounded below 2^37 for these byte symbols.
+function sampled(members, histograms, symbolSets, columns, table, rawPrice, choiceBits) {
+  const total = members.length, kinds = symbolSets.length, alphabet = rawPrice.length;
+  if (!(members instanceof Uint32Array) || total < 64 || total > 65536 || !kinds || kinds > 16 ||
+      !alphabet || alphabet > 256 || !(table instanceof Float64Array) || table.length < total + 1 ||
+      !(rawPrice instanceof Float64Array) || histograms.length !== kinds || !Number.isSafeInteger(choiceBits)) return false;
+  const count = symbolSets[0].length;
+  if (count > 65536 || count < total || table.length < count + 1 || symbolSets.some(s => !(s instanceof Uint8Array) || s.length !== count) ||
+      histograms.some(h => !(h instanceof Uint32Array) || h.length !== alphabet)) return false;
+  let maxCuts = 0;
+  for (const column of columns) {
+    if (!(column.indices instanceof Uint8Array) || column.indices.length !== count || column.cuts.length > 255) return false;
+    maxCuts = Math.max(maxCuts, column.cuts.length);
+  }
+  if (!maxCuts) return null;
+  const align = n => Math.ceil(n / 8) * 8;
+  const symbols = P, indices = symbols + total * kinds, histogram = align(indices + total);
+  const entropy = align(histogram + kinds * alphabet * 4), raw = entropy + (count + 1) * 8;
+  const output = raw + alphabet * 8, scratch = output + 24, bins = maxCuts + 1;
+  const needed = scratch + kinds * 32 + kinds * alphabet * 8 + bins * kinds * alphabet * 4 + total * 4 + (2 * bins + 1) * 4;
+  if (needed > engine.memory.buffer.byteLength) {
+    try { engine.memory.grow(Math.ceil((needed - engine.memory.buffer.byteLength) / 65536)); }
+    catch { return false; }
+    engine.u8 = new Uint8Array(engine.memory.buffer);
+    engine.i32 = new Int32Array(engine.memory.buffer);
+  }
+  const {u8, i32} = engine, f64 = new Float64Array(engine.memory.buffer);
+  for (let i = 0; i < total; i++) if (members[i] >= count) return false;
+  for (let c = 0; c < kinds; c++) {
+    const source = symbolSets[c], at = symbols + c * total;
+    for (let i = 0; i < total; i++) { const symbol = source[members[i]]; if (symbol >= alphabet) return false; u8[at + i] = symbol; }
+    i32.set(histograms[c], (histogram >> 2) + c * alphabet);
+  }
+  f64.set(table.subarray(0, count + 1), entropy >> 3); f64.set(rawPrice, raw >> 3);
+  const backend = active === 'simd' ? engine.simd : engine.scalar;
+  let best = null;
+  for (const column of columns) {
+    const cuts = column.cuts.length;
+    if (!cuts) continue;
+    const source = column.indices;
+    for (let i = 0; i < total; i++) { const bin = source[members[i]]; if (bin > cuts) return false; u8[indices + i] = bin; }
+    const bin = backend.sampled(symbols, total, kinds, indices, cuts, alphabet, histogram, entropy, raw, scratch, output);
+    if (bin < 0) continue;
+    const loBits = f64[(output + 8) >> 3], hiBits = f64[(output + 16) >> 3], gain = choiceBits - loBits - hiBits;
+    if (!best || gain > best.gain) best = {gain, column, bin,
+      lo: {selected: i32[output >> 2], bits: loBits}, hi: {selected: i32[(output + 4) >> 2], bits: hiBits}};
+  }
+  return best;
+}
+
 /** Configure optional kernels. Missing or blocked WASM or SIMD uses JavaScript.
  * `parts` is a deterministic per-realm ablation switch, not a timing-based decision.
  * Set it before an encode, never inside a progress callback.
  */
 function configureKernels(mode = 'auto', parts) {
   if (!['off', 'auto', 'scalar', 'simd'].includes(mode)) throw fault('JXL_INPUT', 'Kernel mode is off, auto, scalar or simd.');
-  kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.screen = null; active = 'off';
+  kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.screen = kernelHooks.sampled = null; active = 'off';
   if (mode === 'off') return active;
   try {
     if (typeof WebAssembly !== 'object' || !WebAssembly.validate || new Uint8Array(new Uint32Array([1]).buffer)[0] !== 1) return active;
@@ -167,7 +218,7 @@ function configureKernels(mode = 'auto', parts) {
     engine ||= createEngine();
     if (simd && !engine.simd) {
       const names = new Map(Object.entries(new WebAssembly.Instance(new WebAssembly.Module(decode(SIMD)), {env: {memory: engine.memory}}).exports));
-      engine.simd = {residual: names.get('residual'), fill: names.get('fill'), screen: names.get('screen')};
+      engine.simd = {residual: names.get('residual'), fill: names.get('fill'), screen: names.get('screen'), sampled: names.get('sampled')};
     }
     active = simd ? 'simd' : 'scalar';
     const enabled = parts ? new Map(Object.entries(parts)) : null;
@@ -175,7 +226,8 @@ function configureKernels(mode = 'auto', parts) {
     if (!enabled || enabled.get('weighted')) kernelHooks.weighted = weighted;
     if (!enabled || enabled.get('fill')) kernelHooks.fill = fill;
     if (!enabled || enabled.get('screen')) kernelHooks.screen = screen;
-  } catch { active = 'off'; kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.screen = null; }
+    if (enabled ? enabled.get('sampled') : mode !== 'auto') kernelHooks.sampled = sampled;
+  } catch { active = 'off'; kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.screen = kernelHooks.sampled = null; }
   return active;
 }
 function kernelMode() { return active; }

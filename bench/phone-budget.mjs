@@ -19,7 +19,7 @@ const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const file = fileURLToPath(import.meta.url);
 if (!isMainThread) {
   const {servePool} = await import(pathToFileURL(join(workerData.root, 'pool.mjs')));
-  parentPort.on('message', message => { const reply = servePool(message); if (reply) parentPort.postMessage(...reply); });
+  parentPort.on('message', message => { const reply = servePool(message, report => parentPort.postMessage(report)); if (reply) parentPort.postMessage(...reply); });
 } else {
   const known = new Set(['inputs', 'root', 'out', 'max-pixels', 'efforts', 'workers', 'rounds', 'cpu-share', 'cpus', 'profile', 'reference', 'child']);
   const args = Object.create(null);
@@ -102,7 +102,7 @@ if (!isMainThread) {
     const members = [];
     const spawnWorker = () => {
       // Profiles describe the caller. Worker time is included in aggregate CPU accounting, without per-job profile files.
-      const thread = new Worker(import.meta.url, {workerData: {root}, execArgv: []});
+      const thread = new Worker(file, {workerData: {root}, execArgv: []});
       let ending = false;
       const worker = {postMessage: (message, transfer) => thread.postMessage(message, transfer),
         terminate: () => { ending = true; return thread.terminate(); }, onmessage: null, onerror: null};
@@ -113,7 +113,7 @@ if (!isMainThread) {
     };
     const report = {complete: false, node: process.version, platform: process.platform, arch: arch(), machine: cpus()[0]?.model,
       mode: share === null ? 'Host CPU, ungoverned' : 'Synthetic aggregate CPU envelope', cpuSecondsPerWallSecond: share,
-      affinity: args.cpus ?? null, workerMeaning: 'Additional worker threads; the caller also codes groups. Zero calls the synchronous effort entry.',
+      affinity: args.cpus ?? null, workerMeaning: 'Requested helper budget, capped at three by the encoder. Zero calls the synchronous effort entry.',
       profileMeaning: 'V8 caller samples; worker threads excluded from profiles and included in process CPU samples.',
       cpuMeaning: 'cpuMs is aggregate process CPU; callerCpuMs is current-thread CPU. Both exclude voluntary pauses and blocked wall time.',
       root, sourceHashes, sourceSha256: hash(JSON.stringify(sourceHashes)), benchmarkSha256: hash(readFileSync(file)),

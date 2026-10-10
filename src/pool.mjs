@@ -3,14 +3,14 @@
 // Workers retain transferred pixels until the frame or group dimensions change. The coordinator selects models,
 // combines counts and sections in group order, and codes groups while waiting for worker results.
 //
-// spawn() returns a Worker whose script calls servePool and posts its response with the returned transfer list.
+// spawn() returns a Worker that forwards servePool(message, report) reports and transferable replies.
 // Job completion and cancellation terminate all workers. Failed workers fall back to the same local group functions.
-// Lossy images and images with one group use no workers.
+// Effort 9 also runs independent learned candidates, including images with one format group.
 import {groupLayout, groupRect, GROUP_DIM} from './frame.mjs';
 import {planGroup} from './lossless.mjs';
 import {colourTransform} from './rct-search.mjs';
 import {localGroup} from './local.mjs';
-import {sampledGroup} from './sampled.mjs';
+import {sampledGroup, sampledSteps} from './sampled.mjs';
 import {screenGroup} from './screen.mjs';
 import {paletteGroup} from './palette-search.mjs';
 import {searchGroup, effortJob} from './effort-job.mjs';
@@ -22,7 +22,18 @@ const work = (group, setup, rgba, stride, rect) => { const counts = setup.sizes?
 
 // Worker-local tiles and active pass. Reset releases both before a frame or layout change.
 let tiles = [], current = null;
-export function servePool(message) {
+export function servePool(message, report = () => {}) {
+  if (message.pool === 'candidate') {
+    const {id, k, data, width, height, shape, colorSpace, options, ceiling} = message;
+    try {
+      report({pool: 'candidate-progress', id, k, progress: 0});
+      const steps = sampledSteps(data, width, height, shape, colorSpace, options, false, ceiling);
+      let step;
+      while (!(step = steps.next()).done) if (step.value < 1) report({pool: 'candidate-progress', id, k, progress: step.value});
+      const result = step.value;
+      return [{pool: 'candidate-done', id, k, result}, result ? [result.buffer] : []];
+    } catch (error) { return [{pool: 'candidate-done', id, k, error: {name: error.name, code: error.code, message: error.message}}, []]; }
+  }
   if (message.pool === 'reset') { tiles = []; current = null; return null; }
   if (message.pool === 'tile') { tiles[message.g] = message; return null; }
   if (message.pool === 'pass') { current = {...message, group: WORK[message.kind](message.setup)}; return null; }
@@ -35,8 +46,10 @@ export function servePool(message) {
 
 // Async equivalent of encodeSteps: the same options, progress, hurry flag, and output bytes.
 // Leaving the async iterator terminates its workers.
-export function encodePool(data, width, height, options, {spawn, workers = 4} = {}) {
-  const steps = effortJob(data, width, height, options, true), layout = groupLayout(width, height), groups = layout.groupsX * layout.groupsY;
+export function encodePool(data, width, height, options, {spawn, workers = 3, groupWorkers = true} = {}) {
+  workers = Math.max(0, Math.min(3, Math.floor(workers) || 0));
+  let hurryBytes;
+  const steps = effortJob(data, width, height, options, groupWorkers && workers > 0, workers > 0, bytes => { hurryBytes = bytes; }), layout = groupLayout(width, height), groups = layout.groupsX * layout.groupsY;
   let members = null, failed = false, live = 0, serial = 0, ready = [], wake = () => {}, last = 0;
   let tiledData, tiledWidth, tiledHeight, tiledDim;
   const end = () => { if (members) for (const worker of members) worker.terminate(); members = []; tiledData = null; };
@@ -46,18 +59,22 @@ export function encodePool(data, width, height, options, {spawn, workers = 4} = 
     if (failed) return false;
     try { worker.postMessage(message, transfer); return true; } catch { fail(); return false; }
   };
-  // Start workers and transfer their initial groups.
-  const start = () => {
+  // Start only the workers the next pass can use. The same members serve groups and complete candidates.
+  const start = (count = Math.min(workers, groups)) => {
     members = [];
     try {
-      for (let k = 0; k < Math.min(workers, groups); k++) {
+      for (let k = 0; k < count; k++) {
         const worker = spawn();
         members.push(worker);
-        worker.onmessage = ({data: message}) => { worker.up = true; if (message.id === live) { worker.flight--; ready.push(message); worker.feed(); wake(); } };
+        worker.onmessage = ({data: message}) => {
+          if (!members.includes(worker) || message.id !== live) return;
+          worker.up = true;
+          if (message.pool === 'done') { worker.flight--; worker.feed(); }
+          ready.push(message); wake();
+        };
         worker.onerror = worker.onmessageerror = event => { event?.preventDefault?.(); if (members.includes(worker)) fail(); };
       }
     } catch { fail(); return; }
-    retile(data, width, height, GROUP_DIM);
   };
   // A format-group change or a patch frame changes the owned pixels. Reset before replacing tiles so workers do
   // not retain old atlas/body buffers or accidentally read a previous frame's tile at the same group number.
@@ -83,6 +100,60 @@ export function encodePool(data, width, height, options, {spawn, workers = 4} = 
     if (typeof setImmediate === 'function') { setImmediate(resolve); return; }
     channel ||= new MessageChannel(); channel.port1.onmessage = resolve; channel.port2.postMessage(0);
   });
+  // Fixed candidate shares count completed work, never elapsed time. Results retain transform rank order.
+  async function* candidates({shape, colorSpace, rungs, ceiling, at}) {
+    if (!members) start(Math.min(workers, rungs.length));
+    const id = live = ++serial, waiting = new Set(rungs.map((_, k) => k)), results = [], fractions = rungs.map(() => 0), local = [];
+    ready = [];
+    // Candidate workers own one source copy each. Drop obsolete group tiles before allocating it.
+    for (const worker of members) if (!send(worker, {pool: 'reset'})) break;
+    tiledData = null;
+    const count = Math.min(members.length, rungs.length);
+    for (let k = 0; k < rungs.length; k++) {
+      // With one helper, keep the first-ranked model on the already-warm coordinator.
+      const worker = count < rungs.length ? k > 0 && members[k - 1] : members[k];
+      if (!worker || failed) { local.push(k); continue; }
+      try {
+        const pixels = new Uint8Array(data);
+        send(worker, {pool: 'candidate', id, k, data: pixels, width, height, shape, colorSpace, options: rungs[k], ceiling}, [pixels.buffer]);
+      } catch { fail(); }
+    }
+    // Let a nested helper start before local model learning blocks its creator's thread.
+    if (local.length && count && !failed && !ready.length) await new Promise(resolve => { wake = resolve; });
+    const progress = (k, value) => {
+      fractions[k] = Math.max(fractions[k], value);
+      return at(fractions.reduce((sum, done) => sum + done, 0) / rungs.length);
+    };
+    while (waiting.size) {
+      let done = ready.shift();
+      if (!done) {
+        let k = local.shift();
+        while (k !== undefined && !waiting.has(k)) k = local.shift();
+        if (k === undefined && failed) k = waiting.values().next().value;
+        if (k === undefined) { await new Promise(resolve => { wake = resolve; }); continue; }
+        try {
+          const search = sampledSteps(data, width, height, shape, colorSpace, rungs[k], false, ceiling);
+          let step;
+          while (!(step = search.next(it.hurry)).done) {
+            if (step.value < 1) {
+              const value = progress(k, step.value);
+              if (value > last && value < 1) yield last = value;
+            }
+            await turn();
+          }
+          done = {k, result: step.value};
+        } catch (error) { done = {k, error: {name: error.name, code: error.code, message: error.message}}; }
+      }
+      if (!waiting.has(done.k)) continue;
+      const complete = done.pool !== 'candidate-progress';
+      if (complete) { results[done.k] = done; waiting.delete(done.k); }
+      const value = progress(done.k, complete ? 1 : done.progress);
+      if (value > last && value < 1) yield last = value;
+      if (it.hurry) { live = 0; return {results, hurried: true}; }
+    }
+    live = 0;
+    return {results, hurried: false};
+  }
   // Send one task until a worker first responds, then keep two in flight. The coordinator steals from the longest
   // unsent queue or a worker that has not responded. Duplicate results are identical and count only once.
   async function* pass({kind, setup, at, stop, byteCeiling, dim = GROUP_DIM, data: source = data, width: imageWidth = width, height: imageHeight = height}) {
@@ -120,7 +191,8 @@ export function encodePool(data, width, height, options, {spawn, workers = 4} = 
       waiting.delete(done.g); results[done.g] = done.result;
       if (byteCeiling !== undefined) sectionBytes += done.result.length;
       const g = groups - waiting.size - 1;
-      yield last = at(g);
+      const value = at(g);
+      if (value > last && value < 1) yield last = value;
       hurried = it.hurry;
       // A pruned candidate is not a hurried job. Later candidates still compete against the retained stream.
       if (byteCeiling !== undefined && sectionBytes >= byteCeiling) { live = 0; return {pruned: true, hurried}; }
@@ -133,15 +205,18 @@ export function encodePool(data, width, height, options, {spawn, workers = 4} = 
     let step, reply;
     try {
       // Start workers while the coordinator inspects the image.
-      if (!layout.single && (options?.quality ?? 100) >= 100) start();
+      if (groupWorkers && workers > 0 && !layout.single && (options?.quality ?? 100) >= 100) start();
       while (!(step = guard(() => reply instanceof Error ? steps.throw(reply) : steps.next(reply))).done) {
-        if (typeof step.value === 'number') { yield last = step.value; reply = it.hurry; }
-        else reply = yield* pass(step.value);
+        if (typeof step.value === 'number') {
+          if (step.value > last && step.value < 1) yield last = step.value;
+          reply = it.hurry;
+        } else reply = yield* (step.value.kind === 'candidates' ? candidates(step.value) : pass(step.value));
       }
     } finally { live = -1; end(); channel?.port1.close(); }
     // A candidate given up (the stream limit, or memory for a search) ends early.
-    if (last < 1) yield 1;
-    return it.bytes = answer(step.value);
+    const bytes = answer(step.value), hurried = hurryBytes && answer(hurryBytes);
+    yield 1;
+    return it.bytes = it.hurry && hurried ? hurried : bytes;
   })();
   it.bytes = null; it.hurry = false;
   return it;

@@ -268,12 +268,16 @@ effort 9. `lossless: true` forces quality 100. `photo: true` selects photographi
 quality 100; other inputs use the ordinary pixel encoder. The complete entry admits 24 million pixels,
 16,384 pixels per edge and 16 MiB output. JPEG input admits 16 MiB and 64 million pixels; transcoding uses effort 9,
 preserves admitted coefficients and orientation, and does not preserve the original JPEG file.
+Both methods accept `options.progress(fraction)` to report completed work from 0 to 1.
 
 The standard worker accepts one operation at a time:
 
-- `{id, operation: 'encode', data, width, height, options?, progress?}` returns `{id, ok: true, bytes}`. With `progress: true` the worker first sends `{id, progress}` replies, each a number above the last up to 1, at most about every hundredth and every 100 ms.
-- `{id, operation: 'transcode', bytes}` returns `{id, ok: true, bytes, width, height, orientation}`.
+- `{id, operation: 'encode', data, width, height, options?, progress?}` returns `{id, ok: true, bytes}`.
+- `{id, operation: 'transcode', bytes, progress?}` returns `{id, ok: true, bytes, width, height, orientation}`.
 - A failure returns `{id, ok: false, error: {code, message, stage?, detail?}}`. A concurrent request returns `JXL_BUSY`.
+
+With `progress: true`, either operation first sends `{id, progress}` replies. Fractions increase to 1; intermediate
+reports advance by at least one hundredth and are separated by at least 100 ms. Completion is the final response.
 
 Use a string or number `id` whose string representation is at most 128 characters. Output buffers transfer to the
 caller. Passing an input buffer in `postMessage`'s transfer list detaches it from the sender. Terminate the worker to
