@@ -2,7 +2,7 @@
 import {configureKernels} from './kernels.mjs';
 import {encodeSteps} from './effort.mjs';
 import {encodePool, servePool} from './pool.mjs';
-import {transcodeSteps, reconstructJPEG} from './jpeg.mjs';
+import {transcodeSteps, reconstructJPEG} from './jpeg-ans.mjs';
 import {encodePhotoSteps} from './photo.mjs';
 import {inspectPixels} from './lossless.mjs';
 

@@ -1,6 +1,6 @@
 {
   "name": "rapier-jxl",
-  "version": "4.1.0",
+  "version": "4.1.1",
   "description": "JPEG XL encoder in JavaScript, with optional WebAssembly. Lossless and lossy, exact alpha, HDR and JPEG transcoding, offline in browsers, Node or one HTML file. Built for photography tools and single-file apps. MIT, no dependencies.",
   "license": "MIT",
   "type": "module",
@@ -111,7 +111,6 @@
     "kernels",
     "docs",
     "examples",
-    "bench",
     "skills",
     "LICENSE",
     "README.md",
@@ -155,16 +154,9 @@
     "agent-skills"
   ],
   "scripts": {
-    "test": "node --test \"test/*.test.mjs\"",
-    "test:types": "tsc --noEmit --strict --exactOptionalPropertyTypes --module NodeNext --moduleResolution NodeNext --target ES2022 --lib ES2022,DOM test/types.mts",
-    "test:package": "node test/package.mjs .",
-    "fuzz:scale": "node test/fuzz-shards.mjs",
     "build:kernels": "node kernels/build.mjs"
   },
   "devDependencies": {
-    "jxl-oxide-wasm": "0.12.6",
-    "terser": "5.51.2",
-    "typescript": "7.0.2",
     "wabt": "1.0.39"
   }
 }

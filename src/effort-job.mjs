@@ -21,18 +21,19 @@ export function effortJob(data, width, height, options, pool, helpers = false, r
   const treeLearning = options?.treeLearning;
   if (treeLearning !== undefined && treeLearning !== 'sampled') throw fault('JXL_INPUT', 'Tree learning must be sampled when specified.');
   const losslessProfile = options?.losslessProfile;
-  if (losslessProfile !== undefined && losslessProfile !== 'painting') throw fault('JXL_INPUT', 'The lossless profile is painting when specified.');
+  if (losslessProfile !== undefined && losslessProfile !== 'painting' && losslessProfile !== 'painting-search') throw fault('JXL_INPUT', 'The lossless profile is painting or painting-search when specified.');
   admitPixels(data, width, height);
   const samples = admitSampleFormat(data, options);
   if (losslessProfile === 'painting') {
     admitPaintingProfile(quality, samples);
     return paintingSteps(data, width, height, {colorSpace, pooled: pool && !groupLayout(width, height).single});
   }
+  if (losslessProfile === 'painting-search') admitPaintingProfile(quality, samples);
   if (!samples.native8) return nativeSteps(data, width, height, {quality, samples, effort, pooled: pool && !groupLayout(width, height).single});
-  return effortSteps(data, width, height, quality, colorSpace, effort, pool && quality >= 100 && !groupLayout(width, height).single, treeLearning, helpers, retainHurry);
+  return effortSteps(data, width, height, quality, colorSpace, effort, pool && quality >= 100 && !groupLayout(width, height).single, treeLearning, helpers, retainHurry, losslessProfile === 'painting-search');
 }
 
-function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, treeLearning, helpers = false, retainHurry) {
+function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, treeLearning, helpers = false, retainHurry, painting = false) {
   const shape = inspectPixels(data, width, height);
   if (quality < 100) {
     if (!shape.palette) return yield* lossySteps(data, width, height, {quality, shape, colorSpace});
@@ -53,11 +54,11 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, 
   const direct = shape.palette ? {...shape, palette: null} : shape;
   const screen = effort >= 3 && screenEligible(data, width, height, shape, effort);
   if (effort >= 3) {
-    const searches = effort >= 4 || screen ? [() => searchSteps(data, width, height, direct, colorSpace, 3, pooled, analysis, screen ? best.length : Infinity)] : [];
+    const searches = !painting && (effort >= 4 || screen) ? [() => searchSteps(data, width, height, direct, colorSpace, 3, pooled, analysis, screen ? best.length : Infinity)] : [];
     if (effort >= 4 && shape.palette) searches.push(() => localSteps(data, width, height, shape, colorSpace, 4, true, pooled, best.length));
     if (effort >= 6 && shape.palette) searches.push(() => localSteps(data, width, height, shape, colorSpace, 6, true, pooled, best.length));
-    if (effort >= 4) searches.push(() => rctSearchSteps(data, width, height, shape, colorSpace, pooled));
-    const rungs = effort > 3 || !screen ? learnedRungs(effort, data, width, height, shape) : [], parallel = helpers && rungs.length > 1;
+    if (effort >= 4 && !painting) searches.push(() => rctSearchSteps(data, width, height, shape, colorSpace, pooled));
+    const rungs = effort > 3 || !screen ? learnedRungs(effort, data, width, height, shape, painting) : [], parallel = helpers && rungs.length > 1;
     if (!parallel) {
       const budgets = rungs.map(() => ({reached: pooled})), key = rung => JSON.stringify({...rung, leaves: 0});
       rungs.forEach((rung, i) => {
@@ -115,8 +116,8 @@ const LADDER = Object.freeze({
   8: [{rung: 'precise', ranked: 0}, {rung: 'sampled', ranked: 0}, {rung: 'branching', ranked: 0}],
   9: [{rung: 'precise', ranked: 1}, {rung: 'dense', ranked: 0}, {rung: 'deep', ranked: 0}],
 });
-function learnedRungs(effort, data, width, height, shape) {
-  const steps = effort <= 4 ? LADDER[effort] : Array.from({length: Math.max(0, effort - 4)}, (_, i) => LADDER[i + 5] || []).flat(), ranking = shape.colour === 3 && steps.some(step => step.ranked !== undefined) ? sampleTransformRanking(data, width, height) : [6];
+function learnedRungs(effort, data, width, height, shape, painting = false) {
+  const steps = (effort <= 4 ? LADDER[effort] : Array.from({length: Math.max(0, effort - 4)}, (_, i) => LADDER[i + 5] || []).flat()).filter(step => !painting || step.rung !== 'maximum'), ranking = shape.colour === 3 && steps.some(step => step.ranked !== undefined) ? sampleTransformRanking(data, width, height) : [6];
   const rungs = [], types = [], bases = [];
   for (const step of steps) {
     const base = SEARCH_RUNGS[step.rung], type = step.ranked === undefined ? 6 : ranking[step.ranked] ?? 6;

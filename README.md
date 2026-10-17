@@ -4,7 +4,7 @@ JPEG XL encoder for single-file HTML apps and photography tools. Pure JavaScript
 Deno. Lossless, lossy, native precision, HDR, exact alpha and JPEG transcoding. [MIT license](LICENSE), no runtime
 dependencies. Use it in an app or an agent's image workflow.
 
-The complete worker for [Rapier](https://rapier.website) is **69,891 gzip bytes**, with optional
+The complete worker for [Rapier](https://rapier.website) is **70,232 gzip bytes**, with optional
 WebAssembly and parallel workers. The separate core is **11,866 gzip bytes**. Both fit in one HTML file.
 
 ```sh
@@ -39,11 +39,11 @@ as one HTML file on Android, Web and Windows.
 
 | Build / import | Gzip bytes | Capabilities |
 | --- | ---: | --- |
-| **Rapier worker** · `rapier-jxl/rapier/worker` | 69,891 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel lossless groups. |
-| Rapier module · `rapier-jxl/rapier/min` | 69,944 | The same system with an encoder factory and worker installer. |
+| **Rapier worker** · `rapier-jxl/rapier/worker` | 70,232 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel lossless groups. |
+| Rapier module · `rapier-jxl/rapier/min` | 70,286 | The same system with an encoder factory and worker installer. |
 | Core · `rapier-jxl/min` | 11,866 | Lossless or lossy typed RGBA, native precision, HDR and exact alpha. |
-| Effort · `rapier-jxl/effort/min` | 36,938 | Core with lossless compression search, efforts 1–9. |
-| WASM · `rapier-jxl/wasm/min` | 46,068 | Effort with inlined WASM and JavaScript fallback. |
+| Effort · `rapier-jxl/effort/min` | 36,994 | Core with lossless compression search, efforts 1–9. |
+| WASM · `rapier-jxl/wasm/min` | 46,113 | Effort with inlined WASM and JavaScript fallback. |
 | Photo · `rapier-jxl/photo/min` | 16,210 | Lossy photographs from RGBA pixels. |
 | JPEG · `rapier-jxl/jpeg/min` | 23,726 | Existing JPEGs, preserving admitted coefficients and orientation. |
 | Metadata · `rapier-jxl/metadata/min` | 2,573 | Attach, replace or remove caller-supplied Exif/XMP. |

@@ -9,8 +9,9 @@ export interface EffortOptions extends EncodeOptions {
    * Omit to include all candidates. Hurrying this search returns effort 1's bytes. */
   treeLearning?: 'sampled' | undefined;
   /** Exact painting encoding for straight RGBA8 with sRGB transfer and sRGB or Display P3 primaries.
-   * Requires quality 100. Uses core lossless prediction and palette selection without the effort ladder. */
-  losslessProfile?: 'painting' | undefined;
+   * Requires quality 100. `'painting'` uses core lossless prediction and palette selection without the effort ladder.
+   * `'painting-search'` runs the effort ladder without the candidates that do not win on paintings. */
+  losslessProfile?: 'painting' | 'painting-search' | undefined;
 }
 /** Lossless encoding: effort 1 writes the core's bytes; 2 adds weighted prediction; 3 learns a small tree per group
  * with ANS instead (a screen keeps error contexts and screen coding); 4 adds error contexts, color-transform search and

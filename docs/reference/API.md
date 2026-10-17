@@ -59,7 +59,7 @@ have no `/min` entry. Encoding needs no decoder; rendering JPEG XL requires a se
 | `alphaPremultiplied` | Boolean, default false. True carries associated RGB and alpha without division, including nonzero RGB below zero alpha. |
 | `effort` | Integer from 1 to 9, default 1, in effort, wasm, photo, and JPEG entry points. Selects additional search; the core has no effort option. |
 | `treeLearning` | `'sampled'`, in effort and wasm only. Selects a separate reduced lossless search. Normally omit to include all candidates. |
-| `losslessProfile` | `'painting'`, in effort, wasm, and the complete encoder. Requires quality 100 and straight RGBA8 with sRGB transfer, sRGB or Display P3 primaries, and the default intensity target. Uses core lossless coding without the effort ladder. |
+| `losslessProfile` | `'painting'` or `'painting-search'`, in effort, wasm, and the complete encoder. Requires quality 100 and straight RGBA8 with sRGB transfer, sRGB or Display P3 primaries, and the default intensity target. `'painting'` uses core lossless coding without the effort ladder; `'painting-search'` runs the effort ladder for paintings. |
 
 The core uses modular lossless or lossy coding. For ordinary 8-bit sRGB-transfer inputs the photo entry point uses VarDCT
 below quality 100 and lossless modular coding at 100. Native precision and other color/alpha declarations use the
@@ -96,10 +96,12 @@ candidate at the requested effort. Native precision uses the search described be
 
 Photo and JPEG efforts 3 and 4 try alternative entropy models and coefficient orders. Photo effort 5 and above
 also tries ANS. These searches preserve coefficients and decoded samples. The `-ans` imports try ANS from effort 2.
+At JPEG efforts 2 to 7 the ANS entry writes one ANS pass first and runs the prefix search only for pictures up to
+512 x 512 pixels, where it can still be smaller.
 JPEG effort 8 also combines learned orders with alternate histogram clustering. Effort 9 adds exact prefix-header
 pricing and exact-count order candidates. The optional JPEG ANS entry adds corresponding ANS combinations.
 These higher levels increase search time without changing decoded samples. The complete worker's JPEG route
-continues to use effort 7; use the JPEG entry points to select effort 8 or 9.
+uses the ANS entry at effort 7; use the JPEG entry points to select effort 8 or 9.
 Only a strictly smaller completed stream replaces the retained result. Alpha stays exact at every quality.
 
 ### Lossless painting profile
@@ -113,6 +115,10 @@ it keeps the ordinary effort behavior. Other pixel formats and quality below 100
 ```js
 const bytes = encode(rgba, width, height, {quality: 100, losslessProfile: 'painting'});
 ```
+
+Set `losslessProfile: 'painting-search'` to search for a smaller painting at the requested effort. It runs that
+effort's ladder without the weighted and color-transform searches and the `maximum` learned models, which did not win
+on paintings. At effort 7 it wrote the same bytes as the ordinary search on eight paintings in 69% of the time.
 
 `hurry` finishes the core lossless encode rather than returning a partial stream. Leaving the iterator cancels and leaves
 `job.bytes` null. The complete encoder can distribute painting groups across available helper workers.
@@ -158,9 +164,8 @@ Conformance tests independently read back bit depth, exponent width, primaries, 
 and alpha association. Finite source samples, including signed zero and subnormals, return exactly
 through native libjxl 0.12.0. Unmodified jxl-rs 0.7.4 also returns every finite binary16 value exactly when F32 output
 is requested. Its F16 output conversion halves subnormals and fails the strict F16 test until the explicitly named
-F16-output diagnostic repair is applied. The full public suite uses four documented decoder repairs, including
-three retained ordinary-image defects. [Decoder pins, output formats, and repairs](DECODERS.md) identify
-the unmodified release and diagnostic builds separately; no browser binary is inferred from them. Floating output
+F16-output diagnostic repair is applied. The full suite uses four documented decoder repairs, including
+three retained ordinary-image defects. Floating output
 APIs can quiet signaling NaNs or canonicalize NaN payloads; the encoder's lossless modular input retains the supplied
 IEEE words. Arbitrary NaN payload round trips through every decoder output format are not claimed.
 

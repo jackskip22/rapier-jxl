@@ -52,11 +52,5 @@ The worker pool distributes group counting, writing, and predictor search. Each 
 group and its match history. Workers replace their tiles when the frame or group dimensions change, including
 transitions between a patch atlas and its image body. The coordinator combines histograms and sections in group order.
 
-The public checks cover decoded pixels, alpha, malformed streams and byte equality:
-
-```sh
-node --test test/screen.test.mjs test/screen-lz77.test.mjs test/screen-patches.test.mjs
-```
-
 The format uses ISO/IEC 18181 modular frames, LZ77 and patch dictionaries. These modules are MIT-licensed JavaScript;
 no fonts, OCR model or additional runtime dependency is required.

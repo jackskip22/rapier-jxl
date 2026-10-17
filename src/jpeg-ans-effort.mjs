@@ -1,14 +1,35 @@
 // SPDX-License-Identifier: MIT
 import {jpegEffortSteps} from './jpeg-effort.mjs';
-import {coefficientAnsSteps} from './coefficient-ans.mjs';
-import {coefficientOrderSteps} from './coefficient-effort.mjs';
+import {coefficientEffortSteps, coefficientOrderSteps} from './coefficient-effort.mjs';
 import {varDCTSteps} from './vardct.mjs';
 import {buildAnsCoding} from './ans.mjs';
+import {part} from './bits.mjs';
+
+export const PREFIX_LADDER_PIXELS = 512 * 512;
+
+export function* jpegAnsFirstSteps(jpeg, effort, fallback, retain) {
+  if (effort < 2) return yield* coefficientEffortSteps(jpeg, effort, fallback, retain);
+  let ladder = jpeg.width * jpeg.height <= PREFIX_LADDER_PIXELS, best = fallback;
+  try {
+    const candidate = varDCTSteps(jpeg, {coding: buildAnsCoding});
+    let step;
+    while (!(step = candidate.next()).done) {
+      if ((yield ladder ? step.value / 2 : step.value) && best && step.value < 1) { candidate.return(); return best; }
+    }
+    if (!best || step.value.length < best.length) best = step.value;
+    retain?.(step.value, {coding: buildAnsCoding});
+  } catch (error) {
+    if (!(error instanceof RangeError && !error.code) && error.code !== 'JXL_SIZE') throw error;
+    if (!best) ladder = true;
+  }
+  if (!ladder || (yield 0.5) && best) return best;
+  return yield* part(coefficientEffortSteps(jpeg, effort, best, retain), 1, 2);
+}
 
 export function* jpegAnsEffortSteps(jpeg, effort, retain) {
-  if (effort < 8) return yield* jpegEffortSteps(jpeg, effort, retain, coefficientAnsSteps);
+  if (effort < 8) return yield* jpegEffortSteps(jpeg, effort, retain, jpegAnsFirstSteps);
   let step, hurry, best;
-  const floor = jpegEffortSteps(jpeg, effort, retain, coefficientAnsSteps);
+  const floor = jpegEffortSteps(jpeg, effort, retain, jpegAnsFirstSteps);
   while (!(step = floor.next(hurry)).done) hurry = yield step.value / 2;
   best = step.value;
   if (hurry) return best;
