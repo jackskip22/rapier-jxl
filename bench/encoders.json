@@ -1,0 +1,139 @@
+{
+  "asOf": "2026-09-30",
+  "terser": "5.51.2",
+  "scope": "Published executable JavaScript/WebAssembly encoder payloads found through npm jpeg-xl/jpegxl/jxl searches and upstream repositories; single-thread variants. Decoder-only packages are identified, not ranked. No claim of an exhaustive internet census or the minimum possible build.",
+  "entries": [
+    {
+      "name": "@jsquash/jxl",
+      "version": "1.3.0",
+      "tarball": "https://registry.npmjs.org/@jsquash/jxl/-/jxl-1.3.0.tgz",
+      "integrity": "sha512-IVOPTneyOd9eBAuow+FnCYIP6wkIc7CjrCDnZGiqAPyJ63vMVxv3zoWiucGiZVh6u9vi/l40AkcS9QwkoVSAqA==",
+      "files": [
+        "codec/enc/jxl_enc.js",
+        "codec/enc/jxl_enc.wasm"
+      ],
+      "capability": "8-bit lossless/lossy RGBA; single-thread encoder factory",
+      "encoder": true,
+      "source": "git+https://github.com/jamsinclair/jSquash.git"
+    },
+    {
+      "name": "@discourse/jxl",
+      "version": "1.3.0",
+      "tarball": "https://registry.npmjs.org/@discourse/jxl/-/jxl-1.3.0.tgz",
+      "integrity": "sha512-Veu75DEDC7uKsCCsD94UIjFwvHE73+AATBQbBWb83QyJV34wmyxl2Ji+fiiM234mlNn4cpo3DUl0QFrXgRTcfA==",
+      "files": [
+        "codec/enc/jxl_enc.js",
+        "codec/enc/jxl_enc.wasm"
+      ],
+      "capability": "jSquash fork; 8-bit lossless/lossy RGBA",
+      "encoder": true,
+      "source": "git+https://github.com/discourse/jSquash.git"
+    },
+    {
+      "name": "@lacinak/jsquash-jxl",
+      "version": "1.3.0-kelaci.0",
+      "tarball": "https://registry.npmjs.org/@lacinak/jsquash-jxl/-/jsquash-jxl-1.3.0-kelaci.0.tgz",
+      "integrity": "sha512-LZp9O+iYDR2FtSFf4C2p5OQF9NofGOq7/mMUnLbMCMxPHTFLijugUI3iATyRHEwX8v4/br4swDru3TAffcORkw==",
+      "files": [
+        "codec/enc/jxl_enc.js",
+        "codec/enc/jxl_enc.wasm"
+      ],
+      "capability": "jSquash fork with 8/10/12/16/32-bit input options",
+      "encoder": true,
+      "source": "git+https://github.com/kelaci/jSquash.git"
+    },
+    {
+      "name": "@squoosh-kit/jxl",
+      "version": "0.2.10",
+      "tarball": "https://registry.npmjs.org/@squoosh-kit/jxl/-/jxl-0.2.10.tgz",
+      "integrity": "sha512-yDYw4J0UbZm2+69NSm9IiNnccvUzzThFzlizAQ94vrIUkRfQHFe8l4g1avXui7YFNw80DdAfaZ3q+K026oKRRw==",
+      "files": [
+        "dist/wasm/jxl-enc/jxl_enc.js",
+        "dist/wasm/jxl-enc/jxl_enc.wasm"
+      ],
+      "capability": "8-bit lossless/lossy RGBA; low-level single-thread factory, kit wrapper excluded",
+      "encoder": true,
+      "source": "git+https://github.com/bnowak008/squoosh-kit.git"
+    },
+    {
+      "name": "icodec",
+      "version": "0.6.0",
+      "tarball": "https://registry.npmjs.org/icodec/-/icodec-0.6.0.tgz",
+      "integrity": "sha512-m9ptjNaqBTmnTOc7CkNgTXFrAY6QBjiyri6Ba66AGfGN1+OWPBej8cKgeZ+LwKH53zwDu36zukX2PaO8NTUMbw==",
+      "files": [
+        "dist/jxl-enc.js",
+        "dist/jxl-enc.wasm"
+      ],
+      "capability": "8\u201316-bit lossless/lossy pixels; low-level encoder factory",
+      "encoder": true,
+      "source": "git+https://github.com/Kaciras/icodec.git"
+    },
+    {
+      "name": "@cornerstonejs/codec-libjxl",
+      "version": "1.1.1",
+      "tarball": "https://registry.npmjs.org/@cornerstonejs/codec-libjxl/-/codec-libjxl-1.1.1.tgz",
+      "integrity": "sha512-Gp5AXNDuqX9CggJ6VJzjEuPowL2IsKGkvUPo3I7ZmCaY1vNDTwOdJUFrHACl3RIMDm+EL9EUw0Lhsmbs5b0fvA==",
+      "files": [
+        "dist/jpegxlwasm_encode.js",
+        "dist/jpegxlwasm_encode.wasm"
+      ],
+      "capability": "1\u201316-bit grayscale/RGB lossless/lossy; DICOM-oriented API",
+      "encoder": true,
+      "source": "git+https://github.com/cornerstonejs/codecs.git"
+    },
+    {
+      "name": "jxl-wasm",
+      "version": "0.7.0",
+      "tarball": "https://registry.npmjs.org/jxl-wasm/-/jxl-wasm-0.7.0.tgz",
+      "integrity": "sha512-SQJddwn5YR3fIJnXs9kZQgB7ZtbXzlDOfMdh37zEWGgYooSsXt5fuPRz59AxpozlR1AdScFg4u9+RnH7B/vgSg==",
+      "files": [
+        "lib/cjxl.js",
+        "lib/cjxl.wasm",
+        "lib/cjxl-wrap.js"
+      ],
+      "capability": "libjxl0.7 command-line interface; pixels and reversible JPEG",
+      "encoder": true,
+      "source": "git+https://github.com/saschanaz/jxl-wasm.git"
+    },
+    {
+      "name": "jpeg-to-jxl",
+      "version": "0.2.0",
+      "tarball": "https://registry.npmjs.org/jpeg-to-jxl/-/jpeg-to-jxl-0.2.0.tgz",
+      "integrity": "sha512-e3m8iml/FAX3rsH0wXzRnxA6wuPIipRLi2lIucnvRyGSYCx4CVWjUSsK47x9J022uo7q/wRQ/Poa+mBl3rycHg==",
+      "files": [
+        "dist/index.js",
+        "dist/transcode.js",
+        "dist/transcode.wasm"
+      ],
+      "capability": "JPEG recompression with exact JPEG reconstruction; also includes decode/JPEG fallback",
+      "encoder": true,
+      "source": "git+https://github.com/ChefJulio/jpeg-to-jxl.git"
+    },
+    {
+      "name": "@squoosh/lib",
+      "version": "0.5.3",
+      "tarball": "https://registry.npmjs.org/@squoosh/lib/-/lib-0.5.3.tgz",
+      "integrity": "sha512-d/yn6M0P5rk+L0QOl/hzvlHDqXCCmEvwdcYu7sXwhyYDNskg9oxlZtZTBaKKbX6Vq0rzajI9GZkDC0zXlz/oRw==",
+      "files": [
+        "build/index.js",
+        "build/jxl_node_enc-b8ea914c.wasm"
+      ],
+      "capability": "8-bit lossless/lossy pixels; shared multi-codec JS and JXL encoder WASM",
+      "encoder": true,
+      "source": "git+https://github.com/GoogleChromeLabs/squoosh.git"
+    },
+    {
+      "name": "jxl-oxide-wasm",
+      "version": "0.12.6",
+      "tarball": "https://registry.npmjs.org/jxl-oxide-wasm/-/jxl-oxide-wasm-0.12.6.tgz",
+      "integrity": "sha512-nZlPNSJidFAjkTqNcxxqdac/DxY0oNqr/Q98xOb3UutQyvopHjyubnW7KCjvwFuAr3Lew6xRe+7/zZ8tkbFxug==",
+      "files": [
+        "jxl_oxide_wasm.js",
+        "jxl_oxide_wasm_bg.wasm"
+      ],
+      "capability": "Decoder only; excluded from encoder ranking",
+      "encoder": false,
+      "source": "git+https://github.com/tirr-c/jxl-oxide.git"
+    }
+  ]
+}

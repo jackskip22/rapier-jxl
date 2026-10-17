@@ -1,0 +1,170 @@
+{
+  "name": "rapier-jxl",
+  "version": "4.1.0",
+  "description": "JPEG XL encoder in JavaScript, with optional WebAssembly. Lossless and lossy, exact alpha, HDR and JPEG transcoding, offline in browsers, Node or one HTML file. Built for photography tools and single-file apps. MIT, no dependencies.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "types": "./src/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.mts",
+      "default": "./src/index.mjs"
+    },
+    "./core": {
+      "types": "./src/index.d.mts",
+      "default": "./src/index.mjs"
+    },
+    "./min": {
+      "types": "./src/index.d.mts",
+      "default": "./dist/rapier-jxl.min.mjs"
+    },
+    "./core/min": {
+      "types": "./src/index.d.mts",
+      "default": "./dist/rapier-jxl.min.mjs"
+    },
+    "./jpeg": {
+      "types": "./src/jpeg.d.mts",
+      "default": "./src/jpeg.mjs"
+    },
+    "./jpeg/min": {
+      "types": "./src/jpeg.d.mts",
+      "default": "./dist/jpeg.min.mjs"
+    },
+    "./photo": {
+      "types": "./src/photo.d.mts",
+      "default": "./src/photo.mjs"
+    },
+    "./photo/min": {
+      "types": "./src/photo.d.mts",
+      "default": "./dist/photo.min.mjs"
+    },
+    "./jpeg-ans": {
+      "types": "./src/jpeg-ans.d.mts",
+      "default": "./src/jpeg-ans.mjs"
+    },
+    "./jpeg-ans/min": {
+      "types": "./src/jpeg-ans.d.mts",
+      "default": "./dist/jpeg-ans.min.mjs"
+    },
+    "./photo-ans": {
+      "types": "./src/photo-ans.d.mts",
+      "default": "./src/photo-ans.mjs"
+    },
+    "./photo-ans/min": {
+      "types": "./src/photo-ans.d.mts",
+      "default": "./dist/photo-ans.min.mjs"
+    },
+    "./effort": {
+      "types": "./src/effort.d.mts",
+      "default": "./src/effort.mjs"
+    },
+    "./effort/min": {
+      "types": "./src/effort.d.mts",
+      "default": "./dist/effort.min.mjs"
+    },
+    "./writer": {
+      "types": "./src/writer.d.mts",
+      "default": "./src/writer.mjs"
+    },
+    "./source": {
+      "types": "./src/source.d.mts",
+      "default": "./src/source.mjs"
+    },
+    "./metadata": {
+      "types": "./src/metadata.d.mts",
+      "default": "./src/metadata.mjs"
+    },
+    "./metadata/min": {
+      "types": "./src/metadata.d.mts",
+      "default": "./dist/metadata.min.mjs"
+    },
+    "./package.json": "./package.json",
+    "./kernels": {
+      "types": "./src/kernels.d.mts",
+      "default": "./src/kernels.mjs"
+    },
+    "./wasm": {
+      "types": "./src/wasm.d.mts",
+      "default": "./src/wasm.mjs"
+    },
+    "./wasm/min": {
+      "types": "./src/wasm.d.mts",
+      "default": "./dist/wasm.min.mjs"
+    },
+    "./rapier": {
+      "types": "./src/rapier.d.mts",
+      "default": "./src/rapier.mjs"
+    },
+    "./rapier/min": {
+      "types": "./src/rapier.d.mts",
+      "default": "./dist/rapier.min.mjs"
+    },
+    "./rapier/worker": {
+      "types": "./src/rapier-worker.d.mts",
+      "default": "./dist/rapier-worker.js"
+    }
+  },
+  "files": [
+    "src",
+    "dist",
+    "kernels",
+    "docs",
+    "examples",
+    "bench",
+    "skills",
+    "LICENSE",
+    "README.md",
+    "llms.txt",
+    ".github/CONTRIBUTING.md"
+  ],
+  "sideEffects": [
+    "./src/wasm.mjs",
+    "./dist/wasm.min.mjs",
+    "./dist/rapier-worker.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jackskip22/rapier-jxl.git"
+  },
+  "homepage": "https://github.com/jackskip22/rapier-jxl#readme",
+  "bugs": {
+    "url": "https://github.com/jackskip22/rapier-jxl/issues"
+  },
+  "keywords": [
+    "jpeg-xl",
+    "jpegxl",
+    "jxl",
+    "javascript",
+    "encoder",
+    "image-compression",
+    "lossless",
+    "lossy",
+    "hdr",
+    "offline",
+    "single-file-html",
+    "webassembly",
+    "photography",
+    "exif",
+    "xmp",
+    "browser",
+    "zero-dependency",
+    "agent-skills"
+  ],
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "test:types": "tsc --noEmit --strict --exactOptionalPropertyTypes --module NodeNext --moduleResolution NodeNext --target ES2022 --lib ES2022,DOM test/types.mts",
+    "test:package": "node test/package.mjs .",
+    "fuzz:scale": "node test/fuzz-shards.mjs",
+    "build:kernels": "node kernels/build.mjs"
+  },
+  "devDependencies": {
+    "jxl-oxide-wasm": "0.12.6",
+    "terser": "5.51.2",
+    "typescript": "7.0.2",
+    "wabt": "1.0.39"
+  }
+}
