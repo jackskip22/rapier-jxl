@@ -161,7 +161,7 @@ allocate the largest image. [Precision, bounds and limits](API.md).
 | `photo-ans.min.mjs` | 43,095 | 17,295 | 15,291 |
 | `metadata.min.mjs` | 4,994 | 2,573 | 2,164 |
 | All self-contained entry points in one bundle | 199,814 | 77,390 | 65,443 |
-| All readable modules in `src/` | 397,497 | 107,040 | |
+| All readable modules in `src/` | 397,497 | 107,292 | |
 
 Release 4.2.0, Terser 5.51.2, Node v22.23.3, gzip 9 and Brotli 11. Exact byte counts, import graphs, hashes
 and incremental sizes are in [dist/sizes.json](../../dist/sizes.json). Encoding builds are checked against their
