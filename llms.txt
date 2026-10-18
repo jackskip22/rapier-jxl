@@ -35,7 +35,7 @@ Complete Rapier system: `rapier-jxl/rapier/min` exports `createEncoder()` and `i
 `rapier-jxl/rapier/worker` is a self-starting classic worker, byte-identical to the app's encoder. It includes optional
 WASM, effort 1–9, Photo, JPEG transcoding and parallel lossless groups. Pixel defaults: effort 7, quality 90;
 `lossless: true` forces quality 100. JPEG uses effort 7. See [the complete API](docs/reference/API.md#complete-rapier-system)
-for typed requests, module-worker spawning and Blob URL lifetime. Complete worker: 70,232 gzip bytes.
+for typed requests, module-worker spawning and Blob URL lifetime. Complete worker: 71,321 gzip bytes.
 
 Choose an entry point:
 
@@ -53,7 +53,7 @@ Encoding entry points and `rapier-jxl/metadata` have self-contained `/min` build
 Import the complete file to access its public export names; minification renames local functions.
 Use readable imports when bundling several capabilities so they share code.
 
-Package: `rapier-jxl`. Version: 4.1.1. Install: `npm install rapier-jxl`.
+Package: `rapier-jxl`. Version: 4.2.0. Install: `npm install rapier-jxl`.
 ES modules with no automatic filesystem or network I/O.
 Core payload: 28,153 minified bytes; 11,866 gzip bytes.
 Runs in browsers, module workers, Node, and Deno. This package encodes JPEG XL and reconstructs JPEGs it carried; it does not include a JPEG XL pixel decoder.

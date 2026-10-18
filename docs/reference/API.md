@@ -101,7 +101,7 @@ At JPEG efforts 2 to 7 the ANS entry writes one ANS pass first and runs the pref
 JPEG effort 8 also combines learned orders with alternate histogram clustering. Effort 9 adds exact prefix-header
 pricing and exact-count order candidates. The optional JPEG ANS entry adds corresponding ANS combinations.
 These higher levels increase search time without changing decoded samples. The complete worker's JPEG route
-uses the ANS entry at effort 7; use the JPEG entry points to select effort 8 or 9.
+uses the ANS entry and defaults to effort 7; its `effort` option accepts 1 through 9.
 Only a strictly smaller completed stream replaces the retained result. Alpha stays exact at every quality.
 
 ### Lossless painting profile

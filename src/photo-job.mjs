@@ -4,6 +4,7 @@ import {admitEffort} from './effort-level.mjs';
 import {losslessSteps, nativeSteps} from './lossless.mjs';
 import {admitOptions, admitPixels, admitSampleFormat, job} from './admit.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
+import {photoXYBSteps, preferXYB} from './photo-xyb.mjs';
 
 export function photoJob(data, width, height, options, coefficients) {
   const {quality, colorSpace} = admitOptions(options, 90), effort = admitEffort(options);
@@ -15,6 +16,7 @@ export function photoJob(data, width, height, options, coefficients) {
 
 function* photoSteps(data, width, height, quality, colorSpace, effort, encodeCoefficients) {
   if (quality >= 100) return yield* losslessSteps(data, width, height, {colorSpace});
-  const coefficients = yield* part(photoCoefficientSteps(data, width, height, quality, colorSpace), 0, 2);
+  const coefficients = yield* part(colorSpace === 'srgb' && preferXYB(data, width, height) ? photoXYBSteps(data, width, height, quality)
+    : photoCoefficientSteps(data, width, height, quality, colorSpace), 0, 2);
   return yield* part(encodeCoefficients(coefficients, effort), 1, 2);
 }

@@ -61,7 +61,7 @@ export function transcodeJPEG(bytes, jpeg = parseJPEG(bytes)) { return encodeVar
 export function encodeVarDCT(jpeg, plan) { return complete(varDCTSteps(jpeg, plan)); }
 
 export function* varDCTSteps(jpeg, plan = {}) {
-  const {width, height, components, alpha} = jpeg, grey = components.length === 1;
+  const {width, height, components, alpha, xyb} = jpeg, grey = components.length === 1;
   const quantScale = jpeg.quantScale || 1;
   let field = jpeg.quantFieldBase || 1;
   while (field / (8 * 255 * quantScale) < 1 / 16384) field *= 2;
@@ -83,8 +83,8 @@ export function* varDCTSteps(jpeg, plan = {}) {
   const blockAt = (c, bx, by) => { const comp = comps[c]; if (grey && c !== 1) return -1; return ((by * comp.stride) + bx) * 64; };
 
   const gcd1024 = q => { let d = 1024; while (q % d) d >>= 1; return d; };
-  const dcScale = comps.map(c => ycbcr ? 1 : c.quant[0] / gcd1024(c.quant[0]));
-  const dcLift = comps.map(c => ycbcr ? 0 : 1024 / gcd1024(c.quant[0]));
+  const dcScale = comps.map(c => ycbcr || xyb ? 1 : c.quant[0] / gcd1024(c.quant[0]));
+  const dcLift = comps.map(c => ycbcr || xyb ? 0 : 1024 / gcd1024(c.quant[0]));
   const lumaW = xsizeBlocks >> hshift(1), lumaH = ysizeBlocks >> vshift(1), lumaDc = new Int32Array(lumaW * lumaH);
   for (let by = 0; by < lumaH; by++) for (let bx = 0; bx < lumaW; bx++) lumaDc[by * lumaW + bx] = comps[1].coeffs[blockAt(1, bx, by)] * dcScale[1] + dcLift[1];
   const lumaQuant = comps[1].quant, quantSum = (lumaQuant[8] + lumaQuant[16] + lumaQuant[24] + lumaQuant[32] + lumaQuant[40]) / quantScale;
@@ -93,13 +93,14 @@ export function* varDCTSteps(jpeg, plan = {}) {
   let contexts = blockContexts(lumaDc, wanted, grey);
 
   const header = new BitWriter(256);
-  writeImageHeader(header, width, height, grey ? 1 : 3, !!alpha, {orientation: jpeg.orientation, colorSpace: jpeg.colorSpace});
+  writeImageHeader(header, width, height, grey ? 1 : 3, !!alpha, {xyb, orientation: jpeg.orientation, colorSpace: jpeg.colorSpace});
   header.write(1, 0); header.write(2, 0); header.write(1, 0);
   header.write(2, 2); header.write(8, 128 - 17);
-  header.write(1, ycbcr ? 1 : 0);
+  if (!xyb) header.write(1, ycbcr ? 1 : 0);
   if (ycbcr) for (let c = 0; c < 3; c++) header.write(2, rawH[c] === 0 && rawV[c] === 0 ? 0 : rawH[c] === 1 && rawV[c] === 1 ? 1 : rawH[c] === 1 ? 2 : 3);
   header.write(2, 0);
   if (alpha) header.write(2, 0);
+  if (xyb) { header.write(3, 2); header.write(3, 2); }
   writeFrameHeaderEnd(header, alpha);
 
   const nzeros = [0, 1, 2].map(() => new Int32Array(32 * 32));
@@ -175,7 +176,8 @@ export function* varDCTSteps(jpeg, plan = {}) {
   for (const t of contexts.thresholds) dc.writeU32([[4, 0], [8, 16], [16, 272], [32, 65808]], packSigned(t));
   dc.write(4, 0); dc.write(4, 0);
   writeContextMap(dc, contexts.map);
-  dc.write(1, 0); dc.write(2, 0); dc.write(16, 0); dc.write(16, 0); dc.write(8, 128); dc.write(8, 128);
+  if (xyb) dc.write(1, 1);
+  else { dc.write(1, 0); dc.write(2, 0); dc.write(16, 0); dc.write(16, 0); dc.write(8, 128); dc.write(8, 128); }
   dc.write(1, 0);
   if (alpha) writeModularStream(dc, [single ? alphaPlane(0, 0) : {w: 0, h: 0, data: new Int32Array(0)}], GRADIENT_PREDICTOR);
   checkSection(0);
@@ -198,8 +200,13 @@ export function* varDCTSteps(jpeg, plan = {}) {
     const cw = (rw + 7) >> 3, ch = (rh + 7) >> 3;
     const blocks = new Int32Array(count * 2).fill(field - 1, count);
     if (jpeg.quantFields) for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) blocks[count + y * rw + x] = jpeg.quantFields[(y0 + y) * xsizeBlocks + x0 + x] - 1;
+    const colors = [new Int32Array(cw * ch), new Int32Array(cw * ch)];
+    if (xyb && jpeg.cfl) for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+      const at = ((y0 >> 3) + y) * jpeg.cfl.width + (x0 >> 3) + x;
+      colors[0][y * cw + x] = jpeg.cfl.x[at]; colors[1][y * cw + x] = jpeg.cfl.b[at];
+    }
     writeModularStream(w, [
-      {w: cw, h: ch, data: new Int32Array(cw * ch)}, {w: cw, h: ch, data: new Int32Array(cw * ch)},
+      {w: cw, h: ch, data: colors[0]}, {w: cw, h: ch, data: colors[1]},
       {w: count, h: 2, data: blocks}, {w: rw, h: rh, data: new Int32Array(count)},
     ], field > 1 ? GRADIENT_PREDICTOR : ZERO_PREDICTOR);
     checkSection(1 + g);

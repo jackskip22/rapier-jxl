@@ -33,6 +33,14 @@ function dot8(data, at, step, basis) {
   return sum;
 }
 
+export function transformDCT8(block, intermediate, sums) {
+  for (let c = 0; c < 3; c++) {
+    for (let y = 0; y < 8; y++) for (let u = 0; u < 8; u++) intermediate[y * 8 + u] = dot8(block, c * 64 + y * 8, 1, u * 8);
+    for (let v = 0; v < 8; v++) for (let u = 0; u < 8; u++) sums[c * 64 + v * 8 + u] = dot8(intermediate, u, 8, v * 8);
+  }
+  return sums;
+}
+
 export function dctBlocks(data, width, height) {
   const block = new Float64Array(192), intermediate = new Float64Array(64), sums = new Float64Array(192);
   return (bx, by) => {
@@ -43,11 +51,7 @@ export function dctBlocks(data, width, height) {
       block[64 + k] = -0.168735892 * r - 0.331264108 * g + 0.5 * b;
       block[128 + k] = 0.5 * r - 0.418687589 * g - 0.081312411 * b;
     }
-    for (let c = 0; c < 3; c++) {
-      for (let y = 0; y < 8; y++) for (let u = 0; u < 8; u++) intermediate[y * 8 + u] = dot8(block, c * 64 + y * 8, 1, u * 8);
-      for (let v = 0; v < 8; v++) for (let u = 0; u < 8; u++) sums[c * 64 + v * 8 + u] = dot8(intermediate, u, 8, v * 8);
-    }
-    return sums;
+    return transformDCT8(block, intermediate, sums);
   };
 }
 

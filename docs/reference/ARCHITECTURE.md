@@ -97,6 +97,12 @@ Readable imports share `rapier-jxl/kernels`. Set controls before an encode. [Ker
 | JPEG and photo | JPEG parsing or photographic DCT feeding shared coefficient and VarDCT writers. Photo effort 5 adds ANS; separate ANS entry points start at effort 2. |
 | Kernels | Optional integer operations behind the same JavaScript encoding interface. |
 
+sRGB photographic pixels below quality 100 use the XYB color transform and the shared DCT8 writer when detail is
+mostly in luminance. A bounded sample retains the existing color transform for strong color edges. XYB uses
+64-pixel chroma-from-luma tiles. Other admitted color spaces keep their existing photographic transform; quality 100
+uses exact modular coding. JPEG transcoding carries the original coefficients and does not use the photographic
+color transform.
+
 The core excludes the optional search, ANS, JPEG, photo, source-file parser, metadata and WASM modules. Native precision shares its
 modular planner and writer. `rapier-jxl/writer` exposes typed format primitives in readable source; minified builds
 rename internal format fields.
@@ -144,20 +150,20 @@ allocate the largest image. [Precision, bounds and limits](API.md).
 
 | File in `dist/` | Bytes | gzip | Brotli |
 | --- | ---: | ---: | ---: |
-| `rapier-worker.js` | 182,432 | 70,232 | 60,090 |
-| `rapier.min.mjs` | 182,577 | 70,286 | 60,081 |
-| `rapier-jxl.min.mjs` | 28,153 | 11,866 | 10,615 |
-| `effort.min.mjs` | 95,619 | 36,994 | 32,135 |
-| `wasm.min.mjs` | 117,206 | 46,113 | 39,664 |
-| `jpeg.min.mjs` | 60,746 | 23,726 | 20,901 |
-| `photo.min.mjs` | 40,195 | 16,210 | 14,360 |
-| `jpeg-ans.min.mjs` | 64,389 | 24,849 | 21,854 |
-| `photo-ans.min.mjs` | 40,179 | 16,200 | 14,354 |
-| `metadata.min.mjs` | 4,994 | 2,573 | 2,165 |
-| All self-contained entry points in one bundle | 196,763 | 76,168 | 64,550 |
-| All readable modules in `src/` | 391,579 | 105,584 | |
+| `rapier-worker.js` | 185,376 | 71,321 | 61,018 |
+| `rapier.min.mjs` | 185,521 | 71,373 | 61,023 |
+| `rapier-jxl.min.mjs` | 28,153 | 11,866 | 10,576 |
+| `effort.min.mjs` | 95,619 | 36,994 | 32,152 |
+| `wasm.min.mjs` | 117,206 | 46,113 | 39,694 |
+| `jpeg.min.mjs` | 60,981 | 23,820 | 20,983 |
+| `photo.min.mjs` | 43,111 | 17,305 | 15,344 |
+| `jpeg-ans.min.mjs` | 64,624 | 24,954 | 21,993 |
+| `photo-ans.min.mjs` | 43,095 | 17,295 | 15,291 |
+| `metadata.min.mjs` | 4,994 | 2,573 | 2,164 |
+| All self-contained entry points in one bundle | 199,814 | 77,390 | 65,443 |
+| All readable modules in `src/` | 397,497 | 107,040 | |
 
-Release 4.1.1, Terser 5.51.2, Node v22.23.3, gzip 9 and Brotli 11. Exact byte counts, import graphs, hashes
+Release 4.2.0, Terser 5.51.2, Node v22.23.3, gzip 9 and Brotli 11. Exact byte counts, import graphs, hashes
 and incremental sizes are in [dist/sizes.json](../../dist/sizes.json). Encoding builds are checked against their
 readable entries on encoded-byte fixtures and native integer/float cases with HDR and alpha declarations. The metadata
 build is checked against its readable entry for identical container bytes.
