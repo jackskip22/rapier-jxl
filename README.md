@@ -11,30 +11,6 @@ WebAssembly and parallel workers. The separate core is **11,945 gzip bytes**.
 npm install rapier-jxl
 ```
 
-## Upgrade from 3.x
-
-- JPEG transcoding now returns a JPEG XL container with `jbrd` reconstruction data, rather than a bare codestream.
-  Use `reconstructJPEG(bytes)` or `encoder.reconstruct({bytes})` to recover the original JPEG exactly.
-- Exif/XMP edits through `withMetadata` now throw `JXL_INPUT` for these reconstruction containers. Keep the carried
-  metadata unchanged; pixel-encoded images still support metadata edits.
-- A successful worker response can have `bytes: null` for `reconstruct` when no reconstruction data is present.
-  Check for `null` before creating a Blob or reading the bytes.
-
-Reconstruction reads this encoder's supported output, not arbitrary JPEG XL files. Damaged or unsupported
-reconstruction forms throw `JXL_RECONSTRUCTION`. [JPEG input limits and reconstruction](docs/reference/API.md#existing-jpegs).
-
-## Choose a Rapier workflow
-
-Rapier is a phone-first Markdown editor for notes, diagrams, drawing and watercolor painting. It runs offline
-as one HTML file on Android, Web and Windows.
-
-1. **Work together live.** Connect to `https://mcp.rapier.website/door/mcp`, then call `open`. Use the returned `editor_url` to work with the person and read `rapier://guide` for the tools.
-2. **Deliver an offline editor.** Run `npx rapier-html notes.md` to put the document and editor in one HTML file ([rapier-html](https://github.com/jackskip22/rapier-plugins/tree/main/npm/rapier-html)).
-3. **Embed in your app.** Install [rapier-embed](https://github.com/jackskip22/rapier-plugins/tree/main/npm/rapier-embed); mount the editor or reader, with your app's agent over WebMCP in the editor.
-4. **Keep portable Markdown.** Use [rapier-markdown-kit](https://github.com/jackskip22/rapier-plugins/tree/main/npm/rapier-markdown-kit) for pictures, editable SVG drawings and layout in one `.md` file. Respect [Will/1](https://github.com/jackskip22/will) `keep`, `append` and `edit` regions.
-5. **Encode JPEG XL.** Install [rapier-jxl](https://github.com/jackskip22/rapier-jxl) to encode pixels, photographs and existing JPEGs in JavaScript.
-6. **Host the door.** Run [rapier-server](https://github.com/jackskip22/rapier/tree/main/server) over your own folder or S3-compatible bucket.
-
 ## Builds
 
 | Build / import | Gzip bytes | Capabilities |
