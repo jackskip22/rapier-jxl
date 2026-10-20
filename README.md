@@ -1,11 +1,11 @@
 # Rapier JXL
 
-JPEG XL encoder for single-file HTML apps and photography tools. Pure JavaScript, offline in browsers, Node and
+Tiny JPEG XL encoder, great for single-file HTML apps and photography tools. Pure JavaScript, offline in browsers, Node and
 Deno. Lossless, lossy, native precision, HDR, exact alpha and JPEG transcoding. [MIT license](LICENSE), no runtime
 dependencies. Use it in an app or an agent's image workflow.
 
 The complete worker for [Rapier](https://rapier.website) is **73,183 gzip bytes**, with optional
-WebAssembly and parallel workers. The separate core is **11,945 gzip bytes**. Both fit in one HTML file.
+WebAssembly and parallel workers. The separate core is **11,945 gzip bytes**.
 
 ```sh
 npm install rapier-jxl
