@@ -81,13 +81,14 @@ export function writeChannelHistograms(w, orderedLeaves, freqs, histogramOf = le
   return histograms;
 }
 
-export function codeChannel(w, target, plane, width, height, leaf, raw = false) {
-  if (kernelHooks.channel?.(w, target, plane, width, height, leaf, raw)) return;
+export function codeChannel(w, target, plane, width, height, leaf, raw = false, visit) {
+  if (!visit && kernelHooks.channel?.(w, target, plane, width, height, leaf, raw)) return;
   const predictor = leaf.predictor, offset = leaf.offset, multiplier = leaf.multiplier;
   const config = leaf.config || RESIDUAL_CONFIG, lengthConfig = RUN_CONFIG;
   let run = 0;
   const emit = (value, tokenConfig = config, base = 0) => {
-    if (w) writeHybrid(w, target, tokenConfig, value, base);
+    if (visit) visit(value, tokenConfig, base);
+    else if (w) writeHybrid(w, target, tokenConfig, value, base);
     else if (raw && !base) target[value]++;
     else countToken(tokenConfig, value, target, raw ? target.length - 33 : base);
   };

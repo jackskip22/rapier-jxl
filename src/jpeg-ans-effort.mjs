@@ -2,34 +2,55 @@
 import {jpegEffortSteps} from './jpeg-effort.mjs';
 import {coefficientEffortSteps, coefficientOrderSteps} from './coefficient-effort.mjs';
 import {varDCTSteps} from './vardct.mjs';
-import {buildAnsCoding} from './ans.mjs';
+import {buildAnsCoding, writeModularAnsHistograms} from './ans.mjs';
 import {part} from './bits.mjs';
 
 export const PREFIX_LADDER_PIXELS = 512 * 512;
 
-export function* jpegAnsFirstSteps(jpeg, effort, fallback, retain) {
-  if (effort < 2) return yield* coefficientEffortSteps(jpeg, effort, fallback, retain);
+export function* jpegAnsFirstSteps(jpeg, effort, fallback, retain, shared = {}) {
+  if (effort < 2) return yield* coefficientEffortSteps(jpeg, effort, fallback, retain, shared);
   let ladder = jpeg.width * jpeg.height <= PREFIX_LADDER_PIXELS, best = fallback;
+  const learn = effort >= 4 && !ladder;
   try {
-    const candidate = varDCTSteps(jpeg, {coding: buildAnsCoding});
-    let step;
+    const plan = {coding: buildAnsCoding, modularAns: writeModularAnsHistograms};
+    const candidate = varDCTSteps(jpeg, plan, shared);
+    let step, hurry;
     while (!(step = candidate.next()).done) {
-      if ((yield ladder ? step.value / 2 : step.value) && best && step.value < 1) { candidate.return(); return best; }
+      hurry = yield ladder || learn ? step.value / 2 : step.value;
+      if (hurry && best && step.value < 1) { candidate.return(); return best; }
     }
     if (!best || step.value.length < best.length) best = step.value;
-    retain?.(step.value, {coding: buildAnsCoding});
+    retain?.(step.value, plan);
+    if (hurry) return best;
   } catch (error) {
     if (!(error instanceof RangeError && !error.code) && error.code !== 'JXL_SIZE') throw error;
     if (!best) ladder = true;
   }
-  if (!ladder || (yield 0.5) && best) return best;
-  return yield* part(coefficientEffortSteps(jpeg, effort, best, retain), 1, 2);
+  if (ladder) {
+    if ((yield 0.5) && best) return best;
+    return yield* part(coefficientEffortSteps(jpeg, effort, best, retain, shared), 1, 2);
+  }
+  if (!learn || (yield 0.5)) return best;
+  try {
+    const learning = coefficientOrderSteps(jpeg.components);
+    let step;
+    while (!(step = learning.next()).done) if (yield 0.5 + step.value / 4) { learning.return(); return best; }
+    const plan = {orders: step.value, coding: buildAnsCoding, modularAns: writeModularAnsHistograms};
+    const candidate = varDCTSteps(jpeg, plan, shared);
+    while (!(step = candidate.next()).done) if ((yield 0.75 + step.value / 4) && step.value < 1) { candidate.return(); return best; }
+    if (step.value.length < best.length) best = step.value;
+    retain?.(step.value, plan);
+  } catch (error) {
+    if (!(error instanceof RangeError && !error.code) && error.code !== 'JXL_SIZE') throw error;
+  }
+  return best;
 }
 
 export function* jpegAnsEffortSteps(jpeg, effort, retain) {
-  if (effort < 8) return yield* jpegEffortSteps(jpeg, effort, retain, jpegAnsFirstSteps);
+  const shared = {};
+  if (effort < 8) return yield* jpegEffortSteps(jpeg, effort, retain, jpegAnsFirstSteps, shared);
   let step, hurry, best;
-  const floor = jpegEffortSteps(jpeg, effort, retain, jpegAnsFirstSteps);
+  const floor = jpegEffortSteps(jpeg, effort, retain, jpegAnsFirstSteps, shared);
   while (!(step = floor.next(hurry)).done) hurry = yield step.value / 2;
   best = step.value;
   if (hurry) return best;
@@ -45,8 +66,8 @@ export function* jpegAnsEffortSteps(jpeg, effort, retain) {
     return step.value;
   }
   function* write(orders, clusters) {
-    const plan = {orders, clusters, coding: buildAnsCoding};
-    const steps = varDCTSteps(jpeg, plan);
+    const plan = {orders, clusters, coding: buildAnsCoding, modularAns: writeModularAnsHistograms};
+    const steps = varDCTSteps(jpeg, plan, shared);
     while (!(step = steps.next()).done) {
       hurry = yield 0.5 + (part + step.value) / (2 * parts);
       if (hurry && step.value < 1) { steps.return(); return; }

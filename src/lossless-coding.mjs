@@ -6,16 +6,21 @@ import {ALPHABET} from './modular.mjs';
 const LOSSLESS_INTEGER_CONFIGS = [uintConfig(0), uintConfig(4), uintConfig(4, 1, 1), uintConfig(3, 0, 1), uintConfig(4, 2, 0), uintConfig(4, 2, 1), uintConfig(4, 1, 2)];
 
 export function losslessCoding(raw) {
-  const end = raw.length - 33, token = [0, 0, 0];
+  const token = [0, 0, 0], literals = [], lengths = raw.lengths || raw.subarray(raw.length - 33);
+  if (raw.literals) { for (const [value, count] of raw.literals) if (count) literals.push(value, count); }
+  else for (let value = 0, end = raw.length - 33; value < end; value++) if (raw[value]) literals.push(value, raw[value]);
+  let runExtra = 0;
+  for (let s = 0; s < 33; s++) runExtra += lengths[s] * Math.max(0, s - 12);
   let original, best;
-  for (const config of LOSSLESS_INTEGER_CONFIGS) {
+  candidate: for (const config of LOSSLESS_INTEGER_CONFIGS) {
     const freqs = new Uint32Array(ALPHABET);
-    let extra = 0;
-    for (let value = 0; value < end; value++) if (raw[value]) {
-      hybridToken(config, value, token);
-      freqs[token[0]] += raw[value]; extra += raw[value] * token[1];
+    let extra = runExtra;
+    for (let i = 0; i < literals.length; i += 2) {
+      hybridToken(config, literals[i], token);
+      if (token[0] >= 224) continue candidate;
+      freqs[token[0]] += literals[i + 1]; extra += literals[i + 1] * token[1];
     }
-    for (let s = 0; s < 33; s++) { freqs[224 + s] = raw[end + s]; extra += raw[end + s] * Math.max(0, s - 12); }
+    freqs.set(lengths, 224);
     const code = buildCode(freqs), w = new BitWriter(128);
     writeUintConfig(w, config); writePrefixCode(w, code);
     let bits = w.bitLength + extra + (code.alphabetSize === 1 ? 1 : 5 + floorLog2(code.alphabetSize - 1));

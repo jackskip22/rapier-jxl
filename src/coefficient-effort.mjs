@@ -21,11 +21,11 @@ export function* coefficientOrderSteps(components, bucket = 8) {
   return histograms.map(counts => [0, ...Array.from({length: 63}, (_, k) => k + 1).sort((a, b) => Math.floor(counts[b] / bucket) - Math.floor(counts[a] / bucket) || a - b)]);
 }
 
-export function* coefficientEffortSteps(jpeg, effort, fallback, retain) {
-  if (effort < 3 && !fallback && !retain) return yield* varDCTSteps(jpeg);
+export function* coefficientEffortSteps(jpeg, effort, fallback, retain, shared = {}) {
+  if (effort < 3 && !fallback && !retain) return yield* varDCTSteps(jpeg, {}, shared);
   let best = fallback;
   try {
-    const first = varDCTSteps(jpeg); let step, hurry;
+    const first = varDCTSteps(jpeg, {}, shared); let step, hurry;
     while (!(step = first.next()).done) {
       hurry = yield step.value / 2;
       if (hurry && best && step.value < 1) { first.return(); return best; }
@@ -33,7 +33,7 @@ export function* coefficientEffortSteps(jpeg, effort, fallback, retain) {
     if (!best || step.value.length < best.length) best = step.value;
     retain?.(step.value, {});
     if (hurry || effort < 3) return best;
-    const parts = effort < 4 ? 1 : 3, clustered = varDCTSteps(jpeg, {clusters: {maxClusters: 32, newClusterCost: 160}});
+    const parts = effort < 4 ? 1 : 3, clustered = varDCTSteps(jpeg, {clusters: {maxClusters: 32, newClusterCost: 160}}, shared);
     while (!(step = clustered.next()).done) {
       hurry = yield 0.5 + step.value / (2 * parts);
       if (hurry && step.value < 1) { clustered.return(); return best; }
@@ -43,7 +43,7 @@ export function* coefficientEffortSteps(jpeg, effort, fallback, retain) {
     if (hurry || effort < 4) return best;
     const learning = coefficientOrderSteps(jpeg.components);
     while (!(step = learning.next()).done) if (yield 0.5 + (1 + step.value) / 6) { learning.return(); return best; }
-    const plan = {orders: step.value}, candidate = varDCTSteps(jpeg, plan);
+    const plan = {orders: step.value}, candidate = varDCTSteps(jpeg, plan, shared);
     while (!(step = candidate.next()).done) {
       hurry = yield 0.5 + (2 + step.value) / 6;
       if (hurry && step.value < 1) { candidate.return(); return best; }

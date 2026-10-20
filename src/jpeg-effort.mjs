@@ -3,10 +3,10 @@ import {coefficientEffortSteps, coefficientOrderSteps} from './coefficient-effor
 import {varDCTSteps} from './vardct.mjs';
 import {buildExactTokenCoding} from './coefficient-coding.mjs';
 
-export function* jpegEffortSteps(jpeg, effort, retain, baseline = coefficientEffortSteps) {
-  if (effort < 8) return yield* baseline(jpeg, effort, undefined, retain);
+export function* jpegEffortSteps(jpeg, effort, retain, baseline = coefficientEffortSteps, shared = {}) {
+  if (effort < 8) return yield* baseline(jpeg, effort, undefined, retain, shared);
   let best, step, hurry;
-  const floor = baseline(jpeg, 7, undefined, retain);
+  const floor = baseline(jpeg, 7, undefined, retain, shared);
   while (!(step = floor.next(hurry)).done) hurry = yield step.value / 2;
   best = step.value;
   if (hurry) return best;
@@ -22,7 +22,7 @@ export function* jpegEffortSteps(jpeg, effort, retain, baseline = coefficientEff
     return step.value;
   }
   function* write(plan) {
-    const steps = varDCTSteps(jpeg, plan);
+    const steps = varDCTSteps(jpeg, plan, shared);
     while (!(step = steps.next()).done) {
       hurry = yield 0.5 + (part + step.value) / (2 * parts);
       if (hurry && step.value < 1) { steps.return(); return; }

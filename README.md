@@ -4,8 +4,8 @@ JPEG XL encoder for single-file HTML apps and photography tools. Pure JavaScript
 Deno. Lossless, lossy, native precision, HDR, exact alpha and JPEG transcoding. [MIT license](LICENSE), no runtime
 dependencies. Use it in an app or an agent's image workflow.
 
-The complete worker for [Rapier](https://rapier.website) is **71,321 gzip bytes**, with optional
-WebAssembly and parallel workers. The separate core is **11,866 gzip bytes**. Both fit in one HTML file.
+The complete worker for [Rapier](https://rapier.website) is **73,183 gzip bytes**, with optional
+WebAssembly and parallel workers. The separate core is **11,945 gzip bytes**. Both fit in one HTML file.
 
 ```sh
 npm install rapier-jxl
@@ -39,13 +39,13 @@ as one HTML file on Android, Web and Windows.
 
 | Build / import | Gzip bytes | Capabilities |
 | --- | ---: | --- |
-| **Rapier worker** · `rapier-jxl/rapier/worker` | 71,321 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel lossless groups. |
-| Rapier module · `rapier-jxl/rapier/min` | 71,373 | The same system with an encoder factory and worker installer. |
-| Core · `rapier-jxl/min` | 11,866 | Lossless or lossy typed RGBA, native precision, HDR and exact alpha. |
-| Effort · `rapier-jxl/effort/min` | 36,994 | Core with lossless compression search, efforts 1–9. |
-| WASM · `rapier-jxl/wasm/min` | 46,113 | Effort with inlined WASM and JavaScript fallback. |
-| Photo · `rapier-jxl/photo/min` | 17,305 | Lossy photographs from RGBA pixels. |
-| JPEG · `rapier-jxl/jpeg/min` | 23,820 | Existing JPEGs, preserving admitted coefficients and orientation. |
+| **Rapier worker** · `rapier-jxl/rapier/worker` | 73,183 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel lossless groups. |
+| Rapier module · `rapier-jxl/rapier/min` | 73,238 | The same system with an encoder factory and worker installer. |
+| Core · `rapier-jxl/min` | 11,945 | Lossless or lossy typed RGBA, native precision, HDR and exact alpha. |
+| Effort · `rapier-jxl/effort/min` | 37,304 | Core with lossless compression search, efforts 1–9. |
+| WASM · `rapier-jxl/wasm/min` | 46,431 | Effort with inlined WASM and JavaScript fallback. |
+| Photo · `rapier-jxl/photo/min` | 19,493 | Lossy photographs from RGBA pixels. |
+| JPEG · `rapier-jxl/jpeg/min` | 25,706 | Existing JPEGs, preserving admitted coefficients and orientation. |
 | Metadata · `rapier-jxl/metadata/min` | 2,573 | Attach, replace or remove caller-supplied Exif/XMP. |
 
 Each size measures a complete standalone file at gzip level 9. Readable imports such as `rapier-jxl/rapier` share

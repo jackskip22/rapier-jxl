@@ -91,8 +91,8 @@ function hybrid(r, token, {split, msb, lsb}) {
   if (token < (1 << split)) return token;
   token -= (1 << split);
   const bits = (token >>> (msb + lsb)) + split - msb - lsb;
-  requireJPEG(bits <= 30);
-  return ((((1 << msb) + ((token >>> lsb) & ((1 << msb) - 1))) * (1 << bits) + r.read(bits)) * (1 << lsb)) + (token & ((1 << lsb) - 1));
+  requireJPEG(bits + msb + lsb <= 31);
+  return ((((1 << msb) + ((token >>> lsb) & ((1 << msb) - 1))) * ((1 << bits) >>> 0) + r.read(bits)) * (1 << lsb)) + (token & ((1 << lsb) - 1));
 }
 function distribution(r) {
   if (r.read(1)) {

@@ -1,6 +1,6 @@
 // Rapier's JPEG XL encoder: token coding over many contexts. MIT (LICENSE).
-import {buildCode, uintConfig, hybridToken, writeHybrid} from './prefix.mjs';
-import {floorLog2} from './bits.mjs';
+import {buildCode, uintConfig, hybridToken, writeHybrid, writeHistograms} from './prefix.mjs';
+import {BitWriter, floorLog2} from './bits.mjs';
 
 const CONFIGS = [uintConfig(0), uintConfig(1), uintConfig(2), uintConfig(3), uintConfig(4), uintConfig(4, 1, 1), uintConfig(4, 2, 0), uintConfig(4, 1, 2), uintConfig(5, 1, 1), uintConfig(2, 0, 1), uintConfig(3, 0, 1)];
 const CLUSTER_CONFIG = uintConfig(4, 1, 1);
@@ -23,9 +23,23 @@ export class TokenCounts {
     }
     return freqs;
   }
+  aggregate(contexts) {
+    const result = new TokenCounts(1);
+    for (const ctx of contexts) {
+      result.totals[0] += this.totals[ctx];
+      for (let v = 0; v < 64; v++) result.small[v] += this.small[ctx * 64 + v];
+      if (this.large[ctx]) {
+        const target = result.large[0] || (result.large[0] = new Map());
+        for (const [v, n] of this.large[ctx]) target.set(v, (target.get(v) || 0) + n);
+      }
+    }
+    return result;
+  }
   cost(contexts, config) {
-    const freqs = this.tokens(contexts, config);
-    let bits = entropyBits(freqs);
+    return entropyBits(this.tokens(contexts, config)) + this.rawBits(contexts, config);
+  }
+  rawBits(contexts, config) {
+    let bits = 0;
     for (const ctx of contexts) {
       const base = ctx * 64;
       for (let v = config.splitToken; v < 64; v++) if (this.small[base + v]) bits += this.small[base + v] * (floorLog2(v) - config.msb - config.lsb);
@@ -41,7 +55,7 @@ function hybridTokenOf(config, value) { hybridToken(config, value, slots); retur
 
 const HALVES = [1];
 for (let e = 1; e < 32; e++) HALVES.push(HALVES[e - 1] / 2);
-function log2(x) {
+export function entropyLog2(x) {
   let exponent = 0;
   if (x >= 2 && x < 4294967296) { exponent = 31 - Math.clz32(x); x *= HALVES[exponent]; }
   while (x >= 1.4142135623730951) { x /= 2; exponent++; }
@@ -52,28 +66,86 @@ function log2(x) {
   return exponent + sum * 2.885390081777927;
 }
 
+const NLOG2 = new Float64Array(65536);
+const populationBits = n => n < 2 ? 0 : n < NLOG2.length
+  ? NLOG2[n] || (NLOG2[n] = n * entropyLog2(n)) : n * entropyLog2(n);
 function entropyBits(freqs) {
   let total = 0, bits = 0;
-  for (const f of freqs) total += f;
-  for (const f of freqs) if (f) bits += f * log2(total / f);
-  return bits;
+  for (const f of freqs) { total += f; bits -= populationBits(f); }
+  return bits + populationBits(total);
 }
 
-export function buildTokenCoding(counts, {maxClusters = 48, newClusterCost = 320} = {}) {
+function mergedBits(a, b) {
+  let total = 0, bits = 0;
+  for (let s = 0; s < a.length; s++) { const n = a[s] + b[s]; total += n; bits -= populationBits(n); }
+  return bits + populationBits(total);
+}
+
+function refineClusters(clusters, contexts, maxClusters, symbolCosts) {
+  const length = clusters.length, pairs = new Float64Array(length * length);
+  const price = (a, b) => mergedBits(clusters[a].freqs, clusters[b].freqs) - clusters[a].bits - clusters[b].bits;
+  for (let a = 0; a < length; a++) for (let b = a + 1; b < length; b++) pairs[a * length + b] = price(a, b);
+  for (let remaining = length; remaining > maxClusters; remaining--) {
+    let left = -1, right = -1, best = Infinity;
+    for (let a = 0; a < length; a++) if (clusters[a]) for (let b = a + 1; b < length; b++) if (clusters[b] && pairs[a * length + b] < best) {
+      left = a; right = b; best = pairs[a * length + b];
+    }
+    const a = clusters[left], b = clusters[right];
+    a.contexts.push(...b.contexts);
+    for (let s = 0; s < a.freqs.length; s++) a.freqs[s] += b.freqs[s];
+    a.bits = entropyBits(a.freqs); clusters[right] = null;
+    for (let i = 0; i < length; i++) if (clusters[i] && i !== left) pairs[Math.min(i, left) * length + Math.max(i, left)] = price(i, left);
+  }
+  clusters = clusters.filter(Boolean);
+  const assignments = new Map();
+  clusters.forEach((cluster, i) => { for (const ctx of cluster.contexts) assignments.set(ctx, i); });
+  for (let pass = 0; pass < 2; pass++) {
+    const costs = clusters.map(cluster => symbolCosts(cluster.freqs));
+    const next = clusters.map(() => ({contexts: [], freqs: new Uint32Array(64), bits: 0}));
+    let changed = false;
+    for (const {ctx, sparse} of contexts) {
+      const before = assignments.get(ctx);
+      let best = before, bestCost = Infinity;
+      for (let i = -1; i < costs.length; i++) {
+        const index = i < 0 ? before : i, table = costs[index];
+        let cost = 0;
+        for (let at = 0; at < sparse.length; at += 2) cost += sparse[at + 1] * table[sparse[at]];
+        if (cost < bestCost) { best = index; bestCost = cost; }
+      }
+      const cluster = next[best];
+      cluster.contexts.push(ctx);
+      for (let at = 0; at < sparse.length; at += 2) cluster.freqs[sparse[at]] += sparse[at + 1];
+      if (best !== before) changed = true;
+    }
+    clusters = next.filter(cluster => cluster.contexts.length);
+    clusters.forEach((cluster, i) => {
+      cluster.bits = entropyBits(cluster.freqs);
+      for (const ctx of cluster.contexts) assignments.set(ctx, i);
+    });
+    if (!changed) break;
+  }
+  return clusters;
+}
+
+export function clusterTokenCounts(counts, {maxClusters = 48, newClusterCost = 320} = {}, modelCost, symbolCosts) {
   const used = [];
   for (let ctx = 0; ctx < counts.contexts; ctx++) if (counts.totals[ctx] > 0) used.push(ctx);
   used.sort((a, b) => counts.totals[b] - counts.totals[a]);
-  const clusters = [];
+  let clusters = [];
+  const contexts = [], seeds = symbolCosts ? Math.min(96, maxClusters * 2) : maxClusters;
   for (const ctx of used) {
     const own = counts.tokens([ctx], CLUSTER_CONFIG, 64), ownBits = entropyBits(own);
+    if (symbolCosts) {
+      const sparse = [];
+      for (let s = 0; s < own.length; s++) if (own[s]) sparse.push(s, own[s]);
+      contexts.push({ctx, sparse});
+    }
     let best = -1, bestIncrease = Infinity;
     for (let i = 0; i < clusters.length; i++) {
-      const cluster = clusters[i], merged = new Uint32Array(64);
-      for (let t = 0; t < 64; t++) merged[t] = cluster.freqs[t] + own[t];
-      const increase = entropyBits(merged) - cluster.bits - ownBits;
+      const cluster = clusters[i], increase = mergedBits(cluster.freqs, own) - cluster.bits - ownBits;
       if (increase < bestIncrease) { bestIncrease = increase; best = i; }
     }
-    if (best < 0 || (clusters.length < maxClusters && bestIncrease > newClusterCost)) clusters.push({contexts: [ctx], freqs: own, bits: ownBits});
+    if (best < 0 || (clusters.length < seeds && bestIncrease > newClusterCost / (symbolCosts ? 2 : 1))) clusters.push({contexts: [ctx], freqs: own, bits: ownBits});
     else {
       const cluster = clusters[best];
       cluster.contexts.push(ctx);
@@ -81,17 +153,41 @@ export function buildTokenCoding(counts, {maxClusters = 48, newClusterCost = 320
       cluster.bits = entropyBits(cluster.freqs);
     }
   }
+  if (symbolCosts && clusters.length > 1) clusters = refineClusters(clusters, contexts, maxClusters, symbolCosts);
   if (!clusters.length) clusters.push({contexts: [], freqs: new Uint32Array(64), bits: 0});
   const contextMap = new Uint8Array(counts.contexts);
-  let bits = counts.contexts * 2;
   const histograms = clusters.map((cluster, index) => {
     for (const ctx of cluster.contexts) contextMap[ctx] = index;
-    let config = CONFIGS[0], bestCost = Infinity;
-    for (const candidate of CONFIGS) { const cost = counts.cost(cluster.contexts, candidate); if (cost < bestCost) { bestCost = cost; config = candidate; } }
-    const code = buildCode(counts.tokens(cluster.contexts, config));
-    bits += bestCost + code.alphabetSize * 3 + 40;
-    return {config, code};
+    const aggregate = counts.aggregate(cluster.contexts);
+    let config = CONFIGS[0], bestCost = Infinity, freqs, extra;
+    for (const candidate of CONFIGS) {
+      const tokens = aggregate.tokens([0], candidate), raw = aggregate.rawBits([0], candidate);
+      const cost = raw + (modelCost ? modelCost(tokens, candidate) : entropyBits(tokens) + candidate.split * 18 + (candidate.msb + candidate.lsb) * 28);
+      if (cost < bestCost) { bestCost = cost; config = candidate; freqs = tokens; extra = raw; }
+    }
+    return {config, freqs, extra};
   });
+  for (let left = 0; left + 1 < counts.contexts;) {
+    if (!counts.totals[left]) { left++; continue; }
+    let right = left + 1;
+    while (right < counts.contexts && !counts.totals[right]) right++;
+    if (right < counts.contexts && contextMap[left] === contextMap[right]) contextMap.fill(contextMap[left], left + 1, right);
+    left = right;
+  }
+  return {contextMap, histograms};
+}
+
+export function buildTokenCoding(counts, options) {
+  const {contextMap, histograms} = clusterTokenCounts(counts, options);
+  let bits = 0;
+  for (const histogram of histograms) {
+    const {freqs, extra} = histogram, code = histogram.code = buildCode(freqs);
+    bits += extra;
+    for (let s = 0; s < freqs.length; s++) if (freqs[s]) bits += freqs[s] * code.lengths[s];
+  }
+  const header = new BitWriter();
+  writeHistograms(header, {contextMap, histograms});
+  bits += header.bitLength;
   const write = (w, ctx, value) => {
     const histogram = histograms[contextMap[ctx]];
     writeHybrid(w, histogram.code, histogram.config, value);
