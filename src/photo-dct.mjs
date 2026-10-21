@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+import {kernelHooks} from './kernel-hooks.mjs';
+
 const COSINES = Float64Array.of(0.3535533905932738, 0.3535533905932738, 0.3535533905932738, 0.3535533905932738,
   0.3535533905932738, 0.3535533905932738, 0.3535533905932738, 0.3535533905932738, 0.4903926402016152,
   0.4157348061512726, 0.27778511650980114, 0.09754516100806417, -0.0975451610080641, -0.277785116509801,
@@ -33,12 +35,20 @@ function dot8(data, at, step, basis) {
   return sum;
 }
 
-export function transformDCT8(block, intermediate, sums) {
+export function transformDCT8(block, intermediate, sums, offset = 0) {
   for (let c = 0; c < 3; c++) {
-    for (let y = 0; y < 8; y++) for (let u = 0; u < 8; u++) intermediate[y * 8 + u] = dot8(block, c * 64 + y * 8, 1, u * 8);
+    for (let y = 0; y < 8; y++) for (let u = 0; u < 8; u++) intermediate[y * 8 + u] = dot8(block, offset + c * 64 + y * 8, 1, u * 8);
     for (let v = 0; v < 8; v++) for (let u = 0; u < 8; u++) sums[c * 64 + v * 8 + u] = dot8(intermediate, u, 8, v * 8);
   }
   return sums;
+}
+
+export function transformDCT8Blocks(blocks, count, intermediate, sums) {
+  if (kernelHooks.dct?.(blocks, count, COSINES)) return;
+  for (let n = 0; n < count; n++) {
+    transformDCT8(blocks, intermediate, sums, n * 192);
+    blocks.set(sums, n * 192);
+  }
 }
 
 export function dctBlocks(data, width, height) {

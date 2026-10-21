@@ -4,7 +4,27 @@ import {fault, admitOutputSize} from './admit.mjs';
 export const SIGNATURE = new Uint8Array([0, 0, 0, 12, 74, 88, 76, 32, 13, 10, 135, 10]);
 export const FTYP = 0x66747970, BRAND = 0x6a786c20, CODESTREAM = 0x6a786c63, PARTIAL = 0x6a786c70;
 export const EXIF = 0x45786966, XML = 0x786d6c20, BROB = 0x62726f62, RECONSTRUCTION = 0x6a627264;
+export const JUMBF = 0x6a756d62, LEVEL = 0x6a786c6c;
 const invalidBox = message => fault('JXL_INPUT', message);
+
+export function boxHeader(type, length, wide = false) {
+  if (!Number.isSafeInteger(length) || length < 0 || !Number.isInteger(type) || type < 0 || type > 0xffffffff)
+    throw invalidBox('A JPEG XL box has a four-byte type and a nonnegative safe byte length.');
+  const size = length + (wide || length > 0xffffffff - 8 ? 16 : 8);
+  if (!Number.isSafeInteger(size)) throw invalidBox('The JPEG XL box length exceeds the safe integer range.');
+  const out = new Uint8Array(wide || size > 0xffffffff ? 16 : 8), view = new DataView(out.buffer);
+  view.setUint32(0, out.length === 16 ? 1 : size); view.setUint32(4, type);
+  if (out.length === 16) { view.setUint32(8, Math.floor(size / 4294967296)); view.setUint32(12, size % 4294967296); }
+  return out;
+}
+
+export function fileHeader(level = 5) {
+  if (level !== 5 && level !== 10) throw invalidBox('The JPEG XL level is 5 or 10.');
+  const out = new Uint8Array(level === 10 ? 41 : 32), view = new DataView(out.buffer);
+  out.set(SIGNATURE); view.setUint32(12, 20); view.setUint32(16, FTYP); view.setUint32(20, BRAND); view.setUint32(28, BRAND);
+  if (level === 10) { view.setUint32(32, 9); view.setUint32(36, LEVEL); out[40] = 10; }
+  return out;
+}
 
 export function* boxes(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -53,6 +73,22 @@ export function* boxes(bytes) {
 
 
 export function withJPEGReconstruction(bytes, reconstruction) {
+  if (!(bytes instanceof Uint8Array) || !(reconstruction instanceof Uint8Array))
+    throw invalidBox('JPEG XL codestream and JPEG reconstruction data are Uint8Array values.');
+  if (bytes[0] !== 255 || bytes[1] !== 10) {
+    if (!SIGNATURE.every((byte, i) => bytes[i] === byte)) throw invalidBox('Invalid JPEG XL signature.');
+    let insertion = -1;
+    for (const entry of boxes(bytes)) {
+      if (entry.decoded === RECONSTRUCTION) throw invalidBox('JPEG reconstruction data is already present.');
+      if (insertion < 0 && (entry.type === CODESTREAM || entry.type === PARTIAL)) insertion = entry.at;
+    }
+    const header = boxHeader(RECONSTRUCTION, reconstruction.length), length = bytes.length + header.length + reconstruction.length;
+    admitOutputSize(length);
+    const output = new Uint8Array(length);
+    output.set(bytes.subarray(0, insertion)); output.set(header, insertion); output.set(reconstruction, insertion + header.length);
+    output.set(bytes.subarray(insertion), insertion + header.length + reconstruction.length);
+    return output;
+  }
   admitOutputSize(bytes.length + reconstruction.length + 48);
   const output = new Uint8Array(bytes.length + reconstruction.length + 48), view = new DataView(output.buffer);
   output.set(SIGNATURE); view.setUint32(12, 20); view.setUint32(16, FTYP); view.setUint32(20, BRAND); view.setUint32(28, BRAND);

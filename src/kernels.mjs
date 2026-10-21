@@ -1,4 +1,4 @@
-// Optional integer WebAssembly kernels. MIT (LICENSE).
+// Optional WebAssembly kernels. MIT (LICENSE).
 import {kernelHooks} from './kernel-hooks.mjs';
 import {WEIGHTED_BUCKET} from './weighted-policy.mjs';
 import {BitWriter, LIMITS} from './bits.mjs';
@@ -111,6 +111,21 @@ function fill(rgba, imageWidth, x0, y0, w, h, channels, planes) {
     const at = [P, R, PROPERTY, CONTEXT][c] >> 2;
     planes[c].set(i32.subarray(at, at + n));
   }
+  return true;
+}
+
+function dct(blocks, count, basis) {
+  if (active !== 'simd' || !(blocks instanceof Float64Array) || !Number.isInteger(count) || count < 1 || count > 64 ||
+      blocks.length < count * 192 || !(basis instanceof Float64Array) || basis.length !== 64) return false;
+  const f64 = new Float64Array(engine.memory.buffer), pair = R + 512;
+  f64.set(blocks.subarray(0, count * 192), P >> 3);
+  f64.set(basis, R >> 3);
+  for (let u = 0; u < 8; u += 2) for (let x = 0; x < 8; x++) {
+    f64[(pair >> 3) + u * 8 + x * 2] = basis[u * 8 + x];
+    f64[(pair >> 3) + u * 8 + x * 2 + 1] = basis[(u + 1) * 8 + x];
+  }
+  engine.simd.dct(P, count, R, pair, P + 64 * 192 * 8);
+  blocks.set(f64.subarray(P >> 3, (P >> 3) + count * 192));
   return true;
 }
 
@@ -249,7 +264,7 @@ function sampled(members, histograms, symbolSets, columns, table, rawPrice, choi
 
 function configureKernels(mode = 'auto', parts) {
   if (!['off', 'auto', 'scalar', 'simd'].includes(mode)) throw fault('JXL_INPUT', 'Kernel mode is off, auto, scalar or simd.');
-  kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = null; active = 'off';
+  kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.dct = null; active = 'off';
   if (mode === 'off') return active;
   try {
     if (typeof WebAssembly !== 'object' || !WebAssembly.validate || new Uint8Array(new Uint32Array([1]).buffer)[0] !== 1) return active;
@@ -258,7 +273,7 @@ function configureKernels(mode = 'auto', parts) {
     engine ||= createEngine();
     if (simd && !engine.simd) {
       const names = new Map(Object.entries(new WebAssembly.Instance(new WebAssembly.Module(decode(SIMD)), {env: {memory: engine.memory}}).exports));
-      engine.simd = {residual: names.get('residual'), fill: names.get('fill'), screen: names.get('screen'), sampled: names.get('sampled')};
+      engine.simd = {residual: names.get('residual'), fill: names.get('fill'), screen: names.get('screen'), sampled: names.get('sampled'), dct: names.get('dct')};
     }
     active = simd ? 'simd' : 'scalar';
     const enabled = parts ? new Map(Object.entries(parts)) : null;
@@ -268,7 +283,8 @@ function configureKernels(mode = 'auto', parts) {
     if (kernelHooks.fill && kernelHooks.channel) kernelHooks.group = group;
     if (!enabled || enabled.get('screen')) kernelHooks.screen = screen;
     if (!enabled || enabled.get('sampled')) kernelHooks.sampled = sampled;
-  } catch { active = 'off'; kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = null; }
+    if (simd && (!enabled || enabled.get('dct'))) kernelHooks.dct = dct;
+  } catch { active = 'off'; kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.dct = null; }
   return active;
 }
 function kernelMode() { return active; }

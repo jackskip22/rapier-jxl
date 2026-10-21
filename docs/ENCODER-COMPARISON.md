@@ -1,6 +1,6 @@
 # Encoder comparisons
 
-The complete Rapier worker uses 73,183 gzip bytes: core encoding, effort search, optional WASM, Photo, JPEG transcoding and parallel workers. The separate core uses 11,945 gzip bytes. Both embed in one offline HTML file.
+The complete Rapier worker uses 153,162 gzip bytes: core encoding, effort search, optional WASM, Photo, JPEG transcoding and parallel workers. The separate core uses 22,783 gzip bytes. Both embed in one offline HTML file.
 
 ## Payload
 
@@ -8,12 +8,12 @@ Executable payload sizes. Rapier JXL uses this release; other rows use the pinne
 
 | Encoder / entry | Version | Minified JS + WASM bytes | gzip bytes | Included capability |
 | --- | --- | ---: | ---: | --- |
-| Rapier JXL complete worker | 4.2.1 | 190,512 | 73,183 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel workers |
-| Rapier JXL core | 4.2.1 | 28,342 | 11,945 | Lossless/lossy RGBA, native precision and HDR, exact alpha |
-| Rapier JXL effort | 4.2.1 | 96,255 | 37,304 | Core plus lossless predictor, learned-tree, entropy, color, and screen search |
-| Rapier JXL WASM | 4.2.1 | 117,836 | 46,431 | Effort with inlined kernels and JavaScript fallback |
-| Rapier JXL JPEG | 4.2.1 | 65,579 | 25,706 | JPEG coefficients, orientation and original-byte reconstruction |
-| Rapier JXL photo | 4.2.1 | 48,879 | 19,493 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
+| Rapier JXL complete worker | 5.0.0 | 415,097 | 153,162 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel workers |
+| Rapier JXL core | 5.0.0 | 56,573 | 22,783 | Lossless/lossy RGBA, native precision and HDR, exact alpha |
+| Rapier JXL effort | 5.0.0 | 125,895 | 48,270 | Core plus lossless predictor, learned-tree, entropy, color, and screen search |
+| Rapier JXL WASM | 5.0.0 | 148,884 | 57,919 | Effort with inlined kernels and JavaScript fallback |
+| Rapier JXL JPEG | 5.0.0 | 75,688 | 29,632 | JPEG coefficients, orientation and original-byte reconstruction |
+| Rapier JXL photo | 5.0.0 | 58,394 | 23,129 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
 | [jSquash](https://github.com/jamsinclair/jSquash/tree/main/packages/jxl) | 1.3.0 | 1,388,572 | 525,782 | 8-bit lossless/lossy RGBA |
 | [Discourse's jSquash package](https://www.npmjs.com/package/@discourse/jxl) | 1.3.0 | 1,388,572 | 525,782 | The same encoder bytes as jSquash |
 | [Lacinak's jSquash fork](https://github.com/kelaci/jSquash) | 1.3.0-kelaci.0 | 2,071,514 | 844,866 | High bit-depth input options |
@@ -118,6 +118,47 @@ The photo entry point uses VarDCT with exact alpha. In the matched-size Rapier J
 
 The JPEG entry point now stores standard `jbrd` reconstruction data and restores original JPEG bytes. Older JPEG
 measurements made before that addition omit its metadata cost and must not be compared with reversible libjxl output.
+
+## Animation
+
+`rapier-jxl/animation` against the formats people use for the same frames, measured on 2026-10-21 on one host,
+one thread per encoder. Bytes in kB (1,000 bytes); time is milliseconds per frame. The corpus is three Wikimedia
+Commons GIFs, the first 30 frames of the Xiph `akiyo` and `foreman` CIF camera sequences, and two 800 × 500 screen
+recordings of an editor page rendered in Chromium (typing; a menu, hovers and a scroll). GIF is the original file, or
+a 256-color GIF made by ffmpeg (which is lossy for the camera and screen sources). APNG and WebP are written by
+Pillow 12.3.0 (libwebp 1.6.0, method 6, smallest-size search); cjxl and djxl are libjxl 0.12.0.
+[Raw results](../bench/animation-results.json), [corpus](../bench/animation-sources.json), [harness](../bench/animation.mjs).
+
+Lossless (every frame exact):
+
+| Animation | Frames | GIF | APNG | WebP | cjxl e7 | cjxl e9 | Rapier e1 | Rapier e3 | Rapier e7 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| akiyo (still camera) | 30 | 1,280* | 3,714 | 1,600 | 1,978 | 1,926 | 2,072 | 1,837 | **1,578** |
+| foreman (moving camera) | 30 | 2,175* | 4,768 | 2,820 | 2,261 | **2,206** | 2,728 | 2,337 | 2,237 |
+| Newton's cradle GIF | 36 | 308 | 1,078 | **267** | 575 | 556 | 424 | 353 | 284 |
+| Rotating earth GIF | 44 | 1,002 | 1,566 | 767 | 746 | **720** | 934 | 934 | 904 |
+| Muybridge horse GIF | 15 | 568 | 804 | 423 | 402 | **397** | 482 | 465 | 419 |
+| Screen: typing | 60 | 21* | 49 | **15.8** | 23.6 | 23.3 | 17.6 | 16.9 | 16.1 |
+| Screen: menu, hover, scroll | 40 | 498* | 744 | **95** | 102 | 98 | 414 | 132 | 112 |
+
+\* lossy 256-color GIF. Time per frame (akiyo / screen typing): Rapier e1 40 / 8, e3 321 / 26, e7 5,435 / 173;
+cjxl e7 152 / 3.7; WebP 11,350 / 64.
+
+Lossy, bytes in kB at the mean SSIMULACRA2 reached (higher is better):
+
+| Animation | Rapier q90 e7 | Rapier q95 e7 | cjxl d1 e7 | WebP q90 |
+| --- | ---: | ---: | ---: | ---: |
+| akiyo | 312 at 84.7 | 481 at 89.4 | 501 at 88.7 | 302 at 83.6 |
+| foreman | 537 at 82.8 | 794 at 88.7 | 766 at 88.5 | 634 at 86.2 |
+| Newton's cradle | 216 at 86.7 | 334 at 89.7 | 333 at 89.9 | 193 at 87.0 |
+| Rotating earth | 454 at 76.5 | 680 at 85.0 | 566 at 86.1 | 415 at 82.7 |
+| Muybridge horse | 125 at 84.6 | 181 at 89.5 | 174 at 89.1 | 158 at 88.3 |
+| Screen: typing | 16.1 exact | 16.1 exact | 33.0 at 91.0 | 25.2 at 90.0 |
+| Screen: menu, hover, scroll | 112 exact | 112 exact | 212 | 415 |
+
+Rapier keeps a lossy request exact when the exact first frame is smaller, as on both screen recordings. The rotating
+earth's dithered palette is where Rapier's single-frame coding trails libjxl most (a still frame: 32.5 kB against
+cjxl's 26.2 kB lossless). The scrolling screen recording is 15–18% larger than WebP's and cjxl's.
 
 ## Reproduce
 

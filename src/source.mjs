@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {admitSize, fault} from './admit.mjs';
+import {LIMITS} from './bits.mjs';
+import {inspectICC, prepareColorEncoding} from './color-info.mjs';
 
 const refuse = message => { throw fault('JXL_INPUT', message); };
 const view = bytes => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -9,15 +11,16 @@ const primaries = {
   rec2020: [.708, .292, .170, .797, .131, .046, .3127, .3290],
 };
 
-function colourFromChromaticities(values, tolerance) {
+function colourFromChromaticities(values, tolerance, required = true) {
   for (const [name, expected] of Object.entries(primaries))
     if (expected.every((value, i) => Math.abs(value - values[i]) <= tolerance)) return name;
-  refuse('The source primaries must be sRGB, Display P3 or Rec. 2020 with a D65 white point.');
+  if (required) refuse('The source primaries must be sRGB, Display P3 or Rec. 2020 with a D65 white point.');
 }
 
 async function inflate(parts, expected) {
   if (typeof DecompressionStream !== 'function') refuse('Reading compressed sources requires DecompressionStream (Node 22 or a supporting browser).');
-  const output = new Uint8Array(expected);
+  const profile = expected === undefined;
+  let output = new Uint8Array(profile ? 4 : expected);
   const stream = new ReadableStream({start(controller) {
     for (const part of parts) controller.enqueue(part);
     controller.close();
@@ -28,14 +31,24 @@ async function inflate(parts, expected) {
     for (;;) {
       const {value, done} = await reader.read();
       if (done) break;
-      if (offset + value.length > expected) refuse('Compressed source data exceeds its declared dimensions.');
-      output.set(value, offset); offset += value.length;
+      let bytes = value;
+      if (profile && output.length === 4) {
+        const count = Math.min(4 - offset, bytes.length);
+        output.set(bytes.subarray(0, count), offset); offset += count; bytes = bytes.subarray(count);
+        if (offset < 4) continue;
+        expected = view(output).getUint32(0);
+        if (expected < 132) refuse('The compressed ICC profile declares an incomplete header or tag table.');
+        if (expected > LIMITS.bytes) throw fault('JXL_SIZE', 'An embedded ICC profile exceeds the 16 MiB source limit.');
+        const complete = new Uint8Array(expected); complete.set(output); output = complete;
+      }
+      if (offset + bytes.length > expected) refuse(profile ? 'The ICC profile expands beyond its declared size.' : 'Compressed source data exceeds its declared dimensions.');
+      output.set(bytes, offset); offset += bytes.length;
     }
-    if (offset !== expected) refuse('Compressed source data is incomplete.');
+    if (offset !== expected) refuse(profile ? 'The compressed ICC profile is incomplete.' : 'Compressed source data is incomplete.');
     return output;
   } catch (error) {
     await reader.cancel().catch(() => {});
-    if (error.code === 'JXL_INPUT' || error instanceof RangeError) throw error;
+    if (error.code === 'JXL_INPUT' || error.code === 'JXL_SIZE' || error instanceof RangeError) throw error;
     refuse('The source contains an invalid deflate stream.');
   } finally { reader.releaseLock(); }
 }
@@ -50,25 +63,50 @@ function crc32(bytes) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function pngColour(chunks) {
+function explicitPNGColor(space, fields) {
+  const colorEncoding = {space, ...fields};
+  prepareColorEncoding(colorEncoding);
+  return {colorEncoding};
+}
+
+async function pngColour(chunks, colourType) {
+  const space = colourType === 0 || colourType === 4 ? 'gray' : 'rgb';
   const cicp = chunks.get('cICP');
   if (cicp) {
-    const colorSpace = {1: 'srgb', 9: 'rec2020', 12: 'display-p3'}[cicp[0]];
-    const transferFunction = {8: 'linear', 13: 'srgb', 16: 'pq', 18: 'hlg'}[cicp[1]];
+    const colorSpace = {1: 'srgb', 9: 'rec2020', 11: 'display-p3', 12: 'display-p3'}[cicp[0]];
+    const transferFunction = {1: 'bt709', 8: 'linear', 13: 'srgb', 16: 'pq', 17: 'dci', 18: 'hlg'}[cicp[1]];
     if (!colorSpace || !transferFunction || cicp[2] !== 0 || cicp[3] !== 1)
-      refuse('PNG cICP must declare supported D65 RGB primaries, sRGB/linear/PQ/HLG transfer and full-range samples.');
+      refuse('PNG cICP must declare supported RGB primaries and transfer with full-range, identity-matrix samples.');
+    if (cicp[0] === 11 || transferFunction === 'bt709' || transferFunction === 'dci')
+      return explicitPNGColor(space, {whitePoint: cicp[0] === 11 ? 'dci' : 'd65', ...(space === 'rgb' ? {primaries: colorSpace} : {}), transferFunction});
     return {colorSpace, transferFunction};
   }
-  if (chunks.has('iCCP')) refuse('Embedded PNG ICC profiles require a colour-managed source reader.');
-  if (chunks.has('sRGB')) return {colorSpace: 'srgb', transferFunction: 'srgb'};
+  const packedProfile = chunks.get('iCCP');
+  if (packedProfile) {
+    const end = packedProfile.indexOf(0), name = packedProfile.subarray(0, end);
+    if (end < 1 || end > 79 || end + 2 >= packedProfile.length || packedProfile[end + 1] !== 0 ||
+        name[0] === 32 || name[name.length - 1] === 32 || name.some((value, i) => value < 32 || value > 126 && value < 161 || value === 32 && name[i - 1] === 32))
+      refuse('PNG iCCP requires a valid profile name, compression method zero and a complete deflate stream.');
+    const icc = await inflate([packedProfile.subarray(end + 2)]), channels = inspectICC(icc);
+    if (channels !== (space === 'gray' ? 1 : 3)) refuse('The PNG channel layout and embedded ICC source space must agree.');
+    return {icc};
+  }
+  const srgb = chunks.get('sRGB');
+  if (srgb) {
+    if (srgb[0] !== 1) return explicitPNGColor(space, {transferFunction: 'srgb', renderingIntent: ['perceptual', 'relative', 'saturation', 'absolute'][srgb[0]]});
+    return {colorSpace: 'srgb', transferFunction: 'srgb'};
+  }
   const gamma = chunks.get('gAMA'), chroma = chunks.get('cHRM');
-  if (gamma && view(gamma).getUint32(0) !== 100000)
-    refuse('PNG gamma curves other than linear require a colour-managed source reader or an explicit sRGB/cICP declaration.');
-  let colorSpace = 'srgb';
+  const exponent = gamma ? view(gamma).getUint32(0) / 100000 : undefined;
+  let colorSpace = 'srgb', whitePoint = 'd65', customPrimaries;
   if (chroma) {
     const data = view(chroma), values = Array.from({length: 8}, (_, i) => data.getUint32(i * 4) / 100000);
-    colorSpace = colourFromChromaticities([...values.slice(2), ...values.slice(0, 2)], .0000051);
+    colorSpace = colourFromChromaticities([...values.slice(2), ...values.slice(0, 2)], .0000051, false);
+    if (!colorSpace) { whitePoint = values.slice(0, 2); customPrimaries = [values.slice(2, 4), values.slice(4, 6), values.slice(6, 8)]; }
   }
+  if (!colorSpace || exponent !== undefined && exponent !== 1)
+    return explicitPNGColor(space, {whitePoint, ...(space === 'rgb' ? {primaries: colorSpace ?? customPrimaries} : {}),
+      ...(exponent === undefined ? {transferFunction: 'srgb'} : {gamma: exponent})});
   return {colorSpace, transferFunction: gamma ? 'linear' : 'srgb'};
 }
 
@@ -121,7 +159,7 @@ async function png(bytes) {
     offset = end;
   }
   if (!ended) refuse('PNG image data or its end marker is missing.');
-  const colour = pngColour(chunks), passes = interlace ? pngPasses : [[0, 0, 1, 1]], bytesPerPixel = channels * 2;
+  const colour = await pngColour(chunks, colourType), passes = interlace ? pngPasses : [[0, 0, 1, 1]], bytesPerPixel = channels * 2;
   let expected = 0;
   for (const [x, y, dx, dy] of passes) {
     const w = Math.max(0, Math.ceil((width - x) / dx)), h = Math.max(0, Math.ceil((height - y) / dy));

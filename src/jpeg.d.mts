@@ -13,6 +13,12 @@ export interface Transcoded {
 export interface TranscodeOptions {
   /** Integer from 1 to 9; default 1. Effort 3 adds a 32-cluster budget; 4 adds a learned coefficient order. */
   effort?: number | undefined;
+  /** Embed the exact original RGB/GRAY profile. By default, recognized sRGB/Display P3 profiles retain the
+   * compatible named-color codestream; every other admitted profile is carried exactly. Original JPEG
+   * reconstruction retains every original APP2 byte in either mode. */
+  icc?: 'preserve' | undefined;
+  /** Entropy choice for the embedded ICC. Requires icc:'preserve'; default auto selects the shorter stream. */
+  iccCompression?: 'auto' | 'prefix' | 'lz77' | undefined;
 }
 export function transcode(jpeg: Uint8Array, options?: TranscodeOptions): Transcoded;
 /** Incremental transcode. The first step reads scans and sets display dimensions and orientation. */

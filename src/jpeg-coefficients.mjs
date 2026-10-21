@@ -139,10 +139,11 @@ function contextMap(r, count, depth = 0) {
   }
   return map;
 }
-function entropy(r, contexts, spatial = false, depth = 0) {
+function entropy(r, contexts, spatial = false, depth = 0, byteHistory = false) {
   const lz = r.read(1), minimum = lz ? r.u32([[0, 224], [0, 512], [0, 4096], [15, 8]]) : 0;
   const minLength = lz ? r.u32([[0, 3], [0, 4], [2, 5], [8, 9]]) : 0, lengthConfig = lz ? config(r, 8) : null;
   const map = contexts + lz > 1 ? contextMap(r, contexts + lz, depth) : new Uint8Array(1);
+  if (byteHistory) requireJPEG(map.subarray(0, contexts).every(value => value === map[0]));
   const count = 1 + Math.max(...map), prefix = r.read(1), log = prefix ? 15 : r.read(2) + 5;
   const configs = Array.from({length: count}, () => config(r, log));
   let decoders, aliases;
@@ -154,7 +155,12 @@ function entropy(r, contexts, spatial = false, depth = 0) {
     for (let s = 0; s < counts.length; s++) for (let i = 0; i < counts[s]; i++) { const at = reverse[starts[s] + i]; symbols[at] = s; offsets[at] = i; }
     return {counts, symbols, offsets};
   });
-  let state = null, left = 0, previous = 0, produced = false;
+  let state = null, left = 0, previous = 0, produced = false, position = 0, distance = 1;
+  const history = byteHistory ? new Uint8Array(1048576) : null;
+  const remember = value => {
+    if (history) { requireJPEG(value < 256); history[position++ & 1048575] = value; }
+    return previous = value;
+  };
   const token = h => {
     if (prefix) return decoders[h](r);
     state ??= r.read(32);
@@ -166,18 +172,31 @@ function entropy(r, contexts, spatial = false, depth = 0) {
   return {
     read(ctx) {
       requireJPEG(ctx >= 0 && ctx < contexts);
-      if (left) { left--; return previous; }
+      if (left) { left--; return remember(history ? history[(position - distance) & 1048575] : previous); }
       const h = map[ctx], t = token(h);
       if (lz && t >= minimum) {
         left = hybrid(r, t - minimum, lengthConfig) + minLength - 1;
-        const distance = map[contexts], d = hybrid(r, token(distance), configs[distance]);
-        requireJPEG(produced && d === (spatial ? 1 : 0) && left < 1048576);
-        return previous;
+        const histogram = map[contexts], d = hybrid(r, token(histogram), configs[histogram]);
+        if (history) { distance = d + 1; requireJPEG(distance <= Math.min(position, 1048576) && left < JPEG_LIMITS.bytes); }
+        else requireJPEG(produced && d === (spatial ? 1 : 0) && left < 1048576);
+        return remember(history ? history[(position - distance) & 1048575] : previous);
       }
-      produced = true; return previous = hybrid(r, t, configs[h]);
+      produced = true; return remember(hybrid(r, t, configs[h]));
     },
     finish() { requireJPEG(!left && (prefix || state === 0x130000)); state = null; produced = false; },
   };
+}
+
+export function skipICC(r) {
+  const form = r.read(2);
+  let size = form === 1 ? r.read(4) + 1 : form === 2 ? r.read(8) + 17 : form === 3 ? r.read(12) : 0;
+  if (form === 3) for (let shift = 12; r.read(1); shift += 8) {
+    requireJPEG(shift <= 28); size += r.read(8) * ((1 << shift) >>> 0);
+  }
+  requireJPEG(size >= 132 && size <= JPEG_LIMITS.bytes + 16);
+  const code = entropy(r, 41, false, 0, true);
+  for (let i = 0; i < size; i++) code.read(0);
+  code.finish();
 }
 function modular(r, shapes) {
   r.expect(4, 2);
@@ -219,17 +238,19 @@ export function readJPEGCoefficients(bytes) {
   requireJPEG(width <= JPEG_LIMITS.edge && height <= JPEG_LIMITS.edge && width * height <= JPEG_LIMITS.pixels);
   r.expect(1, 0); const extra = r.read(1), orientation = extra ? r.read(3) + 1 : 1;
   if (extra) r.expect(3, 0);
-  r.expect(3, 0); r.expect(1, 1); r.expect(2, 0); r.expect(1, 0);
-  let grey = false;
+  r.expect(3, 0); r.read(1); r.expect(2, 0); r.expect(1, 0);
+  let grey = false, icc = false;
   if (!r.read(1)) {
-    r.expect(1, 0); const color = r.u32([[0, 0], [0, 1], [4, 2], [6, 18]]);
+    icc = !!r.read(1); const color = r.u32([[0, 0], [0, 1], [4, 2], [6, 18]]);
     requireJPEG(color <= 1); grey = color === 1;
-    r.expect(2, 1);
-    if (!grey) { const primaries = r.u32([[0, 0], [0, 1], [4, 2], [6, 18]]); requireJPEG(primaries === 1 || primaries === 11); }
-    r.expect(1, 0); requireJPEG(r.u32([[0, 0], [0, 1], [4, 2], [6, 18]]) === 13); r.expect(2, 1);
+    if (!icc) {
+      r.expect(2, 1);
+      if (!grey) { const primaries = r.u32([[0, 0], [0, 1], [4, 2], [6, 18]]); requireJPEG(primaries === 1 || primaries === 11); }
+      r.expect(1, 0); requireJPEG(r.u32([[0, 0], [0, 1], [4, 2], [6, 18]]) === 13); r.expect(2, 1);
+    }
   }
   if (extra) r.expect(1, 1);
-  r.expect(3, 4); r.align(); r.expect(4, 0); r.expect(2, 2); r.expect(8, 111);
+  r.expect(3, 4); if (icc) skipICC(r); r.align(); r.expect(4, 0); r.expect(2, 2); r.expect(8, 111);
   const ycbcr = !!r.read(1), sampling = ycbcr ? [r.read(2), r.read(2), r.read(2)] : [0, 0, 0];
   const hs = sampling.map(v => v === 1 || v === 2 ? 1 : 0), vs = sampling.map(v => v === 1 || v === 3 ? 1 : 0);
   const mh = Math.max(...hs), mv = Math.max(...vs), hshift = hs.map(v => mh - v), vshift = vs.map(v => mv - v);

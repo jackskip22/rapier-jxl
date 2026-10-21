@@ -1,0 +1,2324 @@
+{
+  "name": "LF Combinations v1",
+  "node": "v22.23.3",
+  "cpu": "AMD EPYC 9V74 80-Core Processor",
+  "oxide": "0.12.6",
+  "djxl": "0.12.0",
+  "protocol": "Complete synchronous encodePhoto call. Each case uses its actual transform dimensions and nonzero directional or saturated checker detail. One warmup then five measured calls per configuration on one CPU; every call must be byte-identical. The control keeps the same transform and quality; compact tables replace its raw shape and LF cases remove only LF frames. Quantization weights differ, so byte comparisons are not claims of matched perceptual quality. Explicit source hashes identify the measured implementation.",
+  "sources": [
+    {
+      "path": "admit.mjs",
+      "sha256": "6058d1d5012f4ee0e6f004c9943a335ccf4c4e73fbf0041af90aa75f6e9b181f"
+    },
+    {
+      "path": "afv-basis.mjs",
+      "sha256": "df5bd31713accb111f5421a6c4f6dffaa7162b61c764d841de818a02198fd8a1"
+    },
+    {
+      "path": "ans.mjs",
+      "sha256": "8b9193ef471a672240b2e94875dd941e2dd568e1dc36882dc70bd64d6b9395e0"
+    },
+    {
+      "path": "bits.mjs",
+      "sha256": "4c31f8a4072a6866f2908a7cb495d39590117f52462253a740e59c3344a512d2"
+    },
+    {
+      "path": "coefficient-ans.mjs",
+      "sha256": "1cf1a5d232a06f19320696241b2934f475c94986562c829b31f066119d158fd7"
+    },
+    {
+      "path": "coefficient-effort.mjs",
+      "sha256": "ad92d7a8a83d0f918678319b752a7033534767644044d99a9596c7cdd3287988"
+    },
+    {
+      "path": "container.mjs",
+      "sha256": "9f41cfb45cdafcbe6f8f7bec201f75a008dfb355b575ef8ce713b30c724baa04"
+    },
+    {
+      "path": "effort-level.mjs",
+      "sha256": "0e1c6b989e8ac4d5f94f8cf3e0bedf9d077baed57995af7ae76cee0f1a3e72b7"
+    },
+    {
+      "path": "entropy.mjs",
+      "sha256": "4703865674da274e7da593ea101dc772f41fc1b478390b57192e0645302f8a79"
+    },
+    {
+      "path": "fault.mjs",
+      "sha256": "9fbe279fa5b8d95e3377cb0388a2b9fc7b5d69d85ddc9a0ba7b1de080b446fa5"
+    },
+    {
+      "path": "frame.mjs",
+      "sha256": "7d1c4e7dbd896c5a41ee6560d554d76e34fcdbedeb10bef1eba013553004148e"
+    },
+    {
+      "path": "framing.mjs",
+      "sha256": "10636428766f5d88d4ba89c9f25ef4e16d4a8bb61c1c9da2d67155dca4b14461"
+    },
+    {
+      "path": "icc-profile.mjs",
+      "sha256": "cec8c05d1b4325c453e9e35987d0d1070d8a081b0be767bf44bf1c9179249799"
+    },
+    {
+      "path": "icc-write.mjs",
+      "sha256": "fdd8d2871d60f7d3ae43a01e5f141bd8a48be9fb254f8e98c0164532e0caae78"
+    },
+    {
+      "path": "jfif.mjs",
+      "sha256": "8a9a95c64c70a475a7f6ab692a7b8e01b6047c7a8712658f675433a56a07c6d2"
+    },
+    {
+      "path": "kernel-hooks.mjs",
+      "sha256": "59cbfb8d65a27e4a20702664d2b3b431ff37bac80bcf7daf0da47f687e3c8ebc"
+    },
+    {
+      "path": "lf-frames.mjs",
+      "sha256": "23fd81a8b0028f296f63d465e1880f76b08e236cf810355aaad1ef29853e3b9e"
+    },
+    {
+      "path": "lossless-coding.mjs",
+      "sha256": "de31eebb279ea59485d68e59cc35dc83c1b20514b44c8c88e93d40b5fa0b1348"
+    },
+    {
+      "path": "lossless.mjs",
+      "sha256": "b139fd9cb65ac70452df63e9c9b8c165a2a8220116a5661998b0c56b05a1abca"
+    },
+    {
+      "path": "modular.mjs",
+      "sha256": "620c7ced4db45787485427593598cea03e6503ae705224c30e387885ec994c67"
+    },
+    {
+      "path": "noise.mjs",
+      "sha256": "13b6a1b669ef40e6aaa5fa0a2db9de159a35eb7dfdc87ef0f7df73a6384cc7c5"
+    },
+    {
+      "path": "photo-advanced.mjs",
+      "sha256": "f3814593f63a54b38d13a10acc9bafa7c01256bfeffb255acb3f0768e9d210aa"
+    },
+    {
+      "path": "photo-crop.mjs",
+      "sha256": "b26442c1939af59d036e34c771ce88578f984f6bd12c96ca4886bf0b29a93a51"
+    },
+    {
+      "path": "photo-dct.mjs",
+      "sha256": "739b11fe2d14f0101d0c127d4e324f13396b321ec42f5ccc02bdb21a9a12f035"
+    },
+    {
+      "path": "photo-job.mjs",
+      "sha256": "662207444bfd0f14d0756eeff8b000eed1cdfe969b103970c118889ee168a624"
+    },
+    {
+      "path": "photo-xyb.mjs",
+      "sha256": "75ed0b74e292def0e479bea86812566eaa13906bce8b6cf7f1417ea5d1d282c6"
+    },
+    {
+      "path": "prefix.mjs",
+      "sha256": "3eb499a52e84f3fc3b5dea56b9faadf0c87c7cc3362cabe2fc3b7e95a4eca68e"
+    },
+    {
+      "path": "quantization-defaults.mjs",
+      "sha256": "4ccbedaf15db7c0c3950669b52d35a97eb6524e2b47e4717718bfc911e3f4e50"
+    },
+    {
+      "path": "quantization-params.mjs",
+      "sha256": "51f8da4628aaceb69d90e350ff861ff0bc39a102bb3b4b85606a13f699fc701b"
+    },
+    {
+      "path": "screen-lz77.mjs",
+      "sha256": "cdb03812de11d047b3f25b21357cad61d4db79efa51b913487611cd086d7d771"
+    },
+    {
+      "path": "vardct-progressive.mjs",
+      "sha256": "4de863ad9eb6964f16e7b0d49bea6ff5802fc4392c350afa5c66e106db91e74d"
+    },
+    {
+      "path": "vardct-strategies.mjs",
+      "sha256": "47b1db59caad183de37d8846564c7231c44d400647b7eea29b71f0be9cd3c871"
+    },
+    {
+      "path": "vardct.mjs",
+      "sha256": "83c7e3cc9b18fa9d3d32825ed72d3737415613aa533949d21732a754290137e3"
+    }
+  ],
+  "complete": true,
+  "rows": [
+    {
+      "name": "lf-dct8",
+      "width": 16,
+      "height": 16,
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct8",
+        "lfFrames": 1
+      },
+      "bytes": 836,
+      "sha256": "0adc1e9611dc45b5cd900545245e061fbc98a646424e7064dce6365df8646092",
+      "warmupMs": 28.060914999999994,
+      "samplesMs": [
+        12.797420999999986,
+        20.795709999999985,
+        5.02355,
+        10.646979999999985,
+        2.157461000000012
+      ],
+      "medianMs": 10.646979999999985,
+      "control": {
+        "bytes": 517,
+        "sha256": "5c758fcd16bac76e4098e09beba06841a1588a3a5426b19d546efdcc1c9c5d23",
+        "warmupMs": 15.020488,
+        "samplesMs": [
+          10.272131000000002,
+          6.956191999999987,
+          9.396558999999996,
+          7.349648999999999,
+          1.4808790000000158
+        ],
+        "medianMs": 7.349648999999999,
+        "maxSourceDifference": 3,
+        "rgbMeanSquareError": 0.71484375
+      },
+      "maxSourceDifference": 3,
+      "rgbMeanSquareError": 0.71484375,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 0,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-identity",
+      "width": 16,
+      "height": 16,
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "identity",
+        "lfFrames": 1
+      },
+      "bytes": 1194,
+      "sha256": "9f7a206b866afb2e4b0795747223d2c73e1972d244059ebb3341ae49b82f2e39",
+      "warmupMs": 2.0322479999999814,
+      "samplesMs": [
+        3.3659320000000434,
+        2.794054000000017,
+        2.275414000000012,
+        2.0812990000000013,
+        5.345763000000034
+      ],
+      "medianMs": 2.794054000000017,
+      "control": {
+        "bytes": 874,
+        "sha256": "44c0fdb293d40a5f81c8b3074b115d2260d9e0eb67fe01d570ad4029e4410ba5",
+        "warmupMs": 6.602885000000015,
+        "samplesMs": [
+          1.9135330000000295,
+          1.3905579999999986,
+          4.8647170000000415,
+          1.4895720000000097,
+          1.9466830000000073
+        ],
+        "medianMs": 1.9135330000000295,
+        "maxSourceDifference": 2,
+        "rgbMeanSquareError": 0.4166666666666667
+      },
+      "maxSourceDifference": 2,
+      "rgbMeanSquareError": 0.4114583333333333,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct2",
+      "width": 16,
+      "height": 16,
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct2",
+        "lfFrames": 1
+      },
+      "bytes": 1008,
+      "sha256": "54e304f5614a083698ab9884c598e739c71be78c5f45a51d53ae06d82db0d3d1",
+      "warmupMs": 1.4226340000000164,
+      "samplesMs": [
+        5.777025000000094,
+        1.6870810000000347,
+        6.747417000000041,
+        1.4340409999999792,
+        9.509904000000006
+      ],
+      "medianMs": 5.777025000000094,
+      "control": {
+        "bytes": 689,
+        "sha256": "4c8d1687ddca4f9ba596ad2926204a85030f0c0db2e324e0599232aadcf325da",
+        "warmupMs": 1.2974310000000742,
+        "samplesMs": [
+          1.1470110000000204,
+          0.9795850000000428,
+          7.007046999999943,
+          3.743274000000042,
+          1.0074559999999337
+        ],
+        "medianMs": 1.1470110000000204,
+        "maxSourceDifference": 3,
+        "rgbMeanSquareError": 0.8658854166666666
+      },
+      "maxSourceDifference": 3,
+      "rgbMeanSquareError": 0.8671875,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct4",
+      "width": 16,
+      "height": 16,
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct4",
+        "lfFrames": 1
+      },
+      "bytes": 866,
+      "sha256": "baa191aaa6f1ee78d87449b6442a650e5d3cdfbeb99c1221861c374558fb8fa4",
+      "warmupMs": 2.5982270000000653,
+      "samplesMs": [
+        3.7406109999999444,
+        1.3788399999999683,
+        1.1758419999999887,
+        21.187695000000076,
+        1.4930070000000342
+      ],
+      "medianMs": 1.4930070000000342,
+      "control": {
+        "bytes": 546,
+        "sha256": "dbe967b55fd50dad9b44da77fd18fe1f168c297925dbaf37faa434b609b1e7c1",
+        "warmupMs": 1.3258030000000645,
+        "samplesMs": [
+          6.998753999999963,
+          1.049276999999961,
+          1.1697940000000244,
+          13.242233000000056,
+          1.060212999999976
+        ],
+        "medianMs": 1.1697940000000244,
+        "maxSourceDifference": 2,
+        "rgbMeanSquareError": 0.5390625
+      },
+      "maxSourceDifference": 2,
+      "rgbMeanSquareError": 0.5377604166666666,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct16",
+      "width": 16,
+      "height": 16,
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct16",
+        "lfFrames": 1
+      },
+      "bytes": 1174,
+      "sha256": "196418dfbb53729157dd7219ecec5ff89b6a9b057d14d36e317338c48358e6a9",
+      "warmupMs": 1.6325920000000451,
+      "samplesMs": [
+        1.9320410000000265,
+        1.3996099999999387,
+        1.3613040000000183,
+        1.5095019999999977,
+        1.5831600000000208
+      ],
+      "medianMs": 1.5095019999999977,
+      "control": {
+        "bytes": 719,
+        "sha256": "7c5fe19c218c3a1a8c2231c2de0d00a8dcd1103d799ad3e22b0ba5aa4931421a",
+        "warmupMs": 1.843279999999936,
+        "samplesMs": [
+          1.3090680000000248,
+          3.340955000000008,
+          2.5397609999999986,
+          1.0431290000000217,
+          0.9651240000000598
+        ],
+        "medianMs": 1.3090680000000248,
+        "maxSourceDifference": 4,
+        "rgbMeanSquareError": 1.07421875
+      },
+      "maxSourceDifference": 4,
+      "rgbMeanSquareError": 1.07421875,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 0,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct32",
+      "width": 32,
+      "height": 32,
+      "inputSha256": "d8a100d06f4bb095a02eb3a1af465aa863b99091dffb6cbb2791d71de8e1c72b",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct32",
+        "lfFrames": 1
+      },
+      "bytes": 2260,
+      "sha256": "7fa047bbb98550196f41fd6f7a0fd547056a4dff5f0dcd714367584e5e49d88a",
+      "warmupMs": 8.870247000000063,
+      "samplesMs": [
+        8.983752000000095,
+        7.0002470000000585,
+        2.6172050000000127,
+        15.48255400000005,
+        13.627958000000035
+      ],
+      "medianMs": 8.983752000000095,
+      "control": {
+        "bytes": 1839,
+        "sha256": "5ca4b235c1a67294b3c8006e3ea8765868f7b282e83b98144a165ab403af6622",
+        "warmupMs": 8.677984999999921,
+        "samplesMs": [
+          4.748178000000053,
+          6.442749999999933,
+          2.712413999999967,
+          6.313139999999976,
+          5.392791999999986
+        ],
+        "medianMs": 5.392791999999986,
+        "maxSourceDifference": 5,
+        "rgbMeanSquareError": 0.8736979166666666
+      },
+      "maxSourceDifference": 5,
+      "rgbMeanSquareError": 0.8736979166666666,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct16x8",
+      "width": 16,
+      "height": 16,
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct16x8",
+        "lfFrames": 1
+      },
+      "bytes": 1127,
+      "sha256": "c9cf480e360150134b281256138a2e9303dbfdef5fe7a1e393d94037dbb6d88a",
+      "warmupMs": 4.937794999999937,
+      "samplesMs": [
+        3.4941199999999526,
+        1.8059960000000501,
+        1.061935999999946,
+        1.1640350000000126,
+        1.036899999999946
+      ],
+      "medianMs": 1.1640350000000126,
+      "control": {
+        "bytes": 766,
+        "sha256": "8bc8609cd2bcb7f41b30e073668ec2473c18f25133443169bee3d27e9faea777",
+        "warmupMs": 1.1048580000000356,
+        "samplesMs": [
+          0.7698279999999613,
+          0.755437000000029,
+          0.707416999999964,
+          0.6669669999999996,
+          0.7409359999999197
+        ],
+        "medianMs": 0.7409359999999197,
+        "maxSourceDifference": 4,
+        "rgbMeanSquareError": 1.3567708333333333
+      },
+      "maxSourceDifference": 4,
+      "rgbMeanSquareError": 1.3567708333333333,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 0,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct8x16",
+      "width": 16,
+      "height": 16,
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct8x16",
+        "lfFrames": 1
+      },
+      "bytes": 1209,
+      "sha256": "5fbee65699419895f66df26e49a6d174ce14d029a6918e496c21c3673d6c0912",
+      "warmupMs": 8.871389000000136,
+      "samplesMs": [
+        1.3317110000000412,
+        2.0167650000000776,
+        12.498393000000078,
+        1.1343020000001616,
+        1.131118000000015
+      ],
+      "medianMs": 1.3317110000000412,
+      "control": {
+        "bytes": 743,
+        "sha256": "a5ef2f7c23ed4f5ce53f1a5981fe7f61b18f55bb3c450ae025e5f4c3ef3cd38b",
+        "warmupMs": 2.822505000000092,
+        "samplesMs": [
+          5.5785430000000815,
+          0.7256640000000516,
+          0.6464169999999285,
+          0.6919339999999465,
+          0.6861850000000231
+        ],
+        "medianMs": 0.6919339999999465,
+        "maxSourceDifference": 3,
+        "rgbMeanSquareError": 0.6575520833333334
+      },
+      "maxSourceDifference": 3,
+      "rgbMeanSquareError": 0.6575520833333334,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 0,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct32x8",
+      "width": 16,
+      "height": 32,
+      "inputSha256": "2bcbb804839fda663b5600fe2af36727c382c6a16e3c929c28d08b97b1af600a",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct32x8",
+        "lfFrames": 1
+      },
+      "bytes": 1712,
+      "sha256": "83671724b129e2e73893dbb51f6cd220b8b80959793dab3204e91b302481c961",
+      "warmupMs": 7.8045660000000225,
+      "samplesMs": [
+        1.6925999999998567,
+        1.349247000000105,
+        1.9865699999998014,
+        1.630529000000024,
+        4.574563000000126
+      ],
+      "medianMs": 1.6925999999998567,
+      "control": {
+        "bytes": 1334,
+        "sha256": "52d787fbbdfb4a66b37477a2fad536eb99c5ddcaead73c4e7cd669c9be558ac6",
+        "warmupMs": 1.3463929999998072,
+        "samplesMs": [
+          0.9261169999999765,
+          1.0870729999999185,
+          4.362863000000061,
+          0.9525660000001608,
+          1.993680999999924
+        ],
+        "medianMs": 1.0870729999999185,
+        "maxSourceDifference": 4,
+        "rgbMeanSquareError": 1.0716145833333333
+      },
+      "maxSourceDifference": 4,
+      "rgbMeanSquareError": 1.072265625,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct8x32",
+      "width": 32,
+      "height": 16,
+      "inputSha256": "a0553491d078002bb114fde5bc6a5a19d8a7efffe2fc16b06aa0a6f9fb0f5d1d",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct8x32",
+        "lfFrames": 1
+      },
+      "bytes": 1737,
+      "sha256": "277b04f51e5fcca57bce654996b33ece88a9f8f189c297bab7c59250a534f709",
+      "warmupMs": 9.809262999999874,
+      "samplesMs": [
+        7.322828999999956,
+        1.524733999999853,
+        1.4820620000000417,
+        5.57857399999989,
+        1.3108710000001338
+      ],
+      "medianMs": 1.524733999999853,
+      "control": {
+        "bytes": 1299,
+        "sha256": "c8aca58fba95dbaa2f8b13001ebac97a319b9c38d2e90ec32e2fee6e2c5818a5",
+        "warmupMs": 1.1927479999999377,
+        "samplesMs": [
+          0.9747489999999743,
+          4.068130999999994,
+          1.1102160000000367,
+          1.0831880000000638,
+          0.9717540000001463
+        ],
+        "medianMs": 1.0831880000000638,
+        "maxSourceDifference": 3,
+        "rgbMeanSquareError": 0.5826822916666666
+      },
+      "maxSourceDifference": 3,
+      "rgbMeanSquareError": 0.5826822916666666,
+      "decoderMaxDifference": 1,
+      "controlMaxDifference": 0,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct32x16",
+      "width": 16,
+      "height": 32,
+      "inputSha256": "2bcbb804839fda663b5600fe2af36727c382c6a16e3c929c28d08b97b1af600a",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct32x16",
+        "lfFrames": 1
+      },
+      "bytes": 2410,
+      "sha256": "5dd94180b688cdaf78ae0a4ab12c2ffceac64c65baabeeea2f3708f2f6fe0f1a",
+      "warmupMs": 1.7134810000000016,
+      "samplesMs": [
+        5.325427999999874,
+        2.6230030000001534,
+        1.4682310000000598,
+        1.4233750000000782,
+        1.5848320000000058
+      ],
+      "medianMs": 1.5848320000000058,
+      "control": {
+        "bytes": 1978,
+        "sha256": "2cdff2d2f37c99bf7c0deb5f7838a1e4c7a6982419f1976e466d1c9a592f275a",
+        "warmupMs": 4.517428999999993,
+        "samplesMs": [
+          5.320155999999997,
+          1.1478609999999208,
+          14.033942999999908,
+          1.1488630000001194,
+          11.612965000000031
+        ],
+        "medianMs": 5.320155999999997,
+        "maxSourceDifference": 4,
+        "rgbMeanSquareError": 0.953125
+      },
+      "maxSourceDifference": 4,
+      "rgbMeanSquareError": 0.9537760416666666,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct16x32",
+      "width": 32,
+      "height": 16,
+      "inputSha256": "a0553491d078002bb114fde5bc6a5a19d8a7efffe2fc16b06aa0a6f9fb0f5d1d",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct16x32",
+        "lfFrames": 1
+      },
+      "bytes": 2423,
+      "sha256": "7d2a3aca168fb46979a650fec747a2fd831e2e4574dbe55d7d5d9118fed22170",
+      "warmupMs": 1.5986729999999625,
+      "samplesMs": [
+        6.674530000000004,
+        2.4695580000000064,
+        5.210855000000038,
+        1.605201999999963,
+        1.5059369999999035
+      ],
+      "medianMs": 2.4695580000000064,
+      "control": {
+        "bytes": 1984,
+        "sha256": "da40712267fea6cac39470e25dc905fe4035dedd06d2676fee1fc583fa962e21",
+        "warmupMs": 1.3242609999999786,
+        "samplesMs": [
+          1.3190329999999904,
+          5.597490999999991,
+          1.144886999999926,
+          1.1327300000000378,
+          4.529886999999917
+        ],
+        "medianMs": 1.3190329999999904,
+        "maxSourceDifference": 4,
+        "rgbMeanSquareError": 0.9720052083333334
+      },
+      "maxSourceDifference": 4,
+      "rgbMeanSquareError": 0.974609375,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct4x8",
+      "width": 16,
+      "height": 16,
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct4x8",
+        "lfFrames": 1
+      },
+      "bytes": 870,
+      "sha256": "b466b012053a1980d4f890435a1fc33c2f78d6c6fae0f3e0ef8740f1665f4356",
+      "warmupMs": 1.3838379999999688,
+      "samplesMs": [
+        1.2542579999999361,
+        1.9498470000000907,
+        1.1512669999999616,
+        1.1259299999999257,
+        6.717112000000043
+      ],
+      "medianMs": 1.2542579999999361,
+      "control": {
+        "bytes": 550,
+        "sha256": "7b9440744d3edfbf6328cebfde2e4bea8fda65695fef9e1d577d05ffeb1113da",
+        "warmupMs": 1.0735930000000735,
+        "samplesMs": [
+          0.8910750000000007,
+          4.8905959999999595,
+          0.8696649999999408,
+          0.7961270000000695,
+          0.795455999999831
+        ],
+        "medianMs": 0.8696649999999408,
+        "maxSourceDifference": 3,
+        "rgbMeanSquareError": 0.6653645833333334
+      },
+      "maxSourceDifference": 3,
+      "rgbMeanSquareError": 0.6640625,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct8x4",
+      "width": 16,
+      "height": 16,
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct8x4",
+        "lfFrames": 1
+      },
+      "bytes": 847,
+      "sha256": "c5a7078e93f17938938f2ef37eeece9808ff64e84f8be21e498c9d0596228d1e",
+      "warmupMs": 1.1494539999998779,
+      "samplesMs": [
+        1.1608410000001186,
+        9.236654000000044,
+        1.2199769999999717,
+        7.23815599999989,
+        1.3857700000000932
+      ],
+      "medianMs": 1.3857700000000932,
+      "control": {
+        "bytes": 528,
+        "sha256": "d1f5a142afe028bc24b983742b1c7b058a61b9863ff0306c4844044767c18b1a",
+        "warmupMs": 0.9069389999999657,
+        "samplesMs": [
+          0.7479260000000068,
+          1.041146000000026,
+          0.7122630000001209,
+          0.7143469999998615,
+          0.6376740000000609
+        ],
+        "medianMs": 0.7143469999998615,
+        "maxSourceDifference": 2,
+        "rgbMeanSquareError": 0.56640625
+      },
+      "maxSourceDifference": 2,
+      "rgbMeanSquareError": 0.56640625,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 0,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-afv0",
+      "width": 16,
+      "height": 16,
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "afv0",
+        "lfFrames": 1
+      },
+      "bytes": 953,
+      "sha256": "d2f84d4a074bf4808b9c858aebea65530a0b542712fafcc506966ed03688f954",
+      "warmupMs": 8.13103799999999,
+      "samplesMs": [
+        1.660483000000113,
+        1.7511250000000018,
+        1.6829260000001796,
+        11.716325999999981,
+        1.6242899999999736
+      ],
+      "medianMs": 1.6829260000001796,
+      "control": {
+        "bytes": 633,
+        "sha256": "c191e15811a4ea45748a581d53614240fc9b75a724c7c5a1ad975790bb569149",
+        "warmupMs": 1.5018600000000788,
+        "samplesMs": [
+          3.1367159999999785,
+          1.1777259999998932,
+          3.070219000000179,
+          1.1115090000000691,
+          2.294431999999915
+        ],
+        "medianMs": 2.294431999999915,
+        "maxSourceDifference": 2,
+        "rgbMeanSquareError": 0.53515625
+      },
+      "maxSourceDifference": 2,
+      "rgbMeanSquareError": 0.5338541666666666,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-afv1",
+      "width": 16,
+      "height": 16,
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "afv1",
+        "lfFrames": 1
+      },
+      "bytes": 947,
+      "sha256": "df150eb49f3bb85e0c6316dc97f69d6d1c215675f70f6efa5894bc5208c412f4",
+      "warmupMs": 2.127236000000039,
+      "samplesMs": [
+        1.3651500000000851,
+        1.4446570000000065,
+        1.7766129999999976,
+        5.7408220000002075,
+        1.2900200000001405
+      ],
+      "medianMs": 1.4446570000000065,
+      "control": {
+        "bytes": 627,
+        "sha256": "535c7743538063d6f4a17a1ba4c4a341dbd1bd78480bedd28ef07eb922ddc90c",
+        "warmupMs": 2.735357000000022,
+        "samplesMs": [
+          1.143094999999903,
+          3.5172329999998055,
+          0.9908219999999801,
+          0.9782929999998942,
+          1.5960390000000189
+        ],
+        "medianMs": 1.143094999999903,
+        "maxSourceDifference": 3,
+        "rgbMeanSquareError": 0.5442708333333334
+      },
+      "maxSourceDifference": 3,
+      "rgbMeanSquareError": 0.54296875,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-afv2",
+      "width": 16,
+      "height": 16,
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "afv2",
+        "lfFrames": 1
+      },
+      "bytes": 945,
+      "sha256": "c067f74361cc525338af997f1873a3a614a9ff5a60f5f0ad404b9a855a7f2893",
+      "warmupMs": 1.9905470000003334,
+      "samplesMs": [
+        2.1602749999997286,
+        4.890917000000172,
+        2.2388609999998152,
+        1.4013730000001487,
+        5.510333000000173
+      ],
+      "medianMs": 2.2388609999998152,
+      "control": {
+        "bytes": 625,
+        "sha256": "650405925e6a3fe78679ed2ab42a30465e659fb1e1c682d8ef8fb4a1d2a795fe",
+        "warmupMs": 7.240076999999928,
+        "samplesMs": [
+          1.1544220000000678,
+          2.566179999999804,
+          0.9931750000000648,
+          0.9694600000002538,
+          0.9004290000002584
+        ],
+        "medianMs": 0.9931750000000648,
+        "maxSourceDifference": 2,
+        "rgbMeanSquareError": 0.54296875
+      },
+      "maxSourceDifference": 2,
+      "rgbMeanSquareError": 0.54296875,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 0,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-afv3",
+      "width": 16,
+      "height": 16,
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "afv3",
+        "lfFrames": 1
+      },
+      "bytes": 951,
+      "sha256": "69d83c0c2937540baa79eb967863610f32f2f67ce91932763992d094ef34f981",
+      "warmupMs": 1.3916189999999915,
+      "samplesMs": [
+        2.0172450000000026,
+        1.1334000000001652,
+        1.64248600000019,
+        1.1292339999999967,
+        1.114502999999786
+      ],
+      "medianMs": 1.1334000000001652,
+      "control": {
+        "bytes": 632,
+        "sha256": "7ca361ef8502add4d4ba60e53490d05f1b9b69f1a0546ec8bcd832760a44ce31",
+        "warmupMs": 1.262028999999984,
+        "samplesMs": [
+          0.978012999999919,
+          0.8585079999998015,
+          2.1660940000001574,
+          1.2895699999999124,
+          0.8646770000000288
+        ],
+        "medianMs": 0.978012999999919,
+        "maxSourceDifference": 2,
+        "rgbMeanSquareError": 0.515625
+      },
+      "maxSourceDifference": 2,
+      "rgbMeanSquareError": 0.515625,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 0,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct64",
+      "width": 64,
+      "height": 64,
+      "inputSha256": "1528bcdb04f1c974a1b805d5e9fd095eab81af95d243c38b047bacacde445aa9",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct64",
+        "lfFrames": 1
+      },
+      "bytes": 5820,
+      "sha256": "62331e14fb879415370d1419cd80c98c4088016d0503a67c93d4576354a61bf9",
+      "warmupMs": 7.740252000000055,
+      "samplesMs": [
+        8.500395000000026,
+        6.8052309999998215,
+        6.635171999999784,
+        6.1490600000001905,
+        7.73260399999981
+      ],
+      "medianMs": 6.8052309999998215,
+      "control": {
+        "bytes": 5462,
+        "sha256": "383c3aa2b9075d259d9bcfc1ad7af663a0c20c01cb07cd40b07d28216073a908",
+        "warmupMs": 6.727707000000009,
+        "samplesMs": [
+          15.245837999999821,
+          6.10317299999997,
+          5.886445000000094,
+          10.16018699999995,
+          5.898382000000311
+        ],
+        "medianMs": 6.10317299999997,
+        "maxSourceDifference": 5,
+        "rgbMeanSquareError": 0.6029459635416666
+      },
+      "maxSourceDifference": 5,
+      "rgbMeanSquareError": 0.6028645833333334,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct64x32",
+      "width": 32,
+      "height": 64,
+      "inputSha256": "072ba7d76f978428ce0b15a2761c266522387c9e5ff77433ffceab40a5b3b139",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct64x32",
+        "lfFrames": 1
+      },
+      "bytes": 7209,
+      "sha256": "a57e77941812a524212a5ceb198853571f5ff3f8166454c40068efc578235bb3",
+      "warmupMs": 4.82669100000021,
+      "samplesMs": [
+        3.5076639999997496,
+        3.7088739999999234,
+        5.695467000000008,
+        4.7045420000004015,
+        3.461675000000014
+      ],
+      "medianMs": 3.7088739999999234,
+      "control": {
+        "bytes": 6817,
+        "sha256": "c3071aaea77b43b3afc1d357276a07a81f7cfafe5f1ea4bb419fa52d152954e9",
+        "warmupMs": 3.6275000000000546,
+        "samplesMs": [
+          3.282973000000311,
+          3.161243999999897,
+          3.4542840000003707,
+          3.1651999999999134,
+          4.2641349999998965
+        ],
+        "medianMs": 3.282973000000311,
+        "maxSourceDifference": 4,
+        "rgbMeanSquareError": 0.7197265625
+      },
+      "maxSourceDifference": 4,
+      "rgbMeanSquareError": 0.7194010416666666,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct32x64",
+      "width": 64,
+      "height": 32,
+      "inputSha256": "146c2963214c82467fac1dc3b90057efc5d1f98c4e5b2644e78b545171ec754c",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct32x64",
+        "lfFrames": 1
+      },
+      "bytes": 7180,
+      "sha256": "9e6af7d4a5d877dc6e9685deb1fe831a0874afd97270b8726592a15274bb2f41",
+      "warmupMs": 4.146411000000171,
+      "samplesMs": [
+        3.5747110000002067,
+        3.6001790000000256,
+        4.285507000000052,
+        3.2933890000003885,
+        3.2263100000000122
+      ],
+      "medianMs": 3.5747110000002067,
+      "control": {
+        "bytes": 6785,
+        "sha256": "cdddff5790c31272eecf9a36757e05606453d6d6bb6db1a2b04fd7a2292eafeb",
+        "warmupMs": 3.472331000000395,
+        "samplesMs": [
+          3.252238000000034,
+          3.571356999999807,
+          3.184900000000198,
+          4.22778100000005,
+          3.4246710000002167
+        ],
+        "medianMs": 3.4246710000002167,
+        "maxSourceDifference": 5,
+        "rgbMeanSquareError": 0.7195638020833334
+      },
+      "maxSourceDifference": 5,
+      "rgbMeanSquareError": 0.7195638020833334,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct128",
+      "width": 128,
+      "height": 128,
+      "inputSha256": "c677c354dd5ed4fef1780448fc215d767cf5d7ace6c4a2216beee40254c283e9",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct128",
+        "lfFrames": 1
+      },
+      "bytes": 19506,
+      "sha256": "56eac59b93fdebfcec860c9028f1250b0fa82d0e56307740442d6a2e95a34646",
+      "warmupMs": 50.09244200000012,
+      "samplesMs": [
+        47.82308699999976,
+        47.10801700000002,
+        31.439166999999998,
+        32.83579000000009,
+        31.446297999999842
+      ],
+      "medianMs": 32.83579000000009,
+      "control": {
+        "bytes": 18475,
+        "sha256": "5c4217048ab2f773a29f764073846b41d11706ed5bc2032aee9910c0120729e4",
+        "warmupMs": 48.22788199999968,
+        "samplesMs": [
+          75.31945199999973,
+          44.58230700000013,
+          39.75109799999973,
+          69.55721700000004,
+          46.30754100000013
+        ],
+        "medianMs": 46.30754100000013,
+        "maxSourceDifference": 5,
+        "rgbMeanSquareError": 0.4083455403645833
+      },
+      "maxSourceDifference": 5,
+      "rgbMeanSquareError": 0.4082438151041667,
+      "decoderMaxDifference": 1,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct128x64",
+      "width": 64,
+      "height": 128,
+      "inputSha256": "bbddb23502d2d775ead604861f2ef332095a3eb4df97fa2bdbe5b8c41c82b3bc",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct128x64",
+        "lfFrames": 1
+      },
+      "bytes": 24654,
+      "sha256": "5a3c7b5fe2ad3c02a81a465706dbdaa9110da11115414c7d5db19f651fb3168d",
+      "warmupMs": 16.314788000000135,
+      "samplesMs": [
+        15.963152000000264,
+        15.927178999999796,
+        17.410227999999734,
+        15.48850399999992,
+        14.874373000000105
+      ],
+      "medianMs": 15.927178999999796,
+      "control": {
+        "bytes": 24089,
+        "sha256": "6902d21d6829e754f6c3ec98849dd802c10b7f9eef73d44f8740a22f2aa49969",
+        "warmupMs": 14.275472000000264,
+        "samplesMs": [
+          15.507453000000169,
+          15.059584000000086,
+          15.084240000000136,
+          16.13273100000015,
+          17.842032000000017
+        ],
+        "medianMs": 15.507453000000169,
+        "maxSourceDifference": 5,
+        "rgbMeanSquareError": 0.5318196614583334
+      },
+      "maxSourceDifference": 5,
+      "rgbMeanSquareError": 0.53173828125,
+      "decoderMaxDifference": 1,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct64x128",
+      "width": 128,
+      "height": 64,
+      "inputSha256": "1ebcbec7559c448f426699647f68fd7e907cc9a63c8cfbf36f162f065a9b5e5b",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct64x128",
+        "lfFrames": 1
+      },
+      "bytes": 24638,
+      "sha256": "d68a1fbfa338b9d92c39c8d65abdb100a3b60a908fb455c3c8b32ae0164233b5",
+      "warmupMs": 14.596443999999792,
+      "samplesMs": [
+        15.271156000000246,
+        19.488640999999916,
+        18.440039999999954,
+        14.48050400000011,
+        17.52257299999974
+      ],
+      "medianMs": 17.52257299999974,
+      "control": {
+        "bytes": 24048,
+        "sha256": "e1e89b6cc5037d1c7bcb1c8239901b7debeae2b66000f277a5c9cc6a7c40dae4",
+        "warmupMs": 20.704267000000073,
+        "samplesMs": [
+          22.235286000000087,
+          17.126530999999886,
+          14.50107399999979,
+          20.99676700000009,
+          13.608752999999979
+        ],
+        "medianMs": 17.126530999999886,
+        "maxSourceDifference": 5,
+        "rgbMeanSquareError": 0.518798828125
+      },
+      "maxSourceDifference": 5,
+      "rgbMeanSquareError": 0.5189208984375,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct256",
+      "width": 256,
+      "height": 256,
+      "inputSha256": "772f1a376586d7ebb3a63b2d13f253e475d89f7bfc2cda5a2083c363c3706155",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct256",
+        "lfFrames": 1
+      },
+      "bytes": 74080,
+      "sha256": "836941f13eb76863842601a69f93757c345fdc55a734495b01896e4791238bb6",
+      "warmupMs": 219.0660340000004,
+      "samplesMs": [
+        212.95946100000037,
+        288.7897329999996,
+        278.8871259999996,
+        245.92880199999945,
+        209.74499599999945
+      ],
+      "medianMs": 245.92880199999945,
+      "control": {
+        "bytes": 70468,
+        "sha256": "87092eee460fa1ae4b2bd14c6e09c242cd6767f799480cfa5664ff244fa4cbc9",
+        "warmupMs": 232.19398500000034,
+        "samplesMs": [
+          209.60704599999963,
+          224.97266000000036,
+          227.1280459999998,
+          233.96380899999986,
+          220.04572199999984
+        ],
+        "medianMs": 224.97266000000036,
+        "maxSourceDifference": 5,
+        "rgbMeanSquareError": 0.2801157633463542
+      },
+      "maxSourceDifference": 5,
+      "rgbMeanSquareError": 0.2800445556640625,
+      "decoderMaxDifference": 1,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct256x128",
+      "width": 128,
+      "height": 256,
+      "inputSha256": "88606542943ae3ac14f0b7c5ef2f2e94b62586817cede0b0c19c21a5a9332231",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct256x128",
+        "lfFrames": 1
+      },
+      "bytes": 84601,
+      "sha256": "bd4f17251cdafa8d01f9a401759aafd55813609dd6e9d10252cdff8b66980d23",
+      "warmupMs": 98.92860199999996,
+      "samplesMs": [
+        86.52606099999957,
+        81.73242699999992,
+        81.36563899999965,
+        88.27835899999991,
+        83.78131899999971
+      ],
+      "medianMs": 83.78131899999971,
+      "control": {
+        "bytes": 82690,
+        "sha256": "df9efcdd705ffba37b156382e41ce82a507ab2ddaf3fb32a358cd29841879a8c",
+        "warmupMs": 218.16415299999971,
+        "samplesMs": [
+          120.79605400000037,
+          89.57629100000031,
+          86.30507699999998,
+          84.67805299999964,
+          101.56388900000002
+        ],
+        "medianMs": 89.57629100000031,
+        "maxSourceDifference": 5,
+        "rgbMeanSquareError": 0.34259033203125
+      },
+      "maxSourceDifference": 5,
+      "rgbMeanSquareError": 0.3426106770833333,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-dct128x256",
+      "width": 256,
+      "height": 128,
+      "inputSha256": "4f5c446e553e63597c1b4844a3dba17b76b12c7784c286b9fcf3248ae15b81fe",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct128x256",
+        "lfFrames": 1
+      },
+      "bytes": 84503,
+      "sha256": "fa7376e513b2e22c208abe43b16184c5a191e2857daf7faaeebacf1db613d092",
+      "warmupMs": 91.58229199999914,
+      "samplesMs": [
+        92.53564300000107,
+        102.81622900000002,
+        102.14696299999923,
+        148.89196699999957,
+        95.84443699999974
+      ],
+      "medianMs": 102.14696299999923,
+      "control": {
+        "bytes": 82569,
+        "sha256": "f664af77dd33824971d0c1836f2fab78d001781db87a30fc42fbae60bfa84ae6",
+        "warmupMs": 173.78942799999913,
+        "samplesMs": [
+          101.89421199999924,
+          80.1191519999993,
+          79.13768399999935,
+          106.69234999999935,
+          105.8856880000003
+        ],
+        "medianMs": 101.89421199999924,
+        "maxSourceDifference": 6,
+        "rgbMeanSquareError": 0.340606689453125
+      },
+      "maxSourceDifference": 6,
+      "rgbMeanSquareError": 0.3406473795572917,
+      "decoderMaxDifference": 1,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-alpha-1",
+      "width": 257,
+      "height": 259,
+      "inputSha256": "e39e5efdc7aed8841b76c1dd2c74a22e94ec80ebde73473d1652d7f9bb2a9c49",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "lfFrames": 1
+      },
+      "bytes": 52591,
+      "sha256": "fac83e65500176d5dc970993da09a4c8ea020d06b34b95b7500710ae4bb94df7",
+      "warmupMs": 85.144056000001,
+      "samplesMs": [
+        63.8364300000012,
+        42.34813000000031,
+        58.75567500000034,
+        17.418955999999525,
+        17.01014799999939
+      ],
+      "medianMs": 42.34813000000031,
+      "control": {
+        "bytes": 49148,
+        "sha256": "a7f6497df4915ff71196bb3bc052c326e0279a9822c1f421c1709ea7293a959d",
+        "warmupMs": 94.79522999999972,
+        "samplesMs": [
+          99.2134649999989,
+          22.868553000000247,
+          15.81058000000121,
+          29.68146700000034,
+          24.09023299999899
+        ],
+        "medianMs": 24.09023299999899,
+        "maxSourceDifference": 3,
+        "rgbMeanSquareError": 0.6276509973008028
+      },
+      "maxSourceDifference": 3,
+      "rgbMeanSquareError": 0.3747076704275148,
+      "decoderMaxDifference": 1,
+      "controlMaxDifference": 4,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-alpha-2",
+      "width": 257,
+      "height": 259,
+      "inputSha256": "e39e5efdc7aed8841b76c1dd2c74a22e94ec80ebde73473d1652d7f9bb2a9c49",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "lfFrames": 2
+      },
+      "bytes": 52622,
+      "sha256": "1b474f646599a4054f44eb86e553ce8214023e867206c951ea098ed76d1e615d",
+      "warmupMs": 25.501445999998396,
+      "samplesMs": [
+        27.640357000000222,
+        26.086654999999155,
+        48.336865999999645,
+        21.764957000001232,
+        18.49696699999913
+      ],
+      "medianMs": 26.086654999999155,
+      "control": {
+        "bytes": 49148,
+        "sha256": "a7f6497df4915ff71196bb3bc052c326e0279a9822c1f421c1709ea7293a959d",
+        "warmupMs": 96.43411000000015,
+        "samplesMs": [
+          21.744676999998774,
+          17.3990249999988,
+          15.805593999999473,
+          14.959952999999587,
+          14.49986700000045
+        ],
+        "medianMs": 15.805593999999473,
+        "maxSourceDifference": 3,
+        "rgbMeanSquareError": 0.6276509973008028
+      },
+      "maxSourceDifference": 3,
+      "rgbMeanSquareError": 0.3747076704275148,
+      "decoderMaxDifference": 1,
+      "controlMaxDifference": 4,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-alpha-3",
+      "width": 257,
+      "height": 259,
+      "inputSha256": "e39e5efdc7aed8841b76c1dd2c74a22e94ec80ebde73473d1652d7f9bb2a9c49",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "lfFrames": 3
+      },
+      "bytes": 52828,
+      "sha256": "b8805b995450746cd90e512a3d593abd1092e50026abb5ee4733a4c37bb3143b",
+      "warmupMs": 25.485340999999607,
+      "samplesMs": [
+        20.922269000000597,
+        43.67270400000052,
+        40.68659900000057,
+        19.16275499999938,
+        18.729159000000436
+      ],
+      "medianMs": 20.922269000000597,
+      "control": {
+        "bytes": 49148,
+        "sha256": "a7f6497df4915ff71196bb3bc052c326e0279a9822c1f421c1709ea7293a959d",
+        "warmupMs": 127.47109400000045,
+        "samplesMs": [
+          21.845046000000366,
+          15.749061999998958,
+          16.003426000001127,
+          18.536976000001232,
+          16.427057999999306
+        ],
+        "medianMs": 16.427057999999306,
+        "maxSourceDifference": 3,
+        "rgbMeanSquareError": 0.6276509973008028
+      },
+      "maxSourceDifference": 3,
+      "rgbMeanSquareError": 0.37489796633765504,
+      "decoderMaxDifference": 1,
+      "controlMaxDifference": 4,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-alpha-4",
+      "width": 257,
+      "height": 259,
+      "inputSha256": "e39e5efdc7aed8841b76c1dd2c74a22e94ec80ebde73473d1652d7f9bb2a9c49",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "lfFrames": 4
+      },
+      "bytes": 52936,
+      "sha256": "a1a3a1864b0be8e9809ea26d8cdada973543e6931a4054c978c3018b1fd927c2",
+      "warmupMs": 17.778623000000152,
+      "samplesMs": [
+        21.383927999999287,
+        22.342665999998644,
+        19.656160000000455,
+        18.587730000001102,
+        18.449737999999343
+      ],
+      "medianMs": 19.656160000000455,
+      "control": {
+        "bytes": 49148,
+        "sha256": "a7f6497df4915ff71196bb3bc052c326e0279a9822c1f421c1709ea7293a959d",
+        "warmupMs": 41.527194000000236,
+        "samplesMs": [
+          20.026194000000032,
+          14.17947600000116,
+          15.689344000000347,
+          15.510811000000103,
+          13.777494999998453
+        ],
+        "medianMs": 15.510811000000103,
+        "maxSourceDifference": 3,
+        "rgbMeanSquareError": 0.6276509973008028
+      },
+      "maxSourceDifference": 3,
+      "rgbMeanSquareError": 0.3748929585505461,
+      "decoderMaxDifference": 1,
+      "controlMaxDifference": 4,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-opaque-fine-97",
+      "width": 32,
+      "height": 32,
+      "inputSha256": "d7a9fd6bb4a02ce397a46bc11d2c2ee1dbb05a7224d98a7cab9f8c8c62446f43",
+      "options": {
+        "quality": 97,
+        "effort": 1,
+        "lfFrames": 1
+      },
+      "bytes": 922,
+      "sha256": "a711c0f0b84d74683ef67ed66f7cb84aad4b50215d4cda3d28c394a632c13556",
+      "warmupMs": 1.9047179999997752,
+      "samplesMs": [
+        1.9448969999994006,
+        2.166972999999416,
+        17.80815099999927,
+        15.44310299999961,
+        2.0516029999998864
+      ],
+      "medianMs": 2.166972999999416,
+      "control": {
+        "bytes": 573,
+        "sha256": "16795d470ab314fb5e42fae9c8fa8b8ec2b053693f3d774f8eba1b1f1426b851",
+        "warmupMs": 5.159988999999769,
+        "samplesMs": [
+          5.992951999998695,
+          1.5384199999989505,
+          3.1576679999998305,
+          9.619187999998758,
+          1.3840030000010302
+        ],
+        "medianMs": 3.1576679999998305,
+        "maxSourceDifference": 4,
+        "rgbMeanSquareError": 1.0445963541666667
+      },
+      "maxSourceDifference": 4,
+      "rgbMeanSquareError": 1.0442708333333333,
+      "decoderMaxDifference": 1,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-opaque-fine-98",
+      "width": 32,
+      "height": 32,
+      "inputSha256": "d7a9fd6bb4a02ce397a46bc11d2c2ee1dbb05a7224d98a7cab9f8c8c62446f43",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "lfFrames": 1
+      },
+      "bytes": 932,
+      "sha256": "9b79af19e95d9092803310f423c5b85367e38703191b2d944506bcb92b5408fd",
+      "warmupMs": 4.346725000001243,
+      "samplesMs": [
+        1.9301049999994575,
+        1.8236790000009933,
+        1.8624449999988428,
+        3.487923000000592,
+        1.8514890000005835
+      ],
+      "medianMs": 1.8624449999988428,
+      "control": {
+        "bytes": 585,
+        "sha256": "c7a570a9edf34c28ee2009ad3d27ab7366b9f1bbb70a883104958932b1a8d06c",
+        "warmupMs": 1.4529039999997622,
+        "samplesMs": [
+          1.1667830000005779,
+          1.1747849999992468,
+          1.1620270000003075,
+          1.084643000000142,
+          1.0994250000003376
+        ],
+        "medianMs": 1.1620270000003075,
+        "maxSourceDifference": 3,
+        "rgbMeanSquareError": 0.7272135416666666
+      },
+      "maxSourceDifference": 3,
+      "rgbMeanSquareError": 0.7278645833333334,
+      "decoderMaxDifference": 1,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-opaque-fine-99",
+      "width": 32,
+      "height": 32,
+      "inputSha256": "d7a9fd6bb4a02ce397a46bc11d2c2ee1dbb05a7224d98a7cab9f8c8c62446f43",
+      "options": {
+        "quality": 99,
+        "effort": 1,
+        "lfFrames": 1
+      },
+      "bytes": 949,
+      "sha256": "f0618699e8cdf9a066ec5b1d52c0d5ef4710feaed1497c3eb9d81fb4be072243",
+      "warmupMs": 1.7615269999987504,
+      "samplesMs": [
+        2.0204279999998107,
+        4.463655999999901,
+        1.4428189999998722,
+        6.844963999999891,
+        1.760866000000533
+      ],
+      "medianMs": 2.0204279999998107,
+      "control": {
+        "bytes": 612,
+        "sha256": "1d0bcd3a0cb4c58875365ba481568ba1484847b7aa3dbcb531224240cb569125",
+        "warmupMs": 5.3310399999991205,
+        "samplesMs": [
+          2.6556199999995442,
+          1.4996630000005098,
+          0.910968000000139,
+          0.9357139999992796,
+          3.262642000001506
+        ],
+        "medianMs": 1.4996630000005098,
+        "maxSourceDifference": 3,
+        "rgbMeanSquareError": 0.5478515625
+      },
+      "maxSourceDifference": 3,
+      "rgbMeanSquareError": 0.5462239583333334,
+      "decoderMaxDifference": 1,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-alpha-one-row-noise",
+      "width": 257,
+      "height": 1,
+      "inputSha256": "aec4c861ad356e462cd1d65491f803af66b8863dfbdc91ad2b52b285af664a65",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "lfFrames": 4,
+        "noise": "photon",
+        "progressive": "spectral"
+      },
+      "bytes": 1576,
+      "sha256": "9ac4c82834e7084f4dfe4826c30e8a6bb3b8d0a5b9a5bd64d1bc0c9e24d483d1",
+      "warmupMs": 10.86080199999924,
+      "samplesMs": [
+        11.963150999999925,
+        22.549520000000484,
+        20.489203999999518,
+        10.821565000000192,
+        9.433075000000827
+      ],
+      "medianMs": 11.963150999999925,
+      "control": {
+        "bytes": 952,
+        "sha256": "a0412e13b8b612ffa6fadf2622bfd699f05484c515b291263329167c6b85b559",
+        "warmupMs": 17.419724999999744,
+        "samplesMs": [
+          8.115560000000187,
+          11.611965000000055,
+          7.0439060000007885,
+          8.410411999999269,
+          5.091877999999269
+        ],
+        "medianMs": 8.115560000000187,
+        "maxSourceDifference": 2,
+        "rgbMeanSquareError": 0.23994811932555124
+      },
+      "maxSourceDifference": 2,
+      "rgbMeanSquareError": 0.23994811932555124,
+      "decoderMaxDifference": 1,
+      "controlMaxDifference": 0,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-alpha-wide-border",
+      "width": 8193,
+      "height": 9,
+      "inputSha256": "d9f6a210fe71bfec254820eb703d26ad6d6a1bb6443266f93b03fd7cd712ede5",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "lfFrames": 2
+      },
+      "bytes": 83931,
+      "sha256": "149f10f9905bf4fdb7fa1c7591ff07afd127de7577bf96fbdf85ec25e30a0f88",
+      "warmupMs": 31.876137999999628,
+      "samplesMs": [
+        31.526504999999815,
+        32.74290099999962,
+        37.00524199999927,
+        44.25146499999937,
+        48.67226800000026
+      ],
+      "medianMs": 37.00524199999927,
+      "control": {
+        "bytes": 63803,
+        "sha256": "27bcf6e3cd69d5def07f9d6f3b6eaa7f91bad3d467861114da97da7e8218afca",
+        "warmupMs": 61.896600999998554,
+        "samplesMs": [
+          27.499931000000288,
+          23.867745999999897,
+          23.87858199999937,
+          32.344365999999354,
+          24.59085700000105
+        ],
+        "medianMs": 24.59085700000105,
+        "maxSourceDifference": 3,
+        "rgbMeanSquareError": 1.009081826853095
+      },
+      "maxSourceDifference": 5,
+      "rgbMeanSquareError": 1.5803915718476929,
+      "decoderMaxDifference": 1,
+      "controlMaxDifference": 6,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-alpha-modular-groups",
+      "width": 8193,
+      "height": 9,
+      "inputSha256": "d9f6a210fe71bfec254820eb703d26ad6d6a1bb6443266f93b03fd7cd712ede5",
+      "options": {
+        "quality": 95,
+        "effort": 1,
+        "lfFrames": 1
+      },
+      "bytes": 67295,
+      "sha256": "bbc64b4077cb6992373873974d4f605af81c9a69ba5ac9b75d26ea2f62487b3e",
+      "warmupMs": 35.35256499999923,
+      "samplesMs": [
+        33.55668700000024,
+        27.463761999999406,
+        26.84683099999893,
+        30.341253000000506,
+        27.49305000000095
+      ],
+      "medianMs": 27.49305000000095,
+      "control": {
+        "bytes": 62620,
+        "sha256": "28a64d16544a0b74f593eb7952c7d6d455b26eb9dfd81a8c3a9a9067adf91495",
+        "warmupMs": 114.4157899999991,
+        "samplesMs": [
+          30.97258199999851,
+          25.74945900000057,
+          23.539644000000408,
+          33.01275800000076,
+          27.30221999999958
+        ],
+        "medianMs": 27.30221999999958,
+        "maxSourceDifference": 5,
+        "rgbMeanSquareError": 1.6065701976845637
+      },
+      "maxSourceDifference": 7,
+      "rgbMeanSquareError": 3.634389790742775,
+      "decoderMaxDifference": 1,
+      "controlMaxDifference": 8,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-auto-progressive-noise",
+      "width": 257,
+      "height": 259,
+      "inputSha256": "e39e5efdc7aed8841b76c1dd2c74a22e94ec80ebde73473d1652d7f9bb2a9c49",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "auto",
+        "lfFrames": 4,
+        "progressive": "spectral",
+        "noise": "photon"
+      },
+      "bytes": 61782,
+      "sha256": "5f0347c8f71f7a230129bdd70f4d4e0af4021885113e2c079d481f45e9278747",
+      "warmupMs": 79.72035099999994,
+      "samplesMs": [
+        113.10522200000014,
+        103.73894300000029,
+        75.98020299999916,
+        98.71790300000066,
+        74.26051299999926
+      ],
+      "medianMs": 98.71790300000066,
+      "control": {
+        "bytes": 57496,
+        "sha256": "90b445c87e95b7af8c560e9db0428a256976f3c816ab93dae482921c7ae53902",
+        "warmupMs": 176.9135639999986,
+        "samplesMs": [
+          117.26744699999836,
+          142.9317319999991,
+          108.35921299999973,
+          79.43847199999982,
+          73.79945699999917
+        ],
+        "medianMs": 108.35921299999973,
+        "maxSourceDifference": 5,
+        "rgbMeanSquareError": 1.0149933146042096
+      },
+      "maxSourceDifference": 5,
+      "rgbMeanSquareError": 1.0147429252487619,
+      "decoderMaxDifference": 1,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-raw-matrices",
+      "width": 32,
+      "height": 24,
+      "inputSha256": "ca4d3c7312ee4c3253d33317f0b2a3a803e0f4efff3380f06d8fab83f06f99dc",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct8x16",
+        "lfFrames": 3,
+        "quantization": {
+          "dc": [
+            0.125,
+            0.25,
+            0.25
+          ],
+          "dct8x16": [
+            [
+              0.5,
+              0.5625,
+              0.625,
+              0.6875,
+              0.75,
+              0.8125,
+              0.875,
+              0.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              0.5,
+              0.5625,
+              0.625,
+              0.6875,
+              0.75,
+              0.8125,
+              0.875,
+              0.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              0.5,
+              0.5625,
+              0.625,
+              0.6875,
+              0.75,
+              0.8125,
+              0.875,
+              0.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              0.5,
+              0.5625,
+              0.625,
+              0.6875,
+              0.75,
+              0.8125,
+              0.875,
+              0.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              0.5,
+              0.5625,
+              0.625,
+              0.6875,
+              0.75,
+              0.8125,
+              0.875,
+              0.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              0.5,
+              0.5625,
+              0.625,
+              0.6875,
+              0.75,
+              0.8125,
+              0.875,
+              0.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              0.5,
+              0.5625,
+              0.625,
+              0.6875,
+              0.75,
+              0.8125,
+              0.875,
+              0.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              0.5,
+              0.5625,
+              0.625,
+              0.6875,
+              0.75,
+              0.8125,
+              0.875,
+              0.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375
+            ],
+            [
+              0.75,
+              0.8125,
+              0.875,
+              0.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              1.5,
+              1.5625,
+              1.625,
+              1.6875,
+              0.75,
+              0.8125,
+              0.875,
+              0.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              1.5,
+              1.5625,
+              1.625,
+              1.6875,
+              0.75,
+              0.8125,
+              0.875,
+              0.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              1.5,
+              1.5625,
+              1.625,
+              1.6875,
+              0.75,
+              0.8125,
+              0.875,
+              0.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              1.5,
+              1.5625,
+              1.625,
+              1.6875,
+              0.75,
+              0.8125,
+              0.875,
+              0.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              1.5,
+              1.5625,
+              1.625,
+              1.6875,
+              0.75,
+              0.8125,
+              0.875,
+              0.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              1.5,
+              1.5625,
+              1.625,
+              1.6875,
+              0.75,
+              0.8125,
+              0.875,
+              0.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              1.5,
+              1.5625,
+              1.625,
+              1.6875,
+              0.75,
+              0.8125,
+              0.875,
+              0.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              1.5,
+              1.5625,
+              1.625,
+              1.6875
+            ],
+            [
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              1.5,
+              1.5625,
+              1.625,
+              1.6875,
+              1.75,
+              1.8125,
+              1.875,
+              1.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              1.5,
+              1.5625,
+              1.625,
+              1.6875,
+              1.75,
+              1.8125,
+              1.875,
+              1.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              1.5,
+              1.5625,
+              1.625,
+              1.6875,
+              1.75,
+              1.8125,
+              1.875,
+              1.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              1.5,
+              1.5625,
+              1.625,
+              1.6875,
+              1.75,
+              1.8125,
+              1.875,
+              1.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              1.5,
+              1.5625,
+              1.625,
+              1.6875,
+              1.75,
+              1.8125,
+              1.875,
+              1.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              1.5,
+              1.5625,
+              1.625,
+              1.6875,
+              1.75,
+              1.8125,
+              1.875,
+              1.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              1.5,
+              1.5625,
+              1.625,
+              1.6875,
+              1.75,
+              1.8125,
+              1.875,
+              1.9375,
+              1,
+              1.0625,
+              1.125,
+              1.1875,
+              1.25,
+              1.3125,
+              1.375,
+              1.4375,
+              1.5,
+              1.5625,
+              1.625,
+              1.6875,
+              1.75,
+              1.8125,
+              1.875,
+              1.9375
+            ]
+          ]
+        }
+      },
+      "bytes": 1874,
+      "sha256": "0000ed9c60dd86c5c22e47dbdb940e7aa4d99abd0eef2218684e12202329f8f7",
+      "warmupMs": 8.388685999998415,
+      "samplesMs": [
+        8.505076999999801,
+        11.034555000000182,
+        9.442151000001104,
+        2.640991000000213,
+        3.1851189999997587
+      ],
+      "medianMs": 8.505076999999801,
+      "control": {
+        "bytes": 1213,
+        "sha256": "06df5c02d2b1de22334439b82db18d0fd69e8295a8e9f8be10a3b1ef44afc2c9",
+        "warmupMs": 11.416893999999957,
+        "samplesMs": [
+          1.9328530000002502,
+          6.145638999998482,
+          2.019270000000688,
+          17.777769000000262,
+          1.8143999999992957
+        ],
+        "medianMs": 2.019270000000688,
+        "maxSourceDifference": 1,
+        "rgbMeanSquareError": 0.06597222222222222
+      },
+      "maxSourceDifference": 1,
+      "rgbMeanSquareError": 0.06553819444444445,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-compact-matrices",
+      "width": 32,
+      "height": 32,
+      "inputSha256": "d8a100d06f4bb095a02eb3a1af465aa863b99091dffb6cbb2791d71de8e1c72b",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct16",
+        "lfFrames": 4,
+        "quantization": {
+          "dct16": {
+            "mode": "library"
+          }
+        },
+        "progressive": "responsive"
+      },
+      "bytes": 2186,
+      "sha256": "6048e87e35a643fcfbcc0d5c801dc2c7496daf0158f396b4fb06d0972595cf07",
+      "warmupMs": 16.775970000000598,
+      "samplesMs": [
+        19.47056100000009,
+        13.28032600000006,
+        9.52839700000004,
+        12.62032900000122,
+        10.864644999999655
+      ],
+      "medianMs": 12.62032900000122,
+      "control": {
+        "bytes": 1415,
+        "sha256": "427bfbae23f1dae6b8048d783825d190204a1d2294906a6309f4b43fd9ee3013",
+        "warmupMs": 21.584720000000743,
+        "samplesMs": [
+          30.099731000000247,
+          3.764939000000595,
+          7.957214000000022,
+          24.46634400000039,
+          3.483055000000604
+        ],
+        "medianMs": 7.957214000000022,
+        "maxSourceDifference": 3,
+        "rgbMeanSquareError": 0.6328125
+      },
+      "maxSourceDifference": 3,
+      "rgbMeanSquareError": 0.6344401041666666,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 1,
+      "documentedOxideLimitation": false
+    },
+    {
+      "name": "lf-wide-coefficients",
+      "width": 32,
+      "height": 32,
+      "inputSha256": "d8a100d06f4bb095a02eb3a1af465aa863b99091dffb6cbb2791d71de8e1c72b",
+      "options": {
+        "quality": 98,
+        "effort": 1,
+        "transforms": "dct8",
+        "lfFrames": 4,
+        "quantization": {
+          "dct8": {
+            "mode": "dct",
+            "bands": [
+              [
+                1048576
+              ],
+              [
+                1048576
+              ],
+              [
+                1048576
+              ]
+            ]
+          }
+        },
+        "progressive": "successive"
+      },
+      "bytes": 3395,
+      "sha256": "699b2bec5f186ab1c717691ad79ab4be19039d2d4c94678982198535fa628834",
+      "warmupMs": 5.077833000001192,
+      "samplesMs": [
+        6.359862999999677,
+        5.048490000001038,
+        5.786631999999372,
+        4.235769000000801,
+        4.726549000000887
+      ],
+      "medianMs": 5.048490000001038,
+      "control": {
+        "bytes": 2688,
+        "sha256": "09108c99c7e4b5cd590e549207e202520ec7bb9cb2e96b3920bc518aecb09406",
+        "warmupMs": 6.968263999999181,
+        "samplesMs": [
+          2.670944999999847,
+          2.5977379999985715,
+          2.418546000000788,
+          2.3013839999985066,
+          2.864207999999053
+        ],
+        "medianMs": 2.5977379999985715,
+        "maxSourceDifference": 0,
+        "rgbMeanSquareError": 0
+      },
+      "maxSourceDifference": 0,
+      "rgbMeanSquareError": 0,
+      "decoderMaxDifference": 0,
+      "controlMaxDifference": 0,
+      "documentedOxideLimitation": false
+    }
+  ]
+}

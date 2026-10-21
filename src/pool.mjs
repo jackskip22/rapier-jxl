@@ -40,9 +40,11 @@ export function encodePool(data, width, height, options, {spawn, workers = 3, gr
   let hurryBytes;
   const steps = effortJob(data, width, height, options, groupWorkers && workers > 0, workers > 0, bytes => { hurryBytes = bytes; }), layout = groupLayout(width, height), groups = layout.groupsX * layout.groupsY;
   let members = null, failed = false, live = 0, serial = 0, ready = [], wake = () => {}, last = 0;
+  const signal = options?.signal;
   let tiledData, tiledWidth, tiledHeight, tiledDim;
   const end = () => { if (members) for (const worker of members) worker.terminate(); members = []; tiledData = null; };
   const fail = () => { failed = true; end(); wake(); };
+  const abort = () => { end(); wake(); };
   const send = (worker, message, transfer = []) => {
     if (failed) return false;
     try { worker.postMessage(message, transfer); return true; } catch { fail(); return false; }
@@ -104,6 +106,7 @@ export function encodePool(data, width, height, options, {spawn, workers = 3, gr
       return at(fractions.reduce((sum, done) => sum + done, 0) / rungs.length);
     };
     while (waiting.size) {
+      signal?.throwIfAborted();
       let done = ready.shift();
       if (!done) {
         let k = local.shift();
@@ -156,6 +159,7 @@ export function encodePool(data, width, height, options, {spawn, workers = 3, gr
     };
     let local, hurried = false, sectionBytes = 0;
     while (waiting.size) {
+      signal?.throwIfAborted();
       let done = ready.shift();
       if (!done) {
         const g = steal();
@@ -180,6 +184,8 @@ export function encodePool(data, width, height, options, {spawn, workers = 3, gr
   const it = (async function* () {
     let step, reply;
     try {
+      signal?.throwIfAborted();
+      signal?.addEventListener('abort', abort, {once: true});
       if (groupWorkers && workers > 0 && !layout.single && (options?.quality ?? 100) >= 100) start();
       while (!(step = guard(() => reply instanceof Error ? steps.throw(reply) : steps.next(reply))).done) {
         if (typeof step.value === 'number') {
@@ -187,7 +193,7 @@ export function encodePool(data, width, height, options, {spawn, workers = 3, gr
           reply = it.hurry;
         } else reply = yield* (step.value.kind === 'candidates' ? candidates(step.value) : pass(step.value));
       }
-    } finally { live = -1; end(); channel?.port1.close(); }
+    } finally { live = -1; signal?.removeEventListener('abort', abort); end(); channel?.port1.close(); channel?.port2.close(); }
     const bytes = answer(step.value), hurried = hurryBytes && answer(hurryBytes);
     yield 1;
     return it.bytes = it.hurry && hurried ? hurried : bytes;

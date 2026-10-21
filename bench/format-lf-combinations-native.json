@@ -1,0 +1,1214 @@
+{
+  "node": "v22.23.3",
+  "chrome": "155.0.8059.39",
+  "commandLine": [
+    "/tmp/rapier-jxl-recovery-20261021/environment/chrome-linux64/chrome",
+    "--disable-field-trial-config",
+    "--disable-background-networking",
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-back-forward-cache",
+    "--disable-breakpad",
+    "--disable-client-side-phishing-detection",
+    "--disable-component-extensions-with-background-pages",
+    "--disable-component-update",
+    "--no-default-browser-check",
+    "--disable-default-apps",
+    "--disable-dev-shm-usage",
+    "--disable-edgeupdater",
+    "--disable-extensions",
+    "--disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,BoundaryEventDispatchTracksNodeRemoval,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,BlockOriginHeaderModificationOnRedirect,Translate,AutoDeElevate,OptimizationHints,msForceBrowserSignIn,msEdgeUpdateLaunchServicesPreferredVersion",
+    "--enable-features=CDPScreenshotNewSurface",
+    "--allow-pre-commit-input",
+    "--disable-hang-monitor",
+    "--disable-ipc-flooding-protection",
+    "--disable-popup-blocking",
+    "--disable-prompt-on-repost",
+    "--disable-renderer-backgrounding",
+    "--disable-updater-scheduler",
+    "--force-color-profile=srgb",
+    "--metrics-recording-only",
+    "--no-first-run",
+    "--password-store=basic",
+    "--use-mock-keychain",
+    "--no-service-autorun",
+    "--export-tagged-pdf",
+    "--disable-search-engine-choice-screen",
+    "--unsafely-disable-devtools-self-xss-warnings",
+    "--edge-skip-compat-layer-relaunch",
+    "--disable-infobars",
+    "--disable-search-engine-choice-screen",
+    "--disable-sync",
+    "--enable-unsafe-swiftshader",
+    "--headless",
+    "--hide-scrollbars",
+    "--mute-audio",
+    "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4",
+    "--no-sandbox",
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    "--enable-automation",
+    "--user-data-dir=/tmp/playwright_chromiumdev_profile-4eRf7S",
+    "--remote-debugging-pipe",
+    "--no-startup-window",
+    "--noerrdialogs",
+    "--ozone-platform=headless",
+    "--ozone-override-screen-size=800,600",
+    "--use-angle=swiftshader-webgl",
+    "--flag-switches-begin",
+    "--flag-switches-end",
+    "--enable-unsafe-swiftshader"
+  ],
+  "oxide": "0.12.6",
+  "djxl": "0.12.0",
+  "cases": [
+    {
+      "name": "lf-dct8",
+      "apis": {
+        "createImageBitmap": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "29f86020f0a8ba7609045758dd70fcf26d190169dbf35e12e69860b6b036e789",
+          "maxDifference": 179,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "39922b5cd72072061024449cb58995d4a14ba30a34a3fce8bcc3f3f6d8aa144b",
+          "maxDifference": 122,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "0adc1e9611dc45b5cd900545245e061fbc98a646424e7064dce6365df8646092",
+      "width": 16,
+      "height": 16,
+      "bytes": 836,
+      "sha256": "0adc1e9611dc45b5cd900545245e061fbc98a646424e7064dce6365df8646092",
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-identity",
+      "apis": {
+        "createImageBitmap": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "4b06ee6c1bdbc093b847e971bbe4d8c1859197c5997293acc70cb1d0f296ef71",
+          "maxDifference": 180,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "424de60a7a6eaecf2db8b248203a55e01df044b37200667450612d0c35f45843",
+          "maxDifference": 121,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "9f7a206b866afb2e4b0795747223d2c73e1972d244059ebb3341ae49b82f2e39",
+      "width": 16,
+      "height": 16,
+      "bytes": 1194,
+      "sha256": "9f7a206b866afb2e4b0795747223d2c73e1972d244059ebb3341ae49b82f2e39",
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-dct2",
+      "apis": {
+        "createImageBitmap": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "490196fa4cf3ce3a540168d88d7241681d40a3a6f0aa8089db14fde5742e1c63",
+          "maxDifference": 180,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "f7a11888449555dd7a8fe92cba8718a5b851126677ab80b3a19bb7885549ba0e",
+          "maxDifference": 121,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "54e304f5614a083698ab9884c598e739c71be78c5f45a51d53ae06d82db0d3d1",
+      "width": 16,
+      "height": 16,
+      "bytes": 1008,
+      "sha256": "54e304f5614a083698ab9884c598e739c71be78c5f45a51d53ae06d82db0d3d1",
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-dct4",
+      "apis": {
+        "createImageBitmap": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "e56c23e391e6a89984759c1aa29e713d2d4b9f995dc744070c7ae4df28968a73",
+          "maxDifference": 180,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "920992a2850810316c55c405f634958de5aaf78d8886594df60b288a76bbe033",
+          "maxDifference": 122,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "baa191aaa6f1ee78d87449b6442a650e5d3cdfbeb99c1221861c374558fb8fa4",
+      "width": 16,
+      "height": 16,
+      "bytes": 866,
+      "sha256": "baa191aaa6f1ee78d87449b6442a650e5d3cdfbeb99c1221861c374558fb8fa4",
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-dct16",
+      "apis": {
+        "createImageBitmap": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "13188b1abcd1ab4ab03454c4bed952351b36a9cc0d119de7cab5394fa50aefa3",
+          "maxDifference": 180,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "af6aa4c6a221ddb78e4bf087f97dd0d979a64456330413857957719889c38a6c",
+          "maxDifference": 122,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "196418dfbb53729157dd7219ecec5ff89b6a9b057d14d36e317338c48358e6a9",
+      "width": 16,
+      "height": 16,
+      "bytes": 1174,
+      "sha256": "196418dfbb53729157dd7219ecec5ff89b6a9b057d14d36e317338c48358e6a9",
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-dct32",
+      "apis": {
+        "createImageBitmap": {
+          "width": 32,
+          "height": 32,
+          "rgbaSha256": "778e8887067fe6ff21690d6ac960b6edc62deca323101c1abf3cf3a7eba31f65",
+          "maxDifference": 184,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 32,
+          "height": 32,
+          "rgbaSha256": "c8f1c3faba87fb5e1ebcab46b80a35c46ea0f7699f892ab5afe44565584e81cc",
+          "maxDifference": 120,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "7fa047bbb98550196f41fd6f7a0fd547056a4dff5f0dcd714367584e5e49d88a",
+      "width": 32,
+      "height": 32,
+      "bytes": 2260,
+      "sha256": "7fa047bbb98550196f41fd6f7a0fd547056a4dff5f0dcd714367584e5e49d88a",
+      "inputSha256": "d8a100d06f4bb095a02eb3a1af465aa863b99091dffb6cbb2791d71de8e1c72b",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-dct16x8",
+      "apis": {
+        "createImageBitmap": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "8ebc4c4a0e35ed185471042ff0152926201265f2cc49f465c48306ea3a18bdfb",
+          "maxDifference": 180,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "7a17ea7794de3166d7d23dd13e676296f7ae437bfbd7ed2fa29da6d6161f1aa8",
+          "maxDifference": 119,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "c9cf480e360150134b281256138a2e9303dbfdef5fe7a1e393d94037dbb6d88a",
+      "width": 16,
+      "height": 16,
+      "bytes": 1127,
+      "sha256": "c9cf480e360150134b281256138a2e9303dbfdef5fe7a1e393d94037dbb6d88a",
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-dct8x16",
+      "apis": {
+        "createImageBitmap": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "89321fc797093d2de50d4724b3dbab6b9113db12f30bf68edc72cd305c5bbb21",
+          "maxDifference": 180,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "29ada7976e2d1b155825e3b58beec7af2fcee9fe8a589f87320e185a33508d0c",
+          "maxDifference": 122,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "5fbee65699419895f66df26e49a6d174ce14d029a6918e496c21c3673d6c0912",
+      "width": 16,
+      "height": 16,
+      "bytes": 1209,
+      "sha256": "5fbee65699419895f66df26e49a6d174ce14d029a6918e496c21c3673d6c0912",
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-dct32x8",
+      "apis": {
+        "createImageBitmap": {
+          "width": 16,
+          "height": 32,
+          "rgbaSha256": "f41d930e9081d825b56139c065fd86d3bb7970d7f7ae3304ccfbbc7704e32472",
+          "maxDifference": 166,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 16,
+          "height": 32,
+          "rgbaSha256": "552f8c1a0f671ab339e811b5a332426a1b6b88afadcc6b4c4209aedfb5f148ea",
+          "maxDifference": 127,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "83671724b129e2e73893dbb51f6cd220b8b80959793dab3204e91b302481c961",
+      "width": 16,
+      "height": 32,
+      "bytes": 1712,
+      "sha256": "83671724b129e2e73893dbb51f6cd220b8b80959793dab3204e91b302481c961",
+      "inputSha256": "2bcbb804839fda663b5600fe2af36727c382c6a16e3c929c28d08b97b1af600a",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-dct8x32",
+      "apis": {
+        "createImageBitmap": {
+          "width": 32,
+          "height": 16,
+          "rgbaSha256": "215f9e258bdad6d96d57b0001f27d376e9b4f95f52dc9bf396e36b720429f8c7",
+          "maxDifference": 169,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 32,
+          "height": 16,
+          "rgbaSha256": "9ffef78e32acf036ef5ad6517bcdd3680694771af4837609ebba11e14d67cb43",
+          "maxDifference": 122,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "277b04f51e5fcca57bce654996b33ece88a9f8f189c297bab7c59250a534f709",
+      "width": 32,
+      "height": 16,
+      "bytes": 1737,
+      "sha256": "277b04f51e5fcca57bce654996b33ece88a9f8f189c297bab7c59250a534f709",
+      "inputSha256": "a0553491d078002bb114fde5bc6a5a19d8a7efffe2fc16b06aa0a6f9fb0f5d1d",
+      "oxideMaxDifference": 1
+    },
+    {
+      "name": "lf-dct32x16",
+      "apis": {
+        "createImageBitmap": {
+          "width": 16,
+          "height": 32,
+          "rgbaSha256": "7335e838aee1c526a38ce4bb7e7bda39646d0b91022d8c9fb216d06509a66cef",
+          "maxDifference": 165,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 16,
+          "height": 32,
+          "rgbaSha256": "5c9fb9bd64de90d515dcd6944f2918d2d870dac24af1c48b3d70c71dbfcd61f8",
+          "maxDifference": 125,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "5dd94180b688cdaf78ae0a4ab12c2ffceac64c65baabeeea2f3708f2f6fe0f1a",
+      "width": 16,
+      "height": 32,
+      "bytes": 2410,
+      "sha256": "5dd94180b688cdaf78ae0a4ab12c2ffceac64c65baabeeea2f3708f2f6fe0f1a",
+      "inputSha256": "2bcbb804839fda663b5600fe2af36727c382c6a16e3c929c28d08b97b1af600a",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-dct16x32",
+      "apis": {
+        "createImageBitmap": {
+          "width": 32,
+          "height": 16,
+          "rgbaSha256": "10dc32818916d5117d2d741e61cfc9df7323144f43ef71f036d4226d8e02fc46",
+          "maxDifference": 166,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 32,
+          "height": 16,
+          "rgbaSha256": "abf6ba474783f8c6f217d20c57fc3d90494310175a48d5d5f461dff71e73baec",
+          "maxDifference": 121,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "7d2a3aca168fb46979a650fec747a2fd831e2e4574dbe55d7d5d9118fed22170",
+      "width": 32,
+      "height": 16,
+      "bytes": 2423,
+      "sha256": "7d2a3aca168fb46979a650fec747a2fd831e2e4574dbe55d7d5d9118fed22170",
+      "inputSha256": "a0553491d078002bb114fde5bc6a5a19d8a7efffe2fc16b06aa0a6f9fb0f5d1d",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-dct4x8",
+      "apis": {
+        "createImageBitmap": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "634ceead9c5ddd1c7e6bc56e48740433919df15671098d1bfb71a0d7cedffe70",
+          "maxDifference": 179,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "a764bfba618f0c96b50908901de91bb65c3fab7f49b2377292802fdc7a6f1a42",
+          "maxDifference": 121,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "b466b012053a1980d4f890435a1fc33c2f78d6c6fae0f3e0ef8740f1665f4356",
+      "width": 16,
+      "height": 16,
+      "bytes": 870,
+      "sha256": "b466b012053a1980d4f890435a1fc33c2f78d6c6fae0f3e0ef8740f1665f4356",
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-dct8x4",
+      "apis": {
+        "createImageBitmap": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "baa9cd643db3c0493c281a526f6620855a98d95f9c8df7dedd85ba7116e60784",
+          "maxDifference": 180,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "08fe37cf248718d87179d2bd620e6b8fb3adaa93559fa661a584b109fa1945c4",
+          "maxDifference": 123,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "c5a7078e93f17938938f2ef37eeece9808ff64e84f8be21e498c9d0596228d1e",
+      "width": 16,
+      "height": 16,
+      "bytes": 847,
+      "sha256": "c5a7078e93f17938938f2ef37eeece9808ff64e84f8be21e498c9d0596228d1e",
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-afv0",
+      "apis": {
+        "createImageBitmap": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "a30b6eec3c1bc25a142d9959f49150708ac256bdece0dba6ae9f91a55ce49306",
+          "maxDifference": 180,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "641cb751c86740ebdf2ac401776c9caf5e180ca7d6ca27de67de1c995303aab6",
+          "maxDifference": 121,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "d2f84d4a074bf4808b9c858aebea65530a0b542712fafcc506966ed03688f954",
+      "width": 16,
+      "height": 16,
+      "bytes": 953,
+      "sha256": "d2f84d4a074bf4808b9c858aebea65530a0b542712fafcc506966ed03688f954",
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-afv1",
+      "apis": {
+        "createImageBitmap": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "1f7240e4d4cc0380b1acc51b1a789627a2228c3718ee720ac36567d371fa7ca5",
+          "maxDifference": 180,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "0d7ccdb144b21fedad3bb6c40861478bbc4ac1c0edba3af5ebbd56362b52bc51",
+          "maxDifference": 121,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "df150eb49f3bb85e0c6316dc97f69d6d1c215675f70f6efa5894bc5208c412f4",
+      "width": 16,
+      "height": 16,
+      "bytes": 947,
+      "sha256": "df150eb49f3bb85e0c6316dc97f69d6d1c215675f70f6efa5894bc5208c412f4",
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-afv2",
+      "apis": {
+        "createImageBitmap": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "ddf17e9f2e91f9721fb0296a1b9c4d4d38fe9369fdb24ca7c84ad171e8aafbd8",
+          "maxDifference": 179,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "a0e6b5dfff8554d97f85f2d728bdaf5ae28dbd72e31ae2b4c32f24c7a52b91de",
+          "maxDifference": 121,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "c067f74361cc525338af997f1873a3a614a9ff5a60f5f0ad404b9a855a7f2893",
+      "width": 16,
+      "height": 16,
+      "bytes": 945,
+      "sha256": "c067f74361cc525338af997f1873a3a614a9ff5a60f5f0ad404b9a855a7f2893",
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-afv3",
+      "apis": {
+        "createImageBitmap": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "7fb6d072748679a17751a0ec10cb3c33250acb94f598ac78cde52e60c4eee1ed",
+          "maxDifference": 179,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 16,
+          "height": 16,
+          "rgbaSha256": "1e72f40f519936ecb0c1b6bf38ef055749e90dbf3e709f68744040c1bbdb4af8",
+          "maxDifference": 121,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "69d83c0c2937540baa79eb967863610f32f2f67ce91932763992d094ef34f981",
+      "width": 16,
+      "height": 16,
+      "bytes": 951,
+      "sha256": "69d83c0c2937540baa79eb967863610f32f2f67ce91932763992d094ef34f981",
+      "inputSha256": "bdc0719406c283276bddf195b74999bb292c2d6729066933894a8bcf5341c6bc",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-dct64",
+      "apis": {
+        "createImageBitmap": {
+          "width": 64,
+          "height": 64,
+          "rgbaSha256": "4f5cc41632941a77223d3df91b3106b602d88c78cda6d2f00aa1e4dd89dc1c15",
+          "maxDifference": 203,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 64,
+          "height": 64,
+          "rgbaSha256": "57ae302e095ed12b923c66bf6cf95997b37740655ac3f8b2cbbb0ebe6a2c2641",
+          "maxDifference": 127,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "62331e14fb879415370d1419cd80c98c4088016d0503a67c93d4576354a61bf9",
+      "width": 64,
+      "height": 64,
+      "bytes": 5820,
+      "sha256": "62331e14fb879415370d1419cd80c98c4088016d0503a67c93d4576354a61bf9",
+      "inputSha256": "1528bcdb04f1c974a1b805d5e9fd095eab81af95d243c38b047bacacde445aa9",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-dct64x32",
+      "apis": {
+        "createImageBitmap": {
+          "width": 32,
+          "height": 64,
+          "rgbaSha256": "83b9ccd694f9f09236b314d917499c12441920e535f5739ee42e8326aca97c6e",
+          "maxDifference": 192,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 32,
+          "height": 64,
+          "rgbaSha256": "68e45dbe2d9f3299ca7b07be8d365466580079df5fe099244dcbe0b01522131a",
+          "maxDifference": 125,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "a57e77941812a524212a5ceb198853571f5ff3f8166454c40068efc578235bb3",
+      "width": 32,
+      "height": 64,
+      "bytes": 7209,
+      "sha256": "a57e77941812a524212a5ceb198853571f5ff3f8166454c40068efc578235bb3",
+      "inputSha256": "072ba7d76f978428ce0b15a2761c266522387c9e5ff77433ffceab40a5b3b139",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-dct32x64",
+      "apis": {
+        "createImageBitmap": {
+          "width": 64,
+          "height": 32,
+          "rgbaSha256": "8a3a804dcf46822004cf841ed663469108bb9f9adbc89701371f9e292942358c",
+          "maxDifference": 200,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 64,
+          "height": 32,
+          "rgbaSha256": "32637f7ee4919d72fb260b72f3e613be77d43a6c2bf9182588763b6dc3c52d8e",
+          "maxDifference": 125,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "9e6af7d4a5d877dc6e9685deb1fe831a0874afd97270b8726592a15274bb2f41",
+      "width": 64,
+      "height": 32,
+      "bytes": 7180,
+      "sha256": "9e6af7d4a5d877dc6e9685deb1fe831a0874afd97270b8726592a15274bb2f41",
+      "inputSha256": "146c2963214c82467fac1dc3b90057efc5d1f98c4e5b2644e78b545171ec754c",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-dct128",
+      "apis": {
+        "createImageBitmap": {
+          "width": 128,
+          "height": 128,
+          "rgbaSha256": "5041a7f111a6c62555329da9aabd705a90e960f48d21d1e16af321af407424c4",
+          "maxDifference": 217,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 128,
+          "height": 128,
+          "rgbaSha256": "b02d1c3a6fac1b75066e1c8a4c1430b786de686ad7d26148648afabec3e8eebd",
+          "maxDifference": 127,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "56eac59b93fdebfcec860c9028f1250b0fa82d0e56307740442d6a2e95a34646",
+      "width": 128,
+      "height": 128,
+      "bytes": 19506,
+      "sha256": "56eac59b93fdebfcec860c9028f1250b0fa82d0e56307740442d6a2e95a34646",
+      "inputSha256": "c677c354dd5ed4fef1780448fc215d767cf5d7ace6c4a2216beee40254c283e9",
+      "oxideMaxDifference": 1
+    },
+    {
+      "name": "lf-dct128x64",
+      "apis": {
+        "createImageBitmap": {
+          "width": 64,
+          "height": 128,
+          "rgbaSha256": "a8fe44e7d3ca686531faaec9032c57c43b5ac23d5efa9c21715d64702c66f792",
+          "maxDifference": 208,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 64,
+          "height": 128,
+          "rgbaSha256": "f05726b0e7a25979230ac4755133269364e751e8407dd93a301c9825edd9cb32",
+          "maxDifference": 127,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "5a3c7b5fe2ad3c02a81a465706dbdaa9110da11115414c7d5db19f651fb3168d",
+      "width": 64,
+      "height": 128,
+      "bytes": 24654,
+      "sha256": "5a3c7b5fe2ad3c02a81a465706dbdaa9110da11115414c7d5db19f651fb3168d",
+      "inputSha256": "bbddb23502d2d775ead604861f2ef332095a3eb4df97fa2bdbe5b8c41c82b3bc",
+      "oxideMaxDifference": 1
+    },
+    {
+      "name": "lf-dct64x128",
+      "apis": {
+        "createImageBitmap": {
+          "width": 128,
+          "height": 64,
+          "rgbaSha256": "2eccffefceb3d161feaf5c26aded0ea2d8af0f4ea26910701b6d0c21e074f0e7",
+          "maxDifference": 215,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 128,
+          "height": 64,
+          "rgbaSha256": "9e729336e833c37147aef4bc4485422bb101a9e981ae4664b748a77510232d7f",
+          "maxDifference": 127,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "d68a1fbfa338b9d92c39c8d65abdb100a3b60a908fb455c3c8b32ae0164233b5",
+      "width": 128,
+      "height": 64,
+      "bytes": 24638,
+      "sha256": "d68a1fbfa338b9d92c39c8d65abdb100a3b60a908fb455c3c8b32ae0164233b5",
+      "inputSha256": "1ebcbec7559c448f426699647f68fd7e907cc9a63c8cfbf36f162f065a9b5e5b",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-dct256",
+      "apis": {
+        "createImageBitmap": {
+          "width": 256,
+          "height": 256,
+          "rgbaSha256": "ea0265dfae09440e90652f63a379a5b8a68691c0575529233b2e8b6a87c23477",
+          "maxDifference": 224,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 256,
+          "height": 256,
+          "rgbaSha256": "1d5fb0d89701cf596b5a2fc3db74abf488ae8fdfc72c4ec3050ffb57a29da702",
+          "maxDifference": 128,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "836941f13eb76863842601a69f93757c345fdc55a734495b01896e4791238bb6",
+      "width": 256,
+      "height": 256,
+      "bytes": 74080,
+      "sha256": "836941f13eb76863842601a69f93757c345fdc55a734495b01896e4791238bb6",
+      "inputSha256": "772f1a376586d7ebb3a63b2d13f253e475d89f7bfc2cda5a2083c363c3706155",
+      "oxideMaxDifference": 1
+    },
+    {
+      "name": "lf-dct256x128",
+      "apis": {
+        "createImageBitmap": {
+          "width": 128,
+          "height": 256,
+          "rgbaSha256": "53359c0c9e16aa200cb931e370bb11944a4bde56d50c7ba44245db1327311ccc",
+          "maxDifference": 220,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 128,
+          "height": 256,
+          "rgbaSha256": "bf8b6ce8ab98db94793c4e87c3e3f5c5ea59ba58541c4fd2c280a4c7f0c27ae4",
+          "maxDifference": 128,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "bd4f17251cdafa8d01f9a401759aafd55813609dd6e9d10252cdff8b66980d23",
+      "width": 128,
+      "height": 256,
+      "bytes": 84601,
+      "sha256": "bd4f17251cdafa8d01f9a401759aafd55813609dd6e9d10252cdff8b66980d23",
+      "inputSha256": "88606542943ae3ac14f0b7c5ef2f2e94b62586817cede0b0c19c21a5a9332231",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-dct128x256",
+      "apis": {
+        "createImageBitmap": {
+          "width": 256,
+          "height": 128,
+          "rgbaSha256": "1cdce14d0dbcfc2d05feacf0ecaafdd786b3e871738f0209571c69ef7d6b06f9",
+          "maxDifference": 222,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 256,
+          "height": 128,
+          "rgbaSha256": "1c3e4b2db5958bf58825e193db1e91495e30a1366a20041488fbcfb99d9fcffe",
+          "maxDifference": 128,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "fa7376e513b2e22c208abe43b16184c5a191e2857daf7faaeebacf1db613d092",
+      "width": 256,
+      "height": 128,
+      "bytes": 84503,
+      "sha256": "fa7376e513b2e22c208abe43b16184c5a191e2857daf7faaeebacf1db613d092",
+      "inputSha256": "4f5c446e553e63597c1b4844a3dba17b76b12c7784c286b9fcf3248ae15b81fe",
+      "oxideMaxDifference": 1
+    },
+    {
+      "name": "lf-alpha-1",
+      "apis": {
+        "createImageBitmap": {
+          "width": 257,
+          "height": 259,
+          "rgbaSha256": "4ab9298a7f9d76813a821de9c5f772e45f11c61219758467f82a1a16dba40ca2",
+          "maxDifference": 225,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 257,
+          "height": 259,
+          "rgbaSha256": "739b0b478048ade93f5bed87ceb29cdc8d0578aeed1568f611764557f5c4feb1",
+          "maxDifference": 128,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "fac83e65500176d5dc970993da09a4c8ea020d06b34b95b7500710ae4bb94df7",
+      "width": 257,
+      "height": 259,
+      "bytes": 52591,
+      "sha256": "fac83e65500176d5dc970993da09a4c8ea020d06b34b95b7500710ae4bb94df7",
+      "inputSha256": "e39e5efdc7aed8841b76c1dd2c74a22e94ec80ebde73473d1652d7f9bb2a9c49",
+      "oxideMaxDifference": 1
+    },
+    {
+      "name": "lf-alpha-2",
+      "apis": {
+        "createImageBitmap": {
+          "width": 257,
+          "height": 259,
+          "rgbaSha256": "4ab9298a7f9d76813a821de9c5f772e45f11c61219758467f82a1a16dba40ca2",
+          "maxDifference": 225,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 257,
+          "height": 259,
+          "rgbaSha256": "8aeee0300f6671280b8737eb373108b98283924c8c2072efb8a69a3d13b1b4e9",
+          "maxDifference": 128,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "1b474f646599a4054f44eb86e553ce8214023e867206c951ea098ed76d1e615d",
+      "width": 257,
+      "height": 259,
+      "bytes": 52622,
+      "sha256": "1b474f646599a4054f44eb86e553ce8214023e867206c951ea098ed76d1e615d",
+      "inputSha256": "e39e5efdc7aed8841b76c1dd2c74a22e94ec80ebde73473d1652d7f9bb2a9c49",
+      "oxideMaxDifference": 1
+    },
+    {
+      "name": "lf-alpha-3",
+      "apis": {
+        "createImageBitmap": {
+          "width": 257,
+          "height": 259,
+          "rgbaSha256": "7141b830c0990f704d2abe33a2673da8e24069ea06520861b35e56e17f63f263",
+          "maxDifference": 225,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 257,
+          "height": 259,
+          "rgbaSha256": "d3b664e91acb87da3d6e02994d1fbf8bc0a4b3beb7f07034ab769984822ce965",
+          "maxDifference": 128,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "b8805b995450746cd90e512a3d593abd1092e50026abb5ee4733a4c37bb3143b",
+      "width": 257,
+      "height": 259,
+      "bytes": 52828,
+      "sha256": "b8805b995450746cd90e512a3d593abd1092e50026abb5ee4733a4c37bb3143b",
+      "inputSha256": "e39e5efdc7aed8841b76c1dd2c74a22e94ec80ebde73473d1652d7f9bb2a9c49",
+      "oxideMaxDifference": 1
+    },
+    {
+      "name": "lf-alpha-4",
+      "apis": {
+        "createImageBitmap": {
+          "width": 257,
+          "height": 259,
+          "rgbaSha256": "99a30d78ec9cdba2dd4c127f8f0f9bc487f4b2abb8a195b23c3313d7096c8815",
+          "maxDifference": 225,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 257,
+          "height": 259,
+          "rgbaSha256": "5a86386f68a14e5b542dfe1e3cd75d8d2d2f62ee238cbe9bf569cdfaf17950d2",
+          "maxDifference": 128,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "a1a3a1864b0be8e9809ea26d8cdada973543e6931a4054c978c3018b1fd927c2",
+      "width": 257,
+      "height": 259,
+      "bytes": 52936,
+      "sha256": "a1a3a1864b0be8e9809ea26d8cdada973543e6931a4054c978c3018b1fd927c2",
+      "inputSha256": "e39e5efdc7aed8841b76c1dd2c74a22e94ec80ebde73473d1652d7f9bb2a9c49",
+      "oxideMaxDifference": 1
+    },
+    {
+      "name": "lf-opaque-fine-97",
+      "apis": {
+        "createImageBitmap": {
+          "width": 32,
+          "height": 32,
+          "rgbaSha256": "cfa5872c9f437e24c9bcf97ee2961d494562281d92fefa983afaba8e9857567c",
+          "maxDifference": 1,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 32,
+          "height": 32,
+          "rgbaSha256": "cfa5872c9f437e24c9bcf97ee2961d494562281d92fefa983afaba8e9857567c",
+          "maxDifference": 1,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "a711c0f0b84d74683ef67ed66f7cb84aad4b50215d4cda3d28c394a632c13556",
+      "width": 32,
+      "height": 32,
+      "bytes": 922,
+      "sha256": "a711c0f0b84d74683ef67ed66f7cb84aad4b50215d4cda3d28c394a632c13556",
+      "inputSha256": "d7a9fd6bb4a02ce397a46bc11d2c2ee1dbb05a7224d98a7cab9f8c8c62446f43",
+      "oxideMaxDifference": 1
+    },
+    {
+      "name": "lf-opaque-fine-98",
+      "apis": {
+        "createImageBitmap": {
+          "width": 32,
+          "height": 32,
+          "rgbaSha256": "61a11cd1a6820a4c136db895b7a33440ffb12e65aa86fc860d2cae7e2183cb68",
+          "maxDifference": 1,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 32,
+          "height": 32,
+          "rgbaSha256": "61a11cd1a6820a4c136db895b7a33440ffb12e65aa86fc860d2cae7e2183cb68",
+          "maxDifference": 1,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "9b79af19e95d9092803310f423c5b85367e38703191b2d944506bcb92b5408fd",
+      "width": 32,
+      "height": 32,
+      "bytes": 932,
+      "sha256": "9b79af19e95d9092803310f423c5b85367e38703191b2d944506bcb92b5408fd",
+      "inputSha256": "d7a9fd6bb4a02ce397a46bc11d2c2ee1dbb05a7224d98a7cab9f8c8c62446f43",
+      "oxideMaxDifference": 1
+    },
+    {
+      "name": "lf-opaque-fine-99",
+      "apis": {
+        "createImageBitmap": {
+          "width": 32,
+          "height": 32,
+          "rgbaSha256": "30acce0bb298e9bf1dd5ada9a81c855518725caed154e93962896fb46131adbd",
+          "maxDifference": 1,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 32,
+          "height": 32,
+          "rgbaSha256": "30acce0bb298e9bf1dd5ada9a81c855518725caed154e93962896fb46131adbd",
+          "maxDifference": 1,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "f0618699e8cdf9a066ec5b1d52c0d5ef4710feaed1497c3eb9d81fb4be072243",
+      "width": 32,
+      "height": 32,
+      "bytes": 949,
+      "sha256": "f0618699e8cdf9a066ec5b1d52c0d5ef4710feaed1497c3eb9d81fb4be072243",
+      "inputSha256": "d7a9fd6bb4a02ce397a46bc11d2c2ee1dbb05a7224d98a7cab9f8c8c62446f43",
+      "oxideMaxDifference": 1
+    },
+    {
+      "name": "lf-alpha-one-row-noise",
+      "apis": {
+        "createImageBitmap": {
+          "width": 257,
+          "height": 1,
+          "rgbaSha256": "e5bb100b2b4875b6d51524af8822c5481f521d49d54b42e5da5388c4050414fa",
+          "maxDifference": 105,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 257,
+          "height": 1,
+          "rgbaSha256": "5821b84b6ffe66c4c661a1a2c9f950998d0fd4558bfeaadaaa44c5038a29236e",
+          "maxDifference": 105,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "9ac4c82834e7084f4dfe4826c30e8a6bb3b8d0a5b9a5bd64d1bc0c9e24d483d1",
+      "width": 257,
+      "height": 1,
+      "bytes": 1576,
+      "sha256": "9ac4c82834e7084f4dfe4826c30e8a6bb3b8d0a5b9a5bd64d1bc0c9e24d483d1",
+      "inputSha256": "aec4c861ad356e462cd1d65491f803af66b8863dfbdc91ad2b52b285af664a65",
+      "oxideMaxDifference": 1
+    },
+    {
+      "name": "lf-alpha-wide-border",
+      "apis": {
+        "createImageBitmap": {
+          "width": 8193,
+          "height": 9,
+          "rgbaSha256": "81a21e151aa5ef735c408f6487db2f5c419b65ae6fa15e58eb9da68cfc5fbd4b",
+          "maxDifference": 214,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 8193,
+          "height": 9,
+          "rgbaSha256": "bd958bbcf1e82e392b0ec15b191014c394286543157193385afc99c9768f79f9",
+          "maxDifference": 128,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "149f10f9905bf4fdb7fa1c7591ff07afd127de7577bf96fbdf85ec25e30a0f88",
+      "width": 8193,
+      "height": 9,
+      "bytes": 83931,
+      "sha256": "149f10f9905bf4fdb7fa1c7591ff07afd127de7577bf96fbdf85ec25e30a0f88",
+      "inputSha256": "d9f6a210fe71bfec254820eb703d26ad6d6a1bb6443266f93b03fd7cd712ede5",
+      "oxideMaxDifference": 1
+    },
+    {
+      "name": "lf-alpha-modular-groups",
+      "apis": {
+        "createImageBitmap": {
+          "width": 8193,
+          "height": 9,
+          "rgbaSha256": "cb83742e8ce6912f79689842bf23afad8999028d7906c26a655123496b8b708a",
+          "maxDifference": 209,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 8193,
+          "height": 9,
+          "rgbaSha256": "f89913722165077c3a3b5892cbb204e37614ef4f0485983684677dd49d69c253",
+          "maxDifference": 128,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "bbc64b4077cb6992373873974d4f605af81c9a69ba5ac9b75d26ea2f62487b3e",
+      "width": 8193,
+      "height": 9,
+      "bytes": 67295,
+      "sha256": "bbc64b4077cb6992373873974d4f605af81c9a69ba5ac9b75d26ea2f62487b3e",
+      "inputSha256": "d9f6a210fe71bfec254820eb703d26ad6d6a1bb6443266f93b03fd7cd712ede5",
+      "oxideMaxDifference": 1
+    },
+    {
+      "name": "lf-auto-progressive-noise",
+      "apis": {
+        "createImageBitmap": {
+          "width": 257,
+          "height": 259,
+          "rgbaSha256": "6c48154ca80344ac709dc1060f6d3a573ebb9d4c9edca6e6bc3852d766e57247",
+          "maxDifference": 222,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 257,
+          "height": 259,
+          "rgbaSha256": "e53cfa87c4972fa7ba1d5e3cc6ac5d3677aecb6619f8cdbeb9680ac2309b5cd4",
+          "maxDifference": 128,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "5f0347c8f71f7a230129bdd70f4d4e0af4021885113e2c079d481f45e9278747",
+      "width": 257,
+      "height": 259,
+      "bytes": 61782,
+      "sha256": "5f0347c8f71f7a230129bdd70f4d4e0af4021885113e2c079d481f45e9278747",
+      "inputSha256": "e39e5efdc7aed8841b76c1dd2c74a22e94ec80ebde73473d1652d7f9bb2a9c49",
+      "oxideMaxDifference": 1
+    },
+    {
+      "name": "lf-raw-matrices",
+      "apis": {
+        "createImageBitmap": {
+          "width": 32,
+          "height": 24,
+          "rgbaSha256": "0462dded7fb91f5a43ce1726b3f81fb171f367fdfd8922dfe666ba444642eb5a",
+          "maxDifference": 180,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 32,
+          "height": 24,
+          "rgbaSha256": "7e324c6ceaab89d10c6ddd4275dc2dabe7ce5bab45c936fc914ff593fac2343f",
+          "maxDifference": 125,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "0000ed9c60dd86c5c22e47dbdb940e7aa4d99abd0eef2218684e12202329f8f7",
+      "width": 32,
+      "height": 24,
+      "bytes": 1874,
+      "sha256": "0000ed9c60dd86c5c22e47dbdb940e7aa4d99abd0eef2218684e12202329f8f7",
+      "inputSha256": "ca4d3c7312ee4c3253d33317f0b2a3a803e0f4efff3380f06d8fab83f06f99dc",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-compact-matrices",
+      "apis": {
+        "createImageBitmap": {
+          "width": 32,
+          "height": 32,
+          "rgbaSha256": "65b27bdaa529a6a2f9f88f837671d6c50d64998b6d424b99b5a3eeeeaff65c35",
+          "maxDifference": 185,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 32,
+          "height": 32,
+          "rgbaSha256": "29b884468742b1918f8d2f9e07efd424500871c6c15e8deb41928aa476356c77",
+          "maxDifference": 121,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "6048e87e35a643fcfbcc0d5c801dc2c7496daf0158f396b4fb06d0972595cf07",
+      "width": 32,
+      "height": 32,
+      "bytes": 2186,
+      "sha256": "6048e87e35a643fcfbcc0d5c801dc2c7496daf0158f396b4fb06d0972595cf07",
+      "inputSha256": "d8a100d06f4bb095a02eb3a1af465aa863b99091dffb6cbb2791d71de8e1c72b",
+      "oxideMaxDifference": 0
+    },
+    {
+      "name": "lf-wide-coefficients",
+      "apis": {
+        "createImageBitmap": {
+          "width": 32,
+          "height": 32,
+          "rgbaSha256": "c6fa51d2f4f39f607b89f90b3ed1541814d7b28a12b2182025613dad349b84ce",
+          "maxDifference": 185,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        },
+        "ImageDecoder": {
+          "width": 32,
+          "height": 32,
+          "rgbaSha256": "700864838f6dd2dd75a50459325845fe2d1c9fbddea17675a1ba574171d8cb20",
+          "maxDifference": 121,
+          "outsideCanvasRounding": 0,
+          "alphaDifference": 0
+        }
+      },
+      "browserEncodedSha256": "699b2bec5f186ab1c717691ad79ab4be19039d2d4c94678982198535fa628834",
+      "width": 32,
+      "height": 32,
+      "bytes": 3395,
+      "sha256": "699b2bec5f186ab1c717691ad79ab4be19039d2d4c94678982198535fa628834",
+      "inputSha256": "d8a100d06f4bb095a02eb3a1af465aa863b99091dffb6cbb2791d71de8e1c72b",
+      "oxideMaxDifference": 0
+    }
+  ]
+}

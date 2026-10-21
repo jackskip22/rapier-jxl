@@ -1,7 +1,7 @@
 {
   "name": "rapier-jxl",
-  "version": "4.2.1",
-  "description": "JPEG XL encoder in JavaScript, with optional WebAssembly. Lossless and lossy, exact alpha, HDR and JPEG transcoding, offline in browsers, Node or one HTML file. Built for photography tools and single-file apps. MIT, no dependencies.",
+  "version": "5.0.0",
+  "description": "JPEG XL encoder in JavaScript. Lossless, lossy, HDR and JPEG transcoding, in browsers, Node and one HTML file.",
   "license": "MIT",
   "type": "module",
   "main": "./src/index.mjs",
@@ -39,6 +39,94 @@
       "types": "./src/photo.d.mts",
       "default": "./dist/photo.min.mjs"
     },
+    "./photo-advanced": {
+      "types": "./src/photo-advanced.d.mts",
+      "default": "./src/photo-advanced.mjs"
+    },
+    "./photo-advanced/min": {
+      "types": "./src/photo-advanced.d.mts",
+      "default": "./dist/photo-advanced.min.mjs"
+    },
+    "./photo-plan": {
+      "types": "./src/photo-plan.d.mts",
+      "default": "./src/photo-plan.mjs"
+    },
+    "./photo-plan/min": {
+      "types": "./src/photo-plan.d.mts",
+      "default": "./dist/photo-plan.min.mjs"
+    },
+    "./noise": {
+      "types": "./src/photo-noise.d.mts",
+      "default": "./src/photo-noise.mjs"
+    },
+    "./noise/min": {
+      "types": "./src/photo-noise.d.mts",
+      "default": "./dist/noise.min.mjs"
+    },
+    "./hybrid": {
+      "types": "./src/hybrid.d.mts",
+      "default": "./src/hybrid.mjs"
+    },
+    "./hybrid/min": {
+      "types": "./src/hybrid.d.mts",
+      "default": "./dist/hybrid.min.mjs"
+    },
+    "./icc": {
+      "types": "./src/icc.d.mts",
+      "default": "./src/icc.mjs"
+    },
+    "./icc/min": {
+      "types": "./src/icc.d.mts",
+      "default": "./dist/icc.min.mjs"
+    },
+    "./opsin": {
+      "types": "./src/opsin.d.mts",
+      "default": "./src/opsin.mjs"
+    },
+    "./opsin/min": {
+      "types": "./src/opsin.d.mts",
+      "default": "./dist/opsin.min.mjs"
+    },
+    "./delta-palette": {
+      "types": "./src/delta-palette.d.mts",
+      "default": "./src/delta-palette.mjs"
+    },
+    "./delta-palette/min": {
+      "types": "./src/delta-palette.d.mts",
+      "default": "./dist/delta-palette.min.mjs"
+    },
+    "./splines": {
+      "types": "./src/splines.d.mts",
+      "default": "./src/splines.mjs"
+    },
+    "./splines/min": {
+      "types": "./src/splines.d.mts",
+      "default": "./dist/splines.min.mjs"
+    },
+    "./channels": {
+      "types": "./src/channels.d.mts",
+      "default": "./src/channels.mjs"
+    },
+    "./channels/min": {
+      "types": "./src/channels.d.mts",
+      "default": "./dist/channels.min.mjs"
+    },
+    "./layers": {
+      "types": "./src/layers.d.mts",
+      "default": "./src/layers.mjs"
+    },
+    "./layers/min": {
+      "types": "./src/layers.d.mts",
+      "default": "./dist/layers.min.mjs"
+    },
+    "./patches": {
+      "types": "./src/patches.d.mts",
+      "default": "./src/patches.mjs"
+    },
+    "./patches/min": {
+      "types": "./src/patches.d.mts",
+      "default": "./dist/patches.min.mjs"
+    },
     "./jpeg-ans": {
       "types": "./src/jpeg-ans.d.mts",
       "default": "./src/jpeg-ans.mjs"
@@ -54,6 +142,14 @@
     "./photo-ans/min": {
       "types": "./src/photo-ans.d.mts",
       "default": "./dist/photo-ans.min.mjs"
+    },
+    "./animation": {
+      "types": "./src/animation.d.mts",
+      "default": "./src/animation.mjs"
+    },
+    "./animation/min": {
+      "types": "./src/animation.d.mts",
+      "default": "./dist/animation.min.mjs"
     },
     "./effort": {
       "types": "./src/effort.d.mts",
@@ -79,6 +175,46 @@
       "types": "./src/metadata.d.mts",
       "default": "./dist/metadata.min.mjs"
     },
+    "./brotli": {
+      "types": "./src/brotli.d.mts",
+      "default": "./src/brotli.mjs"
+    },
+    "./brotli/min": {
+      "types": "./src/brotli.d.mts",
+      "default": "./dist/brotli.min.mjs"
+    },
+    "./container": {
+      "types": "./src/container-stream.d.mts",
+      "default": "./src/container-stream.mjs"
+    },
+    "./container/min": {
+      "types": "./src/container-stream.d.mts",
+      "default": "./dist/container.min.mjs"
+    },
+    "./container-advanced": {
+      "types": "./src/container-advanced.d.mts",
+      "default": "./src/container-advanced.mjs"
+    },
+    "./container-advanced/min": {
+      "types": "./src/container-advanced.d.mts",
+      "default": "./dist/container-advanced.min.mjs"
+    },
+    "./progressive-container": {
+      "types": "./src/progressive-container.d.mts",
+      "default": "./src/progressive-container.mjs"
+    },
+    "./progressive-container/min": {
+      "types": "./src/progressive-container.d.mts",
+      "default": "./dist/progressive-container.min.mjs"
+    },
+    "./delivery": {
+      "types": "./src/delivery.d.mts",
+      "default": "./src/delivery.mjs"
+    },
+    "./delivery/min": {
+      "types": "./src/delivery.d.mts",
+      "default": "./dist/delivery.min.mjs"
+    },
     "./package.json": "./package.json",
     "./kernels": {
       "types": "./src/kernels.d.mts",
@@ -92,6 +228,14 @@
       "types": "./src/wasm.d.mts",
       "default": "./dist/wasm.min.mjs"
     },
+    "./image": {
+      "types": "./src/image.d.mts",
+      "default": "./src/image.mjs"
+    },
+    "./image/min": {
+      "types": "./src/image.d.mts",
+      "default": "./dist/image.min.mjs"
+    },
     "./rapier": {
       "types": "./src/rapier.d.mts",
       "default": "./src/rapier.mjs"
@@ -103,6 +247,10 @@
     "./rapier/worker": {
       "types": "./src/rapier-worker.d.mts",
       "default": "./dist/rapier-worker.js"
+    },
+    "./rapier/still-worker": {
+      "types": "./src/rapier-worker.d.mts",
+      "default": "./dist/rapier-still-worker.js"
     }
   },
   "files": [
@@ -121,7 +269,8 @@
   "sideEffects": [
     "./src/wasm.mjs",
     "./dist/wasm.min.mjs",
-    "./dist/rapier-worker.js"
+    "./dist/rapier-worker.js",
+    "./dist/rapier-still-worker.js"
   ],
   "engines": {
     "node": ">=18"
@@ -136,23 +285,16 @@
   },
   "keywords": [
     "jpeg-xl",
-    "jpegxl",
     "jxl",
-    "javascript",
+    "jpegxl",
     "encoder",
     "image-compression",
     "lossless",
     "lossy",
+    "jpeg",
     "hdr",
-    "offline",
-    "single-file-html",
     "webassembly",
-    "photography",
-    "exif",
-    "xmp",
-    "browser",
-    "zero-dependency",
-    "agent-skills"
+    "browser"
   ],
   "scripts": {
     "build:kernels": "node kernels/build.mjs"

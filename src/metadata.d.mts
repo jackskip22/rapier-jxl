@@ -6,8 +6,39 @@ export interface MetadataOptions {
   exif?: Uint8Array | null | undefined;
   /** XMP packet as a UTF-8 string or its original UTF-8 bytes. */
   xmp?: string | Uint8Array | null | undefined;
+  /** Contents of one JUMBF superbox, or multiple superboxes. null or [] removes all JUMBF boxes. */
+  jumb?: Uint8Array | readonly Uint8Array[] | null | undefined;
 }
-/** Return owned JPEG XL bytes with the requested Exif/XMP fields replaced (null removes). Omitted fields and other boxes remain
- * unchanged. Pixels, color encoding and orientation are not rewritten; keep Exif orientation coherent with the
- * encoded image. Metadata edits reject files containing JPEG reconstruction data. Maximum output: 16 MiB. */
+export type BrotliCodec = (bytes: Uint8Array, options: {maxOutputLength: number}) => Uint8Array | Promise<Uint8Array>;
+export interface CompressedMetadataOptions extends MetadataOptions {
+  /** auto uses brob only when its full payload is smaller; brotli always compresses. Defaults to auto. */
+  compression?: 'auto' | 'brotli';
+  /** Optional codec. Node uses node:zlib; browsers use native Brotli streams or the portable LZ77/prefix writer. */
+  compress?: BrotliCodec;
+}
+export interface MetadataReadOptions {
+  /** Maximum combined decoded metadata, from 1 byte to 16 MiB; defaults to 16 MiB. */
+  maxDecodedBytes?: number;
+  /** Optional full decoder. It must honor maxOutputLength before allocating output. Without native support,
+   * the built-in reader accepts the portable writer's subset; arbitrary external Brotli may need this hook. */
+  decompress?: BrotliCodec;
+}
+export interface Metadata {
+  /** Raw TIFF bytes, one array per Exif box, in file order. */
+  exif: Bytes[];
+  /** Original UTF-8 packet bytes, one array per XMP box, in file order. */
+  xmp: Bytes[];
+  /** Original JUMBF superbox contents, in file order. */
+  jumb: Bytes[];
+  /** Known metadata awaiting decompression. boxType is its unsigned four-byte box code; data is the Brotli stream. */
+  compressed: {boxType: number; data: Bytes}[];
+}
+/** Replace requested fields (null removes); omitted fields and all other boxes stay exact. Pixels, color encoding
+ * and orientation are not rewritten. Metadata edits refuse JPEG reconstruction files. Maximum output: 16 MiB. */
 export function withMetadata(bytes: Uint8Array, options?: MetadataOptions): Bytes;
+/** withMetadata with optional brob compression. Inputs are captured before the first asynchronous codec call. */
+export function withCompressedMetadata(bytes: Uint8Array, options?: CompressedMetadataOptions): Promise<Bytes>;
+/** Extract plain metadata with owned buffers, retaining known compressed metadata in compressed. */
+export function readMetadata(bytes: Uint8Array): Metadata;
+/** Extract plain and compressed metadata with owned buffers; compressed is empty on success. */
+export function readMetadataAsync(bytes: Uint8Array, options?: MetadataReadOptions): Promise<Metadata>;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {QUANT_SHAPE, transformDCT8} from './photo-dct.mjs';
+import {QUANT_SHAPE, transformDCT8Blocks} from './photo-dct.mjs';
 
 const BIAS = 0.0037930732552754493;
 function seedRoot(v) {
@@ -40,7 +40,7 @@ export function preferXYB(data, width, height) {
   return chromaEnergy <= lumaEnergy;
 }
 
-export function* photoXYBSteps(data, width, height, quality) {
+export function* photoXYBSteps(data, width, height, quality, options) {
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), quantScale = 256;
   const distance = quality >= 30 ? 0.1 + (100 - quality) * 0.09 : 53 / 3000 * quality * quality - 23 / 20 * quality + 25;
   const strength = Math.max(0, Math.min(1, (90 - quality) / 15)), stepScale = 1 - 0.1 * strength, acScale = 1.175 + 0.075 * strength;
@@ -50,26 +50,30 @@ export function* photoXYBSteps(data, width, height, quality) {
     coeffs: new Int16Array(stride * rows * 64)}));
   const tileWidth = Math.ceil(stride / 8), tileRows = Math.ceil(rows / 8);
   const cfl = {width: tileWidth, x: new Int8Array(tileWidth * tileRows), b: new Int8Array(tileWidth * tileRows)};
-  const block = new Float64Array(192), intermediate = new Float64Array(64), sums = new Float64Array(192), tile = new Float64Array(64 * 192);
+  const intermediate = new Float64Array(64), sums = new Float64Array(192), tile = new Float64Array(64 * 192);
   for (let ty = 0; ty < tileRows; ty++) {
     for (let tx = 0; tx < tileWidth; tx++) {
       const bx0 = tx * 8, by0 = ty * 8, bw = Math.min(8, stride - bx0), bh = Math.min(8, rows - by0);
       let yy = 0, xy = 0, bySum = 0;
       for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++) {
+        const offset = (by * bw + bx) * 192;
         for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
           const at = (Math.min(height - 1, (by0 + by) * 8 + y) * width + Math.min(width - 1, (bx0 + bx) * 8 + x)) * 4, k = y * 8 + x;
           const r = LINEAR[data[at]], g = LINEAR[data[at + 1]], b = LINEAR[data[at + 2]];
           const l = cubeRoot(0.3 * r + 0.622 * g + 0.078 * b + BIAS) - ROOT_BIAS;
           const m = cubeRoot(0.23 * r + 0.692 * g + 0.078 * b + BIAS) - ROOT_BIAS;
           const s = cubeRoot(0.24342268924547819 * r + 0.20476744424496821 * g + 0.5518098665095536 * b + BIAS) - ROOT_BIAS;
-          block[k] = (l - m) * 127.5;
-          block[64 + k] = (l + m) * 127.5;
-          block[128 + k] = s * 255 - block[64 + k];
+          tile[offset + k] = (l - m) * 127.5;
+          tile[offset + 64 + k] = (l + m) * 127.5;
+          tile[offset + 128 + k] = s * 255 - tile[offset + 64 + k];
         }
-        transformDCT8(block, intermediate, sums);
-        const offset = (by * bw + bx) * 192;
-        tile.set(sums, offset);
-        for (let k = 1; k < 64; k++) { yy += sums[64 + k] * sums[64 + k]; xy += sums[k] * sums[64 + k]; bySum += sums[128 + k] * sums[64 + k]; }
+      }
+      transformDCT8Blocks(tile, bw * bh, intermediate, sums);
+      for (let n = 0; n < bw * bh; n++) for (let k = 1; k < 64; k++) {
+        const at = n * 192;
+        yy += tile[at + 64 + k] * tile[at + 64 + k];
+        xy += tile[at + k] * tile[at + 64 + k];
+        bySum += tile[at + 128 + k] * tile[at + 64 + k];
       }
       const index = ty * tileWidth + tx;
       const fx = cfl.x[index] = Math.max(-128, Math.min(127, Math.round(84 * xy / (yy + 1))));
@@ -88,5 +92,6 @@ export function* photoXYBSteps(data, width, height, quality) {
   }
   let alpha = null;
   for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) { alpha = data; break; }
-  return {width, height, components, quantScale, cfl, xyb: true, ycbcr: false, orientation: 1, alpha, colorSpace: 'srgb'};
+  const epf = quality <= 90 && options?.filter !== 'off' ? 20 * distance : 0;
+  return {width, height, components, quantScale, cfl, epf, xyb: true, ycbcr: false, orientation: 1, alpha, colorSpace: 'srgb'};
 }

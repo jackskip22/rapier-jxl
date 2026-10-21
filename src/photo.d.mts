@@ -3,7 +3,7 @@ import type {Pixels, Bytes, EncodeOptions, Job, Limits} from './index.mjs';
 export type {Pixels, Bytes, ColorSpace, SampleFormat, TransferFunction, Limits, EncodeOptions, ErrorCode, EncoderError, Job} from './index.mjs';
 /** Limits: 16 MiB output, 40 million pixels, 16,384 pixels per side. */
 export const LIMITS: Limits;
-export interface PhotoOptions extends EncodeOptions {
+export interface PhotoOptions extends Omit<EncodeOptions, 'photo'> {
   /** Integer from 1 to 9; default 1. Higher efforts search for smaller photographic streams. */
   effort?: number | undefined;
 }

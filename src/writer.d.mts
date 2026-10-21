@@ -66,6 +66,10 @@ export interface ImageHeaderOptions {
   xyb?: boolean; orientation?: Orientation; colorSpace?: ColorSpace;
   bitDepth?: number; exponentBits?: number; transferFunction?: TransferFunction;
   intensityTarget?: number; alphaPremultiplied?: boolean;
+  /** Unaligned prepared metadata writers, including those returned by prepareICC. */
+  colorData?: BitWriter; toneData?: BitWriter; iccData?: BitWriter;
+  /** CustomTransformData, including prepareOpsinTransform for an XYB header. */
+  transformData?: BitWriter;
 }
 export interface GroupLayout { groupsX: number; groupsY: number; dcGroupsX: number; dcGroupsY: number; single: boolean; }
 export function writeImageHeader(w: BitWriter, width: number, height: number, colour: 1 | 3, alpha: boolean, options?: ImageHeaderOptions): void;
@@ -157,6 +161,7 @@ export interface CoefficientImage {
   width: number;
   height: number;
   components: readonly DCTComponent[];
+  xyb?: boolean;
   ycbcr?: boolean;
   orientation?: Orientation;
   colorSpace?: ColorSpace;
@@ -164,6 +169,9 @@ export interface CoefficientImage {
   quantScale?: number;
   quantFieldBase?: number;
   quantFields?: Uint8Array;
+  /** Optional original color metadata and custom inverse transform for the image header. */
+  profile?: ImageHeaderOptions & Partial<import('./icc.mjs').PreparedICC>;
+  level?: 5 | 10;
 }
 export type CoefficientCoding = {
   bits: number;
@@ -183,7 +191,9 @@ export interface ParsedJPEG extends CoefficientImage { components: JPEGComponent
 export function encodeVarDCT(jpeg: CoefficientImage, plan?: VarDCTPlan): Bytes;
 export function varDCTSteps(jpeg: CoefficientImage, plan?: VarDCTPlan): Steps;
 export function transcodeJPEG(bytes: Uint8Array, jpeg?: CoefficientImage): Bytes;
-export function parseJPEG(bytes: Uint8Array): ParsedJPEG;
+export function parseJPEG(bytes: Uint8Array, retainScans?: boolean, profileOptions?: {
+  preserveICC?: boolean; compression?: 'auto' | 'prefix' | 'lz77';
+}): ParsedJPEG;
 export function profileSpace(profile: Uint8Array): ColorSpace | null;
 export const ZIGZAG: number[];
 

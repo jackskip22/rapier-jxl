@@ -9,6 +9,8 @@ import {admitSampleFormat} from './admit.mjs';
 
 const MAX_PALETTE = 2048;
 
+export const shapeFloors = new WeakMap();
+
 export const paletteKey = (rgba, i, grey, alpha) => grey
   ? (alpha ? rgba[i] + rgba[i + 3] * 256 : rgba[i])
   : rgba[i] + rgba[i + 1] * 256 + rgba[i + 2] * 65536 + (alpha ? rgba[i + 3] * 16777216 : 0);
@@ -16,8 +18,8 @@ export const paletteKey = (rgba, i, grey, alpha) => grey
 export function inspectPixels(rgba, width, height, {palette: wantPalette = true, samples, ...options} = {}) {
   if (!samples && (rgba instanceof Uint16Array || rgba instanceof Float32Array)) samples = admitSampleFormat(rgba, options);
   if (samples) return inspectNativePixels(rgba, width, height, samples, wantPalette);
-  const pixels = width * height;
-  let opaque = true, grey = true;
+  const pixels = width * height, floor = shapeFloors.get(rgba);
+  let opaque = !floor?.alpha, grey = floor?.colour !== 3;
   for (let i = 0, p = 0; p < pixels; p++, i += 4) {
     if (rgba[i + 3] !== 255) { opaque = false; if (!grey) break; }
     if (rgba[i] !== rgba[i + 1] || rgba[i] !== rgba[i + 2]) { grey = false; if (!opaque) break; }
@@ -206,7 +208,7 @@ function* planSteps(rgba, width, height, shape, colorSpace, rct, pooled, samples
     yield* groupPass({pooled, kind: 'plan', setup: written, at: g => (groups + g + 1) / (2 * groups), stop: () => false},
       groups, g => place(g, write(rgba, width, ...rect(g))), place);
   }
-  return assembleCodestream(header, sections, samples && (samples.bitDepth > 12 || samples.exponentBits) ? 10 : 5);
+  return assembleCodestream(header, sections, samples && (samples.level === 10 || samples.bitDepth > 12 || samples.exponentBits) ? 10 : 5);
 }
 
 export function* nativeSteps(data, width, height, {samples, quality = 100, effort = 1, pooled} = {}) {
@@ -271,7 +273,8 @@ function nativePaletteKey(data, i, grey, alpha, quantize) {
 function inspectNativePixels(data, width, height, samples, wantPalette) {
   const words = nativeWords(data, samples), quantize = nativeQuantizer(samples);
   const opaqueValue = samples.exponentBits ? samples.bitDepth === 32 ? 0x3f800000 : 0x3c00 : (1 << samples.bitDepth) - 1;
-  let opaque = true, grey = samples.colorSpace === 'srgb';
+  const floor = shapeFloors.get(data);
+  let opaque = !floor?.alpha, grey = (samples.colorChannels === 1 || (samples.colorChannels === undefined && samples.colorSpace === 'srgb')) && floor?.colour !== 3;
   for (let i = 0; i < words.length; i += 4) {
     if (words[i + 3] !== opaqueValue) opaque = false;
     if (quantize(words[i]) !== quantize(words[i + 1]) || quantize(words[i]) !== quantize(words[i + 2])) grey = false;

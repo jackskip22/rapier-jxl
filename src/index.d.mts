@@ -10,6 +10,12 @@ export interface Limits { readonly bytes: number; readonly pixels: number; reado
 export const LIMITS: Limits;
 export interface EncodeOptions {
   /** 1 to 100; 100 is exact. */ quality?: number | undefined;
+  /** Photographic coding for non-palette straight RGBA8 below quality 100; default true.
+   * Set false for Modular lossy coding. Palette, native-precision, ICC and exact inputs keep their existing path. */
+  photo?: boolean | undefined;
+  /** "auto" (default) applies one edge-preserving pass to sRGB XYB photos at quality 90 or below.
+   * "off" keeps the unfiltered reconstruction. Alpha remains exact; other coding paths do not use this filter. */
+  filter?: 'auto' | 'off' | undefined;
   /** Source color space, declared without conversion; default 'srgb'. */ colorSpace?: ColorSpace | undefined;
   /** Integer code-value depth: 8 for bytes; 10, 12, or 16 for Uint16Array (default 16).
    * Floating-point depth is fixed by the sample format: 16 or 32. */ bitDepth?: 8 | 10 | 12 | 16 | 32 | undefined;
@@ -21,12 +27,19 @@ export interface EncodeOptions {
   intensityTarget?: number | undefined;
   /** Source RGB is premultiplied by alpha; default false. Values are never unpremultiplied. */
   alphaPremultiplied?: boolean | undefined;
+  /** Original RGB or GRAY ICC profile, retained byte-for-byte without color conversion. Mutually exclusive
+   * with colorSpace and transferFunction. Uses Modular coding at every quality; gray needs identical RGB words.
+   * Profiles are limited to 16 MiB; above 4 MiB selects level 10. The encoded output remains limited to 16 MiB. */
+  icc?: Uint8Array | undefined;
+  /** Default auto compares exact prefix and LZ77 bit lengths. Requires icc. */
+  iccCompression?: 'auto' | 'prefix' | 'lz77' | undefined;
 }
 export type ErrorCode = 'JXL_INPUT' | 'JXL_DIMENSIONS' | 'JXL_SIZE' | 'JXL_MEMORY' | 'JXL_JPEG' | 'JXL_RECONSTRUCTION';
 /** Encoding entry points throw these codes. Low-level writers do not validate preconditions. */
 export interface EncoderError extends Error { code: ErrorCode; }
 /** Encode row-major RGBA as JPEG XL. Quality 100 (default) preserves all samples exactly.
- * Below quality 100, native precision quantizes RGB code values or mantissa bits; alpha remains exact. */
+ * Ordinary non-palette RGBA8 below quality 100 uses photographic coding at effort 1 unless photo is false.
+ * Native precision quantizes RGB code values or mantissa bits; alpha remains exact on every path. */
 export function encode(data: Pixels, width: number, height: number, options?: EncodeOptions): Bytes;
 /** Yields progress in (0, 1]. Exhaust the iterator to set `bytes`; yielding 1 does not complete the job.
  * Leaving the loop cancels. `hurry` finishes a search with a completed candidate.

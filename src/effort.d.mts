@@ -20,7 +20,10 @@ export interface EffortOptions extends EncodeOptions {
  * properties; 8 uses all 14 predictors; 9 also learns it under the second-ranked transform.
  * Levels 3 and 4 accumulate on effort 1's stream; from 5 each level's learned model replaces the level below's.
  * Complete streams compete by size, with the earlier result winning ties.
- * Native integer effort 2 also tries untransformed RGB; floats have no additional lossless search. */
+ * Native integer effort 2 also tries untransformed RGB; floats have no additional lossless search.
+ * Below quality 100, ordinary non-palette RGBA8 uses photographic coding unless photo is false:
+ * effort 3 adds clustering, 4 adds a learned coefficient order, and 5 through 9 also try ANS.
+ * These photographic searches preserve reconstructed pixels. Palette inputs also price an exact candidate. */
 export function encode(data: Pixels, width: number, height: number, options?: EffortOptions): Bytes;
 /** Incremental encode. Above effort 1, lossless progress up to 0.5 writes effort 1's stream; the rest searches.
  * `hurry` returns the smallest completed stream, or effort 1's bytes for `treeLearning: 'sampled'`.

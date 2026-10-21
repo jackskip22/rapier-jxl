@@ -6,7 +6,8 @@ JPEG coefficient carrying, photographic pixel encoding, source-file parsing and 
 | Need | Entry point | Self-contained file |
 | --- | --- | --- |
 | Complete Rapier encoder and worker installer | `rapier-jxl/rapier` | `dist/rapier.min.mjs` |
-| Complete self-starting Rapier worker | `rapier-jxl/rapier/worker` | `dist/rapier-worker.js` |
+| Still-picture worker (no animation) | `rapier-jxl/rapier/still-worker` | `dist/rapier-still-worker.js` |
+| Complete self-starting worker (still + animation) | `rapier-jxl/rapier/worker` | `dist/rapier-worker.js` |
 | RGBA, lossless or lossy | `rapier-jxl` or `rapier-jxl/core` | `dist/rapier-jxl.min.mjs` |
 | Lossless compression search | `rapier-jxl/effort` | `dist/effort.min.mjs` |
 | Same search with optional WASM | `rapier-jxl/wasm` | `dist/wasm.min.mjs` |
@@ -14,7 +15,9 @@ JPEG coefficient carrying, photographic pixel encoding, source-file parsing and 
 | Photographic RGBA | `rapier-jxl/photo` | `dist/photo.min.mjs` |
 | JPEG with ANS search | `rapier-jxl/jpeg-ans` | `dist/jpeg-ans.min.mjs` |
 | Photographic RGBA with ANS search | `rapier-jxl/photo-ans` | `dist/photo-ans.min.mjs` |
+| One call from a page to an `image/jxl` Blob | `rapier-jxl/image` | `dist/image.min.mjs` |
 | Attach, replace or remove Exif/XMP | `rapier-jxl/metadata` | `dist/metadata.min.mjs` |
+| Animated JPEG XL from whole-canvas frames | `rapier-jxl/animation` | `dist/animation.min.mjs` |
 
 Append `/min` to an encoding or metadata entry point for its self-contained build through npm. `rapier-jxl/min` and
 `rapier-jxl/core/min` both select the core. `rapier-jxl/source` reads PNG16 and supported OpenEXR into typed samples;
@@ -95,13 +98,51 @@ Readable imports share `rapier-jxl/kernels`. Set controls before an encode. [Ker
 | Pixel core | Typed RGBA to lossless or lossy modular streams. |
 | Lossless search | Weighted prediction, learned trees, local models, color transforms and screen matching. |
 | JPEG and photo | JPEG parsing or photographic DCT feeding shared coefficient and VarDCT writers. Photo effort 5 adds ANS; separate ANS entry points start at effort 2. |
-| Kernels | Optional integer operations behind the same JavaScript encoding interface. |
+| Kernels | Optional integer operations and exact float64 SIMD DCT behind the same JavaScript encoding interface. |
+| Worker scheduling | Lossless groups and candidates; photographic bands above 3 million pixels. Workers share no caller-owned mutable buffers. |
 
 sRGB photographic pixels below quality 100 use the XYB color transform and the shared DCT8 writer when detail is
 mostly in luminance. A bounded sample retains the existing color transform for strong color edges. XYB uses
 64-pixel chroma-from-luma tiles. Other admitted color spaces keep their existing photographic transform; quality 100
 uses exact modular coding. JPEG transcoding carries the original coefficients and does not use the photographic
 color transform.
+
+The photographic SIMD kernel batches up to 64 DCT blocks. It preserves the JavaScript operation order and every
+float64 result bit before quantization; it uses no relaxed floating-point instructions. JavaScript remains the
+fallback. The complete encoder selects optional kernels automatically; other entry points keep their existing
+kernel controls. One optional edge-preserving filter improves the measured average XYB quality through quality 90;
+`filter: 'off'` retains unfiltered output. This is separate from lossless coding and JPEG reconstruction.
+
+The [complete-encoder benchmark protocol](../../bench/IDEAL.md) records source snapshots, real input provenance,
+both perceptual metrics, independent decodes, actual helper use, and complete-API timing in Node and Chrome.
+Choose effort by measured byte savings and time, and compare lossy settings at measured quality.
+
+### Direction
+
+Keep the small exact core and shared format writers. Search, photographic transforms, source parsing, metadata,
+SIMD and worker scheduling remain optional layers. The complete encoder combines them with presets, progress and
+cancellation; each preset supplies defaults that explicit options can override. The painting profile keeps its
+separate exact save policy.
+
+The next performance work is to measure each expensive lossless candidate's time and bytes won, then reduce repeated
+work without changing retained results. Photographic workers currently distribute transform production; entropy
+writing remains on the coordinator. Additional parallelism needs a measured gain after worker startup, messages,
+copies and memory are included.
+
+Preview-first output is the next format feature to investigate. A useful implementation must let independent
+decoders display an early valid prefix and still meet the final quality or exactness contract. Numeric progress
+callbacks do not provide that capability. Genuine streaming input separately needs row/tile admission, color and
+sample declarations, backpressure, cancellation and bounded memory. Search that revisits pixels needs a replayable
+source or an explicit storage policy. Neither streaming input nor progressive output is implemented yet.
+
+Lossy Modular coding already exists. Further graphics work should improve measured quality around text, sharp edges
+and transparency and choose photographic or graphics coding from evidence. Animation is an optional layer
+(`rapier-jxl/animation`). Exact JPEG carrying remains separate from
+future matched-quality JPEG recompression.
+
+Reject changes that gain speed by altering exact coefficients, start helpers on every small image, or hide large
+memory and search costs behind a preset. Retain JavaScript fallback, the photographic filter opt-out, per-image
+regressions in benchmark reports, and independent decoding before accepting changed output bytes.
 
 The core excludes the optional search, ANS, JPEG, photo, source-file parser, metadata and WASM modules. Native precision shares its
 modular planner and writer. `rapier-jxl/writer` exposes typed format primitives in readable source; minified builds
@@ -150,20 +191,22 @@ allocate the largest image. [Precision, bounds and limits](API.md).
 
 | File in `dist/` | Bytes | gzip | Brotli |
 | --- | ---: | ---: | ---: |
-| `rapier-worker.js` | 190,512 | 73,183 | 62,702 |
-| `rapier.min.mjs` | 190,657 | 73,238 | 62,694 |
-| `rapier-jxl.min.mjs` | 28,342 | 11,945 | 10,645 |
-| `effort.min.mjs` | 96,255 | 37,304 | 32,396 |
-| `wasm.min.mjs` | 117,836 | 46,431 | 40,018 |
-| `jpeg.min.mjs` | 65,579 | 25,706 | 22,653 |
-| `photo.min.mjs` | 48,879 | 19,493 | 17,278 |
-| `jpeg-ans.min.mjs` | 71,268 | 27,416 | 24,191 |
-| `photo-ans.min.mjs` | 48,863 | 19,483 | 17,194 |
-| `metadata.min.mjs` | 4,994 | 2,573 | 2,165 |
-| All self-contained entry points in one bundle | 205,088 | 79,365 | 67,299 |
-| All readable modules in `src/` | 409,145 | 110,416 | |
+| `rapier-still-worker.js` | 223,038 | 86,099 | 72,785 |
+| `rapier-worker.js` | 415,097 | 153,162 | 126,092 |
+| `rapier.min.mjs` | 415,306 | 153,219 | 126,126 |
+| `rapier-jxl.min.mjs` | 56,573 | 22,783 | 20,217 |
+| `effort.min.mjs` | 125,895 | 48,270 | 41,919 |
+| `wasm.min.mjs` | 148,884 | 57,919 | 49,860 |
+| `jpeg.min.mjs` | 75,688 | 29,632 | 26,024 |
+| `photo.min.mjs` | 58,394 | 23,129 | 20,435 |
+| `jpeg-ans.min.mjs` | 81,374 | 31,370 | 27,488 |
+| `photo-ans.min.mjs` | 58,378 | 23,119 | 20,428 |
+| `metadata.min.mjs` | 43,422 | 17,038 | 14,994 |
+| `animation.min.mjs` | 148,277 | 56,607 | 48,793 |
+| All self-contained entry points in one bundle | 421,275 | 154,454 | 126,653 |
+| All readable modules in `src/` | 759,994 | 201,284 | |
 
-Release 4.2.1, Terser 5.51.2, Node v22.23.3, gzip 9 and Brotli 11. Exact byte counts, import graphs, hashes
+Release 5.0.0, Terser 5.51.2, Node v22.23.3, gzip 9 and Brotli 11. Exact byte counts, import graphs, hashes
 and incremental sizes are in [dist/sizes.json](../../dist/sizes.json). Encoding builds are checked against their
 readable entries on encoded-byte fixtures and native integer/float cases with HDR and alpha declarations. The metadata
 build is checked against its readable entry for identical container bytes.
@@ -171,15 +214,16 @@ build is checked against its readable entry for identical container bytes.
 
 ## Complete Rapier worker
 
-`dist/rapier-worker.js` is the complete self-starting worker embedded by Rapier. The package and app use one builder
-and the same MIT modules. Its exact bytes, gzip size, source version and module graph are recorded in
+`dist/rapier-still-worker.js` is the self-starting still-picture worker embedded by Rapier's page.
+`dist/rapier-worker.js` is the complete worker: the same modules plus animation, downloaded by Rapier's JPEG XL
+converter for animations and video. The package and app use one builder and the same MIT modules. Each worker's exact bytes, gzip size, source version and module graph are recorded in
 [dist/sizes.json](../../dist/sizes.json); the app records the same worker SHA-256 in its build receipt.
 
-Copy the file beside a served page and use `new Worker('./rapier-worker.js')`. For one offline HTML file:
+Copy the file beside a served page and use `new Worker('./rapier-still-worker.js')` (or `rapier-worker.js`). For one offline HTML file:
 
 ```html
 <script type="text/plain" id="rapier-jxl-worker">
-/* Paste the complete dist/rapier-worker.js here, including its MIT notice. */
+/* Paste the complete dist/rapier-still-worker.js here, including its MIT notice. */
 </script>
 <script type="module">
 const url = URL.createObjectURL(new Blob([

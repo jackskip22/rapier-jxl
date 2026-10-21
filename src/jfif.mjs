@@ -1,5 +1,7 @@
 // JPEG coefficient reader. MIT (LICENSE).
 import {JPEG_LIMITS} from './bits.mjs';
+import {prepareICC} from './icc-write.mjs';
+import {inspectICC} from './icc-profile.mjs';
 
 export const ZIGZAG = [0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28,
   35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63];
@@ -69,7 +71,7 @@ export function profileSpace(profile) {
   return near(SRGB) ? 'srgb' : near(P3) ? 'display-p3' : null;
 }
 
-export function parseJPEG(bytes, retainScans = false) {
+export function parseJPEG(bytes, retainScans = false, {preserveICC = false, compression = 'auto'} = {}) {
   if (!(bytes.length > 4) || bytes[0] !== 0xFF || bytes[1] !== 0xD8) throw jpegError('not a JPEG');
   const quant = [], huffman = [[], []], badDC = new Set(), icc = {count: 0, parts: []}, scanChoices = retainScans ? [] : null;
   let frame = null, restartInterval = 0, adobeTransform = -1, jfif = false, orientation = null, pos = 2;
@@ -183,21 +185,30 @@ export function parseJPEG(bytes, retainScans = false) {
   for (const c of frame.components) {
     for (let k = 0; k < 64; k++) if (c.coverage[k] !== 0) throw jpegError(frame.progressive ? 'a progressive JPEG whose scans do not finish every coefficient' : 'a component without its scan');
   }
-  let colorSpace = 'srgb';
+  let colorSpace = 'srgb', profile;
   if (icc.count) {
     const parts = [];
     for (let i = 1; i <= icc.count; i++) { if (!icc.parts[i]) throw jpegError('a color profile cut short'); parts.push(icc.parts[i]); }
-    const profile = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-    for (let i = 0, at = 0; i < parts.length; at += parts[i].length, i++) profile.set(parts[i], at);
-    colorSpace = profileSpace(profile);
-    if (!colorSpace) throw jpegError('a color profile other than sRGB or Display P3 (decode the picture and encode its pixels)');
+    const original = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    for (let i = 0, at = 0; i < parts.length; at += parts[i].length, i++) original.set(parts[i], at);
+    const expected = frame.components.length === 1 ? 'gray' : 'rgb';
+    try {
+      inspectICC(original, undefined, expected);
+      const named = profileSpace(original);
+      colorSpace = named || 'srgb';
+      if (preserveICC || !named) profile = prepareICC(original, {compression, colorSpace: expected});
+    } catch (error) {
+      if (error.code === 'JXL_INPUT') throw jpegError('invalid or incompatible color profile: ' + error.message);
+      throw error;
+    }
   }
   let rgb = false;
   if (frame.components.length === 3 && !jfif) {
     if (adobeTransform >= 0) rgb = adobeTransform === 0;
     else rgb = frame.components[0].id === 0x52 && frame.components[1].id === 0x47 && frame.components[2].id === 0x42;
   }
-  return {width: frame.width, height: frame.height, components: frame.components, progressive: frame.progressive, ycbcr: !rgb, orientation: orientation ?? 1, colorSpace, ...(scanChoices ? {scanChoices} : {})};
+  return {width: frame.width, height: frame.height, components: frame.components, progressive: frame.progressive, ycbcr: !rgb, orientation: orientation ?? 1, colorSpace,
+    ...(profile ? {profile, level: profile.level} : {}), ...(scanChoices ? {scanChoices} : {})};
 }
 
 function exifOrientation(bytes, start, end) {

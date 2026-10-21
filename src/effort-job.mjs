@@ -5,6 +5,9 @@ import {buildCode, writePrefixCode} from './prefix.mjs';
 import {AVERAGE_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, split, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
 import {inspectPixels, losslessSteps, planeFill, nativeSteps} from './lossless.mjs';
 import {lossySteps} from './lossy.mjs';
+import {photoSteps, admitPhotoFilter} from './photo-job.mjs';
+import {coefficientEffortSteps} from './coefficient-effort.mjs';
+import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {WEIGHTED_PREDICTOR, WEIGHTED_PROPERTY, WEIGHTED_CUTS, codeWeighted} from './weighted.mjs';
 import {fault, admitOptions, admitPixels, admitSampleFormat} from './admit.mjs';
 import {localSteps} from './local.mjs';
@@ -17,6 +20,7 @@ const hurryOf = reply => reply === null || (typeof reply === 'object' ? reply.hu
 
 export function effortJob(data, width, height, options, pool, helpers = false, retainHurry) {
   const {quality, colorSpace} = admitOptions(options), effort = options?.effort === undefined ? 1 : options.effort;
+  const filter = admitPhotoFilter(options);
   if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fault('JXL_INPUT', 'Effort is a whole number from 1 to 9.');
   const treeLearning = options?.treeLearning;
   if (treeLearning !== undefined && treeLearning !== 'sampled') throw fault('JXL_INPUT', 'Tree learning must be sampled when specified.');
@@ -30,13 +34,14 @@ export function effortJob(data, width, height, options, pool, helpers = false, r
   }
   if (losslessProfile === 'painting-search') admitPaintingProfile(quality, samples);
   if (!samples.native8) return nativeSteps(data, width, height, {quality, samples, effort, pooled: pool && !groupLayout(width, height).single});
-  return effortSteps(data, width, height, quality, colorSpace, effort, pool && quality >= 100 && !groupLayout(width, height).single, treeLearning, helpers, retainHurry, losslessProfile === 'painting-search');
+  return effortSteps(data, width, height, quality, colorSpace, effort, pool && quality >= 100 && !groupLayout(width, height).single, treeLearning, helpers, retainHurry, losslessProfile === 'painting-search', options?.photo !== false, filter);
 }
 
-function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, treeLearning, helpers = false, retainHurry, painting = false) {
+function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, treeLearning, helpers = false, retainHurry, painting = false, photo = true, filter) {
   const shape = inspectPixels(data, width, height);
   if (quality < 100) {
-    if (!shape.palette) return yield* lossySteps(data, width, height, {quality, shape, colorSpace});
+    if (!shape.palette) return yield* (photo ? photoSteps(data, width, height, quality, colorSpace, effort,
+      effort >= 5 ? coefficientAnsSteps : coefficientEffortSteps, filter) : lossySteps(data, width, height, {quality, shape, colorSpace}));
     const exact = yield* part(effortSteps(data, width, height, 100, colorSpace, effort, false), 0, 2);
     let bytes;
     try { bytes = yield* part(lossySteps(data, width, height, {quality, shape, colorSpace}), 1, 2); }

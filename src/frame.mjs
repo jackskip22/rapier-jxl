@@ -8,19 +8,20 @@ function writeSize(w, size) {
   w.writeU32([[9, 1], [13, 1], [18, 1], [30, 1]], size);
 }
 
-export function writeImageHeader(w, width, height, colour, alpha, {xyb = false, orientation = 1, colorSpace, bitDepth = 8, exponentBits = 0, transferFunction = 'srgb', intensityTarget = 255, alphaPremultiplied = false} = {}) {
+export function writeImageHeader(w, width, height, colour, alpha, {xyb = false, orientation = 1, colorSpace, bitDepth = 8, exponentBits = 0, transferFunction = 'srgb', intensityTarget = 255, alphaPremultiplied = false, modular16bit = bitDepth <= 12 && !exponentBits, colorData, toneData, iccData, imageFields, extraChannelData, transformData} = {}) {
   w.write(16, 0x0AFF);
   w.write(1, 0);
   writeSize(w, height);
   w.write(3, 0);
   writeSize(w, width);
   w.write(1, 0);
-  const extra = orientation !== 1 || intensityTarget !== 255;
+  const extra = orientation !== 1 || intensityTarget !== 255 || !!toneData || !!imageFields;
   w.write(1, extra ? 1 : 0);
-  if (extra) w.write(6, orientation - 1);
+  if (extra) { if (imageFields) w.append(imageFields); else w.write(6, orientation - 1); }
   writeSampleDepth(w, bitDepth, exponentBits);
-  w.write(1, bitDepth <= 12 && !exponentBits ? 1 : 0);
-  if (alpha && bitDepth === 8 && !exponentBits && !alphaPremultiplied) w.write(3, 0b1_01);
+  w.write(1, modular16bit ? 1 : 0);
+  if (extraChannelData) w.append(extraChannelData);
+  else if (alpha && bitDepth === 8 && !exponentBits && !alphaPremultiplied) w.write(3, 0b1_01);
   else if (alpha) {
     w.write(3, 0b0_01);
     w.write(2, 0);
@@ -30,7 +31,8 @@ export function writeImageHeader(w, width, height, colour, alpha, {xyb = false, 
   }
   else w.write(2, 0);
   w.write(1, xyb ? 1 : 0);
-  if (transferFunction !== 'srgb' || colorSpace === 'rec2020') {
+  if (colorData) w.append(colorData);
+  else if (transferFunction !== 'srgb' || colorSpace === 'rec2020') {
     w.write(2, 0);
     writeColorEnum(w, colour === 3 ? 0 : 1);
     writeColorEnum(w, 1);
@@ -45,14 +47,18 @@ export function writeImageHeader(w, width, height, colour, alpha, {xyb = false, 
     w.write(15, 0b01_1011_10_0_01_01_0_0);
   }
   if (extra) {
-    w.write(1, intensityTarget === 255 ? 1 : 0);
-    if (intensityTarget !== 255) {
-      w.write(16, float16Bits(intensityTarget));
-      w.write(32, 0); w.write(1, 0);
+    if (toneData) w.append(toneData);
+    else {
+      w.write(1, intensityTarget === 255 ? 1 : 0);
+      if (intensityTarget !== 255) {
+        w.write(16, float16Bits(intensityTarget));
+        w.write(32, 0); w.write(1, 0);
+      }
     }
   }
   w.write(2, 0);
-  w.write(1, 1);
+  if (transformData) w.append(transformData); else w.write(1, 1);
+  if (iccData) w.append(iccData);
   w.zeroPadToByte();
 }
 
@@ -64,16 +70,25 @@ function writeSampleDepth(w, bits, exponent) {
 
 function writeColorEnum(w, value) { w.writeU32([[0, 0], [0, 1], [4, 2], [6, 18]], value); }
 
-export function writeModularFrameHeader(w, {alpha, shift = 1}) {
-  w.write(9, 0b00_0_00_1_00_0);
-  if (alpha) w.write(2, 0);
+export function writeModularFrameHeader(w, {alpha, shift = 1, extraChannels = Number(!!alpha), upsampling = 1, extraUpsampling}) {
+  w.write(7, 0b0_00_1_00_0);
+  w.writeU32([[0, 1], [0, 2], [0, 4], [0, 8]], upsampling);
+  for (let c = 0; c < extraChannels; c++) w.writeU32([[0, 1], [0, 2], [0, 4], [0, 8]], extraUpsampling?.[c] ?? 1);
   w.write(2, shift);
-  writeFrameHeaderEnd(w, alpha);
+  writeFrameHeaderEnd(w, extraChannels);
 }
 
-export function writeFrameHeaderEnd(w, alpha) {
-  w.write(alpha ? 7 : 5, 0);
-  w.write(11, 1);
+export function writeFrameHeaderEnd(w, alpha, epf = 0, passes) {
+  const channels = typeof alpha === 'number' ? alpha : Number(!!alpha);
+  if (passes) w.append(passes); else w.write(2, 0);
+  w.write(3, 0);
+  for (let c = 0; c < channels; c++) w.write(2, 0);
+  if (!epf) { w.write(11, 1); return; }
+  w.write(5, 1);
+  w.write(2, 1);
+  w.write(3, 4);
+  for (const value of [epf, 0.9, 6.5, 2 / 3]) w.write(16, float16Bits(value));
+  w.write(4, 0);
 }
 
 export function writeTOC(w, sizes) {

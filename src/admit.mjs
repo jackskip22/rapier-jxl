@@ -1,10 +1,19 @@
 // Input validation, limits, errors, and incremental jobs. MIT (LICENSE).
 import {LIMITS} from './bits.mjs';
 
-export const fault = (code, message) => Object.assign(new Error(message), {code});
+import {fault} from './fault.mjs';
+import {prepareICC} from './icc-write.mjs';
+
+export {fault};
+
+function admitColorRoute(options) {
+  if (options.colorEncoding !== undefined || options.toneMapping !== undefined)
+    throw fault('JXL_INPUT', 'Custom color metadata requires encodeProfile from rapier-jxl/icc.');
+}
 
 export function admitOptions(options = {}, quality = 100) {
   if (options === null || typeof options !== 'object') throw fault('JXL_INPUT', 'Options are an object: {quality, colorSpace}.');
+  admitColorRoute(options);
   if (options.quality !== undefined) quality = options.quality;
   if (typeof quality !== 'number' || !Number.isFinite(quality) || quality < 1 || quality > 100) throw fault('JXL_INPUT', 'Quality is a number from 1 to 100.');
   const colorSpace = options.colorSpace === undefined ? 'srgb' : options.colorSpace;
@@ -25,6 +34,7 @@ export function admitPixels(data, width, height, limits) {
 }
 
 export function admitSampleFormat(data, options = {}) {
+  admitColorRoute(options);
   const float32 = data instanceof Float32Array, wide = data instanceof Uint16Array;
   const sampleFormat = options.sampleFormat ?? (float32 ? 'float32' : 'uint');
   if (!['uint', 'float16', 'float32'].includes(sampleFormat) || (sampleFormat === 'float32') !== float32 || sampleFormat === 'float16' && !wide)
@@ -46,8 +56,21 @@ export function admitSampleFormat(data, options = {}) {
     const max = (1 << bitDepth) - 1;
     for (const value of data) if (value > max) throw fault('JXL_INPUT', 'A sample exceeds the declared bitDepth; declare the source depth instead of truncating it.');
   }
-  return {sampleFormat, bitDepth, exponentBits, colorSpace, transferFunction, intensityTarget, alphaPremultiplied,
+  const samples = {sampleFormat, bitDepth, exponentBits, colorSpace, transferFunction, intensityTarget, alphaPremultiplied,
     native8: bitDepth === 8 && transferFunction === 'srgb' && colorSpace !== 'rec2020' && intensityTarget === 255 && !alphaPremultiplied};
+  if (options.icc !== undefined) {
+    if (options.colorSpace !== undefined || options.transferFunction !== undefined)
+      throw fault('JXL_INPUT', 'An ICC profile supplies the color encoding; omit other color declarations.');
+    if (options.level === 5 && (bitDepth > 12 || exponentBits)) throw fault('JXL_INPUT', 'These sample depths require JPEG XL level 10.');
+    const profile = prepareICC(options.icc, {level: options.level, compression: options.iccCompression});
+    if (profile.colorChannels === 1) {
+      const words = float32 ? new Uint32Array(data.buffer, data.byteOffset, data.length) : data;
+      for (let i = 0; i < words.length; i += 4)
+        if (words[i] !== words[i + 1] || words[i] !== words[i + 2]) throw fault('JXL_INPUT', 'A GRAY profile requires identical R, G and B sample words in every RGBA pixel.');
+    }
+    Object.assign(samples, profile, {native8: false});
+  } else if (options.iccCompression !== undefined) throw fault('JXL_INPUT', 'iccCompression requires an ICC profile.');
+  return samples;
 }
 
 export function admitOutputSize(length) {
