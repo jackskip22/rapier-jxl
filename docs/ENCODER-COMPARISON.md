@@ -8,12 +8,12 @@ Executable payload sizes. Rapier JXL uses this release; other rows use the pinne
 
 | Encoder / entry | Version | Minified JS + WASM bytes | gzip bytes | Included capability |
 | --- | --- | ---: | ---: | --- |
-| Rapier JXL complete worker | 5.2.0 | 475,402 | 174,450 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel workers |
-| Rapier JXL core | 5.2.0 | 61,771 | 24,831 | Lossless/lossy RGBA, native precision and HDR, exact alpha |
-| Rapier JXL effort | 5.2.0 | 131,101 | 50,419 | Core plus lossless predictor, learned-tree, entropy, color, and screen search |
-| Rapier JXL WASM | 5.2.0 | 154,096 | 60,129 | Effort with inlined kernels and JavaScript fallback |
-| Rapier JXL JPEG | 5.2.0 | 77,649 | 30,616 | JPEG coefficients, orientation and original-byte reconstruction |
-| Rapier JXL photo | 5.2.0 | 63,498 | 25,190 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
+| Rapier JXL complete worker | 5.2.1 | 475,402 | 174,450 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel workers |
+| Rapier JXL core | 5.2.1 | 61,771 | 24,831 | Lossless/lossy RGBA, native precision and HDR, exact alpha |
+| Rapier JXL effort | 5.2.1 | 131,101 | 50,419 | Core plus lossless predictor, learned-tree, entropy, color, and screen search |
+| Rapier JXL WASM | 5.2.1 | 154,096 | 60,129 | Effort with inlined kernels and JavaScript fallback |
+| Rapier JXL JPEG | 5.2.1 | 77,649 | 30,616 | JPEG coefficients, orientation and original-byte reconstruction |
+| Rapier JXL photo | 5.2.1 | 63,498 | 25,190 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
 | [jSquash](https://github.com/jamsinclair/jSquash/tree/main/packages/jxl) | 1.3.0 | 1,388,572 | 525,782 | 8-bit lossless/lossy RGBA |
 | [Discourse's jSquash package](https://www.npmjs.com/package/@discourse/jxl) | 1.3.0 | 1,388,572 | 525,782 | The same encoder bytes as jSquash |
 | [Lacinak's jSquash fork](https://github.com/kelaci/jSquash) | 1.3.0-kelaci.0 | 2,071,514 | 844,866 | High bit-depth input options |

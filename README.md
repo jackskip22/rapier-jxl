@@ -1,33 +1,41 @@
 # Rapier JXL
 
-JPEG XL encoder in pure JavaScript, for single-file HTML apps, photography tools and agent image workflows. Offline in
-browsers, Node and Deno. [MIT license](LICENSE), no runtime dependencies.
+JPEG XL encoder in pure JavaScript. Great for single-file HTML apps, photography tools and agent image workflows. Runs
+offline in browsers, Node and Deno. MIT license, no dependencies.
 
-- **Still encoder: 102,931 gzip bytes.** This is what [Rapier](https://rapier.website) itself carries:
-  lossless and lossy pictures, photographs, JPEG carrying and exact restore, native precision, HDR and exact alpha.
-- **Complete encoder: 174,450 gzip bytes.** The still encoder plus animated JPEG XL and the other format writers.
-- **Core: 24,831 gzip bytes.** Lossless or lossy RGBA and nothing else.
+- **20× smaller than other JPEG XL encoders.** The core is 25 KB gzipped; the smallest
+  WebAssembly encoder ([@squoosh-kit/jxl](docs/ENCODER-COMPARISON.md#payload)) is 512 KB, libjxl's
+  `jxl-wasm` is 962 KB (38×).
+- **Exact JPEGs in 34× less code.** A JPEG restores byte for byte (24 of 24 photos), 11.6% smaller. The JPEG
+  entry is 31 KB; `jpeg-to-jxl` is 1,063 KB.
+- **Animations up to 2× smaller than libjxl**, lossless, against `cjxl` at its highest effort: a GIF 284 KB vs 556 KB, a
+  screen recording 16 KB vs 23 KB, a camera clip 1.6 MB vs 1.9 MB ([results](docs/ENCODER-COMPARISON.md#animation)).
+- **No WebAssembly needed.** Lossless and lossy, 8-bit to 32-bit float, HDR (PQ, HLG), exact alpha, color profiles, animation.
 
 ```sh
 npm install rapier-jxl
 ```
 
-**New in 5.2.0.** A picture with its own matrix/TRC color profile (Display P3, Adobe RGB, ProPhoto, Rec. 2020, gray) is coded lossy through that profile's primaries and curves and keeps the profile; lossless is the same samples in a smaller file.
+## Convert a file in a page
 
-**New in 5.1.0.**
-- No 16 MiB output limit: pictures, animations, JPEG carrying and metadata use available memory. Byte budgets you
-  pass still apply.
-- A carried RGB JPEG now restores byte for byte through libjxl's `djxl` as well as through this package.
-- `rapier-jxl/graphics`: screenshots and flat art within an error you set. `rapier-jxl/animation-atlas`: repeated
-  glyphs and tiles stored once across an animation's frames.
-- More of the format: progressive Modular, Squeeze, custom weighted prediction, high bit-depth color transforms and
-  palettes, more ICC and original color spaces, typed extra channels beside photos, patches from several sources and
-  coefficient orders for every VarDCT strategy. See [format coverage](docs/reference/FORMAT-COVERAGE.md).
-- The still worker answers five format actions: `photo`, `profile`, `readSource`, `encodeSource` and `opsin`.
+Copy `node_modules/rapier-jxl/dist/rapier-still-worker.js` beside your page (`rapier-worker.js` adds animation), then:
 
-**New in 5.0.0.** Lossy pictures use the photo coding unless you pass `photo: false`. Animated JPEG XL
-(`rapier-jxl/animation`) stores only changed rectangles, with exact timing. The still worker is a separate file,
-`rapier-jxl/rapier/still-worker`. Version 5 does not keep 4.x callers working.
+```js
+import {toJXL} from 'rapier-jxl/image';
+const jxl = await toJXL(file, {worker: './rapier-still-worker.js'}); // an image/jxl Blob
+```
+
+For one offline HTML file, embed the worker as text and start it from a Blob URL
+([example](docs/reference/ARCHITECTURE.md#complete-rapier-worker)).
+
+## Encode pixels
+
+```js
+import {encode} from 'rapier-jxl';
+const bytes = encode(rgba, width, height, {quality: 100}); // 100 is lossless; 1 to 99 is lossy
+```
+
+Alpha stays exact at every quality. [API and options](docs/reference/API.md).
 
 ## Builds
 
@@ -42,79 +50,22 @@ npm install rapier-jxl
 | WASM · `rapier-jxl/wasm/min` | 60,129 | Effort with inlined WASM and JavaScript fallback. |
 | Photo · `rapier-jxl/photo/min` | 25,190 | Lossy photographs from RGBA pixels. |
 | JPEG · `rapier-jxl/jpeg/min` | 30,616 | Existing JPEGs, preserving admitted coefficients and orientation. |
-| Metadata · `rapier-jxl/metadata/min` | 12,293 | Attach, replace or remove caller-supplied Exif/XMP. |
+| Metadata · `rapier-jxl/metadata/min` | 12,292 | Attach, replace or remove caller-supplied Exif/XMP. |
 | Animation · `rapier-jxl/animation/min` | 58,816 | Animated JPEG XL from frames: only changed rectangles stored, exact timing, lossless or lossy. |
 
-Each size measures a complete standalone file at gzip level 9. Readable imports such as `rapier-jxl/rapier` share
-dependencies when bundled together; separate minified files each include theirs. Optional JPEG and Photo ANS builds,
-combined sizes and file hashes are listed in [Entry points and embedding](docs/reference/ARCHITECTURE.md).
+Sizes are standalone files gzipped at level 9. [Entry points and embedding](docs/reference/ARCHITECTURE.md).
 
-**Used by Rapier:** each app release embeds its own still worker; Rapier's JPEG XL converter downloads the complete
-worker once, for animations and video. Standalone package versions can differ.
-Pixel encoding defaults to effort 7 and
-quality 90; `lossless: true` selects quality 100. JPEG transcoding takes effort 1 to 9, 7 by default. WASM falls back to JavaScript;
-larger lossless images use available helper workers. Painting saves add `losslessProfile: 'painting'` for core
-lossless coding without the effort ladder, with helper workers from 32 groups. [Complete API](docs/reference/API.md#complete-rapier-system).
+## Effort
 
-## Compression measurements
+Effort 1 to 9 trades time for size; 7 is the default. On 71 lossless images:
 
-On a 71-image lossless corpus, effort 8 used **2.083% fewer bytes** than effort 7 at **4.247×** its summed observed handler time; effort 9 used **2.395% fewer bytes** at **9.546×**. These are single observations on one host, not phone timings. [Times, protocol and per-image/group results](docs/ENCODER-COMPARISON.md#lossless-effort-cost).
+| Effort | Size | Time |
+| ---: | --- | ---: |
+| 7 | baseline | 1× |
+| 8 | 2.1% smaller | 4.2× |
+| 9 | 2.4% smaller | 9.5× |
 
-The [five-image comparison with libjxl](docs/ENCODER-COMPARISON.md#complete-worker-versus-libjxl) records Rapier 3.1.0 on 2026-10-08. Its bytes and times apply to that frozen worker, not the current search.
+[What each effort adds](docs/reference/API.md#lossless-effort) · [Measurements](docs/ENCODER-COMPARISON.md#lossless-effort-cost)
 
-## Use a worker
-
-Copy `node_modules/rapier-jxl/dist/rapier-still-worker.js` (or `rapier-worker.js` for animation) beside your page:
-
-```js
-const worker = new Worker('./rapier-still-worker.js');
-worker.onmessage = ({data}) => {
-  if (data.ok) console.log(new Blob([data.bytes], {type: 'image/jxl'}));
-  else console.error(data.error.message);
-};
-worker.postMessage({
-  id: 1, operation: 'encode', width: 1, height: 1,
-  data: new Uint8Array([255, 0, 0, 255]), options: {lossless: true}
-});
-```
-
-For one offline HTML file, embed the worker as text and create it through a Blob URL.
-[Copyable worker and module examples](docs/reference/ARCHITECTURE.md#complete-rapier-worker).
-Keep the MIT notice. No network download or decoder is needed for encoding.
-
-From a page, `await toJXL(file, {worker: './rapier-still-worker.js'})` (`rapier-jxl/image`) returns an `image/jxl` Blob. A JPEG is carried and rebuilds to its exact bytes. [Image API](docs/reference/API.md#one-call-from-a-page)
-
-The core and effort modules expose `encode(rgba, width, height, options)`. Quality 100 preserves every sample,
-including RGB under transparent pixels; 1–99 is lossy. Alpha stays exact. Core/effort default to quality 100,
-and the separate effort entry defaults to effort 1. [API and options](docs/reference/API.md).
-
-### Lossless efforts
-
-For painting saves, use `{quality: 100, losslessProfile: 'painting'}` with the effort or wasm entry point,
-or `{lossless: true, losslessProfile: 'painting'}` with the complete encoder. This separate RGBA8 profile keeps
-every pixel exact and may produce larger files. Omit it to use the effort search below.
-
-Each level retains the earlier candidates, except that 3 replaces 2's weighted search. Extra search costs depend on the picture; no level has a deadline.
-
-| Effort | What it adds and costs |
-| ---: | --- |
-| 1 | Channel prediction and zero runs; shortest search. |
-| 2 | Weighted prediction; another prediction family. |
-| 3 | A small learned tree per group with ANS coding; for a screen, error contexts, palettes and repeated regions instead; additional image passes. |
-| 4 | Error contexts, color transforms and local palettes; several candidates. |
-| 5 | Learned group trees and entropy-model selection; tree-learning work. |
-| 6 | The first-ranked color transform; another learned candidate. |
-| 7 | Broader predictor and context search; the worker default. |
-| 8 | Denser samples, wider trees and local screen transforms; more learned candidates. |
-| 9 | Another color transform and deeper trees; the longest search. |
-
-JPEG entry points also add order and entropy-model combinations at efforts 8 and 9, retaining the smaller complete
-stream without changing pixels. The workers' JPEG route remains at effort 7. [Effort details](docs/reference/API.md#lossless-effort).
-
-Native inputs include 8/10/12/16-bit integers, binary16/32 floats, PQ/HLG and Rec. 2020. `rapier-jxl/source` reads
-supported PNG16/OpenEXR files. Displaying encoded output requires JPEG XL support.
-
-Agent skills: [Single-file apps](skills/rapier-jxl-single-file-app/SKILL.md) · [Photography](skills/rapier-jxl-photography/SKILL.md).
-
-[API](docs/reference/API.md) · [Entry points and embedding](docs/reference/ARCHITECTURE.md) · [Agent reference](llms.txt) ·
-[Comparisons](docs/ENCODER-COMPARISON.md) · [Browser example](examples/browser.html)
+[API](docs/reference/API.md) · [Comparisons](docs/ENCODER-COMPARISON.md) · [Agent reference](llms.txt) ·
+[Agent skills](skills/rapier-jxl-photography/SKILL.md) · [Browser example](examples/browser.html)

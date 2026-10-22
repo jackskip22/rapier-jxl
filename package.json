@@ -1,7 +1,7 @@
 {
   "name": "rapier-jxl",
-  "version": "5.2.0",
-  "description": "JPEG XL encoder in JavaScript. Lossless, lossy, HDR and JPEG transcoding, in browsers, Node and one HTML file.",
+  "version": "5.2.1",
+  "description": "JPEG XL encoder in pure JavaScript. Great for single-file HTML apps, photography tools and agent image workflows.",
   "license": "MIT",
   "type": "module",
   "main": "./src/index.mjs",
