@@ -11,7 +11,7 @@ export const LIMITS: Limits;
 export interface EncodeOptions {
   /** 1 to 100; 100 is exact. */ quality?: number | undefined;
   /** Photographic coding for non-palette straight RGBA8 below quality 100; default true.
-   * Set false for Modular lossy coding. Palette, native-precision, ICC and exact inputs keep their existing path. */
+   * Set false for Modular lossy coding. Palette, native-precision and exact inputs keep their existing path. */
   photo?: boolean | undefined;
   /** "auto" (default) applies one edge-preserving pass to sRGB XYB photos at quality 90 or below.
    * "off" keeps the unfiltered reconstruction. Alpha remains exact; other coding paths do not use this filter. */
@@ -28,7 +28,9 @@ export interface EncodeOptions {
   /** Source RGB is premultiplied by alpha; default false. Values are never unpremultiplied. */
   alphaPremultiplied?: boolean | undefined;
   /** Original defined three-component ICC.1 profile or GRAY, retained byte-for-byte without color conversion. Mutually exclusive
-   * with colorSpace and transferFunction. Uses Modular coding at every quality; gray needs identical RGB words.
+   * with colorSpace and transferFunction. Eight-bit samples below quality 100 are coded as photographs (a matrix/TRC profile through its own
+   * primaries and curves in XYB; a gray one, or one that needs a color engine, as the samples are) and are decoded back into the profile;
+   * deeper samples use Modular coding. Gray needs identical RGB words.
    * Profiles above 4 MiB select level 10. The complete profile and encoded output must fit available memory. */
   icc?: Uint8Array | undefined;
   /** Default auto compares exact prefix and LZ77 bit lengths. Requires icc. */

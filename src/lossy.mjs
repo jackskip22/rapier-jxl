@@ -31,7 +31,7 @@ export function quantiserFor(component, hshift, vshift, distance) {
 export function encodeLossy(rgba, width, height, options) { return complete(lossySteps(rgba, width, height, options)); }
 
 export function* lossySteps(rgba, width, height, options = {}) {
-  const samples = admitSampleFormat(rgba, options), quality = options.quality ?? 90;
+  const samples = typeof options.colorSpace === 'object' ? {native8: true} : admitSampleFormat(rgba, options), quality = options.quality ?? 90;
   if (!samples.native8) return yield* nativeSteps(rgba, width, height, {quality, samples});
   const {shape = inspectPixels(rgba, width, height, {palette: false}), colorSpace} = options;
   const distance = distanceFromQuality(quality);

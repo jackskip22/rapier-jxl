@@ -2,7 +2,7 @@
 import {LIMITS} from './bits.mjs';
 
 import {fault} from './fault.mjs';
-import {prepareICC} from './icc-write.mjs';
+import {prepareICC, iccSpace} from './icc-write.mjs';
 
 export {fault};
 
@@ -69,6 +69,8 @@ export function admitSampleFormat(data, options = {}) {
         if (words[i] !== words[i + 1] || words[i] !== words[i + 2]) throw fault('JXL_INPUT', 'A GRAY profile requires identical R, G and B sample words in every RGBA pixel.');
     }
     Object.assign(samples, profile, {native8: false});
+    if (bitDepth === 8 && !exponentBits && !alphaPremultiplied && intensityTarget === 255 && profile.level === 5 && options.level !== 10)
+      samples.iccSpace = iccSpace(options.icc, {level: 5, compression: options.iccCompression}, profile);
   } else if (options.iccCompression !== undefined) throw fault('JXL_INPUT', 'iccCompression requires an ICC profile.');
   return samples;
 }

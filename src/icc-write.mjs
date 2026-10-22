@@ -128,3 +128,15 @@ export function prepareICC(profile, {level, compression = 'auto', colorSpace, co
   return {colorData, iccData, colorChannels, level: selectedLevel};
 }
 
+
+const prepared = new WeakMap();
+export function iccSpace(profile, {level, compression} = {}, made) {
+  const space = {icc: profile, level, compression, colorChannels: made?.colorChannels};
+  if (made) prepared.set(space, made);
+  return space;
+}
+export function headerOf(space) {
+  let made = prepared.get(space);
+  if (!made) prepared.set(space, made = prepareICC(space.icc, {level: space.level, compression: space.compression}));
+  return made;
+}

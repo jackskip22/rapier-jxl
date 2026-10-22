@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {inspectPixels, losslessSteps, nativeSteps} from './lossless.mjs';
+import {inspectPixels, losslessSteps, nativeSteps, iccShape} from './lossless.mjs';
 import {lossySteps} from './lossy.mjs';
 import {photoSteps, admitPhotoFilter} from './photo-job.mjs';
 import {varDCTSteps} from './vardct.mjs';
@@ -14,6 +14,7 @@ export function encodeSteps(data, width, height, options) {
   const {quality, colorSpace} = admitOptions(options), filter = admitPhotoFilter(options);
   admitPixels(data, width, height);
   const samples = admitSampleFormat(data, options);
+  if (samples.iccSpace) return job(iccShape(data, samples.iccSpace, pixelSteps(data, width, height, quality, samples.iccSpace, options?.photo !== false, filter)));
   if (!samples.native8) return job(nativeSteps(data, width, height, {quality, samples}));
   return job(pixelSteps(data, width, height, quality, colorSpace, options?.photo !== false, filter));
 }

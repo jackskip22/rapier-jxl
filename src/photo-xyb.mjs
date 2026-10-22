@@ -15,6 +15,10 @@ function cubeRoot(v) {
   for (let i = 0; i < 2; i++) root = (2 * root + v / (root * root)) / 3;
   return root;
 }
+function signedRoot(v) {
+  const a = Math.abs(v), root = a <= 1 ? cubeRoot(a) : seedRoot(a);
+  return v < 0 ? -root : root;
+}
 const LINEAR = Float64Array.from({length: 256}, (_, i) => {
   const v = i / 255;
   if (i <= 10) return v / 12.92;
@@ -41,6 +45,7 @@ export function preferXYB(data, width, height) {
 }
 
 export function* photoXYBSteps(data, width, height, quality, options) {
+  const T = options?.transform, lms = T?.lms;
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), quantScale = 256;
   const distance = quality >= 30 ? 0.1 + (100 - quality) * 0.09 : 53 / 3000 * quality * quality - 23 / 20 * quality + 25;
   const strength = Math.max(0, Math.min(1, (90 - quality) / 15)), stepScale = 1 - 0.1 * strength, acScale = 1.175 + 0.075 * strength;
@@ -59,10 +64,18 @@ export function* photoXYBSteps(data, width, height, quality, options) {
         const offset = (by * bw + bx) * 192;
         for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
           const at = (Math.min(height - 1, (by0 + by) * 8 + y) * width + Math.min(width - 1, (bx0 + bx) * 8 + x)) * 4, k = y * 8 + x;
-          const r = LINEAR[data[at]], g = LINEAR[data[at + 1]], b = LINEAR[data[at + 2]];
-          const l = cubeRoot(0.3 * r + 0.622 * g + 0.078 * b + BIAS) - ROOT_BIAS;
-          const m = cubeRoot(0.23 * r + 0.692 * g + 0.078 * b + BIAS) - ROOT_BIAS;
-          const s = cubeRoot(0.24342268924547819 * r + 0.20476744424496821 * g + 0.5518098665095536 * b + BIAS) - ROOT_BIAS;
+          let l, m, s;
+          if (T) {
+            const r = T.tables[0][data[at]], g = T.tables[1][data[at + 1]], b = T.tables[2][data[at + 2]];
+            l = signedRoot(lms[0] * r + lms[1] * g + lms[2] * b + BIAS) - ROOT_BIAS;
+            m = signedRoot(lms[3] * r + lms[4] * g + lms[5] * b + BIAS) - ROOT_BIAS;
+            s = signedRoot(lms[6] * r + lms[7] * g + lms[8] * b + BIAS) - ROOT_BIAS;
+          } else {
+            const r = LINEAR[data[at]], g = LINEAR[data[at + 1]], b = LINEAR[data[at + 2]];
+            l = cubeRoot(0.3 * r + 0.622 * g + 0.078 * b + BIAS) - ROOT_BIAS;
+            m = cubeRoot(0.23 * r + 0.692 * g + 0.078 * b + BIAS) - ROOT_BIAS;
+            s = cubeRoot(0.24342268924547819 * r + 0.20476744424496821 * g + 0.5518098665095536 * b + BIAS) - ROOT_BIAS;
+          }
           tile[offset + k] = (l - m) * 127.5;
           tile[offset + 64 + k] = (l + m) * 127.5;
           tile[offset + 128 + k] = s * 255 - tile[offset + 64 + k];
@@ -93,5 +106,5 @@ export function* photoXYBSteps(data, width, height, quality, options) {
   let alpha = null;
   for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) { alpha = data; break; }
   const epf = quality <= 90 && options?.filter !== 'off' ? 20 * distance : 0;
-  return {width, height, components, quantScale, cfl, epf, xyb: true, ycbcr: false, orientation: 1, alpha, colorSpace: 'srgb'};
+  return {width, height, components, quantScale, cfl, epf, xyb: true, ycbcr: false, orientation: 1, alpha, colorSpace: options?.space ?? 'srgb'};
 }

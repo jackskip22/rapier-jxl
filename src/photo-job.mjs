@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 import {PHOTO_LIMITS, part} from './bits.mjs';
 import {admitEffort} from './effort-level.mjs';
-import {losslessSteps, nativeSteps} from './lossless.mjs';
+import {losslessSteps, nativeSteps, iccShape} from './lossless.mjs';
+import {spaceTransform} from './icc-transform.mjs';
 import {admitOptions, admitPixels, admitSampleFormat, job, fault} from './admit.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
 import {photoXYBSteps, preferXYB} from './photo-xyb.mjs';
@@ -11,6 +12,7 @@ export function photoJob(data, width, height, options, coefficients) {
   const filter = admitPhotoFilter(options);
   admitPixels(data, width, height, PHOTO_LIMITS);
   const samples = admitSampleFormat(data, options);
+  if (samples.iccSpace) return job(iccShape(data, samples.iccSpace, photoSteps(data, width, height, quality, samples.iccSpace, effort, coefficients, filter)));
   if (!samples.native8) return job(nativeSteps(data, width, height, {quality, samples, effort}));
   return job(photoSteps(data, width, height, quality, colorSpace, effort, coefficients, filter));
 }
@@ -24,7 +26,16 @@ export function admitPhotoFilter(options) {
 
 export function* photoSteps(data, width, height, quality, colorSpace, effort, encodeCoefficients, filter) {
   if (quality >= 100) return yield* losslessSteps(data, width, height, {colorSpace});
-  const coefficients = yield* part(colorSpace === 'srgb' && preferXYB(data, width, height) ? photoXYBSteps(data, width, height, quality, {filter})
-    : photoCoefficientSteps(data, width, height, quality, colorSpace), 0, 2);
+  const coefficients = yield* part(photoProducer(data, width, height, quality, colorSpace, filter), 0, 2);
   return yield* part(encodeCoefficients(coefficients, effort), 1, 2);
+}
+
+export function photoProducer(data, width, height, quality, colorSpace, filter) {
+  if (colorSpace && typeof colorSpace === 'object') {
+    const transform = spaceTransform(colorSpace);
+    if (colorSpace.colorChannels === 1) return photoCoefficientSteps(data, width, height, quality, colorSpace, true);
+    if (transform && preferXYB(data, width, height)) return photoXYBSteps(data, width, height, quality, {filter, transform, space: colorSpace});
+    return photoCoefficientSteps(data, width, height, quality, colorSpace);
+  }
+  return colorSpace === 'srgb' && preferXYB(data, width, height) ? photoXYBSteps(data, width, height, quality, {filter}) : photoCoefficientSteps(data, width, height, quality, colorSpace);
 }

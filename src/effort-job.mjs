@@ -3,7 +3,7 @@ import {BitWriter, part, scaled} from './bits.mjs';
 import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, groupPass, addCounts, assembleCodestream, GROUP_DIM} from './frame.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
 import {AVERAGE_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, split, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
-import {inspectPixels, losslessSteps, planeFill, nativeSteps} from './lossless.mjs';
+import {inspectPixels, losslessSteps, planeFill, nativeSteps, iccShape} from './lossless.mjs';
 import {lossySteps} from './lossy.mjs';
 import {photoSteps, admitPhotoFilter} from './photo-job.mjs';
 import {coefficientEffortSteps} from './coefficient-effort.mjs';
@@ -33,6 +33,8 @@ export function effortJob(data, width, height, options, pool, helpers = false, r
     return paintingSteps(data, width, height, {colorSpace, pooled: pool && !groupLayout(width, height).single});
   }
   if (losslessProfile === 'painting-search') admitPaintingProfile(quality, samples);
+  if (samples.iccSpace && losslessProfile === undefined)
+    return iccShape(data, samples.iccSpace, effortSteps(data, width, height, quality, samples.iccSpace, effort, pool && quality >= 100 && !groupLayout(width, height).single, treeLearning, helpers, retainHurry, false, options?.photo !== false, filter));
   if (!samples.native8) return nativeSteps(data, width, height, {quality, samples, effort, pooled: pool && !groupLayout(width, height).single});
   return effortSteps(data, width, height, quality, colorSpace, effort, pool && quality >= 100 && !groupLayout(width, height).single, treeLearning, helpers, retainHurry, losslessProfile === 'painting-search', options?.photo !== false, filter);
 }

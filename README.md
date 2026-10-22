@@ -3,14 +3,16 @@
 JPEG XL encoder in pure JavaScript, for single-file HTML apps, photography tools and agent image workflows. Offline in
 browsers, Node and Deno. [MIT license](LICENSE), no runtime dependencies.
 
-- **Still encoder: 101,287 gzip bytes.** This is what [Rapier](https://rapier.website) itself carries:
+- **Still encoder: 102,931 gzip bytes.** This is what [Rapier](https://rapier.website) itself carries:
   lossless and lossy pictures, photographs, JPEG carrying and exact restore, native precision, HDR and exact alpha.
-- **Complete encoder: 172,819 gzip bytes.** The still encoder plus animated JPEG XL and the other format writers.
-- **Core: 23,326 gzip bytes.** Lossless or lossy RGBA and nothing else.
+- **Complete encoder: 174,450 gzip bytes.** The still encoder plus animated JPEG XL and the other format writers.
+- **Core: 24,831 gzip bytes.** Lossless or lossy RGBA and nothing else.
 
 ```sh
 npm install rapier-jxl
 ```
+
+**New in 5.2.0.** A picture with its own matrix/TRC color profile (Display P3, Adobe RGB, ProPhoto, Rec. 2020, gray) is coded lossy through that profile's primaries and curves and keeps the profile; lossless is the same samples in a smaller file.
 
 **New in 5.1.0.**
 - No 16 MiB output limit: pictures, animations, JPEG carrying and metadata use available memory. Byte budgets you
@@ -31,17 +33,17 @@ npm install rapier-jxl
 
 | Build / import | Gzip bytes | Capabilities |
 | --- | ---: | --- |
-| **Still worker** · `rapier-jxl/rapier/still-worker` | 101,287 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel lossless groups. No animation. |
-| **Complete worker** · `rapier-jxl/rapier/worker` | 172,819 | Everything in the still worker, plus animation and the other format writers. |
-| Complete module · `rapier-jxl/rapier/min` | 172,889 | The complete system with an encoder factory and worker installer. |
+| **Still worker** · `rapier-jxl/rapier/still-worker` | 102,931 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel lossless groups. No animation. |
+| **Complete worker** · `rapier-jxl/rapier/worker` | 174,450 | Everything in the still worker, plus animation and the other format writers. |
+| Complete module · `rapier-jxl/rapier/min` | 174,517 | The complete system with an encoder factory and worker installer. |
 | Image · `rapier-jxl/image/min` | 1,184 | One call from a page: a file, bitmap, image data or canvas in, an `image/jxl` Blob out, through either worker. |
-| Core · `rapier-jxl/min` | 23,326 | Lossless or lossy typed RGBA, native precision, HDR and exact alpha. |
-| Effort · `rapier-jxl/effort/min` | 48,795 | Core with lossless compression search, efforts 1–9. |
-| WASM · `rapier-jxl/wasm/min` | 58,449 | Effort with inlined WASM and JavaScript fallback. |
-| Photo · `rapier-jxl/photo/min` | 23,665 | Lossy photographs from RGBA pixels. |
-| JPEG · `rapier-jxl/jpeg/min` | 30,493 | Existing JPEGs, preserving admitted coefficients and orientation. |
-| Metadata · `rapier-jxl/metadata/min` | 12,237 | Attach, replace or remove caller-supplied Exif/XMP. |
-| Animation · `rapier-jxl/animation/min` | 57,253 | Animated JPEG XL from frames: only changed rectangles stored, exact timing, lossless or lossy. |
+| Core · `rapier-jxl/min` | 24,831 | Lossless or lossy typed RGBA, native precision, HDR and exact alpha. |
+| Effort · `rapier-jxl/effort/min` | 50,419 | Core with lossless compression search, efforts 1–9. |
+| WASM · `rapier-jxl/wasm/min` | 60,129 | Effort with inlined WASM and JavaScript fallback. |
+| Photo · `rapier-jxl/photo/min` | 25,190 | Lossy photographs from RGBA pixels. |
+| JPEG · `rapier-jxl/jpeg/min` | 30,616 | Existing JPEGs, preserving admitted coefficients and orientation. |
+| Metadata · `rapier-jxl/metadata/min` | 12,293 | Attach, replace or remove caller-supplied Exif/XMP. |
+| Animation · `rapier-jxl/animation/min` | 58,816 | Animated JPEG XL from frames: only changed rectangles stored, exact timing, lossless or lossy. |
 
 Each size measures a complete standalone file at gzip level 9. Readable imports such as `rapier-jxl/rapier` share
 dependencies when bundled together; separate minified files each include theirs. Optional JPEG and Photo ANS builds,

@@ -95,12 +95,18 @@ function fallbackPlanGroup(setup, rct) {
   };
 }
 
+export function* iccShape(data, space, steps) {
+  const had = shapeFloors.get(data);
+  if (space.colorChannels === 3) shapeFloors.set(data, {...had, colour: 3});
+  try { return yield* steps; } finally { if (had) shapeFloors.set(data, had); else shapeFloors.delete(data); }
+}
+
 export function encodeLossless(rgba, width, height, options) { return complete(losslessSteps(rgba, width, height, options)); }
 
 export function* losslessSteps(rgba, width, height, options = {}) {
   const {colorSpace, rct, pooled, analysis} = options;
   let {samples} = options;
-  if (!samples) { const format = admitSampleFormat(rgba, options); if (!format.native8) samples = format; }
+  if (!samples && !(colorSpace && typeof colorSpace === 'object')) { const format = admitSampleFormat(rgba, options); if (!format.native8) samples = format; }
   const shape = options.shape || inspectPixels(rgba, width, height, {samples});
   let best, oversized;
   const candidates = shape.palette ? [shape, {...shape, palette: null}] : [shape];

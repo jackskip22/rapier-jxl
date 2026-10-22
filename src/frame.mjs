@@ -1,6 +1,7 @@
 // Rapier's JPEG XL encoder: the codestream around a frame. MIT (LICENSE).
 import {BitWriter, float16Bits} from './bits.mjs';
 import {admitOutputSize} from './admit.mjs';
+import {headerOf} from './icc-write.mjs';
 
 export const GROUP_DIM = 256, DC_GROUP_DIM = 2048;
 
@@ -9,6 +10,7 @@ function writeSize(w, size) {
 }
 
 export function writeImageHeader(w, width, height, colour, alpha, {xyb = false, orientation = 1, colorSpace, bitDepth = 8, exponentBits = 0, transferFunction = 'srgb', intensityTarget = 255, alphaPremultiplied = false, modular16bit = bitDepth <= 12 && !exponentBits, colorData, toneData, iccData, imageFields, extraChannelData, transformData} = {}) {
+  if (colorSpace && typeof colorSpace === 'object') ({colorData, iccData} = headerOf(colorSpace));
   w.write(16, 0x0AFF);
   w.write(1, 0);
   writeSize(w, height);

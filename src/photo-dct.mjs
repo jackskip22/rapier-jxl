@@ -51,12 +51,13 @@ export function transformDCT8Blocks(blocks, count, intermediate, sums) {
   }
 }
 
-export function dctBlocks(data, width, height) {
+export function dctBlocks(data, width, height, gray = false) {
   const block = new Float64Array(192), intermediate = new Float64Array(64), sums = new Float64Array(192);
   return (bx, by) => {
     for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
       const at = (Math.min(height - 1, by * 8 + y) * width + Math.min(width - 1, bx * 8 + x)) * 4;
       const r = data[at], g = data[at + 1], b = data[at + 2], k = y * 8 + x;
+      if (gray) { block[k] = r - 128; block[64 + k] = block[128 + k] = 0; continue; }
       block[k] = 0.299 * r + 0.587 * g + 0.114 * b - 128;
       block[64 + k] = -0.168735892 * r - 0.331264108 * g + 0.5 * b;
       block[128 + k] = 0.5 * r - 0.418687589 * g - 0.081312411 * b;
@@ -65,18 +66,18 @@ export function dctBlocks(data, width, height) {
   };
 }
 
-export function* photoCoefficientSteps(data, width, height, quality, colorSpace) {
+export function* photoCoefficientSteps(data, width, height, quality, colorSpace, gray = false) {
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), quantScale = 16;
   const distance = quality >= 30 ? 0.1 + (100 - quality) * 0.09 : 53 / 3000 * quality * quality - 23 / 20 * quality + 25;
   const strength = Math.max(0, Math.min(1, (90 - quality) / 15)), stepScale = 1 - 0.1 * strength;
-  const components = [0, 1, 2].map(c => ({h: 1, v: 1, stride, rows,
+  const components = (gray ? [0] : [0, 1, 2]).map(c => ({h: 1, v: 1, stride, rows,
     quant: Int32Array.from(QUANT_SHAPE, (shape, k) => Math.max(1, Math.round(quantScale * distance * stepScale * (c ? 18 : 10) * (k ? shape : 0.25)))),
     coeffs: new Int16Array(stride * rows * 64)}));
-  const transform = dctBlocks(data, width, height);
+  const transform = dctBlocks(data, width, height, gray);
   const band = (from, to) => {
     for (let by = from; by < to; by++) for (let bx = 0; bx < stride; bx++) {
       const sums = transform(bx, by), offset = (by * stride + bx) * 64;
-      for (let c = 0; c < 3; c++) for (let k = 0; k < 64; k++) {
+      for (let c = 0; c < components.length; c++) for (let k = 0; k < 64; k++) {
         const value = sums[c * 64 + k] * quantScale / components[c].quant[k];
         const threshold = k && c === 0 ? 0.5 + strength * ((k & 7) >= 4 || (k >> 3) >= 4 ? 0.14 : 0.08) : 0.5;
         components[c].coeffs[offset + k] = Math.abs(value) < threshold ? 0 : Math.round(value);
