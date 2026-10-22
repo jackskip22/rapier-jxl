@@ -133,13 +133,15 @@ function contextMap(r, count, depth = 0) {
   if (r.read(1)) { const bits = r.read(2); for (let i = 0; i < count; i++) map[i] = r.read(bits); }
   else {
     r.expect(1, 0);
-    const code = entropy(r, 1, false, depth + 1);
+    const code = entropy(r, 1, {depth: depth + 1, values: count});
     for (let i = 0; i < count; i++) { const value = code.read(0); requireJPEG(value < 256); map[i] = value; }
     code.finish();
   }
   return map;
 }
-function entropy(r, contexts, spatial = false, depth = 0, byteHistory = false) {
+function entropy(r, contexts, {spatial = false, depth = 0, byteHistory = false, values}) {
+  requireJPEG(Number.isSafeInteger(values) && values >= 0);
+  let remaining = values;
   const lz = r.read(1), minimum = lz ? r.u32([[0, 224], [0, 512], [0, 4096], [15, 8]]) : 0;
   const minLength = lz ? r.u32([[0, 3], [0, 4], [2, 5], [8, 9]]) : 0, lengthConfig = lz ? config(r, 8) : null;
   const map = contexts + lz > 1 ? contextMap(r, contexts + lz, depth) : new Uint8Array(1);
@@ -171,14 +173,15 @@ function entropy(r, contexts, spatial = false, depth = 0, byteHistory = false) {
   };
   return {
     read(ctx) {
-      requireJPEG(ctx >= 0 && ctx < contexts);
+      requireJPEG(ctx >= 0 && ctx < contexts && remaining > 0); remaining--;
       if (left) { left--; return remember(history ? history[(position - distance) & 1048575] : previous); }
       const h = map[ctx], t = token(h);
       if (lz && t >= minimum) {
         left = hybrid(r, t - minimum, lengthConfig) + minLength - 1;
+        requireJPEG(left <= remaining);
         const histogram = map[contexts], d = hybrid(r, token(histogram), configs[histogram]);
-        if (history) { distance = d + 1; requireJPEG(distance <= Math.min(position, 1048576) && left < JPEG_LIMITS.bytes); }
-        else requireJPEG(produced && d === (spatial ? 1 : 0) && left < 1048576);
+        if (history) { distance = d + 1; requireJPEG(distance <= Math.min(position, 1048576)); }
+        else requireJPEG(produced && d === (spatial ? 1 : 0));
         return remember(history ? history[(position - distance) & 1048575] : previous);
       }
       produced = true; return remember(hybrid(r, t, configs[h]));
@@ -188,19 +191,22 @@ function entropy(r, contexts, spatial = false, depth = 0, byteHistory = false) {
 }
 
 export function skipICC(r) {
-  const form = r.read(2);
+  const start = r.bit, form = r.read(2);
   let size = form === 1 ? r.read(4) + 1 : form === 2 ? r.read(8) + 17 : form === 3 ? r.read(12) : 0;
   if (form === 3) for (let shift = 12; r.read(1); shift += 8) {
     requireJPEG(shift <= 28); size += r.read(8) * ((1 << shift) >>> 0);
   }
-  requireJPEG(size >= 132 && size <= JPEG_LIMITS.bytes + 16);
-  const code = entropy(r, 41, false, 0, true);
-  for (let i = 0; i < size; i++) code.read(0);
+  requireJPEG(size >= 132 && size <= 0xffffffff + 16 && size <= Math.max(65536, (r.bytes.length * 8 - start) * 32));
+  const code = entropy(r, 41, {byteHistory: true, values: size});
+  for (let i = 0; i < size; i++) {
+    if (i && i % 65536 === 0) requireJPEG(i <= (r.bit - start) * 32);
+    code.read(0);
+  }
   code.finish();
 }
 function modular(r, shapes) {
   r.expect(4, 2);
-  const treeCode = entropy(r, 6), nodes = [{}], leaves = [];
+  const treeCode = entropy(r, 6, {values: 6 * (2 * shapes.length - 1)}), nodes = [{}], leaves = [];
   for (const node of nodes) {
     requireJPEG(nodes.length <= 2 * shapes.length - 1);
     const property = treeCode.read(0);
@@ -214,7 +220,7 @@ function modular(r, shapes) {
     }
   }
   treeCode.finish();
-  const code = entropy(r, leaves.length, true), planes = [];
+  const code = entropy(r, leaves.length, {spatial: true, values: shapes.reduce((n, [width, height]) => n + width * height, 0)}), planes = [];
   for (let c = 0; c < shapes.length; c++) {
     const [width, height] = shapes[c], data = new Int32Array(width * height);
     let leaf = nodes[0]; while (leaf.left) leaf = c > leaf.cut ? leaf.left : leaf.right;
@@ -231,8 +237,8 @@ function modular(r, shapes) {
   code.finish(); return planes;
 }
 
-export function readJPEGCoefficients(bytes) {
-  requireJPEG(bytes.length <= JPEG_LIMITS.bytes);
+export function readJPEGCoefficients(bytes, {reconstruction = false} = {}) {
+  requireJPEG(bytes instanceof Uint8Array && bytes.length > 0);
   const r = new JxlBits(bytes), size = [[9, 1], [13, 1], [18, 1], [30, 1]];
   r.expect(17, 0x0aff); const height = r.u32(size); r.expect(3, 0); const width = r.u32(size);
   requireJPEG(width <= JPEG_LIMITS.edge && height <= JPEG_LIMITS.edge && width * height <= JPEG_LIMITS.pixels);
@@ -293,7 +299,7 @@ export function readJPEGCoefficients(bytes) {
   const orderBits = ac.u32([[0, 95], [0, 19], [0, 0], [13, 0]]);
   requireJPEG(orderBits === 0 || orderBits === 1);
   if (orderBits) {
-    const code = entropy(ac, 8);
+    const code = entropy(ac, 8, {values: 3 * 64});
     for (let c = 0; c < 3; c++) {
       const length = code.read(0) + 1, available = natural.slice(1), order = [0]; requireJPEG(length <= 64);
       for (let k = 1; k < length; k++) { const index = code.read(0); requireJPEG(index < available.length); order.push(available.splice(index, 1)[0]); }
@@ -301,7 +307,7 @@ export function readJPEGCoefficients(bytes) {
     }
     code.finish();
   }
-  const code = entropy(ac, contexts * 495); end(ac);
+  const code = entropy(ac, contexts * 495, {values: planes.reduce((n, plane) => n + plane.coeffs.length, 0)}); end(ac);
   for (let g = 0; g < groups; g++) {
     const reader = section(2 + dcs + g);
     if (groups !== 1) { ac.bytes = reader.bytes; ac.bit = 0; }
@@ -326,8 +332,10 @@ export function readJPEGCoefficients(bytes) {
   }
   for (const p of planes) {
     let divisor = 1024; while (p.quant[0] % divisor) divisor >>= 1;
+    const lift = reconstruction ? Math.floor(1024 / p.quant[0]) : 1024 / divisor;
+    const scale = reconstruction ? 1 : p.quant[0] / divisor;
     for (let b = 0; b < p.dc.length; b++) {
-      const dc = ycbcr ? p.dc[b] : (p.dc[b] - 1024 / divisor) / (p.quant[0] / divisor);
+      const dc = ycbcr ? p.dc[b] : (p.dc[b] - lift) / scale;
       requireJPEG(Number.isInteger(dc) && dc >= -32768 && dc <= 32767); p.coeffs[b * 64] = dc;
     }
     delete p.dc;

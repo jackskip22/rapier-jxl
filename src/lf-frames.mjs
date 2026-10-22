@@ -2,7 +2,7 @@
 import {BitWriter, float16Bits, part} from './bits.mjs';
 import {fault, admitOutputSize} from './admit.mjs';
 import {assembleCodestream} from './frame.mjs';
-import {writeLFFrameHeader, readImageHeader} from './framing.mjs';
+import {writeLFFrameHeader, readImageHeader, codestreamOf} from './framing.mjs';
 import {GRADIENT_PREDICTOR, ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
 import {transformDCT8} from './photo-dct.mjs';
 import {varDCTSteps} from './vardct.mjs';
@@ -31,7 +31,7 @@ function dcImage(image) {
     image.strategyData ? component.dc[Math.floor(i / width) * component.stride + i % width] :
       component.coeffs[(Math.floor(i / width) * component.stride + i % width) * 64]));
   let alpha;
-  if (image.alpha) {
+  if (image.alpha && !image.auxiliary) {
     alpha = new Int32Array(width * height);
     for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
       let sum = 0, count = 0;
@@ -41,7 +41,7 @@ function dcImage(image) {
       alpha[y * width + x] = Math.round(sum / count);
     }
   }
-  return {width, height, scales, planes, alpha};
+  return {width, height, scales, planes, alpha, auxiliary: image.auxiliary?.downsample(width, height)};
 }
 
 function writePlanes(writer, planes, width, height) {
@@ -92,8 +92,9 @@ function intermediateLF(parent, level, useDCFrame = true) {
   }
   const alpha = source.alpha && Uint8Array.from({length: width * height * 4}, (_, i) => i % 4 === 3 ? source.alpha[i >> 2] : 0);
   const xyb = !!parent.xyb, ycbcr = !!parent.ycbcr;
-  return {width, height, components, quantScale, xyb, ycbcr, alpha, useDCFrame, modular16bit: false,
-    frameHeader: writer => writeLFFrameHeader(writer, {level, modular: false, xyb, ycbcr, extraChannels: alpha ? 1 : 0, flags: useDCFrame ? 160 : 128})};
+  const auxiliary = source.auxiliary;
+  return {width, height, components, quantScale, xyb, ycbcr, alpha, auxiliary, useDCFrame, modular16bit: false,
+    frameHeader: writer => writeLFFrameHeader(writer, {level, modular: false, xyb, ycbcr, extraChannels: auxiliary?.count ?? (alpha ? 1 : 0), flags: useDCFrame ? 160 : 128})};
 }
 
 function lfCoding(counts) {
@@ -107,7 +108,7 @@ export function* lfFrameSteps(image, levels) {
   if (!image.xyb && !image.ycbcr) throw fault('JXL_INPUT', 'Low-frequency frame pyramids require XYB or YCbCr photographic pixels.');
   const images = [image];
   for (let level = 1; level < levels; level++) images.push(intermediateLF(images.at(-1), level));
-  const modular = image.xyb && modularLF(images.at(-1), levels);
+  const modular = image.xyb && !image.auxiliary && modularLF(images.at(-1), levels);
   const frames = [modular || (yield* part(varDCTSteps(intermediateLF(images.at(-1), levels, false), {coding: lfCoding}), 0, levels))];
   yield 1 / levels;
   for (let level = levels - 1; level; level--) frames.push(yield* part(varDCTSteps(images[level], {coding: lfCoding}), levels - level, levels));
@@ -116,6 +117,7 @@ export function* lfFrameSteps(image, levels) {
 }
 
 export function prependLFFrames(main, frames) {
+  main = codestreamOf(main).codestream;
   const image = readImageHeader(main), extra = frames.reduce((sum, frame) => sum + frame.length, 0);
   admitOutputSize(main.length + extra);
   const out = new Uint8Array(main.length + extra);

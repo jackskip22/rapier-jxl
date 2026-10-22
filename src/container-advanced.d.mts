@@ -3,7 +3,7 @@ import type {Bytes} from './index.mjs';
 import type {ColorEncoding, ICCCompression} from './icc.mjs';
 
 export interface ContainerBounds {
-  /** Complete input and output byte limit, default 16 MiB. May be raised explicitly to a safe integer. */
+  /** Optional positive safe-integer budget for complete input and output. Defaults to available memory. */
   maxBytes?: number;
 }
 export interface ContainerWriteOptions extends ContainerBounds {

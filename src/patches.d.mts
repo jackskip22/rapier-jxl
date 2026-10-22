@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import type {Bytes, Job} from './index.mjs';
+import type {PlanarImage, ChannelOptions} from './channels.mjs';
 export type PatchBlend = 'none' | 'replace' | 'add' | 'multiply' | 'blend-above' | 'blend-below'
   | 'alpha-weighted-add-above' | 'alpha-weighted-add-below';
 /** Normative patch blend modes, in their codestream order 0 through 7. */
@@ -46,3 +47,53 @@ export interface PatchOptions {
 export function encodePatches(data: Uint8Array | Uint8ClampedArray, width: number, height: number, options: PatchOptions): Bytes;
 /** Same result as encodePatches. Hurry retains complete authored output; cancellation leaves bytes null. */
 export function encodePatchesSteps(data: Uint8Array | Uint8ClampedArray, width: number, height: number, options: PatchOptions): Job;
+
+export interface PatchChannelBlend {
+  blend?: PatchBlend;
+  /** Index of an alpha extra channel. Defaults to the first alpha channel, or zero with no extras. */
+  alpha?: number;
+  clamp?: boolean;
+}
+export interface PatchCompositionPosition extends PatchChannelBlend {
+  /** Destination coordinates before the base frame's spatial upsampling. */
+  x: number;
+  y: number;
+  /** One blend per extra channel; omission follows the color blend. Color-over also writes its selected composite alpha. */
+  extraBlending?: readonly (PatchBlend | PatchChannelBlend)[];
+}
+export interface CompositionPatch {
+  /** Saved slot 0..3. Omission selects the first supplied reference. */
+  reference?: 0 | 1 | 2 | 3;
+  /** Source coordinates in the saved reference after its spatial upsampling. */
+  sourceX: number;
+  sourceY: number;
+  width: number;
+  height: number;
+  positions: readonly PatchCompositionPosition[];
+}
+export interface PatchFrameSource {
+  /** Exactly one of image or bytes. Encoded bytes must be one independent, full replacement frame. */
+  image?: PlanarImage;
+  bytes?: Uint8Array;
+  /** Planar coding choices only. Image precision, channel metadata and color meaning are shared. */
+  options?: Pick<ChannelOptions, 'groupSize' | 'predictor' | 'weightedPredictor' | 'upsampling' | 'transforms' |
+    'squeeze' | 'progressive' | 'maxTransformBytes'>;
+}
+export interface PatchReferenceSource extends PatchFrameSource {slot: 0 | 1 | 2 | 3}
+export interface PatchComposition {
+  base: PatchFrameSource;
+  /** One to four distinct slots; each reference is saved before color conversion and has one coding pass. */
+  references: readonly PatchReferenceSource[];
+  patches: readonly CompositionPatch[];
+}
+export interface PatchCompositionOptions extends Omit<ChannelOptions, 'preview'> {
+  /** Authored preview of the finished composition. An encoded base owns its existing preview. */
+  preview?: PlanarImage;
+}
+/** Compose arbitrary typed planes and compatible Modular/VarDCT frames with one patch dictionary.
+ * Headers retain common channel/color/transform meaning; independent payload sections are not re-encoded.
+ * Blending occurs in the decoder's floating-point pre-color domain, including replacement. Wider integer
+ * words and nonfinite payloads therefore have the format's rendered-sample semantics, not a raw-word copy promise.
+ * Source arrays and encoded streams stay caller-owned and unchanged throughout a stepped job. */
+export function encodePatchComposition(image: PatchComposition, options?: PatchCompositionOptions): Bytes;
+export function encodePatchCompositionSteps(image: PatchComposition, options?: PatchCompositionOptions): Job;

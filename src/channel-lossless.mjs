@@ -13,7 +13,7 @@ export function channelLosslessCompatible(config) {
 export function channelFrameHeader(config) {
   const header = new BitWriter(128);
   writeModularFrameHeader(header, {extraChannels: config.extras.length, shift: 31 - Math.clz32(config.groupSize / 128),
-    upsampling: config.upsampling, extraUpsampling: config.extras.map(channel => channel.factor)});
+    upsampling: config.upsampling, extraUpsampling: config.extras.map(channel => channel.factor), passes: config.progression?.header});
   return header;
 }
 

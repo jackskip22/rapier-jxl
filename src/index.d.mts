@@ -5,8 +5,8 @@ export type Bytes = Uint8Array<ArrayBuffer>;
 export type ColorSpace = 'srgb' | 'display-p3' | 'rec2020';
 export type SampleFormat = 'uint' | 'float16' | 'float32';
 export type TransferFunction = 'srgb' | 'linear' | 'pq' | 'hlg';
-export interface Limits { readonly bytes: number; readonly pixels: number; readonly edge: number; }
-/** Core limits: 16 MiB output, 24 million pixels, and 16,384 pixels per side. Input limits apply before encoding. */
+export interface Limits { readonly pixels: number; readonly edge: number; }
+/** Core limits: 24 million pixels and 16,384 pixels per side. Encoded output is bounded by available memory. */
 export const LIMITS: Limits;
 export interface EncodeOptions {
   /** 1 to 100; 100 is exact. */ quality?: number | undefined;
@@ -27,9 +27,9 @@ export interface EncodeOptions {
   intensityTarget?: number | undefined;
   /** Source RGB is premultiplied by alpha; default false. Values are never unpremultiplied. */
   alphaPremultiplied?: boolean | undefined;
-  /** Original RGB or GRAY ICC profile, retained byte-for-byte without color conversion. Mutually exclusive
+  /** Original defined three-component ICC.1 profile or GRAY, retained byte-for-byte without color conversion. Mutually exclusive
    * with colorSpace and transferFunction. Uses Modular coding at every quality; gray needs identical RGB words.
-   * Profiles are limited to 16 MiB; above 4 MiB selects level 10. The encoded output remains limited to 16 MiB. */
+   * Profiles above 4 MiB select level 10. The complete profile and encoded output must fit available memory. */
   icc?: Uint8Array | undefined;
   /** Default auto compares exact prefix and LZ77 bit lengths. Requires icc. */
   iccCompression?: 'auto' | 'prefix' | 'lz77' | undefined;

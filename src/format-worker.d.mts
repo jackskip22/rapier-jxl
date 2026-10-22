@@ -4,7 +4,10 @@ import type {AdvancedPhotoOptions} from './photo-advanced.mjs';
 import type {NoisePhotoOptions} from './photo-noise.mjs';
 import type {HybridOptions, HybridRegion} from './hybrid.mjs';
 import type {DeltaPaletteOptions} from './delta-palette.mjs';
-import type {PatchOptions} from './patches.mjs';
+import type {GraphicsOptions} from './graphics.mjs';
+import type {Animation} from './animation.mjs';
+import type {AnimationAtlasOptions, AtlasSearchOptions, AnimationAtlasPlan} from './animation-atlas.mjs';
+import type {PatchOptions, PatchComposition, PatchCompositionOptions} from './patches.mjs';
 import type {SplineOptions, SplineStrokeOptions, SplinePoint, QuantizedSpline} from './splines.mjs';
 import type {PlanarImage, ChannelOptions} from './channels.mjs';
 import type {LayeredImage, LayerOptions} from './layers.mjs';
@@ -22,15 +25,19 @@ import type {BrotliOptions} from './brotli.mjs';
 type PixelRequest<A extends string, O> = {action: A; data: Pixels | ArrayBuffer; width: number; height: number; options?: O};
 type ByteRequest<A extends string, O = never> = {action: A; bytes: Uint8Array | ArrayBuffer; options?: O};
 /** All requests are structured-cloneable. Pass cancellation and progress outside the format options.
- * Compression callbacks cannot travel in a worker message; the built-in deterministic Brotli codec is used.
- * Its reader accepts the authored subset; readMetadata preserves other compressed payloads without decoding. */
+ * Compression callbacks cannot travel in a worker message. Metadata uses native Brotli when available,
+ * otherwise the portable authored subset; readMetadata preserves other compressed payloads without decoding. */
 export type FormatRequest =
   | PixelRequest<'photo', AdvancedPhotoOptions>
   | PixelRequest<'noise', NoisePhotoOptions>
   | PixelRequest<'hybrid', HybridOptions>
   | PixelRequest<'hybridRegions', never>
   | PixelRequest<'deltaPalette', DeltaPaletteOptions>
+  | PixelRequest<'graphics', GraphicsOptions>
+  | {action: 'animationAtlas'; animation: Animation; options?: AnimationAtlasOptions}
+  | {action: 'animationAtlasPlan'; animation: Animation; options?: AtlasSearchOptions}
   | (PixelRequest<'patches', PatchOptions> & {options: PatchOptions})
+  | {action: 'patchComposition'; image: PatchComposition; options?: PatchCompositionOptions}
   | (PixelRequest<'splines', SplineOptions> & {options: SplineOptions})
   | {action: 'splineStroke'; controlPoints: readonly SplinePoint[]; options: SplineStrokeOptions}
   | {action: 'channels'; image: PlanarImage; options?: ChannelOptions}
@@ -63,13 +70,13 @@ export type FormatRequest =
   | ByteRequest<'brotliCompress', BrotliOptions>
   | ByteRequest<'brotliDecompress', BrotliOptions>;
 /** A request reuses one plan for up to 32 qualities and one optional target, then disposes the retained buffers.
- * Output image bytes together are bounded to 16 MiB. Omitted qualities encode the planning quality unless a
+ * Output image bytes together use available memory. Omitted qualities encode the planning quality unless a
  * target is supplied. Size search returns the highest tested fitting quality, not a global optimum. */
 export interface FormatPhotoPlanResult extends Pick<PhotoPlan, 'width' | 'height' | 'planningQuality' | 'retainedBytes' | 'blockCount' | 'strategies'> {
   images: {quality: number; bytes: Bytes}[];
   target: TargetResult | null;
 }
 export type FormatResult = Bytes | HybridRegion[] | SourceImage | QuantizedSpline | ContainerInspection |
-  ProgressiveContainerPlan | Metadata | FrameIndex | ReadGainMapBundle | DeliveryLayout | FormatPhotoPlanResult | null;
+  ProgressiveContainerPlan | Metadata | FrameIndex | ReadGainMapBundle | DeliveryLayout | FormatPhotoPlanResult | AnimationAtlasPlan | null;
 export const FORMAT_ACTIONS: readonly FormatRequest['action'][];
 export function format(input: FormatRequest, controls?: {signal?: AbortSignal; onProgress?: (fraction: number) => void}): Promise<FormatResult>;

@@ -1,6 +1,6 @@
 {
   "name": "rapier-jxl",
-  "version": "5.0.0",
+  "version": "5.1.0",
   "description": "JPEG XL encoder in JavaScript. Lossless, lossy, HDR and JPEG transcoding, in browsers, Node and one HTML file.",
   "license": "MIT",
   "type": "module",
@@ -70,6 +70,14 @@
     "./hybrid/min": {
       "types": "./src/hybrid.d.mts",
       "default": "./dist/hybrid.min.mjs"
+    },
+    "./graphics": {
+      "types": "./src/graphics.d.mts",
+      "default": "./src/graphics.mjs"
+    },
+    "./graphics/min": {
+      "types": "./src/graphics.d.mts",
+      "default": "./dist/graphics.min.mjs"
     },
     "./icc": {
       "types": "./src/icc.d.mts",
@@ -150,6 +158,14 @@
     "./animation/min": {
       "types": "./src/animation.d.mts",
       "default": "./dist/animation.min.mjs"
+    },
+    "./animation-atlas": {
+      "types": "./src/animation-atlas.d.mts",
+      "default": "./src/animation-atlas.mjs"
+    },
+    "./animation-atlas/min": {
+      "types": "./src/animation-atlas.d.mts",
+      "default": "./dist/animation-atlas.min.mjs"
     },
     "./effort": {
       "types": "./src/effort.d.mts",

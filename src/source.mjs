@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 import {admitSize, fault} from './admit.mjs';
-import {LIMITS} from './bits.mjs';
 import {inspectICC, prepareColorEncoding} from './color-info.mjs';
 
 const refuse = message => { throw fault('JXL_INPUT', message); };
@@ -38,7 +37,6 @@ async function inflate(parts, expected) {
         if (offset < 4) continue;
         expected = view(output).getUint32(0);
         if (expected < 132) refuse('The compressed ICC profile declares an incomplete header or tag table.');
-        if (expected > LIMITS.bytes) throw fault('JXL_SIZE', 'An embedded ICC profile exceeds the 16 MiB source limit.');
         const complete = new Uint8Array(expected); complete.set(output); output = complete;
       }
       if (offset + bytes.length > expected) refuse(profile ? 'The ICC profile expands beyond its declared size.' : 'Compressed source data exceeds its declared dimensions.');
@@ -87,7 +85,7 @@ async function pngColour(chunks, colourType) {
     if (end < 1 || end > 79 || end + 2 >= packedProfile.length || packedProfile[end + 1] !== 0 ||
         name[0] === 32 || name[name.length - 1] === 32 || name.some((value, i) => value < 32 || value > 126 && value < 161 || value === 32 && name[i - 1] === 32))
       refuse('PNG iCCP requires a valid profile name, compression method zero and a complete deflate stream.');
-    const icc = await inflate([packedProfile.subarray(end + 2)]), channels = inspectICC(icc);
+    const icc = await inflate([packedProfile.subarray(end + 2)]), channels = inspectICC(icc, undefined, space);
     if (channels !== (space === 'gray' ? 1 : 3)) refuse('The PNG channel layout and embedded ICC source space must agree.');
     return {icc};
   }

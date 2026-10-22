@@ -2,8 +2,10 @@
 
 > JPEG XL encoder for single-file HTML apps, photography tools and agent image workflows. Pure JavaScript, offline
 > in browsers, Node and Deno. Lossless, lossy, native precision, HDR, exact alpha, JPEG transcoding and animation. MIT, no runtime
-> dependencies. Sizes (gzip): still worker 86,099 bytes, complete worker (adds animation) 153,162, core 22,783.
-> Version 5 keeps no compatibility with 4.x callers.
+> dependencies. Sizes (gzip): still worker 101,287 bytes, complete worker (adds animation) 172,819, core 23,326.
+> Version 5 keeps no compatibility with 4.x callers. 5.1.0: no 16 MiB output limit, byte-exact JPEG restore through
+> libjxl, `rapier-jxl/graphics`, `rapier-jxl/animation-atlas` and more of the format (progressive Modular, typed
+> extra channels, multi-source patches).
 
 ## Choose a Rapier workflow
 
@@ -33,8 +35,8 @@ through a Blob URL. [Copyable HTML](docs/reference/ARCHITECTURE.md#one-html-file
 Agent skills: [Single-file apps](skills/rapier-jxl-single-file-app/SKILL.md) · [Photography](skills/rapier-jxl-photography/SKILL.md).
 
 Two self-starting classic workers, both with optional WASM, effort 1–9, Photo, JPEG transcoding and parallel lossless groups:
-- `rapier-jxl/rapier/still-worker`: still pictures, byte-identical to the encoder Rapier's page embeds. 86,099 gzip bytes.
-- `rapier-jxl/rapier/worker`: the same plus animation and the other format writers; nothing downloads at runtime. 153,162 gzip bytes.
+- `rapier-jxl/rapier/still-worker`: still pictures, byte-identical to the encoder Rapier's page embeds. 101,287 gzip bytes.
+- `rapier-jxl/rapier/worker`: the same plus animation and the other format writers; nothing downloads at runtime. 172,819 gzip bytes.
 
 `rapier-jxl/rapier/min` exports `createEncoder()` and `installWorker()` (complete). Pixel defaults: effort 7, quality 90;
 `lossless: true` forces quality 100. JPEG uses effort 7. See [the complete API](docs/reference/API.md#complete-rapier-system)
@@ -69,9 +71,9 @@ Encoding entry points and `rapier-jxl/metadata` have self-contained `/min` build
 Import the complete file to access its public export names; minification renames local functions.
 Use readable imports when bundling several capabilities so they share code.
 
-Package: `rapier-jxl`. Version: 5.0.0. Install: `npm install rapier-jxl`.
+Package: `rapier-jxl`. Version: 5.1.0. Install: `npm install rapier-jxl`.
 ES modules with no automatic filesystem or network I/O.
-Core payload: 56,573 minified bytes; 22,783 gzip bytes.
+Core payload: 57,755 minified bytes; 23,326 gzip bytes.
 Runs in browsers, module workers, Node, and Deno. This package encodes JPEG XL and reconstructs JPEGs it carried; it does not include a JPEG XL pixel decoder.
 
 ## Inputs and outputs
@@ -100,7 +102,7 @@ Runs in browsers, module workers, Node, and Deno. This package encodes JPEG XL a
 - `withMetadata(jxlBytes, {exif, xmp, jumb})` returns a new `Uint8Array` with standard `Exif` and `xml ` boxes. It wraps a bare codestream when adding metadata and preserves image coding, color encoding, orientation and other boxes.
 - `exif`: raw TIFF `Uint8Array`, beginning with `II` or `MM`, without the `Exif\0\0` prefix or JPEG APP1 header. `xmp`: UTF-8 string or `Uint8Array`. Omitted or `undefined` fields retain existing metadata; `null` removes the field.
 - Supply metadata separately; the metadata helper does not extract it or convert color. Supply ICC through the encoder's `icc` option. Keep Exif orientation consistent with the encoded image.
-- Requested edits reject containers with JPEG reconstruction data (`jbrd`). The output limit, including metadata, is 16 MiB. [Metadata API](docs/reference/API.md#exif-and-xmp).
+- Requested edits reject containers with JPEG reconstruction data (`jbrd`). Output, including metadata, uses available memory. [Metadata API](docs/reference/API.md#exif-and-xmp).
 
 ## Other entry points and contracts
 
@@ -110,14 +112,14 @@ Runs in browsers, module workers, Node, and Deno. This package encodes JPEG XL a
 - `wasm` exports `configureKernels` and `kernelMode`. Unavailable or blocked WASM falls back to JavaScript. Configure the same imported module before encoding; readable entry points share `rapier-jxl/kernels`.
 - `writer` exposes typed format primitives in readable source. `source`, `kernels`, and `writer` have no `/min` entry.
 - `treeLearning: 'sampled'` on effort/wasm selects a separate reduced search: shared trees at 2–3, group trees at 4–9; any observed hurry returns effort 1 exactly. Normally omit it to include all candidates.
-- Limits: 16 MiB output; 16,384 pixels per side. Core/effort/wasm 24 million pixels, photo 40 million, JPEG 64 million and 16 MiB JPEG input. Optional source reader uses core dimensions.
+- Limits: 16,384 pixels per side. Core/effort/wasm 24 million pixels, photo 40 million, JPEG 64 million. Input bytes and encoded output use available memory; explicit caller byte budgets still apply. Optional source reader uses core dimensions.
 - Checked encoder errors: `JXL_INPUT`, `JXL_DIMENSIONS`, `JXL_SIZE`, `JXL_MEMORY`, `JXL_JPEG`. Inspect `error.code`. Writer primitives have unchecked preconditions.
 
 [API, options, and errors](docs/reference/API.md) · [Entry points, embedding, and sizes](docs/reference/ARCHITECTURE.md) ·
 [Exports and types](package.json) · [Worker example](examples/worker.mjs) ·
 [Payload hashes and import graphs](dist/sizes.json) · [Measured comparisons](docs/ENCODER-COMPARISON.md)
 
-Container helpers preserve image bytes and JPEG reconstruction exactly. `withContainer(bytes, {chunkSize: 65536})` collects ordered `jxlp` boxes; `containerChunks` yields them; `streamContainer` accepts raw chunk iterables with backpressure and a truthful `level` (5 or 10). `maxBytes` defaults to 16 MiB, and `signal` cancels. Framing alone does not make the image progressive.
+Container helpers preserve image bytes and JPEG reconstruction exactly. `withContainer(bytes, {chunkSize: 65536})` collects ordered `jxlp` boxes; `containerChunks` yields them; `streamContainer` accepts raw chunk iterables with backpressure and a truthful `level` (5 or 10). `maxBytes` is an optional positive safe-integer budget and otherwise uses available memory; `signal` cancels. Framing alone does not make the image progressive.
 
 Optional format controls are opt-in and measured separately. All 27 VarDCT strategies and every raw or compact quantization-table mode
 are writable; automatic planning currently compares DCT8/16. Progressive HF passes preserve the final coefficients.
@@ -129,7 +131,7 @@ use per-frame extra upsampling for that case. Wide-canvas small previews expose 
 Arithmetic patch/layer alpha above1 needs ImageDecoder or createImageBitmap with premultiplyAlpha:'none' in Chrome155.
 See the API for exact schemas, browser limits, and measured optional module sizes.
 
-Metadata `jumb` accepts one Uint8Array or an array of JUMBF payloads. `withCompressedMetadata` defaults to `compression: "auto"`, retaining plain boxes unless Brotli is smaller; `"brotli"` requires compression. A bundled portable codec handles browsers without Brotli streams; an explicit `compress` callback overrides it. `readMetadata` returns owned plain payloads and pending compressed entries; `readMetadataAsync` expands them with a 16 MiB default combined limit and optional `decompress` callback.
+Metadata `jumb` accepts one Uint8Array or an array of JUMBF payloads. `withCompressedMetadata` defaults to `compression: "auto"`, retaining plain boxes unless Brotli is smaller; `"brotli"` requires compression. A bundled portable codec handles browsers without Brotli streams; an explicit `compress` callback overrides it. `readMetadata` returns owned plain payloads and pending compressed entries; `readMetadataAsync` expands them with an optional positive safe-integer `maxDecodedBytes` combined budget and optional `decompress` callback. Without that budget, expansion uses available memory.
 
 `rapier-jxl/container-advanced` supplies `inspectContainer`, `reframeContainer`, `containerBoxHeader`,
 `frameIndexPayload`/`withFrameIndex`/`readFrameIndex`, and `gainMapPayload`/`withGainMap`/`readGainMap`.
@@ -161,7 +163,7 @@ Actual TOC changes refuse JPEG reconstruction. The parser accepts its authored p
 The complete offline worker includes every format writer. Call `encoder.format({action, ...input, options},
 {signal, progress})`, or post `{id, operation: 'format', input, progress: true}`. Byte results use `bytes`;
 structured results use `result`. `photoPlan` shares one plan across up to 32 qualities and one optional byte target,
-then disposes it; their total output must fit 16 MiB. See the API's action table and declarations.
+then disposes it; complete outputs use available memory. See the API's action table and declarations.
 
 Metadata has a portable Brotli fallback when browser Brotli streams are absent. `compressBrotli` and
 `decompressBrotli` from `rapier-jxl/brotli` are also callable directly. The portable reader supports the writer's

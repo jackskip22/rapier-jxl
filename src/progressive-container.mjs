@@ -13,7 +13,7 @@ function bounded(length, maximum) {
 }
 function settings(options) {
   if (!options || typeof options !== 'object' || Array.isArray(options)) throw invalid('Progressive container options are an object.');
-  const {chunkSize = 65536, maxBytes = 16777216, extended = false, metadataPlacement = 'after', signal, level, iccBitLength} = options;
+  const {chunkSize = 65536, maxBytes = Number.MAX_SAFE_INTEGER, extended = false, metadataPlacement = 'after', signal, level, iccBitLength} = options;
   if (!Number.isSafeInteger(chunkSize) || chunkSize < 1 || chunkSize > 0x7fffffff) throw invalid('chunkSize is an integer from 1 through 2147483647.');
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw invalid('maxBytes is a positive safe integer.');
   if (typeof extended !== 'boolean') throw invalid('extended is a boolean.');
@@ -41,7 +41,7 @@ function landmarks(parsed) {
   if (parsed.preview) add('preview', parsed.preview, -1, parsed.preview.end);
   for (const [frameIndex, frame] of parsed.frames.entries()) {
     if (frame.type === 1) { add('lf-frame', frame, frameIndex, frame.end, {dcLevel: frame.dcLevel}); continue; }
-    if (!frame.modular && frame.sizes.length > 1) {
+    if ((!frame.modular || frame.passes > 1) && frame.sizes.length > 1) {
       const dimension = 128 << frame.shift, width = Math.ceil(frame.width / frame.upsampling), height = Math.ceil(frame.height / frame.upsampling);
       const groups = Math.ceil(width / dimension) * Math.ceil(height / dimension);
       const dcGroups = Math.ceil(width / (dimension * 8)) * Math.ceil(height / (dimension * 8));
@@ -75,7 +75,7 @@ function prepare(bytes, options) {
   } else {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), wide = view.getUint32(12) === 1;
     const header = wide ? 16 : 8, length = wide ? view.getUint32(20) * 4294967296 + view.getUint32(24) : view.getUint32(12);
-    ftyp = bytes.slice(12 + header, 12 + length); new DataView(ftyp.buffer).setUint32(4, 0);
+    ftyp = Uint8Array.from(bytes.subarray(12 + header, 12 + length)); new DataView(ftyp.buffer).setUint32(4, 0);
   }
   const prefix = [SIGNATURE.slice(), boxHeader(FTYP, ftyp.length, state.extended), ftyp], suffix = [];
   if (level === 10) prefix.push(boxHeader(LEVEL, 1, state.extended), Uint8Array.of(10));

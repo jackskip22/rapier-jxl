@@ -26,6 +26,6 @@ function* pixelSteps(data, width, height, quality, colorSpace, photo, filter) {
   const exact = yield* part(losslessSteps(data, width, height, {shape, colorSpace}), 0, 2);
   let bytes;
   try { bytes = yield* part(lossySteps(data, width, height, {quality, shape, colorSpace}), 1, 2); }
-  catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; bytes = exact; }
+  catch (error) { if (error.code !== 'JXL_SIZE' && error.code !== 'JXL_MEMORY' && (!(error instanceof RangeError) || error.code)) throw error; bytes = exact; }
   return exact.length <= bytes.length ? exact : bytes;
 }

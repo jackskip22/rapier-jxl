@@ -3,38 +3,45 @@
 JPEG XL encoder in pure JavaScript, for single-file HTML apps, photography tools and agent image workflows. Offline in
 browsers, Node and Deno. [MIT license](LICENSE), no runtime dependencies.
 
-- **Still encoder: 86,099 gzip bytes.** This is what [Rapier](https://rapier.website) itself carries:
+- **Still encoder: 101,287 gzip bytes.** This is what [Rapier](https://rapier.website) itself carries:
   lossless and lossy pictures, photographs, JPEG carrying and exact restore, native precision, HDR and exact alpha.
-- **Complete encoder: 153,162 gzip bytes.** The still encoder plus animated JPEG XL and the other format writers.
-- **Core: 22,783 gzip bytes.** Lossless or lossy RGBA and nothing else.
+- **Complete encoder: 172,819 gzip bytes.** The still encoder plus animated JPEG XL and the other format writers.
+- **Core: 23,326 gzip bytes.** Lossless or lossy RGBA and nothing else.
 
 ```sh
 npm install rapier-jxl
 ```
 
-**New in 5.0.0.**
-- Lossy pictures use the photo coding unless you pass `photo: false`.
-- Animated JPEG XL (`rapier-jxl/animation`; the complete worker's `animation` operation): only changed rectangles are
-  stored, with exact timing. The complete worker also carries the other format writers listed in the
-  [API](docs/reference/API.md).
-- The still worker is a separate file, `rapier-jxl/rapier/still-worker`.
-- Version 5 does not keep 4.x callers working.
+**New in 5.1.0.**
+- No 16 MiB output limit: pictures, animations, JPEG carrying and metadata use available memory. Byte budgets you
+  pass still apply.
+- A carried RGB JPEG now restores byte for byte through libjxl's `djxl` as well as through this package.
+- `rapier-jxl/graphics`: screenshots and flat art within an error you set. `rapier-jxl/animation-atlas`: repeated
+  glyphs and tiles stored once across an animation's frames.
+- More of the format: progressive Modular, Squeeze, custom weighted prediction, high bit-depth color transforms and
+  palettes, more ICC and original color spaces, typed extra channels beside photos, patches from several sources and
+  coefficient orders for every VarDCT strategy. See [format coverage](docs/reference/FORMAT-COVERAGE.md).
+- The still worker answers five format actions: `photo`, `profile`, `readSource`, `encodeSource` and `opsin`.
+
+**New in 5.0.0.** Lossy pictures use the photo coding unless you pass `photo: false`. Animated JPEG XL
+(`rapier-jxl/animation`) stores only changed rectangles, with exact timing. The still worker is a separate file,
+`rapier-jxl/rapier/still-worker`. Version 5 does not keep 4.x callers working.
 
 ## Builds
 
 | Build / import | Gzip bytes | Capabilities |
 | --- | ---: | --- |
-| **Still worker** · `rapier-jxl/rapier/still-worker` | 86,099 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel lossless groups. No animation. |
-| **Complete worker** · `rapier-jxl/rapier/worker` | 153,162 | Everything in the still worker, plus animation and the other format writers. |
-| Complete module · `rapier-jxl/rapier/min` | 153,219 | The complete system with an encoder factory and worker installer. |
+| **Still worker** · `rapier-jxl/rapier/still-worker` | 101,287 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel lossless groups. No animation. |
+| **Complete worker** · `rapier-jxl/rapier/worker` | 172,819 | Everything in the still worker, plus animation and the other format writers. |
+| Complete module · `rapier-jxl/rapier/min` | 172,889 | The complete system with an encoder factory and worker installer. |
 | Image · `rapier-jxl/image/min` | 1,184 | One call from a page: a file, bitmap, image data or canvas in, an `image/jxl` Blob out, through either worker. |
-| Core · `rapier-jxl/min` | 22,783 | Lossless or lossy typed RGBA, native precision, HDR and exact alpha. |
-| Effort · `rapier-jxl/effort/min` | 48,270 | Core with lossless compression search, efforts 1–9. |
-| WASM · `rapier-jxl/wasm/min` | 57,919 | Effort with inlined WASM and JavaScript fallback. |
-| Photo · `rapier-jxl/photo/min` | 23,129 | Lossy photographs from RGBA pixels. |
-| JPEG · `rapier-jxl/jpeg/min` | 29,632 | Existing JPEGs, preserving admitted coefficients and orientation. |
-| Metadata · `rapier-jxl/metadata/min` | 17,038 | Attach, replace or remove caller-supplied Exif/XMP. |
-| Animation · `rapier-jxl/animation/min` | 56,607 | Animated JPEG XL from frames: only changed rectangles stored, exact timing, lossless or lossy. |
+| Core · `rapier-jxl/min` | 23,326 | Lossless or lossy typed RGBA, native precision, HDR and exact alpha. |
+| Effort · `rapier-jxl/effort/min` | 48,795 | Core with lossless compression search, efforts 1–9. |
+| WASM · `rapier-jxl/wasm/min` | 58,449 | Effort with inlined WASM and JavaScript fallback. |
+| Photo · `rapier-jxl/photo/min` | 23,665 | Lossy photographs from RGBA pixels. |
+| JPEG · `rapier-jxl/jpeg/min` | 30,493 | Existing JPEGs, preserving admitted coefficients and orientation. |
+| Metadata · `rapier-jxl/metadata/min` | 12,237 | Attach, replace or remove caller-supplied Exif/XMP. |
+| Animation · `rapier-jxl/animation/min` | 57,253 | Animated JPEG XL from frames: only changed rectangles stored, exact timing, lossless or lossy. |
 
 Each size measures a complete standalone file at gzip level 9. Readable imports such as `rapier-jxl/rapier` share
 dependencies when bundled together; separate minified files each include theirs. Optional JPEG and Photo ANS builds,

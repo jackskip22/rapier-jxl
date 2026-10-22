@@ -9,7 +9,7 @@ export interface MetadataOptions {
   /** Contents of one JUMBF superbox, or multiple superboxes. null or [] removes all JUMBF boxes. */
   jumb?: Uint8Array | readonly Uint8Array[] | null | undefined;
 }
-export type BrotliCodec = (bytes: Uint8Array, options: {maxOutputLength: number}) => Uint8Array | Promise<Uint8Array>;
+export type BrotliCodec = (bytes: Uint8Array, options: {maxOutputLength?: number}) => Uint8Array | Promise<Uint8Array>;
 export interface CompressedMetadataOptions extends MetadataOptions {
   /** auto uses brob only when its full payload is smaller; brotli always compresses. Defaults to auto. */
   compression?: 'auto' | 'brotli';
@@ -17,9 +17,9 @@ export interface CompressedMetadataOptions extends MetadataOptions {
   compress?: BrotliCodec;
 }
 export interface MetadataReadOptions {
-  /** Maximum combined decoded metadata, from 1 byte to 16 MiB; defaults to 16 MiB. */
+  /** Optional positive safe-integer budget for combined decoded metadata. Defaults to available memory. */
   maxDecodedBytes?: number;
-  /** Optional full decoder. It must honor maxOutputLength before allocating output. Without native support,
+  /** Optional full decoder. It must honor a supplied maxOutputLength before allocating output. Without native support,
    * the built-in reader accepts the portable writer's subset; arbitrary external Brotli may need this hook. */
   decompress?: BrotliCodec;
 }
@@ -34,7 +34,7 @@ export interface Metadata {
   compressed: {boxType: number; data: Bytes}[];
 }
 /** Replace requested fields (null removes); omitted fields and all other boxes stay exact. Pixels, color encoding
- * and orientation are not rewritten. Metadata edits refuse JPEG reconstruction files. Maximum output: 16 MiB. */
+ * and orientation are not rewritten. Metadata edits refuse JPEG reconstruction files. Output uses available memory. */
 export function withMetadata(bytes: Uint8Array, options?: MetadataOptions): Bytes;
 /** withMetadata with optional brob compression. Inputs are captured before the first asynchronous codec call. */
 export function withCompressedMetadata(bytes: Uint8Array, options?: CompressedMetadataOptions): Promise<Bytes>;

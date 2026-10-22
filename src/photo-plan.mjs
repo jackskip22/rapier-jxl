@@ -7,11 +7,14 @@ import {strategyCoefficientSteps, requantizeStrategySteps, admitStrategyOptions,
 import {progressivePasses} from './vardct-progressive.mjs';
 import {admitNoise} from './noise.mjs';
 import {admitLFFrames, lfFrameSteps, prependLFFrames} from './lf-frames.mjs';
-import {padPhotoTiles, cropPhotoCanvas, photoLevelContainer} from './photo-crop.mjs';
+import {cropPhotoCanvas, photoLevelContainer} from './photo-crop.mjs';
 import {readImageHeader} from './framing.mjs';
 import {varDCTSteps} from './vardct.mjs';
 import {buildAnsCoding, writeModularAnsHistograms} from './ans.mjs';
 import {quantParamCoding} from './quantization-params.mjs';
+import {prepareCoefficientOrders} from './coefficient-orders.mjs';
+import {admitPhotoLayout, padPhotoLayout, applyPhotoLayout} from './photo-layout.mjs';
+import {admitPhotoExtras, snapshotPhotoExtras, applyPhotoExtras} from './photo-extras.mjs';
 
 const PLAN_LIMITS = Object.freeze({...PHOTO_LIMITS, retainedBytes: 256 * 1024 * 1024});
 export {PLAN_LIMITS as LIMITS};
@@ -52,29 +55,34 @@ function planJob(steps) {
 export function createPhotoPlan(data, width, height, options) { return complete(createPhotoPlanSteps(data, width, height, options)); }
 export function createPhotoPlanSteps(data, width, height, options = {}) {
   const {quality, colorSpace} = admitOptions(options, 90), effort = admitEffort(options);
-  planQuality(quality); admitPixels(data, width, height, PHOTO_LIMITS);
+  planQuality(quality);
+  const layout = admitPhotoLayout(width, height, options, quality);
+  admitPixels(data, layout.codedWidth, layout.codedHeight, PHOTO_LIMITS);
   const samples = admitSampleFormat(data, options);
   if (!samples.native8) throw fault('JXL_INPUT', 'Retained photographic plans require eight-bit RGB samples with sRGB transfer and no ICC profile.');
+  const extras = admitPhotoExtras(data, layout, options);
   const admitted = admitStrategyOptions(options), progression = progressivePasses(options.progressive);
+  const authoredOrderPasses = prepareCoefficientOrders(options.coefficientOrders, progression?.count || 1);
   const noiseLut = admitNoise(options.noise, width, height), lfLevels = admitLFFrames(options.lfFrames);
   admitPhotoFilter(options);
   if (lfLevels && colorSpace !== 'srgb') throw fault('JXL_INPUT', 'Low-frequency frame pyramids currently require sRGB photographic pixels.');
   const maxRetainedBytes = options.maxRetainedBytes ?? PLAN_LIMITS.retainedBytes;
   if (!Number.isSafeInteger(maxRetainedBytes) || maxRetainedBytes < 1 || maxRetainedBytes > 2147483648)
     throw fault('JXL_INPUT', 'maxRetainedBytes is a positive whole number of bytes, at most 2 GiB.');
-  const codedPixels = Math.ceil(width / 8) * Math.ceil(height / 8) * 64;
+  const codedPixels = Math.ceil(layout.codedWidth / 8) * Math.ceil(layout.codedHeight / 8) * 64;
   const shapes = new Map(admitted.ids.map(id => {
     const shape = TRANSFORMS[id]; return [Math.max(shape.width, shape.height) + ':' + Math.min(shape.width, shape.height), shape.width * shape.height * 4];
   }));
   const estimate = codedPixels * (24 + 3 / 8 + 1 / 16 + 4) + [...shapes.values()].reduce((a, b) => a + b, 0)
-    + retainedMemory(admitted.custom, noiseLut);
+    + retainedMemory(admitted.custom, noiseLut, authoredOrderPasses, layout, extras);
   if (estimate > maxRetainedBytes) throw fault('JXL_MEMORY', 'The retained coefficient estimate exceeds maxRetainedBytes (' + Math.ceil(estimate) + ' bytes required).');
-  return planJob(preparePlanSteps(data, width, height, {quality, colorSpace, effort, admitted, progression, noiseLut,
-    lfLevels, maxRetainedBytes, orientation: options.orientation ?? 1}));
+  return planJob(preparePlanSteps(data, layout.codedWidth, layout.codedHeight, {quality, colorSpace, effort, admitted, progression, noiseLut,
+    lfLevels, maxRetainedBytes, authoredOrderPasses, orientation: options.orientation ?? 1, layout, extras: snapshotPhotoExtras(extras)}));
 }
 
 function* preparePlanSteps(data, width, height, settings) {
-  const originalWidth = width, originalHeight = height, padded = settings.noiseLut && padPhotoTiles(data, width, height);
+  const originalWidth = settings.layout.width, originalHeight = settings.layout.height;
+  const padded = padPhotoLayout(data, width, height, settings.layout, settings.noiseLut);
   if (padded) ({data, width, height} = padded);
   const retained = yield* strategyCoefficientSteps(data, width, height, settings.quality, settings.colorSpace,
     {orientation: settings.orientation}, settings.admitted, true);
@@ -83,7 +91,7 @@ function* preparePlanSteps(data, width, height, settings) {
     delete block.coeffs; delete block.dc; delete block.cost; delete block.wide;
   }
   delete retained.components; delete retained.strategyData.tables;
-  const retainedBytes = retainedMemory(retained, settings.admitted.custom, settings.noiseLut);
+  const retainedBytes = retainedMemory(retained, settings.admitted.custom, settings.noiseLut, settings.authoredOrderPasses, settings.layout, settings.extras);
   if (retainedBytes > settings.maxRetainedBytes) throw fault('JXL_MEMORY', 'Retained buffers exceed maxRetainedBytes (' + retainedBytes + ' bytes required).');
   return makePhotoPlan(retained, {...settings, originalWidth, originalHeight, padded: !!padded, retainedBytes});
 }
@@ -106,14 +114,16 @@ function makePhotoPlan(retained, settings) {
     get disposed() { return retained === null; },
     encode: quality => complete(encodeSteps(quality)), encodeSteps,
     encodeTarget: (targetBytes, options) => complete(encodeTargetSteps(targetBytes, options)), encodeTargetSteps,
-    dispose() { retained = null; settings.admitted = null; settings.noiseLut = null; },
+    dispose() { retained = null; settings.admitted = null; settings.noiseLut = null; settings.authoredOrderPasses = null; settings.layout = null; settings.extras = null; },
   });
 }
 
 function* encodeRetainedSteps(retained, quality, settings) {
   const {effort, progression, noiseLut, lfLevels} = settings;
   const image = yield* part(requantizeStrategySteps(retained, quality, settings.admitted), 0, lfLevels ? 3 : 2);
-  image.progression = progression; image.noiseLut = noiseLut;
+  applyPhotoLayout(image, settings.layout, settings.padded);
+  applyPhotoExtras(image, settings.extras, settings.layout);
+  image.progression = progression; image.noiseLut = noiseLut; image.authoredOrderPasses = settings.authoredOrderPasses;
   const frames = lfLevels && (yield* part(lfFrameSteps(image, lfLevels), 1, 3));
   const finish = bytes => {
     if (frames) bytes = prependLFFrames(bytes, frames);
@@ -139,8 +149,8 @@ function* encodeRetainedSteps(retained, quality, settings) {
 }
 
 function admitTarget(targetBytes, options) {
-  if (!Number.isSafeInteger(targetBytes) || targetBytes < 1 || targetBytes > PLAN_LIMITS.bytes)
-    throw fault('JXL_INPUT', 'targetBytes is a positive whole number no greater than the encoded-file limit.');
+  if (!Number.isSafeInteger(targetBytes) || targetBytes < 1)
+    throw fault('JXL_INPUT', 'targetBytes is a positive safe integer number of bytes.');
   if (!options || typeof options !== 'object' || Array.isArray(options)) throw fault('JXL_INPUT', 'Target search options are an object.');
   const minQuality = planQuality(options.minQuality ?? 1), maxQuality = planQuality(options.maxQuality ?? 99.9), maxProbes = options.maxProbes ?? 12;
   const initialQuality = options.initialQuality === undefined ? null : planQuality(options.initialQuality);

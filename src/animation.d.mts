@@ -2,7 +2,7 @@
 import type {Pixels, Bytes, Limits} from './index.mjs';
 export type {Pixels, Bytes, ColorSpace, SampleFormat, TransferFunction, Limits, EncodeOptions, ErrorCode, EncoderError} from './index.mjs';
 import type {EncodeOptions} from './index.mjs';
-/** Per-frame canvas limits as the core's; the file is at most 256 MiB and has at most 1,048,576 frames. */
+/** Per-frame canvas limits as the core's, with at most 1,048,576 frames. Encoded output grows with available memory. */
 export const LIMITS: Limits & {readonly frames: number};
 export interface Frame {
   /** The whole canvas, width * height * 4 straight RGBA samples, in any layout `encode` admits. Every frame uses the same array type. */

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {complete} from './bits.mjs';
 import {guard} from './admit.mjs';
-import {admitAnimation, animationSteps, partSteps, pixelsOf, ANIMATION_LIMITS} from './animation-frames.mjs';
+import {admitAnimation, animationSteps, partSteps, pixelsOf} from './animation-frames.mjs';
 
 let animationSerial = 0;
 
@@ -27,7 +27,6 @@ export function encodeAnimationPool(animation, options, {spawn, workers = 3} = {
         reply = run.result;
       }
     } finally { for (const worker of members) worker.terminate(); members = []; }
-    if (step.value.length > ANIMATION_LIMITS.bytes) throw Object.assign(new Error('The encoded animation exceeds 256 MiB.'), {code: 'JXL_SIZE'});
     return it.bytes = step.value;
   })();
   it.bytes = null; it.hurry = false;

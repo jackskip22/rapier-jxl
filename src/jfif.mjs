@@ -225,7 +225,7 @@ function exifOrientation(bytes, start, end) {
   return null;
 }
 
-function admitScan(frame, scan, ss, se, ah, al) {
+export function admitScan(frame, scan, ss, se, ah, al) {
   const progressive = frame.progressive;
   if (!progressive) {
     if (ss !== 0 || se !== 63 || ah !== 0 || al !== 0) throw jpegError('a bad spectral selection');

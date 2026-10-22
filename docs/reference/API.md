@@ -23,10 +23,11 @@ declaration. The same pixels and options produce the same bytes in every JavaScr
 
 ## Version 5
 
-Two workers: `rapier-jxl/rapier/still-worker` (still pictures) and `rapier-jxl/rapier/worker` (the same, plus animation).
-`rapier-jxl/animation` and the complete worker's `animation` operation are new; the still worker answers `JXL_UNAVAILABLE`
-to animation and format-writer operations. Lossy pixels use photographic coding unless you pass `photo: false` or
-a preset that says otherwise (4.x used ordinary pixel coding). Version 5 keeps no compatibility with 4.x callers; JPEG transcoding returns reconstruction containers, metadata edits to them are refused, and a
+Two workers: `rapier-jxl/rapier/still-worker` supports still pictures and the `photo`, `profile`, `readSource`,
+`encodeSource` and `opsin` format actions. `rapier-jxl/rapier/worker` also supports animation and every other format
+action documented below. The still worker answers `JXL_UNAVAILABLE` to animation, complete-only format actions
+and advanced photo options. Lossy pixels use photographic coding unless you pass `photo: false` or a preset that
+says otherwise. JPEG transcoding returns reconstruction containers, metadata edits to them are refused, and a
 reconstruction response may carry `bytes: null`.
 
 ## Entry points
@@ -46,13 +47,15 @@ reconstruction response may carry `bytes: null`.
 | `rapier-jxl/image` | `toJXL`, one call from a page to an `image/jxl` Blob | [image.d.mts](../../src/image.d.mts) |
 | `rapier-jxl/metadata` | `withMetadata` for Exif/XMP container boxes | [metadata.d.mts](../../src/metadata.d.mts) |
 | `rapier-jxl/animation` | `encodeAnimation`, `encodeAnimationSteps`, `LIMITS` | [animation.d.mts](../../src/animation.d.mts) |
+| `rapier-jxl/animation-atlas` | `buildAnimationAtlas`, `encodeAnimationAtlas`, `encodeAnimationAtlasSteps` | [animation-atlas.d.mts](../../src/animation-atlas.d.mts) |
 | `rapier-jxl/icc` | `encodeProfile`, `encodeProfileSteps`, `prepareICC`, `LIMITS` | [icc.d.mts](../../src/icc.d.mts) |
 | `rapier-jxl/photo-advanced` | Photo API, `TRANSFORMS`, `photonNoise` | [photo-advanced.d.mts](../../src/photo-advanced.d.mts) |
 | `rapier-jxl/delta-palette` | `encodeDeltaPalette`, `encodeDeltaPaletteSteps` | [delta-palette.d.mts](../../src/delta-palette.d.mts) |
+| `rapier-jxl/graphics` | `encodeGraphics`, `encodeGraphicsSteps`, `LIMITS` | [graphics.d.mts](../../src/graphics.d.mts) |
 | `rapier-jxl/channels` | `encodeChannels`, `encodeChannelsSteps`, `EXTRA_CHANNEL_TYPES`, `LIMITS` | [channels.d.mts](../../src/channels.d.mts) |
 | `rapier-jxl/layers` | `encodeLayers`, `encodeLayersSteps`, `LAYER_BLEND_MODES`, `LIMITS` | [layers.d.mts](../../src/layers.d.mts) |
 | `rapier-jxl/splines` | `encodeSplines`, `encodeSplinesSteps`, `splineStroke` | [splines.d.mts](../../src/splines.d.mts) |
-| `rapier-jxl/patches` | `encodePatches`, `encodePatchesSteps`, `PATCH_BLEND_MODES` | [patches.d.mts](../../src/patches.d.mts) |
+| `rapier-jxl/patches` | `encodePatches`, `encodePatchesSteps`, `encodePatchComposition`, `encodePatchCompositionSteps`, `PATCH_BLEND_MODES` | [patches.d.mts](../../src/patches.d.mts) |
 | `rapier-jxl/container` | `withContainer`, `containerChunks`, `streamContainer` | [container-stream.d.mts](../../src/container-stream.d.mts) |
 | `rapier-jxl/container-advanced` | Reframing, box inspection, frame indexes and supplied gain maps | [container-advanced.d.mts](../../src/container-advanced.d.mts) |
 | `rapier-jxl/progressive-container` | Pass-aligned plans, chunks, collected output and async metadata delivery | [progressive-container.d.mts](../../src/progressive-container.d.mts) |
@@ -240,18 +243,21 @@ const bytes = encodeProfile(rgba16, width, height, {
 ```
 
 Ordinary `encode`, photo and worker calls accept `icc`. Use `encodeProfile` for explicit custom color fields or
-tone-mapping metadata. It preserves source sample words, RGB/GRAY profile bytes, unknown ICC tags and padding.
-No color conversion, gamut mapping or tone mapping is performed. Profiles are copied immediately, limited to
-16 MiB, and use level 10 above 4 MiB. Explicit `level: 5` refuses incompatible precision or profile size;
+tone-mapping metadata. It preserves source sample words, complete three-component or GRAY profile bytes, unknown
+ICC tags and padding. The three-component signatures are RGB, XYZ, Lab, Luv, YCbr, Yxy, HSV, HLS, CMY and 3CLR;
+the RGBA array positions hold those profile-defined components and alpha. No color conversion, gamut mapping or
+tone mapping is performed. Profiles are copied immediately, validated against their declared extent and use
+available memory. Profiles above the normative level-5 limit of 4 MiB select level 10. Explicit `level: 5` refuses incompatible precision or profile size;
 `level: 10` declares the higher level. `effort` is 1 or 2; 2 also prices coding without a reversible color transform.
 
-`colorEncoding` replaces an ICC profile and accepts these fields:
+Without ICC, `colorEncoding` supplies these fields. Alongside ICC it may supply only an explicit `space`; the
+profile supplies the remaining color meaning.
 
 | Field | Values |
 | --- | --- |
-| `space` | `'rgb'` or `'gray'`; gray RGBA input repeats identical R/G/B words. |
+| `space` | `'rgb'`, `'gray'`, `'xyb'` or `'unknown'`; gray RGBA input repeats identical R/G/B words. Unknown requires ICC. Original XYB describes already-scaled source components and does not enable the encoder's internal XYB transform. |
 | `whitePoint` | `'d65'`, `'e'`, `'dci'`, or `[x, y]`. Custom coordinates round to millionths. |
-| `primaries` | `'srgb'`, `'display-p3'`, `'rec2020'`, or three `[x, y]` pairs in red/green/blue order. |
+| `primaries` | RGB only: `'srgb'`, `'display-p3'`, `'rec2020'`, or three `[x, y]` pairs in red/green/blue order. |
 | `transferFunction` | `'srgb'`, `'linear'`, `'pq'`, `'hlg'`, `'bt709'`, or `'dci'`. |
 | `gamma` | Encoding exponent from 1/8192 through 1, such as `1 / 2.2`; mutually exclusive with transfer function. |
 | `renderingIntent` | `'perceptual'`, `'relative'`, `'saturation'`, or `'absolute'`. |
@@ -259,7 +265,10 @@ No color conversion, gamut mapping or tone mapping is performed. Profiles are co
 `toneMapping` accepts `intensityTarget` (peak nits), `minNits`, `relativeToMaxDisplay` and `linearBelow`.
 The last is nits or a fraction of the display peak according to the flag. Luminances use binary16;
 minimum luminance cannot exceed the peak. These fields describe display adaptation of already-encoded values.
-PQ defaults to 10000 peak nits, HLG to 1000. Omit other color declarations when supplying `icc`.
+PQ defaults to 10000 peak nits, HLG to 1000. Original XYB omits white-point, primaries and transfer fields and defaults
+to perceptual intent. Decoder support for original XYB/unknown enums and specialized non-RGB ICC interpretation
+varies; see [format coverage](FORMAT-COVERAGE.md). Omit other color declarations when supplying `icc`, except the
+optional explicit `colorEncoding.space`.
 
 `prepareICC(profile, {compression, level, colorSpace})` supplies `colorData` and `iccData` bit writers for the
 readable `/writer` API. Append the ICC data after transform data and before image-header byte alignment.
@@ -340,7 +349,7 @@ require sRGB primaries. Alpha remains exact. Quality is at least 1 and less than
 `encodeTarget(targetBytes, options)` measures complete files, including alpha, LF frames and container overhead.
 `minQuality` defaults to 1, `maxQuality` to 99.9, and `maxProbes` to 12 (allowed 2–32). An optional `initialQuality`
 must lie inside the chosen range. The result contains `bytes`, `quality`, `targetBytes` and every probe's quality
-and file size; `null` size records a candidate that exceeded the output limit. It returns the highest quality
+and file size; `null` size records a candidate rejected with `JXL_SIZE`. It returns the highest quality
 actually tested that fits. Quantization and entropy choices make size nonmonotonic, so this is not a global
 quality optimum. No fitting tested candidate raises `JXL_SIZE`.
 
@@ -429,8 +438,8 @@ too. On an existing custom image, omitted fields retain their existing values. E
 copy. The prepared writer composes as `ImageHeaderOptions.transformData` with `xyb: true`.
 
 Containers retain brands, level and auxiliary boxes, coalesce the edited image into `jxlc`, and adjust frame-index
-offsets by the header-size change. Actual edits to JPEG-reconstruction files are refused. Input and output are
-bounded to 16 MiB. This parser accepts the encoder's supported header/profile syntax.
+offsets by the header-size change. Actual edits to JPEG-reconstruction files are refused. Input and output use
+available memory. This parser accepts the encoder's supported header/profile syntax.
 
 ## Exact graphics and authored patches
 
@@ -465,6 +474,85 @@ blending while keeping atlas samples, alpha and fully transparent RGB exact. Rep
 `orientation` is 1–8; `colorSpace` is sRGB or Display P3. Default level 5 enforces the native browser's patch-area
 budget. Explicit `level: 10` admits larger legal dictionaries, which Chrome 155 can still refuse.
 Automatic glyph detection remains in the existing screen search; authored patches do not automatically replace it.
+
+### Bounded graphics
+
+```js
+import {encodeGraphics} from 'rapier-jxl/graphics';
+const bytes = encodeGraphics(rgba8, width, height, {preset: 'screen', protectedMask});
+```
+
+This entry compares complete exact and bounded-error Modular/palette files and keeps the smallest; the exact
+candidate wins size ties. It accepts straight RGBA8 with sRGB transfer and sRGB or Display P3 primaries. Alpha and
+every RGB sample at alpha below 255 stay exact, including hidden RGB. Source pixels are never modified.
+
+| Option | Meaning |
+| --- | --- |
+| `preset` | `'exact'` by default; `'screen'` allows two RGB code values of error, and `'dither'` allows eight. |
+| `maxColorError` | Integer 0–32, overriding the preset; hard maximum absolute error per RGB channel. Zero retains the ordinary exact delta-palette selection. |
+| `paletteColors` | Learned-cluster search budget, 1–4096, default 256. Protected/unmerged colors or an exact winner may exceed this color count. |
+| `preserveEdges` | Default `true`; preserves the outer border and pixels whose 3×3 source neighborhood has a channel range of at least 32 or touches nonopaque alpha. This is a precise pixel rule, not text recognition. |
+| `undither` | Also prices a 3×3 binomial-mean candidate clamped to the original per-channel error bounds, then palette reduction. Default `true` only for the dither preset. |
+| `protectedMask` | One byte per pixel; each nonzero entry preserves all four original samples exactly. |
+
+`colorSpace`, `deltaPredictor`, `maxPaletteColors`, `groupSize` and `screenEffort` have the delta-palette meanings
+above. `encodeGraphicsSteps` has the same result; keep source and mask unchanged until completion. Hurry retains
+a complete candidate, and ending iteration cancels without partial output. This entry does not admit arbitrary
+ICC profiles or native-depth samples.
+
+### Typed planes and multiple patch sources
+
+```js
+import {encodePatchComposition} from 'rapier-jxl/patches';
+
+const bytes = encodePatchComposition({
+  base: {image: backgroundPlanes},
+  references: [
+    {slot: 0, image: firstSourcePlanes},
+    {slot: 3, bytes: secondSourceJXL},
+  ],
+  patches: [
+    {reference: 0, sourceX: 0, sourceY: 0, width: 32, height: 24,
+      positions: [{x: 16, y: 16}]},
+    {reference: 3, sourceX: 4, sourceY: 4, width: 16, height: 16,
+      positions: [{x: 80, y: 16, blend: 'blend-above', alpha: 2,
+        extraBlending: ['none', 'replace', 'none']}]},
+  ],
+}, {bitDepth: 16});
+```
+
+Each source supplies either a `PlanarImage` or existing encoded `bytes`. One to four references use distinct
+slots 0–3, and each rectangle selects its own `reference`; omission selects the first supplied reference.
+All sources share channel precision, extra-channel meaning and order, orientation, color, tone and transform
+metadata. The example's extra planes are primary alpha, depth and a second alpha. An encoded source is one
+independent, full replacement Modular or VarDCT frame without an existing patch or low-frequency dependency.
+References have one coding pass; the base may retain progressive passes. RGB Modular and compatible RGB
+VarDCT sources can mix. XYB sources compose with the same XYB domain. Existing encoded payload sections stay
+unchanged; only framing, the patch dictionary and the first section's bit alignment are written.
+
+Typed inputs use the same planar encoder and precision controls as `encodeChannels`, including integer and
+floating planes and up to 256 extras. Per-source `options` may select `groupSize`, `predictor`,
+`weightedPredictor`, `transforms`, `squeeze`, `progressive`, `maxTransformBytes` and `upsampling` without
+changing shared metadata. Encoded sources already own those choices. Exact ICC/transform bits are part of the
+compatibility check: two differently compressed copies of the same ICC profile can be refused. An implicit
+default sRGB declaration and its equivalent explicit declaration are accepted together.
+
+`alpha` selects an alpha extra-channel index, defaulting to the first alpha. `extraBlending` has one named
+operation or `{blend, alpha, clamp}` object per extra channel; omission follows the color operation. All eight
+patch operations apply independently. Color `blend-above`/`blend-below` also assigns that operation to the
+selected composite alpha so native decoders agree. A non-alpha plane cannot serve as an alpha selector.
+
+Destination coordinates refer to the base's coded pixels before spatial upsampling. Source coordinates refer
+to the saved reference after its own spatial upsampling. For an upsampled base, color and every extra plane
+must have the same total sampling factor, including `dimShift`. Every source and destination rectangle must
+fit, and the writer enforces the format's image-dependent patch/blending and level-specific area budgets.
+
+Patches blend floating-point samples in the decoder's pre-color domain. Even replacement therefore has
+rendered-sample semantics for wide integers and nonfinite floating values; it does not promise raw uint31 or
+NaN-payload copying. The original encoded source sections remain exact. A supplied `preview` is an authored
+planar image of the finished composition. An encoded base retains its existing preview and refuses a separate
+preview option. `encodePatchCompositionSteps` reports monotone progress; hurry keeps the same complete
+composition, cancellation leaves `bytes` null, and all source buffers stay caller-owned and unchanged.
 
 ## Planar images, extra channels and previews
 
@@ -571,22 +659,22 @@ Added gzip is the entry bundled with the core minus the core alone, so shared co
 
 | Entry | Minified bytes | gzip | Brotli | Added gzip with core |
 | --- | ---: | ---: | ---: | ---: |
-| `icc` | 35,619 | 14,193 | 12,577 | 1,971 |
-| `photo-advanced` | 104,427 | 39,016 | 33,737 | 18,315 |
-| `delta-palette` | 84,827 | 32,926 | 28,791 | 20,341 |
-| `channels` | 75,105 | 27,641 | 24,229 | 21,340 |
-| `layers` | 82,010 | 29,779 | 26,094 | 23,475 |
-| `splines` | 53,833 | 21,384 | 18,833 | 4,380 |
-| `patches` | 62,279 | 24,005 | 21,083 | 17,404 |
-| `container` | 7,498 | 3,365 | 2,865 | 1,904 |
-| `container-advanced` | 59,520 | 21,863 | 19,195 | 19,924 |
-| `opsin` | 112,504 | 42,770 | 36,613 | 28,184 |
-| `progressive-container` | 77,409 | 28,094 | 24,507 | 26,180 |
-| `noise` | 137,668 | 52,123 | 44,364 | 32,122 |
-| `hybrid` | 127,093 | 47,370 | 40,816 | 28,396 |
-| `photo-plan` | 96,356 | 35,719 | 30,950 | 19,744 |
-| `delivery` | 68,536 | 24,933 | 21,801 | 22,990 |
-| `brotli` | 14,862 | 6,523 | 5,762 | 11,651 |
+| `icc` | 36,892 | 14,591 | 12,883 | 2,114 |
+| `photo-advanced` | 152,456 | 55,006 | 47,071 | 34,000 |
+| `delta-palette` | 85,405 | 33,169 | 28,931 | 20,361 |
+| `channels` | 85,091 | 31,503 | 27,515 | 24,609 |
+| `layers` | 95,665 | 34,936 | 30,505 | 28,117 |
+| `splines` | 54,968 | 21,887 | 19,278 | 4,358 |
+| `patches` | 140,699 | 52,257 | 44,820 | 38,491 |
+| `container` | 7,487 | 3,350 | 2,825 | 1,910 |
+| `container-advanced` | 42,172 | 15,722 | 13,840 | 15,600 |
+| `opsin` | 70,284 | 27,302 | 23,601 | 18,353 |
+| `progressive-container` | 53,524 | 19,981 | 17,615 | 19,863 |
+| `noise` | 177,784 | 65,957 | 55,649 | 45,318 |
+| `hybrid` | 138,698 | 51,731 | 44,644 | 32,145 |
+| `photo-plan` | 114,509 | 41,909 | 36,022 | 24,888 |
+| `delivery` | 47,878 | 17,864 | 15,721 | 17,745 |
+| `brotli` | 12,269 | 5,484 | 4,770 | 9,315 |
 
 ## Existing JPEGs
 
@@ -630,7 +718,8 @@ containers, preserve the codestream and other boxes exactly, and write ordered `
 does not add progressive image coding. JPEG reconstruction stays exact. `streamContainer` consumes a synchronous
 or asynchronous iterable of raw codestream chunks with backpressure, holding one byte for the final fragment.
 
-`chunkSize` is 1–16 MiB, default 65,536; `maxBytes` bounds total output, default 16 MiB; `signal` cancels iteration.
+`chunkSize` is a positive safe integer, default 65,536. `maxBytes` is an optional positive safe-integer budget for
+total output; omission uses available memory. `signal` cancels iteration.
 For incremental raw input, set `level: 10` when required by the image; it defaults to 5. A canceled, failed or
 incomplete producer does not receive a successful final fragment. Use `/container/min` for a self-contained build.
 
@@ -656,7 +745,7 @@ API. Framing alone does not add progression to an image.
 | Option | Meaning |
 |---|---|
 | `chunkSize` | 1–2,147,483,647 bytes, default 65,536; also cuts large sections. |
-| `maxBytes` | Positive safe integer, default 16 MiB. |
+| `maxBytes` | Optional positive safe-integer total-byte budget; omission uses available memory. |
 | `metadataPlacement` | `'after'` by default, or `'before'`; indexes stay after the image. |
 | `extended` | Use extended box headers. |
 | `level` | 5 or 10; existing level 10 is retained and demotion refused. |
@@ -673,7 +762,7 @@ while the tested small single-group and dedicated-preview examples wait for more
 The chunk iterator snapshots input at the call and yields owned, complete boxes. Backpressure limits later chunk
 allocation. Async metadata compression completes before the first chunk, even when the metadata is placed last.
 Version-1 fragments normalize to ordered delivery; auxiliary payloads and JPEG reconstruction remain exact.
-Metadata editing retains its 16 MiB limit and refuses reconstruction files. Unsupported external header syntax
+Metadata editing uses available memory and refuses reconstruction files. Unsupported external header syntax
 and permuted frame TOCs are refused by this entry's framing reader.
 
 ## Deliver a selected region first
@@ -701,7 +790,8 @@ region witness finishes the selected 128×128 region at 3,206 of 4,365 bytes whi
 
 `normalizeDelivery` restores logical order for the layer, animation and progressive-container readers. Supported
 permutations use this writer's one-histogram prefix form without LZ77; arbitrary external ANS permutations are
-refused. `maxBytes` defaults to 16 MiB; `iccBitLength` supports known profile-bearing framing. Empty options retain
+refused. `maxBytes` is an optional positive safe-integer budget and otherwise uses available memory;
+`iccBitLength` supports known profile-bearing framing. Empty options retain
 input bytes exactly. Actual TOC edits refuse JPEG-reconstruction containers; the no-op keeps reconstruction exact.
 
 ## Exif and XMP
@@ -725,7 +815,7 @@ input arrays unchanged. Use `rapier-jxl/metadata/min` for the self-contained mod
 Omit a field, or pass `undefined`, to retain its existing metadata. Supply a value to replace it, or `null` to remove
 it. New metadata uses standard uncompressed `Exif`, `xml ` and `jumb` boxes. Matching existing boxes, including compressed
 metadata boxes, are replaced or removed; other boxes and the image codestream retain their bytes. Adding metadata
-to a bare codestream wraps it in a JPEG XL container. Total output, including metadata, is limited to 16 MiB.
+to a bare codestream wraps it in a JPEG XL container. Total output, including metadata, uses available memory.
 
 Pixels, color encoding and orientation stay unchanged. Keep Exif orientation consistent with the encoded image.
 This module does not extract metadata from source files, import ICC profiles or convert color. It checks container
@@ -738,12 +828,13 @@ because changing metadata can invalidate reconstruction. Omitting all fields ret
 complete compressed payload is smaller. Use `compression: 'brotli'` to require compression. Node loads its native
 Brotli codec lazily; browsers use native Brotli streams when available and the bundled portable codec otherwise.
 An explicit `compress(bytes, {maxOutputLength})` callback overrides that choice and may return bytes or a promise.
-The complete worker always uses the deterministic portable codec, so its metadata bytes match Node and browsers.
+The complete worker uses the same native-first choice. Compressed metadata bytes can differ between native
+implementations; extracted payload bytes remain the comparison boundary.
 
 `readMetadata(bytes)` returns owned `exif`, `xmp`, and `jumb` arrays in file order, plus `compressed` entries with
 `boxType` and `data`. `await readMetadataAsync(bytes, {decompress, maxDecodedBytes})` also expands compressed
-metadata. `maxDecodedBytes` caps all expanded payloads, including the Exif offset, at 16 MiB by default. A supplied
-decoder must honor `maxOutputLength` before allocating its result. These calls preserve payloads without interpreting
+metadata. `maxDecodedBytes` optionally bounds all expanded payloads, including the Exif offset; omission uses
+available memory. A supplied decoder must honor a supplied `maxOutputLength` before allocating its result. These calls preserve payloads without interpreting
 their application-specific contents.
 
 ## Portable Brotli
@@ -756,7 +847,7 @@ const original = decompressBrotli(compressed, {maxOutputLength: 16 * 1024 * 1024
 ```
 
 These synchronous calls return owned `Uint8Array` buffers and leave input unchanged. `maxOutputLength` is an
-integer from 0 through 16 MiB, default 16 MiB. The encoder uses a 64 KiB window, adaptive prefix coding and LZ77;
+optional nonnegative safe-integer output budget; omission uses available memory. The encoder uses a 64 KiB window, adaptive prefix coding and LZ77;
 incompressible blocks use stored output. It is an original MIT implementation with no runtime dependency.
 
 The portable reader supports the form this writer emits, not every external Brotli stream. Multiple context
@@ -785,7 +876,8 @@ const gained = withGainMap(encoded, {
 
 `inspectContainer(bytes)` returns owned logical codestream bytes, level, version, fragment records and opaque
 auxiliary payloads. `containerBoxHeader(type, bodyLength, {extended})` writes a header without allocating its
-payload. Complete inputs and outputs default to `maxBytes: 16777216`; explicit safe-integer limits may raise it.
+payload. `maxBytes` is an optional positive safe-integer budget for complete inputs and outputs; omission uses
+available memory.
 Writing options accept `extended` and `level: 5 | 10`. The signature keeps its fixed header, and level 10 cannot
 be demoted. Image coding, unknown payloads and JPEG reconstruction bytes remain exact.
 
@@ -840,11 +932,47 @@ const bytes = encodeAnimation({width, height, loops: 0, frames: [{data: rgba0, d
   canvas. The file then declares alpha; every shown pixel stays opaque.
 - Options are `encode`'s, plus `effort` (1–9, applied to each frame), `photo`, `filter`, `signal` and `progress`.
   `encodeAnimationSteps` yields progress like `encodeSteps`.
-- `LIMITS`: each frame within the core's 24 million pixels and 16,384 pixels per side; the file within 256 MiB.
+- `LIMITS`: each frame within the core's 24 million pixels and 16,384 pixels per side, with at most 1,048,576 frames.
+  Encoded output uses available memory.
 
 The complete encoder has the same call: `await encoder.animation({width, height, loops, frames}, options)` takes the
 complete encoder's presets and defaults. The worker request is `{id, operation: 'animation', width, height, loops,
 frames, options}`; transfer each frame's buffer. The still worker has no animation and answers `JXL_UNAVAILABLE`.
+
+### Shared animation atlas
+
+```js
+import {encodeAnimationAtlas} from 'rapier-jxl/animation-atlas';
+const bytes = encodeAnimationAtlas(animation, {
+  quality: 100, atlasMode: 'auto', atlasSearch: {strategy: 'auto', maxEntries: 256},
+});
+```
+
+`buildAnimationAtlas(animation, searchOptions?)` deterministically discovers and packs byte-exact repeated glyphs
+and tiles, returning an owned `AnimationAtlasPlan` or `null` when none fits. All channels, including hidden RGB,
+participate in matching. Placements unchanged from the previously shown frame do not inflate use counts.
+
+`encodeAnimationAtlas` accepts ordinary animation options plus `atlas`, `atlasMode` and `atlasSearch`. An authored
+`atlas` supplies `{atlas: {data, width, height}, patches}`; each patch contains `sourceX`, `sourceY`, `width`,
+`height` and `positions: [{frame, x, y}]`. Every placement must exactly match its source frame. A plan admits up to
+1,048,576 atlas pixels, 4096 rectangles and 262,144 positions.
+
+| Option | Meaning |
+| --- | --- |
+| `atlasMode` | `'auto'` by default retains an atlas only when the complete animation is smaller; `'force'` requires a usable atlas; `'off'` returns ordinary animation bytes. |
+| `atlasSearch.strategy` | `'auto'`, `'glyphs'` or `'tiles'`; auto combines connected glyphs and aligned tiles. |
+| `atlasSearch.tileSize` | 4, 8, 16, 32 or 64 pixels; default 16. |
+| `atlasSearch.maxEntries` | Search budget of 1–4096 rectangles; default 256. |
+| `atlasSearch.maxPixels` | Packed atlas search budget of 16–1,048,576 pixels; default 262,144. |
+| `atlasSearch.minUses` | Useful repeated placements per rectangle, 2–65,536; default 2. |
+
+Automatic atlas coding returns the ordinary animation bytes outside straight RGBA8 quality 100 or without a
+saving; forced atlas coding refuses an unsupported input or an unusable plan. The atlas uses reference slot 3,
+the ordinary animation canvas uses slot 2, and per-frame patch dictionaries retain slot 1. Timing, loops and
+source differencing use the ordinary animation owner. Keep all source and supplied atlas buffers unchanged while
+`encodeAnimationAtlasSteps` is active. Exhaust iteration to set `bytes`; cancellation leaves it null. Hurry can
+retain the completed baseline at planning boundaries, while a started candidate may finish; force completes its
+authored candidate.
 
 ## Progress and cancellation
 
@@ -863,9 +991,11 @@ remain usable by the sender. [Worker example](../../examples/worker.mjs).
 
 ## Limits and errors
 
-Every encoding entry point exports `LIMITS` with `bytes`, `pixels` and `edge`. The output limit is 16 MiB and each dimension
-is at most 16,384 pixels. Core, effort and wasm accept 24 million pixels; photo accepts 40 million; JPEG accepts
-64 million and an input JPEG of at most 16 MiB. The corresponding ANS entry point has the same limits.
+The published `LIMITS` records expose `pixels` and `edge`; each dimension is at most 16,384 pixels. Core,
+effort and wasm accept 24 million pixels; photo accepts 40 million; JPEG accepts 64 million. The corresponding
+ANS entry point has the same dimension limits. Inputs and encoded output use available memory. APIs that expose
+`maxBytes`, `maxDecodedBytes`, `maxOutputLength` or `maxRetainedBytes` retain those explicit caller-controlled
+budgets; format-level restrictions, including level-5 ICC size, also remain in force.
 
 Checked encoding entry points throw `Error` objects with a stable `code`. Branch on `code`; messages are diagnostic text.
 Raw writer primitives require their documented preconditions; their errors are not limited to this vocabulary.
@@ -875,8 +1005,8 @@ Raw writer primitives require their documented preconditions; their errors are n
 | `JXL_INPUT` | Invalid input type, buffer length, dimensions or option value; malformed metadata container or a rejected reconstruction-data edit. |
 | `JXL_RECONSTRUCTION` | Invalid or unsupported JPEG reconstruction metadata or coefficient stream. |
 | `JXL_DIMENSIONS` | Valid positive dimensions exceed the import's edge or pixel limit. |
-| `JXL_SIZE` | Input JPEG or output, including attached metadata, exceeds its byte limit. |
-| `JXL_MEMORY` | Allocation failed. |
+| `JXL_SIZE` | An explicit byte/format budget is exceeded, or no complete candidate fits a requested target size. |
+| `JXL_MEMORY` | Allocation failed or the requested storage length cannot be represented. |
 | `JXL_JPEG` | Malformed JPEG or JPEG form the coefficient carrier cannot represent. |
 
 Kernel configuration uses the same `JXL_INPUT` code for an invalid mode. Missing or blocked WebAssembly selects
@@ -904,12 +1034,13 @@ and returns a `Blob`. `options.worker` is required: a `Worker` running either wo
 
 ## Complete Rapier system
 
-`rapier-jxl/rapier` and `/rapier/min` expose the complete encoder. Two self-starting classic workers carry it:
+`rapier-jxl/rapier` and `/rapier/min` expose the complete encoder. Two self-starting classic workers are provided:
 `rapier-jxl/rapier/still-worker` (`dist/rapier-still-worker.js`, what Rapier's page embeds) and
 `rapier-jxl/rapier/worker` (`dist/rapier-worker.js`, the still worker plus animation and the other format writers described
 here). Both include effort search, optional WASM with JavaScript fallback, photographic pixel encoding, reversible JPEG
-coefficient transcoding and parallel lossless groups. No format feature is downloaded at runtime. Pixel decoding uses the
-browser or an external decoder.
+coefficient transcoding and parallel lossless groups. Each packaged worker contains its supported features. Rapier
+embeds the still worker and provides the complete worker in its on-demand JPEG XL complete part. Pixel decoding
+uses the browser or an external decoder.
 
 In a worker or Node:
 
@@ -922,15 +1053,16 @@ const carried = await encoder.transcode({bytes: jpegBytes});
 
 `encode(image, options)` accepts the typed RGBA formats and color declarations above. Defaults are quality 90 and
 effort 7. `lossless: true` forces quality 100. Add `losslessProfile: 'painting'` to skip the effort ladder for exact painting saves.
-Photographic coding is the default for non-palette RGBA8 below quality 100 (since 5.0.0); `photo: false` asks for the ordinary
-pixel encoder, which other inputs always use. The complete entry admits 24 million pixels,
-16,384 pixels per edge and 16 MiB output. JPEG input admits 16 MiB and 64 million pixels; transcoding takes `effort` 1 to 9 (7 by default),
+Photographic coding is the default for non-palette RGBA8 below quality 100; `photo: false` asks for the ordinary
+pixel encoder, which other inputs always use. The complete entry admits 24 million pixels and
+16,384 pixels per edge. JPEG input admits 64 million pixels; input bytes and encoded output use available memory.
+Transcoding takes `effort` 1 to 9 (7 by default),
 preserves admitted coefficients, orientation and the original JPEG syntax. `await encoder.reconstruct({bytes})`
 returns the original JPEG bytes, or `null` for a file without reconstruction data.
 `encode` and `transcode` accept `options.progress(fraction)` to report completed work from 0 to 1.
 
 Use `preset` to choose defaults. Explicit `quality`, `effort`, and `photo` options override the preset;
-`lossless: true` always forces quality 100. The default without a preset is quality 90, effort 7 and photographic coding (5.0.0; 4.x used ordinary pixel coding).
+`lossless: true` always forces quality 100. The default without a preset is quality 90, effort 7 and photographic coding.
 
 | Preset | Quality | Effort | Coding below quality 100 |
 | --- | --- | --- | --- |
@@ -972,7 +1104,12 @@ The standard worker accepts one operation at a time:
 With `progress: true`, encoding and transcoding first send `{id, progress}` replies. Fractions increase to 1; intermediate
 reports advance by at least one hundredth and are separated by at least 100 ms. Completion is the final response.
 
-### Format operations in the complete worker
+### Format operations
+
+The still worker accepts `photo`, `profile`, `readSource`, `encodeSource` and `opsin`. Its photo action uses the
+ordinary photo options: transforms, quantization, coefficient orders, progressive/noise/LF controls, upsampling,
+extra channels, explicit level and orientation require the complete worker and refuse `JXL_UNAVAILABLE` in the
+still worker. The complete worker accepts those five actions, advanced photo options and every other action below.
 
 ```js
 const image = await encoder.format({
@@ -993,17 +1130,19 @@ structured results return `{id, ok: true, result}`. `FormatRequest` and `FormatR
 
 | Actions | Input and operation |
 |---|---|
-| `photo`, `noise`, `hybrid`, `deltaPalette`, `patches`, `splines`, `profile` | `data`, `width`, `height`, `options`; corresponding encoder. |
+| `photo`, `noise`, `hybrid`, `deltaPalette`, `graphics`, `patches`, `splines`, `profile` | `data`, `width`, `height`, `options`; corresponding encoder. |
+| `animationAtlas`, `animationAtlasPlan` | `animation`, `options`; shared-atlas animation or an owned discovered plan. |
 | `hybridRegions` | RGBA8 dimensions and data; detected candidate rectangles. |
 | `splineStroke` | `controlPoints`, `options`; quantized spline description. |
 | `channels`, `layers` | `image`, `options`; authored planes or layers. |
+| `patchComposition` | `image: {base, references, patches}`, `options`; typed or encoded Modular/VarDCT sources through one patch dictionary. |
 | `photoPlan` | Pixel input and planning options, `qualities`, optional `targetBytes`/`targetOptions`; one retained plan shared across all results. |
 | `readSource`, `encodeSource` | Source-file `bytes`; decoded native samples or their profile-preserving JPEG XL encoding. |
 | `container`, `reframeContainer`, `progressiveContainer` | Encoded `bytes`, `options`; collected complete container. |
 | `streamContainer` | `chunks` array and options; collected result of raw-chunk framing. |
 | `inspectContainer`, `progressivePlan`, `deliveryLayout` | Encoded `bytes`, `options`; structure and byte milestones. |
 | `deliveryOrder`, `normalizeDelivery`, `opsin` | Encoded `bytes`, `options`; corresponding exact-structure edit. |
-| `metadata`, `compressedMetadata` | Encoded `bytes`, metadata options; original or portable-compressed metadata. |
+| `metadata`, `compressedMetadata` | Encoded `bytes`, metadata options; original or native-first Brotli-compressed metadata. |
 | `readMetadata`, `readCompressedMetadata` | Encoded `bytes`; owned metadata, with optional bounded expansion for the latter. |
 | `frameIndex`, `readFrameIndex`, `frameIndexPayload` | Index attachment/removal, reading or payload authoring; use `index` for authored data. |
 | `gainMap`, `readGainMap`, `gainMapPayload` | Supplied gain-map attachment/removal, reading or payload authoring; use `bundle` for authored data. |
@@ -1012,11 +1151,12 @@ structured results return `{id, ok: true, result}`. `FormatRequest` and `FormatR
 
 The photo-plan request accepts up to 32 `qualities`, each at least 1 and less than 100. Omitted qualities encode
 the planning quality, unless a target was supplied. The result reports plan dimensions/retained bytes/strategies,
-`images: [{quality, bytes}]`, and a target result or `null`. Output image bytes together must fit 16 MiB. Retained
+`images: [{quality, bytes}]`, and a target result or `null`. Output images use available memory. Retained
 buffers are disposed after success, failure or cancellation; a later request starts a fresh plan.
 
-All requests are structured-cloneable. Compression callbacks do not cross worker messages: the worker uses its
-built-in portable Brotli. Its reader retains the external-stream limitations above. Progressive metadata is
+All requests are structured-cloneable. Compression callbacks do not cross worker messages: metadata uses native
+Brotli when available and the built-in portable codec otherwise. Explicit `brotliCompress` and `brotliDecompress`
+actions always use the portable entry, whose reader retains the external-stream limitations above. Progressive metadata is
 compressed before the collected result completes. Existing busy, cancellation, transfer and error rules apply;
 no partial result is returned as success.
 

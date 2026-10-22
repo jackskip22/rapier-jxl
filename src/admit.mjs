@@ -74,7 +74,7 @@ export function admitSampleFormat(data, options = {}) {
 }
 
 export function admitOutputSize(length) {
-  if (length > LIMITS.bytes) throw fault('JXL_SIZE', 'The encoded picture exceeds 16 MiB.');
+  if (!Number.isSafeInteger(length) || length < 0) throw fault('JXL_MEMORY', 'The encoded picture cannot be allocated.');
 }
 
 export function answer(bytes) {

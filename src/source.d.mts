@@ -24,7 +24,8 @@ export interface SourceImage {
 /** Decode 16-bit PNG (including Adam7) or single-part flat scanline OpenEXR HALF/FLOAT with NONE/RLE/ZIPS/ZIP.
  * PNG supports grayscale/RGB with optional alpha, cICP, exact RGB/GRAY iCCP profiles, sRGB rendering intent,
  * custom cHRM and gAMA exponents representable by JPEG XL (1/8192 through 1). Color precedence is cICP, iCCP,
- * sRGB, then cHRM/gAMA. Untagged PNG assumes sRGB. Profiles are bounded to 16 MiB before decompression allocation.
+ * sRGB, then cHRM/gAMA. Untagged PNG assumes sRGB. Profile decompression must exactly match its declared ICC
+ * extent, and the complete profile must fit available memory.
  * OpenEXR accepts uniform RGB or Y plus optional A, square pixels
  * and coincident data/display windows. It assumes linear sRGB primaries when chromaticities are absent.
  * Recognized primaries are sRGB, Display P3 and Rec. 2020 (D65); samples and colors are not converted.

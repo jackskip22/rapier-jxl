@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-import {LIMITS} from './bits.mjs';
 import {fault, guard, admitOutputSize} from './admit.mjs';
 import {SIGNATURE, FTYP, LEVEL, CODESTREAM, EXIF, XML, JUMBF, BROB, RECONSTRUCTION, boxes, fileHeader, boxHeader} from './container.mjs';
 import {compressBrotli, decompressBrotli} from './brotli.mjs';
@@ -17,7 +16,6 @@ function utf8Length(text) {
     else if (c < 2048) length += 2;
     else if (c >= 0xd800 && c <= 0xdbff && text.charCodeAt(i + 1) >= 0xdc00 && text.charCodeAt(i + 1) <= 0xdfff) { length += 4; i++; }
     else length += 3;
-    if (length > LIMITS.bytes) admitOutputSize(length);
   }
   return length;
 }
@@ -85,7 +83,7 @@ function attach(bytes, plan, source = sourceBoxes(bytes)) {
 export function withMetadata(bytes, options = {}) { return guard(() => attach(bytes, prepare(options))); }
 
 function limit(value) {
-  if (!Number.isSafeInteger(value) || value < 1 || value > LIMITS.bytes) throw invalid('The decoded metadata limit is from 1 byte through 16 MiB.');
+  if (!Number.isSafeInteger(value) || value < 1) throw invalid('The decoded metadata limit is a positive safe integer.');
   return value;
 }
 
@@ -114,12 +112,13 @@ async function codec(data, direction, provided, maximum) {
   let result;
   if (provided !== undefined) {
     if (typeof provided !== 'function') throw invalid('The Brotli codec is a function.');
-    result = await provided(data, {maxOutputLength: maximum});
+    result = await provided(data, maximum === Number.MAX_SAFE_INTEGER ? {} : {maxOutputLength: maximum});
   } else if (globalThis.process?.versions?.node) {
     const zlib = await import('node:zlib');
     const method = direction === 'compress' ? zlib.brotliCompress : zlib.brotliDecompress;
     try {
-      result = await new Promise((resolve, reject) => method(data, {maxOutputLength: Math.max(1, maximum)}, (error, output) => error ? reject(error) : resolve(output)));
+      const settings = maximum === Number.MAX_SAFE_INTEGER ? {} : {maxOutputLength: Math.max(1, maximum)};
+      result = await new Promise((resolve, reject) => method(data, settings, (error, output) => error ? reject(error) : resolve(output)));
     } catch (error) {
       if (error.code === 'ERR_BUFFER_TOO_LARGE') throw fault('JXL_SIZE', 'Decoded metadata exceeds maxDecodedBytes.');
       throw invalid('Invalid Brotli metadata: ' + error.message);
@@ -159,7 +158,7 @@ export async function withCompressedMetadata(bytes, options = {}) {
     if (plan.changed.size && source?.some(box => box.decoded === RECONSTRUCTION))
       throw invalid('Metadata edits would invalidate JPEG reconstruction data; retain the original JPEG XL file.');
     for (const entry of plan.entries) {
-      const compressed = await codec(entry.data, 'compress', compress, LIMITS.bytes - 4);
+      const compressed = await codec(entry.data, 'compress', compress, Number.MAX_SAFE_INTEGER);
       if (compression === 'auto' && compressed.length + 4 >= entry.data.length) continue;
       const payload = new Uint8Array(compressed.length + 4);
       new DataView(payload.buffer).setUint32(0, entry.type); payload.set(compressed, 4);
@@ -172,7 +171,7 @@ export async function withCompressedMetadata(bytes, options = {}) {
 export async function readMetadataAsync(bytes, options = {}) {
   try {
     if (!options || typeof options !== 'object' || Array.isArray(options)) throw invalid('Metadata reader options are an object.');
-    const maximum = limit(options.maxDecodedBytes ?? LIMITS.bytes), source = sourceBoxes(bytes), {decompress} = options;
+    const maximum = limit(options.maxDecodedBytes ?? Number.MAX_SAFE_INTEGER), source = sourceBoxes(bytes), {decompress} = options;
     const entries = (source ?? []).filter(box => keys.has(box.decoded)).map(box => ({
       type: box.decoded, compressed: box.type === BROB, data: new Uint8Array(bytes.subarray(box.body + (box.type === BROB ? 4 : 0), box.end))
     }));

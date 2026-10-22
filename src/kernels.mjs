@@ -1,7 +1,7 @@
 // Optional WebAssembly kernels. MIT (LICENSE).
 import {kernelHooks} from './kernel-hooks.mjs';
 import {WEIGHTED_BUCKET} from './weighted-policy.mjs';
-import {BitWriter, LIMITS} from './bits.mjs';
+import {BitWriter} from './bits.mjs';
 import {fault} from './admit.mjs';
 import {SCALAR, SIMD, SIMD_PROBE} from './kernels-bytes.mjs';
 
@@ -64,7 +64,7 @@ function channel(w, target, plane, width, height, leaf, raw) {
   if (!acceptablePlane(plane, width, height, leaf.offset) || leaf.multiplier !== 1 || !Number.isInteger(leaf.predictor) || leaf.predictor < 0 || leaf.predictor > 5 || !acceptableWriter(w) || !acceptableConfig(config)) return false;
   if (raw && (w || !(target instanceof Uint32Array) || target.length < 34 || target.length > RAW_BINS)) return false;
   const n = width * height;
-  if (w && w.at + n * 8 + 32 > LIMITS.bytes) return false;
+  if (w && w.at + n * 8 + 32 > 0x7fffffff) return false;
   engine.i32.set(plane.subarray(0, n), P >> 2);
   (active === 'simd' ? engine.simd : engine.scalar).residual(P, width, height, leaf.predictor, leaf.offset, R);
   return tokens(w, [target], n, 0, config, raw ? target.length : 0);
@@ -72,7 +72,7 @@ function channel(w, target, plane, width, height, leaf, raw) {
 function weighted(w, targets, plane, width, height, offset, contextOf, residuals, properties) {
   if (!acceptablePlane(plane, width, height, offset, residuals ? 1048576 : 65536) || !acceptableWriter(w)) return false;
   const n = width * height;
-  if (w && w.at + n * 8 + 32 > LIMITS.bytes) return false;
+  if (w && w.at + n * 8 + 32 > 0x7fffffff) return false;
   if (residuals && (!(residuals instanceof Uint32Array) || residuals.length < n)) return false;
   if (properties && (!(properties instanceof Int32Array) || properties.length < n)) return false;
   if (contextOf.length !== 34 || contextOf.some(c => !Number.isInteger(c) || c < 0 || c >= 34)) return false;
@@ -138,7 +138,7 @@ function group(w, targets, rgba, imageWidth, x0, y0, width, height, setup) {
       !Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width > 256 || height > 256 ||
       !Number.isSafeInteger(imageWidth) || !Number.isSafeInteger(x0) || !Number.isSafeInteger(y0) || x0 < 0 || y0 < 0 ||
       imageWidth < x0 + width || ((y0 + height - 1) * imageWidth + x0 + width) * 4 > rgba.length ||
-      !acceptableWriter(w) || w && w.at + n * channels * 8 + 32 > LIMITS.bytes) return false;
+      !acceptableWriter(w) || w && w.at + n * channels * 8 + 32 > 0x7fffffff) return false;
   for (let c = 0; c < channels; c++) {
     const l = leaves[c], target = targets[c];
     if (picture[c] !== c || l.multiplier !== 1 || !Number.isInteger(l.predictor) || l.predictor < 0 || l.predictor > 5 ||

@@ -36,5 +36,5 @@ export function prepareOpsinTransform(options?: OpsinOptions): BitWriter;
  * Unspecified fields retain existing values. Empty options return an owned exact copy. Non-XYB is refused.
  * All coded frames, original ICC bits, opaque metadata and level are retained. The first serialized frame-index
  * offset is adjusted for the header length; partial codestream boxes are coalesced into one jxlc box.
- * ICC parsing accepts this encoder's profile entropy representation. Input and output are at most 16 MiB. */
+ * ICC parsing accepts this encoder's profile entropy representation. Input and output use available memory. */
 export function withOpsin(bytes: Uint8Array, options?: OpsinOptions): Bytes;

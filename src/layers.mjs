@@ -3,7 +3,7 @@ import {BitWriter, LIMITS, complete} from './bits.mjs';
 import {fault, job, admitSize, admitOutputSize} from './admit.mjs';
 import {encodeChannelsSteps} from './channels.mjs';
 import {prepareICC} from './icc.mjs';
-import {readStill, writeStillFrame, writeStillImageHeader, copyBits} from './framing.mjs';
+import {readStill, writeStillFrame, writeStillImageHeader, copyBits, compositionMetadataKey} from './framing.mjs';
 import {fileHeader, boxHeader, CODESTREAM} from './container.mjs';
 
 export {LIMITS};
@@ -26,17 +26,6 @@ function layerBlend(value, fallback, extras) {
   const clamp = value.clamp ?? fallback.clamp ?? false;
   if (typeof clamp !== 'boolean') throw fault('JXL_INPUT', 'Layer clamp is boolean.');
   return {mode, source, alpha, clamp};
-}
-function layerMetadataKey(still) {
-  const w = new BitWriter(128), {image, codestream} = still;
-  w.write(3, image.orientation - 1);
-  copyBits(w, codestream, image.depthAt, image.modular16At);
-  copyBits(w, codestream, image.modular16At + 1, image.toneAt);
-  const defaultTone = !image.extra || !!(codestream[image.toneAt >> 3] >> (image.toneAt & 7) & 1);
-  w.write(1, defaultTone ? 1 : 0);
-  if (!defaultTone) copyBits(w, codestream, image.toneAt + 1, image.extensionsAt);
-  copyBits(w, codestream, image.extensionsAt, image.payloadEnd);
-  return w.bitLength + ':' + w.finish().join(',');
 }
 function layerAdmission(input, options) {
   layerObject(input, 'Layered image'); layerObject(options, 'Layer options');
@@ -68,7 +57,8 @@ function layerAdmission(input, options) {
       layerObject(layer.options ?? {}, 'Per-layer encoding options');
       for (const name of Object.keys(layer.options ?? {})) if (!['groupSize', 'predictor', 'upsampling'].includes(name))
         throw fault('JXL_INPUT', 'Per-layer options are groupSize, predictor and upsampling; image color and precision are shared.');
-      operation = encodeChannelsSteps(layer.image, {...options, ...layer.options, preview: index ? undefined : options.preview});
+      operation = encodeChannelsSteps(layer.image, {...options, ...layer.options,
+        progressive: layer.referenceOnly ? false : options.progressive, preview: index ? undefined : options.preview});
     }
     return {layer, x0, y0, frameType, reference, still, operation};
   });
@@ -84,7 +74,7 @@ function* layerSteps(config) {
       do { step = item.operation.next(); if (!step.done) yield (i + step.value) / layers.length * .9; } while (!step.done);
       item.still = readStill(step.value, {iccBits});
     }
-    const {still, layer} = item, key = layerMetadataKey(still);
+    const {still, layer} = item, key = compositionMetadataKey(still);
     if (i && key !== metadata) throw fault('JXL_INPUT', 'All layers share identical channel metadata, color meaning, orientation and transform data.');
     metadata = key; modular16 &&= still.image.modular16; level = Math.max(level, still.level);
     if (still.frames.length !== 1) throw fault('JXL_INPUT', 'Each encoded layer is a single frame; author atlas references and LF pyramids through their dedicated encoders.');

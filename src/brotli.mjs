@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {BitWriter, LIMITS, floorLog2, ceilLog2} from './bits.mjs';
+import {BitWriter, floorLog2, ceilLog2} from './bits.mjs';
 import {buildCode, canonicalCodes, writePrefixCode} from './prefix.mjs';
 import {fault} from './fault.mjs';
 
@@ -15,10 +15,9 @@ const INSERT_BASE = bases(INSERT_BITS, 0), COPY_BASE = bases(COPY_BITS, 2);
 
 function admission(bytes, options) {
   if (!(bytes instanceof Uint8Array)) throw invalid('bytes are a Uint8Array.');
-  if (bytes.length > LIMITS.bytes) throw fault('JXL_SIZE', 'The Brotli input exceeds 16 MiB.');
   if (!options || typeof options !== 'object' || Array.isArray(options)) throw invalid('options are an object.');
-  const maximum = options.maxOutputLength ?? LIMITS.bytes;
-  if (!Number.isInteger(maximum) || maximum < 0 || maximum > LIMITS.bytes) throw invalid('maxOutputLength is an integer from 0 to 16 MiB.');
+  const maximum = options.maxOutputLength ?? Number.MAX_SAFE_INTEGER;
+  if (!Number.isSafeInteger(maximum) || maximum < 0) throw invalid('maxOutputLength is a nonnegative safe integer.');
   return maximum;
 }
 function lengthCode(length, base) {
@@ -201,7 +200,13 @@ export function decompressBrotli(bytes, options = {}) {
   const history = [4,11,15,16]; let output = new Uint8Array(0), at = 0, last = false;
   const reserve = end => {
     if (end > maximum) throw tooLarge();
-    if (end > output.length) { const next = new Uint8Array(Math.min(maximum, Math.max(end, output.length * 2))); next.set(output.subarray(0, at)); output = next; }
+    if (end > output.length) {
+      const capacity = Math.min(maximum, Math.max(end, output.length * 2));
+      let next;
+      try { next = new Uint8Array(capacity); }
+      catch (error) { if (!(error instanceof RangeError) || capacity === end) throw error; next = new Uint8Array(end); }
+      next.set(output.subarray(0, at)); output = next;
+    }
   };
   while (!last) {
     last = reader.read(1) === 1; if (last && reader.read(1)) break;

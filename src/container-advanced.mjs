@@ -16,7 +16,7 @@ function uint(value, maximum, name, minimum = 0) {
   if (!Number.isSafeInteger(value) || value < minimum || value > maximum) throw invalid(name + ' is an integer from ' + minimum + ' to ' + maximum + '.');
   return value;
 }
-function limit(options) { record(options, 'Container options'); return uint(options.maxBytes ?? 16777216, Number.MAX_SAFE_INTEGER, 'maxBytes', 1); }
+function limit(options) { record(options, 'Container options'); return uint(options.maxBytes ?? Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, 'maxBytes', 1); }
 function bounded(length, maximum) {
   if (!Number.isSafeInteger(length) || length > maximum) throw fault('JXL_SIZE', 'The JPEG XL container exceeds maxBytes.');
   return length;

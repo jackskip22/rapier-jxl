@@ -4,8 +4,9 @@ import type {AdvancedPhotoOptions, TransformName} from './photo-advanced.mjs';
 export type {Pixels, Bytes, Job, EncoderError, ErrorCode} from './index.mjs';
 export interface PhotoPlanOptions extends AdvancedPhotoOptions {
   /** Maximum retained typed-array bytes; default 256 MiB, at most 2 GiB. The conservative preflight includes
-   * coefficients, LF samples, scan arrays and possible alpha; transient encode buffers and object overhead
-   * are additional. Raising the limit is an explicit memory choice. */
+   * coefficients, LF samples, scan arrays, possible alpha, typed extra-plane snapshots, prepared kernels
+   * and authored-order buffers; transient encode buffers and object overhead
+   * are outside the limit. Raising the limit is an explicit memory choice. */
   maxRetainedBytes?: number | undefined;
 }
 export const LIMITS: Limits & {readonly retainedBytes: number};
@@ -32,6 +33,7 @@ export interface TargetJob extends Generator<number, TargetResult, boolean | und
   result: TargetResult | null;
 }
 export interface PhotoPlan {
+  /** Declared canvas dimensions before Exif orientation, including spatial upsampling. */
   readonly width: number;
   readonly height: number;
   readonly planningQuality: number;
@@ -56,8 +58,10 @@ export interface PhotoPlanJob extends Generator<number, PhotoPlan, boolean | und
 }
 /** Retains YCbCr transform coefficients once. Eight-bit sRGB-transfer inputs only; no ICC profile.
  * Default layout is the optional auto DCT8/DCT16 planner, selected at quality 90 unless supplied. Explicit
- * strategies support all format transforms and raw/compact quantization options. Caller pixels are not
- * retained or modified. LF pyramid intermediates are regenerated from each candidate's quantized DC. */
+ * strategies support all format transforms, raw/compact quantization and per-pass coefficient orders. Caller pixels are not
+ * retained or modified. Extra-channel samples are copied at admission, before the first incremental step,
+ * and released on dispose. Upsampling takes ceil(width/factor) by ceil(height/factor) RGBA samples and retains
+ * the declared canvas. LF pyramid intermediates are regenerated from each candidate's quantized DC. */
 export function createPhotoPlan(data: Pixels, width: number, height: number, options?: PhotoPlanOptions): PhotoPlan;
 /** Incremental planning; option and retained-memory admission are eager. */
 export function createPhotoPlanSteps(data: Pixels, width: number, height: number, options?: PhotoPlanOptions): PhotoPlanJob;

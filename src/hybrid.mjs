@@ -120,14 +120,12 @@ function* hybridSteps(data, width, height, config) {
     const alpha = data.some((value, i) => (i & 3) === 3 && value !== 255), exactCrops = new Map();
     const broadGraphics = regions.reduce((sum, r) => sum + r.width * r.height, 0) >= width * height / 2;
     if (config.automatic) {
-      const selected = []; let cachedBytes = 0;
+      const selected = [];
       for (let i = 0; i < regions.length; i++) {
         const region = regions[i], pixels = hybridCrop(data, width, region);
         const exact = yield* hybridStage(hybridExact(pixels, region.width, region.height, alpha, config), .25 + .25 * i / regions.length, .125 / regions.length);
         const photo = yield* hybridStage(hybridPhoto(pixels, region.width, region.height, config), .25 + .25 * (i + .5) / regions.length, .125 / regions.length);
         if (exact.length + 32 < photo.length) {
-          cachedBytes += exact.length;
-          if (cachedBytes > LIMITS.bytes * 2) throw fault('JXL_SIZE', 'Exact hybrid candidate storage exceeds its bounded working set.');
           selected.push(region); exactCrops.set(region, exact);
         }
         if (yield .25 + .25 * (i + 1) / regions.length) return best;
@@ -144,13 +142,11 @@ function* hybridSteps(data, width, height, config) {
     }
     if (regions.length) {
       const base = yield* hybridStage(hybridPhoto(smooth, width, height, config), config.automatic ? .5 : 0, config.automatic ? .125 : .5);
-      const layers = [{bytes: base}]; let retainedBytes = base.length;
+      const layers = [{bytes: base}];
       for (let i = 0; i < regions.length; i++) {
         const region = regions[i];
         const bytes = exactCrops.get(region) ?? (yield* hybridStage(hybridExact(hybridCrop(data, width, region), region.width, region.height, alpha, config),
           (config.automatic ? .625 : .5) + (config.automatic ? .125 : .25) * i / regions.length, (config.automatic ? .125 : .25) / regions.length));
-        retainedBytes += bytes.length;
-        if (retainedBytes > LIMITS.bytes * 2) throw fault('JXL_SIZE', 'Exact hybrid candidate storage exceeds its bounded working set.');
         layers.push({bytes, x: region.x, y: region.y});
       }
       const bytes = yield* hybridStage(encodeLayersSteps({width, height, layers}), .75, config.automatic && broadGraphics ? .125 : .25);

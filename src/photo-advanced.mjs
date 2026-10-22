@@ -14,46 +14,57 @@ import {admitPhotoFilter} from './photo-job.mjs';
 import {coefficientEffortSteps} from './coefficient-effort.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {admitLFFrames, lfFrameSteps, prependLFFrames} from './lf-frames.mjs';
-import {padPhotoTiles, cropPhotoCanvas, photoLevelContainer} from './photo-crop.mjs';
+import {cropPhotoCanvas, photoLevelContainer} from './photo-crop.mjs';
 import {readImageHeader} from './framing.mjs';
 import {quantParamCoding} from './quantization-params.mjs';
+import {prepareCoefficientOrders, COEFFICIENT_ORDER_BUCKETS} from './coefficient-orders.mjs';
+import {admitPhotoLayout, padPhotoLayout, applyPhotoLayout} from './photo-layout.mjs';
+import {admitPhotoExtras, applyPhotoExtras, exactPhotoExtraSteps} from './photo-extras.mjs';
 
-export {TRANSFORMS, photonNoise};
+export {TRANSFORMS, photonNoise, COEFFICIENT_ORDER_BUCKETS};
 export {PHOTO_LIMITS as LIMITS};
 export function encodePhoto(data, width, height, options) { return complete(encodePhotoSteps(data, width, height, options)); }
 export function encodePhotoSteps(data, width, height, options = {}) {
   const {quality, colorSpace} = admitOptions(options, 90), effort = admitEffort(options);
-  admitPixels(data, width, height, PHOTO_LIMITS);
+  const layout = admitPhotoLayout(width, height, options, quality);
+  admitPixels(data, layout.codedWidth, layout.codedHeight, PHOTO_LIMITS);
   const samples = admitSampleFormat(data, options), progression = progressivePasses(options.progressive), noiseLut = admitNoise(options.noise, width, height);
   const lfLevels = admitLFFrames(options.lfFrames);
+  const authoredOrderPasses = prepareCoefficientOrders(options.coefficientOrders, progression?.count || 1);
   const strategyOptions = admitStrategyOptions(options), filter = admitPhotoFilter(options);
-  if (!samples.native8 && quality < 100 && (strategyOptions.variable || progression || noiseLut || lfLevels))
+  if (quality === 100 && options.extraChannels !== undefined && (!Array.isArray(options.extraChannels) || options.extraChannels.length))
+    return exactPhotoExtraSteps(data, width, height, options, samples);
+  const extras = admitPhotoExtras(data, layout, options);
+  if (!samples.native8 && quality < 100 && (strategyOptions.variable || progression || noiseLut || lfLevels || authoredOrderPasses || extras || layout.factor !== 1 || layout.colorTransform))
     throw fault('JXL_INPUT', 'Advanced VarDCT transforms require eight-bit RGB samples with sRGB transfer.');
   if (quality < 100 && lfLevels) {
     if (colorSpace !== 'srgb') throw fault('JXL_INPUT', 'Low-frequency frame pyramids currently require sRGB photographic pixels.');
   }
-  return job(steps(data, width, height, {quality, colorSpace, effort, samples, options, progression, noiseLut, strategyOptions, filter, lfLevels}));
+  return job(steps(data, layout.codedWidth, layout.codedHeight, {quality, colorSpace, effort, samples, options, progression, noiseLut, strategyOptions, filter, lfLevels, authoredOrderPasses, layout, extras}));
 }
 
-function* steps(data, width, height, {quality, colorSpace, effort, samples, options, progression, noiseLut, strategyOptions, filter, lfLevels}) {
+function* steps(data, width, height, {quality, colorSpace, effort, samples, options, progression, noiseLut, strategyOptions, filter, lfLevels, authoredOrderPasses, layout, extras}) {
   if (!samples.native8) return yield* nativeSteps(data, width, height, {quality, samples, effort});
   if (quality >= 100) return yield* losslessSteps(data, width, height, {colorSpace});
-  const originalWidth = width, originalHeight = height, padded = noiseLut && padPhotoTiles(data, width, height);
+  const padded = padPhotoLayout(data, width, height, layout, noiseLut);
   if (padded) ({data, width, height} = padded);
   const variable = strategyOptions.variable;
   let frames;
   const finish = bytes => {
     if (frames) bytes = prependLFFrames(bytes, frames);
     if (variable && bytes[0] === 255 && !readImageHeader(bytes).modular16) bytes = photoLevelContainer(bytes, 10);
-    return padded ? cropPhotoCanvas(bytes, originalWidth, originalHeight) : bytes;
+    return padded ? cropPhotoCanvas(bytes, layout.width, layout.height) : bytes;
   };
   const producer = variable ? strategyCoefficientSteps(data, width, height, quality, colorSpace, options, strategyOptions) :
     colorSpace === 'srgb' && (lfLevels || noiseLut || preferXYB(data, width, height)) ? photoXYBSteps(data, width, height, quality, {filter}) :
     photoCoefficientSteps(data, width, height, quality, colorSpace);
   const image = yield* part(producer, 0, lfLevels ? 3 : 2);
+  applyPhotoLayout(image, layout, !!padded);
+  applyPhotoExtras(image, extras, layout);
   image.orientation = options.orientation ?? 1;
   image.progression = progression;
   image.noiseLut = noiseLut;
+  image.authoredOrderPasses = authoredOrderPasses;
   frames = lfLevels && (yield* part(lfFrameSteps(image, lfLevels), 1, 3));
   if (!variable) {
     const bytes = yield* part(effort >= 5 ? coefficientAnsSteps(image, effort) : coefficientEffortSteps(image, effort), lfLevels ? 2 : 1, lfLevels ? 3 : 2);

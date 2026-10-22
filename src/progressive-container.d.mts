@@ -5,7 +5,7 @@ import type {CompressedMetadataOptions} from './metadata.mjs';
 export interface ProgressiveContainerOptions {
   /** Maximum encoded payload per fragment. Defaults to 65536; extra cuts align with image milestones. */
   chunkSize?: number;
-  /** Maximum complete container size. Defaults to 16 MiB. */
+  /** Optional positive safe-integer budget for complete container size. Defaults to available memory. */
   maxBytes?: number;
   extended?: boolean;
   /** Existing Level10 is preserved; a Level5 input may be promoted. */
@@ -50,7 +50,7 @@ export interface ProgressiveContainerPlan {
   milestones: ProgressiveMilestone[];
 }
 export interface ProgressiveStreamOptions extends ProgressiveContainerOptions {
-  /** Optional portable Brotli hook is passed through. Metadata editing retains its 16 MiB admission limit
+  /** Optional portable Brotli hook is passed through. Metadata editing honors an explicit decoded-byte budget
    * and refuses JPEG reconstruction files. Compression completes before the first yielded byte. */
   metadata?: CompressedMetadataOptions;
 }

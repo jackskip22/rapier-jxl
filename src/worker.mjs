@@ -53,7 +53,7 @@ export function createJPEGXLCodec({encoderFactory, imageReader, formatHandler}) 
     async transcode(input, options = {}) {
       stage = 'checking image';
       const jpeg = byteView(input?.bytes);
-      if (!jpeg.byteLength || jpeg.byteLength > JPEG_XL_LIMITS.bytes) throw codecError('JXL_INPUT', 'The JPEG is empty or exceeds 16 MiB.');
+      if (!jpeg.byteLength) throw codecError('JXL_INPUT', 'The JPEG is empty.');
       if (!options || typeof options !== 'object' || Array.isArray(options)) throw codecError('JXL_OPTIONS', 'JPEG XL options are invalid.');
       const effort = options.effort ?? 7;
       if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw codecError('JXL_OPTIONS', 'JPEG XL effort must be 1–9.');
@@ -77,7 +77,7 @@ export function createJPEGXLCodec({encoderFactory, imageReader, formatHandler}) 
     async reconstruct(input) {
       stage = 'restoring the JPEG';
       const bytes = byteView(input?.bytes);
-      if (!bytes.byteLength || bytes.byteLength > JPEG_XL_LIMITS.bytes) throw codecError('JXL_INPUT', 'The JPEG XL is empty or exceeds 16 MiB.');
+      if (!bytes.byteLength) throw codecError('JXL_INPUT', 'The JPEG XL is empty.');
       if (typeof encoderFactory !== 'function') throw codecError('JXL_UNAVAILABLE', 'The bundled JPEG XL codec is unavailable.');
       encoder ||= encoderFactory();
       return encoder.reconstruct(bytes);
@@ -167,7 +167,8 @@ export function installJPEGXLWorker(configuration) {
         const result = await codec.format(request.input, {progress: advance, signal: controller.signal});
         progress?.(1);
         if (result instanceof Uint8Array) {
-          const bytes = result.buffer instanceof ArrayBuffer ? result : result.slice();
+          const bytes = result.buffer instanceof ArrayBuffer && result.byteOffset === 0 && result.byteLength === result.buffer.byteLength
+            ? result : new Uint8Array(result);
           globalThis.postMessage({id, ok: true, bytes}, [bytes.buffer]);
         } else globalThis.postMessage({id, ok: true, result});
       } else throw codecError('JXL_OPERATION', 'Unknown JPEG XL operation.');

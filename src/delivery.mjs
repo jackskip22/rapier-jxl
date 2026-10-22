@@ -10,7 +10,7 @@ const INDEX = 0x6a786c69, TOC_ENTRY = [[10, 0], [14, 1024], [22, 17408], [30, 42
 const invalid = message => fault('JXL_INPUT', message);
 function maximum(options) {
   if (!options || typeof options !== 'object' || Array.isArray(options)) throw invalid('Delivery options are an object.');
-  const value = options.maxBytes ?? 16777216;
+  const value = options.maxBytes ?? Number.MAX_SAFE_INTEGER;
   if (!Number.isSafeInteger(value) || value < 1) throw invalid('maxBytes is a positive safe integer.');
   if (options.iccBitLength !== undefined && (!Number.isSafeInteger(options.iccBitLength) || options.iccBitLength < 1)) throw invalid('iccBitLength is a positive safe integer.');
   return value;

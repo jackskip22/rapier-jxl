@@ -1,8 +1,8 @@
 // Bit writer and per-entry limits. MIT (LICENSE).
 
-export const LIMITS = Object.freeze({bytes: 16 * 1024 * 1024, pixels: 24_000_000, edge: 16384});
-export const PHOTO_LIMITS = /*#__PURE__*/ Object.freeze({bytes: 16 * 1024 * 1024, pixels: 40_000_000, edge: 16384});
-export const JPEG_LIMITS = /*#__PURE__*/ Object.freeze({bytes: 16 * 1024 * 1024, pixels: 64_000_000, edge: 16384});
+export const LIMITS = Object.freeze({pixels: 24_000_000, edge: 16384});
+export const PHOTO_LIMITS = /*#__PURE__*/ Object.freeze({pixels: 40_000_000, edge: 16384});
+export const JPEG_LIMITS = /*#__PURE__*/ Object.freeze({pixels: 64_000_000, edge: 16384});
 
 const POWERS = [1];
 for (let count = 1; count <= 32; count++) POWERS.push(POWERS[count - 1] * 2);
@@ -36,9 +36,15 @@ export class BitWriter {
   }
   get bitLength() { return this.at * 8 + this.pending; }
   grow(need = 0) {
-    const cap = LIMITS.bytes + 64;
-    if (this.at + need + 16 > cap) throw Object.assign(new Error('The encoded picture exceeds 16 MiB.'), {code: 'JXL_SIZE'});
-    const next = new Uint8Array(Math.min(cap, Math.max(this.bytes.length * 2, this.at + need + 16)));
+    const required = this.at + need + 16;
+    if (!Number.isSafeInteger(required) || required < 0) throw new RangeError('The encoded picture cannot be allocated.');
+    const capacity = Math.max(this.bytes.length * 2, required);
+    let next;
+    try { next = new Uint8Array(capacity); }
+    catch (error) {
+      if (!(error instanceof RangeError) || capacity === required) throw error;
+      next = new Uint8Array(required);
+    }
     next.set(this.bytes.subarray(0, this.at)); this.bytes = next;
   }
   append(other) {

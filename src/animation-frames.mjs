@@ -12,7 +12,7 @@ import {admitPhotoFilter} from './photo-job.mjs';
 import {readStill, metadataKey, writeAnimatedImageHeader, writeAnimatedFrame, BLEND_MODES} from './framing.mjs';
 import {checkSignal} from './async-job.mjs';
 
-export const ANIMATION_LIMITS = Object.freeze({bytes: 256 * 1024 * 1024, pixels: LIMITS.pixels, edge: LIMITS.edge, frames: 1048576});
+export const ANIMATION_LIMITS = Object.freeze({pixels: LIMITS.pixels, edge: LIMITS.edge, frames: 1048576});
 const CANVAS = 2;
 
 export function admitAnimation(animation, options) {
@@ -41,7 +41,7 @@ export function admitAnimation(animation, options) {
   return {width, height, loops, frames, quality, colorSpace, effort, filter, samples, photo, signal, still: {...still, quality, effort}};
 }
 
-export function* animationSteps(a, pooled = false) {
+export function* animationSteps(a, pooled = false, shared = null) {
   const {width, height, frames, samples, quality} = a;
   let first = frames.findIndex(frame => frame.duration > 0);
   if (first < 0) first = frames.length - 1;
@@ -102,7 +102,7 @@ export function* animationSteps(a, pooled = false) {
   } else {
     for (const job of jobs) {
       const [, , w, h] = job.rect, [from, to] = job.span;
-      const steps = partSteps(coder, pixelsOf(job, width), w, h);
+      const steps = shared ? shared.partSteps(coder, pixelsOf(job, width), w, h, job) : partSteps(coder, pixelsOf(job, width), w, h);
       let step, reply;
       while (!(step = steps.next(reply)).done) reply = yield progress(from + (to - from) * step.value);
       job.bytes = step.value;
@@ -115,6 +115,7 @@ export function* animationSteps(a, pooled = false) {
   const out = new BitWriter(1 << 16);
   writeAnimatedImageHeader(out, parts[0].still, {width, height, ...timing, loops: a.loops}, parts.every(({still}) => still.image.modular16));
   const canvas = {width, height, extraChannels: parts[0].still.image.extraChannels};
+  shared?.writeReferences(out, canvas, key);
   parts.forEach(({frame: k, rect: [x0, y0], shows, still, masked}, p) => {
     const next = parts[p + 1], last = !next;
     const keep = !last && !(next.rect[2] === width && next.rect[3] === height && !next.masked);
@@ -123,7 +124,6 @@ export function* animationSteps(a, pooled = false) {
         ? {canvas, x0, y0, duration: shows ? timing.durations[k] : 0, last, reference: keep ? CANVAS : 0, source: CANVAS, mode: masked ? BLEND_MODES.blend : BLEND_MODES.replace}
         : {canvas, reference: CANVAS});
     });
-    if (out.at > ANIMATION_LIMITS.bytes) throw fault('JXL_SIZE', 'The encoded animation exceeds 256 MiB.');
   });
   const codestream = out.finish();
   return parts.some(({still}) => still.level === 10) ? levelTen(codestream) : codestream;

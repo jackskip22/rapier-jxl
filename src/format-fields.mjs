@@ -2,8 +2,8 @@
 import {BitWriter, float16Bits} from './bits.mjs';
 import {fault} from './admit.mjs';
 
-const SIZE = [[9, 1], [13, 1], [18, 1], [30, 1]];
-const PREVIEW_SIZE = [[6, 1], [8, 65], [10, 321], [12, 1345]];
+const LAYOUT_SIZE = [[9, 1], [13, 1], [18, 1], [30, 1]];
+const LAYOUT_PREVIEW_SIZE = [[6, 1], [8, 65], [10, 321], [12, 1345]];
 export const EXTRA_CHANNEL_TYPES = Object.freeze({alpha: 0, depth: 1, spot: 2, selection: 3, black: 4, cfa: 5, thermal: 6, optional: 16});
 const extraTypes = new Map(Object.entries(EXTRA_CHANNEL_TYPES));
 export const checkInteger = (value, min, max, name) => {
@@ -21,13 +21,13 @@ export function prepareImageFields({orientation = 1, intrinsicSize, preview} = {
     if (!intrinsicSize || typeof intrinsicSize !== 'object') throw fault('JXL_INPUT', 'intrinsicSize is {width, height}.');
     const width = checkInteger(intrinsicSize.width, 1, 1073741824, 'Intrinsic width');
     const height = checkInteger(intrinsicSize.height, 1, 1073741824, 'Intrinsic height');
-    writer.write(1, 0); writer.writeU32(SIZE, height); writer.write(3, 0); writer.writeU32(SIZE, width);
+    writer.write(1, 0); writer.writeU32(LAYOUT_SIZE, height); writer.write(3, 0); writer.writeU32(LAYOUT_SIZE, width);
   }
   writer.write(1, preview === undefined ? 0 : 1);
   if (preview !== undefined) {
     const width = checkInteger(preview.width, 1, 5440, 'Preview width');
     const height = checkInteger(preview.height, 1, 5440, 'Preview height');
-    writer.write(1, 0); writer.writeU32(PREVIEW_SIZE, height); writer.write(3, 0); writer.writeU32(PREVIEW_SIZE, width);
+    writer.write(1, 0); writer.writeU32(LAYOUT_PREVIEW_SIZE, height); writer.write(3, 0); writer.writeU32(LAYOUT_PREVIEW_SIZE, width);
   }
   writer.write(1, 0);
   return writer;
@@ -62,7 +62,7 @@ export function prepareExtraChannels(channels) {
   return writer;
 }
 
-export function prepareUpsamplingWeights(weights) {
+export function prepareUpsamplingWeights(weights, {xyb = false} = {}) {
   if (weights === undefined) return undefined;
   if (!weights || typeof weights !== 'object' || Array.isArray(weights)) throw fault('JXL_INPUT', 'upsamplingWeights maps 2, 4 or 8 to its symmetric kernel coefficients.');
   const entries = new Map(Object.entries(weights)), counts = new Map([['2', 15], ['4', 55], ['8', 210]]);
@@ -75,7 +75,9 @@ export function prepareUpsamplingWeights(weights) {
       throw fault('JXL_INPUT', 'Factor ' + key + ' needs ' + count + ' finite binary16 kernel coefficients.');
     mask |= Number(key) / 2;
   }
-  const writer = new BitWriter(1024); writer.write(1, 0); writer.write(3, mask);
+  const writer = new BitWriter(1024); writer.write(1, 0);
+  if (xyb) writer.write(1, 1);
+  writer.write(3, mask);
   for (const key of counts.keys()) if (entries.has(key)) for (const value of entries.get(key)) writer.write(16, float16Bits(value));
   return writer;
 }

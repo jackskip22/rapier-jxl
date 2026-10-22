@@ -100,27 +100,29 @@ export function readImageHeader(bytes, {iccBits} = {}) {
   header.extraChannels = r.u32([[0, 0], [0, 1], [4, 2], [12, 1]]);
   header.alpha = false; header.channelInfo = [];
   for (let i = 0; i < header.extraChannels; i++) {
-    if (r.bool()) { header.alpha ||= i === 0; header.channelInfo.push({kind: 0, associated: false}); continue; }
+    if (r.bool()) { header.alpha ||= i === 0; header.channelInfo.push({kind: 0, associated: false, bitDepth: 8, exponentBits: 0, dimShift: 0, name: []}); continue; }
     const type = r.enumeration();
     if (i === 0 && type === 0) header.alpha = true;
-    readBitDepth(r);
-    r.u32([[0, 0], [0, 3], [0, 4], [3, 1]]);
-    const name = r.u32(NAME); r.read(8 * name);
+    const depth = readBitDepth(r), dimShift = r.u32([[0, 0], [0, 3], [0, 4], [3, 1]]);
+    const name = Array.from({length: r.u32(NAME)}, () => r.read(8));
     const associated = type === 0 ? r.bool() : false;
-    if (type === 2) r.read(64);
-    else if (type === 5) r.u32([[0, 1], [2, 0], [4, 3], [8, 19]]);
-    header.channelInfo.push({kind: type, associated});
+    const info = {kind: type, associated, bitDepth: depth.bits, exponentBits: depth.exponent ?? 0, dimShift, name};
+    if (type === 2) info.spot = Array.from({length: 4}, () => r.read(16));
+    else if (type === 5) info.cfa = r.u32([[0, 1], [2, 0], [4, 3], [8, 19]]);
+    header.channelInfo.push(info);
   }
-  header.xyb = r.bool();
+  header.xyb = r.bool(); header.colorAt = r.pos;
+  header.defaultColor = true;
   if (!r.bool()) {
     header.icc = r.bool();
     const space = r.enumeration();
     header.colorChannels = space === 1 ? 1 : 3;
+    header.defaultColor = !header.icc && space === 0;
     if (!header.icc) {
-      if (space !== 3) { if (r.enumeration() === 2) readCustomXY(r); }
-      if (space !== 1 && space !== 3) { if (r.enumeration() === 2) for (let i = 0; i < 3; i++) readCustomXY(r); }
-      if (r.bool()) r.read(24); else r.enumeration();
-      r.enumeration();
+      if (space !== 2) { const white = r.enumeration(); header.defaultColor &&= white === 1; if (white === 2) readCustomXY(r); }
+      if (space !== 1 && space !== 2) { const primaries = r.enumeration(); header.defaultColor &&= primaries === 1; if (primaries === 2) for (let i = 0; i < 3; i++) readCustomXY(r); }
+      if (space !== 2) { if (r.bool()) { r.read(24); header.defaultColor = false; } else { const transfer = r.enumeration(); header.defaultColor &&= transfer === 13; } }
+      const intent = r.enumeration(); header.defaultColor &&= intent === 1;
     }
   } else header.colorChannels = 3;
   header.toneAt = r.pos;
@@ -151,7 +153,7 @@ function readFrame(r, image, animation, tocPermutation) {
   if (r.bool()) throw framingFault('A default frame header is not produced by this encoder.');
   frame.type = r.read(2);
   frame.modular = r.read(1) === 1;
-  frame.flags = r.u64();
+  frame.flagsAt = r.pos; frame.flags = r.u64(); frame.flagsEnd = r.pos;
   frame.ycbcr = !image.xyb && r.bool();
   frame.upsampling = 1; frame.extraUpsampling = [];
   if (!(frame.flags & 32)) {
@@ -310,7 +312,13 @@ export function writeStillFrame(w, still, frame, placement) {
   if (type !== REGULAR && type !== REFERENCE_ONLY && type !== SKIP_PROGRESSIVE) throw framingFault('Unknown frame type.');
   if (type === REFERENCE_ONLY && frame.passes !== 1) throw framingFault('A reference-only frame has one pass.');
   w.write(1, 0); w.write(2, type);
-  copyBits(w, bytes, frame.start * 8 + 3, frame.passesAt);
+  if (placement.patchDictionary) {
+    if (!Number.isInteger(frame.flags) || frame.flags < 0 || frame.flags > 4095) throw framingFault('Unsupported frame flags.');
+    if (frame.flags & 2) throw framingFault('A frame already has its own patch dictionary.');
+    copyBits(w, bytes, frame.start * 8 + 3, frame.flagsAt);
+    writeFrameFlags(w, frame.flags | 2);
+    copyBits(w, bytes, frame.flagsEnd, frame.passesAt);
+  } else copyBits(w, bytes, frame.start * 8 + 3, frame.passesAt);
   if (type !== REFERENCE_ONLY) {
     if (frame.type === REFERENCE_ONLY) w.writeU32(NUM_PASSES, 1);
     else copyBits(w, bytes, frame.passesAt, frame.fieldsAt);
@@ -346,10 +354,29 @@ export function writeStillFrame(w, still, frame, placement) {
     w.writeU32(NAME, name.length); for (const value of name) w.write(8, value);
   }
   copyBits(w, bytes, frame.filterAt, frame.tocAt);
+  const sections = []; let at = frame.sectionsAt;
+  for (let i = 0; i < frame.sizes.length; i++) {
+    const start = frame.sectionOffsets?.[i] ?? at, size = frame.sizes[i];
+    sections.push(bytes.subarray(start, start + size)); at += size;
+  }
+  if (placement.patchDictionary) {
+    const first = new BitWriter(Math.ceil(placement.patchDictionary.bitLength / 8) + sections[0].length + 16);
+    first.append(placement.patchDictionary);
+    first.append({bytes: sections[0], at: sections[0].length, pending: 0, acc: 0});
+    sections[0] = first.finish();
+  }
   w.write(1, 0); w.zeroPadToByte();
-  for (const size of frame.sizes) w.writeU32(TOC_ENTRY, size);
+  for (const section of sections) w.writeU32(TOC_ENTRY, section.length);
   w.zeroPadToByte();
-  w.append({bytes: bytes.subarray(frame.sectionsAt, frame.end), at: frame.end - frame.sectionsAt, pending: 0, acc: 0});
+  for (const section of sections) w.append({bytes: section, at: section.length, pending: 0, acc: 0});
+}
+
+function writeFrameFlags(w, flags) {
+  if (!Number.isInteger(flags) || flags < 0 || flags > 4095) throw framingFault('Unsupported frame flags.');
+  if (!flags) w.write(2, 0);
+  else if (flags <= 16) { w.write(2, 1); w.write(4, flags - 1); }
+  else if (flags <= 272) { w.write(2, 2); w.write(8, flags - 17); }
+  else { w.write(2, 3); w.write(12, flags); w.write(1, 0); }
 }
 
 export function writeLFFrameHeader(w, {level = 1, shift = 3, extraChannels = 0, xyb = true, ycbcr = false, modular = true, flags = 0, passes} = {}) {
@@ -357,10 +384,7 @@ export function writeLFFrameHeader(w, {level = 1, shift = 3, extraChannels = 0, 
       !Number.isInteger(extraChannels) || extraChannels < 0 || extraChannels > 256 || !Number.isInteger(flags) || flags < 0 || flags > 4095)
     throw framingFault('Invalid low-frequency frame header.');
   w.write(1, 0); w.write(2, DC_FRAME); w.write(1, modular ? 1 : 0);
-  if (!flags) w.write(2, 0);
-  else if (flags <= 16) { w.write(2, 1); w.write(4, flags - 1); }
-  else if (flags <= 272) { w.write(2, 2); w.write(8, flags - 17); }
-  else { w.write(2, 3); w.write(12, flags); w.write(1, 0); }
+  writeFrameFlags(w, flags);
   if (!xyb) w.write(1, ycbcr ? 1 : 0);
   if (!xyb && ycbcr && !(flags & 32)) w.write(6, 0);
   if (!(flags & 32)) { w.writeU32(UPSAMPLING, 1); for (let i = 0; i < extraChannels; i++) w.writeU32(UPSAMPLING, 1); }
@@ -437,4 +461,14 @@ export function metadataKey(still) {
   copyBits(w, bytes, image.metadataAt, image.modular16At);
   copyBits(w, bytes, image.modular16At + 1, image.extensionsAt);
   return w.bitLength + ':' + w.finish().join(',');
+}
+
+export function compositionMetadataKey(still) {
+  const w = new BitWriter(128), {image, codestream} = still;
+  if (image.defaultColor) w.write(1, 1); else copyBits(w, codestream, image.colorAt, image.toneAt);
+  const defaultTone = !image.extra || !!(codestream[image.toneAt >> 3] >> (image.toneAt & 7) & 1);
+  w.write(1, defaultTone ? 1 : 0);
+  if (!defaultTone) copyBits(w, codestream, image.toneAt + 1, image.extensionsAt);
+  copyBits(w, codestream, image.extensionsAt, image.payloadEnd);
+  return JSON.stringify([image.orientation, image.depth, image.channelInfo, image.xyb]) + ':' + w.bitLength + ':' + w.finish().join(',');
 }

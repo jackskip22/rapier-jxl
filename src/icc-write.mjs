@@ -95,10 +95,19 @@ function lzICC(data) {
   return writer;
 }
 
-export function prepareICC(profile, {level, compression = 'auto', colorSpace} = {}) {
+export function prepareICC(profile, {level, compression = 'auto', colorSpace, colorEncoding} = {}) {
   if (level !== undefined && level !== 5 && level !== 10) throw fault('JXL_INPUT', 'JPEG XL level is 5 or 10.');
   if (!['auto', 'prefix', 'lz77'].includes(compression)) throw fault('JXL_INPUT', 'ICC compression is auto, prefix or lz77.');
   const colorChannels = inspectICC(profile, level, colorSpace);
+  let space = colorChannels === 3 ? 0 : 1;
+  if (colorEncoding !== undefined) {
+    if (!colorEncoding || typeof colorEncoding !== 'object' || Array.isArray(colorEncoding) ||
+        Object.entries(colorEncoding).some(([key, value]) => key !== 'space' && value !== undefined))
+      throw fault('JXL_INPUT', 'An ICC colorEncoding declares only its explicit space. The profile supplies all other color fields.');
+    space = new Map([['rgb', 0], ['gray', 1], ['xyb', 2], ['unknown', 3]]).get(colorEncoding.space);
+    if (space === undefined || (space === 1) !== (colorChannels === 1))
+      throw fault('JXL_INPUT', 'ICC colorEncoding.space must agree with its one- or three-component channel context.');
+  }
   const selectedLevel = level ?? (colorSpace === 'cmyk' || profile.length > ICC_LEVEL5_BYTES ? 10 : 5);
   const bytes = Uint8Array.from(profile), transformed = transformedICC(bytes);
   let iccData = null, capacityError;
@@ -115,7 +124,7 @@ export function prepareICC(profile, {level, compression = 'auto', colorSpace} = 
   if (!iccData) throw capacityError;
   const colorData = new BitWriter(16);
   colorData.write(2, 2);
-  colorData.writeU32([[0, 0], [0, 1], [4, 2], [6, 18]], colorChannels === 3 ? 0 : 1);
+  colorData.writeU32([[0, 0], [0, 1], [4, 2], [6, 18]], space);
   return {colorData, iccData, colorChannels, level: selectedLevel};
 }
 

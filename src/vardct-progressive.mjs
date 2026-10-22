@@ -31,6 +31,13 @@ export function progressivePasses(option) {
   for (const pass of passes.slice(0, -1)) header.write(2, pass.shift);
   for (const hint of hints) header.writeU32([[0, 1], [0, 2], [0, 4], [0, 8]], hint.downsample);
   for (const hint of hints) header.writeU32([[0, 0], [0, 1], [0, 2], [3, 0]], hint.last);
+  let minimum = 3, maximum = 2;
+  const brackets = passes.map((pass, index) => {
+    const hint = hints.find(hint => hint.last === index);
+    if (hint) minimum = 31 - Math.clz32(hint.downsample);
+    if (index === passes.length - 1) minimum = 0;
+    const bracket = {minimum, maximum}; maximum = minimum - 1; return bracket;
+  });
   const value = (coefficient, position, width, height, passIndex) => {
     if (!coefficient) return 0;
     const x = position % width, y = Math.floor(position / width);
@@ -44,5 +51,5 @@ export function progressivePasses(option) {
     }
     return 0;
   };
-  return {passes, count: passes.length, header, value, alphaPass: hints.find(hint => hint.downsample === 1)?.last ?? passes.length - 1};
+  return {passes, count: passes.length, header, value, brackets, alphaPass: hints.find(hint => hint.downsample === 1)?.last ?? passes.length - 1};
 }

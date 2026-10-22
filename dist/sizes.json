@@ -1,91 +1,108 @@
 {
   "package": "rapier-jxl",
-  "version": "5.0.0",
+  "version": "5.1.0",
   "measured": "Staged file bytes; gzip level 9; Brotli quality 11, text mode. Added bytes measure the entry point bundled with the core minus the core alone. Every measured bundle loads as a module.",
   "node": "v22.23.3",
   "terser": "5.51.2",
   "privateProperties": "^(alphabetSize|lengths|codes|simple|treeSelect|splitToken|msb|lsb|contextMap|histograms|predictor|multiplier|context|splitval|property|offset|left|right|channel|acc|pending|at|bitLength|grow|zeroPadToByte|writeU32|append|finish|write|small|large|totals|contexts|tokens|cost|bucketOf|contextOf|nonZero|zeroDensityOffset|thresholds|numDc|numCtxs|freqs|hshift|vshift|residual|component|inPlace|horizontal|beginC|numC|rctType|nbColors|nbDeltas|useGlobalTree|streamId|pieces|rect|minSymbol|minLength|lengthConfig|params|type|leaf|groupsX|groupsY|dcGroupsX|dcGroupsY|single|config|bits|sym|tree|count|parts|lz77|transforms)$",
   "source": {
-    "bytes": 759994,
-    "gzip": 201284,
+    "bytes": 866305,
+    "gzip": 228176,
     "sha256": {
-      "admit.mjs": "e0afd30fbc9cb9887fd1e3054a38c7c82e76accbbcf3d1ad60c9f7b8cc148487",
+      "admit.mjs": "85c8c395df8a3239b7f063788547ab170a4c6041c26e22e405273a7af346ad8d",
       "afv-basis.mjs": "d8fdb4b1642326fe2f1c26d9a07b5a30aa2336666ddab70d6475a82e1a7de8c5",
-      "animation-frames.mjs": "d1401a99cd281c1e6db0e127e8a3dae588bac432b0ac7612615cfe92369a392b",
-      "animation-pool.mjs": "76fcbcb8f057fb0fcef1eca0f6da7e8d7e74dda8f983540189e616997bf08e94",
+      "animation-atlas.mjs": "53565278913dc8589342652f7d2e997613436fcfc726fd09519ed1620de1f862",
+      "animation-frames.mjs": "f4577dea2b411ce9ee49f18d1417b3769add15c89456183f5140f59aef980ac5",
+      "animation-pool.mjs": "399a591a3863c487749869402cf53e2c9fc64df923fab662d824a96670ec0a14",
       "animation.mjs": "214d0cfe2b5a36b1460b2a992dd6517cdd9a7d2574fa431060de9a4d29a1c4bd",
       "ans.mjs": "7d7aae2d301388ada5d7c791dd300d3677607aa8a278f56876872095af4e4e6b",
       "async-job.mjs": "ecafbece2da5b24abbd60210d76385916b75958e7f72aa8eb22798ad5ce9a1d3",
-      "bits.mjs": "52d32a88a0501823feae37e52bae9c636c70b2aebf81140d6d7bdf00610525d2",
-      "brotli.mjs": "bb445c38bc3fade9be1d29c092189090dfb50193a90774e04c2a95be2e75732d",
-      "channel-lossless.mjs": "4dfe5086ee40ed34038a4a44cf742a063e70ab7b7c39a5b0eb656e62d8e8b217",
-      "channels.mjs": "215f76cbe9b915e525bbabcc76681abe3686ce7b21904ff34ba650b3e49a9c3e",
+      "atlas-plan.mjs": "8434c6216257e67c4c7583523afdb41c12bdf0302ba365f7052c573cc00a1b8e",
+      "bits.mjs": "bbf84f856dd594323128565114725779fcec76c9d2827e5b51b9926f609c8300",
+      "brotli.mjs": "336152e51e72227392774a2d5e60ef1bccdf183a0f9940651c0b795d6ce33db4",
+      "channel-lossless.mjs": "9e68fa51f97f38c421c0b3d2dc8c3ed8537c21ea9357aaf4e7b7e4e4975c936a",
+      "channels.mjs": "a36fb8bebbf85ae3d5b8b04b709b9e29fbd2c025bb8c4579de99a697e838021f",
       "coefficient-ans.mjs": "707163b649616b746e8e0124dce8e597f8e24a5e42ebff9d8aba9a745f14e681",
       "coefficient-coding.mjs": "9029e71e72d911079692565dd047d17a59430c1433bc5fbbb9aa3fdb46520ed3",
       "coefficient-effort.mjs": "cdcbac2a73bf3a3042e2ed9e645c5671afb2d10c503387a26a6fe84334a36ab7",
-      "color-info.mjs": "11bf2fc76014f013d3b54b9f657d1cab5f375fe518bb682b1ce4a31f869e8447",
-      "container-advanced.mjs": "f36b9118c448266a3e4d4c8faff95f764d0bface70d6d6f48d4be049332950e9",
-      "container-stream.mjs": "288ad1bcef095976292eabe9281c8c016bf695a71a3785ed0aa1cd6f6275f0ab",
+      "coefficient-orders.mjs": "dafe34903a1df95780b1ea46209f7b6b6a610f6c52d61525b26921ba4f446aa1",
+      "color-info.mjs": "f23bc2f3887cd13a224e1be93fb784f5702213b8c9e460e7b4c50898e5f0f6c2",
+      "container-advanced.mjs": "a2e7f840867ad91a7b4875cc32475bf6fc97526decc904d577d9f89153aa31bb",
+      "container-stream.mjs": "c1a6f616b1f7a078fdfbd75bd462af8557947de3ad839f80a0ee382cdc67ba62",
       "container.mjs": "8b4ef84d11dfa427a99eb674190212b67f553f8b78fecfffbf983b4e78436a00",
-      "delivery.mjs": "a941f1028e44be6e0cdd1539687e81a8c178d7d5bfdd1f1ebfc1a31243042074",
-      "delta-palette.mjs": "f8d3d828fcb38f419813e701e1237862859385da72cabc631d92cd9138069222",
+      "delivery.mjs": "ece0040bf9ae9c4de59ab15e1bdfd448a1553434f55ef5efe90a99c633b466e0",
+      "delta-palette.mjs": "2e90c4e37381436032b384702286b18b7f75a91a3df59c0029622dbe49711ab7",
       "effort-job.mjs": "15decfb1b58ae45426bb6f4c3a2e46ff687cb1bfdc05078ad9abdf89c6b60e69",
       "effort-level.mjs": "c4afa3aba6957353317e8c9f9437038c6274c38f708a9ec2887c4df9328d3106",
       "effort.mjs": "f734f92162fd980393c997e2c2c440d9c03c11997ed0f52599bd9d27bb95a02a",
       "entropy.mjs": "18466a179e72292a8f837e2b7282884ae5962169d14c68638bea1c8f0a19ea51",
       "fault.mjs": "f96f769feebf1d58ec1dac5d00a3601b64570f304e93acdb6e1135f3375d60d2",
-      "format-fields.mjs": "06456d2af0dbfe9df1523d2af4ca75d039602184b8c148779b5ae0b7b451b857",
-      "format-worker.mjs": "5d5c4cb6cca370e0cfbe8a06f372cd55745b0c2c7259c9d32cbb6a912e888423",
-      "frame.mjs": "378e0a525cbcfa6068c8725bc0925ecbe10b5a2dbf19145192b3f7aef387c25d",
-      "framing.mjs": "506d6d2674f3bdab199c3f7081adfcb5da90729b7c219284073e5794535ff42e",
-      "hybrid.mjs": "835bcb04de111707e91fad3a363e2ad1af2c46e300d8c22a472c2208db27fe13",
-      "icc-profile.mjs": "5872e2f4737d6c6a7c5abea8865863aff6db6fd8f45e08f77c7f87f0e6bbcf6e",
-      "icc-write.mjs": "29a6327f2d9b9ac2a9c4edacbea3f22440c234e270a81e3ab6c359c2aab20ccd",
-      "icc.mjs": "4acb72ca1434293af6678f78c80c5c854ca66b89c7f014c681fa12805e49c152",
+      "format-fields.mjs": "c96ff0707aa09bc6c006d91d858a04586fdd6b57906d6ea01b4e1f209e07f692",
+      "format-still.mjs": "a5fbbcbc43d9985490481c71b584978145ec27a07ca048d077c0ea7ebc43a6d5",
+      "format-worker.mjs": "4324044bb4b1dbd271b47296cdbd9d27810765c754364236929c505c6231ed51",
+      "frame.mjs": "6b9e52c43c0ce75f690eed9b1c4ae310aa2e7cd4ca0f3f5fff733a46b8659e7a",
+      "framing.mjs": "ee4cf9cc5652889c8fa8d9ed5d0cce5c610219309754239a1f05bcf4b6eebfdd",
+      "graphics-quantize.mjs": "99453fc2af849405ff255d3affc7a3c9b9c24ceb0efae797a5468d937dfe2606",
+      "graphics.mjs": "972722ffc77de550711988dd15156eed69efb26dea55415b17f6e9c311ac4078",
+      "hybrid.mjs": "68a2efca6eed3be11d09bb6d9b7b8c9ccebe605d2e238a736fe0ad19cfc9b459",
+      "icc-profile.mjs": "32446e03d908a1294a57e116bd0b5cab600d4359aa35563155e35bf082064e51",
+      "icc-write.mjs": "1371e7c988b56b20d227b7322779927b42561b0f78372cbea707b730a1040389",
+      "icc.mjs": "ff0ae0c5398bec0f02baaaf02c6258298734dd5858220b6c4b6939fc2bcd6dc5",
       "image-source.mjs": "f1b9e0b00af324df220c733ec1ff47dc40601c47ac8071a32d54e1c3eff2672d",
       "image.mjs": "89fa0db11e36bdb4ed2e3415a27ca13da82ba349175c3ba18de8c0e324ce1853",
-      "index.mjs": "5587a7ffec0b25b609d5037c999552c1e694fdb4eda34265cf2536d9b84a71f8",
-      "jfif.mjs": "1f9e77ad3efd17ae0101f766a6722976a6db2520a3b5b8bf396692232a8f53a5",
+      "implicit-palette.mjs": "78b5bfea415bdc9312e62563f2efe54820ff6ab1f1a2d88a5274a439f3f8b30e",
+      "index.mjs": "cf30fe17f791f567ccc36f490dcc4256c14eb88d6172b4b459bcfef2502cd7af",
+      "jfif.mjs": "fe273ed75e9d93a8d12da4a120adaf966d498d6616509a71425bf40c8543407c",
       "jpeg-ans-effort.mjs": "32a567a5be239642b499c1d37cc1a0799b7216174ef286f445d41ac2d862a2d2",
       "jpeg-ans.mjs": "91f54001d1a5b2f460dee83ffdf9377e8aad41cad740f2d713869ccef388ddf2",
-      "jpeg-coefficients.mjs": "f2b3b6c7bc563f37757a57d3ffab52514c27594b22fc189a398eda77d80d41f6",
+      "jpeg-coefficients.mjs": "8c4b75fa3c2fc204310e8bed9386054a35bd25cc485e6c07a071ae519d2ddf56",
       "jpeg-effort.mjs": "c758868bf36b308f2171e077bd1bcfe454214bcd5de24d7521260cd8e2270525",
-      "jpeg-job.mjs": "e167accb3d953af110dfc6647247e7e0fd295f1b942709a6e4cc531a20864a7b",
-      "jpeg-reconstruction.mjs": "6e8edc70d4c86ccde514113c38d5737ac17f2229c97008d840651ca145e4d9ea",
+      "jpeg-job.mjs": "3fbf7dfe8a7ce052946e31d1bb5830b7f61795f004e6e4244600486c53429406",
+      "jpeg-reconstruction.mjs": "719c0024a29956592ad452f7cc0d1bde6d7480ae9d160fc7a27eb06db20d1f1b",
       "jpeg.mjs": "c7e06b2649baf94a870f831c626e44b3dd7e32ac6aee22499d13c7d65087c698",
       "kernel-hooks.mjs": "3d44e187b8072693ddadb553a143cc80be5efdc3c8ced0264f3734b494cfb37f",
       "kernels-bytes.mjs": "5c4c53c25e3b08baf8e37588db1558aa01627a9f3f5629ff7500ecba45560ca3",
-      "kernels.mjs": "bf4a07b2f4c4640c079990d007f0b09029016235a931f37db530d48dc5e69ae3",
-      "layers.mjs": "8de5025085d111ac2496ea6084ef75ebba24c523d738559971ac9440c335cc9b",
-      "lf-frames.mjs": "37f3d2f0ebf150bc7df3a2a325343802001b458ef1903e1e5e81db6d8943c129",
+      "kernels.mjs": "6213887f88ad3c5b1d808a8760fa7b26ee1f642465779b9aab2eeef78d65cf9a",
+      "layers.mjs": "3e12e389f616611fcf8e560611b7f12829aaa95fd99872d5eed47e6559645832",
+      "lf-frames.mjs": "9301736dd01fa91eb7ae9cea1f5165a4e6e6aaa71fb0ee52dcefa14e791f4310",
       "local.mjs": "f8789d9b83b67b8e0751f2e4b4dfe7a33c0a8fe087102d391af352880f1d7207",
       "lossless-coding.mjs": "70469fc4f313d13bfbd8cb74dd74264a162d2ce6a96cc76fc3fdb8d90713dd15",
       "lossless.mjs": "91f7f2ec5bb2ff64c6e47e00b14348ff75bbeb9fed77a0b3bf292b2897b451e4",
       "lossy.mjs": "5896084606d16bcde93ac224406b9ae6c500ba601e95d5396dff3de1a15e60f6",
-      "metadata.mjs": "bd19e2b55be4b717277e3c95ce3d8d26c015b247bd451b3c501560a49ad40949",
-      "modular.mjs": "7e3f3747c11d1f605b1b45a521479dfcf14392a4d46f2c3a42a2e6d2cc21ca38",
+      "metadata.mjs": "56eaa24f804564f23f9689df97f87a7e435a535f961664b030d37a6345edb728",
+      "modular-progressive.mjs": "5261c486ec6bb0c32d205c445da2df2ace258674c88645ef63ca92c968b18d4c",
+      "modular.mjs": "d7b17486167b19a87c54d08fdaac01e31f0dc09c30398d915801a7ef5ecb8898",
       "noise-estimation.mjs": "3ee67734685926947f32424b76de40bfc8c191c2c1581f804d2de90d60e2438a",
       "noise.mjs": "9d2870cbd8bf5c7b32086fbf9e6c6f8cf615093211973465080c14bd47494c0d",
       "opsin.mjs": "1ccf2cee19e66a0112000d89b7c92e0017548a55618e01efa8000013c1543cee",
       "painting.mjs": "d6b26d68e1598277c5291a33de69771d2d4be480793bc801d18d8d64617440ec",
       "palette-search.mjs": "c7424e18310e177019900d1a9a3721d20e4ce430e42e7e765ce1b4397e5d9dc0",
-      "patches.mjs": "b6c4ff397a8000565d0e2af50130a5ddaf54b51f04770856abfcf05a0405e6b6",
-      "photo-advanced.mjs": "27f2150a924797a44681e1819bf65e87044515606062249d83035d9a29374fdb",
+      "patch-code.mjs": "18debd7fde16a3cba49ef2c901d0a3986e42b9ebd8322b22a16113cbb2400c86",
+      "patch-composition.mjs": "c82354fe38beb089ff03779458720c7b3c738dd37b2e0208bd7060e8621990f7",
+      "patch-input.mjs": "4ea50819abe6c6d1550e20991dc01ce21b002e1aa187267860eb3aa695c6ba27",
+      "patches.mjs": "01503764e15c69210d83d231c5cf44bc134596b48b4d5c13c6bf3f4e1260b581",
+      "photo-advanced.mjs": "d3489af41297db36219226992dcbd300afc8f2222a61cc98ffd79d6581eb1c4a",
       "photo-ans.mjs": "041d95c6b868f06fd5a12ada82607f08848acbc0b5a5e552ae4b0a2b8b80908f",
       "photo-crop.mjs": "f3d0db00789336e54252a3fac2b924911838ac555aec8c7576984f03045e68f6",
       "photo-dct.mjs": "d28ef75424b0d2764713e1dff1c0a29d0da560aa9aea6dd1ae338897a4d4ca43",
+      "photo-extras.mjs": "2c47c9d0eac8596fa441a8ce792a067bdc3892f313cc2a1b84ffd3651206076f",
       "photo-job.mjs": "51afe0fbb1ae399d89f56e05e7b00e9d1ed66bd5f923425c6ab55a8f8dbe0c2b",
+      "photo-layout.mjs": "a44926731fd81a8680e4dd721428eb75d6db0de1c0ea619aeee4686b454c11bf",
       "photo-noise.mjs": "3d560cc189d72958c63805d2ca8b96f0150a4a84a80d554cb41b991df79262a2",
-      "photo-plan.mjs": "84627a9061051eba6f6baaeb9e5ed3ae2650ebb8e1d3c6bef4618bc10747feac",
+      "photo-plan.mjs": "96e5ff48883e877acfb5e803adb85ec038ac5771d71cb55378be77c479097f34",
       "photo-pool.mjs": "b7d927535b958d6f258261f0032d70872f86c16203ccce90801f47986012ee31",
       "photo-xyb.mjs": "45b256ce99aa33c562858b77d33f40ffb2bf7cf5968399d014e9ed93da583a9a",
       "photo.mjs": "e5201baab38153070a1088938ac6451af71e84250232e374a2f977e7ca6ff93a",
+      "planar-input.mjs": "d46282ddbe7196a3a8526b5e978d0536502aa13ff29a1983b83e97d264ac4e08",
+      "planar-planes.mjs": "5d21b2c2f4825a183f8150d8359b0eeb3eafd111e20f2f6611d4f4e6968596bc",
+      "planar-squeeze.mjs": "e5f6c5d7609d4c992af36db6fc8db41ce089322db8b4b1648a1d1bbbdf5014cb",
+      "planar-transforms.mjs": "8ca81c7a812a3de2d76fb9f16f3685b7406ca31fdc52308cd2f28a6906de294f",
       "pool.mjs": "488bd8025a025d5cb4d78cd7e07e117a7f48298f1e5a81d33eb940ff947afa21",
       "prefix.mjs": "33c605fbad00854decc98d1290fc892eb843cacf31a1c0bd3eeca4e1dbaea451",
-      "progressive-container.mjs": "f58d1c704914bcb2022a9f43237e4f495353f318cef5df1ed00ca4a6d6957251",
+      "progressive-container.mjs": "c01d34f1b304ec31367e383ff0433f68a8ebf1b334ec6eff31fe5646ca600b62",
       "quantization-defaults.mjs": "4345fab5211ef28690182a402d20ee452619bf9b6a64fbc517427e943e79d7bc",
       "quantization-params.mjs": "b6d25e7ddfc13dc0401743e71d6fd441af5f0485b2cab86ccf3c101cb5fbdc50",
-      "rapier-core.mjs": "15527602f279dc0b0ec953a125cc051d5a363b60e6b1b2202a458781dc926e84",
+      "rapier-core.mjs": "2f6293f37507e39271059a8df498bfaa94ae09ec9f0811bd1dae5dc7edd1ad42",
       "rapier-encoder.mjs": "fa48e9505c008180ced6708e9c8cbd7e2f4ca197d2c7bc4f6a8fa91b39867a1f",
       "rapier-still.mjs": "67b1e0c172b49fec78bb40bb44774772723671689bb7db5127b3ee03c749ac9c",
       "rapier.mjs": "8b7d04cfe36d3d4821ab13855b4b2cdf23a4a6461c6fe91f6118c5911f9204c0",
@@ -96,18 +113,19 @@
       "screen-patches.mjs": "ce7372877cde8224f52675626610785d5c030dc10c7efaa6686a7ca6eddc4836",
       "screen-search.mjs": "1c61790a167d800092cfafc8fbb2a22d8271d23dc327491a5aef5c32544e7e6b",
       "screen.mjs": "454795e004600f369d08ed2c773436890cc06be9f835b2f3318beee78b99929a",
-      "source.mjs": "c464078a727ff55ded79ba8959f9f3bf0c57dbbccd9b83117617f0c277f5eff4",
+      "source.mjs": "9bb539bf3de211929492e4b69de6c5b15a40922bdf49d12f5e89b8a68bc48c7e",
       "splines.mjs": "ba10bf7d52eca5c35ae8478b0c53094bc482906e71c95278776091acdcaa994d",
       "squeeze.mjs": "42cfd1b5f9ea6e74f9ed84a4f2e8eeeb3ba11cbc56fefbf888bd27b48df28ca7",
       "toc-permutation.mjs": "97cf74ffec69138b61f0336deaac622749eae61fd777a84f81b84b2aeb585c3d",
-      "vardct-progressive.mjs": "bbabedde9b202661d6b99ecda050eaf2506ecedcad30a75a88c2253af7a74c12",
+      "vardct-progressive.mjs": "d4c7eaf8e7e8727f9b05aaf2cb67b020ab68351e5f418a8ced0c9e2220f5d272",
       "vardct-strategies.mjs": "a61ca8b075bc6a89298e622e912740122af82da0a31b2fdcf80f1f9f7c79b762",
-      "vardct.mjs": "996112bf6bf0ab2a240fed193150517a0fdf8265a4a4a02f4b207672ca1d4b00",
+      "vardct.mjs": "729c879c7845b6016b8389672b655cd7e1b372514eee8b5c37b4bcbe49009859",
       "wasm.mjs": "22c102605b62be22a8ed8b54295217affffe0487674c99b2c4105004e149c529",
+      "weighted-custom.mjs": "3bda40666b8d6e88ebce6ec8203fb3d9803d7143c44894a42688652b8df01da7",
       "weighted-policy.mjs": "85cca86dcea69f985769a1e8d9ed4db2ccd0eb5e8d56c5aecce4cb8c6d10b0c8",
       "weighted.mjs": "7bedd55c6a82249e99dc4d26af19836e16ce6681b1d55249cfcfba9982315770",
       "worker-input.mjs": "21b392ca2d905b5528965780f2609f7c46aaace59687d96b125687a49de743bf",
-      "worker.mjs": "574a90cdd856d0b9e68e951f86ff841ab4e430c68bfe4d9951399182e217b8b8",
+      "worker.mjs": "64283f1da1a358b03093b569c6b3ff18b5ce33abbff6a506504b45027eec4ed5",
       "writer.mjs": "155bdd2b36deb42367604e3a06b9c7ea0dc1cda3686003d03319479462c06b6b"
     }
   },
@@ -146,10 +164,10 @@
         "index"
       ],
       "alone": {
-        "bytes": 56573,
-        "gzip": 22783,
-        "brotli": 20217,
-        "sha256": "2f40d7b6d260a48c1c127840a34f8736879f76c35922a4028fb8a75196db3040",
+        "bytes": 57755,
+        "gzip": 23326,
+        "brotli": 20669,
+        "sha256": "280b99f3f596300c1018f9be8d9192399b1e9dfdffc54cd2f7351d97842bc06c",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -162,7 +180,7 @@
         "gzip": 0,
         "brotli": 0
       },
-      "provedByteCases": 169,
+      "provedByteCases": 182,
       "provedNativeCases": 10
     },
     {
@@ -202,10 +220,10 @@
         "jpeg"
       ],
       "alone": {
-        "bytes": 75688,
-        "gzip": 29632,
-        "brotli": 26024,
-        "sha256": "5c4827b201a894208ab723c2ff04bde2967b85c462f36cb6b188250e050ad5c4",
+        "bytes": 77535,
+        "gzip": 30493,
+        "brotli": 26594,
+        "sha256": "d7a511477a376027296401dafc117e9ec04aa45604e468855e8b8df72f08385e",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -213,9 +231,9 @@
         }
       },
       "added": {
-        "bytes": 42260,
-        "gzip": 15548,
-        "brotli": 13295
+        "bytes": 42955,
+        "gzip": 15841,
+        "brotli": 13454
       },
       "provedByteCases": 34,
       "provedNativeCases": 0
@@ -255,10 +273,10 @@
         "photo"
       ],
       "alone": {
-        "bytes": 58394,
-        "gzip": 23129,
-        "brotli": 20435,
-        "sha256": "9b565fccdc591276b38004641ca4a5750db4d99da61baf91ddfaa902212d4686",
+        "bytes": 59536,
+        "gzip": 23665,
+        "brotli": 20881,
+        "sha256": "fbe17cc73772b17fc081bb9f45a572ac20c6dd8d17a3074038c64c6711027953",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -267,9 +285,9 @@
         }
       },
       "added": {
-        "bytes": 6957,
-        "gzip": 2376,
-        "brotli": 1965
+        "bytes": 6942,
+        "gzip": 2357,
+        "brotli": 1997
       },
       "provedByteCases": 85,
       "provedNativeCases": 10
@@ -279,6 +297,7 @@
       "module": "photo-advanced",
       "file": "dist/photo-advanced.min.mjs",
       "exports": [
+        "COEFFICIENT_ORDER_BUCKETS",
         "LIMITS",
         "TRANSFORMS",
         "encodePhoto",
@@ -318,13 +337,28 @@
         "framing",
         "photo-crop",
         "lf-frames",
+        "coefficient-orders",
+        "format-fields",
+        "photo-layout",
+        "planar-input",
+        "weighted-custom",
+        "planar-planes",
+        "color-info",
+        "icc",
+        "channel-lossless",
+        "planar-squeeze",
+        "modular-progressive",
+        "implicit-palette",
+        "planar-transforms",
+        "channels",
+        "photo-extras",
         "photo-advanced"
       ],
       "alone": {
-        "bytes": 104427,
-        "gzip": 39016,
-        "brotli": 33737,
-        "sha256": "4af1d1677878c7778923b87ec10a60ffea54fc2f78ade772daa791892ef58b8a",
+        "bytes": 152456,
+        "gzip": 55006,
+        "brotli": 47071,
+        "sha256": "325de5a1d708f7c36349b0f2bf518ab2cb30a745e5807d2ebc2cf19386d35c8e",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -333,11 +367,11 @@
         }
       },
       "added": {
-        "bytes": 53201,
-        "gzip": 18315,
-        "brotli": 15346
+        "bytes": 99998,
+        "gzip": 34000,
+        "brotli": 28134
       },
-      "provedByteCases": 204,
+      "provedByteCases": 239,
       "provedNativeCases": 10
     },
     {
@@ -380,24 +414,38 @@
         "photo-crop",
         "lf-frames",
         "ans",
+        "coefficient-orders",
+        "format-fields",
+        "photo-layout",
+        "planar-input",
+        "weighted-custom",
+        "planar-planes",
+        "color-info",
+        "icc",
+        "channel-lossless",
+        "planar-squeeze",
+        "modular-progressive",
+        "implicit-palette",
+        "planar-transforms",
+        "channels",
+        "photo-extras",
         "photo-plan"
       ],
       "alone": {
-        "bytes": 96356,
-        "gzip": 35719,
-        "brotli": 30950,
-        "sha256": "b51b2f7b1dc9571e1426be1f8b6c6896145dcdbb1a42e875520a9b12fed25269",
+        "bytes": 114509,
+        "gzip": 41909,
+        "brotli": 36022,
+        "sha256": "64aee910619d8e80856b7980a15848d532f6b5e5d15d683164a45d8904b08fae",
         "compress": {
           "passes": 2,
-          "hoist_funs": true,
-          "hoist_vars": true,
+          "inline": 1,
           "module": true
         }
       },
       "added": {
-        "bytes": 56859,
-        "gzip": 19744,
-        "brotli": 16451
+        "bytes": 73943,
+        "gzip": 24888,
+        "brotli": 21030
       },
       "provedByteCases": 39,
       "provedNativeCases": 0
@@ -445,24 +493,40 @@
         "framing",
         "photo-crop",
         "lf-frames",
+        "coefficient-orders",
+        "format-fields",
+        "photo-layout",
+        "planar-input",
+        "weighted-custom",
+        "planar-planes",
+        "color-info",
+        "icc",
+        "channel-lossless",
+        "planar-squeeze",
+        "modular-progressive",
+        "implicit-palette",
+        "planar-transforms",
+        "channels",
+        "photo-extras",
         "photo-advanced",
         "noise-estimation",
         "photo-noise"
       ],
       "alone": {
-        "bytes": 137668,
-        "gzip": 52123,
-        "brotli": 44364,
-        "sha256": "d47c6f088309b25f939f0a39a46ab5c44cd49a7d690895a0a9527c735bec0a65",
+        "bytes": 177784,
+        "gzip": 65957,
+        "brotli": 55649,
+        "sha256": "0a9b5bd90c812a045fb88a8f411e6ba74602ca269c3e35d191942b7d1ae121a5",
         "compress": {
           "passes": 2,
+          "inline": 1,
           "module": true
         }
       },
       "added": {
-        "bytes": 87023,
-        "gzip": 32122,
-        "brotli": 26273
+        "bytes": 126102,
+        "gzip": 45318,
+        "brotli": 36900
       },
       "provedByteCases": 99,
       "provedNativeCases": 10
@@ -505,26 +569,90 @@
         "icc",
         "format-fields",
         "channel-lossless",
+        "weighted-custom",
+        "planar-squeeze",
+        "modular-progressive",
+        "implicit-palette",
+        "planar-transforms",
+        "planar-input",
+        "planar-planes",
         "channels",
         "layers",
         "hybrid"
       ],
       "alone": {
-        "bytes": 127093,
-        "gzip": 47370,
-        "brotli": 40816,
-        "sha256": "a80b78da1be43590d943acb129a1dfe470154ef238d51882c7a1dc8233c11101",
+        "bytes": 138698,
+        "gzip": 51731,
+        "brotli": 44644,
+        "sha256": "4aebd331fe7d3a1bde09f7afc8d9fe61d7d811fce47ff1813ebe26da74784052",
+        "compress": {
+          "passes": 2,
+          "inline": 1,
+          "module": true
+        }
+      },
+      "added": {
+        "bytes": 90425,
+        "gzip": 32145,
+        "brotli": 26999
+      },
+      "provedByteCases": 15,
+      "provedNativeCases": 0
+    },
+    {
+      "entry": "./graphics",
+      "module": "graphics",
+      "file": "dist/graphics.min.mjs",
+      "exports": [
+        "LIMITS",
+        "encodeGraphics",
+        "encodeGraphicsSteps"
+      ],
+      "modules": [
+        "bits",
+        "fault",
+        "prefix",
+        "kernel-hooks",
+        "modular",
+        "screen-lz77",
+        "icc-profile",
+        "icc-write",
+        "admit",
+        "frame",
+        "lossless-coding",
+        "lossless",
+        "screen",
+        "screen-patches",
+        "weighted-policy",
+        "weighted",
+        "entropy",
+        "ans",
+        "rct-search",
+        "sampled",
+        "palette-search",
+        "screen-local",
+        "screen-search",
+        "implicit-palette",
+        "delta-palette",
+        "graphics-quantize",
+        "graphics"
+      ],
+      "alone": {
+        "bytes": 99551,
+        "gzip": 38632,
+        "brotli": 33483,
+        "sha256": "bb0507e16a77f9030756152daca79bc21890c946260493d9d53a35dd8c442110",
         "compress": {
           "passes": 2,
           "module": true
         }
       },
       "added": {
-        "bytes": 80071,
-        "gzip": 28396,
-        "brotli": 23837
+        "bytes": 80373,
+        "gzip": 30656,
+        "brotli": 25759
       },
-      "provedByteCases": 15,
+      "provedByteCases": 18,
       "provedNativeCases": 0
     },
     {
@@ -554,10 +682,10 @@
         "icc"
       ],
       "alone": {
-        "bytes": 35619,
-        "gzip": 14193,
-        "brotli": 12577,
-        "sha256": "d5949bc26ba1b8dcac5da68a368db29dfe6e57436bad979fb1f7e11ca4680d21",
+        "bytes": 36892,
+        "gzip": 14591,
+        "brotli": 12883,
+        "sha256": "ea745be74a02ffdbb65b7b0b79dbcac28fad44f91dafe2dae8d96a4d9cf0c92c",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -566,11 +694,11 @@
         }
       },
       "added": {
-        "bytes": 5541,
-        "gzip": 1971,
-        "brotli": 1465
+        "bytes": 6225,
+        "gzip": 2114,
+        "brotli": 1481
       },
-      "provedByteCases": 55,
+      "provedByteCases": 172,
       "provedNativeCases": 10
     },
     {
@@ -608,10 +736,10 @@
         "opsin"
       ],
       "alone": {
-        "bytes": 112504,
-        "gzip": 42770,
-        "brotli": 36613,
-        "sha256": "71450e259128b880257ef1ce064cc5cc2142a3747b87e19068e8ce8e7728bf14",
+        "bytes": 70284,
+        "gzip": 27302,
+        "brotli": 23601,
+        "sha256": "280f318897ca22b564f357ef2c9d257b0d4b04d465d1f58de93e410744b87473",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -619,9 +747,9 @@
         }
       },
       "added": {
-        "bytes": 76863,
-        "gzip": 28184,
-        "brotli": 23494
+        "bytes": 49260,
+        "gzip": 18353,
+        "brotli": 15550
       },
       "provedByteCases": 38,
       "provedNativeCases": 0
@@ -658,13 +786,14 @@
         "palette-search",
         "screen-local",
         "screen-search",
+        "implicit-palette",
         "delta-palette"
       ],
       "alone": {
-        "bytes": 84827,
-        "gzip": 32926,
-        "brotli": 28791,
-        "sha256": "17d7ebb3f0850e78a1deacfb970e353c7a67d744139b0cd913d175d534222ed2",
+        "bytes": 85405,
+        "gzip": 33169,
+        "brotli": 28931,
+        "sha256": "f447c420cad9bb885805ab5a464d99c580a5672866e41980bd1b8351d657a9cb",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -673,9 +802,9 @@
         }
       },
       "added": {
-        "bytes": 54903,
-        "gzip": 20341,
-        "brotli": 17481
+        "bytes": 54900,
+        "gzip": 20361,
+        "brotli": 17461
       },
       "provedByteCases": 32,
       "provedNativeCases": 0
@@ -715,10 +844,10 @@
         "splines"
       ],
       "alone": {
-        "bytes": 53833,
-        "gzip": 21384,
-        "brotli": 18833,
-        "sha256": "5dfad19b7a6fcd3e70d9cbe176dd0359c80fd9f3b049307e45d6467faba2d9cc",
+        "bytes": 54968,
+        "gzip": 21887,
+        "brotli": 19278,
+        "sha256": "4295e1d1b4da8b799a82a99a7bf471db4f96adbe1fe24f833aa87ae591bc7430",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -727,9 +856,9 @@
         }
       },
       "added": {
-        "bytes": 12270,
-        "gzip": 4380,
-        "brotli": 3627
+        "bytes": 12255,
+        "gzip": 4358,
+        "brotli": 3669
       },
       "provedByteCases": 9,
       "provedNativeCases": 0
@@ -763,24 +892,32 @@
         "container",
         "framing",
         "channel-lossless",
+        "weighted-custom",
+        "planar-squeeze",
+        "vardct-progressive",
+        "modular-progressive",
+        "implicit-palette",
+        "planar-transforms",
+        "planar-input",
+        "planar-planes",
         "channels"
       ],
       "alone": {
-        "bytes": 75105,
-        "gzip": 27641,
-        "brotli": 24229,
-        "sha256": "8fefb92c70ef33425d34c8bb1f0e0df3ff7288dad3bdece36e6a7d1e056f79dd",
+        "bytes": 85091,
+        "gzip": 31503,
+        "brotli": 27515,
+        "sha256": "6c17276e61846514a8382f8bb310333b25bfb7bc75e129eb24e16e94cd0fb7a1",
         "compress": {
           "passes": 2,
           "module": true
         }
       },
       "added": {
-        "bytes": 58901,
-        "gzip": 21340,
-        "brotli": 17810
+        "bytes": 68089,
+        "gzip": 24609,
+        "brotli": 20646
       },
-      "provedByteCases": 60,
+      "provedByteCases": 400,
       "provedNativeCases": 0
     },
     {
@@ -812,25 +949,35 @@
         "container",
         "framing",
         "channel-lossless",
+        "weighted-custom",
+        "planar-squeeze",
+        "vardct-progressive",
+        "modular-progressive",
+        "implicit-palette",
+        "planar-transforms",
+        "planar-input",
+        "planar-planes",
         "channels",
         "layers"
       ],
       "alone": {
-        "bytes": 82010,
-        "gzip": 29779,
-        "brotli": 26094,
-        "sha256": "893755497770f0f657f66fe3cc90ca5dd3945618b049f2d757674b3872241749",
+        "bytes": 95665,
+        "gzip": 34936,
+        "brotli": 30505,
+        "sha256": "913aa8ebfa8f42a4f8db3eedb9ba11198daf655174e0ac1aa67808dbb7f5bb67",
         "compress": {
           "passes": 2,
+          "hoist_funs": true,
+          "hoist_vars": true,
           "module": true
         }
       },
       "added": {
-        "bytes": 65806,
-        "gzip": 23475,
-        "brotli": 19766
+        "bytes": 78674,
+        "gzip": 28117,
+        "brotli": 23522
       },
-      "provedByteCases": 23,
+      "provedByteCases": 58,
       "provedNativeCases": 0
     },
     {
@@ -839,6 +986,8 @@
       "file": "dist/patches.min.mjs",
       "exports": [
         "PATCH_BLEND_MODES",
+        "encodePatchComposition",
+        "encodePatchCompositionSteps",
         "encodePatches",
         "encodePatchesSteps"
       ],
@@ -858,25 +1007,49 @@
         "lossless",
         "screen",
         "screen-patches",
+        "patch-code",
         "container",
+        "patch-input",
+        "color-info",
+        "icc",
+        "format-fields",
+        "framing",
+        "channel-lossless",
+        "weighted-custom",
+        "planar-squeeze",
+        "vardct-progressive",
+        "modular-progressive",
+        "implicit-palette",
+        "planar-transforms",
+        "planar-input",
+        "planar-planes",
+        "channels",
+        "toc-permutation",
+        "entropy",
+        "ans",
+        "jfif",
+        "vardct",
+        "jpeg-coefficients",
+        "patch-composition",
         "patches"
       ],
       "alone": {
-        "bytes": 62279,
-        "gzip": 24005,
-        "brotli": 21083,
-        "sha256": "522e794e0aae497470072529ba8572c2aa4569f89dc02486f1902414f61d40f5",
+        "bytes": 140699,
+        "gzip": 52257,
+        "brotli": 44820,
+        "sha256": "fcb8fa5552f71f7df145f1c7aac6def1c3a1fc42531446707df2f407b67cec00",
         "compress": {
           "passes": 2,
+          "inline": 1,
           "module": true
         }
       },
       "added": {
-        "bytes": 45834,
-        "gzip": 17404,
-        "brotli": 14588
+        "bytes": 106352,
+        "gzip": 38491,
+        "brotli": 32070
       },
-      "provedByteCases": 44,
+      "provedByteCases": 73,
       "provedNativeCases": 0
     },
     {
@@ -917,10 +1090,10 @@
         "jpeg-ans"
       ],
       "alone": {
-        "bytes": 81374,
-        "gzip": 31370,
-        "brotli": 27488,
-        "sha256": "53a9cefeadbd85d3c7edf0375cfc8cab02fd85515d4bc160c6fd9eda1a00d23a",
+        "bytes": 83223,
+        "gzip": 32205,
+        "brotli": 28120,
+        "sha256": "10483c365c5a55240169aef458cc58982fa43e6b91d72c9fed33992479acdc80",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -928,9 +1101,9 @@
         }
       },
       "added": {
-        "bytes": 47806,
-        "gzip": 17419,
-        "brotli": 14764
+        "bytes": 48501,
+        "gzip": 17670,
+        "brotli": 14958
       },
       "provedByteCases": 34,
       "provedNativeCases": 0
@@ -970,10 +1143,10 @@
         "photo-ans"
       ],
       "alone": {
-        "bytes": 58378,
-        "gzip": 23119,
-        "brotli": 20428,
-        "sha256": "6e777bb42afb31415bc31c4bb4b33af2ab4a1fbc9f1808346a61a942eb44bca4",
+        "bytes": 59520,
+        "gzip": 23656,
+        "brotli": 20860,
+        "sha256": "55af9c8445930635c41b5c90e945761e569b58a6bff47b99bc62d753f4f54cc0",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -982,9 +1155,9 @@
         }
       },
       "added": {
-        "bytes": 6941,
-        "gzip": 2365,
-        "brotli": 1926
+        "bytes": 6926,
+        "gzip": 2347,
+        "brotli": 1979
       },
       "provedByteCases": 85,
       "provedNativeCases": 10
@@ -1043,23 +1216,95 @@
         "animation"
       ],
       "alone": {
-        "bytes": 148277,
-        "gzip": 56607,
-        "brotli": 48793,
-        "sha256": "baaa227103266dbb3e8080f5a74fe540ca7f1832773121de6cc051571d089b80",
+        "bytes": 149918,
+        "gzip": 57253,
+        "brotli": 49303,
+        "sha256": "2da51189c3c3c477393138abbe6fa336440c44d2c3e60916f18506c8e0bf0470",
         "compress": {
           "passes": 2,
-          "hoist_funs": true,
-          "hoist_vars": true,
           "module": true
         }
       },
       "added": {
-        "bytes": 91784,
-        "gzip": 33830,
-        "brotli": 28628
+        "bytes": 92242,
+        "gzip": 33929,
+        "brotli": 28661
       },
       "provedByteCases": 6,
+      "provedNativeCases": 0
+    },
+    {
+      "entry": "./animation-atlas",
+      "module": "animation-atlas",
+      "file": "dist/animation-atlas.min.mjs",
+      "exports": [
+        "buildAnimationAtlas",
+        "encodeAnimationAtlas",
+        "encodeAnimationAtlasSteps"
+      ],
+      "modules": [
+        "bits",
+        "fault",
+        "prefix",
+        "kernel-hooks",
+        "modular",
+        "screen-lz77",
+        "icc-profile",
+        "icc-write",
+        "admit",
+        "async-job",
+        "effort-level",
+        "frame",
+        "lossless-coding",
+        "lossless",
+        "squeeze",
+        "lossy",
+        "photo-dct",
+        "photo-xyb",
+        "photo-job",
+        "entropy",
+        "jfif",
+        "vardct",
+        "coefficient-effort",
+        "ans",
+        "coefficient-ans",
+        "weighted-policy",
+        "weighted",
+        "local",
+        "rct-search",
+        "screen",
+        "screen-patches",
+        "sampled",
+        "palette-search",
+        "screen-local",
+        "screen-search",
+        "painting",
+        "effort-job",
+        "effort",
+        "container",
+        "framing",
+        "animation-frames",
+        "patch-code",
+        "atlas-plan",
+        "animation-atlas"
+      ],
+      "alone": {
+        "bytes": 185086,
+        "gzip": 71037,
+        "brotli": 60381,
+        "sha256": "98eaa8c13ff42ec7d1d24b8769f2b89dfd6540732974974ddec51dad3e94e44d",
+        "compress": {
+          "passes": 2,
+          "inline": 1,
+          "module": true
+        }
+      },
+      "added": {
+        "bytes": 127511,
+        "gzip": 47773,
+        "brotli": 39819
+      },
+      "provedByteCases": 50,
       "provedNativeCases": 0
     },
     {
@@ -1111,10 +1356,10 @@
         "effort"
       ],
       "alone": {
-        "bytes": 125895,
-        "gzip": 48270,
-        "brotli": 41919,
-        "sha256": "ab2490ae7bf87d8c11a60ed20a06bea1e7ba7e8ae77e539f9b3777dbe058ffac",
+        "bytes": 127052,
+        "gzip": 48795,
+        "brotli": 42332,
+        "sha256": "2c8b1ad32c51a4bcb17aac8601b143cfb93e673eefa5d8dc855067c031f7a4e3",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1123,9 +1368,9 @@
         }
       },
       "added": {
-        "bytes": 69322,
-        "gzip": 25487,
-        "brotli": 21702
+        "bytes": 69297,
+        "gzip": 25469,
+        "brotli": 21663
       },
       "provedByteCases": 169,
       "provedNativeCases": 10
@@ -1155,19 +1400,21 @@
         "metadata"
       ],
       "alone": {
-        "bytes": 43422,
-        "gzip": 17038,
-        "brotli": 14994,
-        "sha256": "f7f7d972ccfcf742ab20a5cc25b03f747f82829b7a57b2331ca8a41c17df55a7",
+        "bytes": 30382,
+        "gzip": 12237,
+        "brotli": 10731,
+        "sha256": "98fb79e21b6a1cb8b9f72484ab92741615983f926ecff66c5a721386a7bcaa5d",
         "compress": {
           "passes": 2,
+          "hoist_funs": true,
+          "hoist_vars": true,
           "module": true
         }
       },
       "added": {
-        "bytes": 39169,
-        "gzip": 15076,
-        "brotli": 12839
+        "bytes": 31522,
+        "gzip": 12304,
+        "brotli": 10465
       },
       "provedByteCases": 3,
       "provedNativeCases": 0
@@ -1187,10 +1434,10 @@
         "brotli"
       ],
       "alone": {
-        "bytes": 14862,
-        "gzip": 6523,
-        "brotli": 5762,
-        "sha256": "de3eeee150f50e54c71d87afec615ed1153ce3f748b7b94130318ff6a7bb6da9",
+        "bytes": 12269,
+        "gzip": 5484,
+        "brotli": 4770,
+        "sha256": "398ba135d7b1b77a5820d59ff534cc84d17c705a169ee731fbe4453f707f4749",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1199,9 +1446,9 @@
         }
       },
       "added": {
-        "bytes": 29103,
-        "gzip": 11651,
-        "brotli": 9843
+        "bytes": 22983,
+        "gzip": 9315,
+        "brotli": 7863
       },
       "provedByteCases": 56,
       "provedNativeCases": 0
@@ -1229,10 +1476,10 @@
         "container-stream"
       ],
       "alone": {
-        "bytes": 7498,
-        "gzip": 3365,
-        "brotli": 2865,
-        "sha256": "823ffdad75dae88015707527790e7b8e5933a28b6ae894ff220ae32157f41a90",
+        "bytes": 7487,
+        "gzip": 3350,
+        "brotli": 2825,
+        "sha256": "826d927fe23da4cf64b99504c057cc22429481c710338e67c1c8a5331c27cdf9",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1241,9 +1488,9 @@
         }
       },
       "added": {
-        "bytes": 5411,
-        "gzip": 1904,
-        "brotli": 1621
+        "bytes": 5415,
+        "gzip": 1910,
+        "brotli": 1618
       },
       "provedByteCases": 6,
       "provedNativeCases": 0
@@ -1279,10 +1526,10 @@
         "container-advanced"
       ],
       "alone": {
-        "bytes": 59520,
-        "gzip": 21863,
-        "brotli": 19195,
-        "sha256": "d9028a07e78b79e78b097d9ebf1cd52b60a3a2ac0d82048bf310795ece7742e2",
+        "bytes": 42172,
+        "gzip": 15722,
+        "brotli": 13840,
+        "sha256": "70e2af47c251200aafe26e4c95ea790d28d5c839ddff7e9534fdd3b6ff0db38e",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -1290,9 +1537,9 @@
         }
       },
       "added": {
-        "bytes": 55267,
-        "gzip": 19924,
-        "brotli": 16897
+        "bytes": 43114,
+        "gzip": 15600,
+        "brotli": 13254
       },
       "provedByteCases": 104,
       "provedNativeCases": 0
@@ -1326,10 +1573,10 @@
         "progressive-container"
       ],
       "alone": {
-        "bytes": 77409,
-        "gzip": 28094,
-        "brotli": 24507,
-        "sha256": "0be0644e3ff7a94db6898ec375ad5f5cc495bd46e43a3c560023e19e1c5fa547",
+        "bytes": 53524,
+        "gzip": 19981,
+        "brotli": 17615,
+        "sha256": "9fdd690e437805e0d3b13ee26821620644b98594843eb70f11c4e46204f34d90",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -1337,11 +1584,11 @@
         }
       },
       "added": {
-        "bytes": 73156,
-        "gzip": 26180,
-        "brotli": 22213
+        "bytes": 54326,
+        "gzip": 19863,
+        "brotli": 16904
       },
-      "provedByteCases": 66,
+      "provedByteCases": 90,
       "provedNativeCases": 0
     },
     {
@@ -1371,10 +1618,10 @@
         "delivery"
       ],
       "alone": {
-        "bytes": 68536,
-        "gzip": 24933,
-        "brotli": 21801,
-        "sha256": "f0185690d9be47891fad4312fd3a145a65cdd746e05df978ae4699fea795a39e",
+        "bytes": 47878,
+        "gzip": 17864,
+        "brotli": 15721,
+        "sha256": "08e8f897301ebd9085062f1c040b7754ba04a0298dcda8cb0033ff43dad896fb",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -1382,9 +1629,9 @@
         }
       },
       "added": {
-        "bytes": 64283,
-        "gzip": 22990,
-        "brotli": 19532
+        "bytes": 48820,
+        "gzip": 17745,
+        "brotli": 15096
       },
       "provedByteCases": 65,
       "provedNativeCases": 0
@@ -1443,10 +1690,10 @@
         "wasm"
       ],
       "alone": {
-        "bytes": 148884,
-        "gzip": 57919,
-        "brotli": 49860,
-        "sha256": "787a69a3acc33b5f66d18391fc6fc43c3869501ffa3be73ad4292294efc4c81d",
+        "bytes": 150047,
+        "gzip": 58449,
+        "brotli": 50313,
+        "sha256": "5cf9644f14f3846221b60c26935243baa0dd67c3b9244c00da59aa1db5b5d847",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1455,9 +1702,9 @@
         }
       },
       "added": {
-        "bytes": 92311,
-        "gzip": 35136,
-        "brotli": 29643
+        "bytes": 92292,
+        "gzip": 35123,
+        "brotli": 29644
       },
       "provedByteCases": 169,
       "provedNativeCases": 10
@@ -1476,7 +1723,7 @@
         "bytes": 2001,
         "gzip": 1184,
         "brotli": 922,
-        "sha256": "f4f16c4ea7bceed8f41ef2d257713bd8eb0510ce51b74df6846734903a74cbe6",
+        "sha256": "fbc561e0dd014e6185c0ae67acaa24402f2d9cf81f5fda0f00d3f9f19bdc2a1a",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1486,8 +1733,8 @@
       },
       "added": {
         "bytes": 906,
-        "gzip": 451,
-        "brotli": 379
+        "gzip": 452,
+        "brotli": 383
       },
       "provedByteCases": 4,
       "provedNativeCases": 0
@@ -1564,6 +1811,13 @@
         "worker-input",
         "worker",
         "image-source",
+        "color-info",
+        "icc",
+        "source",
+        "container-advanced",
+        "format-fields",
+        "opsin",
+        "format-still",
         "afv-basis",
         "quantization-defaults",
         "quantization-params",
@@ -1572,37 +1826,48 @@
         "noise",
         "photo-crop",
         "lf-frames",
+        "coefficient-orders",
+        "photo-layout",
+        "planar-input",
+        "weighted-custom",
+        "planar-planes",
+        "channel-lossless",
+        "planar-squeeze",
+        "modular-progressive",
+        "implicit-palette",
+        "planar-transforms",
+        "channels",
+        "photo-extras",
         "photo-advanced",
         "noise-estimation",
         "photo-noise",
-        "color-info",
-        "icc",
-        "format-fields",
-        "channel-lossless",
-        "channels",
         "layers",
         "hybrid",
         "delta-palette",
+        "graphics-quantize",
+        "graphics",
+        "patch-code",
+        "atlas-plan",
+        "animation-atlas",
+        "patch-input",
+        "toc-permutation",
+        "patch-composition",
         "patches",
         "splines",
-        "source",
         "container-stream",
-        "container-advanced",
         "brotli",
         "metadata",
         "progressive-container",
-        "opsin",
-        "toc-permutation",
         "delivery",
         "photo-plan",
         "format-worker",
         "rapier"
       ],
       "alone": {
-        "bytes": 415306,
-        "gzip": 153219,
-        "brotli": 126126,
-        "sha256": "37ca5917a362f52175ea52b96c03baac422ab314f1e26b3e9da660165a778338",
+        "bytes": 471275,
+        "gzip": 172889,
+        "brotli": 141067,
+        "sha256": "539c4b2b6a7b4a822af723fb038b0be28f8d055737b3f44abd40e1f2b39c7bc7",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -1610,16 +1875,17 @@
         }
       },
       "added": {
-        "bytes": 358820,
-        "gzip": 129998,
-        "brotli": 105468
+        "bytes": 413657,
+        "gzip": 149128,
+        "brotli": 119956
       },
-      "provedByteCases": 286,
+      "provedByteCases": 404,
       "provedNativeCases": 10
     }
   ],
   "all": {
     "exports": [
+      "COEFFICIENT_ORDER_BUCKETS",
       "DEFAULT_OPSIN",
       "EXTRA_CHANNEL_TYPES",
       "JPEG_LIMITS",
@@ -1627,6 +1893,7 @@
       "LIMITS",
       "PATCH_BLEND_MODES",
       "TRANSFORMS",
+      "buildAnimationAtlas",
       "compressBrotli",
       "configureKernels",
       "containerBoxHeader",
@@ -1638,15 +1905,21 @@
       "deliveryLayout",
       "encode",
       "encodeAnimation",
+      "encodeAnimationAtlas",
+      "encodeAnimationAtlasSteps",
       "encodeAnimationSteps",
       "encodeChannels",
       "encodeChannelsSteps",
       "encodeDeltaPalette",
       "encodeDeltaPaletteSteps",
+      "encodeGraphics",
+      "encodeGraphicsSteps",
       "encodeHybrid",
       "encodeHybridSteps",
       "encodeLayers",
       "encodeLayersSteps",
+      "encodePatchComposition",
+      "encodePatchCompositionSteps",
       "encodePatches",
       "encodePatchesSteps",
       "encodePhoto",
@@ -1696,6 +1969,7 @@
       "./photo-plan",
       "./noise",
       "./hybrid",
+      "./graphics",
       "./icc",
       "./opsin",
       "./delta-palette",
@@ -1705,6 +1979,7 @@
       "./patches",
       "./photo",
       "./animation",
+      "./animation-atlas",
       "./wasm",
       "./metadata",
       "./brotli",
@@ -1715,17 +1990,17 @@
       "./image",
       "./rapier"
     ],
-    "bytes": 421275,
-    "gzip": 154454,
-    "brotli": 126653
+    "bytes": 479159,
+    "gzip": 174362,
+    "brotli": 141951
   },
   "rapierWorker": {
     "file": "dist/rapier-worker.js",
-    "version": "5.0.0",
-    "bytes": 415097,
-    "gzip": 153162,
-    "brotli": 126092,
-    "sha256": "4a9f344b8894d4b79d4386260e15da0e7b6d54741efdba3b8a50b6920d163f9c",
+    "version": "5.1.0",
+    "bytes": 470934,
+    "gzip": 172819,
+    "brotli": 141091,
+    "sha256": "5ab70fd037940dbc44a2fa343d55d4db401b5c759f55e6d0e7bb09507b50e7b8",
     "modules": [
       "kernel-hooks.mjs",
       "weighted-policy.mjs",
@@ -1787,6 +2062,13 @@
       "worker-input.mjs",
       "worker.mjs",
       "image-source.mjs",
+      "color-info.mjs",
+      "icc.mjs",
+      "source.mjs",
+      "container-advanced.mjs",
+      "format-fields.mjs",
+      "opsin.mjs",
+      "format-still.mjs",
       "afv-basis.mjs",
       "quantization-defaults.mjs",
       "quantization-params.mjs",
@@ -1795,27 +2077,38 @@
       "noise.mjs",
       "photo-crop.mjs",
       "lf-frames.mjs",
+      "coefficient-orders.mjs",
+      "photo-layout.mjs",
+      "planar-input.mjs",
+      "weighted-custom.mjs",
+      "planar-planes.mjs",
+      "channel-lossless.mjs",
+      "planar-squeeze.mjs",
+      "modular-progressive.mjs",
+      "implicit-palette.mjs",
+      "planar-transforms.mjs",
+      "channels.mjs",
+      "photo-extras.mjs",
       "photo-advanced.mjs",
       "noise-estimation.mjs",
       "photo-noise.mjs",
-      "color-info.mjs",
-      "icc.mjs",
-      "format-fields.mjs",
-      "channel-lossless.mjs",
-      "channels.mjs",
       "layers.mjs",
       "hybrid.mjs",
       "delta-palette.mjs",
+      "graphics-quantize.mjs",
+      "graphics.mjs",
+      "patch-code.mjs",
+      "atlas-plan.mjs",
+      "animation-atlas.mjs",
+      "patch-input.mjs",
+      "toc-permutation.mjs",
+      "patch-composition.mjs",
       "patches.mjs",
       "splines.mjs",
-      "source.mjs",
       "container-stream.mjs",
-      "container-advanced.mjs",
       "brotli.mjs",
       "metadata.mjs",
       "progressive-container.mjs",
-      "opsin.mjs",
-      "toc-permutation.mjs",
       "delivery.mjs",
       "photo-plan.mjs",
       "format-worker.mjs",
@@ -1824,11 +2117,11 @@
   },
   "rapierStillWorker": {
     "file": "dist/rapier-still-worker.js",
-    "version": "5.0.0",
-    "bytes": 223038,
-    "gzip": 86099,
-    "brotli": 72785,
-    "sha256": "1a08ee6409d86fb0e3ae36ebb35d038e1bb4c4d3bfeca9979810ab45a6c3cfee",
+    "version": "5.1.0",
+    "bytes": 264695,
+    "gzip": 101287,
+    "brotli": 85056,
+    "sha256": "73fd9f756341ea8423ad97a9dcf2baf7805e0aea54ec67dd491b448f051c5309",
     "modules": [
       "kernel-hooks.mjs",
       "weighted-policy.mjs",
@@ -1885,6 +2178,14 @@
       "worker-input.mjs",
       "worker.mjs",
       "image-source.mjs",
+      "color-info.mjs",
+      "icc.mjs",
+      "source.mjs",
+      "framing.mjs",
+      "container-advanced.mjs",
+      "format-fields.mjs",
+      "opsin.mjs",
+      "format-still.mjs",
       "rapier-core.mjs"
     ]
   }

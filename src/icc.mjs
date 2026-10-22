@@ -27,11 +27,13 @@ export function encodeProfileSteps(data, width, height, options = {}) {
   const nativeLevel = samples.bitDepth > 12 || samples.exponentBits ? 10 : 5;
   if (options.level === 5 && nativeLevel === 10) throw fault('JXL_INPUT', 'These sample depths require JPEG XL level 10.');
   if (icc !== undefined) {
-    if (colorEncoding !== undefined || options.colorSpace !== undefined || options.transferFunction !== undefined)
+    if (options.colorSpace !== undefined || options.transferFunction !== undefined)
       throw fault('JXL_INPUT', 'An ICC profile supplies the color encoding; omit other color declarations.');
-    Object.assign(samples, prepareICC(icc, {level: options.level, compression: options.iccCompression}));
+    Object.assign(samples, prepareICC(icc, {level: options.level, compression: options.iccCompression, colorEncoding}));
   } else {
     if (options.iccCompression !== undefined) throw fault('JXL_INPUT', 'iccCompression requires an ICC profile.');
+    if (colorEncoding?.space === 'xyb' && (options.colorSpace !== undefined || options.transferFunction !== undefined))
+      throw fault('JXL_INPUT', 'Original XYB color has implicit color fields; omit colorSpace and transferFunction.');
     Object.assign(samples, prepareColorEncoding(colorEncoding, samples));
   }
   samples.level = Math.max(nativeLevel, samples.level ?? options.level ?? 5);

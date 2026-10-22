@@ -70,12 +70,12 @@ function writeSampleDepth(w, bits, exponent) {
 
 function writeColorEnum(w, value) { w.writeU32([[0, 0], [0, 1], [4, 2], [6, 18]], value); }
 
-export function writeModularFrameHeader(w, {alpha, shift = 1, extraChannels = Number(!!alpha), upsampling = 1, extraUpsampling}) {
+export function writeModularFrameHeader(w, {alpha, shift = 1, extraChannels = Number(!!alpha), upsampling = 1, extraUpsampling, passes}) {
   w.write(7, 0b0_00_1_00_0);
   w.writeU32([[0, 1], [0, 2], [0, 4], [0, 8]], upsampling);
   for (let c = 0; c < extraChannels; c++) w.writeU32([[0, 1], [0, 2], [0, 4], [0, 8]], extraUpsampling?.[c] ?? 1);
   w.write(2, shift);
-  writeFrameHeaderEnd(w, extraChannels);
+  writeFrameHeaderEnd(w, extraChannels, 0, passes);
 }
 
 export function writeFrameHeaderEnd(w, alpha, epf = 0, passes) {

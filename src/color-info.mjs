@@ -38,7 +38,18 @@ function writeXY(writer, value) { for (const coordinate of value) writer.writeU3
 export function prepareColorEncoding(info = {}, samples = {}) {
   record(info, 'colorEncoding');
   const space = info.space ?? 'rgb';
-  if (space !== 'rgb' && space !== 'gray') throw fault('JXL_INPUT', 'colorEncoding.space is rgb or gray.');
+  if (space === 'unknown') throw fault('JXL_INPUT', 'An unknown color encoding requires an ICC profile.');
+  if (space === 'xyb') {
+    if (['whitePoint', 'primaries', 'transferFunction', 'gamma'].some(key => info[key] !== undefined))
+      throw fault('JXL_INPUT', 'XYB color encoding has implicit D65, no RGB primaries, and gamma 1/3; omit those fields.');
+    const intent = enumeration(info.renderingIntent ?? 'perceptual', INTENT, 'rendering intent');
+    const colorData = new BitWriter(16);
+    colorData.write(2, 0);
+    colorData.writeU32(COLOR_ENUM, 2);
+    colorData.writeU32(COLOR_ENUM, intent);
+    return {colorData, colorChannels: 3, transferFunction: undefined};
+  }
+  if (space !== 'rgb' && space !== 'gray') throw fault('JXL_INPUT', 'colorEncoding.space is rgb, gray or xyb; unknown requires ICC.');
   const colorChannels = space === 'gray' ? 1 : 3;
   const white = info.whitePoint ?? 'd65', whiteXY = Array.isArray(white) ? chromaticity(white) : null;
   const whiteEnum = whiteXY ? 2 : enumeration(white, WHITE, 'white point');

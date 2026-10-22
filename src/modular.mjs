@@ -81,8 +81,8 @@ export function writeChannelHistograms(w, orderedLeaves, freqs, histogramOf = le
   return histograms;
 }
 
-export function codeChannel(w, target, plane, width, height, leaf, raw = false, visit) {
-  if (!visit && kernelHooks.channel?.(w, target, plane, width, height, leaf, raw)) return;
+export function codeChannel(w, target, plane, width, height, leaf, raw = false, visit, residuals, beginY = 0) {
+  if (!visit && !residuals && kernelHooks.channel?.(w, target, plane, width, height, leaf, raw)) return;
   const predictor = leaf.predictor, offset = leaf.offset, multiplier = leaf.multiplier;
   const config = leaf.config || RESIDUAL_CONFIG, lengthConfig = RUN_CONFIG;
   let run = 0;
@@ -106,11 +106,12 @@ export function codeChannel(w, target, plane, width, height, leaf, raw = false, 
     let r;
     if (multiplier === 1) r = (value - pred - offset) | 0;
     else { r = Math.round((value - pred - offset) / multiplier); plane[index] = pred + offset + r * multiplier; }
+    if (residuals) { residuals[index] = r; return; }
     if (r === 0) { run++; return; }
     flush();
     emit(packSigned(r));
   };
-  for (let y = 0, index = 0; y < height; y++) {
+  for (let y = beginY, index = beginY * width; y < height; y++) {
     for (let x = 0; x < width; x++, index++) {
       let pred;
       if (predictor === 0) pred = 0;

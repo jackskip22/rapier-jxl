@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-import {LIMITS} from './bits.mjs';
 import {fault, guard} from './admit.mjs';
 import {SIGNATURE, CODESTREAM, PARTIAL, boxes, fileHeader, boxHeader} from './container.mjs';
 
@@ -8,9 +7,9 @@ const aborted = signal => { if (signal?.aborted) throw signal.reason ?? fault('J
 
 function settings(options) {
   if (!options || typeof options !== 'object' || Array.isArray(options)) throw invalid('Container options are an object.');
-  const {chunkSize = 65536, maxBytes = LIMITS.bytes, signal} = options;
-  if (!Number.isSafeInteger(chunkSize) || chunkSize < 1 || chunkSize > LIMITS.bytes)
-    throw invalid('A container chunk size is from 1 to 16 MiB bytes.');
+  const {chunkSize = 65536, maxBytes = Number.MAX_SAFE_INTEGER, signal} = options;
+  if (!Number.isSafeInteger(chunkSize) || chunkSize < 1)
+    throw invalid('A container chunk size is a positive safe integer.');
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw invalid('maxBytes is a positive safe integer.');
   if (signal !== undefined && (!signal || typeof signal !== 'object' || typeof signal.aborted !== 'boolean')) throw invalid('signal is an AbortSignal.');
   let total = 0;

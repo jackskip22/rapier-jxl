@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import type {Bytes, Job, Limits} from './index.mjs';
 export type {Bytes, Limits, ErrorCode, EncoderError, Job} from './index.mjs';
-/** Limits: 16 MiB each for input JPEG and output codestream, 64 million pixels, 16,384 pixels per side. */
+/** Limits: 64 million pixels and 16,384 pixels per side. Input and output use available memory. */
 export const LIMITS: Limits;
 export type Orientation = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 export interface Transcoded {

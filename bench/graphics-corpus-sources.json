@@ -1,0 +1,100 @@
+[
+  {
+    "id": "earth-00",
+    "kind": "dithered-palette",
+    "width": 400,
+    "height": 400,
+    "rgbaSha256": "dcec40c29a3e2c5c5769ff082413cf3eb82dec8a97f491914c4f5e493cd9e149",
+    "frame": 0,
+    "url": "https://upload.wikimedia.org/wikipedia/commons/2/2c/Rotating_earth_%28large%29.gif",
+    "sourceFile": "rotating-earth.gif",
+    "sourceSha256": "b0acdc9a01f91f6123dbff38d4bee59d0d6e4b26071b5c83937b242b6b202378",
+    "license": "CC-BY-SA-3.0",
+    "author": "Marvel",
+    "licenseUrl": "https://commons.wikimedia.org/wiki/File:Rotating_earth_(large).gif",
+    "provenance": "Original 400x400 composited GIF frame, Pillow12.3.0 seek/convert RGBA; no resizing. Frame pixels remain under the source license."
+  },
+  {
+    "id": "earth-22",
+    "kind": "dithered-palette",
+    "width": 400,
+    "height": 400,
+    "rgbaSha256": "5f96a3f7de7852180ec98b629dcf07fb684a9dee873889fa5e02e2d1b06c8fee",
+    "frame": 22,
+    "url": "https://upload.wikimedia.org/wikipedia/commons/2/2c/Rotating_earth_%28large%29.gif",
+    "sourceFile": "rotating-earth.gif",
+    "sourceSha256": "b0acdc9a01f91f6123dbff38d4bee59d0d6e4b26071b5c83937b242b6b202378",
+    "license": "CC-BY-SA-3.0",
+    "author": "Marvel",
+    "licenseUrl": "https://commons.wikimedia.org/wiki/File:Rotating_earth_(large).gif",
+    "provenance": "Original 400x400 composited GIF frame, Pillow12.3.0 seek/convert RGBA; no resizing. Frame pixels remain under the source license."
+  },
+  {
+    "id": "ui-gd-paint",
+    "kind": "real-screenshot",
+    "width": 1275,
+    "height": 717,
+    "rgbaSha256": "fc2f14ee627b4e9be38b5fead66585575d47eaaba624ffc0e640a36269c5cea2",
+    "url": "https://raw.githubusercontent.com/godotengine/godot-demo-projects/b761b4cd5718a7118f2c95eb55f181d0a5f004f1/gui/gd_paint/screenshots/gdpaint.png",
+    "sourceFile": "ui-gd-paint.png",
+    "sourceSha256": "2fdc952ebd7f88d23bf153eb0b61d11f09989ca54ee2303ad025bfd01d652418",
+    "license": "MIT",
+    "licenseUrl": "https://github.com/godotengine/godot-demo-projects/blob/b761b4cd5718a7118f2c95eb55f181d0a5f004f1/LICENSE.md",
+    "provenance": "Unmodified Godot paint application screenshot. PNG has no embedded ICC; standard sRGB interpretation."
+  },
+  {
+    "id": "ui-editor",
+    "kind": "real-screenshot",
+    "width": 1853,
+    "height": 1016,
+    "rgbaSha256": "b77703b0515419bf918c6fb2383f29204ffb991b37c10bf3f00238aa3358ccc7",
+    "url": "https://raw.githubusercontent.com/godotengine/godot-demo-projects/b761b4cd5718a7118f2c95eb55f181d0a5f004f1/misc/2.5d/screenshots/editor.png",
+    "sourceFile": "ui-editor.png",
+    "sourceSha256": "a3644c641920364664d9a2bddd92b482c0851c4bc2387433bb68cf7b8307596c",
+    "license": "MIT",
+    "licenseUrl": "https://github.com/godotengine/godot-demo-projects/blob/b761b4cd5718a7118f2c95eb55f181d0a5f004f1/LICENSE.md",
+    "provenance": "Unmodified application/editor screenshot from Godot demo projects."
+  },
+  {
+    "id": "ui-light",
+    "kind": "sharp-text-control",
+    "width": 640,
+    "height": 480,
+    "rgbaSha256": "b92035c3fa4cdabec5c3bbc08e9aa6373fa3f74cb5248571017712d3d7ee309a",
+    "pixels": "../test/complete-corpus/ui-light.rgba.gz",
+    "license": "MIT",
+    "provenance": "Unmodified repository complete-corpus RGBA8 fixture; no resizing."
+  },
+  {
+    "id": "drawing-labels",
+    "kind": "sharp-text-control",
+    "width": 512,
+    "height": 384,
+    "rgbaSha256": "d83a3c7d73f95eba1080a71c66c3be25b065ddf502a1402d6dd02b8aa0689a20",
+    "pixels": "../test/complete-corpus/drawing-labels.rgba.gz",
+    "license": "MIT",
+    "provenance": "Unmodified repository complete-corpus RGBA8 fixture; no resizing."
+  },
+  {
+    "id": "terminal-code",
+    "kind": "sharp-text-control",
+    "width": 512,
+    "height": 384,
+    "rgbaSha256": "ad47c90393a99241341958aee1ce86ac4f8701762c2baa139dd6b3d598668cce",
+    "pixels": "../test/complete-corpus/terminal-code.rgba.gz",
+    "license": "MIT",
+    "provenance": "Unmodified repository complete-corpus RGBA8 fixture; no resizing."
+  },
+  {
+    "id": "binary-dither-text",
+    "kind": "authored-dither-and-text",
+    "width": 512,
+    "height": 384,
+    "generator": {
+      "flat": true
+    },
+    "license": "MIT",
+    "provenance": "Deterministic source fixture: balanced plus/minus8 RGB jitter around a flat color, thin black rules and light antialias fringes; graphicsPixels generator. This is an authored stress case, not a natural screenshot.",
+    "rgbaSha256": "db6c4fbbd42c3d6211be417015d5e259fc1876d21ae22a4e53186c9da26f932c"
+  }
+]

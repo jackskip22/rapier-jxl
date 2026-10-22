@@ -2,9 +2,9 @@
 import type {Bytes} from './index.mjs';
 
 export interface ContainerOptions {
-  /** Encoded bytes per jxlp box; defaults to 65536, from 1 through 16 MiB. */
+  /** Encoded bytes per jxlp box; defaults to 65536; a positive safe integer. */
   chunkSize?: number;
-  /** Maximum total container bytes; defaults to 16 MiB. Streaming callers may set a larger safe integer. */
+  /** Optional positive safe-integer budget for total container bytes. Defaults to available memory. */
   maxBytes?: number;
   signal?: AbortSignal;
 }

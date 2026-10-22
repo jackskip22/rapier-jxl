@@ -2,95 +2,66 @@
 import {BitWriter, LIMITS, complete, part} from './bits.mjs';
 import {fault, job, admitSize, admitOutputSize} from './admit.mjs';
 import {writeImageHeader, groupLayout, assembleCodestream} from './frame.mjs';
-import {leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel, ALPHABET} from './modular.mjs';
-import {buildCode} from './prefix.mjs';
+import {leaf, writeTree, writeModularHeader, writeChannelHistograms, ALPHABET} from './modular.mjs';
 import {prepareICC} from './icc.mjs';
 import {prepareColorEncoding, prepareToneMapping} from './color-info.mjs';
-import {checkInteger, extraChannelType, prepareExtraChannels, prepareImageFields, prepareUpsamplingWeights, EXTRA_CHANNEL_TYPES} from './format-fields.mjs';
+import {checkInteger, prepareExtraChannels, prepareImageFields, prepareUpsamplingWeights, EXTRA_CHANNEL_TYPES} from './format-fields.mjs';
 import {channelLosslessCompatible, channelFrameHeader, channelFrameSize, channelLosslessSteps} from './channel-lossless.mjs';
+import {admitWeightedPredictor, writePlanarModularHeader} from './weighted-custom.mjs';
+import {admitPlanarSqueeze, applyPlanarSqueeze} from './planar-squeeze.mjs';
+import {modularPasses} from './modular-progressive.mjs';
+import {admitPlanarTransforms, applyPlanarTransforms} from './planar-transforms.mjs';
+import {channelPowers, channelUpsampling, requireChannelObject, admitChannelPrecision, admitExtraChannels} from './planar-input.mjs';
+import {channelPiece, writePlanarPlanes} from './planar-planes.mjs';
 
 export {EXTRA_CHANNEL_TYPES, LIMITS};
-const powers = [1]; for (let i = 1; i <= 32; i++) powers.push(powers[i - 1] * 2);
-const upsample = (value, name) => { if (![1, 2, 4, 8].includes(value)) throw fault('JXL_INPUT', name + ' is 1, 2, 4 or 8.'); return value; };
-const object = (value, name) => { if (!value || typeof value !== 'object' || Array.isArray(value)) throw fault('JXL_INPUT', name + ' is an object.'); return value; };
-
-function precision(data, options) {
-  if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray || data instanceof Uint16Array || data instanceof Uint32Array || data instanceof Float32Array))
-    throw fault('JXL_INPUT', 'Channel samples are unsigned typed arrays or Float32Array.');
-  const sampleFormat = options.sampleFormat ?? (data instanceof Float32Array ? 'float32' : 'uint');
-  if (!['uint', 'float', 'float16', 'float32'].includes(sampleFormat)) throw fault('JXL_INPUT', 'sampleFormat is uint, float16, float32 or float (raw words).');
-  const bitDepth = options.bitDepth ?? (sampleFormat === 'float16' ? 16 : data.BYTES_PER_ELEMENT * 8);
-  const exponentBits = sampleFormat === 'uint' ? 0 : options.exponentBits ?? (sampleFormat === 'float16' ? 5 : 8);
-  if (sampleFormat === 'uint' && options.exponentBits !== undefined && options.exponentBits !== 0)
-    throw fault('JXL_INPUT', 'Integer samples have no exponent bits.');
-  if (sampleFormat === 'float16' && (bitDepth !== 16 || exponentBits !== 5) || sampleFormat === 'float32' && (bitDepth !== 32 || exponentBits !== 8))
-    throw fault('JXL_INPUT', 'float16 and float32 use their IEEE sample precision; use float for other raw-word layouts.');
-  checkInteger(bitDepth, 1, exponentBits ? 32 : 31, 'bitDepth');
-  if (exponentBits) {
-    checkInteger(exponentBits, 2, 8, 'exponentBits');
-    checkInteger(bitDepth - exponentBits - 1, 2, 23, 'Mantissa precision');
-  } else if (data instanceof Float32Array) throw fault('JXL_INPUT', 'Float32Array needs floating-point sample metadata.');
-  if (data instanceof Float32Array && (bitDepth !== 32 || exponentBits !== 8)) throw fault('JXL_INPUT', 'Float32Array has 32 bits and eight exponent bits.');
-  if (bitDepth > data.BYTES_PER_ELEMENT * 8) throw fault('JXL_INPUT', 'The channel array cannot hold the declared precision.');
-  const words = data instanceof Float32Array ? new Int32Array(data.buffer, data.byteOffset, data.length) : data;
-  const maximum = powers[bitDepth] - 1;
-  if (!(data instanceof Float32Array)) for (const value of words) if (value > maximum) throw fault('JXL_INPUT', 'A channel sample exceeds its declared precision.');
-  return {data: words, bitDepth, exponentBits, sampleFormat};
-}
 
 function admitPicture(input, options) {
-  object(input, 'Planar image'); object(options, 'Channel options');
+  requireChannelObject(input, 'Planar image'); requireChannelObject(options, 'Channel options');
   const {width, height, color, extraChannels = []} = input;
   admitSize(width, height);
   if (options.quality !== undefined && options.quality !== 100) throw fault('JXL_INPUT', 'Planar channels keep exact sample words; quality is 100.');
   if (!Array.isArray(color) || color.length !== 1 && color.length !== 3) throw fault('JXL_INPUT', 'color contains one gray plane or three RGB planes.');
-  if (!Array.isArray(extraChannels) || extraChannels.length > 256) throw fault('JXL_INPUT', 'An image has at most 256 extra channels.');
-  const upsampling = upsample(options.upsampling ?? 1, 'upsampling');
+  const upsampling = channelUpsampling(options.upsampling ?? 1, 'upsampling');
   const codedWidth = Math.ceil(width / upsampling), codedHeight = Math.ceil(height / upsampling);
-  const channels = color.map(data => ({...precision(data, options), width: codedWidth, height: codedHeight, shift: 0}));
+  const channels = color.map(data => ({...admitChannelPrecision(data, options), width: codedWidth, height: codedHeight, shift: 0}));
   for (const channel of channels) {
     if (channel.data.length !== codedWidth * codedHeight) throw fault('JXL_INPUT', 'Each color plane contains ceil(width/upsampling) times ceil(height/upsampling) samples.');
     if (channel.bitDepth !== channels[0].bitDepth || channel.exponentBits !== channels[0].exponentBits)
       throw fault('JXL_INPUT', 'Color planes share one sample precision.');
   }
-  const extras = extraChannels.map((entry, index) => {
-    object(entry, 'Extra channel ' + index);
-    const kind = extraChannelType(new Map(Object.entries(entry)).get('type')), dimShift = checkInteger(entry.dimShift ?? 0, 0, 3, 'dimShift');
-    if (entry.alphaPremultiplied !== undefined && kind !== 0 || entry.spotColor !== undefined && kind !== 2 || entry.cfaChannel !== undefined && kind !== 5)
-      throw fault('JXL_INPUT', 'Alpha, spot and CFA fields belong to their corresponding channel type.');
-    const factor = upsample(entry.upsampling ?? Math.max(1, upsampling / powers[dimShift]), 'Extra-channel upsampling');
-    const total = factor * powers[dimShift];
-    if (total < upsampling || total > 8) throw fault('JXL_INPUT', 'Combined extra-channel upsampling is at least the color factor and at most eight.');
-    const name = entry.name ?? '';
-    if (typeof name !== 'string' || new TextEncoder().encode(name).length > 1071) throw fault('JXL_INPUT', 'A channel name is at most 1071 UTF-8 bytes.');
-    if (entry.alphaPremultiplied !== undefined && typeof entry.alphaPremultiplied !== 'boolean') throw fault('JXL_INPUT', 'alphaPremultiplied is boolean.');
-    const spotColor = entry.spotColor ?? [0, 0, 0, 0];
-    if (kind === 2 && (!Array.isArray(spotColor) || spotColor.length !== 4 || spotColor.some(value => typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1)))
-      throw fault('JXL_INPUT', 'spotColor is four normalized red, green, blue and solidity values.');
-    const cfaChannel = kind === 5 ? checkInteger(entry.cfaChannel ?? 1, 0, 274, 'cfaChannel') : 1;
-    const channel = {...precision(entry.data, entry), width: Math.ceil(width / total), height: Math.ceil(height / total),
-      shift: 31 - Math.clz32(total / upsampling), kind, dimShift, factor, name, alphaPremultiplied: !!entry.alphaPremultiplied, spotColor, cfaChannel};
-    if (channel.data.length !== channel.width * channel.height) throw fault('JXL_INPUT', 'Extra channel ' + index + ' has the wrong number of samples.');
-    return channel;
-  });
+  const extras = admitExtraChannels(extraChannels, width, height, upsampling);
   channels.push(...extras);
   const groupSize = options.groupSize ?? 256;
   if (![128, 256, 512, 1024].includes(groupSize)) throw fault('JXL_INPUT', 'groupSize is 128, 256, 512 or 1024.');
-  const predictors = new Map([['zero', 0], ['left', 1], ['top', 2], ['average', 3], ['gradient', 5]]);
-  const predictor = new Map(Object.entries(options)).get('predictor') ?? 'auto';
-  if (predictor !== 'auto' && !predictors.has(predictor)) throw fault('JXL_INPUT', 'predictor is auto, zero, left, top, average or gradient.');
-  const requiredLevel = extras.length > 4 || extras.some(c => c.kind === 4) || channels.some(c => c.bitDepth > 12 || c.exponentBits) ? 10 : 5;
+  const predictors = new Map([['zero', 0], ['left', 1], ['top', 2], ['average', 3], ['gradient', 5], ['weighted', 6]]);
+  let predictor = new Map(Object.entries(options)).get('predictor') ?? 'auto';
+  if (options.weightedPredictor !== undefined) {
+    if (predictor !== 'auto' && predictor !== 'weighted') throw fault('JXL_INPUT', 'weightedPredictor requires the weighted predictor.');
+    predictor = 'weighted';
+  }
+  if (predictor !== 'auto' && !predictors.has(predictor)) throw fault('JXL_INPUT', 'predictor is auto, zero, left, top, average, gradient or weighted.');
+  const weighted = predictor === 'weighted' ? admitWeightedPredictor(options.weightedPredictor) : null;
+  const progression = modularPasses(options.progressive);
+  const transformPlan = admitPlanarTransforms(new Map(Object.entries(options)).get('transforms'), color.length, options.maxTransformBytes);
+  const squeezeValue = options.squeeze === undefined && progression ? 'default' : options.squeeze;
+  const squeezePlan = transformPlan ? null : admitPlanarSqueeze(squeezeValue, channels, groupSize, options.maxTransformBytes);
+  const squeezeSource = Array.isArray(squeezeValue) ? squeezeValue.map(step => ({...step})) : squeezeValue;
+  const requiredLevel = extras.length > 4 || extras.some(c => c.kind === 4) || channels.some(c => c.bitDepth > 12 || c.exponentBits) ||
+    squeezePlan?.count > 256 || squeezePlan?.transforms.length > 8 ? 10 : 5;
   if (options.level !== undefined && options.level !== 5 && options.level !== 10) throw fault('JXL_INPUT', 'JPEG XL level is 5 or 10.');
   if (options.level === 5 && requiredLevel === 10) throw fault('JXL_INPUT', 'These channels require JPEG XL level 10.');
   const metadata = {bitDepth: channels[0].bitDepth, exponentBits: channels[0].exponentBits,
     modular16bit: channels.every(c => c.bitDepth <= 12 && !c.exponentBits), extraChannelData: prepareExtraChannels(extras),
     transformData: prepareUpsamplingWeights(options.upsamplingWeights)};
   if (options.icc !== undefined) {
-    if (options.colorEncoding !== undefined || options.colorSpace !== undefined || options.transferFunction !== undefined)
+    if (options.colorSpace !== undefined || options.transferFunction !== undefined)
       throw fault('JXL_INPUT', 'ICC supplies color meaning; omit other color declarations.');
     Object.assign(metadata, prepareICC(options.icc, {level: options.level, compression: options.iccCompression,
-      colorSpace: extras.some(channel => channel.kind === 4) ? 'cmyk' : undefined}));
+      colorSpace: extras.some(channel => channel.kind === 4) ? 'cmyk' : undefined, colorEncoding: options.colorEncoding}));
   } else {
+    if (options.colorEncoding?.space === 'xyb' && (options.colorSpace !== undefined || options.transferFunction !== undefined))
+      throw fault('JXL_INPUT', 'Original XYB color has implicit color fields; omit colorSpace and transferFunction.');
     Object.assign(metadata, prepareColorEncoding(options.colorEncoding ?? {space: color.length === 1 ? 'gray' : 'rgb'},
       {...options, transferFunction: options.transferFunction ?? (channels[0].exponentBits ? 'linear' : 'srgb')}));
   }
@@ -102,78 +73,54 @@ function admitPicture(input, options) {
   const imageFields = prepareImageFields(options);
   if (imageFields) metadata.imageFields = imageFields;
   return {width, height, codedWidth, codedHeight, colorCount: color.length, extras, channels, upsampling, groupSize, metadata, level,
+    weighted, squeezePlan, squeezeSource, transformPlan, progression, requestedLevel: options.level,
     predictor: predictor === 'auto' ? -1 : predictors.get(predictor)};
 }
 
-function piece(channel, x, y, size) {
-  const factor = powers[channel.shift], left = Math.floor(x / factor), top = Math.floor(y / factor);
-  const width = Math.max(0, Math.min(channel.width - left, size / factor));
-  const height = Math.max(0, Math.min(channel.height - top, size / factor));
-  return {channel, left, top, width, height};
-}
-
-function plane(piece) {
-  const {channel, left, top, width, height} = piece, data = new Int32Array(width * height);
-  for (let y = 0; y < height; y++) data.set(channel.data.subarray((top + y) * channel.width + left, (top + y) * channel.width + left + width), y * width);
-  return data;
-}
-
-function selectedPredictor(data, width, height, forced) {
-  if (forced >= 0) return forced;
-  let selected = 0, cost = Infinity;
-  for (const predictor of [0, 1, 2, 3, 5]) {
-    const counts = new Uint32Array(ALPHABET), h = Math.min(height, Math.max(1, Math.floor(4096 / width)));
-    codeChannel(null, counts, data, width, h, leaf(predictor));
-    const code = buildCode(counts);
-    let bits = 0; for (let s = 0; s < counts.length; s++) bits += counts[s] * (code.lengths[s] + Math.max(0, s < 224 ? s - 1 : s - 236));
-    if (bits < cost) { cost = bits; selected = predictor; }
-  }
-  return selected;
-}
-
-function writePlanes(writer, pieces, predictor, afterModel) {
-  if (!pieces.length) return;
-  const leaves = [], histograms = Array.from({length: Math.min(pieces.length, 254)}, () => new Uint32Array(ALPHABET));
-  pieces.forEach((item, c) => {
-    const data = plane(item), model = leaf(selectedPredictor(data, item.width, item.height, predictor)); leaves.push(model);
-    codeChannel(null, histograms[Math.min(c, 253)], data, item.width, item.height, model);
-  });
-  const ordered = writeTree(writer, channelTree(leaves));
-  const codes = writeChannelHistograms(writer, ordered, histograms, model => Math.min(leaves.indexOf(model), 253));
-  if (afterModel) afterModel();
-  pieces.forEach((item, c) => codeChannel(writer, codes[Math.min(c, 253) + 1].code, plane(item), item.width, item.height, leaves[c]));
-}
-
 function* planarFrameSteps(config, byteCeiling = Infinity) {
-  const {codedWidth: width, codedHeight: height, groupSize: dim, channels, predictor} = config;
+  const {codedWidth: width, codedHeight: height, groupSize: dim, channels, predictor, weighted, squeezePlan, progression, modularTransforms} = config;
+  const header = (writer, local = false) => weighted || squeezePlan || modularTransforms
+    ? writePlanarModularHeader(writer, {useGlobalTree: !local, weighted, transforms: local ? [] : modularTransforms ?? squeezePlan?.transforms})
+    : writeModularHeader(writer, {useGlobalTree: !local});
   const layout = groupLayout(width, height, dim), global = new BitWriter(256), sections = [];
   global.write(1, 1); global.write(1, 1);
-  let firstGrouped = 0;
+  let firstGrouped = config.metaCount ?? 0;
   while (firstGrouped < channels.length && channels[firstGrouped].width <= dim && channels[firstGrouped].height <= dim) firstGrouped++;
   if (firstGrouped) {
-    writePlanes(global, channels.slice(0, firstGrouped).map(channel => ({channel, left: 0, top: 0, width: channel.width, height: channel.height})), predictor,
-      () => writeModularHeader(global));
+    writePlanarPlanes(global, channels.slice(0, firstGrouped).map(channel => ({channel, left: 0, top: 0, width: channel.width, height: channel.height})), predictor,
+      () => header(global), weighted, Math.min(4194304, 1024 + Math.floor(width * height * (config.colorCount + config.extras.length) / 16)));
   } else {
     const model = leaf(0), counts = new Uint32Array(ALPHABET); counts[0] = 1;
     const ordered = writeTree(global, model); writeChannelHistograms(global, ordered, [counts]);
-    writeModularHeader(global);
+    header(global);
   }
   sections.push(global.finish());
   const dcGroups = layout.dcGroupsX * layout.dcGroupsY, groups = layout.groupsX * layout.groupsY;
   let size = sections[0].length;
   if (size > byteCeiling) return null;
-  if (!layout.single) {
-    for (const [count, across, extent, dc] of [[dcGroups, layout.dcGroupsX, dim * 8, true], [groups, layout.groupsX, dim, false]]) {
-      if (!dc) sections.push(new Uint8Array(0));
+  if (!layout.single || progression) {
+    const passes = progression?.brackets ?? [{minimum: 0, maximum: 2}];
+    const stages = [{count: dcGroups, across: layout.dcGroupsX, extent: dim * 8, minimum: 3, maximum: Infinity},
+      ...passes.map(pass => ({count: groups, across: layout.groupsX, extent: dim, ...pass}))];
+    let done = 0;
+    for (const [stage, {count, across, extent, minimum, maximum}] of stages.entries()) {
+      if (stage === 1) sections.push(new Uint8Array(0));
       for (let g = 0; g < count; g++) {
-        const pieces = channels.slice(firstGrouped).filter(channel => dc ? channel.shift >= 3 : channel.shift < 3)
-          .map(channel => piece(channel, g % across * extent, Math.floor(g / across) * extent, extent)).filter(p => p.width && p.height);
+        const pieces = channels.slice(firstGrouped).filter(channel => {
+          const shift = Math.min(channel.hshift ?? channel.shift, channel.vshift ?? channel.shift);
+          return shift >= minimum && shift <= maximum;
+        })
+          .map(channel => channelPiece(channel, g % across * extent, Math.floor(g / across) * extent, extent)).filter(p => p.width && p.height);
         const section = new BitWriter(256);
-        if (pieces.length) { writeModularHeader(section, {useGlobalTree: false}); writePlanes(section, pieces, predictor); }
+        if (pieces.length) {
+          header(section, true);
+          writePlanarPlanes(section, pieces, predictor, undefined, weighted,
+            Math.min(1048576, 1024 + pieces.reduce((sum, item) => sum + item.width * item.height, 0)));
+        }
         const bytes = section.finish(); size += bytes.length;
         if (size > byteCeiling) return null;
         admitOutputSize(size); sections.push(bytes);
-        yield ((dc ? 0 : dcGroups) + g + 1) / (dcGroups + groups);
+        yield ++done / (dcGroups + groups * passes.length);
       }
     }
   } else yield 1;
@@ -181,6 +128,29 @@ function* planarFrameSteps(config, byteCeiling = Infinity) {
 }
 
 function* frameSteps(config) {
+  if (config.transformPlan) {
+    const prepared = yield* part(applyPlanarTransforms(config.channels, config.transformPlan, config.metadata.bitDepth, config.weighted), 0, 3);
+    const squeezePlan = admitPlanarSqueeze(config.squeezeSource, prepared.channels, config.groupSize, config.transformPlan.memoryLimit, prepared.metaCount);
+    const squeezed = squeezePlan ? yield* part(applyPlanarSqueeze(prepared.channels, squeezePlan), 1, 3) : prepared;
+    const modularTransforms = [...prepared.transforms, ...(squeezePlan?.transforms ?? [])];
+    if (modularTransforms.length > 273) throw fault('JXL_INPUT', 'The complete Modular recipe has at most 273 transforms.');
+    if (prepared.wide || squeezed.wide) config.metadata.modular16bit = false;
+    if (prepared.wide || squeezed.wide || prepared.maximumChannels > 256 || squeezePlan?.count > 256 || modularTransforms.length > 8) {
+      if (config.requestedLevel === 5) throw fault('JXL_INPUT', 'This Modular transform recipe requires JPEG XL level 10.');
+      config.level = 10;
+    }
+    return yield* part(planarFrameSteps({...config, channels: squeezed.channels, squeezePlan, modularTransforms,
+      metaCount: squeezePlan?.metaCount ?? prepared.metaCount}), 2, 3);
+  }
+  if (config.squeezePlan) {
+    const transformed = yield* part(applyPlanarSqueeze(config.channels, config.squeezePlan), 0, 2);
+    if (transformed.wide) {
+      if (config.requestedLevel === 5) throw fault('JXL_INPUT', 'These Squeeze residuals require JPEG XL level 10.');
+      config.metadata.modular16bit = false; config.level = 10;
+    }
+    return yield* part(planarFrameSteps({...config, channels: transformed.channels}), 1, 2);
+  }
+  if (config.weighted || config.progression) return yield* planarFrameSteps(config);
   if (!channelLosslessCompatible(config)) return yield* planarFrameSteps(config);
   let best, smallest = Infinity, oversized;
   const candidates = [channelLosslessSteps, planarFrameSteps];
@@ -203,6 +173,10 @@ function* channelsSteps(config) {
     preview = assembleCodestream(frame.header, frame.sections);
   }
   const frame = yield* part(frameSteps(config), config.preview ? 1 : 0, config.preview ? 2 : 1), header = new BitWriter(256);
+  if (config.preview) {
+    config.metadata.modular16bit &&= config.preview.metadata.modular16bit;
+    config.level = Math.max(config.level, config.preview.level);
+  }
   writeImageHeader(header, config.width, config.height, config.colorCount, false, config.metadata);
   if (preview) header.append({bytes: preview, at: preview.length, pending: 0, acc: 0});
   header.append(frame.header);
@@ -221,19 +195,19 @@ function thumbnail(input, options, maximum) {
     return result;
   };
   return {width, height, color: input.color.map(data => resize(data, scale)), extraChannels: (input.extraChannels ?? []).map(entry => {
-    const factor = powers[entry.dimShift ?? 0] * (entry.upsampling ?? Math.max(1, scale / powers[entry.dimShift ?? 0]));
+    const factor = channelPowers[entry.dimShift ?? 0] * (entry.upsampling ?? Math.max(1, scale / channelPowers[entry.dimShift ?? 0]));
     return {...entry, data: resize(entry.data, factor)};
   })};
 }
 
 export function encodeChannels(image, options = {}) { return complete(encodeChannelsSteps(image, options)); }
 export function encodeChannelsSteps(image, options = {}) {
-  object(options, 'Channel options');
+  requireChannelObject(options, 'Channel options');
   const config = admitPicture(image, {...options, preview: undefined});
   if (options.preview !== undefined) {
-    object(options.preview, 'preview');
+    requireChannelObject(options.preview, 'preview');
     const input = options.preview.maxDimension !== undefined ? thumbnail(image, options, options.preview.maxDimension) : options.preview;
-    const preview = admitPicture(input, {...options, groupSize: 1024, preview: undefined, intrinsicSize: undefined, orientation: 1});
+    const preview = admitPicture(input, {...options, groupSize: 1024, progressive: false, preview: undefined, intrinsicSize: undefined, orientation: 1});
     const a = config.metadata.extraChannelData, b = preview.metadata.extraChannelData;
     const bytes = a.finish(), other = b.finish();
     if (config.colorCount !== preview.colorCount || config.metadata.bitDepth !== preview.metadata.bitDepth || config.metadata.exponentBits !== preview.metadata.exponentBits ||
