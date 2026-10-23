@@ -185,8 +185,8 @@ export function* localSteps(rgba, width, height, shape, colorSpace, rung = 4, us
   let write;
   if (palettePlans) write = writeModel(global, palettePlans);
   else {
-    const leaves = Array.from({length: channels}, () => leaf(5));
-    writeChannelHistograms(global, writeTree(global, channelTree(leaves)), leaves.map(() => new Uint32Array(ALPHABET)), l => leaves.indexOf(l));
+    const only = leaf(5);
+    writeChannelHistograms(global, writeTree(global, only), [new Uint32Array(ALPHABET)], () => 0);
   }
   writeModularHeader(global, {transforms});
   if (write) write();

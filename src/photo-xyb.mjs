@@ -44,18 +44,33 @@ export function preferXYB(data, width, height) {
   return chromaEnergy <= lumaEnergy;
 }
 
+const ONE = [1 - 0.05465007330715401, 1 - 0.07005449891748593, 1 - 0.049935103337343655];
+function biasedRound(value, c) {
+  const a = Math.abs(value), sign = value < 0 ? -1 : 1;
+  let n = Math.max(1, Math.round(a));
+  const point = m => m === 1 ? ONE[c] : m - 0.145 / m;
+  if (n > 1 && Math.abs(a - point(n - 1)) < Math.abs(a - point(n))) n--;
+  else if (Math.abs(a - point(n + 1)) < Math.abs(a - point(n))) n++;
+  return sign * n;
+}
+
 export function* photoXYBSteps(data, width, height, quality, options) {
   const T = options?.transform, lms = T?.lms;
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), quantScale = 256;
   const distance = quality >= 30 ? 0.1 + (100 - quality) * 0.09 : 53 / 3000 * quality * quality - 23 / 20 * quality + 25;
   const strength = Math.max(0, Math.min(1, (90 - quality) / 15)), stepScale = 1 - 0.1 * strength, acScale = 1.175 + 0.075 * strength;
+  const t = options?.tune, tune = typeof t === "function" ? t : t ? (c, k) => t[c] * (1 + t[3 + c] * Math.sqrt(((k & 7) * (k & 7) + (k >> 3) * (k >> 3)) / 98)) : () => 1;
+  const d = options?.dcScale, dcScale = typeof d === 'function' ? c => d(c, distance) : Array.isArray(d) ? c => d[c] : () => d ?? 1;
   const components = [0, 1, 2].map(c => ({h: 1, v: 1, stride, rows,
     quant: Int32Array.from(QUANT_SHAPE, (shape, k) => Math.max(1, Math.round(quantScale * distance * stepScale *
-      (k ? acScale * [0.84, 7, 5.6][c] * shape * (1 + [1, 0, 5][c] * Math.sqrt(((k & 7) * (k & 7) + (k >> 3) * (k >> 3)) / 98)) : [1.05, 7, 12.6][c] * 0.25)))),
+      (k ? acScale * [0.84, 7, 5.6][c] * shape * (1 + [1, 0, 5][c] * Math.sqrt(((k & 7) * (k & 7) + (k >> 3) * (k >> 3)) / 98)) * tune(c, k) : [1.05, 7, 12.6][c] * 0.25 * dcScale(c))))),
     coeffs: new Int16Array(stride * rows * 64)}));
   const tileWidth = Math.ceil(stride / 8), tileRows = Math.ceil(rows / 8);
   const cfl = {width: tileWidth, x: new Int8Array(tileWidth * tileRows), b: new Int8Array(tileWidth * tileRows)};
   const intermediate = new Float64Array(64), sums = new Float64Array(192), tile = new Float64Array(64 * 192);
+  const roundtrip = !!options?.roundtrip, lumaBack = new Float64Array(64), dead = options?.deadzone, biased = !!options?.biasedRound;
+  const fieldScale = options?.fieldScale, FIELD = 64, quantFields = fieldScale && new Int32Array(stride * rows);
+  if (quantFields) for (let i = 0; i < quantFields.length; i++) quantFields[i] = Math.max(1, Math.min(256, Math.round(FIELD * fieldScale[i])));
   for (let ty = 0; ty < tileRows; ty++) {
     for (let tx = 0; tx < tileWidth; tx++) {
       const bx0 = tx * 8, by0 = ty * 8, bw = Math.min(8, stride - bx0), bh = Math.min(8, rows - by0);
@@ -89,15 +104,22 @@ export function* photoXYBSteps(data, width, height, quality, options) {
         bySum += tile[at + 128 + k] * tile[at + 64 + k];
       }
       const index = ty * tileWidth + tx;
-      const fx = cfl.x[index] = Math.max(-128, Math.min(127, Math.round(84 * xy / (yy + 1))));
-      const fb = cfl.b[index] = Math.max(-128, Math.min(127, Math.round(84 * bySum / (yy + 1))));
+      const cflScale = options?.cflScale ?? 1;
+      const fx = cfl.x[index] = Math.max(-128, Math.min(127, Math.round(cflScale * 84 * xy / (yy + 1))));
+      const fb = cfl.b[index] = Math.max(-128, Math.min(127, Math.round(cflScale * 84 * bySum / (yy + 1))));
       for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++) {
         const at = (by * bw + bx) * 192, offset = ((by0 + by) * stride + bx0 + bx) * 64;
-        for (let c = 0; c < 3; c++) for (let k = 0; k < 64; k++) {
-          const coefficient = tile[at + c * 64 + k] - (k && c !== 1 ? (c === 0 ? fx : fb) / 84 * tile[at + 64 + k] : 0);
-          const value = coefficient * quantScale / components[c].quant[k];
-          const threshold = k && c === 1 ? 0.5 + strength * ((k & 7) >= 4 || (k >> 3) >= 4 ? 0.14 : 0.08) : 0.5;
-          components[c].coeffs[offset + k] = Math.abs(value) < threshold ? 0 : Math.round(value);
+        const fine = quantFields ? quantFields[(by0 + by) * stride + bx0 + bx] / FIELD : 1;
+        for (const c of roundtrip ? [1, 0, 2] : [0, 1, 2]) for (let k = 0; k < 64; k++) {
+          const luma = roundtrip && k ? lumaBack[k] : tile[at + 64 + k];
+          const coefficient = tile[at + c * 64 + k] - (k && c !== 1 ? (c === 0 ? fx : fb) / 84 * luma : 0)
+            + (roundtrip && k && c === 2 ? tile[at + 64 + k] - luma : 0);
+          const value = coefficient * quantScale / components[c].quant[k] * (k ? fine : 1);
+          const high = (k & 7) >= 4 || (k >> 3) >= 4;
+          const threshold = dead && k ? dead[c * 2 + (high ? 1 : 0)] : k && c === 1 ? 0.5 + strength * (high ? 0.14 : 0.08) : 0.5;
+          const q = components[c].coeffs[offset + k] = Math.abs(value) < threshold ? 0 : biased && k ? biasedRound(value, c) : Math.round(value);
+          if (roundtrip && c === 1 && k) lumaBack[k] = (q === 0 ? 0 : q === 1 || q === -1 ? q * 0.92994550108251407 : q - 0.145 / q)
+            * components[1].quant[k] / (quantScale * fine);
         }
       }
     }
@@ -105,6 +127,11 @@ export function* photoXYBSteps(data, width, height, quality, options) {
   }
   let alpha = null;
   for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) { alpha = data; break; }
-  const epf = quality <= 90 && options?.filter !== 'off' ? 20 * distance : 0;
-  return {width, height, components, quantScale, cfl, epf, xyb: true, ycbcr: false, orientation: 1, alpha, colorSpace: options?.space ?? 'srgb'};
+  const epf = (quality <= 90 || options?.filterAlways) && options?.filter !== 'off' ? 20 * distance : 0;
+  const image = {width, height, components, quantScale, cfl, epf, xyb: true, ycbcr: false, orientation: 1, alpha, colorSpace: options?.space ?? 'srgb'};
+  if (quantFields) { image.quantFields = quantFields; image.quantFieldBase = FIELD; image.epf = epf * FIELD / 32; }
+  if (options?.epfScale !== undefined) image.epf *= options.epfScale;
+  if (options?.sharpness) image.sharpness = options.sharpness;
+  if (options?.epfIterations) image.epfIterations = options.epfIterations;
+  return image;
 }

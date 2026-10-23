@@ -22,13 +22,14 @@ export const zeroDensityContext = (left, k, prev) => (COEFF_NUM_NONZERO_CONTEXT[
 function blockContexts(luma, thresholdsWanted, grey) {
   const thresholds = [];
   if (thresholdsWanted > 0) {
-    const counts = new Uint32Array(2048);
-    let total = 0;
-    for (const value of luma) { counts[Math.min(2047, Math.max(0, value + 1024))]++; total++; }
+    let low = -1024, high = 1023, total = 0;
+    for (const value of luma) { if (value < low) low = value; else if (value > high) high = value; }
+    const counts = new Uint32Array(high - low + 1);
+    for (const value of luma) { counts[value - low]++; total++; }
     let cumulative = 0, cut = total / (thresholdsWanted + 1);
-    for (let j = 0; j < 2048 && thresholds.length < thresholdsWanted; j++) {
+    for (let j = 0; j < counts.length && thresholds.length < thresholdsWanted; j++) {
       cumulative += counts[j];
-      if (cumulative > cut) { thresholds.push(j - 1025); cut = total * (thresholds.length + 1) / (thresholdsWanted + 1); }
+      if (cumulative > cut) { thresholds.push(j + low - 1); cut = total * (thresholds.length + 1) / (thresholdsWanted + 1); }
     }
   }
   const numDc = thresholds.length + 1, map = new Uint8Array(3 * ORDERS * numDc);
@@ -126,8 +127,8 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   const numPasses = progression?.count || 1;
   const epf = xyb ? jpeg.epf || 0 : 0;
   const quantScale = jpeg.quantScale || 1;
-  let field = jpeg.quantFieldBase || 1;
-  while (field / (8 * 255 * quantScale) < 1 / 16384) field *= 2;
+  let field = jpeg.quantFieldBase || 1, shift = 1;
+  while (field / (8 * 255 * quantScale) < 1 / 16384) { field *= 2; shift *= 2; }
   const ycbcr = !xyb && (jpeg.ycbcr || grey);
   const map = grey ? [0, 0, 0] : ycbcr ? [1, 0, 2] : [0, 1, 2];
   const comps = map.map(i => components[i]);
@@ -144,6 +145,11 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   const dcGroupsX = Math.ceil(xsizeBlocks / 256), dcGroupsY = Math.ceil(ysizeBlocks / 256), numDcGroups = dcGroupsX * dcGroupsY;
   const single = numGroups === 1 && numPasses === 1;
   const blockAt = (c, bx, by) => { const comp = comps[c]; if (grey && c !== 1) return -1; return ((by * comp.stride) + bx) * 64; };
+  const sharpnessOf = (x0, y0, rw, rh) => {
+    const out = new Int16Array(rw * rh).fill(7), own = jpeg.sharpness;
+    if (own) for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) out[y * rw + x] = own[(y0 + y) * xsizeBlocks + x0 + x];
+    return out;
+  };
   const dcAt = (c, bx, by) => strategyData ? comps[c].dc[by * comps[c].stride + bx] :
     blockAt(c, bx, by) < 0 ? 0 : comps[c].coeffs[blockAt(c, bx, by)];
   if (strategyData && (maxhs || maxvs || plan.orders && !authoredOrderPasses)) throw jpegError('variable transforms with subsampling or DCT8-only learned orders');
@@ -306,12 +312,12 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     const blocks = new Int32Array(count * 2).fill(field - 1, count);
     if (regionBlocks) for (let i = 0; i < count; i++) blocks[i] = regionBlocks[i].id;
     if (jpeg.quantFields && regionBlocks) for (let i = 0; i < count; i++) {
-      const block = regionBlocks[i], value = jpeg.quantFields[block.by * xsizeBlocks + block.bx] - 1;
+      const block = regionBlocks[i], value = jpeg.quantFields[block.by * xsizeBlocks + block.bx] * shift - 1;
       blocks[count + i] = value;
       if (value < -32768 || value > 32767) modular16bit = false;
     }
     else if (jpeg.quantFields) for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) {
-      const value = jpeg.quantFields[(y0 + y) * xsizeBlocks + x0 + x] - 1;
+      const value = jpeg.quantFields[(y0 + y) * xsizeBlocks + x0 + x] * shift - 1;
       blocks[count + y * rw + x] = value;
       if (value < -32768 || value > 32767) modular16bit = false;
     }
@@ -323,7 +329,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     }
     writeModularStream(w, [
       {w: cw, h: ch, data: colors[0]}, {w: cw, h: ch, data: colors[1]},
-      {w: count, h: 2, data: blocks}, {w: rw, h: rh, data: epf ? new Int16Array(rw * rh).fill(7) : new Int16Array(rw * rh)},
+      {w: count, h: 2, data: blocks}, {w: rw, h: rh, data: epf ? sharpnessOf(x0, y0, rw, rh) : new Int16Array(rw * rh)},
     ], field > 1 ? GRADIENT_PREDICTOR : ZERO_PREDICTOR);
     section(1 + g).append(w); checkSection(1 + g);
     if (dcSections) { w.bytes = w.bytes.slice(0, w.at); dcSections[g] = w; }
@@ -405,7 +411,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   else if (alpha) header.write(2, [1, 2, 4, 8].indexOf(jpeg.upsampling ?? 1));
   }
   if (xyb) { header.write(3, 2); header.write(3, 2); }
-  writeFrameHeaderEnd(header, auxiliary?.count ?? alpha, epf, progression?.header);
+  writeFrameHeaderEnd(header, auxiliary?.count ?? alpha, epf, progression?.header, jpeg.epfIterations);
   }
   return assembleCodestream(header, finishSections(writers), jpeg.level ?? 5);
 }

@@ -117,7 +117,7 @@ function expectedDataBits(freqs, counts) {
 
 function histogramCost(freqs, config) {
   const counts = normalise(freqs), header = new BitWriter(256);
-  writeUintConfig(header, config, 8);
+  writeUintConfig(header, config, Math.max(5, ceilLog2(counts.length)));
   writeDistribution(header, counts, true);
   return header.bitLength + expectedDataBits(freqs, counts);
 }

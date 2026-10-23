@@ -81,19 +81,25 @@ function mergedBits(a, b) {
   return bits + populationBits(total);
 }
 
-function refineClusters(clusters, contexts, maxClusters, symbolCosts) {
+function refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost) {
   const length = clusters.length, pairs = new Float64Array(length * length);
   const price = (a, b) => mergedBits(clusters[a].freqs, clusters[b].freqs) - clusters[a].bits - clusters[b].bits;
   for (let a = 0; a < length; a++) for (let b = a + 1; b < length; b++) pairs[a * length + b] = price(a, b);
-  for (let remaining = length; remaining > maxClusters; remaining--) {
+  for (let remaining = length; remaining > 1; remaining--) {
     let left = -1, right = -1, best = Infinity;
     for (let a = 0; a < length; a++) if (clusters[a]) for (let b = a + 1; b < length; b++) if (clusters[b] && pairs[a * length + b] < best) {
       left = a; right = b; best = pairs[a * length + b];
     }
     const a = clusters[left], b = clusters[right];
+    if (remaining <= maxClusters) {
+      const merged = new Uint32Array(64);
+      for (let s = 0; s < 64; s++) merged[s] = a.freqs[s] + b.freqs[s];
+      a.cost ??= modelCost(a.freqs, CLUSTER_CONFIG); b.cost ??= modelCost(b.freqs, CLUSTER_CONFIG);
+      if (modelCost(merged, CLUSTER_CONFIG) >= a.cost + b.cost) break;
+    }
     a.contexts.push(...b.contexts);
     for (let s = 0; s < a.freqs.length; s++) a.freqs[s] += b.freqs[s];
-    a.bits = entropyBits(a.freqs); clusters[right] = null;
+    a.bits = entropyBits(a.freqs); a.cost = undefined; clusters[right] = null;
     for (let i = 0; i < length; i++) if (clusters[i] && i !== left) pairs[Math.min(i, left) * length + Math.max(i, left)] = price(i, left);
   }
   clusters = clusters.filter(Boolean);
@@ -153,7 +159,7 @@ export function clusterTokenCounts(counts, {maxClusters = 48, newClusterCost = 3
       cluster.bits = entropyBits(cluster.freqs);
     }
   }
-  if (symbolCosts && clusters.length > 1) clusters = refineClusters(clusters, contexts, maxClusters, symbolCosts);
+  if (symbolCosts && clusters.length > 1) clusters = refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost);
   if (!clusters.length) clusters.push({contexts: [], freqs: new Uint32Array(64), bits: 0});
   const contextMap = new Uint8Array(counts.contexts);
   const histograms = clusters.map((cluster, index) => {
