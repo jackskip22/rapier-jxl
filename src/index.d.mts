@@ -54,3 +54,7 @@ export interface Job<Output extends Uint8Array = Bytes> extends Generator<number
 }
 /** Validate input immediately, then yield one group of one pass per step. */
 export function encodeSteps(data: Pixels, width: number, height: number, options?: EncodeOptions): Job;
+/** The same bytes as `encode` for every input. A photograph of about a megapixel or more runs its forward stages on
+ * WebGPU when the page has it; `gpu: false` keeps the CPU, `gpu: true` or a `GPUDevice` passed in uses the GPU at any size. With no adapter, a lost device
+ * or any GPU error it runs on the CPU. */
+export function encodeAsync(data: Pixels, width: number, height: number, options?: EncodeOptions & {gpu?: boolean | object}): Promise<Bytes>;

@@ -29,3 +29,6 @@ export function encode(data: Pixels, width: number, height: number, options?: Ef
  * `hurry` returns the smallest completed stream, or effort 1's bytes for `treeLearning: 'sampled'`.
  * The painting profile finishes its core lossless encode when hurried; leaving the iterator cancels without output. */
 export function encodeSteps(data: Pixels, width: number, height: number, options?: EffortOptions): Job;
+/** The same bytes as `encode`. At efforts up to 7 a photograph of about a megapixel or more runs its forward stages on
+ * WebGPU when the page has it; `gpu: false` keeps the CPU, a `GPUDevice` passed in is used at any size. */
+export function encodeAsync(data: Pixels, width: number, height: number, options?: EffortOptions & {gpu?: boolean | object}): Promise<Bytes>;

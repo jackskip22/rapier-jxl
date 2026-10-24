@@ -30,6 +30,12 @@ Butteraugli distance (3-norm) is no worse than effort 7's: 8 tries a measured qu
 transforms and v6 without Gaborish. `rapier-jxl/score` encodes to a score. `filter` applies only to pictures v6 does
 not take; `photo: false` selects Modular lossy coding.
 
+`encodeAsync` (the core, `rapier-jxl`) resolves to the same bytes as `encode` for every input. For a photograph of about a
+megapixel or more, it runs the forward stages on WebGPU when the page has it: XYB, Gaborish, the DCT, color correlation
+and quantization. Any value that single precision could round differently is recomputed on the CPU, so the file does not
+depend on the machine. `gpu: false` keeps the CPU; `gpu: true` or a `GPUDevice` passed in uses the GPU at any size. With no adapter, a lost device or any GPU
+error it encodes on the CPU. `encode` itself always runs on the CPU.
+
 Two workers: `rapier-jxl/rapier/still-worker` supports still pictures and the `photo`, `profile`, `readSource`,
 `encodeSource` and `opsin` format actions. `rapier-jxl/rapier/worker` also supports animation and every other format
 action documented below. The still worker answers `JXL_UNAVAILABLE` to animation, complete-only format actions
@@ -64,8 +70,8 @@ same search on the CPU as steps. Without `gpu`, the same pixels and options give
 
 | Entry point | Exports | Declaration |
 | --- | --- | --- |
-| `rapier-jxl`, `rapier-jxl/core` | `encode`, `encodeSteps`, `LIMITS` | [index.d.mts](../../src/index.d.mts) |
-| `rapier-jxl/effort` | `encode`, `encodeSteps`, `LIMITS` | [effort.d.mts](../../src/effort.d.mts) |
+| `rapier-jxl`, `rapier-jxl/core` | `encode`, `encodeSteps`, `encodeAsync`, `LIMITS` | [index.d.mts](../../src/index.d.mts) |
+| `rapier-jxl/effort` | `encode`, `encodeSteps`, `encodeAsync`, `LIMITS` | [effort.d.mts](../../src/effort.d.mts) |
 | `rapier-jxl/wasm` | Effort API, `configureKernels`, `kernelMode` | [wasm.d.mts](../../src/wasm.d.mts) |
 | `rapier-jxl/jpeg` | `transcode`, `transcodeSteps`, `LIMITS` | [jpeg.d.mts](../../src/jpeg.d.mts) |
 | `rapier-jxl/photo` | `encodePhoto`, `encodePhotoSteps`, `LIMITS` | [photo.d.mts](../../src/photo.d.mts) |
@@ -690,22 +696,22 @@ Added gzip is the entry bundled with the core minus the core alone, so shared co
 
 | Entry | Minified bytes | gzip | Brotli | Added gzip with core |
 | --- | ---: | ---: | ---: | ---: |
-| `icc` | 37,467 | 14,780 | 13,126 | 2,088 |
-| `photo-advanced` | 188,097 | 70,042 | 59,401 | 44,470 |
-| `delta-palette` | 87,698 | 34,040 | 29,733 | 21,213 |
-| `channels` | 85,704 | 31,704 | 27,694 | 24,696 |
-| `layers` | 96,286 | 35,140 | 30,687 | 28,183 |
-| `splines` | 89,947 | 35,847 | 31,278 | 14,414 |
-| `patches` | 144,635 | 53,730 | 45,946 | 39,465 |
-| `container` | 7,499 | 3,358 | 2,835 | 1,897 |
-| `container-advanced` | 42,346 | 15,778 | 13,866 | 15,707 |
-| `opsin` | 74,089 | 28,782 | 24,819 | 19,288 |
-| `progressive-container` | 54,363 | 20,337 | 17,893 | 20,281 |
-| `noise` | 218,248 | 82,647 | 69,224 | 56,534 |
-| `hybrid` | 169,383 | 63,835 | 54,882 | 43,177 |
-| `photo-plan` | 122,965 | 45,479 | 38,940 | 26,588 |
-| `delivery` | 48,052 | 17,920 | 15,759 | 17,850 |
-| `brotli` | 12,269 | 5,484 | 4,771 | 9,395 |
+| `icc` | 37,467 | 14,780 | 13,126 | 2,108 |
+| `photo-advanced` | 188,097 | 70,042 | 59,401 | 44,476 |
+| `delta-palette` | 87,698 | 34,040 | 29,733 | 21,249 |
+| `channels` | 85,704 | 31,704 | 27,694 | 24,774 |
+| `layers` | 96,286 | 35,140 | 30,687 | 28,294 |
+| `splines` | 89,947 | 35,847 | 31,278 | 14,402 |
+| `patches` | 144,635 | 53,730 | 45,946 | 39,536 |
+| `container` | 7,499 | 3,358 | 2,835 | 1,890 |
+| `container-advanced` | 42,346 | 15,778 | 13,866 | 15,782 |
+| `opsin` | 74,089 | 28,782 | 24,819 | 19,359 |
+| `progressive-container` | 54,363 | 20,337 | 17,893 | 20,329 |
+| `noise` | 218,482 | 82,737 | 69,381 | 56,615 |
+| `hybrid` | 169,383 | 63,835 | 54,882 | 43,247 |
+| `photo-plan` | 122,965 | 45,479 | 38,940 | 26,662 |
+| `delivery` | 48,052 | 17,920 | 15,759 | 17,919 |
+| `brotli` | 12,269 | 5,484 | 4,771 | 9,479 |
 
 ## Existing JPEGs
 

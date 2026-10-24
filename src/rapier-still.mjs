@@ -3,7 +3,8 @@ import {configureKernels} from './kernels.mjs';
 import {encodeSteps} from './effort.mjs';
 import {encodePool, servePool} from './pool.mjs';
 import {transcodeSteps, reconstructJPEG} from './jpeg-ans.mjs';
-import {encodePhotoSteps} from './photo.mjs';
+import {encodePhotoSteps, encodePhotoGpuSteps} from './photo.mjs';
+import {gpuJob, GPU_PIXELS} from './gpu-drive.mjs';
 import {inspectPixels} from './lossless.mjs';
 import {finishEncoding, checkSignal} from './async-job.mjs';
 import {encodePhotoPool, servePhotoPool} from './photo-pool.mjs';
@@ -53,6 +54,10 @@ export function createStillEncoder({spawn} = {}) {
             } catch (error) { if (error?.name === 'AbortError') throw error; }
             finally { measurer?.destroy(); }
           }
+        }
+        if (effort <= 7 && options.gpu !== false && (options.gpu || width * height >= GPU_PIXELS)) {
+          const device = options.gpu || await gpu();
+          if (device) return finishEncoding(gpuJob(encodePhotoGpuSteps(data, width, height, options), device), options);
         }
         const pooled = options.parallel !== false && workers > 0 && width * height >= PHOTO_POOL_PIXELS;
         const job = pooled ? encodePhotoPool(data, width, height, options, {spawn: spawnWorker, workers}) : encodePhotoSteps(data, width, height, options);

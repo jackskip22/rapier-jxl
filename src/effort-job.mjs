@@ -19,7 +19,7 @@ import {paintingSteps, admitPaintingProfile} from './painting.mjs';
 
 const hurryOf = reply => reply === null || (typeof reply === 'object' ? reply.hurried : reply);
 
-export function effortJob(data, width, height, options, pool, helpers = false, retainHurry) {
+export function effortJob(data, width, height, options, pool, helpers = false, retainHurry, gpu = false) {
   const {quality, colorSpace} = admitOptions(options), effort = options?.effort === undefined ? 1 : options.effort;
   const filter = admitPhotoFilter(options);
   if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fault('JXL_INPUT', 'Effort is a whole number from 1 to 9.');
@@ -37,14 +37,14 @@ export function effortJob(data, width, height, options, pool, helpers = false, r
   if (samples.iccSpace && losslessProfile === undefined)
     return iccShape(data, samples.iccSpace, effortSteps(data, width, height, quality, samples.iccSpace, effort, pool && quality >= 100 && !groupLayout(width, height).single, treeLearning, helpers, retainHurry, false, options?.photo !== false, filter));
   if (!samples.native8) return nativeSteps(data, width, height, {quality, samples, effort, pooled: pool && !groupLayout(width, height).single});
-  return effortSteps(data, width, height, quality, colorSpace, effort, pool && quality >= 100 && !groupLayout(width, height).single, treeLearning, helpers, retainHurry, losslessProfile === 'painting-search', options?.photo !== false, filter);
+  return effortSteps(data, width, height, quality, colorSpace, effort, pool && quality >= 100 && !groupLayout(width, height).single, treeLearning, helpers, retainHurry, losslessProfile === 'painting-search', options?.photo !== false, filter, gpu);
 }
 
-function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, treeLearning, helpers = false, retainHurry, painting = false, photo = true, filter) {
+function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, treeLearning, helpers = false, retainHurry, painting = false, photo = true, filter, gpu = false) {
   const shape = inspectPixels(data, width, height);
   if (quality < 100) {
     if (!shape.palette) return yield* (photo ? photoSteps(data, width, height, quality, colorSpace, effort,
-      effort >= 5 ? coefficientAnsSteps : coefficientEffortSteps, filter, searchV6) : lossySteps(data, width, height, {quality, shape, colorSpace}));
+      effort >= 5 ? coefficientAnsSteps : coefficientEffortSteps, filter, searchV6, gpu) : lossySteps(data, width, height, {quality, shape, colorSpace}));
     const exact = yield* part(effortSteps(data, width, height, 100, colorSpace, effort, false), 0, 2);
     let bytes;
     try { bytes = yield* part(lossySteps(data, width, height, {quality, shape, colorSpace}), 1, 2); }

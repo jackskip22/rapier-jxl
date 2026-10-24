@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {exactPow} from './exact-math.mjs';
 import {complete} from './bits.mjs';
-import {QUANT_SHAPE} from './photo-dct.mjs';
+import {QUANT_SHAPE, transformDCT8, dct8Basis} from './photo-dct.mjs';
 import {photoXYBSteps, gaborishPlanes} from './photo-xyb.mjs';
 
 const DEFAULT_DCT8 = [[3150.0, 0.0, -0.4, -0.4, -0.4, -2.0], [560.0, 0.0, -0.3, -0.3, -0.3, -0.3], [512.0, -2.0, -1.0, 0.0, -1.0, -2.0]];
@@ -36,7 +36,11 @@ export function photoV6Image(prepared, quality) {
   return complete(photoXYBSteps(rgba, width, height, quality, {...V6, ...GABORISH, ...color, pre, dctCache: dct}));
 }
 
-export function* photoV6Steps(data, width, height, quality, effort, encodeCoefficients, search, color) {
+export function* photoV6Steps(data, width, height, quality, effort, encodeCoefficients, search, color, gpu) {
+  if (gpu && effort <= 7 && !color) {
+    const image = yield {gpu: {kind: 'v6image', data, width, height, quality, options: {...V6, ...GABORISH}, lib: {complete, photoXYBSteps, transformDCT8, dct8Basis}}};
+    if (image) return yield* encodeCoefficients(image, effort);
+  }
   const prepared = prepareV6(data, width, height, color), image = photoV6Image(prepared, quality);
   if (effort <= 7 || !search || color || width < 8 || height < 8) return yield* encodeCoefficients(image, effort);
   return yield* search(prepared, image, quality, effort);

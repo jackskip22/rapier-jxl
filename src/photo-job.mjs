@@ -9,13 +9,17 @@ import {photoXYBSteps, preferXYB} from './photo-xyb.mjs';
 import {photoV6Steps} from './photo-v6.mjs';
 
 export function photoJob(data, width, height, options, coefficients, search) {
+  return job(photoJobSteps(data, width, height, options, coefficients, search));
+}
+
+export function photoJobSteps(data, width, height, options, coefficients, search, gpu) {
   const {quality, colorSpace} = admitOptions(options, 90), effort = admitEffort(options);
   const filter = admitPhotoFilter(options);
   admitPixels(data, width, height, PHOTO_LIMITS);
   const samples = admitSampleFormat(data, options);
-  if (samples.iccSpace) return job(iccShape(data, samples.iccSpace, photoSteps(data, width, height, quality, samples.iccSpace, effort, coefficients, filter, search)));
-  if (!samples.native8) return job(nativeSteps(data, width, height, {quality, samples, effort}));
-  return job(photoSteps(data, width, height, quality, colorSpace, effort, coefficients, filter, search));
+  if (samples.iccSpace) return iccShape(data, samples.iccSpace, photoSteps(data, width, height, quality, samples.iccSpace, effort, coefficients, filter, search));
+  if (!samples.native8) return nativeSteps(data, width, height, {quality, samples, effort});
+  return photoSteps(data, width, height, quality, colorSpace, effort, coefficients, filter, search, gpu);
 }
 
 export function admitPhotoFilter(options) {
@@ -25,9 +29,9 @@ export function admitPhotoFilter(options) {
   return filter;
 }
 
-export function* photoSteps(data, width, height, quality, colorSpace, effort, encodeCoefficients, filter, search) {
+export function* photoSteps(data, width, height, quality, colorSpace, effort, encodeCoefficients, filter, search, gpu) {
   if (quality >= 100) return yield* losslessSteps(data, width, height, {colorSpace});
-  if (colorSpace === 'srgb' && preferXYB(data, width, height)) return yield* photoV6Steps(data, width, height, quality, effort, encodeCoefficients, search);
+  if (colorSpace === 'srgb' && preferXYB(data, width, height)) return yield* photoV6Steps(data, width, height, quality, effort, encodeCoefficients, search, undefined, gpu);
   if (colorSpace && typeof colorSpace === 'object' && colorSpace.colorChannels !== 1) {
     const transform = spaceTransform(colorSpace);
     if (transform && preferXYB(data, width, height)) return yield* photoV6Steps(data, width, height, quality, effort, encodeCoefficients, search, {transform, space: colorSpace});

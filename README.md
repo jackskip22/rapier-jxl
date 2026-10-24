@@ -29,6 +29,11 @@ const {bytes} = await encodeToScore(rgba, width, height, {target: {ssimulacra2: 
 Returns the smallest file that meets the score. `gpu` is an optional `GPUDevice`; without it the search runs on the CPU.
 For a fixed quality, `encode(rgba, width, height, {quality: 90})` from `rapier-jxl` (100 is lossless).
 
+## Encode on the GPU
+
+`encodeAsync(rgba, width, height, options)` writes the same file as `encode`, on WebGPU when the page has it:
+a 12 MP phone photo in about 2.1 s instead of 6.7 s (24 phone photos, median, NVIDIA T4).
+
 ## Convert a file in a page
 
 Copy `node_modules/rapier-jxl/dist/rapier-still-worker.js` beside your page (`rapier-worker.js` adds animation), then:
@@ -44,17 +49,17 @@ For one offline HTML file, embed the worker as text ([example](docs/reference/AR
 
 | Build / import | Gzip bytes | Capabilities |
 | --- | ---: | --- |
-| **Still worker** · `rapier-jxl/rapier/still-worker` | 149,050 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel lossless groups. No animation. |
-| **Complete worker** · `rapier-jxl/rapier/worker` | 213,828 | Everything in the still worker, plus animation and the other format writers. |
-| Complete module · `rapier-jxl/rapier/min` | 213,898 | The complete system with an encoder factory and worker installer. |
+| **Still worker** · `rapier-jxl/rapier/still-worker` | 149,572 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel lossless groups. No animation. |
+| **Complete worker** · `rapier-jxl/rapier/worker` | 214,332 | Everything in the still worker, plus animation and the other format writers. |
+| Complete module · `rapier-jxl/rapier/min` | 214,402 | The complete system with an encoder factory and worker installer. |
 | Image · `rapier-jxl/image/min` | 1,184 | One call from a page: a file, bitmap, image data or canvas in, an `image/jxl` Blob out, through either worker. |
-| Core · `rapier-jxl/min` | 28,604 | Lossless or lossy typed RGBA, native precision, HDR and exact alpha. |
-| Effort · `rapier-jxl/effort/min` | 78,134 | Core with lossless compression search, efforts 1–9. |
-| WASM · `rapier-jxl/wasm/min` | 88,025 | Effort with inlined WASM and JavaScript fallback. |
-| Photo · `rapier-jxl/photo/min` | 60,786 | Lossy photographs from RGBA pixels. |
+| Core · `rapier-jxl/min` | 28,920 | Lossless or lossy typed RGBA, native precision, HDR and exact alpha. |
+| Effort · `rapier-jxl/effort/min` | 78,503 | Core with lossless compression search, efforts 1–9. |
+| WASM · `rapier-jxl/wasm/min` | 88,190 | Effort with inlined WASM and JavaScript fallback. |
+| Photo · `rapier-jxl/photo/min` | 60,943 | Lossy photographs from RGBA pixels. |
 | JPEG · `rapier-jxl/jpeg/min` | 32,866 | Existing JPEGs, preserving admitted coefficients and orientation. |
 | Metadata · `rapier-jxl/metadata/min` | 12,592 | Attach, replace or remove caller-supplied Exif/XMP. |
-| Animation · `rapier-jxl/animation/min` | 86,616 | Animated JPEG XL from frames: only changed rectangles stored, exact timing, lossless or lossy. |
+| Animation · `rapier-jxl/animation/min` | 86,778 | Animated JPEG XL from frames: only changed rectangles stored, exact timing, lossless or lossy. |
 
 Sizes are standalone files gzipped at level 9. [Entry points and embedding](docs/reference/ARCHITECTURE.md).
 

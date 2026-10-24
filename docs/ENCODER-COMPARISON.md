@@ -1,6 +1,6 @@
 # Encoder comparisons
 
-The complete Rapier worker uses 213,828 gzip bytes: core encoding, effort search, optional WASM, Photo, JPEG transcoding and parallel workers. The separate core uses 28,604 gzip bytes. Both embed in one offline HTML file.
+The complete Rapier worker uses 214,332 gzip bytes: core encoding, effort search, optional WASM, Photo, JPEG transcoding and parallel workers. The separate core uses 28,920 gzip bytes. Both embed in one offline HTML file.
 
 ## Payload
 
@@ -8,12 +8,12 @@ Executable payload sizes. Rapier JXL uses this release; other rows use the pinne
 
 | Encoder / entry | Version | Minified JS + WASM bytes | gzip bytes | Included capability |
 | --- | --- | ---: | ---: | --- |
-| Rapier JXL complete worker | 6.0.1 | 576,983 | 213,828 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel workers |
-| Rapier JXL core | 6.0.1 | 70,742 | 28,604 | Lossless/lossy RGBA, native precision and HDR, exact alpha |
-| Rapier JXL effort | 6.0.1 | 204,440 | 78,134 | Core plus lossless predictor, learned-tree, entropy, color, and screen search |
-| Rapier JXL WASM | 6.0.1 | 227,437 | 88,025 | Effort with inlined kernels and JavaScript fallback |
-| Rapier JXL JPEG | 6.0.1 | 83,068 | 32,866 | JPEG coefficients, orientation and original-byte reconstruction |
-| Rapier JXL photo | 6.0.1 | 157,813 | 60,786 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
+| Rapier JXL complete worker | 6.1.0 | 578,260 | 214,332 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel workers |
+| Rapier JXL core | 6.1.0 | 71,567 | 28,920 | Lossless/lossy RGBA, native precision and HDR, exact alpha |
+| Rapier JXL effort | 6.1.0 | 205,204 | 78,503 | Core plus lossless predictor, learned-tree, entropy, color, and screen search |
+| Rapier JXL WASM | 6.1.0 | 227,681 | 88,190 | Effort with inlined kernels and JavaScript fallback |
+| Rapier JXL JPEG | 6.1.0 | 83,068 | 32,866 | JPEG coefficients, orientation and original-byte reconstruction |
+| Rapier JXL photo | 6.1.0 | 158,152 | 60,943 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
 | [jSquash](https://github.com/jamsinclair/jSquash/tree/main/packages/jxl) | 1.3.0 | 1,388,572 | 525,782 | 8-bit lossless/lossy RGBA |
 | [Discourse's jSquash package](https://www.npmjs.com/package/@discourse/jxl) | 1.3.0 | 1,388,572 | 525,782 | The same encoder bytes as jSquash |
 | [Lacinak's jSquash fork](https://github.com/kelaci/jSquash) | 1.3.0-kelaci.0 | 2,071,514 | 844,866 | High bit-depth input options |
@@ -48,7 +48,7 @@ All 213 outputs match the retained earlier streams in SHA-256 and length. That i
 
 ## Photographs
 
-Every picture through Rapier JXL 6.0.1 and libjxl 0.12.0's `cjxl`, mozjpeg 4.1.5, WebP (`cwebp -m 6 -sharp_yuv`) and
+Every picture through Rapier JXL 6.1.0 and libjxl 0.12.0's `cjxl`, mozjpeg 4.1.5, WebP (`cwebp -m 6 -sharp_yuv`) and
 AVIF (`avifenc -s 6`) at 11 to 13 settings each. libjxl's `ssimulacra2` and `butteraugli_main` (3-norm) score the pixels each
 file decodes to; bytes at the same score are interpolated per picture and summed. Every JPEG XL file decodes in djxl,
 jxl-oxide 0.12.6 and Chrome 155 to the same pixels (within 1/255). Encoders run one thread each.
@@ -93,6 +93,127 @@ Exact JPEG: each JPEG converts with `rapier-jxl/jpeg-ans` and restores byte for 
 Reproduce: `node bench/v6-proof.mjs out.json --corpus kodak=<dir of PNG> --jpeg kodak=<dir of JPEG> --chrome <Chrome 155>`,
 then `node bench/v6-wins.mjs wins.json out.json`. Results: [Kodak](../bench/v6-proof-kodak.json),
 [phone photos](../bench/v6-proof-phone.json) ([sources](../bench/phone-photos-sources.json)).
+
+## Encoding on the GPU
+
+`encodeAsync` runs a photo's forward stages (XYB, Gaborish, the DCT, color correlation and quantization) on WebGPU and
+writes the same file as `encode`: every value that single precision could round differently is recomputed on the CPU.
+Each row below is one photo at one quality; every GPU file is byte for byte the CPU file, and the same on both GPUs.
+
+| GPU | Quality | Photos | `encode` (CPU), median | `encodeAsync` (GPU), median | Faster, median (range) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| NVIDIA L4 | 75 | 24 | 5.3 s | 1.6 s | 3.3× (2.1–4.4×) |
+| NVIDIA L4 | 90 | 24 | 5.4 s | 2.3 s | 2.3× (1.7–3.0×) |
+| NVIDIA T4 | 75 | 24 | 6.7 s | 2.1 s | 3.2× (1.9–5.8×) |
+| NVIDIA T4 | 90 | 24 | 6.8 s | 2.9 s | 2.3× (1.6–3.3×) |
+
+Method:
+
+- NVIDIA L4: Chrome for Testing 155, headless; CPU the same machine (model not recorded). Phone Photos 24 (bench/phone-photos-sources.json), read to sRGB, 8-bit RGBA. encode() and encodeAsync() from rapier-jxl in one page, the same RGBA, effort 1. encodeAsync ran once to warm up and was then timed; encode was timed once. Both files' SHA-256 compared.
+- NVIDIA T4: Chrome for Testing 155, headless; CPU Intel Xeon at 2.0 GHz (the same machine). Phone Photos 24 (bench/phone-photos-sources.json), read to sRGB, 8-bit RGBA. encode() and encodeAsync() from rapier-jxl in one page, the same RGBA, effort 1. encodeAsync ran once to warm up and was then timed; encode was timed once. Both files' SHA-256 compared.
+
+<details><summary>Every photo</summary>
+
+| Photo | Pixels | GPU | Quality | `encode` (CPU) | `encodeAsync` (GPU) | Same file |
+| --- | ---: | --- | ---: | ---: | ---: | :---: |
+| phone01-pixel9 | 3072×4080 | NVIDIA L4 | 75 | 5.2 s | 1.9 s | yes |
+| phone01-pixel9 | 3072×4080 | NVIDIA L4 | 90 | 5.3 s | 2.1 s | yes |
+| phone02-pixel9 | 4080×3072 | NVIDIA L4 | 75 | 5.3 s | 1.3 s | yes |
+| phone02-pixel9 | 4080×3072 | NVIDIA L4 | 90 | 5.5 s | 2.1 s | yes |
+| phone03-pixel9 | 4080×3072 | NVIDIA L4 | 75 | 5.2 s | 1.4 s | yes |
+| phone03-pixel9 | 4080×3072 | NVIDIA L4 | 90 | 5.4 s | 2.1 s | yes |
+| phone04-pixel9 | 3072×4080 | NVIDIA L4 | 75 | 5.3 s | 1.2 s | yes |
+| phone04-pixel9 | 3072×4080 | NVIDIA L4 | 90 | 5.5 s | 2.0 s | yes |
+| phone05-pixel9 | 3072×4080 | NVIDIA L4 | 75 | 5.4 s | 2.3 s | yes |
+| phone05-pixel9 | 3072×4080 | NVIDIA L4 | 90 | 5.6 s | 3.0 s | yes |
+| phone06-pixel9 | 4080×3072 | NVIDIA L4 | 75 | 5.4 s | 1.5 s | yes |
+| phone06-pixel9 | 4080×3072 | NVIDIA L4 | 90 | 5.5 s | 2.4 s | yes |
+| phone07-pixel9 | 3072×4080 | NVIDIA L4 | 75 | 5.6 s | 1.7 s | yes |
+| phone07-pixel9 | 3072×4080 | NVIDIA L4 | 90 | 5.9 s | 2.5 s | yes |
+| phone08-pixel9 | 3072×4080 | NVIDIA L4 | 75 | 5.3 s | 1.4 s | yes |
+| phone08-pixel9 | 3072×4080 | NVIDIA L4 | 90 | 5.3 s | 2.0 s | yes |
+| phone09-iphone16 | 4032×3024 | NVIDIA L4 | 75 | 5.4 s | 1.5 s | yes |
+| phone09-iphone16 | 4032×3024 | NVIDIA L4 | 90 | 5.6 s | 2.2 s | yes |
+| phone10-iphone16 | 4032×3024 | NVIDIA L4 | 75 | 5.3 s | 2.6 s | yes |
+| phone10-iphone16 | 4032×3024 | NVIDIA L4 | 90 | 5.5 s | 3.1 s | yes |
+| phone11-iphone16 | 4032×3024 | NVIDIA L4 | 75 | 5.2 s | 1.8 s | yes |
+| phone11-iphone16 | 4032×3024 | NVIDIA L4 | 90 | 5.3 s | 2.5 s | yes |
+| phone12-iphone16 | 4032×3024 | NVIDIA L4 | 75 | 5.1 s | 1.7 s | yes |
+| phone12-iphone16 | 4032×3024 | NVIDIA L4 | 90 | 5.2 s | 2.5 s | yes |
+| phone13-iphone16 | 4032×3024 | NVIDIA L4 | 75 | 5.4 s | 1.8 s | yes |
+| phone13-iphone16 | 4032×3024 | NVIDIA L4 | 90 | 5.3 s | 2.2 s | yes |
+| phone14-iphone16 | 4032×3024 | NVIDIA L4 | 75 | 5.1 s | 1.3 s | yes |
+| phone14-iphone16 | 4032×3024 | NVIDIA L4 | 90 | 5.4 s | 2.2 s | yes |
+| phone15-iphone16 | 4032×3024 | NVIDIA L4 | 75 | 5.1 s | 1.5 s | yes |
+| phone15-iphone16 | 4032×3024 | NVIDIA L4 | 90 | 5.4 s | 1.9 s | yes |
+| phone16-iphone16 | 3024×4032 | NVIDIA L4 | 75 | 5.1 s | 1.5 s | yes |
+| phone16-iphone16 | 3024×4032 | NVIDIA L4 | 90 | 5.3 s | 2.3 s | yes |
+| phone17-s25 | 4000×3000 | NVIDIA L4 | 75 | 5.2 s | 1.7 s | yes |
+| phone17-s25 | 4000×3000 | NVIDIA L4 | 90 | 5.3 s | 2.4 s | yes |
+| phone18-s25 | 4000×3000 | NVIDIA L4 | 75 | 5.4 s | 1.8 s | yes |
+| phone18-s25 | 4000×3000 | NVIDIA L4 | 90 | 5.6 s | 2.6 s | yes |
+| phone19-s25 | 3000×4000 | NVIDIA L4 | 75 | 5.3 s | 1.6 s | yes |
+| phone19-s25 | 3000×4000 | NVIDIA L4 | 90 | 5.5 s | 2.3 s | yes |
+| phone20-s25 | 3000×4000 | NVIDIA L4 | 75 | 5.1 s | 2.1 s | yes |
+| phone20-s25 | 3000×4000 | NVIDIA L4 | 90 | 5.2 s | 2.6 s | yes |
+| phone21-s25 | 3000×4000 | NVIDIA L4 | 75 | 5.0 s | 1.8 s | yes |
+| phone21-s25 | 3000×4000 | NVIDIA L4 | 90 | 5.2 s | 2.3 s | yes |
+| phone22-s25 | 4000×3000 | NVIDIA L4 | 75 | 5.0 s | 1.1 s | yes |
+| phone22-s25 | 4000×3000 | NVIDIA L4 | 90 | 5.1 s | 1.7 s | yes |
+| phone23-s25 | 4000×3000 | NVIDIA L4 | 75 | 5.2 s | 2.1 s | yes |
+| phone23-s25 | 4000×3000 | NVIDIA L4 | 90 | 5.3 s | 2.3 s | yes |
+| phone24-s25 | 4000×3000 | NVIDIA L4 | 75 | 5.3 s | 1.4 s | yes |
+| phone24-s25 | 4000×3000 | NVIDIA L4 | 90 | 5.7 s | 2.4 s | yes |
+| phone01-pixel9 | 3072×4080 | NVIDIA T4 | 75 | 6.7 s | 2.4 s | yes |
+| phone01-pixel9 | 3072×4080 | NVIDIA T4 | 90 | 7.0 s | 2.8 s | yes |
+| phone02-pixel9 | 4080×3072 | NVIDIA T4 | 75 | 8.8 s | 1.5 s | yes |
+| phone02-pixel9 | 4080×3072 | NVIDIA T4 | 90 | 9.3 s | 2.8 s | yes |
+| phone03-pixel9 | 4080×3072 | NVIDIA T4 | 75 | 7.9 s | 1.8 s | yes |
+| phone03-pixel9 | 4080×3072 | NVIDIA T4 | 90 | 7.1 s | 3.0 s | yes |
+| phone04-pixel9 | 3072×4080 | NVIDIA T4 | 75 | 7.0 s | 1.6 s | yes |
+| phone04-pixel9 | 3072×4080 | NVIDIA T4 | 90 | 7.1 s | 2.8 s | yes |
+| phone05-pixel9 | 3072×4080 | NVIDIA T4 | 75 | 6.9 s | 2.9 s | yes |
+| phone05-pixel9 | 3072×4080 | NVIDIA T4 | 90 | 7.4 s | 3.9 s | yes |
+| phone06-pixel9 | 4080×3072 | NVIDIA T4 | 75 | 7.0 s | 2.0 s | yes |
+| phone06-pixel9 | 4080×3072 | NVIDIA T4 | 90 | 7.2 s | 3.3 s | yes |
+| phone07-pixel9 | 3072×4080 | NVIDIA T4 | 75 | 7.1 s | 2.5 s | yes |
+| phone07-pixel9 | 3072×4080 | NVIDIA T4 | 90 | 7.5 s | 3.3 s | yes |
+| phone08-pixel9 | 3072×4080 | NVIDIA T4 | 75 | 6.6 s | 1.7 s | yes |
+| phone08-pixel9 | 3072×4080 | NVIDIA T4 | 90 | 6.8 s | 2.9 s | yes |
+| phone09-iphone16 | 4032×3024 | NVIDIA T4 | 75 | 6.8 s | 1.8 s | yes |
+| phone09-iphone16 | 4032×3024 | NVIDIA T4 | 90 | 6.8 s | 2.7 s | yes |
+| phone10-iphone16 | 4032×3024 | NVIDIA T4 | 75 | 6.7 s | 3.6 s | yes |
+| phone10-iphone16 | 4032×3024 | NVIDIA T4 | 90 | 6.8 s | 4.2 s | yes |
+| phone11-iphone16 | 4032×3024 | NVIDIA T4 | 75 | 6.6 s | 2.3 s | yes |
+| phone11-iphone16 | 4032×3024 | NVIDIA T4 | 90 | 6.6 s | 3.2 s | yes |
+| phone12-iphone16 | 4032×3024 | NVIDIA T4 | 75 | 6.4 s | 2.2 s | yes |
+| phone12-iphone16 | 4032×3024 | NVIDIA T4 | 90 | 6.4 s | 3.0 s | yes |
+| phone13-iphone16 | 4032×3024 | NVIDIA T4 | 75 | 6.8 s | 2.5 s | yes |
+| phone13-iphone16 | 4032×3024 | NVIDIA T4 | 90 | 6.7 s | 3.0 s | yes |
+| phone14-iphone16 | 4032×3024 | NVIDIA T4 | 75 | 6.9 s | 1.7 s | yes |
+| phone14-iphone16 | 4032×3024 | NVIDIA T4 | 90 | 6.7 s | 2.8 s | yes |
+| phone15-iphone16 | 4032×3024 | NVIDIA T4 | 75 | 6.3 s | 1.8 s | yes |
+| phone15-iphone16 | 4032×3024 | NVIDIA T4 | 90 | 6.5 s | 2.5 s | yes |
+| phone16-iphone16 | 3024×4032 | NVIDIA T4 | 75 | 6.3 s | 1.9 s | yes |
+| phone16-iphone16 | 3024×4032 | NVIDIA T4 | 90 | 6.5 s | 2.7 s | yes |
+| phone17-s25 | 4000×3000 | NVIDIA T4 | 75 | 6.2 s | 2.4 s | yes |
+| phone17-s25 | 4000×3000 | NVIDIA T4 | 90 | 6.5 s | 3.2 s | yes |
+| phone18-s25 | 4000×3000 | NVIDIA T4 | 75 | 6.6 s | 2.2 s | yes |
+| phone18-s25 | 4000×3000 | NVIDIA T4 | 90 | 6.9 s | 3.2 s | yes |
+| phone19-s25 | 3000×4000 | NVIDIA T4 | 75 | 6.3 s | 1.9 s | yes |
+| phone19-s25 | 3000×4000 | NVIDIA T4 | 90 | 6.5 s | 2.7 s | yes |
+| phone20-s25 | 3000×4000 | NVIDIA T4 | 75 | 6.6 s | 2.7 s | yes |
+| phone20-s25 | 3000×4000 | NVIDIA T4 | 90 | 6.8 s | 3.3 s | yes |
+| phone21-s25 | 3000×4000 | NVIDIA T4 | 75 | 6.5 s | 2.3 s | yes |
+| phone21-s25 | 3000×4000 | NVIDIA T4 | 90 | 6.4 s | 2.9 s | yes |
+| phone22-s25 | 4000×3000 | NVIDIA T4 | 75 | 6.5 s | 1.5 s | yes |
+| phone22-s25 | 4000×3000 | NVIDIA T4 | 90 | 6.4 s | 2.1 s | yes |
+| phone23-s25 | 4000×3000 | NVIDIA T4 | 75 | 6.6 s | 2.6 s | yes |
+| phone23-s25 | 4000×3000 | NVIDIA T4 | 90 | 6.6 s | 2.8 s | yes |
+| phone24-s25 | 4000×3000 | NVIDIA T4 | 75 | 6.7 s | 1.9 s | yes |
+| phone24-s25 | 4000×3000 | NVIDIA T4 | 90 | 7.1 s | 3.0 s | yes |
+
+</details>
 
 ## Animation
 
