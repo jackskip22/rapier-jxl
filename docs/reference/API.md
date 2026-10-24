@@ -690,22 +690,22 @@ Added gzip is the entry bundled with the core minus the core alone, so shared co
 
 | Entry | Minified bytes | gzip | Brotli | Added gzip with core |
 | --- | ---: | ---: | ---: | ---: |
-| `icc` | 37,467 | 14,780 | 13,089 | 2,088 |
-| `photo-advanced` | 188,097 | 70,042 | 59,346 | 44,470 |
-| `delta-palette` | 87,698 | 34,040 | 29,723 | 21,213 |
-| `channels` | 85,704 | 31,704 | 27,743 | 24,696 |
-| `layers` | 96,286 | 35,140 | 30,634 | 28,183 |
-| `splines` | 89,947 | 35,847 | 31,333 | 14,415 |
-| `patches` | 144,635 | 53,730 | 45,948 | 39,465 |
-| `container` | 7,499 | 3,358 | 2,837 | 1,897 |
-| `container-advanced` | 42,346 | 15,778 | 13,873 | 15,707 |
-| `opsin` | 74,089 | 28,782 | 24,810 | 19,288 |
-| `progressive-container` | 53,698 | 20,042 | 17,582 | 19,982 |
-| `noise` | 218,248 | 82,647 | 69,210 | 56,534 |
-| `hybrid` | 169,383 | 63,835 | 54,878 | 43,177 |
-| `photo-plan` | 122,965 | 45,479 | 38,946 | 26,588 |
-| `delivery` | 48,052 | 17,921 | 15,717 | 17,851 |
-| `brotli` | 12,269 | 5,484 | 4,770 | 9,395 |
+| `icc` | 37,467 | 14,780 | 13,126 | 2,088 |
+| `photo-advanced` | 188,097 | 70,042 | 59,401 | 44,470 |
+| `delta-palette` | 87,698 | 34,040 | 29,733 | 21,213 |
+| `channels` | 85,704 | 31,704 | 27,694 | 24,696 |
+| `layers` | 96,286 | 35,140 | 30,687 | 28,183 |
+| `splines` | 89,947 | 35,847 | 31,278 | 14,414 |
+| `patches` | 144,635 | 53,730 | 45,946 | 39,465 |
+| `container` | 7,499 | 3,358 | 2,835 | 1,897 |
+| `container-advanced` | 42,346 | 15,778 | 13,866 | 15,707 |
+| `opsin` | 74,089 | 28,782 | 24,819 | 19,288 |
+| `progressive-container` | 54,363 | 20,337 | 17,893 | 20,281 |
+| `noise` | 218,248 | 82,647 | 69,224 | 56,534 |
+| `hybrid` | 169,383 | 63,835 | 54,882 | 43,177 |
+| `photo-plan` | 122,965 | 45,479 | 38,940 | 26,588 |
+| `delivery` | 48,052 | 17,920 | 15,759 | 17,850 |
+| `brotli` | 12,269 | 5,484 | 4,771 | 9,395 |
 
 ## Existing JPEGs
 
@@ -885,7 +885,9 @@ The portable reader supports the form this writer emits, not every external Brot
 configurations, direct/postfix distances and static-dictionary references require a full native or supplied
 decoder. `readMetadata` preserves other `brob` payloads as owned compressed bytes without expanding them;
 `readMetadataAsync` refuses an unsupported form rather than returning altered metadata. Supply a bounded
-`decompress` callback when reading broader external metadata. Browser metadata fallback and the complete worker
+`decompress` callback when reading broader external metadata. A runtime whose native Brotli decoder has
+CVE-2026-111497 (Node before 22.23.4, 24.22.1 or 26.12.1, any Node 20, 21, 23 or 25, Bun before 1.4.4) never receives
+compressed metadata: the portable reader reads its form, and any other form refuses and names the update. Browser metadata fallback and the complete worker
 can compress and read back their own Exif, XMP and JUMBF without any network request.
 
 ## Extended containers, indexes and gain maps

@@ -3,7 +3,7 @@
 > JPEG XL encoder in JavaScript. Smaller files than libjxl at the same quality, a quality search that runs on WebGPU.
 > Runs in browsers, workers, Node and Deno. MIT license, no dependencies, no WebAssembly needed. Lossless, lossy, 8-bit to
 > 32-bit float, HDR, exact alpha, color profiles, exact JPEG transcoding and animation. Sizes (gzip): core 28,604 bytes,
-> still worker 149,050, complete worker (adds animation) 213,491.
+> still worker 149,050, complete worker (adds animation) 213,828.
 
 ## Start encoding
 
@@ -22,7 +22,7 @@ Agent skills: [Single-file apps](skills/rapier-jxl-single-file-app/SKILL.md) · 
 
 Two self-starting classic workers, both with optional WASM, effort 1–9, Photo, JPEG transcoding and parallel lossless groups:
 - `rapier-jxl/rapier/still-worker`: still pictures, byte-identical to the encoder Rapier's page embeds. 149,050 gzip bytes.
-- `rapier-jxl/rapier/worker`: the same plus animation and the other format writers; nothing downloads at runtime. 213,491 gzip bytes.
+- `rapier-jxl/rapier/worker`: the same plus animation and the other format writers; nothing downloads at runtime. 213,828 gzip bytes.
 
 `rapier-jxl/rapier/min` exports `createEncoder()` and `installWorker()` (complete). Pixel defaults: effort 7, quality 90;
 `lossless: true` forces quality 100. JPEG uses effort 7. See [the complete API](docs/reference/API.md#complete-rapier-system)
@@ -58,7 +58,7 @@ Encoding entry points and `rapier-jxl/metadata` have self-contained `/min` build
 Import the complete file to access its public export names; minification renames local functions.
 Use readable imports when bundling several capabilities so they share code.
 
-Package: `rapier-jxl`. Version: 6.0.0. Install: `npm install rapier-jxl`.
+Package: `rapier-jxl`. Version: 6.0.1. Install: `npm install rapier-jxl`.
 ES modules with no automatic filesystem or network I/O.
 Core payload: 70,742 minified bytes; 28,604 gzip bytes.
 Runs in browsers, module workers, Node, and Deno. This package encodes JPEG XL and reconstructs JPEGs it carried; it does not include a JPEG XL pixel decoder.

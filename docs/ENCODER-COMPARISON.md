@@ -1,6 +1,6 @@
 # Encoder comparisons
 
-The complete Rapier worker uses 213,491 gzip bytes: core encoding, effort search, optional WASM, Photo, JPEG transcoding and parallel workers. The separate core uses 28,604 gzip bytes. Both embed in one offline HTML file.
+The complete Rapier worker uses 213,828 gzip bytes: core encoding, effort search, optional WASM, Photo, JPEG transcoding and parallel workers. The separate core uses 28,604 gzip bytes. Both embed in one offline HTML file.
 
 ## Payload
 
@@ -8,12 +8,12 @@ Executable payload sizes. Rapier JXL uses this release; other rows use the pinne
 
 | Encoder / entry | Version | Minified JS + WASM bytes | gzip bytes | Included capability |
 | --- | --- | ---: | ---: | --- |
-| Rapier JXL complete worker | 6.0.0 | 576,318 | 213,491 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel workers |
-| Rapier JXL core | 6.0.0 | 70,742 | 28,604 | Lossless/lossy RGBA, native precision and HDR, exact alpha |
-| Rapier JXL effort | 6.0.0 | 204,440 | 78,134 | Core plus lossless predictor, learned-tree, entropy, color, and screen search |
-| Rapier JXL WASM | 6.0.0 | 227,437 | 88,025 | Effort with inlined kernels and JavaScript fallback |
-| Rapier JXL JPEG | 6.0.0 | 83,068 | 32,866 | JPEG coefficients, orientation and original-byte reconstruction |
-| Rapier JXL photo | 6.0.0 | 157,813 | 60,786 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
+| Rapier JXL complete worker | 6.0.1 | 576,983 | 213,828 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel workers |
+| Rapier JXL core | 6.0.1 | 70,742 | 28,604 | Lossless/lossy RGBA, native precision and HDR, exact alpha |
+| Rapier JXL effort | 6.0.1 | 204,440 | 78,134 | Core plus lossless predictor, learned-tree, entropy, color, and screen search |
+| Rapier JXL WASM | 6.0.1 | 227,437 | 88,025 | Effort with inlined kernels and JavaScript fallback |
+| Rapier JXL JPEG | 6.0.1 | 83,068 | 32,866 | JPEG coefficients, orientation and original-byte reconstruction |
+| Rapier JXL photo | 6.0.1 | 157,813 | 60,786 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
 | [jSquash](https://github.com/jamsinclair/jSquash/tree/main/packages/jxl) | 1.3.0 | 1,388,572 | 525,782 | 8-bit lossless/lossy RGBA |
 | [Discourse's jSquash package](https://www.npmjs.com/package/@discourse/jxl) | 1.3.0 | 1,388,572 | 525,782 | The same encoder bytes as jSquash |
 | [Lacinak's jSquash fork](https://github.com/kelaci/jSquash) | 1.3.0-kelaci.0 | 2,071,514 | 844,866 | High bit-depth input options |
@@ -48,7 +48,7 @@ All 213 outputs match the retained earlier streams in SHA-256 and length. That i
 
 ## Photographs
 
-Every picture through Rapier JXL 6.0.0 and libjxl 0.12.0's `cjxl`, mozjpeg 4.1.5, WebP (`cwebp -m 6 -sharp_yuv`) and
+Every picture through Rapier JXL 6.0.1 and libjxl 0.12.0's `cjxl`, mozjpeg 4.1.5, WebP (`cwebp -m 6 -sharp_yuv`) and
 AVIF (`avifenc -s 6`) at 11 to 13 settings each. libjxl's `ssimulacra2` and `butteraugli_main` (3-norm) score the pixels each
 file decodes to; bytes at the same score are interpolated per picture and summed. Every JPEG XL file decodes in djxl,
 jxl-oxide 0.12.6 and Chrome 155 to the same pixels (within 1/255). Encoders run one thread each.

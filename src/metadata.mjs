@@ -108,11 +108,31 @@ export function readMetadata(bytes) {
   });
 }
 
+function nativeBrotliUnsafe(versions) {
+  if (!versions?.node) return false;
+  const older = (version, fixed) => {
+    const parts = String(version).split('.').map(part => parseInt(part, 10) || 0);
+    for (let index = 0; index < 3; index++) if (parts[index] !== fixed[index]) return parts[index] < fixed[index];
+    return false;
+  };
+  if (versions.bun) return older(versions.bun, [1, 4, 4]);
+  if (versions.deno) return false;
+  const major = parseInt(versions.node, 10), fixed = {22: [22, 23, 4], 24: [24, 22, 1], 26: [26, 12, 1]}[major];
+  return fixed ? older(versions.node, fixed) : major < 27;
+}
+
 async function codec(data, direction, provided, maximum) {
   let result;
   if (provided !== undefined) {
     if (typeof provided !== 'function') throw invalid('The Brotli codec is a function.');
     result = await provided(data, maximum === Number.MAX_SAFE_INTEGER ? {} : {maxOutputLength: maximum});
+  } else if (direction === 'decompress' && nativeBrotliUnsafe(globalThis.process?.versions)) {
+    try { result = decompressBrotli(data, {maxOutputLength: maximum}); }
+    catch (error) {
+      if (error?.code === 'JXL_SIZE') throw error;
+      throw invalid('This runtime\'s native Brotli decoder has a remote-code-execution bug (CVE-2026-111497), so only the ' +
+        'portable form is read here. Update Node to 22.23.4, 24.22.1 or 26.12.1 (Bun to 1.4.4), or pass decompress.');
+    }
   } else if (globalThis.process?.versions?.node) {
     const zlib = await import('node:zlib');
     const method = direction === 'compress' ? zlib.brotliCompress : zlib.brotliDecompress;
