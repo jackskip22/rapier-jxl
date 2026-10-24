@@ -3,14 +3,15 @@
 JPEG XL encoder in JavaScript. Smaller files than libjxl at the same quality, a quality search that runs on WebGPU,
 29 KB gzipped. Runs in browsers, workers, Node and Deno. MIT license, no dependencies.
 
-| Same visual quality (SSIMULACRA2), 24 Kodak photos | Rapier JXL |
-| --- | ---: |
-| libjxl, `cjxl -e 9` | 5–7% smaller |
-| AVIF | 4–20% smaller |
-| WebP | 15–23% smaller |
-| JPEG (mozjpeg) | 19–43% smaller |
-| JPEG to JPEG XL, restored byte for byte (24 of 24) | 14% smaller |
-| Encoder size, gzipped | 29 KB (libjxl in WebAssembly: 962 KB) |
+| Same visual quality (SSIMULACRA2), 24 Kodak photos | Effort | Rapier JXL |
+| --- | :---: | ---: |
+| libjxl, `cjxl -e 9` | 7 | 5–7% smaller |
+| libjxl, `cjxl -e 9`, by Butteraugli | 9 | up to 5% smaller |
+| AVIF | 7 | 4–20% smaller |
+| WebP | 7 | 15–23% smaller |
+| JPEG (mozjpeg) | 7 | 19–43% smaller |
+| JPEG to JPEG XL, restored byte for byte (24 of 24) | 9 | 15% smaller |
+| Encoder size, gzipped | | 29 KB (libjxl in WebAssembly: 962 KB) |
 
 [Method, every score and how to reproduce](docs/ENCODER-COMPARISON.md).
 

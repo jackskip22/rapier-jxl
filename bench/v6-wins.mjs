@@ -175,6 +175,16 @@ export function readme(w) {
   if (exact !== images) throw new Error('an exact JPEG did not restore');
   fill.EXACT_JPEG_COUNT = `${exact} of ${images}`;
   fill.EXACT_JPEG_WIN = whole(j.reduce((s, e) => s + e.bytes, 0) / j.reduce((s, e) => s + e.original, 0)) + '%';
+  // Effort 9 where it adds what effort 7 does not: a win against cjxl e9 at every Butteraugli target (every target is
+  // checked, then the best is stated), and the exact JPEG transcode with every file restored.
+  const ba9 = claim(w, 'v6 effort 9 vs cjxl e9 at Butteraugli', c => at(c, 'v6:9 vs cjxl:9', 'ba3', TARGETS.ba3));
+  fill.LIBJXL_BA_WIN_9 = 'up to ' + ba9.value.split('–').pop(); fill.LIBJXL_BA_SET_9 = ba9.set;
+  const j9 = Object.values(w.jpeg).map(x => x.encoders['v6:9']).filter(Boolean);
+  if (!j9.length) throw new Error('no exact JPEG rows at effort 9');
+  const images9 = j9.reduce((s, e) => s + e.images, 0), exact9 = j9.reduce((s, e) => s + e.exact, 0);
+  if (exact9 !== images9) throw new Error('an exact JPEG did not restore at effort 9');
+  fill.EXACT_JPEG_COUNT_9 = `${exact9} of ${images9}`;
+  fill.EXACT_JPEG_WIN_9 = whole(j9.reduce((s, e) => s + e.bytes, 0) / j9.reduce((s, e) => s + e.original, 0)) + '%';
   fill.PROOF_TABLES = tables(w);
   return fill;
 }
