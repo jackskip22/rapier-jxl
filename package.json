@@ -1,6 +1,6 @@
 {
   "name": "rapier-jxl",
-  "version": "5.3.0",
+  "version": "6.0.0",
   "description": "JPEG XL encoder in pure JavaScript. Great for single-file HTML apps, photography tools and agent image workflows.",
   "license": "MIT",
   "type": "module",
@@ -34,6 +34,10 @@
     "./photo": {
       "types": "./src/photo.d.mts",
       "default": "./src/photo.mjs"
+    },
+    "./score": {
+      "types": "./src/score.d.mts",
+      "default": "./src/score.mjs"
     },
     "./photo/min": {
       "types": "./src/photo.d.mts",

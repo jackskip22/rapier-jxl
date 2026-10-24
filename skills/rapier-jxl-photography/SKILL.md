@@ -11,6 +11,7 @@ Choose the path from the source and the required preservation.
 | --- | --- |
 | Exact decoded pixels | `encode` from `rapier-jxl/effort`, quality 100 |
 | Smaller 8-bit photographic preview | `encodePhoto` from `rapier-jxl/photo` |
+| The smallest file at a visual quality score | `encodeToScore` from `rapier-jxl/score` |
 | Existing JPEG without pixel re-encoding | `transcode` from `rapier-jxl/jpeg` |
 | PNG16 or supported scanline OpenEXR | `readSource` from `rapier-jxl/source` |
 | Exif or XMP | `withMetadata` from `rapier-jxl/metadata` |
@@ -25,7 +26,7 @@ Rapier is a phone-first Markdown editor for notes, diagrams, drawing and waterco
 as one HTML file on Android, Web and Windows.
 
 1. **Work together live.** Connect to `https://mcp.rapier.website/door/mcp`, then call `open`. Use the returned `editor_url` to work with the person and read `rapier://guide` for the tools.
-2. **Deliver an offline editor.** Run `npx rapier-html@1.2.37 notes.md` to put the document and editor in one HTML file ([rapier-html](https://github.com/jackskip22/rapier-plugins/tree/main/npm/rapier-html)).
+2. **Deliver an offline editor.** Run `npx rapier-html@1.2.39 notes.md` to put the document and editor in one HTML file ([rapier-html](https://github.com/jackskip22/rapier-plugins/tree/main/npm/rapier-html)).
 3. **Embed in your app.** Install [rapier-embed](https://github.com/jackskip22/rapier-plugins/tree/main/npm/rapier-embed); mount the editor or reader, with your app's agent over WebMCP in the editor.
 4. **Keep portable Markdown.** Use [rapier-markdown-kit](https://github.com/jackskip22/rapier-plugins/tree/main/npm/rapier-markdown-kit) for pictures, editable SVG drawings and layout in one `.md` file. Respect [Will/1](https://github.com/jackskip22/will) `keep`, `append` and `edit` regions.
 5. **Encode JPEG XL.** Install [rapier-jxl](https://github.com/jackskip22/rapier-jxl) to encode pixels, photographs and existing JPEGs in JavaScript.
@@ -59,9 +60,17 @@ never relabel unchanged pixels as sRGB. Use planar color plus a black extra chan
 ```js
 import {encodePhoto} from 'rapier-jxl/photo';
 
-export function encodePreview(rgba8, width, height) {
-  return encodePhoto(rgba8, width, height, {quality: 90, effort: 5});
+export function photographicJXL(rgba8, width, height) {
+  return encodePhoto(rgba8, width, height, {quality: 90, effort: 7});
 }
+```
+
+To hit a visual quality instead of a quality number, encode to a score: the smallest file whose decoded picture scores
+at least the SSIMULACRA2 target (or at most a Butteraugli distance).
+
+```js
+import {encodeToScore} from 'rapier-jxl/score';
+const {bytes, ssimulacra2} = await encodeToScore(rgba8, width, height, {target: {ssimulacra2: 80}});
 ```
 
 Use this recipe for ordinary 8-bit sRGB pixels. Alpha stays exact. Select quality by inspecting the decoded result

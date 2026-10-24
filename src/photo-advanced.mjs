@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {PHOTO_LIMITS, complete, part} from './bits.mjs';
+import {prepareV6, photoV6Image, V6} from './photo-v6.mjs';
 import {admitOptions, admitPixels, admitSampleFormat, fault, job} from './admit.mjs';
 import {admitEffort} from './effort-level.mjs';
 import {losslessSteps, nativeSteps} from './lossless.mjs';
@@ -43,6 +44,11 @@ export function encodePhotoSteps(data, width, height, options = {}) {
   return job(steps(data, layout.codedWidth, layout.codedHeight, {quality, colorSpace, effort, samples, options, progression, noiseLut, strategyOptions, filter, lfLevels, authoredOrderPasses, layout, extras}));
 }
 
+function* photoV6Producer(data, width, height, quality, gaborish = true) {
+  yield 0;
+  return gaborish ? photoV6Image(prepareV6(data, width, height), quality) : complete(photoXYBSteps(data, width, height, quality, V6));
+}
+
 function* steps(data, width, height, {quality, colorSpace, effort, samples, options, progression, noiseLut, strategyOptions, filter, lfLevels, authoredOrderPasses, layout, extras}) {
   if (!samples.native8) return yield* nativeSteps(data, width, height, {quality, samples, effort});
   if (quality >= 100) return yield* losslessSteps(data, width, height, {colorSpace});
@@ -56,7 +62,7 @@ function* steps(data, width, height, {quality, colorSpace, effort, samples, opti
     return padded ? cropPhotoCanvas(bytes, layout.width, layout.height) : bytes;
   };
   const producer = variable ? strategyCoefficientSteps(data, width, height, quality, colorSpace, options, strategyOptions) :
-    colorSpace === 'srgb' && (lfLevels || noiseLut || preferXYB(data, width, height)) ? photoXYBSteps(data, width, height, quality, {filter}) :
+    colorSpace === 'srgb' && (lfLevels || noiseLut || preferXYB(data, width, height)) ? photoV6Producer(data, width, height, quality, !lfLevels && !noiseLut) :
     photoCoefficientSteps(data, width, height, quality, colorSpace);
   const image = yield* part(producer, 0, lfLevels ? 3 : 2);
   applyPhotoLayout(image, layout, !!padded);

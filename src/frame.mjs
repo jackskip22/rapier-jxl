@@ -80,13 +80,18 @@ export function writeModularFrameHeader(w, {alpha, shift = 1, extraChannels = Nu
   writeFrameHeaderEnd(w, extraChannels, 0, passes);
 }
 
-export function writeFrameHeaderEnd(w, alpha, epf = 0, passes, epfIterations = 1) {
+export function writeFrameHeaderEnd(w, alpha, epf = 0, passes, epfIterations = 1, gab = null) {
   const channels = typeof alpha === 'number' ? alpha : Number(!!alpha);
   if (passes) w.append(passes); else w.write(2, 0);
   w.write(3, 0);
   for (let c = 0; c < channels; c++) w.write(2, 0);
-  if (!epf) { w.write(11, 1); return; }
-  w.write(5, 1);
+  if (!epf && !gab) { w.write(11, 1); return; }
+  w.write(5, gab ? 17 : 1);
+  if (gab) {
+    w.write(1, gab === true ? 0 : 1);
+    if (gab !== true) for (const [edge, corner] of gab) { w.write(16, float16Bits(edge)); w.write(16, float16Bits(corner)); }
+  }
+  if (!epf) { w.write(6, 0); return; }
   w.write(2, epfIterations);
   w.write(3, 4);
   for (const value of [epf, 0.9, 6.5, 2 / 3]) w.write(16, float16Bits(value));

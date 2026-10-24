@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 import {coefficientEffortSteps} from './coefficient-effort.mjs';
 import {varDCTSteps} from './vardct.mjs';
-import {part} from './bits.mjs';
+import {part, complete} from './bits.mjs';
 import {buildAnsCoding, writeModularAnsHistograms} from './ans.mjs';
+import {lfCoderFor} from './lf-coding.mjs';
 
 const BUDGETS = [{maxClusters: 32, newClusterCost: 160}, {maxClusters: 24, newClusterCost: 100}, {maxClusters: 16, newClusterCost: 100}];
 
@@ -28,7 +29,7 @@ export function* coefficientAnsSteps(jpeg, effort, fallback, retain) {
   for (let at = 0; at < rungs.length; at++) {
     const rung = rungs[at], from = 0.5 + 0.5 * at / rungs.length, share = 0.5 / rungs.length;
     try {
-      const plan = {orders: rung.orders, clusters: rung.clusters, coding: buildAnsCoding, modularAns: writeModularAnsHistograms};
+      const plan = {orders: rung.orders, clusters: rung.clusters, coding: buildAnsCoding, modularAns: writeModularAnsHistograms, lfCoder: lfCoderFor(effort)};
       if (!plan.clusters) delete plan.clusters;
       const candidate = varDCTSteps(jpeg, plan, shared);
       let step;
@@ -44,4 +45,29 @@ export function* coefficientAnsSteps(jpeg, effort, fallback, retain) {
     }
   }
   return best;
+}
+
+export function* strategyAnsSteps(image, effort = 7, learned = null) {
+  const budgets = BUDGETS.slice(0, Math.max(1, Math.min(3, effort - 6))), lf = lfCoderFor(Math.max(5, effort));
+  const runs = [];
+  if (effort <= 6) runs.push({img: {...image, authoredOrderPasses: null}, shared: {}, plan: {clusters: BUDGETS[0], coding: buildAnsCoding, modularAns: writeModularAnsHistograms, lfCoder: lf}});
+  else for (const authored of learned ? [null, learned] : [null]) {
+    const img = {...image, authoredOrderPasses: authored}, shared = {};
+    runs.push({img, shared, plan: {clusters: BUDGETS[0]}});
+    for (const clusters of budgets) runs.push({img, shared, plan: {clusters, coding: buildAnsCoding, modularAns: writeModularAnsHistograms, lfCoder: lf}});
+  }
+  let best = null;
+  for (let at = 0; at < runs.length; at++) {
+    const {img, shared, plan} = runs[at], candidate = varDCTSteps(img, plan, shared);
+    let step;
+    while (!(step = candidate.next()).done) yield (at + step.value) / runs.length;
+    if (!best || step.value.length < best.length) best = step.value;
+  }
+  return best;
+}
+
+export function estimateBytes(image) {
+  const plan = {clusters: BUDGETS[0], coding: buildAnsCoding, modularAns: writeModularAnsHistograms, lfCoder: lfCoderFor(5), estimate: true};
+  const value = complete(varDCTSteps({...image, authoredOrderPasses: null}, plan, {}));
+  return typeof value === 'number' ? value : value.length;
 }

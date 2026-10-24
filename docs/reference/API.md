@@ -21,14 +21,44 @@ The output is a `Uint8Array` of JPEG XL file bytes: save as `.jxl` or use MIME t
 12 bits use a bare codestream. The 16-bit integer and floating-point formats use a JPEG XL container with a level 10
 declaration. The same pixels and options produce the same bytes in every JavaScript engine.
 
-## Version 5
+## Photographs
+
+Photographs (8-bit sRGB pixels whose colors suit XYB) use v6 coding at every quality below 100: JPEG XL's default
+chroma tables reshaped by measured searches, and Gaborish. A quality gives the same picture at every effort; effort only
+searches longer for a smaller file. Efforts 8 and 9 also measure the decoded picture and keep a smaller file whose
+Butteraugli distance (3-norm) is no worse than effort 7's: 8 tries a measured quantization field, 9 also measured variable
+transforms and v6 without Gaborish. `rapier-jxl/score` encodes to a score. `filter` applies only to pictures v6 does
+not take; `photo: false` selects Modular lossy coding.
 
 Two workers: `rapier-jxl/rapier/still-worker` supports still pictures and the `photo`, `profile`, `readSource`,
 `encodeSource` and `opsin` format actions. `rapier-jxl/rapier/worker` also supports animation and every other format
 action documented below. The still worker answers `JXL_UNAVAILABLE` to animation, complete-only format actions
-and advanced photo options. Lossy pixels use photographic coding unless you pass `photo: false` or a preset that
-says otherwise. JPEG transcoding returns reconstruction containers, metadata edits to them are refused, and a
+and advanced photo options. JPEG transcoding returns reconstruction containers, metadata edits to them are refused, and a
 reconstruction response may carry `bytes: null`.
+
+## Encode to a score
+
+```js
+import {encodeToScore} from 'rapier-jxl/score';
+const {bytes, quality, ssimulacra2} = await encodeToScore(rgba, width, height, {target: {ssimulacra2: 80}});
+```
+
+Returns the smallest file whose decoded picture meets every target: `ssimulacra2` (at least), `butteraugli` (maximum,
+at most) or `butteraugli3` (3-norm, at most). Five candidates compete, each at the lowest quality that meets the target:
+v6 with Gaborish; with measured variable transforms; with a measured quantization field; with that field and measured
+variable transforms; v6 without Gaborish. The picture is measured as the decoder rebuilds it; no file is decoded. Scores are exact; libjxl's
+`ssimulacra2` tool can differ by up to about 1.
+
+| Option | Meaning |
+| --- | --- |
+| `target` | Required. One or more of `ssimulacra2`, `butteraugli`, `butteraugli3`. |
+| `effort` | 1 to 9, default 7: the chosen file's entropy search. |
+| `candidates` | Some of `'gaborish'`, `'blocks'`, `'field'`, `'closed'`, `'plain'`; default all five. |
+| `gpu` | A `GPUDevice`. Butteraugli then runs on WebGPU, in tiles; SSIMULACRA2 stays on the CPU. Results can differ by device. |
+| `onProgress` | Called with a fraction as the GPU search runs. |
+
+Input is 8-bit sRGB RGBA (`Uint8Array` or `Uint8ClampedArray`), at least 8 x 8 pixels. `encodeToScoreSteps` runs the
+same search on the CPU as steps. Without `gpu`, the same pixels and options give the same bytes in every engine.
 
 ## Entry points
 
@@ -39,6 +69,7 @@ reconstruction response may carry `bytes: null`.
 | `rapier-jxl/wasm` | Effort API, `configureKernels`, `kernelMode` | [wasm.d.mts](../../src/wasm.d.mts) |
 | `rapier-jxl/jpeg` | `transcode`, `transcodeSteps`, `LIMITS` | [jpeg.d.mts](../../src/jpeg.d.mts) |
 | `rapier-jxl/photo` | `encodePhoto`, `encodePhotoSteps`, `LIMITS` | [photo.d.mts](../../src/photo.d.mts) |
+| `rapier-jxl/score` | `encodeToScore`, `encodeToScoreSteps`, `LIMITS` | [score.d.mts](../../src/score.d.mts) |
 | `rapier-jxl/jpeg-ans` | JPEG API with ANS search | [jpeg-ans.d.mts](../../src/jpeg-ans.d.mts) |
 | `rapier-jxl/photo-ans` | Photo API with ANS search | [photo-ans.d.mts](../../src/photo-ans.d.mts) |
 | `rapier-jxl/kernels` | `configureKernels`, `kernelMode` | [kernels.d.mts](../../src/kernels.d.mts) |
@@ -77,7 +108,7 @@ have no `/min` entry. Encoding needs no decoder; rendering JPEG XL requires a se
 | --- | --- |
 | `quality` | Number from 1 to 100. Core and effort default to 100; photo defaults to 90. At 100 every source sample is exact, including RGB under transparent alpha. At 1–99 alpha stays exact. The encoder can return a smaller exact stream for a lossy request. |
 | `photo` | Boolean in core, effort and wasm; default `true`. Ordinary non-palette straight RGBA8 below quality 100 uses photographic coding. Set `false` for Modular lossy coding. Palette, native-precision, ICC and quality-100 inputs retain their existing paths. The explicit photo entry always uses its own coding path. |
-| `filter` | `'auto'` (default) or `'off'`. Auto applies one edge-preserving pass to sRGB XYB photographs at quality 90 or below. Off keeps the unfiltered reconstruction. Alpha stays exact; other coding paths do not use this filter. |
+| `filter` | `'auto'` (default) or `'off'`, for the photographic coding of pictures v6 does not take (YCbCr and declared-color inputs). v6 photographs always use their filters. |
 | `colorSpace` | `'srgb'` (default), `'display-p3'`, or `'rec2020'`. Declares D65 input primaries; does not convert samples. |
 | `bitDepth` | Bytes use 8. Integer `Uint16Array` uses 10, 12, or 16, default 16. The encoder rejects a value above the declared maximum. Floating depth is fixed at 16 or 32 by its sample format. |
 | `sampleFormat` | `'uint'` for integer arrays (inferred); `'float16'` for raw IEEE binary16 words in `Uint16Array`; `'float32'` for `Float32Array` (inferred). |
@@ -659,22 +690,22 @@ Added gzip is the entry bundled with the core minus the core alone, so shared co
 
 | Entry | Minified bytes | gzip | Brotli | Added gzip with core |
 | --- | ---: | ---: | ---: | ---: |
-| `icc` | 37,338 | 14,741 | 13,076 | 2,136 |
-| `photo-advanced` | 155,438 | 56,358 | 48,306 | 34,297 |
-| `delta-palette` | 85,856 | 33,315 | 29,098 | 20,501 |
-| `channels` | 85,600 | 31,653 | 27,681 | 24,589 |
-| `layers` | 96,157 | 35,091 | 30,625 | 28,115 |
-| `splines` | 57,870 | 23,071 | 20,369 | 4,516 |
-| `patches` | 141,353 | 52,471 | 44,966 | 38,475 |
-| `container` | 7,499 | 3,359 | 2,838 | 1,896 |
-| `container-advanced` | 42,346 | 15,778 | 13,868 | 15,574 |
-| `opsin` | 70,796 | 27,491 | 23,797 | 18,352 |
-| `progressive-container` | 53,698 | 20,042 | 17,610 | 19,858 |
-| `noise` | 183,536 | 68,332 | 57,607 | 45,435 |
-| `hybrid` | 140,074 | 52,251 | 45,109 | 32,302 |
-| `photo-plan` | 115,544 | 42,338 | 36,406 | 24,951 |
-| `delivery` | 48,052 | 17,921 | 15,759 | 17,711 |
-| `brotli` | 12,269 | 5,484 | 4,770 | 9,285 |
+| `icc` | 37,467 | 14,780 | 13,089 | 2,088 |
+| `photo-advanced` | 188,097 | 70,042 | 59,346 | 44,470 |
+| `delta-palette` | 87,698 | 34,040 | 29,723 | 21,213 |
+| `channels` | 85,704 | 31,704 | 27,743 | 24,696 |
+| `layers` | 96,286 | 35,140 | 30,634 | 28,183 |
+| `splines` | 89,947 | 35,847 | 31,333 | 14,415 |
+| `patches` | 144,635 | 53,730 | 45,948 | 39,465 |
+| `container` | 7,499 | 3,358 | 2,837 | 1,897 |
+| `container-advanced` | 42,346 | 15,778 | 13,873 | 15,707 |
+| `opsin` | 74,089 | 28,782 | 24,810 | 19,288 |
+| `progressive-container` | 53,698 | 20,042 | 17,582 | 19,982 |
+| `noise` | 218,248 | 82,647 | 69,210 | 56,534 |
+| `hybrid` | 169,383 | 63,835 | 54,878 | 43,177 |
+| `photo-plan` | 122,965 | 45,479 | 38,946 | 26,588 |
+| `delivery` | 48,052 | 17,921 | 15,717 | 17,851 |
+| `brotli` | 12,269 | 5,484 | 4,770 | 9,395 |
 
 ## Existing JPEGs
 

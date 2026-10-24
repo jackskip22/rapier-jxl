@@ -81,7 +81,7 @@ function mergedBits(a, b) {
   return bits + populationBits(total);
 }
 
-function refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost) {
+function refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost, passes = 2, switchCost = 0) {
   const length = clusters.length, pairs = new Float64Array(length * length);
   const price = (a, b) => mergedBits(clusters[a].freqs, clusters[b].freqs) - clusters[a].bits - clusters[b].bits;
   for (let a = 0; a < length; a++) for (let b = a + 1; b < length; b++) pairs[a * length + b] = price(a, b);
@@ -105,11 +105,37 @@ function refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost)
   clusters = clusters.filter(Boolean);
   const assignments = new Map();
   clusters.forEach((cluster, i) => { for (const ctx of cluster.contexts) assignments.set(ctx, i); });
-  for (let pass = 0; pass < 2; pass++) {
+  for (let pass = 0; pass < passes; pass++) {
     const costs = clusters.map(cluster => symbolCosts(cluster.freqs));
     const next = clusters.map(() => ({contexts: [], freqs: new Uint32Array(64), bits: 0}));
     let changed = false;
-    for (const {ctx, sparse} of contexts) {
+    if (switchCost > 0) {
+      const ordered = [...contexts].sort((a, b) => a.ctx - b.ctx), n = ordered.length, k = costs.length;
+      const back = new Int16Array(n * k);
+      let best = new Float64Array(k), next2 = new Float64Array(k);
+      for (let t = 0; t < n; t++) {
+        let low = Infinity, lowAt = 0;
+        for (let i = 0; i < k; i++) if (best[i] < low) { low = best[i]; lowAt = i; }
+        const {sparse} = ordered[t];
+        for (let i = 0; i < k; i++) {
+          const table = costs[i];
+          let cost = 0;
+          for (let at = 0; at < sparse.length; at += 2) cost += sparse[at + 1] * table[sparse[at]];
+          const stay = t ? best[i] : 0, change = t ? low + switchCost : 0;
+          if (stay <= change) { next2[i] = cost + stay; back[t * k + i] = i; } else { next2[i] = cost + change; back[t * k + i] = lowAt; }
+        }
+        [best, next2] = [next2, best];
+      }
+      let at = 0;
+      for (let i = 1; i < k; i++) if (best[i] < best[at]) at = i;
+      for (let t = n - 1; t >= 0; t--) {
+        const {ctx, sparse} = ordered[t], cluster = next[at];
+        cluster.contexts.push(ctx);
+        for (let j = 0; j < sparse.length; j += 2) cluster.freqs[sparse[j]] += sparse[j + 1];
+        if (assignments.get(ctx) !== at) changed = true;
+        at = back[t * k + at];
+      }
+    } else for (const {ctx, sparse} of contexts) {
       const before = assignments.get(ctx);
       let best = before, bestCost = Infinity;
       for (let i = -1; i < costs.length; i++) {
@@ -133,12 +159,13 @@ function refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost)
   return clusters;
 }
 
-export function clusterTokenCounts(counts, {maxClusters = 48, newClusterCost = 320} = {}, modelCost, symbolCosts) {
+export function clusterTokenCounts(counts, {maxClusters = 48, newClusterCost = 320, seeds: seedCap = 96, passes, switchCost} = {}, modelCost, symbolCosts) {
+  passes ??= symbolCosts ? 4 : 2; switchCost ??= symbolCosts ? 4 : 0;
   const used = [];
   for (let ctx = 0; ctx < counts.contexts; ctx++) if (counts.totals[ctx] > 0) used.push(ctx);
   used.sort((a, b) => counts.totals[b] - counts.totals[a]);
   let clusters = [];
-  const contexts = [], seeds = symbolCosts ? Math.min(96, maxClusters * 2) : maxClusters;
+  const contexts = [], seeds = symbolCosts ? Math.min(seedCap, maxClusters * 2) : maxClusters;
   for (const ctx of used) {
     const own = counts.tokens([ctx], CLUSTER_CONFIG, 64), ownBits = entropyBits(own);
     if (symbolCosts) {
@@ -159,7 +186,7 @@ export function clusterTokenCounts(counts, {maxClusters = 48, newClusterCost = 3
       cluster.bits = entropyBits(cluster.freqs);
     }
   }
-  if (symbolCosts && clusters.length > 1) clusters = refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost);
+  if (symbolCosts && clusters.length > 1) clusters = refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost, passes, switchCost);
   if (!clusters.length) clusters.push({contexts: [], freqs: new Uint32Array(64), bits: 0});
   const contextMap = new Uint8Array(counts.contexts);
   const histograms = clusters.map((cluster, index) => {
@@ -173,6 +200,19 @@ export function clusterTokenCounts(counts, {maxClusters = 48, newClusterCost = 3
     }
     return {config, freqs, extra};
   });
+  if (symbolCosts) {
+    let first = 0;
+    while (first < counts.contexts && !counts.totals[first]) first++;
+    for (let ctx = 0; ctx < counts.contexts; ctx++) if (!counts.totals[ctx]) contextMap[ctx] = ctx < first ? contextMap[first] : contextMap[ctx - 1];
+    const order = new Int16Array(histograms.length).fill(-1);
+    let next = 0;
+    for (const id of contextMap) if (order[id] < 0) order[id] = next++;
+    for (let id = 0; id < order.length; id++) if (order[id] < 0) order[id] = next++;
+    const renumbered = new Array(histograms.length);
+    histograms.forEach((h, id) => { renumbered[order[id]] = h; });
+    for (let ctx = 0; ctx < contextMap.length; ctx++) contextMap[ctx] = order[contextMap[ctx]];
+    return {contextMap, histograms: renumbered};
+  }
   for (let left = 0; left + 1 < counts.contexts;) {
     if (!counts.totals[left]) { left++; continue; }
     let right = left + 1;

@@ -7,6 +7,25 @@ import {encodePhotoSteps} from './photo.mjs';
 import {inspectPixels} from './lossless.mjs';
 import {finishEncoding, checkSignal} from './async-job.mjs';
 import {encodePhotoPool, servePhotoPool} from './photo-pool.mjs';
+import {preferXYB} from './photo-xyb.mjs';
+import {photoV6MeasuredJob} from './photo-v6-search.mjs';
+import {GpuMeasure} from './gpu-reconstruct.mjs';
+import {attachVarblocks} from './gpu-varblocks.mjs';
+
+let gpuDevice;
+async function gpu() {
+  if (gpuDevice !== undefined) return gpuDevice;
+  gpuDevice = null;
+  try {
+    for (let i = 0; i < 4 && globalThis.navigator?.gpu && !gpuDevice; i++) {
+      const adapter = await navigator.gpu.requestAdapter({powerPreference: 'high-performance'});
+      if (adapter) gpuDevice = await adapter.requestDevice({requiredLimits: {maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxBufferSize: adapter.limits.maxBufferSize}});
+      else await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    gpuDevice?.lost.then(() => { gpuDevice = undefined; });
+  } catch { gpuDevice = null; }
+  return gpuDevice;
+}
 
 const POOL_GROUPS = 40;
 const PAINTING_POOL_GROUPS = 32;
@@ -23,6 +42,18 @@ export function createStillEncoder({spawn} = {}) {
       checkSignal(options.signal);
       const {quality, photo} = options;
       if (options.losslessProfile === undefined && photo && quality < 100 && (data instanceof Uint8Array || data instanceof Uint8ClampedArray) && !inspectPixels(data, width, height).palette) {
+        const effort = options.effort ?? 1;
+        if (effort >= 8 && options.icc === undefined && (options.colorSpace ?? 'srgb') === 'srgb' && width >= 8 && height >= 8 && preferXYB(data, width, height)) {
+          const device = await gpu();
+          if (device) {
+            let measurer;
+            try {
+              measurer = await attachVarblocks(await GpuMeasure.create(device, data, width, height), device);
+              return await finishEncoding(photoV6MeasuredJob(data, width, height, quality, effort, measurer), options);
+            } catch (error) { if (error?.name === 'AbortError') throw error; }
+            finally { measurer?.destroy(); }
+          }
+        }
         const pooled = options.parallel !== false && workers > 0 && width * height >= PHOTO_POOL_PIXELS;
         const job = pooled ? encodePhotoPool(data, width, height, options, {spawn: spawnWorker, workers}) : encodePhotoSteps(data, width, height, options);
         return finishEncoding(job, options);

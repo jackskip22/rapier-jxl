@@ -6,6 +6,7 @@ import {AVERAGE_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, split, channelTre
 import {inspectPixels, losslessSteps, planeFill, nativeSteps, iccShape} from './lossless.mjs';
 import {lossySteps} from './lossy.mjs';
 import {photoSteps, admitPhotoFilter} from './photo-job.mjs';
+import {searchV6} from './photo-v6-search.mjs';
 import {coefficientEffortSteps} from './coefficient-effort.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {WEIGHTED_PREDICTOR, WEIGHTED_PROPERTY, WEIGHTED_CUTS, codeWeighted} from './weighted.mjs';
@@ -43,7 +44,7 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, 
   const shape = inspectPixels(data, width, height);
   if (quality < 100) {
     if (!shape.palette) return yield* (photo ? photoSteps(data, width, height, quality, colorSpace, effort,
-      effort >= 5 ? coefficientAnsSteps : coefficientEffortSteps, filter) : lossySteps(data, width, height, {quality, shape, colorSpace}));
+      effort >= 5 ? coefficientAnsSteps : coefficientEffortSteps, filter, searchV6) : lossySteps(data, width, height, {quality, shape, colorSpace}));
     const exact = yield* part(effortSteps(data, width, height, 100, colorSpace, effort, false), 0, 2);
     let bytes;
     try { bytes = yield* part(lossySteps(data, width, height, {quality, shape, colorSpace}), 1, 2); }
@@ -117,7 +118,7 @@ const SEARCH_RUNGS = Object.freeze({...SAMPLE_RUNGS,
 const LADDER = Object.freeze({
   3: [{rung: 'shallow'}],
   4: [{rung: 'shallow'}],
-  5: [{rung: 'maximum'}],
+  5: [{rung: 'shallow'}, {rung: 'maximum'}],
   6: [{rung: 'maximum', ranked: 0}],
   7: [{rung: 'broad', ranked: 0}],
   8: [{rung: 'precise', ranked: 0}, {rung: 'sampled', ranked: 0}, {rung: 'branching', ranked: 0}],

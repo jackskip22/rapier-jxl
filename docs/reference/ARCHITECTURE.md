@@ -101,17 +101,20 @@ Readable imports share `rapier-jxl/kernels`. Set controls before an encode. [Ker
 | Kernels | Optional integer operations and exact float64 SIMD DCT behind the same JavaScript encoding interface. |
 | Worker scheduling | Lossless groups and candidates; photographic bands above 3 million pixels. Workers share no caller-owned mutable buffers. |
 
-sRGB photographic pixels below quality 100 use the XYB color transform and the shared DCT8 writer when detail is
-mostly in luminance. A bounded sample retains the existing color transform for strong color edges. XYB uses
-64-pixel chroma-from-luma tiles. Other admitted color spaces keep their existing photographic transform; quality 100
-uses exact modular coding. JPEG transcoding carries the original coefficients and does not use the photographic
-color transform.
+sRGB photographic pixels below quality 100 take v6's coding when detail is mostly in luminance: XYB, JPEG XL's
+default chroma tables reshaped by measured searches, Gaborish and the edge-preserving filter, with 64-pixel
+chroma-from-luma tiles. A quality gives the same picture at every effort. Efforts 8 and 9 and `rapier-jxl/score` rebuild
+the decoded picture from the encoder's own coefficients (no file is decoded), measure it with Butteraugli or
+SSIMULACRA2 (on WebGPU in tiles when a device is given), and choose a measured quantization field and variable
+transforms. A bounded sample retains the existing color transform for strong color edges. Other admitted color spaces
+keep their existing photographic transform; quality 100 uses exact modular coding. JPEG transcoding carries the
+original coefficients and does not use the photographic color transform.
 
 The photographic SIMD kernel batches up to 64 DCT blocks. It preserves the JavaScript operation order and every
 float64 result bit before quantization; it uses no relaxed floating-point instructions. JavaScript remains the
 fallback. The complete encoder selects optional kernels automatically; other entry points keep their existing
-kernel controls. One optional edge-preserving filter improves the measured average XYB quality through quality 90;
-`filter: 'off'` retains unfiltered output. This is separate from lossless coding and JPEG reconstruction.
+kernel controls. v6 photographs always use their filters; for the other photographic paths `filter: 'off'` retains
+unfiltered output. This is separate from lossless coding and JPEG reconstruction.
 
 The [complete-encoder benchmark protocol](../../bench/IDEAL.md) records source snapshots, real input provenance,
 both perceptual metrics, independent decodes, actual helper use, and complete-API timing in Node and Chrome.
@@ -141,7 +144,7 @@ and transparency and choose photographic or graphics coding from evidence. Anima
 future matched-quality JPEG recompression.
 
 Reject changes that gain speed by altering exact coefficients, start helpers on every small image, or hide large
-memory and search costs behind a preset. Retain JavaScript fallback, the photographic filter opt-out, per-image
+memory and search costs behind a preset. Retain JavaScript fallback, per-image
 regressions in benchmark reports, and independent decoding before accepting changed output bytes.
 
 The core excludes the optional search, ANS, JPEG, photo, source-file parser, metadata and WASM modules. Native precision shares its
@@ -191,22 +194,22 @@ allocate the largest image. [Precision, bounds and limits](API.md).
 
 | File in `dist/` | Bytes | gzip | Brotli |
 | --- | ---: | ---: | ---: |
-| `rapier-still-worker.js` | 271,043 | 103,729 | 87,251 |
-| `rapier-worker.js` | 477,295 | 175,226 | 143,039 |
-| `rapier.min.mjs` | 477,636 | 175,292 | 143,131 |
-| `rapier-jxl.min.mjs` | 63,250 | 25,527 | 22,596 |
-| `effort.min.mjs` | 132,987 | 51,283 | 44,294 |
-| `wasm.min.mjs` | 155,982 | 61,007 | 52,455 |
-| `jpeg.min.mjs` | 78,052 | 30,781 | 26,815 |
-| `photo.min.mjs` | 65,453 | 26,043 | 22,957 |
-| `jpeg-ans.min.mjs` | 83,763 | 32,470 | 28,391 |
-| `photo-ans.min.mjs` | 65,437 | 26,033 | 22,916 |
-| `metadata.min.mjs` | 30,550 | 12,293 | 10,780 |
-| `animation.min.mjs` | 155,894 | 59,625 | 51,436 |
-| All self-contained entry points in one bundle | 485,506 | 176,801 | 144,172 |
-| All readable modules in `src/` | 878,580 | 231,762 | |
+| `rapier-still-worker.js` | 391,636 | 149,050 | 123,514 |
+| `rapier-worker.js` | 576,318 | 213,491 | 173,428 |
+| `rapier.min.mjs` | 576,659 | 213,564 | 173,290 |
+| `rapier-jxl.min.mjs` | 70,742 | 28,604 | 25,243 |
+| `effort.min.mjs` | 204,440 | 78,134 | 66,611 |
+| `wasm.min.mjs` | 227,437 | 88,025 | 74,868 |
+| `jpeg.min.mjs` | 83,068 | 32,866 | 28,645 |
+| `photo.min.mjs` | 157,813 | 60,786 | 52,390 |
+| `jpeg-ans.min.mjs` | 114,214 | 44,543 | 38,571 |
+| `photo-ans.min.mjs` | 157,797 | 60,779 | 52,388 |
+| `metadata.min.mjs` | 30,550 | 12,293 | 10,818 |
+| `animation.min.mjs` | 227,231 | 86,616 | 73,695 |
+| All self-contained entry points in one bundle | 584,647 | 214,867 | 174,343 |
+| All readable modules in `src/` | 1,062,078 | 284,551 | |
 
-Release 5.3.0, Terser 5.51.2, Node v22.23.3, gzip 9 and Brotli 11. Exact byte counts, import graphs, hashes
+Release 6.0.0, Terser 5.51.2, Node v22.23.3, gzip 9 and Brotli 11. Exact byte counts, import graphs, hashes
 and incremental sizes are in [dist/sizes.json](../../dist/sizes.json). Encoding builds are checked against their
 readable entries on encoded-byte fixtures and native integer/float cases with HDR and alpha declarations. The metadata
 build is checked against its readable entry for identical container bytes.

@@ -13,7 +13,7 @@ const HEIGHTS = [1, 1, 1, 1, 2, 4, 2, 1, 4, 1, 4, 2, 1, 1, 1, 1, 1, 1, 8, 8, 4, 
 const TABLES = [0, 1, 2, 3, 4, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 10, 10, 11, 12, 12, 13, 14, 14, 15, 16, 16];
 export const TRANSFORMS = Object.freeze(NAMES.map((name, id) => Object.freeze({name, id, width: WIDTHS[id] * 8,
   height: HEIGHTS[id] * 8, table: TABLES[id]})));
-const bases = new Map(), scans = new Map();
+const dctBases = new Map(), dctScans = new Map();
 
 function cosine(numerator, denominator) {
   let n = numerator % (denominator * 2);
@@ -29,12 +29,12 @@ function cosine(numerator, denominator) {
 }
 
 function basis(size) {
-  let b = bases.get(size);
+  let b = dctBases.get(size);
   if (!b) {
     b = new Float64Array(size * size);
     for (let k = 0; k < size; k++) for (let x = 0; x < size; x++) b[k * size + x] =
       k ? 1.4142135623730951 * cosine((2 * x + 1) * k, 2 * size) / size : 1 / size;
-    bases.set(size, b);
+    dctBases.set(size, b);
   }
   return b;
 }
@@ -46,15 +46,19 @@ export function scaledDCT(pixels, width, height) {
     for (let x = 0; x < width; x++) sum += pixels[y * width + x] * bx[u * width + x];
     tmp[y * width + u] = sum;
   }
-  for (let v = 0; v < height; v++) for (let u = 0; u < width; u++) {
-    let sum = 0;
-    for (let y = 0; y < height; y++) sum += tmp[y * width + u] * by[v * height + y];
-    out[height >= width ? u * height + v : v * width + u] = sum;
+  const acc = new Float64Array(width);
+  for (let v = 0; v < height; v++) {
+    acc.fill(0);
+    for (let y = 0; y < height; y++) {
+      const c = by[v * height + y], row = y * width;
+      for (let u = 0; u < width; u++) acc[u] += tmp[row + u] * c;
+    }
+    for (let u = 0; u < width; u++) out[height >= width ? u * height + v : v * width + u] = acc[u];
   }
   return out;
 }
 
-function inverseScaledDCT(coeffs, width, height) {
+export function inverseScaledDCT(coeffs, width, height) {
   const bx = basis(width), by = basis(height), tmp = new Float64Array(width * height), out = new Float64Array(tmp.length);
   for (let v = 0; v < height; v++) for (let x = 0; x < width; x++) {
     let sum = 0;
@@ -69,7 +73,7 @@ function inverseScaledDCT(coeffs, width, height) {
   return out;
 }
 
-function smallTransform(pixels, id) {
+export function smallTransform(pixels, id) {
   const out = new Float64Array(64);
   const cut = (x0, y0, w, h) => Float64Array.from({length: w * h}, (_, i) => pixels[(y0 + Math.floor(i / w)) * 8 + x0 + i % w]);
   const combineFour = () => {
@@ -131,7 +135,7 @@ function smallTransform(pixels, id) {
 
 export function naturalOrder(widthBlocks, heightBlocks) {
   const cx = Math.max(widthBlocks, heightBlocks), cy = Math.min(widthBlocks, heightBlocks), key = cx * 64 + cy;
-  if (scans.has(key)) return scans.get(key);
+  if (dctScans.has(key)) return dctScans.get(key);
   const width = cx * 8, ratio = cx / cy, order = new Uint32Array(cx * cy * 64);
   let next = cx * cy;
   for (let i = 0; i < width; i++) for (let j = 0; j <= i; j++) {
@@ -147,11 +151,11 @@ export function naturalOrder(widthBlocks, heightBlocks) {
     if (y % ratio) continue;
     order[next++] = y / ratio * width + x;
   }
-  scans.set(key, order);
+  dctScans.set(key, order);
   return order;
 }
 
-function lowFrequencies(coeffs, widthBlocks, heightBlocks) {
+export function lowFrequencies(coeffs, widthBlocks, heightBlocks) {
   const w = Math.max(widthBlocks, heightBlocks), h = Math.min(widthBlocks, heightBlocks), low = new Float64Array(w * h);
   const scale = (k, size) => cosine(k, 2 * size) * cosine(k, size) * cosine(2 * k, size);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) low[y * w + x] = coeffs[y * w * 8 + x]

@@ -1,0 +1,44 @@
+{
+ "about": "Bytes at equal score against libjxl (gpu-search/bench/compare.mjs): negative is smaller.",
+ "encoder": "rapier6:7",
+ "against": "cjxl:9",
+ "corpus": "Kodak, 24 photos",
+ "rows": {
+  "ssimulacra2@60": {
+   "percent": -5.06,
+   "images": 24
+  },
+  "ssimulacra2@70": {
+   "percent": -4.72,
+   "images": 24
+  },
+  "ssimulacra2@80": {
+   "percent": -6.09,
+   "images": 24
+  },
+  "ssimulacra2@85": {
+   "percent": -5.59,
+   "images": 24
+  },
+  "ssimulacra2@90": {
+   "percent": -7.79,
+   "images": 15
+  },
+  "ba3@2": {
+   "percent": -2.78,
+   "images": 24
+  },
+  "ba3@1.5": {
+   "percent": -2.49,
+   "images": 24
+  },
+  "ba3@1": {
+   "percent": 1.06,
+   "images": 24
+  },
+  "ba3@0.7": {
+   "percent": 4.87,
+   "images": 24
+  }
+ }
+}

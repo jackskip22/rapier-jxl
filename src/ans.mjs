@@ -3,6 +3,7 @@ import {BitWriter, ceilLog2, floorLog2} from './bits.mjs';
 import {hybridToken, writeContextMap, writeUintConfig} from './prefix.mjs';
 import {clusterTokenCounts, entropyLog2} from './entropy.mjs';
 import {LZ77, RESIDUAL_CONFIG} from './modular.mjs';
+import {writeSmallestContextMap} from './context-map.mjs';
 
 export const LOG_LENGTHS = [5, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 6, 7];
 export const LOG_CODES = [17, 11, 15, 3, 9, 7, 4, 2, 5, 6, 0, 33, 1];
@@ -38,12 +39,78 @@ function normalise(freqs) {
   return counts;
 }
 
-function writeDistribution(w, counts, runs = false) {
+const countPrecision = (bits, shift) => Math.max(0, Math.min(bits, shift - ((12 - bits) >> 1)));
+function stepOf(count, shift) {
+  const bits = floorLog2(count);
+  return bits ? 1 << (bits - countPrecision(bits, shift)) : 1;
+}
+const countUp = (count, shift) => count + stepOf(count, shift);
+function countDown(count, shift) {
+  if (count <= 1) return 0;
+  const bits = floorLog2(count);
+  return count === 1 << bits ? count - stepOf(count - 1, shift) : count - stepOf(count, shift);
+}
+
+export function shapeHistogram(freqs, shifts = SHIFTS) {
+  let total = 0, last = 0, omit = 0, used = 0;
+  for (let i = 0; i < freqs.length; i++) if (freqs[i]) { total += freqs[i]; last = i + 1; used++; if (freqs[i] > freqs[omit]) omit = i; }
+  if (used <= 2) { const counts = normalise(freqs); return {counts, shift: 12, omit: -1, bits: distributionBits(counts, 12, -1) + expectedDataBits(freqs, counts)}; }
+  let best = null;
+  for (const shift of shifts) {
+    const counts = new Uint16Array(last);
+    let sum = 0;
+    for (let i = 0; i < last; i++) if (freqs[i] && i !== omit) {
+      const target = freqs[i] * 4096 / total, cap = i < omit ? 2047 : 4095;
+      let c = Math.max(1, Math.min(cap, Math.round(target)));
+      if (c > 1) { const bits = floorLog2(c), step = stepOf(c, shift); c = (1 << bits) + Math.floor((c - (1 << bits)) / step) * step; }
+      const up = countUp(c, shift);
+      if (up <= cap && up - target < target - c) c = up;
+      counts[i] = c; sum += c;
+    }
+    if (sum >= 4096) continue;
+    const f0 = freqs[omit];
+    for (let moves = 0; moves < 4 * last; moves++) {
+      const rest = 4096 - sum, restBits = LOG2[rest];
+      let chosen = -1, to = 0, gain = 1e-9;
+      for (let i = 0; i < last; i++) if (counts[i] && i !== omit) {
+        const c = counts[i], cap = i < omit ? 2047 : 4095, here = LOG2[c];
+        const up = countUp(c, shift);
+        if (up <= cap && rest - (up - c) >= 1) {
+          const g = freqs[i] * (LOG2[up] - here) + f0 * (LOG2[rest - (up - c)] - restBits);
+          if (g > gain) { gain = g; chosen = i; to = up; }
+        }
+        const down = countDown(c, shift);
+        if (down >= 1) {
+          const g = freqs[i] * (LOG2[down] - here) + f0 * (LOG2[rest + c - down] - restBits);
+          if (g > gain) { gain = g; chosen = i; to = down; }
+        }
+      }
+      if (chosen < 0) break;
+      sum += to - counts[chosen]; counts[chosen] = to;
+    }
+    counts[omit] = 4096 - sum;
+    const bits = distributionBits(counts, shift, omit) + expectedDataBits(freqs, counts);
+    if (!best || bits < best.bits) best = {counts, shift, omit, bits};
+  }
+  return best;
+}
+const SHIFTS = [12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
+const LOG2 = new Float64Array(4097);
+for (let n = 1; n <= 4096; n++) LOG2[n] = entropyLog2(n);
+const distributionScratch = new BitWriter(1024);
+function distributionBits(counts, shift, omit) {
+  distributionScratch.at = 0; distributionScratch.pending = 0; distributionScratch.acc = 0;
+  writeDistribution(distributionScratch, counts, true, shift, omit);
+  return distributionScratch.bitLength;
+}
+
+function writeDistribution(w, counts, runs = false, shift = 12, omit = -1) {
   const used = [];
-  let omit = 0;
+  const firstLargest = omit < 0;
+  if (firstLargest) omit = 0;
   for (let i = 0; i < counts.length; i++) {
     if (counts[i]) used.push(i);
-    if (counts[i] > counts[omit]) omit = i;
+    if (firstLargest && counts[i] > counts[omit]) omit = i;
   }
   if (used.length <= 2) {
     w.write(1, 1); w.write(1, used.length - 1);
@@ -52,7 +119,10 @@ function writeDistribution(w, counts, runs = false) {
     return;
   }
   w.write(1, 0); w.write(1, 0);
-  w.write(3, 7); w.write(3, 5);
+  const code = shift + 1, log = floorLog2(code);
+  w.write(log, (1 << log) - 1);
+  if (log < 3) w.write(1, 0);
+  w.write(log, code - (1 << log));
   varUint8(w, counts.length - 3);
   const logs = new Uint8Array(counts.length);
   let omitLog = runs ? 10 : 0;
@@ -71,7 +141,10 @@ function writeDistribution(w, counts, runs = false) {
     }
   }
   for (let i = 0; i < counts.length; i++) {
-    if (i !== omit && logs[i] > 1) { const bits = logs[i] - 1; w.write(bits, counts[i] - (1 << bits)); }
+    if (i !== omit && logs[i] > 1) {
+      const bits = logs[i] - 1, kept = countPrecision(bits, shift);
+      w.write(kept, (counts[i] - (1 << bits)) >> (bits - kept));
+    }
     if (repeats?.[i]) i += repeats[i] - 1;
   }
 }
@@ -132,18 +205,18 @@ export function buildAnsCoding(counts, options) {
   const clustered = clusterTokenCounts(counts, options, histogramCost, symbolCosts);
   let bits = 32;
   const histograms = clustered.histograms.map(({config, freqs, extra}) => {
-    const counts = normalise(freqs);
+    const {counts, shift, omit} = shapeHistogram(freqs, options?.shifts);
     bits += extra + expectedDataBits(freqs, counts);
-    return {config, counts};
+    return {config, counts, shift, omit};
   });
   const logAlphabet = Math.max(5, ceilLog2(Math.max(...histograms.map(h => h.counts.length))));
   for (const histogram of histograms) Object.assign(histogram, reverseAlias(histogram.counts, logAlphabet));
   const header = new BitWriter();
   header.write(1, 0);
-  if (clustered.contextMap.length > 1) writeContextMap(header, clustered.contextMap);
+  if (clustered.contextMap.length > 1) (options?.smallestMap ? writeSmallestContextMap : writeContextMap)(header, clustered.contextMap);
   header.write(1, 0); header.write(2, logAlphabet - 5);
   for (const histogram of histograms) writeUintConfig(header, histogram.config, logAlphabet);
-  for (const histogram of histograms) writeDistribution(header, histogram.counts, true);
+  for (const histogram of histograms) writeDistribution(header, histogram.counts, true, histogram.shift, histogram.omit);
 
   const values = new Uint32Array(GROUP_TOKENS), metadata = new Uint8Array(GROUP_TOKENS), emitted = new Uint16Array(GROUP_TOKENS);
   const slots = [0, 0, 0];
@@ -172,14 +245,14 @@ export function buildAnsCoding(counts, options) {
     }
     length = 0;
   };
-  return {bits: bits + header.bitLength, write, flush, writeHistograms: w => w.append(header)};
+  return {bits: bits + header.bitLength, payloadBits: bits, write, flush, writeHistograms: w => w.append(header)};
 }
 
 export function writeModularAnsHistograms(w, orderedLeaves, freqs, histogramOf = leaf => leaf.context, configOf = () => RESIDUAL_CONFIG) {
   const contextMap = new Uint8Array(orderedLeaves.length + 1);
   for (const leaf of orderedLeaves) contextMap[leaf.context] = histogramOf(leaf) + 1;
   const distance = new Uint32Array(2); distance[1] = 1;
-  const histograms = [distance, ...freqs.slice(0, Math.max(...contextMap))].map(freq => ({counts: normalise(freq)}));
+  const histograms = [distance, ...freqs.slice(0, Math.max(...contextMap))].map(freq => shapeHistogram(freq));
   const logAlphabet = Math.max(5, ceilLog2(Math.max(...histograms.map(h => h.counts.length))));
   if (logAlphabet > 8) throw new Error('Modular ANS alphabet exceeds 256');
   for (const histogram of histograms) Object.assign(histogram, reverseAlias(histogram.counts, logAlphabet));
@@ -190,7 +263,7 @@ export function writeModularAnsHistograms(w, orderedLeaves, freqs, histogramOf =
   if (contextMap.length > 1) writeContextMap(w, contextMap);
   w.write(1, 0); w.write(2, logAlphabet - 5);
   for (let i = 0; i < histograms.length; i++) writeUintConfig(w, i ? configOf(i - 1) : RESIDUAL_CONFIG, logAlphabet);
-  for (const histogram of histograms) writeDistribution(w, histogram.counts, true);
+  for (const histogram of histograms) writeDistribution(w, histogram.counts, true, histogram.shift, histogram.omit);
   const encode = (plans, output) => {
     const length = plans.reduce((total, plan) => total + plan.used, 0), emitted = output ? new Uint16Array(length) : null;
     let state = 0x13 * 65536, at = length, offset = histograms.length, bits = 32;

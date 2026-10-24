@@ -725,6 +725,10 @@ export const sampledPlanes = Object.freeze({
   prepare(plane, width, height, options) {
     return samplePlan(plane, width, height, options, null, [], null, false);
   },
+  prepareSet(planes, width, height, options) {
+    const references = options.references ? planes.map((plane, c) => c + 1 < planes.length ? Object.assign(new Uint16Array(width * height), {plane}) : null) : [];
+    return planes.map((plane, c) => samplePlan(plane, width, height, options, null, references.slice(0, c).reverse(), references[c], false));
+  },
   write(writer, plans, options, {transforms = [], global = false} = {}) {
     const models = plans.map(plan => ({...plan, tags: plan.tags.slice(0, plan.used), extra: plan.extra.slice(0, plan.used)}));
     const prepare = (ans, section = new BitWriter(256), chosen = models) => {

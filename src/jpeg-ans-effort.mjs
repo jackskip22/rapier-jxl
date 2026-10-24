@@ -3,6 +3,7 @@ import {jpegEffortSteps} from './jpeg-effort.mjs';
 import {coefficientEffortSteps, coefficientOrderSteps} from './coefficient-effort.mjs';
 import {varDCTSteps} from './vardct.mjs';
 import {buildAnsCoding, writeModularAnsHistograms} from './ans.mjs';
+import {lfCoderFor} from './lf-coding.mjs';
 import {part} from './bits.mjs';
 
 export const PREFIX_LADDER_PIXELS = 512 * 512;
@@ -12,7 +13,7 @@ export function* jpegAnsFirstSteps(jpeg, effort, fallback, retain, shared = {}) 
   let ladder = jpeg.width * jpeg.height <= PREFIX_LADDER_PIXELS, best = fallback;
   const learn = effort >= 4 && !ladder;
   try {
-    const plan = {coding: buildAnsCoding, modularAns: writeModularAnsHistograms};
+    const plan = {coding: buildAnsCoding, modularAns: writeModularAnsHistograms, lfCoder: lfCoderFor(effort)};
     const candidate = varDCTSteps(jpeg, plan, shared);
     let step, hurry;
     while (!(step = candidate.next()).done) {
@@ -35,7 +36,7 @@ export function* jpegAnsFirstSteps(jpeg, effort, fallback, retain, shared = {}) 
     const learning = coefficientOrderSteps(jpeg.components);
     let step;
     while (!(step = learning.next()).done) if (yield 0.5 + step.value / 4) { learning.return(); return best; }
-    const plan = {orders: step.value, coding: buildAnsCoding, modularAns: writeModularAnsHistograms};
+    const plan = {orders: step.value, coding: buildAnsCoding, modularAns: writeModularAnsHistograms, lfCoder: lfCoderFor(effort)};
     const candidate = varDCTSteps(jpeg, plan, shared);
     while (!(step = candidate.next()).done) if ((yield 0.75 + step.value / 4) && step.value < 1) { candidate.return(); return best; }
     if (step.value.length < best.length) best = step.value;
@@ -66,7 +67,7 @@ export function* jpegAnsEffortSteps(jpeg, effort, retain) {
     return step.value;
   }
   function* write(orders, clusters) {
-    const plan = {orders, clusters, coding: buildAnsCoding, modularAns: writeModularAnsHistograms};
+    const plan = {orders, clusters, coding: buildAnsCoding, modularAns: writeModularAnsHistograms, lfCoder: lfCoderFor(effort)};
     const steps = varDCTSteps(jpeg, plan, shared);
     while (!(step = steps.next()).done) {
       hurry = yield 0.5 + (part + step.value) / (2 * parts);

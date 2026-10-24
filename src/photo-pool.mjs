@@ -3,16 +3,24 @@ import {PHOTO_LIMITS} from './bits.mjs';
 import {admitOptions, admitPixels, admitSampleFormat, answer} from './admit.mjs';
 import {admitEffort} from './effort-level.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
-import {photoXYBSteps, preferXYB} from './photo-xyb.mjs';
+import {photoXYBSteps, preferXYB, gaborishPlanes} from './photo-xyb.mjs';
+import {V6, GABORISH} from './photo-v6.mjs';
 import {spaceTransform} from './icc-transform.mjs';
 import {coefficientEffortSteps} from './coefficient-effort.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {encodePhotoSteps} from './photo.mjs';
 import {admitPhotoFilter} from './photo-job.mjs';
 
+const BAND_MARGIN = 8;
 function photoBand(message) {
-  const {data, width, height, quality, colorSpace, xyb, filter, transform, gray} = message;
-  const steps = xyb ? photoXYBSteps(data, width, height, quality, {filter, transform, space: typeof colorSpace === 'object' ? colorSpace : undefined}) : photoCoefficientSteps(data, width, height, quality, colorSpace, gray);
+  const {width, height, quality, colorSpace, xyb, filter, transform, gray, top = 0} = message, space = typeof colorSpace === 'object' ? colorSpace : undefined;
+  const data = xyb ? message.data.subarray(top * width * 4, (top + height) * width * 4) : message.data;
+  let steps;
+  if (xyb) {
+    const color = transform ? {transform, space} : {}, rows = message.data.length / 4 / width, W = Math.ceil(width / 8) * 8, H = Math.ceil(height / 8) * 8;
+    const all = gaborishPlanes(message.data, width, rows, {...V6, ...GABORISH, ...color}), pre = all.map(p => p.subarray(top * W, (top + H) * W));
+    steps = photoXYBSteps(data, width, height, quality, {...V6, ...GABORISH, ...color, pre});
+  } else steps = photoCoefficientSteps(data, width, height, quality, colorSpace, gray);
   let step;
   while (!(step = steps.next()).done) {}
   const result = step.value;
@@ -36,7 +44,7 @@ export function encodePhotoPool(data, width, height, options, {spawn, workers = 
   admitPhotoFilter(options);
   admitPixels(data, width, height, PHOTO_LIMITS);
   const samples = admitSampleFormat(data, options), colorSpace = samples.iccSpace || named;
-  if (!(samples.native8 || samples.iccSpace) || quality >= 100 || workers < 1 || typeof spawn !== 'function') return encodePhotoSteps(data, width, height, options);
+  if (!(samples.native8 || samples.iccSpace) || quality >= 100 || effort >= 8 || workers < 1 || typeof spawn !== 'function') return encodePhotoSteps(data, width, height, options);
   const signal = options?.signal, space = samples.iccSpace, gray = space?.colorChannels === 1, transform = space && !gray ? spaceTransform(space) : null;
   const xyb = space ? !!transform && preferXYB(data, width, height) : colorSpace === 'srgb' && preferXYB(data, width, height);
   const bandHeight = Math.max(64, Math.floor(262144 / width / 64) * 64), count = Math.ceil(height / bandHeight);
@@ -47,9 +55,9 @@ export function encodePhotoPool(data, width, height, options, {spawn, workers = 
   const fail = () => { failed = true; end(); wake(); };
   const abort = () => { end(); wake(); };
   const request = band => {
-    const y = band * bandHeight, h = Math.min(bandHeight, height - y);
-    return {pool: 'photo', id: 1, band, width, height: h, quality, colorSpace, xyb, filter: options?.filter, transform, gray,
-      data: data.subarray(y * width * 4, (y + h) * width * 4)};
+    const y = band * bandHeight, h = Math.min(bandHeight, height - y), from = xyb ? Math.max(0, y - BAND_MARGIN) : y, to = xyb ? Math.min(height, y + h + BAND_MARGIN) : y + h;
+    return {pool: 'photo', id: 1, band, width, height: h, top: y - from, quality, colorSpace, xyb, filter: options?.filter, transform, gray,
+      data: data.subarray(from * width * 4, to * width * 4)};
   };
   const send = worker => {
     if (failed || next >= count) return;

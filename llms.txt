@@ -1,9 +1,9 @@
 # Rapier JXL
 
-> JPEG XL encoder in pure JavaScript. Great for single-file HTML apps, photography tools and agent image workflows. Runs
-> offline in browsers, Node and Deno. MIT license, no dependencies, no WebAssembly needed. Lossless, lossy, 8-bit to 32-bit
-> float, HDR, exact alpha, color profiles, exact JPEG transcoding and animation. Sizes (gzip): core 25,527 bytes,
-> still worker 103,729, complete worker (adds animation) 175,226.
+> JPEG XL encoder in JavaScript. Smaller files than libjxl at the same quality, a quality search that runs on WebGPU.
+> Runs in browsers, workers, Node and Deno. MIT license, no dependencies, no WebAssembly needed. Lossless, lossy, 8-bit to
+> 32-bit float, HDR, exact alpha, color profiles, exact JPEG transcoding and animation. Sizes (gzip): core 28,604 bytes,
+> still worker 149,050, complete worker (adds animation) 213,491.
 
 ## Start encoding
 
@@ -21,8 +21,8 @@ through a Blob URL. [Copyable HTML](docs/reference/ARCHITECTURE.md#one-html-file
 Agent skills: [Single-file apps](skills/rapier-jxl-single-file-app/SKILL.md) · [Photography](skills/rapier-jxl-photography/SKILL.md).
 
 Two self-starting classic workers, both with optional WASM, effort 1–9, Photo, JPEG transcoding and parallel lossless groups:
-- `rapier-jxl/rapier/still-worker`: still pictures, byte-identical to the encoder Rapier's page embeds. 103,729 gzip bytes.
-- `rapier-jxl/rapier/worker`: the same plus animation and the other format writers; nothing downloads at runtime. 175,226 gzip bytes.
+- `rapier-jxl/rapier/still-worker`: still pictures, byte-identical to the encoder Rapier's page embeds. 149,050 gzip bytes.
+- `rapier-jxl/rapier/worker`: the same plus animation and the other format writers; nothing downloads at runtime. 213,491 gzip bytes.
 
 `rapier-jxl/rapier/min` exports `createEncoder()` and `installWorker()` (complete). Pixel defaults: effort 7, quality 90;
 `lossless: true` forces quality 100. JPEG uses effort 7. See [the complete API](docs/reference/API.md#complete-rapier-system)
@@ -36,7 +36,8 @@ Choose an entry point:
 | Lossless photos and artwork | `rapier-jxl/effort` | `encode(rgba, width, height, {quality: 100, effort: 6})` |
 | Same search with optional WASM | `rapier-jxl/wasm` | Same API; automatic JavaScript fallback |
 | Existing JPEG coefficients | `rapier-jxl/jpeg` | `transcode(jpegBytes, {effort: 4})` |
-| Lossy photographic pixels | `rapier-jxl/photo` | `encodePhoto(rgba, width, height, {quality: 90, effort: 5})` |
+| Lossy photographic pixels | `rapier-jxl/photo` | `encodePhoto(rgba, width, height, {quality: 90, effort: 7})`; every effort gives the same picture, higher ones a smaller file |
+| The smallest file that meets a SSIMULACRA2 or Butteraugli score | `rapier-jxl/score` | `await encodeToScore(rgba, width, height, {target: {ssimulacra2: 80}})`; `gpu: device` measures on WebGPU ([API](docs/reference/API.md#encode-to-a-score)) |
 | Explicit transforms, progression and noise | `rapier-jxl/photo-advanced` | `encodePhoto(rgba8, width, height, {progressive: 'spectral', transforms: 'auto'})`; `lfFrames: 1` also supports alpha and custom transforms/tables |
 | Original ICC/custom color/tone metadata | `rapier-jxl/icc` | `encodeProfile(rgba, width, height, {icc})`; ordinary `encode` also accepts `icc` |
 | Exact graphics with delta palettes | `rapier-jxl/delta-palette` | `encodeDeltaPalette(rgba8, width, height, {paletteMode: 'auto'})` |
@@ -57,9 +58,9 @@ Encoding entry points and `rapier-jxl/metadata` have self-contained `/min` build
 Import the complete file to access its public export names; minification renames local functions.
 Use readable imports when bundling several capabilities so they share code.
 
-Package: `rapier-jxl`. Version: 5.3.0. Install: `npm install rapier-jxl`.
+Package: `rapier-jxl`. Version: 6.0.0. Install: `npm install rapier-jxl`.
 ES modules with no automatic filesystem or network I/O.
-Core payload: 63,250 minified bytes; 25,527 gzip bytes.
+Core payload: 70,742 minified bytes; 28,604 gzip bytes.
 Runs in browsers, module workers, Node, and Deno. This package encodes JPEG XL and reconstructs JPEGs it carried; it does not include a JPEG XL pixel decoder.
 
 ## Inputs and outputs

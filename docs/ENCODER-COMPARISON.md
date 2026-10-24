@@ -1,6 +1,6 @@
 # Encoder comparisons
 
-The complete Rapier worker uses 175,226 gzip bytes: core encoding, effort search, optional WASM, Photo, JPEG transcoding and parallel workers. The separate core uses 25,527 gzip bytes. Both embed in one offline HTML file.
+The complete Rapier worker uses 213,491 gzip bytes: core encoding, effort search, optional WASM, Photo, JPEG transcoding and parallel workers. The separate core uses 28,604 gzip bytes. Both embed in one offline HTML file.
 
 ## Payload
 
@@ -8,12 +8,12 @@ Executable payload sizes. Rapier JXL uses this release; other rows use the pinne
 
 | Encoder / entry | Version | Minified JS + WASM bytes | gzip bytes | Included capability |
 | --- | --- | ---: | ---: | --- |
-| Rapier JXL complete worker | 5.3.0 | 477,295 | 175,226 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel workers |
-| Rapier JXL core | 5.3.0 | 63,250 | 25,527 | Lossless/lossy RGBA, native precision and HDR, exact alpha |
-| Rapier JXL effort | 5.3.0 | 132,987 | 51,283 | Core plus lossless predictor, learned-tree, entropy, color, and screen search |
-| Rapier JXL WASM | 5.3.0 | 155,982 | 61,007 | Effort with inlined kernels and JavaScript fallback |
-| Rapier JXL JPEG | 5.3.0 | 78,052 | 30,781 | JPEG coefficients, orientation and original-byte reconstruction |
-| Rapier JXL photo | 5.3.0 | 65,453 | 26,043 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
+| Rapier JXL complete worker | 6.0.0 | 576,318 | 213,491 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel workers |
+| Rapier JXL core | 6.0.0 | 70,742 | 28,604 | Lossless/lossy RGBA, native precision and HDR, exact alpha |
+| Rapier JXL effort | 6.0.0 | 204,440 | 78,134 | Core plus lossless predictor, learned-tree, entropy, color, and screen search |
+| Rapier JXL WASM | 6.0.0 | 227,437 | 88,025 | Effort with inlined kernels and JavaScript fallback |
+| Rapier JXL JPEG | 6.0.0 | 83,068 | 32,866 | JPEG coefficients, orientation and original-byte reconstruction |
+| Rapier JXL photo | 6.0.0 | 157,813 | 60,786 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
 | [jSquash](https://github.com/jamsinclair/jSquash/tree/main/packages/jxl) | 1.3.0 | 1,388,572 | 525,782 | 8-bit lossless/lossy RGBA |
 | [Discourse's jSquash package](https://www.npmjs.com/package/@discourse/jxl) | 1.3.0 | 1,388,572 | 525,782 | The same encoder bytes as jSquash |
 | [Lacinak's jSquash fork](https://github.com/kelaci/jSquash) | 1.3.0-kelaci.0 | 2,071,514 | 844,866 | High bit-depth input options |
@@ -46,78 +46,53 @@ All 213 outputs match the retained earlier streams in SHA-256 and length. That i
 
 [Per-image/group bytes, observed costs, output hashes and receipt identities](../bench/lossless-effort-costs.json). Milliseconds per megapixel normalize only this measured corpus; they do not predict unmeasured image sizes. No native libjxl comparison was rerun for this corpus.
 
-## Complete worker versus libjxl
+## Photographs
 
-**Historical measurement: 2026-10-08, Rapier 3.1.0.** The raw receipt identifies worker SHA-256 `c8c328dbe1498903da0cfed5bd70b8e9212225d149ee8aa6ea4be1f97fb6276e` (50,021 gzip bytes). All rows below belong to that frozen worker. They do not measure the current effort search; the payload table above describes the current package separately.
+Every picture through Rapier JXL 6.0.0 and libjxl 0.12.0's `cjxl`, mozjpeg 4.1.5, WebP (`cwebp -m 6 -sharp_yuv`) and
+AVIF (`avifenc -s 6`) at 11 to 13 settings each. libjxl's `ssimulacra2` and `butteraugli_main` (3-norm) score the pixels each
+file decodes to; bytes at the same score are interpolated per picture and summed. Every JPEG XL file decodes in djxl,
+jxl-oxide 0.12.6 and Chrome 155 to the same pixels (within 1/255). Encoders run one thread each.
 
-Lossless RGBA8, including hidden RGB, through the **recorded Rapier 3.1.0 worker**, compared with native **libjxl 0.11.2**. Effort numbers are each encoder's search budgets. Bpp means bits per pixel. Rapier ms is one call per configuration without warmup; libjxl ms is the median of three calls after one warmup.
+**Kodak 24**: bytes against libjxl at the same score (below 0 is smaller).
 
-| Input | Effort | Rapier bytes / bpp / ms (single) | libjxl bytes / bpp / ms (median) |
+| Score | Effort 7 vs `cjxl -e 7` | Effort 7 vs `cjxl -e 9` | Effort 9 vs `cjxl -e 9` |
 | --- | ---: | ---: | ---: |
-| Light UI | 1 | 26,612 / 0.693 / 63.8 | 40,313 / 1.050 / 0.8 |
-| Light UI | 3 | 13,852 / 0.361 / 286.4 | 34,595 / 0.901 / 41.6 |
-| Light UI | 6 | 11,515 / 0.300 / 1826.3 | 13,986 / 0.364 / 136.8 |
-| Light UI | 9 | 11,515 / 0.300 / 13937.6 | 12,687 / 0.330 / 406.9 |
-| Labeled drawing | 1 | 6,083 / 0.248 / 16.6 | 7,541 / 0.307 / 1.1 |
-| Labeled drawing | 3 | 3,554 / 0.145 / 98.9 | 8,324 / 0.339 / 21.8 |
-| Labeled drawing | 6 | 1,644 / 0.067 / 528.1 | 2,275 / 0.093 / 67.3 |
-| Labeled drawing | 9 | 1,644 / 0.067 / 7716.8 | 2,208 / 0.090 / 188.2 |
-| Painting | 1 | 162,479 / 6.611 / 23.5 | 176,744 / 7.192 / 0.9 |
-| Painting | 3 | 150,434 / 6.121 / 135.4 | 140,851 / 5.731 / 44.1 |
-| Painting | 6 | 135,430 / 5.511 / 758.2 | 127,932 / 5.206 / 243.7 |
-| Painting | 9 | 119,700 / 4.871 / 28956.9 | 121,901 / 4.960 / 1320.4 |
-| Photograph | 1 | 297,182 / 7.739 / 26.9 | 313,938 / 8.175 / 1.5 |
-| Photograph | 3 | 290,619 / 7.568 / 159.1 | 274,218 / 7.141 / 62.8 |
-| Photograph | 6 | 269,774 / 7.025 / 1158.2 | 256,427 / 6.678 / 353.3 |
-| Photograph | 9 | 258,681 / 6.736 / 32734.2 | 254,579 / 6.630 / 2132.3 |
-| Terminal | 1 | 35,952 / 1.463 / 19.3 | 70,175 / 2.855 / 1.0 |
-| Terminal | 3 | 9,799 / 0.399 / 148.7 | 40,983 / 1.668 / 28.2 |
-| Terminal | 6 | 7,814 / 0.318 / 529.8 | 12,470 / 0.507 / 81.0 |
-| Terminal | 9 | 7,814 / 0.318 / 13108.0 | 11,729 / 0.477 / 246.3 |
+| SSIMULACRA2 60 | −5.9% | −5.4% | −5.3% |
+| SSIMULACRA2 70 | −7.0% | −5.4% | −5.2% |
+| SSIMULACRA2 80 | −7.9% | −6.7% | −6.6% |
+| SSIMULACRA2 85 | −7.6% | −6.3% | −6.0% |
+| SSIMULACRA2 90 | −7.8% | −7.1% | −5.8% |
+| Butteraugli 3-norm 2 | −4.2% | −3.9% | −5.2% |
+| Butteraugli 3-norm 1.5 | −4.8% | −3.2% | −4.5% |
+| Butteraugli 3-norm 1 | −2.2% | +0.2% | −2.3% |
+| Butteraugli 3-norm 0.7 | +1.0% | +3.8% | −0.3% |
 
-Node 22.23.3 on Linux x64, AMD EPYC 9V74, CPU 0. One encoding thread per implementation. Rapier reports one call per configuration without warmup; libjxl reports the median of three calls after one warmup. Rapier uses automatic WASM; libjxl is native C++. The two implementations were measured separately on the same idle host. Timing includes each encode and output, excluding input transport/loading and decoding. Worker startup was 38.3 ms, measured separately. Every result preserves exact source RGBA; Rapier outputs also pass two independent decoders.
+Encode to a score, against `cjxl -e 9` at the score libjxl's tool gives each file:
 
-In this recorded run at effort 9, Rapier produced smaller files on the three document images and the painting; libjxl produced the smaller photograph. Native libjxl was faster in every measured row. These results describe only the recorded versions and inputs; they do not predict current, browser or phone performance.
+| Target | Bytes | Pictures |
+| --- | ---: | ---: |
+| Butteraugli 3-norm 0.7 | −0.5% | 24 |
+| Butteraugli 3-norm 1 | −2.5% | 24 |
+| Butteraugli 3-norm 1.5 | −4.5% | 24 |
+| SSIMULACRA2 70 | −6.3% | 24 |
+| SSIMULACRA2 80 | −7.6% | 24 |
+| SSIMULACRA2 90 | −7.6% | 24 |
 
-[Raw samples, settings and hashes](../bench/complete-worker-results.json) · [Benchmark commands](../bench/README.md). Reproducing these rows requires the recorded worker and libjxl build; a newer worker produces a new comparison. The public repository includes the five exact RGBA inputs in `test/complete-corpus/`; they are excluded from the npm runtime package. The earlier 0.12.0 comparison below used another libjxl build and has no shared timing baseline.
+JPEG XL (effort 7) against other formats at the same SSIMULACRA2:
 
-## Earlier libjxl 0.12.0 size comparison
-
-This earlier 24-image measurement used Rapier 3.0.0. Identical RGBA8 pixels include RGB under transparent alpha; libjxl 0.12.0 receives decoded PNG pixels with `--keep_invisible=1`.
-
-| Image | Rapier 2.6 | Rapier 3.0 | libjxl effort 3 | libjxl effort 9 |
-| --- | ---: | ---: | ---: | ---: |
-| Light UI | 11,515 | 11,515 | 34,589 | 12,634 |
-| Labeled drawing | 1,644 | 1,644 | 8,316 | 2,184 |
-| Painting | 150,434 | 128,668 | 140,833 | 120,979 |
-| Photograph | 290,619 | 264,599 | 274,187 | 249,600 |
-| Terminal | 7,814 | 7,814 | 40,961 | 11,686 |
-
-Sizes are bytes. Effort 9 searches for smaller lossless files; higher effort changes compression, not image fidelity.
-
-Across 24 images—20 photographs, three documents, and one painting—3.0 effort 9 used **9.33% fewer bytes** than 2.6. All 20 photographs improved; the three document files were unchanged. Both libjxl and jxl-oxide reproduced exact source pixels for the corpus and three larger renditions. [Inputs, hashes, and results](../bench/lossless-results.json).
-
-## Earlier 2.6.0 / 3.0.0 encoding time
-
-Paired 2.6.0 and 3.0.0 runs on the five images above. Ratios compare 3.0.0 with 2.6.0; below 1 is faster.
-
-| Effort | Wall time | CPU time | Output bytes |
+| SSIMULACRA2 | AVIF | JPEG (mozjpeg) | WebP |
 | --- | ---: | ---: | ---: |
-| 1 | 0.94× | 0.94× | 0.00% |
-| 3 | 1.04× | 1.06× | 0.00% |
-| 9 | 4.05× | 4.04× | -10.34% |
+| 60 | −4.9% | −19.2% | −16.6% |
+| 70 | −7.0% | −20.2% | −15.6% |
+| 80 | −10.9% | −27.9% | −18.1% |
+| 85 | −14.0% | −35.7% | −20.1% |
+| 90 | −21.0% | −43.4% | −23.8% |
 
-Node 22.23.3, Linux x64, Xeon Platinum 8573C, CPU 0 affinity, SIMD, no encoding workers. Two reversed passes each
-use two warmups and three measured calls per image and encoder. The table uses geometric means of per-image
-median time ratios and total output bytes. Timings exclude input loading; all measured calls remain in the results.
-[Raw samples, environment, and hashes](../bench/lossless-results.json).
+Exact JPEG: each JPEG converts with `rapier-jxl/jpeg-ans` and restores byte for byte in djxl and `reconstructJPEG`.
 
-## Lossy pixels and JPEG input
-
-The photo entry point uses VarDCT with exact alpha. In the matched-size Rapier JXL 2.6.0 comparison, libjxl has higher SSIM in 19 of 20 rows and lower Butteraugli error in 19 of 20. [Metrics and input details](../bench/quality-comparison.json).
-
-The JPEG entry point now stores standard `jbrd` reconstruction data and restores original JPEG bytes. Older JPEG
-measurements made before that addition omit its metadata cost and must not be compared with reversible libjxl output.
+Reproduce: `node bench/v6-proof.mjs out.json --corpus kodak=<dir of PNG> --jpeg kodak=<dir of JPEG> --chrome <Chrome 155>`,
+then `node bench/v6-wins.mjs wins.json out.json`. Results: [Kodak](../bench/v6-proof-kodak.json),
+[phone photos](../bench/v6-proof-phone.json) ([sources](../bench/phone-photos-sources.json)).
 
 ## Animation
 

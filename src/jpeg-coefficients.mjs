@@ -41,7 +41,7 @@ function prefixDecoder(lengths, explicit) {
     throw invalidJPEGData();
   };
 }
-function readPrefix(r, size) {
+function readPrefixCode(r, size) {
   if (size === 1) return () => 0;
   const lengths = new Uint8Array(size), form = r.read(2);
   if (form === 1) {
@@ -103,7 +103,11 @@ function distribution(r) {
     if (count === 2) counts[symbols[1]] = 4096 - counts[symbols[0]];
     return counts;
   }
-  r.expect(1, 0); r.expect(3, 7); r.expect(3, 5);
+  r.expect(1, 0);
+  let log = 0;
+  while (log < 3 && r.read(1)) log++;
+  const shift = (r.read(log) | (1 << log)) - 1;
+  requireJPEG(shift <= 13);
   const size = var8(r) + 3, lengths = new Uint8Array(size), repeats = new Uint16Array(size);
   requireJPEG(size <= 256);
   const decode = prefixDecoder([...LOG_LENGTHS, 7], [...LOG_CODES, 65]);
@@ -119,7 +123,10 @@ function distribution(r) {
   const counts = new Uint16Array(size);
   let total = 0;
   for (let i = 0; i < size; i++) {
-    if (i !== omit) counts[i] = !lengths[i] ? 0 : lengths[i] === 1 ? 1 : (1 << (lengths[i] - 1)) + r.read(lengths[i] - 1);
+    if (i !== omit && lengths[i]) {
+      const code = lengths[i] - 1, bits = shift === 0 || code === 0 ? 0 : Math.max(0, Math.min(code, shift - ((12 - code) >> 1)));
+      counts[i] = (1 << code) + (bits ? r.read(bits) << (code - bits) : 0);
+    }
     const count = repeats[i] || 1;
     requireJPEG(i === omit || i + count <= omit || i > omit);
     counts.fill(counts[i], i, i + count); total += count * counts[i]; i += count - 1;
@@ -151,7 +158,7 @@ function entropy(r, contexts, {spatial = false, depth = 0, byteHistory = false, 
   let decoders, aliases;
   if (prefix) {
     const sizes = configs.map(() => r.read(1) ? (n => (1 << n) + r.read(n) + 1)(r.read(4)) : 1);
-    decoders = sizes.map(size => readPrefix(r, size));
+    decoders = sizes.map(size => readPrefixCode(r, size));
   } else aliases = configs.map(() => {
     const counts = distribution(r), {starts, reverse} = reverseAlias(counts, log), symbols = new Uint16Array(4096), offsets = new Uint16Array(4096);
     for (let s = 0; s < counts.length; s++) for (let i = 0; i < counts[s]; i++) { const at = reverse[starts[s] + i]; symbols[at] = s; offsets[at] = i; }
@@ -204,33 +211,120 @@ export function skipICC(r) {
   }
   code.finish();
 }
+const WP_DIVISORS = Int32Array.from({length: 64}, (_, i) => Math.floor(16777216 / (i + 1)));
+const wpWeight = (sum, most) => { const shift = Math.max(0, 26 - Math.clz32(sum + 1)); return 4 + ((most * WP_DIVISORS[sum >> shift]) >> shift); };
+function weightedReader(width) {
+  const stride = width + 2, e0 = new Int32Array(2 * stride), e1 = new Int32Array(2 * stride), e2 = new Int32Array(2 * stride), e3 = new Int32Array(2 * stride), error = new Int32Array(2 * stride);
+  let cur = 0, prev = 0, x = 0, p0 = 0, p1 = 0, p2 = 0, p3 = 0, pred = 0, most = 0;
+  return {
+    predict(px, py, left, top, topright) {
+      x = px; cur = py & 1 ? 0 : stride; prev = py & 1 ? stride : 0;
+      const n = prev + x, ne = x < width - 1 ? n + 1 : n, nw = x ? n - 1 : n;
+      let w0 = wpWeight(e0[n] + e0[ne] + e0[nw], 13), w1 = wpWeight(e1[n] + e1[ne] + e1[nw], 12);
+      let w2 = wpWeight(e2[n] + e2[ne] + e2[nw], 12), w3 = wpWeight(e3[n] + e3[ne] + e3[nw], 12);
+      const N = top * 8, W = left * 8, NE = topright * 8;
+      const teW = x ? error[cur + x - 1] : 0, teN = error[n], teNW = error[nw], teNE = error[ne], sumWN = teN + teW;
+      most = teW;
+      if (Math.abs(teN) > Math.abs(most)) most = teN;
+      if (Math.abs(teNW) > Math.abs(most)) most = teNW;
+      if (Math.abs(teNE) > Math.abs(most)) most = teNE;
+      p0 = W + NE - N; p1 = N - (((sumWN + teNE) * 16) >> 5); p2 = W - (((sumWN + teNW) * 10) >> 5); p3 = N - (((teNW + teN + teNE) * 7) >> 5);
+      const shift = 27 - Math.clz32(w0 + w1 + w2 + w3);
+      w0 >>= shift; w1 >>= shift; w2 >>= shift; w3 >>= shift;
+      const sum = w0 + w1 + w2 + w3;
+      pred = Math.floor(((sum >> 1) - 1 + p0 * w0 + p1 * w1 + p2 * w2 + p3 * w3) * WP_DIVISORS[sum - 1] / 16777216);
+      if (((teN ^ teW) | (teN ^ teNW)) <= 0) { const lo = Math.min(W, NE, N), hi = Math.max(W, NE, N); pred = pred < lo ? lo : pred > hi ? hi : pred; }
+      return (pred + 3) >> 3;
+    },
+    get most() { return most; },
+    update(value) {
+      const v = value * 8, a0 = (Math.abs(p0 - v) + 3) >> 3, a1 = (Math.abs(p1 - v) + 3) >> 3, a2 = (Math.abs(p2 - v) + 3) >> 3, a3 = (Math.abs(p3 - v) + 3) >> 3;
+      error[cur + x] = pred - v;
+      e0[cur + x] = a0; e1[cur + x] = a1; e2[cur + x] = a2; e3[cur + x] = a3;
+      e0[prev + x + 1] += a0; e1[prev + x + 1] += a1; e2[prev + x + 1] += a2; e3[prev + x + 1] += a3;
+    },
+  };
+}
+const clampedGradient = (w, n, nw) => Math.max(Math.min(w, n), Math.min(Math.max(w, n), w + n - nw));
+
 function modular(r, shapes) {
   r.expect(4, 2);
-  const treeCode = entropy(r, 6, {values: 6 * (2 * shapes.length - 1)}), nodes = [{}], leaves = [];
+  const treeCode = entropy(r, 6, {values: 6 * 65536}), nodes = [{}], leaves = [];
   for (const node of nodes) {
-    requireJPEG(nodes.length <= 2 * shapes.length - 1);
+    requireJPEG(nodes.length <= 65536);
     const property = treeCode.read(0);
     if (property) {
-      requireJPEG(property === 1); node.cut = signed(treeCode.read(1)); node.left = {}; node.right = {}; nodes.push(node.left, node.right);
+      node.property = property - 1; requireJPEG(node.property !== 1 && node.property < 16 + 4 * shapes.length);
+      node.cut = signed(treeCode.read(1)); node.left = {}; node.right = {}; nodes.push(node.left, node.right);
     } else {
       node.predictor = treeCode.read(2); node.offset = signed(treeCode.read(3));
-      const shift = treeCode.read(4), mul = treeCode.read(5);
-      requireJPEG([0, 5].includes(node.predictor) && !node.offset && !shift && !mul);
+      const shift = treeCode.read(4), bits = treeCode.read(5);
+      requireJPEG(node.predictor <= 13 && shift <= 31 && bits < 65536);
+      node.multiplier = (bits + 1) * (shift < 31 ? 1 << shift : 2147483648);
       node.ctx = leaves.length; leaves.push(node);
     }
   }
   treeCode.finish();
   const code = entropy(r, leaves.length, {spatial: true, values: shapes.reduce((n, [width, height]) => n + width * height, 0)}), planes = [];
   for (let c = 0; c < shapes.length; c++) {
-    const [width, height] = shapes[c], data = new Int32Array(width * height);
-    let leaf = nodes[0]; while (leaf.left) leaf = c > leaf.cut ? leaf.left : leaf.right;
+    const [width, height] = shapes[c], data = new Int32Array(width * height), wp = weightedReader(width);
+    const refs = [];
+    for (let j = c - 1; j >= 0; j--) if (shapes[j][0] === width && shapes[j][1] === height) refs.push(planes[j]);
     for (let y = 0, i = 0; y < height; y++) for (let x = 0; x < width; x++, i++) {
-      let predicted = 0;
-      if (leaf.predictor) {
-        const l = x ? data[i - 1] : y ? data[i - width] : 0, t = y ? data[i - width] : l, tl = x && y ? data[i - width - 1] : l;
-        predicted = Math.max(Math.min(l, t), Math.min(Math.max(l, t), l + t - tl));
+      const w = x ? data[i - 1] : y ? data[i - width] : 0, n = y ? data[i - width] : w, nw = x && y ? data[i - width - 1] : w;
+      const ne = y && x + 1 < width ? data[i - width + 1] : n, nn = y > 1 ? data[i - 2 * width] : n, ww = x > 1 ? data[i - 2] : w;
+      const weighted = wp.predict(x, y, w, n, ne), property = p => {
+        if (p >= 16) {
+          const ref = refs[(p - 16) >> 2], kind = (p - 16) & 3, v = ref[i];
+          if (kind < 2) return kind ? v : Math.abs(v);
+          const rw = x ? ref[i - 1] : 0, rn = y ? ref[i - width] : rw, rnw = x && y ? ref[i - width - 1] : rw, d = v - clampedGradient(rw, rn, rnw);
+          return kind === 2 ? Math.abs(d) : d;
+        }
+        switch (p) {
+          case 0: return c;
+          case 2: return y;
+          case 3: return x;
+          case 4: return Math.abs(n);
+          case 5: return Math.abs(w);
+          case 6: return n;
+          case 7: return w;
+          case 8: {
+            if (!x) return w;
+            const pw = x > 1 ? data[i - 2] : y ? data[i - width - 1] : 0, pn = y ? data[i - width - 1] : pw, pnw = x > 1 && y ? data[i - width - 2] : pw;
+            return w - (pw + pn - pnw);
+          }
+          case 9: return w + n - nw;
+          case 10: return w - nw;
+          case 11: return nw - n;
+          case 12: return n - ne;
+          case 13: return n - nn;
+          case 14: return w - ww;
+          default: return wp.most;
+        }
+      };
+      let leaf = nodes[0];
+      while (leaf.left) { if (leaf.property >= 16) requireJPEG(refs.length > (leaf.property - 16) >> 2); leaf = property(leaf.property) > leaf.cut ? leaf.left : leaf.right; }
+      let predicted;
+      switch (leaf.predictor) {
+        case 0: predicted = 0; break;
+        case 1: predicted = w; break;
+        case 2: predicted = n; break;
+        case 3: predicted = Math.trunc((w + n) / 2); break;
+        case 4: { const g = w + n - nw; predicted = Math.abs(g - w) < Math.abs(g - n) ? w : n; break; }
+        case 5: predicted = clampedGradient(w, n, nw); break;
+        case 6: predicted = weighted; break;
+        case 7: predicted = ne; break;
+        case 8: predicted = nw; break;
+        case 9: predicted = ww; break;
+        case 10: predicted = Math.trunc((w + nw) / 2); break;
+        case 11: predicted = Math.trunc((nw + n) / 2); break;
+        case 12: predicted = Math.trunc((n + ne) / 2); break;
+        default: { const nee = y && x + 2 < width ? data[i - width + 2] : ne; predicted = Math.trunc((6 * n - 2 * nn + 7 * w + ww + nee + 3 * ne + 8) / 16); }
       }
-      data[i] = predicted + signed(code.read(leaf.ctx));
+      const value = predicted + signed(code.read(leaf.ctx)) * leaf.multiplier + leaf.offset;
+      requireJPEG(Number.isSafeInteger(value));
+      data[i] = value;
+      wp.update(data[i]);
     }
     planes.push(data);
   }

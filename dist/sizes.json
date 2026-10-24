@@ -1,13 +1,13 @@
 {
   "package": "rapier-jxl",
-  "version": "5.3.0",
+  "version": "6.0.0",
   "measured": "Staged file bytes; gzip level 9; Brotli quality 11, text mode. Added bytes measure the entry point bundled with the core minus the core alone. Every measured bundle loads as a module.",
   "node": "v22.23.3",
   "terser": "5.51.2",
   "privateProperties": "^(alphabetSize|lengths|codes|simple|treeSelect|splitToken|msb|lsb|contextMap|histograms|predictor|multiplier|context|splitval|property|offset|left|right|channel|acc|pending|at|bitLength|grow|zeroPadToByte|writeU32|append|finish|write|small|large|totals|contexts|tokens|cost|bucketOf|contextOf|nonZero|zeroDensityOffset|thresholds|numDc|numCtxs|freqs|hshift|vshift|residual|component|inPlace|horizontal|beginC|numC|rctType|nbColors|nbDeltas|useGlobalTree|streamId|pieces|rect|minSymbol|minLength|lengthConfig|params|type|leaf|groupsX|groupsY|dcGroupsX|dcGroupsY|single|config|bits|sym|tree|count|parts|lz77|transforms)$",
   "source": {
-    "bytes": 878580,
-    "gzip": 231762,
+    "bytes": 1062078,
+    "gzip": 284551,
     "sha256": {
       "admit.mjs": "d7138d552ef338446750e4acab99ba22656eed08a5af63fe032103bb8917fab9",
       "afv-basis.mjs": "d8fdb4b1642326fe2f1c26d9a07b5a30aa2336666ddab70d6475a82e1a7de8c5",
@@ -15,14 +15,16 @@
       "animation-frames.mjs": "f4577dea2b411ce9ee49f18d1417b3769add15c89456183f5140f59aef980ac5",
       "animation-pool.mjs": "399a591a3863c487749869402cf53e2c9fc64df923fab662d824a96670ec0a14",
       "animation.mjs": "214d0cfe2b5a36b1460b2a992dd6517cdd9a7d2574fa431060de9a4d29a1c4bd",
-      "ans.mjs": "cc6bc0e55e43a6a64d0410bd3130c5597ae6a0e4d731598582f27248906f640a",
+      "ans.mjs": "19dd386cff0b76c3c5ead380a07687cd921dc8e2b13844c258e3510b7cf37e2e",
+      "aq.mjs": "d3b4239e01c11a7fe9859e4a8b619108182effb2ed14dc59bf8c57a543776313",
       "async-job.mjs": "ecafbece2da5b24abbd60210d76385916b75958e7f72aa8eb22798ad5ce9a1d3",
       "atlas-plan.mjs": "8434c6216257e67c4c7583523afdb41c12bdf0302ba365f7052c573cc00a1b8e",
       "bits.mjs": "bbf84f856dd594323128565114725779fcec76c9d2827e5b51b9926f609c8300",
       "brotli.mjs": "336152e51e72227392774a2d5e60ef1bccdf183a0f9940651c0b795d6ce33db4",
+      "butteraugli.mjs": "2ce97cbc44f4c43f3040a5cc48a385b2b71a84aa4c70221682ee4dd5fea4cd99",
       "channel-lossless.mjs": "9e68fa51f97f38c421c0b3d2dc8c3ed8537c21ea9357aaf4e7b7e4e4975c936a",
       "channels.mjs": "a36fb8bebbf85ae3d5b8b04b709b9e29fbd2c025bb8c4579de99a697e838021f",
-      "coefficient-ans.mjs": "3446ca74898bc78143f84cad7ffafafeec8b5ad179eefefeec7a118a76e29fdb",
+      "coefficient-ans.mjs": "33caee8e000724e7cee380de0d0ab5c5f5a1745d545c78168aa016136bc584c4",
       "coefficient-coding.mjs": "9029e71e72d911079692565dd047d17a59430c1433bc5fbbb9aa3fdb46520ed3",
       "coefficient-effort.mjs": "cdcbac2a73bf3a3042e2ed9e645c5671afb2d10c503387a26a6fe84334a36ab7",
       "coefficient-orders.mjs": "dafe34903a1df95780b1ea46209f7b6b6a610f6c52d61525b26921ba4f446aa1",
@@ -30,18 +32,24 @@
       "container-advanced.mjs": "a2e7f840867ad91a7b4875cc32475bf6fc97526decc904d577d9f89153aa31bb",
       "container-stream.mjs": "c1a6f616b1f7a078fdfbd75bd462af8557947de3ad839f80a0ee382cdc67ba62",
       "container.mjs": "8b4ef84d11dfa427a99eb674190212b67f553f8b78fecfffbf983b4e78436a00",
+      "context-map.mjs": "ecdd76c9d893278d28c8262d893b151cb7a0f60ba577d7a90d26c91619db4561",
       "delivery.mjs": "ece0040bf9ae9c4de59ab15e1bdfd448a1553434f55ef5efe90a99c633b466e0",
       "delta-palette.mjs": "2e90c4e37381436032b384702286b18b7f75a91a3df59c0029622dbe49711ab7",
-      "effort-job.mjs": "9ab4c37feb4f08e963a8ec0ae0016a182784921b0eb2fd1aeca1f9084c43df3a",
+      "effort-job.mjs": "fa0500654b52134d43d536996413865db0c8c9ea9acfaa3f878bd8fc11d6786a",
       "effort-level.mjs": "c4afa3aba6957353317e8c9f9437038c6274c38f708a9ec2887c4df9328d3106",
       "effort.mjs": "f734f92162fd980393c997e2c2c440d9c03c11997ed0f52599bd9d27bb95a02a",
-      "entropy.mjs": "f2cebab8bef5540e389d242bb29708b2e53b6a3036f66b1e9c990443d05a6444",
+      "entropy.mjs": "940cc1cc265529bcc60be95d2e7a13a0f900ecb77dab0baf2e7db3d79cfb45c3",
+      "exact-math.mjs": "6376515047b44643d58fc457d8f7051b9496d5b51c691a2ebeaff2bbafeae8a6",
       "fault.mjs": "f96f769feebf1d58ec1dac5d00a3601b64570f304e93acdb6e1135f3375d60d2",
       "format-fields.mjs": "c96ff0707aa09bc6c006d91d858a04586fdd6b57906d6ea01b4e1f209e07f692",
       "format-still.mjs": "a5fbbcbc43d9985490481c71b584978145ec27a07ca048d077c0ea7ebc43a6d5",
       "format-worker.mjs": "4324044bb4b1dbd271b47296cdbd9d27810765c754364236929c505c6231ed51",
-      "frame.mjs": "e618ee51d1fb94e0aaa15ef94f15e9d0436ff32a3ec29edfe2fbb54871127884",
+      "frame.mjs": "2bb55ff7f3430b8df4315014c5ff4d24b21cdb2755c06a94a4ddcd6e0152bc20",
       "framing.mjs": "ee4cf9cc5652889c8fa8d9ed5d0cce5c610219309754239a1f05bcf4b6eebfdd",
+      "gpu-butteraugli.mjs": "fa997e37a7337f77024ee24cf403ab78952a5f37c638691091052548e776e53d",
+      "gpu-reconstruct.mjs": "0eafa70f1b596318a78907478cb5200089edc768068e7b29c41939ed72374257",
+      "gpu-ssimulacra2.mjs": "b954460d97bfae9e173f24727bb2a90fbbe5a3e47c427ff930f8fac4a03d522e",
+      "gpu-varblocks.mjs": "45522ba68afceb1e87365d285d19f816603b12f08a88292e62eb82db7038cb10",
       "graphics-quantize.mjs": "99453fc2af849405ff255d3affc7a3c9b9c24ceb0efae797a5468d937dfe2606",
       "graphics.mjs": "972722ffc77de550711988dd15156eed69efb26dea55415b17f6e9c311ac4078",
       "hybrid.mjs": "68a2efca6eed3be11d09bb6d9b7b8c9ccebe605d2e238a736fe0ad19cfc9b459",
@@ -54,9 +62,9 @@
       "implicit-palette.mjs": "78b5bfea415bdc9312e62563f2efe54820ff6ab1f1a2d88a5274a439f3f8b30e",
       "index.mjs": "b2875f1847679134aa5d2785be31f85792b9c398a958552ef58d77e53c825805",
       "jfif.mjs": "fe273ed75e9d93a8d12da4a120adaf966d498d6616509a71425bf40c8543407c",
-      "jpeg-ans-effort.mjs": "32a567a5be239642b499c1d37cc1a0799b7216174ef286f445d41ac2d862a2d2",
+      "jpeg-ans-effort.mjs": "51f88f937a69348fc860f199596f8cc24e546da616a316a227cee63c308099de",
       "jpeg-ans.mjs": "91f54001d1a5b2f460dee83ffdf9377e8aad41cad740f2d713869ccef388ddf2",
-      "jpeg-coefficients.mjs": "8c4b75fa3c2fc204310e8bed9386054a35bd25cc485e6c07a071ae519d2ddf56",
+      "jpeg-coefficients.mjs": "a720c6f0e8261eee697358ca5e21f1582ac0cbb5af93b009b999234798be7431",
       "jpeg-effort.mjs": "c758868bf36b308f2171e077bd1bcfe454214bcd5de24d7521260cd8e2270525",
       "jpeg-job.mjs": "3fbf7dfe8a7ce052946e31d1bb5830b7f61795f004e6e4244600486c53429406",
       "jpeg-reconstruction.mjs": "719c0024a29956592ad452f7cc0d1bde6d7480ae9d160fc7a27eb06db20d1f1b",
@@ -65,6 +73,7 @@
       "kernels-bytes.mjs": "5c4c53c25e3b08baf8e37588db1558aa01627a9f3f5629ff7500ecba45560ca3",
       "kernels.mjs": "6213887f88ad3c5b1d808a8760fa7b26ee1f642465779b9aab2eeef78d65cf9a",
       "layers.mjs": "3e12e389f616611fcf8e560611b7f12829aaa95fd99872d5eed47e6559645832",
+      "lf-coding.mjs": "f1dafac72a873f4755754ef436d0aa9b348d0b46be2239f66e785d7e8f15041b",
       "lf-frames.mjs": "9301736dd01fa91eb7ae9cea1f5165a4e6e6aaa71fb0ee52dcefa14e791f4310",
       "local.mjs": "fc1776cbafe2cd49eaebb8cb420c8752b83aedf783fa5e6706d6372ccafdca2c",
       "lossless-coding.mjs": "70469fc4f313d13bfbd8cb74dd74264a162d2ce6a96cc76fc3fdb8d90713dd15",
@@ -82,18 +91,20 @@
       "patch-composition.mjs": "c82354fe38beb089ff03779458720c7b3c738dd37b2e0208bd7060e8621990f7",
       "patch-input.mjs": "4ea50819abe6c6d1550e20991dc01ce21b002e1aa187267860eb3aa695c6ba27",
       "patches.mjs": "01503764e15c69210d83d231c5cf44bc134596b48b4d5c13c6bf3f4e1260b581",
-      "photo-advanced.mjs": "d3489af41297db36219226992dcbd300afc8f2222a61cc98ffd79d6581eb1c4a",
-      "photo-ans.mjs": "041d95c6b868f06fd5a12ada82607f08848acbc0b5a5e552ae4b0a2b8b80908f",
+      "photo-advanced.mjs": "34a942bf5756a5575bb4061d6413225c8261f79bf4bf1e56ad1492a0f4af504f",
+      "photo-ans.mjs": "1ecfccb3b488eb587f154c8f09d0046e787ab5270dafac95197aac1aa2d22e1c",
       "photo-crop.mjs": "f3d0db00789336e54252a3fac2b924911838ac555aec8c7576984f03045e68f6",
       "photo-dct.mjs": "57c27502d046bf090641e782906ca5598804c56e25679458f0ed3e955c8ee151",
       "photo-extras.mjs": "2c47c9d0eac8596fa441a8ce792a067bdc3892f313cc2a1b84ffd3651206076f",
-      "photo-job.mjs": "e0764c955cc993bada95a719f5494ad166992519f2af0ab18948af6f791f1c06",
+      "photo-job.mjs": "a8bd85abfcaf0cff63e31ef4bbd0949badaec5c77c2f851692c4f7bf1078ef24",
       "photo-layout.mjs": "a44926731fd81a8680e4dd721428eb75d6db0de1c0ea619aeee4686b454c11bf",
       "photo-noise.mjs": "3d560cc189d72958c63805d2ca8b96f0150a4a84a80d554cb41b991df79262a2",
       "photo-plan.mjs": "96e5ff48883e877acfb5e803adb85ec038ac5771d71cb55378be77c479097f34",
-      "photo-pool.mjs": "8ddcde177cc264eb572b3131e17b207541070a380d867c1647f8741240c7dc7a",
-      "photo-xyb.mjs": "5a3c47071e1e647095469dd540a760222a9e00f32d73207c78cd7f5e91c265c9",
-      "photo.mjs": "e5201baab38153070a1088938ac6451af71e84250232e374a2f977e7ca6ff93a",
+      "photo-pool.mjs": "587da689e6bae00e92c16b42a212590173db9eb27f745c3e7a8cef4b3616fe35",
+      "photo-v6-search.mjs": "c747695c869cfe82f1685cb867956835a5dc7de3e578fce93884c57bf2804b4c",
+      "photo-v6.mjs": "97ea4c47d12a623f8fd3935f368acbfad2074fa58e68f23046e37a9c2162572d",
+      "photo-xyb.mjs": "a9233f811bc8cd9df98d95e4d211e852a216946e0dca28043af3de7f7d2b99da",
+      "photo.mjs": "2d12882b7e9857bc8e2db40cd70b73e20d155cb3c12673d3f3cc90c6a9314baa",
       "planar-input.mjs": "d46282ddbe7196a3a8526b5e978d0536502aa13ff29a1983b83e97d264ac4e08",
       "planar-planes.mjs": "5d21b2c2f4825a183f8150d8359b0eeb3eafd111e20f2f6611d4f4e6968596bc",
       "planar-squeeze.mjs": "e5f6c5d7609d4c992af36db6fc8db41ce089322db8b4b1648a1d1bbbdf5014cb",
@@ -105,10 +116,12 @@
       "quantization-params.mjs": "b6d25e7ddfc13dc0401743e71d6fd441af5f0485b2cab86ccf3c101cb5fbdc50",
       "rapier-core.mjs": "2f6293f37507e39271059a8df498bfaa94ae09ec9f0811bd1dae5dc7edd1ad42",
       "rapier-encoder.mjs": "fa48e9505c008180ced6708e9c8cbd7e2f4ca197d2c7bc4f6a8fa91b39867a1f",
-      "rapier-still.mjs": "67b1e0c172b49fec78bb40bb44774772723671689bb7db5127b3ee03c749ac9c",
+      "rapier-still.mjs": "3a97694597c6a5ee1ba246e0f5397dab3aa78321d0d63829fd2e5782d8e58a66",
       "rapier.mjs": "8b7d04cfe36d3d4821ab13855b4b2cdf23a4a6461c6fe91f6118c5911f9204c0",
       "rct-search.mjs": "d6b6f15924928eaa2b925ca587e0235b6da7fa88c87b5a9f0c77b2b5e2088e2c",
-      "sampled.mjs": "127bbd491e982d30a5fa833331d7e5547a964e68d1c010843bbc3aab1c36a24f",
+      "reconstruct.mjs": "c03056deb04b0e533fbb2a7e182f2f666ceaac8191496fc3d147882accc83aa3",
+      "sampled.mjs": "69677d51d6398697643f3a776302755d9e2cf2cc7623d3cb27b88cf7bbdbe1bc",
+      "score.mjs": "8ac76364e6371717d3d99d64faa4d577b8a09df7939307826611a7b7c1a882bd",
       "screen-local.mjs": "0f4a9059de6305a1955958fc090d9f2acabd5ca6a1a0152fb80091a4c3e7ff2f",
       "screen-lz77.mjs": "f16ac8faf045e89e290b166a83960033dd7027e90ff0d13c9da44f5803d1fe71",
       "screen-patches.mjs": "ce7372877cde8224f52675626610785d5c030dc10c7efaa6686a7ca6eddc4836",
@@ -117,10 +130,12 @@
       "source.mjs": "9bb539bf3de211929492e4b69de6c5b15a40922bdf49d12f5e89b8a68bc48c7e",
       "splines.mjs": "ba10bf7d52eca5c35ae8478b0c53094bc482906e71c95278776091acdcaa994d",
       "squeeze.mjs": "42cfd1b5f9ea6e74f9ed84a4f2e8eeeb3ba11cbc56fefbf888bd27b48df28ca7",
+      "ssimulacra2.mjs": "f43d49970fe9f1c1e63a173c71e8d2e7db3eb57d5c929c42e094fab459f65301",
       "toc-permutation.mjs": "97cf74ffec69138b61f0336deaac622749eae61fd777a84f81b84b2aeb585c3d",
+      "varblocks.mjs": "d674e3be1a8e56cfb68cfdc999a639005f52943774d46ec9152dd656a80db88f",
       "vardct-progressive.mjs": "d4c7eaf8e7e8727f9b05aaf2cb67b020ab68351e5f418a8ced0c9e2220f5d272",
-      "vardct-strategies.mjs": "a61ca8b075bc6a89298e622e912740122af82da0a31b2fdcf80f1f9f7c79b762",
-      "vardct.mjs": "844582b74470294433a0a0595fb4114c7bdbba680e453b05f5fbf58a4193810e",
+      "vardct-strategies.mjs": "7c7ee3270c25701c6e1175710d5a2f69f9070b650611c5e4314827eb71d0dd0f",
+      "vardct.mjs": "9ea69493b15d6a7b0353112bb5b4be71b3141bdafcb9ad00a5e9ebc79636d553",
       "wasm.mjs": "22c102605b62be22a8ed8b54295217affffe0487674c99b2c4105004e149c529",
       "weighted-custom.mjs": "3bda40666b8d6e88ebce6ec8203fb3d9803d7143c44894a42688652b8df01da7",
       "weighted-policy.mjs": "85cca86dcea69f985769a1e8d9ed4db2ccd0eb5e8d56c5aecce4cb8c6d10b0c8",
@@ -158,7 +173,9 @@
         "effort-level",
         "icc-transform",
         "photo-dct",
+        "exact-math",
         "photo-xyb",
+        "photo-v6",
         "photo-job",
         "entropy",
         "jfif",
@@ -166,10 +183,10 @@
         "index"
       ],
       "alone": {
-        "bytes": 63250,
-        "gzip": 25527,
-        "brotli": 22596,
-        "sha256": "a8accb49a87297816dd2467e2941ab9b7beabefb5c7663e14c1eba55b143f001",
+        "bytes": 70742,
+        "gzip": 28604,
+        "brotli": 25243,
+        "sha256": "837dc0e1a67d76878c587019e0145df03c013312d98a8374e54aabfec6985424",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -206,6 +223,7 @@
         "icc-write",
         "jfif",
         "entropy",
+        "context-map",
         "ans",
         "admit",
         "frame",
@@ -222,10 +240,10 @@
         "jpeg"
       ],
       "alone": {
-        "bytes": 78052,
-        "gzip": 30781,
-        "brotli": 26815,
-        "sha256": "985f6a8abcdc85c325e029c9e82f816cb7adfd10156b1c543201ed0d7f1cb913",
+        "bytes": 83068,
+        "gzip": 32866,
+        "brotli": 28645,
+        "sha256": "f7f0516bda2cd888950336dca41dc53985264f498f6c31d9dbb8267503848b67",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -233,9 +251,9 @@
         }
       },
       "added": {
-        "bytes": 43016,
-        "gzip": 15907,
-        "brotli": 13390
+        "bytes": 45694,
+        "gzip": 17030,
+        "brotli": 14371
       },
       "provedByteCases": 34,
       "provedNativeCases": 0
@@ -265,21 +283,40 @@
         "lossless",
         "icc-transform",
         "photo-dct",
+        "exact-math",
         "photo-xyb",
+        "photo-v6",
         "photo-job",
+        "afv-basis",
         "entropy",
+        "quantization-defaults",
+        "quantization-params",
+        "vardct-strategies",
         "jfif",
         "vardct",
         "coefficient-effort",
+        "context-map",
         "ans",
+        "weighted-policy",
+        "weighted",
+        "rct-search",
+        "sampled",
+        "lf-coding",
         "coefficient-ans",
+        "coefficient-orders",
+        "varblocks",
+        "aq",
+        "reconstruct",
+        "butteraugli",
+        "ssimulacra2",
+        "photo-v6-search",
         "photo"
       ],
       "alone": {
-        "bytes": 65453,
-        "gzip": 26043,
-        "brotli": 22957,
-        "sha256": "4522f63836752e50341d74c32276c777f16642c5874585ec111afedecbb24312",
+        "bytes": 157813,
+        "gzip": 60786,
+        "brotli": 52390,
+        "sha256": "c69805914c4d75a35b1913c1ae61602e3a203fbe3a5fc9dff5e13d6ebadd10ec",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -288,9 +325,9 @@
         }
       },
       "added": {
-        "bytes": 7488,
-        "gzip": 2532,
-        "brotli": 2090
+        "bytes": 92330,
+        "gzip": 34346,
+        "brotli": 28883
       },
       "provedByteCases": 85,
       "provedNativeCases": 10
@@ -309,9 +346,13 @@
       ],
       "modules": [
         "bits",
+        "exact-math",
+        "kernel-hooks",
+        "photo-dct",
+        "photo-xyb",
+        "photo-v6",
         "fault",
         "prefix",
-        "kernel-hooks",
         "modular",
         "screen-lz77",
         "icc-profile",
@@ -324,18 +365,22 @@
         "entropy",
         "jfif",
         "vardct",
-        "photo-dct",
         "afv-basis",
         "quantization-defaults",
         "quantization-params",
         "vardct-strategies",
+        "context-map",
         "ans",
         "vardct-progressive",
         "noise",
-        "photo-xyb",
         "icc-transform",
         "photo-job",
         "coefficient-effort",
+        "weighted-policy",
+        "weighted",
+        "rct-search",
+        "sampled",
+        "lf-coding",
         "coefficient-ans",
         "container",
         "framing",
@@ -359,10 +404,10 @@
         "photo-advanced"
       ],
       "alone": {
-        "bytes": 155438,
-        "gzip": 56358,
-        "brotli": 48306,
-        "sha256": "b3e22183ee286f6110558aecc58e78d8d687364f65fa9501ef79f93d07a26e38",
+        "bytes": 188097,
+        "gzip": 70042,
+        "brotli": 59346,
+        "sha256": "73a3afd26b0e68fdfed9749e31b5b2b0519a2ec18f203908595b0ffcbf6bb690",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -371,9 +416,9 @@
         }
       },
       "added": {
-        "bytes": 100454,
-        "gzip": 34297,
-        "brotli": 28287
+        "bytes": 125951,
+        "gzip": 44470,
+        "brotli": 36756
       },
       "provedByteCases": 239,
       "provedNativeCases": 10
@@ -403,7 +448,9 @@
         "lossless",
         "icc-transform",
         "photo-dct",
+        "exact-math",
         "photo-xyb",
+        "photo-v6",
         "photo-job",
         "afv-basis",
         "entropy",
@@ -418,6 +465,7 @@
         "vardct",
         "photo-crop",
         "lf-frames",
+        "context-map",
         "ans",
         "coefficient-orders",
         "format-fields",
@@ -437,20 +485,21 @@
         "photo-plan"
       ],
       "alone": {
-        "bytes": 115544,
-        "gzip": 42338,
-        "brotli": 36406,
-        "sha256": "d9d3054aeb36513dc28d7dfa81c6ecc4f5068cc6691aa764875e53c098624d99",
+        "bytes": 122965,
+        "gzip": 45479,
+        "brotli": 38946,
+        "sha256": "5733fc592e4b1a559e5a2cdffbd5cadf112edacf50d9864ea713341d1887f48d",
         "compress": {
           "passes": 2,
-          "inline": 1,
+          "hoist_funs": true,
+          "hoist_vars": true,
           "module": true
         }
       },
       "added": {
-        "bytes": 73965,
-        "gzip": 24951,
-        "brotli": 20960
+        "bytes": 77302,
+        "gzip": 26588,
+        "brotli": 22097
       },
       "provedByteCases": 39,
       "provedNativeCases": 0
@@ -475,6 +524,10 @@
         "icc-profile",
         "icc-write",
         "admit",
+        "exact-math",
+        "photo-dct",
+        "photo-xyb",
+        "photo-v6",
         "effort-level",
         "frame",
         "lossless-coding",
@@ -482,18 +535,22 @@
         "entropy",
         "jfif",
         "vardct",
-        "photo-dct",
         "afv-basis",
         "quantization-defaults",
         "quantization-params",
         "vardct-strategies",
+        "context-map",
         "ans",
         "vardct-progressive",
         "noise",
-        "photo-xyb",
         "icc-transform",
         "photo-job",
         "coefficient-effort",
+        "weighted-policy",
+        "weighted",
+        "rct-search",
+        "sampled",
+        "lf-coding",
         "coefficient-ans",
         "container",
         "framing",
@@ -519,10 +576,10 @@
         "photo-noise"
       ],
       "alone": {
-        "bytes": 183536,
-        "gzip": 68332,
-        "brotli": 57607,
-        "sha256": "84fcd40566826bb078aea44f642b4cb92f67abf025ffe7bc072724d7c73828ad",
+        "bytes": 218248,
+        "gzip": 82647,
+        "brotli": 69210,
+        "sha256": "5c2a357a58facad71e93a93497b9708fd35c94380c866a2387062633aaeb93bb",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -530,9 +587,9 @@
         }
       },
       "added": {
-        "bytes": 126674,
-        "gzip": 45435,
-        "brotli": 37044
+        "bytes": 154075,
+        "gzip": 56534,
+        "brotli": 45944
       },
       "provedByteCases": 99,
       "provedNativeCases": 10
@@ -566,7 +623,13 @@
         "jfif",
         "vardct",
         "coefficient-effort",
+        "context-map",
         "ans",
+        "weighted-policy",
+        "weighted",
+        "rct-search",
+        "sampled",
+        "lf-coding",
         "coefficient-ans",
         "vardct-progressive",
         "container",
@@ -587,20 +650,19 @@
         "hybrid"
       ],
       "alone": {
-        "bytes": 140074,
-        "gzip": 52251,
-        "brotli": 45109,
-        "sha256": "045c1db1e09740d151ec7ebfe136aeb125155819bfe33fbde598a9d808e56c57",
+        "bytes": 169383,
+        "gzip": 63835,
+        "brotli": 54878,
+        "sha256": "a6f124a7bd81142a24d9b432c380283ae51f89bc45405f7802907987cd929997",
         "compress": {
           "passes": 2,
-          "inline": 1,
           "module": true
         }
       },
       "added": {
-        "bytes": 90995,
-        "gzip": 32302,
-        "brotli": 27128
+        "bytes": 118163,
+        "gzip": 43177,
+        "brotli": 36143
       },
       "provedByteCases": 15,
       "provedNativeCases": 0
@@ -632,6 +694,7 @@
         "weighted-policy",
         "weighted",
         "entropy",
+        "context-map",
         "ans",
         "rct-search",
         "sampled",
@@ -644,10 +707,10 @@
         "graphics"
       ],
       "alone": {
-        "bytes": 100214,
-        "gzip": 38850,
-        "brotli": 33650,
-        "sha256": "a63ba434582c8e2e271bcc315408c40fbcdb8d09c140f36291feab21763d6130",
+        "bytes": 104933,
+        "gzip": 40663,
+        "brotli": 35178,
+        "sha256": "0a852f46ad5a4a364155fa836cf2d8f39a67b9db42eabc34749703dd33cd2682",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -655,9 +718,9 @@
         }
       },
       "added": {
-        "bytes": 80470,
-        "gzip": 30633,
-        "brotli": 25692
+        "bytes": 84242,
+        "gzip": 32172,
+        "brotli": 26986
       },
       "provedByteCases": 18,
       "provedNativeCases": 0
@@ -689,10 +752,10 @@
         "icc"
       ],
       "alone": {
-        "bytes": 37338,
-        "gzip": 14741,
-        "brotli": 13076,
-        "sha256": "0305d762e32237112886cc3d937f1553253d47124fb8ec928045e0118aee856a",
+        "bytes": 37467,
+        "gzip": 14780,
+        "brotli": 13089,
+        "sha256": "5d3c275fcfa6b26203f8fbedd6d96b9377380d66fbf5708e32ddd89dbf67ad62",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -701,9 +764,9 @@
         }
       },
       "added": {
-        "bytes": 6262,
-        "gzip": 2136,
-        "brotli": 1538
+        "bytes": 6277,
+        "gzip": 2088,
+        "brotli": 1545
       },
       "provedByteCases": 172,
       "provedNativeCases": 10
@@ -731,6 +794,7 @@
         "container",
         "framing",
         "entropy",
+        "context-map",
         "ans",
         "jfif",
         "frame",
@@ -743,10 +807,10 @@
         "opsin"
       ],
       "alone": {
-        "bytes": 70796,
-        "gzip": 27491,
-        "brotli": 23797,
-        "sha256": "1af480ff964699ad74f832d49ed1902b746c19e5b2a6c09a21e6ac055c19ec4e",
+        "bytes": 74089,
+        "gzip": 28782,
+        "brotli": 24810,
+        "sha256": "970e56d733d588612c7d3158ed90d130b2710a78b6cce8b3129889e86865bbd8",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -754,9 +818,9 @@
         }
       },
       "added": {
-        "bytes": 49353,
-        "gzip": 18352,
-        "brotli": 15474
+        "bytes": 51703,
+        "gzip": 19288,
+        "brotli": 16277
       },
       "provedByteCases": 38,
       "provedNativeCases": 0
@@ -787,6 +851,7 @@
         "weighted-policy",
         "weighted",
         "entropy",
+        "context-map",
         "ans",
         "rct-search",
         "sampled",
@@ -797,10 +862,10 @@
         "delta-palette"
       ],
       "alone": {
-        "bytes": 85856,
-        "gzip": 33315,
-        "brotli": 29098,
-        "sha256": "99dc861fc100bafc00421b6c518c1c798b39c79c663ff6af35de12bad8b77ae3",
+        "bytes": 87698,
+        "gzip": 34040,
+        "brotli": 29723,
+        "sha256": "a19c9a9464cb9d09c9a6452c769e16580ca40b1f9ea931716e5fcc8e5962bf74",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -809,9 +874,9 @@
         }
       },
       "added": {
-        "bytes": 54988,
-        "gzip": 20501,
-        "brotli": 17430
+        "bytes": 56606,
+        "gzip": 21213,
+        "brotli": 17992
       },
       "provedByteCases": 32,
       "provedNativeCases": 0
@@ -841,32 +906,38 @@
         "lossless",
         "icc-transform",
         "photo-dct",
+        "exact-math",
         "photo-xyb",
+        "photo-v6",
         "photo-job",
         "entropy",
         "jfif",
         "vardct",
         "coefficient-effort",
+        "context-map",
         "ans",
+        "weighted-policy",
+        "weighted",
+        "rct-search",
+        "sampled",
+        "lf-coding",
         "coefficient-ans",
         "splines"
       ],
       "alone": {
-        "bytes": 57870,
-        "gzip": 23071,
-        "brotli": 20369,
-        "sha256": "d8a63f6dc07b44e99d7c5102f260bce07e96c3d7006ac7e4cf1f8434e12a6f36",
+        "bytes": 89947,
+        "gzip": 35847,
+        "brotli": 31333,
+        "sha256": "165383a2b3c8a216e8b243897ed2df996cab40fef8b399a4b8cf82cfd2aae81b",
         "compress": {
           "passes": 2,
-          "hoist_funs": true,
-          "hoist_vars": true,
           "module": true
         }
       },
       "added": {
-        "bytes": 12771,
-        "gzip": 4516,
-        "brotli": 3727
+        "bytes": 38136,
+        "gzip": 14415,
+        "brotli": 12309
       },
       "provedByteCases": 9,
       "provedNativeCases": 0
@@ -911,20 +982,21 @@
         "channels"
       ],
       "alone": {
-        "bytes": 85600,
-        "gzip": 31653,
-        "brotli": 27681,
-        "sha256": "9e9bfa08cf093aff4fe800391b85b9a87a55a8e3737c7e93234e18bd51653ce3",
+        "bytes": 85704,
+        "gzip": 31704,
+        "brotli": 27743,
+        "sha256": "b92423e3a3827fbdc2d979f91aedd24203217581187f3f5249b57262fae1b71a",
         "compress": {
           "passes": 2,
-          "inline": 1,
+          "hoist_funs": true,
+          "hoist_vars": true,
           "module": true
         }
       },
       "added": {
-        "bytes": 68186,
-        "gzip": 24589,
-        "brotli": 20614
+        "bytes": 68388,
+        "gzip": 24696,
+        "brotli": 20690
       },
       "provedByteCases": 400,
       "provedNativeCases": 0
@@ -970,10 +1042,10 @@
         "layers"
       ],
       "alone": {
-        "bytes": 96157,
-        "gzip": 35091,
-        "brotli": 30625,
-        "sha256": "c84e5dfd0a2bdcf3e738d40b89acbf7d195b726f99327f46c8f4ff3a9697bb06",
+        "bytes": 96286,
+        "gzip": 35140,
+        "brotli": 30634,
+        "sha256": "087e39d8382198302da7ad254f657b1bec0ed80aa13f90e07af884f1899d5388",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -982,9 +1054,9 @@
         }
       },
       "added": {
-        "bytes": 78771,
-        "gzip": 28115,
-        "brotli": 23620
+        "bytes": 78903,
+        "gzip": 28183,
+        "brotli": 23716
       },
       "provedByteCases": 58,
       "provedNativeCases": 0
@@ -1035,6 +1107,7 @@
         "channels",
         "toc-permutation",
         "entropy",
+        "context-map",
         "ans",
         "jfif",
         "vardct",
@@ -1043,10 +1116,10 @@
         "patches"
       ],
       "alone": {
-        "bytes": 141353,
-        "gzip": 52471,
-        "brotli": 44966,
-        "sha256": "a379119b46f9ec25c3c656bfbabf9ab6f6ce433dc634d97a99b0f37570519e29",
+        "bytes": 144635,
+        "gzip": 53730,
+        "brotli": 45948,
+        "sha256": "997d77df39535990edbbfc9679e413213c3923e943038bb9d9c30701ed3e827c",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -1054,9 +1127,9 @@
         }
       },
       "added": {
-        "bytes": 106451,
-        "gzip": 38475,
-        "brotli": 32090
+        "bytes": 108792,
+        "gzip": 39465,
+        "brotli": 32750
       },
       "provedByteCases": 73,
       "provedNativeCases": 0
@@ -1082,6 +1155,7 @@
         "icc-write",
         "jfif",
         "entropy",
+        "context-map",
         "ans",
         "admit",
         "frame",
@@ -1095,24 +1169,29 @@
         "coefficient-effort",
         "coefficient-coding",
         "jpeg-effort",
+        "weighted-policy",
+        "weighted",
+        "lossless",
+        "rct-search",
+        "sampled",
+        "lf-coding",
         "jpeg-ans-effort",
         "jpeg-ans"
       ],
       "alone": {
-        "bytes": 83763,
-        "gzip": 32470,
-        "brotli": 28391,
-        "sha256": "33d8827d3d9a3d6cd9572b82a593a0202a331ccb420733427b333dc8195f4e8b",
+        "bytes": 114214,
+        "gzip": 44543,
+        "brotli": 38571,
+        "sha256": "70741a549d580a4f14a410ae88cf5e32078223588c28f3bc158703d25dd836c1",
         "compress": {
           "passes": 2,
-          "inline": 1,
           "module": true
         }
       },
       "added": {
-        "bytes": 48577,
-        "gzip": 17688,
-        "brotli": 14832
+        "bytes": 76543,
+        "gzip": 28733,
+        "brotli": 24172
       },
       "provedByteCases": 34,
       "provedNativeCases": 0
@@ -1142,21 +1221,40 @@
         "lossless",
         "icc-transform",
         "photo-dct",
+        "exact-math",
         "photo-xyb",
+        "photo-v6",
         "photo-job",
+        "afv-basis",
         "entropy",
+        "quantization-defaults",
+        "quantization-params",
+        "vardct-strategies",
         "jfif",
         "vardct",
         "coefficient-effort",
+        "context-map",
         "ans",
+        "weighted-policy",
+        "weighted",
+        "rct-search",
+        "sampled",
+        "lf-coding",
         "coefficient-ans",
+        "coefficient-orders",
+        "varblocks",
+        "aq",
+        "reconstruct",
+        "butteraugli",
+        "ssimulacra2",
+        "photo-v6-search",
         "photo-ans"
       ],
       "alone": {
-        "bytes": 65437,
-        "gzip": 26033,
-        "brotli": 22916,
-        "sha256": "93943a17f9dc15536d53fea5d00cf67c6289165c75eebbca62a0ad041c6d61dc",
+        "bytes": 157797,
+        "gzip": 60779,
+        "brotli": 52388,
+        "sha256": "0120572b864566c230073f24c735d593c731a3303255274a9121bb8d3d801b31",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1165,9 +1263,9 @@
         }
       },
       "added": {
-        "bytes": 7472,
-        "gzip": 2522,
-        "brotli": 2085
+        "bytes": 92314,
+        "gzip": 34340,
+        "brotli": 28890
       },
       "provedByteCases": 85,
       "provedNativeCases": 10
@@ -1200,21 +1298,36 @@
         "lossy",
         "icc-transform",
         "photo-dct",
+        "exact-math",
         "photo-xyb",
+        "photo-v6",
         "photo-job",
+        "afv-basis",
         "entropy",
+        "quantization-defaults",
+        "quantization-params",
+        "vardct-strategies",
         "jfif",
         "vardct",
         "coefficient-effort",
+        "context-map",
         "ans",
-        "coefficient-ans",
         "weighted-policy",
         "weighted",
-        "local",
         "rct-search",
+        "sampled",
+        "lf-coding",
+        "coefficient-ans",
+        "coefficient-orders",
+        "varblocks",
+        "aq",
+        "reconstruct",
+        "butteraugli",
+        "ssimulacra2",
+        "photo-v6-search",
+        "local",
         "screen",
         "screen-patches",
-        "sampled",
         "palette-search",
         "screen-local",
         "screen-search",
@@ -1227,20 +1340,21 @@
         "animation"
       ],
       "alone": {
-        "bytes": 155894,
-        "gzip": 59625,
-        "brotli": 51436,
-        "sha256": "5ad1132601522d40a38f9678917d41aa911d03286aa2aded454853e9a0dbaa65",
+        "bytes": 227231,
+        "gzip": 86616,
+        "brotli": 73695,
+        "sha256": "ab4dc7a2b63e0cb8cf4cd95eb036bff5ec86caaad588b0840056c9b140b7ceba",
         "compress": {
           "passes": 2,
-          "inline": 1,
+          "hoist_funs": true,
+          "hoist_vars": true,
           "module": true
         }
       },
       "added": {
-        "bytes": 92723,
-        "gzip": 34102,
-        "brotli": 28845
+        "bytes": 156552,
+        "gzip": 58032,
+        "brotli": 48495
       },
       "provedByteCases": 6,
       "provedNativeCases": 0
@@ -1273,21 +1387,36 @@
         "lossy",
         "icc-transform",
         "photo-dct",
+        "exact-math",
         "photo-xyb",
+        "photo-v6",
         "photo-job",
+        "afv-basis",
         "entropy",
+        "quantization-defaults",
+        "quantization-params",
+        "vardct-strategies",
         "jfif",
         "vardct",
         "coefficient-effort",
+        "context-map",
         "ans",
-        "coefficient-ans",
         "weighted-policy",
         "weighted",
-        "local",
         "rct-search",
+        "sampled",
+        "lf-coding",
+        "coefficient-ans",
+        "coefficient-orders",
+        "varblocks",
+        "aq",
+        "reconstruct",
+        "butteraugli",
+        "ssimulacra2",
+        "photo-v6-search",
+        "local",
         "screen",
         "screen-patches",
-        "sampled",
         "palette-search",
         "screen-local",
         "screen-search",
@@ -1302,20 +1431,19 @@
         "animation-atlas"
       ],
       "alone": {
-        "bytes": 191145,
-        "gzip": 73359,
-        "brotli": 62457,
-        "sha256": "ddeda15e8b3a45582d0a955081b58304534b4472ce002fb6ad3e4fa8957e0484",
+        "bytes": 264728,
+        "gzip": 102063,
+        "brotli": 85333,
+        "sha256": "cf72c5103c36e14331c12dd05d20f6f3b757a51d5b91bed09543d3776e3fb25c",
         "compress": {
           "passes": 2,
-          "inline": 1,
           "module": true
         }
       },
       "added": {
-        "bytes": 128075,
-        "gzip": 47884,
-        "brotli": 39851
+        "bytes": 194172,
+        "gzip": 73467,
+        "brotli": 60148
       },
       "provedByteCases": 50,
       "provedNativeCases": 0
@@ -1347,21 +1475,36 @@
         "effort-level",
         "icc-transform",
         "photo-dct",
+        "exact-math",
         "photo-xyb",
+        "photo-v6",
         "photo-job",
+        "afv-basis",
         "entropy",
+        "quantization-defaults",
+        "quantization-params",
+        "vardct-strategies",
         "jfif",
         "vardct",
         "coefficient-effort",
+        "context-map",
         "ans",
-        "coefficient-ans",
         "weighted-policy",
         "weighted",
-        "local",
         "rct-search",
+        "sampled",
+        "lf-coding",
+        "coefficient-ans",
+        "coefficient-orders",
+        "varblocks",
+        "aq",
+        "reconstruct",
+        "butteraugli",
+        "ssimulacra2",
+        "photo-v6-search",
+        "local",
         "screen",
         "screen-patches",
-        "sampled",
         "palette-search",
         "screen-local",
         "screen-search",
@@ -1370,10 +1513,10 @@
         "effort"
       ],
       "alone": {
-        "bytes": 132987,
-        "gzip": 51283,
-        "brotli": 44294,
-        "sha256": "65b82e1499079fc1c3fb46d4b2baa69f3507386de9f065753ee189c955d19d64",
+        "bytes": 204440,
+        "gzip": 78134,
+        "brotli": 66611,
+        "sha256": "f84e57beb09b7baf125894507b5858725753217dcbcefa26038e7c26d4cf9f12",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1382,9 +1525,9 @@
         }
       },
       "added": {
-        "bytes": 69737,
-        "gzip": 25756,
-        "brotli": 21698
+        "bytes": 133698,
+        "gzip": 49530,
+        "brotli": 41368
       },
       "provedByteCases": 169,
       "provedNativeCases": 10
@@ -1416,8 +1559,8 @@
       "alone": {
         "bytes": 30550,
         "gzip": 12293,
-        "brotli": 10780,
-        "sha256": "7fbcc99dbb9ef4e6e5de821b06ac4aff7c1ccfa6e929ffd8a2574e753698a8a1",
+        "brotli": 10818,
+        "sha256": "06e40576e2e14e11faa44915060020a5c79009617adfc5363ce75edbf76178ef",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1426,9 +1569,9 @@
         }
       },
       "added": {
-        "bytes": 31619,
-        "gzip": 12281,
-        "brotli": 10420
+        "bytes": 31750,
+        "gzip": 12368,
+        "brotli": 10508
       },
       "provedByteCases": 3,
       "provedNativeCases": 0
@@ -1451,7 +1594,7 @@
         "bytes": 12269,
         "gzip": 5484,
         "brotli": 4770,
-        "sha256": "1716a51f06d87b482200f8212b3ec04111013b6c2e5327652acd3bc4464dd676",
+        "sha256": "ef9996b410c6910af5440489c715e0dd7e580f1dc2933ef61b223765e793c7ea",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1460,9 +1603,9 @@
         }
       },
       "added": {
-        "bytes": 23080,
-        "gzip": 9285,
-        "brotli": 7808
+        "bytes": 23211,
+        "gzip": 9395,
+        "brotli": 7963
       },
       "provedByteCases": 56,
       "provedNativeCases": 0
@@ -1491,9 +1634,9 @@
       ],
       "alone": {
         "bytes": 7499,
-        "gzip": 3359,
-        "brotli": 2838,
-        "sha256": "42706e163c66205d467ca25ab2ab1dab98560564ff37d2fb4fcf97eda8829d37",
+        "gzip": 3358,
+        "brotli": 2837,
+        "sha256": "b23c97d332148df4e25f63edfad88a795cc563dabc8f0576658565db1063d99f",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1502,9 +1645,9 @@
         }
       },
       "added": {
-        "bytes": 5415,
-        "gzip": 1896,
-        "brotli": 1554
+        "bytes": 5485,
+        "gzip": 1897,
+        "brotli": 1589
       },
       "provedByteCases": 6,
       "provedNativeCases": 0
@@ -1542,8 +1685,8 @@
       "alone": {
         "bytes": 42346,
         "gzip": 15778,
-        "brotli": 13868,
-        "sha256": "a75327dc3381499725f785aaa2b13daf466068911ce80daca350df3a1a39a3d2",
+        "brotli": 13873,
+        "sha256": "6bc63c523aa90a78da8a7ede4a40365cbde3c13d634344beef121e6650f9c861",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -1551,9 +1694,9 @@
         }
       },
       "added": {
-        "bytes": 43211,
-        "gzip": 15574,
-        "brotli": 13222
+        "bytes": 43413,
+        "gzip": 15707,
+        "brotli": 13376
       },
       "provedByteCases": 104,
       "provedNativeCases": 0
@@ -1589,8 +1732,8 @@
       "alone": {
         "bytes": 53698,
         "gzip": 20042,
-        "brotli": 17610,
-        "sha256": "087294916cf26cc12a4b6275f5bdcfb326e5fb3889f11b5c9c23fcc1fe54edf7",
+        "brotli": 17582,
+        "sha256": "28fd0bc1599a50d56b5ed88a1f7d9cac8bc8d00fd0dac437f6686cfff9d040fd",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -1598,9 +1741,9 @@
         }
       },
       "added": {
-        "bytes": 54423,
-        "gzip": 19858,
-        "brotli": 16952
+        "bytes": 54625,
+        "gzip": 19982,
+        "brotli": 17014
       },
       "provedByteCases": 90,
       "provedNativeCases": 0
@@ -1634,8 +1777,8 @@
       "alone": {
         "bytes": 48052,
         "gzip": 17921,
-        "brotli": 15759,
-        "sha256": "af4633279e07432dd72bdca6294a981d3a9c25d2da9cd649add90286fbfbf59a",
+        "brotli": 15717,
+        "sha256": "03f5ff3d3ee0e6ee3004e470ad5e83bcadeb4816a91aaa3a8cf3f2f5a2b2023e",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -1643,9 +1786,9 @@
         }
       },
       "added": {
-        "bytes": 48917,
-        "gzip": 17711,
-        "brotli": 15094
+        "bytes": 49119,
+        "gzip": 17851,
+        "brotli": 15199
       },
       "provedByteCases": 65,
       "provedNativeCases": 0
@@ -1682,20 +1825,35 @@
         "effort-level",
         "icc-transform",
         "photo-dct",
+        "exact-math",
         "photo-xyb",
+        "photo-v6",
         "photo-job",
+        "afv-basis",
         "entropy",
+        "quantization-defaults",
+        "quantization-params",
+        "vardct-strategies",
         "jfif",
         "vardct",
         "coefficient-effort",
+        "context-map",
         "ans",
-        "coefficient-ans",
         "weighted",
-        "local",
         "rct-search",
+        "sampled",
+        "lf-coding",
+        "coefficient-ans",
+        "coefficient-orders",
+        "varblocks",
+        "aq",
+        "reconstruct",
+        "butteraugli",
+        "ssimulacra2",
+        "photo-v6-search",
+        "local",
         "screen",
         "screen-patches",
-        "sampled",
         "palette-search",
         "screen-local",
         "screen-search",
@@ -1705,10 +1863,10 @@
         "wasm"
       ],
       "alone": {
-        "bytes": 155982,
-        "gzip": 61007,
-        "brotli": 52455,
-        "sha256": "bd7308c0fd9493d75f6786b345e20acfa7ee315f61e1a2ba6d0c9ef45fa3a8ef",
+        "bytes": 227437,
+        "gzip": 88025,
+        "brotli": 74868,
+        "sha256": "a53c4dcbe1b5da4087233f4fcd87910b71acb0149325b10233fa07c78b8dd801",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1717,9 +1875,9 @@
         }
       },
       "added": {
-        "bytes": 92732,
-        "gzip": 35480,
-        "brotli": 29859
+        "bytes": 156695,
+        "gzip": 59421,
+        "brotli": 49625
       },
       "provedByteCases": 169,
       "provedNativeCases": 10
@@ -1736,9 +1894,9 @@
       ],
       "alone": {
         "bytes": 2001,
-        "gzip": 1184,
-        "brotli": 924,
-        "sha256": "cee98e4be64aac8e196f3a6d9cc9089a592426f33d413416fb35f922a83c378a",
+        "gzip": 1183,
+        "brotli": 922,
+        "sha256": "45c01c1856f48644615d13e2988997f84c3dc7d35f4656dc275d17ac1a6850cb",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1748,8 +1906,8 @@
       },
       "added": {
         "bytes": 906,
-        "gzip": 430,
-        "brotli": 337
+        "gzip": 423,
+        "brotli": 400
       },
       "provedByteCases": 4,
       "provedNativeCases": 0
@@ -1786,20 +1944,35 @@
         "effort-level",
         "icc-transform",
         "photo-dct",
+        "exact-math",
         "photo-xyb",
+        "photo-v6",
         "photo-job",
+        "afv-basis",
         "entropy",
+        "quantization-defaults",
+        "quantization-params",
+        "vardct-strategies",
         "jfif",
         "vardct",
         "coefficient-effort",
+        "context-map",
         "ans",
-        "coefficient-ans",
         "weighted",
-        "local",
         "rct-search",
+        "sampled",
+        "lf-coding",
+        "coefficient-ans",
+        "coefficient-orders",
+        "varblocks",
+        "aq",
+        "reconstruct",
+        "butteraugli",
+        "ssimulacra2",
+        "photo-v6-search",
+        "local",
         "screen",
         "screen-patches",
-        "sampled",
         "palette-search",
         "screen-local",
         "screen-search",
@@ -1818,6 +1991,9 @@
         "photo",
         "async-job",
         "photo-pool",
+        "gpu-butteraugli",
+        "gpu-reconstruct",
+        "gpu-varblocks",
         "rapier-still",
         "framing",
         "animation-frames",
@@ -1834,15 +2010,10 @@
         "format-fields",
         "opsin",
         "format-still",
-        "afv-basis",
-        "quantization-defaults",
-        "quantization-params",
-        "vardct-strategies",
         "vardct-progressive",
         "noise",
         "photo-crop",
         "lf-frames",
-        "coefficient-orders",
         "photo-layout",
         "planar-input",
         "weighted-custom",
@@ -1880,10 +2051,10 @@
         "rapier"
       ],
       "alone": {
-        "bytes": 477636,
-        "gzip": 175292,
-        "brotli": 143131,
-        "sha256": "c2c0fdf8250c95d2db558c962480812fa759baec9af72cde97de63c4297bf239",
+        "bytes": 576659,
+        "gzip": 213564,
+        "brotli": 173290,
+        "sha256": "e7796be06616498f310909220472dd523bcc1e06616a67d0574e89beda1450df",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -1891,9 +2062,9 @@
         }
       },
       "added": {
-        "bytes": 414523,
-        "gzip": 149379,
-        "brotli": 120201
+        "bytes": 506054,
+        "gzip": 184369,
+        "brotli": 147793
       },
       "provedByteCases": 404,
       "provedNativeCases": 10
@@ -1981,6 +2152,7 @@
     "doors": [
       "./effort",
       "./jpeg-ans",
+      "./photo-ans",
       "./photo-advanced",
       "./photo-plan",
       "./noise",
@@ -2006,17 +2178,17 @@
       "./image",
       "./rapier"
     ],
-    "bytes": 485506,
-    "gzip": 176801,
-    "brotli": 144172
+    "bytes": 584647,
+    "gzip": 214867,
+    "brotli": 174343
   },
   "rapierWorker": {
     "file": "dist/rapier-worker.js",
-    "version": "5.3.0",
-    "bytes": 477295,
-    "gzip": 175226,
-    "brotli": 143039,
-    "sha256": "e7d1fb8d338169e7b5e03d469d4a33a989b03043722883eec06c299ad655a7dd",
+    "version": "6.0.0",
+    "bytes": 576318,
+    "gzip": 213491,
+    "brotli": 173428,
+    "sha256": "e3bc74ddd1ffd545325c44c79dab9a2451989c6e9383467e88d68181f59c7505",
     "modules": [
       "kernel-hooks.mjs",
       "weighted-policy.mjs",
@@ -2038,20 +2210,35 @@
       "effort-level.mjs",
       "icc-transform.mjs",
       "photo-dct.mjs",
+      "exact-math.mjs",
       "photo-xyb.mjs",
+      "photo-v6.mjs",
       "photo-job.mjs",
+      "afv-basis.mjs",
       "entropy.mjs",
+      "quantization-defaults.mjs",
+      "quantization-params.mjs",
+      "vardct-strategies.mjs",
       "jfif.mjs",
       "vardct.mjs",
       "coefficient-effort.mjs",
+      "context-map.mjs",
       "ans.mjs",
-      "coefficient-ans.mjs",
       "weighted.mjs",
-      "local.mjs",
       "rct-search.mjs",
+      "sampled.mjs",
+      "lf-coding.mjs",
+      "coefficient-ans.mjs",
+      "coefficient-orders.mjs",
+      "varblocks.mjs",
+      "aq.mjs",
+      "reconstruct.mjs",
+      "butteraugli.mjs",
+      "ssimulacra2.mjs",
+      "photo-v6-search.mjs",
+      "local.mjs",
       "screen.mjs",
       "screen-patches.mjs",
-      "sampled.mjs",
       "palette-search.mjs",
       "screen-local.mjs",
       "screen-search.mjs",
@@ -2070,6 +2257,9 @@
       "photo.mjs",
       "async-job.mjs",
       "photo-pool.mjs",
+      "gpu-butteraugli.mjs",
+      "gpu-reconstruct.mjs",
+      "gpu-varblocks.mjs",
       "rapier-still.mjs",
       "framing.mjs",
       "animation-frames.mjs",
@@ -2086,15 +2276,10 @@
       "format-fields.mjs",
       "opsin.mjs",
       "format-still.mjs",
-      "afv-basis.mjs",
-      "quantization-defaults.mjs",
-      "quantization-params.mjs",
-      "vardct-strategies.mjs",
       "vardct-progressive.mjs",
       "noise.mjs",
       "photo-crop.mjs",
       "lf-frames.mjs",
-      "coefficient-orders.mjs",
       "photo-layout.mjs",
       "planar-input.mjs",
       "weighted-custom.mjs",
@@ -2134,11 +2319,11 @@
   },
   "rapierStillWorker": {
     "file": "dist/rapier-still-worker.js",
-    "version": "5.3.0",
-    "bytes": 271043,
-    "gzip": 103729,
-    "brotli": 87251,
-    "sha256": "91728c0a2ccad13a7e5a2524d6f344a1c58425516f288cc4ecdc5d29d92d7b00",
+    "version": "6.0.0",
+    "bytes": 391636,
+    "gzip": 149050,
+    "brotli": 123514,
+    "sha256": "b0dc4c3685bd59c7397f4dc8067c03ddc427d088b8c763f8ac70cb3d22c3bf87",
     "modules": [
       "kernel-hooks.mjs",
       "weighted-policy.mjs",
@@ -2160,20 +2345,35 @@
       "effort-level.mjs",
       "icc-transform.mjs",
       "photo-dct.mjs",
+      "exact-math.mjs",
       "photo-xyb.mjs",
+      "photo-v6.mjs",
       "photo-job.mjs",
+      "afv-basis.mjs",
       "entropy.mjs",
+      "quantization-defaults.mjs",
+      "quantization-params.mjs",
+      "vardct-strategies.mjs",
       "jfif.mjs",
       "vardct.mjs",
       "coefficient-effort.mjs",
+      "context-map.mjs",
       "ans.mjs",
-      "coefficient-ans.mjs",
       "weighted.mjs",
-      "local.mjs",
       "rct-search.mjs",
+      "sampled.mjs",
+      "lf-coding.mjs",
+      "coefficient-ans.mjs",
+      "coefficient-orders.mjs",
+      "varblocks.mjs",
+      "aq.mjs",
+      "reconstruct.mjs",
+      "butteraugli.mjs",
+      "ssimulacra2.mjs",
+      "photo-v6-search.mjs",
+      "local.mjs",
       "screen.mjs",
       "screen-patches.mjs",
-      "sampled.mjs",
       "palette-search.mjs",
       "screen-local.mjs",
       "screen-search.mjs",
@@ -2192,6 +2392,9 @@
       "photo.mjs",
       "async-job.mjs",
       "photo-pool.mjs",
+      "gpu-butteraugli.mjs",
+      "gpu-reconstruct.mjs",
+      "gpu-varblocks.mjs",
       "rapier-still.mjs",
       "worker-input.mjs",
       "worker.mjs",
