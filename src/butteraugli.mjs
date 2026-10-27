@@ -142,6 +142,11 @@ function maltaDiff(a, b, width, height, w0gt1, w0lt1, norm1, lines, mulli, into)
     else if (r1 < small) d += s2 * (small - r1); else if (r1 > big) d -= s2 * (r1 - big);
     diffs[i] = d;
   }
+  if (lines === MALTA_HF) maltaHf(diffs, width, height, into);
+  else maltaLines(diffs, width, height, lines, into);
+}
+
+function maltaLines(diffs, width, height, lines, into) {
   const offsets = lines.map(line => Int32Array.from({length: line.length / 2}, (_, k) => line[2 * k + 1] * width + line[2 * k]));
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
     const at = y * width + x;
@@ -161,6 +166,35 @@ function maltaDiff(a, b, width, height, w0gt1, w0lt1, norm1, lines, mulli, into)
       }
       total += sum * sum;
     }
+    into[at] += total;
+  }
+}
+
+function maltaHf(diffs, width, height, into) {
+  const squares = new Float64Array(12);
+  const offsets = MALTA_HF.slice(0, 12).map(line => Int32Array.from({length: line.length / 2}, (_, k) => line[2 * k + 1] * width + line[2 * k]));
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const at = y * width + x;
+    let total = 0;
+    if (x >= 4 && y >= 4 && x < width - 4 && y < height - 4) {
+      for (let l = 0; l < 12; l++) {
+        const o = offsets[l];
+        let sum = 0;
+        for (let k = 0; k < o.length; k++) sum += diffs[at + o[k]];
+        const square = sum * sum;
+        squares[l] = square; total += square;
+      }
+    } else for (let l = 0; l < 12; l++) {
+      const line = MALTA_HF[l];
+      let sum = 0;
+      for (let k = 0; k < line.length; k += 2) {
+        const xx = x + line[k], yy = y + line[k + 1];
+        if (xx >= 0 && yy >= 0 && xx < width && yy < height) sum += diffs[yy * width + xx];
+      }
+      const square = sum * sum;
+      squares[l] = square; total += square;
+    }
+    total += squares[7]; total += squares[6]; total += squares[5]; total += squares[4];
     into[at] += total;
   }
 }
@@ -207,8 +241,16 @@ function fuzzyErosion(from, width, height) {
 
 const maskY = d => { const c = 2.5485944793 / (0.451936922203 * d + 0.829591754942), r = BA_GLOBAL_SCALE * (1 + c); return r * r; };
 const maskDcY = d => { const c = 0.505054525019 / (3.87449418804 * d + 0.20025578522), r = BA_GLOBAL_SCALE * (1 + c); return r * r; };
+const maskingCache = new WeakMap();
 
-function diffmapBands(p0, p1, width, height) {
+function referenceMasking(bands, width, height) {
+  const blurred = blur(diffPrecompute(maskingInput(bands, width * height)), width, height, 2.7);
+  const ac = fuzzyErosion(blurred, width, height), dc = ac.map(maskDcY);
+  for (let i = 0; i < ac.length; i++) ac[i] = maskY(ac[i]);
+  return {blurred, ac, dc};
+}
+
+function diffmapBands(p0, p1, width, height, cached) {
   const n = width * height, ac = [new Float64Array(n), new Float64Array(n), new Float64Array(n)], dc = [new Float64Array(n), new Float64Array(n), new Float64Array(n)];
   maltaDiff(p0.uhf[1], p1.uhf[1], width, height, UHF_MALTA[0], UHF_MALTA[0], UHF_MALTA[1], MALTA_HF, 0.39905817637, ac[1]);
   maltaDiff(p0.uhf[0], p1.uhf[0], width, height, UHF_MALTA_X[0], UHF_MALTA_X[0], UHF_MALTA_X[1], MALTA_HF, 0.39905817637, ac[0]);
@@ -221,11 +263,16 @@ function diffmapBands(p0, p1, width, height) {
     l2(p0.mf[c], p1.mf[c], BA_WMUL[3 + c], ac[c]);
     l2(p0.lf[c], p1.lf[c], BA_WMUL[6 + c], dc[c]);
   }
-  const b0 = blur(diffPrecompute(maskingInput(p0, n)), width, height, 2.7), b1 = blur(diffPrecompute(maskingInput(p1, n)), width, height, 2.7);
-  const mask = fuzzyErosion(b0, width, height);
+  const b0 = cached ? cached.blurred : blur(diffPrecompute(maskingInput(p0, n)), width, height, 2.7);
+  const b1 = blur(diffPrecompute(maskingInput(p1, n)), width, height, 2.7);
   for (let i = 0; i < n; i++) { const d = b0[i] - b1[i]; ac[1][i] += 10 * d * d; }
   const out = new Float64Array(n);
-  for (let i = 0; i < n; i++) out[i] = Math.sqrt((dc[0][i] + dc[1][i] + dc[2][i]) * maskDcY(mask[i]) + (ac[0][i] + ac[1][i] + ac[2][i]) * maskY(mask[i]));
+  if (cached) {
+    for (let i = 0; i < n; i++) out[i] = Math.sqrt((dc[0][i] + dc[1][i] + dc[2][i]) * cached.dc[i] + (ac[0][i] + ac[1][i] + ac[2][i]) * cached.ac[i]);
+  } else {
+    const mask = fuzzyErosion(b0, width, height);
+    for (let i = 0; i < n; i++) out[i] = Math.sqrt((dc[0][i] + dc[1][i] + dc[2][i]) * maskDcY(mask[i]) + (ac[0][i] + ac[1][i] + ac[2][i]) * maskY(mask[i]));
+  }
   return out;
 }
 
@@ -241,21 +288,32 @@ export function subsample2x(planes, width, height) {
   return {planes: out, width: w, height: h};
 }
 
-export function butteraugliReference(rgb, width, height) {
+export function butteraugliReference(rgb, width, height, {cacheBytes = 0} = {}) {
+  if (!Number.isSafeInteger(cacheBytes) || cacheBytes < 0) throw new RangeError('Butteraugli cacheBytes must be a nonnegative safe integer.');
   const levels = [{width, height, bands: separateFrequencies(opsinDynamics(rgb, width, height), width, height)}];
   const sub = subsample2x(rgb, width, height);
   if (sub.width >= 8 && sub.height >= 8)
     levels.push({width: sub.width, height: sub.height, bands: separateFrequencies(opsinDynamics(sub.planes, sub.width, sub.height), sub.width, sub.height)});
-  return {width, height, levels};
+  let retained = 0;
+  const masks = levels.map(level => {
+    const bytes = 24 * level.width * level.height;
+    if (!(bytes <= cacheBytes - retained)) return null;
+    retained += bytes;
+    return referenceMasking(level.bands, level.width, level.height);
+  });
+  const referenceBytes = levels.reduce((sum, level) => sum + Object.values(level.bands).flat().reduce((n, plane) => n + plane.byteLength, 0), 0);
+  const reference = {width, height, levels, reservedBytes: retained, cacheBytes: retained, referenceBytes};
+  if (retained) maskingCache.set(reference, masks);
+  return reference;
 }
 
 export function butteraugli(reference, rgb) {
-  const {width, height, levels} = reference;
+  const {width, height, levels} = reference, masks = maskingCache.get(reference);
   if (width < 8 || height < 8) throw new Error('Butteraugli here covers pictures of at least 8 x 8 pixels');
-  const map = diffmapBands(levels[0].bands, separateFrequencies(opsinDynamics(rgb, width, height), width, height), width, height);
+  const map = diffmapBands(levels[0].bands, separateFrequencies(opsinDynamics(rgb, width, height), width, height), width, height, masks?.[0]);
   if (levels[1]) {
     const sub = subsample2x(rgb, width, height), lv = levels[1];
-    const subMap = diffmapBands(lv.bands, separateFrequencies(opsinDynamics(sub.planes, lv.width, lv.height), lv.width, lv.height), lv.width, lv.height);
+    const subMap = diffmapBands(lv.bands, separateFrequencies(opsinDynamics(sub.planes, lv.width, lv.height), lv.width, lv.height), lv.width, lv.height, masks?.[1]);
     for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
       const i = y * width + x;
       map[i] = map[i] * (1 - 0.3 * 0.5) + 0.5 * subMap[(y >> 1) * lv.width + (x >> 1)];
@@ -268,6 +326,7 @@ export function butteraugli(reference, rgb) {
 
 export function pnorm(map, p) {
   const sums = [0, 0, 0];
-  for (const v of map) { let d = exactPow(v, p); sums[0] += d; d *= d; sums[1] += d; d *= d; sums[2] += d; }
+  for (const v of map) { let d = p === 3 ? v * (v * v) : exactPow(v, p); sums[0] += d; d *= d; sums[1] += d; d *= d; sums[2] += d; }
   return sums.reduce((a, s, i) => a + exactPow(s / map.length, 1 / (p * (1 << i))), 0) / 3;
 }
+

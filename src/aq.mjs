@@ -35,19 +35,98 @@ export function smoothField(field, levels, switchCost) {
 }
 
 export function* closedLoopFieldSteps(width, height, imageOf, {rounds = 3, gamma = 0.5, aimQuantile = 0.9, min = 0.6, max = 2,
-  levels = [0.6, 0.7, 0.8, 0.9, 1, 1.12, 1.25, 1.4, 1.6, 1.8, 2], switchCost = 0.01, margin = 2, normalize = true, gammaDown = gamma, start = null} = {}) {
-  const blocks = Math.ceil(width / 8) * Math.ceil(height / 8);
+  levels = [0.6, 0.7, 0.8, 0.9, 1, 1.12, 1.25, 1.4, 1.6, 1.8, 2], switchCost = 0.01, margin = 2, normalize = true, gammaDown = gamma, start = null, initial = null} = {}) {
+  const blocks = Math.ceil(width / 8) * Math.ceil(height / 8), options = {gamma, aimQuantile, min, max, normalize, gammaDown};
   let field = start ? Float64Array.from(start) : new Float64Array(blocks).fill(1);
   for (let round = 0; round < rounds; round++) {
-    const d = (yield {measure: imageOf(round || start ? field : null), want: {margin}}).blocks;
-    const sorted = Float64Array.from(d).sort(), aim = sorted[Math.min(blocks - 1, Math.floor(aimQuantile * blocks))];
-    const raw = new Float64Array(blocks);
-    for (let b = 0; b < blocks; b++) raw[b] = Math.max(min, Math.min(max, field[b] * exactPow(Math.max(1e-3, d[b]) / aim, d[b] > aim ? gamma : gammaDown)));
-    if (normalize) {
-      let s = 0; for (const v of raw) s += exactLog(v);
-      const mean = exactExp(s / blocks); for (let b = 0; b < blocks; b++) raw[b] = Math.max(min, Math.min(max, raw[b] / mean));
+    const first = !round && !start && initial, image = first ? first.image : imageOf(round || start ? field : null);
+    const reply = first ? first.scores : yield {measure: image, want: {margin}}, d = reply.blocks, bound = reply.doubt?.blocks ?? 0;
+    if (!bound) { field = smoothField(fieldRaw(d, field, blocks, options), levels, switchCost); continue; }
+    const doubt = new Float64Array(blocks).fill(bound), dist = Float64Array.from(d);
+    let next = null;
+    for (let attempt = 0; attempt < 3 && !next; attempt++) {
+      const raw = fieldRaw(dist, field, blocks, options), path = smoothField(raw, levels, switchCost);
+      const {lo, hi, aimOpen} = fieldRanges(dist, doubt, field, blocks, {...options, meanDoubt: MEAN_DOUBT}), open = certifyPath(lo, hi, path, levels, switchCost);
+      if (!open.length) { next = path; break; }
+      for (const b of aimOpen) open.push(b);
+      const exact = attempt < 2 ? yield {exact: {kind: 'blocks', image, margin, regions: blockRegions(open, width, height)}} : yield {exact: {kind: 'whole', image, margin}};
+      if (!exact) { next = path; break; }
+      if (exact.blocks instanceof Map) for (const [k, v] of exact.blocks) { dist[k] = v; doubt[k] = 0; }
+      else { dist.set(exact.blocks); doubt.fill(0); }
     }
-    field = smoothField(raw, levels, switchCost);
+    field = next ?? smoothField(fieldRaw(dist, field, blocks, options), levels, switchCost);
   }
   return field;
+}
+
+function fieldRaw(d, field, blocks, {gamma, aimQuantile, min, max, normalize, gammaDown}) {
+  const sorted = Float64Array.from(d).sort(), aim = sorted[Math.min(blocks - 1, Math.floor(aimQuantile * blocks))];
+  const raw = new Float64Array(blocks);
+  for (let b = 0; b < blocks; b++) raw[b] = Math.max(min, Math.min(max, field[b] * exactPow(Math.max(1e-3, d[b]) / aim, d[b] > aim ? gamma : gammaDown)));
+  if (normalize) {
+    let s = 0; for (const v of raw) s += exactLog(v);
+    const mean = exactExp(s / blocks); for (let b = 0; b < blocks; b++) raw[b] = Math.max(min, Math.min(max, raw[b] / mean));
+  }
+  return raw;
+}
+
+export const MEAN_DOUBT = 1e-6;
+
+export function fieldRanges(d, doubt, field, blocks, {gamma, aimQuantile, min, max, normalize, gammaDown, meanDoubt}) {
+  const k = Math.min(blocks - 1, Math.floor(aimQuantile * blocks)), dl = new Float64Array(blocks), dh = new Float64Array(blocks);
+  for (let b = 0; b < blocks; b++) { dl[b] = d[b] * (1 - doubt[b]); dh[b] = d[b] * (1 + doubt[b]); }
+  const aimLo = Float64Array.from(dl).sort()[k], aimHi = Float64Array.from(dh).sort()[k];
+  const rl = new Float64Array(blocks), rh = new Float64Array(blocks), clamp = v => Math.max(min, Math.min(max, v));
+  for (let b = 0; b < blocks; b++) {
+    const lowRatio = Math.max(1e-3, dl[b]) / aimHi, highRatio = Math.max(1e-3, dh[b]) / aimLo;
+    const es = dh[b] <= aimLo ? [gammaDown] : dl[b] > aimHi ? [gamma] : [gamma, gammaDown];
+    rl[b] = clamp(field[b] * Math.min(...es.map(e => exactPow(lowRatio, e))));
+    rh[b] = clamp(field[b] * Math.max(...es.map(e => exactPow(highRatio, e))));
+  }
+  if (normalize) {
+    let meanLo, meanHi;
+    if (meanDoubt !== undefined) {
+      const sorted = Float64Array.from(d).sort(), aim = sorted[k];
+      let s = 0; for (let b = 0; b < blocks; b++) s += exactLog(clamp(field[b] * exactPow(Math.max(1e-3, d[b]) / aim, d[b] > aim ? gamma : gammaDown)));
+      meanLo = exactExp(s / blocks - meanDoubt); meanHi = exactExp(s / blocks + meanDoubt);
+    } else {
+      let sl = 0, sh = 0; for (let b = 0; b < blocks; b++) { sl += exactLog(rl[b]); sh += exactLog(rh[b]); }
+      meanLo = exactExp(sl / blocks); meanHi = exactExp(sh / blocks);
+    }
+    for (let b = 0; b < blocks; b++) { const l = clamp(rl[b] / meanHi), h = clamp(rh[b] / meanLo); rl[b] = l; rh[b] = h; }
+  }
+  const lo = new Float64Array(blocks), hi = new Float64Array(blocks), slack = 1e-12, aimOpen = [];
+  for (let b = 0; b < blocks; b++) { lo[b] = exactLog(rl[b]) - slack; hi[b] = exactLog(rh[b]) + slack; }
+  if (aimLo < aimHi) for (let b = 0; b < blocks; b++) if (doubt[b] && dl[b] <= aimHi && dh[b] >= aimLo) aimOpen.push(b);
+  return {lo, hi, aimOpen};
+}
+
+export function certifyPath(lo, hi, path, levels, switchCost) {
+  const n = lo.length, L = levels.length, logs = levels.map(v => exactLog(v)), level = new Uint8Array(n);
+  for (let i = 0; i < n; i++) level[i] = levels.indexOf(path[i]);
+  const term = (i, j) => {
+    const a = lo[i] - logs[j], b = hi[i] - logs[j], least = a <= 0 && b >= 0 ? 0 : Math.min(a * a, b * b), most = Math.max(a * a, b * b);
+    return j === level[i] ? most : least;
+  };
+  const F = new Float64Array(n * L), B = new Float64Array(n * L);
+  for (let i = 0; i < n; i++) {
+    let best = Infinity; if (i) for (let j = 0; j < L; j++) best = Math.min(best, F[(i - 1) * L + j]);
+    for (let j = 0; j < L; j++) F[i * L + j] = term(i, j) + (i ? Math.min(F[(i - 1) * L + j], best + switchCost) : 0);
+  }
+  for (let i = n - 1; i >= 0; i--) {
+    let best = Infinity; if (i < n - 1) for (let j = 0; j < L; j++) best = Math.min(best, B[(i + 1) * L + j]);
+    for (let j = 0; j < L; j++) B[i * L + j] = term(i, j) + (i < n - 1 ? Math.min(B[(i + 1) * L + j], best + switchCost) : 0);
+  }
+  let own = 0;
+  for (let i = 0; i < n; i++) own += term(i, level[i]) + (i && level[i] !== level[i - 1] ? switchCost : 0);
+  const margin = 1e-13 * n * (1 + own), open = [];
+  for (let i = 0; i < n; i++) for (let j = 0; j < L; j++)
+    if (j !== level[i] && F[i * L + j] + B[i * L + j] - term(i, j) <= own + margin) { open.push(i); break; }
+  return open;
+}
+
+function blockRegions(open, width, height) {
+  const stride = Math.ceil(width / 8), tiles = new Set();
+  for (const b of open) tiles.add(Math.floor((b / stride | 0) / 4) * 65536 + Math.floor((b % stride) / 4));
+  return [...tiles].map(t => { const ty = Math.floor(t / 65536), tx = t % 65536; return {x0: tx * 32, y0: ty * 32, x1: Math.min(width, tx * 32 + 32), y1: Math.min(height, ty * 32 + 32)}; });
 }

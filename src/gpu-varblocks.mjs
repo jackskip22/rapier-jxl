@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {strategyInputs} from './varblocks.mjs';
 import {COEFF_FREQ_CONTEXT, COEFF_NUM_NONZERO_CONTEXT} from './vardct.mjs';
+import {gpuSetup} from './gpu-reconstruct.mjs';
 
 const QS = 256, ZD = 458, NZ = 37;
 const SHADER =  `
@@ -54,8 +55,8 @@ fn main(@builtin(workgroup_id) g: vec3<u32>, @builtin(local_invocation_index) li
   var D = 0.0; var R = 0.0;
   for (var ci = 0u; ci < 3u; ci++) {
     let c = select(select(2u, 0u, ci == 1u), 1u, ci == 0u);
-    // Mode 2: the channel's sum of |pixel|, which bounds the f32 transform's error (two summation passes).
-    if (p.mode == 2u) {
+    // Modes 0 and 2: the channel's sum of |pixel|, which bounds the f32 transform's error (two summation passes).
+    if (p.mode != 1u) {
       var m = 0.0;
       for (var i = lid; i < w * h; i += 64u) { m += abs(pixel(c, (by * 8u + i / w) * p.W + bx * 8u + i % w)); }
       partA[lid] = m;
@@ -100,10 +101,10 @@ fn main(@builtin(workgroup_id) g: vec3<u32>, @builtin(local_invocation_index) li
         lowErr += abs(weight) * (abs(scale) * errT + f32(area + 4u) * U32 * abs(low));
       } }
       let dcv = s * 8.0 / tf[p.oConst + 12u + c];
-      out[blockOut + 3u * size + c * area + lid] = floor(dcv + 0.5);
+      out[blockOut + 3u * size + c * area + lid] = bitcast<f32>(i32(floor(dcv + 0.5)));
       if (p.mode == 2u) {
         let e = SAFETY * (lowErr * 8.0 / tf[p.oConst + 12u + c] + 2.0 * U32 * abs(dcv));
-        if (abs(dcv - floor(dcv) - 0.5) <= e) { atomicOr(&uncertain, 1u); }
+        if (abs(dcv - floor(dcv) - 0.5) <= e) { atomicOr(&uncertain, 1u); out[blockOut + 3u * size + c * area + lid] = bitcast<f32>(0x7f000000u); }
       }
     }
     // Quantize in scan order: tmp[k] the signed level, the error into this thread's sum.
@@ -125,16 +126,20 @@ fn main(@builtin(workgroup_id) g: vec3<u32>, @builtin(local_invocation_index) li
       let e = (a - recon) * step / (8.0 * ${QS}.0 * fine);
       d += e * e;
       tmp[k] = select(q, -q, v < 0.0);
-      if (p.mode >= 1u) { out[blockOut + c * size + pos] = tmp[k]; }
-      if (p.mode == 2u) {
-        // Certain when no rounding the f32 error allows crosses the dead zone or a half step.
+      if (p.mode >= 1u) { out[blockOut + c * size + pos] = bitcast<f32>(i32(tmp[k])); }
+      if (p.mode != 1u) {
+        // Certain when no rounding the f32 error allows crosses the dead zone or a half step (mode 0: the position's
+        // rate is then the CPU's to price).
         var errC = errT;
         if (c != 1u) { errC = errT + abs(factor) * errY + 2.0 * U32 * (abs(trans[pos]) + abs(factor * transY[pos])); }
         let errA = SAFETY * (errC * 8.0 * ${QS}.0 / step * fine + 4.0 * U32 * a) + U32 * threshold;
-        if (abs(a - threshold) <= errA || (a >= threshold && abs(a - floor(a) - 0.5) <= errA)) { atomicOr(&uncertain, 1u); }
+        if (abs(a - threshold) <= errA || (a >= threshold && abs(a - floor(a) - 0.5) <= errA)) {
+          atomicOr(&uncertain, 1u);
+          if (p.mode == 2u) { out[blockOut + c * size + pos] = bitcast<f32>(0x7f000000u); }
+        }
       }
     }
-    if (p.mode >= 1u) { for (var k = lid; k < area; k += 64u) { out[blockOut + c * size + tu[p.oOrder + k]] = 0.0; } }
+    if (p.mode >= 1u) { for (var k = lid; k < area; k += 64u) { out[blockOut + c * size + tu[p.oOrder + k]] = bitcast<f32>(0i); } }
     partA[lid] = d;
     workgroupBarrier();
     // Nonzeros before each scan position (trans[k]), by chunks and a scan of the chunk sums.
@@ -186,8 +191,8 @@ fn main(@builtin(workgroup_id) g: vec3<u32>, @builtin(local_invocation_index) li
     workgroupBarrier();
   }
   if (lid == 0u && p.mode == 0u) {
-    let at = (g.y * p.gridW + g.x) * 2u;
-    out[at] = D; out[at + 1u] = R;
+    let at = (g.y * p.gridW + g.x) * 3u;
+    out[at] = D; out[at + 1u] = R; out[at + 2u] = f32(atomicLoad(&uncertain));
   }
   if (lid == 0u && p.mode == 2u) { out[(g.y * p.gridW + g.x) * (3u * size + 3u * area + 1u) + 3u * size + 3u * area] = f32(atomicLoad(&uncertain)); }
 }`;
@@ -218,7 +223,8 @@ class GpuVarblockSession {
     for (let i = 0; i < cfl.x.length; i++) { blk[fine.length + 2 * i] = cfl.x[i] / 84; blk[fine.length + 2 * i + 1] = cfl.b[i] / 84; }
     this.blk = owner.buffer(blk);
   }
-  run(id, mode, gy0 = 0, bandRows, positions) {
+  async run(id, mode, gy0 = 0, bandRows, positions) {
+    this.owner.assertOpen();
     const {stride, rows, transforms, tokens, norm, dead, fine, cfl, one, dcSteps} = this.input, t = transforms.get(id), owner = this.owner, device = owner.device;
     const W = stride * 8, size = t.w * t.h, area = t.bw * t.bh;
     const f = [], offsets = {};
@@ -235,39 +241,49 @@ class GpuVarblockSession {
     if (positions) putU('pos', positions);
     const count = positions ? positions.length / 2 : 0;
     const gridW = positions ? Math.min(count, 1024) : Math.floor(stride / t.bw), gridH = positions ? Math.ceil(count / gridW) : bandRows ?? Math.floor(rows / t.bh) - gy0;
-    const per = mode === 2 ? 3 * size + 3 * area + 1 : mode ? 3 * size + 3 * area : 2, bytes = gridW * gridH * per * 4;
+    const per = mode === 2 ? 3 * size + 3 * area + 1 : mode ? 3 * size + 3 * area : 3, bytes = gridW * gridH * per * 4;
     const params = new Uint32Array([t.w, t.h, t.bw, t.bh, W, stride, rows, cfl.width, area, size, dead ? 1 : 0, t.h >= t.w ? 1 : 0,
       offsets.basisW, offsets.basisH, offsets.steps, offsets.zd, offsets.nz, offsets.const, uo.order, uo.high, uo.ctx, 0, fine.length, gridW, mode, offsets.low, gy0, count, uo.pos ?? 0, 0, 0, 0]);
     device.pushErrorScope('out-of-memory'); device.pushErrorScope('validation');
-    const outBuffer = device.createBuffer({size: bytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC});
-    const readBuffer = device.createBuffer({size: bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST});
-    const temporary = [owner.buffer(params, GPUBufferUsage.UNIFORM), owner.buffer(Float32Array.from(f)), owner.buffer(Uint32Array.from(u))];
-    const bind = device.createBindGroup({layout: owner.pipeline.getBindGroupLayout(0), entries: [
-      {binding: 0, resource: {buffer: temporary[0]}},
-      ...this.planes.map((buffer, i) => ({binding: 1 + i, resource: {buffer}})),
-      {binding: 4, resource: {buffer: temporary[1]}}, {binding: 5, resource: {buffer: temporary[2]}},
-      {binding: 6, resource: {buffer: this.blk}}, {binding: 7, resource: {buffer: outBuffer}}]});
-    const encoder = device.createCommandEncoder(), pass = encoder.beginComputePass();
-    pass.setPipeline(owner.pipeline); pass.setBindGroup(0, bind); pass.dispatchWorkgroups(gridW, gridH); pass.end();
-    encoder.copyBufferToBuffer(outBuffer, 0, readBuffer, 0, bytes);
-    device.queue.submit([encoder.finish()]);
-    const failed = Promise.all([device.popErrorScope(), device.popErrorScope()]);
-    return Promise.all([failed, readBuffer.mapAsync(GPUMapMode.READ)]).then(([errors]) => {
-      if (errors.some(Boolean)) { readBuffer.destroy(); outBuffer.destroy(); for (const b of temporary) b.destroy(); throw new Error('GPU varblocks: ' + errors.find(Boolean).message); }
+    let outBuffer = null, readBuffer = null, scopes = 2;
+    const temporary = [];
+    try {
+      outBuffer = owner.track(device.createBuffer({size: bytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC}));
+      readBuffer = owner.track(device.createBuffer({size: bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST}));
+      temporary.push(owner.buffer(params, GPUBufferUsage.UNIFORM));
+      temporary.push(owner.buffer(Float32Array.from(f))); temporary.push(owner.buffer(Uint32Array.from(u)));
+      const bind = device.createBindGroup({layout: owner.pipeline.getBindGroupLayout(0), entries: [
+        {binding: 0, resource: {buffer: temporary[0]}},
+        ...this.planes.map((buffer, i) => ({binding: 1 + i, resource: {buffer}})),
+        {binding: 4, resource: {buffer: temporary[1]}}, {binding: 5, resource: {buffer: temporary[2]}},
+        {binding: 6, resource: {buffer: this.blk}}, {binding: 7, resource: {buffer: outBuffer}}]});
+      const encoder = device.createCommandEncoder(), pass = encoder.beginComputePass();
+      pass.setPipeline(owner.pipeline); pass.setBindGroup(0, bind); pass.dispatchWorkgroups(gridW, gridH); pass.end();
+      encoder.copyBufferToBuffer(outBuffer, 0, readBuffer, 0, bytes);
+      device.queue.submit([encoder.finish()]);
+      const failed = Promise.all([device.popErrorScope(), device.popErrorScope()]); scopes = 0;
+      const [errors] = await Promise.all([failed, readBuffer.mapAsync(GPUMapMode.READ)]);
+      owner.assertOpen();
+      if (errors.some(Boolean)) throw new Error('GPU varblocks: ' + errors.find(Boolean).message);
       const values = new Float32Array(readBuffer.getMappedRange().slice(0));
-      readBuffer.unmap(); readBuffer.destroy(); outBuffer.destroy(); for (const b of temporary) b.destroy();
+      readBuffer.unmap();
       return {values, gridW, gridH, t, size, area, per};
-    });
+    } finally {
+      while (scopes-- > 0) await device.popErrorScope().catch(() => null);
+      owner.free(readBuffer); owner.free(outBuffer); for (const b of temporary) owner.free(b);
+    }
   }
+
   async costs() {
     const {stride, rows, transforms} = this.input, results = new Map();
     await Promise.all([...transforms.keys()].map(id => this.run(id, 0).then(({values, gridW, gridH, t}) => {
-      const D = new Float64Array(stride * rows), R = new Float64Array(stride * rows);
+      this.owner.assertOpen();
+      const D = new Float64Array(stride * rows), R = new Float64Array(stride * rows), uncertain = new Uint8Array(stride * rows);
       for (let gy = 0; gy < gridH; gy++) for (let gx = 0; gx < gridW; gx++) {
-        const at = (gy * t.bh) * stride + gx * t.bw, i = (gy * gridW + gx) * 2;
-        D[at] = values[i]; R[at] = values[i + 1];
+        const at = (gy * t.bh) * stride + gx * t.bw, i = (gy * gridW + gx) * 3;
+        D[at] = values[i]; R[at] = values[i + 1]; uncertain[at] = values[i + 2] !== 0 ? 1 : 0;
       }
-      results.set(id, {D, R});
+      results.set(id, {D, R, uncertain});
     })));
     return results;
   }
@@ -276,10 +292,12 @@ class GpuVarblockSession {
     const per = 3 * t.w * t.h + 3 * t.bw * t.bh, band = Math.max(1, Math.floor((this.owner.bandBytes ?? 32 * 1048576) / (gridW * per * 4))), bands = [];
     for (let gy = 0; gy < gridH; gy += band) bands.push(this.run(id, 1, gy, Math.min(band, gridH - gy)));
     const parts = await Promise.all(bands), size = t.w * t.h, area = t.bw * t.bh;
+    this.owner.assertOpen();
     return (bx, by) => {
       const gy = by / t.bh, values = parts[Math.floor(gy / band)].values, at = ((gy % band) * gridW + bx / t.bw) * per;
-      return {coeffs: [0, 1, 2].map(c => Int32Array.from(values.subarray(at + c * size, at + (c + 1) * size))),
-        dc: [0, 1, 2].map(c => Int32Array.from(values.subarray(at + 3 * size + c * area, at + 3 * size + (c + 1) * area)))};
+      const ints = new Int32Array(values.buffer, values.byteOffset, values.length);
+      return {coeffs: [0, 1, 2].map(c => ints.subarray(at + c * size, at + (c + 1) * size)),
+        dc: [0, 1, 2].map(c => ints.subarray(at + 3 * size + c * area, at + 3 * size + (c + 1) * area))};
     };
   }
   async exact(layout) {
@@ -292,12 +310,13 @@ class GpuVarblockSession {
       for (let at = 0; at < list.length; at += chunk) {
         const positions = Uint32Array.from(list.slice(at, at + chunk));
         jobs.push(this.run(id, 2, 0, undefined, positions).then(({values}) => {
+          this.owner.assertOpen();
+          const ints = new Int32Array(values.buffer, values.byteOffset, values.length);
           for (let b = 0; b < positions.length / 2; b++) {
             const o = b * per;
-            if (values[o + per - 1]) continue;
             result.set(id + ':' + positions[2 * b] + ':' + positions[2 * b + 1], {
-              coeffs: [0, 1, 2].map(c => Int32Array.from(values.subarray(o + c * size, o + (c + 1) * size))),
-              dc: [0, 1, 2].map(c => Int32Array.from(values.subarray(o + 3 * size + c * area, o + 3 * size + (c + 1) * area)))});
+              coeffs: [0, 1, 2].map(c => ints.subarray(o + c * size, o + (c + 1) * size)),
+              dc: [0, 1, 2].map(c => ints.subarray(o + 3 * size + c * area, o + 3 * size + (c + 1) * area)), uncertain: values[o + per - 1] !== 0});
           }
         }));
       }
@@ -305,29 +324,51 @@ class GpuVarblockSession {
     await Promise.all(jobs);
     return result;
   }
-  release() { this.blk.destroy(); }
+  release() { this.owner.free(this.blk); this.input = null; }
 }
 
 export class GpuVarblockCosts {
   static async create(device) {
     const self = new GpuVarblockCosts();
-    self.device = device;
+    self.device = device; self.buffers = new Set(); self.allocatedBytes = 0; self.peakBufferBytes = 0; self.failures = 0; self.destroyed = false;
     self.pipeline = await device.createComputePipelineAsync({layout: 'auto', compute: {module: device.createShaderModule({code: SHADER}), entryPoint: 'main'}});
     return self;
   }
+  assertOpen() { if (this.destroyed) throw new Error('GPU varblock owner is closed.'); }
   planeBuffers(planes) {
+    this.assertOpen();
     if (this.planesOf !== planes) {
-      for (const b of this.planeUpload || []) b.destroy();
-      this.planesOf = planes; this.planeUpload = planes.map(plane => this.buffer(plane instanceof Float32Array ? plane : Float32Array.from(plane)));
+      for (const b of this.planeUpload || []) this.free(b);
+      this.planesOf = null; this.planeUpload = [];
+      try { for (const plane of planes) this.planeUpload.push(this.buffer(plane instanceof Float32Array ? plane : Float32Array.from(plane))); }
+      catch (error) { for (const b of this.planeUpload) this.free(b); this.planeUpload = []; throw error; }
+      this.planesOf = planes;
     }
     return this.planeUpload;
   }
+  track(buffer) {
+    if (this.destroyed) { buffer.destroy(); this.assertOpen(); }
+    this.buffers.add(buffer); this.allocatedBytes += buffer.size; this.peakBufferBytes = Math.max(this.peakBufferBytes, this.allocatedBytes); return buffer;
+  }
+  free(buffer) {
+    if (!buffer || !this.buffers.delete(buffer)) return;
+    this.allocatedBytes -= buffer.size; buffer.destroy();
+  }
   buffer(data, usage = GPUBufferUsage.STORAGE) {
-    const buffer = this.device.createBuffer({size: Math.max(16, Math.ceil(data.byteLength / 4) * 4), usage: usage | GPUBufferUsage.COPY_DST});
-    this.device.queue.writeBuffer(buffer, 0, data);
-    return buffer;
+    this.assertOpen();
+    const buffer = this.track(this.device.createBuffer({size: Math.max(16, Math.ceil(data.byteLength / 4) * 4), usage: usage | GPUBufferUsage.COPY_DST}));
+    try { this.device.queue.writeBuffer(buffer, 0, data); return buffer; }
+    catch (error) { this.free(buffer); throw error; }
+  }
+  destroy() {
+    if (this.destroyed) return; this.destroyed = true;
+    this.session?.release(); this.session = null;
+    for (const buffer of [...this.buffers]) this.free(buffer);
+    this.planeUpload = []; this.planesOf = null;
+    this.pipeline = this.device = null;
   }
   open(base, width, height, options = {}, priced = true) {
+    this.assertOpen();
     const input = strategyInputs(base, width, height, priced ? options : {...options, model: 'simple'});
     for (const [id, t] of input.transforms) if (t.w * t.h > 1024) input.transforms.delete(id);
     return input.tokens || !priced ? new GpuVarblockSession(this, input) : null;
@@ -338,7 +379,9 @@ export class GpuVarblockCosts {
     try { return await session.costs(); } finally { session.release(); }
   }
   async request(r) {
-    try { return await this.answer(r); } catch { if (r.kind === 'costs') { this.session?.release(); this.session = null; } return null; }
+    if (this.destroyed) return null;
+    try { return await this.answer(r); }
+    catch (error) { if (!this.destroyed) { this.failures++; this.lastError = error; this.destroy(); } return null; }
   }
   async answer(r) {
     if (r.kind === 'costs') { this.session?.release(); this.session = this.open(r.base, r.width, r.height, r.options); return this.session ? this.session.costs() : null; }
@@ -350,8 +393,11 @@ export class GpuVarblockCosts {
   }
 }
 
-export async function attachVarblocks(measurer, device) {
-  const gpu = await GpuVarblockCosts.create(device);
+export async function attachVarblocks(measurer, device, {signal} = {}) {
+  const gpu = await gpuSetup(() => GpuVarblockCosts.create(device), {signal});
+  measurer.varblockResources = gpu;
   measurer.varblocks = r => gpu.request(r);
+  const destroy = measurer.destroy.bind(measurer);
+  measurer.destroy = () => { gpu.destroy(); destroy(); };
   return measurer;
 }

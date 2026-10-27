@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+import {memoryPlan} from './memory-plan.mjs';
+import {fault} from './fault.mjs';
 import {exactPow} from './exact-math.mjs';
 import {complete} from './bits.mjs';
 import {QUANT_SHAPE, transformDCT8, dct8Basis} from './photo-dct.mjs';
@@ -27,8 +29,12 @@ export const V6 = {
 };
 export const GABORISH = {gaborish: {strength: 1, tilt: 1}, epfScale: 2};
 
-export function prepareV6(rgba, width, height, color = {}) {
-  return {rgba, width, height, color, pre: gaborishPlanes(rgba, width, height, {...V6, ...GABORISH, ...color}), dct: {}, dctPlain: {}};
+export function prepareV6(rgba, width, height, color = {}, memory = {}) {
+  const inputBytes = rgba.buffer?.byteLength ?? rgba.byteLength;
+  if (memory?.inputBytes !== undefined && memory.inputBytes < inputBytes) throw fault('JXL_MEMORY', 'Memory reservation omits retained input bytes.');
+  const plan = memoryPlan(width * height, {...memory, inputBytes: memory?.inputBytes ?? inputBytes, width, height}), cache = plan.dct;
+  if (plan.known && !plan.fits) throw fault('JXL_MEMORY', 'Photo encoding exceeds the supplied memory reservation.');
+  return {rgba, width, height, color, memory: plan, pre: gaborishPlanes(rgba, width, height, {...V6, ...GABORISH, ...color}), dct: cache ? {} : null, dctPlain: cache ? {} : null};
 }
 
 export function photoV6Image(prepared, quality) {
@@ -36,12 +42,13 @@ export function photoV6Image(prepared, quality) {
   return complete(photoXYBSteps(rgba, width, height, quality, {...V6, ...GABORISH, ...color, pre, dctCache: dct}));
 }
 
-export function* photoV6Steps(data, width, height, quality, effort, encodeCoefficients, search, color, gpu) {
+export function* photoV6Steps(data, width, height, quality, effort, encodeCoefficients, search, color, gpu, memory) {
   if (gpu && effort <= 7 && !color) {
     const image = yield {gpu: {kind: 'v6image', data, width, height, quality, options: {...V6, ...GABORISH}, lib: {complete, photoXYBSteps, transformDCT8, dct8Basis}}};
     if (image) return yield* encodeCoefficients(image, effort);
   }
-  const prepared = prepareV6(data, width, height, color), image = photoV6Image(prepared, quality);
+  const prepared = prepareV6(data, width, height, color, memory), image = photoV6Image(prepared, quality);
   if (effort <= 7 || !search || color || width < 8 || height < 8) return yield* encodeCoefficients(image, effort);
   return yield* search(prepared, image, quality, effort);
 }
+

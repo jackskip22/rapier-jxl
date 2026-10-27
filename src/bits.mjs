@@ -8,8 +8,10 @@ const POWERS = [1];
 for (let count = 1; count <= 32; count++) POWERS.push(POWERS[count - 1] * 2);
 
 export class BitWriter {
-  constructor(capacity = 4096) {
-    this.bytes = new Uint8Array(capacity);
+  constructor(capacity = 4096, maxBytes = Infinity) {
+    if (maxBytes !== Infinity && (!Number.isSafeInteger(maxBytes) || maxBytes < 0)) throw new RangeError('Invalid encoded picture allocation limit.');
+    this.bytes = new Uint8Array(maxBytes === Infinity ? capacity : Math.min(capacity, maxBytes));
+    this.maxBytes = maxBytes;
     this.at = 0;
     this.acc = 0;
     this.pending = 0;
@@ -38,7 +40,8 @@ export class BitWriter {
   grow(need = 0) {
     const required = this.at + need + 16;
     if (!Number.isSafeInteger(required) || required < 0) throw new RangeError('The encoded picture cannot be allocated.');
-    const capacity = Math.max(this.bytes.length * 2, required);
+    if (required > this.maxBytes) throw Object.assign(new RangeError('The encoded picture exceeds its allocation limit.'), {code: 'JXL_MEMORY'});
+    const capacity = Math.min(this.maxBytes, Math.max(this.bytes.length * 2, required));
     let next;
     try { next = new Uint8Array(capacity); }
     catch (error) {
@@ -62,9 +65,14 @@ export class BitWriter {
 
 export function complete(steps) { let step; while (!(step = steps.next()).done); return step.value; }
 export function* part(steps, index, count) {
-  let step, reply;
-  while (!(step = steps.next(reply)).done) reply = yield scaled(step.value, done => (index + done) / count);
-  return step.value;
+  let step, reply, completed = false;
+  try {
+    while (!(step = steps.next(reply)).done) reply = yield scaled(step.value, done => (index + done) / count);
+    completed = true;
+    return step.value;
+  } finally {
+    try { steps.return?.(); } catch (error) { if (completed) throw error; }
+  }
 }
 export const scaled = (value, f) => typeof value === 'number' ? f(value) : {...value, at: g => f(value.at(g))};
 

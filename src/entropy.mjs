@@ -3,6 +3,7 @@ import {buildCode, uintConfig, hybridToken, writeHybrid, writeHistograms} from '
 import {BitWriter, floorLog2} from './bits.mjs';
 
 const CONFIGS = [uintConfig(0), uintConfig(1), uintConfig(2), uintConfig(3), uintConfig(4), uintConfig(4, 1, 1), uintConfig(4, 2, 0), uintConfig(4, 1, 2), uintConfig(5, 1, 1), uintConfig(2, 0, 1), uintConfig(3, 0, 1)];
+const ANS_CONFIGS = [...CONFIGS, uintConfig(3, 1, 0), uintConfig(4, 0, 1), uintConfig(4, 1, 0), uintConfig(4, 2, 1), uintConfig(5, 1, 0), uintConfig(5, 2, 0), uintConfig(5, 2, 1)];
 const CLUSTER_CONFIG = uintConfig(4, 1, 1);
 
 export class TokenCounts {
@@ -193,7 +194,7 @@ export function clusterTokenCounts(counts, {maxClusters = 48, newClusterCost = 3
     for (const ctx of cluster.contexts) contextMap[ctx] = index;
     const aggregate = counts.aggregate(cluster.contexts);
     let config = CONFIGS[0], bestCost = Infinity, freqs, extra;
-    for (const candidate of CONFIGS) {
+    for (const candidate of modelCost ? ANS_CONFIGS : CONFIGS) {
       const tokens = aggregate.tokens([0], candidate), raw = aggregate.rawBits([0], candidate);
       const cost = raw + (modelCost ? modelCost(tokens, candidate) : entropyBits(tokens) + candidate.split * 18 + (candidate.msb + candidate.lsb) * 28);
       if (cost < bestCost) { bestCost = cost; config = candidate; freqs = tokens; extra = raw; }
@@ -223,6 +224,13 @@ export function clusterTokenCounts(counts, {maxClusters = 48, newClusterCost = 3
   return {contextMap, histograms};
 }
 
+export function prefixGroupWriter({contextMap, histograms}) {
+  return {write(w, ctx, value) {
+    const histogram = histograms[contextMap[ctx]];
+    writeHybrid(w, histogram.code, histogram.config, value);
+  }};
+}
+
 export function buildTokenCoding(counts, options) {
   const {contextMap, histograms} = clusterTokenCounts(counts, options);
   let bits = 0;
@@ -234,9 +242,7 @@ export function buildTokenCoding(counts, options) {
   const header = new BitWriter();
   writeHistograms(header, {contextMap, histograms});
   bits += header.bitLength;
-  const write = (w, ctx, value) => {
-    const histogram = histograms[contextMap[ctx]];
-    writeHybrid(w, histogram.code, histogram.config, value);
-  };
-  return {contextMap, histograms, write, bits};
+  const model = {kind: 'prefix', contextMap, histograms: histograms.map(({config, code}) => ({config, code}))};
+  const {write} = prefixGroupWriter(model);
+  return {contextMap, histograms, model, write, bits};
 }

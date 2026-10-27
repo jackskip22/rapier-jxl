@@ -22,11 +22,22 @@ const RC_INV = (() => {
 })();
 
 const RC_COS = (n, d) => exactCos(EXACT_PI * n / d);
-function rcLlfFromDC(means, bw, bh) {
-  const w = Math.max(bw, bh), h = Math.min(bw, bh), low = scaledDCT(means, bw, bh);
-  const scale = (k, size) => RC_COS(k, 2 * size) * RC_COS(k, size) * RC_COS(2 * k, size);
+const RC_LLF_DIVISORS = new Map();
+function rcLlfDivisors(w, h) {
+  let d = RC_LLF_DIVISORS.get(w * 64 + h);
+  if (!d) {
+    const scale = (k, size) => RC_COS(k, 2 * size) * RC_COS(k, size) * RC_COS(2 * k, size);
+    d = new Float64Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) d[y * w + x] = scale(x, w * 8) * scale(y, h * 8);
+    RC_LLF_DIVISORS.set(w * 64 + h, d);
+  }
+  return d;
+}
+const RC_LLF_ONE = rcLlfDivisors(1, 1)[0];
+export function rcLlfFromDC(means, bw, bh) {
+  const w = Math.max(bw, bh), h = Math.min(bw, bh), low = scaledDCT(means, bw, bh), divisors = rcLlfDivisors(w, h);
   const out = new Float64Array(w * h);
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out[y * w + x] = low[y * w + x] / (scale(x, w * 8) * scale(y, h * 8));
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out[y * w + x] = low[y * w + x] / divisors[y * w + x];
   return out;
 }
 
@@ -43,32 +54,56 @@ export function coefficientPlanes(image) {
   const dcStep = comps.map(c => half(c.quant[0] / (255 * 8 * QS) * 128) / 128 * 255 * 8);
   const strategy = image.strategyData;
   if (!strategy) {
-    const y = new Float64Array(64), coef = new Float64Array(64);
+    const y = new Float64Array(64), coef = new Float64Array(64), order = [1, 0, 2];
+    const quants = comps.map(c => c.quant), coeffs = comps.map(c => c.coeffs), one = [RC_ONE[0], RC_ONE[1], RC_ONE[2]];
     for (let by = 0; by < rows; by++) for (let bx = 0; bx < stride; bx++) {
-      const at = (by * stride + bx) * 64, f = fine(bx, by), k3 = factors(bx, by);
+      const at = (by * stride + bx) * 64, QSf = QS * (fields ? fields[by * stride + bx] / base : 1);
+      const t = (by >> 3) * cfl.width + (bx >> 3), kx = cfl.x[t] / 84, kb = 1 + cfl.b[t] / 84;
       cells[by * stride + bx] = bx | by << 12;
-      for (const c of [1, 0, 2]) {
-        const q = comps[c].coeffs, quant = comps[c].quant;
+      for (let o = 0; o < 3; o++) {
+        const c = order[o], q = coeffs[c], quant = quants[c], r1 = one[c];
         coef[0] = q[at] * dcStep[c];
-        for (let k = 1; k < 64; k++) coef[k] = rcRecon(q[at + k], c) * quant[k] / (QS * f);
+        for (let k = 1; k < 64; k++) {
+          const v = q[at + k];
+          coef[k] = v === 0 ? 0 : (v === 1 ? r1 : v === -1 ? -r1 : v - 0.145 / v) * quant[k] / QSf;
+        }
         if (c === 1) y.set(coef);
-        else for (let k = 0; k < 64; k++) coef[k] += (k ? k3[c] : c === 2 ? 1 : 0) * y[k];
+        else {
+          const k3 = c === 0 ? kx : kb;
+          coef[0] += (c === 2 ? 1 : 0) * y[0];
+          for (let k = 1; k < 64; k++) coef[k] += k3 * y[k];
+        }
         const p = planes[c];
-        for (let k = 0; k < 64; k++) p[(by * 8 + (k >> 3)) * W + bx * 8 + (k & 7)] = coef[k] / (8 * 255);
+        for (let v = 0, row = by * 8 * W + bx * 8; v < 8; v++, row += W) for (let u = 0; u < 8; u++) p[row + u] = coef[v * 8 + u] / (8 * 255);
       }
     }
     return {planes, cells, W, H, stride, rows};
   }
+  const tr = new Float64Array(256 * 256), lumaAC = new Float64Array(256 * 256), channels = [1, 0, 2], one = [RC_ONE[0], RC_ONE[1], RC_ONE[2]];
+  const tableSteps = new Map();
   for (const block of strategy.blocks) {
     const {id, bx, by, bw, bh, area, size, order} = block, t = TRANSFORMS[id], w = t.width, h = t.height;
-    const steps = strategy.tables.get(t.table).planes, f = fine(bx, by), k3 = factors(bx, by), L = Math.max(bw, bh), S = Math.min(bw, bh);
+    let steps = tableSteps.get(t.table);
+    if (!steps) tableSteps.set(t.table, steps = strategy.tables.get(t.table).planes);
+    const f = fields ? fields[by * stride + bx] / base : 1, ct = (by >> 3) * cfl.width + (bx >> 3), k3 = [cfl.x[ct] / 84, 0, 1 + cfl.b[ct] / 84];
+    const L = Math.max(bw, bh), S = Math.min(bw, bh), divisor = 8 * QS * f;
     for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) cells[(by + y) * stride + bx + x] = bx | by << 12 | (bw - 1) << 24 | (bh - 1) << 28;
-    let lumaAC = null;
-    for (const c of [1, 0, 2]) {
-      const tr = new Float64Array(size), q = block.coeffs[c], s = steps[c];
-      for (let k = area; k < size; k++) { const pos = order[k]; tr[pos] = rcRecon(q[pos], c) * s[pos] / (8 * QS * f); }
-      if (c === 1) lumaAC = tr.slice();
-      else for (let k = area; k < size; k++) { const pos = order[k]; tr[pos] += k3[c] * lumaAC[pos]; }
+    for (let o = 0; o < 3; o++) {
+      const c = channels[o], q = block.coeffs[c], s = steps[c], r1 = one[c];
+      tr.fill(0, 0, size);
+      for (let k = area; k < size; k++) {
+        const pos = order[k], v = q[pos];
+        if (v !== 0) tr[pos] = (v === 1 ? r1 : v === -1 ? -r1 : v - 0.145 / v) * s[pos] / divisor;
+      }
+      if (c === 1) lumaAC.set(tr.subarray(0, size));
+      else { const k = k3[c]; for (let i = area; i < size; i++) { const pos = order[i]; tr[pos] += k * lumaAC[pos]; } }
+      if (bw === 1 && bh === 1) {
+        const pos = by * stride + bx;
+        tr[0] = ((comps[c].dc[pos] * dcStep[c] + (c === 2 ? comps[1].dc[pos] * dcStep[1] : 0)) / 8 + 0) / RC_LLF_ONE;
+        const p = planes[c];
+        for (let v = 0, row = by * 8 * W + bx * 8; v < 8; v++, row += W) for (let u = 0; u < 8; u++) p[row + u] = tr[u * 8 + v] / 255;
+        continue;
+      }
       const means = new Float64Array(bw * bh);
       for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
         const pos = (by + y) * stride + bx + x;
@@ -86,7 +121,7 @@ export function coefficientPlanes(image) {
 function rcXybPlanes(image) {
   const {planes: coef, cells, W, H, stride} = coefficientPlanes(image), bases = new Map();
   const ib = n => { let b = bases.get(n); if (!b) bases.set(n, b = inverseBasis(n)); return b; };
-  return {W, H, planes: coef.map(C => {
+  return {W, H, planes: coef.map((C, c) => {
     const tmp = new Float32Array(W * H), out = new Float32Array(W * H);
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const cell = cells[(y >> 3) * stride + (x >> 3)], x0 = (cell & 4095) * 8, w = ((cell >>> 24 & 15) + 1) * 8, B = ib(w), lx = x - x0;
@@ -100,6 +135,7 @@ function rcXybPlanes(image) {
       for (let v = 0; v < h; v++) s += tmp[(y0 + v) * W + x] * B[v * h + ly];
       out[y * W + x] = s;
     }
+    coef[c] = null;
     return out;
   })};
 }
@@ -114,55 +150,85 @@ function rcGaborish(planes, W, width, height, weights) {
         out[m + x] = (p[m + x] + w1 * (p[u + x] + p[d + x] + p[m + l] + p[m + r]) + w2 * (p[u + l] + p[u + r] + p[d + l] + p[d + r])) * n;
       }
     }
+    planes[c] = null;
     return out;
   });
 }
 
-const RC_NB = [0, 1, 2, 3], RC_PLUS = [() => 0, W => -W, () => -1, () => 1, W => W];
 const RC_INV_SIGMA_NUM = -1.1715728752538099024, RC_MIN_SIGMA = -3.90524291751269967465540850526868, RC_SCALE = [40, 5, 3.5];
 function rcEpf1(planes, W, width, height, invSigma, stride, borderMul) {
   const mir = (v, n) => v < 0 ? -v - 1 : v >= n ? 2 * n - v - 1 : v;
-  const out = planes.map(p => Float32Array.from(p));
+  const rows = Number.isSafeInteger(width) && width > 0 && width <= W &&
+    Number.isSafeInteger(height) && height > 0 && height * W <= planes[0].length;
+  const out = planes.map(p => rows ? new Float32Array(3 * width) : Float32Array.from(p));
+  const commit = y => {
+    const row = (y % 3) * width;
+    for (let c = 0; c < 3; c++) planes[c].set(out[c].subarray(row, row + width), y * W);
+  };
   const at = (c, x, y) => planes[c][mir(y, height) * W + mir(x, width)];
   const plus = [[0, 0], [0, -1], [-1, 0], [1, 0], [0, 1]], nb = [[0, -1], [-1, 0], [1, 0], [0, 1]];
+  const offsets = [0, -W, -1, 1, W], neighbors = [-W, -1, 1, W];
+  const above = new Float64Array(width), haveAbove = new Uint8Array(width);
   const sm = 1.65, bsm = sm * borderMul;
   for (let y = 0; y < height; y++) {
+    const row = rows ? (y % 3) * width : y * W;
+    if (rows) for (let c = 0; c < 3; c++) out[c].set(planes[c].subarray(y * W, y * W + width), row);
     const rowBorder = (y & 7) === 0 || (y & 7) === 7;
+    let left = 0, haveLeft = false;
     for (let x = 0; x < width; x++) {
       const s = invSigma[(y >> 3) * stride + (x >> 3)];
-      if (s < RC_MIN_SIGMA) continue;
+      if (s < RC_MIN_SIGMA) { haveLeft = false; haveAbove[x] = 0; continue; }
       const mul = rowBorder || (x & 7) === 0 || (x & 7) === 7 ? bsm : sm, inv = s * mul;
       let w = 1, X, Y, B;
       if (x >= 2 && y >= 2 && x < width - 2 && y < height - 2) {
         const i = y * W + x, P0 = planes[0], P1 = planes[1], P2 = planes[2];
         X = P0[i]; Y = P1[i]; B = P2[i];
         for (let n = 0; n < 4; n++) {
-          const d = RC_NB[n] === 0 ? -W : RC_NB[n] === 1 ? -1 : RC_NB[n] === 2 ? 1 : W, j = i + d;
-          let s0 = 0, s1 = 0, s2 = 0;
-          for (let o = 0; o < 5; o++) {
-            const a = i + RC_PLUS[o](W), b = j + RC_PLUS[o](W);
-            s0 += Math.abs(P0[a] - P0[b]); s1 += Math.abs(P1[a] - P1[b]); s2 += Math.abs(P2[a] - P2[b]);
+          const j = i + neighbors[n];
+          let sad;
+          if (n === 0 && haveAbove[x]) sad = above[x];
+          else if (n === 1 && haveLeft) sad = left;
+          else {
+            let s0 = 0, s1 = 0, s2 = 0;
+            for (let o = 0; o < 5; o++) {
+              const a = i + offsets[o], b = j + offsets[o];
+              s0 += Math.abs(P0[a] - P0[b]); s1 += Math.abs(P1[a] - P1[b]); s2 += Math.abs(P2[a] - P2[b]);
+            }
+            sad = s0 * 40 + s1 * 5 + s2 * 3.5;
           }
-          const sad = s0 * 40 + s1 * 5 + s2 * 3.5, weight = Math.max(0, 1 + sad * inv);
+          if (n === 2) left = sad;
+          else if (n === 3) above[x] = sad;
+          const weight = Math.max(0, 1 + sad * inv);
           w += weight; X += weight * P0[j]; Y += weight * P1[j]; B += weight * P2[j];
         }
       } else {
         X = at(0, x, y); Y = at(1, x, y); B = at(2, x, y);
-        for (const [dx, dy] of nb) {
-          let sad = 0;
-          for (let c = 0; c < 3; c++) {
-            let sc = 0;
-            for (const [ox, oy] of plus) sc += Math.abs(at(c, x + ox, y + oy) - at(c, x + dx + ox, y + dy + oy));
-            sad += sc * RC_SCALE[c];
+        for (let n = 0; n < 4; n++) {
+          const [dx, dy] = nb[n];
+          let sad;
+          if (n === 0 && haveAbove[x]) sad = above[x];
+          else if (n === 1 && haveLeft) sad = left;
+          else {
+            sad = 0;
+            for (let c = 0; c < 3; c++) {
+              let sc = 0;
+              for (const [ox, oy] of plus) sc += Math.abs(at(c, x + ox, y + oy) - at(c, x + dx + ox, y + dy + oy));
+              sad += sc * RC_SCALE[c];
+            }
           }
+          if (n === 2) left = sad;
+          else if (n === 3) above[x] = sad;
           const weight = Math.max(0, 1 + sad * inv);
           w += weight; X += weight * at(0, x + dx, y + dy); Y += weight * at(1, x + dx, y + dy); B += weight * at(2, x + dx, y + dy);
         }
       }
-      out[0][y * W + x] = X / w; out[1][y * W + x] = Y / w; out[2][y * W + x] = B / w;
+      haveLeft = true; haveAbove[x] = 1;
+      out[0][row + x] = X / w; out[1][row + x] = Y / w; out[2][row + x] = B / w;
     }
+    if (rows && y >= 2) commit(y - 2);
   }
-  return out;
+  if (rows) for (let y = Math.max(0, height - 2); y < height; y++) commit(y);
+  return rows ? planes : out;
 }
 
 export function epfInverseSigma(image) {
@@ -181,10 +247,12 @@ export function epfInverseSigma(image) {
 
 export function reconstruct(image) {
   const {width, height} = image, comps = image.components, stride = comps[0].stride, rows = comps[0].rows;
-  let {planes, W} = rcXybPlanes(image);
+  let {planes, W, H} = rcXybPlanes(image);
   if (image.gab) planes = rcGaborish(planes, W, width, height, image.gab);
   if (image.epf) planes = rcEpf1(planes, W, width, height, epfInverseSigma(image), stride, 2 / 3);
-  const out = [0, 1, 2].map(() => new Float32Array(width * height));
+  const n = width * height, compact = Number.isSafeInteger(width) && width > 0 && width <= W &&
+    Number.isSafeInteger(height) && height > 0 && height <= H;
+  const out = compact ? planes : [0, 1, 2].map(() => new Float32Array(n));
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
     const i = y * W + x, X = planes[0][i], Y = planes[1][i], B = planes[2][i];
     const l = rcCube(Y + X + RC_ROOT_BIAS) - RC_BIAS, m = rcCube(Y - X + RC_ROOT_BIAS) - RC_BIAS, s = rcCube(B + RC_ROOT_BIAS) - RC_BIAS, o = y * width + x;
@@ -192,7 +260,12 @@ export function reconstruct(image) {
     out[1][o] = RC_INV[3] * l + RC_INV[4] * m + RC_INV[5] * s;
     out[2][o] = RC_INV[6] * l + RC_INV[7] * m + RC_INV[8] * s;
   }
-  return out;
+  if (!compact || planes.every(p => p.length === n)) return out;
+  return planes.map((p, c) => {
+    const result = p.slice(0, n);
+    planes[c] = null;
+    return result;
+  });
 }
 
 export function toRGBA(linear, width, height) {

@@ -101,7 +101,7 @@ export function* photoXYBSteps(data, width, height, quality, options) {
   const pre = gab && (options.pre ?? gaborishPlanes(data, width, height, options));
   const T = options?.transform, lms = T?.lms;
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), quantScale = 256;
-  const distance = quality >= 30 ? 0.1 + (100 - quality) * 0.09 : 53 / 3000 * quality * quality - 23 / 20 * quality + 25;
+  const distance = quality >= 99 ? 0.19 - 0.16 * (quality - 99) : quality >= 30 ? 0.1 + (100 - quality) * 0.09 : 53 / 3000 * quality * quality - 23 / 20 * quality + 25;
   const strength = Math.max(0, Math.min(1, (90 - quality) / 15)), stepScale = 1 - 0.1 * strength, acScale = 1.175 + 0.075 * strength;
   const t = options?.tune, tune = typeof t === "function" ? t : t ? (c, k) => t[c] * (1 + t[3 + c] * Math.sqrt(((k & 7) * (k & 7) + (k >> 3) * (k >> 3)) / 98)) : () => 1;
   const d = options?.dcScale, dcScale = typeof d === 'function' ? c => d(c, distance) : Array.isArray(d) ? c => d[c] : () => d ?? 1;
@@ -122,6 +122,10 @@ export function* photoXYBSteps(data, width, height, quality, options) {
   const dctCache = options?.dctCache && !options?.planesOnly && !options?.roundtrip ? options.dctCache : null;
   if (dctCache && !dctCache.tiles) Object.assign(dctCache, {tiles: [], x: new Int8Array(Math.ceil(stride / 8) * Math.ceil(rows / 8)), b: new Int8Array(Math.ceil(stride / 8) * Math.ceil(rows / 8))});
   const keep = options?.keepValues && [0, 1, 2].map(() => new Float32Array(stride * rows * 64));
+  const THRESHOLDS = [0, 1, 2].map(c => Float64Array.from({length: 64}, (_, k) => {
+    const high = (k & 7) >= 4 || (k >> 3) >= 4;
+    return dead && k ? dead[c * 2 + (high ? 1 : 0)] : k && c === 1 ? 0.5 + strength * (high ? 0.14 : 0.08) : 0.5;
+  }));
   const fieldScale = options?.fieldScale, FIELD = 64, quantFields = fieldScale && new Int32Array(stride * rows);
   if (quantFields) for (let i = 0; i < quantFields.length; i++) quantFields[i] = Math.max(1, Math.min(256, Math.round(FIELD * fieldScale[i])));
   for (let ty = 0; ty < tileRows; ty++) {
@@ -173,6 +177,23 @@ export function* photoXYBSteps(data, width, height, quality, options) {
       if (dctCache) { dctCache.tiles[index] = tile.slice(0, bw * bh * 192); dctCache.x[index] = cfl.x[index]; dctCache.b[index] = cfl.b[index]; }
       }
       const fx = cfl.x[index], fb = cfl.b[index];
+      if (!roundtrip) {
+        const rx = fx / 84, rb = fb / 84;
+        for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++) {
+          const at = (by * bw + bx) * 192, offset = ((by0 + by) * stride + bx0 + bx) * 64;
+          const fine = quantFields ? quantFields[(by0 + by) * stride + bx0 + bx] / FIELD : 1;
+          for (let c = 0; c < 3; c++) {
+            const quant = components[c].quant, out = components[c].coeffs, ratio = c === 0 ? rx : rb, base = at + c * 64, thresholds = THRESHOLDS[c];
+            for (let k = 0; k < 64; k++) {
+              const coefficient = tile[base + k] - (k && c !== 1 ? ratio * tile[at + 64 + k] : 0) + 0;
+              const value = coefficient * quantScale / quant[k] * (k ? fine : 1);
+              if (keep) keep[c][offset + k] = value;
+              out[offset + k] = Math.abs(value) < thresholds[k] ? 0 : Math.max(-32768, Math.min(32767, biased && k ? biasedRound(value, c) : Math.round(value)));
+            }
+          }
+        }
+        continue;
+      }
       for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++) {
         const at = (by * bw + bx) * 192, offset = ((by0 + by) * stride + bx0 + bx) * 64;
         const fine = quantFields ? quantFields[(by0 + by) * stride + bx0 + bx] / FIELD : 1;
@@ -184,7 +205,7 @@ export function* photoXYBSteps(data, width, height, quality, options) {
           const high = (k & 7) >= 4 || (k >> 3) >= 4;
           const threshold = dead && k ? dead[c * 2 + (high ? 1 : 0)] : k && c === 1 ? 0.5 + strength * (high ? 0.14 : 0.08) : 0.5;
           if (keep) keep[c][offset + k] = value;
-          const q = components[c].coeffs[offset + k] = Math.abs(value) < threshold ? 0 : biased && k ? biasedRound(value, c) : Math.round(value);
+          const q = components[c].coeffs[offset + k] = Math.abs(value) < threshold ? 0 : Math.max(-32768, Math.min(32767, biased && k ? biasedRound(value, c) : Math.round(value)));
           if (roundtrip && c === 1 && k) lumaBack[k] = (q === 0 ? 0 : q === 1 || q === -1 ? q * 0.92994550108251407 : q - 0.145 / q)
             * components[1].quant[k] / (quantScale * fine);
         }

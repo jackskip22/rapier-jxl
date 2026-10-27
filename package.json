@@ -1,6 +1,6 @@
 {
   "name": "rapier-jxl",
-  "version": "6.1.1",
+  "version": "6.2.0-integration.20261026.1",
   "description": "JPEG XL encoder in pure JavaScript. Great for single-file HTML apps, photography tools and agent image workflows.",
   "license": "MIT",
   "type": "module",
@@ -278,6 +278,7 @@
     "dist",
     "kernels",
     "docs",
+    "bench",
     "examples",
     "skills",
     "LICENSE",

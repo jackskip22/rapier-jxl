@@ -19,7 +19,7 @@ import {paintingSteps, admitPaintingProfile} from './painting.mjs';
 
 const hurryOf = reply => reply === null || (typeof reply === 'object' ? reply.hurried : reply);
 
-export function effortJob(data, width, height, options, pool, helpers = false, retainHurry, gpu = false) {
+export function effortJob(data, width, height, options, pool, helpers = false, retainHurry, gpu = false, limits) {
   const {quality, colorSpace} = admitOptions(options), effort = options?.effort === undefined ? 1 : options.effort;
   const filter = admitPhotoFilter(options);
   if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fault('JXL_INPUT', 'Effort is a whole number from 1 to 9.');
@@ -27,7 +27,7 @@ export function effortJob(data, width, height, options, pool, helpers = false, r
   if (treeLearning !== undefined && treeLearning !== 'sampled') throw fault('JXL_INPUT', 'Tree learning must be sampled when specified.');
   const losslessProfile = options?.losslessProfile;
   if (losslessProfile !== undefined && losslessProfile !== 'painting' && losslessProfile !== 'painting-search') throw fault('JXL_INPUT', 'The lossless profile is painting or painting-search when specified.');
-  admitPixels(data, width, height);
+  admitPixels(data, width, height, limits);
   const samples = admitSampleFormat(data, options);
   if (losslessProfile === 'painting') {
     admitPaintingProfile(quality, samples);

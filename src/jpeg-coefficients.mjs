@@ -139,9 +139,14 @@ function contextMap(r, count, depth = 0) {
   const map = new Uint8Array(count);
   if (r.read(1)) { const bits = r.read(2); for (let i = 0; i < count; i++) map[i] = r.read(bits); }
   else {
-    r.expect(1, 0);
-    const code = entropy(r, 1, {depth: depth + 1, values: count});
-    for (let i = 0; i < count; i++) { const value = code.read(0); requireJPEG(value < 256); map[i] = value; }
+    const order = r.read(1) ? Uint8Array.from({length: 256}, (_, i) => i) : null;
+    const code = entropy(r, 1, {depth: depth + 1, values: count, byteHistory: true});
+    for (let i = 0; i < count; i++) {
+      const value = code.read(0); requireJPEG(value < 256);
+      if (!order) { map[i] = value; continue; }
+      const index = order[value]; map[i] = index;
+      order.copyWithin(1, 0, value); order[0] = index;
+    }
     code.finish();
   }
   return map;

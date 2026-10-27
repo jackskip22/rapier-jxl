@@ -24,10 +24,11 @@ declaration. The same pixels and options produce the same bytes in every JavaScr
 ## Photographs
 
 Photographs (8-bit sRGB pixels whose colors suit XYB) use v6 coding at every quality below 100: JPEG XL's default
-chroma tables reshaped by measured searches, and Gaborish. A quality gives the same picture at every effort; effort only
-searches longer for a smaller file. Efforts 8 and 9 also measure the decoded picture and keep a smaller file whose
-Butteraugli distance (3-norm) is no worse than effort 7's: 8 tries a measured quantization field, 9 also measured variable
-transforms and v6 without Gaborish. `rapier-jxl/score` encodes to a score. `filter` applies only to pictures v6 does
+chroma tables reshaped by measured searches, and Gaborish. Efforts 1–7 search compression choices for the same picture.
+Efforts 8 and 9 also measure reconstructed candidates and retain the authored score floors before choosing a smaller
+file. Effort 8 tries Gaborish and measured variable transforms (`gaborish`, `blocks`). Effort 9 also tries a measured
+quantization field and v6 without Gaborish (`field`, `plain`), in that order. `rapier-jxl/score` encodes to a score.
+`filter` applies only to pictures v6 does
 not take; `photo: false` selects Modular lossy coding.
 
 `encodeAsync` (the core, `rapier-jxl`) resolves to the same bytes as `encode` for every input. For a photograph of about a
@@ -194,7 +195,7 @@ effort's ladder without the weighted and color-transform searches and the `maxim
 on paintings. At effort 7 it wrote the same bytes as the ordinary search on eight paintings in 69% of the time.
 
 `hurry` finishes the core lossless encode rather than returning a partial stream. Leaving the iterator cancels and leaves
-`job.bytes` null. The complete encoder can distribute painting groups across available helper workers.
+`job.bytes` null. The complete encoder's legacy painting group pool currently remains disabled.
 
 ## Native precision
 
@@ -696,22 +697,22 @@ Added gzip is the entry bundled with the core minus the core alone, so shared co
 
 | Entry | Minified bytes | gzip | Brotli | Added gzip with core |
 | --- | ---: | ---: | ---: | ---: |
-| `icc` | 37,467 | 14,780 | 13,126 | 2,108 |
-| `photo-advanced` | 188,097 | 70,042 | 59,401 | 44,476 |
-| `delta-palette` | 87,698 | 34,040 | 29,733 | 21,249 |
-| `channels` | 85,704 | 31,704 | 27,694 | 24,774 |
-| `layers` | 96,286 | 35,140 | 30,687 | 28,294 |
-| `splines` | 89,947 | 35,847 | 31,278 | 14,402 |
-| `patches` | 144,635 | 53,730 | 45,946 | 39,536 |
-| `container` | 7,499 | 3,358 | 2,835 | 1,890 |
-| `container-advanced` | 42,346 | 15,778 | 13,866 | 15,782 |
-| `opsin` | 74,089 | 28,782 | 24,819 | 19,359 |
-| `progressive-container` | 54,363 | 20,337 | 17,893 | 20,329 |
-| `noise` | 218,482 | 82,737 | 69,381 | 56,615 |
-| `hybrid` | 169,383 | 63,835 | 54,882 | 43,247 |
-| `photo-plan` | 122,965 | 45,479 | 38,940 | 26,662 |
-| `delivery` | 48,052 | 17,920 | 15,759 | 17,919 |
-| `brotli` | 12,269 | 5,484 | 4,771 | 9,479 |
+| `icc` | 38,802 | 15,103 | 13,385 | 2,088 |
+| `photo-advanced` | 203,517 | 75,107 | 63,699 | 45,240 |
+| `delta-palette` | 90,553 | 34,487 | 30,131 | 21,451 |
+| `channels` | 87,785 | 32,072 | 28,078 | 24,999 |
+| `layers` | 98,346 | 35,517 | 31,005 | 28,512 |
+| `splines` | 98,556 | 38,620 | 33,587 | 14,924 |
+| `patches` | 148,347 | 54,465 | 46,512 | 39,871 |
+| `container` | 7,554 | 3,392 | 2,861 | 1,866 |
+| `container-advanced` | 43,172 | 15,961 | 14,079 | 15,908 |
+| `opsin` | 76,151 | 29,274 | 25,337 | 19,573 |
+| `progressive-container` | 55,212 | 20,520 | 18,041 | 20,448 |
+| `noise` | 234,007 | 88,034 | 73,708 | 57,488 |
+| `hybrid` | 178,382 | 66,633 | 57,163 | 44,114 |
+| `photo-plan` | 129,746 | 47,485 | 40,754 | 26,872 |
+| `delivery` | 48,896 | 18,096 | 15,923 | 18,039 |
+| `brotli` | 12,737 | 5,612 | 4,895 | 9,654 |
 
 ## Existing JPEGs
 
@@ -1077,7 +1078,7 @@ and returns a `Blob`. `options.worker` is required: a `Worker` running either wo
 `rapier-jxl/rapier/still-worker` (`dist/rapier-still-worker.js`, what Rapier's page embeds) and
 `rapier-jxl/rapier/worker` (`dist/rapier-worker.js`, the still worker plus animation and the other format writers described
 here). Both include effort search, optional WASM with JavaScript fallback, photographic pixel encoding, reversible JPEG
-coefficient transcoding and parallel lossless groups. Each packaged worker contains its supported features. Rapier
+coefficient transcoding. Each packaged worker contains its supported features. Rapier
 embeds the still worker and provides the complete worker in its on-demand JPEG XL complete part. Pixel decoding
 uses the browser or an external decoder.
 
@@ -1128,7 +1129,9 @@ controller.abort();
 await result; // Rejects with controller.signal.reason; no partial file is returned.
 ```
 
-Cancellation terminates helper workers and leaves the encoder reusable. Progress reaches 1 only after a complete
+Cancellation retires helper workers before the encoder can be reused. If retirement fails, the encoder refuses later
+work instead of overlapping the unretired allocation; an active abort still rejects with its original reason.
+Progress reaches 1 only after a complete
 output exists. It measures completed work, not elapsed time. Synchronous parsing or one work unit can delay an abort;
 the scheduling interval is not a maximum response time. The synchronous core still cancels by leaving job iteration.
 
@@ -1206,12 +1209,24 @@ across the message boundary. The complete entry runs off the browser document th
 
 `installWorker()` installs this protocol in a worker that imports the module. For a module-worker bootstrap, pass
 `{spawn: () => new Worker(import.meta.url, {type: 'module'})}` so helpers run the same bootstrap and build. The
-published classic worker needs no configuration. It uses up to three helpers in addition to the calling worker,
-subject to hardware concurrency. Ordinary lossless images use group workers from 40 initial 256-pixel groups;
-the painting profile uses them from 32 groups. Effort 9 can also use helpers for independent candidates below
-that threshold. Photographic RGBA8 uses helpers from 3 million pixels. Full-width bands end on 64-pixel boundaries,
-preserving chroma-from-luma tiles and output bytes; the coordinator combines coefficients and writes one frame.
-Set `options.parallel: false` on a complete encoder or worker encode request to disable all helper
-workers for that request. The calling worker writes the same bytes; terminating it cancels the whole search.
-Omitting the option retains automatic parallel work. Failed helpers fall back to the same local encoding.
+published classic worker resolves its own helper asset. A worker factory or requested count is not an allocation grant.
+Legacy lossless, painting, photo-band and animation pools currently use zero helpers.
+
+For still-pixel encoding, `createEncoder({memory})` accepts a conditional reservation. The constructor value, or the
+first encode's `options.memory` when absent at construction, is copied and pinned for that encoder instance. Later
+values must contain identical fields and values. Each image is repriced from its dimensions and actual input backing
+buffer length. `budgetBytes` defaults to 1,073,741,824. `externalBytes`, `searchBytes`, `entropyBytes`, `outputBytes`
+and `gpuBytes` describe disjoint owner scopes; a supplied zero is a caller assertion. Missing scopes grant no optional
+DCT/cache retention or helpers. A known over-budget plan refuses with `JXL_MEMORY` before image work.
+
+`memory.workers` defaults to zero. Positive AC/exact helper use additionally requires bounded `cores`,
+`workerRuntimeBytes`, `workerJobBytes`, `workerInputBytes` and `workerOutputBytes`, then a fresh coordinator-issued
+stage grant. Caller-created, stale or reused grants do not authorize workers. See `EncoderMemory` in the declarations
+for the exact fields. Set `options.parallel: false` to disable helpers for that encode. Recoverable helper failures
+may replay locally after cleanup; reservation and retirement failures are not ordinary fallback.
+
+This planner is a conditional bound for still-pixel encoding, not measured process/GPU compliance or admission for
+animation and format operations. Complete-scope GPU admission remains unproved and refuses with
+`JXL_MEMORY_GPU_UNPROVEN`. The current candidate's full 12 MP, quality and hardware qualification is NOT PROVEN;
+historical timings do not establish these outcomes.
 `kernelMode()` reports the selected kernel mode after the first encode. Input arrays passed to `encode` remain unchanged.

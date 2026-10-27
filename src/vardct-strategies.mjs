@@ -58,6 +58,23 @@ export function scaledDCT(pixels, width, height) {
   return out;
 }
 
+export function scaledDCTAt(pixels, width, height, positions) {
+  const bx = basis(width), by = basis(height), columns = new Map(), out = new Map();
+  for (const at of positions) {
+    const u = height >= width ? Math.floor(at / height) : at % width, v = height >= width ? at % height : Math.floor(at / width);
+    let column = columns.get(u);
+    if (!column) {
+      column = new Float64Array(height);
+      for (let y = 0; y < height; y++) { let sum = 0; for (let x = 0; x < width; x++) sum += pixels[y * width + x] * bx[u * width + x]; column[y] = sum; }
+      columns.set(u, column);
+    }
+    let acc = 0;
+    for (let y = 0; y < height; y++) acc += column[y] * by[v * height + y];
+    out.set(at, acc);
+  }
+  return out;
+}
+
 export function inverseScaledDCT(coeffs, width, height) {
   const bx = basis(width), by = basis(height), tmp = new Float64Array(width * height), out = new Float64Array(tmp.length);
   for (let v = 0; v < height; v++) for (let x = 0; x < width; x++) {

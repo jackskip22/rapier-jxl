@@ -1,32 +1,190 @@
 {
   "package": "rapier-jxl",
-  "version": "6.1.0",
+  "version": "6.2.0-integration.20261026.1",
   "measured": "Staged file bytes; gzip level 9; Brotli quality 11, text mode. Added bytes measure the entry point bundled with the core minus the core alone. Every measured bundle loads as a module.",
   "node": "v22.23.4",
   "terser": "5.51.2",
   "privateProperties": "^(alphabetSize|lengths|codes|simple|treeSelect|splitToken|msb|lsb|contextMap|histograms|predictor|multiplier|context|splitval|property|offset|left|right|channel|acc|pending|at|bitLength|grow|zeroPadToByte|writeU32|append|finish|write|small|large|totals|contexts|tokens|cost|bucketOf|contextOf|nonZero|zeroDensityOffset|thresholds|numDc|numCtxs|freqs|hshift|vshift|residual|component|inPlace|horizontal|beginC|numC|rctType|nbColors|nbDeltas|useGlobalTree|streamId|pieces|rect|minSymbol|minLength|lengthConfig|params|type|leaf|groupsX|groupsY|dcGroupsX|dcGroupsY|single|config|bits|sym|tree|count|parts|lz77|transforms)$",
+  "workerWireProperties": [
+    "pool",
+    "id",
+    "g",
+    "k",
+    "band",
+    "operation",
+    "ok",
+    "progress",
+    "reason",
+    "model",
+    "data",
+    "result",
+    "error",
+    "name",
+    "code",
+    "message",
+    "bytes",
+    "at",
+    "pending",
+    "acc",
+    "coding",
+    "grey",
+    "orders",
+    "hshifts",
+    "vshifts",
+    "authoredOrderPasses",
+    "contexts",
+    "thresholds",
+    "map",
+    "numDc",
+    "numCtxs",
+    "byStrategy",
+    "ordinary",
+    "kind",
+    "contextMap",
+    "histograms",
+    "config",
+    "counts",
+    "starts",
+    "reverse",
+    "split",
+    "msb",
+    "lsb",
+    "splitToken",
+    "alphabetSize",
+    "lengths",
+    "codes",
+    "simple",
+    "treeSelect",
+    "xsizeBlocks",
+    "ysizeBlocks",
+    "lumaW",
+    "lumaBuckets",
+    "strategyData",
+    "blockCounts",
+    "comps",
+    "groups",
+    "area",
+    "size",
+    "bw",
+    "bh",
+    "order",
+    "bx",
+    "by",
+    "coeffs",
+    "stride",
+    "job",
+    "ids",
+    "options",
+    "subBase",
+    "sub",
+    "p",
+    "margin",
+    "width",
+    "height",
+    "components",
+    "hshift",
+    "vshift",
+    "quantFields",
+    "sharpness",
+    "cfl",
+    "dc",
+    "type",
+    "leaf",
+    "tree",
+    "predictor",
+    "multiplier",
+    "context",
+    "splitval",
+    "property",
+    "offset",
+    "left",
+    "right",
+    "channel",
+    "count",
+    "freqs",
+    "contextOf",
+    "bucketOf",
+    "rctType",
+    "minLength",
+    "params",
+    "bits",
+    "cost",
+    "single",
+    "groupsX",
+    "groupsY",
+    "dcGroupsX",
+    "dcGroupsY",
+    "lz77",
+    "transforms",
+    "component",
+    "inPlace",
+    "horizontal",
+    "beginC",
+    "numC",
+    "nbColors",
+    "nbDeltas",
+    "useGlobalTree",
+    "streamId",
+    "pieces",
+    "rect",
+    "minSymbol",
+    "lengthConfig",
+    "workerReservation",
+    "runtimeBytes",
+    "jobBytes",
+    "inputBytes",
+    "outputBytes",
+    "scratchBytes",
+    "totalBytes",
+    "maxOutputBytes",
+    "memory",
+    "budgetBytes",
+    "externalBytes",
+    "searchBytes",
+    "entropyBytes",
+    "gpuBytes",
+    "metricInputBytes",
+    "referenceBytes",
+    "workers",
+    "cores",
+    "workerRuntimeBytes",
+    "workerJobBytes",
+    "workerInputBytes",
+    "workerOutputBytes",
+    "cacheBytes",
+    "banded",
+    "bandRows",
+    "dct",
+    "exact"
+  ],
+  "helper": {
+    "source": "src/rapier-worker.mjs",
+    "moduleBundle": "dist/rapier-worker.js",
+    "classic": "the running installed worker URL, retained through the job"
+  },
   "source": {
-    "bytes": 1085141,
-    "gzip": 291251,
+    "bytes": 1297035,
+    "gzip": 343585,
     "sha256": {
+      "ac-group.mjs": "38964e6dee8f4520147ec6d34d036f682bfc1427d653745490d8ce87c22eaa75",
       "admit.mjs": "d7138d552ef338446750e4acab99ba22656eed08a5af63fe032103bb8917fab9",
       "afv-basis.mjs": "d8fdb4b1642326fe2f1c26d9a07b5a30aa2336666ddab70d6475a82e1a7de8c5",
       "animation-atlas.mjs": "53565278913dc8589342652f7d2e997613436fcfc726fd09519ed1620de1f862",
       "animation-frames.mjs": "f4577dea2b411ce9ee49f18d1417b3769add15c89456183f5140f59aef980ac5",
       "animation-pool.mjs": "399a591a3863c487749869402cf53e2c9fc64df923fab662d824a96670ec0a14",
       "animation.mjs": "214d0cfe2b5a36b1460b2a992dd6517cdd9a7d2574fa431060de9a4d29a1c4bd",
-      "ans.mjs": "19dd386cff0b76c3c5ead380a07687cd921dc8e2b13844c258e3510b7cf37e2e",
-      "aq.mjs": "d3b4239e01c11a7fe9859e4a8b619108182effb2ed14dc59bf8c57a543776313",
-      "async-job.mjs": "ecafbece2da5b24abbd60210d76385916b75958e7f72aa8eb22798ad5ce9a1d3",
+      "ans.mjs": "4b307001cfb3df5c45585bc97ea2ebbf0b68f0213b3eb23a1d2348e41c23c3d7",
+      "aq.mjs": "97cc29c0eaa9145459a6047ae045c0c318ab04b5a802703fabf4f408e60938e3",
+      "async-job.mjs": "43d9d7775a6a538585e4dc12ac8c7d0cb4f37478bfb6c8221b9cf21443fc8866",
       "atlas-plan.mjs": "8434c6216257e67c4c7583523afdb41c12bdf0302ba365f7052c573cc00a1b8e",
-      "bits.mjs": "bbf84f856dd594323128565114725779fcec76c9d2827e5b51b9926f609c8300",
+      "bits.mjs": "6a95759e670649ac6b23072d6d9a17cda888aea45c2dfdccb528240b398da668",
       "brotli.mjs": "336152e51e72227392774a2d5e60ef1bccdf183a0f9940651c0b795d6ce33db4",
-      "butteraugli.mjs": "2ce97cbc44f4c43f3040a5cc48a385b2b71a84aa4c70221682ee4dd5fea4cd99",
+      "butteraugli.mjs": "24efb715828f3ce564ff50a8f4fbf2603268ad7a39d827c4ccade510447aa256",
       "channel-lossless.mjs": "9e68fa51f97f38c421c0b3d2dc8c3ed8537c21ea9357aaf4e7b7e4e4975c936a",
       "channels.mjs": "a36fb8bebbf85ae3d5b8b04b709b9e29fbd2c025bb8c4579de99a697e838021f",
-      "coefficient-ans.mjs": "33caee8e000724e7cee380de0d0ab5c5f5a1745d545c78168aa016136bc584c4",
+      "coefficient-ans.mjs": "41329a3b6d1012c29de050d5016bd576dffc0415f41a2fd877fc6f36ae3e0788",
       "coefficient-coding.mjs": "9029e71e72d911079692565dd047d17a59430c1433bc5fbbb9aa3fdb46520ed3",
-      "coefficient-effort.mjs": "cdcbac2a73bf3a3042e2ed9e645c5671afb2d10c503387a26a6fe84334a36ab7",
+      "coefficient-effort.mjs": "d84c1fb13fd53cc158b1bd38c99024a5ab04ad8787fcf7a5fca7bc6665a74af2",
       "coefficient-orders.mjs": "dafe34903a1df95780b1ea46209f7b6b6a610f6c52d61525b26921ba4f446aa1",
       "color-info.mjs": "f23bc2f3887cd13a224e1be93fb784f5702213b8c9e460e7b4c50898e5f0f6c2",
       "container-advanced.mjs": "a2e7f840867ad91a7b4875cc32475bf6fc97526decc904d577d9f89153aa31bb",
@@ -35,23 +193,28 @@
       "context-map.mjs": "ecdd76c9d893278d28c8262d893b151cb7a0f60ba577d7a90d26c91619db4561",
       "delivery.mjs": "ece0040bf9ae9c4de59ab15e1bdfd448a1553434f55ef5efe90a99c633b466e0",
       "delta-palette.mjs": "2e90c4e37381436032b384702286b18b7f75a91a3df59c0029622dbe49711ab7",
-      "effort-job.mjs": "6cf1f9120ed8441d8fef0572cf830f69284afc5c9332e83497edaf355e55ff7c",
+      "effort-job.mjs": "12c7bb73f5ab0a0eec505f281334a34d9f9eaf3d931194ac46f008a53b2d9fe5",
       "effort-level.mjs": "c4afa3aba6957353317e8c9f9437038c6274c38f708a9ec2887c4df9328d3106",
       "effort.mjs": "581312d8f72f9a798e7eedb9b240a53d702bc25bcdcf13b6ba14f9d58aae757e",
-      "entropy.mjs": "940cc1cc265529bcc60be95d2e7a13a0f900ecb77dab0baf2e7db3d79cfb45c3",
+      "entropy.mjs": "5088754ea1daf14547ccc0eebff41e62c961d734daad26ef1466d98dd526d778",
       "exact-math.mjs": "6376515047b44643d58fc457d8f7051b9496d5b51c691a2ebeaff2bbafeae8a6",
+      "exact-region-worker.mjs": "cd2271dc6bb5d30076d41f4663005f65f0eb67fdf8eb3b4614dc7e0882675d67",
+      "exact-region.mjs": "06d498d826245bd514f662c5cea7bfb4683ec21553cc5f792d9f5afba4fb7c00",
       "fault.mjs": "f96f769feebf1d58ec1dac5d00a3601b64570f304e93acdb6e1135f3375d60d2",
       "format-fields.mjs": "c96ff0707aa09bc6c006d91d858a04586fdd6b57906d6ea01b4e1f209e07f692",
       "format-still.mjs": "a5fbbcbc43d9985490481c71b584978145ec27a07ca048d077c0ea7ebc43a6d5",
       "format-worker.mjs": "4324044bb4b1dbd271b47296cdbd9d27810765c754364236929c505c6231ed51",
       "frame.mjs": "2bb55ff7f3430b8df4315014c5ff4d24b21cdb2755c06a94a4ddcd6e0152bc20",
       "framing.mjs": "ee4cf9cc5652889c8fa8d9ed5d0cce5c610219309754239a1f05bcf4b6eebfdd",
-      "gpu-butteraugli.mjs": "fa997e37a7337f77024ee24cf403ab78952a5f37c638691091052548e776e53d",
+      "gpu-butteraugli.mjs": "a7f3ddd64a6d328bb5add29c8612cf4cdb1dd7c73a18e9bdfbc008c2a8c1a495",
       "gpu-core.mjs": "182b8dda11c2cedb6b601cda899ff05b944b1a15217c0645f60ef73ec1c89d51",
       "gpu-drive.mjs": "5ce519c10c7659b753f8a0da40fbefb1a6eae52e30c4252ceb0dec8fcd445bc2",
-      "gpu-reconstruct.mjs": "0eafa70f1b596318a78907478cb5200089edc768068e7b29c41939ed72374257",
-      "gpu-ssimulacra2.mjs": "b954460d97bfae9e173f24727bb2a90fbbe5a3e47c427ff930f8fac4a03d522e",
-      "gpu-varblocks.mjs": "45522ba68afceb1e87365d285d19f816603b12f08a88292e62eb82db7038cb10",
+      "gpu-reconstruct.mjs": "c8be7f566777d1ff051a674e182445939b444cda8d05129fedfe050fc9c591e5",
+      "gpu-ssimulacra2-measure.mjs": "dce2e9edc22fb93e9b097b5127cd8bf1c531d0f780b30d9a09659b31f051564e",
+      "gpu-ssimulacra2-native.mjs": "4b21963f49fc3f92eadf80220784b16f04f81859623fdff1330e2d259ea42c1c",
+      "gpu-ssimulacra2.mjs": "6e4ac4d0c0edb5f402a87b6770125df62266f56af0c6bed4c37816ea1dda6c51",
+      "gpu-uniforms.mjs": "3d0810e0aad4d51448c3b8aea3ce45161d789ba32d0709317be0414f0e4a0d48",
+      "gpu-varblocks.mjs": "470e1694512654662188cb122741325be8a459d90d3a6a3104273e3850126f81",
       "graphics-quantize.mjs": "99453fc2af849405ff255d3affc7a3c9b9c24ceb0efae797a5468d937dfe2606",
       "graphics.mjs": "972722ffc77de550711988dd15156eed69efb26dea55415b17f6e9c311ac4078",
       "hybrid.mjs": "68a2efca6eed3be11d09bb6d9b7b8c9ccebe605d2e238a736fe0ad19cfc9b459",
@@ -66,7 +229,7 @@
       "jfif.mjs": "fe273ed75e9d93a8d12da4a120adaf966d498d6616509a71425bf40c8543407c",
       "jpeg-ans-effort.mjs": "51f88f937a69348fc860f199596f8cc24e546da616a316a227cee63c308099de",
       "jpeg-ans.mjs": "91f54001d1a5b2f460dee83ffdf9377e8aad41cad740f2d713869ccef388ddf2",
-      "jpeg-coefficients.mjs": "a720c6f0e8261eee697358ca5e21f1582ac0cbb5af93b009b999234798be7431",
+      "jpeg-coefficients.mjs": "825d987a22768ee9ded8fcc778ddb2e58433ef04abdee12707542b8f4f3bbbcb",
       "jpeg-effort.mjs": "c758868bf36b308f2171e077bd1bcfe454214bcd5de24d7521260cd8e2270525",
       "jpeg-job.mjs": "3fbf7dfe8a7ce052946e31d1bb5830b7f61795f004e6e4244600486c53429406",
       "jpeg-reconstruction.mjs": "719c0024a29956592ad452f7cc0d1bde6d7480ae9d160fc7a27eb06db20d1f1b",
@@ -81,6 +244,7 @@
       "lossless-coding.mjs": "70469fc4f313d13bfbd8cb74dd74264a162d2ce6a96cc76fc3fdb8d90713dd15",
       "lossless.mjs": "cd7e2d9a54b92e1505002ec8c4328f37962ae12e7e31b4b20b12b9f000d3bc83",
       "lossy.mjs": "bd005720f089aa0a2eee290a7940fc077d9b4d8d04ccfa79efb01821fa1051b2",
+      "memory-plan.mjs": "974695f826b85160cc187701021b83627ce1a6c7b046be5fa3c16c75300e9027",
       "metadata.mjs": "84d69a6513b62320dedf68cc17806d21efa1dca1b12303676f02eb88551af193",
       "modular-progressive.mjs": "5261c486ec6bb0c32d205c445da2df2ace258674c88645ef63ca92c968b18d4c",
       "modular.mjs": "d7b17486167b19a87c54d08fdaac01e31f0dc09c30398d915801a7ef5ecb8898",
@@ -98,14 +262,14 @@
       "photo-crop.mjs": "f3d0db00789336e54252a3fac2b924911838ac555aec8c7576984f03045e68f6",
       "photo-dct.mjs": "57c27502d046bf090641e782906ca5598804c56e25679458f0ed3e955c8ee151",
       "photo-extras.mjs": "2c47c9d0eac8596fa441a8ce792a067bdc3892f313cc2a1b84ffd3651206076f",
-      "photo-job.mjs": "fc73b20760349ae329c363a175408d8343c7a756201ab850523b5951600568d1",
+      "photo-job.mjs": "9889ec4c66bbbb9073ba7ebbbb4d26a02b4f832e27d482c1c94d8a13df90215b",
       "photo-layout.mjs": "a44926731fd81a8680e4dd721428eb75d6db0de1c0ea619aeee4686b454c11bf",
       "photo-noise.mjs": "3d560cc189d72958c63805d2ca8b96f0150a4a84a80d554cb41b991df79262a2",
       "photo-plan.mjs": "96e5ff48883e877acfb5e803adb85ec038ac5771d71cb55378be77c479097f34",
       "photo-pool.mjs": "587da689e6bae00e92c16b42a212590173db9eb27f745c3e7a8cef4b3616fe35",
-      "photo-v6-search.mjs": "c747695c869cfe82f1685cb867956835a5dc7de3e578fce93884c57bf2804b4c",
-      "photo-v6.mjs": "fc0d81f0d9728d598483f7ff8646f993126baf16b9c66d1c86d6bffa324cf284",
-      "photo-xyb.mjs": "a9233f811bc8cd9df98d95e4d211e852a216946e0dca28043af3de7f7d2b99da",
+      "photo-v6-search.mjs": "4893029b0b1698f38abefbb602c9dee2004986d6ce21e5b366122b3cb461642a",
+      "photo-v6.mjs": "e9ff45608cb53c1b12eddea55a19cb7158f5fde7de4ad477ef8614e4fa2a5810",
+      "photo-xyb.mjs": "fd02f94e391e52b33626b21c5eae32b46c98ba35ffbb1d9d3d02caa0ba81641f",
       "photo.mjs": "1b0bef13d5eafdf35881c7d80bc2eccc1726c85e3c06b91a9985c8109c2a3ea5",
       "planar-input.mjs": "d46282ddbe7196a3a8526b5e978d0536502aa13ff29a1983b83e97d264ac4e08",
       "planar-planes.mjs": "5d21b2c2f4825a183f8150d8359b0eeb3eafd111e20f2f6611d4f4e6968596bc",
@@ -118,12 +282,14 @@
       "quantization-params.mjs": "b6d25e7ddfc13dc0401743e71d6fd441af5f0485b2cab86ccf3c101cb5fbdc50",
       "rapier-core.mjs": "2f6293f37507e39271059a8df498bfaa94ae09ec9f0811bd1dae5dc7edd1ad42",
       "rapier-encoder.mjs": "fa48e9505c008180ced6708e9c8cbd7e2f4ca197d2c7bc4f6a8fa91b39867a1f",
-      "rapier-still.mjs": "6bd1ac8de1b319fdcf9b97d6aad7d59ebc1fab2dc900a1ee23dee85972518950",
+      "rapier-page.mjs": "cd33489bbfcc7c67f9238cb769e83696b86f532ec166c36a06bce7af450229c1",
+      "rapier-still.mjs": "944489d4fa26f0d55d93a89178e92a70f10c312534fc0ab16532bb2888f43e41",
+      "rapier-worker.mjs": "4c345698a06af7271d69b963a08222ff02792da5b5d191a560365cc18c18f4f2",
       "rapier.mjs": "8b7d04cfe36d3d4821ab13855b4b2cdf23a4a6461c6fe91f6118c5911f9204c0",
       "rct-search.mjs": "d6b6f15924928eaa2b925ca587e0235b6da7fa88c87b5a9f0c77b2b5e2088e2c",
-      "reconstruct.mjs": "c03056deb04b0e533fbb2a7e182f2f666ceaac8191496fc3d147882accc83aa3",
+      "reconstruct.mjs": "4a85deb030ab705511681a711cd12f30b89452e500bc6ceb48c0424227598ae0",
       "sampled.mjs": "69677d51d6398697643f3a776302755d9e2cf2cc7623d3cb27b88cf7bbdbe1bc",
-      "score.mjs": "8ac76364e6371717d3d99d64faa4d577b8a09df7939307826611a7b7c1a882bd",
+      "score.mjs": "31710b90f18521f6e06c7eb3dac7aca849acb93b9cd6aad6bf740029bbd07d9f",
       "screen-local.mjs": "0f4a9059de6305a1955958fc090d9f2acabd5ca6a1a0152fb80091a4c3e7ff2f",
       "screen-lz77.mjs": "f16ac8faf045e89e290b166a83960033dd7027e90ff0d13c9da44f5803d1fe71",
       "screen-patches.mjs": "ce7372877cde8224f52675626610785d5c030dc10c7efaa6686a7ca6eddc4836",
@@ -132,18 +298,20 @@
       "source.mjs": "9bb539bf3de211929492e4b69de6c5b15a40922bdf49d12f5e89b8a68bc48c7e",
       "splines.mjs": "ba10bf7d52eca5c35ae8478b0c53094bc482906e71c95278776091acdcaa994d",
       "squeeze.mjs": "42cfd1b5f9ea6e74f9ed84a4f2e8eeeb3ba11cbc56fefbf888bd27b48df28ca7",
-      "ssimulacra2.mjs": "f43d49970fe9f1c1e63a173c71e8d2e7db3eb57d5c929c42e094fab459f65301",
+      "ssimulacra2.mjs": "9ff21fe27e496a95db8f598342c747b8ce3a8b5f0f0626e87b39760e842d4109",
       "toc-permutation.mjs": "97cf74ffec69138b61f0336deaac622749eae61fd777a84f81b84b2aeb585c3d",
-      "varblocks.mjs": "d674e3be1a8e56cfb68cfdc999a639005f52943774d46ec9152dd656a80db88f",
+      "varblocks.mjs": "a9b250700e5c98d189c738e1b5845a548db80328e447d83c00e89eab7f2b5d5e",
       "vardct-progressive.mjs": "d4c7eaf8e7e8727f9b05aaf2cb67b020ab68351e5f418a8ced0c9e2220f5d272",
-      "vardct-strategies.mjs": "7c7ee3270c25701c6e1175710d5a2f69f9070b650611c5e4314827eb71d0dd0f",
-      "vardct.mjs": "9ea69493b15d6a7b0353112bb5b4be71b3141bdafcb9ad00a5e9ebc79636d553",
+      "vardct-strategies.mjs": "0df68babaf1fdd329c3f2f7e7add577914a50cfd4366448c36fc7b6f36a06ce8",
+      "vardct.mjs": "0c71f1f2199e2a33b38519131479efaf60f02581920ceec8ad79a3e39a2d36c7",
       "wasm.mjs": "22c102605b62be22a8ed8b54295217affffe0487674c99b2c4105004e149c529",
       "weighted-custom.mjs": "3bda40666b8d6e88ebce6ec8203fb3d9803d7143c44894a42688652b8df01da7",
       "weighted-policy.mjs": "85cca86dcea69f985769a1e8d9ed4db2ccd0eb5e8d56c5aecce4cb8c6d10b0c8",
       "weighted.mjs": "7bedd55c6a82249e99dc4d26af19836e16ce6681b1d55249cfcfba9982315770",
+      "worker-assets.mjs": "aa61dba687715e2264b894378c3c6a3f6a7a639db74abc075ad6ef710579e95b",
       "worker-input.mjs": "21b392ca2d905b5528965780f2609f7c46aaace59687d96b125687a49de743bf",
-      "worker.mjs": "64283f1da1a358b03093b569c6b3ff18b5ce33abbff6a506504b45027eec4ed5",
+      "worker-reservation.mjs": "973bdab6a9437e5a20927edcdc11d2ffa1cc585a97abf7e62fa448b0524ab2f8",
+      "worker.mjs": "a4085c42cc3f1ae26e2b65500f092d33476f84ce192e5f46c8d499a228fa47b6",
       "writer.mjs": "155bdd2b36deb42367604e3a06b9c7ea0dc1cda3686003d03319479462c06b6b"
     }
   },
@@ -178,6 +346,7 @@
         "photo-dct",
         "exact-math",
         "photo-xyb",
+        "memory-plan",
         "photo-v6",
         "photo-job",
         "entropy",
@@ -187,10 +356,10 @@
         "index"
       ],
       "alone": {
-        "bytes": 71567,
-        "gzip": 28920,
-        "brotli": 25560,
-        "sha256": "6a07c99af1760d6ded2ce99227cadc7404e55e5a7c4ead657107deb198e42e74",
+        "bytes": 84920,
+        "gzip": 33598,
+        "brotli": 29581,
+        "sha256": "7db8ba9883113ab8c2fc0debc22abf5cc6207da750f920b58f4253ae9b62982b",
         "compress": {
           "passes": 2,
           "module": true
@@ -242,10 +411,10 @@
         "jpeg"
       ],
       "alone": {
-        "bytes": 83068,
-        "gzip": 32866,
-        "brotli": 28652,
-        "sha256": "00e9c6e258d247a898817a4b31a7b95e48eda38c03bca3bae2ff187707610682",
+        "bytes": 90199,
+        "gzip": 35232,
+        "brotli": 30640,
+        "sha256": "afc2ffae2aed745725d37e61409277a4794a2c8228bac5fa98e9b43309014e6a",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -253,9 +422,9 @@
         }
       },
       "added": {
-        "bytes": 45631,
-        "gzip": 17065,
-        "brotli": 14307
+        "bytes": 46255,
+        "gzip": 17343,
+        "brotli": 14546
       },
       "provedByteCases": 34,
       "provedNativeCases": 0
@@ -288,6 +457,7 @@
         "photo-dct",
         "exact-math",
         "photo-xyb",
+        "memory-plan",
         "photo-v6",
         "photo-job",
         "afv-basis",
@@ -312,14 +482,24 @@
         "reconstruct",
         "butteraugli",
         "ssimulacra2",
+        "worker-assets",
+        "worker-reservation",
+        "exact-region",
+        "async-job",
+        "gpu-uniforms",
+        "gpu-butteraugli",
+        "gpu-ssimulacra2-measure",
+        "gpu-ssimulacra2-native",
+        "gpu-reconstruct",
+        "ac-group",
         "photo-v6-search",
         "photo"
       ],
       "alone": {
-        "bytes": 158152,
-        "gzip": 60943,
-        "brotli": 52486,
-        "sha256": "9f635bd287a59bf7686f1c239f261690d4481b6254bd7b90cf89acd1b39064a0",
+        "bytes": 237049,
+        "gzip": 87308,
+        "brotli": 74610,
+        "sha256": "20c52428e9d9dbc8685ff1be534b81b8378d29f24f7da7c7a28941adca8b66db",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -328,9 +508,9 @@
         }
       },
       "added": {
-        "bytes": 92416,
-        "gzip": 34340,
-        "brotli": 28858
+        "bytes": 158378,
+        "gzip": 56183,
+        "brotli": 47017
       },
       "provedByteCases": 85,
       "provedNativeCases": 10
@@ -349,12 +529,13 @@
       ],
       "modules": [
         "bits",
+        "memory-plan",
+        "fault",
         "exact-math",
         "kernel-hooks",
         "photo-dct",
         "photo-xyb",
         "photo-v6",
-        "fault",
         "prefix",
         "modular",
         "screen-lz77",
@@ -407,10 +588,10 @@
         "photo-advanced"
       ],
       "alone": {
-        "bytes": 188097,
-        "gzip": 70042,
-        "brotli": 59401,
-        "sha256": "ddf641b7b79f639e46de0fd2e9d18ff3d4d3ad4d8c0bb560defeaa1aa2bea828",
+        "bytes": 203517,
+        "gzip": 75107,
+        "brotli": 63699,
+        "sha256": "e223f0a4f1a0486f20a9a0d8b75ba40b02bf92ebced7a1ce25e0bb913fc261df",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -419,9 +600,9 @@
         }
       },
       "added": {
-        "bytes": 125906,
-        "gzip": 44476,
-        "brotli": 36723
+        "bytes": 128525,
+        "gzip": 45240,
+        "brotli": 37079
       },
       "provedByteCases": 239,
       "provedNativeCases": 10
@@ -453,6 +634,7 @@
         "photo-dct",
         "exact-math",
         "photo-xyb",
+        "memory-plan",
         "photo-v6",
         "photo-job",
         "afv-basis",
@@ -488,10 +670,10 @@
         "photo-plan"
       ],
       "alone": {
-        "bytes": 122965,
-        "gzip": 45479,
-        "brotli": 38940,
-        "sha256": "5914dc66a63791b8378a299f1deb0a46c667071bcb8d67626d9c49105956f310",
+        "bytes": 129746,
+        "gzip": 47485,
+        "brotli": 40754,
+        "sha256": "0baaaba655ec136a7e89509ff47b84271a12e63653012b92932eb71c69b1a2d1",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -500,9 +682,9 @@
         }
       },
       "added": {
-        "bytes": 77238,
-        "gzip": 26662,
-        "brotli": 22088
+        "bytes": 77807,
+        "gzip": 26872,
+        "brotli": 22089
       },
       "provedByteCases": 39,
       "provedNativeCases": 0
@@ -527,6 +709,7 @@
         "icc-profile",
         "icc-write",
         "admit",
+        "memory-plan",
         "exact-math",
         "photo-dct",
         "photo-xyb",
@@ -579,10 +762,10 @@
         "photo-noise"
       ],
       "alone": {
-        "bytes": 218482,
-        "gzip": 82737,
-        "brotli": 69381,
-        "sha256": "99ad96ba62717ea122dd8e3a5498046af37fdd24a20e14e98118a4ee5d1b146f",
+        "bytes": 234007,
+        "gzip": 88034,
+        "brotli": 73708,
+        "sha256": "eef4f2bebeb829ccdf5581327963c01ba05ed9a22a06b6cfc6e5f1aeab5ab508",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -590,9 +773,9 @@
         }
       },
       "added": {
-        "bytes": 154184,
-        "gzip": 56615,
-        "brotli": 46007
+        "bytes": 156809,
+        "gzip": 57488,
+        "brotli": 46370
       },
       "provedByteCases": 99,
       "provedNativeCases": 10
@@ -653,19 +836,19 @@
         "hybrid"
       ],
       "alone": {
-        "bytes": 169383,
-        "gzip": 63835,
-        "brotli": 54882,
-        "sha256": "2a3a44a09474967d9463464304e8eb13b289ebdaca10ac9eac7a33bfe77bee1c",
+        "bytes": 178382,
+        "gzip": 66633,
+        "brotli": 57163,
+        "sha256": "dba07c30f6ea10e9d2ff8861ac210676ce6e301ac5b9d90b61ad38236d128cbf",
         "compress": {
           "passes": 2,
           "module": true
         }
       },
       "added": {
-        "bytes": 118302,
-        "gzip": 43247,
-        "brotli": 36109
+        "bytes": 120820,
+        "gzip": 44114,
+        "brotli": 36565
       },
       "provedByteCases": 15,
       "provedNativeCases": 0
@@ -710,10 +893,10 @@
         "graphics"
       ],
       "alone": {
-        "bytes": 104933,
-        "gzip": 40663,
-        "brotli": 35206,
-        "sha256": "a32db661bfdbb988cc3dc2a068ad12f5267b496d0283dde232e0aa5d499b72b8",
+        "bytes": 108150,
+        "gzip": 41128,
+        "brotli": 35594,
+        "sha256": "68315ccdfeb89b27693d2a1514c22abd5c6e2c8aa607114e3c4ab6dad11c1b4e",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -721,9 +904,9 @@
         }
       },
       "added": {
-        "bytes": 84377,
-        "gzip": 32233,
-        "brotli": 26968
+        "bytes": 85864,
+        "gzip": 32578,
+        "brotli": 27092
       },
       "provedByteCases": 18,
       "provedNativeCases": 0
@@ -755,10 +938,10 @@
         "icc"
       ],
       "alone": {
-        "bytes": 37467,
-        "gzip": 14780,
-        "brotli": 13126,
-        "sha256": "9a60e08b9d55fe5e68a6c1d2e604af8b931ba89804da78eff0296b8710707ef6",
+        "bytes": 38802,
+        "gzip": 15103,
+        "brotli": 13385,
+        "sha256": "8a04c544cd7cfd380425b8d82bd592e1b60788bcb071ab5e778f2119fde35c65",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -767,9 +950,9 @@
         }
       },
       "added": {
-        "bytes": 6214,
-        "gzip": 2108,
-        "brotli": 1561
+        "bytes": 6273,
+        "gzip": 2088,
+        "brotli": 1584
       },
       "provedByteCases": 172,
       "provedNativeCases": 10
@@ -810,10 +993,10 @@
         "opsin"
       ],
       "alone": {
-        "bytes": 74089,
-        "gzip": 28782,
-        "brotli": 24819,
-        "sha256": "dd054aff96cd719697312feeecb0e4a106433ecfd2a2c2d3768a3c6e81275ad1",
+        "bytes": 76151,
+        "gzip": 29274,
+        "brotli": 25337,
+        "sha256": "86bbb5037f3286da4a706ce6a1794e9a0c124a1ff499a0e1ce014f6ff4dd23a6",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -821,9 +1004,9 @@
         }
       },
       "added": {
-        "bytes": 51827,
-        "gzip": 19359,
-        "brotli": 16306
+        "bytes": 52068,
+        "gzip": 19573,
+        "brotli": 16301
       },
       "provedByteCases": 38,
       "provedNativeCases": 0
@@ -865,10 +1048,10 @@
         "delta-palette"
       ],
       "alone": {
-        "bytes": 87698,
-        "gzip": 34040,
-        "brotli": 29733,
-        "sha256": "212cf402841dcd3b73fe52c18da4850d48d167eb946d2b839b52509b33ed9e5e",
+        "bytes": 90553,
+        "gzip": 34487,
+        "brotli": 30131,
+        "sha256": "c6cc3bbb0246fb7ca2b2b014cd94fc3e14b4afd93a823e98f5369cbd1504a4ca",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -877,9 +1060,9 @@
         }
       },
       "added": {
-        "bytes": 56564,
-        "gzip": 21249,
-        "brotli": 17978
+        "bytes": 58107,
+        "gzip": 21451,
+        "brotli": 17945
       },
       "provedByteCases": 32,
       "provedNativeCases": 0
@@ -911,6 +1094,7 @@
         "photo-dct",
         "exact-math",
         "photo-xyb",
+        "memory-plan",
         "photo-v6",
         "photo-job",
         "entropy",
@@ -928,19 +1112,19 @@
         "splines"
       ],
       "alone": {
-        "bytes": 89947,
-        "gzip": 35847,
-        "brotli": 31278,
-        "sha256": "50a345e814f56b55fe867bfd8c52cdb49aaf3bea5b5a1f9a82cf2d4511fd439d",
+        "bytes": 98556,
+        "gzip": 38620,
+        "brotli": 33587,
+        "sha256": "29b460b9f9ce6cd21c85b41b6c01ddc3299e2575f05cb0a50e04013904c2af4c",
         "compress": {
           "passes": 2,
           "module": true
         }
       },
       "added": {
-        "bytes": 38075,
-        "gzip": 14402,
-        "brotli": 12233
+        "bytes": 39851,
+        "gzip": 14924,
+        "brotli": 12674
       },
       "provedByteCases": 9,
       "provedNativeCases": 0
@@ -985,21 +1169,20 @@
         "channels"
       ],
       "alone": {
-        "bytes": 85704,
-        "gzip": 31704,
-        "brotli": 27694,
-        "sha256": "c116e8ae86f27158738eab58e52a7f326beb5df50fce25845f4dec2c885fcbb6",
+        "bytes": 87785,
+        "gzip": 32072,
+        "brotli": 28078,
+        "sha256": "0df6300963f64c1e461130815d4acb19c4130ad53a2bb1c1a15de98aa1ae6804",
         "compress": {
           "passes": 2,
-          "hoist_funs": true,
-          "hoist_vars": true,
+          "inline": 1,
           "module": true
         }
       },
       "added": {
-        "bytes": 68512,
-        "gzip": 24774,
-        "brotli": 20808
+        "bytes": 69183,
+        "gzip": 24999,
+        "brotli": 20781
       },
       "provedByteCases": 400,
       "provedNativeCases": 0
@@ -1045,10 +1228,10 @@
         "layers"
       ],
       "alone": {
-        "bytes": 96286,
-        "gzip": 35140,
-        "brotli": 30687,
-        "sha256": "74fe5ace42ca9b870e579a1659f6b8efeede380ce93052930c5e6856d9a5523e",
+        "bytes": 98346,
+        "gzip": 35517,
+        "brotli": 31005,
+        "sha256": "777fa4b49b7cfaa834b80a1f20fa1361aa60b61fa3a587a26fc205f8bf6b8c8c",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1057,9 +1240,9 @@
         }
       },
       "added": {
-        "bytes": 79038,
-        "gzip": 28294,
-        "brotli": 23769
+        "bytes": 79772,
+        "gzip": 28512,
+        "brotli": 23734
       },
       "provedByteCases": 58,
       "provedNativeCases": 0
@@ -1119,10 +1302,10 @@
         "patches"
       ],
       "alone": {
-        "bytes": 144635,
-        "gzip": 53730,
-        "brotli": 45946,
-        "sha256": "be15e6dcfb8f0210e49edd1ad164ef1f12b86bb6c429ca2e9e35ee5f258c2e0f",
+        "bytes": 148347,
+        "gzip": 54465,
+        "brotli": 46512,
+        "sha256": "4f950218feb258ab08cf78f2693b494f8808f5cf4d5c68b10c5c123f4c622c75",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -1130,9 +1313,9 @@
         }
       },
       "added": {
-        "bytes": 108920,
-        "gzip": 39536,
-        "brotli": 32810
+        "bytes": 110462,
+        "gzip": 39871,
+        "brotli": 32816
       },
       "provedByteCases": 73,
       "provedNativeCases": 0
@@ -1182,19 +1365,21 @@
         "jpeg-ans"
       ],
       "alone": {
-        "bytes": 114214,
-        "gzip": 44543,
-        "brotli": 38631,
-        "sha256": "d0eaca691cf981b440e95d4757954c3c92004172acb3efd81b74030c00cc27a0",
+        "bytes": 121941,
+        "gzip": 47005,
+        "brotli": 40760,
+        "sha256": "999441abbf749ab85c7717e0bad3299efd53ddb2fd02cb1a07880b6c3ee727bd",
         "compress": {
           "passes": 2,
+          "hoist_funs": true,
+          "hoist_vars": true,
           "module": true
         }
       },
       "added": {
-        "bytes": 76480,
-        "gzip": 28771,
-        "brotli": 24126
+        "bytes": 78096,
+        "gzip": 29217,
+        "brotli": 24493
       },
       "provedByteCases": 34,
       "provedNativeCases": 0
@@ -1226,6 +1411,7 @@
         "photo-dct",
         "exact-math",
         "photo-xyb",
+        "memory-plan",
         "photo-v6",
         "photo-job",
         "afv-basis",
@@ -1250,14 +1436,24 @@
         "reconstruct",
         "butteraugli",
         "ssimulacra2",
+        "worker-assets",
+        "worker-reservation",
+        "exact-region",
+        "async-job",
+        "gpu-uniforms",
+        "gpu-butteraugli",
+        "gpu-ssimulacra2-measure",
+        "gpu-ssimulacra2-native",
+        "gpu-reconstruct",
+        "ac-group",
         "photo-v6-search",
         "photo-ans"
       ],
       "alone": {
-        "bytes": 158052,
-        "gzip": 60898,
-        "brotli": 52491,
-        "sha256": "51c1d6c97c0c597d767a936dad37b6a4ca341050b2b6f55db2e550354604230f",
+        "bytes": 236949,
+        "gzip": 87276,
+        "brotli": 74472,
+        "sha256": "98efeadd447d8cbeb514eccf5ebe36b63463b2bc2b88f75be2b07bda314526f5",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1266,9 +1462,9 @@
         }
       },
       "added": {
-        "bytes": 92311,
-        "gzip": 34392,
-        "brotli": 28795
+        "bytes": 158273,
+        "gzip": 56173,
+        "brotli": 46922
       },
       "provedByteCases": 85,
       "provedNativeCases": 10
@@ -1303,6 +1499,7 @@
         "photo-dct",
         "exact-math",
         "photo-xyb",
+        "memory-plan",
         "photo-v6",
         "photo-job",
         "afv-basis",
@@ -1327,6 +1524,15 @@
         "reconstruct",
         "butteraugli",
         "ssimulacra2",
+        "worker-assets",
+        "worker-reservation",
+        "exact-region",
+        "gpu-uniforms",
+        "gpu-butteraugli",
+        "gpu-ssimulacra2-measure",
+        "gpu-ssimulacra2-native",
+        "gpu-reconstruct",
+        "ac-group",
         "photo-v6-search",
         "local",
         "screen",
@@ -1344,10 +1550,10 @@
         "animation"
       ],
       "alone": {
-        "bytes": 227470,
-        "gzip": 86778,
-        "brotli": 73794,
-        "sha256": "bff1369206c124eaf467ae18bad3774e5931ef67b47f1df5950c2bbfa38dcee4",
+        "bytes": 308199,
+        "gzip": 113580,
+        "brotli": 95867,
+        "sha256": "47b174ced601560579ea626e47ca1c0885f35b0932eacaba0d2520682bf3d1ff",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1356,9 +1562,9 @@
         }
       },
       "added": {
-        "bytes": 156500,
-        "gzip": 58089,
-        "brotli": 48376
+        "bytes": 223875,
+        "gzip": 80185,
+        "brotli": 66504
       },
       "provedByteCases": 6,
       "provedNativeCases": 0
@@ -1393,6 +1599,7 @@
         "photo-dct",
         "exact-math",
         "photo-xyb",
+        "memory-plan",
         "photo-v6",
         "photo-job",
         "afv-basis",
@@ -1417,6 +1624,15 @@
         "reconstruct",
         "butteraugli",
         "ssimulacra2",
+        "worker-assets",
+        "worker-reservation",
+        "exact-region",
+        "gpu-uniforms",
+        "gpu-butteraugli",
+        "gpu-ssimulacra2-measure",
+        "gpu-ssimulacra2-native",
+        "gpu-reconstruct",
+        "ac-group",
         "photo-v6-search",
         "local",
         "screen",
@@ -1436,19 +1652,20 @@
         "animation-atlas"
       ],
       "alone": {
-        "bytes": 265492,
-        "gzip": 102380,
-        "brotli": 85599,
-        "sha256": "0f38f0e55d12ab856cf24b2795f9311b4f7f9df0456cec581501223d60a2665e",
+        "bytes": 387625,
+        "gzip": 142590,
+        "brotli": 118725,
+        "sha256": "ef8ce10a0a575b869de8988c55a0d2a174c249eb1fae722b4dba5c504b515b51",
         "compress": {
           "passes": 2,
+          "inline": 1,
           "module": true
         }
       },
       "added": {
-        "bytes": 194285,
-        "gzip": 73540,
-        "brotli": 60159
+        "bytes": 303068,
+        "gzip": 109086,
+        "brotli": 89241
       },
       "provedByteCases": 50,
       "provedNativeCases": 0
@@ -1483,6 +1700,7 @@
         "photo-dct",
         "exact-math",
         "photo-xyb",
+        "memory-plan",
         "photo-v6",
         "photo-job",
         "afv-basis",
@@ -1507,6 +1725,16 @@
         "reconstruct",
         "butteraugli",
         "ssimulacra2",
+        "worker-assets",
+        "worker-reservation",
+        "exact-region",
+        "async-job",
+        "gpu-uniforms",
+        "gpu-butteraugli",
+        "gpu-ssimulacra2-measure",
+        "gpu-ssimulacra2-native",
+        "gpu-reconstruct",
+        "ac-group",
         "photo-v6-search",
         "local",
         "screen",
@@ -1520,10 +1748,10 @@
         "effort"
       ],
       "alone": {
-        "bytes": 205204,
-        "gzip": 78503,
-        "brotli": 66922,
-        "sha256": "764df91a9058e20d6e57052fe163c3a7ec4a2f0310640bd689b2b95baa642c42",
+        "bytes": 285929,
+        "gzip": 105365,
+        "brotli": 89132,
+        "sha256": "80b011ea2f1e613b82bb2a9be0b037da459a6eaafcdf3a1205750a5423525b36",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1532,9 +1760,9 @@
         }
       },
       "added": {
-        "bytes": 133637,
-        "gzip": 49583,
-        "brotli": 41362
+        "bytes": 201009,
+        "gzip": 71767,
+        "brotli": 59551
       },
       "provedByteCases": 169,
       "provedNativeCases": 10
@@ -1564,10 +1792,10 @@
         "metadata"
       ],
       "alone": {
-        "bytes": 31215,
-        "gzip": 12592,
-        "brotli": 11025,
-        "sha256": "6be466a7ef4bc9a79fb350bb71e985f88ba4c3e1b5d4b8862b4516d5452445c0",
+        "bytes": 32055,
+        "gzip": 12774,
+        "brotli": 11216,
+        "sha256": "e2dcaf527fe93156574f85135b1eb1a01771503b6142b3e7bcf51a0f2ecfcdb9",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1576,9 +1804,9 @@
         }
       },
       "added": {
-        "bytes": 32542,
-        "gzip": 12745,
-        "brotli": 10771
+        "bytes": 32586,
+        "gzip": 12924,
+        "brotli": 10777
       },
       "provedByteCases": 3,
       "provedNativeCases": 0
@@ -1598,10 +1826,10 @@
         "brotli"
       ],
       "alone": {
-        "bytes": 12269,
-        "gzip": 5484,
-        "brotli": 4771,
-        "sha256": "c8b692e02ec78336c40f89ad64803140f3bd0b1cbbefc119f681ed3b6ac82dab",
+        "bytes": 12737,
+        "gzip": 5612,
+        "brotli": 4895,
+        "sha256": "c6e8e108d173c7a59c2d78282ff2d1e909d3c0814df4b7cdf4cb52fbd5af4a5f",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1610,9 +1838,9 @@
         }
       },
       "added": {
-        "bytes": 23406,
-        "gzip": 9479,
-        "brotli": 7928
+        "bytes": 23390,
+        "gzip": 9654,
+        "brotli": 7899
       },
       "provedByteCases": 56,
       "provedNativeCases": 0
@@ -1640,10 +1868,10 @@
         "container-stream"
       ],
       "alone": {
-        "bytes": 7499,
-        "gzip": 3358,
-        "brotli": 2835,
-        "sha256": "c5b55f5cf5875b9818fc6caf4697630089287233bab3f61b815746a590657cce",
+        "bytes": 7554,
+        "gzip": 3392,
+        "brotli": 2861,
+        "sha256": "691a945bd24f61876a6dd770163bbb312ea57e7249a8677fafebe901a25091f3",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1653,8 +1881,8 @@
       },
       "added": {
         "bytes": 5418,
-        "gzip": 1890,
-        "brotli": 1467
+        "gzip": 1866,
+        "brotli": 1515
       },
       "provedByteCases": 6,
       "provedNativeCases": 0
@@ -1690,10 +1918,10 @@
         "container-advanced"
       ],
       "alone": {
-        "bytes": 42346,
-        "gzip": 15778,
-        "brotli": 13866,
-        "sha256": "61ebecd9feb146f96f41194b0c1d8fc48fff175bb093b06ee4f62b1cbee32a20",
+        "bytes": 43172,
+        "gzip": 15961,
+        "brotli": 14079,
+        "sha256": "a54a034b29ebc73f86263fed7c73b21e125cdcf993e8aacb63c9e68291de2262",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -1701,9 +1929,9 @@
         }
       },
       "added": {
-        "bytes": 43537,
-        "gzip": 15782,
-        "brotli": 13372
+        "bytes": 43512,
+        "gzip": 15908,
+        "brotli": 13375
       },
       "provedByteCases": 104,
       "provedNativeCases": 0
@@ -1737,10 +1965,10 @@
         "progressive-container"
       ],
       "alone": {
-        "bytes": 54363,
-        "gzip": 20337,
-        "brotli": 17893,
-        "sha256": "95ac03220838867b378ddad887f2c27b52cf5d0328b1cbe2c1a8eae2bff799bf",
+        "bytes": 55212,
+        "gzip": 20520,
+        "brotli": 18041,
+        "sha256": "2fa851c0d8c44ee6119478fb66f9f54b6357481a0b99a3b4cecc370615c2f3fe",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -1748,9 +1976,9 @@
         }
       },
       "added": {
-        "bytes": 55406,
-        "gzip": 20329,
-        "brotli": 17277
+        "bytes": 55396,
+        "gzip": 20448,
+        "brotli": 17241
       },
       "provedByteCases": 90,
       "provedNativeCases": 0
@@ -1782,10 +2010,10 @@
         "delivery"
       ],
       "alone": {
-        "bytes": 48052,
-        "gzip": 17920,
-        "brotli": 15759,
-        "sha256": "1c6802e75c2ada0c35f52d86dad8c47e89ecd1138b7384374b7f60f5d8eb2474",
+        "bytes": 48896,
+        "gzip": 18096,
+        "brotli": 15923,
+        "sha256": "8aceca6b3ec0ad3d0ff054f4628ca3a3ad9fa24f192dc9229675bc3316e730e6",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -1793,9 +2021,9 @@
         }
       },
       "added": {
-        "bytes": 49243,
-        "gzip": 17919,
-        "brotli": 15210
+        "bytes": 49228,
+        "gzip": 18039,
+        "brotli": 15151
       },
       "provedByteCases": 65,
       "provedNativeCases": 0
@@ -1834,6 +2062,7 @@
         "photo-dct",
         "exact-math",
         "photo-xyb",
+        "memory-plan",
         "photo-v6",
         "photo-job",
         "afv-basis",
@@ -1857,6 +2086,16 @@
         "reconstruct",
         "butteraugli",
         "ssimulacra2",
+        "worker-assets",
+        "worker-reservation",
+        "exact-region",
+        "async-job",
+        "gpu-uniforms",
+        "gpu-butteraugli",
+        "gpu-ssimulacra2-measure",
+        "gpu-ssimulacra2-native",
+        "gpu-reconstruct",
+        "ac-group",
         "photo-v6-search",
         "local",
         "screen",
@@ -1871,10 +2110,10 @@
         "wasm"
       ],
       "alone": {
-        "bytes": 227681,
-        "gzip": 88190,
-        "brotli": 74854,
-        "sha256": "b34feaacf5d69dd1e12c67d820c48dce8bd34c2762c1ac3b38bcfb0473834e20",
+        "bytes": 308603,
+        "gzip": 115068,
+        "brotli": 97120,
+        "sha256": "c2888b170fec66d96c7441d89cff73df2381a8553f8356fd459c2323ad70d5db",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1883,9 +2122,9 @@
         }
       },
       "added": {
-        "bytes": 156634,
-        "gzip": 59462,
-        "brotli": 49533
+        "bytes": 224203,
+        "gzip": 81762,
+        "brotli": 67768
       },
       "provedByteCases": 169,
       "provedNativeCases": 10
@@ -1901,10 +2140,10 @@
         "image"
       ],
       "alone": {
-        "bytes": 2001,
-        "gzip": 1184,
-        "brotli": 922,
-        "sha256": "65b3b48a685bc93a36d2f91133732a1584b08ca01759f5d43b3b628ac8652ba3",
+        "bytes": 2024,
+        "gzip": 1200,
+        "brotli": 935,
+        "sha256": "816f58fa60366503ea12da86772b5c40d1ea6e2e37a9ecbc7ffcfb8affcb2241",
         "compress": {
           "passes": 2,
           "hoist_funs": true,
@@ -1914,8 +2153,8 @@
       },
       "added": {
         "bytes": 906,
-        "gzip": 420,
-        "brotli": 292
+        "gzip": 409,
+        "brotli": 271
       },
       "provedByteCases": 4,
       "provedNativeCases": 0
@@ -1954,6 +2193,7 @@
         "photo-dct",
         "exact-math",
         "photo-xyb",
+        "memory-plan",
         "photo-v6",
         "photo-job",
         "afv-basis",
@@ -1977,6 +2217,16 @@
         "reconstruct",
         "butteraugli",
         "ssimulacra2",
+        "worker-assets",
+        "worker-reservation",
+        "exact-region",
+        "async-job",
+        "gpu-uniforms",
+        "gpu-butteraugli",
+        "gpu-ssimulacra2-measure",
+        "gpu-ssimulacra2-native",
+        "gpu-reconstruct",
+        "ac-group",
         "photo-v6-search",
         "local",
         "screen",
@@ -1998,10 +2248,8 @@
         "jpeg-ans-effort",
         "jpeg-ans",
         "photo",
-        "async-job",
         "photo-pool",
-        "gpu-butteraugli",
-        "gpu-reconstruct",
+        "worker-input",
         "gpu-varblocks",
         "rapier-still",
         "framing",
@@ -2009,7 +2257,6 @@
         "animation",
         "animation-pool",
         "rapier-encoder",
-        "worker-input",
         "worker",
         "image-source",
         "color-info",
@@ -2060,10 +2307,10 @@
         "rapier"
       ],
       "alone": {
-        "bytes": 578601,
-        "gzip": 214402,
-        "brotli": 174163,
-        "sha256": "230c22be2f4840d3f95509f8f71d1c3ac597e272008ecd5a899fa4048edc3ec1",
+        "bytes": 704216,
+        "gzip": 255240,
+        "brotli": 206736,
+        "sha256": "71983dbf656a6804b57b3fd85da9cf046298f2ae1dd492beabd6e0a05aca9c43",
         "compress": {
           "passes": 2,
           "inline": 1,
@@ -2071,9 +2318,9 @@
         }
       },
       "added": {
-        "bytes": 507343,
-        "gzip": 184968,
-        "brotli": 148249
+        "bytes": 619606,
+        "gzip": 221126,
+        "brotli": 176811
       },
       "provedByteCases": 404,
       "provedNativeCases": 10
@@ -2188,17 +2435,17 @@
       "./image",
       "./rapier"
     ],
-    "bytes": 586659,
-    "gzip": 215724,
-    "brotli": 174975
+    "bytes": 712358,
+    "gzip": 256371,
+    "brotli": 207669
   },
   "rapierWorker": {
     "file": "dist/rapier-worker.js",
-    "version": "6.1.0",
-    "bytes": 578260,
-    "gzip": 214332,
-    "brotli": 174004,
-    "sha256": "6829b5ddeb0296bbb62d68bfa61b64014731b748191ff646744ad93f9bb37fa8",
+    "version": "6.2.0-integration.20261026.1",
+    "bytes": 703854,
+    "gzip": 255146,
+    "brotli": 206553,
+    "sha256": "c4b04550e29dd4a8366d841e5bdb2b8f1822bf8fa8e190ee19b7753f154c8386",
     "modules": [
       "kernel-hooks.mjs",
       "weighted-policy.mjs",
@@ -2222,6 +2469,7 @@
       "photo-dct.mjs",
       "exact-math.mjs",
       "photo-xyb.mjs",
+      "memory-plan.mjs",
       "photo-v6.mjs",
       "photo-job.mjs",
       "afv-basis.mjs",
@@ -2245,6 +2493,16 @@
       "reconstruct.mjs",
       "butteraugli.mjs",
       "ssimulacra2.mjs",
+      "worker-assets.mjs",
+      "worker-reservation.mjs",
+      "exact-region.mjs",
+      "async-job.mjs",
+      "gpu-uniforms.mjs",
+      "gpu-butteraugli.mjs",
+      "gpu-ssimulacra2-measure.mjs",
+      "gpu-ssimulacra2-native.mjs",
+      "gpu-reconstruct.mjs",
+      "ac-group.mjs",
       "photo-v6-search.mjs",
       "local.mjs",
       "screen.mjs",
@@ -2266,10 +2524,8 @@
       "jpeg-ans-effort.mjs",
       "jpeg-ans.mjs",
       "photo.mjs",
-      "async-job.mjs",
       "photo-pool.mjs",
-      "gpu-butteraugli.mjs",
-      "gpu-reconstruct.mjs",
+      "worker-input.mjs",
       "gpu-varblocks.mjs",
       "rapier-still.mjs",
       "framing.mjs",
@@ -2277,7 +2533,6 @@
       "animation.mjs",
       "animation-pool.mjs",
       "rapier-encoder.mjs",
-      "worker-input.mjs",
       "worker.mjs",
       "image-source.mjs",
       "color-info.mjs",
@@ -2330,9 +2585,9 @@
   },
   "gpuCore": {
     "file": "dist/gpu-core.mjs",
-    "bytes": 13902,
-    "gzip": 6080,
-    "sha256": "161dbeba376dc787b29c3595c99ca90a3b70f64bb8aafa8ff12abd4af8c9c862",
+    "bytes": 13925,
+    "gzip": 6096,
+    "sha256": "09565fcb019f76bca94c79298d3f30556ecd8c2f685e03bf5226a946f4ad8911",
     "namedBy": [
       "dist/rapier-jxl.min.mjs",
       "dist/animation.min.mjs",
@@ -2344,11 +2599,11 @@
   },
   "rapierStillWorker": {
     "file": "dist/rapier-still-worker.js",
-    "version": "6.1.0",
-    "bytes": 392929,
-    "gzip": 149572,
-    "brotli": 123975,
-    "sha256": "113def9511f822fb34afe28cc51347c9db23075ad5947c4e47d0d893f2b891f4",
+    "version": "6.2.0-integration.20261026.1",
+    "bytes": 517668,
+    "gzip": 190373,
+    "brotli": 156888,
+    "sha256": "6d01a859153d66875483fd2fa3cd0134a611d36f2d5c843a84486b1ad474ec27",
     "modules": [
       "kernel-hooks.mjs",
       "weighted-policy.mjs",
@@ -2372,6 +2627,7 @@
       "photo-dct.mjs",
       "exact-math.mjs",
       "photo-xyb.mjs",
+      "memory-plan.mjs",
       "photo-v6.mjs",
       "photo-job.mjs",
       "afv-basis.mjs",
@@ -2395,6 +2651,16 @@
       "reconstruct.mjs",
       "butteraugli.mjs",
       "ssimulacra2.mjs",
+      "worker-assets.mjs",
+      "worker-reservation.mjs",
+      "exact-region.mjs",
+      "async-job.mjs",
+      "gpu-uniforms.mjs",
+      "gpu-butteraugli.mjs",
+      "gpu-ssimulacra2-measure.mjs",
+      "gpu-ssimulacra2-native.mjs",
+      "gpu-reconstruct.mjs",
+      "ac-group.mjs",
       "photo-v6-search.mjs",
       "local.mjs",
       "screen.mjs",
@@ -2416,13 +2682,10 @@
       "jpeg-ans-effort.mjs",
       "jpeg-ans.mjs",
       "photo.mjs",
-      "async-job.mjs",
       "photo-pool.mjs",
-      "gpu-butteraugli.mjs",
-      "gpu-reconstruct.mjs",
+      "worker-input.mjs",
       "gpu-varblocks.mjs",
       "rapier-still.mjs",
-      "worker-input.mjs",
       "worker.mjs",
       "image-source.mjs",
       "color-info.mjs",

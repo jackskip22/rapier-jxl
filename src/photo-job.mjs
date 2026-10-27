@@ -17,9 +17,9 @@ export function photoJobSteps(data, width, height, options, coefficients, search
   const filter = admitPhotoFilter(options);
   admitPixels(data, width, height, PHOTO_LIMITS);
   const samples = admitSampleFormat(data, options);
-  if (samples.iccSpace) return iccShape(data, samples.iccSpace, photoSteps(data, width, height, quality, samples.iccSpace, effort, coefficients, filter, search));
+  if (samples.iccSpace) return iccShape(data, samples.iccSpace, photoSteps(data, width, height, quality, samples.iccSpace, effort, coefficients, filter, search, undefined, options?.memory));
   if (!samples.native8) return nativeSteps(data, width, height, {quality, samples, effort});
-  return photoSteps(data, width, height, quality, colorSpace, effort, coefficients, filter, search, gpu);
+  return photoSteps(data, width, height, quality, colorSpace, effort, coefficients, filter, search, gpu, options?.memory);
 }
 
 export function admitPhotoFilter(options) {
@@ -29,12 +29,12 @@ export function admitPhotoFilter(options) {
   return filter;
 }
 
-export function* photoSteps(data, width, height, quality, colorSpace, effort, encodeCoefficients, filter, search, gpu) {
+export function* photoSteps(data, width, height, quality, colorSpace, effort, encodeCoefficients, filter, search, gpu, memory) {
   if (quality >= 100) return yield* losslessSteps(data, width, height, {colorSpace});
-  if (colorSpace === 'srgb' && preferXYB(data, width, height)) return yield* photoV6Steps(data, width, height, quality, effort, encodeCoefficients, search, undefined, gpu);
+  if (colorSpace === 'srgb' && preferXYB(data, width, height)) return yield* photoV6Steps(data, width, height, quality, effort, encodeCoefficients, search, undefined, gpu, memory);
   if (colorSpace && typeof colorSpace === 'object' && colorSpace.colorChannels !== 1) {
     const transform = spaceTransform(colorSpace);
-    if (transform && preferXYB(data, width, height)) return yield* photoV6Steps(data, width, height, quality, effort, encodeCoefficients, search, {transform, space: colorSpace});
+    if (transform && preferXYB(data, width, height)) return yield* photoV6Steps(data, width, height, quality, effort, encodeCoefficients, search, {transform, space: colorSpace}, undefined, memory);
   }
   const coefficients = yield* part(photoProducer(data, width, height, quality, colorSpace, filter), 0, 2);
   return yield* part(encodeCoefficients(coefficients, effort), 1, 2);

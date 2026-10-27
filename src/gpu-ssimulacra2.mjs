@@ -47,7 +47,7 @@ const PREPARE = COMMON + `
 @group(0) @binding(1) var<storage, read> lin: array<f32>;
 @group(0) @binding(2) var<storage, read_write> src: array<f32>;
 // pow's cube root to full f32 precision with one Newton step (pow is exp2 · log2, a few ulps on some adapters).
-fn cbrt(v: f32) -> f32 { let r = pow(v, 1.0 / 3.0); return r - (r * r * r - v) / (3.0 * r * r); }
+fn cbrt(v: f32) -> f32 { if (v <= 0.0) { return 0.0; } let r = pow(v, 1.0 / 3.0); return r - (r * r * r - v) / (3.0 * r * r); }
 fn xyb(r: f32, g: f32, b: f32) -> vec3f {
   let bias = ${gsF(0.0037930732552754493)}; let root = ${gsF(Math.cbrt(0.0037930732552754493))};
   let l = cbrt(max(0.0, ${gsF(0.30)} * r + ${gsF(0.622)} * g + ${gsF(0.078)} * b + bias)) - root;
@@ -345,3 +345,4 @@ function shareCoefficients(norms, s, scales, scale) {
   }
   return k;
 }
+

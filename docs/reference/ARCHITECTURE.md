@@ -194,22 +194,22 @@ allocate the largest image. [Precision, bounds and limits](API.md).
 
 | File in `dist/` | Bytes | gzip | Brotli |
 | --- | ---: | ---: | ---: |
-| `rapier-still-worker.js` | 392,929 | 149,572 | 123,975 |
-| `rapier-worker.js` | 578,260 | 214,332 | 174,004 |
-| `rapier.min.mjs` | 578,601 | 214,402 | 174,163 |
-| `rapier-jxl.min.mjs` | 71,567 | 28,920 | 25,560 |
-| `effort.min.mjs` | 205,204 | 78,503 | 66,922 |
-| `wasm.min.mjs` | 227,681 | 88,190 | 74,854 |
-| `jpeg.min.mjs` | 83,068 | 32,866 | 28,652 |
-| `photo.min.mjs` | 158,152 | 60,943 | 52,486 |
-| `jpeg-ans.min.mjs` | 114,214 | 44,543 | 38,631 |
-| `photo-ans.min.mjs` | 158,052 | 60,898 | 52,491 |
-| `metadata.min.mjs` | 31,215 | 12,592 | 11,025 |
-| `animation.min.mjs` | 227,470 | 86,778 | 73,794 |
-| All self-contained entry points in one bundle | 586,659 | 215,724 | 174,975 |
-| All readable modules in `src/` | 1,085,141 | 291,251 | |
+| `rapier-still-worker.js` | 517,668 | 190,373 | 156,888 |
+| `rapier-worker.js` | 703,854 | 255,146 | 206,553 |
+| `rapier.min.mjs` | 704,216 | 255,240 | 206,736 |
+| `rapier-jxl.min.mjs` | 84,920 | 33,598 | 29,581 |
+| `effort.min.mjs` | 285,929 | 105,365 | 89,132 |
+| `wasm.min.mjs` | 308,603 | 115,068 | 97,120 |
+| `jpeg.min.mjs` | 90,199 | 35,232 | 30,640 |
+| `photo.min.mjs` | 237,049 | 87,308 | 74,610 |
+| `jpeg-ans.min.mjs` | 121,941 | 47,005 | 40,760 |
+| `photo-ans.min.mjs` | 236,949 | 87,276 | 74,472 |
+| `metadata.min.mjs` | 32,055 | 12,774 | 11,216 |
+| `animation.min.mjs` | 308,199 | 113,580 | 95,867 |
+| All self-contained entry points in one bundle | 712,358 | 256,371 | 207,669 |
+| All readable modules in `src/` | 1,297,035 | 343,585 | |
 
-Release 6.1.0, Terser 5.51.2, Node v22.23.4, gzip 9 and Brotli 11. Exact byte counts, import graphs, hashes
+Release 6.2.0-integration.20261026.1, Terser 5.51.2, Node v22.23.4, gzip 9 and Brotli 11. Exact byte counts, import graphs, hashes
 and incremental sizes are in [dist/sizes.json](../../dist/sizes.json). Encoding builds are checked against their
 readable entries on encoded-byte fixtures and native integer/float cases with HDR and alpha declarations. The metadata
 build is checked against its readable entry for identical container bytes.

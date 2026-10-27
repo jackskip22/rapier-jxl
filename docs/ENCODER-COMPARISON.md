@@ -1,6 +1,6 @@
 # Encoder comparisons
 
-The complete Rapier worker uses 214,332 gzip bytes: core encoding, effort search, optional WASM, Photo, JPEG transcoding and parallel workers. The separate core uses 28,920 gzip bytes. Both embed in one offline HTML file.
+The complete Rapier worker uses 255,146 gzip bytes: core encoding, effort search, optional WASM, Photo and JPEG transcoding. The separate core uses 33,598 gzip bytes. Both embed in one offline HTML file.
 
 ## Payload
 
@@ -8,12 +8,12 @@ Executable payload sizes. Rapier JXL uses this release; other rows use the pinne
 
 | Encoder / entry | Version | Minified JS + WASM bytes | gzip bytes | Included capability |
 | --- | --- | ---: | ---: | --- |
-| Rapier JXL complete worker | 6.1.0 | 578,260 | 214,332 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel workers |
-| Rapier JXL core | 6.1.0 | 71,567 | 28,920 | Lossless/lossy RGBA, native precision and HDR, exact alpha |
-| Rapier JXL effort | 6.1.0 | 205,204 | 78,503 | Core plus lossless predictor, learned-tree, entropy, color, and screen search |
-| Rapier JXL WASM | 6.1.0 | 227,681 | 88,190 | Effort with inlined kernels and JavaScript fallback |
-| Rapier JXL JPEG | 6.1.0 | 83,068 | 32,866 | JPEG coefficients, orientation and original-byte reconstruction |
-| Rapier JXL photo | 6.1.0 | 158,152 | 60,943 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
+| Rapier JXL complete worker | 6.2.0-integration.20261026.1 | 703,854 | 255,146 | Core + effort 1–9, optional WASM, Photo and JPEG transcoding |
+| Rapier JXL core | 6.2.0-integration.20261026.1 | 84,920 | 33,598 | Lossless/lossy RGBA, native precision and HDR, exact alpha |
+| Rapier JXL effort | 6.2.0-integration.20261026.1 | 285,929 | 105,365 | Core plus lossless predictor, learned-tree, entropy, color, and screen search |
+| Rapier JXL WASM | 6.2.0-integration.20261026.1 | 308,603 | 115,068 | Effort with inlined kernels and JavaScript fallback |
+| Rapier JXL JPEG | 6.2.0-integration.20261026.1 | 90,199 | 35,232 | JPEG coefficients, orientation and original-byte reconstruction |
+| Rapier JXL photo | 6.2.0-integration.20261026.1 | 237,049 | 87,308 | 8-bit photographic VarDCT, exact alpha; q100 lossless |
 | [jSquash](https://github.com/jamsinclair/jSquash/tree/main/packages/jxl) | 1.3.0 | 1,388,572 | 525,782 | 8-bit lossless/lossy RGBA |
 | [Discourse's jSquash package](https://www.npmjs.com/package/@discourse/jxl) | 1.3.0 | 1,388,572 | 525,782 | The same encoder bytes as jSquash |
 | [Lacinak's jSquash fork](https://github.com/kelaci/jSquash) | 1.3.0-kelaci.0 | 2,071,514 | 844,866 | High bit-depth input options |
@@ -28,7 +28,7 @@ Executable payload sizes. Rapier JXL uses this release; other rows use the pinne
 JavaScript is minified with Terser 5.51.2. Each JS/WASM resource is gzipped separately at level 9, then summed.
 [Files, versions, integrity, and hashes](../bench/encoder-sizes.json).
 
-## Lossless effort cost
+## Historical lossless effort cost
 
 Recorded 2026-10-10 with the Rapier 3.3.0 worker, SHA-256 `389d3860b751eebf096c7744ca3f82a2eb6177bcdb01a4546db356f6b3e6c2fb`: 71 RGBA8 images, efforts 7, 8 and 9, one observed call per image/effort, zero warmups. All 213 calls completed sequentially in one reused worker, without restart, on Node 22.23.3, AMD EPYC 9V74, CPU 0, with helper workers disabled.
 
@@ -46,183 +46,46 @@ All 213 outputs match the retained earlier streams in SHA-256 and length. That i
 
 [Per-image/group bytes, observed costs, output hashes and receipt identities](../bench/lossless-effort-costs.json). Milliseconds per megapixel normalize only this measured corpus; they do not predict unmeasured image sizes. No native libjxl comparison was rerun for this corpus.
 
-## Photographs
+## Current candidate qualification
 
-Every picture through Rapier JXL 6.1.0 and libjxl 0.12.0's `cjxl`, mozjpeg 4.1.5, WebP (`cwebp -m 6 -sharp_yuv`) and
-AVIF (`avifenc -s 6`) at 11 to 13 settings each. libjxl's `ssimulacra2` and `butteraugli_main` (3-norm) score the pixels each
-file decodes to; bytes at the same score are interpolated per picture and summed. Every JPEG XL file decodes in djxl,
-jxl-oxide 0.12.6 and Chrome 155 to the same pixels (within 1/255). Encoders run one thread each.
+This private integration candidate is 6.2.0-integration.20261026.1. Its full-corpus quality comparisons, requested-score acceptance,
+12 MP CPU/GPU performance, and complete 1 GiB memory target are **NOT PROVEN**. Current build sizes above are
+measured separately from these uncompleted product qualifications. No universal size advantage over libjxl is claimed.
 
-**Kodak 24**: bytes against libjxl at the same score (below 0 is smaller).
+## Historical photographs
 
-| Score | Effort 7 vs `cjxl -e 7` | Effort 7 vs `cjxl -e 9` | Effort 9 vs `cjxl -e 9` |
-| --- | ---: | ---: | ---: |
-| SSIMULACRA2 60 | −5.9% | −5.4% | −5.3% |
-| SSIMULACRA2 70 | −7.0% | −5.4% | −5.2% |
-| SSIMULACRA2 80 | −7.9% | −6.7% | −6.6% |
-| SSIMULACRA2 85 | −7.6% | −6.3% | −6.0% |
-| SSIMULACRA2 90 | −7.8% | −7.1% | −5.8% |
-| Butteraugli 3-norm 2 | −4.2% | −3.9% | −5.2% |
-| Butteraugli 3-norm 1.5 | −4.8% | −3.2% | −4.5% |
-| Butteraugli 3-norm 1 | −2.2% | +0.2% | −2.3% |
-| Butteraugli 3-norm 0.7 | +1.0% | +3.8% | −0.3% |
+The retained [Kodak report](../bench/v6-proof-kodak.json) was recorded on 2026-10-23. Its own source labels are
+`eb23febb` with `9fd20123` for curves and `9ee30f9c` for exact JPEG reconstruction; it does not record this package
+version or a complete current-source freeze. Its runtime was Node 22.22.0, with libjxl 0.12.0, jxl-oxide 0.12.6,
+mozjpeg 4.1.5, cwebp 1.3.2, avifenc 1.0.4 and Chrome 155.0.8059.39. These are historical observations, including
+missed requested scores, not acceptance of this candidate. The report retains truncated JXL output hashes rather
+than the complete output custody needed for new qualification.
 
-Encode to a score, against `cjxl -e 9` at the score libjxl's tool gives each file:
+Historical curves compare decoded SSIMULACRA2 and Butteraugli 3-norm using per-image interpolation between measured
+points. A curve is distinct from an actual requested-score call. Wins, ties, losses and missing brackets must remain
+visible; an aggregate does not establish that every image or every requested target succeeds.
 
-| Target | Bytes | Pictures |
-| --- | ---: | ---: |
-| Butteraugli 3-norm 0.7 | −0.5% | 24 |
-| Butteraugli 3-norm 1 | −2.5% | 24 |
-| Butteraugli 3-norm 1.5 | −4.5% | 24 |
-| SSIMULACRA2 70 | −6.3% | 24 |
-| SSIMULACRA2 80 | −7.6% | 24 |
-| SSIMULACRA2 90 | −7.6% | 24 |
+The original harness remains available: `node bench/v6-proof.mjs out.json --corpus kodak=<dir of PNG>
+--jpeg kodak=<dir of JPEG> --chrome <Chrome 155>`. Freeze current inputs, source, tools, settings and complete retained
+outputs before a new run. The historical summary consumer alone does not qualify changed source.
 
-JPEG XL (effort 7) against other formats at the same SSIMULACRA2:
+## Historical GPU timings
 
-| SSIMULACRA2 | AVIF | JPEG (mozjpeg) | WebP |
-| --- | ---: | ---: | ---: |
-| 60 | −4.9% | −19.2% | −16.6% |
-| 70 | −7.0% | −20.2% | −15.6% |
-| 80 | −10.9% | −27.9% | −18.1% |
-| 85 | −14.0% | −35.7% | −20.1% |
-| 90 | −21.0% | −43.4% | −23.8% |
+The retained [L4](../bench/gpu-encode-l4.json) and [T4](../bench/gpu-encode-t4.json) reports describe
+`encode()`/`encodeAsync()` at **effort 1**, with one GPU warmup followed by one timed GPU call and one CPU call per
+row. They name Chrome for Testing 155 and the adapter, but do not pin an encoder release or complete source graph.
+They are kept as historical observations only. They establish no current effort-7/9 timing, requested-score result,
+complete worker execution, or whole-product memory bound. No current speed ratio is derived from these reports.
 
-Exact JPEG: each JPEG converts with `rapier-jxl/jpeg-ans` and restores byte for byte in djxl and `reconstructJPEG`.
+## Historical animation
 
-Reproduce: `node bench/v6-proof.mjs out.json --corpus kodak=<dir of PNG> --jpeg kodak=<dir of JPEG> --chrome <Chrome 155>`,
-then `node bench/v6-wins.mjs wins.json out.json`. Results: [Kodak](../bench/v6-proof-kodak.json),
-[phone photos](../bench/v6-proof-phone.json) ([sources](../bench/phone-photos-sources.json)).
-
-## Encoding on the GPU
-
-`encodeAsync` runs a photo's forward stages (XYB, Gaborish, the DCT, color correlation and quantization) on WebGPU and
-writes the same file as `encode`: every value that single precision could round differently is recomputed on the CPU.
-Each row below is one photo at one quality; every GPU file is byte for byte the CPU file, and the same on both GPUs.
-
-| GPU | Quality | Photos | `encode` (CPU), median | `encodeAsync` (GPU), median | Faster, median (range) |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| NVIDIA L4 | 75 | 24 | 5.3 s | 1.6 s | 3.3× (2.1–4.4×) |
-| NVIDIA L4 | 90 | 24 | 5.4 s | 2.3 s | 2.3× (1.7–3.0×) |
-| NVIDIA T4 | 75 | 24 | 6.7 s | 2.1 s | 3.2× (1.9–5.8×) |
-| NVIDIA T4 | 90 | 24 | 6.8 s | 2.9 s | 2.3× (1.6–3.3×) |
-
-Method:
-
-- NVIDIA L4: Chrome for Testing 155, headless; CPU the same machine (model not recorded). Phone Photos 24 (bench/phone-photos-sources.json), read to sRGB, 8-bit RGBA. encode() and encodeAsync() from rapier-jxl in one page, the same RGBA, effort 1. encodeAsync ran once to warm up and was then timed; encode was timed once. Both files' SHA-256 compared.
-- NVIDIA T4: Chrome for Testing 155, headless; CPU Intel Xeon at 2.0 GHz (the same machine). Phone Photos 24 (bench/phone-photos-sources.json), read to sRGB, 8-bit RGBA. encode() and encodeAsync() from rapier-jxl in one page, the same RGBA, effort 1. encodeAsync ran once to warm up and was then timed; encode was timed once. Both files' SHA-256 compared.
-
-<details><summary>Every photo</summary>
-
-| Photo | Pixels | GPU | Quality | `encode` (CPU) | `encodeAsync` (GPU) | Same file |
-| --- | ---: | --- | ---: | ---: | ---: | :---: |
-| phone01-pixel9 | 3072×4080 | NVIDIA L4 | 75 | 5.2 s | 1.9 s | yes |
-| phone01-pixel9 | 3072×4080 | NVIDIA L4 | 90 | 5.3 s | 2.1 s | yes |
-| phone02-pixel9 | 4080×3072 | NVIDIA L4 | 75 | 5.3 s | 1.3 s | yes |
-| phone02-pixel9 | 4080×3072 | NVIDIA L4 | 90 | 5.5 s | 2.1 s | yes |
-| phone03-pixel9 | 4080×3072 | NVIDIA L4 | 75 | 5.2 s | 1.4 s | yes |
-| phone03-pixel9 | 4080×3072 | NVIDIA L4 | 90 | 5.4 s | 2.1 s | yes |
-| phone04-pixel9 | 3072×4080 | NVIDIA L4 | 75 | 5.3 s | 1.2 s | yes |
-| phone04-pixel9 | 3072×4080 | NVIDIA L4 | 90 | 5.5 s | 2.0 s | yes |
-| phone05-pixel9 | 3072×4080 | NVIDIA L4 | 75 | 5.4 s | 2.3 s | yes |
-| phone05-pixel9 | 3072×4080 | NVIDIA L4 | 90 | 5.6 s | 3.0 s | yes |
-| phone06-pixel9 | 4080×3072 | NVIDIA L4 | 75 | 5.4 s | 1.5 s | yes |
-| phone06-pixel9 | 4080×3072 | NVIDIA L4 | 90 | 5.5 s | 2.4 s | yes |
-| phone07-pixel9 | 3072×4080 | NVIDIA L4 | 75 | 5.6 s | 1.7 s | yes |
-| phone07-pixel9 | 3072×4080 | NVIDIA L4 | 90 | 5.9 s | 2.5 s | yes |
-| phone08-pixel9 | 3072×4080 | NVIDIA L4 | 75 | 5.3 s | 1.4 s | yes |
-| phone08-pixel9 | 3072×4080 | NVIDIA L4 | 90 | 5.3 s | 2.0 s | yes |
-| phone09-iphone16 | 4032×3024 | NVIDIA L4 | 75 | 5.4 s | 1.5 s | yes |
-| phone09-iphone16 | 4032×3024 | NVIDIA L4 | 90 | 5.6 s | 2.2 s | yes |
-| phone10-iphone16 | 4032×3024 | NVIDIA L4 | 75 | 5.3 s | 2.6 s | yes |
-| phone10-iphone16 | 4032×3024 | NVIDIA L4 | 90 | 5.5 s | 3.1 s | yes |
-| phone11-iphone16 | 4032×3024 | NVIDIA L4 | 75 | 5.2 s | 1.8 s | yes |
-| phone11-iphone16 | 4032×3024 | NVIDIA L4 | 90 | 5.3 s | 2.5 s | yes |
-| phone12-iphone16 | 4032×3024 | NVIDIA L4 | 75 | 5.1 s | 1.7 s | yes |
-| phone12-iphone16 | 4032×3024 | NVIDIA L4 | 90 | 5.2 s | 2.5 s | yes |
-| phone13-iphone16 | 4032×3024 | NVIDIA L4 | 75 | 5.4 s | 1.8 s | yes |
-| phone13-iphone16 | 4032×3024 | NVIDIA L4 | 90 | 5.3 s | 2.2 s | yes |
-| phone14-iphone16 | 4032×3024 | NVIDIA L4 | 75 | 5.1 s | 1.3 s | yes |
-| phone14-iphone16 | 4032×3024 | NVIDIA L4 | 90 | 5.4 s | 2.2 s | yes |
-| phone15-iphone16 | 4032×3024 | NVIDIA L4 | 75 | 5.1 s | 1.5 s | yes |
-| phone15-iphone16 | 4032×3024 | NVIDIA L4 | 90 | 5.4 s | 1.9 s | yes |
-| phone16-iphone16 | 3024×4032 | NVIDIA L4 | 75 | 5.1 s | 1.5 s | yes |
-| phone16-iphone16 | 3024×4032 | NVIDIA L4 | 90 | 5.3 s | 2.3 s | yes |
-| phone17-s25 | 4000×3000 | NVIDIA L4 | 75 | 5.2 s | 1.7 s | yes |
-| phone17-s25 | 4000×3000 | NVIDIA L4 | 90 | 5.3 s | 2.4 s | yes |
-| phone18-s25 | 4000×3000 | NVIDIA L4 | 75 | 5.4 s | 1.8 s | yes |
-| phone18-s25 | 4000×3000 | NVIDIA L4 | 90 | 5.6 s | 2.6 s | yes |
-| phone19-s25 | 3000×4000 | NVIDIA L4 | 75 | 5.3 s | 1.6 s | yes |
-| phone19-s25 | 3000×4000 | NVIDIA L4 | 90 | 5.5 s | 2.3 s | yes |
-| phone20-s25 | 3000×4000 | NVIDIA L4 | 75 | 5.1 s | 2.1 s | yes |
-| phone20-s25 | 3000×4000 | NVIDIA L4 | 90 | 5.2 s | 2.6 s | yes |
-| phone21-s25 | 3000×4000 | NVIDIA L4 | 75 | 5.0 s | 1.8 s | yes |
-| phone21-s25 | 3000×4000 | NVIDIA L4 | 90 | 5.2 s | 2.3 s | yes |
-| phone22-s25 | 4000×3000 | NVIDIA L4 | 75 | 5.0 s | 1.1 s | yes |
-| phone22-s25 | 4000×3000 | NVIDIA L4 | 90 | 5.1 s | 1.7 s | yes |
-| phone23-s25 | 4000×3000 | NVIDIA L4 | 75 | 5.2 s | 2.1 s | yes |
-| phone23-s25 | 4000×3000 | NVIDIA L4 | 90 | 5.3 s | 2.3 s | yes |
-| phone24-s25 | 4000×3000 | NVIDIA L4 | 75 | 5.3 s | 1.4 s | yes |
-| phone24-s25 | 4000×3000 | NVIDIA L4 | 90 | 5.7 s | 2.4 s | yes |
-| phone01-pixel9 | 3072×4080 | NVIDIA T4 | 75 | 6.7 s | 2.4 s | yes |
-| phone01-pixel9 | 3072×4080 | NVIDIA T4 | 90 | 7.0 s | 2.8 s | yes |
-| phone02-pixel9 | 4080×3072 | NVIDIA T4 | 75 | 8.8 s | 1.5 s | yes |
-| phone02-pixel9 | 4080×3072 | NVIDIA T4 | 90 | 9.3 s | 2.8 s | yes |
-| phone03-pixel9 | 4080×3072 | NVIDIA T4 | 75 | 7.9 s | 1.8 s | yes |
-| phone03-pixel9 | 4080×3072 | NVIDIA T4 | 90 | 7.1 s | 3.0 s | yes |
-| phone04-pixel9 | 3072×4080 | NVIDIA T4 | 75 | 7.0 s | 1.6 s | yes |
-| phone04-pixel9 | 3072×4080 | NVIDIA T4 | 90 | 7.1 s | 2.8 s | yes |
-| phone05-pixel9 | 3072×4080 | NVIDIA T4 | 75 | 6.9 s | 2.9 s | yes |
-| phone05-pixel9 | 3072×4080 | NVIDIA T4 | 90 | 7.4 s | 3.9 s | yes |
-| phone06-pixel9 | 4080×3072 | NVIDIA T4 | 75 | 7.0 s | 2.0 s | yes |
-| phone06-pixel9 | 4080×3072 | NVIDIA T4 | 90 | 7.2 s | 3.3 s | yes |
-| phone07-pixel9 | 3072×4080 | NVIDIA T4 | 75 | 7.1 s | 2.5 s | yes |
-| phone07-pixel9 | 3072×4080 | NVIDIA T4 | 90 | 7.5 s | 3.3 s | yes |
-| phone08-pixel9 | 3072×4080 | NVIDIA T4 | 75 | 6.6 s | 1.7 s | yes |
-| phone08-pixel9 | 3072×4080 | NVIDIA T4 | 90 | 6.8 s | 2.9 s | yes |
-| phone09-iphone16 | 4032×3024 | NVIDIA T4 | 75 | 6.8 s | 1.8 s | yes |
-| phone09-iphone16 | 4032×3024 | NVIDIA T4 | 90 | 6.8 s | 2.7 s | yes |
-| phone10-iphone16 | 4032×3024 | NVIDIA T4 | 75 | 6.7 s | 3.6 s | yes |
-| phone10-iphone16 | 4032×3024 | NVIDIA T4 | 90 | 6.8 s | 4.2 s | yes |
-| phone11-iphone16 | 4032×3024 | NVIDIA T4 | 75 | 6.6 s | 2.3 s | yes |
-| phone11-iphone16 | 4032×3024 | NVIDIA T4 | 90 | 6.6 s | 3.2 s | yes |
-| phone12-iphone16 | 4032×3024 | NVIDIA T4 | 75 | 6.4 s | 2.2 s | yes |
-| phone12-iphone16 | 4032×3024 | NVIDIA T4 | 90 | 6.4 s | 3.0 s | yes |
-| phone13-iphone16 | 4032×3024 | NVIDIA T4 | 75 | 6.8 s | 2.5 s | yes |
-| phone13-iphone16 | 4032×3024 | NVIDIA T4 | 90 | 6.7 s | 3.0 s | yes |
-| phone14-iphone16 | 4032×3024 | NVIDIA T4 | 75 | 6.9 s | 1.7 s | yes |
-| phone14-iphone16 | 4032×3024 | NVIDIA T4 | 90 | 6.7 s | 2.8 s | yes |
-| phone15-iphone16 | 4032×3024 | NVIDIA T4 | 75 | 6.3 s | 1.8 s | yes |
-| phone15-iphone16 | 4032×3024 | NVIDIA T4 | 90 | 6.5 s | 2.5 s | yes |
-| phone16-iphone16 | 3024×4032 | NVIDIA T4 | 75 | 6.3 s | 1.9 s | yes |
-| phone16-iphone16 | 3024×4032 | NVIDIA T4 | 90 | 6.5 s | 2.7 s | yes |
-| phone17-s25 | 4000×3000 | NVIDIA T4 | 75 | 6.2 s | 2.4 s | yes |
-| phone17-s25 | 4000×3000 | NVIDIA T4 | 90 | 6.5 s | 3.2 s | yes |
-| phone18-s25 | 4000×3000 | NVIDIA T4 | 75 | 6.6 s | 2.2 s | yes |
-| phone18-s25 | 4000×3000 | NVIDIA T4 | 90 | 6.9 s | 3.2 s | yes |
-| phone19-s25 | 3000×4000 | NVIDIA T4 | 75 | 6.3 s | 1.9 s | yes |
-| phone19-s25 | 3000×4000 | NVIDIA T4 | 90 | 6.5 s | 2.7 s | yes |
-| phone20-s25 | 3000×4000 | NVIDIA T4 | 75 | 6.6 s | 2.7 s | yes |
-| phone20-s25 | 3000×4000 | NVIDIA T4 | 90 | 6.8 s | 3.3 s | yes |
-| phone21-s25 | 3000×4000 | NVIDIA T4 | 75 | 6.5 s | 2.3 s | yes |
-| phone21-s25 | 3000×4000 | NVIDIA T4 | 90 | 6.4 s | 2.9 s | yes |
-| phone22-s25 | 4000×3000 | NVIDIA T4 | 75 | 6.5 s | 1.5 s | yes |
-| phone22-s25 | 4000×3000 | NVIDIA T4 | 90 | 6.4 s | 2.1 s | yes |
-| phone23-s25 | 4000×3000 | NVIDIA T4 | 75 | 6.6 s | 2.6 s | yes |
-| phone23-s25 | 4000×3000 | NVIDIA T4 | 90 | 6.6 s | 2.8 s | yes |
-| phone24-s25 | 4000×3000 | NVIDIA T4 | 75 | 6.7 s | 1.9 s | yes |
-| phone24-s25 | 4000×3000 | NVIDIA T4 | 90 | 7.1 s | 3.0 s | yes |
-
-</details>
-
-## Animation
-
-`rapier-jxl/animation` against the formats people use for the same frames, measured on 2026-10-21 on one host,
+`rapier-jxl/animation` from the recorded `task/a1-jxl-animation-20261021` source label, measured on 2026-10-21 on one host,
 one thread per encoder. Bytes in kB (1,000 bytes); time is milliseconds per frame. The corpus is three Wikimedia
 Commons GIFs, the first 30 frames of the Xiph `akiyo` and `foreman` CIF camera sequences, and two 800 × 500 screen
 recordings of an editor page rendered in Chromium (typing; a menu, hovers and a scroll). GIF is the original file, or
 a 256-color GIF made by ffmpeg (which is lossy for the camera and screen sources). APNG and WebP are written by
 Pillow 12.3.0 (libwebp 1.6.0, method 6, smallest-size search); cjxl and djxl are libjxl 0.12.0.
+The report records Node 22.22.0 and no package release pin; it is not current-candidate acceptance.
 [Raw results](../bench/animation-results.json), [corpus](../bench/animation-sources.json), [harness](../bench/animation.mjs).
 
 Lossless (every frame exact):

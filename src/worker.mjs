@@ -70,7 +70,7 @@ export function createJPEGXLCodec({encoderFactory, imageReader, formatHandler}) 
       checkSignal(options.signal);
       const read = await imageReader(input?.source, options.transcode !== false);
       checkSignal(options.signal);
-      if (read.jpeg) return codec.transcode({bytes: read.jpeg}, {effort: options.effort, progress: options.progress, signal: options.signal});
+      if (read.jpeg) return codec.transcode({bytes: read.jpeg}, {effort: options.effort, progress: options.progress, signal: options.signal, hurrySignal: options.hurrySignal});
       const lossy = options.quality !== undefined && options.quality < 100;
       return {bytes: await codec.encode(read, {...options, lossless: !lossy, photo: lossy})};
     },
@@ -124,15 +124,20 @@ export function installJPEGXLWorker(configuration) {
     const id = request?.id;
     if ((typeof id !== 'number' && typeof id !== 'string') || String(id).length > 128) return;
     if (request.operation === 'cancel') {
-      if (active?.id === id) active.controller.abort(codecError('JXL_ABORTED', 'JPEG XL encoding was canceled.'));
+      if (active?.id === id) active.controller.abort(Object.hasOwn(request, 'reason') ? request.reason
+        : codecError('JXL_ABORTED', 'JPEG XL encoding was canceled.'));
+      return;
+    }
+    if (request.operation === 'hurry') {
+      if (active?.id === id) active.hurry.abort();
       return;
     }
     if (active) {
       globalThis.postMessage({id, ok: false, error: {code: 'JXL_BUSY', message: 'The image worker is busy.'}});
       return;
     }
-    const controller = new AbortController();
-    active = {id, controller};
+    const controller = new AbortController(), hurry = new AbortController();
+    active = {id, controller, hurry};
     try {
       let reported = 0, at = 0;
       const progress = request.progress === true ? value => {
@@ -145,26 +150,26 @@ export function installJPEGXLWorker(configuration) {
       if (request.options !== undefined && (!request.options || typeof request.options !== 'object' || Array.isArray(request.options)))
         throw codecError('JXL_OPTIONS', 'JPEG XL options are invalid.');
       if (request.operation === 'encode') {
-        const bytes = await codec.encode({width: request.width, height: request.height, data: request.data}, {...request.options, progress: advance, signal: controller.signal});
+        const bytes = await codec.encode({width: request.width, height: request.height, data: request.data}, {...request.options, progress: advance, signal: controller.signal, hurrySignal: hurry.signal});
         progress?.(1);
         globalThis.postMessage({id, ok: true, bytes}, [bytes.buffer]);
       } else if (request.operation === 'animation') {
-        const bytes = await codec.animation({width: request.width, height: request.height, loops: request.loops, frames: request.frames}, {...request.options, progress: advance, signal: controller.signal});
+        const bytes = await codec.animation({width: request.width, height: request.height, loops: request.loops, frames: request.frames}, {...request.options, progress: advance, signal: controller.signal, hurrySignal: hurry.signal});
         progress?.(1);
         globalThis.postMessage({id, ok: true, bytes}, [bytes.buffer]);
       } else if (request.operation === 'transcode') {
-        const carried = await codec.transcode({bytes: request.bytes}, {...request.options, progress: advance, signal: controller.signal});
+        const carried = await codec.transcode({bytes: request.bytes}, {...request.options, progress: advance, signal: controller.signal, hurrySignal: hurry.signal});
         progress?.(1);
         globalThis.postMessage({id, ok: true, ...carried}, [carried.bytes.buffer]);
       } else if (request.operation === 'image') {
-        const made = await codec.image({source: request.source}, {...request.options, progress: advance, signal: controller.signal});
+        const made = await codec.image({source: request.source}, {...request.options, progress: advance, signal: controller.signal, hurrySignal: hurry.signal});
         progress?.(1);
         globalThis.postMessage({id, ok: true, ...made}, [made.bytes.buffer]);
       } else if (request.operation === 'reconstruct') {
         const bytes = await codec.reconstruct({bytes: request.bytes});
         globalThis.postMessage({id, ok: true, bytes}, bytes ? [bytes.buffer] : []);
       } else if (request.operation === 'format') {
-        const result = await codec.format(request.input, {progress: advance, signal: controller.signal});
+        const result = await codec.format(request.input, {progress: advance, signal: controller.signal, hurrySignal: hurry.signal});
         progress?.(1);
         if (result instanceof Uint8Array) {
           const bytes = result.buffer instanceof ArrayBuffer && result.byteOffset === 0 && result.byteLength === result.buffer.byteLength
@@ -173,7 +178,10 @@ export function installJPEGXLWorker(configuration) {
         } else globalThis.postMessage({id, ok: true, result});
       } else throw codecError('JXL_OPERATION', 'Unknown JPEG XL operation.');
     } catch (error) {
-      globalThis.postMessage({id, ok: false, error: codec.failure(error)});
+      const failure = controller.signal.aborted
+        ? codecError('JXL_ABORTED', 'JPEG XL encoding was canceled.') : error;
+      globalThis.postMessage({id, ok: false, error: codec.failure(failure),
+        ...(controller.signal.aborted ? {reason: controller.signal.reason} : {})});
     } finally {
       active = null;
     }

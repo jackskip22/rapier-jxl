@@ -1,14 +1,45 @@
 // SPDX-License-Identifier: MIT
+import {UniformRing} from './gpu-uniforms.mjs';
 import {MALTA_LF, MALTA_HF, blurKernel} from './butteraugli.mjs';
 import {SRGB_TO_LINEAR} from './ssimulacra2.mjs';
 
 const GB_WG = 128;
 const gbF = v => { const s = Math.fround(v).toString(); return /[.eE]/.test(s) ? s : s + '.0'; };
+const gbD = v => { const hi = Math.fround(v); return `vec2f(${gbF(hi)}, ${gbF(v - hi)})`; };
+
+const GB_DF = `
+fn opaque(x: f32) -> f32 { return bitcast<f32>(bitcast<u32>(x) ^ bitcast<u32>(P.d)); }
+fn twoSum(a: f32, b: f32) -> vec2f { let s = opaque(a + b); let bb = opaque(s - a); return vec2f(s, (a - (s - bb)) + (b - bb)); }
+fn quick(a: f32, b: f32) -> vec2f { let s = opaque(a + b); return vec2f(s, b - (s - a)); }
+fn split(a: f32) -> vec2f { let c = opaque(4097.0 * a); let h = opaque(c - opaque(c - a)); return vec2f(h, a - h); }
+fn twoProd(a: f32, b: f32) -> vec2f { let p = opaque(a * b); let x = split(a); let y = split(b); return vec2f(p, ((opaque(x.x * y.x) - p) + opaque(x.x * y.y) + opaque(x.y * y.x)) + opaque(x.y * y.y)); }
+fn dadd(a: vec2f, b: vec2f) -> vec2f { let s = twoSum(a.x, b.x); return quick(s.x, s.y + a.y + b.y); }
+fn dmul(a: vec2f, b: vec2f) -> vec2f { let p = twoProd(a.x, b.x); return quick(p.x, p.y + opaque(a.x * b.y) + opaque(a.y * b.x)); }
+fn dscale(a: vec2f, s: f32) -> vec2f { let p = twoProd(a.x, s); return quick(p.x, p.y + opaque(a.y * s)); }
+fn ddiv(a: vec2f, b: vec2f) -> vec2f {
+  let q1 = a.x / b.x; let r1 = dadd(a, -dscale(b, q1)); let q2 = r1.x / b.x; let r2 = dadd(r1, -dscale(b, q2)); let q3 = r2.x / b.x;
+  return dadd(quick(q1, q2), vec2f(q3, 0.0));
+}
+fn dmax(a: vec2f, b: vec2f) -> vec2f { if (a.x > b.x || (a.x == b.x && a.y >= b.y)) { return a; } return b; }
+fn dround(a: vec2f) -> f32 { return opaque(a.x + a.y); }
+// The natural log of a positive double-float: a / 2^e = m in [0.707, 1.414], log m = 2 atanh((m - 1) / (m + 1)) by its
+// series to s^19 (|s| < 0.172, the last term under 1e-16).
+fn dlog(a: vec2f) -> vec2f {
+  let f = frexp(a.x); var e = f.exp; var scale = ldexp(1.0, -e);
+  var m = vec2f(a.x * scale, a.y * scale);
+  if (m.x < 0.70710678) { m = vec2f(m.x * 2.0, m.y * 2.0); e = e - 1; }
+  let s = ddiv(dadd(m, vec2f(-1.0, 0.0)), dadd(m, vec2f(1.0, 0.0))); let s2 = dmul(s, s);
+  var p = ${gbD(1 / 19)};
+  ${[17, 15, 13, 11, 9, 7, 5, 3, 1].map(k => `p = dadd(${gbD(1 / k)}, dmul(s2, p));`).join(' ')}
+  let r = dmul(s, p);
+  return dadd(vec2f(r.x * 2.0, r.y * 2.0), dscale(${gbD(Math.LN2)}, f32(e)));
+}`;
 
 function gbShader(buffers, body, extra = '') {
   return `struct Params { w: u32, h: u32, i0: u32, i1: u32, a: f32, b: f32, c: f32, d: f32 }
 @group(0) @binding(0) var<uniform> P: Params;
 ${buffers.map(([name, access, type = 'array<f32>'], k) => `@group(0) @binding(${k + 1}) var<storage, ${access}> ${name}: ${type};`).join('\n')}
+${GB_DF}
 ${extra}
 @compute @workgroup_size(${GB_WG})
 fn main(@builtin(global_invocation_id) gid: vec3u) {
@@ -26,39 +57,44 @@ fn amplifyRange(w: f32, v: f32) -> f32 { if (v > w) { return v + w; } if (v < -w
 fn maximumClamp(v: f32, m: f32) -> f32 { if (v >= m) { return (v - m) * ${gbF(0.724216145665)} + m; } if (v < -m) { return (v + m) * ${gbF(0.724216145665)} - m; } return v; }`;
 
 const GB_SHADERS = {
-  linearize: gbShader([['lut', 'read', 'array<f32, 256>'], ['rgba', 'read', 'array<u32>'], ...GB_W('r', 'g', 'b')],
-    `let p = rgba[i]; r[i] = lut[p & 255u]; g[i] = lut[(p >> 8u) & 255u]; b[i] = lut[(p >> 16u) & 255u];`),
-  subsample: gbShader([...GB_R('r0', 'g0', 'b0'), ...GB_W('r', 'g', 'b')], `
-    var s = vec3f(0.0); let sw = P.i0; let sh = P.i1;
+  linearize: gbShader([['lut', 'read', 'array<f32, 512>'], ['rgba', 'read', 'array<u32>'], ...GB_W('r', 'g', 'b', 'lo')],
+    `let p = rgba[i]; let kr = 2u * (p & 255u); let kg = 2u * ((p >> 8u) & 255u); let kb = 2u * ((p >> 16u) & 255u);
+    r[i] = lut[kr]; lo[i] = lut[kr + 1u]; g[i] = lut[kg]; lo[n + i] = lut[kg + 1u]; b[i] = lut[kb]; lo[2u * n + i] = lut[kb + 1u];`),
+  clearLo: gbShader(GB_W('lo'), `lo[i] = 0.0; lo[n + i] = 0.0; lo[2u * n + i] = 0.0;`),
+  subsample: gbShader([...GB_R('r0', 'g0', 'b0', 'lo0'), ...GB_W('r', 'g', 'b', 'lo')], `
+    var sr = vec2f(0.0); var sg = vec2f(0.0); var sb = vec2f(0.0); let sw = P.i0; let sh = P.i1; let n0 = sw * sh;
     for (var dy = 0u; dy < 2u; dy++) { for (var dx = 0u; dx < 2u; dx++) {
       let xx = 2u * x + dx; let yy = 2u * y + dy;
-      if (xx < sw && yy < sh) { let k = yy * sw + xx; s += vec3f(r0[k], g0[k], b0[k]) * 0.25; }
+      if (xx < sw && yy < sh) { let k = yy * sw + xx;
+        sr = dadd(sr, vec2f(r0[k] * 0.25, lo0[k] * 0.25)); sg = dadd(sg, vec2f(g0[k] * 0.25, lo0[n0 + k] * 0.25)); sb = dadd(sb, vec2f(b0[k] * 0.25, lo0[2u * n0 + k] * 0.25)); }
     } }
-    if ((sw & 1u) == 1u && x == P.w - 1u) { s *= 2.0; }
-    if ((sh & 1u) == 1u && y == P.h - 1u) { s *= 2.0; }
-    r[i] = s.x; g[i] = s.y; b[i] = s.z;`),
+    if ((sw & 1u) == 1u && x == P.w - 1u) { sr *= 2.0; sg *= 2.0; sb *= 2.0; }
+    if ((sh & 1u) == 1u && y == P.h - 1u) { sr *= 2.0; sg *= 2.0; sb *= 2.0; }
+    let qr = quick(sr.x, sr.y); let qg = quick(sg.x, sg.y); let qb = quick(sb.x, sb.y);
+    r[i] = qr.x; lo[i] = qr.y; g[i] = qg.x; lo[n + i] = qg.y; b[i] = qb.x; lo[2u * n + i] = qb.y;`),
   blurH: gbShader([['taps', 'read', 'array<f32>'], ...GB_R('src'), ...GB_W('dst')], blurBody(false)),
   blurV: gbShader([['taps', 'read', 'array<f32>'], ...GB_R('src'), ...GB_W('dst')], blurBody(true)),
-  sensitivity: gbShader(GB_W('t0', 't1', 't2'), `
-    let m0 = vec4f(${gbF(0.29956550340058319)}, ${gbF(0.63373087833825936)}, ${gbF(0.077705617820981968)}, ${gbF(1.7557483643287353)});
-    let m1 = vec4f(${gbF(0.22158691104574774)}, ${gbF(0.69391388044116142)}, ${gbF(0.0987313588422)}, ${gbF(1.7557483643287353)});
-    let m2 = vec4f(0.02, 0.02, ${gbF(0.20480129041026129)}, ${gbF(12.226454707163354)});
-    let blurred = vec4f(t0[i] * 80.0, t1[i] * 80.0, t2[i] * 80.0, 1.0);
-    var pre = vec3f(max(dot(m0, blurred), m0.w), max(dot(m1, blurred), m1.w), max(dot(m2, blurred), m2.w));
-    pre = max(pre, vec3f(1e-4));
-    let gam = ${gbF(19.245013259874995)} * log(pre + vec3f(${gbF(9.9710635769299145)})) - vec3f(${gbF(23.16046239805755)});
-    let s = max(gam / pre, vec3f(1e-4));
-    t0[i] = s.x; t1[i] = s.y; t2[i] = s.z;`),
-  opsin: gbShader([...GB_R('r', 'g', 'b'), ...GB_W('t0', 't1', 't2')], `
-    let m0 = vec4f(${gbF(0.29956550340058319)}, ${gbF(0.63373087833825936)}, ${gbF(0.077705617820981968)}, ${gbF(1.7557483643287353)});
-    let m1 = vec4f(${gbF(0.22158691104574774)}, ${gbF(0.69391388044116142)}, ${gbF(0.0987313588422)}, ${gbF(1.7557483643287353)});
-    let m2 = vec4f(0.02, 0.02, ${gbF(0.20480129041026129)}, ${gbF(12.226454707163354)});
-    let cur = vec4f(r[i] * 80.0, g[i] * 80.0, b[i] * 80.0, 1.0);
-    let c0 = max(dot(m0, cur) * t0[i], ${gbF(1.7557483643287353)});
-    let c1 = max(dot(m1, cur) * t1[i], ${gbF(1.7557483643287353)});
-    let c2 = max(dot(m2, cur) * t2[i], ${gbF(12.226454707163354)});
-    t0[i] = c0 - c1; t1[i] = c0 + c1; t2[i] = c2;`),
+  blurHd: gbShader([['taps', 'read', 'array<f32>'], ...GB_R('src', 'srcLo'), ...GB_W('dst', 'dstLo')], blurBody(false, true)),
+  blurVd: gbShader([['taps', 'read', 'array<f32>'], ...GB_R('src', 'srcLo'), ...GB_W('dst', 'dstLo')], blurBody(true, true)),
+  sensitivity: gbShader(GB_W('t0', 't1', 't2', 'tl'), `
+    let b0 = dscale(vec2f(t0[i], tl[i]), 80.0); let b1 = dscale(vec2f(t1[i], tl[n + i]), 80.0); let b2 = dscale(vec2f(t2[i], tl[2u * n + i]), 80.0);
+    let s0 = sens(dadd(dadd(dadd(dmul(${gbD(0.29956550340058319)}, b0), dmul(${gbD(0.63373087833825936)}, b1)), dmul(${gbD(0.077705617820981968)}, b2)), ${gbD(1.7557483643287353)}), ${gbD(1.7557483643287353)});
+    let s1 = sens(dadd(dadd(dadd(dmul(${gbD(0.22158691104574774)}, b0), dmul(${gbD(0.69391388044116142)}, b1)), dmul(${gbD(0.0987313588422)}, b2)), ${gbD(1.7557483643287353)}), ${gbD(1.7557483643287353)});
+    let s2 = sens(dadd(dadd(dadd(dmul(${gbD(0.02)}, b0), dmul(${gbD(0.02)}, b1)), dmul(${gbD(0.20480129041026129)}, b2)), ${gbD(12.226454707163354)}), ${gbD(12.226454707163354)});
+    t0[i] = s0.x; tl[i] = s0.y; t1[i] = s1.x; tl[n + i] = s1.y; t2[i] = s2.x; tl[2u * n + i] = s2.y;`, `
+fn sens(v: vec2f, floor: vec2f) -> vec2f {
+  let pre = dmax(dmax(v, floor), ${gbD(1e-4)});
+  let gam = dadd(dmul(${gbD(19.245013259874995)}, dlog(dadd(pre, ${gbD(9.9710635769299145)}))), -${gbD(23.16046239805755)});
+  return dmax(ddiv(gam, pre), ${gbD(1e-4)});
+}`),
+  opsin: gbShader([...GB_R('r', 'g', 'b', 'lo', 'tl'), ...GB_W('t0', 't1', 't2')], `
+    let cr = dscale(vec2f(r[i], lo[i]), 80.0); let cg = dscale(vec2f(g[i], lo[n + i]), 80.0); let cb = dscale(vec2f(b[i], lo[2u * n + i]), 80.0);
+    let c0 = dmax(dmul(dadd(dadd(dadd(dmul(${gbD(0.29956550340058319)}, cr), dmul(${gbD(0.63373087833825936)}, cg)), dmul(${gbD(0.077705617820981968)}, cb)), ${gbD(1.7557483643287353)}), vec2f(t0[i], tl[i])), ${gbD(1.7557483643287353)});
+    let c1 = dmax(dmul(dadd(dadd(dadd(dmul(${gbD(0.22158691104574774)}, cr), dmul(${gbD(0.69391388044116142)}, cg)), dmul(${gbD(0.0987313588422)}, cb)), ${gbD(1.7557483643287353)}), vec2f(t1[i], tl[n + i])), ${gbD(1.7557483643287353)});
+    let c2 = dmax(dmul(dadd(dadd(dadd(dmul(${gbD(0.02)}, cr), dmul(${gbD(0.02)}, cg)), dmul(${gbD(0.20480129041026129)}, cb)), ${gbD(12.226454707163354)}), vec2f(t2[i], tl[2u * n + i])), ${gbD(12.226454707163354)});
+    t0[i] = dround(dadd(c0, -c1)); t1[i] = dround(dadd(c0, c1)); t2[i] = dround(c2);`),
   subtract: gbShader([...GB_R('a', 'b'), ...GB_W('out')], `out[i] = a[i] - b[i];`),
+  copy: gbShader([...GB_R('src'), ...GB_W('dst')], `dst[i] = src[i];`),
   lfVals: gbShader(GB_W('lx', 'ly', 'lb'), `
     let vy = ly[i]; lx[i] = lx[i] * ${gbF(33.832837186260)}; lb[i] = (lb[i] + ${gbF(-0.362267051518)} * vy) * ${gbF(49.87984651440)}; ly[i] = vy * ${gbF(14.458268100570)};`),
   mfHf: gbShader([...GB_R('mf', 'blurred'), ...GB_W('hf', 'mfOut')], `
@@ -92,12 +128,13 @@ const GB_SHADERS = {
   erosion: gbShader([...GB_R('src'), ...GB_W('dst')], `
     var m0 = src[i]; var m1 = 2.0 * m0; var m2 = m1;
     for (var k = 0u; k < 8u; k++) {
-      let xx = i32(x) + array<i32, 8>(-3, -3, -3, 3, 3, 3, 0, 0)[k]; let yy = i32(y) + array<i32, 8>(0, -3, 3, 0, -3, 3, -3, 3)[k];
+      let xx = i32(x) + EROSION_DX[k]; let yy = i32(y) + EROSION_DY[k];
       if (xx < 0 || yy < 0 || xx >= i32(P.w) || yy >= i32(P.h)) { continue; }
       let v = src[u32(yy) * P.w + u32(xx)];
       if (v < m2) { if (v < m0) { m2 = m1; m1 = m0; m0 = v; } else if (v < m1) { m2 = m1; m1 = v; } else { m2 = v; } }
     }
-    dst[i] = 0.45 * m0 + 0.3 * m1 + 0.25 * m2;`),
+    dst[i] = 0.45 * m0 + 0.3 * m1 + 0.25 * m2;`, `const EROSION_DX = array<i32, 8>(-3, -3, -3, 3, 3, 3, 0, 0);
+const EROSION_DY = array<i32, 8>(0, -3, 3, 0, -3, 3, -3, 3);`),
   maskAcc: gbShader([...GB_R('b0', 'b1'), ...GB_W('acc')], `let d = b0[i] - b1[i]; acc[i] += 10.0 * d * d;`),
   combine: gbShader([...GB_R('dc0', 'dc1', 'dc2', 'ac0', 'ac1', 'ac2', 'mask'), ...GB_W('out')], `
     let m = mask[i]; let g = ${gbF(1 / (17.83 * 0.79079917404))};
@@ -108,18 +145,22 @@ const GB_SHADERS = {
   clear: gbShader(GB_W('a', 'b', 'c', 'd', 'e', 'g'), `a[i] = 0.0; b[i] = 0.0; c[i] = 0.0; d[i] = 0.0; e[i] = 0.0; g[i] = 0.0;`),
 };
 
-function blurBody(vertical) {
+function blurBody(vertical, df = false) {
+  const at = vertical ? 'u32(j) * P.w + x' : 'y * P.w + u32(j)';
   return `
-    let count = i32(${vertical ? 'P.h' : 'P.w'}); let at = i32(${vertical ? 'y' : 'x'}); let reach = i32(P.i0);
-    var sum = 0.0; var weight = 0.0;
+    let count = i32(${vertical ? 'P.h' : 'P.w'}); let at = i32(${vertical ? 'y' : 'x'}); let reach = i32(P.i0); let mirror = (P.i1 & 1u) == 1u;
+    let inLo = ((P.i1 >> 4u) & 15u) * n; let outLo = ((P.i1 >> 8u) & 15u) * n;
+    var sum = vec2f(0.0); var weight = vec2f(0.0);
     for (var k = -reach; k <= reach; k++) {
       var j = at + k;
-      if (P.i1 == 1u) { if (j < 0) { j = -j - 1; } if (j >= count) { j = 2 * count - 1 - j; } }
+      if (mirror) { if (j < 0) { j = -j - 1; } if (j >= count) { j = 2 * count - 1 - j; } }
       else if (j < 0 || j >= count) { continue; }
-      let t = taps[u32(k + reach)];
-      sum += t * src[${vertical ? 'u32(j) * P.w + x' : 'y * P.w + u32(j)'}]; weight += t;
+      let t = vec2f(taps[2u * u32(k + reach)], taps[2u * u32(k + reach) + 1u]);
+      sum = dadd(sum, ${df ? `dmul(t, vec2f(src[${at}], srcLo[inLo + ${at}]))` : `dscale(t, src[${at}])`}); weight = dadd(weight, t);
     }
-    if (P.i1 == 1u) { dst[i] = sum / P.a; } else { dst[i] = sum / weight; }`;
+    var v = vec2f(0.0);
+    if (mirror) { v = ddiv(sum, vec2f(P.a, P.c)); } else { v = ddiv(sum, weight); }
+    ${df ? 'let q = quick(v.x, v.y); dst[i] = q.x; dstLo[outLo + i] = q.y;' : 'dst[i] = dround(v);'}`;
 }
 
 function maltaShader(lines) {
@@ -170,8 +211,8 @@ const GB_WMUL = [400.0, 1.50815703118, 0, 2150.0, 10.6195433239, 16.2176043152, 
 export class GpuButteraugli {
   static async create(device, width, height) {
     const self = new GpuButteraugli();
-    self.init(device, width, height);
-    return self;
+    try { self.init(device, width, height); return self; }
+    catch (error) { self.destroy(); throw error; }
   }
 
   init(device, width, height) {
@@ -182,11 +223,15 @@ export class GpuButteraugli {
     const usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
     this.buffers = [];
     const plane = n => { const b = device.createBuffer({size: Math.max(16, Math.ceil(n / 4) * 16), usage}); this.buffers.push(b); return b; };
-    this.lut = plane(256); device.queue.writeBuffer(this.lut, 0, Float32Array.from(SRGB_TO_LINEAR));
+    const lut = new Float32Array(512);
+    for (let v = 0; v < 256; v++) { lut[2 * v] = Math.fround(SRGB_TO_LINEAR[v]); lut[2 * v + 1] = Math.fround(SRGB_TO_LINEAR[v] - lut[2 * v]); }
+    this.lut = plane(512); device.queue.writeBuffer(this.lut, 0, lut);
     this.rgba = plane(width * height);
     this.taps = {};
     for (const [name, sigma] of Object.entries(GB_SIGMAS)) {
-      const k = Float32Array.from(blurKernel(sigma)); this.taps[name] = {buffer: plane(k.length), reach: (k.length - 1) / 2, total: k.reduce((a, b) => a + b)};
+      const kernel = blurKernel(sigma), k = new Float32Array(2 * kernel.length), total = kernel.reduce((a, b) => a + b);
+      kernel.forEach((v, i) => { k[2 * i] = Math.fround(v); k[2 * i + 1] = Math.fround(v - k[2 * i]); });
+      this.taps[name] = {buffer: plane(k.length), reach: (kernel.length - 1) / 2, total: Math.fround(total), totalLo: Math.fround(total - Math.fround(total))};
       device.queue.writeBuffer(this.taps[name].buffer, 0, k);
     }
     const level = (w, h) => {
@@ -194,7 +239,7 @@ export class GpuButteraugli {
       return {w, h, n, groups: Math.ceil(n / GB_WG),
         ref: {lf: [p(), p(), p()], mf: [p(), p(), p()], hf: [p(), p()], uhf: [p(), p()], blurredMask: p(), mask: p()},
         dist: {lf: [p(), p(), p()], mf: [p(), p(), p()], hf: [p(), p()], uhf: [p(), p()], blurredMask: p()},
-        rgb: [p(), p(), p()], t: [p(), p(), p()], xyb: [p(), p(), p()], tmp: p(), tmp2: p(), ac: [p(), p(), p()], dc: [p(), p(), p()], map: p()};
+        rgb: [p(), p(), p()], rgbLo: plane(3 * n), t: [p(), p(), p()], tLo: plane(3 * n), xyb: [p(), p(), p()], tmp: p(), tmp2: p(), ac: [p(), p(), p()], dc: [p(), p(), p()], map: p()};
     };
     this.levels = [level(width, height)];
     const sw = (width + 1) >> 1, sh = (height + 1) >> 1;
@@ -202,25 +247,34 @@ export class GpuButteraugli {
     this.partial = plane(this.levels[0].groups * 4);
     this.read = device.createBuffer({size: this.partial.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST});
     this.mapRead = device.createBuffer({size: this.levels[0].map.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST});
-    this.uniforms = [];
+    this.ring = new UniformRing(device);
   }
 
   run(pass, name, lv, buffers, params = {}) {
-    const u = this.device.createBuffer({size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST});
-    const data = new ArrayBuffer(32), uv = new Uint32Array(data), fv = new Float32Array(data);
-    uv[0] = params.w ?? lv.w; uv[1] = params.h ?? lv.h; uv[2] = params.i0 ?? 0; uv[3] = params.i1 ?? 0;
-    fv[4] = params.a ?? 0; fv[5] = params.b ?? 0; fv[6] = params.c ?? 0; fv[7] = params.d ?? 0;
-    this.device.queue.writeBuffer(u, 0, data); this.uniforms.push(u);
+    const ring = this.ring, at = ring.take(), uv = at === null ? new Uint32Array(8) : ring.u32, fv = at === null ? new Float32Array(uv.buffer) : ring.f32, o = at ?? 0;
+    uv[o] = params.w ?? lv.w; uv[o + 1] = params.h ?? lv.h; uv[o + 2] = params.i0 ?? 0; uv[o + 3] = params.i1 ?? 0;
+    fv[o + 4] = params.a ?? 0; fv[o + 5] = params.b ?? 0; fv[o + 6] = params.c ?? 0; fv[o + 7] = params.d ?? 0;
     const p = this.pipelines[name];
     pass.setPipeline(p);
-    pass.setBindGroup(0, this.device.createBindGroup({layout: p.getBindGroupLayout(0), entries: [u, ...buffers].map((b, i) => ({binding: i, resource: {buffer: b}}))}));
+    pass.setBindGroup(0, ring.bind(p, at, buffers, uv));
     pass.dispatchWorkgroups(Math.ceil((params.w ?? lv.w) * (params.h ?? lv.h) / GB_WG));
   }
 
   blur(pass, lv, sigma, src, dst) {
-    const t = this.taps[sigma], params = {i0: t.reach, i1: t.reach === 2 ? 1 : 0, a: t.total};
+    const t = this.taps[sigma], params = {i0: t.reach, i1: t.reach === 2 ? 1 : 0, a: t.total, c: t.totalLo};
     this.run(pass, 'blurH', lv, [t.buffer, src, lv.tmp2], params);
     this.run(pass, 'blurV', lv, [t.buffer, lv.tmp2, dst], params);
+  }
+  blurDF(pass, lv, sigma, c, src, srcLo, dst, dstLo) {
+    const t = this.taps[sigma], mirror = t.reach === 2 ? 1 : 0, params = {i0: t.reach, a: t.total, c: t.totalLo};
+    this.run(pass, 'blurHd', lv, [t.buffer, src, srcLo, lv.tmp2, lv.tmp], {...params, i1: mirror | c << 4});
+    this.run(pass, 'blurVd', lv, [t.buffer, lv.tmp2, lv.tmp, dst, dstLo], {...params, i1: mirror | c << 8});
+  }
+
+  referenceSet(k) {
+    const n = this.levels[k].n, usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+    const p = () => { const b = this.device.createBuffer({size: Math.max(16, Math.ceil(n / 4) * 16), usage}); this.buffers.push(b); return b; };
+    return {lf: [p(), p(), p()], mf: [p(), p(), p()], hf: [p(), p()], uhf: [p(), p()], blurredMask: p(), mask: p()};
   }
 
   resize(width, height) {
@@ -233,40 +287,41 @@ export class GpuButteraugli {
 
   subsampleLoaded(pass) {
     const [l0, l1] = this.active ?? this.levels;
-    if (l1) this.run(pass, 'subsample', l1, [...l0.rgb, ...l1.rgb], {i0: l0.w, i1: l0.h});
+    if (l1) this.run(pass, 'subsample', l1, [...l0.rgb, l0.rgbLo, ...l1.rgb, l1.rgbLo], {i0: l0.w, i1: l0.h});
   }
   referenceFromLoaded(pass) {
     this.subsampleLoaded(pass);
     for (const lv of this.active ?? this.levels) { this.bands(pass, lv, lv.ref); this.run(pass, 'erosion', lv, [lv.ref.blurredMask, lv.ref.mask]); }
   }
   diffFromLoaded(pass) {
+    this.run(pass, 'clearLo', (this.active ?? this.levels)[0], [(this.active ?? this.levels)[0].rgbLo]);
     this.subsampleLoaded(pass);
     const levels = this.active ?? this.levels, [l0, l1] = levels;
     for (const lv of levels) this.diffmap(pass, lv);
     if (l1) this.run(pass, 'mix', l0, [l1.map, l0.map], {i0: l1.w});
   }
-  freeUniforms() { for (const u of this.uniforms) u.destroy(); this.uniforms = []; }
+  freeUniforms() { this.ring.reset(); }
 
   loadPicture(pass, rgba) {
     this.device.queue.writeBuffer(this.rgba, 0, rgba.buffer, rgba.byteOffset, this.width * this.height * 4);
     const [l0, l1] = this.levels;
-    this.run(pass, 'linearize', l0, [this.lut, this.rgba, ...l0.rgb]);
-    if (l1) this.run(pass, 'subsample', l1, [...l0.rgb, ...l1.rgb], {i0: l0.w, i1: l0.h});
+    this.run(pass, 'linearize', l0, [this.lut, this.rgba, ...l0.rgb, l0.rgbLo]);
+    if (l1) this.run(pass, 'subsample', l1, [...l0.rgb, l0.rgbLo, ...l1.rgb, l1.rgbLo], {i0: l0.w, i1: l0.h});
   }
 
   bands(pass, lv, bands) {
-    for (let c = 0; c < 3; c++) this.blur(pass, lv, 'opsin', lv.rgb[c], lv.t[c]);
-    this.run(pass, 'sensitivity', lv, lv.t);
-    this.run(pass, 'opsin', lv, [...lv.rgb, ...lv.t]);
+    for (let c = 0; c < 3; c++) this.blurDF(pass, lv, 'opsin', c, lv.rgb[c], lv.rgbLo, lv.t[c], lv.tLo);
+    this.run(pass, 'sensitivity', lv, [...lv.t, lv.tLo]);
+    this.run(pass, 'opsin', lv, [...lv.rgb, lv.rgbLo, lv.tLo, ...lv.t]);
     for (let c = 0; c < 3; c++) {
       this.blur(pass, lv, 'lf', lv.t[c], bands.lf[c]);
       this.run(pass, 'subtract', lv, [lv.t[c], bands.lf[c], lv.xyb[c]]);
     }
     this.run(pass, 'lfVals', lv, bands.lf);
     for (let c = 0; c < 3; c++) {
+      if (c === 2) { this.blur(pass, lv, 'mf', lv.xyb[2], bands.mf[2]); continue; }
       this.blur(pass, lv, 'mf', lv.xyb[c], lv.tmp);
-      if (c === 2) this.copy(pass, lv, lv.tmp, bands.mf[2]);
-      else this.run(pass, 'mfHf', lv, [lv.xyb[c], lv.tmp, bands.hf[c], bands.mf[c]], {i0: c});
+      this.run(pass, 'mfHf', lv, [lv.xyb[c], lv.tmp, bands.hf[c], bands.mf[c]], {i0: c});
     }
     this.run(pass, 'suppress', lv, [bands.hf[1], bands.hf[0]]);
     for (let c = 0; c < 2; c++) {
@@ -278,11 +333,7 @@ export class GpuButteraugli {
     this.blur(pass, lv, 'mask', lv.tmp, bands.blurredMask);
   }
 
-  copy(pass, lv, src, dst) { this.run(pass, 'subtract', lv, [src, this.zero(lv), dst]); }
-  zero(lv) {
-    if (!lv.zeroPlane) { lv.zeroPlane = this.device.createBuffer({size: lv.map.size, usage: GPUBufferUsage.STORAGE}); this.buffers.push(lv.zeroPlane); }
-    return lv.zeroPlane;
-  }
+  copy(pass, lv, src, dst) { this.run(pass, 'copy', lv, [src, dst]); }
 
   setReference(rgba) {
     const encoder = this.device.createCommandEncoder(), pass = encoder.beginComputePass();
@@ -291,7 +342,7 @@ export class GpuButteraugli {
       this.bands(pass, lv, lv.ref);
       this.run(pass, 'erosion', lv, [lv.ref.blurredMask, lv.ref.mask]);
     }
-    pass.end(); this.device.queue.submit([encoder.finish()]);
+    pass.end(); this.ring.flush(); this.device.queue.submit([encoder.finish()]);
   }
 
   diffmap(pass, lv) {
@@ -326,6 +377,7 @@ export class GpuButteraugli {
     pass.end();
     encoder.copyBufferToBuffer(this.partial, 0, this.read, 0, l0.groups * 16);
     if (wantMap) encoder.copyBufferToBuffer(l0.map, 0, this.mapRead, 0, l0.n * 4);
+    this.ring.flush();
     this.device.queue.submit([encoder.finish()]);
     await this.read.mapAsync(GPUMapMode.READ, 0, l0.groups * 16);
     const part = new Float32Array(this.read.getMappedRange(0, l0.groups * 16).slice(0));
@@ -339,10 +391,13 @@ export class GpuButteraugli {
       map = new Float32Array(this.mapRead.getMappedRange(0, l0.n * 4).slice(0));
       this.mapRead.unmap();
     }
-    for (const u of this.uniforms) u.destroy();
-    this.uniforms = [];
+    this.ring.reset();
     return {score: max, pnorm3, map};
   }
 
-  destroy() { for (const b of this.buffers) b.destroy(); this.read.destroy(); this.mapRead.destroy(); }
+  destroy() {
+    for (const b of this.buffers ?? []) b.destroy();
+    this.buffers = []; this.read?.destroy(); this.mapRead?.destroy(); this.ring?.destroy();
+  }
 }
+

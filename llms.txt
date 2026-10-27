@@ -1,9 +1,13 @@
 # Rapier JXL
 
-> JPEG XL encoder in JavaScript. Smaller files than libjxl at the same quality, a quality search that runs on WebGPU.
+> JPEG XL encoder in JavaScript with optional WebGPU quality search.
 > Runs in browsers, workers, Node and Deno. MIT license, no dependencies, no WebAssembly needed. Lossless, lossy, 8-bit to
-> 32-bit float, HDR, exact alpha, color profiles, exact JPEG transcoding and animation. Sizes (gzip): core 28,920 bytes,
-> still worker 149,572, complete worker (adds animation) 214,332.
+> 32-bit float, HDR, exact alpha, color profiles, exact JPEG transcoding and animation. Sizes (gzip): core 33,598 bytes,
+> still worker 190,373, complete worker (adds animation) 255,146.
+
+Private integration candidate 6.2.0-integration.20261026.1. Current full-corpus quality comparisons, requested-score acceptance,
+12 MP CPU/GPU performance and complete 1 GiB memory compliance are NOT PROVEN. Historical reports describe their
+original source versions and do not qualify this candidate. Payload sizes measure this staged package.
 
 ## Start encoding
 
@@ -20,13 +24,15 @@ through a Blob URL. [Copyable HTML](docs/reference/ARCHITECTURE.md#one-html-file
 
 Agent skills: [Single-file apps](skills/rapier-jxl-single-file-app/SKILL.md) · [Photography](skills/rapier-jxl-photography/SKILL.md).
 
-Two self-starting classic workers, both with optional WASM, effort 1–9, Photo, JPEG transcoding and parallel lossless groups:
-- `rapier-jxl/rapier/still-worker`: still pictures, byte-identical to the encoder Rapier's page embeds. 149,572 gzip bytes.
-- `rapier-jxl/rapier/worker`: the same plus animation and the other format writers; nothing downloads at runtime. 214,332 gzip bytes.
+Two self-starting classic workers, both with optional WASM, effort 1–9, Photo and JPEG transcoding:
+- `rapier-jxl/rapier/still-worker`: still pictures, byte-identical to the encoder Rapier's page embeds. 190,373 gzip bytes.
+- `rapier-jxl/rapier/worker`: the same plus animation and the other format writers; nothing downloads at runtime. 255,146 gzip bytes.
 
 `rapier-jxl/rapier/min` exports `createEncoder()` and `installWorker()` (complete). Pixel defaults: effort 7, quality 90;
 `lossless: true` forces quality 100. JPEG uses effort 7. See [the complete API](docs/reference/API.md#complete-rapier-system)
 for typed requests, module-worker spawning and Blob URL lifetime.
+Helper workers require the encoder's current memory reservation. Legacy photo, lossless and animation pools default
+to zero; a requested count alone does not admit helpers.
 
 Choose an entry point:
 
@@ -37,7 +43,7 @@ Choose an entry point:
 | Same search with optional WASM | `rapier-jxl/wasm` | Same API; automatic JavaScript fallback |
 | Existing JPEG coefficients | `rapier-jxl/jpeg` | `transcode(jpegBytes, {effort: 4})` |
 | Lossy photographic pixels | `rapier-jxl/photo` | `encodePhoto(rgba, width, height, {quality: 90, effort: 7})`; every effort gives the same picture, higher ones a smaller file |
-| The smallest file that meets a SSIMULACRA2 or Butteraugli score | `rapier-jxl/score` | `await encodeToScore(rgba, width, height, {target: {ssimulacra2: 80}})`; `gpu: device` measures on WebGPU ([API](docs/reference/API.md#encode-to-a-score)) |
+| Search configured candidates for a SSIMULACRA2 or Butteraugli score | `rapier-jxl/score` | `await encodeToScore(rgba, width, height, {target: {ssimulacra2: 80}})`; `gpu: device` measures on WebGPU ([API](docs/reference/API.md#encode-to-a-score)) |
 | Explicit transforms, progression and noise | `rapier-jxl/photo-advanced` | `encodePhoto(rgba8, width, height, {progressive: 'spectral', transforms: 'auto'})`; `lfFrames: 1` also supports alpha and custom transforms/tables |
 | Original ICC/custom color/tone metadata | `rapier-jxl/icc` | `encodeProfile(rgba, width, height, {icc})`; ordinary `encode` also accepts `icc` |
 | Exact graphics with delta palettes | `rapier-jxl/delta-palette` | `encodeDeltaPalette(rgba8, width, height, {paletteMode: 'auto'})` |
@@ -58,9 +64,9 @@ Encoding entry points and `rapier-jxl/metadata` have self-contained `/min` build
 Import the complete file to access its public export names; minification renames local functions.
 Use readable imports when bundling several capabilities so they share code.
 
-Package: `rapier-jxl`. Version: 6.1.1. Install: `npm install rapier-jxl`.
+Package: `rapier-jxl`. Version: 6.2.0-integration.20261026.1. Install: `npm install rapier-jxl`.
 ES modules with no automatic filesystem or network I/O.
-Core payload: 71,567 minified bytes; 28,920 gzip bytes.
+Core payload: 84,920 minified bytes; 33,598 gzip bytes.
 Runs in browsers, module workers, Node, and Deno. This package encodes JPEG XL and reconstructs JPEGs it carried; it does not include a JPEG XL pixel decoder.
 
 ## Inputs and outputs
