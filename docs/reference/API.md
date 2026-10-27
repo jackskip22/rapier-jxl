@@ -1,6 +1,13 @@
 # API
 
 ```js
+import {encodeCapture} from 'rapier-jxl/capture';
+const bytes = await encodeCapture(rgba, width, height);
+```
+
+`encodeCapture` is lossless. On a document it runs in a worker. Flat UI uses one context-model pass and a patch pass, and keeps the smaller file; that is the effort 7 screen result on the measured dashboards, without the rest of the ladder. A photograph falls through to the core exact encode. Lossy quality is not used: on UI it was the larger file.
+
+```js
 import {encode} from 'rapier-jxl/effort';
 const bytes = encode(rgba, width, height, {quality: 100, effort: 6});
 ```
@@ -174,7 +181,7 @@ At JPEG efforts 2 to 7 the ANS entry writes one ANS pass first and runs the pref
 JPEG effort 8 also combines learned orders with alternate histogram clustering. Effort 9 adds exact prefix-header
 pricing and exact-count order candidates. The optional JPEG ANS entry adds corresponding ANS combinations.
 These higher levels increase search time without changing decoded samples. The complete worker's JPEG route
-uses the ANS entry and defaults to effort 7; its `effort` option accepts 1 through 9.
+uses the ANS entry and defaults to effort 1, the same default as `transcode`. Effort 7 is the smaller-file search and is several times slower on a large JPEG; pass it when that size is worth the time. The option accepts 1 through 9.
 Only a strictly smaller completed stream replaces the retained result. Alpha stays exact at every quality.
 
 ### Lossless painting profile

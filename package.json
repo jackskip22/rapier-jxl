@@ -23,6 +23,13 @@
       "types": "./src/index.d.mts",
       "default": "./dist/rapier-jxl.min.mjs"
     },
+    "./capture": {
+      "types": "./src/capture.d.mts",
+      "default": "./src/capture.mjs"
+    },
+    "./capture/worker": {
+      "default": "./src/capture-worker.mjs"
+    },
     "./jpeg": {
       "types": "./src/jpeg.d.mts",
       "default": "./src/jpeg.mjs"
@@ -316,7 +323,8 @@
     "browser"
   ],
   "scripts": {
-    "build:kernels": "node kernels/build.mjs"
+    "build:kernels": "node kernels/build.mjs",
+    "test": "node --test test/capture-contract.test.mjs test/gpu-adapter.test.mjs test/image.test.mjs test/readme.test.mjs"
   },
   "devDependencies": {
     "wabt": "1.0.39"

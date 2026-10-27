@@ -55,7 +55,7 @@ export function createJPEGXLCodec({encoderFactory, imageReader, formatHandler}) 
       const jpeg = byteView(input?.bytes);
       if (!jpeg.byteLength) throw codecError('JXL_INPUT', 'The JPEG is empty.');
       if (!options || typeof options !== 'object' || Array.isArray(options)) throw codecError('JXL_OPTIONS', 'JPEG XL options are invalid.');
-      const effort = options.effort ?? 7;
+      const effort = options.effort ?? 1;
       if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw codecError('JXL_OPTIONS', 'JPEG XL effort must be 1–9.');
       if (typeof encoderFactory !== 'function') throw codecError('JXL_UNAVAILABLE', 'The bundled JPEG XL codec is unavailable.');
       stage = 'starting encoder';

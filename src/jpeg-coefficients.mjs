@@ -6,7 +6,7 @@ import {ZIGZAG} from './jfif.mjs';
 import {zeroDensityContext} from './vardct.mjs';
 import {fault} from './admit.mjs';
 
-const invalidJPEGData = () => fault('JXL_RECONSTRUCTION', 'Invalid or unsupported JPEG reconstruction data.');
+const invalidJPEGData = () => fault('JXL_RECONSTRUCTION', 'Rapier restores only a JPEG it carried. This reconstruction data is not that.');
 export function requireJPEG(condition) { if (!condition) throw invalidJPEGData(); }
 export class JxlBits {
   constructor(bytes) { this.bytes = bytes; this.bit = 0; }

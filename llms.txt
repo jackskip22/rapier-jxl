@@ -1,9 +1,10 @@
 # Rapier JXL
 
-> JPEG XL encoder in JavaScript. Smaller files than libjxl at the same quality, a quality search that runs on WebGPU.
+> JPEG XL encoder in JavaScript. The core is 28,920 gzip bytes: fast lossless and lossy photographs at effort 1.
+> The smaller-than-libjxl photographic numbers belong to the effort and score searches, not to that core.
 > Runs in browsers, workers, Node and Deno. MIT license, no dependencies, no WebAssembly needed. Lossless, lossy, 8-bit to
-> 32-bit float, HDR, exact alpha, color profiles, exact JPEG transcoding and animation. Sizes (gzip): core 28,920 bytes,
-> still worker 149,572, complete worker (adds animation) 214,332.
+> 32-bit float, HDR, exact alpha, color profiles, exact JPEG transcoding and animation. Still worker 149,572 gzip bytes,
+> complete worker (adds animation) 214,332.
 
 ## Start encoding
 
@@ -25,13 +26,14 @@ Two self-starting classic workers, both with optional WASM, effort 1–9, Photo,
 - `rapier-jxl/rapier/worker`: the same plus animation and the other format writers; nothing downloads at runtime. 214,332 gzip bytes.
 
 `rapier-jxl/rapier/min` exports `createEncoder()` and `installWorker()` (complete). Pixel defaults: effort 7, quality 90;
-`lossless: true` forces quality 100. JPEG uses effort 7. See [the complete API](docs/reference/API.md#complete-rapier-system)
+`lossless: true` forces quality 100. JPEG transcoding uses effort 1, the same default as `transcode`; pass `effort: 7` for its smaller-file search. See [the complete API](docs/reference/API.md#complete-rapier-system)
 for typed requests, module-worker spawning and Blob URL lifetime.
 
 Choose an entry point:
 
 | Need | Entry point | Call |
 | --- | --- | --- |
+| A screen capture, lossless, off the page thread | `rapier-jxl/capture` | `await encodeCapture(rgba, width, height)` |
 | Core pixel encoder | `rapier-jxl` | `encode(rgba, width, height, {quality: 100})` |
 | Lossless photos and artwork | `rapier-jxl/effort` | `encode(rgba, width, height, {quality: 100, effort: 6})` |
 | Same search with optional WASM | `rapier-jxl/wasm` | Same API; automatic JavaScript fallback |

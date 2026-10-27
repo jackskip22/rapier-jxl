@@ -20,6 +20,7 @@ async function gpu() {
   try {
     for (let i = 0; i < 4 && globalThis.navigator?.gpu && !gpuDevice; i++) {
       const adapter = await navigator.gpu.requestAdapter({powerPreference: 'high-performance'});
+      if (adapter?.info?.isFallbackAdapter) break;
       if (adapter) gpuDevice = await adapter.requestDevice({requiredLimits: {maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxBufferSize: adapter.limits.maxBufferSize}});
       else await new Promise(resolve => setTimeout(resolve, 250));
     }
@@ -71,7 +72,7 @@ export function createStillEncoder({spawn} = {}) {
     },
     async transcode(jpeg, options = {}) {
       checkSignal(options.signal);
-      const job = transcodeSteps(jpeg, {effort: options.effort ?? 7, icc: options.icc, iccCompression: options.iccCompression});
+      const job = transcodeSteps(jpeg, {effort: options.effort ?? 1, icc: options.icc, iccCompression: options.iccCompression});
       const bytes = await finishEncoding(job, options);
       return {bytes, width: job.width, height: job.height, orientation: job.orientation};
     },

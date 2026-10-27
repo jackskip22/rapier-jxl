@@ -1,0 +1,45 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>snapdom to JPEG XL</title>
+<style>
+  body { font: 16px/1.4 system-ui; margin: 2rem auto; max-width: 44rem; }
+  #board { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1rem 1.2rem; }
+  #board h2 { margin: 0 0 .4rem; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: .35rem .2rem; border-top: 1px solid #e2e8f0; }
+  button { margin-top: 1rem; }
+</style>
+<h1>Capture this board</h1>
+<div id="board">
+  <h2>Orders</h2>
+  <table>
+    <tr><td>NW-24018</td><td>Alder Market</td><td>Paid</td></tr>
+    <tr><td>NW-24019</td><td>Bright &amp; Co</td><td>Packing</td></tr>
+    <tr><td>NW-24020</td><td>Cedar Supply</td><td>Held</td></tr>
+  </table>
+</div>
+<p><button id="go" type="button">Encode JPEG XL</button></p>
+<p id="out"></p>
+<script type="importmap">
+{
+  "imports": {
+    "rapier-jxl/capture": "../../src/capture.mjs",
+    "@zumer/snapdom": "https://cdn.jsdelivr.net/npm/@zumer/snapdom@3.4.0/+esm"
+  }
+}
+</script>
+<script type="module">
+import {snapdom} from '@zumer/snapdom';
+import {install} from './plugin.mjs';
+install(snapdom);
+document.getElementById('go').onclick = async () => {
+  const out = document.getElementById('out');
+  const started = performance.now();
+  try {
+    const blob = await snapdom.toJxl(document.getElementById('board'));
+    out.textContent = `${blob.size.toLocaleString()} bytes in ${Math.round(performance.now() - started)} ms`;
+  } catch (error) {
+    out.textContent = error.message;
+  }
+};
+</script>

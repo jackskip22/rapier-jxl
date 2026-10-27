@@ -283,7 +283,7 @@ let gcDevice;
 export function gpuCoreDevice() {
   gcDevice ??= (async () => {
     const adapter = await globalThis.navigator?.gpu?.requestAdapter({powerPreference: 'high-performance'});
-    if (!adapter) return null;
+    if (!adapter || adapter.info?.isFallbackAdapter) return null;
     const device = await adapter.requestDevice({requiredLimits: {maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxBufferSize: adapter.limits.maxBufferSize}});
     device.lost.then(() => { gcDevice = undefined; });
     return device;

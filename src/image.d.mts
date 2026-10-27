@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 export type ImageSource = Blob | ImageBitmap | ImageData | OffscreenCanvas | HTMLCanvasElement | HTMLImageElement;
 export interface ImageOptions {
-  /** The complete worker: a `Worker` running rapier-worker.js, or that file's URL (one worker per call). Required. */
+  /** A `Worker` running rapier-still-worker.js or rapier-worker.js, or either file's URL (a new worker for that call).
+   * Calls sharing one `Worker` run one after another. Required. */
   worker: Worker | string | URL;
   /** 1 to 99 is lossy; omitted or 100 is lossless. Does not apply to a carried JPEG. */
   quality?: number | undefined;
