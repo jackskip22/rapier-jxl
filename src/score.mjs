@@ -29,8 +29,11 @@ function admitScore(data, width, height, options) {
   return {target: scoreTarget(options?.target), effort: options?.effort === undefined ? 7 : admitEffort(options), candidates};
 }
 
-const scoreAnswer = r => ({bytes: r.bytes, quality: r.quality, candidate: r.candidate, butteraugli: r.butteraugli, butteraugli3: r.butteraugli3,
-  ...(r.ssimulacra2 !== undefined ? {ssimulacra2: r.ssimulacra2} : {})});
+function scoreAnswer(r) {
+  if (!r) throw fault('JXL_TARGET_UNMET', 'No searched candidate meets every requested quality target.');
+  return {bytes: r.bytes, quality: r.quality, candidate: r.candidate, butteraugli: r.butteraugli, butteraugli3: r.butteraugli3,
+    ...(r.ssimulacra2 !== undefined ? {ssimulacra2: r.ssimulacra2} : {})};
+}
 
 export function* encodeToScoreSteps(data, width, height, options) {
   const {target, effort, candidates} = admitScore(data, width, height, options), measure = cpuMeasure(data, width, height);

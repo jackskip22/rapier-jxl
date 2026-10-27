@@ -1,0 +1,140 @@
+{
+  "schema": 1,
+  "libjxl": "0.12.0",
+  "method": "Distance bisection, maximum 13 measured candidates plus zero-distance anchor. Retain the smallest actual file meeting the target SSIMULACRA2. A match is declared only within +0.15 points; otherwise report the achieved gap. CLI ms include input decode and file write. No interpolation of size or runtime.",
+  "rows": [
+    {
+      "key": "snapdom-opaque-1920x1080/capture-error2/main/cjxl-e7",
+      "input": "snapdom-opaque-1920x1080",
+      "comparedCodec": "capture-error2",
+      "comparedBytes": 188133,
+      "targetScore": 81.69462201,
+      "effort": 7,
+      "probes": [
+        {
+          "distance": 0,
+          "bytes": 299968,
+          "ssimulacra2": 100,
+          "ms": 1254.6756839999998,
+          "sha256": "d732dcb43b01d54546450bc31d7d8237493e6535c994140e36a65f09ff0d1556"
+        },
+        {
+          "distance": 6,
+          "bytes": 48465,
+          "ssimulacra2": 69.60611962,
+          "ms": 1152.950864,
+          "sha256": "78eb98395a044e6a9a84ff2f21b767bdc33eda087666f2aa09c9bb567f1e96db"
+        },
+        {
+          "distance": 3,
+          "bytes": 71408,
+          "ssimulacra2": 79.2924542,
+          "ms": 1142.5604049999993,
+          "sha256": "e6d925b2334c72e72dab7772b66554de652423b28b9efe405f0896a90703ced2"
+        },
+        {
+          "distance": 1.5,
+          "bytes": 109180,
+          "ssimulacra2": 84.77848537,
+          "ms": 1014.4257199999993,
+          "sha256": "6ae2fe7505a8f8a25024e895c24524936ca7455fe8c3ede5064baf75034517b2"
+        },
+        {
+          "distance": 2.25,
+          "bytes": 88803,
+          "ssimulacra2": 81.70228107,
+          "ms": 851.8837000000003,
+          "sha256": "edf3d43d91da2310e09e5c25aded85ec8d2b327913eb4922c97abf60168dc8b0"
+        }
+      ],
+      "chosen": {
+        "distance": 2.25,
+        "bytes": 88803,
+        "ssimulacra2": 81.70228107,
+        "ms": 851.8837000000003,
+        "sha256": "edf3d43d91da2310e09e5c25aded85ec8d2b327913eb4922c97abf60168dc8b0"
+      },
+      "scoreGap": 0.007659059999994611,
+      "matched": true,
+      "comparedBytePercent": 111.8543292456336,
+      "status": "measured"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/capture-error2/main/cjxl-e9",
+      "input": "snapdom-opaque-1920x1080",
+      "comparedCodec": "capture-error2",
+      "comparedBytes": 188133,
+      "targetScore": 81.69462201,
+      "effort": 9,
+      "probes": [
+        {
+          "distance": 0,
+          "bytes": 276709,
+          "ssimulacra2": 100,
+          "ms": 5234.594068999999,
+          "sha256": "74bae00fd0cfa8c49126d4904886fae629d5ad5a2d6f318a56d45e7791774d10"
+        },
+        {
+          "distance": 6,
+          "bytes": 55153,
+          "ssimulacra2": 67.64543048,
+          "ms": 6845.562155,
+          "sha256": "f7a2ca5757ceb968c060262646b161f7a2f5c8e5c03c2b77e88906bb7efd9bb5"
+        },
+        {
+          "distance": 3,
+          "bytes": 81372,
+          "ssimulacra2": 78.15742198,
+          "ms": 6047.734722000001,
+          "sha256": "29299f04f9da401efd2cbb39ca781b605df5a4b6df08369843e0fb6de29b18c0"
+        },
+        {
+          "distance": 1.5,
+          "bytes": 112673,
+          "ssimulacra2": 84.40321511,
+          "ms": 6320.596766000002,
+          "sha256": "e38f58bf7702350223588701da27e780286f68b0f34a43abca7b884292aef4df"
+        },
+        {
+          "distance": 2.25,
+          "bytes": 91120,
+          "ssimulacra2": 81.58924062,
+          "ms": 5717.706564,
+          "sha256": "823eb1ae1ec96237eb73c0aaffa5c02e180af868334ee92fa91f304c1f07e433"
+        },
+        {
+          "distance": 1.875,
+          "bytes": 100790,
+          "ssimulacra2": 82.96225354,
+          "ms": 6398.494614000003,
+          "sha256": "7f151a89172fd5dbb1ee29e30817fea7b70c655785e5a41fa6efa3497c07f3a1"
+        },
+        {
+          "distance": 2.0625,
+          "bytes": 94969,
+          "ssimulacra2": 82.26835715,
+          "ms": 6245.407615999997,
+          "sha256": "7de7571ccf534fbda39dd8e24c19353fe6469e936aaa2d62eeabcac238f28625"
+        },
+        {
+          "distance": 2.15625,
+          "bytes": 93068,
+          "ssimulacra2": 81.73503328,
+          "ms": 6439.222469,
+          "sha256": "cb005cd33c0766ee2b5deb0c4c4ffdf9aecb255193139e83b8a8d3204747ab6f"
+        }
+      ],
+      "chosen": {
+        "distance": 2.15625,
+        "bytes": 93068,
+        "ssimulacra2": 81.73503328,
+        "ms": 6439.222469,
+        "sha256": "cb005cd33c0766ee2b5deb0c4c4ffdf9aecb255193139e83b8a8d3204747ab6f"
+      },
+      "scoreGap": 0.04041126999999278,
+      "matched": true,
+      "comparedBytePercent": 102.1457428976662,
+      "status": "measured"
+    }
+  ]
+}

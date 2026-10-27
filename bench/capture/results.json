@@ -1,0 +1,5408 @@
+{
+  "schema": 1,
+  "date": "2026-10-27T12:59:14.612Z",
+  "baseline": "3d36f51c36843a7d2965af2f525504047aa2f8a3",
+  "machine": {
+    "label": "Hosted Linux x86_64; not a mid-range laptop or phone",
+    "platform": "linux",
+    "release": "6.18.55",
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "logicalCpus": 9,
+    "node": "v24.22.1",
+    "memoryBytes": 10451439616,
+    "cpuQuota": "800000 100000"
+  },
+  "method": {
+    "quality": "Lossless compares every decoded RGBA byte, including RGB under zero alpha. Lossy rows are measured with native SSIMULACRA2; matching is a separate sweep, never equal quality-slider values.",
+    "native": "CLI process wall time includes process start, input PNG decode and output write. Each repetition starts a fresh process; these are repeated-process times, not warm in-process encode times.",
+    "peakMemory": "Node uses process.resourceUsage().maxRSS. Native CLI uses resource.getrusage(RUSAGE_CHILDREN) in a fresh Python parent. All include process/runtime/input. Browser memory unavailable is null, never zero.",
+    "gpu": "Node tests are CPU-only. No claim about hardware WebGPU or phone/laptop targets."
+  },
+  "inputs": [
+    {
+      "name": "snapdom-opaque-1920x1080",
+      "width": 1920,
+      "height": 1080,
+      "pngSHA256": "77239db2fc437bc8233a377834f36f454030d210f46f265d0398bf20a672a217",
+      "rgbaSHA256": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57",
+      "photo": false
+    },
+    {
+      "name": "snapdom-opaque-3840x2160",
+      "width": 3840,
+      "height": 2160,
+      "pngSHA256": "decc501e2da5c1533626389d52486db4a1b5e5dcb0458ca332f14c86c0e73062",
+      "rgbaSHA256": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9",
+      "photo": false
+    },
+    {
+      "name": "snapdom-alpha-1920x1080",
+      "width": 1920,
+      "height": 1080,
+      "pngSHA256": "5c8588b1693c1c8eddc4e9e21d10b9ebe6f44b12f489e4a8eb2b544a88b996d7",
+      "rgbaSHA256": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130",
+      "photo": false
+    },
+    {
+      "name": "snapdom-alpha-3840x2160",
+      "width": 3840,
+      "height": 2160,
+      "pngSHA256": "97c3b1288f9d09a6200f6e18c2401b1865274ca6a421fc3e8f65ac1798f3cb6a",
+      "rgbaSHA256": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8",
+      "photo": false
+    },
+    {
+      "name": "snapdom-nested-demo-1920x1080",
+      "width": 1920,
+      "height": 1080,
+      "pngSHA256": "62a9b404bbaca5407876b2ddaf9ea7158ec393d0c78c07bb0ab7c9e13e18620e",
+      "rgbaSHA256": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee",
+      "photo": false
+    },
+    {
+      "name": "photo-keong",
+      "width": 500,
+      "height": 500,
+      "pngSHA256": "eb9189de8004dd0e56c5ccd8312567ae325bcef42861e2bfc86b064f4c4861b6",
+      "rgbaSHA256": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "photo": true
+    }
+  ],
+  "rows": [
+    {
+      "key": "snapdom-opaque-1920x1080/core-lossless/main",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "core-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57",
+      "bytes": 513838,
+      "sha256": "a4ca89be960eb2ead21b89610e4e1841c9abb06fefb3fc31ead440cc8093e31a",
+      "initializationMs": 16.901438999999982,
+      "coldMs": 251.330324,
+      "firstEncodeMs": 234.428885,
+      "warmMs": [
+        203.04680199999996,
+        216.97582799999998,
+        208.34921299999996
+      ],
+      "memory": {
+        "peakRSSKiB": 75776,
+        "before": {
+          "rss": 73809920,
+          "heapTotal": 11063296,
+          "heapUsed": 5903568,
+          "external": 38018329,
+          "arrayBuffers": 26706215
+        },
+        "after": {
+          "rss": 77594624,
+          "heapTotal": 12374016,
+          "heapUsed": 7315056,
+          "external": 18120055,
+          "arrayBuffers": 15802332
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "status": "measured",
+      "run": "capture-headline"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/effort3-lossless/main",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "effort3-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 3,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57",
+      "bytes": 394828,
+      "sha256": "acf788556d45ef56a6628aeaf00f1e76119baa7afa642ad76078b8af7313287a",
+      "initializationMs": 41.33411000000001,
+      "coldMs": 1394.135114,
+      "firstEncodeMs": 1352.801004,
+      "warmMs": [
+        1054.9412900000002,
+        1048.8284829999998,
+        998.3428349999999
+      ],
+      "memory": {
+        "peakRSSKiB": 191588,
+        "before": {
+          "rss": 74174464,
+          "heapTotal": 8966144,
+          "heapUsed": 5864952,
+          "external": 38018329,
+          "arrayBuffers": 26706215
+        },
+        "after": {
+          "rss": 196186112,
+          "heapTotal": 19451904,
+          "heapUsed": 8353144,
+          "external": 62207930,
+          "arrayBuffers": 59893781
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "status": "measured",
+      "originalCorrectness": {
+        "decoder": "libjxl djxl 0.11.1",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "reverification": "Identical encoded output hash; repeated native decode and SSIMULACRA2 with0.12.0. Original encoding timing unchanged.",
+      "run": "capture-reverified"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/effort9-lossless/main",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "effort9-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 9,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57",
+      "bytes": 275041,
+      "sha256": "26484e3d6621965f231874ea682aa58869b1d557b14a2bbf8f5c3dfc3cf4eac2",
+      "initializationMs": 41.344425,
+      "coldMs": 60499.562812,
+      "firstEncodeMs": 60458.21838699999,
+      "warmMs": [
+        65238.84275
+      ],
+      "memory": {
+        "peakRSSKiB": 375560,
+        "before": {
+          "rss": 74530816,
+          "heapTotal": 8704000,
+          "heapUsed": 5857440,
+          "external": 38018329,
+          "arrayBuffers": 26706215
+        },
+        "after": {
+          "rss": 356888576,
+          "heapTotal": 145543168,
+          "heapUsed": 21180400,
+          "external": 31167418,
+          "arrayBuffers": 28853269
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "status": "measured",
+      "originalCorrectness": {
+        "decoder": "libjxl djxl 0.11.1",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "reverification": "Identical encoded output hash; repeated native decode and SSIMULACRA2 with0.12.0. Original encoding timing unchanged.",
+      "run": "capture-reverified"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/wasm3-lossless/main",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "wasm3-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 3,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57",
+      "bytes": 394828,
+      "sha256": "acf788556d45ef56a6628aeaf00f1e76119baa7afa642ad76078b8af7313287a",
+      "initializationMs": 48.83520300000001,
+      "coldMs": 1250.721244,
+      "firstEncodeMs": 1201.886041,
+      "warmMs": [
+        1084.399067,
+        936.8598010000001,
+        958.0468969999997
+      ],
+      "memory": {
+        "peakRSSKiB": 193768,
+        "before": {
+          "rss": 73867264,
+          "heapTotal": 8966144,
+          "heapUsed": 5883928,
+          "external": 38018329,
+          "arrayBuffers": 26706215
+        },
+        "after": {
+          "rss": 198418432,
+          "heapTotal": 18927616,
+          "heapUsed": 9615512,
+          "external": 80166253,
+          "arrayBuffers": 60943816
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "status": "measured",
+      "originalCorrectness": {
+        "decoder": "libjxl djxl 0.11.1",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "reverification": "Identical encoded output hash; repeated native decode and SSIMULACRA2 with0.12.0. Original encoding timing unchanged.",
+      "run": "capture-reverified"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/capture-lossless/main",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "capture-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57",
+      "bytes": 342821,
+      "sha256": "83590eb91d2a9d615501c3e3c9737140991b3bf6e1997e58386c209c411d6695",
+      "initializationMs": 10.496707000000015,
+      "coldMs": 1008.920142,
+      "firstEncodeMs": 998.423435,
+      "warmMs": [
+        925.6402990000001,
+        880.1468360000003,
+        792.5924099999997
+      ],
+      "memory": {
+        "peakRSSKiB": 379068,
+        "before": {
+          "rss": 74137600,
+          "heapTotal": 10801152,
+          "heapUsed": 5918648,
+          "external": 38018329,
+          "arrayBuffers": 26706215
+        },
+        "after": {
+          "rss": 340721664,
+          "heapTotal": 160251904,
+          "heapUsed": 43379880,
+          "external": 79301497,
+          "arrayBuffers": 76987348
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "status": "measured",
+      "run": "capture-headline"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/capture-lossless/worker",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "capture-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57",
+      "bytes": 342821,
+      "sha256": "83590eb91d2a9d615501c3e3c9737140991b3bf6e1997e58386c209c411d6695",
+      "initializationMs": 54.458693,
+      "coldMs": 1161.373977,
+      "firstEncodeMs": 1106.915284,
+      "warmMs": [
+        1455.316085,
+        1139.3843700000002,
+        1016.592713
+      ],
+      "memory": {
+        "peakRSSKiB": 435852,
+        "before": {
+          "rss": 75034624,
+          "heapTotal": 10801152,
+          "heapUsed": 6028480,
+          "external": 38018329,
+          "arrayBuffers": 35700646
+        },
+        "after": {
+          "rss": 345100288,
+          "heapTotal": 10801152,
+          "heapUsed": 6397032,
+          "external": 39488106,
+          "arrayBuffers": 43995046
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "status": "measured",
+      "run": "capture-headline"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/capture-error2/main",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "capture-error2",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 2,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57",
+      "bytes": 188133,
+      "sha256": "758bea7ae02bd090de193af5f9e9179fc243c1c6b39b5dfdf365b90782ed7625",
+      "initializationMs": 9.023270999999994,
+      "coldMs": 739.797662,
+      "firstEncodeMs": 730.7743909999999,
+      "warmMs": [
+        690.4180980000001,
+        678.5609799999997,
+        615.0111939999997
+      ],
+      "memory": {
+        "peakRSSKiB": 258692,
+        "before": {
+          "rss": 74584064,
+          "heapTotal": 11325440,
+          "heapUsed": 5933624,
+          "external": 38018329,
+          "arrayBuffers": 26706215
+        },
+        "after": {
+          "rss": 248844288,
+          "heapTotal": 75026432,
+          "heapUsed": 10178776,
+          "external": 23769849,
+          "arrayBuffers": 21455700
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 3314042,
+        "maxRgbError": 2,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 81.69462201,
+        "decodedRGBAHash": "5c5ea9da16ad14bf6d77782917c5a4760336337c2c2336fbb54e2b5d03350b00"
+      },
+      "status": "measured",
+      "run": "capture-final-capture"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/capture-error2/worker",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "capture-error2",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 2,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57",
+      "bytes": 188133,
+      "sha256": "758bea7ae02bd090de193af5f9e9179fc243c1c6b39b5dfdf365b90782ed7625",
+      "initializationMs": 442.3701219999999,
+      "coldMs": 2439.05541,
+      "firstEncodeMs": 1996.685288,
+      "warmMs": [
+        939.866012,
+        824.0534920000005,
+        699.259693
+      ],
+      "memory": {
+        "peakRSSKiB": 310864,
+        "before": {
+          "rss": 74076160,
+          "heapTotal": 10539008,
+          "heapUsed": 5890376,
+          "external": 38018329,
+          "arrayBuffers": 26706215
+        },
+        "after": {
+          "rss": 296165376,
+          "heapTotal": 11063296,
+          "heapUsed": 6258736,
+          "external": 29874923,
+          "arrayBuffers": 35000615
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 3314042,
+        "maxRgbError": 2,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 81.69462201,
+        "decodedRGBAHash": "5c5ea9da16ad14bf6d77782917c5a4760336337c2c2336fbb54e2b5d03350b00"
+      },
+      "status": "measured",
+      "run": "capture-final-capture"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/jsquash-e7-lossless/main",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "jsquash-e7-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57",
+      "bytes": 284949,
+      "sha256": "e07406e1c90ada23a0db7f5fc78ce26a0d70bb7f21d62ecc4f8436aca1353872",
+      "initializationMs": 12.937819000000005,
+      "coldMs": 4241.726933,
+      "firstEncodeMs": 4228.789114,
+      "warmMs": [
+        3772.3568319999995,
+        3586.686887,
+        3471.0669150000012
+      ],
+      "memory": {
+        "peakRSSKiB": 453772,
+        "before": {
+          "rss": 74293248,
+          "heapTotal": 11325440,
+          "heapUsed": 5918992,
+          "external": 38018329,
+          "arrayBuffers": 26706215
+        },
+        "after": {
+          "rss": 464793600,
+          "heapTotal": 8179712,
+          "heapUsed": 5809128,
+          "external": 388815713,
+          "arrayBuffers": 12150035
+        },
+        "wasmHeapBytes": 374341632
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "status": "measured",
+      "run": "capture-headline"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/jsquash-e7-lossless/worker",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "jsquash-e7-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57",
+      "bytes": 284949,
+      "sha256": "e07406e1c90ada23a0db7f5fc78ce26a0d70bb7f21d62ecc4f8436aca1353872",
+      "initializationMs": 68.884544,
+      "coldMs": 4788.105377,
+      "firstEncodeMs": 4719.220832999999,
+      "warmMs": [
+        4229.195530999999,
+        3485.564569,
+        3613.915379
+      ],
+      "memory": {
+        "peakRSSKiB": 498636,
+        "before": {
+          "rss": 74178560,
+          "heapTotal": 11325440,
+          "heapUsed": 5905104,
+          "external": 38018329,
+          "arrayBuffers": 26706215
+        },
+        "after": {
+          "rss": 510603264,
+          "heapTotal": 11587584,
+          "heapUsed": 6273928,
+          "external": 30262187,
+          "arrayBuffers": 59883815
+        },
+        "wasmHeapBytes": 374341632
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "status": "measured",
+      "run": "capture-headline"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/vips-e3-lossless/main",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "vips-e3-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 3,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57",
+      "bytes": 425715,
+      "sha256": "44f67b8ed4b01420235f64252eac966c9d3c4cb5c46134a77c9aaa19b4161bce",
+      "initializationMs": 104.270487,
+      "coldMs": 947.309434,
+      "firstEncodeMs": 843.038947,
+      "warmMs": [
+        529.6437960000001,
+        511.78474200000005,
+        551.4808699999999
+      ],
+      "memory": {
+        "peakRSSKiB": 286148,
+        "before": {
+          "rss": 74031104,
+          "heapTotal": 11325440,
+          "heapUsed": 5876128,
+          "external": 38018329,
+          "arrayBuffers": 26706215
+        },
+        "after": {
+          "rss": 293015552,
+          "heapTotal": 20537344,
+          "heapUsed": 13415352,
+          "external": 14362457,
+          "arrayBuffers": 11916291
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "status": "measured",
+      "run": "capture-headline"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/vips-e3-lossless/worker",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "vips-e3-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 3,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57",
+      "bytes": 425715,
+      "sha256": "44f67b8ed4b01420235f64252eac966c9d3c4cb5c46134a77c9aaa19b4161bce",
+      "initializationMs": 190.50079300000002,
+      "coldMs": 1013.2147719999999,
+      "firstEncodeMs": 822.7139789999999,
+      "warmMs": [
+        625.978441,
+        546.061355,
+        563.8284659999999
+      ],
+      "memory": {
+        "peakRSSKiB": 352956,
+        "before": {
+          "rss": 73777152,
+          "heapTotal": 10539008,
+          "heapUsed": 5858280,
+          "external": 38018329,
+          "arrayBuffers": 26706215
+        },
+        "after": {
+          "rss": 361426944,
+          "heapTotal": 11063296,
+          "heapUsed": 6230520,
+          "external": 30825251,
+          "arrayBuffers": 51589415
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "status": "measured",
+      "run": "capture-headline"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/vips-e7-lossless/main",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "vips-e7-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57",
+      "bytes": 299968,
+      "sha256": "d732dcb43b01d54546450bc31d7d8237493e6535c994140e36a65f09ff0d1556",
+      "initializationMs": 113.72788699999998,
+      "coldMs": 2268.309552,
+      "firstEncodeMs": 2154.581665,
+      "warmMs": [
+        1675.1191399999998,
+        1455.742205,
+        1419.1301599999997
+      ],
+      "memory": {
+        "peakRSSKiB": 276516,
+        "before": {
+          "rss": 74022912,
+          "heapTotal": 11063296,
+          "heapUsed": 5891752,
+          "external": 38018329,
+          "arrayBuffers": 26706215
+        },
+        "after": {
+          "rss": 283152384,
+          "heapTotal": 20799488,
+          "heapUsed": 13358208,
+          "external": 13356481,
+          "arrayBuffers": 10910315
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "status": "measured",
+      "run": "capture-headline"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/vips-e7-lossless/worker",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "vips-e7-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57",
+      "bytes": 299968,
+      "sha256": "d732dcb43b01d54546450bc31d7d8237493e6535c994140e36a65f09ff0d1556",
+      "initializationMs": 143.28105800000003,
+      "coldMs": 1658.0884500000002,
+      "firstEncodeMs": 1514.8073920000002,
+      "warmMs": [
+        1406.5667879999999,
+        1468.3432020000005,
+        1586.1672020000005
+      ],
+      "memory": {
+        "peakRSSKiB": 345088,
+        "before": {
+          "rss": 73609216,
+          "heapTotal": 11325440,
+          "heapUsed": 5892544,
+          "external": 38018329,
+          "arrayBuffers": 26706215
+        },
+        "after": {
+          "rss": 340004864,
+          "heapTotal": 11587584,
+          "heapUsed": 6265024,
+          "external": 30322263,
+          "arrayBuffers": 43295015
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "status": "measured",
+      "run": "capture-headline"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/cjxl-e7-lossless/cli",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "cjxl-e7-lossless",
+      "execution": "cli",
+      "quality": 100,
+      "effort": 7,
+      "maxError": null,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "version": "0.12.0",
+      "coldMs": 1081.0522290048539,
+      "firstEncodeMs": 1081.0522290048539,
+      "warmMs": [
+        1105.4468509973958,
+        1235.8934079966275,
+        1217.2837190009886
+      ],
+      "memory": {
+        "peakRSSKiB": 105408
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/libjxl12/tools/cjxl",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-opaque-1920x1080.png",
+        "/workspace/scratch/a5eee5bb8095/capture-native12/snapdom-opaque-1920x1080--cjxl-e7-lossless--cli.jxl",
+        "-q",
+        "100",
+        "-e",
+        "7",
+        "--num_threads=1",
+        "--lossless_jpeg=0",
+        "--quiet"
+      ],
+      "bytes": 299968,
+      "sha256": "d732dcb43b01d54546450bc31d7d8237493e6535c994140e36a65f09ff0d1556",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "status": "measured",
+      "run": "capture-native12"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/cjxl-e9-lossless/cli",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "cjxl-e9-lossless",
+      "execution": "cli",
+      "quality": 100,
+      "effort": 9,
+      "maxError": null,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "version": "0.12.0",
+      "coldMs": 4851.756819996808,
+      "firstEncodeMs": 4851.756819996808,
+      "warmMs": [
+        4972.942407999653,
+        4902.8978849964915,
+        5233.778186004201
+      ],
+      "memory": {
+        "peakRSSKiB": 105532
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/libjxl12/tools/cjxl",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-opaque-1920x1080.png",
+        "/workspace/scratch/a5eee5bb8095/capture-native12/snapdom-opaque-1920x1080--cjxl-e9-lossless--cli.jxl",
+        "-q",
+        "100",
+        "-e",
+        "9",
+        "--num_threads=1",
+        "--lossless_jpeg=0",
+        "--quiet"
+      ],
+      "bytes": 276709,
+      "sha256": "74bae00fd0cfa8c49126d4904886fae629d5ad5a2d6f318a56d45e7791774d10",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "status": "measured",
+      "run": "capture-native12"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/webp-lossless/cli",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "webp-lossless",
+      "execution": "cli",
+      "quality": 100,
+      "effort": null,
+      "maxError": null,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "coldMs": 430.0718200029223,
+      "firstEncodeMs": 430.0718200029223,
+      "warmMs": [
+        460.1651140037575,
+        429.7214120015269,
+        469.9729100029799
+      ],
+      "memory": {
+        "peakRSSKiB": 52220
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/webp/bin/cwebp",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-opaque-1920x1080.png",
+        "-o",
+        "/workspace/scratch/a5eee5bb8095/capture-results-final/snapdom-opaque-1920x1080--webp-lossless--cli.webp",
+        "-lossless",
+        "-exact",
+        "-z",
+        "6",
+        "-quiet"
+      ],
+      "bytes": 277078,
+      "sha256": "e75983f8bf4f3ad15d47919417c896f52e75fdb17cc9cddd03bab7400c98fab0",
+      "correctness": {
+        "decoder": "dwebp 1.5.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "status": "measured",
+      "run": "capture-results-final"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/webp-q90/cli",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "webp-q90",
+      "execution": "cli",
+      "quality": 90,
+      "effort": null,
+      "maxError": null,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "coldMs": 136.90509099978954,
+      "firstEncodeMs": 136.90509099978954,
+      "warmMs": [
+        133.40403599431738,
+        143.51074099977268,
+        157.7031819979311
+      ],
+      "memory": {
+        "peakRSSKiB": 13744
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/webp/bin/cwebp",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-opaque-1920x1080.png",
+        "-o",
+        "/workspace/scratch/a5eee5bb8095/capture-results-final/snapdom-opaque-1920x1080--webp-q90--cli.webp",
+        "-q",
+        "90",
+        "-m",
+        "4",
+        "-quiet"
+      ],
+      "bytes": 96666,
+      "sha256": "e577787d56dbe7d6026d7f9966cd68bf50d33052e24f50656c097a0656ce0913",
+      "correctness": {
+        "decoder": "dwebp 1.5.0",
+        "differentSamples": 2114040,
+        "maxRgbError": 45,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 84.48911482,
+        "decodedRGBAHash": "6baaf1cd422de7c878fb11772acb7c81fcf92cef78932c2ec2571b4ade9b1856"
+      },
+      "status": "measured",
+      "run": "capture-results-final"
+    },
+    {
+      "key": "snapdom-opaque-1920x1080/png-oxipng4/cli",
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "png-oxipng4",
+      "execution": "cli",
+      "quality": 100,
+      "effort": null,
+      "maxError": null,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "coldMs": 2418.904279002163,
+      "firstEncodeMs": 2418.904279002163,
+      "warmMs": [
+        2474.993171999813,
+        2463.7506770013715,
+        2461.553125001956
+      ],
+      "memory": {
+        "peakRSSKiB": 72924
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/oxipng/oxipng",
+        "-o",
+        "4",
+        "--strip",
+        "safe",
+        "--out",
+        "/workspace/scratch/a5eee5bb8095/capture-results-final/snapdom-opaque-1920x1080--png-oxipng4--cli.png",
+        "--force",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-opaque-1920x1080.png"
+      ],
+      "bytes": 376634,
+      "sha256": "95b7e8dccbb8b4ad229c850156c6491e12385a71c63401c3e760c2b5e5e199d4",
+      "correctness": {
+        "decoder": "PNG sample reader",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6a3d053f73793652bcd24266082696ed5f141db5f139af258b207171b6632d57"
+      },
+      "status": "measured",
+      "run": "capture-results-final"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/core-lossless/main",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "core-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9",
+      "bytes": 1490811,
+      "sha256": "882363888dc0b6c2f665c4098e55fad6813fc4b8cec6438d84e0677bc5933d74",
+      "initializationMs": 18.696342000000016,
+      "coldMs": 986.565942,
+      "firstEncodeMs": 967.8696,
+      "warmMs": [
+        844.4302950000001,
+        892.7193889999999,
+        849.6242440000001
+      ],
+      "memory": {
+        "peakRSSKiB": 196940,
+        "before": {
+          "rss": 178466816,
+          "heapTotal": 10801152,
+          "heapUsed": 5778192,
+          "external": 106873728,
+          "arrayBuffers": 104556045
+        },
+        "after": {
+          "rss": 201666560,
+          "heapTotal": 12374016,
+          "heapUsed": 7456808,
+          "external": 143012210,
+          "arrayBuffers": 140694487
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9"
+      },
+      "status": "measured",
+      "run": "capture-headline"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/effort3-lossless/main",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "effort3-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 3,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9",
+      "bytes": 1024738,
+      "sha256": "11ad9b13e52e9cd087a09638adb9779f39265885693245227c73df1f444e5ea7",
+      "initializationMs": 35.757000000000005,
+      "coldMs": 4151.004069999999,
+      "firstEncodeMs": 4115.247069999999,
+      "warmMs": [
+        3382.721071,
+        3950.004102,
+        4216.2209569999995
+      ],
+      "memory": {
+        "peakRSSKiB": 237580,
+        "before": {
+          "rss": 178622464,
+          "heapTotal": 10801152,
+          "heapUsed": 5764208,
+          "external": 106873728,
+          "arrayBuffers": 104556045
+        },
+        "after": {
+          "rss": 243281920,
+          "heapTotal": 27054080,
+          "heapUsed": 9293600,
+          "external": 86450746,
+          "arrayBuffers": 84136597
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9"
+      },
+      "status": "measured",
+      "originalCorrectness": {
+        "decoder": "libjxl djxl 0.11.1",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9"
+      },
+      "reverification": "Identical encoded output hash; repeated native decode and SSIMULACRA2 with0.12.0. Original encoding timing unchanged.",
+      "run": "capture-reverified"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/effort9-lossless/main",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "effort9-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 9,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9",
+      "bytes": 692029,
+      "sha256": "fe781df55a4dd0285b5d731a9c022d217bc5b80e21b9cca9a0238ff4cb69798d",
+      "initializationMs": 41.685919999999896,
+      "coldMs": 341893.403006,
+      "firstEncodeMs": 341851.71708599996,
+      "warmMs": [],
+      "memory": {
+        "peakRSSKiB": 442000,
+        "before": {
+          "rss": 178720768,
+          "heapTotal": 10801152,
+          "heapUsed": 5766352,
+          "external": 106873728,
+          "arrayBuffers": 104556045
+        },
+        "after": {
+          "rss": 427544576,
+          "heapTotal": 145281024,
+          "heapUsed": 38480688,
+          "external": 128368368,
+          "arrayBuffers": 126054219
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9"
+      },
+      "status": "measured",
+      "run": "capture-best4k"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/wasm3-lossless/main",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "wasm3-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 3,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9",
+      "bytes": 1024738,
+      "sha256": "11ad9b13e52e9cd087a09638adb9779f39265885693245227c73df1f444e5ea7",
+      "initializationMs": 61.48363999999998,
+      "coldMs": 4152.554906,
+      "firstEncodeMs": 4091.071266,
+      "warmMs": [
+        3387.0690270000005,
+        3689.967426,
+        3509.126532
+      ],
+      "memory": {
+        "peakRSSKiB": 268228,
+        "before": {
+          "rss": 179093504,
+          "heapTotal": 10801152,
+          "heapUsed": 5786080,
+          "external": 106873728,
+          "arrayBuffers": 104556045
+        },
+        "after": {
+          "rss": 260902912,
+          "heapTotal": 26267648,
+          "heapUsed": 14211808,
+          "external": 78065715,
+          "arrayBuffers": 58843278
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9"
+      },
+      "status": "measured",
+      "originalCorrectness": {
+        "decoder": "libjxl djxl 0.11.1",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9"
+      },
+      "reverification": "Identical encoded output hash; repeated native decode and SSIMULACRA2 with0.12.0. Original encoding timing unchanged.",
+      "run": "capture-reverified"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/capture-lossless/main",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "capture-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9",
+      "bytes": 896177,
+      "sha256": "3c82f1ad80f3a725b7118807d8fa846d41d17b7a30aa82c133b0d3f5a5c164cc",
+      "initializationMs": 7.469813999999985,
+      "coldMs": 3332.948577,
+      "firstEncodeMs": 3325.478763,
+      "warmMs": [
+        2826.209536,
+        2719.8351219999995,
+        2741.6580509999985
+      ],
+      "memory": {
+        "peakRSSKiB": 444316,
+        "before": {
+          "rss": 178905088,
+          "heapTotal": 10801152,
+          "heapUsed": 5777312,
+          "external": 106873728,
+          "arrayBuffers": 104556045
+        },
+        "after": {
+          "rss": 372387840,
+          "heapTotal": 141873152,
+          "heapUsed": 16102664,
+          "external": 69828890,
+          "arrayBuffers": 67514741
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9"
+      },
+      "status": "measured",
+      "run": "capture-headline"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/capture-lossless/worker",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "capture-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9",
+      "bytes": 896177,
+      "sha256": "3c82f1ad80f3a725b7118807d8fa846d41d17b7a30aa82c133b0d3f5a5c164cc",
+      "initializationMs": 68.67227099999997,
+      "coldMs": 3357.240605,
+      "firstEncodeMs": 3288.568334,
+      "warmMs": [
+        3242.158863,
+        3116.3374239999994,
+        2778.962018
+      ],
+      "memory": {
+        "peakRSSKiB": 635420,
+        "before": {
+          "rss": 178765824,
+          "heapTotal": 10801152,
+          "heapUsed": 5773448,
+          "external": 106873728,
+          "arrayBuffers": 104556045
+        },
+        "after": {
+          "rss": 561328128,
+          "heapTotal": 11063296,
+          "heapUsed": 6147504,
+          "external": 110556929,
+          "arrayBuffers": 137733645
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9"
+      },
+      "status": "measured",
+      "run": "capture-headline"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/capture-error2/main",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "capture-error2",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 2,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9",
+      "bytes": 491250,
+      "sha256": "12d863c298b3b4c9bfabc23f0ea989cc24f8d90ad078566fc38a4b48dca1169b",
+      "initializationMs": 9.006451999999967,
+      "coldMs": 3015.323919,
+      "firstEncodeMs": 3006.317467,
+      "warmMs": [
+        2915.79561,
+        2652.559531000001,
+        2283.1159620000017
+      ],
+      "memory": {
+        "peakRSSKiB": 455296,
+        "before": {
+          "rss": 178442240,
+          "heapTotal": 11063296,
+          "heapUsed": 5773448,
+          "external": 106873728,
+          "arrayBuffers": 104556045
+        },
+        "after": {
+          "rss": 421687296,
+          "heapTotal": 141873152,
+          "heapUsed": 21790784,
+          "external": 115927461,
+          "arrayBuffers": 113613312
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 13227564,
+        "maxRgbError": 2,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 80.98237492,
+        "decodedRGBAHash": "5e101e122fbd645328914be05a7ad87ea985ae915e49a37fa676e363c1742195"
+      },
+      "status": "measured",
+      "run": "capture-final-capture"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/capture-error2/worker",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "capture-error2",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 2,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9",
+      "bytes": 491250,
+      "sha256": "12d863c298b3b4c9bfabc23f0ea989cc24f8d90ad078566fc38a4b48dca1169b",
+      "initializationMs": 89.71298000000002,
+      "coldMs": 3297.6328190000004,
+      "firstEncodeMs": 3207.919839,
+      "warmMs": [
+        2770.196358,
+        2365.2699110000003,
+        2595.778878000001
+      ],
+      "memory": {
+        "peakRSSKiB": 630184,
+        "before": {
+          "rss": 178634752,
+          "heapTotal": 10801152,
+          "heapUsed": 5814816,
+          "external": 142366800,
+          "arrayBuffers": 104556045
+        },
+        "after": {
+          "rss": 594907136,
+          "heapTotal": 11063296,
+          "heapUsed": 6188592,
+          "external": 108937221,
+          "arrayBuffers": 137733645
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 13227564,
+        "maxRgbError": 2,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 80.98237492,
+        "decodedRGBAHash": "5e101e122fbd645328914be05a7ad87ea985ae915e49a37fa676e363c1742195"
+      },
+      "status": "measured",
+      "run": "capture-final-capture"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/jsquash-e7-lossless/main",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "jsquash-e7-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9",
+      "bytes": 708933,
+      "sha256": "5b980b297cc5ce68d21e64b728e4636910846ad4b65f000bacf4829a7d381bea",
+      "initializationMs": 15.411770999999987,
+      "coldMs": 11277.247379,
+      "firstEncodeMs": 11261.835608000001,
+      "warmMs": [
+        9932.801251,
+        9921.091873000001,
+        10489.084561
+      ],
+      "memory": {
+        "peakRSSKiB": 1545836,
+        "before": {
+          "rss": 179040256,
+          "heapTotal": 11325440,
+          "heapUsed": 5790640,
+          "external": 106873728,
+          "arrayBuffers": 104556045
+        },
+        "after": {
+          "rss": 1582936064,
+          "heapTotal": 7655424,
+          "heapUsed": 4787960,
+          "external": 1529495275,
+          "arrayBuffers": 40425107
+        },
+        "wasmHeapBytes": 1486749696
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9"
+      },
+      "status": "measured",
+      "run": "capture-headline"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/jsquash-e7-lossless/worker",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "jsquash-e7-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9",
+      "bytes": 708933,
+      "sha256": "5b980b297cc5ce68d21e64b728e4636910846ad4b65f000bacf4829a7d381bea",
+      "initializationMs": 90.36723999999998,
+      "coldMs": 12808.04197,
+      "firstEncodeMs": 12717.67473,
+      "warmMs": [
+        10207.217258,
+        10041.842782,
+        10475.763917999997
+      ],
+      "memory": {
+        "peakRSSKiB": 1666412,
+        "before": {
+          "rss": 178810880,
+          "heapTotal": 10801152,
+          "heapUsed": 5791344,
+          "external": 106873728,
+          "arrayBuffers": 104556045
+        },
+        "after": {
+          "rss": 1706405888,
+          "heapTotal": 10801152,
+          "heapUsed": 5576568,
+          "external": 38641719,
+          "arrayBuffers": 99745011
+        },
+        "wasmHeapBytes": 1486749696
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9"
+      },
+      "status": "measured",
+      "run": "capture-headline"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/vips-e3-lossless/main",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "vips-e3-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 3,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9",
+      "bytes": 1178553,
+      "sha256": "f66cf0078181a57f29f6e2e41bd641967095f500f08c089936d242251b880829",
+      "initializationMs": 100.91584799999998,
+      "coldMs": 2720.766041,
+      "firstEncodeMs": 2619.8501929999998,
+      "warmMs": [
+        2126.3755399999995,
+        2152.3750950000003,
+        2086.142801
+      ],
+      "memory": {
+        "peakRSSKiB": 701944,
+        "before": {
+          "rss": 178954240,
+          "heapTotal": 10801152,
+          "heapUsed": 5751048,
+          "external": 106873728,
+          "arrayBuffers": 104556045
+        },
+        "after": {
+          "rss": 718790656,
+          "heapTotal": 12935168,
+          "heapUsed": 10744752,
+          "external": 39374741,
+          "arrayBuffers": 36928575
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9"
+      },
+      "status": "measured",
+      "run": "capture-headline"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/vips-e3-lossless/worker",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "vips-e3-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 3,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9",
+      "bytes": 1178553,
+      "sha256": "f66cf0078181a57f29f6e2e41bd641967095f500f08c089936d242251b880829",
+      "initializationMs": 159.96374699999996,
+      "coldMs": 2533.525837,
+      "firstEncodeMs": 2373.5620900000004,
+      "warmMs": [
+        2121.0445290000002,
+        2208.690447,
+        2079.5194309999997
+      ],
+      "memory": {
+        "peakRSSKiB": 868808,
+        "before": {
+          "rss": 179216384,
+          "heapTotal": 10801152,
+          "heapUsed": 5756992,
+          "external": 106873728,
+          "arrayBuffers": 104556045
+        },
+        "after": {
+          "rss": 856477696,
+          "heapTotal": 10801152,
+          "heapUsed": 6134600,
+          "external": 111686433,
+          "arrayBuffers": 137733645
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9"
+      },
+      "status": "measured",
+      "run": "capture-headline"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/vips-e7-lossless/main",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "vips-e7-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "repeatNote": "One warm repeat; a separate diagnostic found the third effort-7 4K encode fails in wasm-vips0.0.19 even with Cache.max(0).",
+      "inputHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9",
+      "bytes": 707526,
+      "sha256": "1838bbe6259342a7bc90ff741535a1836466fd2d831a399010a87c6d6e900c10",
+      "initializationMs": 92.54913699999997,
+      "coldMs": 5464.770939,
+      "firstEncodeMs": 5372.221802,
+      "warmMs": [
+        4891.947255
+      ],
+      "memory": {
+        "peakRSSKiB": 724456,
+        "before": {
+          "rss": 179130368,
+          "heapTotal": 10801152,
+          "heapUsed": 5768344,
+          "external": 106873728,
+          "arrayBuffers": 104556045
+        },
+        "after": {
+          "rss": 741842944,
+          "heapTotal": 20422656,
+          "heapUsed": 14904192,
+          "external": 46048570,
+          "arrayBuffers": 43602404
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9"
+      },
+      "status": "measured",
+      "run": "capture-headline"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/vips-e7-lossless/worker",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "vips-e7-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "repeatNote": "One warm repeat; a separate diagnostic found the third effort-7 4K encode fails in wasm-vips0.0.19 even with Cache.max(0).",
+      "inputHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9",
+      "bytes": 707526,
+      "sha256": "1838bbe6259342a7bc90ff741535a1836466fd2d831a399010a87c6d6e900c10",
+      "initializationMs": 127.72328199999998,
+      "coldMs": 4984.716106,
+      "firstEncodeMs": 4856.992824,
+      "warmMs": [
+        4563.550909
+      ],
+      "memory": {
+        "peakRSSKiB": 885788,
+        "before": {
+          "rss": 178245632,
+          "heapTotal": 10801152,
+          "heapUsed": 5776312,
+          "external": 142366800,
+          "arrayBuffers": 104556045
+        },
+        "after": {
+          "rss": 840794112,
+          "heapTotal": 11063296,
+          "heapUsed": 6146144,
+          "external": 108387273,
+          "arrayBuffers": 104556045
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9"
+      },
+      "status": "measured",
+      "run": "capture-headline"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/cjxl-e7-lossless/cli",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "cjxl-e7-lossless",
+      "execution": "cli",
+      "quality": 100,
+      "effort": 7,
+      "maxError": null,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "version": "0.12.0",
+      "coldMs": 3630.0744190011756,
+      "firstEncodeMs": 3630.0744190011756,
+      "warmMs": [
+        3698.828685002809,
+        3631.5407939982833,
+        3402.1489079968887
+      ],
+      "memory": {
+        "peakRSSKiB": 273020
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/libjxl12/tools/cjxl",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-opaque-3840x2160.png",
+        "/workspace/scratch/a5eee5bb8095/capture-native12/snapdom-opaque-3840x2160--cjxl-e7-lossless--cli.jxl",
+        "-q",
+        "100",
+        "-e",
+        "7",
+        "--num_threads=1",
+        "--lossless_jpeg=0",
+        "--quiet"
+      ],
+      "bytes": 707526,
+      "sha256": "1838bbe6259342a7bc90ff741535a1836466fd2d831a399010a87c6d6e900c10",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9"
+      },
+      "status": "measured",
+      "run": "capture-native12"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/cjxl-e9-lossless/cli",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "cjxl-e9-lossless",
+      "execution": "cli",
+      "quality": 100,
+      "effort": 9,
+      "maxError": null,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "version": "0.12.0",
+      "coldMs": 16755.7133779992,
+      "firstEncodeMs": 16755.7133779992,
+      "warmMs": [
+        16245.122220003395,
+        17517.63167599711,
+        17512.99689199368
+      ],
+      "memory": {
+        "peakRSSKiB": 277860
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/libjxl12/tools/cjxl",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-opaque-3840x2160.png",
+        "/workspace/scratch/a5eee5bb8095/capture-native12/snapdom-opaque-3840x2160--cjxl-e9-lossless--cli.jxl",
+        "-q",
+        "100",
+        "-e",
+        "9",
+        "--num_threads=1",
+        "--lossless_jpeg=0",
+        "--quiet"
+      ],
+      "bytes": 618691,
+      "sha256": "89c9faed7a1644a09faaa2f03647eda6b40e12b5f783afeaa9f7aaf41b89733a",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9"
+      },
+      "status": "measured",
+      "run": "capture-native12"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/webp-lossless/cli",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "webp-lossless",
+      "execution": "cli",
+      "quality": 100,
+      "effort": null,
+      "maxError": null,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "coldMs": 2137.5278449995676,
+      "firstEncodeMs": 2137.5278449995676,
+      "warmMs": [
+        1938.1144020007923,
+        1853.7792249990162,
+        1813.259927002946
+      ],
+      "memory": {
+        "peakRSSKiB": 197868
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/webp/bin/cwebp",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-opaque-3840x2160.png",
+        "-o",
+        "/workspace/scratch/a5eee5bb8095/capture-results-final/snapdom-opaque-3840x2160--webp-lossless--cli.webp",
+        "-lossless",
+        "-exact",
+        "-z",
+        "6",
+        "-quiet"
+      ],
+      "bytes": 688474,
+      "sha256": "d64c73f0dfcdd449ceb724734c59d62beeada9d1f5e666b1d20a139976190a6b",
+      "correctness": {
+        "decoder": "dwebp 1.5.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9"
+      },
+      "status": "measured",
+      "run": "capture-results-final"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/webp-q90/cli",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "webp-q90",
+      "execution": "cli",
+      "quality": 90,
+      "effort": null,
+      "maxError": null,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "coldMs": 566.6967569995904,
+      "firstEncodeMs": 566.6967569995904,
+      "warmMs": [
+        540.4695250035729,
+        579.7378040006151,
+        539.1970159980701
+      ],
+      "memory": {
+        "peakRSSKiB": 48784
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/webp/bin/cwebp",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-opaque-3840x2160.png",
+        "-o",
+        "/workspace/scratch/a5eee5bb8095/capture-results-final/snapdom-opaque-3840x2160--webp-q90--cli.webp",
+        "-q",
+        "90",
+        "-m",
+        "4",
+        "-quiet"
+      ],
+      "bytes": 204354,
+      "sha256": "86c30c1d8a8a7c683bbb00bc5ac2f6bab0efad3bdde81dab0009545cd8ca0d13",
+      "correctness": {
+        "decoder": "dwebp 1.5.0",
+        "differentSamples": 7564912,
+        "maxRgbError": 31,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 82.9655387,
+        "decodedRGBAHash": "9920bbd39b128290a13b99bb518d07e89d4147390c71203ab760f13709ef0431"
+      },
+      "status": "measured",
+      "run": "capture-results-final"
+    },
+    {
+      "key": "snapdom-opaque-3840x2160/png-oxipng4/cli",
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "png-oxipng4",
+      "execution": "cli",
+      "quality": 100,
+      "effort": null,
+      "maxError": null,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "coldMs": 7884.79154700326,
+      "firstEncodeMs": 7884.79154700326,
+      "warmMs": [
+        8667.152014997555,
+        8711.263001998304,
+        8386.997403998976
+      ],
+      "memory": {
+        "peakRSSKiB": 188052
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/oxipng/oxipng",
+        "-o",
+        "4",
+        "--strip",
+        "safe",
+        "--out",
+        "/workspace/scratch/a5eee5bb8095/capture-results-final/snapdom-opaque-3840x2160--png-oxipng4--cli.png",
+        "--force",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-opaque-3840x2160.png"
+      ],
+      "bytes": 1090309,
+      "sha256": "832c0482788013c39a5e47f58bc13d1852bd284f48393a9143303f096041d507",
+      "correctness": {
+        "decoder": "PNG sample reader",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9"
+      },
+      "status": "measured",
+      "run": "capture-results-final"
+    },
+    {
+      "key": "photo-keong/core-q90/main",
+      "input": "photo-keong",
+      "codec": "core-q90",
+      "execution": "main",
+      "quality": 90,
+      "effort": 7,
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "gpu": false,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 30112,
+      "sha256": "255b20c4f5be46ba9d97e02be254f8ee134c2f6559844a6ee5af1810752941e4",
+      "initializationMs": 18.930025999999998,
+      "coldMs": 225.50120200000003,
+      "firstEncodeMs": 206.57117600000004,
+      "warmMs": [
+        166.579995,
+        169.70005600000007,
+        141.0260300000001
+      ],
+      "memory": {
+        "peakRSSKiB": 300704,
+        "before": {
+          "rss": 43270144,
+          "heapTotal": 8704000,
+          "heapUsed": 6042624,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 99229696,
+          "heapTotal": 13160448,
+          "heapUsed": 7653312,
+          "external": 28975311,
+          "arrayBuffers": 26657588
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 494130,
+        "maxRgbError": 71,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 77.8291325,
+        "decodedRGBAHash": "f3033c512542a5542790c20c7a71bfbd1eb98b6c20180c43981eacfa271896df"
+      },
+      "status": "measured",
+      "originalCorrectness": {
+        "decoder": "libjxl djxl 0.11.1",
+        "differentSamples": 494067,
+        "maxRgbError": 70,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 77.80298548,
+        "decodedRGBAHash": "cb7358a47e12455221649d4673c085308abb38712e78bbf0fb7bb1e2d39969c3"
+      },
+      "reverification": "Identical encoded output hash; repeated native decode and SSIMULACRA2 with0.12.0. Original encoding timing unchanged.",
+      "run": "capture-reverified"
+    },
+    {
+      "key": "photo-keong/photo-e7-q90/main",
+      "input": "photo-keong",
+      "codec": "photo-e7-q90",
+      "execution": "main",
+      "quality": 90,
+      "effort": 7,
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "gpu": false,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 26509,
+      "sha256": "736dc285bb127c7bd8cb50fd394595bc1f2226644421b68ad279f257b8d533bf",
+      "initializationMs": 40.376182,
+      "coldMs": 812.545889,
+      "firstEncodeMs": 772.169707,
+      "warmMs": [
+        540.72249,
+        534.4757079999999,
+        498.545625
+      ],
+      "memory": {
+        "peakRSSKiB": 300708,
+        "before": {
+          "rss": 42803200,
+          "heapTotal": 8704000,
+          "heapUsed": 6060936,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 114425856,
+          "heapTotal": 28626944,
+          "heapUsed": 12327880,
+          "external": 27402416,
+          "arrayBuffers": 25088267
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 494130,
+        "maxRgbError": 71,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 77.8291325,
+        "decodedRGBAHash": "f3033c512542a5542790c20c7a71bfbd1eb98b6c20180c43981eacfa271896df"
+      },
+      "status": "measured",
+      "originalCorrectness": {
+        "decoder": "libjxl djxl 0.11.1",
+        "differentSamples": 494067,
+        "maxRgbError": 70,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 77.80298548,
+        "decodedRGBAHash": "cb7358a47e12455221649d4673c085308abb38712e78bbf0fb7bb1e2d39969c3"
+      },
+      "reverification": "Identical encoded output hash; repeated native decode and SSIMULACRA2 with0.12.0. Original encoding timing unchanged.",
+      "run": "capture-reverified"
+    },
+    {
+      "key": "photo-keong/photo-e9-q90/main",
+      "input": "photo-keong",
+      "codec": "photo-e9-q90",
+      "execution": "main",
+      "quality": 90,
+      "effort": 9,
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "gpu": false,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 26074,
+      "sha256": "9b8ed4faf586b56a0a43cc234e1ea0d1f912341f3545e3ce7d8a65a86a8af8df",
+      "initializationMs": 38.505303000000005,
+      "coldMs": 33009.615377999995,
+      "firstEncodeMs": 32971.110075,
+      "warmMs": [
+        33327.968156,
+        31362.160667999997,
+        26480.457488
+      ],
+      "memory": {
+        "peakRSSKiB": 471916,
+        "before": {
+          "rss": 42901504,
+          "heapTotal": 8704000,
+          "heapUsed": 6047296,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 446189568,
+          "heapTotal": 154890240,
+          "heapUsed": 54332184,
+          "external": 108293230,
+          "arrayBuffers": 105979081
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 495403,
+        "maxRgbError": 81,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 77.21111999,
+        "decodedRGBAHash": "18910783aa783bf77760455cdd1a71bc324499f5114dda605c278bfaaa6ccce1"
+      },
+      "status": "measured",
+      "originalCorrectness": {
+        "decoder": "libjxl djxl 0.11.1",
+        "differentSamples": 495543,
+        "maxRgbError": 81,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 77.2175175,
+        "decodedRGBAHash": "ccb4fa81341a6f380a8936b65c1949028c9f4b12958a6544c74e00fd33b3e166"
+      },
+      "reverification": "Identical encoded output hash; repeated native decode and SSIMULACRA2 with0.12.0. Original encoding timing unchanged.",
+      "run": "capture-reverified"
+    },
+    {
+      "key": "photo-keong/jsquash-e7-q90/main",
+      "input": "photo-keong",
+      "codec": "jsquash-e7-q90",
+      "execution": "main",
+      "quality": 90,
+      "effort": 7,
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "gpu": false,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 38718,
+      "sha256": "5e532f039f6be7fa0758e6bd44b9a72c00291a8aadf65600a06d3baf7f58cb65",
+      "initializationMs": 18.967828999999995,
+      "coldMs": 646.0620470000001,
+      "firstEncodeMs": 627.0942180000001,
+      "warmMs": [
+        518.5969379999999,
+        422.552504,
+        475.5409430000002
+      ],
+      "memory": {
+        "peakRSSKiB": 300708,
+        "before": {
+          "rss": 43077632,
+          "heapTotal": 9228288,
+          "heapUsed": 6061584,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 96632832,
+          "heapTotal": 11849728,
+          "heapUsed": 6394904,
+          "external": 55541525,
+          "arrayBuffers": 2885831
+        },
+        "wasmHeapBytes": 50331648
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 486629,
+        "maxRgbError": 68,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 83.01976607,
+        "decodedRGBAHash": "170fe9e601ce2fe9db5caadd58d44a2c1573e2c7b6ddca343bf775303b500c71"
+      },
+      "status": "measured",
+      "originalCorrectness": {
+        "decoder": "libjxl djxl 0.11.1",
+        "differentSamples": 487035,
+        "maxRgbError": 68,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 82.92624291,
+        "decodedRGBAHash": "6fc4d6894182631a2ef9e5ff47e5b8dae4c97079727e6501ccf8ccfd35b8d835"
+      },
+      "reverification": "Identical encoded output hash; repeated native decode and SSIMULACRA2 with0.12.0. Original encoding timing unchanged.",
+      "run": "capture-reverified"
+    },
+    {
+      "key": "photo-keong/jsquash-e7-q90/worker",
+      "input": "photo-keong",
+      "codec": "jsquash-e7-q90",
+      "execution": "worker",
+      "quality": 90,
+      "effort": 7,
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "gpu": false,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 38718,
+      "sha256": "5e532f039f6be7fa0758e6bd44b9a72c00291a8aadf65600a06d3baf7f58cb65",
+      "initializationMs": 61.74570799999999,
+      "coldMs": 674.638243,
+      "firstEncodeMs": 612.892535,
+      "warmMs": [
+        495.43991800000003,
+        491.42933100000005,
+        494.70588299999986
+      ],
+      "memory": {
+        "peakRSSKiB": 300708,
+        "before": {
+          "rss": 43294720,
+          "heapTotal": 8704000,
+          "heapUsed": 6056600,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 136101888,
+          "heapTotal": 11325440,
+          "heapUsed": 6033752,
+          "external": 3783303,
+          "arrayBuffers": 5212255
+        },
+        "wasmHeapBytes": 50331648
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 486629,
+        "maxRgbError": 68,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 83.01976607,
+        "decodedRGBAHash": "170fe9e601ce2fe9db5caadd58d44a2c1573e2c7b6ddca343bf775303b500c71"
+      },
+      "status": "measured",
+      "originalCorrectness": {
+        "decoder": "libjxl djxl 0.11.1",
+        "differentSamples": 487035,
+        "maxRgbError": 68,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 82.92624291,
+        "decodedRGBAHash": "6fc4d6894182631a2ef9e5ff47e5b8dae4c97079727e6501ccf8ccfd35b8d835"
+      },
+      "reverification": "Identical encoded output hash; repeated native decode and SSIMULACRA2 with0.12.0. Original encoding timing unchanged.",
+      "run": "capture-reverified"
+    },
+    {
+      "key": "photo-keong/vips-e7-q90/main",
+      "input": "photo-keong",
+      "codec": "vips-e7-q90",
+      "execution": "main",
+      "quality": 90,
+      "effort": 7,
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "gpu": false,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 41899,
+      "sha256": "fe40b6871a326e7adf4b78bd56e567ea9f8158e0feaae79242beec3f963fcb2c",
+      "initializationMs": 98.15434499999999,
+      "coldMs": 608.509023,
+      "firstEncodeMs": 510.3546779999999,
+      "warmMs": [
+        229.2027599999999,
+        246.4515500000001,
+        217.55775999999992
+      ],
+      "memory": {
+        "peakRSSKiB": 207864,
+        "before": {
+          "rss": 42520576,
+          "heapTotal": 9228288,
+          "heapUsed": 6068728,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 212983808,
+          "heapTotal": 30908416,
+          "heapUsed": 13728192,
+          "external": 6221327,
+          "arrayBuffers": 3775161
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 458223,
+        "maxRgbError": 59,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 83.4388103,
+        "decodedRGBAHash": "ce93b2101c605e98c5af5cc7711538d959cb3e39db347ec08cd42576f4354fc1"
+      },
+      "status": "measured",
+      "run": "capture-vips-queue"
+    },
+    {
+      "key": "photo-keong/vips-e7-q90/worker",
+      "input": "photo-keong",
+      "codec": "vips-e7-q90",
+      "execution": "worker",
+      "quality": 90,
+      "effort": 7,
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "gpu": false,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 41899,
+      "sha256": "fe40b6871a326e7adf4b78bd56e567ea9f8158e0feaae79242beec3f963fcb2c",
+      "initializationMs": 212.167599,
+      "coldMs": 778.0085210000001,
+      "firstEncodeMs": 565.8409220000001,
+      "warmMs": [
+        238.45977099999993,
+        225.88398600000005,
+        236.49943600000006
+      ],
+      "memory": {
+        "peakRSSKiB": 214652,
+        "before": {
+          "rss": 42684416,
+          "heapTotal": 9228288,
+          "heapUsed": 6029744,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 207163392,
+          "heapTotal": 11325440,
+          "heapUsed": 5998888,
+          "external": 3796027,
+          "arrayBuffers": 5212255
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 458223,
+        "maxRgbError": 59,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 83.4388103,
+        "decodedRGBAHash": "ce93b2101c605e98c5af5cc7711538d959cb3e39db347ec08cd42576f4354fc1"
+      },
+      "status": "measured",
+      "run": "capture-vips-queue"
+    },
+    {
+      "key": "photo-keong/cjxl-e7-q90/cli",
+      "input": "photo-keong",
+      "codec": "cjxl-e7-q90",
+      "execution": "cli",
+      "quality": 90,
+      "effort": 7,
+      "maxError": null,
+      "width": 500,
+      "height": 500,
+      "gpu": false,
+      "version": "0.12.0",
+      "coldMs": 148.01989599800436,
+      "firstEncodeMs": 148.01989599800436,
+      "warmMs": [
+        151.18114500364754,
+        152.21423199545825,
+        168.1091229984304
+      ],
+      "memory": {
+        "peakRSSKiB": 30272
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/libjxl12/tools/cjxl",
+        "/workspace/scratch/a5eee5bb8095/bench-tools/photo-keong-rgba.png",
+        "/workspace/scratch/a5eee5bb8095/capture-photo-native12/photo-keong--cjxl-e7-q90--cli.jxl",
+        "-q",
+        "90",
+        "-e",
+        "7",
+        "--num_threads=1",
+        "--lossless_jpeg=0",
+        "--quiet"
+      ],
+      "bytes": 41911,
+      "sha256": "2f039497bbbee93e0d8d7a861e4bd992ea765dde09b1f8169343d84ee12eeca3",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 458225,
+        "maxRgbError": 59,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 83.45657013,
+        "decodedRGBAHash": "d9d03f1dc278d6557f461d39a687320c18d9ba783f28b2136d85ce16997d3728"
+      },
+      "status": "measured",
+      "run": "capture-photo-native12"
+    },
+    {
+      "key": "photo-keong/cjxl-e9-q90/cli",
+      "input": "photo-keong",
+      "codec": "cjxl-e9-q90",
+      "execution": "cli",
+      "quality": 90,
+      "effort": 9,
+      "maxError": null,
+      "width": 500,
+      "height": 500,
+      "gpu": false,
+      "version": "0.12.0",
+      "coldMs": 744.1438250025385,
+      "firstEncodeMs": 744.1438250025385,
+      "warmMs": [
+        638.0950129969278,
+        669.9079890022404,
+        673.8000940022175
+      ],
+      "memory": {
+        "peakRSSKiB": 86940
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/libjxl12/tools/cjxl",
+        "/workspace/scratch/a5eee5bb8095/bench-tools/photo-keong-rgba.png",
+        "/workspace/scratch/a5eee5bb8095/capture-photo-native12/photo-keong--cjxl-e9-q90--cli.jxl",
+        "-q",
+        "90",
+        "-e",
+        "9",
+        "--num_threads=1",
+        "--lossless_jpeg=0",
+        "--quiet"
+      ],
+      "bytes": 41236,
+      "sha256": "68530d0bb07c19c0096f2b8f00ea117bc9b7e4bc1c517e10d16754832ccf7484",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 457148,
+        "maxRgbError": 62,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 83.7499252,
+        "decodedRGBAHash": "c585e2e9e07939fe33658c2a934ecba329146521396621a9097c456ee4493f62"
+      },
+      "status": "measured",
+      "run": "capture-photo-native12"
+    },
+    {
+      "key": "photo-keong/cjxl-e7-lossless/cli",
+      "input": "photo-keong",
+      "codec": "cjxl-e7-lossless",
+      "execution": "cli",
+      "quality": 100,
+      "effort": 7,
+      "maxError": null,
+      "width": 500,
+      "height": 500,
+      "gpu": false,
+      "version": "0.12.0",
+      "coldMs": 447.7055109964567,
+      "firstEncodeMs": 447.7055109964567,
+      "warmMs": [
+        541.4538700060803,
+        521.4763469994068,
+        417.57559799589217
+      ],
+      "memory": {
+        "peakRSSKiB": 36376
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/libjxl12/tools/cjxl",
+        "/workspace/scratch/a5eee5bb8095/bench-tools/photo-keong-rgba.png",
+        "/workspace/scratch/a5eee5bb8095/capture-photo-native12/photo-keong--cjxl-e7-lossless--cli.jxl",
+        "-q",
+        "100",
+        "-e",
+        "7",
+        "--num_threads=1",
+        "--lossless_jpeg=0",
+        "--quiet"
+      ],
+      "bytes": 257252,
+      "sha256": "c8b683912a3caaf9ca20405551c27ed3fa8fc75984feee83ce7a2097b000f19e",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd"
+      },
+      "status": "measured",
+      "run": "capture-photo-native12"
+    },
+    {
+      "key": "photo-keong/cjxl-e9-lossless/cli",
+      "input": "photo-keong",
+      "codec": "cjxl-e9-lossless",
+      "execution": "cli",
+      "quality": 100,
+      "effort": 9,
+      "maxError": null,
+      "width": 500,
+      "height": 500,
+      "gpu": false,
+      "version": "0.12.0",
+      "coldMs": 1916.9452779970015,
+      "firstEncodeMs": 1916.9452779970015,
+      "warmMs": [
+        2050.4904609988444,
+        1951.4711270021508,
+        1833.0986490036594
+      ],
+      "memory": {
+        "peakRSSKiB": 46748
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/libjxl12/tools/cjxl",
+        "/workspace/scratch/a5eee5bb8095/bench-tools/photo-keong-rgba.png",
+        "/workspace/scratch/a5eee5bb8095/capture-photo-native12/photo-keong--cjxl-e9-lossless--cli.jxl",
+        "-q",
+        "100",
+        "-e",
+        "9",
+        "--num_threads=1",
+        "--lossless_jpeg=0",
+        "--quiet"
+      ],
+      "bytes": 252955,
+      "sha256": "69a29482282490290139ee4fa5d1813921566ae2705168848d8cbad10cf6ecc7",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd"
+      },
+      "status": "measured",
+      "run": "capture-photo-native12"
+    },
+    {
+      "key": "snapdom-alpha-1920x1080/capture-lossless/main",
+      "input": "snapdom-alpha-1920x1080",
+      "codec": "capture-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130",
+      "bytes": 351207,
+      "sha256": "355dc91b030fa3457051131dc764fee66ffad9a44ebab08d70341200406896d9",
+      "initializationMs": 7.219325999999995,
+      "coldMs": 1278.9513599999998,
+      "firstEncodeMs": 1271.7320339999999,
+      "warmMs": [
+        1072.201254,
+        1025.7323420000002,
+        1046.2465329999995
+      ],
+      "memory": {
+        "peakRSSKiB": 345620,
+        "before": {
+          "rss": 74223616,
+          "heapTotal": 11587584,
+          "heapUsed": 5878232,
+          "external": 38020267,
+          "arrayBuffers": 26707515
+        },
+        "after": {
+          "rss": 276836352,
+          "heapTotal": 141611008,
+          "heapUsed": 10860768,
+          "external": 29610357,
+          "arrayBuffers": 27296208
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130"
+      },
+      "status": "measured",
+      "run": "capture-final-capture"
+    },
+    {
+      "key": "snapdom-alpha-1920x1080/capture-lossless/worker",
+      "input": "snapdom-alpha-1920x1080",
+      "codec": "capture-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130",
+      "bytes": 351207,
+      "sha256": "355dc91b030fa3457051131dc764fee66ffad9a44ebab08d70341200406896d9",
+      "initializationMs": 74.412635,
+      "coldMs": 1275.0165409999997,
+      "firstEncodeMs": 1200.6039059999998,
+      "warmMs": [
+        1185.0110280000001,
+        1117.8017880000002,
+        1018.8875290000005
+      ],
+      "memory": {
+        "peakRSSKiB": 424052,
+        "before": {
+          "rss": 74399744,
+          "heapTotal": 10801152,
+          "heapUsed": 5918912,
+          "external": 38020267,
+          "arrayBuffers": 26707515
+        },
+        "after": {
+          "rss": 350982144,
+          "heapTotal": 11063296,
+          "heapUsed": 6287256,
+          "external": 30528519,
+          "arrayBuffers": 35001915
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130"
+      },
+      "status": "measured",
+      "run": "capture-final-capture"
+    },
+    {
+      "key": "snapdom-alpha-1920x1080/capture-error2/main",
+      "input": "snapdom-alpha-1920x1080",
+      "codec": "capture-error2",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 2,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130",
+      "bytes": 230781,
+      "sha256": "e9b2fd2cc04cfed353239ae48bcb3840a0e59d504400a77b9aa8f75ee4c3a155",
+      "initializationMs": 8.791208000000012,
+      "coldMs": 1039.4023280000001,
+      "firstEncodeMs": 1030.61112,
+      "warmMs": [
+        879.987666,
+        869.7824159999996,
+        891.1305950000001
+      ],
+      "memory": {
+        "peakRSSKiB": 324096,
+        "before": {
+          "rss": 73834496,
+          "heapTotal": 10801152,
+          "heapUsed": 5879296,
+          "external": 38020267,
+          "arrayBuffers": 26707515
+        },
+        "after": {
+          "rss": 279285760,
+          "heapTotal": 142135296,
+          "heapUsed": 12070464,
+          "external": 37642733,
+          "arrayBuffers": 35328584
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 1564667,
+        "maxRgbError": 2,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 83.92355267,
+        "decodedRGBAHash": "07d01716b85345b815690518edcb8dd80e47d6fc0e0dde8c77a857ea324caeb7"
+      },
+      "status": "measured",
+      "run": "capture-final-capture"
+    },
+    {
+      "key": "snapdom-alpha-1920x1080/capture-error2/worker",
+      "input": "snapdom-alpha-1920x1080",
+      "codec": "capture-error2",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 2,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130",
+      "bytes": 230781,
+      "sha256": "e9b2fd2cc04cfed353239ae48bcb3840a0e59d504400a77b9aa8f75ee4c3a155",
+      "initializationMs": 64.77025500000002,
+      "coldMs": 1898.590945,
+      "firstEncodeMs": 1833.82069,
+      "warmMs": [
+        1350.4090110000002,
+        1273.847026,
+        1106.0088349999996
+      ],
+      "memory": {
+        "peakRSSKiB": 382640,
+        "before": {
+          "rss": 74625024,
+          "heapTotal": 10539008,
+          "heapUsed": 5934424,
+          "external": 38020267,
+          "arrayBuffers": 26707515
+        },
+        "after": {
+          "rss": 385499136,
+          "heapTotal": 11063296,
+          "heapUsed": 6302768,
+          "external": 30046815,
+          "arrayBuffers": 35001915
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 1564667,
+        "maxRgbError": 2,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 83.92355267,
+        "decodedRGBAHash": "07d01716b85345b815690518edcb8dd80e47d6fc0e0dde8c77a857ea324caeb7"
+      },
+      "status": "measured",
+      "run": "capture-final-capture"
+    },
+    {
+      "key": "snapdom-alpha-3840x2160/capture-lossless/main",
+      "input": "snapdom-alpha-3840x2160",
+      "codec": "capture-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8",
+      "bytes": 919699,
+      "sha256": "7ae0d511d292b103908d623c43fc9fc017a7a528ef366e2f6de5a39fdbab94a8",
+      "initializationMs": 9.271428999999955,
+      "coldMs": 3936.225417,
+      "firstEncodeMs": 3926.953988,
+      "warmMs": [
+        3841.731006,
+        3778.1865419999995,
+        3266.260843
+      ],
+      "memory": {
+        "peakRSSKiB": 444640,
+        "before": {
+          "rss": 178388992,
+          "heapTotal": 10801152,
+          "heapUsed": 5777432,
+          "external": 106883690,
+          "arrayBuffers": 104566007
+        },
+        "after": {
+          "rss": 376225792,
+          "heapTotal": 141611008,
+          "heapUsed": 16222672,
+          "external": 86946006,
+          "arrayBuffers": 84631857
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8"
+      },
+      "status": "measured",
+      "run": "capture-final-capture"
+    },
+    {
+      "key": "snapdom-alpha-3840x2160/capture-lossless/worker",
+      "input": "snapdom-alpha-3840x2160",
+      "codec": "capture-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8",
+      "bytes": 919699,
+      "sha256": "7ae0d511d292b103908d623c43fc9fc017a7a528ef366e2f6de5a39fdbab94a8",
+      "initializationMs": 59.31390299999998,
+      "coldMs": 3481.8426440000003,
+      "firstEncodeMs": 3422.528741,
+      "warmMs": [
+        4092.618481,
+        3683.222322999999,
+        4245.700246
+      ],
+      "memory": {
+        "peakRSSKiB": 616992,
+        "before": {
+          "rss": 178749440,
+          "heapTotal": 10801152,
+          "heapUsed": 5793296,
+          "external": 106883690,
+          "arrayBuffers": 104566007
+        },
+        "after": {
+          "rss": 547221504,
+          "heapTotal": 11063296,
+          "heapUsed": 6167424,
+          "external": 110660979,
+          "arrayBuffers": 137743607
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8"
+      },
+      "status": "measured",
+      "run": "capture-final-capture"
+    },
+    {
+      "key": "snapdom-alpha-3840x2160/capture-error2/main",
+      "input": "snapdom-alpha-3840x2160",
+      "codec": "capture-error2",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 2,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8",
+      "bytes": 516182,
+      "sha256": "b87c27497275b82888f650b4870d8d549bd82cabcc3e25b3d44f8e40a91f930b",
+      "initializationMs": 8.971969999999999,
+      "coldMs": 3161.396644,
+      "firstEncodeMs": 3152.424674,
+      "warmMs": [
+        2606.7224880000003,
+        2644.5644509999993,
+        2615.8330590000005
+      ],
+      "memory": {
+        "peakRSSKiB": 447656,
+        "before": {
+          "rss": 178323456,
+          "heapTotal": 10801152,
+          "heapUsed": 5825992,
+          "external": 142381731,
+          "arrayBuffers": 104566007
+        },
+        "after": {
+          "rss": 404987904,
+          "heapTotal": 141611008,
+          "heapUsed": 14134576,
+          "external": 80936108,
+          "arrayBuffers": 78621959
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 6184195,
+        "maxRgbError": 2,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 83.55931742,
+        "decodedRGBAHash": "20ee8eae1af7ef55d87706f87accafe84d0c54c7fad43b98340e0e68493746ac"
+      },
+      "status": "measured",
+      "run": "capture-final-capture"
+    },
+    {
+      "key": "snapdom-alpha-3840x2160/capture-error2/worker",
+      "input": "snapdom-alpha-3840x2160",
+      "codec": "capture-error2",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 2,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8",
+      "bytes": 516182,
+      "sha256": "b87c27497275b82888f650b4870d8d549bd82cabcc3e25b3d44f8e40a91f930b",
+      "initializationMs": 91.479173,
+      "coldMs": 3469.333657,
+      "firstEncodeMs": 3377.854484,
+      "warmMs": [
+        3271.0951410000002,
+        2810.56466,
+        3008.7293770000015
+      ],
+      "memory": {
+        "peakRSSKiB": 647756,
+        "before": {
+          "rss": 178229248,
+          "heapTotal": 11063296,
+          "heapUsed": 5790088,
+          "external": 106883690,
+          "arrayBuffers": 104566007
+        },
+        "after": {
+          "rss": 590213120,
+          "heapTotal": 11063296,
+          "heapUsed": 6163992,
+          "external": 109046911,
+          "arrayBuffers": 137743607
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 6184195,
+        "maxRgbError": 2,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 83.55931742,
+        "decodedRGBAHash": "20ee8eae1af7ef55d87706f87accafe84d0c54c7fad43b98340e0e68493746ac"
+      },
+      "status": "measured",
+      "run": "capture-final-capture"
+    },
+    {
+      "key": "snapdom-nested-demo-1920x1080/capture-lossless/main",
+      "input": "snapdom-nested-demo-1920x1080",
+      "codec": "capture-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee",
+      "bytes": 16152,
+      "sha256": "8d0425d60af333896c2e8d1397730a941abcc3289cf06fad97238da892ceb2d0",
+      "initializationMs": 10.41835900000001,
+      "coldMs": 533.624448,
+      "firstEncodeMs": 523.206089,
+      "warmMs": [
+        412.6655659999999,
+        413.197893,
+        429.815108
+      ],
+      "memory": {
+        "peakRSSKiB": 246616,
+        "before": {
+          "rss": 73068544,
+          "heapTotal": 9752576,
+          "heapUsed": 5819800,
+          "external": 35876488,
+          "arrayBuffers": 25276929
+        },
+        "after": {
+          "rss": 147222528,
+          "heapTotal": 17354752,
+          "heapUsed": 7287144,
+          "external": 13827243,
+          "arrayBuffers": 11509520
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee"
+      },
+      "status": "measured",
+      "run": "capture-final-capture"
+    },
+    {
+      "key": "snapdom-nested-demo-1920x1080/capture-lossless/worker",
+      "input": "snapdom-nested-demo-1920x1080",
+      "codec": "capture-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee",
+      "bytes": 16152,
+      "sha256": "8d0425d60af333896c2e8d1397730a941abcc3289cf06fad97238da892ceb2d0",
+      "initializationMs": 66.16516100000001,
+      "coldMs": 617.081081,
+      "firstEncodeMs": 550.91592,
+      "warmMs": [
+        495.9866679999999,
+        510.21810099999993,
+        440.9793609999997
+      ],
+      "memory": {
+        "peakRSSKiB": 246616,
+        "before": {
+          "rss": 72806400,
+          "heapTotal": 9228288,
+          "heapUsed": 5836464,
+          "external": 35876488,
+          "arrayBuffers": 25276929
+        },
+        "after": {
+          "rss": 219627520,
+          "heapTotal": 9490432,
+          "heapUsed": 6204832,
+          "external": 27757713,
+          "arrayBuffers": 33571329
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee"
+      },
+      "status": "measured",
+      "run": "capture-final-capture"
+    },
+    {
+      "key": "snapdom-nested-demo-1920x1080/capture-error2/main",
+      "input": "snapdom-nested-demo-1920x1080",
+      "codec": "capture-error2",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 2,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee",
+      "bytes": 14337,
+      "sha256": "359f8327a79c04e6e0aa550d9189bb3c040b8b54ab222bd857a03cc5bafe59b6",
+      "initializationMs": 8.532170000000008,
+      "coldMs": 557.299074,
+      "firstEncodeMs": 548.7669040000001,
+      "warmMs": [
+        486.81032600000015,
+        501.954393,
+        454.0543949999999
+      ],
+      "memory": {
+        "peakRSSKiB": 165120,
+        "before": {
+          "rss": 72634368,
+          "heapTotal": 8441856,
+          "heapUsed": 5834352,
+          "external": 35876488,
+          "arrayBuffers": 25276929
+        },
+        "after": {
+          "rss": 162897920,
+          "heapTotal": 17092608,
+          "heapUsed": 9445736,
+          "external": 77516494,
+          "arrayBuffers": 75198771
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 869016,
+        "maxRgbError": 2,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 88.46603302,
+        "decodedRGBAHash": "f0f0d69e4a621d5e2c6cdfc6d66fffc3cb64ce49c09ef7bd6654028b12486d33"
+      },
+      "status": "measured",
+      "run": "capture-final-capture"
+    },
+    {
+      "key": "snapdom-nested-demo-1920x1080/capture-error2/worker",
+      "input": "snapdom-nested-demo-1920x1080",
+      "codec": "capture-error2",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 2,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee",
+      "bytes": 14337,
+      "sha256": "359f8327a79c04e6e0aa550d9189bb3c040b8b54ab222bd857a03cc5bafe59b6",
+      "initializationMs": 70.21166099999999,
+      "coldMs": 652.910144,
+      "firstEncodeMs": 582.698483,
+      "warmMs": [
+        495.097036,
+        474.22670300000004,
+        532.401846
+      ],
+      "memory": {
+        "peakRSSKiB": 244336,
+        "before": {
+          "rss": 72286208,
+          "heapTotal": 9228288,
+          "heapUsed": 5822352,
+          "external": 35876488,
+          "arrayBuffers": 25276929
+        },
+        "after": {
+          "rss": 230539264,
+          "heapTotal": 9490432,
+          "heapUsed": 6190784,
+          "external": 27750453,
+          "arrayBuffers": 33571329
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 869016,
+        "maxRgbError": 2,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 88.46603302,
+        "decodedRGBAHash": "f0f0d69e4a621d5e2c6cdfc6d66fffc3cb64ce49c09ef7bd6654028b12486d33"
+      },
+      "status": "measured",
+      "run": "capture-final-capture"
+    },
+    {
+      "key": "snapdom-alpha-1920x1080/core-lossless/main",
+      "input": "snapdom-alpha-1920x1080",
+      "codec": "core-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130",
+      "bytes": 540153,
+      "sha256": "db78dbf98f807e15b87ba64f04963393a706ade7a93bc543fc1988ac03745b20",
+      "initializationMs": 23.178371999999996,
+      "coldMs": 404.88966300000004,
+      "firstEncodeMs": 381.711291,
+      "warmMs": [
+        393.80838800000004
+      ],
+      "memory": {
+        "peakRSSKiB": 149836,
+        "before": {
+          "rss": 73973760,
+          "heapTotal": 11063296,
+          "heapUsed": 5924272,
+          "external": 38020267,
+          "arrayBuffers": 26707515
+        },
+        "after": {
+          "rss": 72777728,
+          "heapTotal": 12374016,
+          "heapUsed": 9050256,
+          "external": 25156868,
+          "arrayBuffers": 22839145
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-1920x1080/jsquash-e7-lossless/main",
+      "input": "snapdom-alpha-1920x1080",
+      "codec": "jsquash-e7-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130",
+      "bytes": 285132,
+      "sha256": "01650ef882e5bed301f458795f7e49dab5395906a1ab886e9dd86e892d31610f",
+      "initializationMs": 16.537972000000025,
+      "coldMs": 3813.9054370000003,
+      "firstEncodeMs": 3797.3674650000003,
+      "warmMs": [
+        3393.7764009999996
+      ],
+      "memory": {
+        "peakRSSKiB": 436824,
+        "before": {
+          "rss": 74743808,
+          "heapTotal": 10539008,
+          "heapUsed": 5879896,
+          "external": 38020267,
+          "arrayBuffers": 26707515
+        },
+        "after": {
+          "rss": 430743552,
+          "heapTotal": 11325440,
+          "heapUsed": 5795656,
+          "external": 387676649,
+          "arrayBuffers": 11010971
+        },
+        "wasmHeapBytes": 374341632
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-1920x1080/jsquash-e7-lossless/worker",
+      "input": "snapdom-alpha-1920x1080",
+      "codec": "jsquash-e7-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130",
+      "bytes": 285132,
+      "sha256": "01650ef882e5bed301f458795f7e49dab5395906a1ab886e9dd86e892d31610f",
+      "initializationMs": 64.82827,
+      "coldMs": 3871.012659,
+      "firstEncodeMs": 3806.184389,
+      "warmMs": [
+        3384.5713420000006
+      ],
+      "memory": {
+        "peakRSSKiB": 489204,
+        "before": {
+          "rss": 73728000,
+          "heapTotal": 11325440,
+          "heapUsed": 5879176,
+          "external": 38020267,
+          "arrayBuffers": 26707515
+        },
+        "after": {
+          "rss": 476315648,
+          "heapTotal": 11325440,
+          "heapUsed": 6229048,
+          "external": 29693955,
+          "arrayBuffers": 26707515
+        },
+        "wasmHeapBytes": 374341632
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-1920x1080/vips-e3-lossless/main",
+      "input": "snapdom-alpha-1920x1080",
+      "codec": "vips-e3-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 3,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130",
+      "bytes": 468600,
+      "sha256": "e9254cadae29ad2d9da743008c4626902b468f9983520c28c392c89366fabd01",
+      "initializationMs": 98.99375799999999,
+      "coldMs": 855.0079000000001,
+      "firstEncodeMs": 756.0141420000001,
+      "warmMs": [
+        489.862439
+      ],
+      "memory": {
+        "peakRSSKiB": 281988,
+        "before": {
+          "rss": 74469376,
+          "heapTotal": 10801152,
+          "heapUsed": 5908576,
+          "external": 38020267,
+          "arrayBuffers": 26707515
+        },
+        "after": {
+          "rss": 288755712,
+          "heapTotal": 21061632,
+          "heapUsed": 13185688,
+          "external": 12831071,
+          "arrayBuffers": 10384905
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-1920x1080/vips-e3-lossless/worker",
+      "input": "snapdom-alpha-1920x1080",
+      "codec": "vips-e3-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 3,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130",
+      "bytes": 468600,
+      "sha256": "e9254cadae29ad2d9da743008c4626902b468f9983520c28c392c89366fabd01",
+      "initializationMs": 187.68822799999998,
+      "coldMs": 898.3803399999999,
+      "firstEncodeMs": 710.692112,
+      "warmMs": [
+        541.7284479999998
+      ],
+      "memory": {
+        "peakRSSKiB": 347592,
+        "before": {
+          "rss": 74362880,
+          "heapTotal": 11325440,
+          "heapUsed": 5888912,
+          "external": 38020267,
+          "arrayBuffers": 26707515
+        },
+        "after": {
+          "rss": 342212608,
+          "heapTotal": 11325440,
+          "heapUsed": 6253256,
+          "external": 30060891,
+          "arrayBuffers": 35001915
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-1920x1080/vips-e7-lossless/main",
+      "input": "snapdom-alpha-1920x1080",
+      "codec": "vips-e7-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130",
+      "bytes": 304360,
+      "sha256": "db38cad0024693d9515c93052e13e760f115477284dcfd35a37980f74d98f16d",
+      "initializationMs": 118.00826299999997,
+      "coldMs": 2069.5655580000002,
+      "firstEncodeMs": 1951.557295,
+      "warmMs": [
+        1568.3570849999996
+      ],
+      "memory": {
+        "peakRSSKiB": 273832,
+        "before": {
+          "rss": 74391552,
+          "heapTotal": 10801152,
+          "heapUsed": 5910816,
+          "external": 38020267,
+          "arrayBuffers": 26707515
+        },
+        "after": {
+          "rss": 280403968,
+          "heapTotal": 21323776,
+          "heapUsed": 13292768,
+          "external": 12174111,
+          "arrayBuffers": 9727945
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-1920x1080/vips-e7-lossless/worker",
+      "input": "snapdom-alpha-1920x1080",
+      "codec": "vips-e7-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130",
+      "bytes": 304360,
+      "sha256": "db38cad0024693d9515c93052e13e760f115477284dcfd35a37980f74d98f16d",
+      "initializationMs": 154.16052599999998,
+      "coldMs": 1868.5878729999997,
+      "firstEncodeMs": 1714.4273469999998,
+      "warmMs": [
+        1588.6710199999998
+      ],
+      "memory": {
+        "peakRSSKiB": 329844,
+        "before": {
+          "rss": 74002432,
+          "heapTotal": 11063296,
+          "heapUsed": 5876808,
+          "external": 38020267,
+          "arrayBuffers": 26707515
+        },
+        "after": {
+          "rss": 338022400,
+          "heapTotal": 11325440,
+          "heapUsed": 6241152,
+          "external": 29732411,
+          "arrayBuffers": 43296315
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-1920x1080/cjxl-e7-lossless/cli",
+      "input": "snapdom-alpha-1920x1080",
+      "codec": "cjxl-e7-lossless",
+      "execution": "cli",
+      "quality": 100,
+      "effort": 7,
+      "maxError": null,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "version": "0.12.0",
+      "coldMs": 1125.846991999424,
+      "firstEncodeMs": 1125.846991999424,
+      "warmMs": [
+        1370.113148004748,
+        1147.1437139989575,
+        1169.9166879989207
+      ],
+      "memory": {
+        "peakRSSKiB": 104980
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/libjxl12/tools/cjxl",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-alpha-1920x1080.png",
+        "/workspace/scratch/a5eee5bb8095/capture-alpha-references/snapdom-alpha-1920x1080--cjxl-e7-lossless--cli.jxl",
+        "-q",
+        "100",
+        "-e",
+        "7",
+        "--num_threads=1",
+        "--lossless_jpeg=0",
+        "--quiet"
+      ],
+      "bytes": 304360,
+      "sha256": "db38cad0024693d9515c93052e13e760f115477284dcfd35a37980f74d98f16d",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-1920x1080/cjxl-e9-lossless/cli",
+      "input": "snapdom-alpha-1920x1080",
+      "codec": "cjxl-e9-lossless",
+      "execution": "cli",
+      "quality": 100,
+      "effort": 9,
+      "maxError": null,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "version": "0.12.0",
+      "coldMs": 4768.272627996339,
+      "firstEncodeMs": 4768.272627996339,
+      "warmMs": [
+        4688.688048001495,
+        4667.512988002272,
+        4692.594234002172
+      ],
+      "memory": {
+        "peakRSSKiB": 105024
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/libjxl12/tools/cjxl",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-alpha-1920x1080.png",
+        "/workspace/scratch/a5eee5bb8095/capture-alpha-references/snapdom-alpha-1920x1080--cjxl-e9-lossless--cli.jxl",
+        "-q",
+        "100",
+        "-e",
+        "9",
+        "--num_threads=1",
+        "--lossless_jpeg=0",
+        "--quiet"
+      ],
+      "bytes": 281175,
+      "sha256": "e1f76e249fdc1c994b8c67b624388ed0fdbd9d36be3c440a719b862292ba636d",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-1920x1080/webp-lossless/cli",
+      "input": "snapdom-alpha-1920x1080",
+      "codec": "webp-lossless",
+      "execution": "cli",
+      "quality": 100,
+      "effort": null,
+      "maxError": null,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "coldMs": 654.0574550017482,
+      "firstEncodeMs": 654.0574550017482,
+      "warmMs": [
+        624.6475130028557,
+        544.9764730001334,
+        486.6541449955548
+      ],
+      "memory": {
+        "peakRSSKiB": 69980
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/webp/bin/cwebp",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-alpha-1920x1080.png",
+        "-o",
+        "/workspace/scratch/a5eee5bb8095/capture-alpha-references/snapdom-alpha-1920x1080--webp-lossless--cli.webp",
+        "-lossless",
+        "-exact",
+        "-z",
+        "6",
+        "-quiet"
+      ],
+      "bytes": 291726,
+      "sha256": "2d21c747561d4126886137b7375ea3964182a77af949f6674d253a7d30345b11",
+      "correctness": {
+        "decoder": "dwebp 1.5.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-1920x1080/webp-q90/cli",
+      "input": "snapdom-alpha-1920x1080",
+      "codec": "webp-q90",
+      "execution": "cli",
+      "quality": 90,
+      "effort": null,
+      "maxError": null,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "coldMs": 248.3772119958303,
+      "firstEncodeMs": 248.3772119958303,
+      "warmMs": [
+        264.9604219986941,
+        222.21511699899565,
+        207.3478480015183
+      ],
+      "memory": {
+        "peakRSSKiB": 55048
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/webp/bin/cwebp",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-alpha-1920x1080.png",
+        "-o",
+        "/workspace/scratch/a5eee5bb8095/capture-alpha-references/snapdom-alpha-1920x1080--webp-q90--cli.webp",
+        "-q",
+        "90",
+        "-m",
+        "4",
+        "-quiet"
+      ],
+      "bytes": 108202,
+      "sha256": "f4450ef8d529be690b1404067ac1b783496ed7c080fcba02f87ca8dfb956e6be",
+      "correctness": {
+        "decoder": "dwebp 1.5.0",
+        "differentSamples": 1676679,
+        "maxRgbError": 239,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 106055,
+        "ssimulacra2": 85.61503714,
+        "decodedRGBAHash": "550f64a81cf87efac21c0126a94dc1660dbd7917500178fde443f4cc93aab87b"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-1920x1080/png-oxipng4/cli",
+      "input": "snapdom-alpha-1920x1080",
+      "codec": "png-oxipng4",
+      "execution": "cli",
+      "quality": 100,
+      "effort": null,
+      "maxError": null,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "coldMs": 3299.2516480007907,
+      "firstEncodeMs": 3299.2516480007907,
+      "warmMs": [
+        3630.7795489992714,
+        3833.389095001621,
+        3516.7169680062216
+      ],
+      "memory": {
+        "peakRSSKiB": 77164
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/oxipng/oxipng",
+        "-o",
+        "4",
+        "--strip",
+        "safe",
+        "--out",
+        "/workspace/scratch/a5eee5bb8095/capture-alpha-references/snapdom-alpha-1920x1080--png-oxipng4--cli.png",
+        "--force",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-alpha-1920x1080.png"
+      ],
+      "bytes": 417787,
+      "sha256": "329300a4c6fcc78735772b287d9fc7b20c7b2ede529da3b4a49908fa448af755",
+      "correctness": {
+        "decoder": "PNG sample reader",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "de7bffcb9e0e435cf999f0373f48f5a35f1e26cf60cffad15fdd2fbce6d77130"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-3840x2160/core-lossless/main",
+      "input": "snapdom-alpha-3840x2160",
+      "codec": "core-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8",
+      "bytes": 1549201,
+      "sha256": "0fe56232927a5d0e8be4e1df6006855dbae041b6dfebb62afc21e3aef7379ce0",
+      "initializationMs": 39.611446,
+      "coldMs": 1186.4005849999999,
+      "firstEncodeMs": 1146.789139,
+      "warmMs": [
+        1080.2416130000001
+      ],
+      "memory": {
+        "peakRSSKiB": 216244,
+        "before": {
+          "rss": 178339840,
+          "heapTotal": 10801152,
+          "heapUsed": 5781752,
+          "external": 106883690,
+          "arrayBuffers": 104566007
+        },
+        "after": {
+          "rss": 123363328,
+          "heapTotal": 12636160,
+          "heapUsed": 7322160,
+          "external": 66213609,
+          "arrayBuffers": 63895886
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-3840x2160/jsquash-e7-lossless/main",
+      "input": "snapdom-alpha-3840x2160",
+      "codec": "jsquash-e7-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8",
+      "bytes": 709284,
+      "sha256": "eab50edf7be31716c66b6f7e130fe48d4bcb98677eb0845a0b1943c520698787",
+      "initializationMs": 10.095316000000025,
+      "coldMs": 15339.126129000002,
+      "firstEncodeMs": 15329.030813000001,
+      "warmMs": [
+        12080.081641
+      ],
+      "memory": {
+        "peakRSSKiB": 1542876,
+        "before": {
+          "rss": 179138560,
+          "heapTotal": 10801152,
+          "heapUsed": 5772000,
+          "external": 106883690,
+          "arrayBuffers": 104566007
+        },
+        "after": {
+          "rss": 1577660416,
+          "heapTotal": 7131136,
+          "heapUsed": 4696152,
+          "external": 1627008175,
+          "arrayBuffers": 36881495
+        },
+        "wasmHeapBytes": 1587806208
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-3840x2160/jsquash-e7-lossless/worker",
+      "input": "snapdom-alpha-3840x2160",
+      "codec": "jsquash-e7-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8",
+      "bytes": 709284,
+      "sha256": "eab50edf7be31716c66b6f7e130fe48d4bcb98677eb0845a0b1943c520698787",
+      "initializationMs": 96.15092400000003,
+      "coldMs": 14053.72145,
+      "firstEncodeMs": 13957.570526,
+      "warmMs": [
+        12307.036431
+      ],
+      "memory": {
+        "peakRSSKiB": 1663548,
+        "before": {
+          "rss": 178851840,
+          "heapTotal": 10801152,
+          "heapUsed": 5751280,
+          "external": 106883690,
+          "arrayBuffers": 104566007
+        },
+        "after": {
+          "rss": 1666506752,
+          "heapTotal": 10801152,
+          "heapUsed": 6107144,
+          "external": 108400751,
+          "arrayBuffers": 137743607
+        },
+        "wasmHeapBytes": 1587806208
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-3840x2160/vips-e3-lossless/main",
+      "input": "snapdom-alpha-3840x2160",
+      "codec": "vips-e3-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 3,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8",
+      "bytes": 1268264,
+      "sha256": "c2c6f56cb85686bccbc94836769663697d4ae847c8bb333bc1faa06943ccdf87",
+      "initializationMs": 108.19438500000007,
+      "coldMs": 2854.544948,
+      "firstEncodeMs": 2746.350563,
+      "warmMs": [
+        2675.605336
+      ],
+      "memory": {
+        "peakRSSKiB": 674680,
+        "before": {
+          "rss": 178933760,
+          "heapTotal": 10801152,
+          "heapUsed": 5773632,
+          "external": 106883690,
+          "arrayBuffers": 104566007
+        },
+        "after": {
+          "rss": 690872320,
+          "heapTotal": 20160512,
+          "heapUsed": 14821192,
+          "external": 48291522,
+          "arrayBuffers": 45845356
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-3840x2160/vips-e3-lossless/worker",
+      "input": "snapdom-alpha-3840x2160",
+      "codec": "vips-e3-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 3,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8",
+      "bytes": 1268264,
+      "sha256": "c2c6f56cb85686bccbc94836769663697d4ae847c8bb333bc1faa06943ccdf87",
+      "initializationMs": 175.12544200000002,
+      "coldMs": 2896.535123,
+      "firstEncodeMs": 2721.409681,
+      "warmMs": [
+        2302.6693699999996
+      ],
+      "memory": {
+        "peakRSSKiB": 841804,
+        "before": {
+          "rss": 178585600,
+          "heapTotal": 10801152,
+          "heapUsed": 5767464,
+          "external": 106883690,
+          "arrayBuffers": 104566007
+        },
+        "after": {
+          "rss": 829288448,
+          "heapTotal": 11063296,
+          "heapUsed": 6137312,
+          "external": 109518711,
+          "arrayBuffers": 137743607
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-3840x2160/vips-e7-lossless/main",
+      "input": "snapdom-alpha-3840x2160",
+      "codec": "vips-e7-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8",
+      "bytes": 713352,
+      "sha256": "b1aede6e6abdea5fba4a5bcb36f8471646fa7861264e288559fac4bb2197175d",
+      "initializationMs": 104.82275700000002,
+      "coldMs": 6084.539809,
+      "firstEncodeMs": 5979.717052,
+      "warmMs": [
+        5817.354464000001
+      ],
+      "memory": {
+        "peakRSSKiB": 714912,
+        "before": {
+          "rss": 179068928,
+          "heapTotal": 10801152,
+          "heapUsed": 5751112,
+          "external": 106883690,
+          "arrayBuffers": 104566007
+        },
+        "after": {
+          "rss": 732069888,
+          "heapTotal": 20160512,
+          "heapUsed": 14911856,
+          "external": 46071874,
+          "arrayBuffers": 43625708
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-3840x2160/vips-e7-lossless/worker",
+      "input": "snapdom-alpha-3840x2160",
+      "codec": "vips-e7-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "inputHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8",
+      "bytes": 713352,
+      "sha256": "b1aede6e6abdea5fba4a5bcb36f8471646fa7861264e288559fac4bb2197175d",
+      "initializationMs": 180.69901300000004,
+      "coldMs": 5661.520823,
+      "firstEncodeMs": 5480.8218099999995,
+      "warmMs": [
+        6755.124091
+      ],
+      "memory": {
+        "peakRSSKiB": 865776,
+        "before": {
+          "rss": 178970624,
+          "heapTotal": 10801152,
+          "heapUsed": 5777464,
+          "external": 106883690,
+          "arrayBuffers": 104566007
+        },
+        "after": {
+          "rss": 871833600,
+          "heapTotal": 11063296,
+          "heapUsed": 6147352,
+          "external": 108408887,
+          "arrayBuffers": 137743607
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-3840x2160/cjxl-e7-lossless/cli",
+      "input": "snapdom-alpha-3840x2160",
+      "codec": "cjxl-e7-lossless",
+      "execution": "cli",
+      "quality": 100,
+      "effort": 7,
+      "maxError": null,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "version": "0.12.0",
+      "coldMs": 3913.207600999158,
+      "firstEncodeMs": 3913.207600999158,
+      "warmMs": [
+        3996.984295998118,
+        3980.1547219976783,
+        3690.8536740011186
+      ],
+      "memory": {
+        "peakRSSKiB": 285732
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/libjxl12/tools/cjxl",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-alpha-3840x2160.png",
+        "/workspace/scratch/a5eee5bb8095/capture-alpha-references/snapdom-alpha-3840x2160--cjxl-e7-lossless--cli.jxl",
+        "-q",
+        "100",
+        "-e",
+        "7",
+        "--num_threads=1",
+        "--lossless_jpeg=0",
+        "--quiet"
+      ],
+      "bytes": 713352,
+      "sha256": "b1aede6e6abdea5fba4a5bcb36f8471646fa7861264e288559fac4bb2197175d",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-3840x2160/cjxl-e9-lossless/cli",
+      "input": "snapdom-alpha-3840x2160",
+      "codec": "cjxl-e9-lossless",
+      "execution": "cli",
+      "quality": 100,
+      "effort": 9,
+      "maxError": null,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "version": "0.12.0",
+      "coldMs": 16348.844257001474,
+      "firstEncodeMs": 16348.844257001474,
+      "warmMs": [
+        18303.89502699836,
+        18238.01059199468,
+        17869.993246997183
+      ],
+      "memory": {
+        "peakRSSKiB": 279540
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/libjxl12/tools/cjxl",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-alpha-3840x2160.png",
+        "/workspace/scratch/a5eee5bb8095/capture-alpha-references/snapdom-alpha-3840x2160--cjxl-e9-lossless--cli.jxl",
+        "-q",
+        "100",
+        "-e",
+        "9",
+        "--num_threads=1",
+        "--lossless_jpeg=0",
+        "--quiet"
+      ],
+      "bytes": 626726,
+      "sha256": "8109fab735ef25b9658de995bcf9bb2c7442df1a42360f52bb8a5466f5442a56",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-3840x2160/webp-lossless/cli",
+      "input": "snapdom-alpha-3840x2160",
+      "codec": "webp-lossless",
+      "execution": "cli",
+      "quality": 100,
+      "effort": null,
+      "maxError": null,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "coldMs": 2089.993820001837,
+      "firstEncodeMs": 2089.993820001837,
+      "warmMs": [
+        2275.2622260013595,
+        2163.6364970036084,
+        1868.6060859981808
+      ],
+      "memory": {
+        "peakRSSKiB": 197796
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/webp/bin/cwebp",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-alpha-3840x2160.png",
+        "-o",
+        "/workspace/scratch/a5eee5bb8095/capture-alpha-references/snapdom-alpha-3840x2160--webp-lossless--cli.webp",
+        "-lossless",
+        "-exact",
+        "-z",
+        "6",
+        "-quiet"
+      ],
+      "bytes": 712118,
+      "sha256": "6d839ffa2c8acd222fdfce7d1e1eaa3fa3a94b783a195b4a0db432658c68f8f8",
+      "correctness": {
+        "decoder": "dwebp 1.5.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-3840x2160/webp-q90/cli",
+      "input": "snapdom-alpha-3840x2160",
+      "codec": "webp-q90",
+      "execution": "cli",
+      "quality": 90,
+      "effort": null,
+      "maxError": null,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "coldMs": 912.8585599974031,
+      "firstEncodeMs": 912.8585599974031,
+      "warmMs": [
+        954.1614400004619,
+        919.6711330005201,
+        888.2476910002879
+      ],
+      "memory": {
+        "peakRSSKiB": 210700
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/webp/bin/cwebp",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-alpha-3840x2160.png",
+        "-o",
+        "/workspace/scratch/a5eee5bb8095/capture-alpha-references/snapdom-alpha-3840x2160--webp-q90--cli.webp",
+        "-q",
+        "90",
+        "-m",
+        "4",
+        "-quiet"
+      ],
+      "bytes": 236846,
+      "sha256": "8580f51dc386657a4e459b20686029d1d41745edea7e200d904dd3b3dcb3f1f7",
+      "correctness": {
+        "decoder": "dwebp 1.5.0",
+        "differentSamples": 5668938,
+        "maxRgbError": 237,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 230600,
+        "ssimulacra2": 84.34454179,
+        "decodedRGBAHash": "c380f1a9a30efa120a0071ed06e51f56f5f134a887dabef8316210a8b1634bee"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-alpha-3840x2160/png-oxipng4/cli",
+      "input": "snapdom-alpha-3840x2160",
+      "codec": "png-oxipng4",
+      "execution": "cli",
+      "quality": 100,
+      "effort": null,
+      "maxError": null,
+      "width": 3840,
+      "height": 2160,
+      "gpu": false,
+      "coldMs": 10991.817782996804,
+      "firstEncodeMs": 10991.817782996804,
+      "warmMs": [
+        10579.667724996398,
+        9720.779613002378,
+        10166.18882700277
+      ],
+      "memory": {
+        "peakRSSKiB": 194928
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/oxipng/oxipng",
+        "-o",
+        "4",
+        "--strip",
+        "safe",
+        "--out",
+        "/workspace/scratch/a5eee5bb8095/capture-alpha-references/snapdom-alpha-3840x2160--png-oxipng4--cli.png",
+        "--force",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-alpha-3840x2160.png"
+      ],
+      "bytes": 1207812,
+      "sha256": "599ae34373bb2ea1bdf6904d29d07e76436bc82e8f8764a6fb9a7428f3145563",
+      "correctness": {
+        "decoder": "PNG sample reader",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "10989c6911852a8800c4762f52c5a48d33ac6d3cffd2b974d3a3e712715807d8"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-nested-demo-1920x1080/core-lossless/main",
+      "input": "snapdom-nested-demo-1920x1080",
+      "codec": "core-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee",
+      "bytes": 20089,
+      "sha256": "5450be61bdee040cc2e77b6093c2e38bf8641ae9191e71d4ea67ec57c6442167",
+      "initializationMs": 23.414881999999977,
+      "coldMs": 538.4663170000001,
+      "firstEncodeMs": 515.0514350000001,
+      "warmMs": [
+        539.3604979999999
+      ],
+      "memory": {
+        "peakRSSKiB": 248768,
+        "before": {
+          "rss": 72339456,
+          "heapTotal": 9228288,
+          "heapUsed": 5838568,
+          "external": 35876488,
+          "arrayBuffers": 25276929
+        },
+        "after": {
+          "rss": 72306688,
+          "heapTotal": 12374016,
+          "heapUsed": 7890552,
+          "external": 22750245,
+          "arrayBuffers": 20432522
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-nested-demo-1920x1080/jsquash-e7-lossless/main",
+      "input": "snapdom-nested-demo-1920x1080",
+      "codec": "jsquash-e7-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee",
+      "bytes": 13430,
+      "sha256": "49a6d248abca4e98533330806ab7bf13b5fd469a00e1740339fb294c4f88374d",
+      "initializationMs": 10.76230600000001,
+      "coldMs": 1878.4864850000001,
+      "firstEncodeMs": 1867.724179,
+      "warmMs": [
+        1582.4354010000002
+      ],
+      "memory": {
+        "peakRSSKiB": 618248,
+        "before": {
+          "rss": 72675328,
+          "heapTotal": 9228288,
+          "heapUsed": 5815704,
+          "external": 35876488,
+          "arrayBuffers": 25276929
+        },
+        "after": {
+          "rss": 617517056,
+          "heapTotal": 11325440,
+          "heapUsed": 5794280,
+          "external": 655025297,
+          "arrayBuffers": 9924163
+        },
+        "wasmHeapBytes": 642777088
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-nested-demo-1920x1080/jsquash-e7-lossless/worker",
+      "input": "snapdom-nested-demo-1920x1080",
+      "codec": "jsquash-e7-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee",
+      "bytes": 13430,
+      "sha256": "49a6d248abca4e98533330806ab7bf13b5fd469a00e1740339fb294c4f88374d",
+      "initializationMs": 61.48373000000001,
+      "coldMs": 2384.976126,
+      "firstEncodeMs": 2323.492396,
+      "warmMs": [
+        1660.5867309999999
+      ],
+      "memory": {
+        "peakRSSKiB": 639548,
+        "before": {
+          "rss": 72224768,
+          "heapTotal": 9228288,
+          "heapUsed": 5812104,
+          "external": 35876488,
+          "arrayBuffers": 25276929
+        },
+        "after": {
+          "rss": 647163904,
+          "heapTotal": 9490432,
+          "heapUsed": 6162008,
+          "external": 27719965,
+          "arrayBuffers": 41865729
+        },
+        "wasmHeapBytes": 642777088
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-nested-demo-1920x1080/vips-e3-lossless/main",
+      "input": "snapdom-nested-demo-1920x1080",
+      "codec": "vips-e3-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 3,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee",
+      "bytes": 51882,
+      "sha256": "1149079e507d23ada5d6f78b1fa3dc03eac5f83222843fd1f147c275600e62e0",
+      "initializationMs": 115.79066099999999,
+      "coldMs": 876.1090839999999,
+      "firstEncodeMs": 760.3184229999999,
+      "warmMs": [
+        536.8161339999999
+      ],
+      "memory": {
+        "peakRSSKiB": 275448,
+        "before": {
+          "rss": 73064448,
+          "heapTotal": 9228288,
+          "heapUsed": 5843624,
+          "external": 35876488,
+          "arrayBuffers": 25276929
+        },
+        "after": {
+          "rss": 282058752,
+          "heapTotal": 22634496,
+          "heapUsed": 15504016,
+          "external": 11164199,
+          "arrayBuffers": 8718033
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-nested-demo-1920x1080/vips-e3-lossless/worker",
+      "input": "snapdom-nested-demo-1920x1080",
+      "codec": "vips-e3-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 3,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee",
+      "bytes": 51882,
+      "sha256": "1149079e507d23ada5d6f78b1fa3dc03eac5f83222843fd1f147c275600e62e0",
+      "initializationMs": 240.946067,
+      "coldMs": 1046.043467,
+      "firstEncodeMs": 805.0974,
+      "warmMs": [
+        516.968642
+      ],
+      "memory": {
+        "peakRSSKiB": 339392,
+        "before": {
+          "rss": 72638464,
+          "heapTotal": 8966144,
+          "heapUsed": 5838776,
+          "external": 35876488,
+          "arrayBuffers": 25276929
+        },
+        "after": {
+          "rss": 347537408,
+          "heapTotal": 8966144,
+          "heapUsed": 6203288,
+          "external": 27796869,
+          "arrayBuffers": 41865729
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-nested-demo-1920x1080/vips-e7-lossless/main",
+      "input": "snapdom-nested-demo-1920x1080",
+      "codec": "vips-e7-lossless",
+      "execution": "main",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee",
+      "bytes": 23754,
+      "sha256": "a9cf7b40726f43f307e785d9113d63ad29a6ca09daceb532a5ff112e27a5067e",
+      "initializationMs": 146.98508499999997,
+      "coldMs": 1596.876242,
+      "firstEncodeMs": 1449.891157,
+      "warmMs": [
+        1148.044604
+      ],
+      "memory": {
+        "peakRSSKiB": 277548,
+        "before": {
+          "rss": 72937472,
+          "heapTotal": 9228288,
+          "heapUsed": 5838840,
+          "external": 35876488,
+          "arrayBuffers": 25276929
+        },
+        "after": {
+          "rss": 284209152,
+          "heapTotal": 23158784,
+          "heapUsed": 15452752,
+          "external": 11051687,
+          "arrayBuffers": 8605521
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-nested-demo-1920x1080/vips-e7-lossless/worker",
+      "input": "snapdom-nested-demo-1920x1080",
+      "codec": "vips-e7-lossless",
+      "execution": "worker",
+      "quality": 100,
+      "effort": 7,
+      "maxError": 0,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "inputHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee",
+      "bytes": 23754,
+      "sha256": "a9cf7b40726f43f307e785d9113d63ad29a6ca09daceb532a5ff112e27a5067e",
+      "initializationMs": 185.377711,
+      "coldMs": 1713.4785230000002,
+      "firstEncodeMs": 1528.1008120000001,
+      "warmMs": [
+        1134.371994
+      ],
+      "memory": {
+        "peakRSSKiB": 330164,
+        "before": {
+          "rss": 72937472,
+          "heapTotal": 8441856,
+          "heapUsed": 5842776,
+          "external": 35876488,
+          "arrayBuffers": 25276929
+        },
+        "after": {
+          "rss": 338087936,
+          "heapTotal": 8966144,
+          "heapUsed": 6207176,
+          "external": 27740613,
+          "arrayBuffers": 41865729
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node worker_threads. Cold includes worker startup, module init and first copy/transfer/encode/reply. Warm includes caller-owned input copy, transfers and encode. Fixture decode excluded.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "vips": {
+        "concurrency": 1,
+        "cacheMax": 0,
+        "dynamicLibraries": [
+          "vips-jxl.wasm"
+        ]
+      },
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-nested-demo-1920x1080/cjxl-e7-lossless/cli",
+      "input": "snapdom-nested-demo-1920x1080",
+      "codec": "cjxl-e7-lossless",
+      "execution": "cli",
+      "quality": 100,
+      "effort": 7,
+      "maxError": null,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "version": "0.12.0",
+      "coldMs": 959.3461039985414,
+      "firstEncodeMs": 959.3461039985414,
+      "warmMs": [
+        805.8288259999244,
+        694.6023779964889,
+        744.4775059993844
+      ],
+      "memory": {
+        "peakRSSKiB": 102916
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/libjxl12/tools/cjxl",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-nested-demo-1920x1080.png",
+        "/workspace/scratch/a5eee5bb8095/capture-alpha-references/snapdom-nested-demo-1920x1080--cjxl-e7-lossless--cli.jxl",
+        "-q",
+        "100",
+        "-e",
+        "7",
+        "--num_threads=1",
+        "--lossless_jpeg=0",
+        "--quiet"
+      ],
+      "bytes": 23754,
+      "sha256": "a9cf7b40726f43f307e785d9113d63ad29a6ca09daceb532a5ff112e27a5067e",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-nested-demo-1920x1080/cjxl-e9-lossless/cli",
+      "input": "snapdom-nested-demo-1920x1080",
+      "codec": "cjxl-e9-lossless",
+      "execution": "cli",
+      "quality": 100,
+      "effort": 9,
+      "maxError": null,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "version": "0.12.0",
+      "coldMs": 2561.1227120025433,
+      "firstEncodeMs": 2561.1227120025433,
+      "warmMs": [
+        2475.367853003263,
+        2687.1582139938255,
+        2383.692985997186
+      ],
+      "memory": {
+        "peakRSSKiB": 102912
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/libjxl12/tools/cjxl",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-nested-demo-1920x1080.png",
+        "/workspace/scratch/a5eee5bb8095/capture-alpha-references/snapdom-nested-demo-1920x1080--cjxl-e9-lossless--cli.jxl",
+        "-q",
+        "100",
+        "-e",
+        "9",
+        "--num_threads=1",
+        "--lossless_jpeg=0",
+        "--quiet"
+      ],
+      "bytes": 22912,
+      "sha256": "b59da6e36b3992e35aefd93fada1c57e9e9449b1547be67ac71c9447e49f0005",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-nested-demo-1920x1080/webp-lossless/cli",
+      "input": "snapdom-nested-demo-1920x1080",
+      "codec": "webp-lossless",
+      "execution": "cli",
+      "quality": 100,
+      "effort": null,
+      "maxError": null,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "coldMs": 95.56163099477999,
+      "firstEncodeMs": 95.56163099477999,
+      "warmMs": [
+        86.41103799891425,
+        99.08925700437976,
+        99.3985530003556
+      ],
+      "memory": {
+        "peakRSSKiB": 65696
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/webp/bin/cwebp",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-nested-demo-1920x1080.png",
+        "-o",
+        "/workspace/scratch/a5eee5bb8095/capture-alpha-references/snapdom-nested-demo-1920x1080--webp-lossless--cli.webp",
+        "-lossless",
+        "-exact",
+        "-z",
+        "6",
+        "-quiet"
+      ],
+      "bytes": 13794,
+      "sha256": "7f5d5cda826aa65a73e4830ab75701e26348bc1dfcfebc9e695ad18bab587ea4",
+      "correctness": {
+        "decoder": "dwebp 1.5.0",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-nested-demo-1920x1080/webp-q90/cli",
+      "input": "snapdom-nested-demo-1920x1080",
+      "codec": "webp-q90",
+      "execution": "cli",
+      "quality": 90,
+      "effort": null,
+      "maxError": null,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "coldMs": 198.53415399848018,
+      "firstEncodeMs": 198.53415399848018,
+      "warmMs": [
+        179.69117699976778,
+        148.41201600211207,
+        177.50717099988833
+      ],
+      "memory": {
+        "peakRSSKiB": 55644
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/webp/bin/cwebp",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-nested-demo-1920x1080.png",
+        "-o",
+        "/workspace/scratch/a5eee5bb8095/capture-alpha-references/snapdom-nested-demo-1920x1080--webp-q90--cli.webp",
+        "-q",
+        "90",
+        "-m",
+        "4",
+        "-quiet"
+      ],
+      "bytes": 26164,
+      "sha256": "dcae4c94981e7aefb60e5626ab279859d5b3eed8129dbd98876cc8d738633c05",
+      "correctness": {
+        "decoder": "dwebp 1.5.0",
+        "differentSamples": 644264,
+        "maxRgbError": 214,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 86578,
+        "ssimulacra2": 89.24550048,
+        "decodedRGBAHash": "892a48031c39255daca6527fa1643d9dea895c53d442d3a21c57b404e7bd8b6a"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    },
+    {
+      "key": "snapdom-nested-demo-1920x1080/png-oxipng4/cli",
+      "input": "snapdom-nested-demo-1920x1080",
+      "codec": "png-oxipng4",
+      "execution": "cli",
+      "quality": 100,
+      "effort": null,
+      "maxError": null,
+      "width": 1920,
+      "height": 1080,
+      "gpu": false,
+      "coldMs": 1100.4026800001157,
+      "firstEncodeMs": 1100.4026800001157,
+      "warmMs": [
+        1090.7664699989255,
+        987.0548379985848,
+        1003.9824909981689
+      ],
+      "memory": {
+        "peakRSSKiB": 59720
+      },
+      "timing": "CLI process wall time including startup, decode and write; warmMs are repeated fresh CLI runs (OS file cache warm).",
+      "command": [
+        "/workspace/scratch/a5eee5bb8095/bench-tools/oxipng/oxipng",
+        "-o",
+        "4",
+        "--strip",
+        "safe",
+        "--out",
+        "/workspace/scratch/a5eee5bb8095/capture-alpha-references/snapdom-nested-demo-1920x1080--png-oxipng4--cli.png",
+        "--force",
+        "/workspace/scratch/a5eee5bb8095/rapier-jxl/bench/capture/fixtures/snapdom-nested-demo-1920x1080.png"
+      ],
+      "bytes": 37503,
+      "sha256": "f24f34a061aa0c28a1d1b55fff224b6305e222d7b6807a8345fb1aa791cf282a",
+      "correctness": {
+        "decoder": "PNG sample reader",
+        "differentSamples": 0,
+        "maxRgbError": 0,
+        "alphaDifferences": 0,
+        "hiddenRgbDifferences": 0,
+        "ssimulacra2": 100,
+        "decodedRGBAHash": "385880938af5d9168ca8bdf9e50d7bacd4453b669a9e3ee09f9be1553b6a66ee"
+      },
+      "status": "measured",
+      "run": "capture-alpha-references"
+    }
+  ],
+  "runs": [
+    {
+      "name": "capture-results-final",
+      "sha256": "e47cb9b3079c09a279623b9609a9a0703c12bc6f828d3538af0a9b97cfca1c6c",
+      "date": "2026-10-27T12:59:14.612Z",
+      "rows": 47
+    },
+    {
+      "name": "capture-native12",
+      "sha256": "1b46d733f0eaf251fbd08cbb51a7331a7eebfc11e0f2a0e91c9daef6198b0f43",
+      "date": "2026-10-27T13:08:57.295Z",
+      "rows": 8
+    },
+    {
+      "name": "capture-photo-native12",
+      "sha256": "8374ccfbcad3777a835d936a8425207e9dc84ec1ed9aeb607003688d456300fb",
+      "date": "2026-10-27T13:17:20.934Z",
+      "rows": 4
+    },
+    {
+      "name": "capture-vips-queue",
+      "sha256": "4e292ea921ed6fbec8c3709935e5863c3f6c479c951c75bf3c21514aa25c75be",
+      "date": "2026-10-27T13:14:14.475Z",
+      "rows": 10
+    },
+    {
+      "name": "capture-best4k",
+      "sha256": "64eda092456dfea4ebebeca4f6dfa8e5c92d4404e074ba7f37e7e7579675cd91",
+      "date": "2026-10-27T13:08:19.730Z",
+      "rows": 1
+    },
+    {
+      "name": "capture-final-capture",
+      "sha256": "f4cc0e2f4fedc33435c4fc70cdb4e3994af6d575c66b0d69fa1cd4434e6d9ecf",
+      "date": "2026-10-27T13:18:36.681Z",
+      "rows": 20
+    },
+    {
+      "name": "capture-alpha-references",
+      "sha256": "ffa6a59178dfa07057b8f27130469aaf37e1daa459bdec520f9e633a911a9671",
+      "date": "2026-10-27T13:17:28.396Z",
+      "rows": 36
+    },
+    {
+      "name": "capture-headline",
+      "sha256": "18468af218ea0c89d36ead4b35a26a947059254e5c38b8307e04614d84c89044",
+      "date": "2026-10-27T13:24:20.436Z",
+      "rows": 18
+    },
+    {
+      "name": "capture-reverified",
+      "sha256": "24e521e673c1cfe83cc4cccdbd880a931113d893c03839ea0322dd8056352a80",
+      "date": "2026-10-27T12:59:14.612Z",
+      "rows": 10
+    }
+  ],
+  "scope": "One hosted EPYC Linux instance, Node24 and Chrome155. Not a physical midrange laptop/phone qualification. All input/output byte and correctness facts are reproducible; latency is machine/load-specific. Native CLI repeats include startup and PNG decode, JS timings exclude input decode. Explicitly inspect each row timing and memoryMethod.",
+  "finalCaptureSource": {
+    "capture-codec": "779d73548661ab975a74a7fa0d97eb1135532cb483ca10edb8b111789909a260",
+    "capture-gpu": "ed9b6b63d31d9745c6affeaf0e2619b92b2dc9963c9f8af6eed132ddd25e2d80",
+    "capture": "0fb888cc6456780047efeefd6882465ae9e5536689038bd9554609aaecbcbbe2",
+    "screen": "006c91ecf55814671d1dc0f7b5bc6ce6252c09aeed0a533992bd173fd1e96098",
+    "screen-lz77": "f16ac8faf045e89e290b166a83960033dd7027e90ff0d13c9da44f5803d1fe71",
+    "screen-local": "8cf98e68ade6ad315237ca62f869850ead984a80126d248183fe8f2e7e719225",
+    "lossless": "cd7e2d9a54b92e1505002ec8c4328f37962ae12e7e31b4b20b12b9f000d3bc83",
+    "image": "80469d30ba03f523839ade6bc0bc356b7805b537c45eacaa4b972b42c3f17e18",
+    "encode-worker": "89f97a23f4104e5d68ab62888e33be4183c8c24b2a8f329554bd861458867c40"
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "package": "wasm-vips 0.0.19",
+  "node": "v24.22.1",
+  "width": 3840,
+  "height": 2160,
+  "rgbaSHA256": "814328953b8bc8c9984ade87b14f94757240765d442b1207a7745fb62067c3b9",
+  "settings": {
+    "Q": 100,
+    "effort": 7,
+    "lossless": true,
+    "keep": "none",
+    "concurrency": 1,
+    "cacheMax": 0
+  },
+  "note": "Fresh process, four sequential attempts with 10ms event-loop yields; both vips images deleted after each. A failure is preserved, not interpreted as a proven cause. RSS is whole process including input/runtime.",
+  "rows": [
+    {
+      "attempt": 1,
+      "rssBefore": 127639552,
+      "vipsMemoryBefore": 0,
+      "cacheEntriesBefore": 0,
+      "status": "measured",
+      "ms": 4977.813054,
+      "bytes": 707526,
+      "sha256": "1838bbe6259342a7bc90ff741535a1836466fd2d831a399010a87c6d6e900c10",
+      "rssAfter": 589103104,
+      "vipsMemoryAfter": 0,
+      "peakRSSKiB": 575296
+    },
+    {
+      "attempt": 2,
+      "rssBefore": 589234176,
+      "vipsMemoryBefore": 0,
+      "cacheEntriesBefore": 0,
+      "status": "measured",
+      "ms": 4795.602940999999,
+      "bytes": 707526,
+      "sha256": "1838bbe6259342a7bc90ff741535a1836466fd2d831a399010a87c6d6e900c10",
+      "rssAfter": 739573760,
+      "vipsMemoryAfter": 0,
+      "peakRSSKiB": 722240
+    },
+    {
+      "attempt": 3,
+      "rssBefore": 739573760,
+      "vipsMemoryBefore": 0,
+      "cacheEntriesBefore": 0,
+      "status": "failed",
+      "ms": 66.90598300000056,
+      "error": "vips::Error,unable to call jxlsave_buffer\njxlsave_buffer: JxlEncoderAddImageFrame error\n",
+      "rssAfter": 760283136,
+      "vipsMemoryAfter": 0,
+      "peakRSSKiB": 742464
+    }
+  ]
+}

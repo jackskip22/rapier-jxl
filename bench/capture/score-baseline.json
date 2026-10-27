@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "input": {
+    "name": "photo-keong",
+    "width": 500,
+    "height": 500,
+    "sha256": "24de33523c9edb14a1e2a6fb9c0c2eb7ebdd5ebeeccf38f6a03a2c872e7ca764"
+  },
+  "method": "One source photo, each encoding API in a fresh Node process. Cold import+first encode; one warm repeat except expensive score search. Animations contain one 100ms frame; layers one replacement layer; patches one pixel copied onto itself; splines one zero-amplitude curve. These are footprint/mode smoke measurements, not representative animation/patch/spline compression claims.",
+  "rows": [
+    {
+      "codec": "score",
+      "quality": 85,
+      "effort": 7,
+      "input": "photo-keong",
+      "key": "photo-keong/score-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 38962,
+      "sha256": "40da6e7ad22258997c5f3f4a2eac3d7c39f8551258fd964dda6d143cd2e97e0b",
+      "initializationMs": 40.940962999999996,
+      "coldMs": 61246.648607,
+      "firstEncodeMs": 61205.707644,
+      "warmMs": [],
+      "memory": {
+        "peakRSSKiB": 442120,
+        "before": {
+          "rss": 43180032,
+          "heapTotal": 9228288,
+          "heapUsed": 6020936,
+          "external": 7685985,
+          "arrayBuffers": 5368302
+        },
+        "after": {
+          "rss": 442961920,
+          "heapTotal": 165728256,
+          "heapUsed": 94451704,
+          "external": 110471766,
+          "arrayBuffers": 108157617
+        },
+        "wasmHeapBytes": null
+      },
+      "metadata": {
+        "quality": 95,
+        "candidate": "gaborish",
+        "butteraugli": 1.7548470025246061,
+        "butteraugli3": 0.6396274981412897,
+        "ssimulacra2": 85.04924152717727
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 465905,
+        "ssimulacra2": 84.12126809
+      },
+      "status": "measured"
+    }
+  ]
+}

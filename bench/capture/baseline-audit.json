@@ -1,0 +1,1600 @@
+{
+  "version": "6.1.1",
+  "recordedSizesVersion": "6.1.0",
+  "node": "v24.22.1",
+  "method": "Actual file bytes; Node gzip level 9. Closure sums separately compressed imported files (static and optional dynamic); not a concatenated or tree-shaken estimate. Source-only entries are explicitly not minified.",
+  "exportCount": 67,
+  "exports": [
+    {
+      "entry": ".",
+      "target": "./src/index.mjs",
+      "measuredFile": "dist/rapier-jxl.min.mjs",
+      "minified": true,
+      "modes": "RGBA: exact Modular; lossy Squeeze or DCT8/XYB at effort 1; 8/10/12/16-bit and floating samples; alpha, ICC/HDR declarations. No deep screen or photo search.",
+      "entryBytes": {
+        "bytes": 71567,
+        "gzip": 28920,
+        "sha256": "6a07c99af1760d6ded2ce99227cadc7404e55e5a7c4ead657107deb198e42e74"
+      },
+      "staticClosureGzip": 28920,
+      "closureGzip": 35000,
+      "files": [
+        "dist/gpu-core.mjs",
+        "dist/rapier-jxl.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./core",
+      "target": "./src/index.mjs",
+      "measuredFile": "dist/rapier-jxl.min.mjs",
+      "minified": true,
+      "modes": "RGBA: exact Modular; lossy Squeeze or DCT8/XYB at effort 1; 8/10/12/16-bit and floating samples; alpha, ICC/HDR declarations. No deep screen or photo search.",
+      "entryBytes": {
+        "bytes": 71567,
+        "gzip": 28920,
+        "sha256": "6a07c99af1760d6ded2ce99227cadc7404e55e5a7c4ead657107deb198e42e74"
+      },
+      "staticClosureGzip": 28920,
+      "closureGzip": 35000,
+      "files": [
+        "dist/gpu-core.mjs",
+        "dist/rapier-jxl.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./min",
+      "target": "./dist/rapier-jxl.min.mjs",
+      "measuredFile": "dist/rapier-jxl.min.mjs",
+      "minified": true,
+      "modes": "RGBA: exact Modular; lossy Squeeze or DCT8/XYB at effort 1; 8/10/12/16-bit and floating samples; alpha, ICC/HDR declarations. No deep screen or photo search.",
+      "entryBytes": {
+        "bytes": 71567,
+        "gzip": 28920,
+        "sha256": "6a07c99af1760d6ded2ce99227cadc7404e55e5a7c4ead657107deb198e42e74"
+      },
+      "staticClosureGzip": 28920,
+      "closureGzip": 35000,
+      "files": [
+        "dist/gpu-core.mjs",
+        "dist/rapier-jxl.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./core/min",
+      "target": "./dist/rapier-jxl.min.mjs",
+      "measuredFile": "dist/rapier-jxl.min.mjs",
+      "minified": true,
+      "modes": "RGBA: exact Modular; lossy Squeeze or DCT8/XYB at effort 1; 8/10/12/16-bit and floating samples; alpha, ICC/HDR declarations. No deep screen or photo search.",
+      "entryBytes": {
+        "bytes": 71567,
+        "gzip": 28920,
+        "sha256": "6a07c99af1760d6ded2ce99227cadc7404e55e5a7c4ead657107deb198e42e74"
+      },
+      "staticClosureGzip": 28920,
+      "closureGzip": 35000,
+      "files": [
+        "dist/gpu-core.mjs",
+        "dist/rapier-jxl.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./jpeg",
+      "target": "./src/jpeg.mjs",
+      "measuredFile": "dist/jpeg.min.mjs",
+      "minified": true,
+      "modes": "JPEG coefficient transcoding and byte-exact JPEG reconstruction; not RGBA encoding or general JXL decoding.",
+      "entryBytes": {
+        "bytes": 83068,
+        "gzip": 32866,
+        "sha256": "00e9c6e258d247a898817a4b31a7b95e48eda38c03bca3bae2ff187707610682"
+      },
+      "staticClosureGzip": 32866,
+      "closureGzip": 32866,
+      "files": [
+        "dist/jpeg.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./jpeg/min",
+      "target": "./dist/jpeg.min.mjs",
+      "measuredFile": "dist/jpeg.min.mjs",
+      "minified": true,
+      "modes": "JPEG coefficient transcoding and byte-exact JPEG reconstruction; not RGBA encoding or general JXL decoding.",
+      "entryBytes": {
+        "bytes": 83068,
+        "gzip": 32866,
+        "sha256": "00e9c6e258d247a898817a4b31a7b95e48eda38c03bca3bae2ff187707610682"
+      },
+      "staticClosureGzip": 32866,
+      "closureGzip": 32866,
+      "files": [
+        "dist/jpeg.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./photo",
+      "target": "./src/photo.mjs",
+      "measuredFile": "dist/photo.min.mjs",
+      "minified": true,
+      "modes": "Photographic DCT/XYB and ANS search at effort 1–9; quality 100 exact; native precision Modular; exact alpha.",
+      "entryBytes": {
+        "bytes": 158152,
+        "gzip": 60943,
+        "sha256": "9f635bd287a59bf7686f1c239f261690d4481b6254bd7b90cf89acd1b39064a0"
+      },
+      "staticClosureGzip": 60943,
+      "closureGzip": 60943,
+      "files": [
+        "dist/photo.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./score",
+      "target": "./src/score.mjs",
+      "measuredFile": "./src/score.mjs",
+      "minified": false,
+      "modes": "Encode to an explicit SSIMULACRA2/Butteraugli target with CPU/GPU candidate measurement and quality search.",
+      "entryBytes": {
+        "bytes": 3504,
+        "gzip": 1271,
+        "sha256": "8ac76364e6371717d3d99d64faa4d577b8a09df7939307826611a7b7c1a882bd"
+      },
+      "staticClosureGzip": 133531,
+      "closureGzip": 133531,
+      "files": [
+        "src/admit.mjs",
+        "src/afv-basis.mjs",
+        "src/ans.mjs",
+        "src/aq.mjs",
+        "src/bits.mjs",
+        "src/butteraugli.mjs",
+        "src/coefficient-ans.mjs",
+        "src/coefficient-effort.mjs",
+        "src/coefficient-orders.mjs",
+        "src/context-map.mjs",
+        "src/effort-level.mjs",
+        "src/entropy.mjs",
+        "src/exact-math.mjs",
+        "src/fault.mjs",
+        "src/frame.mjs",
+        "src/gpu-butteraugli.mjs",
+        "src/gpu-reconstruct.mjs",
+        "src/gpu-varblocks.mjs",
+        "src/icc-profile.mjs",
+        "src/icc-write.mjs",
+        "src/jfif.mjs",
+        "src/kernel-hooks.mjs",
+        "src/lf-coding.mjs",
+        "src/lossless-coding.mjs",
+        "src/lossless.mjs",
+        "src/modular.mjs",
+        "src/photo-dct.mjs",
+        "src/photo-v6-search.mjs",
+        "src/photo-v6.mjs",
+        "src/photo-xyb.mjs",
+        "src/prefix.mjs",
+        "src/quantization-defaults.mjs",
+        "src/quantization-params.mjs",
+        "src/rct-search.mjs",
+        "src/reconstruct.mjs",
+        "src/sampled.mjs",
+        "src/score.mjs",
+        "src/screen-lz77.mjs",
+        "src/ssimulacra2.mjs",
+        "src/varblocks.mjs",
+        "src/vardct-strategies.mjs",
+        "src/vardct.mjs",
+        "src/weighted-policy.mjs",
+        "src/weighted.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./photo/min",
+      "target": "./dist/photo.min.mjs",
+      "measuredFile": "dist/photo.min.mjs",
+      "minified": true,
+      "modes": "Photographic DCT/XYB and ANS search at effort 1–9; quality 100 exact; native precision Modular; exact alpha.",
+      "entryBytes": {
+        "bytes": 158152,
+        "gzip": 60943,
+        "sha256": "9f635bd287a59bf7686f1c239f261690d4481b6254bd7b90cf89acd1b39064a0"
+      },
+      "staticClosureGzip": 60943,
+      "closureGzip": 60943,
+      "files": [
+        "dist/photo.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./photo-advanced",
+      "target": "./src/photo-advanced.mjs",
+      "measuredFile": "dist/photo-advanced.min.mjs",
+      "minified": true,
+      "modes": "Photo plus explicit VarDCT transforms, progressive passes and coefficient orders.",
+      "entryBytes": {
+        "bytes": 188097,
+        "gzip": 70042,
+        "sha256": "ddf641b7b79f639e46de0fd2e9d18ff3d4d3ad4d8c0bb560defeaa1aa2bea828"
+      },
+      "staticClosureGzip": 70042,
+      "closureGzip": 70042,
+      "files": [
+        "dist/photo-advanced.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./photo-advanced/min",
+      "target": "./dist/photo-advanced.min.mjs",
+      "measuredFile": "dist/photo-advanced.min.mjs",
+      "minified": true,
+      "modes": "Photo plus explicit VarDCT transforms, progressive passes and coefficient orders.",
+      "entryBytes": {
+        "bytes": 188097,
+        "gzip": 70042,
+        "sha256": "ddf641b7b79f639e46de0fd2e9d18ff3d4d3ad4d8c0bb560defeaa1aa2bea828"
+      },
+      "staticClosureGzip": 70042,
+      "closureGzip": 70042,
+      "files": [
+        "dist/photo-advanced.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./photo-plan",
+      "target": "./src/photo-plan.mjs",
+      "measuredFile": "dist/photo-plan.min.mjs",
+      "minified": true,
+      "modes": "Reusable photographic transform plan with encode and target-byte-budget encode methods.",
+      "entryBytes": {
+        "bytes": 122965,
+        "gzip": 45479,
+        "sha256": "5914dc66a63791b8378a299f1deb0a46c667071bcb8d67626d9c49105956f310"
+      },
+      "staticClosureGzip": 45479,
+      "closureGzip": 45479,
+      "files": [
+        "dist/photo-plan.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./photo-plan/min",
+      "target": "./dist/photo-plan.min.mjs",
+      "measuredFile": "dist/photo-plan.min.mjs",
+      "minified": true,
+      "modes": "Reusable photographic transform plan with encode and target-byte-budget encode methods.",
+      "entryBytes": {
+        "bytes": 122965,
+        "gzip": 45479,
+        "sha256": "5914dc66a63791b8378a299f1deb0a46c667071bcb8d67626d9c49105956f310"
+      },
+      "staticClosureGzip": 45479,
+      "closureGzip": 45479,
+      "files": [
+        "dist/photo-plan.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./noise",
+      "target": "./src/photo-noise.mjs",
+      "measuredFile": "dist/noise.min.mjs",
+      "minified": true,
+      "modes": "Photographic coding with optional generated photon noise.",
+      "entryBytes": {
+        "bytes": 218482,
+        "gzip": 82737,
+        "sha256": "99ad96ba62717ea122dd8e3a5498046af37fdd24a20e14e98118a4ee5d1b146f"
+      },
+      "staticClosureGzip": 82737,
+      "closureGzip": 82737,
+      "files": [
+        "dist/noise.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./noise/min",
+      "target": "./dist/noise.min.mjs",
+      "measuredFile": "dist/noise.min.mjs",
+      "minified": true,
+      "modes": "Photographic coding with optional generated photon noise.",
+      "entryBytes": {
+        "bytes": 218482,
+        "gzip": 82737,
+        "sha256": "99ad96ba62717ea122dd8e3a5498046af37fdd24a20e14e98118a4ee5d1b146f"
+      },
+      "staticClosureGzip": 82737,
+      "closureGzip": 82737,
+      "files": [
+        "dist/noise.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./hybrid",
+      "target": "./src/hybrid.mjs",
+      "measuredFile": "dist/hybrid.min.mjs",
+      "minified": true,
+      "modes": "Mixed exact Modular regions and lossy photographic layers.",
+      "entryBytes": {
+        "bytes": 169383,
+        "gzip": 63835,
+        "sha256": "2a3a44a09474967d9463464304e8eb13b289ebdaca10ac9eac7a33bfe77bee1c"
+      },
+      "staticClosureGzip": 63835,
+      "closureGzip": 63835,
+      "files": [
+        "dist/hybrid.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./hybrid/min",
+      "target": "./dist/hybrid.min.mjs",
+      "measuredFile": "dist/hybrid.min.mjs",
+      "minified": true,
+      "modes": "Mixed exact Modular regions and lossy photographic layers.",
+      "entryBytes": {
+        "bytes": 169383,
+        "gzip": 63835,
+        "sha256": "2a3a44a09474967d9463464304e8eb13b289ebdaca10ac9eac7a33bfe77bee1c"
+      },
+      "staticClosureGzip": 63835,
+      "closureGzip": 63835,
+      "files": [
+        "dist/hybrid.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./graphics",
+      "target": "./src/graphics.mjs",
+      "measuredFile": "dist/graphics.min.mjs",
+      "minified": true,
+      "modes": "Exact delta palettes or bounded-error palette/undither graphics.",
+      "entryBytes": {
+        "bytes": 104933,
+        "gzip": 40663,
+        "sha256": "a32db661bfdbb988cc3dc2a068ad12f5267b496d0283dde232e0aa5d499b72b8"
+      },
+      "staticClosureGzip": 40663,
+      "closureGzip": 40663,
+      "files": [
+        "dist/graphics.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./graphics/min",
+      "target": "./dist/graphics.min.mjs",
+      "measuredFile": "dist/graphics.min.mjs",
+      "minified": true,
+      "modes": "Exact delta palettes or bounded-error palette/undither graphics.",
+      "entryBytes": {
+        "bytes": 104933,
+        "gzip": 40663,
+        "sha256": "a32db661bfdbb988cc3dc2a068ad12f5267b496d0283dde232e0aa5d499b72b8"
+      },
+      "staticClosureGzip": 40663,
+      "closureGzip": 40663,
+      "files": [
+        "dist/graphics.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./icc",
+      "target": "./src/icc.mjs",
+      "measuredFile": "dist/icc.min.mjs",
+      "minified": true,
+      "modes": "ICC profile preparation and profile-bearing still encoding.",
+      "entryBytes": {
+        "bytes": 37467,
+        "gzip": 14780,
+        "sha256": "9a60e08b9d55fe5e68a6c1d2e604af8b931ba89804da78eff0296b8710707ef6"
+      },
+      "staticClosureGzip": 14780,
+      "closureGzip": 14780,
+      "files": [
+        "dist/icc.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./icc/min",
+      "target": "./dist/icc.min.mjs",
+      "measuredFile": "dist/icc.min.mjs",
+      "minified": true,
+      "modes": "ICC profile preparation and profile-bearing still encoding.",
+      "entryBytes": {
+        "bytes": 37467,
+        "gzip": 14780,
+        "sha256": "9a60e08b9d55fe5e68a6c1d2e604af8b931ba89804da78eff0296b8710707ef6"
+      },
+      "staticClosureGzip": 14780,
+      "closureGzip": 14780,
+      "files": [
+        "dist/icc.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./opsin",
+      "target": "./src/opsin.mjs",
+      "measuredFile": "dist/opsin.min.mjs",
+      "minified": true,
+      "modes": "Opsin transform preparation/wrapping; not an independent RGBA encoder.",
+      "entryBytes": {
+        "bytes": 74089,
+        "gzip": 28782,
+        "sha256": "dd054aff96cd719697312feeecb0e4a106433ecfd2a2c2d3768a3c6e81275ad1"
+      },
+      "staticClosureGzip": 28782,
+      "closureGzip": 28782,
+      "files": [
+        "dist/opsin.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./opsin/min",
+      "target": "./dist/opsin.min.mjs",
+      "measuredFile": "dist/opsin.min.mjs",
+      "minified": true,
+      "modes": "Opsin transform preparation/wrapping; not an independent RGBA encoder.",
+      "entryBytes": {
+        "bytes": 74089,
+        "gzip": 28782,
+        "sha256": "dd054aff96cd719697312feeecb0e4a106433ecfd2a2c2d3768a3c6e81275ad1"
+      },
+      "staticClosureGzip": 28782,
+      "closureGzip": 28782,
+      "files": [
+        "dist/opsin.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./delta-palette",
+      "target": "./src/delta-palette.mjs",
+      "measuredFile": "dist/delta-palette.min.mjs",
+      "minified": true,
+      "modes": "Exact or explicitly configured delta-palette Modular coding.",
+      "entryBytes": {
+        "bytes": 87698,
+        "gzip": 34040,
+        "sha256": "212cf402841dcd3b73fe52c18da4850d48d167eb946d2b839b52509b33ed9e5e"
+      },
+      "staticClosureGzip": 34040,
+      "closureGzip": 34040,
+      "files": [
+        "dist/delta-palette.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./delta-palette/min",
+      "target": "./dist/delta-palette.min.mjs",
+      "measuredFile": "dist/delta-palette.min.mjs",
+      "minified": true,
+      "modes": "Exact or explicitly configured delta-palette Modular coding.",
+      "entryBytes": {
+        "bytes": 87698,
+        "gzip": 34040,
+        "sha256": "212cf402841dcd3b73fe52c18da4850d48d167eb946d2b839b52509b33ed9e5e"
+      },
+      "staticClosureGzip": 34040,
+      "closureGzip": 34040,
+      "files": [
+        "dist/delta-palette.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./splines",
+      "target": "./src/splines.mjs",
+      "measuredFile": "dist/splines.min.mjs",
+      "minified": true,
+      "modes": "Spline frame coding and drawing primitives.",
+      "entryBytes": {
+        "bytes": 89947,
+        "gzip": 35847,
+        "sha256": "50a345e814f56b55fe867bfd8c52cdb49aaf3bea5b5a1f9a82cf2d4511fd439d"
+      },
+      "staticClosureGzip": 35847,
+      "closureGzip": 35847,
+      "files": [
+        "dist/splines.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./splines/min",
+      "target": "./dist/splines.min.mjs",
+      "measuredFile": "dist/splines.min.mjs",
+      "minified": true,
+      "modes": "Spline frame coding and drawing primitives.",
+      "entryBytes": {
+        "bytes": 89947,
+        "gzip": 35847,
+        "sha256": "50a345e814f56b55fe867bfd8c52cdb49aaf3bea5b5a1f9a82cf2d4511fd439d"
+      },
+      "staticClosureGzip": 35847,
+      "closureGzip": 35847,
+      "files": [
+        "dist/splines.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./channels",
+      "target": "./src/channels.mjs",
+      "measuredFile": "dist/channels.min.mjs",
+      "minified": true,
+      "modes": "Lossless native samples with named/typed extra channels.",
+      "entryBytes": {
+        "bytes": 85704,
+        "gzip": 31704,
+        "sha256": "c116e8ae86f27158738eab58e52a7f326beb5df50fce25845f4dec2c885fcbb6"
+      },
+      "staticClosureGzip": 31704,
+      "closureGzip": 31704,
+      "files": [
+        "dist/channels.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./channels/min",
+      "target": "./dist/channels.min.mjs",
+      "measuredFile": "dist/channels.min.mjs",
+      "minified": true,
+      "modes": "Lossless native samples with named/typed extra channels.",
+      "entryBytes": {
+        "bytes": 85704,
+        "gzip": 31704,
+        "sha256": "c116e8ae86f27158738eab58e52a7f326beb5df50fce25845f4dec2c885fcbb6"
+      },
+      "staticClosureGzip": 31704,
+      "closureGzip": 31704,
+      "files": [
+        "dist/channels.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./layers",
+      "target": "./src/layers.mjs",
+      "measuredFile": "dist/layers.min.mjs",
+      "minified": true,
+      "modes": "Lossless layer/frame composition and blend modes.",
+      "entryBytes": {
+        "bytes": 96286,
+        "gzip": 35140,
+        "sha256": "74fe5ace42ca9b870e579a1659f6b8efeede380ce93052930c5e6856d9a5523e"
+      },
+      "staticClosureGzip": 35140,
+      "closureGzip": 35140,
+      "files": [
+        "dist/layers.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./layers/min",
+      "target": "./dist/layers.min.mjs",
+      "measuredFile": "dist/layers.min.mjs",
+      "minified": true,
+      "modes": "Lossless layer/frame composition and blend modes.",
+      "entryBytes": {
+        "bytes": 96286,
+        "gzip": 35140,
+        "sha256": "74fe5ace42ca9b870e579a1659f6b8efeede380ce93052930c5e6856d9a5523e"
+      },
+      "staticClosureGzip": 35140,
+      "closureGzip": 35140,
+      "files": [
+        "dist/layers.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./patches",
+      "target": "./src/patches.mjs",
+      "measuredFile": "dist/patches.min.mjs",
+      "minified": true,
+      "modes": "Patch dictionaries, exact repeated regions and patch compositions.",
+      "entryBytes": {
+        "bytes": 144635,
+        "gzip": 53730,
+        "sha256": "be15e6dcfb8f0210e49edd1ad164ef1f12b86bb6c429ca2e9e35ee5f258c2e0f"
+      },
+      "staticClosureGzip": 53730,
+      "closureGzip": 53730,
+      "files": [
+        "dist/patches.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./patches/min",
+      "target": "./dist/patches.min.mjs",
+      "measuredFile": "dist/patches.min.mjs",
+      "minified": true,
+      "modes": "Patch dictionaries, exact repeated regions and patch compositions.",
+      "entryBytes": {
+        "bytes": 144635,
+        "gzip": 53730,
+        "sha256": "be15e6dcfb8f0210e49edd1ad164ef1f12b86bb6c429ca2e9e35ee5f258c2e0f"
+      },
+      "staticClosureGzip": 53730,
+      "closureGzip": 53730,
+      "files": [
+        "dist/patches.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./jpeg-ans",
+      "target": "./src/jpeg-ans.mjs",
+      "measuredFile": "dist/jpeg-ans.min.mjs",
+      "minified": true,
+      "modes": "JPEG transcoding/reconstruction with ANS entropy search.",
+      "entryBytes": {
+        "bytes": 114214,
+        "gzip": 44543,
+        "sha256": "d0eaca691cf981b440e95d4757954c3c92004172acb3efd81b74030c00cc27a0"
+      },
+      "staticClosureGzip": 44543,
+      "closureGzip": 44543,
+      "files": [
+        "dist/jpeg-ans.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./jpeg-ans/min",
+      "target": "./dist/jpeg-ans.min.mjs",
+      "measuredFile": "dist/jpeg-ans.min.mjs",
+      "minified": true,
+      "modes": "JPEG transcoding/reconstruction with ANS entropy search.",
+      "entryBytes": {
+        "bytes": 114214,
+        "gzip": 44543,
+        "sha256": "d0eaca691cf981b440e95d4757954c3c92004172acb3efd81b74030c00cc27a0"
+      },
+      "staticClosureGzip": 44543,
+      "closureGzip": 44543,
+      "files": [
+        "dist/jpeg-ans.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./photo-ans",
+      "target": "./src/photo-ans.mjs",
+      "measuredFile": "dist/photo-ans.min.mjs",
+      "minified": true,
+      "modes": "Photographic encoder with ANS entropy search.",
+      "entryBytes": {
+        "bytes": 158052,
+        "gzip": 60898,
+        "sha256": "51c1d6c97c0c597d767a936dad37b6a4ca341050b2b6f55db2e550354604230f"
+      },
+      "staticClosureGzip": 60898,
+      "closureGzip": 60898,
+      "files": [
+        "dist/photo-ans.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./photo-ans/min",
+      "target": "./dist/photo-ans.min.mjs",
+      "measuredFile": "dist/photo-ans.min.mjs",
+      "minified": true,
+      "modes": "Photographic encoder with ANS entropy search.",
+      "entryBytes": {
+        "bytes": 158052,
+        "gzip": 60898,
+        "sha256": "51c1d6c97c0c597d767a936dad37b6a4ca341050b2b6f55db2e550354604230f"
+      },
+      "staticClosureGzip": 60898,
+      "closureGzip": 60898,
+      "files": [
+        "dist/photo-ans.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./animation",
+      "target": "./src/animation.mjs",
+      "measuredFile": "dist/animation.min.mjs",
+      "minified": true,
+      "modes": "Animated JPEG XL frames, timing and pixel/photographic modes.",
+      "entryBytes": {
+        "bytes": 227470,
+        "gzip": 86778,
+        "sha256": "bff1369206c124eaf467ae18bad3774e5931ef67b47f1df5950c2bbfa38dcee4"
+      },
+      "staticClosureGzip": 86778,
+      "closureGzip": 86778,
+      "files": [
+        "dist/animation.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./animation/min",
+      "target": "./dist/animation.min.mjs",
+      "measuredFile": "dist/animation.min.mjs",
+      "minified": true,
+      "modes": "Animated JPEG XL frames, timing and pixel/photographic modes.",
+      "entryBytes": {
+        "bytes": 227470,
+        "gzip": 86778,
+        "sha256": "bff1369206c124eaf467ae18bad3774e5931ef67b47f1df5950c2bbfa38dcee4"
+      },
+      "staticClosureGzip": 86778,
+      "closureGzip": 86778,
+      "files": [
+        "dist/animation.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./animation-atlas",
+      "target": "./src/animation-atlas.mjs",
+      "measuredFile": "dist/animation-atlas.min.mjs",
+      "minified": true,
+      "modes": "Animated frames with shared reference atlas and patches.",
+      "entryBytes": {
+        "bytes": 265492,
+        "gzip": 102380,
+        "sha256": "0f38f0e55d12ab856cf24b2795f9311b4f7f9df0456cec581501223d60a2665e"
+      },
+      "staticClosureGzip": 102380,
+      "closureGzip": 108460,
+      "files": [
+        "dist/animation-atlas.min.mjs",
+        "dist/gpu-core.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./animation-atlas/min",
+      "target": "./dist/animation-atlas.min.mjs",
+      "measuredFile": "dist/animation-atlas.min.mjs",
+      "minified": true,
+      "modes": "Animated frames with shared reference atlas and patches.",
+      "entryBytes": {
+        "bytes": 265492,
+        "gzip": 102380,
+        "sha256": "0f38f0e55d12ab856cf24b2795f9311b4f7f9df0456cec581501223d60a2665e"
+      },
+      "staticClosureGzip": 102380,
+      "closureGzip": 108460,
+      "files": [
+        "dist/animation-atlas.min.mjs",
+        "dist/gpu-core.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./effort",
+      "target": "./src/effort.mjs",
+      "measuredFile": "dist/effort.min.mjs",
+      "minified": true,
+      "modes": "Core plus lossless predictor/RCT/palette/screen/patch searches and photographic effort 1–9.",
+      "entryBytes": {
+        "bytes": 205204,
+        "gzip": 78503,
+        "sha256": "764df91a9058e20d6e57052fe163c3a7ec4a2f0310640bd689b2b95baa642c42"
+      },
+      "staticClosureGzip": 78503,
+      "closureGzip": 84583,
+      "files": [
+        "dist/effort.min.mjs",
+        "dist/gpu-core.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./effort/min",
+      "target": "./dist/effort.min.mjs",
+      "measuredFile": "dist/effort.min.mjs",
+      "minified": true,
+      "modes": "Core plus lossless predictor/RCT/palette/screen/patch searches and photographic effort 1–9.",
+      "entryBytes": {
+        "bytes": 205204,
+        "gzip": 78503,
+        "sha256": "764df91a9058e20d6e57052fe163c3a7ec4a2f0310640bd689b2b95baa642c42"
+      },
+      "staticClosureGzip": 78503,
+      "closureGzip": 84583,
+      "files": [
+        "dist/effort.min.mjs",
+        "dist/gpu-core.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./writer",
+      "target": "./src/writer.mjs",
+      "measuredFile": "./src/writer.mjs",
+      "minified": false,
+      "modes": "Low-level bit/format writer plus lossless, lossy Squeeze and JPEG/VarDCT encoding kernels; probe uses encodeLossless.",
+      "entryBytes": {
+        "bytes": 1343,
+        "gzip": 658,
+        "sha256": "155bdd2b36deb42367604e3a06b9c7ea0dc1cda3686003d03319479462c06b6b"
+      },
+      "staticClosureGzip": 49662,
+      "closureGzip": 49662,
+      "files": [
+        "src/admit.mjs",
+        "src/bits.mjs",
+        "src/entropy.mjs",
+        "src/fault.mjs",
+        "src/frame.mjs",
+        "src/icc-profile.mjs",
+        "src/icc-write.mjs",
+        "src/jfif.mjs",
+        "src/kernel-hooks.mjs",
+        "src/lossless-coding.mjs",
+        "src/lossless.mjs",
+        "src/lossy.mjs",
+        "src/modular.mjs",
+        "src/prefix.mjs",
+        "src/screen-lz77.mjs",
+        "src/squeeze.mjs",
+        "src/vardct.mjs",
+        "src/weighted-policy.mjs",
+        "src/weighted.mjs",
+        "src/writer.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./source",
+      "target": "./src/source.mjs",
+      "measuredFile": "./src/source.mjs",
+      "minified": false,
+      "modes": "Input samples/color-source preparation; not an encoder.",
+      "entryBytes": {
+        "bytes": 21067,
+        "gzip": 6823,
+        "sha256": "9bb539bf3de211929492e4b69de6c5b15a40922bdf49d12f5e89b8a68bc48c7e"
+      },
+      "staticClosureGzip": 25634,
+      "closureGzip": 25634,
+      "files": [
+        "src/admit.mjs",
+        "src/bits.mjs",
+        "src/color-info.mjs",
+        "src/fault.mjs",
+        "src/icc-profile.mjs",
+        "src/icc-write.mjs",
+        "src/kernel-hooks.mjs",
+        "src/modular.mjs",
+        "src/prefix.mjs",
+        "src/screen-lz77.mjs",
+        "src/source.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./metadata",
+      "target": "./src/metadata.mjs",
+      "measuredFile": "dist/metadata.min.mjs",
+      "minified": true,
+      "modes": "Read/write Exif/XMP/JUMBF/container metadata; not a pixel codec.",
+      "entryBytes": {
+        "bytes": 31215,
+        "gzip": 12592,
+        "sha256": "6be466a7ef4bc9a79fb350bb71e985f88ba4c3e1b5d4b8862b4516d5452445c0"
+      },
+      "staticClosureGzip": 12592,
+      "closureGzip": 12592,
+      "files": [
+        "dist/metadata.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./metadata/min",
+      "target": "./dist/metadata.min.mjs",
+      "measuredFile": "dist/metadata.min.mjs",
+      "minified": true,
+      "modes": "Read/write Exif/XMP/JUMBF/container metadata; not a pixel codec.",
+      "entryBytes": {
+        "bytes": 31215,
+        "gzip": 12592,
+        "sha256": "6be466a7ef4bc9a79fb350bb71e985f88ba4c3e1b5d4b8862b4516d5452445c0"
+      },
+      "staticClosureGzip": 12592,
+      "closureGzip": 12592,
+      "files": [
+        "dist/metadata.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./brotli",
+      "target": "./src/brotli.mjs",
+      "measuredFile": "dist/brotli.min.mjs",
+      "minified": true,
+      "modes": "Brotli for metadata; not a pixel codec.",
+      "entryBytes": {
+        "bytes": 12269,
+        "gzip": 5484,
+        "sha256": "c8b692e02ec78336c40f89ad64803140f3bd0b1cbbefc119f681ed3b6ac82dab"
+      },
+      "staticClosureGzip": 5484,
+      "closureGzip": 5484,
+      "files": [
+        "dist/brotli.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./brotli/min",
+      "target": "./dist/brotli.min.mjs",
+      "measuredFile": "dist/brotli.min.mjs",
+      "minified": true,
+      "modes": "Brotli for metadata; not a pixel codec.",
+      "entryBytes": {
+        "bytes": 12269,
+        "gzip": 5484,
+        "sha256": "c8b692e02ec78336c40f89ad64803140f3bd0b1cbbefc119f681ed3b6ac82dab"
+      },
+      "staticClosureGzip": 5484,
+      "closureGzip": 5484,
+      "files": [
+        "dist/brotli.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./container",
+      "target": "./src/container-stream.mjs",
+      "measuredFile": "dist/container.min.mjs",
+      "minified": true,
+      "modes": "JXL container framing/streaming; not a pixel codec.",
+      "entryBytes": {
+        "bytes": 7499,
+        "gzip": 3358,
+        "sha256": "c5b55f5cf5875b9818fc6caf4697630089287233bab3f61b815746a590657cce"
+      },
+      "staticClosureGzip": 3358,
+      "closureGzip": 3358,
+      "files": [
+        "dist/container.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./container/min",
+      "target": "./dist/container.min.mjs",
+      "measuredFile": "dist/container.min.mjs",
+      "minified": true,
+      "modes": "JXL container framing/streaming; not a pixel codec.",
+      "entryBytes": {
+        "bytes": 7499,
+        "gzip": 3358,
+        "sha256": "c5b55f5cf5875b9818fc6caf4697630089287233bab3f61b815746a590657cce"
+      },
+      "staticClosureGzip": 3358,
+      "closureGzip": 3358,
+      "files": [
+        "dist/container.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./container-advanced",
+      "target": "./src/container-advanced.mjs",
+      "measuredFile": "dist/container-advanced.min.mjs",
+      "minified": true,
+      "modes": "Container inspection, frame index and gain-map boxes; not a pixel codec.",
+      "entryBytes": {
+        "bytes": 42346,
+        "gzip": 15778,
+        "sha256": "61ebecd9feb146f96f41194b0c1d8fc48fff175bb093b06ee4f62b1cbee32a20"
+      },
+      "staticClosureGzip": 15778,
+      "closureGzip": 15778,
+      "files": [
+        "dist/container-advanced.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./container-advanced/min",
+      "target": "./dist/container-advanced.min.mjs",
+      "measuredFile": "dist/container-advanced.min.mjs",
+      "minified": true,
+      "modes": "Container inspection, frame index and gain-map boxes; not a pixel codec.",
+      "entryBytes": {
+        "bytes": 42346,
+        "gzip": 15778,
+        "sha256": "61ebecd9feb146f96f41194b0c1d8fc48fff175bb093b06ee4f62b1cbee32a20"
+      },
+      "staticClosureGzip": 15778,
+      "closureGzip": 15778,
+      "files": [
+        "dist/container-advanced.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./progressive-container",
+      "target": "./src/progressive-container.mjs",
+      "measuredFile": "dist/progressive-container.min.mjs",
+      "minified": true,
+      "modes": "Progressive codestream/container delivery; not a pixel codec.",
+      "entryBytes": {
+        "bytes": 54363,
+        "gzip": 20337,
+        "sha256": "95ac03220838867b378ddad887f2c27b52cf5d0328b1cbe2c1a8eae2bff799bf"
+      },
+      "staticClosureGzip": 20337,
+      "closureGzip": 20337,
+      "files": [
+        "dist/progressive-container.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./progressive-container/min",
+      "target": "./dist/progressive-container.min.mjs",
+      "measuredFile": "dist/progressive-container.min.mjs",
+      "minified": true,
+      "modes": "Progressive codestream/container delivery; not a pixel codec.",
+      "entryBytes": {
+        "bytes": 54363,
+        "gzip": 20337,
+        "sha256": "95ac03220838867b378ddad887f2c27b52cf5d0328b1cbe2c1a8eae2bff799bf"
+      },
+      "staticClosureGzip": 20337,
+      "closureGzip": 20337,
+      "files": [
+        "dist/progressive-container.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./delivery",
+      "target": "./src/delivery.mjs",
+      "measuredFile": "dist/delivery.min.mjs",
+      "minified": true,
+      "modes": "Group order and region delivery layout; not a pixel codec.",
+      "entryBytes": {
+        "bytes": 48052,
+        "gzip": 17920,
+        "sha256": "1c6802e75c2ada0c35f52d86dad8c47e89ecd1138b7384374b7f60f5d8eb2474"
+      },
+      "staticClosureGzip": 17920,
+      "closureGzip": 17920,
+      "files": [
+        "dist/delivery.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./delivery/min",
+      "target": "./dist/delivery.min.mjs",
+      "measuredFile": "dist/delivery.min.mjs",
+      "minified": true,
+      "modes": "Group order and region delivery layout; not a pixel codec.",
+      "entryBytes": {
+        "bytes": 48052,
+        "gzip": 17920,
+        "sha256": "1c6802e75c2ada0c35f52d86dad8c47e89ecd1138b7384374b7f60f5d8eb2474"
+      },
+      "staticClosureGzip": 17920,
+      "closureGzip": 17920,
+      "files": [
+        "dist/delivery.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./package.json",
+      "target": "./package.json",
+      "measuredFile": "./package.json",
+      "minified": false,
+      "modes": "Package metadata; no runtime code.",
+      "entryBytes": {
+        "bytes": 8451,
+        "gzip": 1371,
+        "sha256": "e47f1b411e86351b813c4ec878f6bebdddf40267a436d9705b9c87259999b3f6"
+      },
+      "staticClosureGzip": 1371,
+      "closureGzip": 1371,
+      "files": [
+        "package.json"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./kernels",
+      "target": "./src/kernels.mjs",
+      "measuredFile": "./src/kernels.mjs",
+      "minified": false,
+      "modes": "Optional embedded WASM arithmetic kernels; not an encoder.",
+      "entryBytes": {
+        "bytes": 17573,
+        "gzip": 4919,
+        "sha256": "6213887f88ad3c5b1d808a8760fa7b26ee1f642465779b9aab2eeef78d65cf9a"
+      },
+      "staticClosureGzip": 27526,
+      "closureGzip": 27526,
+      "files": [
+        "src/admit.mjs",
+        "src/bits.mjs",
+        "src/fault.mjs",
+        "src/icc-profile.mjs",
+        "src/icc-write.mjs",
+        "src/kernel-hooks.mjs",
+        "src/kernels-bytes.mjs",
+        "src/kernels.mjs",
+        "src/modular.mjs",
+        "src/prefix.mjs",
+        "src/screen-lz77.mjs",
+        "src/weighted-policy.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./wasm",
+      "target": "./src/wasm.mjs",
+      "measuredFile": "dist/wasm.min.mjs",
+      "minified": true,
+      "modes": "Effort plus embedded optional scalar/SIMD kernels; identical format and modes.",
+      "entryBytes": {
+        "bytes": 227681,
+        "gzip": 88190,
+        "sha256": "b34feaacf5d69dd1e12c67d820c48dce8bd34c2762c1ac3b38bcfb0473834e20"
+      },
+      "staticClosureGzip": 88190,
+      "closureGzip": 88190,
+      "files": [
+        "dist/wasm.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./wasm/min",
+      "target": "./dist/wasm.min.mjs",
+      "measuredFile": "dist/wasm.min.mjs",
+      "minified": true,
+      "modes": "Effort plus embedded optional scalar/SIMD kernels; identical format and modes.",
+      "entryBytes": {
+        "bytes": 227681,
+        "gzip": 88190,
+        "sha256": "b34feaacf5d69dd1e12c67d820c48dce8bd34c2762c1ac3b38bcfb0473834e20"
+      },
+      "staticClosureGzip": 88190,
+      "closureGzip": 88190,
+      "files": [
+        "dist/wasm.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./image",
+      "target": "./src/image.mjs",
+      "measuredFile": "dist/image.min.mjs",
+      "minified": true,
+      "modes": "Browser source/worker client; requires an encoder worker or injected encoder.",
+      "entryBytes": {
+        "bytes": 2001,
+        "gzip": 1184,
+        "sha256": "65b3b48a685bc93a36d2f91133732a1584b08ca01759f5d43b3b628ac8652ba3"
+      },
+      "staticClosureGzip": 1184,
+      "closureGzip": 1184,
+      "files": [
+        "dist/image.min.mjs"
+      ],
+      "dependencyNote": "Adapter only. Add the selected worker/encoder bytes; this is not a 1 KB JPEG XL encoder."
+    },
+    {
+      "entry": "./image/min",
+      "target": "./dist/image.min.mjs",
+      "measuredFile": "dist/image.min.mjs",
+      "minified": true,
+      "modes": "Browser source/worker client; requires an encoder worker or injected encoder.",
+      "entryBytes": {
+        "bytes": 2001,
+        "gzip": 1184,
+        "sha256": "65b3b48a685bc93a36d2f91133732a1584b08ca01759f5d43b3b628ac8652ba3"
+      },
+      "staticClosureGzip": 1184,
+      "closureGzip": 1184,
+      "files": [
+        "dist/image.min.mjs"
+      ],
+      "dependencyNote": "Adapter only. Add the selected worker/encoder bytes; this is not a 1 KB JPEG XL encoder."
+    },
+    {
+      "entry": "./rapier",
+      "target": "./src/rapier.mjs",
+      "measuredFile": "dist/rapier.min.mjs",
+      "minified": true,
+      "modes": "Complete encoder/worker engine, including animation, metadata, native/HDR, JPEG and GPU helpers.",
+      "entryBytes": {
+        "bytes": 578601,
+        "gzip": 214402,
+        "sha256": "230c22be2f4840d3f95509f8f71d1c3ac597e272008ecd5a899fa4048edc3ec1"
+      },
+      "staticClosureGzip": 214402,
+      "closureGzip": 220482,
+      "files": [
+        "dist/gpu-core.mjs",
+        "dist/rapier.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./rapier/min",
+      "target": "./dist/rapier.min.mjs",
+      "measuredFile": "dist/rapier.min.mjs",
+      "minified": true,
+      "modes": "Complete encoder/worker engine, including animation, metadata, native/HDR, JPEG and GPU helpers.",
+      "entryBytes": {
+        "bytes": 578601,
+        "gzip": 214402,
+        "sha256": "230c22be2f4840d3f95509f8f71d1c3ac597e272008ecd5a899fa4048edc3ec1"
+      },
+      "staticClosureGzip": 214402,
+      "closureGzip": 220482,
+      "files": [
+        "dist/gpu-core.mjs",
+        "dist/rapier.min.mjs"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./rapier/worker",
+      "target": "./dist/rapier-worker.js",
+      "measuredFile": "dist/rapier-worker.js",
+      "minified": true,
+      "modes": "Complete worker engine; same encoder features as rapier.",
+      "entryBytes": {
+        "bytes": 578260,
+        "gzip": 214332,
+        "sha256": "6829b5ddeb0296bbb62d68bfa61b64014731b748191ff646744ad93f9bb37fa8"
+      },
+      "staticClosureGzip": 214332,
+      "closureGzip": 220412,
+      "files": [
+        "dist/gpu-core.mjs",
+        "dist/rapier-worker.js"
+      ],
+      "dependencyNote": null
+    },
+    {
+      "entry": "./rapier/still-worker",
+      "target": "./dist/rapier-still-worker.js",
+      "measuredFile": "dist/rapier-still-worker.js",
+      "minified": true,
+      "modes": "Still-image worker engine; no animation/atlas payload.",
+      "entryBytes": {
+        "bytes": 392929,
+        "gzip": 149572,
+        "sha256": "113def9511f822fb34afe28cc51347c9db23075ad5947c4e47d0d893f2b891f4"
+      },
+      "staticClosureGzip": 149572,
+      "closureGzip": 155652,
+      "files": [
+        "dist/gpu-core.mjs",
+        "dist/rapier-still-worker.js"
+      ],
+      "dependencyNote": null
+    }
+  ],
+  "builds": [
+    {
+      "file": "dist/rapier-jxl.min.mjs",
+      "module": "index",
+      "modes": "RGBA: exact Modular; lossy Squeeze or DCT8/XYB at effort 1; 8/10/12/16-bit and floating samples; alpha, ICC/HDR declarations. No deep screen or photo search.",
+      "bytes": 71567,
+      "gzip": 28920,
+      "sha256": "6a07c99af1760d6ded2ce99227cadc7404e55e5a7c4ead657107deb198e42e74",
+      "closureGzip": 35000
+    },
+    {
+      "file": "dist/jpeg.min.mjs",
+      "module": "jpeg",
+      "modes": "JPEG coefficient transcoding and byte-exact JPEG reconstruction; not RGBA encoding or general JXL decoding.",
+      "bytes": 83068,
+      "gzip": 32866,
+      "sha256": "00e9c6e258d247a898817a4b31a7b95e48eda38c03bca3bae2ff187707610682",
+      "closureGzip": 32866
+    },
+    {
+      "file": "dist/photo.min.mjs",
+      "module": "photo",
+      "modes": "Photographic DCT/XYB and ANS search at effort 1–9; quality 100 exact; native precision Modular; exact alpha.",
+      "bytes": 158152,
+      "gzip": 60943,
+      "sha256": "9f635bd287a59bf7686f1c239f261690d4481b6254bd7b90cf89acd1b39064a0",
+      "closureGzip": 60943
+    },
+    {
+      "file": "dist/photo-advanced.min.mjs",
+      "module": "photo-advanced",
+      "modes": "Photo plus explicit VarDCT transforms, progressive passes and coefficient orders.",
+      "bytes": 188097,
+      "gzip": 70042,
+      "sha256": "ddf641b7b79f639e46de0fd2e9d18ff3d4d3ad4d8c0bb560defeaa1aa2bea828",
+      "closureGzip": 70042
+    },
+    {
+      "file": "dist/photo-plan.min.mjs",
+      "module": "photo-plan",
+      "modes": "Reusable photographic transform plan with encode and target-byte-budget encode methods.",
+      "bytes": 122965,
+      "gzip": 45479,
+      "sha256": "5914dc66a63791b8378a299f1deb0a46c667071bcb8d67626d9c49105956f310",
+      "closureGzip": 45479
+    },
+    {
+      "file": "dist/noise.min.mjs",
+      "module": "photo-noise",
+      "modes": "Photographic coding with optional generated photon noise.",
+      "bytes": 218482,
+      "gzip": 82737,
+      "sha256": "99ad96ba62717ea122dd8e3a5498046af37fdd24a20e14e98118a4ee5d1b146f",
+      "closureGzip": 82737
+    },
+    {
+      "file": "dist/hybrid.min.mjs",
+      "module": "hybrid",
+      "modes": "Mixed exact Modular regions and lossy photographic layers.",
+      "bytes": 169383,
+      "gzip": 63835,
+      "sha256": "2a3a44a09474967d9463464304e8eb13b289ebdaca10ac9eac7a33bfe77bee1c",
+      "closureGzip": 63835
+    },
+    {
+      "file": "dist/graphics.min.mjs",
+      "module": "graphics",
+      "modes": "Exact delta palettes or bounded-error palette/undither graphics.",
+      "bytes": 104933,
+      "gzip": 40663,
+      "sha256": "a32db661bfdbb988cc3dc2a068ad12f5267b496d0283dde232e0aa5d499b72b8",
+      "closureGzip": 40663
+    },
+    {
+      "file": "dist/icc.min.mjs",
+      "module": "icc",
+      "modes": "ICC profile preparation and profile-bearing still encoding.",
+      "bytes": 37467,
+      "gzip": 14780,
+      "sha256": "9a60e08b9d55fe5e68a6c1d2e604af8b931ba89804da78eff0296b8710707ef6",
+      "closureGzip": 14780
+    },
+    {
+      "file": "dist/opsin.min.mjs",
+      "module": "opsin",
+      "modes": "Opsin transform preparation/wrapping; not an independent RGBA encoder.",
+      "bytes": 74089,
+      "gzip": 28782,
+      "sha256": "dd054aff96cd719697312feeecb0e4a106433ecfd2a2c2d3768a3c6e81275ad1",
+      "closureGzip": 28782
+    },
+    {
+      "file": "dist/delta-palette.min.mjs",
+      "module": "delta-palette",
+      "modes": "Exact or explicitly configured delta-palette Modular coding.",
+      "bytes": 87698,
+      "gzip": 34040,
+      "sha256": "212cf402841dcd3b73fe52c18da4850d48d167eb946d2b839b52509b33ed9e5e",
+      "closureGzip": 34040
+    },
+    {
+      "file": "dist/splines.min.mjs",
+      "module": "splines",
+      "modes": "Spline frame coding and drawing primitives.",
+      "bytes": 89947,
+      "gzip": 35847,
+      "sha256": "50a345e814f56b55fe867bfd8c52cdb49aaf3bea5b5a1f9a82cf2d4511fd439d",
+      "closureGzip": 35847
+    },
+    {
+      "file": "dist/channels.min.mjs",
+      "module": "channels",
+      "modes": "Lossless native samples with named/typed extra channels.",
+      "bytes": 85704,
+      "gzip": 31704,
+      "sha256": "c116e8ae86f27158738eab58e52a7f326beb5df50fce25845f4dec2c885fcbb6",
+      "closureGzip": 31704
+    },
+    {
+      "file": "dist/layers.min.mjs",
+      "module": "layers",
+      "modes": "Lossless layer/frame composition and blend modes.",
+      "bytes": 96286,
+      "gzip": 35140,
+      "sha256": "74fe5ace42ca9b870e579a1659f6b8efeede380ce93052930c5e6856d9a5523e",
+      "closureGzip": 35140
+    },
+    {
+      "file": "dist/patches.min.mjs",
+      "module": "patches",
+      "modes": "Patch dictionaries, exact repeated regions and patch compositions.",
+      "bytes": 144635,
+      "gzip": 53730,
+      "sha256": "be15e6dcfb8f0210e49edd1ad164ef1f12b86bb6c429ca2e9e35ee5f258c2e0f",
+      "closureGzip": 53730
+    },
+    {
+      "file": "dist/jpeg-ans.min.mjs",
+      "module": "jpeg-ans",
+      "modes": "JPEG transcoding/reconstruction with ANS entropy search.",
+      "bytes": 114214,
+      "gzip": 44543,
+      "sha256": "d0eaca691cf981b440e95d4757954c3c92004172acb3efd81b74030c00cc27a0",
+      "closureGzip": 44543
+    },
+    {
+      "file": "dist/photo-ans.min.mjs",
+      "module": "photo-ans",
+      "modes": "Photographic encoder with ANS entropy search.",
+      "bytes": 158052,
+      "gzip": 60898,
+      "sha256": "51c1d6c97c0c597d767a936dad37b6a4ca341050b2b6f55db2e550354604230f",
+      "closureGzip": 60898
+    },
+    {
+      "file": "dist/animation.min.mjs",
+      "module": "animation",
+      "modes": "Animated JPEG XL frames, timing and pixel/photographic modes.",
+      "bytes": 227470,
+      "gzip": 86778,
+      "sha256": "bff1369206c124eaf467ae18bad3774e5931ef67b47f1df5950c2bbfa38dcee4",
+      "closureGzip": 86778
+    },
+    {
+      "file": "dist/animation-atlas.min.mjs",
+      "module": "animation-atlas",
+      "modes": "Animated frames with shared reference atlas and patches.",
+      "bytes": 265492,
+      "gzip": 102380,
+      "sha256": "0f38f0e55d12ab856cf24b2795f9311b4f7f9df0456cec581501223d60a2665e",
+      "closureGzip": 108460
+    },
+    {
+      "file": "dist/effort.min.mjs",
+      "module": "effort",
+      "modes": "Core plus lossless predictor/RCT/palette/screen/patch searches and photographic effort 1–9.",
+      "bytes": 205204,
+      "gzip": 78503,
+      "sha256": "764df91a9058e20d6e57052fe163c3a7ec4a2f0310640bd689b2b95baa642c42",
+      "closureGzip": 84583
+    },
+    {
+      "file": "dist/metadata.min.mjs",
+      "module": "metadata",
+      "modes": "Read/write Exif/XMP/JUMBF/container metadata; not a pixel codec.",
+      "bytes": 31215,
+      "gzip": 12592,
+      "sha256": "6be466a7ef4bc9a79fb350bb71e985f88ba4c3e1b5d4b8862b4516d5452445c0",
+      "closureGzip": 12592
+    },
+    {
+      "file": "dist/brotli.min.mjs",
+      "module": "brotli",
+      "modes": "Brotli for metadata; not a pixel codec.",
+      "bytes": 12269,
+      "gzip": 5484,
+      "sha256": "c8b692e02ec78336c40f89ad64803140f3bd0b1cbbefc119f681ed3b6ac82dab",
+      "closureGzip": 5484
+    },
+    {
+      "file": "dist/container.min.mjs",
+      "module": "container-stream",
+      "modes": "JXL container framing/streaming; not a pixel codec.",
+      "bytes": 7499,
+      "gzip": 3358,
+      "sha256": "c5b55f5cf5875b9818fc6caf4697630089287233bab3f61b815746a590657cce",
+      "closureGzip": 3358
+    },
+    {
+      "file": "dist/container-advanced.min.mjs",
+      "module": "container-advanced",
+      "modes": "Container inspection, frame index and gain-map boxes; not a pixel codec.",
+      "bytes": 42346,
+      "gzip": 15778,
+      "sha256": "61ebecd9feb146f96f41194b0c1d8fc48fff175bb093b06ee4f62b1cbee32a20",
+      "closureGzip": 15778
+    },
+    {
+      "file": "dist/progressive-container.min.mjs",
+      "module": "progressive-container",
+      "modes": "Progressive codestream/container delivery; not a pixel codec.",
+      "bytes": 54363,
+      "gzip": 20337,
+      "sha256": "95ac03220838867b378ddad887f2c27b52cf5d0328b1cbe2c1a8eae2bff799bf",
+      "closureGzip": 20337
+    },
+    {
+      "file": "dist/delivery.min.mjs",
+      "module": "delivery",
+      "modes": "Group order and region delivery layout; not a pixel codec.",
+      "bytes": 48052,
+      "gzip": 17920,
+      "sha256": "1c6802e75c2ada0c35f52d86dad8c47e89ecd1138b7384374b7f60f5d8eb2474",
+      "closureGzip": 17920
+    },
+    {
+      "file": "dist/wasm.min.mjs",
+      "module": "wasm",
+      "modes": "Effort plus embedded optional scalar/SIMD kernels; identical format and modes.",
+      "bytes": 227681,
+      "gzip": 88190,
+      "sha256": "b34feaacf5d69dd1e12c67d820c48dce8bd34c2762c1ac3b38bcfb0473834e20",
+      "closureGzip": 88190
+    },
+    {
+      "file": "dist/image.min.mjs",
+      "module": "image",
+      "modes": "Browser source/worker client; requires an encoder worker or injected encoder.",
+      "bytes": 2001,
+      "gzip": 1184,
+      "sha256": "65b3b48a685bc93a36d2f91133732a1584b08ca01759f5d43b3b628ac8652ba3",
+      "closureGzip": 1184
+    },
+    {
+      "file": "dist/rapier.min.mjs",
+      "module": "rapier",
+      "modes": "Complete encoder/worker engine, including animation, metadata, native/HDR, JPEG and GPU helpers.",
+      "bytes": 578601,
+      "gzip": 214402,
+      "sha256": "230c22be2f4840d3f95509f8f71d1c3ac597e272008ecd5a899fa4048edc3ec1",
+      "closureGzip": 220482
+    },
+    {
+      "file": "dist/rapier-worker.js",
+      "module": "rapier-worker",
+      "modes": "Complete worker engine; same encoder features as rapier.",
+      "bytes": 578260,
+      "gzip": 214332,
+      "sha256": "6829b5ddeb0296bbb62d68bfa61b64014731b748191ff646744ad93f9bb37fa8",
+      "closureGzip": 220412
+    },
+    {
+      "file": "dist/gpu-core.mjs",
+      "module": "gpu-core",
+      "modes": "Optional photographic GPU kernels; not a standalone encoder.",
+      "bytes": 13902,
+      "gzip": 6080,
+      "sha256": "161dbeba376dc787b29c3595c99ca90a3b70f64bb8aafa8ff12abd4af8c9c862",
+      "closureGzip": 6080
+    },
+    {
+      "file": "dist/rapier-still-worker.js",
+      "module": "rapier-still-worker",
+      "modes": "Still-image worker engine; no animation/atlas payload.",
+      "bytes": 392929,
+      "gzip": 149572,
+      "sha256": "113def9511f822fb34afe28cc51347c9db23075ad5947c4e47d0d893f2b891f4",
+      "closureGzip": 155652
+    }
+  ]
+}

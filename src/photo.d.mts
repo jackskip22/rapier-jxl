@@ -16,3 +16,5 @@ export interface PhotoOptions extends Omit<EncodeOptions, 'photo'> {
 export function encodePhoto(data: Pixels, width: number, height: number, options?: PhotoOptions): Bytes;
 /** Incremental encodePhoto with immediate input validation. */
 export function encodePhotoSteps(data: Pixels, width: number, height: number, options?: PhotoOptions): Job;
+/** Incremental photographic job whose GPU requests are handled by the photo entry and worker. */
+export function encodePhotoGpuSteps(data: Pixels, width: number, height: number, options?: PhotoOptions): Generator<unknown, Bytes, unknown>;

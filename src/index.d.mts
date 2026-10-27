@@ -36,7 +36,7 @@ export interface EncodeOptions {
   /** Default auto compares exact prefix and LZ77 bit lengths. Requires icc. */
   iccCompression?: 'auto' | 'prefix' | 'lz77' | undefined;
 }
-export type ErrorCode = 'JXL_INPUT' | 'JXL_DIMENSIONS' | 'JXL_SIZE' | 'JXL_MEMORY' | 'JXL_JPEG' | 'JXL_RECONSTRUCTION';
+export type ErrorCode = 'JXL_INPUT' | 'JXL_DIMENSIONS' | 'JXL_SIZE' | 'JXL_MEMORY' | 'JXL_JPEG' | 'JXL_RECONSTRUCTION' | 'JXL_TARGET_UNMET';
 /** Encoding entry points throw these codes. Low-level writers do not validate preconditions. */
 export interface EncoderError extends Error { code: ErrorCode; }
 /** Encode row-major RGBA as JPEG XL. Quality 100 (default) preserves all samples exactly.

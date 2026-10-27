@@ -5,7 +5,7 @@ import {encode} from 'rapier-jxl/effort';
 const bytes = encode(rgba, width, height, {quality: 100, effort: 6});
 ```
 
-Use `rapier-jxl` for the core, `/effort` for compression search, `/wasm` for the same search with optional kernels,
+Use `rapier-jxl/capture` (also the package root) for async capture encoding; see the [integration contract](../INTEGRATION.md). Use `/core` for low-level RGBA, `/effort` for compression search, `/wasm` for the same search with optional kernels,
 `/jpeg` for existing JPEG coefficients, and `/photo` for lossy photographic pixels. `/photo-advanced` adds explicit
 transform, progression and texture controls; `/channels` and `/layers` retain authored image structure.
 `/metadata` attaches or compresses Exif/XMP/JUMBF. Optional entry points keep specialized code separate.
@@ -14,7 +14,7 @@ Encoding and metadata entry points provide self-contained `/min` builds.
 
 Agent skills: [Single-file apps](../../skills/rapier-jxl-single-file-app/SKILL.md) · [Photography](../../skills/rapier-jxl-photography/SKILL.md).
 
-Encoding functions run synchronously and do not modify input arrays. Pixel input is a
+The low-level encoding functions below run synchronously and do not modify input arrays. The capture/photo image entries and image client are asynchronous. Pixel input is a
 `Uint8Array`, `Uint8ClampedArray`, `Uint16Array`, or `Float32Array` containing exactly `width * height * 4` RGBA samples,
 row by row. Alpha is straight unless `alphaPremultiplied: true` describes the source.
 The output is a `Uint8Array` of JPEG XL file bytes: save as `.jxl` or use MIME type `image/jxl`. Integer inputs up to
@@ -24,22 +24,19 @@ declaration. The same pixels and options produce the same bytes in every JavaScr
 ## Photographs
 
 Photographs (8-bit sRGB pixels whose colors suit XYB) use v6 coding at every quality below 100: JPEG XL's default
-chroma tables reshaped by measured searches, and Gaborish. A quality gives the same picture at every effort; effort only
-searches longer for a smaller file. Efforts 8 and 9 also measure the decoded picture and keep a smaller file whose
+chroma tables reshaped by measured searches, and Gaborish. Efforts 1–7 retain the same reconstructed picture while searching entropy coding. Efforts 8 and 9 also measure the decoded picture and keep a smaller file whose
 Butteraugli distance (3-norm) is no worse than effort 7's: 8 tries a measured quantization field, 9 also measured variable
 transforms and v6 without Gaborish. `rapier-jxl/score` encodes to a score. `filter` applies only to pictures v6 does
 not take; `photo: false` selects Modular lossy coding.
 
-`encodeAsync` (the core, `rapier-jxl`) resolves to the same bytes as `encode` for every input. For a photograph of about a
+`encodeAsync` (from `rapier-jxl/core`) resolves to the same bytes as `encode` for every input. For a photograph of about a
 megapixel or more, it runs the forward stages on WebGPU when the page has it: XYB, Gaborish, the DCT, color correlation
 and quantization. Any value that single precision could round differently is recomputed on the CPU, so the file does not
 depend on the machine. `gpu: false` keeps the CPU; `gpu: true` or a `GPUDevice` passed in uses the GPU at any size. With no adapter, a lost device or any GPU
 error it encodes on the CPU. `encode` itself always runs on the CPU.
 
-Two workers: `rapier-jxl/rapier/still-worker` supports still pictures and the `photo`, `profile`, `readSource`,
-`encodeSource` and `opsin` format actions. `rapier-jxl/rapier/worker` also supports animation and every other format
-action documented below. The still worker answers `JXL_UNAVAILABLE` to animation, complete-only format actions
-and advanced photo options. JPEG transcoding returns reconstruction containers, metadata edits to them are refused, and a
+The full worker, `rapier-jxl/full/worker`, supports still pictures, animation and every format
+action documented below. The capture and photo workers serve their focused image APIs. JPEG transcoding returns reconstruction containers, metadata edits to them are refused, and a
 reconstruction response may carry `bytes: null`.
 
 ## Encode to a score
@@ -49,11 +46,9 @@ import {encodeToScore} from 'rapier-jxl/score';
 const {bytes, quality, ssimulacra2} = await encodeToScore(rgba, width, height, {target: {ssimulacra2: 80}});
 ```
 
-Returns the smallest file whose decoded picture meets every target: `ssimulacra2` (at least), `butteraugli` (maximum,
-at most) or `butteraugli3` (3-norm, at most). Five candidates compete, each at the lowest quality that meets the target:
-v6 with Gaborish; with measured variable transforms; with a measured quantization field; with that field and measured
-variable transforms; v6 without Gaborish. The picture is measured as the decoder rebuilds it; no file is decoded. Scores are exact; libjxl's
-`ssimulacra2` tool can differ by up to about 1.
+Returns the smallest completed file among the searched candidates that meet every internal reconstructed-image target: `ssimulacra2` at least, `butteraugli` or `butteraugli3` at most. The defined candidates are Gaborish, measured transforms, measured quantization field, their combination, and v6 without Gaborish. Failure to find a passing candidate rejects; it does not return an under-target image as success.
+
+SSIMULACRA2 arithmetic follows native libjxl float32 behavior and is pinned by native parity fixtures. Search scores still describe the internal reconstruction, not an independently decoded file; validate strict delivery thresholds externally. Actual encoded byte lengths choose the winner among passing candidates. This is a bounded candidate search, not a global file-size optimum.
 
 | Option | Meaning |
 | --- | --- |
@@ -70,18 +65,20 @@ same search on the CPU as steps. Without `gpu`, the same pixels and options give
 
 | Entry point | Exports | Declaration |
 | --- | --- | --- |
-| `rapier-jxl`, `rapier-jxl/core` | `encode`, `encodeSteps`, `encodeAsync`, `LIMITS` | [index.d.mts](../../src/index.d.mts) |
+| `rapier-jxl`, `rapier-jxl/capture` | Async `encode`, `LIMITS` | [capture.d.mts](../../src/capture.d.mts) |
+| `rapier-jxl/full` | `createEncoder`, `installWorker`, capture/photo helpers, full format toolkit | [full.d.mts](../../src/full.d.mts) |
+| `rapier-jxl/core` | `encode`, `encodeSteps`, `encodeAsync`, `LIMITS` | [index.d.mts](../../src/index.d.mts) |
 | `rapier-jxl/effort` | `encode`, `encodeSteps`, `encodeAsync`, `LIMITS` | [effort.d.mts](../../src/effort.d.mts) |
 | `rapier-jxl/wasm` | Effort API, `configureKernels`, `kernelMode` | [wasm.d.mts](../../src/wasm.d.mts) |
 | `rapier-jxl/jpeg` | `transcode`, `transcodeSteps`, `LIMITS` | [jpeg.d.mts](../../src/jpeg.d.mts) |
-| `rapier-jxl/photo` | `encodePhoto`, `encodePhotoSteps`, `LIMITS` | [photo.d.mts](../../src/photo.d.mts) |
+| `rapier-jxl/photo` | Async `encode`, low-level `encodePhoto` and score search | [photo-entry.d.mts](../../src/photo-entry.d.mts) |
 | `rapier-jxl/score` | `encodeToScore`, `encodeToScoreSteps`, `LIMITS` | [score.d.mts](../../src/score.d.mts) |
 | `rapier-jxl/jpeg-ans` | JPEG API with ANS search | [jpeg-ans.d.mts](../../src/jpeg-ans.d.mts) |
 | `rapier-jxl/photo-ans` | Photo API with ANS search | [photo-ans.d.mts](../../src/photo-ans.d.mts) |
 | `rapier-jxl/kernels` | `configureKernels`, `kernelMode` | [kernels.d.mts](../../src/kernels.d.mts) |
 | `rapier-jxl/writer` | Frame, entropy, prediction, and admission primitives | [writer.d.mts](../../src/writer.d.mts) |
 | `rapier-jxl/source` | Async `readSource` for PNG16 and supported OpenEXR files | [source.d.mts](../../src/source.d.mts) |
-| `rapier-jxl/image` | `toJXL`, one call from a page to an `image/jxl` Blob | [image.d.mts](../../src/image.d.mts) |
+| `rapier-jxl/image` | `createEncoder`, persistent worker queue returning bytes | [image.d.mts](../../src/image.d.mts) |
 | `rapier-jxl/metadata` | `withMetadata` for Exif/XMP container boxes | [metadata.d.mts](../../src/metadata.d.mts) |
 | `rapier-jxl/animation` | `encodeAnimation`, `encodeAnimationSteps`, `LIMITS` | [animation.d.mts](../../src/animation.d.mts) |
 | `rapier-jxl/animation-atlas` | `buildAnimationAtlas`, `encodeAnimationAtlas`, `encodeAnimationAtlasSteps` | [animation-atlas.d.mts](../../src/animation-atlas.d.mts) |
@@ -103,7 +100,7 @@ same search on the CPU as steps. Without `gpu`, the same pixels and options give
 | `rapier-jxl/brotli` | `compressBrotli`, `decompressBrotli` | [brotli.d.mts](../../src/brotli.d.mts) |
 | `rapier-jxl/noise` | Grain-aware `encodePhoto`, `encodePhotoSteps`, `photonNoise`, `LIMITS` | [photo-noise.d.mts](../../src/photo-noise.d.mts) |
 
-`rapier-jxl/min` and `rapier-jxl/core/min` both select the minified core. The source reader, kernel controls, and writer
+`rapier-jxl/min` selects capture; `rapier-jxl/core/min` selects the general low-level core. The source reader, kernel controls, and writer
 have no `/min` entry. Encoding needs no decoder; rendering JPEG XL requires a separate decoder or native support.
 
 ## Pixel options
@@ -204,7 +201,7 @@ one. Binary16 input contains IEEE words, not numeric integers to convert into ha
 RGB10A2 inputs require explicit conversion to an admitted layout before encoding.
 
 ```js
-import {encode} from 'rapier-jxl';
+import {encode} from 'rapier-jxl/core';
 
 const pq = encode(new Uint16Array([0, 1023, 512, 1023]), 1, 1, {
   bitDepth: 10, colorSpace: 'rec2020', transferFunction: 'pq', intensityTarget: 10000,
@@ -1046,45 +1043,24 @@ Raw writer primitives require their documented preconditions; their errors are n
 | `JXL_DIMENSIONS` | Valid positive dimensions exceed the import's edge or pixel limit. |
 | `JXL_SIZE` | An explicit byte/format budget is exceeded, or no complete candidate fits a requested target size. |
 | `JXL_MEMORY` | Allocation failed or the requested storage length cannot be represented. |
+| `JXL_TARGET_UNMET` | No searched photographic candidate meets every requested reconstruction quality target. No under-target file is returned. |
 | `JXL_JPEG` | Malformed JPEG or JPEG form the coefficient carrier cannot represent. |
 
 Kernel configuration uses the same `JXL_INPUT` code for an invalid mode. Missing or blocked WebAssembly selects
 JavaScript. [Kernel controls](../KERNELS.md).
 
-## One call from a page
+## Image integration
 
-```js
-import {toJXL} from 'rapier-jxl/image/min';
-const blob = await toJXL(file, {worker: './rapier-worker.js'}); // type 'image/jxl'
-```
+Use the [stable integration contract](../INTEGRATION.md). `createEncoder({worker})` from `rapier-jxl/image` provides a persistent queue, `encode(source, options)` returns bytes, and `close()` ends it. Pick `capture-worker.js`, `photo-worker.js` or `full-worker.js` for the job.
 
-`toJXL(source, options)` takes a `Blob` or `File`, `ImageBitmap`, `ImageData`, canvas, `OffscreenCanvas` or image element
-and returns a `Blob`. `options.worker` is required: a `Worker` running either worker, or the URL of
-`rapier-still-worker.js` or `rapier-worker.js` (one worker, ended after the call). A worker handles one call at a time.
+## Complete format toolkit
 
-- A JPEG file is carried losslessly at `effort` (7 by default) and `reconstruct` returns its exact bytes. Pass
-  `transcode: false` to decode it and encode the pixels; a JPEG that cannot be carried fails with `JXL_JPEG`.
-- Anything else is decoded with `createImageBitmap` (EXIF orientation applied) and encoded losslessly, or lossy with
-  photographic coding when `quality` is 1 to 99. A canvas holds premultiplied alpha, so RGB under partly transparent
-  pixels can round; `ImageData` reaches the encoder as given.
-- Either worker also answers `{id, operation: 'image', source, options?, progress?}` with `{id, ok: true, bytes}`
-  (plus `width`, `height` and `orientation` for a carried JPEG), and `createEncoder().image({source}, options)` does the
-  same inside a worker. Failures use the codes above.
-
-## Complete Rapier system
-
-`rapier-jxl/rapier` and `/rapier/min` expose the complete encoder. Two self-starting classic workers are provided:
-`rapier-jxl/rapier/still-worker` (`dist/rapier-still-worker.js`, what Rapier's page embeds) and
-`rapier-jxl/rapier/worker` (`dist/rapier-worker.js`, the still worker plus animation and the other format writers described
-here). Both include effort search, optional WASM with JavaScript fallback, photographic pixel encoding, reversible JPEG
-coefficient transcoding and parallel lossless groups. Each packaged worker contains its supported features. Rapier
-embeds the still worker and provides the complete worker in its on-demand JPEG XL complete part. Pixel decoding
-uses the browser or an external decoder.
+`rapier-jxl/full` and `/full/min` expose the complete encoder. `rapier-jxl/full/worker` is its self-starting worker. It retains effort search, optional WASM, photographic coding, reversible JPEG carrying, animation, parallel lossless groups and all format writers. The capture and target-photo paths are also available through format actions `capture` and `photoTarget`. Pixel decoding uses the browser or an external decoder.
 
 In a worker or Node:
 
 ```js
-import {createEncoder} from 'rapier-jxl/rapier/min';
+import {createEncoder} from 'rapier-jxl/full/min';
 const encoder = createEncoder();
 const bytes = await encoder.encode({data: rgba, width, height}, {lossless: true, effort: 9});
 const carried = await encoder.transcode({bytes: jpegBytes});

@@ -3,7 +3,7 @@ import type {Bytes, Limits} from './index.mjs';
 export type {Bytes, Limits, ErrorCode, EncoderError} from './index.mjs';
 /** Limits: 40 million pixels and 16,384 pixels per side. */
 export const LIMITS: Limits;
-/** Scores the file must meet: SSIMULACRA2 at least, Butteraugli maximum or 3-norm at most. Name one or more. */
+/** Internal reconstruction targets: SSIMULACRA2 at least, Butteraugli maximum or 3-norm at most. Name one or more. */
 export interface ScoreTarget {
   ssimulacra2?: number | undefined;
   butteraugli?: number | undefined;
@@ -29,8 +29,11 @@ export interface ScoreResult {
   butteraugli3: number;
   ssimulacra2?: number;
 }
-/** The smallest file whose decoded picture meets every target, from 8-bit sRGB RGBA. Each candidate's quality is searched
- * by measuring the picture the file decodes to; the smallest meeting file wins. With `gpu`, results can differ by device. */
+/** The smallest completed file among searched candidates whose internal reconstruction meets every target.
+ * Input is straight 8-bit sRGB RGBA. Transparency is modeled over dark and bright sRGB backgrounds.
+ * Each passing candidate is actually encoded before selecting its size.
+ * Throws JXL_TARGET_UNMET when no candidate meets the targets. Scores on independently decoded pixels can differ
+ * because reconstruction and output sample quantization differ. With `gpu`, results can differ by device. */
 export function encodeToScore(data: Uint8Array | Uint8ClampedArray, width: number, height: number, options: ScoreOptions): Promise<ScoreResult>;
 /** encodeToScore on the CPU as steps (a fraction each); the last step's value is the result. */
 export function encodeToScoreSteps(data: Uint8Array | Uint8ClampedArray, width: number, height: number, options: ScoreOptions): Generator<number, ScoreResult, unknown>;

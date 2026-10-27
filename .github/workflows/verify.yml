@@ -1,0 +1,25 @@
+name: verify
+on:
+  pull_request:
+  push:
+    branches: [task/astra-capture-encoder-20261027]
+permissions:
+  contents: read
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - run: npm install --package-lock=false
+      - run: node bench/capture/setup.mjs /tmp/rapier-capture-tools
+      - run: npm run build
+      - run: npm test
+        env:
+          DJXL: /tmp/rapier-capture-tools/libjxl12/tools/djxl
+          SSIMULACRA2: /tmp/rapier-capture-tools/libjxl12/tools/ssimulacra2
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:snapdom
+      - run: npm pack --dry-run --ignore-scripts

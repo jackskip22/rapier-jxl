@@ -22,13 +22,15 @@ import {withMetadata, withCompressedMetadata, readMetadata, readMetadataAsync} f
 import {deliveryLayout, withDeliveryOrder, normalizeDelivery} from './delivery.mjs';
 import {createPhotoPlanSteps} from './photo-plan.mjs';
 import {compressBrotli, decompressBrotli} from './brotli.mjs';
+import {encode as encodeCapture} from './capture.mjs';
+import {encode as encodePhotoTarget} from './photo-entry.mjs';
 
 export const FORMAT_ACTIONS = Object.freeze([...STILL_FORMAT_ACTIONS, 'noise', 'hybrid', 'hybridRegions', 'deltaPalette', 'patches', 'patchComposition',
   'splines', 'splineStroke', 'channels', 'layers', 'container',
   'streamContainer', 'inspectContainer', 'reframeContainer', 'progressiveContainer', 'progressivePlan', 'metadata',
   'compressedMetadata', 'readMetadata', 'readCompressedMetadata', 'frameIndex', 'readFrameIndex',
   'frameIndexPayload', 'gainMap', 'readGainMap', 'gainMapPayload', 'boxHeader', 'deliveryLayout', 'deliveryOrder',
-  'normalizeDelivery', 'photoPlan', 'brotliCompress', 'brotliDecompress', 'graphics', 'animationAtlas', 'animationAtlasPlan']);
+  'normalizeDelivery', 'photoPlan', 'brotliCompress', 'brotliDecompress', 'graphics', 'animationAtlas', 'animationAtlasPlan', 'capture', 'photoTarget']);
 
 async function collectFormatChunks(source, signal) {
   const chunks = []; let length = 0;
@@ -89,6 +91,8 @@ export async function format(input, {signal, onProgress} = {}) {
   const finish = job => finishEncoding(job, {signal, progress: onProgress});
   let result;
   switch (input.action) {
+    case 'capture': return encodeCapture({data: formatPixels(input.data), width: input.width, height: input.height}, {...input.options, signal, onProgress});
+    case 'photoTarget': return encodePhotoTarget({data: formatPixels(input.data), width: input.width, height: input.height}, {...input.options, signal, onProgress});
     case 'noise': return finish(encodePhotoSteps(formatPixels(input.data), input.width, input.height, options));
     case 'hybrid': return finish(encodeHybridSteps(formatPixels(input.data), input.width, input.height, options));
     case 'hybridRegions': result = hybridRegions(formatPixels(input.data), input.width, input.height); break;

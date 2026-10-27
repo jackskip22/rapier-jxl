@@ -21,6 +21,8 @@ import type {OpsinOptions} from './opsin.mjs';
 import type {DeliveryOptions, DeliveryReadOptions, DeliveryLayout} from './delivery.mjs';
 import type {PhotoPlanOptions, TargetOptions, TargetResult, PhotoPlan} from './photo-plan.mjs';
 import type {BrotliOptions} from './brotli.mjs';
+import type {CaptureOptions} from './capture.mjs';
+import type {PhotoImageOptions} from './photo-entry.mjs';
 
 type PixelRequest<A extends string, O> = {action: A; data: Pixels | ArrayBuffer; width: number; height: number; options?: O};
 type ByteRequest<A extends string, O = never> = {action: A; bytes: Uint8Array | ArrayBuffer; options?: O};
@@ -28,6 +30,8 @@ type ByteRequest<A extends string, O = never> = {action: A; bytes: Uint8Array | 
  * Compression callbacks cannot travel in a worker message. Metadata uses native Brotli when available,
  * otherwise the portable authored subset; readMetadata preserves other compressed payloads without decoding. */
 export type FormatRequest =
+  | PixelRequest<'capture', Omit<CaptureOptions, 'signal' | 'onProgress'>>
+  | PixelRequest<'photoTarget', Omit<PhotoImageOptions, 'signal' | 'onProgress'>>
   | PixelRequest<'photo', AdvancedPhotoOptions>
   | PixelRequest<'noise', NoisePhotoOptions>
   | PixelRequest<'hybrid', HybridOptions>

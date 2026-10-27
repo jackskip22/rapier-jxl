@@ -6,9 +6,9 @@ import {closedLoopStrategySteps, xybStrategies, encodeStrategyImage, cellSums} f
 import {closedLoopFieldSteps, blockDistances} from './aq.mjs';
 import {reconstruct} from './reconstruct.mjs';
 import {butteraugli, butteraugliReference} from './butteraugli.mjs';
-import {ssimulacra2, linearFromRGBA} from './ssimulacra2.mjs';
+import {ssimulacra2, linearFromRGBA, linearForSsimulacra2, compositeForSsimulacra2} from './ssimulacra2.mjs';
 import {coefficientEffortSteps} from './coefficient-effort.mjs';
-import {coefficientAnsSteps, estimateBytes} from './coefficient-ans.mjs';
+import {coefficientAnsSteps} from './coefficient-ans.mjs';
 
 export {prepareV6, V6, GABORISH};
 export const AQ = {rounds: 3, switchCost: 0.01, gamma: 0.5, aimQuantile: 0.9};
@@ -19,10 +19,17 @@ const EFFORT_CANDIDATES = {8: ['gaborish', 'field'], 9: ['gaborish', 'field', 'c
 
 export function cpuMeasure(rgba, width, height) {
   const n = width * height, ref = linearFromRGBA(rgba, n), ba = butteraugliReference(ref, width, height);
+  let s2Reference, transparent = false;
+  for (let i = 3; i < rgba.length; i += 4) if (rgba[i] !== 255) { transparent = true; break; }
   return (image, {p = 3, margin = 2, ssimulacra2: wantS2 = false} = {}) => {
     const lin = reconstruct(image), r = butteraugli(ba, lin);
     const out = {butteraugli: r.score, butteraugli3: r.pnorm3, cells: cellSums(r.map, width, height, p), blocks: blockDistances({map: r.map, width, height}, margin)};
-    if (wantS2) out.ssimulacra2 = ssimulacra2(ref, lin, width, height).score;
+    if (wantS2) {
+      const backgrounds = transparent ? [0.1, 0.9] : [undefined];
+      s2Reference ||= backgrounds.map(bg => linearForSsimulacra2(rgba, n, bg));
+      out.ssimulacra2 = Math.min(...backgrounds.map((bg, i) => ssimulacra2(s2Reference[i],
+        bg === undefined ? lin : compositeForSsimulacra2(lin, rgba, n, bg), width, height).score));
+    }
     return out;
   };
 }
@@ -133,10 +140,14 @@ export function* scoreSteps(prepared, target, {candidates = CANDIDATES, effort =
     if (name === 'gaborish') gaborishQuality = best.quality;
     found.push({candidate: name, quality: best.quality, image: best.image, ...best.scores, pass: meets(best.scores, target)});
   }
-  for (const f of found) f.size = found.length > 1 ? estimateBytes(f.image) : 0;
-  const passing = found.filter(f => f.pass), pool = passing.length ? passing : found;
-  const chosen = pool.reduce((a, b) => b.size < a.size ? b : a), bytes = writeImage(chosen.image, effort);
-  return {...chosen, bytes, size: bytes.length, image: undefined, cells: undefined, blocks: undefined,
+  let chosen = null;
+  for (const f of found) if (f.pass) {
+    const bytes = writeImage(f.image, effort);
+    f.size = bytes.length;
+    if (!chosen || f.size < chosen.size) chosen = {...f, bytes};
+  }
+  if (!chosen) return null;
+  return {...chosen, image: undefined, cells: undefined, blocks: undefined,
     tried: found.map(({image, cells, blocks, ...rest}) => rest)};
 }
 
@@ -176,7 +187,7 @@ export function photoV6MeasuredJob(data, width, height, quality, effort, measure
       if (it.hurry) return it.bytes;
     }
     const found = step.value;
-    if (found.pass && found.size < ownBytes.length) it.bytes = found.bytes;
+    if (found?.pass && found.size < ownBytes.length) it.bytes = found.bytes;
     return it.bytes;
   })();
   it.bytes = null; it.hurry = false;

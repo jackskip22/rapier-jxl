@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 import {guard, answer} from './admit.mjs';
+import {gpuCoreDevice, gpuCoreImage} from './gpu-core.mjs';
 
 export const GPU_PIXELS = 1 << 20;
 export const gpuWanted = (options, width, height) => options?.gpu !== false && (!!options?.gpu || width * height >= GPU_PIXELS && !!globalThis.navigator?.gpu);
 
 async function gpuAnswer(request, given) {
-  const core = await import('./gpu-core.mjs').catch(() => null), device = core && ((typeof given === 'object' && given) || await core.gpuCoreDevice());
-  return device ? await core.gpuCoreImage(device, request) : null;
+  const device = (typeof given === 'object' && given) || await gpuCoreDevice();
+  return device ? await gpuCoreImage(device, request) : null;
 }
 
 export async function driveGpu(it, given) {

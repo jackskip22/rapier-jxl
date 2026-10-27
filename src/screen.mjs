@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {BitWriter, packSigned, complete} from './bits.mjs';
-import {writeImageHeader, writeModularFrameHeader, groupLayout, groupPass, addCounts, assembleCodestream, GROUP_DIM} from './frame.mjs';
+import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, groupPass, addCounts, assembleCodestream, GROUP_DIM} from './frame.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
 import {screenModel, writeScreenModel, screenLZ77} from './screen-lz77.mjs';
 import {admitOutputSize} from './admit.mjs';
@@ -31,7 +31,6 @@ export function screenLike(rgba, width, height) {
   return flat >= 192;
 }
 
-const screenValueAt = (rgba, i, c, shape) => rgba[i + (shape.colour === 1 && c === 1 ? 3 : c)];
 const screenPacked = (rgba, i) => rgba[i] + rgba[i + 1] * 256 + rgba[i + 2] * 65536 + rgba[i + 3] * 16777216;
 
 function screenFill(setup) {
@@ -94,12 +93,21 @@ export function screenPlan(rgba, width, height, shape, mode = 'global') {
   }
   if (mode === 'scalar') {
     const maps = Array.from({length: channels}, () => new Int16Array(256).fill(-1));
-    for (let i = 0; i < rgba.length; i += 4)
-      for (let c = 0; c < channels; c++) maps[c][screenValueAt(rgba, i, c, shape)] = 0;
-    const palettes = maps.map(map => Array.from({length: 256}, (_, i) => i).filter(v => map[v] === 0));
+    for (let c = 0; c < channels; c++) {
+      const map = maps[c]; let count = 0;
+      for (let i = shape.colour === 1 && c === 1 ? 3 : c; i < rgba.length; i += 4) {
+        const value = rgba[i];
+        if (map[value] === 0) continue;
+        map[value] = 0;
+        if (++count > 192) { maps[c] = null; break; }
+      }
+    }
+    if (maps.every(map => !map)) return null;
+    const palettes = maps.map(map => map && Array.from({length: 256}, (_, i) => i).filter(v => map[v] === 0));
     for (let c = channels - 1; c >= 0; c--) {
       const values = palettes[c];
-      if (values.length > 192 || values.length >= values.at(-1) - values[0] + 1) {
+      if (!values) continue;
+      if (values.length >= values.at(-1) - values[0] + 1) {
         maps[c] = null;
         continue;
       }
@@ -299,4 +307,55 @@ function* screenDetailedFrameSteps(rgba, width, height, shape, colorSpace, plan,
 export function encodeScreen(rgba, width, height, shape, colorSpace, options = {}) {
   const plan = screenPlan(rgba, width, height, shape, options.mode);
   return plan ? complete(screenFrameSteps(rgba, width, height, shape, colorSpace, plan, options)) : null;
+}
+
+export function* screenLocalFrameSteps(rgba, width, height, shape, colorSpace,
+  {dim = 1024, depths = [64], ceiling = Infinity, stats = null, minLength = 7, modes, planner = screenPlan, select} = {}) {
+  const layout = groupLayout(width, height, dim), groups = layout.groupsX * layout.groupsY;
+  const header = new BitWriter(128), sections = [];
+  writeImageHeader(header, width, height, shape.colour, shape.alpha, {colorSpace});
+  writeModularFrameHeader(header, {alpha: shape.alpha, shift: dim === 1024 ? 3 : dim === 512 ? 2 : 1});
+  let total = 0;
+  const append = bytes => { total += bytes.length; admitOutputSize(total); sections.push(bytes); };
+  if (!layout.single) {
+    const global = new BitWriter(128);
+    global.write(1, 1); global.write(1, 1);
+    writeChannelHistograms(global, writeTree(global, leaf(0)), [new Uint32Array(ALPHABET)]);
+    writeModularHeader(global); append(global.finish());
+    for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
+  }
+  for (let g = 0; g < groups; g++) {
+    const [x, y, w, h] = groupRect(layout, width, height, g, dim);
+    const tile = new Uint8Array(w * h * 4);
+    for (let row = 0; row < h; row++) tile.set(rgba.subarray(((y + row) * width + x) * 4,
+      ((y + row) * width + x + w) * 4), row * w * 4);
+    let best = null, selected;
+    const candidates = stats ? [] : null;
+    let choices = modes.map(mode => ({mode, choice: planner(tile, w, h, shape, mode)})).filter(entry => entry.choice);
+    if (select) choices = select(choices, w, h);
+    for (const [index, {mode, choice}] of choices.entries()) {
+      if (yield (g + index / choices.length) / groups) return null;
+      const values = Array.from({length: choice.count}, () => new Int16Array(w * h));
+      choice.fill(values, 0, 0, w, h);
+      const planes = [...choice.meta, ...values.map(plane => ({plane, width: w, height: h}))];
+      for (const [attempt, depth] of depths.entries()) {
+        const writer = new BitWriter(256);
+        if (layout.single) { writer.write(1, 1); writer.write(1, 1); }
+        else writeModularHeader(writer, {useGlobalTree: false, transforms: choice.transforms});
+        const write = writeScreenModel(writer, planes.map(({plane, width, height}) => screenModel(plane, width, height, depth, minLength)));
+        if (layout.single) writeModularHeader(writer, {transforms: choice.transforms});
+        write();
+        const bytes = writer.finish();
+        candidates?.push({mode, depth, bytes: bytes.length});
+        if (!best || bytes.length < best.length) { best = bytes; selected = {mode, depth, bytes: bytes.length}; }
+        const hurried = yield (g + (index + (attempt + 1) / depths.length) / choices.length) / groups;
+        if (hurried && (g + 1 < groups || index + 1 < choices.length || attempt + 1 < depths.length)) return null;
+      }
+    }
+    if (stats) stats.push({g, x, y, width: w, height: h, selected, candidates});
+    append(best);
+    if (total >= ceiling) return null;
+  }
+  const bytes = assembleCodestream(header, sections);
+  return bytes.length < ceiling ? bytes : null;
 }

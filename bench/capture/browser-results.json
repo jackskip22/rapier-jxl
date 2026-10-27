@@ -1,0 +1,856 @@
+{
+  "schema": 1,
+  "browser": "155.0.8059.39",
+  "machine": {
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "platform": "linux",
+    "release": "6.18.55"
+  },
+  "method": "Fresh page per case; first encode then three repeats. Main timing excludes module fetch; worker timing includes startup on first call. RGBA input was decoded before timing. Wall clock includes borrowed-input copy, messaging and result receipt. Native JXL decode uses createImageBitmap then canvas RGBA readback; alpha readback can incur browser premultiplication rounding. No GPU hardware speed claim is made for a missing or software adapter.",
+  "memory": {
+    "peak": null,
+    "reason": "Browser native/GPU allocation peak is not exposed by this harness; Node process RSS is measured separately."
+  },
+  "rows": [
+    {
+      "input": "snapdom-opaque-1920x1080",
+      "execution": "main",
+      "mode": "exact",
+      "maxError": 0,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 1920,
+      "height": 1080,
+      "bytes": 342821,
+      "sha256": "83590eb91d2a9d615501c3e3c9737140991b3bf6e1997e58386c209c411d6695",
+      "coldMs": 940.1000000014901,
+      "warmMs": [
+        854.3000000044703,
+        881.8999999985099,
+        802.8999999985099
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 1920,
+        "height": 1080,
+        "rgbaEqual": true,
+        "differentSamples": 0,
+        "maxRGBError": 0,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-opaque-1920x1080",
+      "execution": "main",
+      "mode": "near-cpu",
+      "maxError": 1,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 1920,
+      "height": 1080,
+      "bytes": 259074,
+      "sha256": "141c0b0e04f12727aae3c6f9c45f1e22d505450a615592745685f39522996592",
+      "coldMs": 1116.5,
+      "warmMs": [
+        1031.2000000029802,
+        1056.6999999955297,
+        925.6000000014901
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 1920,
+        "height": 1080,
+        "rgbaEqual": false,
+        "differentSamples": 3037959,
+        "maxRGBError": 1,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-opaque-1920x1080",
+      "execution": "main",
+      "mode": "near-auto",
+      "maxError": 1,
+      "gpu": "auto",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 1920,
+      "height": 1080,
+      "bytes": 259074,
+      "sha256": "141c0b0e04f12727aae3c6f9c45f1e22d505450a615592745685f39522996592",
+      "coldMs": 901.6999999955297,
+      "warmMs": [
+        931.3000000044703,
+        946.0999999940395,
+        929.3000000044703
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 1920,
+        "height": 1080,
+        "rgbaEqual": false,
+        "differentSamples": 3037959,
+        "maxRGBError": 1,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-opaque-1920x1080",
+      "execution": "worker",
+      "mode": "exact",
+      "maxError": 0,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 1920,
+      "height": 1080,
+      "bytes": 342821,
+      "sha256": "83590eb91d2a9d615501c3e3c9737140991b3bf6e1997e58386c209c411d6695",
+      "coldMs": 1102.2999999970198,
+      "warmMs": [
+        994.8999999985099,
+        1002.8999999985099,
+        797.5
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 1920,
+        "height": 1080,
+        "rgbaEqual": true,
+        "differentSamples": 0,
+        "maxRGBError": 0,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-opaque-1920x1080",
+      "execution": "worker",
+      "mode": "near-cpu",
+      "maxError": 1,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 1920,
+      "height": 1080,
+      "bytes": 259074,
+      "sha256": "141c0b0e04f12727aae3c6f9c45f1e22d505450a615592745685f39522996592",
+      "coldMs": 1223.6000000014901,
+      "warmMs": [
+        1035.6000000014901,
+        1061.6000000014901,
+        933.1999999955297
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 1920,
+        "height": 1080,
+        "rgbaEqual": false,
+        "differentSamples": 3037959,
+        "maxRGBError": 1,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-opaque-1920x1080",
+      "execution": "worker",
+      "mode": "near-auto",
+      "maxError": 1,
+      "gpu": "auto",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 1920,
+      "height": 1080,
+      "bytes": 259074,
+      "sha256": "141c0b0e04f12727aae3c6f9c45f1e22d505450a615592745685f39522996592",
+      "coldMs": 1033.5,
+      "warmMs": [
+        937.7000000029802,
+        1069.7000000029802,
+        1044.2999999970198
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 1920,
+        "height": 1080,
+        "rgbaEqual": false,
+        "differentSamples": 3037959,
+        "maxRGBError": 1,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-opaque-3840x2160",
+      "execution": "main",
+      "mode": "exact",
+      "maxError": 0,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 3840,
+      "height": 2160,
+      "bytes": 896177,
+      "sha256": "3c82f1ad80f3a725b7118807d8fa846d41d17b7a30aa82c133b0d3f5a5c164cc",
+      "coldMs": 4302.80000000447,
+      "warmMs": [
+        3403.89999999851,
+        3621.89999999851,
+        3375.2999999970198
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 3840,
+        "height": 2160,
+        "rgbaEqual": true,
+        "differentSamples": 0,
+        "maxRGBError": 0,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-opaque-3840x2160",
+      "execution": "main",
+      "mode": "near-cpu",
+      "maxError": 1,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 3840,
+      "height": 2160,
+      "bytes": 622727,
+      "sha256": "2cf8abec1a675fbda9690061d6de1ad497a89b0da59dca87f820a2f8866fa8f6",
+      "coldMs": 3157.6999999955297,
+      "warmMs": [
+        2995.3000000044703,
+        3308.3000000044703,
+        3022
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 3840,
+        "height": 2160,
+        "rgbaEqual": false,
+        "differentSamples": 12144877,
+        "maxRGBError": 1,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-opaque-3840x2160",
+      "execution": "main",
+      "mode": "near-auto",
+      "maxError": 1,
+      "gpu": "auto",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 3840,
+      "height": 2160,
+      "bytes": 622727,
+      "sha256": "2cf8abec1a675fbda9690061d6de1ad497a89b0da59dca87f820a2f8866fa8f6",
+      "coldMs": 3164.60000000149,
+      "warmMs": [
+        2840.7000000029802,
+        2774.2999999970198,
+        2930.2000000029802
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 3840,
+        "height": 2160,
+        "rgbaEqual": false,
+        "differentSamples": 12144877,
+        "maxRGBError": 1,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-opaque-3840x2160",
+      "execution": "worker",
+      "mode": "exact",
+      "maxError": 0,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 3840,
+      "height": 2160,
+      "bytes": 896177,
+      "sha256": "3c82f1ad80f3a725b7118807d8fa846d41d17b7a30aa82c133b0d3f5a5c164cc",
+      "coldMs": 3009.89999999851,
+      "warmMs": [
+        2467.60000000149,
+        2782.39999999851,
+        2603.4000000059605
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 3840,
+        "height": 2160,
+        "rgbaEqual": true,
+        "differentSamples": 0,
+        "maxRGBError": 0,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-opaque-3840x2160",
+      "execution": "worker",
+      "mode": "near-cpu",
+      "maxError": 1,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 3840,
+      "height": 2160,
+      "bytes": 622727,
+      "sha256": "2cf8abec1a675fbda9690061d6de1ad497a89b0da59dca87f820a2f8866fa8f6",
+      "coldMs": 2552.3000000044703,
+      "warmMs": [
+        2527.2999999970198,
+        2618.10000000149,
+        2750.7999999970198
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 3840,
+        "height": 2160,
+        "rgbaEqual": false,
+        "differentSamples": 12144877,
+        "maxRGBError": 1,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-opaque-3840x2160",
+      "execution": "worker",
+      "mode": "near-auto",
+      "maxError": 1,
+      "gpu": "auto",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 3840,
+      "height": 2160,
+      "bytes": 622727,
+      "sha256": "2cf8abec1a675fbda9690061d6de1ad497a89b0da59dca87f820a2f8866fa8f6",
+      "coldMs": 2753.4000000059605,
+      "warmMs": [
+        2735.89999999851,
+        2987.7999999970198,
+        3185.5
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 3840,
+        "height": 2160,
+        "rgbaEqual": false,
+        "differentSamples": 12144877,
+        "maxRGBError": 1,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-alpha-1920x1080",
+      "execution": "main",
+      "mode": "exact",
+      "maxError": 0,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 1920,
+      "height": 1080,
+      "bytes": 351207,
+      "sha256": "355dc91b030fa3457051131dc764fee66ffad9a44ebab08d70341200406896d9",
+      "coldMs": 1035.7999999970198,
+      "warmMs": [
+        987.7000000029802,
+        973.8999999985099,
+        940.2999999970198
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 1920,
+        "height": 1080,
+        "rgbaEqual": false,
+        "differentSamples": 5306,
+        "maxRGBError": 64,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-alpha-1920x1080",
+      "execution": "main",
+      "mode": "near-cpu",
+      "maxError": 1,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 1920,
+      "height": 1080,
+      "bytes": 269024,
+      "sha256": "0a1e204b125e7136e311f10384304501ac5342080a4fcc10fcd624af7b160dd2",
+      "coldMs": 1112.2000000029802,
+      "warmMs": [
+        914.8999999985099,
+        944.7999999970198,
+        804.6000000014901
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 1920,
+        "height": 1080,
+        "rgbaEqual": false,
+        "differentSamples": 1087418,
+        "maxRGBError": 85,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-alpha-1920x1080",
+      "execution": "main",
+      "mode": "near-auto",
+      "maxError": 1,
+      "gpu": "auto",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 1920,
+      "height": 1080,
+      "bytes": 269024,
+      "sha256": "0a1e204b125e7136e311f10384304501ac5342080a4fcc10fcd624af7b160dd2",
+      "coldMs": 1049.0999999940395,
+      "warmMs": [
+        902.3000000044703,
+        974.2999999970198,
+        830.6000000014901
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 1920,
+        "height": 1080,
+        "rgbaEqual": false,
+        "differentSamples": 1087418,
+        "maxRGBError": 85,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-alpha-1920x1080",
+      "execution": "worker",
+      "mode": "exact",
+      "maxError": 0,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 1920,
+      "height": 1080,
+      "bytes": 351207,
+      "sha256": "355dc91b030fa3457051131dc764fee66ffad9a44ebab08d70341200406896d9",
+      "coldMs": 1217.4000000059605,
+      "warmMs": [
+        992,
+        959.2999999970198,
+        815.3999999985099
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 1920,
+        "height": 1080,
+        "rgbaEqual": false,
+        "differentSamples": 5306,
+        "maxRGBError": 64,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-alpha-1920x1080",
+      "execution": "worker",
+      "mode": "near-cpu",
+      "maxError": 1,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 1920,
+      "height": 1080,
+      "bytes": 269024,
+      "sha256": "0a1e204b125e7136e311f10384304501ac5342080a4fcc10fcd624af7b160dd2",
+      "coldMs": 1008.5,
+      "warmMs": [
+        911.8999999985099,
+        960.7999999970198,
+        769.2000000029802
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 1920,
+        "height": 1080,
+        "rgbaEqual": false,
+        "differentSamples": 1087418,
+        "maxRGBError": 85,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-alpha-1920x1080",
+      "execution": "worker",
+      "mode": "near-auto",
+      "maxError": 1,
+      "gpu": "auto",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 1920,
+      "height": 1080,
+      "bytes": 269024,
+      "sha256": "0a1e204b125e7136e311f10384304501ac5342080a4fcc10fcd624af7b160dd2",
+      "coldMs": 1090.5,
+      "warmMs": [
+        911.8999999985099,
+        908.2000000029802,
+        817
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 1920,
+        "height": 1080,
+        "rgbaEqual": false,
+        "differentSamples": 1087418,
+        "maxRGBError": 85,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-alpha-3840x2160",
+      "execution": "main",
+      "mode": "exact",
+      "maxError": 0,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 3840,
+      "height": 2160,
+      "bytes": 919699,
+      "sha256": "7ae0d511d292b103908d623c43fc9fc017a7a528ef366e2f6de5a39fdbab94a8",
+      "coldMs": 3125.2999999970198,
+      "warmMs": [
+        2902.60000000149,
+        2981,
+        2909.89999999851
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 3840,
+        "height": 2160,
+        "rgbaEqual": false,
+        "differentSamples": 16314,
+        "maxRGBError": 64,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-alpha-3840x2160",
+      "execution": "main",
+      "mode": "near-cpu",
+      "maxError": 1,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 3840,
+      "height": 2160,
+      "bytes": 642826,
+      "sha256": "07118bb8cee4087eb877e88b08d0bb7959086459f5f11ffe50d0f7a0c3438bc9",
+      "coldMs": 3013,
+      "warmMs": [
+        2815.5,
+        2964.1999999955297,
+        2577.89999999851
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 3840,
+        "height": 2160,
+        "rgbaEqual": false,
+        "differentSamples": 4319672,
+        "maxRGBError": 127,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-alpha-3840x2160",
+      "execution": "main",
+      "mode": "near-auto",
+      "maxError": 1,
+      "gpu": "auto",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 3840,
+      "height": 2160,
+      "bytes": 642826,
+      "sha256": "07118bb8cee4087eb877e88b08d0bb7959086459f5f11ffe50d0f7a0c3438bc9",
+      "coldMs": 2793.2999999970198,
+      "warmMs": [
+        2505.39999999851,
+        2832.4000000059605,
+        2739.10000000149
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 3840,
+        "height": 2160,
+        "rgbaEqual": false,
+        "differentSamples": 4319672,
+        "maxRGBError": 127,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-alpha-3840x2160",
+      "execution": "worker",
+      "mode": "exact",
+      "maxError": 0,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 3840,
+      "height": 2160,
+      "bytes": 919699,
+      "sha256": "7ae0d511d292b103908d623c43fc9fc017a7a528ef366e2f6de5a39fdbab94a8",
+      "coldMs": 3351.8000000044703,
+      "warmMs": [
+        2867,
+        2791.6999999955297,
+        2645.8000000044703
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 3840,
+        "height": 2160,
+        "rgbaEqual": false,
+        "differentSamples": 16314,
+        "maxRGBError": 64,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-alpha-3840x2160",
+      "execution": "worker",
+      "mode": "near-cpu",
+      "maxError": 1,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 3840,
+      "height": 2160,
+      "bytes": 642826,
+      "sha256": "07118bb8cee4087eb877e88b08d0bb7959086459f5f11ffe50d0f7a0c3438bc9",
+      "coldMs": 2877.1999999955297,
+      "warmMs": [
+        2614.60000000149,
+        2597.7000000029802,
+        2647.60000000149
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 3840,
+        "height": 2160,
+        "rgbaEqual": false,
+        "differentSamples": 4319672,
+        "maxRGBError": 127,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-alpha-3840x2160",
+      "execution": "worker",
+      "mode": "near-auto",
+      "maxError": 1,
+      "gpu": "auto",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 3840,
+      "height": 2160,
+      "bytes": 642826,
+      "sha256": "07118bb8cee4087eb877e88b08d0bb7959086459f5f11ffe50d0f7a0c3438bc9",
+      "coldMs": 2909.1999999955297,
+      "warmMs": [
+        2665.2000000029802,
+        2518.10000000149,
+        2516.1999999955297
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 3840,
+        "height": 2160,
+        "rgbaEqual": false,
+        "differentSamples": 4319672,
+        "maxRGBError": 127,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-nested-demo-1920x1080",
+      "execution": "main",
+      "mode": "exact",
+      "maxError": 0,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 1920,
+      "height": 1080,
+      "bytes": 16152,
+      "sha256": "8d0425d60af333896c2e8d1397730a941abcc3289cf06fad97238da892ceb2d0",
+      "coldMs": 391,
+      "warmMs": [
+        326.5,
+        372.8999999985099,
+        336.20000000298023
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 1920,
+        "height": 1080,
+        "rgbaEqual": false,
+        "differentSamples": 12801,
+        "maxRGBError": 6,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-nested-demo-1920x1080",
+      "execution": "main",
+      "mode": "near-cpu",
+      "maxError": 1,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 1920,
+      "height": 1080,
+      "bytes": 15195,
+      "sha256": "50e1665bcc345cea8a327edf405669801fccf9fc03de75e1b469fae45aa0cebb",
+      "coldMs": 440,
+      "warmMs": [
+        420.30000000447035,
+        370.19999999552965,
+        342.70000000298023
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 1920,
+        "height": 1080,
+        "rgbaEqual": false,
+        "differentSamples": 2072664,
+        "maxRGBError": 7,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-nested-demo-1920x1080",
+      "execution": "main",
+      "mode": "near-auto",
+      "maxError": 1,
+      "gpu": "auto",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 1920,
+      "height": 1080,
+      "bytes": 15195,
+      "sha256": "50e1665bcc345cea8a327edf405669801fccf9fc03de75e1b469fae45aa0cebb",
+      "coldMs": 435.1000000014901,
+      "warmMs": [
+        378.5,
+        385.19999999552965,
+        378
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 1920,
+        "height": 1080,
+        "rgbaEqual": false,
+        "differentSamples": 2072664,
+        "maxRGBError": 7,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-nested-demo-1920x1080",
+      "execution": "worker",
+      "mode": "exact",
+      "maxError": 0,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 1920,
+      "height": 1080,
+      "bytes": 16152,
+      "sha256": "8d0425d60af333896c2e8d1397730a941abcc3289cf06fad97238da892ceb2d0",
+      "coldMs": 444.1000000014901,
+      "warmMs": [
+        393.8999999985099,
+        374.30000000447035,
+        350.8999999985099
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 1920,
+        "height": 1080,
+        "rgbaEqual": false,
+        "differentSamples": 12801,
+        "maxRGBError": 6,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-nested-demo-1920x1080",
+      "execution": "worker",
+      "mode": "near-cpu",
+      "maxError": 1,
+      "gpu": "cpu",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 1920,
+      "height": 1080,
+      "bytes": 15195,
+      "sha256": "50e1665bcc345cea8a327edf405669801fccf9fc03de75e1b469fae45aa0cebb",
+      "coldMs": 453.70000000298023,
+      "warmMs": [
+        422.59999999403954,
+        444.70000000298023,
+        435.8999999985099
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 1920,
+        "height": 1080,
+        "rgbaEqual": false,
+        "differentSamples": 2072664,
+        "maxRGBError": 7,
+        "maxAlphaError": 0
+      }
+    },
+    {
+      "input": "snapdom-nested-demo-1920x1080",
+      "execution": "worker",
+      "mode": "near-auto",
+      "maxError": 1,
+      "gpu": "auto",
+      "webgpu": true,
+      "adapterInfo": null,
+      "width": 1920,
+      "height": 1080,
+      "bytes": 15195,
+      "sha256": "50e1665bcc345cea8a327edf405669801fccf9fc03de75e1b469fae45aa0cebb",
+      "coldMs": 466.19999999552965,
+      "warmMs": [
+        413,
+        364.70000000298023,
+        398.6000000014901
+      ],
+      "roundTrip": {
+        "supported": true,
+        "width": 1920,
+        "height": 1080,
+        "rgbaEqual": false,
+        "differentSamples": 2072664,
+        "maxRGBError": 7,
+        "maxAlphaError": 0
+      }
+    }
+  ]
+}

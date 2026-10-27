@@ -1,0 +1,273 @@
+{
+  "schema": 1,
+  "libjxl": "0.12.0",
+  "method": "Distance bisection, maximum 13 measured candidates plus zero-distance anchor, followed by at most 20 local probes when quantization prevents a match. Retain the smallest actual file within target..target+0.15; also record the smallest at/above target. If no match exists among the probes, report the achieved gap. CLI ms include input decode and file write. No interpolation of size or runtime.",
+  "rows": [
+    {
+      "key": "photo-keong/score-module/main/cjxl-e7",
+      "input": "photo-keong",
+      "comparedCodec": "score",
+      "comparedBytes": 41005,
+      "targetScore": 84.83829741,
+      "effort": 7,
+      "probes": [
+        {
+          "distance": 0,
+          "bytes": 257252,
+          "ssimulacra2": 100,
+          "ms": 492.546899,
+          "sha256": "c8b683912a3caaf9ca20405551c27ed3fa8fc75984feee83ce7a2097b000f19e"
+        },
+        {
+          "distance": 6,
+          "bytes": 9865,
+          "ssimulacra2": 46.17000968,
+          "ms": 172.73872000000006,
+          "sha256": "a192165a66b2f371352c9da7fad4d18c2e0903286d1625287729776a03385712"
+        },
+        {
+          "distance": 3,
+          "bytes": 17581,
+          "ssimulacra2": 64.56492403,
+          "ms": 165.38185999999996,
+          "sha256": "f8b9a4dad574e6a19fd7e433e78c2747926ed0b984c3e4752a824bfc4ff492ed"
+        },
+        {
+          "distance": 1.5,
+          "bytes": 31075,
+          "ssimulacra2": 77.70842296,
+          "ms": 247.6374249999999,
+          "sha256": "13e2873f47325a734fdc9b4f8e697b476837d10a256c5cb90836296c847493e0"
+        },
+        {
+          "distance": 0.75,
+          "bytes": 50259,
+          "ssimulacra2": 86.32326522,
+          "ms": 142.62319200000002,
+          "sha256": "9b1faf67a465fbe206a4c638ead9350a89356e2d43efa382d86df48b68a4662e"
+        },
+        {
+          "distance": 1.125,
+          "bytes": 38700,
+          "ssimulacra2": 82.00396683,
+          "ms": 145.8766390000003,
+          "sha256": "b61bb4b00c11528a6215e28ff0ef306d36c2c0df45b565e7a2a8a575e8daaf9b"
+        },
+        {
+          "distance": 0.9375,
+          "bytes": 43692,
+          "ssimulacra2": 84.01890357,
+          "ms": 175.10095899999988,
+          "sha256": "fc78b10d204191f6a11ed64d2577724a10433c83a394c4913725924b51d7fc2d"
+        },
+        {
+          "distance": 0.84375,
+          "bytes": 46743,
+          "ssimulacra2": 85.35497765,
+          "ms": 140.0223329999999,
+          "sha256": "ac5ba721f0c8144dbd7e7b3941e417e0bb896a718ca763406fcc2d357baa1929"
+        },
+        {
+          "distance": 0.890625,
+          "bytes": 45266,
+          "ssimulacra2": 84.58498121,
+          "ms": 192.29364899999973,
+          "sha256": "f50ca7141614fcc8d5e70b7ee1605a41255196be30847fcd473901ff332c5be8"
+        },
+        {
+          "distance": 0.8671875,
+          "bytes": 46046,
+          "ssimulacra2": 84.99340223,
+          "ms": 189.22793599999977,
+          "sha256": "4b1971cc4a6d87ad3afe55742a68b7a3e4d82811c9f2091d59ed078feda61773"
+        },
+        {
+          "distance": 0.87890625,
+          "bytes": 45637,
+          "ssimulacra2": 84.82170237,
+          "ms": 176.47886500000004,
+          "sha256": "4a6c34858d2375a78c40a496a65795716fc28fdc8c329c9cf7f39f515488ec50"
+        },
+        {
+          "distance": 0.873046875,
+          "bytes": 45886,
+          "ssimulacra2": 84.75804234,
+          "ms": 157.73019600000043,
+          "sha256": "9abfa691be94faddc145f856352faaa686c8a3cd16fe1e33d0b0bd957d47b94e"
+        },
+        {
+          "distance": 0.8701171875,
+          "bytes": 46013,
+          "ssimulacra2": 85.00125714,
+          "ms": 146.79323899999963,
+          "sha256": "573ac46fb58092cc00910cfd82132169aa1fd63af94d70f1d908dae3bb558db1"
+        },
+        {
+          "distance": 0.87158203125,
+          "bytes": 45909,
+          "ssimulacra2": 84.81003207,
+          "ms": 155.11813300000085,
+          "sha256": "9c60bdd5eb8ea4475d78c86c10d42f20e0071889b14108ad258574622a85e8a1"
+        },
+        {
+          "distance": 0.87990625,
+          "bytes": 45582,
+          "ssimulacra2": 84.67687921,
+          "ms": 142.140292,
+          "sha256": "b848545e3a23abbf7b6958dbac8673b7a2c38fcd792fe3e4461ec52d33deef92"
+        },
+        {
+          "distance": 0.87790625,
+          "bytes": 45700,
+          "ssimulacra2": 84.87706749,
+          "ms": 164.136612,
+          "sha256": "f4cf9a736a358bd5d847c9f5b7f241695976fc65e04302aa1495b3ecdbf68acc"
+        }
+      ],
+      "chosen": {
+        "distance": 0.87790625,
+        "bytes": 45700,
+        "ssimulacra2": 84.87706749,
+        "ms": 164.136612,
+        "sha256": "f4cf9a736a358bd5d847c9f5b7f241695976fc65e04302aa1495b3ecdbf68acc"
+      },
+      "scoreGap": 0.038770080000006146,
+      "matched": true,
+      "comparedBytePercent": -10.273522975929982,
+      "status": "measured",
+      "smallestAtOrAbove": {
+        "distance": 0.87790625,
+        "bytes": 45700,
+        "ssimulacra2": 84.87706749,
+        "ms": 164.136612,
+        "sha256": "f4cf9a736a358bd5d847c9f5b7f241695976fc65e04302aa1495b3ecdbf68acc"
+      }
+    },
+    {
+      "key": "photo-keong/score-module/main/cjxl-e9",
+      "input": "photo-keong",
+      "comparedCodec": "score",
+      "comparedBytes": 41005,
+      "targetScore": 84.83829741,
+      "effort": 9,
+      "probes": [
+        {
+          "distance": 0,
+          "bytes": 252955,
+          "ssimulacra2": 100,
+          "ms": 2135.7311660000005,
+          "sha256": "69a29482282490290139ee4fa5d1813921566ae2705168848d8cbad10cf6ecc7"
+        },
+        {
+          "distance": 6,
+          "bytes": 9296,
+          "ssimulacra2": 42.90355218,
+          "ms": 818.740417,
+          "sha256": "46918c15c6d665e02db96202f08dd04b12594d7b9a297e9ad80343bca3f648ab"
+        },
+        {
+          "distance": 3,
+          "bytes": 17500,
+          "ssimulacra2": 63.24923903,
+          "ms": 811.3078690000002,
+          "sha256": "c5e00b8b4abe4189d27cc730292c2182cafa6430ca0193dcaa0dd64d008f3730"
+        },
+        {
+          "distance": 1.5,
+          "bytes": 30199,
+          "ssimulacra2": 77.95704381,
+          "ms": 783.9641499999998,
+          "sha256": "431238fbf927d975afe21a385dfa3315d752f07001bcc5b0ec426cb29590be10"
+        },
+        {
+          "distance": 0.75,
+          "bytes": 50326,
+          "ssimulacra2": 86.60164865,
+          "ms": 738.2716459999992,
+          "sha256": "7e7bf86eb8c4154cc014c35600d83e6c37e43d3ccec7557c0ec8b1ee1ebf50f9"
+        },
+        {
+          "distance": 1.125,
+          "bytes": 37937,
+          "ssimulacra2": 82.32800677,
+          "ms": 761.8692919999994,
+          "sha256": "71626fba97b7cbf4129109c700eff017b09672d66a38638024769fbb74950ecc"
+        },
+        {
+          "distance": 0.9375,
+          "bytes": 43441,
+          "ssimulacra2": 84.44283824,
+          "ms": 707.0574149999993,
+          "sha256": "fa180c4763c13e7387c828fef63643bb29df340efc779ec174b74c2b7a2add1e"
+        },
+        {
+          "distance": 0.84375,
+          "bytes": 46147,
+          "ssimulacra2": 85.47623909,
+          "ms": 766.4750210000002,
+          "sha256": "3179acb95a1de6bd23b0eb7c14911682c3e3b055dfe6beb2bbcbe7b0dc96e43d"
+        },
+        {
+          "distance": 0.890625,
+          "bytes": 44912,
+          "ssimulacra2": 84.78580379,
+          "ms": 763.8809370000017,
+          "sha256": "81c9ffb808273990c1cbd98dcf15c44d7938a44959e934033c9ac38ddbdc6b1f"
+        },
+        {
+          "distance": 0.8671875,
+          "bytes": 45478,
+          "ssimulacra2": 84.95882239,
+          "ms": 710.0634659999996,
+          "sha256": "8b90ac517f16a342a19b8861b4f8ddc455f167f185c35a1bb04ad2fcb5dd59c1"
+        },
+        {
+          "distance": 0.87890625,
+          "bytes": 45186,
+          "ssimulacra2": 84.92446866,
+          "ms": 850.199036,
+          "sha256": "4cb0fc2b2e410ed93d85c31e1c67bf84ae33c476ba77dabc62592859a0245891"
+        },
+        {
+          "distance": 0.884765625,
+          "bytes": 45070,
+          "ssimulacra2": 84.83174905,
+          "ms": 821.6159089999983,
+          "sha256": "7260add73c4ef0b5634d622f7d19a3d103975447b05f5a50dbb78a98154cceda"
+        },
+        {
+          "distance": 0.8818359375,
+          "bytes": 45148,
+          "ssimulacra2": 85.05287603,
+          "ms": 865.9402799999989,
+          "sha256": "419a771f01d663c148a832794285cf2b7f1b6a6a5ebcedb137f94b4b2eb93c3f"
+        },
+        {
+          "distance": 0.88330078125,
+          "bytes": 45162,
+          "ssimulacra2": 84.82950201,
+          "ms": 875.3705389999996,
+          "sha256": "9f65c420ff31e9d25cda593b612d1c6ef8de2ac3d7466dbc0a03b8cf9daa2af9"
+        }
+      ],
+      "chosen": {
+        "distance": 0.87890625,
+        "bytes": 45186,
+        "ssimulacra2": 84.92446866,
+        "ms": 850.199036,
+        "sha256": "4cb0fc2b2e410ed93d85c31e1c67bf84ae33c476ba77dabc62592859a0245891"
+      },
+      "scoreGap": 0.0861712500000067,
+      "matched": true,
+      "comparedBytePercent": -9.252865931925813,
+      "status": "measured",
+      "smallestAtOrAbove": {
+        "distance": 0.8818359375,
+        "bytes": 45148,
+        "ssimulacra2": 85.05287603,
+        "ms": 865.9402799999989,
+        "sha256": "419a771f01d663c148a832794285cf2b7f1b6a6a5ebcedb137f94b4b2eb93c3f"
+      }
+    }
+  ]
+}

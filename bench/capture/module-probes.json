@@ -1,0 +1,1138 @@
+{
+  "schema": 1,
+  "input": {
+    "name": "photo-keong",
+    "width": 500,
+    "height": 500,
+    "sha256": "eb9189de8004dd0e56c5ccd8312567ae325bcef42861e2bfc86b064f4c4861b6"
+  },
+  "method": "One source photo, each encoding API in a fresh Node process. Cold import+first encode; one warm repeat except expensive score search. Animations contain one 100ms frame; layers one replacement layer; patches one pixel copied onto itself; splines one zero-amplitude curve. These are footprint/mode smoke measurements, not representative animation/patch/spline compression claims.",
+  "rows": [
+    {
+      "codec": "core",
+      "quality": 100,
+      "effort": 1,
+      "input": "photo-keong",
+      "key": "photo-keong/core-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 312610,
+      "sha256": "9c7501e625ff0d7bcd87b64ef1e3ccaee9a7eae796696f6471c503c29d06b21d",
+      "initializationMs": 19.089304000000006,
+      "coldMs": 132.198956,
+      "firstEncodeMs": 113.10965200000001,
+      "warmMs": [
+        76.61091200000001
+      ],
+      "memory": {
+        "peakRSSKiB": 52380,
+        "before": {
+          "rss": 42909696,
+          "heapTotal": 9228288,
+          "heapUsed": 6067856,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 53637120,
+          "heapTotal": 12374016,
+          "heapUsed": 7933904,
+          "external": 8384573,
+          "arrayBuffers": 6066850
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "ssimulacra2": 100
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "effort",
+      "quality": 100,
+      "effort": 9,
+      "input": "photo-keong",
+      "key": "photo-keong/effort-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 250908,
+      "sha256": "aa5a0180e2f358cd04dcc19194eb156df4818556602158c31f2251bb29f6ae93",
+      "initializationMs": 53.386342,
+      "coldMs": 39473.607263,
+      "firstEncodeMs": 39420.220921,
+      "warmMs": [
+        32624.323558000004
+      ],
+      "memory": {
+        "peakRSSKiB": 302952,
+        "before": {
+          "rss": 43016192,
+          "heapTotal": 8441856,
+          "heapUsed": 6043008,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 287731712,
+          "heapTotal": 144756736,
+          "heapUsed": 44117024,
+          "external": 77329314,
+          "arrayBuffers": 75015165
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "ssimulacra2": 100
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "wasm",
+      "quality": 100,
+      "effort": 9,
+      "input": "photo-keong",
+      "key": "photo-keong/wasm-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 250908,
+      "sha256": "aa5a0180e2f358cd04dcc19194eb156df4818556602158c31f2251bb29f6ae93",
+      "initializationMs": 43.380869999999994,
+      "coldMs": 30647.430512000003,
+      "firstEncodeMs": 30604.049642,
+      "warmMs": [
+        29946.654864
+      ],
+      "memory": {
+        "peakRSSKiB": 249560,
+        "before": {
+          "rss": 42610688,
+          "heapTotal": 9228288,
+          "heapUsed": 6066640,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 235024384,
+          "heapTotal": 78958592,
+          "heapUsed": 9540192,
+          "external": 26358833,
+          "arrayBuffers": 19915916
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "ssimulacra2": 100
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "photo",
+      "quality": 90,
+      "effort": 9,
+      "input": "photo-keong",
+      "key": "photo-keong/photo-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 26074,
+      "sha256": "9b8ed4faf586b56a0a43cc234e1ea0d1f912341f3545e3ce7d8a65a86a8af8df",
+      "initializationMs": 35.55862400000001,
+      "coldMs": 30947.053127000003,
+      "firstEncodeMs": 30911.494503,
+      "warmMs": [
+        29963.459490000005
+      ],
+      "memory": {
+        "peakRSSKiB": 448564,
+        "before": {
+          "rss": 42897408,
+          "heapTotal": 9228288,
+          "heapUsed": 6043368,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 435875840,
+          "heapTotal": 159801344,
+          "heapUsed": 56190344,
+          "external": 152201717,
+          "arrayBuffers": 149887568
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 495403,
+        "ssimulacra2": 77.21111999
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "photo-advanced",
+      "quality": 90,
+      "effort": 7,
+      "input": "photo-keong",
+      "key": "photo-keong/photo-advanced-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 26509,
+      "sha256": "736dc285bb127c7bd8cb50fd394595bc1f2226644421b68ad279f257b8d533bf",
+      "initializationMs": 51.47091099999999,
+      "coldMs": 1095.390397,
+      "firstEncodeMs": 1043.919486,
+      "warmMs": [
+        566.294155
+      ],
+      "memory": {
+        "peakRSSKiB": 115016,
+        "before": {
+          "rss": 43032576,
+          "heapTotal": 8441856,
+          "heapUsed": 6069544,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 112295936,
+          "heapTotal": 20238336,
+          "heapUsed": 14291128,
+          "external": 16466881,
+          "arrayBuffers": 14149158
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 494130,
+        "ssimulacra2": 77.8291325
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "photo-ans",
+      "quality": 90,
+      "effort": 7,
+      "input": "photo-keong",
+      "key": "photo-keong/photo-ans-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 26509,
+      "sha256": "736dc285bb127c7bd8cb50fd394595bc1f2226644421b68ad279f257b8d533bf",
+      "initializationMs": 40.280558,
+      "coldMs": 1273.829924,
+      "firstEncodeMs": 1233.549366,
+      "warmMs": [
+        694.346364
+      ],
+      "memory": {
+        "peakRSSKiB": 123180,
+        "before": {
+          "rss": 43008000,
+          "heapTotal": 8704000,
+          "heapUsed": 6064128,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 126136320,
+          "heapTotal": 31772672,
+          "heapUsed": 16645304,
+          "external": 35661167,
+          "arrayBuffers": 33343444
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 494130,
+        "ssimulacra2": 77.8291325
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "photo-plan",
+      "quality": 90,
+      "effort": 7,
+      "input": "photo-keong",
+      "key": "photo-keong/photo-plan-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 35527,
+      "sha256": "0cffed8584b0e057b3d38684e440de0132ea5f799a10bc99b18945be8aa1a080",
+      "initializationMs": 40.33234599999999,
+      "coldMs": 900.822919,
+      "firstEncodeMs": 860.4905729999999,
+      "warmMs": [
+        603.885566
+      ],
+      "memory": {
+        "peakRSSKiB": 134280,
+        "before": {
+          "rss": 43073536,
+          "heapTotal": 8704000,
+          "heapUsed": 6055352,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 137502720,
+          "heapTotal": 85442560,
+          "heapUsed": 30588528,
+          "external": 32166034,
+          "arrayBuffers": 29848311
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 490048,
+        "ssimulacra2": 79.70423271
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "noise",
+      "quality": 90,
+      "effort": 7,
+      "input": "photo-keong",
+      "key": "photo-keong/noise-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 26509,
+      "sha256": "736dc285bb127c7bd8cb50fd394595bc1f2226644421b68ad279f257b8d533bf",
+      "initializationMs": 57.27274,
+      "coldMs": 1185.2276980000001,
+      "firstEncodeMs": 1127.954958,
+      "warmMs": [
+        534.4835600000001
+      ],
+      "memory": {
+        "peakRSSKiB": 112344,
+        "before": {
+          "rss": 42795008,
+          "heapTotal": 9228288,
+          "heapUsed": 6034664,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 100413440,
+          "heapTotal": 29413376,
+          "heapUsed": 9936784,
+          "external": 14398275,
+          "arrayBuffers": 12080552
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 494130,
+        "ssimulacra2": 77.8291325
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "score",
+      "quality": 85,
+      "effort": 7,
+      "input": "photo-keong",
+      "key": "photo-keong/score-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 38962,
+      "sha256": "40da6e7ad22258997c5f3f4a2eac3d7c39f8551258fd964dda6d143cd2e97e0b",
+      "initializationMs": 47.14459699999999,
+      "coldMs": 76090.98489200001,
+      "firstEncodeMs": 76043.840295,
+      "warmMs": [],
+      "memory": {
+        "peakRSSKiB": 438456,
+        "before": {
+          "rss": 42733568,
+          "heapTotal": 8704000,
+          "heapUsed": 6033600,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 402690048,
+          "heapTotal": 165466112,
+          "heapUsed": 91461504,
+          "external": 109249436,
+          "arrayBuffers": 106935287
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 465905,
+        "ssimulacra2": 84.12126809
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "hybrid",
+      "quality": 90,
+      "effort": 7,
+      "input": "photo-keong",
+      "key": "photo-keong/hybrid-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 34007,
+      "sha256": "33e3f1240b60034f75e00fa0883ea5801607f45d60265cddce471357a1b670b6",
+      "initializationMs": 34.557331000000005,
+      "coldMs": 1102.3534989999998,
+      "firstEncodeMs": 1067.7961679999999,
+      "warmMs": [
+        693.058254
+      ],
+      "memory": {
+        "peakRSSKiB": 114868,
+        "before": {
+          "rss": 42803200,
+          "heapTotal": 9228288,
+          "heapUsed": 6086320,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 117624832,
+          "heapTotal": 30461952,
+          "heapUsed": 13321264,
+          "external": 18309059,
+          "arrayBuffers": 15991336
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 485764,
+        "ssimulacra2": 80.66007264
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "graphics",
+      "quality": 100,
+      "effort": 1,
+      "input": "photo-keong",
+      "key": "photo-keong/graphics-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 312610,
+      "sha256": "9c7501e625ff0d7bcd87b64ef1e3ccaee9a7eae796696f6471c503c29d06b21d",
+      "initializationMs": 31.501632999999998,
+      "coldMs": 1556.2318520000001,
+      "firstEncodeMs": 1524.730219,
+      "warmMs": [
+        1085.464143
+      ],
+      "memory": {
+        "peakRSSKiB": 263464,
+        "before": {
+          "rss": 42848256,
+          "heapTotal": 9228288,
+          "heapUsed": 6061088,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 255131648,
+          "heapTotal": 200380416,
+          "heapUsed": 106297200,
+          "external": 40388216,
+          "arrayBuffers": 38070493
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "ssimulacra2": 100
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "icc",
+      "quality": 100,
+      "effort": 1,
+      "input": "photo-keong",
+      "key": "photo-keong/icc-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 318563,
+      "sha256": "07e5edf9c4e07bcc54194951fa2f066b047256a373a18f934729e7755256e3ea",
+      "initializationMs": 11.371308999999997,
+      "coldMs": 118.27186,
+      "firstEncodeMs": 106.90055100000001,
+      "warmMs": [
+        77.17064600000003
+      ],
+      "memory": {
+        "peakRSSKiB": 52972,
+        "before": {
+          "rss": 42823680,
+          "heapTotal": 8441856,
+          "heapUsed": 6081376,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 54374400,
+          "heapTotal": 12111872,
+          "heapUsed": 7606472,
+          "external": 9418965,
+          "arrayBuffers": 7101242
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "ssimulacra2": 100
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "delta-palette",
+      "quality": 100,
+      "effort": 1,
+      "input": "photo-keong",
+      "key": "photo-keong/delta-palette-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 312610,
+      "sha256": "9c7501e625ff0d7bcd87b64ef1e3ccaee9a7eae796696f6471c503c29d06b21d",
+      "initializationMs": 23.676545000000004,
+      "coldMs": 1265.6711129999999,
+      "firstEncodeMs": 1241.9945679999998,
+      "warmMs": [
+        1152.768216
+      ],
+      "memory": {
+        "peakRSSKiB": 275208,
+        "before": {
+          "rss": 42344448,
+          "heapTotal": 9228288,
+          "heapUsed": 6053608,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 264396800,
+          "heapTotal": 208302080,
+          "heapUsed": 113165632,
+          "external": 42547346,
+          "arrayBuffers": 40229623
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "ssimulacra2": 100
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "channels",
+      "quality": 100,
+      "effort": 1,
+      "input": "photo-keong",
+      "key": "photo-keong/channels-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 312635,
+      "sha256": "99e81384c52d29eeee5c68228fd17ce07888b4a6caee6c1a23d19d493a0b63b4",
+      "initializationMs": 20.79238000000001,
+      "coldMs": 323.34395099999995,
+      "firstEncodeMs": 302.55157099999997,
+      "warmMs": [
+        187.98389600000002
+      ],
+      "memory": {
+        "peakRSSKiB": 63588,
+        "before": {
+          "rss": 42815488,
+          "heapTotal": 8441856,
+          "heapUsed": 6053368,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 65114112,
+          "heapTotal": 12374016,
+          "heapUsed": 8617576,
+          "external": 18672732,
+          "arrayBuffers": 16355009
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "ssimulacra2": 100
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "layers",
+      "quality": 100,
+      "effort": 1,
+      "input": "photo-keong",
+      "key": "photo-keong/layers-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 312635,
+      "sha256": "99e81384c52d29eeee5c68228fd17ce07888b4a6caee6c1a23d19d493a0b63b4",
+      "initializationMs": 28.262659,
+      "coldMs": 224.82701500000002,
+      "firstEncodeMs": 196.56435600000003,
+      "warmMs": [
+        146.98848700000002
+      ],
+      "memory": {
+        "peakRSSKiB": 62556,
+        "before": {
+          "rss": 42672128,
+          "heapTotal": 8704000,
+          "heapUsed": 6063744,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 64057344,
+          "heapTotal": 12636160,
+          "heapUsed": 8593016,
+          "external": 19653635,
+          "arrayBuffers": 17335912
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "ssimulacra2": 100
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "animation",
+      "quality": 100,
+      "effort": 1,
+      "input": "photo-keong",
+      "key": "photo-keong/animation-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 312613,
+      "sha256": "16edc7ca48f39c1c52b98681b8079e95bac532da87ecefc607284b70ebac9c89",
+      "initializationMs": 52.794076,
+      "coldMs": 153.630742,
+      "firstEncodeMs": 100.83666600000001,
+      "warmMs": [
+        74.49634799999998
+      ],
+      "memory": {
+        "peakRSSKiB": 56572,
+        "before": {
+          "rss": 42774528,
+          "heapTotal": 8441856,
+          "heapUsed": 6076904,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 56438784,
+          "heapTotal": 13422592,
+          "heapUsed": 8010232,
+          "external": 8746883,
+          "arrayBuffers": 6429160
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "ssimulacra2": 100
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "animation-atlas",
+      "quality": 100,
+      "effort": 1,
+      "input": "photo-keong",
+      "key": "photo-keong/animation-atlas-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 312613,
+      "sha256": "16edc7ca48f39c1c52b98681b8079e95bac532da87ecefc607284b70ebac9c89",
+      "initializationMs": 61.418284000000014,
+      "coldMs": 201.06230700000003,
+      "firstEncodeMs": 139.644023,
+      "warmMs": [
+        97.07493700000003
+      ],
+      "memory": {
+        "peakRSSKiB": 60148,
+        "before": {
+          "rss": 43298816,
+          "heapTotal": 9228288,
+          "heapUsed": 6068984,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 61591552,
+          "heapTotal": 17616896,
+          "heapUsed": 8801760,
+          "external": 8481552,
+          "arrayBuffers": 6163829
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "ssimulacra2": 100
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "rapier",
+      "quality": 90,
+      "effort": 7,
+      "input": "photo-keong",
+      "key": "photo-keong/rapier-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 26509,
+      "sha256": "736dc285bb127c7bd8cb50fd394595bc1f2226644421b68ad279f257b8d533bf",
+      "initializationMs": 89.211993,
+      "coldMs": 892.9051450000001,
+      "firstEncodeMs": 803.693152,
+      "warmMs": [
+        373.141831
+      ],
+      "memory": {
+        "peakRSSKiB": 129452,
+        "before": {
+          "rss": 42795008,
+          "heapTotal": 8441856,
+          "heapUsed": 6037872,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 132558848,
+          "heapTotal": 32821248,
+          "heapUsed": 15561832,
+          "external": 29663731,
+          "arrayBuffers": 24200280
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 494130,
+        "ssimulacra2": 77.8291325
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "rapier-still",
+      "quality": 90,
+      "effort": 7,
+      "input": "photo-keong",
+      "key": "photo-keong/rapier-still-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 26509,
+      "sha256": "736dc285bb127c7bd8cb50fd394595bc1f2226644421b68ad279f257b8d533bf",
+      "initializationMs": 51.866186000000006,
+      "coldMs": 707.786917,
+      "firstEncodeMs": 655.920731,
+      "warmMs": [
+        455.42617700000005
+      ],
+      "memory": {
+        "peakRSSKiB": 124976,
+        "before": {
+          "rss": 43098112,
+          "heapTotal": 9228288,
+          "heapUsed": 6070104,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 127975424,
+          "heapTotal": 30986240,
+          "heapUsed": 11540064,
+          "external": 39331498,
+          "arrayBuffers": 33868047
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 494130,
+        "ssimulacra2": 77.8291325
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "jpeg",
+      "quality": 90,
+      "effort": 7,
+      "input": "photo-keong",
+      "key": "photo-keong/jpeg-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 62392,
+      "sha256": "56d6856d34931799296130f5f0aa4503aca6738f6f30611d8810a61cc06516ce",
+      "initializationMs": 17.843792000000008,
+      "coldMs": 347.092302,
+      "firstEncodeMs": 329.24851,
+      "warmMs": [
+        214.23313199999996
+      ],
+      "memory": {
+        "peakRSSKiB": 78520,
+        "before": {
+          "rss": 42512384,
+          "heapTotal": 9228288,
+          "heapUsed": 6042664,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 75587584,
+          "heapTotal": 19451904,
+          "heapUsed": 14238912,
+          "external": 15825431,
+          "arrayBuffers": 13507708
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 480747,
+        "ssimulacra2": 86.24152588
+      },
+      "jpeg": {
+        "inputBytes": 68979,
+        "inputSHA256": "b627f34b63e79ec8a031b2533de7bef436bdd497092448d893fbceeea408ccaa",
+        "nativeReconstructionExact": true
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "jpeg-ans",
+      "quality": 90,
+      "effort": 7,
+      "input": "photo-keong",
+      "key": "photo-keong/jpeg-ans-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 58132,
+      "sha256": "092d4d671d7ddbd0490da31c060dae9bf2e20d57db73ff48efacaa9a02281c4a",
+      "initializationMs": 26.696659999999994,
+      "coldMs": 838.399056,
+      "firstEncodeMs": 811.702396,
+      "warmMs": [
+        359.15029200000004
+      ],
+      "memory": {
+        "peakRSSKiB": 103464,
+        "before": {
+          "rss": 43094016,
+          "heapTotal": 8441856,
+          "heapUsed": 6067744,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 102584320,
+          "heapTotal": 33869824,
+          "heapUsed": 12506816,
+          "external": 7181944,
+          "arrayBuffers": 4864221
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 480747,
+        "ssimulacra2": 86.24152588
+      },
+      "jpeg": {
+        "inputBytes": 68979,
+        "inputSHA256": "b627f34b63e79ec8a031b2533de7bef436bdd497092448d893fbceeea408ccaa",
+        "nativeReconstructionExact": true
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "patches",
+      "quality": 100,
+      "effort": 1,
+      "input": "photo-keong",
+      "key": "photo-keong/patches-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 321640,
+      "sha256": "dadc75ba72fbd49f943e416b45dcfa95a50da5ff6217634003b58bbfead11733",
+      "initializationMs": 29.854848000000004,
+      "coldMs": 147.109871,
+      "firstEncodeMs": 117.25502300000001,
+      "warmMs": [
+        63.11299599999998
+      ],
+      "memory": {
+        "peakRSSKiB": 53148,
+        "before": {
+          "rss": 43094016,
+          "heapTotal": 8704000,
+          "heapUsed": 6050984,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 54423552,
+          "heapTotal": 12898304,
+          "heapUsed": 8804240,
+          "external": 9204491,
+          "arrayBuffers": 6886768
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "ssimulacra2": 100
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "splines",
+      "quality": 90,
+      "effort": 1,
+      "input": "photo-keong",
+      "key": "photo-keong/splines-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 37215,
+      "sha256": "f8304308f12b66c73f652a0cdcb7e1db14a36d2cbb50eda90d52a86056636dd3",
+      "initializationMs": 31.187081999999997,
+      "coldMs": 194.8765,
+      "firstEncodeMs": 163.689418,
+      "warmMs": [
+        96.850822
+      ],
+      "memory": {
+        "peakRSSKiB": 60012,
+        "before": {
+          "rss": 42725376,
+          "heapTotal": 9228288,
+          "heapUsed": 6050912,
+          "external": 6755269,
+          "arrayBuffers": 4437586
+        },
+        "after": {
+          "rss": 59056128,
+          "heapTotal": 13422592,
+          "heapUsed": 8281208,
+          "external": 7005468,
+          "arrayBuffers": 4687745
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 475996,
+        "ssimulacra2": 81.23744062
+      },
+      "status": "measured"
+    },
+    {
+      "codec": "writer",
+      "quality": 100,
+      "effort": 1,
+      "input": "photo-keong",
+      "key": "photo-keong/writer-module/main",
+      "execution": "main",
+      "maxError": 0,
+      "width": 500,
+      "height": 500,
+      "inputHash": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+      "bytes": 312610,
+      "sha256": "9c7501e625ff0d7bcd87b64ef1e3ccaee9a7eae796696f6471c503c29d06b21d",
+      "initializationMs": 13.986737000000005,
+      "coldMs": 100.339355,
+      "firstEncodeMs": 86.35261799999999,
+      "warmMs": [
+        49.58599699999999
+      ],
+      "memory": {
+        "peakRSSKiB": 54552,
+        "before": {
+          "rss": 43442176,
+          "heapTotal": 8704000,
+          "heapUsed": 6001776,
+          "external": 7685985,
+          "arrayBuffers": 5368302
+        },
+        "after": {
+          "rss": 55861248,
+          "heapTotal": 12111872,
+          "heapUsed": 8287824,
+          "external": 9153497,
+          "arrayBuffers": 6835774
+        },
+        "wasmHeapBytes": null
+      },
+      "timing": "Node main thread. Cold includes module import/initialization plus first encode. Warm excludes input PNG decode and output file write.",
+      "memoryMethod": "Whole fresh Node process peak RSS (KiB), including decoded input, encoder, runtime and worker where used; not incremental codec allocation.",
+      "correctness": {
+        "decoder": "libjxl djxl 0.12.0",
+        "differentSamples": 0,
+        "ssimulacra2": 100
+      },
+      "status": "measured"
+    }
+  ],
+  "nativeJPEG": [
+    {
+      "effort": 7,
+      "bytes": 56985,
+      "ms": 23.487326000000053,
+      "jpegReconstructionExact": true
+    },
+    {
+      "effort": 9,
+      "bytes": 56575,
+      "ms": 230.69370600000002,
+      "jpegReconstructionExact": true
+    }
+  ]
+}

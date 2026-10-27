@@ -30,7 +30,9 @@ export function createJPEGXLCodec({encoderFactory, imageReader, formatHandler}) 
       stage = 'starting encoder';
       encoder ||= encoderFactory();
       stage = 'encoding image';
-      return encoder.encode(data, width, height, {...options, quality, effort, photo: (photo ?? preset[2]) === true});
+      return encoder.encode(data, width, height, {...options, quality, effort,
+        gpu: options.gpu === 'cpu' ? false : options.gpu === 'auto' ? undefined : options.gpu,
+        photo: (photo ?? preset[2]) === true});
     },
     async animation(input, options = {}) {
       stage = 'checking image';
@@ -68,11 +70,16 @@ export function createJPEGXLCodec({encoderFactory, imageReader, formatHandler}) 
       if (typeof imageReader !== 'function') throw codecError('JXL_UNAVAILABLE', 'The bundled JPEG XL codec cannot read pictures.');
       if (!options || typeof options !== 'object' || Array.isArray(options)) throw codecError('JXL_OPTIONS', 'JPEG XL options are invalid.');
       checkSignal(options.signal);
-      const read = await imageReader(input?.source, options.transcode !== false);
+      const maxPixels = options.maxPixels ?? JPEG_XL_LIMITS.pixels;
+      if (!Number.isSafeInteger(maxPixels) || maxPixels < 1 || maxPixels > JPEG_XL_LIMITS.pixels)
+        throw codecError('JXL_OPTIONS', 'maxPixels exceeds the full encoder limit.');
+      const read = await imageReader(input?.source, options.transcode !== false, {...JPEG_XL_LIMITS, pixels: maxPixels});
       checkSignal(options.signal);
       if (read.jpeg) return codec.transcode({bytes: read.jpeg}, {effort: options.effort, progress: options.progress, signal: options.signal});
       const lossy = options.quality !== undefined && options.quality < 100;
-      return {bytes: await codec.encode(read, {...options, lossless: !lossy, photo: lossy})};
+      if (read.colorSpace !== undefined && options.colorSpace !== undefined && read.colorSpace !== options.colorSpace)
+        throw codecError('JXL_INPUT', 'The declared color space differs from the source pixels.');
+      return {bytes: await codec.encode(read, {...options, ...(options.icc ? {} : {colorSpace: options.colorSpace ?? read.colorSpace}), lossless: !lossy, photo: lossy})};
     },
     async reconstruct(input) {
       stage = 'restoring the JPEG';
@@ -175,8 +182,10 @@ export function installJPEGXLWorker(configuration) {
     } catch (error) {
       globalThis.postMessage({id, ok: false, error: codec.failure(error)});
     } finally {
+      if (typeof ImageBitmap === 'function' && request.source instanceof ImageBitmap) request.source.close();
       active = null;
     }
   };
+  globalThis.postMessage({protocol: 'rapier-jxl', version: 1});
 }
 

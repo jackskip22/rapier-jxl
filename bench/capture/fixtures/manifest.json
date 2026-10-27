@@ -1,0 +1,210 @@
+{
+  "schema": 1,
+  "browser": "155.0.8059.39",
+  "machine": {
+    "platform": "linux",
+    "release": "6.18.55",
+    "cpu": "AMD EPYC 9V74 80-Core Processor"
+  },
+  "snapdomCommit": "f7bb642d83ece9f6efdca0825ab87bb7b2274650",
+  "capture": {
+    "compress": false,
+    "embedFonts": false,
+    "dpr": 1
+  },
+  "timing": "First toBlob call then three repeats; same captured canvas. Encode callback completion, excludes DOM capture/rasterization. Canvas cannot request lossless WebP explicitly.",
+  "inputs": [
+    {
+      "name": "snapdom-opaque-1920x1080",
+      "file": "snapdom-opaque-1920x1080.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 804840,
+      "sha256": "77239db2fc437bc8233a377834f36f454030d210f46f265d0398bf20a672a217",
+      "captureMs": 135.10000000149012,
+      "source": "examples/snapdom/scene.html (960x540 layout)"
+    },
+    {
+      "name": "snapdom-opaque-3840x2160",
+      "file": "snapdom-opaque-3840x2160.png",
+      "width": 3840,
+      "height": 2160,
+      "bytes": 2404437,
+      "sha256": "decc501e2da5c1533626389d52486db4a1b5e5dcb0458ca332f14c86c0e73062",
+      "captureMs": 53.29999999701977,
+      "source": "examples/snapdom/scene.html (960x540 layout)"
+    },
+    {
+      "name": "snapdom-alpha-1920x1080",
+      "file": "snapdom-alpha-1920x1080.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 805490,
+      "sha256": "5c8588b1693c1c8eddc4e9e21d10b9ebe6f44b12f489e4a8eb2b544a88b996d7",
+      "captureMs": 92.69999999552965,
+      "source": "examples/snapdom/scene.html (960x540 layout)"
+    },
+    {
+      "name": "snapdom-alpha-3840x2160",
+      "file": "snapdom-alpha-3840x2160.png",
+      "width": 3840,
+      "height": 2160,
+      "bytes": 2409418,
+      "sha256": "97c3b1288f9d09a6200f6e18c2401b1865274ca6a421fc3e8f65ac1798f3cb6a",
+      "captureMs": 40.79999999701977,
+      "source": "examples/snapdom/scene.html (960x540 layout)"
+    },
+    {
+      "name": "snapdom-nested-demo-1920x1080",
+      "file": "snapdom-nested-demo-1920x1080.png",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 90197,
+      "sha256": "62a9b404bbaca5407876b2ddaf9ea7158ec393d0c78c07bb0ab7c9e13e18620e",
+      "captureMs": 24.599999994039536,
+      "source": "snapdom demos/d8-nested-elements.html (scripts removed, fixed CSS colour variables, 960x540 layout)"
+    }
+  ],
+  "encodes": [
+    {
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "browser-png",
+      "type": "image/png",
+      "bytes": 804840,
+      "coldMs": 32.899999998509884,
+      "warmMs": [
+        22.200000002980232,
+        20.899999998509884,
+        24.200000002980232
+      ],
+      "memory": null,
+      "memoryNote": "Browser canvas native allocations are not exposed; no peak claimed."
+    },
+    {
+      "input": "snapdom-opaque-1920x1080",
+      "codec": "browser-webp-q90",
+      "type": "image/webp",
+      "bytes": 96958,
+      "coldMs": 136.10000000149012,
+      "warmMs": [
+        136.29999999701977,
+        130.30000000447035,
+        128.10000000149012
+      ],
+      "memory": null,
+      "memoryNote": "Browser canvas native allocations are not exposed; no peak claimed."
+    },
+    {
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "browser-png",
+      "type": "image/png",
+      "bytes": 2404437,
+      "coldMs": 92.39999999850988,
+      "warmMs": [
+        71.39999999850988,
+        72.70000000298023,
+        70.39999999850988
+      ],
+      "memory": null,
+      "memoryNote": "Browser canvas native allocations are not exposed; no peak claimed."
+    },
+    {
+      "input": "snapdom-opaque-3840x2160",
+      "codec": "browser-webp-q90",
+      "type": "image/webp",
+      "bytes": 204828,
+      "coldMs": 530.8999999985099,
+      "warmMs": [
+        519.1000000014901,
+        509.29999999701977,
+        492
+      ],
+      "memory": null,
+      "memoryNote": "Browser canvas native allocations are not exposed; no peak claimed."
+    },
+    {
+      "input": "snapdom-alpha-1920x1080",
+      "codec": "browser-png",
+      "type": "image/png",
+      "bytes": 805490,
+      "coldMs": 35.600000001490116,
+      "warmMs": [
+        30,
+        25.5,
+        24
+      ],
+      "memory": null,
+      "memoryNote": "Browser canvas native allocations are not exposed; no peak claimed."
+    },
+    {
+      "input": "snapdom-alpha-1920x1080",
+      "codec": "browser-webp-q90",
+      "type": "image/webp",
+      "bytes": 110180,
+      "coldMs": 177,
+      "warmMs": [
+        172.89999999850988,
+        155,
+        171.59999999403954
+      ],
+      "memory": null,
+      "memoryNote": "Browser canvas native allocations are not exposed; no peak claimed."
+    },
+    {
+      "input": "snapdom-alpha-3840x2160",
+      "codec": "browser-png",
+      "type": "image/png",
+      "bytes": 2409418,
+      "coldMs": 83.60000000149012,
+      "warmMs": [
+        68.5,
+        63.20000000298023,
+        63.099999994039536
+      ],
+      "memory": null,
+      "memoryNote": "Browser canvas native allocations are not exposed; no peak claimed."
+    },
+    {
+      "input": "snapdom-alpha-3840x2160",
+      "codec": "browser-webp-q90",
+      "type": "image/webp",
+      "bytes": 241082,
+      "coldMs": 659.8000000044703,
+      "warmMs": [
+        590.3999999985099,
+        614.5,
+        564.5
+      ],
+      "memory": null,
+      "memoryNote": "Browser canvas native allocations are not exposed; no peak claimed."
+    },
+    {
+      "input": "snapdom-nested-demo-1920x1080",
+      "codec": "browser-png",
+      "type": "image/png",
+      "bytes": 90197,
+      "coldMs": 9.700000002980232,
+      "warmMs": [
+        11.899999998509884,
+        15.5,
+        19.700000002980232
+      ],
+      "memory": null,
+      "memoryNote": "Browser canvas native allocations are not exposed; no peak claimed."
+    },
+    {
+      "input": "snapdom-nested-demo-1920x1080",
+      "codec": "browser-webp-q90",
+      "type": "image/webp",
+      "bytes": 26812,
+      "coldMs": 147,
+      "warmMs": [
+        136.59999999403954,
+        125.40000000596046,
+        119.89999999850988
+      ],
+      "memory": null,
+      "memoryNote": "Browser canvas native allocations are not exposed; no peak claimed."
+    }
+  ]
+}

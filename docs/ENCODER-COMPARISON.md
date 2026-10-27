@@ -1,6 +1,6 @@
-# Encoder comparisons
+# Earlier encoder comparisonss
 
-The complete Rapier worker uses 214,332 gzip bytes: core encoding, effort search, optional WASM, Photo, JPEG transcoding and parallel workers. The separate core uses 28,920 gzip bytes. Both embed in one offline HTML file.
+The recorded 6.1.0 complete Rapier worker used 214,332 gzip bytes: core encoding, effort search, optional WASM, Photo, JPEG transcoding and parallel workers. The recorded separate core used 28,920 gzip bytes, plus a 6,080-byte optional GPU dependency. These historical runs do not measure the current capture architecture. Use [the capture audit](CAPTURE-AUDIT.md) for current build sizes and scoped comparisons.
 
 ## Payload
 

@@ -1,67 +1,80 @@
 # Rapier JXL
 
-JPEG XL encoder in JavaScript. Smaller files than libjxl at the same quality, a quality search that runs on WebGPU,
-29 KB gzipped. Runs in browsers, workers, Node and Deno. MIT license, no dependencies.
+JPEG XL in JavaScript. Exact captures, high-quality photographs, and a complete format toolkit. MIT. No runtime dependencies.
 
-| Same visual quality (SSIMULACRA2), 24 Kodak photos | Effort | Rapier JXL |
-| --- | :---: | ---: |
-| libjxl, `cjxl -e 9` | 7 | 5–7% smaller |
-| libjxl, `cjxl -e 9`, by Butteraugli | 9 | up to 5% smaller |
-| AVIF | 7 | 4–20% smaller |
-| WebP | 7 | 15–23% smaller |
-| JPEG (mozjpeg) | 7 | 19–43% smaller |
-| JPEG to JPEG XL, restored byte for byte (24 of 24) | 9 | 15% smaller |
-| Encoder size, gzipped | | 29 KB (libjxl in WebAssembly: 962 KB) |
+**Start with capture.** It preserves every RGBA sample, including alpha and RGB beneath transparency. A small optional error bound trades fidelity for size; exact is the default.
 
-[Method, every score and how to reproduce](docs/ENCODER-COMPARISON.md).
+```js
+import {createEncoder} from 'rapier-jxl/image';
+
+// Copy dist/capture-worker.js to your own /assets/ directory.
+const encoder = createEncoder({worker: '/assets/capture-worker.js'});
+const bytes = await encoder.encode(canvas);
+const file = new Blob([bytes], {type: 'image/jxl'});
+// Reuse encoder for later captures. Call encoder.close() when finished.
+```
+
+Already inside a worker, Node or Deno:
+
+```js
+import {encode} from 'rapier-jxl/capture';
+const bytes = await encode({data: rgba, width, height});
+```
+
+## Choose the job
+
+| Need | Import | Worker |
+| --- | --- | --- |
+| Screenshots, DOM captures, drawings | `rapier-jxl/capture` (also the package root) | `capture-worker.js` |
+| Photographs, effort search, perceptual targets | `rapier-jxl/photo` | `photo-worker.js` |
+| Animation, original-JPEG reconstruction, HDR, metadata, format tools | `rapier-jxl/full` | `full-worker.js` |
+| Persistent private worker and bounded queue | `rapier-jxl/image` | Your selected worker |
+| Low-level RGBA encoder | `rapier-jxl/core` | Import it into your existing worker |
+
+Each generated file includes its GPU code and dependencies. Nothing else downloads. CPU encoding always works. Specialist entries remain available for hosts that need exact control.
+
+[Complete measured sizes and comparisons](docs/CAPTURE-AUDIT.md) · [Integrator contract](docs/INTEGRATION.md) · [All APIs](docs/reference/API.md)
+
+## Capture options
+
+```js
+await encoder.encode(canvas, {maxError: 1, signal, onProgress});
+```
+
+`maxError` is an integer from 0 to 8, measured in 8-bit RGB sample values. Alpha and fully transparent RGB stay exact. A bound is **not** a visual-quality guarantee; compare the supplied SSIMULACRA2 results. `gpu: 'cpu'` disables optional GPU work.
+
+Canvas and bitmap inputs preserve the browser's rasterized pixels. Browser premultiplication and color conversion can already have changed those pixels; use straight RGBA or ImageData for byte-level custody.
+
+## Photographs
+
+```js
+import {encode} from 'rapier-jxl/photo';
+const bytes = await encode({data: rgba, width, height}, {quality: 90, effort: 9});
+```
+
+Use the photo worker through the same image client in a page. `target: {ssimulacra2: 85}` searches candidates against the encoder's reconstructed-image metric. Validate external delivery thresholds with an independent decoder. JPEG input decoding uses the browser; reversible original-JPEG carrying belongs to `full` or `jpeg`.
+
+## SnapDOM
+
+The [reference plugin and offline demo](examples/snapdom/README.md) use SnapDOM's real `defineExports` hook:
+
+```js
+const result = await snapdom(element, {plugins: [jxlExport({encoder})]});
+const file = await result.toJxl();
+```
+
+The plugin adds `result.toJxl()` and borrows the already captured canvas. Its tests run against the pinned upstream SnapDOM implementation.
+
+## Build and verify
 
 ```sh
-npm install rapier-jxl
+npm install
+npm run build
+npm test
+npx playwright install chromium
+npm run test:snapdom
 ```
 
-## Encode pixels to a score
+The build enforces the JavaScript and TypeScript integration contracts and writes exact gzip/Brotli sizes to `dist/sizes.json`. Native decoder checks use `DJXL` or `djxl` on PATH. [Reproduce the measurements](bench/capture/README.md).
 
-```js
-import {encodeToScore} from 'rapier-jxl/score';
-const {bytes} = await encodeToScore(rgba, width, height, {target: {ssimulacra2: 80}, gpu: device});
-```
-
-Returns the smallest file that meets the score. `gpu` is an optional `GPUDevice`; without it the search runs on the CPU.
-For a fixed quality, `encode(rgba, width, height, {quality: 90})` from `rapier-jxl` (100 is lossless).
-
-## Encode on the GPU
-
-`encodeAsync(rgba, width, height, options)` writes the same file as `encode`, on WebGPU when the page has it:
-a 12 MP phone photo in about 2.1 s instead of 6.7 s (24 phone photos, median, NVIDIA T4).
-
-## Convert a file in a page
-
-Copy `node_modules/rapier-jxl/dist/rapier-still-worker.js` beside your page (`rapier-worker.js` adds animation), then:
-
-```js
-import {toJXL} from 'rapier-jxl/image';
-const jxl = await toJXL(file, {worker: './rapier-still-worker.js'}); // an image/jxl Blob
-```
-
-For one offline HTML file, embed the worker as text ([example](docs/reference/ARCHITECTURE.md#complete-rapier-worker)).
-
-## Builds
-
-| Build / import | Gzip bytes | Capabilities |
-| --- | ---: | --- |
-| **Still worker** · `rapier-jxl/rapier/still-worker` | 149,572 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel lossless groups. No animation. |
-| **Complete worker** · `rapier-jxl/rapier/worker` | 214,332 | Everything in the still worker, plus animation and the other format writers. |
-| Complete module · `rapier-jxl/rapier/min` | 214,402 | The complete system with an encoder factory and worker installer. |
-| Image · `rapier-jxl/image/min` | 1,184 | One call from a page: a file, bitmap, image data or canvas in, an `image/jxl` Blob out, through either worker. |
-| Core · `rapier-jxl/min` | 28,920 | Lossless or lossy typed RGBA, native precision, HDR and exact alpha. |
-| Effort · `rapier-jxl/effort/min` | 78,503 | Core with lossless compression search, efforts 1–9. |
-| WASM · `rapier-jxl/wasm/min` | 88,190 | Effort with inlined WASM and JavaScript fallback. |
-| Photo · `rapier-jxl/photo/min` | 60,943 | Lossy photographs from RGBA pixels. |
-| JPEG · `rapier-jxl/jpeg/min` | 32,866 | Existing JPEGs, preserving admitted coefficients and orientation. |
-| Metadata · `rapier-jxl/metadata/min` | 12,592 | Attach, replace or remove caller-supplied Exif/XMP. |
-| Animation · `rapier-jxl/animation/min` | 86,778 | Animated JPEG XL from frames: only changed rectangles stored, exact timing, lossless or lossy. |
-
-Sizes are standalone files gzipped at level 9. [Entry points and embedding](docs/reference/ARCHITECTURE.md).
-
-[API](docs/reference/API.md) · [Comparisons](docs/ENCODER-COMPARISON.md) · [Agent reference](llms.txt) ·
-[Agent skills](skills/rapier-jxl-photography/SKILL.md) · [Browser example](examples/browser.html)
+Encoding does not require browser JPEG XL support. Display and browser-side decoding do. This package does not include a JPEG XL pixel decoder.

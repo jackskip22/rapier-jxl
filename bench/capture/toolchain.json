@@ -1,0 +1,104 @@
+{
+  "downloads": [
+    {
+      "file": "libjxl-v0.12.0.tar.lz",
+      "url": "https://github.com/libjxl/libjxl/releases/download/v0.12.0/jxl-linux-x86_64-static.tar.lz",
+      "sha256": "5318a1ea40adad76d023e0c17a03d4627f8282f83cb2b575e69be8e74f1ff456"
+    },
+    {
+      "file": "libwebp-1.5.0.tar.gz",
+      "url": "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.5.0-linux-x86-64.tar.gz",
+      "sha256": "f4bf49f85991f50e86a5404d16f15b72a053bb66768ed5cc0f6d042277cc2bb8"
+    },
+    {
+      "file": "oxipng-9.1.5.tar.gz",
+      "url": "https://github.com/oxipng/oxipng/releases/download/v9.1.5/oxipng-9.1.5-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "571e69fcb06a3675fe247998d845619075631b01ac2246e8a88206c723a472e2"
+    },
+    {
+      "file": "jsquash-jxl-1.3.0.tgz",
+      "url": "https://registry.npmjs.org/@jsquash/jxl/-/jxl-1.3.0.tgz",
+      "sha256": "737c6e4749213a46aab1a2b39aed5bc527e06f0390d3a4e337ed006c349a876b"
+    },
+    {
+      "file": "wasm-vips-0.0.19.tgz",
+      "url": "https://registry.npmjs.org/wasm-vips/-/wasm-vips-0.0.19.tgz",
+      "sha256": "0bfec00056bc72e2d37b936e4836889885fb61c8f2dbe6d028d340bee4aa5ee1"
+    },
+    {
+      "file": "photo-keong.png",
+      "url": "https://raw.githubusercontent.com/libjxl/testdata/73695d303670c90e4d506ea89d9901b081385089/external/wesaturate/500px/cvo9xd_keong_macan_srgb8.png",
+      "sha256": "eb9189de8004dd0e56c5ccd8312567ae325bcef42861e2bfc86b064f4c4861b6"
+    }
+  ],
+  "payloads": [
+    {
+      "file": "jsquash/codec/enc/jxl_enc.js",
+      "bytes": 47073,
+      "gzip": 13132,
+      "sha256": "5bb33d2a204f43035bfca2c581aff28669706aedae93188372c5d5c81532f8a8"
+    },
+    {
+      "file": "jsquash/codec/enc/jxl_enc.wasm",
+      "bytes": 1363824,
+      "gzip": 516855,
+      "sha256": "3c6c02df45c0dededab146888789d541b23b9a299cb16d497dce412a3a4bc7d3"
+    },
+    {
+      "file": "vips/lib/vips-es6.js",
+      "bytes": 83765,
+      "gzip": 31813,
+      "sha256": "4de6113dc80958b2acc7d45af95086277bab670af474125fdbd179e62dae96af"
+    },
+    {
+      "file": "vips/lib/vips.wasm",
+      "bytes": 5154052,
+      "gzip": 2023395,
+      "sha256": "36c25e290570757f911b45d67947e8262b01261028db438dadc09990ad978ff6"
+    },
+    {
+      "file": "vips/lib/vips-jxl.wasm",
+      "bytes": 2224543,
+      "gzip": 798402,
+      "sha256": "ffdd01c8dbd6a8fc616f1a023cbf2b526d12df770f5adca96e44cdf8c20c8afe"
+    }
+  ],
+  "photographicInput": {
+    "file": "photo-keong-rgba.png",
+    "width": 500,
+    "height": 500,
+    "rgbaSha256": "6264332e6488348f8d2a37e6925fe8d6336f3787d1e51e5fc7acd7d1baac3bbd",
+    "note": "Same decoded RGBA8 bytes as the pinned source, written without ICC/Exif/text metadata. All codecs receive the same sRGB samples and native encoders are not charged for source metadata JS never receives."
+  },
+  "packages": {
+    "jsquash": "1.3.0",
+    "wasmVips": "0.0.19",
+    "aom": "3.15.1",
+    "brotli": "1.2.0",
+    "cgif": "0.5.4",
+    "emscripten": "6.0.10",
+    "exif": "0.6.26",
+    "expat": "2.8.5",
+    "ffi": "3.8.0",
+    "glib": "2.90.0",
+    "heif": "1.23.5",
+    "highway": "1.4.0",
+    "imagequant": "2.4.1",
+    "jxl": "0.12.0",
+    "lcms": "2.19.1",
+    "mozjpeg": "0826579",
+    "png": "1.6.58",
+    "resvg": "0.48.1",
+    "tiff": "4.7.2",
+    "uhdr": "2.0.2",
+    "vips": "8.18.7",
+    "webp": "1.6.0",
+    "zlib-ng": "2.3.3"
+  },
+  "native": {
+    "cjxl": "cjxl v0.12.0 4128790 [_AVX2_,SSE4,SSE2] {Clang 18.1.3}\nCopyright (c) the JPEG XL Project",
+    "cwebp": "1.5.0\nlibsharpyuv: 0.4.1",
+    "oxipng": "oxipng 9.1.5"
+  },
+  "note": "jSquash factory + its single-thread WASM, not decoders or optional multithread builds. Vips includes browser JS + base WASM + JXL side module, with dynamicLibraries restricted to JXL. Gzip level 9 per delivered file."
+}

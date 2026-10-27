@@ -1,0 +1,22 @@
+{
+  "browser": "155.0.8059.39",
+  "method": "Functional demo checks; UI timings are not benchmark medians.",
+  "first": {
+    "type": "image/jxl",
+    "bytes": 342821,
+    "width": 1920,
+    "height": 1080,
+    "status": "1920 × 1080 · 342,821 bytes\nCapture 88.5 ms · raster + worker encode 828.2 ms"
+  },
+  "cancelled": "Capture cancelled.",
+  "restarted": {
+    "type": "image/jxl",
+    "bytes": 342821,
+    "width": 1920,
+    "height": 1080,
+    "status": "1920 × 1080 · 342,821 bytes\nCapture 0.6 ms · raster + worker encode 978.5 ms"
+  },
+  "failures": [],
+  "blocked": [],
+  "offline": true
+}

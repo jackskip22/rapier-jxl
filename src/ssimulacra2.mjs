@@ -1,7 +1,11 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT AND BSD-3-Clause
+// Float32 numerical kernels adapted from libjxl 0.12.0 (JPEG XL Project Authors).
+// Sources: tools/ssimulacra2.cc, tools/gauss_blur.cc, lib/jxl/base/fast_math-inl.h,
+// lib/jxl/cms/transfer_functions-inl.h. See LICENSE.libjxl.
 
 import {exactCbrt, exactPow, exactTan, exactSin, exactCos, exactExp, EXACT_PI} from './exact-math.mjs';
-const SIGMA = 1.5, C2 = 0.0009, SCALES = 6;
+const f32 = Math.fround;
+const SIGMA = 1.5, C2 = f32(0.0009), SCALES = 6;
 const S2_WEIGHTS = Float64Array.of(0.0, 0.0007376606707406586, 0.0, 0.0, 0.0007793481682867309, 0.0, 0.0, 0.0004371155730107379,
   0.0, 1.1041726426657346, 0.00066284834129271, 0.00015231632783718752, 0.0, 0.0016406437456599754, 0.0, 1.8422455520539298,
   11.441172603757666, 0.0, 0.0007989109436015163, 0.000176816438078653, 0.0, 1.8787594979546387, 10.94906990605142, 0.0,
@@ -17,12 +21,39 @@ const S2_WEIGHTS = Float64Array.of(0.0, 0.0007376606707406586, 0.0, 0.0, 0.00077
   0.00010854057858411537);
 export {S2_WEIGHTS as SSIMULACRA2_WEIGHTS};
 
-const S2_OPSIN = [0.30, 0.622, 0.078, 0.23, 0.692, 0.078, 0.24342268924547819, 0.20476744424496821, 0.55180986650955360];
-const S2_BIAS = 0.0037930732552754493, BIAS_ROOT = exactCbrt(S2_BIAS);
+const S2_OPSIN = Float32Array.of(
+  0.30, f32(1 - f32(0.078)) - f32(0.30), 0.078,
+  0.23, f32(1 - f32(0.078)) - f32(0.23), 0.078,
+  0.24342268924547819, 0.20476744424496821, f32(1 - f32(0.24342268924547819)) - f32(0.20476744424496821));
+const S2_BIAS = f32(0.0037930732552754493), BIAS_ROOT = f32(exactCbrt(S2_BIAS));
 
+// Keep the mathematical transfer for the encoder/Butteraugli. SSIMULACRA2 uses
+// the reference CMS's float32 approximation: variance cancellation amplifies ulps.
 export const SRGB_TO_LINEAR = Float64Array.from({length: 256}, (_, i) => {
   const v = i / 255; return v <= 0.04045 ? v / 12.92 : exactPow((v + 0.055) / 1.055, 2.4);
 });
+const S2_P = Float32Array.of(2.200248328e-4, 1.043637593e-2, 1.624820318e-1, 7.961564959e-1, 8.210152774e-1);
+const S2_Q = Float32Array.of(2.631846970e-1, 1.076976492, 4.987528350e-1, -5.512498495e-2, 6.521209011e-3);
+function referenceLinear(x) {
+  const sign = x < 0 ? -1 : 1;
+  x = Math.abs(x);
+  if (x <= f32(0.04045)) return sign * f32(x * f32(1 / f32(12.92)));
+  let p = S2_P[4], q = S2_Q[4];
+  for (let i = 3; i >= 0; i--) { p = f32(p * x + S2_P[i]); q = f32(q * x + S2_Q[i]); }
+  return sign * f32(p / q);
+}
+const S2_LINEAR = Float32Array.from({length: 256}, (_, i) => referenceLinear(f32(i * f32(1 / 255))));
+const S2_ENCODE_P = Float32Array.of(-5.135152395e-4, 5.287254571e-3, 3.903842876e-1, 1.474205315, 7.352629620e-1);
+const S2_ENCODE_Q = Float32Array.of(1.004519624e-2, 3.036675394e-1, 1.340816930, 9.258482155e-1, 2.424867759e-2);
+function referenceEncoded(value) {
+  const sign = value < 0 ? -1 : 1, v = Math.abs(f32(value));
+  if (v <= f32(0.0031308)) return sign * f32(v * f32(12.92));
+  const x = f32(Math.sqrt(v));
+  let p = S2_ENCODE_P[4], q = S2_ENCODE_Q[4];
+  for (let i = 3; i >= 0; i--) { p = f32(p * x + S2_ENCODE_P[i]); q = f32(q * x + S2_ENCODE_Q[i]); }
+  return sign * f32(p / q);
+}
+
 export function srgbToLinear(v) {
   const a = Math.abs(v), l = a <= 0.04045 ? a / 12.92 : exactPow((a + 0.055) / 1.055, 2.4);
   return v < 0 ? -l : l;
@@ -47,6 +78,15 @@ function invert3(m) {
 }
 
 const GAUSS = recursiveGaussian(SIGMA);
+const G_N = Float32Array.from(GAUSS.n2), G_D = Float32Array.from(GAUSS.d1);
+const G_MUL = GAUSS.n2.map((n, i) => {
+  const d = GAUSS.d1[i], d2 = d * d;
+  return {
+    input: Float32Array.of(n, -d * n, d2 * n - n, -d2 * d * n + 2 * d * n),
+    prev: Float32Array.of(-d, d2 - 1, -d2 * d + 2 * d, d2 * d2 - 3 * d2 + 1),
+    prev2: Float32Array.of(-1, d, -d2 + 1, d2 * d - 2 * d)
+  };
+});
 
 export function gaussianTaps(g = GAUSS) {
   const size = 4 * g.radius + 1, line = new Float64Array(size), out = new Float64Array(size);
@@ -69,31 +109,90 @@ function blurLine(input, out, at, count, stride, g = GAUSS) {
   }
 }
 
-export function s2Blur(plane, width, height, out = new Float64Array(plane.length), temp = new Float64Array(plane.length)) {
-  for (let y = 0; y < height; y++) blurLine(plane, temp, y * width, width, 1);
-  for (let x = 0; x < width; x++) blurLine(temp, out, x, height, width);
+// Preserve the reference's four-lane float32 evaluation order. Each f32(a*b+c)
+// emulates a float32 fused operation; products of float32 operands fit in JS doubles.
+function blurHorizontal(input, out, at, count) {
+  const N = GAUSS.radius, prev = new Float32Array(3), prev2 = new Float32Array(3);
+  const sums = new Float32Array(4), values = new Float32Array(12);
+  let n = -N + 1;
+  const scalar = () => {
+    const left = n - N - 1, right = n + N - 1;
+    const sum = f32((left >= 0 ? input[at + left] : 0) + (right < count ? input[at + right] : 0));
+    for (let k = 0; k < 3; k++) {
+      const m = G_MUL[k], value = f32(m.prev[0] * prev[k] + f32(m.prev2[0] * prev2[k] + f32(m.input[0] * sum)));
+      prev2[k] = prev[k]; prev[k] = value;
+    }
+    if (n >= 0) out[at + n] = f32(prev[0] + f32(prev[1] + prev[2]));
+  };
+  for (; n < Math.min(Math.ceil((N + 1) / 4) * 4, count); n++) scalar();
+  for (; n < count - N - 2; n += 4) {
+    for (let i = 0; i < 4; i++) sums[i] = input[at + n + i - N - 1] + input[at + n + i + N - 1];
+    for (let k = 0; k < 3; k++) {
+      const m = G_MUL[k], o = k * 4;
+      for (let lane = 0; lane < 4; lane++) {
+        let value = f32(sums[0] * m.input[lane]);
+        for (let i = 1; i <= lane; i++) value = f32(m.input[lane - i] * sums[i] + value);
+        value = f32(m.prev2[lane] * prev2[k] + value);
+        values[o + lane] = f32(m.prev[lane] * prev[k] + value);
+      }
+      prev2[k] = values[o + 2]; prev[k] = values[o + 3];
+    }
+    for (let i = 0; i < 4; i++) out[at + n + i] = f32(values[i] + f32(values[4 + i] + values[8 + i]));
+  }
+  for (; n < count; n++) scalar();
+}
+
+function blurVertical(input, out, at, count, stride) {
+  const N = GAUSS.radius, [n1, n3, n5] = G_N, [d1, d3, d5] = G_D;
+  let a1 = 0, b1 = 0, a3 = 0, b3 = 0, a5 = 0, b5 = 0;
+  for (let n = -N + 1; n < count; n++) {
+    const top = n - N - 1, bottom = n + N - 1;
+    const sum = f32((top >= 0 ? input[at + top * stride] : 0) + (bottom < count ? input[at + bottom * stride] : 0));
+    const o1 = f32(n1 * sum + f32(-d1 * a1 - b1)), o3 = f32(n3 * sum + f32(-d3 * a3 - b3)), o5 = f32(n5 * sum + f32(-d5 * a5 - b5));
+    b1 = a1; a1 = o1; b3 = a3; a3 = o3; b5 = a5; a5 = o5;
+    if (n >= 0) out[at + n * stride] = f32(o1 + f32(o3 + o5));
+  }
+}
+
+export function s2Blur(plane, width, height, out = new Float32Array(plane.length), temp = new Float32Array(plane.length)) {
+  for (let y = 0; y < height; y++) blurHorizontal(plane, temp, y * width, width);
+  for (let x = 0; x < width; x++) blurVertical(temp, out, x, height, width);
   return out;
+}
+
+const rootBits = new DataView(new ArrayBuffer(4));
+function cubeRootBias(x) {
+  const third = f32(1 / 3), fourThirds = f32(4 / 3), xa3 = f32(third * x);
+  rootBits.setFloat32(0, x, true);
+  const exponent = rootBits.getInt32(0, true);
+  rootBits.setInt32(0, exponent === 0 ? 0 : 0x54800000 - (exponent >> 23) * 0x002aaaaa, true);
+  let r = rootBits.getFloat32(0, true);
+  for (let i = 0; i < 3; i++) { const r2 = f32(r * r); r = f32(-xa3 * f32(r2 * r2) + f32(fourThirds * r)); }
+  let r2 = f32(r * r);
+  r = f32(third * f32(-x * f32(r2 * r2) + r) + r); r2 = f32(r * r);
+  return f32(r2 * x - BIAS_ROOT);
 }
 
 export function positiveXYB(linear, pixels) {
   const out = [new Float32Array(pixels), new Float32Array(pixels), new Float32Array(pixels)], [r, g, b] = linear, m = S2_OPSIN;
   for (let i = 0; i < pixels; i++) {
-    const l = exactCbrt(Math.max(0, m[0] * r[i] + m[1] * g[i] + m[2] * b[i] + S2_BIAS)) - BIAS_ROOT;
-    const mm = exactCbrt(Math.max(0, m[3] * r[i] + m[4] * g[i] + m[5] * b[i] + S2_BIAS)) - BIAS_ROOT;
-    const s = exactCbrt(Math.max(0, m[6] * r[i] + m[7] * g[i] + m[8] * b[i] + S2_BIAS)) - BIAS_ROOT;
-    const X = 0.5 * (l - mm), Y = 0.5 * (l + mm);
-    out[0][i] = X * 14 + 0.42; out[1][i] = Y + 0.01; out[2][i] = (s - Y) + 0.55;
+    const red = f32(r[i]), green = f32(g[i]), blue = f32(b[i]);
+    const l = cubeRootBias(Math.max(0, f32(m[0] * red + f32(m[1] * green + f32(m[2] * blue + S2_BIAS)))));
+    const mm = cubeRootBias(Math.max(0, f32(m[3] * red + f32(m[4] * green + f32(m[5] * blue + S2_BIAS)))));
+    const s = cubeRootBias(Math.max(0, f32(m[6] * red + f32(m[7] * green + f32(m[8] * blue + S2_BIAS)))));
+    const X = f32(0.5 * f32(l - mm)), Y = f32(0.5 * f32(l + mm));
+    out[0][i] = X * 14 + f32(0.42); out[1][i] = Y + f32(0.01); out[2][i] = f32(s - Y) + f32(0.55);
   }
   return out;
 }
 
 export function downsample(planes, width, height) {
-  const w = (width + 1) >> 1, h = (height + 1) >> 1, out = planes.map(() => new Float64Array(w * h));
+  const w = (width + 1) >> 1, h = (height + 1) >> 1, out = planes.map(() => new Float32Array(w * h));
   for (let c = 0; c < planes.length; c++) {
     const p = planes[c], o = out[c];
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       const x0 = 2 * x, y0 = 2 * y, x1 = Math.min(x0 + 1, width - 1), y1 = Math.min(y0 + 1, height - 1);
-      o[y * w + x] = 0.25 * (p[y0 * width + x0] + p[y0 * width + x1] + p[y1 * width + x0] + p[y1 * width + x1]);
+      o[y * w + x] = 0.25 * f32(f32(f32(p[y0 * width + x0] + p[y0 * width + x1]) + p[y1 * width + x0]) + p[y1 * width + x1]);
     }
   }
   return {planes: out, width: w, height: h};
@@ -105,13 +204,36 @@ export function linearFromRGBA(rgba, pixels) {
   return planes;
 }
 
+/** Native metric transfer; with background, composite in encoded sRGB first. */
+export function linearForSsimulacra2(rgba, pixels, background) {
+  const planes = [new Float32Array(pixels), new Float32Array(pixels), new Float32Array(pixels)];
+  const norm = f32(1 / 255), bg = f32(background);
+  for (let i = 0; i < pixels; i++) {
+    const alpha = f32(rgba[i * 4 + 3] * norm), other = f32(f32(1 - alpha) * bg);
+    for (let c = 0; c < 3; c++) planes[c][i] = background === undefined ? S2_LINEAR[rgba[i * 4 + c]]
+      : referenceLinear(f32(f32(alpha * f32(rgba[i * 4 + c] * norm)) + other));
+  }
+  return planes;
+}
+
+/** Model the reference tool's alpha handling for a linear reconstruction. */
+export function compositeForSsimulacra2(linear, rgba, pixels, background) {
+  const planes = [new Float32Array(pixels), new Float32Array(pixels), new Float32Array(pixels)];
+  const norm = f32(1 / 255), bg = f32(background);
+  for (let i = 0; i < pixels; i++) {
+    const alpha = f32(rgba[i * 4 + 3] * norm), other = f32(f32(1 - alpha) * bg);
+    for (let c = 0; c < 3; c++) planes[c][i] = referenceLinear(f32(f32(alpha * referenceEncoded(linear[c][i])) + other));
+  }
+  return planes;
+}
+
 export function ssimulacra2(reference, distorted, width, height, {wantMap = false} = {}) {
   let a = reference, b = distorted, w = width, h = height;
   const norms = [], map = wantMap ? new Float64Array(width * height) : null, scaleMaps = [];
   for (let scale = 0; scale < SCALES; scale++) {
     if (w < 8 || h < 8) break;
     if (scale) { const da = downsample(a, w, h), db = downsample(b, w, h); a = da.planes; b = db.planes; w = da.width; h = da.height; }
-    const n = w * h, x1 = positiveXYB(a, n), x2 = positiveXYB(b, n), temp = new Float64Array(n), mul = new Float64Array(n);
+    const n = w * h, x1 = positiveXYB(a, n), x2 = positiveXYB(b, n), temp = new Float32Array(n), mul = new Float32Array(n);
     const per = {ssim: new Float64Array(6), edge: new Float64Array(12)}, local = wantMap ? [] : null;
     for (let c = 0; c < 3; c++) {
       const p1 = x1[c], p2 = x2[c];
@@ -125,11 +247,11 @@ export function ssimulacra2(reference, distorted, width, height, {wantMap = fals
       const d = wantMap ? new Float64Array(n) : null, art = wantMap ? new Float64Array(n) : null, lost = wantMap ? new Float64Array(n) : null;
       let ss1 = 0, ss4 = 0, a1 = 0, a4 = 0, l1 = 0, l4 = 0;
       for (let i = 0; i < n; i++) {
-        const m1 = mu1[i], m2 = mu2[i], numM = 1 - (m1 - m2) * (m1 - m2);
-        const numS = 2 * (s12[i] - m1 * m2) + C2, denS = (s11[i] - m1 * m1) + (s22[i] - m2 * m2) + C2;
-        const e = Math.max(0, 1 - numM * numS / denS);
+        const m1 = mu1[i], m2 = mu2[i], numM = f32(1 - f32(m1 - m2) * f32(m1 - m2));
+        const numS = f32(2 * f32(s12[i] - f32(m1 * m2)) + C2), denS = f32(f32(f32(s11[i] - f32(m1 * m1)) + f32(s22[i] - f32(m2 * m2))) + C2);
+        const e = Math.max(0, 1 - f32(f32(numM * numS) / denS));
         ss1 += e; ss4 += e * e * e * e;
-        const d1 = (1 + Math.abs(p2[i] - m2)) / (1 + Math.abs(p1[i] - m1)) - 1, artifact = Math.max(d1, 0), detail = Math.max(-d1, 0);
+        const d1 = (1 + Math.abs(f32(p2[i] - m2))) / (1 + Math.abs(f32(p1[i] - m1))) - 1, artifact = Math.max(d1, 0), detail = Math.max(-d1, 0);
         a1 += artifact; a4 += artifact * artifact * artifact * artifact; l1 += detail; l4 += detail * detail * detail * detail;
         if (wantMap) { d[i] = e; art[i] = artifact; lost[i] = detail; }
       }

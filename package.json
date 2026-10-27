@@ -1,27 +1,27 @@
 {
   "name": "rapier-jxl",
   "version": "6.1.1",
-  "description": "JPEG XL encoder in pure JavaScript. Great for single-file HTML apps, photography tools and agent image workflows.",
+  "description": "JPEG XL for captures, photographs and embedders. Small JavaScript encoders, private workers, exact pixels.",
   "license": "MIT",
   "type": "module",
-  "main": "./src/index.mjs",
-  "types": "./src/index.d.mts",
+  "main": "./src/capture.mjs",
+  "types": "./src/capture.d.mts",
   "exports": {
     ".": {
-      "types": "./src/index.d.mts",
-      "default": "./src/index.mjs"
+      "types": "./src/capture.d.mts",
+      "default": "./src/capture.mjs"
     },
     "./core": {
       "types": "./src/index.d.mts",
       "default": "./src/index.mjs"
     },
     "./min": {
-      "types": "./src/index.d.mts",
-      "default": "./dist/rapier-jxl.min.mjs"
+      "types": "./src/capture.d.mts",
+      "default": "./dist/capture.min.mjs"
     },
     "./core/min": {
       "types": "./src/index.d.mts",
-      "default": "./dist/rapier-jxl.min.mjs"
+      "default": "./dist/core.min.mjs"
     },
     "./jpeg": {
       "types": "./src/jpeg.d.mts",
@@ -32,15 +32,15 @@
       "default": "./dist/jpeg.min.mjs"
     },
     "./photo": {
-      "types": "./src/photo.d.mts",
-      "default": "./src/photo.mjs"
+      "types": "./src/photo-entry.d.mts",
+      "default": "./src/photo-entry.mjs"
     },
     "./score": {
       "types": "./src/score.d.mts",
       "default": "./src/score.mjs"
     },
     "./photo/min": {
-      "types": "./src/photo.d.mts",
+      "types": "./src/photo-entry.d.mts",
       "default": "./dist/photo.min.mjs"
     },
     "./photo-advanced": {
@@ -256,21 +256,33 @@
       "types": "./src/image.d.mts",
       "default": "./dist/image.min.mjs"
     },
-    "./rapier": {
-      "types": "./src/rapier.d.mts",
-      "default": "./src/rapier.mjs"
+    "./capture": {
+      "types": "./src/capture.d.mts",
+      "default": "./src/capture.mjs"
     },
-    "./rapier/min": {
-      "types": "./src/rapier.d.mts",
-      "default": "./dist/rapier.min.mjs"
+    "./capture/min": {
+      "types": "./src/capture.d.mts",
+      "default": "./dist/capture.min.mjs"
     },
-    "./rapier/worker": {
-      "types": "./src/rapier-worker.d.mts",
-      "default": "./dist/rapier-worker.js"
+    "./capture/worker": {
+      "types": "./src/worker-entry.d.mts",
+      "default": "./dist/capture-worker.js"
     },
-    "./rapier/still-worker": {
-      "types": "./src/rapier-worker.d.mts",
-      "default": "./dist/rapier-still-worker.js"
+    "./photo/worker": {
+      "types": "./src/worker-entry.d.mts",
+      "default": "./dist/photo-worker.js"
+    },
+    "./full": {
+      "types": "./src/full.d.mts",
+      "default": "./src/full.mjs"
+    },
+    "./full/min": {
+      "types": "./src/full.d.mts",
+      "default": "./dist/full.min.mjs"
+    },
+    "./full/worker": {
+      "types": "./src/worker-entry.d.mts",
+      "default": "./dist/full-worker.js"
     }
   },
   "files": [
@@ -283,13 +295,14 @@
     "LICENSE",
     "README.md",
     "llms.txt",
-    ".github/CONTRIBUTING.md"
+    ".github/CONTRIBUTING.md",
+    "LICENSE.libjxl"
   ],
   "sideEffects": [
     "./src/wasm.mjs",
     "./dist/wasm.min.mjs",
-    "./dist/rapier-worker.js",
-    "./dist/rapier-still-worker.js"
+    "./src/*-worker.mjs",
+    "./dist/*-worker.js"
   ],
   "engines": {
     "node": ">=18"
@@ -316,9 +329,21 @@
     "browser"
   ],
   "scripts": {
-    "build:kernels": "node kernels/build.mjs"
+    "build:kernels": "node kernels/build.mjs",
+    "build": "node build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:types": "tsc --noEmit --strict --module nodenext --target es2022 --lib es2022,dom test/contract-types.mts",
+    "test:snapdom": "vitest run --config examples/snapdom/vitest.config.mjs",
+    "prepack": "npm run build"
   },
   "devDependencies": {
-    "wabt": "1.0.39"
+    "wabt": "1.0.39",
+    "esbuild": "0.28.2",
+    "terser": "5.44.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.12",
+    "@vitest/browser-playwright": "4.1.12",
+    "playwright": "1.55.1",
+    "vite": "8.3.5"
   }
 }
