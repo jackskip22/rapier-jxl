@@ -5,7 +5,7 @@ import {encodeCapture} from 'rapier-jxl/capture';
 const bytes = await encodeCapture(rgba, width, height);
 ```
 
-`encodeCapture` is lossless. On a document it runs in a worker. Flat UI uses one context-model pass and a patch pass, and keeps the smaller file; that is the effort 7 screen result on the measured dashboards, without the rest of the ladder. A photograph falls through to the core exact encode. Lossy quality is not used: on UI it was the larger file.
+`encodeCapture` is lossless. On a document it runs in a worker, one capture at a time. A page of up to 16,384 colours is a palette plus one SIMD context-model pass. Above that, a flat page uses the same pass on the colour channels, and a photograph falls through to the core exact encode. `nearLossless: true` may move high-contrast samples by `maxColorError` (default 6) and is kept only when the file is smaller. Lossy photographic quality is not used.
 
 ```js
 import {encode} from 'rapier-jxl/effort';

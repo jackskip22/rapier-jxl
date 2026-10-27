@@ -54,6 +54,24 @@ test('a capture worker returns the same bytes', async () => {
   assert.deepEqual(bytes, inline);
 });
 
+test('several thousand colours stay lossless, and near-lossless is never larger', () => {
+  const width = 320, height = 180, pixels = ui(width, height);
+  for (let i = 0; i < 5000; i++) {
+    const at = i * 4;
+    pixels[at] = i & 255;
+    pixels[at + 1] = (i >> 8) & 255;
+    pixels[at + 2] = (i * 13) & 255;
+    pixels[at + 3] = 255;
+  }
+  const before = pixels.slice();
+  const exact = encodeCaptureBytes(pixels, width, height);
+  const near = encodeCaptureBytes(pixels, width, height, {nearLossless: true, maxColorError: 6});
+  assert.deepEqual(pixels, before);
+  assert.deepEqual([...exact.subarray(0, 2)], SIGNATURE);
+  assert.ok(near.length <= exact.length);
+  assert.throws(() => encodeCaptureBytes(pixels, width, height, {maxColorError: 0}), error => error.code === 'JXL_INPUT');
+});
+
 test('unknown capture options are refused', async () => {
   await assert.rejects(encodeCapture(ui(8, 8), 8, 8, {worker: false, quality: 90}), error => error.code === 'JXL_INPUT');
 });

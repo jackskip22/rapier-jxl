@@ -194,13 +194,13 @@ allocate the largest image. [Precision, bounds and limits](API.md).
 
 | File in `dist/` | Bytes | gzip | Brotli |
 | --- | ---: | ---: | ---: |
-| `rapier-still-worker.js` | 392,929 | 149,572 | 123,975 |
-| `rapier-worker.js` | 578,260 | 214,332 | 174,004 |
-| `rapier.min.mjs` | 578,601 | 214,402 | 174,163 |
+| `rapier-still-worker.js` | 374,320 | 141,078 | 117,943 |
+| `rapier-worker.js` | 552,100 | 201,953 | 165,374 |
+| `rapier.min.mjs` | 552,134 | 201,807 | 165,237 |
 | `rapier-jxl.min.mjs` | 71,567 | 28,920 | 25,560 |
 | `effort.min.mjs` | 205,204 | 78,503 | 66,922 |
 | `wasm.min.mjs` | 227,681 | 88,190 | 74,854 |
-| `jpeg.min.mjs` | 83,068 | 32,866 | 28,652 |
+| `jpeg.min.mjs` | 83,013 | 32,909 | 28,670 |
 | `photo.min.mjs` | 158,152 | 60,943 | 52,486 |
 | `jpeg-ans.min.mjs` | 114,214 | 44,543 | 38,631 |
 | `photo-ans.min.mjs` | 158,052 | 60,898 | 52,491 |
@@ -209,8 +209,7 @@ allocate the largest image. [Precision, bounds and limits](API.md).
 | All self-contained entry points in one bundle | 586,659 | 215,724 | 174,975 |
 | All readable modules in `src/` | 1,085,141 | 291,251 | |
 
-Release 6.1.0, Terser 5.51.2, Node v22.23.4, gzip 9 and Brotli 11. Exact byte counts, import graphs, hashes
-and incremental sizes are in [dist/sizes.json](../../dist/sizes.json). Encoding builds are checked against their
+The still worker, complete worker, complete module and JPEG rows above were rebuilt from this branch (Terser 5.51.2, gzip 9, Brotli 11). Against the previous bundles that is gzip −8,494, −12,379, −12,595 and +43. [dist/sizes.json](../../dist/sizes.json) is still the 6.1.0 receipt for the other rows. Encoding builds are checked against their
 readable entries on encoded-byte fixtures and native integer/float cases with HDR and alpha declarations. The metadata
 build is checked against its readable entry for identical container bytes.
 [Measured encoder comparisons](../ENCODER-COMPARISON.md).

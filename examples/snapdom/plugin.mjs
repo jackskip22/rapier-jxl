@@ -17,7 +17,11 @@ export function jxl() {
           });
           const context = canvas.getContext('2d', {willReadFrequently: true});
           const {data, width, height} = context.getImageData(0, 0, canvas.width, canvas.height);
-          const bytes = await encodeCapture(data, width, height, {signal: opts.signal});
+          const bytes = await encodeCapture(data, width, height, {
+            signal: opts.signal,
+            nearLossless: opts.nearLossless === true,
+            ...(opts.maxColorError !== undefined ? {maxColorError: opts.maxColorError} : {}),
+          });
           return new Blob([bytes], {type: 'image/jxl'});
         },
       };

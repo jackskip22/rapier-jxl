@@ -4,7 +4,7 @@ import {fault} from './admit.mjs';
 
 export {LIMITS};
 
-const allowed = new Set(['signal', 'worker']);
+const allowed = new Set(['signal', 'worker', 'nearLossless', 'maxColorError']);
 let pool;
 
 function fail(code, message) { return Object.assign(new Error(message), {code}); }
@@ -43,7 +43,7 @@ function endpoint() {
 }
 
 const owned = new WeakMap();
-function post(thread, pixels, width, height, signal) {
+function post(thread, pixels, width, height, options) {
   let slot = owned.get(thread);
   if (!slot) {
     let next = 0;
@@ -62,8 +62,8 @@ function post(thread, pixels, width, height, signal) {
     });
     owned.set(thread, slot);
   }
-  if (signal?.aborted) return Promise.reject(fail('JXL_ABORTED', 'JPEG XL encoding was canceled.'));
-  return slot({operation: 'capture', width, height, data: pixels});
+  if (options.signal?.aborted) return Promise.reject(fail('JXL_ABORTED', 'JPEG XL encoding was canceled.'));
+  return slot({operation: 'capture', width, height, data: pixels, nearLossless: options.nearLossless, maxColorError: options.maxColorError});
 }
 
 function inline(data, width, height, options) {
@@ -77,6 +77,6 @@ export async function encodeCapture(data, width, height, options = {}) {
   const onWorker = options.worker !== false && (options.worker || typeof document !== 'undefined');
   if (!onWorker || typeof Worker === 'undefined') return inline(data, width, height, options);
   const pixels = own(data);
-  if (options.worker instanceof Worker) return post(options.worker, pixels, width, height, options.signal);
-  return endpoint()({operation: 'capture', width, height, data: pixels, signal: options.signal}, [pixels.buffer]);
+  if (options.worker instanceof Worker) return post(options.worker, pixels, width, height, options);
+  return endpoint()({operation: 'capture', width, height, data: pixels, signal: options.signal, nearLossless: options.nearLossless, maxColorError: options.maxColorError}, [pixels.buffer]);
 }

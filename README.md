@@ -8,7 +8,7 @@ The core and the search are different encoders. The core is the 29 KB one. The f
 | --- | ---: | --- |
 | Core · `rapier-jxl` | 28,920 | Fast lossless, and lossy photographs at effort 1. On 24 Kodak photos at SSIMULACRA2 80 this entry is about **1.3% larger** than `cjxl -e 7`. |
 | Effort · `rapier-jxl/effort` | 78,503 | The search in the table below. Effort 7 on those Kodak photos is about **8.2% smaller** than `cjxl -e 7` at SSIMULACRA2 80. At 12 MP that same effort is about **4.5% larger**. |
-| Capture · `rapier-jxl/capture` | screen coder, not a second core | Lossless screen captures. One context-model pass and a patch pass, then the smaller file. It does not run the effort 7 ladder. |
+| Capture · `rapier-jxl/capture` | screen coder, not a second core | Lossless screen captures, with an optional near-lossless setting. One SIMD context-model pass. It does not run the effort 7 ladder. |
 
 | Same visual quality, 24 Kodak photos | Entry | Against |
 | --- | --- | --- |
@@ -33,21 +33,29 @@ import {encodeCapture} from 'rapier-jxl/capture';
 const bytes = await encodeCapture(rgba, width, height); // lossless JPEG XL
 ```
 
-On a document this runs in a module worker, one capture at a time. `worker: false` encodes on the caller. The result is exact. Flat UI takes the fast context model; repeated text takes patch matching; a photograph, or anything those passes do not shrink, takes the core exact encode.
+On a document this runs in a module worker, one capture at a time. `worker: false` encodes on the caller. The result is exact unless `nearLossless: true`. A page of up to 16,384 colours uses a palette and the SIMD context model. A flat gradient above that uses the same model on the colour channels. A photograph uses the core exact encode. The exact encode is skipped when a coarse residual estimate already shows the screen file is smaller.
 
-Lossy quality 90 is the wrong tool for a screenshot: on the measured dashboard it was larger than lossless. Capture does not use it.
+Antialiased text was the mixed-page loss. Hacker News, GitHub, MDN and the chart page each have 4,300–10,400 colours, over the old 4,096-colour palette, so the previous capture wrote three residual channels and landed around 210 KB. The capture palette now holds 16,384 colours. Those pages encode as one index plane.
 
-A full-HD dashboard drawn here (PNG 145 KB, WebP quality 90 at 86 KB):
+`nearLossless` moves only high-contrast samples, by at most `maxColorError` (default 6). Flat colour and gradients stay exact. The smaller of the two files is returned. On the pages below that score is about 87–93 SSIMULACRA2.
 
-| Encode | Bytes | Time |
-| --- | ---: | ---: |
-| Core lossless, effort 1 | 90,082 | 290 ms |
-| Capture | 32,942 | about 0.9 s |
-| Effort 7 lossless | 32,843 | 7.5 s |
+Times are a warm Node process on this machine. A fresh process spends about 140–160 ms on the first full-HD frame, including the kernel compile. The worker encodes a blank 64×64 frame at load. WebP quality 90 below is the file size; the 135 ms figure is the earlier Chrome encode of a different dashboard, not a fresh timing of each of these pages.
 
-Capture matched the effort 7 file. The 0.9 s includes the exact encode it compares against, so the result is never larger than effort 1. WebP was 86 KB. djxl decoded the capture back to the same pixels. A denser text page (PNG 196 KB, WebP 203 KB) was 23,847 bytes in 0.8 s, against effort 7 at 19,186 bytes in 7.7 s: about 24% larger than effort 7, and still far under WebP. A text-heavy browser screenshot does not always beat WebP. Hacker News was 213 KB lossless against a 139 KB WebP, and effort 7 was 186 KB, so lossless JPEG XL does not win that page.
+| Full HD | PNG | WebP q90 | Lossless | Warm | Near-lossless | Warm | Score |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Drawn dashboard | 145 KB | 86 KB | 34,641 | 99 ms | 28,672 | 0.41 s | 89.7 |
+| Dense text | 196 KB | 203 KB | 38,311 | 85 ms | 34,529 | 0.38 s | 90.4 |
+| example.com | 91 KB | 56 KB | 52,599 | 71 ms | 39,833 | 0.31 s | 92.5 |
+| Hacker News | 244 KB | 139 KB | 98,752 | 78 ms | 86,679 | 0.33 s | 89.7 |
+| GitHub | 232 KB | 138 KB | 124,464 | 81 ms | 93,071 | 0.33 s | 89.9 |
+| GitHub, dark | 232 KB | 130 KB | 126,565 | 83 ms | 96,381 | 0.33 s | 92.8 |
+| MDN | 251 KB | 163 KB | 146,913 | 82 ms | 120,288 | 0.33 s | 90.3 |
+| Chart.js docs | 214 KB | 160 KB | 111,485 | 76 ms | 96,785 | 0.35 s | 90.4 |
+| Drawn gradient | 214 KB | 62 KB | 149,331 | 108 ms | 126,805 | 0.41 s | 87.4 |
 
-The reference from snapdom 3.4.0, a different full-HD dashboard: PNG 402 KB in 41 ms, WebP 135 KB in 135 ms, lossless effort 1 at 221 KB in 76 ms, effort 3 at 177 KB in 518 ms, effort 7 at 49 KB in 4.0 s. Capture is aimed at that effort 7 size without the 4 second ladder. It was not re-run on those exact pixels.
+djxl restored every lossless file to the same pixels. The drawn dashboard is 5.5% larger than its effort 7 screen file (32,843 bytes, 7.5 s). Dense text is 38,311 bytes; the patch pass that reached 19,186 bytes took about a second and is not on this path. The drawn gradient has 27,263 colours, so it misses the palette. Lossy WebP is smaller there, and the near-lossless file is still larger than that WebP. A 4K version of the same gradient was 469,991 bytes in 0.36 s, against a 740 KB PNG.
+
+The reference from snapdom 3.4.0, a different full-HD dashboard: PNG 402 KB in 41 ms, WebP 135 KB in 135 ms, lossless effort 1 at 221 KB in 76 ms, effort 3 at 177 KB in 518 ms, effort 7 at 49 KB in 4.0 s. Those pixels were not in this run. Kodak kodim01 stays on the core exact encode: 531,645 bytes either way.
 
 ## Encode pixels to a score
 
@@ -83,19 +91,19 @@ For one offline HTML file, embed the worker as text ([example](docs/reference/AR
 
 | Build / import | Gzip bytes | Capabilities |
 | --- | ---: | --- |
-| **Still worker** · `rapier-jxl/rapier/still-worker` | 149,572 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel lossless groups. No animation. |
-| **Complete worker** · `rapier-jxl/rapier/worker` | 214,332 | Everything in the still worker, plus animation and the other format writers. |
-| Complete module · `rapier-jxl/rapier/min` | 214,402 | The complete system with an encoder factory and worker installer. |
-| Image · `rapier-jxl/image/min` | 1,184 | One call from a page: a file, bitmap, image data or canvas in, an `image/jxl` Blob out, through either worker. |
+| **Still worker** · `rapier-jxl/rapier/still-worker` | 141,078 | Core + effort 1–9, optional WASM, Photo, JPEG transcoding and parallel lossless groups. No animation. |
+| **Complete worker** · `rapier-jxl/rapier/worker` | 201,953 | Everything in the still worker, plus animation and the other format writers. |
+| Complete module · `rapier-jxl/rapier/min` | 201,807 | The complete system with an encoder factory and worker installer. |
+| Image · `rapier-jxl/image/min` | 1,253 | One call from a page: a file, bitmap, image data or canvas in, an `image/jxl` Blob out, through either worker. |
 | Core · `rapier-jxl/min` | 28,920 | Lossless or lossy typed RGBA, native precision, HDR and exact alpha. Effort 1. |
 | Effort · `rapier-jxl/effort/min` | 78,503 | Core with lossless compression search, efforts 1–9. Default effort 1. |
 | WASM · `rapier-jxl/wasm/min` | 88,190 | Effort with inlined WASM and JavaScript fallback. |
 | Photo · `rapier-jxl/photo/min` | 60,943 | Lossy photographs from RGBA pixels. Default effort 1: the same picture as higher efforts, a larger file. |
-| JPEG · `rapier-jxl/jpeg/min` | 32,866 | Existing JPEGs, preserving admitted coefficients and orientation. Default effort 1. |
+| JPEG · `rapier-jxl/jpeg/min` | 32,909 | Existing JPEGs, preserving admitted coefficients and orientation. Default effort 1. |
 | Metadata · `rapier-jxl/metadata/min` | 12,592 | Attach, replace or remove caller-supplied Exif/XMP. |
 | Animation · `rapier-jxl/animation/min` | 86,778 | Animated JPEG XL from frames: only changed rectangles stored, exact timing, lossless or lossy. |
 
-`transcode()` and, from source, the worker both default JPEG to effort 1. The worker's pixel default is still quality 90 and effort 7. On a 12 MP JPEG made by upscaling Kodak, ANS effort 1 took 0.59 s and effort 7 took 2.0 s, for a 4% smaller file. libjxl on a harder 12 MP JPEG was reported at 0.36 s against Rapier's 3.0 s at effort 7. That gap is not closed. The prebuilt `dist/rapier-still-worker.js` and `dist/rapier-worker.js` are the previous bundles: they still default JPEG to effort 7, and they still accept a software WebGPU adapter. Both are fixed in source (`src/worker.mjs`, `src/rapier-still.mjs`, `src/gpu-core.mjs`), not by editing those bundles.
+`transcode()` and the worker both default JPEG to effort 1. The worker's pixel default is still quality 90 and effort 7. On a 12 MP JPEG made by upscaling Kodak, ANS effort 1 took 0.59 s and effort 7 took 2.0 s, for a 4% smaller file. libjxl on a harder 12 MP JPEG was reported at 0.36 s against Rapier's 3.0 s at effort 7. That gap is not closed. The prebuilt workers are rebuilt from this source: JPEG effort 1, no software WebGPU adapter, and `toJXL` calls on one worker run in turn. Gzip deltas are in the pull request.
 
 Peak resident set on the full-HD dashboard, one Node process: capture 118 MB, effort 7 lossless 231 MB. The 778–876 MB figure against vips at 577 MB was a 12 MP encode and was not improved here.
 
