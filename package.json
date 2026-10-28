@@ -4,6 +4,27 @@
  "type": "module",
  "license": "MIT",
  "description": "JPEG XL for pictures, captures and exact JPEG reconstruction.",
+ "repository": {
+  "type": "git",
+  "url": "git+https://github.com/jackskip22/rapier-jxl.git"
+ },
+ "homepage": "https://github.com/jackskip22/rapier-jxl#readme",
+ "bugs": {
+  "url": "https://github.com/jackskip22/rapier-jxl/issues"
+ },
+ "keywords": [
+  "jpeg-xl",
+  "jxl",
+  "jpegxl",
+  "encoder",
+  "image-compression",
+  "lossless",
+  "lossy",
+  "jpeg",
+  "hdr",
+  "webassembly",
+  "browser"
+ ],
  "exports": {
   ".": {
    "types": "./types/index.d.mts",
