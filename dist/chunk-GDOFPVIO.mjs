@@ -1,0 +1,2 @@
+/*! rapier-jxl 7.1.0 | MIT */
+import{a as o}from"./chunk-NCIWO4K3.mjs";var r=1,t=7;function e(t={},e=r){if(t===null||typeof t!="object")throw o("JXL_INPUT","Options are an object.");let f=t.effort===void 0?e:t.effort;if(!Number.isInteger(f)||f<1||f>9)throw o("JXL_INPUT","Effort is a whole number from 1 to 9.");return f}export{r as a,t as b,e as c};

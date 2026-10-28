@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {BitWriter, packSigned} from './bits.mjs';
 import {fault} from './fault.mjs';
+import {writeImageHeader as writeHeader} from './frame.mjs';
 import {buildCode, countToken, uintConfig, writeHistograms, writeHybrid} from './prefix.mjs';
 import {screenMatches} from './screen-lz77.mjs';
 import {inspectICC} from './icc-profile.mjs';
@@ -163,4 +164,8 @@ function namedHeader(fields) {
   if (fields.gamma) colorData.write(24, Math.round(fields.gamma * 1e7)); else colorData.writeU32(ICC_ENUM, fields.transfer);
   colorData.writeU32(ICC_ENUM, fields.intent);
   return {colorData, iccData: null};
+}
+
+export function writeImageHeader(w, width, height, colour, alpha, options = {}) {
+  return writeHeader(w, width, height, colour, alpha, options, headerOf);
 }

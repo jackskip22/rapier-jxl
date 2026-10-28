@@ -1,13 +1,15 @@
 // Rapier's JPEG XL encoder: lossless pictures. MIT (images/jxl/LICENSE).
 import {kernelHooks} from './kernel-hooks.mjs';
 import {BitWriter, complete, part} from './bits.mjs';
-import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, groupPass, assembleCodestream, GROUP_DIM} from './frame.mjs';
+import {writeModularFrameHeader, groupLayout, groupRect, groupPass, assembleCodestream, GROUP_DIM} from './frame.mjs';
+import {writeImageHeader} from './icc-write.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
-import {AVERAGE_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, RESIDUAL_CONFIG, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
+import {AVERAGE_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, RESIDUAL_CONFIG, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
+import {codeChannel} from './modular-channel.mjs';
 import {losslessCoding} from './lossless-coding.mjs';
-import {admitSampleFormat} from './admit.mjs';
+import {admitSampleFormat} from './admit-samples.mjs';
 
-const MAX_PALETTE = 2048;
+const MAX_PALETTE = 2048, PROBE_BITS = 13, PROBE_SIZE = 1 << PROBE_BITS;
 
 export const shapeFloors = new WeakMap();
 
@@ -33,17 +35,18 @@ export function inspectPixels(rgba, width, height, {palette: wantPalette = true,
     } else for (let i = p * 4 + 3; p < pixels; p++, i += 4) if (rgba[i] !== 255) { opaque = false; break; }
   }
   const colour = grey ? 1 : 3, alpha = !opaque, channels = colour + (alpha ? 1 : 0);
-  const key = i => paletteKey(rgba, i, grey, alpha);
-  const seen = new Map();
+  const table = wantPalette ? new Uint32Array(PROBE_SIZE) : null, entries = [];
   let palette = null;
   for (let i = 0, p = 0; wantPalette && p < pixels; p++, i += 4) {
-    const k = key(i);
-    if (k === 0 || seen.has(k)) continue;
-    seen.set(k, 1);
-    if (seen.size >= MAX_PALETTE) break;
+    const k = paletteKey(rgba, i, grey, alpha);
+    if (k === 0) continue;
+    let slot = Math.imul(k, 0x9e3779b1) >>> (32 - PROBE_BITS);
+    while (table[slot] !== 0 && table[slot] !== k) slot = (slot + 1) & (PROBE_SIZE - 1);
+    if (table[slot] === k) continue;
+    table[slot] = k; entries.push(k);
+    if (entries.length >= MAX_PALETTE) break;
   }
-  if (wantPalette && seen.size < MAX_PALETTE) {
-    const entries = [...seen.keys()];
+  if (wantPalette && entries.length < MAX_PALETTE) {
     const byte = (k, c) => (k >>> 8 * c) & 255;
     const weight = k => (0.299 * byte(k, 0) + 0.587 * byte(k, 1) + 0.114 * byte(k, 2) + 0.01) * (channels === 4 ? byte(k, 3) : 1);
     entries.sort((a, b) => weight(a) - weight(b));

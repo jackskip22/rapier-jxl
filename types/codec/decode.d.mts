@@ -12,9 +12,13 @@ export interface DecodeColorTarget {
 }
 export interface DecodeLimits {
   maxPixels: number;
+  /** Each side of the image and of every frame. */
+  maxDimension: number;
   maxSamples: number;
   /** Conservative budget for saved references, returned frames and the frame being rendered. */
   maxRetainedSamples: number;
+  /** Every frame's samples and canvas together, counted from the frame headers before any frame renders. */
+  maxTotalSamples: number;
   /** Bound samples plus evaluated Modular tree nodes within one frame. */
   maxModularWork: number;
   maxFrames: number;

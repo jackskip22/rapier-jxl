@@ -48,8 +48,8 @@ function curve(view,at,end,budget) {
   const tag=view.getUint32(at);
   if(tag===0x63757276) {
     const n=view.getUint32(at+8);has(12+n*2);
-    if(!n)return {read:x=>x,inverse:x=>x,bytes:12};
-    if(n===1){const g=view.getUint16(at+12)/256;requireDecode(g>0,'Invalid ICC curve gamma.');return {read:g===1?x=>x:x=>exactPow(Math.max(0,x),g),inverse:g===1?x=>x:x=>exactPow(Math.max(0,x),1/g),bytes:14};}
+    if(!n)return {read:x=>x,inverse:x=>x,bytes:12,formula:'identity'};
+    if(n===1){const g=view.getUint16(at+12)/256;requireDecode(g>0,'Invalid ICC curve gamma.');return {read:g===1?x=>x:x=>exactPow(Math.max(0,x),g),inverse:g===1?x=>x:x=>exactPow(Math.max(0,x),1/g),bytes:14,formula:'gamma '+g};}
     const table=budget.numbers(view,at+12,n,'u16');
     return {...sampledCurve(table),bytes:12+n*2};
   }
@@ -67,7 +67,7 @@ function curve(view,at,end,budget) {
     const boundary=read(cut);
     inverse=a>0&&low>=0?y=>y>=boundary?(exactPow(Math.max(0,y-add),1/g)-b)/a:low?(y-base)/low:0:null;
   }
-  return {read,inverse,bytes:12+4*count};
+  return {read,inverse,bytes:12+4*count,formula:'para '+form+' '+Array.from(p).join(' ')};
 }
 
 function curveStage(curves) {
@@ -220,7 +220,7 @@ export function readICCColor(icc,{intent,maxSamples=DEFAULT_ICC_SAMPLES,maxStage
   };
   const directForward=choose('D2B'),directReverse=choose('B2D');
   const forward=directForward||choose('A2B'),reverse=directReverse||choose('B2A');
-  const temp=new Float64Array(16),xyz=new Float64Array(3);let toPCS=null,fromPCS=null;
+  const temp=new Float64Array(16),xyz=new Float64Array(3);let toPCS=null,fromPCS=null,toModel=null,fromModel=null;
   if(forward){requireDecode(forward.inputs===channels&&forward.outputs===3,'ICC input transform channel count does not match.');toPCS=(v,out)=>decodePCS(forward.run(v,temp),pcs,forward.type,out);}
   if(reverse){requireDecode(reverse.inputs===3&&reverse.outputs===channels,'ICC output transform channel count does not match.');fromPCS=(v,out)=>reverse.run(encodePCS(v,pcs,reverse.type,xyz),out);}
   const readCurve=name=>{const tag=tags.get(name);return tag?curve(view,tag.offset,tag.offset+tag.length,budget):null;};
@@ -229,8 +229,9 @@ export function readICCColor(icc,{intent,maxSamples=DEFAULT_ICC_SAMPLES,maxStage
     const curves=['rTRC','gTRC','bTRC'].map(readCurve);
     if(columns.every(Boolean)&&curves.every(Boolean)) {
       const matrix=[0,1,2].flatMap(row=>columns.map(col=>col[row])),inv=inverse3(matrix);
-      if(!toPCS)toPCS=(v,out)=>{for(let c=0;c<3;c++)xyz[c]=curves[c].read(v[c]);return vector3(matrix,xyz,out);};
-      if(!fromPCS&&curves.every(c=>c.inverse))fromPCS=(v,out)=>{vector3(inv,v,xyz);for(let c=0;c<3;c++)out[c]=curves[c].inverse(xyz[c]);return out;};
+      const formula=curves.every(c=>c.formula);
+      if(!toPCS){toPCS=(v,out)=>{for(let c=0;c<3;c++)xyz[c]=curves[c].read(v[c]);return vector3(matrix,xyz,out);};if(formula)toModel={matrix,curves:curves.map(c=>c.read),keys:curves.map(c=>c.formula)};}
+      if(!fromPCS&&curves.every(c=>c.inverse)){fromPCS=(v,out)=>{vector3(inv,v,xyz);for(let c=0;c<3;c++)out[c]=curves[c].inverse(xyz[c]);return out;};if(formula)fromModel={matrix:inv,curves:curves.map(c=>c.inverse),keys:curves.map(c=>'inverse '+c.formula)};}
     }
   } else if(space==='GRAY'&&(!toPCS||!fromPCS)) {
     const c=readCurve('kTRC');
@@ -241,8 +242,9 @@ export function readICCColor(icc,{intent,maxSamples=DEFAULT_ICC_SAMPLES,maxStage
     requireDecode(white&&white.length>=20&&text(icc,white.offset)==='XYZ ','ICC absolute intent needs a media white point.');
     const scale=[0,1,2].map(c=>view.getInt32(white.offset+8+4*c)/65536/D50[c]);
     requireDecode(scale.every(v=>v>0),'Invalid ICC media white point.');
+    toModel=fromModel=null;
     if(toPCS&&!directForward){const relative=toPCS;toPCS=(v,out)=>{relative(v,out);for(let c=0;c<3;c++)out[c]*=scale[c];return out;};}
     if(fromPCS&&!directReverse){const relative=fromPCS,adjusted=new Float64Array(3);fromPCS=(v,out)=>{for(let c=0;c<3;c++)adjusted[c]=v[c]/scale[c];return relative(adjusted,out);};}
   }
-  const value={space,pcs,channels,toPCS,fromPCS,intent:selected};cache.set(icc,{intent,maxSamples,maxStages,value});return value;
+  const value={space,pcs,channels,toPCS,fromPCS,toModel,fromModel,intent:selected};cache.set(icc,{intent,maxSamples,maxStages,value});return value;
 }

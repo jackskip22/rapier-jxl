@@ -68,8 +68,8 @@ export type Quantization = Partial<Record<TransformName, QuantizationVectors | C
   & {dc?: ArrayLike<number> | undefined};
 export type Noise = false | 'photon' | {iso: number} | readonly number[] | Float32Array | Float64Array;
 export interface AdvancedPhotoOptions extends PhotoOptions {
-  /** Exact typed planes beside photographic color. Lossy VarDCT color uses eight-bit samples; quality 100
-   * delegates all admitted color precisions and alpha words to the shared exact encodeChannels owner.
+  /** Exact typed planes beside photographic color. Lossy VarDCT color uses eight-bit samples; at quality 100
+   * every color precision and alpha word is kept exactly, as encodeChannels keeps them.
    * Uses the same sample-word, metadata,
    * dimShift and upsampling contract as encodeChannels. If RGBA has transparency, its alpha is prepended;
    * the combined count is at most 256. Caller sample buffers are borrowed until the job completes and are

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 /** Exercise the actual offline demo, worker cancellation and restart. */
 import { serve } from './serve.mjs';
-// playwright-core, as every other harness uses (PLAYWRIGHT_MODULE overrides).
+// playwright-core, or the module PLAYWRIGHT_MODULE names.
 const playwright=await import(process.env.PLAYWRIGHT_MODULE || 'playwright-core'),{ chromium }=playwright.default ?? playwright;
 const {server,url}=await serve();
-// Chrome refuses its sandbox under root; a root run is a diagnostic, not a normal-sandbox result (the report says which).
+// Chrome refuses its sandbox when run as root, so a root run turns it off and says so.
 const uid=process.getuid?.(),launchArgs=uid===0?['--no-sandbox']:[],sandbox=launchArgs.length?'none (root)':'normal';
 const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM||undefined,args:launchArgs});
 const failures=[],blocked=[];

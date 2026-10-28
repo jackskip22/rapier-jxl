@@ -1,16 +1,17 @@
 // Optional WebAssembly kernels. MIT (images/jxl/LICENSE).
 import {kernelHooks} from './kernel-hooks.mjs';
+import {jpegKernels} from './jpeg-kernels.mjs';
 import {WEIGHTED_BUCKET} from './weighted-policy.mjs';
 import {BitWriter} from './bits.mjs';
 import {hybridToken} from './prefix.mjs';
 import {fault} from './admit.mjs';
 import {SCALAR, SIMD, SIMD_PROBE} from './kernels-bytes.mjs';
 
-export const {configureKernels, ensureKernels, kernelMode} = (() => {
+export const {configureKernels, ensureKernels, kernelMode, disableEntropyKernels} = (() => {
 const P = 65536, R = 327680, PROPERTY = 589824, CONTEXT = 851968;
 const OUTPUT = 1114128, TABLE = 1642496, SOURCE = 1769472, STATE = 2097152;
 const DIV = 16, WEIGHTS = 272, BUCKET = 16656, MAP = 20672, ALPHABET = 257;
-let engine, active = 'off', explicit = false;
+let engine, active = 'off', explicit = false, entropyAllowed = true;
 const decode = text => Uint8Array.from(atob(text), c => c.charCodeAt(0));
 const acceptablePlane = (p, w, h, offset, limit = 65536) => p instanceof Int16Array && Number.isInteger(w) && Number.isInteger(h) && w > 0 && h > 0 && w <= 16384 && w * h <= limit && p.length >= w * h && Number.isInteger(offset) && Math.abs(offset) <= 32768;
 const acceptableWriter = w => !w || (w instanceof BitWriter && w.write === BitWriter.prototype.write && w.grow === BitWriter.prototype.grow);
@@ -22,7 +23,7 @@ const GROUP_PLANES = [P, PROPERTY, CONTEXT, STATE];
 function createEngine() {
   const memory = new WebAssembly.Memory({initial: 48, maximum: 272});
   const names = new Map(Object.entries(new WebAssembly.Instance(new WebAssembly.Module(decode(SCALAR)), {env: {memory}}).exports));
-  const scalar = {residual: names.get('residual'), tokens: names.get('tokens'), fill: names.get('fill'), weighted: names.get('weighted'), screen: names.get('screen'), sampled: names.get('sampled')};
+  const scalar = {residual: names.get('residual'), tokens: names.get('tokens'), fill: names.get('fill'), weighted: names.get('weighted'), screen: names.get('screen'), sampled: names.get('sampled'), subtract: names.get('subtract')};
   const u8 = new Uint8Array(memory.buffer), i32 = new Int32Array(memory.buffer);
   for (let i = 0; i < 64; i++) i32[(DIV >> 2) + i] = Math.floor(16777216 / (i + 1));
   for (let most = 12; most <= 13; most++) for (let sum = 0; sum < 2048; sum++) {
@@ -34,7 +35,7 @@ function createEngine() {
 }
 
 function tokens(w, targets, count, contexts, config = PLAIN, rawLength = 0) {
-  tileTables = null; acClean = false; ansStamp = null; tileBand = null;
+  tileTables = null; acClean = false; ansStamp = null; tileBand = null; retainEpoch++;
   const {scalar, i32, u8} = engine, stride = rawLength || ALPHABET;
   if (!acceptableWriter(w) || !targets.length || targets.length > 34) return false;
   if (w) {
@@ -62,7 +63,7 @@ function tokens(w, targets, count, contexts, config = PLAIN, rawLength = 0) {
   return true;
 }
 function channel(w, target, plane, width, height, leaf, raw) {
-  tileTables = null; acClean = false; ansStamp = null; tileBand = null;
+  tileTables = null; acClean = false; ansStamp = null; tileBand = null; retainEpoch++;
   const config = leaf.config || PLAIN;
   if (!acceptablePlane(plane, width, height, leaf.offset) || leaf.multiplier !== 1 || !Number.isInteger(leaf.predictor) || leaf.predictor < 0 || leaf.predictor > 5 || !acceptableWriter(w) || !acceptableConfig(config)) return false;
   if (raw && (w || !(target instanceof Uint32Array) || target.length < 34 || target.length > RAW_BINS)) return false;
@@ -73,7 +74,7 @@ function channel(w, target, plane, width, height, leaf, raw) {
   return tokens(w, [target], n, 0, config, raw ? target.length : 0);
 }
 function weighted(w, targets, plane, width, height, offset, contextOf, residuals, properties) {
-  tileTables = null; acClean = false; ansStamp = null; tileBand = null;
+  tileTables = null; acClean = false; ansStamp = null; tileBand = null; retainEpoch++;
   if (!acceptablePlane(plane, width, height, offset, residuals ? 1048576 : 65536) || !acceptableWriter(w)) return false;
   const n = width * height;
   if (w && w.at + n * 8 + 32 > 0x7fffffff) return false;
@@ -103,7 +104,7 @@ function weighted(w, targets, plane, width, height, offset, contextOf, residuals
   return tokens(w, targets, n, CONTEXT);
 }
 function fill(rgba, imageWidth, x0, y0, w, h, channels, planes) {
-  tileTables = null; acClean = false; ansStamp = null; tileBand = null;
+  tileTables = null; acClean = false; ansStamp = null; tileBand = null; retainEpoch++;
   const n = w * h;
   if (n < 1 || n > 65536 || channels < 1 || channels > 4) return false;
   const {u8, i32} = engine;
@@ -120,7 +121,7 @@ function fill(rgba, imageWidth, x0, y0, w, h, channels, planes) {
 }
 
 function dct(blocks, count, basis) {
-  tileTables = null; acClean = false; ansStamp = null; tileBand = null;
+  tileTables = null; acClean = false; ansStamp = null; tileBand = null; retainEpoch++;
   if (active !== 'simd' || !(blocks instanceof Float64Array) || !Number.isInteger(count) || count < 1 || count > 64 ||
       blocks.length < count * 192 || !(basis instanceof Float64Array) || basis.length !== 64) return false;
   const f64 = new Float64Array(engine.memory.buffer), pair = R + 512;
@@ -137,9 +138,11 @@ function dct(blocks, count, basis) {
 
 const TILE_F64 = P + 16384, TILE_ROOTS = P + 114688, TILE_LINEAR = P + 147600, TILE_SCALE = P + 149648;
 let tileTables = null, tileBand = null;
+let retainEpoch = 0;
 const TILE_BAND = 12582912;
 const TILE_SUMS = P + 150160, TILE_STEPS = P + 150184, TILE_LIMITS = P + 151720, TILE_OUT = P + 153256, TILE_COUNTS = P + 177832;
 function photoTile(data, width, height, bx0, by0, bw, bh, tables, cfl, components, stride, nonZero) {
+  retainEpoch++;
   if (active !== 'simd' || !(data instanceof Uint8Array || data instanceof Uint8ClampedArray) || !Number.isInteger(bw) || !Number.isInteger(bh) ||
       bw < 1 || bw > 8 || bh < 1 || bh > 8 || tables.roots.length !== 4113 || tables.linear.length !== 256) return false;
   const padded = stride * 32, end = TILE_BAND + 64 * padded;
@@ -205,9 +208,10 @@ function ansTablesOf(model) {
   return t;
 }
 function acGroup(state, g, pass, sink, zd) {
+  retainEpoch++;
   const {authoredOrderPasses, groupsX, strategyData, progression, contexts, lumaBuckets, lumaW, xsizeBlocks, ysizeBlocks, comps, grey,
     orders, counted, blockCounts, nonZero, hshifts, vshifts} = state;
-  if (active !== 'simd' || strategyData || progression || authoredOrderPasses?.[pass] || grey || !nonZero ||
+  if (active !== 'simd' || strategyData || progression || authoredOrderPasses?.[pass] || grey || (!nonZero && (!counted || !entropyAllowed)) ||
       hshifts.some(Boolean) || vshifts.some(Boolean) || comps.some(comp => !(comp.coeffs instanceof Int16Array)) ||
       contexts.contexts > 65536 || contexts.map.length > 8192) return false;
   tileBand = null;
@@ -225,6 +229,18 @@ function acGroup(state, g, pass, sink, zd) {
   const gx = g % groupsX, gy = (g / groupsX) | 0, bx0 = gx * 32, by0 = gy * 32;
   const bw = Math.min(32, xsizeBlocks - bx0), bh = Math.min(32, ysizeBlocks - by0), blocks = bw * bh, stride = comps[0].stride;
   const source = counted ? blockCounts : nonZero;
+  if (!nonZero) {
+    if (bw < 1 || bh < 1 || !Number.isInteger(stride) || stride < bx0 + bw ||
+        !Number.isInteger(contexts.numDc) || contexts.numDc < 1 || contexts.numDc > 16 ||
+        !Number.isInteger(contexts.numCtxs) || contexts.numCtxs < 1 || contexts.numCtxs > 16 || zd.length !== 4096) return false;
+    const end = (by0 + bh - 1) * stride + bx0 + bw;
+    for (let c = 0; c < 3; c++) {
+      if (comps[c].stride !== stride || comps[c].coeffs.length < end * 64 ||
+          !(source[c] instanceof Uint8Array) || source[c].length < end || orders[c].length !== 64) return false;
+      for (const k of orders[c]) if (!Number.isInteger(k) || k < 0 || k > 63) return false;
+      for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) if (source[c][(by0 + y) * stride + bx0 + x] > 63) return false;
+    }
+  }
   const tokens = 3 * blocks * 64;
   const histBytes = contexts.contexts * 256, HIST = AC_CODES + Math.max(8, codes ? codes.length * alphabet * 8 : 8);
   let TOUCHED = HIST + histBytes, OVERFLOW = TOUCHED + tokens * 4, OUT = OVERFLOW + tokens * 8, end = OUT + tokens * 8 + 16;
@@ -306,7 +322,7 @@ function acGroup(state, g, pass, sink, zd) {
 
 function nonzero(coeffs, from, end, natural) {
   if (active !== 'simd' || !(coeffs instanceof Int16Array) || from % 64 || (end - from) % 64) return false;
-  tileTables = null; acClean = false; ansStamp = null; tileBand = null;
+  tileTables = null; acClean = false; ansStamp = null; tileBand = null; retainEpoch++;
   const i16 = new Int16Array(engine.memory.buffer), i32 = new Int32Array(engine.memory.buffer), out = R + 131072;
   i32.fill(0, out >> 2, (out >> 2) + 64);
   for (let at = from; at < end; at += 65536) {
@@ -319,7 +335,7 @@ function nonzero(coeffs, from, end, natural) {
 }
 
 function group(w, targets, rgba, imageWidth, x0, y0, width, height, setup) {
-  tileTables = null; acClean = false; ansStamp = null; tileBand = null;
+  tileTables = null; acClean = false; ansStamp = null; tileBand = null; retainEpoch++;
   const {channels, leaves, picture} = setup, n = width * height;
   if (setup.palette || setup.samples || setup.rct !== undefined ||
       !(rgba instanceof Uint8Array || rgba instanceof Uint8ClampedArray) ||
@@ -377,7 +393,7 @@ function group(w, targets, rgba, imageWidth, x0, y0, width, height, setup) {
 }
 
 function screen(plane, width, height, predictor, depth, emit, minLength = 7) {
-  tileTables = null; acClean = false; ansStamp = null; tileBand = null;
+  tileTables = null; acClean = false; ansStamp = null; tileBand = null; retainEpoch++;
   const n = width * height;
   if (!(plane instanceof Int16Array) || !Number.isInteger(width) || !Number.isInteger(height) ||
       width < 1 || height < 1 || width > 16384 || height > 16384 || n > 1048576 || plane.length < n ||
@@ -404,9 +420,59 @@ function screen(plane, width, height, predictor, depth, emit, minLength = 7) {
   return true;
 }
 
-function sampled(members, histograms, symbolSets, columns, table, rawPrice, choiceBits) {
+const align8 = n => Math.ceil(n / 8) * 8;
+function sampledLayout(total, kinds, alphabet, maxCuts) {
+  const symbols = P, indices = symbols + total * kinds, histogram = align8(indices + total);
+  const entropy = align8(histogram + kinds * alphabet * 4), raw = entropy + (total + 1) * 8;
+  const output = raw + alphabet * 8, scratch = output + 24, bins = maxCuts + 1;
+  const dense = scratch + kinds * 32 + kinds * alphabet * 8;
+  return {symbols, indices, histogram, entropy, raw, output, scratch, dense, needed: dense + bins * kinds * alphabet * 4 + total * 4 + (2 * bins + 1) * 4};
+}
+const SAMPLED_CAP = 272 * 65536, RETAIN_BUDGET = 8 * 1048576;
+
+function sampledStore(count, kinds, alphabet, columns) {
+  if (!engine || !Number.isInteger(count) || count < 64 || count > 65536 || !kinds || kinds > 16 || !alphabet || alphabet > 256) return null;
+  let maxCuts = 0;
+  for (const column of columns) maxCuts = Math.max(maxCuts, column.cuts.length);
+  if (!maxCuts || maxCuts > 255) return null;
+  const base = Math.ceil(sampledLayout(count, kinds, alphabet, maxCuts).needed / 64) * 64;
+  if (base >= SAMPLED_CAP) return null;
+  const epoch = retainEpoch, free = [[base, Math.min(SAMPLED_CAP, base + RETAIN_BUDGET)]];
+  let peak = 0, used = 0;
+  const live = () => epoch === retainEpoch;
+  return {
+    live,
+    allocate(bytes) {
+      if (!live()) return -1;
+      for (let i = 0; i < free.length; i++) {
+        const [at, end] = free[i];
+        if (end - at < bytes) continue;
+        if (at + bytes > engine.memory.buffer.byteLength) {
+          try { engine.memory.grow(Math.ceil((at + bytes - engine.memory.buffer.byteLength) / 65536)); }
+          catch { return -1; }
+          engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
+        }
+        if (at + bytes === end) free.splice(i, 1); else free[i] = [at + bytes, end];
+        used += bytes; peak = Math.max(peak, used);
+        return at;
+      }
+      return -1;
+    },
+    release(handle) {
+      if (!handle) return;
+      used -= handle.bytes;
+      free.push([handle.at, handle.at + handle.bytes]);
+      free.sort((a, b) => a[0] - b[0]);
+      for (let i = free.length - 1; i > 0; i--) if (free[i - 1][1] === free[i][0]) { free[i - 1][1] = free[i][1]; free.splice(i, 1); }
+    },
+    get peak() { return peak; },
+  };
+}
+
+function sampled(members, histograms, symbolSets, columns, table, rawPrice, choiceBits, keep = null) {
   tileTables = null; acClean = false; ansStamp = null; tileBand = null;
   const total = members.length, kinds = symbolSets.length, alphabet = rawPrice.length;
+  if (keep) keep.handle = null;
   if (!(members instanceof Uint32Array) || total < 64 || total > 65536 || !kinds || kinds > 16 ||
       !alphabet || alphabet > 256 || !(table instanceof Float64Array) || table.length < total + 1 ||
       !(rawPrice instanceof Float64Array) || histograms.length !== kinds || !Number.isSafeInteger(choiceBits)) return false;
@@ -419,45 +485,63 @@ function sampled(members, histograms, symbolSets, columns, table, rawPrice, choi
     maxCuts = Math.max(maxCuts, column.cuts.length);
   }
   if (!maxCuts) return null;
-  const align = n => Math.ceil(n / 8) * 8;
-  const symbols = P, indices = symbols + total * kinds, histogram = align(indices + total);
-  const entropy = align(histogram + kinds * alphabet * 4), raw = entropy + (total + 1) * 8;
-  const output = raw + alphabet * 8, scratch = output + 24, bins = maxCuts + 1;
-  const needed = scratch + kinds * 32 + kinds * alphabet * 8 + bins * kinds * alphabet * 4 + total * 4 + (2 * bins + 1) * 4;
+  const {symbols, indices, histogram, entropy, raw, output, scratch, dense, needed} = sampledLayout(total, kinds, alphabet, maxCuts);
   if (needed > engine.memory.buffer.byteLength) {
     try { engine.memory.grow(Math.ceil((needed - engine.memory.buffer.byteLength) / 65536)); }
     catch { return false; }
     engine.u8 = new Uint8Array(engine.memory.buffer);
     engine.i32 = new Int32Array(engine.memory.buffer);
   }
-  const {u8, i32} = engine, f64 = new Float64Array(engine.memory.buffer);
-  for (let i = 0; i < total; i++) if (members[i] >= count) return false;
-  for (let c = 0; c < kinds; c++) {
-    const source = symbolSets[c], at = symbols + c * total;
-    for (let i = 0; i < total; i++) { const symbol = source[members[i]]; if (symbol >= alphabet) return false; u8[at + i] = symbol; }
-    i32.set(histograms[c], (histogram >> 2) + c * alphabet);
+  const store = keep?.store?.live() ? keep.store : null;
+  const derive = !!(store && keep.parent && keep.sibling && keep.parent.columns === columns && keep.sibling.columns === columns);
+  let save = !!(store && keep.save);
+  for (const column of columns) if (column.cuts.length && !derive && total * 4 <= (column.cuts.length + 1) * alphabet) save = false;
+  let handle = null;
+  if (save) {
+    const offsets = [];
+    let bytes = 0;
+    for (const column of columns) { offsets.push(bytes); bytes += column.cuts.length ? (column.cuts.length + 1) * kinds * alphabet * 4 : 0; }
+    const at = bytes ? store.allocate(bytes) : -1;
+    if (at >= 0) handle = {at, bytes, offsets, columns};
   }
+  const {u8, i32} = engine, f64 = new Float64Array(engine.memory.buffer);
+  if (!derive) {
+    for (let i = 0; i < total; i++) if (members[i] >= count) return store?.release(handle), false;
+    for (let c = 0; c < kinds; c++) {
+      const source = symbolSets[c], at = symbols + c * total;
+      for (let i = 0; i < total; i++) { const symbol = source[members[i]]; if (symbol >= alphabet) return store?.release(handle), false; u8[at + i] = symbol; }
+    }
+  }
+  for (let c = 0; c < kinds; c++) i32.set(histograms[c], (histogram >> 2) + c * alphabet);
   f64.set(table.subarray(0, total + 1), entropy >> 3); f64.set(rawPrice, raw >> 3);
   const backend = active === 'simd' ? engine.simd : engine.scalar;
   let best = null;
-  for (const column of columns) {
-    const cuts = column.cuts.length;
+  for (let k = 0; k < columns.length; k++) {
+    const column = columns[k], cuts = column.cuts.length;
     if (!cuts) continue;
-    const source = column.indices;
-    for (let i = 0; i < total; i++) { const bin = source[members[i]]; if (bin > cuts) return false; u8[indices + i] = bin; }
-    const bin = backend.sampled(symbols, total, kinds, indices, cuts, alphabet, histogram, entropy, raw, scratch, output);
+    const size = (cuts + 1) * kinds * alphabet;
+    if (derive) {
+      backend.subtract(dense, keep.parent.at + keep.parent.offsets[k], keep.sibling.at + keep.sibling.offsets[k], size);
+    } else {
+      const source = column.indices;
+      for (let i = 0; i < total; i++) { const bin = source[members[i]]; if (bin > cuts) return store?.release(handle), false; u8[indices + i] = bin; }
+    }
+    const bin = backend.sampled(symbols, total, kinds, indices, cuts, alphabet, histogram, entropy, raw, scratch, output, derive ? 1 : 0);
+    if (handle) u8.copyWithin(handle.at + handle.offsets[k], dense, dense + size * 4);
     if (bin < 0) continue;
     const loBits = f64[(output + 8) >> 3], hiBits = f64[(output + 16) >> 3], gain = choiceBits - loBits - hiBits;
     if (!best || gain > best.gain) best = {gain, column, bin,
       lo: {selected: i32[output >> 2], bits: loBits}, hi: {selected: i32[(output + 4) >> 2], bits: hiBits}};
   }
+  if (keep) keep.handle = handle;
   return best;
 }
 
+function disableEntropyKernels() { entropyAllowed = false; kernelHooks.entropy = null; }
 function configureKernels(mode = 'auto', parts) {
   if (!['off', 'auto', 'scalar', 'simd'].includes(mode)) throw fault('JXL_INPUT', 'Kernel mode is off, auto, scalar or simd.');
-  explicit = true; tileTables = null; acClean = false; ansStamp = null; tileBand = null;
-  kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.dct = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.nonzero = null; active = 'off';
+  explicit = true; tileTables = null; acClean = false; ansStamp = null; tileBand = null; retainEpoch++;
+  kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.nonzero = kernelHooks.entropy = null; active = 'off';
   if (mode === 'off') return active;
   try {
     if (typeof WebAssembly !== 'object' || !WebAssembly.validate || new Uint8Array(new Uint32Array([1]).buffer)[0] !== 1) return active;
@@ -466,7 +550,7 @@ function configureKernels(mode = 'auto', parts) {
     engine ||= createEngine();
     if (simd && !engine.simd) {
       const names = new Map(Object.entries(new WebAssembly.Instance(new WebAssembly.Module(decode(SIMD)), {env: {memory: engine.memory}}).exports));
-      engine.simd = {residual: names.get('residual'), fill: names.get('fill'), screen: names.get('screen'), sampled: names.get('sampled'), dct: names.get('dct'), xybTile: names.get('xybTile'), quantTile: names.get('quantTile'), acGroup: names.get('acGroup'), ansFlush: names.get('ansFlush'), nonzeroCounts: names.get('nonzeroCounts')};
+      engine.simd = {residual: names.get('residual'), fill: names.get('fill'), screen: names.get('screen'), sampled: names.get('sampled'), subtract: names.get('subtract'), dct: names.get('dct'), xybTile: names.get('xybTile'), quantTile: names.get('quantTile'), acGroup: names.get('acGroup'), ansFlush: names.get('ansFlush'), nonzeroCounts: names.get('nonzeroCounts')};
     }
     active = simd ? 'simd' : 'scalar';
     const enabled = parts ? new Map(Object.entries(parts)) : null;
@@ -475,12 +559,13 @@ function configureKernels(mode = 'auto', parts) {
     if (!enabled || enabled.get('fill')) kernelHooks.fill = fill;
     if (kernelHooks.fill && kernelHooks.channel) kernelHooks.group = group;
     if (!enabled || enabled.get('screen')) kernelHooks.screen = screen;
-    if (!enabled || enabled.get('sampled')) kernelHooks.sampled = sampled;
+    if (!enabled || enabled.get('sampled')) { kernelHooks.sampled = sampled; kernelHooks.sampledStore = sampledStore; }
     if (simd && (!enabled || enabled.get('dct'))) kernelHooks.dct = dct;
     if (simd && (!enabled || enabled.get('photoTile'))) kernelHooks.photoTile = photoTile;
     if (simd && (!enabled || enabled.get('acGroup'))) kernelHooks.acGroup = acGroup;
     if (simd && (!enabled || enabled.get('nonzero'))) kernelHooks.nonzero = nonzero;
-  } catch { active = 'off'; kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.dct = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.nonzero = null; }
+    if (entropyAllowed && (!enabled || enabled.get('entropy'))) kernelHooks.entropy = jpegKernels;
+  } catch { active = 'off'; kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.nonzero = kernelHooks.entropy = null; }
   return active;
 }
 function ensureKernels() {
@@ -488,5 +573,5 @@ function ensureKernels() {
   return active;
 }
 function kernelMode() { return active; }
-return {configureKernels, ensureKernels, kernelMode};
+return {configureKernels, ensureKernels, kernelMode, disableEntropyKernels};
 })();

@@ -20,12 +20,19 @@ function utf8Length(text) {
   return length;
 }
 
-function sourceBoxes(bytes) {
+function sourceBoxes(bytes, options = {}) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 2) throw invalid('JPEG XL input is a Uint8Array.');
+  const maxBoxes = options.maxBoxes ?? Number.MAX_SAFE_INTEGER;
+  if (!Number.isSafeInteger(maxBoxes) || maxBoxes < 1) throw invalid('maxBoxes is an integer from 1 to ' + Number.MAX_SAFE_INTEGER + '.');
   admitOutputSize(bytes.length);
   if (bytes[0] === 255 && bytes[1] === 10) return null;
   if (!SIGNATURE.every((byte, i) => bytes[i] === byte)) throw invalid('Invalid JPEG XL signature.');
-  return Array.from(boxes(bytes));
+  const source = [];
+  for (const box of boxes(bytes)) {
+    if (source.length >= maxBoxes) throw invalid('JPEG XL box count exceeds the limit.');
+    source.push(box);
+  }
+  return source;
 }
 
 function prepare(options) {
@@ -54,7 +61,7 @@ function prepare(options) {
   return {changed, entries};
 }
 
-function attach(bytes, plan, source = sourceBoxes(bytes)) {
+function attach(bytes, plan, source) {
   const {changed, entries} = plan, edited = changed.size > 0;
   const added = entries.reduce((sum, entry) => sum + entry.data.length + 8, 0);
   let prefix = 0, length = bytes.length + added;
@@ -80,7 +87,7 @@ function attach(bytes, plan, source = sourceBoxes(bytes)) {
   return output;
 }
 
-export function withMetadata(bytes, options = {}) { return guard(() => attach(bytes, prepare(options))); }
+export function withMetadata(bytes, options = {}) { return guard(() => { const plan = prepare(options); return attach(bytes, plan, sourceBoxes(bytes, options)); }); }
 
 function limit(value) {
   if (!Number.isSafeInteger(value) || value < 1) throw invalid('The decoded metadata limit is a positive safe integer.');
@@ -95,9 +102,9 @@ function metadataValue(type, data) {
   return new Uint8Array(data.subarray(at));
 }
 
-export function readMetadata(bytes) {
+export function readMetadata(bytes, options = {}) {
   return guard(() => {
-    const source = sourceBoxes(bytes), result = {exif: [], xmp: [], jumb: [], compressed: []};
+    const source = sourceBoxes(bytes, options), result = {exif: [], xmp: [], jumb: [], compressed: []};
     for (const box of source ?? []) {
       const key = keys.get(box.decoded);
       if (!key) continue;
@@ -172,7 +179,7 @@ async function codec(data, direction, provided, maximum) {
 
 export async function withCompressedMetadata(bytes, options = {}) {
   try {
-    const plan = prepare(options), source = sourceBoxes(bytes), snapshot = new Uint8Array(bytes);
+    const plan = prepare(options), source = sourceBoxes(bytes, options), snapshot = new Uint8Array(bytes);
     const {compression = 'auto', compress} = options;
     if (compression !== 'auto' && compression !== 'brotli') throw invalid('Metadata compression is auto or brotli.');
     if (plan.changed.size && source?.some(box => box.decoded === RECONSTRUCTION))
@@ -192,7 +199,7 @@ export const METADATA_DECODED_BYTES = 67108864;
 export async function readMetadataAsync(bytes, options = {}) {
   try {
     if (!options || typeof options !== 'object' || Array.isArray(options)) throw invalid('Metadata reader options are an object.');
-    const maximum = limit(options.maxDecodedBytes ?? METADATA_DECODED_BYTES), source = sourceBoxes(bytes), {decompress} = options;
+    const maximum = limit(options.maxDecodedBytes ?? METADATA_DECODED_BYTES), source = sourceBoxes(bytes, options), {decompress} = options;
     const entries = (source ?? []).filter(box => keys.has(box.decoded)).map(box => ({
       type: box.decoded, compressed: box.type === BROB, data: new Uint8Array(bytes.subarray(box.body + (box.type === BROB ? 4 : 0), box.end))
     }));

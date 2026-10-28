@@ -9,7 +9,7 @@ export interface Limits { readonly pixels: number; readonly edge: number; }
 /** Core limits: 24 million pixels and 16,384 pixels per side. Encoded output is bounded by available memory. */
 export const LIMITS: Limits;
 export interface EncodeOptions {
-  /** 1 to 100; 100 is exact. */ quality?: number | undefined;
+  /** 1 to 100; 100 is exact. Lossy XYB photo quantization caps at 99.9 (a quality above it quantizes as 99.9). */ quality?: number | undefined;
   /** Photographic coding for non-palette straight RGBA8 below quality 100; default true.
    * Set false for Modular lossy coding. Palette, native-precision and exact inputs keep their existing path. */
   photo?: boolean | undefined;

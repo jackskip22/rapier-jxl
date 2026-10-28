@@ -3,7 +3,7 @@ import {BitWriter} from './bits.mjs';
 import {sampledPlanes, SAMPLE_RUNGS} from './sampled.mjs';
 
 const BROAD = {...SAMPLE_RUNGS.broad, references: true, referenceKinds: [0, 1, 2, 3]};
-export const RUNGS = {broad: BROAD, fast: {...BROAD, samples: 16384, bins: 64},
+export const RUNGS = {broad: BROAD, jpegBroad: {...BROAD, clustered: true}, fast: {...BROAD, samples: 16384, bins: 64},
   rich: {...BROAD, samples: 4096, bins: 32, leaves: 32, depth: 8}, quick: {...BROAD, samples: 2048, bins: 16, leaves: 16, depth: 6}};
 
 const fits16 = data => {
@@ -12,7 +12,7 @@ const fits16 = data => {
   return Int16Array.from(data);
 };
 
-function learned(w, planes, options, plain, together) {
+function learned(w, planes, options, plain, together, kernels) {
   const data = planes.map(p => fits16(p.data));
   const fallback = new BitWriter(256);
   plain(fallback);
@@ -21,7 +21,7 @@ function learned(w, planes, options, plain, together) {
   const plans = same ? sampledPlanes.prepareSet(data, planes[0].w, planes[0].h, options)
     : planes.map((p, i) => sampledPlanes.prepare(data[i], p.w, p.h, {...options, references: false}));
   const candidate = new BitWriter(256);
-  sampledPlanes.write(candidate, plans, options);
+  sampledPlanes.write(candidate, plans, kernels ? {...options, kernels} : options);
   w.append(candidate.bitLength < fallback.bitLength ? candidate : fallback);
 }
 
@@ -30,11 +30,29 @@ export function lfCoder(rung = 'fast') {
   if (!coders.has(rung)) {
     const options = typeof rung === 'object' ? rung : RUNGS[rung];
     coders.set(rung, Object.freeze({
-      dc: (w, planes, plain) => learned(w, planes, options, plain, true),
-      metadata: (w, planes, plain) => learned(w, planes, options, plain, false),
+      dc: (w, planes, plain, kernels) => learned(w, planes, options, plain, true, kernels),
+      metadata: (w, planes, plain, kernels) => learned(w, planes, options, plain, false, kernels),
     }));
   }
   return coders.get(rung);
 }
 
 export const lfCoderFor = effort => effort >= 5 ? lfCoder(effort >= 9 ? 'broad' : effort >= 8 ? 'fast' : effort >= 7 ? 'rich' : 'quick') : undefined;
+
+const FIXED_BINS = [16, 8, 8], FIXED_WRITE = Object.freeze({ans: true, hybrid: true, sharing: Object.freeze([])});
+function fixedDc(w, planes, plain, kernels) {
+  const data = planes.map(p => fits16(p.data));
+  if (data.includes(null) || planes.some(p => !p.w || !p.h)) { plain(w); return; }
+  sampledPlanes.write(w, planes.map((p, i) => sampledPlanes.fixed(data[i], p.w, p.h, FIXED_BINS[i] ?? 8)), kernels ? {...FIXED_WRITE, kernels} : FIXED_WRITE);
+}
+export const fixedLfCoder = Object.freeze({dc: fixedDc, metadata: (w, planes, plain) => plain(w)});
+
+const quick = lfCoder('quick');
+export const quickOrFixedLfCoder = Object.freeze({
+  dc(w, planes, plain, kernels) {
+    const learnt = new BitWriter(256), fixed = new BitWriter(256);
+    quick.dc(learnt, planes, plain, kernels); fixedDc(fixed, planes, plain, kernels);
+    w.append(learnt.bitLength <= fixed.bitLength ? learnt : fixed);
+  },
+  metadata: quick.metadata,
+});

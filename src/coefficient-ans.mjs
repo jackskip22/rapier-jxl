@@ -32,7 +32,7 @@ const ansPlan = (rung, orders, effort) => ({coding: buildAnsCoding, modularAns: 
 
 const isSizeFailure = error => error instanceof RangeError && !error?.code || error?.code === 'JXL_SIZE';
 
-const PREFIX_PIXELS = 512 * 512;
+const PREFIX_PIXELS = 128 * 128;
 
 export function* coefficientAnsSteps(jpeg, effort, fallback, retain, pooled = false) {
   const shared = {};

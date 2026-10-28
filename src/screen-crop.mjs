@@ -37,17 +37,20 @@ export function screenCrop(data, width, height) {
     if (col >= right) right = col + 1;
   }
   if (!x && !y && right === width && bottom === height) return null;
-  const w = right - x, h = bottom - y, cropped = new Uint8Array(w * h * 4);
-  for (let row = 0; row < h; row++) {
-    const at = ((row + y) * width + x) * 4;
-    cropped.set(data.subarray(at, at + w * 4), row * w * 4);
-  }
-  return {data: cropped, width: w, height: h, x, y, background};
+  const w = right - x, h = bottom - y;
+  let cropped = null;
+  return {get data() {
+    if (!cropped) {
+      cropped = new Uint8Array(w * h * 4);
+      for (let row = 0; row < h; row++) { const at = ((row + y) * width + x) * 4; cropped.set(data.subarray(at, at + w * 4), row * w * 4); }
+    }
+    return cropped;
+  }, width: w, height: h, x, y, background};
 }
 
-export function writeScreenBackground(writer, width, height, shape, background) {
+export function writeScreenBackground(writer, width, height, shape, background, crop) {
   const global = new BitWriter(128), layout = groupLayout(width, height, 1024);
-  writeModularFrameHeader(writer, {alpha: shape.alpha, shift: 3, last: false, reference: 1});
+  writeModularFrameHeader(writer, {alpha: shape.alpha, shift: 3, last: false, reference: 1, crop});
   global.write(1, 1); global.write(1, 1);
   const leaves = Array.from({length: shape.channels}, (_, c) => leaf(0, background[shape.colour === 1 && c === 1 ? 3 : c]));
   const counts = new Uint32Array(ALPHABET); counts[0] = 1;

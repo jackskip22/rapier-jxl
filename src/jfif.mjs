@@ -2,6 +2,7 @@
 import {JPEG_LIMITS} from './limits.mjs';
 import {prepareICC} from './icc-write.mjs';
 import {inspectICC} from './icc-profile.mjs';
+import {kernelHooks} from './kernel-hooks.mjs';
 import {ZIGZAG, jpegError} from './jpeg-tables.mjs';
 
 export {ZIGZAG, jpegError};
@@ -159,7 +160,9 @@ export function parseJPEG(bytes, retainScans = false, {preserveICC = false, comp
         if (scan.some(s => s.component === component)) throw jpegError('a component twice in one scan');
         if (!component.quant) component.quant = quant[component.tq];
         if (!component.quant) throw jpegError('a scan without its quantisation table');
-        scan.push({component, dc: huffman[0][bytes[at + 1] >> 4], ac: huffman[1][bytes[at + 1] & 15], dcSlot: bytes[at + 1] >> 4});
+        const td = bytes[at + 1] >> 4, ta = bytes[at + 1] & 15;
+        if (td > 3 || ta > 3) throw jpegError('a scan table selector above 3');
+        scan.push({component, dc: huffman[0][td], ac: huffman[1][ta], dcSlot: td});
       }
       if (n > 1 && scan.reduce((sum, s) => sum + s.component.h * s.component.v, 0) > 10) throw jpegError('bad sampling');
       const ss = bytes[at], se = bytes[at + 1], ah = bytes[at + 2] >> 4, al = bytes[at + 2] & 15;
@@ -394,26 +397,33 @@ const extend = (value, n) => value < (1 << (n - 1)) ? value - (1 << n) + 1 : val
 
 function decodeScan(bytes, start, frame, scan, ss, se, ah, al, restartInterval, choices) {
   admitScan(frame, scan, ss, se, ah, al);
-  const reader = new ScanReader(bytes, start, frame, scan, ss, se, ah, al, choices), single = scan.length === 1;
-  for (const s of scan) s.component.pred = 0;
-  reader.load();
-  const first = scan[0].component;
+  const single = scan.length === 1, first = scan[0].component;
   const total = single ? first.blocksW * first.blocksH : frame.mcusX * frame.mcusY;
-  for (let unit = 0; unit < total; unit++) {
-    if (restartInterval && unit > 0 && unit % restartInterval === 0) reader.restart(unit / restartInterval - 1);
-    if (single) {
-      const by = (unit / first.blocksW) | 0, bx = unit - by * first.blocksW;
-      reader.block(scan[0], first.coeffs, (by * first.stride + bx) * 64);
-    } else {
-      const my = (unit / frame.mcusX) | 0, mx = unit - my * frame.mcusX;
-      for (const s of scan) {
-        const c = s.component;
-        for (let v = 0; v < c.v; v++) for (let h = 0; h < c.h; h++) reader.block(s, c.coeffs, ((my * c.v + v) * c.stride + mx * c.h + h) * 64);
+  let pos;
+  const decoded = frame.progressive ? null : kernelHooks.entropy?.()?.sequentialDecode(bytes, start, frame, scan, restartInterval, ZIGZAG);
+  if (decoded) {
+    pos = decoded.pos;
+    if (choices) for (const [block, count] of decoded.zeros) choices.zeros.push({block, count});
+  } else {
+    const reader = new ScanReader(bytes, start, frame, scan, ss, se, ah, al, choices);
+    for (const s of scan) s.component.pred = 0;
+    reader.load();
+    for (let unit = 0; unit < total; unit++) {
+      if (restartInterval && unit > 0 && unit % restartInterval === 0) reader.restart(unit / restartInterval - 1);
+      if (single) {
+        const by = (unit / first.blocksW) | 0, bx = unit - by * first.blocksW;
+        reader.block(scan[0], first.coeffs, (by * first.stride + bx) * 64);
+      } else {
+        const my = (unit / frame.mcusX) | 0, mx = unit - my * frame.mcusX;
+        for (const s of scan) {
+          const c = s.component;
+          for (let v = 0; v < c.v; v++) for (let h = 0; h < c.h; h++) reader.block(s, c.coeffs, ((my * c.v + v) * c.stride + mx * c.h + h) * 64);
+        }
       }
     }
+    reader.atMarker(true);
+    pos = reader.pos;
   }
-  reader.atMarker(true);
-  let pos = reader.pos;
   if (bytes[pos] === 0xFF && bytes[pos + 1] >= 0xD0 && bytes[pos + 1] <= 0xD7) {
     if (!restartInterval || total % restartInterval || bytes[pos + 1] !== 0xD0 + ((total / restartInterval - 1) & 7)) throw jpegError('a restart marker out of order');
     if (choices) choices.finalRestart = bytes[pos + 1];

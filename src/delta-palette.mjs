@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 import {BitWriter, complete, part, packSigned, ceilLog2} from './bits.mjs';
-import {admitOptions, admitPixels, admitSampleFormat, admitOutputSize, fault, job} from './admit.mjs';
+import {admitOptions, admitPixels, admitOutputSize, fault, job} from './admit.mjs';
+import {admitSampleFormat} from './admit-samples.mjs';
 import {inspectPixels, losslessSteps} from './lossless.mjs';
-import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, assembleCodestream} from './frame.mjs';
+import {writeModularFrameHeader, groupLayout, groupRect, assembleCodestream} from './frame.mjs';
+import {writeImageHeader} from './icc-write.mjs';
 import {ALPHABET, leaf, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {screenResiduals, screenModel, writeScreenModel} from './screen-lz77.mjs';
 import {screenSteps} from './screen-search.mjs';

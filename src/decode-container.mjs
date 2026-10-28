@@ -13,6 +13,7 @@ function uint(value, maximum, name, minimum = 0) {
   return value;
 }
 function limit(options) { record(options, 'Container options'); return uint(options.maxBytes ?? Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, 'maxBytes', 1); }
+function boxLimit(options) { return uint(options.maxBoxes ?? Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, 'maxBoxes', 1); }
 function bounded(length, maximum) {
   if (!Number.isSafeInteger(length) || length > maximum) throw fault('JXL_SIZE', 'The JPEG XL container exceeds maxBytes.');
   return length;
@@ -24,13 +25,14 @@ function joinBytes(parts, maximum) {
   for (const part of parts) { result.set(part, cursor); cursor += part.length; }
   return result;
 }
-function scanContainer(bytes, maximum) {
+function scanContainer(bytes, maximum, maxBoxes = Number.MAX_SAFE_INTEGER) {
   byteArray(bytes, 'JPEG XL input'); bounded(bytes.length, maximum);
   if (bytes[0] === 255 && bytes[1] === 10) return {codestream: bytes, level: 5, minorVersion: 0, entries: [], fragments: []};
   if (!SIGNATURE.every((byte, i) => bytes[i] === byte)) throw invalid('Invalid JPEG XL signature.');
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), entries = [], fragments = [], byIndex = new Map();
   let minorVersion = 0, level = 5, seenLevel = false, full = null, finalIndex = -1, indexBoxes = 0, gainBoxes = 0;
   for (let at = 12; at < bytes.length;) {
+    if (entries.length >= maxBoxes) throw invalid('JPEG XL box count exceeds the limit.');
     if (bytes.length - at < 8) throw invalid('Truncated JPEG XL box header.');
     const short = view.getUint32(at), type = view.getUint32(at + 4), headerLength = short === 1 ? 16 : 8;
     if (bytes.length - at < headerLength) throw invalid('Truncated extended JPEG XL box header.');
@@ -82,7 +84,7 @@ function scanContainer(bytes, maximum) {
   return {codestream, level, minorVersion, entries, fragments};
 }
 export function inspectContainer(bytes, options = {}) {
-  const source = scanContainer(bytes, limit(options));
+  const source = scanContainer(bytes, limit(options), boxLimit(options));
   return {codestream: source.codestream.slice(), level: source.level, minorVersion: source.minorVersion,
     fragments: source.fragments.map(row => ({...row})),
     auxiliary: source.entries.filter(row => ![FTYP, LEVEL, CODESTREAM, PARTIAL].includes(row.type)).map(row =>

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {BitWriter} from './bits.mjs';
+import {kernelHooks} from './kernel-hooks.mjs';
 import {ZIGZAG, jpegError, admitScan} from './jfif.mjs';
 import {JxlBits, requireJPEG, readJPEGCoefficients} from './jpeg-coefficients.mjs';
 import {jpegReconstruction, withJPEGReconstruction} from './container.mjs';
@@ -11,6 +12,8 @@ const FOUR = [[0, 1], [0, 2], [0, 3], [0, 4]];
 const COUNTS = [[0, 0], [0, 1], [3, 2], [8, 0]], SYMBOLS = [[2, 0], [2, 4], [4, 8], [8, 1]];
 const EVENTS = [[0, 0], [2, 1], [4, 4], [16, 20]], BLOCK = [[0, 0], [3, 1], [5, 9], [28, 41]];
 const HUFFMANS = [[0, 4], [3, 2], [4, 10], [6, 26]], TAIL = [[0, 0], [8, 1], [16, 257], [22, 65793]];
+export const RECONSTRUCTION_PAYLOAD_BYTES = 67108864;
+export const RECONSTRUCTION_SCAN_EVENTS = 4194304;
 const equal = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 function concatenate(parts) {
   const size = parts.reduce((n, part) => n + part.length, 0); admitOutputSize(size);
@@ -22,6 +25,7 @@ function structure(bytes, jpeg) {
   const sharedSampling = Math.min(...jpeg.components.map(c => c.h)) > 1 || Math.min(...jpeg.components.map(c => c.v)) > 1;
   if (sharedSampling && jpeg.progressive) throw jpegError('progressive shared sampling factors cannot be reconstructed');
   const data = {markers: [], apps: [], comments: [], quant: [], huffman: [], scans: [], inter: [], tail: new Uint8Array(0), restart: 0, components: jpeg.components.map(c => ({id: c.id, quant: -1}))};
+  let events = 0;
   const raw = part => {
     for (let at = 0; at < part.length; at += 65535) { data.markers.push(255); data.inter.push(part.subarray(at, at + 65535)); }
   };
@@ -49,7 +53,9 @@ function structure(bytes, jpeg) {
       for (let p = body; p < end;) {
         const slot = bytes[p++], counts = [0, ...bytes.subarray(p, p + 16)]; p += 16;
         const n = counts.reduce((a, b) => a + b, 0), symbols = [...bytes.subarray(p, p + n), 256]; p += n;
+        requireJPEG(n > 0);
         let last = 16; while (!counts[last]) last--; counts[last]++;
+        requireJPEG(counts[last] <= 255);
         data.huffman.push({slot, counts, symbols, last: p === end});
       }
     } else if (marker === 218) {
@@ -57,7 +63,9 @@ function structure(bytes, jpeg) {
       if (sharedSampling && count !== 1) throw jpegError('interleaved shared sampling factors cannot be reconstructed');
       for (let p = body + 1, i = 0; i < count; i++, p += 2) components.push({index: jpeg.components.findIndex(c => c.id === bytes[p]), dc: bytes[p + 1] >> 4, ac: bytes[p + 1] & 15});
       const p = body + 1 + count * 2, choices = jpeg.scanChoices[data.scans.length];
-      requireJPEG(p + 3 === end);
+      requireJPEG(p + 3 === end && choices.resets.length <= 65555 && choices.zeros.length <= 65555);
+      events += choices.resets.length + choices.zeros.length;
+      if (events > RECONSTRUCTION_SCAN_EVENTS) throw jpegError(`more than ${RECONSTRUCTION_SCAN_EVENTS} scan events cannot be reconstructed`);
       data.scans.push({components, ss: bytes[p], se: bytes[p + 1], al: bytes[p + 2] & 15, ah: bytes[p + 2] >> 4, ...choices});
       data.markers.push(marker); at = end;
       while (at < bytes.length) {
@@ -103,7 +111,8 @@ function brotliStore(bytes) {
   }
   w.write(2, 3); return w.finish();
 }
-function writeData(data, literalContexts) {
+const CONTEXT_BYTES = 196608;
+function writeData(data, effort, contextsFrom) {
   const w = new BitWriter(), grey = data.components.length === 1;
   w.write(1, grey ? 1 : 0); for (const marker of data.markers) w.write(6, marker - 192);
   for (const part of data.apps) { w.write(2, 0); w.write(16, part.length - 1); }
@@ -137,7 +146,8 @@ function writeData(data, literalContexts) {
   const raw = concatenate([...data.apps, ...data.comments, ...data.inter, data.tail]);
   let packed = brotliStore(raw);
   if (raw.length > 32) {
-    try { const compressed = compressBrotli(raw, {literalContexts}); if (compressed.length < packed.length) packed = compressed; }
+    const literalContexts = effort >= 7 || effort >= contextsFrom && raw.length <= CONTEXT_BYTES;
+    try { const compressed = compressBrotli(raw, {literalContexts, kernels: kernelHooks.entropy?.()}); if (compressed.length < packed.length) packed = compressed; }
     catch (error) { if (error.code !== 'JXL_SIZE' && error.code !== 'JXL_INPUT') throw error; }
   }
   return concatenate([w.finish(), packed]);
@@ -299,11 +309,13 @@ function readData(bytes, sources = {}) {
     data.scans.push({components, ss, se, al, ah, resets: [], zeros: []});
   }
   if (data.markers.includes(221)) data.restart = r.read(16);
+  let events = 0;
+  const admitScanEvent = () => { if (++events > RECONSTRUCTION_SCAN_EVENTS) throw fault('JXL_RECONSTRUCTION', `The JPEG reconstruction data has more than ${RECONSTRUCTION_SCAN_EVENTS} scan events.`); };
   for (const scan of data.scans) {
     let previous = -1;
-    for (let n = r.u32(EVENTS); n; n--) { previous += 1 + r.u32(BLOCK); requireJPEG(previous < 201326592); scan.resets.push(previous); }
+    for (let n = r.u32(EVENTS); n; n--) { admitScanEvent(); previous += 1 + r.u32(BLOCK); requireJPEG(previous < 201326592); scan.resets.push(previous); }
     previous = -1;
-    for (let n = r.u32(EVENTS); n; n--) { const count = r.u32([[0, 1], [2, 2], [4, 5], [8, 20]]); previous += 1 + r.u32(BLOCK); requireJPEG(previous < 201326592 && count <= 4); scan.zeros.push({block: previous, count}); }
+    for (let n = r.u32(EVENTS); n; n--) { admitScanEvent(); const count = r.u32([[0, 1], [2, 2], [4, 5], [8, 20]]); previous += 1 + r.u32(BLOCK); requireJPEG(previous < 201326592 && count <= 4); scan.zeros.push({block: previous, count}); }
   }
   for (const marker of data.markers) if (marker === 255) data.inter.push(r.read(16));
   data.tail = r.u32(TAIL); requireJPEG(data.tail <= 4260096);
@@ -315,6 +327,7 @@ function readData(bytes, sources = {}) {
   }
   r.align();
   const brotliBytes = data.tail + data.comments.reduce((n, v) => n + v, 0) + data.inter.reduce((n, v) => n + v, 0) + data.apps.reduce((n, app) => n + (app.type ? 0 : app.length), 0);
+  requireJPEG(brotliBytes <= RECONSTRUCTION_PAYLOAD_BYTES);
   let raw;
   const brotliInput = bytes.subarray(Math.floor(r.bit / 8));
   const brotliCap = Math.max(brotliBytes, 1);
@@ -332,11 +345,11 @@ function readData(bytes, sources = {}) {
   data.tail = take(data.tail); requireJPEG(at === raw.length); return data;
 }
 
-export function carryJPEG(bytes, jpeg, codestream, effort = 1) {
+export function carryJPEG(bytes, jpeg, codestream, effort = 1, contextsFrom = 7) {
   try {
     const data = structure(bytes, jpeg);
     if (!equal(writeJPEG(jpeg, data), bytes)) throw jpegError('JPEG syntax cannot be reconstructed exactly');
-    return withJPEGReconstruction(codestream, writeData(data, effort >= 7));
+    return withJPEGReconstruction(codestream, writeData(data, effort, contextsFrom));
   } catch (error) {
     if (error.code === 'JXL_RECONSTRUCTION') throw jpegError('JPEG syntax cannot be reconstructed exactly');
     throw error;
@@ -537,6 +550,16 @@ function writeScan(out, jpeg, scan, huffman, restart, progressive, pad, nonzero)
   const hmax = Math.max(...components.map(c => c.h)), vmax = Math.max(...components.map(c => c.v)), single = scan.components.length === 1;
   const lead = components[scan.components[0].index], nx = Math.ceil(jpeg.width * (single ? lead.h : 1) / (8 * hmax)), ny = Math.ceil(jpeg.height * (single ? lead.v : 1) / (8 * vmax));
   const shapes = entries.map(entry => { const c = components[entry.index]; return {stride: c.stride, h: single ? 1 : c.h, v: single ? 1 : c.v}; });
+  if (!progressive) {
+    const written = kernelHooks.entropy?.()?.sequentialScan(out, entries.map((entry, e) => ({...entry, ...shapes[e]})), nx, ny, restart,
+      writer.zeros || new Map(), pad, NATURAL);
+    if (written === null) requireJPEG(false);
+    if (written) {
+      const blocks = nx * ny * shapes.reduce((n, {h, v}) => n + h * v, 0);
+      requireJPEG(scan.resets.every(n => n < blocks) && scan.zeros.every(z => z.block < blocks)); out.align(pad);
+      return;
+    }
+  }
   let nextReset = 0;
   for (let m = 0, y = 0; y < ny; y++) for (let x = 0; x < nx; x++, m++) {
     if (restart && m && m % restart === 0) { writer.flush(); out.align(pad); out.marker(208 + ((m / restart - 1) & 7)); preds.fill(0); }
@@ -612,7 +635,7 @@ function openBrotli(input, maxOutputLength) {
 const openBox = part => {
   if (!part) return null;
   if (!part.compressed) return part;
-  const maximum = Math.max(part.length * 16, 1 << 20);
+  const maximum = Math.min(Math.max(part.length * 16, 1 << 20), RECONSTRUCTION_PAYLOAD_BYTES);
   try { return openBrotli(part, maximum); }
   catch (error) {
     if (error.code === 'JXL_SIZE' || error.code === 'JXL_DICTIONARY') throw error;

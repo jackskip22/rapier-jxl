@@ -70,5 +70,7 @@ export function buildExactTokenCoding(counts, options) {
     const histogram = histograms[contextMap[ctx]];
     writeHybrid(w, histogram.code, histogram.config, value);
   };
-  return {contextMap, histograms, write, bits: header.bitLength + payloadBits};
+  const writeTokens = (w, ctxs, values, n) => { for (let i = 0; i < n; i++) write(w, ctxs[i], values[i]); };
+  const writeFilled = options?.kernels?.prefixFilled({contextMap, histograms}) || undefined;
+  return {contextMap, histograms, write, writeTokens, writeFilled, bits: header.bitLength + payloadBits};
 }

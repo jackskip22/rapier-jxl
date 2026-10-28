@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 import {PHOTO_LIMITS} from './limits.mjs';
 import {BitWriter, complete, part, packSigned} from './bits.mjs';
-import {admitOptions, admitPixels, admitSampleFormat, fault, job} from './admit.mjs';
+import {admitOptions, admitPixels, fault, job} from './admit.mjs';
+import {admitSampleFormat} from './admit-samples.mjs';
 import {admitEffort} from './effort-level.mjs';
 import {admitPhotoFilter} from './photo-job.mjs';
 import {photoXYBSteps} from './photo-xyb.mjs';

@@ -13,13 +13,13 @@ function transferable(value, buffers = new Set(), seen = new Set()) {
 export function install(port, pending = []) {
   let here = false;
   const owner = {}, running = new Map();
-  const reply = (id, reason) => port.postMessage({id, ok: false, error: {name: reason?.name || 'Error', code: reason?.code || 'JXL_INPUT', message: reason?.message || String(reason)}});
+  const reply = (id, reason) => port.postMessage({id, ok: false, error: {name: reason?.name || 'Error', code: typeof reason?.code === 'string' && reason.code.startsWith('JXL_') ? reason.code : 'JXL_INTERNAL', message: reason?.message || String(reason)}});
   const receive = message => {
     if (!message) return;
     if (message.cancel !== undefined) { running.get(message.cancel)?.abort(Object.assign(new Error('JPEG XL operation was canceled.'), {code: 'JXL_ABORTED'})); return; }
     if (!Number.isSafeInteger(message.id) || message.id < 1) return;
     const {id, operation, input, options, maxPixels, helpers, lane, alone} = message;
-    const beside = lane === 1 && helpers && running.size - Number(here) < helpers.count;
+    const beside = lane === 1 && helpers && running.size - here < helpers.count;
     if (running.has(id) || (here && !beside)) { reply(id, Object.assign(new Error('The worker already has an active operation.'), {code: 'JXL_BUSY'})); return; }
     const controller = new AbortController();
     running.set(id, controller);

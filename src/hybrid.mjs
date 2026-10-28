@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 import {LIMITS} from './limits.mjs';
 import {BitWriter, complete, part, scaled} from './bits.mjs';
-import {admitOptions, admitPixels, admitSampleFormat, fault, job} from './admit.mjs';
+import {admitOptions, admitPixels, fault, job} from './admit.mjs';
+import {admitSampleFormat} from './admit-samples.mjs';
 import {admitEffort} from './effort-level.mjs';
 import {inspectPixels, shapeFloors, losslessSteps} from './lossless.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {progressivePasses} from './vardct-progressive.mjs';
-import {writeImageHeader} from './frame.mjs';
+import {writeImageHeader} from './icc-write.mjs';
 import {readStill, copyBits} from './framing.mjs';
 import {encodeLayersSteps} from './layers.mjs';
 

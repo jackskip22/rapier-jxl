@@ -1,2 +1,2 @@
-/*! rapier-jxl 7.0.0 | MIT */
-import{a as n,b as o}from"./chunk-WYQBEJ6Q.mjs";import"./chunk-DRP72F5Q.mjs";import"./chunk-UZBOSTJN.mjs";import"./chunk-LP6ERT4E.mjs";function r(o,r){return n().encode(o,r)}export{o as createEncoder,r as encode};
+/*! rapier-jxl 7.1.0 | MIT */
+import{a as n,b as o}from"./chunk-OYHW4BL5.mjs";import"./chunk-WILBA55Q.mjs";import"./chunk-C6WQS6EE.mjs";import"./chunk-MZ6TOABJ.mjs";function r(o,r){return n().encode(o,r)}export{o as createEncoder,r as encode};

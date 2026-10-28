@@ -1,8 +1,10 @@
 // Rapier's JPEG XL encoder: a JPEG carried into a VarDCT frame. MIT (images/jxl/LICENSE).
 import {kernelHooks} from './kernel-hooks.mjs';
 import {BitWriter, float16Bits, packSigned, ceilLog2, complete} from './bits.mjs';
-import {writeImageHeader, writeFrameHeaderEnd, finishSections, assembleCodestream, GROUP_DIM, GROUP_TOKENS} from './frame.mjs';
-import {ZERO_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
+import {writeFrameHeaderEnd, finishSections, assembleCodestream, GROUP_DIM, GROUP_TOKENS} from './frame.mjs';
+import {writeImageHeader} from './icc-write.mjs';
+import {ZERO_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
+import {codeChannel} from './modular-channel.mjs';
 import {writeContextMap, writeHistograms, buildCode, uintConfig, countToken, writeHybrid, hybridToken} from './prefix.mjs';
 import {TokenCounts, buildTokenCoding} from './entropy.mjs';
 import {jpegError, ZIGZAG} from './jpeg-tables.mjs';
@@ -143,7 +145,7 @@ function mergedCounts(source, counts, target) {
   return result;
 }
 
-function writeModularStream(w, planes, predictor, ans) {
+function writeModularStream(w, planes, predictor, ans, kernels) {
   const leaves = planes.map(() => leaf(predictor));
   const freqs = leaves.map(() => new Uint32Array(ALPHABET));
   const plans = ans && planes.map((p, i) => {
@@ -178,7 +180,7 @@ function writeModularStream(w, planes, predictor, ans) {
       return model;
     });
     const candidate = new BitWriter(256);
-    const write = ans(candidate, ordered, models.map(model => model.freqs), l => leaves.indexOf(l), i => models[i].config);
+    const write = ans(candidate, ordered, models.map(model => model.freqs), l => leaves.indexOf(l), i => models[i].config, kernels);
     if (candidate.bitLength + write.measure(plans) < prefixBits) { write(plans); w.append(candidate); return; }
     w.append(header);
   }
@@ -229,7 +231,8 @@ export function walkACGroup(state, g, emit, pass = 0) {
   for (let i = 0; i < n; i++) emit(ctxs[i], values[i]);
 }
 
-const tokenBuffer = () => ({ctxs: new Int32Array(GROUP_TOKENS), values: new Int32Array(GROUP_TOKENS)});
+let sharedTokens = null;
+const tokenBuffer = () => sharedTokens ||= {ctxs: new Int32Array(GROUP_TOKENS), values: new Int32Array(GROUP_TOKENS)};
 export function fillACGroup(state, g, pass, ctxs, values) {
   const {authoredOrderPasses, groupsX, progression, contexts, lumaBuckets, lumaW,
     nzeros, xsizeBlocks, ysizeBlocks, comps, grey, orders, counted, blockCounts, nonZero, hshifts, vshifts} = state;
@@ -308,6 +311,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   const gcd1024 = q => { let d = 1024; while (q % d) d >>= 1; return d; };
   const dcScale = comps.map(c => ycbcr || xyb || jpegReconstruction ? 1 : c.quant[0] / gcd1024(c.quant[0]));
   const dcLift = comps.map(c => ycbcr || xyb ? 0 : jpegReconstruction ? Math.floor(1024 / c.quant[0]) : 1024 / gcd1024(c.quant[0]));
+  const kernels = kernelHooks.entropy?.();
   const dcGroup = g => {
     const lfCoder = plan.lfCoder;
     const w = new BitWriter(4096), gx = g % dcGroupsX, gy = (g / dcGroupsX) | 0;
@@ -327,8 +331,8 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
       }
       return {w: pw, h: ph, data};
     });
-    const plainDc = target => writeModularStream(target, planes, GRADIENT_PREDICTOR, plan.modularAns);
-    if (lfCoder) lfCoder.dc(w, planes, plainDc); else plainDc(w);
+    const plainDc = target => writeModularStream(target, planes, GRADIENT_PREDICTOR, plan.modularAns, kernels);
+    if (lfCoder) lfCoder.dc(w, planes, plainDc, kernels); else plainDc(w);
     }
     auxiliary?.group(w, gx * 2048, gy * 2048, 2048, 3, Infinity);
     const regionBlocks = strategyData && strategyData.blocks.filter(block => block.bx >= x0 && block.bx < x0 + rw && block.by >= y0 && block.by < y0 + rh)
@@ -359,7 +363,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
       {w: count, h: 2, data: blocks}, {w: rw, h: rh, data: epf ? sharpnessOf(x0, y0, rw, rh) : new Int16Array(rw * rh)},
     ];
     const plainMetadata = target => writeSmallerModularStream(target, metadata, field > 1 ? GRADIENT_PREDICTOR : ZERO_PREDICTOR);
-    if (lfCoder) lfCoder.metadata(w, metadata, plainMetadata); else plainMetadata(w);
+    if (lfCoder) lfCoder.metadata(w, metadata, plainMetadata, kernels); else plainMetadata(w);
     return w;
   };
   if (plan.lfGroup !== undefined) {
@@ -375,7 +379,8 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   const wanted = fast || useDCFrame || blocksTotal < 256 ? 0 : Math.max(1, Math.min(7, ceilLog2(blocksTotal) - ceilLog2(quantSum) - 7));
   const designs = strategyData ? ['dcBuckets', 'sizes', 'sizesShared'] : ['dcBuckets'];
   let contexts = blockContexts(lumaDc, wanted, grey, strategyData ? DESIGNS.fine(grey) : undefined);
-  const lumaBuckets = Uint8Array.from(lumaDc, contexts.bucketOf);
+  const lumaBuckets = new Uint8Array(lumaDc.length), bucketOf = contexts.bucketOf;
+  for (let i = 0; i < lumaDc.length; i++) lumaBuckets[i] = bucketOf(lumaDc[i]);
   let contextHeader = null;
 
   const nzeros = [0, 1, 2].map(() => new Int32Array(32 * 32));
@@ -387,22 +392,30 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     hshifts: [0, 1, 2].map(hshift), vshifts: [0, 1, 2].map(vshift)});
   const tokens = (g, emit, pass = 0) => walkACGroup(tokenState(), g, emit, pass);
   let kept = null, renaming = null;
+  const fill = (g, pass) => {
+    const state = tokenState(), filled = kernels?.fill(state, g, pass, DCT8_DENSITY);
+    return filled || [fillACGroup(state, g, pass, buffer.ctxs, buffer.values), buffer.ctxs, buffer.values];
+  };
   const countTokens = (g, into, pass) => {
     if (kernelHooks.acGroup?.(tokenState(), g, pass, {counts: into}, DCT8_DENSITY)) return;
     if (!buffer) { tokens(g, (ctx, value) => into.add(ctx, value), pass); return; }
-    const n = fillACGroup(tokenState(), g, pass, buffer.ctxs, buffer.values);
-    into.addTokens(buffer.ctxs, buffer.values, n);
-    if (kept) kept[g] = shared.tokenStore.keep(buffer, n);
+    const [n, ctxs, values] = fill(g, pass);
+    if (!(ctxs.buffer !== buffer.ctxs.buffer && kernels.countFilled(into, n))) into.addTokens(ctxs, values, n);
+    if (kept && !kernels) kept[g] = shared.tokenStore.keep({ctxs, values}, n);
   };
   const writeTokens = (g, coding, w, pass) => {
     const written = kernelHooks.acGroup?.(tokenState(), g, pass, {coding, w}, DCT8_DENSITY);
     if (written) return written;
     if (!buffer || !coding.writeTokens) { tokens(g, (ctx, value) => coding.write(w, ctx, value), pass); return; }
+    if (coding.writeFilled) {
+      const filled = kernels.fill(tokenState(), g, pass, DCT8_DENSITY);
+      if (filled) { coding.writeFilled(w, filled[0]); return; }
+    }
     const group = kept?.[g];
     if (!group || renaming === false) {
-      const n = fillACGroup(tokenState(), g, pass, buffer.ctxs, buffer.values);
-      if (kept && !renaming && !progression) kept[g] = shared.tokenStore.keep(buffer, n);
-      coding.writeTokens(w, buffer.ctxs, buffer.values, n);
+      const [n, ctxs, values] = fill(g, pass);
+      if (kept && !kernels && !renaming && !progression) kept[g] = shared.tokenStore.keep({ctxs, values}, n);
+      coding.writeTokens(w, ctxs, values, n);
       return;
     }
     if (!renaming) { coding.writeTokens(w, group.ctxs, group.values, group.ctxs.length); return; }
@@ -444,7 +457,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     const candidate = blockContexts(lumaDc, buckets, grey, DESIGNS[name](grey));
     if (candidate.numCtxs > 16) continue;
     const same = candidate.numCtxs === countedMap.numCtxs && candidate.numDc === countedMap.numDc && candidate.map.every((v, i) => v === countedMap.map[i]);
-    const candidateCodings = counts.map(count => buildCoding(same ? count : mergedCounts(countedMap, count, candidate), {...plan.clusters, smallestMap: true})), header = new BitWriter(128);
+    const candidateCodings = counts.map(count => buildCoding(same ? count : mergedCounts(countedMap, count, candidate), {...plan.clusters, smallestMap: true, kernels})), header = new BitWriter(128);
     writeBlockContexts(header, candidate);
     if (!codings || candidateCodings.reduce((n, coding) => n + coding.bits, header.bitLength) < codings.reduce((n, coding) => n + coding.bits, contextHeader.bitLength)) {
       codings = candidateCodings; contexts = candidate; contextHeader = header;

@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: MIT
 import {BitWriter, part, scaled, complete} from './bits.mjs';
-import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, groupPass, assembleCodestream, GROUP_DIM} from './frame.mjs';
+import {writeModularFrameHeader, groupLayout, groupRect, groupPass, assembleCodestream, GROUP_DIM} from './frame.mjs';
+import {writeImageHeader} from './icc-write.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
-import {AVERAGE_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, split, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
+import {AVERAGE_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, split, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
+import {codeChannel} from './modular-channel.mjs';
 import {inspectPixels, losslessSteps, planeFill, nativeSteps, iccShape} from './lossless.mjs';
 import {lossySteps} from './lossy.mjs';
 import {photoSteps, admitPhotoFilter} from './photo-job.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {WEIGHTED_PREDICTOR, WEIGHTED_PROPERTY, WEIGHTED_CUTS, codeWeighted} from './weighted.mjs';
-import {fault, admitOptions, admitPixels, admitSampleFormat} from './admit.mjs';
+import {fault, admitOptions, admitPixels} from './admit.mjs';
+import {admitSampleFormat} from './admit-samples.mjs';
 import {localSteps} from './local.mjs';
 import {rctSearchSteps} from './rct-search.mjs';
 import {screenEligible, screenSteps} from './screen-search.mjs';

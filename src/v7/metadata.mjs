@@ -1,12 +1,17 @@
 import {check, fail, object} from './primitives.mjs';
 import {copyBytes, encodedByteLength} from './bytes.mjs';
+const DEFAULT_MAX_BOXES = 65536;
 const capture = options => {
-  if (options === undefined) return {};
+  if (options === undefined) return {maxBoxes: DEFAULT_MAX_BOXES};
   object(options);
   const copy = {...options};
   for (const key of ['exif', 'xmp', 'jumb']) {
     if (ArrayBuffer.isView(copy[key])) copy[key] = copyBytes(copy[key], true);
     else if (Array.isArray(copy[key])) copy[key] = copy[key].map(value => ArrayBuffer.isView(value) ? copyBytes(value, true) : value);
+  }
+  if (copy.maxBoxes === undefined) copy.maxBoxes = DEFAULT_MAX_BOXES;
+  else if (!Number.isSafeInteger(copy.maxBoxes) || copy.maxBoxes < 1) {
+    throw fail('JXL_INPUT', 'maxBoxes is an integer from 1 to ' + Number.MAX_SAFE_INTEGER + '.');
   }
   return copy;
 };

@@ -13,7 +13,7 @@
   output{display:block;margin:18px 0;white-space:pre-wrap;line-height:1.6}small{color:#637468}a[hidden]{display:none}
 </style>
 <main>
-  <small>REFERENCE PLUGIN / SNAPDOM 3 / RAPIER-JXL 7</small>
+  <small>RAPIER-JXL/SNAPDOM / SNAPDOM 3</small>
   <h1>Capture → JPEG XL</h1>
   <p>One capture, a persistent encoder worker, and an ordinary <code>image/jxl</code> Blob. All assets are local.</p>
   <div class="controls">
@@ -28,11 +28,12 @@
 </main>
 <script type="module">
   import { snapdom } from './vendor/snapdom.mjs';
-  import { jxlExport } from './jxl-export.mjs';
-  import { createEncoder } from '../../dist/index.mjs';
-  // In an app: import { createEncoder } from 'rapier-jxl', or import { encode } from 'rapier-jxl/capture'.
-  const encoder = createEncoder();
-  const plugin = jxlExport({encode: encoder.capture});
+  // In an app: import { snapdom } from '@zumer/snapdom' and import { jxl } from 'rapier-jxl/snapdom'.
+  // In the installed package this loads its own dist/; this folder alone (StackBlitz) loads the package from jsDelivr.
+  let jxl;
+  try { ({ jxl } = await import('../../dist/snapdom.mjs')); }
+  catch { ({ jxl } = await import('https://cdn.jsdelivr.net/npm/rapier-jxl@7/dist/snapdom.mjs')); }
+  const plugin = jxl();
   plugin.prepare().catch(() => {});
   const $ = selector => document.querySelector(selector);
   let controller, download;
@@ -59,6 +60,6 @@
     } catch(error) { $('output').value=error.name==='AbortError'?'Capture canceled.':`${error.name}: ${error.message}`; }
     finally { $('#capture').disabled=false; $('#cancel').hidden=true; controller=undefined; }
   };
-  addEventListener('pagehide', () => {encoder.close(); if(download) URL.revokeObjectURL(download);});
+  addEventListener('pagehide', () => {if(download) URL.revokeObjectURL(download);});
 </script>
 </html>

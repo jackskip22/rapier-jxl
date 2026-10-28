@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 import {fault} from './admit.mjs';
 import {part} from './bits.mjs';
-import {codeChannel, leaf} from './modular.mjs';
+import {leaf} from './modular.mjs';
+import {codeChannel} from './modular-channel.mjs';
 import {admitWeightedPredictor, customWeightedResiduals} from './weighted-custom.mjs';
 import {DELTA_IMPLICIT} from './implicit-palette.mjs';
 

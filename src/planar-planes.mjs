@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 import {fault} from './admit.mjs';
 import {channelPowers} from './planar-input.mjs';
-import {leaf, channelTree, writeTree, writeChannelHistograms, codeChannel, ALPHABET} from './modular.mjs';
+import {leaf, channelTree, writeTree, writeChannelHistograms, ALPHABET} from './modular.mjs';
+import {codeChannel} from './modular-channel.mjs';
 import {buildCode} from './prefix.mjs';
 import {codeCustomWeighted} from './weighted-custom.mjs';
 

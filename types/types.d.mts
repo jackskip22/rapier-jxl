@@ -23,6 +23,7 @@ type PixelEncodingOptions = Omit<CodecOptions, 'quality'> & JobOptions & {
   effort?: Effort; acceleration?: Acceleration; losslessProfile?: 'painting' | 'painting-search';
 } & (
   {lossless: true; quality?: never; target?: never; format?: FormatFeatures} |
+  /** quality: 1 to 100; 100 is lossless. Lossy XYB photo quantization caps at 99.9 (a quality above it quantizes as 99.9). */
   {lossless?: false; quality?: number; target?: never; format?: FormatFeatures}
 );
 export type TargetEncodeOptions = JobOptions & {
@@ -80,6 +81,8 @@ export interface Encoder {
   decode(input: Uint8Array | Blob, options?: DecodeOptions): Promise<DecodedImage>;
   animate(input: Animation, options?: AnimationOptions): Promise<Bytes>;
   format(input: FormatRequest, options?: FormatOptions): Promise<Bytes>;
+  /** Starts the worker with no job; resolves when it is ready (at once in place). */
+  prepare(): Promise<void>;
   close(): void;
   readonly stats: EncoderStats;
 }

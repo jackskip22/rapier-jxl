@@ -56,21 +56,25 @@ function correlate(tile, count, cfl, index, cflScale) {
   cfl.x[index] = Math.max(-128, Math.min(127, Math.round(cflScale * 84 * xy / (yy + 1))));
   cfl.b[index] = Math.max(-128, Math.min(127, Math.round(cflScale * 84 * bySum / (yy + 1))));
 }
-function quantFastTile(tile, bw, bh, by0, bx0, stride, components, scale, fx, fb, thresholds, nonZero) {
+export const FAST_RANGE = new Error('A fast-path level is outside Int16.');
+function quantFastTile(tile, bw, bh, by0, bx0, stride, components, scale, fx, fb, thresholds, nonZero, strict = false) {
   const ratios = [fx / 84, 0, fb / 84];
   for (let c = 0; c < 3; c++) {
     const sc = scale[c], out = components[c].coeffs, ratio = ratios[c], threshold = thresholds[c], counts = nonZero && nonZero[c];
     for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++) {
       const at = (by * bw + bx) * 192, base = at + c * 64, luma = at + 64, block = (by0 + by) * stride + bx0 + bx, offset = block * 64;
       const dc = tile[base] * sc[0];
-      out[offset] = Math.abs(dc) < 0.5 ? 0 : Math.round(dc);
+      if (strict && Math.abs(dc) >= 32767.5) throw FAST_RANGE;
+      out[offset] = Math.abs(dc) < 0.5 ? 0 : Math.max(-32768, Math.min(32767, Math.round(dc)));
       let count = 0;
       if (c === 1) for (let k = 1; k < 64; k++) {
         const value = tile[base + k] * sc[k], q = Math.abs(value) < threshold[k] ? 0 : Math.round(value);
-        out[offset + k] = q; count += q !== 0;
+        if (strict && Math.abs(q) > 32767) throw FAST_RANGE;
+        out[offset + k] = Math.max(-32768, Math.min(32767, q)); count += q !== 0;
       } else for (let k = 1; k < 64; k++) {
         const value = (tile[base + k] - ratio * tile[luma + k]) * sc[k], q = Math.abs(value) < threshold[k] ? 0 : Math.round(value);
-        out[offset + k] = q; count += q !== 0;
+        if (strict && Math.abs(q) > 32767) throw FAST_RANGE;
+        out[offset + k] = Math.max(-32768, Math.min(32767, q)); count += q !== 0;
       }
       if (counts) counts[block] = count;
     }
@@ -212,8 +216,9 @@ export function* photoXYBSteps(data, width, height, quality, options) {
   const T = options?.transform, lms = T?.lms;
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), quantScale = 256;
   if (options?.planesOnly) return {planes: xybPlanes(data, width, height, T, stride * 8, rows * 8)};
-  const distance = (fast ? 0.539 : 1) * (quality >= 99 ? 0.19 - 0.16 * (quality - 99) : quality >= 30 ? 0.1 + (100 - quality) * 0.09 : 53 / 3000 * quality * quality - 23 / 20 * quality + 25);
-  const strength = Math.max(0, Math.min(1, (90 - quality) / 15)), stepScale = 1 - 0.1 * strength, acScale = 1.175 + 0.075 * strength;
+  const q = Math.min(quality, 99.9);
+  const distance = (fast ? 0.539 : 1) * (q >= 99 ? 0.19 - 0.16 * (q - 99) : q >= 30 ? 0.1 + (100 - q) * 0.09 : 53 / 3000 * q * q - 23 / 20 * q + 25);
+  const strength = Math.max(0, Math.min(1, (90 - q) / 15)), stepScale = 1 - 0.1 * strength, acScale = 1.175 + 0.075 * strength;
   const t = options?.tune, tune = typeof t === "function" ? t : t ? (c, k) => t[c] * (1 + t[3 + c] * Math.sqrt(((k & 7) * (k & 7) + (k >> 3) * (k >> 3)) / 98)) : () => 1;
   const d = options?.dcScale, dcScale = typeof d === 'function' ? c => d(c, distance) : Array.isArray(d) ? c => d[c] : () => d ?? 1;
   const gabTilt = (c, k) => {
@@ -294,7 +299,7 @@ export function* photoXYBSteps(data, width, height, quality, options) {
       }
       const fx = cfl.x[index], fb = cfl.b[index];
       if (fast) {
-        quantFastTile(tile, bw, bh, by0, bx0, stride, components, fastScale, fx, fb, THRESHOLDS, nonZero);
+        quantFastTile(tile, bw, bh, by0, bx0, stride, components, fastScale, fx, fb, THRESHOLDS, nonZero, !!T);
         continue;
       }
       if (!roundtrip) {
@@ -322,7 +327,7 @@ export function* photoXYBSteps(data, width, height, quality, options) {
   }
   let alpha = null;
   for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) { alpha = data; break; }
-  const epf = (quality <= 90 || options?.filterAlways) && options?.filter !== 'off' ? 20 * distance : 0;
+  const epf = (q <= 90 || options?.filterAlways) && options?.filter !== 'off' ? 20 * distance : 0;
   const image = {width, height, components, quantScale, cfl, epf, xyb: true, ycbcr: false, orientation: 1, alpha, colorSpace: options?.space ?? 'srgb'};
   if (quantFields) { image.quantFields = quantFields; image.quantFieldBase = FIELD; image.epf = epf * FIELD / 32; }
   if (options?.epfScale !== undefined) image.epf *= options.epfScale;

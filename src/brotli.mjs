@@ -108,7 +108,7 @@ function histogramBits(a, b) {
   for (let s = 0; s < 256; s++) { const f = b ? a[s] + b[s] : a[s]; if (f) { total += f; bits -= populationBits(f); used++; } }
   return bits + populationBits(total) + (used > 1 ? 16 + 5 * used : 8);
 }
-function literalModel(data, commands) {
+function literalModel(data, commands, kernels) {
   const single = new Uint32Array(256);
   for (const command of commands) for (let at = command.start; at < command.start + command.insert; at++) single[data[at]]++;
   let best = {mode: 0, map: new Uint8Array(64), bits: histogramBits(single), trees: 1, histograms: [single]};
@@ -118,20 +118,25 @@ function literalModel(data, commands) {
       histograms[literalContext(mode, at ? data[at - 1] : 0, at > 1 ? data[at - 2] : 0)][data[at]]++;
     const clusters = histograms.map((freqs, i) => ({freqs, contexts: [i], bits: histogramBits(freqs)})).filter(c => c.freqs.some(Boolean));
     if (clusters.length < 2) continue;
-    const n = clusters.length, gains = new Float64Array(n * n), alive = new Uint8Array(n).fill(1);
-    const gain = (i, j) => clusters[i].bits + clusters[j].bits - histogramBits(clusters[i].freqs, clusters[j].freqs);
-    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) gains[i * n + j] = gain(i, j);
-    let count = n;
-    while (count > 1) {
-      let pi = -1, pj = -1, pg = -Infinity;
-      for (let i = 0; i < n; i++) if (alive[i]) for (let j = i + 1; j < n; j++) if (alive[j] && gains[i * n + j] > pg) { pg = gains[i * n + j]; pi = i; pj = j; }
-      if (pg <= 0 && count <= 256) break;
-      const a = clusters[pi], b = clusters[pj];
-      for (let s = 0; s < 256; s++) a.freqs[s] += b.freqs[s];
-      a.contexts.push(...b.contexts); a.bits = histogramBits(a.freqs); alive[pj] = 0; count--;
-      for (let k = 0; k < n; k++) if (alive[k] && k !== pi) gains[Math.min(k, pi) * n + Math.max(k, pi)] = gain(Math.min(k, pi), Math.max(k, pi));
+    let kept;
+    if (kernels) kept = kernels.literalClusters(clusters);
+    else {
+      const n = clusters.length, gains = new Float64Array(n * n), alive = new Uint8Array(n).fill(1);
+      const gain = (i, j) => clusters[i].bits + clusters[j].bits - histogramBits(clusters[i].freqs, clusters[j].freqs);
+      for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) gains[i * n + j] = gain(i, j);
+      let count = n;
+      while (count > 1) {
+        let pi = -1, pj = -1, pg = -Infinity;
+        for (let i = 0; i < n; i++) if (alive[i]) for (let j = i + 1; j < n; j++) if (alive[j] && gains[i * n + j] > pg) { pg = gains[i * n + j]; pi = i; pj = j; }
+        if (pg <= 0 && count <= 256) break;
+        const a = clusters[pi], b = clusters[pj];
+        for (let s = 0; s < 256; s++) a.freqs[s] += b.freqs[s];
+        a.contexts.push(...b.contexts); a.bits = histogramBits(a.freqs); alive[pj] = 0; count--;
+        for (let k = 0; k < n; k++) if (alive[k] && k !== pi) gains[Math.min(k, pi) * n + Math.max(k, pi)] = gain(Math.min(k, pi), Math.max(k, pi));
+      }
+      kept = clusters.filter((_, i) => alive[i]);
     }
-    const kept = clusters.filter((_, i) => alive[i]), map = new Uint8Array(64);
+    const map = new Uint8Array(64);
     kept.forEach((cluster, k) => { for (const c of cluster.contexts) map[c] = k; });
     const bits = kept.reduce((total, c) => total + c.bits, 0) + (kept.length > 1 ? 64 * Math.max(1, ceilLog2(kept.length)) : 0);
     if (bits < best.bits) best = {mode, map, bits, trees: kept.length, histograms: kept.map(c => c.freqs)};
@@ -142,10 +147,10 @@ function writeVarLenUint8(writer, value) {
   if (!value) { writer.write(1, 0); return; }
   const n = floorLog2(value); writer.write(1, 1); writer.write(3, n); writer.write(n, value - (1 << n));
 }
-function compressedBlock(data, start, end, matches, contexts) {
+function compressedBlock(data, start, end, matches, contexts, kernels) {
   const plan = commandsFor(data, start, end, matches, contexts), single = writeBlock(data, start, end, plan, {mode: 0, map: new Uint8Array(64), trees: 1, histograms: [plan.literal]});
   if (!contexts) return single;
-  const model = literalModel(data, plan.commands);
+  const model = literalModel(data, plan.commands, kernels);
   if (model.trees === 1) return single;
   const modelled = writeBlock(data, start, end, plan, model);
   return single.bitLength <= modelled.bitLength ? single : modelled;
@@ -187,7 +192,7 @@ export function compressBrotli(bytes, options = {}) {
   else if (windowBits === 17) { writer.write(1, 1); writer.write(3, 0); writer.write(3, 0); }
   else { writer.write(1, 1); writer.write(3, windowBits - 17); }
   for (let start = 0; start < bytes.length; start += 65536) {
-    const ring = matches?.history.slice(), end = Math.min(bytes.length, start + 65536), compressed = compressedBlock(bytes, start, end, matches, options.literalContexts);
+    const ring = matches?.history.slice(), end = Math.min(bytes.length, start + 65536), compressed = compressedBlock(bytes, start, end, matches, options.literalContexts, options.kernels);
     const rawBits = 20 + ((8 - (writer.bitLength + 20) % 8) % 8) + (end - start) * 8;
     const chosenBits = Math.min(rawBits, compressed.bitLength);
     if (Math.ceil((writer.bitLength + chosenBits + 2) / 8) > maximum) throw tooLarge();

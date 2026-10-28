@@ -1,6 +1,6 @@
 {
  "name": "rapier-jxl",
- "version": "7.0.0",
+ "version": "7.1.0",
  "type": "module",
  "license": "MIT",
  "description": "JPEG XL for pictures, captures and exact JPEG reconstruction.",
@@ -33,6 +33,10 @@
   "./capture": {
    "types": "./types/capture.d.mts",
    "import": "./dist/capture.mjs"
+  },
+  "./snapdom": {
+   "types": "./types/snapdom.d.mts",
+   "import": "./dist/snapdom.mjs"
   },
   "./jpeg": {
    "types": "./types/jpeg.d.mts",
@@ -76,7 +80,8 @@
   "examples",
   "LICENSE",
   "README.md",
-  "THIRD_PARTY_NOTICES"
+  "THIRD_PARTY_NOTICES",
+  "CHANGELOG.md"
  ],
  "engines": {
   "node": "^20.16.0 || >=22.3.0"

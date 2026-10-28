@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 import {LIMITS} from './limits.mjs';
 import {complete} from './bits.mjs';
-import {admitOptions, admitPixels, admitSampleFormat, fault, job} from './admit.mjs';
+import {admitOptions, admitPixels, fault, job} from './admit.mjs';
+import {admitSampleFormat} from './admit-samples.mjs';
 import {nativeSteps} from './lossless.mjs';
 import {prepareColorEncoding, prepareToneMapping} from './color-info.mjs';
 import {prepareICC} from './icc-write.mjs';

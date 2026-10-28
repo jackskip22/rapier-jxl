@@ -1,2 +1,0 @@
-/*! rapier-jxl 7.0.0 | MIT */
-import{a as m,b as t}from"./chunk-DPTNW26C.mjs";import"./chunk-RVKF7PG6.mjs";import"./chunk-IRWOMHMB.mjs";import"./chunk-KISGRXW4.mjs";import"./chunk-IVNWBWTO.mjs";import"./chunk-53WDLGM7.mjs";import"./chunk-HC6V5ATK.mjs";import"./chunk-ELWWLD3L.mjs";import"./chunk-2YE65DBU.mjs";import"./chunk-BOE2FTHY.mjs";import"./chunk-P6KVDOKV.mjs";import"./chunk-XGDJ7TJI.mjs";import"./chunk-OFTJD563.mjs";import"./chunk-OMW3WO6C.mjs";import"./chunk-WOE22HDO.mjs";export{m as encodeDeltaPalette,t as encodeDeltaPaletteSteps};

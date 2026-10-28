@@ -1,10 +1,12 @@
 // Lossy modular encoding. MIT (images/jxl/LICENSE).
 import {BitWriter, complete} from './bits.mjs';
-import {writeImageHeader, writeModularFrameHeader, groupLayout, finishSections, assembleCodestream} from './frame.mjs';
-import {ZERO_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, channelTree, streamTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
+import {writeModularFrameHeader, groupLayout, finishSections, assembleCodestream} from './frame.mjs';
+import {writeImageHeader} from './icc-write.mjs';
+import {ZERO_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, channelTree, streamTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
+import {codeChannel} from './modular-channel.mjs';
 import {forwardSqueeze, defaultSqueezeParams} from './squeeze.mjs';
 import {inspectPixels, nativeSteps} from './lossless.mjs';
-import {admitSampleFormat} from './admit.mjs';
+import {admitSampleFormat} from './admit-samples.mjs';
 
 const QUALITY_FACTOR = 0.35, LUMA_FACTOR = 1.1;
 const SQUEEZE_GROUP = 1024, SQUEEZE_DC_GROUP = 8 * SQUEEZE_GROUP;

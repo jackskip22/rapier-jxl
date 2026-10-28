@@ -1,10 +1,10 @@
 
 import {DEFAULT_INPUT_BYTES, DEFAULT_PIXELS, record, dimensions, measure, snapshot} from './ownership.mjs';
+import {fail as error} from './primitives.mjs';
 const DEFAULT_JOBS = 32;
 const HELPER_BYTES = 46137344, PIXEL_BYTES = 56;
 const operations = ['encode', 'capture', 'recompress', 'restore', 'decode', 'animate', 'format'];
 
-function error(code, message) { return Object.assign(new Error(message), {code}); }
 function positive(value, fallback, name) {
   if (value === undefined) value = fallback;
   if (!Number.isSafeInteger(value) || value < 1) throw error('JXL_OPTIONS', `${name} must be a positive safe integer.`);
@@ -14,8 +14,35 @@ function aborted(signal) {
   try { return signal?.reason === undefined ? error('JXL_ABORTED', 'JPEG XL operation was canceled.') : signal.reason; }
   catch (reason) { return reason; }
 }
+const WORKER_START = 'Could not start the JPEG XL module worker. Serve the package from the page origin, allow blob: in worker-src when it comes from another origin, or use createEncoder({worker: false}). workerFactory can supply your own worker.';
+function started(make, cleanup) {
+  try { return make(); } catch (cause) { cleanup?.(); throw Object.assign(error('JXL_WORKER', WORKER_START), {cause}); }
+}
 function browserWorker() {
-  return new Worker(new URL('./worker.mjs', import.meta.url), {type: 'module'});
+  const origin = new URL('./worker.mjs', import.meta.url).origin;
+  if (typeof location === 'undefined' || !origin || origin === 'null' || origin === location.origin)
+    return started(() => new Worker(new URL('./worker.mjs', import.meta.url), {type: 'module'}));
+  const source = URL.createObjectURL(new Blob(['import ' + JSON.stringify(new URL('./worker.mjs', import.meta.url).href) + ';'], {type: 'text/javascript'}));
+  let blocked = false;
+  const violation = event => {
+    if (event.disposition === 'enforce' && event.effectiveDirective === 'worker-src' && (event.blockedURI === 'blob' || event.blockedURI === source)) blocked = true;
+  };
+  const done = () => { document.removeEventListener('securitypolicyviolation', violation); URL.revokeObjectURL(source); };
+  document.addEventListener('securitypolicyviolation', violation);
+  const worker = started(() => new Worker(source, {type: 'module'}), done);
+  worker.addEventListener('message', done, {once: true});
+  worker.addEventListener('error', event => {
+    done();
+    if (blocked) Object.defineProperties(event, {code: {value: 'JXL_WORKER_CSP'}, message: {value: "This page's Content Security Policy blocks blob: workers, which rapier-jxl needs when loaded from another origin. Add blob: to worker-src, or use createEncoder({worker: false})."}});
+  }, {once: true});
+  const terminate = worker.terminate;
+  worker.terminate = function () { done(); return terminate.call(this); };
+  return worker;
+}
+
+function coded(reason, job) {
+  if (reason === job.controller.signal.reason || (typeof reason?.code === 'string' && reason.code.startsWith('JXL_'))) return reason;
+  return Object.assign(error('JXL_INTERNAL', reason?.message || String(reason)), {cause: reason});
 }
 
 function helperReservation(value) {
@@ -128,18 +155,20 @@ export function createEncoder(config = {}) {
       start(job);
     }
   }
+  function load() {
+    return loading ||= import('./transport.mjs').then(({createTransport}) => { transport = createTransport(host); },
+      reason => { loading = null; throw reason; });
+  }
   function start(job) {
     if (factory) {
-      loading ||= import('./transport.mjs').then(({createTransport}) => { transport = createTransport(host); },
-        reason => { loading = null; throw reason; });
-      loading.then(() => {
+      load().then(() => {
         if (running.get(job.id) !== job) return;
         if (job.settled) { release(job); return; }
         try { transport.send(transport.open(), job); } catch (reason) { transport.stop(); complete(job, false, reason); }
       }, reason => { if (running.get(job.id) === job) complete(job, false, reason); });
     } else {
       import('./runtime.mjs').then(({run}) => { runtimeLoaded = true; return run(job.operation, job.input, job.options, {signal: job.controller.signal, onProgress: fraction => progress(job, fraction), maxPixels, helpers, owner, lane: job.lane, alone: job.alone}); })
-        .then(value => complete(job, true, value), reason => complete(job, false, reason));
+        .then(value => complete(job, true, value), reason => complete(job, false, coded(reason, job)));
     }
   }
   function admit(options = {}, inputBytes = 0) {
@@ -186,6 +215,16 @@ export function createEncoder(config = {}) {
     admit(options, inputBytes);
   };
   Object.defineProperty(encoder, 'stats', {enumerable: true, get: () => Object.freeze({queuedJobs: queue.length, queuedBytes: retainedBytes - runningBytes(), activeJobs: running.size, activeBytes: runningBytes(), closed, workerGeneration: transport?.generation ?? 0})});
+  encoder.prepare = () => {
+    const shut = () => error('JXL_CLOSED', 'The JPEG XL encoder is closed.');
+    if (closed) return Promise.reject(shut());
+    if (!factory) return Promise.resolve();
+    return load().then(async () => {
+      while (stopping) await stopping;
+      if (closed) throw shut();
+      return transport.ready();
+    }).catch(reason => { throw closed ? shut() : reason; });
+  };
   encoder.close = () => {
     if (closed) return;
     closed = true;

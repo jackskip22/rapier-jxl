@@ -3,15 +3,15 @@ import {complete} from './bits.mjs';
 import {varDCTSteps, seedLfSections} from './vardct.mjs';
 import {coefficientOrders} from './coefficient-effort.mjs';
 import {buildAnsCoding, writeModularAnsHistograms} from './ans.mjs';
-import {lfCoderFor} from './lf-coding.mjs';
+import {lfCoder, lfCoderFor, fixedLfCoder, quickOrFixedLfCoder} from './lf-coding.mjs';
 import {photoXYBBand, placeBand} from './photo-bands.mjs';
 import {photoXYBSteps} from './photo-xyb.mjs';
 import {TokenCounts} from './entropy.mjs';
 import {acGroupEncoder} from './ac-group.mjs';
 import {V6, GABORISH} from './photo-v6.mjs';
-import {configureKernels} from './kernels.mjs';
+import {configureKernels, disableEntropyKernels} from './kernels.mjs';
 
-const LF_CODERS = Array.from({length: 10}, (_, e) => e ? lfCoderFor(e) : null);
+const LF_CODERS = [...Array.from({length: 10}, (_, e) => e ? lfCoderFor(e) : null), fixedLfCoder, quickOrFixedLfCoder, lfCoder('jpegBroad')];
 const PLAN_KEYS = new Set(['fast', 'clusters', 'orders', 'coding', 'modularAns', 'lfCoder']);
 export function describePlan(plan) {
   for (const key of Object.keys(plan)) if (plan[key] !== undefined && !PLAN_KEYS.has(key)) return null;
@@ -28,7 +28,7 @@ function rebuildPlan(d) {
   if (d.orders) plan.orders = d.orders;
   if (d.ans) plan.coding = buildAnsCoding;
   if (d.modularAns) plan.modularAns = writeModularAnsHistograms;
-  if (d.lf) plan.lfCoder = lfCoderFor(d.lf);
+  if (d.lf) plan.lfCoder = LF_CODERS[d.lf];
   return plan;
 }
 
@@ -39,6 +39,7 @@ function cacheOf(image, plan, counts) {
 
 const inputs = new Map(), encoders = new Map();
 export function serveParallel(message) {
+  disableEntropyKernels();
   if (message.kernels !== undefined) { configureKernels(message.kernels); return null; }
   if (message.input !== undefined) { inputs.set(message.input, message.value); return null; }
   if (message.drop !== undefined) { inputs.delete(message.drop); encoders.delete(message.drop); return null; }

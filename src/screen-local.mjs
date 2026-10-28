@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {BitWriter} from './bits.mjs';
-import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, assembleCodestream} from './frame.mjs';
+import {writeModularFrameHeader, groupLayout, groupRect, assembleCodestream} from './frame.mjs';
+import {writeImageHeader} from './icc-write.mjs';
 import {ALPHABET, leaf, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {sampleTransformRanking} from './sampled.mjs';
 import {colourTransform} from './rct-search.mjs';

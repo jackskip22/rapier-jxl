@@ -17,6 +17,7 @@ function uint(value, maximum, name, minimum = 0) {
   return value;
 }
 function limit(options) { record(options, 'Container options'); return uint(options.maxBytes ?? Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, 'maxBytes', 1); }
+function boxLimit(options) { return uint(options.maxBoxes ?? Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, 'maxBoxes', 1); }
 function bounded(length, maximum) {
   if (!Number.isSafeInteger(length) || length > maximum) throw fault('JXL_SIZE', 'The JPEG XL container exceeds maxBytes.');
   return length;
@@ -39,13 +40,14 @@ export function containerBoxHeader(boxType, bodyByteLength, {extended = false} =
   return boxHeader(typeCode(boxType), bodyByteLength, extended);
 }
 
-function scanContainer(bytes, maximum) {
+function scanContainer(bytes, maximum, maxBoxes = Number.MAX_SAFE_INTEGER) {
   byteArray(bytes, 'JPEG XL input'); bounded(bytes.length, maximum);
   if (bytes[0] === 255 && bytes[1] === 10) return {codestream: bytes, level: 5, minorVersion: 0, entries: [], fragments: []};
   if (!SIGNATURE.every((byte, i) => bytes[i] === byte)) throw invalid('Invalid JPEG XL signature.');
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), entries = [], fragments = [], byIndex = new Map();
   let minorVersion = 0, level = 5, seenLevel = false, full = null, finalIndex = -1, indexBoxes = 0, gainBoxes = 0;
   for (let at = 12; at < bytes.length;) {
+    if (entries.length >= maxBoxes) throw invalid('JPEG XL box count exceeds the limit.');
     if (bytes.length - at < 8) throw invalid('Truncated JPEG XL box header.');
     const short = view.getUint32(at), type = view.getUint32(at + 4), headerLength = short === 1 ? 16 : 8;
     if (bytes.length - at < headerLength) throw invalid('Truncated extended JPEG XL box header.');
@@ -98,7 +100,7 @@ function scanContainer(bytes, maximum) {
 }
 
 export function inspectContainer(bytes, options = {}) {
-  const source = scanContainer(bytes, limit(options));
+  const source = scanContainer(bytes, limit(options), boxLimit(options));
   return {codestream: source.codestream.slice(), level: source.level, minorVersion: source.minorVersion,
     fragments: source.fragments.map(row => ({...row})),
     auxiliary: source.entries.filter(row => ![FTYP, LEVEL, CODESTREAM, PARTIAL].includes(row.type)).map(row =>
@@ -142,31 +144,59 @@ function validateOrder(order, chunks, stream, options) {
 }
 
 export function reframeContainer(bytes, options = {}) {
-  const maximum = limit(options), source = scanContainer(bytes, maximum), stream = source.codestream;
+  const maximum = limit(options), source = scanContainer(bytes, maximum, boxLimit(options)), stream = source.codestream;
   const extended = options.extended ?? false;
   if (typeof extended !== 'boolean') throw invalid('extended is a boolean.');
   const level = options.level ?? source.level;
   if (level !== 5 && level !== 10 || source.level === 10 && level !== 10) throw invalid('The container level is 5 or 10 and cannot demote an existing level 10 declaration.');
-  const chunkSize = options.chunkSize === undefined ? stream.length : uint(options.chunkSize, 0x7fffffff, 'chunkSize', 1);
-  const chunks = [];
-  for (let start = 0; start < stream.length; start += chunkSize) chunks.push({start, data: stream.subarray(start, Math.min(stream.length, start + chunkSize))});
-  const order = options.fragmentOrder ?? chunks.map((_, i) => i), outOfOrder = validateOrder(order, chunks, stream, options);
+  const fragmenting = options.chunkSize !== undefined || options.fragmentOrder !== undefined;
+  const chunkSize = fragmenting
+    ? uint(options.chunkSize === undefined ? Math.max(stream.length, 1) : options.chunkSize, 0x7fffffff, 'chunkSize', 1)
+    : Math.max(stream.length, 1);
+  const fragmentCount = stream.length === 0 ? 0 : Math.ceil(stream.length / chunkSize);
+  if (fragmenting && fragmentCount > 0x80000000) throw fault('JXL_SIZE', 'A JPEG XL stream has at most 2147483648 fragments.');
+  const headerLen = extended ? 16 : 8;
+  const ftyp = source.entries.length ? source.entries[0].data.slice() : new Uint8Array([106,120,108,32,0,0,0,0,106,120,108,32]);
+  const wantLevel = level === 10 || source.entries.some(row => row.type === LEVEL);
+  const auxiliary = source.entries.filter(row => ![FTYP, LEVEL, CODESTREAM, PARTIAL].includes(row.type));
+  let total = SIGNATURE.length + headerLen + ftyp.length;
+  if (wantLevel) total = bounded(total + headerLen + 1, maximum);
+  for (const row of auxiliary) if (row.type !== INDEX) total = bounded(total + headerLen + row.data.length, maximum);
+  if (!fragmenting) total = bounded(total + headerLen + stream.length, maximum);
+  else total = bounded(total + fragmentCount * (headerLen + 4) + stream.length, maximum);
+  for (const row of auxiliary) if (row.type === INDEX) total = bounded(total + headerLen + row.data.length, maximum);
+
+  let outOfOrder = false, order = null;
+  if (fragmenting && options.fragmentOrder !== undefined) {
+    const chunks = {length: fragmentCount};
+    for (let i = 0; i < fragmentCount; i++) chunks[i] = {start: i * chunkSize};
+    order = options.fragmentOrder;
+    outOfOrder = validateOrder(order, chunks, stream, options);
+  }
   const minorVersion = options.minorVersion ?? (outOfOrder ? 1 : 0);
   if (minorVersion !== 0 && minorVersion !== 1 || outOfOrder && minorVersion !== 1) throw invalid('Out-of-order fragments require minorVersion 1.');
-  const ftyp = source.entries.length ? source.entries[0].data.slice() : new Uint8Array([106,120,108,32,0,0,0,0,106,120,108,32]);
-  new DataView(ftyp.buffer).setUint32(4, minorVersion);
-  const parts = [SIGNATURE, boxHeader(FTYP, ftyp.length, extended), ftyp];
-  if (level === 10 || source.entries.some(row => row.type === LEVEL)) parts.push(boxHeader(LEVEL, 1, extended), Uint8Array.of(level));
-  const auxiliary = source.entries.filter(row => ![FTYP, LEVEL, CODESTREAM, PARTIAL].includes(row.type));
-  for (const row of auxiliary) if (row.type !== INDEX) parts.push(boxHeader(row.type, row.data.length, extended), row.data);
-  if (options.chunkSize === undefined && options.fragmentOrder === undefined) parts.push(boxHeader(CODESTREAM, stream.length, extended), stream);
-  else for (const index of order) {
-    const data = chunks[index].data, counter = new Uint8Array(4);
-    new DataView(counter.buffer).setUint32(0, index + (index === chunks.length - 1 ? 0x80000000 : 0));
-    parts.push(boxHeader(PARTIAL, data.length + 4, extended), counter, data);
+  new DataView(ftyp.buffer, ftyp.byteOffset, ftyp.byteLength).setUint32(4, minorVersion);
+
+  const out = new Uint8Array(total);
+  let at = 0;
+  const put = part => { out.set(part, at); at += part.length; };
+  put(SIGNATURE); put(boxHeader(FTYP, ftyp.length, extended)); put(ftyp);
+  if (wantLevel) { put(boxHeader(LEVEL, 1, extended)); put(Uint8Array.of(level)); }
+  for (const row of auxiliary) if (row.type !== INDEX) { put(boxHeader(row.type, row.data.length, extended)); put(row.data); }
+  if (!fragmenting) { put(boxHeader(CODESTREAM, stream.length, extended)); put(stream); }
+  else {
+    const writeFragment = index => {
+      const start = index * chunkSize, end = Math.min(stream.length, start + chunkSize), len = end - start;
+      put(boxHeader(PARTIAL, len + 4, extended));
+      const counter = new Uint8Array(4);
+      new DataView(counter.buffer).setUint32(0, index + (index === fragmentCount - 1 ? 0x80000000 : 0));
+      put(counter); out.set(stream.subarray(start, end), at); at += len;
+    };
+    if (order) for (const index of order) writeFragment(index);
+    else for (let index = 0; index < fragmentCount; index++) writeFragment(index);
   }
-  for (const row of auxiliary) if (row.type === INDEX) parts.push(boxHeader(row.type, row.data.length, extended), row.data);
-  return joinBytes(parts, maximum);
+  for (const row of auxiliary) if (row.type === INDEX) { put(boxHeader(row.type, row.data.length, extended)); put(row.data); }
+  return out;
 }
 
 function integer63(value, name, minimum = 0n) {
@@ -221,7 +251,7 @@ function parseIndex(data) {
 }
 
 function attached(bytes, type, payload, options) {
-  const maximum = limit(options), source = scanContainer(bytes, maximum), extended = options.extended ?? false;
+  const maximum = limit(options), source = scanContainer(bytes, maximum, boxLimit(options)), extended = options.extended ?? false;
   if (typeof extended !== 'boolean') throw invalid('extended is a boolean.');
   const level = options.level ?? source.level;
   if (level !== 5 && level !== 10 || source.level === 10 && level !== 10) throw invalid('The container level is 5 or 10 and cannot demote an existing level 10 declaration.');
@@ -241,13 +271,13 @@ function attached(bytes, type, payload, options) {
 }
 
 export function withFrameIndex(bytes, index, options = {}) {
-  const maximum = limit(options), source = scanContainer(bytes, maximum), payload = index === null ? null : frameIndexPayload(index, options);
+  const maximum = limit(options), source = scanContainer(bytes, maximum, boxLimit(options)), payload = index === null ? null : frameIndexPayload(index, options);
   if (index !== null) for (const frame of index.frames) if (integer63(frame.byteOffset, 'byteOffset') >= BigInt(source.codestream.length))
     throw invalid('A frame index byteOffset must fall inside the logical codestream.');
   return attached(bytes, INDEX, payload, options);
 }
 export function readFrameIndex(bytes, options = {}) {
-  const source = scanContainer(bytes, limit(options)), entry = source.entries.find(row => row.type === INDEX);
+  const source = scanContainer(bytes, limit(options), boxLimit(options)), entry = source.entries.find(row => row.type === INDEX);
   if (!entry) return null;
   const index = parseIndex(entry.data);
   for (const frame of index.frames) if (integer63(frame.byteOffset, 'byteOffset') >= BigInt(source.codestream.length))
@@ -259,7 +289,7 @@ export function gainMapPayload(bundle, options = {}) {
   const maximum = limit(options); record(bundle, 'Gain map bundle');
   if ((bundle.version ?? 0) !== 0) throw invalid('The supported gain-map bundle version is 0.');
   const metadata = byteArray(bundle.gainMapMetadata, 'gainMapMetadata'); uint(metadata.length, 65535, 'gainMapMetadata byte length');
-  const gain = scanContainer(bundle.gainMap, maximum).codestream; uint(gain.length, 0xffffffff, 'gainMap byte length', 2);
+  const gain = scanContainer(bundle.gainMap, maximum, boxLimit(options)).codestream; uint(gain.length, 0xffffffff, 'gainMap byte length', 2);
   if (bundle.alternativeColorEncoding !== undefined && bundle.alternativeColorEncodingBytes !== undefined)
     throw invalid('Choose structured alternativeColorEncoding or its serialized bytes.');
   const color = bundle.alternativeColorEncoding !== undefined ? prepareColorEncoding(bundle.alternativeColorEncoding).colorData.finish()
@@ -275,11 +305,11 @@ export function gainMapPayload(bundle, options = {}) {
 }
 
 export function withGainMap(bytes, bundle, options = {}) {
-  const source = scanContainer(bytes, limit(options)), settings = {...options, level: options.level ?? source.level};
+  const source = scanContainer(bytes, limit(options), boxLimit(options)), settings = {...options, level: options.level ?? source.level};
   return attached(bytes, GAIN, bundle === null ? null : gainMapPayload(bundle, settings), settings);
 }
 export function readGainMap(bytes, options = {}) {
-  const source = scanContainer(bytes, limit(options)), entry = source.entries.find(row => row.decoded === GAIN);
+  const source = scanContainer(bytes, limit(options), boxLimit(options)), entry = source.entries.find(row => row.decoded === GAIN);
   if (!entry) return null;
   if (entry.type === BROB) throw invalid('Reading a Brotli-compressed gain map requires external decompression first.');
   const data = entry.data, view = new DataView(data.buffer, data.byteOffset, data.byteLength); let cursor = 0;

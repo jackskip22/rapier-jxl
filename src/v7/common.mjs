@@ -46,7 +46,14 @@ export function targetSource(data, ...descriptions) {
 export async function drain(iterator, hooks = {}, gpuAnswer) {
   const {signal, onProgress} = hooks;
   check(signal);
-  let last = 0, reply, lastTurn = performance.now(), failed = false;
+  let last = 0, told = 0, reply, lastTurn = performance.now(), failed = false, channel;
+  const turn = () => new Promise(resolve => {
+    if (typeof setImmediate === 'function') { setImmediate(resolve); return; }
+    if (typeof MessageChannel !== 'function') { setTimeout(resolve, 0); return; }
+    channel ||= new MessageChannel();
+    channel.port1.onmessage = resolve;
+    channel.port2.postMessage(0);
+  });
   try {
     for (;;) {
       check(signal);
@@ -57,17 +64,17 @@ export async function drain(iterator, hooks = {}, gpuAnswer) {
       if (step.value?.capture) { reply = await captureAnswer(step.value.capture); continue; }
       if (step.value?.split) { reply = hooks.split ? await hooks.split(step.value.split) : undefined; continue; }
       reply = undefined;
-      if (typeof step.value === 'number' && Number.isFinite(step.value)) {
-        last = Math.max(last, Math.min(0.999999, step.value));
-        onProgress?.(last); check(signal);
-      }
-      if (signal && performance.now() - lastTurn >= 8) {
-        await new Promise(resolve => typeof setImmediate === 'function' ? setImmediate(resolve) : setTimeout(resolve, 0));
+      if (typeof step.value === 'number' && Number.isFinite(step.value)) last = Math.max(last, Math.min(0.999999, step.value));
+      const due = performance.now() - lastTurn >= 8;
+      if (last > told && (due || !told)) { told = last; onProgress?.(last); check(signal); }
+      if (due) {
+        if (signal) await turn();
         lastTurn = performance.now();
       }
     }
   } catch (reason) { failed = true; throw reason; }
   finally {
+    channel?.port1.close(); channel?.port2.close();
     try { await iterator.return?.(); } catch (reason) { if (!failed) throw reason; }
   }
 }

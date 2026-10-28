@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {readEntropy} from './decode-entropy.mjs';
 import {requireDecode, unpackSigned} from './decode-bits.mjs';
-import {DEFAULT_WEIGHTED, ModularPrediction, RECIPROCAL, weightedDivision} from './decode-modular-predict.mjs';
+import {DEFAULT_WEIGHTED, RECIPROCAL, weightedDivision} from './decode-modular-weights.mjs';
 import {part} from './decode-parts.mjs';
 
 const POWERS = [1]; for (let i = 1; i <= 32; i++) POWERS.push(POWERS[i - 1] * 2);
@@ -53,16 +53,15 @@ function channelSamples(channels, maximum) {
   return total;
 }
 
-function localTree(nodes) {
-  if (nodes.some(node => node.property >= 16)) return false;
-  const n = nodes.length, property = new Int32Array(n), value = new Float64Array(n), left = new Int32Array(n), right = new Int32Array(n);
+export function localTree(nodes) {
+  const n = nodes.length, property = new Float64Array(n), value = new Float64Array(n), left = new Int32Array(n), right = new Int32Array(n);
   const context = new Int32Array(n), predictor = new Int32Array(n), offset = new Float64Array(n), multiplier = new Float64Array(n);
   nodes.forEach((node, i) => {
     property[i] = node.property;
     if (node.property >= 0) { value[i] = node.value; left[i] = node.left; right[i] = node.right; }
     else { context[i] = node.context; predictor[i] = node.predictor; offset[i] = node.offset; multiplier[i] = node.multiplier; }
   });
-  return {property, value, left, right, context, predictor, offset, multiplier, tables: new Map()};
+  return {property, value, left, right, context, predictor, offset, multiplier, tables: new Map(), references: nodes.some(node => node.property >= 16)};
 }
 
 function propertyTable(tree, root, samples) {
@@ -86,7 +85,7 @@ function propertyTable(tree, root, samples) {
   return {tested, low, high: low + size - 1, leaf, depth};
 }
 
-function decodeLocal(channel, tree, root, parameters, channelIndex, streamIndex, entropy, remaining, modularWork) {
+export function decodeLocal(channel, tree, root, parameters, channelIndex, streamIndex, entropy, remaining, modularWork, references) {
   const {property, value, left, right, context, predictor, offset, multiplier} = tree, d = channel.data, width = channel.width, height = channel.height;
   const table = tree.tables.get(root) ?? propertyTable(tree, root, width * height);
   if (table) tree.tables.set(root, table);
@@ -132,13 +131,13 @@ function decodeLocal(channel, tree, root, parameters, channelIndex, streamIndex,
       const gradient = w + n - nw;
       let node = root;
       if (table) {
-        const v = propertyValue(tested, channelIndex, streamIndex, y, x, n, w, nw, ne, nn, ww, previousGradient, gradient, maximumError) | 0;
+        const v = (tested >= 16 ? referenceProperty(tested, references, i, x, y, width) : propertyValue(tested, channelIndex, streamIndex, y, x, n, w, nw, ne, nn, ww, previousGradient, gradient, maximumError)) | 0;
         const k = (v < low ? low : v > high ? high : v) - low;
         node = leaf[k]; remaining -= depth[k];
         if (remaining < 0) workLimit(modularWork, -1);
       } else while (property[node] >= 0) {
         if (--remaining < 0) { modularWork.remaining = remaining; workLimit(modularWork, remaining); }
-        const v = propertyValue(property[node], channelIndex, streamIndex, y, x, n, w, nw, ne, nn, ww, previousGradient, gradient, maximumError) | 0;
+        const id = property[node], v = (id >= 16 ? referenceProperty(id, references, i, x, y, width) : propertyValue(id, channelIndex, streamIndex, y, x, n, w, nw, ne, nn, ww, previousGradient, gradient, maximumError)) | 0;
         node = v > value[node] ? left[node] : right[node];
       }
       const residual = unpackSigned(entropy.read(context[node]));
@@ -185,6 +184,19 @@ function propertyValue(id, channelIndex, streamIndex, y, x, n, w, nw, ne, nn, ww
   }
 }
 
+function referenceProperty(id, references, i, x, y, width) {
+  const offset = id - 16, channel = references[Math.floor(offset / 4)];
+  if (!channel) return 0;
+  const kind = offset & 3, data = channel.data, value = data[i];
+  if (kind === 0) return Math.abs(value) | 0;
+  if (kind === 1) return value;
+  const left = x ? data[i - 1] : y ? data[i - width] : 0, top = y ? data[i - width] : left;
+  const corner = x && y ? data[i - width - 1] : left;
+  const prediction = Math.max(Math.min(left, top), Math.min(Math.max(left, top), left + top - corner));
+  const difference = (value - prediction) | 0;
+  return kind === 2 ? Math.abs(value - prediction) | 0 : difference;
+}
+
 function weight(errors, north, northEast, northWest, parameter) {
   const sum = (errors[north] + errors[northEast] + errors[northWest]) >>> 0;
   if (sum < 63) return (4 + parameter * RECIPROCAL[sum + 1]) >>> 0;
@@ -197,7 +209,7 @@ function weight(errors, north, northEast, northWest, parameter) {
 const LOCAL_FAULTS = ['', 'Invalid JPEG XL entropy read.', 'Truncated JPEG XL data.', 'JPEG XL integer exceeds 32 bits.'];
 function kernelChannels(kernels, entropy, tree, channels) {
   const m = entropy.model, r = entropy.reader;
-  if (m.lz || m.prefix || m.codes.some(c => c.counts.length > 256) || !tree.local || !channels.length) return null;
+  if (m.lz || m.prefix || m.codes.some(c => c.counts.length > 256) || tree.local.references || !channels.length) return null;
   const nodes = tree.local.property.length, area = Math.max(...channels.map(c => c.width * c.height)), stride = Math.max(...channels.map(c => c.width)) + 2;
   const [samples, nodeAt, leafAt, parametersAt, weightedAt, bytesAt, mapAt, tablesAt, reciprocalsAt, io] =
     kernels.reserve([area * 4, nodes * 32, 4096 * 8, 44, 5 * stride * 8, r.bytes.length + 16, m.map.length, m.codes.length * 12816, 65 * 4, 128]);
@@ -258,18 +270,7 @@ function decodeChannels(r, channels, tree, parameters, streamIndex, modularWork,
       root = nodes[(root.property === 0 ? channelIndex : streamIndex) > root.value ? root.left : root.right];
     }
     if (K) remaining = kernelLocal(K, channel, tree, nodes.indexOf(root), tree.weighted ? parameters : null, channelIndex, streamIndex, entropy, remaining, modularWork);
-    else if (tree.local) remaining = decodeLocal(channel, tree.local, nodes.indexOf(root), tree.weighted ? parameters : null, channelIndex, streamIndex, entropy, remaining, modularWork);
-    else for (let i = 0, prediction = new ModularPrediction(channel, {weighted: tree.weighted, parameters, previous, channelIndex, streamIndex}); i < count; i++) {
-      prediction.prepare();
-      let node = root;
-      while (node.property >= 0) {
-        if (--remaining < 0) workLimit(modularWork, remaining);
-        node = nodes[prediction.property(node.property) > node.value ? node.left : node.right];
-      }
-      const residual = unpackSigned(entropy.read(node.context));
-      const value = (prediction.predict(node.predictor) + node.offset + Math.imul(residual, node.multiplier)) | 0;
-      prediction.record(value);
-    }
+    else remaining = decodeLocal(channel, tree.local, nodes.indexOf(root), tree.weighted ? parameters : null, channelIndex, streamIndex, entropy, remaining, modularWork, previous);
     previous.unshift(channel); earlier.set(shape, previous);
     modularWork.remaining = remaining;
   }

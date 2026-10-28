@@ -1,5 +1,5 @@
 import {encodeSteps} from '../index.mjs';
-import {admitSampleFormat} from '../admit.mjs';
+import {admitSampleFormat} from '../admit-samples.mjs';
 import {screenLike} from '../screen.mjs';
 export function* coreSteps(data, width, height, options) {
   const steps = encodeSteps(data, width, height, options), colorSpace = options?.colorSpace, samples = admitSampleFormat(data, options);

@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
 import {BitWriter, packSigned, complete} from './bits.mjs';
-import {writeImageHeader, writeModularFrameHeader, groupLayout, groupPass, assembleCodestream, GROUP_DIM} from './frame.mjs';
+import {writeModularFrameHeader, groupLayout, groupPass, assembleCodestream, GROUP_DIM} from './frame.mjs';
+import {writeImageHeader} from './icc-write.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
 import {screenModel, writeScreenModel} from './screen-lz77.mjs';
 import {admitOutputSize} from './admit.mjs';
-import {ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
+import {ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
+import {codeChannel} from './modular-channel.mjs';
 
 export function screenLike(rgba, width, height) {
   if (width < 32 || height < 32) return false;

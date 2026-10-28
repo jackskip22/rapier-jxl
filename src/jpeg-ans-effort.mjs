@@ -2,32 +2,39 @@
 import {jpegEffortSteps} from './jpeg-effort.mjs';
 import {coefficientEffortSteps, coefficientOrderSteps, candidateSteps, prefetch} from './coefficient-effort.mjs';
 import {buildAnsCoding, writeModularAnsHistograms} from './ans.mjs';
-import {lfCoder, lfCoderFor, RUNGS} from './lf-coding.mjs';
+import {lfCoder, lfCoderFor, fixedLfCoder, quickOrFixedLfCoder} from './lf-coding.mjs';
 import {part, scaled} from './bits.mjs';
 import {offloading} from './offload.mjs';
 import {jpegJob} from './jpeg-job.mjs';
 
 export const PREFIX_LADDER_PIXELS = 512 * 512;
 const WIDE = {maxClusters: 128, seeds: 255, newClusterCost: 160}, WIDEST = {maxClusters: 255, seeds: 255, newClusterCost: 80};
+const NARROW = {maxClusters: 48};
 const EVERY_WIDE = {...WIDE, everyConfig: true}, EVERY_WIDEST = {...WIDEST, everyConfig: true};
-const JPEG_BROAD = {...RUNGS.broad, clustered: true};
-const lfFor = effort => effort >= 9 ? lfCoder(JPEG_BROAD) : lfCoderFor(effort);
+const lfFor = effort => effort >= 9 ? lfCoder('jpegBroad') : effort >= 5 ? lfCoderFor(effort) : effort === 4 ? quickOrFixedLfCoder : fixedLfCoder;
 
 export function* jpegAnsFirstSteps(jpeg, effort, fallback, retain, shared = {}, every = effort >= 9) {
-  const wide = every ? EVERY_WIDE : WIDE;
+  const wide = effort === 2 ? NARROW : every ? EVERY_WIDE : WIDE;
   if (effort < 2) return yield* coefficientEffortSteps(jpeg, effort, fallback, retain, shared);
   let ladder = jpeg.width * jpeg.height <= PREFIX_LADDER_PIXELS, best = fallback;
-  const learn = effort >= 4 && !ladder;
-  if (offloading()) yield prefetch(jpeg, [{coding: buildAnsCoding, clusters: wide, modularAns: writeModularAnsHistograms, lfCoder: lfFor(effort)},
+  const learn = effort >= 5 && !ladder;
+  const first = effort <= 4 && !ladder ? 'learned' : undefined;
+  if (offloading()) yield prefetch(jpeg, [{orders: first, coding: buildAnsCoding, clusters: wide, modularAns: writeModularAnsHistograms, lfCoder: lfFor(effort)},
     ...(learn ? [{orders: 'learned', coding: buildAnsCoding, clusters: wide, modularAns: writeModularAnsHistograms, lfCoder: lfFor(effort)}] : [])]);
   try {
-    const plan = {coding: buildAnsCoding, clusters: wide, modularAns: writeModularAnsHistograms, lfCoder: lfFor(effort)};
+    let orders, step, hurry, reply;
+    if (first) {
+      const learning = coefficientOrderSteps(jpeg.components);
+      while (!(step = learning.next()).done) yield step.value / 20;
+      orders = step.value;
+    }
+    const at = done => orders ? 0.05 + 0.95 * done : ladder || learn ? done / 2 : done;
+    const plan = {orders, coding: buildAnsCoding, clusters: wide, modularAns: writeModularAnsHistograms, lfCoder: lfFor(effort)};
     const candidate = candidateSteps(jpeg, plan, shared);
-    let step, hurry, reply;
     while (!(step = candidate.next(reply)).done) {
       reply = undefined;
-      if (typeof step.value !== 'number') { reply = yield scaled(step.value, done => ladder || learn ? done / 2 : done); continue; }
-      hurry = yield ladder || learn ? step.value / 2 : step.value;
+      if (typeof step.value !== 'number') { reply = yield scaled(step.value, at); continue; }
+      hurry = yield at(step.value);
       if (hurry && best && step.value < 1) { candidate.return(); return best; }
     }
     if (!best || step.value.length < best.length) best = step.value;
@@ -123,4 +130,5 @@ export function* jpegAnsEffortSteps(jpeg, effort, retain) {
   }
 }
 
+jpegAnsEffortSteps.contextsFrom = 2;
 export function ansTranscodeSteps(jpeg, options) { return jpegJob(jpeg, options, jpegAnsEffortSteps); }

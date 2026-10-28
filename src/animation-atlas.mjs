@@ -5,7 +5,7 @@ import {checkSignal} from './async-job.mjs';
 import {admitAnimation, animationSteps, partSteps, useMeasuredSearch} from './animation-frames.mjs';
 import {searchV6} from './photo-v6-search.mjs';
 import {losslessSteps, inspectPixels, shapeFloors} from './lossless.mjs';
-import {writeImageHeader} from './frame.mjs';
+import {writeImageHeader} from './icc-write.mjs';
 import {readStill, readFrames, metadataKey, writeStillFrame} from './framing.mjs';
 import {authoredPatchEntropy, authoredPatchFrame} from './patch-code.mjs';
 import {atlasSearchOptions, discoverAtlasSteps, validateAtlasPlan, atlasCropPlan, buildAnimationAtlas} from './atlas-plan.mjs';

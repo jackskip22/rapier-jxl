@@ -1,6 +1,6 @@
-// An upload queue in a page, Gutenberg's case: several photos go through one worker, one at a time and in order, each
+// An upload queue in a page: several photos go through one worker, one at a time and in order, each
 // with its own progress, cancel and errors that carry a code. Pick files with the input, or call window.run() for a
-// self-contained demonstration (the browser test does).
+// self-contained demonstration.
 // With a bundler (Vite, webpack, Rollup, esbuild): import {createEncoder} from 'rapier-jxl';
 import {createEncoder} from './node_modules/rapier-jxl/dist/index.mjs';
 

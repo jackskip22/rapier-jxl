@@ -1,4 +1,5 @@
 import {WORKER_PROTOCOL} from './protocol.mjs';
+import {fail as error} from './primitives.mjs';
 
 function blob(value) { return typeof Blob === 'function' && value instanceof Blob; }
 function transfers(value, buffers = new Set(), seen = new Set()) {
@@ -10,7 +11,6 @@ function transfers(value, buffers = new Set(), seen = new Set()) {
   return buffers;
 }
 
-function error(code, message) { return Object.assign(new Error(message), {code}); }
 function listen(target, type, callback) {
   if (typeof target.addEventListener === 'function') {
     target.addEventListener(type, callback);
@@ -34,6 +34,7 @@ export function createTransport(host) {
     generation++;
     clearTimeout(old.timer);
     for (const remove of old.listeners) remove();
+    for (const waiter of old.waiters) waiter.reject(reason);
     let result;
     try { result = old.worker.terminate(); } catch { return; }
     if (result && typeof result.then === 'function') {
@@ -43,8 +44,8 @@ export function createTransport(host) {
     for (const job of [...running.values()]) complete(job, false, reason);
   }
   function crash(current, event) {
-    if (thread !== current || current.generation !== generation) return;
-    const reason = error(event?.code || 'JXL_WORKER', event?.message || event?.error?.message || 'The JPEG XL worker stopped.');
+    if (thread !== current) return;
+    const reason = error(typeof event?.code === 'string' && event.code.startsWith('JXL_') ? event.code : 'JXL_WORKER', event?.message || event?.error?.message || 'The JPEG XL worker stopped.');
     stopThread(reason);
     schedule();
   }
@@ -64,14 +65,16 @@ export function createTransport(host) {
     if (thread) return thread;
     const worker = factory();
     if (!worker || typeof worker.postMessage !== 'function' || typeof worker.terminate !== 'function') throw error('JXL_OPTIONS', 'workerFactory must return a new Worker.');
-    const current = {worker, generation: ++generation, listeners: [], ready: false, timer: null};
+    generation++;
+    const current = {worker, listeners: [], ready: false, timer: null, waiters: []};
     thread = current;
     try {
       current.listeners.push(listen(worker, 'message', ({data}) => {
-        if (thread !== current || generation !== current.generation) return;
+        if (thread !== current) return;
         if (data?.ready !== undefined) {
           if (data.ready !== WORKER_PROTOCOL) { crash(current, {code: 'JXL_PROTOCOL', message: 'The worker belongs to a different JPEG XL protocol.'}); return; }
           current.ready = true; clearTimeout(current.timer);
+          for (const waiter of current.waiters.splice(0)) waiter.resolve();
           for (const job of running.values()) send(current, job);
           return;
         }
@@ -91,5 +94,9 @@ export function createTransport(host) {
     } catch (reason) { stopThread(); throw reason; }
     return current;
   }
-  return {open: openThread, send, cancel, stop: stopThread, get generation() { return generation; }};
+  function ready() {
+    const current = openThread();
+    return current.ready ? Promise.resolve() : new Promise((resolve, reject) => current.waiters.push({resolve, reject}));
+  }
+  return {open: openThread, ready, send, cancel, stop: stopThread, get generation() { return generation; }};
 }

@@ -5,7 +5,8 @@ import {photoSteps, admitPhotoFilter} from './photo-job.mjs';
 import {varDCTSteps} from './vardct.mjs';
 import {LIMITS} from './limits.mjs';
 import {complete, part} from './bits.mjs';
-import {admitOptions, admitPixels, admitSampleFormat, job} from './admit.mjs';
+import {admitOptions, admitPixels, job} from './admit.mjs';
+import {admitSampleFormat} from './admit-samples.mjs';
 import {driveGpu, gpuWanted} from './gpu-drive.mjs';
 
 export {LIMITS};

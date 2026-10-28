@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {BitWriter} from './bits.mjs';
-import {leaf, codeChannel, writeTransform} from './modular.mjs';
+import {leaf, writeTransform} from './modular.mjs';
+import {codeChannel} from './modular-channel.mjs';
 import {losslessCoding} from './lossless-coding.mjs';
 import {losslessSteps} from './lossless.mjs';
 

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 import {LIMITS} from './limits.mjs';
 import {BitWriter, part, complete} from './bits.mjs';
-import {fault, guard, admitOptions, admitPixels, admitSize, admitSampleFormat} from './admit.mjs';
+import {fault, guard, admitOptions, admitPixels, admitSize} from './admit.mjs';
+import {admitSampleFormat} from './admit-samples.mjs';
 import {admitEffort} from './effort-level.mjs';
 import {job} from './admit.mjs';
 import {effortJob} from './effort-job.mjs';
@@ -90,8 +91,10 @@ export function* animationSteps(a, shared = null) {
     }
   }
   const jobs = parts.flatMap(part => part.candidates.map(masked => ({part, masked, rect: part.rect, data: part.data, previous: part.previous, fill: part.fill})));
+  const byFrame = Array.from({length: shown.length}, () => []);
+  for (const job of jobs) byFrame[job.part.frame].push(job);
   for (let k = 0, from = 0; k < shown.length; k++) {
-    const own = jobs.filter(job => job.part.frame === k), area = own.reduce((n, {rect}) => n + rect[2] * rect[3], 0), to = (shown[k].upTo + 1) / frames.length;
+    const own = byFrame[k], area = own.reduce((n, {rect}) => n + rect[2] * rect[3], 0), to = (shown[k].upTo + 1) / frames.length;
     let at = from;
     for (const job of own) { const next = at + (to - from) * job.rect[2] * job.rect[3] / area; job.span = [at, next]; at = next; }
     from = to;

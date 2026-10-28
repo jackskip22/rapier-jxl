@@ -4,7 +4,7 @@ import {fault} from './fault.mjs';
 import {exactPow} from './exact-math.mjs';
 import {complete, part, scaled} from './bits.mjs';
 import {QUANT_SHAPE, transformDCT8, dct8Basis} from './photo-dct.mjs';
-import {photoXYBSteps, gaborishPlanes} from './photo-xyb.mjs';
+import {photoXYBSteps, gaborishPlanes, FAST_RANGE} from './photo-xyb.mjs';
 import {photoXYBBands, photoXYBBand, appendPhotoBand, PHOTO_BAND_MARGIN, photoFastBands} from './photo-bands.mjs';
 import {offloading} from './offload.mjs';
 
@@ -146,6 +146,12 @@ function* pictureSteps(data, width, height, quality, effort, encodeCoefficients,
     }
     const image = offloading() ? yield* part(photoFastBands(data, width, height, quality, {...V6, fast: true}), 0, 2) : complete(photoXYBSteps(data, width, height, quality, {...V6, fast: true}));
     return yield* (offloading() ? part(encodeCoefficients(image, effort), 1, 2) : encodeCoefficients(image, effort));
+  }
+  if (effort <= 3 && color?.transform && !color.transform.gray) {
+    admitV6Memory(data, width, height, memory);
+    let image = null;
+    try { image = complete(photoXYBSteps(data, width, height, quality, {...V6, fast: true, ...color})); } catch (error) { if (error !== FAST_RANGE) throw error; }
+    if (image) return yield* encodeCoefficients(image, effort);
   }
   if (gpu && effort <= 7 && !color) {
     const image = yield {gpu: {kind: 'v6image', data, width, height, quality, options: {...V6, ...GABORISH}, lib: {complete, photoXYBSteps, transformDCT8, dct8Basis}}};

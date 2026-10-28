@@ -5,6 +5,17 @@ import {readMATree, createModular} from './decode-modular.mjs';
 import {readVarDCTGlobal, createVarDCT, restoreFilters} from './decode-vardct.mjs';
 
 const floatBits = new DataView(new ArrayBuffer(4));
+function mapSamples(data, map) {
+  const out = new Float32Array(data.length);
+  for (let i = 0; i < data.length; i++) out[i] = map(data[i], i);
+  return out;
+}
+function channelSamples(data, depth) {
+  if (depth.float) return mapSamples(data, v => sampleValue(v, depth));
+  const maximum = power2(depth.bits) - 1, out = new Float32Array(data.length);
+  for (let i = 0; i < data.length; i++) out[i] = data[i] / maximum;
+  return out;
+}
 export function sampleValue(word, depth) {
   if (!depth.float) return word / (power2(depth.bits) - 1);
   if (depth.bits === 32 && depth.exponentBits === 8) { floatBits.setUint32(0,word>>>0); return floatBits.getFloat32(0); }
@@ -23,13 +34,25 @@ export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, m
   requireDecode(readFeatures || !(f.flags & 19n),'JPEG XL frame features need their reader.',r);
   const lfDequant = r.read(1) ? [1/32,1/4,1/2] : [r.f16(),r.f16(),r.f16()];
   requireDecode(lfDequant.every(v=>v>=1e-8),'Invalid JPEG XL LF dequantization.',r);
-  const global = f.modular ? null : readVarDCTGlobal(r), globalTree = r.read(1) ? readMATree(r) : null;
   const {hs,vs}=jpegShifts(f.jpegUpsampling), channels=[];
   if(f.modular) for(let c=0;c<f.encodedColorChannels;c++) channels.push({width:Math.ceil(f.encodedWidth/power2(hs[c])),height:Math.ceil(f.encodedHeight/power2(vs[c])),hshift:hs[c],vshift:vs[c]});
   for(let c=0;c<h.extraChannels.length;c++) {
     const factor=f.extraUpsampling[c]*power2(h.extraChannels[c].dimShift)/f.upsampling,shift=31-Math.clz32(factor);
     channels.push({width:Math.ceil(f.encodedWidth/factor),height:Math.ceil(f.encodedHeight/factor),hshift:shift,vshift:shift});
   }
+  let sampleBudget = 0;
+  for (const c of channels) {
+    const samples = c.width * c.height;
+    if (!Number.isSafeInteger(samples) || samples < 0 || sampleBudget > Number.MAX_SAFE_INTEGER - samples) { sampleBudget = 0; break; }
+    sampleBudget += samples;
+  }
+  if (!f.modular) {
+    const area = f.encodedWidth * f.encodedHeight * 3;
+    if (Number.isSafeInteger(area) && area > sampleBudget) sampleBudget = area;
+  }
+  const maxTreeNodes = Math.min(1048576, 1024 + sampleBudget);
+  const global = f.modular ? null : readVarDCTGlobal(r);
+  const globalTree = r.read(1) ? readMATree(r, {maxNodes: maxTreeNodes}) : null;
   const modular=createModular(r,channels,{globalTree,groupDim:f.groupDim,bitDepth:h.bitDepth.bits,maxModularWork,...(maxSamples===undefined?{}:{maxSamples})});
   modular.decodeGlobal(r,0);
   const dct=f.modular?null:createVarDCT({width:f.encodedWidth,height:f.encodedHeight,header:f,global,lfDequant,bitDepth:h.bitDepth.bits,globalTree,imageHeader:h,maxModularWork,modularWork:modular.modularWork,band,maxSection:Math.max(...readers.map(x=>x.bytes.length))});
@@ -61,13 +84,13 @@ export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, m
   if(single)r.end();
   if(band)return {dct,features};
   const decoded=modular.finish(),colorCount=f.modular?f.encodedColorChannels:0;
-  const extraChannels=decoded.slice(colorCount).map((c,i)=>({...h.extraChannels[i],width:c.width,height:c.height,data:Float32Array.from(c.data,v=>sampleValue(v,h.extraChannels[i].bitDepth))}));
+  const extraChannels=decoded.slice(colorCount).map((c,i)=>({...h.extraChannels[i],width:c.width,height:c.height,data:channelSamples(c.data,h.extraChannels[i].bitDepth)}));
   if(dct) return {...dct.render({lfReference}),width:f.encodedWidth,height:f.encodedHeight,extraChannels,features,global,lfDequant};
   let planes;
   if(h.xyb) {
     const [y,x,b]=decoded;
-    planes=[Float32Array.from(x.data,v=>v*lfDequant[0]/128),Float32Array.from(y.data,v=>v*lfDequant[1]/128),Float32Array.from(b.data,(v,i)=>(v+y.data[i])*lfDequant[2]/128)];
-  } else planes=decoded.slice(0,colorCount).map(c=>Float32Array.from(c.data,v=>sampleValue(v,h.bitDepth)));
+    planes=[mapSamples(x.data,v=>v*lfDequant[0]/128),mapSamples(y.data,v=>v*lfDequant[1]/128),mapSamples(b.data,(v,i)=>(v+y.data[i])*lfDequant[2]/128)];
+  } else planes=decoded.slice(0,colorCount).map(c=>channelSamples(c.data,h.bitDepth));
   const widths=decoded.slice(0,colorCount).map(c=>c.width),heights=decoded.slice(0,colorCount).map(c=>c.height);
   return {planes,widths,heights,width:f.encodedWidth,height:f.encodedHeight,extraChannels,features,global,lfDequant,filtersApplied:false};
 }

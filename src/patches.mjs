@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 import {BitWriter, complete, scaled} from './bits.mjs';
-import {admitOptions, admitPixels, admitSampleFormat, admitOutputSize, fault, job} from './admit.mjs';
+import {admitOptions, admitPixels, admitOutputSize, fault, job} from './admit.mjs';
+import {admitSampleFormat} from './admit-samples.mjs';
 import {admitEffort} from './effort-level.mjs';
 import {inspectPixels} from './lossless.mjs';
-import {writeImageHeader} from './frame.mjs';
+import {writeImageHeader} from './icc-write.mjs';
 import {authoredPatchEntropy, authoredPatchFrame} from './patch-code.mjs';
 import {fileHeader, boxHeader, CODESTREAM} from './container.mjs';
 

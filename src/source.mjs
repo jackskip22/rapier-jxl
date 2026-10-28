@@ -3,6 +3,7 @@ import {admitSize, fault} from './admit.mjs';
 import {inspectICC, prepareColorEncoding} from './color-info.mjs';
 
 const refuse = message => { throw fault('JXL_INPUT', message); };
+const PNG_ICC_BYTES = 16 * 1024 * 1024;
 const view = bytes => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 const primaries = {
   srgb: [.640, .330, .300, .600, .150, .060, .3127, .3290],
@@ -37,6 +38,7 @@ async function inflate(parts, expected) {
         if (offset < 4) continue;
         expected = view(output).getUint32(0);
         if (expected < 132) refuse('The compressed ICC profile declares an incomplete header or tag table.');
+        if (expected > PNG_ICC_BYTES) throw fault('JXL_SIZE', 'The PNG ICC profile declares more than 16 MiB.');
         const complete = new Uint8Array(expected); complete.set(output); output = complete;
       }
       if (offset + bytes.length > expected) refuse(profile ? 'The ICC profile expands beyond its declared size.' : 'Compressed source data exceeds its declared dimensions.');

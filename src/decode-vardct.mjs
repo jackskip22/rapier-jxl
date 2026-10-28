@@ -9,7 +9,7 @@ import {inverseVarDCT, restoreFilters, restoreRows, restorationStages, scaledBas
 
 export {restoreFilters};
 
-const WIRE_ORDER = [1, 0, 2];
+const WIRE_ORDER = [1, 0, 2], LF_ORDER = [0, 2, 1];
 const ORDER_IDS = [0, 1, 1, 1, 2, 3, 4, 4, 5, 5, 6, 6, 1, 1, 1, 1, 1, 1, 7, 8, 8, 9, 10, 10, 11, 12, 12];
 const FAMILY_IDS = [0, 1, 2, 3, 4, 5, 7, 9, 11, 12, 14, 18, 20, 21, 23, 24, 26];
 const ORDER_SHAPES = [[1, 1], [1, 1], [2, 2], [4, 4], [2, 1], [4, 1], [4, 2], [8, 8], [8, 4], [16, 16], [16, 8], [32, 32], [32, 16]];
@@ -265,14 +265,14 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
     for (const block of blockGroups[group]) {
       const {id, area, multiplier} = block, {width: tw, height: th} = TRANSFORMS[id], orderID = ORDER_IDS[id];
       let lowBucket = 0;
-      if (!header.useLFFrame) for (const c of [0, 2, 1]) {
+      if (!header.useLFFrame) for (const c of LF_ORDER) {
         const thresholds = global.lfThresholds[c], value = dc[c][(block.y >> vshift[c]) * dcWidth[c] + (block.x >> hshift[c])];
         lowBucket *= thresholds.length + 1;
         for (const threshold of thresholds) if (value > threshold) lowBucket++;
       }
       let highBucket = 0; for (const threshold of global.qfThresholds) if (multiplier > threshold) highBucket++;
       for (let wire = 0; wire < 3; wire++) {
-        const c = [1, 0, 2][wire], sx = (block.x - groupX) >> hshift[c], sy = (block.y - groupY) >> vshift[c];
+        const c = WIRE_ORDER[wire], sx = (block.x - groupX) >> hshift[c], sy = (block.y - groupY) >> vshift[c];
         if (sx * (1 << hshift[c]) !== block.x - groupX || sy * (1 << vshift[c]) !== block.y - groupY) continue;
         const meta = metadata[lfg];
         if ((hshift[c] || vshift[c]) && !meta.starts[((groupY & 255) + sy) * meta.bw + (groupX & 255) + sx]) continue;

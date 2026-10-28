@@ -1,2 +1,0 @@
-/*! rapier-jxl 7.0.0 | MIT */
-var e=[];for(let r=1,a=0;a<16;a++){e.push(r);let a=2*r*r;do{r++}while(r*r<a)}var r=[...e.slice().reverse().map(e=>-e),0,...e],a=Int8Array.from({length:1003},(e,a)=>r.filter(e=>e<a-501).length);export{r as a,a as b};

@@ -28,7 +28,7 @@ function fragment(data, index, final) {
   });
 }
 
-export function* containerChunks(bytes, options = {}) {
+function prepareContainer(bytes, options = {}) {
   const state = settings(options);
   if (!(bytes instanceof Uint8Array) || bytes.length < 2) throw invalid('JPEG XL input is a Uint8Array.');
   aborted(state.signal);
@@ -50,8 +50,31 @@ export function* containerChunks(bytes, options = {}) {
     } else size += entry.end - entry.at;
   }
   state.count(size);
-  yield bare ? fileHeader() : SIGNATURE.slice();
+  return {state, bare, entries, lastPayload, size};
+}
+
+function writeContainer(plan, bytes, emit) {
+  const {state, bare, entries, lastPayload} = plan;
+  emit(bare ? fileHeader() : SIGNATURE.slice());
   let index = 0;
+  for (const entry of entries) {
+    aborted(state.signal);
+    if (entry.type !== CODESTREAM && entry.type !== PARTIAL) { emit(new Uint8Array(bytes.subarray(entry.at, entry.end))); continue; }
+    const begin = entry.body + (entry.type === PARTIAL ? 4 : 0);
+    const final = entry === lastPayload;
+    for (let at = begin; at < entry.end; at += state.chunkSize) {
+      aborted(state.signal);
+      const end = Math.min(entry.end, at + state.chunkSize);
+      emit(fragment(bytes.subarray(at, end), index++, final && end === entry.end));
+    }
+  }
+}
+
+export function* containerChunks(bytes, options = {}) {
+  const plan = prepareContainer(bytes, options);
+  yield plan.bare ? fileHeader() : SIGNATURE.slice();
+  let index = 0;
+  const {state, entries, lastPayload} = plan;
   for (const entry of entries) {
     aborted(state.signal);
     if (entry.type !== CODESTREAM && entry.type !== PARTIAL) { yield new Uint8Array(bytes.subarray(entry.at, entry.end)); continue; }
@@ -67,9 +90,10 @@ export function* containerChunks(bytes, options = {}) {
 
 export function withContainer(bytes, options = {}) {
   return guard(() => {
-    const chunks = Array.from(containerChunks(bytes, options)), size = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    const out = new Uint8Array(size); let at = 0;
-    for (const chunk of chunks) { out.set(chunk, at); at += chunk.length; }
+    const plan = prepareContainer(bytes, options);
+    const out = new Uint8Array(plan.size);
+    let at = 0;
+    writeContainer(plan, bytes, chunk => { out.set(chunk, at); at += chunk.length; });
     return out;
   });
 }

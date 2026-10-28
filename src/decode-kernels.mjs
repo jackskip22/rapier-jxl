@@ -11,7 +11,7 @@ export function decodeKernels() {
   if (kernelEngine !== undefined) return kernelEngine;
   kernelEngine = null;
   try {
-    const bytes = Uint8Array.from(atob(DECODE_KERNELS), c => c.charCodeAt(0)), {exports} = new WebAssembly.Instance(new WebAssembly.Module(bytes));
+    const bytes = Uint8Array.from(DECODE_KERNELS, c => c.charCodeAt(0)), {exports} = new WebAssembly.Instance(new WebAssembly.Module(bytes));
     const memory = exports.memory, bases = new Map();
     let next = KERNEL_BASES;
     const engine = {
@@ -23,7 +23,9 @@ export function decodeKernels() {
       reserve(sizes) {
         let at = KERNEL_ARENA;
         const offsets = sizes.map(size => { const offset = at; at += Math.ceil(size / 16) * 16; return offset; });
-        if (at > memory.buffer.byteLength) memory.grow(Math.ceil((at - memory.buffer.byteLength) / 65536));
+        const memoryError = message => Object.assign(new RangeError(message), {code: 'JXL_MEMORY'});
+        if (!(at <= 0x80000000)) throw memoryError('JPEG XL kernel memory request exceeds its limit.');
+        if (at > memory.buffer.byteLength) try { memory.grow(Math.ceil((at - memory.buffer.byteLength) / 65536)); } catch { throw memoryError('JPEG XL kernel memory could not be allocated.'); }
         engine.views();
         return offsets;
       },
@@ -57,3 +59,4 @@ export function decodeKernels() {
   } catch {}
   return kernelEngine;
 }
+

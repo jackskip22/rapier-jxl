@@ -2,7 +2,8 @@
 import {LIMITS} from './limits.mjs';
 import {BitWriter, complete, part} from './bits.mjs';
 import {fault, job, admitSize, admitOutputSize} from './admit.mjs';
-import {writeImageHeader, groupLayout, assembleCodestream} from './frame.mjs';
+import {groupLayout, assembleCodestream} from './frame.mjs';
+import {writeImageHeader} from './icc-write.mjs';
 import {leaf, writeTree, writeModularHeader, writeChannelHistograms, ALPHABET} from './modular.mjs';
 import {prepareICC} from './icc.mjs';
 import {prepareColorEncoding, prepareToneMapping} from './color-info.mjs';

@@ -16,10 +16,18 @@ function mapMoveToFront(map) {
   return out;
 }
 
+const HEAD = new Int32Array(1 << 15).fill(-1);
+let PREV = new Int32Array(0);
 function mapParse(values, minLength, chain = 64) {
-  const n = values.length, head = new Int32Array(1 << 15).fill(-1), prev = new Int32Array(n).fill(-1), pieces = [];
+  const n = values.length, head = HEAD, pieces = [];
+  if (PREV.length < n) PREV = new Int32Array(n);
+  const prev = PREV;
   const key = i => ((values[i] * 31 + values[i + 1]) * 31 + values[i + 2]) & 32767;
   const insert = i => { if (i + 2 < n) { const k = key(i); prev[i] = head[k]; head[k] = i; } };
+  try { return parse(values, n, minLength, chain, head, prev, pieces, key, insert); }
+  finally { for (let i = 0; i + 2 < n; i++) head[key(i)] = -1; }
+}
+function parse(values, n, minLength, chain, head, prev, pieces, key, insert) {
   for (let i = 0; i < n;) {
     let bestLength = 0, bestDistance = 0;
     if (i + 2 < n) for (let j = head[key(i)], tries = 0; j >= 0 && tries < chain; j = prev[j], tries++) {
@@ -42,8 +50,8 @@ function mapParse(values, minLength, chain = 64) {
 const mapSlots = [0, 0, 0];
 function mapToken(config, value) { hybridToken(config, value, mapSlots); return [mapSlots[0], mapSlots[1], mapSlots[2]]; }
 
-export function codedMap(map, mtf, minLength) {
-  const values = mtf ? mapMoveToFront(map) : map, w = new BitWriter(256);
+export function codedMap(map, mtf, minLength, moved) {
+  const values = mtf ? moved ?? mapMoveToFront(map) : map, w = new BitWriter(256);
   w.write(1, 0); w.write(1, mtf ? 1 : 0);
   if (!minLength) {
     let widest = 0;
@@ -77,8 +85,9 @@ export function codedMap(map, mtf, minLength) {
 export function writeSmallestContextMap(w, map) {
   let best = new BitWriter(256);
   writeContextMap(best, map);
+  const moved = map.length >= 16 ? mapMoveToFront(map) : null;
   if (map.length >= 16) for (const mtf of [false, true]) for (const minLength of [0, 3, 5]) {
-    const candidate = codedMap(map, mtf, minLength);
+    const candidate = codedMap(map, mtf, minLength, moved);
     if (candidate.bitLength < best.bitLength) best = candidate;
   }
   w.append(best);

@@ -1,0 +1,2 @@
+/*! rapier-jxl 7.1.0 | MIT */
+var r=Uint32Array.from({length:65},(r,a)=>a?Math.floor(16777216/a):0),a=[16,10,7,7,7,0,0,13,12,12,12];function o(r,a){let o=Math.floor(r/16777216);return o*a+Math.floor((r-o*16777216)*a/16777216)}export{r as a,a as b,o as c};

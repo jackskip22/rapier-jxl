@@ -1,0 +1,2 @@
+/*! rapier-jxl 7.1.0 | MIT */
+import{a}from"./chunk-2EV2D2XW.mjs";async function t(t="js",e=0,r=0,o=7){for(let t of Object.keys(a))a[t]=null;if(t==="wasm"||t==="auto"){let{configureKernels:a}=await(import("./chunk-5NU3WBQC.mjs"));a("auto")}if((t==="webgpu"||t==="auto")&&e>0&&r>0&&o>=4&&o<=7&&!(o===7&&e*r>=8e6)&&globalThis.navigator?.gpu){let a=await(import("./chunk-UR6TUTSX.mjs")),t=await a.gpuCoreDevice();if(t)return async e=>{try{return await a.gpuCoreImage(t,e)}catch{return null}}}}export{t as acceleration};

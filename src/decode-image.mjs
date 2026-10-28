@@ -8,7 +8,7 @@ import {composeFrame,orientFrame,rgbaPixels} from './decode-compose.mjs';
 import {SIGNATURE,CODESTREAM,PARTIAL,BROB,FTYP,LEVEL} from './decode-tables.mjs';
 import {inspectContainer} from './decode-container.mjs';
 
-export const DECODE_LIMITS=Object.freeze({maxPixels:64000000,maxSamples:268435456,maxRetainedSamples:268435456,maxModularWork:536870912,maxFrames:4096,maxBoxes:65536,maxMetadataBytes:67108864,maxInputBytes:1073741824,maxFeatureBytes:268435456,maxFeatureWork:268435456});
+export const DECODE_LIMITS=Object.freeze({maxPixels:64000000,maxDimension:65536,maxSamples:268435456,maxRetainedSamples:268435456,maxTotalSamples:536870912,maxModularWork:536870912,maxFrames:4096,maxBoxes:65536,maxMetadataBytes:67108864,maxInputBytes:1073741824,maxFeatureBytes:268435456,maxFeatureWork:268435456});
 const fourCC=type=>String.fromCharCode(type>>>24,type>>>16&255,type>>>8&255,type&255);
 function unpackInput(bytes,limits) {
   requireDecode(bytes instanceof Uint8Array&&bytes.length>=2,'JPEG XL input is a Uint8Array containing a complete image.');
@@ -26,7 +26,7 @@ function unpackInput(bytes,limits) {
     if(type!==FTYP&&type!==LEVEL&&type!==CODESTREAM&&type!==PARTIAL&&type!==BROB)rawMetadata+=length-header;
     requireDecode(rawMetadata<=limits.maxMetadataBytes,'JPEG XL metadata exceeds the byte limit.');at+=length;
   }
-  const source=inspectContainer(bytes,{maxBytes:limits.maxInputBytes}),metadata=[];let totalMetadata=0;
+  const source=inspectContainer(bytes,{maxBytes:limits.maxInputBytes,maxBoxes:limits.maxBoxes}),metadata=[];let totalMetadata=0;
   for(const box of source.auxiliary) {
     const compressed=box.boxType==='brob';let type=box.boxType,data=box.data;
     if(compressed){type=fourCC(new DataView(data.buffer,data.byteOffset,data.byteLength).getUint32(0));data=part('brotli').decompressBrotli(data.subarray(4),{maxOutput:limits.maxMetadataBytes-totalMetadata,dictionary:limits.dictionary});}
@@ -69,9 +69,10 @@ function renderSections(readers,h,f,refs,lf,options,visibility) {
 
 function publicFrame(frame,h,f,options) {
   requireDecode(frame.width*frame.height*(4+3+frame.extraChannels.length)<=options.maxSamples,'JPEG XL output exceeds the sample limit.');
-  frame=convertOutputColor(frame,h,{colorSpace:options.colorSpace});
-  if(options.applyOrientation)frame=orientFrame(frame,h.orientation);
   const format=outputFormat(h,options);
+  const quantize=options.planes||options.unpremultiplyAlpha||options.renderSpotColors?0:format==='uint8'?255:format==='uint16'?65535:0;
+  frame=convertOutputColor(frame,h,{colorSpace:options.colorSpace,quantize});
+  if(options.applyOrientation)frame=orientFrame(frame,h.orientation);
   const nativeSpace=frame.colorEncoding.iccSpace;
   const rgbaFrame=frame.colorEncoding.space==='xyb'||nativeSpace&&nativeSpace!=='RGB '&&nativeSpace!=='GRAY'?convertOutputColor(frame,h,{colorSpace:'srgb'}):frame;
   const banded=frame.rgba?.format===format&&frame.rgba.planes.length===rgbaFrame.planes.length&&frame.rgba.planes.every((p,i)=>p===rgbaFrame.planes[i]);
@@ -105,11 +106,27 @@ export function openFirstFrame(bytes,options) {
   return {h,f,readers:f&&readDecodeTOC(r,f)};
 }
 
+function frameSamples(h,f) {
+  const normal=f.type===0||f.type===3,keyframe=normal&&(f.isLast||f.duration!==0);
+  return {expandedSamples:Math.ceil(f.width/power2(3*f.lfLevel))*Math.ceil(f.height/power2(3*f.lfLevel))*(3+h.extraChannels.length),
+    canvasSamples:normal?h.width*h.height*(3+h.extraChannels.length+(keyframe?4:0)):0};
+}
+
 export function decodeImage(bytes,options,renderFrame=null) {
   const {input,r,h}=openImage(bytes,options);
+  const ph=h.preview?{...h,...h.preview,preview:null,animation:null}:null,pf=ph&&readDecodeFrameHeader(r,ph,options),pr=pf&&readDecodeTOC(r,pf);
+  const start=r.bit;let totalSamples=pf?frameSamples(ph,pf).expandedSamples+pf.width*pf.height*4:0;
+  requireDecode(totalSamples<=options.maxTotalSamples,'JPEG XL frames exceed the total sample limit.',r);
+  for(let index=0;;index++) {
+    requireDecode(index<options.maxFrames,'JPEG XL frame count exceeds the limit.',r);
+    const f=readDecodeFrameHeader(r,h,options);readDecodeTOC(r,f);
+    const {expandedSamples,canvasSamples}=frameSamples(h,f);totalSamples+=expandedSamples+canvasSamples;
+    requireDecode(totalSamples<=options.maxTotalSamples,'JPEG XL frames exceed the total sample limit.',r);
+    if(f.isLast)break;
+  }
+  r.bit=start;
   let preview=null;
-  if(h.preview) {
-    const ph={...h,...h.preview,preview:null,animation:null},pf=readDecodeFrameHeader(r,ph,options),pr=readDecodeTOC(r,pf);
+  if(pf) {
     const decoded=renderSections(pr,ph,pf,[],[],options,{visibleFrame:0,nonvisibleFrame:0});
     preview=publicFrame(transformColor(decoded,ph,pf,{colorSpace:'original'}),ph,pf,options);
   }
@@ -118,9 +135,7 @@ export function decodeImage(bytes,options,renderFrame=null) {
   for(let index=0;;index++) {
     requireDecode(index<options.maxFrames,'JPEG XL frame count exceeds the limit.',r);
     const f=readDecodeFrameHeader(r,h,options),readers=readDecodeTOC(r,f);frameHeaders.push(f);
-    const normal=f.type===0||f.type===3,keyframe=normal&&(f.isLast||f.duration!==0);
-    const expandedSamples=Math.ceil(f.width/power2(3*f.lfLevel))*Math.ceil(f.height/power2(3*f.lfLevel))*(3+h.extraChannels.length);
-    const canvasSamples=normal?h.width*h.height*(3+h.extraChannels.length+(keyframe?4:0)):0;
+    const normal=f.type===0||f.type===3,keyframe=normal&&(f.isLast||f.duration!==0),{expandedSamples,canvasSamples}=frameSamples(h,f);
     requireDecode(canvasSamples<=options.maxSamples,'JPEG XL canvas exceeds the sample limit.',r);
     const heldSamples=outputSamples+references.reduce((n,v)=>n+retainedSamples(v),0)+lf.reduce((n,v)=>n+retainedSamples(v),0);
     requireDecode(heldSamples+expandedSamples+canvasSamples<=options.maxRetainedSamples,'JPEG XL retained frames exceed the sample limit.',r);

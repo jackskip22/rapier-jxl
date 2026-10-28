@@ -122,7 +122,60 @@ export function sameEncoding(a,b) {
   return !a.wantICC&&!b.wantICC&&a.space===b.space&&a.transferFunction===b.transferFunction&&a.gamma===b.gamma&&JSON.stringify(a.whitePoint??'d65')===JSON.stringify(b.whitePoint??'d65')&&(a.space==='gray'||JSON.stringify(a.primaries??'srgb')===JSON.stringify(b.primaries??'srgb'));
 }
 
-function convert(frame,h,source,target,sourceICC,targetICC,preserveAssociation=false) {
+const STEPS=65536,LOW=-STEPS/4,SIZE=STEPS*3/2,kept=[];
+function curveTable(read,key) {
+  const at=kept.findIndex(t=>t.key===key);
+  if(at>=0){const [table]=kept.splice(at,1);kept.push(table);return table;}
+  const values=new Float32Array(SIZE*2);
+  for(let i=0,next=read(LOW/STEPS);i<SIZE;i++) {
+    const value=next;next=read((i+1+LOW)/STEPS);
+    values[i*2]=value;values[i*2+1]=Math.abs((value+next)/2-read((i+LOW+.5)/STEPS))<=1e-7?next-value:NaN;
+  }
+  let error=0;
+  for(let i=0;i<SIZE;i++)if(values[i*2+1]===values[i*2+1])for(const s of [0,.25,.5,.75])error=Math.max(error,Math.abs(values[i*2]+values[i*2+1]*s-read((i+LOW+s)/STEPS)));
+  const table={key,values,error:2*error};
+  kept.push(table);if(kept.length>2)kept.shift();
+  return table;
+}
+function enumModel(encoding,h,toLinear) {
+  const tf=encoding.transferFunction??(encoding.gamma===undefined?'srgb':'gamma');
+  if(encoding.wantICC||encoding.space!=='rgb'||tf==='hlg'||tf==='unknown')return null;
+  const key=JSON.stringify([tf,encoding.gamma,toLinear,h.toneMapping.intensityTarget]),curve=transferCurve(encoding,toLinear,h.toneMapping.intensityTarget);
+  const white=whiteXYZ(encoding.whitePoint),native=primariesXYZ(encoding.primaries,encoding.whitePoint);
+  return {matrix:toLinear?multiply3(adaptWhite(white,D50),native):multiply3(inverse3(native),adaptWhite(D50,white)),curves:[curve,curve,curve],keys:[key,key,key]};
+}
+function tableCurve(values,read,x) {
+  const p=x*STEPS-LOW;
+  if(!(p>=0&&p<SIZE))return read(x);
+  const i=p|0,slope=values[i*2+1];
+  return slope===slope?values[i*2]+slope*(p-i):read(x);
+}
+function certain(values,maximum,linear,out,error,a) {
+  const p=linear*STEPS-LOW;
+  if(!(p>=0&&p<SIZE))return -1;
+  const i=p|0,slope=values[i*2+1];
+  if(slope!==slope)return -1;
+  const near=Math.max(Math.abs(slope),i?Math.abs(values[i*2-1]):0,i+1<SIZE?Math.abs(values[i*2+3]):0)*STEPS,y=(values[i*2]+slope*(p-i))*a;
+  const spread=((out+2*near*error+1e-12)*a+Math.abs(y)*2.4e-7)*maximum,t=y*maximum+.5;
+  if(!(spread<Infinity&&t<Infinity&&t>-Infinity))return -1;
+  return quantized(t-spread,maximum)===quantized(t+spread,maximum)?Math.fround(y):-1;
+}
+function quantized(t,maximum) { return t>=maximum+.5?maximum:t>=1?Math.floor(t):0; }
+function quantizedConvert(frame,n,from,to,alpha,planes,maximum,exact) {
+  const [f0,f1,f2]=from.curves,inTables=from.curves.map((c,i)=>curveTable(c,from.keys[i])),outTables=to.curves.map((c,i)=>curveTable(c,to.keys[i]));
+  const [i0,i1,i2]=inTables.map(t=>t.values),[o0,o1,o2]=outTables.map(t=>t.values),[q0,q1,q2]=outTables.map(t=>t.error),m=multiply3(to.matrix,from.matrix),[m0,m1,m2,m3,m4,m5,m6,m7,m8]=m;
+  const input=Math.max(...inTables.map(t=>t.error)),[e0,e1,e2]=[0,3,6].map(r=>(Math.abs(m[r])+Math.abs(m[r+1])+Math.abs(m[r+2]))*input+1e-12);
+  const [p0,p1,p2]=frame.planes,[r,g,b]=planes;
+  for(let i=0;i<n;i++) {
+    const a=alpha?alpha[i]:1;
+    if(!(a>0))continue;
+    const x=tableCurve(i0,f0,p0[i]/a),y=tableCurve(i1,f1,p1[i]/a),z=tableCurve(i2,f2,p2[i]/a);
+    const u=certain(o0,maximum,m0*x+m1*y+m2*z,q0,e0,a),v=u<0?-1:certain(o1,maximum,m3*x+m4*y+m5*z,q1,e1,a),w=v<0?-1:certain(o2,maximum,m6*x+m7*y+m8*z,q2,e2,a);
+    if(w<0)exact(i);else{r[i]=u;g[i]=v;b[i]=w;}
+  }
+}
+
+function convert(frame,h,source,target,sourceICC,targetICC,preserveAssociation=false,quantize=0) {
   if(sameEncoding(source,target)||sourceICC&&sourceICC===targetICC)return finish(frame,frame.planes,target,targetICC);
   const intent=target.renderingIntent??source.renderingIntent;
   const inputProfile=sourceICC?part('iccColor').readICCColor(sourceICC,{intent}):null,outputProfile=targetICC?part('iccColor').readICCColor(targetICC,{intent}):null;
@@ -136,9 +189,9 @@ function convert(frame,h,source,target,sourceICC,targetICC,preserveAssociation=f
   const inputInk=inputCount===4&&source.invertedCMYK!==false,outputInk=outputCount===4&&target.invertedCMYK!==false;
   const firstAlpha=preserveAssociation?frame.extraChannels?.find(c=>c.type===0):null,alpha=firstAlpha?.associated?firstAlpha.data:null;
   const inputXYB=!sourceICC&&source.space==='xyb',outputXYB=!targetICC&&target.space==='xyb';
-  for(let i=0;i<n;i++) {
+  const pixel=i=>{
     const a=alpha?alpha[i]:1;
-    if(alpha&&!(a>0))continue;
+    if(alpha&&!(a>0))return;
     for(let c=0;c<inputCount;c++) {
       const stored=c===3?sourceBlack[i]:frame.planes[c][i],value=alpha&&!inputXYB?stored/a:stored;
       input[c]=inputInk?1-value:value;
@@ -150,17 +203,20 @@ function convert(frame,h,source,target,sourceICC,targetICC,preserveAssociation=f
     const scale=alpha&&!outputXYB?a:1;
     for(let c=0;c<planes.length;c++)planes[c][i]=(outputInk?1-out[c]:out[c])*scale;
     if(k)k[i]=(outputInk?1-out[3]:out[3])*scale;
-  }
+  };
+  const from=quantize&&inputCount===3&&n>=STEPS&&(sourceICC?inputProfile.toModel:enumModel(source,h,true)),to=from&&outputCount===3&&(targetICC?outputProfile.fromModel:enumModel(target,h,false));
+  if(to)quantizedConvert(frame,n,from,to,alpha,planes,quantize,pixel);
+  else for(let i=0;i<n;i++)pixel(i);
   let extras=frame.extraChannels;
   if(k){requireDecode(black>=0,'CMYK output needs a black extra channel.');extras=extras.map((c,i)=>i===black?{...c,data:k}:c);}
   return finish(frame,planes,target,targetICC,extras);
 }
 
-export function convertOutputColor(frame,h,{colorSpace='original',icc}={}) {
+export function convertOutputColor(frame,h,{colorSpace='original',icc,quantize=0}={}) {
   const source=frame.colorEncoding??nativeEncoding(h),sourceICC=frame.icc??(source.wantICC?h.icc:undefined);
   if(colorSpace==='original'&&!icc)return finish(frame,frame.planes,source,sourceICC);
   const target=icc?{space:signature(icc)==='GRAY'?'gray':signature(icc)==='CMYK'?'cmyk':'rgb',wantICC:true,transferFunction:'icc',iccSpace:signature(icc),invertedCMYK:signature(icc)==='CMYK',renderingIntent:icc.length>=68?new DataView(icc.buffer,icc.byteOffset,icc.byteLength).getUint32(64):undefined}:targetEncoding(colorSpace);
-  return convert(frame,h,source,target,sourceICC,icc,true);
+  return convert(frame,h,source,target,sourceICC,icc,true,quantize);
 }
 
 export function transformColor(frame,h,f,{colorSpace='original',icc,inPlace=false,rgba8=null}={}) {

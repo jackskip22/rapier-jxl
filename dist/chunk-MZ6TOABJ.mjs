@@ -1,0 +1,2 @@
+/*! rapier-jxl 7.1.0 | MIT */
+var e=(e,r)=>Object.assign(new Error(r),{code:e});function r(e){e?.throwIfAborted()}function t(r,t="Options"){if(r===void 0)return{};if(!r||typeof r!="object"||Array.isArray(r))throw e("JXL_OPTIONS",`${t} must be an object.`);return r}function i(r,t,i=4e7){if(!Number.isSafeInteger(r)||!Number.isSafeInteger(t)||r<1||t<1||r>16384||t>16384||r*t>i)throw e("JXL_DIMENSIONS","Image dimensions exceed the configured limit.")}export{e as a,r as b,t as c,i as d};

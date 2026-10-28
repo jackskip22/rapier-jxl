@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 import {BitWriter, packSigned, complete, scaled} from './bits.mjs';
 import {admitOutputSize} from './admit.mjs';
-import {writeImageHeader, writeFrameHeaderEnd} from './frame.mjs';
+import {writeFrameHeaderEnd} from './frame.mjs';
+import {writeImageHeader} from './icc-write.mjs';
 import {buildCode, uintConfig, countToken, writeHybrid, writeHistograms} from './prefix.mjs';
 import {screenPlan, screenFrameSteps} from './screen.mjs';
 

@@ -1,2 +1,0 @@
-/*! rapier-jxl 7.0.0 | MIT */
-import{a as r,b as e,c as m}from"./chunk-ZZC7G7JD.mjs";import"./chunk-2YE65DBU.mjs";import"./chunk-OFTJD563.mjs";import"./chunk-OMW3WO6C.mjs";import"./chunk-WOE22HDO.mjs";export{r as configureKernels,e as ensureKernels,m as kernelMode};

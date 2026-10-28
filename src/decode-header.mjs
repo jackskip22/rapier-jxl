@@ -88,7 +88,9 @@ function tone(r, extra) {
 export function readDecodeImageHeader(r, limits = {}) {
   r.expect(16, 0x0aff);
   const h = {...size(r), orientation:1, intrinsicSize:null, preview:null, animation:null};
+  const side = limits.maxDimension ?? 65536;
   requireDecode(h.width > 0 && h.height > 0 && h.width * h.height <= (limits.maxPixels ?? 64000000), 'JPEG XL image exceeds the pixel limit.', r);
+  requireDecode(h.width <= side && h.height <= side, 'JPEG XL image exceeds the dimension limit.', r);
   const defaults = bool(r), extra = !defaults && bool(r);
   if (extra) {
     h.orientation = r.read(3) + 1;
@@ -175,6 +177,7 @@ export function readDecodeFrameHeader(r, h, limits = {}) {
     f.width = r.u32(FRAME_SIZE); f.height = r.u32(FRAME_SIZE);
   }
   requireDecode(f.width > 0 && f.height > 0 && f.width * f.height <= (limits.maxPixels ?? 64000000), 'JPEG XL frame exceeds the pixel limit.', r);
+  requireDecode(f.width <= (limits.maxDimension ?? 65536) && f.height <= (limits.maxDimension ?? 65536), 'JPEG XL frame exceeds the dimension limit.', r);
   const normal = f.type === 0 || f.type === 3;
   f.blending = [{mode:0,alpha:0,clamp:false,source:0}, ...array(h.extraChannels.length, () => ({mode:0,alpha:0,clamp:false,source:0}))];
   if (!defaults && normal) {
