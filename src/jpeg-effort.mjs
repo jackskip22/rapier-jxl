@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: MIT
-import {coefficientEffortSteps, coefficientOrderSteps} from './coefficient-effort.mjs';
-import {varDCTSteps} from './vardct.mjs';
+import {coefficientEffortSteps, coefficientOrderSteps, candidateSteps} from './coefficient-effort.mjs';
+import {scaled} from './bits.mjs';
 import {buildExactTokenCoding} from './coefficient-coding.mjs';
 
 export function* jpegEffortSteps(jpeg, effort, retain, baseline = coefficientEffortSteps, shared = {}) {
   if (effort < 8) return yield* baseline(jpeg, effort, undefined, retain, shared);
   let best, step, hurry;
   const floor = baseline(jpeg, 7, undefined, retain, shared);
-  while (!(step = floor.next(hurry)).done) hurry = yield step.value / 2;
+  let reply;
+  while (!(step = floor.next(reply)).done) {
+    if (typeof step.value !== 'number') { reply = yield scaled(step.value, done => done / 2); continue; }
+    reply = hurry = yield step.value / 2;
+  }
   best = step.value;
   if (hurry) return best;
   const alternate = {maxClusters: 32, newClusterCost: 160}, parts = effort === 8 ? 2 : 11;
@@ -22,8 +26,11 @@ export function* jpegEffortSteps(jpeg, effort, retain, baseline = coefficientEff
     return step.value;
   }
   function* write(plan) {
-    const steps = varDCTSteps(jpeg, plan, shared);
-    while (!(step = steps.next()).done) {
+    const steps = candidateSteps(jpeg, plan, shared);
+    let reply;
+    while (!(step = steps.next(reply)).done) {
+      reply = undefined;
+      if (typeof step.value !== 'number') { reply = yield scaled(step.value, done => 0.5 + (part + done) / (2 * parts)); continue; }
       hurry = yield 0.5 + (part + step.value) / (2 * parts);
       if (hurry && step.value < 1) { steps.return(); return; }
     }

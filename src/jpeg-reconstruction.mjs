@@ -4,6 +4,8 @@ import {ZIGZAG, jpegError, admitScan} from './jfif.mjs';
 import {JxlBits, requireJPEG, readJPEGCoefficients} from './jpeg-coefficients.mjs';
 import {jpegReconstruction, withJPEGReconstruction} from './container.mjs';
 import {guard, admitOutputSize} from './admit.mjs';
+import {fault} from './fault.mjs';
+import {compressBrotli, decompressBrotli} from './brotli.mjs';
 
 const FOUR = [[0, 1], [0, 2], [0, 3], [0, 4]];
 const COUNTS = [[0, 0], [0, 1], [3, 2], [8, 0]], SYMBOLS = [[2, 0], [2, 4], [4, 8], [8, 1]];
@@ -64,6 +66,11 @@ function structure(bytes, jpeg) {
         if (bytes[at] >= 208 && bytes[at] <= 215) { at++; continue; }
         at--; break;
       }
+      if (choices.fill) {
+        const fill = new Uint8Array(choices.fill * 2);
+        for (let i = 0; i < fill.length; i += 2) fill[i] = 255;
+        raw(fill);
+      }
       if (choices.finalRestart !== undefined) raw(Uint8Array.of(255, choices.finalRestart));
       continue;
     } else if (marker >= 224 && marker <= 239) data.apps.push(bytes.subarray(markerStart + 1, end));
@@ -96,18 +103,7 @@ function brotliStore(bytes) {
   }
   w.write(2, 3); return w.finish();
 }
-function brotliLoad(bytes, size) {
-  requireJPEG(size <= bytes.length);
-  const r = new JxlBits(bytes), output = new Uint8Array(size); let at = 0;
-  r.expect(1, 0);
-  while (!r.read(1)) {
-    r.expect(2, 0); const n = r.read(16) + 1; r.expect(1, 1); r.align();
-    requireJPEG(at + n <= size && r.bit / 8 + n <= bytes.length);
-    output.set(bytes.subarray(r.bit / 8, r.bit / 8 + n), at); at += n; r.bit += n * 8;
-  }
-  r.expect(1, 1); r.end(); requireJPEG(at === size); return output;
-}
-function writeData(data) {
+function writeData(data, literalContexts) {
   const w = new BitWriter(), grey = data.components.length === 1;
   w.write(1, grey ? 1 : 0); for (const marker of data.markers) w.write(6, marker - 192);
   for (const part of data.apps) { w.write(2, 0); w.write(16, part.length - 1); }
@@ -138,15 +134,148 @@ function writeData(data) {
   }
   for (const part of data.inter) w.write(16, part.length);
   w.writeU32(TAIL, data.tail.length); w.write(1, 0); w.zeroPadToByte();
-  return concatenate([w.finish(), brotliStore(concatenate([...data.apps, ...data.comments, ...data.inter, data.tail]))]);
+  const raw = concatenate([...data.apps, ...data.comments, ...data.inter, data.tail]);
+  let packed = brotliStore(raw);
+  if (raw.length > 32) {
+    try { const compressed = compressBrotli(raw, {literalContexts}); if (compressed.length < packed.length) packed = compressed; }
+    catch (error) { if (error.code !== 'JXL_SIZE' && error.code !== 'JXL_INPUT') throw error; }
+  }
+  return concatenate([w.finish(), packed]);
 }
 
-function readData(bytes) {
+const TAGS = ['cprt', 'wtpt', 'bkpt', 'rXYZ', 'gXYZ', 'bXYZ', 'kXYZ', 'rTRC', 'gTRC', 'bTRC', 'kTRC', 'chad', 'desc', 'chrm', 'dmnd', 'dmdd', 'lumi'];
+const TYPES = ['XYZ ', 'desc', 'text', 'mluc', 'para', 'curv', 'sf32', 'gbd '];
+const HEADER = Uint8Array.of(0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 109, 110, 116, 114, 82, 71, 66, 32, 88, 89, 90, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 97, 99, 115, 112, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 246, 214, 0, 1, 0, 0, 0, 0, 211, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+const chars = text => [text.charCodeAt(0), text.charCodeAt(1), text.charCodeAt(2), text.charCodeAt(3)];
+const sameTag = (a, text) => a.length === 4 && chars(text).every((c, i) => a[i] === c);
+function shuffleBytes(data, width) {
+  const size = data.length, height = Math.ceil(size / width), out = new Uint8Array(size);
+  let column = 0, at = 0;
+  for (let i = 0; i < size; i++) { out[i] = data[at]; at += height; if (at >= size) at = ++column; }
+  return out;
+}
+function predictByte(data, start, i, stride, width, order) {
+  const predict = (p1, p2, p3, mask) => { const value = order === 0 ? p1 : order === 1 ? 2 * p1 - p2 : 3 * p1 - 3 * p2 + p3; return value & mask; };
+  if (width === 1) return predict(data[start + i - stride], data[start + i - stride * 2], data[start + i - stride * 3], 255);
+  if (width === 2) {
+    const p = start + (i & ~1), pair = at => (data[at] << 8) + data[at + 1], value = predict(pair(p - stride), pair(p - stride * 2), pair(p - stride * 3), 65535);
+    return i & 1 ? value & 255 : value >>> 8;
+  }
+  const p = start + (i & ~3), word = at => at < 0 ? 0 : ((data[at] << 24) | (data[at + 1] << 16) | (data[at + 2] << 8) | data[at + 3]) >>> 0;
+  const value = predict(word(p - stride), word(p - stride * 2), word(p - stride * 3), 0xffffffff);
+  return (value >>> ((3 - (i & 3)) * 8)) & 255;
+}
+export function unpredictICC(enc) {
+  requireJPEG(enc instanceof Uint8Array && enc.length >= 2);
+  let pos = 0;
+  const varint = () => {
+    let value = 0, scale = 1;
+    for (let i = 0; i < 10; i++, scale *= 128) {
+      requireJPEG(pos < enc.length);
+      const byte = enc[pos++]; value += (byte & 127) * scale;
+      if (!(byte & 128)) return value;
+    }
+    requireJPEG(false);
+  };
+  const osize = varint(), csize = varint();
+  requireJPEG(osize <= 268435456 && Number.isSafeInteger(csize) && pos + csize <= enc.length);
+  const command = {at: pos}, data = pos + csize; pos = data;
+  const commandVarint = () => { const saved = pos; pos = command.at; const value = varint(); command.at = pos; pos = saved; return value; };
+  const out = new Uint8Array(osize); let at = 0;
+  const push = byte => { requireJPEG(at < osize); out[at++] = byte & 255; };
+  const be = value => { push(value >>> 24); push(value >>> 16); push(value >>> 8); push(value); };
+  const header = HEADER.slice(); header[0] = osize >>> 24; header[1] = (osize >>> 16) & 255; header[2] = (osize >>> 8) & 255; header[3] = osize & 255;
+  for (let i = 0; i <= 128; i++) {
+    if (at === osize) { requireJPEG(command.at === data && pos === enc.length); return out; }
+    if (i === 128) break;
+    if (i === 8 && at >= 8) header.set(out.subarray(4, 8), 80);
+    if (i === 41 && at >= 41) { if (out[40] === 65) header.set([80, 80, 76], 41); if (out[40] === 77) header.set([83, 70, 84], 41); }
+    if (i === 42 && at >= 42 && out[40] === 83) { if (out[41] === 71) header.set([73, 32], 42); if (out[41] === 85) header.set([78, 87], 42); }
+    requireJPEG(pos < enc.length); push(enc[pos++] + header[i]);
+  }
+  requireJPEG(command.at < data);
+  let numtags = commandVarint();
+  if (numtags) {
+    numtags--; requireJPEG(numtags <= 0xffffffff); be(numtags);
+    let previousStart = 128 + numtags * 12, previousSize = 0;
+    for (;;) {
+      requireJPEG(at <= osize && command.at <= data);
+      if (command.at === data) break;
+      const code = enc[command.at++], tagcode = code & 63; let tag;
+      if (!tagcode) break;
+      if (tagcode === 1) { requireJPEG(pos + 4 <= enc.length); tag = enc.subarray(pos, pos += 4); }
+      else if (tagcode === 2) tag = chars('rTRC');
+      else if (tagcode === 3) tag = chars('rXYZ');
+      else { requireJPEG(tagcode >= 4 && tagcode - 4 < TAGS.length); tag = chars(TAGS[tagcode - 4]); }
+      for (const byte of tag) push(byte);
+      let tagSize = previousSize;
+      if (['rXYZ', 'gXYZ', 'bXYZ', 'kXYZ', 'wtpt', 'bkpt', 'lumi'].some(name => sameTag(tag, name))) tagSize = 20;
+      const tagStart = code & 64 ? commandVarint() : previousStart + previousSize;
+      requireJPEG(tagStart <= 0xffffffff); be(tagStart);
+      if (code & 128) tagSize = commandVarint();
+      requireJPEG(tagSize <= 0xffffffff); be(tagSize);
+      previousStart = tagStart; previousSize = tagSize;
+      if (tagcode === 2) { for (const name of ['gTRC', 'bTRC']) { for (const byte of chars(name)) push(byte); be(tagStart); be(tagSize); } }
+      if (tagcode === 3) { requireJPEG(tagStart + tagSize * 2 <= 0xffffffff); for (const [name, shift] of [['gXYZ', 1], ['bXYZ', 2]]) { for (const byte of chars(name)) push(byte); be(tagStart + tagSize * shift); be(tagSize); } }
+    }
+  }
+  for (;;) {
+    requireJPEG(at <= osize && command.at <= data);
+    if (command.at === data) break;
+    const code = enc[command.at++];
+    if (code === 1 || code === 2 || code === 3) {
+      const count = commandVarint(); requireJPEG(pos + count <= enc.length);
+      let bytes = enc.subarray(pos, pos + count);
+      if (code !== 1) bytes = shuffleBytes(bytes, code === 2 ? 2 : 4);
+      for (const byte of bytes) push(byte); pos += count;
+    } else if (code === 4) {
+      requireJPEG(command.at + 2 <= data);
+      const flags = enc[command.at++], width = (flags & 3) + 1, order = (flags >> 2) & 3;
+      requireJPEG(width !== 3 && order !== 3);
+      const stride = flags & 16 ? commandVarint() : width;
+      requireJPEG(stride >= width && at && ((at - 1) >>> 2) >= stride && command.at < data);
+      const count = commandVarint(); requireJPEG(pos + count <= enc.length);
+      let bytes = enc.subarray(pos, pos + count); if (width > 1) bytes = shuffleBytes(bytes, width);
+      const start = at;
+      for (let i = 0; i < count; i++) push(predictByte(out, start, i, stride, width, order) + bytes[i]);
+      pos += count;
+    } else if (code === 10) {
+      for (const byte of chars('XYZ ')) push(byte); for (let i = 0; i < 4; i++) push(0);
+      requireJPEG(pos + 12 <= enc.length); for (let i = 0; i < 12; i++) push(enc[pos++]);
+    } else if (code >= 16 && code < 16 + TYPES.length) {
+      for (const byte of chars(TYPES[code - 16])) push(byte); for (let i = 0; i < 4; i++) push(0);
+    } else requireJPEG(false);
+  }
+  requireJPEG(pos === enc.length && at === osize); return out;
+}
+const EXIF_TAG = Uint8Array.of(69, 120, 105, 102, 0, 0), ICC_TAG = Uint8Array.of(73, 67, 67, 95, 80, 82, 79, 70, 73, 76, 69, 0);
+const XMP_TAG = Uint8Array.from('http://ns.adobe.com/xap/1.0/\0', char => char.charCodeAt(0));
+function materializeApps(apps, take, {icc, exif, xml} = {}) {
+  const iccCount = apps.reduce((n, app) => n + (app.type === 1), 0); let sequence = 0, iccAt = 0, exifDone = false, xmlDone = false;
+  const filled = apps.map(app => {
+    const out = new Uint8Array(app.length); out[1] = (app.length - 1) >> 8; out[2] = (app.length - 1) & 255;
+    if (!app.type) { out.set(take(app.length)); requireJPEG(out[1] * 256 + out[2] + 1 === out.length); return out; }
+    if (app.type === 1) {
+      const n = app.length - 17; requireJPEG(n >= 0 && icc && iccAt + n <= icc.length);
+      out[0] = 226; out.set(ICC_TAG, 3); out[15] = ++sequence; out[16] = iccCount; out.set(icc.subarray(iccAt, iccAt += n), 17); return out;
+    }
+    if (app.type === 2) {
+      requireJPEG(!exifDone && exif && exif.length >= 4 && app.length === exif.length + 5);
+      out[0] = 225; out.set(EXIF_TAG, 3); out.set(exif.subarray(4), 9); exifDone = true; return out;
+    }
+    requireJPEG(!xmlDone && xml && app.length === xml.length + 32);
+    out[0] = 225; out.set(XMP_TAG, 3); out.set(xml, 32); xmlDone = true; return out;
+  });
+  requireJPEG(!iccCount || iccAt === icc.length); return filled;
+}
+function readData(bytes, sources = {}) {
   const r = new JxlBits(bytes), grey = r.read(1), data = {markers: [], apps: [], comments: [], quant: [], huffman: [], scans: [], inter: [], restart: 0};
   for (;;) { const marker = r.read(6) + 192; data.markers.push(marker); requireJPEG(data.markers.length <= 16384); if (marker === 217) break; }
-  let total = 0;
-  const size = n => { total += n; requireJPEG(total <= bytes.length); return n; };
-  for (const marker of data.markers) if (marker >= 224 && marker <= 239) { r.expect(2, 0); data.apps.push(size(r.read(16) + 1)); }
+  const size = n => { requireJPEG(n >= 3 && n <= 65536); return n; };
+  for (const marker of data.markers) if (marker >= 224 && marker <= 239) {
+    const type = r.u32([[0, 0], [0, 1], [1, 2], [2, 4]]);
+    requireJPEG(type <= 3); data.apps.push({type, length: size(r.read(16) + 1)});
+  }
   for (const marker of data.markers) if (marker === 254) data.comments.push(size(r.read(16) + 1));
   const quantCount = r.u32(FOUR); requireJPEG(quantCount < 4);
   for (let i = 0; i < quantCount; i++) data.quant.push({precision: r.read(1), index: r.read(2), last: !!r.read(1)});
@@ -166,7 +295,8 @@ function readData(bytes) {
     requireJPEG(count <= ids.length && ss <= se && al <= 13 && ah <= 13);
     const components = Array.from({length: count}, () => ({index: r.read(2), ac: r.read(2), dc: r.read(2)}));
     requireJPEG(components.every(c => c.index < ids.length) && new Set(components.map(c => c.index)).size === count);
-    r.expect(2, 0); data.scans.push({components, ss, se, al, ah, resets: [], zeros: []});
+    const pass = r.u32([[0, 0], [0, 1], [0, 2], [3, 3]]); requireJPEG(pass <= 10);
+    data.scans.push({components, ss, se, al, ah, resets: [], zeros: []});
   }
   if (data.markers.includes(221)) data.restart = r.read(16);
   for (const scan of data.scans) {
@@ -175,19 +305,38 @@ function readData(bytes) {
     previous = -1;
     for (let n = r.u32(EVENTS); n; n--) { const count = r.u32([[0, 1], [2, 2], [4, 5], [8, 20]]); previous += 1 + r.u32(BLOCK); requireJPEG(previous < 201326592 && count <= 4); scan.zeros.push({block: previous, count}); }
   }
-  for (const marker of data.markers) if (marker === 255) data.inter.push(size(r.read(16)));
-  data.tail = size(r.u32(TAIL)); r.expect(1, 0); r.align();
-  const raw = brotliLoad(bytes.subarray(r.bit / 8), total); let at = 0;
-  const take = n => raw.subarray(at, at += n);
-  for (const key of ['apps', 'comments', 'inter']) data[key] = data[key].map(take);
-  data.tail = take(data.tail); return data;
+  for (const marker of data.markers) if (marker === 255) data.inter.push(r.read(16));
+  data.tail = r.u32(TAIL); requireJPEG(data.tail <= 4260096);
+  data.padding = null;
+  if (r.read(1)) {
+    const count = r.read(24); requireJPEG(count <= 16777216);
+    data.padding = Uint8Array.from({length: count}, () => r.read(1));
+    requireJPEG(data.padding.every(bit => bit <= 1));
+  }
+  r.align();
+  const brotliBytes = data.tail + data.comments.reduce((n, v) => n + v, 0) + data.inter.reduce((n, v) => n + v, 0) + data.apps.reduce((n, app) => n + (app.type ? 0 : app.length), 0);
+  let raw;
+  const brotliInput = bytes.subarray(Math.floor(r.bit / 8));
+  const brotliCap = Math.max(brotliBytes, 1);
+  try { raw = openBrotli(brotliInput, brotliCap); }
+  catch (error) {
+    if (error.code === 'JXL_SIZE' || error.code === 'JXL_DICTIONARY') throw error;
+    requireJPEG(false);
+  }
+  requireJPEG(raw.length === brotliBytes);
+  let at = 0;
+  const take = n => { const part = raw.subarray(at, at += n); requireJPEG(part.length === n); return part; };
+  data.apps = materializeApps(data.apps, take, sources);
+  data.comments = data.comments.map(n => { const part = take(n); requireJPEG(part[1] * 256 + part[2] + 1 === part.length); return part; });
+  data.inter = data.inter.map(take);
+  data.tail = take(data.tail); requireJPEG(at === raw.length); return data;
 }
 
-export function carryJPEG(bytes, jpeg, codestream) {
+export function carryJPEG(bytes, jpeg, codestream, effort = 1) {
   try {
     const data = structure(bytes, jpeg);
     if (!equal(writeJPEG(jpeg, data), bytes)) throw jpegError('JPEG syntax cannot be reconstructed exactly');
-    return withJPEGReconstruction(codestream, writeData(data));
+    return withJPEGReconstruction(codestream, writeData(data, effort >= 7));
   } catch (error) {
     if (error.code === 'JXL_RECONSTRUCTION') throw jpegError('JPEG syntax cannot be reconstructed exactly');
     throw error;
@@ -208,105 +357,205 @@ class JPEGOutput {
     }
     next.set(this.bytes.subarray(0, this.at)); this.bytes = next;
   }
-  byte(v) { this.reserve(1); this.bytes[this.at++] = v; }
+  byte(v) { if (this.at >= this.bytes.length) this.reserve(1); this.bytes[this.at++] = v; }
   chunk(bytes) { this.reserve(bytes.length); this.bytes.set(bytes, this.at); this.at += bytes.length; }
   marker(v) { requireJPEG(!this.pending); this.byte(255); this.byte(v); }
   segment(marker, data) { requireJPEG(data.length <= 65533); this.marker(marker); this.byte((data.length + 2) >> 8); this.byte((data.length + 2) & 255); this.chunk(data); }
   bits(n, value) {
     requireJPEG(n >= 0 && n <= 16 && value >= 0 && value < (1 << n));
-    this.acc = this.acc * (1 << n) + value; this.pending += n;
-    while (this.pending >= 8) {
-      this.pending -= 8; const byte = Math.floor(this.acc / (1 << this.pending)); this.acc %= (1 << this.pending);
-      this.byte(byte); if (byte === 255) this.byte(0);
-    }
+    this.put(n, value);
   }
-  align() { const n = (-this.pending) & 7; this.bits(n, (1 << n) - 1); }
+  put(n, value) {
+    let acc = (this.acc << n) | value, pending = this.pending + n;
+    if (pending >= 8) {
+      if (this.at + 6 > this.bytes.length) this.reserve(6);
+      const bytes = this.bytes;
+      do {
+        pending -= 8; const byte = (acc >>> pending) & 255;
+        bytes[this.at++] = byte; if (byte === 255) bytes[this.at++] = 0;
+      } while (pending >= 8);
+      acc &= (1 << pending) - 1;
+    }
+    this.acc = acc; this.pending = pending;
+  }
+  align(pad) {
+    const n = (-this.pending) & 7;
+    if (!n) return;
+    if (!pad) { this.bits(n, (1 << n) - 1); return; }
+    let pattern = 0;
+    for (let i = 0; i < n; i++) { requireJPEG(pad.at < pad.bits.length && pad.bits[pad.at] <= 1); pattern = pattern * 2 + pad.bits[pad.at++]; }
+    this.bits(n, pattern);
+  }
   finish() { requireJPEG(!this.pending); return this.bytes.slice(0, this.at); }
 }
-const category = value => value ? 32 - Math.clz32(Math.abs(value)) : 0;
+const category = value => value ? 32 - Math.clz32(value < 0 ? -value : value) : 0;
 function jpegCode(h) {
-  const lengths = new Uint8Array(257), codes = new Uint16Array(257);
+  const words = new Int32Array(257);
   let code = 0, at = 0;
   for (let n = 1; n <= 16; n++) {
     requireJPEG(code + h.counts[n] <= (1 << n));
-    for (let j = 0; j < h.counts[n]; j++) { const s = h.symbols[at++]; lengths[s] = n; codes[s] = code++; }
+    for (let j = 0; j < h.counts[n]; j++) { const s = h.symbols[at++]; words[s] = (n << 16) | code++; }
     code *= 2;
   }
-  return {lengths, codes};
+  return words;
 }
-function writeScan(out, jpeg, scan, huffman, restart, progressive) {
-  const emit = (table, symbol) => { requireJPEG(table && table.lengths[symbol]); out.bits(table.lengths[symbol], table.codes[symbol]); };
-  const value = (table, number, run = null) => {
-    const n = category(number); requireJPEG(n <= (run === null ? 11 : 10)); emit(table, ((run ?? 0) << 4) | n);
-    out.bits(n, number < 0 ? number + (1 << n) - 1 : number);
-  };
-  const {ss, se, al, ah} = scan, components = jpeg.components, unit = (1 << al);
-  requireJPEG(progressive ? ss === 0 ? se === 0 : scan.components.length === 1 : ss === 0 && se === 63 && !al && !ah);
-  const preds = new Int32Array(components.length), pending = [], resets = new Set(scan.resets), zeros = new Map(scan.zeros.map(z => [z.block, z.count]));
-  let blockIndex = 0, eob = 0, eobTable = null;
-  const flush = () => {
-    if (eob) { const n = category(eob) - 1; emit(eobTable, n << 4); out.bits(n, eob - (1 << n)); eob = 0; }
-    for (const bit of pending) out.bits(1, bit); pending.length = 0;
-  };
-  const endBand = (table, corrections = []) => {
-    eobTable = table; eob++; for (const bit of corrections) pending.push(bit);
-    if (!progressive || eob === 32767) flush();
-  };
-  const block = (entry, at) => {
-    const c = components[entry.index], co = c.coeffs, dc = huffman[entry.dc], ac = huffman[16 + entry.ac];
-    if (resets.has(blockIndex)) flush();
-    if (!ss) {
-      if (ah) out.bits(1, (co[at] >> al) & 1);
-      else { const current = co[at] >> al; value(dc, current - preds[entry.index]); preds[entry.index] = current; }
-      if (progressive) { blockIndex++; return; }
+const NO_CODE = new Int32Array(257);
+const NATURAL = Int32Array.from(ZIGZAG);
+function coded(out, word, n, extra) {
+  const length = (word >>> 16) + n;
+  if (length <= 24) out.put(length, (word & 65535) << n | extra);
+  else { out.put(word >>> 16, word & 65535); out.put(n, extra); }
+}
+function sequentialBlock(out, co, at, dc, ac, predictor, extra) {
+  const current = co[at], difference = current - predictor;
+  let n = category(difference), word = dc[n]; requireJPEG(n <= 11 && word);
+  coded(out, word, n, difference < 0 ? difference + (1 << n) - 1 : difference);
+  let run = 0;
+  for (let k = 1; k < 64; k++) {
+    const v = co[at + NATURAL[k]];
+    if (!v) { run++; continue; }
+    for (; run >= 16; run -= 16) { word = ac[240]; requireJPEG(word); out.put(word >>> 16, word & 65535); }
+    n = category(v); word = ac[(run << 4) | n]; requireJPEG(n <= 10 && word);
+    coded(out, word, n, v < 0 ? v + (1 << n) - 1 : v); run = 0;
+  }
+  if (extra) {
+    requireJPEG(run >= extra * 16); run -= extra * 16;
+    for (let i = 0; i < extra; i++) { word = ac[240]; requireJPEG(word); out.put(word >>> 16, word & 65535); }
+  }
+  if (run) { word = ac[0]; requireJPEG(word); out.put(word >>> 16, word & 65535); }
+  return current;
+}
+class ScanWriter {
+  constructor(out, scan, zeros) {
+    this.out = out; this.ss = scan.ss; this.se = scan.se; this.al = scan.al; this.ah = scan.ah; this.zeros = zeros;
+    this.blockIndex = 0; this.eob = 0; this.eobTable = NO_CODE; this.pending = new Uint8Array(1024); this.pendingBits = 0;
+    this.corrections = new Uint8Array(64); this.band = bandMask(scan.ss, scan.se);
+  }
+  emit(word) { requireJPEG(word); this.out.put(word >>> 16, word & 65535); }
+  extra() { return this.zeros ? this.zeros.get(this.blockIndex) || 0 : 0; }
+  hold(n) {
+    if (this.pendingBits + n > this.pending.length) {
+      const grown = new Uint8Array(Math.max(this.pending.length * 2, this.pendingBits + n)); grown.set(this.pending.subarray(0, this.pendingBits)); this.pending = grown;
     }
-    const first = ss || 1;
-    if (!ah) {
-      let run = 0;
-      for (let k = first; k <= se; k++) {
-        const v = Math.trunc(co[at + ZIGZAG[k]] / unit);
-        if (!v) { run++; continue; }
-        flush(); while (run >= 16) { emit(ac, 240); run -= 16; }
-        value(ac, v, run); run = 0;
+    this.pending.set(this.corrections.subarray(0, n), this.pendingBits); this.pendingBits += n;
+  }
+  flush() {
+    const out = this.out;
+    if (this.eob) { const n = category(this.eob) - 1, word = this.eobTable[n << 4]; requireJPEG(word); coded(out, word, n, this.eob - (1 << n)); this.eob = 0; }
+    for (let i = 0; i < this.pendingBits; i++) out.put(1, this.pending[i]);
+    this.pendingBits = 0;
+  }
+  endBand(table, held) {
+    this.eobTable = table; this.eob++; if (held) this.hold(held);
+    if (this.eob === 32767) this.flush();
+  }
+  sequential(entry, at, preds) {
+    preds[entry.index] = sequentialBlock(this.out, entry.co, at, entry.dc, entry.ac, preds[entry.index], this.extra());
+    this.blockIndex++;
+  }
+  progressive(entry, at, preds) {
+    const co = entry.co, ac = entry.ac, out = this.out, {ss, se, al, ah} = this;
+    if (!ss) {
+      if (ah) out.put(1, (co[at] >> al) & 1);
+      else {
+        const current = co[at] >> al, difference = current - preds[entry.index], n = category(difference), word = entry.dc[n];
+        requireJPEG(n <= 11 && word); coded(out, word, n, difference < 0 ? difference + (1 << n) - 1 : difference); preds[entry.index] = current;
       }
-      const extra = zeros.get(blockIndex) || 0;
-      if (extra) { flush(); requireJPEG(run >= extra * 16); for (let i = 0; i < extra; i++) emit(ac, 240); run -= extra * 16; }
-      if (run) endBand(ac);
+      this.blockIndex++; return;
+    }
+    const masks = entry.nonzero, band = this.band, first = masks[at >> 5] & band[0], second = masks[(at >> 5) + 1] & band[1];
+    if (!ah) {
+      let previous = ss - 1;
+      for (let low = first, high = second; low || high;) {
+        let k;
+        if (low) { const bit = low & -low; k = 31 - Math.clz32(bit); low ^= bit; } else { const bit = high & -high; k = 63 - Math.clz32(bit); high ^= bit; }
+        const c = co[at + NATURAL[k]], v = c < 0 ? -(-c >> al) : c >> al;
+        if (!v) continue;
+        let run = k - previous - 1;
+        if (this.eob || this.pendingBits) this.flush();
+        for (; run >= 16; run -= 16) this.emit(ac[240]);
+        const n = category(v), word = ac[(run << 4) | n]; requireJPEG(n <= 10 && word);
+        coded(out, word, n, v < 0 ? v + (1 << n) - 1 : v); previous = k;
+      }
+      let run = se - previous;
+      const extra = this.extra();
+      if (extra) { this.flush(); requireJPEG(run >= extra * 16); for (let i = 0; i < extra; i++) this.emit(ac[240]); run -= extra * 16; }
+      if (run) this.endBand(ac, 0);
     } else {
       requireJPEG(ah === al + 1);
-      let lastNew = first - 1, run = 0, corrections = [];
-      for (let k = first; k <= se; k++) if (Math.floor(Math.abs(co[at + ZIGZAG[k]]) / unit) === 1) lastNew = k;
-      for (let k = first; k <= se; k++) {
-        const original = co[at + ZIGZAG[k]], magnitude = Math.floor(Math.abs(original) / unit);
-        if (!magnitude) { run++; continue; }
+      const corrections = this.corrections;
+      let lastNew = ss - 1, run = 0, held = 0, previous = ss - 1;
+      for (let low = first, high = second; low || high;) {
+        let k;
+        if (low) { const bit = low & -low; k = 31 - Math.clz32(bit); low ^= bit; } else { const bit = high & -high; k = 63 - Math.clz32(bit); high ^= bit; }
+        const c = co[at + NATURAL[k]]; if (((c < 0 ? -c : c) >> al) === 1) lastNew = k;
+      }
+      for (let low = first, high = second; low || high;) {
+        let k;
+        if (low) { const bit = low & -low; k = 31 - Math.clz32(bit); low ^= bit; } else { const bit = high & -high; k = 63 - Math.clz32(bit); high ^= bit; }
+        const original = co[at + NATURAL[k]], magnitude = (original < 0 ? -original : original) >> al;
+        if (!magnitude) continue;
+        run += k - previous - 1; previous = k;
         while (run >= 16 && k <= lastNew) {
-          flush(); emit(ac, 240); run -= 16; for (const bit of corrections) out.bits(1, bit); corrections = [];
+          this.flush(); this.emit(ac[240]); run -= 16;
+          for (let i = 0; i < held; i++) out.put(1, corrections[i]);
+          held = 0;
         }
-        if (magnitude > 1) corrections.push(magnitude & 1);
+        if (magnitude > 1) corrections[held++] = magnitude & 1;
         else {
-          flush(); emit(ac, (run << 4) | 1); out.bits(1, original > 0 ? 1 : 0);
-          for (const bit of corrections) out.bits(1, bit); corrections = []; run = 0;
+          this.flush(); this.emit(ac[(run << 4) | 1]); out.put(1, original > 0 ? 1 : 0);
+          for (let i = 0; i < held; i++) out.put(1, corrections[i]);
+          held = 0; run = 0;
         }
       }
-      if (run || corrections.length) endBand(ac, corrections);
+      run += se - previous;
+      if (run || held) this.endBand(ac, held);
     }
-    blockIndex++;
-  };
+    this.blockIndex++;
+  }
+}
+const ZIGZAG_OF = new Int32Array(64);
+for (let k = 0; k < 64; k++) ZIGZAG_OF[NATURAL[k]] = k;
+function nonzeroMasks(component) {
+  const co = component.coeffs, blocks = co.length >> 6, masks = new Int32Array(blocks * 2);
+  for (let b = 0, at = 0; b < blocks; b++, at += 64) {
+    let low = 0, high = 0;
+    for (let i = 1; i < 64; i++) if (co[at + i]) { const k = ZIGZAG_OF[i]; if (k < 32) low |= 1 << k; else high |= 1 << (k - 32); }
+    masks[2 * b] = low; masks[2 * b + 1] = high;
+  }
+  return masks;
+}
+const upTo = k => k >= 31 ? -1 : k < 0 ? 0 : (1 << (k + 1)) - 1;
+const bandMask = (ss, se) => [upTo(Math.min(se, 31)) & ~upTo(ss - 1), upTo(se - 32) & ~upTo(ss - 33)];
+function writeScan(out, jpeg, scan, huffman, restart, progressive, pad, nonzero) {
+  const {ss, se, al, ah} = scan, components = jpeg.components;
+  requireJPEG(progressive ? ss === 0 ? se === 0 : scan.components.length === 1 : ss === 0 && se === 63 && !al && !ah);
+  const preds = new Int32Array(components.length);
+  const resets = Int32Array.from(scan.resets).sort(), writer = new ScanWriter(out, scan, scan.zeros.length ? new Map(scan.zeros.map(z => [z.block, z.count])) : null);
+  const entries = scan.components.map(entry => ({index: entry.index, co: components[entry.index].coeffs, dc: huffman[entry.dc] || NO_CODE, ac: huffman[16 + entry.ac] || NO_CODE,
+    nonzero: progressive && ss ? nonzero(entry.index) : null}));
   const hmax = Math.max(...components.map(c => c.h)), vmax = Math.max(...components.map(c => c.v)), single = scan.components.length === 1;
-  const first = components[scan.components[0].index], nx = Math.ceil(jpeg.width * (single ? first.h : 1) / (8 * hmax)), ny = Math.ceil(jpeg.height * (single ? first.v : 1) / (8 * vmax));
-  for (let m = 0; m < nx * ny; m++) {
-    if (restart && m && m % restart === 0) { flush(); out.align(); out.marker(208 + ((m / restart - 1) & 7)); preds.fill(0); }
-    const x = m % nx, y = Math.floor(m / nx);
-    for (const entry of scan.components) {
-      const c = components[entry.index], h = single ? 1 : c.h, v = single ? 1 : c.v;
-      for (let dy = 0; dy < v; dy++) for (let dx = 0; dx < h; dx++) block(entry, ((y * v + dy) * c.stride + x * h + dx) * 64);
+  const lead = components[scan.components[0].index], nx = Math.ceil(jpeg.width * (single ? lead.h : 1) / (8 * hmax)), ny = Math.ceil(jpeg.height * (single ? lead.v : 1) / (8 * vmax));
+  const shapes = entries.map(entry => { const c = components[entry.index]; return {stride: c.stride, h: single ? 1 : c.h, v: single ? 1 : c.v}; });
+  let nextReset = 0;
+  for (let m = 0, y = 0; y < ny; y++) for (let x = 0; x < nx; x++, m++) {
+    if (restart && m && m % restart === 0) { writer.flush(); out.align(pad); out.marker(208 + ((m / restart - 1) & 7)); preds.fill(0); }
+    for (let e = 0; e < entries.length; e++) {
+      const entry = entries[e], {stride, h, v} = shapes[e];
+      for (let dy = 0; dy < v; dy++) for (let dx = 0; dx < h; dx++) {
+        if (resets[nextReset] === writer.blockIndex) { writer.flush(); while (resets[nextReset] === writer.blockIndex) nextReset++; }
+        const at = ((y * v + dy) * stride + x * h + dx) * 64;
+        if (progressive) writer.progressive(entry, at, preds); else writer.sequential(entry, at, preds);
+      }
     }
   }
-  requireJPEG(scan.resets.every(n => n < blockIndex) && scan.zeros.every(z => z.block < blockIndex)); flush(); out.align();
+  const blocks = writer.blockIndex;
+  requireJPEG(scan.resets.every(n => n < blocks) && scan.zeros.every(z => z.block < blocks)); writer.flush(); out.align(pad);
 }
 function writeJPEG(jpeg, data) {
-  const out = new JPEGOutput(), huffman = [];
+  const out = new JPEGOutput(), huffman = [], pad = data.padding ? {bits: data.padding, at: 0} : null;
   const coverage = jpeg.components.map(() => ({coverage: new Int8Array(64).fill(-1)}));
+  const masks = [], nonzero = index => masks[index] ||= nonzeroMasks(jpeg.components[index]);
   let app = 0, comment = 0, inter = 0, quant = 0, table = 0, scan = 0, restart = 0, progressive = false;
   out.marker(216);
   for (const marker of data.markers) {
@@ -343,18 +592,44 @@ function writeJPEG(jpeg, data) {
       catch (error) { if (error.code !== 'JXL_JPEG') throw error; requireJPEG(false); }
       for (const c of info.components) body.push(jpeg.components[c.index].id, c.dc * 16 + c.ac);
       body.push(info.ss, info.se, info.ah * 16 + info.al); out.segment(marker, body);
-      writeScan(out, jpeg, info, huffman, restart, progressive);
+      writeScan(out, jpeg, info, huffman, restart, progressive, pad, nonzero);
     } else if (marker === 217) { out.marker(marker); out.chunk(data.tail); }
     else requireJPEG(false);
   }
-  requireJPEG(coverage.every(c => c.coverage.every(value => value === 0)));
+  requireJPEG(coverage.every(c => c.coverage.every(value => value === 0)) && (!pad || pad.at === pad.bits.length));
   return out.finish();
 }
 
-export function reconstructJPEG(bytes) {
+let dictionaryOf = null;
+function openBrotli(input, maxOutputLength) {
+  try { return decompressBrotli(input, {maxOutputLength}); }
+  catch (error) {
+    if (error.dictionary !== true) throw error;
+    if (!dictionaryOf) throw fault('JXL_DICTIONARY', 'This file\'s JPEG data refers to the Brotli dictionary.');
+    return decompressBrotli(input, {dictionary: dictionaryOf(), maxOutputLength});
+  }
+}
+const openBox = part => {
+  if (!part) return null;
+  if (!part.compressed) return part;
+  const maximum = Math.max(part.length * 16, 1 << 20);
+  try { return openBrotli(part, maximum); }
+  catch (error) {
+    if (error.code === 'JXL_SIZE' || error.code === 'JXL_DICTIONARY') throw error;
+    requireJPEG(false);
+  }
+};
+export function restoreJPEG(bytes, dictionary) {
+  dictionaryOf = typeof dictionary === 'function' ? dictionary : null;
+  try { return restore(bytes); } finally { dictionaryOf = null; }
+}
+function restore(bytes) {
   return guard(() => {
-    const boxed = jpegReconstruction(bytes); if (!boxed) return null;
-    const data = readData(boxed.reconstruction), jpeg = readJPEGCoefficients(boxed.codestream, {reconstruction: true});
+    const boxed = jpegReconstruction(bytes);
+    if (!boxed) return null;
+    const stream = openBox(boxed.reconstruction); requireJPEG(stream);
+    const jpeg = readJPEGCoefficients(boxed.codestream, {reconstruction: true});
+    const data = readData(stream, {icc: jpeg.icc ? unpredictICC(jpeg.icc) : null, exif: openBox(boxed.exif), xml: openBox(boxed.xml)});
     requireJPEG(data.components.length === jpeg.components.length);
     for (let i = 0; i < jpeg.components.length; i++) {
       const c = jpeg.components[i], descriptor = data.components[i], q = data.quant[descriptor.quant];

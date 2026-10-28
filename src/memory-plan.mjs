@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 export const MEMORY_BUDGET = 1_073_741_824;
 export const WORKER_SCRATCH_BYTES = 3 * 32 * 32 * 64 * 7 + 3 * 32 * 32 * 4;
-const MEMORY_BAND_ROWS = [128, 64, 32, 16, 8], HALO = 80, MEMORY_RECON_MARGIN = 8;
+const MEMORY_BAND_ROWS = [128, 64, 32, 16, 8], MEMORY_RECON_MARGIN = 8, UNKNOWN_WHOLE_PIXELS = 524288;
+const BUTTERAUGLI_RING_BYTES = 22992;
 const RECON_SCRATCH = 2 * 256 * 256 * 8;
 
 function reconstructionBytes(width, padded, blocks) {
@@ -46,17 +47,14 @@ export function butteraugliBytes(width, height) {
 export function bandBytes(width, height, rows = 8, {map = false} = {}) {
   integer(width, 'width', 1); integer(height, 'height', 1); integer(rows, 'band rows', 1);
   if (rows % 8) throw new RangeError('band rows must be a multiple of 8');
-  const n = mul(width, height), cropHeight = Math.min(height, memorySum(rows, 2 * HALO));
-  const crop = mul(width, cropHeight), paddedWidth = 8 * Math.ceil(width / 8);
-  const subHeight = Math.min(8 * Math.ceil(height / 8), 64 * Math.ceil((cropHeight + 2 * MEMORY_RECON_MARGIN + 63) / 64));
+  const n = mul(width, height), bandHeight = Math.min(height, rows), paddedWidth = 8 * Math.ceil(width / 8);
+  const subHeight = Math.min(8 * Math.ceil(height / 8), 64 * Math.ceil((bandHeight + 2 * MEMORY_RECON_MARGIN + 63) / 64));
   const sub = mul(paddedWidth, subHeight), blocks = mul(Math.ceil(width / 8), Math.ceil(height / 8));
-  const ba = butteraugliBytes(width, cropHeight);
   const image = memorySum(mul(16, sub), mul(34, sub / 64), 3 * 64 * 4);
   const reconstruction = reconstructionBytes(paddedWidth, sub, sub / 64);
-  const score = memorySum(mul(12, sub), mul(48, crop), ba.reference, ba.work);
+  const score = memorySum(mul(12, sub), mul(BUTTERAUGLI_RING_BYTES, width), mul(16, width));
   const result = map ? mul(8, n) : mul(16, blocks);
-  return {rows, crop, padded: sub, result, imageBytes: image,
-    work: memorySum(image, Math.max(memorySum(mul(24, crop), reconstruction), score), result)};
+  return {rows, padded: sub, result, imageBytes: image, work: memorySum(image, Math.max(reconstruction, score), result)};
 }
 
 export function ssimulacra2Bytes(width, height, {native = false, map = false} = {}) {
@@ -143,6 +141,8 @@ export function memoryPlan(pixels, options = {}) {
   else if (known && banded) for (const rows of MEMORY_BAND_ROWS) {
     if (maximum(stagesFor(true, rows)) <= budgetBytes) { bandRows = rows; break; }
   }
+  else if (banded && width * height <= UNKNOWN_WHOLE_PIXELS && options.banded !== true) banded = false;
+  else if (banded) bandRows = MEMORY_BAND_ROWS[0];
   if (options.bandRows !== undefined) {
     integer(options.bandRows, 'bandRows', 8);
     if (!MEMORY_BAND_ROWS.includes(options.bandRows)) throw new RangeError('bandRows must be 8, 16, 32, 64 or 128');

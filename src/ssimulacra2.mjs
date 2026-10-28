@@ -99,12 +99,30 @@ export function positiveXYB(linear, pixels) {
   return out;
 }
 
-export function positiveXYBPlane(linear, pixels, c) {
-  return positiveXYBInto(linear, c, new Float32Array(pixels), 0, 0, pixels);
+export function positiveXYBPlane(linear, pixels, c, colors = linear.rgba ? s2Colors() : null) {
+  return positiveXYBInto(linear, c, new Float32Array(pixels), 0, 0, pixels, colors);
 }
 
-function positiveXYBInto(linear, c, out, at, from, count) {
+const S2_COLOR_SLOTS = 1 << 17;
+const s2Colors = () => ({keys: new Int32Array(S2_COLOR_SLOTS).fill(-1), values: new Float64Array(S2_COLOR_SLOTS * 3)});
+
+function positiveXYBInto(linear, c, out, at, from, count, colors) {
   const m = S2_OPSIN, rgba = linear.rgba, [rp, gp, bp] = rgba ? [] : linear, L = SRGB_TO_LINEAR;
+  if (rgba && colors) {
+    const {keys, values} = colors;
+    for (let k = 0; k < count; k++) {
+      const i = (from + k) * 4, key = rgba[i] << 16 | rgba[i + 1] << 8 | rgba[i + 2], slot = Math.imul(key, 0x9e3779b1) >>> 15, v = slot * 3;
+      if (keys[slot] !== key) {
+        const r = L[rgba[i]], g = L[rgba[i + 1]], b = L[rgba[i + 2]];
+        const l = exactCbrt(Math.max(0, m[0] * r + m[1] * g + m[2] * b + S2_BIAS)) - BIAS_ROOT;
+        const mm = exactCbrt(Math.max(0, m[3] * r + m[4] * g + m[5] * b + S2_BIAS)) - BIAS_ROOT;
+        const Y = 0.5 * (l + mm), s = exactCbrt(Math.max(0, m[6] * r + m[7] * g + m[8] * b + S2_BIAS)) - BIAS_ROOT;
+        keys[slot] = key; values[v] = 0.5 * (l - mm) * 14 + 0.42; values[v + 1] = Y + 0.01; values[v + 2] = (s - Y) + 0.55;
+      }
+      out[at + k] = values[v + c];
+    }
+    return out;
+  }
   for (let k = 0; k < count; k++) {
     const i = from + k, r = rgba ? L[rgba[i * 4]] : rp[i], g = rgba ? L[rgba[i * 4 + 1]] : gp[i], b = rgba ? L[rgba[i * 4 + 2]] : bp[i];
     const l = exactCbrt(Math.max(0, m[0] * r + m[1] * g + m[2] * b + S2_BIAS)) - BIAS_ROOT;
@@ -118,7 +136,7 @@ function positiveXYBInto(linear, c, out, at, from, count) {
   return out;
 }
 
-function channelSums(a, b, w, h, c, native, cached, keep) {
+function channelSums(a, b, w, h, c, native, cached, keep, colors) {
   const g = native ? GAUSS32 : GAUSS, N = g.radius, R = 2 * N + 1, Plane = native ? Float32Array : Float64Array;
   const [n1, n3, n5] = g.n2, [d1, d3, d5] = g.d1, line = native ? blurLine32 : blurLine;
   const p1 = new Float32Array(R * w), p2 = new Float32Array(R * w), prod = new Plane(R * w);
@@ -130,8 +148,8 @@ function channelSums(a, b, w, h, c, native, cached, keep) {
   const make = y => {
     const at = (y % R) * w;
     if (cached) p1.set(cached.p1.subarray(y * w, (y + 1) * w), at);
-    else positiveXYBInto(a, c, p1, at, y * w, w);
-    positiveXYBInto(b, c, p2, at, y * w, w);
+    else positiveXYBInto(a, c, p1, at, y * w, w, a.rgba ? colors : null);
+    positiveXYBInto(b, c, p2, at, y * w, w, b.rgba ? colors : null);
     if (!cached) {
       line(p1, across[0], at, w, 1);
       for (let x = 0; x < w; x++) prod[at + x] = p1[at + x] * p1[at + x]; line(prod, across[2], at, w, 1);
@@ -255,7 +273,7 @@ export function ssimulacra2(reference, distorted, width, height, {wantMap = fals
   if (fixed) fixed.busy = true;
   try {
     if (fixed) a = lastSourceScale < 0 ? null : typeof fixed.reference === 'function' ? fixed.reference() : fixed.reference;
-    const norms = [], map = wantMap ? new Float64Array(width * height) : null, scaleMaps = [];
+    const norms = [], map = wantMap ? new Float64Array(width * height) : null, scaleMaps = [], colors = a?.rgba || b?.rgba ? s2Colors() : null;
     for (let scale = 0; scale < SCALES; scale++) {
       if (w < 8 || h < 8) break;
       if (scale) {
@@ -266,7 +284,7 @@ export function ssimulacra2(reference, distorted, width, height, {wantMap = fals
       const per = {ssim: new Float64Array(6), edge: new Float64Array(12)}, local = wantMap ? [] : null;
       const channels = fixed?.scales[scale];
       for (let c = 0; c < 3 && !wantMap; c++) {
-        const result = channelSums(a, b, w, h, c, native, channels?.[c], !!channels);
+        const result = channelSums(a, b, w, h, c, native, channels?.[c], !!channels, colors);
         if (result.reference) {
           channels[c] = result.reference;
           fixed.cacheBytes += result.reference.p1.byteLength + result.reference.mu1.byteLength + result.reference.s11.byteLength;
@@ -277,7 +295,7 @@ export function ssimulacra2(reference, distorted, width, height, {wantMap = fals
         per.edge[c * 4 + 2] = l1 / n; per.edge[c * 4 + 3] = Math.sqrt(Math.sqrt(l4 / n));
       }
       for (let c = 0; c < 3 && wantMap; c++) {
-        const cached = channels?.[c], p1 = cached ? cached.p1 : positiveXYBPlane(a, n, c), p2 = positiveXYBPlane(b, n, c);
+        const cached = channels?.[c], p1 = cached ? cached.p1 : positiveXYBPlane(a, n, c, colors), p2 = positiveXYBPlane(b, n, c, colors);
         const mu1 = cached ? cached.mu1 : s2Blur(p1, w, h, undefined, temp), mu2 = s2Blur(p2, w, h, undefined, temp);
         const product = f => { const m = new Float64Array(n); for (let i = 0; i < n; i++) m[i] = f(i); return s2Blur(m, w, h, m, temp); };
         const s11 = cached ? cached.s11 : product(i => p1[i] * p1[i]), s22 = product(i => p2[i] * p2[i]), s12 = product(i => p1[i] * p2[i]);

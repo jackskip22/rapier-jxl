@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
-import {BitWriter, LIMITS, complete, part, scaled} from './bits.mjs';
+import {LIMITS} from './limits.mjs';
+import {BitWriter, complete, part, scaled} from './bits.mjs';
 import {admitOptions, admitPixels, admitSampleFormat, fault, job} from './admit.mjs';
 import {admitEffort} from './effort-level.mjs';
 import {inspectPixels, shapeFloors, losslessSteps} from './lossless.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
-import {coefficientEffortSteps} from './coefficient-effort.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {progressivePasses} from './vardct-progressive.mjs';
 import {writeImageHeader} from './frame.mjs';
@@ -86,7 +86,7 @@ function* hybridExact(data, width, height, alpha, config, forced = true) {
 function* hybridPhoto(data, width, height, config) {
   const image = yield* part(photoCoefficientSteps(data, width, height, config.quality, config.colorSpace), 0, 2);
   image.orientation = config.orientation; image.progression = config.progression;
-  return yield* part(config.effort >= 5 ? coefficientAnsSteps(image, config.effort) : coefficientEffortSteps(image, config.effort), 1, 2);
+  return yield* part(coefficientAnsSteps(image, config.effort), 1, 2);
 }
 function hybridCrop(data, stride, region) {
   const out = new Uint8Array(region.width * region.height * 4);

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {PHOTO_LIMITS} from './bits.mjs';
+import {PHOTO_LIMITS} from './limits.mjs';
 import {admitSize, fault} from './admit.mjs';
 import {prepareUpsamplingWeights} from './format-fields.mjs';
 import {padPhotoTiles} from './photo-crop.mjs';

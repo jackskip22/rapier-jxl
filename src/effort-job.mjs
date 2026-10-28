@@ -1,26 +1,24 @@
 // SPDX-License-Identifier: MIT
-import {BitWriter, part, scaled} from './bits.mjs';
-import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, groupPass, addCounts, assembleCodestream, GROUP_DIM} from './frame.mjs';
+import {BitWriter, part, scaled, complete} from './bits.mjs';
+import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, groupPass, assembleCodestream, GROUP_DIM} from './frame.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
 import {AVERAGE_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, split, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
 import {inspectPixels, losslessSteps, planeFill, nativeSteps, iccShape} from './lossless.mjs';
 import {lossySteps} from './lossy.mjs';
 import {photoSteps, admitPhotoFilter} from './photo-job.mjs';
-import {searchV6} from './photo-v6-search.mjs';
-import {coefficientEffortSteps} from './coefficient-effort.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {WEIGHTED_PREDICTOR, WEIGHTED_PROPERTY, WEIGHTED_CUTS, codeWeighted} from './weighted.mjs';
 import {fault, admitOptions, admitPixels, admitSampleFormat} from './admit.mjs';
 import {localSteps} from './local.mjs';
 import {rctSearchSteps} from './rct-search.mjs';
 import {screenEligible, screenSteps} from './screen-search.mjs';
+import {screenLike} from './screen.mjs';
 import {SAMPLE_RUNGS, sampledSteps, sampleTransformRanking} from './sampled.mjs';
 import {paintingSteps, admitPaintingProfile} from './painting.mjs';
+import {FAST_EFFORT} from './effort-level.mjs';
 
-const hurryOf = reply => reply === null || (typeof reply === 'object' ? reply.hurried : reply);
-
-export function effortJob(data, width, height, options, pool, helpers = false, retainHurry, gpu = false, limits) {
-  const {quality, colorSpace} = admitOptions(options), effort = options?.effort === undefined ? 1 : options.effort;
+export function effortJob(data, width, height, options, gpu = false, limits, search) {
+  const {quality, colorSpace} = admitOptions(options), effort = options?.effort === undefined ? FAST_EFFORT : options.effort;
   const filter = admitPhotoFilter(options);
   if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fault('JXL_INPUT', 'Effort is a whole number from 1 to 9.');
   const treeLearning = options?.treeLearning;
@@ -31,75 +29,71 @@ export function effortJob(data, width, height, options, pool, helpers = false, r
   const samples = admitSampleFormat(data, options);
   if (losslessProfile === 'painting') {
     admitPaintingProfile(quality, samples);
-    return paintingSteps(data, width, height, {colorSpace, pooled: pool && !groupLayout(width, height).single});
+    return paintingSteps(data, width, height, {colorSpace});
   }
   if (losslessProfile === 'painting-search') admitPaintingProfile(quality, samples);
   if (samples.iccSpace && losslessProfile === undefined)
-    return iccShape(data, samples.iccSpace, effortSteps(data, width, height, quality, samples.iccSpace, effort, pool && quality >= 100 && !groupLayout(width, height).single, treeLearning, helpers, retainHurry, false, options?.photo !== false, filter));
-  if (!samples.native8) return nativeSteps(data, width, height, {quality, samples, effort, pooled: pool && !groupLayout(width, height).single});
-  return effortSteps(data, width, height, quality, colorSpace, effort, pool && quality >= 100 && !groupLayout(width, height).single, treeLearning, helpers, retainHurry, losslessProfile === 'painting-search', options?.photo !== false, filter, gpu);
+    return iccShape(data, samples.iccSpace, effortSteps(data, width, height, quality, samples.iccSpace, effort, treeLearning, false, options?.photo !== false, filter, false, search));
+  if (!samples.native8) return nativeSteps(data, width, height, {quality, samples, effort});
+  return effortSteps(data, width, height, quality, colorSpace, effort, treeLearning, losslessProfile === 'painting-search', options?.photo !== false, filter, gpu, search);
 }
 
-function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, treeLearning, helpers = false, retainHurry, painting = false, photo = true, filter, gpu = false) {
+function* effortSteps(data, width, height, quality, colorSpace, effort, treeLearning, painting = false, photo = true, filter, gpu = false, search) {
   const shape = inspectPixels(data, width, height);
   if (quality < 100) {
-    if (!shape.palette) return yield* (photo ? photoSteps(data, width, height, quality, colorSpace, effort,
-      effort >= 5 ? coefficientAnsSteps : coefficientEffortSteps, filter, searchV6, gpu) : lossySteps(data, width, height, {quality, shape, colorSpace}));
-    const exact = yield* part(effortSteps(data, width, height, 100, colorSpace, effort, false), 0, 2);
-    let bytes;
-    try { bytes = yield* part(lossySteps(data, width, height, {quality, shape, colorSpace}), 1, 2); }
-    catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; bytes = exact; }
-    return exact.length <= bytes.length ? exact : bytes;
+    if (!shape.palette) {
+      const lossy = photo ? photoSteps(data, width, height, quality, colorSpace, effort,
+        coefficientAnsSteps, filter, search, gpu) : lossySteps(data, width, height, {quality, shape, colorSpace});
+      if (effort < 2) return yield* screenFirst(data, width, height, colorSpace, lossy);
+      return yield* capturedFloor(data, width, height, colorSpace, yield* lossy, true);
+    }
+    const palette = (function* () {
+      const exact = yield* part(effortSteps(data, width, height, 100, colorSpace, effort), 0, 2);
+      let bytes;
+      try { bytes = yield* part(lossySteps(data, width, height, {quality, shape, colorSpace}), 1, 2); }
+      catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; bytes = exact; }
+      return exact.length <= bytes.length ? exact : bytes;
+    })();
+    return yield* (effort < 2 ? screenFirst(data, width, height, colorSpace, palette) : palette);
   }
-  if (effort < 2) return yield* losslessSteps(data, width, height, {shape, colorSpace, pooled});
-  if (treeLearning === 'sampled') return yield* sampledSearch(data, width, height, shape, colorSpace, effort, pooled, retainHurry);
+  if (effort < 2) return yield* screenFirst(data, width, height, colorSpace, losslessSteps(data, width, height, {shape, colorSpace, fast: true}));
+  if (treeLearning === 'sampled') return yield* sampledSearch(data, width, height, shape, colorSpace, effort);
   const analysis = {};
-  const core = losslessSteps(data, width, height, {shape, colorSpace, pooled, analysis});
+  const fast = yield* capturedFloor(data, width, height, colorSpace, complete(losslessSteps(data, width, height, {shape, colorSpace, fast: true})));
+  const core = losslessSteps(data, width, height, {shape, colorSpace, analysis});
   let step, reply, hurried = false;
-  while (!(step = core.next(reply)).done) { reply = yield scaled(step.value, done => done / 2); hurried ||= hurryOf(reply); }
-  let best = step.value;
+  while (!(step = core.next(reply)).done) { reply = yield scaled(step.value, done => done / 2); hurried ||= !!reply; }
+  let best = step.value.length < fast.length ? step.value : fast;
   if (hurried) return best;
   const direct = shape.palette ? {...shape, palette: null} : shape;
   const screen = effort >= 3 && screenEligible(data, width, height, shape, effort);
-  if (effort >= 3) {
-    const searches = !painting && (effort >= 4 || screen) ? [() => searchSteps(data, width, height, direct, colorSpace, 3, pooled, analysis, screen ? best.length : Infinity)] : [];
-    if (effort >= 4 && shape.palette) searches.push(() => localSteps(data, width, height, shape, colorSpace, 4, true, pooled, best.length));
-    if (effort >= 6 && shape.palette) searches.push(() => localSteps(data, width, height, shape, colorSpace, 6, true, pooled, best.length));
-    if (effort >= 4 && !painting) searches.push(() => rctSearchSteps(data, width, height, shape, colorSpace, pooled));
-    const rungs = effort > 3 || !screen ? learnedRungs(effort, data, width, height, shape, painting) : [], parallel = helpers && rungs.length > 1;
-    if (!parallel) {
-      const budgets = rungs.map(() => ({reached: pooled})), key = rung => JSON.stringify({...rung, leaves: 0});
-      rungs.forEach((rung, i) => {
-        const narrower = rungs.findIndex((other, j) => j < i && other.leaves < rung.leaves && key(other) === key(rung));
-        searches.push(() => narrower >= 0 && !budgets[narrower].reached ? none() : sampledSteps(data, width, height, shape, colorSpace, {...rung, budget: budgets[i]}, pooled, best.length));
-      });
-    }
-    if (screen) searches.unshift(() => screenSteps(data, width, height, shape, colorSpace, {fastFloor: effort === 3 ? best.length : 0, effort, pooled}));
-    const count = searches.length + (parallel ? rungs.length : 0);
+  if (effort >= 4 || screen) {
+    const searches = !painting && (effort >= 4 || screen) ? [() => searchSteps(data, width, height, direct, colorSpace, 3, analysis, screen ? best.length : Infinity)] : [];
+    if (effort >= 4 && shape.palette) searches.push(() => localSteps(data, width, height, shape, colorSpace, 4, true, best.length));
+    if (effort >= 6 && shape.palette) searches.push(() => localSteps(data, width, height, shape, colorSpace, 6, true, best.length));
+    if (effort >= 4 && !painting) searches.push(() => rctSearchSteps(data, width, height, shape, colorSpace));
+    const rungs = learnedRungs(effort, data, width, height, shape, painting);
+    const budgets = rungs.map(() => ({reached: false})), key = rung => JSON.stringify({...rung, leaves: 0});
+    rungs.forEach((rung, i) => {
+      const narrower = rungs.findIndex((other, j) => j < i && other.leaves < rung.leaves && key(other) === key(rung));
+      searches.push(() => narrower >= 0 && !budgets[narrower].reached ? none() : sampledSteps(data, width, height, shape, colorSpace, {...rung, budget: budgets[i]}, best.length));
+    });
+    if (screen) searches.unshift(() => screenSteps(data, width, height, shape, colorSpace, {fastFloor: effort === 3 ? best.length : 0, effort}));
+    const count = searches.length;
     for (let i = 0; i < searches.length; i++) {
       try {
         const search = searches[i]();
         let step, reply, hurried = false;
-        while (!(step = search.next(reply)).done) hurried = hurryOf(reply = yield scaled(step.value, done => 0.5 + (i + done) / (2 * count)));
+        while (!(step = search.next(reply)).done) hurried = !!(reply = yield scaled(step.value, done => 0.5 + (i + done) / (2 * count)));
         if (step.value && step.value.length < best.length) best = step.value;
         if (hurried) return best;
       } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
     }
-    if (parallel) {
-      const reply = yield {kind: 'candidates', data, width, height, shape: {colour: shape.colour, alpha: shape.alpha, channels: shape.channels}, colorSpace, rungs, ceiling: best.length,
-        at: done => 0.5 + (searches.length + done * rungs.length) / (2 * count)};
-      for (const candidate of reply.results) {
-        if (!candidate) continue;
-        const {result, error} = candidate;
-        if (error && error.code !== 'JXL_SIZE' && !(error.name === 'RangeError' && !error.code))
-          throw Object.assign(new Error(error.message), error);
-        if (result && result.length < best.length) best = result;
-      }
-    }
     return best;
   }
   try {
-    const bytes = yield* part(searchSteps(data, width, height, direct, colorSpace, effort, pooled, analysis), 1, 2);
+    const rung = learnedRungs(3, data, width, height, shape, painting)[0];
+    const bytes = yield* part(sampledSteps(data, width, height, shape, colorSpace, {...rung, budget: {reached: false}}, best.length), 1, 2);
     if (bytes && bytes.length < best.length) best = bytes;
   } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
   return best;
@@ -107,12 +101,26 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, pooled, 
 
 function* none() { return null; }
 
-const sharing = Object.freeze([160, 320, 640, 1280, 2560]);
+function* screenFirst(data, width, height, colorSpace, steps) {
+  if (typeof colorSpace !== 'object' && screenLike(data, width, height)) {
+    const captured = yield {capture: {data, width, height, colorSpace}};
+    if (captured instanceof Uint8Array) return captured;
+  }
+  return yield* steps;
+}
+
+function* capturedFloor(data, width, height, colorSpace, bytes, lossy = false) {
+  if (typeof colorSpace === 'object' || !screenLike(data, width, height)) return bytes;
+  const captured = yield {capture: {data, width, height, colorSpace}};
+  return captured instanceof Uint8Array && (lossy ? captured.length <= bytes.length : captured.length < bytes.length) ? captured : bytes;
+}
+
+const SEARCH_SHARING = Object.freeze([160, 320, 640, 1280, 2560]);
 const SEARCH_RUNGS = Object.freeze({...SAMPLE_RUNGS,
-  sampled: Object.freeze({...SAMPLE_RUNGS.precise, clustered: true, samples: 131072, leaves: 192, depth: 24, sharing}),
-  branching: Object.freeze({...SAMPLE_RUNGS.broad, clustered: true, samples: 131072, leaves: 512, depth: 24, sharing}),
-  dense: Object.freeze({...SAMPLE_RUNGS.precise, clustered: true, samples: 262144, leaves: 192, depth: 24, sharing}),
-  deep: Object.freeze({...SAMPLE_RUNGS.precise, clustered: true, samples: 262144, leaves: 1024, depth: 24, sharing}),
+  sampled: Object.freeze({...SAMPLE_RUNGS.precise, clustered: true, samples: 131072, leaves: 192, depth: 24, sharing: SEARCH_SHARING}),
+  branching: Object.freeze({...SAMPLE_RUNGS.broad, clustered: true, samples: 131072, leaves: 512, depth: 24, sharing: SEARCH_SHARING}),
+  dense: Object.freeze({...SAMPLE_RUNGS.precise, clustered: true, samples: 262144, leaves: 192, depth: 24, sharing: SEARCH_SHARING}),
+  deep: Object.freeze({...SAMPLE_RUNGS.precise, clustered: true, samples: 262144, leaves: 1024, depth: 24, sharing: SEARCH_SHARING}),
   shallow: SAMPLE_RUNGS.deep,
 });
 const LADDER = Object.freeze({
@@ -124,7 +132,7 @@ const LADDER = Object.freeze({
   8: [{rung: 'precise', ranked: 0}, {rung: 'sampled', ranked: 0}, {rung: 'branching', ranked: 0}],
   9: [{rung: 'precise', ranked: 1}, {rung: 'dense', ranked: 0}, {rung: 'deep', ranked: 0}],
 });
-function learnedRungs(effort, data, width, height, shape, painting = false) {
+export function learnedRungs(effort, data, width, height, shape, painting = false) {
   const steps = (effort <= 4 ? LADDER[effort] : Array.from({length: Math.max(0, effort - 4)}, (_, i) => LADDER[i + 5] || []).flat()).filter(step => !painting || step.rung !== 'maximum'), ranking = shape.colour === 3 && steps.some(step => step.ranked !== undefined) ? sampleTransformRanking(data, width, height) : [6];
   const rungs = [], types = [], bases = [];
   for (const step of steps) {
@@ -135,30 +143,29 @@ function learnedRungs(effort, data, width, height, shape, painting = false) {
   return rungs;
 }
 
-function* sampledSearch(data, width, height, shape, colorSpace, effort, pooled, retainHurry) {
-  const first = losslessSteps(data, width, height, {shape, colorSpace, pooled});
+function* sampledSearch(data, width, height, shape, colorSpace, effort) {
+  const first = losslessSteps(data, width, height, {shape, colorSpace});
   let step, reply, hurried = false, last = 0;
   while (!(step = first.next(reply)).done) {
     reply = yield scaled(step.value, done => last = done / 2);
-    hurried ||= hurryOf(reply);
+    hurried ||= !!reply;
   }
-  const floor = step.value;
-  retainHurry?.(floor);
+  const floor = yield* capturedFloor(data, width, height, colorSpace, step.value);
   if (hurried) return floor;
   const rungs = effort < 4 ? [SAMPLE_RUNGS.cheap] : [SAMPLE_RUNGS.cheap, SAMPLE_RUNGS.rich];
   let best = floor;
   for (let i = 0; i < rungs.length; i++) {
     try {
-      const steps = sampledSteps(data, width, height, shape, colorSpace, rungs[i], pooled);
+      const steps = sampledSteps(data, width, height, shape, colorSpace, rungs[i]);
       reply = undefined;
       while (!(step = steps.next(reply)).done) {
         reply = yield scaled(step.value, done => last = 0.5 + (i + done) / (2 * rungs.length));
-        if (hurryOf(reply)) return floor;
+        if (reply) return floor;
       }
       if (step.value && step.value.length < best.length) best = step.value;
     } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
   }
-  if (last < 1 && hurryOf(yield 1)) return floor;
+  if (last < 1 && (yield 1)) return floor;
   return best;
 }
 
@@ -186,7 +193,7 @@ const sum = histograms => { const out = new Uint32Array(ALPHABET); for (const h 
 
 const CONTEXTS = WEIGHTED_CUTS.length + 1, IDENTITY = Int32Array.from({length: CONTEXTS}, (_, k) => k);
 
-export function searchGroup(setup) {
+function searchGroup(setup) {
   const {channels, first, plans, contexts = CONTEXTS, countFirst = true} = setup, fill = planeFill(setup), leaves = first?.map(p => leaf(p));
   const planes = Array.from({length: channels}, () => new Int16Array(GROUP_DIM * GROUP_DIM));
   return (rgba, stride, x0, y0, w, h, target) => {
@@ -209,7 +216,7 @@ export function searchGroup(setup) {
   };
 }
 
-export function* searchSteps(rgba, width, height, shape, colorSpace, effort, pooled, analysis, ceiling = Infinity) {
+export function* searchSteps(rgba, width, height, shape, colorSpace, effort, analysis, ceiling = Infinity) {
   const {channels} = shape, layout = groupLayout(width, height), groups = layout.groupsX * layout.groupsY;
   const setup = {channels, alpha: shape.alpha, palette: null}, fill = planeFill(setup);
   const planes = Array.from({length: channels}, () => new Int16Array(32 * 32));
@@ -228,7 +235,7 @@ export function* searchSteps(rgba, width, height, shape, colorSpace, effort, poo
   const firstCounts = cached?.freqs || planes.map(() => new Uint32Array(ALPHABET)), intervals = planes.map(() => Array.from({length: contexts}, () => new Uint32Array(ALPHABET)));
   const counts = [...(cached ? [] : firstCounts), ...intervals.flat()];
   const counted = {...setup, first: first.map(l => l.predictor), contexts, countFirst: !cached}, count = searchGroup(counted);
-  if (!pooled && Number.isFinite(ceiling)) {
+  if (Number.isFinite(ceiling)) {
     const fixed = cached ? firstCounts.map(minimumSearchDataBits) : null;
     for (let g = 0; g < groups; g++) {
       count(rgba, width, ...rect(g), counts);
@@ -237,8 +244,7 @@ export function* searchSteps(rgba, width, height, shape, colorSpace, effort, poo
       const hurried = yield (g + 1) / (2 * groups);
       if (bits >= ceiling * 8 || hurried) return null;
     }
-  } else if ((yield* groupPass({pooled, kind: 'search', setup: {...counted, sizes: counts.map(h => h.length)}, at: g => (g + 1) / (2 * groups), stop: () => true},
-    groups, g => count(rgba, width, ...rect(g), counts), (g, partial) => addCounts(counts, partial))) === null) return null;
+  } else if ((yield* groupPass({at: g => (g + 1) / (2 * groups), stop: () => true}, groups, g => count(rgba, width, ...rect(g), counts))) === null) return null;
   const rung2 = planes.map((_, c) => {
     const plan = {cost: cost(firstCounts[c]), leaves: [first[c]], freqs: [firstCounts[c]], cuts: []};
     const whole = sum(intervals[c]), single = cost(whole);
@@ -314,8 +320,8 @@ export function* searchSteps(rgba, width, height, shape, colorSpace, effort, poo
       sections.push(global.finish());
       for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
       const at = written, base = sections.length, place = (g, section) => { sections[base + g] = section; };
-      hurried = yield* groupPass({pooled, kind: 'search', setup: coded, at: g => 0.5 + (at + g + 1) / (2 * chosen.length * groups), stop: g => g + 1 < groups},
-        groups, g => place(g, group(rgba, width, ...rect(g))), place);
+      hurried = yield* groupPass({at: g => 0.5 + (at + g + 1) / (2 * chosen.length * groups), stop: g => g + 1 < groups},
+        groups, g => place(g, group(rgba, width, ...rect(g))));
       if (hurried === null) return null;
       written += groups;
     }

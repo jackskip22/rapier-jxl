@@ -138,7 +138,7 @@ function writeModel(writer, plans) {
   };
 }
 
-export function localGroup(setup) {
+function localGroup(setup) {
   const fill = planeFill(setup), planes = Array.from({length: setup.palette ? 1 : setup.channels}, () => new Int16Array(GROUP_DIM * GROUP_DIM));
   return (rgba, stride, x0, y0, w, h) => {
     fill(planes, rgba, stride, x0, y0, w, h);
@@ -149,7 +149,7 @@ export function localGroup(setup) {
   };
 }
 
-export function* localSteps(rgba, width, height, shape, colorSpace, rung = 4, usePalette = false, pooled, ceiling = Infinity) {
+export function* localSteps(rgba, width, height, shape, colorSpace, rung = 4, usePalette = false, ceiling = Infinity) {
   const {channels} = shape, layout = groupLayout(width, height), groups = layout.groupsX * layout.groupsY;
   const palette = usePalette ? shape.palette : null;
   if (usePalette && !palette) return null;
@@ -194,7 +194,7 @@ export function* localSteps(rgba, width, height, shape, colorSpace, rung = 4, us
   if (sectionBytes >= ceiling) return null;
   for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
   const group = localGroup(setup);
-  if ((yield* groupPass({pooled, kind: 'local', setup, at: g => (g + 1) / groups, stop: () => true, byteCeiling: ceiling - sectionBytes},
-    groups, g => appendSection(group(rgba, width, ...groupRect(layout, width, height, g))), (g, bytes) => appendSection(bytes))) === null) return null;
+  if ((yield* groupPass({at: g => (g + 1) / groups, stop: () => true, byteCeiling: ceiling - sectionBytes},
+    groups, g => appendSection(group(rgba, width, ...groupRect(layout, width, height, g))))) === null) return null;
   return assembleCodestream(header, sections);
 }

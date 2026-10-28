@@ -1,0 +1,2 @@
+/*! rapier-jxl 7.0.0 | MIT */
+import{a as r}from"./chunk-WYQBEJ6Q.mjs";import"./chunk-DRP72F5Q.mjs";import"./chunk-UZBOSTJN.mjs";import"./chunk-LP6ERT4E.mjs";function s(s,o){return r().recompress(s,o)}function o(s,o){return r().restore(s,o)}export{s as recompress,o as restore};

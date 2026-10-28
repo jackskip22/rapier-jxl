@@ -1,16 +1,17 @@
-// Rapier's JPEG XL encoder: the codestream around a frame. MIT (LICENSE).
-import {BitWriter, float16Bits} from './bits.mjs';
+// Rapier's JPEG XL encoder: the codestream around a frame. MIT (images/jxl/LICENSE).
+import {BitWriter, float16Bits, packSigned, FRAME_SIZE} from './bits.mjs';
 import {admitOutputSize} from './admit.mjs';
 import {headerOf} from './icc-write.mjs';
 
 export const GROUP_DIM = 256, DC_GROUP_DIM = 2048;
+export const GROUP_TOKENS = 3 * 32 * 32 * 64;
 
 function writeSize(w, size) {
   w.writeU32([[9, 1], [13, 1], [18, 1], [30, 1]], size);
 }
 
 export function writeImageHeader(w, width, height, colour, alpha, {xyb = false, orientation = 1, colorSpace, bitDepth = 8, exponentBits = 0, transferFunction = 'srgb', intensityTarget = 255, alphaPremultiplied = false, modular16bit = bitDepth <= 12 && !exponentBits, colorData, toneData, iccData, imageFields, extraChannelData, transformData} = {}) {
-  if (colorSpace && typeof colorSpace === 'object') ({colorData, iccData} = headerOf(colorSpace));
+  if (colorSpace && typeof colorSpace === 'object') ({colorData, iccData} = headerOf(colorSpace, xyb));
   w.write(16, 0x0AFF);
   w.write(1, 0);
   writeSize(w, height);
@@ -72,21 +73,34 @@ function writeSampleDepth(w, bits, exponent) {
 
 function writeColorEnum(w, value) { w.writeU32([[0, 0], [0, 1], [4, 2], [6, 18]], value); }
 
-export function writeModularFrameHeader(w, {alpha, shift = 1, extraChannels = Number(!!alpha), upsampling = 1, extraUpsampling, passes}) {
-  w.write(7, 0b0_00_1_00_0);
+export function writeModularFrameHeader(w, {alpha, shift = 1, extraChannels = Number(!!alpha), upsampling = 1, extraUpsampling, passes, crop, last = true, reference = 0}) {
+  w.write(7, 0b0_00_1_00_0 | (last ? 0 : 6));
   w.writeU32([[0, 1], [0, 2], [0, 4], [0, 8]], upsampling);
   for (let c = 0; c < extraChannels; c++) w.writeU32([[0, 1], [0, 2], [0, 4], [0, 8]], extraUpsampling?.[c] ?? 1);
   w.write(2, shift);
-  writeFrameHeaderEnd(w, extraChannels, 0, passes);
+  writeFrameHeaderEnd(w, extraChannels, 0, passes, 1, null, {crop, last, reference});
 }
 
-export function writeFrameHeaderEnd(w, alpha, epf = 0, passes, epfIterations = 1, gab = null) {
+export function writeFrameHeaderEnd(w, alpha, epf = 0, passes, epfIterations = 1, gab = null, placement) {
   const channels = typeof alpha === 'number' ? alpha : Number(!!alpha);
+  const {crop, last = true, reference = 0} = placement ?? {};
   if (passes) w.append(passes); else w.write(2, 0);
-  w.write(3, 0);
-  for (let c = 0; c < channels; c++) w.write(2, 0);
-  if (!epf && !gab) { w.write(11, 1); return; }
-  w.write(5, gab ? 17 : 1);
+  w.write(1, crop ? 1 : 0);
+  if (crop) {
+    w.writeU32(FRAME_SIZE, packSigned(crop.x)); w.writeU32(FRAME_SIZE, packSigned(crop.y));
+    w.writeU32(FRAME_SIZE, crop.width); w.writeU32(FRAME_SIZE, crop.height);
+  }
+  for (let c = 0; c <= channels; c++) {
+    w.write(2, 0);
+    if (crop) w.write(2, 1);
+  }
+  w.write(1, last ? 1 : 0);
+  if (!last) {
+    w.write(2, reference);
+    if (!crop) w.write(1, 0);
+  }
+  if (!epf && !gab) { w.write(10, 0); return; }
+  w.write(4, gab ? 8 : 0);
   if (gab) {
     w.write(1, gab === true ? 0 : 1);
     if (gab !== true) for (const [edge, corner] of gab) { w.write(16, float16Bits(edge)); w.write(16, float16Bits(corner)); }
@@ -116,13 +130,7 @@ export function groupRect(layout, width, height, g, dim = GROUP_DIM) {
   return [x0, y0, Math.min(dim, width - x0), Math.min(dim, height - y0)];
 }
 
-export function* groupPass(request, groups, run, accept) {
-  if (request.pooled) {
-    const reply = yield request;
-    if (!reply || reply.pruned) return null;
-    reply.results.forEach((result, g) => accept(g, result));
-    return reply.hurried;
-  }
+export function* groupPass(request, groups, run) {
   let hurried = false, sectionBytes = 0;
   for (let g = 0; g < groups; g++) {
     const result = run(g);

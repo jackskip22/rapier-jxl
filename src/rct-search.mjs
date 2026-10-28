@@ -33,7 +33,7 @@ export function transformKeys(type) {
     custom & 1 ? 3 + 3 * c + a : c];
 }
 
-export function* rctSearchSteps(rgba, width, height, shape, colorSpace, pooled) {
+export function* rctSearchSteps(rgba, width, height, shape, colorSpace) {
   if (shape.colour !== 3 || width * height < 4096) return null;
   const sw = Math.min(width, 32), sh = Math.min(height, 32);
   const planes = Array.from({length: shape.channels}, () => new Int16Array(sw * sh));
@@ -60,12 +60,12 @@ export function* rctSearchSteps(rgba, width, height, shape, colorSpace, pooled) 
     if (yield (k + 1) / (4 * types.length)) return null;
   }
   if (best.rct.type === 6) return null;
-  const plan = losslessSteps(rgba, width, height, {shape: {...shape, palette: null}, colorSpace, rct: best.rct, pooled});
+  const plan = losslessSteps(rgba, width, height, {shape: {...shape, palette: null}, colorSpace, rct: best.rct});
   let step, reply;
   while (!(step = plan.next(reply)).done) {
-    const done = step.value, inner = typeof done === 'number';
-    reply = yield inner ? 0.25 + 0.75 * done : {...done, at: g => 0.25 + 0.75 * done.at(g), stop: g => done.at(g) < 1};
-    if (inner ? reply && done < 1 : !reply) return null;
+    const done = step.value;
+    reply = yield 0.25 + 0.75 * done;
+    if (reply && done < 1) return null;
   }
   return step.value;
 }

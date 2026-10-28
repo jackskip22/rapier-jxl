@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rapier-jxl upload queue</title>
+<!-- Put this page and its module beside node_modules after `npm install rapier-jxl`, serve the folder over HTTP and
+     open the page. It needs no inline script, eval or blob: worker, so a strict Content-Security-Policy works; add
+     'wasm-unsafe-eval' to script-src for the WebAssembly kernels. -->
+<script type="module" src="./09-browser-upload-queue.mjs"></script>
+<h1>Upload queue</h1>
+<p><input type="file" id="files" accept="image/*" multiple> <button id="cancel">Cancel all</button></p>
+<ol id="list"></ol>
+</html>

@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: MIT
 import {complete} from './bits.mjs';
 import {photoXYBSteps} from './photo-xyb.mjs';
-import {V6, GABORISH, prepareV6, photoV6Image} from './photo-v6.mjs';
-import {closedLoopStrategySteps, xybStrategies, encodeStrategyImage, encodeStrategyImageSteps, cellSums} from './varblocks.mjs';
+import {V6, GABORISH, prepareV6, photoV6Image, v6Image} from './photo-v6.mjs';
+import {closedLoopStrategySteps, xybStrategies, encodeStrategyImage, encodeStrategyImageSteps, cellSums, lazyStrategyImage, materialize} from './varblocks.mjs';
 import {closedLoopFieldSteps, blockDistances} from './aq.mjs';
-import {exactAnswerer, exactPool, exactScores} from './exact-region.mjs';
+import {exactAnswerer, exactPool, exactScores, bandedRGBA} from './exact-region.mjs';
 import {reconstruct, toRGBA} from './reconstruct.mjs';
 import {butteraugli, butteraugliReference} from './butteraugli.mjs';
 import {ssimulacra2, ssimulacra2Reference, linearFromRGBA} from './ssimulacra2.mjs';
-import {coefficientEffortSteps} from './coefficient-effort.mjs';
 import {coefficientAnsSteps, estimateBytes} from './coefficient-ans.mjs';
 
 import {memoryPlan} from './memory-plan.mjs';
 import {checkSignal} from './async-job.mjs';
 import {fault} from './fault.mjs';
-import {gpuSetup} from './gpu-reconstruct.mjs';
+import {gpuSetup} from './gpu-setup.mjs';
 import {acGroupPool} from './ac-group.mjs';
+import {linearFromTransform} from './icc-transform.mjs';
 
 export {prepareV6, V6, GABORISH};
 export const AQ = {rounds: 3, switchCost: 0.01, gamma: 0.5, aimQuantile: 0.9};
@@ -78,7 +78,7 @@ export function cpuMeasure(rgba, width, height, {native = false, reference = nul
     busy = true;
     let lin = null;
     try {
-      lin = reconstruct(image);
+      lin = reconstruct(materialize(image));
       const out = {};
       if (wantBa) {
         let r = butteraugli(ba ??= butteraugliReference(linearReference(), width, height, {cacheBytes: maskCacheBytes}), lin);
@@ -102,11 +102,8 @@ export function cpuMeasure(rgba, width, height, {native = false, reference = nul
     let lin = null;
     try {
       const out = {};
-      if (wantS2) {
-        lin = reconstruct(image);
-        if (native) { const decoded = {rgba: toRGBA(lin, width, height)}; lin = null; out.ssimulacra2 = ssimulacra2(s2, decoded, width, height, {native: true}).score; }
-        else out.ssimulacra2 = ssimulacra2(s2, lin, width, height).score;
-      }
+      if (wantS2 && native) out.ssimulacra2 = ssimulacra2(s2, {rgba: bandedRGBA(image)}, width, height, {native: true}).score;
+      else if (wantS2) { lin = reconstruct(image); out.ssimulacra2 = ssimulacra2(s2, lin, width, height).score; }
       lin = null;
       if (wantBa) Object.assign(out, measureBa(rawReference(), image, want));
       return out;
@@ -165,11 +162,11 @@ export async function runAsync(steps, measure, onProgress = () => {}) {
 function searchTransforms() { return null; }
 
 export function* decisionSteps(prepared, quality, fieldOnly = false, aq = AQ, ids = VARBLOCK_IDS, lambda = 1, initial = null) {
-  const {rgba, width, height, pre} = prepared, options = {...V6, ...GABORISH, pre};
+  const {width, height} = prepared;
   if (initial?.quality !== quality) initial = null;
-  const field = aq === false ? undefined : yield* closedLoopFieldSteps(width, height, f => complete(photoXYBSteps(rgba, width, height, quality, {...options, fieldScale: f, dctCache: prepared.dct})), {...aq, initial: initial?.scores?.blocks && (aq.margin ?? 2) === 2 ? initial : null});
+  const field = aq === false ? undefined : yield* closedLoopFieldSteps(width, height, f => v6Image(prepared, quality, {fieldScale: f}), {...aq, initial: initial?.scores?.blocks && (aq.margin ?? 2) === 2 ? initial : null});
   if (fieldOnly) return {field};
-  const base = complete(photoXYBSteps(rgba, width, height, quality, {...options, fieldScale: field, keepPlanes: true, dctCache: prepared.dct}));
+  const base = v6Image(prepared, quality, {fieldScale: field, keepPlanes: true});
   const transforms = prepared.transforms ??= searchTransforms(prepared);
   const {layout} = yield* closedLoopStrategySteps(base, width, height, {deadzone: V6.deadzone, lambda, ids, transforms, initial: aq === false ? initial : null});
   return {field, layout, transforms};
@@ -177,34 +174,36 @@ export function* decisionSteps(prepared, quality, fieldOnly = false, aq = AQ, id
 
 function* closedSteps(prepared, quality, known, ids = VARBLOCK_IDS, lambda = 1, field = true) {
   if (!known) return yield* decisionSteps(prepared, quality, false, field ? AQ : false, ids, lambda);
-  const {rgba, width, height, pre} = prepared, initial = known.initial;
+  const {width, height} = prepared, initial = known.initial;
   known.initial = null;
-  const base = complete(photoXYBSteps(rgba, width, height, quality, {...V6, ...GABORISH, pre, fieldScale: known.field, keepPlanes: true, dctCache: prepared.dct}));
+  const base = v6Image(prepared, quality, {fieldScale: known.field, keepPlanes: true});
   const transforms = prepared.transforms ??= searchTransforms(prepared);
   const {layout} = yield* closedLoopStrategySteps(base, width, height, {deadzone: V6.deadzone, lambda, ids, transforms, initial});
   return {field: known.field, layout, transforms};
 }
 
 export function candidateImage(prepared, name, quality, decisions) {
-  const {rgba, width, height, pre} = prepared;
-  if (name === 'plain') return complete(photoXYBSteps(rgba, width, height, quality, {...V6, dctCache: prepared.dctPlain}));
+  const {rgba, width, height} = prepared;
+  if (name === 'plain') return complete(photoXYBSteps(rgba, width, height, quality, {...V6, ...prepared.color, dctCache: prepared.dctPlain}));
   if (name === 'gaborish') return photoV6Image(prepared, quality);
-  const options = {...V6, ...GABORISH, pre};
-  if (name === 'field') return complete(photoXYBSteps(rgba, width, height, quality, {...options, fieldScale: decisions.field, dctCache: prepared.dct}));
-  const base = complete(photoXYBSteps(rgba, width, height, quality, {...options, fieldScale: decisions.field, keepPlanes: true, dctCache: prepared.dct}));
-  return xybStrategies(base, width, height, {deadzone: V6.deadzone, layout: decisions.layout, transforms: decisions.transforms}).image;
+  if (name === 'field') return v6Image(prepared, quality, {fieldScale: decisions.field});
+  const base = v6Image(prepared, quality, {fieldScale: decisions.field, keepPlanes: true}), options = {deadzone: V6.deadzone, transforms: decisions.transforms};
+  if (base.planeRows) return lazyStrategyImage(base, width, height, options, decisions.layout);
+  return xybStrategies(base, width, height, {...options, layout: decisions.layout}).image;
 }
 export function* candidateImageSteps(prepared, name, quality, decisions) {
   if (name !== 'closed' && name !== 'blocks') return candidateImage(prepared, name, quality, decisions);
-  const {rgba, width, height, pre} = prepared;
-  const base = complete(photoXYBSteps(rgba, width, height, quality, {...V6, ...GABORISH, pre, fieldScale: decisions.field, keepPlanes: true, dctCache: prepared.dct}));
+  const {width, height} = prepared;
+  const base = v6Image(prepared, quality, {fieldScale: decisions.field, keepPlanes: true});
+  if (base.planeRows) return lazyStrategyImage(base, width, height, {deadzone: V6.deadzone, transforms: decisions.transforms}, decisions.layout);
   const options = {deadzone: V6.deadzone}, exact = yield {varblocks: {kind: 'layout', base, width, height, options, layout: decisions.layout}};
   return xybStrategies(base, width, height, {...options, layout: decisions.layout, transforms: decisions.transforms, ...(exact ? {exact} : {})}).image;
 }
 
 export function writeImage(image, effort = 7) {
-  const write = level => image.strategyData ? encodeStrategyImage(image, level >= 7, level)
-    : complete(level >= 5 ? coefficientAnsSteps(image, level) : coefficientEffortSteps(image, level));
+  image = materialize(image);
+  if (!image.strategyData) return complete(coefficientAnsSteps(image, effort));
+  const write = level => encodeStrategyImage(image, level >= 7, level);
   let best = write(Math.min(effort, 7));
   for (let level = 8; level <= effort; level++) {
     const bytes = write(level);
@@ -294,70 +293,68 @@ function* qualitySteps(imageAt, target, {start = 85, probes = 8, low = 20, high 
     }
     if (!i && first) Object.assign(first, {quality: q, image, scores});
     remember(q, scores);
-    if (pass && (!best || q < best.quality)) best = {quality: q, image, scores};
+    if (pass && (!best || q < best.quality)) best = {quality: q, scores};
     image = null;
     const step = searchStep(view(), pass, options);
     if (step.stop) break;
     q = step.next;
   }
-  if (!best) { const image = yield* imageAt(high); best = {quality: high, image, scores: yield {measure: image, want: {...want, exact: true}}}; remember(high, best.scores); }
+  if (!best) { best = {quality: high, scores: yield {measure: yield* imageAt(high), want: {...want, exact: true}}}; remember(high, best.scores); }
   return {...best, bestObserved};
 }
 
-export function* scoreSteps(prepared, target, {candidates = CANDIDATES, effort = 7, start = 85, aq = AQ, ids = VARBLOCK_IDS, lambda = 1, field = true, targetDoubt = null, initial = null, reuseDecisions = true, pooled = false} = {}) {
+export function* scoreSteps(prepared, target, {candidates = CANDIDATES, effort = 7, start = 85, aq = AQ, ids = VARBLOCK_IDS, lambda = 1, field = true, targetDoubt = null, initial = null, reuseDecisions = true, pooled = false, exactSize = false} = {}) {
   const found = [];
   let gaborishQuality = start, fieldDecisions = null, gaborish = initial;
   for (const name of [...candidates].sort((a, b) => CANDIDATES.indexOf(a) - CANDIDATES.indexOf(b))) {
     let decisions = null;
-    const seed = reuseDecisions && gaborish?.quality === gaborishQuality ? gaborish : null;
-    if (name === 'field') decisions = fieldDecisions = yield* decisionSteps(prepared, gaborishQuality, true, aq, ids, lambda, seed);
-    if (name === 'blocks') decisions = yield* decisionSteps(prepared, gaborishQuality, false, false, ids, lambda, seed);
+    const seed = function* () {
+      if (!reuseDecisions || gaborish?.quality !== gaborishQuality) return null;
+      return {quality: gaborish.quality, scores: gaborish.scores, image: gaborish.imageAt ? yield* gaborish.imageAt(gaborish.quality) : gaborish.image};
+    };
+    if (name === 'field') decisions = fieldDecisions = yield* decisionSteps(prepared, gaborishQuality, true, aq, ids, lambda, yield* seed());
+    if (name === 'blocks') decisions = yield* decisionSteps(prepared, gaborishQuality, false, false, ids, lambda, yield* seed());
     if (name === 'closed') decisions = yield* closedSteps(prepared, gaborishQuality, fieldDecisions, ids, lambda, field);
     const first = name === 'field' && reuseDecisions && candidates.includes('closed') ? {} : null;
     const imageAt = function* (q) {
-      if (name === 'gaborish' && initial?.quality === q) return initial.image;
+      if (name === 'gaborish' && initial?.image && initial.quality === q) return initial.image;
       return yield* candidateImageSteps(prepared, name, q, decisions);
     };
     const best = yield* qualitySteps(imageAt, target, {start: name === 'gaborish' ? start : gaborishQuality, targetDoubt,
       initial: name === 'gaborish' ? initial : null, first});
     if (first) decisions.initial = first;
-    if (name === 'gaborish') { gaborishQuality = best.quality; gaborish = best; }
-    found.push({candidate: name, quality: best.quality, image: best.image, ...best.scores, pass: meets(best.scores, target),
+    if (name === 'gaborish') { gaborishQuality = best.quality; gaborish = {...best, imageAt}; }
+    found.push({candidate: name, quality: best.quality, imageAt, ...best.scores, pass: meets(best.scores, target),
       bestObserved: {candidate: name, ...best.bestObserved}});
   }
   gaborish = null; fieldDecisions = null;
+  if (initial) initial.image = null;
+  const completeFiles = effort >= 8 || exactSize;
   for (const f of found) {
     f.cells = undefined; f.blocks = undefined;
-    f.size = found.length > 1 ? estimateBytes(f.image) : 0;
+    if (!completeFiles) f.size = found.length > 1 ? estimateBytes(materialize(yield* f.imageAt(f.quality))) : 0;
   }
   const passing = found.filter(f => f.pass), pool = passing.length ? passing : found;
-  if (passing.length) for (const f of found) if (!f.pass) f.image = undefined;
   const encode = function* (f) {
-    if (initial?.effort === effort && initial.bytes && f.image === initial.image) return initial.bytes;
-    return pooled ? yield {encode: {image: f.image, effort, pass: f.pass}} : writeImage(f.image, effort);
+    if (initial?.effort === effort && initial.bytes && f.candidate === 'gaborish' && f.quality === initial.quality) return initial.bytes;
+    const image = yield* f.imageAt(f.quality);
+    return pooled ? yield {encode: {image, effort, pass: f.pass}} : writeImage(image, effort);
   };
   let chosen, bytes;
-  if (effort >= 8) for (const f of pool) {
+  if (completeFiles) for (const f of pool) {
     const encoded = yield* encode(f); f.size = encoded.length;
-    if (!bytes || encoded.length < bytes.length) {
-      if (chosen) chosen.image = undefined;
-      chosen = f; bytes = encoded;
-    }
-    if (chosen !== f || f.butteraugli3 !== undefined) f.image = undefined;
+    if (!bytes || encoded.length < bytes.length) { chosen = f; bytes = encoded; }
   }
   else {
     chosen = pool.reduce((a, b) => b.size < a.size ? b : a);
-    for (const f of pool) if (f !== chosen) f.image = undefined;
     bytes = yield* encode(chosen);
-    if (chosen.butteraugli3 !== undefined) chosen.image = undefined;
   }
   if (chosen.butteraugli3 === undefined) {
-    const scores = yield {measure: chosen.image, want: {ssimulacra2: target.ssimulacra2 !== undefined}};
+    const scores = yield {measure: yield* chosen.imageAt(chosen.quality), want: {ssimulacra2: target.ssimulacra2 !== undefined}};
     chosen.butteraugli = scores.butteraugli; chosen.butteraugli3 = scores.butteraugli3;
   }
-  chosen.image = undefined;
-  return {...chosen, bytes, size: bytes.length, image: undefined, cells: undefined, blocks: undefined,
-    tried: found.map(({image, cells, blocks, ...rest}) => rest)};
+  return {...chosen, bytes, size: bytes.length, imageAt: undefined, cells: undefined, blocks: undefined,
+    tried: found.map(({imageAt, cells, blocks, ...rest}) => rest)};
 }
 
 function* measuredSteps(steps, measure, expected) {
@@ -378,18 +375,26 @@ function* measuredSteps(steps, measure, expected) {
 
 export function* searchV6(prepared, own, quality, effort) {
   prepared.transforms ??= searchTransforms(prepared, 0);
-  const {rgba, width, height} = prepared;
+  const {rgba, width, height, color} = prepared;
   const plan = prepared.memory ?? memoryPlan(width * height, {width, height, exact: false});
   if (plan.known && !plan.fits) throw fault('JXL_MEMORY', 'Measured search exceeds its memory reservation.');
-  const ownBytes = writeImage(own, effort), whole = cpuMeasure(rgba, width, height, {native: true, cacheBytes: plan.cacheBytes});
+  const ownBytes = writeImage(own, effort), whole = cpuMeasure(rgba, width, height, color?.transform
+    ? {reference: linearFromTransform(rgba, width * height, color.transform), cacheBytes: plan.cacheBytes}
+    : {native: true, cacheBytes: plan.cacheBytes});
   try {
     const measure = (image, want) => exactScores(whole, null, width, height, image, want, plan);
     const scores = measure(own, {ssimulacra2: true}), target = {butteraugli3: scores.butteraugli3, ssimulacra2: scores.ssimulacra2 + S2_MARGIN};
+    const takeImage = () => { const image = own; own = null; return image; };
     const found = yield* measuredSteps(scoreSteps(prepared, target, {candidates: EFFORT_CANDIDATES[effort >= 9 ? 9 : 8], ids: EFFORT_IDS[effort >= 9 ? 9 : 8], effort, start: quality,
-      initial: {quality, image: own, scores, bytes: ownBytes, effort}}), measure, effort >= 9 ? 44 : 20);
+      initial: {quality, image: takeImage(), scores, bytes: ownBytes, effort}}), measure, effort >= 9 ? 44 : 20);
     return found && found.pass && found.size < ownBytes.length ? found.bytes : ownBytes;
   } finally { whole.destroy(); }
 }
+searchV6.blocks = (held, width, height, deadzone) => {
+  const image = xybStrategies(held.base, width, height, {deadzone, ids: [4, 5], model: 'simple'}).image;
+  held.base = null;
+  return encodeStrategyImage(image, true, 7);
+};
 
 export function photoV6MeasuredJob(data, width, height, quality, effort, measurer,
   {decisions = 'gpu', poolSize, nativeOnGpu = false, memory = {}, signal, workerLease, referenceRgba = null} = {}) {
@@ -455,10 +460,9 @@ export function photoV6MeasuredJob(data, width, height, quality, effort, measure
       if (!workers) return writeImage(image, effort);
       ac ??= acGroupPool({...workerLease.stage('ac', workers), signal: activeSignal});
       let best = null;
-      for (let level = Math.min(effort, 7); level <= effort; level = level < 8 ? 8 : level + 1) {
+      for (let level = image.strategyData ? Math.min(effort, 7) : effort; level <= effort; level = level < 8 ? 8 : level + 1) {
         const writer = image.strategyData ? encodeStrategyImageSteps(image, level >= 7, level, true)
-          : level >= 5 ? coefficientAnsSteps(image, level, undefined, undefined, true)
-          : coefficientEffortSteps(image, level, undefined, undefined, undefined, true);
+          : coefficientAnsSteps(image, level, undefined, undefined, true);
         let completed = false;
         try {
           let step, reply;

@@ -1,4 +1,4 @@
-// Lossy modular encoding. MIT (LICENSE).
+// Lossy modular encoding. MIT (images/jxl/LICENSE).
 import {BitWriter, complete} from './bits.mjs';
 import {writeImageHeader, writeModularFrameHeader, groupLayout, finishSections, assembleCodestream} from './frame.mjs';
 import {ZERO_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, channelTree, streamTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';

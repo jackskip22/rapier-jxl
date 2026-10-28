@@ -4,7 +4,7 @@ import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, assem
 import {ALPHABET, leaf, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {sampleTransformRanking} from './sampled.mjs';
 import {colourTransform} from './rct-search.mjs';
-import {screenPlan} from './screen.mjs';
+import {screenPlan, lookupPalette} from './screen.mjs';
 import {screenModel, writeScreenModel} from './screen-lz77.mjs';
 import {admitOutputSize} from './admit.mjs';
 
@@ -23,7 +23,7 @@ function localPlan(rgba, width, height, shape, mode) {
     const first = new Int32Array(n).fill(-1);
     for (let i = 0; i < rgba.length; i += 4) {
       const key = rgba[i] + rgba[i + 1] * 256 + rgba[i + 2] * 65536 + rgba[i + 3] * 16777216;
-      const value = plan.setup.index.get(key);
+      const value = lookupPalette(plan.setup.index, key);
       if (first[value] < 0) first[value] = i;
     }
     order.sort((a, b) => first[a] - first[b]);

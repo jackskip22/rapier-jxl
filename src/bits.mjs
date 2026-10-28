@@ -1,8 +1,4 @@
-// Bit writer and per-entry limits. MIT (LICENSE).
-
-export const LIMITS = Object.freeze({pixels: 24_000_000, edge: 16384});
-export const PHOTO_LIMITS = /*#__PURE__*/ Object.freeze({pixels: 40_000_000, edge: 16384});
-export const JPEG_LIMITS = /*#__PURE__*/ Object.freeze({pixels: 64_000_000, edge: 16384});
+// Bit writer. MIT (images/jxl/LICENSE).
 
 const POWERS = [1];
 for (let count = 1; count <= 32; count++) POWERS.push(POWERS[count - 1] * 2);
@@ -18,9 +14,15 @@ export class BitWriter {
   }
   write(count, value) {
     if (!(value >= 0 && value < POWERS[count])) throw new Error('bit write out of range: ' + count + ' bits, ' + value);
-    let acc = this.acc + value * (1 << this.pending), pending = this.pending + count;
+    let pending = this.pending + count;
     if (this.at + 5 >= this.bytes.length) this.grow();
     const bytes = this.bytes;
+    if (pending < 32) {
+      let acc = this.acc | value << this.pending;
+      while (pending >= 8) { bytes[this.at++] = acc & 255; acc >>>= 8; pending -= 8; }
+      this.acc = acc; this.pending = pending; return;
+    }
+    let acc = this.acc + value * (1 << this.pending);
     while (pending >= 8) { bytes[this.at++] = acc & 255; acc = Math.floor(acc / 256); pending -= 8; }
     this.acc = acc; this.pending = pending;
   }
@@ -97,3 +99,5 @@ export function float16Bits(value) {
   if (m === 1024) { m = 0; exponent++; }
   return sign | ((exponent + 15) << 10) | m;
 }
+
+export const FRAME_SIZE = [[8, 0], [11, 256], [14, 2304], [30, 18688]];

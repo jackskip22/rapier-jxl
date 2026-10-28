@@ -22,32 +22,66 @@ export const QUANT_SHAPE = Float64Array.from({length: 64}, (_, k) => {
   return sum;
 });
 
-function dot8(data, at, step, basis) {
-  let sum = 0;
-  sum += data[at] * COSINES[basis];
-  sum += data[at + step] * COSINES[basis + 1];
-  sum += data[at + 2 * step] * COSINES[basis + 2];
-  sum += data[at + 3 * step] * COSINES[basis + 3];
-  sum += data[at + 4 * step] * COSINES[basis + 4];
-  sum += data[at + 5 * step] * COSINES[basis + 5];
-  sum += data[at + 6 * step] * COSINES[basis + 6];
-  sum += data[at + 7 * step] * COSINES[basis + 7];
-  return sum;
+function dctChannel(src, o, mid, dst, d) {
+  for (let y = 0; y < 8; y++) {
+    const a = o + y * 8, x0 = src[a], x1 = src[a + 1], x2 = src[a + 2], x3 = src[a + 3], x4 = src[a + 4], x5 = src[a + 5], x6 = src[a + 6], x7 = src[a + 7];
+    for (let u = 0, b = 0; u < 8; u++, b += 8) {
+      let sum = 0;
+      sum += x0 * COSINES[b]; sum += x1 * COSINES[b + 1]; sum += x2 * COSINES[b + 2]; sum += x3 * COSINES[b + 3];
+      sum += x4 * COSINES[b + 4]; sum += x5 * COSINES[b + 5]; sum += x6 * COSINES[b + 6]; sum += x7 * COSINES[b + 7];
+      mid[y * 8 + u] = sum;
+    }
+  }
+  for (let u = 0; u < 8; u++) {
+    const x0 = mid[u], x1 = mid[8 + u], x2 = mid[16 + u], x3 = mid[24 + u], x4 = mid[32 + u], x5 = mid[40 + u], x6 = mid[48 + u], x7 = mid[56 + u];
+    for (let v = 0, b = 0; v < 8; v++, b += 8) {
+      let sum = 0;
+      sum += x0 * COSINES[b]; sum += x1 * COSINES[b + 1]; sum += x2 * COSINES[b + 2]; sum += x3 * COSINES[b + 3];
+      sum += x4 * COSINES[b + 4]; sum += x5 * COSINES[b + 5]; sum += x6 * COSINES[b + 6]; sum += x7 * COSINES[b + 7];
+      dst[d + v * 8 + u] = sum;
+    }
+  }
 }
 
 export function transformDCT8(block, intermediate, sums, offset = 0) {
-  for (let c = 0; c < 3; c++) {
-    for (let y = 0; y < 8; y++) for (let u = 0; u < 8; u++) intermediate[y * 8 + u] = dot8(block, offset + c * 64 + y * 8, 1, u * 8);
-    for (let v = 0; v < 8; v++) for (let u = 0; u < 8; u++) sums[c * 64 + v * 8 + u] = dot8(intermediate, u, 8, v * 8);
-  }
+  for (let c = 0; c < 3; c++) dctChannel(block, offset + c * 64, intermediate, sums, c * 64);
   return sums;
 }
 
-export function transformDCT8Blocks(blocks, count, intermediate, sums) {
+export function transformDCT8Blocks(blocks, count, intermediate) {
   if (kernelHooks.dct?.(blocks, count, COSINES)) return;
+  for (let n = 0; n < count * 3; n++) dctChannel(blocks, n * 64, intermediate, blocks, n * 64);
+}
+
+const FAST_S = Float64Array.of(1, 0.7209598223816907, 0.7653668647301796, 0.8504300941521988, 1, 1.2727585826345942, 1.8477590650225744, 3.6245097377961106);
+export const FAST_SCALE = Float64Array.from({length: 64}, (_, k) => FAST_S[k & 7] * FAST_S[k >> 3] / 8);
+export function transformDCT8BlocksFast(blocks, count) {
+  const x = blocks;
   for (let n = 0; n < count; n++) {
-    transformDCT8(blocks, intermediate, sums, n * 192);
-    blocks.set(sums, n * 192);
+    let o = n * 192;
+    for (let c = 0; c < 3; c++, o += 64) {
+      for (let pass = 0; pass < 2; pass++) {
+        const stride = pass ? 8 : 1, step = pass ? 1 : 8;
+        for (let i = 0; i < 8; i++) {
+          const p = o + i * step;
+          const x0 = x[p], x1 = x[p + stride], x2 = x[p + 2 * stride], x3 = x[p + 3 * stride];
+          const x4 = x[p + 4 * stride], x5 = x[p + 5 * stride], x6 = x[p + 6 * stride], x7 = x[p + 7 * stride];
+          const tmp0 = x0 + x7, tmp7 = x0 - x7, tmp1 = x1 + x6, tmp6 = x1 - x6;
+          const tmp2 = x2 + x5, tmp5 = x2 - x5, tmp3 = x3 + x4, tmp4 = x3 - x4;
+          const tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3, tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
+          x[p] = tmp10 + tmp11; x[p + 4 * stride] = tmp10 - tmp11;
+          const z1 = (tmp12 + tmp13) * 0.7071067811865476;
+          x[p + 2 * stride] = tmp13 + z1; x[p + 6 * stride] = tmp13 - z1;
+          const t10 = tmp4 + tmp5, t11 = tmp5 + tmp6, t12 = tmp6 + tmp7;
+          const z5 = (t10 - t12) * 0.3826834333650898;
+          const z2 = 0.5411961001461969 * t10 + z5, z4 = 1.3065629648763766 * t12 + z5, z3 = t11 * 0.7071067811865476;
+          const z11 = tmp7 + z3, z13 = tmp7 - z3;
+          x[p + 5 * stride] = z13 + z2; x[p + 3 * stride] = z13 - z2;
+          x[p + stride] = z11 + z4; x[p + 7 * stride] = z11 - z4;
+        }
+      }
+      for (let k = 0; k < 64; k++) x[o + k] *= FAST_SCALE[k];
+    }
   }
 }
 

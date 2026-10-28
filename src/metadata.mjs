@@ -188,10 +188,11 @@ export async function withCompressedMetadata(bytes, options = {}) {
   } catch (error) { return guard(() => { throw error; }); }
 }
 
+export const METADATA_DECODED_BYTES = 67108864;
 export async function readMetadataAsync(bytes, options = {}) {
   try {
     if (!options || typeof options !== 'object' || Array.isArray(options)) throw invalid('Metadata reader options are an object.');
-    const maximum = limit(options.maxDecodedBytes ?? Number.MAX_SAFE_INTEGER), source = sourceBoxes(bytes), {decompress} = options;
+    const maximum = limit(options.maxDecodedBytes ?? METADATA_DECODED_BYTES), source = sourceBoxes(bytes), {decompress} = options;
     const entries = (source ?? []).filter(box => keys.has(box.decoded)).map(box => ({
       type: box.decoded, compressed: box.type === BROB, data: new Uint8Array(bytes.subarray(box.body + (box.type === BROB ? 4 : 0), box.end))
     }));

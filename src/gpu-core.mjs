@@ -281,12 +281,16 @@ export async function gpuCoreImage(device, request) {
 
 let gcDevice;
 export function gpuCoreDevice() {
-  gcDevice ??= (async () => {
+  if (gcDevice) return gcDevice;
+  const pending = (async () => {
     const adapter = await globalThis.navigator?.gpu?.requestAdapter({powerPreference: 'high-performance'});
-    if (!adapter) return null;
+    if (!adapter || adapter.info.isFallbackAdapter) return null;
     const device = await adapter.requestDevice({requiredLimits: {maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxBufferSize: adapter.limits.maxBufferSize}});
-    device.lost.then(() => { gcDevice = undefined; });
+    device.lost.then(() => { if (gcDevice === pending) gcDevice = undefined; });
     return device;
-  })().catch(() => null);
-  return gcDevice;
+  })().catch(() => null).then(device => {
+    if (!device && gcDevice === pending) gcDevice = undefined;
+    return device;
+  });
+  return gcDevice = pending;
 }

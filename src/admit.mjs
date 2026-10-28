@@ -1,5 +1,5 @@
-// Input validation, limits, errors, and incremental jobs. MIT (LICENSE).
-import {LIMITS} from './bits.mjs';
+// Input validation, limits, errors, and incremental jobs. MIT (images/jxl/LICENSE).
+import {LIMITS} from './limits.mjs';
 
 import {fault} from './fault.mjs';
 import {prepareICC, iccSpace} from './icc-write.mjs';
@@ -91,8 +91,11 @@ export function guard(work) {
 
 export function job(steps) {
   const it = (function* () {
-    let step, last;
-    while (!(step = guard(() => steps.next(it.hurry))).done) yield last = step.value;
+    let step, last, reply;
+    while (!(step = guard(() => steps.next(reply))).done) {
+      if (step.value?.capture || step.value?.split) { reply = undefined; continue; }
+      yield last = step.value; reply = it.hurry;
+    }
     if (last < 1) yield 1;
     return it.bytes = answer(step.value);
   })();

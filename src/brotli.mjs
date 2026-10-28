@@ -2,6 +2,7 @@
 import {BitWriter, floorLog2, ceilLog2} from './bits.mjs';
 import {buildCode, canonicalCodes, writePrefixCode} from './prefix.mjs';
 import {fault} from './fault.mjs';
+import {populationBits} from './entropy.mjs';
 
 const invalid = message => fault('JXL_INPUT', 'Portable Brotli: ' + message);
 const need = (value, message = 'invalid compressed data.') => { if (!value) throw invalid(message); };
@@ -16,7 +17,7 @@ const INSERT_BASE = bases(INSERT_BITS, 0), COPY_BASE = bases(COPY_BITS, 2);
 function admission(bytes, options) {
   if (!(bytes instanceof Uint8Array)) throw invalid('bytes are a Uint8Array.');
   if (!options || typeof options !== 'object' || Array.isArray(options)) throw invalid('options are an object.');
-  const maximum = options.maxOutputLength ?? Number.MAX_SAFE_INTEGER;
+  const maximum = options.maxOutputLength ?? 67108864;
   if (!Number.isSafeInteger(maximum) || maximum < 0) throw invalid('maxOutputLength is a nonnegative safe integer.');
   return maximum;
 }
@@ -31,28 +32,43 @@ function tree(frequencies, alphabetSize) {
 }
 const symbol = (writer, code, value) => writer.write(code.lengths[value], code.codes[value]);
 
-function matcher(data) {
-  const heads = new Int32Array(65536).fill(-1), previous = new Int32Array(65536).fill(-1);
+function matcher(data, windowBits) {
+  const span = 1 << Math.min(windowBits, Math.max(16, ceilLog2(data.length))), mask = span - 1, reach = (1 << windowBits) - 16;
+  const heads = new Int32Array(65536).fill(-1), previous = new Int32Array(span).fill(-1);
   const hash = at => Math.imul((data[at] | data[at + 1] << 8 | data[at + 2] << 16 | data[at + 3] << 24), 0x1e35a7bd) >>> 16;
   return {
-    insert(at) { if (at + 3 < data.length) { const key = hash(at); previous[at & 65535] = heads[key]; heads[key] = at; } },
-    find(at, end) {
+    history: [4, 11, 15, 16],
+    insert(at) { if (at + 3 < data.length) { const key = hash(at); previous[at & mask] = heads[key]; heads[key] = at; } },
+    find(at, end, cache) {
       if (at + 4 > end) return {length: 0, distance: 0};
       let probe = heads[hash(at)], length = 3, distance = 0, attempts = 32;
-      const oldest = Math.max(0, at - 65520), available = end - at;
+      const oldest = Math.max(0, at - reach), available = end - at;
       while (probe >= oldest && attempts--) {
         if (data[probe] === data[at] && data[probe + 1] === data[at + 1] && data[probe + 2] === data[at + 2] && data[probe + length] === data[at + length]) {
           let count = 3; while (count < available && data[probe + count] === data[at + count]) count++;
           if (count > length) { length = count; distance = at - probe; if (length === available) break; }
         }
-        const next = previous[probe & 65535]; if (next >= probe) break; probe = next;
+        const next = previous[probe & mask]; if (next >= probe) break; probe = next;
+      }
+      if (cache) for (const d of this.history) {
+        if (d > at - oldest || d === distance) continue;
+        let count = 0; while (count < available && data[at - d + count] === data[at + count]) count++;
+        if (count > 3 && count >= length) { length = count; distance = d; }
       }
       return {length: distance ? length : 0, distance};
     },
   };
 }
 
-function commandsFor(data, start, end, matches) {
+function shortCode(history, distance) {
+  for (let k = 0; k < 4; k++) if (history[k] === distance) return k;
+  for (let c = 4; c < 16; c++) {
+    const delta = c < 10 ? c - 4 : c - 10;
+    if (history[c < 10 ? 0 : 1] + ((delta & 1) ? 1 : -1) * ((delta >> 1) + 1) === distance) return c;
+  }
+  return -1;
+}
+function commandsFor(data, start, end, matches, cache) {
   const commands = [], literalFrequencies = new Uint32Array(256), commandFrequencies = new Uint32Array(704), distanceFrequencies = new Uint32Array(64);
   let at = start, literals = start;
   const push = (position, count, distance) => {
@@ -60,15 +76,21 @@ function commandsFor(data, start, end, matches) {
     const code = COMMAND_GROUP[(insertCode >> 3) * 3 + (copyCode >> 3)] + ((insertCode & 7) << 3) + (copyCode & 7);
     const command = {start: literals, insert, count, insertCode, copyCode, code};
     for (let i = literals; i < position; i++) literalFrequencies[data[i]]++;
-    if (count) {
+    const short = count && cache ? shortCode(matches.history, distance) : -1;
+    if (short === 0 && insertCode < 8 && copyCode < 16) {
+      command.code = (copyCode >= 8 ? 64 : 0) + (insertCode << 3) + (copyCode & 7); command.implicit = true;
+    } else if (short >= 0) {
+      command.distanceCode = short; command.distanceBits = 0; command.distanceExtra = 0; distanceFrequencies[short]++;
+    } else if (count) {
       const bits = floorLog2(distance + 3) - 1, high = (distance + 3) >>> bits & 1;
       command.distanceCode = 16 + 2 * (bits - 1) + high; command.distanceBits = bits;
       command.distanceExtra = distance - ((2 + high) * (1 << bits) - 3); distanceFrequencies[command.distanceCode]++;
     }
-    commands.push(command); commandFrequencies[code]++;
+    if (count && short !== 0) { matches.history.pop(); matches.history.unshift(distance); }
+    commands.push(command); commandFrequencies[command.code]++;
   };
   while (at < end) {
-    const match = matches.find(at, end); matches.insert(at);
+    const match = matches.find(at, end, cache); matches.insert(at);
     if (match.length < 4) { at++; continue; }
     push(at, match.length, match.distance);
     for (let i = at + 1; i < at + match.length; i++) matches.insert(i);
@@ -81,34 +103,97 @@ function commandsFor(data, start, end, matches) {
 function blockHeader(writer, length, uncompressed) {
   writer.write(1, 0); writer.write(2, 0); writer.write(16, length - 1); writer.write(1, uncompressed);
 }
-function compressedBlock(data, start, end, matches) {
-  const plan = commandsFor(data, start, end, matches), writer = new BitWriter();
+function histogramBits(a, b) {
+  let total = 0, bits = 0, used = 0;
+  for (let s = 0; s < 256; s++) { const f = b ? a[s] + b[s] : a[s]; if (f) { total += f; bits -= populationBits(f); used++; } }
+  return bits + populationBits(total) + (used > 1 ? 16 + 5 * used : 8);
+}
+function literalModel(data, commands) {
+  const single = new Uint32Array(256);
+  for (const command of commands) for (let at = command.start; at < command.start + command.insert; at++) single[data[at]]++;
+  let best = {mode: 0, map: new Uint8Array(64), bits: histogramBits(single), trees: 1, histograms: [single]};
+  for (let mode = 0; mode < 4; mode++) {
+    const histograms = Array.from({length: 64}, () => new Uint32Array(256));
+    for (const command of commands) for (let at = command.start; at < command.start + command.insert; at++)
+      histograms[literalContext(mode, at ? data[at - 1] : 0, at > 1 ? data[at - 2] : 0)][data[at]]++;
+    const clusters = histograms.map((freqs, i) => ({freqs, contexts: [i], bits: histogramBits(freqs)})).filter(c => c.freqs.some(Boolean));
+    if (clusters.length < 2) continue;
+    const n = clusters.length, gains = new Float64Array(n * n), alive = new Uint8Array(n).fill(1);
+    const gain = (i, j) => clusters[i].bits + clusters[j].bits - histogramBits(clusters[i].freqs, clusters[j].freqs);
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) gains[i * n + j] = gain(i, j);
+    let count = n;
+    while (count > 1) {
+      let pi = -1, pj = -1, pg = -Infinity;
+      for (let i = 0; i < n; i++) if (alive[i]) for (let j = i + 1; j < n; j++) if (alive[j] && gains[i * n + j] > pg) { pg = gains[i * n + j]; pi = i; pj = j; }
+      if (pg <= 0 && count <= 256) break;
+      const a = clusters[pi], b = clusters[pj];
+      for (let s = 0; s < 256; s++) a.freqs[s] += b.freqs[s];
+      a.contexts.push(...b.contexts); a.bits = histogramBits(a.freqs); alive[pj] = 0; count--;
+      for (let k = 0; k < n; k++) if (alive[k] && k !== pi) gains[Math.min(k, pi) * n + Math.max(k, pi)] = gain(Math.min(k, pi), Math.max(k, pi));
+    }
+    const kept = clusters.filter((_, i) => alive[i]), map = new Uint8Array(64);
+    kept.forEach((cluster, k) => { for (const c of cluster.contexts) map[c] = k; });
+    const bits = kept.reduce((total, c) => total + c.bits, 0) + (kept.length > 1 ? 64 * Math.max(1, ceilLog2(kept.length)) : 0);
+    if (bits < best.bits) best = {mode, map, bits, trees: kept.length, histograms: kept.map(c => c.freqs)};
+  }
+  return best;
+}
+function writeVarLenUint8(writer, value) {
+  if (!value) { writer.write(1, 0); return; }
+  const n = floorLog2(value); writer.write(1, 1); writer.write(3, n); writer.write(n, value - (1 << n));
+}
+function compressedBlock(data, start, end, matches, contexts) {
+  const plan = commandsFor(data, start, end, matches, contexts), single = writeBlock(data, start, end, plan, {mode: 0, map: new Uint8Array(64), trees: 1, histograms: [plan.literal]});
+  if (!contexts) return single;
+  const model = literalModel(data, plan.commands);
+  if (model.trees === 1) return single;
+  const modelled = writeBlock(data, start, end, plan, model);
+  return single.bitLength <= modelled.bitLength ? single : modelled;
+}
+function writeBlock(data, start, end, plan, model) {
+  const writer = new BitWriter();
+  const literals = model.histograms.map(freqs => freqs.lengths ? freqs : tree(Uint32Array.from(freqs), 256));
   blockHeader(writer, end - start, 0);
   writer.write(3, 0);
   writer.write(6, 0);
-  writer.write(2, 0);
-  writer.write(2, 0);
-  for (const code of [plan.literal, plan.command, plan.distance]) writePrefixCode(writer, code);
+  writer.write(2, model.mode);
+  writeVarLenUint8(writer, model.trees - 1);
+  if (model.trees > 1) {
+    const counts = new Uint32Array(model.trees);
+    for (const k of model.map) counts[k]++;
+    const code = tree(counts, model.trees);
+    writer.write(1, 0); writePrefixCode(writer, code);
+    for (const k of model.map) symbol(writer, code, k);
+    writer.write(1, 0);
+  }
+  writer.write(1, 0);
+  for (const code of [...literals, plan.command, plan.distance]) writePrefixCode(writer, code);
   for (const command of plan.commands) {
     symbol(writer, plan.command, command.code);
     writer.write(INSERT_BITS[command.insertCode], command.insert - INSERT_BASE[command.insertCode]);
     writer.write(COPY_BITS[command.copyCode], (command.count || 2) - COPY_BASE[command.copyCode]);
-    for (let at = command.start; at < command.start + command.insert; at++) symbol(writer, plan.literal, data[at]);
-    if (command.count) { symbol(writer, plan.distance, command.distanceCode); writer.write(command.distanceBits, command.distanceExtra); }
+    for (let at = command.start; at < command.start + command.insert; at++)
+      symbol(writer, literals[model.trees > 1 ? model.map[literalContext(model.mode, at ? data[at - 1] : 0, at > 1 ? data[at - 2] : 0)] : 0], data[at]);
+    if (command.count && !command.implicit) { symbol(writer, plan.distance, command.distanceCode); writer.write(command.distanceBits, command.distanceExtra); }
   }
   return writer;
 }
 
 export function compressBrotli(bytes, options = {}) {
-  const maximum = admission(bytes, options), writer = new BitWriter(), matches = bytes.length ? matcher(bytes) : null;
-  writer.write(1, 0);
+  const maximum = admission(bytes, options);
+  const windowBits = options.literalContexts ? Math.min(24, Math.max(16, ceilLog2(bytes.length + 16))) : 16;
+  const writer = new BitWriter(), matches = bytes.length ? matcher(bytes, windowBits) : null;
+  if (windowBits === 16) writer.write(1, 0);
+  else if (windowBits === 17) { writer.write(1, 1); writer.write(3, 0); writer.write(3, 0); }
+  else { writer.write(1, 1); writer.write(3, windowBits - 17); }
   for (let start = 0; start < bytes.length; start += 65536) {
-    const end = Math.min(bytes.length, start + 65536), compressed = compressedBlock(bytes, start, end, matches);
+    const ring = matches?.history.slice(), end = Math.min(bytes.length, start + 65536), compressed = compressedBlock(bytes, start, end, matches, options.literalContexts);
     const rawBits = 20 + ((8 - (writer.bitLength + 20) % 8) % 8) + (end - start) * 8;
     const chosenBits = Math.min(rawBits, compressed.bitLength);
     if (Math.ceil((writer.bitLength + chosenBits + 2) / 8) > maximum) throw tooLarge();
     if (compressed.bitLength < rawBits) writer.append(compressed);
     else {
+      matches.history = ring;
       blockHeader(writer, end - start, 1); writer.zeroPadToByte();
       writer.append({bytes: bytes.subarray(start, end), at: end - start, pending: 0, acc: 0});
     }
@@ -189,12 +274,85 @@ function windowBits(reader) {
   const high = reader.read(3); if (high) return 17 + high;
   const low = reader.read(3); need(low !== 1, 'invalid window size.'); return low ? 8 + low : 17;
 }
-function distanceValue(reader, code, history) {
+function distanceValue(reader, code, history, postfix = 0, direct = 0) {
   if (code < 4) return history[code];
   if (code < 16) { const group = code < 10 ? 0 : 1, delta = code < 10 ? code - 4 : code - 10; return history[group] + ((delta & 1) ? 1 : -1) * ((delta >> 1) + 1); }
-  const bits = 1 + ((code - 16) >> 1); return (2 + (code & 1)) * (1 << bits) - 3 + reader.read(bits);
+  if (code < 16 + direct) return code - 15;
+  const d = code - direct - 16, bits = 1 + (d >> (postfix + 1)), offset = ((2 + ((d >> postfix) & 1)) << bits) - 4;
+  return ((offset + reader.read(bits)) << postfix) + (d & ((1 << postfix) - 1)) + direct + 1;
 }
 
+const DICT_BITS = [0, 0, 0, 0, 10, 10, 11, 11, 10, 10, 10, 10, 10, 9, 9, 8, 7, 7, 8, 7, 7, 6, 6, 5, 5, 0, 0, 0, 0, 0, 0, 0];
+const DICT_OFFSETS = [0, 0, 0, 0, 0, 4096, 9216, 21504, 35840, 44032, 53248, 63488, 74752, 87040, 93696, 100864, 104704, 106752, 108928, 113536, 115968, 118528, 119872, 121280, 122016, 122784, 122784, 122784, 122784, 122784, 122784, 122784];
+const AFFIX = Uint8Array.from([1,32,2,44,32,8,32,111,102,32,116,104,101,32,4,32,111,102,32,2,115,32,1,46,5,32,97,110,100,32,4,32,105,110,32,1,34,4,32,116,111,32,2,34,62,1,10,2,46,32,1,93,5,32,102,111,114,32,3,32,97,32,6,32,116,104,97,116,32,1,39,6,32,119,105,116,104,32,6,32,102,114,111,109,32,4,32,98,121,32,1,40,6,46,32,84,104,101,32,4,32,111,110,32,4,32,97,115,32,4,32,105,115,32,4,105,110,103,32,2,10,9,1,58,3,101,100,32,2,61,34,4,32,97,116,32,3,108,121,32,1,44,2,61,39,5,46,99,111,109,47,7,46,32,84,104,105,115,32,5,32,110,111,116,32,3,101,114,32,3,97,108,32,4,102,117,108,32,4,105,118,101,32,5,108,101,115,115,32,4,101,115,116,32,4,105,122,101,32,2,194,160,4,111,117,115,32,5,32,116,104,101,32,2,101,32,0]);
+const AFFIX_AT = [0,2,5,14,19,22,24,30,35,37,42,45,47,50,52,58,62,69,71,78,85,90,92,99,104,109,114,119,122,124,128,131,136,140,142,145,151,159,165,169,173,178,183,189,194,199,202,207,213,216];
+const WORD_FORMS = Uint8Array.from([49,0,49,49,0,0,0,0,0,49,12,49,49,10,0,49,0,47,0,0,49,4,0,0,49,0,3,49,10,49,49,0,6,49,13,49,49,1,49,1,0,0,49,0,1,0,10,0,49,0,7,49,0,9,48,0,0,49,0,8,49,0,5,49,0,10,49,0,11,49,3,49,49,0,13,49,0,14,49,14,49,49,2,49,49,0,15,49,0,16,0,10,49,49,0,12,5,0,49,0,0,1,49,15,49,49,0,18,49,0,17,49,0,19,49,0,20,49,16,49,49,17,49,47,0,49,49,4,49,49,0,22,49,11,49,49,0,23,49,0,24,49,0,25,49,7,49,49,1,26,49,0,27,49,0,28,0,0,12,49,0,29,49,20,49,49,18,49,49,6,49,49,0,21,49,10,1,49,8,49,49,0,31,49,0,32,47,0,3,49,5,49,49,9,49,0,10,1,49,10,8,5,0,21,49,11,0,49,10,10,49,0,30,0,0,5,35,0,49,47,0,2,49,10,17,49,0,36,49,0,33,5,0,0,49,10,21,49,10,5,49,0,37,0,0,30,49,0,38,0,11,0,49,0,39,0,11,49,49,0,34,49,11,8,49,10,12,0,0,21,49,0,40,0,10,12,49,0,41,49,0,42,49,11,17,49,0,43,0,10,5,49,11,10,0,0,34,49,10,33,49,0,44,49,11,5,45,0,49,0,0,33,49,10,30,49,11,30,49,0,46,49,11,1,49,10,34,0,10,33,0,11,30,0,11,1,49,11,33,49,11,21,49,11,12,0,11,5,49,11,34,0,11,12,0,10,30,0,11,34,0,10,34]);
+function affix(id) { const at = AFFIX_AT[id], n = AFFIX[at]; return AFFIX.subarray(at + 1, at + 1 + n); }
+function upperStep(word, at) {
+  const b = word[at];
+  if (b < 0xC0) { if (b >= 97 && b <= 122) word[at] ^= 32; return 1; }
+  if (b < 0xE0) { word[at + 1] ^= 32; return 2; }
+  word[at + 2] ^= 5; return 3;
+}
+function dictionaryWord(dict, offset, length, form) {
+  if (!form) return dict.subarray(offset, offset + length);
+  const prefix = affix(WORD_FORMS[form * 3]), kind = WORD_FORMS[form * 3 + 1], suffix = affix(WORD_FORMS[form * 3 + 2]);
+  let skip = 0, keep = length;
+  if (kind <= 9) keep -= kind;
+  else if (kind >= 12 && kind <= 20) { skip = kind - 11; keep -= skip; }
+  need(skip >= 0 && keep >= 0, 'invalid dictionary transform.');
+  const out = new Uint8Array(prefix.length + keep + suffix.length);
+  out.set(prefix); out.set(dict.subarray(offset + skip, offset + skip + keep), prefix.length); out.set(suffix, prefix.length + keep);
+  const start = prefix.length;
+  if (kind === 10) upperStep(out, start);
+  else if (kind === 11) for (let i = 0, left = keep; left > 0;) { const step = upperStep(out, start + i); i += step; left -= step; }
+  return out;
+}
+
+function varLenUint8(reader) {
+  if (reader.read(1) === 0) return 0;
+  const bits = reader.read(3);
+  return bits === 0 ? 1 : (1 << bits) + reader.read(bits);
+}
+const BLOCK_LEN_OFFSET = [1, 5, 9, 13, 17, 25, 33, 41, 49, 65, 81, 97, 113, 145, 177, 209, 241, 305, 369, 497, 753, 1265, 2289, 4337, 8433, 16625];
+const BLOCK_LEN_BITS = [2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 7, 8, 9, 10, 11, 12, 13, 24];
+function blockLength(reader, tree) {
+  const code = tree(reader);
+  need(code < 26, 'invalid block length symbol.');
+  return BLOCK_LEN_OFFSET[code] + reader.read(BLOCK_LEN_BITS[code]);
+}
+function inverseMoveToFront(values) {
+  const list = Uint8Array.from({length: 256}, (_, i) => i);
+  for (let i = 0; i < values.length; i++) {
+    const index = values[i], value = list[index];
+    values[i] = value;
+    if (index) list.copyWithin(1, 0, index);
+    list[0] = value;
+  }
+}
+function brotliContextMap(reader, size) {
+  const trees = varLenUint8(reader) + 1, map = new Uint8Array(size);
+  if (trees === 1) return {trees, map};
+  const runPrefix = reader.read(1) ? reader.read(4) + 1 : 0, symbols = readTree(reader, trees + runPrefix);
+  for (let i = 0; i < size;) {
+    const code = symbols(reader);
+    if (code === 0) map[i++] = 0;
+    else if (code > runPrefix) { need(code - runPrefix < trees, 'invalid context map item.'); map[i++] = code - runPrefix; }
+    else {
+      const reps = (1 << code) + reader.read(code);
+      need(i + reps <= size, 'context map repeat exceeds the map.');
+      i += reps;
+    }
+  }
+  if (reader.read(1)) inverseMoveToFront(map);
+  return {trees, map};
+}
+const CONTEXT_TEXT = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+PwABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8AAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+PwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQEBAQICAgIDAwMDBAQEBAUFBQUGBgYGBwcHBwgICAgJCQkJCgoKCgsLCwsMDAwMDQ0NDQ4ODg4PDw8PEBAQEBERERESEhISExMTExQUFBQVFRUVFhYWFhcXFxcYGBgYGRkZGRoaGhobGxsbHBwcHB0dHR0eHh4eHx8fHyAgICAhISEhIiIiIiMjIyMkJCQkJSUlJSYmJiYnJycnKCgoKCkpKSkqKioqKysrKywsLCwtLS0tLi4uLi8vLy8wMDAwMTExMTIyMjIzMzMzNDQ0NDU1NTU2NjY2Nzc3Nzg4ODg5OTk5Ojo6Ojs7Ozs8PDw8PT09PT4+Pj4/Pz8/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQEAAAEAAAAAAAAAAAAAAAAAAAAAAAACAwQDAwUDBAYHAwMIAwkDCwsLCwsLCwsLCwgIBgoHAwMMDQ0NDA0NDQwNDQ0NDQwNDQ0NDQwNDQ0NDQYDBwMDAw4PDw8ODw8PDg8PDw8PDg8PDw8PDg8PDw8PBgMHAwAAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQIDAgMCAwIDAgMCAwIDAgMCAwIDAgMCAwIDAgMCAwIDAgMCAwIDAgMCAwIDAgMCAwIDAgMCAwIDAgMCAwIDAgMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAQEBAQEBAQEBAQEBAQECAgICAgICAgICAQEBAQEBAQICAgICAgICAgICAgICAgICAgICAgICAgICAQEBAQEBAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMBAQEBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAAgICAgICAgICAgICAgICBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBggICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoMDAwMDAwMDAwMDAwMDAwOAABAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQYGBgYGBgYGBgYGBgYGBgc=";
+const CONTEXT = Uint8Array.from(atob(CONTEXT_TEXT), char => char.charCodeAt(0));
+const literalContext = (mode, previous, older) => {
+  const base = mode << 9;
+  return CONTEXT[base + previous] | CONTEXT[base + 256 + older];
+};
 export function decompressBrotli(bytes, options = {}) {
   const maximum = admission(bytes, options), reader = new Reader(bytes), window = (1 << windowBits(reader)) - 16;
   const history = [4,11,15,16]; let output = new Uint8Array(0), at = 0, last = false;
@@ -225,23 +383,66 @@ export function decompressBrotli(bytes, options = {}) {
       reader.pad(); need(reader.pos / 8 + length <= bytes.length, 'stored block is truncated.');
       output.set(bytes.subarray(reader.pos / 8, reader.pos / 8 + length), at); reader.pos += length * 8; at = end; continue;
     }
-    need(reader.read(1) === 0 && reader.read(1) === 0 && reader.read(1) === 0, 'multiple block types require a full decoder.');
-    need(reader.read(6) === 0, 'postfix and direct distance codes require a full decoder.');
-    reader.read(2);
-    need(reader.read(1) === 0 && reader.read(1) === 0, 'multiple context trees require a full decoder.');
-    const literal = readTree(reader, 256), command = readTree(reader, 704), distance = readTree(reader, 64);
+    const categories = [0, 1, 2].map(() => {
+      const numTypes = varLenUint8(reader) + 1;
+      need(numTypes >= 1 && numTypes <= 256, 'invalid block-type count.');
+      if (numTypes === 1) return {numTypes, length: 1 << 28, ring: [1, 0]};
+      const typeTree = readTree(reader, numTypes + 2), lenTree = readTree(reader, 26);
+      return {numTypes, length: blockLength(reader, lenTree), ring: [1, 0], typeTree, lenTree};
+    });
+    const switchBlock = category => {
+      let symbol = category.typeTree(reader);
+      let type = symbol === 0 ? category.ring[0] : symbol === 1 ? category.ring[1] + 1 : symbol - 2;
+      if (type >= category.numTypes) type -= category.numTypes;
+      category.ring[0] = category.ring[1]; category.ring[1] = type;
+      category.length = blockLength(reader, category.lenTree);
+    };
+    const postfix = reader.read(2), direct = reader.read(4) << postfix;
+    const contextModes = Uint8Array.from({length: categories[0].numTypes}, () => reader.read(2));
+    const literalMap = brotliContextMap(reader, categories[0].numTypes << 6), distanceMap = brotliContextMap(reader, categories[2].numTypes << 2);
+    const literal = Array.from({length: literalMap.trees}, () => readTree(reader, 256));
+    const command = Array.from({length: categories[1].numTypes}, () => readTree(reader, 704));
+    const distanceTrees = Array.from({length: distanceMap.trees}, () => readTree(reader, 16 + direct + (48 << postfix)));
+    const [literalBlocks, commandBlocks, distanceBlocks] = categories;
+    const useBlocks = category => category.numTypes > 1;
     while (at < end) {
-      const code = command(reader), group = code >> 6, insertCode = INSERT_GROUP[group] + ((code >> 3) & 7), copyCode = COPY_GROUP[group] + (code & 7);
+      if (useBlocks(commandBlocks) && commandBlocks.length === 0) switchBlock(commandBlocks);
+      const code = command[commandBlocks.ring[1]](reader), group = code >> 6, insertCode = INSERT_GROUP[group] + ((code >> 3) & 7), copyCode = COPY_GROUP[group] + (code & 7);
+      if (useBlocks(commandBlocks)) commandBlocks.length--;
       const insert = INSERT_BASE[insertCode] + reader.read(INSERT_BITS[insertCode]), copy = COPY_BASE[copyCode] + reader.read(COPY_BITS[copyCode]);
       need(insert <= end - at, 'literal run exceeds the meta-block.');
-      for (let i = 0; i < insert; i++) output[at++] = literal(reader);
+      for (let i = 0; i < insert; i++) {
+        if (useBlocks(literalBlocks) && literalBlocks.length === 0) switchBlock(literalBlocks);
+        const type = literalBlocks.ring[1];
+        const context = literalMap.trees === 1 ? 0 : literalContext(contextModes[type], at ? output[at - 1] : 0, at > 1 ? output[at - 2] : 0);
+        output[at++] = literal[literalMap.map[(type << 6) + context]](reader);
+        if (useBlocks(literalBlocks)) literalBlocks.length--;
+      }
       if (at === end) break;
-      const distanceCode = code < 128 ? 0 : distance(reader), backward = distanceValue(reader, distanceCode, history);
+      let distanceCode = 0;
+      if (code >= 128) {
+        if (useBlocks(distanceBlocks) && distanceBlocks.length === 0) switchBlock(distanceBlocks);
+        const context = distanceMap.trees === 1 ? 0 : copy > 4 ? 3 : copy - 2;
+        distanceCode = distanceTrees[distanceMap.map[(distanceBlocks.ring[1] << 2) + context]](reader);
+      }
+      if (code >= 128 && useBlocks(distanceBlocks)) distanceBlocks.length--;
+      const backward = distanceValue(reader, distanceCode, history, postfix, direct);
       need(backward > 0, 'backward distance must be positive.');
-      need(backward <= Math.min(window, at), 'static dictionary references require a full decoder.');
-      need(copy <= end - at, 'copy run exceeds the meta-block.');
-      if (distanceCode) { history.pop(); history.unshift(backward); }
-      for (let i = 0; i < copy; i++, at++) output[at] = output[at - backward];
+      const maxDistance = Math.min(window, at);
+      if (backward > maxDistance) {
+        const dict = options.dictionary;
+        if (!dict) throw Object.assign(invalid('static dictionary references require a full decoder or the dictionary.'), {dictionary: true});
+        need(backward <= 0x7ffffffc && copy >= 4 && copy <= 24 && DICT_BITS[copy], 'invalid static dictionary reference.');
+        const shift = DICT_BITS[copy], address = backward - maxDistance - 1, form = address >>> shift;
+        need(form < 121, 'invalid dictionary transform.');
+        const word = dictionaryWord(dict, DICT_OFFSETS[copy] + (address & ((1 << shift) - 1)) * copy, copy, form);
+        need(word.length <= end - at && !(word.length === 0 && backward <= 120), 'invalid dictionary transform.');
+        output.set(word, at); at += word.length;
+      } else {
+        need(copy <= end - at, 'copy run exceeds the meta-block.');
+        if (distanceCode) { history.pop(); history.unshift(backward); }
+        for (let i = 0; i < copy; i++, at++) output[at] = output[at - backward];
+      }
     }
   }
   reader.pad(); need(reader.pos === bytes.length * 8, 'bytes follow the final meta-block.'); return output.slice(0, at);

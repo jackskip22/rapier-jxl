@@ -1,325 +1,63 @@
 {
-  "name": "rapier-jxl",
-  "version": "6.2.0-integration.20261026.1",
-  "description": "JPEG XL encoder in pure JavaScript. Great for single-file HTML apps, photography tools and agent image workflows.",
-  "license": "MIT",
-  "type": "module",
-  "main": "./src/index.mjs",
-  "types": "./src/index.d.mts",
-  "exports": {
-    ".": {
-      "types": "./src/index.d.mts",
-      "default": "./src/index.mjs"
-    },
-    "./core": {
-      "types": "./src/index.d.mts",
-      "default": "./src/index.mjs"
-    },
-    "./min": {
-      "types": "./src/index.d.mts",
-      "default": "./dist/rapier-jxl.min.mjs"
-    },
-    "./core/min": {
-      "types": "./src/index.d.mts",
-      "default": "./dist/rapier-jxl.min.mjs"
-    },
-    "./jpeg": {
-      "types": "./src/jpeg.d.mts",
-      "default": "./src/jpeg.mjs"
-    },
-    "./jpeg/min": {
-      "types": "./src/jpeg.d.mts",
-      "default": "./dist/jpeg.min.mjs"
-    },
-    "./photo": {
-      "types": "./src/photo.d.mts",
-      "default": "./src/photo.mjs"
-    },
-    "./score": {
-      "types": "./src/score.d.mts",
-      "default": "./src/score.mjs"
-    },
-    "./photo/min": {
-      "types": "./src/photo.d.mts",
-      "default": "./dist/photo.min.mjs"
-    },
-    "./photo-advanced": {
-      "types": "./src/photo-advanced.d.mts",
-      "default": "./src/photo-advanced.mjs"
-    },
-    "./photo-advanced/min": {
-      "types": "./src/photo-advanced.d.mts",
-      "default": "./dist/photo-advanced.min.mjs"
-    },
-    "./photo-plan": {
-      "types": "./src/photo-plan.d.mts",
-      "default": "./src/photo-plan.mjs"
-    },
-    "./photo-plan/min": {
-      "types": "./src/photo-plan.d.mts",
-      "default": "./dist/photo-plan.min.mjs"
-    },
-    "./noise": {
-      "types": "./src/photo-noise.d.mts",
-      "default": "./src/photo-noise.mjs"
-    },
-    "./noise/min": {
-      "types": "./src/photo-noise.d.mts",
-      "default": "./dist/noise.min.mjs"
-    },
-    "./hybrid": {
-      "types": "./src/hybrid.d.mts",
-      "default": "./src/hybrid.mjs"
-    },
-    "./hybrid/min": {
-      "types": "./src/hybrid.d.mts",
-      "default": "./dist/hybrid.min.mjs"
-    },
-    "./graphics": {
-      "types": "./src/graphics.d.mts",
-      "default": "./src/graphics.mjs"
-    },
-    "./graphics/min": {
-      "types": "./src/graphics.d.mts",
-      "default": "./dist/graphics.min.mjs"
-    },
-    "./icc": {
-      "types": "./src/icc.d.mts",
-      "default": "./src/icc.mjs"
-    },
-    "./icc/min": {
-      "types": "./src/icc.d.mts",
-      "default": "./dist/icc.min.mjs"
-    },
-    "./opsin": {
-      "types": "./src/opsin.d.mts",
-      "default": "./src/opsin.mjs"
-    },
-    "./opsin/min": {
-      "types": "./src/opsin.d.mts",
-      "default": "./dist/opsin.min.mjs"
-    },
-    "./delta-palette": {
-      "types": "./src/delta-palette.d.mts",
-      "default": "./src/delta-palette.mjs"
-    },
-    "./delta-palette/min": {
-      "types": "./src/delta-palette.d.mts",
-      "default": "./dist/delta-palette.min.mjs"
-    },
-    "./splines": {
-      "types": "./src/splines.d.mts",
-      "default": "./src/splines.mjs"
-    },
-    "./splines/min": {
-      "types": "./src/splines.d.mts",
-      "default": "./dist/splines.min.mjs"
-    },
-    "./channels": {
-      "types": "./src/channels.d.mts",
-      "default": "./src/channels.mjs"
-    },
-    "./channels/min": {
-      "types": "./src/channels.d.mts",
-      "default": "./dist/channels.min.mjs"
-    },
-    "./layers": {
-      "types": "./src/layers.d.mts",
-      "default": "./src/layers.mjs"
-    },
-    "./layers/min": {
-      "types": "./src/layers.d.mts",
-      "default": "./dist/layers.min.mjs"
-    },
-    "./patches": {
-      "types": "./src/patches.d.mts",
-      "default": "./src/patches.mjs"
-    },
-    "./patches/min": {
-      "types": "./src/patches.d.mts",
-      "default": "./dist/patches.min.mjs"
-    },
-    "./jpeg-ans": {
-      "types": "./src/jpeg-ans.d.mts",
-      "default": "./src/jpeg-ans.mjs"
-    },
-    "./jpeg-ans/min": {
-      "types": "./src/jpeg-ans.d.mts",
-      "default": "./dist/jpeg-ans.min.mjs"
-    },
-    "./photo-ans": {
-      "types": "./src/photo-ans.d.mts",
-      "default": "./src/photo-ans.mjs"
-    },
-    "./photo-ans/min": {
-      "types": "./src/photo-ans.d.mts",
-      "default": "./dist/photo-ans.min.mjs"
-    },
-    "./animation": {
-      "types": "./src/animation.d.mts",
-      "default": "./src/animation.mjs"
-    },
-    "./animation/min": {
-      "types": "./src/animation.d.mts",
-      "default": "./dist/animation.min.mjs"
-    },
-    "./animation-atlas": {
-      "types": "./src/animation-atlas.d.mts",
-      "default": "./src/animation-atlas.mjs"
-    },
-    "./animation-atlas/min": {
-      "types": "./src/animation-atlas.d.mts",
-      "default": "./dist/animation-atlas.min.mjs"
-    },
-    "./effort": {
-      "types": "./src/effort.d.mts",
-      "default": "./src/effort.mjs"
-    },
-    "./effort/min": {
-      "types": "./src/effort.d.mts",
-      "default": "./dist/effort.min.mjs"
-    },
-    "./writer": {
-      "types": "./src/writer.d.mts",
-      "default": "./src/writer.mjs"
-    },
-    "./source": {
-      "types": "./src/source.d.mts",
-      "default": "./src/source.mjs"
-    },
-    "./metadata": {
-      "types": "./src/metadata.d.mts",
-      "default": "./src/metadata.mjs"
-    },
-    "./metadata/min": {
-      "types": "./src/metadata.d.mts",
-      "default": "./dist/metadata.min.mjs"
-    },
-    "./brotli": {
-      "types": "./src/brotli.d.mts",
-      "default": "./src/brotli.mjs"
-    },
-    "./brotli/min": {
-      "types": "./src/brotli.d.mts",
-      "default": "./dist/brotli.min.mjs"
-    },
-    "./container": {
-      "types": "./src/container-stream.d.mts",
-      "default": "./src/container-stream.mjs"
-    },
-    "./container/min": {
-      "types": "./src/container-stream.d.mts",
-      "default": "./dist/container.min.mjs"
-    },
-    "./container-advanced": {
-      "types": "./src/container-advanced.d.mts",
-      "default": "./src/container-advanced.mjs"
-    },
-    "./container-advanced/min": {
-      "types": "./src/container-advanced.d.mts",
-      "default": "./dist/container-advanced.min.mjs"
-    },
-    "./progressive-container": {
-      "types": "./src/progressive-container.d.mts",
-      "default": "./src/progressive-container.mjs"
-    },
-    "./progressive-container/min": {
-      "types": "./src/progressive-container.d.mts",
-      "default": "./dist/progressive-container.min.mjs"
-    },
-    "./delivery": {
-      "types": "./src/delivery.d.mts",
-      "default": "./src/delivery.mjs"
-    },
-    "./delivery/min": {
-      "types": "./src/delivery.d.mts",
-      "default": "./dist/delivery.min.mjs"
-    },
-    "./package.json": "./package.json",
-    "./kernels": {
-      "types": "./src/kernels.d.mts",
-      "default": "./src/kernels.mjs"
-    },
-    "./wasm": {
-      "types": "./src/wasm.d.mts",
-      "default": "./src/wasm.mjs"
-    },
-    "./wasm/min": {
-      "types": "./src/wasm.d.mts",
-      "default": "./dist/wasm.min.mjs"
-    },
-    "./image": {
-      "types": "./src/image.d.mts",
-      "default": "./src/image.mjs"
-    },
-    "./image/min": {
-      "types": "./src/image.d.mts",
-      "default": "./dist/image.min.mjs"
-    },
-    "./rapier": {
-      "types": "./src/rapier.d.mts",
-      "default": "./src/rapier.mjs"
-    },
-    "./rapier/min": {
-      "types": "./src/rapier.d.mts",
-      "default": "./dist/rapier.min.mjs"
-    },
-    "./rapier/worker": {
-      "types": "./src/rapier-worker.d.mts",
-      "default": "./dist/rapier-worker.js"
-    },
-    "./rapier/still-worker": {
-      "types": "./src/rapier-worker.d.mts",
-      "default": "./dist/rapier-still-worker.js"
-    }
+ "name": "rapier-jxl",
+ "version": "7.0.0",
+ "type": "module",
+ "license": "MIT",
+ "description": "JPEG XL for pictures, captures and exact JPEG reconstruction.",
+ "exports": {
+  ".": {
+   "types": "./types/index.d.mts",
+   "import": "./dist/index.mjs"
   },
-  "files": [
-    "src",
-    "dist",
-    "kernels",
-    "docs",
-    "bench",
-    "examples",
-    "skills",
-    "LICENSE",
-    "README.md",
-    "llms.txt",
-    ".github/CONTRIBUTING.md"
-  ],
-  "sideEffects": [
-    "./src/wasm.mjs",
-    "./dist/wasm.min.mjs",
-    "./dist/rapier-worker.js",
-    "./dist/rapier-still-worker.js"
-  ],
-  "engines": {
-    "node": ">=18"
+  "./capture": {
+   "types": "./types/capture.d.mts",
+   "import": "./dist/capture.mjs"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/jackskip22/rapier-jxl.git"
+  "./jpeg": {
+   "types": "./types/jpeg.d.mts",
+   "import": "./dist/jpeg.mjs"
   },
-  "homepage": "https://github.com/jackskip22/rapier-jxl#readme",
-  "bugs": {
-    "url": "https://github.com/jackskip22/rapier-jxl/issues"
+  "./decode": {
+   "types": "./types/decode.d.mts",
+   "import": "./dist/decode.mjs"
   },
-  "keywords": [
-    "jpeg-xl",
-    "jxl",
-    "jpegxl",
-    "encoder",
-    "image-compression",
-    "lossless",
-    "lossy",
-    "jpeg",
-    "hdr",
-    "webassembly",
-    "browser"
-  ],
-  "scripts": {
-    "build:kernels": "node kernels/build.mjs"
+  "./animation": {
+   "types": "./types/animation.d.mts",
+   "import": "./dist/animation.mjs"
   },
-  "devDependencies": {
-    "wabt": "1.0.39"
-  }
+  "./metadata": {
+   "types": "./types/metadata.d.mts",
+   "import": "./dist/metadata.mjs"
+  },
+  "./format": {
+   "types": "./types/format.d.mts",
+   "import": "./dist/format.mjs"
+  },
+  "./offline": {
+   "types": "./types/offline.d.mts",
+   "import": "./dist/offline.mjs"
+  },
+  "./worker": "./dist/worker.mjs",
+  "./parallel-worker": "./dist/parallel-worker.mjs",
+  "./worker-classic": "./dist/worker-classic.js",
+  "./package.json": "./package.json"
+ },
+ "types": "./types/index.d.mts",
+ "sideEffects": [
+  "./dist/worker.mjs",
+  "./dist/worker-runtime.mjs",
+  "./dist/worker-classic.js",
+  "./dist/parallel-worker.mjs"
+ ],
+ "files": [
+  "dist",
+  "types",
+  "examples",
+  "LICENSE",
+  "README.md",
+  "THIRD_PARTY_NOTICES"
+ ],
+ "engines": {
+  "node": "^20.16.0 || >=22.3.0"
+ }
 }

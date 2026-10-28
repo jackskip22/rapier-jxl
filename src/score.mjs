@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
-import {PHOTO_LIMITS, complete} from './bits.mjs';
+import {PHOTO_LIMITS} from './limits.mjs';
+import {complete} from './bits.mjs';
 import {admitPixels, fault, job} from './admit.mjs';
-import {admitEffort} from './effort-level.mjs';
+import {admitEffort, BALANCED_EFFORT} from './effort-level.mjs';
 import {effortJob} from './effort-job.mjs';
 import {checkSignal} from './async-job.mjs';
 import {prepareV6, scoreSteps, cpuMeasure, runAsync, gpuDoubt, CANDIDATES} from './photo-v6-search.mjs';
 import {exactAnswerer, exactPool, exactScores} from './exact-region.mjs';
 import {memoryPlan} from './memory-plan.mjs';
-import {GpuMeasure, gpuSetup} from './gpu-reconstruct.mjs';
-import {attachVarblocks} from './gpu-varblocks.mjs';
+import {gpuSetup} from './gpu-setup.mjs';
 
 export {PHOTO_LIMITS as LIMITS};
 
@@ -33,7 +33,7 @@ function admitScore(data, width, height, options) {
   const allowLossless = options?.allowLossless === undefined ? true : options.allowLossless, maxBytes = options?.maxBytes ?? Number.MAX_SAFE_INTEGER;
   if (typeof allowLossless !== 'boolean') throw fault('JXL_INPUT', 'allowLossless is a boolean.');
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || options?.maxBytes === null) throw fault('JXL_INPUT', 'maxBytes is a positive safe integer.');
-  return {target: scoreTarget(options?.target), effort: options?.effort === undefined ? 7 : admitEffort(options), candidates, allowLossless, maxBytes};
+  return {target: scoreTarget(options?.target), effort: admitEffort(options ?? {}, BALANCED_EFFORT), candidates, allowLossless, maxBytes};
 }
 
 function scoreMemory(data, width, height, options, exact) {
@@ -61,7 +61,7 @@ function* finishScore(result, data, width, height, {target, effort, allowLossles
   if (result.pass && result.bytes.length <= maxBytes) return scoreAnswer(result);
   if (!allowLossless) throw scoreRefusal(result, target, result.pass ? 'JXL_SIZE' : 'JXL_TARGET',
     result.pass ? 'The selected file exceeds maxBytes.' : 'The lossy search did not reach the target and lossless is disabled.');
-  const exact = job(effortJob(data, width, height, {quality: 100, effort}, undefined, false, undefined, false, PHOTO_LIMITS));
+  const exact = job(effortJob(data, width, height, {quality: 100, effort}, false, PHOTO_LIMITS));
   try {
     let step;
     while (!(step = exact.next()).done) yield 0.95 + 0.05 * step.value;
@@ -86,7 +86,7 @@ export function* encodeToScoreSteps(data, width, height, options) {
       }
       return out;
     };
-    steps = scoreSteps(prepareV6(data, width, height, {}, memory), target, {candidates, effort});
+    steps = scoreSteps(prepareV6(data, width, height, {}, memory), target, {candidates, effort, exactSize: true});
     let step, reply, n = 0;
     while (!(step = steps.next(reply)).done) {
       checkSignal(options?.signal);
@@ -141,6 +141,7 @@ export async function encodeToScore(data, width, height, options) {
     metricRgba = new Uint8Array(width * height * 4); metricRgba.set(data.subarray(0, metricRgba.length));
     cpuOnce = cpuMeasure(metricRgba, width, height, {cacheBytes: plan.cacheBytes, immutable: true});
     try {
+      const {GpuMeasure, attachVarblocks} = await import('./gpu-measure.mjs');
       measurer = await GpuMeasure.create(gpu, metricRgba, width, height, {signal: options?.signal});
       await attachVarblocks(measurer, gpu, {signal: options?.signal});
     } catch (error) { gpuFailure = error; gpuFailed = true; throw error; }
@@ -182,7 +183,7 @@ export async function encodeToScore(data, width, height, options) {
       stats.regionFallbacks = exactAnswer.fallbacks;
       return result;
     };
-    steps = scoreSteps(prepareV6(data, width, height, {}, memory), target, {candidates, effort});
+    steps = scoreSteps(prepareV6(data, width, height, {}, memory), target, {candidates, effort, exactSize: true});
     const progress = value => { checkSignal(options?.signal); options?.onProgress?.(value); checkSignal(options?.signal); };
     const result = await runAsync(steps, measure, progress);
     const released = await cleanup(); checkSignal(options?.signal); if (released.failed) throw released.error;

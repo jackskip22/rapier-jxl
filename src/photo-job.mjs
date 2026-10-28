@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-import {PHOTO_LIMITS, part} from './bits.mjs';
+import {PHOTO_LIMITS} from './limits.mjs';
+import {part} from './bits.mjs';
 import {admitEffort} from './effort-level.mjs';
 import {losslessSteps, nativeSteps, iccShape} from './lossless.mjs';
-import {spaceTransform} from './icc-transform.mjs';
+import {spaceTransform, P3_TRANSFORM} from './icc-transform.mjs';
 import {admitOptions, admitPixels, admitSampleFormat, job, fault} from './admit.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
 import {photoXYBSteps, preferXYB} from './photo-xyb.mjs';
@@ -30,8 +31,9 @@ export function admitPhotoFilter(options) {
 }
 
 export function* photoSteps(data, width, height, quality, colorSpace, effort, encodeCoefficients, filter, search, gpu, memory) {
-  if (quality >= 100) return yield* losslessSteps(data, width, height, {colorSpace});
+  if (quality >= 100) return yield* losslessSteps(data, width, height, {colorSpace, fast: effort < 2});
   if (colorSpace === 'srgb' && preferXYB(data, width, height)) return yield* photoV6Steps(data, width, height, quality, effort, encodeCoefficients, search, undefined, gpu, memory);
+  if (colorSpace === 'display-p3' && preferXYB(data, width, height)) return yield* photoV6Steps(data, width, height, quality, effort, encodeCoefficients, search, {transform: P3_TRANSFORM, space: colorSpace}, undefined, memory);
   if (colorSpace && typeof colorSpace === 'object' && colorSpace.colorChannels !== 1) {
     const transform = spaceTransform(colorSpace);
     if (transform && preferXYB(data, width, height)) return yield* photoV6Steps(data, width, height, quality, effort, encodeCoefficients, search, {transform, space: colorSpace}, undefined, memory);
@@ -47,5 +49,6 @@ export function photoProducer(data, width, height, quality, colorSpace, filter) 
     if (transform && preferXYB(data, width, height)) return photoXYBSteps(data, width, height, quality, {filter, transform, space: colorSpace});
     return photoCoefficientSteps(data, width, height, quality, colorSpace);
   }
+  if (colorSpace === 'display-p3' && preferXYB(data, width, height)) return photoXYBSteps(data, width, height, quality, {filter, transform: P3_TRANSFORM, space: colorSpace});
   return colorSpace === 'srgb' && preferXYB(data, width, height) ? photoXYBSteps(data, width, height, quality, {filter}) : photoCoefficientSteps(data, width, height, quality, colorSpace);
 }

@@ -3,7 +3,8 @@ import {inspectPixels, losslessSteps, nativeSteps, iccShape} from './lossless.mj
 import {lossySteps} from './lossy.mjs';
 import {photoSteps, admitPhotoFilter} from './photo-job.mjs';
 import {varDCTSteps} from './vardct.mjs';
-import {LIMITS, complete, part} from './bits.mjs';
+import {LIMITS} from './limits.mjs';
+import {complete, part} from './bits.mjs';
 import {admitOptions, admitPixels, admitSampleFormat, job} from './admit.mjs';
 import {driveGpu, gpuWanted} from './gpu-drive.mjs';
 
@@ -28,10 +29,10 @@ export function encodeAsync(data, width, height, options) {
 
 function* pixelSteps(data, width, height, quality, colorSpace, photo, filter, gpu) {
   const shape = inspectPixels(data, width, height);
-  if (quality >= 100) return yield* losslessSteps(data, width, height, {shape, colorSpace});
-  if (!shape.palette) return yield* (photo ? photoSteps(data, width, height, quality, colorSpace, 1, coefficients => varDCTSteps(coefficients), filter, undefined, gpu)
+  if (quality >= 100) return yield* losslessSteps(data, width, height, {shape, colorSpace, fast: true});
+  if (!shape.palette) return yield* (photo ? photoSteps(data, width, height, quality, colorSpace, 1, coefficients => varDCTSteps(coefficients, {fast: true}), filter, undefined, gpu)
     : lossySteps(data, width, height, {quality, shape, colorSpace}));
-  const exact = yield* part(losslessSteps(data, width, height, {shape, colorSpace}), 0, 2);
+  const exact = yield* part(losslessSteps(data, width, height, {shape, colorSpace, fast: true}), 0, 2);
   let bytes;
   try { bytes = yield* part(lossySteps(data, width, height, {quality, shape, colorSpace}), 1, 2); }
   catch (error) { if (error.code !== 'JXL_SIZE' && error.code !== 'JXL_MEMORY' && (!(error instanceof RangeError) || error.code)) throw error; bytes = exact; }

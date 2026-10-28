@@ -1,4 +1,4 @@
-// Rapier's JPEG XL encoder: the self-correcting (weighted) predictor. MIT (LICENSE).
+// Rapier's JPEG XL encoder: the self-correcting (weighted) predictor. MIT (images/jxl/LICENSE).
 import {kernelHooks} from './kernel-hooks.mjs';
 import {packSigned} from './bits.mjs';
 import {countToken, writeHybrid} from './prefix.mjs';

@@ -1,4 +1,4 @@
-// Prefix codes and histogram bundles. MIT (LICENSE).
+// Prefix codes and histogram bundles. MIT (images/jxl/LICENSE).
 import {BitWriter, floorLog2, ceilLog2} from './bits.mjs';
 
 const CODE_LENGTH_ORDER = [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15];

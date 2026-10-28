@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
-import {BitWriter, LIMITS, part, complete} from './bits.mjs';
+import {LIMITS} from './limits.mjs';
+import {BitWriter, part, complete} from './bits.mjs';
 import {fault, guard, admitOptions, admitPixels, admitSize, admitSampleFormat} from './admit.mjs';
 import {admitEffort} from './effort-level.mjs';
-import {encodeSteps} from './effort.mjs';
+import {job} from './admit.mjs';
+import {effortJob} from './effort-job.mjs';
 import {inspectPixels, shapeFloors} from './lossless.mjs';
 import {photoXYBSteps, preferXYB} from './photo-xyb.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
-import {coefficientEffortSteps} from './coefficient-effort.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {admitPhotoFilter} from './photo-job.mjs';
 import {readStill, metadataKey, writeAnimatedImageHeader, writeAnimatedFrame, BLEND_MODES} from './framing.mjs';
@@ -41,7 +42,7 @@ export function admitAnimation(animation, options) {
   return {width, height, loops, frames, quality, colorSpace, effort, filter, samples, photo, signal, still: {...still, quality, effort}};
 }
 
-export function* animationSteps(a, pooled = false, shared = null) {
+export function* animationSteps(a, shared = null) {
   const {width, height, frames, samples, quality} = a;
   let first = frames.findIndex(frame => frame.duration > 0);
   if (first < 0) first = frames.length - 1;
@@ -96,17 +97,12 @@ export function* animationSteps(a, pooled = false, shared = null) {
     from = to;
   }
   const coder = coderOf(a, mode, floor), progress = done => 0.02 + 0.97 * done;
-  if (pooled) {
-    const reply = yield {kind: 'animation', width, coder, parts: jobs.map(({data, previous, rect, masked, fill, span}) => ({data, previous, rect, masked, fill, span})), at: progress};
-    reply.forEach((bytes, j) => { jobs[j].bytes = bytes; });
-  } else {
-    for (const job of jobs) {
-      const [, , w, h] = job.rect, [from, to] = job.span;
-      const steps = shared ? shared.partSteps(coder, pixelsOf(job, width), w, h, job) : partSteps(coder, pixelsOf(job, width), w, h);
-      let step, reply;
-      while (!(step = steps.next(reply)).done) reply = yield progress(from + (to - from) * step.value);
-      job.bytes = step.value;
-    }
+  for (const job of jobs) {
+    const [, , w, h] = job.rect, [from, to] = job.span;
+    const steps = shared ? shared.partSteps(coder, pixelsOf(job, width), w, h, job) : partSteps(coder, pixelsOf(job, width), w, h);
+    let step, reply;
+    while (!(step = steps.next(reply)).done) reply = yield progress(from + (to - from) * step.value);
+    job.bytes = step.value;
   }
   for (const job of jobs) if (!job.part.still || job.bytes.length < job.part.bytes) Object.assign(job.part, {still: job.bytes, bytes: job.bytes.length, masked: job.masked});
   for (const part of parts) part.still = readStill(part.still);
@@ -129,6 +125,10 @@ export function* animationSteps(a, pooled = false, shared = null) {
   return parts.some(({still}) => still.level === 10) ? levelTen(codestream) : codestream;
 }
 
+let measuredSearch;
+export function useMeasuredSearch(search) { measuredSearch = search; }
+const frameEncodeSteps = (data, width, height, options) => job(effortJob(data, width, height, options, false, undefined, measuredSearch));
+
 function* frameMode(a, first) {
   const {width, height, quality, samples, photo, colorSpace} = a;
   if (quality >= 100 || !samples.native8 || photo === false) return 'modular';
@@ -137,7 +137,7 @@ function* frameMode(a, first) {
   let alpha = false;
   for (let i = 3; i < first.length && !alpha; i += 4) alpha = first[i] !== 255;
   const shrink = steps => (function* () { let step, reply; while (!(step = steps.next(reply)).done) reply = yield 0.01 + 0.01 * step.value; return step.value; })();
-  const exact = yield* shrink(part(encodeSteps(first, width, height, {...a.still, quality: 100, effort: 1}), 0, 2));
+  const exact = yield* shrink(part(frameEncodeSteps(first, width, height, {...a.still, quality: 100, effort: 1}), 0, 2));
   const lossy = yield* shrink(part(frameSteps(a, dct, first, width, height, {alpha}), 1, 2));
   return exact.length <= lossy.length ? 'modular' : dct;
 }
@@ -150,11 +150,11 @@ export function* partSteps(coder, crop, w, h) {
 }
 
 function* frameSteps(a, mode, crop, w, h, floor) {
-  if (mode === 'modular') return yield* encodeSteps(crop, w, h, a.still);
+  if (mode === 'modular') return yield* frameEncodeSteps(crop, w, h, a.still);
   const coefficients = yield* part(mode === 'xyb' ? photoXYBSteps(crop, w, h, a.quality, {filter: a.filter})
     : photoCoefficientSteps(crop, w, h, a.quality, a.colorSpace), 0, 2);
   coefficients.alpha = floor.alpha ? crop : null;
-  return yield* part((a.effort >= 5 ? coefficientAnsSteps : coefficientEffortSteps)(coefficients, a.effort), 1, 2);
+  return yield* part(coefficientAnsSteps(coefficients, a.effort), 1, 2);
 }
 
 const SEPARATE = 4096, TILE = 16, MOST = 16;

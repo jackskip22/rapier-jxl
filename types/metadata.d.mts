@@ -1,0 +1,10 @@
+import type {Metadata, MetadataReadOptions, MetadataOptions, CompressedMetadataOptions} from './codec/metadata.mjs';
+import type {ContainerInspection, ContainerBounds, ReframeOptions} from './codec/container-advanced.mjs';
+import type {ContainerStreamOptions} from './codec/container-stream.mjs';
+import type {Bytes} from './types.mjs';
+export type {Metadata, MetadataReadOptions, MetadataOptions, CompressedMetadataOptions, ContainerInspection, ReframeOptions};
+export function read(input: Uint8Array, options?: MetadataReadOptions): Promise<Metadata>;
+export function write(input: Uint8Array, options?: MetadataOptions | CompressedMetadataOptions): Promise<Bytes>;
+export function inspect(input: Uint8Array, options?: ContainerBounds): Promise<ContainerInspection>;
+export function repack(input: Uint8Array, options?: ReframeOptions): Promise<Bytes>;
+export function stream(source: Iterable<Uint8Array> | AsyncIterable<Uint8Array>, options?: ContainerStreamOptions): AsyncGenerator<Bytes>;

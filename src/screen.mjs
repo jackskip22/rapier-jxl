@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 import {BitWriter, packSigned, complete} from './bits.mjs';
-import {writeImageHeader, writeModularFrameHeader, groupLayout, groupPass, addCounts, assembleCodestream, GROUP_DIM} from './frame.mjs';
+import {writeImageHeader, writeModularFrameHeader, groupLayout, groupPass, assembleCodestream, GROUP_DIM} from './frame.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
-import {screenModel, writeScreenModel, screenLZ77} from './screen-lz77.mjs';
+import {screenModel, writeScreenModel} from './screen-lz77.mjs';
 import {admitOutputSize} from './admit.mjs';
 import {ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
 
@@ -32,14 +32,52 @@ export function screenLike(rgba, width, height) {
 }
 
 const screenValueAt = (rgba, i, c, shape) => rgba[i + (shape.colour === 1 && c === 1 ? 3 : c)];
-const screenPacked = (rgba, i) => rgba[i] + rgba[i + 1] * 256 + rgba[i + 2] * 65536 + rgba[i + 3] * 16777216;
+const screenPacked = (rgba, i) => (rgba[i] + rgba[i + 1] * 256 + rgba[i + 2] * 65536 + rgba[i + 3] * 16777216) >>> 0;
+const PALETTE_CAP = 8192;
+function paletteTable(limit) {
+  let cap = PALETTE_CAP;
+  while (cap < limit * 2) cap <<= 1;
+  return cap;
+}
+function scanPalette(rgba, frequency, limit = 4096) {
+  const cap = paletteTable(limit), mask = cap - 1, shift = Math.clz32(mask);
+  const slotOf = key => (Math.imul(key ^ (key >>> 16), 0x7feb352d) >>> shift) & mask;
+  const keys = new Uint32Array(cap), occupied = new Uint8Array(cap), counts = frequency ? new Uint32Array(cap) : null;
+  let used = 0, grey = true, opaque = true;
+  for (let i = 0; i < rgba.length; i += 4) {
+    if (rgba[i + 3] !== 255) opaque = false;
+    if (grey && (rgba[i] !== rgba[i + 1] || rgba[i] !== rgba[i + 2])) grey = false;
+    const key = screenPacked(rgba, i);
+    let slot = slotOf(key);
+    while (occupied[slot] && keys[slot] !== key) slot = (slot + 1) & mask;
+    if (!occupied[slot]) {
+      if (used === limit) return null;
+      occupied[slot] = 1; keys[slot] = key; if (counts) counts[slot] = 1; used++;
+    } else if (counts) counts[slot]++;
+  }
+  const slots = [];
+  for (let slot = 0; slot < cap; slot++) if (occupied[slot]) slots.push(slot);
+  slots.sort(frequency ? (a, b) => counts[b] - counts[a] || (keys[a] < keys[b] ? -1 : keys[a] > keys[b] ? 1 : 0)
+    : (a, b) => keys[a] < keys[b] ? -1 : keys[a] > keys[b] ? 1 : 0);
+  const indexOf = new Uint16Array(cap);
+  slots.forEach((slot, index) => { indexOf[slot] = index; });
+  return {keys, occupied, indexOf, colours: slots.map(slot => keys[slot]), grey, alpha: !opaque, mask, shift};
+}
+export function lookupPalette(table, key) {
+  let slot = (Math.imul(key ^ (key >>> 16), 0x7feb352d) >>> table.shift) & table.mask;
+  while (table.occupied[slot]) {
+    if (table.keys[slot] === key) return table.indexOf[slot];
+    slot = (slot + 1) & table.mask;
+  }
+  return 0;
+}
 
 function screenFill(setup) {
   const {mode, channels, colour, index, maps} = setup;
   return (planes, rgba, stride, x0, y0, w, h) => {
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       const p = ((y0 + y) * stride + x0 + x) * 4, at = y * w + x;
-      if (mode === 'global' || mode === 'frequency') planes[0][at] = index.get(screenPacked(rgba, p));
+      if (mode === 'global' || mode === 'frequency') planes[0][at] = lookupPalette(index, screenPacked(rgba, p));
       else if (mode === 'scalar') {
         for (let c = 0; c < channels; c++) {
           const value = rgba[p + (colour === 1 && c === 1 ? 3 : c)];
@@ -62,35 +100,32 @@ function screenPlanned(rgba, width, meta, transforms, setup) {
     fill: (planes, x0, y0, w, h) => fill(planes, rgba, width, x0, y0, w, h)};
 }
 
+function indexedPlan(rgba, width, scanned, shape) {
+  const colours = scanned.colours, channels = shape.channels, n = colours.length, rows = new Int16Array(n * channels);
+  for (let c = 0; c < channels; c++)
+    for (let i = 0; i < n; i++)
+      rows[c * n + i] = (colours[i] >>> (8 * (shape.colour === 1 && c === 1 ? 3 : c))) & 255;
+  const meta = [{plane: rows, width: n, height: channels}];
+  const transforms = [{type: 'palette', beginC: 0, numC: channels, nbColors: n}];
+  return screenPlanned(rgba, width, meta, transforms, {mode: 'frequency', count: 1, channels, colour: shape.colour, index: scanned});
+}
+
 export function screenPlan(rgba, width, height, shape, mode = 'global') {
   const channels = shape.channels,
     meta = [],
     transforms = [];
   if (mode === 'global' || mode === 'frequency') {
-    const seen = new Map();
-    if (mode === 'frequency') {
-      for (let i = 0; i < rgba.length; i += 4) {
-        const k = screenPacked(rgba, i), count = seen.get(k) || 0;
-        if (!count && seen.size === 4096) return null;
-        seen.set(k, count + 1);
-      }
-    } else for (let i = 0; i < rgba.length; i += 4) {
-      const k = screenPacked(rgba, i);
-      if (!seen.has(k)) {
-        if (seen.size === 4096) return null;
-        seen.set(k, 0);
-      }
-    }
-    const colours = [...seen.keys()].sort(mode === 'frequency' ? (a, b) => seen.get(b) - seen.get(a) || a - b : (a, b) => a - b),
-      n = colours.length;
-    colours.forEach((k, i) => seen.set(k, i));
-    const rows = new Int16Array(n * channels);
+    const table = scanPalette(rgba, mode === 'frequency');
+    if (!table) return null;
+    if (mode === 'frequency' && shape.colour === (table.grey ? 1 : 3) && shape.alpha === table.alpha)
+      return indexedPlan(rgba, width, table, shape);
+    const colours = table.colours, n = colours.length, rows = new Int16Array(n * channels);
     for (let c = 0; c < channels; c++)
       for (let i = 0; i < n; i++)
         rows[c * n + i] = (colours[i] >>> (8 * (shape.colour === 1 && c === 1 ? 3 : c))) & 255;
     meta.push({plane: rows, width: n, height: channels});
     transforms.push({type: 'palette', beginC: 0, numC: channels, nbColors: n});
-    return screenPlanned(rgba, width, meta, transforms, {mode, count: 1, channels, colour: shape.colour, index: seen});
+    return screenPlanned(rgba, width, meta, transforms, {mode, count: 1, channels, colour: shape.colour, index: table});
   }
   if (mode === 'scalar') {
     const maps = Array.from({length: channels}, () => new Int16Array(256).fill(-1));
@@ -114,31 +149,6 @@ export function screenPlan(rgba, width, height, shape, mode = 'global') {
     {mode: 'direct', count: channels, channels, colour: shape.colour});
 }
 
-export function screenGroup(setup) {
-  const fill = screenFill(setup.plan);
-  let planes;
-  return (rgba, stride, x0, y0, w, h, target) => {
-    if (!planes || planes[0].length < w * h) planes = Array.from({length: setup.plan.count}, () => new Int16Array(w * h));
-    fill(planes, rgba, stride, x0, y0, w, h);
-    if (setup.depth !== undefined) {
-      const models = planes.map(plane => screenModel(plane, w, h, setup.depth, setup.minLength));
-      const section = new BitWriter(w * h * planes.length + 256);
-      writeModularHeader(section, {useGlobalTree: false});
-      writeScreenModel(section, models)();
-      return section.finish();
-    }
-    const custom = setup.lz ? screenLZ77.create({minLength: setup.minLength, distances: target?.at(-1), distanceCode: setup.distanceCode}) : null;
-    const writer = setup.codes ? new BitWriter(w * h * planes.length + 64) : null;
-    if (writer) writeModularHeader(writer);
-    for (let c = 0; c < planes.length; c++) {
-      const code = writer ? setup.codes[c] : target[c];
-      if (custom) custom.code(writer, code, planes[c], w, h, setup.leaves[c]);
-      else codeChannel(writer, code, planes[c], w, h, setup.leaves[c]);
-    }
-    return writer?.finish();
-  };
-}
-
 function screenPrefixPrice(freq) {
   const code = buildCode(freq),
     w = new BitWriter(128);
@@ -156,9 +166,9 @@ export function* screenFrameSteps(
   shape,
   colorSpace,
   plan,
-  {predictor = null, frameHeader = null, globalPrefix = null, imageHeader = true, tokenCodec = null, search = null, pooled = false, minLength = 7} = {}
+  {predictor = null, frameHeader = null, globalPrefix = null, imageHeader = true, tokenCodec = null, search = null, minLength = 7} = {}
 ) {
-  if (search) return yield* screenDetailedFrameSteps(rgba, width, height, shape, colorSpace, plan, {frameHeader, globalPrefix, imageHeader, pooled, minLength, ...search});
+  if (search) return yield* screenDetailedFrameSteps(rgba, width, height, shape, colorSpace, plan, {frameHeader, globalPrefix, imageHeader, minLength, ...search});
   const layout = groupLayout(width, height),
     groups = layout.groupsX * layout.groupsY;
   const count = layout.single ? plan.meta.length + plan.count : Math.max(plan.meta.length, plan.count);
@@ -201,26 +211,19 @@ export function* screenFrameSteps(
   }
   const freqs = leaves.map(() => new Uint32Array(ALPHABET));
   const distances = tokenCodec ? new Uint32Array(64) : null, custom = tokenCodec?.create({distances, minLength});
-  const parallel = pooled && !layout.single && (!tokenCodec || tokenCodec === screenLZ77);
-  const setup = {plan: plan.setup, leaves, lz: !!tokenCodec, minLength};
   const code = (writer, target, plane, w, h, l, s) =>
     custom ? custom.code(writer, target, plane, w, h, l, s) : codeChannel(writer, target, plane, w, h, l);
   for (let c = 0; c < plan.meta.length; c++) {
     const m = plan.meta[c];
     code(null, freqs[c], m.plane, m.width, m.height, leaves[c], c);
   }
-  if ((yield* groupPass({pooled: parallel, kind: 'screen', data: rgba, width, height,
-    setup: {...setup, sizes: [...freqs.map(freq => freq.length), ...(distances ? [64] : [])]},
-    at: g => (g + 1) / (2 * groups), stop: () => true}, groups, g => {
+  if ((yield* groupPass({at: g => (g + 1) / (2 * groups), stop: () => true}, groups, g => {
     visit(g, (w, h) => {
       for (let c = 0; c < plan.count; c++) {
         const s = slot(c);
         code(null, freqs[s], planes[c], w, h, leaves[s], s);
       }
     });
-  }, (g, counts) => {
-    addCounts(freqs, counts);
-    if (distances) addCounts([distances], [counts.at(-1)]);
   })) === null) return null;
   const header = new BitWriter(256);
   if (imageHeader) writeImageHeader(header, width, height, shape.colour, shape.alpha, {colorSpace});
@@ -244,9 +247,7 @@ export function* screenFrameSteps(
     sections.push(global.finish());
     for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
   }
-  if ((yield* groupPass({pooled: parallel, kind: 'screen', data: rgba, width, height,
-    setup: {...setup, codes: histograms.slice(1).map(histogram => histogram.code), distanceCode: custom ? histograms[0].code : undefined},
-    at: g => 0.5 + (g + 1) / (2 * groups), stop: () => true}, groups, g => {
+  if ((yield* groupPass({at: g => 0.5 + (g + 1) / (2 * groups), stop: () => true}, groups, g => {
     visit(g, (w, h) => {
       const out = layout.single ? global : new BitWriter(w * h * plan.count + 64);
       if (!layout.single) writeModularHeader(out);
@@ -256,12 +257,12 @@ export function* screenFrameSteps(
       }
       sections.push(out.finish());
     });
-  }, (g, bytes) => sections.push(bytes))) === null) return null;
+  })) === null) return null;
   return assembleCodestream(header, sections);
 }
 
 function* screenDetailedFrameSteps(rgba, width, height, shape, colorSpace, plan,
-  {dim = 1024, depth = 4, frameHeader = null, globalPrefix = null, imageHeader = true, pooled = false, minLength = 7}) {
+  {dim = 1024, depth = 4, frameHeader = null, globalPrefix = null, imageHeader = true, minLength = 7, predictors = undefined, codeBudget = 15}) {
   const layout = groupLayout(width, height, dim), groups = layout.groupsX * layout.groupsY,
     header = new BitWriter(256), global = new BitWriter(4096), sections = [];
   let planes;
@@ -270,29 +271,28 @@ function* screenDetailedFrameSteps(rgba, width, height, shape, colorSpace, plan,
   else writeModularFrameHeader(header, {alpha: shape.alpha, shift: dim === 1024 ? 3 : dim === 512 ? 2 : 1});
   if (globalPrefix) globalPrefix(global);
   global.write(1, 1); global.write(1, 1);
-  const meta = plan.meta.map(m => screenModel(m.plane, m.width, m.height, depth, minLength));
+  const meta = plan.meta.map(m => screenModel(m.plane, m.width, m.height, depth, minLength, predictors));
   let sectionBytes = 0;
   const append = section => { sectionBytes += section.length; admitOutputSize(sectionBytes); sections.push(section); };
   if (!layout.single) {
-    const write = writeScreenModel(global, meta.length ? meta : [screenModel(new Int16Array(1), 1, 1, depth, minLength)]);
+    const write = writeScreenModel(global, meta.length ? meta : [screenModel(new Int16Array(1), 1, 1, depth, minLength)], codeBudget);
     writeModularHeader(global, {transforms: plan.transforms});
     if (meta.length) write();
     append(global.finish());
     for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
   }
-  if ((yield* groupPass({pooled: pooled && !layout.single, kind: 'screen', data: rgba, width, height, dim,
-    setup: {plan: plan.setup, depth, minLength}, at: g => (g + 1) / groups, stop: () => true}, groups, g => {
+  if ((yield* groupPass({at: g => (g + 1) / groups, stop: () => true}, groups, g => {
     const x = g % layout.groupsX * dim, y = ((g / layout.groupsX) | 0) * dim,
       w = Math.min(dim, width - x), h = Math.min(dim, height - y);
     planes ||= Array.from({length: plan.count}, () => new Int16Array(Math.min(width, dim) * Math.min(height, dim)));
     plan.fill(planes, x, y, w, h);
-    const models = planes.map(plane => screenModel(plane, w, h, depth, minLength)),
+    const models = planes.map(plane => screenModel(plane, w, h, depth, minLength, predictors)),
       section = layout.single ? global : new BitWriter(w * h * plan.count + 256);
     if (!layout.single) writeModularHeader(section, {useGlobalTree: false});
-    const write = writeScreenModel(section, layout.single ? [...meta, ...models] : models);
+    const write = writeScreenModel(section, layout.single ? [...meta, ...models] : models, codeBudget);
     if (layout.single) writeModularHeader(section, {transforms: plan.transforms});
     write(); append(section.finish());
-  }, (g, bytes) => append(bytes))) === null) return null;
+  })) === null) return null;
   return assembleCodestream(header, sections);
 }
 

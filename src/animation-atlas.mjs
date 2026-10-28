@@ -2,7 +2,8 @@
 import {BitWriter, scaled} from './bits.mjs';
 import {fault, guard} from './admit.mjs';
 import {checkSignal} from './async-job.mjs';
-import {admitAnimation, animationSteps, partSteps} from './animation-frames.mjs';
+import {admitAnimation, animationSteps, partSteps, useMeasuredSearch} from './animation-frames.mjs';
+import {searchV6} from './photo-v6-search.mjs';
 import {losslessSteps, inspectPixels, shapeFloors} from './lossless.mjs';
 import {writeImageHeader} from './frame.mjs';
 import {readStill, readFrames, metadataKey, writeStillFrame} from './framing.mjs';
@@ -87,7 +88,7 @@ function* atlasAnimationSteps(animation, search, mode, supplied) {
   }
   const shared = sharedAtlas(plan, mode === 'force');
   let candidate;
-  try { candidate = yield* span(animationSteps(animation, false, shared), .55, .45); }
+  try { candidate = yield* span(animationSteps(animation, shared), .55, .45); }
   catch (error) { if (mode === 'force' || error.code !== 'JXL_SIZE') throw error; }
   if (mode === 'force' && !shared.used) throw fault('JXL_INPUT', 'No atlas placement fits a displayed animation rectangle.');
   yield 1;
@@ -101,6 +102,7 @@ export function encodeAnimationAtlas(animation, options) {
 }
 
 export function encodeAnimationAtlasSteps(animation, options = {}) {
+  useMeasuredSearch(searchV6);
   const admitted = admitAnimation(animation, options), mode = options.atlasMode ?? 'auto', search = atlasSearchOptions(options.atlasSearch);
   if (!['auto', 'force', 'off'].includes(mode)) throw fault('JXL_INPUT', 'atlasMode is auto, force or off.');
   if (options.progress !== undefined && typeof options.progress !== 'function') throw fault('JXL_INPUT', 'progress is a function.');

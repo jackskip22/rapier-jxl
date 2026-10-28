@@ -103,17 +103,20 @@ export function jpegReconstruction(bytes) {
   admitOutputSize(bytes.length);
   if (bytes[0] === 255 && bytes[1] === 10) return null;
   if (!SIGNATURE.every((byte, i) => bytes[i] === byte)) throw invalidBox('Invalid JPEG XL signature.');
-  let reconstruction = null;
+  let reconstruction = null, exif = null, xml = null;
   const parts = [];
   for (const box of boxes(bytes)) {
     if (box.decoded === RECONSTRUCTION) {
-      if (reconstruction || box.type === BROB) throw invalidBox('Unsupported JPEG reconstruction box.');
+      if (box.type === BROB) throw invalidBox('JPEG reconstruction data must not be in a brob box.');
+      if (reconstruction) throw invalidBox('Repeated JPEG reconstruction data.');
       reconstruction = bytes.subarray(box.body, box.end);
     }
+    if (box.decoded === EXIF && !exif) { exif = bytes.subarray(box.body + (box.type === BROB ? 4 : 0), box.end); exif.compressed = box.type === BROB; }
+    if (box.decoded === XML && !xml) { xml = bytes.subarray(box.body + (box.type === BROB ? 4 : 0), box.end); xml.compressed = box.type === BROB; }
     if (box.type === CODESTREAM || box.type === PARTIAL) parts.push(bytes.subarray(box.body + (box.type === PARTIAL ? 4 : 0), box.end));
   }
   if (!reconstruction) return null;
   const codestream = parts.length === 1 ? parts[0] : new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   if (parts.length > 1) { let at = 0; for (const part of parts) { codestream.set(part, at); at += part.length; } }
-  return {reconstruction, codestream};
+  return {reconstruction, exif, xml, codestream};
 }

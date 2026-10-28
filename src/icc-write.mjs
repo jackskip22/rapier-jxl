@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
-import {BitWriter} from './bits.mjs';
+import {BitWriter, packSigned} from './bits.mjs';
 import {fault} from './fault.mjs';
 import {buildCode, countToken, uintConfig, writeHistograms, writeHybrid} from './prefix.mjs';
 import {screenMatches} from './screen-lz77.mjs';
 import {inspectICC} from './icc-profile.mjs';
+import {profileFields} from './icc-transform.mjs';
 
 const ICC_LEVEL5_BYTES = 4 * 1024 * 1024, ICC_WINDOW = 1 << 20;
 const LITERAL = uintConfig(8), LENGTH = uintConfig(4), DISTANCE = uintConfig(4);
@@ -135,8 +136,31 @@ export function iccSpace(profile, {level, compression} = {}, made) {
   if (made) prepared.set(space, made);
   return space;
 }
-export function headerOf(space) {
+export function headerOf(space, xyb = false) {
+  if (xyb) {
+    if (!named.has(space)) named.set(space, namedHeader(profileFields(space.icc)));
+    const made = named.get(space);
+    if (made) return made;
+  }
   let made = prepared.get(space);
   if (!made) prepared.set(space, made = prepareICC(space.icc, {level: space.level, compression: space.compression}));
   return made;
+}
+
+const named = new WeakMap(), ICC_ENUM = [[0, 0], [0, 1], [4, 2], [6, 18]], ICC_XY = [[19, 0], [19, 524288], [20, 1048576], [21, 2097152]];
+function namedHeader(fields) {
+  if (!fields) return null;
+  const colorData = new BitWriter(64), xy = pair => { for (const v of pair) colorData.writeU32(ICC_XY, packSigned(Math.round(v * 1e6))); };
+  colorData.write(2, 0);
+  colorData.writeU32(ICC_ENUM, fields.gray ? 1 : 0);
+  colorData.writeU32(ICC_ENUM, fields.white.enum);
+  if (fields.white.enum === 2) xy(fields.white.xy);
+  if (!fields.gray) {
+    colorData.writeU32(ICC_ENUM, fields.primaries.enum);
+    if (fields.primaries.enum === 2) fields.primaries.xy.forEach(xy);
+  }
+  colorData.write(1, fields.gamma ? 1 : 0);
+  if (fields.gamma) colorData.write(24, Math.round(fields.gamma * 1e7)); else colorData.writeU32(ICC_ENUM, fields.transfer);
+  colorData.writeU32(ICC_ENUM, fields.intent);
+  return {colorData, iccData: null};
 }

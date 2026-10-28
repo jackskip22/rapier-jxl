@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-import {BitWriter, LIMITS, complete} from './bits.mjs';
+import {LIMITS} from './limits.mjs';
+import {BitWriter, complete} from './bits.mjs';
 import {fault, job, admitSize, admitOutputSize} from './admit.mjs';
 import {encodeChannelsSteps} from './channels.mjs';
 import {prepareICC} from './icc.mjs';

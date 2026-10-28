@@ -1,0 +1,2 @@
+/*! rapier-jxl 7.0.0 | MIT */
+import{a as m}from"./chunk-WYQBEJ6Q.mjs";import"./chunk-DRP72F5Q.mjs";import"./chunk-UZBOSTJN.mjs";import"./chunk-LP6ERT4E.mjs";function o(o,r){return m().format(o,r)}export{o as encode};

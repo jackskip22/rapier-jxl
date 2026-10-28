@@ -14,6 +14,6 @@ export function encodePaintingSteps(data, width, height, options) {
   return job(paintingSteps(data, width, height, {colorSpace}));
 }
 
-export function* paintingSteps(data, width, height, {colorSpace, pooled = false} = {}) {
-  return yield* losslessSteps(data, width, height, {colorSpace, pooled});
+export function* paintingSteps(data, width, height, {colorSpace} = {}) {
+  return yield* losslessSteps(data, width, height, {colorSpace});
 }

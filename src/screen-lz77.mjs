@@ -3,6 +3,7 @@ import {BitWriter, packSigned} from './bits.mjs';
 import {buildCode, priceCode, canonicalCodes, writePrefixCode, writeHistograms, uintConfig, hybridToken, countToken, writeHybrid, writeUintConfig} from './prefix.mjs';
 import {ALPHABET, LZ77, RESIDUAL_CONFIG, leaf, channelTree, writeTree} from './modular.mjs';
 import {kernelHooks} from './kernel-hooks.mjs';
+import {SCREEN_INTEGER_CONFIGS, screenDistanceMap} from './screen-codes.mjs';
 const SCREEN_DISTANCE_CONFIG = uintConfig(4),
   SCREEN_HASH_SIZE = 65536;
 
@@ -167,9 +168,9 @@ function screenRowMatches(values, width, emit, depth, minLength) {
   }
 }
 
-export function screenModel(plane, width, height, depth = 4, minLength = 7) {
+export function screenModel(plane, width, height, depth = 4, minLength = 7, predictors = [0, 1, 2, 5]) {
   let best;
-  for (const predictor of [0, 1, 2, 5]) {
+  for (const predictor of predictors) {
     const pieces = [], freqs = new Uint32Array(ALPHABET), distances = new Uint32Array(64), token = [0, 0, 0];
     let raw = 0;
     const count = (config, value, target, base = 0) => {
@@ -194,35 +195,6 @@ export function screenModel(plane, width, height, depth = 4, minLength = 7) {
   return best;
 }
 
-const SCREEN_INTEGER_CONFIGS = [
-  uintConfig(4), uintConfig(0), uintConfig(1), uintConfig(2), uintConfig(3), uintConfig(6), uintConfig(8),
-  uintConfig(4, 0, 1), uintConfig(4, 0, 2), uintConfig(4, 0, 3), uintConfig(4, 0, 4),
-  uintConfig(4, 1, 3), uintConfig(4, 1, 1), uintConfig(4, 2, 2), uintConfig(3, 0, 1)
-];
-const SCREEN_SPECIAL_DISTANCES = Int8Array.of(
-  0, 1, 1, 0, 1, 1, -1, 1, 0, 2, 2, 0, 1, 2, -1, 2,
-  2, 1, -2, 1, 2, 2, -2, 2, 0, 3, 3, 0, 1, 3, -1, 3,
-  3, 1, -3, 1, 2, 3, -2, 3, 3, 2, -3, 2, 0, 4, 4, 0,
-  1, 4, -1, 4, 4, 1, -4, 1, 3, 3, -3, 3, 2, 4, -2, 4,
-  4, 2, -4, 2, 0, 5, 3, 4, -3, 4, 4, 3, -4, 3, 5, 0,
-  1, 5, -1, 5, 5, 1, -5, 1, 2, 5, -2, 5, 5, 2, -5, 2,
-  4, 4, -4, 4, 3, 5, -3, 5, 5, 3, -5, 3, 0, 6, 6, 0,
-  1, 6, -1, 6, 6, 1, -6, 1, 2, 6, -2, 6, 6, 2, -6, 2,
-  4, 5, -4, 5, 5, 4, -5, 4, 3, 6, -3, 6, 6, 3, -6, 3,
-  0, 7, 7, 0, 1, 7, -1, 7, 5, 5, -5, 5, 7, 1, -7, 1,
-  4, 6, -4, 6, 6, 4, -6, 4, 2, 7, -2, 7, 7, 2, -7, 2,
-  3, 7, -3, 7, 7, 3, -7, 3, 5, 6, -5, 6, 6, 5, -6, 5,
-  8, 0, 4, 7, -4, 7, 7, 4, -7, 4, 8, 1, 8, 2, 6, 6,
-  -6, 6, 8, 3, 5, 7, -5, 7, 7, 5, -7, 5, 8, 4, 6, 7,
-  -6, 7, 7, 6, -7, 6, 8, 5, 7, 7, -7, 7, 8, 6, 8, 7
-);
-function screenDistanceMap(width) {
-  const map = new Map();
-  for (let i = SCREEN_SPECIAL_DISTANCES.length - 2; i >= 0; i -= 2)
-    map.set(Math.max(1, SCREEN_SPECIAL_DISTANCES[i] + width * SCREEN_SPECIAL_DISTANCES[i + 1]), i / 2);
-  return map;
-}
-
 function screenIntegerPrice(freqs, config, raw) {
   const code = priceCode(freqs), writer = new BitWriter(256);
   writeHistograms(writer, {contextMap: new Uint8Array(1), histograms: [{config, code}]});
@@ -231,9 +203,10 @@ function screenIntegerPrice(freqs, config, raw) {
   return {code, bits};
 }
 
-export function writeScreenModel(writer, models) {
+export function writeScreenModel(writer, models, codeBudget = 15) {
   const minLength = models[0].minLength;
   if (models.some(model => model.minLength !== minLength)) throw new Error('A screen stream has one copy minimum.');
+  const configs = codeBudget >= SCREEN_INTEGER_CONFIGS.length ? SCREEN_INTEGER_CONFIGS : SCREEN_INTEGER_CONFIGS.slice(0, codeBudget);
   const ordered = writeTree(writer, channelTree(models.map(model => model.leaf))),
     counts = [], distances = new Map(), token = [0, 0, 0];
   for (const model of models) {
@@ -245,7 +218,7 @@ export function writeScreenModel(writer, models) {
         distances.set(distance, (distances.get(distance) || 0) + 1);
       } else values.set(value, (values.get(value) || 0) + 1);
     }
-    const literals = SCREEN_INTEGER_CONFIGS.map(config => {
+    const literals = configs.map(config => {
       const freqs = new Uint32Array(512); let raw = 0;
       for (const [value, n] of values) { hybridToken(config, value, token); if (token[0] >= LZ77.minSymbol) return null; freqs[token[0]] += n; raw += token[1] * n; }
       return {config, freqs, raw};
@@ -274,7 +247,7 @@ export function writeScreenModel(writer, models) {
   };
   for (const count of counts) count.fixed = count.lengths.size ? null : cheapest(count);
   let length;
-  for (const config of distances.size ? SCREEN_INTEGER_CONFIGS : [LZ77.lengthConfig]) {
+  for (const config of distances.size ? configs : [LZ77.lengthConfig]) {
     const codes = [], configs = [], parameter = new BitWriter(16);
     writeUintConfig(parameter, config, 8);
     let bits = parameter.bitLength;
@@ -286,7 +259,7 @@ export function writeScreenModel(writer, models) {
   }
   let distance;
   const map = distances.size ? screenDistanceMap(Math.max(...models.map(model => model.width))) : null;
-  if (map) for (const spatial of [false, true]) for (const config of SCREEN_INTEGER_CONFIGS) {
+  if (map) for (const spatial of [false, true]) for (const config of configs) {
     const freqs = new Uint32Array(512);
     let raw = 0;
     for (const [d, n] of distances) {

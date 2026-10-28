@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
-import {PHOTO_LIMITS, complete, part} from './bits.mjs';
-import {prepareV6, photoV6Image, V6} from './photo-v6.mjs';
+import {PHOTO_LIMITS} from './limits.mjs';
+import {complete, part} from './bits.mjs';
+import {V6, GABORISH} from './photo-v6.mjs';
+import {photoXYBBands} from './photo-bands.mjs';
 import {admitOptions, admitPixels, admitSampleFormat, fault, job} from './admit.mjs';
 import {admitEffort} from './effort-level.mjs';
 import {losslessSteps, nativeSteps} from './lossless.mjs';
@@ -12,7 +14,6 @@ import {admitNoise, photonNoise} from './noise.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
 import {photoXYBSteps, preferXYB} from './photo-xyb.mjs';
 import {admitPhotoFilter} from './photo-job.mjs';
-import {coefficientEffortSteps} from './coefficient-effort.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {admitLFFrames, lfFrameSteps, prependLFFrames} from './lf-frames.mjs';
 import {cropPhotoCanvas, photoLevelContainer} from './photo-crop.mjs';
@@ -44,14 +45,16 @@ export function encodePhotoSteps(data, width, height, options = {}) {
   return job(steps(data, layout.codedWidth, layout.codedHeight, {quality, colorSpace, effort, samples, options, progression, noiseLut, strategyOptions, filter, lfLevels, authoredOrderPasses, layout, extras}));
 }
 
-function* photoV6Producer(data, width, height, quality, gaborish = true) {
+function* photoV6Producer(data, width, height, quality, gaborish = true, effort = 7) {
+  if (gaborish && effort <= 3) { yield 0; return complete(photoXYBSteps(data, width, height, quality, {...V6, fast: true})); }
+  if (gaborish) return yield* photoXYBBands(data, width, height, quality, {...V6, ...GABORISH});
   yield 0;
-  return gaborish ? photoV6Image(prepareV6(data, width, height), quality) : complete(photoXYBSteps(data, width, height, quality, V6));
+  return complete(photoXYBSteps(data, width, height, quality, V6));
 }
 
 function* steps(data, width, height, {quality, colorSpace, effort, samples, options, progression, noiseLut, strategyOptions, filter, lfLevels, authoredOrderPasses, layout, extras}) {
   if (!samples.native8) return yield* nativeSteps(data, width, height, {quality, samples, effort});
-  if (quality >= 100) return yield* losslessSteps(data, width, height, {colorSpace});
+  if (quality >= 100) return yield* losslessSteps(data, width, height, {colorSpace, fast: effort < 2});
   const padded = padPhotoLayout(data, width, height, layout, noiseLut);
   if (padded) ({data, width, height} = padded);
   const variable = strategyOptions.variable;
@@ -62,7 +65,7 @@ function* steps(data, width, height, {quality, colorSpace, effort, samples, opti
     return padded ? cropPhotoCanvas(bytes, layout.width, layout.height) : bytes;
   };
   const producer = variable ? strategyCoefficientSteps(data, width, height, quality, colorSpace, options, strategyOptions) :
-    colorSpace === 'srgb' && (lfLevels || noiseLut || preferXYB(data, width, height)) ? photoV6Producer(data, width, height, quality, !lfLevels && !noiseLut) :
+    colorSpace === 'srgb' && (lfLevels || noiseLut || preferXYB(data, width, height)) ? photoV6Producer(data, width, height, quality, !lfLevels && !noiseLut, effort) :
     photoCoefficientSteps(data, width, height, quality, colorSpace);
   const image = yield* part(producer, 0, lfLevels ? 3 : 2);
   applyPhotoLayout(image, layout, !!padded);
@@ -73,8 +76,13 @@ function* steps(data, width, height, {quality, colorSpace, effort, samples, opti
   image.authoredOrderPasses = authoredOrderPasses;
   frames = lfLevels && (yield* part(lfFrameSteps(image, lfLevels), 1, 3));
   if (!variable) {
-    const bytes = yield* part(effort >= 5 ? coefficientAnsSteps(image, effort) : coefficientEffortSteps(image, effort), lfLevels ? 2 : 1, lfLevels ? 3 : 2);
-    return finish(bytes);
+    const bytes = yield* part(coefficientAnsSteps(image, effort), lfLevels ? 2 : 1, lfLevels ? 3 : 2);
+    const ordinary = effort >= 4 && !padded && layout.factor === 1 && !layout.colorTransform && !layout.xybTransform && !extras &&
+      !progression && !noiseLut && !lfLevels && !authoredOrderPasses && options.orientation === undefined && colorSpace === 'srgb' &&
+      preferXYB(data, width, height);
+    if (!ordinary) return finish(bytes);
+    const floor = complete(coefficientAnsSteps(complete(photoXYBSteps(data, width, height, quality, {...V6, fast: true})), 1));
+    return finish(floor.length <= bytes.length ? floor : bytes);
   }
   const shared = {}, plan = effort >= 3 ? {clusters: {maxClusters: 32, newClusterCost: 160}} : {};
   if (image.wideCoefficients) return finish(yield* part(varDCTSteps(image, {...plan, coding: quantParamCoding}, shared), lfLevels ? 2 : 1, lfLevels ? 3 : 2));

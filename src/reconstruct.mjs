@@ -268,11 +268,40 @@ export function reconstruct(image) {
   });
 }
 
-export function toRGBA(linear, width, height) {
-  const out = new Uint8ClampedArray(width * height * 4), enc = v => v <= 0.0031308 ? 12.92 * v : 1.055 * exactPow(v, 1 / 2.4) - 0.055;
-  for (let i = 0; i < width * height; i++) {
-    for (let c = 0; c < 3; c++) out[i * 4 + c] = Math.round(255 * Math.min(1, Math.max(0, enc(linear[c][i]))));
-    out[i * 4 + 3] = 255;
+export function toRGBA(linear, width, height) { return toRGBAInto(linear, 0, width * height, new Uint8ClampedArray(width * height * 4), 0); }
+export function toRGBAInto(linear, from, count, out, at) {
+  if (linear.every(p => p instanceof Float32Array)) {
+    const T = RGBA_THRESHOLDS ??= rgbaThresholds();
+    for (let i = 0; i < count; i++) {
+      for (let c = 0; c < 3; c++) {
+        const v = linear[c][from + i];
+        let lo = 0, hi = 255;
+        while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (v >= T[mid]) lo = mid; else hi = mid - 1; }
+        out[(at + i) * 4 + c] = lo;
+      }
+      out[(at + i) * 4 + 3] = 255;
+    }
+    return out;
+  }
+  return toRGBAExact(linear, from, count, out, at);
+}
+function toRGBAExact(linear, from, count, out, at) {
+  const enc = v => v <= 0.0031308 ? 12.92 * v : 1.055 * exactPow(v, 1 / 2.4) - 0.055;
+  for (let i = 0; i < count; i++) {
+    for (let c = 0; c < 3; c++) out[(at + i) * 4 + c] = Math.round(255 * Math.min(1, Math.max(0, enc(linear[c][from + i]))));
+    out[(at + i) * 4 + 3] = 255;
+  }
+  return out;
+}
+
+let RGBA_THRESHOLDS = null;
+function rgbaThresholds() {
+  const one = new Float32Array(1), zero = new Float32Array(1), bits = new Uint32Array(1), f = new Float32Array(bits.buffer), out = new Float32Array(256);
+  const level = b => { bits[0] = b; one[0] = f[0]; return toRGBAExact([one, zero, zero], 0, 1, new Uint8ClampedArray(4), 0)[0]; };
+  for (let k = 1; k < 256; k++) {
+    let lo = 0, hi = 0x3f800000;
+    while (lo < hi) { const mid = (lo + hi) >>> 1; if (level(mid) >= k) hi = mid; else lo = mid + 1; }
+    bits[0] = lo; out[k] = f[0];
   }
   return out;
 }

@@ -1,4 +1,4 @@
-// Rapier's JPEG XL encoder: the modular sub-bitstream. MIT (LICENSE).
+// Rapier's JPEG XL encoder: the modular sub-bitstream. MIT (images/jxl/LICENSE).
 import {kernelHooks} from './kernel-hooks.mjs';
 import {packSigned} from './bits.mjs';
 import {buildCode, writeHistograms, uintConfig, countToken, writeHybrid} from './prefix.mjs';
@@ -81,9 +81,43 @@ export function writeChannelHistograms(w, orderedLeaves, freqs, histogramOf = le
   return histograms;
 }
 
+function codeGradient(w, target, plane, width, height, config, raw) {
+  const lengthConfig = RUN_CONFIG;
+  let run = 0;
+  const emit = (value, tokenConfig = config, base = 0) => {
+    if (w) writeHybrid(w, target, tokenConfig, value, base);
+    else if (raw && !base) target[value]++;
+    else countToken(tokenConfig, value, target, raw ? target.length - 33 : base);
+  };
+  const flush = () => {
+    if (!run) return;
+    if (run >= MIN_RUN_LENGTH + 1) { emit(0); emit(run - MIN_RUN_LENGTH - 1, lengthConfig, MIN_RUN_SYMBOL); }
+    else for (let i = 0; i < run; i++) emit(0);
+    run = 0;
+  };
+  for (let y = 0, index = 0; y < height; y++) {
+    for (let x = 0; x < width; x++, index++) {
+      let pred = 0;
+      if (x | y) {
+        const left = x ? plane[index - 1] : plane[index - width];
+        const top = y ? plane[index - width] : left;
+        const nw = x && y ? plane[index - width - 1] : left, grad = left + top - nw;
+        const lo = left < top ? left : top, hi = left < top ? top : left;
+        pred = grad < lo ? lo : grad > hi ? hi : grad;
+      }
+      const r = (plane[index] - pred) | 0;
+      if (!r) run++;
+      else { flush(); emit(r >= 0 ? r + r : -r - r - 1); }
+    }
+  }
+  flush();
+}
+
 export function codeChannel(w, target, plane, width, height, leaf, raw = false, visit, residuals, beginY = 0) {
   if (!visit && !residuals && kernelHooks.channel?.(w, target, plane, width, height, leaf, raw)) return;
   const predictor = leaf.predictor, offset = leaf.offset, multiplier = leaf.multiplier;
+  if (!visit && !residuals && beginY === 0 && predictor === GRADIENT_PREDICTOR && multiplier === 1 && offset === 0)
+    return codeGradient(w, target, plane, width, height, leaf.config || RESIDUAL_CONFIG, raw);
   const config = leaf.config || RESIDUAL_CONFIG, lengthConfig = RUN_CONFIG;
   let run = 0;
   const emit = (value, tokenConfig = config, base = 0) => {

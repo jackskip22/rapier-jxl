@@ -1,12 +1,13 @@
-// JPEG coefficient reader. MIT (LICENSE).
-import {JPEG_LIMITS} from './bits.mjs';
+// JPEG coefficient reader. MIT (images/jxl/LICENSE).
+import {JPEG_LIMITS} from './limits.mjs';
 import {prepareICC} from './icc-write.mjs';
 import {inspectICC} from './icc-profile.mjs';
+import {ZIGZAG, jpegError} from './jpeg-tables.mjs';
 
-export const ZIGZAG = [0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28,
-  35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63];
+export {ZIGZAG, jpegError};
 
-export function jpegError(message, code = 'JXL_JPEG') { return Object.assign(new Error('JPEG: ' + message), {code}); }
+
+
 
 function buildHuffman(counts, symbols) {
   const lookup = new Uint16Array(65536);
@@ -251,148 +252,168 @@ export function admitScan(frame, scan, ss, se, ah, al) {
   }
 }
 
-function decodeScan(bytes, start, frame, scan, ss, se, ah, al, restartInterval, choices) {
-  admitScan(frame, scan, ss, se, ah, al);
-  let pos = start, buffer = 0, count = 0, pad = 0, marker = false;
-  const fill = () => {
-    while (count <= 24) {
-      let byte = 0;
-      if (marker || pos >= bytes.length) { marker = true; pad += 8; }
-      else {
-        byte = bytes[pos];
-        if (byte === 0xFF) {
-          const next = bytes[pos + 1];
-          if (next === 0) pos += 2;
-          else if (next === 0xFF) { pos++; continue; }
-          else { marker = true; byte = 0; pad += 8; }
-        } else pos++;
+class ScanReader {
+  constructor(bytes, start, frame, scan, ss, se, ah, al, choices) {
+    this.bytes = bytes; this.pos = start; this.clean = new Uint8Array(0); this.bit = 0; this.limit = 0;
+    this.scan = scan; this.ss = ss; this.se = se; this.ah = ah; this.al = al; this.choices = choices;
+    this.progressive = frame.progressive; this.eobrun = -1; this.blockIndex = 0;
+    this.mode = !this.progressive ? 0 : ss === 0 ? (ah === 0 ? 1 : 2) : (ah === 0 ? 3 : 4);
+  }
+  load() {
+    const bytes = this.bytes;
+    let end = this.pos;
+    while (end < bytes.length && !(bytes[end] === 0xFF && bytes[end + 1] !== 0 && bytes[end + 1] !== 0xFF)) end++;
+    if (this.clean.length < end - this.pos + 4) this.clean = new Uint8Array(end - this.pos + 4);
+    const clean = this.clean;
+    let n = 0, pos = this.pos;
+    while (pos < bytes.length) {
+      const byte = bytes[pos];
+      if (byte === 0xFF) {
+        const next = bytes[pos + 1];
+        if (next === 0) { clean[n++] = 0xFF; pos += 2; continue; }
+        if (next === 0xFF) { pos++; continue; }
+        break;
       }
-      buffer = ((buffer << 8) | byte) >>> 0; count += 8;
+      clean[n++] = byte; pos++;
     }
-  };
-  const short = () => jpegError('a scan cut short');
-  const receive = n => { if (!n) return 0; fill(); if (n > count - pad) throw short(); const value = (buffer >>> (count - n)) & ((1 << n) - 1); count -= n; return value; };
-  const extend = (value, n) => value < (1 << (n - 1)) ? value - (1 << n) + 1 : value;
-  const decode = table => {
+    clean.fill(0, n, n + 4); this.pos = pos; this.bit = 0; this.limit = n * 8;
+  }
+  window() { const clean = this.clean, bit = this.bit, at = bit >>> 3; return ((clean[at] << 24 | clean[at + 1] << 16 | clean[at + 2] << 8 | clean[at + 3]) << (bit & 7)) >>> 0; }
+  receive(n) {
+    if (!n) return 0;
+    if (this.bit + n > this.limit) throw jpegError('a scan cut short');
+    const value = this.window() >>> (32 - n); this.bit += n; return value;
+  }
+  decode(table) {
     if (!table) throw jpegError('a scan without its Huffman table');
-    fill();
-    const entry = table[(buffer >>> (count - 16)) & 0xFFFF];
+    const entry = table[this.window() >>> 16];
     if (!entry) throw jpegError('bad Huffman code');
-    if ((entry >> 8) > count - pad) throw short();
-    count -= entry >> 8;
+    if (this.bit + (entry >> 8) > this.limit) throw jpegError('a scan cut short');
+    this.bit += entry >> 8;
     return entry & 255;
-  };
-  const atMarker = () => {
-    const remaining = count - pad;
-    if (remaining >= 8) throw jpegError('bytes left over in a scan');
-    if (eobrun > 0) throw jpegError('an end-of-band run past its interval');
-    if (remaining && ((buffer >>> pad) & ((1 << remaining) - 1)) !== (1 << remaining) - 1) throw jpegError('bad scan padding');
-    while (pos + 1 < bytes.length && bytes[pos] === 0xFF && bytes[pos + 1] === 0xFF) pos++;
-  };
-  const restart = index => {
-    atMarker();
-    if (!(bytes[pos] === 0xFF && bytes[pos + 1] === 0xD0 + (index & 7))) throw jpegError('a restart marker missing or out of order');
-    pos += 2; buffer = 0; count = 0; pad = 0; marker = false;
-    for (const s of scan) s.component.pred = 0;
-    eobrun = -1;
-  };
-  const dcValue = (s, t) => {
+  }
+  atMarker(final = false) {
+    const remaining = this.limit - this.bit, padding = remaining & 7, fill = remaining >>> 3, bytes = this.bytes;
+    if (fill) {
+      if (!final || this.clean.subarray((this.bit + 7) >>> 3, this.limit >>> 3).some(byte => byte !== 255)) throw jpegError('bytes left over in a scan');
+      if (this.choices) this.choices.fill = fill;
+    }
+    if (this.eobrun > 0) throw jpegError('an end-of-band run past its interval');
+    if (padding && (this.window() >>> (32 - padding)) !== (1 << padding) - 1) throw jpegError('bad scan padding');
+    while (this.pos + 1 < bytes.length && bytes[this.pos] === 0xFF && bytes[this.pos + 1] === 0xFF) this.pos++;
+  }
+  restart(index) {
+    this.atMarker();
+    if (!(this.bytes[this.pos] === 0xFF && this.bytes[this.pos + 1] === 0xD0 + (index & 7))) throw jpegError('a restart marker missing or out of order');
+    this.pos += 2; this.load();
+    for (const s of this.scan) s.component.pred = 0;
+    this.eobrun = -1;
+  }
+  dcValue(s, t) {
     if (t > 11) throw jpegError('a DC value out of range');
-    const diff = t ? extend(receive(t), t) : 0;
+    const diff = t ? extend(this.receive(t), t) : 0;
     s.component.pred += diff;
     if (s.component.pred > 2047 || s.component.pred < -2048) throw jpegError('a DC value out of range');
     return s.component.pred;
-  };
-  const acValue = (size, shift) => {
+  }
+  acValue(size, shift) {
     if (size > 10) throw jpegError('an AC value out of range');
-    const value = extend(receive(size), size) * (1 << shift);
+    const value = extend(this.receive(size), size) * (1 << shift);
     if (value > 1023 || value < -1023) throw jpegError('an AC value out of range');
     return value;
-  };
-  let eobrun = -1, blockIndex = 0;
-  const single = scan.length === 1, progressive = frame.progressive;
-  const baseline = (s, coeffs, at) => {
-    coeffs[at] = dcValue(s, decode(s.dc));
-    acFirst(s, coeffs, at);
-  };
-  const dcFirst = (s, coeffs, at) => {
-    const value = dcValue(s, decode(s.dc)) * (1 << al);
-    if (value > 2047 || value < -2048) throw jpegError('a DC value out of range');
-    coeffs[at] = value;
-  };
-  const dcRefine = (s, coeffs, at) => { if (receive(1)) coeffs[at] |= 1 << al; };
-  const pastBand = () => jpegError('coefficients past the ' + (progressive ? 'band' : 'block'));
-  const acFirst = (s, coeffs, at) => {
-    if (eobrun > 0) { eobrun--; return; }
-    const ended = eobrun === 0;
-    eobrun = -1;
+  }
+  block(s, coeffs, at) {
+    switch (this.mode) {
+      case 0: coeffs[at] = this.dcValue(s, this.decode(s.dc)); this.acFirst(s, coeffs, at); break;
+      case 1: {
+        const value = this.dcValue(s, this.decode(s.dc)) * (1 << this.al);
+        if (value > 2047 || value < -2048) throw jpegError('a DC value out of range');
+        coeffs[at] = value; break;
+      }
+      case 2: if (this.receive(1)) coeffs[at] |= 1 << this.al; break;
+      case 3: this.acFirst(s, coeffs, at); break;
+      default: this.acRefine(s, coeffs, at);
+    }
+    this.blockIndex++;
+  }
+  pastBand() { return jpegError('coefficients past the ' + (this.progressive ? 'band' : 'block')); }
+  acFirst(s, coeffs, at) {
+    if (this.eobrun > 0) { this.eobrun--; return; }
+    const ended = this.eobrun === 0, {ss, se, al, progressive, choices} = this;
+    this.eobrun = -1;
     let zeroRuns = 0;
     for (let k = ss || 1; k <= se;) {
-      const rs = decode(s.ac), r = rs >> 4, size = rs & 15;
+      const rs = this.decode(s.ac), r = rs >> 4, size = rs & 15;
       if (!size) {
         if (r < 15) {
           if (r && !progressive) throw jpegError('an end-of-band run in a sequential scan');
-          if (progressive && k === ss && ended) choices?.resets.push(blockIndex);
-          eobrun = (1 << r) - 1 + (r ? receive(r) : 0); break;
+          if (progressive && k === ss && ended) choices?.resets.push(this.blockIndex);
+          this.eobrun = (1 << r) - 1 + (r ? this.receive(r) : 0); break;
         }
-        k += 16; zeroRuns++; if (k > se + 1) throw pastBand(); continue;
+        k += 16; zeroRuns++; if (k > se + 1) throw this.pastBand(); continue;
       }
       k += r;
-      if (k > se) throw pastBand();
-      coeffs[at + ZIGZAG[k]] = acValue(size, al);
+      if (k > se) throw this.pastBand();
+      coeffs[at + ZIGZAG[k]] = this.acValue(size, al);
       zeroRuns = 0;
       k++;
     }
-    if (zeroRuns) choices?.zeros.push({block: blockIndex, count: zeroRuns});
-  };
-  const acRefine = (s, coeffs, at) => {
-    const p1 = 1 << al, m1 = -1 << al;
+    if (zeroRuns) choices?.zeros.push({block: this.blockIndex, count: zeroRuns});
+  }
+  acRefine(s, coeffs, at) {
+    const {ss, se, al, choices} = this, p1 = 1 << al, m1 = -1 << al;
     let k = ss;
-    if (eobrun <= 0) {
-      const ended = eobrun === 0;
-      eobrun = -1;
+    if (this.eobrun <= 0) {
+      const ended = this.eobrun === 0;
+      this.eobrun = -1;
       for (; k <= se; k++) {
-        const rs = decode(s.ac);
+        const rs = this.decode(s.ac);
         let r = rs >> 4, value = 0;
         const size = rs & 15;
-        if (size) { if (size !== 1) throw jpegError('a bad refinement code'); value = receive(1) ? p1 : m1; }
-        else if (r !== 15) { if (k === ss && ended) choices?.resets.push(blockIndex); eobrun = 1 << r; if (r) eobrun += receive(r); break; }
+        if (size) { if (size !== 1) throw jpegError('a bad refinement code'); value = this.receive(1) ? p1 : m1; }
+        else if (r !== 15) { if (k === ss && ended) choices?.resets.push(this.blockIndex); this.eobrun = 1 << r; if (r) this.eobrun += this.receive(r); break; }
         for (; k <= se; k++) {
           const z = at + ZIGZAG[k];
-          if (coeffs[z] !== 0) { if (receive(1) && (coeffs[z] & p1) === 0) coeffs[z] += coeffs[z] >= 0 ? p1 : m1; }
+          if (coeffs[z] !== 0) { if (this.receive(1) && (coeffs[z] & p1) === 0) coeffs[z] += coeffs[z] >= 0 ? p1 : m1; }
           else if (--r < 0) break;
         }
         if (r >= 0 || (value && k > se)) throw jpegError('coefficients past the band');
         if (value) coeffs[at + ZIGZAG[k]] = value;
       }
     }
-    if (eobrun > 0) {
+    if (this.eobrun > 0) {
       for (; k <= se; k++) {
         const z = at + ZIGZAG[k];
-        if (coeffs[z] !== 0 && receive(1) && (coeffs[z] & p1) === 0) coeffs[z] += coeffs[z] >= 0 ? p1 : m1;
+        if (coeffs[z] !== 0 && this.receive(1) && (coeffs[z] & p1) === 0) coeffs[z] += coeffs[z] >= 0 ? p1 : m1;
       }
-      eobrun--;
+      this.eobrun--;
     }
-  };
-  const decodeBlock = !progressive ? baseline : ss === 0 ? (ah === 0 ? dcFirst : dcRefine) : (ah === 0 ? acFirst : acRefine);
-  const block = (s, coeffs, at) => { decodeBlock(s, coeffs, at); blockIndex++; };
+  }
+}
+const extend = (value, n) => value < (1 << (n - 1)) ? value - (1 << n) + 1 : value;
+
+function decodeScan(bytes, start, frame, scan, ss, se, ah, al, restartInterval, choices) {
+  admitScan(frame, scan, ss, se, ah, al);
+  const reader = new ScanReader(bytes, start, frame, scan, ss, se, ah, al, choices), single = scan.length === 1;
   for (const s of scan) s.component.pred = 0;
+  reader.load();
   const first = scan[0].component;
   const total = single ? first.blocksW * first.blocksH : frame.mcusX * frame.mcusY;
   for (let unit = 0; unit < total; unit++) {
-    if (restartInterval && unit > 0 && unit % restartInterval === 0) restart(unit / restartInterval - 1);
+    if (restartInterval && unit > 0 && unit % restartInterval === 0) reader.restart(unit / restartInterval - 1);
     if (single) {
       const by = (unit / first.blocksW) | 0, bx = unit - by * first.blocksW;
-      block(scan[0], first.coeffs, (by * first.stride + bx) * 64);
+      reader.block(scan[0], first.coeffs, (by * first.stride + bx) * 64);
     } else {
       const my = (unit / frame.mcusX) | 0, mx = unit - my * frame.mcusX;
       for (const s of scan) {
         const c = s.component;
-        for (let v = 0; v < c.v; v++) for (let h = 0; h < c.h; h++) block(s, c.coeffs, ((my * c.v + v) * c.stride + mx * c.h + h) * 64);
+        for (let v = 0; v < c.v; v++) for (let h = 0; h < c.h; h++) reader.block(s, c.coeffs, ((my * c.v + v) * c.stride + mx * c.h + h) * 64);
       }
     }
   }
-  atMarker();
+  reader.atMarker(true);
+  let pos = reader.pos;
   if (bytes[pos] === 0xFF && bytes[pos + 1] >= 0xD0 && bytes[pos + 1] <= 0xD7) {
     if (!restartInterval || total % restartInterval || bytes[pos + 1] !== 0xD0 + ((total / restartInterval - 1) & 7)) throw jpegError('a restart marker out of order');
     if (choices) choices.finalRestart = bytes[pos + 1];

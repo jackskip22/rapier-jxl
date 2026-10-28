@@ -1,4 +1,4 @@
-// Rapier's JPEG XL encoder: the Squeeze transform. MIT (LICENSE).
+// Rapier's JPEG XL encoder: the Squeeze transform. MIT (images/jxl/LICENSE).
 
 const average = (a, b) => (a + b + (a > b ? 1 : 0)) >> 1;
 

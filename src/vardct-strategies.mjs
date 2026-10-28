@@ -39,21 +39,55 @@ function basis(size) {
   return b;
 }
 
-export function scaledDCT(pixels, width, height) {
-  const bx = basis(width), by = basis(height), tmp = new Float64Array(width * height), out = new Float64Array(tmp.length);
-  for (let y = 0; y < height; y++) for (let u = 0; u < width; u++) {
-    let sum = 0;
-    for (let x = 0; x < width; x++) sum += pixels[y * width + x] * bx[u * width + x];
-    tmp[y * width + u] = sum;
+const dctRows = new Map(), dctBasesT = new Map();
+function basisT(size) {
+  let t = dctBasesT.get(size);
+  if (!t) {
+    const b = basis(size);
+    t = new Float64Array(size * size);
+    for (let k = 0; k < size; k++) for (let x = 0; x < size; x++) t[x * size + k] = b[k * size + x];
+    dctBasesT.set(size, t);
   }
-  const acc = new Float64Array(width);
-  for (let v = 0; v < height; v++) {
-    acc.fill(0);
-    for (let y = 0; y < height; y++) {
-      const c = by[v * height + y], row = y * width;
-      for (let u = 0; u < width; u++) acc[u] += tmp[row + u] * c;
+  return t;
+}
+export function scaledDCT(pixels, width, height, out = new Float64Array(width * height)) {
+  const size = width * height, bt = basisT(width), by = basis(height);
+  let tmp = dctRows.get(size);
+  if (!tmp) dctRows.set(size, tmp = new Float64Array(size));
+  for (let y = 0; y < height; y += 2) for (let u = 0; u < width; u += 8) {
+    const r0 = y * width, r1 = r0 + width;
+    let a0 = 0, a1 = 0, a2 = 0, a3 = 0, a4 = 0, a5 = 0, a6 = 0, a7 = 0, c0 = 0, c1 = 0, c2 = 0, c3 = 0, c4 = 0, c5 = 0, c6 = 0, c7 = 0;
+    for (let x = 0, b = u; x < width; x++, b += width) {
+      const p = pixels[r0 + x], q = pixels[r1 + x];
+      const k0 = bt[b], k1 = bt[b + 1], k2 = bt[b + 2], k3 = bt[b + 3], k4 = bt[b + 4], k5 = bt[b + 5], k6 = bt[b + 6], k7 = bt[b + 7];
+      a0 += p * k0; a1 += p * k1; a2 += p * k2; a3 += p * k3; a4 += p * k4; a5 += p * k5; a6 += p * k6; a7 += p * k7;
+      c0 += q * k0; c1 += q * k1; c2 += q * k2; c3 += q * k3; c4 += q * k4; c5 += q * k5; c6 += q * k6; c7 += q * k7;
     }
-    for (let u = 0; u < width; u++) out[height >= width ? u * height + v : v * width + u] = acc[u];
+    let o = r0 + u;
+    tmp[o] = a0; tmp[o + 1] = a1; tmp[o + 2] = a2; tmp[o + 3] = a3; tmp[o + 4] = a4; tmp[o + 5] = a5; tmp[o + 6] = a6; tmp[o + 7] = a7;
+    o = r1 + u;
+    tmp[o] = c0; tmp[o + 1] = c1; tmp[o + 2] = c2; tmp[o + 3] = c3; tmp[o + 4] = c4; tmp[o + 5] = c5; tmp[o + 6] = c6; tmp[o + 7] = c7;
+  }
+  const tall = height >= width;
+  for (let v = 0; v < height; v += 2) for (let u = 0, b = v * height; u < width; u += 8) {
+    let s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0;
+    for (let y = 0, at = u; y < height; y++, at += width) {
+      const c = by[b + y], d = by[b + height + y];
+      const m0 = tmp[at], m1 = tmp[at + 1], m2 = tmp[at + 2], m3 = tmp[at + 3], m4 = tmp[at + 4], m5 = tmp[at + 5], m6 = tmp[at + 6], m7 = tmp[at + 7];
+      s0 += m0 * c; s1 += m1 * c; s2 += m2 * c; s3 += m3 * c; s4 += m4 * c; s5 += m5 * c; s6 += m6 * c; s7 += m7 * c;
+      t0 += m0 * d; t1 += m1 * d; t2 += m2 * d; t3 += m3 * d; t4 += m4 * d; t5 += m5 * d; t6 += m6 * d; t7 += m7 * d;
+    }
+    if (tall) {
+      let o = u * height + v;
+      out[o] = s0; out[o + height] = s1; out[o + 2 * height] = s2; out[o + 3 * height] = s3; out[o + 4 * height] = s4; out[o + 5 * height] = s5; out[o + 6 * height] = s6; out[o + 7 * height] = s7;
+      o++;
+      out[o] = t0; out[o + height] = t1; out[o + 2 * height] = t2; out[o + 3 * height] = t3; out[o + 4 * height] = t4; out[o + 5 * height] = t5; out[o + 6 * height] = t6; out[o + 7 * height] = t7;
+    } else {
+      let o = v * width + u;
+      out[o] = s0; out[o + 1] = s1; out[o + 2] = s2; out[o + 3] = s3; out[o + 4] = s4; out[o + 5] = s5; out[o + 6] = s6; out[o + 7] = s7;
+      o += width;
+      out[o] = t0; out[o + 1] = t1; out[o + 2] = t2; out[o + 3] = t3; out[o + 4] = t4; out[o + 5] = t5; out[o + 6] = t6; out[o + 7] = t7;
+    }
   }
   return out;
 }
@@ -172,11 +206,20 @@ export function naturalOrder(widthBlocks, heightBlocks) {
   return order;
 }
 
+const lowScales = new Map();
+function lowScale(blocks) {
+  let scales = lowScales.get(blocks);
+  if (!scales) {
+    const size = blocks * 8;
+    scales = Float64Array.from({length: blocks}, (_, k) => cosine(k, 2 * size) * cosine(k, size) * cosine(2 * k, size));
+    lowScales.set(blocks, scales);
+  }
+  return scales;
+}
 export function lowFrequencies(coeffs, widthBlocks, heightBlocks) {
   const w = Math.max(widthBlocks, heightBlocks), h = Math.min(widthBlocks, heightBlocks), low = new Float64Array(w * h);
-  const scale = (k, size) => cosine(k, 2 * size) * cosine(k, size) * cosine(2 * k, size);
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) low[y * w + x] = coeffs[y * w * 8 + x]
-    * scale(x, w * 8) * scale(y, h * 8);
+  const sx = lowScale(w), sy = lowScale(h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) low[y * w + x] = coeffs[y * w * 8 + x] * sx[x] * sy[y];
   return inverseScaledDCT(low, widthBlocks, heightBlocks);
 }
 

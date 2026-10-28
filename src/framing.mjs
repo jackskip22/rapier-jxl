@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {BitWriter} from './bits.mjs';
+import {BitWriter, FRAME_SIZE} from './bits.mjs';
 import {boxes, SIGNATURE, CODESTREAM, PARTIAL} from './container.mjs';
 import {fault} from './admit.mjs';
 
@@ -36,7 +36,6 @@ class BitReader {
 
 const ENUM = [[0, 0], [0, 1], [4, 2], [6, 18]];
 const SIZE = [[9, 1], [13, 1], [18, 1], [30, 1]];
-const FRAME_SIZE = [[8, 0], [11, 256], [14, 2304], [30, 18688]];
 const NAME = [[0, 0], [4, 0], [5, 16], [10, 48]];
 const BLEND_MODE = [[0, 0], [0, 1], [0, 2], [2, 3]];
 const SOURCE = [[0, 0], [0, 1], [0, 2], [0, 3]];

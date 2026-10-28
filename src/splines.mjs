@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
-import {BitWriter, PHOTO_LIMITS, complete, part, packSigned} from './bits.mjs';
+import {PHOTO_LIMITS} from './limits.mjs';
+import {BitWriter, complete, part, packSigned} from './bits.mjs';
 import {admitOptions, admitPixels, admitSampleFormat, fault, job} from './admit.mjs';
 import {admitEffort} from './effort-level.mjs';
 import {admitPhotoFilter} from './photo-job.mjs';
 import {photoXYBSteps} from './photo-xyb.mjs';
-import {coefficientEffortSteps} from './coefficient-effort.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {buildCode, uintConfig, countToken, writeHistograms, writeHybrid} from './prefix.mjs';
 
@@ -136,7 +136,7 @@ function* splineImageSteps(data, width, height, quality, effort, filter, orienta
   const splineBits = yield* part(splineEntropySteps(plan), 0, 3);
   const image = yield* part(photoXYBSteps(data, width, height, quality, {filter}), 1, 3);
   image.splineBits = splineBits; image.orientation = orientation; image.level = plan.level;
-  return yield* part(effort >= 5 ? coefficientAnsSteps(image, effort) : coefficientEffortSteps(image, effort), 2, 3);
+  return yield* part(coefficientAnsSteps(image, effort), 2, 3);
 }
 
 export function encodeSplines(data, width, height, options) { return complete(encodeSplinesSteps(data, width, height, options)); }

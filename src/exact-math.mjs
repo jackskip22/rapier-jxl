@@ -5,19 +5,16 @@ const EXACT_PI = 3.141592653589793, EM_TWO_PI = 6.283185307179586;
 
 function emPow2(k) { emView.setUint32(0, (k + 1023) << 20); emView.setUint32(4, 0); return emView.getFloat64(0); }
 
-function emSplit(x) {
-  let scale = 0;
-  if (x < 2.2250738585072014e-308) { x *= 18014398509481984; scale = -54; }
-  emView.setFloat64(0, x);
-  const hi = emView.getUint32(0), e = (hi >>> 20) - 1023;
-  emView.setUint32(0, (hi & 0x000fffff) | 0x3ff00000);
-  return [emView.getFloat64(0), e + scale];
-}
-
 export function exactLog(x) {
   if (!(x > 0)) return x === 0 ? -Infinity : NaN;
   if (x === Infinity) return Infinity;
-  let [m, e] = emSplit(x);
+  let scale = 0;
+  if (x < 2.2250738585072014e-308) { x *= 18014398509481984; scale = -54; }
+  emView.setFloat64(0, x);
+  const hi = emView.getUint32(0);
+  let e = (hi >>> 20) - 1023 + scale;
+  emView.setUint32(0, (hi & 0x000fffff) | 0x3ff00000);
+  let m = emView.getFloat64(0);
   if (m > EM_SQRT2) { m /= 2; e++; }
   const s = (m - 1) / (m + 1), s2 = s * s;
   let term = s, sum = s;

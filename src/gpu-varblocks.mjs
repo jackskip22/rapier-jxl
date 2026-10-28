@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {strategyInputs} from './varblocks.mjs';
 import {COEFF_FREQ_CONTEXT, COEFF_NUM_NONZERO_CONTEXT} from './vardct.mjs';
-import {gpuSetup} from './gpu-reconstruct.mjs';
+import {gpuSetup} from './gpu-setup.mjs';
 
 const QS = 256, ZD = 458, NZ = 37;
 const SHADER =  `

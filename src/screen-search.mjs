@@ -22,10 +22,10 @@ export function screenEligible(rgba, width, height, shape, effort = 3) {
   return flat >= 112 && soft * 3 <= 256 - flat;
 }
 
-export function* screenSteps(rgba, width, height, shape, colorSpace, {fastFloor = 0, effort = 3, pooled = false} = {}) {
+export function* screenSteps(rgba, width, height, shape, colorSpace, {fastFloor = 0, effort = 3} = {}) {
   let best = null;
   for (const [pass, minLength] of [7, 4].entries()) {
-    const steps = screenPass(rgba, width, height, shape, colorSpace, {fastFloor, effort, pooled, minLength});
+    const steps = screenPass(rgba, width, height, shape, colorSpace, {fastFloor, effort, minLength});
     let step, reply, hurried = false;
     while (!(step = steps.next(reply)).done) {
       reply = yield scaled(step.value, done => (pass + done) / 2);
@@ -37,7 +37,7 @@ export function* screenSteps(rgba, width, height, shape, colorSpace, {fastFloor 
   return best;
 }
 
-function* screenPass(rgba, width, height, shape, colorSpace, {fastFloor, effort, pooled, minLength}) {
+function* screenPass(rgba, width, height, shape, colorSpace, {fastFloor, effort, minLength}) {
   let best = null, bestMode, deepen;
   const plans = new Map();
   const modes = ['global-lz', 'patch-lz', 'scalar-lz', 'global', 'scalar'];
@@ -57,10 +57,10 @@ function* screenPass(rgba, width, height, shape, colorSpace, {fastFloor, effort,
     let steps;
     if (modes[i].startsWith('local-')) steps = localScreenSteps(rgba, width, height, shape, colorSpace,
       {dim: modes[i] === 'local-fine' ? 512 : 1024, depths: modes[i] === 'local-copy' ? [64] : [64, 256], ceiling: best?.length ?? Infinity, minLength});
-    else if (modes[i] === 'patch-lz') steps = patchSteps(rgba, width, height, shape, colorSpace, {tokenCodec: screenLZ77, pooled, minLength});
-    else if (modes[i] === 'patch-deep') steps = patchSteps(rgba, width, height, shape, colorSpace, {search: {}, limit: best?.length ?? Infinity, pooled, minLength});
+    else if (modes[i] === 'patch-lz') steps = patchSteps(rgba, width, height, shape, colorSpace, {tokenCodec: screenLZ77, minLength});
+    else if (modes[i] === 'patch-deep') steps = patchSteps(rgba, width, height, shape, colorSpace, {search: {}, limit: best?.length ?? Infinity, minLength});
     else if (modes[i] === 'palette') steps = paletteSteps(rgba, width, height, shape, colorSpace,
-      {plan: plans.get('global'), pooled, ceiling: best?.length ?? Infinity});
+      {plan: plans.get('global'), ceiling: best?.length ?? Infinity});
     else {
       const mode = modes[i].replace(/-(lz|deep|deeper)$/, '');
       if (!plans.has(mode)) plans.set(mode, screenPlan(rgba, width, height, shape, mode));
@@ -68,7 +68,7 @@ function* screenPass(rgba, width, height, shape, colorSpace, {fastFloor, effort,
       if (!plan) continue;
       steps = screenFrameSteps(rgba, width, height, shape, colorSpace, plan, {
         tokenCodec: modes[i].endsWith('-lz') ? screenLZ77 : null,
-        search: deeper ? {depth: 64} : modes[i].endsWith('-deep') ? {} : null, pooled, minLength
+        search: deeper ? {depth: 64} : modes[i].endsWith('-deep') ? {} : null, minLength
       });
     }
     let step, reply, hurry = false;

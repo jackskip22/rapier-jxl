@@ -1,4 +1,4 @@
-// Rapier's JPEG XL encoder: exact hybrid-integer prices for lossless residuals. MIT (LICENSE).
+// Rapier's JPEG XL encoder: exact hybrid-integer prices for lossless residuals. MIT (images/jxl/LICENSE).
 import {BitWriter, floorLog2} from './bits.mjs';
 import {uintConfig, hybridToken, buildCode, writePrefixCode, writeUintConfig} from './prefix.mjs';
 import {ALPHABET} from './modular.mjs';

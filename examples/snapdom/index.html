@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SnapDOM → JPEG XL</title>
+<style>
+  *{box-sizing:border-box}body{margin:0;background:#f5f4ee;color:#233a2e;font:16px system-ui,sans-serif}
+  main{max-width:1040px;margin:36px auto;padding:0 24px}h1{font-size:38px;letter-spacing:-1.5px;margin-bottom:8px}
+  p{line-height:1.6;color:#526158}.controls{display:flex;flex-wrap:wrap;gap:16px;align-items:center;margin:24px 0}
+  select,button,a{font:inherit}button,.download{border:0;border-radius:7px;background:#286447;color:white;padding:11px 18px;text-decoration:none}
+  button:disabled{opacity:.6}select{padding:8px;border:1px solid #aebcae;border-radius:6px;background:white}
+  iframe{width:960px;height:540px;border:0;display:block}.preview{width:fit-content;max-width:100%;overflow:auto;border-radius:12px;border:1px solid #cdd5ca;background:repeating-conic-gradient(#edf0e9 0% 25%,white 0% 50%) 50% /20px 20px}
+  output{display:block;margin:18px 0;white-space:pre-wrap;line-height:1.6}small{color:#637468}a[hidden]{display:none}
+</style>
+<main>
+  <small>REFERENCE PLUGIN / SNAPDOM 3 / RAPIER-JXL 7</small>
+  <h1>Capture → JPEG XL</h1>
+  <p>One capture, a persistent encoder worker, and an ordinary <code>image/jxl</code> Blob. All assets are local.</p>
+  <div class="controls">
+    <label>Resolution <select id="size"><option value="1920">Full HD</option><option value="3840">4K</option></select></label>
+    <label>Pixels <select id="error"><option value="0">Exact</option><option value="1">Max RGB error 1</option><option value="2">Max RGB error 2</option></select></label>
+    <label><input id="alpha" type="checkbox"> Transparent</label>
+    <button id="capture">Capture JXL</button><button id="cancel" hidden>Cancel</button><a id="save" class="download" hidden>Save JXL</a>
+  </div>
+  <div class="preview"><iframe title="Capture scene" src="./scene.html"></iframe></div>
+  <output aria-live="polite">Ready. The encoder runs outside the page’s UI thread.</output>
+  <small>Run <code>node examples/snapdom/serve.mjs</code> in the installed package. No CDN or account is needed.</small>
+</main>
+<script type="module">
+  import { snapdom } from './vendor/snapdom.mjs';
+  import { jxlExport } from './jxl-export.mjs';
+  import { createEncoder } from '../../dist/index.mjs';
+  // In an app: import { createEncoder } from 'rapier-jxl', or import { encode } from 'rapier-jxl/capture'.
+  const encoder = createEncoder();
+  const plugin = jxlExport({encode: encoder.capture});
+  plugin.prepare().catch(() => {});
+  const $ = selector => document.querySelector(selector);
+  let controller, download;
+  $('#alpha').onchange = () => { $('iframe').src = `./scene.html${$('#alpha').checked ? '?alpha' : ''}`; };
+  $('#cancel').onclick = () => controller?.abort();
+  $('#capture').onclick = async () => {
+    controller = new AbortController();
+    $('#capture').disabled = true; $('#cancel').hidden = false; $('#save').hidden = true;
+    try {
+      const frame = $('iframe');
+      await frame.contentDocument.fonts.ready;
+      await Promise.all([...frame.contentDocument.images].map(image => image.decode()));
+      const width = Number($('#size').value), height = width * 9 / 16;
+      const started = performance.now();
+      const result = await snapdom(frame.contentDocument.querySelector('#capture'), {plugins:[plugin],width,height,dpr:1,compress:false,embedFonts:false});
+      const captured = performance.now();
+      const blob = await result.toJxl({maxError:Number($('#error').value),signal:controller.signal});
+      globalThis.lastCapture = {result, blob};
+      const ended = performance.now();
+      if(download) URL.revokeObjectURL(download);
+      download = URL.createObjectURL(blob);
+      $('#save').href=download; $('#save').download=`capture-${width}.jxl`; $('#save').hidden=false;
+      $('output').value=`${width} × ${height} · ${blob.size.toLocaleString()} bytes\nCapture ${(captured-started).toFixed(1)} ms · raster + worker encode ${(ended-captured).toFixed(1)} ms`;
+    } catch(error) { $('output').value=error.name==='AbortError'?'Capture canceled.':`${error.name}: ${error.message}`; }
+    finally { $('#capture').disabled=false; $('#cancel').hidden=true; controller=undefined; }
+  };
+  addEventListener('pagehide', () => {encoder.close(); if(download) URL.revokeObjectURL(download);});
+</script>
+</html>

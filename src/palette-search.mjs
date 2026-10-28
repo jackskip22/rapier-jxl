@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT
 import {BitWriter} from './bits.mjs';
-import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, groupPass, assembleCodestream} from './frame.mjs';
+import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, assembleCodestream} from './frame.mjs';
 import {ALPHABET, leaf, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {sampledPlanes, SAMPLE_RUNGS} from './sampled.mjs';
-import {screenPlan} from './screen.mjs';
+import {screenPlan, lookupPalette} from './screen.mjs';
 import {admitOutputSize} from './admit.mjs';
 
 const packed = (rgba, i) => rgba[i] + rgba[i + 1] * 256 + rgba[i + 2] * 65536 + rgba[i + 3] * 16777216;
 const PALETTE_MODEL = Object.freeze({...SAMPLE_RUNGS.precise, predictors: Object.freeze([5, 6, 1, 2, 0])});
 
-export function paletteGroup(setup) {
+function paletteGroup(setup) {
   const {index, rows, colours, channels, colour, alpha, single} = setup, model = PALETTE_MODEL;
   const weights = Float64Array.from({length: colours}, (_, i) => {
     const r = rows[i], g = colour === 3 ? rows[colours + i] : r, b = colour === 3 ? rows[2 * colours + i] : r;
@@ -18,7 +18,7 @@ export function paletteGroup(setup) {
   return (rgba, stride, x0, y0, width, height) => {
     const values = new Int16Array(width * height), counts = new Uint32Array(colours);
     for (let y = 0, at = 0; y < height; y++) for (let x = 0; x < width; x++, at++) {
-      const value = index.get(packed(rgba, ((y0 + y) * stride + x0 + x) * 4));
+      const value = lookupPalette(index, packed(rgba, ((y0 + y) * stride + x0 + x) * 4));
       values[at] = value; counts[value]++;
     }
     const entries = [];
@@ -44,7 +44,7 @@ export function paletteGroup(setup) {
 }
 
 export function* paletteSteps(rgba, width, height, shape, colorSpace,
-  {plan = null, pooled = false, ceiling = Infinity} = {}) {
+  {plan = null, ceiling = Infinity} = {}) {
   plan ||= screenPlan(rgba, width, height, shape, 'global');
   if (!plan) return null;
   const palette = plan.meta[0], model = PALETTE_MODEL;
@@ -91,10 +91,7 @@ export function* paletteSteps(rgba, width, height, shape, colorSpace,
     }
   };
   if (!frames.some(Boolean)) return null;
-  if (pooled) {
-    if ((yield* groupPass({pooled, kind: 'palette', setup, data: rgba, width, height, dim,
-      at: g => (g + 1) / groups, stop: g => g + 1 < groups}, groups, null, append)) === null) return null;
-  } else for (let g = 0; g < groups; g++) {
+  for (let g = 0; g < groups; g++) {
     append(g, group(rgba, width, ...groupRect(layout, width, height, g, dim)));
     const hurried = yield (g + 1) / groups;
     if (!frames.some(Boolean) || hurried && g + 1 < groups) return null;

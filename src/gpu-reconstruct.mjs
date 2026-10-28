@@ -6,6 +6,7 @@ import {GpuNativeSsimulacra2} from './gpu-ssimulacra2-native.mjs';
 import {coefficientPlanes, epfInverseSigma, inverseBasis, half, rcLlfFromDC} from './reconstruct.mjs';
 import {TRANSFORMS} from './vardct-strategies.mjs';
 import {SRGB_TO_LINEAR} from './ssimulacra2.mjs';
+import {gpuSetup} from './gpu-setup.mjs';
 
 const GR_WG = 128, GR_CORE = 1024, GR_MARGIN = 128;
 const grF = v => { const s = Math.fround(v).toString(); return /[.eE]/.test(s) ? s : s + '.0'; };
@@ -142,26 +143,6 @@ fn recon(q: i32, c: u32) -> f32 {
 };
 
 export const GR_REFERENCE_BUDGET = 0;
-
-export function gpuSetup(start, {signal, dispose = owner => owner?.destroy?.()} = {}) {
-  if (signal !== undefined && (typeof signal?.addEventListener !== 'function' || typeof signal?.aborted !== 'boolean'))
-    return Promise.reject(new TypeError('signal must be an AbortSignal.'));
-  if (signal?.aborted) return Promise.reject(signal.reason);
-  return new Promise((resolve, reject) => {
-    let canceled = false;
-    const release = owner => { try { dispose(owner); } catch {  } };
-    const onAbort = () => { canceled = true; signal.removeEventListener('abort', onAbort); release(); reject(signal.reason); };
-    signal?.addEventListener('abort', onAbort, {once: true});
-    let pending;
-    try { pending = start(); }
-    catch (error) { signal?.removeEventListener('abort', onAbort); reject(error); return; }
-    Promise.resolve(pending).then(owner => {
-      signal?.removeEventListener('abort', onAbort);
-      if (canceled || signal?.aborted) { release(owner); if (!canceled) reject(signal.reason); }
-      else resolve(owner);
-    }, error => { signal?.removeEventListener('abort', onAbort); if (!canceled) reject(error); });
-  });
-}
 
 export class GpuMeasure {
   static async create(device, rgba, width, height, {tile = GR_CORE, keepReference = false, referenceBytes = 0, signal} = {}) {

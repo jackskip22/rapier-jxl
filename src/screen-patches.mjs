@@ -198,18 +198,18 @@ function* patchFraction(steps, start, span) {
   return step.value;
 }
 
-export function* patchSteps(rgba, width, height, shape, colorSpace, {tokenCodec = null, stats = null, search = null, limit = Infinity, pooled = false, minLength = 7} = {}) {
+export function* patchSteps(rgba, width, height, shape, colorSpace, {tokenCodec = null, stats = null, search = null, limit = Infinity, minLength = 7} = {}) {
   const dict = glyphDictionary(rgba, width, height);
   if (yield 0.05) return null;
   if (!dict) return null;
-  if (search) return yield* patchSearchSteps(dict, width, height, shape, colorSpace, {...search, minLength}, limit, stats, pooled);
+  if (search) return yield* patchSearchSteps(dict, width, height, shape, colorSpace, {...search, minLength}, limit, stats);
   const atlasPlan = screenPlan(dict.atlas, dict.width, dict.height, shape, 'global');
   const bodyPlan = screenPlan(dict.body, width, height, shape, 'global');
   if (!atlasPlan || !bodyPlan) return null;
   const atlas = yield* patchFraction(
     screenFrameSteps(dict.atlas, dict.width, dict.height, shape, colorSpace, atlasPlan, {
       imageHeader: false,
-      tokenCodec, pooled, minLength,
+      tokenCodec, minLength,
       frameHeader: w => writePatchFrameHeader(w, shape.alpha, {reference: true, width: dict.width, height: dict.height})
     }),
     0.05,
@@ -219,7 +219,7 @@ export function* patchSteps(rgba, width, height, shape, colorSpace, {tokenCodec 
   const body = yield* patchFraction(
     screenFrameSteps(dict.body, width, height, shape, colorSpace, bodyPlan, {
       imageHeader: false,
-      tokenCodec, pooled, minLength,
+      tokenCodec, minLength,
       frameHeader: w => writePatchFrameHeader(w, shape.alpha),
       globalPrefix: w => writePatchDictionary(w, dict, shape.alpha)
     }),
@@ -251,7 +251,7 @@ export function* patchSteps(rgba, width, height, shape, colorSpace, {tokenCodec 
   return bytes;
 }
 
-function* patchSearchSteps(dict, width, height, shape, colorSpace, search, limit, stats, pooled) {
+function* patchSearchSteps(dict, width, height, shape, colorSpace, search, limit, stats) {
   const header = new BitWriter(256), dictionary = new BitWriter(256);
   writeImageHeader(header, width, height, shape.colour, shape.alpha, {colorSpace});
   writePatchDictionary(dictionary, dict, shape.alpha);
@@ -264,7 +264,7 @@ function* patchSearchSteps(dict, width, height, shape, colorSpace, search, limit
       const plan = screenPlan(pixels, w, h, shape, mode);
       if (!plan) continue;
       const bytes = yield* patchFraction(screenFrameSteps(pixels, w, h, shape, colorSpace, plan, {
-        imageHeader: false, search, pooled,
+        imageHeader: false, search,
         frameHeader: out => writePatchFrameHeader(out, shape.alpha, {reference: !stage, width: w, height: h,
           shift: search.dim === 512 ? 2 : search.dim === 256 ? 1 : 3}),
         globalPrefix: stage ? out => writePatchDictionary(out, dict, shape.alpha) : null

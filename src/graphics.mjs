@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-import {LIMITS, complete, part} from './bits.mjs';
+import {LIMITS} from './limits.mjs';
+import {complete, part} from './bits.mjs';
 import {admitOptions, admitPixels, admitSampleFormat, fault, job} from './admit.mjs';
 import {encodeDeltaPaletteSteps} from './delta-palette.mjs';
 import {graphicsProtectionSteps, graphicsPaletteSteps, graphicsUnditherSteps} from './graphics-quantize.mjs';

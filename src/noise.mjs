@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {admitSize, fault} from './admit.mjs';
-import {PHOTO_LIMITS} from './bits.mjs';
+import {PHOTO_LIMITS} from './limits.mjs';
 
 const NOISE_MAX = 1023 / 1024, PHOTON_BIAS = .0037930732552754493;
 function noiseCubeRoot(value) {

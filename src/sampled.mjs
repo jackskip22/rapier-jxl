@@ -742,7 +742,7 @@ export const sampledPlanes = Object.freeze({
   }
 });
 
-export function* sampledSteps(rgba, width, height, shape, colorSpace, options, pooled, ceiling = Infinity) {
+export function* sampledSteps(rgba, width, height, shape, colorSpace, options, ceiling = Infinity) {
   const {channels} = shape, dim = options.dim || GROUP_DIM, layout = groupLayout(width, height, dim), groups = layout.groupsX * layout.groupsY;
   const maxLeaves = options.clustered && options.ans ? 1024 : Math.floor(255 / channels);
   if (options.leaves > maxLeaves) options = {...options, leaves: maxLeaves};
@@ -764,7 +764,7 @@ export function* sampledSteps(rgba, width, height, shape, colorSpace, options, p
   writeModularHeader(global, {transforms}); append(global.finish());
   if (sectionBytes >= ceiling) return null;
   for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
-  if ((yield* groupPass({pooled, kind: 'sampled', setup, dim, at: g => (g + 1) / groups, stop: g => g + 1 < groups, byteCeiling: ceiling - sectionBytes},
-    groups, g => append(group(rgba, width, ...groupRect(layout, width, height, g, dim))), (g, bytes) => append(bytes))) === null) return null;
+  if ((yield* groupPass({at: g => (g + 1) / groups, stop: g => g + 1 < groups, byteCeiling: ceiling - sectionBytes},
+    groups, g => append(group(rgba, width, ...groupRect(layout, width, height, g, dim))))) === null) return null;
   return assembleCodestream(header, sections);
 }

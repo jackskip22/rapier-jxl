@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-import {BitWriter, PHOTO_LIMITS} from './bits.mjs';
+import {PHOTO_LIMITS} from './limits.mjs';
+import {BitWriter} from './bits.mjs';
 import {admitSize, admitOutputSize} from './admit.mjs';
 import {readFrames, writeStillImageHeader, writeStillFrame, copyBits} from './framing.mjs';
 import {fileHeader, boxHeader, CODESTREAM} from './container.mjs';

@@ -1,7 +1,7 @@
-// Rapier's JPEG XL encoder: lossless pictures. MIT (LICENSE).
+// Rapier's JPEG XL encoder: lossless pictures. MIT (images/jxl/LICENSE).
 import {kernelHooks} from './kernel-hooks.mjs';
 import {BitWriter, complete, part} from './bits.mjs';
-import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, groupPass, addCounts, assembleCodestream, GROUP_DIM} from './frame.mjs';
+import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, groupPass, assembleCodestream, GROUP_DIM} from './frame.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
 import {AVERAGE_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, RESIDUAL_CONFIG, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms, codeChannel} from './modular.mjs';
 import {losslessCoding} from './lossless-coding.mjs';
@@ -15,14 +15,22 @@ export const paletteKey = (rgba, i, grey, alpha) => grey
   ? (alpha ? rgba[i] + rgba[i + 3] * 256 : rgba[i])
   : rgba[i] + rgba[i + 1] * 256 + rgba[i + 2] * 65536 + (alpha ? rgba[i + 3] * 16777216 : 0);
 
+const LITTLE_ENDIAN = new Uint8Array(Uint32Array.of(1).buffer)[0] === 1;
+
 export function inspectPixels(rgba, width, height, {palette: wantPalette = true, samples, ...options} = {}) {
   if (!samples && (rgba instanceof Uint16Array || rgba instanceof Float32Array)) samples = admitSampleFormat(rgba, options);
   if (samples) return inspectNativePixels(rgba, width, height, samples, wantPalette);
   const pixels = width * height, floor = shapeFloors.get(rgba);
-  let opaque = !floor?.alpha, grey = floor?.colour !== 3;
-  for (let i = 0, p = 0; p < pixels; p++, i += 4) {
+  let opaque = !floor?.alpha, grey = floor?.colour !== 3, p = 0;
+  for (let i = 0; p < pixels; p++, i += 4) {
     if (rgba[i + 3] !== 255) { opaque = false; if (!grey) break; }
-    if (rgba[i] !== rgba[i + 1] || rgba[i] !== rgba[i + 2]) { grey = false; if (!opaque) break; }
+    if (rgba[i] !== rgba[i + 1] || rgba[i] !== rgba[i + 2]) { grey = false; p++; break; }
+  }
+  if (!grey && opaque && p < pixels) {
+    if (LITTLE_ENDIAN && rgba.byteOffset % 4 === 0) {
+      const words = new Uint32Array(rgba.buffer, rgba.byteOffset, pixels);
+      for (; p < pixels; p++) if (words[p] < 0xff000000) { opaque = false; break; }
+    } else for (let i = p * 4 + 3; p < pixels; p++, i += 4) if (rgba[i] !== 255) { opaque = false; break; }
   }
   const colour = grey ? 1 : 3, alpha = !opaque, channels = colour + (alpha ? 1 : 0);
   const key = i => paletteKey(rgba, i, grey, alpha);
@@ -104,7 +112,7 @@ export function* iccShape(data, space, steps) {
 export function encodeLossless(rgba, width, height, options) { return complete(losslessSteps(rgba, width, height, options)); }
 
 export function* losslessSteps(rgba, width, height, options = {}) {
-  const {colorSpace, rct, pooled, analysis} = options;
+  const {colorSpace, rct, analysis} = options;
   let {samples} = options;
   if (!samples && !(colorSpace && typeof colorSpace === 'object')) { const format = admitSampleFormat(rgba, options); if (!format.native8) samples = format; }
   const shape = options.shape || inspectPixels(rgba, width, height, {samples});
@@ -112,7 +120,7 @@ export function* losslessSteps(rgba, width, height, options = {}) {
   const candidates = shape.palette ? [shape, {...shape, palette: null}] : [shape];
   for (let i = 0; i < candidates.length; i++) {
     try {
-      const bytes = yield* part(planSteps(rgba, width, height, candidates[i], colorSpace, rct, pooled, samples, analysis), i, candidates.length);
+      const bytes = yield* part(planSteps(rgba, width, height, candidates[i], colorSpace, rct, samples, analysis, options.fast), i, candidates.length);
       if (!best || bytes.length < best.length) best = bytes;
     } catch (error) { if (error.code !== 'JXL_SIZE') throw error; oversized = error; }
   }
@@ -120,7 +128,7 @@ export function* losslessSteps(rgba, width, height, options = {}) {
   return best;
 }
 
-function* planSteps(rgba, width, height, shape, colorSpace, rct, pooled, samples, analysis) {
+function* planSteps(rgba, width, height, shape, colorSpace, rct, samples, analysis, fast) {
   const {channels, alpha, palette} = shape;
   const layout = groupLayout(width, height), groups = layout.groupsX * layout.groupsY;
   const streamChannels = palette ? 2 : channels;
@@ -146,7 +154,7 @@ function* planSteps(rgba, width, height, shape, colorSpace, rct, pooled, samples
     palette.colours.forEach((k, at) => { for (let c = 0; c < channels; c++) paletteRows[c * n + at] = palette.byte(k, c); });
   }
 
-  if (!palette) {
+  if (!palette && !fast) {
     const cost = freqs => {
       const code = buildCode(freqs), writer = new BitWriter(128);
       writePrefixCode(writer, code);
@@ -179,8 +187,7 @@ function* planSteps(rgba, width, height, shape, colorSpace, rct, pooled, samples
   let freqs = leaves.map(() => new Uint32Array(samples ? ALPHABET : (palette ? 4096 : 1024) + 33));
   if (paletteRows) codeChannel(null, freqs[0], paletteRows, palette.colours.length, channels, leaves[0], !samples);
   const count = planGroup(setup, rct);
-  yield* groupPass({pooled, kind: 'plan', setup: {...setup, sizes: freqs.map(f => f.length)}, at: g => (g + 1) / (2 * groups), stop: () => false},
-    groups, g => count(rgba, width, ...rect(g), freqs), (g, counts) => addCounts(freqs, counts));
+  yield* groupPass({at: g => (g + 1) / (2 * groups), stop: () => false}, groups, g => count(rgba, width, ...rect(g), freqs));
 
   if (!samples) {
   const pairs = freqs.map(losslessCoding);
@@ -211,13 +218,12 @@ function* planSteps(rgba, width, height, shape, colorSpace, rct, pooled, samples
     sections.push(global.finish());
     for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
     const first = sections.length, place = (g, section) => { sections[first + g] = section; };
-    yield* groupPass({pooled, kind: 'plan', setup: written, at: g => (groups + g + 1) / (2 * groups), stop: () => false},
-      groups, g => place(g, write(rgba, width, ...rect(g))), place);
+    yield* groupPass({at: g => (groups + g + 1) / (2 * groups), stop: () => false}, groups, g => place(g, write(rgba, width, ...rect(g))));
   }
   return assembleCodestream(header, sections, samples && (samples.level === 10 || samples.bitDepth > 12 || samples.exponentBits) ? 10 : 5);
 }
 
-export function* nativeSteps(data, width, height, {samples, quality = 100, effort = 1, pooled} = {}) {
+export function* nativeSteps(data, width, height, {samples, quality = 100, effort = 1} = {}) {
   const choices = [{samples}];
   if (effort >= 2 && !samples.exponentBits) choices.push({samples, rct: {type: 0}});
   if (quality < 100) {
@@ -232,11 +238,11 @@ export function* nativeSteps(data, width, height, {samples, quality = 100, effor
   let best, failure, hurried = false;
   for (let i = 0; i < choices.length; i++) {
     try {
-      const steps = part(losslessSteps(data, width, height, {...choices[i], pooled}), i, choices.length);
+      const steps = part(losslessSteps(data, width, height, choices[i]), i, choices.length);
       let step, reply;
       while (!(step = steps.next(reply)).done) {
         reply = yield step.value;
-        hurried ||= reply === null || (typeof reply === 'object' ? reply.hurried : !!reply);
+        hurried ||= !!reply;
       }
       if (!best || step.value.length < best.length) best = step.value;
       if (hurried) return best;

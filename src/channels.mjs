@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-import {BitWriter, LIMITS, complete, part} from './bits.mjs';
+import {LIMITS} from './limits.mjs';
+import {BitWriter, complete, part} from './bits.mjs';
 import {fault, job, admitSize, admitOutputSize} from './admit.mjs';
 import {writeImageHeader, groupLayout, assembleCodestream} from './frame.mjs';
 import {leaf, writeTree, writeModularHeader, writeChannelHistograms, ALPHABET} from './modular.mjs';

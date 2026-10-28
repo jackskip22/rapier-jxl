@@ -4,10 +4,10 @@ import {hybridToken, writeContextMap, writeUintConfig} from './prefix.mjs';
 import {clusterTokenCounts, entropyLog2} from './entropy.mjs';
 import {LZ77, RESIDUAL_CONFIG} from './modular.mjs';
 import {writeSmallestContextMap} from './context-map.mjs';
+import {GROUP_TOKENS} from './frame.mjs';
 
 export const LOG_LENGTHS = [5, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 6, 7];
 export const LOG_CODES = [17, 11, 15, 3, 9, 7, 4, 2, 5, 6, 0, 33, 1];
-const GROUP_TOKENS = 3 * 32 * 32 * 64;
 const SYMBOL_BITS = new Float64Array(4097);
 for (let count = 1; count <= 4096; count++) SYMBOL_BITS[count] = 12 - entropyLog2(count);
 
@@ -204,6 +204,14 @@ function symbolCosts(freqs) {
 export function ansGroupWriter({contextMap, histograms}) {
   const values = new Uint32Array(GROUP_TOKENS), metadata = new Uint8Array(GROUP_TOKENS), emitted = new Uint16Array(GROUP_TOKENS);
   const slots = [0, 0, 0];
+  const small = new Int32Array(histograms.length * 64), freqs = new Int32Array(histograms.length * 64), starts = new Int32Array(histograms.length * 64);
+  histograms.forEach((h, id) => {
+    for (let v = 0; v < 64; v++) {
+      hybridToken(h.config, v, slots);
+      small[id * 64 + v] = slots[1] << 6 | slots[2]; freqs[id * 64 + v] = h.counts[slots[0]]; starts[id * 64 + v] = h.starts[slots[0]];
+    }
+  });
+  const reverses = histograms.map(h => h.reverse);
   let length = 0;
   const write = (_w, ctx, value) => {
     values[length] = value; metadata[length++] = contextMap[ctx];
@@ -211,37 +219,52 @@ export function ansGroupWriter({contextMap, histograms}) {
   const flush = w => {
     let state = 0x13 * 65536;
     for (let i = length - 1; i >= 0; i--) {
-      const h = histograms[metadata[i]];
-      hybridToken(h.config, values[i], slots);
-      const symbol = slots[0], freq = h.counts[symbol];
-      values[i] = slots[2]; metadata[i] = slots[1];
+      const id = metadata[i], value = values[i];
+      let freq, start, bits;
+      if (value < 64) { const at = id * 64 + value, entry = small[at]; bits = entry >> 6; values[i] = entry & 63; freq = freqs[at]; start = starts[at]; }
+      else {
+        const h = histograms[id];
+        hybridToken(h.config, value, slots); bits = slots[1]; values[i] = slots[2]; freq = h.counts[slots[0]]; start = h.starts[slots[0]];
+      }
+      metadata[i] = bits;
       if ((state >>> 20) >= freq) {
         emitted[i] = state & 65535; metadata[i] |= 64; state >>>= 16;
       }
       const q = Math.floor(state / freq);
-      state = q * 4096 + h.reverse[h.starts[symbol] + state - q * freq];
+      state = q * 4096 + reverses[id][start + state - q * freq];
     }
     w.write(32, state);
     for (let i = 0; i < length; i++) {
-      if (metadata[i] & 64) w.write(16, emitted[i]);
       const bits = metadata[i] & 63;
+      if (metadata[i] & 64) {
+        if (bits <= 8) { w.write(16 + bits, emitted[i] | values[i] << 16); continue; }
+        w.write(16, emitted[i]);
+      }
       if (bits) w.write(bits, values[i]);
     }
     length = 0;
   };
   const reset = () => { length = 0; };
-  return {write, flush, reset};
+  const writeTokens = (_w, ctxs, tokens, n) => {
+    for (let i = 0; i < n; i++) { values[length] = tokens[i]; metadata[length++] = contextMap[ctxs[i]]; }
+  };
+  return {write, writeTokens, flush, reset};
 }
 
 export function buildAnsCoding(counts, options) {
-  const clustered = clusterTokenCounts(counts, options, histogramCost, symbolCosts);
+  const shapedCost = (freqs, config) => {
+    const header = new BitWriter(64);
+    writeUintConfig(header, config, Math.max(5, ceilLog2(freqs.findLastIndex(Boolean) + 1)));
+    return header.bitLength + shapeHistogram(freqs, options?.shifts).bits;
+  };
+  const clustered = clusterTokenCounts(counts, options, histogramCost, symbolCosts, shapedCost);
   let bits = 32;
   const histograms = clustered.histograms.map(({config, freqs, extra}) => {
     const {counts, shift, omit} = shapeHistogram(freqs, options?.shifts);
     bits += extra + expectedDataBits(freqs, counts);
     return {config, counts, shift, omit};
   });
-  const logAlphabet = Math.max(5, ceilLog2(Math.max(...histograms.map(h => h.counts.length))));
+  const logAlphabet = Math.max(5, ceilLog2(Math.max(...histograms.map(h => h.counts.length))), ...histograms.map(h => h.config.split));
   for (const histogram of histograms) Object.assign(histogram, reverseAlias(histogram.counts, logAlphabet));
   const header = new BitWriter();
   header.write(1, 0);
@@ -252,8 +275,8 @@ export function buildAnsCoding(counts, options) {
 
   const model = {kind: 'ans', contextMap: clustered.contextMap,
     histograms: histograms.map(({config, counts, starts, reverse}) => ({config, counts, starts, reverse}))};
-  const {write, flush, reset} = ansGroupWriter(model);
-  return {bits: bits + header.bitLength, payloadBits: bits, model, write, flush, reset, writeHistograms: w => w.append(header)};
+  const {write, writeTokens, flush, reset} = ansGroupWriter(model);
+  return {bits: bits + header.bitLength, payloadBits: bits, model, write, writeTokens, flush, reset, writeHistograms: w => w.append(header)};
 }
 
 export function writeModularAnsHistograms(w, orderedLeaves, freqs, histogramOf = leaf => leaf.context, configOf = () => RESIDUAL_CONFIG) {

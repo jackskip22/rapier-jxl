@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-import {reconstruct} from './reconstruct.mjs';
-import {butteraugli, butteraugliReference} from './butteraugli.mjs';
+import {reconstruct, toRGBAInto} from './reconstruct.mjs';
+import {butteraugli, butteraugliReference, butteraugliRows} from './butteraugli.mjs';
 import {exactPow} from './exact-math.mjs';
 import {SRGB_TO_LINEAR} from './ssimulacra2.mjs';
 import {butteraugliBytes, memoryPlan, poolWorkers} from './memory-plan.mjs';
@@ -21,6 +21,7 @@ export function subBase(base, bx0, by0, bx1, by1) {
 }
 
 export function subImage(image, bx0, by0, bx1, by1) {
+  if (image.lazyStrategy) return subImage(image.lazyStrategy.rows(by0, by1), bx0, by0, bx1, by1);
   const sub = sliceBlocks(image, bx0, by0, bx1, by1), sd = image.strategyData;
   if (!sd) return sub;
   const stride = bx1 - bx0, rows = by1 - by0, at = new Int32Array(stride * rows).fill(-1), blocks = [];
@@ -57,6 +58,16 @@ function sliceBlocks(image, bx0, by0, bx1, by1) {
       ...(c.dc ? {dc: rows(c.dc, 1)} : {})})),
     quantFields: image.quantFields ? rows(image.quantFields, 1) : image.quantFields,
     ...(image.sharpness ? {sharpness: rows(image.sharpness, 1)} : {}), cfl: {...cfl, width: tw, x: tiles(cfl.x), b: tiles(cfl.b)}};
+}
+
+export function bandedRGBA(image, rows = 512) {
+  const {width, height} = image, stride = image.components[0].stride, blockRows = image.components[0].rows, out = new Uint8ClampedArray(width * height * 4);
+  for (let y0 = 0; y0 < height; y0 += rows) {
+    const y1 = Math.min(height, y0 + rows), by0 = Math.max(0, Math.floor((y0 - RECON_MARGIN) / 64) * 8), by1 = Math.min(blockRows, Math.ceil((y1 + RECON_MARGIN) / 64) * 8);
+    const lin = reconstruct(subImage(image, 0, by0, stride, by1));
+    toRGBAInto(lin, (y0 - by0 * 8) * width, (y1 - y0) * width, out, y0 * width);
+  }
+  return out;
 }
 
 export function cropFor({x0, y0, x1, y1}, width, height, margin = CROP_MARGIN) {
@@ -444,23 +455,27 @@ export function poolSize(pixels = 0, cores = globalThis.navigator?.hardwareConcu
 
 export const BAND_ROWS = 128;
 
-function eachBand(reference, width, height, image, rows, consume) {
+function eachRow(reference, width, height, image, rows, consume) {
   if (!Number.isSafeInteger(rows) || rows < 1) throw new RangeError('Exact band rows must be a positive integer.');
-  for (let y0 = 0; y0 < height; y0 += rows) {
-    const region = {x0: 0, y0, x1: width, y1: Math.min(height, y0 + rows)}, job = regionJob(reference, width, height, region), {crop, blocks: b} = job;
-    const cw = crop.x1 - crop.x0, ch = crop.y1 - crop.y0, sub = subImage(image, b.bx0, b.by0, b.bx1, b.by1), lin = reconstruct(sub), sw = sub.width;
-    const ox = crop.x0 - b.bx0 * 8, oy = crop.y0 - b.by0 * 8;
-    const dist = lin.map(pl => { const o = new Float64Array(cw * ch); for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) o[y * cw + x] = pl[(oy + y) * sw + ox + x]; return o; });
-    const map = butteraugli(butteraugliReference(job.refPlanes, cw, ch), dist).map;
-    consume(map, crop, region);
-  }
+  const blockRows = image.components[0].rows, stride = image.components[0].stride;
+  let lin = null, top = 0, end = 0, sw = 0, skip = 0;
+  const distorted = (c, y) => {
+    if (y < top || y >= end) {
+      const y0 = y - y % rows, by0 = Math.max(0, Math.floor((y0 - RECON_MARGIN) / 64) * 8), by1 = Math.min(blockRows, Math.ceil((Math.min(height, y0 + rows) + RECON_MARGIN) / 64) * 8);
+      const sub = subImage(image, 0, by0, stride, by1);
+      lin = null; lin = reconstruct(sub); sw = sub.width; top = y0; end = Math.min(height, y0 + rows); skip = by0 * 8;
+    }
+    return lin[c].subarray((y - skip) * sw, (y - skip) * sw + width);
+  };
+  const row = new Float64Array(width), refRow = reference.rgba
+    ? (c, y) => { for (let x = 0, at = y * width * 4 + c; x < width; x++, at += 4) row[x] = SRGB_TO_LINEAR[reference.rgba[at]]; return row; }
+    : (c, y) => reference[c].subarray(y * width, (y + 1) * width);
+  butteraugliRows(refRow, distorted, width, height, consume);
 }
 
 export function bandedMap(reference, width, height, image, rows = BAND_ROWS) {
   const map = new Float64Array(width * height);
-  eachBand(reference, width, height, image, rows, (band, crop, region) => {
-    for (let y = region.y0; y < region.y1; y++) map.set(band.subarray((y - crop.y0) * width, (y - crop.y0 + 1) * width), y * width);
-  });
+  eachRow(reference, width, height, image, rows, (y, row) => map.set(row, y * width));
   return map;
 }
 
@@ -468,17 +483,15 @@ export function bandedScores(reference, width, height, image, {p = 3, margin = 2
   if (!Number.isSafeInteger(margin) || margin < 0) throw new RangeError('Exact block margin must be a nonnegative integer.');
   const stride = Math.ceil(width / 8), count = Math.ceil(height / 8), cells = new Float64Array(stride * count), blocks = new Float64Array(stride * count);
   const sums = [0, 0, 0]; let max = 0;
-  eachBand(reference, width, height, image, rows, (map, crop, region) => {
-    for (let y = region.y0; y < region.y1; y++) {
-      const by0 = Math.max(0, Math.ceil((y - margin - 7) / 8)), by1 = Math.min(count - 1, Math.floor((y + margin) / 8));
-      for (let x = 0; x < width; x++) {
-        const v = map[(y - crop.y0) * width + x]; max = Math.max(max, v);
-        let d = v * (v * v); sums[0] += d; d *= d; sums[1] += d; d *= d; sums[2] += d;
-        cells[(y >> 3) * stride + (x >> 3)] += exactPow(v, p);
-        const bx0 = Math.max(0, Math.ceil((x - margin - 7) / 8)), bx1 = Math.min(stride - 1, Math.floor((x + margin) / 8));
-        for (let by = by0; by <= by1; by++) for (let bx = bx0; bx <= bx1; bx++) {
-          const at = by * stride + bx; blocks[at] = Math.max(blocks[at], v);
-        }
+  eachRow(reference, width, height, image, rows, (y, map) => {
+    const by0 = Math.max(0, Math.ceil((y - margin - 7) / 8)), by1 = Math.min(count - 1, Math.floor((y + margin) / 8));
+    for (let x = 0; x < width; x++) {
+      const v = map[x]; max = Math.max(max, v);
+      let d = v * (v * v); sums[0] += d; d *= d; sums[1] += d; d *= d; sums[2] += d;
+      cells[(y >> 3) * stride + (x >> 3)] += exactPow(v, p);
+      const bx0 = Math.max(0, Math.ceil((x - margin - 7) / 8)), bx1 = Math.min(stride - 1, Math.floor((x + margin) / 8));
+      for (let by = by0; by <= by1; by++) for (let bx = bx0; bx <= bx1; bx++) {
+        const at = by * stride + bx; blocks[at] = Math.max(blocks[at], v);
       }
     }
   });
@@ -488,7 +501,7 @@ export function bandedScores(reference, width, height, image, {p = 3, margin = 2
 
 export function exactScores(cpu, reference, width, height, image, want = {}, memory = cpu.memory ?? null) {
   const plan = memory ?? memoryPlan(width * height, {width, height});
-  if (!plan.banded || want.butteraugli === false) return cpu(image, want);
+  if (!plan.banded) return cpu(image, want);
   if (typeof cpu.banded !== 'function') throw fault('JXL_INPUT', 'Banded scoring requires the CPU reference transaction.');
   return cpu.banded(image, want, ref => bandedScores(ref, width, height, image, {...want, rows: plan.bandRows}));
 }
