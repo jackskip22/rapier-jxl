@@ -54,15 +54,15 @@ jobs:
           }
           for version in $(sed -n 's/^## \([0-9][0-9.]*[0-9]\)\( .*\)\{0,1\}$/\1/p' CHANGELOG.md | sort -V); do
             tag="v$version"
-            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then continue; fi
+            if gh release view "$tag" >/dev/null 2>&1; then continue; fi
             if [ -z "$(npm view "$name@$version" version 2>/dev/null)" ]; then echo "$name@$version is not on the registry: no tag" | tee -a "$GITHUB_STEP_SUMMARY"; continue; fi
             if [ "$version" = "$current" ]; then target="$GITHUB_SHA"
             else target=$(git log --format=%H --grep="^Rapier JXL $version\$" | head -n 1); fi
             if [ -z "$target" ]; then echo "no commit publishes $version: no tag" | tee -a "$GITHUB_STEP_SUMMARY"; continue; fi
             notes "$version" > "$RUNNER_TEMP/notes-$version.md"
             latest=false; [ "$version" = "$current" ] && latest=true
-            git tag "$tag" "$target"
-            if ! git push origin "refs/tags/$tag"; then
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then :
+            elif git tag "$tag" "$target" && ! git push origin "refs/tags/$tag"; then
               # The workflow token cannot tag an older commit whose workflow file differs from today's; a lead tags it by hand.
               if [ "$version" = "$current" ]; then exit 1; fi
               echo "::warning::$tag at $target needs a tag pushed by hand (docs/RELEASING.md)"; continue
