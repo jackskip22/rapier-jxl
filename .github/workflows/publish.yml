@@ -61,6 +61,8 @@ jobs:
             if [ -z "$target" ]; then echo "no commit publishes $version: no tag" | tee -a "$GITHUB_STEP_SUMMARY"; continue; fi
             notes "$version" > "$RUNNER_TEMP/notes-$version.md"
             latest=false; [ "$version" = "$current" ] && latest=true
-            gh release create "$tag" --target "$target" --title "$version" --notes-file "$RUNNER_TEMP/notes-$version.md" --latest=$latest
+            git tag "$tag" "$target"
+            git push origin "refs/tags/$tag"
+            gh release create "$tag" --verify-tag --title "$version" --notes-file "$RUNNER_TEMP/notes-$version.md" --latest=$latest
             echo "tagged $tag at $target and released $version" | tee -a "$GITHUB_STEP_SUMMARY"
           done
