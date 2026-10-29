@@ -4,7 +4,7 @@ on:
     branches: [main]
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
   id-token: write
 concurrency:
   group: publish
@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
@@ -34,3 +36,31 @@ jobs:
           fi
           npm publish --access public
           echo "published $name@$version" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: tag every CHANGELOG.md version on the registry and release it with its section (the newest at this commit, older ones at the last commit that published them)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          name=$(node -p "require('./package.json').name")
+          current=$(node -p "require('./package.json').version")
+          notes() {
+            node -e '
+              const version = process.argv[1], lines = require("fs").readFileSync("CHANGELOG.md", "utf8").split("\n");
+              const start = lines.findIndex(line => line.startsWith("## " + version + " ") || line === "## " + version);
+              if (start < 0) { console.error("CHANGELOG.md has no section for " + version); process.exit(1); }
+              const end = lines.findIndex((line, index) => index > start && line.startsWith("## "));
+              process.stdout.write(lines.slice(start + 1, end < 0 ? undefined : end).join("\n").trim() + "\n");
+            ' "$1"
+          }
+          for version in $(sed -n 's/^## \([0-9][0-9.]*[0-9]\)\( .*\)\{0,1\}$/\1/p' CHANGELOG.md | sort -V); do
+            tag="v$version"
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then continue; fi
+            if [ -z "$(npm view "$name@$version" version 2>/dev/null)" ]; then echo "$name@$version is not on the registry: no tag" | tee -a "$GITHUB_STEP_SUMMARY"; continue; fi
+            if [ "$version" = "$current" ]; then target="$GITHUB_SHA"
+            else target=$(git log --format=%H --grep="^Rapier JXL $version\$" | head -n 1); fi
+            if [ -z "$target" ]; then echo "no commit publishes $version: no tag" | tee -a "$GITHUB_STEP_SUMMARY"; continue; fi
+            notes "$version" > "$RUNNER_TEMP/notes-$version.md"
+            latest=false; [ "$version" = "$current" ] && latest=true
+            gh release create "$tag" --target "$target" --title "$version" --notes-file "$RUNNER_TEMP/notes-$version.md" --latest=$latest
+            echo "tagged $tag at $target and released $version" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
