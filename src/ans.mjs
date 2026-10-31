@@ -51,53 +51,108 @@ function countDown(count, shift) {
   return count === 1 << bits ? count - stepOf(count - 1, shift) : count - stepOf(count, shift);
 }
 
-export function shapeHistogram(freqs, shifts = SHIFTS) {
+const SHAPE_ACTIVE = new Uint16Array(512);
+const SHAPE_TARGETS = new Float64Array(512);
+const SHAPE_ROUNDS = new Uint16Array(512);
+const SHAPE_CAPS = new Uint16Array(512);
+const SHAPE_UPS = new Uint16Array(512);
+const SHAPE_DOWNS = new Uint16Array(512);
+const SHAPE_UP_GAINS = new Float64Array(512);
+const SHAPE_DOWN_GAINS = new Float64Array(512);
+
+export function shapeHistogram(freqs, shifts = SHIFTS, headerAware = false) {
   let total = 0, last = 0, omit = 0, used = 0;
   for (let i = 0; i < freqs.length; i++) if (freqs[i]) { total += freqs[i]; last = i + 1; used++; if (freqs[i] > freqs[omit]) omit = i; }
   if (used <= 2) { const counts = normalise(freqs); return {counts, shift: 12, omit: -1, bits: distributionBits(counts, 12, -1) + expectedDataBits(freqs, counts)}; }
-  let best = null;
-  const ups = new Uint16Array(last), downs = new Uint16Array(last), upGains = new Float64Array(last), downGains = new Float64Array(last);
+  const active = last <= 512 ? SHAPE_ACTIVE : new Uint16Array(last);
+  const targets = last <= 512 ? SHAPE_TARGETS : new Float64Array(last);
+  const rounds = last <= 512 ? SHAPE_ROUNDS : new Uint16Array(last);
+  const caps = last <= 512 ? SHAPE_CAPS : new Uint16Array(last);
+  const ups = last <= 512 ? SHAPE_UPS : new Uint16Array(last);
+  const downs = last <= 512 ? SHAPE_DOWNS : new Uint16Array(last);
+  const upGains = last <= 512 ? SHAPE_UP_GAINS : new Float64Array(last);
+  const downGains = last <= 512 ? SHAPE_DOWN_GAINS : new Float64Array(last);
+  let actLen = 0, maxRoundBits = 0;
+  for (let i = 0; i < last; i++) if (freqs[i] && i !== omit) {
+    const idx = actLen++;
+    active[idx] = i;
+    const t = freqs[i] * 4096 / total, cap = i < omit ? 2047 : 4095, r = Math.max(1, Math.min(cap, Math.round(t)));
+    targets[idx] = t; caps[idx] = cap; rounds[idx] = r;
+    const b = floorLog2(r);
+    if (b > maxRoundBits) maxRoundBits = b;
+  }
+  const f0 = freqs[omit];
+  let best = null, prevShift = -1, prevCounts = null, prevBits = 0, prevMaxBits = 0;
   for (let k = 0; k < shifts.length; k++) {
     const shift = shifts[k];
     if (REPEATS[shift] && shifts.indexOf(shift + 1) >= 0 && shifts.indexOf(shift + 1) < k) continue;
+    if (prevCounts !== null) {
+      const checkMax = Math.min(11, Math.max(maxRoundBits, prevMaxBits) + 1);
+      let same = true;
+      for (let b = 1; b <= checkMax; b++) if (countPrecision(b, shift) !== countPrecision(b, prevShift)) { same = false; break; }
+      if (same) {
+        const bits = prevBits - gammaBits(prevShift) + gammaBits(shift);
+        prevShift = shift; prevBits = bits;
+        if (!best || bits < best.bits) best = {counts: prevCounts, shift, omit, bits};
+        continue;
+      }
+    }
     const counts = new Uint16Array(last);
     let sum = 0;
-    for (let i = 0; i < last; i++) if (freqs[i] && i !== omit) {
-      const target = freqs[i] * 4096 / total, cap = i < omit ? 2047 : 4095;
-      let c = Math.max(1, Math.min(cap, Math.round(target)));
+    for (let idx = 0; idx < actLen; idx++) {
+      const i = active[idx], target = targets[idx], cap = caps[idx];
+      let c = rounds[idx];
       if (c > 1) { const bits = floorLog2(c), step = stepOf(c, shift); c = (1 << bits) + Math.floor((c - (1 << bits)) / step) * step; }
       const up = countUp(c, shift);
       if (up <= cap && up - target < target - c) c = up;
       counts[i] = c; sum += c;
     }
-    if (sum >= 4096) continue;
-    const f0 = freqs[omit];
-    const steps = i => {
-      const c = counts[i], cap = i < omit ? 2047 : 4095, here = LOG2[c], up = countUp(c, shift), down = countDown(c, shift);
-      ups[i] = up <= cap ? up : 0; downs[i] = down;
-      if (up <= cap) upGains[i] = freqs[i] * (LOG2[up] - here);
-      if (down >= 1) downGains[i] = freqs[i] * (LOG2[down] - here);
+    if (sum >= 4096) { prevCounts = null; continue; }
+    let initialBits = Infinity, initialCounts = null, initialMaxBits = 0;
+    if (headerAware) {
+      counts[omit] = 4096 - sum;
+      initialBits = distributionBits(counts, shift, omit) + expectedDataBits(freqs, counts);
+      initialCounts = counts.slice();
+      for (let idx = 0; idx < actLen; idx++) initialMaxBits = Math.max(initialMaxBits, floorLog2(counts[active[idx]]));
+      if (!best || initialBits < best.bits) best = {counts: initialCounts, shift, omit, bits: initialBits};
+    }
+    const symbolHeader = c => { const b = floorLog2(c); return LOG_LENGTHS[b + 1] + (b ? countPrecision(b, shift) : 0); };
+    const steps = idx => {
+      const i = active[idx], c = counts[i], cap = caps[idx], here = LOG2[c], h0 = headerAware ? symbolHeader(c) : 0, up = countUp(c, shift), down = countDown(c, shift);
+      ups[idx] = up <= cap ? up : 0; downs[idx] = down;
+      if (up <= cap) upGains[idx] = freqs[i] * (LOG2[up] - here) - (headerAware ? symbolHeader(up) - h0 : 0);
+      if (down >= 1) downGains[idx] = freqs[i] * (LOG2[down] - here) - (headerAware ? symbolHeader(down) - h0 : 0);
     };
-    for (let i = 0; i < last; i++) if (counts[i] && i !== omit) steps(i);
+    for (let idx = 0; idx < actLen; idx++) steps(idx);
     for (let moves = 0; moves < 4 * last; moves++) {
       const rest = 4096 - sum, restBits = LOG2[rest];
-      let chosen = -1, to = 0, gain = 1e-9;
-      for (let i = 0; i < last; i++) if (counts[i] && i !== omit) {
-        const c = counts[i], up = ups[i], down = downs[i];
+      let chosenIdx = -1, to = 0, gain = 1e-9;
+      for (let idx = 0; idx < actLen; idx++) {
+        const i = active[idx], c = counts[i], up = ups[idx], down = downs[idx];
         if (up && rest - (up - c) >= 1) {
-          const g = upGains[i] + f0 * (LOG2[rest - (up - c)] - restBits);
-          if (g > gain) { gain = g; chosen = i; to = up; }
+          const g = upGains[idx] + f0 * (LOG2[rest - (up - c)] - restBits);
+          if (g > gain) { gain = g; chosenIdx = idx; to = up; }
         }
         if (down >= 1) {
-          const g = downGains[i] + f0 * (LOG2[rest + c - down] - restBits);
-          if (g > gain) { gain = g; chosen = i; to = down; }
+          const g = downGains[idx] + f0 * (LOG2[rest + c - down] - restBits);
+          if (g > gain) { gain = g; chosenIdx = idx; to = down; }
         }
       }
-      if (chosen < 0) break;
-      sum += to - counts[chosen]; counts[chosen] = to; steps(chosen);
+      if (chosenIdx < 0) break;
+      const chosen = active[chosenIdx];
+      sum += to - counts[chosen]; counts[chosen] = to; steps(chosenIdx);
     }
     counts[omit] = 4096 - sum;
-    const bits = distributionBits(counts, shift, omit) + expectedDataBits(freqs, counts);
+    let maxB = 0, dataBits = f0 * SYMBOL_BITS[counts[omit]];
+    for (let idx = 0; idx < actLen; idx++) {
+      const i = active[idx], c = counts[i], b = floorLog2(c);
+      if (b > maxB) maxB = b;
+      dataBits += freqs[i] * SYMBOL_BITS[c];
+    }
+    const bits = distributionBits(counts, shift, omit) + dataBits;
+    prevShift = shift;
+    if (initialBits < bits) { prevCounts = initialCounts; prevBits = initialBits; prevMaxBits = initialMaxBits; }
+    else { prevCounts = counts; prevBits = bits; prevMaxBits = maxB; }
     if (!best || bits < best.bits) best = {counts, shift, omit, bits};
   }
   return best;
@@ -182,6 +237,11 @@ function writeDistribution(w, counts, runs = false, shift = 12, omit = -1) {
   }
 }
 
+const ALIAS_CUTOFFS = new Int32Array(256);
+const ALIAS_ALIASES = new Uint16Array(256);
+const ALIAS_OFFSETS = new Int32Array(256);
+const ALIAS_UNDER = new Uint16Array(256);
+const ALIAS_OVER = new Uint16Array(256);
 export function reverseAlias(counts, logAlphabet) {
   const size = 1 << logAlphabet, entry = 4096 >> logAlphabet;
   const starts = new Uint16Array(counts.length + 1), reverse = new Uint16Array(4096);
@@ -194,19 +254,24 @@ export function reverseAlias(counts, logAlphabet) {
     for (let i = 0; i < 4096; i++) reverse[i] = i;
     return {starts, reverse};
   }
-  const cutoffs = new Int32Array(size), aliases = new Uint16Array(size), offsets = new Int32Array(size);
-  const under = [], over = [];
+  const cutoffs = size <= 256 ? ALIAS_CUTOFFS : new Int32Array(size);
+  const aliases = size <= 256 ? ALIAS_ALIASES : new Uint16Array(size);
+  const offsets = size <= 256 ? ALIAS_OFFSETS : new Int32Array(size);
+  const under = size <= 256 ? ALIAS_UNDER : new Uint16Array(size);
+  const over = size <= 256 ? ALIAS_OVER : new Uint16Array(size);
+  cutoffs.fill(0, 0, size); aliases.fill(0, 0, size); offsets.fill(0, 0, size);
   cutoffs.set(counts);
+  let uLen = 0, oLen = 0;
   for (let i = 0; i < size; i++) {
-    if (cutoffs[i] < entry) under.push(i);
-    else if (cutoffs[i] > entry) over.push(i);
+    if (cutoffs[i] < entry) under[uLen++] = i;
+    else if (cutoffs[i] > entry) over[oLen++] = i;
   }
-  while (over.length) {
-    const from = over.pop(), to = under.pop(), taken = entry - cutoffs[to];
+  while (oLen > 0) {
+    const from = over[--oLen], to = under[--uLen], taken = entry - cutoffs[to];
     cutoffs[from] -= taken;
     aliases[to] = from; offsets[to] = cutoffs[from] - cutoffs[to];
-    if (cutoffs[from] < entry) under.push(from);
-    else if (cutoffs[from] > entry) over.push(from);
+    if (cutoffs[from] < entry) under[uLen++] = from;
+    else if (cutoffs[from] > entry) over[oLen++] = from;
   }
   for (let i = 0; i < size; i++) {
     const cutoff = cutoffs[i], start = starts[i], aliased = starts[aliases[i]] + offsets[i], base = i * entry;
@@ -296,8 +361,9 @@ function ansFlush(g, w) {
 
 export function buildAnsCoding(counts, options) {
   const shaped = new WeakMap();
+  const headerAware = options?.seeds === 128;
   const shapedCost = (freqs, config) => {
-    const header = new BitCount(), shape = shapeHistogram(freqs, options?.shifts);
+    const header = new BitCount(), shape = shapeHistogram(freqs, options?.shifts, headerAware);
     shaped.set(freqs, shape);
     writeUintConfig(header, config, Math.max(5, ceilLog2(freqs.findLastIndex(Boolean) + 1)));
     return header.bitLength + shape.bits;
@@ -305,7 +371,7 @@ export function buildAnsCoding(counts, options) {
   const clustered = clusterTokenCounts(counts, options, histogramCost, symbolCosts, shapedCost);
   let bits = 32;
   const histograms = clustered.histograms.map(({config, freqs, extra}) => {
-    const {counts, shift, omit} = shaped.get(freqs) ?? shapeHistogram(freqs, options?.shifts);
+    const {counts, shift, omit} = shaped.get(freqs) ?? shapeHistogram(freqs, options?.shifts, headerAware);
     bits += extra + expectedDataBits(freqs, counts);
     return {config, counts, shift, omit};
   });

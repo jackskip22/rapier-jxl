@@ -109,8 +109,9 @@ function appendWord(output, at, end, length, wordId, r, dictionary) {
   return at;
 }
 
-export function decompressBrotli(bytes, {maxOutput = 268435456, dictionary} = {}) {
-  requireDecode(bytes instanceof Uint8Array && Number.isSafeInteger(maxOutput) && maxOutput >= 0, 'Invalid Brotli input or output limit.');
+export function decompressBrotli(bytes, {maxOutput = 268435456, maxBlocks = 65536, dictionary} = {}) {
+  requireDecode(bytes instanceof Uint8Array && Number.isSafeInteger(maxOutput) && maxOutput >= 0 &&
+    Number.isSafeInteger(maxBlocks) && maxBlocks > 0, 'Invalid Brotli input or resource limit.');
   let words;
   const dictionaryBytes = () => {
     if (words) return words;
@@ -127,8 +128,9 @@ export function decompressBrotli(bytes, {maxOutput = 268435456, dictionary} = {}
     else { const low = r.read(3); requireDecode(low !== 1, 'Invalid Brotli window size.', r); windowBits = low ? low + 8 : 17; }
   }
   const window = (1 << windowBits) - 16, history = [4,11,15,16];
-  let output = new Uint8Array(0), at = 0, last = false;
+  let output = new Uint8Array(0), at = 0, last = false, blocks = 0;
   while (!last) {
+    if (++blocks > maxBlocks) throw Object.assign(new RangeError('Brotli meta-block count exceeds the limit.'), {code: 'JXL_LIMIT'});
     last = !!r.read(1);
     if (last && r.read(1)) break;
     const nibbles = r.read(2) + 4;
@@ -179,5 +181,5 @@ export function decompressBrotli(bytes, {maxOutput = 268435456, dictionary} = {}
       requireDecode(at > started || r.bit > bit, 'Brotli command does not advance.', r);
     }
   }
-  r.end(); return output.slice(0,at);
+  r.end(); return output.length === at ? output : output.slice(0,at);
 }

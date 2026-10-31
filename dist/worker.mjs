@@ -1,2 +1,0 @@
-/*! rapier-jxl 7.1.0 | MIT */
-import{a as o}from"./chunk-3O6MLZV3.mjs";import"./chunk-ZZX2NZD4.mjs";import"./chunk-KYNSZNNM.mjs";import"./chunk-GOWIYXRZ.mjs";o(typeof globalThis.addEventListener=="function"?globalThis:globalThis.process?.getBuiltinModule?.("node:worker_threads")?.parentPort??globalThis);

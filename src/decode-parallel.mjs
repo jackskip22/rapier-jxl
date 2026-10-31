@@ -7,7 +7,7 @@ import {transformColor, nativeEncoding, sameEncoding, targetEncoding} from './de
 import {rgbaPixels} from './decode-compose.mjs';
 
 const BAND_WORKER = 'rapier-jxl-decode';
-const nodeThreads = globalThis.process?.getBuiltinModule?.('node:worker_threads');
+const nodeThreads = (() => { try { return globalThis.process?.getBuiltinModule?.('node:worker_threads'); } catch { return undefined; } })();
 const groupRows = f => Math.ceil(f.height / 256);
 const rgbaArray = (format, length) => new (format === 'float32' ? Float32Array : format === 'uint16' ? Uint16Array : Uint8Array)(length);
 
@@ -98,12 +98,31 @@ function bandWorker() {
     const flags = globalThis.process.execArgv, execArgv = flags.some(flag => flag.startsWith('--input-type')) ? flags.filter(flag => !flag.startsWith('--input-type')) : undefined;
     const thread = new nodeThreads.Worker(new URL(import.meta.url), {workerData: BAND_WORKER, execArgv});
     thread.on('message', deliver); thread.on('error', error => deliver({type: 'error', message: error.message}));
+    thread.on('messageerror', error => deliver({type: 'error', message: 'JPEG XL band worker message could not be deserialized: ' + (error?.message ?? String(error))}));
+    thread.on('exit', code => {
+      const idle = idleWorkers.indexOf(worker);
+      if (idle >= 0) idleWorkers.splice(idle, 1);
+      deliver({type: 'error', message: 'JPEG XL band worker exited before completing its work (exit code ' + code + ').'});
+    });
     Object.assign(worker, {post: (message, transfer) => thread.postMessage(message, transfer), end: () => thread.terminate(),
       ref: () => thread.ref(), unref: () => thread.unref()});
   } else {
     const thread = new Worker(import.meta.url, {type: 'module', name: BAND_WORKER});
     thread.onmessage = event => deliver(event.data);
-    thread.onerror = event => { event.preventDefault?.(); deliver({type: 'error', message: event.message}); };
+    const unavailable = message => {
+      const idle = idleWorkers.indexOf(worker);
+      if (idle >= 0) {
+        idleWorkers.splice(idle, 1);
+        clearTimeout(worker.timer);
+        thread.terminate();
+      } else if (worker.handler) deliver({type: 'error', message});
+    };
+    thread.onerror = event => {
+      event.preventDefault?.();
+      unavailable(event.message || 'JPEG XL browser band worker failed.');
+    };
+    thread.onmessageerror = event =>
+      unavailable(event?.message || 'JPEG XL browser band worker message could not be deserialized.');
     Object.assign(worker, {post: (message, transfer) => thread.postMessage(message, transfer), end: () => thread.terminate(),
       ref: () => {}, unref: () => { worker.timer = setTimeout(() => { idleWorkers.splice(idleWorkers.indexOf(worker), 1); thread.terminate(); }, 10000); }});
   }
@@ -117,22 +136,28 @@ function runBands(bytes, options, bands, rows) {
     const edges = new Array(bands.length);
     let edgeCount = 0, doneCount = 0;
     const fail = message => { if (!failed) { failed = true; reject(new Error(message)); } };
-    bands.forEach(([first, end], index) => {
-      const worker = bandWorker(); workers.push(worker);
-      worker.handler = message => {
-        if (failed) return;
-        if (message.type === 'error') return fail(message.message);
-        if (message.type === 'edges') {
-          edges[index] = message;
-          if (++edgeCount === bands.length) workers.forEach((w, i) => {
-            const above = i ? edges[i - 1].below : null, below = i + 1 < bands.length ? edges[i + 1].above : null;
-            w.post({type: 'halo', above, below});
-          });
-        } else if (message.type === 'rows') rows(message.top, message.planes, message.data);
-        else if (message.type === 'done' && ++doneCount === bands.length) resolve();
-      };
-      worker.post({type: 'band', bytes, options, first, end});
-    });
+    try {
+      bands.forEach(([first, end], index) => {
+        const worker = bandWorker(); workers.push(worker);
+        worker.handler = message => {
+          if (failed) return;
+          try {
+            if (message.type === 'error') return fail(message.message);
+            if (message.type === 'edges') {
+              edges[index] = message;
+              if (++edgeCount === bands.length) workers.forEach((w, i) => {
+                const above = i ? edges[i - 1].below : null, below = i + 1 < bands.length ? edges[i + 1].above : null;
+                w.post({type: 'halo', above, below});
+              });
+            } else if (message.type === 'rows') rows(message.top, message.planes, message.data);
+            else if (message.type === 'done' && ++doneCount === bands.length) resolve();
+          } catch (error) { fail(error?.message ?? String(error)); }
+        };
+        worker.post({type: 'band', bytes, options, first, end});
+      });
+    } catch (error) {
+      fail(error?.message ?? String(error));
+    }
   }).finally(() => workers.forEach(worker => {
     worker.handler = null;
     if (failed) worker.end(); else { worker.unref(); idleWorkers.push(worker); }
@@ -141,17 +166,21 @@ function runBands(bytes, options, bands, rows) {
 
 export async function decodeAsync(bytes, options = {}) {
   options = decodeOptions(options);
-  const threads = options.threads ?? Math.min(8, globalThis.navigator?.hardwareConcurrency ?? 1);
-  requireDecode(Number.isSafeInteger(threads) && threads >= 1, 'JPEG XL decode threads is a positive integer.');
+  const requested = options.threads ?? globalThis.navigator?.hardwareConcurrency ?? 1;
+  requireDecode(Number.isSafeInteger(requested) && requested >= 1, 'JPEG XL decode threads is a positive integer.');
+  const threads = Math.min(8, requested);
   let probe = null;
-  try { decodeImage(bytes, options, (readers, h, f) => { throw probe = {readers, h, f}; }); } catch (error) { if (error !== probe) throw error; }
-  const {readers, h, f} = probe, rows = groupRows(f), count = Math.min(threads, rows);
+  try { decodeImage(bytes, options, (readers, h, f, codestream) => { throw probe = {readers, h, f, codestream}; }); } catch (error) { if (error !== probe) throw error; }
+  const {readers, h, f, codestream} = probe, rows = groupRows(f), count = Math.min(threads, rows);
   if (count < 2 || readers.length < 2 || !bandable(h, f, options) || !(nodeThreads || typeof Worker === 'function')) return decodeBands(bytes, options);
   const bands = Array.from({length: count}, (_, i) => [Math.floor(i * rows / count), Math.floor((i + 1) * rows / count)]);
   const width = f.width, format = outputFormat(h, options);
   const planes = [0, 1, 2].map(() => new Float32Array(options.planes ? width * f.height : 0)), data = rgbaArray(format, width * f.height * 4);
   try {
-    await runBands(bytes, options, bands, (top, rows, rgba) => {
+    const backing = nodeThreads && typeof SharedArrayBuffer === 'function' ? new SharedArrayBuffer(f.end) : new ArrayBuffer(f.end);
+    const workerBytes = new Uint8Array(backing);
+    workerBytes.set(codestream.subarray(0, f.end));
+    await runBands(workerBytes, options, bands, (top, rows, rgba) => {
       if (rows) for (let c = 0; c < 3; c++) planes[c].set(rows[c], top * width);
       data.set(rgba, top * width * 4);
     });

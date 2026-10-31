@@ -17,7 +17,7 @@ function uint(value, maximum, name, minimum = 0) {
   return value;
 }
 function limit(options) { record(options, 'Container options'); return uint(options.maxBytes ?? Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, 'maxBytes', 1); }
-function boxLimit(options) { return uint(options.maxBoxes ?? Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, 'maxBoxes', 1); }
+function boxLimit(options) { return uint(options.maxBoxes ?? 65536, Number.MAX_SAFE_INTEGER, 'maxBoxes', 1); }
 function bounded(length, maximum) {
   if (!Number.isSafeInteger(length) || length > maximum) throw fault('JXL_SIZE', 'The JPEG XL container exceeds maxBytes.');
   return length;
@@ -159,12 +159,14 @@ export function reframeContainer(bytes, options = {}) {
   const ftyp = source.entries.length ? source.entries[0].data.slice() : new Uint8Array([106,120,108,32,0,0,0,0,106,120,108,32]);
   const wantLevel = level === 10 || source.entries.some(row => row.type === LEVEL);
   const auxiliary = source.entries.filter(row => ![FTYP, LEVEL, CODESTREAM, PARTIAL].includes(row.type));
+  const authoredBoxes = 1 + Number(wantLevel) + auxiliary.length + (fragmenting ? fragmentCount : 1);
   let total = SIGNATURE.length + headerLen + ftyp.length;
   if (wantLevel) total = bounded(total + headerLen + 1, maximum);
   for (const row of auxiliary) if (row.type !== INDEX) total = bounded(total + headerLen + row.data.length, maximum);
   if (!fragmenting) total = bounded(total + headerLen + stream.length, maximum);
   else total = bounded(total + fragmentCount * (headerLen + 4) + stream.length, maximum);
   for (const row of auxiliary) if (row.type === INDEX) total = bounded(total + headerLen + row.data.length, maximum);
+  if (authoredBoxes > boxLimit(options)) throw invalid('JPEG XL box count exceeds the limit.');
 
   let outOfOrder = false, order = null;
   if (fragmenting && options.fragmentOrder !== undefined) {
@@ -250,6 +252,15 @@ function parseIndex(data) {
   return {tickNumerator, tickDenominator, frames};
 }
 
+function admitAttachmentBoxCount(source, type, hasPayload, level, options) {
+  const count = source.entries.length
+    ? source.entries.reduce((n, row) => n + Number(row.decoded !== type &&
+        !(row.type === LEVEL && source.level !== level)), 0)
+      + Number(source.level !== level) + Number(hasPayload)
+    : 2 + Number(level === 10) + Number(hasPayload);
+  if (count > boxLimit(options)) throw invalid('JPEG XL box count exceeds the limit.');
+}
+
 function attached(bytes, type, payload, options) {
   const maximum = limit(options), source = scanContainer(bytes, maximum, boxLimit(options)), extended = options.extended ?? false;
   if (typeof extended !== 'boolean') throw invalid('extended is a boolean.');
@@ -271,7 +282,9 @@ function attached(bytes, type, payload, options) {
 }
 
 export function withFrameIndex(bytes, index, options = {}) {
-  const maximum = limit(options), source = scanContainer(bytes, maximum, boxLimit(options)), payload = index === null ? null : frameIndexPayload(index, options);
+  const maximum = limit(options), source = scanContainer(bytes, maximum, boxLimit(options));
+  admitAttachmentBoxCount(source, INDEX, index !== null, options.level ?? source.level, options);
+  const payload = index === null ? null : frameIndexPayload(index, options);
   if (index !== null) for (const frame of index.frames) if (integer63(frame.byteOffset, 'byteOffset') >= BigInt(source.codestream.length))
     throw invalid('A frame index byteOffset must fall inside the logical codestream.');
   return attached(bytes, INDEX, payload, options);
@@ -306,6 +319,7 @@ export function gainMapPayload(bundle, options = {}) {
 
 export function withGainMap(bytes, bundle, options = {}) {
   const source = scanContainer(bytes, limit(options), boxLimit(options)), settings = {...options, level: options.level ?? source.level};
+  admitAttachmentBoxCount(source, GAIN, bundle !== null, settings.level, settings);
   return attached(bytes, GAIN, bundle === null ? null : gainMapPayload(bundle, settings), settings);
 }
 export function readGainMap(bytes, options = {}) {

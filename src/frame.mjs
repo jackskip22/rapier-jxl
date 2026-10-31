@@ -9,7 +9,7 @@ function writeSize(w, size) {
   w.writeU32([[9, 1], [13, 1], [18, 1], [30, 1]], size);
 }
 
-export function writeImageHeader(w, width, height, colour, alpha, {xyb = false, orientation = 1, colorSpace, bitDepth = 8, exponentBits = 0, transferFunction = 'srgb', intensityTarget = 255, alphaPremultiplied = false, modular16bit = bitDepth <= 12 && !exponentBits, colorData, toneData, iccData, imageFields, extraChannelData, transformData} = {}, profileHeader) {
+export function writeHeaderFields(w, width, height, colour, alpha, {xyb = false, orientation = 1, colorSpace, bitDepth = 8, exponentBits = 0, transferFunction = 'srgb', intensityTarget = 255, alphaPremultiplied = false, modular16bit = bitDepth <= 12 && !exponentBits, colorData, toneData, iccData, imageFields, extraChannelData, transformData} = {}, profileHeader) {
   if (colorSpace && typeof colorSpace === 'object') ({colorData, iccData} = profileHeader(colorSpace, xyb));
   w.write(16, 0x0AFF);
   w.write(1, 0);

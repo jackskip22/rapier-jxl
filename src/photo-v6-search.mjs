@@ -1,20 +1,19 @@
 // SPDX-License-Identifier: MIT
 import {complete} from './bits.mjs';
-import {photoXYBSteps} from './photo-xyb.mjs';
-import {V6, GABORISH, prepareV6, photoV6Image, v6Image} from './photo-v6.mjs';
-import {closedLoopStrategySteps, xybStrategies, encodeStrategyImage, encodeStrategyImageSteps, cellSums, lazyStrategyImage, materialize} from './varblocks.mjs';
+import {photoXYBSteps, XYB_TABLES} from './photo-xyb.mjs';
+import {transformDCT8, dct8Basis} from './photo-dct.mjs';
+import {V6, GABORISH, prepareV6, photoV6Image, v6Image, v6Trace} from './photo-v6.mjs';
+import {closedLoopStrategySteps, xybStrategies, cellSums, lazyStrategyImage, materialize} from './varblocks.mjs';
 import {closedLoopFieldSteps, blockDistances} from './aq.mjs';
-import {exactAnswerer, exactPool, exactScores, bandedRGBA} from './exact-region.mjs';
+import {exactScores, bandedRGBA} from './exact-region.mjs';
 import {reconstruct, toRGBA} from './reconstruct.mjs';
 import {butteraugli, butteraugliReference} from './butteraugli.mjs';
 import {ssimulacra2, ssimulacra2Reference, linearFromRGBA} from './ssimulacra2.mjs';
 import {coefficientAnsSteps, estimateBytes} from './coefficient-ans.mjs';
 
-import {memoryPlan} from './memory-plan.mjs';
-import {checkSignal} from './async-job.mjs';
+import {memoryPlan, s2Admitted, S2_SEARCH_PIXELS} from './memory-plan.mjs';
+export {S2_SEARCH_PIXELS};
 import {fault} from './fault.mjs';
-import {gpuSetup} from './gpu-setup.mjs';
-import {acGroupPool} from './ac-group.mjs';
 import {linearFromTransform} from './icc-transform.mjs';
 
 export {prepareV6, V6, GABORISH};
@@ -202,14 +201,7 @@ export function* candidateImageSteps(prepared, name, quality, decisions) {
 
 export function writeImage(image, effort = 7) {
   image = materialize(image);
-  if (!image.strategyData) return complete(coefficientAnsSteps(image, effort));
-  const write = level => encodeStrategyImage(image, level >= 7, level);
-  let best = write(Math.min(effort, 7));
-  for (let level = 8; level <= effort; level++) {
-    const bytes = write(level);
-    if (bytes.length < best.length) best = bytes;
-  }
-  return best;
+  return complete(image.strategyData ? encodeStrategyImageSteps(image, true, effort) : coefficientAnsSteps(image, effort));
 }
 
 export function meets(scores, target) {
@@ -373,11 +365,24 @@ function* measuredSteps(steps, measure, expected) {
   }
 }
 
-export function* searchV6(prepared, own, quality, effort) {
+const deeperFloor = (floor, effort) => { const deeper = writeImage(floor.image, effort); return deeper.length < floor.bytes.length ? deeper : floor.bytes; };
+
+export function* searchV6(prepared, own, quality, effort, floor = null, gpu = false) {
+  const s2Route = (w, h, color) => floor?.image && w >= 128 && h >= 128 && !color?.transform;
+  if (typeof prepared === 'function') {
+    if (s2Route(prepared.width, prepared.height, prepared.color) && prepared.width * prepared.height > S2_SEARCH_PIXELS) return deeperFloor(floor, effort);
+    prepared = prepared();
+  }
   prepared.transforms ??= searchTransforms(prepared, 0);
   const {rgba, width, height, color} = prepared;
   const plan = prepared.memory ?? memoryPlan(width * height, {width, height, exact: false});
   if (plan.known && !plan.fits) throw fault('JXL_MEMORY', 'Measured search exceeds its memory reservation.');
+  if (s2Route(width, height, color)) {
+    if (width * height > S2_SEARCH_PIXELS) return deeperFloor(floor, effort);
+    if (!s2Admitted(plan, width, height, effort)) throw fault('JXL_MEMORY', 'The effort 8-9 search exceeds the memory reservation.');
+    return yield* s2EffortSearchSteps(prepared, quality, effort, floor, gpu);
+  }
+  if (typeof own === 'function') own = own();
   const ownBytes = writeImage(own, effort), whole = cpuMeasure(rgba, width, height, color?.transform
     ? {reference: linearFromTransform(rgba, width * height, color.transform), cacheBytes: plan.cacheBytes}
     : {native: true, cacheBytes: plan.cacheBytes});
@@ -390,168 +395,169 @@ export function* searchV6(prepared, own, quality, effort) {
     return found && found.pass && found.size < ownBytes.length ? found.bytes : ownBytes;
   } finally { whole.destroy(); }
 }
-searchV6.blocks = (held, width, height, deadzone) => {
-  const image = xybStrategies(held.base, width, height, {deadzone, ids: [4, 5], model: 'simple'}).image;
-  held.base = null;
-  return encodeStrategyImage(image, true, 7);
-};
 
-export function photoV6MeasuredJob(data, width, height, quality, effort, measurer,
-  {decisions = 'gpu', poolSize, nativeOnGpu = false, memory = {}, signal, workerLease, referenceRgba = null} = {}) {
-  let activePass = null, hurry = false, returned = false;
-  const cancel = new AbortController();
-  const activeSignal = signal ? AbortSignal.any([signal, cancel.signal]) : cancel.signal;
-  const it = (async function* () {
-    checkSignal(activeSignal);
-    const inputBytes = data.buffer.byteLength, metricInputBytes = Math.max(width * height * 4, referenceRgba?.buffer?.byteLength ?? 0);
-    if (memory?.reservations || memory?.geometry) throw fault('JXL_INPUT', 'memory must contain reservation options.');
-    if ((memory.inputBytes !== undefined && memory.inputBytes < inputBytes) ||
-        (memory.metricInputBytes !== undefined && memory.metricInputBytes < metricInputBytes))
-      throw fault('JXL_MEMORY', 'Measured search reservation omits its input or metric source.');
-    const scoped = {...memory, inputBytes: memory.inputBytes ?? inputBytes, metricInputBytes: memory.metricInputBytes ?? metricInputBytes,
-      width, height, exact: false}, plan = memoryPlan(width * height, scoped);
-    if (plan.known && !plan.fits) throw fault('JXL_MEMORY', 'Measured search exceeds its memory reservation.');
-    if (plan.known && measurer) throw fault('JXL_MEMORY_GPU_UNPROVEN', 'GPU allocation has no complete memory reservation.');
-    if (nativeOnGpu && measurer) throw fault('JXL_GPU_NATIVE_UNPROVEN', 'Native GPU reconstruction has no validated score bound.');
-    if (poolSize !== undefined && (!Number.isSafeInteger(poolSize) || poolSize < 0)) throw fault('JXL_INPUT', 'poolSize is a nonnegative integer.');
-    const workers = Math.min(poolSize ?? plan.workers, plan.workers, workerLease?.reservation.count ?? 0), stats = it.stats;
-    let metricRgba = referenceRgba, cpuOnce = null, pool = null, ac = null, exactAnswer = null, steps = null;
-    let gpuFailed = false, primaryFailure = false;
-    const record = () => {
-      stats.gpuBufferBytes = Math.max(stats.gpuBufferBytes ?? 0, measurer?.gpuBufferBytes ?? 0);
-      stats.cacheBytes = Math.max(stats.cacheBytes ?? 0, measurer?.cacheBytes ?? 0);
-      stats.metricCacheBytes = Math.max(stats.metricCacheBytes ?? 0, cpuOnce?.cacheBytes ?? 0);
-      stats.metricReferenceBytes = Math.max(stats.metricReferenceBytes ?? 0, cpuOnce?.referenceBytes ?? 0);
-      stats.metricInputBytes = Math.max(stats.metricInputBytes ?? 0, metricRgba?.buffer.byteLength ?? 0);
-    };
-    const retireAc = async () => { if (ac) { await ac.terminate(); ac = null; } };
-    const retireExact = async () => {
-      if (pool) { await pool.terminate(); pool = null; }
-      exactAnswer?.destroy(); exactAnswer = null;
-    };
-    const cpu = (image, want) => { stats.cpuProbes++; return exactScores(cpuOnce, null, width, height, image, want, plan); };
-    cpu.withReference = consume => cpuOnce.withReference(consume);
-    const gpuCall = async (method, ...args) => {
-      checkSignal(activeSignal); if (!measurer) return undefined;
-      try { return await gpuSetup(() => measurer[method]?.(...args), {signal: activeSignal, dispose: () => measurer.destroy?.()}); }
-      catch (error) { checkSignal(activeSignal); gpuFailed = true; throw error; }
-    };
-    const measure = async (image, want) => {
-      checkSignal(activeSignal); await retireAc(); await retireExact();
-      if (!measurer) return cpu(image, want);
-      if (want?.exact) { stats.exact++; return cpu(image, want); }
-      if (decisions === 'cpu' && want && ('p' in want || 'margin' in want)) { stats.cpuDecisions = (stats.cpuDecisions ?? 0) + 1; return cpu(image, want); }
-      const scores = await gpuCall('measure', image, {...want, ssimulacra2: false});
-      stats.gpuProbes++; record();
-      if (!want?.ssimulacra2) return {...scores, doubt: gpuDoubt(scores)};
-      stats.probes++; stats.cpu++;
-      return {...scores, ssimulacra2: cpu(image, {ssimulacra2: true, butteraugli: false}).ssimulacra2, doubt: gpuDoubt(scores)};
-    };
-    const exact = async request => {
-      checkSignal(activeSignal); await retireAc(); stats.regions += request.regions?.length ?? 1;
-      if (!exactAnswer) {
-        pool = workers ? await exactPool(workers, {...workerLease.stage('exact', workers), signal: activeSignal}) : null;
-        exactAnswer = exactAnswerer(data, width, height, pool, cpu, pool?.size ?? 0, plan, cpu, activeSignal);
-      }
-      const result = await exactAnswer(request); stats.regionFallbacks = exactAnswer.fallbacks; return result;
-    };
-    const encode = async ({image, effort}) => {
-      await retireExact(); checkSignal(activeSignal);
-      if (!workers) return writeImage(image, effort);
-      ac ??= acGroupPool({...workerLease.stage('ac', workers), signal: activeSignal});
-      let best = null;
-      for (let level = image.strategyData ? Math.min(effort, 7) : effort; level <= effort; level = level < 8 ? 8 : level + 1) {
-        const writer = image.strategyData ? encodeStrategyImageSteps(image, level >= 7, level, true)
-          : coefficientAnsSteps(image, level, undefined, undefined, true);
-        let completed = false;
-        try {
-          let step, reply;
-          while (!(step = writer.next(reply)).done) {
-            checkSignal(activeSignal); reply = undefined;
-            if (step.value?.kind === 'ac-group') {
-              activePass = ac.pass(step.value); activePass.hurry = hurry;
-              let part;
-              while (!(part = await activePass.next()).done) { checkSignal(activeSignal); }
-              reply = part.value; activePass = null;
-              stats.acPasses++;
-              stats.acGroups += reply?.results?.filter(Boolean).length ?? 0;
-            }
-            else if (typeof step.value === 'number') reply = hurry;
-            step = null;
-          }
-          completed = true;
-          if (!best || step.value.length < best.length) best = step.value;
-          if (hurry) break;
-        } finally {
-          try { writer.return(); } catch (error) { if (completed) throw error; }
-        }
-      }
-      return best;
-    };
-    try {
-      if (metricRgba === null) { metricRgba = new Uint8Array(width * height * 4); metricRgba.set(data.subarray(0, metricRgba.length)); }
-      if (!(metricRgba instanceof Uint8Array || metricRgba instanceof Uint8ClampedArray) || metricRgba.length !== width * height * 4)
-        throw fault('JXL_INPUT', 'referenceRgba is the encoder-owned immutable RGBA source.');
-      cpuOnce = cpuMeasure(metricRgba, width, height, {native: true, cacheBytes: plan.cacheBytes, immutable: true});
-      const prepared = prepareV6(data, width, height, {}, scoped), own = photoV6Image(prepared, quality), ownBytes = writeImage(own, effort);
-      it.bytes = ownBytes;
-      yield 0.05; checkSignal(activeSignal); if (hurry) return it.bytes;
-      const scores = await measure(own, {ssimulacra2: true}), target = {butteraugli3: scores.butteraugli3, ssimulacra2: scores.ssimulacra2 + S2_MARGIN};
-      const targetDoubt = scores.doubt ? {...scores.doubt} : null;
-      steps = scoreSteps(prepared, target, {candidates: EFFORT_CANDIDATES[effort >= 9 ? 9 : 8], ids: EFFORT_IDS[effort >= 9 ? 9 : 8], effort, start: quality, targetDoubt,
-        initial: {quality, image: own, scores, bytes: ownBytes, effort}, reuseDecisions: decisions !== 'cpu', pooled: workers > 0});
-      let step, reply, n = 0;
-      const expected = effort >= 9 ? 44 : 20;
-      while (!(step = steps.next(reply)).done) {
-        checkSignal(activeSignal); reply = undefined;
-        if (step.value?.encode) {
-          reply = await encode(step.value.encode);
-          if (step.value.encode.pass && reply.length < it.bytes.length) it.bytes = reply;
-          step = null; if (hurry) return it.bytes; continue;
-        }
-        if (step.value?.varblocks) {
-          await retireAc(); await retireExact(); reply = await gpuCall('varblocks', step.value.varblocks);
-          stats.varblockGpuFailures = measurer?.varblockResources?.failures ?? 0;
-          if (stats.varblockGpuFailures) stats.backend = 'gpu+cpu-fallback';
-          record(); step = null; continue;
-        }
-        if (step.value?.exact) { reply = await exact(step.value.exact); step = null; continue; }
-        if (step.value?.exactTarget) {
-          await retireAc(); await retireExact(); const exactTargetScores = cpu(own, {ssimulacra2: true});
-          Object.assign(target, {butteraugli3: exactTargetScores.butteraugli3, ssimulacra2: exactTargetScores.ssimulacra2 + S2_MARGIN});
-          for (const key of Object.keys(targetDoubt ?? {})) targetDoubt[key] = 0;
-          stats.exactTarget++; step = null; continue;
-        }
-        if (!step.value?.measure) { step = null; continue; }
-        reply = await measure(step.value.measure, step.value.want); step = null;
-        yield Math.min(0.95, 0.05 + 0.9 * ++n / expected);
-        checkSignal(activeSignal); if (hurry) return it.bytes;
-      }
-      const found = step.value;
-      if (found.pass && found.size < ownBytes.length) it.bytes = found.bytes;
-      return it.bytes;
-    } catch (error) {
-      primaryFailure = true;
-      if (returned && !signal?.aborted && error === cancel.signal.reason && activeSignal.reason === cancel.signal.reason) return it.bytes;
-      if (activeSignal.aborted) { stats.backend = 'canceled'; throw activeSignal.reason; }
-      if (gpuFailed) { stats.backend = 'gpu-failed'; stats.gpuFailures++; }
-      throw error;
-    } finally {
-      const closing = [];
-      for (const release of [record, () => activePass?.return(), retireAc, retireExact, () => steps?.return(), () => cpuOnce?.destroy()]) {
-        try { closing.push(Promise.resolve(release())); } catch (error) { closing.push(Promise.reject(error)); }
-      }
-      const failures = (await Promise.allSettled(closing)).filter(result => result.status === 'rejected');
-      stats.cleanupFailures = (stats.cleanupFailures ?? 0) + failures.length;
-      metricRgba = referenceRgba = cpuOnce = pool = ac = exactAnswer = steps = activePass = null;
-      if (!primaryFailure && !returned) { checkSignal(activeSignal); if (failures.length) throw failures[0].reason; }
+import {TRANSFORMS, scaledDCTBases, lowFrequencies} from './vardct-strategies.mjs';
+import {smoothField} from './aq.mjs';
+import {exactLog, exactExp, exactPow} from './exact-math.mjs';
+import {encodeStrategyImageSteps, strategyInputs, rateModel, tokenRate, forcedLayout} from './varblocks.mjs';
+
+function* layoutImage(base, width, height, layout, options, req) {
+  let exact = null;
+  if (req) {
+    const ids = [...new Set([4, ...layout.map(b => b.id)])].filter(id => id), search = {...options, ids};
+    const made = yield {gpu: {kind: 'blocks-levels', ...req, input: strategyInputs(base, width, height, search), search, ids, scaledDCTBases, lowFrequencies, layout}};
+    exact = made?.exact ?? null;
+    if (exact) gpuStats.levels++;
+  }
+  return xybStrategies(base, width, height, {...options, layout, ...(exact ? {exact} : {})}).image;
+}
+export const gpuStats = {levels: 0};
+
+export function* s2GuidedBlocksSteps(base, width, height, refMap, ids = [4, 5, 6, 7], lamFactor = 0.85, req = null) {
+  const stride = base.components[0].stride, rows = base.components[0].rows, tokens = rateModel(base, stride, rows, 8);
+  const plain = {deadzone: V6.deadzone, sizeScale: 1.03}, perceptual = {...plain, perceptual: true};
+  const maps = [], rates = new Map();
+  let score0 = 75;
+  for (const id of [0, ...ids]) {
+    const layout = forcedLayout(id, stride, rows);
+    let picture = yield* layoutImage(base, width, height, layout, plain, req);
+    for (const b of picture.strategyData.blocks) (rates.get(b.id) ?? rates.set(b.id, new Float64Array(stride * rows)).get(b.id))[b.by * stride + b.bx] = tokenRate(b, tokens);
+    picture = null;
+    v6Trace(`s2 shape ${id} rates`);
+    picture = yield* layoutImage(base, width, height, layout, perceptual, req);
+    v6Trace(`s2 shape ${id} picture`);
+    let lin = reconstruct(picture);
+    picture = null;
+    v6Trace(`s2 shape ${id} reconstructed`);
+    let s2Res = ssimulacra2(refMap, lin, width, height, {wantMap: true});
+    lin = null;
+    v6Trace(`s2 shape ${id} map`);
+    if (id === 0) score0 = s2Res.score;
+    maps[id] = cellSums(s2Res.map, width, height, 1);
+    s2Res = null;
+  }
+  for (const r of rates.values()) for (let i = 0; i < r.length; i++) r[i] += 8.0;
+  const lamBlock = lamFactor * (30 / Math.max(8, 100 - score0));
+  let {layout} = xybStrategies(base, width, height, {
+    deadzone: V6.deadzone, sizeScale: 1.03, ids, maps, rates, lambda: lamBlock, model: 'tokens', chooseOnly: true,
+  });
+  for (const fam of [8, 5, 4, 6]) {
+    const count = layout.filter(b => TRANSFORMS[b.id].table === fam).length;
+    if (count > 0 && count < 8) {
+      layout = layout.flatMap(b => {
+        if (TRANSFORMS[b.id].table !== fam) return [b];
+        const bw = TRANSFORMS[b.id].width / 8, bh = TRANSFORMS[b.id].height / 8, sub = [];
+        for (let dy = 0; dy < bh; dy++) for (let dx = 0; dx < bw; dx++) sub.push({id: 0, bx: b.bx + dx, by: b.by + dy});
+        return sub;
+      });
     }
-  })();
-  it.bytes = null;
-  Object.defineProperty(it, 'hurry', {get: () => hurry, set: value => { if (value) { hurry = true; if (activePass) activePass.hurry = true; } }});
-  const leave = it.return.bind(it);
-  it.return = value => { returned = true; cancel.abort(); return leave(value); };
-  it.stats = {backend: measurer ? 'gpu+cpu' : 'cpu', probes: 0, exact: 0, exactTarget: 0, cpu: 0, regions: 0,
-    gpuProbes: 0, cpuProbes: 0, gpuFailures: 0, acPasses: 0, acGroups: 0};
-  return it;
+  }
+  const s2Var = yield* layoutImage(base, width, height, layout, perceptual, req);
+  return {s2Var, layout, maps, rates, score0};
+}
+export const s2GuidedBlocks = (...args) => complete(s2GuidedBlocksSteps(...args));
+
+const LAGRANGE_LEVELS = [0.78, 0.85, 0.92, 0.96, 1.0, 1.05, 1.12, 1.18, 1.25];
+export function lagrangeS2Field(s2Var, r0, refMap, width, height, {gamma = 0.18, r0Bias = 20, switchCost = 0.04} = {}) {
+  const lin = reconstruct(s2Var);
+  const {map: s2Map} = ssimulacra2(refMap, lin, width, height, {wantMap: true});
+  const cells = cellSums(s2Map, width, height, 1), n = cells.length;
+  const slope = new Float64Array(n);
+  let logSum = 0;
+  for (let i = 0; i < n; i++) {
+    slope[i] = Math.max(1e-6, cells[i]) / (r0[i] + r0Bias);
+    logSum += exactLog(slope[i]);
+  }
+  const meanSlope = exactExp(logSum / Math.max(1, n));
+  const raw = new Float64Array(n);
+  for (let i = 0; i < n; i++) raw[i] = Math.max(0.78, Math.min(1.25, exactPow(slope[i] / meanSlope, gamma)));
+  return smoothField(raw, LAGRANGE_LEVELS, switchCost);
+}
+
+export function* s2EffortSearchSteps(prepared, quality, effort = 8, floor, gpu = false) {
+  const {color} = prepared;
+  return yield* s2Search(prepared, quality, effort, floor, gpu && !color?.transform && !color?.space);
+}
+
+function* s2Search(prepared, quality, effort, floor, device) {
+  const {rgba, width, height} = prepared;
+  const cacheBytes = Math.min(64 * 1024 * 1024, Math.max(8 * 1024 * 1024, width * height * 64));
+  const refMap = ssimulacra2Reference({rgba}, width, height, {native: false, immutable: true, cacheBytes});
+  const refNative = ssimulacra2Reference({rgba}, width, height, {native: true, immutable: true, cacheBytes});
+  v6Trace('s2 refs');
+  const decodedOf = img => toRGBA(reconstruct(materialize(img)), width, height);
+  const cpuScore = (img, decoded = decodedOf(img)) => ssimulacra2(refNative, {rgba: decoded}, width, height, {native: true}).score;
+  function* scored(img, bytes) {
+    const decoded = decodedOf(img);
+    const answer = device ? yield {gpu: {kind: 's2-native', rgba, width, height, decoded}} : null;
+    if (Number.isFinite(answer?.score)) return {img, bytes, s2: answer.score, doubt: NATIVE_DOUBT, decoded};
+    return {img, bytes, s2: cpuScore(img, decoded), doubt: 0};
+  }
+  const rank = img => scored(img, writeImage(img, 7));
+  function choose(order, c0) {
+    const pick = () => {
+      const k = 1.03 / Math.max(6, 100 - c0.s2), J = c => Math.log(c.bytes.length) - k * (c.s2 - c0.s2);
+      return order.reduce((a, c) => J(c) < J(a) ? c : a);
+    };
+    let w = pick();
+    if (order.some(c => c.doubt) && !certain(order, w, c0)) {
+      for (const c of order) if (c.doubt) { c.s2 = cpuScore(null, c.decoded); c.doubt = 0; c.decoded = null; }
+      v6Trace('s2 scores again on the CPU');
+      w = pick();
+    }
+    return w;
+  }
+  const smallest = (...files) => files.filter(Boolean).reduce((a, b) => b.length < a.length ? b : a);
+  const reqFor = row => device ? {data: rgba, width, height, options: {...V6, ...GABORISH, calibrationRow: row}, lib: {complete, photoXYBSteps, transformDCT8, dct8Basis, xyb: XYB_TABLES}} : null;
+
+  const c0 = yield* scored(floor.image, floor.bytes);
+  v6Trace('s2 c0 scored');
+  let floorWrites = null;
+  if (width * height > 2048 * 2048) {
+    floorWrites = {8: writeImage(floor.image, 8), ...(effort >= 9 ? {9: writeImage(floor.image, 9)} : {})};
+    c0.img = null; floor.image = null;
+    v6Trace('s2 c0 written');
+  }
+  const write = (c, e) => c === c0 && floorWrites ? floorWrites[e] : writeImage(c.img, e);
+  if (yield 0.05) return floor.bytes;
+  function* guided(row, extra, ids, lamFactor) {
+    const base = v6Image(prepared, quality, {...extra, keepPlanes: true, calibrationRow: row, noLevels: false}, false);
+    v6Trace(`s2 base ${row}`);
+    return yield* s2GuidedBlocksSteps(base, width, height, refMap, ids, lamFactor, reqFor(row));
+  }
+  const {s2Var, rates} = yield* guided('s2e8', {}, [4, 5, 6, 7], 0.85);
+  v6Trace('s2 guided A');
+  if (yield 0.5) return floor.bytes;
+  const cA = yield* rank(s2Var);
+  v6Trace('s2 cA ranked');
+  const e8Pick = choose([cA, c0], c0);
+  if (effort <= 8) return smallest(write(e8Pick, 8), floor.bytes);
+  if (yield 0.6) return floor.bytes;
+
+  const {s2Var: s2VarB} = yield* guided('s2e9', {}, [4, 5, 6, 7, 10, 11], 1.25);
+  v6Trace('s2 guided B');
+  const cB = yield* rank(s2VarB);
+  v6Trace('s2 cB ranked');
+  if (yield 0.75) return floor.bytes;
+
+  const fieldScale = lagrangeS2Field(s2Var, rates.get(0), refMap, width, height);
+  const {s2Var: s2VarC} = yield* guided('s2e9', {fieldScale}, [4, 5, 6, 7], 0.95);
+  v6Trace('s2 field and guided C');
+  const cC = yield* rank(s2VarC);
+  v6Trace('s2 cC ranked');
+  if (yield 0.9) return floor.bytes;
+
+  const best = choose([c0, cA, cB, cC], c0);
+  return smallest(write(best, 9), best === e8Pick ? null : write(e8Pick, 8), floor.bytes);
+}
+
+export function certain(order, w, c0) {
+  const kOf = s => 1.03 / Math.max(6, 100 - s), k0 = kOf(c0.s2 - c0.doubt), k1 = kOf(c0.s2 + c0.doubt);
+  for (const c of order) {
+    if (c === w) continue;
+    const L = Math.log(c.bytes.length) - Math.log(w.bytes.length), d = c.s2 - w.s2, e = c.doubt + w.doubt;
+    const most = Math.max(k0 * (d - e), k0 * (d + e), k1 * (d - e), k1 * (d + e));
+    if (!(L - most > 1e-12 * (1 + Math.abs(Math.log(c.bytes.length))))) return false;
+  }
+  return true;
 }

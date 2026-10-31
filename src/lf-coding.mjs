@@ -12,17 +12,27 @@ const fits16 = data => {
   return Int16Array.from(data);
 };
 
+const LEARNED = [], LEARNED_KEEP = 32;
+const sameSamples = (a, b) => { if (a.length !== b.length) return false; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; };
+const sameStream = (a, b) => a.at === b.at && a.pending === b.pending && a.acc === b.acc && sameSamples(a.bytes.subarray(0, a.at), b.bytes.subarray(0, b.at));
+
 function learned(w, planes, options, plain, together, kernels) {
   const data = planes.map(p => fits16(p.data));
   const fallback = new BitWriter(256);
   plain(fallback);
   if (data.includes(null) || planes.some(p => !p.w || !p.h)) { w.append(fallback); return; }
+  const hit = LEARNED.find(e => e.options === options && e.together === together && e.data.length === data.length &&
+    planes.every((p, i) => p.w === e.shapes[i][0] && p.h === e.shapes[i][1] && sameSamples(data[i], e.data[i])) && sameStream(fallback, e.fallback));
+  if (hit) { w.append(hit.chosen); return; }
   const same = together && planes.every(p => p.w === planes[0].w && p.h === planes[0].h && p.w * p.h > 0);
   const plans = same ? sampledPlanes.prepareSet(data, planes[0].w, planes[0].h, options)
     : planes.map((p, i) => sampledPlanes.prepare(data[i], p.w, p.h, {...options, references: false}));
   const candidate = new BitWriter(256);
   sampledPlanes.write(candidate, plans, kernels ? {...options, kernels} : options);
-  w.append(candidate.bitLength < fallback.bitLength ? candidate : fallback);
+  const chosen = candidate.bitLength < fallback.bitLength ? candidate : fallback;
+  LEARNED.unshift({options, together, shapes: planes.map(p => [p.w, p.h]), data: data.map(d => d.slice()), fallback, chosen});
+  if (LEARNED.length > LEARNED_KEEP) LEARNED.pop();
+  w.append(chosen);
 }
 
 const coders = new Map();
@@ -37,8 +47,6 @@ export function lfCoder(rung = 'fast') {
   return coders.get(rung);
 }
 
-export const lfCoderFor = effort => effort >= 5 ? lfCoder(effort >= 9 ? 'broad' : effort >= 8 ? 'fast' : effort >= 7 ? 'rich' : 'quick') : undefined;
-
 const FIXED_BINS = [16, 8, 8], FIXED_WRITE = Object.freeze({ans: true, hybrid: true, sharing: Object.freeze([])});
 function fixedDc(w, planes, plain, kernels) {
   const data = planes.map(p => fits16(p.data));
@@ -46,6 +54,16 @@ function fixedDc(w, planes, plain, kernels) {
   sampledPlanes.write(w, planes.map((p, i) => sampledPlanes.fixed(data[i], p.w, p.h, FIXED_BINS[i] ?? 8)), kernels ? {...FIXED_WRITE, kernels} : FIXED_WRITE);
 }
 export const fixedLfCoder = Object.freeze({dc: fixedDc, metadata: (w, planes, plain) => plain(w)});
+
+export const plainOrFixedLfCoder = Object.freeze({
+  dc(w, planes, plain, kernels) {
+    if (!planes.length || planes[0].w * planes[0].h < 256) { plain(w); return; }
+    const fallback = new BitWriter(256), fixed = new BitWriter(256);
+    plain(fallback); fixedDc(fixed, planes, plain, kernels);
+    w.append(fixed.bitLength < fallback.bitLength ? fixed : fallback);
+  },
+  metadata: (w, _planes, plain) => plain(w),
+});
 
 const quick = lfCoder('quick');
 export const quickOrFixedLfCoder = Object.freeze({
@@ -56,3 +74,24 @@ export const quickOrFixedLfCoder = Object.freeze({
   },
   metadata: quick.metadata,
 });
+
+const plainOnce = plain => { let kept = null; return target => { if (!kept) { kept = new BitWriter(256); plain(kept); } target.append(kept); }; };
+const smallerLf = (higher, lower) => Object.freeze({
+  dc(w, planes, plain, kernels) {
+    const a = new BitWriter(256), b = new BitWriter(256), once = plainOnce(plain);
+    higher.dc(a, planes, once, kernels); lower.dc(b, planes, once, kernels);
+    w.append(a.bitLength <= b.bitLength ? a : b);
+  },
+  metadata(w, planes, plain, kernels) {
+    const a = new BitWriter(256), b = new BitWriter(256), once = plainOnce(plain);
+    higher.metadata(a, planes, once, kernels); lower.metadata(b, planes, once, kernels);
+    w.append(a.bitLength <= b.bitLength ? a : b);
+  },
+});
+const richLfCoder = smallerLf(lfCoder('rich'), quickOrFixedLfCoder);
+const fastLfCoder = smallerLf(lfCoder('fast'), richLfCoder);
+const broadLfCoder = smallerLf(smallerLf(lfCoder('jpegBroad'), lfCoder('broad')), fastLfCoder);
+
+export const monotonicLfCoderFor = effort => effort >= 9 ? broadLfCoder : effort >= 8 ? fastLfCoder : richLfCoder;
+export const lfCoderFor = effort => effort >= 9 ? lfCoder('broad') : effort >= 8 ? lfCoder('fast')
+  : effort >= 7 ? richLfCoder : effort >= 5 ? quickOrFixedLfCoder : effort >= 3 ? plainOrFixedLfCoder : undefined;

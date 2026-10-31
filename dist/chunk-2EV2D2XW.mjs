@@ -1,2 +1,0 @@
-/*! rapier-jxl 7.1.0 | MIT */
-var l={channel:null,weighted:null,fill:null,group:null,screen:null,sampled:null,sampledStore:null,dct:null,photoTile:null,acGroup:null,nonzero:null,entropy:null};export{l as a};

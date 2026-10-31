@@ -65,7 +65,7 @@ jobs:
             elif git tag "$tag" "$target" && ! git push origin "refs/tags/$tag"; then
               # The workflow token cannot tag an older commit whose workflow file differs from today's; a lead tags it by hand.
               if [ "$version" = "$current" ]; then exit 1; fi
-              echo "::warning::$tag at $target needs a tag pushed by hand (docs/RELEASING.md)"; continue
+              echo "::warning::$tag at $target needs its tag pushed by hand"; continue
             fi
             gh release create "$tag" --verify-tag --title "$version" --notes-file "$RUNNER_TEMP/notes-$version.md" --latest=$latest
             echo "tagged $tag at $target and released $version" | tee -a "$GITHUB_STEP_SUMMARY"

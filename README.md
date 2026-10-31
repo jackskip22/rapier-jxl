@@ -1,10 +1,15 @@
 # Rapier JXL
 
-JPEG XL encoder in JavaScript, WebGPU accelerated at high effort levels. Screenshot encoder about 34 KB
-gzipped. Full image encoder about 158 KB, with lossless, lossy, HDR, exact alpha, WebAssembly and parallel
-workers. Separate modules for JPEG transcoding and decoding. Browsers, workers, Node, Deno and Bun. MIT, no dependencies.
+JPEG XL encoder in JavaScript, WebGPU accelerated at high effort levels. Screenshot encoder about 30 KB
+gzipped, upload encoder about 170 KB, full image encoder about 273 KB with lossless, lossy, HDR, exact
+alpha and WebAssembly. Separate modules for animation, JPEG transcoding and decoding. Each module is one file.
+Browsers, workers, Node, Deno, Bun, Cloudflare Workers. MIT, no dependencies.
 
-Smaller than WebP at the same quality, for screenshots and photos. Faster uploads than wasm-vips, in smaller files.
+| | Rapier JXL | jSquash | WebP |
+| --- | ---: | ---: | ---: |
+| Download, gzip | 273 KB | 526 KB | built in |
+| WebGPU | ✓ | | |
+| Lossless JPEG recompression | ✓ | | |
 
 ```sh
 npm install rapier-jxl
@@ -12,38 +17,31 @@ npm install rapier-jxl
 
 ## Modules
 
-Gzipped, worker included. Each loads on first use.
-
-| Import | For | Size |
+| | For | Gzip |
 | --- | --- | ---: |
-| `rapier-jxl` | Photos and graphics, efforts 1–9 | 158 KB |
-| `rapier-jxl`, effort 1 | Live previews | 71 KB |
-| `rapier-jxl/capture` | Exact screenshots | 34 KB |
-| `rapier-jxl/snapdom` | SnapDOM plug-in | 35 KB |
-| `rapier-jxl/jpeg` | Lossless JPEG recompression | 132 KB |
-| `rapier-jxl/decode` | Decoder | 74 KB |
-| `rapier-jxl/animation` | Animation | 116 KB |
-| `rapier-jxl/offline` | Encoder in one file | 152 KB |
-| `rapier-jxl/metadata` | Exif, XMP and boxes | |
-| `rapier-jxl/format` | Layers, patches, splines, extra channels | |
+| `rapier-jxl/capture` | Exact screenshots | 30 KB |
+| `rapier-jxl/upload` | Photos before upload, effort 1–3 | 170 KB |
+| `rapier-jxl` | Full still encoder, WebGPU at effort 7–9 | 273 KB |
+| `rapier-jxl/animation` | Animations, with the full encoder | 279 KB |
+| `rapier-jxl/format` | Layers, patches, splines, extra channels | 298 KB |
+| `rapier-jxl/decode` | Decoder | 143 KB |
+| `rapier-jxl/jpeg` | Lossless JPEG recompression | 175 KB |
+| `rapier-jxl/metadata` | Header, Exif, XMP and boxes | 27 KB |
+| `rapier-jxl/codec` | A worker and queue over any module | 13 KB |
+| `rapier-jxl/polyfill` | Display without native support | 22 KB |
 
-| | rapier-jxl | Smallest other |
-| --- | ---: | ---: |
-| Still encoder | 158 KB | 512 KB, `@squoosh-kit/jxl` 0.2.10 |
-| Lossless JPEG recompression | 132 KB | 962 KB, `jxl-wasm` 0.7.0 |
-| Decoder | 74 KB | 613 KB, `jxl-oxide-wasm` 0.12.6 |
+One file each; nothing loads after the import. `upload` contains `capture`; `rapier-jxl` contains both.
 
-## Screenshots
+## Upload
 
-Exact, and smaller than lossless WebP. SnapDOM 3.5, 1920×1080 pages, `cwebp -lossless -m 4 -exact`.
+```js
+import {encode} from 'rapier-jxl/upload';
 
-| Page | Lossless WebP | `toJxl()` | |
-| --- | ---: | ---: | ---: |
-| GitHub | 78,778 B | 76,015 B | −3.5% |
-| MDN | 85,088 B | 82,673 B | −2.8% |
-| MDN dark | 84,044 B | 81,241 B | −3.3% |
-| Dashboard | 75,752 B | 75,062 B | −0.9% |
-| Hacker News | 82,122 B | 64,470 B | −21.5% |
+// file: a File or Blob from an input, a drop or a fetch.
+const compress = file => encode(file, {fidelity: {quality: 82}});
+```
+
+With `createCodec`, `helpers` splits each picture across worker threads (see Workers and queues).
 
 ## Encode
 
@@ -52,176 +50,91 @@ import {writeFile} from 'node:fs/promises';
 import {encode} from 'rapier-jxl';
 
 const picture = {data: new Uint8Array([240, 120, 40, 255]), width: 1, height: 1};
-await writeFile('picture.jxl', await encode(picture, {quality: 90}));
+await writeFile('picture.jxl', await encode(picture, {fidelity: {quality: 90}}));
 ```
 
-Takes RGBA `{data, width, height}`, `ImageData`, a canvas, an `ImageBitmap` or a `Blob`. Returns a `Uint8Array`.
+Takes RGBA `{data, width, height}`, `ImageData`, a canvas, an `ImageBitmap`, a `Blob` or a decoded image, and returns a
+`Uint8Array`. For animations, `rapier-jxl/animation`'s `encode` also takes `{width, height, frames}`.
 
-- `quality`: 1–100, default 90. 100 is lossless.
+- `fidelity`: `{quality: 1–100}`, default 90. `'exact'` is lossless.
 - `effort`: 1–9, default 7.
-- `acceleration`: `'wasm'`, `'webgpu'` or `'auto'`. Same bytes on every backend.
+- `webgpu`: efforts 7–9 use WebGPU when available. `'required'` fails without it; `false` turns it off.
 
 | Effort | Use |
 | ---: | --- |
 | 1 | Live previews |
 | 3 | Upload queues |
-| 4–7 | WebGPU accelerated |
-| 7 | Default |
+| 7 | Default, WebGPU accelerated |
 | 8–9 | Smallest files |
 
-Node 20.16+ or 22.3+, Deno, Bun. ESM.
+Efforts 8–9 currently apply to pictures up to 1 MP; larger pictures are encoded as at effort 7. Updates will raise
+this limit.
 
-## Screenshots, JPEG, decoding
+## Screenshots
 
 ```js
-import {encode as capture} from 'rapier-jxl/capture';
-import {decode} from 'rapier-jxl/decode';
+import {capture} from 'rapier-jxl/capture';
 
-const screenshot = await capture({data: new Uint8Array([10, 20, 30, 0]), width: 1, height: 1}, {maxError: 0});
-const pixels = await decode(screenshot);
+const screenshot = await capture({data: new Uint8Array([10, 20, 30, 0]), width: 1, height: 1});
 ```
 
-`maxError` 1–8 makes smaller files within that error per sample.
+- Takes a canvas, `ImageData`, an `ImageBitmap`, a `Blob` or RGBA. Exact by default.
+- `fidelity: {maxError: 1–8}`: lossy, each sample within that error.
+
+## JPEG, decoding, metadata
 
 ```js
 import {recompress, restore} from 'rapier-jxl/jpeg';
+import {decode} from 'rapier-jxl/decode';
+import {header} from 'rapier-jxl/metadata';
 
 // jpeg: a Uint8Array holding a JPEG file.
 const roundTrip = async jpeg => restore(await recompress(jpeg));
+const pixels = async file => decode(file);
+const size = file => header(file); // synchronous, from a file or its first bytes
 ```
 
-## Queues and workers
+## Workers and queues
 
 ```js
-import {createEncoder} from 'rapier-jxl';
+import {createCodec} from 'rapier-jxl/codec';
 
-const queue = createEncoder({helpers: {count: 3, memoryBytes: 1024 * 1024 * 1024}});
+const queue = createCodec({module: 'rapier-jxl/upload', helpers: {count: 3, memoryBytes: 1 << 30}});
 const photo = (width, height) => ({data: new Uint8Array(width * height * 4).fill(200), width, height});
-// An upload's sizes, submitted together, encode at once.
-const sizes = [photo(1200, 900), photo(768, 576), photo(300, 225), photo(150, 150)];
-const files = await Promise.all(sizes.map(picture => queue.encode(picture, {quality: 82, effort: 3, acceleration: 'wasm'})));
-console.log(files.map(bytes => bytes.length));
-queue.close();
+try {
+  const files = await Promise.all([photo(1200, 900), photo(300, 225)].map(picture => queue.encode(picture)));
+} finally {
+  await queue.close();
+}
 ```
 
-- In browsers, calls run in a module worker; in Node, Deno and workers, in place. `worker: false` runs in place.
-- Jobs run in order, with progress and cancel. `queue.prepare()` starts the worker early.
-- `helpers` adds up to 16 workers, with the same bytes.
-- Errors carry a `code`, such as `JXL_INPUT`, `JXL_OPTIONS`, `JXL_DECODE` or `JXL_MEMORY`.
+- In browsers the module runs in a worker (upload: 192 KB). Node, Deno and Bun run it in the calling thread.
+- `helpers` adds up to 16 worker threads.
+- Errors carry a `code`, such as `JXL_INPUT`, `JXL_OPTIONS`, `JXL_WASM` or `JXL_WEBGPU`.
 
 ## Browsers
 
 ```html
 <script type="module">
-  import {createEncoder} from 'https://cdn.jsdelivr.net/npm/rapier-jxl@7/dist/index.mjs';
-  const encoder = createEncoder({worker: false});
-  const bytes = await encoder.encode({data: new Uint8Array([240, 120, 40, 255]), width: 1, height: 1}, {quality: 90});
+  import {encode} from 'https://cdn.jsdelivr.net/npm/rapier-jxl@8/dist/index.mjs';
+  const bytes = await encode(document.querySelector('canvas'));
 </script>
 ```
 
-- Save: `new Blob([bytes], {type: 'image/jxl'})`.
-- Display P3: `colorSpace: 'display-p3'`.
-- Content Security Policy: `'wasm-unsafe-eval'` for WebAssembly; `worker-src blob:` from a CDN.
+- Content Security Policy: `'wasm-unsafe-eval'`; `worker-src blob:` for `rapier-jxl/codec` from a CDN.
+- Without native JPEG XL: `import 'rapier-jxl/polyfill'`.
+- Vite: `worker: {format: 'es'}`. webpack 5, Parcel, Angular and Next.js work as is. Next.js edge routes: import
+  modules directly, not `rapier-jxl/codec`.
+- Rollup: `@web/rollup-plugin-import-meta-assets` with `assetFileNames: 'assets/[name][extname]'`.
+- esbuild: copy `rapier-jxl/dist/*.worker.mjs` and `*.helper.mjs` beside the bundle.
 
-## Bundlers
+Node 20.16+, Deno, Bun, Cloudflare Workers. ESM.
 
-webpack 5 and Next.js work as is. Next.js server routes with `helpers` (`next.config.mjs`):
+## Compatibility
 
-```js
-export default {serverExternalPackages: ['rapier-jxl']};
-```
-
-Vite:
-
-```js
-export default {worker: {format: 'es'}};
-```
-
-Angular CLI (`build.options.assets`):
-
-```json
-{"glob": "*.mjs", "input": "node_modules/rapier-jxl/dist", "output": "/"}
-```
-
-Bun:
-
-```sh
-bun build app.mjs node_modules/rapier-jxl/dist/worker.mjs node_modules/rapier-jxl/dist/parallel-worker.mjs \
-  --production --splitting --entry-naming '[name].mjs' --chunk-naming '[name]-[hash].mjs' --outdir dist
-```
-
-esbuild:
-
-```js
-import {build} from 'esbuild';
-import {createRequire} from 'node:module';
-const require = createRequire(import.meta.url);
-await build({
-  entryPoints: {app: 'app.mjs', worker: require.resolve('rapier-jxl/worker'),
-    'parallel-worker': require.resolve('rapier-jxl/parallel-worker')},
-  bundle: true, format: 'esm', splitting: true, platform: 'browser',
-  outdir: 'dist', outExtension: {'.js': '.mjs'},
-});
-```
-
-Rollup:
-
-```js
-import {nodeResolve} from '@rollup/plugin-node-resolve';
-import {createRequire} from 'node:module';
-const require = createRequire(import.meta.url);
-export default {
-  input: {app: 'app.mjs', worker: require.resolve('rapier-jxl/worker'),
-    'parallel-worker': require.resolve('rapier-jxl/parallel-worker')},
-  plugins: [nodeResolve()],
-  output: {dir: 'dist', format: 'es', entryFileNames: '[name].mjs', chunkFileNames: 'chunk-[hash].mjs'},
-};
-```
-
-Parcel 2.16.4:
-
-```json
-{
-  "@parcel/resolver-default": {"packageExports": true},
-  "scripts": {"build": "parcel build index.html --no-scope-hoist"}
-}
-```
-
-## SnapDOM
-
-```sh
-npm install @zumer/snapdom@3 rapier-jxl
-```
-
-```js
-import {snapdom} from '@zumer/snapdom';
-import {jxl} from 'rapier-jxl/snapdom';
-
-const result = await snapdom(document.body, {plugins: [jxl()]});
-const blob = await result.toJxl();
-```
-
-- Exact by default. `toJxl({quality: 0.9})` for photographic pages.
-- `snapdom.plugins(jxl())` registers it for every capture.
-- `jxl({encode: encoder.capture, encodeLossy: encoder.encode})` uses your own queue.
-
-[Demo on StackBlitz](https://stackblitz.com/github/jackskip22/rapier-jxl/tree/main/examples/snapdom)
-
-## html2canvas and html-to-image
-
-```js
-import html2canvas from 'html2canvas';
-import {encode} from 'rapier-jxl/capture';
-
-const jxl = await encode(await html2canvas(document.body));
-```
-
-```js
-import {toCanvas} from 'html-to-image';
-import {encode} from 'rapier-jxl/capture';
-
-const jxl = await encode(await toCanvas(document.body));
-```
+8.x keeps every import, export, option, default and error code, and may add new ones. Output is deterministic within a
+version; a later version may write smaller files at the same fidelity. Recompressed JPEGs restore exactly in every
+later version.
 
 ## License
 

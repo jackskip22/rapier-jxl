@@ -118,16 +118,22 @@ export function srgbPlane(p) {
 }
 
 let srgb8;
+const exactSrgb = transferCurve({transferFunction: "srgb"}, false);
+const invSrgb = transferCurve({transferFunction: "srgb"}, true);
+exactLog(1.5);
 export function srgb8Table() {
   if (!srgb8) {
     const p = new Float32Array(1), word = new Uint32Array(p.buffer), thresholds = new Uint32Array(257).fill(0xffffffff, 256), steps = new Uint8Array(32768);
-    const level = bits => { word[0] = bits; srgbPlane(p); const t = p[0] * 255 + .5; return t >= 255.5 ? 255 : t >= 1 ? Math.floor(t) : 0; };
+    const level = bits => { word[0] = bits; const x = p[0], r = x <= 0.0031308 ? 12.92 * x : exactSrgb(x), t = Math.fround(r) * 255 + .5; return t >= 255.5 ? 255 : t >= 1 ? t | 0 : 0; };
     for (let k = 1; k < 256; k++) {
-      let low = thresholds[k - 1], high = 0x7f800000;
-      while (low < high) { const middle = low + Math.floor((high - low) / 2); if (level(middle) >= k) high = middle; else low = middle + 1; }
+      p[0] = invSrgb((k - 0.5) / 255);
+      let low = Math.max(thresholds[k - 1], word[0] - 4);
+      while (low > thresholds[k - 1] && level(low - 1) >= k) low--;
+      while (low < 0x7f800000 && level(low) < k) low++;
+      if (!(low < 0x7f800000)) throw new Error('Invalid sRGB8 threshold.');
       thresholds[k] = low;
     }
-    for (let b = 0, k = 0; b <= 0x7f80; b++) { while (k < 255 && thresholds[k + 1] <= b * 65536) k++; steps[b] = k; }
+    for (let b = 0, k = 0; b <= 0x7f80; b++) { while (k < 255 && thresholds[k + 1] <= (b << 16)) k++; steps[b] = k; }
     for (let k = 2; k < 256; k++) if (thresholds[k] >>> 16 === thresholds[k - 1] >>> 16) throw new Error('Two sRGB8 thresholds share a step.');
     srgb8 = {thresholds, steps};
   }

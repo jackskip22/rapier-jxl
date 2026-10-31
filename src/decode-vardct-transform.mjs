@@ -264,7 +264,7 @@ function epfRows(source, top, out, outTop, width, height, y0, y1, step, epf, sig
   const pixel = (x, y) => {
     const at = (y - top) * width + x, to = (y - outTop) * width + x, s = sigma ? sigma[(y >> 3) * sw + (x >> 3)] : epf.sigmaForModular ?? 1;
     if (s < .3) { o0[to] = p0[at]; o1[to] = p1[at]; o2[to] = p2[at]; return; }
-    const border = (x & 7) === 0 || (x & 7) === 7 || (y & 7) === 0 || (y & 7) === 7;
+    const border = (((x & 7) === 0) | ((x & 7) === 7) | ((y & 7) === 0) | ((y & 7) === 7)) !== 0;
     const factor = -1.9330952441687866 / s * multiplier * (border ? borderMultiplier : 1);
     let weightSum = 1, v0 = p0[at], v1 = p1[at], v2 = p2[at];
     const a0 = ry(y + 2 - 3) + x, a1 = at - x + reflectedX[x + 2];

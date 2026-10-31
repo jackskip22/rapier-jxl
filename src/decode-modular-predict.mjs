@@ -125,7 +125,7 @@ export class ModularPrediction {
       case 11: return Math.trunc((n + nw) / 2);
       case 12: return Math.trunc((n + ne) / 2);
       case 13: return Math.trunc((6 * n - 2 * nn + 7 * w + ww + nee + 3 * ne + 8) / 16);
-      default: throw Object.assign(new Error('Invalid Modular predictor.'), {code: 'JXL_INVALID'});
+      default: throw Object.assign(new Error('Invalid Modular predictor.'), {code: 'JXL_DECODE'});
     }
   }
   record(value) {

@@ -33,6 +33,20 @@ export function screenLike(rgba, width, height) {
   return flat >= 192;
 }
 
+export const CAPTURE_FLAT = 64;
+export function flatSamples(rgba, width, height) {
+  if (width < 32 || height < 32) return 0;
+  let flat = 0;
+  for (let s = 0; s < 256; s++) {
+    const x = Math.min(width - 2, Math.floor((((s % 16) * 16 + ((s * 13) & 15)) * width) / 256));
+    const y = Math.min(height - 2, Math.floor((((s >> 4) * 16 + ((s * 7) & 15)) * height) / 256));
+    const p = (y * width + x) * 4, q = p + 4, r = p + width * 4;
+    if (rgba[p] === rgba[q] && rgba[p + 1] === rgba[q + 1] && rgba[p + 2] === rgba[q + 2] && rgba[p + 3] === rgba[q + 3] &&
+        rgba[p] === rgba[r] && rgba[p + 1] === rgba[r + 1] && rgba[p + 2] === rgba[r + 2] && rgba[p + 3] === rgba[r + 3]) flat++;
+  }
+  return flat;
+}
+
 const screenValueAt = (rgba, i, c, shape) => rgba[i + (shape.colour === 1 && c === 1 ? 3 : c)];
 const screenPacked = (rgba, i) => (rgba[i] + rgba[i + 1] * 256 + rgba[i + 2] * 65536 + rgba[i + 3] * 16777216) >>> 0;
 const PALETTE_CAP = 8192;

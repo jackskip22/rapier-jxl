@@ -2,15 +2,15 @@
 import {kernelHooks} from './kernel-hooks.mjs';
 import {packSigned} from './bits.mjs';
 import {countToken, writeHybrid} from './prefix.mjs';
-import {LZ77, RESIDUAL_CONFIG, GRADIENT_PREDICTOR} from './modular.mjs';
+import {MIN_RUN_SYMBOL, MIN_RUN_LENGTH, RUN_CONFIG, RESIDUAL_CONFIG, GRADIENT_PREDICTOR} from './modular.mjs';
 
-const {minSymbol: MIN_RUN_SYMBOL, minLength: MIN_RUN_LENGTH, lengthConfig: RUN_CONFIG} = LZ77;
 
-function codeGradient(w, target, plane, width, height, config, raw) {
+function codeGradient(w, target, plane, width, height, config, raw, visit) {
   const lengthConfig = RUN_CONFIG;
   let run = 0;
   const emit = (value, tokenConfig = config, base = 0) => {
-    if (w) writeHybrid(w, target, tokenConfig, value, base);
+    if (visit) visit(value, tokenConfig, base);
+    else if (w) writeHybrid(w, target, tokenConfig, value, base);
     else if (raw && !base) target[value]++;
     else countToken(tokenConfig, value, target, raw ? target.length - 33 : base);
   };
@@ -41,8 +41,8 @@ function codeGradient(w, target, plane, width, height, config, raw) {
 export function codeChannel(w, target, plane, width, height, leaf, raw = false, visit, residuals, beginY = 0) {
   if (!visit && !residuals && kernelHooks.channel?.(w, target, plane, width, height, leaf, raw)) return;
   const predictor = leaf.predictor, offset = leaf.offset, multiplier = leaf.multiplier;
-  if (!visit && !residuals && beginY === 0 && predictor === GRADIENT_PREDICTOR && multiplier === 1 && offset === 0)
-    return codeGradient(w, target, plane, width, height, leaf.config || RESIDUAL_CONFIG, raw);
+  if (!residuals && beginY === 0 && predictor === GRADIENT_PREDICTOR && multiplier === 1 && offset === 0)
+    return codeGradient(w, target, plane, width, height, leaf.config || RESIDUAL_CONFIG, raw, visit);
   const config = leaf.config || RESIDUAL_CONFIG, lengthConfig = RUN_CONFIG;
   let run = 0;
   const emit = (value, tokenConfig = config, base = 0) => {

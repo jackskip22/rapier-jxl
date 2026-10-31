@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {SSIMULACRA2_WEIGHTS, finalCurve, gaussianTaps} from './ssimulacra2.mjs';
 import {UniformRing} from './gpu-uniforms.mjs';
+import {gpuPipelineSet} from './gpu-pipelines.mjs';
 
 const S2G_WG = 128, S2G_SCALES = 6, S2G_REACH = 4;
 const S2G_TAPS = gaussianTaps();
@@ -122,19 +123,20 @@ function s2gScales(width, height) {
   return scales;
 }
 
+const s2gPipelines = gpuPipelineSet(S2G_SHADERS);
 export class GpuSsimulacra2Measure {
   static fits(device, width, height) {
     const limit = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize);
     return width >= 8 && height >= 8 && width * height * 4 <= limit && 15 * width * (8 + 2 * S2G_REACH + 1) * 4 <= limit;
   }
 
-  constructor(device, width, height, reference) {
-    this.buffers = [];
-    try { this.init(device, width, height, reference); }
-    catch (error) { this.destroy(); throw error; }
+  static async create(device, width, height, reference) {
+    const self = new GpuSsimulacra2Measure();
+    try { self.init(device, width, height, reference, await s2gPipelines(device)); return self; }
+    catch (error) { self.destroy(); throw error; }
   }
 
-  init(device, width, height, reference) {
+  init(device, width, height, reference, pipelines) {
     this.device = device; this.width = width; this.height = height;
     const usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC, buffers = this.buffers = [];
     const buffer = bytes => { const b = device.createBuffer({size: Math.max(16, Math.ceil(bytes / 16) * 16), usage}); buffers.push(b); return b; };
@@ -158,8 +160,7 @@ export class GpuSsimulacra2Measure {
     this.partial = buffer(slots * 18 * 4);
     this.read = device.createBuffer({size: this.partial.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST});
     this.slots = slots;
-    this.pipelines = Object.fromEntries(Object.entries(S2G_SHADERS).map(([name, code]) =>
-      [name, device.createComputePipeline({layout: 'auto', compute: {module: device.createShaderModule({code}), entryPoint: 'main'}})]));
+    this.pipelines = pipelines;
     this.ring = new UniformRing(device, 1024);
     this.referenceReady = false;
   }

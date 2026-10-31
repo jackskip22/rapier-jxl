@@ -1,2 +1,0 @@
-/*! rapier-jxl 7.1.0 | MIT */
-import{b as m,j as s,k as n}from"./chunk-WZAUWQ5N.mjs";import"./chunk-EUE5TWMD.mjs";import"./chunk-NBFSUYDT.mjs";import"./chunk-X5UE2DV3.mjs";import"./chunk-BURSFLQ2.mjs";import"./chunk-PKQAVIYW.mjs";import"./chunk-LESRETCI.mjs";import"./chunk-SKZZNTTZ.mjs";import"./chunk-ZFL5PYO4.mjs";import"./chunk-5YFDXCJ2.mjs";import"./chunk-DLI4RUBA.mjs";import{j as o}from"./chunk-KJS3N7RP.mjs";import"./chunk-NCIWO4K3.mjs";import"./chunk-2EV2D2XW.mjs";export{m as EXTRA_CHANNEL_TYPES,o as LIMITS,s as encodeChannels,n as encodeChannelsSteps};

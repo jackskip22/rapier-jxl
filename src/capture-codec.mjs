@@ -1,17 +1,26 @@
 // SPDX-License-Identifier: MIT
-import {BitWriter, complete} from './bits.mjs';
+import {BitWriter, complete, packSigned} from './bits.mjs';
 import {admitOptions, admitPixels, admitOutputSize, fault, job} from './admit.mjs';
 import {SCREEN_INTEGER_CONFIGS, screenDistanceMap} from './screen-codes.mjs';
-import {writeImageHeader, writeModularFrameHeader, groupLayout, groupRect, assembleCodestream} from './frame.mjs';
+import {writeHeaderFields, writeModularFrameHeader, groupLayout, groupRect, assembleCodestream} from './frame.mjs';
 import {pixelKeys, screenColumns, screenCrop, screenRegions, writeScreenBackground} from './screen-crop.mjs';
 import {LZ77, leaf, split, writeTree, writeModularHeader} from './modular.mjs';
-import {WEIGHTED_PREDICTOR, WEIGHTED_PROPERTY, codeWeighted} from './weighted.mjs';
+import {WEIGHTED_PREDICTOR, WEIGHTED_PROPERTY} from './weighted-policy.mjs';
+import {captureCopies, captureLiterals, capturePieceCounts, captureResiduals, captureScan, treeArena, captureWeightedPieces, compileCaptureKernels, requireCaptureKernels, WEIGHTED_BANDS, WEIGHTED_CONTEXT} from './capture-kernels.mjs';
 import {buildCode, canonicalCodes, hybridToken, priceCode, uintConfig, writeHistograms, writeHybrid, writePrefixCode, writeUintConfig} from './prefix.mjs';
 
-const DIM = 1024, PALETTE_LIMIT = 16384;
+const DIM = 1024, PALETTE_LIMIT = 16384, RARE_PALETTE = 8192;
+
+export {compileCaptureKernels};
+export const CAPTURE_PREDICTOR_PROBE = Symbol('capture predictor choices');
+export const CAPTURE_BASE = Symbol('capture base layer');
 
 function scanColours(rgba, stride, x0, y0, w, h, limit, rows = false) {
   limit = Math.min(limit, w * h);
+  const fast = captureScan(pixelKeys(rgba), stride, x0, y0, w, h, limit, rows);
+  return fast === undefined ? scanColoursScript(rgba, stride, x0, y0, w, h, limit, rows) : fast;
+}
+export function scanColoursScript(rgba, stride, x0, y0, w, h, limit, rows = false) {
   let size = 1024;
   while (size < limit * 2) size <<= 1;
   const keys = new Uint32Array(size), slots = new Uint16Array(size), shift = Math.clz32(size) + 1, mask = size - 1;
@@ -42,13 +51,12 @@ function scanColours(rgba, stride, x0, y0, w, h, limit, rows = false) {
 
 const rgbaKey = c => ((c & 255) << 24 | (c >>> 8 & 255) << 16 | (c >>> 16 & 255) << 8 | c >>> 24) >>> 0;
 function paletteModel(colours, models, shape, minimum) {
-  const n = colours.length, uses = new Uint32Array(n), common = [];
-  for (const model of models) for (let k = 0; k < model.count; k++) if (!model.pieceDistance[k]) uses[model.pieceValue[k] >> 1]++;
+  const n = colours.length, uses = captureLiterals(models, n), common = [];
   let rare = 0;
   for (let i = 0; i < n; i++) if (uses[i] >= 16) common.push(i); else if (uses[i]) rare++;
   common.sort((a, b) => uses[b] - uses[a] || colours[a] - colours[b]);
-  for (let lo = 8; lo < common.length; lo += 1 << (31 - Math.clz32(lo) - 2)) {
-    const hi = Math.min(common.length, lo + (1 << (31 - Math.clz32(lo) - 2))), slice = common.slice(lo, hi).sort((a, b) => rgbaKey(colours[a]) - rgbaKey(colours[b]));
+  for (let lo = 4; lo < common.length; lo *= 2) {
+    const hi = Math.min(common.length, lo * 2), slice = common.slice(lo, hi).sort((a, b) => rgbaKey(colours[a]) - rgbaKey(colours[b]));
     for (let j = lo; j < hi; j++) common[j] = slice[j - lo];
   }
   const keys = new Float64Array(rare);
@@ -57,21 +65,17 @@ function paletteModel(colours, models, shape, minimum) {
     keys[j++] = rgbaKey(c) * 65536 + i;
   }
   keys.sort();
-  const order = new Int32Array(common.length + rare), sorted = new Uint32Array(order.length);
+  const order = new Int32Array(common.length + rare), sorted = new Uint32Array(order.length), remap = new Int32Array(n);
   order.set(common);
   for (let j = 0; j < rare; j++) order[common.length + j] = keys[j] % 65536;
-  for (let j = 0; j < order.length; j++) sorted[j] = colours[order[j]];
-  const meta = paletteMeta(sorted, shape), best = {order, meta, model: channelModel(meta.plane, meta.width, meta.height, 'rows', 1, minimum)};
-  const remap = new Int32Array(n);
-  for (let j = 0; j < best.order.length; j++) remap[best.order[j]] = j;
-  for (const model of models) {
-    for (let k = 0; k < model.count; k++) if (!model.pieceDistance[k]) model.pieceValue[k] = remap[model.pieceValue[k] >> 1] * 2;
-    if (!model.group) learnContexts(model, remap, common.length, best.order.length);
-  }
-  return best;
+  for (let j = 0; j < order.length; j++) { sorted[j] = colours[order[j]]; remap[order[j]] = j; }
+  const meta = paletteMeta(sorted, shape), model = channelModel(meta.plane, meta.width, meta.height, 'rows');
+  captureLiterals(models, n, remap);
+  for (const m of models) if (!m.group) learnContexts(m, remap, common.length, order.length);
+  return {meta, model};
 }
 
-const TREE_TOKENS = 128, TREE_SPLIT = 160, TREE_MIN = 256, TREE_NODES = 32;
+const TREE_TOKENS = 128, TREE_SPLIT = 96, TREE_MIN = 128, TREE_NODES = 48;
 let nlog = new Float64Array(0);
 function nlogTable(n) {
   if (nlog.length <= n) {
@@ -83,36 +87,39 @@ function nlogTable(n) {
   return nlog;
 }
 
+const sampleToken = v => {
+  if (v < 16) return v;
+  const e = 31 - Math.clz32(v);
+  return 16 + ((e - 4) << 2 | (v >> (e - 1) & 1) << 1 | v & 1);
+};
+
 function learnContexts(model, remap, common, total) {
   const w = model.width, plane = model.plane, count = model.count, h = Math.ceil(plane.length / w);
   const indexCuts = [];
   for (let a = 0, b = 1; a < common - 1; [a, b] = [b, a + b]) if (!indexCuts.includes(a)) indexCuts.push(a);
   if (common) indexCuts.push(common - 1);
   for (let k = 1; k < 4; k++) { const c = common + Math.floor((total - common) * k / 4) - 1; if (c > (indexCuts[indexCuts.length - 1] ?? -1)) indexCuts.push(c); }
-  const spread = n => { const cuts = []; for (let k = 1; k < 8; k++) { const c = Math.floor(n * k / 8) - 1; if (c > (cuts[cuts.length - 1] ?? -1)) cuts.push(c); } return cuts; };
+  const spread = n => { const cuts = []; for (let k = 1; k < 16; k++) { const c = Math.floor(n * k / 16) - 1; if (c > (cuts[cuts.length - 1] ?? -1)) cuts.push(c); } return cuts; };
   const cuts = [spread(h), spread(w), indexCuts, indexCuts];
   const binsOf = (list, n) => { const bins = new Uint8Array(n); for (let v = 0, b = 0; v < n; v++) { while (b < list.length && v > list[b]) b++; bins[v] = b; } return bins; };
   const yBin = binsOf(cuts[0], h), xBin = binsOf(cuts[1], w), indexBin = binsOf(indexCuts, total), binOf = new Uint8Array(remap.length);
   for (let i = 0; i < remap.length; i++) binOf[i] = indexBin[remap[i]];
-  const by = new Uint8Array(count), bx = new Uint8Array(count), bw = new Uint8Array(count), bn = new Uint8Array(count), tokens = new Uint8Array(count);
-  pieceBins(plane, w, model.pieceValue, model.pieceDistance, model.minimum, count, yBin, xBin, binOf, tokens, by, bx, bw, bn);
-  const order = new Int32Array(count), span = (Math.max(...cuts.map(c => c.length)) + 1) * TREE_TOKENS;
-  for (let k = 0; k < count; k++) order[k] = k;
-  const s = {cuts, by, bx, bw, bn, tokens, order, scratch: new Int32Array(count), nlog: nlogTable(count), context: model.pieceContext,
-    all: new Uint32Array(TREE_TOKENS), low: new Uint32Array(TREE_TOKENS), used: new Uint8Array(TREE_TOKENS),
-    span, counts: new Uint32Array(4 * span), leaves: [], nodes: 0,
-    split: TREE_SPLIT, min: TREE_MIN, most: TREE_NODES, cut: 0};
+  const span = (Math.max(...cuts.map(c => c.length)) + 1) * TREE_TOKENS, arena = treeArena(count, span), {by, bx, bw, bn, tokens, order} = arena;
+  pieceBins(plane, w, model.pieceValue, model.pieceDistance, model.minimum, count, yBin, xBin, binOf, tokens, by, bx, bw, bn, order);
+  const s = {cuts, order, nlog: nlogTable(count), context: model.pieceContext, all: arena.all, counts: arena.counts,
+    tally: arena.tally, part: arena.part, low: new Uint32Array(TREE_TOKENS), used: new Uint8Array(TREE_TOKENS),
+    span, leaves: [], nodes: 0, split: TREE_SPLIT, min: TREE_MIN, most: TREE_NODES, cut: 0};
   model.tree = treeNode(s, 0, count);
   model.leaves = s.leaves; model.classes = s.leaves.length;
 }
 
-function pieceBins(plane, w, pieceValue, pieceDistance, minimum, count, yBin, xBin, binOf, tokens, by, bx, bw, bn) {
+function pieceBins(plane, w, pieceValue, pieceDistance, minimum, count, yBin, xBin, binOf, tokens, by, bx, bw, bn, order) {
   for (let k = 0, x = 0, y = 0, at = 0; k < count; k++) {
     const west = x ? plane[at - 1] : y ? plane[at - w] : -1, north = y ? plane[at - w] : west;
     const d = pieceDistance[k], value = d ? Math.min(pieceValue[k], 16383) : pieceValue[k];
-    const e = 31 - Math.clz32(value), token = value < 16 ? value : 16 + ((e - 4) << 2 | (value >> (e - 1) & 1) << 1 | value & 1);
-    tokens[k] = (d ? 64 : 0) + Math.min(token, 63);
+    tokens[k] = (d ? 64 : 0) + Math.min(sampleToken(value), 63);
     by[k] = yBin[y]; bx[k] = xBin[x]; bw[k] = west < 0 ? 0 : binOf[west]; bn[k] = north < 0 ? 0 : binOf[north];
+    order[k] = k;
     const step = d ? pieceValue[k] + minimum : 1;
     at += step; x += step;
     while (x >= w) { x -= w; y++; }
@@ -121,21 +128,15 @@ function pieceBins(plane, w, pieceValue, pieceDistance, minimum, count, yBin, xB
 
 const TREE_PROPERTY = [2, 3, 7, 6];
 function treeNode(s, from, to) {
-  const {all, used, order, tokens, nlog} = s, size = to - from;
+  const {all, used, order, nlog} = s, size = to - from;
   s.nodes++;
-  all.fill(0);
-  for (let i = from; i < to; i++) all[tokens[order[i]]]++;
+  const splits = size >= s.min && s.nodes + 2 <= s.most;
+  s.tally(from, to, splits);
   let sum = 0, kinds = 0;
   for (let t = 0; t < TREE_TOKENS; t++) if (all[t]) { sum += nlog[all[t]]; used[kinds++] = t; }
   let gain = 32 * s.split, property = -1, cut = 0;
-  if (size >= s.min && s.nodes + 2 <= s.most) {
-    const here = nlog[size] - sum + 160 * kinds, counts = s.counts, span = s.span, b0 = s.by, b1 = s.bx, b2 = s.bw, b3 = s.bn;
-    counts.fill(0);
-    for (let i = from; i < to; i++) {
-      const k = order[i], t = tokens[k];
-      counts[b0[k] * TREE_TOKENS + t]++; counts[span + b1[k] * TREE_TOKENS + t]++;
-      counts[2 * span + b2[k] * TREE_TOKENS + t]++; counts[3 * span + b3[k] * TREE_TOKENS + t]++;
-    }
+  if (splits) {
+    const here = nlog[size] - sum + 160 * kinds;
     for (let p = 0; p < 4; p++) {
       const found = bestCut(s, p, size, here, sum, kinds);
       if (found > gain) { gain = found; property = p; cut = s.cut; }
@@ -147,10 +148,7 @@ function treeNode(s, from, to) {
     for (let i = from; i < to; i++) s.context[order[i]] = node.local;
     return node;
   }
-  const bin = property === 0 ? s.by : property === 1 ? s.bx : property === 2 ? s.bw : s.bn, scratch = s.scratch;
-  let a = from, b = 0;
-  for (let i = from; i < to; i++) { const k = order[i]; if (bin[k] > cut) order[a++] = k; else scratch[b++] = k; }
-  order.set(scratch.subarray(0, b), a);
+  const a = s.part(from, to, property, cut);
   const node = split(TREE_PROPERTY[property], s.cuts[property][cut], null, null);
   node.left = treeNode(s, from, a); node.right = treeNode(s, a, to);
   return node;
@@ -158,7 +156,7 @@ function treeNode(s, from, to) {
 
 function bestCut(s, p, size, here, sum, kinds) {
   const {counts, low, all, used, nlog} = s, n = s.cuts[p].length + 1, offset = p * s.span;
-  low.fill(0);
+  for (let u = 0; u < kinds; u++) low[used[u]] = 0;
   let best = 0, sumLow = 0, kindsLow = 0, sumHigh = sum, kindsHigh = kinds, lowSize = 0;
   for (let c = 0; c + 1 < n; c++) {
     const base = offset + c * TREE_TOKENS;
@@ -206,7 +204,8 @@ function intervals(property, cuts, child) {
 
 function predictSmooth(plane, w, h, values, contexts, step) {
   const bound = (step - 1) >> 1;
-  for (let y = 0, i = 0; y < h; y++) for (let x = 0; x < w; x++, i++) {
+  for (let i = 0, x = 0, y = 0, size = w * h; i < size; i++, x++) {
+    if (x === w) { x = 0; y++; }
     const west = x ? plane[i - 1] : y ? plane[i - w] : 0, north = y ? plane[i - w] : west,
       northWest = x && y ? plane[i - w - 1] : west;
     const low = west < north ? west : north, high = west < north ? north : west, gradient = west + north - northWest;
@@ -216,13 +215,53 @@ function predictSmooth(plane, w, h, values, contexts, step) {
       residual = residual >= 0 ? (residual + bound) / step | 0 : -((bound - residual) / step | 0);
       plane[i] = prediction + residual * step;
     }
-    values[i] = residual >= 0 ? residual * 2 : -residual * 2 - 1;
+    values[i] = packSigned(residual);
     contexts[i] = SMOOTH[west - northWest + RANGE] * 4 + SMOOTH[northWest - north + RANGE];
   }
 }
 
-const WEIGHTED_BANDS = [-200, -100, -50, -25, -12, -6, -3, -1, 0, 2, 4, 7, 13, 26, 51, 101, 201];
-const WEIGHTED_CONTEXT = Uint8Array.from({length: 511}, (_, i) => WEIGHTED_BANDS.filter(cut => cut < i - 255).length);
+const SAMPLE_TOKENS = 128;
+function sampleCost(counts, totals, rawBits) {
+  let bits = rawBits;
+  for (let c = 0; c < totals.length; c++) {
+    const n = totals[c];
+    if (!n) continue;
+    const bins = counts.subarray(c * SAMPLE_TOKENS, (c + 1) * SAMPLE_TOKENS);
+    let kinds = 0;
+    for (let k = 0; k < bins.length; k++) if (bins[k]) kinds++;
+    bits += entropy(bins, n) + 5 * kinds;
+  }
+  return bits;
+}
+function useWeighted(plane, w, h) {
+  if (w * h < 4096 || h < 8) return true;
+  const rows = Math.min(8, h), last = h - rows;
+  const positions = [0, Math.floor(last / 3), Math.floor(2 * last / 3), last];
+  const residuals = new Uint32Array(w * rows), properties = new Int32Array(w * rows);
+  const smoothCounts = new Uint32Array(16 * SAMPLE_TOKENS), weightedCounts = new Uint32Array(18 * SAMPLE_TOKENS);
+  const smoothTotals = new Uint32Array(16), weightedTotals = new Uint32Array(18);
+  let smoothRaw = 0, weightedRaw = 0, previous = -1;
+  for (const y0 of positions) {
+    if (y0 === previous) continue;
+    previous = y0;
+    const strip = plane.subarray(y0 * w, (y0 + rows) * w);
+    captureResiduals(strip, w, rows, residuals, properties);
+    for (let i = 2 * w, x = 0, end = rows * w; i < end; i++, x++) {
+      if (x === w) x = 0;
+      const west = x ? strip[i - 1] : strip[i - w], north = strip[i - w], northWest = x ? strip[i - w - 1] : west;
+      const low = west < north ? west : north, high = west < north ? north : west, guess = west + north - northWest;
+      const prediction = guess < low ? low : guess > high ? high : guess;
+      const smooth = packSigned(strip[i] - prediction);
+      const sc = SMOOTH[west - northWest + RANGE] * 4 + SMOOTH[northWest - north + RANGE];
+      smoothCounts[sc * SAMPLE_TOKENS + sampleToken(smooth)]++; smoothTotals[sc]++;
+      if (smooth >= 16) smoothRaw += 29 - Math.clz32(smooth);
+      const e = properties[i], wc = WEIGHTED_CONTEXT[e < -255 ? 0 : e > 255 ? 510 : e + 255], wr = residuals[i];
+      weightedCounts[wc * SAMPLE_TOKENS + sampleToken(wr)]++; weightedTotals[wc]++;
+      if (wr >= 16) weightedRaw += 29 - Math.clz32(wr);
+    }
+  }
+  return sampleCost(weightedCounts, weightedTotals, weightedRaw) <= sampleCost(smoothCounts, smoothTotals, smoothRaw);
+}
 
 function smoothTree(leaves, step) {
   return intervals(10, SMOOTH_CUTS, a => intervals(11, SMOOTH_CUTS, b => {
@@ -232,114 +271,33 @@ function smoothTree(leaves, step) {
   }));
 }
 
-const copyHash = (values, i) => (Math.imul(values[i] + 1, 0x1e35a7bd) ^ Math.imul(values[i + 1] + 1, 0x6c8e9cf5) ^ Math.imul(values[i + 2] + 1, 0x2c1b3c6d)) >>> 16;
-
-function matchLength(values, previous, from, n) {
-  let k = 3;
-  while (from + k < n && values[previous + k] === values[from + k]) k++;
-  return k;
+const SPATIAL = new Map();
+function spatialLookup(width) {
+  let entry = SPATIAL.get(width);
+  if (!entry) {
+    const map = screenDistanceMap(width), max = Math.max(...map.keys()) + 1;
+    const flags = new Uint8Array(max), codes = new Int16Array(max).fill(-1);
+    for (const [d, code] of map) { flags[d] = code < 2 ? 1 : code < 12 ? 3 : code < 32 ? 5 : 7; codes[d] = code; }
+    if (SPATIAL.size > 64) SPATIAL.clear();
+    SPATIAL.set(width, entry = [flags, codes]);
+  }
+  return entry;
 }
 
-function copyProbe(s, previous, recent = false) {
-  const values = s.values, at = s.at, length = s.length;
-  if (previous < 0 || values[previous] !== values[at] || values[previous + 1] !== values[at + 1] || values[previous + 2] !== values[at + 2]) return;
-  if (length && values[previous + length - 1] !== values[at + length - 1]) return;
-  const d = at - previous, slot = d & 63;
-  let k;
-  if (s.endDistance[slot] === d && s.endFrom[slot] <= at && s.endAt[slot] - at > 3) k = s.endAt[slot] - at;
-  else { k = matchLength(values, previous, at, s.n); s.endDistance[slot] = d; s.endFrom[slot] = at; s.endAt[slot] = at + k; }
-  const cost = d < s.spatial.length && s.spatial[d] ? 2 : Math.max(2, 31 - Math.clz32(d) - (recent ? 4 : 0));
-  if (6 * k - cost > 6 * length - s.lengthCost) { s.length = k; s.distance = d; s.lengthCost = cost; }
-}
-
-function remember(recent, d) {
-  let i = 0;
-  while (i < recent.length - 1 && recent[i] !== d) i++;
-  for (; i > 0; i--) recent[i] = recent[i - 1];
-  recent[0] = d;
-}
-
-function copyFind(s, position) {
-  const {values, n, width, depth, heads, chain} = s;
-  const at = s.at = position;
-  s.length = 0; s.distance = 0; s.lengthCost = 0;
-  if (at + s.minimum > n) return 0;
-  if (depth) for (let i = s.inserted; i < at; i++) { const h = copyHash(values, i); chain[i] = heads[h]; heads[h] = i; }
-  if (depth && s.inserted < at) s.inserted = at;
-  if (at) copyProbe(s, at - 1);
-  if (at >= width && at + s.length < n) copyProbe(s, at - width);
-  if (depth) {
-    const v = values[at], recent = s.recent;
-    for (let i = 0; i < recent.length && s.length < 256; i++) {
-      const r = recent[i];
-      if (r > 1 && r !== width && r <= at && values[at - r] === v) copyProbe(s, at - r, true);
+function channelModel(plane, w, h, kind, step = 1, minimum = 3, weighted = true) {
+  if (kind === 'smooth') {
+    const v0 = plane[0]; let constant = true;
+    for (let i = 1; i < plane.length; i++) if (plane[i] !== v0) { constant = false; break; }
+    if (constant) {
+      const tree = leaf(0, v0); tree.local = 0;
+      return {kind, tree, leaves: [tree], classes: 1, width: w, plane, minimum, count: 1, pieceValue: Int32Array.of(0), pieceDistance: Int32Array.of(0), pieceContext: Uint8Array.of(0)};
     }
   }
-  if (depth) for (let p = heads[copyHash(values, at)], d = 0; p >= 0 && d < depth && at + s.length < n && s.length < 256; p = chain[p], d++) copyProbe(s, p);
-  return s.length >= s.minimum ? s.length : 0;
-}
-
-function runCopies(values, out) {
-  for (let i = 0, n = values.length; i < n;) {
-    if (!i || values[i] !== values[i - 1]) { literal(out, i++); continue; }
-    let k = 1;
-    while (i + k < n && values[i + k] === values[i - 1]) k++;
-    if (k >= 16) { copied(out, i, k, 1); i += k; } else for (const end = i + k; i < end;) literal(out, i++);
+  if (kind === 'smooth' && step === 1 && weighted) {
+    const leaves = [], tree = intervals(WEIGHTED_PROPERTY, WEIGHTED_BANDS, band => { const node = leaf(WEIGHTED_PREDICTOR); node.local = band; leaves.push(node); return node; });
+    const {count, value, distance, context} = captureWeightedPieces(plane, w, h, minimum);
+    return {kind, tree, leaves, classes: WEIGHTED_BANDS.length + 1, width: w, plane, minimum, count, pieceValue: value, pieceDistance: distance, pieceContext: context};
   }
-}
-
-function pieces(values, contexts, n, minimum, scale) {
-  const size = Math.min(n, 4096);
-  return {values, contexts, n, minimum, scale, value: new Int32Array(size), distance: new Int32Array(size), context: new Uint8Array(size), count: 0};
-}
-function grow(out) {
-  const size = Math.min(out.n, out.count * 2), value = new Int32Array(size), distance = new Int32Array(size), context = new Uint8Array(size);
-  value.set(out.value); distance.set(out.distance); context.set(out.context);
-  out.value = value; out.distance = distance; out.context = context;
-}
-function literal(out, at) {
-  if (out.count === out.value.length) grow(out);
-  const k = out.count++;
-  out.context[k] = out.contexts[at]; out.value[k] = out.values[at] * out.scale; out.distance[k] = 0;
-}
-function copied(out, at, length, distance) {
-  if (out.count === out.value.length) grow(out);
-  const k = out.count++;
-  out.context[k] = out.contexts[at]; out.value[k] = length - out.minimum; out.distance[k] = distance;
-}
-
-const SPATIAL = new Map();
-function spatialFlags(width) {
-  let flags = SPATIAL.get(width);
-  if (!flags) {
-    const near = [...screenDistanceMap(width).keys()];
-    flags = new Uint8Array(Math.max(...near) + 1);
-    for (const d of near) flags[d] = 1;
-    if (SPATIAL.size > 64) SPATIAL.clear();
-    SPATIAL.set(width, flags);
-  }
-  return flags;
-}
-
-function captureCopies(values, width, depth, minimum, out) {
-  const n = values.length, s = {values, n, width, depth, minimum, spatial: spatialFlags(width), heads: depth ? new Int32Array(65536).fill(-1) : null,
-    chain: depth ? new Int32Array(n) : null, inserted: 0, at: 0, length: 0, distance: 0, lengthCost: 0, recent: new Int32Array(16),
-    endDistance: new Int32Array(64), endFrom: new Int32Array(64), endAt: new Int32Array(64)};
-  let position = 0, copy = copyFind(s, 0), from = s.distance, fromCost = s.lengthCost;
-  while (position < n) {
-    if (copy) {
-      const next = depth ? copyFind(s, position + 1) : 0;
-      if (next && 6 * next - s.lengthCost > 6 * copy - fromCost + 3) { literal(out, position++); copy = next; from = s.distance; fromCost = s.lengthCost; continue; }
-      copied(out, position, copy, from);
-      if (depth) remember(s.recent, from);
-      if (copy > 64) { copyFind(s, position + 8); s.inserted = position + copy - 3; }
-      position += copy;
-    } else literal(out, position++);
-    copy = copyFind(s, position); from = s.distance; fromCost = s.lengthCost;
-  }
-}
-
-function channelModel(plane, w, h, kind, step = 1, minimum = kind === 'index' ? 3 : 4) {
   const n = w * h, values = kind === 'index' ? plane instanceof Int32Array ? plane : Int32Array.from(plane) : new Int32Array(n);
   const contexts = new Uint8Array(n), leaves = [], scale = kind === 'index' ? 2 : 1;
   let tree, classes = 1;
@@ -348,16 +306,15 @@ function channelModel(plane, w, h, kind, step = 1, minimum = kind === 'index' ? 
   } else if (kind === 'rows') {
     classes = 3 * h;
     const byNorth = new Int32Array(n), byGradient = new Int32Array(n), counts = new Uint32Array(3 * classes * 512);
-    const zigzag = r => r >= 0 ? r * 2 : -r * 2 - 1;
     for (let i = 0, x = 0, row = 0; i < n; i++, x++) {
       if (x === w) { x = 0; row++; }
       const west = x ? plane[i - 1] : row ? plane[i - w] : 0, north = row ? plane[i - w] : west, northWest = x && row ? plane[i - w - 1] : west;
       const gradient = Math.max(Math.min(west, north), Math.min(Math.max(west, north), west + north - northWest));
       const change = Math.abs(northWest - north), context = contexts[i] = row * 3 + (change ? change <= 8 ? 1 : 2 : 0);
       const at = context * 512, value = plane[i];
-      counts[at + (values[i] = zigzag(value - west))]++;
-      counts[classes * 512 + at + (byNorth[i] = zigzag(value - north))]++;
-      counts[2 * classes * 512 + at + (byGradient[i] = zigzag(value - gradient))]++;
+      counts[at + (values[i] = packSigned(value - west))]++;
+      counts[classes * 512 + at + (byNorth[i] = packSigned(value - north))]++;
+      counts[2 * classes * 512 + at + (byGradient[i] = packSigned(value - gradient))]++;
     }
     const chosen = new Uint8Array(classes);
     for (let c = 0; c < classes; c++) for (let p = 0, least = Infinity; p < 3; p++) {
@@ -371,24 +328,16 @@ function channelModel(plane, w, h, kind, step = 1, minimum = kind === 'index' ? 
     const node = local => { const l = leaf([1, 2, 5][chosen[local]]); l.local = local; leaves.push(l); return l; };
     tree = intervals(2, upTo(h - 1), row => row ? split(11, 8, node(row * 3 + 2),
       split(11, 0, node(row * 3 + 1), split(11, -1, node(row * 3), split(11, -9, node(row * 3 + 1), node(row * 3 + 2))))) : node(0));
-  } else if (step === 1) {
-    const errors = new Int32Array(n);
-    codeWeighted(null, null, plane, w, h, 0, undefined, new Uint32Array(values.buffer), errors);
-    for (let i = 0; i < n; i++) { const e = errors[i]; contexts[i] = WEIGHTED_CONTEXT[e < -255 ? 0 : e > 255 ? 510 : e + 255]; }
-    tree = intervals(WEIGHTED_PROPERTY, WEIGHTED_BANDS, band => { const node = leaf(WEIGHTED_PREDICTOR); node.local = band; leaves.push(node); return node; });
-    classes = WEIGHTED_BANDS.length + 1;
   } else { predictSmooth(plane, w, h, values, contexts, step); tree = smoothTree(leaves, step); classes = 16; }
   if (classes === 1) { tree.local = 0; leaves.push(tree); }
-  const out = pieces(values, contexts, n, minimum, scale);
-  if (kind === 'smooth' && step === 1) runCopies(values, out);
-  else captureCopies(values, w, kind === 'index' ? 12 : 0, minimum, out);
-  const {count, value: pieceValue, distance: pieceDistance, context: pieceContext} = out;
+  const {count, value: pieceValue, distance: pieceDistance, context: pieceContext} = kind === 'rows'
+    ? {count: n, value: values, distance: new Int32Array(n), context: contexts}
+    : captureCopies(values, contexts, w, kind === 'index' ? 24 : 0, minimum, scale, spatialLookup(w)[0]);
   return {kind, tree, leaves, classes, width: w, plane, minimum, count, pieceValue, pieceDistance, pieceContext};
 }
 
-const LITERAL_CONFIGS = [...SCREEN_INTEGER_CONFIGS, ...[5, 6, 7, 8, 9, 10, 11, 12, 13].map(n => uintConfig(n))];
-const SMALL = 64;
-const MAX_MIN_SYMBOL = 512;
+const LITERAL_CONFIGS = [...SCREEN_INTEGER_CONFIGS, ...[[4, 2, 1], [5, 1, 1], [5, 2, 1], [6, 1, 1], [6, 2, 1], [7, 2, 1], [5], [6], [7], [8], [9], [10], [11], [12], [13]].map(a => uintConfig(...a))];
+const SMALL = 2048;
 const LOG_MANTISSA = Uint8Array.of(0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 22, 23, 24, 25, 26, 27, 27, 28, 29, 30, 31, 31);
 const log2x32 = x => {
   const e = 31 - Math.clz32(x);
@@ -400,6 +349,16 @@ const entropy = (freqs, total) => {
   for (const n of freqs) if (n) bits += n * (whole - log2x32(n));
   return bits / 32;
 };
+
+const DISTANCE_TOKENS = 1 << 15;
+const FREQS = new Uint32Array(DISTANCE_TOKENS), USED = new Uint16Array(DISTANCE_TOKENS);
+let usedLen = 0;
+
+function clearFreqs() {
+  for (let i = 0; i < usedLen; i++) FREQS[USED[i]] = 0;
+  usedLen = 0;
+}
+
 function valueCounts(small, large) {
   let size = large.size;
   for (let v = 0; v < SMALL; v++) if (small[v]) size++;
@@ -409,67 +368,71 @@ function valueCounts(small, large) {
   for (const [v, n] of large) { values[i] = v; counts[i++] = n; }
   return {values, counts};
 }
-function tokenPrice(config, {values, counts}, out) {
-  const freqs = out.freqs, {split, msb, lsb, splitToken} = config, low = (1 << lsb) - 1;
-  freqs.fill(0, 0, out.top === undefined ? freqs.length : out.top + 1);
-  let raw = 0, top = 0, total = 0, used = 0;
+function tokenPrice(config, {values, counts}) {
+  clearFreqs();
+  const {split, msb, lsb, splitToken} = config, low = (1 << lsb) - 1, shift = msb + lsb;
+  let raw = 0, top = 0, total = 0, uLen = 0;
   for (let i = 0; i < values.length; i++) {
     const value = values[i], n = counts[i];
     let token = value;
     if (value >= splitToken) {
       const e = 31 - Math.clz32(value), below = value - (1 << e);
-      token = splitToken + (((e - split) << (msb + lsb)) | ((below >> (e - msb)) << lsb) | (below & low));
-      raw += (e - msb - lsb) * n;
+      token = splitToken + (((e - split) << shift) | ((below >> (e - msb)) << lsb) | (below & low));
+      raw += (e - shift) * n;
     }
-    if (!freqs[token]) used++;
-    freqs[token] += n; total += n;
+    if (!FREQS[token]) USED[uLen++] = token;
+    FREQS[token] += n; total += n;
     if (token > top) top = token;
   }
-  out.top = top; out.total = total;
-  out.bits = total ? entropy(freqs.subarray(0, top + 1), total) + raw + 5 * used : 0;
-  return out;
+  usedLen = uLen;
+  let bits = 0;
+  if (total) {
+    const whole = log2x32(total);
+    for (let i = 0; i < uLen; i++) { const n = FREQS[USED[i]]; bits += n * (whole - log2x32(n)); }
+  }
+  return {config, bits: total ? bits / 32 + raw + 4 * uLen + top : 0, top};
 }
 
-const WIDE_DISTANCES = [uintConfig(8, 4, 4), uintConfig(10, 4, 3), uintConfig(10, 5, 4), uintConfig(10, 5, 5), uintConfig(12, 5, 5)];
+const WIDE_DISTANCES = [[8, 4, 4], [10, 4, 3], [10, 5, 4], [10, 5, 5], [12, 5, 5], [12, 6, 5], [12, 6, 6], [13, 6, 6], [14, 6, 6], [14, 7, 7]].map(a => uintConfig(...a));
 const DISTANCE_CONFIGS = [...SCREEN_INTEGER_CONFIGS, ...WIDE_DISTANCES];
-const DISTANCE_TOKENS = 1 << 15;
-function distanceTokens(config, values, out) {
-  const token = [0, 0, 0], freqs = out.freqs;
-  let raw = 0, top = 0, total = 0;
-  freqs.fill(0, 0, out.top === undefined ? freqs.length : out.top + 1);
+function distanceTokens(config, values) {
+  clearFreqs();
+  const token = [0, 0, 0];
+  let raw = 0, top = 0, total = 0, uLen = 0;
   for (let i = 0; i < values.values.length; i++) {
     const v = values.values[i], n = values.counts[i];
     hybridToken(config, v, token);
-    if (token[0] >= DISTANCE_TOKENS) { out.top = top; return null; }
-    freqs[token[0]] += n; raw += token[1] * n; total += n;
-    if (token[0] > top) top = token[0];
+    const s = token[0];
+    if (s >= DISTANCE_TOKENS) { usedLen = uLen; return null; }
+    if (!FREQS[s]) USED[uLen++] = s;
+    FREQS[s] += n; raw += token[1] * n; total += n;
+    if (s > top) top = s;
   }
-  out.top = top;
+  usedLen = uLen;
   return {raw, total, top};
 }
-function distanceEstimate(config, values, out) {
-  const counted = distanceTokens(config, values, out);
+function distanceEstimate(config, values) {
+  const counted = distanceTokens(config, values);
   if (!counted) return Infinity;
-  const freqs = out.freqs, whole = log2x32(counted.total);
-  let bits = 0, header = 0, gap = 0;
-  for (let i = 0; i <= counted.top; i++) {
-    const n = freqs[i];
-    if (!n) { gap++; continue; }
+  const whole = log2x32(counted.total), used = USED.subarray(0, usedLen).sort();
+  let bits = 0, header = 0, prev = -1;
+  for (let j = 0; j < used.length; j++) {
+    const i = used[j], n = FREQS[i], gap = i - prev - 1;
     bits += n * (whole - log2x32(n));
-    header += 4 + (gap ? gap < 3 ? 3 * gap : 6 : 0); gap = 0;
+    header += 4 + (gap ? gap < 3 ? 3 * gap : 6 : 0); prev = i;
   }
   return bits / 32 + counted.raw + header;
 }
-function distancePrice(config, values, out) {
-  const {raw, top} = distanceTokens(config, values, out), freqs = out.freqs;
-  const code = priceCode(freqs.subarray(0, top + 1)), header = new BitWriter(256);
+function distancePrice(config, values) {
+  const {raw, top} = distanceTokens(config, values);
+  const code = priceCode(FREQS.subarray(0, top + 1), USED.subarray(0, usedLen).sort()), header = new BitWriter(256);
   writeUintConfig(header, config, 15); writePrefixCode(header, code);
   let bits = raw + header.bitLength;
-  for (let i = 0; i <= top; i++) bits += freqs[i] * code.lengths[i];
+  for (let i = 0; i < usedLen; i++) { const s = USED[i]; bits += FREQS[s] * code.lengths[s]; }
   return {bits, code};
 }
 
-const CLUSTER_CONFIG = uintConfig(4, 1, 1), CLUSTER_TOKENS = 128, CLUSTER_HEADER = 128;
+const CLUSTER_CONFIG = uintConfig(4, 1, 1), CLUSTER_TOKENS = 128, CLUSTER_HEADER = 48;
 function clusterCost(freqs) {
   let total = 0, used = 0;
   for (let i = 0; i < CLUSTER_TOKENS; i++) if (freqs[i]) { total += freqs[i]; used++; }
@@ -512,9 +475,10 @@ function writeChannels(writer, models) {
   const histograms = [], distances = new Map();
   for (const model of models) {
     model.base = histograms.length;
-    for (let c = 0; c < model.classes; c++) histograms.push({small: new Uint32Array(SMALL), large: new Map(), lengths: new Map(), literals: 0, copies: 0});
-    for (let k = 0; k < model.count; k++) {
-      const target = histograms[model.base + model.pieceContext[k]], value = model.pieceValue[k], d = model.pieceDistance[k];
+    const {counts, literals, others} = capturePieceCounts(model, SMALL);
+    for (let c = 0; c < model.classes; c++) histograms.push({small: counts.subarray(c * SMALL, (c + 1) * SMALL), large: new Map(), lengths: new Map(), literals: literals[c], copies: 0});
+    for (let i = 0; i < others.length; i++) {
+      const k = others[i], target = histograms[model.base + model.pieceContext[k]], value = model.pieceValue[k], d = model.pieceDistance[k];
       if (d) { target.lengths.set(value, (target.lengths.get(value) || 0) + 1); target.copies++; distances.set(d, (distances.get(d) || 0) + 1); }
       else { if (value < SMALL) target.small[value]++; else target.large.set(value, (target.large.get(value) || 0) + 1); target.literals++; }
     }
@@ -527,54 +491,45 @@ function writeChannels(writer, models) {
     for (let i = 0; i < histograms.length; i++) index[i] = of[index[i]];
     live = groups;
   }
-  const scratch = {freqs: new Uint32Array(DISTANCE_TOKENS)}, none = new Uint32Array(SMALL), token = [0, 0, 0];
-  for (const h of live) {
+  const none = new Uint32Array(SMALL), token = [0, 0, 0], minSymbol = models.at(-1).kind === 'index' && models[0].width <= 2048 ? 224 : 512;
+  const configs = live.map(h => {
     const literals = valueCounts(h.small, h.large);
     h.lengthCounts = valueCounts(none, h.lengths);
-    let largest = 0;
+    if (!h.literals) return {config: LITERAL_CONFIGS[0], top: 0};
+    let largest = 0, best, wide;
     for (const v of literals.values) if (v > largest) largest = v;
-    h.options = h.literals ? LITERAL_CONFIGS.map(config => {
-      if (distances.size) { hybridToken(config, largest, token); if (token[0] >= MAX_MIN_SYMBOL) return {config, bits: Infinity, top: token[0]}; }
-      const {bits, top} = tokenPrice(config, literals, scratch);
-      return {config, bits, top};
-    }) : [{config: LITERAL_CONFIGS[0], bits: 0, top: 0}];
-  }
+    for (const config of LITERAL_CONFIGS) {
+      if (distances.size) { hybridToken(config, largest, token); if (token[0] >= minSymbol) continue; }
+      const option = config.splitToken > largest ? {...(wide ??= tokenPrice(config, literals)), config} : tokenPrice(config, literals);
+      if (!best || option.bits < best.bits) best = option;
+    }
+    return best;
+  });
   let length = {config: LZ77.lengthConfig, bits: 0};
   if (distances.size) {
     length = null;
     for (const config of SCREEN_INTEGER_CONFIGS) {
       let bits = 0;
-      for (const h of live) if (h.copies) bits += tokenPrice(config, h.lengthCounts, scratch).bits;
+      for (const h of live) if (h.copies) bits += tokenPrice(config, h.lengthCounts).bits;
       if (!length || bits < length.bits) length = {config, bits};
     }
   }
-  let choice;
-  for (const minSymbol of distances.size ? [224, MAX_MIN_SYMBOL] : [224]) {
-    let bits = 0;
-    const configs = live.map(h => {
-      let best;
-      for (const option of h.options) if ((!distances.size || option.top < minSymbol) && (!best || option.bits < best.bits)) best = option;
-      if (best) bits += best.bits;
-      return best;
-    });
-    if (configs.every(Boolean) && (!choice || bits + minSymbol / 64 < choice.bits)) choice = {minSymbol, configs, bits: bits + minSymbol / 64};
-  }
-  const codes = live.map((h, m) => buildCode(countTokens(new Uint32Array(Math.max(choice.configs[m].top + 1, choice.minSymbol + 1024)),
-    h, choice.configs[m].config, length.config, choice.minSymbol, Infinity)));
-  let distance;
-  const map = distances.size ? screenDistanceMap(Math.max(...models.map(model => model.width))) : null;
-  if (map) {
-    const spatial = new Map(), generic = new Map();
+  const codes = live.map((h, m) => buildCode(countTokens(new Uint32Array(h.copies ? minSymbol + 1024 : configs[m].top + 1),
+    h, configs[m].config, length.config, minSymbol, Infinity)));
+  let distance, sCodes = null;
+  if (distances.size) {
+    sCodes = spatialLookup(Math.max(...models.map(model => model.width)))[1];
+    const spatial = new Map(), generic = new Map(), sLen = sCodes.length;
     for (const [d, n] of distances) {
-      const s = map.get(d) ?? d + 119, g = d === 1 ? 1 : d + 119;
+      const s = d < sLen && sCodes[d] >= 0 ? sCodes[d] : d + 119, g = d === 1 ? 1 : d + 119;
       spatial.set(s, (spatial.get(s) || 0) + n); generic.set(g, (generic.get(g) || 0) + n);
     }
     const ranked = [];
     for (const [kind, values] of [[true, valueCounts(none, spatial)], [false, valueCounts(none, generic)]]) for (const config of DISTANCE_CONFIGS)
-      ranked.push({config, kind, values, estimate: distanceEstimate(config, values, scratch)});
+      ranked.push({config, kind, values, estimate: distanceEstimate(config, values)});
     ranked.sort((a, b) => a.estimate - b.estimate);
-    for (const {config, kind, values} of ranked.slice(0, 2)) {
-      const priced = distancePrice(config, values, scratch);
+    for (const {config, kind, values} of ranked.slice(0, 4)) {
+      const priced = distancePrice(config, values);
       if (!distance || priced.bits < distance.bits) distance = {...priced, config, spatial: kind};
     }
     distance.code.codes = canonicalCodes(distance.code.lengths);
@@ -582,53 +537,94 @@ function writeChannels(writer, models) {
   const offset = distance ? 1 : 0, contextMap = new Uint8Array(ordered.length + offset);
   for (const model of models) for (const node of model.leaves) contextMap[node.context] = index[model.base + node.local] + offset;
   writeHistograms(writer, {
-    lz77: distance ? {minSymbol: choice.minSymbol, minLength: models[0].minimum, lengthConfig: length.config} : null,
+    lz77: distance ? {minSymbol: minSymbol, minLength: models[0].minimum, lengthConfig: length.config} : null,
     contextMap,
     histograms: [...(distance ? [{config: distance.config, code: distance.code}] : []),
-      ...codes.map((code, m) => ({config: choice.configs[m].config, code}))]
+      ...codes.map((code, m) => ({config: configs[m].config, code}))]
   });
-  return () => {
-    for (const model of models) for (let k = 0; k < model.count; k++) {
-      const h = index[model.base + model.pieceContext[k]], value = model.pieceValue[k], d = model.pieceDistance[k];
-      if (d) {
-        writeHybrid(writer, codes[h], length.config, value, choice.minSymbol);
-        writeHybrid(writer, distance.code, distance.config, distance.spatial ? (map.get(d) ?? d + 119) : d === 1 ? 1 : d + 119);
-      } else writeHybrid(writer, codes[h], choice.configs[h].config, value);
+  const fastLen = new Uint8Array(codes.length << 9), fastBits = new Uint32Array(codes.length << 9);
+  for (let h = 0; h < codes.length; h++) {
+    const code = codes[h], cfg = configs[h].config, base = h << 9;
+    for (let v = 0; v < 512; v++) {
+      hybridToken(cfg, v, token);
+      const s = token[0], l = code.lengths[s];
+      if (s < code.lengths.length) { fastLen[base | v] = l + token[1]; fastBits[base | v] = code.codes[s] | (token[2] << l); }
     }
+  }
+  return () => {
+    let bytes = writer.bytes, at = writer.at, acc = writer.acc, pending = writer.pending;
+    const sLen = sCodes ? sCodes.length : 0;
+    for (const model of models) {
+      const mBase = model.base, pCtx = model.pieceContext, pVal = model.pieceValue, pDist = model.pieceDistance, count = model.count;
+      for (let k = 0; k < count; k++) {
+        const h = index[mBase + pCtx[k]], value = pVal[k], d = pDist[k];
+        if (!d && value < 512) {
+          if (at + 8 >= bytes.length) { writer.at = at; writer.acc = acc; writer.pending = pending; writer.grow(65536); bytes = writer.bytes; }
+          const slot = (h << 9) | value;
+          acc |= fastBits[slot] << pending;
+          pending += fastLen[slot];
+          while (pending >= 8) { bytes[at++] = acc & 255; acc >>>= 8; pending -= 8; }
+        } else {
+          writer.at = at; writer.acc = acc; writer.pending = pending;
+          if (d) {
+            writeHybrid(writer, codes[h], length.config, value, minSymbol);
+            writeHybrid(writer, distance.code, distance.config, distance.spatial ? (d < sLen && sCodes[d] >= 0 ? sCodes[d] : d + 119) : d === 1 ? 1 : d + 119);
+          } else writeHybrid(writer, codes[h], configs[h].config, value);
+          bytes = writer.bytes; at = writer.at; acc = writer.acc; pending = writer.pending;
+        }
+      }
+    }
+    writer.at = at; writer.acc = acc; writer.pending = pending;
   };
 }
 
-function groupChannels(rgba, stride, x, y, w, h, shape, {maxError}) {
-  const scan = scanColours(rgba, stride, x, y, w, h, Math.min(PALETTE_LIMIT, (w * h) >> 3));
+function groupChannels(rgba, stride, x, y, w, h, shape, {maxError, onPredictor}) {
+  const scan = w === stride && !x && !y ? null : scanColours(rgba, stride, x, y, w, h, Math.min(PALETTE_LIMIT, (w * h) / 20 | 0));
   if (scan) {
     const index = channelModel(scan.indices, w, h, 'index', 1, 3); index.group = true;
-    const {meta, model} = paletteModel(scan.colours, [index], shape, 3);
+    const {meta, model} = paletteModel(scan.colours, [index], shape);
     return {transforms: [meta.transform], models: [model, index]};
   }
   const sample = c => {
-    const plane = new Int32Array(w * h);
-    for (let row = 0, at = 0; row < h; row++) for (let p = ((y + row) * stride + x) * 4 + c, end = p + w * 4; p < end; p += 4) plane[at++] = rgba[p];
+    const plane = new Int16Array(w * h);
+    for (let at = 0, col = 0, p = (y * stride + x) * 4 + c, n = w * h; at < n; at++, col++, p += 4) {
+      if (col === w) { col = 0; p += (stride - w) * 4; }
+      plane[at] = rgba[p];
+    }
     return plane;
   };
   const step = 2 * maxError + 1, models = [];
+  const colour = (plane, channel, keepWeighted = false) => {
+    const weighted = step === 1 && (keepWeighted || useWeighted(plane, w, h));
+    if (step === 1) onPredictor?.(channel, weighted ? 'weighted' : 'gradient');
+    models.push(channelModel(plane, w, h, 'smooth', step, 4, weighted));
+    return weighted;
+  };
   let transforms = [];
-  if (shape.colour === 1) models.push(channelModel(sample(0), w, h, 'smooth', step));
+  if (shape.colour === 1) colour(sample(0), 'gray');
   else {
-    const green = sample(1);
-    models.push(channelModel(green, w, h, 'smooth', step));
-    for (const c of [2, 0]) {
-      const plane = sample(c);
-      for (let i = 0; i < plane.length; i++) plane[i] -= green[i];
-      models.push(channelModel(plane, w, h, 'smooth', step));
+    const n = w * h, words = pixelKeys(rgba), green = new Int16Array(n), blue = new Int16Array(n), red = new Int16Array(n);
+    for (let at = 0, col = 0, p = y * stride + x; at < n; at++, col++, p++) {
+      if (col === w) { col = 0; p += stride - w; }
+      const word = words[p];
+      green[at] = word >>> 8 & 255; blue[at] = word >>> 16 & 255; red[at] = word & 255;
     }
+    const greenWeighted = colour(green, 'green');
+    for (let i = 0; i < n; i++) { blue[i] -= green[i]; red[i] -= green[i]; }
+    colour(blue, 'blue-green', greenWeighted);
+    colour(red, 'red-green', greenWeighted);
     transforms = [{type: 'rct', beginC: 0, rctType: 10}];
   }
-  if (shape.alpha) models.push(channelModel(sample(3), w, h, 'smooth'));
+  if (shape.alpha) {
+    const alpha = sample(3), weighted = useWeighted(alpha, w, h);
+    onPredictor?.('alpha', weighted ? 'weighted' : 'gradient');
+    models.push(channelModel(alpha, w, h, 'smooth', 1, 4, weighted));
+  }
   return {transforms, models};
 }
 
-function shapeOf(keys, margin = keys[0]) {
-  let grey = !((margin ^ margin >>> 8) & 0xffff), opaque = margin >>> 24 === 255;
+function shapeOf(keys, margin = keys[0], rgb = false) {
+  let grey = !rgb && !((margin ^ margin >>> 8) & 0xffff), opaque = margin >>> 24 === 255;
   for (let i = 0; i < keys.length && (grey || opaque); i++) {
     const key = keys[i];
     if (key >>> 24 !== 255) opaque = false;
@@ -649,8 +645,8 @@ function* captureFrameSteps(pixels, width, height, shape, coding, frame, header,
     for (let row = 0, p = (fy + y) * stride + fx + x; row < h; row++, p += stride) indices.set(frame.indices.subarray(p, p + w), row * w);
     return channelModel(indices, w, h, 'index', 1, 3);
   }) : null;
-  const palette = frame ? paletteModel(frame.colours, indexModels, shape, layout.single ? 3 : 4) : null;
-  const global = new BitWriter(1024);
+  const palette = frame ? paletteModel(frame.colours, indexModels, shape) : null;
+  const global = new BitWriter(layout.single ? width * height + 256 : 1024);
   global.write(1, 1); global.write(1, 1);
   if (layout.single) {
     const {transforms, models} = frame
@@ -677,6 +673,7 @@ function* captureFrameSteps(pixels, width, height, shape, coding, frame, header,
     const channels = frame ? {transforms: [], models: [indexModels[g]]} : groupChannels(pixels, width, x, y, w, h, shape, coding);
     writeModularHeader(section, {useGlobalTree: false, transforms: channels.transforms});
     writeChannels(section, channels.models)();
+    if (frame) indexModels[g] = null;
     append(section.finish());
     yield (g + 1) / groups;
   }
@@ -706,13 +703,28 @@ function screenBands(scan, width, height) {
 }
 
 function* captureSteps(source, imageWidth, imageHeight, colorSpace, coding) {
-  const crop = screenCrop(source, imageWidth, imageHeight);
+  const crop = coding.base ? null : screenCrop(source, imageWidth, imageHeight);
   const width = crop ? crop.width : imageWidth, height = crop ? crop.height : imageHeight;
-  const scan = scanColours(source, imageWidth, crop?.x ?? 0, crop?.y ?? 0, width, height, PALETTE_LIMIT, true), bands = screenBands(scan, width, height);
+  let scan = scanColours(source, imageWidth, crop?.x ?? 0, crop?.y ?? 0, width, height, PALETTE_LIMIT, true);
   const header = new BitWriter(128);
+  if (!crop && scan?.colours.length === 1) {
+    const shape = shapeOf(scan.colours, undefined, coding.base);
+    writeHeaderFields(header, imageWidth, imageHeight, shape.colour, shape.alpha, {colorSpace});
+    writeScreenBackground(header, imageWidth, imageHeight, shape, source.subarray(0, 4), undefined, true);
+    return header.finish();
+  }
+  if (scan && scan.colours.length * 32 > width * height) scan = null;
+  const bands = coding.base ? null : screenBands(scan, width, height);
+  const rare = !coding.base && scan && scan.colours.length > RARE_PALETTE ? rareRegions(scan, width, height, crop?.x ?? 0, crop?.y ?? 0) : null;
+  if (rare && rare.only >= 0.75) return yield* pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, header, null, crop, null, rare);
   if (!bands) return yield* pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, header, null, crop, scan);
-  const shape = shapeOf(scan.colours, crop ? pixelKeys(crop.background)[0] : undefined), frames = [], count = bands.length - 1;
-  writeImageHeader(header, imageWidth, imageHeight, shape.colour, shape.alpha, {colorSpace});
+  return yield* bandSteps(source, imageWidth, imageHeight, colorSpace, coding, header, crop, scan, bands);
+}
+
+function* bandSteps(source, imageWidth, imageHeight, colorSpace, coding, header, crop, scan, bands) {
+  const width = crop ? crop.width : imageWidth;
+  const shape = shapeOf(scan.colours, crop ? pixelKeys(crop.background)[0] : undefined, coding.base), frames = [], count = bands.length - 1;
+  writeHeaderFields(header, imageWidth, imageHeight, shape.colour, shape.alpha, {colorSpace});
   if (crop) writeScreenBackground(header, imageWidth, imageHeight, shape, crop.background);
   for (let b = 0; b < count; b++) {
     const y = bands[b], rows = bands[b + 1] - y, band = {x: crop?.x ?? 0, y: (crop?.y ?? 0) + y, shape, last: b + 1 === count};
@@ -724,6 +736,56 @@ function* captureSteps(source, imageWidth, imageHeight, colorSpace, coding) {
   return concatenate(frames);
 }
 
+function rareRegions(scan, width, height, cx, cy) {
+  const TILE = 16, tx = Math.ceil(width / TILE), ty = Math.ceil(height / TILE), dense = new Uint8Array(tx * ty);
+  const {colours, indices} = scan, freq = new Uint32Array(colours.length);
+  for (let i = 0; i < indices.length; i++) freq[indices[i]]++;
+  for (let by = 0; by < ty; by++) for (let bx = 0; bx < tx; bx++) {
+    let rare = 0;
+    for (let y = by * TILE, ye = Math.min(height, y + TILE); y < ye; y++)
+      for (let i = y * width + bx * TILE, ie = y * width + Math.min(width, bx * TILE + TILE); i < ie; i++) if (freq[indices[i]] <= 2) rare++;
+    dense[by * tx + bx] = rare > 16;
+  }
+  const seen = new Uint8Array(tx * ty), regions = [];
+  for (let i = 0; i < tx * ty; i++) if (dense[i] && !seen[i]) {
+    let x0 = tx, y0 = ty, x1 = -1, y1 = -1; const stack = [i]; seen[i] = 1;
+    while (stack.length) {
+      const j = stack.pop(), jx = j % tx, jy = j / tx | 0;
+      x0 = Math.min(x0, jx); x1 = Math.max(x1, jx); y0 = Math.min(y0, jy); y1 = Math.max(y1, jy);
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const nx = jx + dx, ny = jy + dy, k = ny * tx + nx;
+        if (nx >= 0 && ny >= 0 && nx < tx && ny < ty && dense[k] && !seen[k]) { seen[k] = 1; stack.push(k); }
+      }
+    }
+    const x = x0 * TILE, y = y0 * TILE, w = Math.min(width, (x1 + 1) * TILE) - x, h = Math.min(height, (y1 + 1) * TILE) - y;
+    if (w * h >= 4096 && w * h * 2 <= width * height) regions.push({x, y, width: w, height: h});
+  }
+  for (let merged = true; merged;) {
+    merged = false;
+    for (let a = 0; a < regions.length && !merged; a++) for (let b = a + 1; b < regions.length && !merged; b++) {
+      const p = regions[a], q = regions[b], top = Math.max(p.y, q.y), bottom = Math.min(p.y + p.height, q.y + q.height);
+      if ((bottom - top) * 2 < Math.min(p.height, q.height)) continue;
+      const x = Math.min(p.x, q.x), y = Math.min(p.y, q.y);
+      regions[a] = {x, y, width: Math.max(p.x + p.width, q.x + q.width) - x, height: Math.max(p.y + p.height, q.y + q.height) - y};
+      regions.splice(b, 1); merged = true;
+    }
+  }
+  if (!regions.length) return null;
+  const inside = new Uint8Array(width * height), outside = new Uint8Array(colours.length);
+  for (const r of regions) for (let y = r.y; y < r.y + r.height; y++) inside.fill(1, y * width + r.x, y * width + r.x + r.width);
+  for (let i = 0; i < indices.length; i++) if (!inside[i]) outside[indices[i]] = 1;
+  let only = 0;
+  for (let c = 0; c < colours.length; c++) only += 1 - outside[c];
+  for (const r of regions) {
+    const border = new Map();
+    for (let xx = r.x; xx < r.x + r.width; xx++) for (const yy of [r.y, r.y + r.height - 1]) { const k = indices[yy * width + xx]; border.set(k, (border.get(k) || 0) + 1); }
+    let most = 0, index = 0;
+    for (const [k, n] of border) if (n > most) { most = n; index = k; }
+    r.background = colours[index]; r.x += cx; r.y += cy;
+  }
+  return {regions, background: regions[0].background, solid: false, only: only / colours.length};
+}
+
 function concatenate(frames) {
   let length = 0;
   for (const f of frames) length += f.length;
@@ -733,7 +795,7 @@ function concatenate(frames) {
   return out;
 }
 
-function* pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, header, band, crop, scan) {
+function* pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, header, band, crop, scan, forced) {
   const width = crop ? crop.width : imageWidth, height = crop ? crop.height : imageHeight;
   let frame = scan;
   if (band && crop && scan) {
@@ -744,17 +806,18 @@ function* pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, head
   const pixels = !crop ? source : frame ? null : crop.data;
   const at = r => band ? {...r, x: r.x + band.x, y: r.y + band.y} : r, whole = {x: 0, y: 0, width: imageWidth, height: imageHeight};
   const final = !band || band.last;
-  let partition = frame && screenColumns(source, imageWidth, imageHeight) || screenRegions(source, imageWidth, imageHeight);
+  let partition = forced ?? (coding.base ? null : frame && screenColumns(source, imageWidth, imageHeight) || screenRegions(source, imageWidth, imageHeight, !frame));
   if (partition) {
     const x0 = crop?.x ?? 0, y0 = crop?.y ?? 0, x1 = x0 + width, y1 = y0 + height;
     const regions = partition.regions.map(r => {
       const x = Math.max(r.x, x0), y = Math.max(r.y, y0);
-      return {x, y, width: Math.min(r.x + r.width, x1) - x, height: Math.min(r.y + r.height, y1) - y};
-    }).filter(r => r.width > 0 && r.height > 0 && r.width < imageWidth && r.width * r.height >= 20000);
-    partition = regions.length ? {...partition, regions} : null;
+      return {x, y, width: Math.min(r.x + r.width, x1) - x, height: Math.min(r.y + r.height, y1) - y, background: r.background ?? partition.background};
+    }).filter(r => r.width > 0 && r.height > 0 && r.width < imageWidth && (forced || r.width * r.height >= 20000));
+    const solid = partition.solid && regions.length === partition.regions.length && regions.every((r, i) => r.width === partition.regions[i].width && r.height === partition.regions[i].height);
+    partition = regions.length && (!frame || forced || regions.some(r => r.y * 6 <= imageHeight)) ? {...partition, regions, solid} : null;
   }
-  const shape = band ? band.shape : shapeOf(frame ? frame.colours : pixelKeys(partition ? source : pixels), crop ? pixelKeys(crop.background)[0] : undefined);
-  if (!band) writeImageHeader(header, imageWidth, imageHeight, shape.colour, shape.alpha, {colorSpace});
+  const shape = band ? band.shape : shapeOf(frame ? frame.colours : pixelKeys(partition ? source : pixels), crop ? pixelKeys(crop.background)[0] : undefined, coding.base);
+  if (!band) writeHeaderFields(header, imageWidth, imageHeight, shape.colour, shape.alpha, {colorSpace});
   if (!partition) {
     if (crop) writeScreenBackground(header, imageWidth, imageHeight, shape, crop.background, band && at(whole));
     const placement = crop ? {crop: at({x: crop.x, y: crop.y, width, height})} : band ? {crop: at(whole)} : {};
@@ -771,29 +834,44 @@ function* pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, head
     blank((from, to) => indices.fill(backgroundIndex, from, to));
     base = {colours: frame.colours, indices};
   } else {
-    body = Uint8Array.from(source);
-    const [r, g, b, a] = [0, 8, 16, 24].map(shift => background >>> shift & 255);
-    blank((from, to) => { for (let p = 4 * from; p < 4 * to; p += 4) { body[p] = r; body[p + 1] = g; body[p + 2] = b; body[p + 3] = a; } });
-    base = scanColours(body, imageWidth, 0, 0, imageWidth, imageHeight, PALETTE_LIMIT);
+    const allSolid = partition.solid;
+    for (const r of regions) r.local = scanColours(source, imageWidth, r.x, r.y, r.width, r.height, Math.min(PALETTE_LIMIT, (r.width * r.height) / 20 | 0));
+    if (allSolid) {
+      base = {colours: Uint32Array.of(background)};
+    } else {
+      body = Uint8Array.from(source);
+      for (const reg of regions) {
+        const bg = reg.background ?? background, [r, g, b, a] = [0, 8, 16, 24].map(shift => bg >>> shift & 255);
+        for (let y = reg.y; y < reg.y + reg.height; y++) for (let p = (y * imageWidth + reg.x) * 4, to = p + reg.width * 4; p < to; p += 4) { body[p] = r; body[p + 1] = g; body[p + 2] = b; body[p + 3] = a; }
+      }
+      base = scanColours(body, imageWidth, 0, 0, imageWidth, imageHeight, PALETTE_LIMIT);
+    }
   }
-  const count = regions.length + 1;
-  frames.push(yield* scaledSteps(captureFrameSteps(body, imageWidth, imageHeight, shape, coding, base, header,
-    {...band && {crop: at(whole)}, last: false, reference: 1}), 0, 1 / count));
+  const count = regions.length + 1, solidBase = base && base.colours.length === 1;
+  if (solidBase) {
+    const c0 = base.colours[0];
+    writeScreenBackground(header, imageWidth, imageHeight, shape, Uint8Array.of(c0 & 255, c0 >>> 8 & 255, c0 >>> 16 & 255, c0 >>> 24 & 255), band && at(whole));
+  } else {
+    frames.push(yield* scaledSteps(captureFrameSteps(body, imageWidth, imageHeight, shape, coding, base, header,
+      {...band && {crop: at(whole)}, last: false, reference: 1}), 0, 1 / count));
+  }
   for (let i = 0; i < regions.length; i++) {
     const r = regions[i], placement = {crop: at(r), last: final && i + 1 === regions.length, reference: 1};
     let part = null, local;
     if (frame) local = {colours: frame.colours, indices: frame.indices, stride: width, x: r.x - (crop?.x ?? 0), y: r.y - (crop?.y ?? 0)};
     else {
-      part = new Uint8Array(r.width * r.height * 4);
-      for (let y = 0; y < r.height; y++) part.set(source.subarray(((r.y + y) * imageWidth + r.x) * 4, ((r.y + y) * imageWidth + r.x + r.width) * 4), y * r.width * 4);
-      local = scanColours(part, r.width, 0, 0, r.width, r.height, PALETTE_LIMIT);
+      local = r.local;
+      if (!local) {
+        part = new Uint8Array(r.width * r.height * 4);
+        for (let y = 0; y < r.height; y++) part.set(source.subarray(((r.y + y) * imageWidth + r.x) * 4, ((r.y + y) * imageWidth + r.x + r.width) * 4), y * r.width * 4);
+      }
     }
-    frames.push(yield* scaledSteps(captureFrameSteps(part, r.width, r.height, shape, coding, local, new BitWriter(64), placement), (i + 1) / count, 1 / count));
+    frames.push(yield* scaledSteps(captureFrameSteps(part, r.width, r.height, shape, coding, local, i === 0 && solidBase ? header : new BitWriter(64), placement), (i + 1) / count, 1 / count));
   }
   return concatenate(frames);
 }
 
-function admitCapture(data, width, height, options) {
+export function admitCapture(data, width, height, options) {
   if (options === null || typeof options !== 'object' || Array.isArray(options)) throw fault('JXL_INPUT', 'Capture options are an object.');
   const maxError = options.maxError ?? 0;
   if (!Number.isInteger(maxError) || maxError < 0 || maxError > 8)
@@ -801,14 +879,19 @@ function admitCapture(data, width, height, options) {
   const {colorSpace} = admitOptions({colorSpace: options.colorSpace});
   admitPixels(data, width, height);
   if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray)) throw fault('JXL_INPUT', 'Captures use straight RGBA8 samples.');
-  return {colorSpace, coding: {maxError}};
+  return {colorSpace, coding: {maxError, onPredictor: options[CAPTURE_PREDICTOR_PROBE], base: options[CAPTURE_BASE] === true}};
 }
 
 export function encodeCaptureBytes(data, width, height, options = {}) {
   const aborted = () => { if (options?.signal?.aborted) throw fault('JXL_ABORTED', 'JPEG XL encoding was canceled.'); };
   aborted();
   const {colorSpace, coding} = admitCapture(data, width, height, options);
-  const bytes = complete(job(captureSteps(data, width, height, colorSpace, coding)));
+  requireCaptureKernels();
+  let bytes = complete(job(captureSteps(data, width, height, colorSpace, coding)));
+  if (coding.maxError) {
+    const exact = complete(job(captureSteps(data, width, height, colorSpace, {...coding, maxError: 0})));
+    if (exact.length <= bytes.length) bytes = exact;
+  }
   aborted();
   return bytes;
 }

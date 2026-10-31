@@ -15,6 +15,11 @@ const FAMILY_IDS = [0, 1, 2, 3, 4, 5, 7, 9, 11, 12, 14, 18, 20, 21, 23, 24, 26];
 const ORDER_SHAPES = [[1, 1], [1, 1], [2, 2], [4, 4], [2, 1], [4, 1], [4, 2], [8, 8], [8, 4], [16, 16], [16, 8], [32, 32], [32, 16]];
 const DEFAULT_BIAS = [1 - .05465007330715401, 1 - .07005449891748593, 1 - .049935103337343655];
 
+export function varDCTArenaCapacity(blocksH) {
+  check(Number.isSafeInteger(blocksH) && blocksH > 0, 'Invalid JPEG XL block height.');
+  return 3 * 32 * Math.min(32, blocksH) * 64;
+}
+
 export function readVarDCTGlobal(r) {
   const globalScale = r.u32([[11, 1], [11, 2049], [12, 4097], [16, 8193]]);
   const quantLF = r.u32([[0, 16], [5, 1], [8, 1], [16, 1]]);
@@ -95,16 +100,19 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
   const groupsX = Math.ceil(width / 256), groupsY = Math.ceil(height / 256), numGroups = groupsX * groupsY;
   const lfGroupsX = Math.ceil(width / 2048), lfGroupsY = Math.ceil(height / 2048), numLFGroups = lfGroupsX * lfGroupsY;
   const dcWidth = hshift.map(s => blocksW >> s), dcHeight = vshift.map(s => blocksH >> s);
-  const dc = dcWidth.map((w, c) => new Int32Array(w * dcHeight[c]));
-  const low = dc.map(p => new Float32Array(p.length));
+  const groupArenaLength = varDCTArenaCapacity(blocksH);
+  const dc = [new Int32Array(dcWidth[0] * dcHeight[0]), new Int32Array(dcWidth[1] * dcHeight[1]), new Int32Array(dcWidth[2] * dcHeight[2])];
+  const low = [new Float32Array(dc[0].length), new Float32Array(dc[1].length), new Float32Array(dc[2].length)];
   const metadata = new Array(numLFGroups), blockGroups = Array.from({length: numGroups}, () => []);
   const decodedLF = new Uint8Array(numLFGroups), decodedPass = [];
   const sigma = new Float32Array(blocksW * blocksH);
   const state = {width, height, header, global, lfDequant, bitDepth, globalTree, maxModularWork, modularWork, numGroups, numLFGroups, groupsX, groupsY, lfGroupsX, lfGroupsY};
-  let matrices = null, passes = null, numPresets = 0;
+  let matrices = []; matrices = null;
+  let passes = []; passes = null;
+  let numPresets = 1; numPresets = 0;
   const arenas = new Array(numGroups), freeArenas = [];
 
-  const lfKernels = () => matrices === null ? decodeKernels() : null;
+  const kernels = decodeKernels();
   function readLF(r, group, {decodeExtraLF} = {}) {
     check(Number.isInteger(group) && group >= 0 && group < numLFGroups && !decodedLF[group], 'Invalid or repeated JPEG XL LF group.');
     const bx = group % lfGroupsX * 256, by = Math.floor(group / lfGroupsX) * 256;
@@ -113,7 +121,7 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
       const precision = r.read(2), order = [1, 0, 2];
       const channels = decodeModularStream(r, order.map(c => ({width: bw >> hshift[c], height: bh >> vshift[c]})), {
         globalTree: state.globalTree, bitDepth, streamIndex: 1 + group, groupDim: 0,
-        maxModularWork: state.maxModularWork, modularWork: state.modularWork, kernels: lfKernels(),
+        maxModularWork: state.maxModularWork, modularWork: state.modularWork, kernels: matrices === null ? kernels : null,
       });
       for (let channel = 0; channel < 3; channel++) {
         const c = order[channel], data = channels[channel].data, cw = bw >> hshift[c], ch = bh >> vshift[c];
@@ -130,7 +138,7 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
     const cw = Math.ceil(Math.min(2048, width - bx * 8) / 64), ch = Math.ceil(Math.min(2048, height - by * 8) / 64);
     const values = decodeModularStream(r, [{width: cw, height: ch}, {width: cw, height: ch}, {width: count, height: 2}, {width: bw, height: bh}], {
       globalTree: state.globalTree, bitDepth, streamIndex: 1 + 2 * numLFGroups + group, groupDim: 0,
-      maxModularWork: state.maxModularWork, modularWork: state.modularWork, kernels: lfKernels(),
+      maxModularWork: state.maxModularWork, modularWork: state.modularWork, kernels: matrices === null ? kernels : null,
     });
     const xFromY = values[0].data, bFromY = values[1].data, info = values[2].data, sharpness = values[3].data;
     const occupied = new Int32Array(bw * bh).fill(-1), starts = new Uint8Array(bw * bh), blocks = [];
@@ -155,7 +163,7 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
       }
       starts[y * bw + x] = 1;
       if (!band || (gy >> 5) >= band.first && (gy >> 5) < band.end) {
-        const block = {id, x: gx, y: gy, bw: w, bh: h, area: w * h, multiplier, coefficients: [null, null, null], lfGroup: group};
+        const block = {id, x: gx, y: gy, bw: w, bh: h, area: Math.imul(w, h), multiplier, coefficients: [null, null, null], arena: null, lfGroup: group};
         blocks.push(block); blockGroups[(gy >> 5) * groupsX + (gx >> 5)].push(block);
       }
       index++;
@@ -191,7 +199,9 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
     reserveKernelMemory();
   }
 
-  let kernelRegions = null, entropyKernel = null, kernelWeights = null;
+  let kernelRegions = {}; kernelRegions = null;
+  let entropyKernel = {}; entropyKernel = null;
+  let kernelWeights = {}; kernelWeights = null;
   const ENTROPY_FAULTS = ['', 'Invalid JPEG XL entropy read.', 'Truncated JPEG XL data.', 'JPEG XL integer exceeds 32 bits.', 'JPEG XL coefficient overflows its range.'];
   function kernelCoefficients(code, values, offset, n, pass, orderID, c, area, base, remaining, previous, scale) {
     const K = entropyKernel, {kernels, io32: io} = K, r = code.reader;
@@ -215,12 +225,13 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
     const kernels = decodeKernels();
     if (!kernels) return;
     const stages = restorationStages(header.filter), slots = Math.max(1, stages.length), restoring = streams && (radius || band), rows = Math.min(height, 256 + 2 * radius), plane = rows * width * 4;
+    const colorScratch = Math.min(height, 256) * width * 4;
     const sigmaLength = Math.ceil(width / 8) * Math.ceil(height / 8);
     const models = passes.map(p => p.entropy.model), simple = models.every(m => !m.lz && !m.prefix && m.codes.every(c => c.counts.length <= 256)) && maxSection < 0x8000000;
     const orderSize = ORDER_SHAPES.reduce((n, [w, h]) => n + 3 * w * h * 64, 0) * 4;
-    const sizes = [...(restoring ? [...Array(6 + 3 * slots).fill(plane), 21 * width * 8, width * 8, width * 8, sigmaLength * 4, 32, 256 * width * 4, 256 * width * 4] : []),
+    const sizes = [...(restoring ? [...Array(6 + 3 * slots).fill(plane), 21 * width * 8, width * 8, width * 8, sigmaLength * 4, 32, colorScratch, colorScratch] : []),
       ...(simple ? [...models.flatMap(m => [m.codes.length * 12816, m.map.length]), passes.length * orderSize, 1024, 65536 * 4, maxSection + 16, 128] : []),
-      ...(simple && passes.length === 1 ? [groupsX * 3 * 65536 * 4] : []),
+      ...(simple && passes.length === 1 ? [groupsX * groupArenaLength * 4] : []),
       matrices.reduce((n, m) => n + m.width * m.height * 12, 0)];
     if (!sizes.length) return;
     const at = kernels.reserve(sizes);
@@ -248,7 +259,7 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
       u16.set(COEFF_NUM_NONZERO_CONTEXT, contextsAt / 2); u16.set(COEFF_FREQ_CONTEXT, (contextsAt + 512) / 2);
       entropyKernel = {tables, orders, nonzero: contextsAt, frequency: contextsAt + 512, values: at[k++], bytes: at[k++], io: at[k++], reader: null, kernels};
       entropyKernel.io32 = new Int32Array(kernels.buffer, entropyKernel.io, 32);
-      if (passes.length === 1) for (let g = 0; g < groupsX; g++) freeArenas.push(new Int32Array(kernels.buffer, at[k] + g * 3 * 65536 * 4, 3 * 65536).fill(0));
+      if (passes.length === 1) for (let g = 0; g < groupsX; g++) freeArenas.push(new Int32Array(kernels.buffer, at[k] + g * groupArenaLength * 4, groupArenaLength).fill(0));
     }
   }
 
@@ -259,7 +270,7 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
     check(decodedLF[lfg], 'JPEG XL LF metadata is absent.');
     const preset = r.read(ceilLog2(numPresets)); check(preset < numPresets, 'Invalid JPEG XL HF preset.');
     const code = passes[pass].entropy.start(r), prefix = preset * global.clusters * 495;
-    const nonzero = hshift.map(s => new Uint32Array(gbw >> s));
+    const nonzero = [new Uint32Array(gbw >> hshift[0]), new Uint32Array(gbw >> hshift[1]), new Uint32Array(gbw >> hshift[2])];
     const shift = header.passes?.shift?.[pass] || 0, scale = 1 << shift;
     const lfBins = global.lfThresholds.reduce((n, t) => n * (t.length + 1), 1), hfBins = global.qfThresholds.length + 1;
     for (const block of blockGroups[group]) {
@@ -286,7 +297,7 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
         const density = Math.ceil(remaining / area); row.fill(density, sx, sx + block.bw);
         let values = block.coefficients[c];
         if (values == null) {
-          const arena = arenas[group] ??= {data: freeArenas.pop()?.fill(0) ?? new Int32Array(3 * 65536), used: 0};
+          const arena = arenas[group] ??= {data: freeArenas.pop()?.fill(0) ?? new Int32Array(groupArenaLength), used: 0};
           check(arena.used + tw * th <= arena.data.length, 'JPEG XL group coefficients exceed the group.');
           if (entropyKernel && arena.data.buffer === entropyKernel.kernels.buffer) { block.arena = arena.data; values = block.coefficients[c] = arena.used; arena.used += tw * th; }
           else block.coefficients[c] = values = arena.data.subarray(arena.used, arena.used += tw * th);
@@ -315,7 +326,9 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
     code.finish(); decodedPass[pass][group] = 1;
   }
 
-  let prepared = null, rendered = 0, pending = null;
+  let prepared = {}; prepared = null;
+  let rendered = 1; rendered = 0;
+  let pending = {}; pending = null;
   const streams = !maxH && !maxV, radius = streams ? restorationStages(header.filter).reduce((n, s) => n + s.radius, 0) : 0;
   function prepare(lfReference) {
     let lf;

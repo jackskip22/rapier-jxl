@@ -67,15 +67,13 @@ export function ssimulacra2Bytes(width, height, {native = false, map = false} = 
     if (s) { w = Math.ceil(w / 2); h = Math.ceil(h / 2); }
     scales.push({width: w, height: h, pixels: mul(w, h)});
   }
-  let peak = 0, local = 0;
+  let peak = 0;
   for (let i = 0; i < scales.length; i++) {
     const cur = scales[i], next = scales[i + 1];
-    const source = i ? mul(48, cur.pixels) : 0;
-    local = map ? memorySum(local, mul(72, cur.pixels)) : 0;
-    const active = map ? memorySum(mul(8, n), local, mul(56, cur.pixels)) : mul(native ? 612 : 896, cur.width);
+    const source = i ? mul(48, cur.pixels) : 0, ring = mul(native ? 612 : 896, cur.width);
+    const active = map ? memorySum(mul(8, n), mul(32, cur.pixels), ring) : ring;
     peak = Math.max(peak, memorySum(candidate, source, active));
-    if (next) peak = Math.max(peak, memorySum(candidate, source, mul(48, next.pixels), map ? memorySum(mul(8, n), local) : 0));
-    if (map) peak = Math.max(peak, memorySum(candidate, mul(8, n), local, mul(8, cur.pixels)));
+    if (next) peak = Math.max(peak, memorySum(candidate, source, mul(48, next.pixels), map ? mul(8, n) : 0));
   }
   return {work: peak, candidate, scales};
 }
@@ -178,3 +176,19 @@ export function bandsExact(pixels, options = {}) { return memoryPlan(pixels, opt
 export function predictedBytes(pixels, options = {}) { return memoryPlan(pixels, options).used; }
 export function keepsDct(pixels, _plain = true, width, options = {}) { return memoryPlan(pixels, {...options, width}).dct; }
 export function poolWorkers(pixels, cores, options = {}) { return memoryPlan(pixels, {...options, cores: cores ?? 2}).workers; }
+
+export const S2_SEARCH_PIXELS = 1024 * 1024;
+
+export function s2SearchBytes(width, height, effort = 8) {
+  const g = memoryGeometry(mul(width, height), {width, height}), {padded, pixels, blocks} = g;
+  const picture = mul(32, padded), cache = Math.min(64 * 1024 * 1024, Math.max(8 * 1024 * 1024, mul(64, pixels)));
+  const floor = pixels > 2048 * 2048 ? 0 : picture, base = mul(16, padded), kept = effort >= 9 ? 2 : 0;
+  const shape = memorySum(picture, Math.max(reconstructionBytes(width, padded, blocks), memorySum(mul(12, padded), ssimulacra2Bytes(width, height, {map: true}).work)));
+  return memorySum(floor, base, mul(2, cache), mul(kept + 1, mul(4, pixels)), mul(kept, picture), shape);
+}
+
+export function s2Admitted(plan, width, height, effort = 8) {
+  if (!plan?.known) return true;
+  const retained = plan.stages.entropy - plan.reservations.entropyBytes;
+  return memorySum(retained, s2SearchBytes(width, height, effort)) <= plan.budgetBytes;
+}

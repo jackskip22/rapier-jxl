@@ -1,2 +1,0 @@
-/*! rapier-jxl 7.1.0 | MIT */
-async function t({data:t,width:c,height:e,colorSpace:a}){let n=await import("./chunk-ZWGB4QAZ.mjs").catch(()=>null);return n?n.encodeCaptureBytes(t,c,e,{colorSpace:a}):null}export{t as a};

@@ -25,27 +25,41 @@ export function blendSample(background, foreground, backgroundAlpha, foregroundA
   return f32(contribution * (mergedAlpha > 0 ? f32(1 / mergedAlpha) : 0));
 }
 
-export function composeFrame(frame,h,f,references) {
+export function composeFrame(frame,h,f,references,inPlace=false) {
   const colors=frame.planes.length, source=channels(frame), count=source.length;
   const width=h.width,height=h.height,exact=f.x0===0&&f.y0===0&&frame.width===width&&frame.height===height;
   const replace=c=>f.blending[c<colors?0:c-colors+1].mode===0;
-  const planes=source.map((p,c)=>exact&&replace(c)?p:new Float32Array(width*height));
+  const base=inPlace?references[f.blending[0].source]:null;
+  if(base)requireDecode(base.width===width&&base.height===height&&!(base.x0??0)&&!(base.y0??0)&&base.planes.length===colors&&channels(base).length===count,'JPEG XL frame blending needs a full canvas.');
+  const planes=base?channels(base):source.map((p,c)=>exact&&replace(c)?p:new Float32Array(width*height));
   const alphaCount=h.extraChannels.length, hasAlpha=h.extraChannels.some(e=>e.type===0);
   const coversCanvas=f.x0<=0&&f.y0<=0&&f.x0+frame.width>=width&&f.y0+frame.height>=height;
   for(let c=0;c<count;c++) {
-    const blend=f.blending[c<colors?0:c-colors+1], reference=blend.mode===0&&coversCanvas?null:references[blend.source];
+    const blend=f.blending[c<colors?0:c-colors+1], reference=base||blend.mode===0&&coversCanvas?null:references[blend.source];
     if(reference) {
       requireDecode(!reference.saveBeforeColorTransform,'JPEG XL frame blending needs a post-color reference.');
       requireDecode(reference.planes.length===colors,'JPEG XL frame reference color channels disagree.');
       const input=c<colors?reference.planes[c]:reference.extraChannels[c-colors].data;
+      if(planes[c]===input)continue;
       const ox=reference.x0??0,oy=reference.y0??0;
-      const x0=Math.max(0,ox),y0=Math.max(0,oy),x1=Math.min(width,ox+reference.width),y1=Math.min(height,oy+reference.height);
-      for(let y=y0;y<y1;y++) planes[c].set(input.subarray((y-oy)*reference.width+x0-ox,(y-oy)*reference.width+x1-ox),y*width+x0);
+      if(ox===0&&oy===0&&reference.width===width&&reference.height===height) {
+        planes[c].set(input);
+      } else {
+        const x0=Math.max(0,ox),y0=Math.max(0,oy),x1=Math.min(width,ox+reference.width),y1=Math.min(height,oy+reference.height);
+        for(let y=y0;y<y1;y++) planes[c].set(input.subarray((y-oy)*reference.width+x0-ox,(y-oy)*reference.width+x1-ox),y*width+x0);
+      }
     }
   }
   const x0=Math.max(0,f.x0),y0=Math.max(0,f.y0),x1=Math.min(width,f.x0+frame.width);let y1=Math.min(height,f.y0+frame.height);
   const values=new Float32Array(count);
-  for(let c=0;c<count;c++)if(replace(c)&&planes[c]!==source[c]&&x1>x0)for(let y=y0;y<y1;y++)planes[c].set(source[c].subarray((y-f.y0)*frame.width+x0-f.x0,(y-f.y0)*frame.width+x1-f.x0),y*width+x0);
+  for(let c=0;c<count;c++)if(replace(c)&&planes[c]!==source[c]&&x1>x0){
+    const src=source[c],dst=planes[c],fw=frame.width,fx0=f.x0,fy0=f.y0,span=x1-x0;
+    if(fx0===0&&fw===width&&span===width) {
+      dst.set(src.subarray((y0-fy0)*fw,(y1-fy0)*fw),y0*width);
+    } else {
+      for(let y=y0;y<y1;y++)dst.set(src.subarray((y-fy0)*fw+x0-fx0,(y-fy0)*fw+x1-fx0),y*width+x0);
+    }
+  }
   if(source.every((_,c)=>replace(c)))y1=y0;
   for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++) {
     const dst=y*width+x,src=(y-f.y0)*frame.width+x-f.x0;
@@ -104,10 +118,28 @@ export function rgbaPixels(frame,format,unpremultiplyAlpha=false,renderSpotColor
   if(!spots.length&&!(unpremultiplyAlpha&&alpha?.associated)) {
     const r=frame.planes[0],g=frame.planes[gray?0:1],b=frame.planes[gray?0:2],a=alpha?.data,kernels=decodeKernels();
     if(kernels&&format==='uint8'&&!a&&[r,g,b,data].every(p=>p.buffer===kernels.buffer)){kernels.rgba8(count,r,g,b,data);return data;}
-    if(format==='float32')for(let i=0,o=0;i<count;i++,o+=4){data[o]=r[i];data[o+1]=g[i];data[o+2]=b[i];data[o+3]=a?a[i]:1;}
-    else {
-      const top=maximum+.5,q=v=>{const t=v*maximum+.5;return t>=top?maximum:t>=1?Math.floor(t):0;};
-      for(let i=0,o=0;i<count;i++,o+=4){data[o]=q(r[i]);data[o+1]=q(g[i]);data[o+2]=q(b[i]);data[o+3]=a?q(a[i]):maximum;}
+    if(format==='float32') {
+      if(!a)for(let i=0,o=0;i<count;i++,o+=4){data[o]=r[i];data[o+1]=g[i];data[o+2]=b[i];data[o+3]=1;}
+      else for(let i=0,o=0;i<count;i++,o+=4){data[o]=r[i];data[o+1]=g[i];data[o+2]=b[i];data[o+3]=a[i];}
+    } else {
+      const top=maximum+.5;
+      if(!a) {
+        for(let i=0,o=0;i<count;i++,o+=4) {
+          const tr=r[i]*maximum+.5,tg=g[i]*maximum+.5,tb=b[i]*maximum+.5;
+          data[o]=tr>=top?maximum:tr>=1?tr|0:0;
+          data[o+1]=tg>=top?maximum:tg>=1?tg|0:0;
+          data[o+2]=tb>=top?maximum:tb>=1?tb|0:0;
+          data[o+3]=maximum;
+        }
+      } else {
+        for(let i=0,o=0;i<count;i++,o+=4) {
+          const tr=r[i]*maximum+.5,tg=g[i]*maximum+.5,tb=b[i]*maximum+.5,ta=a[i]*maximum+.5;
+          data[o]=tr>=top?maximum:tr>=1?tr|0:0;
+          data[o+1]=tg>=top?maximum:tg>=1?tg|0:0;
+          data[o+2]=tb>=top?maximum:tb>=1?tb|0:0;
+          data[o+3]=ta>=top?maximum:ta>=1?ta|0:0;
+        }
+      }
     }
     return data;
   }

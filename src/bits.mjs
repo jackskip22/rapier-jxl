@@ -3,6 +3,8 @@
 const POWERS = [1];
 for (let count = 1; count <= 32; count++) POWERS.push(POWERS[count - 1] * 2);
 
+export const LITTLE_ENDIAN = new Uint8Array(Uint32Array.of(1).buffer)[0] === 1;
+
 export class BitWriter {
   constructor(capacity = 4096, maxBytes = Infinity) {
     if (maxBytes !== Infinity && (!Number.isSafeInteger(maxBytes) || maxBytes < 0)) throw new RangeError('Invalid encoded picture allocation limit.');

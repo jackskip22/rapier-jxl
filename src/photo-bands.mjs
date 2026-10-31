@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: MIT
 import {complete} from './bits.mjs';
-import {photoXYBSteps, gaborishPlanes} from './photo-xyb.mjs';
+import {photoXYBSteps} from './photo-xyb.mjs';
 import {offloading, offloadWorkers, sharing, shareable} from './offload.mjs';
 
 export const PHOTO_BAND_MARGIN = 8;
 
-export function photoXYBBand(data, width, height, quality, options, top = 0) {
-  const W = Math.ceil(width / 8) * 8, H = Math.ceil(height / 8) * 8;
-  const all = gaborishPlanes(data, width, data.length / 4 / width, options);
-  const pre = all.map(p => p.subarray(top * W, (top + H) * W));
-  return complete(photoXYBSteps(data.subarray(top * width * 4, (top + height) * width * 4), width, height, quality, {...options, pre}));
+export function photoXYBBand(data, width, height, quality, options, top = 0, only = false) {
+  return complete(photoXYBSteps(data.subarray(top * width * 4, (top + height) * width * 4), width, height, quality, {...options, band: {data, top, only}}));
 }
 
 export function appendPhotoBand(image, result, width, height, y, data, colorSpace = result.colorSpace, target = null) {
@@ -62,22 +59,28 @@ export function* photoFastBands(data, width, height, quality, options) {
 
 export function* photoXYBBands(data, width, height, quality, options, color) {
   color = offloading() ? color : undefined;
+  if (!color) {
+    const whole = photoXYBBand(data, width, height, quality, options, 0, true);
+    if (whole) { yield 1; return whole; }
+  }
   const serial = Math.max(64, Math.floor(1048576 / width / 64) * 64), rounds = Math.ceil(Math.ceil(height / serial) / offloadWorkers());
   const bandHeight = color ? Math.max(64, Math.ceil(height / (rounds * offloadWorkers()) / 64) * 64) : serial, bands = [], target = color && bandTarget(width, height, false);
   for (let y = 0; y < height; y += bandHeight) {
     const h = Math.min(bandHeight, height - y);
-    bands.push({kind: 'band', data, width, h, quality, color, from: Math.max(0, y - PHOTO_BAND_MARGIN), to: Math.min(height, y + h + PHOTO_BAND_MARGIN), y, target});
+    bands.push({kind: 'band', data, width, h, quality, color, fast: !!options.fastGaborish, from: Math.max(0, y - PHOTO_BAND_MARGIN), to: Math.min(height, y + h + PHOTO_BAND_MARGIN), y, target});
   }
   if (color) yield {offload: 'prefetch', tasks: bands, at: done => done};
-  let image, opaque = true;
+  let image, opaque = true, counted = true;
   if (target) for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) { opaque = false; break; }
   for (const band of bands) {
     const {h, from, to, y} = band, remote = color && (yield {offload: 'run', task: band, at: () => y / height});
     const result = remote ? {...remote, colorSpace: options.space ?? 'srgb'} : photoXYBBand(data.subarray(from * width * 4, to * width * 4), width, h, quality, options, y - from);
+    counted &&= !remote && !!result.nonZero;
     const first = !image;
     image = appendPhotoBand(image, result, width, height, y, data, undefined, target);
     if (first && target && bands.length > 1) { image.alpha = opaque ? null : data; yield {offload: 'image', image, bands, at: () => (y + h) / height}; }
     yield (y + h) / height;
   }
+  if (!counted) image.nonZero = null;
   return image;
 }

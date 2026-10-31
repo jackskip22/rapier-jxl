@@ -14,5 +14,10 @@ export function encodedByteLength(value, allowEmpty = false) {
 }
 export function copyBytes(value, allowEmpty = false) {
   encodedByteLength(value, allowEmpty);
-  return new Uint8Array(value);
+  try { return new Uint8Array(value); }
+  catch { throw error('JXL_INPUT', 'Encoded input must be a Uint8Array with an ordinary, attached ArrayBuffer.'); }
+}
+export function viewBytes(value) {
+  const length = encodedByteLength(value);
+  return new Uint8Array(typedFields.buffer.call(value), typedFields.byteOffset.call(value), length);
 }

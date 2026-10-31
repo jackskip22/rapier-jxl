@@ -6,19 +6,22 @@ export function requireDecode(condition, message = 'Invalid JPEG XL data.', read
   throw error;
 }
 
-export const unpackSigned = value => value & 1 ? -(value + 1) / 2 : value / 2;
+export const unpackSigned = value => (value >>> 1) ^ -(value & 1);
 
 export class JxlBits {
   constructor(bytes) {
     if (!(bytes instanceof Uint8Array)) throw new TypeError('JPEG XL bytes must be a Uint8Array.');
     this.bytes = bytes;
+    const buf = bytes.length <= 67108864 ? new Uint8Array(bytes.length + 8) : bytes;
+    if (buf !== bytes) buf.set(bytes);
+    this.buf = buf;
     this.bit = 0;
   }
   get remaining() { return this.bytes.length * 8 - this.bit; }
   peek(n) {
     if (!((n | 0) === n && n >= 0 && n <= 32)) requireDecode(false, 'Invalid JPEG XL bit count.', this);
     if (!n) return 0;
-    const at = Math.floor(this.bit / 8), shift = this.bit & 7, b = this.bytes;
+    const at = this.bit < 4294967296 ? this.bit >>> 3 : Math.floor(this.bit / 8), shift = this.bit & 7, b = this.buf;
     let word = (b[at] >>> shift) | (b[at + 1] << (8 - shift)) |
       (b[at + 2] << (16 - shift)) | (b[at + 3] << (24 - shift));
     if (shift) word |= b[at + 4] << (32 - shift);
@@ -33,7 +36,7 @@ export class JxlBits {
     if (!n) return 0;
     const bit = this.bit;
     if (n > this.bytes.length * 8 - bit) requireDecode(false, 'Truncated JPEG XL data.', this);
-    const at = Math.floor(bit / 8), shift = bit & 7, b = this.bytes;
+    const at = bit < 4294967296 ? bit >>> 3 : Math.floor(bit / 8), shift = bit & 7, b = this.buf;
     let word = (b[at] >>> shift) | (b[at + 1] << (8 - shift)) | (b[at + 2] << (16 - shift)) | (b[at + 3] << (24 - shift));
     if (shift) word |= b[at + 4] << (32 - shift);
     this.bit = bit + n;
@@ -73,4 +76,14 @@ export class JxlBits {
   enum() { return this.u32([[0, 0], [0, 1], [4, 2], [6, 18]]); }
   align() { this.expect((-this.bit) & 7, 0); }
   end() { this.align(); requireDecode(this.remaining === 0, 'Trailing JPEG XL section data.', this); }
+  endSection() { this.align(); while (this.remaining) requireDecode(this.read(8) === 0, 'Trailing JPEG XL section data.', this); }
+}
+
+{
+  const warm = new JxlBits(new Uint8Array(8));
+  for (let i = 0; i < 20; i++) {
+    warm.bit = 0;
+    warm.peek(0); warm.peek(1); warm.peek(32);
+    warm.read(0); warm.read(1); warm.read(32);
+  }
 }

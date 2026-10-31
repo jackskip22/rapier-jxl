@@ -1,2 +1,0 @@
-/*! rapier-jxl 7.1.0 | MIT */
-import{f as m,g as s,h as o,i as t,j as r}from"./chunk-CX72DYMI.mjs";import"./chunk-XTI2WKJD.mjs";import"./chunk-2KGAYCJ7.mjs";import"./chunk-3DMZRXJE.mjs";import"./chunk-6D6DZ4MZ.mjs";import"./chunk-54UZPUWB.mjs";import"./chunk-AUJWQREN.mjs";import"./chunk-KZTZGBUE.mjs";import"./chunk-MVPOUYKR.mjs";import"./chunk-QDWZPFKH.mjs";import"./chunk-NCIWO4K3.mjs";export{m as DECODE_LIMITS,r as decodeImage,s as decodeOptions,t as openFirstFrame,o as outputFormat};

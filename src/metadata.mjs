@@ -21,17 +21,18 @@ function utf8Length(text) {
 }
 
 function sourceBoxes(bytes, options = {}) {
+  if (options === null || typeof options !== 'object') throw invalid('Metadata options are an object.');
   if (!(bytes instanceof Uint8Array) || bytes.length < 2) throw invalid('JPEG XL input is a Uint8Array.');
-  const maxBoxes = options.maxBoxes ?? Number.MAX_SAFE_INTEGER;
+  const maxBoxes = options.maxBoxes ?? 65536;
   if (!Number.isSafeInteger(maxBoxes) || maxBoxes < 1) throw invalid('maxBoxes is an integer from 1 to ' + Number.MAX_SAFE_INTEGER + '.');
+  const maxBytes = options.maxBytes ?? Number.MAX_SAFE_INTEGER;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw invalid('maxBytes is an integer from 1 to ' + Number.MAX_SAFE_INTEGER + '.');
+  if (bytes.length > maxBytes) throw fault('JXL_SIZE', 'The JPEG XL container exceeds maxBytes.');
   admitOutputSize(bytes.length);
   if (bytes[0] === 255 && bytes[1] === 10) return null;
   if (!SIGNATURE.every((byte, i) => bytes[i] === byte)) throw invalid('Invalid JPEG XL signature.');
   const source = [];
-  for (const box of boxes(bytes)) {
-    if (source.length >= maxBoxes) throw invalid('JPEG XL box count exceeds the limit.');
-    source.push(box);
-  }
+  for (const box of boxes(bytes, maxBoxes)) source.push(box);
   return source;
 }
 
@@ -87,7 +88,7 @@ function attach(bytes, plan, source) {
   return output;
 }
 
-export function withMetadata(bytes, options = {}) { return guard(() => { const plan = prepare(options); return attach(bytes, plan, sourceBoxes(bytes, options)); }); }
+export function withMetadata(bytes, options = {}) { return guard(() => { const source = sourceBoxes(bytes, options), plan = prepare(options); return attach(bytes, plan, source); }); }
 
 function limit(value) {
   if (!Number.isSafeInteger(value) || value < 1) throw invalid('The decoded metadata limit is a positive safe integer.');
@@ -104,7 +105,15 @@ function metadataValue(type, data) {
 
 export function readMetadata(bytes, options = {}) {
   return guard(() => {
+    if (!options || typeof options !== 'object' || Array.isArray(options)) throw invalid('Metadata reader options are an object.');
+    const maximum = limit(options.maxDecodedBytes ?? METADATA_DECODED_BYTES);
     const source = sourceBoxes(bytes, options), result = {exif: [], xmp: [], jumb: [], compressed: []};
+    let plain = 0;
+    for (const box of source ?? []) if (box.type !== BROB && keys.has(box.decoded)) {
+      const length = box.end - box.body;
+      if (length > maximum - plain) throw fault('JXL_SIZE', 'Decoded metadata exceeds maxDecodedBytes.');
+      plain += length;
+    }
     for (const box of source ?? []) {
       const key = keys.get(box.decoded);
       if (!key) continue;
@@ -128,6 +137,11 @@ function nativeBrotliUnsafe(versions) {
   return fixed ? older(versions.node, fixed) : major < 27;
 }
 
+function nodeZlib() {
+  if (!globalThis.process?.versions?.node) return null;
+  try { return globalThis.process.getBuiltinModule?.('node:zlib') ?? null; } catch { return null; }
+}
+
 async function codec(data, direction, provided, maximum) {
   let result;
   if (provided !== undefined) {
@@ -140,8 +154,8 @@ async function codec(data, direction, provided, maximum) {
       throw invalid('This runtime\'s native Brotli decoder has a remote-code-execution bug (CVE-2026-111497), so only the ' +
         'portable form is read here. Update Node to 22.23.4, 24.22.1 or 26.12.1 (Bun to 1.4.4), or pass decompress.');
     }
-  } else if (globalThis.process?.versions?.node) {
-    const zlib = await import('node:zlib');
+  } else if (nodeZlib()) {
+    const zlib = nodeZlib();
     const method = direction === 'compress' ? zlib.brotliCompress : zlib.brotliDecompress;
     try {
       const settings = maximum === Number.MAX_SAFE_INTEGER ? {} : {maxOutputLength: Math.max(1, maximum)};
@@ -179,7 +193,7 @@ async function codec(data, direction, provided, maximum) {
 
 export async function withCompressedMetadata(bytes, options = {}) {
   try {
-    const plan = prepare(options), source = sourceBoxes(bytes, options), snapshot = new Uint8Array(bytes);
+    const source = sourceBoxes(bytes, options), plan = prepare(options), snapshot = new Uint8Array(bytes);
     const {compression = 'auto', compress} = options;
     if (compression !== 'auto' && compression !== 'brotli') throw invalid('Metadata compression is auto or brotli.');
     if (plan.changed.size && source?.some(box => box.decoded === RECONSTRUCTION))
@@ -200,6 +214,8 @@ export async function readMetadataAsync(bytes, options = {}) {
   try {
     if (!options || typeof options !== 'object' || Array.isArray(options)) throw invalid('Metadata reader options are an object.');
     const maximum = limit(options.maxDecodedBytes ?? METADATA_DECODED_BYTES), source = sourceBoxes(bytes, options), {decompress} = options;
+    const plain = (source ?? []).filter(box => keys.has(box.decoded) && box.type !== BROB).reduce((sum, box) => sum + box.end - box.body, 0);
+    if (plain > maximum) throw fault('JXL_SIZE', 'Decoded metadata exceeds maxDecodedBytes.');
     const entries = (source ?? []).filter(box => keys.has(box.decoded)).map(box => ({
       type: box.decoded, compressed: box.type === BROB, data: new Uint8Array(bytes.subarray(box.body + (box.type === BROB ? 4 : 0), box.end))
     }));
@@ -209,7 +225,7 @@ export async function readMetadataAsync(bytes, options = {}) {
       const data = entry.compressed ? await codec(entry.data, 'decompress', decompress, maximum - total) : entry.data;
       total += data.length;
       if (total > maximum) throw fault('JXL_SIZE', 'Decoded metadata exceeds maxDecodedBytes.');
-      result[keys.get(entry.type)].push(metadataValue(entry.type, data));
+      result[keys.get(entry.type)].push(!entry.compressed && entry.type !== EXIF ? data : metadataValue(entry.type, data));
     }
     return result;
   } catch (error) { return guard(() => { throw error; }); }

@@ -6,7 +6,7 @@ import {part,frameFeatures} from './decode-parts.mjs';
 import {transformColor,convertOutputColor} from './decode-color.mjs';
 import {composeFrame,orientFrame,rgbaPixels} from './decode-compose.mjs';
 import {SIGNATURE,CODESTREAM,PARTIAL,BROB,FTYP,LEVEL} from './decode-tables.mjs';
-import {inspectContainer} from './decode-container.mjs';
+import {readContainer} from './decode-container.mjs';
 
 export const DECODE_LIMITS=Object.freeze({maxPixels:64000000,maxDimension:65536,maxSamples:268435456,maxRetainedSamples:268435456,maxTotalSamples:536870912,maxModularWork:536870912,maxFrames:4096,maxBoxes:65536,maxMetadataBytes:67108864,maxInputBytes:1073741824,maxFeatureBytes:268435456,maxFeatureWork:268435456});
 const fourCC=type=>String.fromCharCode(type>>>24,type>>>16&255,type>>>8&255,type&255);
@@ -23,14 +23,17 @@ function unpackInput(bytes,limits) {
     requireDecode(bytes.length-at>=header,'Truncated extended JPEG XL box header.');
     const length=short===1?view.getUint32(at+8)*4294967296+view.getUint32(at+12):short||bytes.length-at;
     requireDecode(Number.isSafeInteger(length)&&length>=header&&length<=bytes.length-at,'Invalid JPEG XL box size.');
-    if(type!==FTYP&&type!==LEVEL&&type!==CODESTREAM&&type!==PARTIAL&&type!==BROB)rawMetadata+=length-header;
+    if(type===FTYP) {
+      rawMetadata+=Math.max(0,length-header-12);
+    } else if(type!==LEVEL&&type!==CODESTREAM&&type!==PARTIAL)rawMetadata+=length-header;
     requireDecode(rawMetadata<=limits.maxMetadataBytes,'JPEG XL metadata exceeds the byte limit.');at+=length;
   }
-  const source=inspectContainer(bytes,{maxBytes:limits.maxInputBytes,maxBoxes:limits.maxBoxes}),metadata=[];let totalMetadata=0;
+  const source=readContainer(bytes,{maxBytes:limits.maxInputBytes,maxBoxes:limits.maxBoxes}),metadata=[];let totalMetadata=0;
   for(const box of source.auxiliary) {
     const compressed=box.boxType==='brob';let type=box.boxType,data=box.data;
     if(compressed){type=fourCC(new DataView(data.buffer,data.byteOffset,data.byteLength).getUint32(0));data=part('brotli').decompressBrotli(data.subarray(4),{maxOutput:limits.maxMetadataBytes-totalMetadata,dictionary:limits.dictionary});}
-    totalMetadata+=data.length;requireDecode(totalMetadata<=limits.maxMetadataBytes,'JPEG XL metadata exceeds the byte limit.');metadata.push({type,data,compressed});
+    totalMetadata+=data.length;requireDecode(totalMetadata<=limits.maxMetadataBytes,'JPEG XL metadata exceeds the byte limit.');
+    metadata.push({type,data:compressed?data:data.slice(),compressed});
   }
   return {codestream:source.codestream,boxes:metadata,container:{level:source.level,minorVersion:source.minorVersion}};
 }
@@ -51,18 +54,18 @@ function admitExpanded(h,f,options) {
   requireDecode(expandedWidth*expandedHeight*(f.encodedColorChannels+h.extraChannels.length)<=options.maxSamples,'JPEG XL expanded planes exceed the sample limit.');
 }
 
-function renderSections(readers,h,f,refs,lf,options,visibility) {
+function renderSections(readers,h,f,refs,lf,options,visibility,sharedFeatureWork) {
   admitExpanded(h,f,options);
-  let frame=restoreFrame(decodeFrameSections(readers,h,f,{readFeatures:(r,h,f)=>frameFeatures(r,h,f,options),lfReference:lf[f.lfLevel],maxSamples:options.maxSamples,maxModularWork:options.maxModularWork}),f);
-  const {patches,splines,noise}=frame.features,correlation=frame.global?[frame.global.correlation.baseX,frame.global.correlation.baseB]:[0,1];
-  if(patches){upsampleExtra(frame,f,h,true);part('features').applyPatches(frame,patches,refs,h,options);}
-  if(splines&&frame.planes.length===3)part('features').applySplines(frame,splines,{...options,correlation});
+  let frame=restoreFrame(decodeFrameSections(readers,h,f,{readFeatures:(r,h,f)=>frameFeatures(r,h,f,options,sharedFeatureWork),lfReference:lf[f.lfLevel],maxSamples:options.maxSamples,maxModularWork:options.maxModularWork}),f);
+  const {patches,splines,noise,budget}=frame.features,correlation=frame.global?[frame.global.correlation.baseX,frame.global.correlation.baseB]:[0,1];
+  if(patches){upsampleExtra(frame,f,h,true);part('features').applyPatches(frame,patches,refs,h,options,budget);}
+  if(splines&&frame.planes.length===3)part('features').applySplines(frame,splines,{...options,correlation},budget);
   const width=Math.ceil(f.width/power2(3*f.lfLevel)),height=Math.ceil(f.height/power2(3*f.lfLevel));
   frame.planes=frame.planes.map(p=>upsamplePlane(p,frame.width,frame.height,f.upsampling,width,height,h.upsamplingWeights));
   if(patches)frame.extraChannels=frame.extraChannels.map(e=>({...e,width,height,data:upsamplePlane(e.data,e.width,e.height,f.upsampling,width,height,h.upsamplingWeights)}));
   else upsampleExtra(frame,f,h,false);
   frame.width=width;frame.height=height;frame.widths=frame.planes.map(()=>width);frame.heights=frame.planes.map(()=>height);
-  if(noise&&frame.planes.length===3)part('features').applyNoise(frame,noise,{...options,...visibility,correlation,groupSize:f.groupDim});
+  if(noise&&frame.planes.length===3)part('features').applyNoise(frame,noise,{...options,...visibility,correlation,groupSize:f.groupDim},budget);
   frame.x0=f.x0;frame.y0=f.y0;frame.saveBeforeColorTransform=f.saveBeforeColorTransform;
   return frame;
 }
@@ -106,49 +109,88 @@ export function openFirstFrame(bytes,options) {
   return {h,f,readers:f&&readDecodeTOC(r,f)};
 }
 
-function frameSamples(h,f) {
+function frameSamples(h,f,inPlace=false) {
   const normal=f.type===0||f.type===3,keyframe=normal&&(f.isLast||f.duration!==0);
   return {expandedSamples:Math.ceil(f.width/power2(3*f.lfLevel))*Math.ceil(f.height/power2(3*f.lfLevel))*(3+h.extraChannels.length),
-    canvasSamples:normal?h.width*h.height*(3+h.extraChannels.length+(keyframe?4:0)):0};
+    canvasSamples:normal?h.width*h.height*(3+h.extraChannels.length+(keyframe?4:0))-(inPlace?h.width*h.height*(3+h.extraChannels.length):0):0};
+}
+
+export function admitPreviewSize(h, options) {
+  requireDecode(h.width > 0 && h.height > 0 && h.width <= options.maxDimension &&
+    h.height <= options.maxDimension && h.width * h.height <= options.maxPixels,
+    'JPEG XL preview exceeds the pixel or dimension limit.');
+}
+export function admitPreview(h, f, options) {
+  if (!f) return 0;
+  admitPreviewSize(h, options);
+  const expanded = frameSamples(h, f).expandedSamples, pixels = f.width * f.height;
+  const output = pixels * (4 + h.extraChannels.length + (options.planes ? 3 : 0));
+  requireDecode(expanded + output <= options.maxRetainedSamples,
+    'JPEG XL preview exceeds the retained sample limit.');
+  return expanded + pixels * 4;
+}
+
+export function referenceSlots() {
+  const slots=new Array(4).fill(null);
+  return {
+    inPlace(f) {
+      const normal=f.type===0||f.type===3,source=f.blending?.[0]?.source;
+      if(!normal||f.blending.some(b=>b.mode!==0||b.source!==source)||!slots[source]?.free)return false;
+      const canReference=!f.isLast&&(f.duration===0||f.saveAsReference!==0);
+      return canReference?f.saveAsReference===source&&!f.saveBeforeColorTransform:f.isLast;
+    },
+    after(f) {
+      const normal=f.type===0||f.type===3,keyframe=normal&&(f.isLast||f.duration!==0);
+      if(f.type===1||f.isLast||!(f.duration===0||f.saveAsReference!==0))return;
+      slots[f.saveAsReference]={free:normal&&!f.saveBeforeColorTransform&&!keyframe};
+    },
+  };
 }
 
 export function decodeImage(bytes,options,renderFrame=null) {
-  const {input,r,h}=openImage(bytes,options);
-  const ph=h.preview?{...h,...h.preview,preview:null,animation:null}:null,pf=ph&&readDecodeFrameHeader(r,ph,options),pr=pf&&readDecodeTOC(r,pf);
-  const start=r.bit;let totalSamples=pf?frameSamples(ph,pf).expandedSamples+pf.width*pf.height*4:0;
+  const {input,r,h}=openImage(bytes,options),sharedFeatureWork={spent:0};
+  const ph=h.preview?{...h,...h.preview,preview:null,animation:null}:null;
+  if(ph)admitPreviewSize(ph,options);
+  const pf=ph&&readDecodeFrameHeader(r,ph,options),pr=pf&&readDecodeTOC(r,pf);
+  const start=r.bit;let totalSamples=pf?admitPreview(ph,pf,options):0;
   requireDecode(totalSamples<=options.maxTotalSamples,'JPEG XL frames exceed the total sample limit.',r);
+  const counted=referenceSlots();
   for(let index=0;;index++) {
     requireDecode(index<options.maxFrames,'JPEG XL frame count exceeds the limit.',r);
     const f=readDecodeFrameHeader(r,h,options);readDecodeTOC(r,f);
-    const {expandedSamples,canvasSamples}=frameSamples(h,f);totalSamples+=expandedSamples+canvasSamples;
+    const {expandedSamples,canvasSamples}=frameSamples(h,f,counted.inPlace(f));totalSamples+=expandedSamples+canvasSamples;
     requireDecode(totalSamples<=options.maxTotalSamples,'JPEG XL frames exceed the total sample limit.',r);
+    counted.after(f);
     if(f.isLast)break;
   }
   r.bit=start;
   let preview=null;
   if(pf) {
-    const decoded=renderSections(pr,ph,pf,[],[],options,{visibleFrame:0,nonvisibleFrame:0});
+    const decoded=renderSections(pr,ph,pf,[],[],options,{visibleFrame:0,nonvisibleFrame:0},sharedFeatureWork);
     preview=publicFrame(transformColor(decoded,ph,pf,{colorSpace:'original'}),ph,pf,options);
   }
   const references=new Array(4),lf=new Array(4),frames=[],frameHeaders=[];
   let visible=0,nonvisible=0,outputSamples=retainedSamples(preview);
+  const slots=referenceSlots();
   for(let index=0;;index++) {
     requireDecode(index<options.maxFrames,'JPEG XL frame count exceeds the limit.',r);
     const f=readDecodeFrameHeader(r,h,options),readers=readDecodeTOC(r,f);frameHeaders.push(f);
-    const normal=f.type===0||f.type===3,keyframe=normal&&(f.isLast||f.duration!==0),{expandedSamples,canvasSamples}=frameSamples(h,f);
+    const inPlace=slots.inPlace(f);slots.after(f);
+    const normal=f.type===0||f.type===3,keyframe=normal&&(f.isLast||f.duration!==0),{expandedSamples,canvasSamples}=frameSamples(h,f,inPlace);
     requireDecode(canvasSamples<=options.maxSamples,'JPEG XL canvas exceeds the sample limit.',r);
     const heldSamples=outputSamples+references.reduce((n,v)=>n+retainedSamples(v),0)+lf.reduce((n,v)=>n+retainedSamples(v),0);
     requireDecode(heldSamples+expandedSamples+canvasSamples<=options.maxRetainedSamples,'JPEG XL retained frames exceed the sample limit.',r);
     if(keyframe){visible++;nonvisible=0;}else nonvisible++;
     requireDecode(!f.useLFFrame||lf[f.lfLevel],'JPEG XL frame refers to a missing low-frequency frame.',r);
     let frame=null;
-    if(index===0&&renderFrame){admitExpanded(h,f,options);frame=renderFrame(readers,h,f);}
-    frame??=renderSections(readers,h,f,references,lf,options,{visibleFrame:visible,nonvisibleFrame:nonvisible});
+    if(index===0&&renderFrame){admitExpanded(h,f,options);
+      frame=renderFrame(readers,h,f,input.codestream);}
+    frame??=renderSections(readers,h,f,references,lf,options,{visibleFrame:visible,nonvisibleFrame:nonvisible},sharedFeatureWork);
     if(f.type===1){lf[f.lfLevel-1]=frame;continue;}
     const canReference=!f.isLast&&(f.duration===0||f.saveAsReference!==0);
     const beforeColor=frame;
     frame=transformColor(frame,h,f,{colorSpace:'original',inPlace:!(canReference&&f.saveBeforeColorTransform)});
-    if(normal)frame=composeFrame(frame,h,f,references);
+    if(normal)frame=composeFrame(frame,h,f,references,inPlace);
     if(canReference)references[f.saveAsReference]=f.saveBeforeColorTransform?beforeColor:{...frame,saveBeforeColorTransform:false};
     if(keyframe){const output=publicFrame(frame,h,f,options);outputSamples+=retainedSamples(output);frames.push(output);}
     if(f.isLast)break;

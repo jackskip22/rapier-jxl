@@ -13,7 +13,7 @@ function uint(value, maximum, name, minimum = 0) {
   return value;
 }
 function limit(options) { record(options, 'Container options'); return uint(options.maxBytes ?? Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, 'maxBytes', 1); }
-function boxLimit(options) { return uint(options.maxBoxes ?? Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, 'maxBoxes', 1); }
+function boxLimit(options) { return uint(options.maxBoxes ?? 65536, Number.MAX_SAFE_INTEGER, 'maxBoxes', 1); }
 function bounded(length, maximum) {
   if (!Number.isSafeInteger(length) || length > maximum) throw fault('JXL_SIZE', 'The JPEG XL container exceeds maxBytes.');
   return length;
@@ -89,4 +89,11 @@ export function inspectContainer(bytes, options = {}) {
     fragments: source.fragments.map(row => ({...row})),
     auxiliary: source.entries.filter(row => ![FTYP, LEVEL, CODESTREAM, PARTIAL].includes(row.type)).map(row =>
       ({boxType: fourcc(row.type), data: row.data.slice(), extended: row.headerLength === 16}))};
+}
+
+export function readContainer(bytes, options = {}) {
+  const source = scanContainer(bytes, limit(options), boxLimit(options));
+  return {codestream: source.codestream, level: source.level, minorVersion: source.minorVersion,
+    auxiliary: source.entries.filter(row => ![FTYP, LEVEL, CODESTREAM, PARTIAL].includes(row.type)).map(row =>
+      ({boxType: fourcc(row.type), data: row.data, extended: row.headerLength === 16}))};
 }

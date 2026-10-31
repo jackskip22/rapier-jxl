@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {UniformRing} from './gpu-uniforms.mjs';
+import {gpuPipelineSet} from './gpu-pipelines.mjs';
 import {MALTA_LF, MALTA_HF, blurKernel} from './butteraugli.mjs';
 import {SRGB_TO_LINEAR} from './ssimulacra2.mjs';
 
@@ -7,22 +8,22 @@ const GB_WG = 128;
 const gbF = v => { const s = Math.fround(v).toString(); return /[.eE]/.test(s) ? s : s + '.0'; };
 const gbD = v => { const hi = Math.fround(v); return `vec2f(${gbF(hi)}, ${gbF(v - hi)})`; };
 
-const GB_DF = `
-fn opaque(x: f32) -> f32 { return bitcast<f32>(bitcast<u32>(x) ^ bitcast<u32>(P.d)); }
-fn twoSum(a: f32, b: f32) -> vec2f { let s = opaque(a + b); let bb = opaque(s - a); return vec2f(s, (a - (s - bb)) + (b - bb)); }
-fn quick(a: f32, b: f32) -> vec2f { let s = opaque(a + b); return vec2f(s, b - (s - a)); }
-fn split(a: f32) -> vec2f { let c = opaque(4097.0 * a); let h = opaque(c - opaque(c - a)); return vec2f(h, a - h); }
-fn twoProd(a: f32, b: f32) -> vec2f { let p = opaque(a * b); let x = split(a); let y = split(b); return vec2f(p, ((opaque(x.x * y.x) - p) + opaque(x.x * y.y) + opaque(x.y * y.x)) + opaque(x.y * y.y)); }
-fn dadd(a: vec2f, b: vec2f) -> vec2f { let s = twoSum(a.x, b.x); return quick(s.x, s.y + a.y + b.y); }
-fn dmul(a: vec2f, b: vec2f) -> vec2f { let p = twoProd(a.x, b.x); return quick(p.x, p.y + opaque(a.x * b.y) + opaque(a.y * b.x)); }
-fn dscale(a: vec2f, s: f32) -> vec2f { let p = twoProd(a.x, s); return quick(p.x, p.y + opaque(a.y * s)); }
-fn ddiv(a: vec2f, b: vec2f) -> vec2f {
+const GB_DF = [
+  ['opaque', `fn opaque(x: f32) -> f32 { return bitcast<f32>(bitcast<u32>(x) ^ bitcast<u32>(P.d)); }`],
+  ['twoSum', `fn twoSum(a: f32, b: f32) -> vec2f { let s = opaque(a + b); let bb = opaque(s - a); return vec2f(s, (a - (s - bb)) + (b - bb)); }`],
+  ['quick', `fn quick(a: f32, b: f32) -> vec2f { let s = opaque(a + b); return vec2f(s, b - (s - a)); }`],
+  ['split', `fn split(a: f32) -> vec2f { let c = opaque(4097.0 * a); let h = opaque(c - opaque(c - a)); return vec2f(h, a - h); }`],
+  ['twoProd', `fn twoProd(a: f32, b: f32) -> vec2f { let p = opaque(a * b); let x = split(a); let y = split(b); return vec2f(p, ((opaque(x.x * y.x) - p) + opaque(x.x * y.y) + opaque(x.y * y.x)) + opaque(x.y * y.y)); }`],
+  ['dadd', `fn dadd(a: vec2f, b: vec2f) -> vec2f { let s = twoSum(a.x, b.x); return quick(s.x, s.y + a.y + b.y); }`],
+  ['dmul', `fn dmul(a: vec2f, b: vec2f) -> vec2f { let p = twoProd(a.x, b.x); return quick(p.x, p.y + opaque(a.x * b.y) + opaque(a.y * b.x)); }`],
+  ['dscale', `fn dscale(a: vec2f, s: f32) -> vec2f { let p = twoProd(a.x, s); return quick(p.x, p.y + opaque(a.y * s)); }`],
+  ['ddiv', `fn ddiv(a: vec2f, b: vec2f) -> vec2f {
   let q1 = a.x / b.x; let r1 = dadd(a, -dscale(b, q1)); let q2 = r1.x / b.x; let r2 = dadd(r1, -dscale(b, q2)); let q3 = r2.x / b.x;
   return dadd(quick(q1, q2), vec2f(q3, 0.0));
-}
-fn dmax(a: vec2f, b: vec2f) -> vec2f { if (a.x > b.x || (a.x == b.x && a.y >= b.y)) { return a; } return b; }
-fn dround(a: vec2f) -> f32 { return opaque(a.x + a.y); }
-// The natural log of a positive double-float: a / 2^e = m in [0.707, 1.414], log m = 2 atanh((m - 1) / (m + 1)) by its
+}`],
+  ['dmax', `fn dmax(a: vec2f, b: vec2f) -> vec2f { if (a.x > b.x || (a.x == b.x && a.y >= b.y)) { return a; } return b; }`],
+  ['dround', `fn dround(a: vec2f) -> f32 { return opaque(a.x + a.y); }`],
+  ['dlog', `// The natural log of a positive double-float: a / 2^e = m in [0.707, 1.414], log m = 2 atanh((m - 1) / (m + 1)) by its
 // series to s^19 (|s| < 0.172, the last term under 1e-16).
 fn dlog(a: vec2f) -> vec2f {
   let f = frexp(a.x); var e = f.exp; var scale = ldexp(1.0, -e);
@@ -33,13 +34,26 @@ fn dlog(a: vec2f) -> vec2f {
   ${[17, 15, 13, 11, 9, 7, 5, 3, 1].map(k => `p = dadd(${gbD(1 / k)}, dmul(s2, p));`).join(' ')}
   let r = dmul(s, p);
   return dadd(vec2f(r.x * 2.0, r.y * 2.0), dscale(${gbD(Math.LN2)}, f32(e)));
-}`;
+}`],
+];
+const GB_DF_PARTS = GB_DF.map(([name, code]) => ({code, call: new RegExp('\\b' + name + '\\s*\\(')}));
+function gbDoubleFloat(source) {
+  const used = new Set();
+  const include = part => {
+    if (used.has(part)) return;
+    used.add(part);
+    for (const dependency of GB_DF_PARTS) if (dependency.call.test(part.code)) include(dependency);
+  };
+  for (const part of GB_DF_PARTS) if (part.call.test(source)) include(part);
+  return GB_DF_PARTS.filter(part => used.has(part)).map(part => part.code).join('\n');
+}
+
 
 function gbShader(buffers, body, extra = '') {
   return `struct Params { w: u32, h: u32, i0: u32, i1: u32, a: f32, b: f32, c: f32, d: f32 }
 @group(0) @binding(0) var<uniform> P: Params;
 ${buffers.map(([name, access, type = 'array<f32>'], k) => `@group(0) @binding(${k + 1}) var<storage, ${access}> ${name}: ${type};`).join('\n')}
-${GB_DF}
+${gbDoubleFloat(body + extra)}
 ${extra}
 @compute @workgroup_size(${GB_WG})
 fn main(@builtin(global_invocation_id) gid: vec3u) {
@@ -207,19 +221,19 @@ const GB_MALTA = {
   mfY: [37.0819870399, 130262059.556, 'maltaLF', 0.611612573796], mfX: [8246.75321353, 1009002.70582, 'maltaLF', 0.611612573796],
 };
 const GB_WMUL = [400.0, 1.50815703118, 0, 2150.0, 10.6195433239, 16.2176043152, 29.2353797994, 0.844626970982, 0.703646627719];
+const gbPipelines = gpuPipelineSet({...GB_SHADERS, reduce: GB_REDUCE});
 
 export class GpuButteraugli {
+  static prepare(device) { return gbPipelines(device); }
   static async create(device, width, height) {
     const self = new GpuButteraugli();
-    try { self.init(device, width, height); return self; }
+    try { self.init(device, width, height, await gbPipelines(device)); return self; }
     catch (error) { self.destroy(); throw error; }
   }
 
-  init(device, width, height) {
+  init(device, width, height, pipelines) {
     this.device = device; this.width = width; this.height = height;
-    this.pipelines = {};
-    for (const [name, code] of Object.entries({...GB_SHADERS, reduce: GB_REDUCE}))
-      this.pipelines[name] = device.createComputePipeline({layout: 'auto', compute: {module: device.createShaderModule({code}), entryPoint: 'main'}});
+    this.pipelines = pipelines;
     const usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
     this.buffers = [];
     const plane = n => { const b = device.createBuffer({size: Math.max(16, Math.ceil(n / 4) * 16), usage}); this.buffers.push(b); return b; };

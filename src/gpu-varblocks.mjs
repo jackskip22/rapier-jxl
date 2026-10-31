@@ -2,6 +2,7 @@
 import {strategyInputs} from './varblocks.mjs';
 import {COEFF_FREQ_CONTEXT, COEFF_NUM_NONZERO_CONTEXT} from './vardct.mjs';
 import {gpuSetup} from './gpu-setup.mjs';
+import {gpuPipelineSet} from './gpu-pipelines.mjs';
 
 const QS = 256, ZD = 458, NZ = 37;
 const SHADER =  `
@@ -163,6 +164,8 @@ fn main(@builtin(workgroup_id) g: vec3<u32>, @builtin(local_invocation_index) li
     var before = partB[lid];
     for (var k = start; k < end; k++) { trans[k] = before; if (tmp[k] != 0.0) { before += 1.0; } }
     workgroupBarrier();
+    // Only mode 0 reports rate. The mode is uniform, including the barriers in this block.
+    if (p.mode == 0u) {
     // Token bits as varblocks's tokenBits: the count, then every level while nonzeros remain.
     let count = u32(total);
     var bits = 0.0;
@@ -189,6 +192,7 @@ fn main(@builtin(workgroup_id) g: vec3<u32>, @builtin(local_invocation_index) li
       R += b + tf[p.oNz + (c * ${NZ}u + bucket) * 64u + t.x] + f32(t.y);
     }
     workgroupBarrier();
+    }
   }
   if (lid == 0u && p.mode == 0u) {
     let at = (g.y * p.gridW + g.x) * 3u;
@@ -231,8 +235,8 @@ class GpuVarblockSession {
     const put = (name, array) => { offsets[name] = f.length; for (const v of array) f.push(v); };
     put('basisW', gpuBasis(t.w)); put('basisH', gpuBasis(t.h));
     put('steps', [...t.steps[0], ...t.steps[1], ...t.steps[2]]);
-    put('zd', tokens ? [...tokens.zd[0], ...tokens.zd[1], ...tokens.zd[2]] : new Float32Array(3 * 458 * 64));
-    put('nz', tokens ? [...tokens.nz[0], ...tokens.nz[1], ...tokens.nz[2]] : new Float32Array(3 * 37 * 64));
+    put('zd', tokens ? [...tokens.zd[0], ...tokens.zd[1], ...tokens.zd[2]] : new Float32Array(mode ? 4 : 3 * 458 * 64));
+    put('nz', tokens ? [...tokens.nz[0], ...tokens.nz[1], ...tokens.nz[2]] : new Float32Array(mode ? 4 : 3 * 37 * 64));
     put('const', [...(dead || [0, 0, 0, 0, 0, 0]), ...norm, ...one, ...dcSteps]);
     put('low', gpuLowTables(t.bw, t.bh));
     const u = [], uo = {};
@@ -327,11 +331,12 @@ class GpuVarblockSession {
   release() { this.owner.free(this.blk); this.input = null; }
 }
 
+const vbPipelines = gpuPipelineSet({main: SHADER});
 export class GpuVarblockCosts {
   static async create(device) {
     const self = new GpuVarblockCosts();
     self.device = device; self.buffers = new Set(); self.allocatedBytes = 0; self.peakBufferBytes = 0; self.failures = 0; self.destroyed = false;
-    self.pipeline = await device.createComputePipelineAsync({layout: 'auto', compute: {module: device.createShaderModule({code: SHADER}), entryPoint: 'main'}});
+    self.pipeline = (await vbPipelines(device)).main;
     return self;
   }
   assertOpen() { if (this.destroyed) throw new Error('GPU varblock owner is closed.'); }

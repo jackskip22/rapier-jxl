@@ -8,6 +8,9 @@ import {writeImageHeader} from './icc-write.mjs';
 import {ALPHABET, leaf, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {screenResiduals, screenModel, writeScreenModel} from './screen-lz77.mjs';
 import {screenSteps} from './screen-search.mjs';
+import {paletteSteps} from './palette-search.mjs';
+import {localScreenSteps} from './screen-local.mjs';
+const SCREEN = Object.freeze({paletteSteps, localScreenSteps});
 import {codeWeighted} from './weighted.mjs';
 
 import {DELTA_IMPLICIT} from './implicit-palette.mjs';
@@ -189,7 +192,7 @@ function* deltaEncodeSteps(rgba, width, height, options) {
   if ((yield 1 / 3) && best) return best;
   if (options.screenEffort >= 3) {
     try {
-      const screen = yield* part(screenSteps(rgba, width, height, shape, options.colorSpace, {effort: options.screenEffort}), 1, 3);
+      const screen = yield* part(screenSteps(rgba, width, height, shape, options.colorSpace, {effort: options.screenEffort, deep: SCREEN}), 1, 3);
       if (screen && (!best || screen.length < best.length)) best = screen;
     } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
   }

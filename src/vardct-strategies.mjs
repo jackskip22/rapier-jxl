@@ -50,6 +50,7 @@ function basisT(size) {
   }
   return t;
 }
+export const scaledDCTBases = size => ({basis: basis(size), basisT: basisT(size)});
 export function scaledDCT(pixels, width, height, out = new Float64Array(width * height)) {
   const size = width * height, bt = basisT(width), by = basis(height);
   let tmp = dctRows.get(size);
@@ -124,8 +125,23 @@ export function inverseScaledDCT(coeffs, width, height) {
   return out;
 }
 
-export function smallTransform(pixels, id) {
-  const out = new Float64Array(64);
+const SMALL_ROWS = new Float64Array(32);
+function smallDCT(pixels, x0, y0, w, h, out) {
+  const bw = basis(w), bh = basis(h), tall = h >= w;
+  for (let y = 0; y < h; y++) for (let j = 0; j < w; j++) {
+    let a = 0;
+    for (let x = 0, at = (y0 + y) * 8 + x0; x < w; x++) a += pixels[at + x] * bw[j * w + x];
+    SMALL_ROWS[y * w + j] = a;
+  }
+  for (let v = 0; v < h; v++) for (let j = 0; j < w; j++) {
+    let s = 0;
+    for (let y = 0; y < h; y++) s += SMALL_ROWS[y * w + j] * bh[v * h + y];
+    out[tall ? j * h + v : v * w + j] = s;
+  }
+  return out;
+}
+const SMALL_PIECE = new Float64Array(32);
+export function smallTransform(pixels, id, out = new Float64Array(64)) {
   const cut = (x0, y0, w, h) => Float64Array.from({length: w * h}, (_, i) => pixels[(y0 + Math.floor(i / w)) * 8 + x0 + i % w]);
   const combineFour = () => {
     const a = out[0], b = out[1], c = out[8], d = out[9];
@@ -134,11 +150,11 @@ export function smallTransform(pixels, id) {
   };
   if (id === 1 || id === 3) {
     for (let by = 0; by < 2; by++) for (let bx = 0; bx < 2; bx++) {
-      const block = cut(bx * 4, by * 4, 4, 4);
       if (id === 3) {
-        const coeffs = scaledDCT(block, 4, 4);
+        const coeffs = smallDCT(pixels, bx * 4, by * 4, 4, 4, SMALL_PIECE);
         for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) out[(by + y * 2) * 8 + bx + x * 2] = coeffs[y * 4 + x];
       } else {
+        const block = cut(bx * 4, by * 4, 4, 4);
         let sum = 0;
         for (const value of block) sum += value;
         for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) if (x !== 1 || y !== 1)
@@ -163,7 +179,7 @@ export function smallTransform(pixels, id) {
   } else if (id === 12 || id === 13) {
     for (let half = 0; half < 2; half++) {
       const w = id === 12 ? 8 : 4, h = id === 12 ? 4 : 8;
-      const coeffs = scaledDCT(cut(id === 13 ? half * 4 : 0, id === 12 ? half * 4 : 0, w, h), w, h);
+      const coeffs = smallDCT(pixels, id === 13 ? half * 4 : 0, id === 12 ? half * 4 : 0, w, h, SMALL_PIECE);
       for (let y = 0; y < 4; y++) for (let x = 0; x < 8; x++) out[(half + y * 2) * 8 + x] = coeffs[y * 8 + x];
     }
     const a = out[0], b = out[8]; out[0] = (a + b) * .5; out[8] = (a - b) * .5;
@@ -181,6 +197,70 @@ export function smallTransform(pixels, id) {
     const a = out[0] * .25, b = out[1], c = out[8];
     out[0] = (a + b + 2 * c) * .25; out[1] = (a - b) * .5; out[8] = (a + b - 2 * c) * .25;
   }
+  return out;
+}
+
+const INV_SMALL_WORK = new Float64Array(64), INV_SMALL_SCRATCH = new Float64Array(64), INV_SMALL_PART = new Float64Array(32);
+export function inverseSmallTransform(coefficients, id, out = new Float64Array(64)) {
+  if (![1, 2, 3, 12, 13, 14, 15, 16, 17].includes(id) || coefficients.length < 64 || out.length < 64)
+    throw new RangeError('Invalid small JPEG XL transform.');
+  const work = INV_SMALL_WORK, scratch = INV_SMALL_SCRATCH, part = INV_SMALL_PART;
+  const copyBlock = (src, left, top, width, height) => {
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) out[(top + y) * 8 + left + x] = src[y * width + x];
+  };
+  for (let i = 0; i < 64; i++) work[i] = coefficients[i];
+  if (id <= 3) {
+    const combine = size => {
+      const half = size / 2;
+      for (let y = 0; y < half; y++) for (let x = 0; x < half; x++) {
+        const a = work[y * 8 + x], b = work[y * 8 + x + half];
+        const c = work[(y + half) * 8 + x], d = work[(y + half) * 8 + x + half];
+        const p = y * 2 * size + x * 2;
+        scratch[p] = a + b + c + d; scratch[p + 1] = a + b - c - d;
+        scratch[p + size] = a - b + c - d; scratch[p + size + 1] = a - b - c + d;
+      }
+      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) work[y * 8 + x] = scratch[y * size + x];
+    };
+    combine(2);
+    if (id === 2) { combine(4); combine(8); out.set(work); return out; }
+    for (let by = 0; by < 2; by++) for (let bx = 0; bx < 2; bx++) {
+      for (let k = 0; k < 16; k++) part[k] = work[(by + (k >> 2) * 2) * 8 + bx + (k & 3) * 2];
+      if (id === 3) copyBlock(inverseScaledDCT(part.subarray(0, 16), 4, 4), bx * 4, by * 4, 4, 4);
+      else {
+        let residual = 0;
+        for (let k = 1; k < 16; k++) residual += part[k];
+        const center = part[0] - residual / 16;
+        part[0] = part[5]; part[5] = 0;
+        for (let k = 0; k < 16; k++) part[k] += center;
+        copyBlock(part, bx * 4, by * 4, 4, 4);
+      }
+    }
+    return out;
+  }
+  if (id === 12 || id === 13) {
+    work[0] = coefficients[0] + coefficients[8]; work[8] = coefficients[0] - coefficients[8];
+    for (let half = 0; half < 2; half++) {
+      for (let k = 0; k < 32; k++) part[k] = work[((k >> 3) * 2 + half) * 8 + (k & 7)];
+      const w = id === 12 ? 8 : 4, h = id === 12 ? 4 : 8;
+      copyBlock(inverseScaledDCT(part, w, h), id === 13 ? half * 4 : 0, id === 12 ? half * 4 : 0, w, h);
+    }
+    return out;
+  }
+  const flipX = (id - 14) & 1, flipY = (id - 14) >> 1;
+  for (let k = 0; k < 16; k++) part[k] = work[(k >> 2) * 16 + (k & 3) * 2];
+  part[0] = 4 * (work[0] + work[1] + work[8]);
+  for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
+    const i = (flipY ? 3 - y : y) * 4 + (flipX ? 3 - x : x);
+    let value = 0;
+    for (let k = 0; k < 16; k++) value += part[k] * AFV_BASIS[i * 16 + k];
+    out[(flipY * 4 + y) * 8 + flipX * 4 + x] = value;
+  }
+  for (let k = 0; k < 16; k++) part[k] = work[(k >> 2) * 16 + (k & 3) * 2 + 1];
+  part[0] = work[0] - work[1] + work[8];
+  copyBlock(inverseScaledDCT(part.subarray(0, 16), 4, 4), (1 - flipX) * 4, flipY * 4, 4, 4);
+  for (let k = 0; k < 32; k++) part[k] = work[((k >> 3) * 2 + 1) * 8 + (k & 7)];
+  part[0] = work[0] - work[8];
+  copyBlock(inverseScaledDCT(part, 8, 4), 0, (1 - flipY) * 4, 8, 4);
   return out;
 }
 

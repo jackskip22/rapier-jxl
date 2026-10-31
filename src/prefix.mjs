@@ -3,25 +3,41 @@ import {BitWriter, floorLog2, ceilLog2} from './bits.mjs';
 
 const CODE_LENGTH_ORDER = [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 const CLCL_BITS = [2, 4, 3, 2, 2, 4], CLCL_CODE = [0, 7, 3, 2, 1, 15];
+const REV8 = Uint8Array.from({length: 256}, (_, b) => {
+  let out = 0, v = b;
+  for (let i = 0; i < 8; i++) { out = (out << 1) | (v & 1); v >>= 1; }
+  return out;
+});
+const reverseBits = (value, count) => ((REV8[value & 255] << 8) | REV8[(value >>> 8) & 255]) >>> (16 - count);
 
-export function codeLengths(freqs, limit) {
-  const lengths = new Uint8Array(freqs.length), used = [];
-  for (let i = 0; i < freqs.length; i++) if (freqs[i] > 0) used.push(i);
+const HUFF_WEIGHTS = new Float64Array(1024);
+const HUFF_PARENTS = new Int32Array(1024);
+const CANON_COUNTS = new Uint32Array(17);
+const CANON_NEXT = new Uint32Array(17);
+
+export function codeLengths(freqs, limit, used, size = freqs.length) {
+  const lengths = new Uint8Array(size);
+  if (!used) {
+    used = [];
+    for (let i = 0; i < size; i++) if (freqs[i] > 0) used.push(i);
+  }
   const count = used.length;
   if (!count) return lengths;
   if (count === 1) { lengths[used[0]] = 1; return lengths; }
-  const weights = new Array(count * 2 - 1), parents = new Array(count * 2 - 1);
+  const nodes = count * 2 - 1;
+  const weights = nodes <= 1024 ? HUFF_WEIGHTS : new Float64Array(nodes);
+  const parents = nodes <= 1024 ? HUFF_PARENTS : new Int32Array(nodes);
   for (let floor = 1; ; floor *= 2) {
     used.sort((a, b) => Math.max(freqs[a], floor) - Math.max(freqs[b], floor) || a - b);
     for (let i = 0; i < count; i++) weights[i] = Math.max(freqs[used[i]], floor);
     let li = 0, ii = count;
-    for (let next = count; next < weights.length; next++) {
+    for (let next = count; next < nodes; next++) {
       const a = li < count && (ii >= next || weights[li] <= weights[ii]) ? li++ : ii++;
       const b = li < count && (ii >= next || weights[li] <= weights[ii]) ? li++ : ii++;
       weights[next] = weights[a] + weights[b]; parents[a] = next; parents[b] = next;
     }
-    parents[parents.length - 1] = 0;
-    for (let i = parents.length - 2; i >= count; i--) parents[i] = parents[parents[i]] + 1;
+    parents[nodes - 1] = 0;
+    for (let i = nodes - 2; i >= count; i--) parents[i] = parents[parents[i]] + 1;
     let deepest = 0;
     for (let i = 0; i < count; i++) {
       const depth = parents[parents[i]] + 1;
@@ -38,14 +54,16 @@ function pushRun(tokens, extras, symbol, count, mask, shift) {
   for (let i = digits.length - 1; i >= 0; i--) { tokens.push(symbol); extras.push(digits[i]); }
 }
 
-function reverseBits(value, count) { let out = 0; for (let i = 0; i < count; i++) { out = (out << 1) | (value & 1); value >>= 1; } return out; }
-
 export function canonicalCodes(lengths) {
-  const counts = new Uint32Array(17), next = new Uint32Array(17), codes = new Uint16Array(lengths.length);
-  for (const length of lengths) counts[length]++;
+  const counts = CANON_COUNTS, next = CANON_NEXT, codes = new Uint16Array(lengths.length);
+  counts.fill(0);
+  for (let i = 0; i < lengths.length; i++) counts[lengths[i]]++;
   counts[0] = 0;
   for (let length = 1, code = 0; length <= 16; length++) { code = (code + counts[length - 1]) << 1; next[length] = code; }
-  for (let i = 0; i < lengths.length; i++) if (lengths[i]) codes[i] = reverseBits(next[lengths[i]]++, lengths[i]);
+  for (let i = 0; i < lengths.length; i++) {
+    const l = lengths[i];
+    if (l) codes[i] = reverseBits(next[l]++, l);
+  }
   return codes;
 }
 
@@ -54,21 +72,22 @@ export function buildCode(freqs) {
   code.codes = canonicalCodes(code.lengths);
   return code;
 }
-export function priceCode(freqs) {
-  const used = [];
-  for (let i = 0; i < freqs.length; i++) if (freqs[i] > 0) used.push(i);
+export function priceCode(freqs, used) {
+  if (!used) { used = []; for (let i = 0; i < freqs.length; i++) if (freqs[i] > 0) used.push(i); } else used = [...used];
   const count = used.length, alphabetSize = used[count - 1] + 1 || 1;
-  const lengths = count <= 4 ? new Uint8Array(alphabetSize) : codeLengths(freqs, 15).subarray(0, alphabetSize);
+  const lengths = count <= 4 ? new Uint8Array(alphabetSize) : codeLengths(freqs, 15, used, alphabetSize);
   let treeSelect = 0;
   if (count <= 4) {
     used.sort((a, b) => freqs[b] - freqs[a] || a - b);
     treeSelect = count === 4 && freqs[used[0]] > freqs[used[2]] + freqs[used[3]] ? 1 : 0;
     const depths = count < 2 ? [0] : count === 2 ? [1, 1] : count === 3 ? [1, 2, 2] : treeSelect ? [1, 2, 3, 3] : [2, 2, 2, 2];
-    used.forEach((symbol, index) => { lengths[symbol] = depths[index]; });
+    for (let index = 0; index < count; index++) lengths[used[index]] = depths[index];
     used.sort((a, b) => lengths[a] - lengths[b] || a - b);
   }
   return {alphabetSize, lengths, codes: null, simple: count && count <= 4 ? used : null, treeSelect};
 }
+
+function runEnd(lengths, i, last, value) { while (i <= last && lengths[i] === value) i++; return i; }
 
 export function writePrefixCode(w, code) {
   if (code.alphabetSize <= 1) return;
@@ -84,9 +103,7 @@ export function writePrefixCode(w, code) {
   while (last > 0 && !lengths[last]) last--;
   let previous = 8;
   for (let i = 0; i <= last;) {
-    const value = lengths[i];
-    let run = 1;
-    while (i + run <= last && lengths[i + run] === value) run++;
+    const value = lengths[i], run = runEnd(lengths, i + 1, last, value) - i;
     let repeats = run;
     if (value && value !== previous) { tokens.push(value); extras.push(0); repeats--; previous = value; }
     if (repeats < 3) for (let k = 0; k < repeats; k++) { tokens.push(value); extras.push(0); }
@@ -139,16 +156,24 @@ export function writeHybrid(w, code, config, value, base = 0) {
   if (scratch[1]) w.write(scratch[1], scratch[2]);
 }
 
+const CODED_MAP_LITERAL = uintConfig(8), CODED_MAP_LENGTH = uintConfig(4), CODED_MAP_DISTANCE = uintConfig(0);
+const ONE_DISTANCE_CODE = buildCode(Uint32Array.of(1));
+const CODED_MAP_FREQ = new Uint32Array(257);
+let CODED_PIECE_IDX = new Uint16Array(4096);
+let CODED_PIECE_COPY = new Uint32Array(4096);
+
 export function writeContextMap(w, contextMap) {
   let widest = 0;
-  for (const index of contextMap) widest = Math.max(widest, index);
+  for (let i = 0; i < contextMap.length; i++) if (contextMap[i] > widest) widest = contextMap[i];
   const bits = widest ? ceilLog2(widest + 1) : 0;
   if (bits <= 3) {
-    const coded = new BitWriter(64);
-    if (bits && contextMap.length >= 64) writeCodedContextMap(coded, contextMap, widest);
-    if (bits && contextMap.length >= 64 && coded.bitLength < 3 + bits * contextMap.length) { w.append(coded); return; }
+    if (bits && contextMap.length >= 64) {
+      const coded = new BitWriter(64);
+      writeCodedContextMap(coded, contextMap, widest);
+      if (coded.bitLength < 3 + bits * contextMap.length) { w.append(coded); return; }
+    }
     w.write(1, 1); w.write(2, bits);
-    if (bits) for (const index of contextMap) w.write(bits, index);
+    if (bits) for (let i = 0; i < contextMap.length; i++) w.write(bits, contextMap[i]);
     return;
   }
   writeCodedContextMap(w, contextMap, widest);
@@ -156,25 +181,39 @@ export function writeContextMap(w, contextMap) {
 
 function writeCodedContextMap(w, contextMap, widest) {
   w.write(1, 0); w.write(1, 0);
-  const config = uintConfig(8), length = uintConfig(4), minLength = 7, minSymbol = 224;
-  const runs = contextMap.length >= 64 && widest < minSymbol, freqs = new Uint32Array(runs ? minSymbol + 33 : widest + 1);
-  const pieces = [];
+  const config = CODED_MAP_LITERAL, length = CODED_MAP_LENGTH, minLength = 7, minSymbol = 224;
+  const runs = contextMap.length >= 64 && widest < minSymbol, fLen = runs ? minSymbol + 33 : widest + 1;
+  const freqs = fLen <= 257 ? CODED_MAP_FREQ.subarray(0, fLen) : new Uint32Array(fLen);
+  freqs.fill(0);
+  if (CODED_PIECE_IDX.length < contextMap.length) {
+    CODED_PIECE_IDX = new Uint16Array(contextMap.length);
+    CODED_PIECE_COPY = new Uint32Array(contextMap.length);
+  }
+  const pieceIdx = CODED_PIECE_IDX, pieceCopy = CODED_PIECE_COPY;
+  let pCount = 0;
   for (let i = 0; i < contextMap.length;) {
+    const v = contextMap[i];
     let run = 1;
-    while (runs && i + run < contextMap.length && contextMap[i + run] === contextMap[i]) run++;
-    if (run >= minLength + 1) { pieces.push([contextMap[i], run - 1]); freqs[contextMap[i]]++; countToken(length, run - 1 - minLength, freqs, minSymbol); i += run; }
-    else { for (let k = 0; k < run; k++) { pieces.push([contextMap[i], 0]); freqs[contextMap[i]]++; } i += run; }
+    while (runs && i + run < contextMap.length && contextMap[i + run] === v) run++;
+    if (run >= minLength + 1) {
+      pieceIdx[pCount] = v; pieceCopy[pCount++] = run - 1;
+      freqs[v]++; countToken(length, run - 1 - minLength, freqs, minSymbol);
+      i += run;
+    } else {
+      for (let k = 0; k < run; k++) { pieceIdx[pCount] = v; pieceCopy[pCount++] = 0; freqs[v]++; }
+      i += run;
+    }
   }
   const code = buildCode(freqs);
   if (!runs) {
     writeHistograms(w, {contextMap: new Uint8Array(1), histograms: [{config, code}]});
-    for (const [index] of pieces) writeHybrid(w, code, config, index);
+    for (let i = 0; i < pCount; i++) writeHybrid(w, code, config, pieceIdx[i]);
     return;
   }
-  const distance = new Uint32Array(1); distance[0] = 1;
-  writeHistograms(w, {lz77: {minSymbol, minLength, lengthConfig: length}, contextMap: new Uint8Array([1, 0]), histograms: [{config: uintConfig(0), code: buildCode(distance)}, {config, code}]});
-  for (const [index, copy] of pieces) {
-    writeHybrid(w, code, config, index);
+  writeHistograms(w, {lz77: {minSymbol, minLength, lengthConfig: length}, contextMap: new Uint8Array([1, 0]), histograms: [{config: CODED_MAP_DISTANCE, code: ONE_DISTANCE_CODE}, {config, code}]});
+  for (let i = 0; i < pCount; i++) {
+    const index = pieceIdx[i], copy = pieceCopy[i];
+    w.write(code.lengths[index], code.codes[index]);
     if (copy) writeHybrid(w, code, length, copy - minLength, minSymbol);
   }
 }

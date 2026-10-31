@@ -138,7 +138,8 @@ export function validateAtlasPlan(animation, plan) {
   if (width * height > 1048576) throw fault('JXL_SIZE', 'An animation atlas has at most 1,048,576 pixels.');
   if (!Array.isArray(plan.patches) || !plan.patches.length || plan.patches.length > 4096)
     throw fault('JXL_INPUT', 'An animation atlas has 1 to 4096 source rectangles.');
-  const byData = new Map(); let total = 0;
+  const byData = new Map(), budget = 4 * animation.width * animation.height * animation.frames.length;
+  let total = 0, compared = 0;
   for (const entry of plan.patches) {
     if (!entry || typeof entry !== 'object') throw fault('JXL_INPUT', 'An atlas patch is an object.');
     const sx = whole(entry.sourceX, 0, width - 1, 'Atlas sourceX'), sy = whole(entry.sourceY, 0, height - 1, 'Atlas sourceY');
@@ -147,6 +148,8 @@ export function validateAtlasPlan(animation, plan) {
     if (!Array.isArray(entry.positions) || !entry.positions.length || entry.positions.length > MAX_POSITIONS - total)
       throw fault('JXL_INPUT', 'Atlas positions are nonempty, with at most 262144 positions in the plan.');
     total += entry.positions.length;
+    compared += w * h * entry.positions.length;
+    if (compared > budget) throw fault('JXL_INPUT', 'Atlas positions cover more than four times the animation; supply fewer or smaller rectangles.');
     for (const position of entry.positions) {
       if (!position || typeof position !== 'object') throw fault('JXL_INPUT', 'An atlas position supplies frame, x and y.');
       const frame = whole(position.frame, 0, animation.frames.length - 1, 'Atlas frame');

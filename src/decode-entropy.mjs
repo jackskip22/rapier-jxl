@@ -2,9 +2,8 @@
 import {requireDecode} from './decode-bits.mjs';
 import {ceilLog2, canonicalCodes, LOG_LENGTHS, LOG_CODES, reverseAlias, SCREEN_SPECIAL_DISTANCES, COEFF_NUM_NONZERO_CONTEXT, COEFF_FREQ_CONTEXT} from './decode-tables.mjs';
 
-const POW2 = [1];
-for (let i = 1; i <= 32; i++) POW2.push(POW2[i - 1] * 2);
 const WINDOW = 1048576, MASK = WINDOW - 1;
+const HISTORY_POOL = [new Uint32Array(WINDOW)];
 const LENGTH_ORDER = [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 const var8 = r => r.read(1) ? (n => (1 << n) + r.read(n))(r.read(3)) : 0;
 
@@ -16,20 +15,25 @@ function prefixTable(lengths, explicit) {
     max = Math.max(max, n); count++; only = i; space += 32768 >>> n;
   }
   requireDecode(count > 0 && (count === 1 || space === 32768), 'Invalid JPEG XL prefix tree.');
-  if (count === 1) return {single: only, bits: 0, table: null};
+  if (count === 1) return {single: only, bits: 0, mask: 0, table: null};
   const codes = explicit || canonicalCodes(lengths), table = new Uint32Array(1 << max);
   for (let i = 0; i < lengths.length; i++) if (lengths[i]) {
     const n = lengths[i], entry = i * 32 + n;
     for (let at = codes[i]; at < table.length; at += 1 << n) table[at] = entry;
   }
-  return {single: -1, bits: max, table};
+  return {single: -1, bits: max, mask: (1 << max) - 1, table};
 }
 
 function prefixToken(r, code) {
   if (code.single >= 0) return code.single;
-  const entry = code.table[r.peek(code.bits)];
-  requireDecode((entry & 31) !== 0, 'Invalid JPEG XL prefix symbol.', r);
-  r.skip(entry & 31);
+  const bit = r.bit, at = bit < 4294967296 ? bit >>> 3 : Math.floor(bit / 8), shift = bit & 7, b = r.buf;
+  const word = (b[at] >>> shift) | (b[at + 1] << (8 - shift)) | (b[at + 2] << (16 - shift));
+  const entry = code.table[word & code.mask], len = entry & 31;
+  if (!len || bit + len > r.bytes.length * 8) {
+    requireDecode(len !== 0, 'Invalid JPEG XL prefix symbol.', r);
+    requireDecode(false, 'Truncated JPEG XL data.', r);
+  }
+  r.bit = bit + len;
   return entry >>> 5;
 }
 export {prefixToken as readPrefixSymbol};
@@ -39,7 +43,7 @@ const ANS_LOG_CODE = prefixTable([...LOG_LENGTHS, 7], [...LOG_CODES, 65]);
 
 export function readPrefixCode(r, size) {
   requireDecode(Number.isInteger(size) && size >= 1 && size <= 32768, 'Invalid JPEG XL alphabet.', r);
-  if (size === 1) return {single: 0, bits: 0, table: null};
+  if (size === 1) return {single: 0, bits: 0, mask: 0, table: null};
   const form = r.read(2), lengths = new Uint8Array(size);
   if (form === 1) {
     const count = r.read(2) + 1, symbols = [];
@@ -48,7 +52,7 @@ export function readPrefixCode(r, size) {
       requireDecode(symbol < size && !symbols.includes(symbol), 'Invalid JPEG XL simple prefix tree.', r);
       symbols.push(symbol);
     }
-    if (count === 1) return {single: symbols[0], bits: 0, table: null};
+    if (count === 1) return {single: symbols[0], bits: 0, mask: 0, table: null};
     const depths = count === 2 ? [1, 1] : count === 3 ? [1, 2, 2] : r.read(1) ? [1, 2, 3, 3] : [2, 2, 2, 2];
     for (let i = 0; i < count; i++) lengths[symbols[i]] = depths[i];
   } else {
@@ -93,16 +97,29 @@ export function readUintConfig(r, logAlphabet) {
   requireDecode(msb <= split, 'Invalid JPEG XL integer high bits.', r);
   const lsb = split === logAlphabet ? 0 : r.read(ceilLog2(split - msb + 1));
   requireDecode(msb + lsb <= split, 'Invalid JPEG XL integer low bits.', r);
-  return {split, msb, lsb};
+  const splitToken = 1 << split;
+  return {split, msb, lsb, splitToken, fastLimit: splitToken};
 }
 
 export function readHybridUint(r, token, {split, msb, lsb}) {
-  if (token < POW2[split]) return token;
-  token -= POW2[split];
-  const bits = Math.floor(token / POW2[msb + lsb]) + split - msb - lsb;
-  requireDecode(bits >= 0 && bits + msb + lsb <= 31, 'JPEG XL integer exceeds 32 bits.', r);
-  const high = POW2[msb] + (Math.floor(token / POW2[lsb]) & (POW2[msb] - 1));
-  return (high * POW2[bits] + r.read(bits)) * POW2[lsb] + (token & (POW2[lsb] - 1));
+  const splitToken = 1 << split;
+  if (token < splitToken) return token;
+  token -= splitToken;
+  const msbLsb = msb + lsb;
+  const bits = (token >>> msbLsb) + split - msbLsb;
+  if (!(bits >= 0 && bits + msbLsb <= 31)) requireDecode(false, 'JPEG XL integer exceeds 32 bits.', r);
+  const high = (1 << msb) | ((token >>> lsb) & ((1 << msb) - 1));
+  let extra = 0;
+  if (bits > 0) {
+    const bit = r.bit;
+    if (bit + bits > r.bytes.length * 8) requireDecode(false, 'Truncated JPEG XL data.', r);
+    const at = bit < 4294967296 ? bit >>> 3 : Math.floor(bit / 8), shift = bit & 7, b = r.buf;
+    let word = (b[at] >>> shift) | (b[at + 1] << (8 - shift)) | (b[at + 2] << (16 - shift)) | (b[at + 3] << (24 - shift));
+    if (shift) word |= b[at + 4] << (32 - shift);
+    r.bit = bit + bits;
+    extra = word & ((1 << bits) - 1);
+  }
+  return ((((high << bits) | extra) << lsb) | (token & ((1 << lsb) - 1))) >>> 0;
 }
 
 function readDistribution(r, logAlphabet) {
@@ -124,7 +141,7 @@ function readDistribution(r, logAlphabet) {
     while (log < 3 && r.read(1)) log++;
     const precision = r.read(log) + (1 << log) - 1, size = var8(r) + 3;
     requireDecode(precision <= 13 && size <= limit, 'Invalid JPEG XL ANS histogram.', r);
-    const logs = new Uint8Array(size), repeats = new Uint16Array(size);
+    const logs = new Uint8Array(size), repeats = new Uint16Array(size + 1);
     let omit = -1, highest = -1;
     for (let i = 0; i < size;) {
       const value = prefixToken(r, ANS_LOG_CODE);
@@ -149,7 +166,7 @@ function readDistribution(r, logAlphabet) {
         const code = logs[i] - 1;
         if (i !== omit && code >= 0) {
           const bits = Math.max(0, Math.min(code, precision - ((12 - code) >> 1)));
-          counts[i] = (1 << code) + r.read(bits) * (1 << (code - bits));
+          counts[i] = (1 << code) + (r.read(bits) << (code - bits));
           total += counts[i];
         }
         i++;
@@ -216,7 +233,11 @@ export function readEntropy(r, contexts, options = {}) {
   let count = 0;
   for (const value of map) count = Math.max(count, value + 1);
   const prefix = !!r.read(1), logAlphabet = prefix ? 15 : r.read(2) + 5;
-  const configs = Array.from({length: count}, () => readUintConfig(r, logAlphabet));
+  const configs = Array.from({length: count}, () => {
+    const cfg = readUintConfig(r, logAlphabet);
+    if (lz && minimum < cfg.fastLimit) cfg.fastLimit = minimum;
+    return cfg;
+  });
   let codes;
   if (prefix) {
     const sizes = configs.map(() => r.read(1) ? (n => 1 + (1 << n) + r.read(n))(r.read(4)) : 1);
@@ -238,13 +259,13 @@ class EntropyStream {
     this.left = 0;
     this.distance = 0;
     this.history = null;
-    this.historySize = Math.min(WINDOW, Math.max(1, values));
     this.finished = false;
   }
   start(reader, options) { return new EntropyStream(reader, this.model, options); }
   begin() {
     requireDecode(!this.finished, 'JPEG XL entropy stream is finished.', this.reader);
     if (!this.model.prefix && this.state === null) this.state = this.reader.read(32);
+    if (this.model.lz) this.history ??= HISTORY_POOL.pop() ?? new Uint32Array(WINDOW);
     return this;
   }
   token(cluster) {
@@ -253,8 +274,23 @@ class EntropyStream {
     if (this.state === null || this.finished) this.begin();
     const at = this.state & 4095, symbol = code.symbols[at];
     this.state = code.counts[symbol] * (this.state >>> 12) + code.offsets[at];
-    if (this.state < 65536) this.state = this.state * 65536 + this.reader.read(16);
+    if (this.state < 65536) this.state = ((this.state << 16) | this.reader.read(16)) >>> 0;
     return symbol;
+  }
+  lzRun(r, m, token, distanceMultiplier) {
+    this.left = readHybridUint(r, token - m.minimum, m.lengthConfig) + m.minLength - 1;
+    requireDecode(this.position > 0 && this.left <= this.remaining && this.left < 0xffffffff,
+      'Invalid JPEG XL LZ77 run.', r);
+    const dc = m.map[m.contexts], raw = readHybridUint(r, this.token(dc), m.configs[dc]);
+    let distance = raw + 1;
+    if (distanceMultiplier) {
+      requireDecode(Number.isSafeInteger(distanceMultiplier) && distanceMultiplier > 0,
+        'Invalid JPEG XL spatial distance.', r);
+      distance = raw < 120 ? Math.max(1, SCREEN_SPECIAL_DISTANCES[2 * raw] +
+        distanceMultiplier * SCREEN_SPECIAL_DISTANCES[2 * raw + 1]) : raw - 119;
+    }
+    this.distance = Math.min(distance, this.position, WINDOW);
+    return this.history[(this.position - this.distance) & MASK];
   }
   read(context, distanceMultiplier = this.distanceMultiplier) {
     const m = this.model, r = this.reader;
@@ -262,34 +298,22 @@ class EntropyStream {
       requireDecode(false, 'Invalid JPEG XL entropy read.', r);
     this.remaining--;
     if (!m.lz) {
-      const cluster = m.map[context];
+      const cluster = m.map[context], token = this.token(cluster), cfg = m.configs[cluster];
       this.position++;
-      return readHybridUint(r, this.token(cluster), m.configs[cluster]);
+      return token < cfg.splitToken ? token : readHybridUint(r, token, cfg);
     }
-    if (!this.history) this.history = new Uint32Array(this.historySize);
+    this.history ??= HISTORY_POOL.pop() ?? new Uint32Array(WINDOW);
     let value;
     if (this.left) {
       this.left--;
       value = this.history[(this.position - this.distance) & MASK];
     } else {
-      const cluster = m.map[context], token = this.token(cluster);
-      if (m.lz && token >= m.minimum) {
-        this.left = readHybridUint(r, token - m.minimum, m.lengthConfig) + m.minLength - 1;
-        requireDecode(this.position > 0 && this.left <= this.remaining && this.left < 0xffffffff,
-          'Invalid JPEG XL LZ77 run.', r);
-        const dc = m.map[m.contexts], raw = readHybridUint(r, this.token(dc), m.configs[dc]);
-        let distance = raw + 1;
-        if (distanceMultiplier) {
-          requireDecode(Number.isSafeInteger(distanceMultiplier) && distanceMultiplier > 0,
-            'Invalid JPEG XL spatial distance.', r);
-          distance = raw < 120 ? Math.max(1, SCREEN_SPECIAL_DISTANCES[2 * raw] +
-            distanceMultiplier * SCREEN_SPECIAL_DISTANCES[2 * raw + 1]) : raw - 119;
-        }
-        this.distance = Math.min(distance, this.position, WINDOW);
-        value = this.history[(this.position - this.distance) & MASK];
-      } else value = readHybridUint(r, token, m.configs[cluster]);
+      const cluster = m.map[context], token = this.token(cluster), cfg = m.configs[cluster];
+      if (token < cfg.fastLimit) value = token;
+      else if (token >= m.minimum) value = this.lzRun(r, m, token, distanceMultiplier);
+      else value = token < cfg.splitToken ? token : readHybridUint(r, token, cfg);
     }
-    if (this.history) this.history[this.position & MASK] = value;
+    this.history[this.position & MASK] = value;
     this.position++;
     return value;
   }
@@ -305,8 +329,9 @@ class EntropyStream {
       this.remaining--; this.position++;
       const cluster = map[context], code = codes[cluster], at = state & 4095, symbol = code.symbols[at];
       state = code.counts[symbol] * (state >>> 12) + code.offsets[at];
-      if (state < 65536) state = state * 65536 + r.read(16);
-      const token = readHybridUint(r, symbol, configs[cluster]), value = token & 1 ? -(token + 1) / 2 : token / 2;
+      if (state < 65536) state = ((state << 16) | r.read(16)) >>> 0;
+      const cfg = configs[cluster], token = symbol < cfg.splitToken ? symbol : readHybridUint(r, symbol, cfg);
+      const value = (token >>> 1) ^ -(token & 1);
       const index = order[k], sum = values[index] + value * scale;
       if (!(sum >= -2147483648 && sum <= 2147483647)) { this.state = state; requireDecode(false, 'JPEG XL coefficient overflows its range.'); }
       values[index] = sum; previous = value !== 0 ? 1 : 0; remaining -= previous;
@@ -319,6 +344,10 @@ class EntropyStream {
     requireDecode(this.left === 0 && (this.model.prefix || this.state === 0x130000),
       'Invalid JPEG XL entropy final state.', this.reader);
     this.finished = true;
+    if (this.history && this.history.length === WINDOW && HISTORY_POOL.length < 4) {
+      HISTORY_POOL.push(this.history);
+      this.history = null;
+    }
   }
 }
 

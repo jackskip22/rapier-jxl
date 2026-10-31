@@ -2,6 +2,10 @@
 import type {Bytes} from './index.mjs';
 
 export interface MetadataOptions {
+  /** Optional full encoded input-size limit, enforced before copying (JXL_SIZE on refusal). */
+  maxBytes?: number;
+  /** Maximum accepted input boxes. Defaults to 65,536. */
+  maxBoxes?: number;
   /** Raw TIFF bytes, beginning with II or MM; no Exif\0\0 or JPEG APP1 header. */
   exif?: Uint8Array | null | undefined;
   /** XMP packet as a UTF-8 string or its original UTF-8 bytes. */
@@ -17,6 +21,10 @@ export interface CompressedMetadataOptions extends MetadataOptions {
   compress?: BrotliCodec;
 }
 export interface MetadataReadOptions {
+  /** Optional full encoded input-size limit, enforced before copying (JXL_SIZE on refusal). */
+  maxBytes?: number;
+  /** Maximum input boxes. Defaults to 65,536. */
+  maxBoxes?: number;
   /** Optional positive safe-integer budget for combined decoded metadata, 64 MiB (67108864) by default. Beyond it the
    * read is refused with JXL_SIZE. */
   maxDecodedBytes?: number;
@@ -40,6 +48,6 @@ export function withMetadata(bytes: Uint8Array, options?: MetadataOptions): Byte
 /** withMetadata with optional brob compression. Inputs are captured before the first asynchronous codec call. */
 export function withCompressedMetadata(bytes: Uint8Array, options?: CompressedMetadataOptions): Promise<Bytes>;
 /** Extract plain metadata with owned buffers, retaining known compressed metadata in compressed. */
-export function readMetadata(bytes: Uint8Array): Metadata;
+export function readMetadata(bytes: Uint8Array, options?: Pick<MetadataReadOptions, 'maxBytes' | 'maxBoxes' | 'maxDecodedBytes'>): Metadata;
 /** Extract plain and compressed metadata with owned buffers; compressed is empty on success. */
 export function readMetadataAsync(bytes: Uint8Array, options?: MetadataReadOptions): Promise<Metadata>;

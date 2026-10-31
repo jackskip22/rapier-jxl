@@ -7,6 +7,7 @@ import {coefficientPlanes, epfInverseSigma, inverseBasis, half, rcLlfFromDC} fro
 import {TRANSFORMS} from './vardct-strategies.mjs';
 import {SRGB_TO_LINEAR} from './ssimulacra2.mjs';
 import {gpuSetup} from './gpu-setup.mjs';
+import {gpuPipelineSet} from './gpu-pipelines.mjs';
 
 const GR_WG = 128, GR_CORE = 1024, GR_MARGIN = 128;
 const grF = v => { const s = Math.fround(v).toString(); return /[.eE]/.test(s) ? s : s + '.0'; };
@@ -143,6 +144,7 @@ fn recon(q: i32, c: u32) -> f32 {
 };
 
 export const GR_REFERENCE_BUDGET = 0;
+const grPipelines = gpuPipelineSet(GR_SHADERS);
 
 export class GpuMeasure {
   static async create(device, rgba, width, height, {tile = GR_CORE, keepReference = false, referenceBytes = 0, signal} = {}) {
@@ -152,10 +154,12 @@ export class GpuMeasure {
       throw new RangeError('GPU kept references must be a boolean or nonnegative tile count.');
     const self = new GpuMeasure();
     return gpuSetup(async () => {
+      const [pipelines, butteraugli] = await Promise.all([grPipelines(device), GpuButteraugli.prepare(device)]);
+      if (self.destroyed) throw Object.assign(new Error('GPU metric owner was destroyed during setup.'), {code: 'JXL_GPU'});
       device.pushErrorScope('validation'); device.pushErrorScope('out-of-memory');
       let remaining = 2;
       try {
-        self.init(device, rgba, width, height, tile);
+        self.init(device, rgba, width, height, tile, pipelines, butteraugli);
         const setBytes = self.ba.levels.reduce((a, lv) => a + 12 * Math.max(16, Math.ceil(lv.n / 4) * 16), 0);
         const requested = keepReference === true ? self.tiles.length : keepReference === false ? 0 : keepReference;
         const keep = Math.min(self.tiles.length, requested, Math.floor(referenceBytes / setBytes));
@@ -191,7 +195,7 @@ export class GpuMeasure {
     return this.destroyed ? 0 : [this, this.ba, this.s2, this.native].reduce((n, o) => n + (o?.ring?.data?.byteLength ?? 0), 0);
   }
 
-  init(device, rgba, width, height, tile) {
+  init(device, rgba, width, height, tile, pipelines, butteraugli) {
     this.rgba = rgba; this.destroyed = false; this.measuring = false;
     this.stats = {gpuProbes: 0, failures: 0};
     const lossState = this.lossState = {info: null};
@@ -205,10 +209,9 @@ export class GpuMeasure {
     }
     const maxW = Math.max(...this.tiles.map(t => t.rw)), maxH = Math.max(...this.tiles.map(t => t.rh));
     const PW = Math.ceil(maxW / 8) * 8, PH = Math.ceil(maxH / 8) * 8;
-    this.ba = new GpuButteraugli(); this.ba.init(device, maxW, maxH);
+    this.ba = new GpuButteraugli(); this.ba.init(device, maxW, maxH, butteraugli);
     this.sharedReference = this.ba.levels.map(lv => lv.ref);
-    this.pipelines = {};
-    for (const [name, code] of Object.entries(GR_SHADERS)) this.pipelines[name] = device.createComputePipeline({layout: 'auto', compute: {module: device.createShaderModule({code}), entryPoint: 'main'}});
+    this.pipelines = pipelines;
     const usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
     this.buffers = [];
     const buffer = bytes => { const b = device.createBuffer({size: Math.max(16, Math.ceil(bytes / 16) * 16), usage}); this.buffers.push(b); return b; };
@@ -351,8 +354,11 @@ export class GpuMeasure {
       if (this.destroyed) { child?.destroy(); throw Object.assign(new Error('GPU metric owner was destroyed during setup.'), {code: 'JXL_GPU'}); }
       this.native = child;
     }
-    if (wantS2 && !native && this.s2 === undefined)
-      this.s2 = GpuSsimulacra2Measure.fits(this.device, this.width, this.height) ? new GpuSsimulacra2Measure(this.device, this.width, this.height, this.reference) : null;
+    if (wantS2 && !native && this.s2 === undefined) {
+      const child = GpuSsimulacra2Measure.fits(this.device, this.width, this.height) ? await GpuSsimulacra2Measure.create(this.device, this.width, this.height, this.reference) : null;
+      if (this.destroyed) { child?.destroy(); throw Object.assign(new Error('GPU metric owner was destroyed during setup.'), {code: 'JXL_GPU'}); }
+      this.s2 = child;
+    }
     const s2 = wantS2 ? (native ? this.native : this.s2) : null;
     const onGpu = this.uploadLevels(image);
     const {width, height} = this, {planes, cells, W: planeWidth, stride} = onGpu || coefficientPlanes(image), sigma = image.epf ? epfInverseSigma(image) : null;

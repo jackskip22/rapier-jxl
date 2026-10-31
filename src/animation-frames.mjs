@@ -6,11 +6,14 @@ import {admitSampleFormat} from './admit-samples.mjs';
 import {admitEffort} from './effort-level.mjs';
 import {job} from './admit.mjs';
 import {effortJob} from './effort-job.mjs';
+import {photoAnsSteps} from './photo-v6-blocks.mjs';
+import {EXACT_LADDER} from './exact-ladder.mjs';
 import {inspectPixels, shapeFloors} from './lossless.mjs';
 import {photoXYBSteps, preferXYB} from './photo-xyb.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {admitPhotoFilter} from './photo-job.mjs';
+import {V6} from './photo-v6.mjs';
 import {readStill, metadataKey, writeAnimatedImageHeader, writeAnimatedFrame, BLEND_MODES} from './framing.mjs';
 import {checkSignal} from './async-job.mjs';
 
@@ -47,7 +50,7 @@ export function* animationSteps(a, shared = null) {
   const {width, height, frames, samples, quality} = a;
   let first = frames.findIndex(frame => frame.duration > 0);
   if (first < 0) first = frames.length - 1;
-  const mode = yield* frameMode(a, frames[first].data);
+  const mode = yield* frameMode(a, frames[first].data, frames);
   const shown = [];
   let previous = null, source = null;
   const tolerance = mode === 'modular' ? null : toleranceOf(quality);
@@ -130,13 +133,15 @@ export function* animationSteps(a, shared = null) {
 
 let measuredSearch;
 export function useMeasuredSearch(search) { measuredSearch = search; }
-const frameEncodeSteps = (data, width, height, options) => job(effortJob(data, width, height, options, false, undefined, measuredSearch));
+const frameEncodeSteps = (data, width, height, options) => job(effortJob(data, width, height, options, false, undefined, measuredSearch, photoAnsSteps, EXACT_LADDER));
 
-function* frameMode(a, first) {
+function* frameMode(a, first, frames) {
   const {width, height, quality, samples, photo, colorSpace} = a;
   if (quality >= 100 || !samples.native8 || photo === false) return 'modular';
-  const dct = colorSpace === 'srgb' && preferXYB(first, width, height) ? 'xyb' : 'ycbcr';
-  if (photo === true || !inspectPixels(first, width, height).palette) return dct;
+  const rich = photo === true ? first
+    : frames.find(({data, duration}, i) => (duration > 0 || i === frames.length - 1) && !inspectPixels(data, width, height).palette)?.data;
+  const dct = colorSpace === 'srgb' && preferXYB(rich ?? first, width, height) ? 'xyb' : 'ycbcr';
+  if (rich) return dct;
   let alpha = false;
   for (let i = 3; i < first.length && !alpha; i += 4) alpha = first[i] !== 255;
   const shrink = steps => (function* () { let step, reply; while (!(step = steps.next(reply)).done) reply = yield 0.01 + 0.01 * step.value; return step.value; })();
@@ -154,7 +159,7 @@ export function* partSteps(coder, crop, w, h) {
 
 function* frameSteps(a, mode, crop, w, h, floor) {
   if (mode === 'modular') return yield* frameEncodeSteps(crop, w, h, a.still);
-  const coefficients = yield* part(mode === 'xyb' ? photoXYBSteps(crop, w, h, a.quality, {filter: a.filter})
+  const coefficients = yield* part(mode === 'xyb' ? photoXYBSteps(crop, w, h, a.quality, {...V6, filter: a.filter, fast: true})
     : photoCoefficientSteps(crop, w, h, a.quality, a.colorSpace), 0, 2);
   coefficients.alpha = floor.alpha ? crop : null;
   return yield* part(coefficientAnsSteps(coefficients, a.effort), 1, 2);

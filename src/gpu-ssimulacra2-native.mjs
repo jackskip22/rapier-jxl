@@ -183,6 +183,14 @@ function nsScales(width, height) {
   return scales;
 }
 
+const nsCompiled = new WeakMap();
+function nsPipelines(device) {
+  let made = nsCompiled.get(device);
+  if (!made) nsCompiled.set(device, made = Object.fromEntries(Object.entries(NS_SHADERS).map(([name, code]) =>
+    [name, device.createComputePipeline({layout: 'auto', compute: {module: device.createShaderModule({code}), entryPoint: 'main'}})])));
+  return made;
+}
+
 export class GpuNativeSsimulacra2 {
   static async create(device, rgba, width, height) {
     const limit = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize);
@@ -225,8 +233,7 @@ export class GpuNativeSsimulacra2 {
     for (const sc of this.scales) { sc.slot = slots; sc.groups = Math.ceil(sc.w * sc.h / NS_WG); slots += 3 * sc.groups; }
     this.slots = slots; this.partial = buffer(slots * 6 * 4);
     this.read = device.createBuffer({size: this.partial.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST});
-    this.pipelines = Object.fromEntries(Object.entries(NS_SHADERS).map(([name, code]) =>
-      [name, device.createComputePipeline({layout: 'auto', compute: {module: device.createShaderModule({code}), entryPoint: 'main'}})]));
+    this.pipelines = nsPipelines(device);
     this.ring = new UniformRing(device, 1024);
     this.referenceReady = false;
   }
@@ -244,6 +251,12 @@ export class GpuNativeSsimulacra2 {
 
   place(pass, rgb, t) {
     this.run(pass, 'place', [t.cw, t.ch], [...rgb, this.th, this.dist], {i0: t.rw, i1: this.width, i2: (t.x - t.rx) | (t.y - t.ry) << 16, i3: t.x | t.y << 16});
+  }
+
+  scoreRgba(rgba) {
+    const n = this.width * this.height;
+    this.device.queue.writeBuffer(this.dist, 0, rgba.buffer, rgba.byteOffset, n * 4);
+    return this.score();
   }
 
   async score() {
@@ -301,3 +314,21 @@ export class GpuNativeSsimulacra2 {
   destroy() { for (const b of this.buffers ?? []) b.destroy(); this.buffers = []; this.read?.destroy(); this.ring?.destroy(); }
 }
 
+export const gpuS2Stats = {scores: 0};
+export async function gpuS2Native(device, {rgba, width, height, decoded}) {
+  const measurer = await GpuNativeSsimulacra2.create(device, rgba, width, height);
+  if (!measurer) return null;
+  device.pushErrorScope('validation'); device.pushErrorScope('out-of-memory');
+  let remaining = 2, score;
+  try {
+    ({score} = await measurer.scoreRgba(decoded));
+    remaining--; const memory = await device.popErrorScope();
+    remaining--; const validation = await device.popErrorScope();
+    if (memory || validation || !Number.isFinite(score)) return null;
+  } finally {
+    while (remaining-- > 0) await device.popErrorScope().catch(() => null);
+    measurer.destroy();
+  }
+  gpuS2Stats.scores++;
+  return {score};
+}

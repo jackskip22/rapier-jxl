@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {kernelHooks} from './kernel-hooks.mjs';
+import {calibration} from './quality-calibration.mjs';
 
 const COSINES = Float64Array.of(0.3535533905932738, 0.3535533905932738, 0.3535533905932738, 0.3535533905932738,
   0.3535533905932738, 0.3535533905932738, 0.3535533905932738, 0.3535533905932738, 0.4903926402016152,
@@ -102,7 +103,7 @@ export function dctBlocks(data, width, height, gray = false) {
 
 export function* photoCoefficientSteps(data, width, height, quality, colorSpace, gray = false) {
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), quantScale = 16;
-  const distance = quality >= 30 ? 0.1 + (100 - quality) * 0.09 : 53 / 3000 * quality * quality - 23 / 20 * quality + 25;
+  const distance = Math.max(0.1, calibration(quality, 'ycbcr') * (quality >= 30 ? 0.1 + (100 - quality) * 0.09 : 53 / 3000 * quality * quality - 23 / 20 * quality + 25));
   const strength = Math.max(0, Math.min(1, (90 - quality) / 15)), stepScale = 1 - 0.1 * strength;
   const components = (gray ? [0] : [0, 1, 2]).map(c => ({h: 1, v: 1, stride, rows,
     quant: Int32Array.from(QUANT_SHAPE, (shape, k) => Math.max(1, Math.round(quantScale * distance * stepScale * (c ? 18 : 10) * (k ? shape : 0.25)))),

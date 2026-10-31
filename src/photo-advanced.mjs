@@ -38,6 +38,8 @@ export function encodePhotoSteps(data, width, height, options = {}) {
   if (quality === 100 && options.extraChannels !== undefined && (!Array.isArray(options.extraChannels) || options.extraChannels.length))
     return exactPhotoExtraSteps(data, width, height, options, samples);
   const extras = admitPhotoExtras(data, layout, options);
+  if (options.orientation !== undefined && options.orientation !== 1 && (quality >= 100 || !samples.native8))
+    throw fault('JXL_UNSUPPORTED', 'An exact photo, or one whose samples are not eight-bit with sRGB transfer, does not carry orientation in this version; rotate the pixels.');
   if (!samples.native8 && quality < 100 && (strategyOptions.variable || progression || noiseLut || lfLevels || authoredOrderPasses || extras || layout.factor !== 1 || layout.colorTransform))
     throw fault('JXL_INPUT', 'Advanced VarDCT transforms require eight-bit RGB samples with sRGB transfer.');
   if (quality < 100 && lfLevels) {

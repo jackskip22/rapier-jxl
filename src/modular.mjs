@@ -6,7 +6,7 @@ export const ZERO_PREDICTOR = 0, AVERAGE_PREDICTOR = 3, GRADIENT_PREDICTOR = 5;
 export const PREDICTOR = /*#__PURE__*/ Object.freeze({zero: ZERO_PREDICTOR, left: 1, top: 2, average0: AVERAGE_PREDICTOR, select: 4, gradient: GRADIENT_PREDICTOR, weighted: 6,
   topRight: 7, topLeft: 8, leftLeft: 9, average1: 10, average2: 11, average3: 12, average4: 13});
 
-const MIN_RUN_SYMBOL = 224, MIN_RUN_LENGTH = 7, RUN_CONFIG = uintConfig(4);
+export const MIN_RUN_SYMBOL = 224, MIN_RUN_LENGTH = 7, RUN_CONFIG = uintConfig(4);
 export const LZ77 = Object.freeze({minSymbol: MIN_RUN_SYMBOL, minLength: MIN_RUN_LENGTH, lengthConfig: RUN_CONFIG});
 export const RESIDUAL_CONFIG = uintConfig(0);
 export const ALPHABET = MIN_RUN_SYMBOL + 33;

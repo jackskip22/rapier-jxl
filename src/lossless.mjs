@@ -1,6 +1,6 @@
 // Rapier's JPEG XL encoder: lossless pictures. MIT (images/jxl/LICENSE).
 import {kernelHooks} from './kernel-hooks.mjs';
-import {BitWriter, complete, part} from './bits.mjs';
+import {BitWriter, complete, part, LITTLE_ENDIAN} from './bits.mjs';
 import {writeModularFrameHeader, groupLayout, groupRect, groupPass, assembleCodestream, GROUP_DIM} from './frame.mjs';
 import {writeImageHeader} from './icc-write.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
@@ -17,7 +17,6 @@ export const paletteKey = (rgba, i, grey, alpha) => grey
   ? (alpha ? rgba[i] + rgba[i + 3] * 256 : rgba[i])
   : rgba[i] + rgba[i + 1] * 256 + rgba[i + 2] * 65536 + (alpha ? rgba[i + 3] * 16777216 : 0);
 
-const LITTLE_ENDIAN = new Uint8Array(Uint32Array.of(1).buffer)[0] === 1;
 
 export function inspectPixels(rgba, width, height, {palette: wantPalette = true, samples, ...options} = {}) {
   if (!samples && (rgba instanceof Uint16Array || rgba instanceof Float32Array)) samples = admitSampleFormat(rgba, options);
@@ -36,17 +35,31 @@ export function inspectPixels(rgba, width, height, {palette: wantPalette = true,
   }
   const colour = grey ? 1 : 3, alpha = !opaque, channels = colour + (alpha ? 1 : 0);
   const table = wantPalette ? new Uint32Array(PROBE_SIZE) : null, entries = [];
-  let palette = null;
-  for (let i = 0, p = 0; wantPalette && p < pixels; p++, i += 4) {
+  let palette = null, tooMany = false;
+  if (wantPalette && pixels >= 16384) {
+    const step = ((pixels / 4096) | 0) || 1;
+    let count = 0;
+    for (let p = 0; p < pixels; p += step) {
+      const k = paletteKey(rgba, p * 4, grey, alpha);
+      if (k === 0) continue;
+      let slot = Math.imul(k, 0x9e3779b1) >>> (32 - PROBE_BITS);
+      while (table[slot] !== 0 && table[slot] !== k) slot = (slot + 1) & (PROBE_SIZE - 1);
+      if (table[slot] === k) continue;
+      table[slot] = k;
+      if (++count >= MAX_PALETTE) { tooMany = true; break; }
+    }
+    if (!tooMany) table.fill(0);
+  }
+  for (let i = 0, p = 0; wantPalette && !tooMany && p < pixels; p++, i += 4) {
     const k = paletteKey(rgba, i, grey, alpha);
     if (k === 0) continue;
     let slot = Math.imul(k, 0x9e3779b1) >>> (32 - PROBE_BITS);
     while (table[slot] !== 0 && table[slot] !== k) slot = (slot + 1) & (PROBE_SIZE - 1);
     if (table[slot] === k) continue;
     table[slot] = k; entries.push(k);
-    if (entries.length >= MAX_PALETTE) break;
+    if (entries.length >= MAX_PALETTE) { tooMany = true; break; }
   }
-  if (wantPalette && entries.length < MAX_PALETTE) {
+  if (wantPalette && !tooMany && entries.length < MAX_PALETTE) {
     const byte = (k, c) => (k >>> 8 * c) & 255;
     const weight = k => (0.299 * byte(k, 0) + 0.587 * byte(k, 1) + 0.114 * byte(k, 2) + 0.01) * (channels === 4 ? byte(k, 3) : 1);
     entries.sort((a, b) => weight(a) - weight(b));

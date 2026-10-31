@@ -1,11 +1,11 @@
 // An upload queue in a page: several photos go through one worker, one at a time and in order, each
 // with its own progress, cancel and errors that carry a code. Pick files with the input, or call window.run() for a
 // self-contained demonstration.
-// With a bundler (Vite, webpack, Rollup, esbuild): import {createEncoder} from 'rapier-jxl';
-import {createEncoder} from './node_modules/rapier-jxl/dist/index.mjs';
+// With a bundler (Vite, webpack, Rollup, esbuild): import {createCodec} from 'rapier-jxl/codec';
+import {createCodec} from './node_modules/rapier-jxl/dist/codec.mjs';
 
-// One owned queue: one module worker, input copied at submission, bounded memory and job count.
-const queue = createEncoder({maxPixels: 16_000_000, maxInputBytes: 64 * 1024 * 1024, maxQueuedJobs: 8});
+// One owned queue over the upload module: its own worker, input copied at submission, bounded memory and job count.
+const queue = createCodec({module: 'rapier-jxl/upload', maxPixels: 16_000_000, maxPendingBytes: 64 * 1024 * 1024, maxPendingJobs: 8});
 const cancelAll = new AbortController();
 const list = document.querySelector('#list');
 
@@ -20,11 +20,11 @@ function row(name) {
 // One upload: encode, then hand the JPEG XL file to whatever stores it (here, a Blob for the page).
 // A cancel rejects with the signal's AbortError; every other refusal carries a JXL_ code.
 const codeOf = error => error?.name === 'AbortError' ? 'AbortError' : error?.code ?? error?.name;
-function upload(file, {signal = cancelAll.signal, effort = 7, quality = 90} = {}) {
+function upload(file, {signal = cancelAll.signal, effort = 3, quality = 82} = {}) {
   const view = row(file.name), progress = [];
   const onProgress = fraction => { progress.push(fraction); view.progress.value = fraction; };
-  // acceleration: 'wasm' runs the WebAssembly kernels where the page's CSP allows 'wasm-unsafe-eval', JavaScript otherwise.
-  return queue.encode(file, {effort, quality, acceleration: 'wasm', signal, onProgress}).then(bytes => {
+  // A page's Content Security Policy must allow 'wasm-unsafe-eval'.
+  return queue.encode(file, {effort, fidelity: {quality}, signal, onProgress}).then(bytes => {
     view.done(`${bytes.length} bytes`);
     return {name: file.name, ok: true, bytes: bytes.length, progress, jxl: new Blob([bytes], {type: 'image/jxl'})};
   }, error => {
@@ -63,7 +63,7 @@ window.run = async () => {
   jobs.push(upload(broken));
   const results = await Promise.all(jobs);
   // A full queue refuses at once: fill the eight places, then ask for one more.
-  const blocker = Array.from({length: 8}, () => queue.encode({data: new Uint8Array(4), width: 1, height: 1}, {lossless: true, effort: 1}).catch(error => error));
+  const blocker = Array.from({length: 8}, () => queue.encode({data: new Uint8Array(4), width: 1, height: 1}, {fidelity: 'exact', effort: 1}).catch(error => error));
   const full = await queue.encode({data: new Uint8Array(4), width: 1, height: 1}).then(() => null, error => error.code);
   await Promise.all(blocker);
   return {results: results.map(({name, ok, bytes, code, progress}) => ({name, ok, bytes, code, progress})), order, queueFull: full,

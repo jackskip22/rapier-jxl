@@ -12,7 +12,9 @@ export async function image(input, options, hooks = {}) {
       const view = new DataView(head.buffer);
       dimensions(view.getUint32(16), view.getUint32(20), hooks.maxPixels);
       if (head[24] === 16) {
-        const {readSource} = await import('../source.mjs');
+        if (options?.readAs !== undefined) throw fail('JXL_OPTIONS', 'readAs reads what the browser decodes; a 16-bit PNG is read at its own depth and in its own space.');
+        if (!hooks.deep) throw fail('JXL_INPUT', 'This encoder takes 8-bit samples; this PNG is 16-bit. Use encode from rapier-jxl.');
+        const {readSource} = await hooks.deep();
         const result = await readSource(new Uint8Array(await input.arrayBuffer()));
         check(hooks.signal);
         return result;
@@ -23,16 +25,22 @@ export async function image(input, options, hooks = {}) {
     }
     if (typeof createImageBitmap !== 'function' || typeof OffscreenCanvas !== 'function')
       throw fail('JXL_PLATFORM', 'This input needs a native image decoder. Supply RGBA pixels, a 16-bit PNG Blob, or use JPEG recompression.');
-    const bitmap = await createImageBitmap(input);
+    let bitmap;
+    try { bitmap = await createImageBitmap(input); }
+    catch (cause) { throw Object.assign(fail('JXL_INPUT', 'The browser could not decode this Blob: ' + (cause?.message || cause)), {cause}); }
     try {
       check(hooks.signal); dimensions(bitmap.width, bitmap.height, hooks.maxPixels);
-      return surface(bitmap, {maxPixels: hooks.maxPixels, colorSpace: options?.colorSpace});
+      return surface(bitmap, {maxPixels: hooks.maxPixels, readAs: options?.readAs});
     } finally { bitmap.close(); }
   }
-  const result = surface(input, {maxPixels: hooks.maxPixels, colorSpace: options?.colorSpace});
+  return pixels(input, options, hooks.maxPixels);
+}
+
+export function pixels(input, options, maxPixels) {
+  const result = surface(input, {maxPixels, readAs: options?.readAs});
   if (!result || !ArrayBuffer.isView(result.data) || result.data instanceof DataView)
     throw fail('JXL_INPUT', 'Pixels must be {data, width, height}; use recompress for JPEG bytes.');
-  dimensions(result.width, result.height, hooks.maxPixels);
+  dimensions(result.width, result.height, maxPixels);
   return result;
 }
 

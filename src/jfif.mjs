@@ -24,6 +24,14 @@ function buildHuffman(counts, symbols) {
   }
   return lookup;
 }
+function validateHuffman(counts) {
+  let code = 0;
+  for (let length = 1; length <= 16; length++) {
+    const n = counts[length - 1];
+    if (n && (code + n) * (1 << (16 - length)) >= 65536) throw jpegError('bad Huffman table');
+    code = (code + n) * 2;
+  }
+}
 
 const SRGB = [0.436, 0.2225, 0.0139, 0.3851, 0.7169, 0.0971, 0.143, 0.0606, 0.7139];
 const P3 = [0.5151, 0.2412, -0.001, 0.292, 0.6922, 0.0419, 0.1571, 0.0666, 0.7841];
@@ -76,7 +84,9 @@ export function profileSpace(profile) {
 export function parseJPEG(bytes, retainScans = false, {preserveICC = false, compression = 'auto'} = {}) {
   if (!(bytes.length > 4) || bytes[0] !== 0xFF || bytes[1] !== 0xD8) throw jpegError('not a JPEG');
   const quant = [], huffman = [[], []], badDC = new Set(), icc = {count: 0, parts: []}, scanChoices = retainScans ? [] : null;
+  const lookup = (kind, slot) => { const table = huffman[kind][slot]; return table && (table.lookup ??= buildHuffman(table.counts, table.symbols)); };
   let frame = null, restartInterval = 0, adobeTransform = -1, jfif = false, orientation = null, pos = 2;
+  let markerCount = 0, huffmanCount = 0;
   const u16 = at => (bytes[at] << 8) | bytes[at + 1];
   const signatureAt = (at, signature) => {
     for (let i = 0; i < signature.length; i++) if (bytes[at + i] !== signature.charCodeAt(i)) return false;
@@ -87,6 +97,7 @@ export function parseJPEG(bytes, retainScans = false, {preserveICC = false, comp
     if (bytes[pos] !== 0xFF) throw jpegError('marker expected');
     while (bytes[pos] === 0xFF) pos++;
     const marker = bytes[pos++];
+    if (++markerCount > 16384) throw jpegError('more than 16384 JPEG markers');
     if (marker === 0xD9) break;
     if (marker === 0xD8) throw jpegError('a second start');
     if (marker >= 0xD0 && marker <= 0xD7) throw jpegError('a restart marker outside a scan');
@@ -107,6 +118,7 @@ export function parseJPEG(bytes, retainScans = false, {preserveICC = false, comp
       }
     } else if (marker === 0xC4) {
       for (let at = segment; at < end;) {
+        if (++huffmanCount > 89) throw jpegError('more than 89 JPEG Huffman tables');
         const tc = bytes[at] >> 4, th = bytes[at] & 15;
         if (tc > 1 || th > 3 || at + 17 > end) throw jpegError('bad Huffman table');
         at++;
@@ -115,7 +127,8 @@ export function parseJPEG(bytes, retainScans = false, {preserveICC = false, comp
         for (const c of counts) total += c;
         if (total > 256 || at + 16 + total > end) throw jpegError('bad Huffman table');
         const symbols = bytes.subarray(at + 16, at + 16 + total);
-        huffman[tc][th] = buildHuffman(counts, symbols);
+        validateHuffman(counts);
+        huffman[tc][th] = {counts, symbols, lookup: null};
         if (tc === 0) { if (symbols.some(s => s > 15)) badDC.add(th); else badDC.delete(th); }
         at += 16 + total;
       }
@@ -162,7 +175,7 @@ export function parseJPEG(bytes, retainScans = false, {preserveICC = false, comp
         if (!component.quant) throw jpegError('a scan without its quantisation table');
         const td = bytes[at + 1] >> 4, ta = bytes[at + 1] & 15;
         if (td > 3 || ta > 3) throw jpegError('a scan table selector above 3');
-        scan.push({component, dc: huffman[0][td], ac: huffman[1][ta], dcSlot: td});
+        scan.push({component, dc: lookup(0, td), ac: lookup(1, ta), dcSlot: td});
       }
       if (n > 1 && scan.reduce((sum, s) => sum + s.component.h * s.component.v, 0) > 10) throw jpegError('bad sampling');
       const ss = bytes[at], se = bytes[at + 1], ah = bytes[at + 2] >> 4, al = bytes[at + 2] & 15;

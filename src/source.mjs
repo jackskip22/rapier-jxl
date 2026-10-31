@@ -327,15 +327,24 @@ async function exr(bytes) {
     sampleFormat: half ? 'float16' : 'float32', colorSpace, transferFunction: 'linear', alphaPremultiplied: hasAlpha, ...luminance};
 }
 
-export async function readSource(input) {
+async function read(input, reader) {
   try {
-    if (!(input instanceof Uint8Array) && !(input instanceof ArrayBuffer) || input.byteLength === 0) refuse('Source bytes are a nonempty Uint8Array or ArrayBuffer containing PNG16 or OpenEXR.');
+    if (!(input instanceof Uint8Array) && !(input instanceof ArrayBuffer) || input.byteLength === 0) refuse('Source bytes are a nonempty Uint8Array or ArrayBuffer.');
     const bytes = input instanceof ArrayBuffer ? new Uint8Array(input.slice(0)) : new Uint8Array(input);
-    if (bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((value, i) => bytes[i] === value)) return await png(bytes);
-    if (bytes.length >= 8 && view(bytes).getUint32(0, true) === 20000630) return await exr(bytes);
-    refuse('Source bytes must contain a 16-bit PNG or a flat scanline OpenEXR image.');
+    return await reader(bytes);
   } catch (error) {
     if (error instanceof RangeError && !error.code) throw fault('JXL_MEMORY', 'Not enough memory to read this source picture.');
     throw error;
   }
+}
+const isPNG = bytes => bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((value, i) => bytes[i] === value);
+export function readSource(input) {
+  return read(input, bytes => {
+    if (isPNG(bytes)) return png(bytes);
+    if (bytes.length >= 8 && view(bytes).getUint32(0, true) === 20000630) return exr(bytes);
+    refuse('Source bytes must contain a 16-bit PNG or a flat scanline OpenEXR image.');
+  });
+}
+export function readPNG16(input) {
+  return read(input, bytes => { if (isPNG(bytes)) return png(bytes); refuse('Source bytes must contain a 16-bit PNG.'); });
 }

@@ -3,8 +3,10 @@ import {requireDecode} from './decode-bits.mjs';
 import {power2} from './decode-header.mjs';
 import {readMATree, createModular} from './decode-modular.mjs';
 import {readVarDCTGlobal, createVarDCT, restoreFilters} from './decode-vardct.mjs';
+import {decodeKernels} from './decode-kernels.mjs';
 
 const floatBits = new DataView(new ArrayBuffer(4));
+const U8_FLOAT = Float32Array.from({length: 256}, (_, i) => i / 255);
 function mapSamples(data, map) {
   const out = new Float32Array(data.length);
   for (let i = 0; i < data.length; i++) out[i] = map(data[i], i);
@@ -12,8 +14,16 @@ function mapSamples(data, map) {
 }
 function channelSamples(data, depth) {
   if (depth.float) return mapSamples(data, v => sampleValue(v, depth));
-  const maximum = power2(depth.bits) - 1, out = new Float32Array(data.length);
-  for (let i = 0; i < data.length; i++) out[i] = data[i] / maximum;
+  const n = data.length, out = new Float32Array(n);
+  if (depth.bits === 8) {
+    for (let i = 0; i < n; i++) {
+      const v = data[i];
+      out[i] = (v & -256) === 0 ? U8_FLOAT[v] : v / 255;
+    }
+    return out;
+  }
+  const maximum = power2(depth.bits) - 1;
+  for (let i = 0; i < n; i++) out[i] = data[i] / maximum;
   return out;
 }
 export function sampleValue(word, depth) {
@@ -53,19 +63,19 @@ export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, m
   const maxTreeNodes = Math.min(1048576, 1024 + sampleBudget);
   const global = f.modular ? null : readVarDCTGlobal(r);
   const globalTree = r.read(1) ? readMATree(r, {maxNodes: maxTreeNodes}) : null;
-  const modular=createModular(r,channels,{globalTree,groupDim:f.groupDim,bitDepth:h.bitDepth.bits,maxModularWork,...(maxSamples===undefined?{}:{maxSamples})});
+  const modular=createModular(r,channels,{globalTree,groupDim:f.groupDim,bitDepth:h.bitDepth.bits,maxModularWork,kernels:f.modular&&!band?decodeKernels():null,...(maxSamples===undefined?{}:{maxSamples})});
   modular.decodeGlobal(r,0);
   const dct=f.modular?null:createVarDCT({width:f.encodedWidth,height:f.encodedHeight,header:f,global,lfDequant,bitDepth:h.bitDepth.bits,globalTree,imageHeader:h,maxModularWork,modularWork:modular.modularWork,band,maxSection:Math.max(...readers.map(x=>x.bytes.length))});
-  if(!single)r.end();
+  if(!single)r.endSection();
   for(let g=0;g<f.numLFGroups;g++) {
     if(band){const y=Math.floor(g/f.lfGroupsX)*2048;if(y+2048<=band.first*256-16||y>=band.end*256+16)continue;}
     const rr=single?r:readers[1+g], readExtra=()=>modular.decodeGroup(rr,{x:g%f.lfGroupsX*f.groupDim*8,y:Math.floor(g/f.lfGroupsX)*f.groupDim*8,width:f.groupDim*8,height:f.groupDim*8,lf:true,streamIndex:1+f.numLFGroups+g});
     if(dct)dct.readLF(rr,g,{decodeExtraLF:readExtra});else readExtra();
-    if(!single)rr.end();
+    if(!single)rr.endSection();
   }
   const hf=single?r:readers[1+f.numLFGroups];
   if(dct)dct.readHFGlobal(hf);
-  if(!single)hf.end();
+  if(!single)hf.endSection();
   let maximum=3;
   for(let pass=0;pass<f.passes.count;pass++) {
     let minimum=maximum;const hint=f.passes.lastPass.indexOf(pass);
@@ -76,12 +86,12 @@ export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, m
       const rr=single?r:readers[2+f.numLFGroups+pass*f.numGroups+g];
       if(dct)dct.readPassGroup(rr,g,pass);
       modular.decodeGroup(rr,{x:g%f.groupsX*f.groupDim,y:Math.floor(g/f.groupsX)*f.groupDim,width:f.groupDim,height:f.groupDim,minShift:minimum,maxShift:maximum,streamIndex:1+3*f.numLFGroups+17+pass*f.numGroups+g});
-      if(!single)rr.end();
+      if(!single)rr.endSection();
       if(dct&&pass===f.passes.count-1&&(g%dct.groupsX===dct.groupsX-1||g===f.numGroups-1))dct.renderRow(Math.floor(g/dct.groupsX),lfReference);
     }
     maximum=minimum;
   }
-  if(single)r.end();
+  if(single)r.endSection();
   if(band)return {dct,features};
   const decoded=modular.finish(),colorCount=f.modular?f.encodedColorChannels:0;
   const extraChannels=decoded.slice(colorCount).map((c,i)=>({...h.extraChannels[i],width:c.width,height:c.height,data:channelSamples(c.data,h.extraChannels[i].bitDepth)}));

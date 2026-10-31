@@ -1,3 +1,4 @@
+import {wasmModule} from './wasm-modules.mjs';
 // SPDX-License-Identifier: MIT
 import {JPEG_KERNELS} from './jpeg-kernels-bytes.mjs';
 import {hybridToken} from './prefix.mjs';
@@ -18,9 +19,7 @@ export function jpegKernels() {
   if (engine !== undefined) return engine;
   engine = null;
   try {
-    const text = atob(JPEG_KERNELS), bytes = new Uint8Array(text.length);
-    for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i);
-    const {exports} = new WebAssembly.Instance(new WebAssembly.Module(bytes));
+    const {exports} = new WebAssembly.Instance(wasmModule('jpeg', () => Uint8Array.from(JPEG_KERNELS, c => c.charCodeAt(0))));
     const memory = exports.memory;
     let f64, u32, u8, i16, i32, u16;
     const views = () => {
@@ -29,7 +28,7 @@ export function jpegKernels() {
     };
     if (memory.buffer.byteLength < DYNAMIC) memory.grow(Math.ceil((DYNAMIC - memory.buffer.byteLength) / 65536));
     views();
-    let loaded = null;
+    let loaded = null, priceStamp = null;
     const append = (w, bytes) => {
       if (w.at + bytes + 8 >= w.bytes.length) w.grow(bytes + 8);
       w.bytes.set(u8.subarray(OUT, OUT + bytes), w.at); w.at += bytes;
@@ -42,17 +41,21 @@ export function jpegKernels() {
       own(freqs) { u32.set(freqs, OWN >> 2); },
       alive(i, live) { u8[ALIVE + i] = live ? 1 : 0; },
       priceConfigs(values, weights, candidates, {symbolBits, logLengths}) {
-        const n = values.length, c = candidates.length, vals = DYNAMIC, wts = vals + n * 4, cands = wts + n * 4, bits = cands + c * 16;
-        const logs = bits + symbolBits.length * 8, scratch = logs + 16, best = scratch + 768, out = best + 512, end = out + 16;
-        if (end > memory.buffer.byteLength) { memory.grow(Math.ceil((end - memory.buffer.byteLength) / 65536)); views(); }
+        const n = values.length, c = candidates.length, bits = DYNAMIC, logs = bits + symbolBits.length * 8, cands = logs + 16;
+        const scratch = cands + c * 16, best = scratch + 768, out = best + 512, vals = out + 16, wts = vals + n * 4, end = wts + n * 4;
+        if (end > memory.buffer.byteLength) { memory.grow(Math.ceil((end - memory.buffer.byteLength) / 65536)); views(); priceStamp = null; }
+        if (priceStamp !== symbolBits) {
+          f64.set(symbolBits, bits >> 3); u8.set(logLengths, logs);
+          candidates.forEach((k, i) => u32.set([k.split, k.msb, k.lsb, k.splitToken], (cands >> 2) + i * 4));
+          priceStamp = symbolBits;
+        }
         u32.set(values, vals >> 2); u32.set(weights, wts >> 2);
-        candidates.forEach((k, i) => u32.set([k.split, k.msb, k.lsb, k.splitToken], (cands >> 2) + i * 4));
-        f64.set(symbolBits, bits >> 3); u8.set(logLengths, logs);
         const index = exports.priceConfigs(vals, wts, n, cands, c, bits, logs, scratch, best, out);
         return index < 0 ? null : {index, tokens: u32.slice(best >> 2, (best >> 2) + 128), raw: f64[out >> 3], cost: f64[(out >> 3) + 1]};
       },
       seedBest(k, ownBits) { const best = exports.seedBest(k, ownBits); return [best, f64[SCRATCH >> 3]]; },
       seedAll(used, counts, tokenOf, seeds, threshold) {
+        priceStamp = null;
         const n = used.length, small = DYNAMIC, tok = small + n * 256, loff = tok + 256, owns = loff + ((n + 1) * 4 + 7 & ~7);
         const assign = owns + n * 256, larges = [];
         let pairs = 0;
@@ -72,16 +75,17 @@ export function jpegKernels() {
         const clusters = [];
         for (let t = 0; t < n; t++) {
           const i = u32[(assign >> 2) + t];
-          if (i === clusters.length) clusters.push({contexts: [used[t]], freqs: null, bits: 0, last: 0});
+          if (i === clusters.length) clusters.push({contexts: [used[t]], freqs: null, bits: 0, last: 0, cost: -1});
           else clusters[i].contexts.push(used[t]);
         }
         for (let i = 0; i < k; i++) { clusters[i].freqs = u32.slice((ROWS >> 2) + i * 64, (ROWS >> 2) + i * 64 + 64); clusters[i].bits = f64[(BITS >> 3) + i]; }
-        return {clusters, owns: u32.slice(owns >> 2, (owns >> 2) + n * 64)};
+        return {clusters, owns: u32.subarray(owns >> 2, (owns >> 2) + n * 64)};
       },
       pairsInit: length => { u8.fill(1, ALIVE, ALIVE + length); exports.pairsInit(length); },
       pairsUpdate: (length, left) => exports.pairsUpdate(length, left),
       pairMin(length) { const left = exports.pairMin(length); return [left, u32[SCRATCH >> 2], f64[(SCRATCH >> 3) + 1]]; },
       assign(sparse, costs, switchCost) {
+        priceStamp = null;
         const n = sparse.offsets.length - 1, k = costs.length;
         const tables = DYNAMIC, best = tables + k * 512, next = best + k * 8, offsets = next + k * 8;
         const pairs = offsets + (n + 1) * 4, back = pairs + sparse.pairs.length * 4, end = back + ((n * k * 2 + 7) & ~7);
@@ -250,7 +254,7 @@ export function jpegKernels() {
       },
       modularAns(histograms) {
         if (histograms.length > 255 || histograms.some(h => h.counts.length > 256)) return null;
-        let n = 0;
+        let n = 0, lastPlans = null, lastBits = 0;
         const load = plans => {
           if (loaded !== histograms) {
             histograms.forEach((h, id) => {
@@ -260,7 +264,10 @@ export function jpegKernels() {
             });
             exports.recips(histograms.length);
             loaded = histograms;
+            lastPlans = null;
           }
+          if (lastPlans === plans) return lastBits;
+          priceStamp = null;
           n = 0;
           let maps = 0;
           for (const plan of plans) { n += plan.used; maps += plan.histogramMap?.length ?? 0; }
@@ -275,7 +282,8 @@ export function jpegKernels() {
             exports.mtags(at, used, histogramMap ? map : 0, offset);
             at += used * 4; map += (histogramMap?.length ?? 0) * 2; offset += plan.freqs.length;
           }
-          return exports.mbits(n, DYNAMIC, DYNAMIC + n * 8);
+          lastPlans = plans;
+          return lastBits = exports.mbits(n, DYNAMIC, DYNAMIC + n * 8);
         };
         return {
           bits: load,

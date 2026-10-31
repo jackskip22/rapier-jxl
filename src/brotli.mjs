@@ -359,8 +359,10 @@ const literalContext = (mode, previous, older) => {
   return CONTEXT[base + previous] | CONTEXT[base + 256 + older];
 };
 export function decompressBrotli(bytes, options = {}) {
-  const maximum = admission(bytes, options), reader = new Reader(bytes), window = (1 << windowBits(reader)) - 16;
-  const history = [4,11,15,16]; let output = new Uint8Array(0), at = 0, last = false;
+  const maximum = admission(bytes, options), maxBlocks = options.maxBlocks ?? 65536;
+  need(Number.isSafeInteger(maxBlocks) && maxBlocks > 0, 'maxBlocks is a positive safe integer.');
+  const reader = new Reader(bytes), window = (1 << windowBits(reader)) - 16;
+  const history = [4,11,15,16]; let output = new Uint8Array(0), at = 0, last = false, blocks = 0;
   const reserve = end => {
     if (end > maximum) throw tooLarge();
     if (end > output.length) {
@@ -372,6 +374,7 @@ export function decompressBrotli(bytes, options = {}) {
     }
   };
   while (!last) {
+    if (++blocks > maxBlocks) throw fault('JXL_SIZE', 'The Brotli stream exceeds maxBlocks.');
     last = reader.read(1) === 1; if (last && reader.read(1)) break;
     const nibbles = reader.read(2) + 4;
     if (nibbles === 7) {

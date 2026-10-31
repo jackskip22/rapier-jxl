@@ -335,14 +335,14 @@ function weightedReader(width) {
 }
 const clampedGradient = (w, n, nw) => Math.max(Math.min(w, n), Math.min(Math.max(w, n), w + n - nw));
 
-function readMaTree(r, channels) {
-  const treeCode = entropy(r, 6, {values: 6 * 65536}), nodes = [{}], leaves = [];
+export function readMaTree(r, channels) {
+  const treeCode = entropy(r, 6, {values: 6 * 65536}), nodes = [{depth: 0}], leaves = [];
   for (const node of nodes) {
-    requireJPEG(nodes.length <= 65536);
+    requireJPEG(nodes.length <= 65536 && node.depth <= 2048);
     const property = treeCode.read(1);
     if (property) {
       node.property = property - 1; requireJPEG(node.property >= 0 && node.property < 16 + 4 * channels);
-      node.cut = signed(treeCode.read(0)); node.left = {}; node.right = {}; nodes.push(node.left, node.right);
+      node.cut = signed(treeCode.read(0)); node.left = {depth: node.depth + 1}; node.right = {depth: node.depth + 1}; nodes.push(node.left, node.right);
     } else {
       node.predictor = treeCode.read(2); node.offset = signed(treeCode.read(3));
       const shift = treeCode.read(4), bits = treeCode.read(5);
@@ -354,7 +354,7 @@ function readMaTree(r, channels) {
   treeCode.finish();
   return {root: nodes[0], leaves};
 }
-function modular(r, shapes, shared, stream = 0) {
+export function modular(r, shapes, shared, stream, work) {
   const useGlobal = !!r.read(1), wpDefault = !!r.read(1);
   requireJPEG(wpDefault && r.u32([[0, 0], [0, 1], [4, 2], [8, 18]]) === 0);
   const pixels = shapes.reduce((n, [width, height]) => n + width * height, 0);
@@ -377,6 +377,7 @@ function modular(r, shapes, shared, stream = 0) {
       const prediction = wp ? wp.predict(x, y, w, n, ne) : 0;
       let leaf = root;
       while (leaf.left) {
+        if (--work.left < 0) throw fault('JXL_LIMIT', 'JPEG reconstruction Modular work exceeds the limit.');
         const p = leaf.property;
         let value;
         if (p >= 16) {
@@ -439,7 +440,7 @@ function modular(r, shapes, shared, stream = 0) {
   code.finish(); return planes;
 }
 
-export function readJPEGCoefficients(bytes, {reconstruction = false} = {}) {
+export function readJPEGCoefficients(bytes, {reconstruction = false, maxPixels = JPEG_LIMITS.pixels} = {}) {
   requireJPEG(bytes instanceof Uint8Array && bytes.length > 0);
   const r = new JxlBits(bytes), size = [[9, 1], [13, 1], [18, 1], [30, 1]];
   r.expect(16, 0x0aff);
@@ -447,6 +448,7 @@ export function readJPEGCoefficients(bytes, {reconstruction = false} = {}) {
   const height = small ? (r.read(5) + 1) * 8 : r.u32(size), ratio = r.read(3);
   const width = ratio ? Math.floor(height * ratios[ratio][0] / ratios[ratio][1]) : small ? (r.read(5) + 1) * 8 : r.u32(size);
   requireJPEG(width <= JPEG_LIMITS.edge && height <= JPEG_LIMITS.edge && width * height <= JPEG_LIMITS.pixels);
+  if (width * height > maxPixels) throw fault('JXL_DIMENSIONS', 'The JPEG XL image exceeds maxPixels.');
   r.expect(1, 0); const extra = r.read(1), orientation = extra ? r.read(3) + 1 : 1;
   if (extra) r.expect(3, 0);
   r.expect(3, 0); r.read(1); r.expect(2, 0); r.expect(1, 0);
@@ -496,19 +498,20 @@ export function readJPEGCoefficients(bytes, {reconstruction = false} = {}) {
     requireJPEG(zero(dc.read(16)) && zero(dc.read(16)) && dc.read(8) === 128 && dc.read(8) === 128);
   }
   let shared = null;
+  const work = {left: 536870912};
   if (dc.read(1)) { const tree = readMaTree(dc, 256); shared = {tree, model: entropyModel(dc, tree.leaves.length)}; }
   end(dc);
   for (let g = 0; g < dcs; g++) {
     const reader = section(1 + g), x0 = g % dcX * 256, y0 = Math.floor(g / dcX) * 256, rw = Math.min(256, blocksW - x0), rh = Math.min(256, blocksH - y0);
     reader.expect(2, 0);
-    const values = modular(reader, [1, 0, 2].map(c => [rw >> hshift[c], rh >> vshift[c]]), shared, 1 + g);
+    const values = modular(reader, [1, 0, 2].map(c => [rw >> hshift[c], rh >> vshift[c]]), shared, 1 + g, work);
     for (const [i, c] of [1, 0, 2].entries()) {
       const p = planes[c], w = rw >> hshift[c], h = rh >> vshift[c];
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) p.dc[(y + (y0 >> vshift[c])) * p.stride + x + (x0 >> hshift[c])] = values[i][y * w + x];
     }
     const n = rw * rh; reader.expect(ceilLog2(n), n - 1);
     const cw = (rw + 7) >> 3, ch = (rh + 7) >> 3;
-    const [ytox, ytob, blocks] = modular(reader, [[cw, ch], [cw, ch], [n, 2], [rw, rh]], shared, 1 + 2 * dcs + g);
+    const [ytox, ytob, blocks] = modular(reader, [[cw, ch], [cw, ch], [n, 2], [rw, rh]], shared, 1 + 2 * dcs + g, work);
     requireJPEG(blocks.subarray(0, n).every(strategy => strategy === 0));
     for (let ty = 0; ty < ch; ty++) for (let tx = 0; tx < cw; tx++) {
       const at = ((y0 >> 3) + ty) * tilesW + (x0 >> 3) + tx;
@@ -517,7 +520,7 @@ export function readJPEGCoefficients(bytes, {reconstruction = false} = {}) {
     end(reader);
   }
   const ac = section(1 + dcs); ac.expect(1, 0); ac.expect(3, 7); ac.read(16);
-  const matrices = modular(ac, [[8, 8], [8, 8], [8, 8]], shared, 1 + 3 * dcs);
+  const matrices = modular(ac, [[8, 8], [8, 8], [8, 8]], shared, 1 + 3 * dcs, work);
   for (let c = 0; c < 3; c++) {
     const p = planes[c]; p.quant = Int32Array.from({length: 64}, (_, k) => matrices[c][(k % 8) * 8 + (k >> 3)]);
     requireJPEG(p.quant.every(q => q > 0 && q < 65536));

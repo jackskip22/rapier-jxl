@@ -4,6 +4,7 @@ import {complete} from './bits.mjs';
 import {admitPixels, fault, job} from './admit.mjs';
 import {admitEffort, BALANCED_EFFORT} from './effort-level.mjs';
 import {effortJob} from './effort-job.mjs';
+import {EXACT_LADDER} from './exact-ladder.mjs';
 import {checkSignal} from './async-job.mjs';
 import {prepareV6, scoreSteps, cpuMeasure, runAsync, gpuDoubt, CANDIDATES} from './photo-v6-search.mjs';
 import {exactAnswerer, exactPool, exactScores} from './exact-region.mjs';
@@ -61,7 +62,7 @@ function* finishScore(result, data, width, height, {target, effort, allowLossles
   if (result.pass && result.bytes.length <= maxBytes) return scoreAnswer(result);
   if (!allowLossless) throw scoreRefusal(result, target, result.pass ? 'JXL_SIZE' : 'JXL_TARGET',
     result.pass ? 'The selected file exceeds maxBytes.' : 'The lossy search did not reach the target and lossless is disabled.');
-  const exact = job(effortJob(data, width, height, {quality: 100, effort}, false, PHOTO_LIMITS));
+  const exact = job(effortJob(data, width, height, {quality: 100, effort}, false, PHOTO_LIMITS, undefined, undefined, EXACT_LADDER));
   try {
     let step;
     while (!(step = exact.next()).done) yield 0.95 + 0.05 * step.value;

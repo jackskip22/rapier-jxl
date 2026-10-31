@@ -3,8 +3,7 @@ import {screenLike, screenPlan, screenFrameSteps} from './screen.mjs';
 import {screenLZ77} from './screen-lz77.mjs';
 import {patchSteps} from './screen-patches.mjs';
 import {scaled} from './bits.mjs';
-import {paletteSteps} from './palette-search.mjs';
-import {localScreenSteps} from './screen-local.mjs';
+import {fault} from './admit.mjs';
 export function screenEligible(rgba, width, height, shape, effort = 3) {
   if (shape.palette) return true;
   if (effort >= 8 && screenPlan(rgba, width, height, shape, 'global')) return true;
@@ -22,10 +21,11 @@ export function screenEligible(rgba, width, height, shape, effort = 3) {
   return flat >= 112 && soft * 3 <= 256 - flat;
 }
 
-export function* screenSteps(rgba, width, height, shape, colorSpace, {fastFloor = 0, effort = 3} = {}) {
+export function* screenSteps(rgba, width, height, shape, colorSpace, {fastFloor = 0, effort = 3, deep} = {}) {
+  if (effort >= 8 && !deep) throw fault('JXL_INTERNAL', 'Efforts 8-9 need their screen candidates (palette-search.mjs, screen-local.mjs).');
   let best = null;
   for (const [pass, minLength] of [7, 4].entries()) {
-    const steps = screenPass(rgba, width, height, shape, colorSpace, {fastFloor, effort, minLength});
+    const steps = screenPass(rgba, width, height, shape, colorSpace, {fastFloor, effort, minLength, deep});
     let step, reply, hurried = false;
     while (!(step = steps.next(reply)).done) {
       reply = yield scaled(step.value, done => (pass + done) / 2);
@@ -37,7 +37,7 @@ export function* screenSteps(rgba, width, height, shape, colorSpace, {fastFloor 
   return best;
 }
 
-function* screenPass(rgba, width, height, shape, colorSpace, {fastFloor, effort, minLength}) {
+function* screenPass(rgba, width, height, shape, colorSpace, {fastFloor, effort, minLength, deep}) {
   let best = null, bestMode, deepen;
   const plans = new Map();
   const modes = ['global-lz', 'patch-lz', 'scalar-lz', 'global', 'scalar'];
@@ -55,11 +55,11 @@ function* screenPass(rgba, width, height, shape, colorSpace, {fastFloor, effort,
       if (!deepen) continue;
     }
     let steps;
-    if (modes[i].startsWith('local-')) steps = localScreenSteps(rgba, width, height, shape, colorSpace,
+    if (modes[i].startsWith('local-')) steps = deep.localScreenSteps(rgba, width, height, shape, colorSpace,
       {dim: modes[i] === 'local-fine' ? 512 : 1024, depths: modes[i] === 'local-copy' ? [64] : [64, 256], ceiling: best?.length ?? Infinity, minLength});
     else if (modes[i] === 'patch-lz') steps = patchSteps(rgba, width, height, shape, colorSpace, {tokenCodec: screenLZ77, minLength});
     else if (modes[i] === 'patch-deep') steps = patchSteps(rgba, width, height, shape, colorSpace, {search: {}, limit: best?.length ?? Infinity, minLength});
-    else if (modes[i] === 'palette') steps = paletteSteps(rgba, width, height, shape, colorSpace,
+    else if (modes[i] === 'palette') steps = deep.paletteSteps(rgba, width, height, shape, colorSpace,
       {plan: plans.get('global'), ceiling: best?.length ?? Infinity});
     else {
       const mode = modes[i].replace(/-(lz|deep|deeper)$/, '');

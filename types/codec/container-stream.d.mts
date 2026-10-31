@@ -6,6 +6,8 @@ export interface ContainerOptions {
   chunkSize?: number;
   /** Optional positive safe-integer budget for total container bytes. Defaults to available memory. */
   maxBytes?: number;
+  /** Maximum input and authored output boxes, including ftyp and level. Default 65,536. */
+  maxBoxes?: number;
   signal?: AbortSignal;
 }
 export interface ContainerStreamOptions extends ContainerOptions {

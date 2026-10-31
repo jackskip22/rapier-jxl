@@ -1,3 +1,4 @@
+import {wasmModule} from './wasm-modules.mjs';
 // SPDX-License-Identifier: MIT
 import {DECODE_KERNELS} from './decode-kernels-bytes.mjs';
 import {srgbTables, srgbExact, srgb8Table} from './decode-color-math.mjs';
@@ -11,12 +12,13 @@ export function decodeKernels() {
   if (kernelEngine !== undefined) return kernelEngine;
   kernelEngine = null;
   try {
-    const bytes = Uint8Array.from(DECODE_KERNELS, c => c.charCodeAt(0)), {exports} = new WebAssembly.Instance(new WebAssembly.Module(bytes));
+    const {exports} = new WebAssembly.Instance(wasmModule('decode', () => Uint8Array.from(DECODE_KERNELS, c => c.charCodeAt(0))));
     const memory = exports.memory, bases = new Map();
     let next = KERNEL_BASES;
     const engine = {
+      arena: KERNEL_ARENA,
       views() {
-        engine.buffer = memory.buffer; engine.tables = false; engine.f64 = new Float64Array(memory.buffer); engine.i32 = new Int32Array(memory.buffer);
+        engine.buffer = memory.buffer; engine.f64 = new Float64Array(memory.buffer); engine.i32 = new Int32Array(memory.buffer);
         engine.coefficients = [0, 1, 2].map(c => new Float64Array(memory.buffer, c * KERNEL_BLOCK, 65536));
         engine.output = new Float64Array(memory.buffer, KERNEL_OUT, 65536);
       },
@@ -25,8 +27,10 @@ export function decodeKernels() {
         const offsets = sizes.map(size => { const offset = at; at += Math.ceil(size / 16) * 16; return offset; });
         const memoryError = message => Object.assign(new RangeError(message), {code: 'JXL_MEMORY'});
         if (!(at <= 0x80000000)) throw memoryError('JPEG XL kernel memory request exceeds its limit.');
-        if (at > memory.buffer.byteLength) try { memory.grow(Math.ceil((at - memory.buffer.byteLength) / 65536)); } catch { throw memoryError('JPEG XL kernel memory could not be allocated.'); }
-        engine.views();
+        if (at > memory.buffer.byteLength) {
+          try { memory.grow(Math.ceil((at - memory.buffer.byteLength) / 65536)); } catch { throw memoryError('JPEG XL kernel memory could not be allocated.'); }
+          engine.views();
+        }
         return offsets;
       },
       basis(n, values) {

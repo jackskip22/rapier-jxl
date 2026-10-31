@@ -5,6 +5,8 @@ import type {ColorEncoding, ICCCompression} from './icc.mjs';
 export interface ContainerBounds {
   /** Optional positive safe-integer budget for complete input and output. Defaults to available memory. */
   maxBytes?: number;
+  /** Maximum accepted or authored container boxes. Default 65,536; larger files require an explicit override. */
+  maxBoxes?: number;
 }
 export interface ContainerWriteOptions extends ContainerBounds {
   /** Use 64-bit extended headers for new boxes. The signature always retains its fixed 12-byte form. */

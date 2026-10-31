@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 import {guard, answer} from './admit.mjs';
-import {captureAnswer} from './screen-floor.mjs';
+import {captureAnswer, screenPhotoAnswer} from './screen-floor.mjs';
+import {gpuOffered} from './gpu-gate.mjs';
+import {FAST_EFFORT} from './effort-level.mjs';
+import {gpuQueue} from './gpu-queue.mjs';
 
-export const GPU_PIXELS = 1 << 20;
-export const gpuWanted = (options, width, height) => options?.gpu !== false && (!!options?.gpu || width * height >= GPU_PIXELS && !!globalThis.navigator?.gpu);
+export const gpuWanted = (options, width, height) => options?.gpu !== false && (!!options?.gpu || gpuOffered(width, height, options?.effort ?? FAST_EFFORT) && !!globalThis.navigator?.gpu);
 
 async function gpuAnswer(request, given) {
   const core = await import('./gpu-core.mjs').catch(() => null), device = core && ((typeof given === 'object' && given) || await core.gpuCoreDevice());
@@ -12,17 +14,24 @@ async function gpuAnswer(request, given) {
 
 export async function driveGpu(it, given) {
   let step, reply;
-  while (!(step = guard(() => it.next(reply))).done)
-    reply = step.value?.gpu ? await gpuAnswer(step.value.gpu, given) : step.value?.capture ? await captureAnswer(step.value.capture) : undefined;
+  const gpu = gpuQueue(request => gpuAnswer(request, given));
+  while (!(step = guard(() => it.next(reply))).done) {
+    const v = step.value;
+    reply = v?.gpu ? (v.later ? gpu(v.gpu) : await gpu(v.gpu)) : v?.await !== undefined ? await v.await
+      : v?.capture ? await captureAnswer(v.capture) : v?.screenPhoto ? await screenPhotoAnswer(v.screenPhoto) : undefined;
+  }
   return answer(step.value);
 }
 
 export function gpuJob(steps, device) {
   const it = (async function* () {
     let step, last, reply;
+    const gpu = device ? gpuQueue(request => gpuAnswer(request, device)) : () => null;
     while (!(step = guard(() => steps.next(reply))).done) {
-      if (step.value?.gpu) reply = device ? await gpuAnswer(step.value.gpu, device) : null;
+      if (step.value?.gpu) reply = step.value.later ? gpu(step.value.gpu) : await gpu(step.value.gpu);
+      else if (step.value?.await !== undefined) reply = await step.value.await;
       else if (step.value?.capture) reply = await captureAnswer(step.value.capture);
+      else if (step.value?.screenPhoto) reply = await screenPhotoAnswer(step.value.screenPhoto);
       else if (step.value?.split) reply = undefined;
       else { yield last = step.value; reply = it.hurry; }
     }

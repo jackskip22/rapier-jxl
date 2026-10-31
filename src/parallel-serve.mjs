@@ -47,7 +47,7 @@ export function serveParallel(message) {
   try {
     if (task.kind === 'band' || task.kind === 'fast-band') {
       const data = inputs.get(task.data), {width, h, quality, color, from, to, y} = task;
-      const result = task.kind === 'band' ? photoXYBBand(data.subarray(from * width * 4, to * width * 4), width, h, quality, {...V6, ...GABORISH, ...color}, y - from)
+      const result = task.kind === 'band' ? photoXYBBand(data.subarray(from * width * 4, to * width * 4), width, h, quality, {...V6, ...GABORISH, ...color, ...(task.fast ? {fastGaborish: true} : {})}, y - from)
         : complete(photoXYBSteps(data.subarray(y * width * 4, (y + h) * width * 4), width, h, quality, {...V6, fast: true}));
       result.alpha = !!result.alpha; delete result.colorSpace;
       const target = task.target !== undefined && inputs.get(task.target);

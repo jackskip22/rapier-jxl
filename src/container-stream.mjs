@@ -7,13 +7,20 @@ const aborted = signal => { if (signal?.aborted) throw signal.reason ?? fault('J
 
 function settings(options) {
   if (!options || typeof options !== 'object' || Array.isArray(options)) throw invalid('Container options are an object.');
-  const {chunkSize = 65536, maxBytes = Number.MAX_SAFE_INTEGER, signal} = options;
+  const {chunkSize = 65536, maxBytes = Number.MAX_SAFE_INTEGER, maxBoxes = 65536, signal} = options;
   if (!Number.isSafeInteger(chunkSize) || chunkSize < 1)
     throw invalid('A container chunk size is a positive safe integer.');
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw invalid('maxBytes is a positive safe integer.');
+  if (!Number.isSafeInteger(maxBoxes) || maxBoxes < 1) throw invalid('maxBoxes is a positive safe integer.');
   if (signal !== undefined && (!signal || typeof signal !== 'object' || typeof signal.aborted !== 'boolean')) throw invalid('signal is an AbortSignal.');
-  let total = 0;
-  return {chunkSize, signal, count(length) {
+  let total = 0, boxCount = 0;
+  return {chunkSize, signal, maxBoxes,
+    boxes(n) {
+      if (!Number.isSafeInteger(n) || n < 0 || n > maxBoxes - boxCount)
+        throw invalid('JPEG XL box count exceeds the limit.');
+      boxCount += n;
+    },
+    count(length) {
     if (!Number.isSafeInteger(total + length) || total + length > maxBytes) throw fault('JXL_SIZE', 'The streamed JPEG XL container exceeds maxBytes.');
     total += length;
   }};
@@ -37,19 +44,31 @@ function prepareContainer(bytes, options = {}) {
   if (bare) entries = [{type: CODESTREAM, body: 0, end: bytes.length}];
   else {
     if (!SIGNATURE.every((value, i) => bytes[i] === value)) throw invalid('Invalid JPEG XL signature.');
-    entries = Array.from(boxes(bytes));
+    entries = Array.from(boxes(bytes, state.maxBoxes));
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (view.getUint32(entries[0].body + 4) === 1) {
+      const fragments = entries.filter(entry => entry.type === PARTIAL);
+      if (fragments.length > 1) {
+        const logical = new Array(fragments.length);
+        for (const entry of fragments) logical[view.getUint32(entry.body) & 0x7fffffff] = entry;
+        let at = 0;
+        entries = entries.map(entry => entry.type === PARTIAL ? logical[at++] : entry);
+      }
+    }
   }
   const payloads = entries.filter(entry => (entry.type === CODESTREAM || entry.type === PARTIAL) &&
     entry.end > entry.body + (entry.type === PARTIAL ? 4 : 0));
   const lastPayload = payloads.at(-1);
-  let size = bare ? 32 : SIGNATURE.length;
+  let size = bare ? 32 : SIGNATURE.length, outputBoxes = bare ? 1 : 0;
   for (const entry of entries) {
     if (entry.type === CODESTREAM || entry.type === PARTIAL) {
       const length = entry.end - entry.body - (entry.type === PARTIAL ? 4 : 0);
+      outputBoxes += Math.ceil(length / state.chunkSize);
       size += length + 12 * Math.ceil(length / state.chunkSize);
-    } else size += entry.end - entry.at;
+    } else { size += entry.end - entry.at; outputBoxes++; }
   }
   state.count(size);
+  state.boxes(outputBoxes);
   return {state, bare, entries, lastPayload, size};
 }
 
@@ -102,7 +121,7 @@ export async function* streamContainer(source, options = {}) {
   const state = settings(options), prefix = fileHeader(options.level ?? 5);
   if (!source || typeof source[Symbol.asyncIterator] !== 'function' && typeof source[Symbol.iterator] !== 'function')
     throw invalid('The codestream source is an iterable of Uint8Array chunks.');
-  aborted(state.signal); state.count(prefix.length); yield prefix;
+  aborted(state.signal); state.boxes(options.level === 10 ? 2 : 1); state.count(prefix.length); yield prefix;
   let index = 0, signature = 0, tail = null;
   for await (const chunk of source) {
     aborted(state.signal);
@@ -111,15 +130,15 @@ export async function* streamContainer(source, options = {}) {
       if (chunk[i] !== (signature++ ? 10 : 255)) throw invalid('Invalid raw JPEG XL codestream signature.');
     }
     if (!chunk.length) continue;
-    if (tail !== null) { state.count(13); yield fragment(Uint8Array.of(tail), index++, false); }
+    if (tail !== null) { state.boxes(1); state.count(13); yield fragment(Uint8Array.of(tail), index++, false); }
     for (let at = 0; at < chunk.length - 1; at += state.chunkSize) {
       aborted(state.signal);
       const part = chunk.subarray(at, Math.min(chunk.length - 1, at + state.chunkSize));
-      state.count(part.length + 12); yield fragment(part, index++, false);
+      state.boxes(1); state.count(part.length + 12); yield fragment(part, index++, false);
     }
     tail = chunk[chunk.length - 1];
   }
   aborted(state.signal);
   if (signature !== 2) throw invalid('The raw JPEG XL codestream is incomplete.');
-  state.count(13); yield fragment(Uint8Array.of(tail), index, true);
+  state.boxes(1); state.count(13); yield fragment(Uint8Array.of(tail), index, true);
 }

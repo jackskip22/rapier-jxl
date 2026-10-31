@@ -26,8 +26,11 @@ const NODES = {};
 export function record(value) {
   if (Array.isArray(value) && value.length > MAX_NODES) throw error('JXL_MEMORY', 'Queue input has too many fields; at most ' + MAX_NODES + ' records and fields.');
   const proto = Object.getPrototypeOf(value);
-  if (!plain(proto) && !Array.isArray(value))
+  if (!plain(proto) && !Array.isArray(value)) {
+    if (typeof VideoFrame === 'function' && value instanceof VideoFrame)
+      throw error('JXL_INPUT', 'A VideoFrame is not an input yet; pass createImageBitmap(frame), or draw it on a canvas.');
     throw error('JXL_INPUT', 'Queue inputs must be pixels, bytes, Blobs, or plain records.');
+  }
   if (Object.getOwnPropertySymbols(value).some(key => Object.getOwnPropertyDescriptor(value, key).enumerable))
     throw error('JXL_INPUT', 'Queue records cannot contain symbol keys.');
   return Object.entries(Object.getOwnPropertyDescriptors(value)).filter(([key, descriptor]) => {
@@ -44,9 +47,9 @@ export function dimensions(value, maxPixels, fields) {
   if (!w || !h || !('value' in w) || !('value' in h)) throw error('JXL_INPUT', 'Image dimensions must be plain numeric values.');
   const width = w.value, height = h.value;
   if (!Number.isSafeInteger(width) || width < 1 || !Number.isSafeInteger(height) || height < 1)
-    throw error('JXL_SIZE', 'Image width and height must be positive safe integers.');
-  if (width > Math.floor(maxPixels / height))
-    throw error('JXL_SIZE', 'Image dimensions exceed maxPixels; reduce width or height, or raise maxPixels in createEncoder().');
+    throw error('JXL_DIMENSIONS', 'Image width and height must be positive safe integers.');
+  if (width > 16384 || height > 16384 || width > Math.floor(maxPixels / height))
+    throw error('JXL_DIMENSIONS', 'Image dimensions exceed maxPixels or 16,384 pixels a side; reduce width or height, or raise maxPixels in createCodec().');
 }
 export function measure(value, maxPixels, plans = new Map(), depth = 0) {
   if (depth > 64) throw error('JXL_INPUT', 'Queue input is nested too deeply.');

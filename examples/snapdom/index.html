@@ -32,7 +32,7 @@
   // In the installed package this loads its own dist/; this folder alone (StackBlitz) loads the package from jsDelivr.
   let jxl;
   try { ({ jxl } = await import('../../dist/snapdom.mjs')); }
-  catch { ({ jxl } = await import('https://cdn.jsdelivr.net/npm/rapier-jxl@7/dist/snapdom.mjs')); }
+  catch { ({ jxl } = await import('https://cdn.jsdelivr.net/npm/rapier-jxl@8/dist/snapdom.mjs')); }
   const plugin = jxl();
   plugin.prepare().catch(() => {});
   const $ = selector => document.querySelector(selector);

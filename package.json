@@ -1,6 +1,6 @@
 {
  "name": "rapier-jxl",
- "version": "7.1.0",
+ "version": "8.0.0",
  "type": "module",
  "license": "MIT",
  "description": "JPEG XL for pictures, captures and exact JPEG reconstruction.",
@@ -28,51 +28,100 @@
  "exports": {
   ".": {
    "types": "./types/index.d.mts",
+   "workerd": "./dist/index.workerd.mjs",
+   "edge-light": "./dist/index.edge-light.mjs",
    "import": "./dist/index.mjs"
+  },
+  "./upload": {
+   "types": "./types/upload.d.mts",
+   "workerd": "./dist/upload.workerd.mjs",
+   "edge-light": "./dist/upload.edge-light.mjs",
+   "import": "./dist/upload.mjs"
   },
   "./capture": {
    "types": "./types/capture.d.mts",
+   "workerd": "./dist/capture.workerd.mjs",
+   "edge-light": "./dist/capture.edge-light.mjs",
    "import": "./dist/capture.mjs"
-  },
-  "./snapdom": {
-   "types": "./types/snapdom.d.mts",
-   "import": "./dist/snapdom.mjs"
-  },
-  "./jpeg": {
-   "types": "./types/jpeg.d.mts",
-   "import": "./dist/jpeg.mjs"
-  },
-  "./decode": {
-   "types": "./types/decode.d.mts",
-   "import": "./dist/decode.mjs"
   },
   "./animation": {
    "types": "./types/animation.d.mts",
+   "workerd": "./dist/animation.workerd.mjs",
+   "edge-light": "./dist/animation.edge-light.mjs",
    "import": "./dist/animation.mjs"
+  },
+  "./format": {
+   "types": "./types/format.d.mts",
+   "workerd": "./dist/format.workerd.mjs",
+   "edge-light": "./dist/format.edge-light.mjs",
+   "import": "./dist/format.mjs"
+  },
+  "./decode": {
+   "types": "./types/decode.d.mts",
+   "workerd": "./dist/decode.workerd.mjs",
+   "edge-light": "./dist/decode.edge-light.mjs",
+   "import": "./dist/decode.mjs"
+  },
+  "./jpeg": {
+   "types": "./types/jpeg.d.mts",
+   "workerd": "./dist/jpeg.workerd.mjs",
+   "edge-light": "./dist/jpeg.edge-light.mjs",
+   "import": "./dist/jpeg.mjs"
   },
   "./metadata": {
    "types": "./types/metadata.d.mts",
    "import": "./dist/metadata.mjs"
   },
-  "./format": {
-   "types": "./types/format.d.mts",
-   "import": "./dist/format.mjs"
+  "./codec": {
+   "types": "./types/codec.d.mts",
+   "import": "./dist/codec.mjs"
   },
-  "./offline": {
-   "types": "./types/offline.d.mts",
-   "import": "./dist/offline.mjs"
+  "./polyfill": {
+   "types": "./types/polyfill.d.mts",
+   "import": "./dist/polyfill.mjs"
   },
-  "./worker": "./dist/worker.mjs",
-  "./parallel-worker": "./dist/parallel-worker.mjs",
-  "./worker-classic": "./dist/worker-classic.js",
+  "./snapdom": {
+   "types": "./types/snapdom.d.mts",
+   "import": "./dist/snapdom.mjs"
+  },
+  "./wasm": {
+   "types": "./types/wasm.d.mts",
+   "workerd": "./dist/wasm.workerd.mjs",
+   "edge-light": "./dist/wasm.edge-light.mjs",
+   "import": "./dist/wasm.mjs"
+  },
   "./package.json": "./package.json"
  },
  "types": "./types/index.d.mts",
  "sideEffects": [
-  "./dist/worker.mjs",
-  "./dist/worker-runtime.mjs",
-  "./dist/worker-classic.js",
-  "./dist/parallel-worker.mjs"
+  "./dist/polyfill.mjs",
+  "./dist/still.worker.mjs",
+  "./dist/upload.worker.mjs",
+  "./dist/capture.worker.mjs",
+  "./dist/animation.worker.mjs",
+  "./dist/format.worker.mjs",
+  "./dist/decode.worker.mjs",
+  "./dist/jpeg.worker.mjs",
+  "./dist/still.helper.mjs",
+  "./dist/upload.helper.mjs",
+  "./dist/animation.helper.mjs",
+  "./dist/format.helper.mjs",
+  "./dist/index.workerd.mjs",
+  "./dist/index.edge-light.mjs",
+  "./dist/upload.workerd.mjs",
+  "./dist/upload.edge-light.mjs",
+  "./dist/capture.workerd.mjs",
+  "./dist/capture.edge-light.mjs",
+  "./dist/animation.workerd.mjs",
+  "./dist/animation.edge-light.mjs",
+  "./dist/format.workerd.mjs",
+  "./dist/format.edge-light.mjs",
+  "./dist/decode.workerd.mjs",
+  "./dist/decode.edge-light.mjs",
+  "./dist/jpeg.workerd.mjs",
+  "./dist/jpeg.edge-light.mjs",
+  "./dist/wasm.workerd.mjs",
+  "./dist/wasm.edge-light.mjs"
  ],
  "files": [
   "dist",

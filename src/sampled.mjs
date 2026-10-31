@@ -409,6 +409,18 @@ function sampleZeroPlane(plane, width, height, options, candidates, previous, re
   return true;
 }
 
+const SAMPLE_WEIGHTED = new WeakMap();
+function sampleWeighted(plane, width, height) {
+  let hit = SAMPLE_WEIGHTED.get(plane);
+  if (!hit || hit.width !== width || hit.height !== height || !sameValues(hit.plane, plane)) {
+    const weighted = new Uint32Array(width * height), errors = new Int32Array(width * height);
+    codeWeighted(null, null, plane, width, height, 0, undefined, weighted, errors);
+    SAMPLE_WEIGHTED.set(plane, hit = {width, height, plane: plane.slice(), weighted, errors});
+  }
+  return {weighted: hit.weighted.slice(), errors: hit.errors.slice()};
+}
+const sameValues = (a, b) => { if (a.length !== b.length) return false; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; };
+
 function samplePlan(plane, width, height, options, shared, previous, referenceOutput, byteDomain = true) {
   if (shared) return sampleFinishPlan(sampleTokenize(plane, width, height, null, null, shared, previous, referenceOutput, byteDomain), shared.predictor);
   const length = width * height;
@@ -419,8 +431,7 @@ function samplePlan(plane, width, height, options, shared, previous, referenceOu
   }
   const positions = samplePositions(length, options.samples), table = sampleEntropyTable(positions.length);
   const weightedState = options.weighted || candidates.includes(6);
-  const weighted = weightedState ? new Uint32Array(length) : null, errors = weightedState ? new Int32Array(length) : null;
-  if (weighted) codeWeighted(null, null, plane, width, height, 0, undefined, weighted, errors);
+  const {weighted = null, errors = null} = weightedState ? sampleWeighted(plane, width, height) : {};
   const symbols = candidates.map(() => new Uint8Array(positions.length)), histograms = candidates.map(() => new Uint32Array(options.trainConfig ? ALPHABET : SAMPLE_SYMBOLS)), extras = candidates.map(() => 0);
   const properties = [...options.properties.filter(property => property !== 15 || options.weighted), ...(options.references ? previous.flatMap((_, i) => (options.referenceKinds || [2]).map(kind => 16 + kind + 4 * i)) : [])];
   const m = positions.length, X = new Int32Array(m), Y = new Int32Array(m), W = new Int32Array(m), N = new Int32Array(m), NW = new Int32Array(m);
@@ -540,6 +551,16 @@ function sampleCompileLookup(tree) {
   });
   return {table, p9: maps[0], p10: maps[1], p11: maps[2], p18: maps[3], p22: maps[4], p26: maps[5]};
 }
+function sampleFlatTree(tree) {
+  const nodes = [tree], at = new Map([[tree, 0]]);
+  for (let k = 0; k < nodes.length; k++) if (nodes[k].left) for (const child of [nodes[k].left, nodes[k].right]) { at.set(child, nodes.length * 4); nodes.push(child); }
+  const flat = new Int32Array(nodes.length * 4);
+  nodes.forEach((node, k) => {
+    if (node.left) flat.set([node.property, node.splitval, at.get(node.left), at.get(node.right)], k * 4);
+    else flat.set([-1, node.slot, 0, 0], k * 4);
+  });
+  return flat;
+}
 function sampleTokenize(plane, width, height, weighted, errors, learned, previous, referenceOutput, byteDomain = true) {
   const length = width * height, count = learned.leaves.length, freqs = Array.from({length: count}, () => new Uint32Array(ALPHABET));
   const Context = count > 256 ? Uint16Array : Uint8Array;
@@ -558,6 +579,7 @@ function sampleTokenize(plane, width, height, weighted, errors, learned, previou
     run = 0;
   };
   const interior = learned.interior || learned.tree, noTree = !interior.left, lookup = noTree || !byteDomain ? null : sampleCompileLookup(interior);
+  const flat = noTree || lookup ? null : sampleFlatTree(interior);
   for (let y = 0, i = 0; y < height; y++) for (let x = 0; x < width; x++, i++) {
     const w = x ? plane[i - 1] : y ? plane[i - width] : 0, n = y ? plane[i - width] : w, nw = x && y ? plane[i - width - 1] : w;
     let ctx;
@@ -572,9 +594,9 @@ function sampleTokenize(plane, width, height, weighted, errors, learned, previou
       ctx = lookup.table[index];
     }
     else {
-      let node = interior;
-      while (node.left) {
-        const property = node.property;
+      let at = 0;
+      while (flat[at] >= 0) {
+        const property = flat[at];
         let v;
         if (property === 9) v = w + n - nw;
         else if (property === 10) v = w - nw;
@@ -590,9 +612,9 @@ function sampleTokenize(plane, width, height, weighted, errors, learned, previou
         else if (property === 2) v = y;
         else if (property === 3) v = x;
         else v = samplePropertyValue(property, plane, width, i, x, y, w, n, nw, errors, previous);
-        node = v > node.splitval ? node.left : node.right;
+        at = v > flat[at + 1] ? flat[at + 2] : flat[at + 3];
       }
-      ctx = node.slot;
+      ctx = flat[at + 1];
     }
     const leafPredictor = learned.leaves[ctx].predictor;
     const value = leafPredictor === 6 ? weighted[i] : packSigned(plane[i] - (leafPredictor === 5 ? sampleGradient(w, n, nw) : samplePrediction(leafPredictor, plane, width, i, x, y, w, n, nw)));
@@ -609,45 +631,81 @@ function sampleTokenize(plane, width, height, weighted, errors, learned, previou
     extra: used < length / 2 ? extra.slice(0, used) : extra, used};
 }
 
-function sampleClusterPlan(plan) {
+export function sampleClusterPlan(plan) {
   const table = sampleEntropyTable(plan.used), count = plan.freqs.length;
-  const key = c => [c.split,c.msb,c.lsb].join(',');
-  let groups, costs, previous;
+  const key = c => [c.split, c.msb, c.lsb].join(',');
+  let groups, costs, bySlot, rowBest, previous;
+  const pair = (a, b) => {
+    if (!a || !b || a.key !== b.key) return null;
+    const index = a.slot * count + b.slot;
+    let cost = costs[index];
+    if (Number.isNaN(cost)) {
+      cost = table[a.total + b.total] - table[a.total] - table[b.total] + a.cost + b.cost;
+      const symbols = a.symbols.length < b.symbols.length ? a.symbols : b.symbols;
+      for (const s of symbols) if (a.freq[s] && b.freq[s])
+        cost -= table[a.freq[s] + b.freq[s]] - table[a.freq[s]] - table[b.freq[s]];
+      costs[index] = cost;
+    }
+    return {j: b.slot, cost, delta: cost - a.cost - b.cost};
+  };
+  const row = slot => {
+    const a = bySlot[slot];
+    if (!a) return null;
+    let best = null;
+    for (let j = slot + 1; j < count; j++) {
+      const choice = pair(a, bySlot[j]);
+      if (choice && (!best || choice.delta < best.delta)) best = choice;
+    }
+    return best;
+  };
   return penalty => {
     if (!groups || !(penalty > previous)) {
       groups = plan.freqs.map((freq, i) => {
         const config = plan.configs?.[i] || RESIDUAL_CONFIG, symbols = []; let total = 0;
         for (let s = 0; s < freq.length; s++) if (freq[s]) { symbols.push(s); total += freq[s]; }
-        return {freq, ids:[i], config, key:key(config), slot:i, symbols, total, cost:sampleEntropy(freq,table)};
+        return {freq, ids: [i], config, key: key(config), slot: i, symbols, total, cost: sampleEntropy(freq, table)};
       });
-      costs = new Float64Array(count*count).fill(NaN);
+      costs = new Float64Array(count * count).fill(NaN);
+      bySlot = groups.slice();
+      rowBest = Array.from({length: count}, (_, slot) => row(slot));
     }
     previous = penalty;
-    while(groups.length>1){
-      let best=null;
-      for(let i=0;i<groups.length;i++)for(let j=i+1;j<groups.length;j++){
-        const a=groups[i],b=groups[j];if(a.key!==b.key)continue;
-        const index=a.slot*count+b.slot;
-        let cost=costs[index];
-        if(Number.isNaN(cost)){
-          cost = table[a.total + b.total] - table[a.total] - table[b.total] + a.cost + b.cost;
-          const symbols = a.symbols.length < b.symbols.length ? a.symbols : b.symbols;
-          for (const s of symbols) if (a.freq[s] && b.freq[s]) cost -= table[a.freq[s] + b.freq[s]] - table[a.freq[s]] - table[b.freq[s]];
-          costs[index] = cost;
+    while (groups.length > 1) {
+      let best = null, slot = -1;
+      for (const group of groups) {
+        const choice = rowBest[group.slot];
+        if (choice && choice.delta < penalty * SAMPLE_Q && (!best || choice.delta < best.delta)) {
+          best = choice; slot = group.slot;
         }
-        const delta=cost-a.cost-b.cost;
-        if(delta<penalty*SAMPLE_Q&&(!best||delta<best.delta))best={i,j,cost,delta};
       }
-      if(!best)break;
-      const a=groups[best.i],b=groups[best.j],freq=a.freq.map((value,k)=>value+b.freq[k]);
-      groups[best.i]={...a,freq,cost:best.cost,ids:[...a.ids,...b.ids],total:a.total+b.total,
-        symbols:[...a.symbols,...b.symbols.filter(s=>!a.freq[s])]};
-      groups.splice(best.j,1);
-      for(let i=0;i<count;i++){costs[a.slot*count+i]=NaN;costs[i*count+a.slot]=NaN;}
+      if (!best) break;
+      const a = bySlot[slot], b = bySlot[best.j];
+      const merged = {...a, freq: a.freq.map((value, k) => value + b.freq[k]), cost: best.cost,
+        ids: [...a.ids, ...b.ids], total: a.total + b.total,
+        symbols: [...a.symbols, ...b.symbols.filter(s => !a.freq[s])]};
+      const at = groups.findIndex(group => group.slot === slot);
+      groups[at] = merged;
+      groups.splice(groups.findIndex(group => group.slot === best.j), 1);
+      bySlot[slot] = merged; bySlot[best.j] = null;
+      for (let i = 0; i < count; i++) { costs[slot * count + i] = NaN; costs[i * count + slot] = NaN; }
+      rowBest[slot] = row(slot); rowBest[best.j] = null;
+      for (let i = 0; i < slot; i++) {
+        if (!bySlot[i]) continue;
+        const prior = rowBest[i];
+        if (prior?.j === slot || prior?.j === best.j) rowBest[i] = row(i);
+        else {
+          const choice = pair(bySlot[i], merged);
+          if (choice && (!prior || choice.delta < prior.delta ||
+              choice.delta === prior.delta && slot < prior.j)) rowBest[i] = choice;
+        }
+      }
+      for (let i = slot + 1; i < best.j; i++)
+        if (bySlot[i] && rowBest[i]?.j === best.j) rowBest[i] = row(i);
     }
-    const Context=groups.length>256?Uint16Array:Uint8Array;
-    const map=new Context(plan.leaves.length);groups.forEach((g,i)=>g.ids.forEach(id=>map[id]=i));
-    return {...plan,freqs:groups.map(g=>g.freq),configs:groups.map(g=>g.config),histogramMap:map};
+    const Context = groups.length > 256 ? Uint16Array : Uint8Array;
+    const map = new Context(plan.leaves.length);
+    groups.forEach((g, i) => g.ids.forEach(id => map[id] = i));
+    return {...plan, freqs: groups.map(g => g.freq), configs: groups.map(g => g.config), histogramMap: map};
   };
 }
 
@@ -761,6 +819,7 @@ function sampleChooseModel(plans, options, prepare, offset = 0) {
 
 export function sampledGroup(setup) {
   const {channels, options, shared} = setup, fill = planeFill(setup, options.rctType === undefined ? undefined : colourTransform(options.rctType, channels));
+  const kernels = options.ans ? kernelHooks.entropy?.() ?? null : null;
   let planes;
   return (rgba, stride, x0, y0, w, h, target) => {
     if (!planes || planes[0].length < w * h) planes = Array.from({length: channels}, () => new Int16Array(w * h));
@@ -769,7 +828,7 @@ export function sampledGroup(setup) {
     const plans = planes.map((plane, c) => samplePlan(plane, w, h, options, shared?.[c], references.slice(0, c).reverse(), references[c]));
     const prepare = (ans, section = new BitWriter(options.ans && !ans ? 256 : w * h * channels + 256), models = plans) => {
       if (!target) writeModularHeader(section, {useGlobalTree: false});
-      const model = sampleWriteModel(section, models, ans, options.ans && !ans);
+      const model = sampleWriteModel(section, models, ans, options.ans && !ans, kernels);
       if (target) writeModularHeader(section, {transforms: channels >= 3 ? [{type: 'rct', beginC: 0, rctType: options.rctType ?? 6}] : []});
       return {section, ...model};
     };
@@ -789,9 +848,7 @@ export const sampledPlanes = Object.freeze({
     return planes.map((plane, c) => samplePlan(plane, width, height, options, null, references.slice(0, c).reverse(), references[c], false));
   },
   fixed(plane, width, height, bins) {
-    const length = width * height, weighted = new Uint32Array(length), errors = new Int32Array(length);
-    codeWeighted(null, null, plane, width, height, 0, undefined, weighted, errors);
-    const {cuts} = sampleQuantize(errors, bins), leaves = [];
+    const {weighted, errors} = sampleWeighted(plane, width, height), {cuts} = sampleQuantize(errors, bins), leaves = [];
     const build = (lo, hi) => {
       if (lo === hi) { const node = leaf(6); node.slot = leaves.length; leaves.push(node); return node; }
       const mid = (lo + hi) >> 1;

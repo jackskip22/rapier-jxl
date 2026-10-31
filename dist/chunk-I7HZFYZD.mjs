@@ -1,2 +1,0 @@
-/*! rapier-jxl 7.1.0 | MIT */
-import{a as m,b as s}from"./chunk-BURSFLQ2.mjs";import"./chunk-PKQAVIYW.mjs";import"./chunk-LESRETCI.mjs";import{h as o}from"./chunk-SKZZNTTZ.mjs";import"./chunk-ZFL5PYO4.mjs";import"./chunk-5YFDXCJ2.mjs";import"./chunk-DLI4RUBA.mjs";import{j as r}from"./chunk-KJS3N7RP.mjs";import"./chunk-NCIWO4K3.mjs";import"./chunk-2EV2D2XW.mjs";export{r as LIMITS,m as encodeProfile,s as encodeProfileSteps,o as prepareICC};

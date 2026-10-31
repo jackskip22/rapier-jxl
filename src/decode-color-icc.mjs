@@ -8,15 +8,16 @@ const align4=n=>Math.ceil(n/4)*4;
 const text=(b,at)=>String.fromCharCode(b[at],b[at+1],b[at+2],b[at+3]);
 const XYZ_SCALE=65535/32768,LAB_OLD=65535/65280;
 const cache=new WeakMap();
-const DEFAULT_ICC_SAMPLES=16777216,DEFAULT_ICC_STAGES=256;
+const DEFAULT_ICC_SAMPLES=16777216,DEFAULT_ICC_STAGES=256,DEFAULT_ICC_WORK=1024,DEFAULT_ICC_TAGS=4096;
 
-function profileBudget(maxSamples,maxStages) {
-  let samples=0,stages=0;const numeric=new Map();
+function profileBudget(maxSamples,maxStages,maxWork) {
+  let samples=0,stages=0,work=0;const numeric=new Map();
   const limit=message=>{throw Object.assign(new RangeError(message),{code:'JXL_LIMIT'});};
   const allocate=count=>{if(count>maxSamples-samples)limit('ICC parsed samples exceed the limit.');samples+=count;};
   return {
     allocate,
     stages(count=1){if(count>maxStages-stages)limit('ICC processing stages exceed the limit.');stages+=count;},
+    workForPixel(cost,kind='interpolation'){if(!Number.isSafeInteger(cost)||cost>maxWork-work)limit('ICC '+kind+' work exceeds the limit.');work+=cost;},
     numbers(view,at,count,kind) {
       const key=kind+':'+at+':'+count;let values=numeric.get(key);if(values)return values;
       allocate(count);
@@ -117,6 +118,8 @@ function parseTag(bytes,tag,budget) {
   const curves=(offset,n)=>{let p=at+offset;const out=[];for(let i=0;i<n;i++){has(p,12);const c=curve(view,p,end,budget);out.push(c);p+=align4(c.bytes);}return curveStage(out);};
   const lookup=(p,grid,outputs,precision)=>{
     let n=outputs;for(const count of grid){requireDecode(count>=2,'Invalid ICC lookup dimensions.');n*=count;requireDecode(Number.isSafeInteger(n)&&n<=16777216,'ICC lookup table exceeds the sample limit.');}
+    const multilinear=grid.length>=3?grid.length-3:grid.length;
+    budget.workForPixel((1<<multilinear)*(grid.length+4*outputs));
     has(p,n*precision);
     const values=budget.numbers(view,p,n,precision===1?'u8':precision===2?'u16':'float');
     return {stage:clutStage(grid,outputs,values),bytes:n*precision};
@@ -154,10 +157,14 @@ function parseTag(bytes,tag,budget) {
       const offset=view.getUint32(at+16+i*8),size=view.getUint32(at+20+i*8),p=at+offset,limit=p+size;has(p,size);requireDecode(offset>=16+count*8&&offset%4===0&&size>=12,'Invalid ICC processing element.');
       const id=text(bytes,p),n=view.getUint16(p+8),m=view.getUint16(p+10);channels(n,m);requireDecode(n===previous,'ICC processing channels do not match.');previous=m;
       const localHas=(q,length)=>requireDecode(q>=p&&q+length<=limit,'Truncated ICC processing element.');
-      if(id==='matf'){localHas(p+12,4*m*(n+1));stages.push(matrixStage(floats(p+12,m*(n+1)),n,m));}
+      if(id==='matf'){
+        localHas(p+12,4*m*(n+1));
+        budget.workForPixel(m*(n+1),'processing');
+        stages.push(matrixStage(floats(p+12,m*(n+1)),n,m));
+      }
       else if(id==='clut') {localHas(p+12,16);const grid=Array.from(bytes.subarray(p+12,p+12+n));let length=m*4;for(const v of grid)length*=v;localHas(p+28,length);stages.push(lookup(p+28,grid,m,4).stage);}
       else if(id==='cvst') {
-        requireDecode(n===m,'Invalid ICC curve set dimensions.');localHas(p+12,n*8);const list=[];
+        requireDecode(n===m,'Invalid ICC curve set dimensions.');budget.workForPixel(n,'processing');localHas(p+12,n*8);const list=[];
         budget.stages(n);
         for(let ch=0;ch<n;ch++) {
           const offset=view.getUint32(p+12+ch*8),size=view.getUint32(p+16+ch*8),cp=p+offset,ce=cp+size;localHas(cp,size);
@@ -182,7 +189,7 @@ function parseTag(bytes,tag,budget) {
           list.push({read(x){let s=0;while(s<breaks.length&&x>breaks[s])s++;return functions[s](x);}});
         }
         stages.push(curveStage(list));
-      } else if(id==='bACS'||id==='eACS'){requireDecode(n===m,'Invalid ICC expansion element.');stages.push((v,out)=>{for(let c=0;c<n;c++)out[c]=v[c];return out;});}
+      } else if(id==='bACS'||id==='eACS'){requireDecode(n===m,'Invalid ICC expansion element.');budget.workForPixel(n,'processing');stages.push((v,out)=>{for(let c=0;c<n;c++)out[c]=v[c];return out;});}
       else return null;
     }
     requireDecode(previous===outputs,'ICC output channel count does not match.');return {...pipeline(stages,inputs,outputs),type};
@@ -202,13 +209,14 @@ function encodePCS(v,pcs,type,out) {
   xyzLab(out);const scale=type==='mft2'?LAB_OLD:1;out[0]/=100*scale;out[1]=(out[1]+128)/(255*scale);out[2]=(out[2]+128)/(255*scale);return out;
 }
 
-export function readICCColor(icc,{intent,maxSamples=DEFAULT_ICC_SAMPLES,maxStages=DEFAULT_ICC_STAGES}={}) {
+export function readICCColor(icc,{intent,maxSamples=DEFAULT_ICC_SAMPLES,maxStages=DEFAULT_ICC_STAGES,maxWork=DEFAULT_ICC_WORK,maxTags=DEFAULT_ICC_TAGS}={}) {
   requireDecode(icc instanceof Uint8Array&&icc.length>=132,'Invalid ICC profile for color conversion.');
-  requireDecode(Number.isSafeInteger(maxSamples)&&maxSamples>0&&Number.isSafeInteger(maxStages)&&maxStages>0,'Invalid ICC processing limits.');
-  const cached=cache.get(icc);if(cached&&cached.intent===intent&&cached.maxSamples===maxSamples&&cached.maxStages===maxStages)return cached.value;
-  const budget=profileBudget(maxSamples,maxStages);
+  requireDecode(Number.isSafeInteger(maxSamples)&&maxSamples>0&&Number.isSafeInteger(maxStages)&&maxStages>0&&Number.isSafeInteger(maxWork)&&maxWork>0&&Number.isSafeInteger(maxTags)&&maxTags>0,'Invalid ICC processing limits.');
+  const cached=cache.get(icc);if(cached&&cached.intent===intent&&cached.maxSamples===maxSamples&&cached.maxStages===maxStages&&cached.maxWork===maxWork&&cached.maxTags===maxTags)return cached.value;
+  const budget=profileBudget(maxSamples,maxStages,maxWork);
   const view=new DataView(icc.buffer,icc.byteOffset,icc.byteLength),length=view.getUint32(0),count=view.getUint32(128);
   requireDecode(length===icc.length&&text(icc,36)==='acsp'&&132+count*12<=length,'Invalid ICC color profile header.');
+  if(count>maxTags)throw Object.assign(new RangeError('ICC tag directory exceeds the limit.'),{code:'JXL_LIMIT'});
   const space=text(icc,16),pcs=text(icc,20),tags=new Map(),channels=space==='GRAY'?1:space==='CMYK'?4:3;
   requireDecode(pcs==='XYZ '||pcs==='Lab ','ICC color profile needs an XYZ or Lab connection space.');
   for(let i=0;i<count;i++){const p=132+i*12,offset=view.getUint32(p+4),size=view.getUint32(p+8);requireDecode(offset>=132+count*12&&offset%4===0&&size>=8&&offset+size<=length,'Invalid ICC color tag extent.');tags.set(text(icc,p),{offset,length:size});}
@@ -246,5 +254,5 @@ export function readICCColor(icc,{intent,maxSamples=DEFAULT_ICC_SAMPLES,maxStage
     if(toPCS&&!directForward){const relative=toPCS;toPCS=(v,out)=>{relative(v,out);for(let c=0;c<3;c++)out[c]*=scale[c];return out;};}
     if(fromPCS&&!directReverse){const relative=fromPCS,adjusted=new Float64Array(3);fromPCS=(v,out)=>{for(let c=0;c<3;c++)adjusted[c]=v[c]/scale[c];return relative(adjusted,out);};}
   }
-  const value={space,pcs,channels,toPCS,fromPCS,toModel,fromModel,intent:selected};cache.set(icc,{intent,maxSamples,maxStages,value});return value;
+  const value={space,pcs,channels,toPCS,fromPCS,toModel,fromModel,intent:selected};cache.set(icc,{intent,maxSamples,maxStages,maxWork,maxTags,value});return value;
 }

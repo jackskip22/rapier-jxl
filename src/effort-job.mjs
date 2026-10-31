@@ -7,81 +7,94 @@ import {AVERAGE_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, split, channelTre
 import {codeChannel} from './modular-channel.mjs';
 import {inspectPixels, losslessSteps, planeFill, nativeSteps, iccShape} from './lossless.mjs';
 import {lossySteps} from './lossy.mjs';
-import {photoSteps, admitPhotoFilter} from './photo-job.mjs';
+import {photoSteps, admitPhotoFilter, screenImageSteps, screenRouted} from './photo-job.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {WEIGHTED_PREDICTOR, WEIGHTED_PROPERTY, WEIGHTED_CUTS, codeWeighted} from './weighted.mjs';
 import {fault, admitOptions, admitPixels} from './admit.mjs';
 import {admitSampleFormat} from './admit-samples.mjs';
-import {localSteps} from './local.mjs';
-import {rctSearchSteps} from './rct-search.mjs';
 import {screenEligible, screenSteps} from './screen-search.mjs';
-import {screenLike} from './screen.mjs';
+import {screenLike, flatSamples, CAPTURE_FLAT} from './screen.mjs';
+import {screenPhotoRegions} from './screen-photo-regions.mjs';
 import {SAMPLE_RUNGS, sampledSteps, sampleTransformRanking} from './sampled.mjs';
-import {paintingSteps, admitPaintingProfile} from './painting.mjs';
 import {FAST_EFFORT} from './effort-level.mjs';
 
-export function effortJob(data, width, height, options, gpu = false, limits, search) {
+export function effortJob(data, width, height, options, gpu = false, limits, search, writer = coefficientAnsSteps, deep = null) {
   const {quality, colorSpace} = admitOptions(options), effort = options?.effort === undefined ? FAST_EFFORT : options.effort;
   const filter = admitPhotoFilter(options);
   if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fault('JXL_INPUT', 'Effort is a whole number from 1 to 9.');
-  const treeLearning = options?.treeLearning;
-  if (treeLearning !== undefined && treeLearning !== 'sampled') throw fault('JXL_INPUT', 'Tree learning must be sampled when specified.');
-  const losslessProfile = options?.losslessProfile;
-  if (losslessProfile !== undefined && losslessProfile !== 'painting' && losslessProfile !== 'painting-search') throw fault('JXL_INPUT', 'The lossless profile is painting or painting-search when specified.');
+  if (effort >= 4 && !deep) throw fault('JXL_INTERNAL', 'Efforts 4-9 need their exact ladder (local.mjs, rct-search.mjs).');
+  if (effort >= 8 && !deep.screen) throw fault('JXL_INTERNAL', 'Efforts 8-9 need their screen candidates (palette-search.mjs, screen-local.mjs).');
   admitPixels(data, width, height, limits);
   const samples = admitSampleFormat(data, options);
-  if (losslessProfile === 'painting') {
-    admitPaintingProfile(quality, samples);
-    return paintingSteps(data, width, height, {colorSpace});
-  }
-  if (losslessProfile === 'painting-search') admitPaintingProfile(quality, samples);
-  if (samples.iccSpace && losslessProfile === undefined)
-    return iccShape(data, samples.iccSpace, effortSteps(data, width, height, quality, samples.iccSpace, effort, treeLearning, false, options?.photo !== false, filter, false, search));
+  if (samples.iccSpace)
+    return iccShape(data, samples.iccSpace, effortSteps(data, width, height, quality, samples.iccSpace, effort, options?.photo !== false, filter, false, search, writer, deep));
   if (!samples.native8) return nativeSteps(data, width, height, {quality, samples, effort});
-  return effortSteps(data, width, height, quality, colorSpace, effort, treeLearning, losslessProfile === 'painting-search', options?.photo !== false, filter, gpu, search);
+  return effortSteps(data, width, height, quality, colorSpace, effort, options?.photo !== false, filter, gpu, search, writer, deep);
 }
 
-function* effortSteps(data, width, height, quality, colorSpace, effort, treeLearning, painting = false, photo = true, filter, gpu = false, search) {
+function* effortSteps(data, width, height, quality, colorSpace, effort, photo = true, filter, gpu = false, search, writer = coefficientAnsSteps, deep = null) {
   const shape = inspectPixels(data, width, height);
   if (quality < 100) {
     if (!shape.palette) {
       const lossy = photo ? photoSteps(data, width, height, quality, colorSpace, effort,
-        coefficientAnsSteps, filter, search, gpu) : lossySteps(data, width, height, {quality, shape, colorSpace});
-      if (effort < 2) return yield* screenFirst(data, width, height, colorSpace, lossy);
+        writer, filter, search, gpu) : lossySteps(data, width, height, {quality, shape, colorSpace});
+      const screen = photo && effort >= 2 ? yield* screenProbe(data, width, height, quality, colorSpace, filter, search, gpu, writer) : null;
+      if (screen?.exact) { lossy.return?.(); return screen.captured; }
+      if (screen) {
+        const shared = screen.image && screenRouted(data, width, height, colorSpace, effort);
+        if (shared) lossy.return?.();
+        const bytes = yield* within(shared ? coefficientAnsSteps(screen.image, effort) : lossy, 0.1, 0.9);
+        let best = screen.captured.length <= bytes.length ? screen.captured : bytes;
+        const regions = best === bytes ? screenPhotoRegions(data, width, height) : [];
+        if (regions.length) {
+          const mixed = yield {screenPhoto: {data, width, height, quality, regions, effort}};
+          if (mixed instanceof Uint8Array && mixed.length < best.length) best = mixed;
+        }
+        return best;
+      }
       return yield* capturedFloor(data, width, height, colorSpace, yield* lossy, true);
     }
     const palette = (function* () {
-      const exact = yield* part(effortSteps(data, width, height, 100, colorSpace, effort), 0, 2);
+      const captured = effort >= 2 && typeof colorSpace !== 'object' && screenLike(data, width, height)
+        ? yield {capture: {data, width, height, colorSpace}} : null;
+      const exact = captured instanceof Uint8Array ? captured : yield* part(effortSteps(data, width, height, 100, colorSpace, effort, true, undefined, false, undefined, undefined, deep), 0, 2);
       let bytes;
       try { bytes = yield* part(lossySteps(data, width, height, {quality, shape, colorSpace}), 1, 2); }
       catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; bytes = exact; }
       return exact.length <= bytes.length ? exact : bytes;
     })();
-    return yield* (effort < 2 ? screenFirst(data, width, height, colorSpace, palette) : palette);
+    return yield* palette;
   }
-  if (effort < 2) return yield* screenFirst(data, width, height, colorSpace, losslessSteps(data, width, height, {shape, colorSpace, fast: true}));
-  if (treeLearning === 'sampled') return yield* sampledSearch(data, width, height, shape, colorSpace, effort);
+  if (effort < 2) {
+    const steps = losslessSteps(data, width, height, {shape, colorSpace, fast: true});
+    return yield* (screenLike(data, width, height) || typeof colorSpace === 'object' || flatSamples(data, width, height) < CAPTURE_FLAT
+      ? screenFirst(data, width, height, colorSpace, steps) : capturedFloor(data, width, height, colorSpace, yield* steps, false, true));
+  }
   const analysis = {};
-  const fast = yield* capturedFloor(data, width, height, colorSpace, complete(losslessSteps(data, width, height, {shape, colorSpace, fast: true})));
+  const stream = complete(losslessSteps(data, width, height, {shape, colorSpace, fast: true}));
+  const captured = typeof colorSpace !== 'object' && (screenLike(data, width, height) || flatSamples(data, width, height) >= CAPTURE_FLAT)
+    ? yield {capture: {data, width, height, colorSpace}} : null;
+  if (captured instanceof Uint8Array && captured.length <= PROBE * stream.length) return captured;
+  const fast = captured instanceof Uint8Array && captured.length < stream.length ? captured : stream;
   const core = losslessSteps(data, width, height, {shape, colorSpace, analysis});
   let step, reply, hurried = false;
   while (!(step = core.next(reply)).done) { reply = yield scaled(step.value, done => done / 2); hurried ||= !!reply; }
   let best = step.value.length < fast.length ? step.value : fast;
   if (hurried) return best;
   const direct = shape.palette ? {...shape, palette: null} : shape;
-  const screen = effort >= 3 && screenEligible(data, width, height, shape, effort);
+  const screen = losslessScreenCandidate(data, width, height, shape, effort);
   if (effort >= 4 || screen) {
-    const searches = !painting && (effort >= 4 || screen) ? [() => searchSteps(data, width, height, direct, colorSpace, 3, analysis, screen ? best.length : Infinity)] : [];
-    if (effort >= 4 && shape.palette) searches.push(() => localSteps(data, width, height, shape, colorSpace, 4, true, best.length));
-    if (effort >= 6 && shape.palette) searches.push(() => localSteps(data, width, height, shape, colorSpace, 6, true, best.length));
-    if (effort >= 4 && !painting) searches.push(() => rctSearchSteps(data, width, height, shape, colorSpace));
-    const rungs = learnedRungs(effort, data, width, height, shape, painting);
+    const searches = (effort >= 4 || screen) ? [() => searchSteps(data, width, height, direct, colorSpace, 3, analysis, screen ? best.length : Infinity)] : [];
+    if (effort >= 4 && shape.palette) searches.push(() => deep.localSteps(data, width, height, shape, colorSpace, 4, true, best.length));
+    if (effort >= 6 && shape.palette) searches.push(() => deep.localSteps(data, width, height, shape, colorSpace, 6, true, best.length));
+    if (effort >= 4) searches.push(() => deep.rctSearchSteps(data, width, height, shape, colorSpace));
+    const rungs = learnedRungs(effort, data, width, height, shape);
     const budgets = rungs.map(() => ({reached: false})), key = rung => JSON.stringify({...rung, leaves: 0});
     rungs.forEach((rung, i) => {
       const narrower = rungs.findIndex((other, j) => j < i && other.leaves < rung.leaves && key(other) === key(rung));
       searches.push(() => narrower >= 0 && !budgets[narrower].reached ? none() : sampledSteps(data, width, height, shape, colorSpace, {...rung, budget: budgets[i]}, best.length));
     });
-    if (screen) searches.unshift(() => screenSteps(data, width, height, shape, colorSpace, {fastFloor: effort === 3 ? best.length : 0, effort}));
+    if (screen) searches.unshift(() => screenSteps(data, width, height, shape, colorSpace, {fastFloor: effort === 3 ? best.length : 0, effort, deep: deep?.screen}));
     const count = searches.length;
     for (let i = 0; i < searches.length; i++) {
       try {
@@ -95,11 +108,16 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, treeLear
     return best;
   }
   try {
-    const rung = learnedRungs(3, data, width, height, shape, painting)[0];
+    const rung = learnedRungs(3, data, width, height, shape)[0];
     const bytes = yield* part(sampledSteps(data, width, height, shape, colorSpace, {...rung, budget: {reached: false}}, best.length), 1, 2);
     if (bytes && bytes.length < best.length) best = bytes;
   } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
   return best;
+}
+
+export function losslessScreenCandidate(data, width, height, shape, effort) {
+  return effort === 3 ? screenEligible(data, width, height, shape, 3)
+    : effort >= 4 && screenLike(data, width, height);
 }
 
 function* none() { return null; }
@@ -112,8 +130,27 @@ function* screenFirst(data, width, height, colorSpace, steps) {
   return yield* steps;
 }
 
-function* capturedFloor(data, width, height, colorSpace, bytes, lossy = false) {
-  if (typeof colorSpace === 'object' || !screenLike(data, width, height)) return bytes;
+const PROBE = 0.7;
+function* screenProbe(data, width, height, quality, colorSpace, filter, search, gpu, writer = coefficientAnsSteps) {
+  if (typeof colorSpace === 'object' || !screenLike(data, width, height)) return null;
+  const captured = yield {capture: {data, width, height, colorSpace}};
+  if (!(captured instanceof Uint8Array)) return null;
+  const image = screenRouted(data, width, height, colorSpace, 1) ? yield* part(screenImageSteps(data, width, height, quality), 0, 20) : null;
+  const probe = image ? yield* part(coefficientAnsSteps(image, 1), 1, 20)
+    : yield* part(photoSteps(data, width, height, quality, colorSpace, 1, writer, filter, search, gpu), 0, 10);
+  return {captured, image, exact: captured.length <= PROBE * probe.length};
+}
+
+function* within(steps, from, span) {
+  let step, reply;
+  try {
+    while (!(step = steps.next(reply)).done) reply = yield scaled(step.value, done => from + done * span);
+    return step.value;
+  } finally { steps.return?.(); }
+}
+
+function* capturedFloor(data, width, height, colorSpace, bytes, lossy = false, flat = false) {
+  if (typeof colorSpace === 'object' || !flat && !screenLike(data, width, height)) return bytes;
   const captured = yield {capture: {data, width, height, colorSpace}};
   return captured instanceof Uint8Array && (lossy ? captured.length <= bytes.length : captured.length < bytes.length) ? captured : bytes;
 }
@@ -135,8 +172,8 @@ const LADDER = Object.freeze({
   8: [{rung: 'precise', ranked: 0}, {rung: 'sampled', ranked: 0}, {rung: 'branching', ranked: 0}],
   9: [{rung: 'precise', ranked: 1}, {rung: 'dense', ranked: 0}, {rung: 'deep', ranked: 0}],
 });
-export function learnedRungs(effort, data, width, height, shape, painting = false) {
-  const steps = (effort <= 4 ? LADDER[effort] : Array.from({length: Math.max(0, effort - 4)}, (_, i) => LADDER[i + 5] || []).flat()).filter(step => !painting || step.rung !== 'maximum'), ranking = shape.colour === 3 && steps.some(step => step.ranked !== undefined) ? sampleTransformRanking(data, width, height) : [6];
+export function learnedRungs(effort, data, width, height, shape) {
+  const steps = effort <= 4 ? LADDER[effort] : Array.from({length: Math.max(0, effort - 4)}, (_, i) => LADDER[i + 5] || []).flat(), ranking = shape.colour === 3 && steps.some(step => step.ranked !== undefined) ? sampleTransformRanking(data, width, height) : [6];
   const rungs = [], types = [], bases = [];
   for (const step of steps) {
     const base = SEARCH_RUNGS[step.rung], type = step.ranked === undefined ? 6 : ranking[step.ranked] ?? 6;
@@ -144,32 +181,6 @@ export function learnedRungs(effort, data, width, height, shape, painting = fals
     types.push(type); bases.push(base); rungs.push(type === 6 ? base : {...base, rctType: type});
   }
   return rungs;
-}
-
-function* sampledSearch(data, width, height, shape, colorSpace, effort) {
-  const first = losslessSteps(data, width, height, {shape, colorSpace});
-  let step, reply, hurried = false, last = 0;
-  while (!(step = first.next(reply)).done) {
-    reply = yield scaled(step.value, done => last = done / 2);
-    hurried ||= !!reply;
-  }
-  const floor = yield* capturedFloor(data, width, height, colorSpace, step.value);
-  if (hurried) return floor;
-  const rungs = effort < 4 ? [SAMPLE_RUNGS.cheap] : [SAMPLE_RUNGS.cheap, SAMPLE_RUNGS.rich];
-  let best = floor;
-  for (let i = 0; i < rungs.length; i++) {
-    try {
-      const steps = sampledSteps(data, width, height, shape, colorSpace, rungs[i]);
-      reply = undefined;
-      while (!(step = steps.next(reply)).done) {
-        reply = yield scaled(step.value, done => last = 0.5 + (i + done) / (2 * rungs.length));
-        if (reply) return floor;
-      }
-      if (step.value && step.value.length < best.length) best = step.value;
-    } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
-  }
-  if (last < 1 && (yield 1)) return floor;
-  return best;
 }
 
 const estimatedRawBits = s => Math.max(0, s < 224 ? s - 1 : s - 236);

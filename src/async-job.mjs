@@ -8,13 +8,17 @@ export async function finishEncoding(job, {progress, signal, hurrySignal} = {}) 
   checkSignal(signal);
   if (hurrySignal !== undefined && typeof hurrySignal?.throwIfAborted !== 'function')
     throw new TypeError('hurrySignal must be an AbortSignal.');
-  let channel, lastTurn = performance.now();
+  let channel = typeof MessageChannel === 'function' ? undefined : false, immediate = typeof setImmediate === 'function', lastTurn = performance.now();
   const hurry = () => { job.hurry = true; };
   const turn = () => new Promise(resolve => {
-    if (typeof setImmediate === 'function') { setImmediate(resolve); return; }
-    channel ||= new MessageChannel();
-    channel.port1.onmessage = resolve;
-    channel.port2.postMessage(0);
+    if (immediate) try { setImmediate(resolve); return; } catch { immediate = false; }
+    if (channel !== false) try {
+      channel ||= new MessageChannel();
+      channel.port1.onmessage = resolve;
+      channel.port2.postMessage(0);
+      return;
+    } catch { channel = false; }
+    setTimeout(resolve, 0);
   });
   try {
     hurrySignal?.addEventListener('abort', hurry, {once: true});
@@ -33,6 +37,6 @@ export async function finishEncoding(job, {progress, signal, hurrySignal} = {}) 
     return job.bytes;
   } finally {
     hurrySignal?.removeEventListener('abort', hurry);
-    channel?.port1.close(); channel?.port2.close();
+    if (channel) { channel.port1.close(); channel.port2.close(); }
   }
 }

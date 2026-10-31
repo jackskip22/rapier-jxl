@@ -3,7 +3,7 @@ import {reconstruct, toRGBAInto} from './reconstruct.mjs';
 import {butteraugli, butteraugliReference, butteraugliRows} from './butteraugli.mjs';
 import {exactPow} from './exact-math.mjs';
 import {SRGB_TO_LINEAR} from './ssimulacra2.mjs';
-import {butteraugliBytes, memoryPlan, poolWorkers} from './memory-plan.mjs';
+import {bandBytes, butteraugliBytes, memoryPlan, poolWorkers} from './memory-plan.mjs';
 import {fault} from './fault.mjs';
 import {spawnJxlHelper} from './worker-assets.mjs';
 import {validateWorkerReservation, claimWorkerReservation, workerBackingBytes} from './worker-reservation.mjs';
@@ -375,6 +375,42 @@ export function exactAnswerer(rgba, width, height, pool = null, reference = null
       for (const id of request.ids) out.set(id, measured(xybStrategies(request.base, width, height, {...request.options, force: id, maps: null}).image));
       return out;
     };
+    if (!plan.known && request.kind === 'blocks' && (!pool || pool.size === 0) && !request.image.lazyStrategy) {
+      const regions = mergeRegions(request.regions, width, height);
+      const full = regions.some(r => r.x0 === 0 && r.y0 === 0 && r.x1 === width && r.y1 === height);
+      if (!full && cropsCost(regions, width, height, 1, margin) <= WHOLE_COST * width * height) {
+        const allowance = plan.banded ? bandBytes(width, height, plan.bandRows).work : butteraugliBytes(width, height).work;
+        let peakJob = 0, resultBytes = 0, admitted = true;
+        try {
+          for (const region of regions) {
+            const geometry = cropFor(region, width, height, Math.max(CROP_MARGIN, Math.ceil((75 + margin) / 8) * 8));
+            const crop = geometry.crop, job = {...geometry, region, width, height,
+              refPlanes: sized(24 * (crop.x1 - crop.x0) * (crop.y1 - crop.y0))};
+            const bytes = exactJobBytes({job, sub: previewSub(request.image, geometry.blocks), p, margin});
+            peakJob = Math.max(peakJob, bytes.jobBytes); resultBytes += bytes.outputBytes;
+          }
+          admitted = Number.isSafeInteger(resultBytes) && peakJob + 2 * resultBytes <= allowance;
+        } catch (error) { if (error.code !== 'JXL_MEMORY') throw error; admitted = false; }
+        if (admitted) return await afterRetirement(() => {
+          const out = {cells: new Map(), blocks: new Map()};
+          try {
+            for (const region of regions) {
+              if (signal?.aborted) throw signal.reason;
+              if (destroyed) throw Object.assign(new Error('Exact answerer is closed.'), {name: 'AbortError'});
+              const job = withReference(ref => regionJob(ref, width, height, region, {margin})), b = job.blocks;
+              const message = {job, sub: subImage(request.image, b.bx0, b.by0, b.bx1, b.by1), p, margin};
+              const bytes = exactJobBytes(message);
+              if (bytes.jobBytes + 2 * resultBytes > allowance) throw fault('JXL_MEMORY', 'Local exact job exceeds the whole-path workspace.');
+              for (const [, cells, blocks] of runJob(message)) {
+                for (const [k, v] of cells) out.cells.set(k, v);
+                for (const [k, v] of blocks) out.blocks.set(k, v);
+              }
+            }
+            return out;
+          } catch (error) { out.cells.clear(); out.blocks.clear(); throw error; }
+        });
+      }
+    }
     if (!activePool || activePool.size === 0 || request.kind === 'cells') return await afterRetirement(whole);
     const reservation = exactReservation(Math.min(workers, activePool.size), activePool.reservation ?? plan.workerReservation);
     const regions = mergeRegions(request.regions, width, height);

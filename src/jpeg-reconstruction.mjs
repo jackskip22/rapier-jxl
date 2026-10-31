@@ -27,10 +27,14 @@ function structure(bytes, jpeg) {
   const data = {markers: [], apps: [], comments: [], quant: [], huffman: [], scans: [], inter: [], tail: new Uint8Array(0), restart: 0, components: jpeg.components.map(c => ({id: c.id, quant: -1}))};
   let events = 0;
   const raw = part => {
-    for (let at = 0; at < part.length; at += 65535) { data.markers.push(255); data.inter.push(part.subarray(at, at + 65535)); }
+    for (let at = 0; at < part.length; at += 65535) {
+      requireJPEG(data.markers.length < 16384);
+      data.markers.push(255); data.inter.push(part.subarray(at, at + 65535));
+    }
   };
   let at = 2, ended = false, hasRestart = false;
   while (at < bytes.length) {
+    requireJPEG(data.markers.length < 16384);
     const start = at;
     while (bytes[at] === 255) at++;
     if (at - start > 1) raw(bytes.subarray(start, at - 1));
@@ -50,7 +54,9 @@ function structure(bytes, jpeg) {
         tables.every(q => !data.quant.some(old => old.index === q.index));
       if (keep) data.quant.push(...tables);
     } else if (marker === 196) {
+      if (body === end) keep = false;
       for (let p = body; p < end;) {
+        requireJPEG(data.huffman.length < 89);
         const slot = bytes[p++], counts = [0, ...bytes.subarray(p, p + 16)]; p += 16;
         const n = counts.reduce((a, b) => a + b, 0), symbols = [...bytes.subarray(p, p + n), 256]; p += n;
         requireJPEG(n > 0);
@@ -642,16 +648,16 @@ const openBox = part => {
     requireJPEG(false);
   }
 };
-export function restoreJPEG(bytes, dictionary) {
+export function restoreJPEG(bytes, dictionary, {maxPixels} = {}) {
   dictionaryOf = typeof dictionary === 'function' ? dictionary : null;
-  try { return restore(bytes); } finally { dictionaryOf = null; }
+  try { return restore(bytes, maxPixels); } finally { dictionaryOf = null; }
 }
-function restore(bytes) {
+function restore(bytes, maxPixels) {
   return guard(() => {
     const boxed = jpegReconstruction(bytes);
     if (!boxed) return null;
     const stream = openBox(boxed.reconstruction); requireJPEG(stream);
-    const jpeg = readJPEGCoefficients(boxed.codestream, {reconstruction: true});
+    const jpeg = readJPEGCoefficients(boxed.codestream, {reconstruction: true, maxPixels});
     const data = readData(stream, {icc: jpeg.icc ? unpredictICC(jpeg.icc) : null, exif: openBox(boxed.exif), xml: openBox(boxed.xml)});
     requireJPEG(data.components.length === jpeg.components.length);
     for (let i = 0; i < jpeg.components.length; i++) {

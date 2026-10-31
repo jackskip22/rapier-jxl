@@ -1,7 +1,10 @@
+export {wasmOnlySupported as supported} from './capture-support.mjs';
 // SPDX-License-Identifier: MIT
-import {defaultEncoder} from './session.mjs';
-const captureEncode = (input, options) => defaultEncoder().capture(input, options);
-const photoEncode = (input, options) => defaultEncoder().encode(input, options);
+import {createCodec} from './codec.mjs';
+import {admitSignal, check} from './primitives.mjs';
+let captureCodec, uploadCodec;
+const captureEncode = (input, options) => (captureCodec ||= createCodec({module: 'rapier-jxl/capture'})).capture(input, options);
+const photoEncode = (input, options) => (uploadCodec ||= createCodec({module: 'rapier-jxl/upload'})).encode(input, options);
 
 function warmPage() {
   const width = 1100, height = 96, data = new Uint8Array(width * height * 4);
@@ -34,12 +37,19 @@ function warmup(encode) {
 }
 
 const OWN = new Set(['quality', 'maxError', 'signal', 'onProgress']);
+const refuse = (Class, message) => Object.assign(new Class(message), {code: 'JXL_OPTIONS'});
+const bound = (value, name) => { if (!Number.isInteger(value) || value < 0 || value > 8) throw refuse(RangeError, `${name}: maxError is an integer from 0 to 8; 0 is exact.`); };
 
-export function jxl({maxError = 0, encode = captureEncode, encodeLossy = encode === captureEncode ? photoEncode : undefined, prepare = true} = {}) {
-  if (typeof encode !== 'function') throw new TypeError('jxl(): encode must be a function, such as encoder.capture from createEncoder()');
-  if (encodeLossy !== undefined && typeof encodeLossy !== 'function') throw new TypeError('jxl(): encodeLossy must be a function, such as encoder.encode from createEncoder()');
-  const start = warmup(encode), startLossy = encodeLossy
-    ? warmup(input => encodeLossy(input, {quality: 1, effort: 1, acceleration: 'wasm'})) : start;
+const PLUGIN = new Set(['maxError', 'capture', 'encode', 'prepare']);
+export function jxl(settings = {}) {
+  for (const key of Object.keys(settings ?? {})) if (!PLUGIN.has(key)) throw refuse(TypeError, `jxl(): unknown option ${key}.`);
+  const {maxError = 0, capture = captureEncode, encode = capture === captureEncode ? photoEncode : undefined, prepare = true} = settings ?? {};
+  if (typeof capture !== 'function') throw refuse(TypeError, 'jxl(): capture must be a function, such as encoder.capture from createCodec()');
+  if (encode !== undefined && typeof encode !== 'function') throw refuse(TypeError, 'jxl(): encode must be a function, such as encoder.encode from createCodec()');
+  bound(maxError, 'jxl()');
+  if (typeof prepare !== 'boolean') throw refuse(TypeError, 'jxl(): prepare is true or false.');
+  const start = warmup(capture), startLossy = encode
+    ? warmup(input => encode(input, {fidelity: {quality: 1}, effort: 1})) : start;
   if (prepare) start(true).catch(() => {});
   return {
     name: 'jxl',
@@ -47,21 +57,24 @@ export function jxl({maxError = 0, encode = captureEncode, encodeLossy = encode 
     defineExports: ({exports}) => ({
       async jxl(context, options = {}) {
         const {signal, onProgress} = options;
-        signal?.throwIfAborted();
+        admitSignal(signal);
+        if (onProgress !== undefined && typeof onProgress !== 'function') throw refuse(TypeError, 'toJxl(): onProgress is a function.');
+        if (options.maxError !== undefined) bound(options.maxError, 'toJxl()');
+        check(signal);
         const requested = context?.export?.requestedOptions ?? {}, explicitQuality = Object.hasOwn(requested, 'quality');
         const quality = requested.quality === 1 ? 1 : options.quality, error = options.maxError ?? maxError;
         if (explicitQuality) {
           for (const value of [requested.quality, quality])
-            if (!Number.isFinite(value) || value < 0 || value > 1) throw new RangeError('toJxl(): quality must be a finite number from 0 to 1.');
-          if (error !== 0) throw new TypeError('toJxl(): quality and nonzero maxError cannot be combined.');
-          if (quality < 1 && !encodeLossy) throw new TypeError('toJxl(): a custom encode needs encodeLossy for quality below 1.');
+            if (!Number.isFinite(value) || value < 0 || value > 1) throw refuse(RangeError, 'toJxl(): quality must be a finite number from 0 to 1.');
+          if (error !== 0) throw refuse(TypeError, 'toJxl(): quality and nonzero maxError cannot be combined.');
+          if (quality < 1 && !encode) throw refuse(TypeError, 'toJxl(): a custom capture needs encode for quality below 1.');
         }
         const lossy = explicitQuality && quality < 1;
         (lossy ? startLossy : start)().catch(() => {});
         const canvas = await exports.canvas(Object.fromEntries(Object.entries(options).filter(([key]) => !OWN.has(key))));
         const bytes = lossy
-          ? await encodeLossy(canvas, {quality: Math.max(1, quality * 100), effort: 1, acceleration: 'wasm', signal, onProgress})
-          : await encode(canvas, {maxError: error, signal, onProgress});
+          ? await encode(canvas, {fidelity: {quality: Math.max(1, quality * 100)}, effort: 1, signal, onProgress})
+          : await capture(canvas, {fidelity: error ? {maxError: error} : 'exact', signal, onProgress});
         return new Blob([bytes], {type: 'image/jxl'});
       },
     }),

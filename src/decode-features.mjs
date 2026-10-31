@@ -9,14 +9,16 @@ const clamp01 = x => Math.max(0, Math.min(1, x));
 const boundedPoint = (x, y, r) => requireDecode(Math.abs(x) < 8388608 && Math.abs(y) < 8388608,
   'JPEG XL spline coordinate exceeds its range.', r);
 
-function featureBudget({maxFeatureBytes = 268435456, maxFeatureWork = 268435456} = {}) {
+export function featureBudget({maxFeatureBytes = 268435456, maxFeatureWork = 268435456} = {}, sharedWork = {spent: 0}) {
   requireDecode(Number.isSafeInteger(maxFeatureBytes) && maxFeatureBytes >= 0 && Number.isSafeInteger(maxFeatureWork) && maxFeatureWork >= 0,
     'Invalid JPEG XL feature resource budget.');
-  let bytes = 0, work = 0;
+  let bytes = 0;
   const check = (value, maximum, label) => {
-    if (value > maximum) { const error = new Error('JPEG XL features exceed the '+label+' limit.'); error.code = 'JXL_LIMIT'; throw error; }
+    if (!Number.isSafeInteger(value) || value < 0 || value > maximum) { const error = new Error('JPEG XL features exceed the '+label+' limit.'); error.code = 'JXL_LIMIT'; throw error; }
   };
-  return {memory(n) { bytes += n; check(bytes,maxFeatureBytes,'memory'); }, work(n) { work += n; check(work,maxFeatureWork,'work'); }};
+  return {memory(n) { check(n,maxFeatureBytes,'memory'); bytes += n; check(bytes,maxFeatureBytes,'memory'); },
+    work(n) { check(n,maxFeatureWork,'work'); check(sharedWork.spent,maxFeatureWork,'work');
+      check(n,maxFeatureWork-sharedWork.spent,'work'); sharedWork.spent += n; }};
 }
 
 export function readPatches(r, imageHeader, frameHeader, options = {}, budget = featureBudget(options)) {
@@ -59,8 +61,7 @@ export function readPatches(r, imageHeader, frameHeader, options = {}, budget = 
 }
 
 
-export function applyPatches(frame, patches, references, imageHeader, options = {}) {
-  const budget = featureBudget(options);
+export function applyPatches(frame, patches, references, imageHeader, options = {}, budget = featureBudget(options)) {
   if (!patches) return frame;
   const metadata = imageHeader.extraChannels, colorCount = frame.planes.length;
   const channels = [...frame.planes, ...frame.extraChannels.map(c => c.data)], values = new Float32Array(channels.length);
@@ -148,13 +149,15 @@ export function readSplines(r, imageHeader, frameHeader, options = {}, budget = 
   return {quantizationAdjustment, splines};
 }
 
-export function readFeatures(r, imageHeader, frameHeader, options = {}) {
-  const flags = frameHeader.flags, budget = featureBudget(options);
+export function readFeatures(r, imageHeader, frameHeader, options = {}, sharedWork) {
+  const flags = frameHeader.flags, budget = featureBudget(options,sharedWork);
   const patches = flags & 2n ? readPatches(r, imageHeader, frameHeader, options, budget) : null;
   const splines = flags & 16n ? readSplines(r, imageHeader, frameHeader, options, budget) : null;
   if (flags & 1n) { budget.memory(32); budget.work(8); }
   const noise = flags & 1n ? Float32Array.from({length: 8}, () => r.read(10) / 1024) : null;
-  return {patches, splines, noise};
+  const features = {patches, splines, noise};
+  Object.defineProperty(features, 'budget', {value: budget});
+  return features;
 }
 
 const MASK64 = 18446744073709551615n;
@@ -229,8 +232,7 @@ function noiseStrength(lut, value) {
   return clamp01(f32(f32(lut[index+1] - lut[index]) * fraction + lut[index]));
 }
 
-export function applyNoise(frame, noise, {visibleFrame = 0, nonvisibleFrame = 0, correlation = [0,1], groupSize = 256, ...limits} = {}) {
-  const budget = featureBudget(limits);
+export function applyNoise(frame, noise, {visibleFrame = 0, nonvisibleFrame = 0, correlation = [0,1], groupSize = 256, ...limits} = {}, budget = featureBudget(limits)) {
   if (!noise || !noise.some(v => v > .001)) return frame;
   requireDecode(frame.planes.length === 3 && [128,256,512,1024].includes(groupSize), 'Invalid JPEG XL noise geometry.');
   const {width, height} = frame;
@@ -357,8 +359,7 @@ function splineArea(spline, inverse, correlation, areaLimit) {
   return area*spline.distance;
 }
 
-export function applySplines(frame, splines, {correlation = [0,1], ...limits} = {}) {
-  const budget = featureBudget(limits);
+export function applySplines(frame, splines, {correlation = [0,1], ...limits} = {}, budget = featureBudget(limits)) {
   if (!splines) return frame;
   requireDecode(frame.planes.length === 3, 'JPEG XL splines require three color planes.');
   const qa = splines.quantizationAdjustment, inverse = qa >= 0 ? f32(1/f32(1+f32(qa*.125))) : f32(1-f32(qa*.125));
