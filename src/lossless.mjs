@@ -18,7 +18,7 @@ export const paletteKey = (rgba, i, grey, alpha) => grey
   : rgba[i] + rgba[i + 1] * 256 + rgba[i + 2] * 65536 + (alpha ? rgba[i + 3] * 16777216 : 0);
 
 
-export function inspectPixels(rgba, width, height, {palette: wantPalette = true, samples, ...options} = {}) {
+export function inspectPixels(rgba, width, height, {palette: wantPalette = true, opacity = true, samples, ...options} = {}) {
   if (!samples && (rgba instanceof Uint16Array || rgba instanceof Float32Array)) samples = admitSampleFormat(rgba, options);
   if (samples) return inspectNativePixels(rgba, width, height, samples, wantPalette);
   const pixels = width * height, floor = shapeFloors.get(rgba);
@@ -27,7 +27,7 @@ export function inspectPixels(rgba, width, height, {palette: wantPalette = true,
     if (rgba[i + 3] !== 255) { opaque = false; if (!grey) break; }
     if (rgba[i] !== rgba[i + 1] || rgba[i] !== rgba[i + 2]) { grey = false; p++; break; }
   }
-  if (!grey && opaque && p < pixels) {
+  if (opacity && !grey && opaque && p < pixels) {
     if (LITTLE_ENDIAN && rgba.byteOffset % 4 === 0) {
       const words = new Uint32Array(rgba.buffer, rgba.byteOffset, pixels);
       for (; p < pixels; p++) if (words[p] < 0xff000000) { opaque = false; break; }

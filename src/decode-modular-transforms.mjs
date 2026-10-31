@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 import {DELTA_IMPLICIT} from './implicit-palette.mjs';
-import {smoothTendency} from './decode-tables.mjs';
-import {ModularPrediction} from './decode-modular-predict.mjs';
+import {RECIPROCAL} from './decode-modular-weights.mjs';
+import {streamKernels} from './decode-kernels.mjs';
 
 const BEGIN = [[3, 0], [6, 8], [10, 72], [13, 1096]];
-const POWERS = [1]; for (let i = 1; i <= 32; i++) POWERS.push(POWERS[i - 1] * 2);
 const EMPTY_I32 = new Int32Array(0);
 const invalid = message => { throw Object.assign(new Error(message), {code: 'JXL_DECODE'}); };
 const shape = c => ({width: c.width, height: c.height, hshift: c.hshift, vshift: c.vshift, data: EMPTY_I32, decoded: 0, regions: null});
@@ -90,93 +89,63 @@ export function readModularTransforms(r, channels, count, parameters, checkSize,
   return {transforms, meta};
 }
 
+const CHUNK = 1048576;
+const view = (kernels, at, n) => new Int32Array(kernels.buffer, at, n);
+
 function inverseRCT(channels, transform) {
   const {begin, rct} = transform, permutation = Math.floor(rct / 7), mode = rct % 7;
-  const o0 = permutation % 3, o1 = (permutation + 1 + Math.floor(permutation / 3)) % 3, o2 = (permutation + 2 - Math.floor(permutation / 3)) % 3;
-  const p0 = channels[begin].data, p1 = channels[begin + 1].data, p2 = channels[begin + 2].data;
-  const d0 = o0 === 0 ? p0 : o0 === 1 ? p1 : p2;
-  const d1 = o1 === 0 ? p0 : o1 === 1 ? p1 : p2;
-  const d2 = o2 === 0 ? p0 : o2 === 1 ? p1 : p2;
-  const count = p0.length;
-  if (!mode) { channels[begin + o0].data = p0; channels[begin + o1].data = p1; channels[begin + o2].data = p2; return; }
-  if (mode === 6) {
-    for (let i = 0; i < count; i++) {
-      const y = p0[i], co = p1[i], cg = p2[i];
-      const middle = (y - (cg >> 1)) | 0;
-      const b = (cg + middle) | 0, c = (middle - (co >> 1)) | 0, a = (c + co) | 0;
-      d0[i] = a; d1[i] = b; d2[i] = c;
-    }
-  } else {
-    const m0 = mode & 1, m1 = mode >> 1;
-    for (let i = 0; i < count; i++) {
-      const a = p0[i]; let b = p1[i], c = p2[i];
-      if (m0) c = (c + a) | 0;
-      if (m1 === 1) b = (b + a) | 0;
-      else if (m1 === 2) b = (b + (((a + c) | 0) >> 1)) | 0;
-      d0[i] = a; d1[i] = b; d2[i] = c;
-    }
+  const order = [permutation % 3, (permutation + 1 + Math.floor(permutation / 3)) % 3, (permutation + 2 - Math.floor(permutation / 3)) % 3];
+  const planes = [0, 1, 2].map(k => channels[begin + k].data);
+  if (!mode) { order.forEach((to, k) => { channels[begin + to].data = planes[k]; }); return; }
+  const kernels = streamKernels(), count = planes[0].length, chunk = Math.min(count, CHUNK), at = kernels.reserve([chunk * 4, chunk * 4, chunk * 4]);
+  for (let i = 0; i < count; i += chunk) {
+    const n = Math.min(chunk, count - i);
+    planes.forEach((d, k) => view(kernels, at[k], n).set(d.subarray(i, i + n)));
+    kernels.rct(n, at[0], at[1], at[2], mode, at[order[0]], at[order[1]], at[order[2]]);
+    planes.forEach((d, k) => d.set(view(kernels, at[k], n), i));
   }
 }
 
-function paletteEntry(table, index, component, depth) {
-  if (index >= 0 && index < table.width) return table.data[Math.imul(component, table.width) + index];
-  if (component >= 3) return 0;
-  if (index < 0) {
-    const n = (-(index + 1)) % 143;
-    return DELTA_IMPLICIT[(n + 1) >> 1][component] * (n & 1 ? 1 : -1) * POWERS[Math.max(0, depth - 8)];
-  }
-  index -= table.width;
-  const maximum = POWERS[depth] - 1;
-  if (index < 64) return Math.floor((Math.floor(index / [1, 4, 16][component]) % 4) * maximum / 4) + POWERS[Math.max(0, depth - 3)];
-  return Math.floor((Math.floor((index - 64) / [1, 5, 25][component]) % 5) * maximum / 4);
-}
 function inversePalette(channels, t, bitDepth) {
   const table = channels.shift(), index = channels[t.begin];
   const result = t.original.map(c => ({width: c.width, height: c.height, hshift: c.hshift, vshift: c.vshift, data: new Int32Array(c.width * c.height), decoded: c.width * c.height, regions: null}));
-  const depth = Math.min(bitDepth, 24), idx = index.data, n = idx.length, tw = table.width, td = table.data;
+  const depth = Math.min(bitDepth, 24), codes = index.data, n = codes.length, tw = table.width, kernels = streamKernels();
+  const tables = (at) => { view(kernels, at[0], table.data.length).set(table.data); view(kernels, at[1], DELTA_IMPLICIT.length * 3).set(DELTA_IMPLICIT.flat()); };
+  const fixed = [table.data.length * 4, DELTA_IMPLICIT.length * 12];
   if (t.predictor === 0) {
-    const clampSingle = t.components === 1 && !t.deltas;
-    for (let c = 0; c < t.components; c++) {
-      const out = result[c].data, row = Math.imul(c, tw);
-      for (let i = 0; i < n; i++) {
-        let code = idx[i];
-        if (clampSingle) code = Math.min(Math.max(code, 0), tw - 1);
-        out[i] = code >= 0 && code < tw ? td[row + code] : paletteEntry(table, code, c, depth);
-      }
+    const clamp = t.components === 1 && !t.deltas ? 1 : 0, chunk = Math.min(n, CHUNK), at = kernels.reserve([...fixed, chunk * 4, chunk * 4]);
+    tables(at);
+    for (let i = 0; i < n; i += chunk) {
+      const m = Math.min(chunk, n - i);
+      view(kernels, at[2], m).set(codes.subarray(i, i + m));
+      for (let c = 0; c < t.components; c++) { kernels.palette(m, at[2], at[3], at[0], tw, c, depth, clamp, at[1]); result[c].data.set(view(kernels, at[3], m), i); }
     }
-    channels.splice(t.begin, 1, ...result);
-    return;
-  }
-  for (let c = 0; c < t.components; c++) {
-    const prediction = new ModularPrediction(result[c], {weighted: t.predictor === 6, parameters: t.parameters});
-    const row = Math.imul(c, tw);
-    for (let i = 0; i < n; i++) {
-      const code = idx[i], delta = code < t.deltas;
-      prediction.prepare();
-      const entry = code >= 0 && code < tw ? td[row + code] : paletteEntry(table, code, c, depth);
-      const value = (entry + (delta ? prediction.predict(t.predictor) : 0)) | 0;
-      prediction.record(value);
+  } else {
+    const width = index.width, height = index.height, stride = width + 2;
+    const at = kernels.reserve([...fixed, n * 4, n * 4, n * 4, 5 * stride * 8, 44, 65 * 4, 128, 32, 128]);
+    const [, , codesAt, entriesAt, outAt, weightedAt, parametersAt, reciprocalsAt, io, nodeAt, blockAt] = at, i32 = kernels.i32;
+    tables(at);
+    view(kernels, codesAt, n).set(codes);
+    i32.set(RECIPROCAL, reciprocalsAt / 4);
+    i32.set([-1, 0, 0, 0, 0, t.predictor, 0, 1], nodeAt / 4);
+    if (t.predictor === 6) i32.set(t.parameters, parametersAt / 4);
+    i32.fill(0, blockAt / 4, blockAt / 4 + 32);
+    for (let c = 0; c < t.components; c++) {
+      kernels.palette(n, codesAt, entriesAt, at[0], tw, c, depth, 0, at[1]);
+      i32.fill(0, weightedAt / 4, weightedAt / 4 + 10 * stride);
+      i32.fill(0, io / 4, io / 4 + 32);
+      i32.set([outAt, width, height, nodeAt, 0, 0, 0, 0, 0, 0, t.predictor === 6 ? parametersAt : 0, weightedAt, 0, 0, 0, blockAt, 0, 0], io / 4);
+      i32[io / 4 + 23] = reciprocalsAt; kernels.f64[io / 8 + 12] = Number.MAX_SAFE_INTEGER;
+      i32.set([entriesAt, codesAt, t.deltas], io / 4 + 26);
+      kernels.modular(io);
+      result[c].data.set(view(kernels, outAt, n));
     }
   }
   channels.splice(t.begin, 1, ...result);
 }
 
-function wideTendency(a, b, c) {
-  if (a === b && b === c) return 0;
-  if (Math.max(Math.abs(a), Math.abs(b), Math.abs(c)) < 134217728) return smoothTendency(a, b, c);
-  let value;
-  if (a >= b && b >= c) {
-    value = Math.trunc(((Math.imul(4, a) - Math.imul(3, c) - b + 6) | 0) / 12);
-    if (((value - (value & 1)) | 0) > Math.imul(2, (a - b) | 0)) value = (Math.imul(2, (a - b) | 0) + 1) | 0;
-    if (((value + (value & 1)) | 0) > Math.imul(2, (b - c) | 0)) value = Math.imul(2, (b - c) | 0);
-  } else if (a <= b && b <= c) {
-    value = Math.trunc(((Math.imul(4, a) - Math.imul(3, c) - b - 6) | 0) / 12);
-    if (((value + (value & 1)) | 0) < Math.imul(2, (a - b) | 0)) value = (Math.imul(2, (a - b) | 0) - 1) | 0;
-    if (((value - (value & 1)) | 0) < Math.imul(2, (b - c) | 0)) value = Math.imul(2, (b - c) | 0);
-  } else value = 0;
-  return value;
-}
 function inverseSqueeze(channels, t) {
+  const kernels = streamKernels();
   for (let pIndex = t.params.length - 1; pIndex >= 0; pIndex--) {
     const p = t.params[pIndex], offset = p.inPlace ? p.begin + p.count : channels.length - p.count;
     const residuals = channels.splice(offset, p.count);
@@ -185,32 +154,25 @@ function inverseSqueeze(channels, t) {
       const ow = original.width, oh = original.height, output = new Int32Array(ow * oh);
       const ld = low.data, hd = high.data, lw = low.width, hw = high.width;
       if (p.horizontal) {
-        const inner = lw, pairs = hw;
-        for (let line = 0; line < oh; line++) {
-          const lRow = line * lw, hRow = line * hw, oRow = line * ow;
-          let previous = ld[lRow];
-          for (let at = 0; at < pairs; at++) {
-            const average = ld[lRow + at], next = at + 1 < inner ? ld[lRow + at + 1] : average;
-            const difference = (hd[hRow + at] + wideTendency(previous, average, next)) | 0;
-            const first = (average + ((difference + (difference < 0 ? 1 : 0)) >> 1)) | 0, second = (first - difference) | 0;
-            const oi = oRow + at * 2;
-            output[oi] = first; output[oi + 1] = second; previous = second;
-          }
-          if (pairs < inner) output[oRow + pairs * 2] = ld[lRow + pairs];
+        const rows = Math.max(1, Math.min(oh, Math.floor(CHUNK / Math.max(1, ow)))), at = kernels.reserve([rows * lw * 4, rows * hw * 4, rows * ow * 4]);
+        for (let y = 0; y < oh; y += rows) {
+          const m = Math.min(rows, oh - y);
+          view(kernels, at[0], m * lw).set(ld.subarray(y * lw, (y + m) * lw)); view(kernels, at[1], m * hw).set(hd.subarray(y * hw, (y + m) * hw));
+          kernels.squeezeAcross(at[0], lw, at[1], hw, at[2], ow, m);
+          output.set(view(kernels, at[2], m * ow), y * ow);
         }
       } else {
-        const inner = low.height, pairs = high.height;
-        for (let line = 0; line < ow; line++) {
-          let previous = ld[line];
-          for (let at = 0; at < pairs; at++) {
-            const li = at * lw + line, average = ld[li], next = at + 1 < inner ? ld[li + lw] : average;
-            const difference = (hd[at * hw + line] + wideTendency(previous, average, next)) | 0;
-            const first = (average + ((difference + (difference < 0 ? 1 : 0)) >> 1)) | 0, second = (first - difference) | 0;
-            const oi = at * 2 * ow + line;
-            output[oi] = first; output[oi + ow] = second; previous = second;
-          }
-          if (pairs < inner) output[pairs * 2 * ow + line] = ld[pairs * lw + line];
+        const inner = low.height, pairs = high.height, per = Math.max(1, Math.min(pairs, Math.floor(CHUNK / Math.max(1, ow))));
+        const at = kernels.reserve([(per + 1) * ow * 4, per * ow * 4, 2 * per * ow * 4, ow * 4]);
+        for (let a = 0; a < pairs; a += per) {
+          const b = Math.min(pairs, a + per), lowRows = Math.min(inner, b + 1) - a;
+          view(kernels, at[0], lowRows * ow).set(ld.subarray(a * lw, (a + lowRows) * lw));
+          view(kernels, at[1], (b - a) * ow).set(hd.subarray(a * hw, b * hw));
+          view(kernels, at[3], ow).set(a ? output.subarray((2 * a - 1) * ow, 2 * a * ow) : ld.subarray(0, ow));
+          kernels.squeezeDown(at[0], lowRows, at[1], at[2], ow, b - a, at[3]);
+          output.set(view(kernels, at[2], 2 * (b - a) * ow), 2 * a * ow);
         }
+        if (pairs < inner) output.set(ld.subarray(pairs * lw, pairs * lw + ow), pairs * 2 * ow);
       }
       channels[p.begin + k] = {width: ow, height: oh, hshift: original.hshift, vshift: original.vshift, data: output, decoded: ow * oh, regions: null};
     }

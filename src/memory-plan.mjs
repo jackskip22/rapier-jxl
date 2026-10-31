@@ -71,7 +71,7 @@ export function ssimulacra2Bytes(width, height, {native = false, map = false} = 
   for (let i = 0; i < scales.length; i++) {
     const cur = scales[i], next = scales[i + 1];
     const source = i ? mul(48, cur.pixels) : 0, ring = mul(native ? 612 : 896, cur.width);
-    const active = map ? memorySum(mul(8, n), mul(32, cur.pixels), ring) : ring;
+    const active = map ? memorySum(mul(8, n), mul(i ? 24 : 16, cur.pixels), ring) : ring;
     peak = Math.max(peak, memorySum(candidate, source, active));
     if (next) peak = Math.max(peak, memorySum(candidate, source, mul(48, next.pixels), map ? mul(8, n) : 0));
   }
@@ -177,18 +177,19 @@ export function predictedBytes(pixels, options = {}) { return memoryPlan(pixels,
 export function keepsDct(pixels, _plain = true, width, options = {}) { return memoryPlan(pixels, {...options, width}).dct; }
 export function poolWorkers(pixels, cores, options = {}) { return memoryPlan(pixels, {...options, cores: cores ?? 2}).workers; }
 
-export const S2_SEARCH_PIXELS = 1024 * 1024;
-
-export function s2SearchBytes(width, height, effort = 8) {
-  const g = memoryGeometry(mul(width, height), {width, height}), {padded, pixels, blocks} = g;
-  const picture = mul(32, padded), cache = Math.min(64 * 1024 * 1024, Math.max(8 * 1024 * 1024, mul(64, pixels)));
-  const floor = pixels > 2048 * 2048 ? 0 : picture, base = mul(16, padded), kept = effort >= 9 ? 2 : 0;
-  const shape = memorySum(picture, Math.max(reconstructionBytes(width, padded, blocks), memorySum(mul(12, padded), ssimulacra2Bytes(width, height, {map: true}).work)));
-  return memorySum(floor, base, mul(2, cache), mul(kept + 1, mul(4, pixels)), mul(kept, picture), shape);
+export function s2SearchBytes(width, height) {
+  const g = memoryGeometry(mul(width, height), {width, height}), {padded, pixels, blocks} = g, W = 8 * Math.ceil(width / 8), H = 8 * Math.ceil(height / 8);
+  const base = memorySum(mul(8, padded), mul(24, mul(W, Math.min(320, H))));
+  const cache = Math.min(64 * 1024 * 1024, Math.max(8 * 1024 * 1024, mul(64, pixels))), decoded = mul(4, pixels);
+  const bandPx = mul(W, Math.min(640, H));
+  const map = memorySum(mul(8, pixels), mul(259, blocks));
+  const shape = memorySum(mul(24, bandPx), reconstructionBytes(width, bandPx, bandPx / 64), map);
+  const picture = mul(32, padded), ranking = memorySum(picture, decoded, pixels > 2048 * 2048 ? 0 : picture);
+  return memorySum(base, cache, mul(3, decoded), Math.max(shape, ranking));
 }
 
-export function s2Admitted(plan, width, height, effort = 8) {
+export function s2Admitted(plan, width, height) {
   if (!plan?.known) return true;
   const retained = plan.stages.entropy - plan.reservations.entropyBytes;
-  return memorySum(retained, s2SearchBytes(width, height, effort)) <= plan.budgetBytes;
+  return memorySum(retained, s2SearchBytes(width, height)) <= plan.budgetBytes;
 }

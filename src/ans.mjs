@@ -5,6 +5,7 @@ import {clusterTokenCounts, entropyLog2} from './entropy.mjs';
 import {LZ77, RESIDUAL_CONFIG} from './modular.mjs';
 import {writeSmallestContextMap} from './context-map.mjs';
 import {GROUP_TOKENS} from './frame.mjs';
+import {kernelHooks} from './kernel-hooks.mjs';
 
 export const LOG_LENGTHS = [5, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 6, 7];
 export const LOG_CODES = [17, 11, 15, 3, 9, 7, 4, 2, 5, 6, 0, 33, 1];
@@ -64,6 +65,7 @@ export function shapeHistogram(freqs, shifts = SHIFTS, headerAware = false) {
   let total = 0, last = 0, omit = 0, used = 0;
   for (let i = 0; i < freqs.length; i++) if (freqs[i]) { total += freqs[i]; last = i + 1; used++; if (freqs[i] > freqs[omit]) omit = i; }
   if (used <= 2) { const counts = normalise(freqs); return {counts, shift: 12, omit: -1, bits: distributionBits(counts, 12, -1) + expectedDataBits(freqs, counts)}; }
+  if (shifts === SHIFTS && !headerAware) { const kernel = kernelHooks.shape?.(freqs, last, total, omit, SHAPE_TABLES); if (kernel) return kernel.none ? null : kernel; }
   const active = last <= 512 ? SHAPE_ACTIVE : new Uint16Array(last);
   const targets = last <= 512 ? SHAPE_TARGETS : new Float64Array(last);
   const rounds = last <= 512 ? SHAPE_ROUNDS : new Uint16Array(last);
@@ -164,6 +166,7 @@ const REPEATS = Array.from({length: 13}, (_, shift) => shift < 12 && gammaBits(s
 const LOG2 = new Float64Array(4097);
 for (let n = 1; n <= 4096; n++) LOG2[n] = entropyLog2(n);
 function distributionBits(counts, shift, omit) { return distributionLength(counts, true, shift, omit); }
+const SHAPE_TABLES = Object.freeze({log2: LOG2, symbolBits: SYMBOL_BITS, logLengths: Int32Array.from(LOG_LENGTHS), repeats: Int32Array.from(REPEATS, Number)});
 
 const varUint8Length = value => value ? 4 + floorLog2(value) : 1;
 function distributionLength(counts, runs = false, shift = 12, omit = -1) {

@@ -55,6 +55,9 @@ jobs:
           for version in $(sed -n 's/^## \([0-9][0-9.]*[0-9]\)\( .*\)\{0,1\}$/\1/p' CHANGELOG.md | sort -V); do
             tag="v$version"
             if gh release view "$tag" >/dev/null 2>&1; then continue; fi
+            # The version just published can take minutes to appear on the registry: wait for it, up to 10 minutes.
+            tries=1; [ "$version" = "$current" ] && tries=20
+            for try in $(seq 1 "$tries"); do [ -n "$(npm view "$name@$version" version 2>/dev/null)" ] && break; [ "$try" = "$tries" ] || sleep 30; done
             if [ -z "$(npm view "$name@$version" version 2>/dev/null)" ]; then echo "$name@$version is not on the registry: no tag" | tee -a "$GITHUB_STEP_SUMMARY"; continue; fi
             if [ "$version" = "$current" ]; then target="$GITHUB_SHA"
             else target=$(git log --format=%H --grep="^Rapier JXL $version\$" | head -n 1); fi

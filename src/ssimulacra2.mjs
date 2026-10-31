@@ -186,9 +186,13 @@ function positiveXYBInto(linear, c, out, at, from, count, colors) {
       const i = (from + k) * 4, key = rgba[i] << 16 | rgba[i + 1] << 8 | rgba[i + 2], slot = Math.imul(key, 0x9e3779b1) >>> 15, v = slot * 3;
       if (keys[slot] !== key) {
         const r = L[rgba[i]], g = L[rgba[i + 1]], b = L[rgba[i + 2]];
-        const l = exactCbrt(Math.max(0, m[0] * r + m[1] * g + m[2] * b + S2_BIAS)) - BIAS_ROOT;
-        const mm = exactCbrt(Math.max(0, m[3] * r + m[4] * g + m[5] * b + S2_BIAS)) - BIAS_ROOT;
-        const Y = 0.5 * (l + mm), s = exactCbrt(Math.max(0, m[6] * r + m[7] * g + m[8] * b + S2_BIAS)) - BIAS_ROOT;
+        const al = Math.max(0, m[0] * r + m[1] * g + m[2] * b + S2_BIAS), am = Math.max(0, m[3] * r + m[4] * g + m[5] * b + S2_BIAS);
+        const as = Math.max(0, m[6] * r + m[7] * g + m[8] * b + S2_BIAS), lc = s2Cbrt(al), mc = s2Cbrt(am), sc = s2Cbrt(as);
+        let l = lc - BIAS_ROOT, mm = mc - BIAS_ROOT, Y = 0.5 * (l + mm), s = sc - BIAS_ROOT;
+        const d = S2_GUARD * (1 + lc + mc + sc);
+        if (!(s2Settled(0.5 * (l - mm) * 14 + 0.42, d) && s2Settled(Y + 0.01, d) && s2Settled((s - Y) + 0.55, d))) {
+          l = exactCbrt(al) - BIAS_ROOT; mm = exactCbrt(am) - BIAS_ROOT; Y = 0.5 * (l + mm); s = exactCbrt(as) - BIAS_ROOT;
+        }
         keys[slot] = key; values[v] = 0.5 * (l - mm) * 14 + 0.42; values[v + 1] = Y + 0.01; values[v + 2] = (s - Y) + 0.55;
       }
       out[at + k] = values[v + c];
@@ -220,13 +224,16 @@ function positiveXYBInto(linear, c, out, at, from, count, colors) {
   return out;
 }
 
-function channelSums(a, b, w, h, c, native, cached, keep, colors, terms = null) {
+function channelSums(a, b, w, h, c, native, cached, keep, colors, terms = null, rings = {}) {
   const g = native ? GAUSS32 : GAUSS, N = g.radius, R = 2 * N + 1, Plane = native ? Float32Array : Float64Array;
   const [n1, n3, n5] = g.n2, [d1, d3, d5] = g.d1, line = native ? blurLine32 : blurLine;
-  const p1 = new Float32Array(R * w), p2 = new Float32Array(R * w), prod = new Plane(R * w);
+  rings.p1 ??= new Float32Array(R * w); rings.p2 ??= new Float32Array(R * w); rings.prod ??= new Plane(R * w);
+  rings.across ??= []; rings.state ??= []; rings.down ??= [];
+  const p1 = rings.p1, p2 = rings.p2, prod = rings.prod;
   const active = [0, 1, 2, 3, 4].map(k => !cached || (k !== 0 && k !== 2));
-  const across = active.map(use => use ? new Plane(R * w) : null), state = active.map(use => use ? new Float64Array(6 * w) : null);
-  const down = active.map(use => use ? new Plane(w) : null);
+  const across = active.map((use, k) => use ? rings.across[k] ??= new Plane(R * w) : null);
+  const state = active.map((use, k) => use ? (rings.state[k] ??= new Float64Array(6 * w)).fill(0) : null);
+  const down = active.map((use, k) => use ? rings.down[k] ??= new Plane(w) : null);
   const retained = keep && !cached ? {p1: new Float32Array(w * h), mu1: new Plane(w * h), s11: new Plane(w * h)} : null;
   let made = 0;
   const make = y => {
@@ -287,22 +294,51 @@ function channelSums(a, b, w, h, c, native, cached, keep, colors, terms = null) 
       ss1 += e; ss4 += e * e * e * e;
       const artifact = Math.max(dd, 0), detail = Math.max(-dd, 0);
       a1 += artifact; a4 += artifact * artifact * artifact * artifact; l1 += detail; l4 += detail * detail * detail * detail;
-      if (terms) { const i = n * w + x; terms.d[i] = e; terms.art[i] = artifact; terms.lost[i] = detail; }
+      if (terms) { const i = n * w + x; terms.d[i] = e; terms.dd[i] = dd; }
     }
   }
   return {sums: [ss1, ss4, a1, a4, l1, l4], reference: retained};
 }
 
-export function downsample(planes, width, height) {
-  const w = (width + 1) >> 1, h = (height + 1) >> 1, out = [0, 1, 2].map(() => new Float64Array(w * h)), rgba = planes.rgba, L = SRGB_TO_LINEAR;
-  for (let c = 0; c < 3; c++) {
-    const p = rgba ? null : planes[c], o = out[c], v = rgba ? k => L[rgba[k * 4 + c]] : k => p[k];
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-      const x0 = 2 * x, y0 = 2 * y, x1 = Math.min(x0 + 1, width - 1), y1 = Math.min(y0 + 1, height - 1);
-      o[y * w + x] = 0.25 * (v(y0 * width + x0) + v(y0 * width + x1) + v(y1 * width + x0) + v(y1 * width + x1));
-    }
+export function downsample(planes, width, height, into = null) {
+  const w = (width + 1) >> 1, h = (height + 1) >> 1, out = into ? into.map(p => p.subarray(0, w * h)) : [new Float64Array(w * h), new Float64Array(w * h), new Float64Array(w * h)];
+  if (planes.rgba) downsampleRGBA(planes.rgba, out, width, height, w, h);
+  else for (let c = 0; c < 3; c++) {
+    if (planes[c] instanceof Float32Array) downsample32(planes[c], out[c], width, height, w, h);
+    else downsample64(planes[c], out[c], width, height, w, h);
   }
   return {planes: out, width: w, height: h};
+}
+function downsampleRGBA(rgba, out, width, height, w, h) {
+  const L = SRGB_TO_LINEAR;
+  for (let c = 0; c < 3; c++) {
+    const o = out[c];
+    for (let y = 0; y < h; y++) {
+      const r0 = 2 * y * width, r1 = Math.min(2 * y + 1, height - 1) * width;
+      for (let x = 0; x < w; x++) {
+        const x0 = 2 * x, x1 = Math.min(x0 + 1, width - 1);
+        o[y * w + x] = 0.25 * (L[rgba[(r0 + x0) * 4 + c]] + L[rgba[(r0 + x1) * 4 + c]] + L[rgba[(r1 + x0) * 4 + c]] + L[rgba[(r1 + x1) * 4 + c]]);
+      }
+    }
+  }
+}
+function downsample32(p, o, width, height, w, h) {
+  for (let y = 0; y < h; y++) {
+    const r0 = 2 * y * width, r1 = Math.min(2 * y + 1, height - 1) * width;
+    for (let x = 0; x < w; x++) {
+      const x0 = 2 * x, x1 = Math.min(x0 + 1, width - 1);
+      o[y * w + x] = 0.25 * (p[r0 + x0] + p[r0 + x1] + p[r1 + x0] + p[r1 + x1]);
+    }
+  }
+}
+function downsample64(p, o, width, height, w, h) {
+  for (let y = 0; y < h; y++) {
+    const r0 = 2 * y * width, r1 = Math.min(2 * y + 1, height - 1) * width;
+    for (let x = 0; x < w; x++) {
+      const x0 = 2 * x, x1 = Math.min(x0 + 1, width - 1);
+      o[y * w + x] = 0.25 * (p[r0 + x0] + p[r0 + x1] + p[r1 + x0] + p[r1 + x1]);
+    }
+  }
 }
 
 export function linearFromRGBA(rgba, pixels) {
@@ -364,17 +400,23 @@ export function ssimulacra2(reference, distorted, width, height, {wantMap = fals
       if (sw < 8 || sh < 8) break;
       if (scales) { sw = (sw + 1) >> 1; sh = (sh + 1) >> 1; }
     }
+    const pyramid = {a: [null, null], b: [null, null]}, half = ((width + 1) >> 1) * ((height + 1) >> 1);
+    const level = (set, s, n) => set[s & 1] ??= [new Float64Array(n), new Float64Array(n), new Float64Array(n)];
+    const termPlanes = wantMap ? {d: new Float64Array(width * height), dd: new Float64Array(width * height)} : null;
+    let sharePlane = null;
     for (let scale = 0; scale < SCALES; scale++) {
       if (w < 8 || h < 8) break;
       if (scale) {
-        if (a) a = downsample(a, w, h).planes;
-        const db = downsample(b, w, h); b = db.planes; w = db.width; h = db.height;
+        const n = ((w + 1) >> 1) * ((h + 1) >> 1);
+        if (a) a = downsample(a, w, h, level(pyramid.a, scale, n)).planes;
+        const db = downsample(b, w, h, level(pyramid.b, scale, n)); b = db.planes; w = db.width; h = db.height;
       }
       const n = w * h, per = {ssim: new Float64Array(6), edge: new Float64Array(12)};
-      const channels = fixed?.scales[scale], share = wantMap ? new Float64Array(n) : null;
-      const terms = wantMap ? {d: new Float64Array(n), art: new Float64Array(n), lost: new Float64Array(n)} : null;
+      const channels = fixed?.scales[scale], rings = {};
+      const share = wantMap ? scale ? (sharePlane ??= new Float64Array(half)).subarray(0, n).fill(0) : map : null;
+      const terms = wantMap ? {d: termPlanes.d.subarray(0, n), dd: termPlanes.dd.subarray(0, n)} : null;
       for (let c = 0; c < 3; c++) {
-        const result = channelSums(a, b, w, h, c, native, channels?.[c], !!channels, colors, terms);
+        const result = channelSums(a, b, w, h, c, native, channels?.[c], !!channels, colors, terms, rings);
         if (result.reference) {
           channels[c] = result.reference;
           fixed.cacheBytes += result.reference.p1.byteLength + result.reference.mu1.byteLength + result.reference.s11.byteLength;
@@ -387,7 +429,7 @@ export function ssimulacra2(reference, distorted, width, height, {wantMap = fals
       }
       if (fixed && scale === lastSourceScale) a = null;
       norms.push(per);
-      if (wantMap) spreadScale(map, width, height, scale, w, h, share);
+      if (wantMap && scale) spreadScale(map, width, height, scale, w, h, share);
     }
     let sum = 0, i = 0;
     for (let c = 0; c < 3; c++) for (let s = 0; s < norms.length; s++) for (let k = 0; k < 2; k++) {
@@ -410,13 +452,15 @@ export function finalCurve(sum) {
   return s > 0 ? 100 - 10 * exactPow(s, 0.6276336467831387) : 100;
 }
 
-function shareChannel(share, n, scales, s, c, per, {d, art, lost}) {
+function shareChannel(share, n, scales, s, c, per, {d, dd}) {
   const base = c * scales * 6 + s * 6, wt = k => S2_WEIGHTS[base + k];
-  const terms = [[d, wt(0), wt(3), per.ssim[c * 2 + 1]], [art, wt(1), wt(4), per.edge[c * 4 + 1]], [lost, wt(2), wt(5), per.edge[c * 4 + 3]]];
-  for (const [values, w1, w4, norm4] of terms) {
+  const terms = [[0, wt(0), wt(3), per.ssim[c * 2 + 1]], [1, wt(1), wt(4), per.edge[c * 4 + 1]], [-1, wt(2), wt(5), per.edge[c * 4 + 3]]];
+  for (const [sign, w1, w4, norm4] of terms) {
     if (!w1 && !w4) continue;
     const k4 = norm4 > 0 ? w4 / (n * norm4 * norm4 * norm4) : 0;
-    for (let i = 0; i < n; i++) { const v = values[i]; share[i] += w1 / n * v + k4 * v * v * v * v; }
+    if (sign === 0) for (let i = 0; i < n; i++) { const v = d[i]; share[i] += w1 / n * v + k4 * v * v * v * v; }
+    else if (sign > 0) for (let i = 0; i < n; i++) { const v = Math.max(dd[i], 0); share[i] += w1 / n * v + k4 * v * v * v * v; }
+    else for (let i = 0; i < n; i++) { const v = Math.max(-dd[i], 0); share[i] += w1 / n * v + k4 * v * v * v * v; }
   }
 }
 function spreadScale(map, width, height, s, w, h, share) {

@@ -202,10 +202,16 @@ function bkBlockWeights(weight, stride, rows, bw, bh, originsX, originRows) {
 }
 
 const bkPipelines = new WeakMap();
+function bkCached(set, key, make) {
+  if (set[key]) return set[key];
+  const made = set[key] = Promise.resolve().then(make);
+  made.catch(() => { if (set[key] === made) delete set[key]; });
+  return made;
+}
 function bkPipeline(device, ds, w, h) {
   let set = bkPipelines.get(device);
   if (!set) bkPipelines.set(device, set = {});
-  return set[w + 'x' + h] ||= device.createComputePipelineAsync({layout: 'auto', compute: {module: device.createShaderModule({code: bkCostsShader(ds, w, h)}), entryPoint: 'main'}});
+  return bkCached(set, w + 'x' + h, () => device.createComputePipelineAsync({layout: 'auto', compute: {module: device.createShaderModule({code: bkCostsShader(ds, w, h)}), entryPoint: 'main'}}));
 }
 export function gpuBlocksPipelines(device, ds, shapes = [[8, 8], [16, 16], [8, 16], [16, 8], [32, 32], [16, 32], [32, 16]]) { return Promise.all(shapes.map(([w, h]) => bkPipeline(device, ds, w, h))); }
 
@@ -382,8 +388,10 @@ fn main(@builtin(workgroup_id) g: vec3u, @builtin(local_invocation_index) lid: u
 function bkLevelsPipeline(device, ds, w, h) {
   let set = bkPipelines.get(device);
   if (!set) bkPipelines.set(device, set = {});
-  return set['levels' + w + 'x' + h] ||= device.createComputePipelineAsync({layout: 'auto', compute: {module: device.createShaderModule({code: bkLevelsShader(ds, w, h)}), entryPoint: 'main'}});
+  return bkCached(set, 'levels' + w + 'x' + h, () => device.createComputePipelineAsync({layout: 'auto', compute: {module: device.createShaderModule({code: bkLevelsShader(ds, w, h)}), entryPoint: 'main'}}));
 }
+
+export function gpuBlocksLevelsPipelines(device, ds, shapes = [[8, 8], [16, 16], [8, 16], [16, 8], [32, 32], [16, 32], [32, 16]]) { return Promise.all(shapes.map(([w, h]) => bkLevelsPipeline(device, ds, w, h))); }
 
 export async function gpuBlocksLevels(device, request, ds, core) {
   const started = performance.now();

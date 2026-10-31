@@ -280,6 +280,16 @@ export function tokenRate(block, tokens, rc = [4, 3, 2, 0.6]) {
 }
 export function forcedLayout(id, stride, rows) {
   const t = TRANSFORMS[id], bw = t.width / 8, bh = t.height / 8, layout = [], fits = (bx, by) => bx + bw <= stride && by + bh <= rows;
+  if (id >= 18) {
+    const parts = id === 18 ? [[0, 0, 8, 8]] : id === 19 ? [[0, 0, 4, 8], [4, 0, 4, 8]] : [[0, 0, 8, 4], [0, 4, 8, 4]];
+    for (let cy = 0; cy < rows; cy += 8) for (let cx = 0; cx < stride; cx += 8) for (const [dx, dy, rw, rh] of parts) {
+      const bx = cx + dx, by = cy + dy;
+      if (bx >= stride || by >= rows) continue;
+      if (fits(bx, by)) { layout.push({id, bx, by}); continue; }
+      for (let y = by; y < Math.min(rows, by + rh); y++) for (let x = bx; x < Math.min(stride, bx + rw); x++) layout.push({id: 0, bx: x, by: y});
+    }
+    return layout;
+  }
   for (let cy = 0; cy < rows; cy += 4) for (let cx = 0; cx < stride; cx += 4) {
     if (id === 5 && fits(cx, cy)) { layout.push({id, bx: cx, by: cy}); continue; }
     if (id === 10 && fits(cx, cy) && fits(cx + 2, cy)) { layout.push({id, bx: cx, by: cy}, {id, bx: cx + 2, by: cy}); continue; }

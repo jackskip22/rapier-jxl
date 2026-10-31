@@ -5,14 +5,14 @@ import {transformDCT8, dct8Basis} from './photo-dct.mjs';
 import {V6, GABORISH, prepareV6, photoV6Image, v6Image, v6Trace} from './photo-v6.mjs';
 import {closedLoopStrategySteps, xybStrategies, cellSums, lazyStrategyImage, materialize} from './varblocks.mjs';
 import {closedLoopFieldSteps, blockDistances} from './aq.mjs';
-import {exactScores, bandedRGBA} from './exact-region.mjs';
-import {reconstruct, toRGBA} from './reconstruct.mjs';
+import {exactScores, bandedRGBA, subImage} from './exact-region.mjs';
+import {reconstruct, toRGBA, toRGBAInto} from './reconstruct.mjs';
+import {s2CellSums, s2CellMap} from './s2-cells.mjs';
 import {butteraugli, butteraugliReference} from './butteraugli.mjs';
 import {ssimulacra2, ssimulacra2Reference, linearFromRGBA} from './ssimulacra2.mjs';
 import {coefficientAnsSteps, estimateBytes} from './coefficient-ans.mjs';
 
-import {memoryPlan, s2Admitted, S2_SEARCH_PIXELS} from './memory-plan.mjs';
-export {S2_SEARCH_PIXELS};
+import {memoryPlan, s2Admitted} from './memory-plan.mjs';
 import {fault} from './fault.mjs';
 import {linearFromTransform} from './icc-transform.mjs';
 
@@ -368,18 +368,12 @@ function* measuredSteps(steps, measure, expected) {
 const deeperFloor = (floor, effort) => { const deeper = writeImage(floor.image, effort); return deeper.length < floor.bytes.length ? deeper : floor.bytes; };
 
 export function* searchV6(prepared, own, quality, effort, floor = null, gpu = false) {
-  const s2Route = (w, h, color) => floor?.image && w >= 128 && h >= 128 && !color?.transform;
-  if (typeof prepared === 'function') {
-    if (s2Route(prepared.width, prepared.height, prepared.color) && prepared.width * prepared.height > S2_SEARCH_PIXELS) return deeperFloor(floor, effort);
-    prepared = prepared();
-  }
   prepared.transforms ??= searchTransforms(prepared, 0);
   const {rgba, width, height, color} = prepared;
   const plan = prepared.memory ?? memoryPlan(width * height, {width, height, exact: false});
   if (plan.known && !plan.fits) throw fault('JXL_MEMORY', 'Measured search exceeds its memory reservation.');
-  if (s2Route(width, height, color)) {
-    if (width * height > S2_SEARCH_PIXELS) return deeperFloor(floor, effort);
-    if (!s2Admitted(plan, width, height, effort)) throw fault('JXL_MEMORY', 'The effort 8-9 search exceeds the memory reservation.');
+  if (floor?.image && width >= 128 && height >= 128 && !color?.transform) {
+    if (!s2Admitted(plan, width, height)) return deeperFloor(floor, effort);
     return yield* s2EffortSearchSteps(prepared, quality, effort, floor, gpu);
   }
   if (typeof own === 'function') own = own();
@@ -397,14 +391,12 @@ export function* searchV6(prepared, own, quality, effort, floor = null, gpu = fa
 }
 
 import {TRANSFORMS, scaledDCTBases, lowFrequencies} from './vardct-strategies.mjs';
-import {smoothField} from './aq.mjs';
-import {exactLog, exactExp, exactPow} from './exact-math.mjs';
 import {encodeStrategyImageSteps, strategyInputs, rateModel, tokenRate, forcedLayout} from './varblocks.mjs';
 
 function* layoutImage(base, width, height, layout, options, req) {
   let exact = null;
   if (req) {
-    const ids = [...new Set([4, ...layout.map(b => b.id)])].filter(id => id), search = {...options, ids};
+    const ids = [...new Set([4, ...layout.map(b => b.id)])].filter(id => id && id < 18), search = {...options, ids};
     const made = yield {gpu: {kind: 'blocks-levels', ...req, input: strategyInputs(base, width, height, search), search, ids, scaledDCTBases, lowFrequencies, layout}};
     exact = made?.exact ?? null;
     if (exact) gpuStats.levels++;
@@ -413,28 +405,36 @@ function* layoutImage(base, width, height, layout, options, req) {
 }
 export const gpuStats = {levels: 0};
 
-export function* s2GuidedBlocksSteps(base, width, height, refMap, ids = [4, 5, 6, 7], lamFactor = 0.85, req = null) {
+export function* forcedBands(base, width, height, layout, req, rgba, rate, rows = 512, shared = false) {
+  const stride = base.components[0].stride, blockRows = base.components[0].rows, byRow = Array.from({length: blockRows}, () => []);
+  for (const b of layout) byRow[b.by].push(b);
+  const plain = {deadzone: V6.deadzone, sizeScale: 1.03}, perceptual = {...plain, perceptual: true}, tables = shared ? [perceptual] : [plain, perceptual];
+  let rated = 0;
+  for (let y0 = 0; y0 < height; y0 += rows) {
+    const y1 = Math.min(height, y0 + rows), by0 = Math.max(0, Math.floor((y0 - 8) / 64) * 8), by1 = Math.min(blockRows, Math.ceil((y1 + 8) / 64) * 8);
+    const entries = byRow.slice(by0, by1).flat();
+    for (const [k, options] of tables.entries()) {
+      const part = yield* layoutImage(base, width, height, entries, options, req);
+      if (k === 0) { for (const b of part.strategyData.blocks) if (b.by >= rated) rate(b); if (!shared) continue; }
+      toRGBAInto(reconstruct(subImage(part, 0, by0, stride, by1)), (y0 - by0 * 8) * width, (y1 - y0) * width, rgba, y0 * width);
+    }
+    rated = by1;
+  }
+}
+
+export function* s2GuidedBlocksSteps(base, width, height, reference, ids = [4, 5, 6, 7], lamFactor = 0.85, req = null, rgba = new Uint8ClampedArray(width * height * 4)) {
   const stride = base.components[0].stride, rows = base.components[0].rows, tokens = rateModel(base, stride, rows, 8);
-  const plain = {deadzone: V6.deadzone, sizeScale: 1.03}, perceptual = {...plain, perceptual: true};
-  const maps = [], rates = new Map();
+  const perceptual = {deadzone: V6.deadzone, sizeScale: 1.03, perceptual: true}, maps = [], rates = new Map();
+  const rate = b => { (rates.get(b.id) ?? rates.set(b.id, new Float64Array(stride * rows)).get(b.id))[b.by * stride + b.bx] = tokenRate(b, tokens); };
   let score0 = 75;
   for (const id of [0, ...ids]) {
-    const layout = forcedLayout(id, stride, rows);
-    let picture = yield* layoutImage(base, width, height, layout, plain, req);
-    for (const b of picture.strategyData.blocks) (rates.get(b.id) ?? rates.set(b.id, new Float64Array(stride * rows)).get(b.id))[b.by * stride + b.bx] = tokenRate(b, tokens);
-    picture = null;
-    v6Trace(`s2 shape ${id} rates`);
-    picture = yield* layoutImage(base, width, height, layout, perceptual, req);
-    v6Trace(`s2 shape ${id} picture`);
-    let lin = reconstruct(picture);
-    picture = null;
-    v6Trace(`s2 shape ${id} reconstructed`);
-    let s2Res = ssimulacra2(refMap, lin, width, height, {wantMap: true});
-    lin = null;
+    yield* forcedBands(base, width, height, forcedLayout(id, stride, rows), req, rgba, rate, 512, id === 0);
+    v6Trace(`s2 shape ${id} decoded`);
+    const sums = (req ? yield {gpu: {kind: 's2-cells', reference: reference.rgba, decoded: rgba, width, height}} : null) ?? s2CellSums(reference, {rgba}, width, height);
+    const {cells, score} = s2CellMap(sums, width, height);
     v6Trace(`s2 shape ${id} map`);
-    if (id === 0) score0 = s2Res.score;
-    maps[id] = cellSums(s2Res.map, width, height, 1);
-    s2Res = null;
+    if (id === 0) score0 = score;
+    maps[id] = cells;
   }
   for (const r of rates.values()) for (let i = 0; i < r.length; i++) r[i] += 8.0;
   const lamBlock = lamFactor * (30 / Math.max(8, 100 - score0));
@@ -457,23 +457,6 @@ export function* s2GuidedBlocksSteps(base, width, height, refMap, ids = [4, 5, 6
 }
 export const s2GuidedBlocks = (...args) => complete(s2GuidedBlocksSteps(...args));
 
-const LAGRANGE_LEVELS = [0.78, 0.85, 0.92, 0.96, 1.0, 1.05, 1.12, 1.18, 1.25];
-export function lagrangeS2Field(s2Var, r0, refMap, width, height, {gamma = 0.18, r0Bias = 20, switchCost = 0.04} = {}) {
-  const lin = reconstruct(s2Var);
-  const {map: s2Map} = ssimulacra2(refMap, lin, width, height, {wantMap: true});
-  const cells = cellSums(s2Map, width, height, 1), n = cells.length;
-  const slope = new Float64Array(n);
-  let logSum = 0;
-  for (let i = 0; i < n; i++) {
-    slope[i] = Math.max(1e-6, cells[i]) / (r0[i] + r0Bias);
-    logSum += exactLog(slope[i]);
-  }
-  const meanSlope = exactExp(logSum / Math.max(1, n));
-  const raw = new Float64Array(n);
-  for (let i = 0; i < n; i++) raw[i] = Math.max(0.78, Math.min(1.25, exactPow(slope[i] / meanSlope, gamma)));
-  return smoothField(raw, LAGRANGE_LEVELS, switchCost);
-}
-
 export function* s2EffortSearchSteps(prepared, quality, effort = 8, floor, gpu = false) {
   const {color} = prepared;
   return yield* s2Search(prepared, quality, effort, floor, gpu && !color?.transform && !color?.space);
@@ -482,18 +465,16 @@ export function* s2EffortSearchSteps(prepared, quality, effort = 8, floor, gpu =
 function* s2Search(prepared, quality, effort, floor, device) {
   const {rgba, width, height} = prepared;
   const cacheBytes = Math.min(64 * 1024 * 1024, Math.max(8 * 1024 * 1024, width * height * 64));
-  const refMap = ssimulacra2Reference({rgba}, width, height, {native: false, immutable: true, cacheBytes});
-  const refNative = ssimulacra2Reference({rgba}, width, height, {native: true, immutable: true, cacheBytes});
+  const reference = {rgba};
+  let refNative = ssimulacra2Reference({rgba}, width, height, {native: true, immutable: true, cacheBytes});
   v6Trace('s2 refs');
-  const decodedOf = img => toRGBA(reconstruct(materialize(img)), width, height);
+  const decodedOf = img => bandedRGBA(materialize(img));
   const cpuScore = (img, decoded = decodedOf(img)) => ssimulacra2(refNative, {rgba: decoded}, width, height, {native: true}).score;
-  function* scored(img, bytes) {
-    const decoded = decodedOf(img);
+  function* scored(img, bytes, decoded = decodedOf(img)) {
     const answer = device ? yield {gpu: {kind: 's2-native', rgba, width, height, decoded}} : null;
     if (Number.isFinite(answer?.score)) return {img, bytes, s2: answer.score, doubt: NATIVE_DOUBT, decoded};
     return {img, bytes, s2: cpuScore(img, decoded), doubt: 0};
   }
-  const rank = img => scored(img, writeImage(img, 7));
   function choose(order, c0) {
     const pick = () => {
       const k = 1.03 / Math.max(6, 100 - c0.s2), J = c => Math.log(c.bytes.length) - k * (c.s2 - c0.s2);
@@ -509,46 +490,28 @@ function* s2Search(prepared, quality, effort, floor, device) {
   }
   const smallest = (...files) => files.filter(Boolean).reduce((a, b) => b.length < a.length ? b : a);
   const reqFor = row => device ? {data: rgba, width, height, options: {...V6, ...GABORISH, calibrationRow: row}, lib: {complete, photoXYBSteps, transformDCT8, dct8Basis, xyb: XYB_TABLES}} : null;
+  const PERCEPTUAL = {deadzone: V6.deadzone, sizeScale: 1.03, perceptual: true}, keep = width * height <= 2048 * 2048;
+  let decoded = new Uint8ClampedArray(width * height * 4);
 
   const c0 = yield* scored(floor.image, floor.bytes);
+  c0.img = null;
   v6Trace('s2 c0 scored');
-  let floorWrites = null;
-  if (width * height > 2048 * 2048) {
-    floorWrites = {8: writeImage(floor.image, 8), ...(effort >= 9 ? {9: writeImage(floor.image, 9)} : {})};
-    c0.img = null; floor.image = null;
-    v6Trace('s2 c0 written');
-  }
-  const write = (c, e) => c === c0 && floorWrites ? floorWrites[e] : writeImage(c.img, e);
   if (yield 0.05) return floor.bytes;
-  function* guided(row, extra, ids, lamFactor) {
-    const base = v6Image(prepared, quality, {...extra, keepPlanes: true, calibrationRow: row, noLevels: false}, false);
-    v6Trace(`s2 base ${row}`);
-    return yield* s2GuidedBlocksSteps(base, width, height, refMap, ids, lamFactor, reqFor(row));
-  }
-  const {s2Var, rates} = yield* guided('s2e8', {}, [4, 5, 6, 7], 0.85);
-  v6Trace('s2 guided A');
+  let base = v6Image(prepared, quality, {keepPlanes: true, calibrationRow: 's2e8', noLevels: false}, false);
+  v6Trace('s2 base s2e8');
+  let {s2Var, layout} = yield* s2GuidedBlocksSteps(base, width, height, reference, [4, 5, 6, 7], 0.85, reqFor('s2e8'), decoded);
+  v6Trace('s2 guided s2e8');
+  base = decoded = null;
+  const cA = {...(yield* scored(s2Var, writeImage(s2Var, 7))), layout};
+  s2Var = null;
+  if (!keep) cA.img = null;
+  v6Trace('s2 s2e8 ranked');
   if (yield 0.5) return floor.bytes;
-  const cA = yield* rank(s2Var);
-  v6Trace('s2 cA ranked');
-  const e8Pick = choose([cA, c0], c0);
-  if (effort <= 8) return smallest(write(e8Pick, 8), floor.bytes);
-  if (yield 0.6) return floor.bytes;
-
-  const {s2Var: s2VarB} = yield* guided('s2e9', {}, [4, 5, 6, 7, 10, 11], 1.25);
-  v6Trace('s2 guided B');
-  const cB = yield* rank(s2VarB);
-  v6Trace('s2 cB ranked');
-  if (yield 0.75) return floor.bytes;
-
-  const fieldScale = lagrangeS2Field(s2Var, rates.get(0), refMap, width, height);
-  const {s2Var: s2VarC} = yield* guided('s2e9', {fieldScale}, [4, 5, 6, 7], 0.95);
-  v6Trace('s2 field and guided C');
-  const cC = yield* rank(s2VarC);
-  v6Trace('s2 cC ranked');
-  if (yield 0.9) return floor.bytes;
-
-  const best = choose([c0, cA, cB, cC], c0);
-  return smallest(write(best, 9), best === e8Pick ? null : write(e8Pick, 8), floor.bytes);
+  const pick = choose([cA, c0], c0);
+  refNative = null; cA.decoded = c0.decoded = null;
+  if (pick === c0) return smallest(writeImage(floor.image, effort), floor.bytes);
+  const picture = cA.img ?? (yield* layoutImage(v6Image(prepared, quality, {keepPlanes: true, calibrationRow: 's2e8', noLevels: false}, false), width, height, cA.layout, PERCEPTUAL, reqFor('s2e8')));
+  return smallest(writeImage(picture, effort), floor.bytes);
 }
 
 export function certain(order, w, c0) {

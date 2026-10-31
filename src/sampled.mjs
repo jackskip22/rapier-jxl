@@ -740,22 +740,27 @@ function sampleWriteModel(writer, plans, ans = false, price = false, kernels = n
 function sampleProjectIntegers(plans) {
   const scratch = [0, 0, 0];
   for (const plan of plans) {
-    const raw = plan.freqs.map(freq => {
+    const sizes = plan.freqs.map(freq => {
       let size = 1;
       for (let symbol = 1; symbol < 32; symbol++) if (freq[symbol]) size = 2 * (1 << (symbol - 1));
-      return new Uint32Array(size + 33);
+      return size;
     });
-    for (let i = 0; i < plan.used; i++) {
-      const symbol = plan.tags[i] & 511, counts = raw[plan.tags[i] >>> 16];
+    const {tags, extra, used} = plan;
+    const staged = kernelHooks.hybridPlan?.(plan, sizes);
+    const raw = staged ? staged.counts : sizes.map(size => new Uint32Array(size + 33));
+    if (!staged) for (let i = 0; i < used; i++) {
+      const tag = tags[i], symbol = tag & 511, counts = raw[tag >>> 16];
       if (symbol >= 224) counts[counts.length - 33 + symbol - 224]++;
-      else { const value = symbol ? (1 << (symbol - 1)) + plan.extra[i] : 0; counts[value]++; }
+      else { const value = symbol ? (1 << (symbol - 1)) + extra[i] : 0; counts[value]++; }
     }
-    const selected = raw.map(counts => losslessCoding(counts)[1]);
-    plan.configs = selected.map(model => model.config); plan.freqs = selected.map(model => model.freqs);
-    for (let i = 0; i < plan.used; i++) if ((plan.tags[i] & 511) < 224) {
-      const symbol = plan.tags[i] & 511, value = symbol ? (1 << (symbol - 1)) + plan.extra[i] : 0;
-      hybridToken(plan.configs[plan.tags[i] >>> 16], value, scratch);
-      plan.tags[i] = (plan.tags[i] & 0xffff0000) | scratch[0] | (scratch[1] << 9); plan.extra[i] = scratch[2];
+    const selected = raw.map(counts => losslessCoding(counts)[1]), configs = selected.map(model => model.config);
+    plan.configs = configs; plan.freqs = selected.map(model => model.freqs);
+    if (staged?.tokens(configs)) continue;
+    for (let i = 0; i < used; i++) {
+      const tag = tags[i], symbol = tag & 511;
+      if (symbol >= 224) continue;
+      hybridToken(configs[tag >>> 16], symbol ? (1 << (symbol - 1)) + extra[i] : 0, scratch);
+      tags[i] = (tag & 0xffff0000) | scratch[0] | (scratch[1] << 9); extra[i] = scratch[2];
     }
   }
 }
@@ -785,6 +790,16 @@ function sampleImageModel(rgba, width, height, shape, options) {
 
 function sampleChooseModel(plans, options, prepare, offset = 0) {
   const bytes = bits => Math.ceil((offset + bits) / 8);
+  const cheaper = models => {
+    if (models.reduce((count, model) => count + model.freqs.length, 0) > 255) return null;
+    const prefix = prepare(false, undefined, models), ans = prepare(true, undefined, models);
+    const prefixBytes = bytes(prefix.section.bitLength + prefix.dataBits), ansBytes = bytes(ans.section.bitLength + ans.bits());
+    if (prefixBytes <= ansBytes) return {bytes: prefixBytes, write() {
+      if (prefix.section.at + Math.ceil(prefix.dataBits / 8) + 5 >= prefix.section.bytes.length) prefix.section.grow(Math.ceil(prefix.dataBits / 8));
+      prefix.write(); return prefix.section;
+    }};
+    return {bytes: ansBytes, write() { ans.write(); return ans.section; }};
+  };
   const choose = (best, models = plans) => {
     if (models.reduce((count, model) => count + model.freqs.length, 0) > 255) return best;
     const prefix = prepare(false, undefined, models), ans = prepare(true, undefined, models);
@@ -812,6 +827,17 @@ function sampleChooseModel(plans, options, prepare, offset = 0) {
     }
     return section;
   };
+  if (options.hybrid && !options.sharing?.length) {
+    const first = cheaper(plans);
+    if (first) {
+      const kept = plans.map(plan => ({tags: plan.tags.slice(0, plan.used), extra: plan.extra.slice(0, plan.used), freqs: plan.freqs, configs: plan.configs}));
+      sampleProjectIntegers(plans);
+      const second = cheaper(plans);
+      if (second && second.bytes < first.bytes) return second.write();
+      plans.forEach((plan, c) => { plan.tags.set(kept[c].tags); plan.extra.set(kept[c].extra); plan.freqs = kept[c].freqs; plan.configs = kept[c].configs; });
+      return cheaper(plans).write();
+    }
+  }
   let section = withSharing(choose(null));
   if (options.hybrid) { sampleProjectIntegers(plans); section = withSharing(choose(section)); }
   return section;
@@ -854,8 +880,12 @@ export const sampledPlanes = Object.freeze({
       const mid = (lo + hi) >> 1;
       return split(15, cuts[mid], build(mid + 1, hi), build(lo, mid));
     };
-    const tree = build(0, cuts.length);
-    return sampleFinishPlan(sampleTokenize(plane, width, height, weighted, errors, {tree, leaves}, [], null, false), 6);
+    const tree = build(0, cuts.length), length = width * height;
+    const kernel = kernelHooks.wpTokens?.(sampleFlatTree(tree), errors, weighted, length, leaves.length, ALPHABET);
+    const result = kernel ? {tree, leaves, freqs: kernel.freqs, tags: kernel.used < length / 2 ? kernel.tags.slice(0, kernel.used) : kernel.tags,
+      extra: kernel.used < length / 2 ? kernel.extra.slice(0, kernel.used) : kernel.extra, used: kernel.used}
+      : sampleTokenize(plane, width, height, weighted, errors, {tree, leaves}, [], null, false);
+    return sampleFinishPlan(result, 6);
   },
   write(writer, plans, options, {transforms = [], global = false} = {}) {
     const models = plans.map(plan => ({...plan, tags: plan.tags.slice(0, plan.used), extra: plan.extra.slice(0, plan.used)}));

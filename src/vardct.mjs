@@ -503,6 +503,11 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     const planes = [1, 0, 2].map(c => {
       const pw = rw >> hshift(c), ph = rh >> vshift(c), scale = dcScale[c], lift = dcLift[c];
       let data = new Int16Array(pw * ph);
+      const own = comps[c].dc, bx0 = x0 >> hshift(c), by0 = y0 >> vshift(c);
+      if (own instanceof Int16Array && scale === 1 && lift === 0) {
+        for (let y = 0; y < ph; y++) data.set(own.subarray((by0 + y) * comps[c].stride + bx0, (by0 + y) * comps[c].stride + bx0 + pw), y * pw);
+        return {w: pw, h: ph, data};
+      }
       for (let y = 0; y < ph; y++) for (let x = 0; x < pw; x++) {
         const value = dcAt(c, (x0 >> hshift(c)) + x, (y0 >> vshift(c)) + y) * scale + lift;
         if (value < -32768 || value > 32767) {
@@ -522,8 +527,9 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     const count = regionBlocks ? regionBlocks.length : rw * rh, bits = ceilLog2(rw * rh);
     if (bits) w.write(bits, count - 1);
     const cw = (rw + 7) >> 3, ch = (rh + 7) >> 3;
-    const uniformBlocks = !lfCoder && !regionBlocks && !jpeg.quantFields;
-    const uniformSharpness = !lfCoder && !jpeg.sharpness;
+    const metadataPlain = !lfCoder || lfCoder.plainMetadata === true;
+    const uniformBlocks = metadataPlain && !regionBlocks && !jpeg.quantFields;
+    const uniformSharpness = metadataPlain && !jpeg.sharpness;
     let blocks = null;
     if (!uniformBlocks) {
       blocks = new Int32Array(count * 2).fill(field - 1, count);

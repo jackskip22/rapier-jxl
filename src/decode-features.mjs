@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 import {readEntropy} from './decode-entropy.mjs';
 import {requireDecode, unpackSigned} from './decode-bits.mjs';
-import {blendSample} from './decode-compose.mjs';
+import {blendRows} from './decode-compose.mjs';
+import {decodeKernels} from './decode-kernels.mjs';
 import {exactCos, exactExp, exactLog, EXACT_PI} from './exact-math.mjs';
 
 const f32 = Math.fround;
-const clamp01 = x => Math.max(0, Math.min(1, x));
 const boundedPoint = (x, y, r) => requireDecode(Math.abs(x) < 8388608 && Math.abs(y) < 8388608,
   'JPEG XL spline coordinate exceeds its range.', r);
 
@@ -64,7 +64,7 @@ export function readPatches(r, imageHeader, frameHeader, options = {}, budget = 
 export function applyPatches(frame, patches, references, imageHeader, options = {}, budget = featureBudget(options)) {
   if (!patches) return frame;
   const metadata = imageHeader.extraChannels, colorCount = frame.planes.length;
-  const channels = [...frame.planes, ...frame.extraChannels.map(c => c.data)], values = new Float32Array(channels.length);
+  const channels = [...frame.planes, ...frame.extraChannels.map(c => c.data)];
   budget.memory(channels.length*4);
   const hasAlpha = metadata.some(c => c.type === 0);
   for (const group of patches.groups) {
@@ -83,27 +83,23 @@ export function applyPatches(frame, patches, references, imageHeader, options = 
         'JPEG XL patch is outside the destination.');
       const height = Math.min(group.h, frame.height - position.y), width = Math.min(group.w, frame.width - position.x);
       budget.work(Math.max(0,height)*Math.max(0,width)*channels.length);
-      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-        const to = (position.y + y) * frame.width + position.x + x, from = (group.sy + y) * reference.width + group.sx + x;
-        for (let c = 0; c < channels.length; c++) {
-          const blend = position.blending[c < colorCount ? 0 : c - colorCount + 1];
-          if (blend.mode < 4 || c < colorCount && !hasAlpha) {
-            const mode = blend.mode < 4 ? blend.mode : blend.mode < 6 ? 1 : 2;
-            values[c] = mode === 0 ? channels[c][to] : mode === 1 ? source[c][from] : mode === 2 ?
-              channels[c][to] + source[c][from] : channels[c][to] * (blend.clamp ? clamp01(source[c][from]) : source[c][from]);
-          } else {
-            const a = colorCount + blend.alpha;
-            values[c] = blendSample(channels[c][to], source[c][from], channels[a][to], source[a][from], blend,
-              metadata[blend.alpha].associated, c === a);
-          }
-        }
-        const colorBlend = position.blending[0];
-        if (hasAlpha && (colorBlend.mode === 4 || colorBlend.mode === 5)) {
-          const a = colorCount + colorBlend.alpha;
-          values[a] = blendSample(channels[a][to], source[a][from], channels[a][to], source[a][from], colorBlend, false, true);
-        }
-        for (let c = 0; c < channels.length; c++) channels[c][to] = values[c];
+      const blended = new Map();
+      const add = (c, mode, clamp, a = -1, associated = false) => blended.set(c, {mode, clamp, associated, isAlpha: c === a,
+        fill(role, y, run) {
+          const k = role & 1 ? source[role < 2 ? c : a] : channels[role < 2 ? c : a], at = role & 1 ? (group.sy + y) * reference.width + group.sx : (position.y + y) * frame.width + position.x;
+          if (role < 2 || a >= 0) run.set(k.subarray(at, at + width));
+        },
+        write(y, run) { channels[c].set(run, (position.y + y) * frame.width + position.x); }});
+      for (let c = 0; c < channels.length; c++) {
+        const blend = position.blending[c < colorCount ? 0 : c - colorCount + 1];
+        if (blend.mode < 4 || c < colorCount && !hasAlpha) add(c, blend.mode < 4 ? blend.mode : blend.mode < 6 ? 1 : 2, blend.clamp);
+        else add(c, blend.mode, blend.clamp, colorCount + blend.alpha, metadata[blend.alpha].associated);
       }
+      const colorBlend = position.blending[0];
+      if (hasAlpha && (colorBlend.mode === 4 || colorBlend.mode === 5)) {
+        const a = colorCount + colorBlend.alpha; add(a, colorBlend.mode, colorBlend.clamp, a);
+      }
+      blendRows([...blended.values()].filter(c => c.mode !== 0), height, width);
     }
   }
   return frame;
@@ -160,100 +156,25 @@ export function readFeatures(r, imageHeader, frameHeader, options = {}, sharedWo
   return features;
 }
 
-const MASK64 = 18446744073709551615n;
-function mixSeed(z) {
-  z = ((z ^ z >> 30n) * 13787848793156543929n) & MASK64;
-  z = ((z ^ z >> 27n) * 10723151780598845931n) & MASK64;
-  return z ^ z >> 31n;
-}
-
-class NoiseRandom {
-  constructor(visible, nonvisible, x, y) {
-    this.a = new Uint32Array(16); this.b = new Uint32Array(16); this.batch = new Uint32Array(16);
-    let a = mixSeed(((BigInt(visible >>> 0) << 32n) + BigInt(nonvisible >>> 0) + 11400714819323198485n) & MASK64);
-    let b = mixSeed(((BigInt(x >>> 0) << 32n) + BigInt(y >>> 0) + 11400714819323198485n) & MASK64);
-    for (let lane = 0; lane < 16; lane += 2) {
-      this.a[lane] = Number(a & 4294967295n); this.a[lane+1] = Number(a >> 32n);
-      this.b[lane] = Number(b & 4294967295n); this.b[lane+1] = Number(b >> 32n);
-      a = mixSeed(a); b = mixSeed(b);
-    }
-  }
-  next() {
-    const {a, b, batch} = this;
-    for (let i = 0; i < 16; i += 2) {
-      const al = a[i], ah = a[i+1], bl = b[i], bh = b[i+1], sum = al + bl;
-      batch[i] = sum; batch[i+1] = ah + bh + Number(sum >= 4294967296);
-      const lo = (al ^ al << 23) >>> 0, hi = (ah ^ ah << 23 ^ al >>> 9) >>> 0;
-      a[i] = bl; a[i+1] = bh;
-      b[i] = lo ^ bl ^ lo >>> 18 ^ hi << 14 ^ bl >>> 5 ^ bh << 27;
-      b[i+1] = hi ^ bh ^ hi >>> 18 ^ bh >>> 5;
-    }
-    return batch;
-  }
-}
-
-function mirror(index, length) {
-  while (index < 0 || index >= length) index = index < 0 ? -index - 1 : 2 * length - index - 1;
-  return index;
-}
-
-function convolveNoise(data, width, height) {
-  const rows = Array.from({length: 5}, () => new Float32Array(width + 4)), rowNumbers = new Int32Array(5).fill(-1);
-  const xIndices = Uint32Array.from({length: width + 4}, (_, x) => mirror(x - 2, width));
-  const selected = new Array(5), needed = new Int32Array(5), k = f32(.16), centerWeight = f32(-3.84);
-  for (let y = 0; y < height; y++) {
-    for (let i = 0; i < 5; i++) needed[i] = mirror(y + i - 2, height);
-    for (let i = 0; i < 5; i++) {
-      let slot = rowNumbers.indexOf(needed[i]);
-      if (slot < 0) {
-        slot = rowNumbers.findIndex(n => !needed.includes(n));
-        const base = needed[i] * width, row = rows[slot];
-        for (let x = 0; x < width + 4; x++) row[x] = data[base + xIndices[x]];
-        rowNumbers[slot] = needed[i];
-      }
-      selected[i] = rows[slot];
-    }
-    const [a,b,c,d,e] = selected, base = y * width;
-    for (let x = 0; x < width; x++) {
-      let sum = 0;
-      for (let j = x; j < x + 5; j++) {
-        sum = f32(sum + a[j]); sum = f32(sum + b[j]); sum = f32(sum + d[j]); sum = f32(sum + e[j]);
-      }
-      sum = f32(sum + c[x]); sum = f32(sum + c[x+1]); sum = f32(sum + c[x+3]); sum = f32(sum + c[x+4]);
-      data[base+x] = f32(sum * k + f32(c[x+2] * centerWeight));
-    }
-  }
-}
-
-function noiseStrength(lut, value) {
-  const scaled = Math.max(0, f32(value * 3));
-  if (scaled >= 7) return lut[7];
-  const index = Math.floor(scaled), fraction = f32(scaled - index);
-  return clamp01(f32(f32(lut[index+1] - lut[index]) * fraction + lut[index]));
-}
-
 export function applyNoise(frame, noise, {visibleFrame = 0, nonvisibleFrame = 0, correlation = [0,1], groupSize = 256, ...limits} = {}, budget = featureBudget(limits)) {
   if (!noise || !noise.some(v => v > .001)) return frame;
   requireDecode(frame.planes.length === 3 && [128,256,512,1024].includes(groupSize), 'Invalid JPEG XL noise geometry.');
-  const {width, height} = frame;
+  const {width, height} = frame, n = width * height;
   budget.memory(12*width*height+24*width+400); budget.work(3*width*height);
-  const random = Array.from({length: 3}, () => new Float32Array(width * height));
-  for (let y0 = 0; y0 < height; y0 += groupSize) for (let x0 = 0; x0 < width; x0 += groupSize) {
-    const rng = new NoiseRandom(visibleFrame, nonvisibleFrame, x0, y0), w = Math.min(groupSize, width-x0), h = Math.min(groupSize, height-y0);
-    for (const plane of random) for (let y = 0; y < h; y++) for (let x = 0; x < w; x += 16) {
-      const bits = rng.next(), start = (y0 + y) * width + x0 + x;
-      for (let j = 0; j < Math.min(16,w-x); j++) plane[start+j] = 1 + (bits[j] >>> 9) / 8388608;
-    }
-  }
-  for (const plane of random) convolveNoise(plane, width, height);
-  const [x,y,b] = frame.planes, [rx,ry,rb] = random, norm = f32(.22), [corrX,corrB] = correlation;
-  for (let i = 0; i < x.length; i++) {
-    const sx = noiseStrength(noise, f32(y[i]+x[i])), sy = noiseStrength(noise, f32(y[i]-x[i]));
-    const common = f32(.9921875 * f32(rb[i] * norm));
-    const nx = f32(sx * f32(.0078125 * f32(rx[i]*norm) + common));
-    const ny = f32(sy * f32(.0078125 * f32(ry[i]*norm) + common)), sum = f32(nx+ny);
-    x[i] = f32(f32(corrX * sum + f32(nx-ny)) + x[i]);
-    y[i] = f32(y[i]+sum); b[i] = f32(corrB * sum + b[i]);
+  const kernels = decodeKernels(), chunk = Math.min(n, 1048576);
+  const [random0, random1, random2, ring, slots, state, lut, args, ...frameAt] = kernels.reserve([n * 4, n * 4, n * 4, (width + 4) * 20, 20, 128, 32, 16, chunk * 4, chunk * 4, chunk * 4]);
+  const random = [random0, random1, random2];
+  kernels.i32.set(random, args / 4);
+  new Float32Array(kernels.buffer, lut, 8).set(noise);
+  for (let y0 = 0; y0 < height; y0 += groupSize) for (let x0 = 0; x0 < width; x0 += groupSize)
+    kernels.noiseRandom(args, width, x0, y0, Math.min(groupSize, width - x0), Math.min(groupSize, height - y0), visibleFrame, nonvisibleFrame, state);
+  for (const plane of random) kernels.noiseConvolve(plane, width, height, ring, slots);
+  const [corrX, corrB] = correlation;
+  for (let i = 0; i < n; i += chunk) {
+    const m = Math.min(chunk, n - i), views = frameAt.map(at => new Float32Array(kernels.buffer, at, m));
+    frame.planes.forEach((p, c) => views[c].set(p.subarray(i, i + m)));
+    kernels.noiseApply(m, ...frameAt, ...random.map(at => at + i * 4), lut, corrX, corrB);
+    frame.planes.forEach((p, c) => p.set(views[c], i));
   }
   return frame;
 }
@@ -307,24 +228,19 @@ function* arcPoints(points) {
   }
 }
 
-let erfValues, erfDerivatives;
-function splineErf(value) {
-  const x = Math.abs(value);
-  if (x >= 6) return Math.sign(value);
-  if (!erfValues) {
-    erfValues = new Float64Array(1537); erfDerivatives = new Float64Array(1537);
-    const factor = 2 / Math.sqrt(EXACT_PI), step = 1/256;
-    erfDerivatives[0] = factor;
+let erfTable;
+function splineErfTable() {
+  if (!erfTable) {
+    const values = new Float64Array(1537), derivatives = new Float64Array(1537), factor = 2 / Math.sqrt(EXACT_PI), step = 1/256;
+    derivatives[0] = factor;
     for (let i = 1; i <= 1536; i++) {
       const at = i*step, mid = at-step/2;
-      erfDerivatives[i] = factor * exactExp(-at*at);
-      erfValues[i] = erfValues[i-1] + step/6 * (erfDerivatives[i-1] + 4*factor*exactExp(-mid*mid) + erfDerivatives[i]);
+      derivatives[i] = factor * exactExp(-at*at);
+      values[i] = values[i-1] + step/6 * (derivatives[i-1] + 4*factor*exactExp(-mid*mid) + derivatives[i]);
     }
+    erfTable = new Float64Array(3074); erfTable.set(values); erfTable.set(derivatives, 1537);
   }
-  const scaled = x*256, index = Math.floor(scaled), t = scaled-index, tt = t*t, ttt = tt*t;
-  const result = (2*ttt-3*tt+1)*erfValues[index] + (-2*ttt+3*tt)*erfValues[index+1] +
-    ((ttt-2*tt+t)*erfDerivatives[index] + (ttt-tt)*erfDerivatives[index+1])/256;
-  return value < 0 ? -result : result;
+  return erfTable;
 }
 
 function splineDct(coefficients, position) {
@@ -364,7 +280,15 @@ export function applySplines(frame, splines, {correlation = [0,1], ...limits} = 
   requireDecode(frame.planes.length === 3, 'JPEG XL splines require three color planes.');
   const qa = splines.quantizationAdjustment, inverse = qa >= 0 ? f32(1/f32(1+f32(qa*.125))) : f32(1-f32(qa*.125));
   const areaLimit = Math.min(4398046511104,1024*frame.width*frame.height+4294967296);
-  let estimatedArea = 0, scratchReserved = false;
+  let estimatedArea = 0, scratchReserved = false, kernel = null;
+  const kernelPlanes = () => {
+    if (kernel) return kernel;
+    const kernels = decodeKernels(), n = frame.width * frame.height, at = kernels.reserve([n * 4, n * 4, n * 4, 16, 3074 * 8]);
+    frame.planes.forEach((p, c) => new Float32Array(kernels.buffer, at[c], n).set(p));
+    kernels.i32.set(at.slice(0, 3), at[3] / 4);
+    new Float64Array(kernels.buffer, at[4], 3074).set(splineErfTable());
+    return kernel = {kernels, planes: at[3], tables: at[4], at, n};
+  };
   for (const spline of splines.splines) {
     estimatedArea += splineArea(spline,inverse,correlation,areaLimit);
     requireDecode(estimatedArea <= areaLimit, 'JPEG XL splines exceed their area budget.');
@@ -386,15 +310,10 @@ export function applySplines(frame, splines, {correlation = [0,1], ...limits} = 
       const x1 = Math.min(frame.width,Math.floor(point[0]+radius+.5)+1), y1 = Math.min(frame.height,Math.floor(point[1]+radius+.5)+1);
       if (x1 <= x0 || y1 <= y0) continue;
       budget.work((x1-x0)*(y1-y0));
-      const reciprocalSigma = f32(1/sigma), amplitude = f32(f32(.25*sigma)*weight), offset = f32(Math.SQRT1_2*.5);
-      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
-        const dx = f32(x-point[0]), dy = f32(y-point[1]), distance = f32(Math.sqrt(f32(dx*dx+f32(dy*dy))));
-        const upper = f32(f32(distance*.5+offset)*reciprocalSigma), lower = f32(f32(distance*.5-offset)*reciprocalSigma);
-        const integral = f32(f32(splineErf(upper))-f32(splineErf(lower))), value = f32(amplitude*f32(integral*integral));
-        const at = y*frame.width+x;
-        for (let c = 0; c < 3; c++) frame.planes[c][at] = f32(color[c]*value+frame.planes[c][at]);
-      }
+      const reciprocalSigma = f32(1/sigma), amplitude = f32(f32(.25*sigma)*weight), offset = f32(Math.SQRT1_2*.5), K = kernelPlanes();
+      K.kernels.splineDot(K.planes, frame.width, x0, y0, x1, y1, point[0], point[1], reciprocalSigma, amplitude, color[0], color[1], color[2], offset, K.tables);
     }
   }
+  if (kernel) frame.planes.forEach((p, c) => p.set(new Float32Array(kernel.kernels.buffer, kernel.at[c], kernel.n)));
   return frame;
 }

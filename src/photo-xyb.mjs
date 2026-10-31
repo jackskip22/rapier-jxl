@@ -358,12 +358,12 @@ export function* photoXYBSteps(data, width, height, quality, options) {
   const components = [0, 1, 2].map(c => ({h: 1, v: 1, stride, rows,
     quant: useCachedFast ? useCachedFast.quants[c] : Int32Array.from(QUANT_SHAPE, (shape, k) => Math.max(1, Math.round(quantScale * distance * stepScale *
       (k ? acScale * [0.84, 7, 5.6][c] * shape * (1 + [1, 0, 5][c] * Math.sqrt(((k & 7) * (k & 7) + (k >> 3) * (k >> 3)) / 98)) * tune(c, k) * gabTilt(c, k) : [1.05, 7, 12.6][c] * 0.25 * dcScale(c))))),
-    coeffs: new Int16Array(stride * rows * 64)}));
+    coeffs: fastGab && options.packed ? null : new Int16Array(stride * rows * 64)}));
   const fastScale = fast && (useCachedFast ? useCachedFast.fastScale : components.map(c => Float64Array.from(c.quant, q => quantScale / q)));
   const nonZero = fast && [0, 1, 2].map(() => new Uint8Array(stride * rows));
   const tileWidth = Math.ceil(stride / 8), tileRows = Math.ceil(rows / 8);
   const cfl = {width: tileWidth, x: new Int8Array(tileWidth * tileRows), b: new Int8Array(tileWidth * tileRows)};
-  const intermediate = new Float64Array(64), tile = new Float64Array(64 * 192);
+  let intermediate = null, tile = null;
   let colors = null;
   const roundtrip = !!options?.roundtrip, lumaBack = new Float64Array(64), dead = options?.deadzone, biased = !!options?.biasedRound;
   const planes = options?.keepPlanes && (pre || [0, 1, 2].map(() => new Float64Array(stride * rows * 64)));
@@ -380,15 +380,25 @@ export function* photoXYBSteps(data, width, height, quality, options) {
   const fieldScale = options?.fieldScale, FIELD = 64, quantFields = fieldScale && new Int32Array(stride * rows);
   if (quantFields) for (let i = 0; i < quantFields.length; i++) quantFields[i] = Math.max(1, Math.min(256, Math.round(FIELD * fieldScale[i])));
   const cflScale = options?.cflScale ?? 1, cflPair = [0, 0];
-  let nonZeroBand = null;
+  let nonZeroBand = null, packedOpacity;
   if (fastGab) {
     const counts = [0, 1, 2].map(() => new Uint8Array(stride * rows)), total = band.data.length / 4 / width;
+    const packed = options.packed ? {natural: new Uint32Array(192), opaque: true, channels: counts.map(c => ({at: new Uint8Array(stride * rows * 4), levels: new Int16Array(stride * rows * 4),
+      total: 0, starts: null, dc: new Int16Array(stride * rows), counts: c}))} : null;
     const job = {linear: LINEAR, mix: SRGB_MIX, bias: BIAS, rootBias: ROOT_BIAS, weights: [0, 1, 2].map(c => gab.weights?.[c] ?? GAB_DEFAULT),
       iterations: gab.iterations ?? 4, fast: true, scale: FAST_SCALE32, steps: components.map(c => Float32Array.from(c.quant, q => quantScale / q)),
-      thresholds: THRESHOLDS.map(t => Float32Array.from(t)), c84: cflScale * 84, components, cfl, nonZero: counts};
-    if (!(kernelBand && kernelHooks.gabBand(band.data, width, total, band.top, height, job))) {
+      thresholds: THRESHOLDS.map(t => Float32Array.from(t)), c84: cflScale * 84, components, cfl, nonZero: counts, packed};
+    if (kernelBand && kernelHooks.gabBand(band.data, width, total, band.top, height, job)) {
+      if (packed) packedOpacity = packed.opaque;
+      if (packed) components.forEach((component, c) => {
+        const {at, levels, total: n, starts, groupStarts, dc} = packed.channels[c];
+        component.packed = {at: at.slice(0, n), levels: levels.slice(0, n), counts: counts[c], starts, groupStarts, segment: packed.segment, dc,
+          natural: packed.natural.subarray(c * 64, c * 64 + 64), length: stride * rows * 64};
+      });
+    } else {
       if (band.only) return null;
-      fastGaborishBand(band.data, width, total, band.top, height, job);
+      for (const component of components) component.coeffs ||= new Int16Array(stride * rows * 64);
+      fastGaborishBand(band.data, width, total, band.top, height, {...job, packed: null});
     }
     nonZeroBand = counts;
   } else if (kernelBand) {
@@ -403,6 +413,7 @@ export function* photoXYBSteps(data, width, height, quality, options) {
       pre = gaborishPlanes(band.data, width, band.data.length / 4 / width, options).map(p => p.subarray(band.top * W, (band.top + rows * 8) * W));
     }
   }
+  if (!nonZeroBand) { intermediate = new Float64Array(64); tile = new Float64Array(64 * 192); }
   let tileIndex = 0;
   const onTileCfl = (xy, yy, bySum) => {
     const fx = Math.max(-128, Math.min(127, Math.round(cflScale * 84 * xy / (yy + 1))));
@@ -483,7 +494,8 @@ export function* photoXYBSteps(data, width, height, quality, options) {
     yield (ty + 1) / tileRows;
   }
   let alpha = null;
-  if (LITTLE_ENDIAN && data.byteOffset % 4 === 0 && (data.byteLength & 3) === 0) {
+  if (packedOpacity !== undefined) { if (!packedOpacity) alpha = data; }
+  else if (LITTLE_ENDIAN && data.byteOffset % 4 === 0 && (data.byteLength & 3) === 0) {
     const words = new Uint32Array(data.buffer, data.byteOffset, data.byteLength >> 2);
     for (let i = 0; i < words.length; i++) if (words[i] < 0xff000000) { alpha = data; break; }
   } else {

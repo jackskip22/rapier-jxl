@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {decodeKernels} from './decode-kernels.mjs';
 import {JxlBits,requireDecode} from './decode-bits.mjs';
 import {readDecodeImageHeader,readDecodeFrameHeader,readDecodeTOC,power2} from './decode-header.mjs';
 import {decodeFrameSections,restoreFrame} from './decode-frame.mjs';
@@ -71,7 +72,7 @@ function renderSections(readers,h,f,refs,lf,options,visibility,sharedFeatureWork
 }
 
 function publicFrame(frame,h,f,options) {
-  requireDecode(frame.width*frame.height*(4+3+frame.extraChannels.length)<=options.maxSamples,'JPEG XL output exceeds the sample limit.');
+  requireDecode(frame.width*frame.height*(frame.rgba?4+(options.planes?3:0):4+3+frame.extraChannels.length)<=options.maxSamples,'JPEG XL output exceeds the sample limit.');
   const format=outputFormat(h,options);
   const quantize=options.planes||options.unpremultiplyAlpha||options.renderSpotColors?0:format==='uint8'?255:format==='uint16'?65535:0;
   frame=convertOutputColor(frame,h,{colorSpace:options.colorSpace,quantize});
@@ -148,6 +149,7 @@ export function referenceSlots() {
 }
 
 export function decodeImage(bytes,options,renderFrame=null) {
+  decodeKernels();
   const {input,r,h}=openImage(bytes,options),sharedFeatureWork={spent:0};
   const ph=h.preview?{...h,...h.preview,preview:null,animation:null}:null;
   if(ph)admitPreviewSize(ph,options);
@@ -176,7 +178,8 @@ export function decodeImage(bytes,options,renderFrame=null) {
     requireDecode(index<options.maxFrames,'JPEG XL frame count exceeds the limit.',r);
     const f=readDecodeFrameHeader(r,h,options),readers=readDecodeTOC(r,f);frameHeaders.push(f);
     const inPlace=slots.inPlace(f);slots.after(f);
-    const normal=f.type===0||f.type===3,keyframe=normal&&(f.isLast||f.duration!==0),{expandedSamples,canvasSamples}=frameSamples(h,f,inPlace);
+    const normal=f.type===0||f.type===3,keyframe=normal&&(f.isLast||f.duration!==0);
+    const banded=index===0&&renderFrame?.bandable?.(h,f),{expandedSamples,canvasSamples}=banded?{expandedSamples:0,canvasSamples:h.width*h.height*(4+(options.planes?3:0))}:frameSamples(h,f,inPlace);
     requireDecode(canvasSamples<=options.maxSamples,'JPEG XL canvas exceeds the sample limit.',r);
     const heldSamples=outputSamples+references.reduce((n,v)=>n+retainedSamples(v),0)+lf.reduce((n,v)=>n+retainedSamples(v),0);
     requireDecode(heldSamples+expandedSamples+canvasSamples<=options.maxRetainedSamples,'JPEG XL retained frames exceed the sample limit.',r);

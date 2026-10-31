@@ -1,6 +1,6 @@
 {
  "name": "rapier-jxl",
- "version": "8.0.0",
+ "version": "8.0.1",
  "type": "module",
  "license": "MIT",
  "description": "JPEG XL for pictures, captures and exact JPEG reconstruction.",

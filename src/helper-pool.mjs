@@ -1,6 +1,6 @@
 import {suppliedWasm} from './wasm-modules.mjs';
 // SPDX-License-Identifier: MIT
-import {kernelMode} from './kernels.mjs';
+import {kernelRequest, ensureKernels} from './kernels.mjs';
 
 export const canShare = () => typeof SharedArrayBuffer === 'function' && globalThis.crossOriginIsolated !== false;
 const mark = (...entry) => { globalThis.__helperMarks?.push(entry); };
@@ -76,7 +76,9 @@ export function workerPool(spawn, count) {
         if (api.broken) count = members.length;
         pump();
       });
-      member.worker.postMessage({pool: 'parallel', kernels: kernelMode(), wasmModules: spawn.wasm ? spawn.wasm(true) : suppliedWasm(true)});
+      const kernels = kernelRequest();
+      mark('kernels', kernels);
+      member.worker.postMessage({pool: 'parallel', kernels, wasmModules: spawn.wasm ? spawn.wasm(true) : suppliedWasm(true)});
     } catch (error) { drop(member); throw error; }
     return member;
   };
@@ -265,6 +267,9 @@ const untilAborted = (promise, signal) => new Promise(resolve => {
   promise.then(done, done);
 });
 export async function splitOnIdle(owner, reservation, request, signal, helper) {
+  const asked = kernelRequest();
+  if (asked !== 'off' && ensureKernels() !== 'simd') return undefined;
+  mark('split-kernels', asked === 'off' ? 'off' : 'simd');
   const spawn = await spawnHelper(helper);
   if (signal?.aborted) return undefined;
   const pool = ownerPool(owner, reservation, spawn);
@@ -279,7 +284,10 @@ export async function splitOnIdle(owner, reservation, request, signal, helper) {
   }
   if (!leased.length) return undefined;
   pool.hold(true); pool.jobs = (pool.jobs ?? 0) + 1;
-  try { return await (await import('./photo-split.mjs')).encodeSplit(request.data, request.width, request.height, request.quality, leased, {signal, gaborish: request.gaborish}); }
+  try {
+    return request.ladder ? await request.run(request.data, request.width, request.height, request.quality, leased, {signal, effort: request.ladder})
+      : await (await import('./photo-split.mjs')).encodeSplit(request.data, request.width, request.height, request.quality, leased, {signal, gaborish: request.gaborish});
+  }
   catch (error) { if (signal?.aborted) throw error; return undefined; }
   finally { pool.unlease(leased); pool.jobs--; idle(pool); }
 }

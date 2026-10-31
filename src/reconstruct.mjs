@@ -49,8 +49,6 @@ export function coefficientPlanes(image) {
   const comps = image.components, stride = comps[0].stride, rows = comps[0].rows, W = stride * 8, H = rows * 8;
   const QS = image.quantScale || 256, planes = [0, 1, 2].map(() => new Float32Array(W * H)), cells = new Uint32Array(stride * rows);
   const cfl = image.cfl, base = image.quantFieldBase || 1, fields = image.quantFields;
-  const fine = (bx, by) => fields ? fields[by * stride + bx] / base : 1;
-  const factors = (bx, by) => { const t = (by >> 3) * cfl.width + (bx >> 3); return [cfl.x[t] / 84, 0, 1 + cfl.b[t] / 84]; };
   const dcStep = comps.map(c => half(c.quant[0] / (255 * 8 * QS) * 128) / 128 * 255 * 8);
   const strategy = image.strategyData;
   if (!strategy) {
@@ -89,15 +87,27 @@ export function coefficientPlanes(image) {
     const f = fields ? fields[by * stride + bx] / base : 1, ct = (by >> 3) * cfl.width + (bx >> 3), k3 = [cfl.x[ct] / 84, 0, 1 + cfl.b[ct] / 84];
     const L = Math.max(bw, bh), S = Math.min(bw, bh), divisor = 8 * QS * f;
     for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) cells[(by + y) * stride + bx + x] = bx | by << 12 | (bw - 1) << 24 | (bh - 1) << 28;
+    let lumaNzLen = 0;
+    const lumaNz = RC_LUMA_NZ;
     for (let o = 0; o < 3; o++) {
       const c = channels[o], q = block.coeffs[c], s = steps[c], r1 = one[c];
       tr.fill(0, 0, size);
-      for (let k = area; k < size; k++) {
-        const pos = order[k], v = q[pos];
-        if (v !== 0) tr[pos] = (v === 1 ? r1 : v === -1 ? -r1 : v - 0.145 / v) * s[pos] / divisor;
+      if (c === 1) {
+        for (let k = area; k < size; k++) {
+          const pos = order[k], v = q[pos];
+          if (v !== 0) {
+            const val = (v === 1 ? r1 : v === -1 ? -r1 : v - 0.145 / v) * s[pos] / divisor;
+            tr[pos] = val; lumaAC[pos] = val; lumaNz[lumaNzLen++] = pos;
+          }
+        }
+      } else {
+        for (let k = area; k < size; k++) {
+          const pos = order[k], v = q[pos];
+          if (v !== 0) tr[pos] = (v === 1 ? r1 : v === -1 ? -r1 : v - 0.145 / v) * s[pos] / divisor;
+        }
+        const k = k3[c];
+        if (k !== 0) for (let i = 0; i < lumaNzLen; i++) { const pos = lumaNz[i]; tr[pos] += k * lumaAC[pos]; }
       }
-      if (c === 1) lumaAC.set(tr.subarray(0, size));
-      else { const k = k3[c]; for (let i = area; i < size; i++) { const pos = order[i]; tr[pos] += k * lumaAC[pos]; } }
       if (bw === 1 && bh === 1) {
         const pos = by * stride + bx;
         tr[0] = ((comps[c].dc[pos] * dcStep[c] + (c === 2 ? comps[1].dc[pos] * dcStep[1] : 0)) / 8 + 0) / RC_LLF_ONE;
@@ -122,69 +132,221 @@ export function coefficientPlanes(image) {
 
 const RC_BASES = [];
 const rcBasis = n => RC_BASES[n] || (RC_BASES[n] = inverseBasis(n));
+const RC_ACC = new Float64Array(256), RC_ROW_TMP = new Float32Array(256 * 256), RC_ACTIVE_V = new Uint8Array(256);
+const RC_SMALL_PX = new Float64Array(64), RC_SMALL_DCT = new Float64Array(64);
+const RC_TR = new Float64Array(256 * 256), RC_LUMA_AC = new Float64Array(256 * 256), RC_LUMA_NZ = new Uint16Array(256 * 256), RC_MEANS_SCRATCH = new Map();
+
+function rcBlockIdct(tr, w, h, tall, Bw, Bh, out, x0, y0, W) {
+  const f32 = Math.fround, acc = RC_ACC, rowTmp = RC_ROW_TMP, activeV = RC_ACTIVE_V;
+  let numActive = 0;
+  for (let v = 0; v < h; v++) {
+    const vw = v * w;
+    let any = 0;
+    acc.fill(0, 0, w);
+    if (tall) {
+      for (let u = 0; u < w; u++) {
+        const cu = f32(tr[u * h + v] / 255);
+        if (cu !== 0) {
+          any = 1;
+          const uw = u * w;
+          for (let lx = 0; lx < w; lx++) acc[lx] += cu * Bw[uw + lx];
+        }
+      }
+    } else {
+      for (let u = 0; u < w; u++) {
+        const cu = f32(tr[vw + u] / 255);
+        if (cu !== 0) {
+          any = 1;
+          const uw = u * w;
+          for (let lx = 0; lx < w; lx++) acc[lx] += cu * Bw[uw + lx];
+        }
+      }
+    }
+    if (any) {
+      activeV[numActive++] = v;
+      for (let lx = 0; lx < w; lx++) rowTmp[vw + lx] = acc[lx];
+    }
+  }
+  for (let ly = 0; ly < h; ly++) {
+    const yW = (y0 + ly) * W + x0;
+    acc.fill(0, 0, w);
+    for (let a = 0; a < numActive; a++) {
+      const v = activeV[a], bvl = Bh[v * h + ly], vw = v * w;
+      for (let lx = 0; lx < w; lx++) acc[lx] += rowTmp[vw + lx] * bvl;
+    }
+    for (let lx = 0; lx < w; lx++) out[yW + lx] = acc[lx];
+  }
+}
 
 function rcXybPlanes(image) {
-  const {planes: coef, cells, W, H, stride, rows} = coefficientPlanes(image);
-  const acc = new Float64Array(W);
-  return {W, H, planes: coef.map((C, c) => {
-    const tmp = new Float32Array(W * H), out = new Float32Array(W * H);
-    for (let y = 0; y < H; y++) {
-      const yW = y * W, rowCells = (y >> 3) * stride;
-      for (let bx = 0; bx < stride; ) {
-        const cell = cells[rowCells + bx], x0 = (cell & 4095) * 8, bw = (cell >>> 24 & 15) + 1, w = bw * 8, B = rcBasis(w);
-        acc.fill(0, 0, w);
-        for (let u = 0; u < w; u++) {
-          const cu = C[yW + x0 + u];
-          if (cu !== 0) {
-            const uw = u * w;
-            for (let lx = 0; lx < w; lx++) acc[lx] += cu * B[uw + lx];
-          }
+  const comps = image.components, stride = comps[0].stride, rows = comps[0].rows, W = stride * 8, H = rows * 8;
+  const QS = image.quantScale || 256, outPlanes = [0, 1, 2].map(() => new Float32Array(W * H));
+  const cfl = image.cfl, base = image.quantFieldBase || 1, fields = image.quantFields;
+  const dcStep = comps.map(c => half(c.quant[0] / (255 * 8 * QS) * 128) / 128 * 255 * 8);
+  const strategy = image.strategyData, f32 = Math.fround;
+  const acc = RC_ACC, rowTmp = RC_ROW_TMP, activeV = RC_ACTIVE_V;
+
+  if (!strategy) {
+    const B8 = rcBasis(8), y = new Float64Array(64), coef = new Float64Array(64), order = [1, 0, 2];
+    const quants = comps.map(c => c.quant), coeffs = comps.map(c => c.coeffs), one = [RC_ONE[0], RC_ONE[1], RC_ONE[2]];
+    for (let by = 0; by < rows; by++) for (let bx = 0; bx < stride; bx++) {
+      const at = (by * stride + bx) * 64, QSf = QS * (fields ? fields[by * stride + bx] / base : 1);
+      const t = (by >> 3) * cfl.width + (bx >> 3), kx = cfl.x[t] / 84, kb = 1 + cfl.b[t] / 84;
+      const x0 = bx * 8, y0 = by * 8;
+      for (let o = 0; o < 3; o++) {
+        const c = order[o], q = coeffs[c], quant = quants[c], r1 = one[c];
+        coef[0] = q[at] * dcStep[c];
+        for (let k = 1; k < 64; k++) {
+          const v = q[at + k];
+          coef[k] = v === 0 ? 0 : (v === 1 ? r1 : v === -1 ? -r1 : v - 0.145 / v) * quant[k] / QSf;
         }
-        for (let lx = 0; lx < w; lx++) tmp[yW + x0 + lx] = acc[lx];
-        bx += bw;
-      }
-    }
-    for (let by = 0; by < rows; by++) {
-      const rowCells = by * stride;
-      for (let bx = 0; bx < stride; ) {
-        const cell = cells[rowCells + bx], x0 = (cell & 4095) * 8, y0 = (cell >>> 12 & 4095) * 8;
-        const bw = (cell >>> 24 & 15) + 1, bh = (cell >>> 28) + 1, w = bw * 8, h = bh * 8;
-        if (by * 8 === y0) {
-          const B = rcBasis(h);
-          for (let ly = 0; ly < h; ly++) {
-            const yW = (y0 + ly) * W + x0;
-            acc.fill(0, 0, w);
-            for (let v = 0; v < h; v++) {
-              const bvl = B[v * h + ly], vW = (y0 + v) * W + x0;
-              for (let lx = 0; lx < w; lx++) acc[lx] += tmp[vW + lx] * bvl;
+        if (c === 1) y.set(coef);
+        else {
+          const k3 = c === 0 ? kx : kb;
+          coef[0] += (c === 2 ? 1 : 0) * y[0];
+          for (let k = 1; k < 64; k++) coef[k] += k3 * y[k];
+        }
+        for (let v = 0; v < 8; v++) {
+          const v8 = v * 8;
+          let any = 0;
+          acc.fill(0, 0, 8);
+          for (let u = 0; u < 8; u++) {
+            const cu = f32(coef[v8 + u] / (8 * 255));
+            if (cu !== 0) {
+              any = 1;
+              const u8 = u * 8;
+              for (let lx = 0; lx < 8; lx++) acc[lx] += cu * B8[u8 + lx];
             }
-            for (let lx = 0; lx < w; lx++) out[yW + lx] = acc[lx];
           }
+          activeV[v] = any;
+          if (any) for (let lx = 0; lx < 8; lx++) rowTmp[v8 + lx] = acc[lx];
         }
-        bx += bw;
+        const out = outPlanes[c];
+        for (let ly = 0; ly < 8; ly++) {
+          const yW = (y0 + ly) * W + x0;
+          acc.fill(0, 0, 8);
+          for (let v = 0; v < 8; v++) {
+            if (!activeV[v]) continue;
+            const bvl = B8[v * 8 + ly], v8 = v * 8;
+            for (let lx = 0; lx < 8; lx++) acc[lx] += rowTmp[v8 + lx] * bvl;
+          }
+          for (let lx = 0; lx < 8; lx++) out[yW + lx] = acc[lx];
+        }
       }
     }
-    coef[c] = null;
-    return out;
-  })};
+    return {W, H, planes: outPlanes};
+  }
+
+  const tr = RC_TR, lumaAC = RC_LUMA_AC, channels = [1, 0, 2], one = [RC_ONE[0], RC_ONE[1], RC_ONE[2]];
+  const tableSteps = new Map(), meansScratch = RC_MEANS_SCRATCH;
+  for (const block of strategy.blocks) {
+    const {id, bx, by, bw, bh, area, size, order} = block, t = TRANSFORMS[id], w = t.width, h = t.height;
+    const x0 = bx * 8, y0 = by * 8;
+    let steps = tableSteps.get(t.table);
+    if (!steps) tableSteps.set(t.table, steps = strategy.tables.get(t.table).planes);
+    const f = fields ? fields[by * stride + bx] / base : 1, ct = (by >> 3) * cfl.width + (bx >> 3), k3 = [cfl.x[ct] / 84, 0, 1 + cfl.b[ct] / 84];
+    const L = Math.max(bw, bh), S = Math.min(bw, bh), divisor = 8 * QS * f;
+    const Bw = rcBasis(w), Bh = rcBasis(h), tall = h >= w;
+    for (let o = 0; o < 3; o++) {
+      const c = channels[o], q = block.coeffs[c], s = steps[c], r1 = one[c];
+      tr.fill(0, 0, size);
+      for (let k = area; k < size; k++) {
+        const pos = order[k], v = q[pos];
+        if (v !== 0) tr[pos] = (v === 1 ? r1 : v === -1 ? -r1 : v - 0.145 / v) * s[pos] / divisor;
+      }
+      if (c === 1) lumaAC.set(tr.subarray(0, size));
+      else { const k = k3[c]; for (let i = area; i < size; i++) { const pos = order[i]; tr[pos] += k * lumaAC[pos]; } }
+      if (bw === 1 && bh === 1) {
+        const pos = by * stride + bx;
+        tr[0] = ((comps[c].dc[pos] * dcStep[c] + (c === 2 ? comps[1].dc[pos] * dcStep[1] : 0)) / 8 + 0) / RC_LLF_ONE;
+        if (id !== 0) { rcBlockIdct(scaledDCT(inverseSmallTransform(tr, id, RC_SMALL_PX), 8, 8, RC_SMALL_DCT), 8, 8, true, Bw, Bh, outPlanes[c], x0, y0, W); continue; }
+      } else {
+        let means = meansScratch.get(area);
+        if (!means) meansScratch.set(area, means = new Float64Array(area));
+        for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
+          const pos = (by + y) * stride + bx + x;
+          means[y * bw + x] = (comps[c].dc[pos] * dcStep[c] + (c === 2 ? comps[1].dc[pos] * dcStep[1] : 0)) / 8;
+        }
+        const llf = rcLlfFromDC(means, bw, bh);
+        for (let y = 0; y < S; y++) for (let x = 0; x < L; x++) tr[y * L * 8 + x] = llf[y * L + x];
+      }
+      rcBlockIdct(tr, w, h, tall, Bw, Bh, outPlanes[c], x0, y0, W);
+    }
+  }
+  return {W, H, planes: outPlanes};
 }
 
 function rcGaborish(planes, W, width, height, weights) {
-  return planes.map((p, c) => {
-    const [w1, w2] = weights === true ? RC_GAB : weights[c], n = 1 / (1 + 4 * w1 + 4 * w2), out = new Float32Array(p.length);
+  const above = new Float32Array(width), here = new Float32Array(width);
+  for (let c = 0; c < 3; c++) {
+    const p = planes[c], [w1, w2] = weights === true ? RC_GAB : weights[c], n = 1 / (1 + 4 * w1 + 4 * w2);
     for (let y = 0; y < height; y++) {
-      const u = Math.max(0, y - 1) * W, m = y * W, d = Math.min(height - 1, y + 1) * W;
-      for (let x = 0; x < width; x++) {
-        const l = Math.max(0, x - 1), r = Math.min(width - 1, x + 1);
-        out[m + x] = (p[m + x] + w1 * (p[u + x] + p[d + x] + p[m + l] + p[m + r]) + w2 * (p[u + l] + p[u + r] + p[d + l] + p[d + r])) * n;
+      const m = y * W;
+      here.set(p.subarray(m, m + width));
+      if (y === 0) above.set(here);
+      const D = y + 1 < height ? p : here, d = y + 1 < height ? m + W : 0, U = above, M = here;
+      if (width >= 2) {
+        p[m] = (M[0] + w1 * (U[0] + D[d] + M[0] + M[1]) + w2 * (U[0] + U[1] + D[d] + D[d + 1])) * n;
+        const end = width - 1;
+        for (let x = 1; x < end; x++) {
+          p[m + x] = (M[x] + w1 * (U[x] + D[d + x] + M[x - 1] + M[x + 1]) + w2 * (U[x - 1] + U[x + 1] + D[d + x - 1] + D[d + x + 1])) * n;
+        }
+        p[m + end] = (M[end] + w1 * (U[end] + D[d + end] + M[end - 1] + M[end]) + w2 * (U[end - 1] + U[end] + D[d + end - 1] + D[d + end])) * n;
+      } else {
+        for (let x = 0; x < width; x++) {
+          const l = Math.max(0, x - 1), r = Math.min(width - 1, x + 1);
+          p[m + x] = (M[x] + w1 * (U[x] + D[d + x] + M[l] + M[r]) + w2 * (U[l] + U[r] + D[d + l] + D[d + r])) * n;
+        }
       }
+      above.set(here);
     }
-    planes[c] = null;
-    return out;
-  });
+  }
+  return planes;
 }
 
 const RC_INV_SIGMA_NUM = -1.1715728752538099024, RC_MIN_SIGMA = -3.90524291751269967465540850526868, RC_SCALE = [40, 5, 3.5];
+function rcEpfInteriorRow(y, W, width, stride, invSigma, rowBorder, bsm, sm, P0, P1, P2, O0, O1, O2, row, H0, H1, H2, V0, V1, V2, above, haveAbove, leftState) {
+  const rm2 = ((y - 2) & 3) * width, rm1 = ((y - 1) & 3) * width, r0 = (y & 3) * width, rp1 = ((y + 1) & 3) * width;
+  const rowIn = y * W, rowSigma = (y >> 3) * stride, end = width - 2;
+  let left = leftState.left, haveLeft = leftState.haveLeft;
+  for (let x = 2; x < end; x++) {
+    const s = invSigma[rowSigma + (x >> 3)];
+    if (s < RC_MIN_SIGMA) { haveLeft = false; haveAbove[x] = 0; continue; }
+    const mul = rowBorder || (x & 7) === 0 || (x & 7) === 7 ? bsm : sm, inv = s * mul;
+    const i = rowIn + x;
+    let w = 1, X = P0[i], Y = P1[i], B = P2[i];
+    const sad0 = haveAbove[x] ? above[x] : (
+      (V0[rm1 + x] + V0[rm2 + x] + V0[rm1 + x - 1] + V0[rm1 + x + 1] + V0[r0 + x]) * 40 +
+      (V1[rm1 + x] + V1[rm2 + x] + V1[rm1 + x - 1] + V1[rm1 + x + 1] + V1[r0 + x]) * 5 +
+      (V2[rm1 + x] + V2[rm2 + x] + V2[rm1 + x - 1] + V2[rm1 + x + 1] + V2[r0 + x]) * 3.5);
+    const w0 = Math.max(0, 1 + sad0 * inv), j0 = i - W;
+    w += w0; X += w0 * P0[j0]; Y += w0 * P1[j0]; B += w0 * P2[j0];
+    const sad1 = haveLeft ? left : (
+      (H0[r0 + x - 1] + H0[rm1 + x - 1] + H0[r0 + x - 2] + H0[r0 + x] + H0[rp1 + x - 1]) * 40 +
+      (H1[r0 + x - 1] + H1[rm1 + x - 1] + H1[r0 + x - 2] + H1[r0 + x] + H1[rp1 + x - 1]) * 5 +
+      (H2[r0 + x - 1] + H2[rm1 + x - 1] + H2[r0 + x - 2] + H2[r0 + x] + H2[rp1 + x - 1]) * 3.5);
+    const w1 = Math.max(0, 1 + sad1 * inv), j1 = i - 1;
+    w += w1; X += w1 * P0[j1]; Y += w1 * P1[j1]; B += w1 * P2[j1];
+    const sad2 = (
+      (H0[r0 + x] + H0[rm1 + x] + H0[r0 + x - 1] + H0[r0 + x + 1] + H0[rp1 + x]) * 40 +
+      (H1[r0 + x] + H1[rm1 + x] + H1[r0 + x - 1] + H1[r0 + x + 1] + H1[rp1 + x]) * 5 +
+      (H2[r0 + x] + H2[rm1 + x] + H2[r0 + x - 1] + H2[r0 + x + 1] + H2[rp1 + x]) * 3.5);
+    left = sad2;
+    const w2 = Math.max(0, 1 + sad2 * inv), j2 = i + 1;
+    w += w2; X += w2 * P0[j2]; Y += w2 * P1[j2]; B += w2 * P2[j2];
+    const sad3 = (
+      (V0[r0 + x] + V0[rm1 + x] + V0[r0 + x - 1] + V0[r0 + x + 1] + V0[rp1 + x]) * 40 +
+      (V1[r0 + x] + V1[rm1 + x] + V1[r0 + x - 1] + V1[r0 + x + 1] + V1[rp1 + x]) * 5 +
+      (V2[r0 + x] + V2[rm1 + x] + V2[r0 + x - 1] + V2[r0 + x + 1] + V2[rp1 + x]) * 3.5);
+    above[x] = sad3;
+    const w3 = Math.max(0, 1 + sad3 * inv), j3 = i + W;
+    w += w3; X += w3 * P0[j3]; Y += w3 * P1[j3]; B += w3 * P2[j3];
+    haveLeft = true; haveAbove[x] = 1;
+    O0[row + x] = X / w; O1[row + x] = Y / w; O2[row + x] = B / w;
+  }
+  leftState.left = left; leftState.haveLeft = haveLeft;
+}
+
 function rcEpf1(planes, W, width, height, invSigma, stride, borderMul) {
   const mir = (v, n) => v < 0 ? -v - 1 : v >= n ? 2 * n - v - 1 : v;
   const rows = Number.isSafeInteger(width) && width > 0 && width <= W &&
@@ -199,6 +361,30 @@ function rcEpf1(planes, W, width, height, invSigma, stride, borderMul) {
   const above = new Float64Array(width), haveAbove = new Uint8Array(width);
   const sm = 1.65, bsm = sm * borderMul;
   const P0 = planes[0], P1 = planes[1], P2 = planes[2], O0 = out[0], O1 = out[1], O2 = out[2];
+  const borderPixel = (x, y, inv, leftObj) => {
+    let w = 1, X = at(0, x, y), Y = at(1, x, y), B = at(2, x, y), left = leftObj.left, haveLeft = leftObj.haveLeft;
+    for (let n = 0; n < 4; n++) {
+      const [dx, dy] = nb[n];
+      let sad;
+      if (n === 0 && haveAbove[x]) sad = above[x];
+      else if (n === 1 && haveLeft) sad = left;
+      else {
+        sad = 0;
+        for (let c = 0; c < 3; c++) {
+          let sc = 0;
+          for (const [ox, oy] of plus) sc += Math.abs(at(c, x + ox, y + oy) - at(c, x + dx + ox, y + dy + oy));
+          sad += sc * RC_SCALE[c];
+        }
+      }
+      if (n === 2) left = sad;
+      else if (n === 3) above[x] = sad;
+      const weight = Math.max(0, 1 + sad * inv);
+      w += weight; X += weight * at(0, x + dx, y + dy); Y += weight * at(1, x + dx, y + dy); B += weight * at(2, x + dx, y + dy);
+    }
+    leftObj.left = left; leftObj.haveLeft = true; haveAbove[x] = 1;
+    const row = rows ? (y % 3) * width : y * W;
+    O0[row + x] = X / w; O1[row + x] = Y / w; O2[row + x] = B / w;
+  };
   const H0 = new Float64Array(4 * width), H1 = new Float64Array(4 * width), H2 = new Float64Array(4 * width);
   const V0 = new Float64Array(4 * width), V1 = new Float64Array(4 * width), V2 = new Float64Array(4 * width);
   const fillDiffRow = r => {
@@ -220,69 +406,30 @@ function rcEpf1(planes, W, width, height, invSigma, stride, borderMul) {
   };
   if (height >= 5 && width >= 5) { fillDiffRow(0); fillDiffRow(1); fillDiffRow(2); }
   for (let y = 0; y < height; y++) {
-    if (height >= 5 && width >= 5 && y >= 1 && y + 2 < height) fillDiffRow(y + 2);
+    if (height >= 5 && width >= 5 && y >= 2 && y + 1 < height) fillDiffRow(y + 1);
     const row = rows ? (y % 3) * width : y * W;
     if (rows) for (let c = 0; c < 3; c++) out[c].set(planes[c].subarray(y * W, y * W + width), row);
     const rowBorder = (y & 7) === 0 || (y & 7) === 7;
-    const rm1 = ((y - 1) & 3) * width, r0 = (y & 3) * width, rp1 = ((y + 1) & 3) * width;
-    let left = 0, haveLeft = false;
-    for (let x = 0; x < width; x++) {
-      const s = invSigma[(y >> 3) * stride + (x >> 3)];
-      if (s < RC_MIN_SIGMA) { haveLeft = false; haveAbove[x] = 0; continue; }
-      const mul = rowBorder || (x & 7) === 0 || (x & 7) === 7 ? bsm : sm, inv = s * mul;
-      let w = 1, X, Y, B;
-      if (x >= 2 && y >= 2 && x < width - 2 && y < height - 2) {
-        const i = y * W + x;
-        X = P0[i]; Y = P1[i]; B = P2[i];
-        const sad0 = haveAbove[x] ? above[x] : (
-          (V0[rm1 + x] + V0[((y - 2) & 3) * width + x] + V0[rm1 + x - 1] + V0[rm1 + x + 1] + V0[r0 + x]) * 40 +
-          (V1[rm1 + x] + V1[((y - 2) & 3) * width + x] + V1[rm1 + x - 1] + V1[rm1 + x + 1] + V1[r0 + x]) * 5 +
-          (V2[rm1 + x] + V2[((y - 2) & 3) * width + x] + V2[rm1 + x - 1] + V2[rm1 + x + 1] + V2[r0 + x]) * 3.5);
-        const w0 = Math.max(0, 1 + sad0 * inv), j0 = i - W;
-        w += w0; X += w0 * P0[j0]; Y += w0 * P1[j0]; B += w0 * P2[j0];
-        const sad1 = haveLeft ? left : (
-          (H0[r0 + x - 1] + H0[rm1 + x - 1] + H0[r0 + x - 2] + H0[r0 + x] + H0[rp1 + x - 1]) * 40 +
-          (H1[r0 + x - 1] + H1[rm1 + x - 1] + H1[r0 + x - 2] + H1[r0 + x] + H1[rp1 + x - 1]) * 5 +
-          (H2[r0 + x - 1] + H2[rm1 + x - 1] + H2[r0 + x - 2] + H2[r0 + x] + H2[rp1 + x - 1]) * 3.5);
-        const w1 = Math.max(0, 1 + sad1 * inv), j1 = i - 1;
-        w += w1; X += w1 * P0[j1]; Y += w1 * P1[j1]; B += w1 * P2[j1];
-        const sad2 = (
-          (H0[r0 + x] + H0[rm1 + x] + H0[r0 + x - 1] + H0[r0 + x + 1] + H0[rp1 + x]) * 40 +
-          (H1[r0 + x] + H1[rm1 + x] + H1[r0 + x - 1] + H1[r0 + x + 1] + H1[rp1 + x]) * 5 +
-          (H2[r0 + x] + H2[rm1 + x] + H2[r0 + x - 1] + H2[r0 + x + 1] + H2[rp1 + x]) * 3.5);
-        left = sad2;
-        const w2 = Math.max(0, 1 + sad2 * inv), j2 = i + 1;
-        w += w2; X += w2 * P0[j2]; Y += w2 * P1[j2]; B += w2 * P2[j2];
-        const sad3 = (
-          (V0[r0 + x] + V0[rm1 + x] + V0[r0 + x - 1] + V0[r0 + x + 1] + V0[rp1 + x]) * 40 +
-          (V1[r0 + x] + V1[rm1 + x] + V1[r0 + x - 1] + V1[r0 + x + 1] + V1[rp1 + x]) * 5 +
-          (V2[r0 + x] + V2[rm1 + x] + V2[r0 + x - 1] + V2[r0 + x + 1] + V2[rp1 + x]) * 3.5);
-        above[x] = sad3;
-        const w3 = Math.max(0, 1 + sad3 * inv), j3 = i + W;
-        w += w3; X += w3 * P0[j3]; Y += w3 * P1[j3]; B += w3 * P2[j3];
-      } else {
-        X = at(0, x, y); Y = at(1, x, y); B = at(2, x, y);
-        for (let n = 0; n < 4; n++) {
-          const [dx, dy] = nb[n];
-          let sad;
-          if (n === 0 && haveAbove[x]) sad = above[x];
-          else if (n === 1 && haveLeft) sad = left;
-          else {
-            sad = 0;
-            for (let c = 0; c < 3; c++) {
-              let sc = 0;
-              for (const [ox, oy] of plus) sc += Math.abs(at(c, x + ox, y + oy) - at(c, x + dx + ox, y + dy + oy));
-              sad += sc * RC_SCALE[c];
-            }
-          }
-          if (n === 2) left = sad;
-          else if (n === 3) above[x] = sad;
-          const weight = Math.max(0, 1 + sad * inv);
-          w += weight; X += weight * at(0, x + dx, y + dy); Y += weight * at(1, x + dx, y + dy); B += weight * at(2, x + dx, y + dy);
-        }
+    if (y >= 2 && y < height - 2 && width >= 5) {
+      const leftState = {left: 0, haveLeft: false};
+      for (let x = 0; x < 2; x++) {
+        const s = invSigma[(y >> 3) * stride + (x >> 3)];
+        if (s < RC_MIN_SIGMA) { leftState.haveLeft = false; haveAbove[x] = 0; continue; }
+        borderPixel(x, y, s * (rowBorder || (x & 7) === 0 || (x & 7) === 7 ? bsm : sm), leftState);
       }
-      haveLeft = true; haveAbove[x] = 1;
-      O0[row + x] = X / w; O1[row + x] = Y / w; O2[row + x] = B / w;
+      rcEpfInteriorRow(y, W, width, stride, invSigma, rowBorder, bsm, sm, P0, P1, P2, O0, O1, O2, row, H0, H1, H2, V0, V1, V2, above, haveAbove, leftState);
+      for (let x = width - 2; x < width; x++) {
+        const s = invSigma[(y >> 3) * stride + (x >> 3)];
+        if (s < RC_MIN_SIGMA) { leftState.haveLeft = false; haveAbove[x] = 0; continue; }
+        borderPixel(x, y, s * (rowBorder || (x & 7) === 0 || (x & 7) === 7 ? bsm : sm), leftState);
+      }
+    } else {
+      const leftState = {left: 0, haveLeft: false};
+      for (let x = 0; x < width; x++) {
+        const s = invSigma[(y >> 3) * stride + (x >> 3)];
+        if (s < RC_MIN_SIGMA) { leftState.haveLeft = false; haveAbove[x] = 0; continue; }
+        borderPixel(x, y, s * (rowBorder || (x & 7) === 0 || (x & 7) === 7 ? bsm : sm), leftState);
+      }
     }
     if (rows && y >= 2) commit(y - 2);
   }
@@ -312,12 +459,17 @@ export function reconstruct(image) {
   const n = width * height, compact = Number.isSafeInteger(width) && width > 0 && width <= W &&
     Number.isSafeInteger(height) && height > 0 && height <= H;
   const out = compact ? planes : [0, 1, 2].map(() => new Float32Array(n));
-  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-    const i = y * W + x, X = planes[0][i], Y = planes[1][i], B = planes[2][i];
-    const l = rcCube(Y + X + RC_ROOT_BIAS) - RC_BIAS, m = rcCube(Y - X + RC_ROOT_BIAS) - RC_BIAS, s = rcCube(B + RC_ROOT_BIAS) - RC_BIAS, o = y * width + x;
-    out[0][o] = RC_INV[0] * l + RC_INV[1] * m + RC_INV[2] * s;
-    out[1][o] = RC_INV[3] * l + RC_INV[4] * m + RC_INV[5] * s;
-    out[2][o] = RC_INV[6] * l + RC_INV[7] * m + RC_INV[8] * s;
+  const p0 = planes[0], p1 = planes[1], p2 = planes[2], o0 = out[0], o1 = out[1], o2 = out[2];
+  const m0 = RC_INV[0], m1 = RC_INV[1], m2 = RC_INV[2], m3 = RC_INV[3], m4 = RC_INV[4], m5 = RC_INV[5], m6 = RC_INV[6], m7 = RC_INV[7], m8 = RC_INV[8];
+  for (let y = 0; y < height; y++) {
+    const rIn = y * W, rOut = y * width;
+    for (let x = 0; x < width; x++) {
+      const i = rIn + x, X = p0[i], Y = p1[i], B = p2[i];
+      const l = rcCube(Y + X + RC_ROOT_BIAS) - RC_BIAS, m = rcCube(Y - X + RC_ROOT_BIAS) - RC_BIAS, s = rcCube(B + RC_ROOT_BIAS) - RC_BIAS, o = rOut + x;
+      o0[o] = m0 * l + m1 * m + m2 * s;
+      o1[o] = m3 * l + m4 * m + m5 * s;
+      o2[o] = m6 * l + m7 * m + m8 * s;
+    }
   }
   if (!compact || planes.every(p => p.length === n)) return out;
   return planes.map((p, c) => {

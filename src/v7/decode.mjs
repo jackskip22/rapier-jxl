@@ -11,6 +11,7 @@ import {readModularTransforms, inverseModularTransforms} from '../decode-modular
 import {brotliDictionary} from '../brotli-dictionary.mjs';
 import {compileWasm} from '../wasm-modules.mjs';
 import {DECODE_KERNELS} from '../decode-kernels-bytes.mjs';
+import {wasmRequired} from '../capture-wasm-error.mjs';
 import {decodedFields} from './describe.mjs';
 import {bytes, check, fail, declared, object, callers, pixelLimit, admitSignal} from './primitives.mjs';
 import {header} from './inspect.mjs';
@@ -21,13 +22,16 @@ export {configureWasm} from '../wasm-modules.mjs';
 addPart('features', {readFeatures, applyPatches, applySplines, applyNoise}); addPart('icc', {readICC}); addPart('iccColor', {readICCColor});
 addPart('upsample', {upsamplePlane}); addPart('brotli', {decompressBrotli}); addPart('transforms', {readModularTransforms, inverseModularTransforms});
 
+const compileKernels = () => compileWasm('decode', () => Uint8Array.from(DECODE_KERNELS, c => c.charCodeAt(0)));
 export async function prepare() {
-  try { await compileWasm('decode', () => Uint8Array.from(DECODE_KERNELS, c => c.charCodeAt(0))); } catch (error) { throw declared(error); }
+  let compiled;
+  try { compiled = await compileKernels(); } catch (error) { throw declared(error); }
+  if (!compiled) throw wasmRequired();
 }
 export async function supported(feature) {
   if (feature === 'webgpu') return false;
   if (feature !== undefined) throw fail('JXL_OPTIONS', "supported takes nothing, or 'webgpu'.");
-  return true;
+  try { return await compileKernels(); } catch { return false; }
 }
 const HDR = ['pq', 'hlg'];
 const FLAGS = ['applyOrientation', 'unpremultiplyAlpha', 'renderSpotColors', 'planes'];
@@ -92,7 +96,7 @@ async function decodeHere(input, options) {
     let transfer; try { transfer = header(owned).colorEncoding?.transferFunction; } catch {}
     if (HDR.includes(transfer)) throw fail('JXL_UNSUPPORTED', "Converting an HDR picture (PQ or HLG) to another color space is not offered in this version; decode it with colorSpace 'original'.");
   }
-  await prepare().catch(() => {});
+  await prepare();
   check(signal);
   const result = decodeBands(owned, limits);
   Object.assign(result, decodedFields(result));

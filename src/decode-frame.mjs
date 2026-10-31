@@ -5,34 +5,20 @@ import {readMATree, createModular} from './decode-modular.mjs';
 import {readVarDCTGlobal, createVarDCT, restoreFilters} from './decode-vardct.mjs';
 import {decodeKernels} from './decode-kernels.mjs';
 
-const floatBits = new DataView(new ArrayBuffer(4));
-const U8_FLOAT = Float32Array.from({length: 256}, (_, i) => i / 255);
-function mapSamples(data, map) {
-  const out = new Float32Array(data.length);
-  for (let i = 0; i < data.length; i++) out[i] = map(data[i], i);
+function kernelSamples(runs, convert) {
+  const kernels = decodeKernels(), total = runs[0].length, chunk = Math.max(1, Math.min(total, 1048576)), at = kernels.reserve(runs.map(() => chunk * 4));
+  const out = runs.map(r => new Float32Array(r.buffer, r.byteOffset, r.length));
+  for (let i = 0; i < total; i += chunk) {
+    const n = Math.min(chunk, total - i);
+    runs.forEach((r, k) => new Int32Array(kernels.buffer, at[k], n).set(r.subarray(i, i + n)));
+    convert(n, at);
+    out.forEach((o, k) => o.set(new Float32Array(kernels.buffer, at[k], n), i));
+  }
   return out;
 }
 function channelSamples(data, depth) {
-  if (depth.float) return mapSamples(data, v => sampleValue(v, depth));
-  const n = data.length, out = new Float32Array(n);
-  if (depth.bits === 8) {
-    for (let i = 0; i < n; i++) {
-      const v = data[i];
-      out[i] = (v & -256) === 0 ? U8_FLOAT[v] : v / 255;
-    }
-    return out;
-  }
-  const maximum = power2(depth.bits) - 1;
-  for (let i = 0; i < n; i++) out[i] = data[i] / maximum;
-  return out;
-}
-export function sampleValue(word, depth) {
-  if (!depth.float) return word / (power2(depth.bits) - 1);
-  if (depth.bits === 32 && depth.exponentBits === 8) { floatBits.setUint32(0,word>>>0); return floatBits.getFloat32(0); }
-  const bits = depth.bits, eb = depth.exponentBits, mb = bits-eb-1, unit = power2(mb), signBit = power2(bits-1), bias = power2(eb-1)-1;
-  const u = word>>>0, sign = u >= signBit ? -1 : 1, exponent = Math.floor(u/unit) % power2(eb), fraction = u % unit;
-  if (exponent === power2(eb)-1) return fraction ? NaN : sign*Infinity;
-  return sign*(exponent ? 1+fraction/unit : fraction/unit)*power2((exponent || 1)-bias);
+  const kernels = decodeKernels();
+  return kernelSamples([data], (n, [at]) => kernels.samples(n, at, depth.float ? 1 : 0, depth.float ? 0 : power2(depth.bits) - 1, depth.bits, depth.exponentBits ?? 0))[0];
 }
 export function jpegShifts(sample) {
   const hs=sample.map(v=>v===1||v===2?1:0),vs=sample.map(v=>v===1||v===3?1:0),mh=Math.max(...hs),mv=Math.max(...vs);
@@ -63,7 +49,7 @@ export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, m
   const maxTreeNodes = Math.min(1048576, 1024 + sampleBudget);
   const global = f.modular ? null : readVarDCTGlobal(r);
   const globalTree = r.read(1) ? readMATree(r, {maxNodes: maxTreeNodes}) : null;
-  const modular=createModular(r,channels,{globalTree,groupDim:f.groupDim,bitDepth:h.bitDepth.bits,maxModularWork,kernels:f.modular&&!band?decodeKernels():null,...(maxSamples===undefined?{}:{maxSamples})});
+  const modular=createModular(r,channels,{globalTree,groupDim:f.groupDim,bitDepth:h.bitDepth.bits,maxModularWork,...(maxSamples===undefined?{}:{maxSamples})});
   modular.decodeGlobal(r,0);
   const dct=f.modular?null:createVarDCT({width:f.encodedWidth,height:f.encodedHeight,header:f,global,lfDequant,bitDepth:h.bitDepth.bits,globalTree,imageHeader:h,maxModularWork,modularWork:modular.modularWork,band,maxSection:Math.max(...readers.map(x=>x.bytes.length))});
   if(!single)r.endSection();
@@ -94,35 +80,31 @@ export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, m
   if(single)r.endSection();
   if(band)return {dct,features};
   const decoded=modular.finish(),colorCount=f.modular?f.encodedColorChannels:0;
+  const rendered=dct?.render({lfReference});
   const extraChannels=decoded.slice(colorCount).map((c,i)=>({...h.extraChannels[i],width:c.width,height:c.height,data:channelSamples(c.data,h.extraChannels[i].bitDepth)}));
-  if(dct) return {...dct.render({lfReference}),width:f.encodedWidth,height:f.encodedHeight,extraChannels,features,global,lfDequant};
+  if(dct) return {...rendered,width:f.encodedWidth,height:f.encodedHeight,extraChannels,features,global,lfDequant};
   let planes;
   if(h.xyb) {
-    const [y,x,b]=decoded;
-    planes=[mapSamples(x.data,v=>v*lfDequant[0]/128),mapSamples(y.data,v=>v*lfDequant[1]/128),mapSamples(b.data,(v,i)=>(v+y.data[i])*lfDequant[2]/128)];
+    const [y,x,b]=decoded,kernels=decodeKernels();
+    planes=kernelSamples([x.data,y.data,b.data],(n,[ax,ay,ab])=>kernels.xybSamples(n,ax,ay,ab,lfDequant[0],lfDequant[1],lfDequant[2]));
   } else planes=decoded.slice(0,colorCount).map(c=>channelSamples(c.data,h.bitDepth));
   const widths=decoded.slice(0,colorCount).map(c=>c.width),heights=decoded.slice(0,colorCount).map(c=>c.height);
   return {planes,widths,heights,width:f.encodedWidth,height:f.encodedHeight,extraChannels,features,global,lfDequant,filtersApplied:false};
 }
 
 export function upsampleJPEG(plane, width, height, targetWidth, targetHeight) {
-  if(width<targetWidth) {
-    const out=new Float32Array(targetWidth*height);
-    for(let y=0;y<height;y++) for(let x=0;x<targetWidth;x++) {
-      const c=x>>1,neighbor=x&1?Math.min(c+1,width-1):Math.max(c-1,0);
-      out[y*targetWidth+x]=(3*plane[y*width+c]+plane[y*width+neighbor])/4;
-    }
-    plane=out;width=targetWidth;
+  if(width>=targetWidth&&height>=targetHeight)return plane;
+  const kernels=decodeKernels(),across=width<targetWidth,down=height<targetHeight,tw=across?targetWidth:width,th=down?targetHeight:height;
+  const rows=Math.max(2,Math.min(th,Math.floor(1048576/tw))),held=down?(rows>>1)+3:rows;
+  const [source,wide,stripe]=kernels.reserve([held*width*4,held*tw*4,rows*tw*4]),out=new Float32Array(tw*th);
+  for(let t0=0;t0<th;t0+=rows) {
+    const t1=Math.min(th,t0+rows),s0=down?Math.max(0,(t0>>1)-1):t0,s1=down?Math.min(height,((t1-1)>>1)+2):t1;
+    new Float32Array(kernels.buffer,source,(s1-s0)*width).set(plane.subarray(s0*width,s1*width));
+    if(across)kernels.jpegAcross(s1-s0,source,width,wide,tw);
+    if(down)kernels.jpegDown(across?wide:source,tw,s0,height,stripe,t0,t1);
+    out.set(new Float32Array(kernels.buffer,down?stripe:wide,(t1-t0)*tw),t0*tw);
   }
-  if(height<targetHeight) {
-    const out=new Float32Array(width*targetHeight);
-    for(let y=0;y<targetHeight;y++) {
-      const c=y>>1,neighbor=y&1?Math.min(c+1,height-1):Math.max(c-1,0);
-      for(let x=0;x<width;x++)out[y*width+x]=(3*plane[c*width+x]+plane[neighbor*width+x])/4;
-    }
-    plane=out;
-  }
-  return plane;
+  return out;
 }
 export function restoreFrame(frame,f) {
   if(f.ycbcr)frame.planes=frame.planes.map((p,c)=>upsampleJPEG(p,frame.widths[c],frame.heights[c],frame.width,frame.height));

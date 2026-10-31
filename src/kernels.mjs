@@ -8,7 +8,7 @@ import {hybridToken} from './prefix.mjs';
 import {fault} from './admit.mjs';
 import {SIMD, SIMD_PROBE} from './kernels-bytes.mjs';
 
-export const {configureKernels, ensureKernels, kernelMode, disableEntropyKernels, prepareKernels} = (() => {
+export const {configureKernels, ensureKernels, kernelMode, kernelRequest, disableEntropyKernels, prepareKernels} = (() => {
 const P = 65536, R = 327680, PROPERTY = 589824, CONTEXT = 851968;
 const OUTPUT = 1114128, TABLE = 1642496, SOURCE = 1769472, STATE = 2097152;
 const DIV = 16, WEIGHTS = 272, BUCKET = 16656, MAP = 20672, ALPHABET = 257;
@@ -24,7 +24,7 @@ const GROUP_PLANES = [P, PROPERTY, CONTEXT, STATE];
 function createEngine() {
   const memory = new WebAssembly.Memory({initial: 48, maximum: 272});
   const names = new Map(Object.entries(new WebAssembly.Instance(wasmModule('simd', () => decode(SIMD)), {env: {memory}}).exports));
-  const simd = {residual: names.get('residual'), tokens: names.get('tokens'), fill: names.get('fill'), weighted: names.get('weighted'), screen: names.get('screen'), sampled: names.get('sampled'), subtract: names.get('subtract'), dct: names.get('dct'), xybTile: names.get('xybTile'), quantTile: names.get('quantTile'), acGroup: names.get('acGroup'), ansFlush: names.get('ansFlush'), nonzeroCounts: names.get('nonzeroCounts'), vbDct: names.get('vbDct'), vbQuant: names.get('vbQuant'), gab: names.get('gab'), sgFill: names.get('sgFill'), xybRows: names.get('xybRows'), acTokens: names.get('acTokens'), gabTiles: names.get('gabTiles'), fgXyb: names.get('fgXyb'), gab32: names.get('gab32'), fgTiles: names.get('fgTiles')};
+  const simd = {residual: names.get('residual'), tokens: names.get('tokens'), fill: names.get('fill'), weighted: names.get('weighted'), screen: names.get('screen'), sampled: names.get('sampled'), subtract: names.get('subtract'), dct: names.get('dct'), xybTile: names.get('xybTile'), quantTile: names.get('quantTile'), acGroup: names.get('acGroup'), ansFlush: names.get('ansFlush'), ansFlush2: names.get('ansFlush2'), nonzeroCounts: names.get('nonzeroCounts'), vbDct: names.get('vbDct'), vbQuant: names.get('vbQuant'), gab: names.get('gab'), sgFill: names.get('sgFill'), xybRows: names.get('xybRows'), acTokens: names.get('acTokens'), gabTiles: names.get('gabTiles'), fgXyb: names.get('fgXyb'), gab32: names.get('gab32'), gab32From: names.get('gab32From'), fgTiles: names.get('fgTiles'), packLevels: names.get('packLevels'), unpackGroup: names.get('unpackGroup'), opaque: names.get('opaque'), wpTokens: names.get('wpTokens'), gradEvents: names.get('gradEvents'), hpCount: names.get('hpCount'), hpTokens: names.get('hpTokens'), shape: names.get('shape'), wpDc: names.get('wpDc')};
   const u8 = new Uint8Array(memory.buffer), i32 = new Int32Array(memory.buffer);
   weightedTables(i32, DIV, WEIGHTS);
   i32.set(WEIGHTED_BUCKET, BUCKET >> 2);
@@ -91,7 +91,8 @@ function weighted(w, targets, plane, width, height, offset, contextOf, residuals
   const {i32, simd} = engine;
   i32.set(plane.subarray(0, n), P >> 2); i32.set(contextOf, MAP >> 2);
   i32.fill(0, state >> 2, (state >> 2) + (width + 2) * 10);
-  simd.weighted(P, width, height, offset, residual, property, context, MAP, BUCKET, DIV, WEIGHTS, state);
+  if (residuals && properties && offset === 0) simd.wpDc(P, width, height, residual, property, DIV, WEIGHTS, state);
+  else simd.weighted(P, width, height, offset, residual, property, context, MAP, BUCKET, DIV, WEIGHTS, state);
   if (residuals) {
     residuals.set(i32.subarray(residual >> 2, (residual >> 2) + n));
     if (properties) properties.set(i32.subarray(property >> 2, (property >> 2) + n));
@@ -186,8 +187,20 @@ function photoTile(data, width, height, bx0, by0, bw, bh, tables, cfl, component
 const AC = 4194304, AC_COEFFS = AC + 128, AC_STRIDE = 131072, AC_COUNTS = AC_COEFFS + 3 * AC_STRIDE, AC_BUCKETS = AC_COUNTS + 3072;
 const AC_BLOCK_CTX = AC_BUCKETS + 1024, AC_ORDERS = AC_BLOCK_CTX + 1024, AC_ZD = AC_ORDERS + 256, AC_NZ = AC_ZD + 8192;
 const AC_MAP = AC_NZ + 12288, AC_CONFIGS = AC_MAP + 8192, AC_CODES = AC_CONFIGS + 4096;
-let acClean = false, ansStamp = null, zdLoaded = false, acBucketsZero = false, acResident = null;
+let acClean = false, acCleanBytes = 0, ansStamp = null, zdLoaded = false, acBucketsZero = false, acResident = null, acDeferred = null;
+const HIST_KEY = contexts => contexts.contexts;
 const ansTables = new WeakMap();
+const RECIPS_BYTES = 4097 * 8;
+let reciprocalTable = null;
+function reciprocals() {
+  if (reciprocalTable) return reciprocalTable;
+  const table = new Int32Array(4097 * 2);
+  for (let d = 1; d <= 4096; d++) {
+    const l = 32 - Math.clz32(d - 1), m = ((1n << BigInt(32 + l)) + BigInt(d) - 1n) / BigInt(d);
+    table[d * 2] = Number(m - (1n << 32n)) | 0; table[d * 2 + 1] = l;
+  }
+  return reciprocalTable = table;
+}
 function ansTablesOf(model) {
   let t = ansTables.get(model);
   if (t) return t;
@@ -208,12 +221,31 @@ function ansTablesOf(model) {
   ansTables.set(model, t);
   return t;
 }
-function acGroup(state, g, pass, sink, zd) {
+function acGroupPair(state, g0, g1, pass, sink0, sink1, zd) {
+  if (sink0.counts || sink1.counts || !sink0.coding || sink0.coding.model !== sink1.coding?.model || sink0.coding.model?.kind !== 'ans') return false;
+  const pair = {};
+  if (acGroup(state, g0, pass, sink0, zd, pair) !== 3) return false;
+  return acGroup(state, g1, pass, sink1, zd, pair) === 2 ? 2 : flushParked(pair) ? 1 : false;
+}
+function flushParked(pair) {
+  const args = AC_CONFIGS + 4096 - 256, i32 = new Int32Array(engine.memory.buffer);
+  i32.set(pair.args, args >> 2);
+  engine.simd.ansFlush(args);
+  takeFlushed(pair.w, args, pair.out);
+  return true;
+}
+function takeFlushed(w, args, out) {
+  const i32 = new Int32Array(engine.memory.buffer), written = i32[(args >> 2) + 17];
+  if (w.at + written + 8 >= w.bytes.length) w.grow(written + 8);
+  w.bytes.set(new Uint8Array(engine.memory.buffer, out, written), w.at);
+  w.at += written; w.acc = i32[(args >> 2) + 15]; w.pending = i32[(args >> 2) + 16];
+}
+function acGroup(state, g, pass, sink, zd, pair = null) {
   retainEpoch++;
   const {authoredOrderPasses, groupsX, strategyData, progression, contexts, lumaBuckets, lumaW, xsizeBlocks, ysizeBlocks, comps, grey,
     orders, counted, blockCounts, nonZero, hshifts, vshifts} = state;
   if (active !== 'simd' || strategyData || progression || authoredOrderPasses?.[pass] || grey || (!nonZero && (!counted || !entropyAllowed)) ||
-      hshifts.some(Boolean) || vshifts.some(Boolean) || comps.some(comp => !(comp.coeffs instanceof Int16Array)) ||
+      hshifts.some(Boolean) || vshifts.some(Boolean) || comps.some(comp => !(comp.coeffs instanceof Int16Array || !comp.coeffs && comp.packed?.starts)) ||
       contexts.contexts > 65536 || contexts.map.length > 8192) return false;
   tileBand = null;
   let codes = null, alphabet = 0, w = null, ans = null;
@@ -230,6 +262,8 @@ function acGroup(state, g, pass, sink, zd) {
   const gx = g % groupsX, gy = (g / groupsX) | 0, bx0 = gx * 32, by0 = gy * 32;
   const bw = Math.min(32, xsizeBlocks - bx0), bh = Math.min(32, ysizeBlocks - by0), blocks = bw * bh, stride = comps[0].stride;
   const source = counted ? blockCounts : nonZero;
+  const packed = !comps[0].coeffs;
+  if (packed && !nonZero) return false;
   if (!nonZero) {
     if (bw < 1 || bh < 1 || !Number.isInteger(stride) || stride < bx0 + bw ||
         !Number.isInteger(contexts.numDc) || contexts.numDc < 1 || contexts.numDc > 16 ||
@@ -244,32 +278,60 @@ function acGroup(state, g, pass, sink, zd) {
   }
   const tokens = 3 * blocks * 64;
   const histBytes = contexts.contexts * 256, HIST = AC_CODES + Math.max(8, codes ? codes.length * alphabet * 8 : 8);
-  let TOUCHED = HIST + histBytes, OVERFLOW = TOUCHED + tokens * 4, OUT = OVERFLOW + tokens * 8, end = OUT + tokens * 8 + 16;
-  let A_SMALL, A_FREQS, A_STARTS, A_REVERSE, A_CONFIGS, A_COUNTS, A_SYMBOL_STARTS, A_VALUES, A_IDS, A_RAWS, A_META, A_EMITTED;
+  const defer = !!(sink.counts && sink.defer);
+  if (acDeferred && (!defer || acDeferred.counts !== sink.counts || acDeferred.hist !== HIST_KEY(contexts))) throw new Error('Deferred AC counts were not taken.');
+  let TOUCHED = HIST + histBytes, OVERFLOW = TOUCHED + (defer ? Math.max(tokens * 4, histBytes) : tokens * 4), OUT = OVERFLOW + tokens * 8, end = OUT + tokens * 8 + 16;
+  const stage = () => end + 15 & ~15;
+  let A_SMALL, A_FREQS, A_STARTS, A_REVERSE, A_CONFIGS, A_COUNTS, A_SYMBOL_STARTS, A_RECIPS, A_VALUES, A_IDS, A_RAWS, A_META, A_EMITTED;
   if (ans) {
     A_SMALL = AC_CODES; A_FREQS = A_SMALL + ans.ids * 256; A_STARTS = A_FREQS + ans.ids * 256; A_REVERSE = A_STARTS + ans.ids * 256;
     A_CONFIGS = A_REVERSE + ans.ids * 8192; A_COUNTS = A_CONFIGS + ans.ids * 16; A_SYMBOL_STARTS = A_COUNTS + ans.ids * ans.alphabet * 4;
-    A_VALUES = A_SYMBOL_STARTS + ans.ids * ans.alphabet * 4; A_IDS = A_VALUES + tokens * 4; A_RAWS = A_IDS + tokens + 8 & ~7;
+    A_RECIPS = A_SYMBOL_STARTS + ans.ids * ans.alphabet * 4 + 7 & ~7; A_VALUES = A_RECIPS + RECIPS_BYTES; A_IDS = A_VALUES + tokens * 4; A_RAWS = A_IDS + tokens + 8 & ~7;
     A_META = A_RAWS + tokens * 4; A_EMITTED = A_META + tokens + 8 & ~7; OUT = A_EMITTED + tokens * 2 + 8 & ~7; end = OUT + tokens * 8 + 16;
   }
+  const STAGE_AT = packed ? stage() : 0, STAGE_VAL = STAGE_AT + tokens;
+  if (packed) end = STAGE_VAL + 2 * tokens;
   if (end > engine.memory.buffer.byteLength) {
     try { engine.memory.grow(Math.ceil((end - engine.memory.buffer.byteLength) / 65536)); } catch { return false; }
     engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
   }
   const buffer = engine.memory.buffer, u8 = new Uint8Array(buffer), i32 = new Int32Array(buffer), i16 = new Int16Array(buffer), u16 = new Uint16Array(buffer);
   if (!sink.counts) acClean = false;
-  else if (!acClean) { u8.fill(0, HIST, HIST + histBytes); acClean = true; }
+  else {
+    if (!acClean || acCleanBytes < histBytes) {
+      if (acDeferred) throw new Error('Deferred AC counts were overwritten.');
+      u8.fill(0, HIST, HIST + histBytes); acClean = true;
+    }
+    acCleanBytes = histBytes;
+  }
   if (!ans) ansStamp = null;
   else if (ansStamp !== sink.coding.model) {
     i32.set(ans.small, A_SMALL >> 2); i32.set(ans.freqs, A_FREQS >> 2); i32.set(ans.starts, A_STARTS >> 2); u16.set(ans.reverse, A_REVERSE >> 1);
     i32.set(ans.configs, A_CONFIGS >> 2); i32.set(ans.counts, A_COUNTS >> 2); i32.set(ans.symbolStarts, A_SYMBOL_STARTS >> 2);
+    i32.set(reciprocals(), A_RECIPS >> 2);
     ansStamp = sink.coding.model;
   }
+  const levelsOf = c => comps[c].coeffs ?? comps[c].packed;
   const sameGroup = acResident && acResident.g === g && acResident.bw === bw && acResident.bh === bh &&
-    acResident.c0 === comps[0].coeffs && acResident.c1 === comps[1].coeffs && acResident.c2 === comps[2].coeffs &&
+    acResident.c0 === levelsOf(0) && acResident.c1 === levelsOf(1) && acResident.c2 === levelsOf(2) &&
     acResident.s0 === source[0] && acResident.s1 === source[1] && acResident.s2 === source[2];
+  let staged = 0;
   for (let c = 0; c < 3; c++) {
-    if (!sameGroup) {
+    if (!sameGroup && packed) {
+      const {at, levels, starts, segment, groupStarts} = comps[c].packed, counts = source[c], segments = Math.ceil(stride / segment), s0 = Math.floor(bx0 / segment);
+      for (let y = 0; y < bh; y++) {
+        const row = (by0 + y) * stride, first = row + bx0;
+        let from;
+        if (groupStarts) from = groupStarts[(by0 + y) * Math.ceil(stride / 32) + bx0 / 32];
+        else { from = starts[(by0 + y) * segments + s0]; for (let b = row + s0 * segment; b < first; b++) from += counts[b]; }
+        let to = from;
+        for (let b = first; b < first + bw; b++) to += counts[b];
+        u8.set(at.subarray(from, to), STAGE_AT + staged);
+        i16.set(levels.subarray(from, to), (STAGE_VAL >> 1) + staged);
+        staged += to - from;
+        u8.set(counts.subarray(first, first + bw), AC_COUNTS + c * blocks + y * bw);
+      }
+    } else if (!sameGroup) {
       const coeffs = comps[c].coeffs, counts = source[c];
       for (let y = 0; y < bh; y++) {
         const at = (by0 + y) * stride + bx0;
@@ -287,7 +349,8 @@ function acGroup(state, g, pass, sink, zd) {
     for (let k = 0; k < 64; k++) u8[AC_ORDERS + c * 64 + k] = ord[k];
     for (let b = 0; b < contexts.numDc; b++) i32[(AC_BLOCK_CTX >> 2) + c * contexts.numDc + b] = contexts.contextOf(c, b);
   }
-  acResident = {g, bw, bh, c0: comps[0].coeffs, c1: comps[1].coeffs, c2: comps[2].coeffs, s0: source[0], s1: source[1], s2: source[2]};
+  if (!sameGroup && packed) engine.simd.unpackGroup(AC_COEFFS, AC_STRIDE, bw, bh, AC_COUNTS, STAGE_AT, STAGE_VAL);
+  acResident = {g, bw, bh, c0: levelsOf(0), c1: levelsOf(1), c2: levelsOf(2), s0: source[0], s1: source[1], s2: source[2]};
   if (contexts.thresholds.length) {
     acBucketsZero = false;
     for (let y = 0; y < bh; y++) {
@@ -311,13 +374,35 @@ function acGroup(state, g, pass, sink, zd) {
     }
   }
   i32.set([AC_COEFFS, AC_STRIDE, bw, bh, AC_COUNTS, AC_BUCKETS, AC_BLOCK_CTX, contexts.numDc, contexts.numCtxs, AC_ORDERS, AC_ZD, AC_NZ,
-    ans ? 2 : codes ? 1 : 0, HIST, TOUCHED, OVERFLOW, 0, 0, AC_MAP, AC_CONFIGS, AC_CODES, alphabet, OUT, w ? w.acc : 0, w ? w.pending : 0, 0,
+    ans ? 2 : codes ? 1 : 0, HIST, TOUCHED + 4 * (acDeferred?.touched ?? 0), OVERFLOW, 0, 0, AC_MAP, AC_CONFIGS, AC_CODES, alphabet, OUT, w ? w.acc : 0, w ? w.pending : 0, 0,
     ans ? A_VALUES : 0, ans ? A_IDS : 0, 0], AC >> 2);
   engine.simd.acGroup(AC);
   if (ans) {
-    const args = AC_CONFIGS + 4096 - 128;
-    i32.set([A_VALUES, A_IDS, i32[(AC >> 2) + 28], A_SMALL, A_FREQS, A_STARTS, A_REVERSE, A_CONFIGS, A_COUNTS, A_SYMBOL_STARTS, ans.alphabet,
-      A_RAWS, A_META, A_EMITTED, OUT, w.acc, w.pending, 0], args >> 2);
+    const args = AC_CONFIGS + 4096 - 128, n = i32[(AC >> 2) + 28];
+    const tables = [A_SMALL, A_FREQS, A_STARTS, A_REVERSE, A_CONFIGS, A_COUNTS, A_SYMBOL_STARTS, ans.alphabet];
+    if (pair && !pair.args) {
+      const park = A_VALUES + 23 * 3 * 1024 * 64 + 256 + 15 & ~15, P_IDS = park + n * 4, P_RAWS = P_IDS + n + 8 & ~7, P_META = P_RAWS + n * 4;
+      const P_EMITTED = P_META + n + 8 & ~7, P_OUT = P_EMITTED + n * 2 + 8 & ~7, P_END = P_OUT + n * 8 + 16;
+      if (P_END > 272 * 65536) return false;
+      if (P_END > engine.memory.buffer.byteLength) {
+        try { engine.memory.grow(Math.ceil((P_END - engine.memory.buffer.byteLength) / 65536)); } catch { return false; }
+        engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
+      }
+      const bytes = new Uint8Array(engine.memory.buffer);
+      bytes.copyWithin(park, A_VALUES, A_VALUES + n * 4); bytes.copyWithin(P_IDS, A_IDS, A_IDS + n);
+      pair.args = [park, P_IDS, n, ...tables, P_RAWS, P_META, P_EMITTED, P_OUT, w.acc, w.pending, 0, A_RECIPS];
+      pair.w = w; pair.out = P_OUT; pair.model = sink.coding.model;
+      return 3;
+    }
+    i32.set([A_VALUES, A_IDS, n, ...tables, A_RAWS, A_META, A_EMITTED, OUT, w.acc, w.pending, 0, A_RECIPS], args >> 2);
+    if (pair) {
+      if (pair.model !== sink.coding.model) throw new Error('A pair of AC groups crosses models.');
+      const first = AC_CONFIGS + 4096 - 256;
+      i32.set(pair.args, first >> 2);
+      engine.simd.ansFlush2(first, args);
+      takeFlushed(pair.w, first, pair.out); takeFlushed(w, args, OUT);
+      return 2;
+    }
     engine.simd.ansFlush(args);
     const written = i32[(args >> 2) + 17];
     if (w.at + written + 8 >= w.bytes.length) w.grow(written + 8);
@@ -332,13 +417,112 @@ function acGroup(state, g, pass, sink, zd) {
     w.at += written; w.acc = i32[(AC >> 2) + 23]; w.pending = i32[(AC >> 2) + 24];
     return true;
   }
-  const counts = sink.counts, touched = i32[(AC >> 2) + 16], overflow = i32[(AC >> 2) + 17], hist = new Uint32Array(buffer, HIST, histBytes >> 2);
-  for (let i = 0; i < touched; i++) {
-    const index = i32[(TOUCHED >> 2) + i], n = hist[index];
-    counts.small[index] += n; counts.totals[index >> 6] += n; hist[index] = 0;
-  }
+  const counts = sink.counts, touched = i32[(AC >> 2) + 16], overflow = i32[(AC >> 2) + 17];
+  if (defer) acDeferred = {counts, hist: HIST_KEY(contexts), at: HIST, list: TOUCHED, bytes: histBytes, touched: (acDeferred?.touched ?? 0) + touched};
+  else takeCounts(counts, HIST, TOUCHED, touched, histBytes);
   for (let i = 0; i < overflow; i++) counts.add(i32[(OVERFLOW >> 2) + 2 * i], i32[(OVERFLOW >> 2) + 2 * i + 1]);
   return true;
+}
+function takeCounts(counts, at, list, touched, bytes) {
+  const i32 = new Int32Array(engine.memory.buffer), hist = new Uint32Array(engine.memory.buffer, at, bytes >> 2);
+  for (let i = 0; i < touched; i++) {
+    const index = i32[(list >> 2) + i], n = hist[index];
+    counts.small[index] += n; counts.totals[index >> 6] += n; hist[index] = 0;
+  }
+}
+function deferredCounts() {
+  if (!acDeferred) return;
+  const {counts, at, list, touched, bytes} = acDeferred;
+  acDeferred = null;
+  if (!acClean) throw new Error('Deferred AC counts were overwritten.');
+  takeCounts(counts, at, list, touched, bytes);
+}
+
+function wpTokens(flat, errors, weighted, n, leaves, alphabet) {
+  const WP_RUNS = P + 1024, WP_ERRORS = P + 2048, WP_WEIGHTED = WP_ERRORS + 4 * n, WP_TAGS = WP_WEIGHTED + 4 * n, WP_EXTRA = WP_TAGS + 4 * n, WP_FREQS = WP_EXTRA + 4 * n;
+  if (active !== 'simd' || n > 65536 || flat.length > 256 || leaves * alphabet > 65536 || WP_FREQS + 4 * leaves * alphabet > AC) return null;
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
+  const i32 = new Int32Array(engine.memory.buffer);
+  i32.set(flat, P >> 2); i32.set(errors.subarray(0, n), WP_ERRORS >> 2); i32.set(new Int32Array(weighted.buffer, weighted.byteOffset, n), WP_WEIGHTED >> 2);
+  i32.fill(0, WP_FREQS >> 2, (WP_FREQS >> 2) + leaves * alphabet);
+  const used = engine.simd.wpTokens(P, WP_ERRORS, WP_WEIGHTED, n, WP_TAGS, WP_EXTRA, WP_FREQS, alphabet, WP_RUNS);
+  const freqs = Array.from({length: leaves}, (_, l) => Uint32Array.from(new Uint32Array(engine.memory.buffer, WP_FREQS + 4 * l * alphabet, alphabet)));
+  const tags = new Uint32Array(errors.buffer, errors.byteOffset, n), extra = weighted;
+  tags.set(new Uint32Array(engine.memory.buffer, WP_TAGS, used)); extra.set(new Uint32Array(engine.memory.buffer, WP_EXTRA, used));
+  return {freqs, tags, extra, used};
+}
+
+const GE_PLANE = P, GE_COUNTS = P + 131072, GE_TOUCHED = GE_COUNTS + 4 * (131072 + 33) + 12, GE_STATS = GE_TOUCHED + 4 * 65536;
+const GE_LOSS = Math.log2(16 / 15);
+function dcBound(planes) {
+  if (active !== 'simd' || planes.some(p => !(p.data instanceof Int16Array) || !(p.w > 0 && p.h > 0) || p.w * p.h > 65536 || p.data.length < p.w * p.h)) return null;
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
+  const buffer = engine.memory.buffer, i16 = new Int16Array(buffer), u32 = new Uint32Array(buffer);
+  let entropy = 0, raw = 0, events = 0;
+  const term = c => c > 1 ? c * Math.log2(c) : 0;
+  for (const {data, w, h} of planes) {
+    u32.fill(0, GE_COUNTS >> 2, (GE_COUNTS >> 2) + 131072 + 33);
+    i16.set(data.subarray(0, w * h), GE_PLANE >> 1);
+    engine.simd.gradEvents(GE_PLANE, w, h, GE_COUNTS, GE_TOUCHED, GE_STATS);
+    const n = u32[GE_STATS >> 2], touched = u32[(GE_STATS >> 2) + 2];
+    let sum = 0;
+    for (let i = 0; i < touched; i++) sum += term(u32[(GE_COUNTS >> 2) + u32[(GE_TOUCHED >> 2) + i]]);
+    for (let t = 0; t < 33; t++) sum += term(u32[(GE_COUNTS >> 2) + 131072 + t]);
+    entropy += term(n) - sum; raw += u32[(GE_STATS >> 2) + 1]; events += n;
+  }
+  const exact = entropy + raw, ans = (exact - GE_LOSS * events + Math.log2(0x130000)) / (1 + GE_LOSS / 16);
+  return Math.min(exact, ans) - 1e-9 * exact - 4;
+}
+
+const HP_TAGS = P, HP_EXTRA = P + 262144, HP_LAYOUT = P + 524288, HP_CFGS = HP_LAYOUT + 2048, HP_COUNTS = HP_CFGS + 4096;
+const HP_ROOM = (AC - HP_COUNTS) >> 2;
+function hybridPlan(plan, sizes) {
+  const {tags, extra, used} = plan, contexts = sizes.length;
+  if (active !== 'simd' || !(tags instanceof Uint32Array) || !(extra instanceof Uint32Array) || !Number.isInteger(used) || used < 0 ||
+      used > 65536 || tags.length < used || extra.length < used || contexts < 1 || contexts > 256) return null;
+  let total = 0;
+  for (const size of sizes) { if (!Number.isInteger(size) || size < 1) return null; total += size + 33; }
+  if (total > HP_ROOM) return null;
+  for (let i = 0; i < used; i++) if ((tags[i] >>> 16) >= contexts) return null;
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
+  const epoch = retainEpoch, buffer = engine.memory.buffer, u32 = new Uint32Array(buffer), i32 = new Int32Array(buffer);
+  u32.set(tags.subarray(0, used), HP_TAGS >> 2); u32.set(extra.subarray(0, used), HP_EXTRA >> 2);
+  const counts = [];
+  for (let c = 0, at = 0; c < contexts; c++) {
+    i32[(HP_LAYOUT >> 2) + 2 * c] = at; i32[(HP_LAYOUT >> 2) + 2 * c + 1] = sizes[c];
+    counts.push(u32.subarray((HP_COUNTS >> 2) + at, (HP_COUNTS >> 2) + at + sizes[c] + 33));
+    at += sizes[c] + 33;
+  }
+  u32.fill(0, HP_COUNTS >> 2, (HP_COUNTS >> 2) + total);
+  engine.simd.hpCount(HP_TAGS, HP_EXTRA, used, HP_COUNTS, HP_LAYOUT);
+  return {counts, tokens(configs) {
+    if (retainEpoch !== epoch || configs.length !== contexts || !configs.every(c => Number.isInteger(c.split) && Number.isInteger(c.msb) && Number.isInteger(c.lsb) &&
+        c.split >= 0 && c.split <= 30 && c.msb >= 0 && c.lsb >= 0 && c.msb + c.lsb <= c.split && c.splitToken === 2 ** c.split)) return false;
+    configs.forEach((config, c) => i32.set([config.splitToken, config.split, config.msb, config.lsb], (HP_CFGS >> 2) + 4 * c));
+    engine.simd.hpTokens(HP_TAGS, HP_EXTRA, used, HP_CFGS);
+    tags.set(u32.subarray(HP_TAGS >> 2, (HP_TAGS >> 2) + used)); extra.set(u32.subarray(HP_EXTRA >> 2, (HP_EXTRA >> 2) + used));
+    return true;
+  }};
+}
+
+const SH_ARGS = P, SH_LOG2 = P + 64, SH_SYM = SH_LOG2 + 4097 * 8, SH_LOGLEN = SH_SYM + 4097 * 8, SH_REPEATS = SH_LOGLEN + 64,
+  SH_FREQS = SH_REPEATS + 64, SH_SCRATCH = SH_FREQS + 2048, SH_BEST = SH_SCRATCH + 24576;
+let shapeEpoch = -1, shapeTables = null;
+function shape(freqs, last, total, omit, tables) {
+  if (active !== 'simd' || !(last >= 3 && last <= 512) || !(total >= 1 && total <= 0xffffffff) || !(omit >= 0 && omit < last) || freqs.length < last) return null;
+  const buffer = engine.memory.buffer, i32 = new Int32Array(buffer), u32 = new Uint32Array(buffer), f64 = new Float64Array(buffer);
+  if (shapeEpoch !== retainEpoch || shapeTables !== tables) {
+    f64.set(tables.log2, SH_LOG2 >> 3); f64.set(tables.symbolBits, SH_SYM >> 3);
+    i32.set(tables.logLengths, SH_LOGLEN >> 2); i32.set(tables.repeats, SH_REPEATS >> 2);
+    shapeTables = tables;
+  }
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; shapeEpoch = ++retainEpoch;
+  for (let i = 0; i < last; i++) u32[(SH_FREQS >> 2) + i] = freqs[i];
+  i32.set([SH_FREQS, last, total, omit, SH_LOG2, SH_SYM, SH_LOGLEN, SH_REPEATS, SH_SCRATCH], SH_ARGS >> 2);
+  engine.simd.shape(SH_ARGS);
+  const shift = i32[(SH_ARGS >> 2) + 9];
+  if (shift < 0) return {none: true};
+  return {counts: Uint16Array.from(i32.subarray(SH_BEST >> 2, (SH_BEST >> 2) + last)), shift, omit, bits: f64[(SH_ARGS + 40) >> 3]};
 }
 
 function nonzero(coeffs, from, end, natural) {
@@ -638,7 +822,7 @@ function strategyWrite(state, g, pass, nzContext, freqContext, orderOf, coding, 
   const tokens = levels + 3072, ans = ansTablesOf(model);
   const A_SMALL = AC_CODES, A_FREQS = A_SMALL + ans.ids * 256, A_STARTS = A_FREQS + ans.ids * 256, A_REVERSE = A_STARTS + ans.ids * 256;
   const A_CONFIGS = A_REVERSE + ans.ids * 8192, A_COUNTS = A_CONFIGS + ans.ids * 16, A_SYMBOL_STARTS = A_COUNTS + ans.ids * ans.alphabet * 4;
-  const A_VALUES = A_SYMBOL_STARTS + ans.ids * ans.alphabet * 4, A_IDS = A_VALUES + tokens * 4, A_RAWS = A_IDS + tokens + 8 & ~7;
+  const A_RECIPS = A_SYMBOL_STARTS + ans.ids * ans.alphabet * 4 + 7 & ~7, A_VALUES = A_RECIPS + RECIPS_BYTES, A_IDS = A_VALUES + tokens * 4, A_RAWS = A_IDS + tokens + 8 & ~7;
   const A_META = A_RAWS + tokens * 4, A_EMITTED = A_META + tokens + 8 & ~7, OUT = A_EMITTED + tokens * 2 + 8 & ~7, base = OUT + tokens * 8 + 16 + 8 & ~7;
   retainEpoch++; acClean = false; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null;
   const laid = strategyLayout(state, g, pass, nzContext, freqContext, orderOf, base);
@@ -647,6 +831,7 @@ function strategyWrite(state, g, pass, nzContext, freqContext, orderOf, coding, 
   if (ansStamp !== model) {
     i32.set(ans.small, A_SMALL >> 2); i32.set(ans.freqs, A_FREQS >> 2); i32.set(ans.starts, A_STARTS >> 2); u16.set(ans.reverse, A_REVERSE >> 1);
     i32.set(ans.configs, A_CONFIGS >> 2); i32.set(ans.counts, A_COUNTS >> 2); i32.set(ans.symbolStarts, A_SYMBOL_STARTS >> 2);
+    i32.set(reciprocals(), A_RECIPS >> 2);
     ansStamp = model;
   }
   u8.set(model.contextMap, AC_MAP);
@@ -655,7 +840,7 @@ function strategyWrite(state, g, pass, nzContext, freqContext, orderOf, coding, 
   engine.simd.acTokens(AC, laid.ctx, laid.val, laid.n);
   const args = AC_CONFIGS + 4096 - 128;
   i32.set([A_VALUES, A_IDS, i32[(AC >> 2) + 28], A_SMALL, A_FREQS, A_STARTS, A_REVERSE, A_CONFIGS, A_COUNTS, A_SYMBOL_STARTS, ans.alphabet,
-    A_RAWS, A_META, A_EMITTED, OUT, w.acc, w.pending, 0], args >> 2);
+    A_RAWS, A_META, A_EMITTED, OUT, w.acc, w.pending, 0, A_RECIPS], args >> 2);
   engine.simd.ansFlush(args);
   const written = i32[(args >> 2) + 17];
   if (w.at + written + 8 >= w.bytes.length) w.grow(written + 8);
@@ -711,10 +896,14 @@ function gaborish(t, source, W, H, weights, iterations) {
   return true;
 }
 
-const GB = 4194304, GB_LIMIT = 272 * 65536, GB_TILE_ROWS = 4;
+const GB = 4194304, GB_LIMIT = 272 * 65536, GB_TILE_ROWS = 4, GB_INTO = [3, 0, 1];
+const PACK_TABLE = new Uint8Array(6144);
+for (let mask = 0; mask < 256; mask++) for (let lane = 0, j = 0; lane < 8; lane++) if (mask >> lane & 1) {
+  PACK_TABLE[mask * 16 + 2 * j] = 2 * lane; PACK_TABLE[mask * 16 + 2 * j + 1] = 2 * lane + 1; PACK_TABLE[4096 + mask * 8 + j++] = lane;
+}
 const GB_ROOTS = GB, GB_LIN = GB + 32912, GB_MIX = GB_LIN + 2048, GB_BASIS = GB_MIX + 80, GB_PAIRED = GB_BASIS + 512, GB_QUANT = GB_PAIRED + 512,
   GB_THR = GB_QUANT + 1536, GB_SCRATCH = GB_THR + 1536, GB_TILE = GB_SCRATCH + 512, GB_CFL = GB_TILE + 98304, GB_KEYS = GB_CFL + 1024,
-  GB_VALS = GB_KEYS + 4 * 131072, GB_CHUNK = GB_VALS + 24 * 131072;
+  GB_VALS = GB_KEYS + 4 * 131072, GB_CHUNK = GB_VALS + 24 * 131072, GB_FAST_BYTES = 4 << 20;
 function gabBand(data, width, total, top, height, job) {
   const {linear, mix, bias, rootBias, weights, iterations, thresholds, c84, components, cfl, nonZero, fast} = job;
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), W = stride * 8, Hpad = Math.ceil(total / 8) * 8;
@@ -722,12 +911,14 @@ function gabBand(data, width, total, top, height, job) {
       !Number.isInteger(top) || top < 0 || top + rows * 8 > Hpad || linear.length !== 256 || mix.length !== 9 ||
       !Number.isInteger(iterations) || iterations < 1 || iterations > 8 || !fast && job.roots.length !== 4113 ||
       (fast ? job.steps.length !== 3 || job.scale.length !== 64 : job.basis.length !== 64)) return false;
-  const S = fast ? 4 : 8, halo = iterations + (iterations & 1);
+  const S = fast ? 4 : 8, halo = iterations + (iterations & 1), packed = fast ? job.packed : null;
   const tileRows = Math.ceil(rows / 8), tileCols = Math.ceil(stride / 8), chunkRows = Math.min(tileRows, GB_TILE_ROWS) * 64 + 2 * iterations;
-  const perColumn = chunkRows * (4 + 4 * S) + 2 * S + 3 * 8 * 16 + 3;
-  const across = Math.min(tileCols, Math.floor((Math.floor((GB_LIMIT - GB_CHUNK) / perColumn) - 2 * halo) / 64));
+  const perColumn = chunkRows * (4 + 4 * S) + 2 * S + 3 * 8 * 16 + 3 + (packed ? 585 : 0);
+  const chunkAt = fast ? GB_KEYS + 1024 : GB_CHUNK, room = fast ? GB_FAST_BYTES : GB_LIMIT - GB_CHUNK;
+  let across = Math.min(tileCols, Math.floor((Math.floor(room / perColumn) - 2 * halo) / 64));
+  if (packed && across < tileCols) across &= ~3;
   if (across < 1) return false;
-  const span = Math.min(W, across * 64) + 2 * halo, need = GB_CHUNK + span * perColumn + 64;
+  const span = Math.min(W, across * 64) + 2 * halo, need = chunkAt + span * perColumn + 64;
   if (need > engine.memory.buffer.byteLength) {
     try { engine.memory.grow(Math.ceil((need - engine.memory.buffer.byteLength) / 65536)); } catch { return false; }
     engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
@@ -749,44 +940,85 @@ function gabBand(data, width, total, top, height, job) {
     engine.i32.fill(-1, GB_KEYS >> 2, (GB_KEYS >> 2) + 131072);
   }
   const norms = weights.map(([w1, w2]) => 1 / (1 + 4 * w1 + 4 * w2)), tileWidth = cfl.width;
+  if (packed) {
+    engine.i32.fill(0, GB_KEYS >> 2, (GB_KEYS >> 2) + 192);
+    u8.set(PACK_TABLE, GB_ROOTS);
+    packed.segment = across * 8; packed.segments = Math.ceil(stride / packed.segment);
+    for (const channel of packed.channels) { channel.starts = new Uint32Array(rows * packed.segments); channel.groupStarts = new Uint32Array(rows * Math.ceil(stride / 32)); }
+  }
   for (let ty0 = 0; ty0 < tileRows; ty0 += GB_TILE_ROWS) {
     const ty1 = Math.min(tileRows, ty0 + GB_TILE_ROWS), first = top + ty0 * 64, last = top + Math.min(ty1 * 64, rows * 8);
     const s0 = Math.max(0, first - iterations), s1 = Math.min(Hpad, last + iterations), n = s1 - s0;
     for (let tx0 = 0; tx0 < tileCols; tx0 += across) {
       const tx1 = Math.min(tileCols, tx0 + across), x0 = tx0 * 64, x1 = Math.min(tx1 * 64, W);
       const c0 = Math.max(0, x0 - halo), c1 = Math.min(W, x1 + halo), Wc = c1 - c0, real = Math.min(c1, width) - c0;
-      const rgba = GB_CHUNK, planes = rgba + Math.ceil(n * real * 4 / 16) * 16, plane = n * Wc * S, orig = planes + 3 * plane, ring = orig + plane;
+      const rgba = chunkAt, planes = rgba + Math.ceil(n * real * 4 / 16) * 16, plane = n * Wc * S, orig = planes + 3 * plane, ring = orig + plane;
       const levels = ring + 2 * Wc * S, blocks = (tx1 - tx0 - 1) * 8 + Math.min(8, stride - (tx1 - 1) * 8), counts = levels + 3 * 8 * blocks * 128;
       for (let y = s0; y < s1; y++) {
         const from = (Math.min(y, total - 1) * width + c0) * 4;
         u8.set(data.subarray(from, from + real * 4), rgba + (y - s0) * real * 4);
       }
+      if (packed && packed.opaque) packed.opaque = engine.simd.opaque(rgba, n * real * 4) === 1;
       if (fast) engine.simd.fgXyb(rgba, real, n, Wc, GB_LIN, GB_MIX, Math.fround(bias), Math.fround(rootBias), planes);
       else engine.simd.xybRows(rgba, real, n, Wc, GB_ROOTS, GB_LIN, GB_MIX, bias, rootBias, GB_KEYS, GB_VALS, planes);
       for (let c = 0; c < 3; c++) {
         const p = planes + c * plane, [w1, w2] = weights[c];
-        u8.copyWithin(orig, p, p + plane);
-        for (let i = 0; i < iterations; i++) {
-          if (fast) engine.simd.gab32(p, orig, ring, Wc, n, Math.fround(w1), Math.fround(w2), Math.fround(norms[c]));
-          else engine.simd.gab(p, orig, ring, Wc, n, w1, w2, norms[c]);
+        if (fast) {
+          const into = planes + GB_INTO[c] * plane;
+          engine.simd.gab32From(p, into, Wc, n, Math.fround(w1), Math.fround(w2), Math.fround(norms[c]));
+          for (let i = 1; i < iterations; i++) engine.simd.gab32(into, p, ring, Wc, n, Math.fround(w1), Math.fround(w2), Math.fround(norms[c]));
+          continue;
         }
+        u8.copyWithin(orig, p, p + plane);
+        for (let i = 0; i < iterations; i++) engine.simd.gab(p, orig, ring, Wc, n, w1, w2, norms[c]);
       }
       for (let ty = ty0; ty < ty1; ty++) {
         const bh = Math.min(8, rows - ty * 8), bwLast = Math.min(8, stride - (tx1 - 1) * 8);
-        if (fast) engine.simd.fgTiles(planes, n, Wc, top + ty * 64 - s0, x0 - c0, tx1 - tx0, bwLast, bh, GB_TILE, GB_PAIRED, GB_QUANT, GB_THR, c84, levels, counts, GB_CFL, blocks);
+        if (fast) engine.simd.fgTiles(planes + GB_INTO[0] * plane, n, Wc, top + ty * 64 - s0, x0 - c0, tx1 - tx0, bwLast, bh, GB_TILE, GB_PAIRED, GB_QUANT, GB_THR, c84, levels, counts, GB_CFL, blocks,
+          planes + GB_INTO[1] * plane, planes + GB_INTO[2] * plane);
         else engine.simd.gabTiles(planes, n, Wc, top + ty * 64 - s0, x0 - c0, tx1 - tx0, bwLast, bh, GB_TILE, GB_BASIS, GB_PAIRED,
           GB_SCRATCH, GB_QUANT, GB_THR, c84, levels, counts, GB_CFL, blocks);
+        if (packed) { packTileRow(packed, levels, counts, bh, blocks, stride, ty * 8 * stride + tx0 * 8, u8); }
+        else {
         const out = new Int16Array(buffer, levels, 3 * 8 * blocks * 64);
         for (let c = 0; c < 3; c++) for (let by = 0; by < bh; by++) {
           const from = (c * 8 + by) * blocks, block = (ty * 8 + by) * stride + tx0 * 8;
           components[c].coeffs.set(out.subarray(from * 64, (from + blocks) * 64), block * 64);
           nonZero[c].set(u8.subarray(counts + from, counts + from + blocks), block);
         }
+        }
         for (let t = 0; t < tx1 - tx0; t++) { cfl.x[ty * tileWidth + tx0 + t] = i8[GB_CFL + t]; cfl.b[ty * tileWidth + tx0 + t] = i8[GB_CFL + tx1 - tx0 + t]; }
       }
     }
   }
+  if (packed) packed.natural.set(new Uint32Array(engine.memory.buffer, GB_KEYS, 192));
   return true;
+}
+function packTileRow(packed, levels, counts, bh, blocks, stride, first, u8) {
+  const entries = 3 * 8 * blocks, starts = counts + entries + 3 & ~3, dc = starts + 4 * entries, at = dc + 2 * entries, val = at + 63 * entries + 9 & ~1;
+  const end = val + 126 * entries + 16;
+  if (end > engine.memory.buffer.byteLength) throw new RangeError('The packed tile row passes the arena.');
+  const n = engine.simd.packLevels(levels, counts, bh, blocks, at, val, starts, dc, GB_KEYS, 0, GB_ROOTS);
+  const buffer = engine.memory.buffer, i32 = new Int32Array(buffer, starts, entries), i16 = new Int16Array(buffer, dc, entries);
+  for (let c = 0; c < 3; c++) {
+    const from = bh ? i32[c * 8 * blocks] : 0, to = c < 2 && bh ? i32[(c + 1) * 8 * blocks] : n, channel = packed.channels[c];
+    const base = channel.total - from;
+    if (channel.total + to - from > channel.at.length) {
+      const size = Math.max(channel.total + to - from, channel.at.length * 2), grownAt = new Uint8Array(size), grownVal = new Int16Array(size);
+      grownAt.set(channel.at.subarray(0, channel.total)); grownVal.set(channel.levels.subarray(0, channel.total));
+      channel.at = grownAt; channel.levels = grownVal;
+    }
+    channel.at.set(u8.subarray(at + from, at + to), channel.total);
+    channel.levels.set(new Int16Array(buffer, val + 2 * from, to - from), channel.total);
+    channel.total += to - from;
+    for (let by = 0; by < bh; by++) {
+      const row = (c * 8 + by) * blocks, block = first + by * stride;
+      channel.dc.set(i16.subarray(row, row + blocks), block);
+      channel.counts.set(u8.subarray(counts + row, counts + row + blocks), block);
+      channel.starts[(Math.floor(first / stride) + by) * packed.segments + (first % stride) / packed.segment] = base + i32[row];
+      for (let k = 0, at = (Math.floor(first / stride) + by) * Math.ceil(stride / 32) + (first % stride) / 32; k * 32 < blocks; k++) channel.groupStarts[at + k] = base + i32[row + k * 32];
+    }
+  }
 }
 
 const VB_LOG2 = P, VB_BASES = P + 32768, VB_PIX = P + 54272, VB_TMP = P + 62464, VB_TR = P + 70656, VB_TABLES = P + 95232,
@@ -893,7 +1125,7 @@ function disableEntropyKernels() { entropyAllowed = false; kernelHooks.entropy =
 function configureKernels(mode = 'auto', parts) {
   if (!['off', 'auto', 'simd'].includes(mode)) throw fault('JXL_INPUT', 'Kernel mode is off, auto or simd.');
   explicit = true; acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
-  kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = null; active = 'off';
+  kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.acGroupPair = kernelHooks.acDeferred = kernelHooks.wpTokens = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = kernelHooks.dcBound = kernelHooks.hybridPlan = kernelHooks.shape = null; active = 'off';
   if (mode === 'off') return active;
   try {
     if (typeof WebAssembly !== 'object' || new Uint8Array(new Uint32Array([1]).buffer)[0] !== 1) return active;
@@ -909,15 +1141,17 @@ function configureKernels(mode = 'auto', parts) {
     if (!enabled || enabled.get('sampled')) { kernelHooks.sampled = sampled; kernelHooks.sampledStore = sampledStore; }
     if (!enabled || enabled.get('dct')) kernelHooks.dct = dct;
     if (!enabled || enabled.get('photoTile')) kernelHooks.photoTile = photoTile;
-    if (!enabled || enabled.get('acGroup')) kernelHooks.acGroup = acGroup;
+    if (!enabled || enabled.get('acGroup')) { kernelHooks.acGroup = acGroup; kernelHooks.acGroupPair = acGroupPair; kernelHooks.acDeferred = deferredCounts; }
     if (!enabled || enabled.get('nonzero')) kernelHooks.nonzero = nonzero;
+    if (!enabled || enabled.get('wpTokens')) { kernelHooks.wpTokens = wpTokens; kernelHooks.dcBound = dcBound; kernelHooks.hybridPlan = hybridPlan; }
+    if (entropyAllowed && (!enabled || enabled.get('shape'))) kernelHooks.shape = shape;
     if (!enabled || enabled.get('varblock')) kernelHooks.varblock = varblock;
     if (!enabled || enabled.get('gaborish')) kernelHooks.gaborish = gaborish;
     if (!enabled || enabled.get('strategyFill')) { kernelHooks.strategyFill = strategyFill; kernelHooks.strategyWrite = strategyWrite; }
     if (!enabled || enabled.get('xybPlanes')) kernelHooks.xybPlanes = xybPlanesKernel;
     if (!enabled || enabled.get('gabBand')) kernelHooks.gabBand = gabBand;
     if (entropyAllowed && (!enabled || enabled.get('entropy'))) kernelHooks.entropy = jpegKernels;
-  } catch { active = 'off'; kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = null; }
+  } catch { active = 'off'; kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.acGroupPair = kernelHooks.acDeferred = kernelHooks.wpTokens = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = kernelHooks.dcBound = kernelHooks.hybridPlan = kernelHooks.shape = null; }
   return active;
 }
 function ensureKernels() {
@@ -925,10 +1159,11 @@ function ensureKernels() {
   return active;
 }
 function kernelMode() { return active; }
+function kernelRequest() { return explicit ? active : 'auto'; }
 async function prepareKernels() {
   if (typeof WebAssembly !== 'object' || new Uint8Array(new Uint32Array([1]).buffer)[0] !== 1) return false;
   if (!(hasWasmModule('simd') || !suppliedWasm() && SIMD && WebAssembly.validate(decode(SIMD_PROBE)))) return false;
   return compileWasm('simd', () => decode(SIMD));
 }
-return {configureKernels, ensureKernels, kernelMode, disableEntropyKernels, prepareKernels};
+return {configureKernels, ensureKernels, kernelMode, kernelRequest, disableEntropyKernels, prepareKernels};
 })();

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import {gpuBlocks16Costs, gpuBlocks16Levels, gpuBlocks16Pipelines, gpuBlocks16EnergyHook} from './gpu-blocks16.mjs';
-import {gpuBlocksCosts, gpuBlocksLevels} from './gpu-blocks.mjs';
+import {gpuBlocksCosts, gpuBlocksLevels, gpuBlocksPipelines, gpuBlocksLevelsPipelines} from './gpu-blocks.mjs';
 
 const GC_GAB = [0.115169525, 0.061248592], GC_MARGIN = 8;
 
@@ -553,7 +553,8 @@ const gcCores = new WeakMap();
 function gcReady(device) {
   let ready = gcCores.get(device);
   const later = start => Promise.resolve().then(start);
-  if (!ready) gcCores.set(device, ready = Promise.all([later(() => gpuCoreQualified(device)), later(() => GpuCore.create(device, null)), later(() => gpuBlocks16Pipelines(device, GC_DS)).catch(() => null)]).then(([ok, core]) => ok ? core : null, () => null));
+  if (!ready) gcCores.set(device, ready = Promise.all([later(() => gpuCoreQualified(device)), later(() => GpuCore.create(device, null)), later(() => gpuBlocks16Pipelines(device, GC_DS)).catch(() => null),
+    later(() => gpuBlocksPipelines(device, GC_DS)).catch(() => null), later(() => gpuBlocksLevelsPipelines(device, GC_DS)).catch(() => null)]).then(([ok, core]) => ok ? core : null, () => null));
   return ready;
 }
 export async function gpuCoreReady(device) { return !!await gcReady(device); }
@@ -573,6 +574,7 @@ async function gcAnswer(device, request, strict) {
     if (request.kind === 'blocks') return await gpuBlocksCosts(device, {...request, planeBound: B.plane}, GC_DS, core);
     if (request.kind === 'blocks-levels') return await gpuBlocksLevels(device, {...request, planeBound: B.plane}, GC_DS, core);
     if (request.kind === 's2-native') return await (await import('./gpu-ssimulacra2-native.mjs')).gpuS2Native(device, request);
+    if (request.kind === 's2-cells') return await (await import('./gpu-s2-cells.mjs')).gpuS2Cells(device, request);
     if (request.kind === 'audit-failed') throw new GpuCoreAuditError('gpu-blocks16 audit: a cost past its bound');
     if (request.kind === 'blocks16-levels') return await gpuBlocks16Levels(device, {...request, planeBound: B.plane}, GC_DS, core);
     const energy = request.energy ? await gpuBlocks16EnergyHook(device, GC_DS, request.width, request.height, B.plane) : null;

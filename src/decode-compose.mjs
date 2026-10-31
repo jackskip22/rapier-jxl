@@ -5,24 +5,19 @@ import {decodeKernels} from './decode-kernels.mjs';
 const modes=[1,2,4,6,3];
 const channels=frame=>[...frame.planes,...frame.extraChannels.map(c=>c.data)];
 
-const f32=Math.fround,clamp01=x=>Math.max(0,Math.min(1,x));
-export function blendSample(background, foreground, backgroundAlpha, foregroundAlpha, blend, associated = false, isAlpha = false) {
-  const {mode, clamp} = blend;
-  if (mode === 0) return background;
-  if (mode === 1) return foreground;
-  if (mode === 2) return f32(background + foreground);
-  if (mode === 3) return f32(background * (clamp ? clamp01(foreground) : foreground));
-  if (mode === 5 || mode === 7) {
-    [background, foreground] = [foreground, background];
-    [backgroundAlpha, foregroundAlpha] = [foregroundAlpha, backgroundAlpha];
+const ROLES=4;
+export function blendRows(channels,rows,span) {
+  const count=channels.length;
+  if(!count||rows<=0||span<=0)return;
+  const kernels=decodeKernels(),chunk=Math.max(1,Math.min(rows,Math.floor(2097152/(count*(ROLES+1)*span)))),n=chunk*span;
+  const at=kernels.reserve([count*32,...Array(count*(ROLES+1)).fill(n*4)]),runs=k=>new Float32Array(kernels.buffer,at[1+k],n);
+  channels.forEach((c,i)=>kernels.i32.set([at[1+i*(ROLES+1)],...[1,2,3,4].map(r=>at[1+i*(ROLES+1)+r]),c.mode,(c.clamp?1:0)|(c.associated?2:0)|(c.isAlpha?4:0)],(at[0]>>2)+i*8));
+  for(let y0=0;y0<rows;y0+=chunk) {
+    const m=Math.min(chunk,rows-y0);
+    channels.forEach((c,i)=>{for(let r=0;r<ROLES;r++){const run=runs(i*(ROLES+1)+1+r);for(let y=0;y<m;y++)c.fill(r,y0+y,run.subarray(y*span,(y+1)*span));}});
+    kernels.blend(m*span,at[0],count);
+    channels.forEach((c,i)=>{const out=runs(i*(ROLES+1));for(let y=0;y<m;y++)c.write(y0+y,out.subarray(y*span,(y+1)*span));});
   }
-  const alpha = clamp ? clamp01(foregroundAlpha) : foregroundAlpha;
-  if (mode >= 6) return isAlpha ? background : f32(background + f32(alpha * foreground));
-  const remaining = f32(1 - alpha), mergedAlpha = f32(1 - f32(remaining * f32(1 - backgroundAlpha)));
-  if (isAlpha) return mergedAlpha;
-  if (associated) return f32(foreground + f32(background * remaining));
-  const contribution = f32(f32(foreground * alpha) + f32(f32(background * backgroundAlpha) * remaining));
-  return f32(contribution * (mergedAlpha > 0 ? f32(1 / mergedAlpha) : 0));
 }
 
 export function composeFrame(frame,h,f,references,inPlace=false) {
@@ -50,8 +45,7 @@ export function composeFrame(frame,h,f,references,inPlace=false) {
       }
     }
   }
-  const x0=Math.max(0,f.x0),y0=Math.max(0,f.y0),x1=Math.min(width,f.x0+frame.width);let y1=Math.min(height,f.y0+frame.height);
-  const values=new Float32Array(count);
+  const x0=Math.max(0,f.x0),y0=Math.max(0,f.y0),x1=Math.min(width,f.x0+frame.width),y1=Math.min(height,f.y0+frame.height);
   for(let c=0;c<count;c++)if(replace(c)&&planes[c]!==source[c]&&x1>x0){
     const src=source[c],dst=planes[c],fw=frame.width,fx0=f.x0,fy0=f.y0,span=x1-x0;
     if(fx0===0&&fw===width&&span===width) {
@@ -60,44 +54,45 @@ export function composeFrame(frame,h,f,references,inPlace=false) {
       for(let y=y0;y<y1;y++)dst.set(src.subarray((y-fy0)*fw+x0-fx0,(y-fy0)*fw+x1-fx0),y*width+x0);
     }
   }
-  if(source.every((_,c)=>replace(c)))y1=y0;
-  for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++) {
-    const dst=y*width+x,src=(y-f.y0)*frame.width+x-f.x0;
-    for(let c=0;c<count;c++) {
-      if(replace(c)){values[c]=planes[c][dst];continue;}
-      const blend=f.blending[c<colors?0:c-colors+1];let mode=modes[blend.mode];
-      const useAlpha=alphaCount>0&&(c>=colors||hasAlpha)&&(blend.mode===2||blend.mode===3);
-      if(!useAlpha&&mode>=4)mode=mode===4?1:2;
-      let ba=0,fa=0,associated=false,isAlpha=false;
-      if(useAlpha) {
-        const a=blend.alpha,reference=references[blend.source];fa=frame.extraChannels[a].data[src];
-        if(reference) {
-          const rx=x-(reference.x0??0),ry=y-(reference.y0??0);
-          if(rx>=0&&ry>=0&&rx<reference.width&&ry<reference.height)ba=reference.extraChannels[a].data[ry*reference.width+rx];
+  const span=x1-x0,blended=[];
+  for(let c=0;c<count;c++) {
+    if(replace(c))continue;
+    const blend=f.blending[c<colors?0:c-colors+1];let mode=modes[blend.mode];
+    const useAlpha=alphaCount>0&&(c>=colors||hasAlpha)&&(blend.mode===2||blend.mode===3);
+    if(!useAlpha&&mode>=4)mode=mode===4?1:2;
+    const a=blend.alpha,reference=useAlpha?references[blend.source]:null,fa=useAlpha?frame.extraChannels[a].data:null;
+    const ba=reference?.extraChannels[a].data,rx0=reference?.x0??0,ry0=reference?.y0??0;
+    blended.push({mode,clamp:blend.clamp,associated:useAlpha&&h.extraChannels[a].associated,isAlpha:useAlpha&&c===colors+a,
+      fill(role,row,run) {
+        const y=y0+row,from=(y-f.y0)*frame.width+x0-f.x0;
+        if(role===0)run.set(planes[c].subarray(y*width+x0,y*width+x1));
+        else if(role===1)run.set(source[c].subarray(from,from+span));
+        else if(!useAlpha)return;
+        else if(role===3)run.set(fa.subarray(from,from+span));
+        else {
+          run.fill(0);
+          const ry=y-ry0,a0=Math.max(x0,rx0),a1=Math.min(x1,rx0+(reference?.width??0));
+          if(reference&&ry>=0&&ry<reference.height&&a1>a0)run.set(ba.subarray(ry*reference.width+a0-rx0,ry*reference.width+a1-rx0),a0-x0);
         }
-        associated=h.extraChannels[a].associated;isAlpha=c===colors+a;
-      }
-      values[c]=blendSample(planes[c][dst],source[c][src],ba,fa,{mode,clamp:blend.clamp},associated,isAlpha);
-    }
-    for(let c=0;c<count;c++)planes[c][dst]=values[c];
+      },
+      write(row,run){planes[c].set(run,(y0+row)*width+x0);}});
   }
+  if(span>0)blendRows(blended,y1-y0,span);
   return {...frame,width,height,widths:frame.planes.map(()=>width),heights:frame.planes.map(()=>height),x0:0,y0:0,
     planes:planes.slice(0,colors),extraChannels:frame.extraChannels.map((e,c)=>({...e,width,height,data:planes[colors+c]})),saveBeforeColorTransform:false};
 }
 
 export function orientPlane(input,width,height,orientation) {
   if(orientation===1)return input;
-  const output=new Float32Array(input.length),dw=orientation>=5?height:width;
-  for(let y=0;y<height;y++)for(let x=0;x<width;x++) {
-    let ox=x,oy=y;
-    if(orientation===2)ox=width-1-x;
-    else if(orientation===3){ox=width-1-x;oy=height-1-y;}
-    else if(orientation===4)oy=height-1-y;
-    else if(orientation===5){ox=y;oy=x;}
-    else if(orientation===6){ox=height-1-y;oy=x;}
-    else if(orientation===7){ox=height-1-y;oy=width-1-x;}
-    else if(orientation===8){ox=y;oy=width-1-x;}
-    output[oy*dw+ox]=input[y*width+x];
+  const output=new Float32Array(input.length),dw=orientation>=5?height:width,transpose=orientation>=5,flipped=[3,4,6,7].includes(orientation);
+  const kernels=decodeKernels(),rows=Math.max(1,Math.min(height,Math.floor(1048576/Math.max(1,width)))),[stripe,oriented]=kernels.reserve([rows*width*4,rows*width*4]);
+  for(let a=0;a<height;a+=rows) {
+    const b=Math.min(height,a+rows),n=b-a,first=flipped?height-b:a;
+    new Float32Array(kernels.buffer,stripe,n*width).set(input.subarray(a*width,b*width));
+    kernels.orient(stripe,width,height,a,b,orientation,oriented,transpose?n:width,transpose?first:0,transpose?0:first);
+    const result=new Float32Array(kernels.buffer,oriented,n*width);
+    if(!transpose)output.set(result,first*width);
+    else for(let y=0;y<width;y++)output.set(result.subarray(y*n,(y+1)*n),y*dw+first);
   }
   return output;
 }
@@ -110,48 +105,37 @@ export function orientFrame(frame,orientation) {
     extraChannels:frame.extraChannels.map(e=>({...e,width,height,data:orientPlane(e.data,frame.width,frame.height,orientation)}))};
 }
 
-export function rgbaPixels(frame,format,unpremultiplyAlpha=false,renderSpotColors=false,target=null) {
-  const count=frame.width*frame.height,alpha=frame.extraChannels.find(e=>e.type===0);
+const FORMAT={uint8:0,uint16:1,float32:2},RGBA_CHUNK=65536;
+export function rgbaPixels(frame,format,unpremultiplyAlpha=false,renderSpotColors=false,target=null,scratch=null) {
+  const count=frame.width*frame.height,alpha=frame.extraChannels.find(e=>e.type===0),gray=frame.planes.length===1;
   const data=target??(format==='float32'?new Float32Array(count*4):format==='uint16'?new Uint16Array(count*4):new Uint8Array(count*4));
-  const maximum=format==='uint16'?65535:255,gray=frame.planes.length===1;
-  const spots=renderSpotColors?frame.extraChannels.filter(e=>e.type===2):[];
-  if(!spots.length&&!(unpremultiplyAlpha&&alpha?.associated)) {
-    const r=frame.planes[0],g=frame.planes[gray?0:1],b=frame.planes[gray?0:2],a=alpha?.data,kernels=decodeKernels();
-    if(kernels&&format==='uint8'&&!a&&[r,g,b,data].every(p=>p.buffer===kernels.buffer)){kernels.rgba8(count,r,g,b,data);return data;}
-    if(format==='float32') {
-      if(!a)for(let i=0,o=0;i<count;i++,o+=4){data[o]=r[i];data[o+1]=g[i];data[o+2]=b[i];data[o+3]=1;}
-      else for(let i=0,o=0;i<count;i++,o+=4){data[o]=r[i];data[o+1]=g[i];data[o+2]=b[i];data[o+3]=a[i];}
-    } else {
-      const top=maximum+.5;
-      if(!a) {
-        for(let i=0,o=0;i<count;i++,o+=4) {
-          const tr=r[i]*maximum+.5,tg=g[i]*maximum+.5,tb=b[i]*maximum+.5;
-          data[o]=tr>=top?maximum:tr>=1?tr|0:0;
-          data[o+1]=tg>=top?maximum:tg>=1?tg|0:0;
-          data[o+2]=tb>=top?maximum:tb>=1?tb|0:0;
-          data[o+3]=maximum;
-        }
-      } else {
-        for(let i=0,o=0;i<count;i++,o+=4) {
-          const tr=r[i]*maximum+.5,tg=g[i]*maximum+.5,tb=b[i]*maximum+.5,ta=a[i]*maximum+.5;
-          data[o]=tr>=top?maximum:tr>=1?tr|0:0;
-          data[o+1]=tg>=top?maximum:tg>=1?tg|0:0;
-          data[o+2]=tb>=top?maximum:tb>=1?tb|0:0;
-          data[o+3]=ta>=top?maximum:ta>=1?ta|0:0;
-        }
-      }
+  const spots=renderSpotColors?frame.extraChannels.filter(e=>e.type===2):[],kernels=decodeKernels();
+  const planes=[frame.planes[0],frame.planes[gray?0:1],frame.planes[gray?0:2],...(alpha?[alpha.data]:[]),...spots.map(s=>s.data)];
+  const un=unpremultiplyAlpha&&alpha?.associated?1:0,size=data.BYTES_PER_ELEMENT;
+  const run=(n,inputs,out,list)=>{
+    const g=kernels.args/4;
+    spots.forEach((spot,k)=>{const at=list+k*40;kernels.i32[at/4]=inputs[3+(alpha?1:0)+k].byteOffset;kernels.f64.set(spot.spotColor.slice(0,4),at/8+1);});
+    kernels.i32.set([n,FORMAT[format],inputs[0].byteOffset,inputs[1].byteOffset,inputs[2].byteOffset,alpha?inputs[3].byteOffset:0,out.byteOffset,un,spots.length,list],g);
+    kernels.rgba(kernels.args);
+  };
+  if(planes.every(p=>p.buffer===kernels.buffer)&&!spots.length) {
+    if(data.buffer===kernels.buffer){run(count,planes,data,0);return data;}
+    requireDecode(scratch,'RGBA from the kernels needs scratch.');
+    const rows=Math.max(1,Math.floor(scratch.bytes/(16*size)))*4,out=new data.constructor(kernels.buffer,scratch.at,rows*4);
+    for(let start=0;start<count;start+=rows) {
+      const n=Math.min(rows,count-start);
+      run(n,planes.map(p=>p.subarray(start,start+n)),out,0);
+      data.set(out.subarray(0,n*4),start*4);
     }
     return data;
   }
-  for(let i=0;i<count;i++) {
-    const a=alpha?alpha.data[i]:1;
-    for(let c=0;c<3;c++) {
-      let v=frame.planes[gray?0:c][i];
-      if(unpremultiplyAlpha&&alpha?.associated)v=a>0?v/a:0;
-      for(const spot of spots){const mix=spot.data[i]*spot.spotColor[3];v=v*(1-mix)+spot.spotColor[c]*mix;}
-      data[4*i+c]=format==='float32'?v:Math.max(0,Math.min(maximum,Math.round(v*maximum)));
-    }
-    data[4*i+3]=format==='float32'?a:Math.max(0,Math.min(maximum,Math.round(a*maximum)));
+  const chunk=Math.min(count,RGBA_CHUNK),at=kernels.reserve([...planes.map(()=>chunk*4),chunk*4*size,spots.length*40]);
+  const staged=planes.map((_,k)=>new Float32Array(kernels.buffer,at[k],chunk)),out=new data.constructor(kernels.buffer,at.at(-2),chunk*4);
+  for(let start=0;start<count;start+=chunk) {
+    const n=Math.min(chunk,count-start);
+    planes.forEach((p,k)=>staged[k].set(p.subarray(start,start+n)));
+    run(n,staged,out,at.at(-1));
+    data.set(out.subarray(0,n*4),start*4);
   }
   return data;
 }

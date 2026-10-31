@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {BitWriter} from './bits.mjs';
 import {sampledPlanes, SAMPLE_RUNGS} from './sampled.mjs';
+import {kernelHooks} from './kernel-hooks.mjs';
 
 const BROAD = {...SAMPLE_RUNGS.broad, references: true, referenceKinds: [0, 1, 2, 3]};
 export const RUNGS = {broad: BROAD, jpegBroad: {...BROAD, clustered: true}, fast: {...BROAD, samples: 16384, bins: 64},
@@ -53,16 +54,21 @@ function fixedDc(w, planes, plain, kernels) {
   if (data.includes(null) || planes.some(p => !p.w || !p.h)) { plain(w); return; }
   sampledPlanes.write(w, planes.map((p, i) => sampledPlanes.fixed(data[i], p.w, p.h, FIXED_BINS[i] ?? 8)), kernels ? {...FIXED_WRITE, kernels} : FIXED_WRITE);
 }
-export const fixedLfCoder = Object.freeze({dc: fixedDc, metadata: (w, planes, plain) => plain(w)});
+export const fixedLfCoder = Object.freeze({dc: fixedDc, metadata: (w, planes, plain) => plain(w), plainMetadata: true});
 
 export const plainOrFixedLfCoder = Object.freeze({
   dc(w, planes, plain, kernels) {
     if (!planes.length || planes[0].w * planes[0].h < 256) { plain(w); return; }
-    const fallback = new BitWriter(256), fixed = new BitWriter(256);
-    plain(fallback); fixedDc(fixed, planes, plain, kernels);
+    const fixed = new BitWriter(256);
+    fixedDc(fixed, planes, plain, kernels);
+    const bound = kernelHooks.dcBound?.(planes);
+    if (bound != null && fixed.bitLength < bound) { w.append(fixed); return; }
+    const fallback = new BitWriter(256);
+    plain(fallback);
     w.append(fixed.bitLength < fallback.bitLength ? fixed : fallback);
   },
   metadata: (w, _planes, plain) => plain(w),
+  plainMetadata: true,
 });
 
 const quick = lfCoder('quick');

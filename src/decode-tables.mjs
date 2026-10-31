@@ -99,16 +99,6 @@ export function canonicalCodes(lengths) {
   return codes;
 }
 
-export function smoothTendency(B, a, n) {
-  const sign = B >= a && a >= n ? 1 : B <= a && a <= n ? -1 : 0;
-  if (!sign) return 0;
-  B *= sign; a *= sign; n *= sign;
-  let diff = ((4 * B - 3 * n - a + 6) / 12) | 0;
-  if (diff - (diff & 1) > 2 * (B - a)) diff = 2 * (B - a) + 1;
-  if (diff + (diff & 1) > 2 * (a - n)) diff = 2 * (a - n);
-  return sign * diff;
-}
-
 const HALVES = [1];
 for (let e = 1; e < 32; e++) HALVES.push(HALVES[e - 1] / 2);
 export function entropyLog2(x) {

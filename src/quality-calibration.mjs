@@ -8,8 +8,7 @@ const CALIBRATION_ROWS = {
   ycbcr: [0.675, 0.686, 0.685, 0.651, 0.658],
   screen: [0.362, 0.391, 0.393, 0.328, 0.342],
   screenFull: [0.365, 0.420, 0.441, 0.338, 0.351],
-  s2e8: [0.7268, 0.7481, 0.6893, 0.5197, 0.4627],
-  s2e9: [0.7268, 0.7426, 0.6891, 0.5171, 0.4697],
+  s2e8: [0.7635, 0.7493, 0.6925, 0.5235, 0.4651],
 };
 export function calibration(quality, row) {
   const factor = CALIBRATION_ROWS[row === true ? 'fast' : row === false ? 'full' : row];

@@ -1,5 +1,14 @@
 # Changelog
 
+## 8.0.1 (2026-10-31)
+
+- Efforts 8 and 9 now run at every size, not only up to 1 MP: files 2.6–5.7% smaller than effort 7 at the same quality.
+- Efforts 8 and 9 are faster on WebGPU: a 12 MP photo at effort 8 takes half the time.
+- `rapier-jxl/upload` is 25–34% faster on one thread and uses less memory: a 12 MP upload fits in a 128 MB edge worker.
+- Efforts 4 and 5 split one picture across `helpers`: a 12 MP photo at effort 4 is 2.4× faster with 3 helpers.
+- `helpers` run the WebAssembly kernels; a helper started before the first job used the slower path.
+- The decoder requires WebAssembly with SIMD; its JavaScript fallback is removed.
+
 ## 8.0.0 (2026-10-31)
 
 - Breaking: new modules. `rapier-jxl` is the full encoder; `rapier-jxl/upload` (efforts 1–3) and `/capture` are subsets.

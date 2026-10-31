@@ -31,7 +31,7 @@ function renderBand(readers, h, f, options, first, end, emit = null) {
     const rgba8 = !options.planes && format === 'uint8' ? target ?? new Uint8Array(count * width * 4) : null;
     const frame = transformColor({width, height: count, planes: rows, widths: [width, width, width], heights: [count, count, count], extraChannels: []},
       h, f, {colorSpace: 'original', inPlace: true, rgba8});
-    const rgba = frame.rgba8 ?? rgbaPixels(frame, format, options.unpremultiplyAlpha, options.renderSpotColors, target);
+    const rgba = frame.rgba8 ?? rgbaPixels(frame, format, options.unpremultiplyAlpha, options.renderSpotColors, target, {at: band.kernel.rgba, bytes: band.kernel.rgbaBytes});
     if (!inKernels) {
       if (planes && frame.planes[0] !== rows[0]) for (let c = 0; c < 3; c++) planes[c].set(frame.planes[c], (a - top) * width);
       return emit?.(a, options.planes ? frame.planes : null, rgba);
@@ -51,12 +51,13 @@ function bandFrame(h, f, planes, data, format) {
     colorEncoding: nativeEncoding(h), icc: undefined, ctDone: true, saveBeforeColorTransform: f.saveBeforeColorTransform, rgba: {format, planes, data}};
 }
 
+const banding = (options, render) => Object.assign(render, {bandable: (h, f) => bandable(h, f, options)});
 export function decodeBands(bytes, options) {
-  return decodeImage(bytes, options, (readers, h, f) => {
+  return decodeImage(bytes, options, banding(options, (readers, h, f) => {
     if (!bandable(h, f, options)) return null;
     const {planes, data, format} = renderBand(readers, h, f, options, 0, groupRows(f));
     return bandFrame(h, f, planes ?? [0, 1, 2].map(() => new Float32Array(0)), data, format);
-  });
+  }));
 }
 
 function serveBands(post, listen) {
@@ -170,7 +171,7 @@ export async function decodeAsync(bytes, options = {}) {
   requireDecode(Number.isSafeInteger(requested) && requested >= 1, 'JPEG XL decode threads is a positive integer.');
   const threads = Math.min(8, requested);
   let probe = null;
-  try { decodeImage(bytes, options, (readers, h, f, codestream) => { throw probe = {readers, h, f, codestream}; }); } catch (error) { if (error !== probe) throw error; }
+  try { decodeImage(bytes, options, banding(options, (readers, h, f, codestream) => { throw probe = {readers, h, f, codestream}; })); } catch (error) { if (error !== probe) throw error; }
   const {readers, h, f, codestream} = probe, rows = groupRows(f), count = Math.min(threads, rows);
   if (count < 2 || readers.length < 2 || !bandable(h, f, options) || !(nodeThreads || typeof Worker === 'function')) return decodeBands(bytes, options);
   const bands = Array.from({length: count}, (_, i) => [Math.floor(i * rows / count), Math.floor((i + 1) * rows / count)]);
@@ -185,5 +186,5 @@ export async function decodeAsync(bytes, options = {}) {
       data.set(rgba, top * width * 4);
     });
   } catch { return decodeBands(bytes, options); }
-  return decodeImage(bytes, options, () => bandFrame(h, f, planes, data, format));
+  return decodeImage(bytes, options, banding(options, () => bandFrame(h, f, planes, data, format)));
 }

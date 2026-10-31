@@ -246,6 +246,7 @@ export function readEntropy(r, contexts, options = {}) {
   return new EntropyStream(r, {lz, minimum, minLength, lengthConfig, map, contexts, configs, prefix, codes}, options);
 }
 
+export const entropyStream = (reader, model, options) => new EntropyStream(reader, model, options);
 class EntropyStream {
   constructor(reader, model, {values = Number.MAX_SAFE_INTEGER, distanceMultiplier = 0} = {}) {
     requireDecode(Number.isSafeInteger(values) && values >= 0, 'Invalid JPEG XL entropy length.', reader);
@@ -317,28 +318,6 @@ class EntropyStream {
     this.position++;
     return value;
   }
-  blockCoefficients(values, order, area, base, remaining, previous, scale) {
-    const m = this.model, r = this.reader;
-    if (m.lz || m.prefix) return -1;
-    const map = m.map, codes = m.codes, configs = m.configs, contexts = m.contexts, size = values.length, logArea = 31 - Math.clz32(area);
-    if (this.state === null) this.begin();
-    let state = this.state;
-    for (let k = area; k < size && remaining; k++) {
-      const context = base + (COEFF_NUM_NONZERO_CONTEXT[((remaining - 1) >> logArea) + 1] + COEFF_FREQ_CONTEXT[((k - area) >> logArea) + 1]) * 2 + previous;
-      if (!(!this.finished && context < contexts && this.remaining > 0)) { this.state = state; requireDecode(false, 'Invalid JPEG XL entropy read.', r); }
-      this.remaining--; this.position++;
-      const cluster = map[context], code = codes[cluster], at = state & 4095, symbol = code.symbols[at];
-      state = code.counts[symbol] * (state >>> 12) + code.offsets[at];
-      if (state < 65536) state = ((state << 16) | r.read(16)) >>> 0;
-      const cfg = configs[cluster], token = symbol < cfg.splitToken ? symbol : readHybridUint(r, symbol, cfg);
-      const value = (token >>> 1) ^ -(token & 1);
-      const index = order[k], sum = values[index] + value * scale;
-      if (!(sum >= -2147483648 && sum <= 2147483647)) { this.state = state; requireDecode(false, 'JPEG XL coefficient overflows its range.'); }
-      values[index] = sum; previous = value !== 0 ? 1 : 0; remaining -= previous;
-    }
-    this.state = state;
-    return remaining;
-  }
   finish() {
     this.begin();
     requireDecode(this.left === 0 && (this.model.prefix || this.state === 0x130000),
@@ -349,6 +328,55 @@ class EntropyStream {
       this.history = null;
     }
   }
+}
+
+const BLOCK_BYTES = 128, BYTE_WINDOW = 0x0fffffff, SPECIAL = Int8Array.from(SCREEN_SPECIAL_DISTANCES);
+export function modelSizes(m) {
+  const clusters = m.codes.length;
+  return [m.map.length, clusters * 16, m.prefix ? clusters * 16 : clusters * 12816, m.prefix ? m.codes.reduce((n, c) => n + (c.table ? c.table.byteLength : 0), 0) : 0, SPECIAL.length];
+}
+export function writeModel(kernels, m, at) {
+  const [map, configs, codes, prefixTables, special] = at, buffer = kernels.buffer, u8 = new Uint8Array(buffer), u16 = new Uint16Array(buffer), i32 = new Int32Array(buffer);
+  u8.set(m.map, map); new Int8Array(buffer, special, SPECIAL.length).set(SPECIAL);
+  m.configs.forEach((c, k) => i32.set([c.split, c.msb, c.lsb, c.fastLimit], configs / 4 + k * 4));
+  if (m.prefix) {
+    let table = prefixTables;
+    m.codes.forEach((code, k) => {
+      i32.set([code.single, code.mask, table], codes / 4 + k * 4);
+      if (code.table) { new Uint32Array(buffer, table, code.table.length).set(code.table); table += code.table.byteLength; }
+    });
+  } else m.codes.forEach((code, k) => {
+    const t = codes + k * 12816;
+    u8.set(code.symbols, t); u16.set(code.offsets, (t + 4096) / 2); u16.set(code.counts, (t + 12288) / 2);
+  });
+  return {map, configs, codes, special};
+}
+export const windowBytes = stream => Math.min(stream.reader.bytes.length - Math.floor(stream.reader.bit / 8), BYTE_WINDOW) + 16;
+export function writeBlock(kernels, stream, block, bytes, model, history) {
+  const m = stream.model, r = stream.reader, start = Math.floor(r.bit / 8), length = Math.min(r.bytes.length - start, BYTE_WINDOW);
+  const u8 = new Uint8Array(kernels.buffer), i32 = kernels.i32, f64 = kernels.f64, length32 = m.lengthConfig ?? {split: 0, msb: 0, lsb: 0};
+  u8.set(r.bytes.subarray(start, start + length), bytes); u8.fill(0, bytes + length, bytes + length + 16);
+  i32.set([bytes, length * 8, r.bit - start * 8, stream.state ?? 0], block / 4);
+  f64.set([stream.remaining, stream.position, stream.left], block / 8 + 2);
+  i32.set([stream.distance, stream.distanceMultiplier, model.map, m.contexts, m.prefix ? 0 : model.codes, m.prefix ? model.codes : 0, m.prefix ? 1 : 0, m.lz ? 1 : 0,
+    m.minimum, m.minLength, length32.split, length32.msb, length32.lsb, history, model.configs, model.special], block / 4 + 10);
+  stream.base = start;
+  return block;
+}
+export function streamSizes(stream) {
+  return [BLOCK_BYTES, windowBytes(stream), ...modelSizes(stream.model), stream.model.lz ? WINDOW * 4 : 0];
+}
+export function writeStream(kernels, stream, at) {
+  return writeBlock(kernels, stream, at[0], at[1], writeModel(kernels, stream.model, at.slice(2, 7)), at[7]);
+}
+export const STREAM_BLOCK_BYTES = BLOCK_BYTES, HISTORY_BYTES = WINDOW * 4;
+const STREAM_FAULTS = {1: 'Invalid JPEG XL entropy read.', 2: 'Truncated JPEG XL data.', 3: 'JPEG XL integer exceeds 32 bits.', 6: 'Invalid JPEG XL prefix symbol.', 7: 'Invalid JPEG XL LZ77 run.'};
+export function syncStream(kernels, stream, block, fault = 0) {
+  const i32 = kernels.i32, f64 = kernels.f64, r = stream.reader;
+  r.bit = stream.base * 8 + i32[block / 4 + 2];
+  if (!stream.model.prefix) stream.state = i32[block / 4 + 3] >>> 0;
+  stream.remaining = f64[block / 8 + 2]; stream.position = f64[block / 8 + 3]; stream.left = f64[block / 8 + 4]; stream.distance = i32[block / 4 + 10];
+  if (STREAM_FAULTS[fault]) requireDecode(false, STREAM_FAULTS[fault], r);
 }
 
 export function readPermutation(code, size, skip = 0) {

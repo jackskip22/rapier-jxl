@@ -1,40 +1,20 @@
 // SPDX-License-Identifier: MIT
-import {memoryPlan, s2Admitted, S2_SEARCH_PIXELS} from './memory-plan.mjs';
+import {memoryPlan} from './memory-plan.mjs';
 import {fault} from './fault.mjs';
-import {exactPow} from './exact-math.mjs';
 import {complete, part, scaled} from './bits.mjs';
-import {QUANT_SHAPE, transformDCT8, dct8Basis} from './photo-dct.mjs';
+import {transformDCT8, dct8Basis} from './photo-dct.mjs';
 import {photoXYBSteps, gaborishPlanes, FAST_RANGE, XYB_TABLES} from './photo-xyb.mjs';
 import {photoXYBBands, photoXYBBand, appendPhotoBand, PHOTO_BAND_MARGIN, photoFastBands} from './photo-bands.mjs';
 import {screenLike} from './screen.mjs';
 import {offloading} from './offload.mjs';
+import {photoSplitSteps} from './photo-split.mjs';
+import {SPLIT_HOOKS} from './split-hooks.mjs';
+import {V6, GABORISH, UPLOAD_PICTURE} from './photo-v6-settings.mjs';
 
-const DEFAULT_DCT8 = [[3150.0, 0.0, -0.4, -0.4, -0.4, -2.0], [560.0, 0.0, -0.3, -0.3, -0.3, -0.3], [512.0, -2.0, -1.0, 0.0, -1.0, -2.0]];
-function defaultWeight(c, x, y) {
-  const p = DEFAULT_DCT8[c], bands = [p[0]];
-  for (let i = 1; i < p.length; i++) bands.push(bands[i - 1] * (p[i] > 0 ? 1 + p[i] : 1 / (1 - p[i])));
-  const dx = x / 7, dy = y / 7, at = Math.sqrt(dx * dx + dy * dy) * (bands.length - 1) / 1.4142135623730951;
-  const i = Math.min(bands.length - 2, Math.floor(at));
-  return bands[i] * exactPow(bands[i + 1] / bands[i], at - i);
-}
-const baseStep = (c, k) => [0.84, 7, 5.6][c] * QUANT_SHAPE[k] * (1 + [1, 0, 5][c] * Math.sqrt(((k & 7) * (k & 7) + (k >> 3) * (k >> 3)) / 98));
-const LUMA = (1 / defaultWeight(1, 1, 0)) / baseStep(1, 1);
-const CHROMA = Float64Array.from({length: 192}, (_, i) => {
-  const c = i >> 6, k = i & 63; return k ? (1 / defaultWeight(c, k & 7, k >> 3)) / baseStep(c, k) / LUMA : 1;
-});
+export {V6, GABORISH, UPLOAD_PICTURE};
 
 export const blockSearchOptions = (data, width, height) => ({perceptual: true, deadzone: V6.deadzone,
   ids: screenLike(data, width, height) ? [4, 5, 6, 7, 3, 12, 13] : [4, 5, 6, 7], model: 'simple', rate: [1.0, 3, 2, 0.6], lambda: 0.28, sizeScale: 1.03});
-
-export const V6 = {
-  tune: (c, k) => {
-    const r = Math.sqrt(((k & 7) * (k & 7) + (k >> 3) * (k >> 3)) / 98);
-    return CHROMA[c * 64 + k] * [1.3, 1, 1.675][c] * (1 + [0.45, 0.45, 0][c] * r) * (1 + [-0.15, 0.05, 0][c] * r * r);
-  },
-  deadzone: [0.72, 0.76, 0.485, 0.575, 0.54, 0.6], epfScale: 3, filterAlways: true, dcScale: [1.675, 1.35, 1.675], cflScale: 0.7,
-};
-export const GABORISH = {gaborish: {strength: 1, tilt: 1}, epfScale: 2};
-export const UPLOAD_PICTURE = {...V6, ...GABORISH, fastGaborish: true};
 
 export function admitV6Memory(rgba, width, height, memory) {
   const inputBytes = rgba.buffer?.byteLength ?? rgba.byteLength;
@@ -149,27 +129,23 @@ export function* photoV6Steps(data, width, height, quality, effort, encodeCoeffi
     v6Trace(`written (picture ${best?.length ?? 0} B)`);
     return best ? {bytes: best, image} : null;
   }
-  if (blocks8 && effort >= 9 && search && !color?.transform && width * height <= S2_SEARCH_PIXELS && !s2Admitted(admitV6Memory(data, width, height, memory), width, height, effort - 1))
-    throw fault('JXL_MEMORY', 'The effort 8-9 search exceeds the memory reservation.');
   if (blocks8) {
     const picture = (e, deferred = true) => pictureSteps(data, width, height, quality, e, encodeCoefficients, search, color, gpu, memory, screen, true, deferred, both);
     let made;
     if (gpu) { made = yield* overlapped([picture(8, 'prelearn'), picture(7)], below); hurry ||= made.hurry; }
     else {
-      const seven = yield* share(picture(7), 0, 0.4 * below);
+      made = {seven: yield* share(picture(7), 0, 0.4 * below), full: null};
       v6Trace('16x16 picture done');
-      const full = hurry ? null : yield* share(picture(8), 0.4 * below, 0.8 * below);
+      if (!hurry) made.full = yield* share(picture(8), 0.4 * below, 0.8 * below);
       v6Trace('full picture done');
-      made = {seven, full};
     }
     const floor7 = hurry ? null : yield* written(made.seven, made.full);
     made = null;
     if (!hurry && floor7 && (effort === 8 || !search)) return floor7.bytes;
     if (!hurry && floor7) {
       const wantPlanes = width * height <= 2048 * 2048 && !color?.transform;
-      let made = null;
-      const prepare = Object.assign(() => made ??= prepareV6(data, width, height, color, memory, {banded: !wantPlanes}), {width, height, color, memory});
-      const found = yield* share(search(prepare, () => photoV6Image(prepare(), quality, true), quality, effort - 1, floor7, gpu), below, 1);
+      const prepared = prepareV6(data, width, height, color, memory, {banded: !wantPlanes});
+      const found = yield* share(search(prepared, () => photoV6Image(prepared, quality, true), quality, effort - 1, floor7, gpu), below, 1);
       return found && found.length < floor7.bytes.length ? found : floor7.bytes;
     }
     const best = floor7?.bytes ?? null;
@@ -233,6 +209,10 @@ function* pictureSteps(data, width, height, quality, effort, encodeCoefficients,
     if (effort >= 2 && quality < 100 && width * height > 512 * 512 && encodeCoefficients.splits) {
       const bytes = yield {split: {data, width, height, quality, gaborish}};
       if (bytes) return bytes;
+      if (!offloading()) {
+        if (gaborish) admitV6Memory(data, width, height, memory);
+        return yield* photoSplitSteps(data, width, height, quality, {gaborish});
+      }
     }
     if (gaborish) {
       admitV6Memory(data, width, height, memory);
@@ -260,6 +240,10 @@ function* pictureSteps(data, width, height, quality, effort, encodeCoefficients,
   }
   if (perceptualBlocks) return yield* encodeCoefficients.blocks({data, width, height, quality, effort, encodeCoefficients, color, gpu, memory, screen, floored, blockDesign, deferred, both});
   if (effort <= 7 || !search || width < 8 || height < 8) {
+    if ((effort === 4 || effort === 5) && !color && !screen && quality < 100 && width * height > 512 * 512 && encodeCoefficients.splits && SPLIT_HOOKS.ladder) {
+      const bytes = yield {split: {data, width, height, quality, ladder: effort, run: SPLIT_HOOKS.ladder}};
+      if (bytes) return bytes;
+    }
     admitV6Memory(data, width, height, memory);
     if (offloading()) return yield* bandsThenCoefficients(photoXYBBands(data, width, height, quality, {...V6, ...GABORISH, ...color}, color || {}), image => encodeCoefficients(image, effort));
     const image = yield* part(photoXYBBands(data, width, height, quality, {...V6, ...GABORISH, ...color}), 0, 2);

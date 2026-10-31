@@ -7,10 +7,10 @@ import {buildAnsCoding, writeModularAnsHistograms} from './ans.mjs';
 import {lfCoderFor, monotonicLfCoderFor} from './lf-coding.mjs';
 
 const PHOTO_CLUSTERS = {maxClusters: 64, newClusterCost: 100, seeds: 128};
-const BUDGETS = [{maxClusters: 64, newClusterCost: 80, seeds: 128, switchCost: 5}, {maxClusters: 48, newClusterCost: 130, seeds: 128}, {maxClusters: 64, newClusterCost: 90, seeds: 128, everyConfig: true}];
+export const BUDGETS = [{maxClusters: 64, newClusterCost: 80, seeds: 128, switchCost: 5}, {maxClusters: 48, newClusterCost: 130, seeds: 128}, {maxClusters: 64, newClusterCost: 90, seeds: 128, everyConfig: true}];
 const EXTRA_BUDGETS = [{maxClusters: 64, newClusterCost: 70, seeds: 128, switchCost: 4, everyConfig: true}, {maxClusters: 64, newClusterCost: 58, seeds: 128, switchCost: 4, everyConfig: true}];
 
-function rungs(effort) {
+export function rungs(effort) {
   if (effort < 4) return [{orders: true, lf: 3}];
   const lf = effort >= 7 ? 7 : 5, list = [...(effort >= 5 ? [{orders: true}] : []), {orders: true, lf}, {lf}];
   for (let i = 0; i < (effort >= 5 ? Math.min(3, effort - 4) : 0); i++) list.push({orders: 'best', lf, clusters: BUDGETS[i]});
@@ -28,7 +28,7 @@ function* quiet(steps) { let step; while (!(step = steps.next()).done) yield ste
 
 const FAST_LAST = 3;
 
-const ansPlan = (rung, orders, effort) => ({coding: buildAnsCoding, modularAns: writeModularAnsHistograms, ...(effort <= FAST_LAST ? {fast: true} : {}),
+export const ansPlan = (rung, orders, effort) => ({coding: buildAnsCoding, modularAns: writeModularAnsHistograms, ...(effort <= FAST_LAST ? {fast: true} : {}),
   ...(rung.lf ? {lfCoder: lfCoderFor(rung.lf)} : {}), ...(orders ? {orders} : {}), clusters: rung.clusters ?? PHOTO_CLUSTERS});
 
 const isSizeFailure = error => error instanceof RangeError && !error?.code || error?.code === 'JXL_SIZE';
@@ -39,7 +39,7 @@ export function* coefficientAnsSteps(jpeg, effort, fallback, retain, pooled = fa
   const shared = retain ? {} : {acCoding: buildAnsCoding};
   if (effort < 2) return yield* part(coefficientEffortSteps(jpeg, effort, fallback, retain, shared, pooled), 0, 1);
   const list = rungs(effort), learn = list.some(rung => rung.orders) ? 1 : 0, small = jpeg.width * jpeg.height <= PREFIX_PIXELS;
-  const floorFirst = effort >= 4, parts = learn + list.length + (floorFirst || small ? 1 : 0);
+  const lazyFloor = effort >= 4 && effort <= 6 && !small && !!jpeg.xyb, floorFirst = effort >= 4 && !lazyFloor, parts = learn + list.length + (floorFirst || small || lazyFloor ? 1 : 0);
   let best = fallback, hurry = false, at = 0, orders;
   function* run(steps) {
     const from = at / parts;
@@ -92,7 +92,7 @@ export function* coefficientAnsSteps(jpeg, effort, fallback, retain, pooled = fa
       if (best !== before) bestOrders = use;
     } catch (error) { if (!isSizeFailure(error)) throw error; }
   }
-  if (!floorFirst && small && !(hurry && best) || !best) {
+  if (!floorFirst && small && !(hurry && best) || lazyFloor && hurry || !best) {
     try { keep(yield* run(floor()), {}); }
     catch (error) { if (!isSizeFailure(error) || !best) throw error; }
   }

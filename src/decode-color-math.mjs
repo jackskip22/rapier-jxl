@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 import {requireDecode} from './decode-bits.mjs';
-import {exactPow, exactLog, exactExp} from './exact-math.mjs';
+import {exactPow, exactLog} from './exact-math.mjs';
+import {CURVE} from './decode-color-program.mjs';
+import {decodeKernels} from './decode-kernels.mjs';
 
 export const IDENTITY3 = Object.freeze([1,0,0, 0,1,0, 0,0,1]);
 export const D50 = Object.freeze([0.9642,1,0.8249]);
@@ -61,114 +63,27 @@ export function floatColorMatrix(primaries='srgb',white='d65') {
   return {xyz,pcs:multiply3(adaptation,xyz).map(f)};
 }
 
-function signed(x,v){return x<0||Object.is(x,-0)?-v:v;}
-const HLG_A=0.17883277,HLG_B=1-4*HLG_A,HLG_C=0.5599107295;
-const PQ_M1=2610/16384,PQ_M2=2523/32,PQ_C1=3424/4096,PQ_C2=2413/128,PQ_C3=2392/128;
-
 export function transferCurve(encoding,inverse=false,intensityTarget=255) {
   const tf=encoding.transferFunction??(encoding.gamma===undefined?'srgb':'gamma');
-  if(tf==='linear')return x=>x;
-  if(tf==='srgb')return inverse
-    ?x=>{const a=Math.abs(x);return signed(x,a<=0.04045?a/12.92:exactPow((a+0.055)/1.055,2.4));}
-    :x=>{const a=Math.abs(x);return signed(x,a<=0.0031308?12.92*a:1.055*exactPow(a,1/2.4)-0.055);};
-  if(tf==='bt709')return inverse
-    ?x=>x<0.081?x/4.5:exactPow((x+0.099)/1.099,1/0.45)
-    :x=>x<0.018?4.5*x:1.099*exactPow(x,0.45)-0.099;
+  if(tf==='linear')return {kind:CURVE.linear};
+  if(tf==='srgb')return {kind:inverse?CURVE.srgbInverse:CURVE.srgb};
+  if(tf==='bt709')return {kind:inverse?CURVE.bt709Inverse:CURVE.bt709};
   if(tf==='gamma'||tf==='dci') {
     const exponent=tf==='dci'?1/2.6:encoding.gamma;
     requireDecode(Number.isFinite(exponent)&&exponent>0,'Invalid JPEG XL color gamma.');
-    const g=inverse?1/exponent:exponent;
-    return x=>x<=0?0:exactPow(x,g);
+    return {kind:CURVE.gamma,p:[inverse?1/exponent:exponent]};
   }
-  if(tf==='pq')return inverse
-    ?x=>{if(x===0)return x;const p=exactPow(Math.abs(x),1/PQ_M2),d=PQ_C2-PQ_C3*p;return signed(x,exactPow(Math.max(p-PQ_C1,0)/d,1/PQ_M1)*10000/intensityTarget);}
-    :x=>{if(x===0)return x;const p=exactPow(Math.abs(x)*intensityTarget/10000,PQ_M1);return signed(x,exactPow((PQ_C1+PQ_C2*p)/(1+PQ_C3*p),PQ_M2));};
-  if(tf==='hlg')return inverse
-    ?x=>{const a=Math.abs(x);return signed(x,a<=0.5?a*a/3:(exactExp((a-HLG_C)/HLG_A)+HLG_B)/12);}
-    :x=>{const a=Math.abs(x);return signed(x,a<=1/12?Math.sqrt(3*a):HLG_A*exactLog(12*a-HLG_B)+HLG_C);};
+  if(tf==='pq')return {kind:inverse?CURVE.pqInverse:CURVE.pq,p:[intensityTarget]};
+  if(tf==='hlg')return {kind:inverse?CURVE.hlgInverse:CURVE.hlg};
   requireDecode(false,'Cannot convert an unknown JPEG XL transfer function.');
 }
 
-const SRGB_POWER=1/2.4,POW_C2=SRGB_POWER*(SRGB_POWER-1)/2,POW_C3=POW_C2*(SRGB_POWER-2)/3;
-let powMantissa,powInverse,powExponent;
-export function srgbTables() {
-  if(!powMantissa) {
-    powMantissa=new Float64Array(4096);powInverse=new Float64Array(4096);powExponent=new Float64Array(2048);
-    for(let i=0;i<4096;i++){powMantissa[i]=exactPow(1+i/4096,SRGB_POWER);powInverse[i]=1/(1+i/4096);}
-    for(let e=0;e<2048;e++)powExponent[e]=exactPow(2,SRGB_POWER*(e-1023));
-  }
-  return [powMantissa,powInverse,powExponent,Float64Array.of(SRGB_POWER,POW_C2,POW_C3)];
-}
-export function srgbExact(p,indices,count) {
-  const exact=transferCurve({transferFunction:'srgb'},false);
-  for(let k=0;k<count;k++)p[indices[k]]=exact(p[indices[k]]);
-}
-export function srgbPlane(p) {
-  srgbTables();
-  const bits=new Uint32Array(p.buffer,p.byteOffset,p.length),f=Math.fround,exact=transferCurve({transferFunction:'srgb'},false);
-  for(let i=0;i<p.length;i++) {
-    const word=bits[i],x=p[i],exponent=word>>>23;
-    if(exponent>=255){p[i]=exact(x);continue;}
-    if(x<=0.0031308){p[i]=12.92*x;continue;}
-    const index=word>>>11&4095,t=(1+(word&0x7fffff)/8388608-(1+index/4096))*powInverse[index];
-    const r=1.055*(powMantissa[index]*powExponent[exponent+896]*(1+t*(SRGB_POWER+t*(POW_C2+t*POW_C3))))-0.055,d=1e-12*(1+r);
-    p[i]=f(r-d)===f(r+d)?r:exact(x);
-  }
-  return p;
-}
-
-let srgb8;
-const exactSrgb = transferCurve({transferFunction: "srgb"}, false);
-const invSrgb = transferCurve({transferFunction: "srgb"}, true);
-exactLog(1.5);
 export function srgb8Table() {
-  if (!srgb8) {
-    const p = new Float32Array(1), word = new Uint32Array(p.buffer), thresholds = new Uint32Array(257).fill(0xffffffff, 256), steps = new Uint8Array(32768);
-    const level = bits => { word[0] = bits; const x = p[0], r = x <= 0.0031308 ? 12.92 * x : exactSrgb(x), t = Math.fround(r) * 255 + .5; return t >= 255.5 ? 255 : t >= 1 ? t | 0 : 0; };
-    for (let k = 1; k < 256; k++) {
-      p[0] = invSrgb((k - 0.5) / 255);
-      let low = Math.max(thresholds[k - 1], word[0] - 4);
-      while (low > thresholds[k - 1] && level(low - 1) >= k) low--;
-      while (low < 0x7f800000 && level(low) < k) low++;
-      if (!(low < 0x7f800000)) throw new Error('Invalid sRGB8 threshold.');
-      thresholds[k] = low;
-    }
-    for (let b = 0, k = 0; b <= 0x7f80; b++) { while (k < 255 && thresholds[k + 1] <= (b << 16)) k++; steps[b] = k; }
-    for (let k = 2; k < 256; k++) if (thresholds[k] >>> 16 === thresholds[k - 1] >>> 16) throw new Error('Two sRGB8 thresholds share a step.');
-    srgb8 = {thresholds, steps};
-  }
-  return srgb8;
-}
-export function srgb8Pixels(planes, n, out) {
-  const {thresholds, steps} = srgb8Table(), [r, g, b] = planes.map(p => new Uint32Array(p.buffer, p.byteOffset, n));
-  for (let i = 0, o = 0; i < n; i++, o += 4) {
-    out[o] = srgb8Level(r[i], thresholds, steps); out[o + 1] = srgb8Level(g[i], thresholds, steps); out[o + 2] = srgb8Level(b[i], thresholds, steps); out[o + 3] = 255;
-  }
-  return out;
-}
-export function srgb8Level(bits, thresholds, steps) {
-  if (bits > 0x7f800000) return 0;
-  const k = steps[bits >>> 16];
-  return bits >= thresholds[k + 1] ? k + 1 : k;
+  const kernels=decodeKernels(),at=kernels.srgb8Table();
+  return {steps:new Uint8Array(kernels.buffer,at,32768).slice(),thresholds:new Uint32Array(kernels.buffer,at+32768,257).slice()};
 }
 
 export function hlgScale(intensityTarget,inverse=false) {
   const gamma=1.2*exactPow(1.111,exactLog(intensityTarget/1000)/Math.LN2);
   return inverse?1/gamma-1:gamma-1;
-}
-export function hlgOotf(v,luminance,exponent) {
-  const y=luminance[0]*v[0]+luminance[1]*v[1]+luminance[2]*v[2];
-  const scale=y>0?exactPow(y,exponent):0;
-  v[0]*=scale;v[1]*=scale;v[2]*=scale;return v;
-}
-
-export function labXYZ(lab,out=lab) {
-  const fy=(lab[0]+16)/116,fx=fy+lab[1]/500,fz=fy-lab[2]/200;
-  const f=v=>v>6/29?v*v*v:3*(6/29)*(6/29)*(v-4/29);
-  out[0]=D50[0]*f(fx);out[1]=f(fy);out[2]=D50[2]*f(fz);return out;
-}
-export function xyzLab(xyz,out=xyz) {
-  const f=v=>v>216/24389?exactPow(v,1/3):v*841/108+4/29;
-  const x=f(xyz[0]/D50[0]),y=f(xyz[1]),z=f(xyz[2]/D50[2]);
-  out[0]=116*y-16;out[1]=500*(x-y);out[2]=200*(y-z);return out;
 }

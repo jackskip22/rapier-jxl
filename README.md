@@ -1,15 +1,15 @@
 # Rapier JXL
 
 JPEG XL encoder in JavaScript, WebGPU accelerated at high effort levels. Screenshot encoder about 30 KB
-gzipped, upload encoder about 170 KB, full image encoder about 273 KB with lossless, lossy, HDR, exact
+gzipped, upload encoder about 182 KB, full image encoder about 294 KB with lossless, lossy, HDR, exact
 alpha and WebAssembly. Separate modules for animation, JPEG transcoding and decoding. Each module is one file.
 Browsers, workers, Node, Deno, Bun, Cloudflare Workers. MIT, no dependencies.
 
-| | Rapier JXL | jSquash | WebP |
-| --- | ---: | ---: | ---: |
-| Download, gzip | 273 KB | 526 KB | built in |
-| WebGPU | ✓ | | |
-| Lossless JPEG recompression | ✓ | | |
+- 17% smaller files than libjxl and libvips at the same quality (effort 7, 2,560-pixel photos).
+- 12% smaller uploads than libvips at the same quality (effort 3, 2,560-pixel photos).
+- Uploads faster than libvips in Chrome (2,560-pixel and 12-megapixel photos), and nearly twice as fast with 3 helpers.
+- The upload encoder downloads 182 KB; libvips in the browser downloads 2.9 MB.
+- Half the memory of libvips for a 12-megapixel upload.
 
 ```sh
 npm install rapier-jxl
@@ -20,12 +20,12 @@ npm install rapier-jxl
 | | For | Gzip |
 | --- | --- | ---: |
 | `rapier-jxl/capture` | Exact screenshots | 30 KB |
-| `rapier-jxl/upload` | Photos before upload, effort 1–3 | 170 KB |
-| `rapier-jxl` | Full still encoder, WebGPU at effort 7–9 | 273 KB |
-| `rapier-jxl/animation` | Animations, with the full encoder | 279 KB |
-| `rapier-jxl/format` | Layers, patches, splines, extra channels | 298 KB |
-| `rapier-jxl/decode` | Decoder | 143 KB |
-| `rapier-jxl/jpeg` | Lossless JPEG recompression | 175 KB |
+| `rapier-jxl/upload` | Photos before upload, effort 1–3 | 182 KB |
+| `rapier-jxl` | Full still encoder, WebGPU at effort 7–9 | 294 KB |
+| `rapier-jxl/animation` | Animations, with the full encoder | 299 KB |
+| `rapier-jxl/format` | Layers, patches, splines, extra channels | 319 KB |
+| `rapier-jxl/decode` | Decoder | 146 KB |
+| `rapier-jxl/jpeg` | Lossless JPEG recompression | 182 KB |
 | `rapier-jxl/metadata` | Header, Exif, XMP and boxes | 27 KB |
 | `rapier-jxl/codec` | A worker and queue over any module | 13 KB |
 | `rapier-jxl/polyfill` | Display without native support | 22 KB |
@@ -63,12 +63,13 @@ Takes RGBA `{data, width, height}`, `ImageData`, a canvas, an `ImageBitmap`, a `
 | Effort | Use |
 | ---: | --- |
 | 1 | Live previews |
+| 2 | Phone uploads |
 | 3 | Upload queues |
-| 7 | Default, WebGPU accelerated |
-| 8–9 | Smallest files |
-
-Efforts 8–9 currently apply to pictures up to 1 MP; larger pictures are encoded as at effort 7. Updates will raise
-this limit.
+| 4 | Server encoding |
+| 5 | App exports |
+| 6 | Batch publishing |
+| 7 | Compact saves, default |
+| 8–9 | Photography |
 
 ## Screenshots
 
@@ -108,7 +109,7 @@ try {
 }
 ```
 
-- In browsers the module runs in a worker (upload: 192 KB). Node, Deno and Bun run it in the calling thread.
+- In browsers the module runs in a worker (upload: 202 KB). Node, Deno and Bun run it in the calling thread.
 - `helpers` adds up to 16 worker threads.
 - Errors carry a `code`, such as `JXL_INPUT`, `JXL_OPTIONS`, `JXL_WASM` or `JXL_WEBGPU`.
 
@@ -122,6 +123,7 @@ try {
 ```
 
 - Content Security Policy: `'wasm-unsafe-eval'`; `worker-src blob:` for `rapier-jxl/codec` from a CDN.
+- Every module needs WebAssembly with SIMD (`JXL_WASM` without it), except `restore` and `metadata`.
 - Without native JPEG XL: `import 'rapier-jxl/polyfill'`.
 - Vite: `worker: {format: 'es'}`. webpack 5, Parcel, Angular and Next.js work as is. Next.js edge routes: import
   modules directly, not `rapier-jxl/codec`.
