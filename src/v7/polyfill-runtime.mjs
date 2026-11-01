@@ -181,9 +181,9 @@ export function installFallback(document, options) {
   }
   async function decoder() {
     if (options.decode) return options.decode;
-    const {createCodec} = await import('./codec.mjs');
+    const {createDecodeCodec} = await import('./decode-codec.mjs');
     if (stopped) throw fail('JXL_CLOSED', 'Polyfill disconnected.');
-    const client = createCodec({module: 'rapier-jxl/decode', maxPendingBytes: maxInputBytes, maxPixels: Math.min(40000000, Math.floor(maxBytes / 32)), maxPendingJobs: 1, ...(options.workerFactory ? {workerFactory: options.workerFactory} : {})});
+    const client = createDecodeCodec({maxPendingBytes: maxInputBytes, maxPixels: Math.min(40000000, Math.floor(maxBytes / 32)), maxPendingJobs: 1, ...(options.workerFactory ? {workerFactory: options.workerFactory} : {})});
     clients.push(client); return (bytes, settings) => client.decode(bytes, settings);
   }
   const decoders = [];

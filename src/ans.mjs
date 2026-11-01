@@ -65,7 +65,7 @@ export function shapeHistogram(freqs, shifts = SHIFTS, headerAware = false) {
   let total = 0, last = 0, omit = 0, used = 0;
   for (let i = 0; i < freqs.length; i++) if (freqs[i]) { total += freqs[i]; last = i + 1; used++; if (freqs[i] > freqs[omit]) omit = i; }
   if (used <= 2) { const counts = normalise(freqs); return {counts, shift: 12, omit: -1, bits: distributionBits(counts, 12, -1) + expectedDataBits(freqs, counts)}; }
-  if (shifts === SHIFTS && !headerAware) { const kernel = kernelHooks.shape?.(freqs, last, total, omit, SHAPE_TABLES); if (kernel) return kernel.none ? null : kernel; }
+  if (shifts === SHIFTS) { const kernel = kernelHooks.shape?.(freqs, last, total, omit, SHAPE_TABLES, headerAware); if (kernel) return kernel.none ? null : kernel; }
   const active = last <= 512 ? SHAPE_ACTIVE : new Uint16Array(last);
   const targets = last <= 512 ? SHAPE_TARGETS : new Float64Array(last);
   const rounds = last <= 512 ? SHAPE_ROUNDS : new Uint16Array(last);
@@ -390,7 +390,13 @@ export function buildAnsCoding(counts, options) {
   const model = {kind: 'ans', contextMap: clustered.contextMap,
     histograms: histograms.map(({config, counts, starts, reverse}) => ({config, counts, starts, reverse}))};
   const {write, writeTokens, writeFilled, flush, reset} = options?.kernels?.ansWriter(model) ?? ansGroupWriter(model);
-  return {bits: bits + header.bitLength, payloadBits: bits, model, write, writeTokens, writeFilled, flush, reset, writeHistograms: w => w.append(header)};
+  return {bits: bits + header.bitLength, payloadBits: bits, model, histogramHeader: header, write, writeTokens, writeFilled, flush, reset, writeHistograms: w => w.append(header)};
+}
+export const ansCodingParts = ({bits, payloadBits, model, histogramHeader: {bytes, at, pending, acc}}) => ({bits, payloadBits, model, header: {bytes: bytes.slice(0, at + 1), at, pending, acc}});
+export function ansCodingFrom({bits, payloadBits, model, header}, kernels) {
+  const histogramHeader = Object.assign(new BitWriter(0), header);
+  const {write, writeTokens, writeFilled, flush, reset} = kernels?.ansWriter(model) ?? ansGroupWriter(model);
+  return {bits, payloadBits, model, histogramHeader, write, writeTokens, writeFilled, flush, reset, writeHistograms: w => w.append(histogramHeader)};
 }
 
 const SHAPES = new WeakMap();

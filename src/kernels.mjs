@@ -1,19 +1,23 @@
 import {wasmModule, hasWasmModule, suppliedWasm, compileWasm} from './wasm-modules.mjs';
+import {wasmBytes} from './wasm-text.mjs';
 // The WebAssembly kernels every encoder's pixel loops run in. MIT (images/jxl/LICENSE).
 import {kernelHooks} from './kernel-hooks.mjs';
-import {jpegKernels} from './jpeg-kernels.mjs';
+import {ARENA_BYTES} from './arena.mjs';
+import {jpegKernels, capJpegKernels, releaseJpegKernels} from './jpeg-kernels.mjs';
 import {WEIGHTED_BUCKET, weightedTables} from './weighted-policy.mjs';
 import {BitWriter} from './bits.mjs';
 import {hybridToken} from './prefix.mjs';
 import {fault} from './admit.mjs';
-import {SIMD, SIMD_PROBE} from './kernels-bytes.mjs';
+import {SIMD as SIMD_ALL, SIMD_JPEG, SIMD_UPLOAD, SIMD_PROBE} from './kernels-bytes.mjs';
 
-export const {configureKernels, ensureKernels, kernelMode, kernelRequest, disableEntropyKernels, prepareKernels} = (() => {
+export const {configureKernels, ensureKernels, kernelMode, kernelRequest, disableEntropyKernels, prepareKernels, arenaKernels, releaseArena} = (() => {
+const UPLOAD = typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true;
+const JPEG = typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true;
 const P = 65536, R = 327680, PROPERTY = 589824, CONTEXT = 851968;
 const OUTPUT = 1114128, TABLE = 1642496, SOURCE = 1769472, STATE = 2097152;
 const DIV = 16, WEIGHTS = 272, BUCKET = 16656, MAP = 20672, ALPHABET = 257;
 let engine, active = 'off', explicit = false, entropyAllowed = true, hasPartsFilter = false;
-const decode = text => Uint8Array.from(text, c => c.charCodeAt(0));
+const SIMD = JPEG ? SIMD_JPEG : UPLOAD ? SIMD_UPLOAD : SIMD_ALL;
 const acceptablePlane = (p, w, h, offset, limit = 65536) => p instanceof Int16Array && Number.isInteger(w) && Number.isInteger(h) && w > 0 && h > 0 && w <= 16384 && w * h <= limit && p.length >= w * h && Number.isInteger(offset) && Math.abs(offset) <= 32768;
 const acceptableWriter = w => !w || (w instanceof BitWriter && w.write === BitWriter.prototype.write && w.grow === BitWriter.prototype.grow);
 const PLAIN = {split: 0, msb: 0, lsb: 0};
@@ -23,8 +27,8 @@ const GROUP_PLANES = [P, PROPERTY, CONTEXT, STATE];
 
 function createEngine() {
   const memory = new WebAssembly.Memory({initial: 48, maximum: 272});
-  const names = new Map(Object.entries(new WebAssembly.Instance(wasmModule('simd', () => decode(SIMD)), {env: {memory}}).exports));
-  const simd = {residual: names.get('residual'), tokens: names.get('tokens'), fill: names.get('fill'), weighted: names.get('weighted'), screen: names.get('screen'), sampled: names.get('sampled'), subtract: names.get('subtract'), dct: names.get('dct'), xybTile: names.get('xybTile'), quantTile: names.get('quantTile'), acGroup: names.get('acGroup'), ansFlush: names.get('ansFlush'), ansFlush2: names.get('ansFlush2'), nonzeroCounts: names.get('nonzeroCounts'), vbDct: names.get('vbDct'), vbQuant: names.get('vbQuant'), gab: names.get('gab'), sgFill: names.get('sgFill'), xybRows: names.get('xybRows'), acTokens: names.get('acTokens'), gabTiles: names.get('gabTiles'), fgXyb: names.get('fgXyb'), gab32: names.get('gab32'), gab32From: names.get('gab32From'), fgTiles: names.get('fgTiles'), packLevels: names.get('packLevels'), unpackGroup: names.get('unpackGroup'), opaque: names.get('opaque'), wpTokens: names.get('wpTokens'), gradEvents: names.get('gradEvents'), hpCount: names.get('hpCount'), hpTokens: names.get('hpTokens'), shape: names.get('shape'), wpDc: names.get('wpDc')};
+  const names = new Map(Object.entries(new WebAssembly.Instance(wasmModule('simd', () => wasmBytes(SIMD)), {env: {memory}}).exports));
+  const simd = {residual: names.get('residual'), tokens: names.get('tokens'), fill: names.get('fill'), weighted: names.get('weighted'), screen: names.get('screen'), sampled: names.get('sampled'), subtract: names.get('subtract'), dct: names.get('dct'), xybTile: names.get('xybTile'), quantTile: names.get('quantTile'), acGroup: names.get('acGroup'), ansFlush: names.get('ansFlush'), ansFlush2: names.get('ansFlush2'), nonzeroCounts: names.get('nonzeroCounts'), vbDct: names.get('vbDct'), vbQuant: names.get('vbQuant'), gab: names.get('gab'), sgFill: names.get('sgFill'), xybRows: names.get('xybRows'), acTokens: names.get('acTokens'), gabTiles: names.get('gabTiles'), fgXyb: names.get('fgXyb'), gab32: names.get('gab32'), gab32From: names.get('gab32From'), fgTiles: names.get('fgTiles'), packLevels: names.get('packLevels'), unpackGroup: names.get('unpackGroup'), ctxIds: names.get('ctxIds'), opaque: names.get('opaque'), wpTokens: names.get('wpTokens'), gradEvents: names.get('gradEvents'), hpCount: names.get('hpCount'), hpTokens: names.get('hpTokens'), shape: names.get('shape'), wpDc: names.get('wpDc')};
   const u8 = new Uint8Array(memory.buffer), i32 = new Int32Array(memory.buffer);
   weightedTables(i32, DIV, WEIGHTS);
   i32.set(WEIGHTED_BUCKET, BUCKET >> 2);
@@ -118,7 +122,7 @@ function fill(rgba, imageWidth, x0, y0, w, h, channels, planes) {
   return true;
 }
 
-function dct(blocks, count, basis) {
+const dct = JPEG ? null : function dct(blocks, count, basis) {
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   if (active !== 'simd' || !(blocks instanceof Float64Array) || !Number.isInteger(count) || count < 1 || count > 64 ||
       blocks.length < count * 192 || !(basis instanceof Float64Array) || basis.length !== 64) return false;
@@ -140,7 +144,7 @@ let tileTables = null, tileBand = null;
 let retainEpoch = 0;
 const TILE_BAND = 12582912;
 const TILE_SUMS = P + 150160, TILE_OUT = P + 153256, TILE_COUNTS = P + 177832;
-function photoTile(data, width, height, bx0, by0, bw, bh, tables, cfl, components, stride, nonZero) {
+const photoTile = JPEG ? null : function photoTile(data, width, height, bx0, by0, bw, bh, tables, cfl, components, stride, nonZero) {
   retainEpoch++;
   if (active !== 'simd' || !(data instanceof Uint8Array || data instanceof Uint8ClampedArray) || !Number.isInteger(bw) || !Number.isInteger(bh) ||
       bw < 1 || bw > 8 || bh < 1 || bh > 8 || tables.roots.length !== 4113 || tables.linear.length !== 256) return false;
@@ -221,7 +225,7 @@ function ansTablesOf(model) {
   ansTables.set(model, t);
   return t;
 }
-function acGroupPair(state, g0, g1, pass, sink0, sink1, zd) {
+const acGroupPair = JPEG ? null : function acGroupPair(state, g0, g1, pass, sink0, sink1, zd) {
   if (sink0.counts || sink1.counts || !sink0.coding || sink0.coding.model !== sink1.coding?.model || sink0.coding.model?.kind !== 'ans') return false;
   const pair = {};
   if (acGroup(state, g0, pass, sink0, zd, pair) !== 3) return false;
@@ -311,6 +315,14 @@ function acGroup(state, g, pass, sink, zd, pair = null) {
     i32.set(reciprocals(), A_RECIPS >> 2);
     ansStamp = sink.coding.model;
   }
+  const kept = ans ? sink.kept ?? null : null, keep = !!(sink.counts && sink.keep);
+  if (kept) {
+    if (!(kept.values instanceof Int32Array) || !(kept.ctxs instanceof Uint16Array) || kept.values.length !== kept.ctxs.length || kept.values.length > tokens) return false;
+    acResident = null;
+    u8.set(sink.coding.model.contextMap, AC_MAP);
+    i32.set(kept.values, A_VALUES >> 2); u16.set(kept.ctxs, A_RAWS >> 1);
+    engine.simd.ctxIds(A_RAWS, A_IDS, kept.values.length, AC_MAP);
+  } else {
   const levelsOf = c => comps[c].coeffs ?? comps[c].packed;
   const sameGroup = acResident && acResident.g === g && acResident.bw === bw && acResident.bh === bh &&
     acResident.c0 === levelsOf(0) && acResident.c1 === levelsOf(1) && acResident.c2 === levelsOf(2) &&
@@ -374,11 +386,13 @@ function acGroup(state, g, pass, sink, zd, pair = null) {
     }
   }
   i32.set([AC_COEFFS, AC_STRIDE, bw, bh, AC_COUNTS, AC_BUCKETS, AC_BLOCK_CTX, contexts.numDc, contexts.numCtxs, AC_ORDERS, AC_ZD, AC_NZ,
-    ans ? 2 : codes ? 1 : 0, HIST, TOUCHED + 4 * (acDeferred?.touched ?? 0), OVERFLOW, 0, 0, AC_MAP, AC_CONFIGS, AC_CODES, alphabet, OUT, w ? w.acc : 0, w ? w.pending : 0, 0,
-    ans ? A_VALUES : 0, ans ? A_IDS : 0, 0], AC >> 2);
+    ans ? 2 : codes ? 1 : keep ? 3 : 0, HIST, TOUCHED + 4 * (acDeferred?.touched ?? 0), OVERFLOW, 0, 0, AC_MAP, AC_CONFIGS, AC_CODES, alphabet, OUT, w ? w.acc : 0, w ? w.pending : 0, 0,
+    ans ? A_VALUES : keep ? OUT : 0, ans ? A_IDS : keep ? OUT + tokens * 4 : 0, 0], AC >> 2);
   engine.simd.acGroup(AC);
+  if (keep) { const n = i32[(AC >> 2) + 28]; sink.kept = {values: i32.slice(OUT >> 2, (OUT >> 2) + n), ctxs: u16.slice((OUT + tokens * 4) >> 1, ((OUT + tokens * 4) >> 1) + n)}; }
+  }
   if (ans) {
-    const args = AC_CONFIGS + 4096 - 128, n = i32[(AC >> 2) + 28];
+    const args = AC_CONFIGS + 4096 - 128, n = kept ? kept.values.length : i32[(AC >> 2) + 28];
     const tables = [A_SMALL, A_FREQS, A_STARTS, A_REVERSE, A_CONFIGS, A_COUNTS, A_SYMBOL_STARTS, ans.alphabet];
     if (pair && !pair.args) {
       const park = A_VALUES + 23 * 3 * 1024 * 64 + 256 + 15 & ~15, P_IDS = park + n * 4, P_RAWS = P_IDS + n + 8 & ~7, P_META = P_RAWS + n * 4;
@@ -430,7 +444,7 @@ function takeCounts(counts, at, list, touched, bytes) {
     counts.small[index] += n; counts.totals[index >> 6] += n; hist[index] = 0;
   }
 }
-function deferredCounts() {
+const deferredCounts = JPEG ? null : function deferredCounts() {
   if (!acDeferred) return;
   const {counts, at, list, touched, bytes} = acDeferred;
   acDeferred = null;
@@ -453,25 +467,18 @@ function wpTokens(flat, errors, weighted, n, leaves, alphabet) {
 }
 
 const GE_PLANE = P, GE_COUNTS = P + 131072, GE_TOUCHED = GE_COUNTS + 4 * (131072 + 33) + 12, GE_STATS = GE_TOUCHED + 4 * 65536;
-const GE_LOSS = Math.log2(16 / 15);
-function dcBound(planes) {
+function dcEvents(planes) {
   if (active !== 'simd' || planes.some(p => !(p.data instanceof Int16Array) || !(p.w > 0 && p.h > 0) || p.w * p.h > 65536 || p.data.length < p.w * p.h)) return null;
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   const buffer = engine.memory.buffer, i16 = new Int16Array(buffer), u32 = new Uint32Array(buffer);
-  let entropy = 0, raw = 0, events = 0;
-  const term = c => c > 1 ? c * Math.log2(c) : 0;
-  for (const {data, w, h} of planes) {
+  return planes.map(({data, w, h}) => {
     u32.fill(0, GE_COUNTS >> 2, (GE_COUNTS >> 2) + 131072 + 33);
     i16.set(data.subarray(0, w * h), GE_PLANE >> 1);
     engine.simd.gradEvents(GE_PLANE, w, h, GE_COUNTS, GE_TOUCHED, GE_STATS);
-    const n = u32[GE_STATS >> 2], touched = u32[(GE_STATS >> 2) + 2];
-    let sum = 0;
-    for (let i = 0; i < touched; i++) sum += term(u32[(GE_COUNTS >> 2) + u32[(GE_TOUCHED >> 2) + i]]);
-    for (let t = 0; t < 33; t++) sum += term(u32[(GE_COUNTS >> 2) + 131072 + t]);
-    entropy += term(n) - sum; raw += u32[(GE_STATS >> 2) + 1]; events += n;
-  }
-  const exact = entropy + raw, ans = (exact - GE_LOSS * events + Math.log2(0x130000)) / (1 + GE_LOSS / 16);
-  return Math.min(exact, ans) - 1e-9 * exact - 4;
+    const touched = u32[(GE_STATS >> 2) + 2], literalPairs = new Uint32Array(2 * touched);
+    for (let i = 0; i < touched; i++) { const v = u32[(GE_TOUCHED >> 2) + i]; literalPairs[2 * i] = v; literalPairs[2 * i + 1] = u32[(GE_COUNTS >> 2) + v]; }
+    return {literalPairs, literalPairsLen: 2 * touched, lengths: u32.slice((GE_COUNTS >> 2) + 131072, (GE_COUNTS >> 2) + 131072 + 33)};
+  });
 }
 
 const HP_TAGS = P, HP_EXTRA = P + 262144, HP_LAYOUT = P + 524288, HP_CFGS = HP_LAYOUT + 2048, HP_COUNTS = HP_CFGS + 4096;
@@ -508,7 +515,7 @@ function hybridPlan(plan, sizes) {
 const SH_ARGS = P, SH_LOG2 = P + 64, SH_SYM = SH_LOG2 + 4097 * 8, SH_LOGLEN = SH_SYM + 4097 * 8, SH_REPEATS = SH_LOGLEN + 64,
   SH_FREQS = SH_REPEATS + 64, SH_SCRATCH = SH_FREQS + 2048, SH_BEST = SH_SCRATCH + 24576;
 let shapeEpoch = -1, shapeTables = null;
-function shape(freqs, last, total, omit, tables) {
+function shape(freqs, last, total, omit, tables, headerAware) {
   if (active !== 'simd' || !(last >= 3 && last <= 512) || !(total >= 1 && total <= 0xffffffff) || !(omit >= 0 && omit < last) || freqs.length < last) return null;
   const buffer = engine.memory.buffer, i32 = new Int32Array(buffer), u32 = new Uint32Array(buffer), f64 = new Float64Array(buffer);
   if (shapeEpoch !== retainEpoch || shapeTables !== tables) {
@@ -518,7 +525,7 @@ function shape(freqs, last, total, omit, tables) {
   }
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; shapeEpoch = ++retainEpoch;
   for (let i = 0; i < last; i++) u32[(SH_FREQS >> 2) + i] = freqs[i];
-  i32.set([SH_FREQS, last, total, omit, SH_LOG2, SH_SYM, SH_LOGLEN, SH_REPEATS, SH_SCRATCH], SH_ARGS >> 2);
+  i32.set([SH_FREQS, last, total, omit, SH_LOG2, SH_SYM, SH_LOGLEN, SH_REPEATS, SH_SCRATCH, 0, 0, 0, headerAware ? 1 : 0], SH_ARGS >> 2);
   engine.simd.shape(SH_ARGS);
   const shift = i32[(SH_ARGS >> 2) + 9];
   if (shift < 0) return {none: true};
@@ -634,9 +641,11 @@ function sampledLayout(total, kinds, alphabet, maxCuts) {
   return {symbols, indices, histogram, entropy, raw, output, scratch, dense, needed: dense + bins * kinds * alphabet * 4 + total * 4 + (2 * bins + 1) * 4};
 }
 const SAMPLED_CAP = 272 * 65536, RETAIN_BUDGET = 8 * 1048576;
+const SAMPLED_COUNT = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ||
+  (typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) ? 65536 : 262144;
 
 function sampledStore(count, kinds, alphabet, columns) {
-  if (!engine || !Number.isInteger(count) || count < 64 || count > 65536 || !kinds || kinds > 16 || !alphabet || alphabet > 256) return null;
+  if (!engine || !Number.isInteger(count) || count < 64 || count > SAMPLED_COUNT || !kinds || kinds > 16 || !alphabet || alphabet > 256) return null;
   let maxCuts = 0;
   for (const column of columns) maxCuts = Math.max(maxCuts, column.cuts.length);
   if (!maxCuts || maxCuts > 255) return null;
@@ -678,7 +687,7 @@ function sampled(members, histograms, symbolSets, columns, table, rawPrice, choi
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null;
   const total = members.length, kinds = symbolSets.length, alphabet = rawPrice.length;
   if (keep) keep.handle = null;
-  if (!(members instanceof Uint32Array) || total < 64 || total > 65536 || !kinds || kinds > 16 ||
+  if (!(members instanceof Uint32Array) || total < 64 || total > SAMPLED_COUNT || !kinds || kinds > 16 ||
       !alphabet || alphabet > 256 || !(table instanceof Float64Array) || table.length < total + 1 ||
       !(rawPrice instanceof Float64Array) || histograms.length !== kinds || !Number.isSafeInteger(choiceBits)) return false;
   const count = symbolSets[0].length;
@@ -691,6 +700,7 @@ function sampled(members, histograms, symbolSets, columns, table, rawPrice, choi
   }
   if (!maxCuts) return null;
   const {symbols, indices, histogram, entropy, raw, output, scratch, dense, needed} = sampledLayout(total, kinds, alphabet, maxCuts);
+  if (needed > SAMPLED_CAP) return false;
   if (needed > engine.memory.buffer.byteLength) {
     try { engine.memory.grow(Math.ceil((needed - engine.memory.buffer.byteLength) / 65536)); }
     catch { return false; }
@@ -744,7 +754,7 @@ function sampled(members, histograms, symbolSets, columns, table, rawPrice, choi
 
 
 const SG = 4194304, sgOrderAt = new Int32Array(81);
-function strategyLayout(state, g, pass, nzContext, freqContext, orderOf, base) {
+const strategyLayout = UPLOAD ? null : function strategyLayout(state, g, pass, nzContext, freqContext, orderOf, base) {
   const {authoredOrderPasses, groupsX, strategyData, map, contexts, lumaBuckets, lumaW} = state;
   const blocks = strategyData?.groups[g];
   if (active !== 'simd' || !blocks || nzContext.length !== 64 || freqContext.length !== 64 || blocks.length * 3 > 3072) return null;
@@ -805,15 +815,15 @@ function strategyLayout(state, g, pass, nzContext, freqContext, orderOf, base) {
     }
   }
   return {n: engine.simd.sgFill(RECS, count, contexts.numCtxs, base, NZ, CTX, VAL), ctx: CTX, val: VAL, levels};
-}
-function strategyFill(state, g, pass, nzContext, freqContext, orderOf, ctxs, values) {
+};
+const strategyFill = UPLOAD ? null : function strategyFill(state, g, pass, nzContext, freqContext, orderOf, ctxs, values) {
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   const laid = strategyLayout(state, g, pass, nzContext, freqContext, orderOf, SG);
   if (!laid || laid.n > ctxs.length) return null;
   ctxs.set(engine.i32.subarray(laid.ctx >> 2, (laid.ctx >> 2) + laid.n)); values.set(engine.i32.subarray(laid.val >> 2, (laid.val >> 2) + laid.n));
   return laid.n;
-}
-function strategyWrite(state, g, pass, nzContext, freqContext, orderOf, coding, w) {
+};
+const strategyWrite = UPLOAD ? null : function strategyWrite(state, g, pass, nzContext, freqContext, orderOf, coding, w) {
   const model = coding.model, blocks = state.strategyData?.groups[g];
   if (active !== 'simd' || !blocks || model?.kind !== 'ans' || !coding.flush || model.histograms.length > 256 || model.contextMap.length > 8192 ||
       !acceptableWriter(w) || model.histograms.some(h => !(h.reverse instanceof Uint16Array) || h.reverse.length !== 4096)) return false;
@@ -847,10 +857,10 @@ function strategyWrite(state, g, pass, nzContext, freqContext, orderOf, coding, 
   w.bytes.set(u8.subarray(OUT, OUT + written), w.at);
   w.at += written; w.acc = i32[(args >> 2) + 15]; w.pending = i32[(args >> 2) + 16];
   return 2;
-}
+};
 
 const XYB_AT = 4194304, XY_LIN = XYB_AT + 4113 * 8, XY_MIX = XY_LIN + 2048, XY_KEYS = XY_MIX + 128, XY_VALS = XY_KEYS + 4 * 131072, XY_ROWS = XY_VALS + 24 * 131072;
-function xybPlanesKernel(data, width, height, W, H, planes, roots, linear, mix, bias, rootBias) {
+const xybPlanesKernel = UPLOAD || JPEG ? null : function xybPlanesKernel(data, width, height, W, H, planes, roots, linear, mix, bias, rootBias) {
   if (active !== 'simd' || !(data instanceof Uint8Array || data instanceof Uint8ClampedArray) || roots.length !== 4113 || linear.length !== 256 ||
       mix.length !== 9 || W < width || H < height || planes.some(p => !(p instanceof Float64Array) || p.length !== W * H)) return false;
   const perRow = width * 4 + 3 * W * 8, rows = Math.min(height, Math.floor((272 * 65536 - XY_ROWS - 8) / perRow));
@@ -870,10 +880,10 @@ function xybPlanesKernel(data, width, height, W, H, planes, roots, linear, mix, 
     for (let c = 0; c < 3; c++) planes[c].set(f64.subarray((out >> 3) + c * n * W, (out >> 3) + (c + 1) * n * W), y * W);
   }
   return true;
-}
+};
 
 const GAB = 4194304, GAB_LIMIT = 272 * 65536;
-function gaborish(t, source, W, H, weights, iterations) {
+const gaborish = UPLOAD || JPEG ? null : function gaborish(t, source, W, H, weights, iterations) {
   if (active !== 'simd' || !(t instanceof Float64Array) || !(source instanceof Float64Array) || source.length < W * H || !Number.isInteger(W) || !Number.isInteger(H) || W < 8 || W % 2 ||
       H < 1 || t.length !== W * H || !Number.isInteger(iterations) || iterations < 1 || iterations > 16) return false;
   const rowBytes = W * 8, room = Math.floor((GAB_LIMIT - GAB) / rowBytes) - 2;
@@ -894,7 +904,7 @@ function gaborish(t, source, W, H, weights, iterations) {
     t.set(f64.subarray((GAB >> 3) + (a - from) * W, (GAB >> 3) + (b - from) * W), a * W);
   }
   return true;
-}
+};
 
 const GB = 4194304, GB_LIMIT = 272 * 65536, GB_TILE_ROWS = 4, GB_INTO = [3, 0, 1];
 const PACK_TABLE = new Uint8Array(6144);
@@ -904,7 +914,7 @@ for (let mask = 0; mask < 256; mask++) for (let lane = 0, j = 0; lane < 8; lane+
 const GB_ROOTS = GB, GB_LIN = GB + 32912, GB_MIX = GB_LIN + 2048, GB_BASIS = GB_MIX + 80, GB_PAIRED = GB_BASIS + 512, GB_QUANT = GB_PAIRED + 512,
   GB_THR = GB_QUANT + 1536, GB_SCRATCH = GB_THR + 1536, GB_TILE = GB_SCRATCH + 512, GB_CFL = GB_TILE + 98304, GB_KEYS = GB_CFL + 1024,
   GB_VALS = GB_KEYS + 4 * 131072, GB_CHUNK = GB_VALS + 24 * 131072, GB_FAST_BYTES = 4 << 20;
-function gabBand(data, width, total, top, height, job) {
+const gabBand = JPEG ? null : function gabBand(data, width, total, top, height, job) {
   const {linear, mix, bias, rootBias, weights, iterations, thresholds, c84, components, cfl, nonZero, fast} = job;
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), W = stride * 8, Hpad = Math.ceil(total / 8) * 8;
   if (active !== 'simd' || !(data instanceof Uint8Array || data instanceof Uint8ClampedArray) || data.length !== total * width * 4 ||
@@ -1026,10 +1036,10 @@ const VB_LOG2 = P, VB_BASES = P + 32768, VB_PIX = P + 54272, VB_TMP = P + 62464,
 let vbRegionNext = VB_REGION;
 let vbLoaded = -1, vbSlots = null, vbNext = 0, vbBuffer = null, vbF64 = null, vbI32 = null, vbU8 = null, vbStrip = null;
 const vbViewCache = new Map();
-function vbViews() {
+const vbViews = UPLOAD || JPEG ? null : function vbViews() {
   if (vbBuffer !== engine.memory.buffer) { vbBuffer = engine.memory.buffer; vbF64 = new Float64Array(vbBuffer); vbI32 = new Int32Array(vbBuffer); vbU8 = new Uint8Array(vbBuffer); vbViewCache.clear(); }
-}
-function vbEnter(log2, bases) {
+};
+const vbEnter = UPLOAD || JPEG ? null : function vbEnter(log2, bases) {
   vbViews();
   if (vbLoaded !== retainEpoch) {
     acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null;
@@ -1039,9 +1049,9 @@ function vbEnter(log2, bases) {
     vbSlots = new Map(); vbNext = VB_TABLES; vbStrip = null;
     vbLoaded = ++retainEpoch;
   }
-}
+};
 const vbBasis = size => VB_BASES + 8 * (size === 8 ? 0 : size === 16 ? 128 : 640);
-function varblock(log2, bases) {
+const varblock = UPLOAD || JPEG ? null : function varblock(log2, bases) {
   if (active !== 'simd' || !(log2 instanceof Float64Array) || log2.length !== 4096) return null;
   return {
     table(id, table, size, order, high) {
@@ -1119,17 +1129,17 @@ function varblock(log2, bases) {
       return true;
     },
   };
-}
+};
 
 function disableEntropyKernels() { entropyAllowed = false; kernelHooks.entropy = null; }
 function configureKernels(mode = 'auto', parts) {
   if (!['off', 'auto', 'simd'].includes(mode)) throw fault('JXL_INPUT', 'Kernel mode is off, auto or simd.');
   explicit = true; acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
-  kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.acGroupPair = kernelHooks.acDeferred = kernelHooks.wpTokens = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = kernelHooks.dcBound = kernelHooks.hybridPlan = kernelHooks.shape = null; active = 'off';
+  kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.acGroupPair = kernelHooks.acDeferred = kernelHooks.wpTokens = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = kernelHooks.dcEvents = kernelHooks.hybridPlan = kernelHooks.shape = null; active = 'off';
   if (mode === 'off') return active;
   try {
     if (typeof WebAssembly !== 'object' || new Uint8Array(new Uint32Array([1]).buffer)[0] !== 1) return active;
-    if (!(hasWasmModule('simd') || !suppliedWasm() && SIMD && WebAssembly.validate(decode(SIMD_PROBE)))) return active;
+    if (!(hasWasmModule('simd') || !suppliedWasm() && SIMD && WebAssembly.validate(wasmBytes(SIMD_PROBE)))) return active;
     engine ||= createEngine();
     active = 'simd';
     const enabled = parts ? new Map(Object.entries(parts)) : null;
@@ -1143,15 +1153,17 @@ function configureKernels(mode = 'auto', parts) {
     if (!enabled || enabled.get('photoTile')) kernelHooks.photoTile = photoTile;
     if (!enabled || enabled.get('acGroup')) { kernelHooks.acGroup = acGroup; kernelHooks.acGroupPair = acGroupPair; kernelHooks.acDeferred = deferredCounts; }
     if (!enabled || enabled.get('nonzero')) kernelHooks.nonzero = nonzero;
-    if (!enabled || enabled.get('wpTokens')) { kernelHooks.wpTokens = wpTokens; kernelHooks.dcBound = dcBound; kernelHooks.hybridPlan = hybridPlan; }
+    if (!enabled || enabled.get('wpTokens')) { kernelHooks.wpTokens = wpTokens; kernelHooks.dcEvents = dcEvents; kernelHooks.hybridPlan = hybridPlan; }
     if (entropyAllowed && (!enabled || enabled.get('shape'))) kernelHooks.shape = shape;
-    if (!enabled || enabled.get('varblock')) kernelHooks.varblock = varblock;
-    if (!enabled || enabled.get('gaborish')) kernelHooks.gaborish = gaborish;
-    if (!enabled || enabled.get('strategyFill')) { kernelHooks.strategyFill = strategyFill; kernelHooks.strategyWrite = strategyWrite; }
-    if (!enabled || enabled.get('xybPlanes')) kernelHooks.xybPlanes = xybPlanesKernel;
+    if (!UPLOAD && !JPEG) {
+      if (!enabled || enabled.get('varblock')) kernelHooks.varblock = varblock;
+      if (!enabled || enabled.get('gaborish')) kernelHooks.gaborish = gaborish;
+      if (!enabled || enabled.get('xybPlanes')) kernelHooks.xybPlanes = xybPlanesKernel;
+    }
+    if (!UPLOAD && (!enabled || enabled.get('strategyFill'))) { kernelHooks.strategyFill = strategyFill; kernelHooks.strategyWrite = strategyWrite; }
     if (!enabled || enabled.get('gabBand')) kernelHooks.gabBand = gabBand;
     if (entropyAllowed && (!enabled || enabled.get('entropy'))) kernelHooks.entropy = jpegKernels;
-  } catch { active = 'off'; kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.acGroupPair = kernelHooks.acDeferred = kernelHooks.wpTokens = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = kernelHooks.dcBound = kernelHooks.hybridPlan = kernelHooks.shape = null; }
+  } catch { active = 'off'; kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.acGroupPair = kernelHooks.acDeferred = kernelHooks.wpTokens = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = kernelHooks.dcEvents = kernelHooks.hybridPlan = kernelHooks.shape = null; }
   return active;
 }
 function ensureKernels() {
@@ -1162,8 +1174,11 @@ function kernelMode() { return active; }
 function kernelRequest() { return explicit ? active : 'auto'; }
 async function prepareKernels() {
   if (typeof WebAssembly !== 'object' || new Uint8Array(new Uint32Array([1]).buffer)[0] !== 1) return false;
-  if (!(hasWasmModule('simd') || !suppliedWasm() && SIMD && WebAssembly.validate(decode(SIMD_PROBE)))) return false;
-  return compileWasm('simd', () => decode(SIMD));
+  if (!(hasWasmModule('simd') || !suppliedWasm() && SIMD && WebAssembly.validate(wasmBytes(SIMD_PROBE)))) return false;
+  return compileWasm('simd', () => wasmBytes(SIMD));
 }
-return {configureKernels, ensureKernels, kernelMode, kernelRequest, disableEntropyKernels, prepareKernels};
+const arenaKernels = UPLOAD ? null : capJpegKernels;
+const releaseArena = UPLOAD ? null : releaseJpegKernels;
+kernelHooks.arena = {lend: () => capJpegKernels(ARENA_BYTES), release: releaseJpegKernels};
+return {configureKernels, ensureKernels, kernelMode, kernelRequest, disableEntropyKernels, prepareKernels, arenaKernels, releaseArena};
 })();

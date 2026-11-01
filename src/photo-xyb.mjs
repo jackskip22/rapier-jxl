@@ -95,7 +95,7 @@ function quantTile(tile, bw, bh, by0, bx0, stride, components, quantScale, rx, r
     }
   }
 }
-function signedRoot(v) {
+export function signedRoot(v) {
   const a = Math.abs(v), root = a <= 1 ? cubeRoot(a) : seedRoot(a);
   return v < 0 ? -root : root;
 }
@@ -208,6 +208,8 @@ function xybPlanes(data, width, height, T, W, H) {
   for (const p of planes) for (let y = height; y < H; y++) p.copyWithin(y * W, (height - 1) * W, height * W);
   return planes;
 }
+
+export const gaborishXYB = (planes, W, H, gaborish) => gaborishInverse(planes, W, H, gaborish);
 
 export function gaborishPlanes(data, width, height, options) {
   const W = Math.ceil(width / 8) * 8, H = Math.ceil(height / 8) * 8;
@@ -352,12 +354,13 @@ export function* photoXYBSteps(data, width, height, quality, options) {
     const [w1, w2] = options.gaborish.weights?.[c] ?? GAB_DEFAULT, a = exactCos(EXACT_PI * (k & 7) / 8), b = exactCos(EXACT_PI * (k >> 3) / 8);
     return exactPow((1 + 4 * w1 + 4 * w2) / (1 + 2 * w1 * (a + b) + 4 * w2 * a * b), options.gaborish.tilt);
   };
-  const cachedFast = fast && !pre && !T && !options?.gaborish?.tilt && typeof t === "function" && Array.isArray(d) && Array.isArray(options?.deadzone) && !options?.calibrationRow
+  const low = options?.lowScale;
+  const cachedFast = fast && !pre && !T && !low && !options?.gaborish?.tilt && typeof t === "function" && Array.isArray(d) && Array.isArray(options?.deadzone) && !options?.calibrationRow
     ? fastV6Tables(q, distance, strength, stepScale, acScale, quantScale, options) : null;
   const useCachedFast = cachedFast && cachedFast.tune === t && cachedFast.dead === options.deadzone && cachedFast.dc0 === d[0] && cachedFast.dc1 === d[1] && cachedFast.dc2 === d[2] ? cachedFast : null;
   const components = [0, 1, 2].map(c => ({h: 1, v: 1, stride, rows,
     quant: useCachedFast ? useCachedFast.quants[c] : Int32Array.from(QUANT_SHAPE, (shape, k) => Math.max(1, Math.round(quantScale * distance * stepScale *
-      (k ? acScale * [0.84, 7, 5.6][c] * shape * (1 + [1, 0, 5][c] * Math.sqrt(((k & 7) * (k & 7) + (k >> 3) * (k >> 3)) / 98)) * tune(c, k) * gabTilt(c, k) : [1.05, 7, 12.6][c] * 0.25 * dcScale(c))))),
+      (k ? acScale * [0.84, 7, 5.6][c] * shape * (1 + [1, 0, 5][c] * Math.sqrt(((k & 7) * (k & 7) + (k >> 3) * (k >> 3)) / 98)) * tune(c, k) * gabTilt(c, k) * (low ? low[c * 64 + k] : 1) : [1.05, 7, 12.6][c] * 0.25 * dcScale(c))))),
     coeffs: fastGab && options.packed ? null : new Int16Array(stride * rows * 64)}));
   const fastScale = fast && (useCachedFast ? useCachedFast.fastScale : components.map(c => Float64Array.from(c.quant, q => quantScale / q)));
   const nonZero = fast && [0, 1, 2].map(() => new Uint8Array(stride * rows));

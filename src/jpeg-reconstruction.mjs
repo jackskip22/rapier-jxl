@@ -161,7 +161,7 @@ function writeData(data, effort, contextsFrom) {
 
 const TAGS = ['cprt', 'wtpt', 'bkpt', 'rXYZ', 'gXYZ', 'bXYZ', 'kXYZ', 'rTRC', 'gTRC', 'bTRC', 'kTRC', 'chad', 'desc', 'chrm', 'dmnd', 'dmdd', 'lumi'];
 const TYPES = ['XYZ ', 'desc', 'text', 'mluc', 'para', 'curv', 'sf32', 'gbd '];
-const HEADER = Uint8Array.of(0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 109, 110, 116, 114, 82, 71, 66, 32, 88, 89, 90, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 97, 99, 115, 112, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 246, 214, 0, 1, 0, 0, 0, 0, 211, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+const HEADER = /* @__PURE__ */ Uint8Array.of(0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 109, 110, 116, 114, 82, 71, 66, 32, 88, 89, 90, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 97, 99, 115, 112, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 246, 214, 0, 1, 0, 0, 0, 0, 211, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 const chars = text => [text.charCodeAt(0), text.charCodeAt(1), text.charCodeAt(2), text.charCodeAt(3)];
 const sameTag = (a, text) => a.length === 4 && chars(text).every((c, i) => a[i] === c);
 function shuffleBytes(data, width) {
@@ -264,8 +264,8 @@ export function unpredictICC(enc) {
   }
   requireJPEG(pos === enc.length && at === osize); return out;
 }
-const EXIF_TAG = Uint8Array.of(69, 120, 105, 102, 0, 0), ICC_TAG = Uint8Array.of(73, 67, 67, 95, 80, 82, 79, 70, 73, 76, 69, 0);
-const XMP_TAG = Uint8Array.from('http://ns.adobe.com/xap/1.0/\0', char => char.charCodeAt(0));
+const EXIF_TAG = /* @__PURE__ */ Uint8Array.of(69, 120, 105, 102, 0, 0), ICC_TAG = /* @__PURE__ */ Uint8Array.of(73, 67, 67, 95, 80, 82, 79, 70, 73, 76, 69, 0);
+const XMP_TAG = /* @__PURE__ */ Uint8Array.from('http://ns.adobe.com/xap/1.0/\0', char => char.charCodeAt(0));
 function materializeApps(apps, take, {icc, exif, xml} = {}) {
   const iccCount = apps.reduce((n, app) => n + (app.type === 1), 0); let sequence = 0, iccAt = 0, exifDone = false, xmlDone = false;
   const filled = apps.map(app => {
@@ -418,8 +418,8 @@ function jpegCode(h) {
   }
   return words;
 }
-const NO_CODE = new Int32Array(257);
-const NATURAL = Int32Array.from(ZIGZAG);
+const NO_CODE = /* @__PURE__ */ new Int32Array(257);
+const NATURAL = /* @__PURE__ */ Int32Array.from(ZIGZAG);
 function coded(out, word, n, extra) {
   const length = (word >>> 16) + n;
   if (length <= 24) out.put(length, (word & 65535) << n | extra);
@@ -533,7 +533,7 @@ class ScanWriter {
     this.blockIndex++;
   }
 }
-const ZIGZAG_OF = new Int32Array(64);
+const ZIGZAG_OF = /* @__PURE__ */ new Int32Array(64);
 for (let k = 0; k < 64; k++) ZIGZAG_OF[NATURAL[k]] = k;
 function nonzeroMasks(component) {
   const co = component.coeffs, blocks = co.length >> 6, masks = new Int32Array(blocks * 2);
@@ -581,7 +581,32 @@ function writeScan(out, jpeg, scan, huffman, restart, progressive, pad, nonzero)
   const blocks = writer.blockIndex;
   requireJPEG(scan.resets.every(n => n < blocks) && scan.zeros.every(z => z.block < blocks)); writer.flush(); out.align(pad);
 }
-function writeJPEG(jpeg, data) {
+function bandedScan(out, jpeg, scan, huffman, restart, progressive, pad) {
+  requireJPEG(!progressive && scan.ss === 0 && scan.se === 63 && !scan.al && !scan.ah);
+  const components = jpeg.components, preds = new Int32Array(components.length), bands = jpeg.rows();
+  const resets = Int32Array.from(scan.resets).sort(), writer = new ScanWriter(out, scan, scan.zeros.length ? new Map(scan.zeros.map(z => [z.block, z.count])) : null);
+  const entries = scan.components.map(entry => ({index: entry.index, co: null, row0: 0, dc: huffman[entry.dc] || NO_CODE, ac: huffman[16 + entry.ac] || NO_CODE}));
+  const hmax = Math.max(...components.map(c => c.h)), vmax = Math.max(...components.map(c => c.v)), single = scan.components.length === 1;
+  const lead = components[scan.components[0].index], nx = Math.ceil(jpeg.width * (single ? lead.h : 1) / (8 * hmax)), ny = Math.ceil(jpeg.height * (single ? lead.v : 1) / (8 * vmax));
+  const shapes = entries.map(entry => { const c = components[entry.index]; return {stride: c.stride, h: single ? 1 : c.h, v: single ? 1 : c.v}; });
+  let nextReset = 0;
+  for (let m = 0, y = 0; y < ny; y++) {
+    if (!(y % (32 * (single ? lead.v : 1) / vmax))) { const band = bands.next().value?.components ?? requireJPEG(0); for (const e of entries) ({coeffs: e.co, row0: e.row0} = band[e.index]); }
+    for (let x = 0; x < nx; x++, m++) {
+      if (restart && m && m % restart === 0) { writer.flush(); out.align(pad); out.marker(208 + ((m / restart - 1) & 7)); preds.fill(0); }
+      for (let e = 0; e < entries.length; e++) {
+        const entry = entries[e], {stride, h, v} = shapes[e];
+        for (let dy = 0; dy < v; dy++) for (let dx = 0; dx < h; dx++) {
+          if (resets[nextReset] === writer.blockIndex) { writer.flush(); while (resets[nextReset] === writer.blockIndex) nextReset++; }
+          writer.sequential(entry, ((y * v + dy - entry.row0) * stride + x * h + dx) * 64, preds);
+        }
+      }
+    }
+  }
+  const blocks = writer.blockIndex;
+  requireJPEG(scan.resets.every(n => n < blocks) && scan.zeros.every(z => z.block < blocks)); writer.flush(); out.align(pad);
+}
+function writeJPEG(jpeg, data, scanOf = writeScan) {
   const out = new JPEGOutput(), huffman = [], pad = data.padding ? {bits: data.padding, at: 0} : null;
   const coverage = jpeg.components.map(() => ({coverage: new Int8Array(64).fill(-1)}));
   const masks = [], nonzero = index => masks[index] ||= nonzeroMasks(jpeg.components[index]);
@@ -621,7 +646,7 @@ function writeJPEG(jpeg, data) {
       catch (error) { if (error.code !== 'JXL_JPEG') throw error; requireJPEG(false); }
       for (const c of info.components) body.push(jpeg.components[c.index].id, c.dc * 16 + c.ac);
       body.push(info.ss, info.se, info.ah * 16 + info.al); out.segment(marker, body);
-      writeScan(out, jpeg, info, huffman, restart, progressive, pad, nonzero);
+      scanOf(out, jpeg, info, huffman, restart, progressive, pad, nonzero);
     } else if (marker === 217) { out.marker(marker); out.chunk(data.tail); }
     else requireJPEG(false);
   }
@@ -648,23 +673,25 @@ const openBox = part => {
     requireJPEG(false);
   }
 };
-export function restoreJPEG(bytes, dictionary, {maxPixels} = {}) {
+export function restoreJPEG(bytes, dictionary, {maxPixels, bands = true} = {}) {
   dictionaryOf = typeof dictionary === 'function' ? dictionary : null;
-  try { return restore(bytes, maxPixels); } finally { dictionaryOf = null; }
+  try { return restore(bytes, maxPixels, bands); } finally { dictionaryOf = null; }
 }
-function restore(bytes, maxPixels) {
+function restore(bytes, maxPixels, bands) {
   return guard(() => {
     const boxed = jpegReconstruction(bytes);
     if (!boxed) return null;
     const stream = openBox(boxed.reconstruction); requireJPEG(stream);
-    const jpeg = readJPEGCoefficients(boxed.codestream, {reconstruction: true, maxPixels});
+    let jpeg = readJPEGCoefficients(boxed.codestream, {reconstruction: true, maxPixels, rows: true});
     const data = readData(stream, {icc: jpeg.icc ? unpredictICC(jpeg.icc) : null, exif: openBox(boxed.exif), xml: openBox(boxed.xml)});
+    const banded = bands && data.scans.length === 1 && !data.markers.includes(194);
+    if (!banded) jpeg = jpeg.whole();
     requireJPEG(data.components.length === jpeg.components.length);
     for (let i = 0; i < jpeg.components.length; i++) {
       const c = jpeg.components[i], descriptor = data.components[i], q = data.quant[descriptor.quant];
       requireJPEG(!q.values || equal(q.values, c.quant)); q.values = c.quant; c.id = descriptor.id; c.tq = q.index;
     }
     for (let i = 0; i < data.quant.length; i++) { data.quant[i].values ||= data.quant[i - 1]?.values; requireJPEG(data.quant[i].values); }
-    return writeJPEG(jpeg, data);
+    return writeJPEG(jpeg, data, banded ? bandedScan : writeScan);
   });
 }

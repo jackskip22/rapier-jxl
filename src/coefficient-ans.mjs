@@ -5,6 +5,7 @@ import {varDCTSteps, vdLfGroupCount, seedLfSections} from './vardct.mjs';
 import {part, complete, scaled} from './bits.mjs';
 import {buildAnsCoding, writeModularAnsHistograms} from './ans.mjs';
 import {lfCoderFor, monotonicLfCoderFor} from './lf-coding.mjs';
+import {SMALL_PIXELS, SMALL_CLUSTERS} from './photo-v6-settings.mjs';
 
 const PHOTO_CLUSTERS = {maxClusters: 64, newClusterCost: 100, seeds: 128};
 export const BUDGETS = [{maxClusters: 64, newClusterCost: 80, seeds: 128, switchCost: 5}, {maxClusters: 48, newClusterCost: 130, seeds: 128}, {maxClusters: 64, newClusterCost: 90, seeds: 128, everyConfig: true}];
@@ -38,7 +39,7 @@ const PREFIX_PIXELS = 128 * 128;
 export function* coefficientAnsSteps(jpeg, effort, fallback, retain, pooled = false) {
   const shared = retain ? {} : {acCoding: buildAnsCoding};
   if (effort < 2) return yield* part(coefficientEffortSteps(jpeg, effort, fallback, retain, shared, pooled), 0, 1);
-  const list = rungs(effort), learn = list.some(rung => rung.orders) ? 1 : 0, small = jpeg.width * jpeg.height <= PREFIX_PIXELS;
+  const list = effort <= 3 && jpeg.xyb && jpeg.width * jpeg.height < SMALL_PIXELS ? [{orders: true, clusters: SMALL_CLUSTERS}] : rungs(effort), learn = list.some(rung => rung.orders) ? 1 : 0, small = jpeg.width * jpeg.height <= PREFIX_PIXELS;
   const lazyFloor = effort >= 4 && effort <= 6 && !small && !!jpeg.xyb, floorFirst = effort >= 4 && !lazyFloor, parts = learn + list.length + (floorFirst || small || lazyFloor ? 1 : 0);
   let best = fallback, hurry = false, at = 0, orders;
   function* run(steps) {
@@ -124,7 +125,7 @@ export function* strategyAnsSteps(image, effort = 7, learned = null, pooled = fa
   }
   let best = null;
   for (let at = 0; at < runs.length; at++) {
-    const {img, shared, plan} = runs[at], candidate = varDCTSteps(img, pooled ? {...plan, pooled: true, abortable: !!best} : plan, shared);
+    const {img, shared, plan} = runs[at], candidate = varDCTSteps(img, pooled ? {...plan, pooled: true, abortable: !!best, ...(pooled === 'split' ? {splitGroups: true} : {})} : plan, shared);
     let settled = false, hurry = false;
     try {
       let step, reply;

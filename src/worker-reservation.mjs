@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 const AC_SCRATCH_BYTES = 1376256 + 12288;
-const ZERO = Object.freeze({count: 0, runtimeBytes: 0, jobBytes: 0, inputBytes: 0, outputBytes: 0,
+const ZERO = /* @__PURE__ */ Object.freeze({count: 0, runtimeBytes: 0, jobBytes: 0, inputBytes: 0, outputBytes: 0,
   scratchBytes: AC_SCRATCH_BYTES, totalBytes: 0});
 const FIELDS = ['count', 'runtimeBytes', 'jobBytes', 'inputBytes', 'outputBytes', 'scratchBytes', 'totalBytes'];
 const BUFFER_BYTES = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get;
 const RESERVATION_TYPED_BUFFER = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), 'buffer').get;
 const VIEW_BUFFER = Object.getOwnPropertyDescriptor(DataView.prototype, 'buffer').get;
-const STAGE_GRANTS = new WeakMap();
+const STAGE_GRANTS = /* @__PURE__ */ new WeakMap();
 const leaseRefusal = message => Object.assign(new Error(message), {code: 'JXL_WORKER_LEASE'});
 
 export function claimWorkerReservation(value, spawn, role) {

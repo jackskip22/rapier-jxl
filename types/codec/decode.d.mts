@@ -42,7 +42,16 @@ export interface DecodeOptions extends Partial<DecodeLimits> {
   renderSpotColors?: boolean;
   /** Also return the float32 color planes beside RGBA. Default false: planes is []. */
   planes?: boolean;
+  /** Decode only this rectangle of the picture as returned (after orientation when applyOrientation): whole pixels inside
+   * it. The result, every frame and its planes are the rectangle, equal to the same pixels of a whole decode; frames
+   * and groups the rectangle does not reach are not decoded. */
+  region?: DecodeRegion;
+  /** A file cut short (a download in progress) decodes to the picture at 1:8 from the LF its bytes hold, instead of being
+   * refused: the result is ceil(width / 8) x ceil(height / 8) and says partial. A whole file decodes as without it.
+   * Plain VarDCT frames without alpha only; anything else cut short is refused. Not with region. Default false. */
+  partial?: boolean;
 }
+export interface DecodeRegion {x: number; y: number; width: number; height: number}
 export interface DecodedBitDepth {bits: number; exponentBits: number; float: boolean}
 export interface DecodedColorEncoding {
   space: string;
@@ -100,6 +109,10 @@ export interface DecodedImage extends DecodedFrame {
   /** Original EXIF-style orientation, 1 through 8. */
   orientation: number;
   orientationApplied: boolean;
+  /** The region decoded, when the options gave one. */
+  region?: DecodeRegion;
+  /** Present when partial decoded a cut file: the result is the picture at 1:scale. */
+  partial?: {scale: 8};
   animation: DecodedAnimation | null;
   /** Metadata box payloads, decompressed when stored in brob. */
   boxes: DecodedBox[];

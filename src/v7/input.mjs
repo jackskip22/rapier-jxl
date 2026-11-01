@@ -36,8 +36,8 @@ export async function image(input, options, hooks = {}) {
   return pixels(input, options, hooks.maxPixels);
 }
 
-export function pixels(input, options, maxPixels) {
-  const result = surface(input, {maxPixels, readAs: options?.readAs});
+export function pixels(input, options, maxPixels, half = false) {
+  const result = surface(input, {maxPixels, readAs: options?.readAs, half});
   if (!result || !ArrayBuffer.isView(result.data) || result.data instanceof DataView)
     throw fail('JXL_INPUT', 'Pixels must be {data, width, height}; use recompress for JPEG bytes.');
   dimensions(result.width, result.height, maxPixels);

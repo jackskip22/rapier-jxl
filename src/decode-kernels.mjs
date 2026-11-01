@@ -1,4 +1,5 @@
 import {wasmModule} from './wasm-modules.mjs';
+import {wasmBytes} from './wasm-text.mjs';
 // SPDX-License-Identifier: MIT
 import {DECODE_KERNELS} from './decode-kernels-bytes.mjs';
 import {wasmRequired} from './capture-wasm-error.mjs';
@@ -12,7 +13,7 @@ export function decodeKernels() { return kernelEngine ??= createEngine(); }
 export function streamKernels() { decodeKernels(); return streamEngine ??= createEngine(); }
 function createEngine() {
   let exports;
-  try { ({exports} = new WebAssembly.Instance(wasmModule('decode', () => Uint8Array.from(DECODE_KERNELS, c => c.charCodeAt(0))))); }
+  try { ({exports} = new WebAssembly.Instance(wasmModule('decode', () => wasmBytes(DECODE_KERNELS)))); }
   catch (error) { throw error?.code === 'JXL_WASM' ? error : wasmRequired(); }
   const memory = exports.memory, bases = new Map();
   let next = KERNEL_BASES;

@@ -24,7 +24,7 @@ export function jpegShifts(sample) {
   const hs=sample.map(v=>v===1||v===2?1:0),vs=sample.map(v=>v===1||v===3?1:0),mh=Math.max(...hs),mv=Math.max(...vs);
   return {hs:hs.map(v=>mh-v),vs:vs.map(v=>mv-v)};
 }
-export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, maxSamples, maxModularWork, band = null} = {}) {
+export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, maxSamples, maxModularWork, band = null, lfOnly = false} = {}) {
   const single = readers.length === 1, r=readers[0];
   const features = readFeatures ? readFeatures(r,h,f) : {};
   requireDecode(readFeatures || !(f.flags & 19n),'JPEG XL frame features need their reader.',r);
@@ -51,14 +51,15 @@ export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, m
   const globalTree = r.read(1) ? readMATree(r, {maxNodes: maxTreeNodes}) : null;
   const modular=createModular(r,channels,{globalTree,groupDim:f.groupDim,bitDepth:h.bitDepth.bits,maxModularWork,...(maxSamples===undefined?{}:{maxSamples})});
   modular.decodeGlobal(r,0);
-  const dct=f.modular?null:createVarDCT({width:f.encodedWidth,height:f.encodedHeight,header:f,global,lfDequant,bitDepth:h.bitDepth.bits,globalTree,imageHeader:h,maxModularWork,modularWork:modular.modularWork,band,maxSection:Math.max(...readers.map(x=>x.bytes.length))});
+  const dct=f.modular?null:createVarDCT({width:f.encodedWidth,height:f.encodedHeight,header:f,global,lfDequant,bitDepth:h.bitDepth.bits,globalTree,imageHeader:h,maxModularWork,modularWork:modular.modularWork,band,lfOnly,maxSection:Math.max(...readers.map(x=>x?x.bytes.length:0))});
   if(!single)r.endSection();
   for(let g=0;g<f.numLFGroups;g++) {
-    if(band){const y=Math.floor(g/f.lfGroupsX)*2048;if(y+2048<=band.first*256-16||y>=band.end*256+16)continue;}
+    if(band){const y=Math.floor(g/f.lfGroupsX)*2048,x=g%f.lfGroupsX*2048;if(y+2048<=band.first*256-16||y>=band.end*256+16||x+2048<=(band.left??0)*256||band.right!==undefined&&x>=band.right*256)continue;}
     const rr=single?r:readers[1+g], readExtra=()=>modular.decodeGroup(rr,{x:g%f.lfGroupsX*f.groupDim*8,y:Math.floor(g/f.lfGroupsX)*f.groupDim*8,width:f.groupDim*8,height:f.groupDim*8,lf:true,streamIndex:1+f.numLFGroups+g});
     if(dct)dct.readLF(rr,g,{decodeExtraLF:readExtra});else readExtra();
     if(!single)rr.endSection();
   }
+  if(lfOnly)return dct.lfImage();
   const hf=single?r:readers[1+f.numLFGroups];
   if(dct)dct.readHFGlobal(hf);
   if(!single)hf.endSection();
@@ -68,12 +69,12 @@ export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, m
     if(hint>=0)minimum=31-Math.clz32(f.passes.downsample[hint]);
     if(pass===f.passes.count-1)minimum=0;
     for(let g=0;g<f.numGroups;g++) {
-      if(band&&(Math.floor(g/dct.groupsX)<band.first||Math.floor(g/dct.groupsX)>=band.end))continue;
+      if(band&&(Math.floor(g/dct.groupsX)<band.first||Math.floor(g/dct.groupsX)>=band.end||g%dct.groupsX<(band.left??0)||g%dct.groupsX>=(band.right??dct.groupsX)))continue;
       const rr=single?r:readers[2+f.numLFGroups+pass*f.numGroups+g];
       if(dct)dct.readPassGroup(rr,g,pass);
       modular.decodeGroup(rr,{x:g%f.groupsX*f.groupDim,y:Math.floor(g/f.groupsX)*f.groupDim,width:f.groupDim,height:f.groupDim,minShift:minimum,maxShift:maximum,streamIndex:1+3*f.numLFGroups+17+pass*f.numGroups+g});
       if(!single)rr.endSection();
-      if(dct&&pass===f.passes.count-1&&(g%dct.groupsX===dct.groupsX-1||g===f.numGroups-1))dct.renderRow(Math.floor(g/dct.groupsX),lfReference);
+      if(dct&&pass===f.passes.count-1&&(g%dct.groupsX===(band?.right??dct.groupsX)-1||g===f.numGroups-1))dct.renderRow(Math.floor(g/dct.groupsX),lfReference);
     }
     maximum=minimum;
   }

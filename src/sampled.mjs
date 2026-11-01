@@ -59,7 +59,7 @@ function samplePositions(length, cap) {
   return positions;
 }
 
-export function sampleTransformRanking(rgba, width, height, samples = 32768) {
+export const sampleTransformRanking = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function sampleTransformRanking(rgba, width, height, samples = 32768) {
   const length = width * height, positions = samplePositions(length, samples), count = positions.length, table = sampleEntropyTable(count);
   const value = (i, key) => {
     const r = rgba[i * 4], g = rgba[i * 4 + 1], b = rgba[i * 4 + 2];
@@ -86,7 +86,7 @@ export function sampleTransformRanking(rgba, width, height, samples = 32768) {
   const ranked = Array.from({length: 42}, (_, type) => ({type, price: transformKeys(type).reduce((n, key) => n + prices[key], 0)}));
   ranked.sort((a, b) => a.price - b.price || a.type - b.type);
   return ranked.map(entry => entry.type);
-}
+};
 
 function samplePrediction(p, plane, width, i, x, y, w, n, nw) {
   if(p===0)return 0;if(p===1)return w;if(p===2)return n;if(p===3)return ((w+n)/2)|0;

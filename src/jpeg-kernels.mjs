@@ -1,4 +1,5 @@
 import {wasmModule} from './wasm-modules.mjs';
+import {wasmBytes} from './wasm-text.mjs';
 // SPDX-License-Identifier: MIT
 import {JPEG_KERNELS} from './jpeg-kernels-bytes.mjs';
 import {hybridToken} from './prefix.mjs';
@@ -13,13 +14,13 @@ const DPARAMS = 1048576, DBAND = 1049600, DIN = 1261568, BAND_BYTES = DIN - DBAN
 const CTAB = 7426048, CTAB_END = 9523200, CUNIQUE = 9523200, CLARGE = 10309632;
 const DYNAMIC = 11882496;
 const DECODE_CAP = 64 * 1048576;
-let engine;
+let engine, limit = Infinity;
 
 export function jpegKernels() {
   if (engine !== undefined) return engine;
   engine = null;
   try {
-    const {exports} = new WebAssembly.Instance(wasmModule('jpeg', () => Uint8Array.from(JPEG_KERNELS, c => c.charCodeAt(0))));
+    const {exports} = new WebAssembly.Instance(wasmModule('jpeg', () => wasmBytes(JPEG_KERNELS)));
     const memory = exports.memory;
     let f64, u32, u8, i16, i32, u16;
     const views = () => {
@@ -28,6 +29,10 @@ export function jpegKernels() {
     };
     if (memory.buffer.byteLength < DYNAMIC) memory.grow(Math.ceil((DYNAMIC - memory.buffer.byteLength) / 65536));
     views();
+    const grow = end => {
+      if (end > limit) throw new RangeError('Past the arena charge.');
+      memory.grow(Math.ceil((end - memory.buffer.byteLength) / 65536));
+    };
     let loaded = null, priceStamp = null;
     const append = (w, bytes) => {
       if (w.at + bytes + 8 >= w.bytes.length) w.grow(bytes + 8);
@@ -36,6 +41,7 @@ export function jpegKernels() {
     };
     exports.initTable();
     engine = {
+      memoryBytes: () => memory.buffer.byteLength,
       clusters: 256, flatten: flattenSparse,
       row(i, freqs, bits) { u32.set(freqs, (ROWS >> 2) + i * 64); f64[(BITS >> 3) + i] = bits; exports.terms(i); },
       own(freqs) { u32.set(freqs, OWN >> 2); },
@@ -43,7 +49,7 @@ export function jpegKernels() {
       priceConfigs(values, weights, candidates, {symbolBits, logLengths}) {
         const n = values.length, c = candidates.length, bits = DYNAMIC, logs = bits + symbolBits.length * 8, cands = logs + 16;
         const scratch = cands + c * 16, best = scratch + 768, out = best + 512, vals = out + 16, wts = vals + n * 4, end = wts + n * 4;
-        if (end > memory.buffer.byteLength) { memory.grow(Math.ceil((end - memory.buffer.byteLength) / 65536)); views(); priceStamp = null; }
+        if (end > memory.buffer.byteLength) { grow(end); views(); priceStamp = null; }
         if (priceStamp !== symbolBits) {
           f64.set(symbolBits, bits >> 3); u8.set(logLengths, logs);
           candidates.forEach((k, i) => u32.set([k.split, k.msb, k.lsb, k.splitToken], (cands >> 2) + i * 4));
@@ -61,7 +67,7 @@ export function jpegKernels() {
         let pairs = 0;
         for (const ctx of used) if (counts.large[ctx]) for (const v of counts.large[ctx].keys()) pairs++;
         const lpairs = assign + n * 4, end = lpairs + pairs * 8;
-        if (end > memory.buffer.byteLength) { memory.grow(Math.ceil((end - memory.buffer.byteLength) / 65536)); views(); }
+        if (end > memory.buffer.byteLength) { grow(end); views(); }
         for (let v = 0; v < 64; v++) u32[(tok >> 2) + v] = tokenOf(v);
         let at = 0;
         for (let t = 0; t < n; t++) {
@@ -89,7 +95,7 @@ export function jpegKernels() {
         const n = sparse.offsets.length - 1, k = costs.length;
         const tables = DYNAMIC, best = tables + k * 512, next = best + k * 8, offsets = next + k * 8;
         const pairs = offsets + (n + 1) * 4, back = pairs + sparse.pairs.length * 4, end = back + ((n * k * 2 + 7) & ~7);
-        if (end > memory.buffer.byteLength) { memory.grow(Math.ceil((end - memory.buffer.byteLength) / 65536)); views(); }
+        if (end > memory.buffer.byteLength) { grow(end); views(); }
         for (let i = 0; i < k; i++) f64.set(costs[i], (tables >> 3) + i * 64);
         f64.fill(0, best >> 3, (best >> 3) + 2 * k);
         u32.set(sparse.offsets, offsets >> 2); u32.set(sparse.pairs, pairs >> 2);
@@ -171,7 +177,7 @@ export function jpegKernels() {
         const zerosAt = (DIN + length + 15) & ~15, end = zerosAt + 65536 * 8;
         if (end > memory.buffer.byteLength) {
           if (end > DECODE_CAP) return null;
-          try { memory.grow(Math.ceil((end - memory.buffer.byteLength) / 65536)); } catch { return null; }
+          try { grow(end); } catch { return null; }
           views();
         }
         loaded = null;
@@ -272,7 +278,7 @@ export function jpegKernels() {
           let maps = 0;
           for (const plan of plans) { n += plan.used; maps += plan.histogramMap?.length ?? 0; }
           const end = DYNAMIC + n * 10 + maps * 2;
-          if (end > memory.buffer.byteLength) { memory.grow(Math.ceil((end - memory.buffer.byteLength) / 65536)); views(); }
+          if (end > memory.buffer.byteLength) { grow(end); views(); }
           let at = DYNAMIC, map = DYNAMIC + n * 10, offset = histograms.length;
           for (let c = plans.length - 1; c >= 0; c--) offset -= plans[c].freqs.length;
           for (const plan of plans) {
@@ -332,6 +338,13 @@ export function jpegKernels() {
   } catch { engine = null; }
   return engine;
 }
+export function capJpegKernels(bytes) {
+  const kernels = jpegKernels();
+  if (!kernels || kernels.memoryBytes() > bytes) return null;
+  limit = bytes;
+  return kernels;
+}
+export function releaseJpegKernels() { engine = undefined; limit = Infinity; }
 
 function flattenSparse(ordered) {
   let total = 0;

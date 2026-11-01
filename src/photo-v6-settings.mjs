@@ -25,3 +25,4 @@ export const V6 = {
 };
 export const GABORISH = {gaborish: {strength: 1, tilt: 1}, epfScale: 2};
 export const UPLOAD_PICTURE = {...V6, ...GABORISH, fastGaborish: true};
+export const SMALL_PIXELS = 2e6, SMALL_CLUSTERS = {maxClusters: 64, newClusterCost: 100, seeds: 64};

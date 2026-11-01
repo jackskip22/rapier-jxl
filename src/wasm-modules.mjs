@@ -3,8 +3,8 @@ const supplied = new Map(), used = new Map(), BUNDLE = Symbol.for('rapier-jxl.wa
 let configured = false, sealed = false;
 const error = message => Object.assign(new Error(message), {code: 'JXL_WASM'});
 const exportsFor = {
-  capture: 'weighted copies runs scan tally part literals pieces',
-  simd: 'residual fill screen sampled dct xybTile quantTile acGroup ansFlush ansFlush2 nonzeroCounts subtract vbDct vbQuant gab sgFill xybRows acTokens gabTiles fgXyb gab32 gab32From fgTiles packLevels unpackGroup opaque wpTokens gradEvents hpCount hpTokens shape wpDc tokens weighted',
+  capture: 'weighted copies runs scan tally part literals pieces lowestInk prices edges rowInk colInk',
+  simd: 'residual fill screen sampled dct xybTile quantTile acGroup ansFlush ansFlush2 nonzeroCounts subtract vbDct vbQuant gab sgFill xybRows acTokens gabTiles fgXyb gab32 gab32From fgTiles packLevels unpackGroup ctxIds opaque wpTokens gradEvents hpCount hpTokens shape wpDc tokens weighted',
   jpeg: 'memory initTable terms seedBest pairsInit pairsUpdate pairMin assign ansFlush fill scanStart scanBand decodeStart decodeBand tokensIn prefixWrite literalClusters countFilled countClear recips mbits mwrite mtags seedAll priceConfigs',
   decode: 'memory idct idct8 xyb srgb store modular block8 dequant cfl64 gabRows epf lfPrepare curve run convert srgbTables srgb8Build srgb8 rgba curveTable quantized values passGroup small cfl llf blend upsample orient samples xybSamples jpegAcross jpegDown rct palette squeezeAcross squeezeDown lfScale noiseRandom noiseConvolve noiseApply splineDot',
 };

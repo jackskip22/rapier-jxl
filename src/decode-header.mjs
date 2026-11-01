@@ -201,7 +201,7 @@ export function readDecodeFrameHeader(r, h, limits = {}) {
   for (let i=0;i<h.extraChannels.length;i++) requireDecode(f.extraUpsampling[i]*power2(h.extraChannels[i].dimShift) >= f.upsampling, 'Extra channel is smaller than its sampling grid.', r);
   return f;
 }
-export function readDecodeTOC(r, f) {
+export function readDecodeTOC(r, f, partial = false) {
   const count = f.numGroups === 1 && f.passes.count === 1 ? 1 : 2 + f.numLFGroups + f.numGroups*f.passes.count;
   requireDecode(count <= 1000000, 'JPEG XL table of contents is too large.', r);
   let order = null;
@@ -209,10 +209,11 @@ export function readDecodeTOC(r, f) {
   r.align(); const sizes = array(count, () => r.u32([[10,0],[14,1024],[22,17408],[30,4211712]])); r.align();
   let offset = r.bit / 8; const physical = [];
   for (const length of sizes) {
-    requireDecode(length <= r.bytes.length-offset, 'Truncated JPEG XL frame section.', r);
-    physical.push({offset,length}); offset += length;
+    const cut = length > r.bytes.length-offset;
+    requireDecode(!cut || partial, 'Truncated JPEG XL frame section.', r);
+    f.cut ||= cut; physical.push({offset,length,cut}); offset += length;
   }
   const sections = order ? Array.from(order, i => physical[i]) : physical;
-  f.end = offset; f.sections = sections; r.bit = offset*8;
-  return sections.map(s => new JxlBits(r.bytes.subarray(s.offset,s.offset+s.length)));
+  f.end = offset; f.sections = sections; r.bit = Math.min(offset, r.bytes.length)*8;
+  return sections.map(s => s.cut ? null : new JxlBits(r.bytes.subarray(s.offset,s.offset+s.length)));
 }

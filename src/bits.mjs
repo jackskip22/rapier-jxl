@@ -57,7 +57,12 @@ export class BitWriter {
   append(other) {
     if (this.at + other.at + 8 >= this.bytes.length) this.grow(other.at + 8);
     if (!this.pending) { this.bytes.set(other.bytes.subarray(0, other.at), this.at); this.at += other.at; }
-    else for (let i = 0; i < other.at; i++) this.write(8, other.bytes[i]);
+    else {
+      const bytes = this.bytes, from = other.bytes, shift = this.pending, n = other.at;
+      let acc = this.acc, at = this.at;
+      for (let i = 0; i < n; i++) { const v = acc | from[i] << shift; bytes[at++] = v & 255; acc = v >>> 8; }
+      this.at = at; this.acc = acc;
+    }
     if (other.pending) this.write(other.pending, other.acc);
   }
   finish() {

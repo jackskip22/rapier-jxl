@@ -8,7 +8,9 @@ import {scaledDCTBases, lowFrequencies} from './vardct-strategies.mjs';
 import {coefficientAnsSteps, estimateBytes, strategyLfSteps} from './coefficient-ans.mjs';
 import {perceptualMaskField, maskEnergy, maskWeights, maskWeightDoubts, maskDoubtMax} from './aq.mjs';
 import {offloading} from './offload.mjs';
+import {pictureBlocksSplit} from './block-split.mjs';
 import {V6, GABORISH, admitV6Memory, prepareV6, v6Image, gaborishRows, blockSearchOptions, v6Trace} from './photo-v6.mjs';
+import {wholeBudget, WHOLE_BYTES} from './memory-device.mjs';
 
 export function photoAnsSteps(image, effort, ...rest) { return coefficientAnsSteps(image, effort, ...rest); }
 photoAnsSteps.splits = coefficientAnsSteps.splits;
@@ -57,7 +59,23 @@ export function* fullBlocksOnDevice({base, data, width, height, row, blockSearch
   return xybStrategies(base, width, height, {...blockSearch, layout: choice.layout, ...(made?.exact ? {exact: made.exact} : {})}).image;
 }
 
-function* blockPictureSteps({data, width, height, quality, effort, encodeCoefficients, color, gpu, memory, screen, floored, blockDesign, deferred, both}) {
+export const E7_LOW = Object.freeze([0.62, 0.62, 0.58, 0.72]);
+export const E7_SCALE = Array.from({length: 192}, (_, i) => { const c = i >> 6, k = i & 63; return k && (k & 7) < 2 && k < 16 ? E7_LOW[c] : c > 1 && k && (k & 7) < 3 && k < 24 ? E7_LOW[3] : 1; });
+const E7_GRAIN = Object.freeze({epfScale: 1.5});
+export function grainRegime(data, width, height) {
+  let curvature = 0, gradient = 0, flat = 0, total = 0;
+  const stepY = Math.max(1, Math.floor((height - 2) / 64)), stepX = Math.max(1, Math.floor((width - 2) / 64)), row = width * 4;
+  const luma = i => 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+  for (let y = 1; y < height - 1; y += stepY) for (let x = 1; x < width - 1; x += stepX) {
+    const i = (y * width + x) * 4, c = luma(i), l = luma(i - 4), r = luma(i + 4), u = luma(i - row), d = luma(i + row);
+    const g = Math.abs(r - l) + Math.abs(d - u);
+    curvature += Math.abs(4 * c - l - r - u - d); gradient += g; total++;
+    if (g < 2) flat++;
+  }
+  return total > 0 && flat / total < 0.25 && curvature / (gradient + 1e-9) < 0.95 ? E7_GRAIN : null;
+}
+
+function* blockPictureSteps({data, width, height, quality, effort, encodeCoefficients, color, gpu, memory, screen, floored, blockDesign, deferred, both, pair}) {
   const plan = admitV6Memory(data, width, height, memory);
   let hurried = false;
   function* watch(steps, index, count) {
@@ -74,15 +92,25 @@ function* blockPictureSteps({data, width, height, quality, effort, encodeCoeffic
       try { steps.return?.(); } catch (error) { if (completed) throw error; }
     }
   }
-  const whole = !plan.banded && !offloading();
+  const whole = !offloading() && (!plan.banded || effort === 7 && !pair && !gpu && memory == null &&
+    Math.ceil(width / 8) * Math.ceil(height / 8) * 64 * WHOLE_BYTES <= wholeBudget(undefined, 0));
   let prepared = null;
-  const fast = blockDesign === 'fast', row = {calibrationRow: screen ? 'screenFull' : fast ? 'blocksFast' : 'blocks', ...(fast && floored ? {noLevels: true} : {})}, rowColor = {...color, ...row};
-  const idle = whole ? () => { try { prepared = prepareV6(data, width, height, color, memory); } catch {} } : undefined;
-  let image = gpu && !color && !screen ? yield {gpu: {kind: 'v6image', data, width, height, quality, options: {...V6, ...GABORISH, ...row}, idle, ...(fast || blockDesign === 'full' ? {energy: true} : {}), lib: {complete, photoXYBSteps, transformDCT8, dct8Basis, xyb: XYB_TABLES}}} : null;
+  const fast = blockDesign === 'fast', row = {calibrationRow: screen ? 'screenFull' : fast ? 'blocksFast' : 'blocks', ...(pair ? {lowScale: E7_SCALE, ...(pair.grain ??= grainRegime(data, width, height) ?? false)} : {}), ...(fast && floored ? {noLevels: true} : {})}, rowColor = {...color, ...row};
+  let splitMade = null;
+  if (fast && floored && !gpu && !color && !screen && width * height > 512 * 512 && encodeCoefficients.splits) {
+    const options = {...blockSearchOptions(data, width, height), ids: [4], ...(pair ? {lowScale: E7_SCALE} : {})};
+    const write = deferred ? null : {effort, steps: image => encodeStrategyImageSteps(image, effort >= 7, effort, 'split', null, both)};
+    splitMade = (yield {split: {pixels: width * height, run: (leased, signal) => pictureBlocksSplit(data, width, height, quality, row, options, leased, signal, write)}}) ?? null;
+    if (splitMade?.bytes) { v6Trace(effort + ' picture, blocks and write on helpers'); return splitMade.bytes; }
+    if (splitMade) v6Trace(effort + ' picture and blocks on helpers');
+  }
+  const prepare = () => pair ? pair.prepared ??= prepareV6(data, width, height, color, memory) : prepareV6(data, width, height, color, memory);
+  const idle = whole ? () => { try { prepared = prepare(); } catch {} } : undefined;
+  let image = splitMade ? splitMade.image : gpu && !color && !screen ? yield {gpu: {kind: 'v6image', data, width, height, quality, options: {...V6, ...GABORISH, ...row}, idle, ...(fast || blockDesign === 'full' ? {energy: true} : {}), lib: {complete, photoXYBSteps, transformDCT8, dct8Basis, xyb: XYB_TABLES}}} : null;
   let deviceEnergy = null;
   if (image?.maskEnergy !== undefined) { deviceEnergy = image.maskEnergy; delete image.maskEnergy; }
   v6Trace(effort + ' DCT8 picture');
-  if (whole) prepared ??= prepareV6(data, width, height, color, memory);
+  if (whole && !splitMade) prepared ??= prepare();
   let kept = !image && whole ? v6Image(prepared, quality, {keepPlanes: true, ...row}, false) : null;
   if (kept) { const {planes: _planes, ...picture} = kept; image = picture; }
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), energy = !image && !whole && !offloading() ? new Float64Array(stride * rows) : null;
@@ -90,12 +118,14 @@ function* blockPictureSteps({data, width, height, quality, effort, encodeCoeffic
     : energy ? yield* watch(bandsWithEnergy(data, width, height, quality, {...V6, ...GABORISH, ...rowColor}, energy), 0, 4)
     : yield* watch(bandsOnly(photoXYBBands(data, width, height, quality, {...V6, ...GABORISH, ...rowColor}, offloading() ? rowColor : undefined)), 0, 4);
   if (hurried) return floored ? null : yield* watch(encodeCoefficients(image, effort), 1, 4);
-  const blockSearch = fast ? {...blockSearchOptions(data, width, height), ids: [4]} : blockSearchOptions(data, width, height);
+  const blockSearch = {...blockSearchOptions(data, width, height), ...(fast ? {ids: [4]} : {}), ...(pair ? {lowScale: E7_SCALE} : {})};
   let base = kept ?? (prepared ? {...image, planes: prepared.pre} : {...image, planeRows: gaborishRows(data, width, height, {...V6, ...GABORISH, ...color})});
   const denseRows = base.planeRows;
   if (denseRows && gpu && !color && !screen && blockDesign) base.planeRows = gaborishRows(data, width, height, {...V6, ...GABORISH, ...color}, true);
   kept = null; prepared = null;
-  let varImage = null, dct8Estimate = null;
+
+  let varImage = splitMade?.varImage ?? null, dct8Estimate = null;
+  if (splitMade) blockSearch.maskWeight = splitMade.mask;
   if (fast && gpu && !color && !screen) {
     const input = strategyInputs(base, width, height, blockSearch), weight = base.planes ? perceptualMaskField(base.planes, stride, rows).weight : null;
     const fromEnergy = !weight && deviceEnergy ? {weight: maskWeights(deviceEnergy.hf, stride, rows).weight, weightDoubt: 0.75 * deviceEnergy.bound + 1e-12} : null;

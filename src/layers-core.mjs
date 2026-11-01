@@ -27,9 +27,9 @@ function layerBlend(value, fallback, extras) {
   if (typeof clamp !== 'boolean') throw fault('JXL_INPUT', 'Layer clamp is boolean.');
   return {mode, source, alpha, clamp};
 }
-function layerAdmission(input, options, encodeChannels) {
+function layerAdmission(input, options, encodeChannels, limits) {
   layerObject(input, 'Layered image'); layerObject(options, 'Layer options');
-  const {width, height, layers} = input; admitSize(width, height);
+  const {width, height, layers} = input; admitSize(width, height, limits);
   if (!Array.isArray(layers) || !layers.length || layers.length > 256) throw fault('JXL_INPUT', 'A still has one to 256 authored layers.');
   if (options.preview !== undefined && (!options.preview || options.preview.maxDimension !== undefined))
     throw fault('JXL_INPUT', 'A layered still preview is an authored planar image of the finished composition.');
@@ -119,4 +119,4 @@ function* layerSteps(config) {
   const prefix = fileHeader(10), box = boxHeader(CODESTREAM, bytes.length), output = new Uint8Array(prefix.length + box.length + bytes.length);
   admitOutputSize(output.length); output.set(prefix); output.set(box, prefix.length); output.set(bytes, prefix.length + box.length); return output;
 }
-export function encodeLayersSteps(input, options = {}, encodeChannels = null) { return job(layerSteps(layerAdmission(input, options, encodeChannels))); }
+export function encodeLayersSteps(input, options = {}, encodeChannels = null, limits = LIMITS) { return job(layerSteps(layerAdmission(input, options, encodeChannels, limits))); }

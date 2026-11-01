@@ -1,6 +1,6 @@
 {
  "name": "rapier-jxl",
- "version": "8.0.1",
+ "version": "8.1.0",
  "type": "module",
  "license": "MIT",
  "description": "JPEG XL for pictures, captures and exact JPEG reconstruction.",
@@ -25,6 +25,9 @@
   "webassembly",
   "browser"
  ],
+ "bin": {
+  "rapier-jxl": "dist/cli.mjs"
+ },
  "exports": {
   ".": {
    "types": "./types/index.d.mts",
@@ -80,9 +83,9 @@
    "types": "./types/polyfill.d.mts",
    "import": "./dist/polyfill.mjs"
   },
-  "./snapdom": {
-   "types": "./types/snapdom.d.mts",
-   "import": "./dist/snapdom.mjs"
+  "./serve": {
+   "types": "./types/serve.d.mts",
+   "import": "./dist/serve.mjs"
   },
   "./wasm": {
    "types": "./types/wasm.d.mts",

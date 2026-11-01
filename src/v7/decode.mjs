@@ -1,3 +1,4 @@
+import {wasmBytes} from '../wasm-text.mjs';
 import {decodeBands} from '../decode-parallel.mjs';
 import {decodeOptions} from '../decode-image.mjs';
 import {PUBLIC_DECODE_LIMITS, decodeLimits} from './decode-limits.mjs';
@@ -13,16 +14,17 @@ import {compileWasm} from '../wasm-modules.mjs';
 import {DECODE_KERNELS} from '../decode-kernels-bytes.mjs';
 import {wasmRequired} from '../capture-wasm-error.mjs';
 import {decodedFields} from './describe.mjs';
-import {bytes, check, fail, declared, object, callers, pixelLimit, admitSignal} from './primitives.mjs';
+import {bytes, check, fail, declared, object, callers, pixelLimit, LARGEST, admitSignal} from './primitives.mjs';
 import {header} from './inspect.mjs';
 import {publicDecoded} from './header-fields.mjs';
 import {copyBytes, encodedByteLength} from './bytes.mjs';
+import {admitRegion} from './region.mjs';
 export {configureWasm} from '../wasm-modules.mjs';
 
 addPart('features', {readFeatures, applyPatches, applySplines, applyNoise}); addPart('icc', {readICC}); addPart('iccColor', {readICCColor});
 addPart('upsample', {upsamplePlane}); addPart('brotli', {decompressBrotli}); addPart('transforms', {readModularTransforms, inverseModularTransforms});
 
-const compileKernels = () => compileWasm('decode', () => Uint8Array.from(DECODE_KERNELS, c => c.charCodeAt(0)));
+const compileKernels = () => compileWasm('decode', () => wasmBytes(DECODE_KERNELS));
 export async function prepare() {
   let compiled;
   try { compiled = await compileKernels(); } catch (error) { throw declared(error); }
@@ -34,8 +36,8 @@ export async function supported(feature) {
   try { return await compileKernels(); } catch { return false; }
 }
 const HDR = ['pq', 'hlg'];
-const FLAGS = ['applyOrientation', 'unpremultiplyAlpha', 'renderSpotColors', 'planes'];
-const KEYS = new Set([...PUBLIC_DECODE_LIMITS, ...FLAGS, 'format', 'colorSpace', 'signal', 'onProgress']);
+const FLAGS = ['applyOrientation', 'unpremultiplyAlpha', 'renderSpotColors', 'planes', 'partial'];
+const KEYS = new Set([...PUBLIC_DECODE_LIMITS, ...FLAGS, 'format', 'colorSpace', 'region', 'signal', 'onProgress']);
 const NAMED_SPACES = ['original', 'srgb', 'linear-srgb', 'display-p3', 'rec2020', 'xyb'];
 const TARGET = {space: ['rgb', 'gray', 'xyb'], whitePoint: ['d65', 'dci', 'e', 'd50'], primaries: ['srgb', 'display-p3', 'rec2020'],
   transferFunction: ['srgb', 'linear', 'bt709', 'dci', 'pq', 'hlg', 'gamma']};
@@ -74,6 +76,8 @@ function admitDecode(options) {
     throw fail('JXL_OPTIONS', `${key} is a positive safe integer.`);
   admitSignal(given.signal);
   if (given.colorSpace !== undefined) given.colorSpace = colorTarget(given.colorSpace);
+  if (given.region !== undefined) given.region = admitRegion(given.region);
+  if (given.partial && given.region) throw fail('JXL_OPTIONS', 'partial and region are not offered together in this version.');
   return given;
 }
 export const decode = (input, options) => decodeHere(input, options).catch(error => { throw error === options?.signal?.reason ? error : declared(error); });
@@ -81,7 +85,7 @@ async function decodeHere(input, options) {
   const {signal, onProgress, ...bounds} = admitDecode(options);
   check(signal);
   if (onProgress !== undefined && typeof onProgress !== 'function') throw fail('JXL_OPTIONS', 'onProgress is a function.');
-  const limits = decodeOptions({...bounds, ...decodeLimits(bounds), maxPixels: pixelLimit(bounds.maxPixels), dictionary: brotliDictionary});
+  const limits = decodeOptions({...bounds, ...decodeLimits(bounds), maxPixels: pixelLimit(bounds.maxPixels, LARGEST), dictionary: brotliDictionary});
   let owned;
   if (typeof Blob !== 'undefined' && input instanceof Blob) {
     if (input.size > limits.maxInputBytes) throw fail('JXL_LIMIT', 'Encoded input exceeds maxInputBytes.');
@@ -99,6 +103,7 @@ async function decodeHere(input, options) {
   await prepare();
   check(signal);
   const result = decodeBands(owned, limits);
+  if (limits.region) result.region = {...limits.region};
   Object.assign(result, decodedFields(result));
   publicDecoded(result);
   for (const frame of [result, ...(result.frames ?? []), result.preview]) {

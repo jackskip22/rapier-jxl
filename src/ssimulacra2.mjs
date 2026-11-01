@@ -26,14 +26,16 @@ const S2_CBRT_EXP = Float64Array.from({length: 2048}, (_, e) => {
   s2CbrtU32[1] = (q + 1023) << 20; s2CbrtU32[0] = 0;
   return s2CbrtF64[0] * (r === 0 ? 1 : r === 1 ? 1.2599210498948732 : 1.5874010519681994);
 });
-const S2_CBRT_MANT = Float64Array.from({length: 1025}, (_, i) => exactCbrt(1 + i / 1024));
+let s2CbrtMant;
+const S2_CBRT_MANT_TABLE = () => s2CbrtMant ||= Float64Array.from({length: 1025}, (_, i) => exactCbrt(1 + i / 1024));
 const S2_GUARD = 2 ** -37, s2Settled = (v, d) => Math.fround(v - d) === Math.fround(v + d);
 function s2Cbrt(x) {
   if (!(x > 2.2250738585072014e-308)) return x <= 0 ? 0 : exactCbrt(x);
   s2CbrtF64[0] = x;
   const hi = s2CbrtU32[1], e = hi >>> 20, m = (hi >>> 10) & 1023;
   const frac = ((hi & 1023) * 4294967296 + s2CbrtU32[0]) * (1 / 4398046511104);
-  let r = S2_CBRT_EXP[e] * (S2_CBRT_MANT[m] + frac * (S2_CBRT_MANT[m + 1] - S2_CBRT_MANT[m]));
+  const mant = s2CbrtMant || S2_CBRT_MANT_TABLE();
+  let r = S2_CBRT_EXP[e] * (mant[m] + frac * (mant[m + 1] - mant[m]));
   r = (2 * r + x / (r * r)) / 3;
   r = (2 * r + x / (r * r)) / 3;
   return r;

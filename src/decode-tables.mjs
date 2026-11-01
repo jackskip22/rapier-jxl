@@ -6,7 +6,7 @@ export const COEFF_NUM_NONZERO_CONTEXT = [0, 0, 31, 62, 62, 93, 93, 93, 93, 123,
   180, 180, 180, 180, 180, 180, 180, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206,
   206, 206, 206, 206, 206, 206, 206, 206];
 
-export const DEFAULT_OPSIN = Object.freeze({
+export const DEFAULT_OPSIN = /* @__PURE__ */ Object.freeze({
   inverseMatrix: Object.freeze([11.031566901960783, -9.866943921568629, -0.16462299647058826,
     -3.254147380392157, 4.418770392156863, -0.16462299647058826,
     -3.6588512862745097, 2.7129230470588235, 1.9459282392156863]),
@@ -14,7 +14,7 @@ export const DEFAULT_OPSIN = Object.freeze({
   quantizationBiases: Object.freeze([0.945349926692846, 0.9299455010825141, 0.9500648966626563, 0.145]),
 });
 
-export const SCREEN_SPECIAL_DISTANCES = Int8Array.of(
+export const SCREEN_SPECIAL_DISTANCES = /* @__PURE__ */ Int8Array.of(
   0, 1, 1, 0, 1, 1, -1, 1, 0, 2, 2, 0, 1, 2, -1, 2,
   2, 1, -2, 1, 2, 2, -2, 2, 0, 3, 3, 0, 1, 3, -1, 3,
   3, 1, -3, 1, 2, 3, -2, 3, 3, 2, -3, 2, 0, 4, 4, 0,
@@ -67,7 +67,7 @@ export function reverseAlias(counts, logAlphabet) {
   return {starts, reverse};
 }
 
-export const SIGNATURE = new Uint8Array([0, 0, 0, 12, 74, 88, 76, 32, 13, 10, 135, 10]);
+export const SIGNATURE = /* @__PURE__ */ new Uint8Array([0, 0, 0, 12, 74, 88, 76, 32, 13, 10, 135, 10]);
 export const FTYP = 0x66747970, BRAND = 0x6a786c20, CODESTREAM = 0x6a786c63, PARTIAL = 0x6a786c70;
 export const BROB = 0x62726f62, RECONSTRUCTION = 0x6a627264, LEVEL = 0x6a786c6c;
 

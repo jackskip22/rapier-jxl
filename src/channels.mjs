@@ -15,6 +15,7 @@ import {modularPasses} from './modular-progressive.mjs';
 import {admitPlanarTransforms, applyPlanarTransforms} from './planar-transforms.mjs';
 import {channelPowers, channelUpsampling, requireChannelObject, admitChannelPrecision, admitExtraChannels} from './planar-input.mjs';
 import {channelPiece, writePlanarPlanes} from './planar-planes.mjs';
+import {admitEffort} from './effort-level.mjs';
 
 export {EXTRA_CHANNEL_TYPES, LIMITS};
 
@@ -76,6 +77,7 @@ function admitPicture(input, options) {
   if (imageFields) metadata.imageFields = imageFields;
   return {width, height, codedWidth, codedHeight, colorCount: color.length, extras, channels, upsampling, groupSize, metadata, level,
     weighted, squeezePlan, squeezeSource, transformPlan, progression, requestedLevel: options.level,
+    effort: options.effort === undefined ? undefined : admitEffort(options),
     predictor: predictor === 'auto' ? -1 : predictors.get(predictor)};
 }
 

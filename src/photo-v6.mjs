@@ -7,7 +7,7 @@ import {photoXYBSteps, gaborishPlanes, FAST_RANGE, XYB_TABLES} from './photo-xyb
 import {photoXYBBands, photoXYBBand, appendPhotoBand, PHOTO_BAND_MARGIN, photoFastBands} from './photo-bands.mjs';
 import {screenLike} from './screen.mjs';
 import {offloading} from './offload.mjs';
-import {photoSplitSteps} from './photo-split.mjs';
+import {photoSplitSteps, splitRoute} from './photo-split.mjs';
 import {SPLIT_HOOKS} from './split-hooks.mjs';
 import {V6, GABORISH, UPLOAD_PICTURE} from './photo-v6-settings.mjs';
 
@@ -23,13 +23,13 @@ export function admitV6Memory(rgba, width, height, memory) {
   if (plan.known && !plan.fits) throw fault('JXL_MEMORY', 'Photo encoding exceeds the supplied memory reservation.');
   return plan;
 }
-export function prepareV6(rgba, width, height, color = {}, memory = {}, {banded = false} = {}) {
+export const prepareV6 = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function prepareV6(rgba, width, height, color = {}, memory = {}, {banded = false} = {}) {
   const plan = admitV6Memory(rgba, width, height, memory), cache = plan.dct, whole = !(banded && plan.banded);
   return {rgba, width, height, color, memory: plan, pre: whole ? gaborishPlanes(rgba, width, height, {...V6, ...GABORISH, ...color}) : null,
     dct: whole && cache ? {} : null, dctPlain: cache ? {} : null};
-}
+};
 
-export function gaborishRows(data, width, height, options, sparse = false) {
+export const gaborishRows = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function gaborishRows(data, width, height, options, sparse = false) {
   const W = Math.ceil(width / 8) * 8, M = PHOTO_BAND_MARGIN;
   let band = null;
   return (y0, y1, x0, x1) => {
@@ -49,19 +49,19 @@ export function gaborishRows(data, width, height, options, sparse = false) {
     const planes = gaborishPlanes(data.subarray(from * width * 4, to * width * 4), width, to - from, options);
     return band = {top, rows, planes: planes.map(p => p.subarray((top - from) * W))};
   };
-}
+};
 
-export function photoV6Image(prepared, quality, cache = true) { return v6Image(prepared, quality, {}, cache); }
+export const photoV6Image = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function photoV6Image(prepared, quality, cache = true) { return v6Image(prepared, quality, {}, cache); };
 
-export function v6Image(prepared, quality, extra = {}, cache = true) {
+export const v6Image = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function v6Image(prepared, quality, extra = {}, cache = true) {
   const {rgba, width, height, pre, color, dct} = prepared, options = {...V6, ...GABORISH, ...color, ...(extra.calibrationRow ? {calibrationRow: extra.calibrationRow} : {})};
   if (pre) return complete(photoXYBSteps(rgba, width, height, quality, {...options, pre, dctCache: cache ? dct : null, ...extra}));
   const image = bandedImage(rgba, width, height, quality, options, extra.fieldScale);
   if (extra.keepPlanes) image.planeRows = gaborishRows(rgba, width, height, options);
   return image;
-}
+};
 
-function bandedImage(data, width, height, quality, options, field) {
+const bandedImage = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function bandedImage(data, width, height, quality, options, field) {
   if (!field) return complete(photoXYBBands(data, width, height, quality, options));
   const bandHeight = Math.max(64, Math.floor(1048576 / width / 64) * 64), stride = Math.ceil(width / 8), quantFields = new Int32Array(field.length);
   let image;
@@ -74,7 +74,7 @@ function bandedImage(data, width, height, quality, options, field) {
   }
   image.quantFields = quantFields;
   return image;
-}
+};
 
 function* bandsThenCoefficients(bands, encode) {
   let step, reply, coefficients = null, first = null;
@@ -130,7 +130,8 @@ export function* photoV6Steps(data, width, height, quality, effort, encodeCoeffi
     return best ? {bytes: best, image} : null;
   }
   if (blocks8) {
-    const picture = (e, deferred = true) => pictureSteps(data, width, height, quality, e, encodeCoefficients, search, color, gpu, memory, screen, true, deferred, both);
+    let pair = {};
+    const picture = (e, deferred = true) => pictureSteps(data, width, height, quality, e, encodeCoefficients, search, color, gpu, memory, screen, true, deferred, both, pair);
     let made;
     if (gpu) { made = yield* overlapped([picture(8, 'prelearn'), picture(7)], below); hurry ||= made.hurry; }
     else {
@@ -139,6 +140,7 @@ export function* photoV6Steps(data, width, height, quality, effort, encodeCoeffi
       if (!hurry) made.full = yield* share(picture(8), 0.4 * below, 0.8 * below);
       v6Trace('full picture done');
     }
+    pair = null;
     const floor7 = hurry ? null : yield* written(made.seven, made.full);
     made = null;
     if (!hurry && floor7 && (effort === 8 || !search)) return floor7.bytes;
@@ -153,6 +155,12 @@ export function* photoV6Steps(data, width, height, quality, effort, encodeCoeffi
     const late = yield* share(pictureSteps(data, width, height, quality, 1, encodeCoefficients, undefined, color, undefined, memory, screen), 1, 1);
     return best && best.length < late.length ? best : late;
   }
+  if (!screen && (effort === 4 || effort === 5) && quality < 100 && width >= 128 && height >= 128 && encodeCoefficients.splits) {
+    const bytes = yield* share(pictureSteps(data, width, height, quality, effort, encodeCoefficients, search, color, gpu, memory, screen, true, false, both), 0, 1);
+    if (!hurry && bytes) return bytes;
+    const late = yield* share(pictureSteps(data, width, height, quality, 1, encodeCoefficients, undefined, color, undefined, memory, screen), 1, 1);
+    return bytes && bytes.length < late.length ? bytes : late;
+  }
   v6Trace('floor');
   const floor = yield* share(pictureSteps(data, width, height, quality, 1, encodeCoefficients, undefined, color, undefined, memory, screen), 0, 0.1);
   v6Trace('floor done');
@@ -162,7 +170,7 @@ export function* photoV6Steps(data, width, height, quality, effort, encodeCoeffi
   return bytes && bytes.length < floor.length ? bytes : floor;
 }
 
-function* overlapped(steps, scale = 1) {
+const overlapped = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function* overlapped(steps, scale = 1) {
   const names = ['full picture', '16x16 picture'], ranges = [[0.4 * scale, 0.8 * scale], [0, 0.4 * scale]];
   const jobs = steps.map((it, k) => ({it, k, reply: undefined, pending: null, done: false, value: null}));
   let shown = 0, hurry = false, idle = 0;
@@ -201,13 +209,13 @@ function* overlapped(steps, scale = 1) {
   } finally {
     for (const j of jobs) if (!j.done) try { j.it.return?.(); } catch {}
   }
-}
+};
 
-function* pictureSteps(data, width, height, quality, effort, encodeCoefficients, search, color, gpu, memory, screen = false, floored = false, deferred = false, both = true) {
+function* pictureSteps(data, width, height, quality, effort, encodeCoefficients, search, color, gpu, memory, screen = false, floored = false, deferred = false, both = true, pair = null) {
   if (effort <= 3 && !color) {
     const gaborish = effort === 3 && quality < 100 && !screen;
-    if (effort >= 2 && quality < 100 && width * height > 512 * 512 && encodeCoefficients.splits) {
-      const bytes = yield {split: {data, width, height, quality, gaborish}};
+    if (effort >= 2 && quality < 100 && splitRoute(width, height) && encodeCoefficients.splits) {
+      const bytes = yield {split: {data, width, height, quality, gaborish, pixels: width * height}};
       if (bytes) return bytes;
       if (!offloading()) {
         if (gaborish) admitV6Memory(data, width, height, memory);
@@ -238,10 +246,10 @@ function* pictureSteps(data, width, height, quality, effort, encodeCoefficients,
     const image = yield {gpu: {kind: 'v6image', data, width, height, quality, options: {...V6, ...GABORISH}, lib: {complete, photoXYBSteps, transformDCT8, dct8Basis, xyb: XYB_TABLES}}};
     if (image) return yield* encodeCoefficients(image, effort);
   }
-  if (perceptualBlocks) return yield* encodeCoefficients.blocks({data, width, height, quality, effort, encodeCoefficients, color, gpu, memory, screen, floored, blockDesign, deferred, both});
+  if (perceptualBlocks) return yield* encodeCoefficients.blocks({data, width, height, quality, effort, encodeCoefficients, color, gpu, memory, screen, floored, blockDesign, deferred, both, pair});
   if (effort <= 7 || !search || width < 8 || height < 8) {
     if ((effort === 4 || effort === 5) && !color && !screen && quality < 100 && width * height > 512 * 512 && encodeCoefficients.splits && SPLIT_HOOKS.ladder) {
-      const bytes = yield {split: {data, width, height, quality, ladder: effort, run: SPLIT_HOOKS.ladder}};
+      const bytes = yield {split: {pixels: width * height, run: (leased, options) => SPLIT_HOOKS.ladder(data, width, height, quality, leased, {...options, effort})}};
       if (bytes) return bytes;
     }
     admitV6Memory(data, width, height, memory);

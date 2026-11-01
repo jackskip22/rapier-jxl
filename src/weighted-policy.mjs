@@ -7,7 +7,7 @@ for (let value = 1, i = 0; i < 16; i++) {
   do { value++; } while (value * value < square);
 }
 export const WEIGHTED_CUTS = [...magnitudes.slice().reverse().map(value => -value), 0, ...magnitudes];
-export const WEIGHTED_BUCKET = Int8Array.from({length: 1003}, (_, i) => WEIGHTED_CUTS.filter(cut => cut < i - 501).length);
+export const WEIGHTED_BUCKET = /* @__PURE__ */ Int8Array.from({length: 1003}, (_, i) => WEIGHTED_CUTS.filter(cut => cut < i - 501).length);
 
 export function weightedTables(i32, div, weights) {
   for (let i = 0; i < 64; i++) i32[(div >> 2) + i] = Math.floor(16777216 / (i + 1));

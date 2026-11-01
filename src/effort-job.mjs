@@ -9,6 +9,7 @@ import {inspectPixels, losslessSteps, planeFill, nativeSteps, iccShape} from './
 import {lossySteps} from './lossy.mjs';
 import {photoSteps, admitPhotoFilter, screenImageSteps, screenRouted} from './photo-job.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
+import {preferXYB} from './photo-xyb.mjs';
 import {WEIGHTED_PREDICTOR, WEIGHTED_PROPERTY, WEIGHTED_CUTS, codeWeighted} from './weighted.mjs';
 import {fault, admitOptions, admitPixels} from './admit.mjs';
 import {admitSampleFormat} from './admit-samples.mjs';
@@ -18,7 +19,7 @@ import {screenPhotoRegions} from './screen-photo-regions.mjs';
 import {SAMPLE_RUNGS, sampledSteps, sampleTransformRanking} from './sampled.mjs';
 import {FAST_EFFORT} from './effort-level.mjs';
 
-export function effortJob(data, width, height, options, gpu = false, limits, search, writer = coefficientAnsSteps, deep = null) {
+export function effortJob(data, width, height, options, gpu = false, limits, search, writer = coefficientAnsSteps, deep = null, hdr = null) {
   const {quality, colorSpace} = admitOptions(options), effort = options?.effort === undefined ? FAST_EFFORT : options.effort;
   const filter = admitPhotoFilter(options);
   if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fault('JXL_INPUT', 'Effort is a whole number from 1 to 9.');
@@ -28,7 +29,8 @@ export function effortJob(data, width, height, options, gpu = false, limits, sea
   const samples = admitSampleFormat(data, options);
   if (samples.iccSpace)
     return iccShape(data, samples.iccSpace, effortSteps(data, width, height, quality, samples.iccSpace, effort, options?.photo !== false, filter, false, search, writer, deep));
-  if (!samples.native8) return nativeSteps(data, width, height, {quality, samples, effort});
+  if (!samples.native8) return hdr?.route(data, samples, quality) ? hdr.steps(data, width, height, quality, effort, samples, () => nativeSteps(data, width, height, {quality, samples, effort}))
+    : nativeSteps(data, width, height, {quality, samples, effort});
   return effortSteps(data, width, height, quality, colorSpace, effort, options?.photo !== false, filter, gpu, search, writer, deep);
 }
 
@@ -55,13 +57,19 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, photo = 
       return yield* capturedFloor(data, width, height, colorSpace, yield* lossy, true);
     }
     const palette = (function* () {
-      const captured = effort >= 2 && typeof colorSpace !== 'object' && screenLike(data, width, height)
-        ? yield {capture: {data, width, height, colorSpace}} : null;
-      const exact = captured instanceof Uint8Array ? captured : yield* part(effortSteps(data, width, height, 100, colorSpace, effort, true, undefined, false, undefined, undefined, deep), 0, 2);
+      const screen = effort >= 2 && typeof colorSpace !== 'object' && screenLike(data, width, height);
+      const captured = screen ? yield {capture: {data, width, height, colorSpace}} : null;
+      const photograph = photo && effort >= 2 && typeof colorSpace !== 'object' && !screen && preferXYB(data, width, height), parts = photograph ? 3 : 2;
+      const exact = captured instanceof Uint8Array ? captured : yield* part(effortSteps(data, width, height, 100, colorSpace, effort, true, undefined, false, undefined, undefined, deep), 0, parts);
       let bytes;
-      try { bytes = yield* part(lossySteps(data, width, height, {quality, shape, colorSpace}), 1, 2); }
+      try { bytes = yield* part(lossySteps(data, width, height, {quality, shape, colorSpace}), 1, parts); }
       catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; bytes = exact; }
-      return exact.length <= bytes.length ? exact : bytes;
+      let best = exact.length <= bytes.length ? exact : bytes;
+      if (photograph) {
+        const file = yield* part(photoSteps(data, width, height, quality, colorSpace, effort, writer, filter, search, gpu), 2, 3);
+        if (file.length < best.length) best = file;
+      }
+      return best;
     })();
     return yield* palette;
   }

@@ -1,6 +1,6 @@
 
-import {DEFAULT_INPUT_BYTES, DEFAULT_PIXELS, record, dimensions, measure, snapshot} from './ownership.mjs';
-import {fail as error, declared, callers, isCaller} from './primitives.mjs';
+import {DEFAULT_INPUT_BYTES, DEFAULT_PIXELS, SNAPSHOTS, withCost, record, dimensions, measure, snapshot} from './ownership.mjs';
+import {fail as error, declared, callers, isCaller, LARGEST} from './primitives.mjs';
 import {createTransport, REPLACED} from './transport.mjs';
 const DEFAULT_JOBS = 32;
 const HELPER_BYTES = 46137344, PIXEL_BYTES = 56;
@@ -72,7 +72,7 @@ export function createCodec(config = {}, spec) {
   const webgpu = config.webgpu;
   const maxPendingBytes = positive(config.maxPendingBytes, DEFAULT_INPUT_BYTES, 'maxPendingBytes');
   const maxPixels = positive(config.maxPixels, DEFAULT_PIXELS, 'maxPixels');
-  if (maxPixels > DEFAULT_PIXELS) throw error('JXL_OPTIONS', 'maxPixels is at most ' + DEFAULT_PIXELS + ', the encoders\' own limit.');
+  if (maxPixels > LARGEST) throw error('JXL_OPTIONS', 'maxPixels is at most ' + LARGEST + ' (16,384 x 16,384).');
   const helpers = helperReservation(config.helpers);
   const owner = helpers ? {} : undefined;
   const besideBytes = helpers ? helpers.memoryBytes - helpers.count * HELPER_BYTES : 0;
@@ -82,7 +82,7 @@ export function createCodec(config = {}, spec) {
   const operations = spec.operations;
   const factory = config.workerFactory || (!spec.inPlace && typeof document !== 'undefined' && typeof Worker === 'function' ? () => browserWorker(spec) : null);
   let closed = false, nextId = 0, retainedBytes = 0, here = null, wide = null, scheduled = false, stopping = null, transport = null, closing = null, runtimeLoaded = false;
-  const queue = [], running = new Map();
+  const queue = [], running = new Map(), held = new Set();
   const runningBytes = () => [...running.values()].reduce((sum, job) => sum + job.bytes, 0);
   function lane(job) {
     if (wide) return -1;
@@ -97,7 +97,7 @@ export function createCodec(config = {}, spec) {
     if (!helpers) return true;
     const {effort = spec.defaultEffort ?? 7, fidelity} = job.operation === 'encode' && job.options || {};
     const exact = fidelity === 'exact' || (fidelity !== null && typeof fidelity === 'object' && fidelity.quality === 100);
-    return job.operation === 'encode' && job.pixels >= 500000 && effort >= 7 && !exact;
+    return job.operation === 'encode' && job.area >= 500000 && effort >= 7 && !exact;
   };
   function schedule() {
     if (scheduled || closed || stopping || !queue.length || lane(queue[0]) < 0) return;
@@ -105,7 +105,7 @@ export function createCodec(config = {}, spec) {
     queueMicrotask(() => { scheduled = false; pump(); });
   }
   function release(job) {
-    if (job.released) return;
+    if (job.released || job.acquiring) return;
     job.released = true;
     retainedBytes -= job.bytes;
     job.input = job.options = null;
@@ -135,6 +135,7 @@ export function createCodec(config = {}, spec) {
     } else {
       const at = queue.indexOf(job);
       if (at !== -1) queue.splice(at, 1);
+      if (job.acquiring) held.add(job);
       release(job);
     }
   }
@@ -169,9 +170,22 @@ export function createCodec(config = {}, spec) {
       if (alone && helpers) wide = job;
       progress(job, 0);
       if (job.settled) { release(job); continue; }
-      job.started = true;
-      start(job);
+      if (!job.acquiring) begin(job);
     }
+  }
+  function begin(job) {
+    if (job.refused) { complete(job, false, job.refused); return; }
+    if (job.taken) { job.input = job.taken; job.taken = null; }
+    job.started = true;
+    start(job);
+  }
+  function acquiring(job, acquire) {
+    job.acquiring = acquire.then(input => { job.taken = input; }, reason => { job.refused = reason ?? error('JXL_INPUT', 'The canvas could not be read.'); })
+      .then(() => {
+        job.acquiring = null; held.delete(job);
+        if (job.settled) { try { job.taken?.close?.(); } catch {} job.taken = null; release(job); }
+        else if (running.get(job.id) === job && !job.started) begin(job);
+      });
   }
   function start(job) {
     if (factory) {
@@ -196,7 +210,7 @@ export function createCodec(config = {}, spec) {
     if (signal !== undefined && (!signal || typeof signal.addEventListener !== 'function' || typeof signal.removeEventListener !== 'function' || typeof signal.aborted !== 'boolean')) throw error('JXL_OPTIONS', 'signal must be an AbortSignal.');
     if (onProgress !== undefined && typeof onProgress !== 'function') throw error('JXL_OPTIONS', 'onProgress must be a function.');
     if (signal?.aborted) throw aborted(signal);
-    if (queue.length + running.size >= maxPendingJobs) throw error('JXL_MEMORY', 'The encoder queue is full (maxPendingJobs).');
+    if (queue.length + running.size + held.size >= maxPendingJobs) throw error('JXL_MEMORY', 'The encoder queue is full (maxPendingJobs).');
     const optionPlans = new Map();
     let optionBytes;
     try { optionBytes = measure(parameters, Number.MAX_SAFE_INTEGER, optionPlans); }
@@ -204,7 +218,7 @@ export function createCodec(config = {}, spec) {
     if (inputBytes + optionBytes > maxPendingBytes - retainedBytes) throw error('JXL_MEMORY', 'Pending input exceeds maxPendingBytes.');
     return {signal, onProgress, parameters, optionBytes, optionPlans};
   }
-  function submit(operation, input, options = {}) {
+  function submit(operation, input, options = {}, acquire = null) {
     try {
       const {signal, onProgress, parameters, optionBytes, optionPlans} = admit(options);
       const inputPlans = new Map(), bytes = measure(input, maxPixels, inputPlans) + optionBytes;
@@ -212,9 +226,11 @@ export function createCodec(config = {}, spec) {
       const ownedInput = snapshot(input, inputPlans), ownedOptions = snapshot(parameters, optionPlans);
       return new Promise((resolve, reject) => {
         const pixels = operation === 'encode' && ArrayBuffer.isView(ownedInput?.data) ? ownedInput.width * ownedInput.height : 0;
-        const job = {id: ++nextId, operation, input: ownedInput, options: ownedOptions, bytes, pixels, signal, onProgress, resolve, reject, settled: false, released: false, progress: -1, controller: new AbortController()};
+        const area = pixels || (operation === 'encode' && SNAPSHOTS.has(input) ? SNAPSHOTS.get(input) / 4 : 0);
+        const job = {id: ++nextId, operation, input: ownedInput, options: ownedOptions, bytes, pixels, area, signal, onProgress, resolve, reject, settled: false, released: false, progress: -1, controller: new AbortController()};
         job.abort = () => cancel(job, aborted(signal));
         retainedBytes += bytes;
+        if (acquire) acquiring(job, acquire);
         queue.push(job);
         try {
           signal?.addEventListener('abort', job.abort, {once: true});
@@ -225,6 +241,7 @@ export function createCodec(config = {}, spec) {
     } catch (reason) { return Promise.reject(declared(reason)); }
   }
   const encoder = Object.fromEntries(operations.map(operation => [operation, (input, options) => submit(operation, input, options)]));
+  encoder.acquired = (operation, acquire, cost, options) => submit(operation, withCost({}, cost), options, acquire);
   encoder.admitSurface = (shape, options) => {
     let inputBytes = 0;
     if (shape) {
@@ -235,7 +252,8 @@ export function createCodec(config = {}, spec) {
     }
     admit(options, inputBytes);
   };
-  Object.defineProperty(encoder, 'stats', {enumerable: true, get: () => Object.freeze({queuedJobs: queue.length, queuedBytes: retainedBytes - runningBytes(), activeJobs: running.size, activeBytes: runningBytes(), closed})});
+  encoder.remote = !!factory;
+  Object.defineProperty(encoder, 'stats', {enumerable: true, get: () => Object.freeze({queuedJobs: queue.length + held.size, queuedBytes: retainedBytes - runningBytes(), activeJobs: running.size, activeBytes: runningBytes(), closed})});
   encoder.prepare = operation => {
     const shut = () => error('JXL_CLOSED', 'The JPEG XL encoder is closed.');
     const refuse = reason => { throw closed ? shut() : declared(coded(reason)); };
@@ -257,10 +275,11 @@ export function createCodec(config = {}, spec) {
     if (closing) return closing;
     closed = true;
     const reason = error('JXL_CLOSED', 'The JPEG XL encoder is closed.');
+    const taking = [...queue, ...running.values(), ...held].map(job => job.acquiring).filter(Boolean);
     for (const job of [...queue]) cancel(job, reason, false);
     for (const job of [...running.values()]) cancel(job, reason, false);
     transport?.stop();
-    return closing = Promise.allSettled([stopping, transport?.ended, releaseHelpers(true)]).then(outcomes => {
+    return closing = Promise.allSettled([stopping, transport?.ended, releaseHelpers(true), ...taking]).then(outcomes => {
       const failed = outcomes.find(outcome => outcome.status === 'rejected');
       if (failed) throw Object.assign(error('JXL_WORKER', 'The JPEG XL worker or a helper could not be ended.'), {cause: failed.reason});
     });

@@ -88,7 +88,7 @@ export function coefficientPlanes(image) {
     const L = Math.max(bw, bh), S = Math.min(bw, bh), divisor = 8 * QS * f;
     for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) cells[(by + y) * stride + bx + x] = bx | by << 12 | (bw - 1) << 24 | (bh - 1) << 28;
     let lumaNzLen = 0;
-    const lumaNz = RC_LUMA_NZ;
+    const lumaNz = rc().lumaNz;
     for (let o = 0; o < 3; o++) {
       const c = channels[o], q = block.coeffs[c], s = steps[c], r1 = one[c];
       tr.fill(0, 0, size);
@@ -132,12 +132,13 @@ export function coefficientPlanes(image) {
 
 const RC_BASES = [];
 const rcBasis = n => RC_BASES[n] || (RC_BASES[n] = inverseBasis(n));
-const RC_ACC = new Float64Array(256), RC_ROW_TMP = new Float32Array(256 * 256), RC_ACTIVE_V = new Uint8Array(256);
-const RC_SMALL_PX = new Float64Array(64), RC_SMALL_DCT = new Float64Array(64);
-const RC_TR = new Float64Array(256 * 256), RC_LUMA_AC = new Float64Array(256 * 256), RC_LUMA_NZ = new Uint16Array(256 * 256), RC_MEANS_SCRATCH = new Map();
+let rcScratch;
+const rc = () => rcScratch ||= {acc: new Float64Array(256), rowTmp: new Float32Array(256 * 256), activeV: new Uint8Array(256), smallPx: new Float64Array(64),
+  smallDct: new Float64Array(64), tr: new Float64Array(256 * 256), lumaAC: new Float64Array(256 * 256), lumaNz: new Uint16Array(256 * 256)};
+const RC_MEANS_SCRATCH = new Map();
 
 function rcBlockIdct(tr, w, h, tall, Bw, Bh, out, x0, y0, W) {
-  const f32 = Math.fround, acc = RC_ACC, rowTmp = RC_ROW_TMP, activeV = RC_ACTIVE_V;
+  const f32 = Math.fround, {acc, rowTmp, activeV} = rc();
   let numActive = 0;
   for (let v = 0; v < h; v++) {
     const vw = v * w;
@@ -184,7 +185,7 @@ function rcXybPlanes(image) {
   const cfl = image.cfl, base = image.quantFieldBase || 1, fields = image.quantFields;
   const dcStep = comps.map(c => half(c.quant[0] / (255 * 8 * QS) * 128) / 128 * 255 * 8);
   const strategy = image.strategyData, f32 = Math.fround;
-  const acc = RC_ACC, rowTmp = RC_ROW_TMP, activeV = RC_ACTIVE_V;
+  const {acc, rowTmp, activeV} = rc();
 
   if (!strategy) {
     const B8 = rcBasis(8), y = new Float64Array(64), coef = new Float64Array(64), order = [1, 0, 2];
@@ -237,7 +238,7 @@ function rcXybPlanes(image) {
     return {W, H, planes: outPlanes};
   }
 
-  const tr = RC_TR, lumaAC = RC_LUMA_AC, channels = [1, 0, 2], one = [RC_ONE[0], RC_ONE[1], RC_ONE[2]];
+  const {tr, lumaAC, smallPx, smallDct} = rc(), channels = [1, 0, 2], one = [RC_ONE[0], RC_ONE[1], RC_ONE[2]];
   const tableSteps = new Map(), meansScratch = RC_MEANS_SCRATCH;
   for (const block of strategy.blocks) {
     const {id, bx, by, bw, bh, area, size, order} = block, t = TRANSFORMS[id], w = t.width, h = t.height;
@@ -259,7 +260,7 @@ function rcXybPlanes(image) {
       if (bw === 1 && bh === 1) {
         const pos = by * stride + bx;
         tr[0] = ((comps[c].dc[pos] * dcStep[c] + (c === 2 ? comps[1].dc[pos] * dcStep[1] : 0)) / 8 + 0) / RC_LLF_ONE;
-        if (id !== 0) { rcBlockIdct(scaledDCT(inverseSmallTransform(tr, id, RC_SMALL_PX), 8, 8, RC_SMALL_DCT), 8, 8, true, Bw, Bh, outPlanes[c], x0, y0, W); continue; }
+        if (id !== 0) { rcBlockIdct(scaledDCT(inverseSmallTransform(tr, id, smallPx), 8, 8, smallDct), 8, 8, true, Bw, Bh, outPlanes[c], x0, y0, W); continue; }
       } else {
         let means = meansScratch.get(area);
         if (!means) meansScratch.set(area, means = new Float64Array(area));

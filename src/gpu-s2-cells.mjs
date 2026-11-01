@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 import {SSIMULACRA2_WEIGHTS} from './ssimulacra2.mjs';
 import {S2C_LIN, S2C_MIX, S2C_TAPS, s2cScales} from './s2-cells.mjs';
-import {IS_CBRT_LO, IS_CBRT_HI, IS_BIAS, BLACK} from './int-spec.mjs';
+import {cbrtTables, IS_BIAS, BLACK} from './int-spec.mjs';
 import {INT_WGSL} from './int-ops.mjs';
 
-const GSC_BAND = 128, GSC_HALO = 4, GSC_WG = 64, GSC_HI = 256 + IS_CBRT_LO.length;
+const GSC_BAND = 128, GSC_HALO = 4, GSC_WG = 64, GSC_HI = 256 + (1 << 16);
 
 const GSC_DIV =  `
 fn udiv64by32(a: vec2u, b: u32) -> u32 {
@@ -160,8 +160,8 @@ export async function gpuS2Cells(device, {reference, decoded, width, height}) {
   let remaining = 2;
   try {
     const pipelines = gscPipelines(device);
-    const table = new Int32Array(GSC_HI + IS_CBRT_HI.length);
-    table.set(S2C_LIN); table.set(IS_CBRT_LO, 256); table.set(IS_CBRT_HI, GSC_HI);
+    const {lo, hi} = cbrtTables(), table = new Int32Array(GSC_HI + hi.length);
+    table.set(S2C_LIN); table.set(lo, 256); table.set(hi, GSC_HI);
     const T = buffer(table.byteLength); device.queue.writeBuffer(T, 0, table);
     const upload = rgba => { const b = buffer(width * height * 4); device.queue.writeBuffer(b, 0, rgba.buffer, rgba.byteOffset, width * height * 4); return b; };
     let A = upload(reference), B = upload(decoded), mode = 1;

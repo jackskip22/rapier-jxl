@@ -258,6 +258,9 @@ export function clusterTokenCounts(counts, {maxClusters = 48, newClusterCost = 3
     for (let v = 0; v < 64; v++) if (aggregate.small[v]) { values.push(v); weights.push(aggregate.small[v]); }
     let top = values.length ? values[values.length - 1] : 0;
     if (aggregate.large[0]) for (const [v, n] of aggregate.large[0]) { values.push(v); weights.push(n); if (v > top) top = v; }
+    const ansList = seedCap === 128 ? PHOTO_ANS_CONFIGS : ANS_CONFIGS;
+    const priced0 = kernel?.priceConfigs && modelCost?.kernelTables && !everyConfig && top < (1 << 17) ? kernel.priceConfigs(values, weights, ansList, modelCost.kernelTables) : null;
+    if (priced0) return {config: ansList[priced0.index], freqs: priced0.tokens, extra: priced0.raw};
     const length = values.length, exponents = new Int32Array(length), mantissas = new Int32Array(length);
     for (let i = 0; i < length; i++) { const v = values[i]; if (v) { exponents[i] = floorLog2(v); mantissas[i] = v - (1 << exponents[i]); } }
     const split = (candidate, tokens) => {
@@ -276,10 +279,7 @@ export function clusterTokenCounts(counts, {maxClusters = 48, newClusterCost = 3
       }
       return [raw, last];
     };
-    const ansList = seedCap === 128 ? PHOTO_ANS_CONFIGS : ANS_CONFIGS;
-    const priced0 = kernel?.priceConfigs && modelCost?.kernelTables && !everyConfig && top < (1 << 17) ? kernel.priceConfigs(values, weights, ansList, modelCost.kernelTables) : null;
-    if (priced0) { config = ansList[priced0.index]; bestCost = priced0.cost; freqs = priced0.tokens; extra = priced0.raw; }
-    else for (const candidate of modelCost ? ansList : CONFIGS) {
+    for (const candidate of modelCost ? ansList : CONFIGS) {
       const widest = top >= candidate.splitToken ? candidate.splitToken + (((floorLog2(top) - candidate.split) << (candidate.msb + candidate.lsb)) | ((1 << (candidate.msb + candidate.lsb)) - 1)) + 1 : 0;
       const tokens = new Uint32Array(Math.max(128, widest)), [raw] = split(candidate, tokens);
       const cost = raw + (modelCost ? modelCost(tokens, candidate) : entropyBits(tokens) + candidate.split * 18 + (candidate.msb + candidate.lsb) * 28);

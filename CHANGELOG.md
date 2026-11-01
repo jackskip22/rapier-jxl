@@ -1,5 +1,16 @@
 # Changelog
 
+## 8.1.0 (2026-11-01)
+
+- Faster effort 1 for screenshots and previews, and faster low-colour bounded captures.
+- Large-photo uploads are about 3× faster with 3 helpers.
+- Effort 7 files are 3% smaller at the same quality, at the same speed.
+- `npx rapier-jxl` converts pictures and folders from the command line.
+- `rapier-jxl/serve` sends one stored file as JPEG XL or the original JPEG, by what the browser accepts.
+- Decode reads a picture's `region` or shows a file cut short at 1:8 with `{partial: true}`.
+- Banded pictures decode in about half the memory.
+- Encode reads HDR canvases, playing video, texture array layers, and depth textures.
+
 ## 8.0.1 (2026-10-31)
 
 - Efforts 8 and 9 now run at every size, not only up to 1 MP: files 2.6–5.7% smaller than effort 7 at the same quality.
@@ -22,7 +33,6 @@
 
 ## 7.1.0 (2026-10-28)
 
-- Added `rapier-jxl/snapdom`, a SnapDOM 3 plugin that adds `result.toJxl()`.
 - Lossless screenshots are 4–8% smaller.
 - Faster encoding at efforts 3 and 7, and a faster first upload with `helpers`.
 - Faster decoding and encoding of images with color profiles, including Display P3.

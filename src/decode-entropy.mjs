@@ -38,8 +38,8 @@ function prefixToken(r, code) {
 }
 export {prefixToken as readPrefixSymbol};
 
-const LENGTH_CODE = prefixTable([2, 4, 3, 2, 2, 4], [0, 7, 3, 2, 1, 15]);
-const ANS_LOG_CODE = prefixTable([...LOG_LENGTHS, 7], [...LOG_CODES, 65]);
+const LENGTH_CODE = /* @__PURE__ */ prefixTable([2, 4, 3, 2, 2, 4], [0, 7, 3, 2, 1, 15]);
+const ANS_LOG_CODE = /* @__PURE__ */ prefixTable([...LOG_LENGTHS, 7], [...LOG_CODES, 65]);
 
 export function readPrefixCode(r, size) {
   requireDecode(Number.isInteger(size) && size >= 1 && size <= 32768, 'Invalid JPEG XL alphabet.', r);
@@ -330,7 +330,7 @@ class EntropyStream {
   }
 }
 
-const BLOCK_BYTES = 128, BYTE_WINDOW = 0x0fffffff, SPECIAL = Int8Array.from(SCREEN_SPECIAL_DISTANCES);
+const BLOCK_BYTES = 128, BYTE_WINDOW = 0x0fffffff, SPECIAL = /* @__PURE__ */ Int8Array.from(SCREEN_SPECIAL_DISTANCES);
 export function modelSizes(m) {
   const clusters = m.codes.length;
   return [m.map.length, clusters * 16, m.prefix ? clusters * 16 : clusters * 12816, m.prefix ? m.codes.reduce((n, c) => n + (c.table ? c.table.byteLength : 0), 0) : 0, SPECIAL.length];

@@ -6,7 +6,7 @@ export const SCREEN_INTEGER_CONFIGS = [
   uintConfig(4, 0, 1), uintConfig(4, 0, 2), uintConfig(4, 0, 3), uintConfig(4, 0, 4),
   uintConfig(4, 1, 3), uintConfig(4, 1, 1), uintConfig(4, 2, 2), uintConfig(3, 0, 1)
 ];
-export const SCREEN_SPECIAL_DISTANCES = Int8Array.of(
+export const SCREEN_SPECIAL_DISTANCES = /* @__PURE__ */ Int8Array.of(
   0, 1, 1, 0, 1, 1, -1, 1, 0, 2, 2, 0, 1, 2, -1, 2,
   2, 1, -2, 1, 2, 2, -2, 2, 0, 3, 3, 0, 1, 3, -1, 3,
   3, 1, -3, 1, 2, 3, -2, 3, 3, 2, -3, 2, 0, 4, 4, 0,

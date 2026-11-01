@@ -7,7 +7,8 @@ function blob(value) { return typeof Blob === 'function' && value instanceof Blo
 function transfers(value, buffers = new Set(), seen = new Set()) {
   if (!value || typeof value !== 'object' || seen.has(value) || blob(value)) return buffers;
   seen.add(value);
-  if (value instanceof ArrayBuffer) buffers.add(value);
+  if (value instanceof ArrayBuffer || typeof ImageBitmap === 'function' && value instanceof ImageBitmap ||
+      typeof VideoFrame === 'function' && value instanceof VideoFrame || typeof MessagePort === 'function' && value instanceof MessagePort) buffers.add(value);
   else if (ArrayBuffer.isView(value)) buffers.add(value.buffer);
   else for (const item of Object.values(value)) transfers(item, buffers, seen);
   return buffers;
@@ -57,7 +58,7 @@ export function createTransport(host) {
     schedule();
   }
   function send(current, job) {
-    if (!current.ready || job.sent || job.settled || thread !== current || running.get(job.id) !== job) return;
+    if (!current.ready || !job.started || job.sent || job.settled || thread !== current || running.get(job.id) !== job) return;
     try {
       current.worker.postMessage({id: job.id, operation: job.operation, input: job.input, options: job.options, maxPixels, helpers, webgpu, lane: job.lane, alone: job.alone}, [...transfers([job.input, job.options])]);
       job.sent = true;

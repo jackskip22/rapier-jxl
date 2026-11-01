@@ -38,7 +38,7 @@ export class JxlBits {
   end() { this.align(); requireJPEG(this.bit === this.bytes.length * 8); }
 }
 const signed = n => n & 1 ? -(n + 1) / 2 : n / 2;
-const DENSITY = Int32Array.from({length: 64 * 64}, (_, i) => zeroDensityContext(i >> 6, i & 63, 0));
+const DENSITY = /* @__PURE__ */ Int32Array.from({length: 64 * 64}, (_, i) => zeroDensityContext(i >> 6, i & 63, 0));
 const var8 = r => r.read(1) ? (n => (1 << n) + r.read(n))(r.read(3)) : 0;
 const PRIMARY = 10, LONG = 0x40000000;
 function prefixDecoder(lengths, explicit) {
@@ -299,7 +299,7 @@ export function readEncodedICC(r) {
   code.finish(); return bytes;
 }
 export function skipICC(r) { readEncodedICC(r); }
-const WP_DIVISORS = Int32Array.from({length: 64}, (_, i) => Math.floor(16777216 / (i + 1)));
+const WP_DIVISORS = /* @__PURE__ */ Int32Array.from({length: 64}, (_, i) => Math.floor(16777216 / (i + 1)));
 const wpWeight = (sum, most) => { const shift = Math.max(0, 26 - Math.clz32(sum + 1)); return 4 + ((most * WP_DIVISORS[sum >> shift]) >> shift); };
 function weightedReader(width) {
   const stride = width + 2, e0 = new Int32Array(2 * stride), e1 = new Int32Array(2 * stride), e2 = new Int32Array(2 * stride), e3 = new Int32Array(2 * stride), error = new Int32Array(2 * stride);
@@ -440,7 +440,7 @@ export function modular(r, shapes, shared, stream, work) {
   code.finish(); return planes;
 }
 
-export function readJPEGCoefficients(bytes, {reconstruction = false, maxPixels = JPEG_LIMITS.pixels} = {}) {
+export function readJPEGCoefficients(bytes, {reconstruction = false, maxPixels = JPEG_LIMITS.pixels, rows = false} = {}) {
   requireJPEG(bytes instanceof Uint8Array && bytes.length > 0);
   const r = new JxlBits(bytes), size = [[9, 1], [13, 1], [18, 1], [30, 1]];
   r.expect(16, 0x0aff);
@@ -476,7 +476,7 @@ export function readJPEGCoefficients(bytes, {reconstruction = false, maxPixels =
   requireJPEG(at === bytes.length);
   const section = i => sections[groups === 1 ? 0 : i], end = reader => { if (groups !== 1) reader.end(); };
   const tilesW = (blocksW + 7) >> 3, tilesH = (blocksH + 7) >> 3, toX = new Int32Array(tilesW * tilesH), toB = new Int32Array(tilesW * tilesH);
-  const planes = [0, 1, 2].map(c => ({h: 1 << hs[c], v: 1 << vs[c], stride: blocksW >> hshift[c], rows: blocksH >> vshift[c], dc: new Int32Array((blocksW >> hshift[c]) * (blocksH >> vshift[c])), coeffs: new Int16Array((blocksW >> hshift[c]) * (blocksH >> vshift[c]) * 64)}));
+  const planes = [0, 1, 2].map(c => ({h: 1 << hs[c], v: 1 << vs[c], stride: blocksW >> hshift[c], rows: blocksH >> vshift[c], dc: new Int32Array((blocksW >> hshift[c]) * (blocksH >> vshift[c])), coeffs: rows ? null : new Int16Array((blocksW >> hshift[c]) * (blocksH >> vshift[c]) * 64)}));
   const dc = section(0); dc.expect(1, 0); dc.read(16); dc.read(16); dc.read(16);
   dc.u32([[11, 1], [11, 2049], [12, 4097], [16, 8193]]);
   dc.u32([[0, 16], [5, 1], [8, 1], [16, 1]]);
@@ -544,69 +544,96 @@ export function readJPEGCoefficients(bytes, {reconstruction = false, maxPixels =
     }
     code.finish();
   }
-  const code = entropy(ac, contexts * 495, {values: planes.reduce((n, plane) => n + plane.coeffs.length, 0)}); end(ac);
+  const code = entropy(ac, contexts * 495, {values: planes.reduce((n, plane) => n + plane.stride * plane.rows * 64, 0)}); end(ac);
   const zigzag = orders.map(order => Int32Array.from(order)), zeroBase = contexts * 37;
   const qfRow = (qfThresholds.length + 1) * numDc * 13, flat = dcThresholds.every(list => !list.length);
   const bucketOf = (value, list) => { let n = 0; for (const t of list) n += value > t; return n; };
   const sample = (c, x, y) => { const p = planes[c]; return p.dc[(y >> vshift[c]) * p.stride + (x >> hshift[c])]; };
   const nonzero = [0, 1, 2].map(() => new Uint8Array(1024)), read = code.read;
-  for (let g = 0; g < groups; g++) {
-    const reader = section(2 + dcs + g);
-    if (groups !== 1) { ac.bytes = reader.bytes; ac.bit = 0; }
-    const x0 = g % groupsX * 32, y0 = Math.floor(g / groupsX) * 32, bw = Math.min(32, blocksW - x0), bh = Math.min(32, blocksH - y0);
-    for (const row of nonzero) row.fill(0);
-    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) for (let i = 0; i < 3; i++) {
-      const c = i === 0 ? 1 : i === 1 ? 0 : 2;
-      const sx = x >> hshift[c], sy = y >> vshift[c]; if ((sx << hshift[c]) !== x || (sy << vshift[c]) !== y) continue;
-      const p = planes[c], coeffs = p.coeffs, order = zigzag[c], base = (((y0 >> vshift[c]) + sy) * p.stride + (x0 >> hshift[c]) + sx) * 64, row = nonzero[c];
-      const predicted = sx ? sy ? (row[(sy - 1) * 32 + sx] + row[sy * 32 + sx - 1] + 1) >> 1 : row[sx - 1] : sy ? row[(sy - 1) * 32] : 32;
-      let dcIdx = 0;
-      if (!flat) {
-        const bucketX = bucketOf(sample(0, x0 + x, y0 + y), dcThresholds[0]);
-        const bucketY = bucketOf(sample(1, x0 + x, y0 + y), dcThresholds[1]);
-        const bucketB = bucketOf(sample(2, x0 + x, y0 + y), dcThresholds[2]);
-        dcIdx = (bucketX * (dcThresholds[2].length + 1) + bucketB) * (dcThresholds[1].length + 1) + bucketY;
+  let target = planes.map(p => p.coeffs), row0 = [0, 0, 0];
+  const groupRow = gy => {
+    for (let g = gy * groupsX; g < Math.min(groups, (gy + 1) * groupsX); g++) {
+      const reader = section(2 + dcs + g);
+      if (groups !== 1) { ac.bytes = reader.bytes; ac.bit = 0; }
+      const x0 = g % groupsX * 32, y0 = Math.floor(g / groupsX) * 32, bw = Math.min(32, blocksW - x0), bh = Math.min(32, blocksH - y0);
+      for (const row of nonzero) row.fill(0);
+      for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) for (let i = 0; i < 3; i++) {
+        const c = i === 0 ? 1 : i === 1 ? 0 : 2;
+        const sx = x >> hshift[c], sy = y >> vshift[c]; if ((sx << hshift[c]) !== x || (sy << vshift[c]) !== y) continue;
+        const p = planes[c], coeffs = target[c], order = zigzag[c], base = (((y0 >> vshift[c]) + sy - row0[c]) * p.stride + (x0 >> hshift[c]) + sx) * 64, row = nonzero[c];
+        const predicted = sx ? sy ? (row[(sy - 1) * 32 + sx] + row[sy * 32 + sx - 1] + 1) >> 1 : row[sx - 1] : sy ? row[(sy - 1) * 32] : 32;
+        let dcIdx = 0;
+        if (!flat) {
+          const bucketX = bucketOf(sample(0, x0 + x, y0 + y), dcThresholds[0]);
+          const bucketY = bucketOf(sample(1, x0 + x, y0 + y), dcThresholds[1]);
+          const bucketB = bucketOf(sample(2, x0 + x, y0 + y), dcThresholds[2]);
+          dcIdx = (bucketX * (dcThresholds[2].length + 1) + bucketB) * (dcThresholds[1].length + 1) + bucketY;
+        }
+        const ctx = map[(c < 2 ? c ^ 1 : 2) * qfRow + dcIdx];
+        let left = read((predicted < 8 ? predicted : 4 + (predicted >> 1)) * contexts + ctx); requireJPEG(left <= 63);
+        row[sy * 32 + sx] = left; let previous = left > 4 ? 0 : 1;
+        const histograms = zeroBase + ctx * 458;
+        for (let k = 1; k < 64 && left; k++) {
+          const token = read(histograms + DENSITY[left << 6 | k] + previous), value = token & 1 ? -(token + 1) / 2 : token / 2;
+          requireJPEG(value >= -32768 && value <= 32767); coeffs[base + order[k]] = value;
+          previous = value ? 1 : 0; left -= previous;
+        }
+        requireJPEG(left === 0);
       }
-      const ctx = map[(c < 2 ? c ^ 1 : 2) * qfRow + dcIdx];
-      let left = read((predicted < 8 ? predicted : 4 + (predicted >> 1)) * contexts + ctx); requireJPEG(left <= 63);
-      row[sy * 32 + sx] = left; let previous = left > 4 ? 0 : 1;
-      const histograms = zeroBase + ctx * 458;
-      for (let k = 1; k < 64 && left; k++) {
-        const token = read(histograms + DENSITY[left << 6 | k] + previous), value = token & 1 ? -(token + 1) / 2 : token / 2;
-        requireJPEG(value >= -32768 && value <= 32767); coeffs[base + order[k]] = value;
-        previous = value ? 1 : 0; left -= previous;
-      }
-      requireJPEG(left === 0);
+      code.finish(); ac.end();
     }
-    code.finish(); ac.end();
-  }
-  if (toX.some(Boolean) || toB.some(Boolean)) {
-    requireJPEG(hshift.every(v => !v) && vshift.every(v => !v));
-    const luma = planes[1], ratio = factor => Math.trunc(factor * 2048 / 84);
-    const scaled = [0, 2].map(c => Int32Array.from(planes[c].quant, (q, k) => Math.trunc(2048 * luma.quant[k] / q)));
-    for (let b = 0; b < blocksW * blocksH; b++) {
-      const tile = ((b / blocksW | 0) >> 3) * tilesW + ((b % blocksW) >> 3), factors = [ratio(toX[tile]), ratio(toB[tile])];
-      for (const [i, c] of [0, 2].entries()) {
-        if (!factors[i]) continue;
-        const target = planes[c].coeffs;
-        for (let k = 1; k < 64; k++) {
-          const at = b * 64 + k, y = luma.coeffs[at];
-          if (!y) continue;
-          const scale = (factors[i] * scaled[i][k] + 1024) >> 11, value = target[at] + ((scale * y + 1024) >> 11);
-          requireJPEG(value >= -32768 && value <= 32767); target[at] = value;
+  };
+  const correlated = toX.some(Boolean) || toB.some(Boolean);
+  if (correlated) requireJPEG(hshift.every(v => !v) && vshift.every(v => !v));
+  const luma = planes[1], cflRatio = factor => Math.trunc(factor * 2048 / 84);
+  const scaled = correlated ? [0, 2].map(c => Int32Array.from(planes[c].quant, (q, k) => Math.trunc(2048 * luma.quant[k] / q))) : null;
+  const finish = gy => {
+    if (correlated) {
+      const by0 = gy * 32, by1 = Math.min(blocksH, by0 + 32);
+      for (let b = by0 * blocksW; b < by1 * blocksW; b++) {
+        const tile = ((b / blocksW | 0) >> 3) * tilesW + ((b % blocksW) >> 3), factors = [cflRatio(toX[tile]), cflRatio(toB[tile])], local = (b - row0[1] * blocksW) * 64;
+        for (const [i, c] of [0, 2].entries()) {
+          if (!factors[i]) continue;
+          const own = target[c];
+          for (let k = 1; k < 64; k++) {
+            const y = target[1][local + k];
+            if (!y) continue;
+            const scale = (factors[i] * scaled[i][k] + 1024) >> 11, value = own[local + k] + ((scale * y + 1024) >> 11);
+            requireJPEG(value >= -32768 && value <= 32767); own[local + k] = value;
+          }
         }
       }
     }
+    planes.forEach((p, c) => {
+      let divisor = 1024; while (p.quant[0] % divisor) divisor >>= 1;
+      const lift = reconstruction ? Math.floor(1024 / p.quant[0]) : 1024 / divisor;
+      const scale = reconstruction ? 1 : p.quant[0] / divisor;
+      for (let b = (gy * 32 >> vshift[c]) * p.stride; b < Math.min(p.rows, (gy + 1) * 32 >> vshift[c]) * p.stride; b++) {
+        const dc = ycbcr ? p.dc[b] : (p.dc[b] - lift) / scale;
+        requireJPEG(Number.isInteger(dc) && dc >= -32768 && dc <= 32767); target[c][(b - row0[c] * p.stride) * 64] = dc;
+      }
+    });
+  };
+  const groupRows = Math.ceil(blocksH / 32);
+  const components = grey ? [planes[1]] : ycbcr ? [planes[1], planes[0], planes[2]] : planes;
+  if (rows) {
+    const band = target = planes.map((p, c) => new Int16Array(p.stride * Math.min(p.rows, 32 >> vshift[c]) * 64)), at = components.map(p => planes.indexOf(p));
+    const whole = () => {
+      target = planes.map(p => p.coeffs = new Int16Array(p.stride * p.rows * 64)); row0 = [0, 0, 0];
+      for (let gy = 0; gy < groupRows; gy++) { groupRow(gy); finish(gy); }
+      for (const p of planes) delete p.dc;
+      return {width, height, orientation, ycbcr, icc: profile, components};
+    };
+    return {width, height, orientation, ycbcr, icc: profile, components, whole, *rows() {
+      for (let gy = 0; gy < groupRows; gy++) {
+        for (const b of band) b.fill(0);
+        row0 = vshift.map(v => gy * 32 >> v);
+        groupRow(gy); finish(gy);
+        yield {components: at.map(c => ({coeffs: band[c], row0: row0[c]}))};
+      }
+    }};
   }
-  for (const p of planes) {
-    let divisor = 1024; while (p.quant[0] % divisor) divisor >>= 1;
-    const lift = reconstruction ? Math.floor(1024 / p.quant[0]) : 1024 / divisor;
-    const scale = reconstruction ? 1 : p.quant[0] / divisor;
-    for (let b = 0; b < p.dc.length; b++) {
-      const dc = ycbcr ? p.dc[b] : (p.dc[b] - lift) / scale;
-      requireJPEG(Number.isInteger(dc) && dc >= -32768 && dc <= 32767); p.coeffs[b * 64] = dc;
-    }
-    delete p.dc;
-  }
-  return {width, height, orientation, ycbcr, icc: profile, components: grey ? [planes[1]] : ycbcr ? [planes[1], planes[0], planes[2]] : planes};
+  for (let gy = 0; gy < groupRows; gy++) { groupRow(gy); finish(gy); }
+  for (const p of planes) delete p.dc;
+  return {width, height, orientation, ycbcr, icc: profile, components};
 }

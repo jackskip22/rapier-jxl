@@ -2,6 +2,7 @@
 import {BitWriter} from './bits.mjs';
 import {writeModularFrameHeader, writeTOC, groupLayout} from './frame.mjs';
 import {leaf, channelTree, writeTree, writeChannelHistograms, writeModularHeader, ALPHABET} from './modular.mjs';
+import {captureColumnsUnlike, captureCropEdges, captureLowestInk, captureRowsUnlike} from './capture-kernels.mjs';
 
 const LITTLE = new Uint8Array(Uint32Array.of(1).buffer)[0] === 1;
 export function pixelKeys(rgba) {
@@ -14,25 +15,43 @@ export function pixelKeys(rgba) {
 function runFrom(words, i, end, color) { while (i < end && words[i] === color) i++; return i; }
 function runBack(words, i, stop, color) { while (i >= stop && words[i] === color) i--; return i; }
 
-export function screenCrop(data, width, height) {
-  const background = Uint8Array.of(data[0], data[1], data[2], data[3]);
-  const words = pixelKeys(data), color = words[0], size = width * height, first = runFrom(words, 0, size, color);
-  if (first === size) return null;
-  const last = runBack(words, size - 1, first, color), y = Math.floor(first / width), bottom = Math.floor(last / width) + 1;
+function cropEdges(words, width, height, stride, origin) {
+  const color = words[origin];
+  let first = -1, last = -1;
+  for (let y = 0; y < height && first < 0; y++) {
+    const start = origin + y * stride, found = runFrom(words, start, start + width, color);
+    if (found < start + width) first = y * width + found - start;
+  }
+  if (first < 0) return null;
+  for (let y = height - 1; last < 0; y--) {
+    const start = origin + y * stride, found = runBack(words, start + width - 1, start, color);
+    if (found >= start) last = y * width + found - start;
+  }
+  const bottom = Math.floor(last / width) + 1;
   let x = first % width, right = last % width + 1;
-  for (let row = y; row < bottom && (x || right < width); row++) {
-    const start = row * width, left = runFrom(words, start, start + x, color) - start;
+  for (let row = Math.floor(first / width); row < bottom && (x || right < width); row++) {
+    const start = origin + row * stride, left = runFrom(words, start, start + x, color) - start;
     if (left < x) x = left;
     const end = runBack(words, start + width - 1, start + right, color) - start + 1;
     if (end > right) right = end;
   }
+  return [first, last, x, right];
+}
+
+export function screenCrop(data, width, height, stride = width, origin = 0) {
+  const at = origin * 4, background = Uint8Array.of(data[at], data[at + 1], data[at + 2], data[at + 3]);
+  const words = pixelKeys(data), held = captureCropEdges(words, width, height, stride, origin),
+    edges = held === undefined ? cropEdges(words, width, height, stride, origin) : held;
+  if (!edges) return null;
+  const [first, last] = edges, y = Math.floor(first / width), bottom = Math.floor(last / width) + 1;
+  let [,, x, right] = edges;
   if (!x && !y && right === width && bottom === height) return null;
   const w = right - x, h = bottom - y;
   let cropped = null;
   return {get data() {
     if (!cropped) {
       cropped = new Uint8Array(w * h * 4);
-      for (let row = 0; row < h; row++) { const at = ((row + y) * width + x) * 4; cropped.set(data.subarray(at, at + w * 4), row * w * 4); }
+      for (let row = 0; row < h; row++) { const at = (origin + (row + y) * stride + x) * 4; cropped.set(data.subarray(at, at + w * 4), row * w * 4); }
     }
     return cropped;
   }, width: w, height: h, x, y, background};
@@ -59,30 +78,31 @@ export function writeScreenBackground(writer, width, height, shape, background, 
 
 const MAX_REGIONS = 128;
 
-export function screenRegions(data, width, height, splitSlices = false) {
+export function screenRegions(data, width, height, splitSlices = false, stride = width, origin = 0) {
   if (width < 2 || height < 2) return null;
-  const words = pixelKeys(data), background = words[0], regions = [];
+  const words = pixelKeys(data), row = y => origin + y * stride, background = words[origin], regions = [];
   let solid = true;
   let gutter = false;
   for (let y = 0; y < height && !gutter; y++) {
-    const first = words[y * width]; gutter = first === words[y * width + (width >> 1)] && first === words[y * width + width - 1];
+    const first = words[row(y)]; gutter = first === words[row(y) + (width >> 1)] && first === words[row(y) + width - 1];
   }
   for (let x = 0; x < width && !gutter; x++) {
-    const first = words[x]; gutter = first === words[(height >> 1) * width + x] && first === words[(height - 1) * width + x];
+    const first = words[origin + x]; gutter = first === words[row(height >> 1) + x] && first === words[row(height - 1) + x];
   }
   if (!gutter) return null;
   const band = (y0, y1) => {
-    const edge = words[y0 * width], bandBg = differs(words, y0 * width, y1 * width, width, edge) ? background : edge;
+    const edge = words[row(y0)], bandBg = differs(words, row(y0), row(y1), stride, edge) ? background : edge;
     if (bandBg !== background) solid = false;
+    const inked = captureColumnsUnlike(words, width, height, stride, origin, y0, y1, bandBg);
     let left = -1;
     for (let x = 0; x <= width; x++) {
-      const ink = x < width && differs(words, y0 * width + x, y1 * width + x, width, bandBg);
+      const ink = x < width && (inked ? inked[x] !== 0 : differs(words, row(y0) + x, row(y1) + x, stride, bandBg));
       if (ink && left < 0) left = x;
       else if (!ink && left >= 0) {
         if (splitSlices) {
           let sy0 = -1, gap = 0;
           for (let y = y0; y <= y1; y++) {
-            const rowInk = y < y1 && differs(words, y * width + left, y * width + x, 1, bandBg);
+            const rowInk = y < y1 && differs(words, row(y) + left, row(y) + x, 1, bandBg);
             if (rowInk) { if (sy0 < 0) sy0 = y; gap = 0; }
             else if (sy0 >= 0 && (++gap >= 8 || y === y1)) {
               regions.push({x: left, y: sy0, width: x - left, height: y - gap + 1 - sy0, background: bandBg});
@@ -100,11 +120,12 @@ export function screenRegions(data, width, height, splitSlices = false) {
     return true;
   };
   let top = -1;
+  const unlike = captureRowsUnlike(words, width, height, stride, origin);
   for (let y = 0; y <= height; y++) {
-    const ink = y < height && differs(words, y * width + 1, (y + 1) * width, 1, words[y * width]);
+    const ink = y < height && (unlike ? unlike[y] !== 0 : differs(words, row(y) + 1, row(y) + width, 1, words[row(y)]));
     if (ink && top < 0) top = y;
     else if (!ink) {
-      if (y < height && words[y * width] !== background) solid = false;
+      if (y < height && words[row(y)] !== background) solid = false;
       if (top >= 0) { if (!band(top, y)) return null; top = -1; }
     }
   }
@@ -116,20 +137,46 @@ function differs(words, from, to, step, key) {
   return false;
 }
 
-export function screenColumns(data, width, height) {
-  const words = pixelKeys(data), seen = new Map();
-  for (let i = 0; i < words.length; i += 97) seen.set(words[i], (seen.get(words[i]) || 0) + 1);
-  let background = 0, votes = 0;
-  for (const [colour, n] of seen) if (n > votes) { votes = n; background = colour; }
-  const lowest = new Int32Array(width).fill(-1), open = new Int32Array(width);
-  let count = width;
-  for (let x = 0; x < width; x++) open[x] = x;
-  for (let y = height - 1; y >= 0 && count; y--) count = inkRow(words, y * width, y, open, count, lowest, background);
+export function commonSample(words, step, width = words.length, height = 1, stride = width, origin = 0) {
+  const total = width * height;
+  let size = 1024, slots = new Int32Array(size), keys = new Uint32Array(256), counts = new Uint32Array(256), distinct = 0;
+  const place = key => {
+    let slot = Math.imul(key, 0x9e3779b1) >>> (Math.clz32(size) + 1);
+    while (slots[slot] && keys[slots[slot] - 1] !== key) slot = (slot + 1) & (size - 1);
+    return slot;
+  };
+  for (let i = 0, x = 0, at = origin; i < total; i += step) {
+    const key = words[at], slot = place(key);
+    if (slots[slot]) counts[slots[slot] - 1]++;
+    else {
+      if (distinct === keys.length) { const k = new Uint32Array(2 * distinct), n = new Uint32Array(2 * distinct); k.set(keys); n.set(counts); keys = k; counts = n; }
+      keys[distinct] = key; counts[distinct] = 1; slots[slot] = ++distinct;
+      if (2 * distinct > size) {
+        size *= 2; slots = new Int32Array(size);
+        for (let d = 0; d < distinct; d++) slots[place(keys[d])] = d + 1;
+      }
+    }
+    x += step; at += step;
+    while (x >= width) { x -= width; at += stride - width; }
+  }
+  let best = 0, votes = 0;
+  for (let d = 0; d < distinct; d++) if (counts[d] > votes) { votes = counts[d]; best = keys[d]; }
+  return best;
+}
+
+export function screenColumns(data, width, height, stride = width, origin = 0, crop = null) {
+  const words = pixelKeys(data), background = commonSample(words, 97, width, height, stride, origin), row = y => origin + y * stride;
+  let lowest;
+  if (crop && pixelKeys(crop.background)[0] === background) {
+    const inside = captureLowestInk(words, crop.width, crop.height, background, stride, origin + crop.y * stride + crop.x);
+    lowest = new Int32Array(width).fill(-1);
+    for (let x = 0; x < crop.width; x++) if (inside[x] >= 0) lowest[crop.x + x] = inside[x] + crop.y;
+  } else lowest = captureLowestInk(words, width, height, background, stride, origin);
   const tops = [...new Set(lowest)].map(y => y + 1).sort((a, b) => a - b);
   for (const top of tops) {
     if (top * 5 > height) return null;
     const runs = [];
-    for (let x = 0; x < width; x++) if (lowest[x] >= top && ((runs.length && x === runs.at(-1).end) || lowest[x + 1] >= top || differs(words, (top + 1) * width + x, (lowest[x] + 1) * width + x, width, words[top * width + x]))) {
+    for (let x = 0; x < width; x++) if (lowest[x] >= top && ((runs.length && x === runs.at(-1).end) || lowest[x + 1] >= top || differs(words, row(top + 1) + x, row(lowest[x] + 1) + x, stride, words[row(top) + x]))) {
       if (runs.length && x - runs.at(-1).end < 32) runs.at(-1).end = x + 1;
       else runs.push({start: x, end: x + 1});
     }
@@ -138,15 +185,9 @@ export function screenColumns(data, width, height) {
     return {background, regions: runs.map(({start, end}) => {
       let first = top, last = top;
       for (let x = start; x < end; x++) if (lowest[x] > last) last = lowest[x];
-      while (first < last && !differs(words, first * width + start, first * width + end, 1, background)) first++;
+      while (first < last && !differs(words, row(first) + start, row(first) + end, 1, background)) first++;
       return {x: start, y: first, width: end - start, height: last - first + 1};
     })};
   }
   return null;
-}
-
-function inkRow(words, row, y, open, count, lowest, background) {
-  let kept = 0;
-  for (let i = 0; i < count; i++) { const x = open[i]; if (words[row + x] !== background) lowest[x] = y; else open[kept++] = x; }
-  return kept;
 }

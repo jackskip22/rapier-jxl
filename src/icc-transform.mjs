@@ -58,10 +58,10 @@ function times(x, y) {
   for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) out[r * 3 + c] = x[r * 3] * y[c] + x[r * 3 + 1] * y[3 + c] + x[r * 3 + 2] * y[6 + c];
   return out;
 }
-const SRGB_FROM_D50 = inverse(SRGB_D50);
+const SRGB_FROM_D50 = /* @__PURE__ */ inverse(SRGB_D50);
 
 const LCMS_SRGB_D50 = [0.436041251616, 0.385112910798, 0.143045837586, 0.222484540229, 0.716905078608, 0.060610381162, 0.013920187471, 0.097067238697, 0.713912573832];
-const LCMS_SRGB_FROM_D50 = inverse(LCMS_SRGB_D50);
+const LCMS_SRGB_FROM_D50 = /* @__PURE__ */ inverse(LCMS_SRGB_D50);
 
 function readMatrixShaper(icc) {
   try {
@@ -121,8 +121,8 @@ export function linearFromTransform(rgba, pixels, {tables, lms}) {
 }
 const SRGB_D65 = [0.4124564, 0.3575761, 0.1804375, 0.2126729, 0.7151522, 0.072175, 0.0193339, 0.119192, 0.9503041];
 const P3_D65 = [0.4865709, 0.2656677, 0.1982173, 0.2289746, 0.6917385, 0.0792869, 0, 0.0451134, 1.0439444];
-const SRGB_CURVE = Float64Array.from({length: 256}, (_, i) => { const v = i / 255; return v <= 0.04045 ? v / 12.92 : power((v + 0.055) / 1.055, 2.4); });
-export const P3_TRANSFORM = {gray: false, tables: [SRGB_CURVE, SRGB_CURVE, SRGB_CURVE], lms: Float64Array.from(times(OPSIN, times(inverse(SRGB_D65), P3_D65)))};
+const SRGB_CURVE = /* @__PURE__ */ Float64Array.from({length: 256}, (_, i) => { const v = i / 255; return v <= 0.04045 ? v / 12.92 : power((v + 0.055) / 1.055, 2.4); });
+export const P3_TRANSFORM = /* @__PURE__ */ (() => ({gray: false, tables: [SRGB_CURVE, SRGB_CURVE, SRGB_CURVE], lms: Float64Array.from(times(OPSIN, times(inverse(SRGB_D65), P3_D65)))}))();
 
 export function spaceTransform(space) {
   if (space.transform === undefined) space.transform = profileTransform(space.icc);

@@ -2,6 +2,7 @@
 import {BitWriter} from './bits.mjs';
 import {sampledPlanes, SAMPLE_RUNGS} from './sampled.mjs';
 import {kernelHooks} from './kernel-hooks.mjs';
+import {losslessCoding} from './lossless-coding.mjs';
 
 const BROAD = {...SAMPLE_RUNGS.broad, references: true, referenceKinds: [0, 1, 2, 3]};
 export const RUNGS = {broad: BROAD, jpegBroad: {...BROAD, clustered: true}, fast: {...BROAD, samples: 16384, bins: 64},
@@ -17,7 +18,7 @@ const LEARNED = [], LEARNED_KEEP = 32;
 const sameSamples = (a, b) => { if (a.length !== b.length) return false; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; };
 const sameStream = (a, b) => a.at === b.at && a.pending === b.pending && a.acc === b.acc && sameSamples(a.bytes.subarray(0, a.at), b.bytes.subarray(0, b.at));
 
-function learned(w, planes, options, plain, together, kernels) {
+const learned = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function learned(w, planes, options, plain, together, kernels) {
   const data = planes.map(p => fits16(p.data));
   const fallback = new BitWriter(256);
   plain(fallback);
@@ -34,7 +35,7 @@ function learned(w, planes, options, plain, together, kernels) {
   LEARNED.unshift({options, together, shapes: planes.map(p => [p.w, p.h]), data: data.map(d => d.slice()), fallback, chosen});
   if (LEARNED.length > LEARNED_KEEP) LEARNED.pop();
   w.append(chosen);
-}
+};
 
 const coders = new Map();
 export function lfCoder(rung = 'fast') {
@@ -61,7 +62,7 @@ export const plainOrFixedLfCoder = Object.freeze({
     if (!planes.length || planes[0].w * planes[0].h < 256) { plain(w); return; }
     const fixed = new BitWriter(256);
     fixedDc(fixed, planes, plain, kernels);
-    const bound = kernelHooks.dcBound?.(planes);
+    const bound = plainBound(planes);
     if (bound != null && fixed.bitLength < bound) { w.append(fixed); return; }
     const fallback = new BitWriter(256);
     plain(fallback);
@@ -70,6 +71,20 @@ export const plainOrFixedLfCoder = Object.freeze({
   metadata: (w, _planes, plain) => plain(w),
   plainMetadata: true,
 });
+
+const ANS_WORD_LOSS = 2 * Math.log2(17 / 16), ANS_STEP_LOSS = 4096 / (65536 * Math.LN2 * 15 / 16);
+export function plainBound(planes) {
+  const events = kernelHooks.dcEvents?.(planes);
+  if (!events) return null;
+  const entropy = freqs => { let n = 0, sum = 0, square = 0; for (const c of freqs) if (c) { n += c; sum += c * Math.log2(c); square += c * c; } return [n ? n * Math.log2(n) - sum : 0, Math.sqrt(square)]; };
+  let prefix = 0, ans = 0, norms = 0;
+  for (const plane of events) {
+    const [residual, hybrid] = losslessCoding(plane), [prefixBits] = entropy(residual.freqs), [ansBits, norm] = entropy(hybrid.freqs);
+    prefix += prefixBits + residual.extra; ans += ansBits + hybrid.extra; norms += norm;
+  }
+  const lower = Math.min(prefix, (ans - ANS_STEP_LOSS * norms + Math.log2(0x130000) + 2 * ANS_WORD_LOSS) / (1 + ANS_WORD_LOSS / 16));
+  return lower - 1e-9 * Math.max(prefix, ans) - 4;
+}
 
 const quick = lfCoder('quick');
 export const quickOrFixedLfCoder = Object.freeze({

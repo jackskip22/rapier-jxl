@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {SSIMULACRA2_WEIGHTS, SRGB_TO_LINEAR, gaussianTaps, finalCurve} from './ssimulacra2.mjs';
-import {IS_CBRT_LO, IS_CBRT_HI, IS_BIAS, BLACK} from './int-spec.mjs';
+import {cbrtTables, IS_BIAS, BLACK} from './int-spec.mjs';
 
 const R_HALF = Float64Array.from({length: 32}, (_, k) => k ? 2 ** (k - 1) : 0.5), R_INV = Float64Array.from({length: 32}, (_, k) => 2 ** -k);
 const R = (s, k) => Math.floor((s + R_HALF[k]) * R_INV[k]);
@@ -12,7 +12,7 @@ export const S2C_MIX = Int32Array.from({length: 9}, (_, j) => j % 3 < 2 ? Math.r
   : 16384 - Math.round(OPSIN[j - 2] * 16384) - Math.round(OPSIN[j - 1] * 16384));
 export const S2C_TAPS = (() => { const t = Array.from(gaussianTaps(), v => Math.round(v * 65536)); t[N] += 65536 - t.reduce((a, b) => a + b, 0); return Int32Array.from(t); })();
 const check = (v, bound, what) => { if (!(Math.abs(v) < bound)) throw new RangeError(`s2-cells: ${what} ${v} outside ${bound}`); return v; };
-const cbrt = v => v < 65536 ? IS_CBRT_LO[v] : IS_CBRT_HI[R(v, 4)];
+const cbrt = v => { const {lo, hi} = cbrtTables(); return v < 65536 ? lo[v] : hi[R(v, 4)]; };
 
 function xyb(r, g, b, out, o) {
   const cone = k => R(S2C_MIX[k] * r + S2C_MIX[k + 1] * g + S2C_MIX[k + 2] * b, 9) + IS_BIAS;

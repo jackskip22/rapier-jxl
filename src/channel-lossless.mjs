@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-import {BitWriter} from './bits.mjs';
+import {BitWriter, part} from './bits.mjs';
 import {writeModularFrameHeader, writeTOC} from './frame.mjs';
 import {inspectPixels, shapeFloors, losslessSteps} from './lossless.mjs';
 import {readStill} from './framing.mjs';
+import {rctSearchSteps} from './rct-search.mjs';
 
 export function channelLosslessCompatible(config) {
   return config.groupSize === 256 && config.predictor < 0 && config.extras.length <= 1 &&
@@ -37,7 +38,15 @@ export function* channelLosslessSteps(config) {
   shapeFloors.set(data, {colour: colorCount, alpha});
   try { shape = inspectPixels(data, width, height); }
   finally { shapeFloors.delete(data); }
-  const bytes = yield* losslessSteps(data, width, height, {shape}), still = readStill(bytes), frame = still.frames[0];
+  const searches = config.effort >= 7 && shape.colour === 3 && !shape.palette && width * height >= 4096 ? 2 : 1;
+  let bytes = yield* part(losslessSteps(data, width, height, {shape}), 0, searches);
+  if (searches === 2) {
+    try {
+      const candidate = yield* part(rctSearchSteps(data, width, height, shape), 1, searches);
+      if (candidate && candidate.length < bytes.length) bytes = candidate;
+    } catch (error) { if (error.code !== 'JXL_SIZE') throw error; }
+  }
+  const still = readStill(bytes), frame = still.frames[0];
   let at = frame.sectionsAt;
   const sections = frame.sizes.map(size => { const section = still.codestream.subarray(at, at + size); at += size; return section; });
   return {header: channelFrameHeader(config), sections};

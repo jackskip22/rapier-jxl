@@ -1,6 +1,7 @@
 import {suppliedWasm} from './wasm-modules.mjs';
 // SPDX-License-Identifier: MIT
 import {kernelRequest, ensureKernels} from './kernels.mjs';
+import {ARENA_BYTES} from './arena.mjs';
 
 export const canShare = () => typeof SharedArrayBuffer === 'function' && globalThis.crossOriginIsolated !== false;
 const mark = (...entry) => { globalThis.__helperMarks?.push(entry); };
@@ -285,8 +286,10 @@ export async function splitOnIdle(owner, reservation, request, signal, helper) {
   if (!leased.length) return undefined;
   pool.hold(true); pool.jobs = (pool.jobs ?? 0) + 1;
   try {
-    return request.ladder ? await request.run(request.data, request.width, request.height, request.quality, leased, {signal, effort: request.ladder})
-      : await (await import('./photo-split.mjs')).encodeSplit(request.data, request.width, request.height, request.quality, leased, {signal, gaborish: request.gaborish});
+    const arena = request.pixels > 0 && reservation?.memoryBytes >= 16 * request.pixels + leased.length * (helperBytes(request.pixels) + ARENA_BYTES);
+    if (request.pixels > 0) mark('split-arena', arena, leased.length * ARENA_BYTES, reservation?.memoryBytes);
+    return request.run ? await request.run(leased, {signal, arena})
+      : await (await import('./photo-split.mjs')).encodeSplit(request.data, request.width, request.height, request.quality, leased, {signal, gaborish: request.gaborish, screen: request.screen, opaque: request.opaque, arena});
   }
   catch (error) { if (signal?.aborted) throw error; return undefined; }
   finally { pool.unlease(leased); pool.jobs--; idle(pool); }

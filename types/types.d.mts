@@ -6,7 +6,10 @@ import type {ContainerInspection, ReframeOptions} from './codec/container-advanc
 import type {Animation} from './codec/animation.mjs';
 import type {FormatRequest, FormatOptions} from './format.mjs';
 
-export type Samples = Uint8Array | Uint8ClampedArray | Uint16Array | Float32Array;
+/** Half floats as a Float16Array holds them (typed here by its shape: TypeScript's lib has the global only in esnext).
+ * Read as sampleFormat 'float16', as a Uint16Array of their bits with sampleFormat 'float16' is. */
+export interface Float16Samples extends ArrayBufferView { readonly [Symbol.toStringTag]: 'Float16Array'; readonly length: number; [index: number]: number; }
+export type Samples = Uint8Array | Uint8ClampedArray | Uint16Array | Float16Samples | Float32Array;
 export type Bytes = Uint8Array<ArrayBuffer>;
 export type Effort = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 /** Pixels describe themselves: what the samples are travels with them (SampleDescription). */
@@ -16,12 +19,47 @@ export interface CanvasSurface {
   getContext(contextId: '2d', options?: {willReadFrequently?: boolean}): unknown;
 }
 export interface BitmapSurface { readonly width: number; readonly height: number; close(): void; }
-/** decode()'s result is an input too: its description says what its samples are. A canvas, bitmap or Blob is read in
- * sRGB, or its own space, unless the options' readAs names one. */
-export type ImageInput = Pixels | DecodedImage | CanvasSurface | BitmapSurface | Blob;
+/** A WebCodecs VideoFrame (a camera, a screen capture, a decoded video): read at its display size, converted by the
+ * browser from its own color space to sRGB, or to readAs. The caller keeps it and closes it. */
+export interface FrameSurface { readonly displayWidth: number; readonly displayHeight: number; close(): void; }
+/** decode()'s result is an input too: its description says what its samples are. A canvas (2D, WebGL or WebGPU),
+ * bitmap, video frame or Blob is read in sRGB, or its own space, unless the options' readAs names one. Through a codec
+ * whose jobs run in a worker, a canvas, bitmap or video frame is taken as a snapshot at the call and read there. */
+/** A <video> (playing, or paused on a frame): read as the frame it shows, as a VideoFrame of it is. Refused JXL_INPUT
+ * before it has a frame (readyState below 2) or when the browser will not read it (cross-origin without CORS). */
+export interface VideoSurface { readonly videoWidth: number; readonly videoHeight: number; readonly readyState: number; }
+export type ImageInput = Pixels | DecodedImage | CanvasSurface | BitmapSurface | FrameSurface | VideoSurface | Blob | RowSource | TextureInput;
+/** A WebGPU texture (2D, one sample, COPY_SRC usage; rgba8unorm, bgra8unorm, their -srgb forms, rgba16float or
+ * rgba32float), read from mip level 0 and its `layer` in the realm of its device: the copy is submitted at the call, so GPU work
+ * submitted later does not reach the file. A texture carries no color meaning: the description says it; unsaid, 8-bit
+ * formats are sRGB and float formats linear sRGB. Through a worker codec it is read in the page, then queued. */
+export interface GPUTextureLike {readonly width: number; readonly height: number; readonly format: string; readonly usage: number; readonly dimension: string; readonly sampleCount: number; readonly depthOrArrayLayers?: number}
+/** An extra channel read from a texture of the input's device (a depth buffer: depth16unorm, depth32float, r16uint,
+ * r16float or r32float), from the input's layer, at the picture's size or its 2^dimShift reduction. */
+export type TextureChannel = Omit<NonNullable<AdvancedPhotoOptions['extraChannels']>[number], 'data' | 'bitDepth' | 'sampleFormat' | 'exponentBits'> & {texture: GPUTextureLike};
+export interface TextureInput extends Omit<SampleDescription, 'extraChannels'> {
+  texture: GPUTextureLike;
+  device: {readonly queue: unknown; createBuffer(descriptor: object): unknown; createCommandEncoder(): unknown};
+  /** The array layer read: a WebXR projection layer holds one eye per layer. Default 0. */
+  layer?: number;
+  extraChannels?: readonly (NonNullable<AdvancedPhotoOptions['extraChannels']>[number] | TextureChannel)[];
+}
+/** A picture given a band of rows at a time, so it is never whole in memory: rows(y, count) returns rows y to
+ * y + count - 1 as {data} (width x count RGBA samples, described by the source) or a canvas, bitmap or video frame of
+ * width x count (8-bit, in the source's colorSpace: sRGB or Display P3). Bands are asked for top to bottom and may be
+ * asked for again; each is copied as it arrives, so its buffer may be reused. Coded in bands of about 4 MP. Through a
+ * worker codec the page answers the worker's asks. No readAs, orientation, extra channels, measured fidelity or features. */
+export interface RowSource extends Omit<SampleDescription, 'orientation' | 'extraChannels'> {
+  width: number; height: number;
+  rows(y: number, count: number): RowBand | Promise<RowBand>;
+}
+export type RowBand = {data: Samples} | CanvasSurface | BitmapSurface | FrameSurface;
 /** signal: aborting rejects the job with the signal's reason. onProgress: 0 once started, rising to 1 before the result;
  * an onProgress that throws cancels the job, which rejects with what it threw. */
-/** maxPixels: the largest picture this call admits, at most 40,000,000; under a codec the smaller of the two holds. */
+/** maxPixels: the largest picture this call admits, default 40,000,000; under a codec the smaller of the two holds. An
+ * encode, capture or decode takes up to 268,435,456 (16,384 a side): above 40,000,000 the picture is coded in bands of
+ * about 4 MP, composed as one still, so working memory stays about one band's beside the input; decode scales its work
+ * bounds with it. Other calls: at most 40,000,000. */
 export interface JobOptions { signal?: AbortSignal; onProgress?: (fraction: number) => void; maxPixels?: number; }
 
 /**
@@ -59,9 +97,15 @@ export interface SampleDescription {
 }
 /** The description keys, refused in the options. */
 type Described = {[K in keyof SampleDescription]?: never};
+/** A rectangle of the picture, in whole pixels. */
+export interface Region { x: number; y: number; width: number; height: number; }
+/** firstRegion: the groups covering this rectangle come first in the file, so a browser loading it shows the rectangle
+ * before the rest; the pixels are unchanged. rapier-jxl takes it; rapier-jxl/upload and a capture refuse it
+ * (JXL_UNSUPPORTED) in this version. */
+export interface DeliveryFeatures { firstRegion?: Region; }
 /** Codestream features an encode may set (level, upsampling, ...); `format()` authors whole structures. */
 export type EncodeFeatures = Pick<AdvancedPhotoOptions, 'level' | 'upsampling' | 'upsamplingWeights' |
-  'transforms' | 'quantization' | 'coefficientOrders' | 'progressive' | 'noise' | 'lfFrames'>;
+  'transforms' | 'quantization' | 'coefficientOrders' | 'progressive' | 'noise' | 'lfFrames'> & DeliveryFeatures;
 /** Reads a canvas, bitmap or Blob in this space (a conversion where the source is another); pixels describe themselves. */
 export type ReadAs = 'srgb' | 'display-p3';
 /**
@@ -72,13 +116,15 @@ export type ReadAs = 'srgb' | 'display-p3';
  * readAs: the space a canvas, bitmap or Blob is read in. A measured fidelity runs its own search over 8-bit straight
  * sRGB RGBA (the image's description must say so) and takes no features or profile.
  */
-/** effort, readAs as above. webgpu: as CodecConfig.webgpu says (the call's wins over a codec's). maxPixels: at most
- * 40,000,000, the smaller of the call's and the codec's; a larger picture refuses with JXL_DIMENSIONS before any work. */
+/** effort, readAs as above. webgpu: as CodecConfig.webgpu says (the call's wins over a codec's). maxPixels: as
+ * JobOptions says, the smaller of the call's and the codec's; a larger picture refuses with JXL_DIMENSIONS before any
+ * work. Above 40,000,000 pixels a measured fidelity, orientation, extra channels and features refuse JXL_UNSUPPORTED. */
 export type EncodeOptions = JobOptions & Described & {effort?: Effort; readAs?: ReadAs; webgpu?: 'required' | false; maxPixels?: number} & (
   {fidelity?: PixelFidelity; features?: EncodeFeatures} |
   {fidelity: MeasuredFidelity; features?: never}
 );
-/** rapier-jxl/upload's options: efforts 1-3 (default 3), 'exact' or a quality, with the full encoder's meanings.
+/** rapier-jxl/upload's options: efforts 1-3 (default 3), 'exact' or a quality, with the full encoder's meanings. Lossy
+ * float (HDR) samples, a GPU texture and features (firstRegion included) are rapier-jxl's: refused JXL_UNSUPPORTED.
  * webgpu is taken and changes nothing: efforts 1-3 never ask for a device. */
 export type UploadOptions = JobOptions & Described & {fidelity?: PixelFidelity; effort?: 1 | 2 | 3; readAs?: ReadAs;
   webgpu?: 'required' | false; maxPixels?: number};
@@ -87,7 +133,7 @@ export type AnimationInput = Animation & Omit<SampleDescription, 'orientation' |
 /** An animation, {width, height, frames}: 'exact' or a quality for every frame; no measured target, no `features`. */
 export type AnimationOptions = JobOptions & Described & {fidelity?: PixelFidelity; effort?: Effort; features?: never};
 /** A capture runs on WebAssembly; the pixels say their colorSpace, readAs reads a canvas, bitmap or Blob in a chosen one. */
-export type CaptureOptions = JobOptions & Described & {fidelity?: CaptureFidelity; readAs?: ReadAs};
+export type CaptureOptions = JobOptions & Described & {fidelity?: CaptureFidelity; readAs?: ReadAs; features?: DeliveryFeatures};
 /** JPEG recompression runs on WebAssembly. */
 export interface JPEGOptions extends JobOptions {
   effort?: Effort; icc?: 'preserve';
@@ -204,7 +250,10 @@ export interface CodecConfig {
    * rejected but stays pending until its work lets go of them. The pending jobs' retained input and options together,
    * in bytes (default 256 MiB); a job past it refuses JXL_MEMORY. */
   maxPendingBytes?: number;
-  /** The largest picture any operation admits, restore included: default and at most 40,000,000 pixels; 16,384 a side. */
+  /** The largest picture any operation admits, restore included: default 40,000,000 pixels, at most 268,435,456 (an
+   * encode or capture above 40,000,000 is coded in bands, and decode reopens it; the other operations keep 40,000,000);
+   * 16,384 a side. A
+   * picture's pixels still count against maxPendingBytes. */
   maxPixels?: number;
   /** Pending jobs, queued or running, at once; one more refuses JXL_MEMORY. */
   maxPendingJobs?: number;

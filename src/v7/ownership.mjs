@@ -3,6 +3,8 @@ import {arrayBufferBytes, typedFields, typedName} from './bytes.mjs';
 import {plain} from './records.mjs';
 export const DEFAULT_INPUT_BYTES = 256 * 1024 * 1024;
 export const DEFAULT_PIXELS = 40_000_000;
+export const SNAPSHOTS = new WeakMap();
+export const withCost = (value, cost) => { SNAPSHOTS.set(value, cost); return value; };
 function blob(value) { return typeof Blob === 'function' && value instanceof Blob; }
 const viewFields = Object.fromEntries(['buffer', 'byteOffset', 'byteLength'].map(key => [key, Object.getOwnPropertyDescriptor(DataView.prototype, key).get]));
 const constructors = {Uint8Array, Uint8ClampedArray, Int8Array, Uint16Array, Int16Array, Uint32Array, Int32Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array, DataView};
@@ -27,8 +29,6 @@ export function record(value) {
   if (Array.isArray(value) && value.length > MAX_NODES) throw error('JXL_MEMORY', 'Queue input has too many fields; at most ' + MAX_NODES + ' records and fields.');
   const proto = Object.getPrototypeOf(value);
   if (!plain(proto) && !Array.isArray(value)) {
-    if (typeof VideoFrame === 'function' && value instanceof VideoFrame)
-      throw error('JXL_INPUT', 'A VideoFrame is not an input yet; pass createImageBitmap(frame), or draw it on a canvas.');
     throw error('JXL_INPUT', 'Queue inputs must be pixels, bytes, Blobs, or plain records.');
   }
   if (Object.getOwnPropertySymbols(value).some(key => Object.getOwnPropertyDescriptor(value, key).enumerable))
@@ -60,6 +60,11 @@ export function measure(value, maxPixels, plans = new Map(), depth = 0) {
   if (typeof value !== 'object') throw error('JXL_INPUT', 'Queue input contains a value that cannot be copied.');
   const seen = plans.get(value);
   if (seen) return seen.cost ?? 0;
+  if (SNAPSHOTS.has(value)) {
+    const cost = SNAPSHOTS.get(value);
+    plans.set(value, {kind: 'blob', cost});
+    return cost;
+  }
   if (blob(value)) {
     const cost = Object.getOwnPropertyDescriptor(Blob.prototype, 'size').get.call(value);
     plans.set(value, {kind: 'blob', cost});

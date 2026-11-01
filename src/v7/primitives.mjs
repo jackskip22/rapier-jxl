@@ -45,9 +45,10 @@ export function dimensions(width, height, maxPixels = 40000000) {
       width > 16384 || height > 16384 || width * height > maxPixels)
     throw fail('JXL_DIMENSIONS', 'Image dimensions exceed the configured limit.');
 }
-export function pixelLimit(value) {
+export const LARGEST = 268435456;
+export function pixelLimit(value, largest = 40000000) {
   if (value === undefined) return 40000000;
-  if (!Number.isSafeInteger(value) || value < 1 || value > 40000000) throw fail('JXL_OPTIONS', 'maxPixels is a positive whole number, at most 40,000,000.');
+  if (!Number.isSafeInteger(value) || value < 1 || value > largest) throw fail('JXL_OPTIONS', `maxPixels is a positive whole number, at most ${largest.toLocaleString('en-US')}.`);
   return value;
 }
 export function bytes(input) {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {fail, object, admitSignal} from './primitives.mjs';
+import {pixelLimit, LARGEST, fail, object, admitSignal} from './primitives.mjs';
 import {encodeFidelity} from './fidelity.mjs';
 import {refuseDescription} from './describe.mjs';
 const rawKeys = new Set(['fidelity','effort','features','readAs','webgpu','maxPixels','signal','onProgress']);
@@ -24,14 +24,14 @@ export function encodeOptions(value) {
     throw fail('JXL_OPTIONS', 'readAs is srgb or display-p3.');
   if (options.webgpu !== undefined && options.webgpu !== 'required' && options.webgpu !== false)
     throw fail('JXL_OPTIONS', "webgpu is 'required' or false; leave it out to use WebGPU where this realm has it.");
-  if (options.maxPixels !== undefined && (!Number.isSafeInteger(options.maxPixels) || options.maxPixels < 1 || options.maxPixels > 40000000))
-    throw fail('JXL_OPTIONS', 'maxPixels is a positive whole number, at most 40,000,000.');
+  if (options.maxPixels !== undefined) pixelLimit(options.maxPixels, LARGEST);
   if (options.features !== undefined) {
-    if (fidelity.target !== undefined) throw fail('JXL_OPTIONS', 'A measured target supplies its own features search.');
+    const named = Object.keys(options.features ?? {});
+    if (fidelity.target !== undefined && (named.length !== 1 || named[0] !== 'firstRegion')) throw fail('JXL_OPTIONS', 'A measured target supplies its own features search.');
     object(options.features, 'features');
     refuseDescription(options.features, 'features');
     const allowed = new Set(['level','upsampling','upsamplingWeights','transforms','quantization','coefficientOrders',
-      'progressive','noise','lfFrames']);
+      'progressive','noise','lfFrames','firstRegion']);
     for (const key of Object.keys(options.features)) if (!allowed.has(key)) throw fail('JXL_OPTIONS', `Unknown features option: ${key}.`);
   }
   const {fidelity: _fidelity, signal, onProgress, features, readAs, webgpu, maxPixels, ...codec} = options;
@@ -39,5 +39,5 @@ export function encodeOptions(value) {
 }
 
 export function callOptions({webgpu, maxPixels, ...codec}, hooks = {}) {
-  return {codec, hooks: {...hooks, webgpu: webgpu ?? hooks.webgpu, maxPixels: Math.min(maxPixels ?? 40000000, hooks.maxPixels ?? 40000000)}};
+  return {codec, hooks: {...hooks, webgpu: webgpu ?? hooks.webgpu, maxPixels: Math.min(maxPixels ?? 40000000, hooks.maxPixels ?? Infinity)}};
 }

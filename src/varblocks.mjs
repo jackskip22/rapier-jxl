@@ -208,10 +208,14 @@ function tableFor(id, components, sizeScale, cache) {
   return table;
 }
 
+function channelNorm(comps, weights, lowScale) {
+  const step = c => comps[c].quant[1] / (lowScale?.[c * 64 + 1] ?? 1) / VB_QS, yStep = step(1);
+  return [0, 1, 2].map(c => weights[c] * (yStep / step(c)) * (yStep / step(c)) / (yStep * yStep));
+}
 export function strategyInputs(base, width, height, options = {}) {
   const {sizeScale = 1, ids = [5, 10, 11, 4, 6, 7], deadzone, weights = [1, 1, 1]} = options;
   const comps = base.components, stride = comps[0].stride, rows = comps[0].rows;
-  const yStep = comps[1].quant[1] / VB_QS, norm = [0, 1, 2].map(c => weights[c] * (yStep / (comps[c].quant[1] / VB_QS)) * (yStep / (comps[c].quant[1] / VB_QS)) / (yStep * yStep));
+  const norm = channelNorm(comps, weights, options.lowScale);
   const tables = searchTables(base, options), transforms = new Map();
   for (const id of [0, ...ids]) {
     if (VB_SMALL.has(id) || transforms.has(id)) continue;
@@ -313,7 +317,7 @@ export function xybStrategies(base, width, height, options = {}) {
   const transforms = options.transforms instanceof TransformCache ? options.transforms.forSource(planes, width, height, stride, rows) : null;
   const fineOf = (bx, by) => base.quantFields ? base.quantFields[by * stride + bx] / base.quantFieldBase : 1;
   const tables = searchTables(base, options), cfl = base.cfl, dead = deadzone;
-  const yStep = comps[1].quant[1] / VB_QS, norm = [0, 1, 2].map(c => weights[c] * (yStep / (comps[c].quant[1] / VB_QS)) * (yStep / (comps[c].quant[1] / VB_QS)) / (yStep * yStep));
+  const norm = channelNorm(comps, weights, options.lowScale);
   tableFor(0, comps, sizeScale, tables);
   const allowed = new Set(ids);
   const tokens = !options.layout && options.model !== 'simple' && rateModel(base, stride, rows, 8);
@@ -737,6 +741,7 @@ export function xybStrategies(base, width, height, options = {}) {
       chosen.push(...(keepChosen ? list.map(c => c.light ? make(c) : c) : list));
       if (opened) open.push({bx: cx, by: cy, size: region});
     }
+    if (options.band) return {chosen};
     if (useMask) {
       for (const fam of [5, 4, 6]) {
         let count = 0;
@@ -767,6 +772,11 @@ export function xybStrategies(base, width, height, options = {}) {
   if (options.chooseOnly) return {layout: chosen.map(({id, bx, by}) => ({id, bx, by})), open, reprices, reverted, settled};
   priceOnly = false;
   for (let i = 0; i < chosen.length; i++) if (chosen[i].light) chosen[i] = full(chosen[i].id, chosen[i].bx, chosen[i].by);
+  return {...strategyImage(base, chosen, tables, !!options.perceptual), open, reprices, reverted, settled};
+}
+
+export function strategyImage(base, chosen, tables, perceptual) {
+  const comps = base.components, stride = comps[0].stride, rows = comps[0].rows;
   const at = new Int32Array(stride * rows).fill(-1), byFirst = new Map();
   const components = comps.map(comp => ({h: 1, v: 1, stride, rows, quant: comp.quant, coeffs: new Int16Array(0), dc: new Int32Array(stride * rows)}));
   let wideCoefficients = false;
@@ -794,8 +804,13 @@ export function xybStrategies(base, width, height, options = {}) {
   const counts = {};
   for (const b of blocks) counts[TRANSFORMS[b.id].name] = (counts[TRANSFORMS[b.id].name] || 0) + 1;
   const {planes: _p, values: _v, planeRows: _r, ...rest} = base;
-  return {image: {...rest, components, wideCoefficients, ...(options.perceptual ? {perceptual: true} : {}), strategyData: {groups, blocks, at, tables, stride}}, counts,
-    layout: blocks.map(({id, bx, by}) => ({id, bx, by})), open, reprices, reverted, settled};
+  return {image: {...rest, components, wideCoefficients, ...(perceptual ? {perceptual: true} : {}), strategyData: {groups, blocks, at, tables, stride}}, counts,
+    layout: blocks.map(({id, bx, by}) => ({id, bx, by}))};
+}
+export function strategyTables(base, ids, options) {
+  const tables = searchTables(base, options);
+  for (const id of ids) tableFor(id, base.components, options.sizeScale ?? 1, tables);
+  return tables;
 }
 
 export function strategyCosts(base, width, height, options) {
@@ -841,9 +856,13 @@ export function lazyStrategyImage(base, width, height, options, layout) {
 export const materialize = image => image?.lazyStrategy ? image.lazyStrategy.materialize() : image;
 
 const ORDER_BUCKET = TRANSFORMS.map(t => COEFFICIENT_ORDER_BUCKETS.find(b => b.strategies.includes(t.name)));
+const LEARNED_COUNTS = new WeakMap();
+export const seedLearnedOrderCounts = (image, byBucket) => LEARNED_COUNTS.set(image.strategyData, byBucket);
 export function learnedOrders(image) {
-  const byBucket = new Array(COEFFICIENT_ORDER_BUCKETS.length);
-  for (const block of image.strategyData.blocks) {
+  return ordersFromCounts(LEARNED_COUNTS.get(image.strategyData) ?? learnedOrderCounts(image.strategyData.blocks));
+}
+export function learnedOrderCounts(blocks, byBucket = new Array(COEFFICIENT_ORDER_BUCKETS.length)) {
+  for (const block of blocks) {
     const bucket = ORDER_BUCKET[block.id];
     if (!bucket || bucket.id === 1) continue;
     let c3 = byBucket[bucket.id];
@@ -854,6 +873,9 @@ export function learnedOrders(image) {
       for (let k = area; k < size; k++) if (plane[order[k]]) n[k]++;
     }
   }
+  return byBucket;
+}
+function ordersFromCounts(byBucket) {
   const value = {};
   for (let id = 0; id < byBucket.length; id++) {
     const c3 = byBucket[id];

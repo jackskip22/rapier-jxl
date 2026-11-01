@@ -91,7 +91,7 @@ function expandMatrix(descriptor) {
   return descriptor.matrices;
 }
 
-export function createVarDCT({width, height, header, global, lfDequant, bitDepth = 8, globalTree = null, imageHeader = {}, maxModularWork = 536870912, modularWork = {remaining: maxModularWork}, band = null, maxSection = 0}) {
+export function createVarDCT({width, height, header, global, lfDequant, bitDepth = 8, globalTree = null, imageHeader = {}, maxModularWork = 536870912, modularWork = {remaining: maxModularWork}, band = null, lfOnly = false, maxSection = 0}) {
   check(Number.isSafeInteger(width) && Number.isSafeInteger(height) && width > 0 && height > 0, 'Invalid JPEG XL VarDCT dimensions.');
   const sample = header.jpegUpsampling || [0, 0, 0];
   const hs = sample.map(v => v === 1 || v === 2 ? 1 : 0), vs = sample.map(v => v === 1 || v === 3 ? 1 : 0);
@@ -99,13 +99,14 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
   const blocksW = Math.ceil(width / (8 << maxH)) << maxH, blocksH = Math.ceil(height / (8 << maxV)) << maxV;
   const groupsX = Math.ceil(width / 256), groupsY = Math.ceil(height / 256), numGroups = groupsX * groupsY;
   const lfGroupsX = Math.ceil(width / 2048), lfGroupsY = Math.ceil(height / 2048), numLFGroups = lfGroupsX * lfGroupsY;
-  const dcWidth = hshift.map(s => blocksW >> s), dcHeight = vshift.map(s => blocksH >> s);
+  const left = band?.left ?? 0, right = band?.right ?? groupsX, ox = left * 32, BW = Math.min(blocksW, right * 32) - ox, W = Math.min(width, right * 256) - ox * 8;
+  const dcWidth = hshift.map(s => BW >> s), dcHeight = vshift.map(s => blocksH >> s);
   const groupArenaLength = varDCTArenaCapacity(blocksH);
   const dc = [new Int32Array(dcWidth[0] * dcHeight[0]), new Int32Array(dcWidth[1] * dcHeight[1]), new Int32Array(dcWidth[2] * dcHeight[2])];
   const low = [new Float32Array(dc[0].length), new Float32Array(dc[1].length), new Float32Array(dc[2].length)];
   const metadata = new Array(numLFGroups), blockGroups = Array.from({length: numGroups}, () => []);
   const decodedLF = new Uint8Array(numLFGroups), decodedPass = [];
-  const sigma = new Float32Array(blocksW * blocksH);
+  const sigma = new Float32Array(BW * blocksH);
   const state = {width, height, header, global, lfDequant, bitDepth, globalTree, maxModularWork, modularWork, numGroups, numLFGroups, groupsX, groupsY, lfGroupsX, lfGroupsY};
   let matrices = []; matrices = null;
   let passes = []; passes = null;
@@ -129,9 +130,10 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
         const [at] = kernels.reserve([data.length * 4]), scaled = new Float32Array(kernels.buffer, at, data.length);
         new Int32Array(kernels.buffer, at, data.length).set(data);
         kernels.lfScale(data.length, at, scale);
-        for (let y = 0; y < ch; y++) {
-          const dest = ((by >> vshift[c]) + y) * dcWidth[c] + (bx >> hshift[c]);
-          dc[c].set(data.subarray(y * cw, (y + 1) * cw), dest); low[c].set(scaled.subarray(y * cw, (y + 1) * cw), dest);
+        const from = Math.max(bx, ox) >> hshift[c], to = Math.min(bx + bw, ox + BW) >> hshift[c], start = from - (bx >> hshift[c]), span = to - from;
+        if (span > 0) for (let y = 0; y < ch; y++) {
+          const dest = ((by >> vshift[c]) + y) * dcWidth[c] + from - (ox >> hshift[c]);
+          dc[c].set(data.subarray(y * cw + start, y * cw + start + span), dest); low[c].set(scaled.subarray(y * cw + start, y * cw + start + span), dest);
         }
       }
     }
@@ -161,11 +163,11 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
         if (epf?.iters) {
           const sharp = sharpness[pos]; check(sharp >= 0 && sharp < 8, 'Invalid JPEG XL filter sharpness.');
           const lut = epf.sharpLut || [0, 1 / 7, 2 / 7, 3 / 7, 4 / 7, 5 / 7, 6 / 7, 1];
-          sigma[(gy + dy) * blocksW + gx + dx] = (epf.quantMul ?? .46) * 65536 / global.globalScale / multiplier * lut[sharp];
+          if (gx + dx >= ox && gx + dx < ox + BW) sigma[(gy + dy) * BW + gx + dx - ox] = (epf.quantMul ?? .46) * 65536 / global.globalScale / multiplier * lut[sharp];
         }
       }
       starts[y * bw + x] = 1;
-      if (!band || (gy >> 5) >= band.first && (gy >> 5) < band.end) {
+      if (!lfOnly && (!band || (gy >> 5) >= band.first && (gy >> 5) < band.end && (gx >> 5) >= left && (gx >> 5) < right)) {
         const block = {id, x: gx, y: gy, bw: w, bh: h, area: Math.imul(w, h), multiplier, coefficients: [null, null, null], arena: null, lfGroup: group};
         blocks.push(block); blockGroups[(gy >> 5) * groupsX + (gx >> 5)].push(block);
       }
@@ -212,17 +214,17 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
   const ORDER_SIZE = ORDER_SHAPES.reduce((n, [w, h]) => n + 3 * w * h * 64, 0) * 4;
   function reserveKernelMemory() {
     const kernels = decodeKernels();
-    const stages = restorationStages(header.filter), slots = Math.max(1, stages.length), restoring = streams && (radius || band), rows = Math.min(height, 256 + 2 * radius), plane = rows * width * 4;
-    const colorScratch = Math.min(height, 256) * width * 4;
-    const sigmaLength = Math.ceil(width / 8) * Math.ceil(height / 8);
-    const models = passes.map(p => p.entropy.model), arenaCount = passes.length === 1 ? groupsX : numGroups;
+    const stages = restorationStages(header.filter), slots = Math.max(1, stages.length), restoring = streams && (radius || band), rows = Math.min(height, 256 + 2 * radius), plane = rows * W * 4;
+    const colorScratch = Math.min(height, 256) * W * 4;
+    const sigmaLength = Math.ceil(W / 8) * Math.ceil(height / 8);
+    const models = passes.map(p => p.entropy.model), arenaCount = passes.length === 1 ? right - left : numGroups;
     const thresholds = global.lfThresholds.flat().length + global.qfThresholds.length;
     const reader = [STREAM_BLOCK_BYTES, maxSection + 16, ...models.flatMap(m => [...modelSizes(m), m.lz ? HISTORY_BYTES : 0]), passes.length * ORDER_SIZE, 1024,
       512, 32 * 32 * 48, 3 * 32 * 4, global.map.length * 4, thresholds * 8 + 64, ...dc.map(d => d.length * 4), arenaCount * groupArenaLength * 4];
-    const sizes = [...(restoring ? [...Array(6 + 3 * slots).fill(plane), 21 * width * 8, width * 8, width * 8, sigmaLength * 4, 32, colorScratch] : []), ...reader,
+    const sizes = [...(restoring ? [...Array(6 + 3 * slots).fill(plane), 21 * W * 8, W * 8, W * 8, sigmaLength * 4, 32, colorScratch] : []), ...reader,
       matrices.reduce((n, m) => n + m.width * m.height * 12, 0),
-      65536 + 3 * 1024 * 8, numLFGroups * 8192, ...(!streams || !radius && !band ? [0, 1, 2].map(c => (256 >> vshift[c]) * Math.ceil(width / (1 << hshift[c])) * 4) : [0, 0, 0]),
-      ...Array(9).fill(blocksW * blocksH * 4)];
+      65536 + 3 * 1024 * 8, numLFGroups * 8192, ...(!streams || !radius && !band ? [0, 1, 2].map(c => (256 >> vshift[c]) * Math.ceil(W / (1 << hshift[c])) * 4) : [0, 0, 0]),
+      ...Array(9).fill(BW * blocksH * 4)];
     const at = kernels.reserve(sizes);
     if (restoring) kernelRegions = {at, rows, stages};
     kernelLF = at.slice(-9);
@@ -277,7 +279,7 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
         addresses[c] = block.arena.byteOffset + block.coefficients[c] * 4;
         orderAt(pass, orderID, c);
       }
-      records.push(0, block.x, block.y, block.bw, area, multiplier, wires, tw * th, orderID, ...addresses);
+      records.push(0, block.x - ox, block.y, block.bw, area, multiplier, wires, tw * th, orderID, ...addresses);
     }
     i32.set(records, K.blocks / 4);
     for (let c = 0; c < 3; c++) i32.fill(0, K.nonzero / 4 + c * 32, K.nonzero / 4 + c * 32 + 32);
@@ -285,7 +287,7 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
     for (let id = 0; id < 13; id++) for (let c = 0; c < 3; c++) orders.push(K.loaded[pass][id * 3 + c] ? orderAt(pass, id, c) : 0);
     code.begin();
     const block = writeBlock(kernels, code, K.block, K.bytes, stream.model, stream.history);
-    i32.set([block, K.blocks, records.length / 12, groupX, groupY, prefix], K.args / 4);
+    i32.set([block, K.blocks, records.length / 12, groupX - ox, groupY, prefix], K.args / 4);
     i32[K.args / 4 + 7] = 1 << shift;
     i32.set([gbw >> hshift[0], gbw >> hshift[1], gbw >> hshift[2]], K.args / 4 + 43);
     i32.set(orders, K.args / 4 + 46);
@@ -299,6 +301,20 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
   let rendered = 1; rendered = 0;
   let pending = {}; pending = null;
   const streams = !maxH && !maxV, radius = streams ? restorationStages(header.filter).reduce((n, s) => n + s.radius, 0) : 0;
+  function smoothedLF() {
+    const kernels = decodeKernels(), planes = from => [0, 1, 2].map(c => new Float32Array(kernels.buffer, kernelLF[from + c], low[c].length));
+    const lf = planes(0); for (let c = 0; c < 3; c++) lf[c].set(low[c]);
+    const smooth = !header.skipAdaptiveLFSmoothing && !hshift.some(s => (blocksW >> s) <= 2) && !dcHeight.some(h => h <= 2);
+    const corr = global.correlation, steps = lfDequant.map(m => 512 * m / (global.globalScale * global.quantLF));
+    kernels.i32.set([...kernelLF, ...dcWidth, ...dcHeight, ...hshift, ...vshift], kernels.args / 4);
+    kernels.lfPrepare(kernels.args, !maxH && !maxV ? 1 : 0, corr.baseX + (corr.lfX - 128) / corr.factor, corr.baseB + (corr.lfB - 128) / corr.factor, smooth ? 1 : 0, ...steps);
+    return smooth ? planes(6) : lf;
+  }
+  function lfImage() {
+    check(decodedLF.every(Boolean) && !header.useLFFrame && streams, 'JPEG XL LF image is incomplete.');
+    kernelLF ??= decodeKernels().reserve(Array(9).fill(BW * blocksH * 4));
+    return {planes: smoothedLF().map(p => p.slice()), width: dcWidth[0], height: dcHeight[0]};
+  }
   function prepare(lfReference) {
     let lf;
     if (header.useLFFrame) {
@@ -308,36 +324,29 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
         const sourceHeight = lfReference.heights?.[c] ?? lfReference.height ?? dcHeight[c];
         check(sourceWidth >= dcWidth[c] && sourceHeight >= dcHeight[c] && p.length >= sourceWidth * sourceHeight, 'JPEG XL LF reference is too small.');
         const values = new Float32Array(decodeKernels().buffer, kernelLF[c], low[c].length);
-        for (let y = 0; y < dcHeight[c]; y++) values.set(p.subarray(y * sourceWidth, y * sourceWidth + dcWidth[c]), y * dcWidth[c]);
+        const at = ox >> hshift[c];
+        for (let y = 0; y < dcHeight[c]; y++) values.set(p.subarray(y * sourceWidth + at, y * sourceWidth + at + dcWidth[c]), y * dcWidth[c]);
         return values;
       });
-    } else {
-      const kernels = decodeKernels(), planes = from => [0, 1, 2].map(c => new Float32Array(kernels.buffer, kernelLF[from + c], low[c].length));
-      lf = planes(0); for (let c = 0; c < 3; c++) lf[c].set(low[c]);
-      const smooth = !header.skipAdaptiveLFSmoothing && !dcWidth.some(w => w <= 2) && !dcHeight.some(h => h <= 2);
-      const corr = global.correlation, steps = lfDequant.map(m => 512 * m / (global.globalScale * global.quantLF));
-      kernels.i32.set([...kernelLF, ...dcWidth, ...dcHeight, ...hshift, ...vshift], kernels.args / 4);
-      kernels.lfPrepare(kernels.args, !maxH && !maxV ? 1 : 0, corr.baseX + (corr.lfX - 128) / corr.factor, corr.baseB + (corr.lfB - 128) / corr.factor, smooth ? 1 : 0, ...steps);
-      if (smooth) lf = planes(6);
-    }
-    const widths = hshift.map(s => Math.ceil(width / (1 << s))), heights = vshift.map(s => Math.ceil(height / (1 << s)));
-    const cellsW = Math.ceil(width / 8), cellsH = Math.ceil(height / 8), tightSigma = blocksW === cellsW ? sigma : new Float32Array(cellsW * cellsH);
-    if (tightSigma !== sigma) for (let y = 0; y < cellsH; y++) tightSigma.set(sigma.subarray(y * blocksW, y * blocksW + cellsW), y * cellsW);
+    } else lf = smoothedLF();
+    const widths = hshift.map(s => Math.ceil(W / (1 << s))), heights = vshift.map(s => Math.ceil(height / (1 << s)));
+    const cellsW = Math.ceil(W / 8), cellsH = Math.ceil(height / 8), tightSigma = BW === cellsW ? sigma : new Float32Array(cellsW * cellsH);
+    if (tightSigma !== sigma) for (let y = 0; y < cellsH; y++) tightSigma.set(sigma.subarray(y * BW, y * BW + cellsW), y * cellsW);
     prepared = {lf, widths, heights, tightSigma,
       planes: band ? null : widths.map((w, c) => new Float32Array(w * heights[c])),
       bias: imageHeader.opsinInverseMatrix?.quantBias || DEFAULT_BIAS, numerator: imageHeader.opsinInverseMatrix?.quantBiasNumerator ?? .145,
       qmScale: [header.xQmScale ?? 3, 2, header.bQmScale ?? 2].map(s => { let v = 1; for (let i = 2; i < s; i++) v *= .8; for (let i = s; i < 2; i++) v /= .8; return v; }),
       scratch: decodeKernels().coefficients, restoration: [], stripes: null, blockPlanes: [null, null, null]};
     if (streams && (radius || band)) {
-      const rows = Math.min(height, 256 + 2 * radius), plane = rows * width * 4, stages = restorationStages(header.filter), kernels = decodeKernels();
+      const rows = Math.min(height, 256 + 2 * radius), plane = rows * W * 4, stages = restorationStages(header.filter), kernels = decodeKernels();
       if (kernelRegions) {
         const {at} = kernelRegions;
-        const planes = from => [0, 1, 2].map(c => new Float32Array(kernels.buffer, at[from + c], rows * width));
+        const planes = from => [0, 1, 2].map(c => new Float32Array(kernels.buffer, at[from + c], rows * W));
         prepared.stripes = [planes(0), planes(3)];
         for (let i = 0; i < stages.length - 1; i++) prepared.restoration[i] = planes(6 + 3 * i);
         const k = 6 + 3 * Math.max(1, stages.length);
         prepared.restoration.kernel = {final: planes(k - 3), ring: at[k], up: at[k + 1], down: at[k + 2], sigma: at[k + 3], args: at[k + 4], rgba: at[k + 5],
-          rgbaBytes: Math.min(height, 256) * width * 4};
+          rgbaBytes: Math.min(height, 256) * W * 4};
         if (band) band.kernel = prepared.restoration.kernel;
         new Float32Array(kernels.buffer, at[k + 3], prepared.tightSigma.length).set(prepared.tightSigma);
       }
@@ -368,8 +377,8 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
     if (id === 0 && cflBlock && held.every(h => typeof h === 'number')) {
       const {offsets, loaded} = K, scale = 65536 / (global.globalScale * multiplier);
       if (!loaded[table]) { for (let k = 0; k < 3; k++) new Float32Array(kernels.buffer, offsets[table] + k * 256, 64).set(quant[k]); loaded[table] = true; }
-      const tile = (Math.floor(block.y * 8 / 64) - (group.by >> 3)) * group.width + Math.floor(block.x * 8 / 64) - (group.bx >> 3), at = block.y * dcWidth[0] + block.x;
-      const x0 = block.x * 8, y0 = block.y * 8, w = widths[0], xs = Math.min(8, w - x0), ys = Math.min(8, heights[0] - y0);
+      const tile = (Math.floor(block.y * 8 / 64) - (group.by >> 3)) * group.width + Math.floor(block.x * 8 / 64) - (group.bx >> 3), at = block.y * dcWidth[0] + block.x - ox;
+      const x0 = (block.x - ox) * 8, y0 = block.y * 8, w = widths[0], xs = Math.min(8, w - x0), ys = Math.min(8, heights[0] - y0);
       kernels.block8(arena + held[0] * 4, arena + held[1] * 4, arena + held[2] * 4, offsets[table], scale * qmScale[0], scale * qmScale[1], scale * qmScale[2],
         bias[0], bias[1], bias[2], numerator, global.correlation.baseX + group.xFromY[tile] / global.correlation.factor,
         global.correlation.baseB + group.bFromY[tile] / global.correlation.factor, lf[0][at], lf[1][at], lf[2][at],
@@ -397,7 +406,7 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
           kernels.cfl64(values.byteOffset, luma.byteOffset, base + i32[map / 4 + ci] / global.correlation.factor);
         } else kernels.cfl(values.byteOffset, luma.byteOffset, size, wide, tiles, tiles + 1024, transpose ? 1 : 0, group.width, map, base, global.correlation.factor);
       }
-      const bx = block.x >> hshift[c], by = block.y >> vshift[c], plane = lf[c], stride = dcWidth[c];
+      const bx = (block.x - ox) >> hshift[c], by = block.y >> vshift[c], plane = lf[c], stride = dcWidth[c];
       if (area === 1) values[0] = 0 + plane[by * stride + bx];
       else {
         const w = Math.max(bw, bh), h2 = Math.min(bw, bh);
@@ -409,7 +418,7 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
     }
     block.coefficients = block.arena = null;
     for (let c = 0; c < 3; c++) if (coefficients[c]) {
-      const values = coefficients[c], x0 = (block.x >> hshift[c]) * 8, y0 = (block.y >> vshift[c]) * 8;
+      const values = coefficients[c], x0 = ((block.x - ox) >> hshift[c]) * 8, y0 = (block.y >> vshift[c]) * 8;
       inverseBlock(kernels, values.byteOffset, shape);
       const w = widths[c], xs = Math.min(shape.width, w - x0), ys = Math.min(shape.height, heights[c] - y0);
       if (xs > 0 && ys > 0) kernels.store(shape.width, targets[c], (y0 - tops[c]) * w + x0, w, xs, ys);
@@ -417,7 +426,7 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
   }
 
   if (band) {
-    check(streams && band.first >= 0 && band.first < band.end && band.end <= groupsY, 'Invalid JPEG XL band.');
+    check(streams && band.first >= 0 && band.first < band.end && band.end <= groupsY && left >= 0 && left < right && right <= groupsX, 'Invalid JPEG XL band.');
     rendered = band.first;
     band.top = band.first * 256; band.bottom = Math.min(height, band.end * 256);
     band.deferTop = band.first > 0 ? Math.min(band.bottom, band.top + radius) : band.top;
@@ -426,13 +435,13 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
   }
   function restoreStripe(stripe, a, b) {
     if (a >= b) return;
-    if (!band) return restoreRows(stripe.planes, stripe.lo, width, height, header.filter, prepared.tightSigma, prepared.planes, 0, a, b, prepared.restoration);
-    const output = band.kernel ? band.kernel.final.map(p => p.subarray(0, (b - a) * width)) : band.target(a, b);
-    restoreRows(stripe.planes, stripe.lo, width, height, header.filter, prepared.tightSigma, output, a, a, b, prepared.restoration);
+    if (!band) return restoreRows(stripe.planes, stripe.lo, W, height, header.filter, prepared.tightSigma, prepared.planes, 0, a, b, prepared.restoration);
+    const output = band.kernel ? band.kernel.final.map(p => p.subarray(0, (b - a) * W)) : band.target(a, b);
+    restoreRows(stripe.planes, stripe.lo, W, height, header.filter, prepared.tightSigma, output, a, a, b, prepared.restoration);
     band.restored(a, b, output);
   }
   function keepRows(stripe, a, b) {
-    if (a < b) band.kept.push({top: a, planes: stripe.planes.map(p => p.slice((a - stripe.lo) * width, (b - stripe.lo) * width))});
+    if (a < b) band.kept.push({top: a, planes: stripe.planes.map(p => p.slice((a - stripe.lo) * W, (b - stripe.lo) * W))});
   }
   function renderRow(k, lfReference) {
     check(k === rendered && k < (band ? band.end : groupsY), 'JPEG XL group rows render in order.');
@@ -462,7 +471,7 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
     }
     const from = band ? band.deferTop : 0, to = band ? band.deferBottom : height;
     if (pending) {
-      const copyRows = (from, to, a, b) => { for (let c = 0; c < 3; c++) to.planes[c].set(from.planes[c].subarray((a - from.lo) * width, (b - from.lo) * width), (a - to.lo) * width); };
+      const copyRows = (from, to, a, b) => { for (let c = 0; c < 3; c++) to.planes[c].set(from.planes[c].subarray((a - from.lo) * W, (b - from.lo) * W), (a - to.lo) * W); };
       copyRows(stripe, pending, top, pending.hi); copyRows(pending, stripe, lo, top);
       restoreStripe(pending, Math.max(from, pending.top), Math.min(to, pending.bottom));
     }
@@ -472,9 +481,9 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
 
   function bandEdges() {
     const rows = (a, b) => [0, 1, 2].map(c => {
-      const out = new Float32Array(Math.max(0, b - a) * width);
-      for (const kept of band.kept) for (let y = Math.max(a, kept.top); y < Math.min(b, kept.top + kept.planes[c].length / width); y++)
-        out.set(kept.planes[c].subarray((y - kept.top) * width, (y - kept.top + 1) * width), (y - a) * width);
+      const out = new Float32Array(Math.max(0, b - a) * W);
+      for (const kept of band.kept) for (let y = Math.max(a, kept.top); y < Math.min(b, kept.top + kept.planes[c].length / W); y++)
+        out.set(kept.planes[c].subarray((y - kept.top) * W, (y - kept.top + 1) * W), (y - a) * W);
       return out;
     });
     return {above: rows(band.top, Math.min(band.bottom, band.top + radius)), below: rows(Math.max(band.top, band.bottom - radius), band.bottom)};
@@ -486,14 +495,14 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
     if (band.bottom > band.deferBottom) ranges.push([band.deferBottom, band.bottom]);
     if (ranges.length === 2 && ranges[1][0] <= ranges[0][1]) ranges.splice(0, 2, [band.top, band.bottom]);
     const sources = [...band.kept];
-    if (above) sources.push({top: band.top - above[0].length / width, planes: above});
+    if (above) sources.push({top: band.top - above[0].length / W, planes: above});
     if (below) sources.push({top: band.bottom, planes: below});
     for (const [a, b] of ranges) {
-      const lo = Math.max(0, a - radius), hi = Math.min(height, b + radius), stripe = {lo, planes: prepared.stripes[0].map(p => p.subarray(0, (hi - lo) * width))};
+      const lo = Math.max(0, a - radius), hi = Math.min(height, b + radius), stripe = {lo, planes: prepared.stripes[0].map(p => p.subarray(0, (hi - lo) * W))};
       for (const source of sources) for (let c = 0; c < 3; c++) {
-        const rows = source.planes[c].length / width;
+        const rows = source.planes[c].length / W;
         for (let y = Math.max(lo, source.top); y < Math.min(hi, source.top + rows); y++)
-          stripe.planes[c].set(source.planes[c].subarray((y - source.top) * width, (y - source.top + 1) * width), (y - lo) * width);
+          stripe.planes[c].set(source.planes[c].subarray((y - source.top) * W, (y - source.top + 1) * W), (y - lo) * W);
       }
       restoreStripe(stripe, a, b);
     }
@@ -506,5 +515,5 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
     const {planes, widths, heights, tightSigma} = prepared;
     return {planes, widths, heights, hshift, vshift, filterSigma: tightSigma, filtersApplied: streams};
   }
-  return Object.assign(state, {readLF, readHFGlobal, readPassGroup, renderRow, render, bandEdges, finishBand, band});
+  return Object.assign(state, {readLF, readHFGlobal, readPassGroup, renderRow, render, bandEdges, finishBand, lfImage, band});
 }

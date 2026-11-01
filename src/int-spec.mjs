@@ -25,10 +25,11 @@ const exactRoot = v => {
   let r = Math.round(Math.cbrt(v / Q20) * Q20);
   for (;;) { const [lo, hi] = cube(r); if (v && N8 < lo) r--; else if (N8 >= hi) r++; else return r; }
 };
-export const IS_CBRT_LO = Int32Array.from({length: 1 << 16}, (_, v) => exactRoot(v));
-export const IS_CBRT_HI = Int32Array.from({length: ((Q20 + IS_BIAS + 2) >> 4) + 2}, (_, i) => exactRoot(i * 16));
-const cbrt = v => v < 1 << 16 ? IS_CBRT_LO[v] : IS_CBRT_HI[R(v, 4)];
-export const BLACK = cbrt(IS_BIAS);
+let roots;
+export const cbrtTables = () => roots ||= {lo: Int32Array.from({length: 1 << 16}, (_, v) => exactRoot(v)),
+  hi: Int32Array.from({length: ((Q20 + IS_BIAS + 2) >> 4) + 2}, (_, i) => exactRoot(i * 16))};
+const cbrt = v => { const {lo, hi} = cbrtTables(); return v < 1 << 16 ? lo[v] : hi[R(v, 4)]; };
+export const BLACK = IS_BIAS < 1 << 16 ? exactRoot(IS_BIAS) : exactRoot(R(IS_BIAS, 4) * 16);
 
 export function isXYB(r, g, b) {
   const cone = o => IS_CONE[o * 256 + r] + IS_CONE[(o + 1) * 256 + g] + IS_CONE[(o + 2) * 256 + b] + IS_BIAS;
