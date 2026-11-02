@@ -1,8 +1,9 @@
 # Contributing
 
-Rapier JXL uses the MIT license. Submit contributions under the same license.
+Anybody is welcome to contribute to Rapier JXL, which is intended to be as universal as possible.
 
-- **Encoding errors:** open an issue with an image that reproduces the error, or submit a regression test.
-- **Compression or speed changes:** report the inputs, output sizes, runtime, elapsed times, and measurement method.
-  Scope comparisons to the tested inputs and runtimes. For bundle changes, compare the gzipped entry and worker sizes.
-- **Ports, bindings, and integrations:** develop them as separate projects and share a link in an issue.
+Rapier JXL uses the MIT license.
+
+For feedback, requests or questions, feel free to join the discussion. Our goal is to make Rapier JXL as easy, fast, small, powerful and reliable as possible for every use case, while keeping the architecture simple and general.
+
+For very common use cases, we can add examples and plugins.
