@@ -62,8 +62,8 @@ export function jpegKernels() {
       seedBest(k, ownBits) { const best = exports.seedBest(k, ownBits); return [best, f64[SCRATCH >> 3]]; },
       seedAll(used, counts, tokenOf, seeds, threshold) {
         priceStamp = null;
-        const n = used.length, small = DYNAMIC, tok = small + n * 256, loff = tok + 256, owns = loff + ((n + 1) * 4 + 7 & ~7);
-        const assign = owns + n * 256, larges = [];
+        const n = used.length, small = DYNAMIC, tok = small + n * 256, loff = tok + 256, runs = loff + ((n + 1) * 4 + 7 & ~7);
+        const offs = runs + n * 512, assign = offs + ((n + 1) * 4 + 7 & ~7), larges = [];
         let pairs = 0;
         for (const ctx of used) if (counts.large[ctx]) for (const v of counts.large[ctx].keys()) pairs++;
         const lpairs = assign + n * 4, end = lpairs + pairs * 8;
@@ -77,7 +77,7 @@ export function jpegKernels() {
           if (counts.large[ctx]) for (const [v, count] of counts.large[ctx]) { u32[(lpairs >> 2) + 2 * at] = tokenOf(v); u32[(lpairs >> 2) + 2 * at + 1] = count; at++; }
         }
         u32[(loff >> 2) + n] = at;
-        const k = exports.seedAll(n, small, loff, lpairs, tok, seeds, threshold, owns, assign);
+        const k = exports.seedAll(n, small, loff, lpairs, tok, seeds, threshold, runs, offs, assign);
         const clusters = [];
         for (let t = 0; t < n; t++) {
           const i = u32[(assign >> 2) + t];
@@ -85,7 +85,8 @@ export function jpegKernels() {
           else clusters[i].contexts.push(used[t]);
         }
         for (let i = 0; i < k; i++) { clusters[i].freqs = u32.slice((ROWS >> 2) + i * 64, (ROWS >> 2) + i * 64 + 64); clusters[i].bits = f64[(BITS >> 3) + i]; }
-        return {clusters, owns: u32.subarray(owns >> 2, (owns >> 2) + n * 64)};
+        const offsets = u32.slice(offs >> 2, (offs >> 2) + n + 1);
+        return {clusters, offsets, runs: u32.slice(runs >> 2, (runs >> 2) + 2 * offsets[n])};
       },
       pairsInit: length => { u8.fill(1, ALIVE, ALIVE + length); exports.pairsInit(length); },
       pairsUpdate: (length, left) => exports.pairsUpdate(length, left),
@@ -119,9 +120,10 @@ export function jpegKernels() {
           if (grey && c !== 1) continue;
           const {coeffs, stride} = comps[c], width = widths[c], rows = Math.ceil(bh / (1 << vshifts[c]));
           const x = bx0 >> hshifts[c], y = by0 >> vshifts[c], base = (FCOEFFS >> 1) + c * 65536;
+          const first = comps[c].row0 > 0 ? comps[c].row0 * stride : 0;
           for (let r = 0; r < rows; r++) {
             const at = (y + r) * stride + x;
-            i16.set(coeffs.subarray(at * 64, (at + width) * 64), base + r * width * 64);
+            i16.set(coeffs.subarray((at - first) * 64, (at - first + width) * 64), base + r * width * 64);
             if (counted) u8.set(blockCounts[c].subarray(at, at + width), FCOUNTS + c * 1024 + r * width);
           }
         }

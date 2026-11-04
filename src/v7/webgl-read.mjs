@@ -31,7 +31,7 @@ function place(data, rows, y0, count, width, height, attrs) {
   for (let r = 0; r < count; r++) data.set(rows.subarray(r * line, (r + 1) * line), (height - 1 - y0 - r) * line);
   straighten(data.subarray((height - y0 - count) * line, (height - y0) * line), attrs);
 }
-const space = gl => gl.drawingBufferColorSpace ?? 'srgb', lost = () => fail('JXL_INPUT', 'The canvas lost its WebGL context, so its pixels are gone; draw it again.');
+const space = gl => gl.drawingBufferColorSpace ?? 'srgb', lost = () => fail('JXL_INPUT', 'The canvas lost its WebGL context; draw it again.');
 
 export function readWebGLNow(canvas) {
   const gl = context(canvas);

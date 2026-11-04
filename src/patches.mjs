@@ -16,12 +16,12 @@ function admitPatches(data, width, height, options = {}) {
   const {quality, colorSpace} = admitOptions(options), effort = admitEffort(options);
   admitPixels(data, width, height);
   if (quality !== 100 || !admitSampleFormat(data, options).native8)
-    throw fault('JXL_INPUT', 'Authored patches use straight RGBA8 with sRGB transfer and sRGB or Display P3 primaries; baseError explicitly controls base-image quantization.');
+    throw fault('JXL_INPUT', 'Patches need straight sRGB or Display P3 RGBA8; baseError sets base quantization.');
   const atlas = options.atlas;
-  if (!atlas || typeof atlas !== 'object') throw fault('JXL_INPUT', 'atlas supplies data, width and height for the reference image.');
+  if (!atlas || typeof atlas !== 'object') throw fault('JXL_INPUT', 'atlas needs data, width and height.');
   admitPixels(atlas.data, atlas.width, atlas.height);
   if (!(atlas.data instanceof Uint8Array) && !(atlas.data instanceof Uint8ClampedArray))
-    throw fault('JXL_INPUT', 'The reference atlas uses the same RGBA8 samples and color encoding as the base image.');
+    throw fault('JXL_INPUT', 'The atlas must match the base image\'s samples and color.');
   const baseError = patchWhole(options.baseError ?? 0, 127, 'baseError');
   const orientation = patchWhole(options.orientation ?? 1, 8, 'orientation', 1), level = options.level ?? 5;
   if (level !== 5 && level !== 10) throw fault('JXL_INPUT', 'JPEG XL level is 5 or 10.');

@@ -1,7 +1,8 @@
+import {EDGE} from './limits.mjs';
 export const WHOLE = 40000000;
 export const BAND_PIXELS = 4194304;
 export const COMPACT_WHOLE = 16777216;
-export const BANDED_LIMITS = /* @__PURE__ */ Object.freeze({pixels: 16384 * 16384, edge: 16384});
+export const BANDED_LIMITS = /* @__PURE__ */ Object.freeze({pixels: 268435456, edge: EDGE});
 export const bandRows = width => Math.max(64, Math.floor(BAND_PIXELS / width / 64) * 64);
 
 export const WHOLE_BYTES = 106;

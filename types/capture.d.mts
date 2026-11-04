@@ -1,9 +1,9 @@
-import type {ImageInput, CaptureOptions, Bytes} from './types.mjs';
+import type {CaptureInput, TextureInput, CaptureOptions, Bytes} from './types.mjs';
 import type {WasmBundle} from './wasm.mjs';
-export type {CaptureOptions, CaptureFidelity, MaxError, ImageInput, Bytes} from './types.mjs';
+export type {CaptureOptions, CaptureRecord, CaptureFidelity, MaxError, ImageInput, CaptureInput, CapturePixels, Bytes} from './types.mjs';
 /** The screenshot encoder in one file, run in place: 8-bit sRGB or Display P3 RGBA, exact or within maxError.
- * `capture` from `rapier-jxl` and `rapier-jxl/upload` is the same encoder. */
-export function capture(input: ImageInput, options?: CaptureOptions): Promise<Bytes>;
+ * Efforts 1-5. `rapier-jxl/capture-complete` adds photographic fidelity, efforts 6-9 and WebGPU. */
+export function capture(input: Exclude<CaptureInput, TextureInput>, options?: CaptureOptions): Promise<Bytes>;
 /** Compiles the kernels and warms the coder, with no job. */
 export function prepare(): Promise<void>;
 /** True when this realm runs the capture encoder. supported('webgpu') is false: captures run on WebAssembly only. */

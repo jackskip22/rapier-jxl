@@ -10,7 +10,7 @@ const MAX_RECONSTRUCTION_BOXES = 65536;
 
 export function boxHeader(type, length, wide = false) {
   if (!Number.isSafeInteger(length) || length < 0 || !Number.isInteger(type) || type < 0 || type > 0xffffffff)
-    throw invalidBox('A JPEG XL box has a four-byte type and a nonnegative safe byte length.');
+    throw invalidBox('A box has a four-byte type and a safe byte length.');
   const size = length + (wide || length > 0xffffffff - 8 ? 16 : 8);
   if (!Number.isSafeInteger(size)) throw invalidBox('The JPEG XL box length exceeds the safe integer range.');
   const out = new Uint8Array(wide || size > 0xffffffff ? 16 : 8), view = new DataView(out.buffer);
@@ -56,7 +56,7 @@ export function* boxes(bytes, maxBoxes = 65536) {
     } else if (type === FTYP || type === 0x4a584c20) throw invalidBox('Repeated JPEG XL file header.');
     if (type === LEVEL) {
       if (boxCount !== 1 || levelSeen || end - body !== 1 || bytes[body] !== 5 && bytes[body] !== 10)
-        throw invalidBox('A level box contains 5 or 10 immediately after the file type.');
+        throw invalidBox('The level box (5 or 10) follows the file type.');
       levelSeen = true;
     }
     let decoded = type;
@@ -64,10 +64,10 @@ export function* boxes(bytes, maxBoxes = 65536) {
       if (end - body < 4) throw invalidBox('Truncated compressed JPEG XL metadata.');
       decoded = view.getUint32(body);
       if (decoded === BROB || decoded === RECONSTRUCTION || decoded >>> 8 === 0x6a786c)
-        throw invalidBox('A Brotli box cannot wrap codestream, index, reconstruction or another Brotli box.');
+        throw invalidBox('Brotli cannot wrap codestream, index, reconstruction or Brotli boxes.');
     }
     if (decoded === 0x6a786c69 && ++indexBoxes > 1 || decoded === 0x6a68676d && ++gainBoxes > 1)
-      throw invalidBox('A JPEG XL container has at most one frame index and one gain map.');
+      throw invalidBox('At most one frame index and one gain map.');
     if (type === CODESTREAM) {
       if (complete || next) throw invalidBox('Repeated or mixed JPEG XL codestream boxes.');
       complete = true;
@@ -115,7 +115,7 @@ export function* boxes(bytes, maxBoxes = 65536) {
 
 export function withJPEGReconstruction(bytes, reconstruction) {
   if (!(bytes instanceof Uint8Array) || !(reconstruction instanceof Uint8Array))
-    throw invalidBox('JPEG XL codestream and JPEG reconstruction data are Uint8Array values.');
+    throw invalidBox('Codestream and JPEG reconstruction data are Uint8Array.');
   if (bytes[0] !== 255 || bytes[1] !== 10) {
     if (!SIGNATURE.every((byte, i) => bytes[i] === byte)) throw invalidBox('Invalid JPEG XL signature.');
     let insertion = -1, boxCount = 0;

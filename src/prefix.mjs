@@ -12,9 +12,23 @@ const reverseBits = (value, count) => ((REV8[value & 255] << 8) | REV8[(value >>
 
 const HUFF_WEIGHTS = /* @__PURE__ */ new Float64Array(1024);
 const HUFF_PARENTS = /* @__PURE__ */ new Int32Array(1024);
-const HUFF_KEYS = (typeof __RAPIER_JXL_METADATA__ === 'undefined' || __RAPIER_JXL_METADATA__ !== true) ? new Float64Array(1024) : null;
+const HUFF_KEYS = (typeof __RAPIER_JXL_METADATA__ === 'undefined' || __RAPIER_JXL_METADATA__ !== true) ? /* @__PURE__ */ new Float64Array(1024) : null;
 const CANON_COUNTS = /* @__PURE__ */ new Uint32Array(17);
 const CANON_NEXT = /* @__PURE__ */ new Uint32Array(17);
+
+function treeDepths(weights, parents, count, lengths, symbols, limit) {
+  const nodes = count * 2 - 1;
+  let li = 0, ii = count, deepest = 0;
+  for (let next = count; next < nodes; next++) {
+    const a = li < count && (ii >= next || weights[li] <= weights[ii]) ? li++ : ii++;
+    const b = li < count && (ii >= next || weights[li] <= weights[ii]) ? li++ : ii++;
+    weights[next] = weights[a] + weights[b]; parents[a] = next; parents[b] = next;
+  }
+  parents[nodes - 1] = 0;
+  for (let i = nodes - 2; i >= count; i--) parents[i] = parents[parents[i]] + 1;
+  for (let i = 0; i < count; i++) deepest = Math.max(deepest, lengths[symbols[i]] = parents[parents[i]] + 1);
+  return deepest <= limit;
+}
 
 export function codeLengths(freqs, limit, used, size = freqs.length) {
   const lengths = new Uint8Array(size);
@@ -40,21 +54,7 @@ export function codeLengths(freqs, limit, used, size = freqs.length) {
       used.sort((a, b) => Math.max(freqs[a], floor) - Math.max(freqs[b], floor) || a - b);
       for (let i = 0; i < count; i++) weights[i] = Math.max(freqs[used[i]], floor);
     }
-    let li = 0, ii = count;
-    for (let next = count; next < nodes; next++) {
-      const a = li < count && (ii >= next || weights[li] <= weights[ii]) ? li++ : ii++;
-      const b = li < count && (ii >= next || weights[li] <= weights[ii]) ? li++ : ii++;
-      weights[next] = weights[a] + weights[b]; parents[a] = next; parents[b] = next;
-    }
-    parents[nodes - 1] = 0;
-    for (let i = nodes - 2; i >= count; i--) parents[i] = parents[parents[i]] + 1;
-    let deepest = 0;
-    for (let i = 0; i < count; i++) {
-      const depth = parents[parents[i]] + 1;
-      lengths[used[i]] = depth;
-      if (depth > deepest) deepest = depth;
-    }
-    if (deepest <= limit) return lengths;
+    if (treeDepths(weights, parents, count, lengths, used, limit)) return lengths;
   }
 }
 
@@ -100,7 +100,7 @@ export function priceCode(freqs, used) {
 let compactFreqs = /* @__PURE__ */ new Uint32Array(1024), sortScratch = /* @__PURE__ */ new Uint32Array(0), huffWeights = /* @__PURE__ */ new Float64Array(0), huffParents = /* @__PURE__ */ new Int32Array(0);
 const sortBins = /* @__PURE__ */ new Int32Array(256);
 function compactLengths(freqs, count) {
-  const nodes = count * 2 - 1, lengths = new Uint8Array(count);
+  const lengths = new Uint8Array(count);
   if (sortScratch.length < 4 * count) { sortScratch = new Uint32Array(4 * count); huffWeights = new Float64Array(2 * count); huffParents = new Int32Array(2 * count); }
   let w = sortScratch.subarray(0, count), s = sortScratch.subarray(count, 2 * count), w2 = sortScratch.subarray(2 * count, 3 * count), s2 = sortScratch.subarray(3 * count, 4 * count);
   const weights = huffWeights, parents = huffParents;
@@ -115,16 +115,7 @@ function compactLengths(freqs, count) {
       let t = w; w = w2; w2 = t; t = s; s = s2; s2 = t;
     }
     for (let i = 0; i < count; i++) weights[i] = w[i];
-    let li = 0, ii = count, deepest = 0;
-    for (let next = count; next < nodes; next++) {
-      const x = li < count && (ii >= next || weights[li] <= weights[ii]) ? li++ : ii++;
-      const y = li < count && (ii >= next || weights[li] <= weights[ii]) ? li++ : ii++;
-      weights[next] = weights[x] + weights[y]; parents[x] = next; parents[y] = next;
-    }
-    parents[nodes - 1] = 0;
-    for (let i = nodes - 2; i >= count; i--) parents[i] = parents[parents[i]] + 1;
-    for (let i = 0; i < count; i++) deepest = Math.max(deepest, lengths[s[i]] = parents[parents[i]] + 1);
-    if (deepest <= 15) return lengths;
+    if (treeDepths(weights, parents, count, lengths, s, 15)) return lengths;
   }
 }
 
@@ -136,6 +127,16 @@ export function compactCode(freqs, used) {
   const alphabetSize = used[count - 1] + 1, lengths = new Uint8Array(alphabetSize), compact = compactLengths(compactFreqs, count);
   for (let i = 0; i < count; i++) lengths[used[i]] = compact[i];
   return {alphabetSize, lengths, codes: null, simple: null, treeSelect: 0};
+}
+
+function clclLengths(freqs, first) {
+  let distinct = 0;
+  for (const f of freqs) if (f) distinct++;
+  if (distinct === 1) freqs[first ? 0 : 1] = freqs[first];
+  const clcl = codeLengths(freqs, 5);
+  let count = 18;
+  while (count > 0 && !clcl[CODE_LENGTH_ORDER[count - 1]]) count--;
+  return [clcl, count];
 }
 
 export function prefixCodeBits(freqs, used) {
@@ -177,13 +178,7 @@ export function prefixCodeBits(freqs, used) {
     run(lengths[i], j - i);
     symbol = used[j - 1] + 1; i = j;
   }
-  const freqs18 = tokens.slice();
-  let distinct = 0;
-  for (const f of freqs18) if (f) distinct++;
-  if (distinct === 1) freqs18[first ? 0 : 1] = freqs18[first];
-  const clcl = codeLengths(freqs18, 5);
-  let n = 18;
-  while (n > 0 && !clcl[CODE_LENGTH_ORDER[n - 1]]) n--;
+  const [clcl, n] = clclLengths(tokens.slice(), first);
   bits += 2 + extra;
   for (let i = 0; i < n; i++) bits += CLCL_BITS[clcl[CODE_LENGTH_ORDER[i]]];
   for (let t = 0; t < 18; t++) bits += tokens[t] * clcl[t];
@@ -215,12 +210,7 @@ export function writePrefixCode(w, code) {
   }
   const freqs = new Uint32Array(18);
   for (const token of tokens) freqs[token]++;
-  let distinct = 0;
-  for (const f of freqs) if (f) distinct++;
-  if (distinct === 1) freqs[tokens[0] ? 0 : 1] = freqs[tokens[0]];
-  const clcl = codeLengths(freqs, 5), clCodes = canonicalCodes(clcl);
-  let count = 18;
-  while (count > 0 && !clcl[CODE_LENGTH_ORDER[count - 1]]) count--;
+  const [clcl, count] = clclLengths(freqs, tokens[0]), clCodes = canonicalCodes(clcl);
   w.write(2, 0);
   for (let i = 0; i < count; i++) { const length = clcl[CODE_LENGTH_ORDER[i]]; w.write(CLCL_BITS[length], CLCL_CODE[length]); }
   for (let i = 0; i < tokens.length; i++) {
@@ -260,7 +250,7 @@ export function writeHybrid(w, code, config, value, base = 0) {
 }
 
 const CODED_MAP_LITERAL = /* @__PURE__ */ uintConfig(8), CODED_MAP_LENGTH = /* @__PURE__ */ uintConfig(4), CODED_MAP_DISTANCE = /* @__PURE__ */ uintConfig(0);
-const ONE_DISTANCE_CODE = buildCode(Uint32Array.of(1));
+const ONE_DISTANCE_CODE = /* @__PURE__ */ buildCode(/* @__PURE__ */ Uint32Array.of(1));
 const CODED_MAP_FREQ = /* @__PURE__ */ new Uint32Array(257);
 let CODED_PIECE_IDX = /* @__PURE__ */ new Uint16Array(4096);
 let CODED_PIECE_COPY = /* @__PURE__ */ new Uint32Array(4096);

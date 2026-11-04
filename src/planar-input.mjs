@@ -16,7 +16,7 @@ export function admitChannelPrecision(data, options) {
   if (sampleFormat === 'uint' && options.exponentBits !== undefined && options.exponentBits !== 0)
     throw fault('JXL_INPUT', 'Integer samples have no exponent bits.');
   if (sampleFormat === 'float16' && (bitDepth !== 16 || exponentBits !== 5) || sampleFormat === 'float32' && (bitDepth !== 32 || exponentBits !== 8))
-    throw fault('JXL_INPUT', 'float16 and float32 use their IEEE sample precision; use float for other raw-word layouts.');
+    throw fault('JXL_INPUT', 'float16 and float32 are IEEE; use float for other raw words.');
   checkInteger(bitDepth, 1, exponentBits ? 32 : 31, 'bitDepth');
   if (exponentBits) {
     checkInteger(exponentBits, 2, 8, 'exponentBits');
@@ -36,16 +36,16 @@ export function admitExtraChannels(extraChannels, width, height, upsampling = 1)
     requireChannelObject(entry, 'Extra channel ' + index);
     const kind = extraChannelType(new Map(Object.entries(entry)).get('type')), dimShift = checkInteger(entry.dimShift ?? 0, 0, 3, 'dimShift');
     if (entry.alphaPremultiplied !== undefined && kind !== 0 || entry.spotColor !== undefined && kind !== 2 || entry.cfaChannel !== undefined && kind !== 5)
-      throw fault('JXL_INPUT', 'Alpha, spot and CFA fields belong to their corresponding channel type.');
+      throw fault('JXL_INPUT', 'Alpha, spot and CFA fields need their channel type.');
     const factor = channelUpsampling(entry.upsampling ?? Math.max(1, upsampling / channelPowers[dimShift]), 'Extra-channel upsampling');
     const total = factor * channelPowers[dimShift];
-    if (total < upsampling || total > 8) throw fault('JXL_INPUT', 'Combined extra-channel upsampling is at least the color factor and at most eight.');
+    if (total < upsampling || total > 8) throw fault('JXL_INPUT', 'Extra-channel upsampling is from the color factor to 8.');
     const name = entry.name ?? '';
     if (typeof name !== 'string' || new TextEncoder().encode(name).length > 1071) throw fault('JXL_INPUT', 'A channel name is at most 1071 UTF-8 bytes.');
     if (entry.alphaPremultiplied !== undefined && typeof entry.alphaPremultiplied !== 'boolean') throw fault('JXL_INPUT', 'alphaPremultiplied is boolean.');
     const spotColor = entry.spotColor ?? [0, 0, 0, 0];
     if (kind === 2 && (!Array.isArray(spotColor) || spotColor.length !== 4 || spotColor.some(value => typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1)))
-      throw fault('JXL_INPUT', 'spotColor is four normalized red, green, blue and solidity values.');
+      throw fault('JXL_INPUT', 'spotColor is four values from 0 to 1: red, green, blue, solidity.');
     const cfaChannel = kind === 5 ? checkInteger(entry.cfaChannel ?? 1, 0, 274, 'cfaChannel') : 1;
     const channel = {...admitChannelPrecision(entry.data, entry), width: Math.ceil(width / total), height: Math.ceil(height / total),
       shift: 31 - Math.clz32(total / upsampling), kind, dimShift, factor, name, alphaPremultiplied: !!entry.alphaPremultiplied, spotColor, cfaChannel};

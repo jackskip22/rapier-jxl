@@ -314,20 +314,20 @@ function radialShape(x, y, width, height) {
 function admitTransforms(value) {
   if (value === undefined || value === 'auto') return [4, 0];
   const names = Array.isArray(value) ? value : [value];
-  if (!names.length || names.length > 27) throw fault('JXL_INPUT', 'transforms names one or more JPEG XL transform strategies.');
+  if (!names.length || names.length > 27) throw fault('JXL_INPUT', 'transforms names one or more strategies.');
   const ids = names.map(name => NAMES.indexOf(name));
-  if (ids.some(id => id < 0)) throw fault('JXL_INPUT', 'transforms names a strategy exported by TRANSFORMS, or auto.');
+  if (ids.some(id => id < 0)) throw fault('JXL_INPUT', 'transforms names a TRANSFORMS strategy, or auto.');
   return [...new Set([...ids, 0])].sort((a, b) => WIDTHS[b] * HEIGHTS[b] - WIDTHS[a] * HEIGHTS[a]);
 }
 
 function admitQuantization(value) {
   if (value === undefined) return {};
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw fault('JXL_INPUT', 'quantization maps transform names to three positive coefficient-step arrays.');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw fault('JXL_INPUT', 'quantization maps transforms to three positive step arrays.');
   const out = {};
   for (const [name, matrices] of Object.entries(value)) {
     if (name === 'dc') {
       if ((!Array.isArray(matrices) && !ArrayBuffer.isView(matrices)) || matrices.length !== 3)
-        throw fault('JXL_INPUT', 'quantization.dc gives three positive DC steps in Y/Cb/Cr order.');
+        throw fault('JXL_INPUT', 'quantization.dc is three positive steps, Y/Cb/Cr.');
       out.dc = Int32Array.from(matrices, value => {
         if (!Number.isFinite(value) || value < 1 / 16 || value > 4095) throw fault('JXL_INPUT', 'DC steps are finite numbers from 1/16 through 4095.');
         return Math.round(value * 16);
@@ -335,17 +335,17 @@ function admitQuantization(value) {
       continue;
     }
     const id = NAMES.indexOf(name), area = id < 0 ? 0 : WIDTHS[id] * HEIGHTS[id] * 64;
-    if (!area) throw fault('JXL_INPUT', 'Quantization keys name transform families from TRANSFORMS.');
-    if (out[TABLES[id]]) throw fault('JXL_INPUT', 'Transposed strategies share one quantization family; supply that family once.');
+    if (!area) throw fault('JXL_INPUT', 'Quantization keys are TRANSFORMS families.');
+    if (out[TABLES[id]]) throw fault('JXL_INPUT', 'Transposed strategies share a family; give it once.');
     if (matrices && typeof matrices === 'object' && !Array.isArray(matrices) && !ArrayBuffer.isView(matrices)) {
       const parameters = prepareQuantParams(matrices, Math.max(WIDTHS[id], HEIGHTS[id]) * 8, Math.min(WIDTHS[id], HEIGHTS[id]) * 8, TABLES[id]);
       out[TABLES[id]] = {parameters, planes: quantParamSteps(parameters, 16, 2, [1, 0, 2])};
       continue;
     }
     if (!Array.isArray(matrices) || matrices.length !== 3 || matrices.some(matrix => !matrix || matrix.length !== area))
-      throw fault('JXL_INPUT', 'Each custom quantization family has three complete coefficient-step matrices or a compact descriptor.');
+      throw fault('JXL_INPUT', 'Each quantization family has three step matrices or a compact descriptor.');
     out[TABLES[id]] = matrices.map(matrix => Int32Array.from(matrix, value => {
-      if (!Number.isFinite(value) || value < 1 / 16 || value > 4095) throw fault('JXL_INPUT', 'Coefficient steps are finite numbers from 1/16 through 4095.');
+      if (!Number.isFinite(value) || value < 1 / 16 || value > 4095) throw fault('JXL_INPUT', 'Steps are from 1/16 to 4095.');
       return Math.round(value * 16);
     }));
   }
@@ -354,7 +354,7 @@ function admitQuantization(value) {
 
 export function admitStrategyOptions(options) {
   if (options.orientation !== undefined && (!Number.isInteger(options.orientation) || options.orientation < 1 || options.orientation > 8))
-    throw fault('JXL_INPUT', 'orientation is an Exif orientation from one through eight.');
+    throw fault('JXL_INPUT', 'orientation is 1 to 8.');
   const selection = new Map(Object.entries(options)).get('transforms');
   return {ids: admitTransforms(selection), custom: admitQuantization(options.quantization),
     automatic: selection === undefined || selection === 'auto', variable: selection !== undefined || options.quantization !== undefined};
@@ -406,7 +406,7 @@ export function* strategyCoefficientSteps(data, width, height, quality, colorSpa
       for (let k = area; k < size; k++) {
         const pos = order[k], step = table.planes[c][pos] / quantScale, value = Math.round(transformed[pos] * 8 / step);
         if (!Number.isSafeInteger(value) || value < -2147483648 || value > 2147483647)
-          throw fault('JXL_INPUT', 'Quantization produces a coefficient outside the signed 32-bit format range.');
+          throw fault('JXL_INPUT', 'Quantization overflows signed 32-bit.');
         wide ||= value < -32768 || value > 32767;
         plane[pos] = value;
         if (value) cost += 2 + ceilLog2(1 + Math.abs(value));
@@ -472,7 +472,7 @@ export function* requantizeStrategySteps(retained, quality, admitted) {
         for (let k = area; k < size; k++) {
           const pos = order[k], step = table.planes[c][pos] / quantScale, value = Math.round(transformed[pos] * 8 / step);
           if (!Number.isSafeInteger(value) || value < -2147483648 || value > 2147483647)
-            throw fault('JXL_INPUT', 'Quantization produces a coefficient outside the signed 32-bit format range.');
+            throw fault('JXL_INPUT', 'Quantization overflows signed 32-bit.');
           wideCoefficients ||= value < -32768 || value > 32767;
           plane[pos] = value;
         }

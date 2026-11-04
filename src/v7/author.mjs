@@ -19,30 +19,31 @@ const PIXEL_KINDS = ['patches', 'splines', 'graphics', 'hybrid', 'palette', 'pho
 const NO_ORIENTATION = ['graphics', 'palette', 'profile'], NO_EXTRA_CHANNELS = ['patches', 'splines', 'graphics', 'palette', 'profile'];
 function refuseLost(kind, image) {
   if (NO_ORIENTATION.includes(kind) && image.orientation !== undefined && image.orientation !== 1)
-    throw fail('JXL_UNSUPPORTED', `A ${kind} file does not carry orientation in this version; rotate the pixels, or use kind 'photo'.`);
+    throw fail('JXL_UNSUPPORTED', `A ${kind} file has no orientation; rotate the pixels, or use kind 'photo'.`);
   if (NO_EXTRA_CHANNELS.includes(kind) && image.extraChannels !== undefined && !(Array.isArray(image.extraChannels) && !image.extraChannels.length))
-    throw fail('JXL_UNSUPPORTED', `A ${kind} file does not carry extra channels in this version; write them with kind 'photo' or 'channels'.`);
+    throw fail('JXL_UNSUPPORTED', `A ${kind} file has no extra channels; use kind 'photo' or 'channels'.`);
 }
 export function admitFormat(request, options) {
   object(request, 'Format input'); object(options);
   if (!KINDS.includes(request.kind)) throw fail('JXL_OPTIONS', 'Unknown JPEG XL format author.');
   for (const key of RETIRED) if (options[key] !== undefined) throw fail('JXL_OPTIONS', `Unknown format option: ${key}.`);
-  if (options.screenEffort !== undefined) throw fail('JXL_OPTIONS', 'screenEffort is not a format option: effort sets the screen search.');
+  if (options.screenEffort !== undefined) throw fail('JXL_OPTIONS', 'screenEffort is not an option; use effort.');
   if (PIXEL_KINDS.includes(request.kind)) refuseDescription(options, `options of a ${request.kind} request; set it on the request`);
   if (options.effort !== undefined && (!Number.isInteger(options.effort) || options.effort < 1 || options.effort > 9)) throw fail('JXL_OPTIONS', 'effort must be an integer 1–9.');
   if (options.fidelity === undefined) return;
   const read = encodeFidelity(options.fidelity);
-  if (read.target !== undefined) throw fail('JXL_OPTIONS', "A format request takes fidelity 'exact' or {quality}.");
+  if (read.target !== undefined || read.webp !== undefined) throw fail('JXL_OPTIONS', "A format request takes fidelity 'exact' or {quality}.");
   if (read.quality === 100) {
     const loss = (options.preset !== undefined && options.preset !== 'exact') ? `preset '${options.preset}'` :
       options.maxColorError > 0 ? 'maxColorError' : options.baseError > 0 ? 'baseError' : options.undither === true ? 'undither' : undefined;
-    if (loss) throw fail('JXL_OPTIONS', `fidelity 'exact' keeps every sample; ${loss} allows loss. Leave out one or the other.`);
+    if (loss) throw fail('JXL_OPTIONS', `fidelity 'exact' keeps every sample; ${loss} allows loss. Use one.`);
   }
 }
 export async function author(request, options, hooks) {
   admitFormat(request, options);
   const image = request.image ?? request;
-  dimensions(image.width, image.height, hooks.maxPixels);
+  const sized = request.kind === 'patch-composition' ? [image.base, ...(image.references ?? [])].map(frame => frame?.image).filter(Boolean) : [image];
+  for (const frame of sized) dimensions(frame.width, frame.height, hooks.maxPixels);
   const finish = iterator => drain(iterator, hooks);
   if (PIXEL_KINDS.includes(request.kind)) refuseLost(request.kind, image);
   const {fidelity, ...rest} = options, codec = PIXEL_KINDS.includes(request.kind) ? {...rest, ...described(image)} : {...rest};

@@ -6,7 +6,7 @@ export const DESCRIPTION = ['colorSpace','transferFunction','bitDepth','sampleFo
 
 export function refuseDescription(options, where = 'options') {
   for (const key of DESCRIPTION) if (options?.[key] !== undefined)
-    throw fail('JXL_OPTIONS', `${key} describes the image: set it on the image, not in the ${where}.`);
+    throw fail('JXL_OPTIONS', `${key} goes on the image, not the ${where}.`);
 }
 
 export function described(record) {
@@ -37,15 +37,15 @@ export function decodedDescription(decoded) {
   const out = decodedFields(decoded);
   if (decoded.rgbaICC) out.icc = decoded.rgbaICC;
   else if (out.colorSpace === undefined || out.transferFunction === undefined)
-    throw fail('JXL_INPUT', 'This decoded image is in a color encoding encode cannot name; decode it with colorSpace srgb, display-p3 or rec2020.');
+    throw fail('JXL_INPUT', 'Encode cannot name this color; decode with colorSpace srgb, display-p3 or rec2020.');
   const intensity = decoded.header?.toneMapping?.intensityTarget;
   if (typeof intensity === 'number') out.intensityTarget = intensity;
   if (decoded.alphaPremultiplied) out.alphaPremultiplied = true;
   if (!decoded.orientationApplied && decoded.orientation > 1) out.orientation = decoded.orientation;
   for (const key of RETAGGABLE) if (decoded[key] !== undefined && decoded[key] !== out[key])
-    throw fail('JXL_INPUT', `${key} on this decoded image is ${String(decoded[key])}, but its samples are ${String(out[key] ?? 'unnamed')}; to retag them pass {data, width, height, ${key}}.`);
+    throw fail('JXL_INPUT', `${key} is ${String(decoded[key])} but the samples are ${String(out[key] ?? 'unnamed')}; to retag, pass {data, width, height, ${key}}.`);
   const extra = (decoded.extraChannels ?? []).filter(channel => channel?.type !== 0);
-  if (extra.length) throw fail('JXL_UNSUPPORTED', 'This decoded image has extra channels beyond alpha, which encode does not carry yet; pass {data, width, height} to leave them out, or write them with format({kind: \'channels\'}).');
+  if (extra.length) throw fail('JXL_UNSUPPORTED', 'Encode drops extra channels beyond alpha; pass {data, width, height}, or use format({kind: \'channels\'}).');
   return out;
 }
 

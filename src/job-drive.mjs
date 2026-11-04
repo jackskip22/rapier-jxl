@@ -21,8 +21,8 @@ export async function* driven(steps, signal, it, gpu, offload) {
       const value = step.value;
       reply = undefined;
       if (typeof value === 'number') { yield last = value; reply = it.hurry; }
-      else if (value?.capture) reply = await settle(captureAnswer(value.capture));
-      else if (value?.screenPhoto) reply = await settle(screenPhotoAnswer(value.screenPhoto));
+      else if (value?.capture) reply = await captureAnswer(value.capture, signal);
+      else if (value?.screenPhoto) reply = await screenPhotoAnswer(value.screenPhoto, signal);
       else if (value?.gpu) reply = value.later ? device(value.gpu) : await settle(device(value.gpu));
       else if (value?.await !== undefined) reply = value.await ? await settle(value.await) : value.await;
       else if (value?.offload === 'prefetch') offload.prefetch(value.tasks, value.after);

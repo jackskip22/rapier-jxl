@@ -169,7 +169,7 @@ function bandWorker() {
     thread.on('exit', code => {
       const idle = idleWorkers.indexOf(worker);
       if (idle >= 0) idleWorkers.splice(idle, 1);
-      deliver({type: 'error', message: 'JPEG XL band worker exited before completing its work (exit code ' + code + ').'});
+      deliver({type: 'error', message: 'Band worker exited early (exit code ' + code + ').'});
     });
     Object.assign(worker, {post: (message, transfer) => thread.postMessage(message, transfer), end: () => thread.terminate(),
       ref: () => thread.ref(), unref: () => thread.unref()});
@@ -189,7 +189,7 @@ function bandWorker() {
       unavailable(event.message || 'JPEG XL browser band worker failed.');
     };
     thread.onmessageerror = event =>
-      unavailable(event?.message || 'JPEG XL browser band worker message could not be deserialized.');
+      unavailable(event?.message || 'Band worker message could not be deserialized.');
     Object.assign(worker, {post: (message, transfer) => thread.postMessage(message, transfer), end: () => thread.terminate(),
       ref: () => {}, unref: () => { worker.timer = setTimeout(() => { idleWorkers.splice(idleWorkers.indexOf(worker), 1); thread.terminate(); }, 10000); }});
   }

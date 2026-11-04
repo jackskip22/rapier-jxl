@@ -64,7 +64,7 @@ function scanContainer(bytes, maximum, maxBoxes = Number.MAX_SAFE_INTEGER) {
     } else if (type === FTYP || type === 0x4a584c20) throw invalid('Repeated JPEG XL file header.');
     if (type === LEVEL) {
       if (entries.length !== 1 || seenLevel || data.length !== 1 || data[0] !== 5 && data[0] !== 10)
-        throw invalid('A level box contains 5 or 10 immediately after the file type.');
+        throw invalid('The level box (5 or 10) follows the file type.');
       level = data[0]; seenLevel = true;
     } else if (type === CODESTREAM) {
       if (full || fragments.length) throw invalid('Repeated or mixed JPEG XL codestream boxes.');
@@ -81,11 +81,11 @@ function scanContainer(bytes, maximum, maxBoxes = Number.MAX_SAFE_INTEGER) {
       if (data.length < 4) throw invalid('Truncated compressed JPEG XL box.');
       const inner = view.getUint32(body);
       if (inner === BROB || inner === RECONSTRUCTION || inner >>> 8 === 0x6a786c)
-        throw invalid('A Brotli box cannot wrap codestream, index, reconstruction or another Brotli box.');
+        throw invalid('Brotli cannot wrap codestream, index, reconstruction or Brotli boxes.');
       entry.decoded = inner;
     }
     if (entry.decoded === INDEX && ++indexBoxes > 1 || entry.decoded === GAIN && ++gainBoxes > 1)
-      throw invalid('A JPEG XL container has at most one frame index and one gain map.');
+      throw invalid('At most one frame index and one gain map.');
     entries.push(entry); at = end;
   }
   if (!entries.length || !full && (!fragments.length || finalIndex !== fragments.length - 1)) throw invalid('The JPEG XL container has no complete codestream.');
@@ -137,9 +137,9 @@ function validateOrder(order, chunks, stream, options) {
   for (let i = 0; i < chunks.length; i++) { beforeMax[i] = highest; highest = Math.max(highest, positions[i]); }
   for (let i = chunks.length - 1; i >= 0; i--) { afterMin[i] = lowest; lowest = Math.min(lowest, positions[i]); }
   for (const boundary of barriers) if (beforeMax[boundary] >= positions[boundary] || afterMin[boundary] <= positions[boundary])
-    throw invalid('Every frame-start fragment must follow all earlier fragments and precede all later fragments.');
+    throw invalid('Frame-start fragments must stay in order.');
   if (!options.allowBufferedFrameEnds) for (const boundary of endings) if (beforeMax[boundary] >= positions[boundary] || afterMin[boundary] <= positions[boundary])
-    throw invalid('Keep the fragment before each frame start in order for Chrome 155, or explicitly allowBufferedFrameEnds.');
+    throw invalid('Keep each frame start\'s preceding fragment in order, or set allowBufferedFrameEnds.');
   return true;
 }
 
@@ -148,7 +148,7 @@ export function reframeContainer(bytes, options = {}) {
   const extended = options.extended ?? false;
   if (typeof extended !== 'boolean') throw invalid('extended is a boolean.');
   const level = options.level ?? source.level;
-  if (level !== 5 && level !== 10 || source.level === 10 && level !== 10) throw invalid('The container level is 5 or 10 and cannot demote an existing level 10 declaration.');
+  if (level !== 5 && level !== 10 || source.level === 10 && level !== 10) throw invalid('Level is 5 or 10, and a level 10 file stays 10.');
   const fragmenting = options.chunkSize !== undefined || options.fragmentOrder !== undefined;
   const chunkSize = fragmenting
     ? uint(options.chunkSize === undefined ? Math.max(stream.length, 1) : options.chunkSize, 0x7fffffff, 'chunkSize', 1)
@@ -265,7 +265,7 @@ function attached(bytes, type, payload, options) {
   const maximum = limit(options), source = scanContainer(bytes, maximum, boxLimit(options)), extended = options.extended ?? false;
   if (typeof extended !== 'boolean') throw invalid('extended is a boolean.');
   const level = options.level ?? source.level;
-  if (level !== 5 && level !== 10 || source.level === 10 && level !== 10) throw invalid('The container level is 5 or 10 and cannot demote an existing level 10 declaration.');
+  if (level !== 5 && level !== 10 || source.level === 10 && level !== 10) throw invalid('Level is 5 or 10, and a level 10 file stays 10.');
   const parts = [];
   if (!source.entries.length) parts.push(fileHeader(level), boxHeader(CODESTREAM, bytes.length), bytes);
   else {
@@ -286,7 +286,7 @@ export function withFrameIndex(bytes, index, options = {}) {
   admitAttachmentBoxCount(source, INDEX, index !== null, options.level ?? source.level, options);
   const payload = index === null ? null : frameIndexPayload(index, options);
   if (index !== null) for (const frame of index.frames) if (integer63(frame.byteOffset, 'byteOffset') >= BigInt(source.codestream.length))
-    throw invalid('A frame index byteOffset must fall inside the logical codestream.');
+    throw invalid('A frame index byteOffset is outside the codestream.');
   return attached(bytes, INDEX, payload, options);
 }
 export function readFrameIndex(bytes, options = {}) {
@@ -304,7 +304,7 @@ export function gainMapPayload(bundle, options = {}) {
   const metadata = byteArray(bundle.gainMapMetadata, 'gainMapMetadata'); uint(metadata.length, 65535, 'gainMapMetadata byte length');
   const gain = scanContainer(bundle.gainMap, maximum, boxLimit(options)).codestream; uint(gain.length, 0xffffffff, 'gainMap byte length', 2);
   if (bundle.alternativeColorEncoding !== undefined && bundle.alternativeColorEncodingBytes !== undefined)
-    throw invalid('Choose structured alternativeColorEncoding or its serialized bytes.');
+    throw invalid('Give alternativeColorEncoding or its bytes, not both.');
   const color = bundle.alternativeColorEncoding !== undefined ? prepareColorEncoding(bundle.alternativeColorEncoding).colorData.finish()
     : bundle.alternativeColorEncodingBytes === undefined ? new Uint8Array(0) : byteArray(bundle.alternativeColorEncodingBytes, 'alternativeColorEncodingBytes');
   uint(color.length, 255, 'alternative color encoding byte length');
@@ -325,7 +325,7 @@ export function withGainMap(bytes, bundle, options = {}) {
 export function readGainMap(bytes, options = {}) {
   const source = scanContainer(bytes, limit(options), boxLimit(options)), entry = source.entries.find(row => row.decoded === GAIN);
   if (!entry) return null;
-  if (entry.type === BROB) throw invalid('Reading a Brotli-compressed gain map requires external decompression first.');
+  if (entry.type === BROB) throw invalid('A Brotli-compressed gain map needs decompression first.');
   const data = entry.data, view = new DataView(data.buffer, data.byteOffset, data.byteLength); let cursor = 0;
   const part = size => { if (size > data.length - cursor) throw invalid('Truncated gain map bundle.'); const value = data.slice(cursor, cursor + size); cursor += size; return value; };
   const version = part(1)[0]; if (version !== 0) throw invalid('Unsupported gain-map bundle version.');

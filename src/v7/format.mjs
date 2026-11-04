@@ -1,5 +1,5 @@
 import {author, admitFormat} from './author.mjs';
-import {object, fail, declared, callers, pixelLimit} from './primitives.mjs';
+import {object, fail, declared, pixelLimit, progressOf} from './primitives.mjs';
 import {own} from './ownership.mjs';
 import {acceleration} from './acceleration.mjs';
 import {prepare as prepareStill} from './still.mjs';
@@ -14,7 +14,7 @@ async function formatHere(input, options = {}) {
   if (onProgress !== undefined && typeof onProgress !== 'function') throw fail('JXL_OPTIONS', 'onProgress must be a function.');
   admitFormat(input, rest);
   const request = own(input, maxPixels), owned = own(rest, maxPixels);
-  const report = onProgress && (fraction => { try { onProgress(fraction); } catch (error) { throw callers(error); } });
+  const report = progressOf(onProgress, signal);
   await acceleration(false, 0, 0);
   return author(request, owned, {signal: signal ?? new AbortController().signal, onProgress: report, maxPixels});
 }

@@ -127,7 +127,7 @@ export function readImageHeader(bytes, {iccBits} = {}) {
   header.toneAt = r.pos;
   if (header.extra && !r.bool()) r.read(16 + 16 + 1 + 16);
   header.extensionsAt = r.pos;
-  if (r.u64()) throw framingFault('Image metadata extensions are not produced by this encoder.');
+  if (r.u64()) throw framingFault('Image metadata extensions are not written.');
   header.transformAt = r.pos;
   if (!r.bool()) {
     if (header.xyb && !r.bool()) r.read(16 * 16);
@@ -138,7 +138,7 @@ export function readImageHeader(bytes, {iccBits} = {}) {
   if (header.icc) {
     if (typeof iccBits === 'function') iccBits = iccBits(bytes, r.pos);
     if (!Number.isSafeInteger(iccBits) || iccBits < 1 || r.pos + iccBits > bytes.length * 8)
-      throw framingFault('Framing an ICC image requires the prepared profile bit length.');
+      throw framingFault('An ICC image needs its profile bit length.');
     r.pos += iccBits;
   }
   header.payloadEnd = r.pos;
@@ -227,7 +227,7 @@ function readFrame(r, image, animation, tocPermutation) {
   const count = groups === 1 && frame.passes === 1 ? 1 : 2 + dcGroups + groups * frame.passes;
   let permutation;
   if (r.bool()) {
-    if (typeof tocPermutation !== 'function') throw framingFault('A permuted table of contents requires its optional delivery reader.');
+    if (typeof tocPermutation !== 'function') throw framingFault('A permuted TOC needs its delivery reader.');
     if (count > 65536) throw framingFault('A table of contents has at most 65536 sections.');
     permutation = tocPermutation(r, count);
     if (!Array.isArray(permutation) || permutation.length !== count) throw framingFault('Invalid table-of-contents permutation length.');

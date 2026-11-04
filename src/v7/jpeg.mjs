@@ -1,5 +1,6 @@
 import {ansTranscodeSteps} from '../jpeg-ans-effort.mjs';
 import {restoreJPEG} from '../jpeg-reconstruction.mjs';
+import {longTail} from '../jpeg-tail.mjs';
 import {brotliDictionary} from '../brotli-dictionary.mjs';
 import {configureKernels, prepareKernels} from '../kernels.mjs';
 import {kernelHooks} from '../kernel-hooks.mjs';
@@ -7,15 +8,12 @@ import {wasmRequired} from '../capture-wasm-error.mjs';
 import {jpegDimensions} from './input.mjs';
 import {admitEffort} from '../effort-level.mjs';
 import {copyBytes, encodedByteLength} from './bytes.mjs';
-import {bytes, check, fail, declared, object, callers, dimensions} from './primitives.mjs';
-import {header} from './inspect.mjs';
+import {bytes, check, fail, declared, object, dimensions, jpegPixels, NO_JPEG, progressOf} from './primitives.mjs';
+import {JxlBits, readSize} from '../jpeg-coefficients.mjs';
+import {boxes, SIGNATURE, CODESTREAM, PARTIAL} from '../container.mjs';
 export {configureWasm} from '../wasm-modules.mjs';
 
-function pixelBound(value) {
-  if (value === undefined) return 40000000;
-  if (!Number.isSafeInteger(value) || value < 1 || value > 40000000) throw fail('JXL_OPTIONS', 'maxPixels is a positive whole number, at most 40,000,000.');
-  return value;
-}
+const pixelBound = jpegPixels;
 const settle = (run, options) => run.catch(error => { throw error === options?.signal?.reason ? error : declared(error); });
 async function kernels() {
   if (!await prepareKernels() || configureKernels('auto') === 'off' || !kernelHooks.channel) throw wasmRequired();
@@ -30,7 +28,7 @@ export async function supported(feature) {
 function hooks(options) {
   const {signal, onProgress} = options;
   if (onProgress !== undefined && typeof onProgress !== 'function') throw fail('JXL_OPTIONS', 'onProgress is a function.');
-  return {signal, progress: fraction => { if (onProgress) try { onProgress(fraction); } catch (error) { throw callers(error); } }};
+  return {signal, progress: progressOf(onProgress, signal) ?? (() => {})};
 }
 async function drain(steps, {signal, progress}) {
   let told = 0, turn = performance.now(), failed = false;
@@ -62,8 +60,8 @@ function recompressHere(input, options) {
     for (const key of Object.keys(settings)) if (!['effort', 'icc', 'maxPixels', 'signal', 'onProgress'].includes(key))
       throw fail('JXL_OPTIONS', `Unknown JPEG option: ${key}.`);
     const {signal, icc} = settings, run = hooks(settings), effort = admitEffort(settings, 7), maxPixels = pixelBound(settings.maxPixels);
-    if (icc !== undefined && icc !== 'preserve') throw fail('JXL_INPUT', 'JPEG ICC mode is preserve, or omitted for named-profile compatibility.');
-    const coding = {effort, ...(icc !== undefined && {icc})};
+    if (icc !== undefined && icc !== 'preserve') throw fail('JXL_INPUT', 'JPEG icc is preserve, or omitted.');
+    const coding = {effort, maxPixels, tails: longTail, ...(icc !== undefined && {icc})};
     check(signal);
     const pending = owned(input, signal);
     return (async () => {
@@ -76,6 +74,16 @@ function recompressHere(input, options) {
   } catch (error) { return Promise.reject(error); }
 }
 
+function pictureSize(bytes) {
+  try {
+    let stream = bytes[0] === 255 && bytes[1] === 10 ? bytes : null;
+    if (!stream && SIGNATURE.every((byte, i) => bytes[i] === byte)) for (const box of boxes(bytes)) {
+      if (box.type === CODESTREAM) { stream = bytes.subarray(box.body, box.end); break; }
+      if (box.type === PARTIAL && box.end - box.body >= 4 && !(bytes[box.body] & 127) && !bytes[box.body + 1] && !bytes[box.body + 2] && !bytes[box.body + 3]) { stream = bytes.subarray(box.body + 4, box.end); break; }
+    }
+    return stream && readSize(new JxlBits(stream));
+  } catch { return null; }
+}
 export const restore = (input, options) => settle(restoreHere(input, options), options);
 async function restoreHere(input, options) {
   const settings = {...object(options)};
@@ -83,12 +91,11 @@ async function restoreHere(input, options) {
   const {signal} = settings, run = hooks(settings), maxPixels = pixelBound(settings.maxPixels);
   check(signal);
   input = await owned(input, signal);
-  let size = null;
-  try { size = header(input); } catch {}
+  const size = pictureSize(input);
   if (size) dimensions(size.width, size.height, maxPixels);
-  if (input[0] === 255 && input[1] === 10) throw fail('JXL_RECONSTRUCTION', 'The file contains no JPEG reconstruction data.');
+  if (input[0] === 255 && input[1] === 10) throw fail('JXL_RECONSTRUCTION', NO_JPEG);
   const result = restoreJPEG(input, brotliDictionary, {maxPixels});
-  if (!result) throw fail('JXL_RECONSTRUCTION', 'The file contains no JPEG reconstruction data.');
+  if (!result) throw fail('JXL_RECONSTRUCTION', NO_JPEG);
   check(signal); run.progress(1); check(signal);
   return result;
 }

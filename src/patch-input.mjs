@@ -27,7 +27,7 @@ export function patchClamp(value, mode, label) {
 
 export function patchGeometry(supplied, width, height, references, position, referenceLimit, defaultReference = 0) {
   if (!Array.isArray(supplied) || !supplied.length || supplied.length > referenceLimit)
-    throw fault('JXL_INPUT', 'patches is a nonempty array within the destination image\'s reference-rectangle budget.');
+    throw fault('JXL_INPUT', 'patches is a nonempty array within the reference budget.');
   let placements = 0, area = 0;
   const groups = Array.from(supplied, group => {
     patchObject(group, 'Each patch');
@@ -37,7 +37,7 @@ export function patchGeometry(supplied, width, height, references, position, ref
     const w = patchWhole(group.width, atlas.width - sx, 'patch width', 1), h = patchWhole(group.height, atlas.height - sy, 'patch height', 1);
     if (w > width || h > height) throw fault('JXL_INPUT', 'A patch rectangle fits inside the destination image.');
     if (!Array.isArray(group.positions) || !group.positions.length || group.positions.length > referenceLimit * 4 - placements)
-      throw fault('JXL_INPUT', 'Patch positions are nonempty and within the destination image\'s placement budget.');
+      throw fault('JXL_INPUT', 'Patch positions are nonempty and within the placement budget.');
     placements += group.positions.length; area += w * h * group.positions.length;
     const positions = Array.from(group.positions, suppliedPosition => {
       patchObject(suppliedPosition, 'Each patch position');
@@ -50,9 +50,9 @@ export function patchGeometry(supplied, width, height, references, position, ref
 }
 
 export function patchCoverage(area, size, level) {
-  if (area > Math.max(1048576, 1024 * size)) throw fault('JXL_INPUT', 'Patch coverage exceeds the JPEG XL level-10 decoder area budget.');
+  if (area > Math.max(1048576, 1024 * size)) throw fault('JXL_INPUT', 'Patch coverage exceeds the level-10 area budget.');
   if (level === 5 && area > Math.max(1048576, 8 * size))
-    throw fault('JXL_INPUT', 'These patches require explicit level: 10; Chrome 155 enforces the smaller level-5 patch area budget.');
+    throw fault('JXL_INPUT', 'These patches need level: 10 (Chrome 155 enforces the level-5 budget).');
 }
 export function patchTokenCount(groups, extraChannels) {
   let count = 1 + groups.length * 6;

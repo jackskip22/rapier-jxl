@@ -1,10 +1,12 @@
 import {fail as error} from './primitives.mjs';
+import {EDGE} from '../limits.mjs';
 import {arrayBufferBytes, typedFields, typedName} from './bytes.mjs';
 import {plain} from './records.mjs';
 export const DEFAULT_INPUT_BYTES = 256 * 1024 * 1024;
 export const DEFAULT_PIXELS = 40_000_000;
 export const SNAPSHOTS = new WeakMap();
 export const withCost = (value, cost) => { SNAPSHOTS.set(value, cost); return value; };
+export const HANDED = new WeakSet();
 function blob(value) { return typeof Blob === 'function' && value instanceof Blob; }
 const viewFields = Object.fromEntries(['buffer', 'byteOffset', 'byteLength'].map(key => [key, Object.getOwnPropertyDescriptor(DataView.prototype, key).get]));
 const constructors = {Uint8Array, Uint8ClampedArray, Int8Array, Uint16Array, Int16Array, Uint32Array, Int32Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array, DataView};
@@ -21,7 +23,7 @@ function view(value) {
 }
 function reach(buffer, byteOffset, byteLength) {
   try { new Uint8Array(buffer, byteOffset, byteLength); }
-  catch { throw error('JXL_INPUT', 'The array buffer is detached or smaller than its view; pass a live ArrayBuffer.'); }
+  catch { throw error('JXL_INPUT', 'The ArrayBuffer is detached or too small; pass a live one.'); }
 }
 export const MAX_NODES = 1048576;
 const NODES = {};
@@ -29,7 +31,7 @@ export function record(value) {
   if (Array.isArray(value) && value.length > MAX_NODES) throw error('JXL_MEMORY', 'Queue input has too many fields; at most ' + MAX_NODES + ' records and fields.');
   const proto = Object.getPrototypeOf(value);
   if (!plain(proto) && !Array.isArray(value)) {
-    throw error('JXL_INPUT', 'Queue inputs must be pixels, bytes, Blobs, or plain records.');
+    throw error('JXL_INPUT', 'Queue inputs are pixels, bytes, Blobs or plain records.');
   }
   if (Object.getOwnPropertySymbols(value).some(key => Object.getOwnPropertyDescriptor(value, key).enumerable))
     throw error('JXL_INPUT', 'Queue records cannot contain symbol keys.');
@@ -44,12 +46,21 @@ export function dimensions(value, maxPixels, fields) {
   const w = fields ? fields.find(([key]) => key === 'width')?.[1] : Object.getOwnPropertyDescriptor(value, 'width');
   const h = fields ? fields.find(([key]) => key === 'height')?.[1] : Object.getOwnPropertyDescriptor(value, 'height');
   if (!w && !h) return;
-  if (!w || !h || !('value' in w) || !('value' in h)) throw error('JXL_INPUT', 'Image dimensions must be plain numeric values.');
+  const given = d => !!d && 'value' in d && d.value !== undefined;
+  const absent = name => { const d = Object.getOwnPropertyDescriptor(value, name); return !d || 'value' in d && d.value === undefined; };
+  if (given(w) !== given(h) && absent(given(w) ? 'height' : 'width')) {
+    const side = (given(w) ? w : h).value;
+    if (!Number.isSafeInteger(side) || side < 1 || side > EDGE)
+      throw error('JXL_DIMENSIONS', 'An image side is a whole number from 1 to 32,767 pixels.');
+    return;
+  }
+  if (!w || !h) throw error('JXL_INPUT', 'Image dimensions must be plain numeric values.');
+  if (!('value' in w) || !('value' in h)) throw error('JXL_INPUT', 'Image dimensions must be plain numeric values.');
   const width = w.value, height = h.value;
   if (!Number.isSafeInteger(width) || width < 1 || !Number.isSafeInteger(height) || height < 1)
     throw error('JXL_DIMENSIONS', 'Image width and height must be positive safe integers.');
-  if (width > 16384 || height > 16384 || width > Math.floor(maxPixels / height))
-    throw error('JXL_DIMENSIONS', 'Image dimensions exceed maxPixels or 16,384 pixels a side; reduce width or height, or raise maxPixels in createCodec().');
+  if (width > EDGE || height > EDGE || width > Math.floor(maxPixels / height))
+    throw error('JXL_DIMENSIONS', 'Over maxPixels or 32,767 pixels a side; resize, or raise maxPixels in createCodec().');
 }
 export function measure(value, maxPixels, plans = new Map(), depth = 0) {
   if (depth > 64) throw error('JXL_INPUT', 'Queue input is nested too deeply.');
@@ -77,7 +88,9 @@ export function measure(value, maxPixels, plans = new Map(), depth = 0) {
     return byteLength;
   }
   if (ArrayBuffer.isView(value)) {
-    const plan = view(value); plan.cost = plan.byteLength; plans.set(value, plan); return plan.byteLength;
+    const plan = view(value);
+    if (HANDED.has(value)) { plan.kind = 'handed'; plan.cost = arrayBufferBytes(plan.buffer); } else plan.cost = plan.byteLength;
+    plans.set(value, plan); return plan.cost;
   }
   const fields = record(value);
   dimensions(value, maxPixels, fields);
@@ -99,7 +112,11 @@ export function snapshot(value, plans, seen = new Map()) {
   const plan = plans.get(value);
   if (plan.kind === 'blob') return value;
   let result;
-  if (plan.kind === 'buffer' || plan.kind === 'view') {
+  if (plan.kind === 'handed') {
+    let moved;
+    try { moved = structuredClone(plan.buffer, {transfer: [plan.buffer]}); } catch { throw error('JXL_INPUT', 'transfer takes an ArrayBuffer.'); }
+    result = new plan.Type(moved, plan.byteOffset, plan.byteLength / plan.Type.BYTES_PER_ELEMENT);
+  } else if (plan.kind === 'buffer' || plan.kind === 'view') {
     const source = new Uint8Array(plan.buffer, plan.byteOffset, plan.byteLength);
     const buffer = new ArrayBuffer(plan.byteLength);
     new Uint8Array(buffer).set(source);

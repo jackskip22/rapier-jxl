@@ -29,7 +29,7 @@ export function admitPlanarSqueeze(value, channels, groupSize, memoryLimit = 268
     squeezeInteger(step.numC, 1, 19, 'Squeeze channelCount');
     if (step.beginC + step.numC > planned.length) throw fault('JXL_INPUT', 'Squeeze selects an absent channel.');
     if (step.beginC < metaCount) {
-      if (step.beginC + step.numC > metaCount || !step.inPlace) throw fault('JXL_INPUT', 'Meta-channel Squeeze stays within the meta range and inserts residuals in place.');
+      if (step.beginC + step.numC > metaCount || !step.inPlace) throw fault('JXL_INPUT', 'Meta-channel Squeeze stays in the meta range, in place.');
       metaCount += step.numC;
     }
     advanceSqueezeShape(planned, step); steps.push(step);
@@ -61,10 +61,10 @@ export function admitPlanarSqueeze(value, channels, groupSize, memoryLimit = 268
   for (const channel of planned.slice(firstGrouped)) {
     const extent = channel.hshift >= 3 && channel.vshift >= 3 ? groupSize * 8 : groupSize;
     if (channel.width && channel.height && (PLANAR_SQUEEZE_POWERS[channel.hshift] > extent || PLANAR_SQUEEZE_POWERS[channel.vshift] > extent))
-      throw fault('JXL_INPUT', 'A grouped Squeeze plane has a shift larger than its group extent.');
+      throw fault('JXL_INPUT', 'A grouped Squeeze shift exceeds its group.');
   }
   const transformedBytes = channels.reduce((sum, channel) => sum + channel.data.length * 4, 0);
-  if (steps.length && transformedBytes * 2 > memoryLimit) throw fault('JXL_MEMORY', 'Squeeze exceeds maxTransformBytes; increase the explicit memory allowance or use fewer source samples.');
+  if (steps.length && transformedBytes * 2 > memoryLimit) throw fault('JXL_MEMORY', 'Squeeze exceeds maxTransformBytes; raise it or use fewer samples.');
   const transforms = [];
   for (let at = 0; at < steps.length; at += 296) transforms.push({type: 'squeeze', params: steps.slice(at, at + 296)});
   if (transforms.length > 512) throw fault('JXL_INPUT', 'JPEG XL permits at most 512 Modular transforms per group.');
@@ -108,9 +108,9 @@ function squeezePlanarChannel(channel, horizontal) {
     const next = axis + 1 < high ? planarAverage(data[at + stride * 2] | 0, data[at + stride * 3] | 0) : count & 1 ? data[at + stride * 2] | 0 : average;
     const previous = axis ? data[at - stride] | 0 : average, tendency = planarTendency(previous, average, next), residual = difference - tendency;
     if (tendency !== planarTendency32(previous, average, next))
-      throw fault('JXL_INPUT', 'This Squeeze tendency exceeds the interoperable signed 32-bit arithmetic range; encode these sample words without Squeeze.');
+      throw fault('JXL_INPUT', 'Squeeze exceeds signed 32-bit range; encode without Squeeze.');
     if (difference < -2147483648 || difference > 2147483647 || residual < -2147483648 || residual > 2147483647)
-      throw fault('JXL_INPUT', 'This Squeeze step exceeds the interoperable signed 32-bit difference range; encode these sample words without Squeeze.');
+      throw fault('JXL_INPUT', 'Squeeze exceeds signed 32-bit range; encode without Squeeze.');
     averages[y * lowWidth + x] = average; residuals[y * residualWidth + x] = residual;
   }
   const hs = channel.hshift ?? channel.shift, vs = channel.vshift ?? channel.shift;

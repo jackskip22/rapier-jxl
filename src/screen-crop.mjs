@@ -1,15 +1,23 @@
 // SPDX-License-Identifier: MIT
-import {BitWriter} from './bits.mjs';
-import {writeModularFrameHeader, writeTOC, groupLayout} from './frame.mjs';
-import {leaf, channelTree, writeTree, writeChannelHistograms, writeModularHeader, ALPHABET} from './modular.mjs';
+import {BitWriter, LITTLE_ENDIAN} from './bits.mjs';
+import {writeTOC, groupLayout, writeModularFrameHeader as generalFrame} from './frame.mjs';
+import {writeCaptureFrameHeader, writeCaptureModularHeader} from './capture-headers.mjs';
+import {leaf, channelTree, writeTree, writeChannelHistograms, writeModularHeader as generalModular, ALPHABET} from './modular.mjs';
 import {captureColumnsUnlike, captureCropEdges, captureLowestInk, captureRowsUnlike} from './capture-kernels.mjs';
 
-const LITTLE = new Uint8Array(Uint32Array.of(1).buffer)[0] === 1;
+const writeModularFrameHeader = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true ? writeCaptureFrameHeader : generalFrame;
+const writeModularHeader = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true ? writeCaptureModularHeader : generalModular;
 export function pixelKeys(rgba) {
-  if (LITTLE && !(rgba.byteOffset & 3)) return new Uint32Array(rgba.buffer, rgba.byteOffset, rgba.length >> 2);
+  if (LITTLE_ENDIAN && !(rgba.byteOffset & 3)) return new Uint32Array(rgba.buffer, rgba.byteOffset, rgba.length >> 2);
   const keys = new Uint32Array(rgba.length >> 2);
   for (let i = 0; i < keys.length; i++) keys[i] = (rgba[4 * i] | rgba[4 * i + 1] << 8 | rgba[4 * i + 2] << 16 | rgba[4 * i + 3] << 24) >>> 0;
   return keys;
+}
+
+export function viewPixels(source, width, height, stride, origin) {
+  const out = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y++) { const at = (origin + y * stride) * 4; out.set(source.subarray(at, at + width * 4), y * width * 4); }
+  return out;
 }
 
 function runFrom(words, i, end, color) { while (i < end && words[i] === color) i++; return i; }
@@ -49,17 +57,13 @@ export function screenCrop(data, width, height, stride = width, origin = 0) {
   const w = right - x, h = bottom - y;
   let cropped = null;
   return {get data() {
-    if (!cropped) {
-      cropped = new Uint8Array(w * h * 4);
-      for (let row = 0; row < h; row++) { const at = (origin + (row + y) * stride + x) * 4; cropped.set(data.subarray(at, at + w * 4), row * w * 4); }
-    }
-    return cropped;
+    return cropped ||= viewPixels(data, w, h, stride, origin + y * stride + x);
   }, width: w, height: h, x, y, background};
 }
 
-export function writeScreenBackground(writer, width, height, shape, background, crop, final = false) {
+export function writeScreenBackground(writer, width, height, shape, background, crop, final = false, canvas) {
   const global = new BitWriter(128), layout = groupLayout(width, height, 1024);
-  writeModularFrameHeader(writer, {alpha: shape.alpha, shift: 3, last: final, reference: final ? 0 : 1, crop});
+  writeModularFrameHeader(writer, {alpha: shape.alpha, shift: 3, last: final, reference: final ? 0 : 1, crop, canvas});
   global.write(1, 1); global.write(1, 1);
   const leaves = Array.from({length: shape.channels}, (_, c) => leaf(0, background[shape.colour === 1 && c === 1 ? 3 : c]));
   const counts = new Uint32Array(ALPHABET); counts[0] = 1;

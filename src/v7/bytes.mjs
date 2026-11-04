@@ -4,18 +4,19 @@ const typedPrototype = Object.getPrototypeOf(Uint8Array.prototype);
 export const typedFields = Object.fromEntries(['buffer', 'byteOffset', 'byteLength'].map(key => [key, Object.getOwnPropertyDescriptor(typedPrototype, key).get]));
 export const typedName = Object.getOwnPropertyDescriptor(typedPrototype, Symbol.toStringTag).get;
 export function arrayBufferBytes(value) {
+  if (ArrayBuffer.isView(value)) return null;
   try { return bufferLength.call(value); } catch { return null; }
 }
 export function encodedByteLength(value, allowEmpty = false) {
   if (typedName.call(value) !== 'Uint8Array' || arrayBufferBytes(typedFields.buffer.call(value)) === null ||
       !allowEmpty && typedFields.byteLength.call(value) === 0)
-    throw error('JXL_INPUT', 'Encoded input must be a nonempty Uint8Array with an ordinary ArrayBuffer.');
+    throw error('JXL_INPUT', 'Encoded input is a nonempty Uint8Array on an ordinary ArrayBuffer.');
   return typedFields.byteLength.call(value);
 }
 export function copyBytes(value, allowEmpty = false) {
   encodedByteLength(value, allowEmpty);
   try { return new Uint8Array(value); }
-  catch { throw error('JXL_INPUT', 'Encoded input must be a Uint8Array with an ordinary, attached ArrayBuffer.'); }
+  catch { throw error('JXL_INPUT', 'Encoded input is a Uint8Array on an ordinary, attached ArrayBuffer.'); }
 }
 export function viewBytes(value) {
   const length = encodedByteLength(value);

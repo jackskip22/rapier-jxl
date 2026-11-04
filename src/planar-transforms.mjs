@@ -28,7 +28,7 @@ function transformTable(input, count, maximum, name) {
 export function admitPlanarTransforms(value, colorCount, memoryLimit = 268435456) {
   transformInteger(memoryLimit, 1, 2147483648, 'maxTransformBytes');
   if (value === undefined || value === false) return null;
-  if (!Array.isArray(value) || value.length > 273) throw fault('JXL_INPUT', 'transforms is false or an ordered array of at most 273 recipes.');
+  if (!Array.isArray(value) || value.length > 273) throw fault('JXL_INPUT', 'transforms is false or up to 273 recipes.');
   if (!value.length) return null;
   let authoredBytes = 0;
   const recipes = Array.from(value, input => {
@@ -46,7 +46,7 @@ export function admitPlanarTransforms(value, colorCount, memoryLimit = 268435456
     if (!PLANAR_PALETTE_PREDICTORS.has(name)) throw fault('JXL_INPUT', 'Palette predictor is zero, left, top, average, select, gradient or weighted.');
     const predictor = PLANAR_PALETTE_PREDICTORS.get(name);
     if (numC === 1 && predictor === 0 && (mode === 'implicit' || mode === 'hybrid'))
-      throw fault('JXL_INPUT', 'A one-channel implicit palette needs a nonzero predictor for independent-decoder compatibility.');
+      throw fault('JXL_INPUT', 'A one-channel implicit palette needs a nonzero predictor.');
     for (const key of ['colors', 'deltas']) if (Array.isArray(fields.get(key))) authoredBytes += fields.get(key).length * numC * 4;
     if (authoredBytes > memoryLimit) throw fault('JXL_MEMORY', 'Authored palette words exceed maxTransformBytes.');
     const colors = transformTable(fields.get('colors'), numC, 70911, 'colors'), deltas = transformTable(fields.get('deltas'), numC, 66816, 'deltas');
@@ -67,7 +67,7 @@ function transformRange(channels, metaCount, recipe) {
   const selected = channels.slice(beginC, end), first = selected[0];
   for (const channel of selected) if (channel.width !== first.width || channel.height !== first.height ||
     channel.hshift !== first.hshift || channel.vshift !== first.vshift)
-    throw fault('JXL_INPUT', 'Transformed channels share dimensions and sampling shifts.');
+    throw fault('JXL_INPUT', 'Transformed channels must share size and sampling.');
   return selected;
 }
 
@@ -161,7 +161,7 @@ function* palettePlanes(selected, recipe, bitDepth, weighted, available) {
       else {
         let index = colors.get(key);
         if (index === undefined) {
-          if (recipe.colors || absolute.length >= recipe.maxColors) throw fault('JXL_INPUT', 'The palette needs another absolute color; supply it or increase maxColors.');
+          if (recipe.colors || absolute.length >= recipe.maxColors) throw fault('JXL_INPUT', 'The palette needs another color; supply it or raise maxColors.');
           charge(96 + key.length * 2); index = absolute.length; colors.set(key, index); absolute.push({key, at});
         }
         indices[at] = entries.length + index; kinds[at] = 1;

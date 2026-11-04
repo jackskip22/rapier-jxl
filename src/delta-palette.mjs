@@ -157,7 +157,7 @@ function* deltaFrameSteps(rgba, width, height, shape, options) {
     }
     if (!best) {
       if (paletteMode === 'auto') return null;
-      throw fault('JXL_SIZE', 'This group needs more palette entries; increase maxPaletteColors or maxDeltaEntries, or use paletteMode auto.');
+      throw fault('JXL_SIZE', 'The group needs more palette entries: raise maxPaletteColors or maxDeltaEntries, or use paletteMode auto.');
     }
     append(best);
   }
@@ -168,7 +168,7 @@ function deltaOptions(rgba, width, height, options = {}) {
   const {quality, colorSpace} = admitOptions(options);
   admitPixels(rgba, width, height);
   if (quality !== 100 || !admitSampleFormat(rgba, options).native8)
-    throw fault('JXL_INPUT', 'Delta palettes encode exact straight RGBA8 with sRGB transfer and sRGB or Display P3 primaries.');
+    throw fault('JXL_INPUT', 'Delta palettes need exact straight RGBA8, sRGB transfer, sRGB or Display P3.');
   const paletteMode = options.paletteMode ?? 'auto', deltaPredictor = options.deltaPredictor ?? 'auto';
   const maxDeltaEntries = options.maxDeltaEntries ?? 256, maxPaletteColors = options.maxPaletteColors ?? 4096;
   const groupSize = options.groupSize ?? 1024, screenEffort = options.screenEffort ?? 5;

@@ -9,18 +9,18 @@ export function progressivePasses(option) {
   else if (option === 'successive') passes = [{downsample: 1, shift: 2}, {downsample: 1, shift: 1}, {downsample: 1, shift: 0}];
   else if (option === 'responsive') passes = [{downsample: 4, shift: 1}, {downsample: 2, shift: 1}, {downsample: 1, shift: 1}, {downsample: 1, shift: 0}];
   else if (option && typeof option === 'object' && Array.isArray(option.passes)) passes = option.passes;
-  else throw fault('JXL_INPUT', 'progressive is false, spectral, successive, responsive, or an object with 2–11 passes.');
+  else throw fault('JXL_INPUT', 'progressive is false, spectral, successive, responsive, or 2 to 11 passes.');
   if (passes.length < 2 || passes.length > 11) throw fault('JXL_INPUT', 'A progressive frame has two through eleven passes.');
   passes = passes.map(pass => {
     if (!pass || typeof pass !== 'object') throw fault('JXL_INPUT', 'Each progressive pass gives downsample and shift.');
     const downsample = pass.downsample ?? 1, shift = pass.shift ?? 0;
     if (![1, 2, 4, 8].includes(downsample) || !Number.isInteger(shift) || shift < 0 || shift > 3)
-      throw fault('JXL_INPUT', 'Progressive downsample is 1, 2, 4 or 8; shift is an integer from zero through three.');
+      throw fault('JXL_INPUT', 'Downsample is 1, 2, 4 or 8; shift is 0 to 3.');
     return {downsample, shift, scale: 1 << shift};
   });
   for (let i = 1; i < passes.length; i++) if (passes[i].downsample > passes[i - 1].downsample || passes[i].shift > passes[i - 1].shift)
-    throw fault('JXL_INPUT', 'Progressive passes refine resolution and coefficient precision in order.');
-  if (passes.at(-1).downsample !== 1 || passes.at(-1).shift !== 0) throw fault('JXL_INPUT', 'The last progressive pass must finish full resolution at shift zero.');
+    throw fault('JXL_INPUT', 'Passes must refine resolution and precision in order.');
+  if (passes.at(-1).downsample !== 1 || passes.at(-1).shift !== 0) throw fault('JXL_INPUT', 'The last pass must be full resolution at shift 0.');
   const header = new BitWriter(32), hints = [];
   header.writeU32([[0, 1], [0, 2], [0, 3], [3, 4]], passes.length);
   for (let i = 0; i < passes.length - 1 && i < 8; i++) {

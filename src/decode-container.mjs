@@ -49,7 +49,7 @@ function scanContainer(bytes, maximum, maxBoxes = Number.MAX_SAFE_INTEGER) {
     } else if (type === FTYP || type === 0x4a584c20) throw invalid('Repeated JPEG XL file header.');
     if (type === LEVEL) {
       if (entries.length !== 1 || seenLevel || data.length !== 1 || data[0] !== 5 && data[0] !== 10)
-        throw invalid('A level box contains 5 or 10 immediately after the file type.');
+        throw invalid('The level box (5 or 10) follows the file type.');
       level = data[0]; seenLevel = true;
     } else if (type === CODESTREAM) {
       if (full || fragments.length) throw invalid('Repeated or mixed JPEG XL codestream boxes.');
@@ -66,11 +66,11 @@ function scanContainer(bytes, maximum, maxBoxes = Number.MAX_SAFE_INTEGER) {
       if (data.length < 4) throw invalid('Truncated compressed JPEG XL box.');
       const inner = view.getUint32(body);
       if (inner === BROB || inner === RECONSTRUCTION || inner >>> 8 === 0x6a786c)
-        throw invalid('A Brotli box cannot wrap codestream, index, reconstruction or another Brotli box.');
+        throw invalid('Brotli cannot wrap codestream, index, reconstruction or Brotli boxes.');
       entry.decoded = inner;
     }
     if (entry.decoded === INDEX && ++indexBoxes > 1 || entry.decoded === GAIN && ++gainBoxes > 1)
-      throw invalid('A JPEG XL container has at most one frame index and one gain map.');
+      throw invalid('At most one frame index and one gain map.');
     entries.push(entry); at = end;
   }
   if (!entries.length || !full && (!fragments.length || finalIndex !== fragments.length - 1)) throw invalid('The JPEG XL container has no complete codestream.');

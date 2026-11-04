@@ -37,7 +37,7 @@ function sharedAtlas(plan, forced) {
       writeImageHeader(header, width, height, shape.colour, shape.alpha, {colorSpace: coder.colorSpace});
       header.append({bytes: frame, at: frame.length, pending: 0, acc: 0});
       const candidate = header.finish(), still = readStill(candidate);
-      if (metadataKey(still) !== metadataKey(ordinary)) throw fault('JXL_FRAMING', 'The shared atlas requires the animation\'s exact color and channel metadata.');
+      if (metadataKey(still) !== metadataKey(ordinary)) throw fault('JXL_FRAMING', 'The shared atlas needs the animation\'s exact color and channel metadata.');
       if (!forced && candidate.length >= baseline.length) { yield 1; return baseline; }
       if (!reference) {
         const pixels = new Uint8Array(plan.atlas.data);
@@ -53,7 +53,7 @@ function sharedAtlas(plan, forced) {
           {shape: atlasShape, colorSpace: coder.colorSpace}), .8, .2);
         reference = readStill(bytes); rejectSlot(reference);
         if (reference.frames.length !== 1 || metadataKey(reference) !== metadataKey(ordinary))
-          throw fault('JXL_FRAMING', 'The shared atlas must have one compatible Modular reference frame.');
+          throw fault('JXL_FRAMING', 'The shared atlas needs one compatible Modular reference frame.');
       }
       used = true; yield 1; return candidate;
     },
@@ -71,7 +71,7 @@ function* atlasAnimationSteps(animation, search, mode, supplied) {
   if (mode === 'off') return baseline;
   if ((yield .45) && mode !== 'force') { yield 1; return baseline; }
   if (!animation.samples.native8 || animation.quality !== 100) {
-    if (mode === 'force') throw fault('JXL_INPUT', 'A forced shared atlas uses exact straight RGBA8 animation.');
+    if (mode === 'force') throw fault('JXL_INPUT', 'A forced shared atlas needs exact straight RGBA8.');
     yield 1; return baseline;
   }
   const original = readFrames(baseline);
@@ -107,7 +107,7 @@ export function encodeAnimationAtlasSteps(animation, options = {}) {
   if (!['auto', 'force', 'off'].includes(mode)) throw fault('JXL_INPUT', 'atlasMode is auto, force or off.');
   if (options.progress !== undefined && typeof options.progress !== 'function') throw fault('JXL_INPUT', 'progress is a function.');
   if (mode === 'force' && (!admitted.samples.native8 || admitted.quality !== 100))
-    throw fault('JXL_INPUT', 'A forced shared atlas uses exact straight RGBA8 animation.');
+    throw fault('JXL_INPUT', 'A forced shared atlas needs exact straight RGBA8.');
   const supplied = options.atlas === undefined ? null : validateAtlasPlan(admitted, options.atlas);
   const iterator = (function* () {
     const steps = atlasAnimationSteps(admitted, search, mode, supplied);

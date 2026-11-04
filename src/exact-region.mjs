@@ -154,7 +154,7 @@ export function exactPayloadBytes(value) {
 
 function exactReservation(size, reservation) {
   try { reservation = validateWorkerReservation(reservation); }
-  catch (error) { throw Object.assign(fault('JXL_MEMORY', 'Exact workers require a complete shared worker reservation.'), {cause: error}); }
+  catch (error) { throw Object.assign(fault('JXL_MEMORY', 'Exact workers need a complete worker reservation.'), {cause: error}); }
   if (size > reservation.count) throw fault('JXL_MEMORY', 'Exact worker count exceeds its shared reservation.');
   return reservation;
 }
@@ -185,7 +185,7 @@ export function exactJobBytes(message) {
         transform.width !== 8 * block.bw || transform.height !== 8 * block.bh || block.order?.length !== block.size ||
         !Array.isArray(block.coeffs) || block.coeffs.length !== 3 || block.coeffs.some(plane => plane.length !== block.size);
     })))
-    throw fault('JXL_MEMORY', 'Exact transform geometry exceeds its reconstruction bound.');
+    throw fault('JXL_MEMORY', 'Exact transform geometry exceeds its bound.');
   if (job.refPlanes?.[previewBytes] === undefined && (!Array.isArray(job.refPlanes) || job.refPlanes.length !== 3 ||
       job.refPlanes.some(plane => !(plane instanceof Float64Array) || plane.length !== cw * ch)))
     throw fault('JXL_MEMORY', 'Exact reference planes do not match the crop.');
@@ -203,7 +203,7 @@ function admittedJob(message, reservation) {
   const bytes = exactJobBytes(message);
   if (bytes.inputBytes > reservation.inputBytes || bytes.outputBytes > reservation.outputBytes ||
       bytes.jobBytes + reservation.scratchBytes > reservation.jobBytes)
-    throw fault('JXL_MEMORY', 'Exact job exceeds its input, result or working-memory reservation.');
+    throw fault('JXL_MEMORY', 'Exact job exceeds its memory reservation.');
   return bytes;
 }
 

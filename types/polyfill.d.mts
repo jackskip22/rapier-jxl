@@ -1,4 +1,4 @@
-import type {WorkerLike, DecodeOptions, DecodedImage} from './types.mjs';
+import type {Bytes, WorkerLike, DecodeOptions, DecodedImage} from './types.mjs';
 export interface PolyfillOptions {
   document?: Document;
   root?: Document | Element | ShadowRoot;
@@ -11,8 +11,9 @@ export interface PolyfillOptions {
   maxInputBytes?: number;
   rootMargin?: string;
   workerFactory?: () => WorkerLike;
-  /** Your own decoder in place of the package's (a native or a server-side one): it receives each image's bytes. */
-  decode?: (bytes: Uint8Array, options: DecodeOptions) => Promise<DecodedImage>;
+  /** Your own decoder in place of the package's (a native or a server-side one): it receives owned bytes and may
+   * return the decoded image directly or asynchronously. */
+  decode?: (bytes: Bytes, options: DecodeOptions) => DecodedImage | PromiseLike<DecodedImage>;
   /** An image that could not be shown. `error.code` is the decoder's ErrorCode, or one of the polyfill's own:
    * JXL_FETCH (the image request failed), JXL_IMAGE_CSP (the page's image policy refuses decoded images) or
    * JXL_DISPLAY (the decoded picture could not be put on screen). */

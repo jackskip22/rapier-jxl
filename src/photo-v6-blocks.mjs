@@ -6,10 +6,10 @@ import {photoXYBBands, photoXYBBand, appendPhotoBand, PHOTO_BAND_MARGIN} from '.
 import {xybStrategies, encodeStrategyImageSteps, strategyInputs, auditCosts} from './varblocks.mjs';
 import {scaledDCTBases, lowFrequencies} from './vardct-strategies.mjs';
 import {coefficientAnsSteps, estimateBytes, strategyLfSteps} from './coefficient-ans.mjs';
-import {perceptualMaskField, maskEnergy, maskWeights, maskWeightDoubts, maskDoubtMax} from './aq.mjs';
+import {perceptualMaskField, perceptualMaskSteps, maskEnergy, maskWeights, maskWeightDoubts, maskDoubtMax} from './aq.mjs';
 import {offloading} from './offload.mjs';
 import {pictureBlocksSplit} from './block-split.mjs';
-import {V6, GABORISH, admitV6Memory, prepareV6, v6Image, gaborishRows, blockSearchOptions, v6Trace} from './photo-v6.mjs';
+import {V6, GABORISH, admitV6Memory, prepareV6, v6Image, gaborishRows, blockSearchOptions, v6Trace, idleWork} from './photo-v6.mjs';
 import {wholeBudget, WHOLE_BYTES} from './memory-device.mjs';
 
 export function photoAnsSteps(image, effort, ...rest) { return coefficientAnsSteps(image, effort, ...rest); }
@@ -39,7 +39,21 @@ function* bandsOnly(bands) {
   return step.value;
 }
 
-export function* fullBlocksOnDevice({base, data, width, height, row, blockSearch, mask, own, whileLevels, label = ''}) {
+function refineEnergyOpen({hf, each}, open, planeRows, stride, rows) {
+  const exact = hf.slice(), bound = each.slice(), row = new Float64Array(stride * rows);
+  const done = new Set();
+  for (const {bx, by, size} of open) {
+    const bx0 = Math.max(0, bx - 1), bx1 = Math.min(stride, bx + size + 1);
+    for (let y = Math.max(0, by - 1); y < Math.min(rows, by + size + 1); y++) {
+      if (!done.has(y)) { const {planes, top} = planeRows(y * 8, y * 8 + 8); maskEnergy(planes, top, stride, y, y + 1, row); done.add(y); }
+      for (let x = bx0; x < bx1; x++) { exact[y * stride + x] = row[y * stride + x]; bound[y * stride + x] = 0; }
+    }
+  }
+  const m = maskWeights(exact, stride, rows);
+  return {weight: m.weight, weightDoubt: maskWeightDoubts(bound, stride, rows, m.eroded)};
+}
+
+export function* fullBlocksOnDevice({base, data, width, height, row, blockSearch, mask, own, ownWork, refineOpen, whileLevels, label = ''}) {
   const request = {data, width, height, options: {...V6, ...GABORISH, ...row}, input: strategyInputs(base, width, height, blockSearch), search: blockSearch, ids: blockSearch.ids, scaledDCTBases, lowFrequencies,
     lib: {complete, photoXYBSteps, transformDCT8, dct8Basis, xyb: XYB_TABLES}};
   v6Trace(label + ' inputs and mask');
@@ -49,7 +63,15 @@ export function* fullBlocksOnDevice({base, data, width, height, row, blockSearch
   v6Trace(label + ' audit');
   let choice = priced?.costs ? xybStrategies(base, width, height, {...blockSearch, costs: priced.costs, maskWeight: priced.weight, costDoubt: priced.weightDoubt, priceOnly: true, chooseOnly: true}) : null;
   v6Trace(`${label} choice (open ${choice?.open.length ?? '-'}, repriced ${choice?.reprices.length ?? '-'}, settled ${choice?.settled ?? '-'}, mask doubt ${maskDoubtMax(priced?.weightDoubt ?? 0).toExponential(1)})`);
-  if (choice?.open.length && maskDoubtMax(priced.weightDoubt)) choice = xybStrategies(base, width, height, {...blockSearch, costs: priced.costs, maskWeight: own(), priceOnly: true, chooseOnly: true});
+  if (choice?.open.length && maskDoubtMax(priced.weightDoubt) && refineOpen) {
+    const refined = refineOpen(choice.open);
+    choice = xybStrategies(base, width, height, {...blockSearch, costs: priced.costs, maskWeight: refined.weight, costDoubt: refined.weightDoubt, priceOnly: true, chooseOnly: true});
+    v6Trace(`${label} refined (open ${choice.open.length})`);
+  }
+  if (choice?.open.length && maskDoubtMax(priced.weightDoubt)) {
+    if (ownWork && !ownWork.done) { yield {idle: ownWork}; yield {await: ownWork.finished}; }
+    choice = xybStrategies(base, width, height, {...blockSearch, costs: priced.costs, maskWeight: own(), priceOnly: true, chooseOnly: true});
+  }
   if (!choice || choice.open.length) return null;
   v6Trace(label + ' audit and choice');
   const asked = yield {gpu: {kind: 'blocks-levels', ...request, layout: choice.layout}, later: true};
@@ -75,6 +97,15 @@ export function grainRegime(data, width, height) {
   return total > 0 && flat / total < 0.25 && curvature / (gradient + 1e-9) < 0.95 ? E7_GRAIN : null;
 }
 
+const pairMask = (pair, data, width, height, stride, rows) => pair.mask ??= idleWork(perceptualMaskSteps(stride, rows,
+  (rowsOf => by => rowsOf(by * 8, by * 8 + 8))(gaborishRows(data, width, height, {...V6, ...GABORISH}))));
+
+function* sharedDeviceImage(pair, ask) {
+  pair.deviceImage ??= yield {...ask, later: true};
+  const answer = pair.deviceImage && typeof pair.deviceImage.then === 'function' ? yield {await: pair.deviceImage} : pair.deviceImage;
+  return answer ? {...answer} : null;
+}
+
 function* blockPictureSteps({data, width, height, quality, effort, encodeCoefficients, color, gpu, memory, screen, floored, blockDesign, deferred, both, pair}) {
   const plan = admitV6Memory(data, width, height, memory);
   let hurried = false;
@@ -95,7 +126,7 @@ function* blockPictureSteps({data, width, height, quality, effort, encodeCoeffic
   const whole = !offloading() && (!plan.banded || effort === 7 && !pair && !gpu && memory == null &&
     Math.ceil(width / 8) * Math.ceil(height / 8) * 64 * WHOLE_BYTES <= wholeBudget(undefined, 0));
   let prepared = null;
-  const fast = blockDesign === 'fast', row = {calibrationRow: screen ? 'screenFull' : fast ? 'blocksFast' : 'blocks', ...(pair ? {lowScale: E7_SCALE, ...(pair.grain ??= grainRegime(data, width, height) ?? false)} : {}), ...(fast && floored ? {noLevels: true} : {})}, rowColor = {...color, ...row};
+  const fast = blockDesign === 'fast', row = {calibrationRow: screen ? 'screenFull' : pair ? 'e7' : fast ? 'blocksFast' : 'blocks', ...(pair ? {lowScale: E7_SCALE, ...(pair.grain ??= grainRegime(data, width, height) ?? false)} : {}), ...(fast && floored ? {noLevels: true} : {})}, rowColor = {...color, ...row};
   let splitMade = null;
   if (fast && floored && !gpu && !color && !screen && width * height > 512 * 512 && encodeCoefficients.splits) {
     const options = {...blockSearchOptions(data, width, height), ids: [4], ...(pair ? {lowScale: E7_SCALE} : {})};
@@ -106,7 +137,8 @@ function* blockPictureSteps({data, width, height, quality, effort, encodeCoeffic
   }
   const prepare = () => pair ? pair.prepared ??= prepareV6(data, width, height, color, memory) : prepareV6(data, width, height, color, memory);
   const idle = whole ? () => { try { prepared = prepare(); } catch {} } : undefined;
-  let image = splitMade ? splitMade.image : gpu && !color && !screen ? yield {gpu: {kind: 'v6image', data, width, height, quality, options: {...V6, ...GABORISH, ...row}, idle, ...(fast || blockDesign === 'full' ? {energy: true} : {}), lib: {complete, photoXYBSteps, transformDCT8, dct8Basis, xyb: XYB_TABLES}}} : null;
+  const ask = {gpu: {kind: 'v6image', data, width, height, quality, options: {...V6, ...GABORISH, ...row, ...(pair ? {noLevels: false} : {})}, idle, ...(fast || blockDesign === 'full' ? {energy: true} : {}), lib: {complete, photoXYBSteps, transformDCT8, dct8Basis, xyb: XYB_TABLES}}};
+  let image = splitMade ? splitMade.image : gpu && !color && !screen ? pair ? yield* sharedDeviceImage(pair, ask) : yield ask : null;
   let deviceEnergy = null;
   if (image?.maskEnergy !== undefined) { deviceEnergy = image.maskEnergy; delete image.maskEnergy; }
   v6Trace(effort + ' DCT8 picture');
@@ -128,7 +160,8 @@ function* blockPictureSteps({data, width, height, quality, effort, encodeCoeffic
   if (splitMade) blockSearch.maskWeight = splitMade.mask;
   if (fast && gpu && !color && !screen) {
     const input = strategyInputs(base, width, height, blockSearch), weight = base.planes ? perceptualMaskField(base.planes, stride, rows).weight : null;
-    const fromEnergy = !weight && deviceEnergy ? {weight: maskWeights(deviceEnergy.hf, stride, rows).weight, weightDoubt: 0.75 * deviceEnergy.bound + 1e-12} : null;
+    const m16 = !weight && deviceEnergy ? maskWeights(deviceEnergy.hf, stride, rows) : null;
+    const fromEnergy = m16 ? {weight: m16.weight, weightDoubt: deviceEnergy.each ? maskWeightDoubts(deviceEnergy.each, stride, rows, m16.eroded) : 0.75 * deviceEnergy.bound + 1e-12} : null;
     const source = {data, width, height, options: {...V6, ...GABORISH, ...row}, ...(weight ? {weight} : fromEnergy ?? {maskWeights}),
       lib: {complete, photoXYBSteps, transformDCT8, dct8Basis, xyb: XYB_TABLES}};
     v6Trace(effort + ' inputs');
@@ -136,8 +169,14 @@ function* blockPictureSteps({data, width, height, quality, effort, encodeCoeffic
     v6Trace(effort + ' GPU costs');
     if (priced?.costs && !(auditCosts(base, width, height, blockSearch, priced) <= 1)) { yield {gpu: {kind: 'audit-failed'}}; priced = null; }
     let choice = priced?.costs ? xybStrategies(base, width, height, {...blockSearch, costs: priced.costs, maskWeight: priced.weight, costDoubt: priced.weightDoubt, priceOnly: true, chooseOnly: true}) : null;
-    if (choice?.open.length && priced.weightDoubt) {
-      const own = perceptualMaskField(null, stride, rows, by => base.planeRows(by * 8, by * 8 + 8)).weight;
+    if (choice?.open.length && maskDoubtMax(priced.weightDoubt) && deviceEnergy?.each && base.planeRows) {
+      const refined = refineEnergyOpen(deviceEnergy, choice.open, base.planeRows, stride, rows);
+      choice = xybStrategies(base, width, height, {...blockSearch, costs: priced.costs, maskWeight: refined.weight, costDoubt: refined.weightDoubt, priceOnly: true, chooseOnly: true});
+    }
+    if (choice?.open.length && maskDoubtMax(priced.weightDoubt)) {
+      const work = pair && !base.planes ? pairMask(pair, data, width, height, stride, rows) : null;
+      if (work && !work.done) { yield {idle: work}; yield {await: work.finished}; }
+      const own = work ? work.run().weight : perceptualMaskField(null, stride, rows, by => base.planeRows(by * 8, by * 8 + 8)).weight;
       choice = xybStrategies(base, width, height, {...blockSearch, costs: priced.costs, maskWeight: own, priceOnly: true, chooseOnly: true});
       blockSearch.maskWeight = own;
     }
@@ -151,9 +190,13 @@ function* blockPictureSteps({data, width, height, quality, effort, encodeCoeffic
   }
   if (blockDesign === 'full' && gpu && !color && !screen) {
     let cpuMask = null;
-    const own = () => cpuMask ??= base.planes ? perceptualMaskField(base.planes, stride, rows).weight : perceptualMaskField(null, stride, rows, by => base.planeRows(by * 8, by * 8 + 8)).weight;
-    const mask = !base.planes && deviceEnergy ? {weight: maskWeights(deviceEnergy.hf, stride, rows).weight, weightDoubt: deviceEnergy.each ? maskWeightDoubts(deviceEnergy.each, stride, rows) : 0.75 * deviceEnergy.bound + 1e-12} : {weight: own(), weightDoubt: 0};
-    varImage = yield* fullBlocksOnDevice({base, data, width, height, row, blockSearch, mask, own, label: effort, whileLevels: () => { dct8Estimate = estimateBytes(image); }});
+    const ownWork = pair && !base.planes && deviceEnergy ? pairMask(pair, data, width, height, stride, rows) : null;
+    if (ownWork) yield {idle: ownWork};
+    const own = () => cpuMask ??= base.planes ? perceptualMaskField(base.planes, stride, rows).weight : ownWork ? ownWork.run().weight : perceptualMaskField(null, stride, rows, by => base.planeRows(by * 8, by * 8 + 8)).weight;
+    const mFull = !base.planes && deviceEnergy ? maskWeights(deviceEnergy.hf, stride, rows) : null;
+    const mask = mFull ? {weight: mFull.weight, weightDoubt: deviceEnergy.each ? maskWeightDoubts(deviceEnergy.each, stride, rows, mFull.eroded) : 0.75 * deviceEnergy.bound + 1e-12} : {weight: own(), weightDoubt: 0};
+    const refineOpen = mFull && deviceEnergy.each && base.planeRows ? open => refineEnergyOpen(deviceEnergy, open, base.planeRows, stride, rows) : null;
+    varImage = yield* fullBlocksOnDevice({base, data, width, height, row, blockSearch, mask, own, ownWork, refineOpen, label: effort, whileLevels: () => { dct8Estimate = estimateBytes(image); }});
     if (!varImage && cpuMask && !base.planes) blockSearch.maskWeight = cpuMask;
   }
   if (!varImage && denseRows) base.planeRows = denseRows;
@@ -162,7 +205,7 @@ function* blockPictureSteps({data, width, height, quality, effort, encodeCoeffic
   v6Trace(effort + ' blocks assembled');
   base = null;
   const primed = {};
-  if (fast && deferred) { const est = estimateBytes(varImage, primed); v6Trace(effort + ' estimate'); return {est, image: varImage, write: () => encodeStrategyImageSteps(varImage, effort >= 7, effort, false, primed, both)}; }
+  if (fast && deferred) { const est = estimateBytes(varImage, primed); v6Trace(effort + ' estimate'); return {est, image: varImage, write: blockWriter(varImage, effort >= 7, effort, primed, both)}; }
   if (fast) return yield* watch(encodeStrategyImageSteps(varImage, effort >= 7, effort, false, null, both), 1, 2);
   const estBlocks = estimateBytes(varImage, primed), estDct8 = dct8Estimate ?? estimateBytes(image), blocksWin = estBlocks < estDct8;
   v6Trace(effort + ' estimates');
@@ -172,9 +215,11 @@ function* blockPictureSteps({data, width, height, quality, effort, encodeCoeffic
       for (const _ of strategyLfSteps(varImage, Math.min(effort, 7))) if (yield 0.99) { hurried = true; return null; }
       v6Trace(effort + ' LF learned');
     }
-    return {est, image: blocksWin ? varImage : image, write: () => blocksWin ? encodeStrategyImageSteps(varImage, effort >= 7, Math.min(effort, 7), false, primed, both) : encodeCoefficients(image, Math.min(effort, 7))};
+    return {est, image: blocksWin ? varImage : image, write: blocksWin ? blockWriter(varImage, effort >= 7, Math.min(effort, 7), primed, both) : dct8Writer(image, encodeCoefficients, Math.min(effort, 7))};
   }
   if (blocksWin) return yield* watch(encodeStrategyImageSteps(varImage, effort >= 7, Math.min(effort, 7), false, primed, both), 1, 2);
   return yield* watch(encodeCoefficients(image, Math.min(effort, 7)), 1, 2);
 }
 photoAnsSteps.blocks = blockPictureSteps;
+const blockWriter = (image, learned, effort, primed, both) => () => encodeStrategyImageSteps(image, learned, effort, false, primed, both);
+const dct8Writer = (image, encodeCoefficients, effort) => () => encodeCoefficients(image, effort);

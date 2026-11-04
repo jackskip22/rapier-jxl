@@ -8,7 +8,7 @@ import {photoXYBBand, placeBand} from './photo-bands.mjs';
 import {photoXYBSteps} from './photo-xyb.mjs';
 import {TokenCounts} from './entropy.mjs';
 import {acGroupEncoder} from './ac-group.mjs';
-import {V6, GABORISH} from './photo-v6.mjs';
+import {V6, GABORISH, UPLOAD_PICTURE, UPLOAD_FLAT_PICTURE} from './photo-v6.mjs';
 import {configureKernels, disableEntropyKernels} from './kernels.mjs';
 
 const LF_CODERS = [...Array.from({length: 10}, (_, e) => e ? lfCoderFor(e) : null), fixedLfCoder, quickOrFixedLfCoder, lfCoder('jpegBroad')];
@@ -47,11 +47,14 @@ export function serveParallel(message) {
   try {
     if (task.kind === 'band' || task.kind === 'fast-band') {
       const data = inputs.get(task.data), {width, h, quality, color, from, to, y} = task;
-      const result = task.kind === 'band' ? photoXYBBand(data.subarray(from * width * 4, to * width * 4), width, h, quality, {...V6, ...GABORISH, ...color, ...(task.fast ? {fastGaborish: true} : {})}, y - from)
-        : complete(photoXYBSteps(data.subarray(y * width * 4, (y + h) * width * 4), width, h, quality, {...V6, fast: true}));
+      const picture = task.fast ? task.uploadFlat ? UPLOAD_FLAT_PICTURE : UPLOAD_PICTURE
+        : {...V6, ...GABORISH, ...(task.uploadProfile ? {tune: UPLOAD_PICTURE.tune, calibrationRow: 'upload'} : {})};
+      const result = task.kind === 'band' ? photoXYBBand(data.subarray(from * width * 4, to * width * 4), width, h, quality, {...picture, ...color}, y - from)
+        : complete(photoXYBSteps(data.subarray(y * width * 4, (y + h) * width * 4), width, h, quality, {...V6, fast: true, fastBand: true}));
       result.alpha = !!result.alpha; delete result.colorSpace;
       const target = task.target !== undefined && inputs.get(task.target);
       if (target) {
+        if (!target.nonZero) result.nonZero = null;
         placeBand({components: target.coeffs.map(coeffs => ({coeffs})), cfl: target.cfl, nonZero: target.nonZero}, result, width, y);
         return [{id, result: {...result, placed: true, components: result.components.map(({coeffs, ...c}) => c), cfl: result.cfl && {width: result.cfl.width}, nonZero: undefined}}, []];
       }

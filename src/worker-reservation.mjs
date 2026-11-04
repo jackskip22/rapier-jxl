@@ -27,17 +27,17 @@ export function validateWorkerReservation(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('Invalid worker reservation.');
   const reservation = Object.fromEntries(FIELDS.map(name => [name, value[name]]));
   if (FIELDS.some(name => !Number.isSafeInteger(reservation[name]) || reservation[name] < 0))
-    throw new TypeError('Worker reservation values must be nonnegative safe integers.');
+    throw new TypeError('Worker reservation values are nonnegative safe integers.');
   const {count, runtimeBytes, jobBytes, inputBytes, outputBytes, scratchBytes, totalBytes} = reservation;
   const perWorker = runtimeBytes + jobBytes, total = count * perWorker;
   if (!Number.isSafeInteger(perWorker) || !Number.isSafeInteger(total) || totalBytes !== total)
-    throw new RangeError('Worker reservation total does not match its instance count.');
+    throw new RangeError('Worker reservation total does not match its instances.');
   if (scratchBytes < AC_SCRATCH_BYTES)
-    throw new RangeError('Worker reservation does not cover the helper AC scratch floor.');
+    throw new RangeError('Worker reservation is below the AC scratch floor.');
   if (count && (!runtimeBytes || !inputBytes || !outputBytes ||
       !Number.isSafeInteger(inputBytes + 2 * outputBytes + scratchBytes) ||
       jobBytes < inputBytes + 2 * outputBytes + scratchBytes))
-    throw new RangeError('Worker reservation does not cover its input, output growth and AC scratch.');
+    throw new RangeError('Worker reservation does not cover input, output and AC scratch.');
   return Object.freeze(reservation);
 }
 

@@ -13,7 +13,7 @@ function noiseCubeRoot(value) {
 
 export function photonNoise(width, height, iso = 800) {
   admitSize(width, height, PHOTO_LIMITS);
-  if (!Number.isFinite(iso) || iso < 1 || iso > 1000000000) throw fault('JXL_INPUT', 'Photon noise ISO is a finite number from one through one billion.');
+  if (!Number.isFinite(iso) || iso < 1 || iso > 1000000000) throw fault('JXL_INPUT', 'Photon noise ISO is from 1 to 1e9.');
   const exposure = 10 / iso, area = 36000 * 24000 / (width * height), electrons18 = .2 * 11260 * exposure * area;
   const biasRoot = noiseCubeRoot(PHOTON_BIAS), norm = .22 * 1.4142135623730951 * 1.13;
   return Float64Array.from({length: 8}, (_, i) => {
@@ -30,7 +30,7 @@ export function admitNoise(option, width, height) {
   if (option && typeof option === 'object' && !Array.isArray(option) && !ArrayBuffer.isView(option) && Object.hasOwn(option, 'iso'))
     return photonNoise(width, height, option.iso);
   if ((!Array.isArray(option) && !(option instanceof Float32Array) && !(option instanceof Float64Array)) || option.length !== 8)
-    throw fault('JXL_INPUT', 'noise is false, photon, {iso}, or eight strength values from zero through 1023/1024.');
+    throw fault('JXL_INPUT', 'noise is false, photon, {iso}, or eight strengths from 0 to 1023/1024.');
   return Float64Array.from(option, value => {
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > NOISE_MAX)
       throw fault('JXL_INPUT', 'Every noise strength is finite and in [0, 1023/1024].');

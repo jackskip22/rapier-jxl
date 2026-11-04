@@ -1,5 +1,5 @@
-import {encodeCaptureBytes, captureBandShape, captureBand} from '../capture-codec.mjs';
-export {encodeCaptureBytes, captureBandShape, captureBand};
+import {encodeCaptureBytes, encodeCaptureSteps, captureBandShape, captureBand, captureBandSteps} from '../capture-codec.mjs';
+export {encodeCaptureBytes, encodeCaptureSteps, captureBandShape, captureBand, captureBandSteps};
 export {compileCaptureKernels} from '../capture-kernels.mjs';
 export {image} from './input.mjs';
 export {configureModules} from '../wasm-modules.mjs';

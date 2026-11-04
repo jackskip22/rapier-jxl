@@ -3,16 +3,16 @@ import {coefficientEffortSteps, coefficientOrderSteps, candidateSteps, prefetch,
 import {offloading} from './offload.mjs';
 import {varDCTSteps, vdLfGroupCount, seedLfSections} from './vardct.mjs';
 import {part, complete, scaled} from './bits.mjs';
-import {buildAnsCoding, writeModularAnsHistograms} from './ans.mjs';
+import {ansCodingsKept, buildAnsCoding, writeModularAnsHistograms} from './ans.mjs';
 import {lfCoderFor, monotonicLfCoderFor} from './lf-coding.mjs';
-import {SMALL_PIXELS, SMALL_CLUSTERS} from './photo-v6-settings.mjs';
+import {SMALL_PIXELS, SMALL_CLUSTERS, UPLOAD_CLUSTERS} from './photo-v6-settings.mjs';
 
 const PHOTO_CLUSTERS = {maxClusters: 64, newClusterCost: 100, seeds: 128};
 export const BUDGETS = [{maxClusters: 64, newClusterCost: 80, seeds: 128, switchCost: 5}, {maxClusters: 48, newClusterCost: 130, seeds: 128}, {maxClusters: 64, newClusterCost: 90, seeds: 128, everyConfig: true}];
 const EXTRA_BUDGETS = [{maxClusters: 64, newClusterCost: 70, seeds: 128, switchCost: 4, everyConfig: true}, {maxClusters: 64, newClusterCost: 58, seeds: 128, switchCost: 4, everyConfig: true}];
 
 export function rungs(effort) {
-  if (effort < 4) return [{orders: true, lf: 3}];
+  if (effort < 4) return [{orders: true, lf: 3, clusters: UPLOAD_CLUSTERS}];
   const lf = effort >= 7 ? 7 : 5, list = [...(effort >= 5 ? [{orders: true}] : []), {orders: true, lf}, {lf}];
   for (let i = 0; i < (effort >= 5 ? Math.min(3, effort - 4) : 0); i++) list.push({orders: 'best', lf, clusters: BUDGETS[i]});
   if (effort >= 8) list.push({orders: 'best', lf: 9});
@@ -35,12 +35,13 @@ export const ansPlan = (rung, orders, effort) => ({coding: buildAnsCoding, modul
 const isSizeFailure = error => error instanceof RangeError && !error?.code || error?.code === 'JXL_SIZE';
 
 const PREFIX_PIXELS = 128 * 128;
+const FLOOR_BYTES = 2048;
 
 export function* coefficientAnsSteps(jpeg, effort, fallback, retain, pooled = false) {
   const shared = retain ? {} : {acCoding: buildAnsCoding};
   if (effort < 2) return yield* part(coefficientEffortSteps(jpeg, effort, fallback, retain, shared, pooled), 0, 1);
   const list = effort <= 3 && jpeg.xyb && jpeg.width * jpeg.height < SMALL_PIXELS ? [{orders: true, clusters: SMALL_CLUSTERS}] : rungs(effort), learn = list.some(rung => rung.orders) ? 1 : 0, small = jpeg.width * jpeg.height <= PREFIX_PIXELS;
-  const lazyFloor = effort >= 4 && effort <= 6 && !small && !!jpeg.xyb, floorFirst = effort >= 4 && !lazyFloor, parts = learn + list.length + (floorFirst || small || lazyFloor ? 1 : 0);
+  const lazyFloor = effort >= 4 && effort <= 6 && !small && !!jpeg.xyb, floorFirst = effort >= 4 && !lazyFloor, parts = learn + list.length + 1;
   let best = fallback, hurry = false, at = 0, orders;
   function* run(steps) {
     const from = at / parts;
@@ -93,7 +94,7 @@ export function* coefficientAnsSteps(jpeg, effort, fallback, retain, pooled = fa
       if (best !== before) bestOrders = use;
     } catch (error) { if (!isSizeFailure(error)) throw error; }
   }
-  if (!floorFirst && small && !(hurry && best) || lazyFloor && hurry || !best) {
+  if (!floorFirst && (small || best && best.length <= FLOOR_BYTES) && !(hurry && best) || lazyFloor && hurry || !best) {
     try { keep(yield* run(floor()), {}); }
     catch (error) { if (!isSizeFailure(error) || !best) throw error; }
   }
@@ -124,27 +125,30 @@ export function* strategyAnsSteps(image, effort = 7, learned = null, pooled = fa
     for (const clusters of budgets) runs.push({img, shared, plan: {clusters, coding: buildAnsCoding, modularAns: writeModularAnsHistograms, lfCoder: lf, ...(richContexts || effort >= 7 ? {richContexts: true} : {})}});
   }
   let best = null;
-  for (let at = 0; at < runs.length; at++) {
-    const {img, shared, plan} = runs[at], candidate = varDCTSteps(img, pooled ? {...plan, pooled: true, abortable: !!best, ...(pooled === 'split' ? {splitGroups: true} : {})} : plan, shared);
-    let settled = false, hurry = false;
-    try {
-      let step, reply;
-      while (!(step = candidate.next(reply)).done) {
-        const value = step.value, response = yield scaled(value, done => (at + done) / runs.length);
-        reply = typeof value === 'number' ? undefined : response;
-        if (typeof value === 'number' ? response : !value?.gpu && (response === null || response?.hurried)) hurry = true;
+  ansCodingsKept(true);
+  try {
+    for (let at = 0; at < runs.length; at++) {
+      const {img, shared, plan} = runs[at], candidate = varDCTSteps(img, pooled ? {...plan, pooled: true, abortable: !!best, ...(pooled === 'split' ? {splitGroups: true} : {})} : plan, shared);
+      let settled = false, hurry = false;
+      try {
+        let step, reply;
+        while (!(step = candidate.next(reply)).done) {
+          const value = step.value, response = yield scaled(value, done => (at + done) / runs.length);
+          reply = typeof value === 'number' ? undefined : response;
+          if (typeof value === 'number' ? response : !value?.gpu && (response === null || response?.hurried)) hurry = true;
+        }
+        if (pooled && step.value === null) {
+          if (!best) throw new Error('Incomplete AC group stream.');
+          settled = true; return best;
+        }
+        if (!best || step.value.length < best.length) best = step.value;
+        settled = true;
+        if (hurry) return best;
+      } finally {
+        closeCandidate(candidate, !settled);
       }
-      if (pooled && step.value === null) {
-        if (!best) throw new Error('Incomplete AC group stream.');
-        settled = true; return best;
-      }
-      if (!best || step.value.length < best.length) best = step.value;
-      settled = true;
-      if (hurry) return best;
-    } finally {
-      closeCandidate(candidate, !settled);
     }
-  }
+  } finally { ansCodingsKept(false); }
   return best;
 }
 

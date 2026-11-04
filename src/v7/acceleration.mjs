@@ -1,3 +1,4 @@
+import * as core from '../gpu-core.mjs';
 import {kernelsReady} from './kernels-ready.mjs';
 import {gpuOffered} from '../gpu-gate.mjs';
 import {GPU_EFFORT, requireWebGPU} from './webgpu.mjs';
@@ -8,13 +9,12 @@ export async function acceleration(webgpu, width = 0, height = 0, effort = 0, ro
   if (effort < GPU_EFFORT || webgpu === false) return undefined;
   const required = webgpu === 'required';
   if (route !== 'still') {
-    if (required) throw fail('JXL_WEBGPU', `This codec requires WebGPU (webgpu: 'required'), and this version runs ${route} on WebAssembly only. Leave the setting out to run it on WebAssembly, the same file.`);
+    if (required) throw fail('JXL_WEBGPU', `webgpu: 'required', but ${route} runs on WebAssembly only. Leave webgpu out for the same file.`);
     return undefined;
   }
   if (!required && !gpuOffered(width, height, effort)) return undefined;
   await requireWebGPU(webgpu, true, effort);
   if (!globalThis.navigator?.gpu) return undefined;
-  const core = await import('../gpu-core.mjs');
   let device = null;
   try { device = await core.gpuCoreDevice(); if (device && !required && !await core.gpuCoreReady(device)) device = null; } catch (cause) { if (required) throw gpuFailed(cause); device = null; }
   if (!device) { if (required) throw gpuFailed(); return undefined; }
@@ -26,7 +26,7 @@ export async function acceleration(webgpu, width = 0, height = 0, effort = 0, ro
     return image;
   };
 }
-const gpuFailed = cause => Object.assign(fail('JXL_WEBGPU', "This codec requires WebGPU (webgpu: 'required') and the device could not run this job" + (cause?.message ? ': ' + cause.message : '.')), cause ? {cause} : {});
+const gpuFailed = cause => Object.assign(fail('JXL_WEBGPU', "webgpu: 'required', and the device could not run this job" + (cause?.message ? ': ' + cause.message : '.')), cause ? {cause} : {});
 
 export function describedRoute(data, codec) {
   if (codec.icc !== undefined) return 'a picture with an ICC profile';

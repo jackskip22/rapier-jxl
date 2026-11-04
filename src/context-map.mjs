@@ -155,11 +155,11 @@ export function codedMap(map, mtf, minLength, moved, limitBits = Infinity) {
   return w;
 }
 
-export function writeSmallestContextMap(w, map) {
+export function writeSmallestContextMap(w, map, lz = true) {
   let best = new BitWriter(256);
   writeContextMap(best, map);
   const moved = map.length >= 16 ? mapMoveToFront(map) : null;
-  if (map.length >= 16) for (const mtf of [false, true]) for (const minLength of [0, 3, 5]) {
+  if (map.length >= 16) for (const mtf of [false, true]) for (const minLength of lz ? [0, 3, 5] : [0]) {
     const candidate = codedMap(map, mtf, minLength, moved, best.bitLength);
     if (candidate && candidate.bitLength < best.bitLength) best = candidate;
   }

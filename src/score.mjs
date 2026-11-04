@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {PHOTO_LIMITS} from './limits.mjs';
 import {complete} from './bits.mjs';
-import {admitPixels, fault, job} from './admit.mjs';
+import {admitPixels, fault, job, guard, answer} from './admit.mjs';
 import {admitEffort, BALANCED_EFFORT} from './effort-level.mjs';
 import {effortJob} from './effort-job.mjs';
 import {EXACT_LADDER} from './exact-ladder.mjs';
@@ -14,7 +14,7 @@ import {gpuSetup} from './gpu-setup.mjs';
 export {PHOTO_LIMITS as LIMITS};
 
 function scoreTarget(target) {
-  if (!target || typeof target !== 'object') throw fault('JXL_INPUT', 'Target is an object naming ssimulacra2, butteraugli or butteraugli3.');
+  if (!target || typeof target !== 'object') throw fault('JXL_INPUT', 'Target names ssimulacra2, butteraugli or butteraugli3.');
   const out = {};
   for (const [key, value] of Object.entries(target)) {
     if (!['ssimulacra2', 'butteraugli', 'butteraugli3'].includes(key)) throw fault('JXL_INPUT', `Target ${key} is not ssimulacra2, butteraugli or butteraugli3.`);
@@ -28,7 +28,7 @@ function scoreTarget(target) {
 function admitScore(data, width, height, options) {
   if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray)) throw fault('JXL_INPUT', 'Encoding to a score takes 8-bit sRGB RGBA.');
   admitPixels(data, width, height, PHOTO_LIMITS);
-  if (width < 8 || height < 8) throw fault('JXL_INPUT', 'Encoding to a score needs a picture of at least 8 x 8 pixels.');
+  if (width < 8 || height < 8) throw fault('JXL_INPUT', 'A score target needs at least 8 x 8 pixels.');
   const candidates = options?.candidates ?? CANDIDATES;
   if (!Array.isArray(candidates) || !candidates.length || candidates.some(c => !CANDIDATES.includes(c))) throw fault('JXL_INPUT', `Candidates are some of ${CANDIDATES.join(', ')}.`);
   const allowLossless = options?.allowLossless === undefined ? true : options.allowLossless, maxBytes = options?.maxBytes ?? Number.MAX_SAFE_INTEGER;
@@ -61,13 +61,18 @@ function scoreRefusal(result, target, code, reason) {
 function* finishScore(result, data, width, height, {target, effort, allowLossless, maxBytes}) {
   if (result.pass && result.bytes.length <= maxBytes) return scoreAnswer(result);
   if (!allowLossless) throw scoreRefusal(result, target, result.pass ? 'JXL_SIZE' : 'JXL_TARGET',
-    result.pass ? 'The selected file exceeds maxBytes.' : 'The lossy search did not reach the target and lossless is disabled.');
-  const exact = job(effortJob(data, width, height, {quality: 100, effort}, false, PHOTO_LIMITS, undefined, undefined, EXACT_LADDER));
+    result.pass ? 'The selected file exceeds maxBytes.' : 'The target was not reached and lossless is off.');
+  const exact = effortJob(data, width, height, {quality: 100, effort}, false, PHOTO_LIMITS, undefined, undefined, EXACT_LADDER);
   try {
-    let step;
-    while (!(step = exact.next()).done) yield 0.95 + 0.05 * step.value;
-    if (step.value.length > maxBytes) throw scoreRefusal(result, target, 'JXL_SIZE', 'The lossless file exceeds maxBytes.');
-    return scoreAnswer({bytes: step.value, quality: 100, candidate: 'lossless', pass: true, ssimulacra2: 100, butteraugli: 0, butteraugli3: 0});
+    let step, reply;
+    while (!(step = guard(() => exact.next(reply))).done) {
+      const value = step.value;
+      if (value?.capture) reply = yield value;
+      else { reply = undefined; if (!value?.split && !value?.gpu) yield 0.95 + 0.05 * value; }
+    }
+    const bytes = answer(step.value);
+    if (bytes.length > maxBytes) throw scoreRefusal(result, target, 'JXL_SIZE', 'The lossless file exceeds maxBytes.');
+    return scoreAnswer({bytes, quality: 100, candidate: 'lossless', pass: true, ssimulacra2: 100, butteraugli: 0, butteraugli3: 0});
   } finally { exact.return(); }
 }
 
@@ -110,7 +115,7 @@ export async function encodeToScore(data, width, height, options) {
   const publish = () => { if (options?.stats) Object.assign(options.stats, stats); };
   if (gpu && plan.known) {
     stats.backend = 'refused'; stats.gpuFailure = 'JXL_MEMORY_GPU_UNPROVEN'; publish();
-    throw fault('JXL_MEMORY_GPU_UNPROVEN', 'The supplied whole-memory envelope has no enforceable GPU allocation bound.');
+    throw fault('JXL_MEMORY_GPU_UNPROVEN', 'The memory envelope gives no GPU allocation bound.');
   }
   if (!gpu) { try { return complete(encodeToScoreSteps(data, width, height, {...options, stats})); } finally { publish(); } }
   let measurer = null, pool = null, exactAnswer = null, steps = null, cpuOnce = null, metricRgba = null, gpuFailure, gpuFailed = false, completed = false;

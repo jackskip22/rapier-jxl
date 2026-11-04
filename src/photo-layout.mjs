@@ -9,9 +9,9 @@ export function admitPhotoLayout(width, height, options, quality) {
   const factor = options.upsampling ?? 1;
   if (![1, 2, 4, 8].includes(factor)) throw fault('JXL_INPUT', 'upsampling is 1, 2, 4 or 8.');
   if (quality === 100 && (factor !== 1 || options.upsamplingWeights !== undefined))
-    throw fault('JXL_INPUT', 'Photographic upsampling requires quality below 100; exact reduced planes use encodeChannels.');
+    throw fault('JXL_INPUT', 'Photo upsampling needs quality below 100; use encodeChannels for exact.');
   if (factor !== 1 && options.lfFrames !== undefined && options.lfFrames !== false)
-    throw fault('JXL_INPUT', 'A frame using a low-frequency frame cannot signal spatial upsampling.');
+    throw fault('JXL_INPUT', 'LF frames cannot signal upsampling.');
   return {width, height, factor, codedWidth: Math.ceil(width / factor), codedHeight: Math.ceil(height / factor),
     colorTransform: prepareUpsamplingWeights(options.upsamplingWeights),
     xybTransform: prepareUpsamplingWeights(options.upsamplingWeights, {xyb: true})};

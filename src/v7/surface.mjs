@@ -1,7 +1,8 @@
 import {readWebGLNow} from './webgl-read.mjs';
 import {isVideo, videoFrame} from './video.mjs';
-import {dimensions, fail} from './primitives.mjs';
+import {dimensions, fail, plainView} from './primitives.mjs';
 import {isPlainRecord} from './records.mjs';
+import {withCost} from './ownership.mjs';
 import {DESCRIPTION, described, isDecoded, fromDecoded} from './describe.mjs';
 const STILL_FIELDS = new Set(['data', 'width', 'height', ...DESCRIPTION]);
 const ANIMATION_FIELDS = new Set(['width', 'height', 'frames', 'loops', ...DESCRIPTION]);
@@ -11,14 +12,14 @@ export function surface(input, options = {}) {
   const {maxPixels = 40000000, maxPendingBytes = 268435456, retainedBytes = 0, admitSurface, readAs: requested, half: halfAllowed = false} = options;
   const typed = typeof ImageData === 'function' && input instanceof ImageData;
   if ((typed || isPlainRecord(input)) && requested !== undefined)
-    throw fail('JXL_OPTIONS', 'readAs converts a canvas, bitmap or Blob as it is read; pixels describe themselves: set colorSpace on the image.');
+    throw fail('JXL_OPTIONS', 'readAs is for a canvas, bitmap or Blob; for pixels, set colorSpace on the image.');
   if (isPlainRecord(input) && Object.values(Object.getOwnPropertyDescriptors(input)).some(field => !('value' in field)))
     throw fail('JXL_INPUT', 'Queue records cannot contain accessors.');
   if (isPlainRecord(input) && isDecoded(input)) return fromDecoded(input);
   if (isPlainRecord(input)) {
     const animation = Array.isArray(input.frames), known = animation ? ANIMATION_FIELDS : STILL_FIELDS;
     for (const key of Object.keys(input)) if (!known.has(key))
-      throw fail('JXL_INPUT', `Unknown picture field: ${key}. A picture is {data, width, height} and its description (${DESCRIPTION.join(', ')}).`);
+      throw fail('JXL_INPUT', `Unknown picture field: ${key}. A picture is {data, width, height} and ${DESCRIPTION.join(', ')}.`);
     if (animation)
       return {width: input.width, height: input.height, ...(input.loops !== undefined && {loops: input.loops}), frames: input.frames, ...described(input)};
     const description = described(input);
@@ -26,7 +27,7 @@ export function surface(input, options = {}) {
       if (description.sampleFormat !== undefined && description.sampleFormat !== 'float16') throw fail('JXL_INPUT', 'A Float16Array holds float16 samples.');
       return {data: new Uint16Array(input.data.buffer, input.data.byteOffset, input.data.length), width: input.width, height: input.height, ...description, sampleFormat: 'float16'};
     }
-    return {data: input.data, width: input.width, height: input.height, ...description};
+    return {data: ArrayBuffer.isView(input.data) && !(input.data instanceof DataView) ? plainView(input.data) : input.data, width: input.width, height: input.height, ...description};
   }
   if (typed) {
     const {data, width, height, colorSpace = 'srgb'} = input;
@@ -44,7 +45,7 @@ export function surface(input, options = {}) {
   dimensions(width, height, maxPixels);
   const admit = byteLength => {
     admitSurface?.({width, height, byteLength});
-    if (byteLength + retainedBytes > maxPendingBytes) throw fail('JXL_MEMORY', 'The image exceeds the pending input budget (maxPendingBytes).');
+    if (byteLength + retainedBytes > maxPendingBytes) throw fail('JXL_MEMORY', 'The image is over maxPendingBytes.');
   };
   admit(width * height * 4);
   let context = canvas ? input.getContext('2d', {willReadFrequently: true}) : null;
@@ -52,33 +53,43 @@ export function surface(input, options = {}) {
   if (half) admit(width * height * 8);
   if (requested !== undefined && requested !== 'srgb' && requested !== 'display-p3')
     throw fail('JXL_OPTIONS', 'readAs is srgb or display-p3.');
-  let target = input;
-  if (bitmap) {
-    target = typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(width, height) : document.createElement('canvas');
-    target.width = width; target.height = height;
-    const drawn = target.getContext('2d', {willReadFrequently: true, colorSpace: requested ?? 'srgb'});
-    if (!drawn) throw fail('JXL_PLATFORM', 'This runtime has no 2D canvas to read the picture. Supply RGBA pixels, a 16-bit PNG Blob, or use JPEG recompression.');
-    drawn.drawImage(input, 0, 0);
+  let copied;
+  const copy = (from, space) => {
+    const canvas = typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(width, height) : document.createElement('canvas');
+    copied = canvas;
+    canvas.width = width; canvas.height = height;
+    const drawn = canvas.getContext('2d', {willReadFrequently: true, colorSpace: space});
+    if (!drawn) throw fail('JXL_PLATFORM', 'No 2D canvas here; pass RGBA pixels.');
+    drawn.drawImage(from, 0, 0);
+    return {canvas, drawn};
+  };
+  try {
+    let target = input;
+    if (bitmap) target = copy(input, requested ?? 'srgb').canvas;
+    context ??= target.getContext('2d', {willReadFrequently: true});
+    if (!context) {
+      const own = foreignSpace(target);
+      const direct = requested === undefined || requested === own ? readWebGLNow(target) : null;
+      if (direct) { withCost(direct.data, direct.data.byteLength); return direct; }
+      context = copy(target, requested ?? own).drawn;
+    }
+    const colorSpace = requested ?? context.getContextAttributes?.().colorSpace ?? 'srgb';
+    const lost = () => { if (context.isContextLost?.()) throw fail('JXL_INPUT', 'The canvas lost its 2D context; draw it again.'); };
+    lost();
+    let pixels;
+    try { pixels = context.getImageData(0, 0, width, height, half ? {colorSpace, pixelFormat: 'rgba-float16'} : {colorSpace}); }
+    catch (cause) { throw Object.assign(fail('JXL_INPUT', 'The canvas could not be read: ' + (cause?.message || cause)), {cause}); }
+    lost();
+    const data = half && pixels.data.BYTES_PER_ELEMENT === 2
+      ? new Uint16Array(pixels.data.buffer, pixels.data.byteOffset, pixels.data.length) : pixels.data;
+    withCost(data, data.byteLength);
+    if (half && pixels.data.BYTES_PER_ELEMENT === 2)
+      return {data, width, height, colorSpace: pixels.colorSpace ?? 'srgb',
+        transferFunction: 'srgb', sampleFormat: 'float16'};
+    return {data, width, height, colorSpace: pixels.colorSpace ?? 'srgb'};
+  } finally {
+    if (copied) copied.width = copied.height = 0;
   }
-  context ??= target.getContext('2d', {willReadFrequently: true});
-  if (!context) {
-    const own = foreignSpace(target);
-    const direct = requested === undefined || requested === own ? readWebGLNow(target) : null;
-    if (direct) return direct;
-    context = new OffscreenCanvas(width, height).getContext('2d', {willReadFrequently: true, colorSpace: requested ?? own});
-    context.drawImage(target, 0, 0);
-  }
-  const colorSpace = requested ?? context.getContextAttributes?.().colorSpace ?? 'srgb';
-  const lost = () => { if (context.isContextLost?.()) throw fail('JXL_INPUT', 'The canvas lost its 2D context, so its pixels are gone; draw it again.'); };
-  lost();
-  let pixels;
-  try { pixels = context.getImageData(0, 0, width, height, half ? {colorSpace, pixelFormat: 'rgba-float16'} : {colorSpace}); }
-  catch (cause) { throw Object.assign(fail('JXL_INPUT', 'The canvas could not be read: ' + (cause?.message || cause)), {cause}); }
-  lost();
-  if (half && pixels.data.BYTES_PER_ELEMENT === 2)
-    return {data: new Uint16Array(pixels.data.buffer, pixels.data.byteOffset, pixels.data.length), width, height, colorSpace: pixels.colorSpace ?? 'srgb',
-      transferFunction: 'srgb', sampleFormat: 'float16'};
-  return {data: pixels.data, width, height, colorSpace: pixels.colorSpace ?? 'srgb'};
 }
 
 export function foreignSpace(canvas) {

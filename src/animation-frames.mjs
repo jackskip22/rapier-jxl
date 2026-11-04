@@ -7,13 +7,14 @@ import {admitEffort} from './effort-level.mjs';
 import {job} from './admit.mjs';
 import {effortJob} from './effort-job.mjs';
 import {photoAnsSteps} from './photo-v6-blocks.mjs';
-import {EXACT_LADDER} from './exact-ladder.mjs';
+import {SCREEN_LADDER} from './screen-ladder.mjs';
 import {inspectPixels, shapeFloors} from './lossless.mjs';
 import {photoXYBSteps, preferXYB} from './photo-xyb.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {admitPhotoFilter} from './photo-job.mjs';
 import {V6} from './photo-v6.mjs';
+import {screenLike} from './screen.mjs';
 import {readStill, metadataKey, writeAnimatedImageHeader, writeAnimatedFrame, BLEND_MODES} from './framing.mjs';
 import {checkSignal} from './async-job.mjs';
 
@@ -51,7 +52,7 @@ export function* animationSteps(a, shared = null) {
   let first = frames.findIndex(frame => frame.duration > 0);
   if (first < 0) first = frames.length - 1;
   const mode = yield* frameMode(a, frames[first].data, frames);
-  const shown = [];
+  let shown = [];
   let previous = null, source = null;
   const tolerance = mode === 'modular' ? null : toleranceOf(quality);
   for (let i = 0; i < frames.length; i++) {
@@ -69,6 +70,18 @@ export function* animationSteps(a, shared = null) {
   }
   shown.at(-1).upTo = frames.length - 1;
   const timing = ticks(shown.map(frame => frame.duration));
+  if (timing.durations.some(duration => duration >= 0xFFFFFFFF)) {
+    const split = [], durations = [];
+    for (let k = 0; k < shown.length; k++) {
+      let remaining = timing.durations[k];
+      do {
+        const count = Math.min(remaining, 0xFFFFFFFE);
+        split.push(shown[k]);
+        durations.push(count); remaining -= count;
+      } while (remaining);
+    }
+    shown = split; timing.durations = durations;
+  }
   const floor = {colour: 1, alpha: false};
   if (mode !== 'xyb') for (const {data} of shown) {
     const shape = inspectPixels(data, width, height, {palette: false, samples: samples.native8 ? undefined : samples});
@@ -83,13 +96,15 @@ export function* animationSteps(a, shared = null) {
     const eligible = parts.filter(part => part.previous && (part.kept = unchangedShare(part.previous, part.data, width, part.rect)) >= MASK_SHARE);
     const trial = eligible.reduce((best, part) => !best || part.kept * part.rect[2] * part.rect[3] > best.kept * best.rect[2] * best.rect[3] ? part : best, null);
     if (trial) {
-      const [, , w, h] = trial.rect, code = (masked, alpha) => complete(partSteps(coderOf(a, mode, {...floor, alpha}), pixelsOf({...trial, masked}, width), w, h)).length;
+      const [, , w, h] = trial.rect, code = (masked, alpha) => complete(partSteps(coderOf(a, mode, {...floor, alpha}), pixelsOf({...trial, masked}, width), w, h));
       const fill = inspectPixels(shown[0].data, width, height).palette ? 'zero' : 'up';
       for (const part of eligible) part.fill = fill;
-      if (code(true, true) < 0.97 * code(false, false)) {
+      const masked = code(true, true), plain = code(false, false);
+      if (masked.length < 0.97 * plain.length) {
         floor.alpha = true;
         for (const part of eligible) part.candidates = a.effort >= 2 ? [false, true] : [true];
-      }
+        if (!shared) trial.tried = {masked: true, bytes: masked};
+      } else if (!shared) trial.tried = {masked: false, bytes: plain};
       yield 0.02;
     }
   }
@@ -102,9 +117,14 @@ export function* animationSteps(a, shared = null) {
     for (const job of own) { const next = at + (to - from) * job.rect[2] * job.rect[3] / area; job.span = [at, next]; at = next; }
     from = to;
   }
-  const coder = coderOf(a, mode, floor), progress = done => 0.02 + 0.97 * done;
+  const paletteSearch = !shared && quality === 100 && a.effort >= 8 && samples.native8 && a.colorSpace === 'srgb';
+  const coder = coderOf(a, mode, floor), progress = done => 0.02 + (paletteSearch ? 0.8 : 0.97) * done;
   for (const job of jobs) {
     const [, , w, h] = job.rect, [from, to] = job.span;
+    if (!shared && job.part.tried?.masked === job.masked) {
+      job.bytes = job.part.tried.bytes; delete job.part.tried;
+      yield progress(to); continue;
+    }
     const steps = shared ? shared.partSteps(coder, pixelsOf(job, width), w, h, job) : partSteps(coder, pixelsOf(job, width), w, h);
     let step, reply;
     while (!(step = steps.next(reply)).done) reply = yield progress(from + (to - from) * step.value);
@@ -114,26 +134,50 @@ export function* animationSteps(a, shared = null) {
   for (const part of parts) part.still = readStill(part.still);
   const key = metadataKey(parts[0].still);
   if (parts.some(({still}) => metadataKey(still) !== key)) throw fault('JXL_FRAMING', 'The frames of the animation need different image headers.');
-  const out = new BitWriter(1 << 16);
-  writeAnimatedImageHeader(out, parts[0].still, {width, height, ...timing, loops: a.loops}, parts.every(({still}) => still.image.modular16));
-  const canvas = {width, height, extraChannels: parts[0].still.image.extraChannels};
-  shared?.writeReferences(out, canvas, key);
-  parts.forEach(({frame: k, rect: [x0, y0], shows, still, masked}, p) => {
-    const next = parts[p + 1], last = !next;
-    const keep = !last && !(next.rect[2] === width && next.rect[3] === height && !next.masked);
-    still.frames.forEach((frame, f) => {
-      writeAnimatedFrame(out, still, frame, f === still.frames.length - 1
-        ? {canvas, x0, y0, duration: shows ? timing.durations[k] : 0, last, reference: keep ? CANVAS : 0, source: CANVAS, mode: masked ? BLEND_MODES.blend : BLEND_MODES.replace}
-        : {canvas, reference: CANVAS});
+  const write = parts => {
+    const out = new BitWriter(1 << 16);
+    writeAnimatedImageHeader(out, parts[0].still, {width, height, ...timing, loops: a.loops}, parts.every(({still}) => still.image.modular16));
+    const canvas = {width, height, extraChannels: parts[0].still.image.extraChannels};
+    shared?.writeReferences(out, canvas, key);
+    parts.forEach(({frame: k, rect: [x0, y0], shows, still, masked}, p) => {
+      const next = parts[p + 1], last = !next;
+      const keep = !last && !(next.rect[2] === width && next.rect[3] === height && !next.masked);
+      still.frames.forEach((frame, f) => {
+        writeAnimatedFrame(out, still, frame, f === still.frames.length - 1
+          ? {canvas, x0, y0, duration: shows ? timing.durations[k] : 0, last, reference: keep ? CANVAS : 0, source: CANVAS, mode: masked ? BLEND_MODES.blend : BLEND_MODES.replace}
+          : {canvas, reference: CANVAS});
+      });
     });
-  });
-  const codestream = out.finish();
-  return parts.some(({still}) => still.level === 10) ? levelTen(codestream) : codestream;
+    const codestream = out.finish();
+    return parts.some(({still}) => still.level === 10) ? levelTen(codestream) : codestream;
+  };
+  const bytes = write(parts);
+  if (!paletteSearch) return bytes;
+  let alternative = null;
+  for (let i = 0; i < parts.length; i++) {
+    const current = parts[i], [, , w, h] = current.rect, crop = pixelsOf(current, width);
+    if (screenLike(crop, w, h)) continue;
+    shapeFloors.set(crop, floor);
+    const shape = inspectPixels(crop, w, h);
+    if (!shape.palette) continue;
+    const steps = SCREEN_LADDER.screen.paletteSteps(crop, w, h, shape, a.colorSpace, {ceiling: current.bytes});
+    let step, reply;
+    while (!(step = steps.next(reply)).done) reply = yield 0.82 + 0.17 * (i + step.value) / parts.length;
+    if (!step.value) continue;
+    const still = readStill(step.value);
+    if (metadataKey(still) !== key) continue;
+    alternative ||= parts.slice();
+    alternative[i] = {...current, still};
+  }
+  if (!alternative) return bytes;
+  const candidate = write(alternative);
+  return candidate.length < bytes.length ? candidate : bytes;
+
 }
 
 let measuredSearch;
 export function useMeasuredSearch(search) { measuredSearch = search; }
-const frameEncodeSteps = (data, width, height, options) => job(effortJob(data, width, height, options, false, undefined, measuredSearch, photoAnsSteps, EXACT_LADDER));
+const frameEncodeSteps = (data, width, height, options) => job(effortJob(data, width, height, options, false, undefined, measuredSearch, photoAnsSteps, SCREEN_LADDER));
 
 function* frameMode(a, first, frames) {
   const {width, height, quality, samples, photo, colorSpace} = a;
@@ -265,8 +309,9 @@ export function pixelsOf({data, previous, rect: [x, y, w, h], masked, fill}, wid
 }
 
 export function cropOf(data, width, x, y, w, h) {
-  if (x === 0 && y === 0 && w === width && h * width * 4 === data.length) return data.slice();
-  const out = new data.constructor(w * h * 4);
+  const kind = data instanceof Uint8ClampedArray ? Uint8ClampedArray : data instanceof Uint8Array ? Uint8Array : data instanceof Uint16Array ? Uint16Array : data.constructor;
+  if (x === 0 && y === 0 && w === width && h * width * 4 === data.length) return new kind(data);
+  const out = new kind(w * h * 4);
   for (let row = 0; row < h; row++) out.set(data.subarray(((y + row) * width + x) * 4, ((y + row) * width + x + w) * 4), row * w * 4);
   return out;
 }

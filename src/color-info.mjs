@@ -26,10 +26,10 @@ function chromaticity(value) {
   const out = value.map(v => {
     if (typeof v !== 'number' || !Number.isFinite(v)) throw fault('JXL_INPUT', 'Chromaticity coordinates are finite numbers.');
     const scaled = Math.round(v * 1000000);
-    if (scaled < -2097152 || scaled > 2097151) throw fault('JXL_INPUT', 'Chromaticity coordinates must fit the signed JPEG XL field, in millionths.');
+    if (scaled < -2097152 || scaled > 2097151) throw fault('JXL_INPUT', 'Chromaticity exceeds the signed JPEG XL field, in millionths.');
     return scaled;
   });
-  if (!out[1]) throw fault('JXL_INPUT', 'A chromaticity y coordinate must remain nonzero in millionths.');
+  if (!out[1]) throw fault('JXL_INPUT', 'Chromaticity y is zero in millionths.');
   return out;
 }
 
@@ -41,7 +41,7 @@ export function prepareColorEncoding(info = {}, samples = {}) {
   if (space === 'unknown') throw fault('JXL_INPUT', 'An unknown color encoding requires an ICC profile.');
   if (space === 'xyb') {
     if (['whitePoint', 'primaries', 'transferFunction', 'gamma'].some(key => info[key] !== undefined))
-      throw fault('JXL_INPUT', 'XYB color encoding has implicit D65, no RGB primaries, and gamma 1/3; omit those fields.');
+      throw fault('JXL_INPUT', 'XYB color is implicit; omit white point, primaries and gamma.');
     const intent = enumeration(info.renderingIntent ?? 'perceptual', INTENT, 'rendering intent');
     const colorData = new BitWriter(16);
     colorData.write(2, 0);
@@ -49,7 +49,7 @@ export function prepareColorEncoding(info = {}, samples = {}) {
     colorData.writeU32(COLOR_ENUM, intent);
     return {colorData, colorChannels: 3, transferFunction: undefined};
   }
-  if (space !== 'rgb' && space !== 'gray') throw fault('JXL_INPUT', 'colorEncoding.space is rgb, gray or xyb; unknown requires ICC.');
+  if (space !== 'rgb' && space !== 'gray') throw fault('JXL_INPUT', 'colorEncoding.space is rgb, gray or xyb; otherwise use ICC.');
   const colorChannels = space === 'gray' ? 1 : 3;
   const white = info.whitePoint ?? 'd65', whiteXY = Array.isArray(white) ? chromaticity(white) : null;
   const whiteEnum = whiteXY ? 2 : enumeration(white, WHITE, 'white point');
@@ -58,7 +58,7 @@ export function prepareColorEncoding(info = {}, samples = {}) {
   if (colorChannels === 1 && info.primaries !== undefined) throw fault('JXL_INPUT', 'Gray color encoding has no RGB primaries.');
   if (colorChannels === 3) {
     if (Array.isArray(primaries)) {
-      if (primaries.length !== 3) throw fault('JXL_INPUT', 'Custom primaries are three [x, y] chromaticities: red, green and blue.');
+      if (primaries.length !== 3) throw fault('JXL_INPUT', 'Primaries are three [x, y] pairs: red, green, blue.');
       primaryXY = primaries.map(chromaticity);
       const [r, g, b] = primaryXY;
       if ((r[0] - b[0]) * (g[1] - b[1]) === (g[0] - b[0]) * (r[1] - b[1]))
@@ -72,7 +72,7 @@ export function prepareColorEncoding(info = {}, samples = {}) {
   const transferFunction = info.transferFunction ?? samples.transferFunction ?? 'srgb';
   if (haveGamma) {
     if (typeof info.gamma !== 'number' || !Number.isFinite(info.gamma) || info.gamma < 1 / 8192 || info.gamma > 1)
-      throw fault('JXL_INPUT', 'Gamma is the encoding exponent, from 1/8192 to 1 (for example 1/2.2).');
+      throw fault('JXL_INPUT', 'Gamma is from 1/8192 to 1 (for example 1/2.2).');
     gamma = Math.round(info.gamma * 10000000);
     if (gamma * 8192 < 10000000) throw fault('JXL_INPUT', 'Gamma is too small after codestream rounding.');
   } else transferEnum = enumeration(transferFunction, TRANSFER, 'transfer function');
@@ -97,12 +97,12 @@ export function prepareToneMapping(info = {}, fallback = 255) {
   const intensityTarget = info.intensityTarget ?? fallback, minNits = info.minNits ?? 0;
   const relativeToMaxDisplay = info.relativeToMaxDisplay ?? false, linearBelow = info.linearBelow ?? 0;
   if (typeof intensityTarget !== 'number' || !Number.isFinite(intensityTarget) || intensityTarget < 1 / 16777216 || intensityTarget >= 65520)
-    throw fault('JXL_INPUT', 'Tone-mapping intensityTarget is positive and representable below 65520 nits.');
+    throw fault('JXL_INPUT', 'intensityTarget is positive and below 65520 nits.');
   if (typeof minNits !== 'number' || !Number.isFinite(minNits) || minNits < 0 || minNits > intensityTarget)
     throw fault('JXL_INPUT', 'Tone-mapping minNits is between zero and intensityTarget.');
   if (typeof relativeToMaxDisplay !== 'boolean') throw fault('JXL_INPUT', 'relativeToMaxDisplay is a boolean.');
   if (typeof linearBelow !== 'number' || !Number.isFinite(linearBelow) || linearBelow < 0 || linearBelow >= 65520 || relativeToMaxDisplay && linearBelow > 1)
-    throw fault('JXL_INPUT', 'linearBelow is a nonnegative binary16 luminance, or a fraction from zero to one when relativeToMaxDisplay is true.');
+    throw fault('JXL_INPUT', 'linearBelow is a nonnegative binary16 luminance, or 0 to 1 with relativeToMaxDisplay.');
   const toneData = new BitWriter(16);
   const allDefault = intensityTarget === 255 && minNits === 0 && !relativeToMaxDisplay && linearBelow === 0;
   toneData.write(1, allDefault ? 1 : 0);

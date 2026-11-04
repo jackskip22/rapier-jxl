@@ -82,8 +82,8 @@ export const VB_DOUBT = 2130706432;
 function vbSettle(certified, id, bx, by, w, h, bw, bh, area, size, table, comps, planeRows, W, cfl, fine, dead) {
   const high = highOf(id, size), order = naturalOrder(bw, bh), ti = (by >> 3) * cfl.width + (bx >> 3), factor = [cfl.x[ti] / 84, 0, cfl.b[ti] / 84];
   const pixelsOf = c => {
-    const {planes: rowsOf, top} = planeRows(by * 8, by * 8 + h, bx * 8, bx * 8 + w), p = new Float64Array(size);
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) p[y * w + x] = rowsOf[c][(by * 8 + y - top) * W + bx * 8 + x];
+    const {planes: rowsOf, top, left = 0, stride: rowW = W} = planeRows(by * 8, by * 8 + h, bx * 8, bx * 8 + w), p = new Float64Array(size);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) p[y * w + x] = rowsOf[c][(by * 8 + y - top) * rowW + bx * 8 - left + x];
     return p;
   };
   const pixels = [], exact = [null, null, null], need = [new Set(), new Set(), new Set()];
@@ -317,6 +317,9 @@ export function xybStrategies(base, width, height, options = {}) {
   const transforms = options.transforms instanceof TransformCache ? options.transforms.forSource(planes, width, height, stride, rows) : null;
   const fineOf = (bx, by) => base.quantFields ? base.quantFields[by * stride + bx] / base.quantFieldBase : 1;
   const tables = searchTables(base, options), cfl = base.cfl, dead = deadzone;
+  const rateBlock = options.rateBlock || null, rateFrom = options.rateFrom ?? 0;
+  const plainTables = rateBlock ? searchTables(base, {...options, perceptual: false}) : null;
+  if (plainTables) tableFor(0, comps, sizeScale, plainTables);
   const norm = channelNorm(comps, weights, options.lowScale);
   tableFor(0, comps, sizeScale, tables);
   const allowed = new Set(ids);
@@ -327,7 +330,7 @@ export function xybStrategies(base, width, height, options = {}) {
   const costs = options.costs;
   const certifiedCosts = !!costs?.certified;
   if (options.perceptual && (options.maps || options.rates || costs && !(certifiedCosts && options.maskWeight)))
-    throw new Error('The perceptual block search takes no maps or rates, and only certified costs with their mask.');
+    throw new Error('The block search takes no maps or rates, only certified costs with their mask.');
   let repricing = false;
   const costDoubt = options.costDoubt || 0, doubtOf = (bx, by, bw, bh) => maskDoubtOver(costDoubt, stride, bx, by, bw, bh);
   if (costs && rates) for (const [id, c] of costs) if (!rates.has(id)) rates.set(id, c.R);
@@ -375,10 +378,10 @@ export function xybStrategies(base, width, height, options = {}) {
   const vk = !tokens && !options.maps && !rates && (!costs || certifiedCosts) && !transforms && !gpuBlocks && !options.exact && !built
     ? kernelHooks.varblock?.(vbLog2Table(), scaledDCTBases) : null, sums = new Float64Array(3);
   const kernelBlock = (id, bx, by, w, h, bw, bh, area, size, table, order, loses) => {
-    const {planes: rowsOf, top} = planeRows(by * 8, by * 8 + h, bx * 8, bx * 8 + w), slot = vk.table(id, table, size, order, highOf(id, size));
+    const {planes: rowsOf, top, left = 0, stride: rowW = W} = planeRows(by * 8, by * 8 + h, bx * 8, bx * 8 + w), slot = vk.table(id, table, size, order, highOf(id, size));
     if (!slot) return null;
-    if (loses) vk.block(rowsOf, top, bx * 8, by * 8, W, w, h, 1, 1);
-    else vk.block(rowsOf, top, bx * 8, by * 8, W, w, h, 0, 2);
+    if (loses) vk.block(rowsOf, top, bx * 8 - left, by * 8, rowW, w, h, 1, 1);
+    else vk.block(rowsOf, top, bx * 8 - left, by * 8, rowW, w, h, 0, 2);
     const ti = (by >> 3) * cfl.width + (bx >> 3), fine = fineOf(bx, by), unit = 8 * VB_QS * fine;
     const levels = priceOnly ? null : new Int32Array(3 * (size + area)), coeffs = priceOnly ? null : [], dc = priceOnly ? null : [];
     let keep = priceOnly && keepChosen ? vk.reserve(size) : -1, lows = null, wide = false;
@@ -425,13 +428,35 @@ export function xybStrategies(base, width, height, options = {}) {
       if (coeffs) coeffs[c] = plane;
       if (c === 1 && loses) {
         if (loses(D + lambda * R)) { if (keep >= 0) vk.unreserve(keep); return {id, bx, by, bw, bh, light: true, J: Infinity}; }
-        vk.block(rowsOf, top, bx * 8, by * 8, W, w, h, 0, 0); vk.block(rowsOf, top, bx * 8, by * 8, W, w, h, 2, 2);
+        vk.block(rowsOf, top, bx * 8 - left, by * 8, rowW, w, h, 0, 0); vk.block(rowsOf, top, bx * 8 - left, by * 8, rowW, w, h, 2, 2);
       }
       if (keep >= 0) {
         lows ||= new Float64Array(3 * area);
         const tr = vk.coefficients(c, size);
         if (area === 1) lows[c] = tr[0];
         else for (let y = 0; y < S; y++) for (let x = 0; x < L; x++) lows[c * area + y * L + x] = tr[y * L * 8 + x];
+      }
+    }
+    if (!priced && rateBlock && by >= rateFrom) {
+      if (id === 0) rateBlock({id, bx, by, area, size, order, coeffs});
+      else {
+        const pTable = tableFor(id, comps, sizeScale, plainTables), pSlot = vk.table(id + 32, pTable, size, order, highOf(id, size));
+        const pLevels = scratch.get(size) || scratch.set(size, new Int32Array(3 * size)).get(size), pCoeffs = [];
+        for (let i = 0; i < 3; i++) {
+          const c = i === 0 ? 1 : i === 1 ? 0 : 2, pPlane = pLevels.subarray(c * size, (c + 1) * size);
+          const fc = c === 0 ? cfl.x[ti] / 84 : c === 2 ? cfl.b[ti] / 84 : 0, lo = dead ? dead[c * 2] : 0.5, hi = dead ? dead[c * 2 + 1] : 0.5;
+          if (!pSlot || !vk.quant(c, pSlot, area, size, fc, lo, hi, fine, unit, VB_ONE[c], 1, rc[1], rc[2], 0, pPlane, sums, -1)) {
+            pPlane.fill(0);
+            const tr = vk.coefficients(c, size), luma = vk.coefficients(1, size), pSteps = pTable.planes[c], high = highOf(id, size);
+            for (let k = area; k < size; k++) {
+              const pos = order[k], coefficient = tr[pos] - (c !== 1 ? fc * luma[pos] : 0);
+              const v = coefficient * 8 * VB_QS / pSteps[pos] * fine, a = Math.abs(v), q = a < (high[pos] ? hi : lo) ? 0 : Math.round(a);
+              pPlane[pos] = v < 0 ? -q : q;
+            }
+          }
+          pCoeffs[c] = pPlane;
+        }
+        rateBlock({id, bx, by, area, size, order, coeffs: pCoeffs});
       }
     }
     if (priceOnly) return keep >= 0 ? {id, bx, by, bw, bh, area, size, light: true, R, D, J: D + lambda * R, Je: doubtOf(bx, by, bw, bh) * D, slot: keep, lows, epoch: vk.epoch()}
@@ -465,9 +490,9 @@ export function xybStrategies(base, width, height, options = {}) {
       const pixels = blockPixels.get(size) || blockPixels.set(size, new Float64Array(size)).get(size);
       const outputs = blockOutputs.get(size) || blockOutputs.set(size, [0, 1, 2].map(() => new Float64Array(size))).get(size);
       transformed = [];
-      const {planes: rowsOf, top} = planeRows(by * 8, by * 8 + h, bx * 8, bx * 8 + w);
+      const {planes: rowsOf, top, left = 0, stride: rowW = W} = planeRows(by * 8, by * 8 + h, bx * 8, bx * 8 + w);
       transformChannel = c => {
-        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) pixels[y * w + x] = rowsOf[c][(by * 8 + y - top) * W + bx * 8 + x];
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) pixels[y * w + x] = rowsOf[c][(by * 8 + y - top) * rowW + bx * 8 - left + x];
         transformed[c] = VB_SMALL.has(id) ? smallTransform(pixels, id, cache ? undefined : outputs[c]) : scaledDCT(pixels, w, h, cache ? undefined : outputs[c]);
       };
       const early = bounded && !!loses;
@@ -533,6 +558,23 @@ export function xybStrategies(base, width, height, options = {}) {
     if (maps) return {id, bx, by, bw, bh, area, size, order, coeffs, dc, ...measuredCost(id, bx, by, bw, bh, R)};
     if (rates) { if (!rates.has(id)) rates.set(id, new Float64Array(stride * rows)); rates.get(id)[by * stride + bx] = R; }
     if (priceOnly) return {id, bx, by, bw, bh, area, light: true, R, D, J: D + lambda * R, Je: doubtOf(bx, by, bw, bh) * D};
+    if (!priced && rateBlock && by >= rateFrom) {
+      if (id === 0) rateBlock({id, bx, by, area, size, order, coeffs});
+      else {
+        const pTable = tableFor(id, comps, sizeScale, plainTables), pLevels = scratch.get(size) || scratch.set(size, new Int32Array(3 * size)).get(size), pCoeffs = [];
+        pLevels.fill(0);
+        for (const c of [1, 0, 2]) {
+          const tr = transformed[c], luma = transformed[1], pPlane = pLevels.subarray(c * size, (c + 1) * size), pSteps = pTable.planes[c], fc = factor[c];
+          for (let k = area; k < size; k++) {
+            const pos = order[k], coefficient = tr[pos] - (c !== 1 ? fc * luma[pos] : 0);
+            const v = coefficient * 8 * VB_QS / pSteps[pos] * fine, a = Math.abs(v), q = a < (dead ? dead[c * 2 + high[pos]] : 0.5) ? 0 : Math.round(a);
+            pPlane[pos] = v < 0 ? -q : q;
+          }
+          pCoeffs[c] = pPlane;
+        }
+        rateBlock({id, bx, by, area, size, order, coeffs: pCoeffs});
+      }
+    }
     const block = {id, bx, by, bw, bh, area, size, order, coeffs, dc, R, D, J: D + lambda * R, Je: doubtOf(bx, by, bw, bh) * D};
     built?.set(id * 16777216 + by * stride + bx, block);
     return block;
@@ -675,16 +717,29 @@ export function xybStrategies(base, width, height, options = {}) {
     return {list: best, ...cur};
   };
   if (options.priceAll) {
-    const out = Object.assign(new Map(), {certified: true});
-    const wanted = options.cells && new Set(options.cells.flatMap(({bx, by}) => Array.from({length: 16}, (_, i) => (by + (i >> 2)) * stride + bx + (i & 3))));
-    for (const id of new Set([0, ...ids])) {
+    const out = Object.assign(new Map(), {certified: true}), idList = [...new Set([0, ...ids])];
+    if (options.cells) {
+      for (const id of idList) { const t = TRANSFORMS[id]; out.set(id, {D: [], R: [], points: [], seen: new Set(), w: t.width / 8, h: t.height / 8}); }
+      for (const {bx: cx, by: cy} of options.cells) for (const id of idList) {
+        const {D, R, w: bw, h: bh, points, seen} = out.get(id);
+        for (let dy = 0; dy < 4; dy++) for (let dx = 0; dx < 4; dx++) {
+          const bx = cx + dx, by = cy + dy, at = by * stride + bx;
+          if (bx % bw === 0 && by % bh === 0 && fits(id, bx, by) && !seen.has(at)) {
+            const c = full(id, bx, by);
+            seen.add(at); points.push(at); D.push(c.D); R.push(c.R);
+          }
+        }
+      }
+      return out;
+    }
+    for (const id of idList) {
       const t = TRANSFORMS[id], D = new Float64Array(stride * rows).fill(NaN), R = new Float64Array(stride * rows).fill(NaN);
       const bw = t.width / 8, bh = t.height / 8;
-      for (let by = 0; by < rows; by++) for (let bx = 0; bx < stride; bx++) if (fits(id, bx, by) && (!wanted || wanted.has(by * stride + bx) && bx % bw === 0 && by % bh === 0)) {
+      for (let by = 0; by < rows; by++) for (let bx = 0; bx < stride; bx++) if (fits(id, bx, by)) {
         const c = full(id, bx, by);
         D[by * stride + bx] = c.D; R[by * stride + bx] = c.R;
       }
-      out.set(id, {D, R, w: t.width / 8, h: t.height / 8});
+      out.set(id, {D, R, w: bw, h: bh});
     }
     return out;
   }
@@ -829,13 +884,15 @@ export function auditCosts(base, width, height, options, priced) {
   for (const [id, mine] of own) {
     const theirs = priced.costs.get(id);
     if (!theirs) continue;
-    for (let at = 0; at < mine.D.length; at++) {
-      if (Number.isNaN(mine.D[at])) continue;
+    const pts = mine.points;
+    for (let k = 0; k < (pts ? pts.length : mine.D.length); k++) {
+      const at = pts ? pts[k] : k, myD = mine.D[k], myR = mine.R[k];
+      if (Number.isNaN(myD)) continue;
       if (theirs.De?.[at] === Infinity) continue;
       if (theirs.De && !(theirs.De[at] >= 0 && Number.isFinite(theirs.De[at]) && theirs.Re?.[at] >= 0 && Number.isFinite(theirs.D[at]) && Number.isFinite(theirs.R[at]))) return Infinity;
       const ratio = (d, bound) => d === 0 ? 0 : d / (bound || 0);
       const bound = (theirs.De?.[at] ?? 0) - maskDoubtOver(priced.weightDoubt || 0, stride, at % stride, Math.floor(at / stride), mine.w, mine.h) * Math.abs(theirs.D[at]);
-      worst = Math.max(worst, ratio(Math.abs(mine.D[at] - theirs.D[at]), bound), ratio(Math.abs(mine.R[at] - theirs.R[at]), theirs.Re?.[at]));
+      worst = Math.max(worst, ratio(Math.abs(myD - theirs.D[at]), bound), ratio(Math.abs(myR - theirs.R[at]), theirs.Re?.[at]));
     }
   }
   return worst;
@@ -898,23 +955,26 @@ export function optimalLearnedOrders(image) {
     const bucket = ORDER_BUCKET[block.id];
     if (!bucket || bucket.name === 'small') continue;
     let entry = byBucket.get(bucket.name);
-    if (!entry) byBucket.set(bucket.name, entry = {bucket, blocks: [], counts: [0, 1, 2].map(() => new Float64Array(block.size))});
+    if (!entry) byBucket.set(bucket.name, entry = {bucket, blocks: [], nz: [[], [], []], counts: [0, 1, 2].map(() => new Float64Array(block.size))});
     entry.blocks.push(block);
     const {area, size, order} = block;
     for (let c = 0; c < 3; c++) {
       const plane = block.coeffs[c], n = entry.counts[c];
-      for (let k = area; k < size; k++) if (plane[order[k]]) n[k]++;
+      let count = 0;
+      for (let k = area; k < size; k++) if (plane[order[k]]) { n[k]++; count++; }
+      entry.nz[c].push(count);
     }
   }
-  const priceChannelTokens = (blocks, c, rankPerm) => {
+  const freq = new Uint32Array(VB_ZD * VB_TOKENS);
+  const priceChannelTokens = (blocks, nzList, c, rankPerm) => {
     const nat = blocks[0].order;
     const scan = rankPerm ? Uint32Array.from(rankPerm, r => nat[r]) : nat;
-    const freq = new Uint32Array(VB_ZD * VB_TOKENS);
+    freq.fill(0);
     let extraBits = 0;
-    for (const block of blocks) {
-      const {area, size} = block, coeffs = block.coeffs[c];
-      let count = 0;
-      for (let k = area; k < size; k++) if (coeffs[scan[k]]) count++;
+    for (let b = 0; b < blocks.length; b++) {
+      const count = nzList[b];
+      if (!count) continue;
+      const {area, size} = blocks[b], coeffs = blocks[b].coeffs[c];
       let prev = count > size / 16 ? 0 : 1, left = count;
       for (let k = area; k < size && left; k++) {
         const q = coeffs[scan[k]], [t, eb] = token(vbPackSigned(q));
@@ -933,27 +993,30 @@ export function optimalLearnedOrders(image) {
     return bits;
   };
   const value = {};
-  for (const [name, {bucket, blocks, counts}] of byBucket) {
+  for (const [name, {bucket, blocks, nz, counts}] of byBucket) {
     const skip = bucket.lowFrequencyCount, size = bucket.width * bucket.height;
-    const baseBits = [0, 1, 2].map(c => priceChannelTokens(blocks, c, null));
-    const bestPerms = [null, null, null], bestGain = [0, 0, 0];
+    const baseBits = [0, 1, 2].map(c => priceChannelTokens(blocks, nz[c], c, null));
+    const bestPerms = [null, null, null], bestGain = [0, 0, 0], bestTBits = [0, 0, 0];
     for (let c = 0; c < 3; c++) {
       const n = counts[c];
+      let prevRest = null;
       for (const div of [1, 2, 4, 8, 16]) {
         const rest = Array.from({length: size - skip}, (_, i) => i + skip).sort((a, b) => Math.floor(n[b] / div) - Math.floor(n[a] / div) || a - b);
         if (!rest.some((r, i) => r !== i + skip)) continue;
+        if (prevRest && rest.every((r, i) => r === prevRest[i])) continue;
+        prevRest = rest;
         const perm = [...Array.from({length: skip}, (_, i) => i), ...rest];
         const testObj = {[name]: [c === 0 ? perm : null, c === 1 ? perm : null, c === 2 ? perm : null]};
         const hBits = prepareCoefficientOrders(testObj, 1)[0].header.bitLength - 4;
-        const tBits = priceChannelTokens(blocks, c, perm);
+        const tBits = priceChannelTokens(blocks, nz[c], c, perm);
         const gain = baseBits[c] - (tBits + hBits * 0.85);
-        if (gain > bestGain[c]) { bestGain[c] = gain; bestPerms[c] = perm; }
+        if (gain > bestGain[c]) { bestGain[c] = gain; bestPerms[c] = perm; bestTBits[c] = tBits; }
       }
     }
     if (bestPerms.some(Boolean)) {
       const combined = {[name]: bestPerms};
       const totalH = prepareCoefficientOrders(combined, 1)[0].header.bitLength - 4;
-      const rawGain = [0, 1, 2].reduce((s, c) => s + (bestPerms[c] ? baseBits[c] - priceChannelTokens(blocks, c, bestPerms[c]) : 0), 0);
+      const rawGain = [0, 1, 2].reduce((s, c) => s + (bestPerms[c] ? baseBits[c] - bestTBits[c] : 0), 0);
       if (rawGain > totalH) value[name] = bestPerms;
     }
   }
@@ -961,10 +1024,20 @@ export function optimalLearnedOrders(image) {
 }
 
 export function encodeStrategyImageSteps(image, orders = true, effort = 7, pooled = false, primed = null, both = true) {
-  if (!orders) return strategyAnsSteps(image, effort, null, pooled, primed, both);
+  if (!orders || effort <= 6) return strategyAnsSteps(image, effort, null, pooled, primed, both);
   const std = learnedOrders(image);
   if (effort < 8) return strategyAnsSteps(image, effort, std, pooled, primed, both);
-  return strategyAnsSteps(image, effort, [std, optimalLearnedOrders(image)].filter(Boolean), pooled, primed, both);
+  const opt = optimalLearnedOrders(image);
+  return strategyAnsSteps(image, effort, [std, sameOrderPasses(std, opt) ? null : opt].filter(Boolean), pooled, primed, both);
+}
+function sameOrderPasses(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]?.header, y = b[i]?.header;
+    if (!x || !y || x.bitLength !== y.bitLength || x.at !== y.at || x.acc !== y.acc || x.pending !== y.pending) return false;
+    for (let k = 0; k < x.at; k++) if (x.bytes[k] !== y.bytes[k]) return false;
+  }
+  return true;
 }
 
 export function encodeXYBStrategies(rgba, width, height, quality, photoOptions, strategyOptions = {}) {

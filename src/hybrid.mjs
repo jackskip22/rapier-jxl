@@ -18,7 +18,7 @@ function hybridAdmission(data, width, height, options) {
   const {quality, colorSpace} = admitOptions(options, 90), effort = admitEffort(options);
   admitPixels(data, width, height);
   for (const key of Object.keys(options)) if (!HYBRID_KEYS.has(key)) throw fault('JXL_INPUT', 'Unknown hybrid option: ' + key + '.');
-  if (!admitSampleFormat(data, options).native8) throw fault('JXL_INPUT', 'Hybrid layers use eight-bit sRGB-transfer RGB or Display P3 samples.');
+  if (!admitSampleFormat(data, options).native8) throw fault('JXL_INPUT', 'Hybrid layers need 8-bit sRGB or Display P3.');
   const orientation = options.orientation ?? 1;
   if (!Number.isInteger(orientation) || orientation < 1 || orientation > 8) throw fault('JXL_INPUT', 'orientation is an Exif value from one through eight.');
   const automatic = options.regions === undefined || options.regions === 'auto';
@@ -27,7 +27,7 @@ function hybridAdmission(data, width, height, options) {
     if (!region || typeof region !== 'object') throw fault('JXL_INPUT', 'A hybrid region is {x, y, width, height}.');
     const {x, y, width: w, height: h} = region;
     if (![x, y, w, h].every(Number.isSafeInteger) || x < 0 || y < 0 || w < 1 || h < 1 || x + w > width || y + h > height)
-      throw fault('JXL_INPUT', 'Every hybrid region is a nonempty rectangle inside the source image.');
+      throw fault('JXL_INPUT', 'Each hybrid region is a nonempty rectangle inside the image.');
     const left = x & ~7, top = y & ~7;
     return {x: left, y: top, width: Math.min(width, Math.ceil((x + w) / 8) * 8) - left,
       height: Math.min(height, Math.ceil((y + h) / 8) * 8) - top};

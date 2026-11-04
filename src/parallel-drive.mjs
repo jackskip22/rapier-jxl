@@ -8,7 +8,7 @@ import {describePlan} from './parallel-serve.mjs';
 
 function taskKey(task, idOf) {
   if (task.kind === 'fast-band') return `fast-band|${idOf(task.data)}|${task.width}|${task.quality}|${task.y}|${task.h}`;
-  if (task.kind === 'band') return `band|${idOf(task.data)}|${idOf(task.color)}|${task.width}|${task.quality}|${task.y}|${task.h}|${task.from}|${task.to}`;
+  if (task.kind === 'band') return `band|${idOf(task.data)}|${idOf(task.color)}|${task.width}|${task.quality}|${task.y}|${task.h}|${task.from}|${task.to}|${!!task.fast}|${!!task.uploadFlat}|${!!task.uploadProfile}`;
   const plan = describePlan(task.plan);
   if (task.kind === 'lf') return plan && `lf|${idOf(task.image)}|${plan.lf}|${plan.modularAns}|${task.g}`;
   return plan && `vardct|${idOf(task.image)}|${JSON.stringify({...plan, orders: plan.orders?.join() ?? null})}`;
@@ -33,7 +33,7 @@ function driver(owner) {
   const message = task => task.kind === 'lf' ? {kind: 'lf', image: task.image, plan: describePlan(task.plan), g: task.g}
     : task.kind === 'fast-band' ? {kind: 'fast-band', data: task.data, target: task.target, width: task.width, h: task.h, quality: task.quality, y: task.y}
     : task.kind === 'vardct' ? {kind: 'vardct', image: task.image, plan: describePlan(task.plan)}
-    : {kind: 'band', data: task.data, target: task.target, width: task.width, h: task.h, quality: task.quality, color: task.color, from: task.from, to: task.to, y: task.y};
+    : {kind: 'band', data: task.data, target: task.target, width: task.width, h: task.h, quality: task.quality, color: task.color, fast: task.fast, uploadFlat: task.uploadFlat, uploadProfile: task.uploadProfile, from: task.from, to: task.to, y: task.y};
   const gates = new WeakMap(), bandRuns = new Map();
   const gated = (image, y0, y1, run) => {
     const gate = gates.get(image);

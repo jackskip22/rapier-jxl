@@ -4,6 +4,7 @@ import {cbrtTables, IS_BIAS, BLACK} from './int-spec.mjs';
 
 const R_HALF = Float64Array.from({length: 32}, (_, k) => k ? 2 ** (k - 1) : 0.5), R_INV = Float64Array.from({length: 32}, (_, k) => 2 ** -k);
 const R = (s, k) => Math.floor((s + R_HALF[k]) * R_INV[k]);
+const R16 = s => Math.floor((s + 32768) * 0.0000152587890625);
 
 const SCALES = 6, N = 4, RB = 2 * N + 1, COLORS = 1 << 17, TWO32 = 4294967296, C2 = 15099;
 export const S2C_LIN = Int32Array.from({length: 256}, (_, i) => Math.round(SRGB_TO_LINEAR[i] * 32768));
@@ -12,7 +13,8 @@ export const S2C_MIX = Int32Array.from({length: 9}, (_, j) => j % 3 < 2 ? Math.r
   : 16384 - Math.round(OPSIN[j - 2] * 16384) - Math.round(OPSIN[j - 1] * 16384));
 export const S2C_TAPS = (() => { const t = Array.from(gaussianTaps(), v => Math.round(v * 65536)); t[N] += 65536 - t.reduce((a, b) => a + b, 0); return Int32Array.from(t); })();
 const check = (v, bound, what) => { if (!(Math.abs(v) < bound)) throw new RangeError(`s2-cells: ${what} ${v} outside ${bound}`); return v; };
-const cbrt = v => { const {lo, hi} = cbrtTables(); return v < 65536 ? lo[v] : hi[R(v, 4)]; };
+let ROOTS = null;
+const cbrt = v => { const {lo, hi} = ROOTS ??= cbrtTables(); return v < 65536 ? lo[v] : hi[Math.floor((v + 8) * 0.0625)]; };
 
 function xyb(r, g, b, out, o) {
   const cone = k => R(S2C_MIX[k] * r + S2C_MIX[k + 1] * g + S2C_MIX[k + 2] * b, 9) + IS_BIAS;
@@ -62,7 +64,7 @@ function plane(pic, n, c, out) {
 }
 
 function channelSums(P1, P2, w, h, sh, stride, acc1, acc4) {
-  const T = S2C_TAPS, ring = [0, 1, 2, 3, 4].map(() => new Int32Array(RB * w));
+  const T = S2C_TAPS, T4 = T[N], ring = [0, 1, 2, 3, 4].map(() => new Int32Array(RB * w));
   const q11 = new Int32Array(w), q22 = new Int32Array(w), q12 = new Int32Array(w);
   const [r0, r1, r2, r3, r4] = ring;
   const makeRow = y => {
@@ -70,34 +72,59 @@ function channelSums(P1, P2, w, h, sh, stride, acc1, acc4) {
     for (let x = 0; x < w; x++) { const p = P1[row + x], q = P2[row + x]; q11[x] = p * p; q22[x] = q * q; q12[x] = p * q; }
     for (let x = 0; x < w; x++) {
       let m1 = 0, m2 = 0, s11 = 0, s22 = 0, s12 = 0;
-      const k0 = x < N ? N - x : 0, k1 = x + N >= w ? N + w - 1 - x : 2 * N;
-      for (let k = k0; k <= k1; k++) {
-        const t = T[k], xx = x + k - N;
-        m1 += t * P1[row + xx]; m2 += t * P2[row + xx]; s11 += t * q11[xx]; s22 += t * q22[xx]; s12 += t * q12[xx];
+      if (x >= N && x + N < w) {
+        const c = row + x;
+        m1 = T4 * P1[c]; m2 = T4 * P2[c]; s11 = T4 * q11[x]; s22 = T4 * q22[x]; s12 = T4 * q12[x];
+        for (let k = 1; k <= N; k++) {
+          const t = T[N - k];
+          m1 += t * (P1[c - k] + P1[c + k]); m2 += t * (P2[c - k] + P2[c + k]);
+          s11 += t * (q11[x - k] + q11[x + k]); s22 += t * (q22[x - k] + q22[x + k]); s12 += t * (q12[x - k] + q12[x + k]);
+        }
+      } else {
+        const k0 = x < N ? N - x : 0, k1 = x + N >= w ? N + w - 1 - x : 2 * N;
+        for (let k = k0; k <= k1; k++) {
+          const t = T[k], xx = x + k - N;
+          m1 += t * P1[row + xx]; m2 += t * P2[row + xx]; s11 += t * q11[xx]; s22 += t * q22[xx]; s12 += t * q12[xx];
+        }
       }
-      r0[o + x] = R(m1, 16); r1[o + x] = R(m2, 16); r2[o + x] = R(s11, 16); r3[o + x] = R(s22, 16); r4[o + x] = R(s12, 16);
+      r0[o + x] = R16(m1); r1[o + x] = R16(m2); r2[o + x] = R16(s11); r3[o + x] = R16(s22); r4[o + x] = R16(s12);
     }
   };
   const push4 = (arr, at, v) => {
+    if (!v) return;
     const u = R(v * v, 8), q = u * u, qh = Math.floor(q / TWO32), ql = q - qh * TWO32;
     let lo = arr[2 * at] + ql, hi = arr[2 * at + 1] + qh;
     if (lo >= TWO32) { lo -= TWO32; hi += 1; }
     arr[2 * at] = lo; arr[2 * at + 1] = hi;
   };
   const [e1, a1, l1] = acc1, [e4, a4, l4] = acc4, offs = new Int32Array(RB), taps = new Int32Array(RB);
+  const [A0, A1, A2, A3, A4] = [0, 1, 2, 3, 4].map(() => new Float64Array(w));
   let made = 0;
   for (let y = 0; y < h; y++) {
     while (made < h && made <= y + N) makeRow(made++);
     let nt = 0;
     for (let k = -N; k <= N; k++) { const yy = y + k; if (yy < 0 || yy >= h) continue; offs[nt] = (yy % RB) * w; taps[nt++] = T[k + N]; }
+    if (nt === RB) {
+      const c = offs[N], t = T[N];
+      for (let x = 0; x < w; x++) { A0[x] = t * r0[c + x]; A1[x] = t * r1[c + x]; A2[x] = t * r2[c + x]; A3[x] = t * r3[c + x]; A4[x] = t * r4[c + x]; }
+      for (let j = 0; j < N; j++) {
+        const t = taps[j], a = offs[j], b = offs[RB - 1 - j];
+        for (let x = 0; x < w; x++) {
+          A0[x] += t * (r0[a + x] + r0[b + x]); A1[x] += t * (r1[a + x] + r1[b + x]); A2[x] += t * (r2[a + x] + r2[b + x]);
+          A3[x] += t * (r3[a + x] + r3[b + x]); A4[x] += t * (r4[a + x] + r4[b + x]);
+        }
+      }
+    } else {
+      A0.fill(0); A1.fill(0); A2.fill(0); A3.fill(0); A4.fill(0);
+      for (let j = 0; j < nt; j++) {
+        const t = taps[j], o = offs[j];
+        for (let x = 0; x < w; x++) { A0[x] += t * r0[o + x]; A1[x] += t * r1[o + x]; A2[x] += t * r2[o + x]; A3[x] += t * r3[o + x]; A4[x] += t * r4[o + x]; }
+      }
+    }
     const cy = sh < 0 ? y * w : (y >> sh) * stride, row = y * w;
     for (let x = 0; x < w; x++) {
-      let m1 = 0, m2 = 0, s11 = 0, s22 = 0, s12 = 0;
-      for (let j = 0; j < nt; j++) {
-        const t = taps[j], o = offs[j] + x;
-        m1 += t * r0[o]; m2 += t * r1[o]; s11 += t * r2[o]; s22 += t * r3[o]; s12 += t * r4[o];
-      }
-      const mu1 = R(m1, 16), mu2 = R(m2, 16), v1 = R(s11, 16) - mu1 * mu1, v2 = R(s22, 16) - mu2 * mu2, cov = R(s12, 16) - mu1 * mu2;
+      const m1 = A0[x], m2 = A1[x], s11 = A2[x], s22 = A3[x], s12 = A4[x];
+      const mu1 = R16(m1), mu2 = R16(m2), v1 = R16(s11) - mu1 * mu1, v2 = R16(s22) - mu2 * mu2, cov = R16(s12) - mu1 * mu2;
       const sv = v1 + v2, lift = sv < 0 ? -sv : 0, numS = 2 * cov + C2 + lift, denS = sv + lift + C2;
       const ratio = Math.min(65536, Math.floor((check(Math.abs(numS) * 65536, 2 ** 44, 'ratio') + (denS >> 1)) / denS)), r = numS < 0 ? -ratio : ratio;
       const d = mu1 - mu2, numM = 16777216 - d * d;
@@ -114,9 +141,15 @@ function channelSums(P1, P2, w, h, sh, stride, acc1, acc4) {
 
 export function s2CellSums(reference, candidate, width, height) {
   const scales = s2cScales(width, height), stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), out = [];
-  let a = {rgba: reference.rgba}, b = {rgba: candidate.rgba};
+  const kept = reference.s2c?.rgba === reference.rgba && reference.s2c.width === width && reference.s2c.height === height
+    ? reference.s2c : (reference.s2c = {rgba: reference.rgba, width, height, below: []});
+  let a = kept, b = {rgba: candidate.rgba};
   for (const [s, {w, h}] of scales.entries()) {
-    if (s) { const p = scales[s - 1]; a = down(a, p.w, p.h, w, h); b = down(b, p.w, p.h, w, h); }
+    if (s) {
+      const p = scales[s - 1];
+      if (!kept.below[s]) { const made = down(a, p.w, p.h, w, h); plane(made, w * h, 0, new Int16Array(w * h)); if (kept.below[s - 1]) kept.below[s - 1].lin = null; kept.below[s] = made; }
+      a = kept.below[s]; b = down(b, p.w, p.h, w, h);
+    }
     const n = s <= 3 ? stride * rows : w * h, sh = s <= 3 ? 3 - s : -1, sums = [], P1 = new Int16Array(w * h), P2 = new Int16Array(w * h);
     for (let c = 0; c < 3; c++) {
       const acc1 = [null, null, null], acc4 = [null, null, null], active = [];
@@ -135,8 +168,8 @@ export function s2CellSums(reference, candidate, width, height) {
   return {scales: out, stride, rows};
 }
 
-export function s2CellMap({scales, stride, rows}, width, height) {
-  const cells = new Float64Array(stride * rows);
+export function s2CellMap({scales, stride, rows}, width, height, at = null) {
+  const cells = new Float64Array(stride * rows), norms = [];
   let total = 0;
   for (const [s, {w, h, sums}] of scales.entries()) {
     const n = w * h, per = s <= 3 ? -1 : s - 3;
@@ -144,12 +177,13 @@ export function s2CellMap({scales, stride, rows}, width, height) {
       const weight = SSIMULACRA2_WEIGHTS[k], m = p === 1 ? sum.length : sum.length / 2, value = p === 1 ? i => sum[i] : i => sum[2 * i + 1] * TWO32 + sum[2 * i];
       let t = 0;
       for (let i = 0; i < m; i++) t += value(i);
-      const norm = p === 1 ? t / n / 65536 : Math.sqrt(Math.sqrt(t / n)) / 4096;
+      const norm = p === 1 ? t / n / 65536 : Math.sqrt(Math.sqrt(t / n)) / 4096, ref = at ? at.norms[norms.length] : norm;
+      norms.push(norm);
       total += weight * norm;
-      const coef = p === 1 ? weight / n / 65536 : norm > 0 ? weight / (n * norm * norm * norm) / 281474976710656 : 0;
+      const coef = p === 1 ? weight / n / 65536 : ref > 0 ? weight / (4 * n * ref * ref * ref) / 281474976710656 : 0;
       if (per < 0) for (let i = 0; i < m; i++) cells[i] += coef * value(i);
       else { const f = coef / 4 ** per; for (let cy = 0; cy < rows; cy++) for (let cx = 0; cx < stride; cx++) cells[cy * stride + cx] += f * value((cy >> per) * w + (cx >> per)); }
     }
   }
-  return {cells, score: finalCurve(total)};
+  return {cells, score: finalCurve(total), norms};
 }

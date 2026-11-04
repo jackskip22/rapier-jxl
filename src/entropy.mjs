@@ -1,6 +1,8 @@
 // Rapier's JPEG XL encoder: token coding over many contexts. MIT (images/jxl/LICENSE).
 import {buildCode, uintConfig, hybridToken, writeHybrid, writeHistograms} from './prefix.mjs';
 import {BitWriter, floorLog2} from './bits.mjs';
+import {entropyLog2} from './entropy-log.mjs';
+export {entropyLog2};
 
 const CONFIGS = [uintConfig(0), uintConfig(1), uintConfig(2), uintConfig(3), uintConfig(4), uintConfig(4, 1, 1), uintConfig(4, 2, 0), uintConfig(4, 1, 2), uintConfig(5, 1, 1), uintConfig(2, 0, 1), uintConfig(3, 0, 1)];
 const ANS_CONFIGS = [...CONFIGS, uintConfig(3, 1, 0), uintConfig(4, 0, 1), uintConfig(4, 1, 0), uintConfig(4, 2, 1), uintConfig(5, 1, 0), uintConfig(5, 2, 0), uintConfig(5, 2, 1)];
@@ -88,19 +90,6 @@ function hybridTokenOf(config, value) { hybridToken(config, value, slots); retur
 const CLUSTER_TOKEN_BELOW_64 = Uint8Array.from({length: 64}, (_, v) => hybridTokenOf(CLUSTER_CONFIG, v));
 const clusterTokenOf = v => v < 64 ? CLUSTER_TOKEN_BELOW_64[v] : hybridTokenOf(CLUSTER_CONFIG, v);
 
-const HALVES = [1];
-for (let e = 1; e < 32; e++) HALVES.push(HALVES[e - 1] / 2);
-export function entropyLog2(x) {
-  let exponent = 0;
-  if (x >= 2 && x < 4294967296) { exponent = 31 - Math.clz32(x); x *= HALVES[exponent]; }
-  while (x >= 1.4142135623730951) { x /= 2; exponent++; }
-  while (x < 0.7071067811865476) { x *= 2; exponent--; }
-  const z = (x - 1) / (x + 1), z2 = z * z;
-  let term = z, sum = z;
-  for (let k = 3; k < 30; k += 2) sum += (term *= z2) / k;
-  return exponent + sum * 2.885390081777927;
-}
-
 const NLOG2 = new Float64Array(65536);
 export const populationBits = n => n < 2 ? 0 : n < NLOG2.length
   ? NLOG2[n] || (NLOG2[n] = n * entropyLog2(n)) : n * entropyLog2(n);
@@ -148,7 +137,13 @@ function refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost,
   const assignments = ASSIGNMENTS_SCRATCH.subarray(0, numContexts);
   assignments.fill(-1);
   clusters.forEach((cluster, i) => { for (const ctx of cluster.contexts) assignments[ctx] = i; });
-  const ordered = switchCost > 0 ? [...contexts].sort((a, b) => a.ctx - b.ctx) : null;
+  let ordered = null;
+  if (switchCost > 0) {
+    const at = new Array(numContexts);
+    for (const context of contexts) at[context.ctx] = context;
+    ordered = [];
+    for (let ctx = 0; ctx < numContexts; ctx++) if (at[ctx]) ordered.push(at[ctx]);
+  }
   const flat = kernel && ordered ? kernel.flatten(ordered) : null;
   for (let pass = 0; pass < passes; pass++) {
     const costs = clusters.map(cluster => symbolCosts(cluster.freqs));
@@ -209,18 +204,22 @@ function refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost,
 export function clusterTokenCounts(counts, {maxClusters = 48, newClusterCost = 320, seeds: seedCap = 96, passes, switchCost, everyConfig = false, kernels = null} = {}, modelCost, symbolCosts, shapedCost) {
   passes ??= symbolCosts ? 4 : 2; switchCost ??= symbolCosts ? 4 : 0;
   const kernel = kernels && (symbolCosts ? Math.min(seedCap, maxClusters * 2) : maxClusters) <= kernels.clusters ? kernels : null;
-  const used = [], contexts = [];
-  for (let ctx = 0; ctx < counts.contexts; ctx++) if (counts.totals[ctx] > 0) used.push(ctx);
-  used.sort((a, b) => counts.totals[b] - counts.totals[a]);
+  const totals = counts.totals, size = counts.contexts, contexts = [];
+  let n = 0;
+  for (let ctx = 0; ctx < size; ctx++) if (totals[ctx] > 0) n++;
+  const keys = new Float64Array(n);
+  for (let ctx = 0, i = 0; ctx < size; ctx++) if (totals[ctx] > 0) keys[i++] = ctx - totals[ctx] * size;
+  keys.sort();
+  const used = new Array(n);
+  for (let i = 0; i < n; i++) { const r = keys[i] % size; used[i] = r ? r + size : 0; }
   let clusters = [];
   const seeds = symbolCosts ? Math.min(seedCap, maxClusters * 2) : maxClusters;
   if (kernel?.seedAll && used.length) {
     const seeded = kernel.seedAll(used, counts, clusterTokenOf, seeds, newClusterCost / (symbolCosts ? 2 : 1));
     clusters = seeded.clusters;
-    if (symbolCosts) for (let t = 0; t < used.length; t++) {
-      const sparse = [], base = t * 64;
-      for (let s = 0; s < 64; s++) if (seeded.owns[base + s]) sparse.push(s, seeded.owns[base + s]);
-      contexts.push({ctx: used[t], sparse});
+    if (symbolCosts) {
+      const {runs, offsets} = seeded;
+      for (let t = 0; t < used.length; t++) contexts.push({ctx: used[t], sparse: runs.subarray(2 * offsets[t], 2 * offsets[t + 1])});
     }
   } else for (const ctx of used) {
     const own = counts.tokens([ctx], CLUSTER_CONFIG, 64), ownBits = entropyBits(own), last = kernel ? 0 : own.findLastIndex(Boolean) + 1;

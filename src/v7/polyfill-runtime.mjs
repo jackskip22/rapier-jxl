@@ -68,7 +68,7 @@ export function installFallback(document, options) {
   const maxBytes = options.maxDecodedBytes ?? 134217728, maxInputBytes = options.maxInputBytes ?? 33554432;
   const concurrency = options.workers ?? 2;
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 4 || !Number.isSafeInteger(maxInputBytes) || maxInputBytes < 1 || !Number.isInteger(concurrency) || concurrency < 1 || concurrency > 4)
-    throw fail('JXL_OPTIONS', 'Polyfill limits must be positive integers; workers is 1 to 4.');
+    throw fail('JXL_OPTIONS', 'Polyfill limits are positive integers; workers 1 to 4.');
   const states = new Set(), elements = new Map(), cache = new Map(), jobs = [], clients = [], mediaListeners = new Map(), styleWrites = new WeakMap();
   let stopped = false, scheduled = false, active = 0, retainedBytes = 0, imageMode = 'blob';
   const controller = {status: 'active', refresh, disconnect, get stats() { return {elements: states.size, resources: cache.size, active, queued: jobs.length}; }};

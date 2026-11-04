@@ -8,16 +8,17 @@ import {WEIGHTED_BUCKET, weightedTables} from './weighted-policy.mjs';
 import {BitWriter} from './bits.mjs';
 import {hybridToken} from './prefix.mjs';
 import {fault} from './admit.mjs';
-import {SIMD as SIMD_ALL, SIMD_JPEG, SIMD_UPLOAD, SIMD_PROBE} from './kernels-bytes.mjs';
+import {SIMD as SIMD_ALL, SIMD_JPEG, SIMD_UPLOAD, SIMD_SAMPLE, SIMD_PROBE} from './kernels-bytes.mjs';
 
-export const {configureKernels, ensureKernels, kernelMode, kernelRequest, disableEntropyKernels, prepareKernels, arenaKernels, releaseArena} = (() => {
+export const {configureKernels, ensureKernels, kernelMode, kernelRequest, disableEntropyKernels, prepareKernels, arenaKernels, releaseArena, orientBlock, sampleTable, sampleFilter, sampleSum, sampleFinish} = (() => {
 const UPLOAD = typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true;
 const JPEG = typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true;
+const SAMPLE = typeof __RAPIER_JXL_SAMPLE__ !== 'undefined' && __RAPIER_JXL_SAMPLE__ === true;
 const P = 65536, R = 327680, PROPERTY = 589824, CONTEXT = 851968;
 const OUTPUT = 1114128, TABLE = 1642496, SOURCE = 1769472, STATE = 2097152;
 const DIV = 16, WEIGHTS = 272, BUCKET = 16656, MAP = 20672, ALPHABET = 257;
 let engine, active = 'off', explicit = false, entropyAllowed = true, hasPartsFilter = false;
-const SIMD = JPEG ? SIMD_JPEG : UPLOAD ? SIMD_UPLOAD : SIMD_ALL;
+const SIMD = SAMPLE ? SIMD_SAMPLE : JPEG ? SIMD_JPEG : UPLOAD ? SIMD_UPLOAD : SIMD_ALL;
 const acceptablePlane = (p, w, h, offset, limit = 65536) => p instanceof Int16Array && Number.isInteger(w) && Number.isInteger(h) && w > 0 && h > 0 && w <= 16384 && w * h <= limit && p.length >= w * h && Number.isInteger(offset) && Math.abs(offset) <= 32768;
 const acceptableWriter = w => !w || (w instanceof BitWriter && w.write === BitWriter.prototype.write && w.grow === BitWriter.prototype.grow);
 const PLAIN = {split: 0, msb: 0, lsb: 0};
@@ -27,15 +28,98 @@ const GROUP_PLANES = [P, PROPERTY, CONTEXT, STATE];
 
 function createEngine() {
   const memory = new WebAssembly.Memory({initial: 48, maximum: 272});
-  const names = new Map(Object.entries(new WebAssembly.Instance(wasmModule('simd', () => wasmBytes(SIMD)), {env: {memory}}).exports));
-  const simd = {residual: names.get('residual'), tokens: names.get('tokens'), fill: names.get('fill'), weighted: names.get('weighted'), screen: names.get('screen'), sampled: names.get('sampled'), subtract: names.get('subtract'), dct: names.get('dct'), xybTile: names.get('xybTile'), quantTile: names.get('quantTile'), acGroup: names.get('acGroup'), ansFlush: names.get('ansFlush'), ansFlush2: names.get('ansFlush2'), nonzeroCounts: names.get('nonzeroCounts'), vbDct: names.get('vbDct'), vbQuant: names.get('vbQuant'), gab: names.get('gab'), sgFill: names.get('sgFill'), xybRows: names.get('xybRows'), acTokens: names.get('acTokens'), gabTiles: names.get('gabTiles'), fgXyb: names.get('fgXyb'), gab32: names.get('gab32'), gab32From: names.get('gab32From'), fgTiles: names.get('fgTiles'), packLevels: names.get('packLevels'), unpackGroup: names.get('unpackGroup'), ctxIds: names.get('ctxIds'), opaque: names.get('opaque'), wpTokens: names.get('wpTokens'), gradEvents: names.get('gradEvents'), hpCount: names.get('hpCount'), hpTokens: names.get('hpTokens'), shape: names.get('shape'), wpDc: names.get('wpDc')};
+  const simd = new WebAssembly.Instance(wasmModule('simd', () => wasmBytes(SIMD)), {env: {memory}}).exports;
   const u8 = new Uint8Array(memory.buffer), i32 = new Int32Array(memory.buffer);
-  weightedTables(i32, DIV, WEIGHTS);
-  i32.set(WEIGHTED_BUCKET, BUCKET >> 2);
+  initializeTables?.(i32);
   return {memory, simd, u8, i32};
 }
 
-function tokens(w, targets, count, contexts, config = PLAIN, rawLength = 0) {
+const initializeTables = SAMPLE ? null : i32 => { weightedTables(i32, DIV, WEIGHTS); i32.set(WEIGHTED_BUCKET, BUCKET >> 2); };
+
+const orientBlock = JPEG ? null : function orientBlock(from, to, stride, outStride, x, y, width, height, ox, oy, pixelBytes, orientation) {
+  if (active !== 'simd' || !engine.simd.orientRGBA) throw fault('JXL_WASM', 'The sample orientation kernel is unavailable.');
+  if (!(from instanceof Uint8Array) || !(to instanceof Uint8Array) || ![4, 8, 16].includes(pixelBytes) ||
+      !Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width > 256 || height > 256 ||
+      !Number.isInteger(orientation) || orientation < 1 || orientation > 8)
+    throw fault('JXL_INTERNAL', 'Invalid sample orientation block.');
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
+  const bytes = width * height * pixelBytes, destination = P + bytes;
+  const view = new Uint8Array(engine.memory.buffer), rowBytes = width * pixelBytes;
+  for (let row = 0; row < height; row++) {
+    const at = ((y + row) * stride + x) * pixelBytes;
+    view.set(from.subarray(at, at + rowBytes), P + row * rowBytes);
+  }
+  engine.simd.orientRGBA(P, width, height, pixelBytes, orientation, destination);
+  const outWidth = orientation >= 5 ? height : width, outHeight = orientation >= 5 ? width : height, outBytes = outWidth * pixelBytes;
+  for (let row = 0; row < outHeight; row++) {
+    const at = destination + row * outBytes;
+    to.set(view.subarray(at, at + outBytes), ((oy + row) * outStride + ox) * pixelBytes);
+  }
+};
+
+const SAMPLE_LINEAR = P + 262144, SAMPLE_FILTER = P + 786432, SAMPLE_SUM = P + 1310720, SAMPLE_OUT = P + 1835008, SAMPLE_TABLE = P + 2097152, SAMPLE_LEVELS = P + 2621440;
+let heldSampleTable = null, sampleTableEpoch = -1;
+const sampleScratch = JPEG ? null : function sampleScratch() {
+  if (active !== 'simd' || !engine.simd.sampleRead) throw fault('JXL_WASM', 'The sample resampling kernel is unavailable.');
+  const held = sampleTableEpoch === retainEpoch;
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
+  if (held) sampleTableEpoch = retainEpoch;
+  return engine.memory.buffer;
+};
+const sampleStatus = JPEG ? null : function sampleStatus(status) {
+  if (status) throw fault('JXL_INPUT', [null, 'Resampling requires finite alpha between zero and one.',
+    'Resampling requires finite color samples.', 'PQ resampling requires samples between zero and one.',
+    'HLG resampling requires nonnegative samples.', 'The resampled value exceeds the sample format.'][status]);
+};
+const sampleTable = JPEG ? null : function sampleTable(maximum, transfer) {
+  if (![255, 1023, 4095, 65535].includes(maximum) || ![0, 1, 2, 3].includes(transfer))
+    throw fault('JXL_INTERNAL', 'Invalid sample transfer table.');
+  const buffer = sampleScratch(); engine.simd.sampleTable(transfer, maximum, SAMPLE_TABLE, 0);
+  heldSampleTable = new Float64Array(buffer, SAMPLE_TABLE, maximum + 1).slice();
+  sampleTableEpoch = retainEpoch;
+  return heldSampleTable;
+};
+const sampleFilter = JPEG ? null : function sampleFilter(data, row, width, target, config, table) {
+  if (!Number.isInteger(width) || !Number.isInteger(target) || width < 1 || width > 16384 || target < 1 || target > 16384 ||
+      !Number.isInteger(row) || row < 0 || (row + 1) * width * 4 > data.length || ![1, 2, 4].includes(data.BYTES_PER_ELEMENT))
+    throw fault('JXL_INTERNAL', 'Invalid sample resampling row.');
+  const buffer = sampleScratch(), bytes = new Uint8Array(buffer), length = width * 4 * data.BYTES_PER_ELEMENT;
+  bytes.set(new Uint8Array(data.buffer, data.byteOffset + row * length, length), P);
+  if (table && (heldSampleTable !== table || sampleTableEpoch !== retainEpoch)) {
+    new Float64Array(buffer).set(table, SAMPLE_TABLE >> 3);
+    heldSampleTable = table; sampleTableEpoch = retainEpoch;
+  }
+  sampleStatus(engine.simd.sampleRead(P, width, ...config, SAMPLE_LINEAR, table ? SAMPLE_TABLE : 0));
+  engine.simd.sampleHorizontal(SAMPLE_LINEAR, width, target, SAMPLE_FILTER);
+  return new Float64Array(buffer, SAMPLE_FILTER, target * 4).slice();
+};
+const sampleSum = JPEG ? null : function sampleSum(sum, row, weight) {
+  if (!(sum instanceof Float64Array) || !(row instanceof Float64Array) || row.length !== sum.length ||
+      !sum.length || sum.length > 65536 || sum.length % 4 || !Number.isFinite(weight) || weight < 0 || weight > 1)
+    throw fault('JXL_INTERNAL', 'Invalid sample accumulation row.');
+  const buffer = sampleScratch(), view = new Float64Array(buffer);
+  view.set(row, SAMPLE_FILTER >> 3); view.set(sum, SAMPLE_SUM >> 3);
+  engine.simd.sampleAccumulate(SAMPLE_FILTER, SAMPLE_SUM, sum.length, weight);
+  sum.set(new Float64Array(buffer, SAMPLE_SUM, sum.length));
+};
+let heldLevels = null, heldLevelsKey = '';
+const sampleFinish = JPEG ? null : function sampleFinish(sum, out, row, width, config, levels = false) {
+  if (!(sum instanceof Float64Array) || sum.length !== width * 4 || width < 1 || width > 16384 ||
+      !Number.isInteger(row) || row < 0 || (row + 1) * width * 4 > out.length || ![1, 2, 4].includes(out.BYTES_PER_ELEMENT) ||
+      levels && !(config[0] < 2 && [255, 1023, 4095].includes(config[1]) && !config[3] && config[4] === 1))
+    throw fault('JXL_INTERNAL', 'Invalid resampled output row.');
+  const buffer = sampleScratch(), key = config[1] + ':' + config[2];
+  if (levels && heldLevelsKey !== key) {
+    engine.simd.sampleTable(config[2], config[1], SAMPLE_OUT, SAMPLE_LEVELS);
+    heldLevels = new Uint8Array(buffer, SAMPLE_LEVELS, 32768 + 4097 * 4).slice(); heldLevelsKey = key;
+  } else if (levels) new Uint8Array(buffer).set(heldLevels, SAMPLE_LEVELS);
+  new Float64Array(buffer).set(sum, SAMPLE_SUM >> 3);
+  sampleStatus(engine.simd.sampleFinish(SAMPLE_SUM, width, ...config, SAMPLE_OUT, levels ? SAMPLE_LEVELS : 0));
+  const length = width * 4 * out.BYTES_PER_ELEMENT;
+  new Uint8Array(out.buffer, out.byteOffset + row * length, length).set(new Uint8Array(buffer, SAMPLE_OUT, length));
+};
+
+const tokens = SAMPLE ? null : function tokens(w, targets, count, contexts, config = PLAIN, rawLength = 0) {
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   const {simd, i32, u8} = engine, stride = rawLength || ALPHABET;
   if (!acceptableWriter(w) || !targets.length || targets.length > 34) return false;
@@ -63,7 +147,7 @@ function tokens(w, targets, count, contexts, config = PLAIN, rawLength = 0) {
   } else for (let c = 0; c < targets.length; c++) targets[c].set(i32.subarray((TABLE >> 2) + c * stride, (TABLE >> 2) + (c + 1) * stride));
   return true;
 }
-function channel(w, target, plane, width, height, leaf, raw) {
+const channel = SAMPLE ? null : function channel(w, target, plane, width, height, leaf, raw) {
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   const config = leaf.config || PLAIN;
   if (!acceptablePlane(plane, width, height, leaf.offset) || leaf.multiplier !== 1 || !Number.isInteger(leaf.predictor) || leaf.predictor < 0 || leaf.predictor > 5 || !acceptableWriter(w) || !acceptableConfig(config)) return false;
@@ -74,7 +158,7 @@ function channel(w, target, plane, width, height, leaf, raw) {
   engine.simd.residual(P, width, height, leaf.predictor, leaf.offset, R);
   return tokens(w, [target], n, 0, config, raw ? target.length : 0);
 }
-function weighted(w, targets, plane, width, height, offset, contextOf, residuals, properties) {
+const weighted = SAMPLE ? null : function weighted(w, targets, plane, width, height, offset, contextOf, residuals, properties) {
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   if (!acceptablePlane(plane, width, height, offset, residuals ? 1048576 : 65536) || !acceptableWriter(w)) return false;
   const n = width * height;
@@ -105,7 +189,7 @@ function weighted(w, targets, plane, width, height, offset, contextOf, residuals
   if (properties) properties.set(i32.subarray(PROPERTY >> 2, (PROPERTY >> 2) + n));
   return tokens(w, targets, n, CONTEXT);
 }
-function fill(rgba, imageWidth, x0, y0, w, h, channels, planes) {
+const fill = SAMPLE || JPEG ? null : function fill(rgba, imageWidth, x0, y0, w, h, channels, planes) {
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   const n = w * h;
   if (n < 1 || n > 65536 || channels < 1 || channels > 4) return false;
@@ -122,21 +206,75 @@ function fill(rgba, imageWidth, x0, y0, w, h, channels, planes) {
   return true;
 }
 
-const dct = JPEG ? null : function dct(blocks, count, basis) {
-  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
-  if (active !== 'simd' || !(blocks instanceof Float64Array) || !Number.isInteger(count) || count < 1 || count > 64 ||
-      blocks.length < count * 192 || !(basis instanceof Float64Array) || basis.length !== 64) return false;
-  const f64 = new Float64Array(engine.memory.buffer), pair = R + 512;
-  f64.set(blocks.subarray(0, count * 192), P >> 3);
+const loadBasis = JPEG || SAMPLE ? null : function loadBasis(f64, basis) {
+  const pair = R + 512;
   f64.set(basis, R >> 3);
   for (let u = 0; u < 8; u += 2) for (let x = 0; x < 8; x++) {
     f64[(pair >> 3) + u * 8 + x * 2] = basis[u * 8 + x];
     f64[(pair >> 3) + u * 8 + x * 2 + 1] = basis[(u + 1) * 8 + x];
   }
-  engine.simd.dct(P, count, R, pair, P + 64 * 192 * 8);
+  return pair;
+};
+
+const dct = JPEG || SAMPLE ? null : function dct(blocks, count, basis) {
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
+  if (active !== 'simd' || !(blocks instanceof Float64Array) || !Number.isInteger(count) || count < 1 || count > 64 ||
+      blocks.length < count * 192 || !(basis instanceof Float64Array) || basis.length !== 64) return false;
+  const f64 = new Float64Array(engine.memory.buffer);
+  f64.set(blocks.subarray(0, count * 192), P >> 3);
+  engine.simd.dct(P, count, R, loadBasis(f64, basis), P + 64 * 192 * 8);
   blocks.set(f64.subarray(P >> 3, (P >> 3) + count * 192));
   return true;
 }
+
+const ycbcrTile = JPEG || SAMPLE ? null : function ycbcrTile(data, width, rowAt, x0, count, tables, coeffs, offset, basis) {
+  if (active !== 'simd' || !engine.simd.ycbcrTile) return false;
+  const YT_SCRATCH = P + 98304, YT_SRC = YT_SCRATCH + 512, YT_OUT = YT_SRC + 16384, YT_TABLES = YT_OUT + 24576;
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
+  const buffer = engine.memory.buffer, u8 = new Uint8Array(buffer), f64 = new Float64Array(buffer);
+  const from = x0 * 32, inside = Math.min(count * 32, width * 4 - from), rowBytes = count * 32, planes = coeffs.length;
+  for (let y = 0; y < 8; y++) {
+    const at = rowAt[y] + from, row = YT_SRC + y * rowBytes;
+    u8.set(data.subarray(at, at + inside), row);
+    for (let x = inside; x < rowBytes; x += 4) u8.copyWithin(row + x, row + inside - 4, row + inside);
+  }
+  f64.set(tables, YT_TABLES >> 3);
+  engine.simd.ycbcrTile(YT_SRC, rowBytes, count, P, R, loadBasis(f64, basis), YT_SCRATCH, YT_TABLES, YT_TABLES + 1536, YT_TABLES + 3072, planes, YT_OUT, 16);
+  const levels = new Int16Array(buffer, YT_OUT, planes * count * 64);
+  for (let c = 0; c < planes; c++) coeffs[c].set(levels.subarray(c * count * 64, (c + 1) * count * 64), offset);
+  return true;
+};
+
+const rgbTile = JPEG || SAMPLE || UPLOAD ? null : function rgbTile(data, width, height, bx0, by0, bw, bh, tableOf, cflOf, planes, stride, basis, quantScale) {
+  if (active !== 'simd' || !engine.simd.rgbTile || !(data instanceof Uint8Array || data instanceof Uint8ClampedArray) || !(bw >= 1 && bw <= 8 && bh >= 1 && bh <= 8)) return false;
+  const SCRATCH = P + 98304, SRC = SCRATCH + 512, OUT = SRC + 16384, SUMS = OUT + 24576, TABS = SUMS + 32, TABLES = TABS + 256;
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
+  const buffer = engine.memory.buffer, u8 = new Uint8Array(buffer), f64 = new Float64Array(buffer), i32 = new Int32Array(buffer);
+  const count = bw * bh, slots = new Map();
+  for (let n = 0; n < count; n++) {
+    const t = tableOf(by0 + (n / bw | 0), bx0 + n % bw);
+    let at = slots.get(t);
+    if (at === undefined) {
+      at = TABLES + slots.size * 3072;
+      if (at + 3072 > R || t.length !== 384) return false;
+      f64.set(t, at >> 3); slots.set(t, at);
+    }
+    i32[(TABS >> 2) + n] = at;
+  }
+  const rowBytes = bw * 32, from = bx0 * 32, inside = Math.min(rowBytes, width * 4 - from);
+  for (let y = 0; y < bh * 8; y++) {
+    const at = Math.min(height - 1, by0 * 8 + y) * width * 4 + from, row = SRC + y * rowBytes;
+    u8.set(data.subarray(at, at + inside), row);
+    for (let x = inside; x < rowBytes; x += 4) u8.copyWithin(row + x, row + inside - 4, row + inside);
+  }
+  engine.simd.rgbTile(SRC, rowBytes, bw, bh, P, R, loadBasis(f64, basis), SCRATCH, TABS, OUT, quantScale, SUMS);
+  const [ax, ab] = cflOf(f64[SUMS >> 3], f64[(SUMS >> 3) + 1], f64[(SUMS >> 3) + 2]);
+  engine.simd.rgbQuant(P, count, TABS, ax, ab, OUT, quantScale);
+  const levels = new Int16Array(buffer, OUT, 3 * count * 64);
+  for (let c = 0; c < 3; c++) for (let y = 0; y < bh; y++)
+    planes[c].set(levels.subarray((c * count + y * bw) * 64, (c * count + y * bw + bw) * 64), ((by0 + y) * stride + bx0) * 64);
+  return true;
+};
 
 const TILE_ROOTS = 20816, TILE_LINEAR = 53728, TILE_SCALE = 55776, TILE_STEPS = 56288, TILE_LIMITS = 57824;
 const TILE_F64 = P + 16384;
@@ -144,7 +282,7 @@ let tileTables = null, tileBand = null;
 let retainEpoch = 0;
 const TILE_BAND = 12582912;
 const TILE_SUMS = P + 150160, TILE_OUT = P + 153256, TILE_COUNTS = P + 177832;
-const photoTile = JPEG ? null : function photoTile(data, width, height, bx0, by0, bw, bh, tables, cfl, components, stride, nonZero) {
+const photoTile = JPEG || SAMPLE ? null : function photoTile(data, width, height, bx0, by0, bw, bh, tables, cfl, components, stride, nonZero) {
   retainEpoch++;
   if (active !== 'simd' || !(data instanceof Uint8Array || data instanceof Uint8ClampedArray) || !Number.isInteger(bw) || !Number.isInteger(bh) ||
       bw < 1 || bw > 8 || bh < 1 || bh > 8 || tables.roots.length !== 4113 || tables.linear.length !== 256) return false;
@@ -192,20 +330,28 @@ const AC = 4194304, AC_COEFFS = AC + 128, AC_STRIDE = 131072, AC_COUNTS = AC_COE
 const AC_BLOCK_CTX = AC_BUCKETS + 1024, AC_ORDERS = AC_BLOCK_CTX + 1024, AC_ZD = AC_ORDERS + 256, AC_NZ = AC_ZD + 8192;
 const AC_MAP = AC_NZ + 12288, AC_CONFIGS = AC_MAP + 8192, AC_CODES = AC_CONFIGS + 4096;
 let acClean = false, acCleanBytes = 0, ansStamp = null, zdLoaded = false, acBucketsZero = false, acResident = null, acDeferred = null;
+const acIdentities = new WeakMap();
+const acIdentity = source => {
+  let identity = acIdentities.get(source);
+  if (!identity) acIdentities.set(source, identity = {});
+  return identity;
+};
 const HIST_KEY = contexts => contexts.contexts;
 const ansTables = new WeakMap();
 const RECIPS_BYTES = 4097 * 8;
 let reciprocalTable = null;
-function reciprocals() {
+const reciprocals = SAMPLE ? null : function reciprocals() {
   if (reciprocalTable) return reciprocalTable;
   const table = new Int32Array(4097 * 2);
   for (let d = 1; d <= 4096; d++) {
-    const l = 32 - Math.clz32(d - 1), m = ((1n << BigInt(32 + l)) + BigInt(d) - 1n) / BigInt(d);
-    table[d * 2] = Number(m - (1n << 32n)) | 0; table[d * 2 + 1] = l;
+    const l = 32 - Math.clz32(d - 1), n = 2 ** (32 + l);
+    let q = Math.floor(n / d), r = n - q * d;
+    if (r < 0) { q--; r += d; } else if (r >= d) { q++; r -= d; }
+    table[d * 2] = (q + (r ? 1 : 0) - 2 ** 32) | 0; table[d * 2 + 1] = l;
   }
   return reciprocalTable = table;
 }
-function ansTablesOf(model) {
+const ansTablesOf = SAMPLE ? null : function ansTablesOf(model) {
   let t = ansTables.get(model);
   if (t) return t;
   const {histograms} = model, ids = histograms.length, slots = [0, 0, 0];
@@ -225,26 +371,26 @@ function ansTablesOf(model) {
   ansTables.set(model, t);
   return t;
 }
-const acGroupPair = JPEG ? null : function acGroupPair(state, g0, g1, pass, sink0, sink1, zd) {
+const acGroupPair = SAMPLE || JPEG ? null : function acGroupPair(state, g0, g1, pass, sink0, sink1, zd) {
   if (sink0.counts || sink1.counts || !sink0.coding || sink0.coding.model !== sink1.coding?.model || sink0.coding.model?.kind !== 'ans') return false;
   const pair = {};
   if (acGroup(state, g0, pass, sink0, zd, pair) !== 3) return false;
   return acGroup(state, g1, pass, sink1, zd, pair) === 2 ? 2 : flushParked(pair) ? 1 : false;
 }
-function flushParked(pair) {
+const flushParked = SAMPLE ? null : function flushParked(pair) {
   const args = AC_CONFIGS + 4096 - 256, i32 = new Int32Array(engine.memory.buffer);
   i32.set(pair.args, args >> 2);
   engine.simd.ansFlush(args);
   takeFlushed(pair.w, args, pair.out);
   return true;
 }
-function takeFlushed(w, args, out) {
+const takeFlushed = SAMPLE ? null : function takeFlushed(w, args, out) {
   const i32 = new Int32Array(engine.memory.buffer), written = i32[(args >> 2) + 17];
   if (w.at + written + 8 >= w.bytes.length) w.grow(written + 8);
   w.bytes.set(new Uint8Array(engine.memory.buffer, out, written), w.at);
   w.at += written; w.acc = i32[(args >> 2) + 15]; w.pending = i32[(args >> 2) + 16];
 }
-function acGroup(state, g, pass, sink, zd, pair = null) {
+const acGroup = SAMPLE ? null : function acGroup(state, g, pass, sink, zd, pair = null) {
   retainEpoch++;
   const {authoredOrderPasses, groupsX, strategyData, progression, contexts, lumaBuckets, lumaW, xsizeBlocks, ysizeBlocks, comps, grey,
     orders, counted, blockCounts, nonZero, hshifts, vshifts} = state;
@@ -323,10 +469,11 @@ function acGroup(state, g, pass, sink, zd, pair = null) {
     i32.set(kept.values, A_VALUES >> 2); u16.set(kept.ctxs, A_RAWS >> 1);
     engine.simd.ctxIds(A_RAWS, A_IDS, kept.values.length, AC_MAP);
   } else {
-  const levelsOf = c => comps[c].coeffs ?? comps[c].packed;
+  const c0 = acIdentity(comps[0].coeffs ?? comps[0].packed), c1 = acIdentity(comps[1].coeffs ?? comps[1].packed), c2 = acIdentity(comps[2].coeffs ?? comps[2].packed);
+  const s0 = acIdentity(source[0]), s1 = acIdentity(source[1]), s2 = acIdentity(source[2]);
   const sameGroup = acResident && acResident.g === g && acResident.bw === bw && acResident.bh === bh &&
-    acResident.c0 === levelsOf(0) && acResident.c1 === levelsOf(1) && acResident.c2 === levelsOf(2) &&
-    acResident.s0 === source[0] && acResident.s1 === source[1] && acResident.s2 === source[2];
+    acResident.c0 === c0 && acResident.c1 === c1 && acResident.c2 === c2 &&
+    acResident.s0 === s0 && acResident.s1 === s1 && acResident.s2 === s2;
   let staged = 0;
   for (let c = 0; c < 3; c++) {
     if (!sameGroup && packed) {
@@ -362,7 +509,7 @@ function acGroup(state, g, pass, sink, zd, pair = null) {
     for (let b = 0; b < contexts.numDc; b++) i32[(AC_BLOCK_CTX >> 2) + c * contexts.numDc + b] = contexts.contextOf(c, b);
   }
   if (!sameGroup && packed) engine.simd.unpackGroup(AC_COEFFS, AC_STRIDE, bw, bh, AC_COUNTS, STAGE_AT, STAGE_VAL);
-  acResident = {g, bw, bh, c0: levelsOf(0), c1: levelsOf(1), c2: levelsOf(2), s0: source[0], s1: source[1], s2: source[2]};
+  acResident = {g, bw, bh, c0, c1, c2, s0, s1, s2};
   if (contexts.thresholds.length) {
     acBucketsZero = false;
     for (let y = 0; y < bh; y++) {
@@ -437,14 +584,14 @@ function acGroup(state, g, pass, sink, zd, pair = null) {
   for (let i = 0; i < overflow; i++) counts.add(i32[(OVERFLOW >> 2) + 2 * i], i32[(OVERFLOW >> 2) + 2 * i + 1]);
   return true;
 }
-function takeCounts(counts, at, list, touched, bytes) {
+const takeCounts = SAMPLE ? null : function takeCounts(counts, at, list, touched, bytes) {
   const i32 = new Int32Array(engine.memory.buffer), hist = new Uint32Array(engine.memory.buffer, at, bytes >> 2);
   for (let i = 0; i < touched; i++) {
     const index = i32[(list >> 2) + i], n = hist[index];
     counts.small[index] += n; counts.totals[index >> 6] += n; hist[index] = 0;
   }
 }
-const deferredCounts = JPEG ? null : function deferredCounts() {
+const deferredCounts = SAMPLE || JPEG ? null : function deferredCounts() {
   if (!acDeferred) return;
   const {counts, at, list, touched, bytes} = acDeferred;
   acDeferred = null;
@@ -452,7 +599,7 @@ const deferredCounts = JPEG ? null : function deferredCounts() {
   takeCounts(counts, at, list, touched, bytes);
 }
 
-function wpTokens(flat, errors, weighted, n, leaves, alphabet) {
+const wpTokens = SAMPLE ? null : function wpTokens(flat, errors, weighted, n, leaves, alphabet) {
   const WP_RUNS = P + 1024, WP_ERRORS = P + 2048, WP_WEIGHTED = WP_ERRORS + 4 * n, WP_TAGS = WP_WEIGHTED + 4 * n, WP_EXTRA = WP_TAGS + 4 * n, WP_FREQS = WP_EXTRA + 4 * n;
   if (active !== 'simd' || n > 65536 || flat.length > 256 || leaves * alphabet > 65536 || WP_FREQS + 4 * leaves * alphabet > AC) return null;
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
@@ -467,7 +614,7 @@ function wpTokens(flat, errors, weighted, n, leaves, alphabet) {
 }
 
 const GE_PLANE = P, GE_COUNTS = P + 131072, GE_TOUCHED = GE_COUNTS + 4 * (131072 + 33) + 12, GE_STATS = GE_TOUCHED + 4 * 65536;
-function dcEvents(planes) {
+const dcEvents = SAMPLE ? null : function dcEvents(planes) {
   if (active !== 'simd' || planes.some(p => !(p.data instanceof Int16Array) || !(p.w > 0 && p.h > 0) || p.w * p.h > 65536 || p.data.length < p.w * p.h)) return null;
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   const buffer = engine.memory.buffer, i16 = new Int16Array(buffer), u32 = new Uint32Array(buffer);
@@ -483,7 +630,7 @@ function dcEvents(planes) {
 
 const HP_TAGS = P, HP_EXTRA = P + 262144, HP_LAYOUT = P + 524288, HP_CFGS = HP_LAYOUT + 2048, HP_COUNTS = HP_CFGS + 4096;
 const HP_ROOM = (AC - HP_COUNTS) >> 2;
-function hybridPlan(plan, sizes) {
+const hybridPlan = SAMPLE ? null : function hybridPlan(plan, sizes) {
   const {tags, extra, used} = plan, contexts = sizes.length;
   if (active !== 'simd' || !(tags instanceof Uint32Array) || !(extra instanceof Uint32Array) || !Number.isInteger(used) || used < 0 ||
       used > 65536 || tags.length < used || extra.length < used || contexts < 1 || contexts > 256) return null;
@@ -515,7 +662,7 @@ function hybridPlan(plan, sizes) {
 const SH_ARGS = P, SH_LOG2 = P + 64, SH_SYM = SH_LOG2 + 4097 * 8, SH_LOGLEN = SH_SYM + 4097 * 8, SH_REPEATS = SH_LOGLEN + 64,
   SH_FREQS = SH_REPEATS + 64, SH_SCRATCH = SH_FREQS + 2048, SH_BEST = SH_SCRATCH + 24576;
 let shapeEpoch = -1, shapeTables = null;
-function shape(freqs, last, total, omit, tables, headerAware) {
+const shape = SAMPLE ? null : function shape(freqs, last, total, omit, tables, headerAware) {
   if (active !== 'simd' || !(last >= 3 && last <= 512) || !(total >= 1 && total <= 0xffffffff) || !(omit >= 0 && omit < last) || freqs.length < last) return null;
   const buffer = engine.memory.buffer, i32 = new Int32Array(buffer), u32 = new Uint32Array(buffer), f64 = new Float64Array(buffer);
   if (shapeEpoch !== retainEpoch || shapeTables !== tables) {
@@ -532,7 +679,64 @@ function shape(freqs, last, total, omit, tables, headerAware) {
   return {counts: Uint16Array.from(i32.subarray(SH_BEST >> 2, (SH_BEST >> 2) + last)), shift, omit, bits: f64[(SH_ARGS + 40) >> 3]};
 }
 
-function nonzero(coeffs, from, end, natural) {
+
+const captureTokenGroup = SAMPLE || JPEG ? null : function captureTokenGroup(comps, width, height, group, density, order, ac = null) {
+  if (active !== 'simd') throw fault('JXL_WASM', 'Photographic capture needs its SIMD kernels.');
+  const groupsX = Math.ceil(width / 256), bx = group % groupsX * 32, by = Math.floor(group / groupsX) * 32;
+  const bw = Math.min(32, Math.ceil(width / 8) - bx), bh = Math.min(32, Math.ceil(height / 8) - by);
+  if (bw < 1 || bh < 1 || comps.length !== 3 || comps.some(c => !(c.coeffs instanceof Int16Array) || c.stride < bx + bw || c.coeffs.length < ((by + bh - 1) * c.stride + bx + bw) * 64))
+    throw fault('JXL_INPUT', 'Photo capture needs three signed16 DCT8 planes.');
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
+  const args = P, coeff = P + 128, counts = coeff + 393216, buckets = counts + 3072, contexts = buckets + 1024;
+  const orders = contexts + 64, zd = orders + 192, nz = zd + 8192, values = nz + 12288, ids = values + 786432;
+  const buffer = engine.memory.buffer, u8 = new Uint8Array(buffer), i16 = new Int16Array(buffer), u16 = new Uint16Array(buffer), i32 = new Int32Array(buffer);
+  for (let c = 0; c < 3; c++) {
+    const {coeffs, stride} = comps[c], at = coeff + c * 131072;
+    for (let y = 0; y < bh; y++) i16.set(coeffs.subarray(((by + y) * stride + bx) * 64, ((by + y) * stride + bx + bw) * 64), (at >> 1) + y * bw * 64);
+    engine.simd.captureSelect(at, counts + c * bw * bh, bw * bh, 128, 3);
+    u8.set(order, orders + c * 64);
+  }
+  u8.fill(0, buckets, buckets + 1024); u16.set(density, zd >> 1);
+  if (ac && ac.K > 1) {
+    const {coeffs, stride} = comps[1];
+    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) u8[buckets + y * bw + x] = ac.bucket(coeffs[((by + y) * stride + bx + x) * 64]);
+    i32.set(ac.table, contexts >> 2);
+  } else i32.set([1, 0, 2], contexts >> 2);
+  i32.set([coeff, 131072, bw, bh, counts, buckets, contexts, ac ? ac.K : 1, ac ? ac.numCtxs : 3, orders, zd, nz, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, values, ids, 0], args >> 2);
+  engine.simd.acGroup(args);
+  const n = i32[(args >> 2) + 28];
+  return {n, values: new Uint32Array(buffer, values, n), ctxs: new Uint16Array(buffer, ids, n)};
+}
+
+const captureOpaque = SAMPLE || JPEG ? null : function captureOpaque(data, width, x, y, w, h) {
+  if (active !== 'simd') throw fault('JXL_WASM', 'Photographic capture needs its SIMD kernels.');
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
+  for (let row = y; row < y + h; row++) {
+    const at = (row * width + x) * 4;
+    engine.u8.set(data.subarray(at, at + w * 4), P);
+    if (!engine.simd.opaque(P, w * 4)) return false;
+  }
+  return true;
+};
+
+const capturePlane = SAMPLE || JPEG ? null : function capturePlane(data, sourceWidth, x, y, width, height, step = 1, offset = 0) {
+  if (active !== 'simd') throw fault('JXL_WASM', 'Photographic capture needs its SIMD kernels.');
+  const type = data instanceof Int16Array ? 1 : data instanceof Int8Array ? 2 : data instanceof Uint8Array || data instanceof Uint8ClampedArray ? 0 : -1;
+  if (type < 0 || width < 1 || height < 1 || width > 256 || height > 256 || !Number.isInteger(step) || step < 1 || step > 64 || x < 0 || y < 0 || x + width > sourceWidth || ((y + height - 1) * sourceWidth + x + width - 1) * step + offset >= data.length)
+    throw fault('JXL_INPUT', 'Photographic capture plane is outside its owned sample rows.');
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
+  const raw = new Uint8Array(data.buffer, data.byteOffset, data.byteLength), unit = data.BYTES_PER_ELEMENT, output = new Int16Array(width * height);
+  const u8 = new Uint8Array(engine.memory.buffer), out = P + 65536, i16 = new Int16Array(engine.memory.buffer);
+  for (let row = 0; row < height; row++) {
+    const at = ((y + row) * sourceWidth + x) * step * unit, end = at + ((width - 1) * step + offset + 1) * unit;
+    u8.set(raw.subarray(at, end), P);
+    engine.simd.captureSelect(P + offset * unit, out, width, step * unit, type);
+    output.set(i16.subarray(out >> 1, (out >> 1) + width), row * width);
+  }
+  return output;
+}
+
+const nonzero = SAMPLE ? null : function nonzero(coeffs, from, end, natural) {
   if (active !== 'simd' || !(coeffs instanceof Int16Array) || from % 64 || (end - from) % 64) return false;
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   const i16 = new Int16Array(engine.memory.buffer), i32 = new Int32Array(engine.memory.buffer), out = R + 131072;
@@ -546,7 +750,7 @@ function nonzero(coeffs, from, end, natural) {
   return true;
 }
 
-function group(w, targets, rgba, imageWidth, x0, y0, width, height, setup) {
+const group = SAMPLE || JPEG ? null : function group(w, targets, rgba, imageWidth, x0, y0, width, height, setup) {
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   const {channels, leaves, picture} = setup, n = width * height;
   if (setup.palette || setup.samples || setup.rct !== undefined ||
@@ -604,7 +808,7 @@ function group(w, targets, rgba, imageWidth, x0, y0, width, height, setup) {
   return true;
 }
 
-function screen(plane, width, height, predictor, depth, emit, minLength = 7) {
+const screen = SAMPLE || JPEG ? null : function screen(plane, width, height, predictor, depth, emit, minLength = 7) {
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   const n = width * height;
   if (!(plane instanceof Int16Array) || !Number.isInteger(width) || !Number.isInteger(height) ||
@@ -633,7 +837,7 @@ function screen(plane, width, height, predictor, depth, emit, minLength = 7) {
 }
 
 const align8 = n => Math.ceil(n / 8) * 8;
-function sampledLayout(total, kinds, alphabet, maxCuts) {
+const sampledLayout = SAMPLE ? null : function sampledLayout(total, kinds, alphabet, maxCuts) {
   const symbols = P, indices = symbols + total * kinds, histogram = align8(indices + total);
   const entropy = align8(histogram + kinds * alphabet * 4), raw = entropy + (total + 1) * 8;
   const output = raw + alphabet * 8, scratch = output + 24, bins = maxCuts + 1;
@@ -644,7 +848,7 @@ const SAMPLED_CAP = 272 * 65536, RETAIN_BUDGET = 8 * 1048576;
 const SAMPLED_COUNT = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ||
   (typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) ? 65536 : 262144;
 
-function sampledStore(count, kinds, alphabet, columns) {
+const sampledStore = SAMPLE ? null : function sampledStore(count, kinds, alphabet, columns) {
   if (!engine || !Number.isInteger(count) || count < 64 || count > SAMPLED_COUNT || !kinds || kinds > 16 || !alphabet || alphabet > 256) return null;
   let maxCuts = 0;
   for (const column of columns) maxCuts = Math.max(maxCuts, column.cuts.length);
@@ -683,7 +887,7 @@ function sampledStore(count, kinds, alphabet, columns) {
   };
 }
 
-function sampled(members, histograms, symbolSets, columns, table, rawPrice, choiceBits, keep = null) {
+const sampled = SAMPLE ? null : function sampled(members, histograms, symbolSets, columns, table, rawPrice, choiceBits, keep = null) {
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null;
   const total = members.length, kinds = symbolSets.length, alphabet = rawPrice.length;
   if (keep) keep.handle = null;
@@ -754,7 +958,7 @@ function sampled(members, histograms, symbolSets, columns, table, rawPrice, choi
 
 
 const SG = 4194304, sgOrderAt = new Int32Array(81);
-const strategyLayout = UPLOAD ? null : function strategyLayout(state, g, pass, nzContext, freqContext, orderOf, base) {
+const strategyLayout = SAMPLE || UPLOAD || JPEG ? null : function strategyLayout(state, g, pass, nzContext, freqContext, orderOf, base) {
   const {authoredOrderPasses, groupsX, strategyData, map, contexts, lumaBuckets, lumaW} = state;
   const blocks = strategyData?.groups[g];
   if (active !== 'simd' || !blocks || nzContext.length !== 64 || freqContext.length !== 64 || blocks.length * 3 > 3072) return null;
@@ -816,14 +1020,14 @@ const strategyLayout = UPLOAD ? null : function strategyLayout(state, g, pass, n
   }
   return {n: engine.simd.sgFill(RECS, count, contexts.numCtxs, base, NZ, CTX, VAL), ctx: CTX, val: VAL, levels};
 };
-const strategyFill = UPLOAD ? null : function strategyFill(state, g, pass, nzContext, freqContext, orderOf, ctxs, values) {
+const strategyFill = SAMPLE || UPLOAD || JPEG ? null : function strategyFill(state, g, pass, nzContext, freqContext, orderOf, ctxs, values) {
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   const laid = strategyLayout(state, g, pass, nzContext, freqContext, orderOf, SG);
   if (!laid || laid.n > ctxs.length) return null;
   ctxs.set(engine.i32.subarray(laid.ctx >> 2, (laid.ctx >> 2) + laid.n)); values.set(engine.i32.subarray(laid.val >> 2, (laid.val >> 2) + laid.n));
   return laid.n;
 };
-const strategyWrite = UPLOAD ? null : function strategyWrite(state, g, pass, nzContext, freqContext, orderOf, coding, w) {
+const strategyWrite = SAMPLE || UPLOAD || JPEG ? null : function strategyWrite(state, g, pass, nzContext, freqContext, orderOf, coding, w) {
   const model = coding.model, blocks = state.strategyData?.groups[g];
   if (active !== 'simd' || !blocks || model?.kind !== 'ans' || !coding.flush || model.histograms.length > 256 || model.contextMap.length > 8192 ||
       !acceptableWriter(w) || model.histograms.some(h => !(h.reverse instanceof Uint16Array) || h.reverse.length !== 4096)) return false;
@@ -860,7 +1064,7 @@ const strategyWrite = UPLOAD ? null : function strategyWrite(state, g, pass, nzC
 };
 
 const XYB_AT = 4194304, XY_LIN = XYB_AT + 4113 * 8, XY_MIX = XY_LIN + 2048, XY_KEYS = XY_MIX + 128, XY_VALS = XY_KEYS + 4 * 131072, XY_ROWS = XY_VALS + 24 * 131072;
-const xybPlanesKernel = UPLOAD || JPEG ? null : function xybPlanesKernel(data, width, height, W, H, planes, roots, linear, mix, bias, rootBias) {
+const xybPlanesKernel = SAMPLE || UPLOAD || JPEG ? null : function xybPlanesKernel(data, width, height, W, H, planes, roots, linear, mix, bias, rootBias) {
   if (active !== 'simd' || !(data instanceof Uint8Array || data instanceof Uint8ClampedArray) || roots.length !== 4113 || linear.length !== 256 ||
       mix.length !== 9 || W < width || H < height || planes.some(p => !(p instanceof Float64Array) || p.length !== W * H)) return false;
   const perRow = width * 4 + 3 * W * 8, rows = Math.min(height, Math.floor((272 * 65536 - XY_ROWS - 8) / perRow));
@@ -870,7 +1074,9 @@ const xybPlanesKernel = UPLOAD || JPEG ? null : function xybPlanesKernel(data, w
     try { engine.memory.grow(Math.ceil((end - engine.memory.buffer.byteLength) / 65536)); } catch { return false; }
     engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
   }
-  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
+  const keepVb = vbLoaded === retainEpoch;
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; vbStrip = null; retainEpoch++;
+  if (keepVb) vbLoaded = retainEpoch;
   const f64 = new Float64Array(engine.memory.buffer), u8 = engine.u8;
   f64.set(roots, XYB_AT >> 3); f64.set(linear, XY_LIN >> 3); f64.set(mix, XY_MIX >> 3); engine.i32.fill(-1, XY_KEYS >> 2, (XY_KEYS >> 2) + 131072);
   for (let y = 0; y < height; y += rows) {
@@ -883,7 +1089,7 @@ const xybPlanesKernel = UPLOAD || JPEG ? null : function xybPlanesKernel(data, w
 };
 
 const GAB = 4194304, GAB_LIMIT = 272 * 65536;
-const gaborish = UPLOAD || JPEG ? null : function gaborish(t, source, W, H, weights, iterations) {
+const gaborish = SAMPLE || UPLOAD || JPEG ? null : function gaborish(t, source, W, H, weights, iterations) {
   if (active !== 'simd' || !(t instanceof Float64Array) || !(source instanceof Float64Array) || source.length < W * H || !Number.isInteger(W) || !Number.isInteger(H) || W < 8 || W % 2 ||
       H < 1 || t.length !== W * H || !Number.isInteger(iterations) || iterations < 1 || iterations > 16) return false;
   const rowBytes = W * 8, room = Math.floor((GAB_LIMIT - GAB) / rowBytes) - 2;
@@ -894,7 +1100,9 @@ const gaborish = UPLOAD || JPEG ? null : function gaborish(t, source, W, H, weig
     try { engine.memory.grow(Math.ceil((end - engine.memory.buffer.byteLength) / 65536)); } catch { return false; }
     engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
   }
-  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
+  const keepVb = vbLoaded === retainEpoch;
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; vbStrip = null; retainEpoch++;
+  if (keepVb) vbLoaded = retainEpoch;
   const f64 = new Float64Array(engine.memory.buffer), orig = GAB + rows * rowBytes, ring = orig + rows * rowBytes;
   const [w1, w2] = weights, norm = 1 / (1 + 4 * w1 + 4 * w2);
   for (let a = 0; a < H; a += keep) {
@@ -914,7 +1122,7 @@ for (let mask = 0; mask < 256; mask++) for (let lane = 0, j = 0; lane < 8; lane+
 const GB_ROOTS = GB, GB_LIN = GB + 32912, GB_MIX = GB_LIN + 2048, GB_BASIS = GB_MIX + 80, GB_PAIRED = GB_BASIS + 512, GB_QUANT = GB_PAIRED + 512,
   GB_THR = GB_QUANT + 1536, GB_SCRATCH = GB_THR + 1536, GB_TILE = GB_SCRATCH + 512, GB_CFL = GB_TILE + 98304, GB_KEYS = GB_CFL + 1024,
   GB_VALS = GB_KEYS + 4 * 131072, GB_CHUNK = GB_VALS + 24 * 131072, GB_FAST_BYTES = 4 << 20;
-const gabBand = JPEG ? null : function gabBand(data, width, total, top, height, job) {
+const gabBand = SAMPLE || JPEG ? null : function gabBand(data, width, total, top, height, job) {
   const {linear, mix, bias, rootBias, weights, iterations, thresholds, c84, components, cfl, nonZero, fast} = job;
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), W = stride * 8, Hpad = Math.ceil(total / 8) * 8;
   if (active !== 'simd' || !(data instanceof Uint8Array || data instanceof Uint8ClampedArray) || data.length !== total * width * 4 ||
@@ -975,7 +1183,7 @@ const gabBand = JPEG ? null : function gabBand(data, width, total, top, height, 
         const p = planes + c * plane, [w1, w2] = weights[c];
         if (fast) {
           const into = planes + GB_INTO[c] * plane;
-          engine.simd.gab32From(p, into, Wc, n, Math.fround(w1), Math.fround(w2), Math.fround(norms[c]));
+          engine.simd.gab32From(p, into, Wc, n, Math.fround(w1), Math.fround(w2), Math.fround(norms[c]), Math.fround(job.boost ?? 1));
           for (let i = 1; i < iterations; i++) engine.simd.gab32(into, p, ring, Wc, n, Math.fround(w1), Math.fround(w2), Math.fround(norms[c]));
           continue;
         }
@@ -1004,7 +1212,7 @@ const gabBand = JPEG ? null : function gabBand(data, width, total, top, height, 
   if (packed) packed.natural.set(new Uint32Array(engine.memory.buffer, GB_KEYS, 192));
   return true;
 }
-function packTileRow(packed, levels, counts, bh, blocks, stride, first, u8) {
+const packTileRow = SAMPLE ? null : function packTileRow(packed, levels, counts, bh, blocks, stride, first, u8) {
   const entries = 3 * 8 * blocks, starts = counts + entries + 3 & ~3, dc = starts + 4 * entries, at = dc + 2 * entries, val = at + 63 * entries + 9 & ~1;
   const end = val + 126 * entries + 16;
   if (end > engine.memory.buffer.byteLength) throw new RangeError('The packed tile row passes the arena.');
@@ -1036,10 +1244,10 @@ const VB_LOG2 = P, VB_BASES = P + 32768, VB_PIX = P + 54272, VB_TMP = P + 62464,
 let vbRegionNext = VB_REGION;
 let vbLoaded = -1, vbSlots = null, vbNext = 0, vbBuffer = null, vbF64 = null, vbI32 = null, vbU8 = null, vbStrip = null;
 const vbViewCache = new Map();
-const vbViews = UPLOAD || JPEG ? null : function vbViews() {
+const vbViews = SAMPLE || UPLOAD || JPEG ? null : function vbViews() {
   if (vbBuffer !== engine.memory.buffer) { vbBuffer = engine.memory.buffer; vbF64 = new Float64Array(vbBuffer); vbI32 = new Int32Array(vbBuffer); vbU8 = new Uint8Array(vbBuffer); vbViewCache.clear(); }
 };
-const vbEnter = UPLOAD || JPEG ? null : function vbEnter(log2, bases) {
+const vbEnter = SAMPLE || UPLOAD || JPEG ? null : function vbEnter(log2, bases) {
   vbViews();
   if (vbLoaded !== retainEpoch) {
     acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null;
@@ -1051,7 +1259,7 @@ const vbEnter = UPLOAD || JPEG ? null : function vbEnter(log2, bases) {
   }
 };
 const vbBasis = size => VB_BASES + 8 * (size === 8 ? 0 : size === 16 ? 128 : 640);
-const varblock = UPLOAD || JPEG ? null : function varblock(log2, bases) {
+const varblock = SAMPLE || UPLOAD || JPEG ? null : function varblock(log2, bases) {
   if (active !== 'simd' || !(log2 instanceof Float64Array) || log2.length !== 4096) return null;
   return {
     table(id, table, size, order, high) {
@@ -1074,7 +1282,7 @@ const varblock = UPLOAD || JPEG ? null : function varblock(log2, bases) {
     block(planes, top, x, y, W, w, h, from, to) {
       vbEnter(log2, bases);
       const available = planes[0].length / W - (y - top);
-      if (!vbStrip || vbStrip.planes !== planes || vbStrip.W !== W || y < vbStrip.y || y + h > vbStrip.y + vbStrip.rows) {
+      if (!vbStrip || !vbStrip.planes.has(planes) || vbStrip.W !== W || y < vbStrip.y || y + h > vbStrip.y + vbStrip.rows) {
         const rows = Math.min(available, Math.max(h, VB_STRIP_ROWS)), end = VB_STRIP + 3 * rows * W * 8;
         vbStrip = null;
         let room = end <= engine.memory.buffer.byteLength;
@@ -1085,7 +1293,7 @@ const varblock = UPLOAD || JPEG ? null : function varblock(log2, bases) {
         if (room) {
           vbViews();
           for (let c = 0; c < 3; c++) vbF64.set(planes[c].subarray((y - top) * W, (y - top + rows) * W), (VB_STRIP >> 3) + c * rows * W);
-          vbStrip = {planes, W, y, rows};
+          vbStrip = {planes: new WeakSet([planes]), W, y, rows};
         }
       }
       for (let c = from; c <= to; c++) {
@@ -1135,7 +1343,7 @@ function disableEntropyKernels() { entropyAllowed = false; kernelHooks.entropy =
 function configureKernels(mode = 'auto', parts) {
   if (!['off', 'auto', 'simd'].includes(mode)) throw fault('JXL_INPUT', 'Kernel mode is off, auto or simd.');
   explicit = true; acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
-  kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.acGroupPair = kernelHooks.acDeferred = kernelHooks.wpTokens = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = kernelHooks.dcEvents = kernelHooks.hybridPlan = kernelHooks.shape = null; active = 'off';
+  kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.ycbcrTile = kernelHooks.rgbTiles = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.acGroupPair = kernelHooks.acDeferred = kernelHooks.wpTokens = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = kernelHooks.dcEvents = kernelHooks.hybridPlan = kernelHooks.shape = null; active = 'off';
   if (mode === 'off') return active;
   try {
     if (typeof WebAssembly !== 'object' || new Uint8Array(new Uint32Array([1]).buffer)[0] !== 1) return active;
@@ -1143,27 +1351,27 @@ function configureKernels(mode = 'auto', parts) {
     engine ||= createEngine();
     active = 'simd';
     const enabled = parts ? new Map(Object.entries(parts)) : null;
-    if (!enabled || enabled.get('channel')) kernelHooks.channel = channel;
-    if (!enabled || enabled.get('weighted')) kernelHooks.weighted = weighted;
-    if (!enabled || enabled.get('fill')) kernelHooks.fill = fill;
-    if (kernelHooks.fill && kernelHooks.channel) kernelHooks.group = group;
-    if (!enabled || enabled.get('screen')) kernelHooks.screen = screen;
-    if (!enabled || enabled.get('sampled')) { kernelHooks.sampled = sampled; kernelHooks.sampledStore = sampledStore; }
-    if (!enabled || enabled.get('dct')) kernelHooks.dct = dct;
-    if (!enabled || enabled.get('photoTile')) kernelHooks.photoTile = photoTile;
-    if (!enabled || enabled.get('acGroup')) { kernelHooks.acGroup = acGroup; kernelHooks.acGroupPair = acGroupPair; kernelHooks.acDeferred = deferredCounts; }
-    if (!enabled || enabled.get('nonzero')) kernelHooks.nonzero = nonzero;
-    if (!enabled || enabled.get('wpTokens')) { kernelHooks.wpTokens = wpTokens; kernelHooks.dcEvents = dcEvents; kernelHooks.hybridPlan = hybridPlan; }
-    if (entropyAllowed && (!enabled || enabled.get('shape'))) kernelHooks.shape = shape;
-    if (!UPLOAD && !JPEG) {
+    if (!SAMPLE && (!enabled || enabled.get('channel'))) kernelHooks.channel = channel;
+    if (!SAMPLE && (!enabled || enabled.get('weighted'))) kernelHooks.weighted = weighted;
+    if (!SAMPLE && !JPEG && (!enabled || enabled.get('fill'))) kernelHooks.fill = fill;
+    if (!SAMPLE && !JPEG && kernelHooks.fill && kernelHooks.channel) kernelHooks.group = group;
+    if (!SAMPLE && !JPEG && (!enabled || enabled.get('screen'))) kernelHooks.screen = screen;
+    if (!SAMPLE && (!enabled || enabled.get('sampled'))) { kernelHooks.sampled = sampled; kernelHooks.sampledStore = sampledStore; }
+    if (!SAMPLE && (!enabled || enabled.get('dct'))) { kernelHooks.dct = dct; kernelHooks.ycbcrTile = ycbcrTile; kernelHooks.rgbTiles = rgbTile; }
+    if (!SAMPLE && (!enabled || enabled.get('photoTile'))) kernelHooks.photoTile = photoTile;
+    if (!SAMPLE && (!enabled || enabled.get('acGroup'))) { kernelHooks.acGroup = acGroup; kernelHooks.acGroupPair = acGroupPair; kernelHooks.acDeferred = deferredCounts; }
+    if (!SAMPLE && (!enabled || enabled.get('nonzero'))) kernelHooks.nonzero = nonzero;
+    if (!SAMPLE && (!enabled || enabled.get('wpTokens'))) { kernelHooks.wpTokens = wpTokens; kernelHooks.dcEvents = dcEvents; kernelHooks.hybridPlan = hybridPlan; }
+    if (!SAMPLE && entropyAllowed && (!enabled || enabled.get('shape'))) kernelHooks.shape = shape;
+    if (!SAMPLE && !UPLOAD && !JPEG) {
       if (!enabled || enabled.get('varblock')) kernelHooks.varblock = varblock;
       if (!enabled || enabled.get('gaborish')) kernelHooks.gaborish = gaborish;
       if (!enabled || enabled.get('xybPlanes')) kernelHooks.xybPlanes = xybPlanesKernel;
     }
-    if (!UPLOAD && (!enabled || enabled.get('strategyFill'))) { kernelHooks.strategyFill = strategyFill; kernelHooks.strategyWrite = strategyWrite; }
-    if (!enabled || enabled.get('gabBand')) kernelHooks.gabBand = gabBand;
-    if (entropyAllowed && (!enabled || enabled.get('entropy'))) kernelHooks.entropy = jpegKernels;
-  } catch { active = 'off'; kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.acGroupPair = kernelHooks.acDeferred = kernelHooks.wpTokens = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = kernelHooks.dcEvents = kernelHooks.hybridPlan = kernelHooks.shape = null; }
+    if (!SAMPLE && !UPLOAD && !JPEG && (!enabled || enabled.get('strategyFill'))) { kernelHooks.strategyFill = strategyFill; kernelHooks.strategyWrite = strategyWrite; }
+    if (!SAMPLE && (!enabled || enabled.get('gabBand'))) kernelHooks.gabBand = gabBand;
+    if (!SAMPLE && entropyAllowed && (!enabled || enabled.get('entropy'))) kernelHooks.entropy = jpegKernels;
+  } catch { active = 'off'; kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.ycbcrTile = kernelHooks.rgbTiles = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.acGroupPair = kernelHooks.acDeferred = kernelHooks.wpTokens = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = kernelHooks.dcEvents = kernelHooks.hybridPlan = kernelHooks.shape = null; }
   return active;
 }
 function ensureKernels() {
@@ -1177,8 +1385,9 @@ async function prepareKernels() {
   if (!(hasWasmModule('simd') || !suppliedWasm() && SIMD && WebAssembly.validate(wasmBytes(SIMD_PROBE)))) return false;
   return compileWasm('simd', () => wasmBytes(SIMD));
 }
-const arenaKernels = UPLOAD ? null : capJpegKernels;
-const releaseArena = UPLOAD ? null : releaseJpegKernels;
-kernelHooks.arena = {lend: () => capJpegKernels(ARENA_BYTES), release: releaseJpegKernels};
-return {configureKernels, ensureKernels, kernelMode, kernelRequest, disableEntropyKernels, prepareKernels, arenaKernels, releaseArena};
+const arenaKernels = SAMPLE || UPLOAD ? null : capJpegKernels;
+const releaseArena = SAMPLE || UPLOAD ? null : releaseJpegKernels;
+if (!SAMPLE) kernelHooks.arena = {lend: () => capJpegKernels(ARENA_BYTES), release: releaseJpegKernels};
+if (!SAMPLE && !JPEG) kernelHooks.capturePhoto = {prepare: prepareKernels, ready: ensureKernels, tokenGroup: captureTokenGroup, plane: capturePlane, opaque: captureOpaque};
+return {configureKernels, ensureKernels, kernelMode, kernelRequest, disableEntropyKernels, prepareKernels, arenaKernels, releaseArena, orientBlock, sampleTable, sampleFilter, sampleSum, sampleFinish};
 })();

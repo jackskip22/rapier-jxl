@@ -7,25 +7,19 @@ import {LIMITS} from './limits.mjs';
 import {complete, part} from './bits.mjs';
 import {admitOptions, admitPixels, job} from './admit.mjs';
 import {admitSampleFormat} from './admit-samples.mjs';
-import {driveGpu, gpuWanted} from './gpu-drive.mjs';
 
 export {LIMITS};
 
 export function encode(data, width, height, options) { return complete(encodeSteps(data, width, height, options)); }
 
 export function encodeSteps(data, width, height, options) { return job(coreSteps(data, width, height, options, false)); }
-function coreSteps(data, width, height, options, gpu) {
+export function coreSteps(data, width, height, options, gpu) {
   const {quality, colorSpace} = admitOptions(options), filter = admitPhotoFilter(options);
   admitPixels(data, width, height);
   const samples = admitSampleFormat(data, options);
   if (samples.iccSpace) return iccShape(data, samples.iccSpace, pixelSteps(data, width, height, quality, samples.iccSpace, options?.photo !== false, filter));
   if (!samples.native8) return nativeSteps(data, width, height, {quality, samples});
   return pixelSteps(data, width, height, quality, colorSpace, options?.photo !== false, filter, gpu);
-}
-
-export function encodeAsync(data, width, height, options) {
-  try { return driveGpu(coreSteps(data, width, height, options, gpuWanted(options, width, height)), options?.gpu); }
-  catch (error) { return Promise.reject(error); }
 }
 
 function* pixelSteps(data, width, height, quality, colorSpace, photo, filter, gpu) {

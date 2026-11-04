@@ -1,4 +1,4 @@
-import {encodeSteps} from '../index.mjs';
+import {encodeSteps} from '../core-steps.mjs';
 import {admitSampleFormat} from '../admit-samples.mjs';
 import {screenLike} from '../screen.mjs';
 export function* coreSteps(data, width, height, options) {

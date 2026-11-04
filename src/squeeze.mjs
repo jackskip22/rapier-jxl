@@ -1,5 +1,7 @@
 // Rapier's JPEG XL encoder: the Squeeze transform. MIT (images/jxl/LICENSE).
 
+import {captureSqueezeStep} from './capture-kernels.mjs';
+
 const average = (a, b) => (a + b + (a > b ? 1 : 0)) >> 1;
 
 export function smoothTendency(B, a, n) {
@@ -15,6 +17,9 @@ export function smoothTendency(B, a, n) {
 function squeeze(ch, horizontal) {
   const {w, h, data: p} = ch, n = horizontal ? w : h, low = (n + 1) >> 1, high = n - low;
   const ow = horizontal ? low : w, oh = horizontal ? h : low, rw = horizontal ? high : w, rh = horizontal ? h : high;
+  const channel = (data, w, h) => ({w, h, hshift: ch.hshift + +horizontal, vshift: ch.vshift + !horizontal, data});
+  const kernel = captureSqueezeStep(p, w, h, horizontal);
+  if (kernel) return [channel(kernel[0], ow, oh), channel(kernel[1], rw, rh)];
   const out = new Int16Array(ow * oh), res = new Int16Array(rw * rh), step = horizontal ? 1 : w;
   for (let y = 0; y < oh; y++) for (let x = 0; x < ow; x++) {
     const pos = horizontal ? x : y, at = horizontal ? y * w + 2 * x : 2 * y * w + x;
@@ -24,7 +29,6 @@ function squeeze(ch, horizontal) {
     out[y * ow + x] = avg;
     res[y * rw + x] = A - B - smoothTendency(pos ? p[at - step] : avg, avg, next);
   }
-  const channel = (data, w, h) => ({w, h, hshift: ch.hshift + +horizontal, vshift: ch.vshift + !horizontal, data});
   return [channel(out, ow, oh), channel(res, rw, rh)];
 }
 

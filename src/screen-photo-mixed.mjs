@@ -2,7 +2,7 @@
 import {part} from './bits.mjs';
 import {encodeCaptureBytes, CAPTURE_BASE, compileCaptureKernels} from './capture-codec.mjs';
 export {compileCaptureKernels};
-import {pixelKeys} from './screen-crop.mjs';
+import {expandPhotoRegions} from './screen-photo-borders.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {encodeLayersSteps} from './layers-core.mjs';
@@ -16,35 +16,12 @@ function crop(data, width, region) {
   return out;
 }
 
-function expandRegions(data, width, height, regions) {
-  const words = pixelKeys(data);
-  const out = regions.map(r => ({x0: r.x, y0: r.y, x1: r.x + r.width, y1: r.y + r.height, ...r}));
-  const free = (i, x0, y0, x1, y1) => !out.some((o, j) => j !== i && x0 < o.x1 && x1 > o.x0 && y0 < o.y1 && y1 > o.y0);
-  const photoLine = (ax, ay, bx, by) => {
-    const seen = new Set();
-    for (let y = ay; y <= by; y++) for (let x = ax; x <= bx; x++) {
-      const k = words[y * width + x];
-      if (k >>> 24 !== 255) return false;
-      seen.add(k);
-    }
-    return seen.size >= 8;
-  };
-  for (let i = 0; i < out.length; i++) {
-    const r = out[i];
-    while (r.x0 > Math.max(0, r.x - 31) && free(i, r.x0 - 1, r.y0, r.x1, r.y1) && photoLine(r.x0 - 1, r.y0, r.x0 - 1, r.y1 - 1)) r.x0--;
-    while (r.x1 < Math.min(width, r.x + r.width + 31) && free(i, r.x0, r.y0, r.x1 + 1, r.y1) && photoLine(r.x1, r.y0, r.x1, r.y1 - 1)) r.x1++;
-    while (r.y0 > Math.max(0, r.y - 31) && free(i, r.x0, r.y0 - 1, r.x1, r.y1) && photoLine(r.x0, r.y0 - 1, r.x1 - 1, r.y0 - 1)) r.y0--;
-    while (r.y1 < Math.min(height, r.y + r.height + 31) && free(i, r.x0, r.y0, r.x1, r.y1 + 1) && photoLine(r.x0, r.y1, r.x1 - 1, r.y1)) r.y1++;
-  }
-  return out.map(r => ({x: r.x0, y: r.y0, width: r.x1 - r.x0, height: r.y1 - r.y0}));
-}
-
 function* stage(steps, start, span) {
   return yield* part(steps, start / span, 1 / span);
 }
 
 export function* screenPhotoSteps({data, width, height, quality, regions: rawRegions, effort = 1, bound = Infinity}) {
-  const regions = expandRegions(data, width, height, rawRegions), base = Uint8Array.from(data);
+  const regions = expandPhotoRegions(data, width, height, rawRegions), base = Uint8Array.from(data);
   for (const {x, y, width: w, height: h} of regions) {
     const corner = ((y ? y - 1 : y) * width + (x ? x - 1 : x)) * 4;
     for (let row = y; row < y + h; row++) for (let col = x; col < x + w; col++) {

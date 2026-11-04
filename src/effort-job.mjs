@@ -13,7 +13,6 @@ import {preferXYB} from './photo-xyb.mjs';
 import {WEIGHTED_PREDICTOR, WEIGHTED_PROPERTY, WEIGHTED_CUTS, codeWeighted} from './weighted.mjs';
 import {fault, admitOptions, admitPixels} from './admit.mjs';
 import {admitSampleFormat} from './admit-samples.mjs';
-import {screenEligible, screenSteps} from './screen-search.mjs';
 import {screenLike, flatSamples, CAPTURE_FLAT} from './screen.mjs';
 import {screenPhotoRegions} from './screen-photo-regions.mjs';
 import {SAMPLE_RUNGS, sampledSteps, sampleTransformRanking} from './sampled.mjs';
@@ -24,7 +23,6 @@ export function effortJob(data, width, height, options, gpu = false, limits, sea
   const filter = admitPhotoFilter(options);
   if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fault('JXL_INPUT', 'Effort is a whole number from 1 to 9.');
   if (effort >= 4 && !deep) throw fault('JXL_INTERNAL', 'Efforts 4-9 need their exact ladder (local.mjs, rct-search.mjs).');
-  if (effort >= 8 && !deep.screen) throw fault('JXL_INTERNAL', 'Efforts 8-9 need their screen candidates (palette-search.mjs, screen-local.mjs).');
   admitPixels(data, width, height, limits);
   const samples = admitSampleFormat(data, options);
   if (samples.iccSpace)
@@ -80,9 +78,11 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, photo = 
   }
   const analysis = {};
   const stream = complete(losslessSteps(data, width, height, {shape, colorSpace, fast: true}));
-  const captured = typeof colorSpace !== 'object' && (screenLike(data, width, height) || flatSamples(data, width, height) >= CAPTURE_FLAT)
-    ? yield {capture: {data, width, height, colorSpace}} : null;
-  if (captured instanceof Uint8Array && captured.length <= PROBE * stream.length) return captured;
+  const screen = losslessScreenCandidate(data, width, height, shape, effort);
+  const screenish = typeof colorSpace !== 'object' && (screenLike(data, width, height) || flatSamples(data, width, height) >= CAPTURE_FLAT);
+  const captured = screenish || typeof colorSpace !== 'object' && shape.palette
+    ? yield {capture: {data, width, height, colorSpace, effort: Math.max(effort, 3), tools: deep?.capture}} : null;
+  if (screenish && captured instanceof Uint8Array && captured.length <= PROBE * stream.length) return captured;
   const fast = captured instanceof Uint8Array && captured.length < stream.length ? captured : stream;
   const core = losslessSteps(data, width, height, {shape, colorSpace, analysis});
   let step, reply, hurried = false;
@@ -90,7 +90,6 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, photo = 
   let best = step.value.length < fast.length ? step.value : fast;
   if (hurried) return best;
   const direct = shape.palette ? {...shape, palette: null} : shape;
-  const screen = losslessScreenCandidate(data, width, height, shape, effort);
   if (effort >= 4 || screen) {
     const searches = (effort >= 4 || screen) ? [() => searchSteps(data, width, height, direct, colorSpace, 3, analysis, screen ? best.length : Infinity)] : [];
     if (effort >= 4 && shape.palette) searches.push(() => deep.localSteps(data, width, height, shape, colorSpace, 4, true, best.length));
@@ -102,7 +101,10 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, photo = 
       const narrower = rungs.findIndex((other, j) => j < i && other.leaves < rung.leaves && key(other) === key(rung));
       searches.push(() => narrower >= 0 && !budgets[narrower].reached ? none() : sampledSteps(data, width, height, shape, colorSpace, {...rung, budget: budgets[i]}, best.length));
     });
-    if (screen) searches.unshift(() => screenSteps(data, width, height, shape, colorSpace, {fastFloor: effort === 3 ? best.length : 0, effort, deep: deep?.screen}));
+    const older = deep?.screenSteps;
+    if (older && screen) searches.unshift(() => older(data, width, height, shape, colorSpace, {fastFloor: effort === 3 ? best.length : 0, effort, deep: deep.screen}));
+    if (older && effort >= 4 && !screen && losslessScreenCandidate(data, width, height, shape, 3))
+      searches.unshift(() => older(data, width, height, shape, colorSpace, {fastFloor: best.length, effort: 3, deep: deep.screen}));
     const count = searches.length;
     for (let i = 0; i < searches.length; i++) {
       try {
@@ -124,8 +126,7 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, photo = 
 }
 
 export function losslessScreenCandidate(data, width, height, shape, effort) {
-  return effort === 3 ? screenEligible(data, width, height, shape, 3)
-    : effort >= 4 && screenLike(data, width, height);
+  return effort === 3 ? !!shape.palette : effort >= 4 && screenLike(data, width, height);
 }
 
 function* none() { return null; }

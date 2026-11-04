@@ -14,7 +14,7 @@ import {compileWasm} from '../wasm-modules.mjs';
 import {DECODE_KERNELS} from '../decode-kernels-bytes.mjs';
 import {wasmRequired} from '../capture-wasm-error.mjs';
 import {decodedFields} from './describe.mjs';
-import {bytes, check, fail, declared, object, callers, pixelLimit, LARGEST, admitSignal} from './primitives.mjs';
+import {bytes, check, fail, declared, object, pixelLimit, LARGEST, admitSignal, progressOf} from './primitives.mjs';
 import {header} from './inspect.mjs';
 import {publicDecoded} from './header-fields.mjs';
 import {copyBytes, encodedByteLength} from './bytes.mjs';
@@ -77,7 +77,7 @@ function admitDecode(options) {
   admitSignal(given.signal);
   if (given.colorSpace !== undefined) given.colorSpace = colorTarget(given.colorSpace);
   if (given.region !== undefined) given.region = admitRegion(given.region);
-  if (given.partial && given.region) throw fail('JXL_OPTIONS', 'partial and region are not offered together in this version.');
+  if (given.partial && given.region) throw fail('JXL_OPTIONS', 'Use partial or region, not both.');
   return given;
 }
 export const decode = (input, options) => decodeHere(input, options).catch(error => { throw error === options?.signal?.reason ? error : declared(error); });
@@ -98,7 +98,7 @@ async function decodeHere(input, options) {
   const target = limits.colorSpace ?? 'original';
   if (target !== 'original') {
     let transfer; try { transfer = header(owned).colorEncoding?.transferFunction; } catch {}
-    if (HDR.includes(transfer)) throw fail('JXL_UNSUPPORTED', "Converting an HDR picture (PQ or HLG) to another color space is not offered in this version; decode it with colorSpace 'original'.");
+    if (HDR.includes(transfer)) throw fail('JXL_UNSUPPORTED', "Converting HDR (PQ or HLG) is not offered in this version; decode with colorSpace 'original'.");
   }
   await prepare();
   check(signal);
@@ -110,7 +110,7 @@ async function decodeHere(input, options) {
     const data = frame?.data;
     if (data instanceof Uint8Array) frame.data = new Uint8ClampedArray(data.buffer, data.byteOffset, data.length);
   }
-  if (onProgress) try { onProgress(1); } catch (error) { throw callers(error); }
+  progressOf(onProgress, signal)?.(1);
   check(signal);
   return result;
 }

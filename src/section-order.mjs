@@ -36,27 +36,29 @@ function groupRectangle(frame, group, details) {
 }
 
 export function admitRegion(frame, region, image) {
-  if (frame.dcLevel) throw invalid('Region delivery selects an image or preview frame; use sectionOrder for LF dependency frames.');
-  if (!region || typeof region !== 'object' || Array.isArray(region)) throw invalid('region gives x, y, width and height in un-oriented canvas pixels.');
+  if (frame.dcLevel) throw invalid('Region delivery takes an image or preview frame; use sectionOrder for LF frames.');
+  if (!region || typeof region !== 'object' || Array.isArray(region)) throw invalid('region is {x, y, width, height} in canvas pixels.');
   for (const [key, minimum] of [['x', 0], ['y', 0], ['width', 1], ['height', 1]])
-    if (!Number.isSafeInteger(region[key]) || region[key] < minimum) throw invalid('The region rectangle uses nonnegative integer coordinates and positive dimensions.');
-  if (region.x + region.width > image.width || region.y + region.height > image.height) throw invalid('The region rectangle lies inside the image canvas before orientation.');
+    if (!Number.isSafeInteger(region[key]) || region[key] < minimum) throw invalid('region is whole nonnegative coordinates and positive size.');
+  if (region.x + region.width > image.width || region.y + region.height > image.height) throw invalid('region lies outside the canvas.');
 }
 
 export function regionOrder(frame, region, strategy) {
   if (frame.sizes.length === 1) return [0];
-  const details = grid(frame), groups = [], centerX = region.x + region.width / 2, centerY = region.y + region.height / 2;
+  const details = grid(frame), span = details.dimension * frame.upsampling, groups = [], centerX = region.x + region.width / 2, centerY = region.y + region.height / 2;
   for (let group = 0; group < details.groups; group++) {
     const info = groupRectangle(frame, group, details);
     const intersects = info.x < region.x + region.width && info.x + info.width > region.x && info.y < region.y + region.height && info.y + info.height > region.y;
+    const halo = !intersects && info.x < region.x + region.width + span && info.x + info.width > region.x - span &&
+      info.y < region.y + region.height + span && info.y + info.height > region.y - span;
     const dx = info.x + info.width / 2 - centerX, dy = info.y + info.height / 2 - centerY;
-    groups.push({group, intersects, distance: dx * dx + dy * dy});
+    groups.push({group, intersects, halo, distance: dx * dx + dy * dy});
   }
-  groups.sort((a, b) => Number(b.intersects) - Number(a.intersects) || a.distance - b.distance || a.group - b.group);
+  groups.sort((a, b) => Number(b.intersects) - Number(a.intersects) || Number(b.halo) - Number(a.halo) || a.distance - b.distance || a.group - b.group);
   const firstAC = details.dcGroups + 2, order = Array.from({length: firstAC}, (_, i) => i);
   if (strategy === 'region-first') {
-    for (const value of groups) if (value.intersects) for (let pass = 0; pass < frame.passes; pass++) order.push(firstAC + pass * details.groups + value.group);
-    for (let pass = 0; pass < frame.passes; pass++) for (const value of groups) if (!value.intersects) order.push(firstAC + pass * details.groups + value.group);
+    for (const value of groups) if (value.intersects || value.halo) for (let pass = 0; pass < frame.passes; pass++) order.push(firstAC + pass * details.groups + value.group);
+    for (let pass = 0; pass < frame.passes; pass++) for (const value of groups) if (!value.intersects && !value.halo) order.push(firstAC + pass * details.groups + value.group);
   } else for (let pass = 0; pass < frame.passes; pass++) for (const value of groups) order.push(firstAC + pass * details.groups + value.group);
   return order;
 }

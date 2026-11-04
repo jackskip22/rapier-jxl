@@ -3,7 +3,9 @@ import type {Bytes, JPEGOptions, JobOptions} from './types.mjs';
 export type {JPEGOptions, JobOptions, WasmBundle};
 /** A JPEG's coefficients coded as JPEG XL with no loss, with what restore needs to write the same JPEG back. The input
  * and options are taken at the call; inputs over 256 MiB refuse (JXL_LIMIT); maxPixels (at most and by default
- * 40,000,000) bounds the JPEG's size, and restore's (JXL_DIMENSIONS). */
+ * 64,000,000) bounds the JPEG's size, and restore's (JXL_DIMENSIONS). Combined APP, COM, inter-marker and inline-tail
+ * reconstruction payload above 64 MiB refuses JXL_JPEG. Caller bytes use plain Uint8Array;
+ * SharedArrayBuffer backing is refused at runtime with JXL_INPUT. */
 export function recompress(input: Uint8Array | Blob, options?: JPEGOptions & {maxPixels?: number}): Promise<Bytes>;
 /** The JPEG a recompressed file was made from, byte for byte. A file with no reconstruction data refuses
  * JXL_RECONSTRUCTION. rapier-jxl/metadata header(bytes).reconstruction says, without a decode, whether the bytes hold a

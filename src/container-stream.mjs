@@ -120,7 +120,7 @@ export function withContainer(bytes, options = {}) {
 export async function* streamContainer(source, options = {}) {
   const state = settings(options), prefix = fileHeader(options.level ?? 5);
   if (!source || typeof source[Symbol.asyncIterator] !== 'function' && typeof source[Symbol.iterator] !== 'function')
-    throw invalid('The codestream source is an iterable of Uint8Array chunks.');
+    throw invalid('The codestream is an iterable of Uint8Array chunks.');
   aborted(state.signal); state.boxes(options.level === 10 ? 2 : 1); state.count(prefix.length); yield prefix;
   let index = 0, signature = 0, tail = null;
   for await (const chunk of source) {

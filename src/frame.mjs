@@ -72,31 +72,35 @@ function writeSampleDepth(w, bits, exponent) {
 
 function writeColorEnum(w, value) { w.writeU32([[0, 0], [0, 1], [4, 2], [6, 18]], value); }
 
-export function writeModularFrameHeader(w, {alpha, shift = 1, extraChannels = Number(!!alpha), upsampling = 1, extraUpsampling, passes, crop, last = true, reference = 0}) {
+export function fullFrame(crop, canvas) {
+  if (!crop) return true;
+  if (!canvas) throw new Error('A crop needs its canvas.');
+  return crop.x <= 0 && crop.y <= 0 && crop.x + crop.width >= canvas.width && crop.y + crop.height >= canvas.height;
+}
+
+export function writeModularFrameHeader(w, {alpha, shift = 1, extraChannels = Number(!!alpha), upsampling = 1, extraUpsampling, passes, crop, canvas, last = true, reference = 0}) {
   w.write(7, 0b0_00_1_00_0 | (last ? 0 : 6));
   w.writeU32([[0, 1], [0, 2], [0, 4], [0, 8]], upsampling);
   for (let c = 0; c < extraChannels; c++) w.writeU32([[0, 1], [0, 2], [0, 4], [0, 8]], extraUpsampling?.[c] ?? 1);
   w.write(2, shift);
-  writeFrameHeaderEnd(w, extraChannels, 0, passes, 1, null, {crop, last, reference});
+  writeFrameHeaderEnd(w, extraChannels, 0, passes, 1, null, {crop, canvas, last, reference});
 }
 
 export function writeFrameHeaderEnd(w, alpha, epf = 0, passes, epfIterations = 1, gab = null, placement) {
   const channels = typeof alpha === 'number' ? alpha : Number(!!alpha);
-  const {crop, last = true, reference = 0} = placement ?? {};
+  const {crop, canvas, last = true, reference = 0, mask = false} = placement ?? {}, full = fullFrame(crop, canvas);
+  if (mask && channels !== 1) throw new Error('A mask is one extra channel.');
   if (passes) w.append(passes); else w.write(2, 0);
   w.write(1, crop ? 1 : 0);
   if (crop) {
     w.writeU32(FRAME_SIZE, packSigned(crop.x)); w.writeU32(FRAME_SIZE, packSigned(crop.y));
     w.writeU32(FRAME_SIZE, crop.width); w.writeU32(FRAME_SIZE, crop.height);
   }
-  for (let c = 0; c <= channels; c++) {
-    w.write(2, 0);
-    if (crop) w.write(2, 1);
-  }
+  for (let c = 0; c <= channels; c++) if (mask) w.write(7, 34); else { w.write(2, 0); if (!full) w.write(2, 1); }
   w.write(1, last ? 1 : 0);
   if (!last) {
     w.write(2, reference);
-    if (!crop) w.write(1, 0);
+    if (full && !mask) w.write(1, 0);
   }
   if (!epf && !gab) { w.write(10, 0); return; }
   w.write(4, gab ? 8 : 0);

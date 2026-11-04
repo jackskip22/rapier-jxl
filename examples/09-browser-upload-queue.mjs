@@ -6,7 +6,8 @@ import {createCodec} from './node_modules/rapier-jxl/dist/codec.mjs';
 
 // One owned queue over the upload module: its own worker, input copied at submission, bounded memory and job count.
 const queue = createCodec({module: 'rapier-jxl/upload', maxPixels: 16_000_000, maxPendingBytes: 64 * 1024 * 1024, maxPendingJobs: 8});
-const cancelAll = new AbortController();
+// Cancel all aborts the uploads already chosen; files chosen after it get a fresh controller.
+let cancelAll = new AbortController();
 const list = document.querySelector('#list');
 
 function row(name) {
@@ -34,7 +35,7 @@ function upload(file, {signal = cancelAll.signal, effort = 3, quality = 82} = {}
 }
 
 document.querySelector('#files').addEventListener('change', event => { for (const file of event.target.files) upload(file); });
-document.querySelector('#cancel').addEventListener('click', () => cancelAll.abort());
+document.querySelector('#cancel').addEventListener('click', () => { cancelAll.abort(); cancelAll = new AbortController(); });
 
 // A phone-like photo as a JPEG File, drawn in the page.
 async function photo(name, width, height, seed) {

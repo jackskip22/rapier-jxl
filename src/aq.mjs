@@ -132,8 +132,12 @@ function blockRegions(open, width, height) {
 }
 
 export function perceptualMaskField(planes, stride, rows, rowsOf = () => ({planes, top: 0})) {
+  const steps = perceptualMaskSteps(stride, rows, rowsOf);
+  for (;;) { const step = steps.next(); if (step.done) return step.value; }
+}
+export function* perceptualMaskSteps(stride, rows, rowsOf) {
   const hf = new Float64Array(stride * rows);
-  for (let by = 0; by < rows; by++) { const {planes: p, top} = rowsOf(by); maskEnergy(p, top, stride, by, by + 1, hf); }
+  for (let by = 0; by < rows; by++) { const {planes: p, top} = rowsOf(by); maskEnergy(p, top, stride, by, by + 1, hf); yield; }
   return maskWeights(hf, stride, rows);
 }
 export function maskEnergy([X, Y, B], top, stride, by0, by1, hf) {
@@ -154,17 +158,25 @@ export function maskEnergy([X, Y, B], top, stride, by0, by1, hf) {
     hf[by * stride + bx] = s / 49;
   }
 }
-export function maskWeightDoubts(bound, stride, rows) {
-  const n = stride * rows, near = new Float64Array(n);
+export function maskWeightDoubts(bound, stride, rows, eroded = null) {
+  const n = stride * rows, rel = new Float64Array(n);
   let total = 0;
   for (let by = 0; by < rows; by++) for (let bx = 0; bx < stride; bx++) {
-    let m = 0;
-    for (let y = Math.max(0, by - 1); y <= Math.min(rows - 1, by + 1); y++) for (let x = Math.max(0, bx - 1); x <= Math.min(stride - 1, bx + 1); x++) m = Math.max(m, bound[y * stride + x]);
-    near[by * stride + bx] = m; total += m;
+    let E = 0;
+    for (let y = Math.max(0, by - 1); y <= Math.min(rows - 1, by + 1); y++) for (let x = Math.max(0, bx - 1); x <= Math.min(stride - 1, bx + 1); x++) E = Math.max(E, bound[y * stride + x]);
+    const b = by * stride + bx;
+    let r = 0.375 * E, w = 1;
+    if (eroded) {
+      const m = Math.max(0, eroded[b] - E);
+      r = Math.min(r, 1.5 * E / ((0.5 * m + 2) * (0.5 * m + 5)));
+      w = 1 + 3 / (0.5 * eroded[b] + 2);
+    }
+    rel[b] = r; total += r * w;
   }
-  const b = 0.375 * total / n;
-  if (!(b < 0.5)) return near.fill(Infinity);
-  return near.map(E => (0.375 * E + b) / (1 - b) + 1e-12);
+  const b = total / n;
+  if (!(b < 0.5)) return rel.fill(Infinity);
+  for (let i = 0; i < n; i++) rel[i] = (rel[i] + b) / (1 - b) + 1e-12;
+  return rel;
 }
 export function maskDoubtOver(doubt, stride, bx, by, bw, bh) {
   if (typeof doubt === 'number') return doubt;

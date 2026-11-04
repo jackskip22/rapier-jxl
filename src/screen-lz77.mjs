@@ -4,7 +4,7 @@ import {buildCode, priceCode, canonicalCodes, writePrefixCode, writeHistograms, 
 import {ALPHABET, LZ77, RESIDUAL_CONFIG, leaf, channelTree, writeTree} from './modular.mjs';
 import {kernelHooks} from './kernel-hooks.mjs';
 import {SCREEN_INTEGER_CONFIGS, screenDistanceMap} from './screen-codes.mjs';
-const SCREEN_DISTANCE_CONFIG = uintConfig(4),
+const SCREEN_DISTANCE_CONFIG = /* @__PURE__ */ uintConfig(4),
   SCREEN_HASH_SIZE = 65536;
 
 export function screenResiduals(plane, width, height, predictor) {

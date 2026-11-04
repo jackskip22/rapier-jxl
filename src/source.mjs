@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {admitSize, fault} from './admit.mjs';
 import {inspectICC, prepareColorEncoding} from './color-info.mjs';
+import {exifOrientation} from './v7/preparation-jpeg.mjs';
 
 const refuse = message => { throw fault('JXL_INPUT', message); };
 const PNG_ICC_BYTES = 16 * 1024 * 1024;
@@ -14,11 +15,11 @@ const primaries = {
 function colourFromChromaticities(values, tolerance, required = true) {
   for (const [name, expected] of Object.entries(primaries))
     if (expected.every((value, i) => Math.abs(value - values[i]) <= tolerance)) return name;
-  if (required) refuse('The source primaries must be sRGB, Display P3 or Rec. 2020 with a D65 white point.');
+  if (required) refuse('Primaries must be sRGB, Display P3 or Rec. 2020, D65.');
 }
 
 async function inflate(parts, expected) {
-  if (typeof DecompressionStream !== 'function') refuse('Reading compressed sources requires DecompressionStream (Node 22 or a supporting browser).');
+  if (typeof DecompressionStream !== 'function') refuse('Compressed sources need DecompressionStream.');
   const profile = expected === undefined;
   let output = new Uint8Array(profile ? 4 : expected);
   const stream = new ReadableStream({start(controller) {
@@ -37,7 +38,7 @@ async function inflate(parts, expected) {
         output.set(bytes.subarray(0, count), offset); offset += count; bytes = bytes.subarray(count);
         if (offset < 4) continue;
         expected = view(output).getUint32(0);
-        if (expected < 132) refuse('The compressed ICC profile declares an incomplete header or tag table.');
+        if (expected < 132) refuse('The compressed ICC profile is incomplete.');
         if (expected > PNG_ICC_BYTES) throw fault('JXL_SIZE', 'The PNG ICC profile declares more than 16 MiB.');
         const complete = new Uint8Array(expected); complete.set(output); output = complete;
       }
@@ -76,7 +77,7 @@ async function pngColour(chunks, colourType) {
     const colorSpace = {1: 'srgb', 9: 'rec2020', 11: 'display-p3', 12: 'display-p3'}[cicp[0]];
     const transferFunction = {1: 'bt709', 8: 'linear', 13: 'srgb', 16: 'pq', 17: 'dci', 18: 'hlg'}[cicp[1]];
     if (!colorSpace || !transferFunction || cicp[2] !== 0 || cicp[3] !== 1)
-      refuse('PNG cICP must declare supported RGB primaries and transfer with full-range, identity-matrix samples.');
+      refuse('PNG cICP needs supported RGB primaries and transfer, full range, identity matrix.');
     if (cicp[0] === 11 || transferFunction === 'bt709' || transferFunction === 'dci')
       return explicitPNGColor(space, {whitePoint: cicp[0] === 11 ? 'dci' : 'd65', ...(space === 'rgb' ? {primaries: colorSpace} : {}), transferFunction});
     return {colorSpace, transferFunction};
@@ -86,9 +87,9 @@ async function pngColour(chunks, colourType) {
     const end = packedProfile.indexOf(0), name = packedProfile.subarray(0, end);
     if (end < 1 || end > 79 || end + 2 >= packedProfile.length || packedProfile[end + 1] !== 0 ||
         name[0] === 32 || name[name.length - 1] === 32 || name.some((value, i) => value < 32 || value > 126 && value < 161 || value === 32 && name[i - 1] === 32))
-      refuse('PNG iCCP requires a valid profile name, compression method zero and a complete deflate stream.');
+      refuse('PNG iCCP needs a valid name, method 0 and a complete deflate stream.');
     const icc = await inflate([packedProfile.subarray(end + 2)]), channels = inspectICC(icc, undefined, space);
-    if (channels !== (space === 'gray' ? 1 : 3)) refuse('The PNG channel layout and embedded ICC source space must agree.');
+    if (channels !== (space === 'gray' ? 1 : 3)) refuse('PNG channels and ICC space differ.');
     return {icc};
   }
   const srgb = chunks.get('sRGB');
@@ -117,9 +118,9 @@ function paeth(a, b, c) {
   return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
 }
 
-async function png(bytes) {
+async function png(bytes, named) {
   const data = view(bytes), chunks = new Map(), packed = [];
-  let offset = 8, seenData = false, endedData = false, ended = false, width, height, channels, colourType, interlace;
+  let offset = 8, seenData = false, endedData = false, ended = false, width, height, channels, colourType, depth, interlace;
   while (offset + 12 <= bytes.length) {
     const length = data.getUint32(offset), end = offset + 12 + length;
     if (length > 0x7fffffff || end > bytes.length) refuse('The PNG contains a truncated chunk.');
@@ -132,9 +133,10 @@ async function png(bytes) {
     if (name === 'IHDR') {
       if (chunks.has(name) || length !== 13) refuse('PNG requires one complete IHDR.');
       const header = view(part); width = header.getUint32(0); height = header.getUint32(4); admitSize(width, height);
-      colourType = part[9]; channels = {0: 1, 2: 3, 4: 2, 6: 4}[colourType]; interlace = part[12];
-      if (part[8] !== 16 || !channels || part[10] || part[11] || interlace > 1)
-        refuse('This source reader accepts 16-bit grayscale, RGB or RGBA PNG, with standard compression and filtering.');
+      depth = part[8]; colourType = part[9]; channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[colourType]; interlace = part[12];
+      const depthOK = depth === 16 ? channels && colourType !== 3 : depth === 8 ? channels : (depth === 1 || depth === 2 || depth === 4) && (colourType === 0 || colourType === 3);
+      if (!depthOK || part[10] || part[11] || interlace > 1)
+        refuse('PNG must be 8- or 16-bit gray, RGB or RGBA, palette up to 8 bits, or gray at 1, 2 or 4 bits.');
       chunks.set(name, part);
     } else if (name === 'IDAT') {
       if (endedData) refuse('PNG image data chunks must be consecutive.');
@@ -142,36 +144,46 @@ async function png(bytes) {
     } else if (name === 'IEND') {
       if (length || !seenData || end !== bytes.length) refuse('PNG requires a final empty IEND after image data.');
       ended = true; break;
+    } else if (name === 'eXIf') {
+      if (!seenData && !chunks.has(name)) chunks.set(name, part);
     } else if (name === 'acTL' || name === 'fcTL' || name === 'fdAT') {
       refuse('Animated PNG is not a single source picture.');
     } else if (['cICP', 'sRGB', 'iCCP', 'gAMA', 'cHRM', 'tRNS', 'sBIT', 'PLTE', 'mDCV', 'cLLI'].includes(name)) {
-      if (seenData || chunks.has(name)) refuse('PNG color and transparency chunks must occur once before image data.');
+      if (seenData || chunks.has(name)) refuse('PNG color and transparency chunks occur once, before image data.');
       const sizes = {cICP: 4, sRGB: 1, gAMA: 4, cHRM: 32, mDCV: 24, cLLI: 8};
       if (sizes[name] !== undefined && length !== sizes[name]) refuse('A PNG color chunk has an invalid size.');
       if (name === 'sRGB' && part[0] > 3) refuse('PNG sRGB rendering intent is invalid.');
-      if (name === 'sBIT' && (length !== channels || part.some(value => value < 1 || value > 16))) refuse('PNG significant sample depths are invalid.');
-      if (name === 'tRNS' && !((colourType === 0 && length === 2) || (colourType === 2 && length === 6)))
-        refuse('PNG transparency must match its source channel layout.');
-      if (name === 'PLTE' && (colourType === 0 || colourType === 4 || !length || length > 768 || length % 3))
+      if (name === 'sBIT' && (length !== {0: 1, 2: 3, 3: 3, 4: 2, 6: 4}[colourType] || part.some(value => value < 1 || value > (colourType === 3 ? 8 : depth))))
+        refuse('PNG significant sample depths are invalid.');
+      if (name === 'tRNS' && !((colourType === 0 && length === 2) || (colourType === 2 && length === 6) ||
+          (colourType === 3 && length >= 1 && length <= (chunks.get('PLTE')?.length ?? 0) / 3)))
+        refuse('PNG transparency does not match the channels or palette.');
+      if (name === 'PLTE' && (colourType === 0 || colourType === 4 || !length || length > 768 || length % 3 || (colourType === 3 && length / 3 > 1 << depth)))
         refuse('The PNG palette is invalid for its channel layout.');
       chunks.set(name, part);
     } else if (!(nameBytes[0] & 32)) refuse('The PNG has an unsupported critical chunk.');
     offset = end;
   }
   if (!ended) refuse('PNG image data or its end marker is missing.');
-  const colour = await pngColour(chunks, colourType), passes = interlace ? pngPasses : [[0, 0, 1, 1]], bytesPerPixel = channels * 2;
+  const palette = chunks.get('PLTE');
+  if (colourType === 3 && !palette) refuse('A palette PNG requires a PLTE chunk.');
+  const colour = await pngColour(chunks, colourType);
+  if (named && colour.colorEncoding) throw fault('JXL_UNSUPPORTED', 'fit and variants need a named color space; this PNG sets gamma, primaries or intent. Use encode.');
+  const passes = interlace ? pngPasses : [[0, 0, 1, 1]], bitsPerPixel = channels * depth, bytesPerPixel = Math.max(1, bitsPerPixel >> 3);
   let expected = 0;
   for (const [x, y, dx, dy] of passes) {
     const w = Math.max(0, Math.ceil((width - x) / dx)), h = Math.max(0, Math.ceil((height - y) / dy));
-    if (w && h) expected += h * (1 + w * bytesPerPixel);
+    if (w && h) expected += h * (1 + Math.ceil(w * bitsPerPixel / 8));
   }
-  const raw = await inflate(packed, expected), result = new Uint16Array(width * height * 4);
-  const key = chunks.get('tRNS'), transparent = key ? Array.from({length: key.length / 2}, (_, i) => view(key).getUint16(i * 2)) : null;
+  const raw = await inflate(packed, expected), wide = depth === 16, full = wide ? 65535 : 255;
+  const result = wide ? new Uint16Array(width * height * 4) : new Uint8Array(width * height * 4);
+  const key = chunks.get('tRNS'), transparent = key && colourType !== 3 ? Array.from({length: key.length / 2}, (_, i) => view(key).getUint16(i * 2)) : null;
+  const paletteAlpha = colourType === 3 ? key : null, entries = palette ? palette.length / 3 : 0, scale = wide || depth === 8 ? 1 : 255 / ((1 << depth) - 1);
   let cursor = 0;
   for (const [startX, startY, dx, dy] of passes) {
     const w = Math.max(0, Math.ceil((width - startX) / dx)), h = Math.max(0, Math.ceil((height - startY) / dy));
     if (!w || !h) continue;
-    const rowBytes = w * bytesPerPixel;
+    const rowBytes = Math.ceil(w * bitsPerPixel / 8);
     let previous = new Uint8Array(rowBytes), row = new Uint8Array(rowBytes);
     for (let y = 0; y < h; y++) {
       const filter = raw[cursor++];
@@ -181,17 +193,26 @@ async function png(bytes) {
         row[i] = raw[cursor++] + (filter === 1 ? a : filter === 2 ? b : filter === 3 ? (a + b) >> 1 : filter === 4 ? paeth(a, b, c) : 0);
       }
       const samples = view(row);
+      const sample = wide ? n => samples.getUint16(n * 2) : depth === 8 ? n => row[n] : n => (row[(n * depth) >> 3] >> (8 - depth - ((n * depth) & 7))) & ((1 << depth) - 1);
       for (let x = 0; x < w; x++) {
-        const src = x * bytesPerPixel, dst = ((startY + y * dy) * width + startX + x * dx) * 4;
-        const r = samples.getUint16(src), g = channels < 3 ? r : samples.getUint16(src + 2), b = channels < 3 ? r : samples.getUint16(src + 4);
-        result[dst] = r; result[dst + 1] = g; result[dst + 2] = b;
-        result[dst + 3] = colourType === 4 || colourType === 6 ? samples.getUint16(src + bytesPerPixel - 2) :
-          transparent && r === transparent[0] && (colourType === 0 || g === transparent[1] && b === transparent[2]) ? 0 : 65535;
+        const dst = ((startY + y * dy) * width + startX + x * dx) * 4;
+        if (colourType === 3) {
+          const index = sample(x);
+          if (index >= entries) refuse('A PNG palette index is past its palette.');
+          result[dst] = palette[index * 3]; result[dst + 1] = palette[index * 3 + 1]; result[dst + 2] = palette[index * 3 + 2];
+          result[dst + 3] = index < (paletteAlpha?.length ?? 0) ? paletteAlpha[index] : 255;
+          continue;
+        }
+        const r = sample(x * channels), g = channels < 3 ? r : sample(x * channels + 1), b = channels < 3 ? r : sample(x * channels + 2);
+        result[dst] = r * scale; result[dst + 1] = g * scale; result[dst + 2] = b * scale;
+        result[dst + 3] = colourType === 4 || colourType === 6 ? sample(x * channels + channels - 1) :
+          transparent && r === transparent[0] && (colourType === 0 || g === transparent[1] && b === transparent[2]) ? 0 : full;
       }
       [previous, row] = [row, previous];
     }
   }
-  return {data: result, width, height, bitDepth: 16, sampleFormat: 'uint', ...colour, alphaPremultiplied: false};
+  const exif = chunks.get('eXIf'), orientation = exif ? exifOrientation(exif, 0, exif.length) : null;
+  return {data: result, width, height, bitDepth: wide ? 16 : 8, sampleFormat: 'uint', ...colour, alphaPremultiplied: false, ...(orientation > 1 && {orientation})};
 }
 
 function unrollRle(packed, expected) {
@@ -234,7 +255,7 @@ async function exr(bytes) {
     const name = string();
     if (!name) break;
     const type = string();
-    if (!type || cursor + 4 > bytes.length || attributes.has(name)) refuse('The OpenEXR header contains an invalid or duplicate attribute.');
+    if (!type || cursor + 4 > bytes.length || attributes.has(name)) refuse('OpenEXR header has a bad or duplicate attribute.');
     const length = data.getInt32(cursor, true); cursor += 4;
     if (length < 0 || cursor + length > bytes.length) refuse('An OpenEXR attribute is truncated.');
     attributes.set(name, {type, start: cursor, length}); cursor += length;
@@ -254,14 +275,14 @@ async function exr(bytes) {
     if (cursor + 16 > channelEnd) refuse('The OpenEXR channel list is truncated.');
     const kind = data.getInt32(cursor, true), x = data.getInt32(cursor + 8, true), y = data.getInt32(cursor + 12, true);
     if (!['R', 'G', 'B', 'A', 'Y'].includes(name) || channels.some(channel => channel.name === name) || kind !== 1 && kind !== 2 || x !== 1 || y !== 1)
-      refuse('OpenEXR requires unsubsampled RGB or Y, optional A, and uniform HALF or FLOAT channels.');
+      refuse('OpenEXR needs unsubsampled RGB or Y, optional A, uniform HALF or FLOAT.');
     channels.push({name, kind}); cursor += 16;
   }
   if (cursor !== channelEnd || !channels.length) refuse('The OpenEXR channel list is invalid.');
   const gray = channels.some(channel => channel.name === 'Y'), hasAlpha = channels.some(channel => channel.name === 'A');
   const names = channels.map(channel => channel.name).sort().join('');
   if (names !== (gray ? hasAlpha ? 'AY' : 'Y' : hasAlpha ? 'ABGR' : 'BGR') || channels.some(channel => channel.kind !== channels[0].kind))
-    refuse('OpenEXR requires unsubsampled RGB or Y, optional A, and uniform HALF or FLOAT channels.');
+    refuse('OpenEXR needs unsubsampled RGB or Y, optional A, uniform HALF or FLOAT.');
   channels.sort((a, b) => a.name < b.name ? -1 : 1);
   const half = channels[0].kind === 1, sampleBytes = half ? 2 : 4;
   const bounds = attribute('dataWindow', 'box2i', 16).start, display = attribute('displayWindow', 'box2i', 16).start;
@@ -269,12 +290,12 @@ async function exr(bytes) {
   const maxX = data.getInt32(bounds + 8, true), maxY = data.getInt32(bounds + 12, true);
   const width = maxX - minX + 1, height = maxY - minY + 1; admitSize(width, height);
   for (let i = 0; i < 16; i += 4) if (data.getInt32(bounds + i, true) !== data.getInt32(display + i, true))
-    refuse('OpenEXR data and display windows must coincide; crop or place the source explicitly.');
+    refuse('OpenEXR data and display windows differ; crop first.');
   const compression = bytes[attribute('compression', 'compression', 1).start];
   if (compression > 3) refuse('OpenEXR compression must be NONE, RLE, ZIPS or ZIP.');
-  if (bytes[attribute('lineOrder', 'lineOrder', 1).start] > 1) refuse('OpenEXR scanlines must have increasing or decreasing line order.');
+  if (bytes[attribute('lineOrder', 'lineOrder', 1).start] > 1) refuse('OpenEXR line order must be increasing or decreasing.');
   if (data.getFloat32(attribute('pixelAspectRatio', 'float', 4).start, true) !== 1)
-    refuse('OpenEXR pixels must be square; resample the source explicitly.');
+    refuse('OpenEXR pixels must be square; resample first.');
   attribute('screenWindowCenter', 'v2f', 8); attribute('screenWindowWidth', 'float', 4);
   for (const name of ['colorInteropID', 'acesImageContainerFlag', 'adoptedNeutral', 'renderingTransform', 'lookModTransform'])
     if (attributes.has(name)) refuse('The OpenEXR ' + name + ' color declaration requires a colour-managed source reader.');
@@ -284,7 +305,7 @@ async function exr(bytes) {
   const white = attribute('whiteLuminance', 'float', 4, false), luminance = {};
   if (white) {
     const value = data.getFloat32(white.start, true);
-    if (!Number.isFinite(value) || value < 1 / 16777216 || value >= 65520) refuse('OpenEXR white luminance must fit the positive JPEG XL intensity target.');
+    if (!Number.isFinite(value) || value < 1 / 16777216 || value >= 65520) refuse('OpenEXR white luminance exceeds the intensity target.');
     luminance.intensityTarget = value;
   }
   const rowsPerBlock = compression === 3 ? 16 : 1, blocks = Math.ceil(height / rowsPerBlock), tableEnd = tableStart + blocks * 8;
@@ -295,7 +316,7 @@ async function exr(bytes) {
     if (!Number.isSafeInteger(offset) || offset < tableEnd || offset + 8 > bytes.length) refuse('An OpenEXR scanline offset is outside the file.');
     const y = data.getInt32(offset, true), length = data.getInt32(offset + 4, true), row = y - minY;
     if (length < 0 || offset + 8 + length > bytes.length || row !== i * rowsPerBlock)
-      refuse('The OpenEXR scanline block does not match its offset table.');
+      refuse('OpenEXR scanline block does not match its offset.');
     locations.push({offset, length, row});
   }
   const physical = [...locations].sort((a, b) => a.offset - b.offset);
@@ -342,9 +363,9 @@ export function readSource(input) {
   return read(input, bytes => {
     if (isPNG(bytes)) return png(bytes);
     if (bytes.length >= 8 && view(bytes).getUint32(0, true) === 20000630) return exr(bytes);
-    refuse('Source bytes must contain a 16-bit PNG or a flat scanline OpenEXR image.');
+    refuse('Source must be PNG or flat scanline OpenEXR.');
   });
 }
-export function readPNG16(input) {
-  return read(input, bytes => { if (isPNG(bytes)) return png(bytes); refuse('Source bytes must contain a 16-bit PNG.'); });
+export function readPNG16(input, {named = false} = {}) {
+  return read(input, bytes => { if (isPNG(bytes)) return png(bytes, named); refuse('Source bytes must contain a PNG.'); });
 }

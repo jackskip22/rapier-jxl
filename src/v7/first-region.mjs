@@ -10,7 +10,7 @@ const TOC_ENTRY = [[10, 0], [14, 1024], [22, 17408], [30, 4211712]];
 export function orderRegion(bytes, region) {
   if (!region) return bytes;
   let parsed;
-  try { parsed = readFrames(bytes); } catch (cause) { throw Object.assign(fail('JXL_UNSUPPORTED', 'firstRegion is not offered with an ICC profile in this version.'), {cause}); }
+  try { parsed = readFrames(bytes); } catch (cause) { throw Object.assign(fail('JXL_UNSUPPORTED', 'firstRegion does not take an ICC profile.'), {cause}); }
   const {codestream, level, image, frames} = parsed;
   if (region.x + region.width > image.width || region.y + region.height > image.height) throw fail('JXL_OPTIONS', 'firstRegion lies inside the picture.');
   const parts = [codestream.subarray(0, image.end)];

@@ -30,7 +30,7 @@ function color(frame) {
   if (encoding.wantICC || encoding.iccSpace || encoding.transferFunction !== 'srgb' ||
       !['rgb', 'gray'].includes(encoding.space) || (encoding.whitePoint ?? 'd65') !== 'd65' ||
       encoding.space === 'rgb' && (encoding.primaries ?? 'srgb') !== 'srgb')
-    throw error('This output color encoding needs a supported ICC profile or an explicit display conversion.');
+    throw error('This color needs a supported ICC profile or a display conversion.');
   const intent = encoding.renderingIntent ?? 1;
   if (!integer(intent, 0, 3)) throw error('Invalid sRGB rendering intent.');
   return {type: 6, profile: null, intent};

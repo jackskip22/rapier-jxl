@@ -408,14 +408,16 @@ export const gpuStats = {levels: 0};
 export function* forcedBands(base, width, height, layout, req, rgba, rate, rows = 512, shared = false) {
   const stride = base.components[0].stride, blockRows = base.components[0].rows, byRow = Array.from({length: blockRows}, () => []);
   for (const b of layout) byRow[b.by].push(b);
-  const plain = {deadzone: V6.deadzone, sizeScale: 1.03}, perceptual = {...plain, perceptual: true}, tables = shared ? [perceptual] : [plain, perceptual];
+  const plain = {deadzone: V6.deadzone, sizeScale: 1.03}, perceptual = {...plain, perceptual: true};
+  const singlePass = shared || !req, tables = singlePass ? [perceptual] : [plain, perceptual];
   let rated = 0;
   for (let y0 = 0; y0 < height; y0 += rows) {
     const y1 = Math.min(height, y0 + rows), by0 = Math.max(0, Math.floor((y0 - 8) / 64) * 8), by1 = Math.min(blockRows, Math.ceil((y1 + 8) / 64) * 8);
     const entries = byRow.slice(by0, by1).flat();
     for (const [k, options] of tables.entries()) {
-      const part = yield* layoutImage(base, width, height, entries, options, req);
-      if (k === 0) { for (const b of part.strategyData.blocks) if (b.by >= rated) rate(b); if (!shared) continue; }
+      const opts = !shared && singlePass ? {...options, rateBlock: rate, rateFrom: rated} : options;
+      const part = yield* layoutImage(base, width, height, entries, opts, req);
+      if (k === 0 && (shared || !singlePass)) { for (const b of part.strategyData.blocks) if (b.by >= rated) rate(b); if (!shared) continue; }
       toRGBAInto(reconstruct(subImage(part, 0, by0, stride, by1)), (y0 - by0 * 8) * width, (y1 - y0) * width, rgba, y0 * width);
     }
     rated = by1;
@@ -426,14 +428,14 @@ export function* s2GuidedBlocksSteps(base, width, height, reference, ids = [4, 5
   const stride = base.components[0].stride, rows = base.components[0].rows, tokens = rateModel(base, stride, rows, 8);
   const perceptual = {deadzone: V6.deadzone, sizeScale: 1.03, perceptual: true}, maps = [], rates = new Map();
   const rate = b => { (rates.get(b.id) ?? rates.set(b.id, new Float64Array(stride * rows)).get(b.id))[b.by * stride + b.bx] = tokenRate(b, tokens); };
-  let score0 = 75;
+  let score0 = 75, at = null;
   for (const id of [0, ...ids]) {
     yield* forcedBands(base, width, height, forcedLayout(id, stride, rows), req, rgba, rate, 512, id === 0);
     v6Trace(`s2 shape ${id} decoded`);
     const sums = (req ? yield {gpu: {kind: 's2-cells', reference: reference.rgba, decoded: rgba, width, height}} : null) ?? s2CellSums(reference, {rgba}, width, height);
-    const {cells, score} = s2CellMap(sums, width, height);
+    const {cells, score, norms} = s2CellMap(sums, width, height, at);
     v6Trace(`s2 shape ${id} map`);
-    if (id === 0) score0 = score;
+    if (id === 0) { score0 = score; at = {norms}; }
     maps[id] = cells;
   }
   for (const r of rates.values()) for (let i = 0; i < r.length; i++) r[i] += 8.0;
@@ -456,6 +458,8 @@ export function* s2GuidedBlocksSteps(base, width, height, reference, ids = [4, 5
   return {s2Var, layout, maps, rates, score0};
 }
 export const s2GuidedBlocks = (...args) => complete(s2GuidedBlocksSteps(...args));
+
+const GUIDED_LAMBDA = 2.5;
 
 export function* s2EffortSearchSteps(prepared, quality, effort = 8, floor, gpu = false) {
   const {color} = prepared;
@@ -481,8 +485,8 @@ function* s2Search(prepared, quality, effort, floor, device) {
       return order.reduce((a, c) => J(c) < J(a) ? c : a);
     };
     let w = pick();
-    if (order.some(c => c.doubt) && !certain(order, w, c0)) {
-      for (const c of order) if (c.doubt) { c.s2 = cpuScore(null, c.decoded); c.doubt = 0; c.decoded = null; }
+    if ((c0.doubt || order.some(c => c.doubt)) && !certain(order, w, c0)) {
+      for (const c of [...order, c0]) if (c.doubt) { c.s2 = cpuScore(null, c.decoded); c.doubt = 0; c.decoded = null; }
       v6Trace('s2 scores again on the CPU');
       w = pick();
     }
@@ -499,19 +503,76 @@ function* s2Search(prepared, quality, effort, floor, device) {
   if (yield 0.05) return floor.bytes;
   let base = v6Image(prepared, quality, {keepPlanes: true, calibrationRow: 's2e8', noLevels: false}, false);
   v6Trace('s2 base s2e8');
-  let {s2Var, layout} = yield* s2GuidedBlocksSteps(base, width, height, reference, [4, 5, 6, 7], 0.85, reqFor('s2e8'), decoded);
+  let {s2Var, layout} = yield* s2GuidedBlocksSteps(base, width, height, reference, [4, 5, 6, 7], GUIDED_LAMBDA, reqFor('s2e8'), decoded);
   v6Trace('s2 guided s2e8');
+  const baseShell = keep ? null : {...base, components: base.components.map(c => ({...c, coeffs: new Int16Array(0)}))};
   base = decoded = null;
   const cA = {...(yield* scored(s2Var, writeImage(s2Var, 7))), layout};
   s2Var = null;
   if (!keep) cA.img = null;
   v6Trace('s2 s2e8 ranked');
   if (yield 0.5) return floor.bytes;
-  const pick = choose([cA, c0], c0);
+  const deeper = effort >= 9 ? (yield* fieldSearch(prepared, quality, cA.layout, reference, scored, c0, choose)).filter(c => c.bytes.length <= floor.bytes.length) : [];
+  const pick = choose([cA, ...deeper, c0], c0);
   refNative = null; cA.decoded = c0.decoded = null;
+  for (const c of deeper) c.decoded = null;
   if (pick === c0) return smallest(writeImage(floor.image, effort), floor.bytes);
-  const picture = cA.img ?? (yield* layoutImage(v6Image(prepared, quality, {keepPlanes: true, calibrationRow: 's2e8', noLevels: false}, false), width, height, cA.layout, PERCEPTUAL, reqFor('s2e8')));
+  const picture = pick.field ? yield* fieldImage(prepared, quality, pick.field, pick.layout)
+    : cA.img ?? (yield* layoutImage(baseShell, width, height, cA.layout, PERCEPTUAL, reqFor('s2e8')));
   return smallest(writeImage(picture, effort), floor.bytes);
+}
+
+const FIELD_SCALES = [1, 0.8, 1.25], FIELD_LAMBDAS = [1.5, 2.5];
+function* fieldImage(prepared, quality, field, layout) {
+  const base = v6Image(prepared, quality, {keepPlanes: true, calibrationRow: 's2e8', noLevels: false, fieldScale: field}, false);
+  return yield* layoutImage(base, prepared.width, prepared.height, layout, {deadzone: V6.deadzone, sizeScale: 1.03, perceptual: true}, null);
+}
+function* fieldSearch(prepared, quality, layout, reference, scored, c0, choose) {
+  const {width, height} = prepared, stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), n = stride * rows;
+  let decoded = new Uint8ClampedArray(width * height * 4), at = null, score0 = 75;
+  const maps = [], rates = [];
+  for (const s of FIELD_SCALES) {
+    const base = v6Image(prepared, quality, {keepPlanes: true, calibrationRow: 's2e8', noLevels: false, fieldScale: new Float64Array(n).fill(s)}, false);
+    const tokens = rateModel(base, stride, rows, 8), r = new Float64Array(n);
+    yield* forcedBands(base, width, height, layout, null, decoded, b => { r[b.by * stride + b.bx] = tokenRate(b, tokens) + 8; }, 512, false);
+    const {cells, score, norms} = s2CellMap(s2CellSums(reference, {rgba: decoded}, width, height), width, height, at);
+    if (!at) { at = {norms}; score0 = score; }
+    maps.push(cells); rates.push(r);
+    v6Trace(`s2 field scale ${s} mapped`);
+  }
+  decoded = null;
+  if (yield 0.6) return [];
+  let T = 0, Rt = 0;
+  for (let i = 0; i < n; i++) { T += maps[0][i]; Rt += rates[0][i]; }
+  const fieldFor = lamFactor => {
+    const lam = lamFactor * (30 / Math.max(8, 100 - score0)), field = new Float64Array(n).fill(1);
+    for (const b of layout) {
+      const t = TRANSFORMS[b.id], bw = Math.max(1, t.width / 8), bh = Math.max(1, t.height / 8);
+      let best = 0, bestJ = Infinity;
+      for (let k = 0; k < FIELD_SCALES.length; k++) {
+        let m = 0;
+        for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) m += maps[k][(b.by + y) * stride + b.bx + x];
+        const J = m / T + lam * rates[k][b.by * stride + b.bx] / Rt;
+        if (J < bestJ) { bestJ = J; best = k; }
+      }
+      for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) field[(b.by + y) * stride + b.bx + x] = FIELD_SCALES[best];
+    }
+    return field;
+  };
+  const out = [];
+  for (const lamFactor of FIELD_LAMBDAS) {
+    const field = fieldFor(lamFactor), img = yield* fieldImage(prepared, quality, field, layout);
+    out.push({...(yield* scored(img, writeImage(img, 7))), img: null, layout, field});
+    v6Trace(`s2 field ${lamFactor} ranked`);
+  }
+  maps.length = rates.length = 0;
+  if (yield 0.75) return out;
+  const best = choose(out, c0);
+  const base = v6Image(prepared, quality, {keepPlanes: true, calibrationRow: 's2e8', noLevels: false, fieldScale: best.field}, false);
+  const again = yield* s2GuidedBlocksSteps(base, width, height, reference, [4, 5, 6, 7], GUIDED_LAMBDA, null);
+  out.push({...(yield* scored(again.s2Var, writeImage(again.s2Var, 7))), img: null, layout: again.layout, field: best.field});
+  v6Trace('s2 field search ranked');
+  return out;
 }
 
 export function certain(order, w, c0) {

@@ -8,7 +8,7 @@ import {inspectICC} from './icc-profile.mjs';
 import {profileFields} from './icc-transform.mjs';
 
 const ICC_LEVEL5_BYTES = 4 * 1024 * 1024, ICC_WINDOW = 1 << 20;
-const LITERAL = uintConfig(8), LENGTH = uintConfig(4), DISTANCE = uintConfig(4);
+const LITERAL = /* @__PURE__ */ uintConfig(8), LENGTH = /* @__PURE__ */ uintConfig(4), DISTANCE = /* @__PURE__ */ uintConfig(4);
 const MIN_LENGTH = 7, MIN_SYMBOL = 256;
 
 function varint(out, value) {
@@ -105,10 +105,10 @@ export function prepareICC(profile, {level, compression = 'auto', colorSpace, co
   if (colorEncoding !== undefined) {
     if (!colorEncoding || typeof colorEncoding !== 'object' || Array.isArray(colorEncoding) ||
         Object.entries(colorEncoding).some(([key, value]) => key !== 'space' && value !== undefined))
-      throw fault('JXL_INPUT', 'An ICC colorEncoding declares only its explicit space. The profile supplies all other color fields.');
+      throw fault('JXL_INPUT', 'With ICC, colorEncoding gives only space.');
     space = new Map([['rgb', 0], ['gray', 1], ['xyb', 2], ['unknown', 3]]).get(colorEncoding.space);
     if (space === undefined || (space === 1) !== (colorChannels === 1))
-      throw fault('JXL_INPUT', 'ICC colorEncoding.space must agree with its one- or three-component channel context.');
+      throw fault('JXL_INPUT', 'ICC colorEncoding.space does not match the channel count.');
   }
   const selectedLevel = level ?? (colorSpace === 'cmyk' || profile.length > ICC_LEVEL5_BYTES ? 10 : 5);
   const bytes = Uint8Array.from(profile), transformed = transformedICC(bytes);
@@ -138,7 +138,7 @@ export function iccSpace(profile, {level, compression} = {}, made) {
   return space;
 }
 export function headerOf(space, xyb = false) {
-  if (xyb) {
+  if (xyb && !(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true)) {
     if (!named.has(space)) named.set(space, namedHeader(profileFields(space.icc)));
     const made = named.get(space);
     if (made) return made;

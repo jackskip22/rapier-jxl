@@ -67,7 +67,7 @@ export function* photoXYBBands(data, width, height, quality, options, color) {
   const bandHeight = color ? Math.max(64, Math.ceil(height / (rounds * offloadWorkers()) / 64) * 64) : serial, bands = [], target = color && bandTarget(width, height, false);
   for (let y = 0; y < height; y += bandHeight) {
     const h = Math.min(bandHeight, height - y);
-    bands.push({kind: 'band', data, width, h, quality, color, fast: !!options.fastGaborish, from: Math.max(0, y - PHOTO_BAND_MARGIN), to: Math.min(height, y + h + PHOTO_BAND_MARGIN), y, target});
+    bands.push({kind: 'band', data, width, h, quality, color, fast: !!options.fastGaborish, uploadProfile: options.calibrationRow === 'upload', uploadFlat: options.calibrationRow === false, from: Math.max(0, y - PHOTO_BAND_MARGIN), to: Math.min(height, y + h + PHOTO_BAND_MARGIN), y, target});
   }
   if (color) yield {offload: 'prefetch', tasks: bands, at: done => done};
   let image, opaque = true, counted = true;

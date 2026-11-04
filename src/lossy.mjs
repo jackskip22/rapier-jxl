@@ -36,6 +36,14 @@ export function* lossySteps(rgba, width, height, options = {}) {
   const samples = typeof options.colorSpace === 'object' ? {native8: true} : admitSampleFormat(rgba, options), quality = options.quality ?? 90;
   if (!samples.native8) return yield* nativeSteps(rgba, width, height, {quality, samples});
   const {shape = inspectPixels(rgba, width, height, {palette: false}), colorSpace} = options;
+  const sections = yield* lossySections(rgba, width, height, quality, shape);
+  const {colour, alpha} = shape, header = new BitWriter(256);
+  writeImageHeader(header, width, height, colour, alpha, {colorSpace});
+  writeModularFrameHeader(header, {alpha, shift: width > 256 || height > 256 ? 3 : 1});
+  return assembleCodestream(header, sections);
+}
+
+export function* lossySections(rgba, width, height, quality, shape) {
   const distance = distanceFromQuality(quality);
   if (!(distance > 0)) throw new Error('lossy encoding needs a quality below 100');
   const {colour, alpha, channels: count} = shape;
@@ -112,9 +120,6 @@ export function* lossySteps(rgba, width, height, options = {}) {
     yield ++done / total;
   }
 
-  const header = new BitWriter(256);
-  writeImageHeader(header, width, height, colour, alpha, {colorSpace});
-  writeModularFrameHeader(header, {alpha, shift: width > 256 || height > 256 ? 3 : 1});
   const writers = Array.from({length: layout.single ? 1 : 2 + dcGroups + acGroups}, () => null);
   const global = writers[0] = new BitWriter(65536);
   global.write(1, 1);
@@ -131,5 +136,5 @@ export function* lossySteps(rgba, width, height, options = {}) {
     for (const piece of section.pieces) codeChannel(w, histograms[histogramOf.get(piece.c) + 1].code, dataOf(piece), piece.rect.w, piece.rect.h, piece.leaf);
     yield ++done / total;
   }
-  return assembleCodestream(header, finishSections(writers));
+  return finishSections(writers);
 }

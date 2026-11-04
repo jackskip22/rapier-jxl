@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 
+import {gpuDevice} from './gpu-device.mjs';
 import {gpuBlocks16Costs, gpuBlocks16Levels, gpuBlocks16Pipelines, gpuBlocks16EnergyHook} from './gpu-blocks16.mjs';
 import {gpuBlocksCosts, gpuBlocksLevels, gpuBlocksPipelines, gpuBlocksLevelsPipelines} from './gpu-blocks.mjs';
 
@@ -408,7 +409,7 @@ export class GpuCore {
     device.queue.writeBuffer(rgba, 0, data.buffer, data.byteOffset + from * width * 4, width * (to - from) * 4);
     const {K: constants} = gcConstants(lib, null, null, options), K = buffer(constants.byteLength, usage);
     device.queue.writeBuffer(K, 0, constants);
-    const t = [buffer(n * 8, usage), buffer(n * 8, usage), buffer(n * 8, usage)], xa = buffer(n * 8, usage), xb = [buffer(n * 8, usage), buffer(n * 8, usage), buffer(n * 8, usage)];
+    const t = [buffer(n * 8, usage), buffer(n * 8, usage), buffer(n * 8, usage)], xa = buffer(n * 8, usage), xb = buffer(n * 8, usage);
     const pass = encoder.beginComputePass(), run = (name, buffers) => {
       const groups = Math.ceil(n / GC_WG), groupsX = Math.min(groups, 65535), u = buffer(48, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
       device.queue.writeBuffer(u, 0, new Uint32Array([W, H, width, to - from, W / 8, H / 8, groupsX, 0, 0, 0, 0, 0x3f800000]));
@@ -420,11 +421,12 @@ export class GpuCore {
     run('xyb', [rgba, K, ...t]);
     const strength = options.gaborish?.strength ?? 1;
     for (let c = 0; c < 3; c++) {
-      run('gab', [t[c], t[c], xa, K]); run('gab', [t[c], xa, xb[c], K]); run('gab', [t[c], xb[c], xa, K]); run('gab', [t[c], xa, xb[c], K]);
-      if (strength !== 1) run('finish', [t[c], xb[c], K]);
+      run('gab', [t[c], t[c], xa, K]); run('gab', [t[c], xa, xb, K]); run('gab', [t[c], xb, xa, K]);
+      if (strength !== 1) { run('gab', [t[c], xa, xb, K]); run('finish', [t[c], xb, K]); }
+      else run('gabLast', [t[c], xa, K]);
     }
     pass.end();
-    return {planes: strength !== 1 ? t : xb, row: y0 - from};
+    return {planes: t, row: y0 - from};
   }
 
   async planes(data, width, height, options, band, rows = 512) {
@@ -588,18 +590,4 @@ async function gcAnswer(device, request, strict) {
   }
 }
 
-let gcDevice;
-export function gpuCoreDevice() {
-  if (gcDevice) return gcDevice;
-  const pending = (async () => {
-    const adapter = await globalThis.navigator?.gpu?.requestAdapter({powerPreference: 'high-performance'});
-    if (!adapter || adapter.info.isFallbackAdapter) return null;
-    const device = await adapter.requestDevice({requiredLimits: {maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxBufferSize: adapter.limits.maxBufferSize}});
-    device.lost.then(() => { if (gcDevice === pending) gcDevice = undefined; });
-    return device;
-  })().catch(() => null).then(device => {
-    if (!device && gcDevice === pending) gcDevice = undefined;
-    return device;
-  });
-  return gcDevice = pending;
-}
+export const gpuCoreDevice = gpuDevice;

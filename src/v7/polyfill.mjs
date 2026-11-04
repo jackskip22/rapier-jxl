@@ -1,4 +1,4 @@
-const PROBE = 'data:image/jxl;base64,/woAEBBQXAgIAgEAlAJLGJuccYQDOIADOCBKwDkFAQAgRIAIEAEiQOT/kXv6HlpnV1VVVSVJkhBQd3d3d3f///+/VW9mZmYG/t+/57+HxpxzrrXPvUmSJARUVVVVVVX////Pva+7u7sb/t+/57+HxpxzrrXPvUmSJARUVVVVVVX////Pva+7u7sb/t+/57+HxpxzrrXPvUmSJARUVVVVVVX////Pva+7u7v7AiEAePh79GM=';
+const PROBE = 'data:image/jxl;base64,/woYAAaASAgCAQBkAEsYkw5wiBJQIwEA4eShY0EWAPoFIgDov58=';
 const probes = new WeakMap(), installations = new WeakMap(), lastInstallations = new WeakMap();
 export function supportsJXL(document = globalThis.document, probeURL = PROBE) {
   if (!document) return Promise.resolve(false);
@@ -44,7 +44,7 @@ function admit(options) {
     if (typeof rootMargin !== 'string') throw refuse('rootMargin is a string.');
     const Observer = (document ?? globalThis.document)?.defaultView?.IntersectionObserver ?? globalThis.IntersectionObserver;
     if (typeof Observer === 'function') {
-      try { new Observer(() => {}, {rootMargin}).disconnect(); } catch { throw refuse('rootMargin is a CSS margin in pixels or percent, such as "1000px".'); }
+      try { new Observer(() => {}, {rootMargin}).disconnect(); } catch { throw refuse('rootMargin is in pixels or percent, such as "1000px".'); }
     }
   }
   for (const name of ['workerFactory', 'decode', 'onError']) if (own[name] !== undefined && typeof own[name] !== 'function') throw refuse(`${name} is a function.`);

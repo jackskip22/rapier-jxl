@@ -545,7 +545,8 @@ export async function gpuBlocks16Costs(device, request, ds, core) {
         const valid = (flag === 0 || flag === 1) && D >= 0 && R >= 0 && e >= 0 && Number.isFinite(D) && Number.isFinite(R) && Number.isFinite(e);
         if (!valid || flag === 1) { into.D[b] = 0; into.R[b] = 0; into.De[b] = Infinity; into.Re[b] = 0; flagged++; continue; }
         into.D[b] = D; into.R[b] = R;
-        into.De[b] = e + mask.weightDoubt * D;
+        const wd = mask.weightDoubt, wDoubt = typeof wd === 'number' ? wd : k < 4 ? wd[b] : Math.max(wd[b], wd[b + 1], wd[b + stride], wd[b + stride + 1]);
+        into.De[b] = e + wDoubt * D;
         into.Re[b] = b16Sum(k < 4 ? 64 : 256) * R;
       }
       costs.set(0, c8); costs.set(4, c16);

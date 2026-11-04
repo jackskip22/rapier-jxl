@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 import {PHOTO_LIMITS} from './limits.mjs';
 import {complete, part} from './bits.mjs';
-import {V6, GABORISH} from './photo-v6.mjs';
+import {V6, GABORISH, uploadPicture} from './photo-v6-settings.mjs';
 import {photoXYBBands} from './photo-bands.mjs';
+import {screenLike} from './screen.mjs';
 import {admitOptions, admitPixels, fault, job} from './admit.mjs';
 import {admitSampleFormat} from './admit-samples.mjs';
 import {admitEffort} from './effort-level.mjs';
@@ -39,18 +40,19 @@ export function encodePhotoSteps(data, width, height, options = {}) {
     return exactPhotoExtraSteps(data, width, height, options, samples);
   const extras = admitPhotoExtras(data, layout, options);
   if (options.orientation !== undefined && options.orientation !== 1 && (quality >= 100 || !samples.native8))
-    throw fault('JXL_UNSUPPORTED', 'An exact photo, or one whose samples are not eight-bit with sRGB transfer, does not carry orientation in this version; rotate the pixels.');
+    throw fault('JXL_UNSUPPORTED', 'Orientation needs a lossy 8-bit sRGB photo; rotate the pixels.');
   if (!samples.native8 && quality < 100 && (strategyOptions.variable || progression || noiseLut || lfLevels || authoredOrderPasses || extras || layout.factor !== 1 || layout.colorTransform))
-    throw fault('JXL_INPUT', 'Advanced VarDCT transforms require eight-bit RGB samples with sRGB transfer.');
+    throw fault('JXL_INPUT', 'Advanced VarDCT transforms need 8-bit sRGB.');
   if (quality < 100 && lfLevels) {
-    if (colorSpace !== 'srgb') throw fault('JXL_INPUT', 'Low-frequency frame pyramids currently require sRGB photographic pixels.');
+    if (colorSpace !== 'srgb') throw fault('JXL_INPUT', 'LF frame pyramids need sRGB photo pixels.');
   }
   return job(steps(data, layout.codedWidth, layout.codedHeight, {quality, colorSpace, effort, samples, options, progression, noiseLut, strategyOptions, filter, lfLevels, authoredOrderPasses, layout, extras}));
 }
 
-function* photoV6Producer(data, width, height, quality, gaborish = true, effort = 7) {
-  if (gaborish && effort <= 3) { yield 0; return complete(photoXYBSteps(data, width, height, quality, {...V6, fast: true})); }
-  if (gaborish) return yield* photoXYBBands(data, width, height, quality, {...V6, ...GABORISH});
+function* photoV6Producer(data, width, height, quality, gaborish = true, effort = 7, ordinary = false) {
+  if (gaborish && effort <= 3) { yield 0; return complete(photoXYBSteps(data, width, height, quality, {...V6, fast: true, fastBand: true})); }
+  if (gaborish) return yield* photoXYBBands(data, width, height, quality,
+    ordinary && (effort === 4 || effort === 5) && !screenLike(data, width, height) ? uploadPicture(data, width, height) : {...V6, ...GABORISH});
   yield 0;
   return complete(photoXYBSteps(data, width, height, quality, V6));
 }
@@ -61,6 +63,9 @@ function* steps(data, width, height, {quality, colorSpace, effort, samples, opti
   const padded = padPhotoLayout(data, width, height, layout, noiseLut);
   if (padded) ({data, width, height} = padded);
   const variable = strategyOptions.variable;
+  const ordinary = !variable && effort >= 4 && !padded && layout.factor === 1 && !layout.colorTransform && !layout.xybTransform && !extras &&
+    !progression && !noiseLut && !lfLevels && !authoredOrderPasses && options.orientation === undefined && colorSpace === 'srgb' &&
+    preferXYB(data, width, height);
   let frames;
   const finish = bytes => {
     if (frames) bytes = prependLFFrames(bytes, frames);
@@ -68,7 +73,7 @@ function* steps(data, width, height, {quality, colorSpace, effort, samples, opti
     return padded ? cropPhotoCanvas(bytes, layout.width, layout.height) : bytes;
   };
   const producer = variable ? strategyCoefficientSteps(data, width, height, quality, colorSpace, options, strategyOptions) :
-    colorSpace === 'srgb' && (lfLevels || noiseLut || preferXYB(data, width, height)) ? photoV6Producer(data, width, height, quality, !lfLevels && !noiseLut, effort) :
+    colorSpace === 'srgb' && (lfLevels || noiseLut || preferXYB(data, width, height)) ? photoV6Producer(data, width, height, quality, !lfLevels && !noiseLut, effort, ordinary) :
     photoCoefficientSteps(data, width, height, quality, colorSpace);
   const image = yield* part(producer, 0, lfLevels ? 3 : 2);
   applyPhotoLayout(image, layout, !!padded);
@@ -80,11 +85,8 @@ function* steps(data, width, height, {quality, colorSpace, effort, samples, opti
   frames = lfLevels && (yield* part(lfFrameSteps(image, lfLevels), 1, 3));
   if (!variable) {
     const bytes = yield* part(coefficientAnsSteps(image, effort), lfLevels ? 2 : 1, lfLevels ? 3 : 2);
-    const ordinary = effort >= 4 && !padded && layout.factor === 1 && !layout.colorTransform && !layout.xybTransform && !extras &&
-      !progression && !noiseLut && !lfLevels && !authoredOrderPasses && options.orientation === undefined && colorSpace === 'srgb' &&
-      preferXYB(data, width, height);
     if (!ordinary) return finish(bytes);
-    const floor = complete(coefficientAnsSteps(complete(photoXYBSteps(data, width, height, quality, {...V6, fast: true})), 1));
+    const floor = complete(coefficientAnsSteps(complete(photoXYBSteps(data, width, height, quality, {...V6, fast: true, fastBand: true})), 1));
     return finish(floor.length <= bytes.length ? floor : bytes);
   }
   const shared = {}, plan = effort >= 3 ? {clusters: {maxClusters: 32, newClusterCost: 160}} : {};

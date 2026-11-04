@@ -8,43 +8,22 @@ import {admitOutputSize} from './admit.mjs';
 import {ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {codeChannel} from './modular-channel.mjs';
 
-export function screenLike(rgba, width, height) {
-  if (width < 32 || height < 32) return false;
-  let flat = 0;
-  for (let s = 0; s < 256; s++) {
-    const x = Math.min(width - 2, Math.floor((((s % 16) * 16 + ((s * 13) & 15)) * width) / 256));
-    const y = Math.min(height - 2, Math.floor((((s >> 4) * 16 + ((s * 7) & 15)) * height) / 256));
-    const p = (y * width + x) * 4,
-      q = p + 4,
-      r = p + width * 4;
-    if (
-      rgba[p] === rgba[q] &&
-      rgba[p + 1] === rgba[q + 1] &&
-      rgba[p + 2] === rgba[q + 2] &&
-      rgba[p + 3] === rgba[q + 3] &&
-      rgba[p] === rgba[r] &&
-      rgba[p + 1] === rgba[r + 1] &&
-      rgba[p + 2] === rgba[r + 2] &&
-      rgba[p + 3] === rgba[r + 3]
-    )
-      flat++;
-    if (flat + 255 - s < 192) return false;
-  }
-  return flat >= 192;
-}
-
 export const CAPTURE_FLAT = 64;
-export function flatSamples(rgba, width, height) {
+export function flatSamples(rgba, width, height, min = 0, stride = width, x0 = 0, y0 = 0) {
   if (width < 32 || height < 32) return 0;
   let flat = 0;
   for (let s = 0; s < 256; s++) {
     const x = Math.min(width - 2, Math.floor((((s % 16) * 16 + ((s * 13) & 15)) * width) / 256));
     const y = Math.min(height - 2, Math.floor((((s >> 4) * 16 + ((s * 7) & 15)) * height) / 256));
-    const p = (y * width + x) * 4, q = p + 4, r = p + width * 4;
+    const p = ((y0 + y) * stride + x0 + x) * 4, q = p + 4, r = p + stride * 4;
     if (rgba[p] === rgba[q] && rgba[p + 1] === rgba[q + 1] && rgba[p + 2] === rgba[q + 2] && rgba[p + 3] === rgba[q + 3] &&
         rgba[p] === rgba[r] && rgba[p + 1] === rgba[r + 1] && rgba[p + 2] === rgba[r + 2] && rgba[p + 3] === rgba[r + 3]) flat++;
+    if (flat + 255 - s < min) return 0;
   }
   return flat;
+}
+export function screenLike(rgba, width, height) {
+  return flatSamples(rgba, width, height, 192) >= 192;
 }
 
 const screenValueAt = (rgba, i, c, shape) => rgba[i + (shape.colour === 1 && c === 1 ? 3 : c)];
@@ -116,16 +95,6 @@ function screenPlanned(rgba, width, meta, transforms, setup) {
     fill: (planes, x0, y0, w, h) => fill(planes, rgba, width, x0, y0, w, h)};
 }
 
-function indexedPlan(rgba, width, scanned, shape) {
-  const colours = scanned.colours, channels = shape.channels, n = colours.length, rows = new Int16Array(n * channels);
-  for (let c = 0; c < channels; c++)
-    for (let i = 0; i < n; i++)
-      rows[c * n + i] = (colours[i] >>> (8 * (shape.colour === 1 && c === 1 ? 3 : c))) & 255;
-  const meta = [{plane: rows, width: n, height: channels}];
-  const transforms = [{type: 'palette', beginC: 0, numC: channels, nbColors: n}];
-  return screenPlanned(rgba, width, meta, transforms, {mode: 'frequency', count: 1, channels, colour: shape.colour, index: scanned});
-}
-
 export function screenPlan(rgba, width, height, shape, mode = 'global') {
   const channels = shape.channels,
     meta = [],
@@ -133,8 +102,6 @@ export function screenPlan(rgba, width, height, shape, mode = 'global') {
   if (mode === 'global' || mode === 'frequency') {
     const table = scanPalette(rgba, mode === 'frequency');
     if (!table) return null;
-    if (mode === 'frequency' && shape.colour === (table.grey ? 1 : 3) && shape.alpha === table.alpha)
-      return indexedPlan(rgba, width, table, shape);
     const colours = table.colours, n = colours.length, rows = new Int16Array(n * channels);
     for (let c = 0; c < channels; c++)
       for (let i = 0; i < n; i++)

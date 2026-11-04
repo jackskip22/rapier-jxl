@@ -29,7 +29,7 @@ function admitPicture(input, options) {
   const codedWidth = Math.ceil(width / upsampling), codedHeight = Math.ceil(height / upsampling);
   const channels = color.map(data => ({...admitChannelPrecision(data, options), width: codedWidth, height: codedHeight, shift: 0}));
   for (const channel of channels) {
-    if (channel.data.length !== codedWidth * codedHeight) throw fault('JXL_INPUT', 'Each color plane contains ceil(width/upsampling) times ceil(height/upsampling) samples.');
+    if (channel.data.length !== codedWidth * codedHeight) throw fault('JXL_INPUT', 'Each color plane has ceil(width/upsampling) * ceil(height/upsampling) samples.');
     if (channel.bitDepth !== channels[0].bitDepth || channel.exponentBits !== channels[0].exponentBits)
       throw fault('JXL_INPUT', 'Color planes share one sample precision.');
   }
@@ -59,12 +59,12 @@ function admitPicture(input, options) {
     transformData: prepareUpsamplingWeights(options.upsamplingWeights)};
   if (options.icc !== undefined) {
     if (options.colorSpace !== undefined || options.transferFunction !== undefined)
-      throw fault('JXL_INPUT', 'ICC supplies color meaning; omit other color declarations.');
+      throw fault('JXL_INPUT', 'ICC sets the color; omit other color fields.');
     Object.assign(metadata, prepareICC(options.icc, {level: options.level, compression: options.iccCompression,
       colorSpace: extras.some(channel => channel.kind === 4) ? 'cmyk' : undefined, colorEncoding: options.colorEncoding}));
   } else {
     if (options.colorEncoding?.space === 'xyb' && (options.colorSpace !== undefined || options.transferFunction !== undefined))
-      throw fault('JXL_INPUT', 'Original XYB color has implicit color fields; omit colorSpace and transferFunction.');
+      throw fault('JXL_INPUT', 'XYB color is implicit; omit colorSpace and transferFunction.');
     Object.assign(metadata, prepareColorEncoding(options.colorEncoding ?? {space: color.length === 1 ? 'gray' : 'rgb'},
       {...options, transferFunction: options.transferFunction ?? (channels[0].exponentBits ? 'linear' : 'srgb')}));
   }
@@ -215,7 +215,7 @@ export function encodeChannelsSteps(image, options = {}) {
     const a = config.metadata.extraChannelData, b = preview.metadata.extraChannelData;
     const bytes = a.finish(), other = b.finish();
     if (config.colorCount !== preview.colorCount || config.metadata.bitDepth !== preview.metadata.bitDepth || config.metadata.exponentBits !== preview.metadata.exponentBits ||
-        a.bitLength !== b.bitLength || bytes.some((value, i) => value !== other[i])) throw fault('JXL_INPUT', 'Preview channels must have the same color count, precision and extra-channel metadata as the main image.');
+        a.bitLength !== b.bitLength || bytes.some((value, i) => value !== other[i])) throw fault('JXL_INPUT', 'Preview channels must match the main image\'s colors, precision and extra channels.');
     config.preview = preview;
     config.metadata.modular16bit &&= preview.metadata.modular16bit;
     config.metadata.imageFields = prepareImageFields({...options, preview: {width: preview.width, height: preview.height}});

@@ -1,5 +1,17 @@
 # Changelog
 
+## 8.2.0 (2026-11-04)
+
+- New `rapier-jxl/capture-complete` for page screenshots: the page lossy as VarDCT, text lossless in a small modular atlas placed as patches, in one file.
+- Page screenshots are smaller than WebP on 24 of 47 test pages; the rest are being worked on for 8.2.x.
+- At WebP's file size, page screenshots keep text lossless and photos closer to the original: SSIMULACRA 2 +6, CVVDP +0.04 on 30 of 47 test pages.
+- `fidelity: {webp: 0.8}` takes the number you pass to `canvas.toBlob('image/webp', 0.8)`.
+- Repeated letters and words are stored once, as JPEG XL patches. Pages over 40 MP are coded band by band, so memory stays bounded.
+- New `fit` (best quality under a size limit) and `variants` (several sizes from one upload).
+- `npx rapier-jxl --json` prints one JSON line per file and a summary, for scripts and coding agents. A rerun leaves finished files untouched. `SKILL.md` ships in the package.
+- JPEG recompression up to 64 MP. Ultra HDR and motion photos restore exactly. HEIC and animated AVIF encode.
+- New `rapier-jxl/svg-jxl` converts the images inside any SVG to JPEG XL where that makes them smaller; new `rapier-jxl/page-rects` finds the text and photos on a page.
+
 ## 8.1.0 (2026-11-01)
 
 - Faster effort 1 for screenshots and previews, and faster low-colour bounded captures.

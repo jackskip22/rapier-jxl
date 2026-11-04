@@ -17,6 +17,7 @@ export function worthFastOrder(lumaCounts, lumaOrder, blocks) {
 }
 
 export function* coefficientOrderSteps(components, bucket = 8, adaptiveFast = false) {
+  if (!adaptiveFast && components.every(c => c.natural)) { yield 1; return ordersFromCounts(components.map(c => Uint32Array.from({length: 64}, (_, k) => k ? c.natural[SCAN[k]] : 0)), bucket); }
   const histograms = components.map(() => new Uint32Array(64)), total = components.reduce((n, c) => n + c.coeffs.length, 0);
   let done = 0;
   const natural = new Uint32Array(64);

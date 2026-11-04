@@ -2,19 +2,8 @@
 
 import {exactCbrt, exactPow, exactTan, exactSin, exactCos, exactExp, EXACT_PI} from './exact-math.mjs';
 const SIGMA = 1.5, C2 = 0.0009, SCALES = 6;
-const S2_WEIGHTS = Float64Array.of(0.0, 0.0007376606707406586, 0.0, 0.0, 0.0007793481682867309, 0.0, 0.0, 0.0004371155730107379,
-  0.0, 1.1041726426657346, 0.00066284834129271, 0.00015231632783718752, 0.0, 0.0016406437456599754, 0.0, 1.8422455520539298,
-  11.441172603757666, 0.0, 0.0007989109436015163, 0.000176816438078653, 0.0, 1.8787594979546387, 10.94906990605142, 0.0,
-  0.0007289346991508072, 0.9677937080626833, 0.0, 0.00014003424285435884, 0.9981766977854967, 0.00031949755934435053,
-  0.0004550992113792063, 0.0, 0.0, 0.0013648766163243398, 0.0, 0.0, 0.0, 0.0, 0.0, 7.466890328078848, 0.0,
-  17.445833984131262, 0.0006235601634041466, 0.0, 0.0, 6.683678146179332, 0.00037724407979611296, 1.027889937768264,
-  225.20515300849274, 0.0, 0.0, 19.213238186143016, 0.0011401524586618361, 0.001237755635509985, 176.39317598450694, 0.0,
-  0.0, 24.43300999870476, 0.28520802612117757, 0.0004485436923833408, 0.0, 0.0, 0.0, 34.77906344483772, 44.835625328877896,
-  0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0008680556573291698, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0005313191874358747, 0.0,
-  0.00016533814161379112, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0004179171803251336, 0.0017290828234722833, 0.0, 0.0020827005846636437,
-  0.0, 0.0, 8.826982764996862, 23.19243343998926, 0.0, 95.1080498811086, 0.9863978034400682, 0.9834382792465353,
-  0.0012286405048278493, 171.2667255897307, 0.9807858872435379, 0.0, 0.0, 0.0, 0.0005130064588990679, 0.0,
-  0.00010854057858411537);
+import {S2_WEIGHTS, finalCurve} from './ssimulacra2-weights.mjs';
+export {finalCurve};
 export {S2_WEIGHTS as SSIMULACRA2_WEIGHTS};
 
 const S2_OPSIN = [0.30, 0.622, 0.078, 0.23, 0.692, 0.078, 0.24342268924547819, 0.20476744424496821, 0.55180986650955360];
@@ -387,7 +376,7 @@ export function ssimulacra2(reference, distorted, width, height, {wantMap = fals
   if (native && wantMap) throw new Error('The native score has no map.');
   const fixed = reference?.[S2_REFERENCE];
   if (fixed && (fixed.width !== width || fixed.height !== height || fixed.native !== native)) {
-    throw new RangeError('SSIMULACRA2 reference dimensions and arithmetic must match.');
+    throw new RangeError('SSIMULACRA2 reference size and arithmetic differ.');
   }
   if (fixed?.busy) throw new Error('SSIMULACRA2 reference is already in use.');
   let lastSourceScale = -1;
@@ -448,11 +437,6 @@ export function ssimulacra2(reference, distorted, width, height, {wantMap = fals
   }
 }
 
-export function finalCurve(sum) {
-  let s = sum * 0.9562382616834844;
-  s = 2.326765642916932 * s - 0.020884521182843837 * s * s + 6.248496625763138e-5 * s * s * s;
-  return s > 0 ? 100 - 10 * exactPow(s, 0.6276336467831387) : 100;
-}
 
 function shareChannel(share, n, scales, s, c, per, {d, dd}) {
   const base = c * scales * 6 + s * 6, wt = k => S2_WEIGHTS[base + k];

@@ -1,81 +1,155 @@
 // SPDX-License-Identifier: MIT
-import {BitWriter, complete, packSigned} from './bits.mjs';
-import {admitOptions, admitPixels, admitOutputSize, fault, job} from './admit.mjs';
+import {BitWriter, packSigned} from './bits.mjs';
+import {admitOptions, admitPixels, admitOutputSize, answer, fault, guard} from './admit.mjs';
 import {SCREEN_INTEGER_CONFIGS, screenDistanceMap} from './screen-codes.mjs';
-import {writeHeaderFields, writeModularFrameHeader, groupLayout, groupRect, assembleCodestream} from './frame.mjs';
-import {pixelKeys, screenColumns, screenCrop, screenRegions, writeScreenBackground} from './screen-crop.mjs';
-import {LZ77, leaf, split, writeTree, writeModularHeader} from './modular.mjs';
+import {fullFrame, groupLayout, groupRect, writeHeaderFields as generalHeader, writeModularFrameHeader as generalFrame, assembleCodestream as generalAssembly} from './frame.mjs';
+import {writeCaptureHeaderFields, writeCaptureFrameHeader, assembleCaptureCodestream, writeCaptureModularHeader} from './capture-headers.mjs';
+import {pixelKeys, screenColumns, screenCrop, screenRegions, viewPixels, writeScreenBackground} from './screen-crop.mjs';
+import {LZ77, leaf, split, writeTree, writeModularHeader as generalModular} from './modular.mjs';
 import {WEIGHTED_PREDICTOR, WEIGHTED_PROPERTY} from './weighted-policy.mjs';
-import {captureCopies, captureHold, captureRelease, captureLiterals, capturePieceCounts, capturePrices, LOG_MANTISSA, captureResiduals, captureScan, treeArena, captureWeightedPieces, compileCaptureKernels, requireCaptureKernels, WEIGHTED_BANDS, WEIGHTED_CONTEXT} from './capture-kernels.mjs';
+import {kernelFail, captureCopies, captureHold, captureRelease, captureLiterals, captureTokens, capturePieceCounts, capturePrices, LOG_MANTISSA, captureScan, captureDenseTiles, treeArena, captureWeighted, captureWeightedLanes, captureWeightedPieces, compileCaptureKernels, requireCaptureKernels, WEIGHTED_BANDS, WEIGHTED_CONTEXT} from './capture-kernels.mjs';
+import {capturePatches, capturePeel, fillPatches, writeAtlasFrameHeader, writeCapturePatches, writePatchedFrameHeader} from './capture-patches.mjs';
 import {buildCode, canonicalCodes, compactCode, hybridToken, prefixCodeBits, uintConfig, writeHistograms, writeUintConfig} from './prefix.mjs';
 
-const DIM = 1024, PALETTE_LIMIT = 16384, RARE_PALETTE = 8192;
+const SMALL_FLOOR = 1 << 16, NEAREST_LIMIT = 4096, DIM = 1024, PALETTE_LIMIT = 16384, RARE_PALETTE = 8192, SMALL_PICTURE = 1 << 18;
+const NEVER = 1 << 30;
+export const DEFAULT_EFFORT = 3;
+const L3 = {indexDepth: 24, lazyUnder: NEVER, nice: NEVER, tree: {split: 96, min: 128, nodes: 48}, prices: 4, weighted: 'sample',
+  palette: 'scan', routes: 'rare', alphaPlane: 'soft', patches: 'one', floor: false, oneFrame: true, smallGroups: true, needs: []};
+const L4 = {...L3, rowCopies: true, indexRamp: true, patches: 'peel', indexDepth: 64, tree: {split: 96, min: 128, nodes: 96}, prices: 50, routes: 'all', alphaPlane: 'all', floor: true, oneFrame: false, smallGroups: false};
+const L5 = {...L4, weighted: 'both', palette: 'both', rcts: [6]};
+const L6 = {...L5, trees: 'learned', needs: ['trees']};
+const L7 = {...L6, ans: true, gpu: true, needs: ['ans', 'trees']};
+const NINE = [{peelLeast: 0}, {minCopy: 5}, {glyph: 10}, {common: 32}, {minCopy: 4}, {glyph: 24}, {common: 8}, {lazyUnder: 8},
+  {learnRcts: [6, 0, 1, 2, 3, 4, 5], learn: {samples: 1 << 22}}, {signs: true, tree: {split: 32, min: 32, nodes: 384}}, {morton: true},
+  {channels: true}, {indexPredict: true}];
+const L8 = {...L7, also: NINE.slice(0, 4).map(delta => ({...L7, ...delta, delta}))};
+const L9 = {...L7, needs: ['ans', 'trees', 'signs'], combine: true, also: NINE.map(delta => ({...L7, ...delta, delta}))};
+export const LEVELS = [null,
+  {...L3, indexDepth: 4, lazyUnder: 0, nice: 16, tree: {split: 96, min: 512, nodes: 16}, prices: 2, routes: 'one', alphaPlane: 'never', patches: false,
+    gradient: true},
+  {...L3, indexDepth: 16, lazyUnder: 32, routes: 'one', alphaPlane: 'never', patches: false},
+  L3, L4, L5, L6, L7, L8, L9];
+let L = L3;
+export const CAPTURE_TOOLS = Symbol('capture tools');
+export const CAPTURE_TOOLS_LEAN = Object.freeze({top: 5, next: 'rapier-jxl/capture-complete'});
+let tools = CAPTURE_TOOLS_LEAN;
+const writeHeaderFields = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true ? writeCaptureHeaderFields : generalHeader;
+const writeModularFrameHeader = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true ? writeCaptureFrameHeader : generalFrame;
+const writeModularHeader = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true ? writeCaptureModularHeader : generalModular;
+const assembleCodestream = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true ? assembleCaptureCodestream : generalAssembly;
 
 export {compileCaptureKernels};
 export const CAPTURE_PREDICTOR_PROBE = Symbol('capture predictor choices');
 export const CAPTURE_BASE = Symbol('capture base layer');
-
-function scanColours(rgba, stride, x0, y0, w, h, limit, rows = false) {
-  limit = Math.min(limit, w * h);
-  const fast = captureScan(pixelKeys(rgba), stride, x0, y0, w, h, limit, rows);
-  return fast === undefined ? scanColoursScript(rgba, stride, x0, y0, w, h, limit, rows) : fast;
+export const CAPTURE_PATCHES = Symbol('capture patches');
+export const CAPTURE_TIMING = Symbol('capture stage timing');
+export const CAPTURE_HELPERS = Symbol('capture helpers');
+export const CAPTURE_GPU = Symbol('capture gpu');
+export const CAPTURE_TRACE = Symbol('capture byte trace');
+let timing = null, inner = 0;
+function timed(stage, work) {
+  if (typeof __RAPIER_JXL_PROBES__ !== 'undefined' || !timing) return work();
+  const t0 = performance.now(), outer = inner;
+  inner = 0;
+  try { return work(); } finally {
+    const spent = performance.now() - t0;
+    timing[stage] = (timing[stage] || 0) + spent - inner; inner = outer + spent;
+  }
 }
-export function scanColoursScript(rgba, stride, x0, y0, w, h, limit, rows = false) {
-  let size = 1024;
-  while (size < limit * 2) size <<= 1;
-  const keys = new Uint32Array(size), slots = new Uint16Array(size), shift = Math.clz32(size) + 1, mask = size - 1;
-  const colours = new Uint32Array(limit), indices = new Uint16Array(w * h), words = pixelKeys(rgba);
-  const first = rows ? new Int32Array(limit) : null, last = rows ? new Int32Array(limit) : null;
-  let n = 0, previous = -1, lastIndex = 0;
-  for (let i = 0, x = 0, y = 0, p = y0 * stride + x0, size = w * h; i < size; i++, x++, p++) {
-    if (x === w) { x = 0; y++; p += stride - w; if (rows) previous = -1; }
-    const key = words[p];
-    if (key === previous) { indices[i] = lastIndex; continue; }
-    if (i >= w && key === words[p - stride]) {
-      indices[i] = lastIndex = indices[i - w]; previous = key;
-      if (rows) last[lastIndex] = y;
+
+function scanColours(rgba, stride, x0, y0, w, h, limit, rows = false, blank = null) {
+  if (limit === 0) return null;
+  const scan = captureScan(pixelKeys(rgba), stride, x0, y0, w, h, Math.min(limit, w * h), rows, blank);
+  if (scan === undefined) throw kernelFail();
+  return scan;
+}
+const spreadBits = v => { v &= 255; v = (v | v << 8) & 0x00f00f; v = (v | v << 4) & 0x0c30c3; return (v | v << 2) & 0x249249; };
+const mortonKey = c => ((c >>> 24) * 16777216 + (spreadBits(c) << 2 | spreadBits(c >>> 8) << 1 | spreadBits(c >>> 16))) >>> 0;
+const rgbaKey = c => ((c & 255) << 24 | (c >>> 8 & 255) << 16 | (c >>> 16 & 255) << 8 | c >>> 24) >>> 0;
+function pruneSkewCopies(model, n) {
+  const {plane, stride, origin, width: w, height: h, minimum, count, pieceValue: V, pieceDistance: D} = model, total = w * h;
+  let copies = 0;
+  for (let k = 0; k < count; k++) if (D[k]) copies++;
+  if (copies * 16 < total) return;
+  const freq = new Uint32Array(n);
+  for (let y = 0, row = origin; y < h; y++, row += stride) for (let x = 0; x < w; x++) freq[plane[row + x]]++;
+  const sorted = freq.slice().sort();
+  let top8 = 0;
+  for (let i = Math.max(0, n - 8); i < n; i++) top8 += sorted[i];
+  if (top8 * 4 < total * 3 || sorted[n - 1] * 20 > total * 13) return;
+  const bits = new Uint16Array(n), whole = log2x32(total), codes = spatialLookup(w)[1];
+  for (let i = 0; i < n; i++) if (freq[i]) bits[i] = Math.max(32, whole - log2x32(freq[i]));
+  const expand = new Uint8Array(count);
+  let expanded = 0, kept = 0;
+  for (let k = 0, x = 0, y = 0; k < count; k++) {
+    const d = D[k];
+    if (!d) { if (++x === w) { x = 0; y++; } continue; }
+    const len = V[k] + minimum, spatial = d < codes.length && codes[d] >= 0;
+    const copy = 32 * (d === 1 || d === w ? 6 : spatial ? 10 : 7 + 31 - Math.clz32(d + 119)) + 32;
+    let literal = 0;
+    for (let j = 0, cx = x, i = origin + y * stride + x; j < len && literal <= copy; j++) {
+      literal += bits[plane[i]];
+      if (++cx === w) { cx = 0; i += stride - w + 1; } else i++;
+    }
+    if (literal <= copy) { expand[k] = 1; expanded += len - 1; } else kept++;
+    x += len; while (x >= w) { x -= w; y++; }
+  }
+  if (!expanded) return;
+  if (kept * 64 < copies) expand.fill(1);
+  let size = 0;
+  for (let k = 0; k < count; k++) size += D[k] && expand[k] ? V[k] + minimum : 1;
+  const value = new Int32Array(size), distance = new Int32Array(size);
+  for (let k = 0, j = 0, p = 0; k < count; k++) {
+    if (D[k] && expand[k]) {
+      for (let e = p + V[k] + minimum; p < e; p++) value[j++] = 2 * plane[origin + (p / w | 0) * stride + p % w];
       continue;
     }
-    let slot = Math.imul(key, 0x9e3779b1) >>> shift;
-    while (slots[slot] && keys[slot] !== key) slot = (slot + 1) & mask;
-    if (!slots[slot]) {
-      if (n === limit) return null;
-      keys[slot] = key; colours[n] = key; slots[slot] = ++n;
-      if (rows) first[n - 1] = y;
-    }
-    indices[i] = lastIndex = slots[slot] - 1; previous = key;
-    if (rows) last[lastIndex] = y;
+    value[j] = V[k]; distance[j++] = D[k]; p += D[k] ? V[k] + minimum : 1;
   }
-  return {colours: colours.subarray(0, n), indices, first: first?.subarray(0, n), last: last?.subarray(0, n)};
+  model.count = size; model.pieceValue = value; model.pieceDistance = distance; model.pieceContext = new Uint8Array(size);
 }
 
-const rgbaKey = c => ((c & 255) << 24 | (c >>> 8 & 255) << 16 | (c >>> 16 & 255) << 8 | c >>> 24) >>> 0;
-function paletteModel(colours, models, shape, minimum) {
+function paletteModel(colours, models, shape) {
+  for (const m of models) if (m.kind === 'index' && !m.group) timed('prune', () => pruneSkewCopies(m, colours.length));
   const n = colours.length, uses = captureLiterals(models, n), common = [];
   let rare = 0;
-  for (let i = 0; i < n; i++) if (uses[i] >= 16) common.push(i); else if (uses[i]) rare++;
+  for (let i = 0; i < n; i++) if (uses[i] >= (L.common ?? 16)) common.push(i); else if (uses[i]) rare++;
   common.sort((a, b) => uses[b] - uses[a] || colours[a] - colours[b]);
   for (let lo = 4; lo < common.length; lo *= 2) {
     const hi = Math.min(common.length, lo * 2), slice = common.slice(lo, hi).sort((a, b) => rgbaKey(colours[a]) - rgbaKey(colours[b]));
     for (let j = lo; j < hi; j++) common[j] = slice[j - lo];
   }
   const keys = new Float64Array(rare);
-  for (let i = 0, j = 0; i < n; i++) if (uses[i] && uses[i] < 16) {
+  for (let i = 0, j = 0; i < n; i++) if (uses[i] && uses[i] < (L.common ?? 16)) {
     const c = colours[i];
-    keys[j++] = rgbaKey(c) * 65536 + i;
+    keys[j++] = ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && L.morton ? mortonKey(c) : rgbaKey(c)) * 65536 + i;
   }
   keys.sort();
   const order = new Int32Array(common.length + rare), sorted = new Uint32Array(order.length), remap = new Int32Array(n);
   order.set(common);
   for (let j = 0; j < rare; j++) order[common.length + j] = keys[j] % 65536;
   for (let j = 0; j < order.length; j++) { sorted[j] = colours[order[j]]; remap[order[j]] = j; }
-  const meta = paletteMeta(sorted, shape), model = channelModel(meta.plane, meta.width, meta.height, 'rows');
+  const rows = m => (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && L.rowCopies ? channelModel(m.plane, m.width, m.height, 'rows', 1, models[0]?.minimum ?? 3, true, m.width, 0, false, true)
+    : channelModel(m.plane, m.width, m.height, 'rows');
+  let meta = paletteMeta(sorted, shape), model = rows(meta);
+  if (rare >= 16 && rare >= 2 * common.length && rare <= NEAREST_LIMIT) {
+    const from = common.length, walk = order.slice();
+    walked(colours, order, from, walk);
+    const path = new Uint32Array(walk.length);
+    for (let j = 0; j < walk.length; j++) path[j] = colours[walk[j]];
+    const other = paletteMeta(path, shape), otherModel = rows(other);
+    if (rowsBits(otherModel) < rowsBits(model)) {
+      meta = other; model = otherModel;
+      for (let j = 0; j < walk.length; j++) { order[j] = walk[j]; remap[walk[j]] = j; }
+    }
+  }
   captureLiterals(models, n, remap);
-  for (const m of models) if (!m.group) learnContexts(m, remap, common.length, order.length);
+  for (const m of models) timed('tree', () => learnContexts(m, remap, common.length, order.length));
   return {meta, model};
 }
 
-const TREE_TOKENS = 128, TREE_SPLIT = 96, TREE_MIN = 128, TREE_NODES = 48;
+const TREE_TOKENS = 128;
 let nlog = new Float64Array(0);
 function nlogTable(n) {
   if (nlog.length <= n) {
@@ -104,11 +178,13 @@ function learnContexts(model, remap, common, total) {
   const binsOf = (list, n) => { const bins = new Uint8Array(n); for (let v = 0, b = 0; v < n; v++) { while (b < list.length && v > list[b]) b++; bins[v] = b; } return bins; };
   const yBin = binsOf(cuts[0], h), xBin = binsOf(cuts[1], w), indexBin = binsOf(indexCuts, total), binOf = new Uint8Array(remap.length);
   for (let i = 0; i < remap.length; i++) binOf[i] = indexBin[remap[i]];
-  const span = (Math.max(...cuts.map(c => c.length)) + 1) * TREE_TOKENS, arena = treeArena(count, span), {by, bx, bw, bn, tokens, order} = arena;
+  if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && L.signs && tools.signs) cuts.push([-1, 0], [-1, 0], [-1, 0]);
+  const span = (Math.max(...cuts.map(c => c.length)) + 1) * TREE_TOKENS, arena = (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && cuts.length > 4 ? tools.signs.arena(count, span, cuts.length) : treeArena(count, span), {by, bx, bw, bn, tokens, order} = arena;
   pieceBins(plane, model.stride, model.origin, w, model.pieceValue, model.pieceDistance, model.minimum, count, yBin, xBin, binOf, tokens, by, bx, bw, bn, order);
+  if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && cuts.length > 4) tools.signs.bins(plane, model.stride, model.origin, w, model.pieceValue, model.pieceDistance, model.minimum, count, remap, arena.bins);
   const s = {cuts, order, nlog: nlogTable(count), context: model.pieceContext, all: arena.all, counts: arena.counts,
     tally: arena.tally, part: arena.part, low: new Uint32Array(TREE_TOKENS), used: new Uint8Array(TREE_TOKENS),
-    span, leaves: [], nodes: 0, split: TREE_SPLIT, min: TREE_MIN, most: TREE_NODES, cut: 0};
+    span, leaves: [], nodes: 0, split: L.tree.split, min: L.tree.min, most: L.tree.nodes, cut: 0};
   model.tree = treeNode(s, 0, count);
   model.leaves = s.leaves; model.classes = s.leaves.length;
 }
@@ -126,7 +202,7 @@ function pieceBins(plane, stride, origin, w, pieceValue, pieceDistance, minimum,
   }
 }
 
-const TREE_PROPERTY = [2, 3, 7, 6];
+const TREE_PROPERTY = [2, 3, 7, 6, 10, 11, 12];
 function treeNode(s, from, to) {
   const {all, used, order, nlog} = s, size = to - from;
   s.nodes++;
@@ -137,7 +213,7 @@ function treeNode(s, from, to) {
   let gain = 32 * s.split, property = -1, cut = 0;
   if (splits) {
     const here = nlog[size] - sum + 160 * kinds;
-    for (let p = 0; p < 4; p++) {
+    for (let p = 0; p < s.cuts.length; p++) {
       const found = bestCut(s, p, size, here, sum, kinds);
       if (found > gain) { gain = found; property = p; cut = s.cut; }
     }
@@ -178,6 +254,64 @@ function bestCut(s, p, size, here, sum, kinds) {
   return best;
 }
 
+let lastWalk = null;
+function walked(colours, order, from, walk) {
+  const w = lastWalk;
+  if (w && w.from === from && w.order.length === order.length && w.colours.length === colours.length && w.order.every((v, i) => v === order[i] && w.colours[v] === colours[v])) {
+    walk.set(w.walk); return;
+  }
+  nearestWalk(colours, order.subarray(from), walk.subarray(from), colours[from ? order[from - 1] : order[from]]);
+  lastWalk = {from, order: order.slice(), colours: colours.slice(), walk: walk.slice()};
+}
+
+function nearestWalk(colours, left, out, start) {
+  const m = left.length, cells = new Int32Array(4097), cellOf = new Int32Array(m), byCell = new Int32Array(m), at = new Int32Array(m);
+  const r = new Int32Array(m), g = new Int32Array(m), b = new Int32Array(m), a = new Int32Array(m);
+  for (let k = 0; k < m; k++) {
+    const c = colours[left[k]];
+    r[k] = c & 255; g[k] = c >>> 8 & 255; b[k] = c >>> 16 & 255; a[k] = c >>> 24;
+    cellOf[k] = (r[k] >> 4) << 8 | (g[k] >> 4) << 4 | b[k] >> 4; cells[cellOf[k] + 1]++;
+  }
+  for (let i = 0; i < 4096; i++) cells[i + 1] += cells[i];
+  const ends = cells.slice(0, 4096);
+  for (let k = 0; k < m; k++) { at[k] = ends[cellOf[k]]; byCell[ends[cellOf[k]]++] = k; }
+  let ar = start & 255, ag = start >>> 8 & 255, ab = start >>> 16 & 255, aa = start >>> 24;
+  for (let j = 0; j < m; j++) {
+    let best = -1, d = 1 << 30;
+    const cr = ar >> 4, cg = ag >> 4, cb = ab >> 4;
+    for (let ring = 0; ring < 16; ring++) {
+      for (let x = Math.max(0, cr - ring); x <= Math.min(15, cr + ring); x++) for (let y = Math.max(0, cg - ring); y <= Math.min(15, cg + ring); y++) {
+        const edge = Math.abs(x - cr) === ring || Math.abs(y - cg) === ring;
+        for (let z = cb - ring; z <= cb + ring; z += edge || !ring ? 1 : 2 * ring) {
+          if (z < 0 || z > 15) continue;
+          const cell = x << 8 | y << 4 | z;
+          for (let i = cells[cell], e = ends[cell]; i < e; i++) {
+            const k = byCell[i], t = Math.abs(ar - r[k]) + Math.abs(ag - g[k]) + Math.abs(ab - b[k]) + Math.abs(aa - a[k]);
+            if (t < d || t === d && k < best) { d = t; best = k; }
+          }
+        }
+      }
+      if (best >= 0 && d <= ring * 16) break;
+    }
+    const cell = cellOf[best], last = --ends[cell], moved = byCell[last];
+    byCell[at[best]] = moved; at[moved] = at[best]; byCell[last] = best; at[best] = last;
+    out[j] = left[best]; ar = r[best]; ag = g[best]; ab = b[best]; aa = a[best];
+  }
+}
+
+function rowsBits({count, pieceValue: V, pieceDistance: D, pieceContext: C, classes}) {
+  const counts = new Uint32Array(classes * 512);
+  let bits = 0;
+  for (let i = 0; i < count; i++) if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && D[i]) bits += 10 + pieceBits(V[i]) + 31 - Math.clz32(D[i] + 1); else counts[C[i] * 512 + V[i]]++;
+  for (let c = 0; c < classes; c++) bits += entropy(counts.subarray(c * 512, c * 512 + 512));
+  return bits;
+}
+function rowsPieces(values, w, h, contexts, classes, minimum) {
+  const n = w * h, plain = {count: n, value: values, distance: new Int32Array(n), context: contexts};
+  const c = captureCopies(Uint16Array.from(values), w, 0, w, h, contexts, L.indexDepth, minimum, 1, spatialLookup(w)[0], L.lazyUnder, L.nice);
+  const bits = p => rowsBits({count: p.count, pieceValue: p.value, pieceDistance: p.distance, pieceContext: p.context, classes});
+  return bits(c) + 32 < bits(plain) ? c : plain;
+}
 function paletteMeta(colours, shape) {
   const n = colours.length, channels = shape.channels, rows = new Int32Array(n * channels);
   for (let c = 0; c < channels; c++) for (let i = 0; i < n; i++)
@@ -185,11 +319,10 @@ function paletteMeta(colours, shape) {
   return {plane: rows, width: n, height: channels, transform: {type: 'palette', beginC: 0, numC: channels, nbColors: n}};
 }
 
-const SMOOTH_CUTS = [-13, -3, -1, 0, 2, 12], SMOOTH_LEVEL = [3, 2, 1, 0, 1, 2, 3], RANGE = 32768;
-const SMOOTH = new Uint8Array(2 * RANGE);
-for (let v = -RANGE, k = 0; v < RANGE; v++) {
-  while (k < SMOOTH_CUTS.length && v > SMOOTH_CUTS[k]) k++;
-  SMOOTH[v + RANGE] = SMOOTH_LEVEL[k];
+const SMOOTH_CUTS = [-13, -3, -1, 0, 2, 12];
+function smoothBin(value) {
+  const magnitude = Math.abs(value);
+  return (magnitude > 0) + (magnitude > 2) + (magnitude > 12);
 }
 
 const upTo = n => Array.from({length: n}, (_, k) => k);
@@ -216,57 +349,42 @@ function predictSmooth(plane, w, h, values, contexts, step) {
       plane[i] = prediction + residual * step;
     }
     values[i] = packSigned(residual);
-    contexts[i] = SMOOTH[west - northWest + RANGE] * 4 + SMOOTH[northWest - north + RANGE];
+    contexts[i] = smoothBin(west - northWest) * 4 + smoothBin(northWest - north);
   }
 }
 
 const SAMPLE_TOKENS = 128;
-function sampleCost(counts, totals, rawBits) {
-  let bits = rawBits;
-  for (let c = 0; c < totals.length; c++) {
-    const n = totals[c];
-    if (!n) continue;
-    const bins = counts.subarray(c * SAMPLE_TOKENS, (c + 1) * SAMPLE_TOKENS);
-    let kinds = 0;
-    for (let k = 0; k < bins.length; k++) if (bins[k]) kinds++;
-    bits += entropy(bins, n) + 5 * kinds;
-  }
+function sampleCost(counts, classes, bits) {
+  for (let c = 0; c < classes; c++) bits += entropy(counts.subarray(c * SAMPLE_TOKENS, (c + 1) * SAMPLE_TOKENS));
   return bits;
 }
 function useWeighted(plane, w, h) {
-  if (w * h < 4096 || h < 8) return true;
-  const rows = Math.min(8, h), last = h - rows;
-  const positions = [0, Math.floor(last / 3), Math.floor(2 * last / 3), last];
-  const residuals = new Uint32Array(w * rows), properties = new Int32Array(w * rows);
+  if (w * h < 4096 || h < 8) return 1;
+  const rows = 8, last = h - rows, end = rows * w;
+  const positions = [last, Math.floor(2 * last / 3), Math.floor(last / 3), 0];
   const smoothCounts = new Uint32Array(16 * SAMPLE_TOKENS), weightedCounts = new Uint32Array(18 * SAMPLE_TOKENS);
-  const smoothTotals = new Uint32Array(16), weightedTotals = new Uint32Array(18);
   let smoothRaw = 0, weightedRaw = 0, previous = -1;
   for (const y0 of positions) {
     if (y0 === previous) continue;
     previous = y0;
     const strip = plane.subarray(y0 * w, (y0 + rows) * w);
-    captureResiduals(strip, w, rows, residuals, properties);
-    for (let i = 2 * w, x = 0, end = rows * w; i < end; i++, x++) {
-      if (x === w) x = 0;
-      const west = x ? strip[i - 1] : strip[i - w], north = strip[i - w], northWest = x ? strip[i - w - 1] : west;
-      const low = west < north ? west : north, high = west < north ? north : west, guess = west + north - northWest;
-      const prediction = guess < low ? low : guess > high ? high : guess;
-      const smooth = packSigned(strip[i] - prediction);
-      const sc = SMOOTH[west - northWest + RANGE] * 4 + SMOOTH[northWest - north + RANGE];
-      smoothCounts[sc * SAMPLE_TOKENS + sampleToken(smooth)]++; smoothTotals[sc]++;
+    const {residuals, properties, values, contexts} = captureWeighted(null, null, strip, w, rows, 0, undefined, null, null, y0 ? 2 : h);
+    for (let i = 2 * w; i < end; i++) {
+      const smooth = values[i];
+      smoothCounts[contexts[i] * SAMPLE_TOKENS + sampleToken(smooth)]++;
       if (smooth >= 16) smoothRaw += 29 - Math.clz32(smooth);
-      const e = properties[i], wc = WEIGHTED_CONTEXT[e < -255 ? 0 : e > 255 ? 510 : e + 255], wr = residuals[i];
-      weightedCounts[wc * SAMPLE_TOKENS + sampleToken(wr)]++; weightedTotals[wc]++;
+      const e = properties[i], wr = residuals[i];
+      weightedCounts[WEIGHTED_CONTEXT[e < -255 ? 0 : e > 255 ? 510 : e + 255] * SAMPLE_TOKENS + sampleToken(wr)]++;
       if (wr >= 16) weightedRaw += 29 - Math.clz32(wr);
     }
   }
-  return sampleCost(weightedCounts, weightedTotals, weightedRaw) <= sampleCost(smoothCounts, smoothTotals, smoothRaw);
+  return sampleCost(weightedCounts, 18, weightedRaw) <= sampleCost(smoothCounts, 16, smoothRaw) ? 2 : 0;
 }
 
 function smoothTree(leaves, step) {
   return intervals(10, SMOOTH_CUTS, a => intervals(11, SMOOTH_CUTS, b => {
     const node = leaf(5, 0, step);
-    node.local = SMOOTH_LEVEL[a] * 4 + SMOOTH_LEVEL[b]; leaves.push(node);
+    node.local = Math.abs(a - 3) * 4 + Math.abs(b - 3); leaves.push(node);
     return node;
   }));
 }
@@ -284,22 +402,17 @@ function spatialLookup(width) {
   return entry;
 }
 
-function channelModel(plane, w, h, kind, step = 1, minimum = 3, weighted = true, stride = w, origin = 0) {
-  if (kind === 'smooth') {
-    const v0 = plane[0]; let constant = true;
-    for (let i = 1; i < plane.length; i++) if (plane[i] !== v0) { constant = false; break; }
-    if (constant) {
-      const tree = leaf(0, v0); tree.local = 0;
-      return {kind, tree, leaves: [tree], classes: 1, width: w, plane, minimum, count: 1, pieceValue: Int32Array.of(0), pieceDistance: Int32Array.of(0), pieceContext: Uint8Array.of(0)};
-    }
+function channelModel(plane, w, h, kind, step = 1, minimum = 3, weighted = true, stride = w, origin = 0, searched = kind === 'index', rowCopies = false) {
+  if (kind === 'smooth' && !searched && constantPlane(plane)) {
+    const tree = leaf(0, plane[0]); tree.local = 0;
+    return {kind, tree, leaves: [tree], classes: 1, width: w, plane, minimum, count: 1, pieceValue: Int32Array.of(0), pieceDistance: Int32Array.of(0), pieceContext: Uint8Array.of(0)};
   }
   if (kind === 'smooth' && step === 1 && weighted) {
-    const leaves = [], tree = intervals(WEIGHTED_PROPERTY, WEIGHTED_BANDS, band => { const node = leaf(WEIGHTED_PREDICTOR); node.local = band; leaves.push(node); return node; });
-    const {count, value, distance, context} = captureWeightedPieces(plane, w, h, minimum);
-    return {kind, tree, leaves, classes: WEIGHTED_BANDS.length + 1, width: w, plane, minimum, count, pieceValue: value, pieceDistance: distance, pieceContext: context};
+    return weightedModel(captureWeightedPieces(plane, w, h, minimum, weighted === 2 ? 8 : 0), plane, w, minimum);
   }
-  const n = w * h, values = kind === 'index' ? plane : kind === 'rows' ? new Int32Array(n) : new Uint16Array(n);
-  const contexts = kind === 'index' ? null : new Uint8Array(n), leaves = [], scale = kind === 'index' ? 2 : 1;
+  const fastSmooth = kind === 'smooth' && step === 1;
+  const n = w * h, values = kind === 'index' || fastSmooth ? plane : kind === 'rows' ? new Int32Array(n) : new Uint16Array(n);
+  const contexts = kind === 'index' || fastSmooth ? null : new Uint8Array(n), leaves = [], scale = kind === 'index' ? 2 : 1;
   let tree, classes = 1;
   if (kind === 'index') {
     tree = leaf(0);
@@ -318,36 +431,119 @@ function channelModel(plane, w, h, kind, step = 1, minimum = 3, weighted = true,
     }
     const chosen = new Uint8Array(classes);
     for (let c = 0; c < classes; c++) for (let p = 0, least = Infinity; p < 3; p++) {
-      const freqs = counts.subarray((p * classes + c) * 512, (p * classes + c + 1) * 512);
-      let total = 0, used = 0;
-      for (let v = 0; v < 512; v++) if (freqs[v]) { total += freqs[v]; used++; }
-      const bits = total ? entropy(freqs, total) + 5 * used : 0;
+      const bits = entropy(counts.subarray((p * classes + c) * 512, (p * classes + c + 1) * 512));
       if (bits < least) { least = bits; chosen[c] = p; }
     }
     for (let i = 0; i < n; i++) { const p = chosen[contexts[i]]; if (p) values[i] = p === 1 ? byNorth[i] : byGradient[i]; }
     const node = local => { const l = leaf([1, 2, 5][chosen[local]]); l.local = local; leaves.push(l); return l; };
     tree = intervals(2, upTo(h - 1), row => row ? split(11, 8, node(row * 3 + 2),
       split(11, 0, node(row * 3 + 1), split(11, -1, node(row * 3), split(11, -9, node(row * 3 + 1), node(row * 3 + 2))))) : node(0));
-  } else { predictSmooth(plane, w, h, values, contexts, step); tree = smoothTree(leaves, step); classes = 16; }
+  } else { if (!fastSmooth) predictSmooth(plane, w, h, values, contexts, step); tree = smoothTree(leaves, step); classes = 16; }
   if (classes === 1) { tree.local = 0; leaves.push(tree); }
   const {count, value: pieceValue, distance: pieceDistance, context: pieceContext} = kind === 'rows'
-    ? {count: n, value: values, distance: new Int32Array(n), context: contexts}
-    : captureCopies(values, stride, origin, w, h, contexts, kind === 'index' ? 24 : 0, minimum, scale, spatialLookup(w)[0]);
-  return {kind, tree, leaves, classes, width: w, height: h, stride, origin, plane, minimum, count, pieceValue, pieceDistance, pieceContext};
+    ? (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && rowCopies ? rowsPieces(values, w, h, contexts, classes, minimum) : {count: n, value: values, distance: new Int32Array(n), context: contexts}
+    : captureCopies(values, stride, origin, w, h, contexts, searched ? L.indexDepth : 0, minimum, scale, spatialLookup(w)[0], L.lazyUnder, L.nice);
+  const model = {kind, tree, leaves, classes, width: w, height: h, stride, origin, plane, minimum, count, pieceValue, pieceDistance, pieceContext};
+  if (kind === 'index' && searched) timed('prune', () => pruneCopies(model));
+  return model;
 }
 
+const pieceBits = v => v < 16 ? 0 : 29 - Math.clz32(v);
+const pieceToken = v => v < 16 ? v : 16 + ((29 - Math.clz32(v)) << 2 | (v >> (29 - Math.clz32(v)) & 2) | v & 1);
+function pruneCopies(model) {
+  const {count, pieceValue: V, pieceDistance: D, plane, width: w, stride, origin, minimum} = model;
+  let copies = 0;
+  for (let k = 0; k < count; k++) if (D[k]) copies++;
+  if (copies < 1000) return;
+  const at = new Int32Array(copies);
+  let top = 0, scale = 0;
+  for (let k = 0, p = 0, c = 0; k < count; k++) {
+    if (D[k]) { at[c++] = p; p += V[k] + minimum; continue; }
+    if (!scale && V[k]) scale = V[k] === plane[origin + (p / w | 0) * stride + p % w] ? 1 : 2;
+    if (V[k] > top) top = V[k];
+    p++;
+  }
+  scale ||= 2;
+  const keep = new Uint8Array(count).fill(1), freq = new Uint32Array(top + 1), bits = new Float64Array(top + 1), literals = new Uint32Array(top + 1);
+  let literalCount = 0;
+  for (let k = 0; k < count; k++) if (!D[k]) { literals[V[k]]++; literalCount++; }
+  for (let pass = 0; pass < 2; pass++) {
+    const lengths = new Float64Array(256), distances = new Float64Array(256);
+    freq.set(literals);
+    let symbols = literalCount, kept = 0;
+    for (let k = 0, c = 0; k < count; k++) {
+      if (!D[k]) continue;
+      if (keep[k]) { lengths[pieceToken(V[k])]++; distances[pieceToken(D[k])]++; symbols++; kept++; }
+      else {
+        for (let y = at[c] / w | 0, x = at[c] % w, i = origin + y * stride + x, n = V[k] + minimum; n > 0; n--) {
+          freq[scale * plane[i]]++;
+          if (++x === w) { x = 0; i = origin + ++y * stride; } else i++;
+        }
+        symbols += V[k] + minimum;
+      }
+      c++;
+    }
+    if (!kept) break;
+    const whole = Math.log2(symbols), each = Math.log2(kept);
+    for (let v = 0; v <= top; v++) bits[v] = freq[v] ? whole - Math.log2(freq[v]) : 0;
+    for (let t = 0; t < 256; t++) { lengths[t] = lengths[t] ? whole - Math.log2(lengths[t]) : 0; distances[t] = distances[t] ? each - Math.log2(distances[t]) : 0; }
+    let changed = false;
+    for (let k = 0, c = 0; k < count; k++) {
+      if (!D[k]) continue;
+      if (keep[k]) {
+        const cost = lengths[pieceToken(V[k])] + pieceBits(V[k]) + distances[pieceToken(D[k])] + pieceBits(D[k]);
+        let literal = 0;
+        for (let y = at[c] / w | 0, x = at[c] % w, i = origin + y * stride + x, n = V[k] + minimum; n > 0 && literal < cost; n--) {
+          literal += bits[scale * plane[i]];
+          if (++x === w) { x = 0; i = origin + ++y * stride; } else i++;
+        }
+        if (literal < cost) { keep[k] = 0; changed = true; }
+      }
+      c++;
+    }
+    if (!changed) break;
+  }
+  let total = 0;
+  for (let k = 0; k < count; k++) total += D[k] && !keep[k] ? V[k] + minimum : 1;
+  if (total === count) return;
+  const value = new Int32Array(total), distance = new Int32Array(total);
+  let j = 0;
+  for (let k = 0, c = 0; k < count; k++) {
+    if (!D[k]) { value[j++] = V[k]; continue; }
+    if (keep[k]) { value[j] = V[k]; distance[j++] = D[k]; }
+    else for (let y = at[c] / w | 0, x = at[c] % w, i = origin + y * stride + x, n = V[k] + minimum; n > 0; n--) {
+      value[j++] = scale * plane[i];
+      if (++x === w) { x = 0; i = origin + ++y * stride; } else i++;
+    }
+    c++;
+  }
+  model.count = total; model.pieceValue = value; model.pieceDistance = distance; model.pieceContext = new Uint8Array(total);
+}
+
+function weightedModel({count, value, distance, context, counts}, plane, w, minimum) {
+  const leaves = [], tree = intervals(WEIGHTED_PROPERTY, WEIGHTED_BANDS, band => { const node = leaf(WEIGHTED_PREDICTOR); node.local = band; leaves.push(node); return node; });
+  return {kind: 'smooth', tree, leaves, classes: WEIGHTED_BANDS.length + 1, width: w, plane, minimum, count, pieceValue: value, pieceDistance: distance, pieceContext: context, pieceCounts: counts};
+}
+function gradientModel({count, value, distance, context, counts}, plane, w, minimum) {
+  const leaves = [], tree = smoothTree(leaves, 1);
+  return {kind: 'smooth', tree, leaves, classes: 16, width: w, plane, minimum, count, pieceValue: value, pieceDistance: distance, pieceContext: context, pieceCounts: counts};
+}
+const constantPlane = plane => { const v0 = plane[0]; for (let i = 1; i < plane.length; i++) if (plane[i] !== v0) return false; return true; };
+
 const LITERAL_CONFIGS = [...SCREEN_INTEGER_CONFIGS, ...[[4, 2, 1], [5, 1, 1], [5, 2, 1], [6, 1, 1], [6, 2, 1], [7, 2, 1], [5], [6], [7], [8], [9], [10], [11], [12], [13]].map(a => uintConfig(...a))];
-const SMALL = 2048;
+const SMALL = 512;
 const log2x32 = x => {
   const e = 31 - Math.clz32(x);
   return 32 * e + LOG_MANTISSA[(e >= 5 ? x >>> e - 5 : x << 5 - e) & 31];
 };
-const entropy = (freqs, total) => {
-  let bits = 0;
+function entropy(freqs, header = 0) {
+  let total = 0, used = 0, bits = 0;
+  for (const n of freqs) if (n) { total += n; used++; }
+  if (!total) return 0;
   const whole = log2x32(total);
   for (const n of freqs) if (n) bits += n * (whole - log2x32(n));
-  return bits / 32;
-};
+  return bits / 32 + 5 * used + header;
+}
 
 const DISTANCE_TOKENS = 1 << 15;
 const FREQS = new Uint32Array(DISTANCE_TOKENS), USED = new Uint16Array(DISTANCE_TOKENS);
@@ -365,12 +561,6 @@ function valueCounts(small, large) {
   let i = 0;
   for (let v = 0; v < SMALL; v++) if (small[v]) { values[i] = v; counts[i++] = small[v]; }
   values.set(large.values, i); counts.set(large.counts, i);
-  return {values, counts};
-}
-function mapCounts(map) {
-  const values = new Int32Array(map.size), counts = new Uint32Array(map.size);
-  let i = 0;
-  for (const [v, n] of map) { values[i] = v; counts[i++] = n; }
   return {values, counts};
 }
 const NO_COUNTS = {values: new Int32Array(0), counts: new Uint32Array(0)};
@@ -425,35 +615,31 @@ const DISTANCE_CONFIGS = [...SCREEN_INTEGER_CONFIGS, ...WIDE_DISTANCES];
 function distanceTokens(config, values) {
   clearFreqs();
   const token = [0, 0, 0];
-  let raw = 0, top = 0, total = 0, uLen = 0;
+  let raw = 0, uLen = 0;
   for (let i = 0; i < values.values.length; i++) {
     const v = values.values[i], n = values.counts[i];
     hybridToken(config, v, token);
     const s = token[0];
     if (s >= DISTANCE_TOKENS) { usedLen = uLen; return null; }
     if (!FREQS[s]) USED[uLen++] = s;
-    FREQS[s] += n; raw += token[1] * n; total += n;
-    if (s > top) top = s;
+    FREQS[s] += n; raw += token[1] * n;
   }
   usedLen = uLen;
-  return {raw, total, top};
+  return [raw, USED.subarray(0, uLen).sort()];
 }
 function distancePrice(config, values) {
-  const {raw} = distanceTokens(config, values), header = new BitWriter(16);
+  const tokens = distanceTokens(config, values);
+  if (!tokens) return Infinity;
+  const header = new BitWriter(16);
   writeUintConfig(header, config, 15);
-  return raw + header.bitLength + prefixCodeBits(FREQS, USED.subarray(0, usedLen).sort());
+  return tokens[0] + header.bitLength + prefixCodeBits(FREQS, tokens[1]);
 }
 function distanceCode(config, values) {
-  const {top} = distanceTokens(config, values);
-  return compactCode(FREQS, USED.subarray(0, usedLen).sort());
+  return compactCode(FREQS, distanceTokens(config, values)[1]);
 }
 
 const CLUSTER_CONFIG = uintConfig(4, 1, 1), CLUSTER_TOKENS = 128, CLUSTER_HEADER = 48;
-function clusterCost(freqs) {
-  let total = 0, used = 0;
-  for (let i = 0; i < CLUSTER_TOKENS; i++) if (freqs[i]) { total += freqs[i]; used++; }
-  return total ? entropy(freqs, total) + 5 * used + CLUSTER_HEADER : 0;
-}
+const clusterCost = freqs => entropy(freqs, CLUSTER_HEADER);
 function countTokens(freqs, h, config, lengthConfig, at, top) {
   const token = [0, 0, 0], add = (c, v, n, from) => { hybridToken(c, v, token); freqs[from + Math.min(token[0], top)] += n; };
   for (let v = 0; v < SMALL; v++) if (h.small[v]) add(config, v, h.small[v], 0);
@@ -497,15 +683,22 @@ function clusterHistograms(live) {
   return {groups, of};
 }
 
-function writeChannels(writer, models) {
+const pieceKeys = [new Uint32Array(0), new Uint32Array(0), new Uint32Array(0)];
+const keySpace = (k, used, more) => {
+  if (pieceKeys[k].length < used + more) { const grown = new Uint32Array(Math.max(used + more, pieceKeys[k].length * 2)); grown.set(pieceKeys[k].subarray(0, used)); pieceKeys[k] = grown; }
+  return pieceKeys[k];
+};
+function writeChannels(writer, models, trace) {
+  const start = typeof __RAPIER_JXL_PROBES__ === 'undefined' ? writer.bitLength : 0;
   const ordered = writeTree(writer, intervals(0, upTo(models.length - 1), m => models[m].tree));
   let pieces = 0;
-  for (const model of models) pieces += model.count;
-  const histograms = [], largeKeys = new Uint32Array(pieces), lengthKeys = new Uint32Array(pieces), copyDistances = new Uint32Array(pieces);
-  let larges = 0, copies = 0;
+  if (typeof __RAPIER_JXL_PROBES__ === 'undefined') for (const model of models) pieces += model.count;
+  const histograms = [];
+  let larges = 0, copies = 0, [largeKeys, lengthKeys, copyDistances] = pieceKeys;
   for (const model of models) {
     model.base = histograms.length;
-    const {counts, literals, others} = capturePieceCounts(model, SMALL);
+    const {counts, literals, others} = model.pieceCounts ?? capturePieceCounts(model, SMALL);
+    largeKeys = keySpace(0, larges, others.length); lengthKeys = keySpace(1, copies, others.length); copyDistances = keySpace(2, copies, others.length);
     for (let c = 0; c < model.classes; c++) histograms.push({small: counts.subarray(c * SMALL, (c + 1) * SMALL), large: NO_COUNTS, lengths: NO_COUNTS, literals: literals[c], copies: 0});
     for (let i = 0; i < others.length; i++) {
       const k = others[i], h = model.base + model.pieceContext[k], target = histograms[h], value = model.pieceValue[k], d = model.pieceDistance[k];
@@ -525,7 +718,7 @@ function writeChannels(writer, models) {
     for (let i = 0; i < histograms.length; i++) index[i] = of[index[i]];
     live = groups;
   }
-  const token = [0, 0, 0], minSymbol = models.at(-1).kind === 'index' && models[0].width <= 2048 ? 224 : 512;
+  const token = [0, 0, 0], minSymbol = models.some(model => model.kind === 'index') && models[0].width <= 2048 ? 224 : 512;
   const configs = live.map(h => {
     const literals = valueCounts(h.small, h.large);
     if (!h.literals) return {config: LITERAL_CONFIGS[0], top: 0};
@@ -557,35 +750,50 @@ function writeChannels(writer, models) {
   }
   const codes = live.map((h, m) => sortedCode(countTokens(new Uint32Array(h.copies ? minSymbol + 1024 : configs[m].top + 1),
     h, configs[m].config, length.config, minSymbol, Infinity)));
+  if (typeof __RAPIER_JXL_PROBES__ === 'undefined' && timing) timing.pieces = (timing.pieces || 0) + pieces;
   let distance, sCodes = null;
-  if (distanceValues.length) {
+  if (distanceValues.length) timed('distance', () => {
     sCodes = spatialLookup(Math.max(...models.map(model => model.width)))[1];
-    const spatial = new Map(), generic = new Map(), sLen = sCodes.length;
+    const sLen = sCodes.length, spatial = new Int32Array(distanceValues.length), generic = new Int32Array(distanceValues.length);
     for (let i = 0; i < distanceValues.length; i++) {
-      const d = distanceValues[i], n = distanceCounts[i], s = d < sLen && sCodes[d] >= 0 ? sCodes[d] : d + 119, g = d === 1 ? 1 : d + 119;
-      spatial.set(s, (spatial.get(s) || 0) + n); generic.set(g, (generic.get(g) || 0) + n);
+      const d = distanceValues[i];
+      spatial[i] = d < sLen && sCodes[d] >= 0 ? sCodes[d] : d + 119; generic[i] = d === 1 ? 1 : d + 119;
     }
     const ranked = [];
-    for (const [kind, values] of [[true, mapCounts(spatial)], [false, mapCounts(generic)]]) {
+    for (const [kind, values] of [[true, {values: spatial, counts: distanceCounts}], [false, {values: generic, counts: distanceCounts}]]) {
       const prices = capturePrices(DISTANCE_CONFIGS, values, true);
       for (let c = 0; c < DISTANCE_CONFIGS.length; c++) ranked.push({config: DISTANCE_CONFIGS[c], kind, values, estimate: prices[c * 2]});
     }
     ranked.sort((a, b) => a.estimate - b.estimate);
-    for (const {config, kind, values} of ranked.slice(0, 4)) {
+    for (const {config, kind, values} of ranked.slice(0, L.prices)) {
       const bits = distancePrice(config, values);
       if (!distance || bits < distance.bits) distance = {bits, config, spatial: kind, values};
     }
     distance.code = distanceCode(distance.config, distance.values);
     distance.code.codes = canonicalCodes(distance.code.lengths);
-  }
+  });
   const offset = distance ? 1 : 0, contextMap = new Uint8Array(ordered.length + offset);
   for (const model of models) for (const node of model.leaves) contextMap[node.context] = index[model.base + node.local] + offset;
-  writeHistograms(writer, {
-    lz77: distance ? {minSymbol: minSymbol, minLength: models[0].minimum, lengthConfig: length.config} : null,
-    contextMap,
+  const lz77 = distance ? {minSymbol: minSymbol, minLength: (models.find(m => m.kind !== 'rows') ?? models[0]).minimum, lengthConfig: length.config} : null;
+  const copy = distance ? {lengthConfig: length.config, distanceConfig: distance.config, code: distance.code, minSymbol, spatial: distance.spatial, sCodes} : null;
+  const prefixHeader = new BitWriter(1024);
+  writeHistograms(prefixHeader, {lz77, contextMap,
     histograms: [...(distance ? [{config: distance.config, code: distance.code}] : []),
       ...codes.map((code, m) => ({config: configs[m].config, code}))]
   });
+  let ans = null;
+  if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && L.ans && tools.ans) timed('ans', () => {
+    const ansCopy = copy && {...copy, distanceConfig: tools.ans.distanceConfig(distance.values), lengthConfig: tools.ans.lengthConfig(live, 256 - minSymbol)};
+    if (copy && !(ansCopy.distanceConfig && ansCopy.lengthConfig)) return;
+    const tokens = tools.ans.tokens(models, index, configs.map(c => c.config), ansCopy, codes.length);
+    if (!tokens) return;
+    const header = new BitWriter(1024), data = new BitWriter(tokens.n + 64);
+    const all = [...(distance ? [ansCopy.distanceConfig] : []), ...configs.map(c => c.config)];
+    if (!tools.ans.write(header, data, {lz77: lz77 && {...lz77, lengthConfig: ansCopy.lengthConfig}, contextMap, configs: all}, tokens)) return;
+    ans = {header, data};
+  });
+  let prefixData = null;
+  const prefixWrite = target => captureTokens(target, models, index, codes, configs.map(c => c.config), fastBits, fastLen, copy);
   const fastLen = new Uint8Array(codes.length << 9), fastBits = new Uint32Array(codes.length << 9);
   for (let h = 0; h < codes.length; h++) {
     const code = codes[h], cfg = configs[h].config, base = h << 9, small = live[h].small;
@@ -596,156 +804,405 @@ function writeChannels(writer, models) {
       if (s < code.lengths.length) { fastLen[base | v] = l + token[1]; fastBits[base | v] = code.codes[s] | (token[2] << l); }
     }
   }
-  return () => {
-    let bytes = writer.bytes, at = writer.at, acc = writer.acc, pending = writer.pending;
-    const sLen = sCodes ? sCodes.length : 0, group = new Int32Array(8), dLengths = distance?.code.lengths, dCodes = distance?.code.codes;
-    for (const model of models) {
-      const mBase = model.base, pCtx = model.pieceContext, pVal = model.pieceValue, pDist = model.pieceDistance, count = model.count;
-      for (let k = 0; k < count; k++) {
-        const h = index[mBase + pCtx[k]], value = pVal[k], d = pDist[k];
-        if (!d && value < 512) {
-          if (at + 8 >= bytes.length) { writer.at = at; writer.acc = acc; writer.pending = pending; writer.grow(65536); bytes = writer.bytes; }
-          const slot = (h << 9) | value;
-          acc |= fastBits[slot] << pending;
-          pending += fastLen[slot];
-          while (pending >= 8) { bytes[at++] = acc & 255; acc >>>= 8; pending -= 8; }
-        } else if (d) {
-          if (at + 16 >= bytes.length) { writer.at = at; writer.acc = acc; writer.pending = pending; writer.grow(65536); bytes = writer.bytes; }
-          const code = codes[h];
-          hybridToken(length.config, value, token);
-          let s = minSymbol + token[0];
-          group[0] = code.lengths[s]; group[1] = code.codes[s]; group[2] = token[1]; group[3] = token[2];
-          hybridToken(distance.config, distance.spatial ? (d < sLen && sCodes[d] >= 0 ? sCodes[d] : d + 119) : d === 1 ? 1 : d + 119, token);
-          s = token[0];
-          group[4] = dLengths[s]; group[5] = dCodes[s]; group[6] = token[1]; group[7] = token[2];
-          for (let g = 0; g < 8; g += 2) {
-            acc |= group[g + 1] << pending;
-            pending += group[g];
-            while (pending >= 8) { bytes[at++] = acc & 255; acc >>>= 8; pending -= 8; }
-          }
-        } else {
-          if (at + 8 >= bytes.length) { writer.at = at; writer.acc = acc; writer.pending = pending; writer.grow(65536); bytes = writer.bytes; }
-          const code = codes[h];
-          hybridToken(configs[h].config, value, token);
-          acc |= code.codes[token[0]] << pending;
-          pending += code.lengths[token[0]];
-          while (pending >= 8) { bytes[at++] = acc & 255; acc >>>= 8; pending -= 8; }
-          acc |= token[2] << pending;
-          pending += token[1];
-          while (pending >= 8) { bytes[at++] = acc & 255; acc >>>= 8; pending -= 8; }
-        }
-      }
+  if (ans) {
+    prefixData = new BitWriter(ans.data.at + 1024);
+    prefixWrite(prefixData);
+    if (ans.header.bitLength + ans.data.bitLength > 0.99 * (prefixHeader.bitLength + prefixData.bitLength)) ans = null;
+  }
+  writer.append(ans ? ans.header : prefixHeader);
+  if (typeof __RAPIER_JXL_PROBES__ === 'undefined' && trace) {
+    let literalBits = 0, lengthBits = 0, literals = 0, copies = 0;
+    for (let m = 0; m < live.length; m++) {
+      const h = live[m], code = codes[m], config = configs[m].config;
+      const bits = (c, v, n, at) => { hybridToken(c, v, token); return n * (code.lengths[at + token[0]] + token[1]); };
+      for (let v = 0; v < SMALL; v++) if (h.small[v]) literalBits += bits(config, v, h.small[v], 0);
+      for (let i = 0; i < h.large.values.length; i++) literalBits += bits(config, h.large.values[i], h.large.counts[i], 0);
+      for (let i = 0; i < h.lengths.values.length; i++) lengthBits += bits(length.config, h.lengths.values[i], h.lengths.counts[i], minSymbol);
+      literals += h.literals; copies += h.copies;
     }
-    writer.at = at; writer.acc = acc; writer.pending = pending;
-  };
+    trace.push({kinds: models.map(m => m.kind + (m.group ? '/group' : '')).join('+'), pieces, literals, copies, classes: histograms.length,
+      codes: live.length, headerBits: writer.bitLength - start, literalBits, lengthBits, distanceBits: distance ? distance.bits : 0, ans: Boolean(ans)});
+  }
+  if (ans) return () => writer.append(ans.data);
+  if (prefixData) return () => writer.append(prefixData);
+  return () => prefixWrite(writer);
 }
 
-function groupChannels(rgba, stride, x, y, w, h, shape, coding) {
-  const {maxError, onPredictor} = coding;
-  const scan = w === stride && !x && !y ? null : scanColours(rgba, stride, x, y, w, h, Math.min(PALETTE_LIMIT, (w * h) / 20 | 0));
-  if (scan) {
-    const index = channelModel(scan.indices, w, h, 'index', 1, 3); index.group = true;
-    const {meta, model} = paletteModel(scan.colours, [index], shape);
-    return {transforms: [meta.transform], models: [model, index]};
+function samplePlane(rgba, stride, x, y, w, h, c) {
+  const plane = new Int16Array(w * h);
+  for (let at = 0, col = 0, p = (y * stride + x) * 4 + c, n = w * h; at < n; at++, col++, p += 4) {
+    if (col === w) { col = 0; p += (stride - w) * 4; }
+    plane[at] = rgba[p];
   }
-  const sample = c => {
-    const plane = new Int16Array(w * h);
-    for (let at = 0, col = 0, p = (y * stride + x) * 4 + c, n = w * h; at < n; at++, col++, p += 4) {
-      if (col === w) { col = 0; p += (stride - w) * 4; }
-      plane[at] = rgba[p];
+  return plane;
+}
+function exactPlanes(words, stride, x, y, w, h, rct) {
+  const n = w * h, green = new Int16Array(n), blue = new Int16Array(n), red = new Int16Array(n);
+  if (rct !== 10) {
+    for (let at = 0, col = 0, p = y * stride + x; at < n; at++, col++, p++) {
+      if (col === w) { col = 0; p += stride - w; }
+      const word = words[p], r = word & 255, g = word >>> 8 & 255, co = r - (word >>> 16 & 255), tmp = (word >>> 16 & 255) + (co >> 1), cg = g - tmp;
+      green[at] = tmp + (cg >> 1); blue[at] = co; red[at] = cg;
     }
-    return plane;
-  };
-  const step = 2 * maxError + 1, models = [];
+  } else {
+    for (let at = 0, col = 0, p = y * stride + x; at < n; at++, col++, p++) {
+      if (col === w) { col = 0; p += stride - w; }
+      const word = words[p], g = word >>> 8 & 255;
+      green[at] = g; blue[at] = (word >>> 16 & 255) - g; red[at] = (word & 255) - g;
+    }
+  }
+  return [green, blue, red];
+}
+const COLOUR_CHANNELS = ['green', 'blue-green', 'red-green'];
+
+function groupChannels(rgba, stride, x, y, w, h, shape, coding, single = false, mode = L.weighted, rct = 10) {
+  const {maxError, onPredictor} = coding;
+  const answered = coding.gpu?.pixels === rgba ? coding.gpu.map : null;
+  const take = name => answered?.get(answerKey(x, y, w, h, rct, name));
+  const scanned = single ? undefined : take('scan');
+  const kept = !single && scanned === undefined && sized.pixels === rgba ? takeScan(`${x},${y},${w},${h}`) : undefined;
+  const scan = single ? null : scanned !== undefined ? scanned : kept !== undefined ? kept : timed('scan', () => scanColours(rgba, stride, x, y, w, h, Math.min(PALETTE_LIMIT, (w * h) / 20 | 0)));
+  if (scan) {
+    const index = timed('copies', () => channelModel(scan.indices, w, h, 'index', 1, L.minCopy ?? 3)); index.group = true;
+    const {meta, model} = timed('palette', () => paletteModel(scan.colours, [index], shape));
+    return {transforms: [meta.transform], models: [model, index], palette: true};
+  }
+  const sample = c => samplePlane(rgba, stride, x, y, w, h, c);
+  const step = 2 * maxError + 1, models = [], lanes = [], learnedAt = [];
   if (step > 1) coding.stepped = true;
-  const colour = (plane, channel, keepWeighted = false) => {
-    const weighted = step === 1 && (keepWeighted || useWeighted(plane, w, h));
-    if (step === 1) onPredictor?.(channel, weighted ? 'weighted' : 'gradient');
-    models.push(channelModel(plane, w, h, 'smooth', step, 4, weighted));
-    return weighted;
+  const colour = (plane, channel, keepWeighted = false, s = step) => {
+    if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && s === 1 && (mode === 'learned' || mode === 'runs') && !constantPlane(plane)) {
+      const given = take(channel);
+      let learned = timed('trees', () => tools.trees.model(plane, w, h, given, L.learn));
+      if (learned && mode === 'runs') learned = learnedRuns(learned, w, h);
+      if (learned) { onPredictor?.(channel, 'learned'); models.push(learned); learnedAt.push(models.length - 1); return true; }
+    }
+    if (s === 1 && L.gradient && !constantPlane(plane)) { onPredictor?.(channel, 'gradient'); lanes.push({plane, at: models.length, weighted: 0}); models.push(null); return false; }
+    const weighted = s === 1 ? (keepWeighted ? 1 : mode === 'never' ? 0 : mode === 'always' ? 1 : timed('sample', () => useWeighted(plane, w, h))) : 0;
+    if (s === 1) onPredictor?.(channel, weighted ? 'weighted' : 'gradient');
+    if (s === 1 && weighted && !constantPlane(plane)) { lanes.push({plane, at: models.length, weighted, channel}); models.push(null); }
+    else models.push(timed(weighted ? 'weighted' : 'gradient', () => channelModel(plane, w, h, 'smooth', s, 4, weighted)));
+    return Boolean(weighted);
   };
   let transforms = [];
   if (shape.colour === 1) colour(sample(0), 'gray');
   else {
-    const n = w * h, words = pixelKeys(rgba), green = new Int16Array(n), blue = new Int16Array(n), red = new Int16Array(n);
-    for (let at = 0, col = 0, p = y * stride + x; at < n; at++, col++, p++) {
-      if (col === w) { col = 0; p += stride - w; }
-      const word = words[p];
-      green[at] = word >>> 8 & 255; blue[at] = word >>> 16 & 255; red[at] = word & 255;
+    const n = w * h, words = pixelKeys(rgba);
+    if (step === 1) {
+      const [green, blue, red] = exactPlanes(words, stride, x, y, w, h, rct);
+      const greenWeighted = colour(green, 'green');
+      colour(blue, 'blue-green', greenWeighted);
+      colour(red, 'red-green', greenWeighted);
+    } else {
+      const green = new Int16Array(n), blue = new Int16Array(n), red = new Int16Array(n);
+      for (let at = 0, col = 0, p = y * stride + x; at < n; at++, col++, p++) {
+        if (col === w) { col = 0; p += stride - w; }
+        const word = words[p];
+        green[at] = word >>> 8 & 255; blue[at] = word >>> 16 & 255; red[at] = word & 255;
+      }
+      const greenWeighted = colour(green, 'green');
+      for (let i = 0; i < n; i++) { blue[i] -= green[i]; red[i] -= green[i]; }
+      colour(blue, 'blue-green', greenWeighted);
+      colour(red, 'red-green', greenWeighted);
     }
-    const greenWeighted = colour(green, 'green');
-    for (let i = 0; i < n; i++) { blue[i] -= green[i]; red[i] -= green[i]; }
-    colour(blue, 'blue-green', greenWeighted);
-    colour(red, 'red-green', greenWeighted);
-    transforms = [{type: 'rct', beginC: 0, rctType: 10}];
+    transforms = [{type: 'rct', beginC: 0, rctType: step === 1 ? rct : 10}];
   }
-  if (shape.alpha) {
-    const alpha = sample(3), weighted = useWeighted(alpha, w, h);
-    onPredictor?.('alpha', weighted ? 'weighted' : 'gradient');
-    models.push(channelModel(alpha, w, h, 'smooth', 1, 4, weighted));
-  }
-  return {transforms, models};
+  if (shape.alpha) colour(sample(3), 'alpha', false, 1);
+  timed('weighted', () => {
+    const gradient = Boolean(L.gradient), answers = !gradient && lanes.length > 1 ? lanes.map(lane => take(lane.channel)) : null;
+    const pieces = lanes.length > 1 ? captureWeightedLanes(lanes.map(lane => lane.plane), w, h, 4, SMALL, gradient, answers?.every(Boolean) ? answers : null) : null;
+    lanes.forEach((lane, c) => { models[lane.at] = pieces ? (gradient ? gradientModel : weightedModel)(pieces[c], lane.plane, w, 4) : channelModel(lane.plane, w, h, 'smooth', 1, 4, lane.weighted); });
+  });
+  return {transforms, models, learnedAt};
+}
+function learnedRuns(learned, w, h) {
+  return timed('copies', () => {
+    const c = captureCopies(Uint16Array.from(learned.pieceValue), w, 0, w, h, learned.pieceContext, 0, 4, 1, spatialLookup(w)[0]);
+    return {...learned, count: c.count, pieceValue: c.value, pieceDistance: c.distance, pieceContext: c.context};
+  });
 }
 
-function shapeOf(keys, margin = keys[0], rgb = false) {
+const SMALL_DIM = 256;
+const sized = {pixels: null, scans: new Map()};
+const takeScan = key => { const scan = sized.scans.get(key); sized.scans.delete(key); return scan; };
+export const captureGroupCache = () => ({pixels: sized.pixels !== null, scans: sized.scans.size});
+function groupSize(pixels, stride, px, py, width, height) {
+  sized.pixels = null; sized.scans.clear();
+  if (!L.smallGroups || groupLayout(width, height, DIM).single) return DIM;
+  sized.pixels = pixels;
+  const fit = (dim, enough) => {
+    const layout = groupLayout(width, height, dim), groups = layout.groupsX * layout.groupsY;
+    if (layout.single) return false;
+    let fits = 0;
+    for (let g = 0; g < groups; g++) {
+      const [x, y, w, h] = groupRect(layout, width, height, g, dim);
+      const scan = timed('scan', () => scanColours(pixels, stride, px + x, py + y, w, h, Math.min(PALETTE_LIMIT, (w * h) / 20 | 0)));
+      sized.scans.set(`${px + x},${py + y},${w},${h}`, scan);
+      if (scan) fits++;
+      if (enough(fits, g + 1, groups)) return true;
+      if (!enough(fits + groups - g - 1, groups, groups)) return false;
+    }
+    return false;
+  };
+  const most = (fits, seen, groups) => 2 * fits > groups, nearlyAll = (fits, seen, groups) => 4 * fits >= 3 * groups;
+  captureHold(pixelKeys(pixels));
+  try {
+    if (fit(DIM, most)) return DIM;
+    sized.scans.clear();
+    if (fit(SMALL_DIM, nearlyAll)) return SMALL_DIM;
+    sized.pixels = null; sized.scans.clear();
+    return DIM;
+  } catch (error) { sized.pixels = null; sized.scans.clear(); throw error; } finally { captureRelease(); }
+}
+
+function groupSections(write, pixels, stride, x, y, w, h, shape, coding, single = false) {
+  const modes = (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && L.weighted === 'both' ? ['never', 'always'] : [L.weighted];
+  let best = null;
+  const keep = bytes => { if (!best || bytes.length < best.length) best = bytes; };
+  const first = groupChannels(pixels, stride, x, y, w, h, shape, coding, single, modes[0]);
+  keep(write(first));
+  if (!first.palette) {
+    for (const mode of modes.slice(1)) keep(write(groupChannels(pixels, stride, x, y, w, h, shape, coding, single, mode)));
+    if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && shape.colour !== 1 && coding.maxError === 0) for (const rct of L.rcts ?? []) for (const mode of modes) keep(write(groupChannels(pixels, stride, x, y, w, h, shape, coding, single, mode, rct)));
+    if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && L.trees === 'learned' && tools.trees && coding.maxError === 0)
+      for (const rct of [10, ...L.learnRcts ?? []]) {
+        const learned = groupChannels(pixels, stride, x, y, w, h, shape, coding, single, 'learned', rct), models = learned.models.slice();
+        for (const at of learned.learnedAt) models[at] = learnedRuns(models[at], w, h);
+        keep(write(learned)); keep(write({...learned, models}));
+      }
+  }
+  else if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && L.palette === 'both') for (const mode of modes) keep(write(groupChannels(pixels, stride, x, y, w, h, shape, coding, true, mode)));
+  return best;
+}
+
+function shapeOf(keys, margin = keys[0], rgb = false, width = keys.length, height = 1, stride = width, origin = 0) {
   let grey = !rgb && !((margin ^ margin >>> 8) & 0xffff), opaque = margin >>> 24 === 255;
-  for (let i = 0; i < keys.length && (grey || opaque); i++) {
-    const key = keys[i];
-    if (key >>> 24 !== 255) opaque = false;
-    if ((key ^ key >>> 8) & 0xffff) grey = false;
+  for (let y = 0; y < height && (grey || opaque); y++) {
+    for (let i = origin + y * stride, end = i + width; i < end && (grey || opaque); i++) {
+      const key = keys[i];
+      if (key >>> 24 !== 255) opaque = false;
+      if ((key ^ key >>> 8) & 0xffff) grey = false;
+    }
   }
   const colour = grey ? 1 : 3;
   return {colour, alpha: !opaque, channels: colour + (opaque ? 0 : 1)};
 }
 
-function* captureFrameSteps(pixels, width, height, shape, coding, frame, header, placement) {
+function rgbFrame(frame, width, height, least) {
+  const {colours, indices, stride = width, x: fx = 0, y: fy = 0} = frame, keys = new Map(), remap = new Uint16Array(colours.length), rgb = [];
+  let soft = 0;
+  for (let y = 0; y < height; y++) for (let i = (fy + y) * stride + fx, e = i + width; i < e; i++) soft += (colours[indices[i]] >>> 24) % 255 > 0;
+  if (soft < width * height * least) return null;
+  for (let i = 0; i < colours.length; i++) {
+    const key = (colours[i] | 0xff000000) >>> 0;
+    let j = keys.get(key);
+    if (j === undefined) { j = rgb.length; keys.set(key, j); rgb.push(key); }
+    remap[i] = j;
+  }
+  const n = width * height, plane = new Uint16Array(n), alpha = new Int16Array(n);
+  for (let y = 0, at = 0; y < height; y++) for (let x = 0, i = (fy + y) * stride + fx; x < width; x++, at++, i++) {
+    const v = indices[i]; plane[at] = remap[v]; alpha[at] = colours[v] >>> 24;
+  }
+  return {colours: Uint32Array.from(rgb), indices: plane, alpha};
+}
+
+const answerKey = (x, y, w, h, rct, name) => COLOUR_CHANNELS.includes(name) ? `${x},${y},${w},${h},${rct},${name}` : `${x},${y},${w},${h},${name}`;
+const GPU_SAMPLES = 1 << 22;
+function* askSteps(pixels, stride, px, py, layout, width, height, shape, coding, from, held) {
+  const gpu = coding.gpu, groups = layout.groupsX * layout.groupsY, rcts = [10, ...L.rcts ?? []], words = pixelKeys(pixels);
+  const planes = [], asked = [];
+  let g = from;
+  for (let samples = 0; g < groups; g++) {
+    const [gx, gy, w, h] = groupRect(layout, width, height, g, DIM), x = px + gx, y = py + gy;
+    const need = w * h * ((shape.colour === 1 ? 1 : 3 * rcts.length) + (shape.alpha ? 1 : 0));
+    if (g > from && samples + need > GPU_SAMPLES) break;
+    samples += need;
+    const scan = timed('scan', () => scanColours(pixels, stride, x, y, w, h, Math.min(PALETTE_LIMIT, (w * h) / 20 | 0)));
+    const own = held[g] = [answerKey(x, y, w, h, 10, 'scan')];
+    gpu.map.set(own[0], scan);
+    if (scan) continue;
+    const add = (plane, rct, name) => {
+      if (constantPlane(plane)) return;
+      const key = answerKey(x, y, w, h, rct, name);
+      planes.push({plane, width: w, height: h}); asked.push(key); own.push(key);
+    };
+    if (shape.colour === 1) add(samplePlane(pixels, stride, x, y, w, h, 0), 10, 'gray');
+    else for (const rct of rcts) exactPlanes(words, stride, x, y, w, h, rct).forEach((plane, c) => add(plane, rct, COLOUR_CHANNELS[c]));
+    if (shape.alpha) add(samplePlane(pixels, stride, x, y, w, h, 3), 10, 'alpha');
+  }
+  return {to: g, asked, handle: planes.length ? yield {gpu: {kind: 'weighted', planes}, ahead: true} : null};
+}
+function* takeSteps({asked, handle}, gpu) {
+  const given = typeof handle?.then === 'function' ? yield {await: handle} : handle;
+  if (Array.isArray(given) && given.length === asked.length) asked.forEach((key, i) => gpu.map.set(key, given[i]));
+}
+
+function lightOrder(colours) {
+  const n = colours.length, key = c => ((c & 255) * 299 + (c >>> 8 & 255) * 587 + (c >>> 16 & 255) * 114) * 256 + (c >>> 24);
+  const order = Array.from({length: n}, (_, i) => i).sort((a, b) => key(colours[a]) - key(colours[b]) || a - b);
+  const remap = new Int32Array(n), sorted = new Uint32Array(n);
+  order.forEach((from, to) => { remap[from] = to; sorted[to] = colours[from]; });
+  return {remap, palette: shape => { const meta = paletteMeta(sorted, shape); return {meta, model: channelModel(meta.plane, meta.width, meta.height, 'rows')}; }};
+}
+function keyOrder(colours) {
+  const n = colours.length, order = Array.from({length: n}, (_, i) => i).sort((a, b) => colours[a] - colours[b]);
+  const remap = new Int32Array(n), sorted = new Uint32Array(n);
+  order.forEach((from, to) => { remap[from] = to; sorted[to] = colours[from]; });
+  return {remap, palette: shape => { const meta = paletteMeta(sorted, shape);
+    return {meta, model: channelModel(meta.plane, meta.width, meta.height, 'rows', 1, L.minCopy ?? 3, true, meta.width, 0, false, true)}; }};
+}
+function rampIndices(indices, stride, origin, w, h, remap) {
+  const plane = new Int16Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) plane[y * w + x] = remap[indices[origin + y * stride + x]];
+  return channelModel(plane, w, h, 'smooth', 1, L.minCopy ?? 3, false, w, 0, true);
+}
+function predictedIndices(indices, stride, origin, w, h, remap) {
+  const plane = new Int16Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) plane[y * w + x] = remap[indices[origin + y * stride + x]];
+  const learned = tools.trees.model(plane, w, h);
+  if (!learned) return channelModel(plane, w, h, 'smooth', 1, 4, 1);
+  const c = captureCopies(Uint16Array.from(learned.pieceValue), w, 0, w, h, learned.pieceContext, 0, 4, 1, spatialLookup(w)[0]);
+  return {...learned, count: c.count, pieceValue: c.value, pieceDistance: c.distance, pieceContext: c.context};
+}
+
+function* captureFrameSteps(pixels, width, height, shape, coding, frame, header, placement, pStride = width, px = 0, py = 0) {
+  if (L.alphaPlane !== 'never' && frame && frame.alpha === undefined && shape.alpha && shape.colour === 3) {
+    const rgb = rgbFrame(frame, width, height, L.alphaPlane === 'soft' ? 1 / 8 : 0), copy = new BitWriter(header.bytes.length);
+    copy.append(header);
+    const one = yield* within(captureFrameSteps(pixels, width, height, shape, coding, {...frame, alpha: null}, header, placement, pStride, px, py));
+    if (!rgb) return least(one);
+    const two = yield* under(one, captureFrameSteps(pixels, width, height, shape, coding, rgb, copy, placement, pStride, px, py));
+    return least(one, two);
+  }
+  if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && L.indexPredict && frame && frame.predicted === undefined &&
+    !frame.alpha && coding.maxError === 0 && tools.trees && frame.colours.length > 2) {
+    const copy = new BitWriter(header.bytes.length);
+    copy.append(header);
+    const one = yield* within(captureFrameSteps(pixels, width, height, shape, coding, {...frame, predicted: false}, header, placement, pStride, px, py));
+    const two = yield* under(one, captureFrameSteps(pixels, width, height, shape, coding, {...frame, predicted: true}, copy, placement, pStride, px, py));
+    return least(one, two);
+  }
+  if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && L.indexRamp && frame && frame.predicted === undefined &&
+    !frame.alpha && coding.maxError === 0 && frame.colours.length >= 256) {
+    const copy = new BitWriter(header.bytes.length);
+    copy.append(header);
+    const one = yield* within(captureFrameSteps(pixels, width, height, shape, coding, {...frame, predicted: false}, header, placement, pStride, px, py));
+    const two = yield* under(one, captureFrameSteps(pixels, width, height, shape, coding, {...frame, predicted: 'ramp'}, copy, placement, pStride, px, py));
+    return least(one, two);
+  }
   captureRelease();
-  const layout = groupLayout(width, height, DIM), groups = layout.groupsX * layout.groupsY, sections = [];
-  writeModularFrameHeader(header, {alpha: shape.alpha, shift: 3, ...placement});
-  let total = 0;
-  const append = bytes => { total += bytes.length; admitOutputSize(total); sections.push(bytes); };
-  const indexModels = frame ? Array.from({length: groups}, (_, g) => {
-    const [x, y, w, h] = groupRect(layout, width, height, g, DIM), {stride = width, x: fx = 0, y: fy = 0} = frame;
-    return channelModel(frame.indices, w, h, 'index', 1, 3, true, stride, (fy + y) * stride + fx + x);
-  }) : null;
-  const palette = frame ? paletteModel(frame.colours, indexModels, shape) : null;
-  const global = new BitWriter(layout.single ? width * height + 256 : 1024);
-  global.write(1, 1); global.write(1, 1);
-  if (layout.single) {
-    const {transforms, models} = frame
-      ? {transforms: [palette.meta.transform], models: [palette.model, indexModels[0]]}
-      : groupChannels(pixels, width, 0, 0, width, height, shape, coding);
-    const write = writeChannels(global, models);
-    writeModularHeader(global, {transforms});
-    write();
-    return assembleCodestream(header, [global.finish()]);
-  }
-  if (frame) {
-    const write = writeChannels(global, [palette.model]);
-    writeModularHeader(global, {transforms: [palette.meta.transform]});
-    write();
-  } else {
-    writeHistograms(global, {contextMap: new Uint8Array(writeTree(global, leaf(0)).length),
-      histograms: [{config: LITERAL_CONFIGS[0], code: buildCode(new Uint32Array(1))}]});
-    writeModularHeader(global);
-  }
-  append(global.finish());
-  for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
-  for (let g = 0; g < groups; g++) {
-    const [x, y, w, h] = groupRect(layout, width, height, g, DIM), section = new BitWriter(w * h + 256);
-    const channels = frame ? {transforms: [], models: [indexModels[g]]} : groupChannels(pixels, width, x, y, w, h, shape, coding);
-    writeModularHeader(section, {useGlobalTree: false, transforms: channels.transforms});
-    writeChannels(section, channels.models)();
-    if (frame) indexModels[g] = null;
-    append(section.finish());
-    yield (g + 1) / groups;
-  }
-  return assembleCodestream(header, sections);
+  const dim = placement.dim ?? (frame ? DIM : groupSize(pixels, pStride, px, py, width, height)), shift = 31 - Math.clz32(dim >> 7);
+  try {
+    const layout = groupLayout(width, height, dim), groups = layout.groupsX * layout.groupsY, sections = [];
+    if (placement.frameHeader) placement.frameHeader(header, shift);
+    else writeModularFrameHeader(header, {alpha: shape.alpha, shift, ...placement});
+    let total = 0;
+    const append = bytes => { total += bytes.length; admitOutputSize(total); if (total > ceiling) throw OVER; sections.push(bytes); };
+    const lit = (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && frame?.predicted === 'ramp' ? keyOrder(frame.colours) : frame?.predicted ? lightOrder(frame.colours) : null;
+    const indexModels = frame ? Array.from({length: groups}, (_, g) => {
+      const [x, y, w, h] = groupRect(layout, width, height, g, dim), {stride = width, x: fx = 0, y: fy = 0} = frame;
+      if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && frame.predicted === 'ramp') return timed('copies', () => rampIndices(frame.indices, stride, (fy + y) * stride + fx + x, w, h, lit.remap));
+      if (lit) return timed('trees', () => predictedIndices(frame.indices, stride, (fy + y) * stride + fx + x, w, h, lit.remap));
+      return timed('copies', () => channelModel(frame.indices, w, h, 'index', 1, L.minCopy ?? 3, true, stride, (fy + y) * stride + fx + x));
+    }) : null;
+    const alphaModels = frame?.alpha ? Array.from({length: groups}, (_, g) => {
+      const [x, y, w, h] = groupRect(layout, width, height, g, dim);
+      const plane = new Int16Array(w * h);
+      for (let row = 0; row < h; row++) plane.set(frame.alpha.subarray((y + row) * width + x, (y + row) * width + x + w), row * w);
+      return timed('gradient', () => channelModel(plane, w, h, 'smooth', 1, 3, false, w, 0, true));
+    }) : null;
+    const palette = lit ? lit.palette(shape) : frame ? timed('palette', () => paletteModel(frame.colours, indexModels, frame.alpha ? {colour: 3, alpha: false, channels: 3} : shape)) : null;
+    if (layout.single) {
+      const stream = ({transforms, models}) => {
+        const global = new BitWriter(width * height + 256);
+        placement.prefix?.(global);
+        global.write(1, 1); global.write(1, 1);
+        const write = timed('histograms', () => writeChannels(global, models, coding.trace));
+        writeModularHeader(global, {transforms});
+        timed('write', write);
+        return global.finish();
+      };
+      return fits(assembleCodestream(header, [frame ? stream({transforms: [palette.meta.transform], models: [palette.model, indexModels[0], ...alphaModels ?? []]})
+        : groupSections(stream, pixels, pStride, px, py, width, height, shape, coding, true)]));
+    }
+    const global = new BitWriter(1024);
+    placement.prefix?.(global);
+    global.write(1, 1); global.write(1, 1);
+    if (frame) {
+      const write = timed('histograms', () => writeChannels(global, [palette.model], coding.trace));
+      writeModularHeader(global, {transforms: [palette.meta.transform]});
+      timed('write', write);
+    } else {
+      writeHistograms(global, {contextMap: new Uint8Array(writeTree(global, leaf(0)).length),
+        histograms: [{config: LITERAL_CONFIGS[0], code: buildCode(new Uint32Array(1))}]});
+      writeModularHeader(global);
+    }
+    append(global.finish());
+    for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
+    let written = null;
+    if (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && helped(coding, frame, groups) && dim === DIM) {
+      const rects = frameRects(width, height, px, py), kept = coding.kept;
+      if (kept?.pixels === pixels && kept.level === L && rects.every(r => kept.map.has(rectKey(r)))) written = rects.map(r => kept.map.get(rectKey(r)));
+      else written = yield* groupSteps(pixels, pStride, rects, shape);
+    }
+    const gpu = (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && !written && coding.gpu && !frame && dim === DIM && coding.maxError === 0 && !L.gradient && width * height >= tools.gpu.pixels ? coding.gpu : null;
+    const held = gpu ? new Array(groups) : null;
+    let batch = null, ahead = null;
+    if (gpu) gpu.pixels = pixels;
+    try {
+      for (let g = 0; g < groups; g++) {
+        if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && gpu && (!batch || g >= batch.to)) {
+          batch = ahead ?? (yield* askSteps(pixels, pStride, px, py, layout, width, height, shape, coding, g, held));
+          ahead = batch.to < groups ? yield* askSteps(pixels, pStride, px, py, layout, width, height, shape, coding, batch.to, held) : null;
+          yield* takeSteps(batch, gpu);
+        }
+        const [x, y, w, h] = groupRect(layout, width, height, g, dim);
+        const section = groupSection(w, h, coding);
+        append(written ? written[g] : frame ? section({transforms: [], models: alphaModels ? [indexModels[g], alphaModels[g]] : [indexModels[g]]})
+          : groupSections(section, pixels, pStride, px + x, py + y, w, h, shape, coding));
+        if (frame) { indexModels[g] = null; if (alphaModels) alphaModels[g] = null; }
+        if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && gpu) { for (const key of held[g]) gpu.map.delete(key); held[g] = null; }
+        yield (g + 1) / groups;
+      }
+    } finally { if (gpu) { gpu.map.clear(); gpu.pixels = null; } }
+    return fits(assembleCodestream(header, sections));
+  } finally { sized.pixels = null; sized.scans.clear(); }
+}
+
+const helped = (coding, frame, groups) => coding.helpers && !frame && coding.maxError === 0 && !coding.trace && groups > 1;
+const rectKey = r => `${r.x},${r.y},${r.width},${r.height}`;
+function frameRects(width, height, px, py) {
+  const layout = groupLayout(width, height, DIM);
+  return Array.from({length: layout.groupsX * layout.groupsY}, (_, g) => {
+    const [x, y, w, h] = groupRect(layout, width, height, g, DIM);
+    return {x: px + x, y: py + y, width: w, height: h};
+  });
+}
+function* groupSteps(pixels, stride, rects, shape) {
+  const given = yield {groups: {pixels, stride, rects, level: L, shape}};
+  return Array.isArray(given) && given.length === rects.length && given.every(bytes => bytes instanceof Uint8Array) ? given : null;
+}
+
+const groupSection = (w, h, coding) => channels => {
+  const out = new BitWriter(w * h + 256);
+  writeModularHeader(out, {useGlobalTree: false, transforms: channels.transforms});
+  timed('write', timed('histograms', () => writeChannels(out, channels.models, coding.trace)));
+  return out.finish();
+};
+export function captureGroupBytes(pixels, stride, {x, y, width, height}, level, shape, kit = CAPTURE_TOOLS_LEAN) {
+  requireCaptureKernels();
+  const outerLevel = L, outerTools = tools, coding = {maxError: 0};
+  L = level; tools = kit;
+  try { return groupSections(groupSection(width, height, coding), pixels, stride, x, y, width, height, shape, coding); }
+  finally { L = outerLevel; tools = outerTools; }
 }
 
 function* scaledSteps(steps, start, span) {
-  let step;
-  while (!(step = steps.next()).done) yield start + span * step.value;
+  let step, reply;
+  while (!(step = steps.next(reply)).done) {
+    if (typeof step.value === 'number') { yield start + span * step.value; reply = undefined; }
+    else reply = yield step.value;
+  }
   return step.value;
 }
 
@@ -766,29 +1223,154 @@ function screenBands(scan, width, height) {
 }
 
 function* captureSteps(source, imageWidth, imageHeight, colorSpace, coding) {
+  const t0 = typeof __RAPIER_JXL_PROBES__ === 'undefined' && coding.timing ? performance.now() : 0;
+  if (typeof __RAPIER_JXL_PROBES__ === 'undefined') { timing = coding.timing ?? null; inner = 0; }
   const words = pixelKeys(source);
   if (words.buffer === source.buffer) captureHold(words);
-  try { return yield* pageSteps(source, imageWidth, imageHeight, colorSpace, coding); }
-  finally { captureRelease(); }
+  try {
+    const mode = coding.maxError === 0 && !coding.base ? coding.patches ?? L.patches : false;
+    const peel = (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && mode === 'peel' ? timed('patches', () => capturePeel(source, imageWidth, imageHeight, L.peelLeast ?? 0.03, L.glyph)) : null;
+    if (peel) peel.scan = scanColours(peel.body, imageWidth, 0, 0, imageWidth, imageHeight, PALETTE_LIMIT);
+    if (!peel) return yield* markSteps(source, imageWidth, imageHeight, colorSpace, coding, mode);
+    const peeled = yield* scaledSteps(patchedSteps(source, imageWidth, imageHeight, colorSpace, coding, peel), 0, 1 / 2);
+    const outer = ceiling;
+    ceiling = peeled.length;
+    try {
+      const other = yield* scaledSteps(within(markSteps(source, imageWidth, imageHeight, colorSpace, coding, mode)), 1 / 2, 1 / 2);
+      return other && other.length <= peeled.length ? other : peeled;
+    } finally { ceiling = outer; }
+  } finally {
+    captureRelease();
+    if (typeof __RAPIER_JXL_PROBES__ === 'undefined' && timing) { timing.total = (timing.total || 0) + performance.now() - t0; timing = null; }
+  }
+}
+
+function* markSteps(source, imageWidth, imageHeight, colorSpace, coding, mode) {
+  const patches = mode ? timed('patches', () => capturePatches(source, imageWidth, imageHeight, 0.03)) : null;
+  if (!patches) return yield* pageSteps(source, imageWidth, imageHeight, colorSpace, coding);
+  const alone = imageWidth * imageHeight > SMALL_PICTURE && patches.cover >= 0.045 && onePalette(source, imageWidth, imageHeight);
+  const patched = yield* scaledSteps(within(patchedSteps(source, imageWidth, imageHeight, colorSpace, coding, patches)), 0, alone ? 1 : 1 / 2);
+  if (!patched) return yield* pageSteps(source, imageWidth, imageHeight, colorSpace, coding);
+  if (alone && patches.dictionary <= patched.length * 4) return patched;
+  const outer = ceiling;
+  ceiling = patched.length;
+  try {
+    const plain = yield* scaledSteps(within(pageSteps(source, imageWidth, imageHeight, colorSpace, coding)), 1 / 2, 1 / 2);
+    return plain && plain.length <= patched.length ? plain : patched;
+  } finally { ceiling = outer; }
+}
+
+function onePalette(source, width, height) {
+  const {x = 0, y = 0, width: w = width, height: h = height} = screenCrop(source, width, height) ?? {};
+  const scan = scanColours(source, width, x, y, w, h, PALETTE_LIMIT, true);
+  return !(!scan || scan.colours.length * 32 > w * h || screenBands(scan, w, h) ||
+    scan.colours.length > RARE_PALETTE && rareRegions(source, width, scan, w, h, x, y)?.only >= 0.75);
+}
+
+function* patchedSteps(source, width, height, colorSpace, coding, patches) {
+  let scan = scanColours(source, width, 0, 0, width, height, PALETTE_LIMIT);
+  const shape = shapeOf(scan ? scan.colours : pixelKeys(source));
+  const header = new BitWriter(128), atlasScan = scanColours(patches.atlas, patches.width, 0, 0, patches.width, patches.height, PALETTE_LIMIT);
+  writeHeaderFields(header, width, height, shape.colour, shape.alpha, {colorSpace});
+  const atlas = yield* scaledSteps(captureFrameSteps(atlasScan ? null : patches.atlas, patches.width, patches.height, shape, coding, atlasScan,
+    header, {frameHeader: (w, shift) => writeAtlasFrameHeader(w, shape.alpha, patches.width, patches.height, shift)}), 0, 1 / 4);
+  let pixels = scan ? null : new Uint8Array(source);
+  if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && patches.peel) { pixels = patches.body; scan = patches.scan; if (scan) pixels = null; }
+  else fillPatches(scan ? scan.indices : pixelKeys(pixels), width, patches);
+  const body = yield* scaledSteps(captureFrameSteps(pixels, width, height, shape, coding, scan, new BitWriter(64),
+    {frameHeader: (w, shift) => writePatchedFrameHeader(w, shape.alpha, shift), prefix: w => writeCapturePatches(w, patches, shape.alpha)}), 1 / 4, 3 / 4);
+  return concatenate([atlas, body]);
+}
+
+function* atlasSteps(atlas, width, height, imageWidth, imageHeight, colorSpace, coding, dim) {
+  const scan = scanColours(atlas, width, 0, 0, width, height, PALETTE_LIMIT);
+  const shape = shapeOf(scan ? scan.colours : pixelKeys(atlas), undefined, true), header = new BitWriter(128);
+  writeHeaderFields(header, imageWidth, imageHeight, 3, false, {colorSpace});
+  return yield* captureFrameSteps(scan ? null : atlas, width, height, shape, coding, scan, header,
+    {frameHeader: (w, shift) => writeAtlasFrameHeader(w, false, width, height, shift), ...dim && {dim}});
 }
 
 function* pageSteps(source, imageWidth, imageHeight, colorSpace, coding) {
-  const crop = coding.base ? null : screenCrop(source, imageWidth, imageHeight);
+  const crop = coding.oneFrame ? null : timed('crop', () => screenCrop(source, imageWidth, imageHeight));
   const width = crop ? crop.width : imageWidth, height = crop ? crop.height : imageHeight;
-  let scan = scanColours(source, imageWidth, crop?.x ?? 0, crop?.y ?? 0, width, height, PALETTE_LIMIT, true);
+  let scan = timed('scan', () => scanColours(source, imageWidth, crop?.x ?? 0, crop?.y ?? 0, width, height, PALETTE_LIMIT, true));
   const header = new BitWriter(128);
-  if (!crop && scan?.colours.length === 1) {
+  if (!crop && !coding.reference && scan?.colours.length === 1) {
     const shape = shapeOf(scan.colours, undefined, coding.base);
     writeHeaderFields(header, imageWidth, imageHeight, shape.colour, shape.alpha, {colorSpace});
     writeScreenBackground(header, imageWidth, imageHeight, shape, source.subarray(0, 4), undefined, true);
     return header.finish();
   }
-  if (scan && scan.colours.length * 32 > width * height) scan = null;
-  const bands = coding.base ? null : screenBands(scan, width, height);
-  const rare = !coding.base && scan && scan.colours.length > RARE_PALETTE ? rareRegions(scan, width, height, crop?.x ?? 0, crop?.y ?? 0) : null;
-  if (rare && rare.only >= 0.75) return yield* pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, header, null, crop, null, rare);
-  if (!bands) return yield* pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, header, null, crop, scan);
-  return yield* bandSteps(source, imageWidth, imageHeight, colorSpace, coding, header, crop, scan, bands);
+  if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && scan && L.channels && scan.colours.length > 1) scan = null;
+  if (scan && coding.base !== true && width * height <= SMALL_PICTURE && scan.colours.length > 512 && scan.colours.length * 32 <= width * height &&
+    repeats(scan.indices, width) * 4 < width * height) scan = null;
+  if (scan && scan.colours.length * 32 > width * height) {
+    if (width * height > SMALL_PICTURE) scan = null;
+    else {
+      const channels = yield* scaledSteps(within(routeSteps(source, imageWidth, imageHeight, colorSpace, coding, header, crop, null)), 0, 1 / 2);
+      const palette = yield* scaledSteps(under(channels, routeSteps(source, imageWidth, imageHeight, colorSpace, coding, new BitWriter(128), crop, scan)), 1 / 2, 1 / 2);
+      return least(channels, palette);
+    }
+  }
+  return yield* routeSteps(source, imageWidth, imageHeight, colorSpace, coding, header, crop, scan);
+}
+
+function repeats(indices, width) {
+  const n = indices.length, last = new Int32Array(1 << 16);
+  let same = 0;
+  for (let i = 0; i < n; i++) {
+    const x = i % width;
+    if (x && indices[i] === indices[i - 1] || i >= width && indices[i] === indices[i - width]) { same++; continue; }
+    if (i + 4 > n) continue;
+    const a = indices[i], b = indices[i + 1], c = indices[i + 2], d = indices[i + 3];
+    const h = Math.imul(a ^ Math.imul(b, 0x9e3779b1) ^ Math.imul(c, 0x85ebca77) ^ Math.imul(d, 0xc2b2ae3d), 0x27d4eb2f) >>> 16, j = last[h] - 1;
+    if (j >= 0 && indices[j] === a && indices[j + 1] === b && indices[j + 2] === c && indices[j + 3] === d) same++;
+    last[h] = i + 1;
+  }
+  return same;
+}
+
+function* routeSteps(source, imageWidth, imageHeight, colorSpace, coding, header, crop, scan) {
+  const width = crop ? crop.width : imageWidth, height = crop ? crop.height : imageHeight;
+  const bands = coding.oneFrame ? null : screenBands(scan, width, height);
+  const rare = coding.effort > 3 && !coding.base && (!scan || scan.colours.length > RARE_PALETTE) ? timed('rare', () => rareRegions(source, imageWidth, scan, width, height, crop?.x ?? 0, crop?.y ?? 0)) : null;
+  if (L.routes === 'all' || L.routes === 'rare' && width * height <= SMALL_PICTURE)
+    return yield* everyRoute(source, imageWidth, imageHeight, colorSpace, coding, crop, scan, bands, rare);
+  if (rare && rare.only >= 0.75) {
+    if (scan) return yield* pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, header, null, crop, null, rare);
+    if (L.routes === 'one') return yield* pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, header, null, crop, null);
+    if (rare.regions.length >= 6) return yield* pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, header, null, crop, null, rare);
+    const automatic = {};
+    const first = yield* scaledSteps(within(pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, header, null, crop, null, undefined, undefined, automatic)), 0, 1 / 3);
+    let second = null;
+    if (!automatic.unsplit) second = yield* scaledSteps(under(first, pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, new BitWriter(128), null, crop, null, false)), 1 / 3, 1 / 3);
+    else yield 2 / 3;
+    const third = yield* scaledSteps(under(second && (!first || second.length < first.length) ? second : first, pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, new BitWriter(128), null, crop, null, rare)), 2 / 3, 1 / 3);
+    return least(first, second, third);
+  }
+  if (bands) return yield* bandSteps(source, imageWidth, imageHeight, colorSpace, coding, header, crop, scan, bands);
+  if (!scan || L.routes === 'one') return yield* pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, header, null, crop, scan);
+  const automatic = {};
+  const best = yield* scaledSteps(within(pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, header, null, crop, scan, undefined, undefined, automatic)), 0, 1 / 2);
+  if (automatic.unsplit) return least(best);
+  const unsplit = yield* scaledSteps(under(best, pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, new BitWriter(128), null, crop, scan, false)), 1 / 2, 1 / 2);
+  return least(best, unsplit);
+}
+
+function* everyRoute(source, imageWidth, imageHeight, colorSpace, coding, crop, scan, bands, rare) {
+  const routes = [], automatic = {};
+  if (bands) routes.push(h => bandSteps(source, imageWidth, imageHeight, colorSpace, coding, h, crop, scan, bands));
+  routes.push(h => pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, h, null, crop, scan, undefined, undefined, automatic),
+    h => automatic.unsplit ? null : pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, h, null, crop, scan, false));
+  if (rare) routes.push(h => pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, h, null, crop, null, rare));
+  let best = null;
+  for (let i = 0; i < routes.length; i++) {
+    const steps = routes[i](new BitWriter(128));
+    if (!steps) continue;
+    const candidate = yield* scaledSteps(under(best, steps), i / routes.length, 1 / routes.length);
+    if (candidate && (!best || candidate.length < best.length)) best = candidate;
+  }
+  return least(best);
 }
 
 function* bandSteps(source, imageWidth, imageHeight, colorSpace, coding, header, crop, scan, bands) {
@@ -797,25 +1379,32 @@ function* bandSteps(source, imageWidth, imageHeight, colorSpace, coding, header,
   writeHeaderFields(header, imageWidth, imageHeight, shape.colour, shape.alpha, {colorSpace});
   if (crop) writeScreenBackground(header, imageWidth, imageHeight, shape, crop.background);
   for (let b = 0; b < count; b++) {
-    const y = bands[b], rows = bands[b + 1] - y, band = {x: crop?.x ?? 0, y: (crop?.y ?? 0) + y, shape, last: b + 1 === count};
+    const y = bands[b], rows = bands[b + 1] - y, band = {x: crop?.x ?? 0, y: (crop?.y ?? 0) + y, shape, last: b + 1 === count, canvas: {width: imageWidth, height: imageHeight}};
     const view = {stride: imageWidth, origin: band.y * imageWidth + band.x}, words = pixelKeys(source);
     if (b && words.buffer === source.buffer) captureHold(words);
     frames.push(yield* scaledSteps(pictureSteps(source, width, rows, colorSpace, coding, b ? new BitWriter(64) : header, band,
-      screenCrop(source, width, rows, view.stride, view.origin), {colours: scan.colours, indices: scan.indices.subarray(y * width, (y + rows) * width)},
+      timed('crop', () => screenCrop(source, width, rows, view.stride, view.origin)), {colours: scan.colours, indices: scan.indices.subarray(y * width, (y + rows) * width)},
       undefined, view), b / count, 1 / count));
   }
   return concatenate(frames);
 }
 
-function rareRegions(scan, width, height, cx, cy) {
-  const TILE = 16, tx = Math.ceil(width / TILE), ty = Math.ceil(height / TILE), dense = new Uint8Array(tx * ty);
-  const {colours, indices} = scan, freq = new Uint32Array(colours.length);
-  for (let i = 0; i < indices.length; i++) freq[indices[i]]++;
-  for (let by = 0; by < ty; by++) for (let bx = 0; bx < tx; bx++) {
-    let rare = 0;
-    for (let y = by * TILE, ye = Math.min(height, y + TILE); y < ye; y++)
-      for (let i = y * width + bx * TILE, ie = y * width + Math.min(width, bx * TILE + TILE); i < ie; i++) if (freq[indices[i]] <= 2) rare++;
-    dense[by * tx + bx] = rare > 16;
+function rareRegions(source, stride, scan, width, height, cx, cy) {
+  if (width * height < 4096) return null;
+  const TILE = 16, tx = Math.ceil(width / TILE), ty = Math.ceil(height / TILE), words = pixelKeys(source);
+  const dense = scan ? new Uint8Array(tx * ty) : captureDenseTiles(words, stride, cx, cy, width, height);
+  if (scan) {
+    const {colours, indices} = scan, freq = new Uint32Array(colours.length), rareColour = new Uint8Array(colours.length);
+    let run = indices[0], length = 0;
+    for (let i = 0; i < indices.length; i++) { const v = indices[i]; if (v === run) length++; else { freq[run] += length; run = v; length = 1; } }
+    freq[run] += length;
+    for (let c = 0; c < colours.length; c++) rareColour[c] = freq[c] <= 2 ? 1 : 0;
+    for (let by = 0; by < ty; by++) for (let bx = 0; bx < tx; bx++) {
+      let rare = 0;
+      for (let y = by * TILE, ye = Math.min(height, y + TILE); y < ye; y++)
+        for (let i = y * width + bx * TILE, ie = y * width + Math.min(width, bx * TILE + TILE); i < ie; i++) rare += rareColour[indices[i]];
+      dense[by * tx + bx] = rare > 16;
+    }
   }
   const seen = new Uint8Array(tx * ty), regions = [];
   for (let i = 0; i < tx * ty; i++) if (dense[i] && !seen[i]) {
@@ -841,20 +1430,35 @@ function rareRegions(scan, width, height, cx, cy) {
       regions.splice(b, 1); merged = true;
     }
   }
-  if (!regions.length) return null;
-  const inside = new Uint8Array(width * height), outside = new Uint8Array(colours.length);
-  for (const r of regions) for (let y = r.y; y < r.y + r.height; y++) inside.fill(1, y * width + r.x, y * width + r.x + r.width);
-  for (let i = 0; i < indices.length; i++) if (!inside[i]) outside[indices[i]] = 1;
-  let only = 0;
-  for (let c = 0; c < colours.length; c++) only += 1 - outside[c];
-  for (const r of regions) {
-    const border = new Map();
-    for (let xx = r.x; xx < r.x + r.width; xx++) for (const yy of [r.y, r.y + r.height - 1]) { const k = indices[yy * width + xx]; border.set(k, (border.get(k) || 0) + 1); }
-    let most = 0, index = 0;
-    for (const [k, n] of border) if (n > most) { most = n; index = k; }
-    r.background = colours[index]; r.x += cx; r.y += cy;
+  let area = 0;
+  for (const r of regions) area += r.width * r.height;
+  if (!regions.length || !scan && area * 2 > width * height) return null;
+  let only = 1;
+  if (scan) {
+    const {colours, indices} = scan, outside = new Uint8Array(colours.length), n = colours.length;
+    let seen = 0;
+    for (let y = 0; y < height; y++) {
+      const spans = regions.filter(r => y >= r.y && y < r.y + r.height).sort((a, b) => a.x - b.x);
+      for (let x = 0, k = 0; x < width; k++) {
+        const end = k < spans.length ? Math.max(x, spans[k].x) : width;
+        for (let i = y * width + x, ie = y * width + end; i < ie; i++) {
+          const c = indices[i];
+          if (!outside[c]) { outside[c] = 1; if (++seen * 4 > n) return null; }
+        }
+        if (k >= spans.length) break;
+        x = Math.max(end, spans[k].x + spans[k].width);
+      }
+    }
+    only = (n - seen) / n;
   }
-  return {regions, background: regions[0].background, solid: false, only: only / colours.length};
+  for (const r of regions) {
+    const border = new Map(), rx = cx + r.x, ry = cy + r.y;
+    for (let xx = rx; xx < rx + r.width; xx++) for (const yy of [ry, ry + r.height - 1]) { const k = words[yy * stride + xx]; border.set(k, (border.get(k) || 0) + 1); }
+    let most = 0, best = words[ry * stride + rx];
+    for (const [k, n] of border) if (n > most) { most = n; best = k; }
+    r.background = best; r.x = rx; r.y = ry;
+  }
+  return {regions, background: regions[0].background, solid: false, only};
 }
 
 let baseBuffer = null;
@@ -864,11 +1468,23 @@ function basePlane(n) {
   return baseBuffer.subarray(0, n);
 }
 
-function viewPixels(source, {stride, origin}, width, height) {
-  const out = new Uint8Array(width * height * 4);
-  for (let y = 0; y < height; y++) { const at = (origin + y * stride) * 4; out.set(source.subarray(at, at + width * 4), y * width * 4); }
-  return out;
+let ceiling = Infinity;
+const OVER = Symbol('over the patched file');
+function* within(steps) {
+  try { return yield* steps; } catch (error) { if (error === OVER) return null; throw error; }
 }
+function* under(best, steps) {
+  const outer = ceiling;
+  if (best) ceiling = Math.min(outer, best.length);
+  try { return yield* within(steps); } finally { ceiling = outer; }
+}
+function least(...files) {
+  let best = null;
+  for (const file of files) if (file && (!best || file.length < best.length)) best = file;
+  if (!best) throw OVER;
+  return best;
+}
+const fits = bytes => { if (bytes.length > ceiling) throw OVER; return bytes; };
 
 function concatenate(frames) {
   let length = 0;
@@ -876,21 +1492,22 @@ function concatenate(frames) {
   admitOutputSize(length);
   const out = new Uint8Array(length);
   for (let i = 0, at = 0; i < frames.length; at += frames[i++].length) out.set(frames[i], at);
-  return out;
+  return fits(out);
 }
 
-function* pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, header, band, crop, scan, forced, view = {stride: imageWidth, origin: 0}) {
+function* pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, header, band, crop, scan, forced, view = {stride: imageWidth, origin: 0}, automatic) {
   const width = crop ? crop.width : imageWidth, height = crop ? crop.height : imageHeight;
   const frame = band && crop && scan ? {colours: scan.colours, indices: scan.indices, stride: imageWidth, x: crop.x, y: crop.y} : scan;
   const fStride = frame?.stride ?? width, fx = frame?.x ?? 0, fy = frame?.y ?? 0;
-  const pixels = !crop ? source : frame ? null : crop.data;
+  const vStride = view.stride, vx = view.origin % vStride, vy = (view.origin / vStride) | 0;
+  const cx = crop?.x ?? 0, cy = crop?.y ?? 0;
   const at = r => band ? {...r, x: r.x + band.x, y: r.y + band.y} : r, whole = {x: 0, y: 0, width: imageWidth, height: imageHeight};
-  const bandCrop = band && !band.fullCanvas ? at(whole) : undefined;
+  const canvas = band?.canvas ?? {width: imageWidth, height: imageHeight}, bandCrop = band && !fullFrame(at(whole), canvas) ? at(whole) : undefined;
   const final = !band || band.last;
-  let partition = forced ?? (coding.base ? null : frame && screenColumns(source, imageWidth, imageHeight, view.stride, view.origin, crop) ||
-    screenRegions(source, imageWidth, imageHeight, !frame, view.stride, view.origin));
+  let partition = forced ?? (coding.oneFrame ? null : timed('partition', () => frame && screenColumns(source, imageWidth, imageHeight, view.stride, view.origin, crop) ||
+    screenRegions(source, imageWidth, imageHeight, !frame, view.stride, view.origin)));
   if (partition) {
-    const x0 = crop?.x ?? 0, y0 = crop?.y ?? 0, x1 = x0 + width, y1 = y0 + height;
+    const x0 = cx, y0 = cy, x1 = x0 + width, y1 = y0 + height;
     const regions = partition.regions.map(r => {
       const x = Math.max(r.x, x0), y = Math.max(r.y, y0);
       return {x, y, width: Math.min(r.x + r.width, x1) - x, height: Math.min(r.y + r.height, y1) - y, background: r.background ?? partition.background};
@@ -898,12 +1515,20 @@ function* pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, head
     const solid = partition.solid && regions.length === partition.regions.length && regions.every((r, i) => r.width === partition.regions[i].width && r.height === partition.regions[i].height);
     partition = regions.length && (!frame || forced || regions.some(r => r.y * 6 <= imageHeight)) ? {...partition, regions, solid} : null;
   }
-  const shape = band ? band.shape : shapeOf(frame ? frame.colours : pixelKeys(partition ? source : pixels), crop ? pixelKeys(crop.background)[0] : undefined, coding.base);
+  const shape = band ? band.shape : frame ? shapeOf(frame.colours, crop ? pixelKeys(crop.background)[0] : undefined, coding.base)
+    : shapeOf(pixelKeys(source), crop ? pixelKeys(crop.background)[0] : undefined, coding.base,
+      partition ? imageWidth : width, partition ? imageHeight : height, vStride,
+      partition ? view.origin : (vy + cy) * vStride + vx + cx);
   if (!band) writeHeaderFields(header, imageWidth, imageHeight, shape.colour, shape.alpha, {colorSpace});
+  const unsplit = () => {
+    if (crop) writeScreenBackground(header, imageWidth, imageHeight, shape, crop.background, bandCrop, false, canvas);
+    const placement = crop ? {crop: at({x: cx, y: cy, width, height}), canvas} : bandCrop ? {crop: bandCrop, canvas} : {};
+    return captureFrameSteps(frame ? null : source, width, height, shape, coding, frame, header,
+      final && !coding.reference ? placement : {...placement, last: false, reference: 1}, vStride, vx + cx, vy + cy);
+  };
   if (!partition) {
-    if (crop) writeScreenBackground(header, imageWidth, imageHeight, shape, crop.background, bandCrop);
-    const placement = crop ? {crop: at({x: crop.x, y: crop.y, width, height})} : bandCrop ? {crop: bandCrop} : {};
-    return yield* captureFrameSteps(pixels, width, height, shape, coding, frame, header, final ? placement : {...placement, last: false, reference: 1});
+    if (automatic) automatic.unsplit = true;
+    return yield* unsplit();
   }
   const {regions, background} = partition, frames = [];
   let body = source, base;
@@ -924,53 +1549,68 @@ function* pictureSteps(source, imageWidth, imageHeight, colorSpace, coding, head
     blank((from, to) => indices.fill(backgroundIndex, from, to));
     base = {colours: frame.colours, indices};
   } else {
-    if (view.origin || view.stride !== imageWidth) body = source = viewPixels(source, view, imageWidth, imageHeight);
+    if (view.origin || view.stride !== imageWidth) body = source = viewPixels(source, imageWidth, imageHeight, view.stride, view.origin);
     const allSolid = partition.solid;
-    for (const r of regions) r.local = scanColours(source, imageWidth, r.x, r.y, r.width, r.height, Math.min(PALETTE_LIMIT, (r.width * r.height) / 20 | 0));
+    for (const r of regions) r.local = timed('scan', () => scanColours(source, imageWidth, r.x, r.y, r.width, r.height, Math.min(PALETTE_LIMIT, (r.width * r.height) / 20 | 0)));
     if (allSolid) {
       base = {colours: Uint32Array.of(background)};
     } else {
-      body = Uint8Array.from(source);
-      for (const reg of regions) {
-        const bg = reg.background ?? background, [r, g, b, a] = [0, 8, 16, 24].map(shift => bg >>> shift & 255);
-        for (let y = reg.y; y < reg.y + reg.height; y++) for (let p = (y * imageWidth + reg.x) * 4, to = p + reg.width * 4; p < to; p += 4) { body[p] = r; body[p + 1] = g; body[p + 2] = b; body[p + 3] = a; }
-      }
-      base = scanColours(body, imageWidth, 0, 0, imageWidth, imageHeight, PALETTE_LIMIT);
+      captureRelease();
+      const fills = regions.map(r => ({...r, fill: r.background ?? background}));
+      base = timed('scan', () => scanColours(source, imageWidth, 0, 0, imageWidth, imageHeight, PALETTE_LIMIT, false, fills));
+      body = base ? null : blanked(source, regions, imageWidth, background);
     }
+  }
+  const asked = frame || !!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) ? [] : regions.filter(r => !r.local).flatMap(r => helped(coding, null, frameRects(r.width, r.height, 0, 0).length) ? frameRects(r.width, r.height, r.x, r.y) : []);
+  if (asked.length) {
+    const given = yield* groupSteps(source, imageWidth, asked, shape);
+    if (given) coding.kept = {pixels: source, level: L, map: new Map(asked.map((r, i) => [rectKey(r), given[i]]))};
   }
   const count = regions.length + 1, solidBase = base && base.colours.length === 1;
   if (solidBase) {
     const c0 = base.colours[0];
-    writeScreenBackground(header, imageWidth, imageHeight, shape, Uint8Array.of(c0 & 255, c0 >>> 8 & 255, c0 >>> 16 & 255, c0 >>> 24 & 255), bandCrop);
+    writeScreenBackground(header, imageWidth, imageHeight, shape, Uint8Array.of(c0 & 255, c0 >>> 8 & 255, c0 >>> 16 & 255, c0 >>> 24 & 255), bandCrop, false, canvas);
   } else {
+    if (!base && forced) return yield* unsplit();
     frames.push(yield* scaledSteps(captureFrameSteps(body, imageWidth, imageHeight, shape, coding, base, header,
-      {...bandCrop && {crop: bandCrop}, last: false, reference: 1}), 0, 1 / count));
+      {...bandCrop && {crop: bandCrop, canvas}, last: false, reference: 1}), 0, 1 / count));
   }
+  body = base = null;
   for (let i = 0; i < regions.length; i++) {
-    const r = regions[i], placement = {crop: at(r), last: final && i + 1 === regions.length, reference: 1};
-    let part = null, local;
-    if (frame) local = {colours: frame.colours, indices: frame.indices, stride: fStride, x: fx + r.x - (crop?.x ?? 0), y: fy + r.y - (crop?.y ?? 0)};
-    else {
-      local = r.local;
-      if (!local) {
-        part = new Uint8Array(r.width * r.height * 4);
-        for (let y = 0; y < r.height; y++) part.set(source.subarray(((r.y + y) * imageWidth + r.x) * 4, ((r.y + y) * imageWidth + r.x + r.width) * 4), y * r.width * 4);
-      }
-    }
-    frames.push(yield* scaledSteps(captureFrameSteps(part, r.width, r.height, shape, coding, local, i === 0 && solidBase ? header : new BitWriter(64), placement), (i + 1) / count, 1 / count));
+    const r = regions[i], placement = {crop: at(r), canvas, last: final && !coding.reference && i + 1 === regions.length, reference: 1};
+    const local = frame ? {colours: frame.colours, indices: frame.indices, stride: fStride, x: fx + r.x - cx, y: fy + r.y - cy} : r.local;
+    frames.push(yield* scaledSteps(captureFrameSteps(local ? null : source, r.width, r.height, shape, coding, local,
+      i === 0 && solidBase ? header : new BitWriter(64), placement, imageWidth, r.x, r.y), (i + 1) / count, 1 / count));
+    r.local = null;
   }
+  coding.kept = null;
   return concatenate(frames);
 }
 
+function blanked(source, regions, imageWidth, background) {
+  const body = Uint8Array.from(source), words = pixelKeys(body);
+  for (const reg of regions) for (let y = reg.y; y < reg.y + reg.height; y++)
+    words.fill(reg.background ?? background, y * imageWidth + reg.x, y * imageWidth + reg.x + reg.width);
+  return body;
+}
 export function admitCapture(data, width, height, options) {
   if (options === null || typeof options !== 'object' || Array.isArray(options)) throw fault('JXL_INPUT', 'Capture options are an object.');
   const maxError = options.maxError ?? 0;
   if (!Number.isInteger(maxError) || maxError < 0 || maxError > 8)
-    throw fault('JXL_INPUT', 'maxError is a whole number from 0 to 8. Zero preserves every sample.');
+    throw fault('JXL_INPUT', 'maxError is a whole number from 0 to 8.');
+  const tools = options[CAPTURE_TOOLS] ?? CAPTURE_TOOLS_LEAN, effort = options.effort ?? DEFAULT_EFFORT;
+  if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fault('JXL_INPUT', 'effort is a whole number from 1 to 9; 3 is the default.');
+  if (effort > tools.top || LEVELS[effort].needs.some(tool => !tools[tool]))
+    throw fault('JXL_UNSUPPORTED', `Capture effort ${effort} is ${tools.next}'s; this module carries efforts 1-${tools.top}.`);
+  const level = LEVELS[effort];
   const {colorSpace} = admitOptions({colorSpace: options.colorSpace});
   admitPixels(data, width, height);
   if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray)) throw fault('JXL_INPUT', 'Captures use straight RGBA8 samples.');
-  return {colorSpace, coding: {maxError, onPredictor: options[CAPTURE_PREDICTOR_PROBE], base: options[CAPTURE_BASE] === true}};
+  const base = options[CAPTURE_BASE];
+  return {colorSpace, coding: {maxError, onPredictor: typeof __RAPIER_JXL_PROBES__ === 'undefined' ? options[CAPTURE_PREDICTOR_PROBE] : null, base: base === true || base === 'reference',
+    oneFrame: !!base || level.oneFrame === true, reference: base === 'reference', timing: typeof __RAPIER_JXL_PROBES__ === 'undefined' ? options[CAPTURE_TIMING] : null, trace: typeof __RAPIER_JXL_PROBES__ === 'undefined' ? options[CAPTURE_TRACE] : null, effort, level, tools,
+    gpu: options[CAPTURE_GPU] === true && level.gpu && tools.gpu ? {pixels: null, map: new Map()} : null, helpers: options[CAPTURE_HELPERS] === true,
+    patches: [false, 'one', 'peel'].includes(options[CAPTURE_PATCHES]) ? options[CAPTURE_PATCHES] : undefined}};
 }
 
 export function captureBandShape(data, previous) {
@@ -978,28 +1618,93 @@ export function captureBandShape(data, previous) {
   if (!previous) return {colour, alpha};
   return {colour: Math.max(colour, previous.colour), alpha: alpha || previous.alpha};
 }
-export function captureBand(data, width, rows, {y, imageHeight, shape, ...options}) {
-  const {colorSpace, coding} = admitCapture(data, width, rows, options);
-  requireCaptureKernels();
-  const header = new BitWriter(y ? 64 : 128), whole = {...shape, channels: shape.colour + (shape.alpha ? 1 : 0)};
-  if (!y) writeHeaderFields(header, width, imageHeight, whole.colour, whole.alpha, {colorSpace});
+function bandSetup(data, width, rows, y, imageHeight, shape, x, coding, imageWidth) {
+  const whole = {...shape, channels: shape.colour + (shape.alpha ? 1 : 0)}, crop = coding.oneFrame ? null : screenCrop(data, width, rows);
   let scan = scanColours(data, width, 0, 0, width, rows, PALETTE_LIMIT, true);
   if (scan && scan.colours.length * 32 > width * rows) scan = null;
-  return complete(job(pictureSteps(data, width, rows, colorSpace, coding, header, {x: 0, y, shape: whole, last: y + rows === imageHeight, fullCanvas: !y && rows === imageHeight},
-    screenCrop(data, width, rows), scan)));
+  return {whole, crop, scan, band: {x, y, shape: whole, last: y + rows === imageHeight, canvas: {width: imageWidth, height: imageHeight}}};
+}
+export function captureBand(data, width, rows, options) {
+  return drain(captureBandSteps(data, width, rows, options));
+}
+
+let stepping = false;
+const idle = () => { if (stepping) throw fault('JXL_INTERNAL', 'A capture is already running; the next waits.'); };
+export function* encodeCaptureSteps(data, width, height, options = {}) {
+  idle();
+  const {colorSpace, coding} = admitCapture(data, width, height, options);
+  requireCaptureKernels();
+  return yield* smallestSteps({...coding, pixels: width * height}, c => captureSteps(data, width, height, colorSpace, c), true);
+}
+export function* encodeAtlasSteps(atlas, width, height, imageWidth, imageHeight, options = {}, dim = undefined) {
+  idle();
+  const {colorSpace, coding} = admitCapture(atlas, width, height, options);
+  requireCaptureKernels();
+  return yield* smallestSteps({...coding, pixels: width * height}, c => atlasSteps(atlas, width, height, imageWidth, imageHeight, colorSpace, c, dim), false);
+}
+export function* captureBandSteps(data, width, rows, {y, imageHeight, imageWidth = width, shape, x = 0, header: withHeader = true, ...options}) {
+  idle();
+  const {colorSpace, coding} = admitCapture(data, width, rows, options);
+  requireCaptureKernels();
+  const {whole, crop, scan, band} = bandSetup(data, width, rows, y, imageHeight, shape, x, coding, imageWidth);
+  return yield* smallestSteps(coding, c => {
+    const header = new BitWriter(y ? 64 : 128);
+    if (!y && withHeader) writeHeaderFields(header, imageWidth, imageHeight, whole.colour, whole.alpha, {colorSpace});
+    return pictureSteps(data, width, rows, colorSpace, c, header, band, crop, scan);
+  }, false);
 }
 
 export function encodeCaptureBytes(data, width, height, options = {}) {
   const aborted = () => { if (options?.signal?.aborted) throw fault('JXL_ABORTED', 'JPEG XL encoding was canceled.'); };
   aborted();
-  const {colorSpace, coding} = admitCapture(data, width, height, options);
-  requireCaptureKernels();
-  let bytes = complete(job(captureSteps(data, width, height, colorSpace, coding)));
-  if (coding.stepped) {
-    const exact = complete(job(captureSteps(data, width, height, colorSpace, {...coding, maxError: 0})));
-    if (exact.length <= bytes.length) bytes = exact;
-  }
+  const bytes = drain(encodeCaptureSteps(data, width, height, options), aborted);
   aborted();
   return bytes;
+}
+function drain(steps, check = () => {}) {
+  try {
+    let step;
+    while (!(step = steps.next()).done) check();
+    return step.value;
+  } finally { steps.return(); }
+}
+
+function* smallestSteps(coding, run, exactToo) {
+  let best = null, bestExact = false;
+  stepping = true;
+  try {
+    const levels = (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && coding.level.floor ? [LEVELS[2], L3, coding.level] : [coding.level];
+    if (coding.pixels <= SMALL_FLOOR && coding.effort === 3) levels.unshift(LEVELS[2]);
+    if (coding.level.orders) levels.push({...coding.level, morton: true});
+    if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && coding.level.also) levels.push(...coding.level.also);
+    const span = 1 / (levels.length + (coding.level.combine ? 1 : 0)) / (exactToo ? 2 : 1), sizes = [];
+    for (let i = 0; i < levels.length; i++) {
+      const candidate = {...coding, level: levels[i], stepped: false, oneFrame: coding.base === true || levels[i].oneFrame === true}, start = exactToo ? 2 * i * span : i * span;
+      L = levels[i]; tools = coding.tools;
+      let bytes = answer(yield* scaledSteps(guarded(run(candidate)), start, span)), kept = !candidate.stepped;
+      if (exactToo && candidate.stepped) {
+        const exact = answer(yield* scaledSteps(guarded(run({...candidate, maxError: 0})), start + span, span));
+        if (exact.length <= bytes.length) { bytes = exact; kept = true; }
+      }
+      sizes[i] = bytes.length;
+      if (!best || bytes.length < best.length) { best = bytes; bestExact = kept; }
+      yield exactToo ? start + 2 * span : start + span;
+      if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && coding.level.combine && i === levels.length - 1 && !levels[i].combined) {
+        const own = sizes[levels.indexOf(coding.level)], won = levels.map((level, k) => ({level, size: sizes[k]}))
+          .filter(c => c.level.delta && c.size < own).sort((a, b) => b.size - a.size);
+        if (won.length > 1) levels.push({...coding.level, ...Object.assign({}, ...won.map(c => c.level.delta)), also: undefined, combine: false, combined: true});
+      }
+    }
+  } finally { L = L3; tools = CAPTURE_TOOLS_LEAN; stepping = false; }
+  if (bestExact) markCaptureExact(best);
+  return best;
+}
+const exactFiles = new WeakSet();
+export const markCaptureExact = bytes => { exactFiles.add(bytes); return bytes; };
+export const captureExact = bytes => exactFiles.has(bytes);
+function* guarded(steps) {
+  let step, reply;
+  while (!(step = guard(() => steps.next(reply))).done) reply = yield step.value;
+  return step.value;
 }
 

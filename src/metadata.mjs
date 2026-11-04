@@ -48,9 +48,9 @@ function prepare(options) {
     const values = key === 'jumb' && Array.isArray(value) ? value : [value];
     for (const item of values) {
       if (key === 'exif' && (!(item instanceof Uint8Array) || !tiff(item)))
-        throw invalid('Exif is raw TIFF bytes, starting with II or MM; omit the JPEG APP1 header.');
+        throw invalid('Exif is raw TIFF bytes (II or MM), without the APP1 header.');
       if (key === 'xmp' ? typeof item !== 'string' && !(item instanceof Uint8Array) : !(item instanceof Uint8Array))
-        throw invalid(key === 'xmp' ? 'XMP is a UTF-8 string or Uint8Array.' : 'JUMBF is Uint8Array box contents or an array of those contents.');
+        throw invalid(key === 'xmp' ? 'XMP is a UTF-8 string or Uint8Array.' : 'JUMBF is Uint8Array box contents, or an array of them.');
       const length = (typeof item === 'string' ? utf8Length(item) : item.length) + (key === 'exif' ? 4 : 0);
       total += length + 8; admitOutputSize(total);
       const data = new Uint8Array(length);
@@ -69,7 +69,7 @@ function attach(bytes, plan, source) {
   if (source === null) { if (added) length += 40; }
   else for (const box of source) {
     if (box.type === FTYP || box.type === LEVEL && box.at === prefix) prefix = box.end;
-    if (edited && box.decoded === RECONSTRUCTION) throw invalid('Metadata edits would invalidate JPEG reconstruction data; retain the original JPEG XL file.');
+    if (edited && box.decoded === RECONSTRUCTION) throw invalid('Metadata edits would break JPEG reconstruction; keep the original file.');
     if (changed.has(box.decoded)) length -= box.end - box.at;
   }
   admitOutputSize(length);
@@ -151,8 +151,8 @@ async function codec(data, direction, provided, maximum) {
     try { result = decompressBrotli(data, {maxOutputLength: maximum}); }
     catch (error) {
       if (error?.code === 'JXL_SIZE') throw error;
-      throw invalid('This runtime\'s native Brotli decoder has a remote-code-execution bug (CVE-2026-111497), so only the ' +
-        'portable form is read here. Update Node to 22.23.4, 24.22.1 or 26.12.1 (Bun to 1.4.4), or pass decompress.');
+      throw invalid('This runtime\'s native Brotli has a code-execution bug (CVE-2026-111497); only the ' +
+        'portable form is read. Update Node to 22.23.4, 24.22.1 or 26.12.1 (Bun 1.4.4), or pass decompress.');
     }
   } else if (nodeZlib()) {
     const zlib = nodeZlib();
@@ -197,7 +197,7 @@ export async function withCompressedMetadata(bytes, options = {}) {
     const {compression = 'auto', compress} = options;
     if (compression !== 'auto' && compression !== 'brotli') throw invalid('Metadata compression is auto or brotli.');
     if (plan.changed.size && source?.some(box => box.decoded === RECONSTRUCTION))
-      throw invalid('Metadata edits would invalidate JPEG reconstruction data; retain the original JPEG XL file.');
+      throw invalid('Metadata edits would break JPEG reconstruction; keep the original file.');
     for (const entry of plan.entries) {
       const compressed = await codec(entry.data, 'compress', compress, Number.MAX_SAFE_INTEGER);
       if (compression === 'auto' && compressed.length + 4 >= entry.data.length) continue;

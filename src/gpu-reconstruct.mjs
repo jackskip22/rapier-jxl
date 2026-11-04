@@ -151,7 +151,7 @@ export class GpuMeasure {
     if (!Number.isSafeInteger(tile) || tile < 64 || tile % 64) throw new RangeError('GPU metric tile must be a positive multiple of 64.');
     if (!Number.isSafeInteger(referenceBytes) || referenceBytes < 0) throw new RangeError('GPU reference allowance must be nonnegative bytes.');
     if (keepReference !== true && keepReference !== false && (!Number.isSafeInteger(keepReference) || keepReference < 0))
-      throw new RangeError('GPU kept references must be a boolean or nonnegative tile count.');
+      throw new RangeError('GPU kept references are a boolean or a tile count.');
     const self = new GpuMeasure();
     return gpuSetup(async () => {
       const [pipelines, butteraugli] = await Promise.all([grPipelines(device), GpuButteraugli.prepare(device)]);

@@ -238,7 +238,7 @@ function rcXybPlanes(image) {
     return {W, H, planes: outPlanes};
   }
 
-  const {tr, lumaAC, smallPx, smallDct} = rc(), channels = [1, 0, 2], one = [RC_ONE[0], RC_ONE[1], RC_ONE[2]];
+  const {tr, lumaAC, smallPx, smallDct} = rc(), lumaNz = new Uint16Array(65536), channels = [1, 0, 2], one = [RC_ONE[0], RC_ONE[1], RC_ONE[2]];
   const tableSteps = new Map(), meansScratch = RC_MEANS_SCRATCH;
   for (const block of strategy.blocks) {
     const {id, bx, by, bw, bh, area, size, order} = block, t = TRANSFORMS[id], w = t.width, h = t.height;
@@ -248,15 +248,23 @@ function rcXybPlanes(image) {
     const f = fields ? fields[by * stride + bx] / base : 1, ct = (by >> 3) * cfl.width + (bx >> 3), k3 = [cfl.x[ct] / 84, 0, 1 + cfl.b[ct] / 84];
     const L = Math.max(bw, bh), S = Math.min(bw, bh), divisor = 8 * QS * f;
     const Bw = rcBasis(w), Bh = rcBasis(h), tall = h >= w;
+    let nLumaNz = 0;
     for (let o = 0; o < 3; o++) {
       const c = channels[o], q = block.coeffs[c], s = steps[c], r1 = one[c];
       tr.fill(0, 0, size);
-      for (let k = area; k < size; k++) {
-        const pos = order[k], v = q[pos];
-        if (v !== 0) tr[pos] = (v === 1 ? r1 : v === -1 ? -r1 : v - 0.145 / v) * s[pos] / divisor;
+      if (c === 1) {
+        for (let k = area; k < size; k++) {
+          const pos = order[k], v = q[pos];
+          if (v !== 0) { const val = (v === 1 ? r1 : v === -1 ? -r1 : v - 0.145 / v) * s[pos] / divisor; tr[pos] = val; lumaAC[pos] = val; lumaNz[nLumaNz++] = pos; }
+        }
+      } else {
+        for (let k = area; k < size; k++) {
+          const pos = order[k], v = q[pos];
+          if (v !== 0) tr[pos] = (v === 1 ? r1 : v === -1 ? -r1 : v - 0.145 / v) * s[pos] / divisor;
+        }
+        const k = k3[c];
+        if (k !== 0) for (let i = 0; i < nLumaNz; i++) { const pos = lumaNz[i]; tr[pos] += k * lumaAC[pos]; }
       }
-      if (c === 1) lumaAC.set(tr.subarray(0, size));
-      else { const k = k3[c]; for (let i = area; i < size; i++) { const pos = order[i]; tr[pos] += k * lumaAC[pos]; } }
       if (bw === 1 && bh === 1) {
         const pos = by * stride + bx;
         tr[0] = ((comps[c].dc[pos] * dcStep[c] + (c === 2 ? comps[1].dc[pos] * dcStep[1] : 0)) / 8 + 0) / RC_LLF_ONE;

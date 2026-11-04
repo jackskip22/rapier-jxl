@@ -8,10 +8,12 @@ import {photoXYBBands, photoXYBBand, appendPhotoBand, PHOTO_BAND_MARGIN, photoFa
 import {screenLike} from './screen.mjs';
 import {offloading} from './offload.mjs';
 import {photoSplitSteps, splitRoute} from './photo-split.mjs';
+import {coefficientAnsSteps} from './coefficient-ans.mjs';
+const effortOne = (width, height, quality, effort, screen) => effort === 1 && quality < 100 && !screen && splitRoute(width, height);
 import {SPLIT_HOOKS} from './split-hooks.mjs';
-import {V6, GABORISH, UPLOAD_PICTURE} from './photo-v6-settings.mjs';
+import {V6, GABORISH, UPLOAD_PICTURE, UPLOAD_FLAT_PICTURE, uploadPicture} from './photo-v6-settings.mjs';
 
-export {V6, GABORISH, UPLOAD_PICTURE};
+export {V6, GABORISH, UPLOAD_PICTURE, UPLOAD_FLAT_PICTURE};
 
 export const blockSearchOptions = (data, width, height) => ({perceptual: true, deadzone: V6.deadzone,
   ids: screenLike(data, width, height) ? [4, 5, 6, 7, 3, 12, 13] : [4, 5, 6, 7], model: 'simple', rate: [1.0, 3, 2, 0.6], lambda: 0.28, sizeScale: 1.03});
@@ -30,19 +32,23 @@ export const prepareV6 = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPI
 };
 
 export const gaborishRows = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function gaborishRows(data, width, height, options, sparse = false) {
-  const W = Math.ceil(width / 8) * 8, M = PHOTO_BAND_MARGIN;
+  const W = Math.ceil(width / 8) * 8, M = PHOTO_BAND_MARGIN, windows = sparse ? new Map() : null;
   let band = null;
   return (y0, y1, x0, x1) => {
     if (band && y0 >= band.top && y1 <= band.top + band.rows && (!band.cols || x0 >= band.cols[0] && x1 <= band.cols[1])) return band;
     band = null;
     if (sparse && x1 !== undefined) {
       y0 = Math.floor(y0 / 32) * 32; y1 = Math.ceil(y1 / 32) * 32; x0 = Math.floor(x0 / 32) * 32; x1 = Math.ceil(x1 / 32) * 32;
+      const key = `${x0}:${x1}:${y0}:${y1}`, kept = windows.get(key);
+      if (kept) return band = kept;
       const from = Math.max(0, Math.floor((y0 - M) / 8) * 8), to = Math.min(height, y1 + M), c0 = Math.max(0, Math.floor((x0 - M) / 8) * 8), c1 = Math.min(width, x1 + M);
       const cw = c1 - c0, crop = new Uint8Array(cw * (to - from) * 4);
       for (let y = from; y < to; y++) crop.set(data.subarray((y * width + c0) * 4, (y * width + c1) * 4), (y - from) * cw * 4);
-      const win = gaborishPlanes(crop, cw, to - from, options), Wc = Math.ceil(cw / 8) * 8, rows = Math.ceil((to - from) / 8) * 8;
-      const planes = win.map(p => { const out = new Float64Array(rows * W); for (let y = 0; y < rows; y++) out.set(p.subarray(y * Wc, y * Wc + Math.min(Wc, W - c0)), y * W + c0); return out; });
-      return band = {top: from, rows: Math.min(rows, y1 - from), cols: [x0, x1], planes};
+      const planes = gaborishPlanes(crop, cw, to - from, options), Wc = Math.ceil(cw / 8) * 8, rows = Math.ceil((to - from) / 8) * 8;
+      band = {top: from, rows: Math.min(rows, y1 - from), cols: [x0, x1], left: c0, stride: Wc, planes};
+      if (windows.size >= 32) windows.delete(windows.keys().next().value);
+      windows.set(key, band);
+      return band;
     }
     const top = Math.floor(y0 / 64) * 64, rows = Math.max(256, Math.ceil((y1 - top) / 64) * 64);
     const from = Math.max(0, top - M), to = Math.min(height, top + rows + M);
@@ -96,8 +102,11 @@ function* bandsThenCoefficients(bands, encode) {
 }
 
 export const v6Trace = label => { const t = globalThis.__jxlTrace; if (t) t.push([label, performance.now()]); };
+const SMALL_LADDER = 512 * 512;
 export function* photoV6Steps(data, width, height, quality, effort, encodeCoefficients, search, color, gpu, memory, screen = false, both = false) {
-  if (effort <= 3 || color) return yield* pictureSteps(data, width, height, quality, color ? Math.min(effort, 8) : effort, encodeCoefficients, color ? undefined : search, color, gpu, memory, screen, false, false, both);
+  const blocks8 = !screen && effort >= 8 && quality < 100 && width >= 128 && height >= 128 && encodeCoefficients.splits;
+  if (effort <= 3 || color && !blocks8) return yield* pictureSteps(data, width, height, quality, color ? Math.min(effort, 8) : effort, encodeCoefficients, color ? undefined : search, color, gpu, memory, screen, false, false, both);
+  if (color) search = undefined;
   let hurry = false;
   function* share(steps, from, to) {
     let step, reply;
@@ -114,18 +123,12 @@ export function* photoV6Steps(data, width, height, quality, effort, encodeCoeffi
     const late = yield* share(pictureSteps(data, width, height, quality, 1, encodeCoefficients, undefined, color, undefined, memory, screen), 1, 1);
     return bytes && bytes.length < late.length ? bytes : late;
   }
-  const blocks8 = !screen && effort >= 8 && quality < 100 && width >= 128 && height >= 128 && encodeCoefficients.splits;
   const below = effort === 8 ? 1 : 0.85;
-  function* written(seven, full) {
-    let best, image;
-    if (seven?.write && full?.write) {
-      const pick = seven.est <= full.est ? seven : full;
-      v6Trace(pick === seven ? 'write the 16x16 picture' : 'write the full picture');
-      best = yield* share(pick.write(), 0.8 * below, below); image = pick.image;
-    } else {
-      const a = seven?.write ? yield* share(seven.write(), 0.8 * below, 0.9 * below) : seven, b = full?.write ? yield* share(full.write(), 0.9 * below, below) : full;
-      best = a && (!b || a.length <= b.length) ? a : b; image = best === a ? seven?.image : full?.image;
-    }
+  function* written(made) {
+    const {full} = made;
+    made.full = null;
+    let best = full, image = full?.image;
+    if (full?.write) { v6Trace('write the full picture'); best = yield* share(full.write(), 0.8 * below, below); }
     v6Trace(`written (picture ${best?.length ?? 0} B)`);
     return best ? {bytes: best, image} : null;
   }
@@ -133,22 +136,22 @@ export function* photoV6Steps(data, width, height, quality, effort, encodeCoeffi
     let pair = {};
     const picture = (e, deferred = true) => pictureSteps(data, width, height, quality, e, encodeCoefficients, search, color, gpu, memory, screen, true, deferred, both, pair);
     let made;
-    if (gpu) { made = yield* overlapped([picture(8, 'prelearn'), picture(7)], below); hurry ||= made.hurry; }
+    if (gpu) { made = yield* overlapped([picture(8, 'prelearn')], below); hurry ||= made.hurry; }
     else {
-      made = {seven: yield* share(picture(7), 0, 0.4 * below), full: null};
-      v6Trace('16x16 picture done');
-      if (!hurry) made.full = yield* share(picture(8), 0.4 * below, 0.8 * below);
+      made = {full: yield* share(picture(8), 0, 0.8 * below)};
       v6Trace('full picture done');
     }
     pair = null;
-    const floor7 = hurry ? null : yield* written(made.seven, made.full);
+    const floor7 = hurry ? null : yield* written(made);
     made = null;
-    if (!hurry && floor7 && (effort === 8 || !search)) return floor7.bytes;
+    const six = !hurry && floor7 && width * height < SMALL_LADDER ? yield* share(photoV6Steps(data, width, height, quality, 7, encodeCoefficients, undefined, color, undefined, memory, screen, both), below, below) : null;
+    const least = bytes => six && six.length < bytes.length ? six : bytes;
+    if (!hurry && floor7 && (effort === 8 || !search)) return least(floor7.bytes);
     if (!hurry && floor7) {
       const wantPlanes = width * height <= 2048 * 2048 && !color?.transform;
       const prepared = prepareV6(data, width, height, color, memory, {banded: !wantPlanes});
       const found = yield* share(search(prepared, () => photoV6Image(prepared, quality, true), quality, effort - 1, floor7, gpu), below, 1);
-      return found && found.length < floor7.bytes.length ? found : floor7.bytes;
+      return least(found && found.length < floor7.bytes.length ? found : floor7.bytes);
     }
     const best = floor7?.bytes ?? null;
     v6Trace('hurried: effort 1');
@@ -170,10 +173,24 @@ export function* photoV6Steps(data, width, height, quality, effort, encodeCoeffi
   return bytes && bytes.length < floor.length ? bytes : floor;
 }
 
+export function idleWork(steps) {
+  let resolve;
+  const work = {done: false, value: undefined, finished: new Promise(r => { resolve = r; }),
+    step() { if (work.done) return; const s = steps.next(); if (s.done) { work.done = true; work.value = s.value; resolve(s.value); } },
+    run() { while (!work.done) work.step(); return work.value; }};
+  return work;
+}
+const nextTurn = () => new Promise(resolve => {
+  if (typeof MessageChannel !== 'function') return setTimeout(() => resolve(null), 0);
+  const {port1, port2} = new MessageChannel();
+  port1.onmessage = () => { port1.close(); port2.close(); resolve(null); };
+  port2.postMessage(0);
+});
 const overlapped = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function* overlapped(steps, scale = 1) {
-  const names = ['full picture', '16x16 picture'], ranges = [[0.4 * scale, 0.8 * scale], [0, 0.4 * scale]];
+  const names = ['full picture', '16x16 picture'], ranges = [[0, 0.8 * scale], [0, 0.4 * scale]];
   const jobs = steps.map((it, k) => ({it, k, reply: undefined, pending: null, done: false, value: null}));
-  let shown = 0, hurry = false, idle = 0;
+  let shown = 0, hurry = false, idle = 0, worked = 0;
+  const background = [];
   try {
     for (;;) {
       const job = !hurry && jobs.find(j => !j.done && !j.pending);
@@ -187,6 +204,7 @@ const overlapped = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL
             shown = Math.max(shown, ranges[job.k][0] + value * (ranges[job.k][1] - ranges[job.k][0]));
             if (yield shown) { hurry = true; break; }
           } else if (value?.gpu && value.later) job.reply = yield value;
+          else if (value?.idle) { if (!value.idle.done) background.push(value.idle); job.reply = undefined; }
           else if (value?.await !== undefined) {
             if (value.await && typeof value.await.then === 'function') { job.pending = value.await; break; }
             job.reply = value.await;
@@ -199,9 +217,17 @@ const overlapped = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL
         }
         continue;
       }
-      if (hurry || jobs.every(j => j.done)) { v6Trace(`overlap: the CPU idle ${Math.round(idle)} ms`); return {seven: jobs[1].value, full: jobs[0].value, hurry}; }
+      if (hurry || jobs.every(j => j.done)) { v6Trace(`overlap: the CPU idle ${Math.round(idle)} ms, ${Math.round(worked)} of it on idle work`); return {full: jobs[0].value, hurry}; }
       const waiting = jobs.filter(j => j.pending), since = performance.now();
-      const [j, answer] = yield {await: Promise.race(waiting.map(w => w.pending.then(v => [w, v])))};
+      const race = Promise.race(waiting.map(w => w.pending.then(v => [w, v])));
+      let first = null;
+      for (let work; !first && (work = background.find(w => !w.done));) {
+        const at = performance.now();
+        work.step();
+        worked += performance.now() - at;
+        first = yield {await: Promise.race([race, nextTurn()])};
+      }
+      const [j, answer] = first ?? (yield {await: race});
       idle += performance.now() - since;
       v6Trace(`waited ${Math.round(performance.now() - since)} ms on the device (${waiting.map(w => ['full', '16x16'][w.k]).join(', ')})`);
       j.pending = null; j.reply = answer;
@@ -214,48 +240,55 @@ const overlapped = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL
 function* pictureSteps(data, width, height, quality, effort, encodeCoefficients, search, color, gpu, memory, screen = false, floored = false, deferred = false, both = true, pair = null) {
   if (effort <= 3 && !color) {
     const gaborish = effort === 3 && quality < 100 && !screen;
-    if (effort >= 2 && quality < 100 && splitRoute(width, height) && encodeCoefficients.splits) {
-      const bytes = yield {split: {data, width, height, quality, gaborish, pixels: width * height}};
+    const picture = gaborish && uploadPicture(data, width, height), flat = picture === UPLOAD_FLAT_PICTURE;
+    if (quality < 100 && splitRoute(width, height) && (encodeCoefficients.splits || effort === 1)) {
+      const bytes = yield {split: {data, width, height, quality, gaborish, uploadFlat: flat, pixels: width * height}};
       if (bytes) return bytes;
       if (!offloading()) {
         if (gaborish) admitV6Memory(data, width, height, memory);
-        return yield* photoSplitSteps(data, width, height, quality, {gaborish});
+        return yield* photoSplitSteps(data, width, height, quality, {gaborish, uploadFlat: flat});
       }
     }
     if (gaborish) {
       admitV6Memory(data, width, height, memory);
-      if (offloading()) return yield* bandsThenCoefficients(photoXYBBands(data, width, height, quality, UPLOAD_PICTURE, {}), image => encodeCoefficients(image, 3));
-      const image = yield* part(photoXYBBands(data, width, height, quality, UPLOAD_PICTURE), 0, 2);
+      if (offloading()) return yield* bandsThenCoefficients(photoXYBBands(data, width, height, quality, picture, {}), image => encodeCoefficients(image, 3));
+      const image = yield* part(photoXYBBands(data, width, height, quality, picture), 0, 2);
       return yield* part(encodeCoefficients(image, 3), 1, 2);
     }
-    const image = offloading() && !screen ? yield* part(photoFastBands(data, width, height, quality, {...V6, fast: true}), 0, 2)
-      : complete(photoXYBSteps(data, width, height, quality, screen ? {...V6, fast: true, calibrationRow: 'screen'} : {...V6, fast: true}));
-    return yield* (offloading() ? part(encodeCoefficients(image, effort), 1, 2) : encodeCoefficients(image, effort));
+    const image = offloading() && !screen ? yield* part(photoFastBands(data, width, height, quality, {...V6, fast: true, fastBand: true}), 0, 2)
+      : complete(photoXYBSteps(data, width, height, quality, screen ? {...V6, fast: true, calibrationRow: 'screen'} : {...V6, fast: true, fastBand: true}));
+    const coded = effortOne(width, height, quality, effort, screen) ? coefficientAnsSteps(image, 2) : encodeCoefficients(image, effort);
+    return yield* (offloading() ? part(coded, 1, 2) : coded);
   }
   if (effort <= 3 && color?.transform && !color.transform.gray) {
     admitV6Memory(data, width, height, memory);
     let image = null;
     try { image = complete(photoXYBSteps(data, width, height, quality, {...V6, fast: true, ...color})); } catch (error) { if (error !== FAST_RANGE) throw error; }
-    if (image) return yield* encodeCoefficients(image, effort);
+    if (image) return yield* (effortOne(width, height, quality, effort, false) ? coefficientAnsSteps(image, 2) : encodeCoefficients(image, effort));
   }
   const blockDesign = screen ? (effort >= 8 ? 'full' : null) : effort === 6 || effort === 7 ? 'fast' : effort === 8 ? 'full' : null;
   const perceptualBlocks = blockDesign !== null && quality < 100 && width >= 128 && height >= 128 &&
     (!color || color.space || color.transform && !color.transform.gray);
-  if (perceptualBlocks && !encodeCoefficients.blocks) throw fault('JXL_INTERNAL', 'The block picture needs its writer (photo-v6-blocks.mjs photoAnsSteps).');
-  if (gpu && effort <= 7 && !color && !screen && !perceptualBlocks) {
+  if (perceptualBlocks && !encodeCoefficients.blocks) throw fault('JXL_INTERNAL', 'The block picture needs photoAnsSteps (photo-v6-blocks.mjs).');
+  const commonUpload = (effort === 4 || effort === 5) && quality < 100 && !screen && (!color || color.transform && !color.transform.gray);
+  const picture = commonUpload && uploadPicture(data, width, height);
+  if (gpu && effort <= 7 && !color && !screen && !perceptualBlocks && !commonUpload) {
     const image = yield {gpu: {kind: 'v6image', data, width, height, quality, options: {...V6, ...GABORISH}, lib: {complete, photoXYBSteps, transformDCT8, dct8Basis, xyb: XYB_TABLES}}};
     if (image) return yield* encodeCoefficients(image, effort);
   }
   if (perceptualBlocks) return yield* encodeCoefficients.blocks({data, width, height, quality, effort, encodeCoefficients, color, gpu, memory, screen, floored, blockDesign, deferred, both, pair});
   if (effort <= 7 || !search || width < 8 || height < 8) {
     if ((effort === 4 || effort === 5) && !color && !screen && quality < 100 && width * height > 512 * 512 && encodeCoefficients.splits && SPLIT_HOOKS.ladder) {
-      const bytes = yield {split: {pixels: width * height, run: (leased, options) => SPLIT_HOOKS.ladder(data, width, height, quality, leased, {...options, effort})}};
+      const bytes = yield {split: {pixels: width * height, run: (leased, options) => SPLIT_HOOKS.ladder(data, width, height, quality, leased, {...options, effort, uploadFlat: picture === UPLOAD_FLAT_PICTURE})}};
       if (bytes) return bytes;
     }
     admitV6Memory(data, width, height, memory);
-    if (offloading()) return yield* bandsThenCoefficients(photoXYBBands(data, width, height, quality, {...V6, ...GABORISH, ...color}, color || {}), image => encodeCoefficients(image, effort));
-    const image = yield* part(photoXYBBands(data, width, height, quality, {...V6, ...GABORISH, ...color}), 0, 2);
-    return yield* part(encodeCoefficients(image, effort), 1, 2);
+    const options = picture && color ? {...V6, ...GABORISH, tune: picture.tune, calibrationRow: picture.calibrationRow, ...color}
+      : picture || {...V6, ...GABORISH, ...color};
+    const write = image => encodeCoefficients(image, effort);
+    if (offloading()) return yield* bandsThenCoefficients(photoXYBBands(data, width, height, quality, options, color || {}), write);
+    const image = yield* part(photoXYBBands(data, width, height, quality, options), 0, 2);
+    return yield* part(write(image), 1, 2);
   }
   const wantPlanes = width >= 128 && height >= 128 && width * height <= 2048 * 2048 && !color?.transform && effort >= 9;
   const prepared = prepareV6(data, width, height, color, memory, {banded: !wantPlanes});

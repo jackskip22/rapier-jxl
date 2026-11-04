@@ -6,6 +6,7 @@ import {LOG_LENGTHS, LOG_CODES, reverseAlias} from './ans.mjs';
 import {ZIGZAG} from './jpeg-tables.mjs';
 import {zeroDensityContext} from './vardct.mjs';
 import {fault} from './admit.mjs';
+import {SCREEN_SPECIAL_DISTANCES as SPECIAL} from './screen-codes.mjs';
 
 const invalidJPEGData = () => fault('JXL_RECONSTRUCTION', 'Invalid or unsupported JPEG reconstruction data.');
 export function requireJPEG(condition) { if (!condition) throw invalidJPEGData(); }
@@ -221,15 +222,15 @@ function entropyModel(r, contexts, {depth = 0, byteHistory = false, history = fa
   });
   return {contexts, lz, minimum, minLength, lengthConfig, map, prefix, configs, decoders, aliases, byteHistory};
 }
-function entropyReader(model, r, values, spatial = false) {
+function entropyReader(model, r, values, multiplier = 0) {
   requireJPEG(Number.isSafeInteger(values) && values >= 0);
   const {contexts, lz, minimum, minLength, lengthConfig, map, prefix, configs, decoders, aliases, byteHistory} = model;
-  let remaining = values, state = null, left = 0, previous = 0, produced = false, position = 0, distance = 1;
-  const history = byteHistory ? new Uint8Array(1048576) : null;
+  let remaining = values, state = null, left = 0, position = 0, distance = 1;
+  const history = byteHistory ? new Uint8Array(1048576) : lz ? new Int32Array(1048576) : null;
   const direct = Int32Array.from(configs, c => 1 << c.split), tables = prefix && decoders.map(d => d.table), widths = prefix && Int32Array.from(decoders, d => d.bits);
   const remember = value => {
-    if (history) { requireJPEG(value < 256); history[position++ & 1048575] = value; }
-    return previous = value;
+    if (history) { requireJPEG(!byteHistory || value < 256); history[position++ & 1048575] = value; }
+    return value;
   };
   const token = h => {
     if (prefix) {
@@ -263,22 +264,22 @@ function entropyReader(model, r, values, spatial = false) {
   return {
     read: plain || (ctx => {
       requireJPEG(ctx >= 0 && ctx < contexts && remaining > 0); remaining--;
-      if (left) { left--; return remember(history ? history[(position - distance) & 1048575] : previous); }
+      if (left) { left--; return remember(history[(position - distance) & 1048575]); }
       const h = map[ctx], t = token(h);
       if (lz && t >= minimum) {
         left = hybrid(r, t - minimum, lengthConfig) + minLength - 1;
         requireJPEG(left <= remaining);
         const histogram = map[contexts], d = hybrid(r, token(histogram), configs[histogram]);
-        if (history) { distance = d + 1; requireJPEG(distance <= Math.min(position, 1048576)); }
-        else requireJPEG(produced && d === (spatial ? 1 : 0));
-        return remember(history ? history[(position - distance) & 1048575] : previous);
+        requireJPEG(position > 0);
+        distance = Math.min(multiplier && d < 120 ? Math.max(1, SPECIAL[2 * d] + multiplier * SPECIAL[2 * d + 1]) : multiplier ? d - 119 : d + 1, position, 1048576);
+        return remember(history[(position - distance) & 1048575]);
       }
-      produced = true; return remember(t < direct[h] ? t : hybrid(r, t, configs[h]));
+      return remember(t < direct[h] ? t : hybrid(r, t, configs[h]));
     }),
-    finish() { requireJPEG(!left && (prefix || state === 0x130000 || values === 0)); state = null; produced = false; },
+    finish() { requireJPEG(!left && (prefix || state === 0x130000 || values === 0)); state = null; },
   };
 }
-function entropy(r, contexts, options) { return entropyReader(entropyModel(r, contexts, options), r, options.values, options.spatial); }
+function entropy(r, contexts, options) { return entropyReader(entropyModel(r, contexts, options), r, options.values, options.multiplier); }
 
 const iccKind1 = b => (b >= 97 && b <= 122) || (b >= 65 && b <= 90) ? 0 : (b >= 48 && b <= 57) || b === 46 || b === 44 ? 1 : b === 0 ? 2 : b === 1 ? 3 : b < 16 ? 4 : b === 255 ? 6 : b > 240 ? 5 : 7;
 const iccKind2 = b => (b >= 97 && b <= 122) || (b >= 65 && b <= 90) ? 0 : (b >= 48 && b <= 57) || b === 46 || b === 44 ? 1 : b < 16 ? 2 : b > 240 ? 3 : 4;
@@ -357,10 +358,10 @@ export function readMaTree(r, channels) {
 export function modular(r, shapes, shared, stream, work) {
   const useGlobal = !!r.read(1), wpDefault = !!r.read(1);
   requireJPEG(wpDefault && r.u32([[0, 0], [0, 1], [4, 2], [8, 18]]) === 0);
-  const pixels = shapes.reduce((n, [width, height]) => n + width * height, 0);
+  const pixels = shapes.reduce((n, [width, height]) => n + width * height, 0), multiplier = Math.max(1, ...shapes.map(([width]) => width));
   let root, leaves, code;
-  if (useGlobal) { requireJPEG(shared); ({root, leaves} = shared.tree); code = entropyReader(shared.model, r, pixels, true); }
-  else { ({root, leaves} = readMaTree(r, shapes.length)); code = entropy(r, leaves.length, {spatial: true, values: pixels}); }
+  if (useGlobal) { requireJPEG(shared); ({root, leaves} = shared.tree); code = entropyReader(shared.model, r, pixels, multiplier); }
+  else { ({root, leaves} = readMaTree(r, shapes.length)); code = entropy(r, leaves.length, {multiplier, values: pixels}); }
   const planes = [];
   let weighted = false;
   for (const pending = [root]; pending.length;) {
@@ -440,13 +441,15 @@ export function modular(r, shapes, shared, stream, work) {
   code.finish(); return planes;
 }
 
+const SIZE = [[9, 1], [13, 1], [18, 1], [30, 1]], RATIOS = [null, [1, 1], [12, 10], [4, 3], [3, 2], [16, 9], [5, 4], [2, 1]];
+export function readSize(r) {
+  r.expect(16, 0x0aff);
+  const small = !!r.read(1), height = small ? (r.read(5) + 1) * 8 : r.u32(SIZE), ratio = r.read(3);
+  return {height, width: ratio ? Math.floor(height * RATIOS[ratio][0] / RATIOS[ratio][1]) : small ? (r.read(5) + 1) * 8 : r.u32(SIZE)};
+}
 export function readJPEGCoefficients(bytes, {reconstruction = false, maxPixels = JPEG_LIMITS.pixels, rows = false} = {}) {
   requireJPEG(bytes instanceof Uint8Array && bytes.length > 0);
-  const r = new JxlBits(bytes), size = [[9, 1], [13, 1], [18, 1], [30, 1]];
-  r.expect(16, 0x0aff);
-  const small = !!r.read(1), ratios = [null, [1, 1], [12, 10], [4, 3], [3, 2], [16, 9], [5, 4], [2, 1]];
-  const height = small ? (r.read(5) + 1) * 8 : r.u32(size), ratio = r.read(3);
-  const width = ratio ? Math.floor(height * ratios[ratio][0] / ratios[ratio][1]) : small ? (r.read(5) + 1) * 8 : r.u32(size);
+  const r = new JxlBits(bytes), {width, height} = readSize(r);
   requireJPEG(width <= JPEG_LIMITS.edge && height <= JPEG_LIMITS.edge && width * height <= JPEG_LIMITS.pixels);
   if (width * height > maxPixels) throw fault('JXL_DIMENSIONS', 'The JPEG XL image exceeds maxPixels.');
   r.expect(1, 0); const extra = r.read(1), orientation = extra ? r.read(3) + 1 : 1;

@@ -146,17 +146,17 @@ export function validateAtlasPlan(animation, plan) {
     const w = whole(entry.width, 1, Math.min(width - sx, animation.width), 'Atlas patch width');
     const h = whole(entry.height, 1, Math.min(height - sy, animation.height), 'Atlas patch height');
     if (!Array.isArray(entry.positions) || !entry.positions.length || entry.positions.length > MAX_POSITIONS - total)
-      throw fault('JXL_INPUT', 'Atlas positions are nonempty, with at most 262144 positions in the plan.');
+      throw fault('JXL_INPUT', 'Atlas positions: 1 to 262144.');
     total += entry.positions.length;
     compared += w * h * entry.positions.length;
-    if (compared > budget) throw fault('JXL_INPUT', 'Atlas positions cover more than four times the animation; supply fewer or smaller rectangles.');
+    if (compared > budget) throw fault('JXL_INPUT', 'Atlas positions cover over 4 times the animation; use fewer or smaller rectangles.');
     for (const position of entry.positions) {
       if (!position || typeof position !== 'object') throw fault('JXL_INPUT', 'An atlas position supplies frame, x and y.');
       const frame = whole(position.frame, 0, animation.frames.length - 1, 'Atlas frame');
       const x = whole(position.x, 0, animation.width - w, 'Atlas x'), y = whole(position.y, 0, animation.height - h, 'Atlas y');
       const source = animation.frames[frame].data;
       if (!equalRect(source, animation.width, x, y, data, width, sx, sy, w, h))
-        throw fault('JXL_INPUT', 'An atlas placement differs from its source frame, including alpha or hidden RGB.');
+        throw fault('JXL_INPUT', 'An atlas placement differs from its source frame.');
       const list = byData.get(source) ?? [];
       list.push({sx, sy, w, h, x, y}); byData.set(source, list);
     }

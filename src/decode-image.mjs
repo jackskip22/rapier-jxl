@@ -10,6 +10,7 @@ import {SIGNATURE,CODESTREAM,PARTIAL,BROB,FTYP,LEVEL} from './decode-tables.mjs'
 import {readContainer} from './decode-container.mjs';
 import {canvasArea,misses,emptyFrame,cropFrame} from './decode-region.mjs';
 import {cutPreview} from './decode-prefix.mjs';
+import {iccProfileLimit,admitDecodedICC} from './decode-icc-admission.mjs';
 
 export const DECODE_LIMITS=Object.freeze({maxPixels:64000000,maxDimension:65536,maxSamples:268435456,maxRetainedSamples:268435456,maxTotalSamples:536870912,maxModularWork:536870912,maxFrames:4096,maxBoxes:65536,maxMetadataBytes:67108864,maxInputBytes:1073741824,maxFeatureBytes:268435456,maxFeatureWork:268435456});
 const fourCC=type=>String.fromCharCode(type>>>24,type>>>16&255,type>>>8&255,type&255);
@@ -108,7 +109,11 @@ export const outputFormat=(h,options)=>options.format==='auto'?(h.bitDepth.float
 
 function openImage(bytes,options) {
   const input=unpackInput(bytes,options),r=new JxlBits(input.codestream),h=readDecodeImageHeader(r,options);
-  if(h.colorEncoding.wantICC)h.icc=part('icc').readICC(r,{maxBytes:options.maxMetadataBytes});
+  if(h.colorEncoding.wantICC){
+    const level=input.container?.level??5;
+    h.icc=part('icc').readICC(r,{maxBytes:options.maxMetadataBytes,maxProfileBytes:iccProfileLimit(level,options.maxMetadataBytes)});
+    admitDecodedICC(h.icc,h,level);
+  }
   r.align();
   return {input,r,h};
 }
@@ -143,7 +148,8 @@ export function referenceSlots() {
   return {
     inPlace(f) {
       const normal=f.type===0||f.type===3,source=f.blending?.[0]?.source;
-      if(!normal||f.blending.some(b=>b.mode!==0||b.source!==source)||!slots[source]?.free)return false;
+      const mode=f.blending?.[0]?.mode;
+      if(!normal||(mode!==0&&mode!==2)||f.blending.some(b=>b.mode!==mode||b.source!==source)||!slots[source]?.free)return false;
       const canReference=!f.isLast&&(f.duration===0||f.saveAsReference!==0);
       return canReference?f.saveAsReference===source&&!f.saveBeforeColorTransform:f.isLast;
     },

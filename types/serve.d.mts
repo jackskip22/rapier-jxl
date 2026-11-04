@@ -8,7 +8,7 @@ export interface ServeOptions {
    * once per stored Uint8Array or Blob (pass a new array, or your own etag, after changing its bytes; a large file's own
    * key or version is a cheap etag). */
   etag?: string;
-  /** The largest picture served, in pixels: at most 40,000,000 (the default); a larger one refuses JXL_DIMENSIONS. */
+  /** The largest picture served, in pixels: at most 64,000,000 (the default); a larger one refuses JXL_DIMENSIONS. */
   maxPixels?: number;
   signal?: AbortSignal;
 }
@@ -28,6 +28,7 @@ export interface ServeNodeResponse {
 /**
  * A file from `recompress` served to every client: `image/jxl` where the request accepts it, else the exact original
  * JPEG, with `Vary: Accept`, an ETag per representation, `Cache-Control`, `Content-Length`, `304` and `HEAD`.
+ * Caller bytes use plain Uint8Array; SharedArrayBuffer backing is refused at runtime with JXL_INPUT.
  */
-export function serve(stored: Bytes | Blob, request: ServeRequest, options?: ServeOptions): Promise<Response>;
-export function serve(stored: Bytes | Blob, request: ServeRequest, response: ServeNodeResponse, options?: ServeOptions): Promise<undefined>;
+export function serve(stored: Uint8Array | Blob, request: ServeRequest, options?: ServeOptions): Promise<Response>;
+export function serve(stored: Uint8Array | Blob, request: ServeRequest, response: ServeNodeResponse, options?: ServeOptions): Promise<undefined>;

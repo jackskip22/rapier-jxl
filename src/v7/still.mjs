@@ -6,18 +6,21 @@ import {encodePhotoSteps} from '../photo-advanced.mjs';
 import {encodeToScoreSteps} from '../score.mjs';
 import {ansTranscodeSteps} from '../jpeg-ans-effort.mjs';
 import {readPNG16} from '../source.mjs';
+import {orientSamples} from '../sample-transforms.mjs';
 import {compileCaptureKernels} from '../capture-codec.mjs';
 import {coreSteps} from './instant.mjs';
-import {bytes, check, fail, declared, callers, isCaller} from './primitives.mjs';
+import {bytes, check, fail, declared, callers, isCaller, progressOf} from './primitives.mjs';
 import {drain, driveSteps, encodeOptions, callOptions, targetSource} from './common.mjs';
 import {parallelJob} from '../parallel-drive.mjs';
 import {DRIVE} from './drive.mjs';
 import {takeFirstRegion, orderRegion} from './first-region.mjs';
-import {image, pixels, jpegDimensions} from './input.mjs';
+import {image, pixels, jpegDimensions, admitJpeg} from './input.mjs';
+import {inspectPhone} from './phone-container.mjs';
 import {own, DEFAULT_INPUT_BYTES} from './ownership.mjs';
 import {encodeBands, WHOLE} from './bands.mjs';
 import {needsBands} from './band-size.mjs';
 import {recodeBand} from './band-recode.mjs';
+import {settleWebp} from './webp-quality.mjs';
 import {HDR} from '../photo-hdr.mjs';
 import {isRowSource, admitRows, readBand} from './rows.mjs';
 import {isTexture, readTexture} from './texture.mjs';
@@ -25,12 +28,12 @@ import {isPlainRecord} from './records.mjs';
 import {isDecoded, fromDecoded} from './describe.mjs';
 import {acceleration, describedRoute} from './acceleration.mjs';
 import {requireWebGPU} from './webgpu.mjs';
-import {capture, prepare as prepareCapture} from './capture.mjs';
+import {capture, prepare as prepareCapture} from './capture-complete-module.mjs';
 export {capture};
 export {supported} from './capture-support.mjs';
 export {configureWasm} from '../wasm-modules.mjs';
 
-const FEATURED = 'Orientation, extra channels and features need an 8-bit lossy encode in this version; exact and deeper samples write them in a later 8.x.';
+const FEATURED = 'Orientation, extra channels and features need 8-bit lossy.';
 
 let prepared;
 export function prepare(operation = 'encode') {
@@ -49,20 +52,22 @@ async function encodeHere(input, options = {}, helpers = null) {
   if (isPlainRecord(input) && isDecoded(input)) input = fromDecoded(input);
   if (Array.isArray(input?.frames)) throw fail('JXL_UNSUPPORTED', 'An animation is encoded by rapier-jxl/animation.');
   if (isRowSource(input)) {
-    if (readAs !== undefined) throw fail('JXL_OPTIONS', 'readAs reads a canvas, bitmap or Blob; a row source names its own space (colorSpace).');
-    if (target !== undefined || options.features !== undefined) throw fail('JXL_UNSUPPORTED', 'A picture given in bands takes no measured fidelity or features in this version.');
+    if (readAs !== undefined) throw fail('JXL_OPTIONS', 'readAs reads a canvas, bitmap or Blob; a row source sets colorSpace.');
+    if (target !== undefined || options.features !== undefined) throw fail('JXL_UNSUPPORTED', 'A banded picture takes no measured fidelity or features.');
     const source = admitRows(input, maxPixels), report = options.onProgress;
-    const hooks = {signal: options.signal ?? new AbortController().signal, maxPixels, onProgress: report && (fraction => { try { report(fraction); } catch (error) { throw callers(error); } })};
+    const hooks = {signal: options.signal ?? new AbortController().signal, maxPixels, onProgress: progressOf(report, options.signal)};
     if (webgpu === 'required') await requireWebGPU('required', codec.quality < 100, codec.effort);
+    const settle = band => settleWebp(codec, band);
     return encodeBands({width: source.width, height: source.height, read: (y, rows) => readBand(source, y, rows, hooks.signal)},
-      (band, bandHooks) => encodePicture(band, codec, bandHooks, helpers, webgpu), (band, shared) => recodeBand(band, codec, shared, HDR, ...bandCoders(codec)), drain, hooks);
+      (band, bandHooks) => encodePicture(band, settle(band), bandHooks, helpers, webgpu), (band, shared) => { const settled = settle(band); return recodeBand(band, settled, shared, HDR, ...bandCoders(settled)); }, drain, hooks);
   }
   const budget = Math.max(DEFAULT_INPUT_BYTES, maxPixels * 16);
   const features = own(options.features, maxPixels, budget);
   if (isTexture(input)) input = await readTexture(input, maxPixels);
   const blob = typeof Blob !== 'undefined' && input instanceof Blob;
-  let captured = blob ? null : own({input: pixels(input, {readAs}, maxPixels, true), codec, features, target}, maxPixels, budget);
-  const report = options.onProgress, onProgress = report && (fraction => { try { report(fraction); } catch (error) { throw callers(error); } });
+  const read = blob ? null : pixels(input, {readAs}, maxPixels, true);
+  let captured = blob ? null : own({input: read, codec: settleWebp(codec, read), features, target}, maxPixels, budget);
+  const report = options.onProgress, onProgress = progressOf(report, options.signal);
   const hooks = {signal: options.signal ?? new AbortController().signal, onProgress, maxPixels};
   if (webgpu === 'required') await requireWebGPU('required', codec.quality < 100 || target !== undefined, codec.effort);
   let carried = null;
@@ -70,6 +75,7 @@ async function encodeHere(input, options = {}, helpers = null) {
     const head = new Uint8Array(await input.slice(0, 2).arrayBuffer());
     check(hooks.signal);
     if (head[0] === 255 && head[1] === 216) {
+      await admitJpeg(input, maxPixels, hooks.signal);
       const jpeg = new Uint8Array(await input.arrayBuffer());
       check(hooks.signal);
       try { return await carry(jpeg, codec.effort, hooks); }
@@ -78,23 +84,23 @@ async function encodeHere(input, options = {}, helpers = null) {
   }
   if (blob) {
     let picture;
-    try { picture = await image(input, {readAs}, {...hooks, deep: async () => ({readSource: readPNG16})}); }
+    try { picture = await image(input, {readAs}, {...hooks, phone: inspectPhone, deep: async () => ({readSource: readPNG16, orient: orientSamples})}); }
     catch (error) {
       if (carried && !isCaller(error) && typeof error?.code === 'string' && error.code.startsWith('JXL_') && error.code !== 'JXL_ABORTED')
         throw Object.assign(carried, {cause: error});
       throw error;
     }
-    captured = own({input: picture, codec, features, target}, maxPixels, budget);
+    captured = own({input: picture, codec: settleWebp(codec, picture), features, target}, maxPixels, budget);
   }
   const {data, width, height, ...source} = captured.input;
   check(hooks.signal);
   const settings = {...source, ...captured.codec};
   const featured = captured.features !== undefined || source.orientation !== undefined || source.extraChannels !== undefined;
   if (width * height > WHOLE && (captured.target !== undefined || featured))
-    throw fail('JXL_UNSUPPORTED', 'Above 40 megapixels a picture is coded in bands, which take no measured fidelity, orientation, extra channels or features in this version.');
+    throw fail('JXL_UNSUPPORTED', 'Over 40 megapixels a picture is coded in bands: no measured fidelity, orientation, extra channels or features.');
   if (captured.target !== undefined) {
     if (source.orientation !== undefined || source.extraChannels !== undefined)
-      throw fail('JXL_INPUT', 'A measured fidelity takes 8-bit straight sRGB RGBA, without orientation or extra channels.');
+      throw fail('JXL_INPUT', 'A measured fidelity needs 8-bit straight sRGB RGBA, no orientation or extra channels.');
     targetSource(data, source, settings);
     await acceleration(webgpu, 0, 0, settings.effort, 'a measured fidelity');
     return (await drain(encodeToScoreSteps(data, width, height, {target: captured.target, effort: settings.effort}), hooks)).bytes;

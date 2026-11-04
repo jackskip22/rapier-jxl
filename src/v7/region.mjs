@@ -1,7 +1,7 @@
 import {fail} from './primitives.mjs';
 
 const SIDES = ['x', 'y', 'width', 'height'];
-const refuse = () => fail('JXL_OPTIONS', 'region is {x, y, width, height}: whole pixels, inside the picture.');
+const refuse = () => fail('JXL_OPTIONS', 'region is {x, y, width, height} in whole pixels, inside the picture.');
 export function admitRegion(region) {
   if (!region || typeof region !== 'object' || Array.isArray(region) || Object.keys(region).some(key => !SIDES.includes(key))) throw refuse();
   const own = {};

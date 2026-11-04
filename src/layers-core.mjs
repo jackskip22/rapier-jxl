@@ -32,17 +32,17 @@ function layerAdmission(input, options, encodeChannels, limits) {
   const {width, height, layers} = input; admitSize(width, height, limits);
   if (!Array.isArray(layers) || !layers.length || layers.length > 256) throw fault('JXL_INPUT', 'A still has one to 256 authored layers.');
   if (options.preview !== undefined && (!options.preview || options.preview.maxDimension !== undefined))
-    throw fault('JXL_INPUT', 'A layered still preview is an authored planar image of the finished composition.');
+    throw fault('JXL_INPUT', 'A layered preview is a planar image of the composition.');
   const iccBits = options.icc === undefined ? undefined : prepareICC(options.icc, {compression: options.iccCompression,
     level: options.level, colorSpace: layers[0].image?.extraChannels?.some(channel => new Map(Object.entries(channel)).get('type') === 'black') ? 'cmyk' : undefined}).iccData.bitLength;
   const admitted = layers.map((layer, index) => {
     layerObject(layer, 'Layer ' + index);
-    if ((layer.image === undefined) === (layer.bytes === undefined)) throw fault('JXL_INPUT', 'Each layer supplies either a planar image or encoded bytes.');
+    if ((layer.image === undefined) === (layer.bytes === undefined)) throw fault('JXL_INPUT', 'Each layer gives a planar image or encoded bytes.');
     const x0 = layerInteger(layer.x ?? 0, -536870911, 536870911, 'Layer x'), y0 = layerInteger(layer.y ?? 0, -536870911, 536870911, 'Layer y');
     const frameType = layer.referenceOnly ? 2 : layer.skipProgressive ? 3 : 0;
     if (layer.referenceOnly !== undefined && typeof layer.referenceOnly !== 'boolean' || layer.skipProgressive !== undefined && typeof layer.skipProgressive !== 'boolean')
       throw fault('JXL_INPUT', 'referenceOnly and skipProgressive are boolean.');
-    if (layer.referenceOnly && layer.skipProgressive || frameType === 2 && (x0 || y0)) throw fault('JXL_INPUT', 'A reference-only frame has no canvas origin or progressive display role.');
+    if (layer.referenceOnly && layer.skipProgressive || frameType === 2 && (x0 || y0)) throw fault('JXL_INPUT', 'A reference-only frame has no origin or progressive role.');
     if (index === layers.length - 1 && frameType === 2) throw fault('JXL_INPUT', 'The final layer displays the finished canvas.');
     if (layer.name !== undefined && (typeof layer.name !== 'string' || new TextEncoder().encode(layer.name).length > 1071))
       throw fault('JXL_INPUT', 'A layer name is at most 1071 UTF-8 bytes.');
@@ -52,11 +52,11 @@ function layerAdmission(input, options, encodeChannels, limits) {
     if (layer.bytes !== undefined) {
       if (!(layer.bytes instanceof Uint8Array) || !layer.bytes.length) throw fault('JXL_INPUT', 'Encoded layer bytes are a nonempty Uint8Array.');
       still = readStill(layer.bytes, {iccBits});
-      if (!index && options.preview !== undefined) throw fault('JXL_INPUT', 'The first encoded layer already supplies the global image header; put its preview there.');
+      if (!index && options.preview !== undefined) throw fault('JXL_INPUT', 'The first encoded layer holds the image header; put its preview there.');
     } else {
       layerObject(layer.options ?? {}, 'Per-layer encoding options');
       for (const name of Object.keys(layer.options ?? {})) if (!['groupSize', 'predictor', 'upsampling'].includes(name))
-        throw fault('JXL_INPUT', 'Per-layer options are groupSize, predictor and upsampling; image color and precision are shared.');
+        throw fault('JXL_INPUT', 'Per-layer options are groupSize, predictor and upsampling.');
       if (!encodeChannels) throw fault('JXL_INTERNAL', 'A planar layer needs the channel encoder (layers.mjs).');
       operation = encodeChannels(layer.image, {...options, ...layer.options,
         progressive: layer.referenceOnly ? false : options.progressive, preview: index ? undefined : options.preview});
@@ -76,12 +76,12 @@ function* layerSteps(config) {
       item.still = readStill(step.value, {iccBits});
     }
     const {still, layer} = item, key = compositionMetadataKey(still);
-    if (i && key !== metadata) throw fault('JXL_INPUT', 'All layers share identical channel metadata, color meaning, orientation and transform data.');
+    if (i && key !== metadata) throw fault('JXL_INPUT', 'Layers must share channels, color, orientation and transforms.');
     metadata = key; modular16 &&= still.image.modular16; level = Math.max(level, still.level);
-    if (still.frames.length !== 1) throw fault('JXL_INPUT', 'Each encoded layer is a single frame; author atlas references and LF pyramids through their dedicated encoders.');
+    if (still.frames.length !== 1) throw fault('JXL_INPUT', 'Each encoded layer is one frame; use the atlas and LF encoders for those.');
     const frame = still.frames[0];
     compositePixels += frame.width * frame.height;
-    if (frame.type !== 0 && frame.type !== 3) throw fault('JXL_INPUT', 'A layer begins with a regular or skip-progressive still frame.');
+    if (frame.type !== 0 && frame.type !== 3) throw fault('JXL_INPUT', 'A layer starts with a regular or skip-progressive frame.');
     const blend = layerBlend(layer, {source: canvasReference}, still.image.extraChannels);
     if (layer.extraBlending !== undefined && (!Array.isArray(layer.extraBlending) || layer.extraBlending.length !== still.image.extraChannels))
       throw fault('JXL_INPUT', 'extraBlending supplies one description per extra channel.');
@@ -94,14 +94,14 @@ function* layerSteps(config) {
       extraBlending[blend.alpha] = {...extraBlending[blend.alpha], mode: 2, alpha: blend.alpha, clamp: blend.clamp};
     }
     const full = item.x0 <= 0 && item.y0 <= 0 && item.x0 + frame.width >= width && item.y0 + frame.height >= height;
-    if (item.frameType === 2 && !layer.beforeColorTransform && !full) throw fault('JXL_INPUT', 'A reference saved after color conversion covers the full canvas.');
+    if (item.frameType === 2 && !layer.beforeColorTransform && !full) throw fault('JXL_INPUT', 'A reference saved after color conversion covers the canvas.');
     if (layer.beforeColorTransform && item.frameType !== 2 && (!full || blend.mode !== 0 || i === layers.length - 1))
-      throw fault('JXL_INPUT', 'A before-color-transform reference is reference-only or a full, nonfinal replacement.');
+      throw fault('JXL_INPUT', 'A before-color-transform reference is reference-only or a full nonfinal replacement.');
     encoded.push({...item, frame, blend, extraBlending, full});
     if (item.frameType !== 2 && i < layers.length - 1) canvasReference = item.reference;
   }
   if (!modular16 || compositePixels > 268435456) level = 10;
-  if (config.requestedLevel === 5 && level === 10) throw fault('JXL_INPUT', 'The composite frame area or channel buffers require JPEG XL level 10.');
+  if (config.requestedLevel === 5 && level === 10) throw fault('JXL_INPUT', 'This frame area or channel buffer needs level 10.');
   const first = encoded[0].still, writer = new BitWriter(256), canvas = {...first.image, width, height}, available = new Set([0]);
   writeStillImageHeader(writer, first, {width, height, modular16});
   if (first.preview) copyBits(writer, first.codestream, first.preview.start * 8, first.preview.end * 8);

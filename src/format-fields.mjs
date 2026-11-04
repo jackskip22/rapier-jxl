@@ -64,7 +64,7 @@ export function prepareExtraChannels(channels) {
 
 export function prepareUpsamplingWeights(weights, {xyb = false} = {}) {
   if (weights === undefined) return undefined;
-  if (!weights || typeof weights !== 'object' || Array.isArray(weights)) throw fault('JXL_INPUT', 'upsamplingWeights maps 2, 4 or 8 to its symmetric kernel coefficients.');
+  if (!weights || typeof weights !== 'object' || Array.isArray(weights)) throw fault('JXL_INPUT', 'upsamplingWeights maps 2, 4 or 8 to symmetric kernel coefficients.');
   const entries = new Map(Object.entries(weights)), counts = new Map([['2', 15], ['4', 55], ['8', 210]]);
   if (!entries.size || [...entries.keys()].some(key => !counts.has(key))) throw fault('JXL_INPUT', 'Custom upsampling factors are 2, 4 and 8.');
   let mask = 0;

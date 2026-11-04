@@ -1,15 +1,11 @@
 import {BUILD_VERSION} from './build-version.mjs';
+import {INTERFACES} from './wasm-interfaces.mjs';
+import {interfaceOf} from './wasm-text.mjs';
 const supplied = new Map(), used = new Map(), BUNDLE = Symbol.for('rapier-jxl.wasm');
 let configured = false, sealed = false;
 const error = message => Object.assign(new Error(message), {code: 'JXL_WASM'});
-const exportsFor = {
-  capture: 'weighted copies runs scan tally part literals pieces lowestInk prices edges rowInk colInk',
-  simd: 'residual fill screen sampled dct xybTile quantTile acGroup ansFlush ansFlush2 nonzeroCounts subtract vbDct vbQuant gab sgFill xybRows acTokens gabTiles fgXyb gab32 gab32From fgTiles packLevels unpackGroup ctxIds opaque wpTokens gradEvents hpCount hpTokens shape wpDc tokens weighted',
-  jpeg: 'memory initTable terms seedBest pairsInit pairsUpdate pairMin assign ansFlush fill scanStart scanBand decodeStart decodeBand tokensIn prefixWrite literalClusters countFilled countClear recips mbits mwrite mtags seedAll priceConfigs',
-  decode: 'memory idct idct8 xyb srgb store modular block8 dequant cfl64 gabRows epf lfPrepare curve run convert srgbTables srgb8Build srgb8 rgba curveTable quantized values passGroup small cfl llf blend upsample orient samples xybSamples jpegAcross jpegDown rct palette squeezeAcross squeezeDown lfScale noiseRandom noiseConvolve noiseApply splineDot',
-};
 
-const MODULES = Symbol.for('rapier-jxl/' + BUILD_VERSION + ' wasm ' + Object.entries(exportsFor).map(([name, list]) => name + ':' + list).join(';'));
+const MODULES = Symbol.for('rapier-jxl/' + BUILD_VERSION + ' wasm ' + Object.entries(INTERFACES).map(([name, word]) => name + ':' + word).join(';'));
 
 export function wasmBundle(modules) {
   return Object.freeze(Object.defineProperty({[BUNDLE]: true}, MODULES, {value: modules ? Object.freeze({...modules}) : null}));
@@ -19,7 +15,7 @@ export function configureWasm(bundle) {
   const object = bundle !== null && typeof bundle === 'object', field = object ? Object.getOwnPropertyDescriptor(bundle, MODULES) : undefined;
   const modules = field && 'value' in field ? field.value : undefined;
   if (modules !== null && (modules === undefined || typeof modules !== 'object')) throw error(object && Object.hasOwn(bundle, BUNDLE)
-    ? 'This WebAssembly bundle comes from another version of rapier-jxl. Import rapier-jxl/wasm from this package.'
+    ? 'This WebAssembly is from another rapier-jxl version; import rapier-jxl/wasm from this package.'
     : 'configureWasm takes the bundle exported by rapier-jxl/wasm.');
   if (modules) configureModules(modules);
 }
@@ -29,17 +25,16 @@ export function configureModules(modules) {
     throw error('Supply named precompiled WebAssembly.Module objects.');
   const entries = Object.entries(modules);
   for (const [name, module] of entries) {
-    const expected = Object.hasOwn(exportsFor, name) ? exportsFor[name].split(' ') : null;
-    if (!expected) throw error(`Unknown WebAssembly module: ${name}.`);
+    if (!Object.hasOwn(INTERFACES, name)) throw error(`Unknown WebAssembly module: ${name}.`);
     let imports, exports;
     try { imports = WebAssembly.Module.imports(module); exports = WebAssembly.Module.exports(module); }
-    catch { throw error(`${name} must be a precompiled WebAssembly.Module, not bytes or an instance.`); }
+    catch { throw error(`${name} must be a compiled WebAssembly.Module.`); }
     const importedMemory = ['capture','simd'].includes(name);
-    if (exports.length !== expected.length || expected.some(key => !exports.some(value => value.name === key && value.kind === (key === 'memory' ? 'memory' : 'function'))) ||
+    if (interfaceOf(exports) !== INTERFACES[name] ||
         (importedMemory ? imports.length !== 1 || imports[0].module !== 'env' || imports[0].name !== 'memory' || imports[0].kind !== 'memory' : imports.length !== 0))
-      throw error(`The ${name} module has a different interface. Use the module shipped with this package.`);
+      throw error(`The ${name} module does not match; use this package's.`);
     if (sealed && supplied.get(name) !== module || supplied.has(name) && supplied.get(name) !== module || used.has(name) && used.get(name) !== module)
-      throw error(`The ${name} module is already selected in this realm. Configure modules before starting workers, probing, preparing or encoding.`);
+      throw error(`The ${name} module is already set; configure modules before any work.`);
   }
   for (const [name, module] of entries) supplied.set(name, module);
   configured = true;
@@ -53,11 +48,15 @@ export const hasWasmModule = name => supplied.has(name);
 const compiling = new Map();
 export async function compileWasm(name, bytes) {
   if (used.get(name) || supplied.has(name)) return true;
-  if (configured) throw error(`The precompiled ${name} module is missing. Supply the module shipped with this package.`);
-  if (typeof WebAssembly !== 'object' || typeof WebAssembly.compile !== 'function') return false;
+  if (configured) throw error(`The ${name} module is missing; supply this package's.`);
   if (!compiling.has(name)) {
     if (!used.has(name)) used.set(name, null);
-    compiling.set(name, WebAssembly.compile(bytes()).then(module => { if (!used.get(name)) used.set(name, module); return true; }, () => { compiling.delete(name); return false; }));
+    compiling.set(name, (async () => {
+      const module = await WebAssembly.compile(bytes());
+      await WebAssembly.instantiate(Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0));
+      if (!used.get(name)) used.set(name, module);
+      return true;
+    })().catch(() => { compiling.delete(name); return false; }));
   }
   return compiling.get(name);
 }
@@ -66,7 +65,7 @@ export function wasmModule(name, bytes) {
   used.set(name, null);
   const module = supplied.get(name);
   if (module) { used.set(name, module); return module; }
-  if (configured) throw error(`The precompiled ${name} module is missing. Supply the module shipped with this package.`);
+  if (configured) throw error(`The ${name} module is missing; supply this package's.`);
   const compiled = new WebAssembly.Module(bytes());
   used.set(name, compiled);
   return compiled;

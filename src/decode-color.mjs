@@ -69,13 +69,13 @@ function xybToEnum(frame,h,encoding,inPlace=false,rgba8=null) {
       for(const p of planes)kernels.srgb(p.subarray(0,n));
       return finish(frame,planes,encoding);
     }
-    const planes=[0,1,2].map(()=>new Float32Array(n));
+    const planes=inPlace?frame.planes.slice(0,3):[0,1,2].map(()=>new Float32Array(n));
     throughKernels(n,frame.planes.slice(0,3),planes,(count,[x,y,b])=>{kernels.xyb(count,x,y,b,constants);kernels.srgb(x);kernels.srgb(y);kernels.srgb(b);});
     return finish(frame,planes,encoding);
   }
   const curve=transferCurve(encoding,false,h.toneMapping.intensityTarget),gamma=encoding.transferFunction==='gamma'||encoding.transferFunction==='dci';
   const exponent=encoding.transferFunction==='hlg'?hlgScale(h.toneMapping.intensityTarget,true):0,luminance=native.slice(3,6);
-  const planes=Array.from({length:gray?1:3},()=>new Float32Array(n));
+  const planes=inPlace?frame.planes.slice(0,gray?1:3):Array.from({length:gray?1:3},()=>new Float32Array(n));
   const to=[xybInverse(h,transform),...(exponent?[{op:OP.hlgOotf,data:Float64Array.of(...luminance,exponent)}]:[]),...planes.map((_,c)=>curveOp(c,curve,gamma))];
   convertPixels(n,{inputs:frame.planes.slice(0,3),outputs:planes,to});
   return finish(frame,planes,encoding);
@@ -157,8 +157,7 @@ export function transformColor(frame,h,f,{colorSpace='original',icc,inPlace=fals
   if(frame.ctDone||frame.colorEncoding)return convertOutputColor(frame,h,{colorSpace,icc});
   const original=nativeEncoding(h),n=frame.width*frame.height;
   requireDecode(frame.planes.every(p=>p.length===n),'JPEG XL color planes have different extents.');
-  const kernels=decodeKernels(),here=inPlace&&frame.planes.every(p=>p.buffer===kernels.buffer);
-  const pixels=(count,ops)=>{const planes=here?frame.planes.slice(0,count):Array.from({length:count},()=>new Float32Array(n));convertPixels(n,{inputs:frame.planes.slice(0,3),outputs:planes,to:ops});return planes;};
+  const pixels=(count,ops)=>{const planes=inPlace?frame.planes.slice(0,count):Array.from({length:count},()=>new Float32Array(n));convertPixels(n,{inputs:frame.planes.slice(0,3),outputs:planes,to:ops});return planes;};
   let decoded;
   if(f.ycbcr) {
     requireDecode(frame.planes.length===3,'JPEG XL YCbCr needs three planes.');

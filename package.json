@@ -1,6 +1,6 @@
 {
  "name": "rapier-jxl",
- "version": "8.1.0",
+ "version": "8.2.0",
  "type": "module",
  "license": "MIT",
  "description": "JPEG XL for pictures, captures and exact JPEG reconstruction.",
@@ -47,6 +47,12 @@
    "edge-light": "./dist/capture.edge-light.mjs",
    "import": "./dist/capture.mjs"
   },
+  "./capture-complete": {
+   "types": "./types/capture-complete.d.mts",
+   "workerd": "./dist/capture-complete.workerd.mjs",
+   "edge-light": "./dist/capture-complete.edge-light.mjs",
+   "import": "./dist/capture-complete.mjs"
+  },
   "./animation": {
    "types": "./types/animation.d.mts",
    "workerd": "./dist/animation.workerd.mjs",
@@ -63,12 +69,14 @@
    "types": "./types/decode.d.mts",
    "workerd": "./dist/decode.workerd.mjs",
    "edge-light": "./dist/decode.edge-light.mjs",
+   "node": "./dist/decode.node.mjs",
    "import": "./dist/decode.mjs"
   },
   "./jpeg": {
    "types": "./types/jpeg.d.mts",
    "workerd": "./dist/jpeg.workerd.mjs",
    "edge-light": "./dist/jpeg.edge-light.mjs",
+   "node": "./dist/jpeg.node.mjs",
    "import": "./dist/jpeg.mjs"
   },
   "./metadata": {
@@ -85,6 +93,7 @@
   },
   "./serve": {
    "types": "./types/serve.d.mts",
+   "node": "./dist/serve.node.mjs",
    "import": "./dist/serve.mjs"
   },
   "./wasm": {
@@ -92,6 +101,14 @@
    "workerd": "./dist/wasm.workerd.mjs",
    "edge-light": "./dist/wasm.edge-light.mjs",
    "import": "./dist/wasm.mjs"
+  },
+  "./page-rects": {
+   "types": "./examples/page-rects.d.ts",
+   "import": "./examples/page-rects.js"
+  },
+  "./svg-jxl": {
+   "types": "./examples/svg-jxl.d.ts",
+   "import": "./examples/svg-jxl.js"
   },
   "./package.json": "./package.json"
  },
@@ -101,6 +118,8 @@
   "./dist/still.worker.mjs",
   "./dist/upload.worker.mjs",
   "./dist/capture.worker.mjs",
+  "./dist/capture-complete.worker.mjs",
+  "./dist/capture-complete.groups.worker.mjs",
   "./dist/animation.worker.mjs",
   "./dist/format.worker.mjs",
   "./dist/decode.worker.mjs",
@@ -109,12 +128,15 @@
   "./dist/upload.helper.mjs",
   "./dist/animation.helper.mjs",
   "./dist/format.helper.mjs",
+  "./dist/capture-complete.helper.mjs",
   "./dist/index.workerd.mjs",
   "./dist/index.edge-light.mjs",
   "./dist/upload.workerd.mjs",
   "./dist/upload.edge-light.mjs",
   "./dist/capture.workerd.mjs",
   "./dist/capture.edge-light.mjs",
+  "./dist/capture-complete.workerd.mjs",
+  "./dist/capture-complete.edge-light.mjs",
   "./dist/animation.workerd.mjs",
   "./dist/animation.edge-light.mjs",
   "./dist/format.workerd.mjs",
@@ -132,6 +154,7 @@
   "examples",
   "LICENSE",
   "README.md",
+  "SKILL.md",
   "THIRD_PARTY_NOTICES",
   "CHANGELOG.md"
  ],

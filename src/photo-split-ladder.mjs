@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {BitWriter, ceilLog2} from './bits.mjs';
 import {PHOTO_BAND_MARGIN} from './photo-bands.mjs';
+import {uploadFlat} from './photo-v6-settings.mjs';
 import {varDCTSteps, blockContexts, seedLfSections, vdLfGroupCount, designPriced} from './vardct.mjs';
 import {TokenCounts} from './entropy.mjs';
 import {rungs, ansPlan, BUDGETS} from './coefficient-ans.mjs';
@@ -36,7 +37,8 @@ export function designAsker(send, count) {
   };
 }
 
-export async function encodeSplitLadder(data, width, height, quality, helpers, {signal, effort = 4, arena = false} = {}) {
+export async function encodeSplitLadder(data, width, height, quality, helpers, {signal, effort = 4, arena = false, uploadFlat: knownFlat} = {}) {
+  const commonUpload = effort === 4 || effort === 5, flat = commonUpload && (knownFlat ?? uploadFlat(data, width, height));
   const {id, ticket} = splitIds(), bands = splitBands(height, helpers.length + 1), keys = bands.map((_, k) => id + ':' + k);
   const shared = typeof SharedArrayBuffer === 'function' && data.buffer instanceof SharedArrayBuffer, issued = [];
   const call = splitAsker(helpers, serveSplit, issued), ask = (w, message, transfer) => call(w, message, keys[w], transfer);
@@ -48,10 +50,10 @@ export async function encodeSplitLadder(data, width, height, quality, helpers, {
     const first = bands.map((band, k) => {
       if (!k) return null;
       const {pixels: view, offset} = rows(band), pixels = shared ? view : view.slice();
-      return ask(k, {split: 'band', width, height: band.height, quality, data: pixels, offset, gaborish: true, full: true}, shared ? [] : [pixels.buffer]);
+      return ask(k, {split: 'band', width, height: band.height, quality, data: pixels, offset, gaborish: true, full: true, upload: commonUpload, uploadFlat: flat}, shared ? [] : [pixels.buffer]);
     });
     const own = rows(bands[0]);
-    first[0] = ask(0, {split: 'band', width, height: bands[0].height, quality, data: own.pixels, offset: own.offset, gaborish: true, full: true});
+    first[0] = ask(0, {split: 'band', width, height: bands[0].height, quality, data: own.pixels, offset: own.offset, gaborish: true, full: true, upload: commonUpload, uploadFlat: flat});
     let image, orders;
     let dcCount, dcImage;
     const dcByKey = new Map();

@@ -6,8 +6,7 @@ import {fault} from './fault.mjs';
 export {fault};
 
 export function admitColorRoute(options) {
-  if (options.colorEncoding !== undefined || options.toneMapping !== undefined)
-    throw fault('JXL_INPUT', 'Custom color metadata requires encodeProfile from rapier-jxl/icc.');
+  if (options.toneMapping !== undefined) throw fault('JXL_INPUT', 'Tone mapping metadata is not encoded.');
 }
 
 export function admitOptions(options = {}, quality = 100) {
@@ -21,15 +20,15 @@ export function admitOptions(options = {}, quality = 100) {
 }
 
 export function admitSize(width, height, limits = LIMITS) {
-  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) throw fault('JXL_INPUT', 'A picture is at least one pixel wide and high, in whole pixels.');
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) throw fault('JXL_INPUT', 'Width and height are whole numbers of at least 1.');
   if (width > limits.edge || height > limits.edge) throw fault('JXL_DIMENSIONS', 'A picture is at most ' + limits.edge + ' pixels on a side.');
   if (width * height > limits.pixels) throw fault('JXL_DIMENSIONS', 'A picture is at most ' + limits.pixels.toLocaleString('en-US') + ' pixels.');
 }
 
 export function admitPixels(data, width, height, limits) {
   admitSize(width, height, limits);
-  if (!(data instanceof Uint8Array) && !(data instanceof Uint8ClampedArray) && !(data instanceof Uint16Array) && !(data instanceof Float32Array)) throw fault('JXL_INPUT', 'Pixels are Uint8Array, Uint8ClampedArray, Uint16Array or Float32Array samples.');
-  if (data.length !== width * height * 4) throw fault('JXL_INPUT', 'Pixels are width * height * 4 samples: straight (not premultiplied) RGBA, row by row.');
+  if (!(data instanceof Uint8Array) && !(data instanceof Uint8ClampedArray) && !(data instanceof Uint16Array) && !(data instanceof Float32Array)) throw fault('JXL_INPUT', 'Pixels are Uint8Array, Uint8ClampedArray, Uint16Array or Float32Array.');
+  if (data.length !== width * height * 4) throw fault('JXL_INPUT', 'Pixels are width * height * 4 straight RGBA samples.');
 }
 
 export function admitOutputSize(length) {
@@ -50,7 +49,7 @@ export function job(steps) {
   const it = (function* () {
     let step, last, reply;
     while (!(step = guard(() => steps.next(reply))).done) {
-      if (step.value?.capture || step.value?.split) { reply = undefined; continue; }
+      if (step.value?.capture || step.value?.split || step.value?.gpu) { reply = undefined; continue; }
       yield last = step.value; reply = it.hurry;
     }
     if (last < 1) yield 1;

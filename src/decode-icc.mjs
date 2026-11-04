@@ -42,10 +42,11 @@ function context(i, a, b) {
   return 1 + first + 8 * second;
 }
 
-export function readICC(reader, {maxBytes = 268435456} = {}) {
+export function readICC(reader, {maxBytes = 268435456, maxProfileBytes = maxBytes} = {}) {
   limit(maxBytes, 0xffffffff);
+  limit(maxProfileBytes, 0xffffffff);
   const start = reader.bit, size = reader.u64();
-  limit(size, maxBytes);
+  limit(size, Math.min(maxBytes, maxProfileBytes + 65536));
   const code = readEntropy(reader, 41, {values: size}), prefix = new Uint8Array(Math.min(size, 20));
   code.begin();
   let a = 0, b = 0;
@@ -56,7 +57,7 @@ export function readICC(reader, {maxBytes = 268435456} = {}) {
   };
   for (let i = 0; i < prefix.length; i++) prefix[i] = next(i);
   const preamble = new Cursor(prefix), outputSize = preamble.integer(), commandSize = preamble.integer();
-  limit(outputSize, maxBytes);
+  limit(outputSize, maxProfileBytes);
   requireDecode(commandSize <= size - preamble.at && size <= outputSize + 65536,
     'Invalid JPEG XL ICC preamble.', reader);
   const bytes = new Uint8Array(size); bytes.set(prefix);
@@ -65,7 +66,7 @@ export function readICC(reader, {maxBytes = 268435456} = {}) {
     bytes[i] = next(i);
   }
   code.finish();
-  return decodeICC(bytes, {maxBytes});
+  return decodeICC(bytes, {maxBytes: maxProfileBytes});
 }
 
 function unshuffle(bytes, width) {

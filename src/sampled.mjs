@@ -13,7 +13,7 @@ import {hybridToken} from './prefix.mjs';
 import {colourTransform, transformKeys} from './rct-search.mjs';
 
 const SAMPLE_SYMBOLS = 32, SAMPLE_Q = 4096;
-const SAMPLE_RETAIN = 4096;
+const SAMPLE_RETAIN = 256;
 const TRAIN_CONFIG = Object.freeze({split: 4, splitToken: 16, msb: 1, lsb: 2});
 const PRECISE = {samples: 65536, bins: 128, leaves: 64, depth: 12,
     properties: Object.freeze([15, 9, 10, 11, 12, 13, 14, 4, 5, 6, 7, 8, 2, 3]),
@@ -827,6 +827,11 @@ function sampleChooseModel(plans, options, prepare, offset = 0) {
     }
     return section;
   };
+  if (options.hybrid && options.projected && !options.sharing?.length) {
+    sampleProjectIntegers(plans);
+    const only = cheaper(plans);
+    if (only) return only.write();
+  }
   if (options.hybrid && !options.sharing?.length) {
     const first = cheaper(plans);
     if (first) {

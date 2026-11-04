@@ -12,7 +12,7 @@ export {LIMITS, prepareICC};
 function admitGray(data) {
   const words = data instanceof Float32Array ? new Uint32Array(data.buffer, data.byteOffset, data.length) : data;
   for (let i = 0; i < words.length; i += 4)
-    if (words[i] !== words[i + 1] || words[i] !== words[i + 2]) throw fault('JXL_INPUT', 'A GRAY profile requires identical R, G and B sample words in every RGBA pixel.');
+    if (words[i] !== words[i + 1] || words[i] !== words[i + 2]) throw fault('JXL_INPUT', 'A GRAY profile needs equal R, G and B in every pixel.');
 }
 
 export function encodeProfile(data, width, height, options) { return complete(encodeProfileSteps(data, width, height, options)); }
@@ -30,12 +30,12 @@ export function encodeProfileSteps(data, width, height, options = {}) {
   if (options.level === 5 && nativeLevel === 10) throw fault('JXL_INPUT', 'These sample depths require JPEG XL level 10.');
   if (icc !== undefined) {
     if (options.colorSpace !== undefined || options.transferFunction !== undefined)
-      throw fault('JXL_INPUT', 'An ICC profile supplies the color encoding; omit other color declarations.');
+      throw fault('JXL_INPUT', 'An ICC profile sets the color; omit other color fields.');
     Object.assign(samples, prepareICC(icc, {level: options.level, compression: options.iccCompression, colorEncoding}));
   } else {
     if (options.iccCompression !== undefined) throw fault('JXL_INPUT', 'iccCompression requires an ICC profile.');
     if (colorEncoding?.space === 'xyb' && (options.colorSpace !== undefined || options.transferFunction !== undefined))
-      throw fault('JXL_INPUT', 'Original XYB color has implicit color fields; omit colorSpace and transferFunction.');
+      throw fault('JXL_INPUT', 'XYB color is implicit; omit colorSpace and transferFunction.');
     Object.assign(samples, prepareColorEncoding(colorEncoding, samples));
   }
   samples.level = Math.max(nativeLevel, samples.level ?? options.level ?? 5);
@@ -45,7 +45,7 @@ export function encodeProfileSteps(data, width, height, options = {}) {
   if (toneMapping !== undefined) {
     const tone = prepareToneMapping(toneMapping, intensityTarget);
     if (options.intensityTarget !== undefined && toneMapping.intensityTarget !== undefined && options.intensityTarget !== toneMapping.intensityTarget)
-      throw fault('JXL_INPUT', 'intensityTarget and toneMapping.intensityTarget must agree.');
+      throw fault('JXL_INPUT', 'intensityTarget and toneMapping.intensityTarget differ.');
     Object.assign(samples, tone);
   } else samples.intensityTarget = intensityTarget;
   samples.native8 = false;

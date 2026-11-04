@@ -18,18 +18,18 @@ function splineInteger(value, label) {
 }
 function splinePointValues(points) {
   if (!Array.isArray(points) || points.length < 2 || points.length > 1048576)
-    throw fault('JXL_INPUT', 'A spline has from 2 to 1048576 control points; one-point curves render differently in current decoders.');
+    throw fault('JXL_INPUT', 'A spline has 2 to 1048576 control points.');
   const values = new Int32Array(points.length * 2);
   let distance = 0;
   for (let i = 0; i < points.length; i++) {
     const point = points[i];
     if (!splineVector(point) || point.length !== 2 || ![point[0], point[1]].every(v => Number.isInteger(v) && Math.abs(v) < SPLINE_COORDINATE))
-      throw fault('JXL_INPUT', 'A spline control point is [x, y] with integer coordinates strictly between -8388608 and 8388608.');
+      throw fault('JXL_INPUT', 'A control point is [x, y], integers strictly within ±8388608.');
     values.set(point, i * 2);
     if (i) {
       const dx = point[0] - values[i * 2 - 2], dy = point[1] - values[i * 2 - 1];
       if ((!dx && !dy) || Math.abs(dx) >= SPLINE_COORDINATE || Math.abs(dy) >= SPLINE_COORDINATE)
-        throw fault('JXL_INPUT', 'Adjacent spline points differ and their coordinate differences are strictly below 8388608.');
+        throw fault('JXL_INPUT', 'Adjacent spline points differ by less than 8388608, and not 0.');
       distance += Math.abs(dx) + Math.abs(dy);
     }
   }
@@ -45,7 +45,7 @@ export function splineStroke(controlPoints, options) {
   if (!options || typeof options !== 'object') throw fault('JXL_INPUT', 'A spline stroke needs colorXYB and sigma.');
   const {colorXYB, sigma} = options, quantizationAdjustment = splineAdjustment(options.quantizationAdjustment);
   if (!splineVector(colorXYB) || colorXYB.length !== 3 || !colorXYB.every(Number.isFinite) || !Number.isFinite(sigma) || sigma <= 0)
-    throw fault('JXL_INPUT', 'colorXYB has three finite normalized XYB values; sigma is positive Gaussian width in pixels.');
+    throw fault('JXL_INPUT', 'colorXYB is three finite XYB values; sigma is a positive width in pixels.');
   const {values} = splinePointValues(controlPoints), colorDct = [new Int32Array(32), new Int32Array(32), new Int32Array(32)], sigmaDct = new Int32Array(32);
   const adjustment = quantizationAdjustment >= 0 ? 1 + quantizationAdjustment / 8 : 1 / (1 - quantizationAdjustment / 8);
   const quantize = (value, weight) => splineInteger(splineRound(value * adjustment / weight), 'The quantized stroke');
@@ -53,7 +53,7 @@ export function splineStroke(controlPoints, options) {
   colorDct[0][0] = quantize(colorXYB[0], SPLINE_WEIGHTS[0]);
   colorDct[2][0] = quantize(colorXYB[2] - colorDct[1][0] * SPLINE_WEIGHTS[1] / adjustment, SPLINE_WEIGHTS[2]);
   sigmaDct[0] = quantize(sigma, SPLINE_WEIGHTS[3]);
-  if (!sigmaDct[0]) throw fault('JXL_INPUT', 'sigma rounds to zero at this quantizationAdjustment; increase either value.');
+  if (!sigmaDct[0]) throw fault('JXL_INPUT', 'sigma rounds to zero; raise sigma or quantizationAdjustment.');
   return {controlPoints: Array.from({length: values.length / 2}, (_, i) => [values[i * 2], values[i * 2 + 1]]), colorDct, sigmaDct, quantizationAdjustment};
 }
 
@@ -62,20 +62,20 @@ function admitSplines(width, height, options) {
   if (!Array.isArray(supplied) || !supplied.length) throw fault('JXL_INPUT', 'splines is a nonempty array of authored curves.');
   const pixelCount = width * height, pointLimit = Math.min(1048576, Math.floor(pixelCount / 2));
   if (options.level !== undefined && options.level !== 5 && options.level !== 10) throw fault('JXL_INPUT', 'JPEG XL level is 5 or 10.');
-  if (supplied.length > Math.min(pointLimit, Math.floor(pixelCount / 4))) throw fault('JXL_INPUT', 'There are too many splines for this image; at most one per four pixels.');
+  if (supplied.length > Math.min(pointLimit, Math.floor(pixelCount / 4))) throw fault('JXL_INPUT', 'Too many splines: at most one per four pixels.');
   const quantizationAdjustment = splineAdjustment(options.quantizationAdjustment ?? supplied[0]?.quantizationAdjustment);
   const inverse = quantizationAdjustment >= 0 ? 1 / (1 + quantizationAdjustment / 8) : 1 - quantizationAdjustment / 8;
   const areaLimit = Math.min(4398046511104, 1024 * pixelCount + 4294967296);
   let points = 0, estimatedArea = 0;
   const splines = Array.from(supplied, (spline, index) => {
     if (!spline || typeof spline !== 'object' || !Array.isArray(spline.colorDct) || spline.colorDct.length !== 3)
-      throw fault('JXL_INPUT', 'Each spline has controlPoints, three colorDct arrays, and sigmaDct.');
+      throw fault('JXL_INPUT', 'A spline has controlPoints, three colorDct arrays and sigmaDct.');
     if (spline.quantizationAdjustment !== undefined && spline.quantizationAdjustment !== quantizationAdjustment)
-      throw fault('JXL_INPUT', 'Every spline in a frame uses the same quantizationAdjustment.');
+      throw fault('JXL_INPUT', 'Splines in a frame share quantizationAdjustment.');
     points += spline.controlPoints?.length ?? 0;
-    if (points > pointLimit) throw fault('JXL_INPUT', 'The frame has too many spline control points; the limit is min(1048576, pixels / 2).');
+    if (points > pointLimit) throw fault('JXL_INPUT', 'Too many control points: at most min(1048576, pixels / 2).');
     const {values, distance} = splinePointValues(spline.controlPoints);
-    if (!index && (values[0] < 0 || values[1] < 0)) throw fault('JXL_INPUT', 'The first spline starts at nonnegative x and y; later curves may start outside the image.');
+    if (!index && (values[0] < 0 || values[1] < 0)) throw fault('JXL_INPUT', 'The first spline starts at nonnegative x and y.');
     const colorDct = [0, 1, 2].map(c => splineDct(spline.colorDct[c], 'colorDct[' + c + ']'));
     const sigmaDct = splineDct(spline.sigmaDct, 'sigmaDct');
     const colors = colorDct.map(values => values.reduce((sum, value) => sum + Math.ceil(Math.abs(value) * inverse), 0));
@@ -90,12 +90,12 @@ function admitSplines(width, height, options) {
     }
     estimatedArea += distance ? distance * widthBound * logColor : 0;
     if (distance > areaLimit || estimatedArea > areaLimit)
-      throw fault('JXL_INPUT', 'The spline geometry, width and color exceed the JPEG XL decoder area budget.');
+      throw fault('JXL_INPUT', 'Splines exceed the decoder area budget.');
     return {values, colorDct, sigmaDct};
   });
   const requiredLevel = estimatedArea > Math.min(1073741824, 8 * pixelCount + 33554432) ? 10 : 5;
   if ((options.level ?? 5) === 5 && requiredLevel === 10)
-    throw fault('JXL_INPUT', 'These spline curves require explicit level: 10; Chrome 155 enforces the smaller level-5 spline area budget.');
+    throw fault('JXL_INPUT', 'These splines need level: 10 (Chrome 155 enforces the level-5 budget).');
   return {splines, quantizationAdjustment, level: options.level ?? 5, tokens: 2 + supplied.length * 129 + points * 2};
 }
 
@@ -145,7 +145,7 @@ export function encodeSplinesSteps(data, width, height, options = {}) {
   const {quality, colorSpace} = admitOptions(options, 90), effort = admitEffort(options), filter = admitPhotoFilter(options);
   admitPixels(data, width, height, PHOTO_LIMITS);
   if (quality === 100 || colorSpace !== 'srgb' || !admitSampleFormat(data, options).native8)
-    throw fault('JXL_INPUT', 'Authored splines require straight sRGB8 pixels and quality below 100; curves add to the source image.');
+    throw fault('JXL_INPUT', 'Splines need straight sRGB8 and quality below 100.');
   const orientation = options.orientation ?? 1;
   if (!Number.isInteger(orientation) || orientation < 1 || orientation > 8) throw fault('JXL_INPUT', 'orientation is an integer from 1 to 8.');
   const plan = admitSplines(width, height, options);

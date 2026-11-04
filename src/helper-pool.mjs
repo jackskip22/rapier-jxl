@@ -1,4 +1,5 @@
 import {suppliedWasm} from './wasm-modules.mjs';
+import {startWorker} from './v7/worker-start.mjs';
 // SPDX-License-Identifier: MIT
 import {kernelRequest, ensureKernels} from './kernels.mjs';
 import {ARENA_BYTES} from './arena.mjs';
@@ -289,7 +290,7 @@ export async function splitOnIdle(owner, reservation, request, signal, helper) {
     const arena = request.pixels > 0 && reservation?.memoryBytes >= 16 * request.pixels + leased.length * (helperBytes(request.pixels) + ARENA_BYTES);
     if (request.pixels > 0) mark('split-arena', arena, leased.length * ARENA_BYTES, reservation?.memoryBytes);
     return request.run ? await request.run(leased, {signal, arena})
-      : await (await import('./photo-split.mjs')).encodeSplit(request.data, request.width, request.height, request.quality, leased, {signal, gaborish: request.gaborish, screen: request.screen, opaque: request.opaque, arena});
+      : await (await import('./photo-split.mjs')).encodeSplit(request.data, request.width, request.height, request.quality, leased, {signal, gaborish: request.gaborish, screen: request.screen, uploadFlat: request.uploadFlat, opaque: request.opaque, arena});
   }
   catch (error) { if (signal?.aborted) throw error; return undefined; }
   finally { pool.unlease(leased); pool.jobs--; idle(pool); }
@@ -318,7 +319,7 @@ export const defaultWorkers = async () => {
 export async function spawnHelper(helper) {
   if (!helper) throw Object.assign(new Error('A helper spawn names its file.'), {code: 'JXL_INTERNAL'});
   const named = spawn => Object.assign(spawn, {module: helper.module, protocol: helper.protocol, wasm: helper.wasm});
-  if (typeof Worker === 'function') return named(() => helper.worker());
+  if (typeof Worker === 'function') return named(() => startWorker(helper));
   const threads = nodeBuiltin('node:worker_threads');
   if (!threads) throw Object.assign(new Error('This runtime starts no helper worker.'), {code: 'JXL_WORKER', lost: true});
   const {Worker: NodeWorker} = threads;

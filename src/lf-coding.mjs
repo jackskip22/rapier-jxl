@@ -50,18 +50,19 @@ export function lfCoder(rung = 'fast') {
 }
 
 const FIXED_BINS = [16, 8, 8], FIXED_WRITE = Object.freeze({ans: true, hybrid: true, sharing: Object.freeze([])});
-function fixedDc(w, planes, plain, kernels) {
+function fixedDc(w, planes, plain, kernels, write = FIXED_WRITE) {
   const data = planes.map(p => fits16(p.data));
   if (data.includes(null) || planes.some(p => !p.w || !p.h)) { plain(w); return; }
-  sampledPlanes.write(w, planes.map((p, i) => sampledPlanes.fixed(data[i], p.w, p.h, FIXED_BINS[i] ?? 8)), kernels ? {...FIXED_WRITE, kernels} : FIXED_WRITE);
+  sampledPlanes.write(w, planes.map((p, i) => sampledPlanes.fixed(data[i], p.w, p.h, FIXED_BINS[i] ?? 8)), kernels ? {...write, kernels} : write);
 }
+const PROJECTED_WRITE = Object.freeze({...FIXED_WRITE, projected: true});
 export const fixedLfCoder = Object.freeze({dc: fixedDc, metadata: (w, planes, plain) => plain(w), plainMetadata: true});
 
 export const plainOrFixedLfCoder = Object.freeze({
   dc(w, planes, plain, kernels) {
     if (!planes.length || planes[0].w * planes[0].h < 256) { plain(w); return; }
     const fixed = new BitWriter(256);
-    fixedDc(fixed, planes, plain, kernels);
+    fixedDc(fixed, planes, plain, kernels, PROJECTED_WRITE);
     const bound = plainBound(planes);
     if (bound != null && fixed.bitLength < bound) { w.append(fixed); return; }
     const fallback = new BitWriter(256);
@@ -86,12 +87,29 @@ export function plainBound(planes) {
   return lower - 1e-9 * Math.max(prefix, ans) - 4;
 }
 
-const quick = lfCoder('quick');
+const quick = lfCoder('quick'), kept = [], KEPT_BYTES = 8 << 20;
+const planesHash = planes => {
+  let h = 2166136261;
+  for (const {w, h: ph, data} of planes) { h = Math.imul(h ^ w, 16777619); h = Math.imul(h ^ ph, 16777619); for (let i = 0; i < data.length; i++) h = Math.imul(h ^ data[i], 16777619); }
+  return h >>> 0;
+};
+const samePlanes = (a, b) => a.length === b.length && a.every((p, i) => {
+  const q = b[i];
+  if (p.w !== q.w || p.h !== q.h || p.data.constructor !== q.data.constructor || p.data.length !== q.data.length) return false;
+  for (let j = 0; j < p.data.length; j++) if (p.data[j] !== q.data[j]) return false;
+  return true;
+});
 export const quickOrFixedLfCoder = Object.freeze({
   dc(w, planes, plain, kernels) {
+    const hash = planesHash(planes), hit = kept.find(k => k.hash === hash && k.kernels === kernels && samePlanes(k.planes, planes));
+    if (hit) { w.append(hit.bits); return; }
     const learnt = new BitWriter(256), fixed = new BitWriter(256);
     quick.dc(learnt, planes, plain, kernels); fixedDc(fixed, planes, plain, kernels);
-    w.append(learnt.bitLength <= fixed.bitLength ? learnt : fixed);
+    const bits = learnt.bitLength <= fixed.bitLength ? learnt : fixed;
+    w.append(bits);
+    const copy = planes.map(({w, h, data}) => ({w, h, data: data.slice()}));
+    kept.push({hash, kernels, planes: copy, bits, bytes: copy.reduce((s, p) => s + p.data.byteLength, 0)});
+    for (let total = kept.reduce((s, k) => s + k.bytes, 0); total > KEPT_BYTES; ) total -= kept.shift().bytes;
   },
   metadata: quick.metadata,
 });
