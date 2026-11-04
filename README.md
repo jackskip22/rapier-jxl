@@ -2,8 +2,6 @@
 
 JPEG XL encoder in JavaScript and WebAssembly, with WebGPU acceleration at higher effort levels.
 
-- At WebP's file size, page screenshots keep text lossless and photos closer to the original: SSIMULACRA 2 +6, CVVDP +0.04 on 30 of 47 test pages.
-- Lossless text is still being fine-tuned: where text touches a photo, a few edge pixels can be lossy.
 - 45 KB Brotli exact capture encoder for screenshots and canvas.
 - 105 KB Brotli page capture encoder: lossy photos, lossless text.
 - 191 KB Brotli upload encoder, includes capture.
