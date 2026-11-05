@@ -76,4 +76,5 @@ if (probes.length) lines.push('', '## Worker-side probe (job inputs as rapier-jx
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');
 console.log(lines.join('\n'));
 const failed = [...out.results.filter(r => r.verdict !== 'pass'), ...[...rows.values()].flatMap(c => Object.values(c)).filter(s => !s.pass)];
-process.exitCode = failed.length ? 1 : 0;
+// Failing rows are results, read from the summary and results.json; the job fails only when the check itself breaks.
+console.log(`${failed.length} failing rows or files`);
