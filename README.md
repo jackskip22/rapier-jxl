@@ -7,7 +7,7 @@ Dual packages:
 | role | tarball | sha256 | extract |
 |---|---|---|---|
 | published 8.2.0 | `rapier-jxl-8.2.0.tgz` | `c966e53f402fc1811670517635d1410b712632d15df5bae969c3bb128cc4c89c` | `package/` |
-| candidate (b5374acbef) | `rapier-jxl-candidate-b5374acbe.tgz` | `8e336ebbcedacd132b4c3270cbaf89f6e27f4e3478030ce558d2a9b1f9ed0028` | `package-cand/` |
+| candidate (unreleased 8.2.1 build) | `rapier-jxl-candidate-b5374acbe.tgz` | `8e336ebbcedacd132b4c3270cbaf89f6e27f4e3478030ce558d2a9b1f9ed0028` | `package-cand/` |
 
 Fixtures are NASA public-domain photographs or pixels generated for this check.
 

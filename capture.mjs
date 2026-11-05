@@ -3,7 +3,7 @@
 // Harness: canvases attached + visible + rAF; getImageData/readPixels/photo inside step().
 // 2D contexts opened with {colorSpace:'srgb', willReadFrequently:true} — same as check.mjs.
 // Dual columns (8.2.0 vs candidate); createCodec worker dig probes;
-// WebGL in-page 26 B on 8.2.0 vs LC2 refuse on candidate.
+// WebGL in-page: 26 B on 8.2.0; the candidate refuses a lost canvas.
 // Canvas text is from NASA's public-domain Apollo 12 page (see README).
 const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 const steps = [], platform = {context2dAttributes: typeof CanvasRenderingContext2D.prototype.getContextAttributes,
