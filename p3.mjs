@@ -19,7 +19,7 @@ const draw = space => {
   colours.forEach(([r, gr, b], i) => { g.fillStyle = `rgb(${r},${gr},${b})`; g.fillRect(i * 20, 0, 20, 20); });
   return {c, delivered: g.getContextAttributes?.().colorSpace ?? 'unknown'};
 };
-const beat = (at) => { window.__result = {done: false, at, userAgent: navigator.userAgent, steps: steps.slice()}; document.getElementById('state').textContent = at; };
+const beat = (at) => { window.__result = {done: false, at, pkg: document.documentElement.dataset.pkg, userAgent: navigator.userAgent, steps: steps.slice()}; document.getElementById('state').textContent = at; };
 const judge = async (name, f, delivered) => {
   beat('before:' + name);
   try {
@@ -40,5 +40,5 @@ await judge("sRGB canvas, readAs 'display-p3', encode q95", () => encode(srgb.c,
 const p3 = draw('display-p3');
 await judge("canvas asked for display-p3, no readAs", () => capture(p3.c), p3.delivered);
 await judge("canvas asked for display-p3, readAs 'display-p3'", () => capture(p3.c, {readAs: 'display-p3'}), p3.delivered);
-window.__result = {done: true, at: 'done', userAgent: navigator.userAgent, steps};
+window.__result = {done: true, at: 'done', pkg: document.documentElement.dataset.pkg, userAgent: navigator.userAgent, steps};
 document.getElementById('state').textContent = 'done';

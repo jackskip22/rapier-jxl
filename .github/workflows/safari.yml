@@ -1,5 +1,4 @@
 # Safari native JPEG XL check for the staged rapier-jxl package on this branch only.
-# Dual package: published 8.2.0 (package/) beside candidate (package-cand/) for product rows.
 name: safari-check
 on:
   push:
@@ -12,7 +11,7 @@ concurrency:
 jobs:
   safari:
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -23,17 +22,14 @@ jobs:
           echo "MACOS_VERSION=$(sw_vers -productVersion)" >> "$GITHUB_ENV"
           /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' /Applications/Safari.app/Contents/Info.plist
           node --version
-      - name: Verify and extract staged packages
+      - name: Verify and extract staged package
         run: |
           shasum -a 256 -c rapier-jxl-8.2.0.tgz.sha256
-          shasum -a 256 -c rapier-jxl-candidate-b5374acbe.tgz.sha256
-          tar -xzf rapier-jxl-candidate-b5374acbe.tgz
-          mv package package-cand
-          tar -xzf rapier-jxl-8.2.0.tgz
-          test -f package/dist/index.mjs
-          test -f package/dist/capture.mjs
-          test -f package-cand/dist/index.mjs
-          test -f package-cand/dist/codec.mjs
+          shasum -a 256 -c rapier-jxl-candidate.tgz.sha256
+          mkdir -p p/820 p/cand
+          tar -xzf rapier-jxl-8.2.0.tgz -C p/820
+          tar -xzf rapier-jxl-candidate.tgz -C p/cand
+          for p in 820 cand; do test -f p/$p/package/dist/index.mjs && test -f p/$p/package/dist/codec.mjs && test -f p/$p/package/dist/capture.worker.mjs; done
           cat PACKAGE.txt
       - name: Safari WebDriver
         run: sudo /usr/bin/safaridriver --enable
@@ -44,7 +40,7 @@ jobs:
           nohup /usr/bin/safaridriver -p 4444 > driver.log 2>&1 &
           echo $! > driver.pid
           sleep 3
-          PKG_VERSION="$(node -p "require('./package/package.json').version")+cand" node drive.mjs
+          PACKAGES_INFO="8.2.0 = published npm tarball; candidate = $(grep '^candidate' PACKAGE.txt | head -1)" node drive.mjs
           status=$?
           kill "$(cat server.pid)" "$(cat driver.pid)" 2>/dev/null || true
           exit $status

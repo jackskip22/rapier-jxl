@@ -14,7 +14,7 @@ const grad = (w, h) => { const d = new Uint8Array(w * h * 4); for (let i = 0; i 
 const p = photoLike(512, 384), lossy = await encode(p, {fidelity: {quality: 90}}), whole = await decode(lossy);
 const g = grad(200, 150), region = {x: 100, y: 60, width: 200, height: 150};
 const failures = [], counts = {region: 0, partial: 0, whole: 0, exact: 0};
-const beat = (at) => { window.__result = {done: false, at, userAgent: navigator.userAgent, n, counts: {...counts}, failureCount: failures.length, steps: [{name: `decoder stress x${n}`, pass: false, error: 'in progress'}]}; document.getElementById('state').textContent = at; };
+const beat = (at) => { window.__result = {done: false, at, pkg: document.documentElement.dataset.pkg, userAgent: navigator.userAgent, n, counts: {...counts}, failureCount: failures.length, steps: [{name: `decoder stress x${n}`, pass: false, error: 'in progress'}]}; document.getElementById('state').textContent = at; };
 const t0 = performance.now();
 beat('start');
 for (let i = 0; i < n; i++) {
@@ -30,6 +30,6 @@ for (let i = 0; i < n; i++) {
   await step('exact', async () => { const b = await encode(g, {fidelity: 'exact'}); return same((await decode(b)).data, g.data); });
   if (i % 20 === 19) beat(`${i + 1}/${n}`);
 }
-window.__result = {done: true, at: 'done', userAgent: navigator.userAgent, n, ms: Math.round(performance.now() - t0), counts, failures: failures.slice(0, 40), failureCount: failures.length,
+window.__result = {done: true, at: 'done', pkg: document.documentElement.dataset.pkg, userAgent: navigator.userAgent, n, ms: Math.round(performance.now() - t0), counts, failures: failures.slice(0, 40), failureCount: failures.length,
   steps: [{name: `decoder stress x${n}`, pass: failures.length === 0, bytes: failures.length}]};
 document.getElementById('state').textContent = 'done';

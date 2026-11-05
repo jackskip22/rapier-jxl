@@ -3,10 +3,13 @@
 // Split: bare getContext('2d') vs getContext('2d', {colorSpace:'srgb', willReadFrequently:true})
 // — check.mjs (decode 47/47 on the same runner) uses willReadFrequently; prior control did not.
 // Also records visibilityState / hasFocus, and a toDataURL probe on the WRF canvas.
-// bare:capture(canvas) row; if bare fails, copy-to-fresh-WRF then capture.
-// Dual package: each package capture row reports pkg=8.2.0|candidate.
 // Heartbeat: window.__result updates after every step; done:true when finished.
 const steps = [];
+const pkg = document.documentElement.dataset.pkg;
+const {capture} = await import('rapier-jxl');
+const {decode} = await import('rapier-jxl/decode');
+// A capture is right when it decodes to the painted picture (pixel 0,0 is rgb(200,100,50)); a blank read encodes to ~26 B.
+const painted = async b => { const d = (await decode(b)).data; return d[0] === 200 && d[1] === 100 && d[2] === 50 && d[3] === 255; };
 const platform = {
   context2dAttributes: typeof CanvasRenderingContext2D.prototype.getContextAttributes,
   webgl2: !!document.createElement('canvas').getContext('webgl2'),
@@ -16,7 +19,7 @@ const platform = {
   hasFocus: document.hasFocus?.() ?? null,
 };
 const beat = (at) => {
-  window.__result = {done: false, at, userAgent: navigator.userAgent, platform, steps: steps.slice()};
+  window.__result = {done: false, at, pkg, userAgent: navigator.userAgent, platform, steps: steps.slice()};
   document.getElementById('state').textContent = at;
 };
 const step = async (name, f) => {
@@ -52,13 +55,6 @@ const paint = (g, c) => {
 const rAF = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 const host = document.getElementById('host');
 
-// Dual package loaders (import map = published 8.2.0; candidate via absolute path).
-const loadPkg = async (which) => {
-  if (which === '8.2.0') return import('rapier-jxl');
-  if (which === 'candidate') return import('./package-cand/dist/index.mjs');
-  throw new Error('unknown pkg ' + which);
-};
-
 beat('start');
 
 await step('page: visibility + focus', async () => {
@@ -66,10 +62,11 @@ await step('page: visibility + focus', async () => {
   const hasFocus = document.hasFocus?.() ?? null;
   platform.visibilityState = visibilityState;
   platform.hasFocus = hasFocus;
+  // Not a pass/fail gate — informational for safaridriver foreground diagnosis.
   return {pass: true, visibilityState, hasFocus};
 });
 
-// --- A: bare getContext('2d') (prior control shape; failed on 41979942528 / 41982515609) ---
+// --- A: bare getContext('2d') ---
 const bare = document.createElement('canvas');
 bare.width = 160; bare.height = 100;
 bare.style.cssText = 'display:block;width:160px;height:100px;';
@@ -78,11 +75,9 @@ const gBare = bare.getContext('2d');
 paint(gBare, bare);
 await rAF();
 
-let bareGetOk = false;
 await step('bare: getImageData', async () => {
   const d = gBare.getImageData(0, 0, bare.width, bare.height).data;
-  bareGetOk = d.length === bare.width * bare.height * 4 && d[0] === 200;
-  return {pass: bareGetOk, bytes: d.length};
+  return {pass: d.length === bare.width * bare.height * 4 && d[0] === 200, bytes: d.length};
 });
 await step('bare: createImageBitmap(canvas)', async () => {
   const bmp = await createImageBitmap(bare);
@@ -91,36 +86,29 @@ await step('bare: createImageBitmap(canvas)', async () => {
   return {pass: width === bare.width && height === bare.height, width, height};
 });
 
-// Product item 1: capture(bareCanvas) on both packages; copy-to-WRF if bare read fails.
-for (const pkg of ['8.2.0', 'candidate']) {
-  await step(`bare: capture(canvas) [${pkg}]`, async () => {
-    const {capture} = await loadPkg(pkg);
-    const b = await capture(bare);
-    return {pass: b instanceof Uint8Array && b.length > 0, bytes: b.length, pkg};
-  });
-}
-
-// Copy route: drawImage bare → fresh WRF canvas, then capture (both packages).
-// Always run so the table shows whether a copy works even when bare capture fails.
-const copyWrf = document.createElement('canvas');
-copyWrf.width = bare.width; copyWrf.height = bare.height;
-copyWrf.style.cssText = 'display:block;width:160px;height:100px;';
-host.appendChild(copyWrf);
-const gCopy = copyWrf.getContext('2d', {colorSpace: 'srgb', willReadFrequently: true});
-gCopy.drawImage(bare, 0, 0);
-await rAF();
-
-await step('copy-to-wrf: getImageData', async () => {
-  const d = gCopy.getImageData(0, 0, copyWrf.width, copyWrf.height).data;
-  return {pass: d.length === copyWrf.width * copyWrf.height * 4 && d[0] === 200, bytes: d.length, bareGetOk};
+await step('bare: toDataURL', async () => {
+  const url = bare.toDataURL('image/png');
+  return {pass: typeof url === 'string' && url.startsWith('data:image/png') && url.length > 200, bytes: url.length};
 });
-for (const pkg of ['8.2.0', 'candidate']) {
-  await step(`copy-to-wrf: capture(canvas) [${pkg}]`, async () => {
-    const {capture} = await loadPkg(pkg);
-    const b = await capture(copyWrf);
-    return {pass: b instanceof Uint8Array && b.length > 0, bytes: b.length, pkg};
-  });
-}
+// The caller's canvas as a page hands it over: opened with plain getContext('2d'), drawn, then capture(canvas).
+// getContext options are sticky, so capture's own getContext('2d', {willReadFrequently: true}) returns this bare context.
+await step('bare: capture(canvas)', async () => {
+  const b = await capture(bare);
+  return {pass: await painted(b), bytes: b.length};
+});
+// The copy route: the same bare canvas drawn onto a fresh willReadFrequently canvas, then read and captured there.
+const copy = document.createElement('canvas');
+copy.width = bare.width; copy.height = bare.height;
+const gCopy = copy.getContext('2d', {colorSpace: 'srgb', willReadFrequently: true});
+await step('bare→wrf copy: drawImage', async () => { gCopy.drawImage(bare, 0, 0); return {pass: true}; });
+await step('bare→wrf copy: getImageData', async () => {
+  const d = gCopy.getImageData(0, 0, copy.width, copy.height).data;
+  return {pass: d.length === copy.width * copy.height * 4 && d[0] === 200 && d[3] === 255, bytes: d.length, first: Array.from(d.slice(0, 4)).join(',')};
+});
+await step('bare→wrf copy: capture(copy)', async () => {
+  const b = await capture(copy);
+  return {pass: await painted(b), bytes: b.length};
+});
 
 // --- B: willReadFrequently (matches check.mjs decode path that passed 47/47) ---
 const wrf = document.createElement('canvas');
@@ -152,13 +140,10 @@ await step('wrf: toDataURL', async () => {
   return {pass: typeof url === 'string' && url.startsWith('data:image/png'), bytes: url.length};
 });
 
-for (const pkg of ['8.2.0', 'candidate']) {
-  await step(`wrf: capture(canvas) [${pkg}]`, async () => {
-    const {capture} = await loadPkg(pkg);
-    const b = await capture(wrf);
-    return {pass: b instanceof Uint8Array && b.length > 0, bytes: b.length, pkg};
-  });
-}
+await step('wrf: capture(canvas) after plain reads', async () => {
+  const b = await capture(wrf);
+  return {pass: b instanceof Uint8Array && b.length > 0, bytes: b.length};
+});
 
 // --- detached WRF (never in document) ---
 const detached = document.createElement('canvas');
@@ -176,13 +161,10 @@ await step('detached-wrf: createImageBitmap(canvas)', async () => {
   bmp.close?.();
   return {pass: width === detached.width && height === detached.height, width, height};
 });
-for (const pkg of ['8.2.0', 'candidate']) {
-  await step(`detached-wrf: capture(canvas) [${pkg}]`, async () => {
-    const {capture} = await loadPkg(pkg);
-    const b = await capture(detached);
-    return {pass: b instanceof Uint8Array && b.length > 0, bytes: b.length, pkg};
-  });
-}
+await step('detached-wrf: capture(canvas) after plain reads', async () => {
+  const b = await capture(detached);
+  return {pass: b instanceof Uint8Array && b.length > 0, bytes: b.length};
+});
 
-window.__result = {done: true, at: 'done', userAgent: navigator.userAgent, platform, steps};
+window.__result = {done: true, at: 'done', pkg, userAgent: navigator.userAgent, platform, steps};
 document.getElementById('state').textContent = 'done';
