@@ -6,11 +6,16 @@ Package: `rapier-jxl-8.2.0.tgz` sha256 `c966e53f402fc1811670517635d1410b712632d1
 
 Fixtures are NASA public-domain photographs or pixels generated for this check.
 
+Canvas text on `capture.html` is copied from NASA's public-domain article
+[Apollo 12: The Pinpoint Mission](https://www.nasa.gov/missions/apollo/apollo-12-the-pinpoint-mission/)
+(US government work).
+
 ## Fixture origins
 
 | file | origin |
 |---|---|
 | photo.jpg | NASA AS12-46-6832 (Apollo 12), public domain; center-cropped and resized to 512×600 for capture.mjs |
+| capture.mjs canvas text | NASA article paragraphs from https://www.nasa.gov/missions/apollo/apollo-12-the-pinpoint-mission/ |
 | files/glyph-exact | Check-authored words "rapier jxl" / "ok encode" drawn on a synthetic canvas; exact encode |
 | files/glyph-q80 | Same glyph canvas; lossy q80 |
 | files/nasa-e3 | NASA AS12-46-6832 crop 640×480; encode q90 effort 3 |

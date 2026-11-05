@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
-// In a browser, with the installed package's files under pkg/ (an import map names them): capture from a 2D canvas and from
+// In a browser, with the staged package under package/dist/ (import map in capture.html): capture from a 2D canvas and from
 // a WebGL canvas, in the page and through createCodec's worker, capture-complete in its worker, encode(canvas). Each step runs
 // on its own and reports its error; an exact capture must decode (rapier-jxl/decode) to the canvas's own pixels, and the
-// codec must write the page's bytes.
+// codec must write the page's bytes. Canvas text is from NASA's public-domain Apollo 12 page (see README).
 const {encode, capture} = await import('rapier-jxl');
 const {capture: capturePhoto} = await import('rapier-jxl/capture-complete');
 const {decode} = await import('rapier-jxl/decode');
@@ -15,7 +15,10 @@ const viaCodec = async (module, input, options) => { const q = createCodec({modu
 
 const c2 = document.createElement('canvas'); c2.width = 300; c2.height = 200;
 const g = c2.getContext('2d');
-g.fillStyle = '#f4f4ef'; g.fillRect(0, 0, 300, 200); g.fillStyle = '#123'; g.font = '16px sans-serif'; g.fillText('rapier jxl', 10, 30);
+g.fillStyle = '#f4f4ef'; g.fillRect(0, 0, 300, 200); g.fillStyle = '#123'; g.font = '14px sans-serif';
+g.fillText('Apollo 12: The Pinpoint Mission', 10, 28);
+g.font = '11px sans-serif';
+g.fillText('NASA public-domain text', 10, 46);
 for (let y = 60; y < 200; y++) for (let x = 120; x < 300; x += 2) { g.fillStyle = `rgb(${(x * 7 + y * 3) % 40 + x},${(y * 5 + x) % 40 + y / 2 | 0},${150 + (x * y) % 40})`; g.fillRect(x, y, 2, 1); }
 const px2d = g.getImageData(0, 0, 300, 200).data;
 let page2d;
@@ -37,8 +40,22 @@ else {
 }
 const big = document.createElement('canvas'); big.width = 640; big.height = 400;
 const bg = big.getContext('2d');
-bg.fillStyle = '#fff'; bg.fillRect(0, 0, 640, 400); bg.fillStyle = '#000'; bg.font = '14px sans-serif';
-for (let i = 0; i < 12; i++) bg.fillText('ok encode ' + i, 10, 20 + i * 18);
+bg.fillStyle = '#fff'; bg.fillRect(0, 0, 640, 400); bg.fillStyle = '#000'; bg.font = '12px sans-serif';
+const nasaLines = [
+  'Apollo 12: The Pinpoint Mission (NASA)',
+  'The primary mission objectives of the second crewed',
+  'lunar landing included an extensive series of lunar',
+  'exploration tasks by the lunar module, or LM, crew,',
+  'as well as the deployment of the Apollo Lunar Surface',
+  'Experiments Package, or ALSEP, which was to be left',
+  'on the moon\'s surface to gather seismic, scientific',
+  'and engineering data throughout a long period of time.',
+  'Other Apollo 12 objectives included a selenological',
+  'inspection; surveys and samplings in landing areas;',
+  'development of techniques for precision-landing',
+  'capabilities; and photography of candidate sites.',
+];
+nasaLines.forEach((line, i) => bg.fillText(line, 10, 18 + i * 16));
 bg.drawImage(await createImageBitmap(await (await fetch('photo.jpg')).blob()), 300, 20, 320, 375);
 await step('capture-complete q80, page = worker', async () => {
   const a = await capturePhoto(big, {fidelity: {quality: 80}}), b = await viaCodec('rapier-jxl/capture-complete', big, {fidelity: {quality: 80}}), exact = await capturePhoto(big);
