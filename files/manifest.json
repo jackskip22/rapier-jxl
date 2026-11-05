@@ -1,0 +1,378 @@
+[
+ {
+  "id": "node-readme-capture",
+  "width": 1,
+  "height": 1,
+  "kind": "exact",
+  "tolerance": 0,
+  "reference": "source pixels"
+ },
+ {
+  "id": "node-efforts-e1",
+  "width": 320,
+  "height": 240,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-efforts-e3",
+  "width": 320,
+  "height": 240,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-efforts-e5",
+  "width": 320,
+  "height": 240,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-efforts-e7",
+  "width": 320,
+  "height": 240,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-efforts-e8",
+  "width": 320,
+  "height": 240,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-efforts-e9",
+  "width": 320,
+  "height": 240,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-encode-exact",
+  "width": 200,
+  "height": 150,
+  "kind": "exact",
+  "tolerance": 0,
+  "reference": "source pixels"
+ },
+ {
+  "id": "node-capture-maxError-1",
+  "width": 64,
+  "height": 48,
+  "kind": "maxError",
+  "tolerance": 1,
+  "reference": "source pixels"
+ },
+ {
+  "id": "node-capture-maxError-2",
+  "width": 64,
+  "height": 48,
+  "kind": "maxError",
+  "tolerance": 2,
+  "reference": "source pixels"
+ },
+ {
+  "id": "node-capture-maxError-8",
+  "width": 64,
+  "height": 48,
+  "kind": "maxError",
+  "tolerance": 8,
+  "reference": "source pixels"
+ },
+ {
+  "id": "node-format-graphics",
+  "width": 48,
+  "height": 32,
+  "kind": "exact",
+  "tolerance": 0,
+  "reference": "source pixels"
+ },
+ {
+  "id": "node-format-hybrid",
+  "width": 48,
+  "height": 32,
+  "kind": "exact",
+  "tolerance": 0,
+  "reference": "source pixels"
+ },
+ {
+  "id": "node-format-palette",
+  "width": 48,
+  "height": 32,
+  "kind": "exact",
+  "tolerance": 0,
+  "reference": "source pixels"
+ },
+ {
+  "id": "node-format-photo",
+  "width": 48,
+  "height": 32,
+  "kind": "exact",
+  "tolerance": 0,
+  "reference": "source pixels"
+ },
+ {
+  "id": "node-variants-root-0",
+  "width": 320,
+  "height": 240,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-variants-root-1",
+  "width": 160,
+  "height": 120,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-variants-root-2",
+  "width": 64,
+  "height": 48,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-variants-upload-0",
+  "width": 320,
+  "height": 240,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-variants-upload-1",
+  "width": 160,
+  "height": 120,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-variants-upload-2",
+  "width": 64,
+  "height": 48,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-bands-exact",
+  "width": 320,
+  "height": 256,
+  "kind": "exact",
+  "tolerance": 0,
+  "reference": "source pixels"
+ },
+ {
+  "id": "node-bands-q90",
+  "width": 320,
+  "height": 256,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-first-region-exact",
+  "width": 320,
+  "height": 240,
+  "kind": "exact",
+  "tolerance": 0,
+  "reference": "source pixels"
+ },
+ {
+  "id": "node-first-region-q90",
+  "width": 320,
+  "height": 240,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-grey-q80-noise-640",
+  "width": 640,
+  "height": 480,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-grey-q80-grey-640",
+  "width": 640,
+  "height": 480,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-grey-q80-dim-640",
+  "width": 640,
+  "height": 480,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-grey-q80-dark-640",
+  "width": 640,
+  "height": 480,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-grey-q80-grey-960",
+  "width": 960,
+  "height": 720,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-grey-q80-dim-960",
+  "width": 960,
+  "height": 720,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "node-grey-q80-dark-960",
+  "width": 960,
+  "height": 720,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "glyph-exact",
+  "width": 300,
+  "height": 200,
+  "kind": "exact",
+  "tolerance": 0,
+  "reference": "source pixels"
+ },
+ {
+  "id": "glyph-q80",
+  "width": 300,
+  "height": 200,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "nasa-e3",
+  "width": 640,
+  "height": 480,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "nasa-e7",
+  "width": 640,
+  "height": 480,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "nasa-e9",
+  "width": 640,
+  "height": 480,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "nasa-q80",
+  "width": 640,
+  "height": 480,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "nasa-upload",
+  "width": 640,
+  "height": 480,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "nasa-fit",
+  "width": 640,
+  "height": 480,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "nasa-capture-exact",
+  "width": 640,
+  "height": 400,
+  "kind": "exact",
+  "tolerance": 0,
+  "reference": "source pixels"
+ },
+ {
+  "id": "nasa-capture-q80",
+  "width": 640,
+  "height": 400,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "nasa-96-q90",
+  "width": 96,
+  "height": 64,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "nasa-96-exact",
+  "width": 96,
+  "height": 64,
+  "kind": "exact",
+  "tolerance": 0,
+  "reference": "source pixels"
+ },
+ {
+  "id": "nasa-320-q90",
+  "width": 320,
+  "height": 240,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ },
+ {
+  "id": "nasa-300-exact",
+  "width": 300,
+  "height": 200,
+  "kind": "exact",
+  "tolerance": 0,
+  "reference": "source pixels"
+ },
+ {
+  "id": "nasa-300-q80",
+  "width": 300,
+  "height": 200,
+  "kind": "lossy",
+  "tolerance": 3,
+  "reference": "djxl 0.12.0"
+ }
+]
