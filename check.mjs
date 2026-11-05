@@ -52,5 +52,5 @@ for (const m of (await (await fetch('files/manifest.json')).json())) {
   results.push(r);
 }
 // Native JPEG XL: any file's <img> decoded.
-window.__result = {userAgent: navigator.userAgent, nativeJXL: results.some(r => r.img && !r.img.error), results};
+window.__result = {done: true, at: 'done', userAgent: navigator.userAgent, nativeJXL: results.some(r => r.img && !r.img.error), results};
 document.getElementById('state').textContent = 'done';

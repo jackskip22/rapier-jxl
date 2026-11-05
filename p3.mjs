@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+// Heartbeat: window.__result updates after every step (done:true at end).
 // readAs 'display-p3': a 2D canvas in its default sRGB space with known colours, captured with
 // readAs: 'display-p3' (in page and through the codec) and with no readAs, then decoded by the browser natively into an
 // sRGB canvas: every file must show the source colours (within 3 levels). A file whose samples are sRGB but labelled P3
@@ -21,13 +22,17 @@ const draw = space => {
   colours.forEach(([r, gr, b], i) => { g.fillStyle = `rgb(${r},${gr},${b})`; g.fillRect(i * 20, 0, 20, 20); });
   return {c, delivered: g.getContextAttributes?.().colorSpace ?? 'unknown'};
 };
+const beat = (at) => { window.__result = {done: false, at, userAgent: navigator.userAgent, steps: steps.slice()}; document.getElementById('state').textContent = at; };
 const judge = async (name, f, delivered) => {
+  beat('before:' + name);
   try {
     const bytes = await f(), got = await sample(bytes);
     const worst = Math.max(...got.map((p, i) => Math.max(...p.map((v, k) => Math.abs(v - colours[i][k])))));
     steps.push({name, pass: worst <= 3, worst, delivered, got: got.map(p => p.join(',')).join(' '), bytes: bytes.length});
   } catch (e) { steps.push({name, pass: false, error: String(e?.message || e).slice(0, 200), code: e?.code}); }
+  beat('after:' + name);
 };
+beat('start');
 const srgb = draw();
 await judge('sRGB canvas, no readAs', () => capture(srgb.c), srgb.delivered);
 await judge("sRGB canvas, readAs 'display-p3', in page", () => capture(srgb.c, {readAs: 'display-p3'}), srgb.delivered);
@@ -38,5 +43,5 @@ await judge("sRGB canvas, readAs 'display-p3', encode q95", () => encode(srgb.c,
 const p3 = draw('display-p3');
 await judge("canvas asked for display-p3, no readAs", () => capture(p3.c), p3.delivered);
 await judge("canvas asked for display-p3, readAs 'display-p3'", () => capture(p3.c, {readAs: 'display-p3'}), p3.delivered);
-window.__result = {userAgent: navigator.userAgent, steps};
+window.__result = {done: true, at: 'done', userAgent: navigator.userAgent, steps};
 document.getElementById('state').textContent = 'done';

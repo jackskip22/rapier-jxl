@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+// Heartbeat: window.__result updates after every step (done:true at end) so a hang names its step.
 // In a browser, with the staged package under package/dist/ (import map in capture.html): capture from a 2D canvas and from
 // a WebGL canvas, in the page and through createCodec's worker, capture-complete in its worker, encode(canvas). Each step runs
 // on its own and reports its error; an exact capture must decode (rapier-jxl/decode) to the canvas's own pixels, and the
@@ -10,8 +11,11 @@ const {createCodec} = await import('rapier-jxl/codec');
 const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 const steps = [], platform = {context2dAttributes: typeof CanvasRenderingContext2D.prototype.getContextAttributes,
   webgl2: !!document.createElement('canvas').getContext('webgl2'), offscreen: typeof OffscreenCanvas, gpu: !!navigator.gpu};
-const step = async (name, f) => { try { steps.push({name, ...await f()}); } catch (e) { steps.push({name, pass: false, error: String(e?.message || e).slice(0, 200), code: e?.code, stack: String(e?.stack || '').split('\n').slice(0, 4).join(' | ').slice(0, 400)}); } };
+const beat = (at) => { window.__result = {done: false, at, userAgent: navigator.userAgent, platform, steps: steps.slice()}; document.getElementById('state').textContent = at; };
+const step = async (name, f) => { beat('before:' + name); try { steps.push({name, ...await f()}); } catch (e) { steps.push({name, pass: false, error: String(e?.message || e).slice(0, 200), code: e?.code, stack: String(e?.stack || '').split('\n').slice(0, 4).join(' | ').slice(0, 400)}); } beat('after:' + name); };
 const viaCodec = async (module, input, options) => { const q = createCodec({module}); try { return await q.capture(input, options); } finally { await q.close(); } };
+beat('start');
+
 
 const c2 = document.createElement('canvas'); c2.width = 300; c2.height = 200;
 const g = c2.getContext('2d');
@@ -62,5 +66,5 @@ await step('capture-complete q80, page = worker', async () => {
   return {pass: same(a, b) && a.length < exact.length && same((await decode(exact)).data, bg.getImageData(0, 0, 640, 400).data), bytes: a.length, exactBytes: exact.length};
 });
 await step('encode(canvas)', async () => { const b = await encode(c2); return {pass: b.length > 0 && (await decode(b)).width === 300, bytes: b.length}; });
-window.__result = {userAgent: navigator.userAgent, platform, steps};
+window.__result = {done: true, at: 'done', userAgent: navigator.userAgent, platform, steps};
 document.getElementById('state').textContent = 'done';
