@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Heartbeat: window.__result updates after every step (done:true at end).
-// readAs 'display-p3': a 2D canvas in its default sRGB space with known colours, captured with
-// readAs: 'display-p3' (in page and through the codec) and with no readAs, then decoded by the browser natively into an
-// sRGB canvas: every file must show the source colours (within 3 levels). A file whose samples are sRGB but labelled P3
-// shows them oversaturated, far outside that. Also a P3 canvas where the browser makes one.
+// readAs 'display-p3' checks. 2D contexts use willReadFrequently (see capture.mjs / check.mjs).
 const {capture} = await import('rapier-jxl/capture');
 const {encode} = await import('rapier-jxl');
 const {capture: capturePhoto} = await import('rapier-jxl/capture-complete');
@@ -13,12 +10,12 @@ const steps = [];
 const sample = async bytes => {
   const bitmap = await createImageBitmap(new Blob([bytes], {type: 'image/jxl'}));
   const c = document.createElement('canvas'); c.width = bitmap.width; c.height = bitmap.height;
-  const g = c.getContext('2d'); g.drawImage(bitmap, 0, 0);
+  const g = c.getContext('2d', {colorSpace: 'srgb', willReadFrequently: true}); g.drawImage(bitmap, 0, 0);
   return colours.map((_, i) => Array.from(g.getImageData(i * 20 + 10, 10, 1, 1).data.slice(0, 3)));
 };
 const draw = space => {
   const c = document.createElement('canvas'); c.width = colours.length * 20; c.height = 20;
-  const g = c.getContext('2d', space ? {colorSpace: space} : undefined);
+  const g = c.getContext('2d', space ? {colorSpace: space, willReadFrequently: true} : {colorSpace: 'srgb', willReadFrequently: true});
   colours.forEach(([r, gr, b], i) => { g.fillStyle = `rgb(${r},${gr},${b})`; g.fillRect(i * 20, 0, 20, 20); });
   return {c, delivered: g.getContextAttributes?.().colorSpace ?? 'unknown'};
 };

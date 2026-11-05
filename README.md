@@ -10,7 +10,7 @@ Canvas text on `capture.html` is copied from NASA's public-domain article
 [Apollo 12: The Pinpoint Mission](https://www.nasa.gov/missions/apollo/apollo-12-the-pinpoint-mission/)
 (US government work).
 
-`control.html` diagnoses canvas-read vs package capture: plain `getImageData` / `createImageBitmap` on an attached visible canvas (after `requestAnimationFrame`) and on a detached canvas, then `capture(canvas)`. Live pages heartbeat `window.__result` after each step (`done: true` at end) so a hang names its step.
+`control.html` diagnoses canvas-read vs package capture: plain `getImageData` / `createImageBitmap` on an attached visible canvas (after `requestAnimationFrame`) and on a detached canvas, then `capture(canvas)`. Live pages heartbeat `window.__result` after each step (`done: true` at end) so a hang names its step. `capture.mjs` attaches canvases and runs every pixel read inside a stepped probe (no bare top-level `getImageData`).
 
 ## Fixture origins
 
@@ -67,3 +67,5 @@ Canvas text on `capture.html` is copied from NASA's public-domain article
 | files/node-readme-capture | Synthetic 1×1; exact |
 
 NASA sources live under the public-domain Apollo / Gemini stills used by the team's phone bench (image ids in the table). Lossy references are djxl 0.12.0 8-bit RGBA; exact references are source pixels. Live pages (`control.mjs`, `capture.mjs`, `p3.mjs`, `stress.mjs`) draw their own pixels or load `photo.jpg` at check time.
+
+Capture/control open 2D contexts with `willReadFrequently: true` (same as `check.mjs`); control also keeps a bare-context probe. `drive.mjs` inserts `about:blank` between pages, maximizes the window, and skips capture/p3 when control `wrf:getImageData` fails.
