@@ -73,7 +73,7 @@ const lines = [`## Safari ${out.safari}, macOS ${out.macos}, native JPEG XL: ${o
 if (captured) lines.push('', `## Capture in Safari (package ${process.env.PKG_VERSION || ''}): ${JSON.stringify(captured.platform || {})}`, '',
   `Harness: blank=${harness.aboutBlank}, maximize, skipCapture=${!!harness.skipCapture}, bare=${JSON.stringify(harness.controlBareGetImageData)}, wrf=${JSON.stringify(harness.controlWrfGetImageData)}, skipped=${harness.skipped.join(',') || 'none'}`, '',
   '| step | result |', '|---|---|',
-  ...captured.steps.map(s => `| ${s.name} | ${s.skipped ? 'skipped: ' + s.skipped : s.pass ? `pass, ${s.bytes} B${s.exactBytes ? `, exact ${s.exactBytes} B` : ''}${s.width ? `, ${s.width}x${s.height}` : ''}` : `FAIL ${s.code || ''} ${s.error || ''} ${s.stack || ''}`} |`));
+  ...captured.steps.map(s => `| ${s.name} | ${s.skipped ? 'skipped: ' + s.skipped : s.pass ? `pass, ${s.bytes != null ? s.bytes + ' B' : ''}${s.exactBytes ? `, exact ${s.exactBytes} B` : ''}${s.width ? `, ${s.width}x${s.height}` : ''}${s.pkg ? `, pkg ${s.pkg}` : ''}${s.hypothesis ? `, ${s.hypothesis}` : ''}${s.inst != null ? `, inst=${s.inst} tag=${s.tag}` : ''}${s.blank26 ? ', blank26' : ''}` : `FAIL ${s.code || ''} ${s.error || ''} ${s.stack || ''}${s.pkg ? ` pkg=${s.pkg}` : ''}`} |`));
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');
 console.log(lines.join('\n'));
 process.exitCode = failed.length ? 1 : 0;

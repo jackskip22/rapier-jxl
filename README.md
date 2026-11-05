@@ -1,8 +1,13 @@
 # ci/safari
 
-Safari native JPEG XL decode of the staged rapier-jxl 8.2.0 package, plus capture encode round-trip on real Safari (macos-15 + safaridriver).
+Safari native JPEG XL decode of the staged rapier-jxl package, plus capture encode round-trip on real Safari (macos-15 + safaridriver).
 
-Package: `rapier-jxl-8.2.0.tgz` sha256 `c966e53f402fc1811670517635d1410b712632d15df5bae969c3bb128cc4c89c`.
+Dual packages:
+
+| role | tarball | sha256 | extract |
+|---|---|---|---|
+| published 8.2.0 | `rapier-jxl-8.2.0.tgz` | `c966e53f402fc1811670517635d1410b712632d15df5bae969c3bb128cc4c89c` | `package/` |
+| candidate (b5374acbef) | `rapier-jxl-candidate-b5374acbe.tgz` | `8e336ebbcedacd132b4c3270cbaf89f6e27f4e3478030ce558d2a9b1f9ed0028` | `package-cand/` |
 
 Fixtures are NASA public-domain photographs or pixels generated for this check.
 
@@ -10,7 +15,7 @@ Canvas text on `capture.html` is copied from NASA's public-domain article
 [Apollo 12: The Pinpoint Mission](https://www.nasa.gov/missions/apollo/apollo-12-the-pinpoint-mission/)
 (US government work).
 
-`control.html` diagnoses canvas-read vs package capture: plain `getImageData` / `createImageBitmap` on an attached visible canvas (after `requestAnimationFrame`) and on a detached canvas, then `capture(canvas)`. Live pages heartbeat `window.__result` after each step (`done: true` at end) so a hang names its step. `capture.mjs` attaches canvases and runs every pixel read inside a stepped probe (no bare top-level `getImageData`).
+`control.html` diagnoses canvas-read vs package capture: bare vs `willReadFrequently` contexts; `capture(bareCanvas)` on both packages; copy-onto-fresh-WRF then capture; WRF and detached WRF rows. Live pages heartbeat `window.__result` after each step (`done: true` at end) so a hang names its step. `capture.mjs` runs dual-column (8.2.0 / candidate) in-page + createCodec rows for 2D and WebGL, plus worker brand dig probes (ImageBitmap / ImageData / plain pixels) — no product code change in this tree.
 
 ## Fixture origins
 
@@ -68,4 +73,4 @@ Canvas text on `capture.html` is copied from NASA's public-domain article
 
 NASA sources live under the public-domain Apollo / Gemini stills used by the team's phone bench (image ids in the table). Lossy references are djxl 0.12.0 8-bit RGBA; exact references are source pixels. Live pages (`control.mjs`, `capture.mjs`, `p3.mjs`, `stress.mjs`) draw their own pixels or load `photo.jpg` at check time.
 
-Capture/control open 2D contexts with `willReadFrequently: true` (same as `check.mjs`); control also keeps a bare-context probe. `drive.mjs` inserts `about:blank` between pages, maximizes the window, and skips capture/p3 when control `wrf:getImageData` fails.
+Capture/control open 2D contexts with `willReadFrequently: true` (same as `check.mjs`); control also keeps a bare-context probe. `drive.mjs` inserts `about:blank` between pages, maximizes the window, and skips capture/p3 when control `wrf:getImageData` fails. Workflow extracts published 8.2.0 to `package/` and the candidate to `package-cand/`.
