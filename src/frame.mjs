@@ -115,10 +115,15 @@ export function writeFrameHeaderEnd(w, alpha, epf = 0, passes, epfIterations = 1
   w.write(4, 0);
 }
 
+export function writeTOCSizes(w, sizes, from = 0, to = sizes.length) {
+  for (let i = from; i < to; i++) w.writeU32([[10, 0], [14, 1024], [22, 17408], [30, 4211712]], sizes[i]);
+}
+export const tocMaxBytes = entries => entries * 4 + 2;
+export const varDCTSectionCount = (groups, dcGroups, passes) => groups === 1 && passes === 1 ? 1 : 2 + dcGroups + groups * passes;
 export function writeTOC(w, sizes) {
   w.write(1, 0);
   w.zeroPadToByte();
-  for (const size of sizes) w.writeU32([[10, 0], [14, 1024], [22, 17408], [30, 4211712]], size);
+  writeTOCSizes(w, sizes);
   w.zeroPadToByte();
 }
 

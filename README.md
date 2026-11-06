@@ -1,12 +1,13 @@
 # rapier-jxl
 
-JPEG XL encoder in JavaScript and WebAssembly, with WebGPU acceleration at higher effort levels.
+JPEG XL in JavaScript and WebAssembly with WebGPU for high efforts.
 
-- 45 KB Brotli exact capture encoder for screenshots and canvas.
-- 105 KB Brotli page capture encoder: lossy photos, lossless text.
-- 191 KB Brotli upload encoder, includes capture.
-- 317 KB Brotli full still image encoder with lossless, lossy, HDR and exact alpha. Used by [rapier.html](https://rapier.website)
-- Separate modules for animation, JPEG transcoding, serving and decoding. Modules are single files.
+- 47 KB Brotli exact capture.
+- 226 KB Brotli complete capture.
+- 215 KB Brotli upload.
+- 325 KB Brotli full encoder with HDR and parallel workers. Used by [rapier.html](https://rapier.website)
+- Lossless JPEG transcoding, decoding, verification, serving, metadata, animation, polyfill, CLI and resumable encoding
+  for edge isolates. Modules are single files.
 - Browsers, workers, Node, Deno, Bun, Cloudflare Workers.
 - No dependencies.
 - MIT.
@@ -39,7 +40,7 @@ leaves finished files untouched.
 import {encode, fit} from 'rapier-jxl/upload';
 
 // file: a File or Blob from an input, a drop or a fetch.
-const compress = async file => new Blob([await encode(file, {fidelity: {quality: 82}})], {type: 'image/jxl'});
+const compress = async file => new Blob([(await encode(file, {fidelity: {quality: 82}})).bytes], {type: 'image/jxl'});
 const small = file => fit(file, {maxBytes: 100_000}); // best quality under 100 KB
 ```
 
@@ -54,17 +55,19 @@ import {writeFile} from 'node:fs/promises';
 import {encode} from 'rapier-jxl';
 
 const picture = {data: new Uint8Array([240, 120, 40, 255]), width: 1, height: 1};
-await writeFile('picture.jxl', await encode(picture, {fidelity: {quality: 90}}));
+await writeFile('picture.jxl', (await encode(picture, {fidelity: {quality: 90}})).bytes);
 ```
 
 Takes RGBA `{data, width, height}`, `ImageData`, a canvas (2D, WebGL or WebGPU), an `ImageBitmap`, a `VideoFrame`, a
-`Blob`, a decoded image or a GPU texture `{texture, device}`, and returns a `Uint8Array`. 8 or 16-bit, `Float16Array`
+`Blob`, a decoded image or a GPU texture `{texture, device}`, and returns a result record with the output in `result.bytes`. 8 or 16-bit, `Float16Array`
 or `Float32Array` samples, including HDR. For animations, use `rapier-jxl/animation`.
 
+- A JPEG kept byte for byte is `recompress` from `rapier-jxl/jpeg` (or `rapier-jxl/upload`); `encode` takes pixels.
 - `fidelity`: `{quality: 1–100}`, default 90. `'exact'` is lossless.
 - `effort`: 1–9, default 7. Lower is faster; 1–3 suit previews and uploads, 8–9 photography.
 - `webgpu`: efforts 7–9 use WebGPU when available. `'required'` fails without it; `false` turns it off.
 - `maxPixels`: default 40 MP, up to 16,384 × 16,384. Very large images can be passed in strips with `rows(y, count)`.
+- `verify(original, result)` from `rapier-jxl/verify` checks a file against its source.
 
 ## Screenshots
 
@@ -73,22 +76,21 @@ import {capture} from 'rapier-jxl/capture';
 import {capture as page} from 'rapier-jxl/capture-complete';
 
 const screenshot = canvas => capture(canvas); // lossless
-const smaller = (canvas, rects) => page(canvas, {fidelity: {webp: 0.92}, ...rects}); // lossy photos, lossless text
+const smaller = (canvas, rects) => page(canvas, {fidelity: {quality: 92}, ...rects}); // lossy photos, lossless text
 ```
 
 - Canvas (2D, WebGL or WebGPU), `ImageData`, an `ImageBitmap`, a `VideoFrame`, a `Blob` or 8-bit RGBA.
 - `rects` is `{exactRects, photoRects}`: the areas to keep lossless, such as text, and where the photos are.
 - `rapier-jxl/page-rects` finds both in a page element, for any library that draws one to a canvas.
 - Pages up to 32,767 pixels tall in one file; WebP stops at 16,383. Above 40 MP, raise `maxPixels`.
+- Efforts 6–9 check photos with the browser's own JPEG XL decoding. In Node, Deno, Bun and desktop apps, the one setup
+  step is `configureDecoder(decode)`, with `decode` from `rapier-jxl/decode`.
 
 | Effort | `capture-complete` |
 |---|---|
 | 1–3 | Fast. 3 is the default, 2 for quick saves, 1 for live previews. |
-| 4 | Deeper search: smaller text and graphics, more time. |
-| ~~5–6~~ | ~~Per-photo quality search.~~ |
-| ~~7–9~~ | ~~Block-size search for photos, on WebGPU.~~ |
-
-In 8.2.0, efforts 5–9 fall back to 4 for photos. Higher efforts for the capture modules are being worked on for 8.2.x.
+| 4–5 | Deeper search: smaller text and graphics. Photos keep their predicted look. |
+| 6–9 | Each photo's look measured, and the smallest file that has it. 7–9 also search block sizes. |
 
 ## JPEG, decoding, metadata
 
@@ -98,7 +100,7 @@ import {decode} from 'rapier-jxl/decode';
 import {header} from 'rapier-jxl/metadata';
 
 // jpeg: a Uint8Array holding a JPEG file, up to 64 MP.
-const roundTrip = async jpeg => restore(await recompress(jpeg));
+const roundTrip = async jpeg => (await restore((await recompress(jpeg)).bytes)).bytes;
 const pixels = async file => decode(file); // {width, height, data}, RGBA
 const size = file => header(file); // synchronous, from a file or its first bytes
 ```
@@ -124,6 +126,27 @@ createServer((req, res) => serve(stored, req, res)).listen(3000);
 Cloudflare Workers, Deno and Bun: `return serve(stored, request)`. `cacheControl` sets `Cache-Control` (default
 `private, no-cache`).
 
+## Resumable encoding
+
+For edge isolates with short time limits: an encode continues across requests in short steps and writes the same file
+as one call.
+
+```js
+import {start, advance, finish} from 'rapier-jxl/resumable';
+import {encode} from 'rapier-jxl/upload';
+
+// store: the original and the job's parts (R2, KV, a database). input names the original:
+// {generation, sha256, byteLength}, with kind: 'file' for an uploaded file.
+const step = async (saved, store, input) => {
+  const job = {operation: encode, store, input};
+  const {checkpoint, done} = await advance(saved ?? await start({...job, options: {fidelity: {quality: 82}}}), job);
+  return done ? {result: await finish(checkpoint, job)} : {checkpoint}; // save checkpoint for the next request
+};
+```
+
+- `capture`, `encode`, `fit`, `variants`, `recompress` and `restore`.
+- Each `advance` runs for about 30 ms (`budget: {ms}`) and writes its parts to the store before it returns.
+
 ## Workers and queues
 
 ```js
@@ -138,7 +161,7 @@ try {
 }
 ```
 
-- In browsers, the module runs in a worker (upload: 218 KB Brotli). Node, Deno and Bun run it in the calling thread.
+- In browsers, the module runs in a worker (upload: 243 KB Brotli). Node, Deno and Bun run it in the calling thread.
 - `helpers` adds up to 16 worker threads; `helpers: true` sizes them by the device.
 - Errors carry a `code`, such as `JXL_INPUT`, `JXL_OPTIONS`, `JXL_WASM` or `JXL_WEBGPU`.
 
@@ -147,7 +170,7 @@ try {
 ```html
 <script type="module">
   import {encode} from 'https://cdn.jsdelivr.net/npm/rapier-jxl@8/dist/index.mjs';
-  const bytes = await encode(document.querySelector('canvas'));
+  const {bytes} = await encode(document.querySelector('canvas'));
 </script>
 ```
 

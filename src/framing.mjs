@@ -417,6 +417,7 @@ export function writeAnimatedImageHeader(w, still, {width, height, numerator, de
   copyBits(w, bytes, image.toneAt, image.extensionsAt);
   w.write(2, 0);
   w.write(1, 1);
+  copyBits(w, bytes, image.iccAt, image.payloadEnd);
   w.zeroPadToByte();
 }
 

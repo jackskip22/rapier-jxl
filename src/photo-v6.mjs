@@ -83,22 +83,27 @@ const bandedImage = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JX
 };
 
 function* bandsThenCoefficients(bands, encode) {
-  let step, reply, coefficients = null, first = null;
-  while (!(step = bands.next(reply)).done) {
-    reply = undefined;
-    if (step.value?.offload === 'image') {
-      coefficients = encode(step.value.image); first = coefficients.next();
-      if (!first.done && first.value?.offload === 'prefetch') { yield {...first.value, after: step.value.bands, at: () => 0}; first = null; }
-      continue;
+  let step, reply, coefficients = null, first = null, next;
+  try {
+    while (!(step = bands.next(reply)).done) {
+      reply = undefined;
+      if (step.value?.offload === 'image') {
+        coefficients = encode(step.value.image); first = coefficients.next();
+        if (!first.done && first.value?.offload === 'prefetch') { yield {...first.value, after: step.value.bands, at: () => 0}; first = null; }
+        continue;
+      }
+      reply = yield scaled(step.value, done => done / 2);
     }
-    reply = yield scaled(step.value, done => done / 2);
+    const image = step.value;
+    yield {offload: 'placed', image, at: () => 0.5};
+    coefficients ??= encode(image);
+    next = first ?? coefficients.next();
+    while (!next.done) next = coefficients.next(yield scaled(next.value, done => 0.5 + done / 2));
+    return next.value;
+  } finally {
+    if (!step?.done) bands.return?.();
+    if (coefficients && !next?.done && !first?.done) coefficients.return?.();
   }
-  const image = step.value;
-  yield {offload: 'placed', image, at: () => 0.5};
-  coefficients ??= encode(image);
-  let next = first ?? coefficients.next();
-  while (!next.done) next = coefficients.next(yield scaled(next.value, done => 0.5 + done / 2));
-  return next.value;
 }
 
 export const v6Trace = label => { const t = globalThis.__jxlTrace; if (t) t.push([label, performance.now()]); };
@@ -110,11 +115,11 @@ export function* photoV6Steps(data, width, height, quality, effort, encodeCoeffi
   let hurry = false;
   function* share(steps, from, to) {
     let step, reply;
-    while (!(step = steps.next(reply)).done) {
+    try { while (!(step = steps.next(reply)).done) {
       const value = step.value;
       reply = yield typeof value === 'number' ? from + value * (to - from) : value;
       if (typeof value === 'number' && reply) hurry = true;
-    }
+    } } finally { if (!step?.done) steps.return?.(); }
     return step.value;
   }
   if (!screen && (effort === 6 || effort === 7) && quality < 100 && width >= 128 && height >= 128 && encodeCoefficients.splits) {

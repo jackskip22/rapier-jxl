@@ -10,6 +10,14 @@ import {SCREEN_SPECIAL_DISTANCES as SPECIAL} from './screen-codes.mjs';
 
 const invalidJPEGData = () => fault('JXL_RECONSTRUCTION', 'Invalid or unsupported JPEG reconstruction data.');
 export function requireJPEG(condition) { if (!condition) throw invalidJPEGData(); }
+
+const RAW_DENOMINATOR = 0x1004;
+const halfValue = h => (h >> 15 ? -1 : 1) * 2 ** (((h >> 10) & 31) - 15) * (1 + (h & 1023) / 1024);
+function transcodedLf(half, q) {
+  if ((half & 0x7c00) === 0 || (half & 0x7c00) === 0x7c00 || half >> 15) return false;
+  const want = q * 16 / 255, unit = 2 ** (((half >> 10) & 31) - 25);
+  return Math.abs(halfValue(half) - want) <= unit * 1.5;
+}
 export class JxlBits {
   constructor(bytes) { this.bytes = bytes; this.bit = 0; }
   read(n) {
@@ -480,9 +488,9 @@ export function readJPEGCoefficients(bytes, {reconstruction = false, maxPixels =
   const section = i => sections[groups === 1 ? 0 : i], end = reader => { if (groups !== 1) reader.end(); };
   const tilesW = (blocksW + 7) >> 3, tilesH = (blocksH + 7) >> 3, toX = new Int32Array(tilesW * tilesH), toB = new Int32Array(tilesW * tilesH);
   const planes = [0, 1, 2].map(c => ({h: 1 << hs[c], v: 1 << vs[c], stride: blocksW >> hshift[c], rows: blocksH >> vshift[c], dc: new Int32Array((blocksW >> hshift[c]) * (blocksH >> vshift[c])), coeffs: rows ? null : new Int16Array((blocksW >> hshift[c]) * (blocksH >> vshift[c]) * 64)}));
-  const dc = section(0); dc.expect(1, 0); dc.read(16); dc.read(16); dc.read(16);
-  dc.u32([[11, 1], [11, 2049], [12, 4097], [16, 8193]]);
-  dc.u32([[0, 16], [5, 1], [8, 1], [16, 1]]);
+  const dc = section(0); dc.expect(1, 0); const lfDequant = [dc.read(16), dc.read(16), dc.read(16)];
+  requireJPEG(dc.u32([[11, 1], [11, 2049], [12, 4097], [16, 8193]]) === 65536);
+  requireJPEG(dc.u32([[0, 16], [5, 1], [8, 1], [16, 1]]) === 1);
   const dcDist = [[4, 0], [8, 16], [16, 272], [32, 65808]], qfDist = [[2, 0], [3, 4], [5, 12], [8, 44]];
   const defaultMap = Uint8Array.of(0, 1, 2, 2, 3, 3, 4, 5, 6, 6, 6, 6, 6, 7, 8, 9, 9, 10, 11, 12, 13, 14, 14, 14, 14, 14, 7, 8, 9, 9, 10, 11, 12, 13, 14, 14, 14, 14, 14);
   let dcThresholds, qfThresholds, numDc, map, contexts;
@@ -515,18 +523,19 @@ export function readJPEGCoefficients(bytes, {reconstruction = false, maxPixels =
     const n = rw * rh; reader.expect(ceilLog2(n), n - 1);
     const cw = (rw + 7) >> 3, ch = (rh + 7) >> 3;
     const [ytox, ytob, blocks] = modular(reader, [[cw, ch], [cw, ch], [n, 2], [rw, rh]], shared, 1 + 2 * dcs + g, work);
-    requireJPEG(blocks.subarray(0, n).every(strategy => strategy === 0));
+    requireJPEG(blocks.subarray(0, n).every(strategy => strategy === 0) && blocks.subarray(n, 2 * n).every(field => field === 0));
     for (let ty = 0; ty < ch; ty++) for (let tx = 0; tx < cw; tx++) {
       const at = ((y0 >> 3) + ty) * tilesW + (x0 >> 3) + tx;
       toX[at] = ytox[ty * cw + tx]; toB[at] = ytob[ty * cw + tx];
     }
     end(reader);
   }
-  const ac = section(1 + dcs); ac.expect(1, 0); ac.expect(3, 7); ac.read(16);
+  const ac = section(1 + dcs); ac.expect(1, 0); ac.expect(3, 7); ac.expect(16, RAW_DENOMINATOR);
   const matrices = modular(ac, [[8, 8], [8, 8], [8, 8]], shared, 1 + 3 * dcs, work);
   for (let c = 0; c < 3; c++) {
     const p = planes[c]; p.quant = Int32Array.from({length: 64}, (_, k) => matrices[c][(k % 8) * 8 + (k >> 3)]);
     requireJPEG(p.quant.every(q => q > 0 && q < 65536));
+    requireJPEG(transcodedLf(lfDequant[c], p.quant[0]));
   }
   ac.expect(32, 0); ac.expect(16, 0);
   if (groups > 1) ac.expect(ceilLog2(groups), 0);

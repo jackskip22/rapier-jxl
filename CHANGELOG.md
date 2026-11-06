@@ -1,5 +1,27 @@
 # Changelog
 
+## 8.3.0 (2026-11-06)
+
+- API change: every encoding operation now returns one result record; verification and resumable encoding are separate modules. Kept on V8 because it's more fitting, rather than making this 9.0.0
+- One quality number: `{webp: 0.8}` is now `{quality: 80}`
+- Page capture is `rapier-jxl/capture` and `rapier-jxl/capture-complete`; `rapier-jxl` encodes pictures.
+- JPEG recompression is `rapier-jxl/jpeg` and `rapier-jxl/upload`; `rapier-jxl`'s `encode` takes pixels.
+- Each result says what was kept (the JPEG's own bytes, exact pixels, or a lossy file with its SSIMULACRA 2 score), plus the source's digest and why a target was missed.
+- New `rapier-jxl/resumable`: capture, encode, fit, variants and JPEG recompress and restore continue across calls in short steps, writing the same file as one call.
+- Working on extending resumable encoding to `capture-complete` for 8.3.1.
+- New `rapier-jxl/verify` checks an output against its original and returns a receipt. In browsers it uses the browser's own decoder (about 63 KB); in Node, Deno and Bun it needs no setup.
+- A quality number aims at a measured SSIMULACRA 2 score. At the same score as Chrome's WebP, Kodak photos are 20-33% smaller at efforts 3-5.
+- `capture-complete` scores photos using the browser's decoder and is now about 226 KB.
+- The full encoder is about 325 KB and exact `capture` about 47 KB. Now working on reducing module sizes significantly for 8.3.1
+- Outside a browser, `capture-complete` measures photos after `configureDecoder(decode)`, with `decode` from `rapier-jxl/decode`.
+
+### Details
+
+- Resumable encoding runs each operation as one list of steps, and a resumable call saves checkpoints of plain data between them. To stop the photo coder mid-file, its bands, counts and DC became steps of their own. A 1.1 s JPEG recompression now runs as 84 steps of about 36 ms in Cloudflare Workers, producing an identical file.
+- To measure a photo's quality realistically, capture-complete now sends candidate files to the browser's own JPEG XL decoder and scores what comes back. 1.8x faster than the old decoder it carried.
+- Canvas 2D readback loses color under alpha (up to 200 levels off), so it uses WebGL2 with premultiply and colour conversion off to get exact pixels from the browser.
+- Quality scoring is 12x faster with identical numbers. The new scorer works out a*b+c with a single rounding, so any machine gets the same score. Uses the browser's WebAssembly for hardware in Chrome and Firefox, and a 768x512 score takes 54 ms.
+
 ## 8.2.0 (2026-11-04)
 
 - New `rapier-jxl/capture-complete` for page screenshots: the page lossy as VarDCT, text lossless in a small modular atlas placed as patches, in one file.
@@ -42,20 +64,3 @@
 - Efforts 7–9 use WebGPU when available. Set `webgpu: 'required'` or `false` to change this.
 - Smaller files at efforts 6–9. Quality now matches libjxl at every effort. Efforts 8–9 apply up to 1 MP for now.
 - Added `rapier-jxl/polyfill` and `prepare()`. Errors use one of 19 `JXL_*` codes.
-
-## 7.1.0 (2026-10-28)
-
-- Lossless screenshots are 4–8% smaller.
-- Faster encoding at efforts 3 and 7, and a faster first upload with `helpers`.
-- Faster decoding and encoding of images with color profiles, including Display P3.
-- Smaller JPEG recompression at efforts 2–6. `recompress` defaults to `acceleration: 'auto'`.
-- The decoder, JPEG recompression and metadata limit the memory and time a damaged file can use.
-- Fixed white decoding as black in lossy photos near quality 100, and hangs on malformed JPEGs.
-- Works from a CDN and in Next.js server routes. `rapier-jxl/worker` runs as a Node worker thread.
-
-## 7.0.0 (2026-10-28)
-
-- Breaking: new API. `encode(image, options)` and `createEncoder()`, a queue with progress, cancel and limits.
-- Added `helpers` for parallel encoding.
-- Added `rapier-jxl/capture`, `/jpeg`, `/decode`, `/animation`, `/metadata`, `/format` and `/offline`.
-- Node 20.16+ and 22.3+, Deno and Bun.

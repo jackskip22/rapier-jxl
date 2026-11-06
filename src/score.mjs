@@ -10,20 +10,9 @@ import {prepareV6, scoreSteps, cpuMeasure, runAsync, gpuDoubt, CANDIDATES} from 
 import {exactAnswerer, exactPool, exactScores} from './exact-region.mjs';
 import {memoryPlan} from './memory-plan.mjs';
 import {gpuSetup} from './gpu-setup.mjs';
+import {photoTarget} from './photo-quality-search.mjs';
 
 export {PHOTO_LIMITS as LIMITS};
-
-function scoreTarget(target) {
-  if (!target || typeof target !== 'object') throw fault('JXL_INPUT', 'Target names ssimulacra2, butteraugli or butteraugli3.');
-  const out = {};
-  for (const [key, value] of Object.entries(target)) {
-    if (!['ssimulacra2', 'butteraugli', 'butteraugli3'].includes(key)) throw fault('JXL_INPUT', `Target ${key} is not ssimulacra2, butteraugli or butteraugli3.`);
-    if (typeof value !== 'number' || !Number.isFinite(value) || (key === 'ssimulacra2' ? value > 100 : value <= 0)) throw fault('JXL_INPUT', `Target ${key} is out of range.`);
-    out[key] = value;
-  }
-  if (!Object.keys(out).length) throw fault('JXL_INPUT', 'Target names ssimulacra2, butteraugli or butteraugli3.');
-  return out;
-}
 
 function admitScore(data, width, height, options) {
   if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray)) throw fault('JXL_INPUT', 'Encoding to a score takes 8-bit sRGB RGBA.');
@@ -34,7 +23,7 @@ function admitScore(data, width, height, options) {
   const allowLossless = options?.allowLossless === undefined ? true : options.allowLossless, maxBytes = options?.maxBytes ?? Number.MAX_SAFE_INTEGER;
   if (typeof allowLossless !== 'boolean') throw fault('JXL_INPUT', 'allowLossless is a boolean.');
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || options?.maxBytes === null) throw fault('JXL_INPUT', 'maxBytes is a positive safe integer.');
-  return {target: scoreTarget(options?.target), effort: admitEffort(options ?? {}, BALANCED_EFFORT), candidates, allowLossless, maxBytes};
+  return {target: photoTarget(options?.target), effort: admitEffort(options ?? {}, BALANCED_EFFORT), candidates, allowLossless, maxBytes};
 }
 
 function scoreMemory(data, width, height, options, exact) {

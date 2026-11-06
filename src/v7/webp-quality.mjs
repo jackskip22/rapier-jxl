@@ -9,11 +9,11 @@ const luma = (data, i, table, float) => table ? 0.299 * table[word(data, i, floa
 
 function linearOf({data, sampleFormat, transferFunction, icc}) {
   const named = icc === undefined ? transferFunction ?? (data instanceof Float32Array || sampleFormat === 'float16' ? 'linear' : 'srgb') : 'srgb';
-  if (named === 'pq' || named === 'hlg') throw fail('JXL_OPTIONS', `{webp} has no ${named.toUpperCase()}; use {quality} or 'exact'.`);
+  if (named === 'pq' || named === 'hlg') throw fail('JXL_OPTIONS', `The photo reading has no ${named.toUpperCase()}; use 'exact'.`);
   return named === 'linear';
 }
 
-export function gradient(picture) {
+export function gradient(picture, {stride = picture.width, origin = 0} = {}) {
   const {data, width, height, bitDepth, sampleFormat} = picture, linear = linearOf(picture);
   const float = data instanceof Float32Array, halves = sampleFormat === 'float16', wide = data instanceof Uint16Array;
   const depth = wide ? bitDepth ?? 16 : 8;
@@ -29,13 +29,13 @@ export function gradient(picture) {
       table[w] = 255 * (linear ? v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055 : v);
     }
   }
-  const stride = width * 4;
+  const rowStride = stride * 4;
   let sum = 0, n = 0;
   for (let y = 1; y < height - 1; y += 4) {
-    let i = y * stride, here = luma(data, i, table, float);
+    let i = (origin + y * stride) * 4, here = luma(data, i, table, float);
     for (let x = 0; x < width - 1; x++, i += 4) {
       const right = luma(data, i + 4, table, float);
-      sum += Math.abs(right - here) + Math.abs(luma(data, i + stride, table, float) - here); here = right; n++;
+      sum += Math.abs(right - here) + Math.abs(luma(data, i + rowStride, table, float) - here); here = right; n++;
     }
   }
   return n ? sum / n : 0;
@@ -56,12 +56,23 @@ export function qualityFor(q, g) {
   return Math.min(99, Math.max(1, Math.round(most)));
 }
 
+const CEILING = [67, 68, 68, 68, 69, 69, 70, 70, 71, 71, 72, 72, 73, 73, 73, 74, 74, 75, 75, 76, 76, 77, 77, 77, 78, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 88, 90, 90, 91, 92, 93, 94, 95, 95, 96, 96, 97, 97];
+export const ceilingFor = q => q < 0.5 || q > 0.98 ? Infinity : CEILING[Math.ceil((q - 0.5) * 100 - 1e-9)];
+
+const SMALL = [[32, [51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 53, 53, 63, 63, 63, 63, 63, 65, 67, 71, 73, 73, 81, 83, 87, 87, 89, 91, 91, 93, 93, 93, 95, 97, 99, 99, 99, 99, 99, 99]], [64, [99, 99, 99, 99, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.9, 99.9, 99.9, 99.9, 99.9, 99.9, 99.9, 99.9, 99.9, 99.9, 99.9, 99.99, 99.99, 99.99, 99.99, 99.99, 99.99, 99.99, 99.99, 99.99, 99.99, 99.99]], [128, [97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99.5, 99.5, 99.5, 99.5, 99.5, 99.5, 99.9, 99.9, 99.9, 99.9, 99.9, 99.9, 99.9, 99.9, 99.9]], [256, [67, 69, 69, 69, 69, 69, 71, 71, 71, 71, 71, 73, 73, 73, 73, 73, 75, 75, 75, 75, 75, 77, 77, 77, 77, 77, 79, 79, 81, 81, 83, 83, 85, 85, 87, 87, 89, 89, 91, 91, 93, 93, 93, 95, 95, 97, 97, 97, 97]]];
+export const smallReading = (q, side) => {
+  const table = SMALL.find(([under]) => side < under)?.[1];
+  if (!table) return Infinity;
+  const at = Math.min(0.98, Math.max(0.5, q));
+  return Math.min(q > 0.98 ? 99.99 : table[Math.ceil((at - 0.5) * 100 - 1e-9)], q > 0.98 ? Infinity : ceilingFor(at));
+};
+
 export const webpQuality = (q, picture) => q >= 1 ? (linearOf(picture), 100) : qualityFor(q, gradient(picture));
 
 export function settleWebp(codec, picture) {
-  if (codec.webp === undefined) return codec;
-  const {webp, ...rest} = codec;
-  return {...rest, quality: webpQuality(webp, picture)};
+  if (codec.qualityIntent === undefined) return codec;
+  const {qualityIntent, ...rest} = codec;
+  return {...rest, quality: webpQuality(qualityIntent, picture)};
 }
 
 const BUMPS = [[0.8, [[100, 8], [250, 6], [Infinity, 3]]], [0.92, [[100, 4], [250, 3], [Infinity, 2]]]];

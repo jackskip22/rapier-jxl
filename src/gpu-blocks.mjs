@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {B16_BOUNDS, B16Session, b16Sum} from './gpu-blocks16.mjs';
-import {maskDoubtOver} from './aq.mjs';
+import {maskDoubtOver} from './photo-mask.mjs';
 
 export const bTr = (w, h) => ((3 * (w + h) + 20) * B16_BOUNDS.u2 + (w + h + 2) * B16_BOUNDS.u64) * 2 / (w * h);
 const bkF = v => { const s = Math.fround(v).toString(); return /[.eE]/.test(s) ? s : s + '.0'; };
@@ -211,7 +211,7 @@ function bkCached(set, key, make) {
 function bkPipeline(device, ds, w, h) {
   let set = bkPipelines.get(device);
   if (!set) bkPipelines.set(device, set = {});
-  return bkCached(set, w + 'x' + h, () => device.createComputePipelineAsync({layout: 'auto', compute: {module: device.createShaderModule({code: bkCostsShader(ds, w, h)}), entryPoint: 'main'}}));
+  return bkCached(set, w + 'x' + h, () => device.createComputePipelineAsync({label: 'rapier-jxl:block-costs:' + w + 'x' + h, layout: 'auto', compute: {module: device.createShaderModule({code: bkCostsShader(ds, w, h)}), entryPoint: 'main'}}));
 }
 export function gpuBlocksPipelines(device, ds, shapes = [[8, 8], [16, 16], [8, 16], [16, 8], [32, 32], [16, 32], [32, 16]]) { return Promise.all(shapes.map(([w, h]) => bkPipeline(device, ds, w, h))); }
 
@@ -392,7 +392,7 @@ fn main(@builtin(workgroup_id) g: vec3u, @builtin(local_invocation_index) lid: u
 function bkLevelsPipeline(device, ds, w, h) {
   let set = bkPipelines.get(device);
   if (!set) bkPipelines.set(device, set = {});
-  return bkCached(set, 'levels' + w + 'x' + h, () => device.createComputePipelineAsync({layout: 'auto', compute: {module: device.createShaderModule({code: bkLevelsShader(ds, w, h)}), entryPoint: 'main'}}));
+  return bkCached(set, 'levels' + w + 'x' + h, () => device.createComputePipelineAsync({label: 'rapier-jxl:block-levels:' + w + 'x' + h, layout: 'auto', compute: {module: device.createShaderModule({code: bkLevelsShader(ds, w, h)}), entryPoint: 'main'}}));
 }
 
 export function gpuBlocksLevelsPipelines(device, ds, shapes = [[8, 8], [16, 16], [8, 16], [16, 8], [32, 32], [16, 32], [32, 16]]) { return Promise.all(shapes.map(([w, h]) => bkLevelsPipeline(device, ds, w, h))); }
@@ -455,3 +455,4 @@ export async function gpuBlocksLevels(device, request, ds, core) {
     while (scopes-- > 0) await device.popErrorScope().catch(() => null);
   }
 }
+

@@ -76,10 +76,10 @@ export function* jpegAnsEffortSteps(jpeg, effort, retain) {
   const first = effort >= 9 ? (image, e, fallback, keep, cache) => jpegAnsFirstSteps(image, e, fallback, keep, cache, true) : jpegAnsFirstSteps;
   const floor = jpegEffortSteps(jpeg, effort, retain, first, shared);
   let reply;
-  while (!(step = floor.next(reply)).done) {
+  try { while (!(step = floor.next(reply)).done) {
     if (typeof step.value !== 'number') { reply = yield scaled(step.value, done => done / 2); continue; }
     reply = hurry = yield step.value / 2;
-  }
+  } } finally { if (!step?.done) floor.return?.(); }
   best = step.value;
   if (hurry) return best;
   const alternate = {maxClusters: 32, newClusterCost: 160, everyConfig: effort === 9}, parts = effort === 8 ? 4 : 7;

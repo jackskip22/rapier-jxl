@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: MIT
-import {CAPTURE_FUSED} from './capture-fused-bytes.mjs';
-import {wasmModule} from './wasm-modules.mjs';
-import {wasmBytes} from './wasm-text.mjs';
+import {kernelModule} from './kernel-runtime.mjs';
 
 export const FRAME_ROWS_BUDGET = 512 * 65536;
 const engines = new WeakMap();
 let own;
 const instance = memory => {
   let frameRows = engines.get(memory);
-  if (!frameRows) engines.set(memory, frameRows = new WebAssembly.Instance(wasmModule('fused', () => wasmBytes(CAPTURE_FUSED)), {env: {memory}}).exports.frameRows);
+  if (!frameRows) engines.set(memory, frameRows = new WebAssembly.Instance(kernelModule(), {env: {memory}}).exports.frameRows);
   return frameRows;
 };
 const ownArena = () => {
@@ -29,7 +27,9 @@ export function fusedFrameRows(data, width, dx, dy, boxes, most = 256, arena = o
   }).filter(r => r.w > 0 && r.h > 0).sort((a, b) => a.y - b.y);
   const n = inside.length, at = arena.base, mask = at + 16 * n, band = (mask + width + 15) & ~15;
   if (band + rowWidth * most * 4 > arena.limit) return null;
-  const {memory} = arena, frameRows = instance(memory), placed = new Int32Array(4 * n);
+  const {memory} = arena, frameRows = instance(memory);
+  if (typeof frameRows !== 'function') return null;
+  const placed = new Int32Array(4 * n);
   let tall = 0;
   inside.forEach((r, i) => { placed.set([r.x, r.y, r.w, r.h], 4 * i); if (r.h > tall) tall = r.h; });
   const rowBytes = width * 4, frameBytes = rowWidth * 4;

@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: MIT
-import {GpuButteraugli} from './gpu-butteraugli.mjs';
+import {butteraugliRows, butteraugliLinearTable, pnorm, prepareButteraugli} from './butteraugli.mjs';
+import {ssimulacra2, ssimulacra2Reference} from './ssimulacra2.mjs';
+import {s2Dimensions, s2RGBA} from './ssimulacra2-input.mjs';
+import {GpuLinearPixels} from './gpu-metric-pixels.mjs';
+import {cellSums} from './varblocks.mjs';
+import {blockDistances} from './aq.mjs';
 import {UniformRing} from './gpu-uniforms.mjs';
-import {GpuSsimulacra2Measure} from './gpu-ssimulacra2-measure.mjs';
-import {GpuNativeSsimulacra2} from './gpu-ssimulacra2-native.mjs';
-import {coefficientPlanes, epfInverseSigma, inverseBasis, half, rcLlfFromDC} from './reconstruct.mjs';
+import {coefficientPlanes, epfInverseSigma, inverseBasis, half, rcLlfFromDC, toRGBA} from './reconstruct.mjs';
 import {TRANSFORMS} from './vardct-strategies.mjs';
-import {SRGB_TO_LINEAR} from './ssimulacra2.mjs';
 import {gpuSetup} from './gpu-setup.mjs';
 import {gpuPipelineSet} from './gpu-pipelines.mjs';
+import {fault} from './fault.mjs';
 
 const GR_WG = 128, GR_CORE = 1024, GR_MARGIN = 128;
 const grF = v => { const s = Math.fround(v).toString(); return /[.eE]/.test(s) ? s : s + '.0'; };
@@ -85,16 +88,6 @@ fn at(x: i32, y: i32) -> u32 { return u32(mir(y, i32(P.h))) * P.i0 + u32(mir(x, 
     r[i] = ${grF(GR_INV[0])} * l + ${grF(GR_INV[1])} * m + ${grF(GR_INV[2])} * s;
     g[i] = ${grF(GR_INV[3])} * l + ${grF(GR_INV[4])} * m + ${grF(GR_INV[5])} * s;
     b[i] = ${grF(GR_INV[6])} * l + ${grF(GR_INV[7])} * m + ${grF(GR_INV[8])} * s;`, `fn pow3(v: f32) -> f32 { return v * v * v; }`),
-  cells: grShader([...GR_R('map'), ...GR_W('out')], `
-    let cx = (x + P.i2) * 8u; let cy = (y + P.i3) * 8u; let m = u32(P.b);
-    var sp = 0.0; var mx = 0.0; var mm = 0.0; var s3 = 0.0; var s6 = 0.0; var s12 = 0.0;
-    for (var yy = cy; yy < min(cy + 8u, P.i1); yy++) { for (var xx = cx; xx < min(cx + 8u, P.i0); xx++) {
-      let d = map[yy * P.i0 + xx]; let d3 = d * d * d;
-      sp += select(0.0, pow(max(d, 1e-30), P.a), d > 0.0); mx = max(mx, d); s3 += d3; s6 += d3 * d3; s12 += d3 * d3 * d3 * d3;
-    } }
-    for (var yy = max(i32(cy) - i32(m), 0); yy < min(i32(cy + 8u + m), i32(P.i1)); yy++) {
-      for (var xx = max(i32(cx) - i32(m), 0); xx < min(i32(cx + 8u + m), i32(P.i0)); xx++) { mm = max(mm, map[u32(yy) * P.i0 + u32(xx)]); } }
-    let o = i * 6u; out[o] = sp; out[o + 1u] = mm; out[o + 2u] = mx; out[o + 3u] = s3; out[o + 4u] = s6; out[o + 5u] = s12;`),
   dequant8: grShader([['levels', 'read', 'array<u32>'], ...GR_R('consts', 'blocks'), ...GR_W('cx', 'cy', 'cb')], `
     let gx = x + P.i2; let gy = y + P.i3; let blk = (gy >> 3u) * P.i0 + (gx >> 3u); let k = (gy & 7u) * 8u + (gx & 7u);
     let at = blk * 64u + k; let QF = blocks[blk * 3u]; let o = y * P.w + x;
@@ -136,36 +129,26 @@ fn recon(q: i32, c: u32) -> f32 {
   if (q == 0) { return 0.0; } if (q == 1) { return consts[195u + c]; } if (q == -1) { return -consts[195u + c]; }
   let v = f32(q); return v - 0.145 / v;
 }`),
-  crop: grShader([...GR_R('rs', 'gs', 'bs'), ...GR_W('r', 'g', 'b')], `
-    let k = (y + P.i3) * P.i0 + x + P.i2; r[i] = rs[k]; g[i] = gs[k]; b[i] = bs[k];`),
-  cropLo: grShader([['rgba', 'read', 'array<u32>'], ['lutLo', 'read', 'array<f32, 256>'], ...GR_W('dst')], `
-    let p = rgba[(y + P.i3) * P.i0 + x + P.i2]; let n = P.w * P.h;
-    dst[i] = lutLo[p & 255u]; dst[n + i] = lutLo[(p >> 8u) & 255u]; dst[2u * n + i] = lutLo[(p >> 16u) & 255u];`),
 };
 
-export const GR_REFERENCE_BUDGET = 0;
 const grPipelines = gpuPipelineSet(GR_SHADERS);
 
 export class GpuMeasure {
-  static async create(device, rgba, width, height, {tile = GR_CORE, keepReference = false, referenceBytes = 0, signal} = {}) {
+  static async create(device, rgba, width, height, {tile = GR_CORE, signal} = {}) {
+    s2RGBA(rgba, s2Dimensions(width, height));
+    if (width < 8 || height < 8) return null;
     if (!Number.isSafeInteger(tile) || tile < 64 || tile % 64) throw new RangeError('GPU metric tile must be a positive multiple of 64.');
-    if (!Number.isSafeInteger(referenceBytes) || referenceBytes < 0) throw new RangeError('GPU reference allowance must be nonnegative bytes.');
-    if (keepReference !== true && keepReference !== false && (!Number.isSafeInteger(keepReference) || keepReference < 0))
-      throw new RangeError('GPU kept references are a boolean or a tile count.');
     const self = new GpuMeasure();
     return gpuSetup(async () => {
-      const [pipelines, butteraugli] = await Promise.all([grPipelines(device), GpuButteraugli.prepare(device)]);
+      const [pipelines] = await Promise.all([grPipelines(device), prepareButteraugli()]);
       if (self.destroyed) throw Object.assign(new Error('GPU metric owner was destroyed during setup.'), {code: 'JXL_GPU'});
       device.pushErrorScope('validation'); device.pushErrorScope('out-of-memory');
       let remaining = 2;
       try {
-        self.init(device, rgba, width, height, tile, pipelines, butteraugli);
-        const setBytes = self.ba.levels.reduce((a, lv) => a + 12 * Math.max(16, Math.ceil(lv.n / 4) * 16), 0);
-        const requested = keepReference === true ? self.tiles.length : keepReference === false ? 0 : keepReference;
-        const keep = Math.min(self.tiles.length, requested, Math.floor(referenceBytes / setBytes));
-        if (keep && self.tiles.length > 1) self.tileReferences = self.tiles.map((_, i) => i < keep ? self.ba.levels.map((_, k) => self.ba.referenceSet(k)) : null);
-        self._cacheBytes = self.tiles.length > 1 ? keep * setBytes : 0;
-        self.reservedReferenceBytes = referenceBytes;
+        self.init(device, rgba, width, height, tile, pipelines);
+        const pixels = await GpuLinearPixels.create(device, width, height);
+        if (self.destroyed) { pixels.destroy(); throw Object.assign(new Error('GPU metric owner was destroyed during setup.'), {code: 'JXL_GPU'}); }
+        self.pixels = pixels;
         remaining--; const memory = await device.popErrorScope();
         remaining--; const validation = await device.popErrorScope();
         if (self.lost || memory || validation) throw Object.assign(new Error('GPU metric creation failed.'), {code: 'JXL_GPU', cause: memory ?? validation ?? self.lost});
@@ -175,13 +158,13 @@ export class GpuMeasure {
     }, {signal, dispose: () => self.destroy()});
   }
 
-  get cacheBytes() { return this.destroyed ? 0 : this._cacheBytes ?? 0; }
+  get cacheBytes() { return this.destroyed ? 0 : (this.s2Reference?.cacheBytes ?? 0); }
   get lost() { return this.lossState?.info ?? null; }
 
   get gpuBufferBytes() {
     if (this.destroyed) return 0;
     const all = new Set(), add = b => { if (b) all.add(b); };
-    for (const owner of [this, this.ba, this.s2, this.native, this.varblockResources]) if (owner) {
+    for (const owner of [this, this.pixels, this.varblockResources]) if (owner) {
       for (const b of owner.buffers ?? []) add(b);
       for (const key of ['read', 'mapRead', 'levels', 'blockParams', 'consts', 'varWords', 'varData']) {
         const b = owner[key]; if (b && typeof b.size === 'number') add(b);
@@ -192,11 +175,15 @@ export class GpuMeasure {
   }
 
   get hostBufferBytes() {
-    return this.destroyed ? 0 : [this, this.ba, this.s2, this.native].reduce((n, o) => n + (o?.ring?.data?.byteLength ?? 0), 0);
+    if (this.destroyed) return 0;
+    return (this.rgba?.byteLength ?? 0) + this.cacheBytes + (this.activePixelBytes ?? 0)
+      + [this, this.pixels].reduce((n, o) => n + (o?.ring?.data?.byteLength ?? 0), 0);
   }
 
-  init(device, rgba, width, height, tile, pipelines, butteraugli) {
-    this.rgba = rgba; this.destroyed = false; this.measuring = false;
+  init(device, rgba, width, height, tile, pipelines) {
+    const count = s2Dimensions(width, height);
+    if (width < 8 || height < 8) throw fault('JXL_DIMENSIONS', 'A GPU metric image needs at least 8 x 8 pixels.');
+    this.rgba = new Uint8Array(s2RGBA(rgba, count)); this.destroyed = false; this.measuring = false;
     this.stats = {gpuProbes: 0, failures: 0};
     const lossState = this.lossState = {info: null};
     device.lost?.then(info => { lossState.info = info ?? {reason: 'unknown'}; });
@@ -209,32 +196,17 @@ export class GpuMeasure {
     }
     const maxW = Math.max(...this.tiles.map(t => t.rw)), maxH = Math.max(...this.tiles.map(t => t.rh));
     const PW = Math.ceil(maxW / 8) * 8, PH = Math.ceil(maxH / 8) * 8;
-    this.ba = new GpuButteraugli(); this.ba.init(device, maxW, maxH, butteraugli);
-    this.sharedReference = this.ba.levels.map(lv => lv.ref);
     this.pipelines = pipelines;
     const usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
     this.buffers = [];
     const buffer = bytes => { const b = device.createBuffer({size: Math.max(16, Math.ceil(bytes / 16) * 16), usage}); this.buffers.push(b); return b; };
     const plane = () => buffer(PW * PH * 4);
-    this.coef = [plane(), plane(), plane()]; this.xyb = [plane(), plane(), plane()]; this.tmp = plane(); this.filtered = [plane(), plane(), plane()];
+    this.coef = [plane(), plane(), plane()]; this.xyb = [plane(), plane(), plane()]; this.tmp = plane(); this.filtered = [plane(), plane(), plane()]; this.rgb = [plane(), plane(), plane()];
     this.cellsBuf = buffer((PW / 8) * (PH / 8) * 4); this.sigmaBuf = buffer((PW / 8) * (PH / 8) * 4);
     this.basis = buffer(GR_BASIS * 4);
     const basis = new Float32Array(GR_BASIS);
     for (const n of [8, 16, 32, 64]) basis.set(inverseBasis(n), GR_OFFSET[n]);
     device.queue.writeBuffer(this.basis, 0, basis);
-    const maxCells = Math.max(...this.tiles.map(t => Math.ceil(t.cw / 8) * Math.ceil(t.ch / 8)));
-    this.out = buffer(maxCells * 24);
-    let readBytes = 0;
-    for (const t of this.tiles) { t.readOffset = readBytes; readBytes += Math.ceil(t.cw / 8) * Math.ceil(t.ch / 8) * 24; }
-    this.readBytes = readBytes;
-    this.read = device.createBuffer({size: Math.max(16, readBytes), usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST});
-    const n = width * height, channel = new Float32Array(n);
-    this.reference = [0, 1, 2].map(c => {
-      for (let i = 0; i < n; i++) channel[i] = SRGB_TO_LINEAR[rgba[i * 4 + c]];
-      const b = buffer(n * 4); device.queue.writeBuffer(b, 0, channel); return b;
-    });
-    this.referenceRgba = buffer(n * 4); device.queue.writeBuffer(this.referenceRgba, 0, rgba.buffer, rgba.byteOffset, n * 4);
-    this.lutLo = buffer(256 * 4); device.queue.writeBuffer(this.lutLo, 0, Float32Array.from(SRGB_TO_LINEAR, v => v - Math.fround(v)));
     this.ring = new UniformRing(device);
     this.gpuDequant = true;
   }
@@ -288,12 +260,12 @@ export class GpuMeasure {
     const families = new Map(); let steps = 0, levels = 0, llf = 0;
     for (const block of blocks) {
       const family = TRANSFORMS[block.id].table;
-      if (!families.has(family)) { const len = sd.tables.get(family).planes[0].length; families.set(family, {at: steps, len}); steps += 3 * len; }
+      if (!families.has(family)) { const len = sd.tables[family].planes[0].length; families.set(family, {at: steps, len}); steps += 3 * len; }
       levels += 3 * block.size; llf += 3 * block.bw * block.bh;
     }
     if (!this.fits((levels + (levels & 1)) * 2, (steps + llf) * 4, (n + blocks.length * 8) * 4)) return null;
     const level16 = new Int16Array(levels + (levels & 1)), data = new Float32Array(steps + llf), words = new Uint32Array(n + blocks.length * 8), wf = new Float32Array(words.buffer);
-    for (const [family, {at, len}] of families) for (let c = 0; c < 3; c++) data.set(sd.tables.get(family).planes[c], at + c * len);
+    for (const [family, {at, len}] of families) for (let c = 0; c < 3; c++) data.set(sd.tables[family].planes[c], at + c * len);
     const cells = new Uint32Array(n);
     let lo = 0, fo = steps;
     for (let b = 0; b < blocks.length; b++) {
@@ -348,24 +320,11 @@ export class GpuMeasure {
   }
 
   async measureImage(image, {p = 3, margin = 2, ssimulacra2: wantS2 = false, butteraugli: wantBA = true} = {}) {
-    const native = wantS2 === 'native';
-    if (native && this.native === undefined) {
-      const child = await GpuNativeSsimulacra2.create(this.device, this.rgba, this.width, this.height);
-      if (this.destroyed) { child?.destroy(); throw Object.assign(new Error('GPU metric owner was destroyed during setup.'), {code: 'JXL_GPU'}); }
-      this.native = child;
-    }
-    if (wantS2 && !native && this.s2 === undefined) {
-      const child = GpuSsimulacra2Measure.fits(this.device, this.width, this.height) ? await GpuSsimulacra2Measure.create(this.device, this.width, this.height, this.reference) : null;
-      if (this.destroyed) { child?.destroy(); throw Object.assign(new Error('GPU metric owner was destroyed during setup.'), {code: 'JXL_GPU'}); }
-      this.s2 = child;
-    }
-    const s2 = wantS2 ? (native ? this.native : this.s2) : null;
+    if (!wantBA && !wantS2) return {};
     const onGpu = this.uploadLevels(image);
     const {width, height} = this, {planes, cells, W: planeWidth, stride} = onGpu || coefficientPlanes(image), sigma = image.epf ? epfInverseSigma(image) : null;
     const gab = image.gab ? [0, 1, 2].map(c => image.gab === true ? GR_GAB : image.gab[c]) : null;
-    const rows = Math.ceil(height / 8), cellSums = new Float64Array(stride * rows), blocks = new Float64Array(stride * rows);
-    let max = 0; const sums = [0, 0, 0];
-    for (const [index, t] of this.tiles.entries()) {
+    for (const t of this.tiles) {
       const PW = Math.ceil(t.rw / 8) * 8, PH = Math.ceil(t.rh / 8) * 8, cs = PW / 8, cr = PH / 8, cx0 = t.rx / 8, cy0 = t.ry / 8;
       const region = onGpu ? null : new Float32Array(PW * PH), cellRegion = new Uint32Array(cs * cr), sigmaRegion = new Float32Array(cs * cr);
       if (!onGpu) for (let c = 0; c < 3; c++) {
@@ -378,17 +337,8 @@ export class GpuMeasure {
       }
       this.device.queue.writeBuffer(this.cellsBuf, 0, cellRegion);
       if (sigma) this.device.queue.writeBuffer(this.sigmaBuf, 0, sigmaRegion);
-      const encoder = this.device.createCommandEncoder(), pass = encoder.beginComputePass(), l0 = () => this.ba.levels[0];
-      this.ba.resize(t.rw, t.rh);
+      const encoder = this.device.createCommandEncoder(), pass = encoder.beginComputePass();
       if (onGpu) this.run(pass, onGpu.pass, [PW, PH], [...onGpu.buffers, ...this.coef], {i0: stride, i1: onGpu.pass === 'dequant8' ? onGpu.n * 64 : onGpu.n, i2: t.rx, i3: t.ry});
-      const kept = this.tileReferences?.[index];
-      this.ba.levels.forEach((lv, k) => { lv.ref = kept ? kept[k] : this.sharedReference[k]; });
-      if (kept ? !t.referenceReady : !(this.tiles.length === 1 && this.referenceReady)) {
-        this.run(pass, 'crop', [t.rw, t.rh], [...this.reference, ...l0().rgb], {i0: width, i2: t.rx, i3: t.ry});
-        this.run(pass, 'cropLo', [t.rw, t.rh], [this.referenceRgba, this.lutLo, l0().rgbLo], {i0: width, i2: t.rx, i3: t.ry});
-        this.ba.referenceFromLoaded(pass);
-        this.referenceReady = this.tiles.length === 1; t.referenceReady = !!kept;
-      }
       for (let c = 0; c < 3; c++) {
         this.run(pass, 'rows', [PW, PH], [this.cellsBuf, this.basis, this.coef[c], this.tmp], {i0: cs, i2: t.rx, i3: t.ry});
         this.run(pass, 'cols', [PW, PH], [this.cellsBuf, this.basis, this.tmp, this.xyb[c]], {i0: cs, i2: t.rx, i3: t.ry});
@@ -406,48 +356,58 @@ export class GpuMeasure {
         this.run(pass, 'epf', [t.rw, t.rh], [...current, this.sigmaBuf, ...next], {i0: PW, i1: cs, a: 1.65, b: 1.65 * 2 / 3});
         current = next;
       }
-      this.run(pass, 'linear', [t.rw, t.rh], [...current, ...l0().rgb], {i0: PW});
-      s2?.place(pass, l0().rgb, t);
-      const ccw = Math.ceil(t.cw / 8), cch = Math.ceil(t.ch / 8);
-      if (!(s2 && !wantBA)) {
-        this.ba.diffFromLoaded(pass);
-        this.run(pass, 'cells', [ccw, cch], [l0().map, this.out], {i0: t.rw, i1: t.rh, i2: (t.x - t.rx) / 8, i3: (t.y - t.ry) / 8, a: p, b: margin});
-      }
+      this.run(pass, 'linear', [t.rw, t.rh], [...current, ...this.rgb], {i0: PW});
+      this.pixels.place(pass, this.rgb, t);
       pass.end();
-      if (!(s2 && !wantBA)) encoder.copyBufferToBuffer(this.out, 0, this.read, t.readOffset, ccw * cch * 24);
-      this.ring.flush(); this.ba.ring.flush(); s2?.ring.flush();
+      this.ring.flush(); this.pixels.ring.flush();
       this.device.queue.submit([encoder.finish()]);
     }
-    if (s2 && !wantBA) await this.device.queue.onSubmittedWorkDone();
-    else {
-      await this.read.mapAsync(GPUMapMode.READ, 0, this.readBytes);
-      const all = new Float32Array(this.read.getMappedRange(0, this.readBytes).slice(0));
-      this.read.unmap();
-      for (const t of this.tiles) {
-        const ccw = Math.ceil(t.cw / 8), cch = Math.ceil(t.ch / 8), o = all.subarray(t.readOffset / 4);
-        for (let y = 0; y < cch; y++) for (let x = 0; x < ccw; x++) {
-          const k = (y * ccw + x) * 6, cell = (t.y / 8 + y) * stride + t.x / 8 + x;
-          cellSums[cell] = o[k]; blocks[cell] = o[k + 1]; max = Math.max(max, o[k + 2]);
-          sums[0] += o[k + 3]; sums[1] += o[k + 4]; sums[2] += o[k + 5];
-        }
+    const linear = await this.pixels.readPlanes();
+    if (this.destroyed || this.lost) throw Object.assign(new Error('GPU metric device is unavailable.'), {code: 'JXL_GPU'});
+    return this.measurePixels(linear, {p, margin, ssimulacra2: wantS2, butteraugli: wantBA});
+  }
+
+  measurePixels(linear, {p = 3, margin = 2, ssimulacra2: wantS2 = false, butteraugli: wantBA = true} = {}) {
+    const {width, height} = this, native = wantS2 === 'native';
+    this.activePixelBytes = linear.reduce((n, plane) => n + plane.byteLength, 0);
+    try {
+      const out = {};
+      if (wantBA) {
+        const map = new Float32Array(width * height), referenceRow = new Float32Array(width);
+        const table = butteraugliLinearTable(), rgba = this.rgba;
+        this.activePixelBytes += map.byteLength + referenceRow.byteLength;
+        let score = 0;
+        butteraugliRows((c, y) => {
+          for (let x = 0; x < width; x++) referenceRow[x] = table[rgba[(y * width + x) * 4 + c]];
+          return referenceRow;
+        }, (c, y) => linear[c].subarray(y * width, (y + 1) * width), width, height, (y, row) => {
+          map.set(row, y * width);
+          for (const value of row) score = Math.max(score, value);
+        });
+        Object.assign(out, {butteraugli: score, butteraugli3: pnorm(map, 3),
+          cells: cellSums(map, width, height, p), blocks: blockDistances({map, width, height}, margin)});
+        this.activePixelBytes -= map.byteLength + referenceRow.byteLength;
       }
+      if (wantS2) {
+        this.s2Reference ??= ssimulacra2Reference({rgba: this.rgba}, width, height, {immutable: true});
+        const candidate = native ? {rgba: toRGBA(linear, width, height)} : linear;
+        out[native ? 'ssimulacra2Native' : 'ssimulacra2'] = ssimulacra2(this.s2Reference, candidate, width, height).score;
+      }
+      return out;
+    } finally {
+      this.activePixelBytes = 0;
+      if (!this.destroyed) this.ring.reset();
     }
-    this.ring.reset(); this.ba.ring.reset(); s2?.ring.reset();
-    const n = width * height, butteraugli3 = sums.reduce((a, s, k) => a + Math.pow(s / n, 1 / (3 * (1 << k))), 0) / 3;
-    const out = s2 && !wantBA ? {} : {butteraugli: max, butteraugli3, cells: cellSums, blocks};
-    if (s2) out[native ? 'ssimulacra2Native' : 'ssimulacra2'] = (await s2.score()).score;
-    return out;
   }
 
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
-    this.s2?.destroy(); this.native?.destroy(); for (const b of this.buffers ?? []) b.destroy();
+    this.pixels?.destroy(); for (const b of this.buffers ?? []) b.destroy();
     this.buffers = []; this.levels?.destroy(); this.blockParams?.destroy(); this.consts?.destroy(); this.varWords?.destroy(); this.varData?.destroy();
-    this.read?.destroy(); this.ring?.destroy(); this.ba?.destroy();
-    for (const name of ['rgba', 'tileReferences', 'sharedReference', 'reference', 'referenceRgba', 'lutLo', 'coef', 'xyb',
-      'tmp', 'filtered', 'cellsBuf', 'sigmaBuf', 'basis', 'out', 'read', 'levels', 'blockParams', 'consts', 'varWords',
-      'varData', 'ba', 's2', 'native', 'ring', 'pipelines', 'tiles', 'device', 'lossState']) this[name] = null;
+    this.ring?.destroy();
+    for (const name of ['rgba', 's2Reference', 'pixels', 'coef', 'xyb', 'rgb', 'tmp', 'filtered',
+      'cellsBuf', 'sigmaBuf', 'basis', 'levels', 'blockParams', 'consts', 'varWords', 'varData', 'ring', 'pipelines', 'tiles', 'device', 'lossState']) this[name] = null;
   }
 }
 

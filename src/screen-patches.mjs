@@ -195,7 +195,7 @@ export function writePatchDictionary(w, dictionary, alpha) {
 
 function* patchFraction(steps, start, span) {
   let step, hurry;
-  while (!(step = steps.next(hurry)).done) hurry = yield scaled(step.value, done => start + span * done);
+  try { while (!(step = steps.next(hurry)).done) hurry = yield scaled(step.value, done => start + span * done); } finally { if (!step?.done) steps.return?.(); }
   return step.value;
 }
 

@@ -1,11 +1,7 @@
-import {wasmModule, hasWasmModule, suppliedWasm, compileWasm} from './wasm-modules.mjs';
+import {kernelModule, compileKernels, kernelsSupported} from './kernel-runtime.mjs';
 // SPDX-License-Identifier: MIT
 import {fault} from './fault.mjs';
 import {wasmRequired} from './capture-wasm-error.mjs';
-import {CAPTURE as CAPTURE_ALL, CAPTURE_UPLOAD, CAPTURE_LEAN, CAPTURE_PHOTO} from './capture-kernels-bytes.mjs';
-const CAPTURE = typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true ? CAPTURE_UPLOAD
-  : typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true ? CAPTURE_LEAN : CAPTURE_ALL;
-import {wasmBytes} from './wasm-text.mjs';
 import {weightedTables} from './weighted-policy.mjs';
 import {kernelHooks} from './kernel-hooks.mjs';
 import {BitWriter} from './bits.mjs';
@@ -16,14 +12,13 @@ export const LOG_MANTISSA = Uint8Array.of(0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14
 
 const MEMORY_PAGES = 640;
 const P = 65536, DIV = 16, WEIGHTS = 272, BANDS = 32768, CONTEXTS = 33280, LOG = 33792, HEADS = 262144, SCRATCH = 832;
-const SIMD_PROBE = 'AGFzbQEAAAABBQFgAAF/AwIBAAcJAQVwcm9iZQAACgsBCQBBAP0R/RsACw==';
 export const kernelFail = cause => Object.assign(new Error("The capture WebAssembly kernel could not run: check memory. Under a CSP, add 'wasm-unsafe-eval' to script-src.", {cause}), {code: 'JXL_WASM'});
 let compiled, engine, simd, resident;
 
-const SIMD_OK = () => hasWasmModule('simd') || !suppliedWasm() && WebAssembly.validate(Uint8Array.from(atob(SIMD_PROBE), c => c.charCodeAt(0)));
+const SIMD_OK = kernelsSupported;
 
 export async function compileCaptureKernels() {
-  try { return await compileWasm('capture', () => wasmBytes(CAPTURE)) && prepareCaptureKernels(); } catch { return false; }
+  try { return await compileKernels() && prepareCaptureKernels(); } catch { return false; }
 }
 
 export function prepareCaptureKernels() {
@@ -31,7 +26,7 @@ export function prepareCaptureKernels() {
     if (typeof WebAssembly !== 'object' || new Uint8Array(new Uint32Array([1]).buffer)[0] !== 1) return false;
     simd ??= SIMD_OK();
     if (!simd) return false;
-    compiled ||= wasmModule('capture', () => wasmBytes(CAPTURE));
+    compiled ||= kernelModule();
     return true;
   } catch { return false; }
 }
@@ -54,7 +49,7 @@ export function captureWeighted(w, targets, plane, width, height, offset, contex
       i32.set(plane.subarray(0, n), base >> 2);
       i32.fill(0, state >> 2, (state >> 2) + (width + 2) * 10);
     } else i32.set(plane.subarray(y0 * width, n), (base >> 2) + y0 * width);
-    if (y0 < height) engine.weighted(base + y0 * width * 4, width, height, offset, residual + y0 * width * 4, property + y0 * width * 4, y0, 0, 0, DIV, WEIGHTS, state);
+    if (y0 < height) engine.captureWeighted(base + y0 * width * 4, width, height, offset, residual + y0 * width * 4, property + y0 * width * 4, y0, 0, 0, DIV, WEIGHTS, state);
     if (keep > 1) {
       new Int16Array(buf, sPlane, n).set(plane.subarray(0, n));
       engine.smooth(sPlane, width, 0, height, sVal, sCtx);
@@ -190,7 +185,7 @@ export function captureWeightedLanes(planes, width, height, minimum, small, grad
     if (end > MEMORY_BYTES) return null;
     reserve(end);
     const buffer = engine.memory.buffer, samples = new Int16Array(buffer, plane, n * 4);
-    if (answers) answers.forEach((a, c) => {
+    if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && answers) answers.forEach((a, c) => {
       new Uint32Array(buffer, residual + c * n * 4, n).set(a.residuals.subarray(0, n));
       new Int32Array(buffer, property + c * n * 4, n).set(a.properties.subarray(0, n));
     });
@@ -436,7 +431,7 @@ export function captureTokens(writer, models, index, codes, configs, fastBits, f
       i32.set(model.pieceDistance.subarray(0, count), distances >> 2);
       u8.set(model.pieceContext.subarray(0, count), contexts);
       for (let k = 0; k < count;) {
-        k = engine.tokens(values, distances, contexts, k, count, hmap, fast, syms, codeTable, cfg, lengthConfig, distanceConfig,
+        k = engine.captureTokens(values, distances, contexts, k, count, hmap, fast, syms, codeTable, cfg, lengthConfig, distanceConfig,
           dcodes, copy ? copy.minSymbol : 0, copy?.spatial ? 1 : 0, sLen, sCodes, out, out + TOKEN_OUT, state);
         const written = i32[(state >> 2) + 3] - out;
         if (writer.at + written + 16 >= writer.bytes.length) writer.grow(written + 16);
@@ -451,7 +446,7 @@ export function captureTokens(writer, models, index, codes, configs, fastBits, f
 }
 
 const PATCH_RUNS = 1 << 17, PATCH_BAND = 1 << 22;
-export function capturePatchMarks(words, width, height, side, limit) {
+export function capturePatchMarks(words, width, height, side, limit, least) {
   if (!prepareCaptureKernels()) return null;
   try {
     ready();
@@ -469,7 +464,7 @@ export function capturePatchMarks(words, width, height, side, limit) {
       new Uint32Array(buf, rows, (to - from) * width).set(words.subarray(from * width, to * width));
       engine.patchInk(rows + (y - from) * width * 4, width, Math.min(band, height - y), y, height, ink + y * width, above);
     }
-    const found = engine.patchMarks(ink, width, height, stack, PATCH_RUNS, boxes, limit, side);
+    const found = engine.patchMarks(ink, width, height, stack, PATCH_RUNS, boxes, limit, side, least);
     return found < 0 ? null : new Int32Array(buf, boxes, found * 4).slice();
   } catch { return null; }
 }
@@ -585,14 +580,14 @@ function photoReady() {
     if (!photo) {
       if (!photoOK()) return 'off';
       const memory = new WebAssembly.Memory({initial: 48, maximum: 640});
-      const simd = new WebAssembly.Instance(wasmModule('simd', () => wasmBytes(CAPTURE_PHOTO)), {env: {memory}}).exports;
+      const simd = new WebAssembly.Instance(kernelModule(), {env: {memory}}).exports;
       photo = {memory, simd, u8: new Uint8Array(memory.buffer), i32: new Int32Array(memory.buffer)};
     }
   } catch { return 'off'; }
   kernelHooks.channel = channel; kernelHooks.dct = dct; kernelHooks.ycbcrTile = ycbcrTile; kernelHooks.rgbTiles = rgbTile; kernelHooks.photoTile = photoTile;
   return 'simd';
 }
-const PHOTO_KERNELS = {prepare: async () => photoOK() && compileWasm('simd', () => wasmBytes(CAPTURE_PHOTO)), ready: photoReady,
+const PHOTO_KERNELS = {prepare: async () => photoOK() && compileKernels(), ready: photoReady,
   tokenGroup: captureTokenGroup, plane: capturePlane, opaque: captureOpaque, tokens: () => photo?.simd.tokCount ? TOKEN_KERNELS : null};
 let tileTables = null, tileBand = null;
 

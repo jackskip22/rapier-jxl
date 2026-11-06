@@ -4,6 +4,7 @@ import {screenPhotoSteps} from '../screen-photo-mixed.mjs';
 export {encodeOptions, callOptions} from './encode-options.mjs';
 import {gpuQueue} from '../gpu-queue.mjs';
 import {exclusive} from '../turn.mjs';
+import {journalNext} from '../step-journal.mjs';
 export function targetSource(data, ...descriptions) {
   if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray))
     throw fail('JXL_INPUT', 'Measured targets require 8-bit straight sRGB RGBA.');
@@ -16,7 +17,7 @@ export function targetSource(data, ...descriptions) {
   }
 }
 export async function drain(iterator, hooks = {}, gpuAnswer) {
-  const {signal, onProgress} = hooks;
+  const {signal, onProgress, journal} = hooks;
   check(signal);
   let last = 0, told = 0, reply, lastTurn = performance.now(), failed = false, channel = typeof MessageChannel === 'function' ? undefined : false,
     immediate = typeof setImmediate === 'function';
@@ -34,12 +35,13 @@ export async function drain(iterator, hooks = {}, gpuAnswer) {
   try {
     for (;;) {
       check(signal);
-      const step = await iterator.next(reply);
+      const step = await (journal ? journalNext(iterator, reply) : iterator.next(reply));
       check(signal);
       if (step.done) { onProgress?.(1); check(signal); return step.value ?? iterator.bytes; }
+      if (journal && (step.value?.unit !== undefined || step.value?.unitDone !== undefined || step.value?.unitFailed !== undefined)) { reply = await journal(step.value); continue; }
       if (step.value?.gpu) { reply = step.value.later ? gpu(step.value.gpu) : await gpu(step.value.gpu); continue; }
       if (step.value?.await !== undefined) { reply = await step.value.await; continue; }
-      if (step.value?.capture) { const {data, width, height, colorSpace, effort, tools} = step.value.capture; await compileCaptureKernels(); reply = await exclusive(() => drain(encodeCaptureSteps(data, width, height, {colorSpace, effort, [CAPTURE_TOOLS]: tools}), {signal}), signal); continue; }
+      if (step.value?.capture) { const {data, width, height, colorSpace, effort, tools} = step.value.capture; await compileCaptureKernels(); reply = await exclusive(() => drain(encodeCaptureSteps(data, width, height, {colorSpace, effort, [CAPTURE_TOOLS]: tools}), {signal, journal}), signal); continue; }
       if (step.value?.screenPhoto) {
         try {
           await compileCaptureKernels();

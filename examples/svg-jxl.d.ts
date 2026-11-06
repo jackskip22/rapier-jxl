@@ -2,7 +2,7 @@
 import type {CaptureCompleteCodec} from 'rapier-jxl/codec';
 import type {Effort} from 'rapier-jxl/capture-complete';
 
-export type CaptureEncoder = Pick<CaptureCompleteCodec, 'capture' | 'prepare'>;
+export type CaptureEncoder = Pick<CaptureCompleteCodec, 'capture'>;
 /** quality: WebP's 0-1 scale, 0.92 by default; exact: no lossy try; cache: shared between calls, a picture is coded once. */
 export type SvgJxlOptions = {quality?: number; exact?: boolean; effort?: Effort; webgpu?: false | 'required'; signal?: AbortSignal;
   onProgress?: (fraction: number) => void; codec?: CaptureEncoder; cache?: Map<string, unknown>};
@@ -10,4 +10,7 @@ export type SvgJxlOptions = {quality?: number; exact?: boolean; effort?: Effort;
 export type SvgJxlPicture = {kind: string; bytes?: number; jxl?: number; route: 'jpeg' | 'lossless' | 'quality' | 'kept'; tries?: {quality?: number; jpeg?: number; lossless?: number}; kept?: string; alpha?: boolean; reader?: string; url?: string};
 export type SvgJxlRecord = {bytes: number; jxl: number; pictures: SvgJxlPicture[]; fonts: number};
 /** The same kind back, and the record. */
-export function svgJxl<T extends string | Blob>(input: T, options?: SvgJxlOptions): Promise<{svg: T; record: SvgJxlRecord}>;
+export function svgJxl<T extends string | Blob>(input: T, options?: SvgJxlOptions): Promise<{
+  svg: T extends string ? string : T extends File ? File : Blob;
+  record: SvgJxlRecord;
+}>;

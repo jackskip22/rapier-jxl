@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
+import {BA_MEMORY, butteraugliAllocation, butteraugliRowsLayout} from './butteraugli-memory.mjs';
+import {ssimulacra2Allocation} from './ssimulacra2-memory.mjs';
 export const MEMORY_BUDGET = 1_073_741_824;
 export const WORKER_SCRATCH_BYTES = 3 * 32 * 32 * 64 * 7 + 3 * 32 * 32 * 4;
 const MEMORY_BAND_ROWS = [128, 64, 32, 16, 8], MEMORY_RECON_MARGIN = 8, UNKNOWN_WHOLE_PIXELS = 524288;
-const BUTTERAUGLI_RING_BYTES = 22992;
 const RECON_SCRATCH = 2 * 256 * 256 * 8;
 
 function reconstructionBytes(width, padded, blocks) {
@@ -31,17 +32,12 @@ export function memoryGeometry(pixels, {width, height} = {}) {
     tiles: mul(Math.ceil(stride / 8), Math.ceil(rows / 8))};
 }
 
-function memoryHalfGeometry(w, h) {
-  const width = Math.ceil(w / 2), height = Math.ceil(h / 2);
-  return {width, height, pixels: mul(width, height), active: width >= 8 && height >= 8};
-}
-
-export function butteraugliBytes(width, height) {
+export function butteraugliBytes(width, height, options = {}) {
   integer(width, 'width', 1); integer(height, 'height', 1);
-  const n = mul(width, height), sub = memoryHalfGeometry(width, height), d = sub.active ? sub.pixels : 0;
-  const reference = mul(80, memorySum(n, d));
-  const work = memorySum(Math.max(mul(160, n), memorySum(mul(8, n), mul(184, d))), mul(8, width));
-  return {reference, work};
+  if (width < 8 || height < 8) return {reference:0, work:0, prepare:0, cache:0};
+  const allocation = butteraugliAllocation(width, height, options);
+  return {reference:allocation.referenceBytes, cache:allocation.cacheBytes, prepare:allocation.prepareWorkBytes,
+    work:memorySum(Math.max(allocation.workBytes, allocation.prepareWorkBytes), allocation.fixedTableBytes)};
 }
 
 export function bandBytes(width, height, rows = 8, {map = false} = {}) {
@@ -52,30 +48,19 @@ export function bandBytes(width, height, rows = 8, {map = false} = {}) {
   const sub = mul(paddedWidth, subHeight), blocks = mul(Math.ceil(width / 8), Math.ceil(height / 8));
   const image = memorySum(mul(16, sub), mul(34, sub / 64), 3 * 64 * 4);
   const reconstruction = reconstructionBytes(paddedWidth, sub, sub / 64);
-  const score = memorySum(mul(12, sub), mul(BUTTERAUGLI_RING_BYTES, width), mul(16, width));
+  const ba = width >= 8 && height >= 8 ? butteraugliRowsLayout(width, height) : null;
+  const score = ba ? memorySum(ba.workBytes, ba.fixedTableBytes, mul(4, width), BA_MEMORY.gaussian - BA_MEMORY.linear) : 0;
   const result = map ? mul(8, n) : mul(16, blocks);
-  return {rows, padded: sub, result, imageBytes: image, work: memorySum(image, Math.max(reconstruction, score), result)};
+  return {rows, padded: sub, result, imageBytes: image, work: memorySum(image, score, Math.max(reconstruction, mul(12, sub)), result)};
 }
 
-export function ssimulacra2Bytes(width, height, {native = false, map = false} = {}) {
+export function ssimulacra2Bytes(width, height, {native = false, map = false, cacheBytes = 0} = {}) {
   integer(width, 'width', 1); integer(height, 'height', 1);
-  if (native && map) throw new Error('native SSIMULACRA2 has no map');
-  const n = mul(width, height), candidate = mul(native ? 4 : 12, n), scales = [];
-  let w = width, h = height;
-  for (let s = 0; s < 6; s++) {
-    if (w < 8 || h < 8) break;
-    if (s) { w = Math.ceil(w / 2); h = Math.ceil(h / 2); }
-    scales.push({width: w, height: h, pixels: mul(w, h)});
-  }
-  let peak = 0;
-  for (let i = 0; i < scales.length; i++) {
-    const cur = scales[i], next = scales[i + 1];
-    const source = i ? mul(48, cur.pixels) : 0, ring = mul(native ? 612 : 896, cur.width);
-    const active = map ? memorySum(mul(8, n), mul(i ? 24 : 16, cur.pixels), ring) : ring;
-    peak = Math.max(peak, memorySum(candidate, source, active));
-    if (next) peak = Math.max(peak, memorySum(candidate, source, mul(48, next.pixels), map ? mul(8, n) : 0));
-  }
-  return {work: peak, candidate, scales};
+  const allocation = ssimulacra2Allocation(width, height,
+    {referenceRgba:false, distortedRgba:native, wantMap:map, cacheBytes});
+  return {work:allocation.workBytes - allocation.cacheBytes, candidate:allocation.candidateBytes,
+    scales:allocation.scales, arenaBytes:allocation.arenaBytes, hostBytes:allocation.hostBytes,
+    retainedArenaBytes:allocation.retainedArenaBytes};
 }
 
 const REQUIRED = ['externalBytes', 'searchBytes', 'entropyBytes', 'outputBytes', 'gpuBytes'];
@@ -89,7 +74,6 @@ export function memoryPlan(pixels, options = {}) {
   }
   if (!g) unknown.unshift('dimensions');
   const exact = options.exact ?? true, map = options.map ?? false;
-  if (!exact && map) throw new Error('native SSIMULACRA2 has no map');
   const cores = integer(options.cores ?? 2, 'cores', 1);
   const requestedWorkers = integer(options.workers ?? 0, 'workers');
   const requestedCache = integer(options.cacheBytes ?? 0, 'cacheBytes');
@@ -115,16 +99,17 @@ export function memoryPlan(pixels, options = {}) {
   const pre = mul(24, padded), dctBytes = memorySum(mul(48, padded), mul(4, tiles));
   const prepared = memorySum(ambient, input, pre, metricInput, extraReference, reserve.searchBytes, reserve.outputBytes);
   const reconstruction = reconstructionBytes(width, padded, blocks);
-  const metric = ssimulacra2Bytes(width, height, {native: !exact, map});
   const ba = butteraugliBytes(width, height);
   function stagesFor(banded, rows, dct = false, workers = 0, cacheBytes = 0) {
+    const metric = ssimulacra2Bytes(width, height, {native: !exact, map, cacheBytes});
+    const baWork = banded ? 0 : butteraugliBytes(width, height, {cacheBytes}).work;
     const retained = memorySum(prepared, dct ? dctBytes : 0, cacheBytes, mul(workers, workerRuntime), banded ? 0 : ba.reference);
     const stages = {
       prepare: memorySum(ambient, input, metricInput, extraReference, mul(56, padded), mul(8, blocks)),
       reconstruct: memorySum(retained, reconstruction),
       ssimulacra2: memorySum(retained, metric.work),
       butteraugli: banded ? memorySum(retained, bandBytes(width, height, rows, {map}).work)
-        : memorySum(retained, mul(24, pixels), mul(12, pixels), ba.work, mul(16, blocks)),
+        : memorySum(retained, mul(24, pixels), mul(12, pixels), baWork, mul(16, blocks)),
       entropy: memorySum(retained, reserve.entropyBytes),
     };
     if (workers) {
@@ -157,7 +142,14 @@ export function memoryPlan(pixels, options = {}) {
       workers = Math.max(0, Math.min(requestedWorkers, cores - 1, runtimeCap, jobCap));
     }
     stages = stagesFor(banded, bandRows, dct, workers);
-    cacheBytes = Math.min(requestedCache, Math.max(0, budgetBytes - maximum(stages)));
+    let lower = 0, upper = Math.min(requestedCache, Math.max(0, budgetBytes - maximum(stages)));
+    if (maximum(stagesFor(banded, bandRows, dct, workers, upper)) <= budgetBytes) lower = upper;
+    while (lower < upper) {
+      const trial = lower + Math.ceil((upper - lower) / 2);
+      if (maximum(stagesFor(banded, bandRows, dct, workers, trial)) <= budgetBytes) lower = trial;
+      else upper = trial - 1;
+    }
+    cacheBytes = lower;
     stages = stagesFor(banded, bandRows, dct, workers, cacheBytes); used = maximum(stages);
   }
   return Object.freeze({known, fits: known && used <= budgetBytes, used, budgetBytes, unknown: Object.freeze(unknown),
@@ -184,7 +176,9 @@ export function s2SearchBytes(width, height) {
   const bandPx = mul(W, Math.min(640, H));
   const map = memorySum(mul(8, pixels), mul(259, blocks));
   const shape = memorySum(mul(24, bandPx), reconstructionBytes(width, bandPx, bandPx / 64), map);
-  const picture = mul(32, padded), ranking = memorySum(picture, decoded, pixels > 2048 * 2048 ? 0 : picture);
+  const scorer = ssimulacra2Allocation(width, height, {referenceRgba:true, distortedRgba:true, cacheBytes:cache});
+  const scoreWork = scorer.workBytes - scorer.candidateBytes - scorer.cacheBytes;
+  const picture = mul(32, padded), ranking = memorySum(picture, decoded, pixels > 2048 * 2048 ? 0 : picture, scoreWork);
   return memorySum(base, cache, mul(3, decoded), Math.max(shape, ranking));
 }
 

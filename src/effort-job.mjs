@@ -86,7 +86,7 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, photo = 
   const fast = captured instanceof Uint8Array && captured.length < stream.length ? captured : stream;
   const core = losslessSteps(data, width, height, {shape, colorSpace, analysis});
   let step, reply, hurried = false;
-  while (!(step = core.next(reply)).done) { reply = yield scaled(step.value, done => done / 2); hurried ||= !!reply; }
+  try { while (!(step = core.next(reply)).done) { reply = yield scaled(step.value, done => done / 2); hurried ||= !!reply; } } finally { if (!step?.done) core.return?.(); }
   let best = step.value.length < fast.length ? step.value : fast;
   if (hurried) return best;
   const direct = shape.palette ? {...shape, palette: null} : shape;
@@ -110,7 +110,7 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, photo = 
       try {
         const search = searches[i]();
         let step, reply, hurried = false;
-        while (!(step = search.next(reply)).done) hurried = !!(reply = yield scaled(step.value, done => 0.5 + (i + done) / (2 * count)));
+        try { while (!(step = search.next(reply)).done) hurried = !!(reply = yield scaled(step.value, done => 0.5 + (i + done) / (2 * count))); } finally { if (!step?.done) search.return?.(); }
         if (step.value && step.value.length < best.length) best = step.value;
         if (hurried) return best;
       } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }

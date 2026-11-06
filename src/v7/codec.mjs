@@ -1,6 +1,7 @@
 import {createBoundCodec} from './codec-bound.mjs';
 import {MODULES} from './codec-modules.mjs';
 import {fail} from './primitives.mjs';
+import './preparation-jpeg.mjs';
 
 export function createCodec(config = {}) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) throw fail('JXL_OPTIONS', 'Codec configuration must be an object.');

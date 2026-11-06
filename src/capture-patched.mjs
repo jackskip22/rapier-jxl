@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: MIT
-import {encodeAtlasSteps} from './capture-codec.mjs';
-import {WHOLE} from './memory-device.mjs';
+import {encodeAtlasSteps, encodeCaptureSteps, captureExact} from './capture-codec.mjs';
+import {WHOLE, bandRows} from './memory-device.mjs';
 import {capturePatches, PEEL_ADD, PEEL_MUL} from './capture-patches.mjs';
 import {capturePatchMarks} from './capture-kernels.mjs';
 import {pixelKeys} from './screen-crop.mjs';
-import {pageFrameSteps} from './capture-page-bands.mjs';
+import {pageFrameSteps} from './photo-frame-bands.mjs';
 import {fusedFrameRows} from './capture-fused.mjs';
-import {groupPass} from './capture-group-pass.mjs';
-import {SCAN, DCT8_DENSITY} from './dct8-contexts.mjs';
-import {acBlockContexts, acBlockLevels} from './capture-vardct.mjs';
-import {regionAnsCoding} from './capture-ans-regions.mjs';
+import {screenPhotoRegions} from './screen-photo-regions.mjs';
+import {expandPhotoRegions} from './screen-photo-borders.mjs';
+import {photoMasks} from './screen-photo-mask.mjs';
+import {flatSamples} from './screen.mjs';
+import {fault} from './fault.mjs';
+import {CAPTURE_PROTECTION} from './capture-protection.mjs';
 
 export function patchBoxes(rects, width, height) {
   let out = [];
@@ -62,29 +64,45 @@ export function uncoveredBoxes(width, box, covered) {
 const NEAR = 2, STANDS_OUT = 96, STEP = 32, PICTURE_KEPT = 0.9;
 const apart = (a, b, t) => Math.abs((a >> 16) - (b >> 16)) >= t || Math.abs((a >> 8 & 255) - (b >> 8 & 255)) >= t || Math.abs((a & 255) - (b & 255)) >= t;
 const cellOf = v => (v >> 9 & 0x7c00) | (v >> 6 & 0x3e0) | (v >> 3 & 0x1f);
-const RING = 2;
-export function groundCells(data, width, height, box) {
-  const cells = new Uint8Array(32768);
-  let n = 0;
-  for (let y = Math.max(0, box.y - RING); y < Math.min(height, box.y + box.h + RING); y++) for (let x = Math.max(0, box.x - RING); x < Math.min(width, box.x + box.w + RING); x++) {
-    if (y >= box.y && y < box.y + box.h && x >= box.x && x < box.x + box.w) continue;
-    const o = (y * width + x) * 4, r = data[o] >> 3, g = data[o + 1] >> 3, b = data[o + 2] >> 3;
-    n++;
-    for (let i = Math.max(0, r - 1); i <= Math.min(31, r + 1); i++) for (let j = Math.max(0, g - 1); j <= Math.min(31, g + 1); j++) for (let k = Math.max(0, b - 1); k <= Math.min(31, b + 1); k++) cells[i << 10 | j << 5 | k] = 1;
-  }
+const RING = 2, STRONG = 2, STRONG_KEPT = 0.5, STRONG_BITS = 3, FLAT = 8, FLAT_BOX = 8192;
+export function groundCells(data, width, height, box, text = null) {
+  const cells = new Uint8Array(32768), counts = new Map();
+  let n = 0, most = 0, common = 0;
+  const ring = visit => {
+    for (let y = Math.max(0, box.y - RING); y < Math.min(height, box.y + box.h + RING); y++) for (let x = Math.max(0, box.x - RING); x < Math.min(width, box.x + box.w + RING); x++) {
+      if (y >= box.y && y < box.y + box.h && x >= box.x && x < box.x + box.w) continue;
+      if (text?.[y * width + x]) continue;
+      const o = (y * width + x) * 4;
+      visit(data[o] << 16 | data[o + 1] << 8 | data[o + 2]);
+    }
+  };
+  ring(v => {
+    const r = v >> 19, g = v >> 11 & 31, b = v >> 3 & 31, c = (counts.get(v) ?? 0) + 1;
+    counts.set(v, c); n++; if (c > most) { most = c; common = v; }
+    for (let i = Math.max(0, r - 1); i <= Math.min(31, r + 1); i++) for (let j = Math.max(0, g - 1); j <= Math.min(31, g + 1); j++) for (let k = Math.max(0, b - 1); k <= Math.min(31, b + 1); k++) cells[i << 10 | j << 5 | k] |= 1;
+  });
+  ring(v => { if (apart(v, common, STANDS_OUT)) cells[cellOf(v)] |= STRONG; });
   return n < 16 ? null : cells;
 }
 export function solidInk(data, width, box, ground = null) {
   const {x: X, y: Y, w, h} = box, n = w * h, px = new Int32Array(n);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const o = ((Y + y) * width + X + x) * 4; px[y * w + x] = data[o] << 16 | data[o + 1] << 8 | data[o + 2]; }
   const counts = new Map();
-  let c = 0, most = 0;
+  let c = 0, most = 0, strong = false;
   for (let y = 0; y < h; y++) for (let x = 0, o = y * w; x < w;) {
     let e = x + 1; while (e < w && px[o + e] === px[o + x]) e++;
-    if (e - x > 1 && !ground?.[cellOf(px[o + x])]) { const v = (counts.get(px[o + x]) ?? 0) + e - x - 1; counts.set(px[o + x], v); if (v > most) { most = v; c = px[o + x]; } }
+    if (e - x > 1 && ground && ground[cellOf(px[o + x])] & STRONG) strong = true;
+    if (e - x > 1 && (!ground?.[cellOf(px[o + x])] || ground[cellOf(px[o + x])] & STRONG)) { const v = (counts.get(px[o + x]) ?? 0) + e - x - 1; counts.set(px[o + x], v); if (v > most) { most = v; c = px[o + x]; } }
+    else if (e - x > 1) counts.set(px[o + x], (counts.get(px[o + x]) ?? 0) + e - x - 1);
     x = e;
   }
   if (ground ? !most : most * 50 < n) return null;
+  if (strong && !ground[cellOf(c)]) {
+    const rivals = new Map();
+    for (const [v, runs] of counts) if (runs >= most && ground[cellOf(v)] && !(ground[cellOf(v)] & STRONG)) rivals.set(v, 0);
+    for (let k = 0; k < n; k++) if (rivals.has(px[k])) rivals.set(px[k], rivals.get(px[k]) + 1);
+    if ([...rivals.values()].every(m => 2 * m >= n)) strong = false;
+  }
   const grown = mask => {
     const row = new Uint8Array(n);
     for (let y = 0; y < h; y++) for (let x = 0, o = y * w, last = -Infinity; x < w + NEAR; x++) {
@@ -101,7 +119,7 @@ export function solidInk(data, width, box, ground = null) {
   const ofC = new Uint8Array(n), steps = new Uint8Array(n);
   let keep;
   if (ground) {
-    for (let k = 0; k < n; k++) if (!apart(px[k], c, STANDS_OUT) || !ground[cellOf(px[k])]) ofC[k] = 1;
+    for (let k = 0; k < n; k++) if (!apart(px[k], c, STANDS_OUT) || !ground[cellOf(px[k])] || strong && ground[cellOf(px[k])] & STRONG) ofC[k] = 1;
     keep = grown(ofC);
   } else {
     for (let k = 0; k < n; k++) if (px[k] === c) ofC[k] = 1;
@@ -140,7 +158,21 @@ export function solidInk(data, width, box, ground = null) {
   const out = [];
   for (let i = 0; i < parent.length; i++) if (parent[i] === i) { const [x0, y0, x1, y1] = bounds[i]; out.push({x: X + x0, y: Y + y0, width: x1 - x0 + 1, height: y1 - y0 + 1}); }
   const parts = patchBoxes(out, Infinity, Infinity);
-  if (ground && parts.reduce((s, r) => s + r.w * r.h, 0) >= PICTURE_KEPT * n) return null;
+  if (ground && parts.reduce((s, r) => s + r.w * r.h, 0) >= (strong ? STRONG_KEPT : PICTURE_KEPT) * n) return null;
+  if (strong) {
+    const inPart = new Uint8Array(n);
+    for (const r of parts) for (let y = r.y - Y; y < r.y - Y + r.h; y++) inPart.fill(1, y * w + r.x - X, y * w + r.x - X + r.w);
+    let bits = 0, out = 0, off = 0;
+    for (let y = 1; y < h; y++) for (let x = 1; x < w; x++) {
+      if (inPart[y * w + x]) continue;
+      out++;
+      for (let ch = 0, i = ((Y + y) * width + X + x) * 4; ch < 3; ch++, i++) {
+        const Wv = data[i - 4], N = data[i - width * 4], NW = data[i - width * 4 - 4], r = Math.abs(data[i] - Math.min(Math.max(Wv + N - NW, Math.min(Wv, N)), Math.max(Wv, N)));
+        bits += Math.log2(1 + r); if (r > FLAT) off++;
+      }
+    }
+    if ((off || n < FLAT_BOX) && bits < STRONG_BITS * out) return null;
+  }
   parts.kept = {x: X, y: Y, w, h, keep};
   return parts;
 }
@@ -221,16 +253,18 @@ function frameRows(data, width, dx, dy, boxes) {
   };
 }
 
-function textPieces(data, width, height, exactRects, regions = []) {
+function textPieces(data, width, height, exactRects, regions = [], protectedBoxes = [], readUnboxed = null) {
   const own = exactRects.filter(r => r.solidText === true), solid = patchBoxes(own, width, height);
-  const plain = patchBoxes(exactRects.filter(r => r.solidText !== true), width, height);
+  const plain = [...protectedBoxes, ...patchBoxes(exactRects.filter(r => r.solidText !== true), width, height)];
   const meets = (b, r) => b.x < r.x + r.width && r.x < b.x + b.w && b.y < r.y + r.height && r.y < b.y + b.h;
   const callers = own.map(r => patchBoxes([r], width, height)[0]).filter(Boolean);
+  let textMask = null;
   const onPicture = b => {
     if (!regions.some(r => meets(b, r))) return [b];
+    textMask ??= boxMask([...callers, ...plain], width, height);
     const kept = [];
     const parts = callers.filter(r => r.x >= b.x && r.y >= b.y && r.x + r.w <= b.x + b.w && r.y + r.h <= b.y + b.h)
-      .flatMap(r => { const ground = groundCells(data, width, height, r), ink = ground && solidInk(data, width, r, ground); if (ink) kept.push(ink.kept); return ink || [r]; });
+      .flatMap(r => { const ground = groundCells(data, width, height, r, textMask), ink = ground && solidInk(data, width, r, ground); if (ink) kept.push(ink.kept); return ink || [r]; });
     if (!kept.length) return [b];
     const joined = patchBoxes(parts.map(r => ({x: r.x, y: r.y, width: r.w, height: r.h})), width, height);
     joined.kept = kept;
@@ -243,7 +277,7 @@ function textPieces(data, width, height, exactRects, regions = []) {
   }), glyphs = reads.flat();
   const ground = groundOf(solid.flatMap((b, i) => regions.some(r => meets(b, r)) ? [reads[i]] : []), width, height);
   if (!plain.length && !glyphs.length) return {pieces: [], blocks: []};
-  plain.push(...patchBoxes(unboxedMarks(data, width, height, [...plain, ...glyphs]), width, height));
+  plain.push(...patchBoxes(unboxedMarks(data, width, height, [...plain, ...glyphs], readUnboxed), width, height));
   const marks = pageMarks(data, width, height), covered = new Uint8Array(width * height);
   for (const g of marks?.groups ?? []) for (let i = 0; i < g.positions.length; i += 2)
     for (let r = 0, at = (g.positions[i + 1] * width + g.positions[i]); r < g.h; r++, at += width) covered.fill(1, at, at + g.w);
@@ -303,6 +337,7 @@ function groundOf(reads, width, height) {
   for (const read of reads) for (const r of read) for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) if (state[y * width + x] === 1) ground[y * width + x] = 1;
   return ground;
 }
+const boxMask = (boxes, width, height) => { const m = new Uint8Array(width * height); for (const b of boxes) for (let y = b.y; y < b.y + b.h; y++) m.fill(1, y * width + b.x, y * width + b.x + b.w); return m; };
 function uniformRuns(data, width, box, covered, runs, rest, depth) {
   const kind = (p, n, step) => {
     const i0 = p * 4, r = data[i0], g = data[i0 + 1], b = data[i0 + 2];
@@ -334,7 +369,7 @@ function uniformRuns(data, width, box, covered, runs, rest, depth) {
     i = e;
   }
 }
-const MARK_SIDE = 128, MARK_LONG = 2048, MARK_CONTRAST = 64;
+const MARK_SIDE = 128, MARK_LONG = 2048, MARK_CONTRAST = 64, GROUND_CONTRAST = 96;
 const grounded = (data, width, x, y, w, h) => {
   const counts = new Map(); let most = 0;
   for (let v = y; v < y + h; v++) for (let u = x, i = (v * width + x) * 4; u < x + w; u++, i += 4) {
@@ -342,29 +377,86 @@ const grounded = (data, width, x, y, w, h) => {
   }
   return most * 4 >= w * h;
 };
-function unboxedMarks(data, width, height, boxes) {
+const UNBOXED_PIXELS = 1 << 22;
+function unboxedSourceMarks(data, width, height, y0, h) {
+  const part = data.subarray(y0 * width * 4, (y0 + h) * width * 4);
+  const marks = capturePatchMarks(pixelKeys(part), width, h, MARK_LONG, 1 << 16, 1);
+  if (!marks) throw fault('JXL_LIMIT', 'The text-mark budget was exhausted; exact text could not be proved.');
+  const found = [];
+  for (let i = 0; i < marks.length; i += 4) {
+    const x = marks[i], y = marks[i + 1] + y0, w = marks[i + 2], mh = marks[i + 3];
+    if (Math.min(w, mh) <= MARK_SIDE) found.push({x, y, w, h: mh, ground: ringGround(data, width, height, x, y, w, mh)});
+  }
+  return strokes(data, width, height, found);
+}
+function unboxedMarks(data, width, height, boxes, readSource = null) {
   const boxed = new Uint8Array(width * height), out = [];
   for (const b of boxes) for (let y = b.y; y < b.y + b.h; y++) boxed.fill(1, y * width + b.x, y * width + b.x + b.w);
-  const rows = Math.max(1, Math.floor((1 << 22) / width));
+  const rows = Math.max(1, Math.floor(UNBOXED_PIXELS / width));
   for (let y0 = 0; y0 < height; y0 += rows) {
-    const h = Math.min(rows, height - y0), part = data.subarray(y0 * width * 4, (y0 + h) * width * 4);
-    const marks = capturePatchMarks(pixelKeys(part), width, h, MARK_LONG, 1 << 16);
-    if (!marks) continue;
-    for (let i = 0; i < marks.length; i += 4) {
-      const x = marks[i], y = marks[i + 1] + y0, w = marks[i + 2], mh = marks[i + 3];
-      if (Math.min(w, mh) > MARK_SIDE) continue;
+    const h = Math.min(rows, height - y0);
+    const sourceMarks = readSource ? readSource(y0, h) : unboxedSourceMarks(data, width, height, y0, h);
+    for (const {x, y, w, h: mh, ground} of sourceMarks) {
       let open = false;
       const lo = [255, 255, 255], hi = [0, 0, 0];
       for (let v = y; v < y + mh; v++) for (let u = x, k = v * width + x; u < x + w; u++, k++) {
         if (!boxed[k]) open = true;
         for (let c = 0; c < 3; c++) { const s = data[k * 4 + c]; if (s < lo[c]) lo[c] = s; if (s > hi[c]) hi[c] = s; }
       }
-      if (!open || (hi[0] - lo[0] < MARK_CONTRAST && hi[1] - lo[1] < MARK_CONTRAST && hi[2] - lo[2] < MARK_CONTRAST)) continue;
+      const off = c => { const g = ground >> (16 - 8 * c) & 255; return Math.max(hi[c] - g, g - lo[c]); };
+      const stands = hi.some((v, c) => v - lo[c] >= MARK_CONTRAST) || ground >= 0 && [0, 1, 2].some(c => off(c) >= GROUND_CONTRAST);
+      if (!open || !stands) continue;
       if (Math.max(w, mh) > MARK_SIDE && (Math.max(w, mh) < 3 * Math.min(w, mh) || !grounded(data, width, x, y, w, mh))) continue;
       out.push({x, y, width: w, height: mh});
     }
   }
   return out;
+}
+function ringGround(data, width, height, x, y, w, h) {
+  const counts = new Map(); let ring = 0, ground = -1, most = 0;
+  const count = (u, v) => {
+    if (u < 0 || v < 0 || u >= width || v >= height) return;
+    const i = (v * width + u) * 4, k = data[i] << 16 | data[i + 1] << 8 | data[i + 2], n = (counts.get(k) ?? 0) + 1;
+    ring++; counts.set(k, n); if (n > most) { most = n; ground = k; }
+  };
+  for (let u = x - 1; u <= x + w; u++) { count(u, y - 1); count(u, y + h); }
+  for (let v = y; v < y + h; v++) { count(x - 1, v); count(x + w, v); }
+  return ring && most * 2 >= ring ? ground : -1;
+}
+const STROKE_GAP = 16, EDGE_SIDE = 3;
+function strokes(data, width, height, marks) {
+  const at = (u, v) => { const i = (v * width + u) * 4; return data[i] << 16 | data[i + 1] << 8 | data[i + 2]; };
+  const stroke = (a, b, rows) => {
+    const [p, q, s0, s1] = rows ? [a.x + a.w, b.x, Math.max(a.y, b.y), Math.min(a.y + a.h, b.y + b.h)] : [a.y + a.h, b.y, Math.max(a.x, b.x), Math.min(a.x + a.w, b.x + b.w)];
+    if (q <= p || q - p > STROKE_GAP || s1 <= s0) return null;
+    const [aw, bw, a0, a1, b0, b1] = rows ? [a.w, b.w, a.y, a.y + a.h, b.y, b.y + b.h] : [a.h, b.h, a.x, a.x + a.w, b.x, b.x + b.w];
+    if (Math.min(aw, bw) > EDGE_SIDE || Math.abs(a0 - b0) > EDGE_SIDE - 1 || Math.abs(a1 - b1) > EDGE_SIDE - 1) return null;
+    const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y), w = Math.max(a.x + a.w, b.x + b.w) - x, h = Math.max(a.y + a.h, b.y + b.h) - y;
+    if (w > MARK_SIDE || h > MARK_SIDE) return null;
+    const ground = ringGround(data, width, height, x, y, w, h);
+    if (ground < 0) return null;
+    for (let t = p; t < q; t++) for (let r = s0; r < s1; r++) if ((rows ? at(t, r) : at(r, t)) === ground) return null;
+    return {x, y, w, h, ground};
+  };
+  let list = marks;
+  for (let joined = true; joined;) {
+    joined = false;
+    for (const rows of [true, false]) {
+      list.sort(rows ? (a, b) => a.x - b.x : (a, b) => a.y - b.y);
+      const kept = [];
+      for (let i = 0; i < list.length; i++) {
+        const a = list[i];
+        if (a.gone) continue;
+        for (let j = i + 1; j < list.length && (rows ? list[j].x : list[j].y) <= (rows ? a.x + a.w : a.y + a.h) + STROKE_GAP; j++) {
+          const b = list[j], one = !b.gone && stroke(a, b, rows);
+          if (one) { Object.assign(a, one); b.gone = true; joined = true; }
+        }
+        kept.push(a);
+      }
+      list = kept;
+    }
+  }
+  return list;
 }
 function pageMarks(data, width, height) {
   const rows = Math.floor((1 << 25) / width);
@@ -413,10 +505,97 @@ function inkFilled(data, width, masks) {
 }
 const placed = r => r.positions ? Array.from({length: r.positions.length >> 1}, (_, k) => ({x: r.positions[2 * k], y: r.positions[2 * k + 1], w: r.w, h: r.h})) : [r];
 
-export function* patchedPageSteps(source, width, height, {quality, regions = [], areas = [], qualityOf = () => quality, exactRects, colorSpace, exactOptions = {}}) {
-  const {pieces: all, blocks} = textPieces(source, width, height, exactRects, regions);
+function protectedPageBoxes(data, width, height) {
+  const valid = list => list.length && list.every((r, i) =>
+    [r.x, r.y, r.width, r.height].every(Number.isSafeInteger) && r.x >= 0 && r.y >= 0 && r.width > 0 && r.height > 0 &&
+    r.x + r.width <= width && r.y + r.height <= height && !list.slice(0, i).some(q =>
+      r.x < q.x + q.width && q.x < r.x + r.width && r.y < q.y + q.height && q.y < r.y + r.height));
+  const seeds = screenPhotoRegions(data, width, height, true);
+  if (!valid(seeds)) return null;
+  const regions = expandPhotoRegions(data, width, height, seeds, true);
+  if (!valid(regions)) return null;
+  const n = width * height;
+  const mayBeExact = n < 2000000 && flatSamples(data, width, height) <= 32 || regions.reduce((s, r) => s + r.width * r.height, 0) * 8 < n;
+  const exact = new Uint8Array(n).fill(1), masks = photoMasks(data, width, height, regions);
+  let photo = 0;
+  for (let i = 0; i < regions.length; i++) {
+    const r = regions[i], m = masks[i];
+    if (!m) continue;
+    for (let y = 0, k = 0; y < r.height; y++) for (let x = 0, p = (r.y + y) * width + r.x; x < r.width; x++, k++, p++)
+      if (!m.exact[k]) { exact[p] = 0; photo++; }
+  }
+  if (!photo) return null;
+  if (regions.length > 1) {
+    const x = Math.min(...regions.map(r => r.x)), y = Math.min(...regions.map(r => r.y));
+    const box = {x, y, width: Math.max(...regions.map(r => r.x + r.width)) - x, height: Math.max(...regions.map(r => r.y + r.height)) - y};
+    const [mask] = photoMasks(data, width, height, [box]);
+    if (!mask) return null;
+    for (let v = 0, k = 0; v < box.height; v++) for (let u = 0, p = (box.y + v) * width + box.x; u < box.width; u++, k++, p++)
+      if (mask.exact[k] && !exact[p]) { exact[p] = 1; photo--; }
+    if (!photo) return null;
+  }
+  const boxes = [];
+  let above = new Map();
+  for (let y = 0; y < height; y++) {
+    const here = new Map();
+    for (let x = 0, at = y * width; x < width;) {
+      if (!exact[at + x]) { x++; continue; }
+      let end = x + 1; while (end < width && exact[at + end]) end++;
+      const key = x + ':' + end, old = above.get(key);
+      const box = old ?? {x, y, w: end - x, h: 0};
+      if (!old) {
+        if (boxes.length === 1 << 16) return null;
+        boxes.push(box);
+      }
+      box.h++; here.set(key, box); x = end;
+    }
+    above = here;
+  }
+  return {boxes, mayBeExact};
+}
+
+function protectedLargeBoxes(data, width, height) {
+  const boxes = [], rows = bandRows(width);
+  for (let y = 0; y < height; y += rows) {
+    const h = Math.min(rows, height - y), part = data.subarray(y * width * 4, (y + h) * width * 4);
+    const protection = protectedPageBoxes(part, width, h);
+    const own = !protection || protection.mayBeExact ? [{x: 0, y: 0, w: width, h}] : protection.boxes;
+    if (boxes.length + own.length > 1 << 16) return null;
+    for (const r of own) boxes.push({...r, y: r.y + y});
+  }
+  return {boxes};
+}
+
+export function* patchedPageSteps(source, width, height, {quality, regions = [], unconfirmed = false, areas = [], qualityOf = () => quality, exactRects, colorSpace, exactOptions = {}, photoBlocks = null, photoBlockEffort, readingWebp, photoRects = [], photoAdmission, photoScoreMemo = null, baseline, textReading, [CAPTURE_PROTECTION]: collector}) {
+  const large = width * height > WHOLE, protection = large ? protectedLargeBoxes(source, width, height) : protectedPageBoxes(source, width, height);
+  const exact = () => encodeCaptureSteps(source, width, height, {...exactOptions, colorSpace, maxError: 0});
+  let unboxedSource = null;
+  const readUnboxed = width * height <= UNBOXED_PIXELS
+    ? (y0, h) => unboxedSource ??= unboxedSourceMarks(source, width, height, y0, h) : null;
+  const requested = textPieces(source, width, height, exactRects, regions, [], readUnboxed);
+  if (!protection) unboxedSource = null;
+  const requiredPieces = requested.pieces.flatMap(piece => placed(piece).map(position => ({...position, mask: piece.mask})));
+  if (textReading) textReading.pieces = requiredPieces;
+  const bare = baseline ? yield* scaled(baseline(requiredPieces), 0, 0) : null;
+  const exactFile = function* () { return bare && captureExact(bare.bytes) ? bare.bytes : yield* exact(); };
+  const shorter = bytes => bare?.exact && bare.bytes.length <= bytes.length && (!photoAdmission || photoAdmission.accepts(bare.bytes)) ? bare.bytes : bytes;
+  if (!protection && large) return null;
+  if (!protection && unconfirmed) return shorter(yield* exactFile());
+  let {pieces: all, blocks} = protection?.boxes.length ? textPieces(source, width, height, exactRects, regions, protection.boxes, readUnboxed) : requested;
+  unboxedSource = null;
+  if (bare?.wholePhoto && protection?.mayBeExact) ({pieces: all, blocks} = requested);
   const masks = all.filter(r => r.mask), boxes = all.filter(r => !r.mask), muls = masks.map(r => ({...r, role: 'mul'}));
   const pieces = all.map(r => r.mask ? {...r, role: 'add'} : r), layered = [...muls, ...pieces.filter(r => r.role)];
+  const groups = [...layered, ...boxes], limit = 268435456;
+  let work = 1 + groups.length * 6, memory = 12 + groups.length * 160;
+  for (const r of groups) {
+    const count = (r.positions?.length ?? 2) / 2;
+    work += count * (5 + 3 * r.w * r.h); memory += count * 168;
+  }
+  if (work > limit || memory > limit) return large ? null : shorter(yield* exactFile());
+
+  const selectedProtection = collector?.patches(width, height, all);
+
   const data = masks.length ? inkFilled(source, width, masks) : source;
   const phases = new Float64Array(64);
   for (const r of regions) phases[(r.y & 7) * 8 + (r.x & 7)] += r.width * r.height;
@@ -426,28 +605,68 @@ export function* patchedPageSteps(source, width, height, {quality, regions = [],
   const placedBoxes = boxes.flatMap(placed), rows = fusedFrameRows(data, width, dx, dy, placedBoxes) ?? frameRows(data, width, dx, dy, placedBoxes);
   let own = regions.length || areas.length ? [...regions.map(r => ({x: r.x + dx, y: r.y + dy, width: r.width, height: r.height, quality: qualityOf(r, ((r.x + dx) & 7) !== 0 || ((r.y + dy) & 7) !== 0, dx, dy)})), ...areas.map(a => ({...a, x: a.x + dx, y: a.y + dy}))] : null;
   const crop = dx || dy ? {x: -dx, y: -dy, width: fw, height: fh} : null;
-  const placement = {imageWidth: width, imageHeight: height, crop, ans: regionAnsCoding};
-  const ac = acBlockContexts(acBlockLevels(data, width, height));
-  const pass = () => typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ ? null
-    : groupPass(data, width, dx, dy, placedBoxes, fw, fh, {quality, colorSpace, areas: own, ac}, ac.contexts, DCT8_DENSITY, SCAN);
-  const frame = (more, from, span) => scaled(pageFrameSteps(rows, fw, fh, {quality, colorSpace, areas: own, placement: {...placement, ...more}, pass: pass(), blocks: ac}), from, span);
-  if (!all.length) return yield* frame({}, 0, 1);
+  const placement = {imageWidth: width, imageHeight: height, crop};
+  const photoCrops = (photoRects.length ? photoRects : regions).map(r => {
+    if (!photoAdmission) return {...r, x: r.x + dx, y: r.y + dy};
+    const x = Math.max(0, r.x), y = Math.max(0, r.y);
+    return {...r, x: x + dx, y: y + dy, width: Math.min(width, r.x + r.width) - x, height: Math.min(height, r.y + r.height) - y};
+  }).filter(r => !photoAdmission || r.width > 0 && r.height > 0);
+  const referenceRows = photoBlocks && frameRows(source, width, dx, dy, []);
+  const exactPieces = photoBlocks && all.flatMap(r => placed(r).map(position => ({...position, mask: r.mask})));
+  const exactRows = photoBlocks && ((top, count) => {
+    const mask = new Uint8Array(fw * count);
+    for (const r of exactPieces) {
+      const x0 = Math.max(0, r.x + dx), x1 = Math.min(fw, r.x + dx + r.w);
+      const y0 = Math.max(top, r.y + dy), y1 = Math.min(top + count, r.y + dy + r.h);
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++)
+        if (!r.mask || r.mask[(y - r.y - dy) * r.w + x - r.x - dx]) mask[(y - top) * fw + x] = 1;
+    }
+    return mask;
+  });
+  const project = photoBlocks && ((rgba, top) => {
+    const count = rgba.length / (fw * 4);
+    for (const r of exactPieces) {
+      const x0 = Math.max(0, r.x + dx), x1 = Math.min(fw, r.x + dx + r.w);
+      const y0 = Math.max(top, r.y + dy), y1 = Math.min(top + count, r.y + dy + r.h);
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+        if (r.mask && !r.mask[(y - r.y - dy) * r.w + x - r.x - dx]) continue;
+        const from = ((y - dy) * width + x - dx) * 4, to = ((y - top) * fw + x) * 4;
+        rgba.set(source.subarray(from, from + 4), to);
+      }
+    }
+  });
+  if (photoBlocks && photoScoreMemo && photoBlockEffort >= 5) photoScoreMemo.patched(source, width, height,
+    {dx, dy, quality, colorSpace, areas: own, crops: photoCrops, masks, placedBoxes, exactPieces}, {rows, referenceRows, exactRows, project});
+  const frame = (more, from, span) => scaled((photoBlocks ?? pageFrameSteps)(rows, fw, fh, {quality, colorSpace, areas: own,
+    placement: {...placement, ...more}, effort: photoBlockEffort ?? exactOptions.effort,
+    ...(photoBlocks && {photoBlockEffort, readingWebp, photoCrops, referenceRows, exactRows, project, signal: exactOptions.signal, photoAdmission, photoScoreMemo})}), from, span);
+  if (!all.length) {
+    const bytes = yield* frame({}, 0, 1); collector?.record(bytes, selectedProtection); return shorter(bytes);
+  }
   const packed = atlasArea([...layered, ...boxes], blocks) <= WHOLE && packAtlas([...pieces.filter(r => !r.block), ...blocks], source, width, muls);
-  if (!packed) return null;
+  if (!packed) return large ? null : shorter(yield* exactFile());
   const {atlas, aw, ah} = packed;
   for (const r of boxes) if (r.block) { r.ax = r.block.ax; r.ay = r.block.ay; }
   const big = aw * ah > 131072 && Math.ceil(aw / 1024) * Math.ceil(ah / 1024) < 4;
   const first = yield* scaled(encodeAtlasSteps(atlas, aw, ah, width, height, {...exactOptions, colorSpace}, big ? 256 : undefined), 0, 0.5);
-  const patches = {groups: [...layered, ...boxes].map(r => ({x: r.x, y: r.y, w: r.w, h: r.h, ax: r.ax, ay: r.ay, mode: r.role === 'mul' ? PEEL_MUL : r.role === 'add' ? PEEL_ADD : undefined, positions: (r.positions ?? [r.x, r.y]).map((v, i) => v + (i & 1 ? dy : dx))}))};
+  const patches = {groups: groups.map(r => ({x: r.x, y: r.y, w: r.w, h: r.h, ax: r.ax, ay: r.ay, mode: r.role === 'mul' ? PEEL_MUL : r.role === 'add' ? PEEL_ADD : undefined, positions: (r.positions ?? [r.x, r.y]).map((v, i) => v + (i & 1 ? dy : dx))}))};
   const page = yield* frame({isFirstFrame: false, patches}, 0.5, 0.5);
   const bytes = new Uint8Array(first.length + page.length);
   bytes.set(first); bytes.set(page, first.length);
-  return bytes;
+  collector?.record(bytes, selectedProtection);
+  return shorter(photoAdmission ? photoAdmission.join(bytes, [page]) : bytes);
 }
 
 function* scaled(steps, from, span) {
-  let step, reply;
-  while (!(step = steps.next(reply)).done) reply = yield typeof step.value === 'number' ? from + span * step.value : step.value;
-  return step.value;
+  let step, reply, failed = false;
+  try {
+    while (!(step = steps.next(reply)).done) reply = yield typeof step.value === 'number' ? from + span * step.value : step.value;
+    return step.value;
+  } catch (error) {
+    failed = true; throw error;
+  } finally {
+    try { steps.return?.(); } catch (error) { if (!failed) throw error; }
+  }
 }
+
 

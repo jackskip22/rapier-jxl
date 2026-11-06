@@ -48,10 +48,11 @@ export function guard(work) {
 export function job(steps) {
   const it = (function* () {
     let step, last, reply;
-    while (!(step = guard(() => steps.next(reply))).done) {
+    try { while (!(step = guard(() => steps.next(reply))).done) {
       if (step.value?.capture || step.value?.split || step.value?.gpu) { reply = undefined; continue; }
+      if (step.value?.unit !== undefined || step.value?.unitDone !== undefined || step.value?.unitFailed !== undefined) { reply = yield step.value; continue; }
       yield last = step.value; reply = it.hurry;
-    }
+    } } finally { if (!step?.done) steps.return?.(); }
     if (last < 1) yield 1;
     return it.bytes = answer(step.value);
   })();

@@ -9,7 +9,7 @@ import {uploadOptions} from './upload-options.mjs';
 import {fitOptions, variantsOptions} from './preparation-options.mjs';
 import {outputSides} from './preparation-sides.mjs';
 import {admitCapture} from './capture-options.mjs';
-import {fail, pixelLimit, dimensions, LARGEST} from './primitives.mjs';
+import {fail, pixelLimit, dimensions, LARGEST, lostBlank, proveRead, LOST} from './primitives.mjs';
 import {WHOLE} from '../memory-device.mjs';
 
 export function encoder(client, config = {}, operations, spec = {}) {
@@ -33,7 +33,6 @@ export function encoder(client, config = {}, operations, spec = {}) {
       let maxPixels = config.maxPixels ?? 40000000;
       const preparation = (name === 'fit' || name === 'variants');
       const richCapture = name === 'capture' && spec.captureAdmission !== undefined;
-      let fidelity;
       if (preparation) {
         maxPixels = Math.min(maxPixels, 40000000);
         const admission = upload ? uploadOptions : undefined;
@@ -48,11 +47,11 @@ export function encoder(client, config = {}, operations, spec = {}) {
       } else {
         const {signal: _signal, onProgress: _onProgress, onEncoded: _onEncoded, ...rest} = options ?? {};
         const levels = spec.captureLevels && {module: spec.module, ...spec.captureLevels};
-        if (richCapture) fidelity = spec.captureAdmission(rest, levels);
+        if (richCapture) spec.captureAdmission(rest, levels);
         else admitCapture(rest, levels);
         if (rest.maxPixels !== undefined) maxPixels = Math.min(maxPixels, pixelLimit(rest.maxPixels, LARGEST));
       }
-      const fixed = preparation ? {...fix(options), maxPixels} : fix(richCapture ? {...options, fidelity} : options);
+      const fixed = preparation ? {...fix(options), maxPixels} : fix(options);
       if (isVideo(input)) {
         const frame = videoFrame(input);
         try { return wrap(name)(frame, fixed); } finally { frame.close(); }
@@ -106,7 +105,9 @@ function snapshot(input, maxPixels, {maxPendingBytes = 268435456}, options, admi
   const readAs = options?.readAs, context = bitmap ? null : input.getContext('2d', {willReadFrequently: true});
   if (over && !context) return null;
   if (half && context?.getContextAttributes?.().colorType === 'float16') return null;
-  if (context?.isContextLost?.()) throw fail('JXL_INPUT', 'The canvas lost its 2D context; draw it again.');
+  const lostAtStart = !!context?.isContextLost?.();
+  if (lostAtStart && !over && lostBlank(context, context.getImageData(0, 0, width, height).data)) throw fail('JXL_INPUT', LOST);
+  proveRead(context);
   const own = bitmap ? 'srgb' : context ? context.getContextAttributes?.().colorSpace ?? 'srgb' : foreignSpace(input);
   if (!/^(srgb|display-p3)$/.test(own) || readAs !== undefined && !/^(srgb|display-p3)$/.test(readAs)) return null;
   if (over) {
@@ -114,17 +115,18 @@ function snapshot(input, maxPixels, {maxPendingBytes = 268435456}, options, admi
     let colorSpace;
     try { colorSpace = context.getImageData(0, 0, 1, 1, {colorSpace: asked}).colorSpace ?? 'srgb'; }
     catch (cause) { throw Object.assign(fail('JXL_INPUT', 'The canvas could not be read: ' + (cause?.message || cause)), {cause}); }
+    let read = false;
     return {width, height, colorSpace, rows: (y, count) => {
       const band = new OffscreenCanvas(width, count);
-      const lost = () => { if (context.isContextLost?.()) throw fail('JXL_INPUT', 'The canvas lost its 2D context; draw it again.'); };
       try {
-        lost();
         const drawn = band.getContext('2d', {colorSpace: own});
         if (!drawn) throw fail('JXL_PLATFORM', 'No 2D canvas here; pass RGBA pixels.');
         drawn.drawImage(input, 0, y, width, count, 0, 0, width, count);
         let {data} = surface(band, {readAs: colorSpace});
         for (let i = 3; i < data.length; i += 4) if (data[i] !== 255 && data[i] !== 0) { data = context.getImageData(0, y, width, count, {colorSpace}).data; break; }
-        lost();
+        if (lostBlank(context, data)) {
+          if (!lostAtStart || !read && y + count >= height) throw fail('JXL_INPUT', LOST);
+        } else read = true;
         return {data};
       } finally { band.width = band.height = 0; }
     }};

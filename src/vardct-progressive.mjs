@@ -2,6 +2,20 @@
 import {BitWriter} from './bits.mjs';
 import {fault} from './admit.mjs';
 
+export function progressiveValue(passes, coefficient, position, width, height, passIndex) {
+  if (!coefficient) return 0;
+  const x = position % width, y = Math.floor(position / width);
+  let reconstructed = 0;
+  for (let i = 0; i <= passIndex; i++) {
+    const pass = passes[i];
+    const part = x < width / pass.downsample && y < height / pass.downsample ?
+      Math.trunc((coefficient - reconstructed) / pass.scale) : 0;
+    if (i === passIndex) return part;
+    reconstructed += part * pass.scale;
+  }
+  return 0;
+}
+
 export function progressivePasses(option) {
   if (option === undefined || option === false) return null;
   let passes;
@@ -38,18 +52,5 @@ export function progressivePasses(option) {
     if (index === passes.length - 1) minimum = 0;
     const bracket = {minimum, maximum}; maximum = minimum - 1; return bracket;
   });
-  const value = (coefficient, position, width, height, passIndex) => {
-    if (!coefficient) return 0;
-    const x = position % width, y = Math.floor(position / width);
-    let reconstructed = 0;
-    for (let i = 0; i <= passIndex; i++) {
-      const pass = passes[i];
-      const part = x < width / pass.downsample && y < height / pass.downsample ?
-        Math.trunc((coefficient - reconstructed) / pass.scale) : 0;
-      if (i === passIndex) return part;
-      reconstructed += part * pass.scale;
-    }
-    return 0;
-  };
-  return {passes, count: passes.length, header, value, brackets, alphaPass: hints.find(hint => hint.downsample === 1)?.last ?? passes.length - 1};
+  return {passes, count: passes.length, header: {bytes: header.bytes, at: header.at, pending: header.pending, acc: header.acc}, brackets, alphaPass: hints.find(hint => hint.downsample === 1)?.last ?? passes.length - 1};
 }

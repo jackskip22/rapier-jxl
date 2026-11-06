@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
-import {BitWriter, ceilLog2} from './bits.mjs';
+import {BitWriter, ceilLog2, complete} from './bits.mjs';
+import {stage, unit} from './step-journal.mjs';
 import {hybridToken, writeContextMap, writeUintConfig} from './prefix.mjs';
-import {TokenCounts, clusterTokenCounts} from './entropy.mjs';
+import {TokenCounts, clusterTokenCountsSteps} from './entropy.mjs';
 import {LZ77, RESIDUAL_CONFIG} from './modular.mjs';
 import {writeSmallestContextMap} from './context-map.mjs';
 import {GROUP_TOKENS} from './frame.mjs';
-import {LOG_CODES, LOG_LENGTHS, SYMBOL_BITS, distributionLength, expectedDataBits, normalise, reverseAlias, shapeHistogram, writeDistribution} from './ans-core.mjs';
+import {LOG_CODES, LOG_LENGTHS, SYMBOL_BITS, distributionLength, expectedDataBits, normalise, reverseAlias, shapeHistogram, writeDistribution, writeAnsHistograms, ansEncode} from './ans-core.mjs';
 export {LOG_LENGTHS, LOG_CODES, shapeHistogram, reverseAlias};
 
 class BitCount {
@@ -52,26 +53,22 @@ function ansWriteTokens(g, ctxs, tokens, n) {
 }
 function ansFlush(g, w) {
   const {values, metadata, emitted, slots, small, freqs, starts, histograms, reverses, length} = g;
-  let state = 0x13 * 65536;
-  for (let i = length - 1; i >= 0; i--) {
+  if (!g.ids || g.ids.length < length) { g.ids = new Uint8Array(length); g.freq = new Int32Array(length); g.start = new Int32Array(length); g.flags = new Uint8Array(length); }
+  const {ids, freq, start, flags} = g;
+  for (let i = 0; i < length; i++) {
     const id = metadata[i], value = values[i];
-    let freq, start, bits;
-    if (value < 64) { const at = id * 64 + value, entry = small[at]; bits = entry >> 6; values[i] = entry & 63; freq = freqs[at]; start = starts[at]; }
+    ids[i] = id;
+    if (value < 64) { const at = id * 64 + value, entry = small[at]; metadata[i] = entry >> 6; values[i] = entry & 63; freq[i] = freqs[at]; start[i] = starts[at]; }
     else {
       const h = histograms[id];
-      hybridToken(h.config, value, slots); bits = slots[1]; values[i] = slots[2]; freq = h.counts[slots[0]]; start = h.starts[slots[0]];
+      hybridToken(h.config, value, slots); metadata[i] = slots[1]; values[i] = slots[2]; freq[i] = h.counts[slots[0]]; start[i] = h.starts[slots[0]];
     }
-    metadata[i] = bits;
-    if ((state >>> 20) >= freq) {
-      emitted[i] = state & 65535; metadata[i] |= 64; state >>>= 16;
-    }
-    const q = Math.floor(state / freq);
-    state = q * 4096 + reverses[id][start + state - q * freq];
   }
-  w.write(32, state);
+  flags.fill(0, 0, length);
+  w.write(32, ansEncode(length, ids, freq, start, reverses, emitted, flags));
   for (let i = 0; i < length; i++) {
     const bits = metadata[i] & 63;
-    if (metadata[i] & 64) {
+    if (flags[i]) {
       if (bits <= 8) { w.write(16 + bits, emitted[i] | values[i] << 16); continue; }
       w.write(16, emitted[i]);
     }
@@ -120,16 +117,31 @@ function sameCounts(copy, {contexts, totals, small, large}) {
 }
 const codingKey = options => !options ? '' : [options.maxClusters, options.newClusterCost, options.seeds, options.passes, options.switchCost,
   !!options.everyConfig, !!options.kernels, options.shifts, options.mapLz, !!options.smallestMap].join();
-export function buildAnsCoding(counts, options) {
-  if (!builtScopes || !(counts instanceof TokenCounts)) return buildAnsCodingOnce(counts, options);
+export function buildAnsCoding(counts, options) { return complete(buildAnsCodingSteps(counts, options)); }
+function* buildAnsCodingSteps(input, options) {
+  const made = yield* stage('coding', function* () {
+    const counts = typeof input === 'function' ? input() : input;
+    return yield* buildAnsCodingCached(counts, options);
+  }, coding => {
+    const parts = ansCodingParts(coding);
+    return {...parts, model: {...parts.model, histograms: parts.model.histograms.map(({config, counts}) => ({config, counts}))}};
+  });
+  if (made.write) return made;
+  const histograms = made.model.histograms, logAlphabet = Math.max(5, ceilLog2(Math.max(...histograms.map(h => h.counts.length))), ...histograms.map(h => h.config.split));
+  for (const histogram of histograms) Object.assign(histogram, reverseAlias(histogram.counts, logAlphabet));
+  return ansCodingFrom(made, options?.kernels);
+}
+function* buildAnsCodingCached(counts, options) {
+  if (!builtScopes || !(counts instanceof TokenCounts)) return yield* buildAnsCodingOnce(counts, options);
   const key = countsHash(counts) + '|' + codingKey(options), hit = BUILT.get(key);
   if (hit && sameCounts(hit.copy, counts)) { BUILT.delete(key); BUILT.set(key, hit); return ansCodingFrom(hit.parts, options?.kernels); }
-  const coding = buildAnsCodingOnce(counts, options);
+  const coding = yield* buildAnsCodingOnce(counts, options);
   BUILT.delete(key); BUILT.set(key, {copy: countsCopy(counts), parts: ansCodingParts(coding)});
   if (BUILT.size > BUILT_KEEP) BUILT.delete(BUILT.keys().next().value);
   return coding;
 }
-function buildAnsCodingOnce(counts, options) {
+buildAnsCoding.steps = buildAnsCodingSteps;
+function* buildAnsCodingOnce(counts, options) {
   const shaped = new WeakMap();
   const headerAware = options?.seeds === 128;
   const shapedCost = (freqs, config) => {
@@ -138,18 +150,29 @@ function buildAnsCodingOnce(counts, options) {
     writeUintConfig(header, config, Math.max(5, ceilLog2(freqs.findLastIndex(Boolean) + 1)));
     return header.bitLength + shape.bits;
   };
-  const clustered = clusterTokenCounts(counts, options, histogramCost, symbolCosts, shapedCost);
-  let bits = 32;
-  const histograms = clustered.histograms.map(({config, freqs, extra}) => {
-    const {counts, shift, omit} = shaped.get(freqs) ?? shapeHistogram(freqs, options?.shifts, headerAware);
-    bits += extra + expectedDataBits(freqs, counts);
-    return {config, counts, shift, omit};
+  const clustered = yield* clusterTokenCountsSteps(counts, options, histogramCost, symbolCosts, shapedCost);
+  const shapes = yield* unit('shapes', () => {
+    let bits = 32;
+    const histograms = clustered.histograms.map(({config, freqs, extra}) => {
+      const {counts, shift, omit} = shaped.get(freqs) ?? shapeHistogram(freqs, options?.shifts, headerAware);
+      bits += extra + expectedDataBits(freqs, counts);
+      return {config, counts, shift, omit};
+    });
+    return {bits, histograms};
   });
+  const {bits, histograms} = shapes;
   const logAlphabet = Math.max(5, ceilLog2(Math.max(...histograms.map(h => h.counts.length))), ...histograms.map(h => h.config.split));
   for (const histogram of histograms) Object.assign(histogram, reverseAlias(histogram.counts, logAlphabet));
   const header = new BitWriter();
   header.write(1, 0);
-  if (clustered.contextMap.length > 1) (options?.smallestMap ? writeSmallestContextMap : writeContextMap)(header, clustered.contextMap, options?.mapLz ?? true);
+  if (clustered.contextMap.length > 1) {
+    const map = yield* unit('map', () => {
+      const w = new BitWriter();
+      (options?.smallestMap ? writeSmallestContextMap : writeContextMap)(w, clustered.contextMap, options?.mapLz ?? true);
+      return {bytes: w.bytes, at: w.at, pending: w.pending, acc: w.acc};
+    }, w => ({...w, bytes: w.bytes.slice(0, w.at + 1)}));
+    header.append(Object.assign(new BitWriter(0), map));
+  }
   header.write(1, 0); header.write(2, logAlphabet - 5);
   for (const histogram of histograms) writeUintConfig(header, histogram.config, logAlphabet);
   for (const histogram of histograms) writeDistribution(header, histogram.counts, true, histogram.shift, histogram.omit);
@@ -190,24 +213,23 @@ export function writeModularAnsHistograms(w, orderedLeaves, freqs, histogramOf =
   w.writeU32([[0, 224], [0, 512], [0, 4096], [15, 8]], LZ77.minSymbol);
   w.writeU32([[0, 3], [0, 4], [2, 5], [8, 9]], LZ77.minLength);
   writeUintConfig(w, LZ77.lengthConfig, 8);
-  if (contextMap.length > 1) writeContextMap(w, contextMap);
-  w.write(1, 0); w.write(2, logAlphabet - 5);
-  for (let i = 0; i < histograms.length; i++) writeUintConfig(w, i ? configOf(i - 1) : RESIDUAL_CONFIG, logAlphabet);
-  for (const histogram of histograms) writeDistribution(w, histogram.counts, true, histogram.shift, histogram.omit);
+  writeAnsHistograms(w, contextMap, logAlphabet, histograms.map((_, i) => i ? configOf(i - 1) : RESIDUAL_CONFIG), histograms);
+  const reverses = histograms.map(h => h.reverse);
   const encode = plans => {
     const length = plans.reduce((total, plan) => total + plan.used, 0), emitted = new Uint16Array(length), flags = new Uint8Array(length);
-    let state = 0x13 * 65536, at = length, offset = histograms.length, bits = 32;
-    for (let c = plans.length - 1; c >= 0; c--) {
-      const plan = plans[c], map = plan.histogramMap; offset -= plan.freqs.length;
-      for (let i = plan.used - 1; i >= 0; i--) {
-        const tag = plan.tags[i], h = histograms[offset + (map ? map[tag >>> 16] : tag >>> 16)], symbol = tag & 511, freq = h.counts[symbol];
-        --at;
+    const ids = new Uint16Array(length), freq = new Int32Array(length), start = new Int32Array(length);
+    let at = 0, offset = histograms.length - plans.reduce((total, plan) => total + plan.freqs.length, 0), bits = 32;
+    for (const plan of plans) {
+      const map = plan.histogramMap;
+      for (let i = 0; i < plan.used; i++, at++) {
+        const tag = plan.tags[i], id = offset + (map ? map[tag >>> 16] : tag >>> 16), h = histograms[id], symbol = tag & 511;
+        ids[at] = id; freq[at] = h.counts[symbol]; start[at] = h.starts[symbol];
         bits += (tag >>> 9) & 63;
-        if ((state >>> 20) >= freq) { bits += 16; emitted[at] = state & 65535; flags[at] = 1; state >>>= 16; }
-        const q = Math.floor(state / freq);
-        state = q * 4096 + h.reverse[h.starts[symbol] + state - q * freq];
       }
+      offset += plan.freqs.length;
     }
+    const state = ansEncode(length, ids, freq, start, reverses, emitted, flags);
+    for (let i = 0; i < length; i++) bits += flags[i] << 4;
     return {plans, emitted, flags, state, bits};
   };
   const kernel = kernels?.modularAns(histograms);

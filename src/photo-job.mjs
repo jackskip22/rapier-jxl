@@ -3,7 +3,8 @@ import {PHOTO_LIMITS} from './limits.mjs';
 import {part} from './bits.mjs';
 import {admitEffort} from './effort-level.mjs';
 import {losslessSteps, nativeSteps, iccShape} from './lossless.mjs';
-import {spaceTransform, P3_TRANSFORM} from './icc-transform.mjs';
+import {spaceTransform} from './icc-transform.mjs';
+import {P3_TRANSFORM} from './color-transform.mjs';
 import {admitOptions, admitPixels, job, fault} from './admit.mjs';
 import {admitSampleFormat} from './admit-samples.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
@@ -42,7 +43,7 @@ export function* photoSteps(data, width, height, quality, colorSpace, effort, en
     return yield* photoV6Steps(data, width, height, quality, screen ? effort : v6Effort(effort), encodeCoefficients, search, undefined, gpu, memory, screen, effort >= 8);
   }
   if (colorSpace === 'display-p3' && preferXYB(data, width, height)) return yield* photoV6Steps(data, width, height, quality, v6Effort(effort), encodeCoefficients, search, {transform: P3_TRANSFORM, space: colorSpace}, undefined, memory, false, effort >= 8);
-  if (colorSpace && typeof colorSpace === 'object' && colorSpace.colorChannels !== 1) {
+  if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || __RAPIER_JXL_CAPTURE_PHOTO__ !== true) && colorSpace && typeof colorSpace === 'object' && colorSpace.colorChannels !== 1) {
     const transform = spaceTransform(colorSpace);
     if (transform && preferXYB(data, width, height)) return yield* photoV6Steps(data, width, height, quality, v6Effort(effort), encodeCoefficients, search, {transform, space: colorSpace}, undefined, memory, false, effort >= 8);
   }
@@ -63,7 +64,7 @@ export function screenImageSteps(data, width, height, quality) {
 }
 
 export function photoProducer(data, width, height, quality, colorSpace, filter) {
-  if (colorSpace && typeof colorSpace === 'object') {
+  if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || __RAPIER_JXL_CAPTURE_PHOTO__ !== true) && colorSpace && typeof colorSpace === 'object') {
     const transform = spaceTransform(colorSpace);
     if (colorSpace.colorChannels === 1) return photoCoefficientSteps(data, width, height, quality, colorSpace, true);
     if (transform && preferXYB(data, width, height)) return photoXYBSteps(data, width, height, quality, {filter, transform, space: colorSpace});

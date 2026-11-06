@@ -11,6 +11,7 @@ import {offloading} from './offload.mjs';
 import {pictureBlocksSplit} from './block-split.mjs';
 import {V6, GABORISH, admitV6Memory, prepareV6, v6Image, gaborishRows, blockSearchOptions, v6Trace, idleWork} from './photo-v6.mjs';
 import {wholeBudget, WHOLE_BYTES} from './memory-device.mjs';
+import {journalRequest} from './step-journal.mjs';
 
 export function photoAnsSteps(image, effort, ...rest) { return coefficientAnsSteps(image, effort, ...rest); }
 photoAnsSteps.splits = coefficientAnsSteps.splits;
@@ -31,11 +32,11 @@ function* bandsWithEnergy(data, width, height, quality, options, energy) {
 
 function* bandsOnly(bands) {
   let step, reply;
-  while (!(step = bands.next(reply)).done) {
+  try { while (!(step = bands.next(reply)).done) {
     reply = undefined;
     if (step.value?.offload === 'image') continue;
     reply = yield step.value;
-  }
+  } } finally { if (!step?.done) bands.return?.(); }
   return step.value;
 }
 
@@ -115,7 +116,7 @@ function* blockPictureSteps({data, width, height, quality, effort, encodeCoeffic
       while (!(step = steps.next(reply)).done) {
         const v = step.value;
         reply = yield scaled(v, done => (index + done) / count);
-        if (typeof v === 'number' ? reply : !v?.gpu && (reply === null || reply?.hurried)) hurried = true;
+        if (typeof v === 'number' ? reply : !v?.gpu && !journalRequest(v) && (reply === null || reply?.hurried)) hurried = true;
       }
       completed = true;
       return step.value;

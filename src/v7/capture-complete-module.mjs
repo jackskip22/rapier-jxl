@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 import {captureWith} from './capture-core.mjs';
+import {imageResult} from './result.mjs';
 import {readTexture} from './texture.mjs';
-import {admitCapturePhoto} from './capture-photo-options.mjs';
+import {admitCapturePhoto, captureRectangles} from './capture-photo-options.mjs';
 import {captureRunner, prepareCapturePhoto} from './run-capture-photo.mjs';
 import {CAPTURE_TOOLS_COMPLETE} from '../capture-ans.mjs';
 import {webgpuUsable} from './webgpu.mjs';
@@ -23,4 +24,4 @@ export const supported = async feature => {
 };
 export const prepare = () => prepareCapturePhoto().catch(error => { throw declared(error); });
 const carried = carriedBy('rapier-jxl/capture-complete', CAPTURE_COMPLETE);
-export const capture = captureWith(readTexture, {admit: options => admitCapturePhoto(options, carried), run: captureRunner(CAPTURE_TOOLS_COMPLETE, {device: required, answerer: engineAnswerer(captureEngine, CAPTURE_TOOLS_COMPLETE.gpu)})});
+export const capture = captureWith(readTexture, {admit: options => admitCapturePhoto(options, carried), rectangles: captureRectangles, run: captureRunner(CAPTURE_TOOLS_COMPLETE, {device: required, answerer: engineAnswerer(captureEngine, CAPTURE_TOOLS_COMPLETE.gpu)})}, imageResult);

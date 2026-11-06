@@ -116,26 +116,35 @@ const REGION_TABLE = regionTable([[10, [0, -0.3, -0.3, -0.3, -0.3], 2.5], [18, [
 const RGB_TABLE = regionTable([[30, [0, -0.3, -0.3, -0.3, -0.3], 4.5], [10, [0, -0.3, -0.3, -0.3, -0.3], 2.5], [30, [0, -0.3, -0.3, -0.3, -0.3], 4.5]]);
 const strengthOf = quality => Math.max(0, Math.min(1, (90 - quality) / 15));
 const distanceOf = (quality, kind) => Math.max(0.1, calibration(quality, kind) * (quality >= 30 ? 0.1 + (100 - quality) * 0.09 : 53 / 3000 * quality * quality - 23 / 20 * quality + 25));
-const stepOf = (quality, kind) => distanceOf(quality, kind) * (1 - 0.1 * strengthOf(quality));
+export const photoQualityStep = (quality, kind) => distanceOf(quality, kind) * (1 - 0.1 * strengthOf(quality));
+export const areaFieldValue = (base, quality, kind, FIELD) => Math.max(1, Math.round(FIELD * base / photoQualityStep(quality, kind)));
+export function applyAreaField(fields, stride, rows, a, value, from = 0, to = fields.length) {
+  for (let by = Math.max(0, Math.ceil((a.y - 4) / 8), Math.floor(from / stride)); by < rows && by * 8 + 4 < a.y + a.height && by * stride < to; by++)
+    for (let bx = Math.max(0, Math.ceil((a.x - 4) / 8), from - by * stride); bx < stride && bx * 8 + 4 < a.x + a.width && by * stride + bx < to; bx++)
+      if (value > fields[by * stride + bx]) fields[by * stride + bx] = value;
+}
+export function finishAreaFields(fields, FIELD, from = 0, to = fields.length) {
+  for (let i = from; i < to; i++) if (!fields[i]) fields[i] = FIELD;
+  return fields;
+}
 function areaFields(areas, quality, kind, stride, rows, FIELD) {
   const fields = new Uint16Array(stride * rows), qualities = new Map();
   if (areas) {
-    const base = stepOf(quality, kind);
+    const base = photoQualityStep(quality, kind);
     for (const a of areas) {
-      const value = Math.max(1, Math.round(FIELD * base / stepOf(a.quality, kind)));
+      const value = areaFieldValue(base, a.quality, kind, FIELD);
       if (value !== FIELD && !qualities.has(value)) qualities.set(value, a.quality);
-      for (let by = Math.max(0, Math.ceil((a.y - 4) / 8)); by < rows && by * 8 + 4 < a.y + a.height; by++)
-        for (let bx = Math.max(0, Math.ceil((a.x - 4) / 8)); bx < stride && bx * 8 + 4 < a.x + a.width; bx++) if (value > fields[by * stride + bx]) fields[by * stride + bx] = value;
+      applyAreaField(fields, stride, rows, a, value);
     }
   }
-  for (let i = 0; i < fields.length; i++) if (!fields[i]) fields[i] = FIELD;
+  finishAreaFields(fields, FIELD);
   return {fields, qualities};
 }
-export function* photoCoefficientSteps(data, width, height, quality, colorSpace, gray = false, table = false, areas = null) {
+export function* photoCoefficientSteps(data, width, height, quality, colorSpace, gray = false, table = false, areas = null, options = {}) {
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), quantScale = 16, kind = table && !gray ? 'regions' : 'ycbcr';
   const distance = distanceOf(quality, kind), strength = strengthOf(quality), stepScale = 1 - 0.1 * strength;
-  const perBlock = table && !gray && areas?.some(a => a.quality !== quality), FIELD = perBlock ? AREA_FIELD : TABLE_FIELD;
-  const {fields, qualities} = areaFields(perBlock ? areas : null, quality, kind, stride, rows, FIELD);
+  const perBlock = options.fieldPlan ? options.fieldPlan.perBlock : table && !gray && areas?.some(a => a.quality !== quality), FIELD = perBlock ? AREA_FIELD : TABLE_FIELD;
+  const {fields, qualities} = options.fieldPlan ?? areaFields(perBlock ? areas : null, quality, kind, stride, rows, FIELD);
   const components = (gray ? [0] : [0, 1, 2]).map(c => ({h: 1, v: 1, stride, rows,
     quant: Int32Array.from(QUANT_SHAPE, (shape, k) => Math.max(1, Math.round(quantScale * distance * stepScale * (c ? 18 : 10) * (k ? shape : 0.25)))),
     coeffs: new Int16Array(stride * rows * 64)}));
@@ -218,12 +227,12 @@ function grayTiles(data, width, height, tilesX) {
   return out;
 }
 
-export function* rgbCoefficientSteps(data, width, height, quality, colorSpace, areas = null) {
+export function* rgbCoefficientSteps(data, width, height, quality, colorSpace, areas = null, options = {}) {
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), quantScale = 16, kind = 'regions';
   const distance = distanceOf(quality, kind), strength = strengthOf(quality), stepScale = 1 - 0.1 * strength;
-  const perBlock = areas?.some(a => a.quality !== quality), FIELD = perBlock ? AREA_FIELD : TABLE_FIELD;
-  const {fields, qualities} = areaFields(perBlock ? areas : null, quality, kind, stride, rows, FIELD);
-  const components = [0, 1, 2].map(() => ({h: 1, v: 1, stride, rows, quant: null, coeffs: new Int16Array(stride * rows * 64)}));
+  const perBlock = options.fieldPlan ? options.fieldPlan.perBlock : areas?.some(a => a.quality !== quality), FIELD = perBlock ? AREA_FIELD : TABLE_FIELD;
+  const {fields, qualities} = options.fieldPlan ?? areaFields(perBlock ? areas : null, quality, kind, stride, rows, FIELD);
+  const components = [0, 1, 2].map(() => ({h: 1, v: 1, stride, rows, quant: null, coeffs: options.packed && kernelHooks.rgbBand ? null : new Int16Array(stride * rows * 64)}));
   const quantTable = components.map((component, c) => {
     const {first: ratio, bits, shape, dc} = RGB_TABLE[c], base = quantScale * distance * stepScale, first = float16Bits(8 * 255 * quantScale / (FIELD * base * ratio) / 64);
     const quant = component.quant = shape.map(value => 8 * 255 * quantScale / (FIELD * half(first) * 64) * value);
@@ -242,7 +251,7 @@ export function* rgbCoefficientSteps(data, width, height, quality, colorSpace, a
     }
     return t;
   };
-  const [R, G, B] = components.map(c => c.coeffs), tilesX = Math.ceil(stride / 8);
+  const tilesX = Math.ceil(stride / 8);
   const cfl = {width: tilesX, x: new Int16Array(tilesX * Math.ceil(rows / 8)), b: new Int16Array(tilesX * Math.ceil(rows / 8))};
   let tile, held;
   const gray = grayTiles(data, width, height, tilesX);
@@ -253,6 +262,12 @@ export function* rgbCoefficientSteps(data, width, height, quality, colorSpace, a
     return [1 + fx / 84, 1 + fb / 84];
   };
   const tableOf = (by, bx) => tablesFor(fields[by * stride + bx]);
+  const result = () => ({width, height, components, quantScale, ycbcr: false, cflBase: 1, cfl, orientation: 1, alpha: null, colorSpace, quantTable, quantFieldBase: FIELD, ...perBlock && {quantFields: fields}});
+  if (options.packed && kernelHooks.rgbBand?.(data, width, height, {components, tableOf, cflOf, basis: COSINES, quantScale})) {
+    yield 1; return result();
+  }
+  for (const component of components) component.coeffs ??= new Int16Array(stride * rows * 64);
+  const [R, G, B] = components.map(c => c.coeffs);
   for (let from = 0; from < rows; from += 32) {
     const to = Math.min(rows, from + 32);
     let kernel = !!kernelHooks.rgbTiles;
@@ -297,5 +312,5 @@ export function* rgbCoefficientSteps(data, width, height, quality, colorSpace, a
     }
     yield to / rows;
   }
-  return {width, height, components, quantScale, ycbcr: false, cflBase: 1, cfl, orientation: 1, alpha: null, colorSpace, quantTable, quantFieldBase: FIELD, ...perBlock && {quantFields: fields}};
+  return result();
 }

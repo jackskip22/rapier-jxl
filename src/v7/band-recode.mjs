@@ -8,6 +8,7 @@ import {V6} from '../photo-v6-settings.mjs';
 import {admitSampleFormat} from '../admit-samples.mjs';
 import {P3_TRANSFORM, spaceTransform} from '../icc-transform.mjs';
 import {fail} from './primitives.mjs';
+import {lowPhotoSteps} from './low-photo.mjs';
 
 export function* recodeBand({data, width, height, ...description}, settings, {xyb, alpha, gray}, hdr = null, writer = coefficientAnsSteps, search) {
   const options = {...description, ...settings}, {quality, effort, colorSpace = 'srgb', filter} = options;
@@ -22,7 +23,11 @@ export function* recodeBand({data, width, height, ...description}, settings, {xy
     try { return yield* losslessSteps(data, width, height, {...options, fast: effort < 2}); }
     finally { shapeFloors.delete(data); }
   }
-  if (xyb && !alpha && !gray && colorSpace === 'srgb') return yield* photoV6Steps(data, width, height, quality, v6Effort(effort), writer, search);
+  if (xyb && !alpha && !gray && colorSpace === 'srgb') {
+    const low = lowPhotoSteps(data, width, height, options);
+    if (low) return yield* low;
+    return yield* photoV6Steps(data, width, height, quality, v6Effort(effort), writer, search);
+  }
   const transform = colorSpace === 'display-p3' ? P3_TRANSFORM : typeof colorSpace === 'object' ? spaceTransform(colorSpace) : undefined;
   const coefficients = yield* (xyb ? photoXYBSteps(data, width, height, quality, {...V6, filter, fast: !transform, ...(transform && {transform, space: colorSpace})})
     : photoCoefficientSteps(data, width, height, quality, colorSpace));

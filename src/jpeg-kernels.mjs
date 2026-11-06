@@ -16,7 +16,9 @@ const DYNAMIC = 11882496;
 const DECODE_CAP = 64 * 1048576;
 let engine, limit = Infinity;
 
-export function jpegKernels() {
+let tokenFlush = null;
+export function jpegKernels(flushTokens) {
+  if (flushTokens) tokenFlush = flushTokens;
   if (engine !== undefined) return engine;
   engine = null;
   try {
@@ -139,6 +141,7 @@ export function jpegKernels() {
         }
         return [n, u16.subarray(FCTXS >> 1, (FCTXS >> 1) + n), u16.subarray(FVALUES >> 1, (FVALUES >> 1) + n)];
       },
+      ...((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? {} : {
       sequentialScan(out, entries, nx, ny, restart, zeros, pad, zigzag) {
         const rowBlocks = entries.reduce((n, e) => n + e.v * e.stride, 0);
         if (entries.length > 4 || rowBlocks > BAND_BLOCKS || zeros.size > 65536 || (pad && pad.bits.length > 65536) || out.pending) return false;
@@ -214,6 +217,7 @@ export function jpegKernels() {
           if (end > CTAB) u8.fill(0, CTAB, Math.min(CTAB_END, end));
         }
       },
+      }),
       prefixFilled(model) {
         const {contextMap, histograms} = model;
         if (histograms.length > 255 || contextMap.length > 8192 || histograms.some(h => h.code.lengths.length > 256)) return null;
@@ -237,6 +241,7 @@ export function jpegKernels() {
         };
         return (w, n) => { load(); exports.tokensIn(0, n); append(w, exports.prefixWrite(n, w.acc, w.pending)); };
       },
+      ...((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? {} : {
       literalClusters(clusters) {
         const n = clusters.length;
         clusters.forEach((c, i) => u32.set(c.freqs, (LHIST >> 2) + i * 256));
@@ -249,6 +254,7 @@ export function jpegKernels() {
         for (let i = 0; i < n; i++) kept[rank[u32[(LOWNER >> 2) + i]]].contexts.push(...clusters[i].contexts);
         return kept;
       },
+      }),
       countFilled(into, n) {
         if (into.contexts > 8192) return false;
         const m = exports.countFilled(n), large = u32[SCRATCH >> 2], small = into.small, totals = into.totals;
@@ -332,7 +338,10 @@ export function jpegKernels() {
             for (let i = 0; i < n; i++) { u32[at + length] = tokens[i]; u8[IDS + length++] = contextMap[ctxs[i]]; }
           },
           writeFilled(_w, n) { load(); exports.tokensIn(length, n); length += n; },
-          flush(w) { load(); append(w, exports.ansFlush(length, w.acc, w.pending)); length = 0; },
+          flush(w) {
+            if (!tokenFlush) throw new Error('The ANS writer is not installed.');
+            tokenFlush(w, model, u32.subarray(VALUES >> 2, (VALUES >> 2) + length), u8.subarray(IDS, IDS + length), length); length = 0;
+          },
           reset() { length = 0; },
         };
       },

@@ -14,7 +14,7 @@ export {buildAnimationAtlas};
 
 function* span(steps, start, length) {
   let step, reply;
-  while (!(step = steps.next(reply)).done) reply = yield scaled(step.value, fraction => start + length * fraction);
+  try { while (!(step = steps.next(reply)).done) reply = yield scaled(step.value, fraction => start + length * fraction); } finally { if (!step?.done) steps.return?.(); }
   return step.value;
 }
 
@@ -112,9 +112,9 @@ export function encodeAnimationAtlasSteps(animation, options = {}) {
   const iterator = (function* () {
     const steps = atlasAnimationSteps(admitted, search, mode, supplied);
     let step, last = 0;
-    while (!(step = guard(() => steps.next(iterator.hurry))).done) {
+    try { while (!(step = guard(() => steps.next(iterator.hurry))).done) {
       checkSignal(admitted.signal); last = step.value; yield last;
-    }
+    } } finally { if (!step?.done) steps.return?.(); }
     if (last < 1) yield 1;
     return iterator.bytes = step.value;
   })();

@@ -7,6 +7,7 @@ import {bytes, check, fail, declared, object, dimensions, admitSignal, jpegPixel
 const NO_SERVE = 'No JPEG reconstruction data: serve it as image/jxl, or make it with recompress().';
 import {isPlainRecord} from './records.mjs';
 import {header} from './inspect.mjs';
+import './preparation-jpeg.mjs';
 
 const MAX_INPUT_BYTES = 256 * 1024 * 1024;
 const DEFAULT_CACHE_CONTROL = 'private, no-cache';
@@ -73,9 +74,10 @@ function acceptsJxl(acceptHeader) {
     const [type, ...params] = headerParts(part, ';').map(text => text.trim());
     const range = type.toLowerCase();
     if (!['image/jxl', 'image/jpeg', 'image/*', '*/*'].includes(range)) continue;
+    if (range === 'image/jxl' && params.some(param => param && param.split('=', 1)[0].trim().toLowerCase() !== 'q')) continue;
     let weight = 1;
     for (const param of params) {
-      const [key, value = ''] = param.split('=').map(text => text.trim());
+      const at = param.indexOf('='), key = (at < 0 ? param : param.slice(0, at)).trim(), value = at < 0 ? '' : param.slice(at + 1).trim();
       if (key.toLowerCase() !== 'q') continue;
       weight = /^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/.test(value) ? Number(value) : NaN;
     }
@@ -124,10 +126,17 @@ function parseCall(request, second, third) {
   const rawMethod = typeof request.method === 'string' ? request.method.toUpperCase() : 'GET';
   if (rawMethod !== 'GET' && rawMethod !== 'HEAD') throw fail('JXL_OPTIONS', 'serve answers GET and HEAD.');
   const cacheControl = options.cacheControl ?? DEFAULT_CACHE_CONTROL;
-  if (typeof cacheControl !== 'string' || !cacheControl.trim() || /[\r\n]/.test(cacheControl))
+  if (typeof cacheControl !== 'string' || !cacheControl.trim() || /[^\t\x20-\x7e\x80-\xff]/.test(cacheControl))
     throw fail('JXL_OPTIONS', 'cacheControl must be a non-empty header string.');
-  if (options.etag !== undefined && (typeof options.etag !== 'string' || !options.etag.trim() || /[\r\n]/.test(options.etag)))
-    throw fail('JXL_OPTIONS', 'etag must be a non-empty string.');
+  if (options.etag !== undefined) {
+    if (typeof options.etag !== 'string' || !options.etag.trim() || /[\r\n]/.test(options.etag))
+      throw fail('JXL_OPTIONS', 'etag must be a non-empty string.');
+    const supplied = options.etag.trim(), raw = supplied.startsWith('W/') ? supplied.slice(2).trim() : supplied;
+    const quoted = raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"');
+    const opaque = quoted ? raw.slice(1, -1) : raw;
+    if ((!quoted && !opaque) || !/^[\x21\x23-\x7e\x80-\xff]*$/.test(opaque))
+      throw fail('JXL_OPTIONS', 'etag must be a valid HTTP entity tag.');
+  }
   admitSignal(options.signal);
   const maxPixels = pixelBound(options.maxPixels);
   return {maxPixels, accept: readHeaderField(request, 'accept') ?? '', ifNoneMatch: readHeaderField(request, 'if-none-match') ?? '', method: rawMethod,

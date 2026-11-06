@@ -2,6 +2,8 @@
 import {fault} from './admit.mjs';
 
 export const FAST_EFFORT = 1;
+export const MEASURED_EFFORT = 6;
+export const measuredLevel = effort => effort >= 9 ? 9 : effort >= 8 ? 7 : effort >= 7 ? 6 : 4;
 export const BALANCED_EFFORT = 7;
 
 export function admitEffort(options = {}, fallback = FAST_EFFORT) {

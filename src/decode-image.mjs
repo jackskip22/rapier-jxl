@@ -68,7 +68,7 @@ function renderSections(readers,h,f,refs,lf,options,visibility,sharedFeatureWork
   let frame=restoreFrame(decodeFrameSections(readers,h,f,{readFeatures:(r,h,f)=>frameFeatures(r,h,f,options,sharedFeatureWork),lfReference:lf[f.lfLevel],maxSamples:options.maxSamples,maxModularWork:options.maxModularWork}),f);
   const {patches,splines,noise,budget}=frame.features,correlation=frame.global?[frame.global.correlation.baseX,frame.global.correlation.baseB]:[0,1];
   if(patches){upsampleExtra(frame,f,h,true);part('features').applyPatches(frame,patches,refs,h,options,budget);}
-  if(splines&&frame.planes.length===3)part('features').applySplines(frame,splines,{...options,correlation},budget);
+  if(splines&&frame.planes.length===3)part('features').applySplines(frame,splines,{...options,correlation,level:h.level},budget);
   const width=Math.ceil(f.width/power2(3*f.lfLevel)),height=Math.ceil(f.height/power2(3*f.lfLevel));
   frame.planes=frame.planes.map(p=>upsamplePlane(p,frame.width,frame.height,f.upsampling,width,height,h.upsamplingWeights));
   if(patches)frame.extraChannels=frame.extraChannels.map(e=>({...e,width,height,data:upsamplePlane(e.data,e.width,e.height,f.upsampling,width,height,h.upsamplingWeights)}));
@@ -109,6 +109,7 @@ export const outputFormat=(h,options)=>options.format==='auto'?(h.bitDepth.float
 
 function openImage(bytes,options) {
   const input=unpackInput(bytes,options),r=new JxlBits(input.codestream),h=readDecodeImageHeader(r,options);
+  h.level=input.container?.level??5;
   if(h.colorEncoding.wantICC){
     const level=input.container?.level??5;
     h.icc=part('icc').readICC(r,{maxBytes:options.maxMetadataBytes,maxProfileBytes:iccProfileLimit(level,options.maxMetadataBytes)});

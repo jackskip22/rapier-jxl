@@ -1,3 +1,6 @@
+import {resultOperation, resultReference, resultFacts, RESULT_REFERENCE} from './result-operation.mjs';
+import {JOURNAL, journaled} from '../step-journal.mjs';
+import {verbSteps, STEPS} from './verb-steps.mjs';
 import {effortJob} from '../effort-job.mjs';
 import {ansTranscodeSteps} from '../jpeg-ans-effort.mjs';
 import {readPNG16} from '../source.mjs';
@@ -6,7 +9,8 @@ import {coreSteps} from './instant.mjs';
 import {bytes, check, fail, declared, callers, isCaller, progressOf} from './primitives.mjs';
 import {drain, driveSteps, callOptions} from './common.mjs';
 import {uploadOptions} from './upload-options.mjs';
-import {settleWebp} from './webp-quality.mjs';
+import {ordinaryStillReader} from './ordinary-still-policy.mjs';
+import {lowPhotoSteps, encodeLowSplit, makeLowUpload, finishLowUpload, closeLowUpload} from './low-photo.mjs';
 import {preparationUpload} from './preparation-upload.mjs';
 import {DRIVE} from './drive.mjs';
 import {image, pixels, jpegDimensions, admitJpeg} from './input.mjs';
@@ -28,11 +32,12 @@ import {isPlainRecord} from './records.mjs';
 import {isDecoded, fromDecoded} from './describe.mjs';
 import {kernelsReady} from './kernels-ready.mjs';
 import {captureWith} from './capture-core.mjs';
-import {admitCapturePhoto} from './capture-photo-options.mjs';
-import {captureRunner, prepareCapturePhoto} from './run-capture-photo.mjs';
+import {imageResult} from './result.mjs';
+import {admitCapturePhoto, captureRectangles} from './capture-photo-options.mjs';
+import {lowCaptureRunner, prepareCapturePhoto} from './capture-photo-runner.mjs';
 import {CAPTURE_UPLOAD, carriedBy} from './capture-levels.mjs';
 const carried = carriedBy('rapier-jxl/upload', CAPTURE_UPLOAD);
-const capture = captureWith(null,{admit:options => admitCapturePhoto(options,carried),run:captureRunner()}), prepareCapture = () => prepareCapturePhoto().catch(error => { throw declared(error); });
+const capture = captureWith(null,{admit:options => admitCapturePhoto(options,carried),rectangles:captureRectangles,run:lowCaptureRunner()},imageResult), prepareCapture = () => prepareCapturePhoto().catch(error => { throw declared(error); });
 import {compileCaptureKernels} from '../capture-codec.mjs';
 export {capture};
 export {wasmOnlySupported as supported} from './capture-support.mjs';
@@ -58,12 +63,25 @@ export function prepare(operation = 'encode') {
     .catch(error => { prepared = undefined; throw declared(error); });
 }
 
-export const encode = (input, options) => encodeHere(input, options).catch(error => { throw error === options?.signal?.reason ? error : declared(error); });
-encode[DRIVE] = (input, options, helpers) => encodeHere(input, options, helpers).catch(error => { throw error === options?.signal?.reason ? error : declared(error); });
-export const {fit, variants} = preparationUpload(encode, {deep: async () => ({readSource: bytes => readPNG16(bytes, {named: true}), orient: orientSamples})});
-async function encodeHere(input, options = {}, helpers = null) {
-  if (!options || typeof options !== 'object' || Array.isArray(options)) throw fail('JXL_OPTIONS', 'JPEG XL options must be an object.');
+const encodeBytes = (input, options) => encodeHere(input, options).catch(error => { throw error === options?.signal?.reason ? error : declared(error); });
+encodeBytes[DRIVE] = (input, options, helpers) => encodeHere(input, options, helpers).catch(error => { throw error === options?.signal?.reason ? error : declared(error); });
+export const encode = resultOperation(encodeBytes);
+export {resultJSON} from './result.mjs';
+export const {fit, variants} = preparationUpload(encodeBytes, {deep: async () => ({readSource: bytes => readPNG16(bytes, {named: true}), orient: orientSamples})});
+const TAKEN = ['fidelity', 'effort', 'readAs', 'maxPixels', 'webgpu'];
+Object.defineProperty(encode, STEPS, {value: verbSteps('encode:rapier-jxl/upload', encode, {taken: TAKEN})});
+Object.defineProperty(fit, STEPS, {value: verbSteps('fit:rapier-jxl/upload', fit, {taken: ['maxBytes', ...TAKEN]})});
+Object.defineProperty(variants, STEPS, {value: verbSteps('variants:rapier-jxl/upload', variants, {taken: ['outputs', ...TAKEN]})});
+async function encodeHere(input, given = {}, helpers = null) {
+  if (!given || typeof given !== 'object' || Array.isArray(given)) throw fail('JXL_OPTIONS', 'JPEG XL options must be an object.');
+  const journal = given[JOURNAL], options = journal === undefined ? given : (({[JOURNAL]: _journal, ...rest}) => rest)(given);
   const {codec, hooks: {webgpu: _webgpu, maxPixels}} = callOptions(uploadOptions(options));
+  const reader = ordinaryStillReader({signal: options.signal, maxPixels});
+  try { return await encodeOwned(input, options, helpers, codec, maxPixels, reader, journal); }
+  finally { reader.destroy(); }
+}
+
+async function encodeOwned(input, options, helpers, codec, maxPixels, reader, journal) {
   const readAs = options.readAs;
   check(options.signal);
   if (isPlainRecord(input) && isDecoded(input)) input = fromDecoded(input);
@@ -71,35 +89,51 @@ async function encodeHere(input, options = {}, helpers = null) {
   if (isRowSource(input)) {
     if (readAs !== undefined) throw fail('JXL_OPTIONS', 'readAs reads a canvas, bitmap or Blob; a row source sets colorSpace.');
     const source = admitRows(input, maxPixels), report = options.onProgress;
-    const hooks = {signal: options.signal ?? new AbortController().signal, maxPixels, onProgress: progressOf(report, options.signal)};
+    source.description = own(source.description, maxPixels);
+    resultReference(options, source);
+    const hooks = {signal: options.signal ?? new AbortController().signal, maxPixels, onProgress: progressOf(report, options.signal), journal};
     await kernelsReady();
-    const settle = band => settleWebp(codec, band);
-    return encodeBands({width: source.width, height: source.height, read: (y, rows) => readBand(source, y, rows, hooks.signal)},
-      (band, bandHooks) => encodePicture(band, settle(band), bandHooks, helpers), (band, shared) => recodeBand(band, settle(band), shared), drain, hooks);
+    let exact = true;
+    const settle = async band => {
+      const settled = reader.read(codec, band) ?? await reader.project(codec, band);
+      exact &&= settled.quality === 100; return settled;
+    };
+    const bytes = await encodeBands({width: source.width, height: source.height, read: (y, rows) => readBand(source, y, rows, hooks.signal)},
+      async (band, bandHooks) => encodePicture(band, await settle(band), bandHooks, helpers), async function* (band, shared) {
+        return yield* recodeBand(band, await settle(band), shared);
+      }, drain, hooks);
+    if (exact) resultFacts(options, {kept: 'pixels', measurements: []});
+    return bytes;
   }
   if (isPlainRecord(input) && input.texture !== undefined && input.device !== undefined) throw fail('JXL_UNSUPPORTED', `A GPU texture is encoded by ${FULL}.`);
   const blob = typeof Blob !== 'undefined' && input instanceof Blob;
-  const owned = blob ? null : pixels(input, {readAs}, maxPixels, true);
-  const read = blob ? null : {input: owned, codec: settleWebp(codec, owned)};
-  const direct = read ? directRoute(read, maxPixels) : null;
-  if (direct) check(options.signal);
+  const borrowed = blob ? null : admitPicture(pixels(input, {readAs}, maxPixels, true));
+  const read = blob ? null : {input: borrowed, codec: reader.read(codec, borrowed)};
+  const direct = read?.codec ? directRoute(read, maxPixels) : null;
+  if (direct) {
+    check(options.signal);
+    if (options[RESULT_REFERENCE]) resultReference(options, read.input);
+  }
   if (direct && helpers?.split) return splitHere(read, direct, helpers, options, maxPixels);
-  const split = direct && photoSplitBands(read.input.data, read.input.width, read.input.height, direct.quality, {gaborish: direct.gaborish});
+  const low = direct?.lowWebp !== undefined && makeLowUpload(read.input.data, read.input.width, read.input.height, direct.quality, direct.effort);
+  const split = low ? low.split : direct && photoSplitBands(read.input.data, read.input.width, read.input.height, direct.quality, {gaborish: direct.gaborish});
   if (split && splitHasAlpha(split)) splitEnd(split);
-  else if (split) {
+  else if (split || low?.incumbent) {
     try {
       v6Trace('upload: bands made, no copy');
-      const report = options.onProgress, hooks = {signal: options.signal ?? new AbortController().signal, maxPixels,
+      const report = options.onProgress, hooks = {signal: options.signal ?? new AbortController().signal, maxPixels, journal,
         onProgress: progressOf(report, options.signal)};
       await kernelsReady();
       check(hooks.signal);
-      return await drain(splitSteps(split), hooks);
-    } finally { splitEnd(split); }
+      return await drain(low ? finishLowUpload(low, direct.effort) : splitSteps(split), hooks);
+    } finally { if (low) closeLowUpload(low); else splitEnd(split); }
   }
   const budget = Math.max(DEFAULT_INPUT_BYTES, maxPixels * 16);
   let captured = blob ? null : own(read, maxPixels, budget);
+  if (captured) resultReference(options, captured.input);
   const report = options.onProgress, onProgress = progressOf(report, options.signal);
-  const hooks = {signal: options.signal ?? new AbortController().signal, onProgress, maxPixels};
+  const hooks = {signal: options.signal ?? new AbortController().signal, onProgress, maxPixels, journal};
+  if (captured && captured.codec === null) captured.codec = await reader.project(codec, captured.input);
   let carried = null;
   if (blob && codec.quality === 100 && readAs === undefined) {
     const head = new Uint8Array(await input.slice(0, 2).arrayBuffer());
@@ -108,23 +142,24 @@ async function encodeHere(input, options = {}, helpers = null) {
       await admitJpeg(input, maxPixels, hooks.signal);
       const jpeg = new Uint8Array(await input.arrayBuffer());
       check(hooks.signal);
-      try { return await carry(jpeg, codec.effort, hooks); }
+      try { const file = await carry(jpeg, codec.effort, hooks); resultReference(options, jpeg, jpeg, {kept: 'jpeg-bytes'}); return file; }
       catch (error) { if (error?.code !== 'JXL_JPEG') throw error; check(hooks.signal); carried = error; }
     }
   }
   if (blob) {
     let picture;
-    try { picture = await image(input, {readAs}, {...hooks, phone: inspectPhone, deep: async () => ({readSource: readPNG16, orient: orientSamples})}); }
+    try { picture = await journaled(journal, 'decode', () => image(input, {readAs}, {...hooks, phone: inspectPhone, deep: async () => ({readSource: readPNG16, orient: orientSamples})})); }
     catch (error) {
       if (carried && !isCaller(error) && typeof error?.code === 'string' && error.code.startsWith('JXL_') && error.code !== 'JXL_ABORTED')
         throw Object.assign(carried, {cause: error});
       throw error;
     }
-    captured = own({input: picture, codec: settleWebp(codec, picture)}, maxPixels, budget);
+    captured = own({input: admitPicture(picture), codec}, maxPixels, budget);
+    resultReference(options, captured.input, input);
+    captured.codec = reader.read(codec, captured.input) ?? await reader.project(codec, captured.input);
   }
   const {data, width, height, ...source} = captured.input;
-  if (source.orientation !== undefined || source.extraChannels !== undefined)
-    throw fail('JXL_UNSUPPORTED', `Orientation and extra channels are written by ${FULL}.`);
+  if (captured.codec.quality === 100) resultFacts(options, {kept: 'pixels', measurements: []});
   check(hooks.signal);
   await kernelsReady();
   check(hooks.signal);
@@ -133,11 +168,18 @@ async function encodeHere(input, options = {}, helpers = null) {
   return encodePicture(captured.input, captured.codec, hooks, helpers);
 }
 
+function admitPicture(picture) {
+  if (picture.orientation !== undefined || picture.extraChannels !== undefined)
+    throw fail('JXL_UNSUPPORTED', `Orientation and extra channels are written by ${FULL}.`);
+  return picture;
+}
+
 function encodePicture({data, width, height, ...source}, codec, hooks, helpers) {
   const settings = {...source, ...codec};
   if (settings.quality < 100 && (data instanceof Float32Array || settings.sampleFormat === 'float16')) throw fail('JXL_UNSUPPORTED', `Lossy float (HDR) needs ${FULL}; this module encodes it exactly.`);
-  const steps = settings.effort === 1 ? coreSteps(data, width, height, settings) : effortJob(data, width, height, settings, false);
-  return helpers && settings.effort !== 1 ? driveSteps(steps, hooks, undefined, width * height, helpers, null) : drain(steps, hooks);
+  const low = lowPhotoSteps(data, width, height, settings);
+  const steps = low ?? (settings.effort === 1 ? coreSteps(data, width, height, settings) : effortJob(data, width, height, settings, false));
+  return helpers && (low || settings.effort !== 1) ? driveSteps(steps, hooks, undefined, width * height, helpers, null) : drain(steps, hooks);
 }
 
 async function splitHere(read, direct, helpers, options, maxPixels) {
@@ -158,9 +200,12 @@ async function splitHere(read, direct, helpers, options, maxPixels) {
   check(hooks.signal);
   v6Trace('upload: no split, the full route');
   const {data: owned, ...source} = captured.input;
+  if (direct.lowWebp !== undefined) return encodePicture(captured.input, captured.codec, hooks, helpers);
   return driveSteps(effortJob(owned, width, height, {...source, ...captured.codec}, false), hooks, undefined, width * height, helpers, null);
 }
-function* splitAsk(data, width, height, {quality, gaborish}) {
+function* splitAsk(data, width, height, {quality, gaborish, lowWebp, effort}) {
+  if (lowWebp !== undefined) return (yield {split: {pixels: width * height,
+    run: (helpers, options) => encodeLowSplit(data, width, height, quality, effort, helpers, options)}}) ?? null;
   return (yield {split: {data, width, height, quality, gaborish, screen: false, opaque: true, pixels: width * height}}) ?? null;
 }
 
@@ -182,7 +227,7 @@ function directRoute(read, maxPixels) {
   for (let p = 0, step = Math.max(1, Math.floor(width * height / 16384)); p < width * height; p += step) if (data[p * 4 + 3] !== 255) return null;
   const shape = inspectPixels(data, width, height, {opacity: false});
   if (shape.palette || shape.alpha || !preferXYB(data, width, height) || screenLike(data, width, height)) return null;
-  return {quality, gaborish: settings.effort === 3};
+  return {quality, gaborish: settings.effort === 3, effort: settings.effort, lowWebp: settings.lowWebp};
 }
 
 async function carry(jpeg, effort, hooks) {
@@ -190,4 +235,3 @@ async function carry(jpeg, effort, hooks) {
   await kernelsReady();
   return drain(ansTranscodeSteps(jpeg, {effort}), hooks);
 }
-

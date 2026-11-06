@@ -30,5 +30,6 @@ export async function acquireSource(input, options, hooks = {}) {
   dimensions(picture?.width, picture?.height, maxPixels);
   admitPixels(picture.data, picture.width, picture.height, {edge: EDGE, pixels: maxPixels});
   admitSampleFormat(picture.data, picture);
+  hooks.reference?.(picture);
   return (hooks.orient ?? orientSamples)(picture, {signal, maxPixels});
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {dimensions, fail} from './primitives.mjs';
 import {SIGNATURE, boxes, RECONSTRUCTION} from '../container.mjs';
+import {useJpegDisplay} from './result.mjs';
 
 export function jpegDisplayDimensions(bytes, maxPixels) {
   if (bytes[0] !== 255 || bytes[1] !== 216) throw fail('JXL_JPEG', 'Input is not a JPEG.');
@@ -53,3 +54,5 @@ export function jpegReconstruction(bytes) {
   for (const {type, body, end} of boxes(bytes)) if (type === RECONSTRUCTION && end > body) return 'jpeg';
   return undefined;
 }
+
+useJpegDisplay(jpegDisplayDimensions);

@@ -33,13 +33,13 @@ function graphicsOptions(data, width, height, options = {}) {
 
 function* graphicsCandidateSteps(candidate) {
   let next;
-  while (!(next = candidate.next()).done) if (yield next.value) candidate.hurry = true;
+  try { while (!(next = candidate.next()).done) if (yield next.value) candidate.hurry = true; } finally { if (!next?.done) candidate.return?.(); }
   return next.value;
 }
 
 function* graphicsPreparationSteps(steps, canStop) {
   let next, reply = false;
-  while (!(next = steps.next(canStop && reply)).done) reply = yield next.value;
+  try { while (!(next = steps.next(canStop && reply)).done) reply = yield next.value; } finally { if (!next?.done) steps.return?.(); }
   return next.value;
 }
 

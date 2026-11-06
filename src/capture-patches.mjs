@@ -10,7 +10,7 @@ const MAX_SIDE = 128, MAX_MARKS = 1 << 16, token = [0, 0, 0];
 export function capturePatches(rgba, width, height, least = 0) {
   const n = width * height;
   if (width < 16 || height < 16 || n > 1 << 25) return null;
-  const keys = pixelKeys(rgba), boxes = capturePatchMarks(keys, width, height, MAX_SIDE, MAX_MARKS);
+  const keys = pixelKeys(rgba), boxes = capturePatchMarks(keys, width, height, MAX_SIDE, MAX_MARKS, 4);
   if (!boxes) return null;
   let marked = 0;
   for (let i = 2; i < boxes.length; i += 4) marked += boxes[i] * boxes[i + 1];

@@ -29,7 +29,7 @@ export function configureModules(modules) {
     let imports, exports;
     try { imports = WebAssembly.Module.imports(module); exports = WebAssembly.Module.exports(module); }
     catch { throw error(`${name} must be a compiled WebAssembly.Module.`); }
-    const importedMemory = ['capture','simd'].includes(name);
+    const importedMemory = name === 'kernels';
     if (interfaceOf(exports) !== INTERFACES[name] ||
         (importedMemory ? imports.length !== 1 || imports[0].module !== 'env' || imports[0].name !== 'memory' || imports[0].kind !== 'memory' : imports.length !== 0))
       throw error(`The ${name} module does not match; use this package's.`);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-import {BitWriter} from './bits.mjs';
+import {BitWriter, complete} from './bits.mjs';
+import {unit, carried, stage, PASSED} from './step-journal.mjs';
 import {kernelHooks} from './kernel-hooks.mjs';
 import {ZIGZAG, jpegError, admitScan} from './jfif.mjs';
 import {JxlBits, requireJPEG, readJPEGCoefficients} from './jpeg-coefficients.mjs';
@@ -471,11 +472,12 @@ function openTail(box, maxPixels, bands, depth, bytes, budget) {
   return concatenate([raw, next]);
 }
 
-export function carryJPEG(bytes, jpeg, codestream, effort = 1, contextsFrom = 7) {
+export const carryJPEG = (bytes, jpeg, codestream, effort, contextsFrom) => complete(carryJPEGSteps(bytes, jpeg, codestream, effort, contextsFrom));
+export function* carryJPEGSteps(bytes, jpeg, codestream, effort = 1, contextsFrom = 7) {
   try {
-    const data = structure(bytes, jpeg);
-    if (!writeJPEG(jpeg, data, bytes)) throw jpegError('JPEG syntax cannot be reconstructed exactly');
-    return withJPEGReconstruction(codestream, writeData(data, effort, contextsFrom));
+    const data = yield* unit('structure', () => structure(bytes, jpeg));
+    if (!(yield* stage('check', () => writeJPEGSteps(jpeg, data, bytes)))) throw jpegError('JPEG syntax cannot be reconstructed exactly');
+    return withJPEGReconstruction(codestream, yield* unit('data', () => writeData(data, effort, contextsFrom)));
   } catch (error) {
     if (error.code === 'JXL_RECONSTRUCTION') throw jpegError('JPEG syntax cannot be reconstructed exactly');
     throw error;
@@ -685,7 +687,7 @@ function nonzeroMasks(component) {
 }
 const upTo = k => k >= 31 ? -1 : k < 0 ? 0 : (1 << (k + 1)) - 1;
 const bandMask = (ss, se) => [upTo(Math.min(se, 31)) & ~upTo(ss - 1), upTo(se - 32) & ~upTo(ss - 33)];
-function writeScan(out, jpeg, scan, huffman, restart, progressive, pad, nonzero) {
+function* writeScan(out, jpeg, scan, huffman, restart, progressive, pad, nonzero) {
   const {ss, se, al, ah} = scan, components = jpeg.components, bands = jpeg.rows?.();
   requireJPEG(progressive ? !bands && (ss === 0 ? se === 0 : scan.components.length === 1) : ss === 0 && se === 63 && !al && !ah);
   const preds = new Int32Array(components.length);
@@ -706,8 +708,13 @@ function writeScan(out, jpeg, scan, huffman, restart, progressive, pad, nonzero)
     }
   }
   let nextReset = 0;
-  for (let m = 0, y = 0; y < ny; y++) {
-    if (bands && !(y % (32 * (single ? lead.v : 1) / vmax))) { const band = bands.next().value?.components ?? requireJPEG(0); for (const e of entries) ({coeffs: e.co, row0: e.row0} = band[e.index]); }
+  const per = 32 * (single ? lead.v : 1) / vmax, banded = bands && jpeg.band && out.expected;
+  const rows = (from, to) => {
+  for (let m = from * nx, y = from; y < to; y++) {
+    if (bands && !(y % per)) {
+      if (banded) { jpeg.band(y / per); for (const e of entries) ({coeffs: e.co, row0: e.row0} = components[e.index]); }
+      else { const band = bands.next().value?.components ?? requireJPEG(0); for (const e of entries) ({coeffs: e.co, row0: e.row0} = band[e.index]); }
+    }
     for (let x = 0; x < nx; x++, m++) {
       if (restart && m && m % restart === 0) { writer.flush(); out.align(pad); out.marker(208 + ((m / restart - 1) & 7)); preds.fill(0); }
       for (let e = 0; e < entries.length; e++) {
@@ -720,10 +727,23 @@ function writeScan(out, jpeg, scan, huffman, restart, progressive, pad, nonzero)
       }
     }
   }
+  return null;
+  };
+  if (!banded) rows(0, ny);
+  else for (let from = 0; from < ny; from += per) {
+    const saved = yield* carried('scan-rows', () => rows(from, Math.min(ny, from + per)), () => {
+      out.spill(0);
+      return {done: out.done, same: out.same, acc: out.acc, pending: out.pending, block: writer.blockIndex, preds, nextReset, pad: pad?.at ?? 0};
+    });
+    if (saved === null || saved === PASSED) continue;
+    Object.assign(out, {done: saved.done, same: saved.same, acc: saved.acc, pending: saved.pending, at: 0});
+    writer.blockIndex = saved.block; preds.set(saved.preds); nextReset = saved.nextReset; if (pad) pad.at = saved.pad;
+  }
   const blocks = writer.blockIndex;
   requireJPEG(scan.resets.every(n => n < blocks) && scan.zeros.every(z => z.block < blocks)); writer.flush(); out.align(pad);
 }
-function writeJPEG(jpeg, data, expected = null, limit = Infinity) {
+const writeJPEG = (jpeg, data, expected, limit) => complete(writeJPEGSteps(jpeg, data, expected, limit));
+function* writeJPEGSteps(jpeg, data, expected = null, limit = Infinity) {
   const out = new JPEGOutput(expected, limit), huffman = [], pad = data.padding ? {bits: data.padding, at: 0} : null;
   const coverage = jpeg.components.map(() => ({coverage: new Int8Array(64).fill(-1)}));
   const masks = [], nonzero = index => masks[index] ||= nonzeroMasks(jpeg.components[index]);
@@ -763,7 +783,7 @@ function writeJPEG(jpeg, data, expected = null, limit = Infinity) {
       catch (error) { if (error.code !== 'JXL_JPEG') throw error; requireJPEG(false); }
       for (const c of info.components) body.push(jpeg.components[c.index].id, c.dc * 16 + c.ac);
       body.push(info.ss, info.se, info.ah * 16 + info.al); out.segment(marker, body);
-      writeScan(out, jpeg, info, huffman, restart, progressive, pad, nonzero);
+      yield* writeScan(out, jpeg, info, huffman, restart, progressive, pad, nonzero);
     } else if (marker === 217) { out.marker(marker); out.chunk(data.tail); }
     else if (marker >= 208 && marker <= 215) out.marker(marker);
     else requireJPEG(false);

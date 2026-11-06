@@ -1,34 +1,16 @@
 // SPDX-License-Identifier: MIT
-
-import {exactCbrt, exactPow, exactTan, exactSin, exactCos, exactExp, EXACT_PI} from './exact-math.mjs';
-const SIGMA = 1.5, C2 = 0.0009, SCALES = 6;
+import {exactPow} from './exact-math.mjs';
+import {fault} from './fault.mjs';
 import {S2_WEIGHTS, finalCurve} from './ssimulacra2-weights.mjs';
+import {GAUSS} from './ssimulacra2-constants.mjs';
+import {S2_REFERENCE, SCALES, s2Colors} from './ssimulacra2-reference.mjs';
+import {s2Dimensions, s2Samples, s2Pad} from './ssimulacra2-input.mjs';
+import {gaussianCoefficients, downsample as down, scaleSums, openMetricArena, referenceArena, useReferenceArena} from './ssimulacra2-arithmetic.mjs';
+export {ssimulacra2Reference} from './ssimulacra2-reference.mjs';
+export {recursiveGaussian, gaussianTaps} from './ssimulacra2-gaussian.mjs';
 export {finalCurve};
 export {S2_WEIGHTS as SSIMULACRA2_WEIGHTS};
-
-const S2_OPSIN = [0.30, 0.622, 0.078, 0.23, 0.692, 0.078, 0.24342268924547819, 0.20476744424496821, 0.55180986650955360];
-const S2_BIAS = 0.0037930732552754493, BIAS_ROOT = exactCbrt(S2_BIAS);
-
-const s2CbrtBuf = new ArrayBuffer(8), s2CbrtF64 = new Float64Array(s2CbrtBuf), s2CbrtU32 = new Uint32Array(s2CbrtBuf);
-const S2_CBRT_EXP = Float64Array.from({length: 2048}, (_, e) => {
-  const k = e - 1023, q = Math.floor(k / 3), r = k - q * 3;
-  s2CbrtU32[1] = (q + 1023) << 20; s2CbrtU32[0] = 0;
-  return s2CbrtF64[0] * (r === 0 ? 1 : r === 1 ? 1.2599210498948732 : 1.5874010519681994);
-});
-let s2CbrtMant;
-const S2_CBRT_MANT_TABLE = () => s2CbrtMant ||= Float64Array.from({length: 1025}, (_, i) => exactCbrt(1 + i / 1024));
-const S2_GUARD = 2 ** -37, s2Settled = (v, d) => Math.fround(v - d) === Math.fround(v + d);
-function s2Cbrt(x) {
-  if (!(x > 2.2250738585072014e-308)) return x <= 0 ? 0 : exactCbrt(x);
-  s2CbrtF64[0] = x;
-  const hi = s2CbrtU32[1], e = hi >>> 20, m = (hi >>> 10) & 1023;
-  const frac = ((hi & 1023) * 4294967296 + s2CbrtU32[0]) * (1 / 4398046511104);
-  const mant = s2CbrtMant || S2_CBRT_MANT_TABLE();
-  let r = S2_CBRT_EXP[e] * (mant[m] + frac * (mant[m + 1] - mant[m]));
-  r = (2 * r + x / (r * r)) / 3;
-  r = (2 * r + x / (r * r)) / 3;
-  return r;
-}
+const GAUSS32 = gaussianCoefficients(GAUSS);
 
 export const SRGB_TO_LINEAR = Float64Array.from({length: 256}, (_, i) => {
   const v = i / 255; return v <= 0.04045 ? v / 12.92 : exactPow((v + 0.055) / 1.055, 2.4);
@@ -38,353 +20,38 @@ export function srgbToLinear(v) {
   return v < 0 ? -l : l;
 }
 
-export function recursiveGaussian(sigma) {
-  const radius = Math.round(3.2795 * sigma + 0.2546), p = EXACT_PI / (2 * radius), omega = [p, 3 * p, 5 * p];
-  const p1 = 1 / exactTan(0.5 * omega[0]), p3 = -1 / exactTan(0.5 * omega[1]), p5 = 1 / exactTan(0.5 * omega[2]);
-  const r1 = p1 * p1 / exactSin(omega[0]), r3 = -p3 * p3 / exactSin(omega[1]), r5 = p5 * p5 / exactSin(omega[2]);
-  const rho = omega.map(w => exactExp(-0.5 * sigma * sigma * w * w) / radius);
-  const d13 = p1 * r3 - r1 * p3, d35 = p3 * r5 - r3 * p5, d51 = p5 * r1 - r5 * p1;
-  const z15 = d35 / d13, z35 = d51 / d13;
-  const A = [p1, p3, p5, r1, r3, r5, z15, z35, 1], gamma = [1, radius * radius - sigma * sigma, z15 * rho[0] + z35 * rho[1] + rho[2]];
-  const inv = invert3(A), beta = [0, 1, 2].map(i => inv[i * 3] * gamma[0] + inv[i * 3 + 1] * gamma[1] + inv[i * 3 + 2] * gamma[2]);
-  return {radius, n2: omega.map((w, i) => -beta[i] * exactCos(w * (radius + 1))), d1: omega.map(w => -2 * exactCos(w))};
-}
-
-function invert3(m) {
-  const [a, b, c, d, e, f, g, h, i] = m, A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g, det = a * A + b * B + c * C;
-  return [A / det, -(b * i - c * h) / det, (b * f - c * e) / det, B / det, (a * i - c * g) / det, -(a * f - c * d) / det,
-    C / det, -(a * h - b * g) / det, (a * e - b * d) / det];
-}
-
-const GAUSS = recursiveGaussian(SIGMA);
-
-export function gaussianTaps(g = GAUSS) {
-  const size = 4 * g.radius + 1, line = new Float64Array(size), out = new Float64Array(size);
-  line[2 * g.radius] = 1;
-  blurLine(line, out, 0, size, 1, g);
-  const taps = [];
-  for (let k = -(g.radius - 1); k <= g.radius - 1; k++) taps.push(out[2 * g.radius + k]);
-  return Float64Array.from(taps);
-}
-
-function blurLine(input, out, at, count, stride, g = GAUSS) {
-  const N = g.radius, n1 = g.n2[0], n3 = g.n2[1], n5 = g.n2[2], d1 = g.d1[0], d3 = g.d1[1], d5 = g.d1[2];
-  let a1 = 0, b1 = 0, a3 = 0, b3 = 0, a5 = 0, b5 = 0;
-  if (stride === 1 && count > 2 * N + 2) {
-    for (let n = -N + 1; n <= N; n++) {
-      const left = n - N - 1, right = n + N - 1;
-      const sum = (left >= 0 ? input[at + left] : 0) + input[at + right];
-      const o1 = n1 * sum - d1 * a1 - b1, o3 = n3 * sum - d3 * a3 - b3, o5 = n5 * sum - d5 * a5 - b5;
-      b1 = a1; a1 = o1; b3 = a3; a3 = o3; b5 = a5; a5 = o5;
-      if (n >= 0) out[at + n] = o1 + o3 + o5;
-    }
-    const stop = count - N + 1;
-    for (let n = N + 1; n < stop; n++) {
-      const sum = input[at + n - N - 1] + input[at + n + N - 1];
-      const o1 = n1 * sum - d1 * a1 - b1, o3 = n3 * sum - d3 * a3 - b3, o5 = n5 * sum - d5 * a5 - b5;
-      b1 = a1; a1 = o1; b3 = a3; a3 = o3; b5 = a5; a5 = o5;
-      out[at + n] = o1 + o3 + o5;
-    }
-    for (let n = stop; n < count; n++) {
-      const sum = input[at + n - N - 1] + 0;
-      const o1 = n1 * sum - d1 * a1 - b1, o3 = n3 * sum - d3 * a3 - b3, o5 = n5 * sum - d5 * a5 - b5;
-      b1 = a1; a1 = o1; b3 = a3; a3 = o3; b5 = a5; a5 = o5;
-      out[at + n] = o1 + o3 + o5;
-    }
-    return;
-  }
-  for (let n = -N + 1; n < count; n++) {
-    const left = n - N - 1, right = n + N - 1;
-    const sum = (left >= 0 ? input[at + left * stride] : 0) + (right < count ? input[at + right * stride] : 0);
-    const o1 = n1 * sum - d1 * a1 - b1, o3 = n3 * sum - d3 * a3 - b3, o5 = n5 * sum - d5 * a5 - b5;
-    b1 = a1; a1 = o1; b3 = a3; a3 = o3; b5 = a5; a5 = o5;
-    if (n >= 0) out[at + n * stride] = o1 + o3 + o5;
-  }
-}
-
-const f32 = Math.fround, GAUSS32 = {radius: GAUSS.radius, n2: GAUSS.n2.map(f32), d1: GAUSS.d1.map(f32)};
-function blurLine32(input, out, at, count, stride) {
-  const N = GAUSS32.radius, n1 = GAUSS32.n2[0], n3 = GAUSS32.n2[1], n5 = GAUSS32.n2[2], d1 = GAUSS32.d1[0], d3 = GAUSS32.d1[1], d5 = GAUSS32.d1[2];
-  let a1 = 0, b1 = 0, a3 = 0, b3 = 0, a5 = 0, b5 = 0;
-  if (stride === 1 && count > 2 * N + 2) {
-    for (let n = -N + 1; n <= N; n++) {
-      const left = n - N - 1, right = n + N - 1;
-      const sum = f32((left >= 0 ? input[at + left] : 0) + input[at + right]);
-      const o1 = f32(n1 * sum - f32(d1 * a1 + b1)), o3 = f32(n3 * sum - f32(d3 * a3 + b3)), o5 = f32(n5 * sum - f32(d5 * a5 + b5));
-      b1 = a1; a1 = o1; b3 = a3; a3 = o3; b5 = a5; a5 = o5;
-      if (n >= 0) out[at + n] = f32(f32(o1 + o3) + o5);
-    }
-    const stop = count - N + 1;
-    for (let n = N + 1; n < stop; n++) {
-      const sum = f32(input[at + n - N - 1] + input[at + n + N - 1]);
-      const o1 = f32(n1 * sum - f32(d1 * a1 + b1)), o3 = f32(n3 * sum - f32(d3 * a3 + b3)), o5 = f32(n5 * sum - f32(d5 * a5 + b5));
-      b1 = a1; a1 = o1; b3 = a3; a3 = o3; b5 = a5; a5 = o5;
-      out[at + n] = f32(f32(o1 + o3) + o5);
-    }
-    for (let n = stop; n < count; n++) {
-      const sum = f32(input[at + n - N - 1] + 0);
-      const o1 = f32(n1 * sum - f32(d1 * a1 + b1)), o3 = f32(n3 * sum - f32(d3 * a3 + b3)), o5 = f32(n5 * sum - f32(d5 * a5 + b5));
-      b1 = a1; a1 = o1; b3 = a3; a3 = o3; b5 = a5; a5 = o5;
-      out[at + n] = f32(f32(o1 + o3) + o5);
-    }
-    return;
-  }
-  for (let n = -N + 1; n < count; n++) {
-    const left = n - N - 1, right = n + N - 1;
-    const sum = f32((left >= 0 ? input[at + left * stride] : 0) + (right < count ? input[at + right * stride] : 0));
-    const o1 = f32(n1 * sum - f32(d1 * a1 + b1)), o3 = f32(n3 * sum - f32(d3 * a3 + b3)), o5 = f32(n5 * sum - f32(d5 * a5 + b5));
-    b1 = a1; a1 = o1; b3 = a3; a3 = o3; b5 = a5; a5 = o5;
-    if (n >= 0) out[at + n * stride] = f32(f32(o1 + o3) + o5);
-  }
-}
-export function s2Blur(plane, width, height, out = new Float64Array(plane.length), temp = new Float64Array(plane.length)) {
-  for (let y = 0; y < height; y++) blurLine(plane, temp, y * width, width, 1);
-  for (let x = 0; x < width; x++) blurLine(temp, out, x, height, width);
-  return out;
-}
-
-export function positiveXYB(linear, pixels) {
-  const out = [new Float32Array(pixels), new Float32Array(pixels), new Float32Array(pixels)], [r, g, b] = linear, m = S2_OPSIN;
-  for (let i = 0; i < pixels; i++) {
-    const al = Math.max(0, m[0] * r[i] + m[1] * g[i] + m[2] * b[i] + S2_BIAS);
-    const am = Math.max(0, m[3] * r[i] + m[4] * g[i] + m[5] * b[i] + S2_BIAS);
-    const as = Math.max(0, m[6] * r[i] + m[7] * g[i] + m[8] * b[i] + S2_BIAS);
-    const lc = s2Cbrt(al), mc = s2Cbrt(am), sc = s2Cbrt(as);
-    let l = lc - BIAS_ROOT, mm = mc - BIAS_ROOT, s = sc - BIAS_ROOT;
-    let X = 0.5 * (l - mm), Y = 0.5 * (l + mm);
-    const d = S2_GUARD * (1 + lc + mc + sc);
-    if (!(s2Settled(X * 14 + 0.42, d) && s2Settled(Y + 0.01, d) && s2Settled((s - Y) + 0.55, d))) {
-      l = exactCbrt(al) - BIAS_ROOT; mm = exactCbrt(am) - BIAS_ROOT; s = exactCbrt(as) - BIAS_ROOT;
-      X = 0.5 * (l - mm); Y = 0.5 * (l + mm);
-    }
-    out[0][i] = X * 14 + 0.42; out[1][i] = Y + 0.01; out[2][i] = (s - Y) + 0.55;
-  }
-  return out;
-}
-
-export function positiveXYBPlane(linear, pixels, c, colors = linear.rgba ? s2Colors() : null) {
-  return positiveXYBInto(linear, c, new Float32Array(pixels), 0, 0, pixels, colors);
-}
-
-const S2_COLOR_SLOTS = 1 << 17;
-const s2Colors = () => ({keys: new Int32Array(S2_COLOR_SLOTS).fill(-1), values: new Float64Array(S2_COLOR_SLOTS * 3)});
-
-function positiveXYBInto(linear, c, out, at, from, count, colors) {
-  const m = S2_OPSIN, rgba = linear.rgba, [rp, gp, bp] = rgba ? [] : linear, L = SRGB_TO_LINEAR;
-  if (rgba && colors) {
-    const {keys, values} = colors;
-    for (let k = 0; k < count; k++) {
-      const i = (from + k) * 4, key = rgba[i] << 16 | rgba[i + 1] << 8 | rgba[i + 2], slot = Math.imul(key, 0x9e3779b1) >>> 15, v = slot * 3;
-      if (keys[slot] !== key) {
-        const r = L[rgba[i]], g = L[rgba[i + 1]], b = L[rgba[i + 2]];
-        const al = Math.max(0, m[0] * r + m[1] * g + m[2] * b + S2_BIAS), am = Math.max(0, m[3] * r + m[4] * g + m[5] * b + S2_BIAS);
-        const as = Math.max(0, m[6] * r + m[7] * g + m[8] * b + S2_BIAS), lc = s2Cbrt(al), mc = s2Cbrt(am), sc = s2Cbrt(as);
-        let l = lc - BIAS_ROOT, mm = mc - BIAS_ROOT, Y = 0.5 * (l + mm), s = sc - BIAS_ROOT;
-        const d = S2_GUARD * (1 + lc + mc + sc);
-        if (!(s2Settled(0.5 * (l - mm) * 14 + 0.42, d) && s2Settled(Y + 0.01, d) && s2Settled((s - Y) + 0.55, d))) {
-          l = exactCbrt(al) - BIAS_ROOT; mm = exactCbrt(am) - BIAS_ROOT; Y = 0.5 * (l + mm); s = exactCbrt(as) - BIAS_ROOT;
-        }
-        keys[slot] = key; values[v] = 0.5 * (l - mm) * 14 + 0.42; values[v + 1] = Y + 0.01; values[v + 2] = (s - Y) + 0.55;
-      }
-      out[at + k] = values[v + c];
-    }
-    return out;
-  }
-  for (let k = 0; k < count; k++) {
-    const i = from + k, r = rgba ? L[rgba[i * 4]] : rp[i], g = rgba ? L[rgba[i * 4 + 1]] : gp[i], b = rgba ? L[rgba[i * 4 + 2]] : bp[i];
-    const al = Math.max(0, m[0] * r + m[1] * g + m[2] * b + S2_BIAS), am = Math.max(0, m[3] * r + m[4] * g + m[5] * b + S2_BIAS);
-    const lc = s2Cbrt(al), mc = s2Cbrt(am);
-    let l = lc - BIAS_ROOT, mm = mc - BIAS_ROOT;
-    if (c === 0) {
-      const v = 0.5 * (l - mm) * 14 + 0.42;
-      out[at + k] = s2Settled(v, S2_GUARD * (1 + lc + mc)) ? v : 0.5 * ((exactCbrt(al) - BIAS_ROOT) - (exactCbrt(am) - BIAS_ROOT)) * 14 + 0.42;
-      continue;
-    }
-    let Y = 0.5 * (l + mm);
-    if (c === 1) {
-      const v = Y + 0.01;
-      out[at + k] = s2Settled(v, S2_GUARD * (1 + lc + mc)) ? v : 0.5 * ((exactCbrt(al) - BIAS_ROOT) + (exactCbrt(am) - BIAS_ROOT)) + 0.01;
-      continue;
-    }
-    const as = Math.max(0, m[6] * r + m[7] * g + m[8] * b + S2_BIAS), sc = s2Cbrt(as);
-    const v = ((sc - BIAS_ROOT) - Y) + 0.55;
-    if (s2Settled(v, S2_GUARD * (1 + lc + mc + sc))) { out[at + k] = v; continue; }
-    l = exactCbrt(al) - BIAS_ROOT; mm = exactCbrt(am) - BIAS_ROOT; Y = 0.5 * (l + mm);
-    out[at + k] = ((exactCbrt(as) - BIAS_ROOT) - Y) + 0.55;
-  }
-  return out;
-}
-
-function channelSums(a, b, w, h, c, native, cached, keep, colors, terms = null, rings = {}) {
-  const g = native ? GAUSS32 : GAUSS, N = g.radius, R = 2 * N + 1, Plane = native ? Float32Array : Float64Array;
-  const [n1, n3, n5] = g.n2, [d1, d3, d5] = g.d1, line = native ? blurLine32 : blurLine;
-  rings.p1 ??= new Float32Array(R * w); rings.p2 ??= new Float32Array(R * w); rings.prod ??= new Plane(R * w);
-  rings.across ??= []; rings.state ??= []; rings.down ??= [];
-  const p1 = rings.p1, p2 = rings.p2, prod = rings.prod;
-  const active = [0, 1, 2, 3, 4].map(k => !cached || (k !== 0 && k !== 2));
-  const across = active.map((use, k) => use ? rings.across[k] ??= new Plane(R * w) : null);
-  const state = active.map((use, k) => use ? (rings.state[k] ??= new Float64Array(6 * w)).fill(0) : null);
-  const down = active.map((use, k) => use ? rings.down[k] ??= new Plane(w) : null);
-  const retained = keep && !cached ? {p1: new Float32Array(w * h), mu1: new Plane(w * h), s11: new Plane(w * h)} : null;
-  let made = 0;
-  const make = y => {
-    const at = (y % R) * w;
-    if (cached) p1.set(cached.p1.subarray(y * w, (y + 1) * w), at);
-    else positiveXYBInto(a, c, p1, at, y * w, w, a.rgba ? colors : null);
-    positiveXYBInto(b, c, p2, at, y * w, w, b.rgba ? colors : null);
-    if (!cached) {
-      line(p1, across[0], at, w, 1);
-      for (let x = 0; x < w; x++) prod[at + x] = p1[at + x] * p1[at + x]; line(prod, across[2], at, w, 1);
-    }
-    if (retained) retained.p1.set(p1.subarray(at, at + w), y * w);
-    line(p2, across[1], at, w, 1);
-    for (let x = 0; x < w; x++) prod[at + x] = p2[at + x] * p2[at + x]; line(prod, across[3], at, w, 1);
-    for (let x = 0; x < w; x++) prod[at + x] = p1[at + x] * p2[at + x]; line(prod, across[4], at, w, 1);
-  };
-  let ss1 = 0, ss4 = 0, a1 = 0, a4 = 0, l1 = 0, l4 = 0;
-  for (let n = -N + 1; n < h; n++) {
-    while (made < h && made <= n + N - 1) make(made++);
-    const left = n - N - 1, right = n + N - 1, lo = left >= 0 ? (left % R) * w : -1, ro = right < h ? (right % R) * w : -1;
-    for (let k = 0; k < 5; k++) {
-      if (!active[k]) continue;
-      const src = across[k], st = state[k], out = down[k];
-      for (let x = 0; x < w; x++) {
-        const j = 6 * x;
-        let o1, o3, o5;
-        if (native) {
-          const sum = f32((lo >= 0 ? src[lo + x] : 0) + (ro >= 0 ? src[ro + x] : 0));
-          o1 = f32(n1 * sum - f32(d1 * st[j] + st[j + 1])); o3 = f32(n3 * sum - f32(d3 * st[j + 2] + st[j + 3])); o5 = f32(n5 * sum - f32(d5 * st[j + 4] + st[j + 5]));
-          if (n >= 0) out[x] = f32(f32(o1 + o3) + o5);
-        } else {
-          const sum = (lo >= 0 ? src[lo + x] : 0) + (ro >= 0 ? src[ro + x] : 0);
-          o1 = n1 * sum - d1 * st[j] - st[j + 1]; o3 = n3 * sum - d3 * st[j + 2] - st[j + 3]; o5 = n5 * sum - d5 * st[j + 4] - st[j + 5];
-          if (n >= 0) out[x] = o1 + o3 + o5;
-        }
-        st[j + 1] = st[j]; st[j] = o1; st[j + 3] = st[j + 2]; st[j + 2] = o3; st[j + 5] = st[j + 4]; st[j + 4] = o5;
-      }
-    }
-    if (n < 0) continue;
-    const at = (n % R) * w, [mu1, mu2, s11, s22, s12] = down;
-    if (retained) { retained.mu1.set(mu1, n * w); retained.s11.set(s11, n * w); }
-    for (let x = 0; x < w; x++) {
-      const m1 = cached ? cached.mu1[n * w + x] : mu1[x], v11 = cached ? cached.s11[n * w + x] : s11[x];
-      const m2 = mu2[x], q1 = p1[at + x], q2 = p2[at + x];
-      let e, dd;
-      if (native) {
-        const delta = f32(m1 - m2), numM = f32(1 - f32(delta * delta));
-        const numS = f32(f32(2 * f32(f32(s12[x]) - f32(m1 * m2))) + f32(C2));
-        const denS = f32(f32(f32(f32(v11) - f32(m1 * m1)) + f32(f32(s22[x]) - f32(m2 * m2))) + f32(C2));
-        e = Math.max(0, 1 - f32(f32(numM * numS) / denS));
-        dd = (1 + Math.abs(f32(q2 - m2))) / (1 + Math.abs(f32(q1 - m1))) - 1;
-      } else {
-        const numM = 1 - (m1 - m2) * (m1 - m2);
-        const numS = 2 * (s12[x] - m1 * m2) + C2, denS = (v11 - m1 * m1) + (s22[x] - m2 * m2) + C2;
-        e = Math.max(0, 1 - numM * numS / denS);
-        dd = (1 + Math.abs(q2 - m2)) / (1 + Math.abs(q1 - m1)) - 1;
-      }
-      ss1 += e; ss4 += e * e * e * e;
-      const artifact = Math.max(dd, 0), detail = Math.max(-dd, 0);
-      a1 += artifact; a4 += artifact * artifact * artifact * artifact; l1 += detail; l4 += detail * detail * detail * detail;
-      if (terms) { const i = n * w + x; terms.d[i] = e; terms.dd[i] = dd; }
-    }
-  }
-  return {sums: [ss1, ss4, a1, a4, l1, l4], reference: retained};
-}
-
-export function downsample(planes, width, height, into = null) {
-  const w = (width + 1) >> 1, h = (height + 1) >> 1, out = into ? into.map(p => p.subarray(0, w * h)) : [new Float64Array(w * h), new Float64Array(w * h), new Float64Array(w * h)];
-  if (planes.rgba) downsampleRGBA(planes.rgba, out, width, height, w, h);
-  else for (let c = 0; c < 3; c++) {
-    if (planes[c] instanceof Float32Array) downsample32(planes[c], out[c], width, height, w, h);
-    else downsample64(planes[c], out[c], width, height, w, h);
-  }
-  return {planes: out, width: w, height: h};
-}
-function downsampleRGBA(rgba, out, width, height, w, h) {
-  const L = SRGB_TO_LINEAR;
-  for (let c = 0; c < 3; c++) {
-    const o = out[c];
-    for (let y = 0; y < h; y++) {
-      const r0 = 2 * y * width, r1 = Math.min(2 * y + 1, height - 1) * width;
-      for (let x = 0; x < w; x++) {
-        const x0 = 2 * x, x1 = Math.min(x0 + 1, width - 1);
-        o[y * w + x] = 0.25 * (L[rgba[(r0 + x0) * 4 + c]] + L[rgba[(r0 + x1) * 4 + c]] + L[rgba[(r1 + x0) * 4 + c]] + L[rgba[(r1 + x1) * 4 + c]]);
-      }
-    }
-  }
-}
-function downsample32(p, o, width, height, w, h) {
-  for (let y = 0; y < h; y++) {
-    const r0 = 2 * y * width, r1 = Math.min(2 * y + 1, height - 1) * width;
-    for (let x = 0; x < w; x++) {
-      const x0 = 2 * x, x1 = Math.min(x0 + 1, width - 1);
-      o[y * w + x] = 0.25 * (p[r0 + x0] + p[r0 + x1] + p[r1 + x0] + p[r1 + x1]);
-    }
-  }
-}
-function downsample64(p, o, width, height, w, h) {
-  for (let y = 0; y < h; y++) {
-    const r0 = 2 * y * width, r1 = Math.min(2 * y + 1, height - 1) * width;
-    for (let x = 0; x < w; x++) {
-      const x0 = 2 * x, x1 = Math.min(x0 + 1, width - 1);
-      o[y * w + x] = 0.25 * (p[r0 + x0] + p[r0 + x1] + p[r1 + x0] + p[r1 + x1]);
-    }
-  }
-}
-
 export function linearFromRGBA(rgba, pixels) {
   const planes = [new Float64Array(pixels), new Float64Array(pixels), new Float64Array(pixels)];
   for (let i = 0; i < pixels; i++) for (let c = 0; c < 3; c++) planes[c][i] = SRGB_TO_LINEAR[rgba[i * 4 + c]];
   return planes;
 }
 
-const S2_REFERENCE = Symbol('SSIMULACRA2 reference');
 
-function s2ReferenceSnapshot(reference, pixels) {
-  if (reference.rgba) {
-    const rgba = reference.rgba, values = rgba.subarray ? rgba.subarray(0, pixels * 4) : rgba.slice(0, pixels * 4);
-    const copy = rgba instanceof Uint8Array || rgba instanceof Uint8ClampedArray ? new Uint8Array(values) : Float64Array.from(values);
-    return {source: {rgba: copy}, bytes: copy.byteLength};
-  }
-  const source = [0, 1, 2].map(c => {
-    const plane = reference[c];
-    return Float64Array.from(plane.subarray ? plane.subarray(0, pixels) : plane.slice(0, pixels));
-  });
-  return {source, bytes: source.reduce((sum, plane) => sum + plane.byteLength, 0)};
+export function downsample(input,width,height) {
+  const close = openMetricArena();
+  try { return down(input,width,height); } finally { close(); }
 }
 
-export function ssimulacra2Reference(reference, width, height, {native = false, cacheBytes = 0, immutable = false} = {}) {
-  if (!Number.isSafeInteger(cacheBytes) || cacheBytes < 0) throw new RangeError('SSIMULACRA2 cacheBytes must be a nonnegative safe integer.');
-  let inputBytes = 0;
-  if (!immutable && typeof reference !== 'function') {
-    const snapshot = s2ReferenceSnapshot(reference, width * height); reference = snapshot.source; inputBytes = snapshot.bytes;
-  }
-  const state = {reference, width, height, native, scales: [], cacheBytes: 0, inputBytes, busy: false};
-  let w = width, h = height, left = cacheBytes;
-  for (let scale = 0; scale < SCALES; scale++) {
-    if (w < 8 || h < 8) break;
-    if (scale) { w = (w + 1) >> 1; h = (h + 1) >> 1; }
-    const bytes = w * h * 3 * (native ? 12 : 20), keep = bytes <= left;
-    state.scales.push(keep ? [] : null);
-    if (keep) left -= bytes;
-  }
-  return Object.freeze({[S2_REFERENCE]: state, reservedBytes: cacheBytes - left,
-    get cacheBytes() { return state.cacheBytes; }, get inputBytes() { return state.inputBytes; }});
-}
-
-export function ssimulacra2(reference, distorted, width, height, {wantMap = false, native = false} = {}) {
-  if (native && wantMap) throw new Error('The native score has no map.');
+export function ssimulacra2(reference, distorted, width, height, {wantMap = false} = {}) {
+  const pixels = s2Dimensions(width, height), originalWidth = width, originalHeight = height;
   const fixed = reference?.[S2_REFERENCE];
-  if (fixed && (fixed.width !== width || fixed.height !== height || fixed.native !== native)) {
-    throw new RangeError('SSIMULACRA2 reference size and arithmetic differ.');
+  if (fixed && (fixed.width !== width || fixed.height !== height)) {
+    throw new RangeError('SSIMULACRA2 reference size differs.');
   }
   if (fixed?.busy) throw new Error('SSIMULACRA2 reference is already in use.');
+  if (fixed?.released) throw new Error('SSIMULACRA2 reference is released.');
   let lastSourceScale = -1;
   if (fixed) for (let s = 0; s < fixed.scales.length; s++) if (!fixed.scales[s] || fixed.scales[s].length < 3) lastSourceScale = s;
-  let a = reference, b = distorted, w = width, h = height;
+  let a = reference, b = distorted;
+  if (fixed && !fixed.arena && fixed.scales.some(Boolean)) fixed.arena = referenceArena(fixed.sizes);
+  const close = fixed?.arena ? useReferenceArena(fixed.arena) : openMetricArena();
   if (fixed) fixed.busy = true;
   try {
     if (fixed) a = lastSourceScale < 0 ? null : typeof fixed.reference === 'function' ? fixed.reference() : fixed.reference;
+    if (!fixed || lastSourceScale >= 0) a = s2Pad(s2Samples(a, pixels), width, height);
+    b = s2Pad(s2Samples(b, pixels), width, height);
+    width = Math.max(8, width); height = Math.max(8, height);
+    let w = width, h = height;
     const norms = [], map = wantMap ? new Float64Array(width * height) : null, colors = a?.rgba || b?.rgba ? s2Colors() : null;
     let scales = 0;
     for (let sw = width, sh = height; scales < SCALES; scales++) {
@@ -392,30 +59,33 @@ export function ssimulacra2(reference, distorted, width, height, {wantMap = fals
       if (scales) { sw = (sw + 1) >> 1; sh = (sh + 1) >> 1; }
     }
     const pyramid = {a: [null, null], b: [null, null]}, half = ((width + 1) >> 1) * ((height + 1) >> 1);
-    const level = (set, s, n) => set[s & 1] ??= [new Float64Array(n), new Float64Array(n), new Float64Array(n)];
+    const Plane = Float32Array;
+    const level = (set, s, n) => set[s & 1] ??= [new Plane(n), new Plane(n), new Plane(n)];
     const termPlanes = wantMap ? {d: new Float64Array(width * height), dd: new Float64Array(width * height)} : null;
     let sharePlane = null;
     for (let scale = 0; scale < SCALES; scale++) {
       if (w < 8 || h < 8) break;
       if (scale) {
         const n = ((w + 1) >> 1) * ((h + 1) >> 1);
-        if (a) a = downsample(a, w, h, level(pyramid.a, scale, n)).planes;
-        const db = downsample(b, w, h, level(pyramid.b, scale, n)); b = db.planes; w = db.width; h = db.height;
+        if (a) a = down(a, w, h, level(pyramid.a, scale, n)).planes;
+        const db = down(b, w, h, level(pyramid.b, scale, n)); b = db.planes; w = db.width; h = db.height;
       }
       const n = w * h, per = {ssim: new Float64Array(6), edge: new Float64Array(12)};
-      const channels = fixed?.scales[scale], rings = {};
+      const channels = fixed?.scales[scale];
       const share = wantMap ? scale ? (sharePlane ??= new Float64Array(half)).subarray(0, n).fill(0) : map : null;
       const terms = wantMap ? {d: termPlanes.d.subarray(0, n), dd: termPlanes.dd.subarray(0, n)} : null;
+      const sums = wantMap ? null : scaleSums(a, b, w, h, GAUSS32, channels, !!channels, colors, null, null, scale);
       for (let c = 0; c < 3; c++) {
-        const result = channelSums(a, b, w, h, c, native, channels?.[c], !!channels, colors, terms, rings);
+        const result = sums ? sums[c] : scaleSums(a, b, w, h, GAUSS32, channels, !!channels, colors, c, terms, scale)[c];
         if (result.reference) {
           channels[c] = result.reference;
-          fixed.cacheBytes += result.reference.p1.byteLength + result.reference.mu1.byteLength + result.reference.s11.byteLength;
+          fixed.cacheBytes += result.reference.bytes;
         }
         const [ss1, ss4, a1, a4, l1, l4] = result.sums;
-        per.ssim[c * 2] = ss1 / n; per.ssim[c * 2 + 1] = Math.sqrt(Math.sqrt(ss4 / n));
-        per.edge[c * 4] = a1 / n; per.edge[c * 4 + 1] = Math.sqrt(Math.sqrt(a4 / n));
-        per.edge[c * 4 + 2] = l1 / n; per.edge[c * 4 + 3] = Math.sqrt(Math.sqrt(l4 / n));
+        const inverse = 1 / n, mean = value => inverse * value;
+        per.ssim[c * 2] = mean(ss1); per.ssim[c * 2 + 1] = Math.sqrt(Math.sqrt(mean(ss4)));
+        per.edge[c * 4] = mean(a1); per.edge[c * 4 + 1] = Math.sqrt(Math.sqrt(mean(a4)));
+        per.edge[c * 4 + 2] = mean(l1); per.edge[c * 4 + 3] = Math.sqrt(Math.sqrt(mean(l4)));
         if (wantMap) shareChannel(share, n, scales, scale, c, per, terms);
       }
       if (fixed && scale === lastSourceScale) a = null;
@@ -429,11 +99,19 @@ export function ssimulacra2(reference, distorted, width, height, {wantMap = fals
       sum += S2_WEIGHTS[i++] * Math.abs(norms[s].edge[c * 4 + k + 2]);
     }
     const score = finalCurve(sum);
+    if (!Number.isFinite(score)) throw fault('JXL_INPUT','SSIMULACRA2 samples exceed the metric arithmetic range.');
     if (fixed && fixed.scales.every(channels => channels?.length === 3)) { fixed.reference = null; fixed.inputBytes = 0; }
-    return {score, sum, norms, map};
+    let resultMap = map;
+    if (map && (originalWidth !== width || originalHeight !== height)) {
+      resultMap = new Float64Array(pixels);
+      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++)
+        resultMap[Math.min(y, originalHeight - 1) * originalWidth + Math.min(x, originalWidth - 1)] += map[y * width + x];
+    }
+    return {score, sum, norms, map: resultMap};
   } finally {
     a = null; b = null;
     if (fixed) fixed.busy = false;
+    close();
   }
 }
 

@@ -1,6 +1,7 @@
 // Rapier's JPEG XL encoder: token coding over many contexts. MIT (images/jxl/LICENSE).
 import {buildCode, uintConfig, hybridToken, writeHybrid, writeHistograms} from './prefix.mjs';
-import {BitWriter, floorLog2} from './bits.mjs';
+import {BitWriter, floorLog2, complete} from './bits.mjs';
+import {unit, carried, stage, PASSED} from './step-journal.mjs';
 import {entropyLog2} from './entropy-log.mjs';
 export {entropyLog2};
 
@@ -106,9 +107,52 @@ function mergedBits(a, b, last) {
 }
 
 const MERGED_SCRATCH = new Uint32Array(64);
-let ASSIGNMENTS_SCRATCH = new Int32Array(8192);
+const LOADED = Symbol('loaded rows');
 
-function refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost, passes = 2, switchCost = 0, kernel = null, numContexts = 8192) {
+export function tokenCountsData({contexts, small, totals, large}) {
+  const list = [];
+  large.forEach((map, ctx) => { if (map) { list.push(ctx, map.size); for (const [v, n] of map) list.push(v, n); } });
+  let n = 0;
+  for (let i = 0; i < small.length; i++) if (small[i]) n++;
+  const at = new Uint32Array(n), values = new Uint32Array(n);
+  for (let i = 0, j = 0; i < small.length; i++) if (small[i]) { at[j] = i; values[j++] = small[i]; }
+  return {contexts, at, values, totals, large: Float64Array.from(list)};
+}
+export function tokenCountsFrom({contexts, at, values, totals, large: list}) {
+  const small = new Uint32Array(contexts * 64);
+  for (let j = 0; j < at.length; j++) small[at[j]] = values[j];
+  const large = Array.from({length: contexts}, () => null);
+  for (let i = 0; i < list.length;) {
+    const map = large[list[i]] = new Map();
+    for (let n = list[i + 1], j = i + 2; n > 0; n--, j += 2) map.set(list[j], list[j + 1]);
+    i += 2 + 2 * list[i + 1];
+  }
+  return Object.assign(Object.create(TokenCounts.prototype), {contexts, small, large, totals});
+}
+
+function packClusters(clusters) {
+  const n = clusters.length, ends = new Int32Array(n), fends = new Int32Array(n), bits = new Float64Array(n), last = new Int32Array(n), cost = new Float64Array(n);
+  let members = 0, size = 0;
+  clusters.forEach((c, i) => { members += c.contexts.length; size += c.freqs.length; ends[i] = members; fends[i] = size; bits[i] = c.bits; last[i] = c.last; cost[i] = c.cost; });
+  const contexts = new Int32Array(members), freqs = new Uint32Array(size);
+  clusters.forEach((c, i) => { contexts.set(c.contexts, i ? ends[i - 1] : 0); freqs.set(c.freqs, i ? fends[i - 1] : 0); });
+  return {contexts, ends, freqs, fends, bits, last, cost};
+}
+const unpackClusters = ({contexts, ends, freqs, fends, bits, last, cost}) => Array.from(ends, (end, i) => ({
+  contexts: Array.from(contexts.subarray(i ? ends[i - 1] : 0, end)), freqs: freqs.slice(i ? fends[i - 1] : 0, fends[i]), bits: bits[i], last: last[i], cost: cost[i]}));
+function packContexts(contexts) {
+  const ctx = new Int32Array(contexts.length), ends = new Int32Array(contexts.length);
+  let size = 0;
+  contexts.forEach((c, i) => { ctx[i] = c.ctx; size += c.sparse.length; ends[i] = size; });
+  const runs = new Uint32Array(size);
+  contexts.forEach((c, i) => runs.set(c.sparse, i ? ends[i - 1] : 0));
+  return {ctx, ends, runs};
+}
+const unpackContexts = ({ctx, ends, runs}) => Array.from(ctx, (c, i) => ({ctx: c, sparse: Array.from(runs.subarray(i ? ends[i - 1] : 0, ends[i]))}));
+
+function* refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost, passes = 2, switchCost = 0, kernel = null, numContexts = 8192, ready = () => {}) {
+  const merges = yield* unit('merge', () => {
+  ready(clusters);
   const length = clusters.length, pairs = kernel ? null : new Float64Array(length * length), merged = MERGED_SCRATCH;
   const price = (a, b) => mergedBits(clusters[a].freqs, clusters[b].freqs, Math.max(clusters[a].last, clusters[b].last)) - clusters[a].bits - clusters[b].bits;
   if (kernel) kernel.pairsInit(length);
@@ -133,9 +177,10 @@ function refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost,
     else for (let i = 0; i < length; i++) if (clusters[i] && i !== left) pairs[Math.min(i, left) * length + Math.max(i, left)] = price(i, left);
   }
   clusters = clusters.filter(Boolean);
-  if (ASSIGNMENTS_SCRATCH.length < numContexts) ASSIGNMENTS_SCRATCH = new Int32Array(numContexts);
-  const assignments = ASSIGNMENTS_SCRATCH.subarray(0, numContexts);
-  assignments.fill(-1);
+  return null;
+  }, () => packClusters(clusters));
+  if (merges !== null) clusters = unpackClusters(merges);
+  const assignments = new Int32Array(numContexts).fill(-1);
   clusters.forEach((cluster, i) => { for (const ctx of cluster.contexts) assignments[ctx] = i; });
   let ordered = null;
   if (switchCost > 0) {
@@ -146,9 +191,10 @@ function refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost,
   }
   const flat = kernel && ordered ? kernel.flatten(ordered) : null;
   for (let pass = 0; pass < passes; pass++) {
+    let changed = false;
+    const saved = yield* carried('pass', () => {
     const costs = clusters.map(cluster => symbolCosts(cluster.freqs));
     const next = clusters.map(() => ({contexts: [], freqs: new Uint32Array(64), bits: 0, last: 0, cost: -1}));
-    let changed = false;
     if (switchCost > 0) {
       const n = ordered.length, k = costs.length;
       let back, at = 0;
@@ -196,12 +242,19 @@ function refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost,
     clusters.forEach((cluster, i) => {
       for (const ctx of cluster.contexts) assignments[ctx] = i;
     });
+    return null;
+    }, () => ({clusters: packClusters(clusters), assignments: assignments.slice(), changed}));
+    if (saved === PASSED) continue;
+    if (saved !== null) { clusters = unpackClusters(saved.clusters); assignments.set(saved.assignments); changed = saved.changed; }
     if (!changed) break;
   }
   return clusters;
 }
 
-export function clusterTokenCounts(counts, {maxClusters = 48, newClusterCost = 320, seeds: seedCap = 96, passes, switchCost, everyConfig = false, kernels = null} = {}, modelCost, symbolCosts, shapedCost) {
+export const clusterTokenCounts = (counts, options, modelCost, symbolCosts, shapedCost) => complete(clusterTokenCountsSteps(counts, options, modelCost, symbolCosts, shapedCost));
+export const clusterTokenCountsSteps = (counts, options, modelCost, symbolCosts, shapedCost) => stage('cluster', () => clusterSteps(counts, options, modelCost, symbolCosts, shapedCost));
+const SEED_CHUNK = 128;
+function* clusterSteps(counts, {maxClusters = 48, newClusterCost = 320, seeds: seedCap = 96, passes, switchCost, everyConfig = false, kernels = null} = {}, modelCost, symbolCosts, shapedCost) {
   passes ??= symbolCosts ? 4 : 2; switchCost ??= symbolCosts ? 4 : 0;
   const kernel = kernels && (symbolCosts ? Math.min(seedCap, maxClusters * 2) : maxClusters) <= kernels.clusters ? kernels : null;
   const totals = counts.totals, size = counts.contexts, contexts = [];
@@ -214,14 +267,25 @@ export function clusterTokenCounts(counts, {maxClusters = 48, newClusterCost = 3
   for (let i = 0; i < n; i++) { const r = keys[i] % size; used[i] = r ? r + size : 0; }
   let clusters = [];
   const seeds = symbolCosts ? Math.min(seedCap, maxClusters * 2) : maxClusters;
-  if (kernel?.seedAll && used.length) {
+  const ready = list => { if (kernel && kernel[LOADED] !== list) { list.forEach((c, i) => kernel.row(i, c.freqs, c.bits)); kernel[LOADED] = list; } };
+  const state = () => ({clusters: packClusters(clusters), contexts: packContexts(contexts)});
+  const restore = saved => {
+    if (saved === null || saved === PASSED) return;
+    clusters = unpackClusters(saved.clusters); contexts.length = 0; contexts.push(...unpackContexts(saved.contexts));
+  };
+  if (kernel?.seedAll && used.length) restore(yield* unit('seeds', () => {
     const seeded = kernel.seedAll(used, counts, clusterTokenOf, seeds, newClusterCost / (symbolCosts ? 2 : 1));
-    clusters = seeded.clusters;
+    clusters = kernel[LOADED] = seeded.clusters;
     if (symbolCosts) {
       const {runs, offsets} = seeded;
       for (let t = 0; t < used.length; t++) contexts.push({ctx: used[t], sparse: runs.subarray(2 * offsets[t], 2 * offsets[t + 1])});
     }
-  } else for (const ctx of used) {
+    return null;
+  }, state));
+  else for (let from = 0; from < used.length; from += SEED_CHUNK) restore(yield* carried('seeds', () => {
+  ready(clusters);
+  for (let at = from; at < Math.min(used.length, from + SEED_CHUNK); at++) {
+    const ctx = used[at];
     const own = counts.tokens([ctx], CLUSTER_CONFIG, 64), ownBits = entropyBits(own), last = kernel ? 0 : own.findLastIndex(Boolean) + 1;
     if (symbolCosts) {
       const sparse = [];
@@ -245,7 +309,11 @@ export function clusterTokenCounts(counts, {maxClusters = 48, newClusterCost = 3
       kernel?.row(best, cluster.freqs, cluster.bits);
     }
   }
-  if (symbolCosts && clusters.length > 1) clusters = refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost, passes, switchCost, kernel, counts.contexts);
+  if (kernel) kernel[LOADED] = clusters;
+  return null;
+  }, state));
+  if (symbolCosts && clusters.length > 1) clusters = yield* refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost, passes, switchCost, kernel, counts.contexts, ready);
+  return yield* unit('histograms', () => {
   if (!clusters.length) clusters.push({contexts: [], freqs: new Uint32Array(64), bits: 0, last: 0, cost: -1});
   const contextMap = new Uint8Array(counts.contexts);
   const histograms = clusters.map((cluster, index) => {
@@ -333,6 +401,7 @@ export function clusterTokenCounts(counts, {maxClusters = 48, newClusterCost = 3
     left = right;
   }
   return {contextMap, histograms};
+  });
 }
 
 export function prefixGroupWriter({contextMap, histograms}) {

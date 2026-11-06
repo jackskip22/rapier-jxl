@@ -53,6 +53,7 @@ jobs:
             ' "$1"
           }
           for version in $(sed -n 's/^## \([0-9][0-9.]*[0-9]\)\( .*\)\{0,1\}$/\1/p' CHANGELOG.md | sort -V); do
+            [ "${version%%.*}" -ge 8 ] || continue
             tag="v$version"
             if gh release view "$tag" >/dev/null 2>&1; then continue; fi
             # The version just published can take minutes to appear on the registry: wait for it, up to 10 minutes.

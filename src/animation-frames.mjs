@@ -17,6 +17,7 @@ import {V6} from './photo-v6.mjs';
 import {screenLike} from './screen.mjs';
 import {readStill, metadataKey, writeAnimatedImageHeader, writeAnimatedFrame, BLEND_MODES} from './framing.mjs';
 import {checkSignal} from './async-job.mjs';
+import {shown as markShown} from './photo-shown.mjs';
 
 export const ANIMATION_LIMITS = Object.freeze({pixels: LIMITS.pixels, edge: LIMITS.edge, frames: 1048576});
 const CANVAS = 2;
@@ -49,6 +50,7 @@ export function admitAnimation(animation, options) {
 
 export function* animationSteps(a, shared = null) {
   const {width, height, frames, samples, quality} = a;
+  const frameRead = samples.iccData ? {iccBits: samples.iccData.bitLength} : undefined;
   let first = frames.findIndex(frame => frame.duration > 0);
   if (first < 0) first = frames.length - 1;
   const mode = yield* frameMode(a, frames[first].data, frames);
@@ -127,11 +129,11 @@ export function* animationSteps(a, shared = null) {
     }
     const steps = shared ? shared.partSteps(coder, pixelsOf(job, width), w, h, job) : partSteps(coder, pixelsOf(job, width), w, h);
     let step, reply;
-    while (!(step = steps.next(reply)).done) reply = yield progress(from + (to - from) * step.value);
+    try { while (!(step = steps.next(reply)).done) reply = yield progress(from + (to - from) * step.value); } finally { if (!step?.done) steps.return?.(); }
     job.bytes = step.value;
   }
   for (const job of jobs) if (!job.part.still || job.bytes.length < job.part.bytes) Object.assign(job.part, {still: job.bytes, bytes: job.bytes.length, masked: job.masked});
-  for (const part of parts) part.still = readStill(part.still);
+  for (const part of parts) { part.file = part.still; part.still = readStill(part.still, frameRead); }
   const key = metadataKey(parts[0].still);
   if (parts.some(({still}) => metadataKey(still) !== key)) throw fault('JXL_FRAMING', 'The frames of the animation need different image headers.');
   const write = parts => {
@@ -151,7 +153,10 @@ export function* animationSteps(a, shared = null) {
     const codestream = out.finish();
     return parts.some(({still}) => still.level === 10) ? levelTen(codestream) : codestream;
   };
-  const bytes = write(parts);
+  const timeline = parts => ({timeline: {width, height, loops: a.loops ?? 0,
+    durations: timing.durations.map(d => d * timing.denominator / timing.numerator),
+    parts: parts.map(({frame, rect, shows, file}) => ({frame, rect, shows, file}))}});
+  const bytes = markShown(write(parts), timeline(parts));
   if (!paletteSearch) return bytes;
   let alternative = null;
   for (let i = 0; i < parts.length; i++) {
@@ -162,16 +167,16 @@ export function* animationSteps(a, shared = null) {
     if (!shape.palette) continue;
     const steps = SCREEN_LADDER.screen.paletteSteps(crop, w, h, shape, a.colorSpace, {ceiling: current.bytes});
     let step, reply;
-    while (!(step = steps.next(reply)).done) reply = yield 0.82 + 0.17 * (i + step.value) / parts.length;
+    try { while (!(step = steps.next(reply)).done) reply = yield 0.82 + 0.17 * (i + step.value) / parts.length; } finally { if (!step?.done) steps.return?.(); }
     if (!step.value) continue;
-    const still = readStill(step.value);
+    const still = readStill(step.value, frameRead);
     if (metadataKey(still) !== key) continue;
     alternative ||= parts.slice();
-    alternative[i] = {...current, still};
+    alternative[i] = {...current, still, file: step.value};
   }
   if (!alternative) return bytes;
   const candidate = write(alternative);
-  return candidate.length < bytes.length ? candidate : bytes;
+  return candidate.length < bytes.length ? markShown(candidate, timeline(alternative)) : bytes;
 
 }
 
@@ -188,7 +193,7 @@ function* frameMode(a, first, frames) {
   if (rich) return dct;
   let alpha = false;
   for (let i = 3; i < first.length && !alpha; i += 4) alpha = first[i] !== 255;
-  const shrink = steps => (function* () { let step, reply; while (!(step = steps.next(reply)).done) reply = yield 0.01 + 0.01 * step.value; return step.value; })();
+  const shrink = steps => (function* () { let step, reply; try { while (!(step = steps.next(reply)).done) reply = yield 0.01 + 0.01 * step.value; } finally { if (!step?.done) steps.return?.(); } return step.value; })();
   const exact = yield* shrink(part(frameEncodeSteps(first, width, height, {...a.still, quality: 100, effort: 1}), 0, 2));
   const lossy = yield* shrink(part(frameSteps(a, dct, first, width, height, {alpha}), 1, 2));
   return exact.length <= lossy.length ? 'modular' : dct;
@@ -206,7 +211,7 @@ function* frameSteps(a, mode, crop, w, h, floor) {
   const coefficients = yield* part(mode === 'xyb' ? photoXYBSteps(crop, w, h, a.quality, {...V6, filter: a.filter, fast: true})
     : photoCoefficientSteps(crop, w, h, a.quality, a.colorSpace), 0, 2);
   coefficients.alpha = floor.alpha ? crop : null;
-  return yield* part(coefficientAnsSteps(coefficients, a.effort), 1, 2);
+  return markShown(yield* part(coefficientAnsSteps(coefficients, a.effort), 1, 2), coefficients);
 }
 
 const SEPARATE = 4096, TILE = 16, MOST = 16;

@@ -1,3 +1,4 @@
+import {resultOperation, resultReference} from './result-operation.mjs';
 import {ansTranscodeSteps} from '../jpeg-ans-effort.mjs';
 import {restoreJPEG} from '../jpeg-reconstruction.mjs';
 import {longTail} from '../jpeg-tail.mjs';
@@ -9,8 +10,9 @@ import {jpegDimensions} from './input.mjs';
 import {admitEffort} from '../effort-level.mjs';
 import {copyBytes, encodedByteLength} from './bytes.mjs';
 import {bytes, check, fail, declared, object, dimensions, jpegPixels, NO_JPEG, progressOf} from './primitives.mjs';
-import {JxlBits, readSize} from '../jpeg-coefficients.mjs';
-import {boxes, SIGNATURE, CODESTREAM, PARTIAL} from '../container.mjs';
+import {pictureSize} from './jpeg-size.mjs';
+import {recompressSteps, restoreSteps, STEPS} from './jpeg-steps.mjs';
+import './preparation-jpeg.mjs';
 export {configureWasm} from '../wasm-modules.mjs';
 
 const pixelBound = jpegPixels;
@@ -53,7 +55,8 @@ async function owned(input, signal) {
   return copyBytes(input);
 }
 
-export const recompress = (input, options) => settle(recompressHere(input, options), options);
+export const recompress = resultOperation((input, options) => settle(recompressHere(input, options), options), {fidelity: 'exact', kept: 'jpeg-bytes'});
+Object.defineProperty(recompress, STEPS, {value: recompressSteps(kernels)});
 function recompressHere(input, options) {
   try {
     const settings = {...object(options)};
@@ -66,6 +69,7 @@ function recompressHere(input, options) {
     const pending = owned(input, signal);
     return (async () => {
       const jpeg = await pending;
+      resultReference(settings, jpeg);
       jpegDimensions(jpeg, maxPixels);
       await kernels();
       check(signal);
@@ -74,23 +78,16 @@ function recompressHere(input, options) {
   } catch (error) { return Promise.reject(error); }
 }
 
-function pictureSize(bytes) {
-  try {
-    let stream = bytes[0] === 255 && bytes[1] === 10 ? bytes : null;
-    if (!stream && SIGNATURE.every((byte, i) => bytes[i] === byte)) for (const box of boxes(bytes)) {
-      if (box.type === CODESTREAM) { stream = bytes.subarray(box.body, box.end); break; }
-      if (box.type === PARTIAL && box.end - box.body >= 4 && !(bytes[box.body] & 127) && !bytes[box.body + 1] && !bytes[box.body + 2] && !bytes[box.body + 3]) { stream = bytes.subarray(box.body + 4, box.end); break; }
-    }
-    return stream && readSize(new JxlBits(stream));
-  } catch { return null; }
-}
-export const restore = (input, options) => settle(restoreHere(input, options), options);
+export const restore = resultOperation((input, options) => settle(restoreHere(input, options), options), {format: 'jpeg', fidelity: 'exact', kept: 'jpeg-bytes'});
+Object.defineProperty(restore, STEPS, {value: restoreSteps});
+export {resultJSON} from './result.mjs';
 async function restoreHere(input, options) {
   const settings = {...object(options)};
   for (const key of Object.keys(settings)) if (!['maxPixels', 'signal', 'onProgress'].includes(key)) throw fail('JXL_OPTIONS', `Unknown restore option: ${key}.`);
   const {signal} = settings, run = hooks(settings), maxPixels = pixelBound(settings.maxPixels);
   check(signal);
   input = await owned(input, signal);
+  resultReference(settings, input);
   const size = pictureSize(input);
   if (size) dimensions(size.width, size.height, maxPixels);
   if (input[0] === 255 && input[1] === 10) throw fail('JXL_RECONSTRUCTION', NO_JPEG);

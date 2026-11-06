@@ -3,6 +3,8 @@ import {JPEG_LIMITS} from './limits.mjs';
 import {prepareICC} from './icc-write.mjs';
 import {inspectICC} from './icc-profile.mjs';
 import {kernelHooks} from './kernel-hooks.mjs';
+import {complete} from './bits.mjs';
+import {carried, PASSED} from './step-journal.mjs';
 import {ZIGZAG, jpegError} from './jpeg-tables.mjs';
 
 export {ZIGZAG, jpegError};
@@ -81,10 +83,12 @@ export function profileSpace(profile) {
   return near(SRGB) ? 'srgb' : near(P3) ? 'display-p3' : null;
 }
 
-export function parseJPEG(bytes, retainScans = false, {preserveICC = false, compression = 'auto', bands = false, maxPixels = JPEG_LIMITS.pixels} = {}, kernels = true) {
+export const parseJPEG = (bytes, retainScans, options, kernels) => complete(parseJPEGSteps(bytes, retainScans, options, kernels));
+export function* parseJPEGSteps(bytes, retainScans = false, {preserveICC = false, compression = 'auto', bands = false, maxPixels = JPEG_LIMITS.pixels} = {}, kernels = true) {
   if (!(bytes.length > 4) || bytes[0] !== 0xFF || bytes[1] !== 0xD8) throw jpegError('not a JPEG');
   const quant = [], huffman = [[], []], badDC = new Set(), icc = {count: 0, parts: []}, scanChoices = retainScans ? [] : null;
   const lookup = (kind, slot) => { const table = huffman[kind][slot]; return table && (table.lookup ??= buildHuffman(table.counts, table.symbols)); };
+  const definition = (kind, slot) => { const table = huffman[kind][slot]; return table ? {counts: table.counts, symbols: table.symbols} : null; };
   let frame = null, restartInterval = 0, adobeTransform = -1, jfif = false, orientation = null, pos = 2;
   let markerCount = 0, huffmanCount = 0;
   const padding = retainScans ? {bits: [], zero: false, kernelScans: 0} : null;
@@ -181,13 +185,13 @@ export function parseJPEG(bytes, retainScans = false, {preserveICC = false, comp
         if (!component.quant) throw jpegError('a scan without its quantisation table');
         const td = bytes[at + 1] >> 4, ta = bytes[at + 1] & 15;
         if (td > 3 || ta > 3) throw jpegError('a scan table selector above 3');
-        scan.push({component, dc: lookup(0, td), ac: lookup(1, ta), dcSlot: td});
+        scan.push({component, dc: lookup(0, td), ac: lookup(1, ta), dcSlot: td, tables: [definition(0, td), definition(1, ta)]});
       }
       if (n > 1 && scan.reduce((sum, s) => sum + s.component.h * s.component.v, 0) > 10) throw jpegError('bad sampling');
       const ss = bytes[at], se = bytes[at + 1], ah = bytes[at + 2] >> 4, al = bytes[at + 2] & 15;
       if ((!frame.progressive || (ss === 0 && ah === 0)) && scan.some(s => badDC.has(s.dcSlot))) throw jpegError('bad Huffman table');
       const choices = scanChoices ? {resets: [], zeros: []} : null;
-      pos = decodeScan(bytes, end, frame, scan, ss, se, ah, al, restartInterval, choices, padding, kernels);
+      pos = yield* decodeScan(bytes, end, frame, scan, ss, se, ah, al, restartInterval, choices, padding, kernels);
       if (choices) scanChoices.push(choices);
       frame.scans++;
     } else if (marker === 0xE0) {
@@ -205,7 +209,7 @@ export function parseJPEG(bytes, retainScans = false, {preserveICC = false, comp
     }
   }
   if (!frame || !frame.scans) throw jpegError('no picture');
-  if (padding?.zero && padding.kernelScans) return parseJPEG(bytes, retainScans, {preserveICC, compression, bands, maxPixels}, false);
+  if (padding?.zero && padding.kernelScans) return yield* parseJPEGSteps(bytes, retainScans, {preserveICC, compression, bands, maxPixels}, false);
   for (const c of frame.components) {
     for (let k = 0; k < 64; k++) if (c.coverage[k] !== 0) throw jpegError(frame.progressive ? 'a progressive JPEG whose scans do not finish every coefficient' : 'a component without its scan');
   }
@@ -462,8 +466,12 @@ class Growing {
   push(value) { if (this.n === this.values.length) { const grown = new this.Type(Math.max(1024, this.n * 2)); grown.set(this.values); this.values = grown; } this.values[this.n++] = value; }
   take() { const values = this.values.slice(0, this.n); this.n = 0; return values; }
 }
-function groupRows(bytes, frame) {
+export function groupRows(bytes, frame) {
   const components = frame.components, count = Math.ceil(frame.mcusY / (32 / frame.vmax));
+  for (const {scan} of frame.bands) for (const s of scan) {
+    if (s.dc === undefined) s.dc = s.tables[0] && buildHuffman(s.tables[0].counts, s.tables[0].symbols);
+    if (s.ac === undefined) s.ac = s.tables[1] && buildHuffman(s.tables[1].counts, s.tables[1].symbols);
+  }
   for (const c of components) c.band = new Int16Array(32 * c.v / frame.vmax * c.stride * 64);
   const sink = {bits: [], zero: false};
   let current = -1;
@@ -489,10 +497,10 @@ function groupRows(bytes, frame) {
       readUnits(reader, frame, scan, point.unit, end, restartInterval, null);
     }
   };
-  return {band, *rows() { for (let gy = 0; gy < count; gy++) { band(gy); yield {components: components.map(c => ({coeffs: c.coeffs, row0: c.row0}))}; } }};
+  return {band, *rows() { for (let gy = 0; gy < count; gy++) { band(gy); yield {components: components.map(c => ({coeffs: c.coeffs, row0: c.row0}))}; } }, bandFrame: frame};
 }
 
-function decodeScan(bytes, start, frame, scan, ss, se, ah, al, restartInterval, choices, padding, kernels) {
+function* decodeScan(bytes, start, frame, scan, ss, se, ah, al, restartInterval, choices, padding, kernels) {
   admitScan(frame, scan, ss, se, ah, al);
   const single = scan.length === 1, first = scan[0].component;
   const total = single ? first.blocksW * first.blocksH : frame.mcusX * frame.mcusY;
@@ -521,15 +529,29 @@ function decodeScan(bytes, start, frame, scan, ss, se, ah, al, restartInterval, 
     if (packed) counts.push(n);
   });
   if (bands) bands.push(entry);
-  for (let unit = 0; unit < total; unit += per) {
+  const row = unit => {
     if (bands) points.push({unit, ...reader.here(), preds: scan.map(s => s.component.pred)});
     readUnits(reader, frame, scan, unit, Math.min(total, unit + per), restartInterval, visit);
-    if (!entry.packed || !bands) continue;
+    if (!entry.packed || !bands) return null;
     const row = {counts: counts.take(), at: at.take(), levels: levels.take()};
     frame.packedBytes = (frame.packedBytes || 0) + row.counts.length + row.at.length * 3;
-    if (frame.packedBytes <= frame.packedLimit) { entry.packed.push(row); continue; }
+    if (frame.packedBytes <= frame.packedLimit) { entry.packed.push(row); return null; }
     frame.packed = false;
     for (const other of bands) other.packed = null;
+    return null;
+  };
+  const state = () => ({...reader.here(), preds: scan.map(s => s.component.pred), block: reader.blockIndex, points,
+    dc: scan.map(s => s.component.dc), natural: scan.map(s => s.component.natural), packed: entry.packed, packedBytes: frame.packedBytes ?? 0,
+    resets: choices?.resets ?? null, zeros: choices?.zeros ?? null, padding: padding && {bits: padding.bits, zero: padding.zero}});
+  for (let unit = 0; unit < total; unit += per) {
+    if (!bands) { row(unit); continue; }
+    const saved = yield* carried('scan-' + frame.scans, () => row(unit), state);
+    if (saved === null || saved === PASSED) continue;
+    reader.pos = saved.pos; reader.load(); reader.bit = saved.bit; reader.blockIndex = saved.block;
+    scan.forEach((s, i) => { s.component.pred = saved.preds[i]; s.component.dc.set(saved.dc[i]); s.component.natural.set(saved.natural[i]); });
+    points.length = 0; points.push(...saved.points); entry.packed = saved.packed; frame.packedBytes = saved.packedBytes;
+    if (choices) { choices.resets = saved.resets; choices.zeros = saved.zeros; }
+    if (padding) { padding.bits = saved.padding.bits; padding.zero = saved.padding.zero; }
   }
   reader.atMarker(true);
   return finishScan(bytes, reader.pos, total, restartInterval, choices);

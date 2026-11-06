@@ -14,20 +14,30 @@ export function channelPiece(channel, x, y, size) {
   return {channel, left, top, width, height};
 }
 
+export function copyPlanarRow(piece, data, y, x = 0, count = piece.width) {
+  const {channel, left, top, width} = piece, from = (top + y) * channel.width + left + x;
+  data.set(channel.data.subarray(from, from + count), y * width + x);
+}
 function plane(piece) {
-  const {channel, left, top, width, height} = piece, data = new Int32Array(width * height);
-  for (let y = 0; y < height; y++) data.set(channel.data.subarray((top + y) * channel.width + left, (top + y) * channel.width + left + width), y * width);
+  const {width, height} = piece, data = new Int32Array(width * height);
+  for (let y = 0; y < height; y++) copyPlanarRow(piece, data, y);
   return data;
+}
+export const PLANAR_PREDICTORS = Object.freeze([0, 1, 2, 3, 5]);
+export const planarSampleHeight = (width, height) => Math.min(height, Math.max(1, Math.floor(4096 / width)));
+export function planarPredictorCost(counts) {
+  const code = buildCode(counts);
+  let bits = 0; for (let s = 0; s < counts.length; s++) bits += counts[s] * (code.lengths[s] + Math.max(0, s < 224 ? s - 1 : s - 236));
+  return bits;
 }
 
 function selectedPredictor(data, width, height, forced) {
   if (forced >= 0) return forced;
   let selected = 0, cost = Infinity;
-  for (const predictor of [0, 1, 2, 3, 5]) {
-    const counts = new Uint32Array(ALPHABET), h = Math.min(height, Math.max(1, Math.floor(4096 / width)));
+  for (const predictor of PLANAR_PREDICTORS) {
+    const counts = new Uint32Array(ALPHABET), h = planarSampleHeight(width, height);
     codeChannel(null, counts, data, width, h, leaf(predictor));
-    const code = buildCode(counts);
-    let bits = 0; for (let s = 0; s < counts.length; s++) bits += counts[s] * (code.lengths[s] + Math.max(0, s < 224 ? s - 1 : s - 236));
+    const bits = planarPredictorCost(counts);
     if (bits < cost) { cost = bits; selected = predictor; }
   }
   return selected;

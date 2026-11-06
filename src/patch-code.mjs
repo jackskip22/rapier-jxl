@@ -59,11 +59,11 @@ export function* authoredPatchFrame(data, width, height, options, {reference = f
     });
     try {
       let step, reply = false;
-      while (!(step = steps.next(reply)).done) {
+      try { while (!(step = steps.next(reply)).done) {
         const requested = yield scaled(step.value, fraction => (i + fraction) / candidates.length);
         hurry ||= !!requested;
         reply = !!best && hurry;
-      }
+      } } finally { if (!step?.done) steps.return?.(); }
       if (step.value && (!best || step.value.length < best.length)) best = step.value;
     } catch (error) {
       if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error;

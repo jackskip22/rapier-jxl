@@ -45,7 +45,7 @@ function admitPatches(data, width, height, options = {}) {
 
 function* authoredPatchProgress(steps, start, span) {
   let step, reply;
-  while (!(step = steps.next(reply)).done) reply = yield scaled(step.value, fraction => start + span * fraction);
+  try { while (!(step = steps.next(reply)).done) reply = yield scaled(step.value, fraction => start + span * fraction); } finally { if (!step?.done) steps.return?.(); }
   return step.value;
 }
 function* authoredPatchEncode(data, width, height, options) {

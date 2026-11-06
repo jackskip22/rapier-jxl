@@ -1,127 +1,145 @@
 // SPDX-License-Identifier: MIT
 
-import {exactExp, exactLog, exactPow} from './exact-math.mjs';
-export function blockDistances({map, width, height}, margin = 2) {
-  const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), out = new Float64Array(stride * rows);
-  for (let by = 0; by < rows; by++) for (let bx = 0; bx < stride; bx++) {
-    let m = 0;
-    for (let y = Math.max(0, by * 8 - margin); y < Math.min(height, by * 8 + 8 + margin); y++)
-      for (let x = Math.max(0, bx * 8 - margin); x < Math.min(width, bx * 8 + 8 + margin); x++) m = Math.max(m, map[y * width + x]);
-    out[by * stride + bx] = m;
-  }
-  return out;
+import {exactExp, exactLog} from './exact-math.mjs';
+import {fieldValues, fieldLogSum, normalizeField, smoothForward, smoothBacktrack, distanceBounds, fieldRangeValues, centralLogSum, intervalLogSums, normalizeRanges, logRanges, appendAimOpen, pathLevels, pathForward, pathBackward, pathOwnCost, appendPathOpen, smoothWinner, fieldPointRange} from './aq-cursor-kernels.mjs';
+function activeCount(active, n, levels = null) {
+  if (active === null) return n;
+  if (!(active instanceof Uint8Array) || active.length !== n) throw new TypeError('AQ active is a Uint8Array with one entry per 8x8 cell.');
+  let count = 0;
+  for (const value of active) count += value !== 0;
+  if (levels && count < n && !levels.includes(1)) throw new RangeError('AQ levels must include 1 for inactive cells.');
+  return count;
+}
+const activeValues = (values, active) => active ? Float64Array.from(values).filter((_, i) => active[i]) : Float64Array.from(values);
+const zeroDistances = (distances, active) => distances.every((value, i) => !active[i] || value === 0);
+function checkActiveDistances(distances, active) {
+  if (!distances || distances.length !== active.length) throw new RangeError('Masked AQ needs one distance per 8x8 cell.');
+  for (let b = 0; b < active.length; b++) if (active[b] && (!Number.isFinite(distances[b]) || distances[b] < 0))
+    throw new RangeError('Masked AQ active distances must be finite and nonnegative.');
 }
 
-export function smoothField(field, levels, switchCost) {
+export {blockDistances} from './photo-distance-cells.mjs';
+
+export function smoothField(field, levels, switchCost, active = null) {
   const n = field.length, L = levels.length, logs = levels.map(v => exactLog(v));
+  activeCount(active, n, levels);
   const cost = new Float64Array(L), next = new Float64Array(L), back = new Uint8Array(n * L);
-  for (let i = 0; i < n; i++) {
-    const lf = exactLog(field[i]);
-    let bestPrev = 0;
-    for (let j = 1; j < L; j++) if (cost[j] < cost[bestPrev]) bestPrev = j;
-    for (let j = 0; j < L; j++) {
-      const stay = cost[j], move = cost[bestPrev] + switchCost;
-      const from = i === 0 || stay <= move ? j : bestPrev;
-      back[i * L + j] = from;
-      next[j] = (i === 0 ? 0 : Math.min(stay, move)) + (lf - logs[j]) * (lf - logs[j]);
-    }
-    cost.set(next);
-  }
-  let j = 0;
-  for (let k = 1; k < L; k++) if (cost[k] < cost[j]) j = k;
+  smoothForward(field, levels, logs, switchCost, active, cost, next, back, 0, n);
+  const j = smoothWinner(cost);
   const out = new Float64Array(n);
-  for (let i = n - 1; i >= 0; i--) { out[i] = levels[j]; j = back[i * L + j]; }
+  smoothBacktrack(out, levels, back, n - 1, 0, j);
   return out;
 }
 
 export function* closedLoopFieldSteps(width, height, imageOf, {rounds = 3, gamma = 0.5, aimQuantile = 0.9, min = 0.6, max = 2,
-  levels = [0.6, 0.7, 0.8, 0.9, 1, 1.12, 1.25, 1.4, 1.6, 1.8, 2], switchCost = 0.01, margin = 2, normalize = true, gammaDown = gamma, start = null, initial = null} = {}) {
-  const blocks = Math.ceil(width / 8) * Math.ceil(height / 8), options = {gamma, aimQuantile, min, max, normalize, gammaDown};
+  levels = [0.6, 0.7, 0.8, 0.9, 1, 1.12, 1.25, 1.4, 1.6, 1.8, 2], switchCost = 0.01, margin = 2, normalize = true, gammaDown = gamma, start = null, initial = null, active = null} = {}) {
+  const blocks = Math.ceil(width / 8) * Math.ceil(height / 8), count = activeCount(active, blocks, levels);
+  if (active) active = active.slice();
+  const options = {gamma, aimQuantile, min, max, normalize, gammaDown, active};
   let field = start ? Float64Array.from(start) : new Float64Array(blocks).fill(1);
+  if (active) {
+    if (field.length !== blocks) throw new RangeError('AQ start has one value per 8x8 cell.');
+    for (let b = 0; b < blocks; b++) if (!active[b]) field[b] = 1;
+    if (!count) return field;
+  }
   for (let round = 0; round < rounds; round++) {
-    const first = !round && !start && initial, image = first ? first.image : imageOf(round || start ? field : null);
+    const first = !round && !start && initial, image = first ? first.image : yield* imageOf(round || start ? field : null);
     const reply = first ? first.scores : yield {measure: image, want: {margin}}, d = reply.blocks, bound = reply.doubt?.blocks ?? 0;
-    if (!bound) { field = smoothField(fieldRaw(d, field, blocks, options), levels, switchCost); continue; }
+    if (active) {
+      checkActiveDistances(d, active);
+      if (!Number.isFinite(bound) || bound < 0) throw new RangeError('Masked AQ distance doubt must be finite and nonnegative.');
+    }
+    if (active && zeroDistances(d, active)) return field;
+    if (!bound || (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) { field = smoothField(fieldRaw(d, field, blocks, options), levels, switchCost, active); continue; }
     const doubt = new Float64Array(blocks).fill(bound), dist = Float64Array.from(d);
     let next = null;
     for (let attempt = 0; attempt < 3 && !next; attempt++) {
-      const raw = fieldRaw(dist, field, blocks, options), path = smoothField(raw, levels, switchCost);
-      const {lo, hi, aimOpen} = fieldRanges(dist, doubt, field, blocks, {...options, meanDoubt: MEAN_DOUBT}), open = certifyPath(lo, hi, path, levels, switchCost);
+      const raw = fieldRaw(dist, field, blocks, options), path = smoothField(raw, levels, switchCost, active);
+      const {lo, hi, aimOpen} = fieldRanges(dist, doubt, field, blocks, {...options, meanDoubt: MEAN_DOUBT}), open = certifyPath(lo, hi, path, levels, switchCost, active);
       if (!open.length) { next = path; break; }
       for (const b of aimOpen) open.push(b);
       const exact = attempt < 2 ? yield {exact: {kind: 'blocks', image, margin, regions: blockRegions(open, width, height)}} : yield {exact: {kind: 'whole', image, margin}};
-      if (!exact) { next = path; break; }
+      if (!exact) {
+        if (active) throw new Error('Masked AQ needs an exact measurement to settle an uncertain field.');
+        next = path; break;
+      }
       if (exact.blocks instanceof Map) for (const [k, v] of exact.blocks) { dist[k] = v; doubt[k] = 0; }
       else { dist.set(exact.blocks); doubt.fill(0); }
+      if (active) checkActiveDistances(dist, active);
+      if (active && zeroDistances(dist, active)) { next = field; break; }
     }
-    field = next ?? smoothField(fieldRaw(dist, field, blocks, options), levels, switchCost);
+    if (active && !next) {
+      const path = smoothField(fieldRaw(dist, field, blocks, options), levels, switchCost, active);
+      const {lo, hi} = fieldRanges(dist, doubt, field, blocks, options);
+      if (doubt.some((value, b) => active[b] && value > 0) && certifyPath(lo, hi, path, levels, switchCost, active).length)
+        throw new Error('Masked AQ exact measurements did not settle its field.');
+      next = path;
+    }
+    field = next ?? smoothField(fieldRaw(dist, field, blocks, options), levels, switchCost, active);
   }
   return field;
 }
 
-function fieldRaw(d, field, blocks, {gamma, aimQuantile, min, max, normalize, gammaDown}) {
-  const sorted = Float64Array.from(d).sort(), aim = sorted[Math.min(blocks - 1, Math.floor(aimQuantile * blocks))];
-  const raw = new Float64Array(blocks);
-  for (let b = 0; b < blocks; b++) raw[b] = Math.max(min, Math.min(max, field[b] * exactPow(Math.max(1e-3, d[b]) / aim, d[b] > aim ? gamma : gammaDown)));
+function fieldRaw(d, field, blocks, {gamma, aimQuantile, min, max, normalize, gammaDown, active = null}) {
+  const sorted = activeValues(d, active).sort(), count = sorted.length, quantile = sorted[Math.min(count - 1, Math.floor(aimQuantile * count))];
+  const aim = active ? Math.max(1e-3, quantile) : quantile, raw = new Float64Array(blocks).fill(1);
+  fieldValues(d, field, raw, active, aim, gamma, gammaDown, min, max, 0, blocks);
   if (normalize) {
-    let s = 0; for (const v of raw) s += exactLog(v);
-    const mean = exactExp(s / blocks); for (let b = 0; b < blocks; b++) raw[b] = Math.max(min, Math.min(max, raw[b] / mean));
+    const s = fieldLogSum(raw, active, 0, blocks), mean = exactExp(s / count);
+    normalizeField(raw, active, mean, min, max, 0, blocks);
   }
   return raw;
 }
 
 export const MEAN_DOUBT = 1e-6;
 
-export function fieldRanges(d, doubt, field, blocks, {gamma, aimQuantile, min, max, normalize, gammaDown, meanDoubt}) {
-  const k = Math.min(blocks - 1, Math.floor(aimQuantile * blocks)), dl = new Float64Array(blocks), dh = new Float64Array(blocks);
-  for (let b = 0; b < blocks; b++) { dl[b] = d[b] * (1 - doubt[b]); dh[b] = d[b] * (1 + doubt[b]); }
-  const aimLo = Float64Array.from(dl).sort()[k], aimHi = Float64Array.from(dh).sort()[k];
-  const rl = new Float64Array(blocks), rh = new Float64Array(blocks), clamp = v => Math.max(min, Math.min(max, v));
-  for (let b = 0; b < blocks; b++) {
-    const lowRatio = Math.max(1e-3, dl[b]) / aimHi, highRatio = Math.max(1e-3, dh[b]) / aimLo;
-    const es = dh[b] <= aimLo ? [gammaDown] : dl[b] > aimHi ? [gamma] : [gamma, gammaDown];
-    rl[b] = clamp(field[b] * Math.min(...es.map(e => exactPow(lowRatio, e))));
-    rh[b] = clamp(field[b] * Math.max(...es.map(e => exactPow(highRatio, e))));
+export function fieldRanges(d, doubt, field, blocks, {gamma, aimQuantile, min, max, normalize, gammaDown, meanDoubt, active = null}) {
+  const count = activeCount(active, blocks);
+  if (active) {
+    checkActiveDistances(d, active);
+    if (!doubt || doubt.length !== blocks) throw new RangeError('Masked AQ needs one doubt per 8x8 cell.');
+    for (let b = 0; b < blocks; b++) if (active[b] && (!Number.isFinite(doubt[b]) || doubt[b] < 0))
+      throw new RangeError('Masked AQ active distance doubts must be finite and nonnegative.');
   }
+  if (active && (!count || zeroDistances(d, active))) {
+    const point = new Float64Array(field.length);
+    fieldPointRange(field, active, point, 0, field.length);
+    return {lo: point, hi: point.slice(), aimOpen: []};
+  }
+  const k = Math.min(count - 1, Math.floor(aimQuantile * count)), dl = new Float64Array(blocks), dh = new Float64Array(blocks);
+  distanceBounds(d, doubt, active, dl, dh, 0, blocks);
+  const low = activeValues(dl, active).sort()[k], high = activeValues(dh, active).sort()[k];
+  const aimLo = active ? Math.max(1e-3, low) : low, aimHi = active ? Math.max(1e-3, high) : high;
+  const rl = new Float64Array(blocks), rh = new Float64Array(blocks);
+  fieldRangeValues(dl, dh, field, active, rl, rh, aimLo, aimHi, gamma, gammaDown, min, max, 0, blocks);
   if (normalize) {
     let meanLo, meanHi;
-    if (meanDoubt !== undefined) {
+    if (meanDoubt !== undefined && !active) {
       const sorted = Float64Array.from(d).sort(), aim = sorted[k];
-      let s = 0; for (let b = 0; b < blocks; b++) s += exactLog(clamp(field[b] * exactPow(Math.max(1e-3, d[b]) / aim, d[b] > aim ? gamma : gammaDown)));
+      const s = centralLogSum(d, field, aim, gamma, gammaDown, min, max, 0, blocks);
       meanLo = exactExp(s / blocks - meanDoubt); meanHi = exactExp(s / blocks + meanDoubt);
     } else {
-      let sl = 0, sh = 0; for (let b = 0; b < blocks; b++) { sl += exactLog(rl[b]); sh += exactLog(rh[b]); }
-      meanLo = exactExp(sl / blocks); meanHi = exactExp(sh / blocks);
+      const [sl, sh] = intervalLogSums(rl, rh, active, 0, blocks);
+      meanLo = exactExp(sl / count); meanHi = exactExp(sh / count);
     }
-    for (let b = 0; b < blocks; b++) { const l = clamp(rl[b] / meanHi), h = clamp(rh[b] / meanLo); rl[b] = l; rh[b] = h; }
+    normalizeRanges(rl, rh, active, meanLo, meanHi, min, max, 0, blocks);
   }
-  const lo = new Float64Array(blocks), hi = new Float64Array(blocks), slack = 1e-12, aimOpen = [];
-  for (let b = 0; b < blocks; b++) { lo[b] = exactLog(rl[b]) - slack; hi[b] = exactLog(rh[b]) + slack; }
-  if (aimLo < aimHi) for (let b = 0; b < blocks; b++) if (doubt[b] && dl[b] <= aimHi && dh[b] >= aimLo) aimOpen.push(b);
+  const lo = new Float64Array(blocks), hi = new Float64Array(blocks), aimOpen = [];
+  logRanges(rl, rh, active, lo, hi, 0, blocks);
+  appendAimOpen(dl, dh, doubt, active, aimLo, aimHi, 0, blocks, aimOpen);
   return {lo, hi, aimOpen};
 }
 
-export function certifyPath(lo, hi, path, levels, switchCost) {
+export function certifyPath(lo, hi, path, levels, switchCost, active = null) {
   const n = lo.length, L = levels.length, logs = levels.map(v => exactLog(v)), level = new Uint8Array(n);
-  for (let i = 0; i < n; i++) level[i] = levels.indexOf(path[i]);
-  const term = (i, j) => {
-    const a = lo[i] - logs[j], b = hi[i] - logs[j], least = a <= 0 && b >= 0 ? 0 : Math.min(a * a, b * b), most = Math.max(a * a, b * b);
-    return j === level[i] ? most : least;
-  };
+  activeCount(active, n, levels);
+  pathLevels(path, levels, active, level, 0, n);
   const F = new Float64Array(n * L), B = new Float64Array(n * L);
-  for (let i = 0; i < n; i++) {
-    let best = Infinity; if (i) for (let j = 0; j < L; j++) best = Math.min(best, F[(i - 1) * L + j]);
-    for (let j = 0; j < L; j++) F[i * L + j] = term(i, j) + (i ? Math.min(F[(i - 1) * L + j], best + switchCost) : 0);
-  }
-  for (let i = n - 1; i >= 0; i--) {
-    let best = Infinity; if (i < n - 1) for (let j = 0; j < L; j++) best = Math.min(best, B[(i + 1) * L + j]);
-    for (let j = 0; j < L; j++) B[i * L + j] = term(i, j) + (i < n - 1 ? Math.min(B[(i + 1) * L + j], best + switchCost) : 0);
-  }
-  let own = 0;
-  for (let i = 0; i < n; i++) own += term(i, level[i]) + (i && level[i] !== level[i - 1] ? switchCost : 0);
+  pathForward(lo, hi, level, levels, logs, active, switchCost, F, 0, n);
+  pathBackward(lo, hi, level, levels, logs, active, switchCost, B, n, n - 1, 0);
+  const own = pathOwnCost(lo, hi, level, levels, logs, active, switchCost, 0, n);
   const margin = 1e-13 * n * (1 + own), open = [];
-  for (let i = 0; i < n; i++) for (let j = 0; j < L; j++)
-    if (j !== level[i] && F[i * L + j] + B[i * L + j] - term(i, j) <= own + margin) { open.push(i); break; }
+  appendPathOpen(lo, hi, level, levels, logs, active, F, B, own, margin, 0, n, open);
   return open;
 }
 
@@ -131,79 +149,7 @@ function blockRegions(open, width, height) {
   return [...tiles].map(t => { const ty = Math.floor(t / 65536), tx = t % 65536; return {x0: tx * 32, y0: ty * 32, x1: Math.min(width, tx * 32 + 32), y1: Math.min(height, ty * 32 + 32)}; });
 }
 
-export function perceptualMaskField(planes, stride, rows, rowsOf = () => ({planes, top: 0})) {
-  const steps = perceptualMaskSteps(stride, rows, rowsOf);
-  for (;;) { const step = steps.next(); if (step.done) return step.value; }
-}
-export function* perceptualMaskSteps(stride, rows, rowsOf) {
-  const hf = new Float64Array(stride * rows);
-  for (let by = 0; by < rows; by++) { const {planes: p, top} = rowsOf(by); maskEnergy(p, top, stride, by, by + 1, hf); yield; }
-  return maskWeights(hf, stride, rows);
-}
-export function maskEnergy([X, Y, B], top, stride, by0, by1, hf) {
-  const W = stride * 8;
-  for (let by = by0; by < by1; by++) for (let bx = 0; bx < stride; bx++) {
-    let s = 0;
-    for (let y = 0; y < 7; y++) {
-      const row = (by * 8 + y - top) * W + bx * 8;
-      for (let x = 0; x < 7; x++) {
-        const i = row + x;
-        const dy1 = Y[i + 1] - Y[i], dy2 = Y[i + W] - Y[i], dd = Y[i + W + 1] + Y[i] - Y[i + 1] - Y[i + W];
-        const dx = X[i + 1] - X[i], db = B[i + 1] - B[i];
-        const eY = Math.sqrt(dy1 * dy1 + dy2 * dy2 + 0.5 * dd * dd);
-        const eC = Math.sqrt(4 * dx * dx + 0.25 * db * db);
-        s += (eY / (1 + 0.08 * eY)) + 0.35 * (eC / (1 + 0.08 * eC));
-      }
-    }
-    hf[by * stride + bx] = s / 49;
-  }
-}
-export function maskWeightDoubts(bound, stride, rows, eroded = null) {
-  const n = stride * rows, rel = new Float64Array(n);
-  let total = 0;
-  for (let by = 0; by < rows; by++) for (let bx = 0; bx < stride; bx++) {
-    let E = 0;
-    for (let y = Math.max(0, by - 1); y <= Math.min(rows - 1, by + 1); y++) for (let x = Math.max(0, bx - 1); x <= Math.min(stride - 1, bx + 1); x++) E = Math.max(E, bound[y * stride + x]);
-    const b = by * stride + bx;
-    let r = 0.375 * E, w = 1;
-    if (eroded) {
-      const m = Math.max(0, eroded[b] - E);
-      r = Math.min(r, 1.5 * E / ((0.5 * m + 2) * (0.5 * m + 5)));
-      w = 1 + 3 / (0.5 * eroded[b] + 2);
-    }
-    rel[b] = r; total += r * w;
-  }
-  const b = total / n;
-  if (!(b < 0.5)) return rel.fill(Infinity);
-  for (let i = 0; i < n; i++) rel[i] = (rel[i] + b) / (1 - b) + 1e-12;
-  return rel;
-}
-export function maskDoubtOver(doubt, stride, bx, by, bw, bh) {
-  if (typeof doubt === 'number') return doubt;
-  let m = 0;
-  for (let y = by; y < by + bh; y++) for (let x = bx; x < bx + bw; x++) m = Math.max(m, doubt[y * stride + x]);
-  return m;
-}
-export const maskDoubtMax = doubt => typeof doubt === 'number' ? doubt : doubt.reduce((m, v) => Math.max(m, v), 0);
-export function maskWeights(hf, stride, rows) {
-  const n = stride * rows, eroded = new Float64Array(n), weight = new Float64Array(n);
-  let wSum = 0;
-  for (let by = 0; by < rows; by++) for (let bx = 0; bx < stride; bx++) {
-    let m0 = Infinity, m1 = Infinity, m2 = Infinity;
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      const ny = Math.max(0, Math.min(rows - 1, by + dy)), nx = Math.max(0, Math.min(stride - 1, bx + dx));
-      const v = hf[ny * stride + nx];
-      if (v < m0) { m2 = m1; m1 = m0; m0 = v; }
-      else if (v < m1) { m2 = m1; m1 = v; }
-      else if (v < m2) { m2 = v; }
-    }
-    const er = 0.45 * m0 + 0.30 * m1 + 0.25 * m2, b = by * stride + bx;
-    eroded[b] = er;
-    const w = 1 + 3.0 / (0.5 * er + 2.0);
-    weight[b] = w;
-    wSum += w;
-  }
-  const norm = n / (wSum || 1);
-  for (let b = 0; b < n; b++) weight[b] *= norm;
-  return {hf, eroded, weight};
-}
+export {perceptualMaskField, perceptualMaskSteps, maskEnergy, maskWeightDoubts, maskDoubtOver, maskDoubtMax, maskWeights} from './photo-mask.mjs';
+
+export {activeCount as aqActiveCount, zeroDistances as aqZeroDistances,
+  checkActiveDistances as aqCheckActiveDistances, fieldRaw as aqFieldRaw, blockRegions as aqBlockRegions};

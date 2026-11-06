@@ -2,6 +2,7 @@
 import {floorLog2} from './bits.mjs';
 import {entropyLog2} from './entropy-log.mjs';
 import {kernelHooks} from './kernel-hooks.mjs';
+import {writeContextMap, writeUintConfig} from './prefix.mjs';
 
 export const LOG_LENGTHS = [5, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 6, 7];
 export const LOG_CODES = [17, 11, 15, 3, 9, 7, 4, 2, 5, 6, 0, 33, 1];
@@ -284,4 +285,22 @@ export function expectedDataBits(freqs, counts) {
   let bits = 0;
   for (let s = 0; s < freqs.length; s++) if (freqs[s]) bits += freqs[s] * SYMBOL_BITS[counts[s]];
   return bits;
+}
+
+export function writeAnsHistograms(w, contextMap, logAlphabet, configs, histograms) {
+  if (contextMap.length > 1) writeContextMap(w, contextMap);
+  w.write(1, 0); w.write(2, logAlphabet - 5);
+  for (const config of configs) writeUintConfig(w, config, logAlphabet);
+  for (const h of histograms) writeDistribution(w, h.counts, true, h.shift, h.omit);
+}
+
+export function ansEncode(n, ids, freq, start, reverses, emitted, flags) {
+  let state = 0x13 * 65536;
+  for (let i = n - 1; i >= 0; i--) {
+    const f = freq[i];
+    if ((state >>> 20) >= f) { emitted[i] = state & 65535; flags[i] = 1; state >>>= 16; }
+    const q = Math.floor(state / f);
+    state = q * 4096 + reverses[ids[i]][start[i] + state - q * f];
+  }
+  return state;
 }

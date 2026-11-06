@@ -11,6 +11,28 @@ function admitRects(name, rects) {
     throw fail('JXL_OPTIONS', `${flag} is true or false, on exactRects only.`);
 }
 
+export function captureRectangles(options, width, height) {
+  const clipped = {}, budget = width * height * 8;
+  let work = 0;
+  for (const name of ['exactRects', 'photoRects']) {
+    if (options[name] === undefined) continue;
+    const out = [], seen = new Set();
+    for (const r of options[name]) {
+      const x = Math.max(0, r.x), y = Math.max(0, r.y);
+      const w = Math.min(width, r.x + r.width) - x, h = Math.min(height, r.y + r.height) - y;
+      if (w <= 0 || h <= 0) continue;
+      const key = `${x},${y},${w},${h},${r.solidText === true},${r.edge === true}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      work += w * h;
+      if (work > budget) throw fail('JXL_LIMIT', 'Capture rectangles exceed the clipped work budget.');
+      out.push({...r, x, y, width: w, height: h});
+    }
+    clipped[name] = out;
+  }
+  return clipped;
+}
+
 export function admitCapturePhoto(options = {}, carried = null) {
   if (!options || typeof options !== 'object' || Array.isArray(options))
     throw fail('JXL_OPTIONS', 'JPEG XL options must be an object.');

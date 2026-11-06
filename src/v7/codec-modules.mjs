@@ -16,7 +16,7 @@ const HELPERS = Object.freeze({
 const runners = new Map();
 const runner = (name, load) => { if (!runners.has(name)) { const loading = load(); runners.set(name, loading); loading.catch(() => runners.delete(name)); } return runners.get(name); };
 export const MODULES = Object.freeze({
-  'rapier-jxl': Object.freeze({module: 'rapier-jxl', gpu: true, operations: ['encode', 'fit', 'variants', 'capture'], captureAdmission: admitCapturePhoto, captureLevels: CAPTURE_COMPLETE,
+  'rapier-jxl': Object.freeze({module: 'rapier-jxl', gpu: true, operations: ['encode', 'fit', 'variants'],
     url: () => new URL('./still.worker.mjs', import.meta.url),
     worker: () => new Worker(new URL('./still.worker.mjs', import.meta.url), {type: 'module'}),
     runtime: () => runner('rapier-jxl', () => import('./index.mjs').then(module => moduleRuntime(module, {name: 'rapier-jxl', gpu: requireWebGPU, helpers, helper: HELPERS.still})))}),

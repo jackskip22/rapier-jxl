@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 import {ceilLog2} from './bits.mjs';
-import {hybridToken, writeContextMap, writeUintConfig} from './prefix.mjs';
+import {hybridToken, writeUintConfig} from './prefix.mjs';
 import {SCREEN_INTEGER_CONFIGS} from './screen-codes.mjs';
 import {learnedModel} from './capture-trees.mjs';
-import {reverseAlias, shapeHistogram, writeDistribution} from './ans-core.mjs';
-import {regionAnsCoding} from './capture-ans-regions.mjs';
+import {colourTransform} from './rct-search.mjs';
+import {reverseAlias, shapeHistogram, writeAnsHistograms, ansEncode} from './ans-core.mjs';
 
 export function captureAnsTokens(models, index, configs, copy, histograms) {
   let n = 0;
@@ -42,29 +42,22 @@ export function writeCaptureAns(header, data, {lz77, contextMap, configs}, token
   for (const f of freqs) for (let s = 255; s > largest; s--) if (f[s]) { largest = s; break; }
   const logAlphabet = Math.max(5, ceilLog2(largest + 1), ...configs.map(c => c.split));
   if (logAlphabet > 8) return false;
-  const shapes = freqs.map(f => {
+  const shapes = [];
+  for (const f of freqs) {
     const shape = shapeHistogram(f);
-    return {...shape, ...reverseAlias(shape.counts, logAlphabet)};
-  });
+    if (!shape) return false;
+    shapes.push({...shape, ...reverseAlias(shape.counts, logAlphabet)});
+  }
   w.write(1, lz77 ? 1 : 0);
   if (lz77) {
     w.writeU32([[0, 224], [0, 512], [0, 4096], [15, 8]], lz77.minSymbol);
     w.writeU32([[0, 3], [0, 4], [2, 5], [8, 9]], lz77.minLength);
     writeUintConfig(w, lz77.lengthConfig, 8);
   }
-  if (contextMap.length > 1) writeContextMap(w, contextMap);
-  w.write(1, 0); w.write(2, logAlphabet - 5);
-  for (const config of configs) writeUintConfig(w, config, logAlphabet);
-  for (const shape of shapes) writeDistribution(w, shape.counts, true, shape.shift, shape.omit);
-  const emitted = new Uint16Array(n), flagged = new Uint8Array(n);
-  let state = 0x13 * 65536;
-  for (let i = n - 1; i >= 0; i--) {
-    const h = shapes[histogram[i]], s = symbol[i], freq = h.counts[s];
-    if ((state >>> 20) >= freq) { emitted[i] = state & 65535; flagged[i] = 1; state >>>= 16; }
-    const q = Math.floor(state / freq);
-    state = q * 4096 + h.reverse[h.starts[s] + state - q * freq];
-  }
-  data.write(32, state);
+  writeAnsHistograms(w, contextMap, logAlphabet, configs, shapes);
+  const emitted = new Uint16Array(n), flagged = new Uint8Array(n), freq = new Int32Array(n), start = new Int32Array(n);
+  for (let i = 0; i < n; i++) { const h = shapes[histogram[i]], s = symbol[i]; freq[i] = h.counts[s]; start[i] = h.starts[s]; }
+  data.write(32, ansEncode(n, histogram, freq, start, shapes.map(h => h.reverse), emitted, flagged));
   for (let i = 0; i < n; i++) {
     if (flagged[i]) data.write(16, emitted[i]);
     if (nbits[i]) data.write(nbits[i], bits[i]);
@@ -142,5 +135,5 @@ function bins(plane, stride, origin, w, pieceValue, pieceDistance, minimum, coun
   }
 }
 
-export const CAPTURE_TOOLS_COMPLETE = Object.freeze({top: 9, next: null, ans: Object.freeze({tokens: captureAnsTokens, write: writeCaptureAns, distanceConfig, lengthConfig, regions: regionAnsCoding}),
-  signs: Object.freeze({arena, bins}), trees: Object.freeze({model: learnedModel}), gpu: Object.freeze({pixels: 1 << 20})});
+export const CAPTURE_TOOLS_COMPLETE = Object.freeze({top: 9, next: null, ans: Object.freeze({tokens: captureAnsTokens, write: writeCaptureAns, distanceConfig, lengthConfig}),
+  signs: Object.freeze({arena, bins}), trees: Object.freeze({model: learnedModel}), transform: colourTransform, gpu: Object.freeze({pixels: 1 << 20})});

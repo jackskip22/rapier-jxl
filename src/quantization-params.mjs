@@ -54,18 +54,18 @@ function quantParamAdmit(input, width, height, family) {
   if (mode < 0) throw fault('JXL_INPUT', 'Quantization mode is library, identity, dct2, dct4, dct4x8, afv or dct.');
   if (mode > 0 && mode < 6 && width * height !== 64)
     throw fault('JXL_INPUT', 'Compact quantization modes need an 8x8 table family.');
-  const source = library ? QUANT_PARAM_LIBRARY[family] : input;
+  const source = !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && library ? QUANT_PARAM_LIBRARY[family] : input;
   if (!source) throw fault('JXL_INPUT', 'Unknown quantization-table family.');
   const kind = QUANT_PARAM_MODES.indexOf(source.mode), table = {mode, kind, library};
   const positive = (v, divisor = 1) => quantParamNumber(v, divisor, true, library);
-  if (kind === 1 || kind === 2) table.weights = quantParamTriplet(source.weights, kind === 1 ? 3 : 6, v => positive(v, 64));
+  if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && (kind === 1 || kind === 2)) table.weights = quantParamTriplet(source.weights, kind === 1 ? 3 : 6, v => positive(v, 64));
   else if (kind === 3) {
     table.multipliers = quantParamTriplet(source.multipliers, 2, v => positive(v));
     table.bands = quantParamBands(source.bands, library);
   } else if (kind === 4) {
     table.multipliers = quantParamVector(source.multipliers, 3, v => positive(v));
     table.bands = quantParamBands(source.bands, library);
-  } else if (kind === 5) {
+  } else if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && kind === 5) {
     table.weights = quantParamTriplet(source.weights, 9, (v, i) => quantParamNumber(v, i < 6 ? 64 : 1, i < 6, library));
     table.bands4x8 = quantParamBands(source.bands4x8, library);
     table.bands4x4 = quantParamBands(source.bands4x4, library);
@@ -103,21 +103,25 @@ function quantParamInterpolate(bands, position) {
   return a * quantParamPower(b / a, position - index);
 }
 
-function quantParamDCT(parameters, width, height) {
+export function fillQuantParamDCT(parameters, width, height, out, from = 0, to = width * height, origin = 0) {
   const bands = quantParamExpandBands(parameters), scale = (bands.length - 1) / (1.4142135623730951 + .000001);
-  return Float64Array.from({length: width * height}, (_, i) => {
+  for (let i = from; i < to; i++) {
     const x = (i % width) / (width - 1), y = Math.floor(i / width) / (height - 1);
-    return quantParamInterpolate(bands, Math.sqrt(x * x + y * y) * scale);
-  });
+    out[i - origin] = quantParamInterpolate(bands, Math.sqrt(x * x + y * y) * scale);
+  }
+  return out;
+}
+function quantParamDCT(parameters, width, height) {
+  return fillQuantParamDCT(parameters, width, height, new Float64Array(width * height));
 }
 
-function quantParamMatrix(table, channel, width, height) {
+export function quantParamMatrix(table, channel, width, height) {
   const {kind} = table;
   if (kind === 6) return quantParamDCT(table.bands[channel], width, height);
   const plane = new Float64Array(64), weights = table.weights?.[channel];
-  if (kind === 1) {
+  if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && kind === 1) {
     plane.fill(weights[0]); plane[1] = plane[8] = weights[1]; plane[9] = weights[2];
-  } else if (kind === 2) {
+  } else if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && kind === 2) {
     plane[0] = 1;
     for (let i = 0; i < 6; i++) {
       const size = 1 << Math.floor(i / 2);
@@ -130,7 +134,7 @@ function quantParamMatrix(table, channel, width, height) {
     const small = quantParamDCT(table.bands[channel], 4, 4);
     for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) plane[y * 8 + x] = small[Math.floor(y / 2) * 4 + Math.floor(x / 2)];
     plane[1] /= table.multipliers[channel][0]; plane[8] /= table.multipliers[channel][0]; plane[9] /= table.multipliers[channel][1];
-  } else if (kind === 4) {
+  } else if (kind === 4 || (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) {
     const small = quantParamDCT(table.bands[channel], 8, 4);
     for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) plane[y * 8 + x] = small[Math.floor(y / 2) * 8 + x];
     plane[8] /= table.multipliers[channel];
@@ -153,15 +157,15 @@ function quantParamWriteBands(writer, bands, order) {
     writer.write(16, float16Bits(bands[channel][i] / (i ? 1 : 64)));
 }
 
-function quantParamWrite(writer, table, order) {
+export function writeQuantParams(writer, table, order) {
   writer.write(3, table.mode);
   if (table.library) return;
   const {kind} = table;
-  if (kind === 1 || kind === 2) for (const channel of order) for (const value of table.weights[channel]) writer.write(16, float16Bits(value / 64));
+  if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && (kind === 1 || kind === 2)) for (const channel of order) for (const value of table.weights[channel]) writer.write(16, float16Bits(value / 64));
   else if (kind === 3 || kind === 4) {
     for (const channel of order) for (const value of kind === 3 ? table.multipliers[channel] : [table.multipliers[channel]]) writer.write(16, float16Bits(value));
     quantParamWriteBands(writer, table.bands, order);
-  } else if (kind === 5) {
+  } else if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && kind === 5) {
     for (const channel of order) for (let i = 0; i < 9; i++) writer.write(16, float16Bits(table.weights[channel][i] / (i < 6 ? 64 : 1)));
     quantParamWriteBands(writer, table.bands4x8, order); quantParamWriteBands(writer, table.bands4x4, order);
   } else quantParamWriteBands(writer, table.bands, order);
@@ -170,14 +174,17 @@ function quantParamWrite(writer, table, order) {
 export function prepareQuantParams(input, width, height, family) {
   const table = quantParamAdmit(input, width, height, family);
   const weights = [0, 1, 2].map(channel => quantParamMatrix(table, channel, width, height));
-  return {mode: table.mode, weights, library: table.library,
-    write: (writer, order) => quantParamWrite(writer, table, order)};
+  return {mode: table.mode, weights, library: table.library, syntax: table};
 }
 
-export function quantParamSteps(prepared, quantScale, field, order) {
-  return order.map((_, component) => Float64Array.from(prepared.weights[prepared.library ? order.indexOf(component) : component],
-    weight => 8 * 255 * quantScale / (field * weight)));
+export function quantParamStepValues(weights, quantScale, field, out = new Float64Array(weights.length)) {
+  for (let i = 0; i < weights.length; i++) out[i] = 8 * 255 * quantScale / (field * weights[i]);
+  return out;
 }
+export function quantParamSteps(prepared, quantScale, field, order) {
+  return order.map((_, component) => quantParamStepValues(prepared.weights[prepared.library ? order.indexOf(component) : component], quantScale, field));
+}
+export {quantParamAdmit as quantParamDescriptor};
 
 export function quantParamCoding(counts) {
   const config = uintConfig(0), aggregate = counts.aggregate(Array.from({length: counts.contexts}, (_, i) => i));

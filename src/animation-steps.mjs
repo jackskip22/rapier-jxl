@@ -8,7 +8,7 @@ export function encodeAnimationJob(animation, options = {}) {
   const it = (function* () {
     const steps = animationSteps(admitted);
     let step, last;
-    while (!(step = guard(() => steps.next(it.hurry))).done) { checkSignal(admitted.signal); yield last = step.value; }
+    try { while (!(step = guard(() => steps.next(it.hurry))).done) { checkSignal(admitted.signal); yield last = step.value; } } finally { if (!step?.done) steps.return?.(); }
     if (last < 1) yield 1;
     return it.bytes = step.value;
   })();

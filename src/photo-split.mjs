@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {complete, BitWriter} from './bits.mjs';
+import {unit, carried, stage, PASSED} from './step-journal.mjs';
+import {packLevels, unpackLevels, packedOnly} from './photo-levels.mjs';
 import {photoXYBSteps} from './photo-xyb.mjs';
 import {photoXYBBand, PHOTO_BAND_MARGIN} from './photo-bands.mjs';
 import {V6, GABORISH, UPLOAD_PICTURE, UPLOAD_FLAT_PICTURE, uploadFlat, SMALL_PIXELS, SMALL_CLUSTERS, UPLOAD_CLUSTERS} from './photo-v6-settings.mjs';
@@ -9,11 +11,10 @@ import {lfCoderFor} from './lf-coding.mjs';
 import {kernelHooks} from './kernel-hooks.mjs';
 import {ordersFromCounts} from './coefficient-effort.mjs';
 import {buildAnsCoding, ansGroupWriter, writeModularAnsHistograms} from './ans.mjs';
-import {TokenCounts, prefixGroupWriter} from './entropy.mjs';
-import {ZIGZAG} from './jpeg-tables.mjs';
+import {TokenCounts, prefixGroupWriter, tokenCountsData, tokenCountsFrom} from './entropy.mjs';
+import {SCAN} from './dct8-contexts.mjs';
 import {GROUP_DIM, GROUP_TOKENS} from './frame.mjs';
 
-const SCAN = ZIGZAG.map(n => ((n & 7) << 3) | (n >> 3));
 const trace = label => { const t = globalThis.__jxlTrace; if (t) t.push([label, performance.now()]); };
 export const SPLIT_MIN_PIXELS = 512 * 512 + 1;
 export const splitRoute = (width, height) => width * height > 64 * 64;
@@ -29,47 +30,8 @@ export function splitBands(height, parts, unit = GROUP_DIM) {
   return bands;
 }
 
-function packLevels(image) {
-  image.components.forEach((component, c) => {
-    const {coeffs} = component, counts = image.nonZero?.[c] ?? splitBlockCounts(coeffs);
-    let total = 0;
-    for (let b = 0; b < counts.length; b++) total += counts[b];
-    const at = new Uint8Array(total), levels = new Int16Array(total), stride = component.stride, starts = new Uint32Array(counts.length / stride);
-    for (let b = 0, n = 0; b < counts.length; b++) {
-      const base = b * 64;
-      if (b % stride === 0) starts[b / stride] = n;
-      for (let k = 1, left = counts[b]; left; k++) { const v = coeffs[base + k]; if (v) { at[n] = k; levels[n++] = v; left--; } }
-    }
-    component.packed = {at, levels, counts, starts, segment: stride, length: coeffs.length};
-    component.coeffs = null;
-  });
-  return image;
-}
-function splitBlockCounts(coeffs) {
-  const counts = new Uint8Array(coeffs.length / 64);
-  for (let b = 0; b < counts.length; b++) { let n = 0; for (let k = 1; k < 64; k++) n += coeffs[b * 64 + k] !== 0; counts[b] = n; }
-  return counts;
-}
-let splitScratch = [];
-function unpackLevels(image) {
-  image.components.forEach((component, c) => {
-    const packed = component.packed;
-    if (!packed || component.coeffs) return;
-    if (!splitScratch[c] || splitScratch[c].length < packed.length) splitScratch[c] = new Int16Array(packed.length);
-    const coeffs = splitScratch[c].subarray(0, packed.length), {at, levels, counts, starts, segment} = packed, stride = component.stride;
-    const segments = Math.ceil(stride / segment);
-    coeffs.fill(0);
-    for (let row = 0, b = 0; b < counts.length; row++) for (let s = 0; s < segments; s++) {
-      let n = starts[row * segments + s];
-      for (const end = row * stride + Math.min(stride, (s + 1) * segment); b < end; b++) { const base = b * 64; for (const last = n + counts[b]; n < last; n++) coeffs[base + at[n]] = levels[n]; }
-    }
-    component.coeffs = coeffs;
-  });
-}
-
-function packedOnly(image) { for (const component of image.components) if (component.packed) component.coeffs = null; }
-
 const held = new Map();
+let splitScratch = [];
 
 function bandStep(message) {
   const {key, width, height, quality, data, screen, gaborish, offset} = message;
@@ -106,15 +68,19 @@ const splitBuckets = (band, contexts) => {
   for (let i = 0; i < lumaBuckets.length; i++) lumaBuckets[i] = contexts.bucketOf(band.lumaDc[i]);
   return {lumaBuckets, lumaW: Math.ceil(band.width / 8)};
 };
+function countState(band, orders, contexts) {
+  const {image, width, height} = band;
+  return {groupsX: Math.ceil(width / GROUP_DIM), contexts, ...splitBuckets(band, contexts), nzeros: [0, 1, 2].map(() => new Int32Array(32 * 32)),
+    xsizeBlocks: Math.ceil(width / 8), ysizeBlocks: Math.ceil(height / 8), comps: image.components, grey: false,
+    orders: orders ? orders.map(order => order.map(k => SCAN[k])) : [SCAN, SCAN, SCAN], counted: !!(image.nonZero), blockCounts: image.nonZero || image.components.map(c => new Uint8Array((c.coeffs?.length ?? c.packed.length) / 64)),
+    nonZero: image.nonZero, hshifts: [0, 0, 0], vshifts: [0, 0, 0]};
+}
 function countStep(message, into = null) {
   const {key, orders} = message, band = held.get(key);
   const {image, width, height} = band;
   const contexts = splitContexts(message.contexts), ladder = !!message.contexts;
   const groupsX = Math.ceil(width / GROUP_DIM), groups = groupsX * Math.ceil(height / GROUP_DIM);
-  const state = {groupsX, contexts, ...splitBuckets(band, contexts), nzeros: [0, 1, 2].map(() => new Int32Array(32 * 32)),
-    xsizeBlocks: Math.ceil(width / 8), ysizeBlocks: Math.ceil(height / 8), comps: image.components, grey: false,
-    orders: orders ? orders.map(order => order.map(k => SCAN[k])) : [SCAN, SCAN, SCAN], counted: !!(image.nonZero), blockCounts: image.nonZero || image.components.map(c => new Uint8Array(c.coeffs.length / 64)),
-    nonZero: image.nonZero, hshifts: [0, 0, 0], vshifts: [0, 0, 0]};
+  const state = countState(band, orders, contexts);
   const counts = into ?? new TokenCounts(contexts.contexts);
   let ctxs = null, values = null;
   band.tokens = []; band.state = state; band.groups = groups;
@@ -123,7 +89,7 @@ function countStep(message, into = null) {
     const sink = {counts, coding: null, w: null, defer: true, keep: !!message.keep};
     if (kernelHooks.acGroup?.(state, g, 0, sink, DCT8_DENSITY)) { band.tokens.push(null); if (band.kept) band.kept[g] = sink.kept ?? null; continue; }
     kernelHooks.acDeferred?.();
-    unpackLevels(image);
+    unpackLevels(image, splitScratch);
     ctxs ||= new Int32Array(GROUP_TOKENS); values ||= new Int32Array(GROUP_TOKENS);
     const n = fillACGroup(state, g, 0, ctxs, values);
     counts.addTokens(ctxs, values, n);
@@ -157,6 +123,10 @@ function writeStep(message) {
     band.tokens = Array(band.groups ?? 0).fill(null); band.kept = null;
   }
   if (!message.keep) held.delete(key);
+  if (!band.tokens) {
+    band.state = countState(band, message.orders, splitContexts(null));
+    band.groups = band.state.groupsX * Math.ceil(band.height / GROUP_DIM); band.tokens = Array(band.groups).fill(null); band.kept = null;
+  }
   let buffer;
   for (let g = 0; g < band.groups; g++) {
     const w = new BitWriter(4096), kept = band.tokens[g];
@@ -178,7 +148,7 @@ function writeStep(message) {
       else if (byKernels) coding.flush?.(w);
       else if (kept) { coding.writeTokens(w, kept.ctxs, kept.values, kept.ctxs.length); coding.flush?.(w); }
       else {
-        unpackLevels(band.image);
+        unpackLevels(band.image, splitScratch);
         buffer ||= {ctxs: new Int32Array(GROUP_TOKENS), values: new Int32Array(GROUP_TOKENS)};
         coding.writeTokens(w, buffer.ctxs, buffer.values, fillACGroup(band.state, g, 0, buffer.ctxs, buffer.values)); coding.flush?.(w);
       }
@@ -276,7 +246,8 @@ export function splitImage(done, width, height, data, adaptive = true) {
 }
 const SPLIT_CLUSTERS = UPLOAD_CLUSTERS;
 export const splitShape = (width, height) => width * height < SMALL_PIXELS ? {lf: null, clusters: SMALL_CLUSTERS} : {lf: 3, clusters: SPLIT_CLUSTERS};
-const splitCoding = (counts, {clusters}) => buildAnsCoding(counts, {smallestMap: true, ...clusters, kernels: kernelHooks.entropy?.()});
+const splitOptions = ({clusters}) => ({smallestMap: true, ...clusters, kernels: kernelHooks.entropy?.()});
+const splitCoding = (counts, plan) => buildAnsCoding(counts, splitOptions(plan));
 function splitFrame(image, orders, counts, coding, dcGroups, {lf, clusters}) {
   const lfCoder = lf ? lfCoderFor(lf) : undefined;
   const plan = {coding: (c, o) => c === counts && o?.smallestMap && o?.seeds === clusters.seeds ? coding : buildAnsCoding(c, o),
@@ -351,6 +322,115 @@ function* splitRest(split, data) {
 }
 export function splitEnd(split) { for (const key of split.keys) held.delete(key); split.done = []; splitScratch = []; }
 
+export function* photoSplitCandidates(data, width, height, quality, clusters, {gaborish = false, uploadFlat: flat, observe = null} = {}) {
+  const split = splitStart(width, height, flat), plans = clusters.map(plan => ({...plan}));
+  split.parts += plans.length * split.bands.length;
+  let hurry = false;
+  try {
+    for (let k = 0; k < split.bands.length; k++) {
+      const saved = yield* unit('band', () => { splitBand(split, data, quality, gaborish, k); return null; },
+        () => ({reply: split.done[k], band: held.get(split.keys[k])}));
+      if (saved) { split.done[k] = saved.reply; held.set(split.keys[k], saved.band); }
+      const reply = yield (k + 1) / split.parts; hurry ||= !!reply;
+    }
+    return yield* splitCandidateRest(split, data, plans, hurry, observe);
+  } finally { splitEnd(split); }
+}
+
+export function* splitCandidates(split, clusters) {
+  try {
+    const plans = clusters.map(plan => ({...plan}));
+    split.parts += plans.length * split.bands.length;
+    return yield* splitCandidateRest(split, null, plans);
+  }
+  finally { splitEnd(split); }
+}
+
+function splitComplete(image, orders, counts, coding, dcGroups, shape, results) {
+  const steps = splitFrame(image, orders, counts, coding, dcGroups, shape);
+  let step, answer, answered = false;
+  while (!(step = steps.next(answer)).done) {
+    answer = undefined;
+    if (step.value?.kind !== 'ac-group') continue;
+    if (results.length !== step.value.groups) throw new Error('Split sections do not cover the frame.');
+    answer = {results, errors: {}}; answered = true;
+  }
+  if (!answered) throw new Error('The frame asked for no AC sections.');
+  return step.value;
+}
+
+function observedImage(split, image) {
+  const {keys, bands} = split, stride = image.components[0].stride, scratch = [];
+  const saved = keys.map(key => {
+    const band = held.get(key).image;
+    return {...band, components: band.components.map(c => ({...c, coeffs: null}))};
+  });
+  return {...image, coefficientRows(by0, by1) {
+    const rows = by1 - by0, count = rows * stride, out = image.components.map(() => new Int16Array(count * 64));
+    for (let k = 0; k < bands.length; k++) {
+      const top = bands[k].top / 8, from = Math.max(by0, top), to = Math.min(by1, top + saved[k].components[0].rows);
+      if (from >= to) continue;
+      const band = saved[k];
+      try {
+        unpackLevels(band, scratch);
+        for (let c = 0; c < out.length; c++) out[c].set(band.components[c].coeffs.subarray(
+          (from - top) * stride * 64, (to - top) * stride * 64), (from - by0) * stride * 64);
+      } finally { packedOnly(band); }
+    }
+    for (let c = 0; c < out.length; c++) for (let b = 0; b < count; b++)
+      out[c][b * 64] = image.components[c].dc[by0 * stride + b];
+    return out;
+  }};
+}
+
+function* splitCandidateRest(split, data, clusters, hurry = false, observe = null) {
+  const {width, height, bands, keys, parts} = split;
+  if (!data && split.done.some(reply => reply.meta.alpha)) throw new Error('A split without pixels has alpha.');
+  const {image, orders} = splitImage(split.done, width, height, data);
+  if (observe) observe(observedImage(split, image));
+  split.done = [];
+  let counts = new TokenCounts(blockContexts(new Int32Array(0), 0, false).contexts);
+  const keepTokens = width * height <= SPLIT_KEEP_PIXELS;
+  const saved = yield* stage('split-counts', function* () {
+    let last = null;
+    for (let k = 0; k < bands.length; k++) {
+      const row = yield* carried('count', () => { if (last) { counts = tokenCountsFrom(last); last = null; } countStep({key: keys[k], orders, keep: keepTokens}, counts); return null; },
+        () => tokenCountsData(counts));
+      if (row !== null && row !== PASSED) last = row;
+      const reply = yield (bands.length + k + 1) / parts; hurry ||= !!reply;
+    }
+    if (last) counts = tokenCountsFrom(last);
+    return null;
+  }, () => tokenCountsData(counts));
+  if (saved) counts = tokenCountsFrom(saved);
+  const shape = splitShape(width, height), reply = yield* unit('split-dc', () => dcStep({image, lf: shape.lf}));
+  const dcGroups = {sections: [], modular16bit: reply.modular16bit};
+  for (const {g, ...section} of reply.sections) dcGroups.sections[g] = section;
+  const plans = [shape, ...clusters.map(value => ({...shape, clusters: value}))];
+  let best = null;
+  for (let p = 0; p < plans.length; p++) {
+    let atYield = false;
+    try {
+      const coding = yield* buildAnsCoding.steps(counts, splitOptions(plans[p])), results = [];
+      for (let k = 0; k < bands.length; k++) {
+        results.push(...(yield* unit('write', () => writeStep({key: keys[k], model: coding.model, keep: p + 1 < plans.length, orders})[0].sections)));
+        atYield = true;
+        const reply = yield ((2 + p) * bands.length + k + 1) / parts;
+        atYield = false; hurry ||= !!reply;
+      }
+      const bytes = yield* unit('frame-file', () => splitComplete(image, orders, counts, coding, dcGroups, plans[p], results));
+      if (!best || bytes.length < best.length) best = bytes;
+    } catch (error) {
+      if (!atYield && best && candidateSizeFailure(error)) return best;
+      throw error;
+    }
+    if (hurry) return best;
+  }
+  return best;
+}
+const candidateSizeFailure = error => error?.code === 'JXL_SIZE' || error?.code === 'JXL_MEMORY' ||
+  (error instanceof RangeError || error?.name === 'RangeError') && !error.code;
+
 let serial = 0, tickets = 0;
 export const splitIds = () => ({id: ++serial, ticket: () => ++tickets});
 export const splitAsker = (helpers, serve, issued) => (w, message, key, transfer = []) => {
@@ -379,7 +459,14 @@ function bandReturned(reply) {
   if (typeof WeakRef === 'function' && bandBuffers.length < 8) bandBuffers.push(new WeakRef(reply.pixels));
   delete reply.pixels;
 }
-export async function encodeSplit(data, width, height, quality, helpers, {signal, gaborish = false, screen: known, uploadFlat: knownFlat, opaque = false, arena = false} = {}) {
+export function encodeSplit(data, width, height, quality, helpers, options = {}) {
+  return encodeSplitUsing(data, width, height, quality, helpers, options);
+}
+export function encodeSplitCandidates(data, width, height, quality, helpers, clusters, options = {}) {
+  const pixels = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  return encodeSplitUsing(pixels, width, height, quality, helpers, options, clusters.map(plan => ({...plan})));
+}
+async function encodeSplitUsing(data, width, height, quality, helpers, {signal, gaborish = false, screen: known, uploadFlat: knownFlat, opaque = false, arena = false} = {}, extraClusters = []) {
   const bands = splitBands(height, helpers.length + 1), id = ++serial;
   const screen = known ?? screenLike(data, width, height);
   const flat = gaborish && (knownFlat ?? uploadFlat(data, width, height));
@@ -392,6 +479,7 @@ export async function encodeSplit(data, width, height, quality, helpers, {signal
   };
   const keys = bands.map((_, k) => id + ':' + k);
   const T = globalThis.__splitMarks, mark = T ? name => T.push([name, performance.now()]) : () => {};
+  let best = null;
   try {
     mark('start');
     const first = bands.map((band, k) => {
@@ -426,8 +514,8 @@ export async function encodeSplit(data, width, height, quality, helpers, {signal
     mark('merge');
     const coding = splitCoding(counts, shape);
     mark('coding');
-    const third = bands.map((_, k) => k ? ask(k, {split: 'write', model: coding.model}) : null);
-    third[0] = ask(0, {split: 'write', model: coding.model});
+    const third = bands.map((_, k) => k ? ask(k, {split: 'write', model: coding.model, ...(extraClusters.length && {keep: true})}) : null);
+    third[0] = ask(0, {split: 'write', model: coding.model, ...(extraClusters.length && {keep: true})});
     mark('own write');
     if (dcHere.length) globalThis.__jxlTrace?.push(['split: ' + dcHere.length + ' DC groups here', performance.now()]);
     if (dcHere.length) dcWriters.push(Promise.resolve(dcStep({image: {...dcImage, components: dcImage.components.map(c => ({...c}))}, groups: dcHere, lf: shape.lf})));
@@ -448,9 +536,24 @@ export async function encodeSplit(data, width, height, quality, helpers, {signal
       reply = {results, errors: {}}; answered = true;
     }
     if (!answered) throw new Error('The frame asked for no AC sections.');
+    best = step.value;
+    if (extraClusters.length) { await Promise.allSettled(issued); issued.length = 0; third.fill(null); }
+    for (let p = 0; p < extraClusters.length; p++) {
+      signal?.throwIfAborted();
+      const plan = {...shape, clusters: extraClusters[p]}, next = splitCoding(counts, plan);
+      const keep = p + 1 < extraClusters.length;
+      const written = bands.map((_, k) => k ? ask(k, {split: 'write', model: next.model, keep}) : null);
+      written[0] = ask(0, {split: 'write', model: next.model, keep});
+      const sections = (await Promise.all(written)).flatMap(answer => answer.sections);
+      signal?.throwIfAborted();
+      const bytes = splitComplete(image, orders, counts, next, dcGroups, plan, sections);
+      if (bytes.length < best.length) best = bytes;
+      await Promise.allSettled(issued); issued.length = 0;
+    }
     await Promise.allSettled(issued);
     mark('end');
-    return step.value;
+    if (extraClusters.length) signal?.throwIfAborted();
+    return best;
   } catch (error) {
     await Promise.allSettled(issued);
     held.delete(keys[0]);
@@ -460,7 +563,9 @@ export async function encodeSplit(data, width, height, quality, helpers, {signal
       catch {}
     }
     await Promise.allSettled(drops);
+    if (extraClusters.length) signal?.throwIfAborted();
     if (error?.alpha) return null;
+    if (extraClusters.length && best && candidateSizeFailure(error)) return best;
     throw error;
   }
 }

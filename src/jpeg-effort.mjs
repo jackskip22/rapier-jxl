@@ -8,10 +8,10 @@ export function* jpegEffortSteps(jpeg, effort, retain, baseline = coefficientEff
   let best, step, hurry;
   const floor = baseline(jpeg, 7, undefined, retain, shared);
   let reply;
-  while (!(step = floor.next(reply)).done) {
+  try { while (!(step = floor.next(reply)).done) {
     if (typeof step.value !== 'number') { reply = yield scaled(step.value, done => done / 2); continue; }
     reply = hurry = yield step.value / 2;
-  }
+  } } finally { if (!step?.done) floor.return?.(); }
   best = step.value;
   if (hurry) return best;
   const alternate = {maxClusters: 32, newClusterCost: 160}, parts = effort === 8 ? 2 : 11;

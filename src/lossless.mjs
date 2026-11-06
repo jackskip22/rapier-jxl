@@ -256,10 +256,10 @@ export function* nativeSteps(data, width, height, {samples, quality = 100, effor
     try {
       const steps = part(losslessSteps(data, width, height, choices[i]), i, choices.length);
       let step, reply;
-      while (!(step = steps.next(reply)).done) {
+      try { while (!(step = steps.next(reply)).done) {
         reply = yield step.value;
         hurried ||= !!reply;
-      }
+      } } finally { if (!step?.done) steps.return?.(); }
       if (!best || step.value.length < best.length) best = step.value;
       if (hurried) return best;
     } catch (error) {

@@ -5,6 +5,7 @@ import type {Metadata, CompressedMetadataOptions, BrotliCodec as CoreBrotliCodec
 import type {ContainerInspection, ReframeOptions} from './codec/container-advanced.mjs';
 import type {Animation as CoreAnimation} from './codec/animation.mjs';
 import type {FormatRequest, FormatOptions} from './format.mjs';
+export type {ImageJob, ImageVerb, Digest, ResultSource, ResultReason, ResultTransform, ResultFidelity, ResultMeasurement, ImageResult, ImageResultJSON} from './result.mjs';
 
 /** Half floats as a Float16Array holds them (typed here by its shape: TypeScript's lib has the global only in esnext).
  * Read as sampleFormat 'float16', as a Uint16Array of their bits with sampleFormat 'float16' is. */
@@ -84,11 +85,10 @@ export interface JobOptions { signal?: AbortSignal; onProgress?: (fraction: numb
 
 /**
  * The one fidelity choice; its shape is exclusive. 'exact': the decoded samples equal the input, bit for bit, in its
- * tagged color space. {quality}: 1 to 100, libjxl's quality at the same number; 100 is 'exact'. {webp}: 0 to 1, as
- * canvas.toBlob(callback, 'image/webp', q) takes it: a quality read from the picture, calibrated on measured photos to look at least
- * as good as the browser's WebP at that number in a smaller file (no worse in 846 of 864 cases, also smaller in 792); not
- * a per-picture guarantee. 1 is 'exact'. Samples are read in their own domain (deeper integers by their depth, floats as
- * numbers, linear through sRGB's curve); PQ and HLG refuse it. {ssimulacra2},
+ * tagged color space. {quality}: 1 to 100, fractions allowed; 100 is 'exact'. The number aims at a measured SSIMULACRA 2
+ * look, and the file is the smallest this version finds with that look (a prediction calibrated on measured photos, not a
+ * per-picture guarantee). Samples are read in their own domain (deeper integers by their depth, floats as numbers,
+ * linear through sRGB's curve). {ssimulacra2},
  * {butteraugli} (maximum) or {butteraugli3} (3-norm): the smallest file its search finds reaching that score under this
  * version's own metric, for 8-bit straight sRGB RGBA.
  * Default {quality: 90}.
@@ -96,13 +96,13 @@ export interface JobOptions { signal?: AbortSignal; onProgress?: (fraction: numb
 export type PixelFidelity = 'exact' | Sole<'quality'>;
 export type MeasuredFidelity = Sole<'ssimulacra2'> | Sole<'butteraugli'> | Sole<'butteraugli3'>;
 /** A still's fidelity without a search: an animation or a format request takes PixelFidelity alone. */
-export type StillFidelity = PixelFidelity | Sole<'webp'>;
+export type StillFidelity = PixelFidelity;
 export type Fidelity = StillFidelity | MeasuredFidelity;
 /** A capture's fidelity: 'exact' (the default), or every sample within maxError of the input; 0 is 'exact'. */
 export type MaxError = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 export type CaptureFidelity = 'exact' | Sole<'maxError', MaxError>;
 /** One measure and no other, as the runtime refuses an object naming two. */
-type FidelityKey = 'quality' | 'webp' | 'ssimulacra2' | 'butteraugli' | 'butteraugli3' | 'maxError';
+type FidelityKey = 'quality' | 'ssimulacra2' | 'butteraugli' | 'butteraugli3' | 'maxError';
 type Sole<K extends FidelityKey, V = number> = {[P in K]: V} & {[P in Exclude<FidelityKey, K>]?: never};
 /**
  * What the samples are, on the image itself (8.0: the image says what it is, the options what to make of it). A
@@ -165,11 +165,6 @@ export type VariantRequest = OutputSize & {effort?: Effort} & (
   ({maxBytes?: never} & (PixelEncoding | MeasuredEncoding))
 );
 export type VariantsOptions = EncodeOptions & {outputs: readonly VariantRequest[]};
-/** Ordered owned results. No fit carries no oversized file. Errors/cancellation reject the whole call. */
-export type PreparationResult<F extends Fidelity = Fidelity> = {width: number; height: number} & (
-  {fits: true; bytes: Bytes; fidelity: F; reconstruction?: 'jpeg'} |
-  {fits: false; bytes?: never; fidelity?: never; reconstruction?: never}
-);
 /** rapier-jxl/upload's options: efforts 1-3 (default 3), 'exact' or a quality, with the full encoder's meanings. Lossy
  * float (HDR) samples, a GPU texture and features (firstRegion included) are rapier-jxl's: refused JXL_UNSUPPORTED.
  * webgpu is taken and changes nothing: efforts 1-3 never ask for a device. */
@@ -200,11 +195,10 @@ export type CaptureOptions = JobOptions & Described & {fidelity?: CaptureFidelit
  * it threw. */
 export type CaptureRecord = {readonly exact: boolean; readonly bands: number};
 /** Photographic capture's options (rapier-jxl/capture-complete and the root, efforts 1-9; rapier-jxl/upload's are UploadCaptureOptions). */
-/** Exact by default. A maxError is integer 0–8; quality 1–100 offers photographic capture, with 100 normalized to exact.
- * {webp}: 0 to 1, as canvas.toBlob(callback, 'image/webp', q) takes it: each photo gets its own quality, measured so the photos look
- * at least as good as in the browser's WebP at that number (on S16's pages, not a per-picture guarantee); 1 is exact.
+/** Exact by default. A maxError is integer 0–8; quality 1–100 offers photographic capture, with 100 normalized to exact:
+ * each photo gets its own coding, aimed at the measured SSIMULACRA 2 look that number names.
  * Fidelity is one exclusive choice. The picture itself continues to describe its samples. */
-export type CapturePhotoFidelity = CaptureFidelity | PixelFidelity | Sole<'webp'>;
+export type CapturePhotoFidelity = CaptureFidelity | PixelFidelity;
 /** A rectangle in whole canvas pixels; width and height are positive safe integers. Parts outside the canvas are ignored. */
 export type CaptureRect = {x: number; y: number; width: number; height: number};
 /** solidText: the rectangle holds plain text of one colour (no shadow, stroke or clipped background); only that text
@@ -215,7 +209,7 @@ export type ExactRect = CaptureRect & {solidText?: boolean; edge?: boolean};
 type PhotoRect = CaptureRect & {solidText?: never; edge?: never};
 /** exactRects: kept exact inside lossy photos (text whose boxes the caller knows). photoRects: pictures the caller knows
  * of (an <img>'s box); lossy only where the encoder also finds a photo there. effort: 1-9 accepted; a quality or
- * {webp} codes efforts 5-9 as 4 until 8.2.x. */
+ * Photographic efforts 5-6 search quality, 7 selects block shapes, 8 adds adaptive quantization, and 9 searches all candidates. */
 export type CapturePhotoOptions = Omit<CaptureOptions, 'fidelity' | 'effort'> & {
   fidelity?: CapturePhotoFidelity; effort?: Effort;
   exactRects?: ReadonlyArray<ExactRect>; photoRects?: ReadonlyArray<PhotoRect>;
@@ -379,3 +373,14 @@ export interface CodecStats {
   readonly closed: boolean;
 }
 // The codecs over each module are declared in codec.d.mts.
+
+/** A host's JPEG XL decoder for measured capture where no browser decodes JPEG XL: rapier-jxl/decode's decode, or any
+ * function answering 8-bit straight RGBA of the whole file in the asked color space. Hooks receive owned bytes and supplied options. */
+type CapturePicture = {data: Uint8Array | Uint8ClampedArray, width: number, height: number};
+export type CaptureDecoder = (bytes: Bytes, options: {colorSpace: 'srgb' | 'display-p3', format: 'uint8', signal?: AbortSignal}) =>
+  CapturePicture | PromiseLike<CapturePicture>;
+/** A full decoded description; configureDecoder accepts rapier-jxl/decode's decode as it is. */
+export type PackageDecode = (input: Bytes, options: DecodeOptions) => DecodedImage | PromiseLike<DecodedImage>;
+/** rapier-jxl/jpeg's restore: the JPEG a recompressed file holds. */
+type RestoredJPEG = Uint8Array | {bytes: Uint8Array} | import('./result.mjs').ImageResult;
+export type JpegRestore = (file: Bytes, options: {maxPixels?: number, signal?: AbortSignal}) => RestoredJPEG | PromiseLike<RestoredJPEG>;

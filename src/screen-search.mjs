@@ -27,10 +27,10 @@ export function* screenSteps(rgba, width, height, shape, colorSpace, {fastFloor 
   for (const [pass, minLength] of [7, 4].entries()) {
     const steps = screenPass(rgba, width, height, shape, colorSpace, {fastFloor, effort, minLength, deep});
     let step, reply, hurried = false;
-    while (!(step = steps.next(reply)).done) {
+    try { while (!(step = steps.next(reply)).done) {
       reply = yield scaled(step.value, done => (pass + done) / 2);
       hurried = reply === null || (typeof reply === 'object' ? reply.hurried : reply);
-    }
+    } } finally { if (!step?.done) steps.return?.(); }
     if (step.value && (!best || step.value.length < best.length)) best = step.value;
     if (hurried) break;
   }
@@ -72,10 +72,10 @@ function* screenPass(rgba, width, height, shape, colorSpace, {fastFloor, effort,
       });
     }
     let step, reply, hurry = false;
-    while (!(step = steps.next(reply)).done) {
+    try { while (!(step = steps.next(reply)).done) {
       reply = yield scaled(step.value, done => (i + 0.01 + 0.99 * done) / modes.length);
       hurry = reply === null || (typeof reply === 'object' ? reply.hurried : reply);
-    }
+    } } finally { if (!step?.done) steps.return?.(); }
     if (step.value && (!best || step.value.length < best.length)) { best = step.value; bestMode = modes[i]; }
     if (hurry) return best;
     if (i === 1 && fastFloor && best && best.length * 4 <= fastFloor * 3) return best;

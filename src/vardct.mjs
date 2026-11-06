@@ -1,18 +1,27 @@
 // Rapier's JPEG XL encoder: a JPEG carried into a VarDCT frame. MIT (images/jxl/LICENSE).
+import {shown} from './photo-shown.mjs';
+import {varDCTDCSpec, copyVarDCTDCRows, copyVarDCTSharpness, copyVarDCTStrategies, copyVarDCTStrategyFields, copyVarDCTFieldRows, copyVarDCTCorrelation, copyVarDCTAlphaRows, copyVarDCTQuantRows, varDCTLFGeometry, varDCTLFMetadataShape} from './vardct-planes.mjs';
+import {varDCTLayout, writeVarDCTHeader, writeVarDCTDCFields, writeVarDCTOrders, varDCTContextBuckets} from './vardct-header.mjs';
+import {writeQuantParams} from './quantization-params.mjs';
+import {ORDER_STRATEGY_BUCKETS as ORDER_OF} from './coefficient-orders.mjs';
+import {countACRanks, emitACRanks, predictDCT8NonZero, predictStrategyNonZero} from './vardct-ranks.mjs';
+import {blockContexts, acContexts, writeBlockContexts, DESIGNS} from './vardct-contexts.mjs';
+export {blockContexts, acContexts} from './vardct-contexts.mjs';
 import {kernelHooks} from './kernel-hooks.mjs';
-import {BitWriter, float16Bits, packSigned, ceilLog2, complete} from './bits.mjs';
-import {writeFrameHeaderEnd, finishSections, assembleCodestream, GROUP_DIM, GROUP_TOKENS} from './frame.mjs';
+import {BitWriter, float16Bits, ceilLog2, complete} from './bits.mjs';
+import {finishSections, assembleCodestream, GROUP_DIM, GROUP_TOKENS, varDCTSectionCount} from './frame.mjs';
 import {writeImageHeader} from './icc-write.mjs';
 import {ZERO_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, MIN_RUN_SYMBOL, MIN_RUN_LENGTH, RUN_CONFIG, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {codeMetadataPlane, writeModularStream as plainModularStream, writeSmallerModularStream} from './modular-channel.mjs';
-import {writeContextMap, writeHistograms, buildCode, uintConfig, countToken, writeHybrid, hybridToken} from './prefix.mjs';
-import {TokenCounts, buildTokenCoding} from './entropy.mjs';
-import {jpegError} from './jpeg-tables.mjs';
+import {writeHistograms, hybridToken} from './prefix.mjs';
+import {TokenCounts, buildTokenCoding, tokenCountsData, tokenCountsFrom} from './entropy.mjs';
 import {NONZERO_BUCKETS, ZERO_DENSITY_CONTEXTS, ORDERS, COEFF_FREQ_CONTEXT, COEFF_NUM_NONZERO_CONTEXT, SCAN, zeroDensityContext, DCT8_DENSITY} from './dct8-contexts.mjs';
 export {COEFF_FREQ_CONTEXT, COEFF_NUM_NONZERO_CONTEXT, SCAN, zeroDensityContext, DCT8_DENSITY} from './dct8-contexts.mjs';
 import {admitOutputSize} from './admit.mjs';
+import {unit, carried, stage, PASSED} from './step-journal.mjs';
 import {losslessCoding} from './lossless-coding.mjs';
 import {offloading} from './offload.mjs';
+import {writeCapturePatches} from './capture-patches.mjs';
 
 const TYPED_ARRAY = Object.getPrototypeOf(Uint8Array.prototype);
 const TYPED_LENGTH = Object.getOwnPropertyDescriptor(TYPED_ARRAY, 'length').get;
@@ -22,7 +31,7 @@ const VD_LF_SECTIONS = new WeakMap();
 const lfEntryOf = (jpeg, plan) => {
   const key = {coder: plan.lfCoder, modularAns: plan.modularAns, epf: jpeg.epf, strategyData: jpeg.strategyData, quantFields: jpeg.quantFields, cfl: jpeg.cfl,
     auxiliary: jpeg.auxiliary, useDCFrame: jpeg.useDCFrame, sharpness: jpeg.sharpness, field: jpeg.quantFieldBase, alpha: jpeg.alpha, xyb: jpeg.xyb, ycbcr: jpeg.ycbcr,
-    reconstruction: jpeg.jpegReconstruction};
+    reconstruction: jpeg.jpegReconstruction, cflBase: jpeg.cflBase};
   const hit = VD_LF_SECTIONS.get(jpeg.components);
   if (hit && Object.keys(key).every(k => hit[k] === key[k])) return hit;
   const entry = {...key, sections: [], wide: false};
@@ -38,57 +47,7 @@ export function seedLfSections(jpeg, plan, groups) {
   const entry = lfEntryOf(jpeg, plan);
   groups.forEach((group, g) => { entry.sections[g] ||= Object.assign(new BitWriter(0), {bytes: group.bytes, at: group.at, pending: group.pending, acc: group.acc}); entry.wide ||= group.wide; });
 }
-export const ORDER_OF = [0, 1, 1, 1, 2, 3, 4, 4, 5, 5, 6, 6, 1, 1, 1, 1, 1, 1, 7, 8, 8, 9, 10, 10, 11, 12, 12];
-const ORDER_CLASS = [0, 1, 2, 2, 3, 4, 5, 6, 7, 7, 7, 7, 7];
-const DESIGNS = {
-  dcBuckets: grey => (row, ord, i, n) => row === 0 ? i : grey ? n : row === 1 ? n + (i >> 1) : n + ((n - 1) >> 1) + 1 + (i >> 1),
-  sizes: grey => (row, ord) => (grey && row ? 1 : row) * 2 + (ord ? 1 : 0),
-  sizesShared: () => (row, ord) => (row ? 2 : 0) + (ord ? 1 : 0),
-  sizes3: grey => (row, ord) => (grey && row ? 1 : row) * 3 + (ORDER_CLASS[ord] === 0 ? 0 : ORDER_CLASS[ord] === 2 ? 1 : 2),
-  sizes3Shared: () => (row, ord) => (row ? 3 : 0) + (ORDER_CLASS[ord] === 0 ? 0 : ORDER_CLASS[ord] === 2 ? 1 : 2),
-  sizesDc: grey => (row, ord, i, n) => {
-    const b = n <= 2 ? i : (i * 2 / n) | 0;
-    if (row === 0) return (ORDER_CLASS[ord] ? 2 : 0) + b;
-    if (grey) return 4 + (ORDER_CLASS[ord] ? 1 : 0);
-    return 4 + (row - 1) * 2 + (ORDER_CLASS[ord] ? 1 : 0);
-  },
-  fine: () => (row, ord, i, n) => (row * 8 + ORDER_CLASS[ord]) * n + i,
-};
-export function blockContexts(luma, thresholdsWanted, grey, design = DESIGNS.dcBuckets(grey)) {
-  const thresholds = [];
-  if (thresholdsWanted > 0) {
-    let low = -1024, high = 1023, total = 0;
-    for (const value of luma) { if (value < low) low = value; else if (value > high) high = value; }
-    const counts = new Uint32Array(high - low + 1);
-    for (const value of luma) { counts[value - low]++; total++; }
-    let cumulative = 0, cut = total / (thresholdsWanted + 1);
-    for (let j = 0; j < counts.length && thresholds.length < thresholdsWanted; j++) {
-      cumulative += counts[j];
-      if (cumulative > cut) { thresholds.push(j + low - 1); cut = total * (thresholds.length + 1) / (thresholdsWanted + 1); }
-    }
-  }
-  const numDc = thresholds.length + 1, map = new Uint8Array(3 * ORDERS * numDc);
-  for (let row = 0; row < 3; row++) for (let ord = 0; ord < ORDERS; ord++) for (let i = 0; i < numDc; i++) map[(row * ORDERS + ord) * numDc + i] = design(row, ord, i, numDc);
-  let numCtxs = 0;
-  for (const v of map) numCtxs = Math.max(numCtxs, v + 1);
-  const bucketOf = value => { let b = 0; for (const t of thresholds) if (value > t) b++; return b; };
-  return {thresholds, numDc, map, numCtxs, bucketOf, ...acContexts(map, numDc, numCtxs)};
-}
-
-export function acContexts(map, numDc, numCtxs) {
-  return {contextOf: (c, bucket, ord = 0) => map[((c < 2 ? c ^ 1 : 2) * ORDERS + ord) * numDc + bucket],
-    nonZero: (predicted, blockCtx) => (Math.min(predicted, 64) < 8 ? Math.min(predicted, 64) : 4 + (Math.min(predicted, 64) >> 1)) * numCtxs + blockCtx,
-    zeroDensityOffset: blockCtx => numCtxs * NONZERO_BUCKETS + ZERO_DENSITY_CONTEXTS * blockCtx,
-    contexts: numCtxs * (NONZERO_BUCKETS + ZERO_DENSITY_CONTEXTS)};
-}
-
-function writeBlockContexts(w, contexts) {
-  w.write(4, contexts.thresholds.length);
-  for (const t of contexts.thresholds) w.writeU32([[4, 0], [8, 16], [16, 272], [32, 65808]], packSigned(t));
-  w.write(4, 0); w.write(4, 0);
-  writeContextMap(w, contexts.map);
-}
-
+export {ORDER_STRATEGY_BUCKETS as ORDER_OF} from './coefficient-orders.mjs';
 const FAST_CONTEXTS_RGB = blockContexts(new Int32Array(0), 0, false);
 const FAST_CONTEXTS_GREY = blockContexts(new Int32Array(0), 0, true);
 const FAST_HEADER_RGB = (() => { const w = new BitWriter(64); writeBlockContexts(w, FAST_CONTEXTS_RGB); return w; })();
@@ -140,12 +99,21 @@ function designShape(name, buckets, grey, lumaDc) {
   return {candidate, header};
 }
 const designWith = ({candidate, header}, codings) => ({candidate, codings, header, total: codings.reduce((n, coding) => n + coding.bits, header.bitLength)});
-function designPrice(name, buckets, grey, lumaDc, countedMap, counts, buildCoding, options) {
+const writerData = w => ({bytes: w.bytes, at: w.at, pending: w.pending, acc: w.acc});
+const UNIT_GROUPS = 4;
+const savedWriter = w => ({...w, bytes: w.bytes.slice(0, w.at + 1)});
+function* designPriceSteps(name, buckets, grey, lumaDc, countedMap, counts, buildCoding, options) {
   const shape = designShape(name, buckets, grey, lumaDc);
   if (!shape) return null;
   const {candidate} = shape, same = candidate === countedMap || (candidate.numCtxs === countedMap.numCtxs && candidate.numDc === countedMap.numDc && candidate.map.every((v, i) => v === countedMap.map[i]));
-  return designWith(shape, counts.map(count => buildCoding(same ? count : mergedCounts(countedMap, count, candidate), options)));
+  const codings = [];
+  for (const count of counts) {
+    const input = () => same ? count : mergedCounts(countedMap, count, candidate);
+    codings.push(buildCoding.steps ? yield* buildCoding.steps(input, options) : buildCoding(input(), options));
+  }
+  return designWith(shape, codings);
 }
+const designPrice = (...args) => complete(designPriceSteps(...args));
 export function designPriced(list, at, {counts, lumaDc, wanted, grey, clusters, fine = true}, buildCoding, kernels) {
   const countedMap = blockContexts(lumaDc, wanted, grey, fine ? DESIGNS.fine(grey) : undefined), options = {...clusters, smallestMap: true, kernels};
   return at.map(i => designPrice(list[i][0], list[i][1], grey, lumaDc, countedMap, [counts], buildCoding, options) ?? null);
@@ -293,10 +261,7 @@ function writeCachedQuantMatrices(ac, comps) {
     let wide = false;
     const planes = [0, 1, 2].map(c => {
       const data = new Int32Array(64), quant = comps[c].quant;
-      for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
-        const value = quant[8 * y + x]; data[8 * x + y] = value;
-        if (value < -32768 || value > 32767) wide = true;
-      }
+      if (copyVarDCTQuantRows(quant, data)) wide = true;
       return {w: 8, h: 8, data: wide ? data : Int16Array.from(data)};
     });
     writeSmallerModularStream(writer, planes, GRADIENT_PREDICTOR);
@@ -313,59 +278,27 @@ function writeCachedQuantMatrices(ac, comps) {
 export function encodeVarDCT(jpeg, plan) { return complete(varDCTSteps(jpeg, plan)); }
 
 export function walkACGroup(state, g, emit, pass = 0) {
-  const {authoredOrderPasses, groupsX, strategyData, map, progression, contexts, lumaBuckets, lumaW, nzeros} = state;
-  const authored = authoredOrderPasses?.[pass];
-  const gx = g % groupsX, gy = (g / groupsX) | 0, bx0 = gx * 32, by0 = gy * 32;
-  if (strategyData) {
-    for (const block of strategyData.groups[g]) for (const c of [1, 0, 2]) {
-      const {area, size, bw, bh} = block, order = authored?.byStrategy[block.id]?.[c] || block.order;
-      const coeffs = block.coeffs[map[c]], bx = block.bx - bx0, by = block.by - by0;
-      const coefficient = pos => progression ? progression.value(coeffs[pos], pos, Math.max(bw, bh) * 8, Math.min(bw, bh) * 8, pass) : coeffs[pos];
-      let count = 0;
-      for (let k = area; k < size; k++) if (coefficient(order[k])) count++;
-      const row = nzeros[c], predicted = bx === 0 ? (by === 0 ? 32 : row[(by - 1) * 32]) : by === 0 ? row[bx - 1] :
-        (row[(by - 1) * 32 + bx] + row[by * 32 + bx - 1] + 1) >> 1;
-      const average = Math.ceil(count / area);
-      for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) row[(by + y) * 32 + bx + x] = average;
-      const bucket = contexts.thresholds.length ? lumaBuckets[block.by * lumaW + block.bx] : 0;
-      const blockCtx = contexts.contextOf(c, bucket, ORDER_OF[block.id]), offset = contexts.zeroDensityOffset(blockCtx);
-      emit(contexts.nonZero(predicted, blockCtx), count);
-      let prev = count > size / 16 ? 0 : 1, left = count;
-      for (let k = area; k < size && left; k++) {
-        const coeff = coefficient(order[k]);
-        emit(offset + zeroDensityContext(Math.ceil(left / area), Math.floor(k / area), prev), packSigned(coeff));
-        prev = coeff ? 1 : 0; left -= prev;
-      }
-    }
-    return;
-  }
-  const {ctxs, values} = state.tokenBuffer || tokenBuffer(), n = fillACGroup(state, g, pass, ctxs, values);
-  for (let i = 0; i < n; i++) emit(ctxs[i], values[i]);
+  const {ctxs, values} = state.tokenBuffer || tokenBuffer();
+  const n = state.strategyData ? fillStrategyGroup(state, g, pass, ctxs, values) : fillACGroup(state, g, pass, ctxs, values);
+  for (let i = 0; i < n; i++) emit(ctxs[i], state.strategyData ? values[i] >>> 0 : values[i]);
 }
 
 const fillStrategyGroup = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) || (typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) ? null : function fillStrategyGroup(state, g, pass, ctxs, values) {
-  const {authoredOrderPasses, groupsX, strategyData, map, contexts, lumaBuckets, lumaW, nzeros} = state;
+  const {authoredOrderPasses, groupsX, strategyData, map, progression, contexts, lumaBuckets, lumaW, nzeros} = state;
   const authored = authoredOrderPasses?.[pass], bucketed = contexts.thresholds.length > 0;
   const bx0 = g % groupsX * 32, by0 = ((g / groupsX) | 0) * 32;
   let n = 0;
   for (const block of strategyData.groups[g]) for (let i = 0; i < 3; i++) {
     const c = i === 0 ? 1 : i === 1 ? 0 : 2, {area, size, bw, bh} = block, order = authored?.byStrategy[block.id]?.[c] || block.order;
     const coeffs = block.coeffs[map[c]], bx = block.bx - bx0, by = block.by - by0;
-    let count = 0;
-    for (let k = area; k < size; k++) if (coeffs[order[k]]) count++;
-    const row = nzeros[c], predicted = bx === 0 ? (by === 0 ? 32 : row[(by - 1) * 32]) : by === 0 ? row[bx - 1] :
-      (row[(by - 1) * 32 + bx] + row[by * 32 + bx - 1] + 1) >> 1;
-    const average = Math.ceil(count / area);
-    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) row[(by + y) * 32 + bx + x] = average;
+    const width = Math.max(bw, bh) * 8, height = Math.min(bw, bh) * 8;
+    const count = countACRanks(coeffs, 0, order, area, size, progression, pass, width, height);
+    const predicted = predictStrategyNonZero(nzeros[c], bx, by, count, bw, bh, area);
     const bucket = bucketed ? lumaBuckets[block.by * lumaW + block.bx] : 0;
     const blockCtx = contexts.contextOf(c, bucket, ORDER_OF[block.id]), offset = contexts.zeroDensityOffset(blockCtx);
     ctxs[n] = contexts.nonZero(predicted, blockCtx); values[n++] = count;
-    let prev = count > size / 16 ? 0 : 1, left = count;
-    for (let k = area; k < size && left; k++) {
-      const coeff = coeffs[order[k]];
-      ctxs[n] = offset + zeroDensityContext(Math.ceil(left / area), Math.floor(k / area), prev); values[n++] = coeff >= 0 ? coeff * 2 : -coeff * 2 - 1;
-      prev = coeff ? 1 : 0; left -= prev;
-    }
+    n = emitACRanks(coeffs, 0, order, area, size, count, count > size / 16 ? 0 : 1, offset, area,
+      ctxs, values, n, progression, pass, width, height);
   }
   return n;
 };
@@ -390,25 +323,18 @@ export function fillACGroup(state, g, pass, ctxs, values) {
       if (counted) count = blockCounts[c][at >> 6];
       else if (nonZero && !progression) { count = nonZero[c][at >> 6]; blockCounts[c][at >> 6] = count; }
       else {
-        if (progression) {
-          for (let k = 1; k < 64; k++) if (progression.value(coeffs[co + k], ((k & 7) << 3) | (k >> 3), 8, 8, pass)) count++;
-        } else for (let k = 1; k < 64; k++) { const v = coeffs[co + k]; count += (v | -v) >>> 31; }
+        count = countACRanks(coeffs, co, null, 1, 64, progression, pass, 8, 8, true);
         blockCounts[c][at >> 6] = count;
       }
     }
-    const row = nzeros[c], predicted = sbx === 0 ? (sby === 0 ? 32 : row[(sby - 1) * 32]) : sby === 0 ? row[sby * 32 + sbx - 1] : (row[(sby - 1) * 32 + sbx] + row[sby * 32 + sbx - 1] + 1) >> 1;
-    row[sby * 32 + sbx] = count;
+    const predicted = predictDCT8NonZero(nzeros[c], sbx, sby, count);
     const bucket = bucketed ? lumaBuckets[((by0 + by) >> vshifts[1]) * lumaW + ((bx0 + bx) >> hshifts[1])] : 0;
     const blockCtx = blockMap[(c < 2 ? c ^ 1 : 2) * ORDERS * numDc + bucket], capped = predicted < 64 ? predicted : 64;
     ctxs[n] = (capped < 8 ? capped : 4 + (capped >> 1)) * numCtxs + blockCtx; values[n++] = count;
     const offset = zeroBase + ZERO_DENSITY_CONTEXTS * blockCtx;
     const coefficientOrder = authored?.ordinary?.[c] || orders[c];
-    let prev = count > 4 ? 0 : 1, left = count;
-    for (let k = 1; k < 64 && left; k++) {
-      const pos = coefficientOrder[k], coeff = progression ? progression.value(coeffs[co + pos], ((pos & 7) << 3) | (pos >> 3), 8, 8, pass) : coeffs[co + pos];
-      ctxs[n] = offset + DCT8_DENSITY[left << 6 | k] + prev; values[n++] = coeff >= 0 ? coeff * 2 : -coeff * 2 - 1;
-      prev = coeff ? 1 : 0; left -= prev;
-    }
+    n = emitACRanks(coeffs, co, coefficientOrder, 1, 64, count, count > 4 ? 0 : 1, offset, 1,
+      ctxs, values, n, progression, pass, 8, 8, true);
   }
   return n;
 }
@@ -417,100 +343,59 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   if (shared && shared.jpeg !== jpeg) Object.assign(shared, {jpeg, blockCounts: null, countedByOrder: null, tokensByOrder: null, tokenStore: null, dcSections: null, ansDcSections: null, lfSections: null, acSections: null, modularAns: null, lfCoder: null, modular16bit: true});
   let modular16bit = (shared?.modular16bit ?? true) && jpeg.modular16bit !== false;
   const {width, height, components, alpha, auxiliary, xyb, strategyData, progression, noiseLut, splineBits, useDCFrame, authoredOrderPasses} = jpeg, grey = components.length === 1;
-  const numPasses = progression?.count || 1;
-  const epf = xyb ? jpeg.epf || 0 : 0;
-  const quantScale = jpeg.quantScale || 1;
-  let field = jpeg.quantFieldBase || 1, shift = 1;
-  while (field / (8 * 255 * quantScale) < 1 / 16384) { field *= 2; shift *= 2; }
-  const ycbcr = !xyb && (jpeg.ycbcr || grey);
-  const map = grey ? [0, 0, 0] : ycbcr ? [1, 0, 2] : [0, 1, 2];
-  const comps = map.map(i => components[i]);
-  const hasOrders = Boolean(plan.orders && !authoredOrderPasses && map.some(i => plan.orders[i].some((k, r) => k !== r)));
-  const orders = hasOrders ? map.map(i => plan.orders[i].map(k => SCAN[k])) : [SCAN, SCAN, SCAN];
-  const log2 = v => v === 1 ? 0 : v === 2 ? 1 : -1;
-  const minH = ycbcr ? 1 : Math.min(...comps.map(c => c.h)), minV = ycbcr ? 1 : Math.min(...comps.map(c => c.v));
-  const rawH = comps.map(c => c.h % minH ? -1 : log2(c.h / minH)), rawV = comps.map(c => c.v % minV ? -1 : log2(c.v / minV));
-  if (rawH.includes(-1) || rawV.includes(-1)) throw jpegError('sampling factors other than one or two');
-  const maxhs = Math.max(...rawH), maxvs = Math.max(...rawV);
-  const hshift = c => maxhs - rawH[c], vshift = c => maxvs - rawV[c];
-  if (!ycbcr && (maxhs || maxvs)) throw jpegError('an RGB JPEG with subsampling');
-  const xsizeBlocks = Math.ceil(width / (8 << maxhs)) << maxhs, ysizeBlocks = Math.ceil(height / (8 << maxvs)) << maxvs;
-  const groupsX = Math.ceil(width / GROUP_DIM), groupsY = Math.ceil(height / GROUP_DIM), numGroups = groupsX * groupsY;
-  const dcGroupsX = Math.ceil(xsizeBlocks / 256), dcGroupsY = Math.ceil(ysizeBlocks / 256), numDcGroups = dcGroupsX * dcGroupsY;
-  const single = numGroups === 1 && numPasses === 1;
-  const blockAt = (c, bx, by) => { const comp = comps[c]; if (grey && c !== 1) return -1; return ((by * comp.stride) + bx) * 64; };
+  const {isFirstFrame = true, isLastFrame = true, crop = null, saveAsReference = 0, imageWidth, imageHeight,
+    alphaChannel = Boolean(alpha), mask = false, patches = null} = jpeg.placement ?? {};
+  if (mask && (!alphaChannel || !crop)) throw new Error('A mask needs alpha and a crop.');
+  const layout = varDCTLayout(jpeg, plan);
+  const {directRGB, numPasses, epf, quantScale, field, shift, ycbcr, map, comps, hasOrders, orders,
+    rawH, rawV, maxhs, maxvs, hshifts, vshifts, xsizeBlocks, ysizeBlocks, groupsX, groupsY, numGroups,
+    dcGroupsX, dcGroupsY, numDcGroups, single, dcScale, dcLift} = layout;
+  const hshift = c => hshifts[c], vshift = c => vshifts[c];
   const sharpnessOf = (x0, y0, rw, rh) => {
     const out = new Int16Array(rw * rh).fill(7), own = jpeg.sharpness;
-    if (own) for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) out[y * rw + x] = own[(y0 + y) * xsizeBlocks + x0 + x];
+    if (own) copyVarDCTSharpness(own, xsizeBlocks, x0, y0, rw, out);
     return out;
   };
-  const dcAt = (c, bx, by) => comps[c].row0 !== undefined && grey && c !== 1 ? 0 : strategyData || comps[c].dc ? comps[c].dc[by * comps[c].stride + bx] :
-    blockAt(c, bx, by) < 0 ? 0 : comps[c].coeffs[blockAt(c, bx, by)];
-  if (strategyData && (maxhs || maxvs || plan.orders && !authoredOrderPasses)) throw jpegError('variable transforms with subsampling or DCT8-only learned orders');
-
-  const jpegReconstruction = jpeg.jpegReconstruction === true;
-  const gcd1024 = q => { let d = 1024; while (q % d) d >>= 1; return d; };
-  const dcScale = comps.map(c => ycbcr || xyb || jpegReconstruction ? 1 : c.quant[0] / gcd1024(c.quant[0]));
-  const dcLift = comps.map(c => ycbcr || xyb ? 0 : jpegReconstruction ? Math.floor(1024 / c.quant[0]) : 1024 / gcd1024(c.quant[0]));
   const kernels = kernelHooks.entropy?.();
-  const dcGroup = g => {
+  const dcGroupSteps = function* (g, part) {
     const lfCoder = plan.lfCoder;
-    const w = new BitWriter(4096), gx = g % dcGroupsX, gy = (g / dcGroupsX) | 0;
-    const x0 = gx * 256, y0 = gy * 256, rw = Math.min(256, xsizeBlocks - x0), rh = Math.min(256, ysizeBlocks - y0);
+    const w = new BitWriter(4096), geometry = varDCTLFGeometry(layout, g);
+    const {gx, gy, x0, y0, rw, rh, cw, ch, bits} = geometry;
+    if (part !== 1) {
     if (!useDCFrame) {
     w.write(2, 0);
     const planes = [1, 0, 2].map(c => {
-      const pw = rw >> hshift(c), ph = rh >> vshift(c), scale = dcScale[c], lift = dcLift[c];
-      let data = new Int16Array(pw * ph);
-      const own = comps[c].row0 !== undefined && grey && c !== 1 ? null : comps[c].dc, bx0 = x0 >> hshift(c), by0 = y0 >> vshift(c);
-      if (own instanceof Int16Array && scale === 1 && lift === 0) {
-        for (let y = 0; y < ph; y++) data.set(own.subarray((by0 + y) * comps[c].stride + bx0, (by0 + y) * comps[c].stride + bx0 + pw), y * pw);
-        return {w: pw, h: ph, data};
-      }
-      for (let y = 0; y < ph; y++) for (let x = 0; x < pw; x++) {
-        const value = dcAt(c, (x0 >> hshift(c)) + x, (y0 >> vshift(c)) + y) * scale + lift;
-        if (value < -32768 || value > 32767) {
-          modular16bit = false;
-          if (data instanceof Int16Array) data = Int32Array.from(data);
-        }
-        data[y * pw + x] = value;
-      }
+      const pw = rw >> hshift(c), ph = rh >> vshift(c);
+      const spec = varDCTDCSpec(jpeg, layout, c, x0 >> hshift(c), y0 >> vshift(c), pw, ph);
+      const data = copyVarDCTDCRows(spec, new Int16Array(pw * ph));
+      if (data instanceof Int32Array) modular16bit = false;
       return {w: pw, h: ph, data};
     });
     const plainDc = target => writeModularStream(target, planes, GRADIENT_PREDICTOR, plan.modularAns, kernels);
-    if (lfCoder) lfCoder.dc(w, planes, plainDc, kernels); else plainDc(w);
+    if (lfCoder?.dcSteps) yield* lfCoder.dcSteps(w, planes, plainDc, kernels);
+    else if (lfCoder) lfCoder.dc(w, planes, plainDc, kernels); else plainDc(w);
     }
     auxiliary?.group(w, gx * 2048, gy * 2048, 2048, 3, Infinity);
+    if (part === 0) return w;
+    }
     const regionBlocks = strategyData && strategyData.blocks.filter(block => block.bx >= x0 && block.bx < x0 + rw && block.by >= y0 && block.by < y0 + rh)
       .sort((a, b) => a.by - b.by || a.bx - b.bx);
-    const count = regionBlocks ? regionBlocks.length : rw * rh, bits = ceilLog2(rw * rh);
-    if (bits) w.write(bits, count - 1);
-    const cw = (rw + 7) >> 3, ch = (rh + 7) >> 3;
     const metadataPlain = !lfCoder || lfCoder.plainMetadata === true;
-    const uniformBlocks = metadataPlain && !regionBlocks && !jpeg.quantFields;
-    const uniformSharpness = metadataPlain && !jpeg.sharpness;
+    const {count, uniformBlocks, uniformSharpness, sharpVal} = varDCTLFMetadataShape(jpeg, layout, geometry, regionBlocks?.length, metadataPlain);
+    if (bits) w.write(bits, count - 1);
     let blocks = null;
     if (!uniformBlocks) {
       blocks = new Int32Array(count * 2).fill(field - 1, count);
-      if (regionBlocks) for (let i = 0; i < count; i++) blocks[i] = regionBlocks[i].id;
-      if (jpeg.quantFields && regionBlocks) for (let i = 0; i < count; i++) {
-        const block = regionBlocks[i], value = jpeg.quantFields[block.by * xsizeBlocks + block.bx] * shift - 1;
-        blocks[count + i] = value;
-        if (value < -32768 || value > 32767) modular16bit = false;
-      }
-      else if (jpeg.quantFields) for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) {
-        const value = jpeg.quantFields[(y0 + y) * xsizeBlocks + x0 + x] * shift - 1;
-        blocks[count + y * rw + x] = value;
-        if (value < -32768 || value > 32767) modular16bit = false;
+      if (regionBlocks) copyVarDCTStrategies(regionBlocks, blocks);
+      if (jpeg.quantFields && regionBlocks) {
+        if (copyVarDCTStrategyFields(jpeg.quantFields, xsizeBlocks, shift, regionBlocks, blocks)) modular16bit = false;
+      } else if (jpeg.quantFields) {
+        if (copyVarDCTFieldRows(jpeg.quantFields, xsizeBlocks, shift, x0, y0, rw, rh, blocks)) modular16bit = false;
       }
       else if (field - 1 < -32768 || field - 1 > 32767) modular16bit = false;
     } else if (field - 1 < -32768 || field - 1 > 32767) modular16bit = false;
     const colors = [new Int16Array(cw * ch), new Int16Array(cw * ch)];
-    if (xyb && jpeg.cfl) for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
-      const at = ((y0 >> 3) + y) * jpeg.cfl.width + (x0 >> 3) + x;
-      colors[0][y * cw + x] = jpeg.cfl.x[at]; colors[1][y * cw + x] = jpeg.cfl.b[at];
-    }
-    const sharpVal = epf ? 7 : 0;
+    if ((xyb || directRGB) && jpeg.cfl) copyVarDCTCorrelation(jpeg.cfl, x0, y0, cw, ch, colors);
     const metadata = [
       {w: cw, h: ch, data: colors[0]}, {w: cw, h: ch, data: colors[1]},
       uniformBlocks ? {w: count, h: 2, rowValues: [0, field - 1]} : {w: count, h: 2, data: blocks},
@@ -520,6 +405,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     if (lfCoder) lfCoder.metadata(w, metadata, plainMetadata, kernels); else plainMetadata(w);
     return w;
   };
+  const dcGroup = (g, part) => complete(dcGroupSteps(g, part));
   if (plan.lfGroup !== undefined) {
     const narrow = modular16bit, w = dcGroup(plan.lfGroup);
     return {bytes: w.bytes.slice(0, w.at), at: w.at, pending: w.pending, acc: w.acc, wide: narrow && !modular16bit};
@@ -527,10 +413,8 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   const lumaW = xsizeBlocks >> hshift(1), lumaH = ysizeBlocks >> vshift(1);
   const fast = !!plan.fast;
   const lumaDc = new Int32Array(fast ? 0 : lumaW * lumaH);
-  if (!fast) for (let by = 0; by < lumaH; by++) for (let bx = 0; bx < lumaW; bx++) lumaDc[by * lumaW + bx] = dcAt(1, bx, by) * dcScale[1] + dcLift[1];
-  const lumaQuant = comps[1].quant, quantSum = (lumaQuant[8] + lumaQuant[16] + lumaQuant[24] + lumaQuant[32] + lumaQuant[40]) / quantScale;
-  const blocksTotal = xsizeBlocks * ysizeBlocks;
-  const wanted = fast || useDCFrame || blocksTotal < 256 ? 0 : Math.max(1, Math.min(7, ceilLog2(blocksTotal) - ceilLog2(quantSum) - (xyb ? 6 : 7)));
+  if (!fast) copyVarDCTDCRows(varDCTDCSpec(jpeg, layout, 1, 0, 0, lumaW, lumaH), lumaDc);
+  const wanted = varDCTContextBuckets(jpeg, layout, fast);
   const designs = strategyData ? (plan.richContexts ? ['dcBuckets', 'sizes', 'sizesShared', 'sizes3', 'sizes3Shared', 'sizesDc'] : ['dcBuckets', 'sizes', 'sizesShared']) : ['dcBuckets'];
   let contexts = !strategyData && wanted === 0 ? (grey ? FAST_CONTEXTS_GREY : FAST_CONTEXTS_RGB) : blockContexts(lumaDc, wanted, grey, strategyData ? DESIGNS.fine(grey) : undefined);
   const lumaBuckets = new Uint8Array(lumaDc.length), bucketOf = contexts.bucketOf;
@@ -544,21 +428,33 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   const buffer = strategyData && progression ? null : tokenBuffer();
   const tokenState = () => ({authoredOrderPasses, groupsX, strategyData, map, progression, contexts, lumaBuckets, lumaW,
     nzeros, xsizeBlocks, ysizeBlocks, comps, grey, orders, counted, blockCounts, nonZero: jpeg.nonZero, tokenBuffer: buffer,
-    hshifts: [0, 1, 2].map(hshift), vshifts: [0, 1, 2].map(vshift)});
-  const tokens = (g, emit, pass = 0) => walkACGroup(tokenState(), g, emit, pass);
+    hshifts, vshifts});
+  const groupInput = g => {
+    const state = tokenState();
+    if (!jpeg.band || strategyData) return {state, g};
+    const by = Math.floor(g / groupsX) * 32, rows = Math.min(32, ysizeBlocks - by);
+    return {g: g % groupsX, state: {...state, ysizeBlocks: rows,
+      comps: comps.map(c => ({...c, row0: 0})),
+      blockCounts: blockCounts.map((counts, c) => counts?.subarray((by >> vshift(c)) * comps[c].stride, ((by + rows) >> vshift(c)) * comps[c].stride)),
+      nonZero: jpeg.nonZero?.map((counts, c) => counts?.subarray((by >> vshift(c)) * comps[c].stride, ((by + rows) >> vshift(c)) * comps[c].stride)),
+      lumaBuckets: lumaBuckets.subarray((by >> vshift(1)) * lumaW, ((by + rows) >> vshift(1)) * lumaW)}};
+  };
+  const tokens = (g, emit, pass = 0) => { const input = groupInput(g); return walkACGroup(input.state, input.g, emit, pass); };
   let kept = null, renaming = null;
   const fill = (g, pass) => {
-    const state = tokenState();
+    const {state, g: local} = groupInput(g);
     if (strategyData) {
-      const n = kernelHooks.strategyFill?.(state, g, pass, COEFF_NUM_NONZERO_CONTEXT, COEFF_FREQ_CONTEXT, ORDER_OF, buffer.ctxs, buffer.values);
-      return [n ?? fillStrategyGroup(state, g, pass, buffer.ctxs, buffer.values), buffer.ctxs, buffer.values];
+      const n = kernelHooks.strategyFill?.(state, local, pass, COEFF_NUM_NONZERO_CONTEXT, COEFF_FREQ_CONTEXT, ORDER_OF, buffer.ctxs, buffer.values);
+      return [n ?? fillStrategyGroup(state, local, pass, buffer.ctxs, buffer.values), buffer.ctxs, buffer.values];
     }
-    const filled = kernels?.fill(state, g, pass, DCT8_DENSITY);
-    return filled || [fillACGroup(state, g, pass, buffer.ctxs, buffer.values), buffer.ctxs, buffer.values];
+    const filled = kernels?.fill(state, local, pass, DCT8_DENSITY);
+    return filled || [fillACGroup(state, local, pass, buffer.ctxs, buffer.values), buffer.ctxs, buffer.values];
   };
   const countTokens = (g, into, pass) => {
     jpeg.band?.((g / groupsX) | 0);
-    if (kernelHooks.acGroup?.(tokenState(), g, pass, {counts: into, coding: null, w: null}, DCT8_DENSITY)) return;
+    const input = groupInput(g);
+    if (kernelHooks.acGroup?.(input.state, input.g, pass, {counts: into, coding: null, w: null}, DCT8_DENSITY)) return;
+    jpeg.unpackBand?.();
     if (!buffer) { tokens(g, (ctx, value) => into.add(ctx, value), pass); return; }
     const [n, ctxs, values] = fill(g, pass);
     if (!(ctxs.buffer !== buffer.ctxs.buffer && kernels.countFilled(into, n))) into.addTokens(ctxs, values, n);
@@ -566,15 +462,17 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   };
   const writeTokens = (g, coding, w, pass) => {
     jpeg.band?.((g / groupsX) | 0);
-    const written = kernelHooks.acGroup?.(tokenState(), g, pass, {counts: null, coding, w}, DCT8_DENSITY);
+    let input = groupInput(g);
+    const written = kernelHooks.acGroup?.(input.state, input.g, pass, {counts: null, coding, w}, DCT8_DENSITY);
     if (written) return written;
+    if (jpeg.unpackBand) { jpeg.unpackBand(); input = groupInput(g); }
     if (strategyData && !progression) {
-      const flushed = kernelHooks.strategyWrite?.(tokenState(), g, pass, COEFF_NUM_NONZERO_CONTEXT, COEFF_FREQ_CONTEXT, ORDER_OF, coding, w);
+      const flushed = kernelHooks.strategyWrite?.(input.state, input.g, pass, COEFF_NUM_NONZERO_CONTEXT, COEFF_FREQ_CONTEXT, ORDER_OF, coding, w);
       if (flushed) return flushed;
     }
     if (!buffer || !coding.writeTokens) { tokens(g, (ctx, value) => coding.write(w, ctx, value), pass); return; }
     if (coding.writeFilled && !strategyData) {
-      const filled = kernels.fill(tokenState(), g, pass, DCT8_DENSITY);
+      const filled = kernels.fill(input.state, input.g, pass, DCT8_DENSITY);
       if (filled) { coding.writeFilled(w, filled[0]); return; }
     }
     const group = kept?.[g];
@@ -595,7 +493,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   const orderKey = authoredOrderPasses || (hasOrders ? plan.orders : null);
   const buildCoding = plan.coding || buildTokenCoding, reuse = countedByOrder?.get(orderKey);
   const counts = reuse || Array.from({length: numPasses}, () => new TokenCounts(contexts.contexts));
-  const tokensByOrder = buffer && countedByOrder ? (shared.tokensByOrder ||= new Map()) : null;
+  const tokensByOrder = buffer && countedByOrder && !jpeg.band ? (shared.tokensByOrder ||= new Map()) : null;
   kept = tokensByOrder?.get(orderKey) || null;
   if ((!reuse || !kept) && tokensByOrder) { tokensByOrder.clear(); (shared.tokenStore ||= tokenStore()).reset(); kept = []; tokensByOrder.set(orderKey, kept); }
   if (plan.countGroups) {
@@ -611,8 +509,27 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     }
     done += numGroups; yield done / total;
   }
-  else for (let p = 0; p < numPasses; p++) for (let g = 0; g < numGroups; g++) {
-    countTokens(g, counts[p], p); yield ++done / total;
+  else {
+    let answered = null;
+    const state = () => ({counts: counts.map(tokenCountsData), blockCounts});
+    const restore = () => {
+      if (!answered) return;
+      answered.counts.forEach((saved, p) => { counts[p] = tokenCountsFrom(saved); });
+      answered.blockCounts.forEach((from, c) => from && blockCounts[c].set(from));
+      answered = null;
+    };
+    answered = yield* stage('counts', function* () {
+      for (let p = 0; p < numPasses; p++) for (let g = 0; g < numGroups; g += UNIT_GROUPS) {
+        const end = Math.min(numGroups, g + UNIT_GROUPS);
+        const saved = yield* carried('count', () => { restore(); for (let h = g; h < end; h++) countTokens(h, counts[p], p); return null; }, state);
+        if (saved !== PASSED && saved !== null) answered = saved;
+        while (done < p * numGroups + end) yield ++done / total;
+      }
+      restore();
+      return null;
+    }, state);
+    if (answered) done = numGroups * numPasses;
+    restore();
   }
   if (countedByOrder) countedByOrder.set(orderKey, counts);
   counted = !progression;
@@ -628,7 +545,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   for (let i = 0; i < list.length; i++) {
     const [name, buckets] = list[i];
     if (remoteTotals) { if (remoteTotals[i] != null && (bestAt < 0 || remoteTotals[i] < best)) { best = remoteTotals[i]; bestAt = i; } continue; }
-    const priced = designPrice(name, buckets, grey, lumaDc, countedMap, counts, buildCoding, {...plan.clusters, smallestMap: true, kernels});
+    const priced = yield* designPriceSteps(name, buckets, grey, lumaDc, countedMap, counts, buildCoding, {...plan.clusters, smallestMap: true, kernels});
     if (!priced) continue;
     if (!codings || priced.total < codings.reduce((n, coding) => n + coding.bits, contextHeader.bitLength)) {
       codings = priced.codings; contexts = priced.candidate; contextHeader = priced.header;
@@ -653,7 +570,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     return written;
   }
 
-  const writers = Array.from({length: single ? 1 : 2 + numDcGroups + numGroups * numPasses}, () => null);
+  const writers = Array.from({length: varDCTSectionCount(numGroups, numDcGroups, numPasses)}, () => null);
   const section = index => writers[single ? 0 : index] || (writers[single ? 0 : index] = new BitWriter(4096));
   const sectionSizes = new Uint32Array(writers.length);
   let sectionBytes = 0;
@@ -665,25 +582,21 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   };
 
   const dc = section(0);
+  if (patches) writeCapturePatches(dc, patches, alphaChannel);
   if (splineBits) dc.append(splineBits);
   if (noiseLut) for (const value of noiseLut) dc.write(10, Math.round(value * 1024));
-  dc.write(1, 0);
 
   const alphaPlane = (gx, gy) => {
     const x0 = gx * GROUP_DIM, y0 = gy * GROUP_DIM, w = Math.min(GROUP_DIM, width - x0), h = Math.min(GROUP_DIM, height - y0), data = new Int16Array(w * h);
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) data[y * w + x] = alpha[((y0 + y) * width + x0 + x) * 4 + 3];
+    const rows = jpeg.alphaRows?.(y0, h);
+    copyVarDCTAlphaRows(alpha, rows, width, x0, y0, w, data, mask);
     return {w, h, data};
   };
-  for (let c = 0; c < 3; c++) dc.write(16, float16Bits(comps[c].quant[0] / dcScale[c] / (255 * 8 * quantScale) * 128));
-  dc.write(2, 3); dc.write(16, 65536 - 8193);
-  dc.write(2, 1); dc.write(5, 0);
-  dc.write(1, 0); dc.write(4, 0);
-  dc.append(contextHeader);
-  if (xyb) dc.write(1, 1);
-  else { dc.write(1, 0); dc.write(2, 0); dc.write(16, 0); dc.write(16, 0); dc.write(8, 128); dc.write(8, 128); }
-  dc.write(1, 0);
+  const writeAlpha = (w, planes) => mask ? plainModularStream(w, planes, GRADIENT_PREDICTOR, 255)
+    : writeModularStream(w, planes, GRADIENT_PREDICTOR, plan.modularAns, kernels);
+  writeVarDCTDCFields(dc, jpeg, layout, contextHeader);
   if (auxiliary) auxiliary.global(dc);
-  else if (alpha) writeModularStream(dc, [numGroups === 1 ? alphaPlane(0, 0) : {w: 0, h: 0, data: new Int32Array(0)}], GRADIENT_PREDICTOR, plan.modularAns, kernels);
+  else if (alphaChannel) writeAlpha(dc, [numGroups === 1 ? alphaPlane(0, 0) : {w: 0, h: 0, data: new Int32Array(0)}]);
   checkSection(0);
 
   if (shared && plan.modularAns && shared.modularAns !== plan.modularAns) { shared.ansDcSections = null; shared.modularAns = plan.modularAns; }
@@ -707,7 +620,18 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     }
     const remote = missing.length && (yield {offload: 'run', task: dcTask(g), at: () => done / total});
     if (remote?.wide) modular16bit = false;
-    const w = remote ? Object.assign(new BitWriter(0), {bytes: remote.bytes, at: remote.at, pending: remote.pending, acc: remote.acc}) : dcGroup(g);
+    let w;
+    if (remote) w = Object.assign(new BitWriter(0), {bytes: remote.bytes, at: remote.at, pending: remote.pending, acc: remote.acc});
+    else for (const part of [0, 1]) {
+      const local = part === 0
+        ? yield* stage('dc', function* () { const narrow = modular16bit, w = yield* dcGroupSteps(g, 0); return {w: writerData(w), wide: narrow && !modular16bit}; },
+          ({w, wide}) => ({w: savedWriter(w), wide}))
+        : yield* unit('dc', () => { const narrow = modular16bit, w = dcGroup(g, 1); return {w: writerData(w), wide: narrow && !modular16bit}; },
+          ({w, wide}) => ({w: savedWriter(w), wide}));
+      if (local.wide) modular16bit = false;
+      const written = Object.assign(new BitWriter(0), local.w);
+      if (part) w.append(written); else w = written;
+    }
     section(1 + g).append(w); checkSection(1 + g);
     if (dcSections) { w.bytes = w.bytes.slice(0, w.at); dcSections[g] = w; }
     if (shared) shared.modular16bit = modular16bit;
@@ -718,9 +642,14 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   const ac = section(1 + numDcGroups);
   ac.write(1, 0);
   for (let i = 0; i < 17; i++) {
-    const table = strategyData?.tables.get(i);
+    const table = strategyData?.tables[i];
     if (strategyData ? !table : i !== 0) { ac.write(3, 0); continue; }
-    if (table?.parameters) { table.parameters.write(ac, map); continue; }
+    if (table?.parameters) { writeQuantParams(ac, table.parameters.syntax, map); continue; }
+    if (!table && jpeg.quantTable) {
+      ac.write(3, 6); ac.write(4, 5);
+      for (const c of map) for (const bits of jpeg.quantTable[c]) ac.write(16, bits);
+      continue;
+    }
     ac.write(3, 7); ac.write(16, float16Bits(field / (8 * 255 * quantScale)));
     if (!table) {
       if (writeCachedQuantMatrices(ac, comps)) modular16bit = false;
@@ -735,24 +664,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   if (numGroups > 1) ac.write(ceilLog2(numGroups), 0);
   for (let pass = 0; pass < codings.length; pass++) {
   const coding = codings[pass];
-  if (authoredOrderPasses) ac.append(authoredOrderPasses[pass].header);
-  else if (hasOrders) {
-    ac.writeU32([[0, 95], [0, 19], [0, 0], [13, 0]], 1);
-    const values = [];
-    for (const c of map) {
-      const available = Array.from({length: 64}, (_, k) => k), lehmer = plan.orders[c].map(k => {
-        const at = available.indexOf(k); available.splice(at, 1); return at;
-      });
-      let end = 64;
-      while (end > 1 && !lehmer[end - 1]) end--;
-      values.push(end - 1, ...lehmer.slice(1, end));
-    }
-    const config = uintConfig(0), freqs = new Uint32Array(64);
-    for (const value of values) countToken(config, value, freqs);
-    const code = buildCode(freqs);
-    writeHistograms(ac, {contextMap: new Uint8Array(8), histograms: [{config, code}]});
-    for (const value of values) writeHybrid(ac, code, config, value);
-  } else ac.write(2, 2);
+  writeVarDCTOrders(ac, jpeg, layout, plan, pass);
   if (coding.writeHistograms) coding.writeHistograms(ac);
   else writeHistograms(ac, {contextMap: coding.contextMap, histograms: coding.histograms});
   }
@@ -771,7 +683,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   if (shared) shared.acSections = null;
 
   const groupSamples = values => values != null && (Object.getPrototypeOf(values) === Int16Array.prototype || Object.getPrototypeOf(values) === Int32Array.prototype);
-  const boundedGroups = (plan.pooled || offloading()) && (strategyData ? strategyData.blocks.every(block => block.coeffs.every(groupSamples)) : comps.every(comp => groupSamples(comp.coeffs)));
+  const boundedGroups = !jpeg.band && (plan.pooled || offloading()) && (strategyData ? strategyData.blocks.every(block => block.coeffs.every(groupSamples)) : comps.every(comp => groupSamples(comp.coeffs)));
   let reply;
   if (!cachedAC && boundedGroups && (numGroups > 1 || plan.pooled && single) && !progression && !auxiliary && codings[0].model) {
     const coding = codings[0], hshifts = [0, 1, 2].map(hshift), vshifts = [0, 1, 2].map(vshift);
@@ -849,7 +761,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
       if (single) section(index).append(w);
       else {
         writers[index] = w;
-        if (alpha) writeModularStream(w, [alphaPlane(g % groupsX, Math.floor(g / groupsX))], GRADIENT_PREDICTOR, plan.modularAns, kernels);
+        if (alphaChannel) writeAlpha(w, [alphaPlane(g % groupsX, Math.floor(g / groupsX))]);
       }
       checkSection(index);
     }
@@ -861,40 +773,38 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     checkSection(index); yield ++done / total;
   }
   if (!cachedAC && !reply) {
-  for (let p = 0; p < numPasses; p++) for (let g = 0; g < numGroups; g++) {
+  const writeGroup = (g, p) => {
     const index = 2 + numDcGroups + p * numGroups + g, w = section(index), coding = codings[p];
     if (writeTokens(g, coding, w, p) !== 2 && coding.flush) coding.flush(w);
     if (auxiliary) {
       const bracket = progression?.brackets[p] ?? {minimum: 0, maximum: 2};
       auxiliary.group(w, g % groupsX * GROUP_DIM, Math.floor(g / groupsX) * GROUP_DIM, GROUP_DIM, bracket.minimum, bracket.maximum);
     }
-    else if (alpha && numGroups > 1 && p === (progression?.alphaPass ?? 0)) writeModularStream(w, [alphaPlane(g % groupsX, Math.floor(g / groupsX))], GRADIENT_PREDICTOR, plan.modularAns, kernels);
-    checkSection(index);
-    yield ++done / total;
+    else if (alphaChannel && numGroups > 1 && p === (progression?.alphaPass ?? 0)) writeAlpha(w, [alphaPlane(g % groupsX, Math.floor(g / groupsX))]);
+    return index;
+  };
+  for (let p = 0; p < numPasses; p++) for (let g = 0; g < numGroups; g += UNIT_GROUPS) {
+    const end = Math.min(numGroups, g + UNIT_GROUPS);
+    if (single) for (let h = g; h < end; h++) { checkSection(writeGroup(h, p)); yield ++done / total; }
+    else {
+      const rows = yield* unit('ac', () => { const out = []; for (let h = g; h < end; h++) out.push(writerData(writers[writeGroup(h, p)])); return out; },
+        out => out.map(savedWriter));
+      for (let h = g; h < end; h++) {
+        const index = 2 + numDcGroups + p * numGroups + h;
+        if (rows[h - g].bytes !== writers[index]?.bytes) writers[index] = Object.assign(new BitWriter(0), rows[h - g]);
+        checkSection(index); yield ++done / total;
+      }
+    }
   }
   }
   const header = new BitWriter(256);
-  if (jpeg.frameHeader) jpeg.frameHeader(header);
-  else {
-  writeImageHeader(header, jpeg.canvasWidth ?? width, jpeg.canvasHeight ?? height, grey ? 1 : 3, !!alpha, {xyb, orientation: jpeg.orientation, colorSpace: jpeg.colorSpace, modular16bit, ...jpeg.profile});
-  header.write(1, 0); header.write(2, 0); header.write(1, 0);
-  header.write(2, 2); header.write(8, 128 + (noiseLut ? 1 : 0) + (splineBits ? 16 : 0) + (useDCFrame ? 32 : 0) - 17);
-  if (!xyb) header.write(1, ycbcr ? 1 : 0);
-  if (!useDCFrame) {
-  if (ycbcr) for (let c = 0; c < 3; c++) header.write(2, rawH[c] === 0 && rawV[c] === 0 ? 0 : rawH[c] === 1 && rawV[c] === 1 ? 1 : rawH[c] === 1 ? 2 : 3);
-  header.write(2, [1, 2, 4, 8].indexOf(jpeg.upsampling ?? 1));
-  if (auxiliary) for (const factor of auxiliary.factors) header.write(2, [1, 2, 4, 8].indexOf(factor));
-  else if (alpha) header.write(2, [1, 2, 4, 8].indexOf(jpeg.upsampling ?? 1));
-  }
-  if (xyb) { header.write(3, 2); header.write(3, 2); }
-  writeFrameHeaderEnd(header, auxiliary?.count ?? alpha, epf, progression?.header, jpeg.epfIterations, xyb ? jpeg.gab : null);
-  }
-  const sections = finishSections(writers), bytes = assembleCodestream(header, sections, jpeg.level ?? 5);
+  writeVarDCTHeader(header, jpeg, layout, modular16bit, writeImageHeader);
+  const sections = finishSections(writers), bytes = assembleCodestream(header, sections, isFirstFrame ? jpeg.level ?? 5 : 5);
   if (acKey && bytes.length + acKey.global.length + acKey.contexts.length <= components.reduce((n, c) => n + (c.coeffs?.byteLength ?? 0), 0)) {
     const groups = [], first = 2 + numDcGroups;
     let at = bytes.length - sections.slice(first).reduce((n, section) => n + section.length, 0);
     for (let g = first; g < sections.length; g++) { groups.push(bytes.subarray(at, at + sections[g].length)); at += sections[g].length; }
     shared.acSections = {...acKey, groups};
   }
-  return bytes;
+  return isFirstFrame && isLastFrame && !crop ? shown(bytes, jpeg) : bytes;
 }

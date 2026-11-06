@@ -40,11 +40,15 @@ interface KindOptions {
 }
 // The 7.x spellings of fidelity and the coder switches the encoder chooses itself are not among them.
 type Retired = 'quality' | 'lossless' | 'target' | 'maxError' | 'photo' | 'filter' | 'losslessProfile' | 'mode' | 'acceleration' | 'progress';
-export {encode, capture, supported, configureWasm} from './index.mjs';
+export {encode, supported, configureWasm} from './index.mjs';
+export {capture, configureDecoder} from './capture-complete.mjs';
 /** The kernels the authored routes run on ('format', the default), or rapier-jxl's 'encode' or 'capture', with no job. */
 export function prepare(operation?: 'format' | 'encode' | 'capture'): Promise<void>;
 /** An authored structure (layers, patches, splines, extra channels, palettes, profiles, atlases): the request names its
  * kind. The full still encoder rides in the same file. */
 type FormatCall = {[K in FormatKind]: [input: Extract<FormatRequest, {kind: K}>,
   ...options: {} extends FormatOptions<K> ? [options?: FormatOptions<K>] : [options: FormatOptions<K>]]}[FormatKind];
-export function format(...args: FormatCall): Promise<import('./types.mjs').Bytes>;
+export function format(...args: FormatCall): Promise<import('./result.mjs').ImageResult>;
+
+export {resultJSON} from './result.mjs';
+export type {ImageJob, ImageVerb, Digest, ResultSource, ResultReason, ResultTransform, ResultFidelity, ResultMeasurement, ImageResult, ImageResultJSON} from './result.mjs';

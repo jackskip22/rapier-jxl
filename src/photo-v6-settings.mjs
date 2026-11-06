@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {exactPow} from './exact-math.mjs';
 import {QUANT_SHAPE} from './photo-dct.mjs';
-import {flatSamples} from './screen.mjs';
+import {flatSamples} from './screen-samples.mjs';
 
 const DEFAULT_DCT8 = [[3150.0, 0.0, -0.4, -0.4, -0.4, -2.0], [560.0, 0.0, -0.3, -0.3, -0.3, -0.3], [512.0, -2.0, -1.0, 0.0, -1.0, -2.0]];
 function defaultWeight(c, x, y) {

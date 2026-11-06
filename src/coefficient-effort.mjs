@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {stage} from './step-journal.mjs';
 import {varDCTSteps, SCAN} from './vardct.mjs';
 import {complete, part, scaled} from './bits.mjs';
 import {offloading} from './offload.mjs';
@@ -50,11 +51,13 @@ export function ordersFromCounts(histograms, bucket = 8, adaptiveFast = false, b
 }
 
 export function* candidateSteps(image, plan, shared) {
-  if (!plan.pooled && offloading()) {
-    const bytes = yield {offload: 'run', task: {kind: 'vardct', image, plan}, at: done => done};
-    if (bytes) return bytes;
-  }
-  return yield* varDCTSteps(image, plan, shared);
+  return yield* stage('candidate', function* () {
+    if (!plan.pooled && offloading()) {
+      const bytes = yield {offload: 'run', task: {kind: 'vardct', image, plan}, at: done => done};
+      if (bytes) return bytes;
+    }
+    return yield* varDCTSteps(image, plan, shared);
+  });
 }
 export const prefetch = (image, plans) => ({offload: 'prefetch', tasks: plans.map(plan => ({kind: 'vardct', image, plan})), at: done => done});
 const CLUSTERED = Object.freeze({maxClusters: 32, newClusterCost: 160});

@@ -166,6 +166,8 @@ function namedHeader(fields) {
   return {colorData, iccData: null};
 }
 
+const noProfile = () => { throw fault('JXL_INTERNAL', 'A page capture carries no ICC profile.'); };
 export function writeImageHeader(w, width, height, colour, alpha, options = {}) {
-  return writeHeaderFields(w, width, height, colour, alpha, options, headerOf);
+  return writeHeaderFields(w, width, height, colour, alpha, options,
+    (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? noProfile : headerOf);
 }

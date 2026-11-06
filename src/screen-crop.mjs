@@ -2,7 +2,8 @@
 import {BitWriter, LITTLE_ENDIAN} from './bits.mjs';
 import {writeTOC, groupLayout, writeModularFrameHeader as generalFrame} from './frame.mjs';
 import {writeCaptureFrameHeader, writeCaptureModularHeader} from './capture-headers.mjs';
-import {leaf, channelTree, writeTree, writeChannelHistograms, writeModularHeader as generalModular, ALPHABET} from './modular.mjs';
+import {leaf, channelTree, writeTree, writeModularHeader as generalModular, ALPHABET, LZ77, RESIDUAL_CONFIG} from './modular.mjs';
+import {buildCode, writeHistograms} from './prefix.mjs';
 import {captureColumnsUnlike, captureCropEdges, captureLowestInk, captureRowsUnlike} from './capture-kernels.mjs';
 
 const writeModularFrameHeader = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true ? writeCaptureFrameHeader : generalFrame;
@@ -67,7 +68,9 @@ export function writeScreenBackground(writer, width, height, shape, background, 
   global.write(1, 1); global.write(1, 1);
   const leaves = Array.from({length: shape.channels}, (_, c) => leaf(0, background[shape.colour === 1 && c === 1 ? 3 : c]));
   const counts = new Uint32Array(ALPHABET); counts[0] = 1;
-  writeChannelHistograms(global, writeTree(global, channelTree(leaves)), [counts], () => 0);
+  const ordered = writeTree(global, channelTree(leaves)), map = new Uint8Array(ordered.length + 1);
+  for (const l of ordered) map[l.context] = 1;
+  writeHistograms(global, {lz77: LZ77, contextMap: map, histograms: [{config: RESIDUAL_CONFIG, code: buildCode(Uint32Array.of(0, 1))}, {config: RESIDUAL_CONFIG, code: buildCode(counts)}]});
   writeModularHeader(global);
   const sections = [global.finish()];
   if (!layout.single) {

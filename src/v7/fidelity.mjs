@@ -9,15 +9,22 @@ function soleKey(value) {
 }
 
 export function exactFidelity(value) {
-  return value === 'exact' || (soleKey(value) === 'quality' && value.quality === 100);
+  const key = soleKey(value);
+  return value === 'exact' || key === 'quality' && value.quality === 100;
 }
 export function measuredFidelity(value) {
   const key = soleKey(value);
   return MEASURES.has(key);
 }
 
-export const fidelityHint = value => ' Write fidelity: ' + (typeof value === 'number' && value > 0 && value < 1 ? `{webp: ${value}}.`
-  : `{quality: ${typeof value === 'number' && value >= 1 && value <= 100 ? value : 90}}.`);
+const hundredfold = value => Math.round(value * 1e8) / 1e6;
+export const fidelityHint = value => ' Write fidelity: ' + `{quality: ${typeof value === 'number' && value > 0 && value < 1 ? Math.max(1, hundredfold(value))
+  : typeof value === 'number' && value >= 1 && value <= 100 ? value : 90}}.`;
+
+function retiredWebp(value) {
+  const webp = value.webp, number = typeof webp === 'number' && Number.isFinite(webp) && webp >= 0 && webp <= 1;
+  return fail('JXL_OPTIONS', 'webp is not a fidelity. Write fidelity: ' + (number ? webp === 1 ? "'exact'." : `{quality: ${Math.max(1, hundredfold(webp))}}.` : '{quality: 1 to 100}.'));
+}
 
 function qualityOf({quality}) {
   if (typeof quality !== 'number' || !Number.isFinite(quality) || quality < 1 || quality > 100)
@@ -25,18 +32,14 @@ function qualityOf({quality}) {
   return quality;
 }
 
-function webpOf({webp}) {
-  if (typeof webp !== 'number' || !Number.isFinite(webp) || webp < 0 || webp > 1) throw fail('JXL_OPTIONS', 'webp is a number from 0 to 1.');
-  return webp;
-}
+const photoIntent = value => qualityOf(value) / 100;
 
 export function encodeFidelity(value = {quality: 90}) {
   if (value === 'exact') return {quality: 100};
   const key = soleKey(value);
-  if (key === 'quality') return {quality: qualityOf(value)};
-  if (key === 'webp') {
-    const webp = webpOf(value);
-    return {quality: webp - 1 ? 90 : 100, webp};
+  if (key === 'quality') {
+    const qualityIntent = photoIntent(value);
+    return qualityIntent === 1 ? {quality: 100} : {quality: 90, qualityIntent};
   }
   if (MEASURES.has(key)) {
     const score = value[key];
@@ -44,13 +47,15 @@ export function encodeFidelity(value = {quality: 90}) {
     return {quality: 90, target: {[key]: score}};
   }
   if (key === 'maxError') throw fail('JXL_OPTIONS', 'maxError is a capture setting: capture(screen, {fidelity: {maxError}}).');
-  throw fail('JXL_OPTIONS', "fidelity is 'exact', {quality}, {webp}, {ssimulacra2}, {butteraugli} or {butteraugli3}." + (typeof value === 'number' ? fidelityHint(value) : value === 'lossless' ? " Write fidelity: 'exact'." : ''));
+  if (key === 'webp') throw retiredWebp(value);
+  throw fail('JXL_OPTIONS', "fidelity is 'exact', {quality}, {ssimulacra2}, {butteraugli} or {butteraugli3}." + (typeof value === 'number' ? fidelityHint(value) : value === 'lossless' ? " Write fidelity: 'exact'." : ''));
 }
 
 export function captureFidelity(value = 'exact') {
   if (value === 'exact') return 0;
   const key = soleKey(value);
-  if (key === 'quality' || key === 'webp') throw fail('JXL_UNSUPPORTED', 'Photo quality is offered by rapier-jxl/capture-complete.');
+  if (key === 'webp') throw retiredWebp(value);
+  if (key === 'quality') throw fail('JXL_UNSUPPORTED', 'Photo quality is offered by rapier-jxl/capture-complete.');
   if (key === 'maxError') {
     const {maxError} = value;
     if (!Number.isInteger(maxError) || maxError < 0 || maxError > 8) throw fail('JXL_OPTIONS', 'maxError is an integer from 0 to 8; 0 is exact.');
@@ -63,12 +68,9 @@ export function capturePhotoFidelity(value = 'exact') {
   const key = soleKey(value);
   if (value === 'exact' || key === 'maxError') return {maxError: captureFidelity(value)};
   if (key === 'quality') {
-    const quality = qualityOf(value);
-    return quality === 100 ? {maxError: 0} : {quality};
+    const qualityIntent = photoIntent(value);
+    return qualityIntent === 1 ? {maxError: 0} : {qualityIntent};
   }
-  if (key === 'webp') {
-    const webp = webpOf(value);
-    return webp === 1 ? {maxError: 0} : {webp};
-  }
-  throw fail('JXL_OPTIONS', "fidelity is 'exact', {maxError: 0 to 8}, {quality: 1 to 100} or {webp: 0 to 1}." + (typeof value === 'number' ? fidelityHint(value) : ''));
+  if (key === 'webp') throw retiredWebp(value);
+  throw fail('JXL_OPTIONS', "fidelity is 'exact', {maxError: 0 to 8} or {quality: 1 to 100}." + (typeof value === 'number' ? fidelityHint(value) : ''));
 }

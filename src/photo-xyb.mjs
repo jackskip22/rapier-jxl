@@ -4,6 +4,8 @@ import {QUANT_SHAPE, FAST_SCALE, transformDCT8Blocks, transformDCT8BlocksFast, d
 import {kernelHooks} from './kernel-hooks.mjs';
 import {complete, LITTLE_ENDIAN} from './bits.mjs';
 import {calibration} from './quality-calibration.mjs';
+import {preferXYB} from './photo-preference.mjs';
+export {preferXYB} from './photo-preference.mjs';
 
 const BIAS = 0.0037930732552754493;
 function seedRoot(v) {
@@ -109,20 +111,6 @@ const LINEAR = Float64Array.from({length: 256}, (_, i) => {
 });
 
 
-export function preferXYB(data, width, height) {
-  let lumaEnergy = 0, chromaEnergy = 0;
-  const pair = (a, b) => {
-    const r = data[a] - data[b], g = data[a + 1] - data[b + 1], blue = data[a + 2] - data[b + 2];
-    const y = 77 * r + 150 * g + 29 * blue, cb = 256 * blue - y, cr = 256 * r - y;
-    lumaEnergy += y * y; chromaEnergy += cb * cb + cr * cr;
-  };
-  for (let y = 0; y < height; y += Math.max(1, height / 32 | 0)) for (let x = 0; x < width; x += Math.max(1, width / 32 | 0)) {
-    const at = (y * width + x) * 4;
-    if (x + 1 < width) pair(at, at + 4);
-    if (y + 1 < height) pair(at, at + width * 4);
-  }
-  return chromaEnergy <= lumaEnergy;
-}
 
 const ONE = [1 - 0.05465007330715401, 1 - 0.07005449891748593, 1 - 0.049935103337343655];
 function biasedRound(value, c) {
@@ -332,8 +320,6 @@ function fastV6Tables(q, distance, strength, stepScale, acScale, quantScale, opt
   FAST_V6_TABLES.set(q, entry);
   return entry;
 }
-
-kernelHooks.captureXYB = {steps: photoXYBSteps, prefer: preferXYB, range: FAST_RANGE};
 
 export function* photoXYBSteps(data, width, height, quality, options) {
   const fast = !!options?.fast;

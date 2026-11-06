@@ -1,9 +1,9 @@
 {
  "name": "rapier-jxl",
- "version": "8.2.0",
+ "version": "8.3.0",
  "type": "module",
  "license": "MIT",
- "description": "JPEG XL for pictures, captures and exact JPEG reconstruction.",
+ "description": "JPEG XL in JavaScript and WebAssembly with WebGPU for high efforts.",
  "repository": {
   "type": "git",
   "url": "git+https://github.com/jackskip22/rapier-jxl.git"
@@ -96,6 +96,21 @@
    "node": "./dist/serve.node.mjs",
    "import": "./dist/serve.mjs"
   },
+  "./verify": {
+   "types": "./types/verify.d.mts",
+   "workerd": "./dist/verify.workerd.mjs",
+   "edge-light": "./dist/verify.edge-light.mjs",
+   "node": "./dist/verify.node.mjs",
+   "import": "./dist/verify.mjs"
+  },
+  "./storage": {
+   "types": "./types/storage.d.mts",
+   "import": "./dist/storage.mjs"
+  },
+  "./resumable": {
+   "types": "./types/resumable.d.mts",
+   "import": "./dist/resumable.mjs"
+  },
   "./wasm": {
    "types": "./types/wasm.d.mts",
    "workerd": "./dist/wasm.workerd.mjs",
@@ -145,6 +160,8 @@
   "./dist/decode.edge-light.mjs",
   "./dist/jpeg.workerd.mjs",
   "./dist/jpeg.edge-light.mjs",
+  "./dist/verify.workerd.mjs",
+  "./dist/verify.edge-light.mjs",
   "./dist/wasm.workerd.mjs",
   "./dist/wasm.edge-light.mjs"
  ],

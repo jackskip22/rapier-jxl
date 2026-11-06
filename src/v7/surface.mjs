@@ -1,6 +1,6 @@
 import {readWebGLNow} from './webgl-read.mjs';
 import {isVideo, videoFrame} from './video.mjs';
-import {dimensions, fail, plainView} from './primitives.mjs';
+import {dimensions, fail, plainView, lostBlank, proveRead, LOST} from './primitives.mjs';
 import {isPlainRecord} from './records.mjs';
 import {withCost} from './ownership.mjs';
 import {DESCRIPTION, described, isDecoded, fromDecoded} from './describe.mjs';
@@ -74,12 +74,11 @@ export function surface(input, options = {}) {
       context = copy(target, requested ?? own).drawn;
     }
     const colorSpace = requested ?? context.getContextAttributes?.().colorSpace ?? 'srgb';
-    const lost = () => { if (context.isContextLost?.()) throw fail('JXL_INPUT', 'The canvas lost its 2D context; draw it again.'); };
-    lost();
+    proveRead(context);
     let pixels;
     try { pixels = context.getImageData(0, 0, width, height, half ? {colorSpace, pixelFormat: 'rgba-float16'} : {colorSpace}); }
     catch (cause) { throw Object.assign(fail('JXL_INPUT', 'The canvas could not be read: ' + (cause?.message || cause)), {cause}); }
-    lost();
+    if (lostBlank(context, pixels.data)) throw fail('JXL_INPUT', LOST);
     const data = half && pixels.data.BYTES_PER_ELEMENT === 2
       ? new Uint16Array(pixels.data.buffer, pixels.data.byteOffset, pixels.data.length) : pixels.data;
     withCost(data, data.byteLength);

@@ -187,7 +187,7 @@ export function createCodec(config = {}, spec) {
     } finally { release(job); }
   }
   const jpegPixels = Math.min(config.maxPixels ?? JPEG_PIXELS, JPEG_PIXELS);
-  const host = {factory, module: spec.module, maxPixels, jpegPixels, helpers, webgpu, workerStartupTimeout, complete, progress, encoded, schedule, running,
+  const host = {factory, module: spec.module, bytes: spec.bytes === true, maxPixels, jpegPixels, helpers, webgpu, workerStartupTimeout, complete, progress, encoded, schedule, running,
     get stopping() { return stopping; }, set stopping(value) { stopping = value; }};
   function pump() {
     while (!closed && !stopping && queue.length) {

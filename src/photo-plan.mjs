@@ -46,7 +46,7 @@ function retainedMemory(...values) {
 function planJob(steps) {
   const it = (function* () {
     let next, previous = 0;
-    while (!(next = guard(() => steps.next(it.hurry))).done) yield previous = next.value;
+    try { while (!(next = guard(() => steps.next(it.hurry))).done) yield previous = next.value; } finally { if (!next?.done) steps.return?.(); }
     it.plan = next.value;
     if (previous < 1) yield 1;
     return it.plan;
@@ -167,7 +167,7 @@ function admitTarget(targetBytes, options) {
 function targetJob(steps) {
   const it = (function* () {
     let next, previous = 0;
-    while (!(next = guard(() => steps.next(it.hurry))).done) yield previous = next.value;
+    try { while (!(next = guard(() => steps.next(it.hurry))).done) yield previous = next.value; } finally { if (!next?.done) steps.return?.(); }
     it.result = next.value; it.bytes = answer(next.value.bytes);
     if (previous < 1) yield 1;
     return it.result;

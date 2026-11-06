@@ -32,7 +32,7 @@ export function admitFormat(request, options) {
   if (options.effort !== undefined && (!Number.isInteger(options.effort) || options.effort < 1 || options.effort > 9)) throw fail('JXL_OPTIONS', 'effort must be an integer 1–9.');
   if (options.fidelity === undefined) return;
   const read = encodeFidelity(options.fidelity);
-  if (read.target !== undefined || read.webp !== undefined) throw fail('JXL_OPTIONS', "A format request takes fidelity 'exact' or {quality}.");
+  if (read.target !== undefined) throw fail('JXL_OPTIONS', "A format request takes fidelity 'exact' or {quality}.");
   if (read.quality === 100) {
     const loss = (options.preset !== undefined && options.preset !== 'exact') ? `preset '${options.preset}'` :
       options.maxColorError > 0 ? 'maxColorError' : options.baseError > 0 ? 'baseError' : options.undither === true ? 'undither' : undefined;
@@ -47,7 +47,7 @@ export async function author(request, options, hooks) {
   const finish = iterator => drain(iterator, hooks);
   if (PIXEL_KINDS.includes(request.kind)) refuseLost(request.kind, image);
   const {fidelity, ...rest} = options, codec = PIXEL_KINDS.includes(request.kind) ? {...rest, ...described(image)} : {...rest};
-  if (fidelity !== undefined) codec.quality = encodeFidelity(fidelity).quality;
+  if (fidelity !== undefined) { const read = encodeFidelity(fidelity); codec.quality = read.qualityIntent !== undefined ? read.qualityIntent * 100 : read.quality; }
   if ((request.kind === 'graphics' || request.kind === 'palette') && codec.effort !== undefined) codec.screenEffort = codec.effort;
   check(hooks.signal);
   switch (request.kind) {

@@ -1,61 +1,20 @@
 // SPDX-License-Identifier: MIT
+import {strategyTableList} from './vardct-tables.mjs';
 import {fault} from './admit.mjs';
+import {naturalOrder} from './coefficient-layout.mjs';
+export {naturalOrder, naturalOrderLower, naturalOrderUpper} from './coefficient-layout.mjs';
 import {ceilLog2} from './bits.mjs';
 import {QUANT_SHAPE} from './photo-dct.mjs';
 import {AFV_BASIS} from './afv-basis.mjs';
 import {prepareQuantParams, quantParamSteps} from './quantization-params.mjs';
 
-const NAMES = ['dct8', 'identity', 'dct2', 'dct4', 'dct16', 'dct32', 'dct16x8', 'dct8x16',
-  'dct32x8', 'dct8x32', 'dct32x16', 'dct16x32', 'dct4x8', 'dct8x4', 'afv0', 'afv1', 'afv2', 'afv3',
-  'dct64', 'dct64x32', 'dct32x64', 'dct128', 'dct128x64', 'dct64x128', 'dct256', 'dct256x128', 'dct128x256'];
-const WIDTHS = [1, 1, 1, 1, 2, 4, 1, 2, 1, 4, 2, 4, 1, 1, 1, 1, 1, 1, 8, 4, 8, 16, 8, 16, 32, 16, 32];
-const HEIGHTS = [1, 1, 1, 1, 2, 4, 2, 1, 4, 1, 4, 2, 1, 1, 1, 1, 1, 1, 8, 8, 4, 16, 16, 8, 32, 32, 16];
-const TABLES = [0, 1, 2, 3, 4, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 10, 10, 11, 12, 12, 13, 14, 14, 15, 16, 16];
-export const TRANSFORMS = Object.freeze(NAMES.map((name, id) => Object.freeze({name, id, width: WIDTHS[id] * 8,
-  height: HEIGHTS[id] * 8, table: TABLES[id]})));
-const dctBases = new Map(), dctScans = new Map();
+import {NAMES, WIDTHS, HEIGHTS, TABLES, TRANSFORMS, cosine, basis, basisT, fillScaledDCTBasis, transposeScaledDCTBasis, inverseScaledDCT} from './vardct-bases.mjs';
+export {TRANSFORMS, fillScaledDCTBasis, transposeScaledDCTBasis, inverseScaledDCT};
 
-function cosine(numerator, denominator) {
-  let n = numerator % (denominator * 2);
-  if (n > denominator) n -= denominator * 2;
-  if (n < -denominator) n += denominator * 2;
-  let sign = 1;
-  if (n > denominator / 2) { n = denominator - n; sign = -1; }
-  if (n < -denominator / 2) { n = -denominator - n; sign = -1; }
-  const x = n * 3.141592653589793 / denominator, square = x * x;
-  let term = 1, sum = 1;
-  for (let i = 1; i < 15; i++) sum += term *= -square / ((2 * i - 1) * (2 * i));
-  return sign * sum;
-}
-
-function basis(size) {
-  let b = dctBases.get(size);
-  if (!b) {
-    b = new Float64Array(size * size);
-    for (let k = 0; k < size; k++) for (let x = 0; x < size; x++) b[k * size + x] =
-      k ? 1.4142135623730951 * cosine((2 * x + 1) * k, 2 * size) / size : 1 / size;
-    dctBases.set(size, b);
-  }
-  return b;
-}
-
-const dctRows = new Map(), dctBasesT = new Map();
-function basisT(size) {
-  let t = dctBasesT.get(size);
-  if (!t) {
-    const b = basis(size);
-    t = new Float64Array(size * size);
-    for (let k = 0; k < size; k++) for (let x = 0; x < size; x++) t[x * size + k] = b[k * size + x];
-    dctBasesT.set(size, t);
-  }
-  return t;
-}
+const dctRows = new Map();
 export const scaledDCTBases = size => ({basis: basis(size), basisT: basisT(size)});
-export function scaledDCT(pixels, width, height, out = new Float64Array(width * height)) {
-  const size = width * height, bt = basisT(width), by = basis(height);
-  let tmp = dctRows.get(size);
-  if (!tmp) dctRows.set(size, tmp = new Float64Array(size));
-  for (let y = 0; y < height; y += 2) for (let u = 0; u < width; u += 8) {
+export function scaledDCTRows(pixels, width, bt, tmp, from, to) {
+  for (let y = from; y < to; y += 2) for (let u = 0; u < width; u += 8) {
     const r0 = y * width, r1 = r0 + width;
     let a0 = 0, a1 = 0, a2 = 0, a3 = 0, a4 = 0, a5 = 0, a6 = 0, a7 = 0, c0 = 0, c1 = 0, c2 = 0, c3 = 0, c4 = 0, c5 = 0, c6 = 0, c7 = 0;
     for (let x = 0, b = u; x < width; x++, b += width) {
@@ -69,8 +28,11 @@ export function scaledDCT(pixels, width, height, out = new Float64Array(width * 
     o = r1 + u;
     tmp[o] = c0; tmp[o + 1] = c1; tmp[o + 2] = c2; tmp[o + 3] = c3; tmp[o + 4] = c4; tmp[o + 5] = c5; tmp[o + 6] = c6; tmp[o + 7] = c7;
   }
+  return tmp;
+}
+export function scaledDCTColumns(tmp, width, height, by, out, from, to) {
   const tall = height >= width;
-  for (let v = 0; v < height; v += 2) for (let u = 0, b = v * height; u < width; u += 8) {
+  for (let v = from; v < to; v += 2) for (let u = 0, b = v * height; u < width; u += 8) {
     let s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0;
     for (let y = 0, at = u; y < height; y++, at += width) {
       const c = by[b + y], d = by[b + height + y];
@@ -92,6 +54,13 @@ export function scaledDCT(pixels, width, height, out = new Float64Array(width * 
   }
   return out;
 }
+export function scaledDCT(pixels, width, height, out = new Float64Array(width * height)) {
+  const size = width * height, bt = basisT(width), by = basis(height);
+  let tmp = dctRows.get(size);
+  if (!tmp) dctRows.set(size, tmp = new Float64Array(size));
+  scaledDCTRows(pixels, width, bt, tmp, 0, height);
+  return scaledDCTColumns(tmp, width, height, by, out, 0, height);
+}
 
 export function scaledDCTAt(pixels, width, height, positions) {
   const bx = basis(width), by = basis(height), columns = new Map(), out = new Map();
@@ -110,20 +79,6 @@ export function scaledDCTAt(pixels, width, height, positions) {
   return out;
 }
 
-export function inverseScaledDCT(coeffs, width, height) {
-  const bx = basis(width), by = basis(height), tmp = new Float64Array(width * height), out = new Float64Array(tmp.length);
-  for (let v = 0; v < height; v++) for (let x = 0; x < width; x++) {
-    let sum = 0;
-    for (let u = 0; u < width; u++) sum += coeffs[height >= width ? u * height + v : v * width + u] * bx[u * width + x] * width;
-    tmp[v * width + x] = sum;
-  }
-  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-    let sum = 0;
-    for (let v = 0; v < height; v++) sum += tmp[v * width + x] * by[v * height + y] * height;
-    out[y * width + x] = sum;
-  }
-  return out;
-}
 
 const SMALL_ROWS = new Float64Array(32);
 function smallDCT(pixels, x0, y0, w, h, out) {
@@ -150,7 +105,7 @@ export function smallTransform(pixels, id, out = new Float64Array(64)) {
   };
   if (id === 1 || id === 3) {
     for (let by = 0; by < 2; by++) for (let bx = 0; bx < 2; bx++) {
-      if (id === 3) {
+      if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) || id === 3) {
         const coeffs = smallDCT(pixels, bx * 4, by * 4, 4, 4, SMALL_PIECE);
         for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) out[(by + y * 2) * 8 + bx + x * 2] = coeffs[y * 4 + x];
       } else {
@@ -163,7 +118,7 @@ export function smallTransform(pixels, id, out = new Float64Array(64)) {
       }
     }
     combineFour();
-  } else if (id === 2) {
+  } else if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && id === 2) {
     out.set(pixels);
     for (const size of [8, 4, 2]) {
       const temp = new Float64Array(64), half = size / 2;
@@ -176,7 +131,7 @@ export function smallTransform(pixels, id, out = new Float64Array(64)) {
       }
       for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) out[y * 8 + x] = temp[y * 8 + x];
     }
-  } else if (id === 12 || id === 13) {
+  } else if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) || id === 12 || id === 13) {
     for (let half = 0; half < 2; half++) {
       const w = id === 12 ? 8 : 4, h = id === 12 ? 4 : 8;
       const coeffs = smallDCT(pixels, id === 13 ? half * 4 : 0, id === 12 ? half * 4 : 0, w, h, SMALL_PIECE);
@@ -222,10 +177,10 @@ export function inverseSmallTransform(coefficients, id, out = new Float64Array(6
       for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) work[y * 8 + x] = scratch[y * size + x];
     };
     combine(2);
-    if (id === 2) { combine(4); combine(8); out.set(work); return out; }
+    if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && id === 2) { combine(4); combine(8); out.set(work); return out; }
     for (let by = 0; by < 2; by++) for (let bx = 0; bx < 2; bx++) {
       for (let k = 0; k < 16; k++) part[k] = work[(by + (k >> 2) * 2) * 8 + bx + (k & 3) * 2];
-      if (id === 3) copyBlock(inverseScaledDCT(part.subarray(0, 16), 4, 4), bx * 4, by * 4, 4, 4);
+      if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) || id === 3) copyBlock(inverseScaledDCT(part.subarray(0, 16), 4, 4), bx * 4, by * 4, 4, 4);
       else {
         let residual = 0;
         for (let k = 1; k < 16; k++) residual += part[k];
@@ -237,7 +192,7 @@ export function inverseSmallTransform(coefficients, id, out = new Float64Array(6
     }
     return out;
   }
-  if (id === 12 || id === 13) {
+  if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) || id === 12 || id === 13) {
     work[0] = coefficients[0] + coefficients[8]; work[8] = coefficients[0] - coefficients[8];
     for (let half = 0; half < 2; half++) {
       for (let k = 0; k < 32; k++) part[k] = work[((k >> 3) * 2 + half) * 8 + (k & 7)];
@@ -264,27 +219,7 @@ export function inverseSmallTransform(coefficients, id, out = new Float64Array(6
   return out;
 }
 
-export function naturalOrder(widthBlocks, heightBlocks) {
-  const cx = Math.max(widthBlocks, heightBlocks), cy = Math.min(widthBlocks, heightBlocks), key = cx * 64 + cy;
-  if (dctScans.has(key)) return dctScans.get(key);
-  const width = cx * 8, ratio = cx / cy, order = new Uint32Array(cx * cy * 64);
-  let next = cx * cy;
-  for (let i = 0; i < width; i++) for (let j = 0; j <= i; j++) {
-    let x = j, y = i - j;
-    if (i & 1) [x, y] = [y, x];
-    if (y % ratio) continue;
-    y /= ratio;
-    order[x < cx && y < cy ? y * cx + x : next++] = y * width + x;
-  }
-  for (let ip = width - 1; ip > 0; ip--) for (let j = 0; j < ip; j++) {
-    let x = width - ip + j, y = width - 1 - j;
-    if ((ip - 1) & 1) [x, y] = [y, x];
-    if (y % ratio) continue;
-    order[next++] = y / ratio * width + x;
-  }
-  dctScans.set(key, order);
-  return order;
-}
+
 
 const lowScales = new Map();
 function lowScale(blocks) {
@@ -453,7 +388,7 @@ export function* strategyCoefficientSteps(data, width, height, quality, colorSpa
   let alpha = null;
   for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) { alpha = data; break; }
   return {width, height, components, quantScale, ycbcr: true, orientation: options.orientation || 1, alpha, colorSpace,
-    wideCoefficients, strategyData: {groups, blocks, at, tables, stride}};
+    wideCoefficients, strategyData: {groups, blocks, at, tables: strategyTableList(tables), stride}};
 }
 
 export function* requantizeStrategySteps(retained, quality, admitted) {
@@ -486,5 +421,5 @@ export function* requantizeStrategySteps(retained, quality, admitted) {
   }
   return {width, height, components, quantScale, ycbcr: true, orientation: retained.orientation,
     alpha: retained.alpha, colorSpace: retained.colorSpace, wideCoefficients,
-    strategyData: {groups, blocks, at: retained.strategyData.at, tables, stride}};
+    strategyData: {groups, blocks, at: retained.strategyData.at, tables: strategyTableList(tables), stride}};
 }

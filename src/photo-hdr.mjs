@@ -2,16 +2,12 @@
 import {photoXYBSteps, gaborishXYB, signedRoot, XYB_TABLES} from './photo-xyb.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {V6, GABORISH} from './photo-v6-settings.mjs';
+import {float16Sample as half} from './sample-values.mjs';
 
 const {mix: MIX, bias: BIAS, rootBias: ROOT_BIAS} = XYB_TABLES;
 const MIXES = new Map([['srgb', MIX],
   ['display-p3', [0.3397908977966958, 0.5745437613923088, 0.08566534081099536, 0.2511010986273785, 0.6632335605616261, 0.08566534081099536, 0.27873014036934823, 0.1152316509458983, 0.6060382086847534]],
   ['rec2020', [0.41926114593841846, 0.5205262403311576, 0.0602126137304239, 0.29430824257431676, 0.6409641128451732, 0.06472764458050997, 0.3686815325499533, 0.03343540192120963, 0.597883065528837]]]);
-
-function half(bits) {
-  const e = (bits >> 10) & 31, m = bits & 1023, sign = bits & 0x8000 ? -1 : 1;
-  return e === 0 ? sign * m * 2 ** -24 : e === 31 ? (m ? NaN : sign * Infinity) : sign * (1024 + m) * 2 ** (e - 25);
-}
 
 export function hdrRoute(data, samples, quality) {
   if (!(quality < 100) || !samples.exponentBits || samples.transferFunction !== 'linear' || samples.alphaPremultiplied ||

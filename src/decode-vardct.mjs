@@ -3,14 +3,13 @@ import {requireDecode as check, unpackSigned as signed} from './decode-bits.mjs'
 import {readEntropy, readContextMap, readPermutation, modelSizes, writeModel, writeBlock, syncStream, STREAM_BLOCK_BYTES, HISTORY_BYTES} from './decode-entropy.mjs';
 import {decodeModularStream} from './decode-modular.mjs';
 import {ceilLog2, COEFF_NUM_NONZERO_CONTEXT, COEFF_FREQ_CONTEXT} from './decode-tables.mjs';
-import {TRANSFORMS, naturalOrder, prepareQuantParams, basis, basisT, llfDivisors} from './decode-strategies.mjs';
+import {TRANSFORMS, prepareQuantParams} from './decode-strategies.mjs';
+import {naturalOrder, ORDER_STRATEGY_BUCKETS as ORDER_IDS} from './coefficient-layout.mjs';
 import {decodeKernels, streamKernels} from './decode-kernels.mjs';
-import {restoreFilters, restoreRows, restorationStages, scaledBasis, inverseBlock} from './decode-vardct-transform.mjs';
-
-export {restoreFilters};
+import {renderVarBlock, renderBlock8, blockTables, prepareLF, epfSigma} from './vardct-render.mjs';
+import {restoreRows, restorationStages, restorePlanes} from './vardct-inverse.mjs';
 
 const WIRE_ORDER = [1, 0, 2], LF_ORDER = [0, 2, 1];
-const ORDER_IDS = [0, 1, 1, 1, 2, 3, 4, 4, 5, 5, 6, 6, 1, 1, 1, 1, 1, 1, 7, 8, 8, 9, 10, 10, 11, 12, 12];
 const FAMILY_IDS = [0, 1, 2, 3, 4, 5, 7, 9, 11, 12, 14, 18, 20, 21, 23, 24, 26];
 const ORDER_SHAPES = [[1, 1], [1, 1], [2, 2], [4, 4], [2, 1], [4, 1], [4, 2], [8, 8], [8, 4], [16, 16], [16, 8], [32, 32], [32, 16]];
 const DEFAULT_BIAS = [1 - .05465007330715401, 1 - .07005449891748593, 1 - .049935103337343655];
@@ -162,8 +161,7 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
         check(occupied[pos] === -1, 'Overlapping JPEG XL transforms.'); occupied[pos] = index;
         if (epf?.iters) {
           const sharp = sharpness[pos]; check(sharp >= 0 && sharp < 8, 'Invalid JPEG XL filter sharpness.');
-          const lut = epf.sharpLut || [0, 1 / 7, 2 / 7, 3 / 7, 4 / 7, 5 / 7, 6 / 7, 1];
-          if (gx + dx >= ox && gx + dx < ox + BW) sigma[(gy + dy) * BW + gx + dx - ox] = (epf.quantMul ?? .46) * 65536 / global.globalScale / multiplier * lut[sharp];
+          if (gx + dx >= ox && gx + dx < ox + BW) sigma[(gy + dy) * BW + gx + dx - ox] = epfSigma(epf, global.globalScale, multiplier, sharp);
         }
       }
       starts[y * bw + x] = 1;
@@ -228,7 +226,7 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
     const at = kernels.reserve(sizes);
     if (restoring) kernelRegions = {at, rows, stages};
     kernelLF = at.slice(-9);
-    kernelBlocks = {tables: at.at(-14), cfl: at.at(-13), rowPlanes: at.slice(-12, -9), next: at.at(-14) + 2048, bases: new Map(), maps: new Map()};
+    kernelBlocks = {...blockTables(at.at(-14), at.at(-13)), rowPlanes: at.slice(-12, -9)};
     let weightsAt = at.at(-15);
     kernelWeights = {kernels, offsets: matrices.map(m => { const offset = weightsAt; weightsAt += m.width * m.height * 12; return offset; }), loaded: matrices.map(() => false)};
     let k = restoring ? 12 + 3 * slots : 0;
@@ -302,13 +300,11 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
   let pending = {}; pending = null;
   const streams = !maxH && !maxV, radius = streams ? restorationStages(header.filter).reduce((n, s) => n + s.radius, 0) : 0;
   function smoothedLF() {
-    const kernels = decodeKernels(), planes = from => [0, 1, 2].map(c => new Float32Array(kernels.buffer, kernelLF[from + c], low[c].length));
-    const lf = planes(0); for (let c = 0; c < 3; c++) lf[c].set(low[c]);
+    const kernels = decodeKernels();
+    for (let c = 0; c < 3; c++) new Float32Array(kernels.buffer, kernelLF[c], low[c].length).set(low[c]);
     const smooth = !header.skipAdaptiveLFSmoothing && !hshift.some(s => (blocksW >> s) <= 2) && !dcHeight.some(h => h <= 2);
-    const corr = global.correlation, steps = lfDequant.map(m => 512 * m / (global.globalScale * global.quantLF));
-    kernels.i32.set([...kernelLF, ...dcWidth, ...dcHeight, ...hshift, ...vshift], kernels.args / 4);
-    kernels.lfPrepare(kernels.args, !maxH && !maxV ? 1 : 0, corr.baseX + (corr.lfX - 128) / corr.factor, corr.baseB + (corr.lfB - 128) / corr.factor, smooth ? 1 : 0, ...steps);
-    return smooth ? planes(6) : lf;
+    return prepareLF(kernels, kernelLF, low.map(p => p.length), {dcWidth, dcHeight, hshift, vshift, cflBlock: !maxH && !maxV,
+      correlation: global.correlation, steps: lfDequant.map(m => 512 * m / (global.globalScale * global.quantLF)), smooth});
   }
   function lfImage() {
     check(decodedLF.every(Boolean) && !header.useLFFrame && streams, 'JPEG XL LF image is incomplete.');
@@ -354,75 +350,13 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
     return prepared;
   }
 
-  function blockTable(key, values) {
-    const K = kernelBlocks;
-    let at = K.bases.get(key);
-    if (at === undefined) {
-      const v = values(); at = K.next; K.next += v.byteLength;
-      check(K.next <= K.tables + 65536, 'JPEG XL block tables exceed their region.');
-      K.bases.set(key, at); new v.constructor(decodeKernels().buffer, at, v.length).set(v);
-    }
-    return at;
-  }
-  function cflMaps(lfGroup) {
-    const K = kernelBlocks, group = metadata[lfGroup];
-    if (!K.maps.has(lfGroup)) { const at = K.cfl + lfGroup * 8192, i32 = decodeKernels().i32; i32.set(group.xFromY, at / 4); i32.set(group.bFromY, at / 4 + 1024); K.maps.set(lfGroup, at); }
-    return K.maps.get(lfGroup);
-  }
+  let renderContext = {}; renderContext = null;
   function renderBlock(block, targets, tops) {
-    const P = prepared, {lf, widths, heights, bias, numerator, qmScale} = P, group = metadata[block.lfGroup], kernels = decodeKernels();
-    const {id, area, multiplier, bw, bh} = block, shape = TRANSFORMS[id], size = area * 64, quant = expandMatrix(matrices[shape.table]);
-    const transpose = !(id === 1 || id === 2 || id === 3 || id >= 12 && id <= 17) && shape.height >= shape.width;
-    const cflBlock = !maxH && !maxV, held = block.coefficients, K = kernelWeights, arena = block.arena.byteOffset, table = shape.table;
-    if (id === 0 && cflBlock && held.every(h => typeof h === 'number')) {
-      const {offsets, loaded} = K, scale = 65536 / (global.globalScale * multiplier);
-      if (!loaded[table]) { for (let k = 0; k < 3; k++) new Float32Array(kernels.buffer, offsets[table] + k * 256, 64).set(quant[k]); loaded[table] = true; }
-      const tile = (Math.floor(block.y * 8 / 64) - (group.by >> 3)) * group.width + Math.floor(block.x * 8 / 64) - (group.bx >> 3), at = block.y * dcWidth[0] + block.x - ox;
-      const x0 = (block.x - ox) * 8, y0 = block.y * 8, w = widths[0], xs = Math.min(8, w - x0), ys = Math.min(8, heights[0] - y0);
-      kernels.block8(arena + held[0] * 4, arena + held[1] * 4, arena + held[2] * 4, offsets[table], scale * qmScale[0], scale * qmScale[1], scale * qmScale[2],
-        bias[0], bias[1], bias[2], numerator, global.correlation.baseX + group.xFromY[tile] / global.correlation.factor,
-        global.correlation.baseB + group.bFromY[tile] / global.correlation.factor, lf[0][at], lf[1][at], lf[2][at],
-        targets[0].byteOffset + ((y0 - tops[0]) * w + x0) * 4, targets[1].byteOffset + ((y0 - tops[1]) * w + x0) * 4, targets[2].byteOffset + ((y0 - tops[2]) * w + x0) * 4,
-        w * 4, xs, ys, kernels.basis(8, () => scaledBasis(8)));
-      block.coefficients = block.arena = null;
-      return;
-    }
-    const wide = Math.max(shape.width, shape.height), coefficients = P.blockPlanes, i32 = kernels.i32, tiles = kernelBlocks.tables;
-    coefficients[0] = coefficients[1] = coefficients[2] = null;
-    if (cflBlock) {
-      const columns = size / wide;
-      for (let u = 0; u < wide; u++) { const px = block.x * 8 + (transpose ? 0 : u), py = block.y * 8 + (transpose ? u : 0); i32[tiles / 4 + u] = transpose ? Math.floor(py / 64) - (group.by >> 3) : Math.floor(px / 64) - (group.bx >> 3); }
-      for (let v = 0; v < columns; v++) { const px = block.x * 8 + (transpose ? v : 0), py = block.y * 8 + (transpose ? 0 : v); i32[tiles / 4 + 256 + v] = transpose ? Math.floor(px / 64) - (group.bx >> 3) : Math.floor(py / 64) - (group.by >> 3); }
-    }
-    for (let wire = 0; wire < 3; wire++) {
-      const c = WIRE_ORDER[wire], h = held[c]; if (h == null) continue;
-      const values = P.scratch[c], factor = 65536 / (global.globalScale * multiplier) * qmScale[c];
-      if (!K.loaded[table]) { for (let k = 0; k < 3; k++) new Float32Array(kernels.buffer, K.offsets[table] + k * size * 4, size).set(quant[k]); K.loaded[table] = true; }
-      kernels.dequant(arena + h * 4, size, K.offsets[table] + c * size * 4, factor, bias[c], numerator, values.byteOffset);
-      if (c !== 1 && cflBlock) {
-        const maps = cflMaps(block.lfGroup), base = c === 0 ? global.correlation.baseX : global.correlation.baseB, map = c === 0 ? maps : maps + 4096, luma = coefficients[1];
-        if (size === 64) {
-          const ci = transpose ? i32[tiles / 4] * group.width + i32[tiles / 4 + 256] : i32[tiles / 4 + 256] * group.width + i32[tiles / 4];
-          kernels.cfl64(values.byteOffset, luma.byteOffset, base + i32[map / 4 + ci] / global.correlation.factor);
-        } else kernels.cfl(values.byteOffset, luma.byteOffset, size, wide, tiles, tiles + 1024, transpose ? 1 : 0, group.width, map, base, global.correlation.factor);
-      }
-      const bx = (block.x - ox) >> hshift[c], by = block.y >> vshift[c], plane = lf[c], stride = dcWidth[c];
-      if (area === 1) values[0] = 0 + plane[by * stride + bx];
-      else {
-        const w = Math.max(bw, bh), h2 = Math.min(bw, bh);
-        i32.set([values.byteOffset, plane.byteOffset, stride, bx, by, bw, bh, blockTable('T' + bw, () => basisT(bw)), blockTable('B' + bh, () => basis(bh)),
-          blockTable('D' + w + 'x' + h2, () => llfDivisors(w, h2)), wide, kernelBlocks.tables + 65536], kernels.args / 4);
-        kernels.llf(kernels.args);
-      }
-      coefficients[c] = values;
-    }
-    block.coefficients = block.arena = null;
-    for (let c = 0; c < 3; c++) if (coefficients[c]) {
-      const values = coefficients[c], x0 = ((block.x - ox) >> hshift[c]) * 8, y0 = (block.y >> vshift[c]) * 8;
-      inverseBlock(kernels, values.byteOffset, shape);
-      const w = widths[c], xs = Math.min(shape.width, w - x0), ys = Math.min(shape.height, heights[c] - y0);
-      if (xs > 0 && ys > 0) kernels.store(shape.width, targets[c], (y0 - tops[c]) * w + x0, w, xs, ys);
-    }
+    const P = prepared;
+    renderContext ??= {kernels: decodeKernels(), lf: P.lf, widths: P.widths, heights: P.heights, bias: P.bias, numerator: P.numerator,
+      qmScale: P.qmScale, global, dcWidth, ox, hshift, vshift, cflBlock: !maxH && !maxV, weights: kernelWeights, blocks: kernelBlocks,
+      blockPlanes: P.blockPlanes, quant: table => expandMatrix(matrices[table]), group: lfGroup => metadata[lfGroup]};
+    if (!renderBlock8(renderContext, block, targets, tops)) renderVarBlock(renderContext, block, targets, tops);
   }
 
   if (band) {
@@ -435,9 +369,9 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
   }
   function restoreStripe(stripe, a, b) {
     if (a >= b) return;
-    if (!band) return restoreRows(stripe.planes, stripe.lo, W, height, header.filter, prepared.tightSigma, prepared.planes, 0, a, b, prepared.restoration);
+    if (!band) return restoreRows(stripe.planes, stripe.lo, W, height, header.filter, prepared.tightSigma, prepared.planes, 0, a, b, prepared.restoration, decodeKernels());
     const output = band.kernel ? band.kernel.final.map(p => p.subarray(0, (b - a) * W)) : band.target(a, b);
-    restoreRows(stripe.planes, stripe.lo, W, height, header.filter, prepared.tightSigma, output, a, a, b, prepared.restoration);
+    restoreRows(stripe.planes, stripe.lo, W, height, header.filter, prepared.tightSigma, output, a, a, b, prepared.restoration, decodeKernels());
     band.restored(a, b, output);
   }
   function keepRows(stripe, a, b) {
@@ -517,3 +451,5 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
   }
   return Object.assign(state, {readLF, readHFGlobal, readPassGroup, renderRow, render, bandEdges, finishBand, lfImage, band});
 }
+
+export const restoreFilters = (planes, width, height, filter, sigma = null) => restorePlanes(decodeKernels(), planes, width, height, filter, sigma);

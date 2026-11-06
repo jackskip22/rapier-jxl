@@ -9,8 +9,8 @@ export function fitOptions(value, admitEncode = encodeOptions) {
   const {maxBytes, fidelity = {quality: 90}, ...encode} = featureless(object(value));
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
     throw fail('JXL_OPTIONS', 'maxBytes is a positive safe integer.');
-  let minQuality, maxQuality;
-  if (fidelity === 'exact') minQuality = maxQuality = 100;
+  let minQuality, maxQuality, requestedFidelity;
+  if (fidelity === 'exact') { minQuality = maxQuality = 100; requestedFidelity = 'exact'; }
   else {
     const keys = fidelity && typeof fidelity === 'object' && Object.keys(fidelity);
     const quality = fidelity?.quality, range = typeof quality === 'number' ? {min: 1, max: quality} : quality;
@@ -20,11 +20,12 @@ export function fitOptions(value, admitEncode = encodeOptions) {
     minQuality = range.min; maxQuality = range.max;
     if (!Number.isFinite(minQuality) || !Number.isFinite(maxQuality) || minQuality < 1 || maxQuality > 100 || minQuality > maxQuality)
       throw fail('JXL_OPTIONS', 'The quality range is finite and 1 <= min <= max <= 100.');
+    requestedFidelity = typeof quality === 'number' ? {quality} : {quality: {min: minQuality, max: maxQuality}};
   }
   admitEncode({...encode, fidelity: {quality: maxQuality}});
   pixelLimit(encode.maxPixels);
   const {signal, onProgress, ...data} = encode;
-  return {maxBytes, search: {minQuality, maxQuality, maxProbes: 12},
+  return {maxBytes, requestedFidelity, search: {minQuality, maxQuality, maxProbes: 12},
     encode: {...own(data), ...(signal !== undefined && {signal}), ...(onProgress !== undefined && {onProgress})}};
 }
 

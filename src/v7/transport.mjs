@@ -1,8 +1,10 @@
 import {suppliedWasm} from '../wasm-modules.mjs';
 import {WORKER_PROTOCOL} from './protocol.mjs';
 import {fail as error, callers} from './primitives.mjs';
+import {isImageResult} from './result-shape.mjs';
 export const REPLACED = Symbol('replaced');
-const BYTE_OPERATIONS = new Set(['encode', 'capture', 'recompress', 'restore', 'format']);
+const IMAGE_OPERATIONS = new Set(['encode', 'capture', 'recompress', 'restore', 'fit', 'format']);
+const REFERENCE_BYTES = new Set(['encode', 'capture', 'recompress', 'restore', 'format']);
 const tag = value => Object.prototype.toString.call(value);
 const invalidBytes = value => !(tag(value) === '[object Uint8Array]' && value.byteLength > 0);
 
@@ -108,7 +110,10 @@ export function createTransport(host) {
         if ('progress' in data) { progress(job, data.progress); return; }
         if ('encoded' in data) { encoded(job, data.encoded); return; }
         if (data.ok === true) {
-          if (BYTE_OPERATIONS.has(job.operation) && invalidBytes(data.value)) complete(job, false, error('JXL_WORKER', 'The JPEG XL worker returned an invalid result.'));
+          if (host.bytes ? REFERENCE_BYTES.has(job.operation) && invalidBytes(data.value) :
+              IMAGE_OPERATIONS.has(job.operation) && !isImageResult(data.value) ||
+              job.operation === 'variants' && (!Array.isArray(data.value) || !data.value.length || !data.value.every(isImageResult)))
+            complete(job, false, error('JXL_WORKER', 'The JPEG XL worker returned an invalid result.'));
           else complete(job, true, data.value);
         } else if (data.ok === false) complete(job, false, Object.assign(new Error(data.error?.message || 'JPEG XL operation failed.'), {name: data.error?.name || 'Error', code: data.error?.code || 'JXL_WORKER'}));
         else crash(current, {message: 'The JPEG XL worker returned an invalid reply.'});

@@ -105,9 +105,9 @@ function* patchCompositionEncode(config) {
     const source = sources[i];
     if (!source.still) {
       let step;
-      while (!(step = source.operation.next()).done) {
+      try { while (!(step = source.operation.next()).done) {
         source.operation.hurry ||= !!(yield scaled(step.value, fraction => .85 * (i + fraction) / sources.length));
-      }
+      } } finally { if (!step?.done) source.operation.return?.(); }
       source.still = patchRead(step.value);
     }
     level = Math.max(level, source.still.level); modular16 &&= source.still.image.modular16;
@@ -123,7 +123,7 @@ function* patchCompositionEncode(config) {
   if (config.requestedLevel === 5 && level === 10) throw fault('JXL_INPUT', 'These patch sources require JPEG XL level 10.');
   patchCoverage(config.area, config.codedPixels, level);
   const steps = authoredPatchEntropy(config); let step;
-  while (!(step = steps.next()).done) yield .85 + .05 * step.value;
+  try { while (!(step = steps.next()).done) yield .85 + .05 * step.value; } finally { if (!step?.done) steps.return?.(); }
   const dictionary = step.value, writer = new BitWriter(256), canvas = ordinary.image;
   writeStillImageHeader(writer, ordinary, {...canvas, modular16});
   if (ordinary.preview) copyBits(writer, ordinary.codestream, ordinary.preview.start * 8, ordinary.preview.end * 8);

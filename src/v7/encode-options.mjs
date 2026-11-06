@@ -3,6 +3,7 @@ import {pixelLimit, LARGEST, fail, object, admitSignal} from './primitives.mjs';
 import {encodeFidelity, fidelityHint} from './fidelity.mjs';
 import {refuseDescription} from './describe.mjs';
 import {featureless} from './first-region-option.mjs';
+import {RESULT_REFERENCE} from './result-reference.mjs';
 const rawKeys = new Set(['fidelity','effort','features','readAs','webgpu','maxPixels','signal','onProgress']);
 const HINT = {
   lossless: "Write fidelity: 'exact'.", target: 'Write fidelity: {ssimulacra2: 80}.',
@@ -35,7 +36,7 @@ export function encodeOptions(value) {
       'progressive','noise','lfFrames','firstRegion']);
     for (const key of Object.keys(options.features)) if (!allowed.has(key)) throw fail('JXL_OPTIONS', `Unknown features option: ${key}.`);
   }
-  const {fidelity: _fidelity, signal, onProgress, features, readAs, webgpu, maxPixels, ...codec} = options;
+  const {[RESULT_REFERENCE]: _reference, fidelity: _fidelity, signal, onProgress, features, readAs, webgpu, maxPixels, ...codec} = options;
   return {...codec, ...fidelity, effort, webgpu, maxPixels};
 }
 

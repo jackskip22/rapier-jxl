@@ -24,6 +24,7 @@ import {quantParamCoding} from './quantization-params.mjs';
 import {prepareCoefficientOrders, COEFFICIENT_ORDER_BUCKETS} from './coefficient-orders.mjs';
 import {admitPhotoLayout, padPhotoLayout, applyPhotoLayout} from './photo-layout.mjs';
 import {admitPhotoExtras, applyPhotoExtras, exactPhotoExtraSteps} from './photo-extras.mjs';
+import {shown} from './photo-shown.mjs';
 
 export {TRANSFORMS, photonNoise, COEFFICIENT_ORDER_BUCKETS};
 export {PHOTO_LIMITS as LIMITS};
@@ -72,6 +73,7 @@ function* steps(data, width, height, {quality, colorSpace, effort, samples, opti
     if (variable && bytes[0] === 255 && !readImageHeader(bytes).modular16) bytes = photoLevelContainer(bytes, 10);
     return padded ? cropPhotoCanvas(bytes, layout.width, layout.height) : bytes;
   };
+  const done = (bytes, shows) => shown(finish(bytes), padded || frames ? null : shows);
   const producer = variable ? strategyCoefficientSteps(data, width, height, quality, colorSpace, options, strategyOptions) :
     colorSpace === 'srgb' && (lfLevels || noiseLut || preferXYB(data, width, height)) ? photoV6Producer(data, width, height, quality, !lfLevels && !noiseLut, effort, ordinary) :
     photoCoefficientSteps(data, width, height, quality, colorSpace);
@@ -85,24 +87,24 @@ function* steps(data, width, height, {quality, colorSpace, effort, samples, opti
   frames = lfLevels && (yield* part(lfFrameSteps(image, lfLevels), 1, 3));
   if (!variable) {
     const bytes = yield* part(coefficientAnsSteps(image, effort), lfLevels ? 2 : 1, lfLevels ? 3 : 2);
-    if (!ordinary) return finish(bytes);
-    const floor = complete(coefficientAnsSteps(complete(photoXYBSteps(data, width, height, quality, {...V6, fast: true, fastBand: true})), 1));
-    return finish(floor.length <= bytes.length ? floor : bytes);
+    if (!ordinary) return done(bytes, image);
+    const fast = complete(photoXYBSteps(data, width, height, quality, {...V6, fast: true, fastBand: true})), floor = complete(coefficientAnsSteps(fast, 1));
+    return floor.length <= bytes.length ? done(floor, fast) : done(bytes, image);
   }
   const shared = {}, plan = effort >= 3 ? {clusters: {maxClusters: 32, newClusterCost: 160}} : {};
-  if (image.wideCoefficients) return finish(yield* part(varDCTSteps(image, {...plan, coding: quantParamCoding}, shared), lfLevels ? 2 : 1, lfLevels ? 3 : 2));
-  if (effort < 2) return finish(yield* part(varDCTSteps(image, plan, shared), lfLevels ? 2 : 1, lfLevels ? 3 : 2));
+  if (image.wideCoefficients) return done(yield* part(varDCTSteps(image, {...plan, coding: quantParamCoding}, shared), lfLevels ? 2 : 1, lfLevels ? 3 : 2), image);
+  if (effort < 2) return done(yield* part(varDCTSteps(image, plan, shared), lfLevels ? 2 : 1, lfLevels ? 3 : 2), image);
   const prefix = yield* part(varDCTSteps(image, plan, shared), lfLevels ? 4 : 2, lfLevels ? 6 : 4), searchAt = lfLevels ? 5 / 6 : .75;
-  if (yield searchAt) return finish(prefix);
+  if (yield searchAt) return done(prefix, image);
   try {
     const candidate = varDCTSteps(image, {...plan, coding: buildAnsCoding, modularAns: writeModularAnsHistograms}, shared);
     let step;
     while (!(step = candidate.next()).done) if ((yield searchAt + step.value * (1 - searchAt)) && step.value < 1) {
-      candidate.return(); return finish(prefix);
+      candidate.return(); return done(prefix, image);
     }
-    return finish(step.value.length < prefix.length ? step.value : prefix);
+    return done(step.value.length < prefix.length ? step.value : prefix, image);
   } catch (error) {
     if (!(error instanceof RangeError && !error.code) && error.code !== 'JXL_SIZE') throw error;
-    return finish(prefix);
+    return done(prefix, image);
   }
 }

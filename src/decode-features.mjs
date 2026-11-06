@@ -249,6 +249,13 @@ function splineDct(coefficients, position) {
   return f32(result * Math.SQRT2);
 }
 
+function splineReach(coefficients) {
+  const bound = c => Math.SQRT2 * c.reduce((sum, [, value]) => sum + Math.abs(value), 0) * 1.001 + 1e-6;
+  const sigma = bound(coefficients[3]), color = Math.max(.01, ...coefficients.slice(0, 3).map(bound));
+  const spread = 3 * Math.log(10) + Math.log(color);
+  return spread > 0 ? Math.sqrt(2 * sigma * sigma * spread) * 1.001 + 4 : 4;
+}
+
 function splineCoefficients(spline, inverse, correlation) {
   const weights = [.0042,.075,.07,.3333], values = spline.coefficients.map((coefficients,c) => Float32Array.from(coefficients,
     (value,k) => f32(f32(f32(value * (k ? 1 : f32(Math.SQRT1_2))) * f32(weights[c])) * inverse)));
@@ -275,11 +282,11 @@ function splineArea(spline, inverse, correlation, areaLimit) {
   return area*spline.distance;
 }
 
-export function applySplines(frame, splines, {correlation = [0,1], ...limits} = {}, budget = featureBudget(limits)) {
+export function applySplines(frame, splines, {correlation = [0,1], level = 5, ...limits} = {}, budget = featureBudget(limits)) {
   if (!splines) return frame;
   requireDecode(frame.planes.length === 3, 'JPEG XL splines require three color planes.');
   const qa = splines.quantizationAdjustment, inverse = qa >= 0 ? f32(1/f32(1+f32(qa*.125))) : f32(1-f32(qa*.125));
-  const areaLimit = Math.min(4398046511104,1024*frame.width*frame.height+4294967296);
+  const pixels = frame.width * frame.height, areaLimit = level === 10 ? Math.min(4398046511104,1024*pixels+4294967296) : Math.min(1073741824,8*pixels+33554432);
   let estimatedArea = 0, scratchReserved = false, kernel = null;
   const kernelPlanes = () => {
     if (kernel) return kernel;
@@ -297,11 +304,13 @@ export function applySplines(frame, splines, {correlation = [0,1], ...limits} = 
     const length = f32(samples-2+lastWeight);
     if (!(length > 0)) continue;
     if (!scratchReserved) { budget.memory(28672); scratchReserved = true; }
-    const coefficients = splineCoefficients(spline,inverse,correlation), reciprocal = f32(1/length);
+    const coefficients = splineCoefficients(spline,inverse,correlation), reciprocal = f32(1/length), reach = splineReach(coefficients);
     let index = 0;
     for (const {point,weight} of arcPoints(spline.points)) {
       const position = f32(31*Math.min(1,f32(index++*reciprocal)));
-      if (!weight) continue;
+      budget.work(1);
+      if (!weight || !(point[0] > -reach && point[0] < frame.width + reach && point[1] > -reach && point[1] < frame.height + reach)) continue;
+      budget.work(128);
       const color = coefficients.slice(0,3).map(c => splineDct(c,position)), sigma = splineDct(coefficients[3],position);
       if (!Number.isFinite(sigma) || !sigma || !Number.isFinite(f32(1/sigma))) continue;
       const largest = Math.max(.01,...color.map(v => Math.abs(f32(v*weight))));

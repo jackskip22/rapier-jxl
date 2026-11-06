@@ -99,7 +99,7 @@ function hybridCrop(data, stride, region) {
 }
 function* hybridStage(steps, start, span) {
   let next, hurry;
-  while (!(next = steps.next(hurry)).done) hurry = yield scaled(next.value, value => start + span * value);
+  try { while (!(next = steps.next(hurry)).done) hurry = yield scaled(next.value, value => start + span * value); } finally { if (!next?.done) steps.return?.(); }
   return next.value;
 }
 function* hybridSteps(data, width, height, config) {

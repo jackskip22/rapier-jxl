@@ -1,74 +1,20 @@
 // SPDX-License-Identifier: MIT
-import {reconstruct, toRGBAInto} from './reconstruct.mjs';
-import {butteraugli, butteraugliReference, butteraugliRows} from './butteraugli.mjs';
+import {reconstruct} from './reconstruct.mjs';
+import {butteraugli, butteraugliReference, butteraugliLinearTable} from './butteraugli.mjs';
 import {exactPow} from './exact-math.mjs';
-import {SRGB_TO_LINEAR} from './ssimulacra2.mjs';
 import {bandBytes, butteraugliBytes, memoryPlan, poolWorkers} from './memory-plan.mjs';
 import {fault} from './fault.mjs';
 import {spawnJxlHelper} from './worker-assets.mjs';
 import {validateWorkerReservation, claimWorkerReservation, workerBackingBytes} from './worker-reservation.mjs';
-import {cellSums, xybStrategies} from './varblocks.mjs';
+import {xybStrategies} from './varblocks.mjs';
+import {cellSums, blockDistances} from './photo-distance-cells.mjs';
 import {TRANSFORMS} from './vardct-strategies.mjs';
-import {blockDistances} from './aq.mjs';
+
+import {subBase, subImage, bandedRGBA, bandedScores, exactScores} from './photo-reconstruct-bands.mjs';
+export {subBase, subImage, bandedRGBA, BAND_ROWS, bandedMap, bandedScores, exactScores} from './photo-reconstruct-bands.mjs';
 
 export const CROP_MARGIN = 80;
-const CELL = 8, RECON_MARGIN = 8;
-
-export function subBase(base, bx0, by0, bx1, by1) {
-  const sliced = sliceBlocks(base, bx0, by0, bx1, by1), W = base.components[0].stride * 8, w = (bx1 - bx0) * 8;
-  sliced.planes = base.planes.map(p => { const o = new p.constructor(w * (by1 - by0) * 8); for (let y = 0; y < (by1 - by0) * 8; y++) o.set(p.subarray((by0 * 8 + y) * W + bx0 * 8, (by0 * 8 + y) * W + bx0 * 8 + w), y * w); return o; });
-  return sliced;
-}
-
-export function subImage(image, bx0, by0, bx1, by1) {
-  if (image.lazyStrategy) return subImage(image.lazyStrategy.rows(by0, by1), bx0, by0, bx1, by1);
-  const sub = sliceBlocks(image, bx0, by0, bx1, by1), sd = image.strategyData;
-  if (!sd) return sub;
-  const stride = bx1 - bx0, rows = by1 - by0, at = new Int32Array(stride * rows).fill(-1), blocks = [];
-  for (const b of sd.blocks) if (b.bx >= bx0 && b.bx < bx1 && b.by >= by0 && b.by < by1) {
-    const moved = {...b, bx: b.bx - bx0, by: b.by - by0};
-    for (let y = 0; y < b.bh; y++) for (let x = 0; x < b.bw; x++) at[(moved.by + y) * stride + moved.bx + x] = blocks.length;
-    blocks.push(moved);
-  }
-  sub.strategyData = {groups: [blocks], blocks, at, tables: sd.tables, stride};
-  return sub;
-}
-
-function sliceBlocks(image, bx0, by0, bx1, by1) {
-  const comps = image.components, stride = comps[0].stride, sw = bx1 - bx0, sh = by1 - by0, n = sw * sh;
-  const rows = (arr, per) => {
-    const o = ArrayBuffer.isView(arr) ? new arr.constructor(n * per) : new Float64Array(n * per);
-    for (let y = 0; y < sh; y++) {
-      const from = ((by0 + y) * stride + bx0) * per;
-      if (ArrayBuffer.isView(arr)) o.set(arr.subarray(from, from + sw * per), y * sw * per);
-      else for (let x = 0; x < sw * per; x++) o[y * sw * per + x] = arr[from + x];
-    }
-    return o;
-  };
-  const cfl = image.cfl, tw = Math.ceil(sw / 8), th = Math.ceil(sh / 8), tiles = arr => { const o = new arr.constructor(tw * th); for (let y = 0; y < th; y++) o.set(arr.subarray((by0 / 8 + y) * cfl.width + bx0 / 8, (by0 / 8 + y) * cfl.width + bx0 / 8 + tw), y * tw); return o; };
-  const {planes: _planes, values: _values, ...coded} = image;
-  const width = Math.min(image.width, bx1 * 8) - bx0 * 8, height = Math.min(image.height, by1 * 8) - by0 * 8;
-  let alpha = null;
-  if (image.alpha) {
-    alpha = new image.alpha.constructor(width * height * 4);
-    for (let y = 0; y < height; y++) alpha.set(image.alpha.subarray(((by0 * 8 + y) * image.width + bx0 * 8) * 4, ((by0 * 8 + y) * image.width + bx0 * 8 + width) * 4), y * width * 4);
-  }
-  return {...coded, width, height, alpha,
-    components: comps.map(c => ({...c, stride: sw, rows: sh, ...(c.coeffs?.length === stride * comps[0].rows * 64 ? {coeffs: rows(c.coeffs, 64)} : {}),
-      ...(c.dc ? {dc: rows(c.dc, 1)} : {})})),
-    quantFields: image.quantFields ? rows(image.quantFields, 1) : image.quantFields,
-    ...(image.sharpness ? {sharpness: rows(image.sharpness, 1)} : {}), cfl: {...cfl, width: tw, x: tiles(cfl.x), b: tiles(cfl.b)}};
-}
-
-export function bandedRGBA(image, rows = 512) {
-  const {width, height} = image, stride = image.components[0].stride, blockRows = image.components[0].rows, out = new Uint8ClampedArray(width * height * 4);
-  for (let y0 = 0; y0 < height; y0 += rows) {
-    const y1 = Math.min(height, y0 + rows), by0 = Math.max(0, Math.floor((y0 - RECON_MARGIN) / 64) * 8), by1 = Math.min(blockRows, Math.ceil((y1 + RECON_MARGIN) / 64) * 8);
-    const lin = reconstruct(subImage(image, 0, by0, stride, by1));
-    toRGBAInto(lin, (y0 - by0 * 8) * width, (y1 - y0) * width, out, y0 * width);
-  }
-  return out;
-}
+const CELL = 16, RECON_MARGIN = 8;
 
 export function cropFor({x0, y0, x1, y1}, width, height, margin = CROP_MARGIN) {
   const cx0 = Math.max(0, x0 - margin) & ~(CELL - 1), cy0 = Math.max(0, y0 - margin) & ~(CELL - 1), cx1 = Math.min(width, x1 + margin), cy1 = Math.min(height, y1 + margin);
@@ -93,10 +39,11 @@ export function regionJob(reference, width, height, region, {margin = 2} = {}) {
 export function cutReference(reference, width, crop) {
   const cw = crop.x1 - crop.x0, ch = crop.y1 - crop.y0;
   if (reference.rgba) {
+    const table = butteraugliLinearTable();
     const planes = [0, 1, 2].map(() => new Float64Array(cw * ch));
     for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
       const source = ((crop.y0 + y) * width + crop.x0 + x) * 4, at = y * cw + x;
-      for (let c = 0; c < 3; c++) planes[c][at] = SRGB_TO_LINEAR[reference.rgba[source + c]];
+      for (let c = 0; c < 3; c++) planes[c][at] = table[reference.rgba[source + c]];
     }
     return planes;
   }
@@ -487,59 +434,6 @@ export function mergeRegions(regions, width, height) {
 
 export function poolSize(pixels = 0, cores = globalThis.navigator?.hardwareConcurrency ?? 2, options = {}) {
   return poolWorkers(pixels, cores, options);
-}
-
-export const BAND_ROWS = 128;
-
-function eachRow(reference, width, height, image, rows, consume) {
-  if (!Number.isSafeInteger(rows) || rows < 1) throw new RangeError('Exact band rows must be a positive integer.');
-  const blockRows = image.components[0].rows, stride = image.components[0].stride;
-  let lin = null, top = 0, end = 0, sw = 0, skip = 0;
-  const distorted = (c, y) => {
-    if (y < top || y >= end) {
-      const y0 = y - y % rows, by0 = Math.max(0, Math.floor((y0 - RECON_MARGIN) / 64) * 8), by1 = Math.min(blockRows, Math.ceil((Math.min(height, y0 + rows) + RECON_MARGIN) / 64) * 8);
-      const sub = subImage(image, 0, by0, stride, by1);
-      lin = null; lin = reconstruct(sub); sw = sub.width; top = y0; end = Math.min(height, y0 + rows); skip = by0 * 8;
-    }
-    return lin[c].subarray((y - skip) * sw, (y - skip) * sw + width);
-  };
-  const row = new Float64Array(width), refRow = reference.rgba
-    ? (c, y) => { for (let x = 0, at = y * width * 4 + c; x < width; x++, at += 4) row[x] = SRGB_TO_LINEAR[reference.rgba[at]]; return row; }
-    : (c, y) => reference[c].subarray(y * width, (y + 1) * width);
-  butteraugliRows(refRow, distorted, width, height, consume);
-}
-
-export function bandedMap(reference, width, height, image, rows = BAND_ROWS) {
-  const map = new Float64Array(width * height);
-  eachRow(reference, width, height, image, rows, (y, row) => map.set(row, y * width));
-  return map;
-}
-
-export function bandedScores(reference, width, height, image, {p = 3, margin = 2, rows = BAND_ROWS} = {}) {
-  if (!Number.isSafeInteger(margin) || margin < 0) throw new RangeError('Exact block margin must be a nonnegative integer.');
-  const stride = Math.ceil(width / 8), count = Math.ceil(height / 8), cells = new Float64Array(stride * count), blocks = new Float64Array(stride * count);
-  const sums = [0, 0, 0]; let max = 0;
-  eachRow(reference, width, height, image, rows, (y, map) => {
-    const by0 = Math.max(0, Math.ceil((y - margin - 7) / 8)), by1 = Math.min(count - 1, Math.floor((y + margin) / 8));
-    for (let x = 0; x < width; x++) {
-      const v = map[x]; max = Math.max(max, v);
-      let d = v * (v * v); sums[0] += d; d *= d; sums[1] += d; d *= d; sums[2] += d;
-      cells[(y >> 3) * stride + (x >> 3)] += exactPow(v, p);
-      const bx0 = Math.max(0, Math.ceil((x - margin - 7) / 8)), bx1 = Math.min(stride - 1, Math.floor((x + margin) / 8));
-      for (let by = by0; by <= by1; by++) for (let bx = bx0; bx <= bx1; bx++) {
-        const at = by * stride + bx; blocks[at] = Math.max(blocks[at], v);
-      }
-    }
-  });
-  const butteraugli3 = sums.reduce((a, sum, k) => a + exactPow(sum / (width * height), 1 / (3 * (1 << k))), 0) / 3;
-  return {butteraugli: max, butteraugli3, cells, blocks};
-}
-
-export function exactScores(cpu, reference, width, height, image, want = {}, memory = cpu.memory ?? null) {
-  const plan = memory ?? memoryPlan(width * height, {width, height});
-  if (!plan.banded) return cpu(image, want);
-  if (typeof cpu.banded !== 'function') throw fault('JXL_INPUT', 'Banded scoring requires the CPU reference transaction.');
-  return cpu.banded(image, want, ref => bandedScores(ref, width, height, image, {...want, rows: plan.bandRows}));
 }
 
 export const CROP_COST = 15, WHOLE_COST = 18;

@@ -35,7 +35,7 @@ export async function svgJxl(input, { quality = 0.92, exact, effort, webgpu, sig
       if (route === 'quality') {
         // The whole picture one photo (a box past an oriented side is cut to the picture); capture-complete makes the look.
         const side = Math.max(size[0], size[1]);
-        return { out: await captureCodec().capture(blob, { ...job, fidelity: { webp: Math.max(0, quality) }, ...gpu, photoRects: [{ x: 0, y: 0, width: side, height: side }] }) };
+        return { out: await captureCodec().capture(blob, { ...job, fidelity: { quality: Math.max(1, quality * 100) }, ...gpu, photoRects: [{ x: 0, y: 0, width: side, height: side }] }) };
       }
       if (route === 'jpeg') return { out: await jpegCodec().recompress(p.bytes, job) };
       let reader;
@@ -51,6 +51,9 @@ export async function svgJxl(input, { quality = 0.92, exact, effort, webgpu, sig
     for (const [r, from] of [[p.route, 0], ...(tryLossy ? [['quality', 0.5]] : [])]) {
       try {
         const made = await encode(r, from);
+        const result = made.out;
+        if (!result.fits) throw Object.assign(new Error(result.reason.message), {code: result.reason.code});
+        made.out = result.bytes;
         tries[r] = made.out.length;
         if (!out || made.out.length < out.length) ({ out, reader } = made), route = r;
       } catch (error) {

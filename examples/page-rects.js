@@ -1,6 +1,6 @@
 // A page element's text, edge and photo rectangles in canvas pixels, for rapier-jxl/capture-complete, after any library
 // draws the element to a canvas: import { measure, pageRects } from 'rapier-jxl/page-rects';
-//   capture(canvas, { fidelity: { webp: 0.92 }, ...pageRects(element, canvas) });
+//   capture(canvas, { fidelity: { quality: 92 }, ...pageRects(element, canvas) });
 
 // The element now, in CSS pixels; measure early when the page may change before pageRects.
 export function measure(element, { edges = false } = {}) {
@@ -20,8 +20,10 @@ export function pageRects(page, canvas, { area = {}, edges = false } = {}) {
   };
   const whole = { x: 0, y: 0, width: canvas.width, height: canvas.height };
   const photoRects = shot.photos.map(r => place(r, 0)).filter(Boolean);
-  // Drawn below 1:1, text blurs past any glyph box.
-  if (sx < 1 || sy < 1) return { exactRects: [whole], photoRects };
+  // place() already maps CSS boxes through the drawn scale and rounds outward to whole canvas
+  // pixels (floor left/top, ceil right/bottom). Keep those exactRects below 1:1 so glyphs stay
+  // lossless; photoRects stay so photographs still take the quality (a whole-canvas exact made the 1×
+  // phone card larger than WebP).
   const exactRects = [];
   for (const { r, grow, solidText } of shot.text) { const b = place(r, grow); if (b) exactRects.push(solidText ? { ...b, solidText } : b); }
   // Edges asked of a measurement made without them: the page may have moved since.

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {unit, stage, unread} from './step-journal.mjs';
 import {BitWriter, packSigned} from './bits.mjs';
 import {admitOptions, admitPixels, admitOutputSize, answer, fault, guard} from './admit.mjs';
 import {SCREEN_INTEGER_CONFIGS, screenDistanceMap} from './screen-codes.mjs';
@@ -18,18 +19,21 @@ const L3 = {indexDepth: 24, lazyUnder: NEVER, nice: NEVER, tree: {split: 96, min
   palette: 'scan', routes: 'rare', alphaPlane: 'soft', patches: 'one', floor: false, oneFrame: true, smallGroups: true, needs: []};
 const L4 = {...L3, rowCopies: true, indexRamp: true, patches: 'peel', indexDepth: 64, tree: {split: 96, min: 128, nodes: 96}, prices: 50, routes: 'all', alphaPlane: 'all', floor: true, oneFrame: false, smallGroups: false};
 const L5 = {...L4, weighted: 'both', palette: 'both', rcts: [6]};
-const L6 = {...L5, trees: 'learned', needs: ['trees']};
-const L7 = {...L6, ans: true, gpu: true, needs: ['ans', 'trees']};
-const NINE = [{peelLeast: 0}, {minCopy: 5}, {glyph: 10}, {common: 32}, {minCopy: 4}, {glyph: 24}, {common: 8}, {lazyUnder: 8},
-  {learnRcts: [6, 0, 1, 2, 3, 4, 5], learn: {samples: 1 << 22}}, {signs: true, tree: {split: 32, min: 32, nodes: 384}}, {morton: true},
-  {channels: true}, {indexPredict: true}];
-const L8 = {...L7, also: NINE.slice(0, 4).map(delta => ({...L7, ...delta, delta}))};
-const L9 = {...L7, needs: ['ans', 'trees', 'signs'], combine: true, also: NINE.map(delta => ({...L7, ...delta, delta}))};
+function deepLevels() {
+  const L6 = {...L5, trees: 'learned', needs: ['trees']};
+  const L7 = {...L6, ans: true, gpu: true, needs: ['ans', 'trees']};
+  const NINE = [{peelLeast: 0}, {minCopy: 5}, {glyph: 10}, {common: 32}, {minCopy: 4}, {glyph: 24}, {common: 8}, {lazyUnder: 8},
+    {learnRcts: [6, 0, 1, 2, 3, 4, 5], learn: {samples: 1 << 22}}, {signs: true, tree: {split: 32, min: 32, nodes: 384}}, {morton: true},
+    {channels: true}, {indexPredict: true}];
+  const L8 = {...L7, also: NINE.slice(0, 4).map(delta => ({...L7, ...delta, delta}))};
+  const L9 = {...L7, needs: ['ans', 'trees', 'signs'], combine: true, also: NINE.map(delta => ({...L7, ...delta, delta}))};
+  return [L6, L7, L8, L9];
+}
 export const LEVELS = [null,
   {...L3, indexDepth: 4, lazyUnder: 0, nice: 16, tree: {split: 96, min: 512, nodes: 16}, prices: 2, routes: 'one', alphaPlane: 'never', patches: false,
     gradient: true},
   {...L3, indexDepth: 16, lazyUnder: 32, routes: 'one', alphaPlane: 'never', patches: false},
-  L3, L4, L5, L6, L7, L8, L9];
+  L3, L4, L5, ...((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) ? deepLevels() : [])];
 let L = L3;
 export const CAPTURE_TOOLS = Symbol('capture tools');
 export const CAPTURE_TOOLS_LEAN = Object.freeze({top: 5, next: 'rapier-jxl/capture-complete'});
@@ -40,13 +44,14 @@ const writeModularHeader = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' &&
 const assembleCodestream = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true ? assembleCaptureCodestream : generalAssembly;
 
 export {compileCaptureKernels};
-export const CAPTURE_PREDICTOR_PROBE = Symbol('capture predictor choices');
+export const CAPTURE_PREDICTOR_PROBE = /* @__PURE__ */ Symbol('capture predictor choices');
 export const CAPTURE_BASE = Symbol('capture base layer');
 export const CAPTURE_PATCHES = Symbol('capture patches');
-export const CAPTURE_TIMING = Symbol('capture stage timing');
+export const CAPTURE_TIMING = /* @__PURE__ */ Symbol('capture stage timing');
 export const CAPTURE_HELPERS = Symbol('capture helpers');
-export const CAPTURE_GPU = Symbol('capture gpu');
-export const CAPTURE_TRACE = Symbol('capture byte trace');
+export const CAPTURE_GPU = /* @__PURE__ */ Symbol('capture gpu');
+export const CAPTURE_TRACE = /* @__PURE__ */ Symbol('capture byte trace');
+export const CAPTURE_LEVEL = Symbol('capture level');
 let timing = null, inner = 0;
 function timed(stage, work) {
   if (typeof __RAPIER_JXL_PROBES__ !== 'undefined' || !timing) return work();
@@ -67,6 +72,21 @@ function scanColours(rgba, stride, x0, y0, w, h, limit, rows = false, blank = nu
 const spreadBits = v => { v &= 255; v = (v | v << 8) & 0x00f00f; v = (v | v << 4) & 0x0c30c3; return (v | v << 2) & 0x249249; };
 const mortonKey = c => ((c >>> 24) * 16777216 + (spreadBits(c) << 2 | spreadBits(c >>> 8) << 1 | spreadBits(c >>> 16))) >>> 0;
 const rgbaKey = c => ((c & 255) << 24 | (c >>> 8 & 255) << 16 | (c >>> 16 & 255) << 8 | c >>> 24) >>> 0;
+export function captureSkewEligible(freq, total) {
+  const sorted = freq.slice().sort(), n = freq.length;
+  let top8 = 0;
+  for (let i = Math.max(0, n - 8); i < n; i++) top8 += sorted[i];
+  return !(top8 * 4 < total * 3 || sorted[n - 1] * 20 > total * 13);
+}
+export function captureSkewBits(freq, total, bits, from, to) {
+  const whole = log2x32(total);
+  for (let i = from; i < to; i++) if (freq[i]) bits[i] = Math.max(32, whole - log2x32(freq[i]));
+}
+export function captureSkewCopyCost(d, w) {
+  const codes = spatialLookup(w)[1], spatial = d < codes.length && codes[d] >= 0;
+  return 32 * (d === 1 || d === w ? 6 : spatial ? 10 : 7 + 31 - Math.clz32(d + 119)) + 32;
+}
+
 function pruneSkewCopies(model, n) {
   const {plane, stride, origin, width: w, height: h, minimum, count, pieceValue: V, pieceDistance: D} = model, total = w * h;
   let copies = 0;
@@ -74,19 +94,15 @@ function pruneSkewCopies(model, n) {
   if (copies * 16 < total) return;
   const freq = new Uint32Array(n);
   for (let y = 0, row = origin; y < h; y++, row += stride) for (let x = 0; x < w; x++) freq[plane[row + x]]++;
-  const sorted = freq.slice().sort();
-  let top8 = 0;
-  for (let i = Math.max(0, n - 8); i < n; i++) top8 += sorted[i];
-  if (top8 * 4 < total * 3 || sorted[n - 1] * 20 > total * 13) return;
-  const bits = new Uint16Array(n), whole = log2x32(total), codes = spatialLookup(w)[1];
-  for (let i = 0; i < n; i++) if (freq[i]) bits[i] = Math.max(32, whole - log2x32(freq[i]));
+  if (!captureSkewEligible(freq, total)) return;
+  const bits = new Uint16Array(n);
+  captureSkewBits(freq, total, bits, 0, n);
   const expand = new Uint8Array(count);
   let expanded = 0, kept = 0;
   for (let k = 0, x = 0, y = 0; k < count; k++) {
     const d = D[k];
     if (!d) { if (++x === w) { x = 0; y++; } continue; }
-    const len = V[k] + minimum, spatial = d < codes.length && codes[d] >= 0;
-    const copy = 32 * (d === 1 || d === w ? 6 : spatial ? 10 : 7 + 31 - Math.clz32(d + 119)) + 32;
+    const len = V[k] + minimum, copy = captureSkewCopyCost(d, w);
     let literal = 0;
     for (let j = 0, cx = x, i = origin + y * stride + x; j < len && literal <= copy; j++) {
       literal += bits[plane[i]];
@@ -265,6 +281,10 @@ function walked(colours, order, from, walk) {
 }
 
 function nearestWalk(colours, left, out, start) {
+  const state = captureNearestStart(colours, left, start);
+  captureNearestRange(state, left, out, left.length);
+}
+export function captureNearestStart(colours, left, start) {
   const m = left.length, cells = new Int32Array(4097), cellOf = new Int32Array(m), byCell = new Int32Array(m), at = new Int32Array(m);
   const r = new Int32Array(m), g = new Int32Array(m), b = new Int32Array(m), a = new Int32Array(m);
   for (let k = 0; k < m; k++) {
@@ -275,8 +295,12 @@ function nearestWalk(colours, left, out, start) {
   for (let i = 0; i < 4096; i++) cells[i + 1] += cells[i];
   const ends = cells.slice(0, 4096);
   for (let k = 0; k < m; k++) { at[k] = ends[cellOf[k]]; byCell[ends[cellOf[k]]++] = k; }
-  let ar = start & 255, ag = start >>> 8 & 255, ab = start >>> 16 & 255, aa = start >>> 24;
-  for (let j = 0; j < m; j++) {
+  return {cells, cellOf, byCell, at, r, g, b, a, ends, next: 0, last: start};
+}
+export function captureNearestRange(state, left, out, through) {
+  const {cells, cellOf, byCell, at, r, g, b, a, ends} = state;
+  let ar = state.last & 255, ag = state.last >>> 8 & 255, ab = state.last >>> 16 & 255, aa = state.last >>> 24;
+  for (let j = state.next; j < through; j++) {
     let best = -1, d = 1 << 30;
     const cr = ar >> 4, cg = ag >> 4, cb = ab >> 4;
     for (let ring = 0; ring < 16; ring++) {
@@ -297,6 +321,8 @@ function nearestWalk(colours, left, out, start) {
     byCell[at[best]] = moved; at[moved] = at[best]; byCell[last] = best; at[best] = last;
     out[j] = left[best]; ar = r[best]; ag = g[best]; ab = b[best]; aa = a[best];
   }
+  state.next = through;
+  state.last = (ar | ag << 8 | ab << 16 | aa << 24) >>> 0;
 }
 
 function rowsBits({count, pieceValue: V, pieceDistance: D, pieceContext: C, classes}) {
@@ -531,6 +557,8 @@ function gradientModel({count, value, distance, context, counts}, plane, w, mini
 const constantPlane = plane => { const v0 = plane[0]; for (let i = 1; i < plane.length; i++) if (plane[i] !== v0) return false; return true; };
 
 const LITERAL_CONFIGS = [...SCREEN_INTEGER_CONFIGS, ...[[4, 2, 1], [5, 1, 1], [5, 2, 1], [6, 1, 1], [6, 2, 1], [7, 2, 1], [5], [6], [7], [8], [9], [10], [11], [12], [13]].map(a => uintConfig(...a))];
+const ANS_FIT = [];
+for (let split = 0; split <= 8; split++) for (let msb = 0; msb <= split; msb++) for (let lsb = 0; msb + lsb <= split; lsb++) ANS_FIT.push(uintConfig(split, msb, lsb));
 const SMALL = 512;
 const log2x32 = x => {
   const e = 31 - Math.clz32(x);
@@ -647,7 +675,7 @@ function countTokens(freqs, h, config, lengthConfig, at, top) {
   for (let i = 0; i < h.lengths.values.length; i++) add(lengthConfig, h.lengths.values[i], h.lengths.counts[i], at);
   return freqs;
 }
-function clusterHistograms(live) {
+function clusterHistograms(live, limit = Infinity) {
   const n = live.length, freqs = live.map(h => countTokens(new Uint32Array(CLUSTER_TOKENS), h, CLUSTER_CONFIG, CLUSTER_CONFIG, 64, 63));
   const cost = freqs.map(clusterCost), alive = new Uint8Array(n).fill(1), parent = Int32Array.from({length: n}, (_, i) => i);
   const delta = new Float64Array(n * n), masks = freqs.map(f => {
@@ -664,8 +692,8 @@ function clusterHistograms(live) {
     return (total ? bits / 32 + 5 * used + CLUSTER_HEADER : 0) - cost[a] - cost[b];
   };
   for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) delta[a * n + b] = gain(a, b);
-  for (;;) {
-    let best = 0, ba = -1, bb = -1;
+  for (let count = n; ; count--) {
+    let best = count > limit ? Infinity : 0, ba = -1, bb = -1;
     for (let a = 0; a < n; a++) if (alive[a]) for (let b = a + 1; b < n; b++) if (alive[b] && delta[a * n + b] < best) { best = delta[a * n + b]; ba = a; bb = b; }
     if (ba < 0) break;
     for (let t = 0; t < CLUSTER_TOKENS; t++) freqs[ba][t] += freqs[bb][t];
@@ -688,7 +716,7 @@ const keySpace = (k, used, more) => {
   if (pieceKeys[k].length < used + more) { const grown = new Uint32Array(Math.max(used + more, pieceKeys[k].length * 2)); grown.set(pieceKeys[k].subarray(0, used)); pieceKeys[k] = grown; }
   return pieceKeys[k];
 };
-function writeChannels(writer, models, trace) {
+function writeChannels(writer, models, trace, ansTools = (typeof __RAPIER_JXL_CAPTURE_LEAN__ === 'undefined' || !__RAPIER_JXL_CAPTURE_LEAN__) && L.ans ? tools.ans : null, own = false) {
   const start = typeof __RAPIER_JXL_PROBES__ === 'undefined' ? writer.bitLength : 0;
   const ordered = writeTree(writer, intervals(0, upTo(models.length - 1), m => models[m].tree));
   let pieces = 0;
@@ -713,8 +741,8 @@ function writeChannels(writer, models, trace) {
   let live = histograms.filter(h => h.literals + h.copies);
   const index = new Int32Array(histograms.length);
   for (let i = 0, next = 0; i < histograms.length; i++) index[i] = histograms[i].literals + histograms[i].copies ? next++ : 0;
-  if (live.length > 1 && models.some(model => model.kind === 'index' && !model.group)) {
-    const {groups, of} = clusterHistograms(live);
+  if (live.length > 1 && (live.length > 255 || models.some(model => model.kind === 'index' && !model.group))) {
+    const {groups, of} = clusterHistograms(live, 255 - (distanceValues.length ? 1 : 0));
     for (let i = 0; i < histograms.length; i++) index[i] = of[index[i]];
     live = groups;
   }
@@ -782,14 +810,24 @@ function writeChannels(writer, models, trace) {
       ...codes.map((code, m) => ({config: configs[m].config, code}))]
   });
   let ans = null;
-  if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && L.ans && tools.ans) timed('ans', () => {
-    const ansCopy = copy && {...copy, distanceConfig: tools.ans.distanceConfig(distance.values), lengthConfig: tools.ans.lengthConfig(live, 256 - minSymbol)};
+  if ((typeof __RAPIER_JXL_CAPTURE_LEAN__ === 'undefined' || !__RAPIER_JXL_CAPTURE_LEAN__) && ansTools) timed('ans', () => {
+    const ansCopy = copy && {...copy, distanceConfig: ansTools.distanceConfig(distance.values), lengthConfig: ansTools.lengthConfig(live, 256 - minSymbol)};
     if (copy && !(ansCopy.distanceConfig && ansCopy.lengthConfig)) return;
-    const tokens = tools.ans.tokens(models, index, configs.map(c => c.config), ansCopy, codes.length);
+    const ansConfigs = own ? live.map((h, m) => {
+      if (!h.literals) return configs[m].config;
+      const literals = valueCounts(h.small, h.large);
+      let best = null, bits = Infinity;
+      for (let at = 0; at < ANS_FIT.length; at += 64) {
+        const some = ANS_FIT.slice(at, at + 64), prices = capturePrices(some, literals);
+        for (let c = 0; c < some.length; c++) if (prices[c * 2] < bits) { bits = prices[c * 2]; best = some[c]; }
+      }
+      return best;
+    }) : configs.map(c => c.config);
+    const tokens = ansTools.tokens(models, index, ansConfigs, ansCopy, codes.length);
     if (!tokens) return;
     const header = new BitWriter(1024), data = new BitWriter(tokens.n + 64);
-    const all = [...(distance ? [ansCopy.distanceConfig] : []), ...configs.map(c => c.config)];
-    if (!tools.ans.write(header, data, {lz77: lz77 && {...lz77, lengthConfig: ansCopy.lengthConfig}, contextMap, configs: all}, tokens)) return;
+    const all = [...(distance ? [ansCopy.distanceConfig] : []), ...ansConfigs];
+    if (!ansTools.write(header, data, {lz77: lz77 && {...lz77, lengthConfig: ansCopy.lengthConfig}, contextMap, configs: all}, tokens)) return;
     ans = {header, data};
   });
   let prefixData = null;
@@ -807,7 +845,7 @@ function writeChannels(writer, models, trace) {
   if (ans) {
     prefixData = new BitWriter(ans.data.at + 1024);
     prefixWrite(prefixData);
-    if (ans.header.bitLength + ans.data.bitLength > 0.99 * (prefixHeader.bitLength + prefixData.bitLength)) ans = null;
+    if (ans.header.bitLength + ans.data.bitLength > (own ? 1 : 0.99) * (prefixHeader.bitLength + prefixData.bitLength)) ans = null;
   }
   writer.append(ans ? ans.header : prefixHeader);
   if (typeof __RAPIER_JXL_PROBES__ === 'undefined' && trace) {
@@ -828,6 +866,13 @@ function writeChannels(writer, models, trace) {
   return () => prefixWrite(writer);
 }
 
+export function writeCaptureStream(writer, models, ans = null, {transforms = [], global = false} = {}) {
+  if (!global) writeModularHeader(writer, {useGlobalTree: false, transforms});
+  const data = writeChannels(writer, models, null, ans, true);
+  if (global) writeModularHeader(writer, {transforms});
+  data();
+}
+
 function samplePlane(rgba, stride, x, y, w, h, c) {
   const plane = new Int16Array(w * h);
   for (let at = 0, col = 0, p = (y * stride + x) * 4 + c, n = w * h; at < n; at++, col++, p += 4) {
@@ -836,8 +881,12 @@ function samplePlane(rgba, stride, x, y, w, h, c) {
   }
   return plane;
 }
-function exactPlanes(words, stride, x, y, w, h, rct) {
+function exactPlanes(words, stride, x, y, w, h, rct, rgba = null) {
   const n = w * h, green = new Int16Array(n), blue = new Int16Array(n), red = new Int16Array(n);
+  if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && rct !== 10 && rct !== 6) {
+    tools.transform(rct, 3).fill([green, blue, red], rgba, stride, x, y, w, h);
+    return [green, blue, red];
+  }
   if (rct !== 10) {
     for (let at = 0, col = 0, p = y * stride + x; at < n; at++, col++, p++) {
       if (col === w) { col = 0; p += stride - w; }
@@ -856,10 +905,10 @@ function exactPlanes(words, stride, x, y, w, h, rct) {
 const COLOUR_CHANNELS = ['green', 'blue-green', 'red-green'];
 
 function groupChannels(rgba, stride, x, y, w, h, shape, coding, single = false, mode = L.weighted, rct = 10) {
-  const {maxError, onPredictor} = coding;
-  const answered = coding.gpu?.pixels === rgba ? coding.gpu.map : null;
+  const {maxError} = coding, onPredictor = typeof __RAPIER_JXL_PROBES__ === 'undefined' ? coding.onPredictor : null;
+  const answered = (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && coding.gpu?.pixels === rgba ? coding.gpu.map : null;
   const take = name => answered?.get(answerKey(x, y, w, h, rct, name));
-  const scanned = single ? undefined : take('scan');
+  const scanned = (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && !single ? take('scan') : undefined;
   const kept = !single && scanned === undefined && sized.pixels === rgba ? takeScan(`${x},${y},${w},${h}`) : undefined;
   const scan = single ? null : scanned !== undefined ? scanned : kept !== undefined ? kept : timed('scan', () => scanColours(rgba, stride, x, y, w, h, Math.min(PALETTE_LIMIT, (w * h) / 20 | 0)));
   if (scan) {
@@ -868,12 +917,14 @@ function groupChannels(rgba, stride, x, y, w, h, shape, coding, single = false, 
     return {transforms: [meta.transform], models: [model, index], palette: true};
   }
   const sample = c => samplePlane(rgba, stride, x, y, w, h, c);
-  const step = 2 * maxError + 1, models = [], lanes = [], learnedAt = [];
+  const step = 2 * maxError + 1, models = [], lanes = [], learnedAt = [], coded = [];
   if (step > 1) coding.stepped = true;
   const colour = (plane, channel, keepWeighted = false, s = step) => {
+    if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && L.references) coded.push(plane);
     if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && s === 1 && (mode === 'learned' || mode === 'runs') && !constantPlane(plane)) {
       const given = take(channel);
-      let learned = timed('trees', () => tools.trees.model(plane, w, h, given, L.learn));
+      const references = L.references ? coded.slice(0, -1).reverse() : [];
+      let learned = timed('trees', () => tools.trees.model(plane, w, h, given, L.learn, references));
       if (learned && mode === 'runs') learned = learnedRuns(learned, w, h);
       if (learned) { onPredictor?.(channel, 'learned'); models.push(learned); learnedAt.push(models.length - 1); return true; }
     }
@@ -889,7 +940,7 @@ function groupChannels(rgba, stride, x, y, w, h, shape, coding, single = false, 
   else {
     const n = w * h, words = pixelKeys(rgba);
     if (step === 1) {
-      const [green, blue, red] = exactPlanes(words, stride, x, y, w, h, rct);
+      const [green, blue, red] = exactPlanes(words, stride, x, y, w, h, rct, rgba);
       const greenWeighted = colour(green, 'green');
       colour(blue, 'blue-green', greenWeighted);
       colour(red, 'red-green', greenWeighted);
@@ -909,7 +960,7 @@ function groupChannels(rgba, stride, x, y, w, h, shape, coding, single = false, 
   }
   if (shape.alpha) colour(sample(3), 'alpha', false, 1);
   timed('weighted', () => {
-    const gradient = Boolean(L.gradient), answers = !gradient && lanes.length > 1 ? lanes.map(lane => take(lane.channel)) : null;
+    const gradient = Boolean(L.gradient), answers = (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && !gradient && lanes.length > 1 ? lanes.map(lane => take(lane.channel)) : null;
     const pieces = lanes.length > 1 ? captureWeightedLanes(lanes.map(lane => lane.plane), w, h, 4, SMALL, gradient, answers?.every(Boolean) ? answers : null) : null;
     lanes.forEach((lane, c) => { models[lane.at] = pieces ? (gradient ? gradientModel : weightedModel)(pieces[c], lane.plane, w, 4) : channelModel(lane.plane, w, h, 'smooth', 1, 4, lane.weighted); });
   });
@@ -923,6 +974,7 @@ function learnedRuns(learned, w, h) {
 }
 
 const SMALL_DIM = 256;
+export const captureGroupThreshold = (dim, fits, groups) => dim === DIM ? 2 * fits > groups : 4 * fits >= 3 * groups;
 const sized = {pixels: null, scans: new Map()};
 const takeScan = key => { const scan = sized.scans.get(key); sized.scans.delete(key); return scan; };
 export const captureGroupCache = () => ({pixels: sized.pixels !== null, scans: sized.scans.size});
@@ -944,7 +996,7 @@ function groupSize(pixels, stride, px, py, width, height) {
     }
     return false;
   };
-  const most = (fits, seen, groups) => 2 * fits > groups, nearlyAll = (fits, seen, groups) => 4 * fits >= 3 * groups;
+  const most = (fits, seen, groups) => captureGroupThreshold(DIM, fits, groups), nearlyAll = (fits, seen, groups) => captureGroupThreshold(SMALL_DIM, fits, groups);
   captureHold(pixelKeys(pixels));
   try {
     if (fit(DIM, most)) return DIM;
@@ -955,23 +1007,38 @@ function groupSize(pixels, stride, px, py, width, height) {
   } catch (error) { sized.pixels = null; sized.scans.clear(); throw error; } finally { captureRelease(); }
 }
 
+export const capturePredictorModes = level => (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && level.weighted === 'both' ? ['never', 'always'] : [level.weighted];
+
+export function captureGroupAlternatives(level, palette, colour, maxError, single, learned) {
+  const modes = capturePredictorModes(level), choices = [];
+  if (!palette) {
+    for (const mode of modes.slice(1)) choices.push({mode, single, rct: 10});
+    if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && colour !== 1 && maxError === 0)
+      for (const rct of level.rcts ?? []) for (const mode of modes) choices.push({mode, single, rct});
+    if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && level.trees === 'learned' && learned && maxError === 0)
+      for (const rct of level.learnOnly ?? [10, ...level.learnRcts ?? []]) choices.push({mode: 'learned', single, rct});
+  } else if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && level.palette === 'both')
+    for (const mode of modes) choices.push({mode, single: true, rct: 10});
+  return choices;
+}
+
 function groupSections(write, pixels, stride, x, y, w, h, shape, coding, single = false) {
-  const modes = (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && L.weighted === 'both' ? ['never', 'always'] : [L.weighted];
   let best = null;
   const keep = bytes => { if (!best || bytes.length < best.length) best = bytes; };
-  const first = groupChannels(pixels, stride, x, y, w, h, shape, coding, single, modes[0]);
+  const first = groupChannels(pixels, stride, x, y, w, h, shape, coding, single, capturePredictorModes(L)[0]);
   keep(write(first));
-  if (!first.palette) {
-    for (const mode of modes.slice(1)) keep(write(groupChannels(pixels, stride, x, y, w, h, shape, coding, single, mode)));
-    if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && shape.colour !== 1 && coding.maxError === 0) for (const rct of L.rcts ?? []) for (const mode of modes) keep(write(groupChannels(pixels, stride, x, y, w, h, shape, coding, single, mode, rct)));
-    if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && L.trees === 'learned' && tools.trees && coding.maxError === 0)
-      for (const rct of [10, ...L.learnRcts ?? []]) {
-        const learned = groupChannels(pixels, stride, x, y, w, h, shape, coding, single, 'learned', rct), models = learned.models.slice();
-        for (const at of learned.learnedAt) models[at] = learnedRuns(models[at], w, h);
-        keep(write(learned)); keep(write({...learned, models}));
+  for (const choice of captureGroupAlternatives(L, first.palette, shape.colour, coding.maxError, single, !!tools.trees)) {
+    const channels = groupChannels(pixels, stride, x, y, w, h, shape, coding, choice.single, choice.mode, choice.rct);
+    if (!(typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) || choice.mode !== 'learned') keep(write(channels));
+    else {
+      keep(write(channels));
+      if (!L.noRuns) {
+        const models = channels.models.slice();
+        for (const at of channels.learnedAt) models[at] = learnedRuns(models[at], w, h);
+        keep(write({...channels, models}));
       }
+    }
   }
-  else if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && L.palette === 'both') for (const mode of modes) keep(write(groupChannels(pixels, stride, x, y, w, h, shape, coding, true, mode)));
   return best;
 }
 
@@ -1027,7 +1094,7 @@ function* askSteps(pixels, stride, px, py, layout, width, height, shape, coding,
       planes.push({plane, width: w, height: h}); asked.push(key); own.push(key);
     };
     if (shape.colour === 1) add(samplePlane(pixels, stride, x, y, w, h, 0), 10, 'gray');
-    else for (const rct of rcts) exactPlanes(words, stride, x, y, w, h, rct).forEach((plane, c) => add(plane, rct, COLOUR_CHANNELS[c]));
+    else for (const rct of rcts) exactPlanes(words, stride, x, y, w, h, rct, pixels).forEach((plane, c) => add(plane, rct, COLOUR_CHANNELS[c]));
     if (shape.alpha) add(samplePlane(pixels, stride, x, y, w, h, 3), 10, 'alpha');
   }
   return {to: g, asked, handle: planes.length ? yield {gpu: {kind: 'weighted', planes}, ahead: true} : null};
@@ -1066,6 +1133,14 @@ function predictedIndices(indices, stride, origin, w, h, remap) {
 }
 
 function* captureFrameSteps(pixels, width, height, shape, coding, frame, header, placement, pStride = width, px = 0, py = 0) {
+  const written = yield* stage('frame', function* () {
+    const file = yield* frameSteps(pixels, width, height, shape, coding, frame, header, placement, pStride, px, py);
+    return {file, header: {bytes: header.bytes, at: header.at, acc: header.acc, pending: header.pending}};
+  });
+  Object.assign(header, written.header);
+  return written.file;
+}
+function* frameSteps(pixels, width, height, shape, coding, frame, header, placement, pStride = width, px = 0, py = 0) {
   if (L.alphaPlane !== 'never' && frame && frame.alpha === undefined && shape.alpha && shape.colour === 3) {
     const rgb = rgbFrame(frame, width, height, L.alphaPlane === 'soft' ? 1 / 8 : 0), copy = new BitWriter(header.bytes.length);
     copy.append(header);
@@ -1098,20 +1173,26 @@ function* captureFrameSteps(pixels, width, height, shape, coding, frame, header,
     else writeModularFrameHeader(header, {alpha: shape.alpha, shift, ...placement});
     let total = 0;
     const append = bytes => { total += bytes.length; admitOutputSize(total); if (total > ceiling) throw OVER; sections.push(bytes); };
-    const lit = (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && frame?.predicted === 'ramp' ? keyOrder(frame.colours) : frame?.predicted ? lightOrder(frame.colours) : null;
-    const indexModels = frame ? Array.from({length: groups}, (_, g) => {
-      const [x, y, w, h] = groupRect(layout, width, height, g, dim), {stride = width, x: fx = 0, y: fy = 0} = frame;
-      if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && frame.predicted === 'ramp') return timed('copies', () => rampIndices(frame.indices, stride, (fy + y) * stride + fx + x, w, h, lit.remap));
-      if (lit) return timed('trees', () => predictedIndices(frame.indices, stride, (fy + y) * stride + fx + x, w, h, lit.remap));
-      return timed('copies', () => channelModel(frame.indices, w, h, 'index', 1, L.minCopy ?? 3, true, stride, (fy + y) * stride + fx + x));
-    }) : null;
+    const lit = (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && frame?.predicted === 'ramp' ? keyOrder(frame.colours) : (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && frame?.predicted ? lightOrder(frame.colours) : null;
+    let indexModels = null;
+    if (frame) {
+      indexModels = new Array(groups);
+      for (let g = 0; g < groups; g++) indexModels[g] = yield* unit('index-model', () => {
+        const [x, y, w, h] = groupRect(layout, width, height, g, dim), {stride = width, x: fx = 0, y: fy = 0} = frame;
+        if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && frame.predicted === 'ramp') return timed('copies', () => rampIndices(frame.indices, stride, (fy + y) * stride + fx + x, w, h, lit.remap));
+        if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && lit) return timed('trees', () => predictedIndices(frame.indices, stride, (fy + y) * stride + fx + x, w, h, lit.remap));
+        return timed('copies', () => channelModel(frame.indices, w, h, 'index', 1, L.minCopy ?? 3, true, stride, (fy + y) * stride + fx + x));
+      });
+    }
     const alphaModels = frame?.alpha ? Array.from({length: groups}, (_, g) => {
       const [x, y, w, h] = groupRect(layout, width, height, g, dim);
       const plane = new Int16Array(w * h);
       for (let row = 0; row < h; row++) plane.set(frame.alpha.subarray((y + row) * width + x, (y + row) * width + x + w), row * w);
       return timed('gradient', () => channelModel(plane, w, h, 'smooth', 1, 3, false, w, 0, true));
     }) : null;
-    const palette = lit ? lit.palette(shape) : frame ? timed('palette', () => paletteModel(frame.colours, indexModels, frame.alpha ? {colour: 3, alpha: false, channels: 3} : shape)) : null;
+    const palette = frame ? yield* unit('palette', () => lit ? {...lit.palette(shape), models: indexModels}
+      : {...timed('palette', () => paletteModel(frame.colours, indexModels, frame.alpha ? {colour: 3, alpha: false, channels: 3} : shape)), models: indexModels}) : null;
+    if (palette) indexModels = palette.models;
     if (layout.single) {
       const stream = ({transforms, models}) => {
         const global = new BitWriter(width * height + 256);
@@ -1125,19 +1206,21 @@ function* captureFrameSteps(pixels, width, height, shape, coding, frame, header,
       return fits(assembleCodestream(header, [frame ? stream({transforms: [palette.meta.transform], models: [palette.model, indexModels[0], ...alphaModels ?? []]})
         : groupSections(stream, pixels, pStride, px, py, width, height, shape, coding, true)]));
     }
-    const global = new BitWriter(1024);
-    placement.prefix?.(global);
-    global.write(1, 1); global.write(1, 1);
-    if (frame) {
-      const write = timed('histograms', () => writeChannels(global, [palette.model], coding.trace));
-      writeModularHeader(global, {transforms: [palette.meta.transform]});
-      timed('write', write);
-    } else {
-      writeHistograms(global, {contextMap: new Uint8Array(writeTree(global, leaf(0)).length),
-        histograms: [{config: LITERAL_CONFIGS[0], code: buildCode(new Uint32Array(1))}]});
-      writeModularHeader(global);
-    }
-    append(global.finish());
+    append(yield* unit('global', () => {
+      const global = new BitWriter(1024);
+      placement.prefix?.(global);
+      global.write(1, 1); global.write(1, 1);
+      if (frame) {
+        const write = timed('histograms', () => writeChannels(global, [palette.model], coding.trace));
+        writeModularHeader(global, {transforms: [palette.meta.transform]});
+        timed('write', write);
+      } else {
+        writeHistograms(global, {contextMap: new Uint8Array(writeTree(global, leaf(0)).length),
+          histograms: [{config: LITERAL_CONFIGS[0], code: buildCode(new Uint32Array(1))}]});
+        writeModularHeader(global);
+      }
+      return global.finish();
+    }));
     for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
     let written = null;
     if (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && helped(coding, frame, groups) && dim === DIM) {
@@ -1157,9 +1240,11 @@ function* captureFrameSteps(pixels, width, height, shape, coding, frame, header,
           yield* takeSteps(batch, gpu);
         }
         const [x, y, w, h] = groupRect(layout, width, height, g, dim);
-        const section = groupSection(w, h, coding);
-        append(written ? written[g] : frame ? section({transforms: [], models: alphaModels ? [indexModels[g], alphaModels[g]] : [indexModels[g]]})
-          : groupSections(section, pixels, pStride, px + x, py + y, w, h, shape, coding));
+        append(written ? written[g] : yield* unit('group', () => {
+          const section = groupSection(w, h, coding);
+          return frame ? section({transforms: [], models: alphaModels ? [indexModels[g], alphaModels[g]] : [indexModels[g]]})
+            : groupSections(section, pixels, pStride, px + x, py + y, w, h, shape, coding);
+        }));
         if (frame) { indexModels[g] = null; if (alphaModels) alphaModels[g] = null; }
         if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && gpu) { for (const key of held[g]) gpu.map.delete(key); held[g] = null; }
         yield (g + 1) / groups;
@@ -1197,12 +1282,26 @@ export function captureGroupBytes(pixels, stride, {x, y, width, height}, level, 
   finally { L = outerLevel; tools = outerTools; }
 }
 
+export function captureResumeContext(level, kit, work) {
+  const previous = [L, tools, timing, inner];
+  L = level; tools = kit; timing = null; inner = 0;
+  try { return work(); }
+  finally { [L, tools, timing, inner] = previous; }
+}
+export {channelModel as captureChannelModel, paletteModel as capturePaletteModel,
+  useWeighted as captureUseWeighted, weightedModel as captureWeightedModel,
+  gradientModel as captureGradientModel, pruneCopies as capturePruneCopies};
+export {LITERAL_CONFIGS, DISTANCE_CONFIGS, valueCounts, countTokens, sortedCode, distancePrice, distanceCode, spatialLookup, intervals};
+export {paletteMeta as capturePaletteMeta, rowsBits as captureRowsBits};
+
 function* scaledSteps(steps, start, span) {
   let step, reply;
-  while (!(step = steps.next(reply)).done) {
-    if (typeof step.value === 'number') { yield start + span * step.value; reply = undefined; }
-    else reply = yield step.value;
-  }
+  try {
+    while (!(step = steps.next(reply)).done) {
+      if (typeof step.value === 'number') { yield start + span * step.value; reply = undefined; }
+      else reply = yield step.value;
+    }
+  } finally { if (!step?.done) steps.return(); }
   return step.value;
 }
 
@@ -1225,12 +1324,15 @@ function screenBands(scan, width, height) {
 function* captureSteps(source, imageWidth, imageHeight, colorSpace, coding) {
   const t0 = typeof __RAPIER_JXL_PROBES__ === 'undefined' && coding.timing ? performance.now() : 0;
   if (typeof __RAPIER_JXL_PROBES__ === 'undefined') { timing = coding.timing ?? null; inner = 0; }
-  const words = pixelKeys(source);
-  if (words.buffer === source.buffer) captureHold(words);
+  const words = unread(source) ? null : pixelKeys(source);
+  if (words && words.buffer === source.buffer) captureHold(words);
   try {
     const mode = coding.maxError === 0 && !coding.base ? coding.patches ?? L.patches : false;
-    const peel = (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && mode === 'peel' ? timed('patches', () => capturePeel(source, imageWidth, imageHeight, L.peelLeast ?? 0.03, L.glyph)) : null;
-    if (peel) peel.scan = scanColours(peel.body, imageWidth, 0, 0, imageWidth, imageHeight, PALETTE_LIMIT);
+    const peel = (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && mode === 'peel' ? yield* unit('peel', () => {
+      const found = timed('patches', () => capturePeel(source, imageWidth, imageHeight, L.peelLeast ?? 0.03, L.glyph));
+      if (found) found.scan = scanColours(found.body, imageWidth, 0, 0, imageWidth, imageHeight, PALETTE_LIMIT);
+      return found;
+    }) : null;
     if (!peel) return yield* markSteps(source, imageWidth, imageHeight, colorSpace, coding, mode);
     const peeled = yield* scaledSteps(patchedSteps(source, imageWidth, imageHeight, colorSpace, coding, peel), 0, 1 / 2);
     const outer = ceiling;
@@ -1246,9 +1348,9 @@ function* captureSteps(source, imageWidth, imageHeight, colorSpace, coding) {
 }
 
 function* markSteps(source, imageWidth, imageHeight, colorSpace, coding, mode) {
-  const patches = mode ? timed('patches', () => capturePatches(source, imageWidth, imageHeight, 0.03)) : null;
+  const patches = mode ? yield* unit('patches', () => timed('patches', () => capturePatches(source, imageWidth, imageHeight, 0.03))) : null;
   if (!patches) return yield* pageSteps(source, imageWidth, imageHeight, colorSpace, coding);
-  const alone = imageWidth * imageHeight > SMALL_PICTURE && patches.cover >= 0.045 && onePalette(source, imageWidth, imageHeight);
+  const alone = imageWidth * imageHeight > SMALL_PICTURE && patches.cover >= 0.045 && (yield* unit('one-palette', () => onePalette(source, imageWidth, imageHeight)));
   const patched = yield* scaledSteps(within(patchedSteps(source, imageWidth, imageHeight, colorSpace, coding, patches)), 0, alone ? 1 : 1 / 2);
   if (!patched) return yield* pageSteps(source, imageWidth, imageHeight, colorSpace, coding);
   if (alone && patches.dictionary <= patched.length * 4) return patched;
@@ -1268,15 +1370,20 @@ function onePalette(source, width, height) {
 }
 
 function* patchedSteps(source, width, height, colorSpace, coding, patches) {
-  let scan = scanColours(source, width, 0, 0, width, height, PALETTE_LIMIT);
+  const peeled = (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && patches.peel;
+  let scan = yield* unit('scan', () => {
+    const found = scanColours(source, width, 0, 0, width, height, PALETTE_LIMIT);
+    if (found && !peeled) fillPatches(found.indices, width, patches);
+    return found;
+  });
   const shape = shapeOf(scan ? scan.colours : pixelKeys(source));
-  const header = new BitWriter(128), atlasScan = scanColours(patches.atlas, patches.width, 0, 0, patches.width, patches.height, PALETTE_LIMIT);
+  const header = new BitWriter(128), atlasScan = yield* unit('atlas-scan', () => scanColours(patches.atlas, patches.width, 0, 0, patches.width, patches.height, PALETTE_LIMIT));
   writeHeaderFields(header, width, height, shape.colour, shape.alpha, {colorSpace});
   const atlas = yield* scaledSteps(captureFrameSteps(atlasScan ? null : patches.atlas, patches.width, patches.height, shape, coding, atlasScan,
     header, {frameHeader: (w, shift) => writeAtlasFrameHeader(w, shape.alpha, patches.width, patches.height, shift)}), 0, 1 / 4);
   let pixels = scan ? null : new Uint8Array(source);
-  if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && patches.peel) { pixels = patches.body; scan = patches.scan; if (scan) pixels = null; }
-  else fillPatches(scan ? scan.indices : pixelKeys(pixels), width, patches);
+  if (peeled) { pixels = patches.body; scan = patches.scan; if (scan) pixels = null; }
+  else if (!scan) fillPatches(pixelKeys(pixels), width, patches);
   const body = yield* scaledSteps(captureFrameSteps(pixels, width, height, shape, coding, scan, new BitWriter(64),
     {frameHeader: (w, shift) => writePatchedFrameHeader(w, shape.alpha, shift), prefix: w => writeCapturePatches(w, patches, shape.alpha)}), 1 / 4, 3 / 4);
   return concatenate([atlas, body]);
@@ -1290,10 +1397,19 @@ function* atlasSteps(atlas, width, height, imageWidth, imageHeight, colorSpace, 
     {frameHeader: (w, shift) => writeAtlasFrameHeader(w, false, width, height, shift), ...dim && {dim}});
 }
 
+export function capturePaletteChoice(colours, area, base, channels, repeated) {
+  if (!colours || (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && channels && colours > 1) return 'channels';
+  if (base !== true && area <= SMALL_PICTURE && colours > 512 && colours * 32 <= area) {
+    if (repeated === undefined) return 'repeats';
+    if (repeated * 4 < area) return 'channels';
+  }
+  return colours * 32 > area ? area > SMALL_PICTURE ? 'channels' : 'compare' : 'palette';
+}
+
 function* pageSteps(source, imageWidth, imageHeight, colorSpace, coding) {
-  const crop = coding.oneFrame ? null : timed('crop', () => screenCrop(source, imageWidth, imageHeight));
+  const crop = coding.oneFrame ? null : yield* unit('crop', () => timed('crop', () => screenCrop(source, imageWidth, imageHeight)));
   const width = crop ? crop.width : imageWidth, height = crop ? crop.height : imageHeight;
-  let scan = timed('scan', () => scanColours(source, imageWidth, crop?.x ?? 0, crop?.y ?? 0, width, height, PALETTE_LIMIT, true));
+  let scan = yield* unit('scan', () => timed('scan', () => scanColours(source, imageWidth, crop?.x ?? 0, crop?.y ?? 0, width, height, PALETTE_LIMIT, true)));
   const header = new BitWriter(128);
   if (!crop && !coding.reference && scan?.colours.length === 1) {
     const shape = shapeOf(scan.colours, undefined, coding.base);
@@ -1301,16 +1417,13 @@ function* pageSteps(source, imageWidth, imageHeight, colorSpace, coding) {
     writeScreenBackground(header, imageWidth, imageHeight, shape, source.subarray(0, 4), undefined, true);
     return header.finish();
   }
-  if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && scan && L.channels && scan.colours.length > 1) scan = null;
-  if (scan && coding.base !== true && width * height <= SMALL_PICTURE && scan.colours.length > 512 && scan.colours.length * 32 <= width * height &&
-    repeats(scan.indices, width) * 4 < width * height) scan = null;
-  if (scan && scan.colours.length * 32 > width * height) {
-    if (width * height > SMALL_PICTURE) scan = null;
-    else {
-      const channels = yield* scaledSteps(within(routeSteps(source, imageWidth, imageHeight, colorSpace, coding, header, crop, null)), 0, 1 / 2);
-      const palette = yield* scaledSteps(under(channels, routeSteps(source, imageWidth, imageHeight, colorSpace, coding, new BitWriter(128), crop, scan)), 1 / 2, 1 / 2);
-      return least(channels, palette);
-    }
+  let choice = capturePaletteChoice(scan?.colours.length ?? 0, width * height, coding.base, L.channels);
+  if (choice === 'repeats') choice = capturePaletteChoice(scan.colours.length, width * height, coding.base, L.channels, yield* unit('repeats', () => repeats(scan.indices, width)));
+  if (choice === 'channels') scan = null;
+  if (choice === 'compare') {
+    const channels = yield* scaledSteps(within(routeSteps(source, imageWidth, imageHeight, colorSpace, coding, header, crop, null)), 0, 1 / 2);
+    const palette = yield* scaledSteps(under(channels, routeSteps(source, imageWidth, imageHeight, colorSpace, coding, new BitWriter(128), crop, scan)), 1 / 2, 1 / 2);
+    return least(channels, palette);
   }
   return yield* routeSteps(source, imageWidth, imageHeight, colorSpace, coding, header, crop, scan);
 }
@@ -1332,8 +1445,8 @@ function repeats(indices, width) {
 
 function* routeSteps(source, imageWidth, imageHeight, colorSpace, coding, header, crop, scan) {
   const width = crop ? crop.width : imageWidth, height = crop ? crop.height : imageHeight;
-  const bands = coding.oneFrame ? null : screenBands(scan, width, height);
-  const rare = coding.effort > 3 && !coding.base && (!scan || scan.colours.length > RARE_PALETTE) ? timed('rare', () => rareRegions(source, imageWidth, scan, width, height, crop?.x ?? 0, crop?.y ?? 0)) : null;
+  const bands = coding.oneFrame ? null : yield* unit('bands', () => screenBands(scan, width, height));
+  const rare = coding.effort > 3 && !coding.base && (!scan || scan.colours.length > RARE_PALETTE) ? yield* unit('rare', () => timed('rare', () => rareRegions(source, imageWidth, scan, width, height, crop?.x ?? 0, crop?.y ?? 0))) : null;
   if (L.routes === 'all' || L.routes === 'rare' && width * height <= SMALL_PICTURE)
     return yield* everyRoute(source, imageWidth, imageHeight, colorSpace, coding, crop, scan, bands, rare);
   if (rare && rare.only >= 0.75) {
@@ -1600,16 +1713,16 @@ export function admitCapture(data, width, height, options) {
     throw fault('JXL_INPUT', 'maxError is a whole number from 0 to 8.');
   const tools = options[CAPTURE_TOOLS] ?? CAPTURE_TOOLS_LEAN, effort = options.effort ?? DEFAULT_EFFORT;
   if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fault('JXL_INPUT', 'effort is a whole number from 1 to 9; 3 is the default.');
-  if (effort > tools.top || LEVELS[effort].needs.some(tool => !tools[tool]))
+  const level = options[CAPTURE_LEVEL] ?? LEVELS[effort];
+  if (effort > tools.top || level.needs.some(tool => !tools[tool]))
     throw fault('JXL_UNSUPPORTED', `Capture effort ${effort} is ${tools.next}'s; this module carries efforts 1-${tools.top}.`);
-  const level = LEVELS[effort];
   const {colorSpace} = admitOptions({colorSpace: options.colorSpace});
   admitPixels(data, width, height);
   if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray)) throw fault('JXL_INPUT', 'Captures use straight RGBA8 samples.');
   const base = options[CAPTURE_BASE];
   return {colorSpace, coding: {maxError, onPredictor: typeof __RAPIER_JXL_PROBES__ === 'undefined' ? options[CAPTURE_PREDICTOR_PROBE] : null, base: base === true || base === 'reference',
     oneFrame: !!base || level.oneFrame === true, reference: base === 'reference', timing: typeof __RAPIER_JXL_PROBES__ === 'undefined' ? options[CAPTURE_TIMING] : null, trace: typeof __RAPIER_JXL_PROBES__ === 'undefined' ? options[CAPTURE_TRACE] : null, effort, level, tools,
-    gpu: options[CAPTURE_GPU] === true && level.gpu && tools.gpu ? {pixels: null, map: new Map()} : null, helpers: options[CAPTURE_HELPERS] === true,
+    gpu: (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && options[CAPTURE_GPU] === true && level.gpu && tools.gpu ? {pixels: null, map: new Map()} : null, helpers: options[CAPTURE_HELPERS] === true,
     patches: [false, 'one', 'peel'].includes(options[CAPTURE_PATCHES]) ? options[CAPTURE_PATCHES] : undefined}};
 }
 
@@ -1640,7 +1753,8 @@ export function* encodeAtlasSteps(atlas, width, height, imageWidth, imageHeight,
   idle();
   const {colorSpace, coding} = admitCapture(atlas, width, height, options);
   requireCaptureKernels();
-  return yield* smallestSteps({...coding, pixels: width * height}, c => atlasSteps(atlas, width, height, imageWidth, imageHeight, colorSpace, c, dim), false);
+  const level = coding.tools.trees && coding.level.trees !== 'learned' ? {...coding.level, trees: 'learned'} : coding.level;
+  return yield* smallestSteps({...coding, level, pixels: width * height}, c => atlasSteps(atlas, width, height, imageWidth, imageHeight, colorSpace, c, dim), false);
 }
 export function* captureBandSteps(data, width, rows, {y, imageHeight, imageWidth = width, shape, x = 0, header: withHeader = true, ...options}) {
   idle();
@@ -1669,30 +1783,45 @@ function drain(steps, check = () => {}) {
   } finally { steps.return(); }
 }
 
+export function captureCandidateLevels(coding) {
+  const levels = (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && coding.level.floor ? [LEVELS[2], L3, coding.level] : [coding.level];
+  if (coding.pixels <= SMALL_FLOOR && coding.effort === 3) levels.unshift(LEVELS[2]);
+  if (coding.level.orders) levels.push({...coding.level, morton: true});
+  if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && coding.level.also) levels.push(...coding.level.also);
+  return {levels, own: levels.indexOf(coding.level)};
+}
+
+export function captureCombinedLevel(level, levels, sizes, own) {
+  const won = levels.map((candidate, k) => ({level: candidate, size: sizes[k]}))
+    .filter(c => c.level.delta && c.size < sizes[own]).sort((a, b) => b.size - a.size);
+  return won.length > 1 ? {...level, ...Object.assign({}, ...won.map(c => c.level.delta)), also: undefined, combine: false, combined: true} : null;
+}
+
 function* smallestSteps(coding, run, exactToo) {
   let best = null, bestExact = false;
   stepping = true;
   try {
-    const levels = (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && coding.level.floor ? [LEVELS[2], L3, coding.level] : [coding.level];
-    if (coding.pixels <= SMALL_FLOOR && coding.effort === 3) levels.unshift(LEVELS[2]);
-    if (coding.level.orders) levels.push({...coding.level, morton: true});
-    if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && coding.level.also) levels.push(...coding.level.also);
+    const {levels, own} = captureCandidateLevels(coding);
     const span = 1 / (levels.length + (coding.level.combine ? 1 : 0)) / (exactToo ? 2 : 1), sizes = [];
     for (let i = 0; i < levels.length; i++) {
       const candidate = {...coding, level: levels[i], stepped: false, oneFrame: coding.base === true || levels[i].oneFrame === true}, start = exactToo ? 2 * i * span : i * span;
       L = levels[i]; tools = coding.tools;
-      let bytes = answer(yield* scaledSteps(guarded(run(candidate)), start, span)), kept = !candidate.stepped;
+      const written = yield* stage('candidate', function* () {
+        const file = yield* scaledSteps(guarded(run(candidate)), start, span);
+        return {file, stepped: candidate.stepped};
+      });
+      candidate.stepped = written.stepped;
+      let bytes = answer(written.file), kept = !candidate.stepped;
       if (exactToo && candidate.stepped) {
-        const exact = answer(yield* scaledSteps(guarded(run({...candidate, maxError: 0})), start + span, span));
+        const exact = answer(yield* stage('exact', () => scaledSteps(guarded(run({...candidate, maxError: 0})), start + span, span)));
         if (exact.length <= bytes.length) { bytes = exact; kept = true; }
       }
       sizes[i] = bytes.length;
       if (!best || bytes.length < best.length) { best = bytes; bestExact = kept; }
       yield exactToo ? start + 2 * span : start + span;
       if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && coding.level.combine && i === levels.length - 1 && !levels[i].combined) {
-        const own = sizes[levels.indexOf(coding.level)], won = levels.map((level, k) => ({level, size: sizes[k]}))
-          .filter(c => c.level.delta && c.size < own).sort((a, b) => b.size - a.size);
-        if (won.length > 1) levels.push({...coding.level, ...Object.assign({}, ...won.map(c => c.level.delta)), also: undefined, combine: false, combined: true});
+        const combined = captureCombinedLevel(coding.level, levels, sizes, own);
+        if (combined) levels.push(combined);
       }
     }
   } finally { L = L3; tools = CAPTURE_TOOLS_LEAN; stepping = false; }
@@ -1704,7 +1833,10 @@ export const markCaptureExact = bytes => { exactFiles.add(bytes); return bytes; 
 export const captureExact = bytes => exactFiles.has(bytes);
 function* guarded(steps) {
   let step, reply;
-  while (!(step = guard(() => steps.next(reply))).done) reply = yield step.value;
+  try { while (!(step = guard(() => steps.next(reply))).done) reply = yield step.value; }
+  finally { if (!step?.done) steps.return(); }
   return step.value;
 }
 
+
+export {spatialLookup as captureCopySpatial};

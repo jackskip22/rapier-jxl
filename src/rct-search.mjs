@@ -63,10 +63,10 @@ export function* rctSearchSteps(rgba, width, height, shape, colorSpace) {
   if (best.rct.type === 6) return null;
   const plan = losslessSteps(rgba, width, height, {shape: {...shape, palette: null}, colorSpace, rct: best.rct});
   let step, reply;
-  while (!(step = plan.next(reply)).done) {
+  try { while (!(step = plan.next(reply)).done) {
     const done = step.value;
     reply = yield 0.25 + 0.75 * done;
     if (reply && done < 1) return null;
-  }
+  } } finally { if (!step?.done) plan.return?.(); }
   return step.value;
 }

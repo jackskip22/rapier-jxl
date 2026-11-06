@@ -3,15 +3,15 @@ import {BitWriter} from './bits.mjs';
 import {writeModularFrameHeader, groupLayout, groupRect, assembleCodestream} from './frame.mjs';
 import {writeImageHeader} from './icc-write.mjs';
 import {ALPHABET, leaf, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
-import {sampleTransformRanking} from './sampled.mjs';
 import {colourTransform} from './rct-search.mjs';
+import {transformRanking} from './capture-trees.mjs';
 import {screenPlan, lookupPalette} from './screen.mjs';
 import {screenModel, writeScreenModel} from './screen-lz77.mjs';
 import {admitOutputSize} from './admit.mjs';
 
 function localPlan(rgba, width, height, shape, mode) {
   if (mode === 'direct-ranked' && shape.colour === 3) {
-    const type = sampleTransformRanking(rgba, width, height)[0], transform = colourTransform(type, shape.channels);
+    const type = transformRanking(rgba, width, height)[0], transform = colourTransform(type, shape.channels);
     return {meta: [], count: shape.channels, transforms: [{type: 'rct', beginC: 0, rctType: type}],
       fill: (planes, x, y, w, h) => transform.fill(planes, rgba, width, x, y, w, h)};
   }

@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: MIT
-import {readFile, writeFile, stat, readdir, mkdir, mkdtemp, link, rename, rm, realpath} from 'node:fs/promises';
+import {readFile, writeFile, stat, readdir, mkdir, mkdtemp, link, rm, realpath} from 'node:fs/promises';
 import {basename, dirname, extname, join, relative, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {deflateSync, inflateSync} from 'node:zlib';
 import {fail, dimensions} from './primitives.mjs';
+import {readGifBytes} from './gif-source.mjs';
+import {imageResult, resultJSON} from './result.mjs';
+import {readPNG16} from '../source.mjs';
+import {orientSamples} from '../sample-transforms.mjs';
+export {readGifBytes} from './gif-source.mjs';
 
 const VERSION = typeof __RAPIER_JXL_VERSION__ !== 'undefined' ? __RAPIER_JXL_VERSION__ : '8.0.1';
 
@@ -20,6 +25,7 @@ Options:
   -l, --lossless           Exact lossless encoding (default for JPEG)
   -o, --out <path>         Output file or directory
   -j, --jobs <0-16>        Helper worker threads (default: 0)
+      --verify             Verify each output before writing it
       --json               One JSON line per file, then a summary
   -h, --help               Show this help
   -v, --version            Show version
@@ -94,6 +100,7 @@ export function parseCliArgs(argv) {
     lossless: false,
     out: undefined,
     jobs: 0,
+    verify: false,
     json: false,
   };
   let positionalOnly = false;
@@ -129,6 +136,9 @@ export function parseCliArgs(argv) {
     } else if (flag === '--json') {
       if (inlineValue !== undefined) throw cliError('JXL_OPTIONS', `--json takes no value (got "${arg}").`, 'write --json without a value.');
       options.json = true;
+    } else if (flag === '--verify') {
+      if (inlineValue !== undefined) throw cliError('JXL_OPTIONS', `--verify takes no value (got "${arg}").`, 'write --verify without a value.');
+      options.verify = true;
     } else if (flag === '-l' || flag === '--lossless') {
       if (inlineValue !== undefined) throw cliError('JXL_OPTIONS', `--lossless takes no value (got "${arg}").`, 'write --lossless without a value.');
       options.lossless = true;
@@ -166,7 +176,7 @@ export function parseCliArgs(argv) {
       throw cliError('JXL_OPTIONS', `Unknown option "${flag}".`, `${FLAG_FIXES[flag]}.`);
     } else {
       throw cliError('JXL_OPTIONS', `Unknown option "${flag}".`,
-        'run npx rapier-jxl --help to see supported options (--quality, --effort, --max-bytes, --lossless, --out, --jobs).');
+        'run npx rapier-jxl --help to see supported options (--quality, --effort, --max-bytes, --lossless, --out, --jobs, --verify).');
     }
   }
 
@@ -177,12 +187,13 @@ export function parseCliArgs(argv) {
   return {inputs, options};
 }
 
-let stillMod, jpegMod, decodeMod, animationMod, codecMod;
+let stillMod, jpegMod, decodeMod, animationMod, codecMod, verifyMod;
 const getStill = () => (stillMod ||= import('./index.mjs'));
 const getJpeg = () => (jpegMod ||= import('./jpeg.mjs'));
 const getDecode = () => (decodeMod ||= import('./decode.mjs'));
 const getAnimation = () => (animationMod ||= import('./animation.mjs'));
 const getCodec = () => (codecMod ||= import('./codec.mjs'));
+const getVerify = () => (verifyMod ||= import('./verify.mjs'));
 
 function detectFormat(bytes, filePath = '') {
   if (bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((b, i) => bytes[i] === b)) return 'png';
@@ -415,17 +426,26 @@ function pngColorChunks(decoded) {
   if (decoded.rgbaICC?.length) return [makePngChunk('iCCP', Buffer.concat([Buffer.from('ICC profile\0\0', 'latin1'), deflateSync(decoded.rgbaICC)]))];
   const {colorSpace, transferFunction} = decoded;
   if (colorSpace === undefined && transferFunction === undefined && decoded.rgbaColorEncoding === undefined) return [];
-  if (colorSpace === 'srgb' && transferFunction === 'srgb') return [makePngChunk('sRGB', Buffer.from([0]))];
+  if (colorSpace === 'srgb' && transferFunction === 'srgb') return [makePngChunk('sRGB', Buffer.from([decoded.rgbaColorEncoding?.renderingIntent ?? 1]))];
   if (CICP_PRIMARIES[colorSpace] && CICP_TRANSFER[transferFunction]) return [makePngChunk('cICP', Buffer.from([CICP_PRIMARIES[colorSpace], CICP_TRANSFER[transferFunction], 0, 1]))];
   throw cliError('JXL_UNSUPPORTED', 'PNG cannot state this picture\'s colors.', 'keep it as .jxl, or decode it with rapier-jxl/decode in code.');
 }
 
-export function writePngBytes(decoded) {
+function pngOutput(decoded) {
   let {width, height, data, bitDepth = 8} = decoded;
+  let fidelity = 'exact', kept = 'pixels';
+  const measurements = [];
   if (data instanceof Float32Array) {
     const signal = !decoded.rgbaICC?.length && CICP_PRIMARIES[decoded.colorSpace] && (decoded.transferFunction === 'pq' || decoded.transferFunction === 'hlg');
     if (!signal || data.some(v => !(v >= 0 && v <= 1))) throw cliError('JXL_UNSUPPORTED', 'PNG cannot hold this picture\'s floating-point samples exactly.', 'keep it as .jxl, or decode it with rapier-jxl/decode in code.');
-    data = Uint16Array.from(data, v => Math.round(v * 65535)); bitDepth = 16;
+    let maximum = 0;
+    data = Uint16Array.from(data, value => {
+      const sample = Math.round(value * 65535);
+      maximum = Math.max(maximum, Math.abs(value - sample / 65535));
+      return sample;
+    });
+    bitDepth = 16; fidelity = {maxError: 0.5 / 65535}; kept = 'lossy';
+    measurements.push({metric: 'max-error', score: maximum, limit: fidelity.maxError, domain: 'encoder-reconstruction'});
   }
   const color = pngColorChunks(decoded);
   const depth = bitDepth === 16 && data instanceof Uint16Array ? 16 : 8;
@@ -458,182 +478,19 @@ export function writePngBytes(decoded) {
   ihdr[8] = depth;
   ihdr[9] = 6;
   const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-  return new Uint8Array(Buffer.concat([sig, makePngChunk('IHDR', ihdr), ...color, makePngChunk('IDAT', deflateSync(raw, {level: 6})), makePngChunk('IEND', Buffer.alloc(0))]));
+  return {bytes: new Uint8Array(Buffer.concat([sig, makePngChunk('IHDR', ihdr), ...color, makePngChunk('IDAT', deflateSync(raw, {level: 6})), makePngChunk('IEND', Buffer.alloc(0))])),
+    fidelity, kept, measurements};
 }
+
+export function writePngBytes(decoded) { return pngOutput(decoded).bytes; }
 
 async function jpegPixels(raw, displayIn) {
   const [{recompress}, {decode}] = await Promise.all([getJpeg(), getDecode()]);
-  try { return await decode(await recompress(raw)); }
+  try { return await decode((await recompress(raw)).bytes); }
   catch (error) {
     throw cliError(error?.code || 'JXL_JPEG', `Could not read the JPEG "${displayIn}": ${error?.message || error}`,
       `convert it to PNG first, then run: npx rapier-jxl "${replaceExtension(displayIn, '.png')}"`);
   }
-}
-
-function lzwDecode(minCodeSize, data, pixelCount) {
-  const clearCode = 1 << minCodeSize, eoiCode = clearCode + 1;
-  const out = new Uint8Array(pixelCount);
-  const prefix = new Int32Array(4096), suffix = new Uint8Array(4096), stack = new Uint8Array(4096);
-  let codeSize = minCodeSize + 1, nextCode = eoiCode + 1, codeMask = (1 << codeSize) - 1;
-  let datum = 0, bits = 0, first = 0, oldCode = -1, top = 0, dst = 0, pos = 0;
-  for (let i = 0; i < clearCode; i++) { prefix[i] = -1; suffix[i] = i; }
-  while (dst < pixelCount) {
-    while (bits < codeSize) {
-      if (pos >= data.length) return out;
-      datum |= data[pos++] << bits;
-      bits += 8;
-    }
-    let code = datum & codeMask;
-    datum >>>= codeSize;
-    bits -= codeSize;
-    if (code === clearCode) {
-      codeSize = minCodeSize + 1;
-      codeMask = (1 << codeSize) - 1;
-      nextCode = eoiCode + 1;
-      oldCode = -1;
-      continue;
-    }
-    if (code === eoiCode) break;
-    if (code > nextCode || oldCode === -1 && code >= clearCode) break;
-    if (oldCode === -1) {
-      out[dst++] = suffix[code];
-      oldCode = code;
-      first = code;
-      continue;
-    }
-    const inCode = code;
-    if (code >= nextCode) {
-      stack[top++] = first;
-      code = oldCode;
-    }
-    while (code >= clearCode) {
-      stack[top++] = suffix[code];
-      code = prefix[code];
-    }
-    first = suffix[code];
-    stack[top++] = first;
-    if (nextCode < 4096) {
-      prefix[nextCode] = oldCode;
-      suffix[nextCode] = first;
-      nextCode++;
-      if ((nextCode & codeMask) === 0 && nextCode < 4096) {
-        codeSize++;
-        codeMask = (1 << codeSize) - 1;
-      }
-    }
-    oldCode = inCode;
-    while (top > 0 && dst < pixelCount) out[dst++] = stack[--top];
-  }
-  return out;
-}
-
-export function readGifBytes(bytes, filePath = 'input.gif', maxPixels = 40000000, heldPixels = 1 << 28) {
-  if (bytes.length < 13) throw cliError('JXL_INPUT', `"${filePath}" is truncated.`, `pass a complete GIF file.`);
-  const width = bytes[6] | (bytes[7] << 8), height = bytes[8] | (bytes[9] << 8);
-  dimensions(width, height, maxPixels);
-  const packed = bytes[10];
-  let pos = 13;
-  let globalPalette = null;
-  if (packed & 0x80) {
-    const count = 1 << ((packed & 7) + 1);
-    globalPalette = bytes.subarray(pos, pos + count * 3);
-    pos += count * 3;
-  }
-  const readSubBlocks = () => {
-    const chunks = [];
-    while (pos < bytes.length) {
-      const sz = bytes[pos++];
-      if (!sz) break;
-      chunks.push(bytes.subarray(pos, pos + sz));
-      pos += sz;
-    }
-    const total = chunks.reduce((n, c) => n + c.length, 0);
-    const merged = new Uint8Array(total);
-    let at = 0;
-    for (const c of chunks) { merged.set(c, at); at += c.length; }
-    return merged;
-  };
-  const canvas = new Uint8Array(width * height * 4);
-  const frames = [];
-  let delayMs = 100, transIdx = -1, disposal = 0, loops = 0;
-  while (pos < bytes.length) {
-    const block = bytes[pos++];
-    if (block === 0x3b) break;
-    if (block === 0x21) {
-      const label = bytes[pos++];
-      if (label === 0xf9) {
-        const sz = bytes[pos++];
-        const flags = bytes[pos];
-        disposal = (flags >> 2) & 7;
-        const hasTrans = flags & 1;
-        const delayCs = bytes[pos + 1] | (bytes[pos + 2] << 8);
-        delayMs = Math.max(10, (delayCs || 10) * 10);
-        transIdx = hasTrans ? bytes[pos + 3] : -1;
-        pos += sz + 1;
-      } else if (label === 0xff) {
-        const sub = readSubBlocks();
-        if (sub.length >= 14 && sub[11] === 1) loops = sub[12] | (sub[13] << 8);
-      } else {
-        readSubBlocks();
-      }
-    } else if (block === 0x2c) {
-      const left = bytes[pos] | (bytes[pos + 1] << 8), top = bytes[pos + 2] | (bytes[pos + 3] << 8);
-      const fw = bytes[pos + 4] | (bytes[pos + 5] << 8), fh = bytes[pos + 6] | (bytes[pos + 7] << 8);
-      const fpack = bytes[pos + 8];
-      pos += 9;
-      let pal = globalPalette;
-      if (fpack & 0x80) {
-        const count = 1 << ((fpack & 7) + 1);
-        pal = bytes.subarray(pos, pos + count * 3);
-        pos += count * 3;
-      }
-      if (!pal) throw cliError('JXL_INPUT', `"${filePath}" GIF frame has no color table.`, `re-export "${filePath}".`);
-      if (!fw || !fh || fw * fh > maxPixels) throw cliError('JXL_DIMENSIONS', `"${filePath}" has a ${fw} x ${fh} GIF frame.`, `re-export "${filePath}".`);
-      const minCodeSize = bytes[pos++];
-      if (!(minCodeSize >= 2 && minCodeSize <= 8)) throw cliError('JXL_INPUT', `"${filePath}" is not a valid GIF (LZW code size ${minCodeSize}).`, `re-export "${filePath}".`);
-      if ((frames.length + 1) * Math.max(width * height, 65536) > heldPixels) throw cliError('JXL_LIMIT', `"${filePath}" has more frames than fit in 1 GiB at ${width} x ${height}.`, `shorten or resize it first.`);
-      const lzwData = readSubBlocks();
-      const indices = lzwDecode(minCodeSize, lzwData, fw * fh);
-      const prevCanvas = disposal === 3 ? canvas.slice() : null;
-      const interlaced = !!(fpack & 0x40);
-      const rowOrder = [];
-      if (interlaced) {
-        for (const [start, step] of [[0, 8], [4, 8], [2, 4], [1, 2]]) {
-          for (let y = start; y < fh; y += step) rowOrder.push(y);
-        }
-      }
-      for (let sy = 0; sy < fh; sy++) {
-        const dy = top + (interlaced ? rowOrder[sy] : sy);
-        if (dy >= height) continue;
-        for (let sx = 0; sx < fw; sx++) {
-          const dx = left + sx;
-          if (dx >= width) continue;
-          const idx = indices[sy * fw + sx];
-          if (idx === transIdx) continue;
-          const dst = (dy * width + dx) * 4;
-          canvas[dst] = pal[idx * 3] ?? 0;
-          canvas[dst + 1] = pal[idx * 3 + 1] ?? 0;
-          canvas[dst + 2] = pal[idx * 3 + 2] ?? 0;
-          canvas[dst + 3] = 255;
-        }
-      }
-      frames.push({data: canvas.slice(), duration: delayMs});
-      if (disposal === 2) {
-        for (let sy = 0; sy < fh; sy++) {
-          const dy = top + sy;
-          if (dy < height) canvas.fill(0, (dy * width + left) * 4, (dy * width + Math.min(width, left + fw)) * 4);
-        }
-      } else if (disposal === 3 && prevCanvas) {
-        canvas.set(prevCanvas);
-      }
-      delayMs = 100; transIdx = -1; disposal = 0;
-    } else {
-      break;
-    }
-  }
-  if (!frames.length) throw cliError('JXL_INPUT', `"${filePath}" contains no GIF frames.`, `pass a valid GIF image.`);
-  if (frames.length === 1) return {kind: 'still', picture: {data: frames[0].data, width, height}};
-  return {kind: 'animation', animation: {width, height, loops, frames}};
 }
 
 async function decodeViaRuntime(bytes, format, filePath, maxPixels = 40000000) {
@@ -665,37 +522,20 @@ async function decodeViaRuntime(bytes, format, filePath, maxPixels = 40000000) {
     `convert "${filePath}" to PNG or JPEG first (for example: ffmpeg -i "${filePath}" "${stem}.png"), then run: npx rapier-jxl "${stem}.png"`);
 }
 
-async function encodeUnderMaxBytes(encodeFn, picture, {maxBytes, quality, effort, lossless, filePath}) {
-  if (lossless || quality === 100) {
-    const exact = await encodeFn(picture, {fidelity: 'exact', effort});
-    if (exact.byteLength <= maxBytes) return {bytes: exact, quality: null};
-    throw cliError('JXL_TARGET',
-      `Lossless output for "${filePath}" is ${formatBytes(exact.byteLength)} (${exact.byteLength} B), which exceeds --max-bytes ${maxBytes}.`,
-      `remove --lossless to allow lossy compression under ${formatBytes(maxBytes)}, or raise --max-bytes to at least ${exact.byteLength}.`);
-  }
-  const ceiling = quality ?? 90;
-  const atCeiling = await encodeFn(picture, {fidelity: {quality: ceiling}, effort});
-  if (atCeiling.byteLength <= maxBytes) return {bytes: atCeiling, quality: ceiling};
-
-  const atMin = await encodeFn(picture, {fidelity: {quality: 1}, effort});
-  if (atMin.byteLength > maxBytes) {
-    throw cliError('JXL_TARGET',
-      `Cannot fit "${filePath}" under ${formatBytes(maxBytes)} (${maxBytes} B); smallest output at --quality 1 is ${formatBytes(atMin.byteLength)} (${atMin.byteLength} B).`,
-      `raise --max-bytes to at least ${atMin.byteLength}, or resize "${filePath}" to smaller dimensions before encoding.`);
-  }
-  let bestBytes = atMin, best = 1;
-  let lo = 2, hi = Math.ceil(ceiling) - 1;
+async function fitAnimation(encode, picture, {maxBytes, fidelity, effort}) {
+  const exact = fidelity === 'exact', ceiling = exact ? 100 : fidelity.quality;
+  const first = await encode(picture, {fidelity, effort});
+  if (exact || first.bytes.byteLength <= maxBytes) return first;
+  const lowest = await encode(picture, {fidelity: {quality: 1}, effort});
+  if (lowest.bytes.byteLength > maxBytes) return lowest;
+  let best = lowest, lo = 2, hi = Math.ceil(ceiling) - 1;
   while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    const candidate = await encodeFn(picture, {fidelity: {quality: mid}, effort});
-    if (candidate.byteLength <= maxBytes) {
-      bestBytes = candidate; best = mid;
-      lo = mid + 1;
-    } else {
-      hi = mid - 1;
-    }
+    const quality = (lo + hi) >> 1;
+    const candidate = await encode(picture, {fidelity: {quality}, effort});
+    if (candidate.bytes.byteLength <= maxBytes) { best = candidate; lo = quality + 1; }
+    else hi = quality - 1;
   }
-  return {bytes: bestBytes, quality: best};
+  return best;
 }
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.avif', '.gif']);
@@ -730,30 +570,47 @@ function formatLine(inDisplay, outDisplay, inSize, outSize, note = '') {
 }
 
 async function encodeFile(raw, format, displayIn, options, runner) {
-  const exactPixels = options.lossless || options.quality === 100;
-  const pixels = async (picture, encodeFn = runner.encode) => {
-    if (options.maxBytes !== undefined) {
-      const fitted = await encodeUnderMaxBytes(encodeFn, picture, {maxBytes: options.maxBytes, quality: options.quality, effort: options.effort, lossless: options.lossless, filePath: displayIn});
-      return {...fitted, kept: fitted.quality === null ? 'pixels' : 'lossy'};
+  const fidelity = options.lossless || options.quality === 100 ? 'exact' : {quality: options.quality ?? 90};
+  const produce = (input, engine = runner) => {
+    const settings = {fidelity, effort: options.effort};
+    return options.maxBytes === undefined ? engine.encode(input, settings)
+      : engine.fit ? engine.fit(input, {...settings, maxBytes: options.maxBytes})
+      : fitAnimation(engine.encode, input, {...settings, maxBytes: options.maxBytes});
+  };
+  const pixels = async (picture, engine = runner) => {
+    const result = await produce(picture, engine);
+    if (options.maxBytes !== undefined && result.bytes?.byteLength > options.maxBytes) {
+      return {result: await imageResult(null, {width: result.width, height: result.height}, {
+        owned: true, fidelity: result.fidelity ?? fidelity, format: 'jxl', maxBytes: options.maxBytes,
+        transform: result.transform, readAs: result.readAs,
+      })};
     }
-    const quality = exactPixels ? null : options.quality ?? 90;
-    return {bytes: await encodeFn(picture, {fidelity: quality === null ? 'exact' : {quality}, effort: options.effort}), quality, kept: quality === null ? 'pixels' : 'lossy'};
+    return {result};
   };
   if (format === 'jpeg') {
     if (options.lossless || options.quality === undefined || options.quality === 100) {
       const {recompress} = await getJpeg();
       let exact = null;
       try { exact = await recompress(raw, {effort: options.effort}); } catch (error) { if (error?.code !== 'JXL_JPEG') throw error; }
-      if (exact && (options.maxBytes === undefined || exact.byteLength <= options.maxBytes)) return {bytes: exact, note: 'exact JPEG', kept: 'jpeg-bytes', quality: null};
+      if (exact && (options.maxBytes === undefined || exact.bytes.byteLength <= options.maxBytes)) return {result: exact, note: 'exact JPEG'};
+      if (exact && fidelity === 'exact') return {result: await imageResult(null, {width: exact.width, height: exact.height}, {
+        owned: true, fidelity, format: 'jxl', maxBytes: options.maxBytes,
+      })};
     }
     return pixels(await jpegPixels(raw, displayIn));
   }
-  if (format === 'png') return pixels(readPngBytes(raw, displayIn));
+  if (format === 'png') {
+    try { return {result: await produce(new Blob([raw], {type: 'image/png'}))}; }
+    catch (error) {
+      if (error?.code !== 'JXL_PLATFORM') throw error;
+      return pixels(await orientSamples(await readPNG16(raw, {named: true}), {maxPixels: 40_000_000}));
+    }
+  }
   if (format === 'gif') {
     const decoded = readGifBytes(raw, displayIn);
     if (decoded.kind !== 'animation') return pixels(decoded.picture);
     const {encode} = await getAnimation();
-    return {...await pixels(decoded.animation, encode), note: 'animation'};
+    return {...await pixels(decoded.animation, {encode}), note: 'animation'};
   }
   return pixels(await decodeViaRuntime(raw, format, displayIn));
 }
@@ -761,7 +618,7 @@ async function encodeFile(raw, format, displayIn, options, runner) {
 async function decodeFile(raw, displayIn, outputPath, named) {
   if (extname(outputPath).toLowerCase() !== '.png') {
     const {restore} = await getJpeg();
-    try { return {bytes: await restore(raw), note: 'exact JPEG', kept: 'jpeg-bytes', outputPath}; }
+    try { return {result: await restore(raw), note: 'exact JPEG', outputPath}; }
     catch (error) {
       if (error?.code !== 'JXL_RECONSTRUCTION') throw error;
       if (named) throw cliError('JXL_RECONSTRUCTION', `"${displayIn}" was not made from a JPEG, so it has no JPEG to restore.`,
@@ -769,14 +626,17 @@ async function decodeFile(raw, displayIn, outputPath, named) {
       outputPath = replaceExtension(outputPath, '.png');
     }
   }
-  const {decode} = await getDecode();
-  return {bytes: writePngBytes(await decode(raw)), note: 'decoded', kept: 'pixels', outputPath};
+  const {decode} = await getDecode(), decoded = await decode(raw), {bytes, fidelity, kept, measurements} = pngOutput(decoded);
+  const transform = decoded.frames?.length > 1 ? {width: decoded.width, height: decoded.height, frame: 0} : undefined;
+  return {result: await imageResult(bytes, {width: decoded.width, height: decoded.height}, {
+    owned: true, fidelity, kept, measurements, format: 'png', transform,
+  }), note: 'decoded', outputPath};
 }
 
-async function writeWhole(path, bytes, noClobber) {
+async function writeWhole(path, bytes) {
   await mkdir(dirname(path), {recursive: true});
   const temporary = await mkdtemp(join(dirname(path), '.rapier-jxl-')), file = join(temporary, 'image');
-  try { await writeFile(file, bytes); await (noClobber ? link(file, path) : rename(file, path)); }
+  try { await writeFile(file, bytes); await link(file, path); }
   finally { await rm(temporary, {recursive: true, force: true}); }
 }
 
@@ -786,20 +646,28 @@ async function processSingleTask(task, options, runner) {
   if (!raw.byteLength) throw cliError('JXL_INPUT', `"${displayIn}" is empty.`, 'pass an image file.');
   const format = detectFormat(raw, inputPath);
   if (!format) throw cliError('JXL_INPUT', `"${displayIn}" is not a PNG, JPEG, GIF, WebP, AVIF or JPEG XL file.`, 'pass one of those, for example: npx rapier-jxl photo.png');
-  const record = (outputPath, outputBytes, kept, quality, skipped, note) => ({inputPath, outputPath, inputBytes: raw.byteLength, outputBytes, kept, quality,
-    effort: format === 'jxl' ? null : options.effort, skipped, line: formatLine(displayIn, replaceExtension(task.displayOut, extname(outputPath)), raw.byteLength, outputBytes, note)});
-  const made = format === 'jxl' ? {...await decodeFile(raw, displayIn, task.outputPath, named), quality: null} : {...await encodeFile(raw, format, displayIn, options, runner), outputPath: task.outputPath};
+  const made = format === 'jxl' ? await decodeFile(raw, displayIn, task.outputPath, named)
+    : {...await encodeFile(raw, format, displayIn, options, runner), outputPath: task.outputPath};
+  let verification;
+  const record = (skipped, written) => ({result: made.result, inputPath, outputPath: made.outputPath,
+    inputBytes: raw.byteLength, outputBytes: made.result.bytes?.byteLength ?? 0,
+    effort: format === 'jxl' ? null : options.effort, skipped, written,
+    ...(verification && {verification}),
+    line: formatLine(displayIn, replaceExtension(task.displayOut, extname(made.outputPath)), raw.byteLength,
+      made.result.bytes?.byteLength ?? 0, made.note)});
+  if (!made.result.fits) return record(false, false);
   if (await samePath(made.outputPath, inputPath)) throw cliError('JXL_OPTIONS', `The output "${displayIn}" is the input itself.`, 'pass another --out path.');
-  try { await writeWhole(made.outputPath, made.bytes, !named); }
+  if (options.verify) verification = await (await getVerify()).verify(raw, made.result);
+  try { await writeWhole(made.outputPath, made.result.bytes); }
   catch (error) {
-    if (named || error.code !== 'EEXIST') throw error;
+    if (error.code !== 'EEXIST') throw error;
     const existing = await readFile(made.outputPath).catch(() => null);
     const shownPath = replaceExtension(task.displayOut, extname(made.outputPath));
-    if (!existing || !Buffer.from(made.bytes).equals(existing)) throw cliError('JXL_OPTIONS', `"${shownPath}" already exists.`,
+    if (!existing || !Buffer.from(made.result.bytes).equals(existing)) throw cliError('JXL_OPTIONS', `"${shownPath}" already exists.`,
       `name another file: npx rapier-jxl "${displayIn}" --out "${replaceExtension(shownPath, '')}-${format === 'jxl' && extname(made.outputPath) === '.png' ? 'decoded' : 'restored'}${extname(made.outputPath)}"`);
-    return record(made.outputPath, made.bytes.byteLength, made.kept, made.quality, true, made.note);
+    return record(true, false);
   }
-  return record(made.outputPath, made.bytes.byteLength, made.kept, made.quality, false, made.note);
+  return record(false, true);
 }
 
 async function samePath(a, b) {
@@ -808,7 +676,7 @@ async function samePath(a, b) {
 }
 
 function friendlyError(error) {
-  const code = error?.code || 'JXL_ERROR';
+  const code = error?.code || 'JXL_INTERNAL';
   const at = error?.fix ? String(error.message).lastIndexOf(' Fix: ') : -1;
   if (at >= 0) return {code, message: error.message.slice(0, at), hint: error.fix};
   const message = String(error?.message || error).replace(/\.?$/, '.');
@@ -820,8 +688,8 @@ function friendlyError(error) {
 }
 
 function formatFriendlyError(error) {
-  const {message, hint} = friendlyError(error);
-  return `rapier-jxl: ${message} Fix: ${hint}`;
+  const {code, message, hint} = friendlyError(error);
+  return `rapier-jxl: ${error?.verification ? `${code}: ` : ''}${message} Fix: ${hint}`;
 }
 
 export async function runCli(argv = process.argv.slice(2), io = {}) {
@@ -831,7 +699,7 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
   const started = performance.now(), elapsed = since => Math.round(performance.now() - since);
   let json = argv.some(arg => String(arg) === '--json');
   const emit = value => stdout(JSON.stringify(value));
-  const summary = (results, total, failed, error) => ({type: 'summary', files: total, written: results.filter(r => !r.skipped).length,
+  const summary = (results, total, failed, error) => ({type: 'summary', files: total, written: results.filter(r => r.written).length,
     skipped: results.filter(r => r.skipped).length, failed, inputBytes: results.reduce((n, r) => n + r.inputBytes, 0),
     outputBytes: results.reduce((n, r) => n + r.outputBytes, 0), ms: elapsed(started), ...(error ? {error: friendlyError(error)} : {})});
   const refuse = error => { if (json) emit(summary([], 0, 0, error)); else stderr(formatFriendlyError(error)); return {exitCode: 1, files: []}; };
@@ -875,6 +743,17 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
         tasks.push({inputPath: fullInput, outputPath, displayIn: show(fullInput), displayOut: show(outputPath), named: out !== null && !outIsDir});
       }
     }
+    const counts = new Map();
+    for (const task of tasks) {
+      const key = task.outputPath.toLowerCase();
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    for (const task of tasks) {
+      if (!task.named && extname(task.outputPath).toLowerCase() === '.jxl' && counts.get(task.outputPath.toLowerCase()) > 1) {
+        task.outputPath = join(dirname(task.outputPath), basename(task.inputPath) + '.jxl');
+        task.displayOut = show(task.outputPath);
+      }
+    }
     const seen = new Map();
     for (const task of tasks) {
       const key = task.outputPath.toLowerCase(), other = seen.get(key);
@@ -887,8 +766,10 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
     if (options.jobs > 0) {
       const {createCodec} = await getCodec();
       codecQueue = createCodec({module: 'rapier-jxl', helpers: {count: options.jobs, memoryBytes: Math.max(1, options.jobs) * 512 * 1024 * 1024}});
-      runner = {encode: (picture, encodeOptions) => codecQueue.encode(picture, encodeOptions)};
-    } else runner = {encode: async (picture, encodeOptions) => (await getStill()).encode(picture, encodeOptions)};
+      runner = {encode: (picture, encodeOptions) => codecQueue.encode(picture, encodeOptions),
+        fit: (picture, fitOptions) => codecQueue.fit(picture, fitOptions)};
+    } else runner = {encode: async (picture, encodeOptions) => (await getStill()).encode(picture, encodeOptions),
+      fit: async (picture, fitOptions) => (await getStill()).fit(picture, fitOptions)};
 
     const results = [];
     let next = 0, failed = 0;
@@ -898,12 +779,19 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
         try {
           const result = await processSingleTask(task, options, runner);
           results.push(result);
-          if (!json) stdout(result.line);
-          else emit({type: 'file', input: task.displayIn, output: replaceExtension(task.displayOut, extname(result.outputPath)), inputBytes: result.inputBytes,
-            outputBytes: result.outputBytes, kept: result.kept, quality: result.quality, effort: result.effort, ms: elapsed(begun), skipped: result.skipped});
+          const accepted = result.result.fits;
+          if (!accepted) failed++;
+          if (!json) {
+            if (accepted) stdout(result.line);
+            else stderr(formatFriendlyError(result.result.reason ?? fail('JXL_TARGET', 'The requested output target was not met.')));
+          } else emit({type: 'file', input: task.displayIn, output: replaceExtension(task.displayOut, extname(result.outputPath)),
+            inputBytes: result.inputBytes, outputBytes: result.outputBytes, ...resultJSON(result.result),
+            effort: result.effort, ms: elapsed(begun), skipped: result.skipped, written: result.written,
+            ...(result.verification && {verification: result.verification})});
         } catch (error) {
           failed++;
-          if (json) emit({type: 'file', input: task.displayIn, output: task.displayOut, ms: elapsed(begun), error: friendlyError(error)});
+          if (json) emit({type: 'file', input: task.displayIn, output: task.displayOut, ms: elapsed(begun), error: friendlyError(error),
+            ...(error?.verification && {verification: error.verification})});
           else stderr(tasks.length > 1 ? `${task.displayIn}: ${formatFriendlyError(error)}` : formatFriendlyError(error));
         }
       }
@@ -912,7 +800,8 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
     else if (tasks.length > 1) {
       const totalIn = results.reduce((n, r) => n + r.inputBytes, 0), totalOut = results.reduce((n, r) => n + r.outputBytes, 0);
       const saved = totalIn - totalOut, pct = totalIn > 0 ? Math.abs(saved / totalIn) * 100 : 0;
-      stdout(`${results.length} of ${tasks.length} files: ${formatBytes(totalIn)} -> ${formatBytes(totalOut)} (${saved >= 0 ? '-' : '+'}${pct.toFixed(1)}%)${failed ? `, ${failed} failed` : ''}`);
+      const completed = results.filter(result => result.result.fits).length;
+      stdout(`${completed} of ${tasks.length} files: ${formatBytes(totalIn)} -> ${formatBytes(totalOut)} (${saved >= 0 ? '-' : '+'}${pct.toFixed(1)}%)${failed ? `, ${failed} failed` : ''}`);
     }
     return {exitCode: failed ? 1 : 0, files: results};
   } catch (error) {
