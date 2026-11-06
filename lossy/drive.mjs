@@ -15,7 +15,12 @@ const wd = async (method, path, body) => {
   return j.value;
 };
 
-const session = await wd('POST', '/session', { capabilities: { alwaysMatch: { browserName: process.env.BROWSER_NAME || 'safari' } } });
+// A fresh runner's Safari can time out on the first session; try three times.
+let session;
+for (let attempt = 1; ; attempt++) {
+  try { session = await wd('POST', '/session', { capabilities: { alwaysMatch: { browserName: process.env.BROWSER_NAME || 'safari' } } }); break; }
+  catch (error) { if (attempt === 3) throw error; console.error('session attempt ' + attempt + ': ' + error.message.slice(0, 200)); await new Promise(r => setTimeout(r, 10000)); }
+}
 const id = session.sessionId, caps = session.capabilities;
 try { await wd('POST', `/session/${id}/window/maximize`, {}); } catch {}
 
