@@ -1,0 +1,59 @@
+# Safari lossy native-decode rows (Kodak corpus) — page + worker createImageBitmap vs rapier-jxl decode().
+name: safari-lossy-rows
+on:
+  push:
+    branches: [ci/safari]
+permissions:
+  contents: read
+concurrency:
+  group: rapier-jxl-ci-safari-lossy
+  cancel-in-progress: false
+jobs:
+  safari-lossy:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: lossy
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Versions
+        run: |
+          sw_vers
+          echo "MACOS_VERSION=$(sw_vers -productVersion)" >> "$GITHUB_ENV"
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' /Applications/Safari.app/Contents/Info.plist
+          node --version
+      - name: Verify and extract candidate
+        run: |
+          shasum -a 256 -c rapier-jxl-candidate.tgz.sha256
+          mkdir -p p/cand
+          tar -xzf rapier-jxl-candidate.tgz -C p/cand
+          test -f p/cand/package/dist/decode.mjs
+          test -f p/cand/package/dist/decode.wasm
+          cat PACKAGE.txt
+      - name: Safari WebDriver
+        run: sudo /usr/bin/safaridriver --enable
+      - name: Check
+        run: |
+          # Default: all 144. If CI time is tight, set SUBSET=24 (kodim01–24 q80-e3).
+          nohup python3 -m http.server 8000 --bind 127.0.0.1 > server.log 2>&1 &
+          echo $! > server.pid
+          nohup /usr/bin/safaridriver -p 4444 > driver.log 2>&1 &
+          echo $! > driver.pid
+          sleep 3
+          SUBSET="${SUBSET:-}" node drive.mjs
+          status=$?
+          kill "$(cat server.pid)" "$(cat driver.pid)" 2>/dev/null || true
+          exit $status
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: safari-lossy-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            lossy/results.json
+            lossy/server.log
+            lossy/driver.log
+          retention-days: 1
+          if-no-files-found: warn
