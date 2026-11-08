@@ -2,6 +2,8 @@
 
 JPEG XL in JavaScript and WebAssembly with WebGPU for high efforts.
 
+- 5-10% smaller than libjxl at the same quality.
+- Uploads encode about 1.5x faster than libvips with about 5% smaller files, for the same or higher quality.
 - 47 KB Brotli exact capture.
 - 226 KB Brotli complete capture.
 - 215 KB Brotli upload.
@@ -83,14 +85,14 @@ const smaller = (canvas, rects) => page(canvas, {fidelity: {quality: 92}, ...rec
 - `rects` is `{exactRects, photoRects}`: the areas to keep lossless, such as text, and where the photos are.
 - `rapier-jxl/page-rects` finds both in a page element, for any library that draws one to a canvas.
 - Pages up to 32,767 pixels tall in one file; WebP stops at 16,383. Above 40 MP, raise `maxPixels`.
-- Efforts 6–9 check photos with the browser's own JPEG XL decoding. In Node, Deno, Bun and desktop apps, the one setup
+- Efforts 6–9 check photo quality with the browser's JPEG XL decoder. In Node, Deno, Bun and desktop apps, the one setup
   step is `configureDecoder(decode)`, with `decode` from `rapier-jxl/decode`.
 
 | Effort | `capture-complete` |
 |---|---|
 | 1–3 | Fast. 3 is the default, 2 for quick saves, 1 for live previews. |
-| 4–5 | Deeper search: smaller text and graphics. Photos keep their predicted look. |
-| 6–9 | Each photo's look measured, and the smallest file that has it. 7–9 also search block sizes. |
+| 4–5 | Deeper search: smaller text, graphics and photos without quality loss. |
+| 6–9 | Automatically finds the smallest file at the quality you choose. 7–9 also search block sizes. |
 
 ## JPEG, decoding, metadata
 
@@ -105,7 +107,7 @@ const pixels = async file => decode(file); // {width, height, data}, RGBA
 const size = file => header(file); // synchronous, from a file or its first bytes
 ```
 
-`rapier-jxl/svg-jxl` converts the images inside any SVG to JPEG XL where that makes them smaller, keeping text and shapes as they are.
+`rapier-jxl/svg-jxl` converts the images inside any SVG to JPEG XL where that makes them smaller while automatically keeping shapes and text sharp.
 `{exact: true}` keeps the images lossless.
 
 ## Serving
@@ -177,8 +179,11 @@ try {
 - Content Security Policy: `'wasm-unsafe-eval'`; `worker-src blob:` for `rapier-jxl/codec` from a CDN.
 - Every module needs WebAssembly with SIMD (`JXL_WASM` without it), except `restore` and `metadata`.
 - Without native JPEG XL: `import 'rapier-jxl/polyfill'`.
-- Vite: `worker: {format: 'es'}`. webpack 5, Parcel, Angular and Next.js work as is. Next.js edge routes: import
-  modules directly, not `rapier-jxl/codec`.
+- Vite: `worker: {format: 'es'}`. webpack 5 and Next.js work as is. Next.js edge routes: import modules directly,
+  not `rapier-jxl/codec`.
+- Parcel: in `package.json`, set `"@parcel/resolver-default": {"packageExports": true}`.
+- Angular: add `{"glob": "*.{worker,helper}.mjs", "input": "node_modules/rapier-jxl/dist", "output": "/"}` to the
+  build's `assets` in `angular.json`.
 - Rollup: `@web/rollup-plugin-import-meta-assets` with `assetFileNames: 'assets/[name][extname]'`.
 - esbuild: copy `rapier-jxl/dist/*.worker.mjs` and `*.helper.mjs` beside the bundle.
 
