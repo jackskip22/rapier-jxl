@@ -63,7 +63,7 @@ Takes RGBA `{data, width, height}`, `ImageData`, a canvas (2D, WebGL or WebGPU),
 `Blob`, a decoded image or a GPU texture `{texture, device}`, and returns a result record with the output in `result.bytes`. 8 or 16-bit, `Float16Array`
 or `Float32Array` samples, including HDR. For animations, use `rapier-jxl/animation`.
 
-- Lossless JPEG recompression is `recompress` from `rapier-jxl/jpeg` (or `rapier-jxl/upload`); `encode` takes pixels.
+- Lossless JPEG recompression is `recompress` from `rapier-jxl/jpeg`; in `rapier-jxl/upload`, `encode(jpegFile, {fidelity: 'exact'})` does the same. The full `encode` takes pixels.
 - `fidelity`: `{quality: 1–100}`, default 90. `'exact'` is lossless.
 - `effort`: 1–9, default 7. Lower is faster; 1–3 suit previews and uploads, 8–9 photography.
 - `webgpu`: efforts 7–9 use WebGPU when available. `'required'` fails without it; `false` turns it off.
