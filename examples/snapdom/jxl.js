@@ -27,8 +27,8 @@ export function jxl({ module = 'rapier-jxl/capture-complete', codec, effort: pre
         const area = { x: clip?.x, y: (clip?.y ?? 0) + up, width: clip?.width ?? context.meta?.w0, height: clip?.height ?? context.meta?.h0 };
         // Below 1:1: page-rects maps text boxes through the drawn scale (outward whole pixels) so
         // glyphs stay exact; photos still take the quality. A canvas-limit scale with no photos stays exact.
-        // When photos remain, measure scaled-boxes vs R49 whole-exact and keep the smaller file
-        // (same one-job hooks / abort-checked finish as keepSmaller) so E2 never writes larger.
+        // When photos remain, measure scaled boxes against the whole page exact and keep the smaller file
+        // (same one-job hooks and abort-checked finish as keepSmaller), so the export never writes larger.
         const naturalW = area.width ?? shot?.box.width, naturalH = area.height ?? shot?.box.height;
         const below = !!(shot && naturalW && naturalH && (canvas.width < naturalW || canvas.height < naturalH));
         let rects = quality < 1 && module !== 'rapier-jxl/capture' && shot
@@ -41,7 +41,7 @@ export function jxl({ module = 'rapier-jxl/capture-complete', codec, effort: pre
         const hooks = { signal, onProgress, onEncoded: record => { exact = record?.exact; onEncoded?.(record); } };
         let file;
         if (below && rects) {
-          // Candidate A: scaled exactRects + photo quality. Candidate B: R49 whole-exact.
+          // Candidate A: scaled exactRects + photo quality. Candidate B: the whole page exact.
           file = await captureKeepSmallerJobs(encoder, canvas, base, [
             { fidelity: photo, ...rects },
             { fidelity: 'exact' },

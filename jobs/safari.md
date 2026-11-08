@@ -2,7 +2,7 @@
 
 **Need:** shipped Safari 26.0 or 26.1 on a Mac, iPhone, or iPad. Use the actual browser, with its normal settings.
 
-**Package:** `rapier-jxl@8.3.0`, loaded from jsDelivr with checked hashes. **Time:** about a minute; stops after two minutes.
+**Package:** `rapier-jxl@8.3.1`, loaded from jsDelivr with checked hashes. **Time:** about a minute; stops after two minutes.
 
 1. [Open the check](https://rapier.website/docs/jxl-job.html?job=safari) in Safari.
 2. Check the full browser version, enter the OS version and device model, and press **Run**. Keep the page in front.

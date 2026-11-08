@@ -3,7 +3,7 @@ import {exactLog, exactPow} from './exact-math.mjs';
 
 export function fieldValues(d, field, raw, active, aim, gamma, gammaDown, min, max, from, to) {
   for (let b = from; b < to; b++) if (!active || active[b])
-    raw[b] = Math.max(min, Math.min(max, field[b] * exactPow(Math.max(1e-3, d[b]) / aim, d[b] > aim ? gamma : gammaDown)));
+    raw[b] = Math.max(min, Math.min(max, field[b] * exactPow(Math.max(1e-3, d[b] / aim), d[b] > aim ? gamma : gammaDown)));
 }
 export function fieldLogSum(raw, active, from, to, sum = 0) {
   for (let b = from; b < to; b++) if (!active || active[b]) sum += exactLog(raw[b]);
@@ -37,7 +37,7 @@ export function distanceBounds(d, doubt, active, low, high, from, to) {
 export function fieldRangeValues(dLow, dHigh, field, active, low, high, aimLo, aimHi, gamma, gammaDown, min, max, from, to) {
   const clamp = value => Math.max(min, Math.min(max, value));
   for (let b = from; b < to; b++) if (!active || active[b]) {
-    const lowRatio = Math.max(1e-3, dLow[b]) / aimHi, highRatio = Math.max(1e-3, dHigh[b]) / aimLo;
+    const lowRatio = Math.max(1e-3, dLow[b] / aimHi), highRatio = Math.max(1e-3, dHigh[b] / aimLo);
     const es = dHigh[b] <= aimLo ? [gammaDown] : dLow[b] > aimHi ? [gamma] : [gamma, gammaDown];
     low[b] = clamp(field[b] * Math.min(...es.map(e => exactPow(lowRatio, e))));
     high[b] = clamp(field[b] * Math.max(...es.map(e => exactPow(highRatio, e))));
@@ -45,7 +45,7 @@ export function fieldRangeValues(dLow, dHigh, field, active, low, high, aimLo, a
 }
 export function centralLogSum(d, field, aim, gamma, gammaDown, min, max, from, to, sum = 0) {
   const clamp = value => Math.max(min, Math.min(max, value));
-  for (let b = from; b < to; b++) sum += exactLog(clamp(field[b] * exactPow(Math.max(1e-3, d[b]) / aim, d[b] > aim ? gamma : gammaDown)));
+  for (let b = from; b < to; b++) sum += exactLog(clamp(field[b] * exactPow(Math.max(1e-3, d[b] / aim), d[b] > aim ? gamma : gammaDown)));
   return sum;
 }
 export function intervalLogSums(low, high, active, from, to, sl = 0, sh = 0) {

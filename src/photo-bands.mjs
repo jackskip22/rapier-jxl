@@ -2,6 +2,9 @@
 import {complete} from './bits.mjs';
 import {photoXYBSteps} from './photo-xyb.mjs';
 import {offloading, offloadWorkers, sharing, shareable} from './offload.mjs';
+import {journaling, unit} from './step-journal.mjs';
+
+const CAPTURE_PHOTO = typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true;
 
 export const PHOTO_BAND_MARGIN = 8;
 
@@ -45,7 +48,7 @@ function bandTarget(width, height, nonZero) {
 export function* photoFastBands(data, width, height, quality, options) {
   const bandHeight = Math.max(64, Math.floor(262144 / width / 64) * 64), bands = [];
   const target = bandTarget(width, height, true);
-  for (let y = 0; y < height; y += bandHeight) bands.push({kind: 'fast-band', data, width, h: Math.min(bandHeight, height - y), quality, y, target});
+  for (let y = 0; y < height; y += bandHeight) bands.push({kind: 'fast-band', data, width, h: Math.min(bandHeight, height - y), quality, y, target, small: !!options.smallFloor});
   yield {offload: 'prefetch', tasks: bands, at: done => done};
   let image;
   for (const band of bands) {
@@ -58,23 +61,25 @@ export function* photoFastBands(data, width, height, quality, options) {
 }
 
 export function* photoXYBBands(data, width, height, quality, options, color) {
-  color = offloading() ? color : undefined;
+  color = (!CAPTURE_PHOTO && offloading()) ? color : undefined;
   if (!color) {
-    const whole = photoXYBBand(data, width, height, quality, options, 0, true);
+    const whole = journaling() ? yield* unit('picture-whole', () => photoXYBBand(data, width, height, quality, options, 0, true))
+      : photoXYBBand(data, width, height, quality, options, 0, true);
     if (whole) { yield 1; return whole; }
   }
-  const serial = Math.max(64, Math.floor(1048576 / width / 64) * 64), rounds = Math.ceil(Math.ceil(height / serial) / offloadWorkers());
+  const serial = Math.max(64, Math.floor((journaling() ? 262144 : 1048576) / width / 64) * 64), rounds = Math.ceil(Math.ceil(height / serial) / offloadWorkers());
   const bandHeight = color ? Math.max(64, Math.ceil(height / (rounds * offloadWorkers()) / 64) * 64) : serial, bands = [], target = color && bandTarget(width, height, false);
   for (let y = 0; y < height; y += bandHeight) {
     const h = Math.min(bandHeight, height - y);
-    bands.push({kind: 'band', data, width, h, quality, color, fast: !!options.fastGaborish, uploadProfile: options.calibrationRow === 'upload', uploadFlat: options.calibrationRow === false, from: Math.max(0, y - PHOTO_BAND_MARGIN), to: Math.min(height, y + h + PHOTO_BAND_MARGIN), y, target});
+    bands.push({kind: 'band', data, width, h, quality, color, fast: !!options.fastGaborish, uploadProfile: options.calibrationRow === 'upload', uploadFlat: options.calibrationRow === false, uploadGrain: !!options.uploadGrain, small: !!options.smallFloor, from: Math.max(0, y - PHOTO_BAND_MARGIN), to: Math.min(height, y + h + PHOTO_BAND_MARGIN), y, target});
   }
   if (color) yield {offload: 'prefetch', tasks: bands, at: done => done};
   let image, opaque = true, counted = true;
   if (target) for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) { opaque = false; break; }
   for (const band of bands) {
     const {h, from, to, y} = band, remote = color && (yield {offload: 'run', task: band, at: () => y / height});
-    const result = remote ? {...remote, colorSpace: options.space ?? 'srgb'} : photoXYBBand(data.subarray(from * width * 4, to * width * 4), width, h, quality, options, y - from);
+    const made = () => photoXYBBand(data.subarray(from * width * 4, to * width * 4), width, h, quality, options, y - from);
+    const result = remote ? {...remote, colorSpace: options.space ?? 'srgb'} : journaling() ? yield* unit('picture-band', made, undefined, false) : made();
     counted &&= !remote && !!result.nonZero;
     const first = !image;
     image = appendPhotoBand(image, result, width, height, y, data, undefined, target);

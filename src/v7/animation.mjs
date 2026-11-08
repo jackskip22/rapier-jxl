@@ -1,4 +1,5 @@
 import {resultOperation, resultReference, resultFacts, RAW_OPERATION} from './result-operation.mjs';
+import {PREVIEW, previewCall} from './preview.mjs';
 import {encodeAnimationJob} from '../animation-steps.mjs';
 import {useMeasuredSearch} from '../animation-frames.mjs';
 import {searchV6} from '../photo-v6-search.mjs';
@@ -14,8 +15,7 @@ import {encode as encodeStill} from './still.mjs';
 import {DRIVE} from './drive.mjs';
 import {featureless} from './first-region-option.mjs';
 import {animationPhoto} from './animation-photo.mjs';
-export {supported, configureWasm} from './still.mjs';
-export {capture, prepare, configureDecoder} from './with-capture.mjs';
+export {supported, configureWasm, prepare} from './still.mjs';
 
 const read = input => isPlainRecord(input) && isDecoded(input) ? fromDecoded(input) : input;
 const admitted = input => { try { return {input: read(input)}; } catch (error) { return {refused: Promise.reject(declared(error))}; } };
@@ -28,7 +28,7 @@ const encodeBytes = (input, options) => {
 };
 encodeBytes[DRIVE] = (input, options, helpers) => { const {input: picture, refused} = admitted(input); if (refused) return refused; input = picture; return Array.isArray(input?.frames) ? encodeBytes(input, options) : encodeStill[RAW_OPERATION][DRIVE](input, options, helpers); };
 
-export const encode = resultOperation(encodeBytes);
+export const encode = resultOperation(encodeBytes, {preview: previewCall});
 export {resultJSON} from './result.mjs';
 async function animate(input, options = {}) {
   options = featureless(options);
@@ -41,7 +41,8 @@ async function animate(input, options = {}) {
   const animation = own(read, maxPixels), codec = {...described(animation), ...settings};
   resultReference(options, animation);
   const report = options.onProgress, onProgress = progressOf(report, options.signal);
-  const hooks = {signal: options.signal ?? new AbortController().signal, onProgress, maxPixels};
+  const hooks = {signal: options.signal ?? new AbortController().signal, onProgress, maxPixels,
+    ...(options[PREVIEW] && {preview: options[PREVIEW]})};
   if (webgpu === 'required') await requireWebGPU('required', codec.quality < 100, codec.effort);
   await acceleration(webgpu, 0, 0, codec.quality < 100 ? codec.effort : 0, 'an animation');
   check(hooks.signal);

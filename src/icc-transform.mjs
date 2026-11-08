@@ -1,19 +1,21 @@
 // SPDX-License-Identifier: MIT
 
 import {ln, power, OPSIN, inverse, times} from './color-transform.mjs';
+import {stage, unit, readEach, unread} from './step-journal.mjs';
 export {P3_TRANSFORM, linearFromTransform, linearFromTransformPlanes} from './color-transform.mjs';
 
 const s15 = (view, at) => view.getInt32(at) / 65536;
 
-function curveOf(view, offset, length) {
+function curveOf(view, offset, length, samples) {
   const type = String.fromCharCode(view.getUint8(offset), view.getUint8(offset + 1), view.getUint8(offset + 2), view.getUint8(offset + 3));
   if (type === 'curv') {
     const n = view.getUint32(offset + 8);
     if (12 + n * 2 > length) return null;
     if (n === 0) return x => x;
     if (n === 1) { const g = view.getUint16(offset + 12) / 256; return x => power(x, g); }
-    const table = Float64Array.from({length: n}, (_, i) => view.getUint16(offset + 12 + i * 2) / 65535);
-    return x => { const p = x * (n - 1), i = Math.min(n - 2, Math.floor(p)); return table[i] + (table[i + 1] - table[i]) * (p - i); };
+    const table = samples ? samples(offset + 12, n) : Float64Array.from({length: n}, (_, i) => view.getUint16(offset + 12 + i * 2) / 65535);
+    const get = samples ? table : i => table[i];
+    return x => { const p = x * (n - 1), i = Math.min(n - 2, Math.floor(p)), a = get(i); return a + (get(i + 1) - a) * (p - i); };
   }
   if (type === 'para') {
     const form = view.getUint16(offset + 8), count = [1, 3, 4, 5, 7][form];
@@ -34,17 +36,31 @@ const SRGB_FROM_D50 = /* @__PURE__ */ inverse(SRGB_D50);
 const LCMS_SRGB_D50 = [0.436041251616, 0.385112910798, 0.143045837586, 0.222484540229, 0.716905078608, 0.060610381162, 0.013920187471, 0.097067238697, 0.713912573832];
 const LCMS_SRGB_FROM_D50 = /* @__PURE__ */ inverse(LCMS_SRGB_D50);
 
+const textOf = view => at => String.fromCharCode(view.getUint8(at), view.getUint8(at + 1), view.getUint8(at + 2), view.getUint8(at + 3));
+function matrixHead(view) {
+  const text = textOf(view), space = text(16);
+  return (space === 'RGB ' || space === 'GRAY') && text(20) === 'XYZ ' ? {space, count: view.getUint32(128)} : null;
+}
+function matrixTags(view, count, tags, at = 132) {
+  const text = textOf(view);
+  for (let i = 0; i < count; i++, at += 12) {
+    const name = text(at), offset = view.getUint32(at + 4), length = view.getUint32(at + 8);
+    if (['rXYZ','gXYZ','bXYZ','rTRC','gTRC','bTRC','kTRC','A2B0','A2B1','A2B2'].includes(name)) tags.set(name, {offset, length});
+  }
+  return tags;
+}
+function colorant(view, offset, length) {
+  return length < 20 || textOf(view)(offset) !== 'XYZ ' ? null : [s15(view, offset + 8), s15(view, offset + 12), s15(view, offset + 16)];
+}
+const columnsXYZ = columns => [columns[0][0], columns[1][0], columns[2][0], columns[0][1], columns[1][1], columns[2][1], columns[0][2], columns[1][2], columns[2][2]];
+const readOrNull = run => { try { return run(); } catch (error) { if (unread(error)) throw error; return null; } };
+
 function readMatrixShaper(icc) {
-  try {
+  return readOrNull(() => {
     if (!icc || icc.length < 132) return null;
-    const view = new DataView(icc.buffer, icc.byteOffset, icc.byteLength), text = at => String.fromCharCode(icc[at], icc[at + 1], icc[at + 2], icc[at + 3]);
-    const space = text(16);
-    if ((space !== 'RGB ' && space !== 'GRAY') || text(20) !== 'XYZ ') return null;
-    const tags = new Map();
-    for (let i = 0, count = view.getUint32(128); i < count; i++) {
-      const at = 132 + i * 12;
-      tags.set(text(at), {offset: view.getUint32(at + 4), length: view.getUint32(at + 8)});
-    }
+    const view = new DataView(icc.buffer, icc.byteOffset, icc.byteLength), head = matrixHead(view);
+    if (!head) return null;
+    const {space, count} = head, tags = matrixTags(view, count, new Map());
     if (tags.has('A2B0') || tags.has('A2B1') || tags.has('A2B2')) return null;
     const curve = name => {
       const tag = tags.get(name);
@@ -57,21 +73,74 @@ function readMatrixShaper(icc) {
     }
     const columns = ['rXYZ', 'gXYZ', 'bXYZ'].map(name => {
       const tag = tags.get(name);
-      if (!tag || tag.length < 20 || text(tag.offset) !== 'XYZ ') return null;
-      return [s15(view, tag.offset + 8), s15(view, tag.offset + 12), s15(view, tag.offset + 16)];
+      return tag ? colorant(view, tag.offset, tag.length) : null;
     });
     const curves = ['rTRC', 'gTRC', 'bTRC'].map(curve);
     if (columns.includes(null) || curves.includes(null)) return null;
-    return {gray: false, tables: curves.map(table), curves, xyz: [columns[0][0], columns[1][0], columns[2][0], columns[0][1], columns[1][1], columns[2][1], columns[0][2], columns[1][2], columns[2][2]]};
-  } catch (_) { return null; }
+    return {gray: false, tables: curves.map(table), curves, xyz: columnsXYZ(columns)};
+  });
 }
 
 export function profileTransform(icc) {
-  const profile = readMatrixShaper(icc);
+  return matrixTransform(readMatrixShaper(icc));
+}
+function matrixTransform(profile) {
   if (!profile) return null;
   if (profile.gray) return {gray: true, tables: profile.tables, lms: Float64Array.from(OPSIN)};
   const lms = times(OPSIN, times(SRGB_FROM_D50, profile.xyz));
   return lms.every(Number.isFinite) ? {gray: false, tables: profile.tables, lms: Float64Array.from(lms)} : null;
+}
+
+export function* profileTransformSteps(icc) {
+  const viewOf = bytes => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return yield* stage('verify-profile-transform', function* () {
+    const head = yield* unit('verify-profile-header', () => readOrNull(() => icc?.length >= 132 ? matrixHead(viewOf(icc.subarray(0, 132))) : null));
+    if (!head) return null;
+    const tags = new Map();
+    for (let first = 0; first < head.count; first += 4096) {
+      const rows = yield* unit('verify-profile-tags', () => readOrNull(() => matrixTags(viewOf(icc.subarray(132 + first * 12,
+        132 + Math.min(head.count, first + 4096) * 12)), Math.min(4096, head.count - first), new Map(), 0)));
+      if (!rows) return null;
+      for (const [name, tag] of rows) tags.set(name, tag);
+    }
+    if (tags.has('A2B0') || tags.has('A2B1') || tags.has('A2B2')) return null;
+    const gray = head.space === 'GRAY';
+    const xyz = gray ? null : yield* unit('verify-profile-colorants', () => readOrNull(() => {
+      const columns = readEach(['rXYZ', 'gXYZ', 'bXYZ'].map(name => () => {
+        const tag = tags.get(name);
+        return tag ? colorant(viewOf(icc.subarray(tag.offset, tag.offset + Math.min(tag.length, 20))), 0, tag.length) : null;
+      }));
+      return columns.includes(null) ? null : columnsXYZ(columns);
+    }));
+    if (!gray && !xyz) return null;
+    const tables = [];
+    for (const name of gray ? ['kTRC'] : ['rTRC', 'gTRC', 'bTRC']) {
+      const tag = tags.get(name); if (!tag) return null;
+      const prefix = yield* unit('verify-profile-curve', () => readOrNull(() => icc.subarray(tag.offset, tag.offset + Math.min(tag.length, 40))));
+      if (!prefix) return null;
+      const pieces = [];
+      for (let first = 0; first < 256; first += 32) {
+        const values = yield* unit('verify-profile-samples', () => readOrNull(() => {
+          const fn = curveOf(viewOf(prefix), 0, tag.length, offset => {
+            const base = tag.offset + offset;
+            let start = -1, window;
+            return i => {
+              const at = base + i * 2, from = base + Math.floor(i * 2 / 65536) * 65536;
+              if (from !== start) { window = viewOf(icc.subarray(from, Math.min(icc.length, from + 65536))); start = from; }
+              return window.getUint16(at - start) / 65535;
+            };
+          });
+          return fn ? Float64Array.from(readEach(Array.from({length: 32}, (_, i) => () => Math.max(0, Math.min(1, fn((first + i) / 255)))))) : null;
+        }));
+        if (!values) return null;
+        pieces.push(values);
+      }
+      tables.push(pieces);
+    }
+    return yield* unit('verify-profile-result', () => matrixTransform({gray, xyz, tables: tables.map(pieces => {
+      const table = new Float64Array(256); pieces.forEach((piece, i) => table.set(piece, i * 32)); return table;
+    })}));
+  });
 }
 
 export function linearSrgbProfile(icc) {

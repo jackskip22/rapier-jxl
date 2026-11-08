@@ -1,13 +1,13 @@
 import {wasmBytes} from '../wasm-text.mjs';
 import {decodeBands} from '../decode-parallel.mjs';
-import {decodeOptions} from '../decode-image.mjs';
+import {decodeOptions, openImageSteps} from '../decode-image.mjs';
 import {PUBLIC_DECODE_LIMITS, decodeLimits} from './decode-limits.mjs';
 import {addPart} from '../decode-parts.mjs';
 import {readFeatures, applyPatches, applySplines, applyNoise} from '../decode-features.mjs';
-import {readICC} from '../decode-icc.mjs';
+import {readICC, readICCSteps} from '../decode-icc.mjs';
 import {readICCColor} from '../decode-color-icc.mjs';
 import {upsamplePlane} from '../decode-upsample.mjs';
-import {decompressBrotli} from '../decode-brotli.mjs';
+import {decompressBrotli, decompressBrotliSteps} from '../decode-brotli.mjs';
 import {readModularTransforms, inverseModularTransforms} from '../decode-modular-transforms.mjs';
 import {brotliDictionary} from '../brotli-dictionary.mjs';
 import {compileWasm} from '../wasm-modules.mjs';
@@ -21,8 +21,8 @@ import {copyBytes, encodedByteLength} from './bytes.mjs';
 import {admitRegion} from './region.mjs';
 export {configureWasm} from '../wasm-modules.mjs';
 
-addPart('features', {readFeatures, applyPatches, applySplines, applyNoise}); addPart('icc', {readICC}); addPart('iccColor', {readICCColor});
-addPart('upsample', {upsamplePlane}); addPart('brotli', {decompressBrotli}); addPart('transforms', {readModularTransforms, inverseModularTransforms});
+addPart('features', {readFeatures, applyPatches, applySplines, applyNoise}); addPart('icc', {readICC, readICCSteps}); addPart('iccColor', {readICCColor});
+addPart('upsample', {upsamplePlane}); addPart('brotli', {decompressBrotli, decompressBrotliSteps}); addPart('transforms', {readModularTransforms, inverseModularTransforms});
 
 const compileKernels = () => compileWasm('decode', () => wasmBytes(DECODE_KERNELS));
 export async function prepare() {
@@ -81,13 +81,32 @@ function admitDecode(options) {
   return given;
 }
 export const decode = (input, options) => decodeHere(input, options).catch(error => { throw error === options?.signal?.reason ? error : declared(error); });
-async function decodeHere(input, options) {
+const limitsOf = bounds => decodeOptions({...bounds, ...decodeLimits(bounds), maxPixels: pixelLimit(bounds.maxPixels, LARGEST), dictionary: brotliDictionary});
+decode[Symbol.for('rapier-jxl.verify.groups')] = Object.freeze({
+  *open(input, options = {}) {
+    bytes(input); const limits = {...limitsOf(admitDecode(options)), borrowed: true};
+    if (input.length > limits.maxInputBytes) throw fail('JXL_LIMIT', 'Encoded input exceeds maxInputBytes.');
+    try { return yield* openImageSteps(input, limits); } catch (error) { throw declared(error); }
+  },
+  region(input, options, opened) {
+    if (!options?.region) return Promise.reject(fail('JXL_OPTIONS', 'A bounded verification decode needs its region.'));
+    if (!opened) return Promise.reject(fail('JXL_INTERNAL', 'A bounded verification region needs its opened image.'));
+    return decodeHere(input, options, opened).catch(error => { throw error === options?.signal?.reason ? error : declared(error); });
+  },
+});
+async function decodeHere(input, options, opened = null) {
   const {signal, onProgress, ...bounds} = admitDecode(options);
   check(signal);
   if (onProgress !== undefined && typeof onProgress !== 'function') throw fail('JXL_OPTIONS', 'onProgress is a function.');
-  const limits = decodeOptions({...bounds, ...decodeLimits(bounds), maxPixels: pixelLimit(bounds.maxPixels, LARGEST), dictionary: brotliDictionary});
+  const limits = limitsOf(bounds);
+  const borrowed = opened !== null;
+  if (borrowed) limits.borrowed = true;
   let owned;
-  if (typeof Blob !== 'undefined' && input instanceof Blob) {
+  if (borrowed) {
+    bytes(input);
+    if (input.length > limits.maxInputBytes) throw fail('JXL_LIMIT', 'Encoded input exceeds maxInputBytes.');
+    owned = input;
+  } else if (typeof Blob !== 'undefined' && input instanceof Blob) {
     if (input.size > limits.maxInputBytes) throw fail('JXL_LIMIT', 'Encoded input exceeds maxInputBytes.');
     owned = new Uint8Array(await input.arrayBuffer()); check(signal);
   } else {
@@ -97,12 +116,12 @@ async function decodeHere(input, options) {
   bytes(owned);
   const target = limits.colorSpace ?? 'original';
   if (target !== 'original') {
-    let transfer; try { transfer = header(owned).colorEncoding?.transferFunction; } catch {}
+    let transfer; try { transfer = (opened?.h ?? header(owned)).colorEncoding?.transferFunction; } catch {}
     if (HDR.includes(transfer)) throw fail('JXL_UNSUPPORTED', "Converting HDR (PQ or HLG) is not offered in this version; decode with colorSpace 'original'.");
   }
   await prepare();
   check(signal);
-  const result = decodeBands(owned, limits);
+  const result = decodeBands(owned, limits, opened);
   if (limits.region) result.region = {...limits.region};
   Object.assign(result, decodedFields(result));
   publicDecoded(result);

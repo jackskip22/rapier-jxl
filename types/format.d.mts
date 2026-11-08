@@ -9,13 +9,33 @@ import type {DeltaPaletteOptions} from './codec/delta-palette.mjs';
 import type {AdvancedPhotoOptions} from './codec/photo-advanced.mjs';
 import type {ProfileOptions} from './codec/icc.mjs';
 import type {AnimationAtlasOptions} from './codec/animation-atlas.mjs';
-type BytePixels = Omit<Pixels, 'data'> & {data: Uint8Array | Uint8ClampedArray};
+/** Authored byte-pixel routes require straight RGBA8 with an sRGB transfer, not a deeper image description.
+ * Orientation and channel support are checked separately by each kind. */
+type ByteDescription = {
+  colorSpace?: 'srgb' | 'display-p3';
+  transferFunction?: 'srgb';
+  bitDepth?: 8;
+  sampleFormat?: 'uint';
+  intensityTarget?: 255;
+  alphaPremultiplied?: false;
+  icc?: never;
+};
+type BytePixels = Omit<Pixels, 'data' | 'extraChannels' | keyof ByteDescription> & ByteDescription & {
+  data: Uint8Array | Uint8ClampedArray; extraChannels?: readonly [];
+};
+/** Splines use an sRGB base; the other byte routes can also use Display P3. */
+type SplinePixels = Omit<BytePixels, 'colorSpace'> & {colorSpace?: 'srgb'};
+/** Hybrid admits no extraChannels key at all, not even an empty list. */
+type HybridPixels = Omit<BytePixels, 'extraChannels'> & {extraChannels?: never};
+/** These authored routes have no Exif orientation field. */
+type UnorientedBytePixels = Omit<BytePixels, 'orientation'> & {orientation?: 1};
+type ProfilePixels = Omit<Pixels, 'orientation' | 'extraChannels'> & {orientation?: 1; extraChannels?: readonly []};
 export type FormatRequest =
   {kind: 'channels'; image: PlanarImage} | {kind: 'layers'; image: LayeredImage} |
   {kind: 'patch-composition'; image: PatchComposition} | {kind: 'atlas'; image: Animation} |
-  ({kind: 'patches'} & BytePixels) | ({kind: 'splines'} & BytePixels) | ({kind: 'graphics'} & BytePixels) |
-  ({kind: 'hybrid'} & BytePixels) | ({kind: 'palette'} & BytePixels) |
-  ({kind: 'photo'} & Pixels) | ({kind: 'profile'} & Pixels);
+  ({kind: 'patches'} & BytePixels) | ({kind: 'splines'} & SplinePixels) | ({kind: 'graphics'} & UnorientedBytePixels) |
+  ({kind: 'hybrid'} & HybridPixels) | ({kind: 'palette'} & UnorientedBytePixels) |
+  ({kind: 'photo'} & Pixels) | ({kind: 'profile'} & ProfilePixels);
 type ExactKind = 'channels' | 'layers' | 'patch-composition' | 'patches' | 'graphics' | 'palette';
 type KindFidelity<K extends FormatKind> = K extends ExactKind ? 'exact' | (Exclude<PixelFidelity, 'exact'> & {quality: 100}) :
   K extends 'splines' ? Exclude<PixelFidelity, 'exact'> : PixelFidelity;
@@ -41,9 +61,8 @@ interface KindOptions {
 // The 7.x spellings of fidelity and the coder switches the encoder chooses itself are not among them.
 type Retired = 'quality' | 'lossless' | 'target' | 'maxError' | 'photo' | 'filter' | 'losslessProfile' | 'mode' | 'acceleration' | 'progress';
 export {encode, supported, configureWasm} from './index.mjs';
-export {capture, configureDecoder} from './capture-complete.mjs';
-/** The kernels the authored routes run on ('format', the default), or rapier-jxl's 'encode' or 'capture', with no job. */
-export function prepare(operation?: 'format' | 'encode' | 'capture'): Promise<void>;
+/** Compiles the authored routes' kernels ('format', the default), or prepares the shared still encoder. */
+export function prepare(operation?: 'format' | 'encode'): Promise<void>;
 /** An authored structure (layers, patches, splines, extra channels, palettes, profiles, atlases): the request names its
  * kind. The full still encoder rides in the same file. */
 type FormatCall = {[K in FormatKind]: [input: Extract<FormatRequest, {kind: K}>,

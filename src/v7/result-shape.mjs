@@ -52,7 +52,7 @@ export function isImageResult(value) {
   if (!isImageResultShape(value)) return false;
   if (value.fits) {
     const fidelity = value.fidelity;
-    if (fidelity === 'exact' && value.kept === 'lossy') return false;
+    if ((fidelity === 'exact' || fidelity?.quality === 100 || fidelity?.maxError === 0) && value.kept === 'lossy') return false;
     for (const m of value.measurements)
       if (m.floor !== undefined && m.score < m.floor || m.limit !== undefined && m.score > m.limit) return false;
     if (value.kept === 'lossy' && fidelity && typeof fidelity === 'object') for (const metric of ['ssimulacra2', 'butteraugli', 'butteraugli3']) {

@@ -1,4 +1,4 @@
-/*! rapier-jxl 8.3.0 | MIT */
+/*! rapier-jxl 8.3.1 | MIT */
 function r(t){try{t!==null&&(typeof t=="object"||typeof t=="function")&&e.add(t)}catch{}return t}
 function n(e){if(e!==void 0){if(!e||typeof e!="object"&&typeof e!="function"||typeof e.aborted!="boolean"||typeof e.addEventListener!="function")throw t("JXL_OPTIONS","signal must be an AbortSignal.");return e}}
 function o(e){if(e==null)return;let n,o;try{n=e.aborted,n&&(o=e.reason)}catch(t){throw r(t)}if(n)throw o===void 0?t("JXL_ABORTED","The job was aborted."):r(o)}

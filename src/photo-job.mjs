@@ -37,7 +37,7 @@ export const v6Effort = effort => effort >= 6 ? effort + 1 : effort;
 
 export function* photoSteps(data, width, height, quality, colorSpace, effort, encodeCoefficients, filter, search, gpu, memory) {
   if (quality >= 100) return yield* losslessSteps(data, width, height, {colorSpace, fast: effort < 2});
-  if (colorSpace === 'srgb' && preferXYB(data, width, height)) {
+  if (colorSpace === 'srgb' && (Math.min(width, height) < 128 || preferXYB(data, width, height))) {
     const screen = screenLike(data, width, height);
     if (screen && (effort <= 7 || width < 128 || height < 128)) return yield* photoScreenSteps(data, width, height, quality, effort, encodeCoefficients);
     return yield* photoV6Steps(data, width, height, quality, screen ? effort : v6Effort(effort), encodeCoefficients, search, undefined, gpu, memory, screen, effort >= 8);

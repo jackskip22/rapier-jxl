@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 import {BitWriter, complete} from './bits.mjs';
-import {unit} from './step-journal.mjs';
+import {unit, stage, journaling, readAll} from './step-journal.mjs';
 import {lfPlanFor, monotonicLfPlanFor} from './lf-plans.mjs';
-import {planeModel, weightedTrees} from './capture-trees.mjs';
-import {writeCaptureStream} from './capture-codec.mjs';
+import {planeModel, planeModelOf, planeTreeSteps, weightedTrees} from './capture-trees.mjs';
+import {writeCaptureStream, runModels} from './capture-codec.mjs';
 import {CAPTURE_TOOLS_COMPLETE} from './capture-ans.mjs';
 import {RUNGS} from './lf-options.mjs';
 export {RUNGS} from './lf-options.mjs';
@@ -29,21 +29,34 @@ export function retainLearnedLfStream(planes, data, options, fallback, together,
   if (LEARNED.length > LEARNED_KEEP) LEARNED.pop();
 }
 
-const learned = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function learned(w, planes, options, plain, together, kernels) {
+const STEP_SAMPLES = 16384, ran = function* (name, run) { return run(); };
+const stepped = planes => journaling() && planes.reduce((n, p) => n + p.w * p.h, 0) >= STEP_SAMPLES;
+function* own(planes, steps) { return stepped(planes) ? yield* steps : complete(steps); }
+const learnedSteps = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function* learnedSteps(w, planes, options, plain, together, kernels) {
+  const step = stepped(planes) ? unit : ran;
   const data = planes.map(p => fits16(p.data));
-  const fallback = new BitWriter(256);
-  plain(fallback);
+  const fallback = Object.assign(new BitWriter(0), yield* step('lf-plain', () => { const f = new BitWriter(256); plain(f); return {...f, bytes: f.bytes.slice(0, f.at + 1)}; }));
   if (data.includes(null) || planes.some(p => !p.w || !p.h)) { w.append(fallback); return; }
-  const learn = learnOptions(options), hit = learnedLfStream(planes, data, learn, fallback, together);
+  const learn = learnOptions(options), hit = step === ran && learnedLfStream(planes, data, learn, fallback, together);
   if (hit) { w.append(hit); return; }
   const same = together && learn.references && planes.every(p => p.w === planes[0].w && p.h === planes[0].h);
-  const models = planes.map((p, i) => planeModel(data[i], p.w, p.h, learn, same ? data.slice(0, i).reverse() : []));
-  const candidate = new BitWriter(256);
-  writeCaptureStream(candidate, models, learn.ans ? ANS : null);
+  const references = i => same ? data.slice(0, i).reverse() : [], models = [];
+  for (let i = 0; i < planes.length; i++) models.push(step === unit ? yield* stage('lf-tree', () => planeTreeSteps(data[i], planes[i].w, planes[i].h, learn, references(i)))
+    : planeModel(data[i], planes[i].w, planes[i].h, learn, references(i)));
+  const written = (name, form) => step(name, () => {
+    const chosen = form(readAll(models).map((model, i) => model?.pieceValue ? model : planeModelOf(data[i], planes[i].w, planes[i].h, model, references(i))));
+    if (!chosen) return null;
+    const c = new BitWriter(256);
+    writeCaptureStream(c, chosen, learn.ans ? ANS : null);
+    return {...c, bytes: c.bytes.slice(0, c.at + 1)};
+  });
+  const plainStream = Object.assign(new BitWriter(0), yield* written('lf-stream', chosen => chosen)), runs = yield* written('lf-runs', runModels);
+  const runsStream = runs && Object.assign(new BitWriter(0), runs), candidate = runsStream && runsStream.bitLength < plainStream.bitLength ? runsStream : plainStream;
   const chosen = candidate.bitLength < fallback.bitLength ? candidate : fallback;
-  retainLearnedLfStream(planes, data, learn, fallback, together, chosen);
+  if (step === ran) retainLearnedLfStream(planes, data, learn, fallback, together, chosen);
   w.append(chosen);
 };
+const learned = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : (w, planes, options, plain, together, kernels) => complete(learnedSteps(w, planes, options, plain, together, kernels));
 
 const LEAST_SAMPLES = 8192;
 const LF_CHARGE = 8;
@@ -68,6 +81,8 @@ export function lfCoder(rung = 'fast') {
     const options = typeof rung === 'object' ? rung : RUNGS[rung];
     coders.set(rung, Object.freeze({
       dc: (w, planes, plain, kernels) => learned(w, planes, options, plain, true, kernels),
+      dcSteps: (w, planes, plain, kernels) => learnedSteps(w, planes, options, plain, true, kernels),
+      metadataSteps: (w, planes, plain, kernels) => learnedSteps(w, planes, options, plain, false, kernels),
       metadata: (w, planes, plain, kernels) => learned(w, planes, options, plain, false, kernels),
     }));
   }
@@ -84,7 +99,7 @@ function* fixedDcSteps(w, planes, plain, kernels, write = FIXED_WRITE) {
   for (let k = 0; k < FIXED_BINS.length; k++) {
     const written = yield* unit('lf-stream', () => {
       const candidate = new BitWriter(256);
-      writeCaptureStream(candidate, models.map(m => m[k]), write.ans ? ANS : null);
+      writeCaptureStream(candidate, readAll(models).map(m => m[k]), write.ans ? ANS : null);
       return {bytes: candidate.bytes, at: candidate.at, pending: candidate.pending, acc: candidate.acc};
     }, c => ({...c, bytes: c.bytes.slice(0, c.at + 1)}));
     const candidate = Object.assign(new BitWriter(0), written);
@@ -96,17 +111,18 @@ const fixedDc = (w, planes, plain, kernels, write) => complete(fixedDcSteps(w, p
 const PROJECTED_WRITE = Object.freeze({...FIXED_WRITE, projected: true});
 export const fixedLfCoder = Object.freeze({dc: fixedDc, dcSteps: fixedDcSteps, metadata: (w, planes, plain) => plain(w), plainMetadata: true});
 
+function* plainOrFixedDcSteps(w, planes, plain, kernels) {
+  if (!planes.length || planes[0].w * planes[0].h < 256) { plain(w); return; }
+  const fixed = new BitWriter(256);
+  yield* fixedDcSteps(fixed, planes, plain, kernels, PROJECTED_WRITE);
+  const bound = yield* unit('lf-bound', () => plainBound(planes));
+  if (bound != null && fixed.bitLength < bound) { w.append(fixed); return; }
+  const fallback = Object.assign(new BitWriter(0), yield* unit('lf-plain', () => { const f = new BitWriter(256); plain(f); return {...f, bytes: f.bytes.slice(0, f.at + 1)}; }));
+  w.append(fixed.bitLength < fallback.bitLength ? fixed : fallback);
+}
 export const plainOrFixedLfCoder = Object.freeze({
-  dc(w, planes, plain, kernels) {
-    if (!planes.length || planes[0].w * planes[0].h < 256) { plain(w); return; }
-    const fixed = new BitWriter(256);
-    fixedDc(fixed, planes, plain, kernels, PROJECTED_WRITE);
-    const bound = plainBound(planes);
-    if (bound != null && fixed.bitLength < bound) { w.append(fixed); return; }
-    const fallback = new BitWriter(256);
-    plain(fallback);
-    w.append(fixed.bitLength < fallback.bitLength ? fixed : fallback);
-  },
+  dc: (w, planes, plain, kernels) => complete(plainOrFixedDcSteps(w, planes, plain, kernels)),
+  dcSteps: plainOrFixedDcSteps,
   metadata: (w, _planes, plain) => plain(w),
   plainMetadata: true,
 });
@@ -138,36 +154,40 @@ const samePlanes = (a, b) => a.length === b.length && a.every((p, i) => {
   return true;
 });
 export const quickOrFixedLfCoder = Object.freeze({
-  dc(w, planes, plain, kernels) {
-    const hash = planesHash(planes), hit = kept.find(k => k.hash === hash && k.kernels === kernels && samePlanes(k.planes, planes));
+  *dcSteps(w, planes, plain, kernels) {
+    const keep = !stepped(planes), hash = keep && planesHash(planes), hit = keep && kept.find(k => k.hash === hash && k.kernels === kernels && samePlanes(k.planes, planes));
     if (hit) { w.append(hit.bits); return; }
     const learnt = new BitWriter(256), fixed = new BitWriter(256);
-    quick.dc(learnt, planes, plain, kernels); fixedDc(fixed, planes, plain, kernels);
+    yield* own(planes, quick.dcSteps(learnt, planes, plain, kernels)); yield* own(planes, fixedDcSteps(fixed, planes, plain, kernels));
     const bits = learnt.bitLength <= fixed.bitLength ? learnt : fixed;
     w.append(bits);
+    if (!keep) return;
     const copy = planes.map(({w, h, data}) => ({w, h, data: data.slice()}));
     kept.push({hash, kernels, planes: copy, bits, bytes: copy.reduce((s, p) => s + p.data.byteLength, 0)});
     for (let total = kept.reduce((s, k) => s + k.bytes, 0); total > KEPT_BYTES; ) total -= kept.shift().bytes;
   },
+  dc: (w, planes, plain, kernels) => complete(quickOrFixedLfCoder.dcSteps(w, planes, plain, kernels)),
   metadata: quick.metadata,
+  metadataSteps: quick.metadataSteps,
 });
+const stepsOf = (coder, stream) => coder[stream + 'Steps'] ?? function* (w, planes, plain, kernels) { coder[stream](w, planes, plain, kernels); };
 
 const plainOnce = plain => { let kept = null; return target => { if (!kept) { kept = new BitWriter(256); plain(kept); } target.append(kept); }; };
-const smallerLf = (higher, lower) => Object.freeze({
-  dc(w, planes, plain, kernels) {
-    const a = new BitWriter(256), b = new BitWriter(256), once = plainOnce(plain);
-    higher.dc(a, planes, once, kernels); lower.dc(b, planes, once, kernels);
-    w.append(a.bitLength <= b.bitLength ? a : b);
-  },
-  metadata(w, planes, plain, kernels) {
-    const a = new BitWriter(256), b = new BitWriter(256), once = plainOnce(plain);
-    higher.metadata(a, planes, once, kernels); lower.metadata(b, planes, once, kernels);
-    w.append(a.bitLength <= b.bitLength ? a : b);
-  },
-});
+function* smallerSteps(higher, lower, stream, w, planes, plain, kernels) {
+  const a = new BitWriter(256), b = new BitWriter(256), once = plainOnce(plain);
+  yield* own(planes, stepsOf(higher, stream)(a, planes, once, kernels)); yield* own(planes, stepsOf(lower, stream)(b, planes, once, kernels));
+  w.append(a.bitLength <= b.bitLength ? a : b);
+}
+const smallerLf = (higher, lower) => Object.freeze(Object.fromEntries(['dc', 'metadata'].flatMap(stream => {
+  const steps = (w, planes, plain, kernels) => smallerSteps(higher, lower, stream, w, planes, plain, kernels);
+  return [[stream, (...args) => complete(steps(...args))], [stream + 'Steps', steps]];
+})));
 const richLfCoder = smallerLf(lfCoder('rich'), quickOrFixedLfCoder);
+export const jpegBroadLfCoder = /* @__PURE__ */ smallerLf(lfCoder('jpegBroad'), richLfCoder);
 const fastLfCoder = smallerLf(lfCoder('fast'), richLfCoder);
 const broadLfCoder = smallerLf(smallerLf(lfCoder('jpegBroad'), lfCoder('broad')), fastLfCoder);
+export const fastOrFixedLfCoder = smallerLf(lfCoder('fast'), fixedLfCoder);
+export const jpegBroadOrFixedLfCoder = smallerLf(lfCoder('jpegBroad'), fixedLfCoder);
 
 export function lfCoderForPlan(name) {
   switch (name) {

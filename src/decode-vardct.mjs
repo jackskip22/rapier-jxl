@@ -360,7 +360,7 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
   }
 
   if (band) {
-    check(streams && band.first >= 0 && band.first < band.end && band.end <= groupsY && left >= 0 && left < right && right <= groupsX, 'Invalid JPEG XL band.');
+    check((streams || typeof band.subsampled === 'function') && band.first >= 0 && band.first < band.end && band.end <= groupsY && left >= 0 && left < right && right <= groupsX, 'Invalid JPEG XL band.');
     rendered = band.first;
     band.top = band.first * 256; band.bottom = Math.min(height, band.end * 256);
     band.deferTop = band.first > 0 ? Math.min(band.bottom, band.top + radius) : band.top;
@@ -388,6 +388,10 @@ export function createVarDCT({width, height, header, global, lfDequant, bitDepth
       const rowPlanes = [0, 1, 2].map(c => new Float32Array(buffer, kernelBlocks.rowPlanes[c], (256 >> vshift[c]) * P.widths[c]));
       for (const block of blocks) renderBlock(block, rowPlanes, tops);
       release();
+      if (band?.subsampled) {
+        band.subsampled(k * 256, rowPlanes.map((plane, c) => plane.subarray(0, Math.max(0, Math.min(P.heights[c] - tops[c], 256 >> vshift[c])) * P.widths[c])));
+        return;
+      }
       for (let c = 0; c < 3; c++) {
         const rows = Math.max(0, Math.min(P.heights[c], tops[c] + (256 >> vshift[c])) - tops[c]);
         P.planes[c].set(rowPlanes[c].subarray(0, rows * P.widths[c]), tops[c] * P.widths[c]);

@@ -1,4 +1,5 @@
 import type {EncodeOptions as CoreOptions, ColorSpace} from './codec/index.mjs';
+import type {ResultMeasurement} from './result.mjs';
 import type {AdvancedPhotoOptions} from './codec/photo-advanced.mjs';
 import type {DecodedImage as CoreDecodedImage, DecodeOptions as CoreDecodeOptions} from './codec/decode.mjs';
 import type {Metadata, CompressedMetadataOptions, BrotliCodec as CoreBrotliCodec} from './codec/metadata.mjs';
@@ -35,10 +36,24 @@ export interface VideoSurface { readonly videoWidth: number; readonly videoHeigh
 export type ImageInput = Pixels | DecodedImage | CanvasSurface | BitmapSurface | FrameSurface | VideoSurface | Blob | RowSource | TextureInput;
 /** Upload keeps the universal image inputs except GPU textures, which the full encoder reads. */
 export type UploadInput = Exclude<ImageInput, TextureInput>;
-/** A capture reads 8-bit straight RGBA in sRGB or Display P3: pixels it is given are 8-bit (encode takes deeper ones). */
-export interface CapturePixels extends Pixels { data: Uint8Array | Uint8ClampedArray; }
+/** A capture takes straight RGBA8, not the deeper sample descriptions accepted by encode. */
+export interface CapturePixels extends Pixels {
+  data: Uint8Array | Uint8ClampedArray;
+  colorSpace?: 'srgb' | 'display-p3';
+  transferFunction?: 'srgb';
+  bitDepth?: 8;
+  sampleFormat?: 'uint';
+  intensityTarget?: 255;
+  alphaPremultiplied?: false;
+  icc?: never;
+  orientation?: 1;
+  extraChannels?: readonly [];
+}
 /** A capture's supplied pixels and row bands are 8-bit. */
-export type CaptureInput = Exclude<ImageInput, Pixels | DecodedImage | RowSource> | CapturePixels | DecodedImage | CaptureRowSource;
+/** decode() can return 16-bit or float samples, which capture refuses. Only a verified 8-bit
+ * decoded result is a capture input; color/profile/alpha/orientation are still admitted at runtime. */
+type CaptureDecodedImage = DecodedImage & {readonly format: 'uint8'; readonly data: Uint8ClampedArray};
+export type CaptureInput = Exclude<ImageInput, Pixels | DecodedImage | RowSource> | CapturePixels | CaptureDecodedImage | CaptureRowSource;
 /** Upload's capture: its inputs, with pixels the caller makes 8-bit. */
 export type UploadCaptureInput = Exclude<CaptureInput, TextureInput>;
 /** Preparation owns one still image, at most 40,000,000 pixels. Streamed rows are encoded directly. */
@@ -53,7 +68,24 @@ export interface GPUTextureLike {readonly width: number; readonly height: number
 export type TextureChannel = Omit<NonNullable<AdvancedPhotoOptions['extraChannels']>[number], 'data' | 'bitDepth' | 'sampleFormat' | 'exponentBits'> & {texture: GPUTextureLike; data?: never};
 export interface TextureInput extends Omit<SampleDescription, 'extraChannels'> {
   texture: GPUTextureLike;
-  device: {readonly queue: unknown; createBuffer(descriptor: object): unknown; createCommandEncoder(): unknown};
+  /** Required to contain failed texture copies, including destroyed or invalid source textures. */
+  /** The GPU operations used by readback, without a dependency on ambient WebGPU declarations.
+   * Native GPUDevice and GPUQueue satisfy this structural contract. */
+  device: {
+    readonly queue: {submit(commandBuffers: Iterable<unknown>): void};
+    createBuffer(descriptor: {size: number; usage: number}): {
+      mapAsync(mode: number): Promise<void>;
+      getMappedRange(): ArrayBuffer;
+      unmap(): void;
+      destroy(): void;
+    };
+    createCommandEncoder(): {
+      copyTextureToBuffer(source: unknown, destination: unknown, copySize: unknown): void;
+      finish(): unknown;
+    };
+    pushErrorScope(filter: 'validation'): void;
+    popErrorScope(): Promise<unknown>;
+  };
   /** The array layer read: a WebXR projection layer holds one eye per layer. Default 0. */
   layer?: number;
   extraChannels?: readonly ((NonNullable<AdvancedPhotoOptions['extraChannels']>[number] & {texture?: never}) | TextureChannel)[];
@@ -72,6 +104,13 @@ export type RowBand = {data: Samples} | CanvasSurface | BitmapSurface | FrameSur
 /** Capture row bands supply 8-bit pixels or a native surface. */
 export type CaptureRowBand = {data: CapturePixels['data']} | CanvasSurface | BitmapSurface | FrameSurface;
 export interface CaptureRowSource extends RowSource {
+  colorSpace?: 'srgb' | 'display-p3';
+  transferFunction?: 'srgb';
+  bitDepth?: 8;
+  sampleFormat?: 'uint';
+  intensityTarget?: 255;
+  alphaPremultiplied?: false;
+  icc?: never;
   rows(y: number, count: number): CaptureRowBand | PromiseLike<CaptureRowBand>;
 }
 /** signal: aborting rejects the job with the signal's reason. onProgress: 0 once started, rising to 1 before the result;
@@ -83,8 +122,20 @@ export interface CaptureRowSource extends RowSource {
  * Preparation calls take at most 40,000,000. */
 export interface JobOptions { signal?: AbortSignal; onProgress?: (fraction: number) => void; maxPixels?: number; }
 
+/** A complete candidate, before the final result. Its bytes belong to the observer; measurements contain only
+ * scores already computed for this file. Candidates can grow or lose quality while the encoder searches. */
+export interface ImagePreview {
+  readonly bytes: Bytes;
+  readonly width: number;
+  readonly height: number;
+  readonly measurements: readonly ResultMeasurement[];
+}
+/** Latest only, at most every 100 ms. A returned promise delays the next preview, never the encoding. Observer
+ * errors are ignored. Pending previews are discarded on completion or cancellation; the final result is separate. */
+export interface PreviewOptions { onPreview?: (preview: ImagePreview) => void | PromiseLike<void>; }
+
 /**
- * The one fidelity choice; its shape is exclusive. 'exact': the decoded samples equal the input, bit for bit, in its
+ * The one fidelity choice; its shape is exclusive. 'exact': the decoded samples equal the input exactly, in its
  * tagged color space. {quality}: 1 to 100, fractions allowed; 100 is 'exact'. The number aims at a measured SSIMULACRA 2
  * look, and the file is the smallest this version finds with that look (a prediction calibrated on measured photos, not a
  * per-picture guarantee). Samples are read in their own domain (deeper integers by their depth, floats as numbers,
@@ -152,7 +203,7 @@ export type ReadAs = 'srgb' | 'display-p3';
 type PixelEncoding = {fidelity?: StillFidelity; features?: EncodeFeatures};
 type MeasuredEncoding = {fidelity: MeasuredFidelity; features?: {firstRegion?: Region} &
   {[K in Exclude<keyof EncodeFeatures, keyof DeliveryFeatures>]?: never}};
-type EncodingExecution = JobOptions & Described & {effort?: Effort; readAs?: ReadAs; webgpu?: 'required' | false};
+type EncodingExecution = JobOptions & PreviewOptions & Described & {effort?: Effort; readAs?: ReadAs; webgpu?: 'required' | false};
 export type EncodeOptions = EncodingExecution & (PixelEncoding | MeasuredEncoding);
 /** {quality: max} searches from max down to 1; omitted, from 90 down to 1; a range sets both bounds. 'exact' never becomes lossy. */
 export type FitFidelity = 'exact' | Sole<'quality', number | {min: number; max: number}>;
@@ -168,7 +219,7 @@ export type VariantsOptions = EncodeOptions & {outputs: readonly VariantRequest[
 /** rapier-jxl/upload's options: efforts 1-3 (default 3), 'exact' or a quality, with the full encoder's meanings. Lossy
  * float (HDR) samples, a GPU texture and features (firstRegion included) are rapier-jxl's: refused JXL_UNSUPPORTED.
  * webgpu is taken and changes nothing: efforts 1-3 never ask for a device. */
-export type UploadOptions = JobOptions & Described & {fidelity?: StillFidelity; effort?: 1 | 2 | 3; readAs?: ReadAs; features?: EmptyFeatures;
+export type UploadOptions = JobOptions & PreviewOptions & Described & {fidelity?: StillFidelity; effort?: 1 | 2 | 3; readAs?: ReadAs; features?: EmptyFeatures;
   webgpu?: 'required' | false; maxPixels?: number};
 /** Frame lists are copied at the call; callers may keep them readonly. */
 type Animation = Omit<CoreAnimation, 'frames'> & {frames: readonly CoreAnimation['frames'][number][]};
@@ -176,17 +227,17 @@ type Animation = Omit<CoreAnimation, 'frames'> & {frames: readonly CoreAnimation
 export type AnimationInput = Animation & Omit<SampleDescription, 'orientation' | 'extraChannels'> &
   {orientation?: never; extraChannels?: never};
 /** An animation, {width, height, frames}: 'exact' or a quality for every frame; no measured target, no `features`. */
-export type AnimationOptions = JobOptions & Described & {fidelity?: PixelFidelity; effort?: Effort; features?: EmptyFeatures;
+export type AnimationOptions = JobOptions & PreviewOptions & Described & {fidelity?: PixelFidelity; effort?: Effort; features?: EmptyFeatures;
   webgpu?: 'required' | false};
-/** A capture's effort in rapier-jxl/capture (1-5); rapier-jxl/upload takes 1-3, and rapier-jxl/capture-complete and
- * rapier-jxl every Effort, 1-9. */
+/** A capture's effort in rapier-jxl/capture (1-5); rapier-jxl/upload takes 1-3, and
+ * rapier-jxl/capture-complete takes every Effort, 1-9. The root still encoder has no capture() export. */
 export type CaptureEffort = 1 | 2 | 3 | 4 | 5;
 /** A capture runs on WebAssembly; the pixels say their colorSpace, readAs reads a canvas, bitmap or Blob in a chosen one.
  * effort: 3 by default; higher is slower and smaller, with the same pixels at the same quality, and each effort writes its
  * own file. A module refuses an effort it does not carry (JXL_UNSUPPORTED) and names the module that does; every module
- * that carries an effort writes the same bytes for the same call. webgpu: as CodecConfig.webgpu says; efforts 7-9 are a capture's GPU efforts, so 'required' refuses there
+ * that carries an effort writes the same file for the same call. webgpu: as CodecConfig.webgpu says; efforts 7-9 are a capture's GPU efforts, so 'required' refuses there
  * (JXL_WEBGPU) in a module or realm that runs them on WebAssembly, and nowhere below 7. */
-export type CaptureOptions = JobOptions & Described & {fidelity?: CaptureFidelity; effort?: CaptureEffort; webgpu?: 'required' | false; readAs?: ReadAs; features?: CaptureFeatures;
+export type CaptureOptions = JobOptions & PreviewOptions & Described & {fidelity?: CaptureFidelity; effort?: CaptureEffort; webgpu?: 'required' | false; readAs?: ReadAs; features?: CaptureFeatures;
   onEncoded?: (record: CaptureRecord) => void};
 /** A capture's execution record, given to onEncoded once the file is written and before the capture resolves, also
  * through a codec. exact: every pixel decodes as it was read. bands: the horizontal bands the picture was coded in (1
@@ -194,7 +245,7 @@ export type CaptureOptions = JobOptions & Described & {fidelity?: CaptureFidelit
  * reject after it (an abort, or an onProgress that throws at 1); an onEncoded that throws cancels the capture with what
  * it threw. */
 export type CaptureRecord = {readonly exact: boolean; readonly bands: number};
-/** Photographic capture's options (rapier-jxl/capture-complete and the root, efforts 1-9; rapier-jxl/upload's are UploadCaptureOptions). */
+/** Photographic capture's options (rapier-jxl/capture-complete, efforts 1-9; rapier-jxl/upload's are UploadCaptureOptions). */
 /** Exact by default. A maxError is integer 0–8; quality 1–100 offers photographic capture, with 100 normalized to exact:
  * each photo gets its own coding, aimed at the measured SSIMULACRA 2 look that number names.
  * Fidelity is one exclusive choice. The picture itself continues to describe its samples. */
@@ -209,7 +260,7 @@ export type ExactRect = CaptureRect & {solidText?: boolean; edge?: boolean};
 type PhotoRect = CaptureRect & {solidText?: never; edge?: never};
 /** exactRects: kept exact inside lossy photos (text whose boxes the caller knows). photoRects: pictures the caller knows
  * of (an <img>'s box); lossy only where the encoder also finds a photo there. effort: 1-9 accepted; a quality or
- * Photographic efforts 5-6 search quality, 7 selects block shapes, 8 adds adaptive quantization, and 9 searches all candidates. */
+ * Efforts 1-5 predict the photo's look without decoder setup; efforts 6-9 measure the completed file and search for a qualifying winner. */
 export type CapturePhotoOptions = Omit<CaptureOptions, 'fidelity' | 'effort'> & {
   fidelity?: CapturePhotoFidelity; effort?: Effort;
   exactRects?: ReadonlyArray<ExactRect>; photoRects?: ReadonlyArray<PhotoRect>;

@@ -1,7 +1,8 @@
 import {requireWebGPU} from './webgpu.mjs';
 import * as module from './animation.mjs';
 import {install, workerPort} from './worker-runtime.mjs';
+import {previewHub} from './preview-relay.mjs';
 import {moduleRuntime} from './module-runtime.mjs';
 const port = workerPort();
 install(port, [], moduleRuntime(module, {name: 'rapier-jxl/animation', gpu: requireWebGPU, helpers: () => import('./helpers.mjs'),
-  helper: {url: () => new URL('./animation.helper.mjs', import.meta.url), worker: () => new Worker(new URL('./animation.helper.mjs', import.meta.url), {type: 'module'})}}));
+  helper: {url: () => new URL('./animation.helper.mjs', import.meta.url), worker: () => new Worker(new URL('./animation.helper.mjs', import.meta.url), {type: 'module'})}}), previewHub);

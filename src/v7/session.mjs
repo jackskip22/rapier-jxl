@@ -41,11 +41,11 @@ export function encoder(client, config = {}, operations, spec = {}) {
         if (limit !== undefined) maxPixels = Math.min(maxPixels, limit);
         if (name === 'variants') for (const request of read.requests) outputSides(request.width, request.height, maxPixels);
       } else if (name === 'encode') {
-        const {signal: _signal, onProgress: _onProgress, ...rest} = options ?? {};
+        const {signal: _signal, onProgress: _onProgress, onPreview: _onPreview, ...rest} = options ?? {};
         const read = upload ? uploadOptions(rest) : encodeOptions(rest);
         if (read.maxPixels !== undefined) maxPixels = Math.min(maxPixels, read.maxPixels);
       } else {
-        const {signal: _signal, onProgress: _onProgress, onEncoded: _onEncoded, ...rest} = options ?? {};
+        const {signal: _signal, onProgress: _onProgress, onEncoded: _onEncoded, onPreview: _onPreview, ...rest} = options ?? {};
         const levels = spec.captureLevels && {module: spec.module, ...spec.captureLevels};
         if (richCapture) spec.captureAdmission(rest, levels);
         else admitCapture(rest, levels);
@@ -142,9 +142,9 @@ function snapshot(input, maxPixels, {maxPendingBytes = 268435456}, options, admi
 
 function fix(options) {
   if (options === undefined || options === null || typeof options !== 'object') return options;
-  const {signal, onProgress, onEncoded, ...data} = options;
+  const {signal, onProgress, onEncoded, onPreview, ...data} = options;
   return {...structuredClone(data), ...(signal !== undefined && {signal}), ...(onProgress !== undefined && {onProgress}),
-    ...(onEncoded !== undefined && {onEncoded})};
+    ...(onEncoded !== undefined && {onEncoded}), ...(onPreview !== undefined && {onPreview})};
 }
 
 export const bounded = (client, name) => (input, options) => {

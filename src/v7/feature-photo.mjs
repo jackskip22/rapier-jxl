@@ -29,6 +29,6 @@ export async function measuredFeatures(picture, features, settings, qualityInten
   };
   try {
     return await measuredFileSearch({ssimulacra2: measuredTarget(webpTarget(qualityIntent))}, probe, metric.measure,
-      {start: coding.quality, signal: hooks.signal, onProgress: hooks.onProgress, closest: true});
+      {start: coding.quality, signal: hooks.signal, onProgress: hooks.onProgress, closest: true, preview: hooks.preview, width, height});
   } finally { metric.destroy(); }
 }

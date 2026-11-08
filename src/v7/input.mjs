@@ -7,7 +7,8 @@ export const image = (input, options, hooks = {}) => imageWith(input, options, h
 async function readBlob(input, options, hooks, head, png) {
   if (png) {
     const depth = head[24], colourType = head[25];
-    if (depth === 16 || hooks.deep && options?.readAs === undefined && (colourType === 4 || colourType === 6 || await transparencyChunk(input, hooks.signal) !== false)) {
+    if (depth === 16 || hooks.deep && options?.readAs === undefined && (colourType === 4 || colourType === 6 ||
+        typeof createImageBitmap !== 'function' || await transparencyChunk(input, hooks.signal) !== false)) {
       requirePNGReader(options, hooks);
       const {readSource, orient} = await hooks.deep();
       const result = await readSource(new Uint8Array(await input.arrayBuffer()));

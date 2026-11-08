@@ -18,12 +18,17 @@ const nativeRgb = picture => (picture.data instanceof Uint8Array || picture.data
   (picture.transferFunction ?? 'srgb') === 'srgb' && !picture.alphaPremultiplied &&
   (picture.intensityTarget ?? 255) === 255;
 
+export const settledFacts = new WeakMap();
+export const lowWebpEligible = picture => nativeRgb(picture) && (picture.colorSpace ?? 'srgb') === 'srgb';
+
 export function lowWebpFacts(picture) {
-  if (!nativeRgb(picture) || (picture.colorSpace ?? 'srgb') !== 'srgb') return {eligible: false};
+  const settled = settledFacts.get(picture.data);
+  if (settled) return settled;
+  if (!lowWebpEligible(picture)) return {eligible: false};
   const {data, width, height} = picture, shape = inspectPixels(data, width, height);
   return {eligible: true, width, height, pixels: width * height, shorterSide: Math.min(width, height),
     gradient: gradient(picture), palette: Boolean(shape.palette), paletteSlots: shape.palette?.colours.length ?? null, alpha: shape.alpha,
-    screenLike: screenLike(data, width, height), preferXYB: preferXYB(data, width, height)};
+    screenLike: screenLike(data, width, height), preferXYB: Math.min(width, height) < 128 || preferXYB(data, width, height)};
 }
 
 function anchor(q, values) {

@@ -17,7 +17,7 @@ export async function encodeBands({width, height, read}, encodeBand, recode, dra
     const h = Math.min(rows, height - y), pixels = await read(y, h);
     check(hooks.signal);
     float ||= pixels.data instanceof Float32Array || pixels.sampleFormat === 'float16';
-    const bytes = await encodeBand(pixels, {...hooks, onProgress: share(i)});
+    const bytes = await encodeBand(pixels, {...hooks, preview: undefined, onProgress: share(i)});
     if (!i && pixels.icc !== undefined) {
       icc = pixels.icc; frameRead = {iccBits: prepareICC(icc).iccData.bitLength};
     }
@@ -29,13 +29,13 @@ export async function encodeBands({width, height, read}, encodeBand, recode, dra
     if (band.shape.one && band.shape.xyb === target.xyb && band.shape.alpha === target.alpha && band.shape.gray === target.gray) continue;
     const pixels = await read(band.y, band.h);
     check(hooks.signal);
-    band.bytes = await drain(recode(pixels, target), {...hooks, onProgress: undefined});
+    band.bytes = await drain(recode(pixels, target), {...hooks, preview: undefined, onProgress: undefined});
   }
   const key = bytes => compositionMetadataKey(readStill(bytes, frameRead)), apart = () => bands.some(band => key(band.bytes) !== key(bands[0].bytes));
   if (apart() && target.gray) for (const band of bands) {
     const pixels = await read(band.y, band.h);
     check(hooks.signal);
-    band.bytes = await drain(recode(pixels, {...target, gray: false}), {...hooks, onProgress: undefined});
+    band.bytes = await drain(recode(pixels, {...target, gray: false}), {...hooks, preview: undefined, onProgress: undefined});
   }
   if (apart()) throw fail('JXL_INTERNAL', 'The bands of one picture did not share an image header.');
   const layers = bands.map(({bytes, y}) => ({bytes, y}));

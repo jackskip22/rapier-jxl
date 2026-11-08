@@ -2,12 +2,11 @@
 
 JPEG XL in JavaScript and WebAssembly with WebGPU for high efforts.
 
-- 5-10% smaller than libjxl at the same quality.
-- Uploads encode about 1.5x faster than libvips with about 5% smaller files, for the same or higher quality.
-- 47 KB Brotli exact capture.
-- 226 KB Brotli complete capture.
-- 215 KB Brotli upload.
-- 325 KB Brotli full encoder with HDR and parallel workers. Used by [rapier.html](https://rapier.website)
+- Uploads over 2x faster than libvips.
+- 48 KB Brotli exact capture.
+- 233 KB Brotli complete capture.
+- 224 KB Brotli upload.
+- 348 KB Brotli full encoder with HDR and parallel workers. Used by [rapier.html](https://rapier.website)
 - Lossless JPEG transcoding, decoding, verification, serving, metadata, animation, polyfill, CLI and resumable encoding
   for edge isolates. Modules are single files.
 - Browsers, workers, Node, Deno, Bun, Cloudflare Workers.
@@ -64,7 +63,7 @@ Takes RGBA `{data, width, height}`, `ImageData`, a canvas (2D, WebGL or WebGPU),
 `Blob`, a decoded image or a GPU texture `{texture, device}`, and returns a result record with the output in `result.bytes`. 8 or 16-bit, `Float16Array`
 or `Float32Array` samples, including HDR. For animations, use `rapier-jxl/animation`.
 
-- A JPEG kept byte for byte is `recompress` from `rapier-jxl/jpeg` (or `rapier-jxl/upload`); `encode` takes pixels.
+- Lossless JPEG recompression is `recompress` from `rapier-jxl/jpeg` (or `rapier-jxl/upload`); `encode` takes pixels.
 - `fidelity`: `{quality: 1–100}`, default 90. `'exact'` is lossless.
 - `effort`: 1–9, default 7. Lower is faster; 1–3 suit previews and uploads, 8–9 photography.
 - `webgpu`: efforts 7–9 use WebGPU when available. `'required'` fails without it; `false` turns it off.
@@ -136,18 +135,78 @@ as one call.
 ```js
 import {start, advance, finish} from 'rapier-jxl/resumable';
 import {encode} from 'rapier-jxl/upload';
+import {verify} from 'rapier-jxl/verify';
 
 // store: the original and the job's parts (R2, KV, a database). input names the original:
 // {generation, sha256, byteLength}, with kind: 'file' for an uploaded file.
 const step = async (saved, store, input) => {
-  const job = {operation: encode, store, input};
+  const job = {operation: encode, store, input, verify};
   const {checkpoint, done} = await advance(saved ?? await start({...job, options: {fidelity: {quality: 82}}}), job);
   return done ? {result: await finish(checkpoint, job)} : {checkpoint}; // save checkpoint for the next request
 };
 ```
 
-- `capture`, `encode`, `fit`, `variants`, `recompress` and `restore`.
-- Each `advance` runs for about 30 ms (`budget: {ms}`) and writes its parts to the store before it returns.
+- `capture`, `encode`, `fit`, `variants`, `recompress`, `restore` and `verify`.
+- Each `advance` runs for about 30 ms (`budget: {ms}`) and writes its parts to the store before it returns. A host that allows few store calls a request passes `budget.reads`: the call ends before more reads than that.
+- `verify` from `rapier-jxl/verify` in the job verifies in the advances. `finish` returns the whole-file verifier's
+  receipt in `result.verification` (one per variant). A failed check rejects with `error.verification`; publish only a finished,
+  verified result. The saved plan keeps this choice for every request.
+- Pixel verification needs the browser's JPEG XL decoding or the host's configured decoder. On a server, call
+  `configureDecoder(decode, restore)` from `rapier-jxl/verify` with `decode` from `rapier-jxl/decode` and `restore` from
+  `rapier-jxl/jpeg` in each new isolate. The resumable module carries no decoder.
+- Keep the original immutable for its `generation` and SHA-256. Save the returned checkpoint with a revision check
+  after its parts are durable, and accept checkpoints only from your service. `finish` assembles the saved output;
+  hashing, decoding and scoring have already finished in the advances.
+- `workerAdmission({operation, options, width, height})` says whether a job fits a Cloudflare Workers isolate (128 MB), from measured memory per operation, effort and size. A size not measured is not admitted; convert it in the browser.
+
+For a candidate uploaded separately, use the existing `verify` verb. Store the candidate as immutable, ordered parts
+of at most 1 MiB, each named by its SHA-256. Pass its result metadata without `bytes` or a `verification` receipt:
+
+```js
+import {start, finish} from 'rapier-jxl/resumable';
+import {verify} from 'rapier-jxl/verify';
+
+const job = (store, input) => ({operation: verify, input, store});
+const begin = (store, input, result, parts) => start({...job(store, input), options: {result, parts}});
+// Persist and advance the checkpoint as above. When done, finish returns the receipt:
+const done = (checkpoint, store, input) => finish(checkpoint, job(store, input));
+```
+
+`finish` returns the same receipt as `verify(original, result)` and reads neither image. A failed check rejects with
+`error.verification`. The service verifies the original generation and candidate revision again before publication;
+metadata supplied by the uploader is a claim to check.
+
+## EmDash
+
+Run in the site's folder:
+
+```sh
+npx rapier-jxl add emdash
+```
+
+For a coding agent: “Add rapier-jxl/emdash to this site, keeping its existing storage and EmDash options.”
+
+For manual setup with EmDash 1.4, install the package and its matching Kumo version:
+
+```sh
+npm install rapier-jxl @cloudflare/kumo@2.6.0
+```
+
+Keep the existing imports and options; wrap `emdash({...})` with `jxl(emdash, {...})`:
+
+```js
+// astro.config.mjs
+import emdash from 'emdash/astro';
+import {jxl} from 'rapier-jxl/emdash';
+
+export default defineConfig({
+  integrations: [react(), jxl(emdash, {database: d1({binding: 'DB'}), storage: r2({binding: 'MEDIA'})})],
+});
+```
+
+Originals stay in the site's `r2()` storage on Cloudflare or `local()` storage on Node. Browsers that accept JPEG XL
+get verified copies; other browsers get the original. Open **Plugins → JPEG XL Image Optimizer** to choose the goal, effort
+and widths or convert the existing library. Without `jxl()`, the site serves its originals.
 
 ## Workers and queues
 
@@ -163,7 +222,7 @@ try {
 }
 ```
 
-- In browsers, the module runs in a worker (upload: 243 KB Brotli). Node, Deno and Bun run it in the calling thread.
+- In browsers, the module runs in a worker (upload: 250 KB Brotli). Node, Deno and Bun run it in the calling thread.
 - `helpers` adds up to 16 worker threads; `helpers: true` sizes them by the device.
 - Errors carry a `code`, such as `JXL_INPUT`, `JXL_OPTIONS`, `JXL_WASM` or `JXL_WEBGPU`.
 

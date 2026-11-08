@@ -4,6 +4,7 @@ import {featureless} from './first-region-option.mjs';
 import {own} from './ownership.mjs';
 import {fail, object, pixelLimit} from './primitives.mjs';
 import {outputSides} from './preparation-sides.mjs';
+import {PREVIEW} from './preview.mjs';
 
 export function fitOptions(value, admitEncode = encodeOptions) {
   const {maxBytes, fidelity = {quality: 90}, ...encode} = featureless(object(value));
@@ -24,9 +25,10 @@ export function fitOptions(value, admitEncode = encodeOptions) {
   }
   admitEncode({...encode, fidelity: {quality: maxQuality}});
   pixelLimit(encode.maxPixels);
-  const {signal, onProgress, ...data} = encode;
+  const {signal, onProgress, onPreview, [PREVIEW]: preview, ...data} = encode;
   return {maxBytes, requestedFidelity, search: {minQuality, maxQuality, maxProbes: 12},
-    encode: {...own(data), ...(signal !== undefined && {signal}), ...(onProgress !== undefined && {onProgress})}};
+    encode: {...own(data), ...(signal !== undefined && {signal}), ...(onProgress !== undefined && {onProgress}),
+      ...(onPreview !== undefined && {onPreview}), ...(preview && {[PREVIEW]: preview})}};
 }
 
 export function variantsOptions(value, admitEncode = encodeOptions) {
@@ -34,8 +36,8 @@ export function variantsOptions(value, admitEncode = encodeOptions) {
   admitEncode(shared);
   const maxPixels = pixelLimit(shared.maxPixels);
   if (!Array.isArray(outputs) || !outputs.length) throw fail('JXL_OPTIONS', 'outputs is a nonempty array of image requests.');
-  const fixed = own(outputs), {signal, onProgress, ...data} = shared;
-  const common = {...own(data), signal, onProgress};
+  const fixed = own(outputs), {signal, onProgress, onPreview, [PREVIEW]: preview, ...data} = shared;
+  const common = {...own(data), signal, onProgress, ...(onPreview !== undefined && {onPreview}), ...(preview && {[PREVIEW]: preview})};
   const requests = fixed.map(output => {
     const {width, height, ...settings} = object(output, 'An output');
     outputSides(width, height, maxPixels);

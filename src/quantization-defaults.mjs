@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 const binary32 = values => values.map(value => Array.isArray(value) ? binary32(value) : Math.fround(value));
-export const QUANT_PARAM_LIBRARY = Object.freeze([
+export const QUANT_PARAM_LIBRARY = /* @__PURE__ */ (() => Object.freeze([
   {"mode":"dct","bands":[[3150,0,-0.4,-0.4,-0.4,-2],[560,0,-0.3,-0.3,-0.3,-0.3],[512,-2,-1,0,-1,-2]]},
   {"mode":"identity","weights":[[280,3160,3160],[60,864,864],[18,200,200]]},
   {"mode":"dct2","weights":[[3840,2560,1280,640,480,300],[960,640,320,180,140,120],[640,320,128,64,32,16]]},
@@ -21,4 +21,4 @@ export const QUANT_PARAM_LIBRARY = Object.freeze([
 ].map(entry => {
   for (const key of Object.keys(entry)) if (key !== "mode") entry[key] = binary32(entry[key]);
   return entry;
-}));
+})))();

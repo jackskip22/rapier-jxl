@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 import {complete} from './bits.mjs';
 import {photoXYBSteps} from './photo-xyb.mjs';
-import {V6, v6Image} from './photo-v6.mjs';
+import {v6Image, v6Options} from './photo-v6.mjs';
+import {v6For} from './photo-v6-settings.mjs';
 import {fixedStrategyImage, lazyStrategyImage, materialize} from './varblock-core.mjs';
 import {estimateBytes} from './coefficient-ans.mjs';
 import {writeImage} from './photo-image-write.mjs';
@@ -15,11 +16,11 @@ export function stillPhotoProvider(prepared) {
     width, height,
     base(quality, {filter = 'gaborish', fieldScale, keepPlanes = false} = {}) {
       if (filter === 'plain') return complete(photoXYBSteps(rgba, width, height, quality,
-        {...V6, ...prepared.color, dctCache: prepared.dctPlain, ...(keepPlanes && {keepPlanes})}));
+        {...v6For(width, height), ...prepared.color, dctCache: prepared.dctPlain, ...(keepPlanes && {keepPlanes})}));
       return v6Image(prepared, quality, {...(fieldScale !== undefined && {fieldScale}), ...(keepPlanes && {keepPlanes})});
     },
     *image(quality, options) { return this.base(quality, options); },
-    blockOptions() { return {deadzone: V6.deadzone, transforms: prepared.transforms ??= searchTransforms(prepared)}; },
+    blockOptions() { return {deadzone: v6Options(prepared, 75).deadzone, transforms: prepared.transforms ??= searchTransforms(prepared)}; },
     *layout(base, layout, options) {
       if (base.planeRows) return lazyStrategyImage(base, width, height, options, layout);
       const {transforms, ...deviceOptions} = options;

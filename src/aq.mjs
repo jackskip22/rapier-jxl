@@ -80,9 +80,10 @@ export function* closedLoopFieldSteps(width, height, imageOf, {rounds = 3, gamma
   return field;
 }
 
+const positiveAim = (value, sorted) => value > 0 ? value : sorted.find(v => v > 0) ?? 1;
 function fieldRaw(d, field, blocks, {gamma, aimQuantile, min, max, normalize, gammaDown, active = null}) {
   const sorted = activeValues(d, active).sort(), count = sorted.length, quantile = sorted[Math.min(count - 1, Math.floor(aimQuantile * count))];
-  const aim = active ? Math.max(1e-3, quantile) : quantile, raw = new Float64Array(blocks).fill(1);
+  const aim = active ? positiveAim(quantile, sorted) : quantile, raw = new Float64Array(blocks).fill(1);
   fieldValues(d, field, raw, active, aim, gamma, gammaDown, min, max, 0, blocks);
   if (normalize) {
     const s = fieldLogSum(raw, active, 0, blocks), mean = exactExp(s / count);
@@ -108,8 +109,8 @@ export function fieldRanges(d, doubt, field, blocks, {gamma, aimQuantile, min, m
   }
   const k = Math.min(count - 1, Math.floor(aimQuantile * count)), dl = new Float64Array(blocks), dh = new Float64Array(blocks);
   distanceBounds(d, doubt, active, dl, dh, 0, blocks);
-  const low = activeValues(dl, active).sort()[k], high = activeValues(dh, active).sort()[k];
-  const aimLo = active ? Math.max(1e-3, low) : low, aimHi = active ? Math.max(1e-3, high) : high;
+  const lows = activeValues(dl, active).sort(), highs = activeValues(dh, active).sort(), low = lows[k], high = highs[k];
+  const aimLo = active ? positiveAim(low, lows) : low, aimHi = active ? positiveAim(high, highs) : high;
   const rl = new Float64Array(blocks), rh = new Float64Array(blocks);
   fieldRangeValues(dl, dh, field, active, rl, rh, aimLo, aimHi, gamma, gammaDown, min, max, 0, blocks);
   if (normalize) {

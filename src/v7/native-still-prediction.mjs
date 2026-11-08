@@ -11,7 +11,7 @@ export const NATIVE_STILL_CALIBRATION = Object.freeze({
   largeMinimum: Object.freeze([48, 78, 92]),
   largeLowMargin: 4,
   maximumLossy: 99.99,
-  exactIntent: 0.99,
+  exactIntent: 1,
 });
 
 function at(intent, values) {

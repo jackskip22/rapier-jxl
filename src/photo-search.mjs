@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
+import {shown} from './photo-shown.mjs';
 import {closedLoopFieldSteps} from './aq.mjs';
 import {closedLoopStrategySteps} from './varblock-measured.mjs';
 import {meets, qualitySteps} from './photo-quality-search.mjs';
 import {fault} from './fault.mjs';
+import {photoOutputMeasurements} from './photo-output-policy.mjs';
 export {meets, qualitySteps} from './photo-quality-search.mjs';
 
 export const AQ = {rounds: 3, switchCost: 0.01, gamma: 0.5, aimQuantile: 0.9};
@@ -47,7 +49,7 @@ export function* candidateImageSteps(provider, name, quality, decisions) {
 }
 
 
-export function* scoreSteps(provider, target, {candidates = CANDIDATES, effort = 7, start = 85, aq = AQ, ids = VARBLOCK_IDS, lambda = 1, field = true, targetDoubt = null, initial = null, reuseDecisions = true, pooled = false, exactSize = false, measureSteps = null} = {}) {
+export function* scoreSteps(provider, target, {candidates = CANDIDATES, effort = 7, start = 85, aq = AQ, ids = VARBLOCK_IDS, lambda = 1, field = true, targetDoubt = null, initial = null, reuseDecisions = true, pooled = false, exactSize = false, measureSteps = null, preview = null} = {}) {
   if (provider.width < 8 || provider.height < 8)
     candidates = candidates.filter(name => candidateApplies(name, provider.width, provider.height));
   if (!candidates.length) return null;
@@ -77,6 +79,10 @@ export function* scoreSteps(provider, target, {candidates = CANDIDATES, effort =
     const candidate = {candidate: name, quality: best.quality, imageAt, ...best.scores, pass: meets(best.scores, target),
       bestObserved: {candidate: name, ...best.bestObserved}};
     if (measureSteps) {
+      if (best.output && !best.output.bytes && best.output.effort === effort) {
+        const image = yield* imageAt(best.quality);
+        best.output = {...best.output, bytes: shown(yield* provider.write(image, effort, {pass: true}), image)};
+      }
       if (!(best.output?.bytes instanceof Uint8Array) || best.output.effort !== effort)
         throw fault('JXL_INTERNAL', 'A complete-output candidate must retain its measured file and writer effort.');
       candidate.size = best.output.bytes.length;
@@ -104,11 +110,15 @@ export function* scoreSteps(provider, target, {candidates = CANDIDATES, effort =
   if (measureSteps) { chosen = outputWinner; bytes = chosen.output.bytes; }
   else if (completeFiles) for (const f of pool) {
     const encoded = yield* encode(f); f.size = encoded.length;
+    preview?.(encoded, {width: provider.width, height: provider.height,
+      measurements: photoOutputMeasurements(target, f, 'encoder-reconstruction')});
     if (!bytes || encoded.length < bytes.length) { chosen = f; bytes = encoded; }
   }
   else {
     chosen = pool.reduce(smallerCandidate);
     bytes = yield* encode(chosen);
+    preview?.(bytes, {width: provider.width, height: provider.height,
+      measurements: photoOutputMeasurements(target, chosen, 'encoder-reconstruction')});
   }
   const {output, ...selected} = chosen;
   return {...selected, bytes, size: bytes.length, imageAt: undefined, cells: undefined, blocks: undefined,

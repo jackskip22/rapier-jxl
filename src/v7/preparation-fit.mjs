@@ -1,11 +1,27 @@
 // SPDX-License-Identifier: MIT
 import {fitSearch} from '../target-search.mjs';
+import {ordinaryStillDecision} from './ordinary-still-policy.mjs';
+import {lowWebpFacts} from './low-webp-quality.mjs';
 import {fitOptions} from './preparation-options.mjs';
 import {check, fail, callers, isCaller, progressOf} from './primitives.mjs';
 import {acquireSource} from './preparation-source.mjs';
 import {preparedResult, preparedEncode, finishPrepared} from './preparation-result.mjs';
 import {jpegDisplayDimensions, jpegReconstruction} from './preparation-jpeg.mjs';
 import {admitJpeg} from './input.mjs';
+import {FIT_BYTES} from './result-reference.mjs';
+import {sourceIntent} from './preparation-source.mjs';
+import {withRenderingIntent} from './header-intent.mjs';
+import {journaled} from '../step-journal.mjs';
+
+export const INTENT_BYTES = 4;
+export const intended = (result, source) => result.bytes && sourceIntent(source) ? {...result, bytes: withRenderingIntent(result.bytes, sourceIntent(source))} : result;
+export const intentPolicy = (policy, source) => sourceIntent(source) && policy.maxBytes > INTENT_BYTES ? {...policy, maxBytes: policy.maxBytes - INTENT_BYTES} : policy;
+import {PREVIEW} from './preview.mjs';
+
+export function fitSettle(picture) {
+  let facts;
+  return q => (ordinaryStillDecision(q / 100, picture, {facts: facts ??= lowWebpFacts(picture)}) ?? {quality: q}).quality;
+}
 
 export function knownFitProbe(policy) {
   const {encode: options, search} = policy, named = options.features && Object.keys(options.features);
@@ -24,7 +40,7 @@ export async function fitPrepared(encode, picture, policy, capabilities = {}) {
   });
   const initial = policy.probed ? [policy.probed] : null, spent = policy.spentProbes ?? 0;
   const candidates = fitSearch(maxBytes, {...search, maxProbes: search.maxProbes - spent,
-    picture, effort: rest.effort, initial});
+    picture, effort: rest.effort, initial, settle: picture?.data && fitSettle(picture)});
   const facts = new WeakMap();
   let next = candidates.next(), count = spent + (initial?.length ?? 0), reuse, encoded = false, failed = false;
   try {
@@ -42,9 +58,16 @@ export async function fitPrepared(encode, picture, policy, capabilities = {}) {
           if (bytes instanceof Uint8Array) facts.set(bytes, result);
         }
         if (!bytes && !known) {
-          const result = await preparedEncode(encode, picture, {...rest, fidelity: {quality: next.value}, ...hooks});
+          const probe = () => preparedEncode(encode, picture, {...rest, fidelity: {quality: next.value}, ...hooks,
+            ...(!encoded && capabilities.fitTarget && {[FIT_BYTES]: {maxBytes, minQuality: search.minQuality, maxQuality: search.maxQuality, candidates: (pixels, [minQuality, maxQuality] = []) => fitSearch(maxBytes, {...search, maxProbes: search.maxProbes - spent, picture: pixels, effort: rest.effort, ...(minQuality !== undefined && {minQuality, maxQuality})})}})});
+          const result = capabilities.journal ? await journaled(capabilities.journal, 'fit-encode', probe) : await probe();
           bytes = result.bytes;
           if (bytes instanceof Uint8Array) facts.set(bytes, result);
+          if (result.fitted) {
+            onProgress?.(1); check(signal);
+            const {fitted: {quality, fits}, ...found} = result, {width, height} = picture;
+            return fits ? {...preparedResult(bytes, {quality}, picture), ...found, bytes} : {fits: false, width, height};
+          }
           encoded = true;
         }
       } catch (error) {
@@ -56,6 +79,7 @@ export async function fitPrepared(encode, picture, policy, capabilities = {}) {
       check(signal);
       if (bytes !== null && (!(bytes instanceof Uint8Array) || !bytes.byteLength))
         throw fail('JXL_INTERNAL', 'The encoder must return a nonempty Uint8Array.');
+      if (bytes) options[PREVIEW]?.(bytes, {width: picture.width, height: picture.height, measurements: facts.get(bytes)?.measurements ?? []});
       count++;
       next = candidates.next({bytes});
     }
@@ -100,6 +124,7 @@ export async function fitWith(encode, input, options, hooks = {}) {
         ...(progress && {onProgress: fraction => progress(fraction / probes)})});
       check(signal);
       const result = preparedResult(bytes, 'exact', picture, jpegReconstruction(bytes));
+      policy.encode[PREVIEW]?.(bytes, {width: picture.width, height: picture.height, measurements: []});
       if (bytes.byteLength <= policy.maxBytes) {
         progress?.(1); check(signal);
         return finishPrepared(result, original,
@@ -113,7 +138,7 @@ export async function fitWith(encode, input, options, hooks = {}) {
   const taking = acquireSource(input, policy.encode, {...hooks, reference: value => { orientation = value.orientation; }});
   const picture = await taking;
   const {readAs: _spent, ...encodeOptions} = policy.encode;
-  const result = await fitPrepared(encode, picture, {...policy, encode: encodeOptions}, hooks);
+  const result = intended(await fitPrepared(encode, picture, {...intentPolicy(policy, picture), encode: encodeOptions}, hooks), picture);
   return finishPrepared(result, picture, {
     fidelity: policy.requestedFidelity, readAs: policy.encode.readAs, maxBytes: policy.maxBytes, signal: policy.encode.signal,
     ...(orientation > 1 && {transform: {width: picture.width, height: picture.height}})});

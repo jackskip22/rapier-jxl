@@ -381,7 +381,7 @@ fn main(@builtin(workgroup_id) g: vec3u, @builtin(local_invocation_index) lid: u
       var unsure = abs(below) <= ba;
       if (below >= 0.0) { let r = dround(a, vec2f(0.5, 0.0), ba); q = i32(r.x); if (r.y != 0.0 || r.x > 1e9) { unsure = true; } }
       if (v.x < 0.0) { q = -q; }
-      if (unsure) { q = ${BK_DOUBT}; atomicOr(&doubt, 1u); }
+      if (unsure) { q = ${BK_DOUBT}; atomicOr(&doubt, 1u); } else if (q < -32768 || q > 32767) { atomicOr(&doubt, 2u); }
       out[slot + c * SIZE + pos] = q;
     }
   }
@@ -436,10 +436,10 @@ export async function gpuBlocksLevels(device, request, ds, core) {
         const all = new Int32Array(read[n]);
         out.destroy();
         list.forEach((b, i) => {
-          const o = i * slot, uncertain = all[o + slot - 1] !== 0;
+          const o = i * slot, flags = all[o + slot - 1], uncertain = (flags & 1) !== 0, d0 = o + 3 * size;
           if (uncertain) doubtful++;
-          exact.set(b.id + ':' + b.bx + ':' + b.by, {coeffs: [0, 1, 2].map(c => all.subarray(o + c * size, o + (c + 1) * size)),
-            dc: [0, 1, 2].map(c => all.subarray(o + 3 * size + c * area, o + 3 * size + (c + 1) * area)), uncertain});
+          exact.set(b.id * 16777216 + b.by * stride + b.bx, {coeffs: [all.subarray(o, o + size), all.subarray(o + size, o + 2 * size), all.subarray(o + 2 * size, o + 3 * size)],
+            dc: [all.subarray(d0, d0 + area), all.subarray(d0 + area, d0 + 2 * area), all.subarray(d0 + 2 * area, d0 + 3 * area)], uncertain, narrow: !uncertain && (flags & 2) === 0});
         });
       }
       for (const b of scratch) b.destroy();

@@ -29,11 +29,13 @@ export function jpegKernels(flushTokens) {
       f64 = new Float64Array(memory.buffer); u32 = new Uint32Array(memory.buffer); u8 = new Uint8Array(memory.buffer);
       i16 = new Int16Array(memory.buffer); i32 = new Int32Array(memory.buffer); u16 = new Uint16Array(memory.buffer);
     };
-    if (memory.buffer.byteLength < DYNAMIC) memory.grow(Math.ceil((DYNAMIC - memory.buffer.byteLength) / 65536));
     views();
     const grow = end => {
       if (end > limit) throw new RangeError('Past the arena charge.');
       memory.grow(Math.ceil((end - memory.buffer.byteLength) / 65536));
+    };
+    const reserve = end => {
+      if (end > memory.buffer.byteLength) { grow(end); views(); }
     };
     let loaded = null, priceStamp = null;
     const append = (w, bytes) => {
@@ -52,10 +54,10 @@ export function jpegKernels(flushTokens) {
         const n = values.length, c = candidates.length, bits = DYNAMIC, logs = bits + symbolBits.length * 8, cands = logs + 16;
         const scratch = cands + c * 16, best = scratch + 768, out = best + 512, vals = out + 16, wts = vals + n * 4, end = wts + n * 4;
         if (end > memory.buffer.byteLength) { grow(end); views(); priceStamp = null; }
-        if (priceStamp !== symbolBits) {
+        if (priceStamp !== candidates) {
           f64.set(symbolBits, bits >> 3); u8.set(logLengths, logs);
           candidates.forEach((k, i) => u32.set([k.split, k.msb, k.lsb, k.splitToken], (cands >> 2) + i * 4));
-          priceStamp = symbolBits;
+          priceStamp = candidates;
         }
         u32.set(values, vals >> 2); u32.set(weights, wts >> 2);
         const index = exports.priceConfigs(vals, wts, n, cands, c, bits, logs, scratch, best, out);
@@ -110,6 +112,7 @@ export function jpegKernels(flushTokens) {
           orders, counted, blockCounts, nonZero, hshifts, vshifts} = state;
         if (progression || nonZero || contexts.map.length > 2560 ||
             comps.some((comp, c) => !(grey && c !== 1) && !(comp.coeffs instanceof Int16Array))) return null;
+        reserve(CTAB);
         i32.set(density, FDENSITY >> 2); i32.set(contexts.map, FMAP >> 2);
         const authored = authoredOrderPasses?.[pass];
         const bx0 = g % groupsX * 32, by0 = ((g / groupsX) | 0) * 32;
@@ -145,6 +148,7 @@ export function jpegKernels(flushTokens) {
       sequentialScan(out, entries, nx, ny, restart, zeros, pad, zigzag) {
         const rowBlocks = entries.reduce((n, e) => n + e.v * e.stride, 0);
         if (entries.length > 4 || rowBlocks > BAND_BLOCKS || zeros.size > 65536 || (pad && pad.bits.length > 65536) || out.pending) return false;
+        reserve(CTAB);
         const runs = [...zeros].sort((a, b) => a[0] - b[0]);
         runs.forEach(([block, count], i) => { u32[(JZEROS >> 2) + 2 * i] = block; u32[(JZEROS >> 2) + 2 * i + 1] = count; });
         if (pad) pad.bits.forEach((bit, i) => { u8[JPADS + i] = bit === 0 || bit === 1 ? bit : 255; });
@@ -223,6 +227,7 @@ export function jpegKernels(flushTokens) {
         if (histograms.length > 255 || contextMap.length > 8192 || histograms.some(h => h.code.lengths.length > 256)) return null;
         const load = () => {
           if (loaded === model) return;
+          reserve(CTAB);
           const slots = [0, 0, 0];
           u8.set(contextMap, CMAP);
           histograms.forEach(({code, config}, id) => {
@@ -244,6 +249,7 @@ export function jpegKernels(flushTokens) {
       ...((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? {} : {
       literalClusters(clusters) {
         const n = clusters.length;
+        reserve(OUT + 131072);
         clusters.forEach((c, i) => u32.set(c.freqs, (LHIST >> 2) + i * 256));
         exports.literalClusters(n);
         const kept = [], rank = new Int32Array(n);
@@ -257,6 +263,7 @@ export function jpegKernels(flushTokens) {
       }),
       countFilled(into, n) {
         if (into.contexts > 8192) return false;
+        reserve(DYNAMIC);
         const m = exports.countFilled(n), large = u32[SCRATCH >> 2], small = into.small, totals = into.totals;
         for (let i = 0; i < m; i++) {
           const at = u32[(CUNIQUE >> 2) + i], count = u32[(CTAB >> 2) + at];
@@ -271,6 +278,7 @@ export function jpegKernels(flushTokens) {
         let n = 0, lastPlans = null, lastBits = 0;
         const load = plans => {
           if (loaded !== histograms) {
+            reserve(HISTOGRAMS + histograms.length * TABLE_SIZE);
             histograms.forEach((h, id) => {
               const base = HISTOGRAMS + id * TABLE_SIZE;
               u16.fill(0, base >> 1, (base >> 1) + 256);
@@ -312,6 +320,7 @@ export function jpegKernels(flushTokens) {
       ansWriter(model) {
         const {contextMap, histograms} = model;
         if (histograms.length > 255 || contextMap.length > 8192 || histograms.some(h => h.counts.length > 256)) return null;
+        reserve(CTAB);
         const load = () => {
           if (loaded === model) return;
           const slots = [0, 0, 0];

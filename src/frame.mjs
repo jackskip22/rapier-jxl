@@ -152,20 +152,24 @@ export function addCounts(into, counts) { into.forEach((h, i) => { const c = cou
 
 export function finishSections(writers) { return writers.map(w => w ? w.finish() : new Uint8Array(0)); }
 
-export function assembleCodestream(header, sections, level = 5) {
-  const sizes = sections.map(section => section.length);
+export function assembleCodestream(header, sections, level = 5, join = null) {
+  const sizes = join ? join(sections).sizes : sections.map(section => section.length);
   writeTOC(header, sizes);
-  const head = header.finish();
+  return codestreamFromParts(header.finish(), sections, level, join);
+}
+export function codestreamFromParts(head, sections, level = 5, join = null) {
+  const sizes = join ? join(sections).sizes : sections.map(section => section.length);
   const prefix = level === 10 ? 49 : 0;
   const length = prefix + head.length + sizes.reduce((a, b) => a + b, 0);
   admitOutputSize(length);
-  const out = new Uint8Array(length);
+  const out = new Uint8Array(join ? prefix : length);
   if (prefix) {
     out.set([0,0,0,12,74,88,76,32,13,10,135,10,
       0,0,0,20,102,116,121,112,106,120,108,32,0,0,0,0,106,120,108,32,
       0,0,0,9,106,120,108,108,10,0,0,0,0,106,120,108,99]);
     new DataView(out.buffer).setUint32(41, length - 41);
   }
+  if (join) return join([out, head, ...sections]);
   out.set(head, prefix);
   let at = prefix + head.length;
   for (const section of sections) { out.set(section, at); at += section.length; }

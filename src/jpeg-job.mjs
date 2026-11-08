@@ -45,7 +45,7 @@ function* carry(jpeg, effort, shown, coefficients, profileOptions, tails, depth 
   admitSize(parsed.width, parsed.height, JPEG_LIMITS);
   const swapped = parsed.orientation >= 5;
   shown?.({width: swapped ? parsed.height : parsed.width, height: swapped ? parsed.width : parsed.height, orientation: parsed.orientation});
-  const codestream = yield* coefficients(parsed, effort), end = parsed.end;
+  const codestream = yield* stage('coefficients', () => coefficients(parsed, effort), undefined, false, true), end = parsed.end;
   if (jpeg.length - end <= JBRD_TAIL || !tails) return yield* carryJPEGSteps(jpeg, parsed, codestream, effort, coefficients.contextsFrom);
   const file = yield* carryJPEGSteps(jpeg.subarray(0, end), parsed, codestream, effort, coefficients.contextsFrom);
   return yield* tails(jpeg, end, file, depth, next => carry(next, effort, null, coefficients, profileOptions, tails, depth + 1), profileOptions.maxPixels);

@@ -8,11 +8,31 @@ export function requireDecode(condition, message = 'Invalid JPEG XL data.', read
 
 export const unpackSigned = value => (value >>> 1) ^ -(value & 1);
 
+export function borrowedBytes(source, begin = 0, end = source.length) {
+  if (ArrayBuffer.isView(source)) return new Uint8Array(source.buffer, source.byteOffset + begin, end - begin);
+  const length = end - begin, at = (v, fallback) => v === undefined ? fallback : Math.max(0, Math.min(length, v < 0 ? length + Math.trunc(v) : Math.trunc(v)));
+  const subarray = (from, to) => { const a = at(from, 0); return source.subarray(begin + a, begin + Math.max(a, at(to, length))); };
+  const known = {length, byteLength: length, byteOffset: 0, constructor: Uint8Array, subarray, slice: (a, b) => subarray(a, b).slice()};
+  let start = 0, window = new Uint8Array(0);
+  return new Proxy(new Uint8Array(0), {get: (_target, key) => {
+    if (Object.hasOwn(known, key)) return known[key];
+    if (key === Symbol.toStringTag) return 'Uint8Array';
+    if (typeof key !== 'string' || !/^\d+$/.test(key)) throw new Error('A borrowed decoder input is read by ranges.');
+    const n = +key;
+    if (n >= length) return undefined;
+    if (n < start || n >= start + window.length) { start = Math.floor(n / 16384) * 16384; window = subarray(start, Math.min(length, start + 16384)); }
+    return window[n - start];
+  }, getPrototypeOf: () => Uint8Array.prototype});
+}
+export const uint32View = bytes => ArrayBuffer.isView(bytes) ? new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  : {getUint32: at => (bytes[at] * 16777216 + (bytes[at + 1] << 16 | bytes[at + 2] << 8 | bytes[at + 3])) >>> 0};
+
 export class JxlBits {
-  constructor(bytes) {
+  constructor(bytes, borrowed = false) {
     if (!(bytes instanceof Uint8Array)) throw new TypeError('JPEG XL bytes must be a Uint8Array.');
     this.bytes = bytes;
-    const buf = bytes.length <= 67108864 ? new Uint8Array(bytes.length + 8) : bytes;
+    this.borrowed = borrowed;
+    const buf = !borrowed && bytes.length <= 67108864 ? new Uint8Array(bytes.length + 8) : bytes;
     if (buf !== bytes) buf.set(bytes);
     this.buf = buf;
     this.bit = 0;

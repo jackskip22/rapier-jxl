@@ -35,7 +35,7 @@ export interface AnimationAtlasOptions extends AnimationOptions {
   atlasSearch?: AtlasSearchOptions;
 }
 
-/** Deterministically discover and pack byte-exact repeated glyphs/tiles. All channels, including hidden RGB,
+/** Deterministically discover and pack exactly repeated glyphs/tiles. All channels, including hidden RGB,
  * participate in matching. Unchanged rectangles after the previous shown frame do not inflate use counts.
  * Returns null when no useful candidate fits the search bounds. The source buffers remain unchanged. */
 export function buildAnimationAtlas(animation: Animation, options?: AtlasSearchOptions): AnimationAtlasPlan | null;

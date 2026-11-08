@@ -287,8 +287,8 @@ export function expectedDataBits(freqs, counts) {
   return bits;
 }
 
-export function writeAnsHistograms(w, contextMap, logAlphabet, configs, histograms) {
-  if (contextMap.length > 1) writeContextMap(w, contextMap);
+export function writeAnsHistograms(w, contextMap, logAlphabet, configs, histograms, mapWriter = writeContextMap) {
+  if (contextMap.length > 1) mapWriter(w, contextMap);
   w.write(1, 0); w.write(2, logAlphabet - 5);
   for (const config of configs) writeUintConfig(w, config, logAlphabet);
   for (const h of histograms) writeDistribution(w, h.counts, true, h.shift, h.omit);

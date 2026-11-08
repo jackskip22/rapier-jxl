@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {JxlBits, readSize} from '../jpeg-coefficients.mjs';
+import {JxlBits, readSize} from '../jxl-size.mjs';
 import {boxes, SIGNATURE, CODESTREAM, PARTIAL} from '../container.mjs';
 
 export function pictureSize(bytes) {

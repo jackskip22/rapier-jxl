@@ -1,4 +1,4 @@
-import {kernelModule, compileKernels, kernelsSupported} from './kernel-runtime.mjs';
+import {kernelModule, compileKernels, kernelsSupported, kernelInstance, arenaHolder, heldExports, takeArena} from './kernel-runtime.mjs';
 // The WebAssembly kernels every encoder's pixel loops run in. MIT (images/jxl/LICENSE).
 import {kernelHooks} from './kernel-hooks.mjs';
 import {ARENA_BYTES} from './arena.mjs';
@@ -8,7 +8,7 @@ import {BitWriter} from './bits.mjs';
 import {hybridToken} from './prefix.mjs';
 import {fault} from './admit.mjs';
 
-export const {configureKernels, ensureKernels, kernelMode, kernelRequest, disableEntropyKernels, prepareKernels, arenaKernels, releaseArena, orientBlock, sampleTable, sampleFilter, sampleSum, sampleFinish} = (() => {
+export const {configureKernels, ensureKernels, kernelMode, kernelRequest, disableEntropyKernels, prepareKernels, arenaKernels, releaseArena, orientBlock, sampleTable, sampleFilter, sampleSum, sampleFinish, captureAnsWrite} = (() => {
 const UPLOAD = typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true;
 const JPEG = typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true;
 const SAMPLE = typeof __RAPIER_JXL_SAMPLE__ !== 'undefined' && __RAPIER_JXL_SAMPLE__ === true;
@@ -23,13 +23,49 @@ const acceptableConfig = c => Number.isInteger(c.split) && Number.isInteger(c.ms
 const RAW_BINS = 4096 + 33;
 const GROUP_PLANES = [P, PROPERTY, CONTEXT, STATE];
 
+let holder = null;
+const enteredOf = new Map();
+const entered = f => enteredOf.get(f) ?? enteredOf.set(f, function (...args) { takeArena(holder); return f.apply(this, args); }).get(f);
+const OWN_HOOKS = ['channel', 'weighted', 'fill', 'group', 'screen', 'sampled', 'sampledStore', 'dct', 'ycbcrTile', 'rgbTiles', 'rgbBand', 'photoTile', 'acGroup', 'acGroupPair', 'acDeferred', 'wpTokens', 'nonzero', 'entropy', 'varblock', 'gaborish', 'strategyFill', 'strategyWrite', 'xybPlanes', 'gabBand', 'dcEvents', 'hybridPlan', 'shape'];
 function createEngine() {
-  const memory = new WebAssembly.Memory({initial: 48, maximum: 272});
-  const simd = new WebAssembly.Instance(kernelModule(), {env: {memory}}).exports;
+  const {memory, exports} = kernelInstance();
+  const views = () => { engine.u8 = new Uint8Array(memory.buffer); engine.i32 = new Int32Array(memory.buffer); };
+  holder = arenaHolder(() => {
+    if (acDeferred) throw fault('JXL_INTERNAL', 'The kernels\' arena was taken under deferred AC counts.');
+    acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; tileTables = null; acResident = null;
+    vbStrip = null; vbLoaded = -1; shapeEpoch = -1; sampleTableEpoch = -1; heldLevelsKey = ''; retainEpoch++;
+  }, views, () => initializeTables?.(new Int32Array(memory.buffer)));
+  const simd = heldExports(exports, holder);
   const u8 = new Uint8Array(memory.buffer), i32 = new Int32Array(memory.buffer);
   initializeTables?.(i32);
   return {memory, simd, u8, i32};
 }
+
+const captureAnsWrite = SAMPLE ? null : function captureAnsWrite(w, tags, extras, n, shapes) {
+  engine ||= createEngine();
+  takeArena(holder);
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; shapeEpoch = -1; retainEpoch++;
+  const tabs = P, at = tabs + shapes.length * 9232, words = at + n * 4, raw = words + (n * 2 + 3 & ~3), out = raw + n * 4;
+  const fit = end => {
+    if (end <= engine.memory.buffer.byteLength) return;
+    try { engine.memory.grow(Math.ceil((end - engine.memory.buffer.byteLength) / 65536)); }
+    catch { throw fault('JXL_MEMORY', 'An ANS stream passes the kernels\' memory.'); }
+    engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
+  };
+  fit(out);
+  const u16 = new Uint16Array(engine.memory.buffer);
+  shapes.forEach((h, k) => {
+    const base = (tabs + k * 9232) >> 1;
+    u16.fill(0, base, base + 520); u16.set(h.counts, base); u16.set(h.starts, base + 256); u16.set(h.reverse, base + 520);
+  });
+  engine.i32.set(tags.subarray(0, n), at >> 2); engine.i32.set(extras.subarray(0, n), raw >> 2);
+  const bits = engine.simd.tokAnsBack(at, n, tabs, words);
+  fit(out + ((bits + w.pending) >> 3) + 16);
+  const written = engine.simd.tokAnsWrite(at, raw, n, words, w.acc, w.pending, out), whole = written >> 3, rest = written & 7;
+  if (w.at + whole + 8 >= w.bytes.length) w.grow(whole + 8);
+  w.bytes.set(engine.u8.subarray(out, out + whole), w.at); w.at += whole;
+  w.acc = rest ? engine.u8[out + whole] & (1 << rest) - 1 : 0; w.pending = rest;
+};
 
 const initializeTables = SAMPLE ? null : i32 => { weightedTables(i32, DIV, WEIGHTS); i32.set(WEIGHTED_BUCKET, BUCKET >> 2); };
 
@@ -116,32 +152,34 @@ const sampleFinish = JPEG ? null : function sampleFinish(sum, out, row, width, c
   new Uint8Array(out.buffer, out.byteOffset + row * length, length).set(new Uint8Array(buffer, SAMPLE_OUT, length));
 };
 
-const tokens = SAMPLE ? null : function tokens(w, targets, count, contexts, config = PLAIN, rawLength = 0) {
+const SMALL_TOKENS = SAMPLE ? null : Object.freeze({residual: R, table: TABLE, output: OUTPUT});
+const tokens = SAMPLE ? null : function tokens(w, targets, count, contexts, config = PLAIN, rawLength = 0, at = SMALL_TOKENS) {
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   const {simd, i32, u8} = engine, stride = rawLength || ALPHABET;
   if (!acceptableWriter(w) || !targets.length || targets.length > 34) return false;
+  const {residual, table, output} = at;
   if (w) {
-    i32.fill(0, TABLE >> 2, (TABLE >> 2) + targets.length * ALPHABET * 2);
+    i32.fill(0, table >> 2, (table >> 2) + targets.length * ALPHABET * 2);
     for (let c = 0; c < targets.length; c++) {
       const code = targets[c];
       if (!code?.lengths || !code?.codes || code.lengths.length > ALPHABET) return false;
       for (let s = 0; s < code.lengths.length; s++) {
-        i32[(TABLE >> 2) + (c * ALPHABET + s) * 2] = code.lengths[s];
-        i32[(TABLE >> 2) + (c * ALPHABET + s) * 2 + 1] = code.codes[s];
+        i32[(table >> 2) + (c * ALPHABET + s) * 2] = code.lengths[s];
+        i32[(table >> 2) + (c * ALPHABET + s) * 2 + 1] = code.codes[s];
       }
     }
   } else {
     for (let c = 0; c < targets.length; c++) {
       if (!(targets[c] instanceof Uint32Array) || targets[c].length !== stride) return false;
-      i32.set(targets[c], (TABLE >> 2) + c * stride);
+      i32.set(targets[c], (table >> 2) + c * stride);
     }
   }
-  const written = simd.tokens(R, contexts, count, TABLE, OUTPUT, w ? 1 : 0, w ? w.acc : 0, w ? w.pending : 0, config.split, config.msb, config.lsb, rawLength);
+  const written = simd.tokens(residual, contexts, count, table, output, w ? 1 : 0, w ? w.acc : 0, w ? w.pending : 0, config.split, config.msb, config.lsb, rawLength);
   if (w) {
     if (w.at + written + 8 >= w.bytes.length) w.grow(written + 8);
-    w.bytes.set(u8.subarray(OUTPUT, OUTPUT + written), w.at);
-    w.at += written; w.acc = i32[(OUTPUT - 8) >> 2]; w.pending = i32[(OUTPUT - 4) >> 2];
-  } else for (let c = 0; c < targets.length; c++) targets[c].set(i32.subarray((TABLE >> 2) + c * stride, (TABLE >> 2) + (c + 1) * stride));
+    w.bytes.set(u8.subarray(output, output + written), w.at);
+    w.at += written; w.acc = i32[(output - 8) >> 2]; w.pending = i32[(output - 4) >> 2];
+  } else for (let c = 0; c < targets.length; c++) targets[c].set(i32.subarray((table >> 2) + c * stride, (table >> 2) + (c + 1) * stride));
   return true;
 }
 const channel = SAMPLE ? null : function channel(w, target, plane, width, height, leaf, raw) {
@@ -155,24 +193,44 @@ const channel = SAMPLE ? null : function channel(w, target, plane, width, height
   engine.simd.residual(P, width, height, leaf.predictor, leaf.offset, R);
   return tokens(w, [target], n, 0, config, raw ? target.length : 0);
 }
+const WEIGHTED_BAND = 1048576;
+const weightedPlane = SAMPLE ? null : (p, w, h, offset) => p instanceof Int16Array && Number.isInteger(w) && Number.isInteger(h) && w > 0 && h > 0 &&
+  p.length >= w * h && Number.isInteger(offset) && Math.abs(offset) <= 32768;
+const weightedGrow = SAMPLE ? null : function weightedGrow(bytes) {
+  if (bytes <= engine.memory.buffer.byteLength) return;
+  try { engine.memory.grow(Math.ceil((bytes - engine.memory.buffer.byteLength) / 65536)); }
+  catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'Not enough memory for the weighted predictor.'), {cause}); }
+  engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
+};
+const weightedBands = SAMPLE ? null : function weightedBands(plane, width, height, offset, residuals, properties) {
+  const rows = Math.max(1, Math.min(height, Math.floor(WEIGHTED_BAND / width))), band = rows * width;
+  const first = P + width * 4, residual = first + band * 4, property = residual + band * 4, state = property + band * 4;
+  weightedGrow(state + (width + 2) * 40);
+  const {i32, simd} = engine;
+  i32.fill(0, state >> 2, (state >> 2) + (width + 2) * 10);
+  for (let y0 = 0; y0 < height; y0 += rows) {
+    const y1 = Math.min(height, y0 + rows), count = (y1 - y0) * width;
+    i32.set(plane.subarray(Math.max(0, y0 - 1) * width, y1 * width), (y0 ? P : first) >> 2);
+    simd.captureWeighted(first, width, y1, offset, residual, property, y0, 0, 0, DIV, WEIGHTS, state);
+    residuals.set(i32.subarray(residual >> 2, (residual >> 2) + count), y0 * width);
+    if (properties) properties.set(i32.subarray(property >> 2, (property >> 2) + count), y0 * width);
+  }
+  return true;
+};
 const weighted = SAMPLE ? null : function weighted(w, targets, plane, width, height, offset, contextOf, residuals, properties) {
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
-  if (!acceptablePlane(plane, width, height, offset, residuals ? 1048576 : 65536) || !acceptableWriter(w)) return false;
+  if (!weightedPlane(plane, width, height, offset) || !acceptableWriter(w)) return false;
   const n = width * height;
-  if (w && w.at + n * 8 + 32 > 0x7fffffff) return false;
+  if (w && w.at + n * 8 + 32 > 0x7fffffff) throw fault('JXL_MEMORY', 'The weighted predictor\'s output would pass 2 GB.');
   if (residuals && (!(residuals instanceof Uint32Array) || residuals.length < n)) return false;
   if (properties && (!(properties instanceof Int32Array) || properties.length < n)) return false;
   if (contextOf.length !== 34 || contextOf.some(c => !Number.isInteger(c) || c < 0 || c >= 34)) return false;
   if (!residuals && contextOf.some(c => c >= targets.length)) return false;
+  if (residuals && (n > WEIGHTED_BAND || width > 16384)) return weightedBands(plane, width, height, offset, residuals, properties);
   const large = n > 65536, residual = large ? P + n * 4 : R, property = large ? P + n * 8 : PROPERTY;
   const context = large ? P + n * 12 : CONTEXT, state = large ? P + n * 16 : STATE;
-  const needed = state + (width + 2) * 40;
-  if (needed > engine.memory.buffer.byteLength) {
-    try { engine.memory.grow(Math.ceil((needed - engine.memory.buffer.byteLength) / 65536)); }
-    catch { return false; }
-    engine.u8 = new Uint8Array(engine.memory.buffer);
-    engine.i32 = new Int32Array(engine.memory.buffer);
-  }
+  const table = large ? state + (width + 2) * 40 + 15 & ~15 : TABLE, output = large ? table + 34 * ALPHABET * 8 + 16 : OUTPUT;
+  weightedGrow(large && !residuals ? output + n * 8 + 64 : state + (width + 2) * 40);
   const {i32, simd} = engine;
   i32.set(plane.subarray(0, n), P >> 2); i32.set(contextOf, MAP >> 2);
   i32.fill(0, state >> 2, (state >> 2) + (width + 2) * 10);
@@ -183,8 +241,8 @@ const weighted = SAMPLE ? null : function weighted(w, targets, plane, width, hei
     if (properties) properties.set(i32.subarray(property >> 2, (property >> 2) + n));
     return true;
   }
-  if (properties) properties.set(i32.subarray(PROPERTY >> 2, (PROPERTY >> 2) + n));
-  return tokens(w, targets, n, CONTEXT);
+  if (properties) properties.set(i32.subarray(property >> 2, (property >> 2) + n));
+  return tokens(w, targets, n, context, PLAIN, 0, large ? {residual, table, output} : SMALL_TOKENS);
 }
 const fill = SAMPLE || JPEG ? null : function fill(rgba, imageWidth, x0, y0, w, h, channels, planes) {
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
@@ -242,9 +300,9 @@ const ycbcrTile = JPEG || SAMPLE ? null : function ycbcrTile(data, width, rowAt,
   return true;
 };
 
-const rgbTile = JPEG || SAMPLE || UPLOAD ? null : function rgbTile(data, width, height, bx0, by0, bw, bh, tableOf, cflOf, planes, stride, basis, quantScale, resident = null) {
+const rgbTile = JPEG || SAMPLE ? null : function rgbTile(data, width, height, bx0, by0, bw, bh, tableOf, cflOf, planes, stride, basis, quantScale, resident = null) {
   if (active !== 'simd' || !engine.simd.rgbTile || !(data instanceof Uint8Array || data instanceof Uint8ClampedArray) || !(bw >= 1 && bw <= 8 && bh >= 1 && bh <= 8)) return false;
-  const SCRATCH = P + 98304, SRC = SCRATCH + 512, OUT = SRC + 16384, SUMS = OUT + 24576, TABS = SUMS + 32, TABLES = TABS + 256;
+  const SCRATCH = P + 98304, SRC = SCRATCH + 512, OUT = SRC + 16384, SUMS = OUT + 24576, TABS = SUMS + 32, TABLES = R + 1024;
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   const buffer = engine.memory.buffer, u8 = new Uint8Array(buffer), f64 = new Float64Array(buffer), i32 = new Int32Array(buffer);
   const count = bw * bh, slots = new Map();
@@ -253,7 +311,7 @@ const rgbTile = JPEG || SAMPLE || UPLOAD ? null : function rgbTile(data, width, 
     let at = slots.get(t);
     if (at === undefined) {
       at = TABLES + slots.size * 3072;
-      if (at + 3072 > R || t.length !== 384) return false;
+      if (t.length !== 384) return false;
       f64.set(t, at >> 3); slots.set(t, at);
     }
     i32[(TABS >> 2) + n] = at;
@@ -714,34 +772,6 @@ const shape = SAMPLE ? null : function shape(freqs, last, total, omit, tables, h
 }
 
 
-const captureTokenGroup = SAMPLE || JPEG ? null : function captureTokenGroup(comps, width, height, group, density, order, ac = null) {
-  if (active !== 'simd') throw fault('JXL_WASM', 'Photographic capture needs its SIMD kernels.');
-  const groupsX = Math.ceil(width / 256), bx = group % groupsX * 32, by = Math.floor(group / groupsX) * 32;
-  const bw = Math.min(32, Math.ceil(width / 8) - bx), bh = Math.min(32, Math.ceil(height / 8) - by);
-  if (bw < 1 || bh < 1 || comps.length !== 3 || comps.some(c => !(c.coeffs instanceof Int16Array) || c.stride < bx + bw || c.coeffs.length < ((by + bh - 1) * c.stride + bx + bw) * 64))
-    throw fault('JXL_INPUT', 'Photo capture needs three signed16 DCT8 planes.');
-  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
-  const args = P, coeff = P + 128, counts = coeff + 393216, buckets = counts + 3072, contexts = buckets + 1024;
-  const orders = contexts + 64, zd = orders + 192, nz = zd + 8192, values = nz + 12288, ids = values + 786432;
-  const buffer = engine.memory.buffer, u8 = new Uint8Array(buffer), i16 = new Int16Array(buffer), u16 = new Uint16Array(buffer), i32 = new Int32Array(buffer);
-  for (let c = 0; c < 3; c++) {
-    const {coeffs, stride} = comps[c], at = coeff + c * 131072;
-    for (let y = 0; y < bh; y++) i16.set(coeffs.subarray(((by + y) * stride + bx) * 64, ((by + y) * stride + bx + bw) * 64), (at >> 1) + y * bw * 64);
-    engine.simd.captureSelect(at, counts + c * bw * bh, bw * bh, 128, 3);
-    u8.set(order, orders + c * 64);
-  }
-  u8.fill(0, buckets, buckets + 1024); u16.set(density, zd >> 1);
-  if (ac && ac.K > 1) {
-    const {coeffs, stride} = comps[1];
-    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) u8[buckets + y * bw + x] = ac.bucket(coeffs[((by + y) * stride + bx + x) * 64]);
-    i32.set(ac.table, contexts >> 2);
-  } else i32.set([1, 0, 2], contexts >> 2);
-  i32.set([coeff, 131072, bw, bh, counts, buckets, contexts, ac ? ac.K : 1, ac ? ac.numCtxs : 3, orders, zd, nz, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, values, ids, 0], args >> 2);
-  engine.simd.acGroup(args);
-  const n = i32[(args >> 2) + 28];
-  return {n, values: new Uint32Array(buffer, values, n), ctxs: new Uint16Array(buffer, ids, n)};
-}
-
 const captureOpaque = SAMPLE || JPEG ? null : function captureOpaque(data, width, x, y, w, h) {
   if (active !== 'simd') throw fault('JXL_WASM', 'Photographic capture needs its SIMD kernels.');
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
@@ -752,23 +782,6 @@ const captureOpaque = SAMPLE || JPEG ? null : function captureOpaque(data, width
   }
   return true;
 };
-
-const capturePlane = SAMPLE || JPEG ? null : function capturePlane(data, sourceWidth, x, y, width, height, step = 1, offset = 0) {
-  if (active !== 'simd') throw fault('JXL_WASM', 'Photographic capture needs its SIMD kernels.');
-  const type = data instanceof Int16Array ? 1 : data instanceof Int8Array ? 2 : data instanceof Uint8Array || data instanceof Uint8ClampedArray ? 0 : -1;
-  if (type < 0 || width < 1 || height < 1 || width > 256 || height > 256 || !Number.isInteger(step) || step < 1 || step > 64 || x < 0 || y < 0 || x + width > sourceWidth || ((y + height - 1) * sourceWidth + x + width - 1) * step + offset >= data.length)
-    throw fault('JXL_INPUT', 'Photographic capture plane is outside its owned sample rows.');
-  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
-  const raw = new Uint8Array(data.buffer, data.byteOffset, data.byteLength), unit = data.BYTES_PER_ELEMENT, output = new Int16Array(width * height);
-  const u8 = new Uint8Array(engine.memory.buffer), out = P + 65536, i16 = new Int16Array(engine.memory.buffer);
-  for (let row = 0; row < height; row++) {
-    const at = ((y + row) * sourceWidth + x) * step * unit, end = at + ((width - 1) * step + offset + 1) * unit;
-    u8.set(raw.subarray(at, end), P);
-    engine.simd.captureSelect(P + offset * unit, out, width, step * unit, type);
-    output.set(i16.subarray(out >> 1, (out >> 1) + width), row * width);
-  }
-  return output;
-}
 
 const nonzero = SAMPLE ? null : function nonzero(coeffs, from, end, natural) {
   if (active !== 'simd' || !(coeffs instanceof Int16Array) || from % 64 || (end - from) % 64) return false;
@@ -880,7 +893,7 @@ const sampledLayout = SAMPLE ? null : function sampledLayout(total, kinds, alpha
 }
 const SAMPLED_CAP = 272 * 65536, RETAIN_BUDGET = 8 * 1048576;
 const SAMPLED_COUNT = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ||
-  (typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) ? 65536 : 262144;
+  (typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) ? 65536 : 524288;
 
 const sampledStore = SAMPLE ? null : function sampledStore(count, kinds, alphabet, columns) {
   if (!engine || !Number.isInteger(count) || count < 64 || count > SAMPLED_COUNT || !kinds || kinds > 16 || !alphabet || alphabet > 256) return null;
@@ -921,6 +934,12 @@ const sampledStore = SAMPLE ? null : function sampledStore(count, kinds, alphabe
   };
 }
 
+const largest = new WeakMap();
+const largestOf = SAMPLE ? null : a => {
+  let most = largest.get(a);
+  if (most === undefined) { most = 0; for (let i = 0; i < a.length; i++) if (a[i] > most) most = a[i]; largest.set(a, most); }
+  return most;
+};
 const sampled = SAMPLE ? null : function sampled(members, histograms, symbolSets, columns, table, rawPrice, choiceBits, keep = null) {
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; shapeEpoch = -1;
   const total = members.length, kinds = symbolSets.length, alphabet = rawPrice.length;
@@ -962,7 +981,9 @@ const sampled = SAMPLE ? null : function sampled(members, histograms, symbolSets
     for (let i = 0; i < total; i++) if (members[i] >= count) return store?.release(handle), false;
     for (let c = 0; c < kinds; c++) {
       const source = symbolSets[c], at = symbols + c * total;
-      for (let i = 0; i < total; i++) { const symbol = source[members[i]]; if (symbol >= alphabet) return store?.release(handle), false; u8[at + i] = symbol; }
+      if (largestOf(source) >= alphabet) return store?.release(handle), false;
+      const out = u8.subarray(at, at + total);
+      for (let i = 0; i < total; i++) out[i] = source[members[i]];
     }
   }
   for (let c = 0; c < kinds; c++) i32.set(histograms[c], (histogram >> 2) + c * alphabet);
@@ -977,7 +998,9 @@ const sampled = SAMPLE ? null : function sampled(members, histograms, symbolSets
       backend.subtract(dense, keep.parent.at + keep.parent.offsets[k], keep.sibling.at + keep.sibling.offsets[k], size);
     } else {
       const source = column.indices;
-      for (let i = 0; i < total; i++) { const bin = source[members[i]]; if (bin > cuts) return store?.release(handle), false; u8[indices + i] = bin; }
+      if (largestOf(source) > cuts) return store?.release(handle), false;
+      const out = u8.subarray(indices, indices + total);
+      for (let i = 0; i < total; i++) out[i] = source[members[i]];
     }
     const bin = backend.sampled(symbols, total, kinds, indices, cuts, alphabet, histogram, entropy, raw, scratch, output, derive ? 1 : 0);
     if (handle) u8.copyWithin(handle.at + handle.offsets[k], dense, dense + size * 4);
@@ -1123,8 +1146,8 @@ const xybPlanesKernel = SAMPLE || UPLOAD || JPEG ? null : function xybPlanesKern
 };
 
 const GAB = 4194304, GAB_LIMIT = 272 * 65536;
-const gaborish = SAMPLE || UPLOAD || JPEG ? null : function gaborish(t, source, W, H, weights, iterations) {
-  if (active !== 'simd' || !(t instanceof Float64Array) || !(source instanceof Float64Array) || source.length < W * H || !Number.isInteger(W) || !Number.isInteger(H) || W < 8 || W % 2 ||
+const gaborish = SAMPLE || UPLOAD || JPEG ? null : function gaborish(t, source, W, H, weights, iterations, start = source) {
+  if (active !== 'simd' || !(t instanceof Float64Array) || !(source instanceof Float64Array) || source.length < W * H || !(start instanceof Float64Array) || start.length < W * H || start === t && start !== source || !Number.isInteger(W) || !Number.isInteger(H) || W < 8 || W % 2 ||
       H < 1 || t.length !== W * H || !Number.isInteger(iterations) || iterations < 1 || iterations > 16) return false;
   const rowBytes = W * 8, room = Math.floor((GAB_LIMIT - GAB) / rowBytes) - 2;
   const rows = Math.min(H, room >> 1), keep = rows === H ? H : rows - 2 * iterations;
@@ -1141,7 +1164,7 @@ const gaborish = SAMPLE || UPLOAD || JPEG ? null : function gaborish(t, source, 
   const [w1, w2] = weights, norm = 1 / (1 + 4 * w1 + 4 * w2);
   for (let a = 0; a < H; a += keep) {
     const b = Math.min(H, a + keep), from = Math.max(0, a - iterations), to = Math.min(H, b + iterations), rowsOf = source.subarray(from * W, to * W);
-    f64.set(rowsOf, GAB >> 3); f64.set(rowsOf, orig >> 3);
+    f64.set(start === source ? rowsOf : start.subarray(from * W, to * W), GAB >> 3); f64.set(rowsOf, orig >> 3);
     for (let i = 0; i < iterations; i++) engine.simd.gab(GAB, orig, ring, W, to - from, w1, w2, norm);
     t.set(f64.subarray((GAB >> 3) + (a - from) * W, (GAB >> 3) + (b - from) * W), a * W);
   }
@@ -1449,6 +1472,7 @@ function configureKernels(mode = 'auto', parts) {
     if (!SAMPLE && !UPLOAD && !JPEG && (!enabled || enabled.get('strategyFill'))) { kernelHooks.strategyFill = strategyFill; kernelHooks.strategyWrite = strategyWrite; }
     if (!SAMPLE && (!enabled || enabled.get('gabBand'))) kernelHooks.gabBand = gabBand;
     if (!SAMPLE && entropyAllowed && (!enabled || enabled.get('entropy'))) kernelHooks.entropy = entropyKernels;
+    for (const name of OWN_HOOKS) if (kernelHooks[name]) kernelHooks[name] = entered(kernelHooks[name]);
   } catch { active = 'off'; kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.ycbcrTile = kernelHooks.rgbTiles = kernelHooks.rgbBand = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.acGroupPair = kernelHooks.acDeferred = kernelHooks.wpTokens = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = kernelHooks.dcEvents = kernelHooks.hybridPlan = kernelHooks.shape = null; }
   return active;
 }
@@ -1466,6 +1490,7 @@ async function prepareKernels() {
 const arenaKernels = SAMPLE || UPLOAD ? null : capJpegKernels;
 const releaseArena = SAMPLE || UPLOAD ? null : releaseJpegKernels;
 if (!SAMPLE) kernelHooks.arena = {lend: () => capJpegKernels(ARENA_BYTES), release: releaseJpegKernels};
-if (!SAMPLE && !JPEG) kernelHooks.capturePhoto = {prepare: prepareKernels, ready: ensureKernels, tokenGroup: captureTokenGroup, plane: capturePlane, opaque: captureOpaque};
-return {configureKernels, ensureKernels, kernelMode, kernelRequest, disableEntropyKernels, prepareKernels, arenaKernels, releaseArena, orientBlock, sampleTable, sampleFilter, sampleSum, sampleFinish};
+kernelHooks.ensure = ensureKernels;
+if (!SAMPLE && !JPEG) kernelHooks.capturePhoto = {prepare: prepareKernels, ready: ensureKernels, opaque: captureOpaque};
+return {configureKernels, ensureKernels, kernelMode, kernelRequest, disableEntropyKernels, prepareKernels, arenaKernels, releaseArena, orientBlock, sampleTable, sampleFilter, sampleSum, sampleFinish, captureAnsWrite};
 })();

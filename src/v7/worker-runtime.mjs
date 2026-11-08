@@ -30,16 +30,18 @@ export function workerPort() {
   return typeof own.postMessage === 'function' && typeof own.addEventListener === 'function' && typeof own.document === 'undefined' ? own : null;
 }
 
-export function install(port, pending = [], runtime) {
+export function install(port, pending = [], runtime, previewHub) {
   const {run, prepare} = runtime;
   if (!port || typeof port.postMessage !== 'function' || typeof port.on !== 'function' && typeof port.addEventListener !== 'function') return;
   if (port[INSTALLED]) return;
   try { Object.defineProperty(port, INSTALLED, {value: true}); } catch {}
   let here = false, configurationError;
+  const previews = previewHub?.(port);
   const owner = {}, running = new Map();
   const reply = (id, reason) => port.postMessage({id, ok: false, error: failure(reason, true)});
   const receive = message => {
     if (!message) return;
+    if (previews?.ack(message)) return;
     if (message.wasmModules) {
       try { configureModules(message.wasmModules); }
       catch (error) { configurationError = {code: error?.code || 'JXL_WASM', message: error?.message || 'Invalid precompiled WebAssembly modules.'}; port.postMessage({configurationError}); }
@@ -61,10 +63,11 @@ export function install(port, pending = [], runtime) {
     const beside = lane === 1 && helpers && running.size - here < helpers.count;
     if (running.has(id) || (here && !beside)) { reply(id, Object.assign(new Error('The worker already has an active operation.'), {code: 'JXL_BUSY'})); return; }
     const controller = new AbortController();
+    const preview = message.preview === true ? previews?.start(id, controller.signal) : undefined;
     running.set(id, controller);
     if (!beside) here = true;
-    const done = () => { running.delete(id); if (!beside) here = false; };
-    Promise.resolve().then(() => run(operation, input, options, {maxPixels, jpegPixels, helpers, webgpu, owner, lane: beside ? 1 : 0, alone, signal: controller.signal, onProgress: progress => port.postMessage({id, progress}), ...(operation === 'capture' && {onEncoded: encoded => port.postMessage({id, encoded})})})).then(value => {
+    const done = () => { preview?.close(); running.delete(id); if (!beside) here = false; };
+    Promise.resolve().then(() => run(operation, input, options, {maxPixels, jpegPixels, helpers, webgpu, owner, lane: beside ? 1 : 0, alone, signal: controller.signal, onProgress: progress => port.postMessage({id, progress}), ...(preview && {onPreview: preview.send}), ...(operation === 'capture' && {onEncoded: encoded => port.postMessage({id, encoded})})})).then(value => {
       done();
       try { port.postMessage({id, ok: true, value}, [...transferable(value)]); } catch (reason) { reply(id, reason); }
     }, reason => { done(); reply(id, reason); });

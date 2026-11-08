@@ -217,10 +217,12 @@ export function createModular(r, inputChannels, options = {}) {
     if (useGlobal) requireDecode(!!tree, 'JPEG XL Modular stream has no global tree.', r);
     else tree = readMATree(r, {maxNodes: Math.min(1048576, 1024 + size(channels))});
   }
+  const region = options.region && transforms.length <= 1 && transforms.every(t => t.type === 0 || t.type === 1 && t.predictor === 0) &&
+    channels.slice(meta).every(c => c.hshift === 0 && c.vshift === 0) ? options.region : null;
   let globalCount = 0, closed = false;
   const admitOpen = () => requireDecode(!closed, 'Modular image has already been finished.');
   const state = {
-    channels, transforms, metaChannels: meta, tree, groupDim, bitDepth, modularWork,
+    channels, transforms, metaChannels: meta, tree, groupDim, bitDepth, modularWork, region,
     decodeAll(reader, streamIndex = 0) {
       admitOpen();
       decodeChannels(reader, channels, tree, parameters, streamIndex, modularWork);
@@ -258,21 +260,33 @@ export function createModular(r, inputChannels, options = {}) {
         c.regions ??= [];
         requireDecode(!c.regions.some(q => left < q[0] + q[2] && left + w > q[0] && top < q[1] + q[3] && top + h > q[1]), 'Overlapping Modular groups.');
         c.regions.push([left, top, w, h]);
-        if (!c.data.length) c.data = new Int32Array(c.width * c.height);
-        for (let row = 0; row < h; row++) c.data.set(decoded[i].data.subarray(row * w, (row + 1) * w), (top + row) * c.width + left);
-        c.decoded = (c.decoded ?? 0) + w * h;
+        const area = region ?? {x: 0, y: 0, width: c.width, height: c.height};
+        const x0 = Math.max(left, area.x), y0 = Math.max(top, area.y), x1 = Math.min(left + w, area.x + area.width), y1 = Math.min(top + h, area.y + area.height);
+        if (!c.data.length) c.data = new Int32Array(area.width * area.height);
+        for (let row = y0; row < y1; row++) c.data.set(decoded[i].data.subarray((row - top) * w + x0 - left, (row - top) * w + x1 - left), (row - area.y) * area.width + x0 - area.x);
+        c.decoded = (c.decoded ?? 0) + Math.max(0, x1 - x0) * Math.max(0, y1 - y0);
       }
       return state;
     },
     finish() {
       admitOpen();
-      for (const c of channels) {
-        const count = c.width * c.height;
+      for (let i = 0; i < channels.length; i++) {
+        const c = channels[i], cropped = region && i >= meta, global = i < globalCount;
+        const count = cropped && !global ? region.width * region.height : c.width * c.height;
         requireDecode((c.decoded ?? 0) === count, 'JPEG XL Modular image has missing groups.');
         if (!c.data) c.data = EMPTY_I32;
+        if (cropped) {
+          if (global) {
+            const data = new Int32Array(region.width * region.height);
+            for (let row = 0; row < region.height; row++) data.set(c.data.subarray((region.y + row) * c.width + region.x, (region.y + row) * c.width + region.x + region.width), row * region.width);
+            c.data = data;
+          }
+          c.width = region.width; c.height = region.height;
+        }
       }
       closed = true;
-      return transforms.length ? part('transforms').inverseModularTransforms(channels, transforms, bitDepth) : channels;
+      const inverses = region ? transforms.map(t => t.type === 1 ? {...t, original: t.original.map(c => ({...c, width: region.width, height: region.height}))} : t) : transforms;
+      return inverses.length ? part('transforms').inverseModularTransforms(channels, inverses, bitDepth) : channels;
     },
   };
   return state;

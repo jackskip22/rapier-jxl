@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {smallPicture} from './photo-v6-settings.mjs';
 import {blockDistances, cellSums} from './photo-distance-cells.mjs';
 import {toRGBA} from './rgb8-output.mjs';
 import {butteraugli, butteraugliReference} from './butteraugli.mjs';
@@ -25,11 +26,11 @@ export function cpuMeasure(rgba, width, height, {reconstruct, bandedRGBA, rgbaOu
   }
   supplied = null; rgba = null;
   if (typeof reference !== 'function') reference = null;
-  let currentReference = null, ba = null, destroyed = false, busy = false;
+  let currentReference = null, rgbaReference = null, ba = null, destroyed = false, busy = false;
   const rawReference = () => {
     if (currentReference === null) {
       const raw = typeof reference === 'function' ? reference() : reference ?? photo;
-      s2Samples(raw, n); currentReference = raw;
+      s2Samples(raw, n); currentReference = raw; rgbaReference ??= !!raw.rgba;
     }
     return currentReference;
   };
@@ -81,7 +82,10 @@ export function cpuMeasure(rgba, width, height, {reconstruct, bandedRGBA, rgbaOu
           if (!lazyOutput) lin = null;
           outputScore(out, outputs);
         }
-        else out.ssimulacra2 = ssimulacra2(s2, lin, width, height).score;
+        else {
+          const rounded = smallPicture(width, height) && (rgbaReference ?? !!rawReference().rgba);
+          out.ssimulacra2 = ssimulacra2(s2, rounded ? {rgba: toRGBA(lin, width, height)} : lin, width, height).score;
+        }
       }
       return out;
     } finally {

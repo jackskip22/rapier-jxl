@@ -2,51 +2,79 @@
 import {dimensions, fail} from './primitives.mjs';
 import {SIGNATURE, boxes, RECONSTRUCTION} from '../container.mjs';
 import {useJpegDisplay} from './result.mjs';
+import {carried, stage, PASSED} from '../step-journal.mjs';
+import {exifOrientation} from '../exif-orientation.mjs';
 
-export function jpegDisplayDimensions(bytes, maxPixels) {
-  if (bytes[0] !== 255 || bytes[1] !== 216) throw fail('JXL_JPEG', 'Input is not a JPEG.');
-  let width, height, orientation = null;
-  for (let at = 2; at < bytes.length;) {
-    if (bytes[at++] !== 255) throw fail('JXL_JPEG', 'Invalid JPEG marker.');
-    while (bytes[at] === 255) at++;
-    const marker = bytes[at++];
-    if (marker === 217) break;
-    if (marker === 1 || marker >= 208 && marker <= 215) continue;
-    const length = bytes[at] * 256 + bytes[at + 1], end = at + length, start = at + 2;
-    if (!Number.isInteger(length) || length < 2 || end > bytes.length) throw fail('JXL_JPEG', 'JPEG segment is incomplete.');
-    if ([192,193,194,195,197,198,199,201,202,203,205,206,207].includes(marker)) {
-      if (length < 8) throw fail('JXL_JPEG', 'JPEG dimensions are incomplete.');
-      height = bytes[start + 1] * 256 + bytes[start + 2]; width = bytes[start + 3] * 256 + bytes[start + 4];
-    }
-    if (marker === 225 && end - start >= 6 && [69,120,105,102,0,0].every((byte, i) => bytes[start + i] === byte))
-      orientation ??= exifOrientation(bytes, start + 6, end);
-    at = end;
-    if (marker === 218) {
-      while (at < bytes.length) {
-        if (bytes[at] !== 255) { at++; continue; }
-        let next = at + 1; while (bytes[next] === 255) next++;
-        if (bytes[next] === 0 || bytes[next] >= 208 && bytes[next] <= 215) { at = next + 1; continue; }
-        break;
-      }
-    }
-  }
+const SCAN_BYTES = 131072;
+const geometryStart = () => ({at: 0, phase: 'signature', width: undefined, height: undefined, orientation: null, done: false});
+const displaySize = ({width, height, orientation}) => orientation >= 5 ? {width: height, height: width} : {width, height};
+function geometryDone({width, height, orientation, orientationAt, orientationBig}, maxPixels) {
   if (width === undefined || height === undefined) throw fail('JXL_JPEG', 'JPEG dimensions are missing.');
   dimensions(width, height, maxPixels);
-  return orientation >= 5 ? {width: height, height: width} : {width, height};
+  return {width, height, orientation: orientation ?? 1, orientationAt, orientationBig};
 }
-
-export function exifOrientation(bytes, start, end) {
-  const big = bytes[start] === 77 && bytes[start + 1] === 77;
-  if (!big && !(bytes[start] === 73 && bytes[start + 1] === 73)) return null;
-  const u16 = at => at + 2 > end ? 0 : big ? bytes[at] * 256 + bytes[at + 1] : bytes[at] + bytes[at + 1] * 256;
-  const u32 = at => at + 4 > end ? 0 : big ? (bytes[at] * 16777216 + bytes[at + 1] * 65536 + bytes[at + 2] * 256 + bytes[at + 3]) : (bytes[at] + bytes[at + 1] * 256 + bytes[at + 2] * 65536 + bytes[at + 3] * 16777216);
-  if (u16(start + 2) !== 42 || u32(start + 4) < 8) return null;
-  const ifd = start + u32(start + 4), entries = u16(ifd);
-  for (let i = 0, at = ifd + 2; i < entries && at + 12 <= end; i++, at += 12) {
-    const value = u16(at + 8);
-    if (u16(at) === 274 && u16(at + 2) === 3 && u32(at + 4) === 1 && value >= 1 && value <= 8) return value;
+export function jpegDisplayDimensions(bytes, maxPixels) {
+  let state = geometryStart();
+  while (!state.done) state = geometryWindow(bytes, state);
+  return displaySize(geometryDone(state, maxPixels));
+}
+export function* jpegDisplayDimensionsSteps(bytes, maxPixels, shown) {
+  const geometry = yield* stage('jpeg-geometry', function* () {
+    let state = geometryStart();
+    while (!state.done) {
+      const value = yield* carried('jpeg-geometry-window', () => geometryWindow(bytes, state));
+      if (value !== PASSED) state = value;
+    }
+    return geometryDone(state, maxPixels);
+  });
+  shown?.({...geometry});
+  return displaySize(geometry);
+}
+function geometryWindow(bytes, previous) {
+  const state = {...previous}, start = state.at, length = bytes.length, stop = Math.min(length, start + SCAN_BYTES);
+  const window = bytes.subarray(start, Math.min(length, stop + 65540)), byte = at => window[at - start];
+  const pending = () => state.phase === 'marker-code' || state.phase === 'entropy-code';
+  if (state.phase === 'signature') {
+    if (byte(0) !== 255 || byte(1) !== 216) throw fail('JXL_JPEG', 'Input is not a JPEG.');
+    state.at = 2; state.phase = 'marker';
   }
-  return null;
+  while (!state.done && (state.at < stop || state.at >= length && pending())) {
+    if (state.phase === 'entropy') {
+      while (state.at < stop && byte(state.at) !== 255) state.at++;
+      if (state.at < stop) { state.at++; state.phase = 'entropy-code'; }
+      continue;
+    }
+    if (state.phase === 'marker') {
+      if (byte(state.at++) !== 255) throw fail('JXL_JPEG', 'Invalid JPEG marker.');
+      state.phase = 'marker-code';
+    }
+    while (state.at < stop && byte(state.at) === 255) state.at++;
+    if (state.at >= stop && state.at < length) break;
+    if (state.phase === 'entropy-code') {
+      const marker = byte(state.at);
+      if (marker === 0 || marker >= 208 && marker <= 215) { state.at++; state.phase = 'entropy'; continue; }
+      state.phase = 'marker-code';
+    }
+    const marker = byte(state.at++);
+    if (marker === 217) { state.done = true; break; }
+    state.phase = 'marker';
+    if (marker === 1 || marker >= 208 && marker <= 215) continue;
+    const size = byte(state.at) * 256 + byte(state.at + 1), end = state.at + size, body = state.at + 2;
+    if (!Number.isInteger(size) || size < 2 || end > length) throw fail('JXL_JPEG', 'JPEG segment is incomplete.');
+    if ([192,193,194,195,197,198,199,201,202,203,205,206,207].includes(marker)) {
+      if (size < 8) throw fail('JXL_JPEG', 'JPEG dimensions are incomplete.');
+      state.height = byte(body + 1) * 256 + byte(body + 2); state.width = byte(body + 3) * 256 + byte(body + 4);
+    }
+    if (marker === 225 && state.orientation === null && end - body >= 6 &&
+        [69,120,105,102,0,0].every((value, i) => byte(body + i) === value))
+      state.orientation = exifOrientation(window, body + 6 - start, end - start, (at, big) => {
+        state.orientationAt = start + at; state.orientationBig = big;
+      });
+    state.at = end;
+    if (marker === 218) state.phase = 'entropy';
+  }
+  if (state.at >= length && !pending()) state.done = true;
+  return state;
 }
 
 export function jpegReconstruction(bytes) {

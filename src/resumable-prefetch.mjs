@@ -5,7 +5,7 @@ export const READ_BATCH_PARTS = 128;
 export const READ_BATCH_BYTES = 8 * 1048576;
 const fail = message => { throw fault('JXL_INPUT', message); };
 
-export async function prefetchParts(io, refs) {
+export async function prefetchParts(io, refs, consume) {
   if (!Array.isArray(refs)) fail('A part frontier is an ordered array.');
   const unique = new Map();
   for (const ref of refs) {
@@ -15,14 +15,15 @@ export async function prefetchParts(io, refs) {
     if (unique.has(ref.hash) && unique.get(ref.hash).length !== ref.length) fail('Conflicting part frontier lengths.');
     unique.set(ref.hash, ref);
   }
-  if (io.durable === false || !unique.size) return;
+  if (!unique.size) return;
+  if (io.durable === false) { await consume?.([...unique.values()]); return; }
   if (typeof io.prefetch !== 'function') fail('The immutable part reader must support declared read frontiers.');
   let batch = [], bytes = 0;
   for (const ref of unique.values()) {
     if (batch.length === READ_BATCH_PARTS || bytes + ref.length > READ_BATCH_BYTES) {
-      await io.prefetch(batch); batch = []; bytes = 0;
+      await io.prefetch(batch); await consume?.(batch); batch = []; bytes = 0;
     }
     batch.push(ref); bytes += ref.length;
   }
-  if (batch.length) await io.prefetch(batch);
+  if (batch.length) { await io.prefetch(batch); await consume?.(batch); }
 }

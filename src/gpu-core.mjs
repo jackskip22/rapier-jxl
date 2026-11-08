@@ -3,9 +3,11 @@
 import {gpuDevice} from './gpu-device.mjs';
 import {GC_BOUNDS, GC_DS, GC_CBRT, gcF, gcSplit, gpuCoreQualified} from './gpu-arithmetic.mjs';
 export {GC_BOUNDS, gcQualificationCases, gcQualificationCheck, gpuCoreQualification, gpuCoreQualified} from './gpu-arithmetic.mjs';
-import {gpuBlocks16Costs, gpuBlocks16Levels, gpuBlocks16Pipelines, gpuBlocks16EnergyHook} from './gpu-blocks16.mjs';
+import {gpuBlocks16Mask, gpuBlocks16Pipelines, gpuBlocks16EnergyHook} from './gpu-blocks16.mjs';
 import {gpuBlocksCosts, gpuBlocksLevels, gpuBlocksPipelines, gpuBlocksLevelsPipelines} from './gpu-blocks.mjs';
 import {captureBlockRequest} from './gpu-capture-blocks.mjs';
+import {gpuRebuild} from './gpu-render.mjs';
+import {gpuBaWindow} from './gpu-ba.mjs';
 
 const GC_GAB = [0.115169525, 0.061248592], GC_MARGIN = 8;
 
@@ -16,8 +18,8 @@ function gcTemplate(lib, data, width, height, quality, options) {
   let alpha = null;
   for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) { alpha = data; break; }
   const tileWidth = Math.ceil(stride / 8), tiles = tileWidth * Math.ceil(rows / 8);
-  return {...probe, width, height, alpha, components: probe.components.map(c => ({...c, stride, rows, coeffs: new Int16Array(stride * rows * 64)})),
-    nonZero: Array.from({length: 3}, () => new Uint8Array(stride * rows)),
+  return {...probe, width, height, alpha, components: probe.components.map(c => ({...c, stride, rows, coeffs: new Int16Array(options.noLevels ? 0 : stride * rows * 64)})),
+    nonZero: Array.from({length: 3}, () => new Uint8Array(options.noLevels ? 0 : stride * rows)),
     cfl: {width: tileWidth, x: new Int8Array(tiles), b: new Int8Array(tiles)}};
 }
 
@@ -33,7 +35,7 @@ function gcWindowPlanes(lib, data, width, height, x0, y0, w, h, options) {
     crop[to] = data[from]; crop[to + 1] = data[from + 1]; crop[to + 2] = data[from + 2]; crop[to + 3] = 255;
   }
   const t = complete(photoXYBSteps(crop, cw, ch, 90, {...options, gaborish: null, fieldScale: null, keepPlanes: true, keepValues: false, planesOnly: true})).planes;
-  const gab = options.gaborish, norm = 1 / (1 + 4 * GC_GAB[0] + 4 * GC_GAB[1]), [w1, w2] = GC_GAB, s = gab.strength ?? 1;
+  const {n, boost, s, w1, w2} = gcGabPlan(options), norm = 1 / (1 + 4 * w1 + 4 * w2);
   const G = (p, out) => {
     for (let y = 0; y < ch; y++) {
       const u = Math.max(0, y - 1) * cw, m = y * cw, d = Math.min(ch - 1, y + 1) * cw;
@@ -45,7 +47,10 @@ function gcWindowPlanes(lib, data, width, height, x0, y0, w, h, options) {
   };
   const planes = t.map(tc => {
     const src = tc.length === cw * ch ? tc : tc.subarray(0, cw * ch), x = Float64Array.from(src), g = new Float64Array(src.length);
-    for (let i = 0; i < 4; i++) { G(x, g); for (let k = 0; k < x.length; k++) x[k] += src[k] - g[k]; }
+    for (let i = 0; i < n; i++) {
+      G(x, g); for (let k = 0; k < x.length; k++) x[k] += src[k] - g[k];
+      if (!i && boost !== 1) for (let k = 0; k < x.length; k++) x[k] = src[k] + boost * (x[k] - src[k]);
+    }
     for (let k = 0; k < x.length; k++) x[k] = src[k] + s * (x[k] - src[k]);
     return x;
   });
@@ -94,7 +99,7 @@ function gcExactTile(lib, data, width, height, image, thresholds, options, tx, t
   const fx = image.cfl.x[index] = Math.max(-128, Math.min(127, Math.round(cflScale * 84 * xy / (yy + 1))));
   const fb = image.cfl.b[index] = Math.max(-128, Math.min(127, Math.round(cflScale * 84 * bySum / (yy + 1))));
   let n = 0;
-  for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++) gcQuantize(all[n++], image, thresholds, bx0 + bx, by0 + by, fx, fb);
+  if (!options.noLevels) for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++) gcQuantize(all[n++], image, thresholds, bx0 + bx, by0 + by, fx, fb);
 }
 
 function gcExactBlock(lib, data, width, height, image, thresholds, options, bx, by) {
@@ -113,7 +118,7 @@ const gcBlockSums = (lib, data, width, height, options, bx, by) => gcBlockDCT(li
 export {gcTemplate, gcThresholds, gcExactTile, gcExactBlock, gcBlockSums};
 
 const GC_WG = 128, GC_DCT_WG = 64, GC_CFL_WG = 64;
-const GK = {mix: 0, bias: 9, root: 10, third: 11, w1: 12, w2: 13, norm: 14, strength: 15, cfl: 16, half: 17, basis: 18, share: 82, linear: 338, recip: 594, dead: 786, size: 978};
+const GK = {mix: 0, bias: 9, root: 10, third: 11, w1: 12, w2: 13, norm: 14, strength: 15, cfl: 16, half: 17, basis: 18, share: 82, linear: 338, recip: 594, dead: 786, boost: 978, size: 979};
 const GC_HEAD = `struct Params { W: u32, H: u32, width: u32, height: u32, stride: u32, rows: u32, groupsX: u32, c: u32, a: f32, b: f32, d: f32, one: f32 }
 @group(0) @binding(0) var<uniform> P: Params;
 fn gcOne() -> f32 { return P.one; }`;
@@ -127,6 +132,23 @@ fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid:
   ${body}
 }`;
 const V = 'array<vec2f>', U = 'array<u32>', B = GC_BOUNDS;
+export function gcGabPlan(options) {
+  const g = options?.gaborish;
+  if (!g) return null;
+  const n = g.iterations ?? 4, boost = g.boost ?? 1, s = g.strength ?? 1, w = g.weights;
+  if (!Number.isInteger(n) || n < 2 || n > 4 || g.adapt || Array.isArray(s)) return null;
+  if (w && !w.every(c => c && c[0] === w[0][0] && c[1] === w[0][1])) return null;
+  const [w1, w2] = w ? w[0] : GC_GAB;
+  return {n, boost, s, w1, w2};
+}
+function gcPasses(plan, run, t, xa, xb, K) {
+  run('gab', [t, t, xa, K]);
+  if (plan.boost !== 1) run('boost', [t, xa, K]);
+  let cur = xa, other = xb;
+  for (let i = 1; i < plan.n - 1; i++) { run('gab', [t, cur, other, K]); [cur, other] = [other, cur]; }
+  if (plan.s !== 1) { run('gab', [t, cur, other, K]); run('finish', [t, other, K]); }
+  else run('gabLast', [t, cur, K]);
+}
 export const GC_SHADERS = {
   xyb: gcKernel([['rgba', 'read', U], ['K', 'read', V], ['tx', 'read_write', V], ['ty', 'read_write', V], ['tb', 'read_write', V]], `
     if (i >= P.W * P.H) { return; }
@@ -154,6 +176,7 @@ fn cone(o: u32, r: vec2f, g: vec2f, b: vec2f) -> vec2f { return dadd(dadd(dadd(d
     let near = dadd(dadd(dadd(x[u + px], x[d + px]), x[m + l]), x[m + r]); let far = dadd(dadd(dadd(x[u + l], x[u + r]), x[d + l]), x[d + r]);
     let g = dmul(dadd(dadd(x[m + px], dmul(K[${GK.w1}], near)), dmul(K[${GK.w2}], far)), K[${GK.norm}]);
     t[i] = dadd(x[i], dsub(t[i], g));`),
+  boost: gcKernel([['t', 'read', V], ['x', 'read_write', V], ['K', 'read', V]], `if (i >= P.W * P.H) { return; } x[i] = dadd(t[i], dmul(K[${GK.boost}], dsub(x[i], t[i])));`),
   finish: gcKernel([['t', 'read_write', V], ['x', 'read', V], ['K', 'read', V]], `if (i >= P.W * P.H) { return; } t[i] = dadd(t[i], dmul(K[${GK.strength}], dsub(x[i], t[i])));`),
   dct: gcKernel([['pre', 'read', V], ['K', 'read', V], ['out', 'read_write', V]], `
     let blocks = P.stride * P.rows; let rawBlk = wid.y * P.groupsX + wid.x;
@@ -242,8 +265,9 @@ function gcConstants(lib, image, thresholds, options) {
   const K = new Float32Array(GK.size * 2), set = (at, v) => gcSplit(v, K, at * 2), {linear, mix, bias, rootBias} = lib.xyb;
   for (let k = 0; k < 9; k++) set(GK.mix + k, mix[k]);
   set(GK.bias, bias); set(GK.root, rootBias); set(GK.third, 1 / 3); set(GK.half, 0.5);
-  const [w1, w2] = GC_GAB, norm = 1 / (1 + 4 * w1 + 4 * w2);
+  const {w1, w2, boost} = gcGabPlan(options) ?? {w1: GC_GAB[0], w2: GC_GAB[1], boost: 1}, norm = 1 / (1 + 4 * w1 + 4 * w2);
   set(GK.w1, w1); set(GK.w2, w2); set(GK.norm, norm); set(GK.strength, options.gaborish?.strength ?? 1); set(GK.cfl, (options.cflScale ?? 1) * 84);
+  set(GK.boost, boost);
   let S = 0;
   for (let u = 0; u < 8; u++) { let row = 0; for (let x = 0; x < 8; x++) { set(GK.basis + u * 8 + x, lib.dct8Basis[u * 8 + x]); row += Math.abs(lib.dct8Basis[u * 8 + x]); } S = Math.max(S, row); }
   for (let f = -128; f < 128; f++) set(GK.share + f + 128, f / 84);
@@ -282,7 +306,7 @@ export class GpuCore {
         const coreHeight = Math.min(512, height - y), from = Math.max(0, y - 64), to = Math.min(height, y + coreHeight + 64);
         const part = await this.imageBand(data.subarray(from * width * 4, to * width * 4), width, to - from, quality, options, y ? undefined : idle, pool, band, {y, from, to});
         const first = (y - from) / 8 * stride, count = Math.ceil(coreHeight / 8) * stride, at = y / 8 * stride;
-        for (let c = 0; c < 3; c++) {
+        if (!options.noLevels) for (let c = 0; c < 3; c++) {
           image.components[c].coeffs.set(part.image.components[c].coeffs.subarray(first * 64, (first + count) * 64), at * 64);
           image.nonZero[c].set(part.image.nonZero[c].subarray(first, first + count), at);
         }
@@ -312,12 +336,8 @@ export class GpuCore {
       pass.dispatchWorkgroups(groupsX, Math.ceil(groups / groupsX));
     };
     run('xyb', [rgba, K, ...t]);
-    const strength = options.gaborish?.strength ?? 1;
-    for (let c = 0; c < 3; c++) {
-      run('gab', [t[c], t[c], xa, K]); run('gab', [t[c], xa, xb, K]); run('gab', [t[c], xb, xa, K]);
-      if (strength !== 1) { run('gab', [t[c], xa, xb, K]); run('finish', [t[c], xb, K]); }
-      else run('gabLast', [t[c], xa, K]);
-    }
+    const plan = gcGabPlan(options);
+    for (let c = 0; c < 3; c++) gcPasses(plan, (name, buffers) => run(name, buffers), t[c], xa, xb, K);
     pass.end();
     return {planes: t, row: y0 - from};
   }
@@ -363,7 +383,7 @@ export class GpuCore {
       const rgba = buffer(width * capRows * 32, usage, 'rgba'); device.queue.writeBuffer(rgba, 0, data.buffer, data.byteOffset, width * height * 4);
       const {K: constants, bound} = gcConstants(lib, image, thresholds, options), K = buffer(constants.byteLength, usage, 'K'); device.queue.writeBuffer(K, 0, constants);
       const t = [0, 1, 2].map(c => buffer(nCap * 8, usage, 't' + c)), xa = buffer(nCap * 8, usage, 'xa'), xb = buffer(nCap * 8, usage, 'xb'), coef = [0, 1, 2].map(c => buffer(n64Cap * 8, usage, 'coef' + c));
-      const cfl = buffer(tilesCap * 8, usage, 'cfl'), tileDoubt = buffer(tilesCap * 4, usage, 'tileDoubt'), levels = noLevels ? null : buffer(n64Cap * 6, usage, 'levels'), blockDoubt = buffer(stride * capRows * 4, usage, 'blockDoubt');
+      const cfl = buffer(tilesCap * 8, usage, 'cfl'), tileDoubt = buffer(tilesCap * 4, usage, 'tileDoubt'), levels = noLevels ? null : buffer(n64Cap * 6, usage, 'levels'), blockDoubt = noLevels ? null : buffer(stride * capRows * 4, usage, 'blockDoubt');
       const uniforms = [], run = (pass, name, count, buffers, params = {}) => {
         const groups = Math.ceil(count / (name === 'dct' ? GC_DCT_WG : name === 'cfl' ? GC_CFL_WG : GC_WG)), groupsX = Math.min(groups, 65535), groupsY = Math.ceil(groups / groupsX);
         const u = buffer(48, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'u' + uniforms.length), d = new ArrayBuffer(48), uv = new Uint32Array(d), fv = new Float32Array(d);
@@ -375,32 +395,28 @@ export class GpuCore {
         pass.dispatchWorkgroups(groupsX, groupsY);
       };
       const encoder = device.createCommandEncoder();
-      if (pool) encoder.clearBuffer(blockDoubt, 0, stride * rows * 4);
+      if (pool && blockDoubt) encoder.clearBuffer(blockDoubt, 0, stride * rows * 4);
       const pass = encoder.beginComputePass();
       run(pass, 'xyb', n, [rgba, K, ...t]);
-      const strength = options.gaborish?.strength ?? 1;
+      const plan = gcGabPlan(options);
       for (let c = 0; c < 3; c++) {
-        run(pass, 'gab', n, [t[c], t[c], xa, K]);
-        run(pass, 'gab', n, [t[c], xa, xb, K]);
-        run(pass, 'gab', n, [t[c], xb, xa, K]);
-        if (strength !== 1) { run(pass, 'gab', n, [t[c], xa, xb, K]); run(pass, 'finish', n, [t[c], xb, K]); }
-        else run(pass, 'gabLast', n, [t[c], xa, K]);
+        gcPasses(plan, (name, buffers) => run(pass, name, n, buffers), t[c], xa, xb, K);
         run(pass, 'dct', n64, [t[c], K, coef[c]]);
       }
       run(pass, 'cfl', tiles * GC_CFL_WG, [...coef, cfl, tileDoubt, K], {a: bound});
       if (!noLevels) for (let c = 0; c < 3; c++) run(pass, 'quant', n64 / 2, [coef[c], coef[1], K, cfl, levels, blockDoubt], {c, a: bound});
       pass.end();
       const after = band?.(encoder, {planes: t, K, W, H, width, height, stride, rows}, geometry);
-      const readLevels = noLevels ? null : buffer(n64Cap * 6, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST, 'readLevels'), readSmall = buffer(tilesCap * 12 + stride * capRows * 4, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST, 'readSmall');
+      const smallBytes = tiles * 12 + (noLevels ? 0 : stride * rows * 4), readLevels = noLevels ? null : buffer(n64Cap * 6, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST, 'readLevels'), readSmall = buffer(tilesCap * 12 + (noLevels ? 0 : stride * capRows * 4), GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST, 'readSmall');
       if (!noLevels) encoder.copyBufferToBuffer(levels, 0, readLevels, 0, n64 * 6);
       encoder.copyBufferToBuffer(cfl, 0, readSmall, 0, tiles * 8);
       encoder.copyBufferToBuffer(tileDoubt, 0, readSmall, tiles * 8, tiles * 4);
-      encoder.copyBufferToBuffer(blockDoubt, 0, readSmall, tiles * 12, stride * rows * 4);
+      if (!noLevels) encoder.copyBufferToBuffer(blockDoubt, 0, readSmall, tiles * 12, stride * rows * 4);
       const audited = this.audit === false ? [] : gcAuditBlocks(stride, rows), auditBytes = audited.length * 3 * 512;
       const readAudit = audited.length ? buffer(GC_AUDIT * 3 * 512, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST, 'readAudit') : null;
       audited.forEach((b, k) => { for (let c = 0; c < 3; c++) encoder.copyBufferToBuffer(coef[c], b * 512, readAudit, (k * 3 + c) * 512, 512); });
       device.queue.submit([encoder.finish()]);
-      const smallBytes = tiles * 12 + stride * rows * 4, mapped = Promise.all([readLevels?.mapAsync(GPUMapMode.READ, 0, n64 * 6), readSmall.mapAsync(GPUMapMode.READ, 0, smallBytes), readAudit?.mapAsync(GPUMapMode.READ, 0, auditBytes)]);
+      const mapped = Promise.all([readLevels?.mapAsync(GPUMapMode.READ, 0, n64 * 6), readSmall.mapAsync(GPUMapMode.READ, 0, smallBytes), readAudit?.mapAsync(GPUMapMode.READ, 0, auditBytes)]);
       try { idle?.(); } catch {}
       await mapped;
       await after?.();
@@ -424,8 +440,8 @@ export class GpuCore {
         const all = new Int16Array(readLevels.getMappedRange(0, n64 * 6));
         for (let c = 0; c < 3; c++) image.components[c].coeffs.set(all.subarray(c * n64, (c + 1) * n64));
       }
-      const small = readSmall.getMappedRange(0, smallBytes), cf = new Int32Array(small, 0, tiles * 2), td = new Uint32Array(small, tiles * 8, tiles), bd = new Uint32Array(small, tiles * 12, stride * rows);
-      for (let b = 0; b < bd.length; b++) for (let c = 0; c < 3; c++) image.nonZero[c][b] = (bd[b] >>> (c * 8)) & 255;
+      const small = readSmall.getMappedRange(0, smallBytes), cf = new Int32Array(small, 0, tiles * 2), td = new Uint32Array(small, tiles * 8, tiles), bd = noLevels ? null : new Uint32Array(small, tiles * 12, stride * rows);
+      if (!noLevels) for (let b = 0; b < bd.length; b++) for (let c = 0; c < 3; c++) image.nonZero[c][b] = (bd[b] >>> (c * 8)) & 255;
       for (let k = 0; k < tiles; k++) { image.cfl.x[k] = cf[k * 2]; image.cfl.b[k] = cf[k * 2 + 1]; }
       let doubtfulTiles = 0, doubtfulBlocks = 0;
       const tileDone = new Uint8Array(tiles);
@@ -465,16 +481,30 @@ async function gcAnswer(device, request, strict) {
     const core = await gcReady(device);
     if (!core) throw new Error('the device did not qualify (double-single arithmetic or its pipelines)');
     if (request.lib) core.lib = request.lib;
-    if (request.kind === 'blocks16') return await gpuBlocks16Costs(device, {...request, planeBound: B.plane}, GC_DS, core);
+    if (request.kind === 'blocks16') {
+      const asked = {...request, planeBound: B.plane}, mask = request.weight ? null : await gpuBlocks16Mask(device, asked, GC_DS, core);
+      return await gpuBlocksCosts(device, {...asked, ...mask, ids: [4]}, GC_DS, core);
+    }
     if (request.kind === 'blocks') return await gpuBlocksCosts(device, {...request, planeBound: B.plane}, GC_DS, core);
     if (request.kind === 'blocks-levels') return await gpuBlocksLevels(device, {...request, planeBound: B.plane}, GC_DS, core);
     if (request.kind === 'photo-block-costs' || request.kind === 'photo-block-levels') return await captureBlockRequest(strict ? 'required' : 'auto', request);
+    if (request.kind === 'photo-rebuild') {
+      const pictures = await gpuRebuild(device, request.image, request);
+      if (!pictures) return {cpu: true};
+      const s2 = request.s2;
+      if (s2 && !pictures.s2) pictures.s2 = await (await import('./gpu-s2.mjs')).gpuS2Sums(device, s2.held, s2.tables, s2.reference, pictures.px ?? [pictures.rgba, pictures.native], s2.width, s2.height);
+      if (pictures.band) pictures.band = await pictures.band;
+      return pictures;
+    }
+    if (request.kind === 'ba-map') return await gpuBaWindow(device, request.ref, request.dist, request.width, request.height);
     if (request.kind === 's2-cells') return await (await import('./gpu-s2-cells.mjs')).gpuS2Cells(device, request);
     if (request.kind === 'audit-failed') throw new GpuCoreAuditError('gpu-blocks16 audit: a cost past its bound');
-    if (request.kind === 'blocks16-levels') return await gpuBlocks16Levels(device, {...request, planeBound: B.plane}, GC_DS, core);
+    if (request.kind === 'blocks16-levels') return await gpuBlocksLevels(device, {...request, planeBound: B.plane}, GC_DS, core);
+    if (!gcGabPlan(request.options)) return null;
     const energy = request.energy ? await gpuBlocks16EnergyHook(device, GC_DS, request.width, request.height, B.plane) : null;
-    const {image} = await core.image(request.data, request.width, request.height, request.quality, request.options, {idle: request.idle, band: energy?.band ?? request.band});
+    const {image, auditBlocks, auditWorst} = await core.image(request.data, request.width, request.height, request.quality, request.options, {idle: request.idle, band: energy?.band ?? request.band});
     if (energy) image.maskEnergy = energy.result();
+    if (request.audit) image.gpuAudit = {blocks: auditBlocks, worst: auditWorst};
     return image;
   } catch (error) {
     if (error instanceof GpuCoreAuditError) gcCores.set(device, Promise.resolve(null));

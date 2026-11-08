@@ -3,15 +3,16 @@ import {complete} from './bits.mjs';
 import {varDCTSteps, seedLfSections} from './vardct.mjs';
 import {coefficientOrders} from './coefficient-effort.mjs';
 import {buildAnsCoding, writeModularAnsHistograms} from './ans.mjs';
-import {lfCoder, lfCoderFor, fixedLfCoder, quickOrFixedLfCoder} from './lf-coding.mjs';
+import {lfCoder, lfCoderFor, fixedLfCoder, quickOrFixedLfCoder, fastOrFixedLfCoder, jpegBroadOrFixedLfCoder} from './lf-coding.mjs';
 import {photoXYBBand, placeBand} from './photo-bands.mjs';
 import {photoXYBSteps} from './photo-xyb.mjs';
 import {TokenCounts} from './entropy.mjs';
 import {acGroupEncoder} from './ac-group.mjs';
-import {V6, GABORISH, UPLOAD_PICTURE, UPLOAD_FLAT_PICTURE} from './photo-v6.mjs';
+import {V6, GABORISH, UPLOAD_PICTURE} from './photo-v6.mjs';
+import {uploadBandPicture, SMALL_V6} from './photo-v6-settings.mjs';
 import {configureKernels, disableEntropyKernels} from './kernels.mjs';
 
-const LF_CODERS = [...Array.from({length: 10}, (_, e) => e ? lfCoderFor(e) : null), fixedLfCoder, quickOrFixedLfCoder, lfCoder('jpegBroad')];
+const LF_CODERS = [...Array.from({length: 10}, (_, e) => e ? lfCoderFor(e) : null), fixedLfCoder, quickOrFixedLfCoder, lfCoder('jpegBroad'), fastOrFixedLfCoder, jpegBroadOrFixedLfCoder];
 const PLAN_KEYS = new Set(['fast', 'clusters', 'orders', 'coding', 'modularAns', 'lfCoder']);
 export function describePlan(plan) {
   for (const key of Object.keys(plan)) if (plan[key] !== undefined && !PLAN_KEYS.has(key)) return null;
@@ -46,11 +47,11 @@ export function serveParallel(message) {
   const {id, task} = message;
   try {
     if (task.kind === 'band' || task.kind === 'fast-band') {
-      const data = inputs.get(task.data), {width, h, quality, color, from, to, y} = task;
-      const picture = task.fast ? task.uploadFlat ? UPLOAD_FLAT_PICTURE : UPLOAD_PICTURE
-        : {...V6, ...GABORISH, ...(task.uploadProfile ? {tune: UPLOAD_PICTURE.tune, calibrationRow: 'upload'} : {})};
+      const data = inputs.get(task.data), {width, h, quality, color, from, to, y} = task, v6 = task.small ? SMALL_V6 : V6;
+      const picture = task.fast ? uploadBandPicture(task.uploadFlat, task.uploadGrain, quality)
+        : {...v6, ...GABORISH, ...(task.uploadProfile ? {tune: UPLOAD_PICTURE.tune, calibrationRow: 'upload'} : {})};
       const result = task.kind === 'band' ? photoXYBBand(data.subarray(from * width * 4, to * width * 4), width, h, quality, {...picture, ...color}, y - from)
-        : complete(photoXYBSteps(data.subarray(y * width * 4, (y + h) * width * 4), width, h, quality, {...V6, fast: true, fastBand: true}));
+        : complete(photoXYBSteps(data.subarray(y * width * 4, (y + h) * width * 4), width, h, quality, {...v6, fast: true, fastBand: true}));
       result.alpha = !!result.alpha; delete result.colorSpace;
       const target = task.target !== undefined && inputs.get(task.target);
       if (target) {

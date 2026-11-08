@@ -3,9 +3,10 @@ import {GPU_FROM} from './capture-levels.mjs';
 import {captureFidelity, fidelityHint} from './fidelity.mjs';
 import {refuseDescription} from './describe.mjs';
 
-const allowed = new Set(['fidelity', 'effort', 'webgpu', 'readAs', 'maxPixels', 'signal', 'onProgress', 'onEncoded', 'features']);
+const allowed = new Set(['fidelity', 'effort', 'webgpu', 'readAs', 'maxPixels', 'signal', 'onProgress', 'onPreview', 'onEncoded', 'features']);
 export function admitCapture(options = {}, carried = null) {
   refuseDescription(options);
+  if (options.onPreview !== undefined && typeof options.onPreview !== 'function') throw fail('JXL_OPTIONS', 'onPreview must be a function.');
   for (const key of Object.keys(options)) if (!allowed.has(key) && key !== 'exactRects' && key !== 'photoRects') throw fail('JXL_OPTIONS', `Unknown capture option: ${key}.${key !== 'quality' ? '' : (carried?.module === 'rapier-jxl/capture' ? ` Photo quality: use ${carried.next}.` : '') + fidelityHint(options.quality)}`);
   if (options.readAs !== undefined && options.readAs !== 'srgb' && options.readAs !== 'display-p3') throw fail('JXL_OPTIONS', 'readAs is srgb or display-p3.');
   if (options.maxPixels !== undefined) pixelLimit(options.maxPixels, LARGEST);

@@ -3,6 +3,7 @@ import {WORKER_PROTOCOL} from './protocol.mjs';
 import {fail as error, callers} from './primitives.mjs';
 import {isImageResult} from './result-shape.mjs';
 export const REPLACED = Symbol('replaced');
+const WORKER_UNLOADED = "The JPEG XL worker file did not load. Serve rapier-jxl/dist's *.worker.mjs and *.helper.mjs beside the bundle, or pass workerFactory.";
 const IMAGE_OPERATIONS = new Set(['encode', 'capture', 'recompress', 'restore', 'fit', 'format']);
 const REFERENCE_BYTES = new Set(['encode', 'capture', 'recompress', 'restore', 'format']);
 const tag = value => Object.prototype.toString.call(value);
@@ -33,7 +34,7 @@ function listen(target, type, callback) {
 }
 
 export function createTransport(host) {
-  const {factory, module, maxPixels, jpegPixels, helpers, webgpu, workerStartupTimeout, complete, progress, encoded, schedule, running} = host;
+  const {factory, module, maxPixels, jpegPixels, helpers, webgpu, workerStartupTimeout, complete, progress, encoded, preview, replyPreview, schedule, running} = host;
   let thread = null, generation = 0, ended, failed;
   function stopThread(reason = Object.assign(error('JXL_WORKER', 'The JPEG XL worker stopped.'), {[REPLACED]: true})) {
     const old = thread;
@@ -58,14 +59,15 @@ export function createTransport(host) {
   }
   function crash(current, event) {
     if (thread !== current) return;
-    const reason = error(typeof event?.code === 'string' && event.code.startsWith('JXL_') ? event.code : 'JXL_WORKER', event?.message || event?.error?.message || 'The JPEG XL worker stopped.');
+    const unloaded = !current.ready && event?.type === 'error' && !event.message && !event.error;
+    const reason = error(typeof event?.code === 'string' && event.code.startsWith('JXL_') ? event.code : 'JXL_WORKER', event?.message || event?.error?.message || (unloaded ? WORKER_UNLOADED : 'The JPEG XL worker stopped.'));
     stopThread(reason);
     schedule();
   }
   function send(current, job) {
     if (!current.ready || !job.started || job.sent || job.settled || thread !== current || running.get(job.id) !== job) return;
     try {
-      current.worker.postMessage({id: job.id, operation: job.operation, input: job.input, options: job.options, maxPixels, jpegPixels, helpers, webgpu, lane: job.lane, alone: job.alone}, [...transfers([job.input, job.options])]);
+      current.worker.postMessage({id: job.id, operation: job.operation, input: job.input, options: job.options, ...(job.onPreview && {preview: true}), maxPixels, jpegPixels, helpers, webgpu, lane: job.lane, alone: job.alone}, [...transfers([job.input, job.options])]);
       job.sent = true;
       job.input = job.options = null;
     } catch (reason) { try { complete(job, false, reason); } finally { stopThread(); } }
@@ -109,6 +111,12 @@ export function createTransport(host) {
         if (!job) return;
         if ('progress' in data) { progress(job, data.progress); return; }
         if ('encoded' in data) { encoded(job, data.encoded); return; }
+        if ('preview' in data) {
+          if (job.onPreview && !job.settled) replyPreview(job, data.preview, data.previewSequence, value => preview(job, value), () => {
+            if (thread === current && running.get(job.id) === job && !job.settled) current.worker.postMessage({id: job.id, previewAck: data.previewSequence});
+          });
+          return;
+        }
         if (data.ok === true) {
           if (host.bytes ? REFERENCE_BYTES.has(job.operation) && invalidBytes(data.value) :
               IMAGE_OPERATIONS.has(job.operation) && !isImageResult(data.value) ||

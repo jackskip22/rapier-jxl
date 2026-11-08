@@ -1,6 +1,6 @@
 {
  "name": "rapier-jxl",
- "version": "8.3.0",
+ "version": "8.3.1",
  "type": "module",
  "license": "MIT",
  "description": "JPEG XL in JavaScript and WebAssembly with WebGPU for high efforts.",
@@ -109,6 +109,9 @@
   },
   "./resumable": {
    "types": "./types/resumable.d.mts",
+   "workerd": "./dist/resumable.workerd.mjs",
+   "edge-light": "./dist/resumable.edge-light.mjs",
+   "node": "./dist/resumable.node.mjs",
    "import": "./dist/resumable.mjs"
   },
   "./wasm": {
@@ -124,6 +127,10 @@
   "./svg-jxl": {
    "types": "./examples/svg-jxl.d.ts",
    "import": "./examples/svg-jxl.js"
+  },
+  "./emdash": {
+   "types": "./examples/emdash/index.d.ts",
+   "import": "./examples/emdash/index.mjs"
   },
   "./package.json": "./package.json"
  },
@@ -162,16 +169,42 @@
   "./dist/jpeg.edge-light.mjs",
   "./dist/verify.workerd.mjs",
   "./dist/verify.edge-light.mjs",
+  "./dist/resumable.workerd.mjs",
+  "./dist/resumable.edge-light.mjs",
   "./dist/wasm.workerd.mjs",
   "./dist/wasm.edge-light.mjs"
  ],
+ "peerDependencies": {
+  "emdash": ">=1.4.0",
+  "@emdash-cms/cloudflare": ">=1.4.0",
+  "@cloudflare/kumo": ">=2.6.0",
+  "astro": ">=6.0.0",
+  "react": ">=18.0.0"
+ },
+ "peerDependenciesMeta": {
+  "emdash": {
+   "optional": true
+  },
+  "@emdash-cms/cloudflare": {
+   "optional": true
+  },
+  "@cloudflare/kumo": {
+   "optional": true
+  },
+  "astro": {
+   "optional": true
+  },
+  "react": {
+   "optional": true
+  }
+ },
  "files": [
   "dist",
   "types",
   "examples",
+  "skills",
   "LICENSE",
   "README.md",
-  "SKILL.md",
   "THIRD_PARTY_NOTICES",
   "CHANGELOG.md"
  ],

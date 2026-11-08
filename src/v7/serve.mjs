@@ -7,7 +7,6 @@ import {bytes, check, fail, declared, object, dimensions, admitSignal, jpegPixel
 const NO_SERVE = 'No JPEG reconstruction data: serve it as image/jxl, or make it with recompress().';
 import {isPlainRecord} from './records.mjs';
 import {header} from './inspect.mjs';
-import './preparation-jpeg.mjs';
 
 const MAX_INPUT_BYTES = 256 * 1024 * 1024;
 const DEFAULT_CACHE_CONTROL = 'private, no-cache';

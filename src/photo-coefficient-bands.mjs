@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {complete, part} from './bits.mjs';
+import {stage, carried, PASSED} from './step-journal.mjs';
 import {GROUP_DIM} from './frame.mjs';
 import {rgbCoefficientSteps} from './photo-dct.mjs';
 import {packLevels, unpackLevels, packedOnly, splitBlockCounts} from './photo-levels.mjs';
@@ -19,10 +20,11 @@ export function* rgbCoefficientBandsSteps(rows, width, height, {quality, colorSp
     const observed = observeBand && !again ? pixels.slice() : null, own = areas?.map(a => ({...a, y: a.y - top}));
     const band = strategy ? yield* strategy.band(pixels, width, h, {quality, colorSpace, areas: own, top, again})
       : yield* rgbCoefficientSteps(pixels, width, h, quality, colorSpace, own, {packed: !observeBand});
-    if (observed) observeBand(band, observed, top);
+    if (observed) observing = [band, observed];
     return band;
   };
-  let image, current = null, currentBand = -1, keptBytes = 0;
+  let observing = null;
+  let image, current = null, currentBand = -1, keptBytes = 0, summarized = false;
   const load = b => {
     if (b === currentBand) return current;
     if (current && !current.strategyData) packedOnly(current);
@@ -35,7 +37,19 @@ export function* rgbCoefficientBandsSteps(rows, width, height, {quality, colorSp
     return current;
   };
   for (let b = 0; b < bands; b++) {
-    const band = yield* part(make(b), b, bands), firstBlock = b * (GROUP_DIM / 8) * stride;
+    const band = yield* part(stage('coefficient-band', () => make(b), {tool: 'band-summary',
+      extra: band => band.strategyData ? {orders: learnedOrderCounts(band.strategyData.blocks), ...strategy?.summary?.(band)} : null}), b, bands);
+    const firstBlock = b * (GROUP_DIM / 8) * stride, full = () => band.summary || band.answered ? complete(make(b, true)) : band;
+    if (observeBand) {
+      const seen = observing?.[0] === band ? observing[1] : null;
+      observing = null;
+      const saved = yield* carried('band-guard', () => {
+        observeBand(full(), seen ?? rows(b * GROUP_DIM, Math.min(GROUP_DIM, height - b * GROUP_DIM)).slice(), b * GROUP_DIM);
+        return observeBand.state?.() ?? null;
+      });
+      if (saved !== PASSED && saved !== null) observeBand.restore?.(saved);
+    }
+    if (strategy?.after) yield* strategy.after(band, b * GROUP_DIM, full);
     if (!image) {
       image = {...band, width, height, alpha: null, alphaRows: rows,
         components: band.components.map(c => ({...c, rows: blockRows, row0: 0, coeffs: new Int16Array(0), packed: undefined,
@@ -44,7 +58,7 @@ export function* rgbCoefficientBandsSteps(rows, width, height, {quality, colorSp
         cfl: {width: tilesX, x: new Int16Array(tilesX * tileRows), b: new Int16Array(tilesX * tileRows)},
         ...(band.quantFields && {quantFields: new Uint16Array(stride * blockRows)}), band: load,
         unpackBand() {
-          if (current.strategyData || current.components[0].coeffs) return;
+          if (!current || current.strategyData || current.components[0].coeffs) return;
           unpackLevels(current, scratch);
           for (let c = 0; c < 3; c++) image.components[c].coeffs = current.components[c].coeffs;
         }};
@@ -55,7 +69,12 @@ export function* rgbCoefficientBandsSteps(rows, width, height, {quality, colorSp
       throw new Error('Bands of one photo frame must share their quantization domain and prediction base.');
     let bytes = 0;
     if (band.strategyData) {
-      learnedOrderCounts(band.strategyData.blocks, orderCounts);
+      if (band.summary) band.extra?.orders?.forEach((c3, id) => {
+        if (!c3) return;
+        if (!orderCounts[id]) orderCounts[id] = c3.map(n => n.slice());
+        else for (let c = 0; c < 3; c++) for (let k = 0; k < c3[c].length; k++) orderCounts[id][c][k] += c3[c][k];
+      });
+      else learnedOrderCounts(band.strategyData.blocks, orderCounts);
       const owner = image.strategyData;
       for (const [family, table] of band.strategyData.tables.entries()) {
         if (!table) continue;
@@ -65,10 +84,13 @@ export function* rgbCoefficientBandsSteps(rows, width, height, {quality, colorSp
         if (!previous) owner.tables[family] = table;
       }
       const coefficientBuffers = new Set();
-      for (let i = 0; i < band.strategyData.blocks.length; i++) {
-        const source = band.strategyData.blocks[i], {coeffs, levels: _levels, ...meta} = source;
+      const coeffsOf = i => load(b).strategyData.blocks[i].coeffs;
+      const frameBlocks = band.summary ? band.frameBlocks(b * (GROUP_DIM / 8), coeffsOf) : band.strategyData.blocks.map((source, i) => {
+        const {coeffs, levels: _levels, ...meta} = source;
         for (const plane of coeffs) if (!coefficientBuffers.has(plane.buffer)) { coefficientBuffers.add(plane.buffer); bytes += plane.buffer.byteLength; }
-        const block = {...meta, by: source.by + b * (GROUP_DIM / 8), get coeffs() { return load(b).strategyData.blocks[i].coeffs; }};
+        return {...meta, by: source.by + b * (GROUP_DIM / 8), get coeffs() { return coeffsOf(i); }};
+      });
+      for (const block of frameBlocks) {
         owner.at[block.by * stride + block.bx] = owner.blocks.length; owner.blocks.push(block);
         const group = b * groupsX + (block.bx >> 5);
         (owner.groups[group] ??= []).push(block);
@@ -105,10 +127,11 @@ export function* rgbCoefficientBandsSteps(rows, width, height, {quality, colorSp
       if (band.quantFields) image.quantFields.set(band.quantFields, firstBlock);
       else image.quantFields.fill(band.quantFieldBase || 1, firstBlock, Math.min(image.quantFields.length, firstBlock + (GROUP_DIM / 8) * stride));
     }
-    if (bytes <= keep - keptBytes) { saved[b] = band.strategyData || band.components[0].packed ? band : packLevels(band); keptBytes += bytes; }
+    if (band.summary) summarized = true;
+    if (!band.summary && bytes <= keep - keptBytes) { saved[b] = band.strategyData || band.components[0].packed ? band : packLevels(band); keptBytes += bytes; }
   }
   if (image.strategyData) seedLearnedOrderCounts(image, orderCounts);
-  load(0);
+  if (saved[0] || !(image.strategyData || summarized)) load(0);
   return image;
 }
 

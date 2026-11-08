@@ -3,7 +3,7 @@ import {encodeCaptureSteps, compileCaptureKernels, CAPTURE_TOOLS} from '../captu
 import {screenPhotoSteps} from '../screen-photo-mixed.mjs';
 export {encodeOptions, callOptions} from './encode-options.mjs';
 import {gpuQueue} from '../gpu-queue.mjs';
-import {exclusive} from '../turn.mjs';
+import {exclusive, turn} from '../turn.mjs';
 import {journalNext} from '../step-journal.mjs';
 export function targetSource(data, ...descriptions) {
   if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray))
@@ -19,23 +19,12 @@ export function targetSource(data, ...descriptions) {
 export async function drain(iterator, hooks = {}, gpuAnswer) {
   const {signal, onProgress, journal} = hooks;
   check(signal);
-  let last = 0, told = 0, reply, lastTurn = performance.now(), failed = false, channel = typeof MessageChannel === 'function' ? undefined : false,
-    immediate = typeof setImmediate === 'function';
-  const turn = () => new Promise(resolve => {
-    if (immediate) try { setImmediate(resolve); return; } catch { immediate = false; }
-    if (channel !== false) try {
-      channel ||= new MessageChannel();
-      channel.port1.onmessage = resolve;
-      channel.port2.postMessage(0);
-      return;
-    } catch { channel = false; }
-    setTimeout(resolve, 0);
-  });
+  let last = 0, told = 0, reply, lastTurn = performance.now(), failed = false;
   const gpu = gpuAnswer ? gpuQueue(gpuAnswer) : () => null;
   try {
     for (;;) {
       check(signal);
-      const step = await (journal ? journalNext(iterator, reply) : iterator.next(reply));
+      const step = await (journal ? journalNext(iterator, reply, journal) : iterator.next(reply));
       check(signal);
       if (step.done) { onProgress?.(1); check(signal); return step.value ?? iterator.bytes; }
       if (journal && (step.value?.unit !== undefined || step.value?.unitDone !== undefined || step.value?.unitFailed !== undefined)) { reply = await journal(step.value); continue; }
@@ -68,7 +57,6 @@ export async function drain(iterator, hooks = {}, gpuAnswer) {
     }
   } catch (reason) { failed = true; throw reason; }
   finally {
-    if (channel) { channel.port1.close(); channel.port2.close(); }
     try { await iterator.return?.(); } catch (reason) { if (!failed) throw reason; }
   }
 }

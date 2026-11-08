@@ -21,7 +21,7 @@ const targetMiss = message => ({code: 'JXL_TARGET', message});
 const proofKind = fidelity => fidelity === 'exact' ? 'pixels' : measurementTarget(fidelity).kind;
 const displaySize = picture => picture.orientation >= 5 ? {width: picture.height, height: picture.width}
   : {width: picture.width, height: picture.height};
-function protectionDomain(scope, reference, decoded) {
+export function protectionDomain(scope, reference, decoded) {
   if (reference.frames || decoded.animation) throw fail('JXL_UNSUPPORTED', 'Protected samples require a still output; animation protection has no frame policy.');
   const orientation = picture => picture.orientationApplied ? 1 : picture.orientation ?? picture.description?.orientation ?? 1;
   if (orientation(reference) !== 1 || orientation(decoded) !== 1)
@@ -29,7 +29,7 @@ function protectionDomain(scope, reference, decoded) {
   if (scope.width !== reference.width || scope.height !== reference.height || scope.width !== decoded.width || scope.height !== decoded.height)
     throw fail('JXL_DIMENSIONS', 'The protected scope does not match the reference and output dimensions.');
 }
-function protectionEvidence(evidence, compared, options) {
+export function protectionEvidence(evidence, compared, options) {
   const scope = options.protection;
   if (!scope) return evidence;
   const exact = compared.supported && compared.protectedExact === true && compared.protectedSamples === scope.count * 4;

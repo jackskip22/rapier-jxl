@@ -3,6 +3,7 @@ import type {CaptureInput, TextureInput, CaptureOptions} from './types.mjs';
 import type {WasmBundle} from './wasm.mjs';
 import type {ResumableFunction} from './resumable.mjs';
 export type {CaptureOptions, CaptureRecord, CaptureFidelity, MaxError, ImageInput, CaptureInput, CapturePixels, Bytes} from './types.mjs';
+export type {ImagePreview, PreviewOptions} from './types.mjs';
 /** The screenshot encoder in one file, run in place: 8-bit sRGB or Display P3 RGBA, exact or within maxError.
  * Efforts 1-5. `rapier-jxl/capture-complete` adds photographic fidelity, efforts 6-9 and WebGPU. */
 export const capture: ResumableFunction<(input: Exclude<CaptureInput, TextureInput>, options?: CaptureOptions) => Promise<ImageResult>>;

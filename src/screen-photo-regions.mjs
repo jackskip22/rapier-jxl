@@ -8,11 +8,6 @@ function nearGrey(data, base, s4) {
     if (Math.max(abs(data[at] - data[at + 1]), abs(data[at + 1] - data[at + 2]), abs(data[at + 2] - data[at])) > 12) return false;
   return true;
 }
-function isTileGrey(data, base, s4) {
-  for (let y = 0; y < TILE; y += 2) for (let x = 0, at = base + y * s4; x < TILE; x += 2, at += 8)
-    if (data[at] !== data[at + 1] || data[at] !== data[at + 2]) return false;
-  return true;
-}
 const keys = new Int32Array(1024), stamps = new Uint32Array(1024);
 let stamp = 0;
 function hasColors(need, n, atOf) {
@@ -53,7 +48,7 @@ function cell(data, s4, base) {
   if ([0, (TILE - 1) * s4, 0, (TILE - 1) * 4].every((edge, i) => !hasColors(2, 16, j => rgb(data, base + edge + j * (i < 2 ? 8 : 2 * s4))))) return 0;
   let runs = 0;
   for (let i = 0; i < 64; i++) { const at = base + (i >> 3) * 4 * s4 + (i & 7) * 16; runs += rgb(data, at) === rgb(data, at + 12); }
-  const tuple = isTileGrey(data, base, s4) || nearGrey(data, base, s4), key = runs < 52 && (tuple ? textured : rgb), quad = tuple ? 18 : 20, many = tuple ? 80 : 96;
+  const tuple = nearGrey(data, base, s4), key = runs < 52 && (tuple ? textured : rgb), quad = tuple ? 18 : 20, many = tuple ? 80 : 96;
   if (!key || !colours(32, key)) return 0;
   let changes = 0, texture = 0, rough = 0, moving = 0, reversing = 0;
   for (let y = 0; y < TILE; y += 2) for (let x = 0; x < TILE; x += 2) {

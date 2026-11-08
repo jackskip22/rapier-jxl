@@ -10,7 +10,25 @@ export {ssimulacra2Reference} from './ssimulacra2-reference.mjs';
 export {recursiveGaussian, gaussianTaps} from './ssimulacra2-gaussian.mjs';
 export {finalCurve};
 export {S2_WEIGHTS as SSIMULACRA2_WEIGHTS};
-const GAUSS32 = gaussianCoefficients(GAUSS);
+export const GAUSS32 = gaussianCoefficients(GAUSS);
+
+export function scaleNorm(per,c,sums,n) {
+  const [ss1,ss4,a1,a4,l1,l4] = sums, inverse = 1 / n, mean = value => inverse * value;
+  per.ssim[c * 2] = mean(ss1); per.ssim[c * 2 + 1] = Math.sqrt(Math.sqrt(mean(ss4)));
+  per.edge[c * 4] = mean(a1); per.edge[c * 4 + 1] = Math.sqrt(Math.sqrt(mean(a4)));
+  per.edge[c * 4 + 2] = mean(l1); per.edge[c * 4 + 3] = Math.sqrt(Math.sqrt(mean(l4)));
+}
+export function scoreNorms(norms) {
+  let sum = 0, i = 0;
+  for (let c = 0; c < 3; c++) for (let s = 0; s < norms.length; s++) for (let k = 0; k < 2; k++) {
+    sum += S2_WEIGHTS[i++] * Math.abs(norms[s].ssim[c * 2 + k]);
+    sum += S2_WEIGHTS[i++] * Math.abs(norms[s].edge[c * 4 + k]);
+    sum += S2_WEIGHTS[i++] * Math.abs(norms[s].edge[c * 4 + k + 2]);
+  }
+  const score = finalCurve(sum);
+  if (!Number.isFinite(score)) throw fault('JXL_INPUT','SSIMULACRA2 samples exceed the metric arithmetic range.');
+  return {score,sum};
+}
 
 export const SRGB_TO_LINEAR = Float64Array.from({length: 256}, (_, i) => {
   const v = i / 255; return v <= 0.04045 ? v / 12.92 : exactPow((v + 0.055) / 1.055, 2.4);
@@ -81,25 +99,14 @@ export function ssimulacra2(reference, distorted, width, height, {wantMap = fals
           channels[c] = result.reference;
           fixed.cacheBytes += result.reference.bytes;
         }
-        const [ss1, ss4, a1, a4, l1, l4] = result.sums;
-        const inverse = 1 / n, mean = value => inverse * value;
-        per.ssim[c * 2] = mean(ss1); per.ssim[c * 2 + 1] = Math.sqrt(Math.sqrt(mean(ss4)));
-        per.edge[c * 4] = mean(a1); per.edge[c * 4 + 1] = Math.sqrt(Math.sqrt(mean(a4)));
-        per.edge[c * 4 + 2] = mean(l1); per.edge[c * 4 + 3] = Math.sqrt(Math.sqrt(mean(l4)));
+        scaleNorm(per,c,result.sums,n);
         if (wantMap) shareChannel(share, n, scales, scale, c, per, terms);
       }
       if (fixed && scale === lastSourceScale) a = null;
       norms.push(per);
       if (wantMap && scale) spreadScale(map, width, height, scale, w, h, share);
     }
-    let sum = 0, i = 0;
-    for (let c = 0; c < 3; c++) for (let s = 0; s < norms.length; s++) for (let k = 0; k < 2; k++) {
-      sum += S2_WEIGHTS[i++] * Math.abs(norms[s].ssim[c * 2 + k]);
-      sum += S2_WEIGHTS[i++] * Math.abs(norms[s].edge[c * 4 + k]);
-      sum += S2_WEIGHTS[i++] * Math.abs(norms[s].edge[c * 4 + k + 2]);
-    }
-    const score = finalCurve(sum);
-    if (!Number.isFinite(score)) throw fault('JXL_INPUT','SSIMULACRA2 samples exceed the metric arithmetic range.');
+    const {score,sum} = scoreNorms(norms);
     if (fixed && fixed.scales.every(channels => channels?.length === 3)) { fixed.reference = null; fixed.inputBytes = 0; }
     let resultMap = map;
     if (map && (originalWidth !== width || originalHeight !== height)) {

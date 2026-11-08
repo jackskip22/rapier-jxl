@@ -4,7 +4,8 @@ import {encodeFidelity, fidelityHint} from './fidelity.mjs';
 import {refuseDescription} from './describe.mjs';
 import {featureless} from './first-region-option.mjs';
 import {RESULT_REFERENCE} from './result-reference.mjs';
-const rawKeys = new Set(['fidelity','effort','features','readAs','webgpu','maxPixels','signal','onProgress']);
+import {PREVIEW} from './preview.mjs';
+const rawKeys = new Set(['fidelity','effort','features','readAs','webgpu','maxPixels','signal','onProgress','onPreview']);
 const HINT = {
   lossless: "Write fidelity: 'exact'.", target: 'Write fidelity: {ssimulacra2: 80}.',
   maxError: 'maxError is a capture fidelity: capture(screen, {fidelity: {maxError: 2}}).',
@@ -19,6 +20,7 @@ export function encodeOptions(value) {
   for (const key of Object.keys(options)) if (!rawKeys.has(key))
     throw fail('JXL_OPTIONS', `Unknown encode option: ${key}.${key === 'quality' ? fidelityHint(options.quality) : Object.hasOwn(HINT, key) ? ' ' + HINT[key] : ''}`);
   if (options.onProgress !== undefined && typeof options.onProgress !== 'function') throw fail('JXL_OPTIONS', 'onProgress must be a function.');
+  if (options.onPreview !== undefined && typeof options.onPreview !== 'function') throw fail('JXL_OPTIONS', 'onPreview must be a function.');
   admitSignal(options.signal);
   const fidelity = encodeFidelity(options.fidelity), {effort = 7} = options;
   if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fail('JXL_OPTIONS', 'effort must be an integer 1–9.');
@@ -36,7 +38,7 @@ export function encodeOptions(value) {
       'progressive','noise','lfFrames','firstRegion']);
     for (const key of Object.keys(options.features)) if (!allowed.has(key)) throw fail('JXL_OPTIONS', `Unknown features option: ${key}.`);
   }
-  const {[RESULT_REFERENCE]: _reference, fidelity: _fidelity, signal, onProgress, features, readAs, webgpu, maxPixels, ...codec} = options;
+  const {[RESULT_REFERENCE]: _reference, [PREVIEW]: _preview, fidelity: _fidelity, signal, onProgress, onPreview, features, readAs, webgpu, maxPixels, ...codec} = options;
   return {...codec, ...fidelity, effort, webgpu, maxPixels};
 }
 

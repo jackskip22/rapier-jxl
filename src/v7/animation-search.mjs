@@ -6,7 +6,7 @@ import {rebuildPicture, rebuildable} from '../photo-rebuild.mjs';
 import {check, fail} from './primitives.mjs';
 import {measuredFileSearch} from './measured-search.mjs';
 
-export async function measuredAnimation(animation, target, encodeAt, {start = 90, probes = 8, signal, onProgress, maxPixels} = {}) {
+export async function measuredAnimation(animation, target, encodeAt, {start = 90, probes = 8, signal, onProgress, maxPixels, preview} = {}) {
   check(signal);
   await preparePictureMeasure(); check(signal);
   const metric = photoAnimationMeasure(animation, {signal, maxPixels});
@@ -25,6 +25,7 @@ export async function measuredAnimation(animation, target, encodeAt, {start = 90
     return {quality, bytes, shown: timeline ? composeTimeline(timeline, pictures) : null};
   };
   try {
-    return await measuredFileSearch(target, probe, metric.measure, {start, probes, signal, onProgress, exact: progress => encodeAt(100, progress)});
+    return await measuredFileSearch(target, probe, metric.measure, {start, probes, signal, onProgress,
+      exact: progress => encodeAt(100, progress), preview, width: animation.width, height: animation.height});
   } finally { metric.destroy(); }
 }

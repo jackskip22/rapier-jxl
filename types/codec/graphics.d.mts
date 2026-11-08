@@ -10,7 +10,7 @@ export interface GraphicsOptions extends Pick<DeltaPaletteOptions,
    * dither allows eight and also prices a bounded local dither-reduction candidate. */
   preset?: 'exact' | 'screen' | 'dither' | undefined;
   /** Hard maximum absolute error per RGB channel, integer 0–32; overrides the preset.
-   * Zero is byte-exact source preservation through the ordinary exact delta-palette selector. */
+   * Zero keeps the source exactly through the ordinary exact delta-palette selector. */
   maxColorError?: number | undefined;
   /** Maximum learned color clusters, integer 1–4096; default 256. This is a search budget, not an output
    * color-count promise: protected/unmerged source colors and an exact winning file can exceed it. */

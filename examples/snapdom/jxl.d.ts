@@ -5,7 +5,7 @@ import type {CaptureOptions as UploadCaptureOptions} from 'rapier-jxl/upload';
 import type {Effort} from 'rapier-jxl/capture-complete';
 
 export type LeanCaptureModule = 'rapier-jxl/capture' | 'rapier-jxl/upload';
-export type CompleteCaptureModule = 'rapier-jxl' | 'rapier-jxl/capture-complete' | 'rapier-jxl/animation' | 'rapier-jxl/format';
+export type CompleteCaptureModule = 'rapier-jxl/capture-complete';
 export type CaptureModule = LeanCaptureModule | CompleteCaptureModule;
 export type CaptureEffort = CaptureOptions['effort'];
 export type UploadEffort = UploadCaptureOptions['effort'];
@@ -23,7 +23,7 @@ export type JxlOptions = {webgpu?: false | 'required'} & (
  * onProgress reports encoding only, after SnapDOM draws; onEncoded and callback exceptions follow capture(). */
 export type JxlExportOptions = Pick<CaptureOptions, 'onProgress' | 'onEncoded'> &
   {quality?: number; scale?: number; width?: number; height?: number; dpr?: number;
-  backgroundColor?: string; filename?: string; format?: string; effort?: Effort; signal?: AbortSignal};
+  backgroundColor?: string | null; filename?: string; format?: string; effort?: Effort; signal?: AbortSignal};
 /** The parts of SnapDOM's capture context the plug-in reads. */
 export type JxlContext = {element?: Element; meta?: {clip?: {x?: number; y?: number; width?: number; height?: number} | null; w0?: number; h0?: number};
   export?: {requestedOptions?: JxlExportOptions}};

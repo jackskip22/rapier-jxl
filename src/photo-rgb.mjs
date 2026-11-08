@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {stage, carried, PASSED, journalRequest} from './step-journal.mjs';
 import {complete} from './bits.mjs';
 import {rgbCoefficientSteps, photoQualityStep} from './photo-dct.mjs';
 import {fixedStrategyImage} from './varblock-core.mjs';
@@ -175,6 +176,7 @@ function rebuildImage(pixels, width, height, options, recipe) {
   return fixedStrategyImage(base, width, height, {...blockOptions(base), perceptual: recipe.perceptual, layout}).image;
 }
 
+const GUARD_FAILED = Symbol('crop guard failed');
 export function* regionPhotoFrameSteps(rows, width, height, options) {
   const {photoBlockEffort: effort = 7, readingWebp, signal, photoCrops, referenceRows = rows, exactRows = null,
     project = null, photoAdmission = null, photoSearch = null, floorImage = null, floorBytes = null, photoScoreMemo = null, ...frame} = options;
@@ -187,8 +189,8 @@ export function* regionPhotoFrameSteps(rows, width, height, options) {
   }
   const newGuard = () => cropGuard(width, height, photoCrops ?? frame.areas, readingWebp,
     frame.placement?.mask === true, project, signal, frame.colorSpace, origin);
-  const observe = guard => (image, pixels, top) => guard.add(pixels, image, image, top,
-    referenceRows(top, image.height), exactRows?.(top, image.height));
+  const observe = guard => Object.assign((image, pixels, top) => guard.add(pixels, image, image, top,
+    referenceRows(top, image.height), exactRows?.(top, image.height)), {state: guard.state, restore: guard.restore});
   if (effort === 4) {
     const guard = newGuard();
     const bytes = yield* pageFrameSteps(rows, width, height, {...frame, observeBand: observe(guard)});
@@ -203,25 +205,47 @@ export function* regionPhotoFrameSteps(rows, width, height, options) {
     }
     const source = pixels.slice(), reference = referenceRows(info.top, h).slice(), exact = exactRows?.(info.top, h);
     const crops = (photoCrops ?? frame.areas)?.map(r => ({...r, y: r.y - info.top}));
-    const scoreScope = memoFrame?.band(info.top, w, h);
-    try {
-      const result = yield* rgbPhotoBandSteps(source, w, h, {...info, effort, signal, reference, crops, photoSearch, scoreScope,
-        exact, mask: frame.placement?.mask === true,
-        project: project && (rgba => project(rgba, info.top)), ans: frame.placement?.ans,
-        origin: {x: origin.x, y: origin.y + info.top}});
-      recipes.set(info.top, imageRecipe(result.image));
-      guard.add(source, result.image, result.plain, info.top, reference, exact);
-      return result.image;
-    } finally { scoreScope?.release(); }
+    let result = null;
+    const recipe = yield* stage('photo-band', function* () {
+      const scoreScope = memoFrame?.band(info.top, w, h);
+      try {
+        result = yield* rgbPhotoBandSteps(source, w, h, {...info, effort, signal, reference, crops, photoSearch, scoreScope,
+          exact, mask: frame.placement?.mask === true,
+          project: project && (rgba => project(rgba, info.top)), ans: frame.placement?.ans,
+          origin: {x: origin.x, y: origin.y + info.top}});
+        return imageRecipe(result.image);
+      } finally { scoreScope?.release(); }
+    }, undefined, true);
+    result ??= {image: rebuildImage(source, w, h, info, recipe), plain: null};
+    recipes.set(info.top, recipe);
+    made = {image: result.image, plain: result.plain, source, reference, exact, info: {...info, width: w, height: h}};
+    return result.image;
+  },
+  summary: image => ({recipe: imageRecipe(image)}),
+  *after(image, top, full) {
+    const band = made?.image === image ? made : null;
+    made = null;
+    if (!recipes.has(top)) recipes.set(top, image.extra?.recipe ?? imageRecipe(image));
+    const saved = yield* carried('crop-guard', () => {
+      const h = image.height, info = band?.info ?? {width, height: h, quality: frame.quality, colorSpace: frame.colorSpace,
+        areas: frame.areas?.map(a => ({...a, y: a.y - top}))};
+      const source = band?.source ?? rows(top, h).slice(), picture = band ? image : full();
+      const plain = band?.plain ?? complete(rgbCoefficientSteps(source, info.width, info.height, info.quality, info.colorSpace, info.areas));
+      guard.add(source, picture, plain, top, band?.reference ?? referenceRows(top, h).slice(), band ? band.exact : exactRows?.(top, h));
+      return guard.state();
+    });
+    if (saved !== PASSED) guard.restore(saved);
+    if (!guard.passed()) throw GUARD_FAILED;
   }};
+  let made = null;
   let step, reply;
   const candidate = pageFrameSteps(rows, width, height, {...frame, strategy});
   try {
     while (!(step = candidate.next(reply)).done) {
-      if (!guard.passed()) break;
+      if (!guard.passed() && !journalRequest(step.value)) break;
       reply = yield typeof step.value === 'number' ? step.value * 0.95 : step.value;
     }
-  } finally { candidate.return?.(); }
+  } catch (error) { if (error !== GUARD_FAILED) throw error; } finally { candidate.return?.(); }
   check(signal);
   if (step.done && guard.complete()) { photoAdmission?.record(step.value, true, guard.measurements()); return step.value; }
   const fallbackGuard = newGuard();

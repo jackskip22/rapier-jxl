@@ -71,7 +71,7 @@ function undecided(tried, pass, options) {
   return false;
 }
 
-export function* qualitySteps(imageAt, target, {start = 85, probes = 8, low = 20, high = 99.99, aim = 0.05, close = 0.12, targetDoubt = null, initial = null, first = null, measureSteps = null} = {}) {
+export function* qualitySteps(imageAt, target, {start = 85, probes = 8, low = 20, high = 99.99, aim = 0.05, close = 0.12, targetDoubt = null, initial = null, first = null, measureSteps = null, seen = null} = {}) {
   const want = {ssimulacra2: target.ssimulacra2 !== undefined, butteraugli: target.butteraugli3 !== undefined || target.butteraugli !== undefined}, tried = [];
   const options = {low, high, aim, close};
   const targetBound = () => targetDoubt ? marginDoubt({doubt: targetDoubt}, target) : 0;
@@ -83,22 +83,27 @@ export function* qualitySteps(imageAt, target, {start = 85, probes = 8, low = 20
       bestObserved = {quality, ...Object.fromEntries(Object.keys(target).map(key => [key, scores[key]]))};
   };
   for (let i = 0; i < probes; i++) {
-    const known = !i && initial?.scores && initial.quality === q ? initial : null;
-    let image = known ? known.image : yield* imageAt(q);
-    let observed = known ?? (yield* read(image, want, {quality: q}));
+    const known = !i && initial?.scores && initial.quality === q ? initial : null, kept = known ? null : seen?.get(q);
+    let image = known ? known.image : kept ? null : yield* imageAt(q);
+    let observed = known ?? kept ?? (yield* read(image, want, {quality: q}));
+    if (!known && !kept) seen?.set(q, observed);
     let scores = observed.scores, output = observed.output, pass = meets(scores, target);
     tried.push({q, scores, exact: !scores.doubt});
     if (undecided(view(), pass, options)) {
-      observed = yield* read(image, {...want, exact: true}, {quality: q});
-      scores = observed.scores; output = observed.output; pass = meets(scores, target);
-      tried[tried.length - 1] = {q, scores, exact: true};
+      if (scores.doubt) {
+        observed = yield* read(image ??= yield* imageAt(q), {...want, exact: true}, {quality: q});
+        scores = observed.scores; output = observed.output; pass = meets(scores, target);
+        tried[tried.length - 1] = {q, scores, exact: true};
+        seen?.set(q, observed);
+      }
       if (targetBound() > 0 && undecided(view(), pass, options)) { yield {exactTarget: true}; pass = meets(scores, target); }
       for (let k = tried.length - 2; k >= 0; k--) if (!tried[k].exact && undecided(view(), pass, options)) {
         const again = yield* read(yield* imageAt(tried[k].q), {...want, exact: true}, {quality: tried[k].q});
         tried[k] = {q: tried[k].q, scores: again.scores, exact: true};
+        seen?.set(tried[k].q, again);
       }
     }
-    if (!i && first) Object.assign(first, {quality: q, image, scores});
+    if (!i && first) Object.assign(first, {quality: q, image: image ?? (yield* imageAt(q)), scores});
     remember(q, scores);
     if (pass && (!best || q < best.quality)) best = {quality: q, scores, ...(output && {output})};
     image = observed = output = initial = null;

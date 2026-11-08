@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-import {captureExact} from '../capture-codec.mjs';
+import {captureExact, markCaptureExact} from '../capture-codec.mjs';
+import {journaled} from '../step-journal.mjs';
 import {resultFacts} from './result-reference.mjs';
 import {LOW_WEBP_CALIBRATION} from './low-webp-quality.mjs';
 import {measuredLevel} from '../effort-level.mjs';
@@ -28,12 +29,19 @@ export async function keepSmaller({input, options, hooks, coding, photo, runCapt
   let slot = 0;
   const run = async (candidate, coder = photo, ownOptions = options) => {
     const from = slot++ * span;
-    let got = null;
-    const bytes = await runCaptureUsing(input, ownOptions, {
-      ...hooks,
-      onProgress: hooks.onProgress && (f => { if (f < 1) hooks.onProgress(from + f * span); }),
-      onEncoded: r => { got = r; },
-    }, candidate, coder);
+    const made = await journaled(hooks.journal, 'candidate', async () => {
+      let got = null;
+      const bytes = await runCaptureUsing(input, ownOptions, {
+        ...hooks,
+        onProgress: hooks.onProgress && (f => { if (f < 1) hooks.onProgress(from + f * span); }),
+        onEncoded: r => { got = r; },
+      }, candidate, coder);
+      return {bytes, got, exact: captureExact(bytes), passed: admission ? admission.accepts(bytes) : null, measured: admission ? admission.measurements(bytes) : null};
+    });
+    const {bytes, got} = made;
+    if (made.exact && !captureExact(bytes)) markCaptureExact(bytes);
+    if (admission && made.passed !== admission.accepts(bytes)) admission.record(bytes, made.passed, made.measured);
+    hooks.preview?.(bytes, {measurements: admission?.measurements(bytes) ?? []});
     if ((!admission || admission.accepts(bytes)) && (!best || bytes.length < best.length)) { best = bytes; record = got; }
   };
   for (let i = 0; i < candidates.length; i++) {
@@ -54,7 +62,7 @@ export async function runPhotoLadder(call) {
   const looks = policy.qualityLooks(input);
   let failed = false;
   try {
-    const wholePhotoRoute = {effort: asked, complete: false};
+    const wholePhotoRoute = {effort: asked, complete: false, preview: call.hooks.preview};
     const engine = {photoBlocks: policy.regionPhotoFrameSteps, photoSearch: policy.photoSearch, photoScoreMemo: looks.scoreMemo, wholePhotoRoute};
     const level = measuredLevel(asked), candidates = [{...engine, photoBlockEffort: 4}];
     if (level >= 5) candidates.push({look: looks.coarse, ...engine, photoBlockEffort: 5});

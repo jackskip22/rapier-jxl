@@ -6,7 +6,7 @@ import {entropyLog2} from './entropy-log.mjs';
 export {entropyLog2};
 
 const CONFIGS = [uintConfig(0), uintConfig(1), uintConfig(2), uintConfig(3), uintConfig(4), uintConfig(4, 1, 1), uintConfig(4, 2, 0), uintConfig(4, 1, 2), uintConfig(5, 1, 1), uintConfig(2, 0, 1), uintConfig(3, 0, 1)];
-const ANS_CONFIGS = [...CONFIGS, uintConfig(3, 1, 0), uintConfig(4, 0, 1), uintConfig(4, 1, 0), uintConfig(4, 2, 1), uintConfig(5, 1, 0), uintConfig(5, 2, 0), uintConfig(5, 2, 1)];
+export const ANS_CONFIGS = [...CONFIGS, uintConfig(3, 1, 0), uintConfig(4, 0, 1), uintConfig(4, 1, 0), uintConfig(4, 2, 1), uintConfig(5, 1, 0), uintConfig(5, 2, 0), uintConfig(5, 2, 1)];
 const PHOTO_ANS_CONFIGS = [...ANS_CONFIGS, uintConfig(1, 1, 0), uintConfig(1, 0, 1), uintConfig(2, 1, 1), uintConfig(2, 2, 0),
   uintConfig(2, 0, 2), uintConfig(3, 1, 2), uintConfig(3, 2, 1), uintConfig(3, 3, 0), uintConfig(3, 0, 3), uintConfig(4, 0, 2), uintConfig(5), uintConfig(5, 0, 1)];
 const CLUSTER_CONFIG = uintConfig(4, 1, 1);
@@ -112,22 +112,23 @@ const LOADED = Symbol('loaded rows');
 export function tokenCountsData({contexts, small, totals, large}) {
   const list = [];
   large.forEach((map, ctx) => { if (map) { list.push(ctx, map.size); for (const [v, n] of map) list.push(v, n); } });
-  let n = 0;
-  for (let i = 0; i < small.length; i++) if (small[i]) n++;
-  const at = new Uint32Array(n), values = new Uint32Array(n);
-  for (let i = 0, j = 0; i < small.length; i++) if (small[i]) { at[j] = i; values[j++] = small[i]; }
-  return {contexts, at, values, totals, large: Float64Array.from(list)};
+  let n = 0, gap = 0, most = 0;
+  for (let i = 0, last = 0; i < small.length; i++) if (small[i]) { n++; gap = Math.max(gap, i - last); last = i; most = Math.max(most, small[i]); }
+  const gaps = gap < 65536, at = gaps ? new Uint16Array(n) : new Uint32Array(n), values = most < 65536 ? new Uint16Array(n) : new Uint32Array(n);
+  for (let i = 0, j = 0, last = 0; i < small.length; i++) if (small[i]) { at[j] = gaps ? i - last : i; values[j++] = small[i]; last = i; }
+  const whole = totals.every(t => t <= 0xffffffff);
+  return {contexts, at, values, totals: whole ? Uint32Array.from(totals) : totals, large: Float64Array.from(list), ...(gaps && {gaps: true})};
 }
-export function tokenCountsFrom({contexts, at, values, totals, large: list}) {
+export function tokenCountsFrom({contexts, at, values, totals, large: list, gaps = false}) {
   const small = new Uint32Array(contexts * 64);
-  for (let j = 0; j < at.length; j++) small[at[j]] = values[j];
+  for (let j = 0, i = 0; j < at.length; j++) { i = gaps ? i + at[j] : at[j]; small[i] = values[j]; }
   const large = Array.from({length: contexts}, () => null);
   for (let i = 0; i < list.length;) {
     const map = large[list[i]] = new Map();
     for (let n = list[i + 1], j = i + 2; n > 0; n--, j += 2) map.set(list[j], list[j + 1]);
     i += 2 + 2 * list[i + 1];
   }
-  return Object.assign(Object.create(TokenCounts.prototype), {contexts, small, large, totals});
+  return Object.assign(Object.create(TokenCounts.prototype), {contexts, small, large, totals: totals instanceof Float64Array ? totals : Float64Array.from(totals)});
 }
 
 function packClusters(clusters) {
@@ -254,7 +255,7 @@ function* refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost
 export const clusterTokenCounts = (counts, options, modelCost, symbolCosts, shapedCost) => complete(clusterTokenCountsSteps(counts, options, modelCost, symbolCosts, shapedCost));
 export const clusterTokenCountsSteps = (counts, options, modelCost, symbolCosts, shapedCost) => stage('cluster', () => clusterSteps(counts, options, modelCost, symbolCosts, shapedCost));
 const SEED_CHUNK = 128;
-function* clusterSteps(counts, {maxClusters = 48, newClusterCost = 320, seeds: seedCap = 96, passes, switchCost, everyConfig = false, kernels = null} = {}, modelCost, symbolCosts, shapedCost) {
+function* clusterSteps(counts, {maxClusters = 48, newClusterCost = 320, seeds: seedCap = 96, passes, switchCost, everyConfig = false, shapedMerge = false, jpeg = null, kernels = null} = {}, modelCost, symbolCosts, shapedCost) {
   passes ??= symbolCosts ? 4 : 2; switchCost ??= symbolCosts ? 4 : 0;
   const kernel = kernels && (symbolCosts ? Math.min(seedCap, maxClusters * 2) : maxClusters) <= kernels.clusters ? kernels : null;
   const totals = counts.totals, size = counts.contexts, contexts = [];
@@ -312,7 +313,7 @@ function* clusterSteps(counts, {maxClusters = 48, newClusterCost = 320, seeds: s
   if (kernel) kernel[LOADED] = clusters;
   return null;
   }, state));
-  if (symbolCosts && clusters.length > 1) clusters = yield* refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost, passes, switchCost, kernel, counts.contexts, ready);
+  if (symbolCosts && clusters.length > 1) clusters = yield* refineClusters(clusters, contexts, maxClusters, symbolCosts, shapedMerge && shapedCost ? shapedCost : modelCost, passes, switchCost, kernel, counts.contexts, ready);
   return yield* unit('histograms', () => {
   if (!clusters.length) clusters.push({contexts: [], freqs: new Uint32Array(64), bits: 0, last: 0, cost: -1});
   const contextMap = new Uint8Array(counts.contexts);
@@ -325,9 +326,9 @@ function* clusterSteps(counts, {maxClusters = 48, newClusterCost = 320, seeds: s
     for (let v = 0; v < 64; v++) if (aggregate.small[v]) { values.push(v); weights.push(aggregate.small[v]); }
     let top = values.length ? values[values.length - 1] : 0;
     if (aggregate.large[0]) for (const [v, n] of aggregate.large[0]) { values.push(v); weights.push(n); if (v > top) top = v; }
-    const ansList = seedCap === 128 ? PHOTO_ANS_CONFIGS : ANS_CONFIGS;
+    const ansList = jpeg ? (top < (1 << 14) ? jpeg.configs : PHOTO_ANS_CONFIGS) : seedCap === 128 ? PHOTO_ANS_CONFIGS : ANS_CONFIGS;
     const priced0 = kernel?.priceConfigs && modelCost?.kernelTables && !everyConfig && top < (1 << 17) ? kernel.priceConfigs(values, weights, ansList, modelCost.kernelTables) : null;
-    if (priced0) return {config: ansList[priced0.index], freqs: priced0.tokens, extra: priced0.raw};
+    if (priced0 && !(jpeg && top >= 128)) return {config: ansList[priced0.index], freqs: priced0.tokens, extra: priced0.raw};
     const length = values.length, exponents = new Int32Array(length), mantissas = new Int32Array(length);
     for (let i = 0; i < length; i++) { const v = values[i]; if (v) { exponents[i] = floorLog2(v); mantissas[i] = v - (1 << exponents[i]); } }
     const split = (candidate, tokens) => {
@@ -346,6 +347,7 @@ function* clusterSteps(counts, {maxClusters = 48, newClusterCost = 320, seeds: s
       }
       return [raw, last];
     };
+    if (priced0) return jpeg.high({config: ansList[priced0.index], freqs: priced0.tokens, extra: priced0.raw, cost: priced0.cost}, top, split, modelCost, shapedMerge && shapedCost);
     for (const candidate of modelCost ? ansList : CONFIGS) {
       const widest = top >= candidate.splitToken ? candidate.splitToken + (((floorLog2(top) - candidate.split) << (candidate.msb + candidate.lsb)) | ((1 << (candidate.msb + candidate.lsb)) - 1)) + 1 : 0;
       const tokens = new Uint32Array(Math.max(128, widest)), [raw] = split(candidate, tokens);

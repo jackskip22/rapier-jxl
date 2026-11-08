@@ -108,7 +108,13 @@ export function cropGuard(width, height, crops, webp, mask, project, signal, col
     }
     if (failed) clear();
   };
-  return {add, passed: () => !failed, complete: () => !failed && checks.every(r => r.done), measurements: () => measured};
+  const state = () => ({checks, failed, held, measured});
+  const restore = saved => {
+    if (saved.checks === checks) return;
+    checks.splice(0, checks.length, ...saved.checks); measured.splice(0, measured.length, ...saved.measured);
+    failed = saved.failed; held = saved.held;
+  };
+  return {add, passed: () => !failed, complete: () => !failed && checks.every(r => r.done), measurements: () => measured, state, restore};
 }
 
 function dct8Band(image, top, height) {

@@ -47,7 +47,7 @@ function scoreRefusal(result, target, code, reason) {
     {target: {...target}, best: {...scores, candidate: best.candidate, quality: best.quality}});
 }
 
-function* finishScore(result, data, width, height, {target, effort, allowLossless, maxBytes}) {
+function* finishScore(result, data, width, height, {target, effort, allowLossless, maxBytes, preview}) {
   if (result.pass && result.bytes.length <= maxBytes) return scoreAnswer(result);
   if (!allowLossless) throw scoreRefusal(result, target, result.pass ? 'JXL_SIZE' : 'JXL_TARGET',
     result.pass ? 'The selected file exceeds maxBytes.' : 'The target was not reached and lossless is off.');
@@ -61,6 +61,7 @@ function* finishScore(result, data, width, height, {target, effort, allowLossles
     }
     const bytes = answer(step.value);
     if (bytes.length > maxBytes) throw scoreRefusal(result, target, 'JXL_SIZE', 'The lossless file exceeds maxBytes.');
+    preview?.(bytes, {width, height, measurements: []});
     return scoreAnswer({bytes, quality: 100, candidate: 'lossless', pass: true, ssimulacra2: 100, butteraugli: 0, butteraugli3: 0});
   } finally { exact.return(); }
 }
@@ -68,6 +69,7 @@ function* finishScore(result, data, width, height, {target, effort, allowLossles
 export function* encodeToScoreSteps(data, width, height, options) {
   checkSignal(options?.signal);
   const settings = admitScore(data, width, height, options), {target, effort, candidates} = settings;
+  if (options?.preview) settings.preview = options.preview;
   const {memory, plan} = scoreMemory(data, width, height, options, target.ssimulacra2 !== undefined);
   let whole = null, steps = null;
   try {
@@ -81,7 +83,7 @@ export function* encodeToScoreSteps(data, width, height, options) {
       }
       return out;
     };
-    steps = scoreSteps(prepareV6(data, width, height, {}, memory), target, {candidates, effort, exactSize: true});
+    steps = scoreSteps(prepareV6(data, width, height, {}, memory), target, {candidates, effort, exactSize: true, preview: settings.preview});
     let step, reply, n = 0;
     while (!(step = steps.next(reply)).done) {
       checkSignal(options?.signal);
@@ -98,6 +100,7 @@ export const S2_DOUBT = 2e-4;
 export async function encodeToScore(data, width, height, options) {
   checkSignal(options?.signal);
   const settings = admitScore(data, width, height, options), {target, effort, candidates} = settings, gpu = options?.gpu;
+  if (options?.preview) settings.preview = options.preview;
   const {memory, plan} = scoreMemory(data, width, height, options, target.ssimulacra2 !== undefined);
   const stats = {backend: gpu ? 'gpu+cpu' : 'cpu', gpuProbes: 0, cpuProbes: 0, cpuFallbacks: 0, gpuFailures: 0,
     probes: 0, recomputed: 0, regions: 0, gpuBufferBytes: 0, hostBufferBytes: 0, cacheBytes: 0};
@@ -178,7 +181,7 @@ export async function encodeToScore(data, width, height, options) {
       stats.regionFallbacks = exactAnswer.fallbacks;
       return result;
     };
-    steps = scoreSteps(prepareV6(data, width, height, {}, memory), target, {candidates, effort, exactSize: true});
+    steps = scoreSteps(prepareV6(data, width, height, {}, memory), target, {candidates, effort, exactSize: true, preview: settings.preview});
     const progress = value => { checkSignal(options?.signal); options?.onProgress?.(value); checkSignal(options?.signal); };
     const result = await runAsync(steps, measure, progress);
     const released = await cleanup(); checkSignal(options?.signal); if (released.failed) throw released.error;

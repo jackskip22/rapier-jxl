@@ -5,6 +5,7 @@ import {encodeCaptureSteps, encodeCaptureBytes, captureBandSteps, CAPTURE_BASE, 
 import {photoKernels} from './capture-kernels.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
 import {writeImage} from './photo-image-write.mjs';
+import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {lowWholePhotoSteps} from './photo-low.mjs';
 import {flatSamples} from './screen-samples.mjs';
 import {viewPixels} from './screen-crop.mjs';
@@ -15,6 +16,7 @@ import {lossyModularFrame, lossyModularSections} from './capture-modular-lossy.m
 import {patchedPageSteps} from './capture-patched.mjs';
 import {CAPTURE_PROTECTION} from './capture-protection.mjs';
 import {BANDED_LIMITS} from './memory-device.mjs';
+import {unit} from './step-journal.mjs';
 
 const CLUSTER = 1.2;
 export const UNION_CAP = Infinity;
@@ -155,11 +157,12 @@ function flattenFar(rgba,w,h,exact,far){
   for(let y=0,i=0;y<h;y++)for(let x=0;x<w;x++,i++)if(d[i]>far&&!touched[(y>>3)*bw+(x>>3)]){rgba[i*4]=r;rgba[i*4+1]=g;rgba[i*4+2]=b;}
 }
 export const regionFrameBytes=job=>photoFrameBytes(job);
-function photoFrameBytes({pixels,width,height,quality,areas,colorSpace,effort,placement,graphic,sections,exact,far}){
+function photoFrameBytes({pixels,width,height,quality,areas,colorSpace,effort=7,placement,graphic,sections,exact,far}){
   if(exact)fillHoles(pixels,width,height,exact);
   if(far)flattenFar(pixels,width,height,exact,far);
   if(graphic)return lossyModularFrame(pixels,width,height,quality,placement,sections);
-  return writeImage(complete(photoCoefficientSteps(pixels,width,height,quality,colorSpace,false,true,areas)),effort,placement);
+  const image=complete(photoCoefficientSteps(pixels,width,height,quality,colorSpace,false,true,areas));
+  return complete(coefficientAnsSteps(placement===undefined?image:{...image,placement},effort));
 }
 function* photoBlockRegionSteps(job, photoBlocks, photoBlockEffort, readingWebp, signal, photoAdmission) {
   if (job.graphic) {
@@ -356,11 +359,11 @@ function* photoSteps(data,width,height,options,band,large=false,reading=options.
   if(quality===100)return yield* exactFile(0);
   const top=band?.y??0,exactRects=rects.filter(e=>e.edge!==true).map(e=>({...e,y:e.y-top})).filter(e=>e.y<height&&e.y+e.height>0),photoRects=(options.photoRects??[]).map(e=>({...e,y:e.y-top}));
   const photoSubjects=(options.photoSubjects??options.photoRects??[]).map(e=>({...e,y:e.y-top}));
-  let regions=options.regions??capturePhotoRegions(data,width,height,photoRects,exactRects),exact=null;
+  let regions=options.regions??(yield* unit('photo-regions',()=>capturePhotoRegions(data,width,height,photoRects,exactRects))),exact=null;
   check(signal);
-  const small=width*height<SMALL,flat=flatSamples(data,width,height)<=32;
+  const small=width*height<SMALL,flat=yield* unit('flat',()=>flatSamples(data,width,height)<=32);
   if(small&&flat)exact=yield* within(exactFile(0),0,0.4);
-  const whole=!large&&flat&&!textLike(data,width,height)&&(exact?dense(exact.length,width*height):covers(regions,width,height)||(yield* denseStrips(data,width,height,{...level,colorSpace,maxError:0,signal},0)));
+  const whole=!large&&flat&&!(yield* unit('text-like',()=>textLike(data,width,height)))&&(exact?dense(exact.length,width*height):covers(regions,width,height)||(yield* denseStrips(data,width,height,{...level,colorSpace,maxError:0,signal},0)));
   if(whole&&exactRects.length&&band&&!band.shape.alpha)return exact??(yield* exactFile(0));
   if(whole&&!exactRects.length){
     const own=options.regionQuality?.(data,width,{x:0,y:0,width,height},false,colorSpace)??quality;
@@ -370,7 +373,7 @@ function* photoSteps(data,width,height,options,band,large=false,reading=options.
       const retainFloor=route?function*(floor){if(!floor&&!exact)exact=yield* exactFile(0);}:null;
       const photo=yield* within((options.wholePhoto??lowWholePhotoSteps)(data,width,height,{quality:own,colorSpace,
         effort:route?.effort??options.photoBlockEffort??effort??DEFAULT_EFFORT,
-        ...(route&&{firstEffort:4,retainFloor}),readingWebp:options.readingWebp,signal,
+        ...(route&&{firstEffort:4,retainFloor,preview:route.preview}),readingWebp:options.readingWebp,signal,
         photoAdmission,photoSearch:options.photoSearch}),exact?0.4:0,exact?0.6:1);
       check(signal);
       const result=!photo||exact&&(exact.length<=photo.length||photoAdmission&&!photoAdmission.accepts(photo))
@@ -404,19 +407,20 @@ function* photoSteps(data,width,height,options,band,large=false,reading=options.
     return result;
   }
   if(whole)regions=[{x:0,y:0,width,height}];
-  let graphics=captureGraphicRegions(data,width,height,photoRects,exactRects);
+  let graphics=yield* unit('graphic-regions',()=>captureGraphicRegions(data,width,height,photoRects,exactRects));
   if(graphics.length){
     const covered=r=>graphics.reduce((s,g)=>{if(!g.palette)return s;const w=Math.min(r.x+r.width,g.x+g.width)-Math.max(r.x,g.x),h=Math.min(r.y+r.height,g.y+g.height)-Math.max(r.y,g.y);return s+(w>0&&h>0?w*h:0);},0)>=HINTED*r.width*r.height;
     regions=regions.filter(r=>!covered(r));graphics=graphics.filter(g=>!regions.some(r=>meets(g,r)));
   }
-  if(!band&&exactRects.length&&(regions.length||graphics.length)&&photoKernels().opaque(data,width,0,0,width,height)){
+  if(!band&&exactRects.length&&(regions.length||graphics.length)&&(yield* unit('opaque',()=>photoKernels().opaque(data,width,0,0,width,height)))){
     const read=(r,offGrid)=>options.regionQuality?.(data,width,r,offGrid,colorSpace)??quality;
     const look=options.look&&(effort??3)>=4&&options.readingWebp!==undefined?options.look:null;
-    const qualityOf=look?(r,offGrid,dx,dy)=>look(data,width,r,read(r,offGrid),options.readingWebp,dx,dy,exactRects,colorSpace,quality,photoRects):read;
+    const qualityOf=look?Object.assign((r,offGrid,dx,dy)=>look(data,width,r,read(r,offGrid),options.readingWebp,dx,dy,exactRects,colorSpace,quality,photoRects),
+      {steps:look.steps&&((r,offGrid,dx,dy)=>look.steps(data,width,r,read(r,offGrid),options.readingWebp,dx,dy,exactRects,colorSpace,quality,photoRects))}):read;
     const lossy=[...regions,...graphics];
-    const baseline=large?null:function*(pieces){
+    const baseline=large?null:function*(pieces,regions){
       const reading={pieces,exact:true,requirePieces:true};
-      const bytes=yield* photoSteps(data,width,height,{...options,wholePhotoRoute:null,exactRects:[],photoRects:[],photoSubjects:photoAdmission?photoSubjects:[],regions:undefined},undefined,false,reading);
+      const bytes=yield* photoSteps(data,width,height,{...options,wholePhotoRoute:null,exactRects:[],photoRects:[],photoSubjects:photoAdmission?photoSubjects:[],regions},undefined,false,reading);
       return {bytes,exact:reading.exact,wholePhoto:reading.wholePhoto===true};
     };
     const page=yield* within(patchedPageSteps(data,width,height,{quality,regions:lossy,unconfirmed:graphics.length>0,qualityOf,exactRects,colorSpace,exactOptions:{...level,signal},

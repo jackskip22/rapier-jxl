@@ -38,6 +38,7 @@ export function moduleRuntime(module, {name, gpu = false, helpers, helper: file}
       const {webgpu: _webgpu, ...rest} = options;
       const call = {...(gpu || operation === 'capture' ? options : rest), ...execution,
         ...(operation === 'capture' && options.webgpu === undefined && hooks.webgpu !== undefined && {webgpu: hooks.webgpu}), signal: hooks.signal, onProgress: hooks.onProgress,
+        ...(hooks.onPreview && {onPreview: hooks.onPreview}),
         ...(operation === 'capture' && hooks.onEncoded && {onEncoded: hooks.onEncoded})};
       if (isRowBridge(input)) {
         const port = input.rowsPort;

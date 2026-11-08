@@ -154,6 +154,18 @@ function copyGauss(g) {
   new Float32Array(memory.buffer,GAUSS,42).set([...g.n2,...g.d1,...g.coefficients.flatMap(p => [...p.input,...p.previous,...p.previous2])]);
   lastGauss = g;
 }
+let deviceTables = null;
+export function s2DeviceTables(g) {
+  if (deviceTables) return deviceTables;
+  const close = openMetricArena();
+  try {
+    ready();
+    const words = new Uint32Array(512);
+    words.set(new Uint32Array(memory.buffer,LUT,256));
+    words.set(new Uint32Array(Float32Array.from([...g.n2,...g.d1,...g.coefficients.flatMap(p => [...p.input,...p.previous,...p.previous2])]).buffer),256);
+    return deviceTables = words;
+  } finally { close(); }
+}
 export function downsample(input,width,height,into = null) {
   const w = Math.ceil(width / 2), h = Math.ceil(height / 2), n = width * height, m = w * h;
   const plan = s2ArenaPlan({base}), source = plan.take(inputBytes(input,n)), output = plan.take(m * 12);
@@ -162,6 +174,23 @@ export function downsample(input,width,height,into = null) {
   const planes = into ? into.map(p => p.subarray(0,m)) : [0,1,2].map(() => new Float32Array(m));
   for (let c = 0; c < 3; c++) planes[c].set(new Float32Array(memory.buffer,output + c * m * 4,m));
   return {planes,width:w,height:h};
+}
+export function scaleBand(a,b,w,h,g,first,end,previous = null) {
+  const inputY = Math.min(h,Math.ceil((first + 4) / 4) * 4);
+  const inputEnd = Math.min(h,Math.ceil((end + 4) / 4) * 4), inputH = inputEnd - inputY;
+  const plan = ssimulacra2Layout(w,Math.max(1,inputH),{referenceRgba:!!a.rgba,distortedRgba:!!b.rgba,base});
+  reserve(plan); copyGauss(g);
+  new Int32Array(memory.buffer,KEYS,1 << 17).fill(-1);
+  writeInput(a,plan.reference,w * inputH); writeInput(b,plan.distorted,w * inputH);
+  if (previous) {
+    new Uint8Array(memory.buffer,plan.scratch,plan.rowBytes).set(previous.scratch);
+    new Float64Array(memory.buffer,plan.sums,18).set(previous.sums);
+  }
+  const made = kernel.s2MetricBand(w,h,first,end,inputY,inputH,plan.reference,a.rgba ? 0 : 1,
+    plan.distorted,b.rgba ? 0 : 1,LUT,GAUSS,plan.scratch,plan.sums,KEYS,VALUES);
+  if (made !== inputEnd) throw fault('JXL_INTERNAL','SSIMULACRA2 row continuation did not consume its input.');
+  return {scratch:new Uint8Array(memory.buffer,plan.scratch,plan.rowBytes).slice(),
+    sums:new Float64Array(memory.buffer,plan.sums,18).slice()};
 }
 export function scaleSums(a,b,w,h,g,channels,keep,colors,channel = null,terms = null,scale = 0) {
   const mask = channel === null ? 7 : 1 << channel;

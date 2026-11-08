@@ -14,9 +14,11 @@ export {readGifBytes} from './gif-source.mjs';
 const VERSION = typeof __RAPIER_JXL_VERSION__ !== 'undefined' ? __RAPIER_JXL_VERSION__ : '8.0.1';
 
 export const HELP_TEXT = `Usage: rapier-jxl <file|folder...> [options]
+       rapier-jxl add emdash
+       rapier-jxl remove emdash
 
 Encode images to JPEG XL (.jxl), or restore recompressed JPEGs.
-JPEGs are recompressed losslessly by default and restore byte-for-byte.
+JPEGs are recompressed losslessly by default and restore exactly.
 
 Options:
   -q, --quality <1-100>    Target quality (default: 90; JPEG default: exact)
@@ -31,6 +33,7 @@ Options:
   -v, --version            Show version
 
 Examples:
+  npx rapier-jxl add emdash
   npx rapier-jxl photo.png
   npx rapier-jxl photo.jpg
   npx rapier-jxl photos/ --effort 6 --jobs 4
@@ -703,6 +706,14 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
     skipped: results.filter(r => r.skipped).length, failed, inputBytes: results.reduce((n, r) => n + r.inputBytes, 0),
     outputBytes: results.reduce((n, r) => n + r.outputBytes, 0), ms: elapsed(started), ...(error ? {error: friendlyError(error)} : {})});
   const refuse = error => { if (json) emit(summary([], 0, 0, error)); else stderr(formatFriendlyError(error)); return {exitCode: 1, files: []}; };
+  if (argv[0] === 'add' || argv[0] === 'remove') {
+    try {
+      if (argv[1] !== 'emdash') throw cliError('JXL_OPTIONS', `Name the integration to ${argv[0]}.`, `run npx rapier-jxl ${argv[0]} emdash in an EmDash site folder.`);
+      const setup = await import('./cli-emdash.mjs');
+      await setup[argv[0] === 'add' ? 'runAddEmdash' : 'runRemoveEmdash'](argv.slice(2), {cwd, version: VERSION, stdout});
+      return {exitCode: 0, files: []};
+    } catch (error) { return refuse(error); }
+  }
   let parsed;
   try { parsed = parseCliArgs(argv); } catch (error) { return refuse(error); }
   const {inputs, options} = parsed;

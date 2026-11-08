@@ -4,14 +4,16 @@ import {sampleDescription} from './result-identity.mjs';
 import {ssimulacra2} from '../ssimulacra2.mjs';
 import {compileKernels} from '../kernel-runtime.mjs';
 import {linearFromTransform, P3_TRANSFORM} from '../color-transform.mjs';
+import {profileTransform, profileFields} from '../icc-transform.mjs';
 import {admitSampleKind} from './verify-samples.mjs';
 
 export const sameBytes = (a, b) => !!a && !!b && a.byteLength === b.byteLength && a.every((value, i) => value === b[i]);
 const sameRecord = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const intent = value => typeof value === 'string' ? ['perceptual', 'relative', 'saturation', 'absolute'].indexOf(value) : value ?? 1;
 const coordinates = value => Array.isArray(value) ? value.map(each => Array.isArray(each) ? coordinates(each) : Math.round(each * 1000000) / 1000000) : value;
+export const pictureICC = picture => Object.hasOwn(picture, 'rgbaICC') ? picture.rgbaICC : picture.icc;
 function color(picture) {
-  const icc = Object.hasOwn(picture, 'rgbaICC') ? picture.rgbaICC : picture.icc;
+  const icc = pictureICC(picture);
   if (icc) return {icc};
   const encoding = picture.rgbaColorEncoding ?? picture.colorEncoding;
   if (encoding) return {space: encoding.space === 'gray' ? 'rgb' : encoding.space,
@@ -23,9 +25,25 @@ function color(picture) {
   return {space: 'rgb', whitePoint: 'd65', primaries: description.colorSpace, transferFunction: description.transferFunction,
     gamma: undefined, renderingIntent: 1};
 }
-function sameMeaning(reference, decoded) {
+const RENDERING_INTENTS = ['perceptual', 'relative', 'saturation', 'absolute'];
+const namesProfile = (icc, b) => {
+  const fields = profileFields(icc), intent = typeof b.renderingIntent === 'number' ? b.renderingIntent : RENDERING_INTENTS.indexOf(b.renderingIntent ?? 'relative');
+  return !!fields && !fields.gray && fields.white.enum === 1 && fields.primaries.enum === 11 && fields.transfer === 13 && !fields.gamma && fields.intent === intent;
+};
+export function conversionProfile(reference, decoded) {
   const a = color(reference), b = color(decoded);
-  if (a.icc || b.icc) { if (!sameBytes(a.icc, b.icc)) return false; }
+  if (!a.icc || b.icc || b.space !== 'rgb' || b.whitePoint !== 'd65' || b.transferFunction !== 'srgb') return null;
+  if (b.primaries !== 'srgb' && !(b.primaries === 'display-p3' && namesProfile(a.icc, b))) return null;
+  return a.icc;
+}
+function converted(reference, decoded) {
+  const icc = conversionProfile(reference, decoded), transform = icc && profileTransform(icc);
+  return transform && !transform.gray ? transform : null;
+}
+function sameMeaning(reference, decoded, profile, equalICC) {
+  const a = color(reference), b = color(decoded);
+  if (profile) {}
+  else if (a.icc || b.icc) { if (!(equalICC ?? sameBytes(a.icc, b.icc))) return false; }
   else if (!sameRecord(a, b)) return false;
   const description = sampleDescription(reference);
   const target = decoded.header?.toneMapping?.intensityTarget ?? sampleDescription(decoded).intensityTarget;
@@ -37,7 +55,10 @@ function half(value) {
   return sign * (exponent === 0 ? mantissa * 2 ** -24 : exponent === 31 ? mantissa ? NaN : Infinity : (1024 + mantissa) * 2 ** (exponent - 25));
 }
 const incomparable = message => ({exact: false, alphaExact: false, maxError: Infinity, supported: false, message});
-export function comparison(reference, decoded, protection, pixelOffset = 0) {
+export function comparisonContext(reference, decoded, profile = converted(reference, decoded), equalICC) {
+  return {profile, supported: sameMeaning(reference, decoded, profile, equalICC)};
+}
+export function comparison(reference, decoded, protection, pixelOffset = 0, context) {
   admitSampleKind(reference.data, reference);
   admitSampleKind(decoded.data, decoded);
   if (reference.width !== decoded.width || reference.height !== decoded.height || reference.data.length !== decoded.data.length)
@@ -45,7 +66,8 @@ export function comparison(reference, decoded, protection, pixelOffset = 0) {
   if (reference.extraChannels?.length || decoded.extraChannels?.some(channel => channel.type !== 0) ||
       decoded.extraChannels?.filter(channel => channel.type === 0).length > 1)
     return incomparable('Verification of extra channels is unavailable.');
-  if (!sameMeaning(reference, decoded))
+  const {profile, supported} = context ?? comparisonContext(reference, decoded);
+  if (!supported)
     return incomparable('The decoded color, orientation, or alpha description differs from the reference.');
   const source = sampleDescription(reference), output = sampleDescription(decoded), data = reference.data, restored = decoded.data;
   const originalMax = source.sampleFormat === 'uint' ? 2 ** source.bitDepth - 1 : 1;
@@ -65,7 +87,8 @@ export function comparison(reference, decoded, protection, pixelOffset = 0) {
     if (protection?.has(pixelOffset + (i >>> 2))) { protectedSamples++; protectedExact &&= equal; }
     maxError = Math.max(maxError, error);
   }
-  return {exact, alphaExact, maxError, supported: true, ...(protection && {protectedSamples, protectedExact})};
+  if (profile) exact = protectedExact = false, maxError = Infinity;
+  return {exact, alphaExact, maxError, supported: true, ...(profile && {profile}), ...(protection && {protectedSamples, protectedExact})};
 }
 
 export function measurementTarget(fidelity, options = {}) {
@@ -79,17 +102,33 @@ export function measurementTarget(fidelity, options = {}) {
   return {kind: metric === 'max-error' ? 'max-error' : 'score', metric,
     ...(Number.isFinite(options.floor) && {floor: options.floor}), ...(Number.isFinite(options.limit) && {limit: options.limit})};
 }
-function sdrEncoding(picture) {
+function sdrEncoding(picture, profile) {
   const description = sampleDescription(picture), encoding = color(picture);
   if (description.sampleFormat !== 'uint' || description.bitDepth !== 8 || description.alphaPremultiplied ||
-      description.intensityTarget !== 255 || encoding.icc || encoding.space !== 'rgb' || encoding.whitePoint !== 'd65' ||
+      description.intensityTarget !== 255) return null;
+  if (profile) return encoding;
+  if (encoding.icc || encoding.space !== 'rgb' || encoding.whitePoint !== 'd65' ||
       encoding.transferFunction !== 'srgb' || !['srgb', 'display-p3'].includes(encoding.primaries)) return null;
   return encoding;
 }
 const linearRGB = picture => linearFromTransform(picture.data, picture.width * picture.height, P3_TRANSFORM);
 const unavailable = message => ({code: 'JXL_UNSUPPORTED', message});
 const missed = message => ({code: 'JXL_TARGET', message});
-export async function pixelEvidence(reference, decoded, fidelity, options = {}, compared = comparison(reference, decoded)) {
+export function metricSamples(reference,decoded,profile,sourceEncoding) {
+  let original = {rgba:reference.data}, restored = {rgba:decoded.data};
+  if (profile) {
+    original = linearFromTransform(reference.data,reference.width * reference.height,profile);
+    if (color(decoded).primaries === 'display-p3') restored = linearRGB(decoded);
+  }
+  else if (sourceEncoding.primaries === 'display-p3') { original = linearRGB(reference); restored = linearRGB(decoded); }
+  return [original,restored];
+}
+async function scorePixels(reference,decoded,profile,sourceEncoding,options) {
+  const [original,restored] = metricSamples(reference,decoded,profile,sourceEncoding);
+  await compileKernels(); check(options.signal);
+  return ssimulacra2(original,restored,reference.width,reference.height,{wantMap:false}).score;
+}
+export async function pixelEvidence(reference, decoded, fidelity, options = {}, compared = comparison(reference, decoded), measure = scorePixels) {
   check(options.signal);
   if (!compared.supported) return {kept: 'lossy', proof: {kind: fidelity === 'exact' ? 'pixels' : measurementTarget(fidelity, options).kind, verified: false},
     reason: unavailable(compared.message)};
@@ -104,15 +143,10 @@ export async function pixelEvidence(reference, decoded, fidelity, options = {}, 
   }
   if (target.metric !== 'ssimulacra2')
     return {kept, proof: {...target, verified: false}, reason: unavailable('This perceptual metric has no admitted scorer.')};
-  const sourceEncoding = sdrEncoding(reference), outputEncoding = sdrEncoding(decoded);
+  const sourceEncoding = sdrEncoding(reference, compared.profile), outputEncoding = sdrEncoding(decoded);
   if (!sourceEncoding || !outputEncoding)
     return {kept, proof: {...target, verified: false}, reason: unavailable('The perceptual scorer covers straight 8-bit SDR sRGB and Display P3 pictures.')};
-  let original = {rgba: reference.data}, restored = {rgba: decoded.data};
-  if (sourceEncoding.primaries === 'display-p3') {
-    original = linearRGB(reference); restored = linearRGB(decoded);
-  }
-  await compileKernels(); check(options.signal);
-  const score = ssimulacra2(original, restored, reference.width, reference.height, {wantMap: false}).score;
+  const score = await measure(reference,decoded,compared.profile,sourceEncoding,options);
   check(options.signal);
   if (!Number.isFinite(score)) return {kept, proof: {...target, verified: false}, reason: unavailable('The scorer did not produce a finite measurement.')};
   const hasBound = Number.isFinite(target.floor), verified = hasBound && score >= target.floor && compared.alphaExact;

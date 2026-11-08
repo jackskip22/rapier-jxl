@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {JxlBits, requireDecode, unpackSigned} from './decode-bits.mjs';
+import {sliceBytes} from './step-journal.mjs';
 import {readEntropy, readPermutation} from './decode-entropy.mjs';
 import {DEFAULT_OPSIN} from './decode-tables.mjs';
 
@@ -104,7 +105,9 @@ export function readDecodeImageHeader(r, limits = {}) {
   requireDecode(count <= 256, 'Too many JPEG XL extra channels.', r);
   h.extraChannels = array(count, () => extraChannel(r));
   h.xyb = defaults || bool(r);
+  const colorFrom = r.bit;
   h.colorEncoding = defaults ? {space:'rgb',spaceId:0,wantICC:false,whitePoint:'d65',whitePointId:1,primaries:'srgb',primariesId:1,transferFunction:'srgb',transferId:13,renderingIntent:1} : color(r);
+  h.colorBits = defaults ? null : [colorFrom, r.bit];
   h.colorChannels = h.colorEncoding.spaceId === 1 ? 1 : 3;
   h.toneMapping = tone(r, extra);
   if (!defaults) readExtensions(r);
@@ -215,5 +218,5 @@ export function readDecodeTOC(r, f, partial = false) {
   }
   const sections = order ? Array.from(order, i => physical[i]) : physical;
   f.end = offset; f.sections = sections; r.bit = Math.min(offset, r.bytes.length)*8;
-  return sections.map(s => s.cut ? null : new JxlBits(r.bytes.subarray(s.offset,s.offset+s.length)));
+  return sections.map(s => s.cut ? null : r.borrowed ? new JxlBits(sliceBytes(r.bytes,s.offset,s.offset+s.length),true) : new JxlBits(r.bytes.subarray(s.offset,s.offset+s.length)));
 }

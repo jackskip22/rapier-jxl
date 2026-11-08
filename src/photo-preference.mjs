@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {journalFact, FACTS} from './step-journal.mjs';
 export function photoPreferenceDifference(data, width, height, from = 0, to = height, sourceRow = 0,
   {stride = width, origin = 0} = {}) {
   let lumaEnergy = 0, chromaEnergy = 0;
@@ -16,5 +17,6 @@ export function photoPreferenceDifference(data, width, height, from = 0, to = he
   return chromaEnergy - lumaEnergy;
 }
 export function preferXYB(data, width, height, sampling) {
-  return photoPreferenceDifference(data, width, height, 0, height, 0, sampling) <= 0;
+  const gathered = sampling === undefined ? journalFact(data, FACTS)?.preference?.() : undefined;
+  return (gathered ?? photoPreferenceDifference(data, width, height, 0, height, 0, sampling)) <= 0;
 }

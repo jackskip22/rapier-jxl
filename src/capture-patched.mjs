@@ -12,6 +12,8 @@ import {photoMasks} from './screen-photo-mask.mjs';
 import {flatSamples} from './screen.mjs';
 import {fault} from './fault.mjs';
 import {CAPTURE_PROTECTION} from './capture-protection.mjs';
+import {unit, stage, journaling} from './step-journal.mjs';
+import {markCaptureExact} from './capture-codec.mjs';
 
 export function patchBoxes(rects, width, height) {
   let out = [];
@@ -66,23 +68,22 @@ const apart = (a, b, t) => Math.abs((a >> 16) - (b >> 16)) >= t || Math.abs((a >
 const cellOf = v => (v >> 9 & 0x7c00) | (v >> 6 & 0x3e0) | (v >> 3 & 0x1f);
 const RING = 2, STRONG = 2, STRONG_KEPT = 0.5, STRONG_BITS = 3, FLAT = 8, FLAT_BOX = 8192;
 export function groundCells(data, width, height, box, text = null) {
-  const cells = new Uint8Array(32768), counts = new Map();
+  const counts = new Map();
   let n = 0, most = 0, common = 0;
-  const ring = visit => {
-    for (let y = Math.max(0, box.y - RING); y < Math.min(height, box.y + box.h + RING); y++) for (let x = Math.max(0, box.x - RING); x < Math.min(width, box.x + box.w + RING); x++) {
-      if (y >= box.y && y < box.y + box.h && x >= box.x && x < box.x + box.w) continue;
-      if (text?.[y * width + x]) continue;
-      const o = (y * width + x) * 4;
-      visit(data[o] << 16 | data[o + 1] << 8 | data[o + 2]);
-    }
-  };
-  ring(v => {
-    const r = v >> 19, g = v >> 11 & 31, b = v >> 3 & 31, c = (counts.get(v) ?? 0) + 1;
+  for (let y = Math.max(0, box.y - RING); y < Math.min(height, box.y + box.h + RING); y++) for (let x = Math.max(0, box.x - RING); x < Math.min(width, box.x + box.w + RING); x++) {
+    if (y >= box.y && y < box.y + box.h && x >= box.x && x < box.x + box.w) { x = box.x + box.w - 1; continue; }
+    if (text?.[y * width + x]) continue;
+    const o = (y * width + x) * 4, v = data[o] << 16 | data[o + 1] << 8 | data[o + 2], c = (counts.get(v) ?? 0) + 1;
     counts.set(v, c); n++; if (c > most) { most = c; common = v; }
+  }
+  if (n < 16) return null;
+  const cells = new Uint8Array(32768);
+  for (const v of counts.keys()) {
+    const r = v >> 19, g = v >> 11 & 31, b = v >> 3 & 31;
     for (let i = Math.max(0, r - 1); i <= Math.min(31, r + 1); i++) for (let j = Math.max(0, g - 1); j <= Math.min(31, g + 1); j++) for (let k = Math.max(0, b - 1); k <= Math.min(31, b + 1); k++) cells[i << 10 | j << 5 | k] |= 1;
-  });
-  ring(v => { if (apart(v, common, STANDS_OUT)) cells[cellOf(v)] |= STRONG; });
-  return n < 16 ? null : cells;
+    if (apart(v, common, STANDS_OUT)) cells[cellOf(v)] |= STRONG;
+  }
+  return cells;
 }
 export function solidInk(data, width, box, ground = null) {
   const {x: X, y: Y, w, h} = box, n = w * h, px = new Int32Array(n);
@@ -551,7 +552,7 @@ function protectedPageBoxes(data, width, height) {
     }
     above = here;
   }
-  return {boxes, mayBeExact};
+  return {boxes, mayBeExact, regions};
 }
 
 function protectedLargeBoxes(data, width, height) {
@@ -567,21 +568,21 @@ function protectedLargeBoxes(data, width, height) {
 }
 
 export function* patchedPageSteps(source, width, height, {quality, regions = [], unconfirmed = false, areas = [], qualityOf = () => quality, exactRects, colorSpace, exactOptions = {}, photoBlocks = null, photoBlockEffort, readingWebp, photoRects = [], photoAdmission, photoScoreMemo = null, baseline, textReading, [CAPTURE_PROTECTION]: collector}) {
-  const large = width * height > WHOLE, protection = large ? protectedLargeBoxes(source, width, height) : protectedPageBoxes(source, width, height);
+  const large = width * height > WHOLE, protection = yield* unit('protection', () => large ? protectedLargeBoxes(source, width, height) : protectedPageBoxes(source, width, height));
   const exact = () => encodeCaptureSteps(source, width, height, {...exactOptions, colorSpace, maxError: 0});
   let unboxedSource = null;
   const readUnboxed = width * height <= UNBOXED_PIXELS
     ? (y0, h) => unboxedSource ??= unboxedSourceMarks(source, width, height, y0, h) : null;
-  const requested = textPieces(source, width, height, exactRects, regions, [], readUnboxed);
+  const requested = yield* unit('text-pieces', () => textPieces(source, width, height, exactRects, regions, [], readUnboxed));
   if (!protection) unboxedSource = null;
   const requiredPieces = requested.pieces.flatMap(piece => placed(piece).map(position => ({...position, mask: piece.mask})));
   if (textReading) textReading.pieces = requiredPieces;
-  const bare = baseline ? yield* scaled(baseline(requiredPieces), 0, 0) : null;
+  const bare = baseline ? yield* fileStage('baseline', () => scaled(baseline(requiredPieces, protection?.regions), 0, 0), bare => bare.bytes, photoAdmission) : null;
   const exactFile = function* () { return bare && captureExact(bare.bytes) ? bare.bytes : yield* exact(); };
   const shorter = bytes => bare?.exact && bare.bytes.length <= bytes.length && (!photoAdmission || photoAdmission.accepts(bare.bytes)) ? bare.bytes : bytes;
   if (!protection && large) return null;
   if (!protection && unconfirmed) return shorter(yield* exactFile());
-  let {pieces: all, blocks} = protection?.boxes.length ? textPieces(source, width, height, exactRects, regions, protection.boxes, readUnboxed) : requested;
+  let {pieces: all, blocks} = protection?.boxes.length ? yield* unit('text-pieces', () => textPieces(source, width, height, exactRects, regions, protection.boxes, readUnboxed)) : requested;
   unboxedSource = null;
   if (bare?.wholePhoto && protection?.mayBeExact) ({pieces: all, blocks} = requested);
   const masks = all.filter(r => r.mask), boxes = all.filter(r => !r.mask), muls = masks.map(r => ({...r, role: 'mul'}));
@@ -596,14 +597,25 @@ export function* patchedPageSteps(source, width, height, {quality, regions = [],
 
   const selectedProtection = collector?.patches(width, height, all);
 
-  const data = masks.length ? inkFilled(source, width, masks) : source;
+
   const phases = new Float64Array(64);
   for (const r of regions) phases[(r.y & 7) * 8 + (r.x & 7)] += r.width * r.height;
   let phase = 0;
   for (let i = 1; i < 64; i++) if (phases[i] > phases[phase]) phase = i;
   const dx = (8 - (phase & 7)) & 7, dy = (8 - (phase >> 3)) & 7, fw = width + dx, fh = height + dy;
-  const placedBoxes = boxes.flatMap(placed), rows = fusedFrameRows(data, width, dx, dy, placedBoxes) ?? frameRows(data, width, dx, dy, placedBoxes);
-  let own = regions.length || areas.length ? [...regions.map(r => ({x: r.x + dx, y: r.y + dy, width: r.width, height: r.height, quality: qualityOf(r, ((r.x + dx) & 7) !== 0 || ((r.y + dy) & 7) !== 0, dx, dy)})), ...areas.map(a => ({...a, x: a.x + dx, y: a.y + dy}))] : null;
+  const placedBoxes = boxes.flatMap(placed);
+  let laidOut = null;
+  const rowsOf = () => laidOut ??= (() => {
+    const data = masks.length ? inkFilled(source, width, masks) : source;
+    return fusedFrameRows(data, width, dx, dy, placedBoxes) ?? frameRows(data, width, dx, dy, placedBoxes);
+  })();
+  const looked = [];
+  for (const r of regions) {
+    const offGrid = ((r.x + dx) & 7) !== 0 || ((r.y + dy) & 7) !== 0;
+    looked.push(journaling() && qualityOf.steps ? yield* stage('region-quality', () => qualityOf.steps(r, offGrid, dx, dy))
+      : yield* unit('region-quality', () => qualityOf(r, offGrid, dx, dy)));
+  }
+  let own = regions.length || areas.length ? [...regions.map((r, i) => ({x: r.x + dx, y: r.y + dy, width: r.width, height: r.height, quality: looked[i]})), ...areas.map(a => ({...a, x: a.x + dx, y: a.y + dy}))] : null;
   const crop = dx || dy ? {x: -dx, y: -dy, width: fw, height: fh} : null;
   const placement = {imageWidth: width, imageHeight: height, crop};
   const photoCrops = (photoRects.length ? photoRects : regions).map(r => {
@@ -636,14 +648,23 @@ export function* patchedPageSteps(source, width, height, {quality, regions = [],
     }
   });
   if (photoBlocks && photoScoreMemo && photoBlockEffort >= 5) photoScoreMemo.patched(source, width, height,
-    {dx, dy, quality, colorSpace, areas: own, crops: photoCrops, masks, placedBoxes, exactPieces}, {rows, referenceRows, exactRows, project});
-  const frame = (more, from, span) => scaled((photoBlocks ?? pageFrameSteps)(rows, fw, fh, {quality, colorSpace, areas: own,
-    placement: {...placement, ...more}, effort: photoBlockEffort ?? exactOptions.effort,
-    ...(photoBlocks && {photoBlockEffort, readingWebp, photoCrops, referenceRows, exactRows, project, signal: exactOptions.signal, photoAdmission, photoScoreMemo})}), from, span);
+    {dx, dy, quality, colorSpace, areas: own, crops: photoCrops, masks, placedBoxes, exactPieces}, {rows: rowsOf(), referenceRows, exactRows, project});
+  const frame = (more, from, span) => {
+    const steps = () => scaled((photoBlocks ?? pageFrameSteps)((y, count) => rowsOf()(y, count), fw, fh, {quality, colorSpace, areas: own,
+      placement: {...placement, ...more}, effort: photoBlockEffort ?? exactOptions.effort,
+      ...(photoBlocks && {photoBlockEffort, readingWebp, photoCrops, referenceRows, exactRows, project, signal: exactOptions.signal, photoAdmission, photoScoreMemo})}), from, span);
+    return photoBlocks ? steps() : fileStage('page-frame', steps, bytes => bytes, photoAdmission);
+  };
   if (!all.length) {
     const bytes = yield* frame({}, 0, 1); collector?.record(bytes, selectedProtection); return shorter(bytes);
   }
-  const packed = atlasArea([...layered, ...boxes], blocks) <= WHOLE && packAtlas([...pieces.filter(r => !r.block), ...blocks], source, width, muls);
+  const packing = [...pieces.filter(r => !r.block), ...blocks], placing = [...packing, ...muls];
+  const made = atlasArea([...layered, ...boxes], blocks) <= WHOLE && (yield* unit('atlas-pack', () => {
+    const packed = packAtlas(packing, source, width, muls);
+    return {packed, places: placing.map(r => [r.ax, r.ay])};
+  }));
+  if (made) placing.forEach((r, i) => { [r.ax, r.ay] = made.places[i]; });
+  const packed = made && made.packed;
   if (!packed) return large ? null : shorter(yield* exactFile());
   const {atlas, aw, ah} = packed;
   for (const r of boxes) if (r.block) { r.ax = r.block.ax; r.ay = r.block.ay; }
@@ -655,6 +676,18 @@ export function* patchedPageSteps(source, width, height, {quality, regions = [],
   bytes.set(first); bytes.set(page, first.length);
   collector?.record(bytes, selectedProtection);
   return shorter(photoAdmission ? photoAdmission.join(bytes, [page]) : bytes);
+}
+
+export function* fileStage(name, steps, file, admission, whole = false) {
+  const made = yield* stage(name, function* () {
+    const value = yield* steps(), bytes = file(value);
+    return {value, exact: !!bytes && captureExact(bytes), passed: bytes && admission ? admission.accepts(bytes) : null,
+      measured: bytes && admission ? admission.measurements(bytes) : null};
+  }, undefined, whole);
+  const bytes = file(made.value);
+  if (bytes && made.exact && !captureExact(bytes)) markCaptureExact(bytes);
+  if (bytes && admission && made.passed !== null && made.passed !== admission.accepts(bytes)) admission.record(bytes, made.passed, made.measured);
+  return made.value;
 }
 
 function* scaled(steps, from, span) {

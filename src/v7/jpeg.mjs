@@ -80,6 +80,7 @@ function recompressHere(input, options) {
 
 export const restore = resultOperation((input, options) => settle(restoreHere(input, options), options), {format: 'jpeg', fidelity: 'exact', kept: 'jpeg-bytes'});
 Object.defineProperty(restore, STEPS, {value: restoreSteps});
+Object.defineProperty(restore, Symbol.for('rapier-jxl.verify.source'), {value: recompress[STEPS]});
 export {resultJSON} from './result.mjs';
 async function restoreHere(input, options) {
   const settings = {...object(options)};

@@ -4,8 +4,9 @@ import {perceptualMaskField} from './photo-mask.mjs';
 import {planeRequest, planeLayoutSteps} from './photo-plane-levels.mjs';
 export {plainLayout, planeRequest, planeLevelsSteps, planeLayoutSteps} from './photo-plane-levels.mjs';
 const check = signal => { if (signal?.aborted) throw signal.reason; };
-const maskOf = base => perceptualMaskField(base.planes, base.components[0].stride, base.components[0].rows,
-  base.planeRows ? by => base.planeRows(by * 8, by * 8 + 8) : undefined).weight;
+const maskOf = base => base.maskWeight ?? (base.devicePlanes ? (base.devicePlanes.maskWeight ??= perceptualMaskField(base.planes, base.components[0].stride, base.components[0].rows,
+  base.planeRows ? by => base.planeRows(by * 8, by * 8 + 8) : undefined).weight) : perceptualMaskField(base.planes, base.components[0].stride, base.components[0].rows,
+  base.planeRows ? by => base.planeRows(by * 8, by * 8 + 8) : undefined).weight);
 
 export function* planeSearchSteps(base, width, height, options, signal) {
   const search = {...options, maskWeight: options.maskWeight ?? maskOf(base)}, request = planeRequest(base, width, height, search);

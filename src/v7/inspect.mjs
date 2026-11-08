@@ -1,4 +1,6 @@
 import {JxlBits} from '../decode-bits.mjs';
+import {readContainer, readContainerSteps} from '../container-advanced.mjs';
+import {journaling, journalTool} from '../step-journal.mjs';
 import {readDecodeImageHeader} from '../decode-header.mjs';
 import {fault} from '../fault.mjs';
 import {SIGNATURE, FTYP, BRAND, CODESTREAM, PARTIAL, LEVEL, BROB, RECONSTRUCTION} from '../decode-tables.mjs';
@@ -17,6 +19,18 @@ export function header(bytes, options = {}) {
   const info = readDecodeImageHeader(new JxlBits(source.codestream), {maxPixels: 65536 * 65536, maxDimension: limits.maxDimension, ...(limits.maxPixels !== undefined && {maxPixels: limits.maxPixels})});
   info.reconstruction = source.reconstruction;
   return info;
+}
+
+export function boundedHeader(bytes,options = {}) {
+  const source = readContainer(bytes,{maxBytes:options.maxInputBytes ?? 1073741824,maxBoxes:options.maxBoxes ?? 65536});
+  const info = header(source.codestream.subarray(0,Math.min(source.codestream.length,65536)),options);
+  info.reconstruction = source.auxiliary.some(box => box.boxType === 'jbrd');
+  return info;
+}
+
+export function* boundedHeaderSteps(bytes, options = {}) {
+  if (!journaling()) return boundedHeader(bytes, options);
+  return yield* journalTool('boundedHeader')(bytes, options, {readContainerSteps, header});
 }
 
 const INDEX = 0x6a786c69, GAIN = 0x6a68676d, HEAD = 65536;

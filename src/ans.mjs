@@ -116,7 +116,7 @@ function sameCounts(copy, {contexts, totals, small, large}) {
   return k === l.length;
 }
 const codingKey = options => !options ? '' : [options.maxClusters, options.newClusterCost, options.seeds, options.passes, options.switchCost,
-  !!options.everyConfig, !!options.kernels, options.shifts, options.mapLz, !!options.smallestMap].join();
+  !!options.everyConfig, !!options.kernels, options.shifts, options.mapLz, !!options.smallestMap, !!options.headerAware, !!options.shapedMerge, !!options.jpeg].join();
 export function buildAnsCoding(counts, options) { return complete(buildAnsCodingSteps(counts, options)); }
 function* buildAnsCodingSteps(input, options) {
   const made = yield* stage('coding', function* () {
@@ -143,7 +143,7 @@ function* buildAnsCodingCached(counts, options) {
 buildAnsCoding.steps = buildAnsCodingSteps;
 function* buildAnsCodingOnce(counts, options) {
   const shaped = new WeakMap();
-  const headerAware = options?.seeds === 128;
+  const headerAware = options?.seeds === 128 || !!options?.headerAware;
   const shapedCost = (freqs, config) => {
     const header = new BitCount(), shape = shapeHistogram(freqs, options?.shifts, headerAware);
     shaped.set(freqs, shape);
@@ -213,7 +213,7 @@ export function writeModularAnsHistograms(w, orderedLeaves, freqs, histogramOf =
   w.writeU32([[0, 224], [0, 512], [0, 4096], [15, 8]], LZ77.minSymbol);
   w.writeU32([[0, 3], [0, 4], [2, 5], [8, 9]], LZ77.minLength);
   writeUintConfig(w, LZ77.lengthConfig, 8);
-  writeAnsHistograms(w, contextMap, logAlphabet, histograms.map((_, i) => i ? configOf(i - 1) : RESIDUAL_CONFIG), histograms);
+  writeAnsHistograms(w, contextMap, logAlphabet, histograms.map((_, i) => i ? configOf(i - 1) : RESIDUAL_CONFIG), histograms, writeSmallestContextMap);
   const reverses = histograms.map(h => h.reverse);
   const encode = plans => {
     const length = plans.reduce((total, plan) => total + plan.used, 0), emitted = new Uint16Array(length), flags = new Uint8Array(length);

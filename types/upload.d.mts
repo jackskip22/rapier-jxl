@@ -4,10 +4,11 @@ import type {UploadPreparationInput, UploadFitOptions, UploadVariantsOptions} fr
 import type {WasmBundle} from './wasm.mjs';
 import type {ResumableFunction} from './resumable.mjs';
 export type {UploadOptions, UploadInput, UploadCaptureInput, CapturePixels, MaxError, UploadInput as ImageInput, Bytes} from './types.mjs';
+export type {ImagePreview, PreviewOptions} from './types.mjs';
 export type {UploadCaptureOptions as CaptureOptions, CapturePhotoFidelity as CaptureFidelity, CaptureRecord} from './types.mjs';
 export type {UploadPreparationInput, UploadFitOptions, UploadVariantRequest, UploadVariantsOptions, UploadPreparation} from './preparation-upload.mjs';
 /** The upload encoder in one file, run in place: a File, Blob, canvas or pixels in; efforts 1-3; an exact JPEG carried.
- * `encode` from `rapier-jxl` writes the same bytes at the same effort, and runs efforts 4-9 too. */
+ * `encode` from `rapier-jxl` writes the same file at the same effort, and runs efforts 4-9 too. */
 export const encode: ResumableFunction<(input: UploadInput, options?: UploadOptions) => Promise<ImageResult>>;
 export function capture(input: UploadCaptureInput, options?: CaptureOptions): Promise<ImageResult>;
 /** Owned still preparation at the source depth, at most 40 MP. Efforts 1-3; no features, measured targets, textures or rows.

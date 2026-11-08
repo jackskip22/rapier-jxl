@@ -2,11 +2,10 @@ import {author, admitFormat} from './author.mjs';
 import {object, fail, declared, pixelLimit, progressOf} from './primitives.mjs';
 import {own} from './ownership.mjs';
 import {acceleration} from './acceleration.mjs';
-import {prepare as prepareStill} from './with-capture.mjs';
+import {prepare as prepareStill} from './still.mjs';
 import {imageResult} from './result.mjs';
 import {readImageHeader, codestreamOf} from '../framing.mjs';
 export {encode, supported, configureWasm} from './still.mjs';
-export {capture, configureDecoder} from './with-capture.mjs';
 export const prepare = (operation = 'format') => operation === 'format' ? acceleration(false, 0, 0).then(() => {}, error => { throw declared(error); }) : prepareStill(operation);
 
 export const format = (input, options) => formatHere(input, options).catch(error => { throw error === options?.signal?.reason ? error : declared(error); });

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {inspectPixels, losslessSteps, nativeSteps, iccShape} from './lossless.mjs';
+import {inspectPixels, losslessSteps, nativeSteps, iccShape, inspectPixelsSteps} from './lossless.mjs';
 import {lossySteps} from './lossy.mjs';
 import {photoSteps, admitPhotoFilter} from './photo-job.mjs';
 import {varDCTSteps} from './vardct.mjs';
@@ -23,11 +23,11 @@ export function coreSteps(data, width, height, options, gpu) {
 }
 
 function* pixelSteps(data, width, height, quality, colorSpace, photo, filter, gpu) {
-  const shape = inspectPixels(data, width, height);
-  if (quality >= 100) return yield* losslessSteps(data, width, height, {shape, colorSpace, fast: true});
+  const shape = yield* inspectPixelsSteps(data, width, height);
+  if (quality >= 100) return yield* losslessSteps(data, width, height, {shape, colorSpace, fast: true, units: true});
   if (!shape.palette) return yield* (photo ? photoSteps(data, width, height, quality, colorSpace, 1, coefficients => varDCTSteps(coefficients, {fast: true}), filter, undefined, gpu)
     : lossySteps(data, width, height, {quality, shape, colorSpace}));
-  const exact = yield* part(losslessSteps(data, width, height, {shape, colorSpace, fast: true}), 0, 2);
+  const exact = yield* part(losslessSteps(data, width, height, {shape, colorSpace, fast: true, units: true}), 0, 2);
   let bytes;
   try { bytes = yield* part(lossySteps(data, width, height, {quality, shape, colorSpace}), 1, 2); }
   catch (error) { if (error.code !== 'JXL_SIZE' && error.code !== 'JXL_MEMORY' && (!(error instanceof RangeError) || error.code)) throw error; bytes = exact; }

@@ -2,7 +2,7 @@
 
 **Need:** a desktop graphics card and a browser with hardware WebGPU enabled. Any OS. Enter the GPU model; software adapters do not qualify.
 
-**Package:** `rapier-jxl@8.3.0`, loaded from jsDelivr with checked hashes. **Time:** allow up to 10 minutes; **Stop** keeps partial results.
+**Package:** `rapier-jxl@8.3.1`, loaded from jsDelivr with checked hashes. **Time:** allow up to 10 minutes; **Stop** keeps partial results.
 
 1. [Open the check](https://rapier.website/docs/jxl-job.html?job=desktop-gpu).
 2. Enter the browser, OS, device, and GPU versions/model, and press **Run**. Keep the page in front and other GPU work idle.

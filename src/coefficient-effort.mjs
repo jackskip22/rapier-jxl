@@ -5,6 +5,8 @@ import {complete, part, scaled} from './bits.mjs';
 import {offloading} from './offload.mjs';
 import {kernelHooks} from './kernel-hooks.mjs';
 
+const CAPTURE_PHOTO = typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true;
+
 export function coefficientOrders(components) { return complete(coefficientOrderSteps(components)); }
 
 const orderFromHistogram = (counts, bucket = 8) => [0, ...Array.from({length: 63}, (_, k) => k + 1).sort((a, b) => Math.floor(counts[b] / bucket) - Math.floor(counts[a] / bucket) || a - b)];
@@ -52,7 +54,7 @@ export function ordersFromCounts(histograms, bucket = 8, adaptiveFast = false, b
 
 export function* candidateSteps(image, plan, shared) {
   return yield* stage('candidate', function* () {
-    if (!plan.pooled && offloading()) {
+    if (!plan.pooled && (!CAPTURE_PHOTO && offloading())) {
       const bytes = yield {offload: 'run', task: {kind: 'vardct', image, plan}, at: done => done};
       if (bytes) return bytes;
     }
@@ -73,7 +75,7 @@ export function* coefficientEffortSteps(jpeg, effort, fallback, retain, shared =
     return bytes;
   }
   let best = fallback, active, settled = false, suspended = false, hurry = false, interrupted = false;
-  if (!pooled && offloading()) yield prefetch(jpeg, prefixPlans(effort, fallback, retain));
+  if (!pooled && (!CAPTURE_PHOTO && offloading())) yield prefetch(jpeg, prefixPlans(effort, fallback, retain));
   function* write(plan, fraction, cache = shared) {
     active = candidateSteps(jpeg, pooled ? {...plan, pooled: true, abortable: !!best} : plan, cache);
     let step, reply;

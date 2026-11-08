@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {configureModules} from './wasm-modules.mjs';
 import {configureKernels, disableEntropyKernels} from './kernels.mjs';
+import {previewRelay} from './v7/preview-relay.mjs';
 
 disableEntropyKernels();
 
@@ -17,15 +18,19 @@ export function serveHelper(load, port = helperPort()) {
   const loaded = Promise.resolve().then(load);
   loaded.catch(fatal);
   const ok = loaded.then(() => true, () => false);
-  let order = Promise.resolve();
+  let order = Promise.resolve(), previews;
   const next = step => { order = order.then(async () => { if (await ok) await step(await loaded); }).catch(fatal); };
   async function whole({id, task}, {run}) {
+    const preview = task.preview === true ? previewRelay((value, sequence, transfer) => port.postMessage({id, preview: value, previewSequence: sequence}, transfer)) : null;
+    if (preview) (previews ??= new Map()).set(id, preview);
     try {
-      const result = await run(task.operation, task.input, task.options, {maxPixels: task.maxPixels, webgpu: task.webgpu, onProgress: progress => port.postMessage({id, progress})});
+      const result = await run(task.operation, task.input, task.options, {maxPixels: task.maxPixels, webgpu: task.webgpu, onProgress: progress => port.postMessage({id, progress}), ...(preview && {onPreview: preview.send})});
       post({id, result}, ArrayBuffer.isView(result) ? [result.buffer] : [], error => ({id, error: described(error)}));
     } catch (error) { port.postMessage({id, error: described(error)}); }
+    finally { preview?.close(); previews?.delete(id); }
   }
   const serve = data => {
+    if (data?.previewAck !== undefined) { previews?.get(data.id)?.ack(data.previewAck); return; }
     if (data?.kernels !== undefined && data.input === undefined && data.task === undefined) {
       next(({name, protocol}) => { if (data.wasmModules) configureModules(data.wasmModules); configureKernels(data.kernels);
         port.postMessage({ready: true, ...(name && {module: name}), ...(protocol && {protocol})}); });

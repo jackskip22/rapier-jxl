@@ -1,4 +1,7 @@
 import {resultOperation, resultReference, resultFacts} from './result-operation.mjs';
+import {FIT_BYTES} from './result-reference.mjs';
+import {sRGBWithIntent, withRenderingIntent} from './header-intent.mjs';
+import {PREVIEW, previewCall} from './preview.mjs';
 import {effortJob} from '../effort-job.mjs';
 import {EXACT_LADDER as DEEP} from '../exact-ladder.mjs';
 import {photoAnsSteps} from '../photo-v6-blocks.mjs';
@@ -10,7 +13,7 @@ import {readPNG16} from '../source.mjs';
 import {orientSamples} from '../sample-transforms.mjs';
 import {compileCaptureKernels} from '../capture-codec.mjs';
 import {coreSteps} from './instant.mjs';
-import {check, fail, declared, callers, progressOf, JPEG_ELSEWHERE} from './primitives.mjs';
+import {check, fail, declared, callers, progressOf, JPEG_ELSEWHERE, dimensions} from './primitives.mjs';
 import {drain, driveSteps, encodeOptions, callOptions} from './common.mjs';
 import {parallelJob} from '../parallel-drive.mjs';
 import {DRIVE} from './drive.mjs';
@@ -22,7 +25,9 @@ import {encodeBands, WHOLE} from './bands.mjs';
 import {needsBands} from './band-size.mjs';
 import {recodeBand} from './band-recode.mjs';
 import {ordinaryStillReader} from './ordinary-still-policy.mjs';
-import {lowPhotoSteps} from './low-photo.mjs';
+import {lowPhotoSteps, lowPhotoRoute} from './low-photo.mjs';
+import {settledFacts, lowWebpEligible} from './low-webp-quality.mjs';
+import {settleScans} from './settle-scans.mjs';
 import {stillPhotoTargetSteps} from './still-photo-target.mjs';
 import {HDR} from '../photo-hdr.mjs';
 import {isRowSource, admitRows, readBand} from './rows.mjs';
@@ -31,7 +36,8 @@ import {isPlainRecord} from './records.mjs';
 import {isDecoded, fromDecoded} from './describe.mjs';
 import {acceleration, describedRoute} from './acceleration.mjs';
 import {requireWebGPU} from './webgpu.mjs';
-import {JOURNAL, journaled} from '../step-journal.mjs';
+import {JOURNAL, JOURNAL_FILE, journaled} from '../step-journal.mjs';
+import {journalPNG} from './journal-png.mjs';
 import {verbSteps, STEPS} from './verb-steps.mjs';
 export {supported} from './capture-support.mjs';
 export {configureWasm} from '../wasm-modules.mjs';
@@ -48,18 +54,20 @@ export function prepare(operation = 'encode') {
 
 const encodeBytes = (input, options) => regioned(encodeHere, input, options).catch(error => { throw error === options?.signal?.reason ? error : declared(error); });
 encodeBytes[DRIVE] = (input, options, helpers) => regioned(encodeHere, input, options, helpers).catch(error => { throw error === options?.signal?.reason ? error : declared(error); });
-export const encode = resultOperation(encodeBytes);
-Object.defineProperty(encode, STEPS, {value: verbSteps('encode:rapier-jxl', encode, {taken: ['fidelity', 'effort', 'readAs', 'maxPixels', 'features', 'webgpu']})});
+export const encode = resultOperation(encodeBytes, {preview: previewCall});
+Object.defineProperty(encode, STEPS, {value: verbSteps('encode:rapier-jxl', encode, {taken: ['fidelity', 'effort', 'readAs', 'maxPixels', 'features', 'webgpu'], rows: true, files: true})});
 export {resultJSON} from './result.mjs';
 async function encodeHere(input, given = {}, helpers = null, region) {
-  const journal = given?.[JOURNAL], options = journal === undefined ? given : (({[JOURNAL]: _journal, ...rest}) => rest)(given);
+  const journal = given?.[JOURNAL], fit = given?.[FIT_BYTES];
+  const options = journal === undefined && fit === undefined ? given : (({[JOURNAL]: _journal, [FIT_BYTES]: _fit, ...rest}) => rest)(given);
   const {codec: {target, ...codec}, hooks: {webgpu, maxPixels}} = callOptions(encodeOptions(options));
   const reader = ordinaryStillReader({signal: options.signal, maxPixels});
-  try { return await encodeOwned(input, options, helpers, {codec, target, webgpu, maxPixels, journal}, reader, region); }
+  const carried = {};
+  try { return withRenderingIntent(await encodeOwned(input, options, helpers, {codec, target, webgpu, maxPixels, journal, fit, carried}, reader, region), carried.intent); }
   finally { reader.destroy(); }
 }
 
-async function encodeOwned(input, options, helpers, {codec, target, webgpu, maxPixels, journal}, reader, region) {
+async function encodeOwned(input, options, helpers, {codec, target, webgpu, maxPixels, journal, fit, carried = {}}, reader, region) {
   const readAs = options.readAs;
   check(options.signal);
   if (isPlainRecord(input) && isDecoded(input)) input = fromDecoded(input);
@@ -70,7 +78,8 @@ async function encodeOwned(input, options, helpers, {codec, target, webgpu, maxP
     const source = admitRows(input, maxPixels), report = options.onProgress;
     source.description = own(source.description, maxPixels);
     resultReference(options, source);
-    const hooks = {signal: options.signal ?? new AbortController().signal, maxPixels, onProgress: progressOf(report, options.signal), journal};
+    const hooks = {signal: options.signal ?? new AbortController().signal, maxPixels, onProgress: progressOf(report, options.signal), journal,
+      ...(options[PREVIEW] && {preview: options[PREVIEW]})};
     if (webgpu === 'required') await requireWebGPU('required', codec.quality < 100, codec.effort);
     let exact = true;
     const settle = async band => {
@@ -89,21 +98,32 @@ async function encodeOwned(input, options, helpers, {codec, target, webgpu, maxP
   const settle = picture => reader.read(codec, picture, {exactAllowed: features === undefined && target === undefined &&
     picture.orientation === undefined && picture.extraChannels === undefined}) ?? reader.project(codec, picture);
   if (isTexture(input)) input = await readTexture(input, maxPixels);
+  let decoded = null;
+  if (journal !== undefined && input?.[JOURNAL_FILE] !== undefined) {
+    const file = input[JOURNAL_FILE];
+    decoded = await journalPNG(file, readAs, maxPixels, journal);
+    if (decoded) [decoded, carried.intent] = sRGBWithIntent(decoded);
+    input = decoded ?? new Blob([file.subarray(0, file.length)]);
+  }
   const blob = typeof Blob !== 'undefined' && input instanceof Blob;
-  const read = blob ? null : pixels(input, {readAs}, maxPixels, true);
-  let captured = blob ? null : own({input: read, codec, features, target}, maxPixels, budget);
+  const read = blob ? null : journal ? decoded ?? journalPixels(input, maxPixels) : pixels(input, {readAs}, maxPixels, true);
+  let captured = blob ? null : journal ? {input: read, ...own({codec, features, target}, maxPixels, budget)} : own({input: read, codec, features, target}, maxPixels, budget);
   if (captured) resultReference(options, captured.input);
   const report = options.onProgress, onProgress = progressOf(report, options.signal);
-  const hooks = {signal: options.signal ?? new AbortController().signal, onProgress, maxPixels, journal};
+  const hooks = {signal: options.signal ?? new AbortController().signal, onProgress, maxPixels, journal,
+    ...(options[PREVIEW] && {preview: options[PREVIEW]})};
   if (webgpu === 'required') await requireWebGPU('required', codec.quality < 100 || target !== undefined, codec.effort);
-  if (captured) captured.codec = await settle(captured.input);
+  if (captured && journal && lowWebpEligible(captured.input))
+    settledFacts.set(captured.input.data, await journal.tools.settleFacts(journal, settleScans, captured.input.data, captured.input.width, captured.input.height));
+  if (captured) captured.codec = await journaled(journal, 'settle', () => settle(captured.input));
   if (blob && codec.quality === 100 && target === undefined && readAs === undefined && features === undefined) {
     const head = new Uint8Array(await input.slice(0, 2).arrayBuffer());
     check(hooks.signal);
     if (head[0] === 255 && head[1] === 216) throw fail('JXL_OPTIONS', JPEG_ELSEWHERE);
   }
   if (blob) {
-    const picture = await journaled(journal, 'decode', () => image(input, {readAs}, {...hooks, phone: inspectPhone, deep: async () => ({readSource: readPNG16, orient: orientSamples})}));
+    let picture = await journaled(journal, 'decode', () => image(input, {readAs}, {...hooks, phone: inspectPhone, deep: async () => ({readSource: readPNG16, orient: orientSamples})}));
+    [picture, carried.intent] = sRGBWithIntent(picture);
     captured = own({input: picture, codec, features, target}, maxPixels, budget);
     resultReference(options, captured.input, input);
     captured.codec = await settle(captured.input);
@@ -131,8 +151,13 @@ async function encodeOwned(input, options, helpers, {codec, target, webgpu, maxP
   }
   if (needsBands(width, height, settings, data)) return encodeBands({width, height, read: (y, rows) => ({...source, data: data.subarray(y * width * 4, (y + rows) * width * 4), width, height: rows})},
     (band, bandHooks) => encodePicture(band, captured.codec, bandHooks, helpers, webgpu), (band, target) => recodeBand(band, captured.codec, target, HDR, ...bandCoders(captured.codec)), drain, hooks);
-  return encodePicture(captured.input, captured.codec, hooks, helpers, webgpu, codec.qualityIntent,
+  return encodePicture(captured.input, captured.codec, {...hooks, fit}, helpers, webgpu, codec.qualityIntent,
     facts => resultFacts(options, facts));
+}
+
+function journalPixels({data, width, height, colorSpace}, maxPixels) {
+  dimensions(width, height, maxPixels);
+  return {data, width, height, ...(colorSpace && {colorSpace})};
 }
 
 const bandCoders = codec => [codec.effort >= 6 ? photoAnsSteps : undefined, codec.effort >= 8 ? searchV6 : undefined];
@@ -141,10 +166,11 @@ async function encodePicture({data, width, height, ...source}, codec, hooks, hel
   const settings = {...source, ...codec}, lossy = settings.quality < 100;
   const gpu = await acceleration(webgpu, width, height, lossy ? settings.effort : 0, describedRoute(data, settings));
   check(hooks.signal);
-  const target = stillPhotoTargetSteps(data, width, height, settings, {intent, signal: hooks.signal, selected, maxPixels: hooks.maxPixels,
+  const target = stillPhotoTargetSteps(data, width, height, settings, {intent, signal: hooks.signal, selected, maxPixels: hooks.maxPixels, fit: hooks.fit,
+    preview: hooks.preview,
     exact: () => effortJob(data, width, height, {...settings, quality: 100, effort: 4}, false,
       undefined, undefined, undefined, DEEP, HDR)});
-  const low = target ?? lowPhotoSteps(data, width, height, settings);
+  const low = target ?? lowPhotoSteps(data, width, height, settings, await journaled(hooks.journal, 'low-route', () => lowPhotoRoute(data, width, height, settings, settledFacts.get(data))));
   const steps = low ?? (settings.effort === 1 ? coreSteps(data, width, height, settings)
     : effortJob(data, width, height, settings, !!gpu, undefined, lossy && settings.effort >= 8 ? searchV6 : undefined,
         lossy && settings.effort >= 6 ? photoAnsSteps : undefined, DEEP, HDR));

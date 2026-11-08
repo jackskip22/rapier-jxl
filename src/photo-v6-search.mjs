@@ -3,6 +3,7 @@ import {complete} from './bits.mjs';
 import {photoXYBSteps, XYB_TABLES} from './photo-xyb.mjs';
 import {transformDCT8, dct8Basis} from './photo-dct.mjs';
 import {V6, GABORISH, prepareV6, v6Image, v6Trace} from './photo-v6.mjs';
+import {v6For} from './photo-v6-settings.mjs';
 import {xybStrategies, lazyStrategyImage, materialize} from './varblocks.mjs';
 import {exactScores, bandedRGBA, subImage} from './exact-region.mjs';
 import {reconstruct, toRGBA, toRGBAInto} from './reconstruct.mjs';
@@ -143,7 +144,7 @@ export const gpuStats = {levels: 0};
 export function* forcedBands(base, width, height, layout, req, rgba, rate, rows = 512, shared = false) {
   const stride = base.components[0].stride, blockRows = base.components[0].rows, byRow = Array.from({length: blockRows}, () => []);
   for (const b of layout) byRow[b.by].push(b);
-  const plain = {deadzone: V6.deadzone, sizeScale: 1.03}, perceptual = {...plain, perceptual: true};
+  const plain = {deadzone: v6For(width, height).deadzone, sizeScale: 1.03}, perceptual = {...plain, perceptual: true};
   const singlePass = shared || !req, tables = singlePass ? [perceptual] : [plain, perceptual];
   let rated = 0;
   for (let y0 = 0; y0 < height; y0 += rows) {
@@ -161,7 +162,7 @@ export function* forcedBands(base, width, height, layout, req, rgba, rate, rows 
 
 export function* s2GuidedBlocksSteps(base, width, height, reference, ids = [4, 5, 6, 7], lamFactor = 0.85, req = null, rgba = new Uint8ClampedArray(width * height * 4)) {
   const stride = base.components[0].stride, rows = base.components[0].rows, tokens = rateModel(base, stride, rows, 8);
-  const perceptual = {deadzone: V6.deadzone, sizeScale: 1.03, perceptual: true}, maps = [], rates = new Map();
+  const perceptual = {deadzone: v6For(width, height).deadzone, sizeScale: 1.03, perceptual: true}, maps = [], rates = new Map();
   const rate = b => { (rates.get(b.id) ?? rates.set(b.id, new Float64Array(stride * rows)).get(b.id))[b.by * stride + b.bx] = tokenRate(b, tokens); };
   let score0 = 75, at = null;
   for (const id of [0, ...ids]) {
@@ -176,7 +177,7 @@ export function* s2GuidedBlocksSteps(base, width, height, reference, ids = [4, 5
   for (const r of rates.values()) for (let i = 0; i < r.length; i++) r[i] += 8.0;
   const lamBlock = lamFactor * (30 / Math.max(8, 100 - score0));
   let {layout} = xybStrategies(base, width, height, {
-    deadzone: V6.deadzone, sizeScale: 1.03, ids, maps, rates, lambda: lamBlock, model: 'tokens', chooseOnly: true,
+    deadzone: v6For(width, height).deadzone, sizeScale: 1.03, ids, maps, rates, lambda: lamBlock, model: 'tokens', chooseOnly: true,
   });
   for (const fam of [8, 5, 4, 6]) {
     const count = layout.filter(b => TRANSFORMS[b.id].table === fam).length;
@@ -216,8 +217,8 @@ function* s2Search(prepared, quality, effort, floor, device) {
     return order.reduce((a, c) => J(c) < J(a) ? c : a);
   }
   const smallest = (...files) => files.filter(Boolean).reduce((a, b) => b.length < a.length ? b : a);
-  const reqFor = row => device ? {data: rgba, width, height, options: {...V6, ...GABORISH, calibrationRow: row}, lib: {complete, photoXYBSteps, transformDCT8, dct8Basis, xyb: XYB_TABLES}} : null;
-  const PERCEPTUAL = {deadzone: V6.deadzone, sizeScale: 1.03, perceptual: true}, keep = width * height <= 2048 * 2048;
+  const reqFor = row => device ? {data: rgba, width, height, options: {...v6For(width, height), ...GABORISH, calibrationRow: row}, lib: {complete, photoXYBSteps, transformDCT8, dct8Basis, xyb: XYB_TABLES}} : null;
+  const PERCEPTUAL = {deadzone: v6For(width, height).deadzone, sizeScale: 1.03, perceptual: true}, keep = width * height <= 2048 * 2048;
   let decoded = new Uint8ClampedArray(width * height * 4);
 
   const c0 = yield* scored(floor.image, floor.bytes);
@@ -247,7 +248,7 @@ function* s2Search(prepared, quality, effort, floor, device) {
 const FIELD_SCALES = [1, 0.8, 1.25], FIELD_LAMBDAS = [1.5, 2.5];
 function* fieldImage(prepared, quality, field, layout) {
   const base = v6Image(prepared, quality, {keepPlanes: true, calibrationRow: 's2e8', noLevels: false, fieldScale: field}, false);
-  return yield* layoutImage(base, prepared.width, prepared.height, layout, {deadzone: V6.deadzone, sizeScale: 1.03, perceptual: true}, null);
+  return yield* layoutImage(base, prepared.width, prepared.height, layout, {deadzone: v6For(prepared.width, prepared.height).deadzone, sizeScale: 1.03, perceptual: true}, null);
 }
 function* fieldSearch(prepared, quality, layout, reference, scored, c0, choose) {
   const {width, height} = prepared, stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), n = stride * rows;

@@ -2,8 +2,9 @@
 import {prepareKernels, ensureKernels, orientBlock, sampleTable, sampleFilter, sampleSum, sampleFinish} from './kernels.mjs';
 import {wasmRequired} from './capture-wasm-error.mjs';
 import {check, fail, dimensions} from './v7/primitives.mjs';
-import {admitSampleFormat} from './admit-samples.mjs';
+import {admitSampleDomain} from './sample-domain.mjs';
 import {exactPow, exactLog} from './exact-math.mjs';
+import {sRGBWithIntent} from './v7/header-intent.mjs';
 
 export async function orientSamples(picture, {signal} = {}) {
   check(signal);
@@ -66,16 +67,18 @@ async function orientInPlace(data, width, height, orientation, signal) {
   return data;
 }
 
-export async function resizeSamples(picture, width, height, {signal, maxPixels = 40000000} = {}) {
-  dimensions(width, height, maxPixels); check(signal);
-  if (width === picture.width && height === picture.height) return picture;
+export async function sampleResizeConfig(picture, {signal} = {}) {
   if (picture.orientation !== undefined && picture.orientation !== 1)
     throw fail('JXL_INPUT', 'Orient the source before resizing.');
   if (picture.extraChannels !== undefined)
     throw fail('JXL_UNSUPPORTED', 'Resizing extra channels needs a sampling policy.');
   if (picture.icc !== undefined)
     throw fail('JXL_UNSUPPORTED', 'Resize needs a named color space; convert ICC samples first.');
-  const samples = admitSampleFormat(picture.data, picture), {data} = picture;
+  const samples = admitSampleDomain(picture.data, picture), {data} = picture;
+  const [named] = sRGBWithIntent(picture);
+  if (named !== picture) {
+    samples.colorSpace = named.colorSpace; samples.transferFunction = named.transferFunction;
+  }
   const format = samples.sampleFormat === 'float32' ? 3 : samples.sampleFormat === 'float16' ? 2 : data.BYTES_PER_ELEMENT === 2 ? 1 : 0;
   const maximum = samples.exponentBits ? 1 : 2 ** samples.bitDepth - 1;
   const tf = ['linear', 'srgb', 'pq', 'hlg'].indexOf(samples.transferFunction);
@@ -87,6 +90,24 @@ export async function resizeSamples(picture, width, height, {signal, maxPixels =
   check(signal);
   const table = format < 2 && !samples.alphaPremultiplied ? sampleTable(maximum, tf) : null;
   const levels = !!table && maximum <= 4095 && gamma === 1;
+  return {config,table,levels};
+}
+export function sampleResizeRows(sourceHeight,height,y) {
+  if (height >= sourceHeight) {
+    const at = Math.max(0,Math.min(sourceHeight - 1,(y + .5) * sourceHeight / height - .5)), first = Math.floor(at);
+    return {first,end:Math.min(sourceHeight,first + 2),fraction:at - first};
+  }
+  const from = y * sourceHeight / height, to = (y + 1) * sourceHeight / height;
+  return {first:Math.floor(from),end:Math.ceil(to),from,to};
+}
+export const sampleResizeWeight = (range,row) => range.fraction !== undefined
+  ? row === range.first ? 1 - range.fraction : range.fraction
+  : (Math.min(range.to,row + 1) - Math.max(range.from,row)) / (range.to - range.from);
+
+export async function resizeSamples(picture, width, height, {signal, maxPixels = 40000000} = {}) {
+  dimensions(width, height, maxPixels); check(signal);
+  if (width === picture.width && height === picture.height) return picture;
+  const {config,table,levels} = await sampleResizeConfig(picture,{signal}), {data} = picture;
   const out = new data.constructor(width * height * 4), rows = new Map(), sum = new Float64Array(width * 4);
   let lastTurn = performance.now();
   const add = (y, weight) => {
@@ -104,15 +125,9 @@ export async function resizeSamples(picture, width, height, {signal, maxPixels =
   };
   for (let y = 0; y < height; y++) {
     check(signal); sum.fill(0);
-    if (height >= picture.height) {
-      const at = Math.max(0, Math.min(picture.height - 1, (y + .5) * picture.height / height - .5)), lo = Math.floor(at), fraction = at - lo;
-      add(lo, 1 - fraction); await turn();
-      if (lo + 1 < picture.height) { add(lo + 1, fraction); await turn(); }
-    } else {
-      const start = y * picture.height / height, end = (y + 1) * picture.height / height;
-      for (let row = Math.floor(start); row < Math.ceil(end); row++) {
-        add(row, (Math.min(end, row + 1) - Math.max(start, row)) / (end - start)); await turn();
-      }
+    const range = sampleResizeRows(picture.height,height,y);
+    for (let row = range.first; row < range.end; row++) {
+      add(row,sampleResizeWeight(range,row)); await turn();
     }
     sampleFinish(sum, out, y, width, config, levels);
   }

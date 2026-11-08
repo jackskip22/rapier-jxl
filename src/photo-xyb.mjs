@@ -2,6 +2,7 @@
 import {exactCos, exactPow, exactLog2, EXACT_PI} from './exact-math.mjs';
 import {QUANT_SHAPE, FAST_SCALE, transformDCT8Blocks, transformDCT8BlocksFast, dct8Basis} from './photo-dct.mjs';
 import {kernelHooks} from './kernel-hooks.mjs';
+import {fault} from './fault.mjs';
 import {complete, LITTLE_ENDIAN} from './bits.mjs';
 import {calibration} from './quality-calibration.mjs';
 import {preferXYB} from './photo-preference.mjs';
@@ -13,8 +14,8 @@ function seedRoot(v) {
   for (let i = 0; i < 7; i++) root = (2 * root + v / (root * root)) / 3;
   return root;
 }
-const ROOT_BIAS = seedRoot(BIAS);
-const ROOTS = Float64Array.from({length: 4113}, (_, i) => i ? seedRoot(i / 4096) : 0);
+const ROOT_BIAS = /* @__PURE__ */ seedRoot(BIAS);
+const ROOTS = /* @__PURE__ */ Float64Array.from({length: 4113}, (_, i) => i ? seedRoot(i / 4096) : 0);
 function cubeRoot(v) {
   const scaled = v * 4096, at = Math.floor(scaled);
   let root = ROOTS[at] + (ROOTS[at + 1] - ROOTS[at]) * (scaled - at);
@@ -59,7 +60,7 @@ function correlate(tile, count, cfl, index, cflScale) {
   cfl.x[index] = Math.max(-128, Math.min(127, Math.round(cflScale * 84 * xy / (yy + 1))));
   cfl.b[index] = Math.max(-128, Math.min(127, Math.round(cflScale * 84 * bySum / (yy + 1))));
 }
-export const FAST_RANGE = new Error('A fast-path level is outside Int16.');
+export const FAST_RANGE = /* @__PURE__ */ new Error('A fast-path level is outside Int16.');
 function quantFastTile(tile, bw, bh, by0, bx0, stride, components, scale, fx, fb, thresholds, nonZero, strict = false) {
   const ratios = [fx / 84, 0, fb / 84];
   for (let c = 0; c < 3; c++) {
@@ -101,7 +102,7 @@ export function signedRoot(v) {
   const a = Math.abs(v), root = a <= 1 ? cubeRoot(a) : seedRoot(a);
   return v < 0 ? -root : root;
 }
-const LINEAR = Float64Array.from({length: 256}, (_, i) => {
+const LINEAR = /* @__PURE__ */ Float64Array.from({length: 256}, (_, i) => {
   const v = i / 255;
   if (i <= 10) return v / 12.92;
   const base = (v + 0.055) / 1.055, square = base * base;
@@ -137,7 +138,7 @@ function gaborishStep(p, orig, W, H, [w1, w2], ring) {
   }
   for (let x = 0, at = (H - 1) * W, r = ((H - 1) & 1) * W; x < W; x++) p[at + x] += orig[at + x] - ring[r + x];
 }
-function gaborishInverse(planes, W, H, {weights, strength = 1, iterations = 4, adapt = 0, floor = 0.3}) {
+function gaborishInverse(planes, W, H, {weights, strength = 1, iterations = 4, adapt = 0, floor = 0.3, boost = 1}) {
   const bw = W / 8, scale = adapt && new Float64Array((W / 8) * (H / 8)).fill(1);
   if (adapt) {
     const Y = planes[1], tex = new Float64Array(scale.length);
@@ -152,7 +153,18 @@ function gaborishInverse(planes, W, H, {weights, strength = 1, iterations = 4, a
   for (let c = 0; c < planes.length; c++) {
     const t = planes[c], w = weights?.[c] ?? GAB_DEFAULT, s = Array.isArray(strength) ? strength[c] : strength, n = t.length;
     orig.set(t);
-    if (!kernelHooks.gaborish?.(t, orig, W, H, w, iterations)) for (let i = 0; i < iterations; i++) gaborishStep(t, orig, W, H, w, ring);
+    const passes = (count, start = orig) => {
+      if (kernelHooks.gaborish?.(t, orig, W, H, w, count, start)) return;
+      if (start !== orig) t.set(start);
+      for (let i = 0; i < count; i++) gaborishStep(t, orig, W, H, w, ring);
+    };
+    if (boost === 1) passes(iterations);
+    else {
+      passes(1);
+      const boosted = new Float64Array(n);
+      for (let k = 0; k < n; k++) boosted[k] = orig[k] + boost * (t[k] - orig[k]);
+      if (iterations > 1) passes(iterations - 1, boosted); else t.set(boosted);
+    }
     if (adapt) for (let k = 0; k < n; k++) t[k] = orig[k] + s * scale[((k / W) >> 3) * bw + ((k % W) >> 3)] * (t[k] - orig[k]);
     else if (s !== 1) for (let k = 0; k < n; k++) t[k] = orig[k] + s * (t[k] - orig[k]);
   }
@@ -160,8 +172,8 @@ function gaborishInverse(planes, W, H, {weights, strength = 1, iterations = 4, a
 }
 
 const COLOR_SLOTS = 1 << 17;
-const SRGB_MIX = Float64Array.of(0.3, 0.622, 0.078, 0.23, 0.692, 0.078, 0.24342268924547819, 0.20476744424496821, 0.5518098665095536);
-export const XYB_TABLES = Object.freeze({linear: LINEAR, mix: SRGB_MIX, bias: BIAS, rootBias: ROOT_BIAS});
+const SRGB_MIX = /* @__PURE__ */ Float64Array.of(0.3, 0.622, 0.078, 0.23, 0.692, 0.078, 0.24342268924547819, 0.20476744424496821, 0.5518098665095536);
+export const XYB_TABLES = /* @__PURE__ */ Object.freeze({linear: LINEAR, mix: SRGB_MIX, bias: BIAS, rootBias: ROOT_BIAS});
 function xybPlanes(data, width, height, T, W, H) {
   const planes = [0, 1, 2].map(() => new Float64Array(W * H)), [X, Y, B] = planes, lms = T?.lms;
   if (!T && kernelHooks.xybPlanes?.(data, width, height, W, H, planes, ROOTS, LINEAR, SRGB_MIX, BIAS, ROOT_BIAS)) {
@@ -204,8 +216,8 @@ export function gaborishPlanes(data, width, height, options) {
   return gaborishInverse(xybPlanes(data, width, height, options.transform, W, H), W, H, options.gaborish);
 }
 
-const FAST_SCALE32 = Float32Array.from(FAST_SCALE);
-const f = Math.fround, THIRD = f(1 / 3), C707 = f(0.7071067811865476), C382 = f(0.3826834333650898), C541 = f(0.5411961001461969), C1306 = f(1.3065629648763766);
+const FAST_SCALE32 = /* @__PURE__ */ Float32Array.from(FAST_SCALE);
+const f = Math.fround, THIRD = /* @__PURE__ */ f(1 / 3), C707 = /* @__PURE__ */ f(0.7071067811865476), C382 = /* @__PURE__ */ f(0.3826834333650898), C541 = /* @__PURE__ */ f(0.5411961001461969), C1306 = /* @__PURE__ */ f(1.3065629648763766);
 function dct32(x, o, scale) {
   for (let pass = 0; pass < 2; pass++) {
     const stride = pass ? 1 : 8, step = pass ? 8 : 1;
@@ -302,7 +314,8 @@ function gabTables(q, distance, {tune, deadzone, dcScale, gaborish}, make) {
   return made;
 }
 function fastV6Tables(q, distance, strength, stepScale, acScale, quantScale, options) {
-  let entry = FAST_V6_TABLES.get(q);
+  const key = options.smallFloor ? -q : q;
+  let entry = FAST_V6_TABLES.get(key);
   if (entry) return entry;
   const tune = options.tune, dcScale = options.dcScale, dead = options.deadzone;
   const quants = [0, 1, 2].map(c => Int32Array.from(QUANT_SHAPE, (shape, k) => Math.max(1, Math.round(quantScale * distance * stepScale *
@@ -317,7 +330,7 @@ function fastV6Tables(q, distance, strength, stepScale, acScale, quantScale, opt
     limits: [0, 1, 2].map(c => Float64Array.from({length: 64}, (_, k) => (k & 7) >= 4 || k >= 32 ? dead[c * 2 + 1] : dead[c * 2])),
   };
   entry = {quants, fastScale, thresholds, tileKernel, tune, dc0: dcScale[0], dc1: dcScale[1], dc2: dcScale[2], dead};
-  FAST_V6_TABLES.set(q, entry);
+  FAST_V6_TABLES.set(key, entry);
   return entry;
 }
 
@@ -330,7 +343,7 @@ export function* photoXYBSteps(data, width, height, quality, options) {
   const band = gab && !options.pre ? options.band ?? (fastGab ? {data, top: 0} : null) : null;
   const kernelBand = band && kernelHooks.gabBand && !options.transform && !options.keepPlanes && !options.dctCache && !options.roundtrip &&
     !options.keepValues && !options.biasedRound && !options.fieldScale && !options.noLevels && !options.planesOnly &&
-    (gab.strength ?? 1) === 1 && !gab.adapt;
+    (gab.strength ?? 1) === 1 && !gab.adapt && (fastGab || (gab.boost ?? 1) === 1);
   if (band?.only && !kernelBand) return null;
   let pre = null;
   if (gab && !kernelBand && !fastGab) {
@@ -344,7 +357,7 @@ export function* photoXYBSteps(data, width, height, quality, options) {
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), quantScale = 256;
   if (options?.planesOnly) return {planes: xybPlanes(data, width, height, T, stride * 8, rows * 8)};
   const q = Math.min(quality, 99.9);
-  const distance = Math.max(fast ? 0.0248 : 0.046, calibration(q, options?.calibrationRow ?? fast) * (q >= 99 ? 0.19 - 0.16 * (q - 99) : q >= 30 ? 0.1 + (100 - q) * 0.09 : 53 / 3000 * q * q - 23 / 20 * q + 25));
+  const distance = Math.max(fast || options?.smallFloor ? 0.0248 : 0.046, calibration(q, options?.calibrationRow ?? fast) * (q >= 99 ? 0.19 - 0.16 * (q - 99) : q >= 30 ? 0.1 + (100 - q) * 0.09 : 53 / 3000 * q * q - 23 / 20 * q + 25));
   const strength = Math.max(0, Math.min(1, (90 - q) / 15)), stepScale = 1 - 0.1 * strength, acScale = 1.175 + 0.075 * strength;
   const t = options?.tune, tune = typeof t === "function" ? t : t ? (c, k) => t[c] * (1 + t[3 + c] * Math.sqrt(((k & 7) * (k & 7) + (k >> 3) * (k >> 3)) / 98)) : () => 1;
   const d = options?.dcScale, dcScale = typeof d === 'function' ? c => d(c, distance) : Array.isArray(d) ? c => d[c] : () => d ?? 1;
@@ -378,11 +391,12 @@ export function* photoXYBSteps(data, width, height, quality, options) {
   const cfl = {width: tileWidth, x: new Int8Array(tileWidth * tileRows), b: new Int8Array(tileWidth * tileRows)};
   let intermediate = null, tile = null;
   let colors = null;
-  const roundtrip = !!options?.roundtrip, lumaBack = new Float64Array(64), biased = !!options?.biasedRound;
+  if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && (options?.roundtrip || options?.biasedRound || options?.keepValues)) throw fault('JXL_INTERNAL', 'capture-complete takes no gpu-search flags.');
+  const roundtrip = !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && !!options?.roundtrip, lumaBack = new Float64Array(64), biased = !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && !!options?.biasedRound;
   const planes = options?.keepPlanes && (pre || [0, 1, 2].map(() => new Float64Array(stride * rows * 64)));
   const dctCache = options?.dctCache && !options?.roundtrip ? options.dctCache : null;
   if (dctCache && !dctCache.tiles) Object.assign(dctCache, {tiles: [], x: new Int8Array(Math.ceil(stride / 8) * Math.ceil(rows / 8)), b: new Int8Array(Math.ceil(stride / 8) * Math.ceil(rows / 8))});
-  const keep = options?.keepValues && [0, 1, 2].map(() => new Float32Array(stride * rows * 64));
+  const keep = !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && options?.keepValues && [0, 1, 2].map(() => new Float32Array(stride * rows * 64));
   const THRESHOLDS = gabCached ? gabCached.thresholds : useCachedFast ? useCachedFast.thresholds : [0, 1, 2].map(thresholdOf);
   const tileKernel = fast && !pre && !T && !planes && !dctCache && !options?.planesOnly && kernelHooks.photoTile && (useCachedFast ? useCachedFast.tileKernel : {roots: ROOTS, linear: LINEAR,
     scale: FAST_SCALE, bias: BIAS, rootBias: ROOT_BIAS, steps: fastScale,

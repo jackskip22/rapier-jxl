@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {encodeCaptureSteps, CAPTURE_TOOLS} from '../capture-codec.mjs';
 import {admitCapture} from './capture-options.mjs';
-import {unmeasuredResult as imageResult} from './result-record.mjs';
+import {unmeasuredResult} from './result-record.mjs';
 import {fail} from './primitives.mjs';
 
 export const STEPS = Symbol.for('rapier-jxl.steps');
@@ -22,6 +22,6 @@ export function captureSteps(carried, tools) {
     },
     open: (plan, data, {width, height}) => encodeCaptureSteps(data, width, height,
       {effort: plan.effort, maxError: plan.maxError, colorSpace: plan.colorSpace, ...(tools && {[CAPTURE_TOOLS]: tools})}),
-    record: (bytes, plan, {width, height}) => imageResult(bytes, {width, height},
+    record: (bytes, plan, {width, height}) => unmeasuredResult(bytes, {width, height},
       {fidelity: plan.maxError ? {maxError: plan.maxError} : 'exact', owned: true})});
 }

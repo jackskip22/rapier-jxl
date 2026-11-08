@@ -1,16 +1,19 @@
+import {previewCall} from './preview.mjs';
 import {resultOperation, resultReference, resultFacts, RESULT_REFERENCE} from './result-operation.mjs';
-import {JOURNAL, journaled} from '../step-journal.mjs';
+import {JOURNAL, JOURNAL_FILE, journaled, journalFact, JOIN} from '../step-journal.mjs';
 import {verbSteps, STEPS} from './verb-steps.mjs';
 import {effortJob} from '../effort-job.mjs';
 import {ansTranscodeSteps} from '../jpeg-ans-effort.mjs';
 import {readPNG16} from '../source.mjs';
+import {journalPNG} from './journal-png.mjs';
+import {sRGBWithIntent, withRenderingIntent} from './header-intent.mjs';
 import {orientSamples} from '../sample-transforms.mjs';
 import {coreSteps} from './instant.mjs';
-import {bytes, check, fail, declared, callers, isCaller, progressOf} from './primitives.mjs';
+import {bytes, check, fail, declared, callers, isCaller, progressOf, dimensions} from './primitives.mjs';
 import {drain, driveSteps, callOptions} from './common.mjs';
 import {uploadOptions} from './upload-options.mjs';
 import {ordinaryStillReader} from './ordinary-still-policy.mjs';
-import {lowPhotoSteps, encodeLowSplit, makeLowUpload, finishLowUpload, closeLowUpload} from './low-photo.mjs';
+import {lowPhotoSteps, encodeLowSplit, makeLowUpload, finishLowUpload, closeLowUpload, smoothPhoto, smoothDecides} from './low-photo.mjs';
 import {preparationUpload} from './preparation-upload.mjs';
 import {DRIVE} from './drive.mjs';
 import {image, pixels, jpegDimensions, admitJpeg} from './input.mjs';
@@ -26,7 +29,7 @@ import {admitPhotoFilter} from '../photo-job.mjs';
 import {inspectPixels} from '../lossless.mjs';
 import {preferXYB} from '../photo-xyb.mjs';
 import {screenLike} from '../screen.mjs';
-import {photoSplitBands, splitSteps, splitEnd, splitHasAlpha, splitRoute} from '../photo-split.mjs';
+import {photoSplitBands, splitSteps, splitEnd, splitHasAlpha, splitRoute, encodeSplit} from '../photo-split.mjs';
 import {v6Trace} from '../photo-v6.mjs';
 import {isPlainRecord} from './records.mjs';
 import {isDecoded, fromDecoded} from './describe.mjs';
@@ -65,25 +68,33 @@ export function prepare(operation = 'encode') {
 
 const encodeBytes = (input, options) => encodeHere(input, options).catch(error => { throw error === options?.signal?.reason ? error : declared(error); });
 encodeBytes[DRIVE] = (input, options, helpers) => encodeHere(input, options, helpers).catch(error => { throw error === options?.signal?.reason ? error : declared(error); });
-export const encode = resultOperation(encodeBytes);
+export const encode = resultOperation(encodeBytes, {preview: previewCall});
 export {resultJSON} from './result.mjs';
 export const {fit, variants} = preparationUpload(encodeBytes, {deep: async () => ({readSource: bytes => readPNG16(bytes, {named: true}), orient: orientSamples})});
 const TAKEN = ['fidelity', 'effort', 'readAs', 'maxPixels', 'webgpu'];
-Object.defineProperty(encode, STEPS, {value: verbSteps('encode:rapier-jxl/upload', encode, {taken: TAKEN})});
-Object.defineProperty(fit, STEPS, {value: verbSteps('fit:rapier-jxl/upload', fit, {taken: ['maxBytes', ...TAKEN]})});
+Object.defineProperty(encode, STEPS, {value: verbSteps('encode:rapier-jxl/upload', encode, {taken: TAKEN, rows: true, files: true})});
+Object.defineProperty(fit, STEPS, {value: verbSteps('fit:rapier-jxl/upload', fit, {taken: ['maxBytes', ...TAKEN], rows: true, files: true})});
 Object.defineProperty(variants, STEPS, {value: verbSteps('variants:rapier-jxl/upload', variants, {taken: ['outputs', ...TAKEN]})});
 async function encodeHere(input, given = {}, helpers = null) {
   if (!given || typeof given !== 'object' || Array.isArray(given)) throw fail('JXL_OPTIONS', 'JPEG XL options must be an object.');
   const journal = given[JOURNAL], options = journal === undefined ? given : (({[JOURNAL]: _journal, ...rest}) => rest)(given);
   const {codec, hooks: {webgpu: _webgpu, maxPixels}} = callOptions(uploadOptions(options));
   const reader = ordinaryStillReader({signal: options.signal, maxPixels});
-  try { return await encodeOwned(input, options, helpers, codec, maxPixels, reader, journal); }
+  const intended = {};
+  try { return withRenderingIntent(await encodeOwned(input, options, helpers, codec, maxPixels, reader, journal, intended), intended.intent); }
   finally { reader.destroy(); }
 }
 
-async function encodeOwned(input, options, helpers, codec, maxPixels, reader, journal) {
+async function encodeOwned(input, options, helpers, codec, maxPixels, reader, journal, intended = {}) {
   const readAs = options.readAs;
   check(options.signal);
+  if (journal !== undefined) { await kernelsReady(); check(options.signal); }
+  let decoded = null;
+  if (journal !== undefined && input?.[JOURNAL_FILE] !== undefined) {
+    const file = input[JOURNAL_FILE];
+    decoded = await journalPNG(file, readAs, maxPixels, journal);
+    if (!decoded) input = new Blob([file.subarray(0, file.length)]);
+  }
   if (isPlainRecord(input) && isDecoded(input)) input = fromDecoded(input);
   if (Array.isArray(input?.frames)) throw fail('JXL_UNSUPPORTED', 'An animation is encoded by rapier-jxl/animation.');
   if (isRowSource(input)) {
@@ -106,8 +117,8 @@ async function encodeOwned(input, options, helpers, codec, maxPixels, reader, jo
     return bytes;
   }
   if (isPlainRecord(input) && input.texture !== undefined && input.device !== undefined) throw fail('JXL_UNSUPPORTED', `A GPU texture is encoded by ${FULL}.`);
-  const blob = typeof Blob !== 'undefined' && input instanceof Blob;
-  const borrowed = blob ? null : admitPicture(pixels(input, {readAs}, maxPixels, true));
+  const blob = decoded !== null || typeof Blob !== 'undefined' && input instanceof Blob;
+  const borrowed = blob ? null : journal ? admitPicture(journalPixels(input, maxPixels)) : admitPicture(pixels(input, {readAs}, maxPixels, true));
   const read = blob ? null : {input: borrowed, codec: reader.read(codec, borrowed)};
   const direct = read?.codec ? directRoute(read, maxPixels) : null;
   if (direct) {
@@ -115,7 +126,8 @@ async function encodeOwned(input, options, helpers, codec, maxPixels, reader, jo
     if (options[RESULT_REFERENCE]) resultReference(options, read.input);
   }
   if (direct && helpers?.split) return splitHere(read, direct, helpers, options, maxPixels);
-  const low = direct?.lowWebp !== undefined && makeLowUpload(read.input.data, read.input.width, read.input.height, direct.quality, direct.effort);
+  const low = direct?.lowWebp !== undefined && makeLowUpload(read.input.data, read.input.width, read.input.height, direct.quality, direct.effort,
+    smoothDecides(direct) && smoothPhoto(read.input.data, read.input.width, read.input.height));
   const split = low ? low.split : direct && photoSplitBands(read.input.data, read.input.width, read.input.height, direct.quality, {gaborish: direct.gaborish});
   if (split && splitHasAlpha(split)) splitEnd(split);
   else if (split || low?.incumbent) {
@@ -129,13 +141,13 @@ async function encodeOwned(input, options, helpers, codec, maxPixels, reader, jo
     } finally { if (low) closeLowUpload(low); else splitEnd(split); }
   }
   const budget = Math.max(DEFAULT_INPUT_BYTES, maxPixels * 16);
-  let captured = blob ? null : own(read, maxPixels, budget);
+  let captured = blob ? null : journal ? {input: read.input, ...own({codec: read.codec}, maxPixels, budget)} : own(read, maxPixels, budget);
   if (captured) resultReference(options, captured.input);
   const report = options.onProgress, onProgress = progressOf(report, options.signal);
   const hooks = {signal: options.signal ?? new AbortController().signal, onProgress, maxPixels, journal};
   if (captured && captured.codec === null) captured.codec = await reader.project(codec, captured.input);
   let carried = null;
-  if (blob && codec.quality === 100 && readAs === undefined) {
+  if (blob && !decoded && codec.quality === 100 && readAs === undefined) {
     const head = new Uint8Array(await input.slice(0, 2).arrayBuffer());
     check(hooks.signal);
     if (head[0] === 255 && head[1] === 216) {
@@ -147,14 +159,15 @@ async function encodeOwned(input, options, helpers, codec, maxPixels, reader, jo
     }
   }
   if (blob) {
-    let picture;
-    try { picture = await journaled(journal, 'decode', () => image(input, {readAs}, {...hooks, phone: inspectPhone, deep: async () => ({readSource: readPNG16, orient: orientSamples})})); }
+    let picture = decoded;
+    if (!picture) try { picture = await journaled(journal, 'decode', () => image(input, {readAs}, {...hooks, phone: inspectPhone, deep: async () => ({readSource: readPNG16, orient: orientSamples})})); }
     catch (error) {
       if (carried && !isCaller(error) && typeof error?.code === 'string' && error.code.startsWith('JXL_') && error.code !== 'JXL_ABORTED')
         throw Object.assign(carried, {cause: error});
       throw error;
     }
-    captured = own({input: admitPicture(picture), codec}, maxPixels, budget);
+    [picture, intended.intent] = sRGBWithIntent(picture);
+    captured = decoded ? {input: admitPicture(picture), ...own({codec}, maxPixels, budget)} : own({input: admitPicture(picture), codec}, maxPixels, budget);
     resultReference(options, captured.input, input);
     captured.codec = reader.read(codec, captured.input) ?? await reader.project(codec, captured.input);
   }
@@ -166,6 +179,11 @@ async function encodeOwned(input, options, helpers, codec, maxPixels, reader, jo
   if (width * height > WHOLE) return encodeBands({width, height, read: (y, rows) => ({...source, data: data.subarray(y * width * 4, (y + rows) * width * 4), width, height: rows})},
     (band, bandHooks) => encodePicture(band, captured.codec, bandHooks, helpers), (band, target) => recodeBand(band, captured.codec, target), drain, hooks);
   return encodePicture(captured.input, captured.codec, hooks, helpers);
+}
+
+function journalPixels({data, width, height, colorSpace}, maxPixels) {
+  dimensions(width, height, maxPixels);
+  return {data, width, height, ...(colorSpace && {colorSpace})};
 }
 
 function admitPicture(picture) {
@@ -205,8 +223,9 @@ async function splitHere(read, direct, helpers, options, maxPixels) {
 }
 function* splitAsk(data, width, height, {quality, gaborish, lowWebp, effort}) {
   if (lowWebp !== undefined) return (yield {split: {pixels: width * height,
-    run: (helpers, options) => encodeLowSplit(data, width, height, quality, effort, helpers, options)}}) ?? null;
-  return (yield {split: {data, width, height, quality, gaborish, screen: false, opaque: true, pixels: width * height}}) ?? null;
+    run: (helpers, options) => encodeLowSplit(data, width, height, quality, effort, helpers, {...options, smooth: smoothDecides({effort, quality}) && smoothPhoto(data, width, height)})}}) ?? null;
+  return (yield {split: {pixels: width * height, run: (helpers, options) =>
+    encodeSplit(data, width, height, quality, helpers, {...options, gaborish, screen: false, opaque: true})}}) ?? null;
 }
 
 function directRoute(read, maxPixels) {
@@ -223,7 +242,7 @@ function directRoute(read, maxPixels) {
     if (samples.iccSpace || !samples.native8) return null;
     quality = admitted.quality;
   } catch { return null; }
-  if (measure(read, maxPixels) > DEFAULT_INPUT_BYTES) return null;
+  if (!journalFact(data, JOIN) && measure(read, maxPixels) > DEFAULT_INPUT_BYTES) return null;
   for (let p = 0, step = Math.max(1, Math.floor(width * height / 16384)); p < width * height; p += step) if (data[p * 4 + 3] !== 255) return null;
   const shape = inspectPixels(data, width, height, {opacity: false});
   if (shape.palette || shape.alpha || !preferXYB(data, width, height) || screenLike(data, width, height)) return null;

@@ -1,7 +1,7 @@
 import {suppliedWasm} from './wasm-modules.mjs';
 import {startWorker} from './v7/worker-start.mjs';
+import {replyPreview, clearPreviewReply} from './v7/preview-relay.mjs';
 // SPDX-License-Identifier: MIT
-import {kernelRequest, ensureKernels} from './kernels.mjs';
 import {ARENA_BYTES} from './arena.mjs';
 
 export const canShare = () => typeof SharedArrayBuffer === 'function' && globalThis.crossOriginIsolated !== false;
@@ -41,6 +41,7 @@ export function workerPool(spawn, count) {
   const finish = (job, value) => {
     if (job.ending) return;
     job.ending = true;
+    if (job.onPreview) { clearPreviewReply(job); job.onPreview = null; }
     const settle = error => { pending.delete(job.id); if (error) job.reject(error); else job.resolve(value); };
     if (value === undefined && job.reject) Promise.resolve().then(() => api.retired()).then(() => settle(), settle);
     else settle();
@@ -79,6 +80,12 @@ export function workerPool(spawn, count) {
         const job = member.busy;
         if (!job || reply.id !== job.id) return;
         if (reply.progress !== undefined) { job.onProgress?.(reply.progress); return; }
+        if (reply.preview !== undefined) {
+          if (job.onPreview) replyPreview(job, reply.preview, reply.previewSequence, job.onPreview, () => {
+            if (!member.dead && member.busy === job) member.worker.postMessage({id: job.id, previewAck: reply.previewSequence});
+          });
+          return;
+        }
         if (reply.error && !job.whole) { drop(member); pump(); return; }
         member.busy = null;
         if (job) finish(job, job.whole ? reply : reply.error ? undefined : reply.result);
@@ -90,7 +97,7 @@ export function workerPool(spawn, count) {
         if (api.broken) count = members.length;
         pump();
       });
-      const kernels = kernelRequest();
+      const kernels = 'auto';
       mark('kernels', kernels);
       member.worker.postMessage({pool: 'parallel', kernels, wasmModules: spawn.wasm ? spawn.wasm(true) : suppliedWasm(true)});
     } catch (error) { drop(member); throw error; }
@@ -152,11 +159,11 @@ export function workerPool(spawn, count) {
       promise.job = job;
       return promise;
     },
-    whole(task, onProgress) {
+    whole(task, onProgress, onPreview) {
       if (closed) return Promise.resolve(undefined);
       let job;
       const promise = new Promise(resolve => {
-        job = {id: ++serial, task, inputs: [], resolve, onProgress, whole: true};
+        job = {id: ++serial, task, inputs: [], resolve, onProgress, onPreview, whole: true};
         pending.set(job.id, job); queue.push(job); pump();
       });
       promise.cancel = () => {
@@ -253,12 +260,12 @@ export function closeHelpers(owner, final = false) {
 }
 
 const lost = async pool => { await pool.retired(); return Object.assign(new Error('A JPEG XL helper stopped.'), {code: 'JXL_WORKER', lost: true}); };
-export async function helperJob(owner, reservation, task, {signal, onProgress, helper} = {}) {
+export async function helperJob(owner, reservation, task, {signal, onProgress, onPreview, helper} = {}) {
   const pool = ownerPool(owner, reservation, await spawnHelper(helper));
   if (signal?.aborted) throw signal.reason;
   if (pool.broken) throw await lost(pool);
   pool.hold(true); pool.limit = pool.count; pool.jobs = (pool.jobs ?? 0) + 1;
-  const reply = pool.whole(task, onProgress), abort = () => reply.cancel();
+  const reply = pool.whole(onPreview ? {...task, preview: true} : task, onProgress, onPreview), abort = () => reply.cancel();
   signal?.addEventListener('abort', abort, {once: true});
   try {
     const answer = await reply;
@@ -282,9 +289,6 @@ const untilAborted = (promise, signal) => new Promise(resolve => {
   promise.then(done, done);
 });
 export async function splitOnIdle(owner, reservation, request, signal, helper) {
-  const asked = kernelRequest();
-  if (asked !== 'off' && ensureKernels() !== 'simd') return undefined;
-  mark('split-kernels', asked === 'off' ? 'off' : 'simd');
   const spawn = await spawnHelper(helper);
   if (signal?.aborted) return undefined;
   const pool = ownerPool(owner, reservation, spawn);
@@ -302,8 +306,7 @@ export async function splitOnIdle(owner, reservation, request, signal, helper) {
   try {
     const arena = request.pixels > 0 && reservation?.memoryBytes >= 16 * request.pixels + leased.length * (helperBytes(request.pixels) + ARENA_BYTES);
     if (request.pixels > 0) mark('split-arena', arena, leased.length * ARENA_BYTES, reservation?.memoryBytes);
-    return request.run ? await request.run(leased, {signal, arena})
-      : await (await import('./photo-split.mjs')).encodeSplit(request.data, request.width, request.height, request.quality, leased, {signal, gaborish: request.gaborish, screen: request.screen, uploadFlat: request.uploadFlat, opaque: request.opaque, arena});
+    return await request.run(leased, {signal, arena});
   }
   catch (error) { if (signal?.aborted) throw error; return undefined; }
   finally { pool.unlease(leased); pool.jobs--; idle(pool); }

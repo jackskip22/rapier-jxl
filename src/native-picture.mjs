@@ -7,7 +7,15 @@ const GL_METHODS = ['isContextLost', 'getParameter', 'createTexture', 'createFra
   'deleteFramebuffer'];
 const platform = (message, cause) => Object.assign(fault('JXL_PLATFORM', message), {cause});
 
-export async function nativePicture(bytes, options = {}) {
+export const NATIVE_PICTURE_OPTIONS = {colorSpaceConversion:'none',premultiplyAlpha:'none',imageOrientation:'from-image'};
+export function nativePicture(bytes, options = {}) {
+  return nativePictureWith(bytes,options,(makeBitmap,BlobType) => {
+    const blob = new BlobType([bytes],{type:'image/jxl'});
+    return () => makeBitmap.call(globalThis,blob,NATIVE_PICTURE_OPTIONS);
+  });
+}
+
+export async function nativePictureWith(bytes, options, prepare) {
   if (!options || typeof options !== 'object' || Array.isArray(options))
     throw fault('JXL_INPUT', 'Native picture options are an object.');
   const {width, height, colorSpace = 'srgb', signal, maxPixels = LIMITS.pixels, orientation = 1,
@@ -41,11 +49,10 @@ export async function nativePicture(bytes, options = {}) {
   try {
     if (signal) { listening = true; signal.addEventListener('abort', abort, {once: true}); }
     check();
-    const blob = native('Native picture bytes could not be placed in a Blob.', () => new BlobType([bytes], {type: 'image/jxl'}));
+    const acquire = native('Native picture bytes could not be placed in a Blob.', () => prepare(makeBitmap,BlobType));
     check();
     try {
-      bitmap = await makeBitmap.call(globalThis, blob,
-        {colorSpaceConversion: 'none', premultiplyAlpha: 'none', imageOrientation: 'from-image'});
+      bitmap = await acquire();
     } catch (cause) { remember(platform('This browser could not decode the JPEG XL file.', cause)); }
     check();
     if (!bitmap || typeof bitmap.close !== 'function') throw platform('Native JPEG XL decoding did not return a closable ImageBitmap.');

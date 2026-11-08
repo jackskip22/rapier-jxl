@@ -2,6 +2,7 @@
 import {captureGroupBytes, compileCaptureKernels} from '../capture-codec.mjs';
 import {regionFrameBytes} from '../capture-photo.mjs';
 import {photoKernels} from '../capture-kernels.mjs';
+import '../kernels.mjs';
 import {CAPTURE_TOOLS_COMPLETE} from '../capture-ans.mjs';
 import {configureModules} from '../wasm-modules.mjs';
 import {WORKER_PROTOCOL} from './protocol.mjs';

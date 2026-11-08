@@ -44,7 +44,7 @@ function frameFilter(image, epf) {
       pass0SigmaScale: half(0.9), pass2SigmaScale: half(6.5), borderSadMul: half(2 / 3), sigmaForModular: 1} : {iters: 0}};
 }
 
-export function rebuildPicture(source, {rgba: wantRGBA = true, linear: wantLinear = false, gamma: wantGamma = false} = {}) {
+export function rebuildPicture(source, {rgba: wantRGBA = true, linear: wantLinear = false, gamma: wantGamma = false, rendered = false, inputs = false, only = null} = {}) {
   const image = materialize(source.lazyStrategy || source.coefficientRows ? coded(source) : source);
   if (!rebuildable(image)) throw Object.assign(new Error('This coefficient image has no decoder rebuild.'), {code: 'JXL_INTERNAL'});
   const kernels = rebuildKernels(), layout = varDCTLayout(image), {width, height} = image, ycbcr = !!image.ycbcr;
@@ -55,10 +55,12 @@ export function rebuildPicture(source, {rgba: wantRGBA = true, linear: wantLinea
   const blocks = [];
   const multiplierAt = (bx, by) => fields ? fields[by * BW + bx] * shift : field;
   if (strategy) for (const b of strategy.blocks) blocks.push({id: b.id, x: b.bx, y: b.by, bw: b.bw, bh: b.bh, area: b.bw * b.bh,
-    multiplier: multiplierAt(b.bx, b.by), lfGroup: (b.by >> 8) * dcGroupsX + (b.bx >> 8), source: b});
+    multiplier: multiplierAt(b.bx, b.by), lfGroup: (b.by >> 8) * dcGroupsX + (b.bx >> 8), source: b, coefficients: null, arena: null});
   else for (let by = 0; by < BH; by++) for (let bx = 0; bx < BW; bx++)
-    blocks.push({id: 0, x: bx, y: by, bw: 1, bh: 1, area: 1, multiplier: multiplierAt(bx, by), lfGroup: (by >> 8) * dcGroupsX + (bx >> 8), source: null});
-  const coefficientCount = 3 * blocks.reduce((sum, b) => sum + b.area * 64, 0);
+    blocks.push({id: 0, x: bx, y: by, bw: 1, bh: 1, area: 1, multiplier: multiplierAt(bx, by), lfGroup: (by >> 8) * dcGroupsX + (bx >> 8), source: null, coefficients: null, arena: null});
+  const onlyList = only ? [...only] : null;
+  const coefficientCount = 3 * (onlyList ? onlyList.reduce((sum, i) => sum + (blocks[i]?.area ?? 0) * 64, 0) : blocks.reduce((sum, b) => sum + b.area * 64, 0));
+  const narrowArena = inputs && !image.wideCoefficients;
   const denominator = half(field / (8 * 255 * QS)), matrices = new Map();
   const quant = table => {
     let m = matrices.get(table);
@@ -77,12 +79,12 @@ export function rebuildPicture(source, {rgba: wantRGBA = true, linear: wantLinea
     return m;
   };
   const tableBytes = TRANSFORMS.reduce((sizes, t) => (sizes[t.table] = t.width * t.height * 12, sizes), new Array(17).fill(0));
-  const restoreRows = 128;
+  const needPlanes = !inputs;
   const sizes = [...Array(9).fill(cells * 4), ...tableBytes, 65536 + 3 * 1024 * 8, numDcGroups * 8192,
-    ...Array(3).fill(n * 4), coefficientCount * 4, n * 4];
+    ...(needPlanes ? [n * 4, n * 4, n * 4] : [0, 0, 0]), coefficientCount * (narrowArena ? 2 : 4), needPlanes && !rendered ? n * 4 : 0];
   const at = kernels.reserve(sizes);
   const lfAt = at.slice(0, 9), weightsAt = at.slice(9, 26), [tablesAt, cflAt, xAt, yAt, bAt, arenaAt, rgbaAt] = at.slice(26);
-  const i32 = kernels.i32, buffer = kernels.buffer;
+  const buffer = kernels.buffer;
   const lfDequant = [0, 1, 2].map(c => half(comps[c].quant[0] / dcScale[c] / (255 * 8 * QS) * 128));
   for (let c = 0; c < 3; c++) {
     const dc = copyVarDCTDCRows(varDCTDCSpec(image, layout, c, 0, 0, BW, BH), new Int32Array(cells));
@@ -100,15 +102,17 @@ export function rebuildPicture(source, {rgba: wantRGBA = true, linear: wantLinea
     if (image.cfl && !ycbcr) copyVarDCTCorrelation(image.cfl, bx, by, cw, ch, colors);
     groups.push({xFromY: colors[0], bFromY: colors[1], width: cw, bx, by});
   }
-  const arena = new Int32Array(buffer, arenaAt, coefficientCount);
+  const arena = narrowArena ? new Int16Array(buffer, arenaAt, coefficientCount) : new Int32Array(buffer, arenaAt, coefficientCount);
   let used = 0;
-  for (const block of blocks) {
+  for (let idx = 0, len = onlyList ? onlyList.length : blocks.length; idx < len; idx++) {
+    const index = onlyList ? onlyList[idx] : idx, block = blocks[index];
+    if (!block) continue;
     const size = block.area * 64, held = [0, 0, 0];
     for (let c = 0; c < 3; c++) {
       held[c] = used;
       if (block.source) {
-        const q = block.source.coeffs[map[c]], order = block.source.order;
-        for (let k = block.area; k < size; k++) arena[used + order[k]] = q[order[k]];
+        const q = block.source.coeffs[map[c]];
+        arena.set(q.length === size ? q : q.subarray(0, size), used);
       } else {
         const q = comps[c].coeffs, from = (block.y * comps[c].stride + block.x) * 64;
         for (let k = 1; k < 64; k++) arena[used + 8 * (k & 7) + (k >> 3)] = q[from + k];
@@ -118,7 +122,7 @@ export function rebuildPicture(source, {rgba: wantRGBA = true, linear: wantLinea
     block.coefficients = held; block.arena = arena;
   }
   let sigma = null;
-  if (filter.epf.iters) {
+  if (filter.epf.iters && !rendered) {
     sigma = new Float32Array(cells);
     const sharp = image.sharpness;
     for (const block of blocks) for (let y = 0; y < block.bh; y++) for (let x = 0; x < block.bw; x++) {
@@ -126,12 +130,24 @@ export function rebuildPicture(source, {rgba: wantRGBA = true, linear: wantLinea
       sigma[cell] = epfSigma(filter.epf, global.globalScale, block.multiplier, sharp ? sharp[cell] : 7);
     }
   }
-  const targets = [xAt, yAt, bAt].map(o => new Float32Array(buffer, o, n));
   const ctx = {kernels, lf, widths: [width, width, width], heights: [height, height, height], bias: DEFAULT_OPSIN.quantizationBiases.slice(0, 3),
     numerator: DEFAULT_OPSIN.quantizationBiases[3], qmScale: [1, 1, 1], global, dcWidth: dims, ox: 0, hshift: zero, vshift: zero,
     cflBlock: true, weights: {offsets: weightsAt, loaded: []}, blocks: blockTables(tablesAt, cflAt), blockPlanes: [null, null, null],
     quant, group: g => groups[g]};
-  for (const block of blocks) renderVarBlock(ctx, block, targets, zero);
+  if (inputs) {
+    const tables = new Map();
+    for (const block of blocks) { const t = TRANSFORMS[block.id].table; if (!tables.has(t)) tables.set(t, quant(t)); }
+    for (const block of blocks) { block.source = null; block.arena = null; }
+    const out = {width, height, xsize: BW, ysize: BH, ycbcr, arena: arena.subarray(0, used), tables,
+      lf, groups, global, bias: ctx.bias, numerator: ctx.numerator, filter, sigma,
+      blocks};
+    for (const block of blocks) { block.source = null; block.arena = null; }
+    return {inputs: out};
+  }
+  const targets = [xAt, yAt, bAt].map(o => new Float32Array(buffer, o, n));
+  if (onlyList) for (const k of onlyList) { if (blocks[k]) renderVarBlock(ctx, blocks[k], targets, zero); }
+  else for (const block of blocks) renderVarBlock(ctx, block, targets, zero);
+  if (rendered) { for (const block of blocks) block.source = null; return {rendered: only ? targets : targets.map(p => p.slice())}; }
   let planes = targets;
   if (stages.length) {
     const restored = restorePlanes(kernels, targets.map(p => p.slice()), width, height, filter, sigma);

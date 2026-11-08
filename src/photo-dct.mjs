@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {kernelHooks} from './kernel-hooks.mjs';
+import {fault} from './fault.mjs';
 import {calibration} from './quality-calibration.mjs';
 import {float16Bits} from './bits.mjs';
 import {exactLog, exactExp} from './exact-math.mjs';
@@ -49,27 +50,8 @@ export function transformDCT8Blocks(blocks, count, intermediate) {
   for (let n = 0; n < count * 3; n++) dctChannel(blocks, n * 64, intermediate, blocks, n * 64);
 }
 
-const B = COSINES, BUT = {b00: B[0], b40: B[32], b20: B[16], b21: B[17], b60: B[48], b61: B[49],
-  o: [1, 3, 5, 7].map(u => [0, 1, 2, 3].map(x => B[u * 8 + x]))};
-function butterfly(v, at, step) {
-  const x = [0, 1, 2, 3, 4, 5, 6, 7].map(i => v[at + i * step]);
-  const s0 = x[0] + x[7], d0 = x[0] - x[7], s1 = x[1] + x[6], d1 = x[1] - x[6], s2 = x[2] + x[5], d2 = x[2] - x[5], s3 = x[3] + x[4], d3 = x[3] - x[4];
-  const e0 = s0 + s3, e1 = s1 + s2, f0 = s0 - s3, f1 = s1 - s2, {o} = BUT;
-  v[at] = BUT.b00 * (e0 + e1);
-  v[at + 4 * step] = BUT.b40 * (e0 - e1);
-  v[at + 2 * step] = BUT.b20 * f0 + BUT.b21 * f1;
-  v[at + 6 * step] = BUT.b60 * f0 + BUT.b61 * f1;
-  for (let u = 0; u < 4; u++) v[at + (2 * u + 1) * step] = ((o[u][0] * d0 + o[u][1] * d1) + o[u][2] * d2) + o[u][3] * d3;
-}
-export function dct8Butterfly(blocks, count) {
-  for (let p = 0; p < count * 192; p += 64) {
-    for (let col = 0; col < 8; col++) butterfly(blocks, p + col, 8);
-    for (let row = 0; row < 8; row++) butterfly(blocks, p + row * 8, 1);
-  }
-}
-
-const FAST_S = Float64Array.of(1, 0.7209598223816907, 0.7653668647301796, 0.8504300941521988, 1, 1.2727585826345942, 1.8477590650225744, 3.6245097377961106);
-export const FAST_SCALE = Float64Array.from({length: 64}, (_, k) => FAST_S[k & 7] * FAST_S[k >> 3] / 8);
+const FAST_S = /* @__PURE__ */ Float64Array.of(1, 0.7209598223816907, 0.7653668647301796, 0.8504300941521988, 1, 1.2727585826345942, 1.8477590650225744, 3.6245097377961106);
+export const FAST_SCALE = /* @__PURE__ */ Float64Array.from({length: 64}, (_, k) => FAST_S[k & 7] * FAST_S[k >> 3] / 8);
 export function transformDCT8BlocksFast(blocks, count) {
   const x = blocks;
   for (let n = 0; n < count; n++) {
@@ -113,7 +95,7 @@ const regionTable = rows => rows.map(([first, falls, dc]) => {
     return {first, bits, shape, dc};
   });
 const REGION_TABLE = regionTable([[10, [0, -0.3, -0.3, -0.3, -0.3], 2.5], [18, [0, -0.3, -0.3, -0.3, -0.3], 4.5], [18, [0, -0.3, -0.3, -0.3, -0.3], 4.5]]);
-const RGB_TABLE = regionTable([[30, [0, -0.3, -0.3, -0.3, -0.3], 4.5], [10, [0, -0.3, -0.3, -0.3, -0.3], 2.5], [30, [0, -0.3, -0.3, -0.3, -0.3], 4.5]]);
+const RGB_TABLE = /* @__PURE__ */ regionTable([[30, [0, -0.3, -0.3, -0.3, -0.3], 4.5], [10, [0, -0.3, -0.3, -0.3, -0.3], 2.5], [30, [0, -0.3, -0.3, -0.3, -0.3], 4.5]]);
 const strengthOf = quality => Math.max(0, Math.min(1, (90 - quality) / 15));
 const distanceOf = (quality, kind) => Math.max(0.1, calibration(quality, kind) * (quality >= 30 ? 0.1 + (100 - quality) * 0.09 : 53 / 3000 * quality * quality - 23 / 20 * quality + 25));
 export const photoQualityStep = (quality, kind) => distanceOf(quality, kind) * (1 - 0.1 * strengthOf(quality));
@@ -155,7 +137,7 @@ export function* photoCoefficientSteps(data, width, height, quality, colorSpace,
     quant[0] = Math.max(1, Math.round(base * dc));
     return [first, ...bits];
   });
-  const tile = new Float64Array(64 * 192), intermediate = new Float64Array(64), rowAt = new Int32Array(8);
+  const rowAt = new Int32Array(8);
   const zonesOf = strength => Float64Array.from({length: 192}, (_, i) => (i & 63) && i < 64 ? 0.5 + strength * ((i & 7) >= 4 || (i >> 3) >= 4 ? 0.14 : 0.08) : (i & 63) && quantTable ? 0.65 : 0.5);
   const zones = zonesOf(strength);
   const tables = Float64Array.from({length: 396}, (_, i) => i < 192 ? components[i >> 6]?.quant[i & 63] ?? 1 : i < 384 ? zones[i - 192]
@@ -171,24 +153,10 @@ export function* photoCoefficientSteps(data, width, height, quality, colorSpace,
     return t;
   };
   const coeffs = components.map(c => c.coeffs);
+  if (!kernelHooks.ycbcrTile) kernelHooks.ensure?.();
   const run = (by, x0, count, t) => {
-    if (kernelHooks.ycbcrTile?.(data, width, rowAt, x0, count, t, coeffs, (by * stride + x0) * 64, COSINES)) return;
-    for (let n = 0; n < count; n++) for (let y = 0, o = n * 192; y < 8; y++) for (let x = 0; x < 8; x++) {
-      const at = rowAt[y] + Math.min(width - 1, (x0 + n) * 8 + x) * 4;
-      const r = data[at], g = data[at + 1], b = data[at + 2], k = o + y * 8 + x;
-      if (gray) { tile[k] = r - 128; tile[64 + k] = tile[128 + k] = 0; continue; }
-      tile[k] = 0.299 * r + 0.587 * g + 0.114 * b - 128;
-      tile[64 + k] = -0.168735892 * r - 0.331264108 * g + 0.5 * b;
-      tile[128 + k] = 0.5 * r - 0.418687589 * g - 0.081312411 * b;
-    }
-    transformDCT8Blocks(tile, count, intermediate);
-    for (let n = 0; n < count; n++) for (let c = 0; c < components.length; c++) {
-      const {coeffs} = components[c], offset = (by * stride + x0 + n) * 64, at = n * 192 + c * 64;
-      for (let k = 0; k < 64; k++) {
-        const value = tile[at + k] * quantScale / t[c * 64 + k];
-        coeffs[offset + k] = Math.abs(value) < t[192 + c * 64 + k] ? 0 : Math.round(value);
-      }
-    }
+    if (!kernelHooks.ycbcrTile?.(data, width, rowAt, x0, count, t, coeffs, (by * stride + x0) * 64, COSINES))
+      throw fault('JXL_WASM', 'The photo tile kernel is unavailable: an encoder needs WebAssembly with SIMD.');
   };
   const band = (from, to) => {
     for (let by = from; by < to; by++) {
@@ -253,7 +221,6 @@ export function* rgbCoefficientSteps(data, width, height, quality, colorSpace, a
   };
   const tilesX = Math.ceil(stride / 8);
   const cfl = {width: tilesX, x: new Int16Array(tilesX * Math.ceil(rows / 8)), b: new Int16Array(tilesX * Math.ceil(rows / 8))};
-  let tile, held;
   const gray = grayTiles(data, width, height, tilesX);
   const cflOf = (index, rg, bg, gg) => {
     const off = gray[index] === 1;
@@ -267,49 +234,13 @@ export function* rgbCoefficientSteps(data, width, height, quality, colorSpace, a
     yield 1; return result();
   }
   for (const component of components) component.coeffs ??= new Int16Array(stride * rows * 64);
-  const [R, G, B] = components.map(c => c.coeffs);
+  if (!kernelHooks.rgbTiles) kernelHooks.ensure?.();
   for (let from = 0; from < rows; from += 32) {
     const to = Math.min(rows, from + 32);
-    let kernel = !!kernelHooks.rgbTiles;
-    for (let ty = from >> 3; kernel && ty * 8 < to; ty++) for (let tx = 0; kernel && tx < tilesX; tx++)
-      kernel = kernelHooks.rgbTiles(data, width, height, tx * 8, ty * 8, Math.min(stride, tx * 8 + 8) - tx * 8, Math.min(to, ty * 8 + 8) - ty * 8,
-        tableOf, (rg, bg, gg) => cflOf(ty * tilesX + tx, rg, bg, gg), components.map(c => c.coeffs), stride, COSINES, quantScale);
-    if (kernel) { yield to / rows; continue; }
-    tile ??= new Float64Array(64 * 192); held ??= new Float64Array(32 * stride * 192);
-    for (let by = from; by < to; by++) for (let x0 = 0; x0 < stride; x0 += 64) {
-      const count = Math.min(64, stride - x0);
-      for (let n = 0; n < count; n++) for (let y = 0, o = n * 192; y < 8; y++) {
-        const row = Math.min(height - 1, by * 8 + y) * width * 4;
-        for (let x = 0; x < 8; x++) {
-          const at = row + Math.min(width - 1, (x0 + n) * 8 + x) * 4, k = o + y * 8 + x;
-          tile[k] = data[at]; tile[64 + k] = data[at + 1]; tile[128 + k] = data[at + 2];
-        }
-      }
-      dct8Butterfly(tile, count);
-      for (let n = 0; n < count; n++) {
-        const t = tablesFor(fields[by * stride + x0 + n]), offset = (by * stride + x0 + n) * 64, at = n * 192, h = ((by - from) * stride + x0 + n) * 192;
-        for (let k = 0; k < 64; k++) {
-          const v = tile[at + 64 + k] * quantScale / t[64 + k], g = Math.abs(v) < t[256 + k] ? 0 : Math.round(v);
-          G[offset + k] = g; held[h + k] = tile[at + k]; held[h + 64 + k] = g * t[64 + k] / quantScale; held[h + 128 + k] = tile[at + 128 + k];
-        }
-      }
-    }
-    for (let ty = from >> 3; ty * 8 < to; ty++) for (let tx = 0; tx < tilesX; tx++) {
-      const y1 = Math.min(to, ty * 8 + 8), x1 = Math.min(stride, tx * 8 + 8);
-      let rg = 0, bg = 0, gg = 0;
-      for (let by = ty * 8; by < y1; by++) for (let bx = tx * 8; bx < x1; bx++) {
-        const h = ((by - from) * stride + bx) * 192;
-        for (let k = 1; k < 64; k++) { const g = held[h + 64 + k]; rg += (held[h + k] - g) * g; bg += (held[h + 128 + k] - g) * g; gg += g * g; }
-      }
-      const [ax, ab] = cflOf(ty * tilesX + tx, rg, bg, gg);
-      for (let by = ty * 8; by < y1; by++) for (let bx = tx * 8; bx < x1; bx++) {
-        const t = tablesFor(fields[by * stride + bx]), offset = (by * stride + bx) * 64, h = ((by - from) * stride + bx) * 192;
-        for (let k = 0; k < 64; k++) {
-          const g = held[h + 64 + k], r = (held[h + k] - (k ? ax : 1) * g) * quantScale / t[k], b = (held[h + 128 + k] - (k ? ab : 1) * g) * quantScale / t[128 + k];
-          R[offset + k] = Math.abs(r) < t[192 + k] ? 0 : Math.round(r); B[offset + k] = Math.abs(b) < t[320 + k] ? 0 : Math.round(b);
-        }
-      }
-    }
+    for (let ty = from >> 3; ty * 8 < to; ty++) for (let tx = 0; tx < tilesX; tx++)
+      if (!kernelHooks.rgbTiles?.(data, width, height, tx * 8, ty * 8, Math.min(stride, tx * 8 + 8) - tx * 8, Math.min(to, ty * 8 + 8) - ty * 8,
+        tableOf, (rg, bg, gg) => cflOf(ty * tilesX + tx, rg, bg, gg), components.map(c => c.coeffs), stride, COSINES, quantScale))
+        throw fault('JXL_WASM', 'The RGB tile kernel is unavailable: an encoder needs WebAssembly with SIMD.');
     yield to / rows;
   }
   return result();

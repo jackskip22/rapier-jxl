@@ -4,6 +4,8 @@ import {exactExp, exactLog, exactLog2, exactPow} from './exact-math.mjs';
 import {perceptualMaskField, maskDoubtOver} from './photo-mask.mjs';
 import {scaledDCT, scaledDCTAt, smallTransform, naturalOrder, lowFrequencies, TRANSFORMS, scaledDCTBases} from './vardct-strategies.mjs';
 import {kernelHooks} from './kernel-hooks.mjs';
+import {fault} from './fault.mjs';
+const noSmall = () => { throw fault('JXL_INTERNAL', 'capture-complete prices no small transform.'); };
 import {zeroDensityContext} from './vardct.mjs';
 import {prepareQuantParams, quantParamSteps} from './quantization-params.mjs';
 import {SCAN as VB_SCAN} from './dct8-contexts.mjs';
@@ -260,7 +262,7 @@ export function strategyInputs(base, width, height, options = {}) {
   }
   const fine = new Float32Array(stride * rows).fill(1);
   if (base.quantFields) for (let i = 0; i < fine.length; i++) fine[i] = base.quantFields[i] / base.quantFieldBase;
-  return {stride, rows, planes: base.planes, transforms, tokens: options.model !== 'simple' ? rateModel(base, stride, rows, 8) : null,
+  return {stride, rows, planes: base.planes, transforms, tokens: !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && options.model !== 'simple' ? rateModel(base, stride, rows, 8) : null,
     norm, dead: deadzone || null, fine, cfl: base.cfl, one: VB_ONE, dcSteps: comps.map(comp => comp.quant[0] / VB_QS), recon: VB_RECON, log2: vbLog2Table()};
 }
 
@@ -332,7 +334,7 @@ export function createStrategyBuilder(base, width, height, options = {}) {
   const norm = channelNorm(comps, weights, options.lowScale);
   tableFor(0, comps, sizeScale, tables);
   const allowed = new Set(ids);
-  const tokens = !options.layout && options.model !== 'simple' && rateModel(base, stride, rows, 8);
+  const tokens = !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && !options.layout && options.model !== 'simple' && rateModel(base, stride, rows, 8);
   const tokenBits = (c, plane, order, area, size) => tokenBitsOf(tokens, c, plane, order, area, size);
   const candidateRate = (bx, by) => { const m = maps; maps = null; const r = full(0, bx, by).R; maps = m; return r; };
   const rates = options.rates;
@@ -476,11 +478,11 @@ export function createStrategyBuilder(base, width, height, options = {}) {
     const t = TRANSFORMS[id], w = t.width, h = t.height, bw = w / 8, bh = h / 8, area = bw * bh, size = w * h;
     const known = built?.get(id * 16777216 + by * stride + bx);
     if (known) { tableFor(id, comps, sizeScale, tables); return known; }
-    const certified = options.exact?.get(id + ':' + bx + ':' + by);
+    const certified = options.exact?.get(id * 16777216 + by * stride + bx) ?? options.exact?.get(id + ':' + bx + ':' + by);
     if (certified) {
       const table = tableFor(id, comps, sizeScale, tables);
       if (certified.uncertain) vbSettle(certified, id, bx, by, w, h, bw, bh, area, size, table, comps, planeRows, W, cfl, fineOf(bx, by), dead);
-      return {id, bx, by, bw, bh, area, size, order: naturalOrder(bw, bh), coeffs: certified.coeffs, dc: certified.dc, R: 0, J: 0};
+      return {id, bx, by, bw, bh, area, size, order: naturalOrder(bw, bh), coeffs: certified.coeffs, dc: certified.dc, R: 0, J: 0, narrow: !!certified.narrow && !certified.uncertain};
     }
     if (gpuBlocks?.has(id) && !maps) {
       tableFor(id, comps, sizeScale, tables);
@@ -501,7 +503,7 @@ export function createStrategyBuilder(base, width, height, options = {}) {
       const {planes: rowsOf, top, left = 0, stride: rowW = W} = planeRows(by * 8, by * 8 + h, bx * 8, bx * 8 + w);
       transformChannel = c => {
         for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) pixels[y * w + x] = rowsOf[c][(by * 8 + y - top) * rowW + bx * 8 - left + x];
-        transformed[c] = VB_SMALL.has(id) ? smallTransform(pixels, id, cache ? undefined : outputs[c]) : scaledDCT(pixels, w, h, cache ? undefined : outputs[c]);
+        transformed[c] = VB_SMALL.has(id) ? (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? noSmall() : smallTransform(pixels, id, cache ? undefined : outputs[c]) : scaledDCT(pixels, w, h, cache ? undefined : outputs[c]);
       };
       const early = bounded && !!loses;
       for (let c = 0; c < 3; c++) if (!early || c === 1) transformChannel(c);
@@ -543,7 +545,7 @@ export function createStrategyBuilder(base, width, height, options = {}) {
         continue;
       }
       const fc = factor[c], luma = transformed[1], lo = dead ? dead[c * 2] : 0.5, hi = dead ? dead[c * 2 + 1] : 0.5, unit = 8 * VB_QS * fine;
-      const pixel = VB_SMALL.has(id) ? pixelWeights(id) : null;
+      const pixel = VB_SMALL.has(id) ? (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? noSmall() : pixelWeights(id) : null;
       for (let k = area; k < size; k++) {
         const pos = order[k], step = steps[pos];
         const coefficient = tr[pos] - (c !== 1 ? fc * luma[pos] : 0);
@@ -610,12 +612,12 @@ export function fixedStrategyImage(base, width, height, options) {
 
 export function strategyImage(base, chosen, tables, perceptual) {
   const comps = base.components, stride = comps[0].stride, rows = comps[0].rows;
-  const at = new Int32Array(stride * rows).fill(-1), byFirst = new Map();
+  const at = new Int32Array(stride * rows).fill(-1), byFirst = new Array(stride * rows);
   const components = comps.map(comp => ({h: 1, v: 1, stride, rows, quant: comp.quant, coeffs: new Int16Array(0), dc: new Int32Array(stride * rows)}));
   let wideCoefficients = false;
   for (const choice of chosen) {
     const {id, bx, by, bw, bh, area, size, order, coeffs, dc, levels} = choice, block = {id, bx, by, bw, bh, area, size, order, coeffs, dc, levels};
-    byFirst.set(block.by * stride + block.bx, block);
+    byFirst[block.by * stride + block.bx] = block;
     for (let y = 0; y < block.bh; y++) for (let x = 0; x < block.bw; x++) {
       const pos = (block.by + y) * stride + block.bx + x;
       at[pos] = -2;
@@ -627,7 +629,7 @@ export function strategyImage(base, chosen, tables, perceptual) {
   for (let gy = 0; gy < Math.ceil(rows / 32); gy++) for (let gx = 0; gx < Math.ceil(stride / 32); gx++) {
     const group = [];
     for (let by = gy * 32; by < Math.min(rows, gy * 32 + 32); by++) for (let bx = gx * 32; bx < Math.min(stride, gx * 32 + 32); bx++) {
-      const block = byFirst.get(by * stride + bx);
+      const block = byFirst[by * stride + bx];
       if (block) { at[by * stride + bx] = blocks.length; blocks.push(block); group.push(block); }
     }
     groups.push(group);
@@ -650,17 +652,18 @@ export function auditLevels(base, width, height, options, layout, answer) {
   const exact = answer?.exact;
   if (!(exact instanceof Map) || !Array.isArray(layout)) return Infinity;
   if (!layout.length) return 0;
+  const stride = base.components[0].stride, exactOf = (id, bx, by) => exact.get(id * 16777216 + by * stride + bx) ?? exact.get(id + ':' + bx + ':' + by);
   const indices = new Set([0, layout.length - 1]), shapes = new Set([...indices].map(i => layout[i]?.id));
   const add = i => { if (indices.size < 8) indices.add(i); };
   for (let i = 0; i < layout.length; i++) {
     const b = layout[i];
-    if (!b || !TRANSFORMS[b.id] || !exact.get(b.id + ':' + b.bx + ':' + b.by)) return Infinity;
+    if (!b || !TRANSFORMS[b.id] || !exactOf(b.id, b.bx, b.by)) return Infinity;
     if (!shapes.has(b.id)) { shapes.add(b.id); add(i); }
   }
   for (let i = 1; i < 8; i++) add(Math.floor(i * (layout.length - 1) / 7));
   const selected = [...indices].map(i => layout[i]);
   for (const {id, bx, by} of selected) {
-    const t = TRANSFORMS[id], size = t.width * t.height, area = size / 64, block = exact.get(id + ':' + bx + ':' + by);
+    const t = TRANSFORMS[id], size = t.width * t.height, area = size / 64, block = exactOf(id, bx, by);
     if (block.coeffs?.length !== 3 || block.dc?.length !== 3) return Infinity;
     for (let c = 0; c < 3; c++) if (block.coeffs[c]?.length !== size || block.dc[c]?.length !== area) return Infinity;
   }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {extractFitStats, predictFitBytes} from './fit-model.mjs';
+import {extractFitStats, predictFitBytes, fitScale} from './fit-model.mjs';
 export function* targetSearch(targetBytes, {minQuality, maxQuality, maxProbes, initialQuality = null}) {
   let best = null, smallestBytes = null, stop = false;
   const probes = [];
@@ -89,9 +89,9 @@ export function fitNearest(probes, best, miss) {
   return [fit, below && (!miss || fit.quality - below.quality < miss.quality - fit.quality) ? below : miss];
 }
 
-export function* fitSearch(targetBytes, {minQuality, maxQuality, maxProbes, rates, area, picture, effort = 3, initial = null}) {
+export function* fitSearch(targetBytes, {minQuality, maxQuality, maxProbes, rates, area, picture, effort = 3, initial = null, settle = null}) {
   let best = null, smallestBytes = null, stop = false, halve = false, poor = 0, fractions = 0;
-  const stats = picture && extractFitStats(picture), model = stats && !stats.isScreen ? q => predictFitBytes(stats, q, effort).total : null;
+  const stats = picture && extractFitStats(picture), model = stats && !stats.isScreen ? settle ? q => predictFitBytes(stats, settle(q), effort).total * fitScale(q, effort) : q => predictFitBytes(stats, q, effort).total : null;
   const probes = [];
   function record(q, reply) {
     const bytes = reply?.bytes ?? null, length = bytes?.byteLength ?? null;

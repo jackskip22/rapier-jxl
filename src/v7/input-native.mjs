@@ -35,7 +35,11 @@ export async function nativeBitmap(input, options, hooks, policy) {
   if (typeof createImageBitmap !== 'function' || typeof OffscreenCanvas !== 'function')
     throw fail('JXL_PLATFORM', 'This input needs a native image decoder. ' + (policy?.platform?.() ?? 'Supply decoded 8-bit RGBA pixels.'));
   let bitmap;
-  try { bitmap = await createImageBitmap(policy?.blob?.(prepared) ?? input, {imageOrientation: 'from-image'}); }
+  try {
+    const source = policy?.blob?.(prepared) ?? input, region = policy?.region;
+    bitmap = region ? await createImageBitmap(source,region.x,region.y,region.width,region.height,{imageOrientation:'from-image'})
+      : await createImageBitmap(source,{imageOrientation:'from-image'});
+  }
   catch (cause) { check(hooks.signal); throw Object.assign(fail('JXL_INPUT', (policy?.failure?.(prepared) ?? 'The browser could not decode this Blob: ') + (cause?.message || cause)), {cause}); }
   try {
     check(hooks.signal); dimensions(bitmap.width, bitmap.height, hooks.maxPixels);

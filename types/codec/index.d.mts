@@ -27,7 +27,7 @@ export interface EncodeOptions {
   intensityTarget?: number | undefined;
   /** Source RGB is premultiplied by alpha; default false. Values are never unpremultiplied. */
   alphaPremultiplied?: boolean | undefined;
-  /** Original defined three-component ICC.1 profile or GRAY, retained byte-for-byte without color conversion. Mutually exclusive
+  /** Original defined three-component ICC.1 profile or GRAY, kept unchanged, without color conversion. Mutually exclusive
    * with colorSpace and transferFunction. Eight-bit samples below quality 100 are coded as photographs (a matrix/TRC profile through its own
    * primaries and curves in XYB; a gray one, or one that needs a color engine, as the samples are) and are decoded back into the profile;
    * deeper samples use Modular coding. Gray needs identical RGB words.
@@ -54,7 +54,7 @@ export interface Job<Output extends Uint8Array = Bytes> extends Generator<number
 }
 /** Validate input immediately, then yield one group of one pass per step. */
 export function encodeSteps(data: Pixels, width: number, height: number, options?: EncodeOptions): Job;
-/** The same bytes as `encode` for every input. A photograph of about a megapixel or more runs its forward stages on
+/** The same file as `encode` for every input. A photograph of about a megapixel or more runs its forward stages on
  * WebGPU when the page has it; `gpu: false` keeps the CPU, `gpu: true` or a `GPUDevice` passed in uses the GPU at any size. With no adapter, a lost device
  * or any GPU error it runs on the CPU. */
 export function encodeAsync(data: Pixels, width: number, height: number, options?: EncodeOptions & {gpu?: boolean | object}): Promise<Bytes>;

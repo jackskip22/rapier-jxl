@@ -10,6 +10,19 @@ import {pixelResult, rowResult, referenceFromOriginal} from './verify-pixels.mjs
 import {isImageResult} from './result-shape.mjs';
 import {protectedScope} from './verify-protection.mjs';
 import {restoreFile, jpegReader} from './verify-decode.mjs';
+import {comparison, comparisonContext, pictureICC, conversionProfile, sameBytes as sameProfileBytes, pixelEvidence, metricSamples} from './verify-compare.mjs';
+import {protectionDomain, protectionEvidence} from './verify-pixels.mjs';
+import {describedIdentity, sampleBytes} from './result-identity.mjs';
+import {nativeBitmap, requirePNGReader} from './input-native.mjs';
+import {nativePictureWith, NATIVE_PICTURE_OPTIONS} from '../native-picture.mjs';
+import {profileTransformSteps} from '../icc-transform.mjs';
+import {scaleBand, downsample, referenceArena, useReferenceArena, releaseReferenceArena} from '../ssimulacra2-arithmetic.mjs';
+import {GAUSS32, scaleNorm, scoreNorms} from '../ssimulacra2.mjs';
+import {s2Pad} from '../ssimulacra2-input.mjs';
+import {compileKernels} from '../kernel-runtime.mjs';
+import {prepareKernels, ensureKernels, orientBlock, sampleFilter, sampleSum, sampleFinish} from '../kernels.mjs';
+import {wasmRequired} from '../capture-wasm-error.mjs';
+import {sampleResizeConfig, sampleResizeRows, sampleResizeWeight} from '../sample-transforms.mjs';
 export {configureWasm} from '../wasm-modules.mjs';
 export {configureDecoder} from '../shown-picture.mjs';
 
@@ -68,42 +81,67 @@ export function verify(original, output, options) {
     return complete(fixed, result, settings).catch(error => { throw error === settings.signal?.reason ? error : declared(error); });
   } catch (error) { return Promise.reject(declared(error)); }
 }
-async function complete(pending, result, options) {
+Object.defineProperty(verify,Symbol.for('rapier-jxl.steps'),{value:Object.freeze({kind:'verify'})});
+const VERIFY_TOOLS = Object.freeze({comparison, comparisonContext, pictureICC, conversionProfile, sameBytes: sameProfileBytes, pixelEvidence, metricSamples,
+  protectionDomain, protectionEvidence, describedIdentity, sampleBytes, nativeBitmap, requirePNGReader, nativePictureWith,
+  NATIVE_PICTURE_OPTIONS, profileTransformSteps, scaleBand, downsample, referenceArena, useReferenceArena, releaseReferenceArena,
+  GAUSS32, scaleNorm, scoreNorms, s2Pad, compileKernels, prepareKernels, ensureKernels, orientBlock, sampleFilter, sampleSum,
+  sampleFinish, wasmRequired, sampleResizeConfig, sampleResizeRows, sampleResizeWeight});
+const verifySteps = (original,result,context) => {
+  const options = settingsOf({maxPixels:context.maxPixels},result);
+  if (!isImageResult(result) || result.fidelity === undefined)
+    throw fail('JXL_INPUT','Verification needs an ImageResult with its fidelity, source identity, format, and preservation promise.');
+  if (!result.fits) throw fail(result.reason.code,result.reason.message);
+  dimensions(result.width,result.height,options.maxPixels);
+  return complete(original,result,options,{...context,tools:VERIFY_TOOLS}).catch(error => { throw declared(error); });
+};
+verifySteps.tools = VERIFY_TOOLS;
+Object.defineProperty(verify,Symbol.for('rapier-jxl.verify.steps'),{value:Object.freeze(verifySteps)});
+async function complete(pending, result, options, context) {
   const tell = progressOf(options.onProgress, options.signal); tell?.(0);
-  const original = await pending; check(options.signal);
+  const original = context ? pending : await pending; check(options.signal);
   const target = targetOf(result.fidelity), details = {transform: result.transform, readAs: result.readAs};
   const settings = {...options, ...details, ...target, format: result.format};
   if (options.protection) settings.protectionDigest = await options.protection.digest();
-  let receipt = {verified: false, source: result.source, outputDigest: await digestBytes(result.bytes), width: result.width,
+  let receipt = {verified: false, source: result.source, outputDigest: context?.outputDigest ?? await digestBytes(result.bytes), width: result.width,
     height: result.height, format: result.format, kept: result.kept, fidelity: result.fidelity,
     ...(options.protection && {protection: {digest: settings.protectionDigest, pixels: options.protection.count, exact: false}}),
     ...(result.transform && {transform: result.transform}), ...(result.readAs && {readAs: result.readAs})};
   try {
-    const source = isRows(original) ? null : await identityOfSnapshot(original, options);
+    const source = context?.sourceIdentity ?? (isRows(original) ? null : await identityOfSnapshot(original, options));
     if (source) receipt.source = source;
     if (source && result.source && !sameIdentity(source, result.source)) throw refused('JXL_INPUT', 'The original does not match the result source identity.', receipt);
     tell?.(0.15);
     if (result.kept === 'jpeg-bytes') {
       if (options.protection) throw fail('JXL_UNSUPPORTED', 'Protected pixel verification requires a decoded-pixel result.');
       if (target.fidelity !== 'exact') throw fail('JXL_UNSUPPORTED', 'JPEG byte restoration verifies exact preservation; a perceptual target needs decoded-pixel verification.');
-      const raw = await encodedSourceBytes(original);
+      const raw = context ? original : await encodedSourceBytes(original);
       if (!raw) throw fail('JXL_INPUT', 'JPEG byte verification needs the original encoded bytes.');
       const compressed = result.format === 'jxl' ? result.bytes : result.format === 'jpeg' ? raw : null;
-      if (!compressed || result.format === 'jxl' && !isJPEG(raw)) throw fail('JXL_INPUT', 'JPEG byte verification compares a JPEG and its JPEG XL reconstruction.');
+      if (!compressed || result.format === 'jxl' && !isJPEG(context ? raw.subarray(0,2) : raw)) throw fail('JXL_INPUT', 'JPEG byte verification compares a JPEG and its JPEG XL reconstruction.');
       check(options.signal);
-      const restored = await restoreFile(compressed, {maxPixels: Math.min(options.maxPixels, JPEG_PIXELS), signal: options.signal});
-      if (!restored) throw fail('JXL_RECONSTRUCTION', 'The JPEG XL file contains no JPEG reconstruction data.');
       const expected = result.format === 'jxl' ? raw : result.bytes;
-      const size = result.format === 'jxl' ? displaySize(header(compressed)) : jpegDisplayDimensions(result.bytes, options.maxPixels);
-      receipt = {...receipt, kind: 'jpeg-restore', restoredDigest: await digestBytes(restored),
+      let size, restoredDigest, equal;
+      if (context) {
+        const restored = await context.restored(compressed,expected,{...options,format:result.format},context);
+        size = restored.size; restoredDigest = restored.digest; equal = restored.equal;
+      } else {
+        const restored = await restoreFile(compressed, {maxPixels: Math.min(options.maxPixels, JPEG_PIXELS), signal: options.signal});
+        if (!restored) throw fail('JXL_RECONSTRUCTION', 'The JPEG XL file contains no JPEG reconstruction data.');
+        size = result.format === 'jxl' ? displaySize(header(compressed)) : jpegDisplayDimensions(result.bytes, options.maxPixels);
+        restoredDigest = await digestBytes(restored); equal = sameBytes(restored,expected);
+      }
+      receipt = {...receipt, kind: 'jpeg-restore', restoredDigest,
         referenceDigest: result.format === 'jxl' ? receipt.source.digest : receipt.outputDigest};
-      if (!sameBytes(restored, expected)) throw refused('JXL_RECONSTRUCTION', 'Restored JPEG bytes differ from the original.', receipt);
+      if (!equal) throw refused('JXL_RECONSTRUCTION', 'Restored JPEG bytes differ from the original.', receipt);
       if (size.width !== result.width || size.height !== result.height) throw refused('JXL_DIMENSIONS', 'The output dimensions differ from the result record.', receipt);
     } else {
       if (result.format === 'jpeg') throw fail('JXL_UNSUPPORTED', 'JPEG verification requires a byte-restorable result.');
       const proofDetails = {...(result.transform && {transform: result.transform}), ...(result.readAs && {readAs: result.readAs})};
       let actual;
-      if (isRows(original)) actual = await rowResult(result.bytes, original, original, {fidelity: target.fidelity, format: result.format,
+      if (context) actual = await context.pixelResult(result.bytes,original,{fidelity:target.fidelity,format:result.format,
+        size:{width:result.width,height:result.height},outputDigest:receipt.outputDigest,details:proofDetails,options:settings},context);
+      else if (isRows(original)) actual = await rowResult(result.bytes, original, original, {fidelity: target.fidelity, format: result.format,
         size: {width: result.width, height: result.height}, outputDigest: receipt.outputDigest, details: proofDetails, options: settings});
       else {
         const reference = await referenceFromOriginal(original, settings, jpegReader());

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 import {requireDecode} from './decode-bits.mjs';
+import {journalTool} from './step-journal.mjs';
 import {ceilLog2, canonicalCodes, LOG_LENGTHS, LOG_CODES, reverseAlias, SCREEN_SPECIAL_DISTANCES, COEFF_NUM_NONZERO_CONTEXT, COEFF_FREQ_CONTEXT} from './decode-tables.mjs';
 
 const WINDOW = 1048576, MASK = WINDOW - 1;
-const HISTORY_POOL = [new Uint32Array(WINDOW)];
+const HISTORY_POOL = [];
 const LENGTH_ORDER = [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 const var8 = r => r.read(1) ? (n => (1 << n) + r.read(n))(r.read(3)) : 0;
 
@@ -220,7 +221,7 @@ export function readContextMap(r, contexts, maxContexts = 268435457) {
   return map;
 }
 
-export function readEntropy(r, contexts, options = {}) {
+function entropyHeader(r, contexts, options) {
   const maxContexts = options.maxContexts ?? 268435456;
   requireDecode(Number.isSafeInteger(maxContexts) && maxContexts >= 1 && Number.isInteger(contexts) && contexts >= 1 && contexts <= maxContexts,
     'Invalid JPEG XL entropy context count.', r);
@@ -238,23 +239,28 @@ export function readEntropy(r, contexts, options = {}) {
     if (lz && minimum < cfg.fastLimit) cfg.fastLimit = minimum;
     return cfg;
   });
-  let codes;
-  if (prefix) {
-    const sizes = configs.map(() => r.read(1) ? (n => 1 + (1 << n) + r.read(n))(r.read(4)) : 1);
-    codes = sizes.map(size => readPrefixCode(r, size));
-  } else codes = configs.map(() => readDistribution(r, logAlphabet));
-  return new EntropyStream(r, {lz, minimum, minLength, lengthConfig, map, contexts, configs, prefix, codes}, options);
+  const sizes = prefix ? configs.map(() => r.read(1) ? (n => 1 + (1 << n) + r.read(n))(r.read(4)) : 1) : null;
+  return {model: {lz, minimum, minLength, lengthConfig, map, contexts, configs, prefix}, sizes, logAlphabet, bit: r.bit};
+}
+const entropyCode = (r, head, i) => head.model.prefix ? readPrefixCode(r, head.sizes[i]) : readDistribution(r, head.logAlphabet);
+export function readEntropy(r, contexts, options = {}) {
+  const head = entropyHeader(r, contexts, options), codes = head.model.configs.map((_, i) => entropyCode(r, head, i));
+  return new EntropyStream(r, {...head.model, codes}, options);
+}
+export function* readEntropyModelSteps(r, contexts, options = {}) {
+  return yield* journalTool('readEntropyModel')(r, contexts, options, {header: entropyHeader, code: entropyCode});
 }
 
 export const entropyStream = (reader, model, options) => new EntropyStream(reader, model, options);
 class EntropyStream {
-  constructor(reader, model, {values = Number.MAX_SAFE_INTEGER, distanceMultiplier = 0} = {}) {
+  constructor(reader, model, {values = Number.MAX_SAFE_INTEGER, distanceMultiplier = 0, byteHistory = false} = {}) {
     requireDecode(Number.isSafeInteger(values) && values >= 0, 'Invalid JPEG XL entropy length.', reader);
     this.reader = reader;
     this.model = model;
     this.map = model.map;
     this.remaining = values;
     this.distanceMultiplier = distanceMultiplier;
+    this.byteHistory = byteHistory;
     this.state = null;
     this.position = 0;
     this.left = 0;
@@ -266,7 +272,7 @@ class EntropyStream {
   begin() {
     requireDecode(!this.finished, 'JPEG XL entropy stream is finished.', this.reader);
     if (!this.model.prefix && this.state === null) this.state = this.reader.read(32);
-    if (this.model.lz) this.history ??= HISTORY_POOL.pop() ?? new Uint32Array(WINDOW);
+    if (this.model.lz) this.history ??= this.byteHistory ? new Uint8Array(WINDOW) : HISTORY_POOL.pop() ?? new Uint32Array(WINDOW);
     return this;
   }
   token(cluster) {
@@ -303,7 +309,7 @@ class EntropyStream {
       this.position++;
       return token < cfg.splitToken ? token : readHybridUint(r, token, cfg);
     }
-    this.history ??= HISTORY_POOL.pop() ?? new Uint32Array(WINDOW);
+    this.history ??= this.byteHistory ? new Uint8Array(WINDOW) : HISTORY_POOL.pop() ?? new Uint32Array(WINDOW);
     let value;
     if (this.left) {
       this.left--;
@@ -323,7 +329,7 @@ class EntropyStream {
     requireDecode(this.left === 0 && (this.model.prefix || this.state === 0x130000),
       'Invalid JPEG XL entropy final state.', this.reader);
     this.finished = true;
-    if (this.history && this.history.length === WINDOW && HISTORY_POOL.length < 4) {
+    if (this.history instanceof Uint32Array && this.history.length === WINDOW && HISTORY_POOL.length < 4) {
       HISTORY_POOL.push(this.history);
       this.history = null;
     }

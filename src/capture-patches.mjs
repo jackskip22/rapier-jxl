@@ -110,19 +110,22 @@ function dictionary(w, patches, alpha) {
       if (alpha) { emit(5, g.mode ?? 1); if (g.mode === PEEL_MUL) emit(9, 0); }
     }
   }
-  const freqs = new Uint32Array(512), byContext = Array.from({length: 10}, () => []);
-  for (let i = 0; i < values.length; i += 2) byContext[values[i]].push(values[i + 1]);
-  const histograms = byContext.map(list => {
+  const freqs = new Uint32Array(512), lengths = new Uint32Array(10), byContext = Array.from({length: 10}, () => new Map());
+  for (let i = 0; i < values.length; i += 2) {
+    const ctx = values[i], value = values[i + 1], counts = byContext[ctx];
+    counts.set(value, (counts.get(value) ?? 0) + 1); lengths[ctx]++;
+  }
+  const histograms = byContext.map((counts, ctx) => {
     let best = null;
     for (let split = 0; split <= 8; split++) for (let msb = 0; msb <= 1 && msb <= split; msb++) for (let lsb = 0; msb + lsb <= split && lsb <= 1; lsb++) {
       const config = uintConfig(split, msb, lsb);
       let bits = 0, top = 0;
-      for (const v of list) { hybridToken(config, v, token); freqs[token[0]]++; bits += token[1]; top = Math.max(top, token[0]); }
-      for (let t = 0; t <= top; t++) if (freqs[t]) { bits -= freqs[t] * Math.log2(freqs[t] / list.length); freqs[t] = 0; }
+      for (const [v, n] of counts) { hybridToken(config, v, token); freqs[token[0]] += n; bits += token[1] * n; top = Math.max(top, token[0]); }
+      for (let t = 0; t <= top; t++) if (freqs[t]) { bits -= freqs[t] * Math.log2(freqs[t] / lengths[ctx]); freqs[t] = 0; }
       if (!best || bits < best.bits) best = {config, bits};
     }
     let top = 0;
-    for (const v of list) { hybridToken(best.config, v, token); freqs[token[0]]++; top = Math.max(top, token[0]); }
+    for (const [v, n] of counts) { hybridToken(best.config, v, token); freqs[token[0]] += n; top = Math.max(top, token[0]); }
     const code = buildCode(freqs.slice(0, top + 1));
     freqs.fill(0, 0, top + 1);
     return {config: best.config, code};

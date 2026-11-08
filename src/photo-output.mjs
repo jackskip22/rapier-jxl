@@ -69,6 +69,31 @@ function encoded(value) {
   ENC_KEYS[slot] = bits; ENC_VALS[slot] = res;
   return res;
 }
+const FAST_MARGIN = 2 ** -12, FAST_SHIFT = 13;
+let fast = null;
+function fastTable() {
+  single[0] = LOW; const low = word[0]; single[0] = 1;
+  const K = ((word[0] - low) >>> FAST_SHIFT) + 2, V = new Float64Array(K), R = new Float64Array(K), S = new Float64Array(K);
+  for (let k = 0; k < K; k++) {
+    word[0] = low + (k << FAST_SHIFT); const v = V[k] = single[0], x = Math.sqrt(v);
+    R[k] = ((((P4 * x + P3) * x + P2) * x + P1) * x + P0) / ((((Q4 * x + Q3) * x + Q2) * x + Q1) * x + Q0);
+  }
+  for (let k = 0; k + 1 < K; k++) S[k] = (R[k + 1] - R[k]) / (V[k + 1] - V[k]);
+  return fast = {low, V, R, S};
+}
+const byteOf = (s, d) => {
+  const v = Math.max(0, Math.min(255, f(f(s * 255) + d))), floor = Math.floor(v);
+  return v - floor === 0.5 ? floor + (floor & 1) : Math.round(v);
+};
+function encodedByte(v, bits, d, {low, V, R, S}) {
+  if (!(v > LOW) || v >= 1) return byteOf(encoded(v), d);
+  const k = (bits - low) >>> FAST_SHIFT, u = 255 * (R[k] + (v - V[k]) * S[k]) + d;
+  const byte = Math.round(Math.max(0, Math.min(255, u - FAST_MARGIN)));
+  return byte === Math.round(Math.max(0, Math.min(255, u + FAST_MARGIN))) ? byte : byteOf(encoded(v), d);
+}
+const bitsOf = p => p instanceof Float32Array ? new Uint32Array(p.buffer, p.byteOffset, p.length) : null;
+export const nativeTables = () => ({dither: DITHER, fast: fast ?? fastTable(), margin: FAST_MARGIN, shift: FAST_SHIFT, low: LOW});
+export const nativeByte = (v, d) => byteOf(encoded(f(v)), d);
 const nearestEven = value => {
   const floor = Math.floor(value);
   return value - floor === 0.5 ? floor + (floor & 1) : Math.round(value);
@@ -85,21 +110,14 @@ function output(planes, width, height, {x = 0, y = 0, alpha = null} = {}, linear
   const rgba = new Uint8Array(pixels * 4), ox = (x % 32 + 32) % 32, oy = (y % 32 + 32) % 32;
   const p0 = planes[0], p1 = planes[1], p2 = planes[2];
   if (dithered && linear) {
+    const table = fast ?? fastTable(), b0 = bitsOf(p0), b1 = bitsOf(p1), b2 = bitsOf(p2);
     for (let row = 0, at = 0; row < height; row++) {
       const dr0 = ((oy + row) & 31) * 32, dr1 = ((oy + row + 13) & 31) * 32, dr2 = ((oy + row + 26) & 31) * 32;
       for (let col = 0; col < width; col++, at++) {
-        const s0 = encoded(p0[at]), v0 = Math.max(0, Math.min(255, f(f(s0 * 255) + DITHER[dr0 + ((ox + col) & 31)])));
-        const fl0 = Math.floor(v0), i4 = at * 4;
-        rgba[i4] = v0 - fl0 === 0.5 ? fl0 + (fl0 & 1) : Math.round(v0);
-
-        const s1 = encoded(p1[at]), v1 = Math.max(0, Math.min(255, f(f(s1 * 255) + DITHER[dr1 + ((ox + col + 23) & 31)])));
-        const fl1 = Math.floor(v1);
-        rgba[i4 + 1] = v1 - fl1 === 0.5 ? fl1 + (fl1 & 1) : Math.round(v1);
-
-        const s2 = encoded(p2[at]), v2 = Math.max(0, Math.min(255, f(f(s2 * 255) + DITHER[dr2 + ((ox + col + 14) & 31)])));
-        const fl2 = Math.floor(v2);
-        rgba[i4 + 2] = v2 - fl2 === 0.5 ? fl2 + (fl2 & 1) : Math.round(v2);
-
+        const i4 = at * 4, v0 = f(p0[at]), v1 = f(p1[at]), v2 = f(p2[at]);
+        rgba[i4] = encodedByte(v0, b0 ? b0[at] : (single[0] = v0, word[0]), DITHER[dr0 + ((ox + col) & 31)], table);
+        rgba[i4 + 1] = encodedByte(v1, b1 ? b1[at] : (single[0] = v1, word[0]), DITHER[dr1 + ((ox + col + 23) & 31)], table);
+        rgba[i4 + 2] = encodedByte(v2, b2 ? b2[at] : (single[0] = v2, word[0]), DITHER[dr2 + ((ox + col + 14) & 31)], table);
         rgba[i4 + 3] = alpha ? alpha[at] : 255;
       }
     }

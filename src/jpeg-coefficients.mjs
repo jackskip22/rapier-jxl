@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MIT
 import {JPEG_LIMITS} from './limits.mjs';
-import {ceilLog2} from './bits.mjs';
+import {ceilLog2, complete} from './bits.mjs';
+import {unit, stage, journaling, journalTool, sliceBytes} from './step-journal.mjs';
 import {canonicalCodes} from './prefix.mjs';
 import {LOG_LENGTHS, LOG_CODES, reverseAlias} from './ans.mjs';
 import {ZIGZAG} from './jpeg-tables.mjs';
 import {zeroDensityContext} from './vardct.mjs';
 import {fault} from './admit.mjs';
 import {SCREEN_SPECIAL_DISTANCES as SPECIAL} from './screen-codes.mjs';
+import {JxlBits, readSize, requireJPEG, invalidJPEGData} from './jxl-size.mjs';
+export {JxlBits, readSize, requireJPEG};
 
-const invalidJPEGData = () => fault('JXL_RECONSTRUCTION', 'Invalid or unsupported JPEG reconstruction data.');
-export function requireJPEG(condition) { if (!condition) throw invalidJPEGData(); }
 
 const RAW_DENOMINATOR = 0x1004;
 const halfValue = h => (h >> 15 ? -1 : 1) * 2 ** (((h >> 10) & 31) - 15) * (1 + (h & 1023) / 1024);
@@ -17,34 +18,6 @@ function transcodedLf(half, q) {
   if ((half & 0x7c00) === 0 || (half & 0x7c00) === 0x7c00 || half >> 15) return false;
   const want = q * 16 / 255, unit = 2 ** (((half >> 10) & 31) - 25);
   return Math.abs(halfValue(half) - want) <= unit * 1.5;
-}
-export class JxlBits {
-  constructor(bytes) { this.bytes = bytes; this.bit = 0; }
-  read(n) {
-    const bit = this.bit, bytes = this.bytes;
-    requireJPEG(n >= 0 && n <= 32 && bit + n <= bytes.length * 8);
-    if (n <= 24) {
-      const at = bit >>> 3;
-      this.bit = bit + n;
-      return ((bytes[at] | bytes[at + 1] << 8 | bytes[at + 2] << 16 | bytes[at + 3] << 24) >>> (bit & 7)) & ((1 << n) - 1);
-    }
-    let value = 0, shift = 0;
-    while (n) {
-      const take = Math.min(n, 8 - (this.bit & 7));
-      value += ((bytes[this.bit >>> 3] >>> (this.bit & 7)) & ((1 << take) - 1)) * ((1 << shift) >>> 0);
-      this.bit += take; shift += take; n -= take;
-    }
-    return value;
-  }
-  peek(n) {
-    const bytes = this.bytes, at = this.bit >>> 3;
-    return ((bytes[at] | bytes[at + 1] << 8 | bytes[at + 2] << 16 | bytes[at + 3] << 24) >>> (this.bit & 7)) & ((1 << n) - 1);
-  }
-  skip(n) { requireJPEG(this.bit + n <= this.bytes.length * 8); this.bit += n; }
-  expect(n, value) { requireJPEG(this.read(n) === value); }
-  u32(choices) { const [bits, offset] = choices[this.read(2)]; return this.read(bits) + offset; }
-  align() { this.expect((-this.bit) & 7, 0); }
-  end() { this.align(); requireJPEG(this.bit === this.bytes.length * 8); }
 }
 const signed = n => n & 1 ? -(n + 1) / 2 : n / 2;
 const DENSITY = /* @__PURE__ */ Int32Array.from({length: 64 * 64}, (_, i) => zeroDensityContext(i >> 6, i & 63, 0));
@@ -254,10 +227,10 @@ function entropyReader(model, r, values, multiplier = 0) {
   };
   const plain = lz || history ? null : prefix ? ctx => {
     requireJPEG(ctx >= 0 && ctx < contexts && remaining > 0); remaining--;
-    const h = map[ctx], bit = r.bit, bytes = r.bytes, at = bit >>> 3;
+    const h = map[ctx], bit = r.bit, bytes = r.window(bit >>> 3), at = (bit >>> 3) - r.offset;
     const entry = lookup(tables[h], (bytes[at] | bytes[at + 1] << 8 | bytes[at + 2] << 16 | bytes[at + 3] << 24) >>> (bit & 7), widths[h]);
     if (entry < 0) throw invalidJPEGData();
-    requireJPEG(bit + (entry & 31) <= bytes.length * 8); r.bit = bit + (entry & 31);
+    requireJPEG(bit + (entry & 31) <= r.bytes.length * 8); r.bit = bit + (entry & 31);
     const t = entry >> 5;
     return t < direct[h] ? t : hybrid(r, t, configs[h]);
   } : ctx => {
@@ -285,29 +258,52 @@ function entropyReader(model, r, values, multiplier = 0) {
       return remember(t < direct[h] ? t : hybrid(r, t, configs[h]));
     }),
     finish() { requireJPEG(!left && (prefix || state === 0x130000 || values === 0)); state = null; },
+    checkpoint() { return {remaining, state, left, position, distance, history: history?.slice(0, Math.min(position, history.length)) ?? null}; },
+    resume(saved) {
+      ({remaining, state, left, position, distance} = saved);
+      if (history) { history.fill(0); history.set(saved.history); }
+    },
   };
 }
 function entropy(r, contexts, options) { return entropyReader(entropyModel(r, contexts, options), r, options.values, options.multiplier); }
 
 const iccKind1 = b => (b >= 97 && b <= 122) || (b >= 65 && b <= 90) ? 0 : (b >= 48 && b <= 57) || b === 46 || b === 44 ? 1 : b === 0 ? 2 : b === 1 ? 3 : b < 16 ? 4 : b === 255 ? 6 : b > 240 ? 5 : 7;
 const iccKind2 = b => (b >= 97 && b <= 122) || (b >= 65 && b <= 90) ? 0 : (b >= 48 && b <= 57) || b === 46 || b === 44 ? 1 : b < 16 ? 2 : b > 240 ? 3 : 4;
-export function readEncodedICC(r) {
+function iccEntropyHeader(r) {
   const start = r.bit, form = r.read(2);
   let size = form === 1 ? r.read(4) + 1 : form === 2 ? r.read(8) + 17 : form === 3 ? r.read(12) : 0;
   if (form === 3) for (let shift = 12; r.read(1); shift += 8) {
     requireJPEG(shift <= 28); size += r.read(8) * ((1 << shift) >>> 0);
   }
   requireJPEG(size >= 132 && size <= 0xffffffff + 16 && size <= Math.max(65536, (r.bytes.length * 8 - start) * 32));
-  const code = entropy(r, 41, {history: true, values: size}), bytes = new Uint8Array(size);
-  let previous = 0, older = 0;
-  for (let i = 0; i < size; i++) {
-    if (i && i % 65536 === 0) requireJPEG(i <= (r.bit - start) * 32);
-    const value = code.read(i <= 128 ? 0 : 1 + iccKind1(previous) + iccKind2(older) * 8);
-    requireJPEG(value < 256); bytes[i] = value; older = previous; previous = value;
-  }
-  code.finish(); return bytes;
+  return {start, size, model: entropyModel(r, 41, {history: true}), bit: r.bit};
 }
-export function skipICC(r) { readEncodedICC(r); }
+function iccEntropyPart(r, code, header, from, previous, older) {
+  const bytes = new Uint8Array(Math.min(65536, header.size - from));
+  for (let at = 0, i = from; at < bytes.length; at++, i++) {
+    if (i && i % 65536 === 0) requireJPEG(i <= (r.bit - header.start) * 32);
+    const value = code.read(i <= 128 ? 0 : 1 + iccKind1(previous) + iccKind2(older) * 8);
+    requireJPEG(value < 256); bytes[at] = value; older = previous; previous = value;
+  }
+  return {bytes, previous, older, bit: r.bit};
+}
+function readICC(r, keep) {
+  const header = iccEntropyHeader(r), code = entropyReader(header.model, r, header.size);
+  const out = keep ? new Uint8Array(header.size) : null; let previous = 0, older = 0;
+  for (let from = 0; from < header.size; from += 65536) {
+    const part = iccEntropyPart(r, code, header, from, previous, older); previous = part.previous; older = part.older;
+    out?.set(part.bytes, from);
+  }
+  code.finish(); return out;
+}
+export const readEncodedICC = r => readICC(r, true);
+export function skipICC(r) { readICC(r, false); }
+export function* readEncodedICCSteps(r) {
+  if (!journaling()) return readEncodedICC(r);
+  const result = yield* journalTool('jpegICCEntropy')(r, {header: iccEntropyHeader, reader: entropyReader, part: iccEntropyPart});
+  r.bit = result.bit; return result.bytes;
+}
+
 const WP_DIVISORS = /* @__PURE__ */ Int32Array.from({length: 64}, (_, i) => Math.floor(16777216 / (i + 1)));
 const wpWeight = (sum, most) => { const shift = Math.max(0, 26 - Math.clz32(sum + 1)); return 4 + ((most * WP_DIVISORS[sum >> shift]) >> shift); };
 function weightedReader(width) {
@@ -449,13 +445,12 @@ export function modular(r, shapes, shared, stream, work) {
   code.finish(); return planes;
 }
 
-const SIZE = [[9, 1], [13, 1], [18, 1], [30, 1]], RATIOS = [null, [1, 1], [12, 10], [4, 3], [3, 2], [16, 9], [5, 4], [2, 1]];
-export function readSize(r) {
-  r.expect(16, 0x0aff);
-  const small = !!r.read(1), height = small ? (r.read(5) + 1) * 8 : r.u32(SIZE), ratio = r.read(3);
-  return {height, width: ratio ? Math.floor(height * RATIOS[ratio][0] / RATIOS[ratio][1]) : small ? (r.read(5) + 1) * 8 : r.u32(SIZE)};
+export const readJPEGCoefficients = (bytes, options) => complete(readJPEGCoefficientsSteps(bytes, options));
+export function* readJPEGCoefficientsSteps(bytes, {reconstruction = false, maxPixels = JPEG_LIMITS.pixels, rows = false} = {}) {
+  const header = yield* stage('coefficient-header', () => coefficientHeaderSteps(bytes, maxPixels));
+  return coefficientReader(header, reconstruction, rows);
 }
-export function readJPEGCoefficients(bytes, {reconstruction = false, maxPixels = JPEG_LIMITS.pixels, rows = false} = {}) {
+function coefficientPreamble(bytes, maxPixels) {
   requireJPEG(bytes instanceof Uint8Array && bytes.length > 0);
   const r = new JxlBits(bytes), {width, height} = readSize(r);
   requireJPEG(width <= JPEG_LIMITS.edge && height <= JPEG_LIMITS.edge && width * height <= JPEG_LIMITS.pixels);
@@ -474,7 +469,11 @@ export function readJPEGCoefficients(bytes, {reconstruction = false, maxPixels =
     }
   }
   if (extra) r.expect(1, 1);
-  r.expect(3, 4); const profile = icc ? readEncodedICC(r) : null; r.align(); r.expect(4, 0); r.expect(2, 2); r.expect(8, 111);
+  r.expect(3, 4); return {width, height, orientation, grey, icc, bit: r.bit};
+}
+function coefficientLayout(bytes, head, profile) {
+  const {width, height, orientation, grey} = head, r = new JxlBits(bytes); r.bit = head.bit;
+  r.align(); r.expect(4, 0); r.expect(2, 2); r.expect(8, 111);
   const ycbcr = !!r.read(1), sampling = ycbcr ? [r.read(2), r.read(2), r.read(2)] : [0, 0, 0];
   const hs = sampling.map(v => v === 1 || v === 2 ? 1 : 0), vs = sampling.map(v => v === 1 || v === 3 ? 1 : 0);
   const mh = Math.max(...hs), mv = Math.max(...vs), hshift = hs.map(v => mh - v), vshift = vs.map(v => mv - v);
@@ -483,85 +482,124 @@ export function readJPEGCoefficients(bytes, {reconstruction = false, maxPixels =
   const groupsX = Math.ceil(width / 256), groups = groupsX * Math.ceil(height / 256), dcX = Math.ceil(blocksW / 256), dcs = dcX * Math.ceil(blocksH / 256);
   const sizes = Array.from({length: groups === 1 ? 1 : 2 + groups + dcs}, () => r.u32([[10, 0], [14, 1024], [22, 17408], [30, 4211712]]));
   r.align(); let at = r.bit / 8;
-  const sections = sizes.map(n => { const part = bytes.subarray(at, at += n); requireJPEG(part.length === n); return new JxlBits(part); });
+  const sections = sizes.map(n => { const end = at + n; requireJPEG(end <= bytes.length); const part = sliceBytes(bytes, at, end); at = end; return part; });
   requireJPEG(at === bytes.length);
+  return {width, height, orientation, grey, ycbcr, profile, hshift, vshift, hs, vs, blocksW, blocksH, groupsX, groups, dcX, dcs, sections};
+}
+
+function* coefficientHeaderSteps(bytes, maxPixels) {
+  const head = yield* unit('coefficient-preamble', () => coefficientPreamble(bytes, maxPixels));
+  const profileReader = new JxlBits(bytes); profileReader.bit = head.bit;
+  const profile = head.icc ? yield* readEncodedICCSteps(profileReader) : null;
+  const layout = yield* unit('coefficient-layout', () => coefficientLayout(bytes, {...head, bit: profileReader.bit}, profile));
+  const {blocksW, blocksH, hshift, vshift, hs, vs, groups, dcs, dcX} = layout;
+  const sections = layout.sections.map(bytes => new JxlBits(bytes));
   const section = i => sections[groups === 1 ? 0 : i], end = reader => { if (groups !== 1) reader.end(); };
   const tilesW = (blocksW + 7) >> 3, tilesH = (blocksH + 7) >> 3, toX = new Int32Array(tilesW * tilesH), toB = new Int32Array(tilesW * tilesH);
-  const planes = [0, 1, 2].map(c => ({h: 1 << hs[c], v: 1 << vs[c], stride: blocksW >> hshift[c], rows: blocksH >> vshift[c], dc: new Int32Array((blocksW >> hshift[c]) * (blocksH >> vshift[c])), coeffs: rows ? null : new Int16Array((blocksW >> hshift[c]) * (blocksH >> vshift[c]) * 64)}));
-  const dc = section(0); dc.expect(1, 0); const lfDequant = [dc.read(16), dc.read(16), dc.read(16)];
-  requireJPEG(dc.u32([[11, 1], [11, 2049], [12, 4097], [16, 8193]]) === 65536);
-  requireJPEG(dc.u32([[0, 16], [5, 1], [8, 1], [16, 1]]) === 1);
-  const dcDist = [[4, 0], [8, 16], [16, 272], [32, 65808]], qfDist = [[2, 0], [3, 4], [5, 12], [8, 44]];
-  const defaultMap = Uint8Array.of(0, 1, 2, 2, 3, 3, 4, 5, 6, 6, 6, 6, 6, 7, 8, 9, 9, 10, 11, 12, 13, 14, 14, 14, 14, 14, 7, 8, 9, 9, 10, 11, 12, 13, 14, 14, 14, 14, 14);
-  let dcThresholds, qfThresholds, numDc, map, contexts;
-  if (dc.read(1)) { dcThresholds = [[], [], []]; qfThresholds = []; numDc = 1; map = defaultMap; contexts = 15; }
-  else {
-    dcThresholds = [0, 1, 2].map(() => Array.from({length: dc.read(4)}, () => signed(dc.u32(dcDist))));
-    numDc = dcThresholds.reduce((n, list) => n * (list.length + 1), 1);
-    qfThresholds = Array.from({length: dc.read(4)}, () => dc.u32(qfDist) + 1);
-    requireJPEG(numDc * (qfThresholds.length + 1) <= 64);
-    map = contextMap(dc, 3 * 13 * numDc * (qfThresholds.length + 1)); contexts = Math.max(...map) + 1;
-    requireJPEG(contexts <= 16);
-  }
-  if (!dc.read(1)) {
-    requireJPEG(dc.u32([[0, 84], [0, 256], [8, 2], [16, 258]]) === 84);
-    const zero = half => (half & 0x7fff) === 0;
-    requireJPEG(zero(dc.read(16)) && zero(dc.read(16)) && dc.read(8) === 128 && dc.read(8) === 128);
-  }
-  let shared = null;
+  const planes = [0, 1, 2].map(c => ({h: 1 << hs[c], v: 1 << vs[c], stride: blocksW >> hshift[c], rows: blocksH >> vshift[c], dc: new Int32Array((blocksW >> hshift[c]) * (blocksH >> vshift[c])), coeffs: null}));
+  const dc = section(0);
+  const global = yield* unit('coefficient-global', () => {
+    dc.expect(1, 0); const lfDequant = [dc.read(16), dc.read(16), dc.read(16)];
+    requireJPEG(dc.u32([[11, 1], [11, 2049], [12, 4097], [16, 8193]]) === 65536);
+    requireJPEG(dc.u32([[0, 16], [5, 1], [8, 1], [16, 1]]) === 1);
+    const dcDist = [[4, 0], [8, 16], [16, 272], [32, 65808]], qfDist = [[2, 0], [3, 4], [5, 12], [8, 44]];
+    const defaultMap = Uint8Array.of(0, 1, 2, 2, 3, 3, 4, 5, 6, 6, 6, 6, 6, 7, 8, 9, 9, 10, 11, 12, 13, 14, 14, 14, 14, 14, 7, 8, 9, 9, 10, 11, 12, 13, 14, 14, 14, 14, 14);
+    let dcThresholds, qfThresholds, numDc, map, contexts;
+    if (dc.read(1)) { dcThresholds = [[], [], []]; qfThresholds = []; numDc = 1; map = defaultMap; contexts = 15; }
+    else {
+      dcThresholds = [0, 1, 2].map(() => Array.from({length: dc.read(4)}, () => signed(dc.u32(dcDist))));
+      numDc = dcThresholds.reduce((n, list) => n * (list.length + 1), 1);
+      qfThresholds = Array.from({length: dc.read(4)}, () => dc.u32(qfDist) + 1);
+      requireJPEG(numDc * (qfThresholds.length + 1) <= 64);
+      map = contextMap(dc, 3 * 13 * numDc * (qfThresholds.length + 1)); contexts = Math.max(...map) + 1;
+      requireJPEG(contexts <= 16);
+    }
+    if (!dc.read(1)) {
+      requireJPEG(dc.u32([[0, 84], [0, 256], [8, 2], [16, 258]]) === 84);
+      const zero = half => (half & 0x7fff) === 0;
+      requireJPEG(zero(dc.read(16)) && zero(dc.read(16)) && dc.read(8) === 128 && dc.read(8) === 128);
+    }
+    let shared = null;
+    if (dc.read(1)) { const tree = readMaTree(dc, 256); shared = {tree, model: entropyModel(dc, tree.leaves.length)}; }
+    end(dc);
+    return {lfDequant, dcThresholds, qfThresholds, numDc, map, contexts, shared, bit: dc.bit};
+  });
+  const {lfDequant, dcThresholds, qfThresholds, numDc, map, contexts, shared} = global;
+  dc.bit = global.bit;
   const work = {left: 536870912};
-  if (dc.read(1)) { const tree = readMaTree(dc, 256); shared = {tree, model: entropyModel(dc, tree.leaves.length)}; }
-  end(dc);
   for (let g = 0; g < dcs; g++) {
     const reader = section(1 + g), x0 = g % dcX * 256, y0 = Math.floor(g / dcX) * 256, rw = Math.min(256, blocksW - x0), rh = Math.min(256, blocksH - y0);
-    reader.expect(2, 0);
-    const values = modular(reader, [1, 0, 2].map(c => [rw >> hshift[c], rh >> vshift[c]]), shared, 1 + g, work);
+    const group = yield* unit('coefficient-dc', () => {
+      reader.expect(2, 0);
+      const values = modular(reader, [1, 0, 2].map(c => [rw >> hshift[c], rh >> vshift[c]]), shared, 1 + g, work);
+      const n = rw * rh; reader.expect(ceilLog2(n), n - 1);
+      const cw = (rw + 7) >> 3, ch = (rh + 7) >> 3;
+      const [ytox, ytob, blocks] = modular(reader, [[cw, ch], [cw, ch], [n, 2], [rw, rh]], shared, 1 + 2 * dcs + g, work);
+      requireJPEG(blocks.subarray(0, n).every(strategy => strategy === 0) && blocks.subarray(n, 2 * n).every(field => field === 0));
+      end(reader);
+      return {values, ytox, ytob, bit: reader.bit, left: work.left};
+    });
+    reader.bit = group.bit; work.left = group.left;
     for (const [i, c] of [1, 0, 2].entries()) {
       const p = planes[c], w = rw >> hshift[c], h = rh >> vshift[c];
-      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) p.dc[(y + (y0 >> vshift[c])) * p.stride + x + (x0 >> hshift[c])] = values[i][y * w + x];
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) p.dc[(y + (y0 >> vshift[c])) * p.stride + x + (x0 >> hshift[c])] = group.values[i][y * w + x];
     }
-    const n = rw * rh; reader.expect(ceilLog2(n), n - 1);
     const cw = (rw + 7) >> 3, ch = (rh + 7) >> 3;
-    const [ytox, ytob, blocks] = modular(reader, [[cw, ch], [cw, ch], [n, 2], [rw, rh]], shared, 1 + 2 * dcs + g, work);
-    requireJPEG(blocks.subarray(0, n).every(strategy => strategy === 0) && blocks.subarray(n, 2 * n).every(field => field === 0));
     for (let ty = 0; ty < ch; ty++) for (let tx = 0; tx < cw; tx++) {
       const at = ((y0 >> 3) + ty) * tilesW + (x0 >> 3) + tx;
-      toX[at] = ytox[ty * cw + tx]; toB[at] = ytob[ty * cw + tx];
+      toX[at] = group.ytox[ty * cw + tx]; toB[at] = group.ytob[ty * cw + tx];
     }
-    end(reader);
   }
-  const ac = section(1 + dcs); ac.expect(1, 0); ac.expect(3, 7); ac.expect(16, RAW_DENOMINATOR);
-  const matrices = modular(ac, [[8, 8], [8, 8], [8, 8]], shared, 1 + 3 * dcs, work);
-  for (let c = 0; c < 3; c++) {
-    const p = planes[c]; p.quant = Int32Array.from({length: 64}, (_, k) => matrices[c][(k % 8) * 8 + (k >> 3)]);
-    requireJPEG(p.quant.every(q => q > 0 && q < 65536));
-    requireJPEG(transcodedLf(lfDequant[c], p.quant[0]));
-  }
-  ac.expect(32, 0); ac.expect(16, 0);
-  if (groups > 1) ac.expect(ceilLog2(groups), 0);
-  const natural = ZIGZAG.map(k => (k % 8) * 8 + (k >> 3)), orders = [natural, natural, natural];
-  const orderBits = ac.u32([[0, 95], [0, 19], [0, 0], [13, 0]]);
-  requireJPEG(orderBits === 0 || orderBits === 1);
-  const orderContext = value => Math.min(32 - Math.clz32(value), 7);
-  if (orderBits) {
-    const code = entropy(ac, 8, {values: 3 * 64});
+  const ac = section(1 + dcs);
+  const high = yield* unit('coefficient-ac', () => {
+    ac.expect(1, 0); ac.expect(3, 7); ac.expect(16, RAW_DENOMINATOR);
+    const matrices = modular(ac, [[8, 8], [8, 8], [8, 8]], shared, 1 + 3 * dcs, work), quant = [];
     for (let c = 0; c < 3; c++) {
-      const length = code.read(orderContext(64)) + 1, available = natural.slice(1), order = [0]; requireJPEG(length <= 64);
-      let last = 0;
-      for (let k = 1; k < length; k++) {
-        const index = code.read(orderContext(last)); requireJPEG(index < available.length);
-        last = index; order.push(available.splice(index, 1)[0]);
-      }
-      orders[c] = order.concat(available);
+      const values = quant[c] = Int32Array.from({length: 64}, (_, k) => matrices[c][(k % 8) * 8 + (k >> 3)]);
+      requireJPEG(values.every(q => q > 0 && q < 65536));
+      requireJPEG(transcodedLf(lfDequant[c], values[0]));
     }
-    code.finish();
-  }
-  const code = entropy(ac, contexts * 495, {values: planes.reduce((n, plane) => n + plane.stride * plane.rows * 64, 0)}); end(ac);
+    ac.expect(32, 0); ac.expect(16, 0);
+    if (groups > 1) ac.expect(ceilLog2(groups), 0);
+    const natural = ZIGZAG.map(k => (k % 8) * 8 + (k >> 3)), orders = [natural, natural, natural];
+    const orderBits = ac.u32([[0, 95], [0, 19], [0, 0], [13, 0]]);
+    requireJPEG(orderBits === 0 || orderBits === 1);
+    const orderContext = value => Math.min(32 - Math.clz32(value), 7);
+    if (orderBits) {
+      const code = entropy(ac, 8, {values: 3 * 64});
+      for (let c = 0; c < 3; c++) {
+        const length = code.read(orderContext(64)) + 1, available = natural.slice(1), order = [0]; requireJPEG(length <= 64);
+        let last = 0;
+        for (let k = 1; k < length; k++) {
+          const index = code.read(orderContext(last)); requireJPEG(index < available.length);
+          last = index; order.push(available.splice(index, 1)[0]);
+        }
+        orders[c] = order.concat(available);
+      }
+      code.finish();
+    }
+    const model = entropyModel(ac, contexts * 495); end(ac);
+    return {model, quant, orders, bit: ac.bit};
+  });
+  planes.forEach((plane, c) => { plane.quant = high.quant[c]; });
+  return {...layout, planes, toX, toB, dcThresholds, qfThresholds, numDc, map, contexts,
+    orders: high.orders, model: high.model, acBit: high.bit};
+}
+
+function coefficientReader(header, reconstruction, rows) {
+  const {width, height, orientation, grey, ycbcr, profile, blocksW, blocksH, hshift, vshift, groupsX, groups, dcs,
+    toX, toB, dcThresholds, qfThresholds, numDc, map, contexts, orders, model, acBit} = header;
+  const tilesW = (blocksW + 7) >> 3, planes = header.planes.map(p => ({...p, coeffs: rows ? null : new Int16Array(p.stride * p.rows * 64)}));
+  const sections = header.sections.map(bytes => new JxlBits(bytes)), section = i => sections[groups === 1 ? 0 : i];
+  const ac = section(1 + dcs), values = planes.reduce((n, plane) => n + plane.stride * plane.rows * 64, 0);
+  ac.bit = acBit;
+  let code = entropyReader(model, ac, values);
   const zigzag = orders.map(order => Int32Array.from(order)), zeroBase = contexts * 37;
   const qfRow = (qfThresholds.length + 1) * numDc * 13, flat = dcThresholds.every(list => !list.length);
   const bucketOf = (value, list) => { let n = 0; for (const t of list) n += value > t; return n; };
   const sample = (c, x, y) => { const p = planes[c]; return p.dc[(y >> vshift[c]) * p.stride + (x >> hshift[c])]; };
-  const nonzero = [0, 1, 2].map(() => new Uint8Array(1024)), read = code.read;
+  const nonzero = [0, 1, 2].map(() => new Uint8Array(1024));
+  let read = code.read;
   let target = planes.map(p => p.coeffs), row0 = [0, 0, 0];
   const groupRow = gy => {
     for (let g = gy * groupsX; g < Math.min(groups, (gy + 1) * groupsX); g++) {
@@ -630,20 +668,30 @@ export function readJPEGCoefficients(bytes, {reconstruction = false, maxPixels =
   const components = grey ? [planes[1]] : ycbcr ? [planes[1], planes[0], planes[2]] : planes;
   if (rows) {
     const band = target = planes.map((p, c) => new Int16Array(p.stride * Math.min(p.rows, 32 >> vshift[c]) * 64)), at = components.map(p => planes.indexOf(p));
+    let next = 0;
+    const reset = () => { ac.bit = acBit; code = entropyReader(model, ac, values); read = code.read; next = 0; };
+    const fill = gy => {
+      for (const b of band) b.fill(0);
+      target = band; row0 = vshift.map(v => gy * 32 >> v);
+      groupRow(gy); finish(gy); next = gy + 1;
+      for (let i = 0; i < components.length; i++) { components[i].coeffs = band[at[i]]; components[i].row0 = row0[at[i]]; }
+      return {components: at.map(c => ({coeffs: band[c], row0: row0[c]}))};
+    };
+    const take = gy => {
+      if (gy < next) reset();
+      while (next < gy) fill(next);
+      return fill(gy);
+    };
     const whole = () => {
-      target = planes.map(p => p.coeffs = new Int16Array(p.stride * p.rows * 64)); row0 = [0, 0, 0];
+      reset(); target = planes.map(p => p.coeffs = new Int16Array(p.stride * p.rows * 64)); row0 = [0, 0, 0];
       for (let gy = 0; gy < groupRows; gy++) { groupRow(gy); finish(gy); }
-      for (const p of planes) delete p.dc;
+      for (const p of planes) { delete p.dc; delete p.row0; }
       return {width, height, orientation, ycbcr, icc: profile, components};
     };
-    return {width, height, orientation, ycbcr, icc: profile, components, whole, *rows() {
-      for (let gy = 0; gy < groupRows; gy++) {
-        for (const b of band) b.fill(0);
-        row0 = vshift.map(v => gy * 32 >> v);
-        groupRow(gy); finish(gy);
-        yield {components: at.map(c => ({coeffs: band[c], row0: row0[c]}))};
-      }
-    }};
+    return {width, height, orientation, ycbcr, icc: profile, components, whole, band: take, reset,
+      checkpoint: () => ({next, code: code.checkpoint()}),
+      resume(saved) { next = saved.next; code.resume(saved.code); },
+      *rows() { reset(); for (let gy = 0; gy < groupRows; gy++) yield take(gy); }};
   }
   for (let gy = 0; gy < groupRows; gy++) { groupRow(gy); finish(gy); }
   for (const p of planes) delete p.dc;

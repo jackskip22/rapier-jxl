@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {createCodec as createClient, helperReservation} from './client.mjs';
+import {previewReplies} from './preview-relay.mjs';
 import {encoder} from './session.mjs';
 import {fail} from './primitives.mjs';
 
@@ -13,5 +14,5 @@ export function createBoundCodec(config = {}, spec) {
     throw fail('JXL_OPTIONS', 'captureAdmission must be a function.');
   const helpers = config.helpers === undefined ? undefined : helperReservation(config.helpers);
   if (helpers?.count && spec.helpers?.url) spec = {...spec, url: spec.helpers.url, worker: spec.helpers.worker};
-  return encoder(createClient(config.helpers === undefined ? config : {...config, helpers}, spec), config, spec.operations, spec);
+  return encoder(createClient(config.helpers === undefined ? config : {...config, helpers}, spec, previewReplies), config, spec.operations, spec);
 }

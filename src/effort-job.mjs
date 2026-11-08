@@ -5,7 +5,7 @@ import {writeImageHeader} from './icc-write.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
 import {AVERAGE_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, split, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {codeChannel} from './modular-channel.mjs';
-import {inspectPixels, losslessSteps, planeFill, nativeSteps, iccShape} from './lossless.mjs';
+import {inspectPixels, inspectPixelsSteps, losslessSteps, planeFill, nativeSteps, iccShape, shapeFloors} from './lossless.mjs';
 import {lossySteps} from './lossy.mjs';
 import {photoSteps, admitPhotoFilter, screenImageSteps, screenRouted} from './photo-job.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
@@ -15,8 +15,11 @@ import {fault, admitOptions, admitPixels} from './admit.mjs';
 import {admitSampleFormat} from './admit-samples.mjs';
 import {screenLike, flatSamples, CAPTURE_FLAT} from './screen.mjs';
 import {screenPhotoRegions} from './screen-photo-regions.mjs';
-import {SAMPLE_RUNGS, sampledSteps, sampleTransformRanking} from './sampled.mjs';
+import {encodeCaptureSteps, captureBusy, CAPTURE_TOOLS, CAPTURE_LEVEL, CAPTURE_FLOOR, LEVELS} from './capture-codec.mjs';
+import {CAPTURE_TOOLS_COMPLETE} from './capture-ans.mjs';
+import {transformRanking} from './capture-trees.mjs';
 import {FAST_EFFORT} from './effort-level.mjs';
+import {stage, unit, journaling, journalRequest, journalFact, JOIN} from './step-journal.mjs';
 
 export function effortJob(data, width, height, options, gpu = false, limits, search, writer = coefficientAnsSteps, deep = null, hdr = null) {
   const {quality, colorSpace} = admitOptions(options), effort = options?.effort === undefined ? FAST_EFFORT : options.effort;
@@ -33,7 +36,7 @@ export function effortJob(data, width, height, options, gpu = false, limits, sea
 }
 
 function* effortSteps(data, width, height, quality, colorSpace, effort, photo = true, filter, gpu = false, search, writer = coefficientAnsSteps, deep = null) {
-  const shape = inspectPixels(data, width, height);
+  const shape = yield* inspectPixelsSteps(data, width, height);
   if (quality < 100) {
     if (!shape.palette) {
       const lossy = photo ? photoSteps(data, width, height, quality, colorSpace, effort,
@@ -77,30 +80,36 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, photo = 
       ? screenFirst(data, width, height, colorSpace, steps) : capturedFloor(data, width, height, colorSpace, yield* steps, false, true));
   }
   const analysis = {};
-  const stream = complete(losslessSteps(data, width, height, {shape, colorSpace, fast: true}));
+  const stream = journaling() ? yield* stage('core-stream', () => unitsOnly(losslessSteps(data, width, height, {shape, colorSpace, fast: true, units: true})))
+    : complete(losslessSteps(data, width, height, {shape, colorSpace, fast: true}));
   const screen = losslessScreenCandidate(data, width, height, shape, effort);
-  const screenish = typeof colorSpace !== 'object' && (screenLike(data, width, height) || flatSamples(data, width, height) >= CAPTURE_FLAT);
+  const screenish = typeof colorSpace !== 'object' && (journaling() ? yield* unit('screenish', () => screenLike(data, width, height) || flatSamples(data, width, height) >= CAPTURE_FLAT)
+    : screenLike(data, width, height) || flatSamples(data, width, height) >= CAPTURE_FLAT);
   const captured = screenish || typeof colorSpace !== 'object' && shape.palette
     ? yield {capture: {data, width, height, colorSpace, effort: Math.max(effort, 3), tools: deep?.capture}} : null;
-  if (screenish && captured instanceof Uint8Array && captured.length <= PROBE * stream.length) return captured;
+  if (screenish && captured instanceof Uint8Array && captured.length <= PROBE * stream.length) {
+    if (effort < 6) return captured;
+    try {
+      const bytes = yield* losslessCapture(data, width, height, colorSpace, losslessLevel(effort, ...(yield* rankingOf(data, width, height, shape, colorSpace))));
+      if (bytes && bytes.length < captured.length) return bytes;
+    } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
+    return captured;
+  }
   const fast = captured instanceof Uint8Array && captured.length < stream.length ? captured : stream;
-  const core = losslessSteps(data, width, height, {shape, colorSpace, analysis});
+  const alone = !screen && (effort < 4 || !shape.palette);
+  const core = alone ? (function* () { return fast; })() : losslessSteps(data, width, height, {shape, colorSpace, analysis});
   let step, reply, hurried = false;
-  try { while (!(step = core.next(reply)).done) { reply = yield scaled(step.value, done => done / 2); hurried ||= !!reply; } } finally { if (!step?.done) core.return?.(); }
-  let best = step.value.length < fast.length ? step.value : fast;
+  try { while (!(step = core.next(reply)).done) { reply = yield scaled(step.value, done => done / 2); hurried ||= !!reply && !journalRequest(step.value); } } finally { if (!step?.done) core.return?.(); }
+  let best = step.value !== fast && step.value.length < fast.length ? step.value : fast;
   if (hurried) return best;
   const direct = shape.palette ? {...shape, palette: null} : shape;
   if (effort >= 4 || screen) {
-    const searches = (effort >= 4 || screen) ? [() => searchSteps(data, width, height, direct, colorSpace, 3, analysis, screen ? best.length : Infinity)] : [];
+    const searches = alone ? [] : [() => searchSteps(data, width, height, direct, colorSpace, 3, analysis, screen ? best.length : Infinity)];
     if (effort >= 4 && shape.palette) searches.push(() => deep.localSteps(data, width, height, shape, colorSpace, 4, true, best.length));
     if (effort >= 6 && shape.palette) searches.push(() => deep.localSteps(data, width, height, shape, colorSpace, 6, true, best.length));
-    if (effort >= 4) searches.push(() => deep.rctSearchSteps(data, width, height, shape, colorSpace));
-    const rungs = learnedRungs(effort, data, width, height, shape);
-    const budgets = rungs.map(() => ({reached: false})), key = rung => JSON.stringify({...rung, leaves: 0});
-    rungs.forEach((rung, i) => {
-      const narrower = rungs.findIndex((other, j) => j < i && other.leaves < rung.leaves && key(other) === key(rung));
-      searches.push(() => narrower >= 0 && !budgets[narrower].reached ? none() : sampledSteps(data, width, height, shape, colorSpace, {...rung, budget: budgets[i]}, best.length));
-    });
+    if (effort >= 4 && !alone) searches.push(() => deep.rctSearchSteps(data, width, height, shape, colorSpace));
+    const level = losslessLevel(effort, ...(yield* rankingOf(data, width, height, shape, colorSpace)));
+    searches.unshift(() => losslessCapture(data, width, height, colorSpace, level));
     const older = deep?.screenSteps;
     if (older && screen) searches.unshift(() => older(data, width, height, shape, colorSpace, {fastFloor: effort === 3 ? best.length : 0, effort, deep: deep.screen}));
     if (older && effort >= 4 && !screen && losslessScreenCandidate(data, width, height, shape, 3))
@@ -110,7 +119,7 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, photo = 
       try {
         const search = searches[i]();
         let step, reply, hurried = false;
-        try { while (!(step = search.next(reply)).done) hurried = !!(reply = yield scaled(step.value, done => 0.5 + (i + done) / (2 * count))); } finally { if (!step?.done) search.return?.(); }
+        try { while (!(step = search.next(reply)).done) hurried = !!(reply = yield scaled(step.value, done => 0.5 + (i + done) / (2 * count))) && !journalRequest(step.value); } finally { if (!step?.done) search.return?.(); }
         if (step.value && step.value.length < best.length) best = step.value;
         if (hurried) return best;
       } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
@@ -118,8 +127,7 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, photo = 
     return best;
   }
   try {
-    const rung = learnedRungs(3, data, width, height, shape)[0];
-    const bytes = yield* part(sampledSteps(data, width, height, shape, colorSpace, {...rung, budget: {reached: false}}, best.length), 1, 2);
+    const bytes = yield* part(losslessCapture(data, width, height, colorSpace, losslessLevel(3, ...(yield* rankingOf(data, width, height, shape, colorSpace)))), 1, 2);
     if (bytes && bytes.length < best.length) best = bytes;
   } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
   return best;
@@ -129,7 +137,6 @@ export function losslessScreenCandidate(data, width, height, shape, effort) {
   return effort === 3 ? !!shape.palette : effort >= 4 && screenLike(data, width, height);
 }
 
-function* none() { return null; }
 
 function* screenFirst(data, width, height, colorSpace, steps) {
   if (typeof colorSpace !== 'object' && screenLike(data, width, height)) {
@@ -164,32 +171,63 @@ function* capturedFloor(data, width, height, colorSpace, bytes, lossy = false, f
   return captured instanceof Uint8Array && (lossy ? captured.length <= bytes.length : captured.length < bytes.length) ? captured : bytes;
 }
 
-const SEARCH_SHARING = Object.freeze([160, 320, 640, 1280, 2560]);
-const SEARCH_RUNGS = Object.freeze({...SAMPLE_RUNGS,
-  sampled: Object.freeze({...SAMPLE_RUNGS.precise, clustered: true, samples: 131072, leaves: 192, depth: 24, sharing: SEARCH_SHARING}),
-  branching: Object.freeze({...SAMPLE_RUNGS.broad, clustered: true, samples: 131072, leaves: 512, depth: 24, sharing: SEARCH_SHARING}),
-  dense: Object.freeze({...SAMPLE_RUNGS.precise, clustered: true, samples: 262144, leaves: 192, depth: 24, sharing: SEARCH_SHARING}),
-  deep: Object.freeze({...SAMPLE_RUNGS.precise, clustered: true, samples: 262144, leaves: 1024, depth: 24, sharing: SEARCH_SHARING}),
-  shallow: SAMPLE_RUNGS.deep,
-});
-const LADDER = Object.freeze({
-  3: [{rung: 'shallow'}],
-  4: [{rung: 'shallow'}],
-  5: [{rung: 'shallow'}, {rung: 'maximum'}],
-  6: [{rung: 'maximum', ranked: 0}],
-  7: [{rung: 'broad', ranked: 0}],
-  8: [{rung: 'precise', ranked: 0}, {rung: 'sampled', ranked: 0}, {rung: 'branching', ranked: 0}],
-  9: [{rung: 'precise', ranked: 1}, {rung: 'dense', ranked: 0}, {rung: 'deep', ranked: 0}],
-});
-export function learnedRungs(effort, data, width, height, shape) {
-  const steps = effort <= 4 ? LADDER[effort] : Array.from({length: Math.max(0, effort - 4)}, (_, i) => LADDER[i + 5] || []).flat(), ranking = shape.colour === 3 && steps.some(step => step.ranked !== undefined) ? sampleTransformRanking(data, width, height) : [6];
-  const rungs = [], types = [], bases = [];
-  for (const step of steps) {
-    const base = SEARCH_RUNGS[step.rung], type = step.ranked === undefined ? 6 : ranking[step.ranked] ?? 6;
-    if (types.some((t, i) => t === type && bases[i] === base)) continue;
-    types.push(type); bases.push(base); rungs.push(type === 6 ? base : {...base, rctType: type});
-  }
-  return rungs;
+const LOSSLESS = Object.freeze({...LEVELS[3], ans: true, trees: 'learned', references: true, noRuns: true, fixedFallback: true, needs: ['trees', 'ans'], floor: false, patches: false, routes: 'one'});
+const PRECISE = Object.freeze([5, 3, 6, 1, 2, 4, 7, 8, 9, 10, 11, 12, 13, 0]);
+const BROAD = Object.freeze([5, 3, 6, 1, 2, 4, 13, 0]);
+const SMALL_FAST = Object.freeze({referenceKinds: Object.freeze([]), properties: Object.freeze([15, 9, 10, 11, 12, 13, 14])});
+export function losslessSets(effort, ranked = [6, 6]) {
+  const [first, second] = ranked, small = effort >= 6 ? Object.freeze({charge: 0, predictors: PRECISE, bins: 255, nodes: 255, clustered: false}) : SMALL_FAST;
+  const set = (rcts, learn) => Object.freeze({rcts: [...new Set(rcts)], learn: Object.freeze({...learn, leaf: true, small})});
+  const five = {samples: 32768, nodes: 127}, six = {samples: 65536, nodes: 169}, seven = {samples: 131072, nodes: 255, bins: 128, predictors: BROAD};
+  const eight = {samples: 131072, nodes: 575, predictors: PRECISE, bins: 128, charge: 8, clustered: true}, nine = {...eight, samples: 262144, nodes: 1663, bins: 192};
+  if (effort >= 9) return [set([first, second], nine), set([first, second], eight), set([first], seven)];
+  if (effort >= 8) return [set([first, second], eight), set([first], seven)];
+  if (effort >= 7) return [set([first], seven), set([first], six)];
+  if (effort >= 6) return [set([first], six), set([first], five)];
+  return [effort >= 5 ? set([first], five)
+    : effort >= 4 ? set([first], {samples: 16384, nodes: 63}) : set([first], {samples: 4096, nodes: 31})];
+}
+function smallSets(effort, ranked, pixels) {
+  const seen = new Map(), wide = pixels <= 4096 && effort >= 6 ? 16 : 2;
+  for (let e = pixels <= 4096 && effort <= 5 ? effort : 2; e <= effort; e++) for (const set of losslessSets(e, ranked)) seen.set(JSON.stringify(set), set);
+  return [...seen.values()].map(set => Object.freeze({...set, rcts: [...new Set([...set.rcts, ...ranked.slice(0, wide), 6])]}));
+}
+const NOISE = Object.freeze({rcts: Object.freeze([0]), learn: Object.freeze({leaf: true, whole: true, least: Infinity})});
+export const losslessLevel = (effort, ranked, estimate, pixels = Infinity) => Object.freeze({...LOSSLESS, estimate, gate: effort >= 6 ? 2 : 1.5,
+  learnSets: estimate * 8 >= 16 * pixels ? [...losslessSets(Math.min(effort, 3), ranked), ...effort >= 7 ? [NOISE] : []] : pixels <= 65536 ? smallSets(effort, ranked, pixels) : losslessSets(effort, ranked)});
+function* rankingOf(data, width, height, shape, colorSpace) {
+  if (typeof colorSpace === 'object') return [[6, 6], undefined, width * height];
+  if (!journaling() || shape.colour !== 3) return ranking(data, width, height, shape);
+  return yield* unit('ranking', () => { const [ranked, estimate, pixels] = ranking(data, width, height, shape); return [Array.from(ranked), estimate, pixels]; });
+}
+function ranking(data, width, height, shape) {
+  if (shape.colour !== 3) return [[6, 6], undefined, width * height];
+  const ranked = transformRanking(data, width, height);
+  return [ranked, ranked.bits * width * height / 8, width * height];
+}
+function* losslessCapture(data, width, height, colorSpace, level) {
+  if (typeof colorSpace === 'object') return null;
+  while (captureBusy()) if (yield 0) return null;
+  const source = journaling() && journalFact(data, JOIN) ? {width, height, rows: (y, count) => data.subarray(y * width * 4, (y + count) * width * 4)} : data;
+  const steps = encodeCaptureSteps(source, width, height, {colorSpace, effort: 3, [CAPTURE_TOOLS]: CAPTURE_TOOLS_COMPLETE, [CAPTURE_LEVEL]: level, [CAPTURE_FLOOR]: shapeFloors.get(data)});
+  let step;
+  try {
+    let reply;
+    while (!(step = steps.next(reply)).done) {
+      reply = undefined;
+      if (journalRequest(step.value)) reply = yield step.value;
+      else if (typeof step.value === 'number' && (yield step.value) && step.value < 1) return null;
+    }
+  } finally { steps.return?.(); }
+  return step.value;
+}
+
+function* unitsOnly(steps) {
+  let step, reply;
+  try {
+    while (!(step = steps.next(reply)).done) reply = journalRequest(step.value) ? yield step.value : undefined;
+  } finally { if (!step?.done) steps.return?.(); }
+  return step.value;
 }
 
 const estimatedRawBits = s => Math.max(0, s < 224 ? s - 1 : s - 236);

@@ -14,6 +14,7 @@ import {admitOutputSize} from '../admit.mjs';
 import {CAPTURE_FACTS} from './capture-facts.mjs';
 import {CAPTURE_PROTECTION} from '../capture-protection.mjs';
 import {captureDomain} from '../capture-domain.mjs';
+import {journalNext, journalRequest} from '../step-journal.mjs';
 
 let active = 0;
 function load() {
@@ -34,9 +35,11 @@ export const exactCoderWith = tools => ({...exactCoder, tools});
 
 async function drive(steps, answer, hooks, from = 0, span = 1) {
   let step, reply, failed = false, last = performance.now();
+  const {journal} = hooks;
   try {
     check(hooks.signal);
-    while (!(step = steps.next(reply)).done) {
+    while (!(step = journal ? journalNext(steps, reply, journal) : steps.next(reply)).done) {
+      if (journal && journalRequest(step.value)) { reply = await journal(step.value); continue; }
       const output = step.value?.photoOutput === true;
       reply = output && answer ? answer(step.value) : undefined; check(hooks.signal);
       if (hooks.signal && performance.now() - last >= 8) { await loopTurn(); check(hooks.signal); last = performance.now(); }
@@ -82,6 +85,8 @@ const helped = (coder, answer, groups, signal) => {
   }});
 };
 
+const isPlainPicture = input => input && typeof input === 'object' && Object.getPrototypeOf(input) === Object.prototype && input.data !== undefined;
+
 export async function runCaptureUsing(input, options, hooks, fidelity, coder) {
   const {[RESULT_REFERENCE]: _reference, fidelity: _fidelity, readAs: _readAs, maxPixels, [GROUPS]: groups, ...rest} = options;
   if (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && coder.tools) fidelity = {...fidelity, [CAPTURE_TOOLS]: coder.tools};
@@ -117,7 +122,7 @@ export async function runCaptureUsing(input, options, hooks, fidelity, coder) {
       if (captureExact(result)) options[CAPTURE_PROTECTION]?.full(result, width, height);
       return finished(result, hooks, facts);
     }
-    const picture = await image(input, options, hooks);
+    const picture = hooks.journal && isPlainPicture(input) ? input : await image(input, options, hooks);
     captureDomain(picture);
     resultReference(options, picture, typeof Blob === 'function' && input instanceof Blob ? input : picture);
     const {data, width, height, colorSpace} = picture;

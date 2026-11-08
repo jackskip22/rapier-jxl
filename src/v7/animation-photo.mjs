@@ -10,7 +10,7 @@ import {webpTarget} from '../photo-quality-table.mjs';
 import {measuredTarget} from '../photo-browser-margin.mjs';
 import {MEASURED_EFFORT} from '../effort-level.mjs';
 
-export async function animationPhoto(animation, settings, encodeAt, {signal, maxPixels, onProgress} = {}) {
+export async function animationPhoto(animation, settings, encodeAt, {signal, maxPixels, onProgress, preview} = {}) {
   const {qualityIntent, ...codec} = settings;
   const encode = (quality, progress = onProgress) => encodeAt({...codec, quality}, progress);
   const fixed = async quality => {
@@ -22,7 +22,7 @@ export async function animationPhoto(animation, settings, encodeAt, {signal, max
   admitAnimation(animation, codec);
   if (codec.effort >= MEASURED_EFFORT && animation.width >= 8 && animation.height >= 8) {
     const answer = await measuredAnimation(animation, {ssimulacra2: measuredTarget(webpTarget(qualityIntent))}, encode,
-      {start: codec.quality, signal, onProgress, maxPixels});
+      {start: codec.quality, signal, onProgress, maxPixels, preview});
     if (answer) return answer;
   }
   const reader = photoIntentReader(ordinaryStillDecision, {signal, maxPixels});

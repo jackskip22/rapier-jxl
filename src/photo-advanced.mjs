@@ -37,8 +37,11 @@ export function encodePhotoSteps(data, width, height, options = {}) {
   const lfLevels = admitLFFrames(options.lfFrames);
   const authoredOrderPasses = prepareCoefficientOrders(options.coefficientOrders, progression?.count || 1);
   const strategyOptions = admitStrategyOptions(options), filter = admitPhotoFilter(options);
-  if (quality === 100 && options.extraChannels !== undefined && (!Array.isArray(options.extraChannels) || options.extraChannels.length))
-    return exactPhotoExtraSteps(data, width, height, options, samples);
+  if (quality === 100 && options.extraChannels !== undefined && (!Array.isArray(options.extraChannels) || options.extraChannels.length)) {
+    if (typeof __RAPIER_JXL_STILL__ !== 'undefined' && __RAPIER_JXL_STILL__ === true)
+      throw fault('JXL_UNSUPPORTED', 'Exact extra channels are written by rapier-jxl/format.');
+    else return exactPhotoExtraSteps(data, width, height, options, samples);
+  }
   const extras = admitPhotoExtras(data, layout, options);
   if (options.orientation !== undefined && options.orientation !== 1 && (quality >= 100 || !samples.native8))
     throw fault('JXL_UNSUPPORTED', 'Orientation needs a lossy 8-bit sRGB photo; rotate the pixels.');
@@ -53,7 +56,7 @@ export function encodePhotoSteps(data, width, height, options = {}) {
 function* photoV6Producer(data, width, height, quality, gaborish = true, effort = 7, ordinary = false) {
   if (gaborish && effort <= 3) { yield 0; return complete(photoXYBSteps(data, width, height, quality, {...V6, fast: true, fastBand: true})); }
   if (gaborish) return yield* photoXYBBands(data, width, height, quality,
-    ordinary && (effort === 4 || effort === 5) && !screenLike(data, width, height) ? uploadPicture(data, width, height) : {...V6, ...GABORISH});
+    ordinary && (effort === 4 || effort === 5) && !screenLike(data, width, height) ? uploadPicture(data, width, height, quality) : {...V6, ...GABORISH});
   yield 0;
   return complete(photoXYBSteps(data, width, height, quality, V6));
 }

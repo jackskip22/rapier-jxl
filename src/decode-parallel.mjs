@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {requireDecode} from './decode-bits.mjs';
 import {decodeImage, decodeOptions, openFirstFrame, outputFormat} from './decode-image.mjs';
-import {decodeFrameSections} from './decode-frame.mjs';
+import {decodeFrameSections, jpegShifts, restoreFrame} from './decode-frame.mjs';
 import {frameFeatures, loadPart} from './decode-parts.mjs';
 import {transformColor, nativeEncoding, sameEncoding, targetEncoding} from './decode-color.mjs';
 import {rgbaPixels} from './decode-compose.mjs';
@@ -69,7 +69,7 @@ function regionBand(readers, h, f, options, area) {
 }
 
 const windowable = (h, f) => !h.extraChannels.length && plainFrame(f);
-function regionFrame(readers, h, f, options, area) {
+function regionFrame(readers, h, f, options, area, chroma = false) {
   const x0 = Math.max(area.x, f.x0) - f.x0, y0 = Math.max(area.y, f.y0) - f.y0;
   const width = Math.min(area.x + area.width, f.x0 + f.width) - f.x0 - x0, height = Math.min(area.y + area.height, f.y0 + f.height) - f.y0 - y0;
   const {first, end, left, right} = window(f, x0, y0, width, height), span = Math.min(f.width, right * 256) - left * 256, x = x0 - left * 256;
@@ -77,10 +77,31 @@ function regionFrame(readers, h, f, options, area) {
   const band = {first, end, left, right, target: (a, b) => [0, 1, 2].map(() => new Float32Array((b - a) * span)), restored(a, b, rows) {
     for (let y = Math.max(a, y0); y < Math.min(b, y0 + height); y++) for (let c = 0; c < 3; c++) planes[c].set(rows[c].subarray((y - a) * span + x, (y - a) * span + x + width), (y - y0) * width);
   }};
+  let sampled;
+  if (chroma) {
+    const {hs, vs} = jpegShifts(f.jpegUpsampling), top = first * 256, height = Math.min(f.height, end * 256) - top;
+    const widths = hs.map(s => Math.ceil(span / 2 ** s)), heights = vs.map(s => Math.ceil(height / 2 ** s));
+    sampled = {width: span, height, widths, heights, planes: widths.map((w, c) => new Float32Array(w * heights[c])), filtersApplied: true};
+    band.subsampled = (a, rows) => rows.forEach((p, c) => sampled.planes[c].set(p, ((a - top) >> vs[c]) * widths[c]));
+  }
   const {features} = decodeFrameSections(readers, h, f, {readFeatures: (r, h, f) => frameFeatures(r, h, f, options),
     maxSamples: options.maxSamples, maxModularWork: options.maxModularWork, band});
+  if (sampled) band.restored(first * 256, Math.min(f.height, end * 256), restoreFrame(sampled, f).planes);
   return {width, height, widths: [width, width, width], heights: [height, height, height], planes, extraChannels: [], features, filtersApplied: true,
     x0: f.x0 + x0, y0: f.y0 + y0, saveBeforeColorTransform: f.saveBeforeColorTransform, regional: {x0: f.x0 + x0 - area.x, y0: f.y0 + y0 - area.y, width, height}};
+}
+
+function regionModular(readers, h, f, options, area) {
+  if (f.type !== 0 || !f.modular || f.ycbcr || h.xyb || f.upsampling !== 1 || f.lfLevel || f.useLFFrame || f.flags & 19n ||
+      f.encodedWidth !== f.width || f.encodedHeight !== f.height || f.filter.gaborish || f.filter.epf.iters ||
+      h.extraChannels.some((c, i) => c.dimShift || f.extraUpsampling[i] !== 1)) return null;
+  const x = Math.max(area.x, f.x0) - f.x0, y = Math.max(area.y, f.y0) - f.y0;
+  const width = Math.min(area.x + area.width, f.x0 + f.width) - f.x0 - x, height = Math.min(area.y + area.height, f.y0 + f.height) - f.y0 - y;
+  const bit = readers[0].bit, frame = decodeFrameSections(readers, h, f, {readFeatures: (r, h, f) => frameFeatures(r, h, f, options),
+    maxSamples: options.maxSamples, maxModularWork: options.maxModularWork, region: {x, y, width, height}});
+  if (!frame) { readers[0].bit = bit; return null; }
+  return {...frame, filtersApplied: true, x0: f.x0 + x, y0: f.y0 + y, saveBeforeColorTransform: f.saveBeforeColorTransform,
+    regional: {x0: f.x0 + x - area.x, y0: f.y0 + y - area.y, width, height}};
 }
 
 function bandFrame(h, f, planes, data, format) {
@@ -116,14 +137,17 @@ function stacker(h, options) {
 
 const banding = (options, render) => Object.assign(render, {bandable: (h, f) => bandable(h, f, options),
   stack: (h, frames) => stackable(h, frames, options) ? stacker(h, options) : null});
-export function decodeBands(bytes, options) {
+export function decodeBands(bytes, options, opened = null) {
   return decodeImage(bytes, options, banding(options, (readers, h, f, codestream, area) => {
+    if (area && f.modular) return regionModular(readers, h, f, options, area);
+    if (area && f.ycbcr && f.jpegUpsampling.some(Boolean) && !h.extraChannels.length && !f.filter.gaborish && !f.filter.epf.iters &&
+        plainFrame({...f, jpegUpsampling: [0, 0, 0]})) return regionFrame(readers, h, f, options, area, true);
     if (area && !bandable(h, f, options)) return windowable(h, f) ? regionFrame(readers, h, f, options, area) : null;
     if (!bandable(h, f, options)) return null;
     if (area) return regionBand(readers, h, f, options, area);
     const {planes, data, format} = renderBand(readers, h, f, options, 0, groupRows(f));
     return bandFrame(h, f, planes ?? [0, 1, 2].map(() => new Float32Array(0)), data, format);
-  }));
+  }), opened);
 }
 
 function serveBands(post, listen) {

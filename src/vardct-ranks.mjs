@@ -2,9 +2,11 @@
 import {progressiveValue} from './vardct-progressive.mjs';
 import {DCT8_DENSITY, zeroDensityContext} from './dct8-contexts.mjs';
 
+const CAPTURE_PHOTO = typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true;
+
 export function countACRanks(coeffs, base, order, from, to, progression, pass = 0, width = 8, height = 8, transpose = false) {
   let count = 0;
-  if (progression) {
+  if (!CAPTURE_PHOTO && progression) {
     for (let k = from; k < to; k++) {
       const pos = order ? order[k] : k;
       if (progressiveValue(progression.passes, coeffs[base + pos], transpose ? ((pos & 7) << 3) | (pos >> 3) : pos, width, height, pass)) count++;
@@ -34,7 +36,7 @@ export function emitACRanks(coeffs, base, order, from, to, left, prev, offset, a
   progression, pass = 0, width = 8, height = 8, transpose = false, tail) {
   let k = from;
   for (; k < to && left; k++) {
-    const pos = order[k], coefficient = progression ? progressiveValue(progression.passes, coeffs[base + pos],
+    const pos = order[k], coefficient = !CAPTURE_PHOTO && progression ? progressiveValue(progression.passes, coeffs[base + pos],
       transpose ? ((pos & 7) << 3) | (pos >> 3) : pos, width, height, pass) : coeffs[base + pos];
     ctxs[n] = offset + (area === 1 ? DCT8_DENSITY[left << 6 | k] + prev :
       zeroDensityContext(Math.ceil(left / area), Math.floor(k / area), prev));

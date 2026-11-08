@@ -8,10 +8,14 @@ import {populationBits} from './entropy.mjs';
 import {VB_ZD, VB_TOKENS, token, vbPackSigned} from './varblock-core.mjs';
 
 const ORDER_BUCKET = TRANSFORMS.map(t => COEFFICIENT_ORDER_BUCKETS.find(b => b.strategies.includes(t.name)));
-const LEARNED_COUNTS = new WeakMap();
-export const seedLearnedOrderCounts = (image, byBucket) => LEARNED_COUNTS.set(image.strategyData, byBucket);
+const LEARNED_COUNTS = new WeakMap(), LEARNED_ORDERS = new WeakMap(), OPTIMAL_ORDERS = new WeakMap();
+export const seedLearnedOrderCounts = (image, byBucket) => { LEARNED_COUNTS.set(image.strategyData, byBucket); LEARNED_ORDERS.delete(image.strategyData); };
 export function learnedOrders(image) {
-  return ordersFromCounts(LEARNED_COUNTS.get(image.strategyData) ?? learnedOrderCounts(image.strategyData.blocks));
+  const key = image.strategyData;
+  if (key && LEARNED_ORDERS.has(key)) return LEARNED_ORDERS.get(key);
+  const out = ordersFromCounts(LEARNED_COUNTS.get(key) ?? learnedOrderCounts(image.strategyData.blocks));
+  if (key) LEARNED_ORDERS.set(key, out);
+  return out;
 }
 export function learnedOrderCounts(blocks, byBucket = new Array(COEFFICIENT_ORDER_BUCKETS.length)) {
   for (const block of blocks) {
@@ -45,6 +49,8 @@ export function encodeStrategyImage(image, orders = true, effort = 7) {
   return complete(encodeStrategyImageSteps(image, orders, effort));
 }
 export function optimalLearnedOrders(image) {
+  const sdKey = image.strategyData;
+  if (sdKey && OPTIMAL_ORDERS.has(sdKey)) return OPTIMAL_ORDERS.get(sdKey);
   const byBucket = new Map();
   for (const block of image.strategyData.blocks) {
     const bucket = ORDER_BUCKET[block.id];
@@ -115,7 +121,9 @@ export function optimalLearnedOrders(image) {
       if (rawGain > totalH) value[name] = bestPerms;
     }
   }
-  return Object.keys(value).length ? prepareCoefficientOrders(value, 1) : null;
+  const out = Object.keys(value).length ? prepareCoefficientOrders(value, 1) : null;
+  if (sdKey) OPTIMAL_ORDERS.set(sdKey, out);
+  return out;
 }
 
 export function encodeStrategyImageSteps(image, orders = true, effort = 7, pooled = false, primed = null, both = true) {

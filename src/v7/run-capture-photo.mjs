@@ -5,6 +5,7 @@ export {prepareCapturePhoto} from './capture-photo-runner.mjs';
 import {CAPTURE_TOOLS_LEAN} from '../capture-codec.mjs';
 import {qualityLooks} from '../photo-region-search.mjs';
 import {regionPhotoFrameSteps} from '../photo-rgb.mjs';
+import {fileStage} from '../capture-patched.mjs';
 import {planeSearchSteps} from '../photo-plane-search.mjs';
 import {planeMeasuredSteps} from '../photo-plane-measured.mjs';
 import {blockSearchOptions} from '../photo-v6.mjs';
@@ -16,8 +17,10 @@ import {MEASURED_EFFORT} from '../effort-level.mjs';
 
 const search = {blocks: planeSearchSteps, options: blockSearchOptions, measured: planeMeasuredSteps,
   score: scoreSteps, aq: AQ, candidates: CANDIDATES};
+const floorFrame = options => !!options.floorImage;
 const policy = {qualityLooks, regionPhotoFrameSteps: (rows, width, height, options) =>
-  regionPhotoFrameSteps(rows, width, height, {...options, photoSearch: search}), photoSearch: search};
+  fileStage('photo-frame', () => regionPhotoFrameSteps(rows, width, height, {...options, photoSearch: search}), bytes => bytes,
+    options.photoAdmission, floorFrame(options)), photoSearch: search};
 const wholePhoto = (data, width, height, options) =>
   wholePhotoOutputSteps(data, width, height, {...options, maxPixels: width * height}, nativePhotoOutputMeasure);
 

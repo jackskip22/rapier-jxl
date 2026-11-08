@@ -16,7 +16,7 @@ export function gcPlaneBound(planes) {
   return bound[0];
 }
 export const GC_DS = `
-fn gcO(x: f32) -> f32 { return x * gcOne(); }
+fn gcO(x: f32) -> f32 { return bitcast<f32>(bitcast<u32>(x) | (bitcast<u32>(gcOne()) ^ 0x3f800000u)); }
 fn ts(a0: f32, b0: f32) -> vec2f { let a = gcO(a0); let b = gcO(b0); let s = gcO(a + b); let v = gcO(s - a); let w = gcO(s - v); return vec2f(s, gcO(gcO(a - w) + gcO(b - v))); }
 fn fs(a0: f32, b0: f32) -> vec2f { let a = gcO(a0); let b = gcO(b0); let s = gcO(a + b); return vec2f(s, gcO(b - gcO(s - a))); }
 fn sp(a: f32) -> vec2f { let h = bitcast<f32>((bitcast<u32>(a) + 0x800u) & 0xfffff000u); return vec2f(h, gcO(a - h)); }

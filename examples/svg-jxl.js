@@ -1,6 +1,7 @@
 // Any SVG (text, Blob or File) with its embedded raster pictures as JPEG XL: import { svgJxl } from 'rapier-jxl/svg-jxl';
 //   const { svg, record } = await svgJxl(input, { quality: 0.92 }); // smallest of lossy, exact and the original
 //   await svgJxl(input, { exact: true });                             // JPEGs restorable, the rest lossless
+// Not a sanitizer: the SVG's own scripts, styles and links pass through unchanged. Sanitize an untrusted SVG yourself.
 import { createCodec } from 'rapier-jxl/codec';
 
 let jpeg, capture, still;
@@ -10,7 +11,7 @@ const stillCodec = () => still ??= createCodec({ module: 'rapier-jxl' });
 
 export async function svgJxl(input, { quality = 0.92, exact, effort, webgpu, signal, onProgress, codec, cache = new Map() } = {}) {
   signal?.throwIfAborted();
-  // A Blob or File is scanned as one character per byte and written back byte for byte, whatever its encoding.
+  // A Blob or File is scanned as one character per byte and written back unchanged, whatever its encoding.
   const text = typeof input === 'string', svg = text ? input : latin1(new Uint8Array(await abortable(input.arrayBuffer(), signal)));
   const captureCodec = () => codec ?? (capture ??= createCodec({ module: 'rapier-jxl/capture-complete' }));
   const decoder = !!codec || typeof createImageBitmap === 'function', lossy = decoder && !exact && quality < 1;

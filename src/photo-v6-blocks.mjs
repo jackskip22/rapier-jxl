@@ -10,8 +10,9 @@ import {perceptualMaskField, perceptualMaskSteps, maskEnergy, maskWeights, maskW
 import {offloading} from './offload.mjs';
 import {pictureBlocksSplit} from './block-split.mjs';
 import {V6, GABORISH, admitV6Memory, prepareV6, v6Image, gaborishRows, blockSearchOptions, v6Trace, idleWork} from './photo-v6.mjs';
+import {grainRegime} from './photo-v6-settings.mjs';
 import {wholeBudget, WHOLE_BYTES} from './memory-device.mjs';
-import {journalRequest} from './step-journal.mjs';
+import {journalRequest, unit} from './step-journal.mjs';
 
 export function photoAnsSteps(image, effort, ...rest) { return coefficientAnsSteps(image, effort, ...rest); }
 photoAnsSteps.splits = coefficientAnsSteps.splits;
@@ -21,9 +22,15 @@ function* bandsWithEnergy(data, width, height, quality, options, energy) {
   let image;
   for (let y = 0; y < height; y += bandHeight) {
     const h = Math.min(bandHeight, height - y), from = Math.max(0, y - PHOTO_BAND_MARGIN), to = Math.min(height, y + h + PHOTO_BAND_MARGIN);
-    const result = photoXYBBand(data.subarray(from * width * 4, to * width * 4), width, h, quality, {...options, keepPlanes: true}, y - from);
-    maskEnergy(result.planes, y, stride, y / 8, Math.ceil((y + h) / 8), energy);
-    image = appendPhotoBand(image, result, width, height, y, data);
+    const by0 = y / 8, by1 = Math.ceil((y + h) / 8);
+    const {result, hf} = yield* unit('picture-band', () => {
+      const made = photoXYBBand(data.subarray(from * width * 4, to * width * 4), width, h, quality, {...options, keepPlanes: true}, y - from);
+      maskEnergy(made.planes, y, stride, by0, by1, energy);
+      const {planes: _planes, ...result} = made;
+      return {result: {...result, alpha: !!result.alpha}, hf: energy.slice(by0 * stride, by1 * stride)};
+    });
+    energy.set(hf, by0 * stride);
+    image = appendPhotoBand(image, {...result, alpha: result.alpha ? data : null}, width, height, y, data);
     image.planes = undefined;
     yield (y + h) / height;
   }
@@ -84,19 +91,6 @@ export function* fullBlocksOnDevice({base, data, width, height, row, blockSearch
 
 export const E7_LOW = Object.freeze([0.62, 0.62, 0.58, 0.72]);
 export const E7_SCALE = Array.from({length: 192}, (_, i) => { const c = i >> 6, k = i & 63; return k && (k & 7) < 2 && k < 16 ? E7_LOW[c] : c > 1 && k && (k & 7) < 3 && k < 24 ? E7_LOW[3] : 1; });
-const E7_GRAIN = Object.freeze({epfScale: 1.5});
-export function grainRegime(data, width, height) {
-  let curvature = 0, gradient = 0, flat = 0, total = 0;
-  const stepY = Math.max(1, Math.floor((height - 2) / 64)), stepX = Math.max(1, Math.floor((width - 2) / 64)), row = width * 4;
-  const luma = i => 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-  for (let y = 1; y < height - 1; y += stepY) for (let x = 1; x < width - 1; x += stepX) {
-    const i = (y * width + x) * 4, c = luma(i), l = luma(i - 4), r = luma(i + 4), u = luma(i - row), d = luma(i + row);
-    const g = Math.abs(r - l) + Math.abs(d - u);
-    curvature += Math.abs(4 * c - l - r - u - d); gradient += g; total++;
-    if (g < 2) flat++;
-  }
-  return total > 0 && flat / total < 0.25 && curvature / (gradient + 1e-9) < 0.95 ? E7_GRAIN : null;
-}
 
 const pairMask = (pair, data, width, height, stride, rows) => pair.mask ??= idleWork(perceptualMaskSteps(stride, rows,
   (rowsOf => by => rowsOf(by * 8, by * 8 + 8))(gaborishRows(data, width, height, {...V6, ...GABORISH}))));
@@ -127,6 +121,7 @@ function* blockPictureSteps({data, width, height, quality, effort, encodeCoeffic
   const whole = !offloading() && (!plan.banded || effort === 7 && !pair && !gpu && memory == null &&
     Math.ceil(width / 8) * Math.ceil(height / 8) * 64 * WHOLE_BYTES <= wholeBudget(undefined, 0));
   let prepared = null;
+  if (pair && pair.grain === undefined) pair.grain = (yield* unit('grain', () => grainRegime(data, width, height))) ?? false;
   const fast = blockDesign === 'fast', row = {calibrationRow: screen ? 'screenFull' : pair ? 'e7' : fast ? 'blocksFast' : 'blocks', ...(pair ? {lowScale: E7_SCALE, ...(pair.grain ??= grainRegime(data, width, height) ?? false)} : {}), ...(fast && floored ? {noLevels: true} : {})}, rowColor = {...color, ...row};
   let splitMade = null;
   if (fast && floored && !gpu && !color && !screen && width * height > 512 * 512 && encodeCoefficients.splits) {

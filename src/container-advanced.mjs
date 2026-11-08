@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {fault} from './fault.mjs';
-import {SIGNATURE, FTYP, BRAND, CODESTREAM, PARTIAL, LEVEL, BROB, RECONSTRUCTION, fileHeader, boxHeader} from './container.mjs';
+import {SIGNATURE, FTYP, BRAND, CODESTREAM, PARTIAL, LEVEL, BROB, RECONSTRUCTION, fileHeader, boxHeader, boxWords, boxCursor, nextBox, endBoxes as containerEnd} from './container.mjs';
+import {journaling, journalTool} from './step-journal.mjs';
 import {readFrames} from './framing.mjs';
 import {prepareColorEncoding} from './color-info.mjs';
 import {prepareICC} from './icc-write.mjs';
@@ -40,63 +41,49 @@ export function containerBoxHeader(boxType, bodyByteLength, {extended = false} =
   return boxHeader(typeCode(boxType), bodyByteLength, extended);
 }
 
-function scanContainer(bytes, maximum, maxBoxes = Number.MAX_SAFE_INTEGER) {
+function containerStart(bytes, maximum) {
   byteArray(bytes, 'JPEG XL input'); bounded(bytes.length, maximum);
-  if (bytes[0] === 255 && bytes[1] === 10) return {codestream: bytes, level: 5, minorVersion: 0, entries: [], fragments: []};
-  if (!SIGNATURE.every((byte, i) => bytes[i] === byte)) throw invalid('Invalid JPEG XL signature.');
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), entries = [], fragments = [], byIndex = new Map();
-  let minorVersion = 0, level = 5, seenLevel = false, full = null, finalIndex = -1, indexBoxes = 0, gainBoxes = 0;
-  for (let at = 12; at < bytes.length;) {
-    if (entries.length >= maxBoxes) throw invalid('JPEG XL box count exceeds the limit.');
-    if (bytes.length - at < 8) throw invalid('Truncated JPEG XL box header.');
-    const short = view.getUint32(at), type = view.getUint32(at + 4), headerLength = short === 1 ? 16 : 8;
-    if (bytes.length - at < headerLength) throw invalid('Truncated extended JPEG XL box header.');
-    const length = short === 1 ? view.getUint32(at + 8) * 4294967296 + view.getUint32(at + 12) : short || bytes.length - at;
-    if (!Number.isSafeInteger(length) || length < headerLength || length > bytes.length - at) throw invalid('Invalid JPEG XL box size.');
-    const body = at + headerLength, end = at + length, data = bytes.subarray(body, end), entry = {at, body, end, type, decoded: type, data, headerLength, unbounded: short === 0};
-    if (!entries.length) {
-      if (type !== FTYP || data.length < 12 || data.length % 4 || view.getUint32(body) !== BRAND)
-        throw invalid('The second JPEG XL box must declare the jxl file type.');
-      minorVersion = view.getUint32(body + 4);
-      if (minorVersion > 1) throw invalid('JPEG XL file-format minorVersion is 0 or 1.');
-      let compatible = false; for (let p = body + 8; p < end; p += 4) compatible ||= view.getUint32(p) === BRAND;
-      if (!compatible) throw invalid('The file type lacks the jxl compatibility brand.');
-    } else if (type === FTYP || type === 0x4a584c20) throw invalid('Repeated JPEG XL file header.');
-    if (type === LEVEL) {
-      if (entries.length !== 1 || seenLevel || data.length !== 1 || data[0] !== 5 && data[0] !== 10)
-        throw invalid('The level box (5 or 10) follows the file type.');
-      level = data[0]; seenLevel = true;
-    } else if (type === CODESTREAM) {
-      if (full || fragments.length) throw invalid('Repeated or mixed JPEG XL codestream boxes.');
-      full = data;
-    } else if (type === PARTIAL) {
-      if (full || data.length < 4) throw invalid('Invalid JPEG XL codestream fragment.');
-      const field = view.getUint32(body), sequence = field & 0x7fffffff, last = field >= 0x80000000;
-      if (byIndex.has(sequence) || minorVersion === 0 && sequence !== fragments.length)
-        throw invalid('Repeated or out-of-order version 0 codestream fragment.');
-      if (last) { if (finalIndex >= 0) throw invalid('Repeated final codestream fragment.'); finalIndex = sequence; }
-      const fragment = {sequence, last, byteOffset: body + 4, byteLength: data.length - 4, headerLength};
-      fragments.push(fragment); byIndex.set(sequence, bytes.subarray(body + 4, end));
-    } else if (type === BROB) {
-      if (data.length < 4) throw invalid('Truncated compressed JPEG XL box.');
-      const inner = view.getUint32(body);
-      if (inner === BROB || inner === RECONSTRUCTION || inner >>> 8 === 0x6a786c)
-        throw invalid('Brotli cannot wrap codestream, index, reconstruction or Brotli boxes.');
-      entry.decoded = inner;
-    }
-    if (entry.decoded === INDEX && ++indexBoxes > 1 || entry.decoded === GAIN && ++gainBoxes > 1)
-      throw invalid('At most one frame index and one gain map.');
-    entries.push(entry); at = end;
+  const prefix = bytes.subarray(0, Math.min(bytes.length, SIGNATURE.length));
+  if (prefix[0] === 255 && prefix[1] === 10) return {raw: true};
+  if (!SIGNATURE.every((byte, i) => prefix[i] === byte)) throw invalid('Invalid JPEG XL signature.');
+  return {...boxCursor(), full: null};
+}
+function containerNext(bytes, maxBoxes, state, words, span, byIndex) {
+  const row = nextBox(bytes, maxBoxes, state, words);
+  if (!row) return null;
+  const {entry: box, sequence, last, unbounded} = row, {at, body, end, type} = box;
+  const data = span(body, end), headerLength = body - at, entry = {...box, data, headerLength, unbounded};
+  let fragment;
+  if (type === CODESTREAM) state.full = data;
+  else if (type === PARTIAL) {
+    fragment = {sequence, last, byteOffset: body + 4, byteLength: end - body - 4, headerLength};
+    byIndex.set(sequence, span(body + 4, end));
   }
-  if (!entries.length || !full && (!fragments.length || finalIndex !== fragments.length - 1)) throw invalid('The JPEG XL container has no complete codestream.');
-  let codestream = full;
-  if (!full) {
+  return {entry, fragment};
+}
+function containerSignature(codestream) {
+  const signature = codestream.subarray(0, 2);
+  if (signature[0] !== 255 || signature[1] !== 10) throw invalid('Invalid logical JPEG XL codestream signature.');
+}
+const rawContainer = bytes => ({codestream: bytes, level: 5, minorVersion: 0, entries: [], fragments: []});
+function scanContainer(bytes, maximum, maxBoxes = Number.MAX_SAFE_INTEGER) {
+  const state = containerStart(bytes, maximum);
+  if (state.raw) return rawContainer(bytes);
+  const words = boxWords(bytes), entries = [], fragments = [], byIndex = new Map();
+  const span = (from, to) => bytes.subarray(from, to);
+  while (state.at < bytes.length) {
+    const row = containerNext(bytes, maxBoxes, state, words, span, byIndex);
+    if (row) { entries.push(row.entry); if (row.fragment) fragments.push(row.fragment); }
+  }
+  containerEnd(state);
+  let codestream = state.full;
+  if (!codestream) {
     const parts = [];
     for (let i = 0; i < fragments.length; i++) { if (!byIndex.has(i)) throw invalid('Missing JPEG XL codestream fragment.'); parts.push(byIndex.get(i)); }
     codestream = joinBytes(parts, maximum);
   }
-  if (codestream[0] !== 255 || codestream[1] !== 10) throw invalid('Invalid logical JPEG XL codestream signature.');
-  return {codestream, level, minorVersion, entries, fragments};
+  containerSignature(codestream);
+  return {codestream, level: state.level, minorVersion: state.minorVersion, entries, fragments};
 }
 
 export function inspectContainer(bytes, options = {}) {
@@ -105,6 +92,20 @@ export function inspectContainer(bytes, options = {}) {
     fragments: source.fragments.map(row => ({...row})),
     auxiliary: source.entries.filter(row => ![FTYP, LEVEL, CODESTREAM, PARTIAL].includes(row.type)).map(row =>
       ({boxType: fourcc(row.type), data: row.data.slice(), extended: row.headerLength === 16}))};
+}
+
+export function readContainer(bytes, options = {}) {
+  const maximum = limit(options), maxBoxes = boxLimit(options);
+  const source = scanContainer(bytes, maximum, maxBoxes);
+  return {codestream: source.codestream, level: source.level, minorVersion: source.minorVersion,
+    auxiliary: source.entries.filter(row => ![FTYP, LEVEL, CODESTREAM, PARTIAL].includes(row.type)).map(row =>
+      ({boxType: fourcc(row.type), data: row.data, extended: row.headerLength === 16}))};
+}
+
+export function* readContainerSteps(bytes, options = {}) {
+  if (!journaling()) return readContainer(bytes, options);
+  return yield* journalTool('containerRead')(bytes, options, {limit, boxLimit, containerStart, containerNext, containerEnd,
+    containerSignature, boxWords, fourcc, invalid, ignored: [FTYP, LEVEL, CODESTREAM, PARTIAL]});
 }
 
 function validateOrder(order, chunks, stream, options) {

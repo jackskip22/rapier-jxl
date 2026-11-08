@@ -3,15 +3,20 @@ import {BitWriter} from './bits.mjs';
 import {writeModularFrameHeader, groupLayout, groupRect, assembleCodestream} from './frame.mjs';
 import {writeImageHeader} from './icc-write.mjs';
 import {ALPHABET, leaf, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
-import {sampledPlanes, SAMPLE_RUNGS} from './sampled.mjs';
+import {planeModel} from './capture-trees.mjs';
+import {writeCaptureStream} from './capture-codec.mjs';
+import {CAPTURE_TOOLS_COMPLETE} from './capture-ans.mjs';
 import {screenPlan, lookupPalette} from './screen.mjs';
 import {admitOutputSize} from './admit.mjs';
 
 const packed = (rgba, i) => rgba[i] + rgba[i + 1] * 256 + rgba[i + 2] * 65536 + rgba[i + 3] * 16777216;
-const PALETTE_MODEL = Object.freeze({...SAMPLE_RUNGS.precise, predictors: Object.freeze([5, 6, 1, 2, 0])});
+const PALETTE_MODEL = Object.freeze({leaves: 64, nodes: 127, samples: 65536, bins: 128, every: true, least: 64, min: 16, gain: 16,
+  properties: Object.freeze([15, 9, 10, 11, 12, 13, 14, 4, 5, 6, 7, 8, 2, 3]), predictors: Object.freeze([5, 6, 1, 2, 0])});
+const ANS = CAPTURE_TOOLS_COMPLETE.ans;
+const model = (plane, width, height) => planeModel(plane, width, height, PALETTE_MODEL);
 
 function paletteGroup(setup) {
-  const {index, rows, colours, channels, colour, alpha, single} = setup, model = PALETTE_MODEL;
+  const {index, rows, colours, channels, colour, alpha, single} = setup;
   const weights = Float64Array.from({length: colours}, (_, i) => {
     const r = rows[i], g = colour === 3 ? rows[colours + i] : r, b = colour === 3 ? rows[2 * colours + i] : r;
     return (299 * r + 587 * g + 114 * b + 100) * (alpha ? rows[(channels - 1) * colours + i] + 1 : 1);
@@ -29,14 +34,14 @@ function paletteGroup(setup) {
     const count = entries.length, mapping = new Int16Array(colours), indices = new Int16Array(values.length);
     entries.forEach((value, i) => { mapping[value] = i; });
     for (let i = 0; i < values.length; i++) indices[i] = mapping[values[i]];
-    const image = sampledPlanes.prepare(indices, width, height, model), sections = [];
+    const image = model(indices, width, height), sections = [];
     for (let representation = 0; representation < (single ? 1 : 2); representation++) {
       const tableChannels = representation ? 1 : channels, table = new Int16Array(count * tableChannels);
       for (let c = 0; c < tableChannels; c++) for (let i = 0; i < count; i++)
         table[c * count + i] = representation ? entries[i] : rows[c * colours + entries[i]];
-      const meta = sampledPlanes.prepare(table, count, tableChannels, model), section = new BitWriter(256);
+      const meta = model(table, count, tableChannels), section = new BitWriter(256);
       if (single) { section.write(1, 1); section.write(1, 1); }
-      sampledPlanes.write(section, [meta, image], model, {global: single,
+      writeCaptureStream(section, [meta, image], ANS, {global: single, runs: true,
         transforms: [{type: 'palette', beginC: 0, numC: tableChannels, nbColors: count}]});
       sections.push(section.finish());
     }
@@ -48,8 +53,8 @@ export function* paletteSteps(rgba, width, height, shape, colorSpace,
   {plan = null, ceiling = Infinity} = {}) {
   plan ||= screenPlan(rgba, width, height, shape, 'global');
   if (!plan) return null;
-  const palette = plan.meta[0], model = PALETTE_MODEL;
-  const dim = palette.width <= model.leaves ? 1024 : 256;
+  const palette = plan.meta[0];
+  const dim = palette.width <= PALETTE_MODEL.leaves ? 1024 : 256;
   const layout = groupLayout(width, height, dim), groups = layout.groupsX * layout.groupsY;
   const setup = {index: plan.setup.index, rows: palette.plane, colours: palette.width,
     channels: shape.channels, colour: shape.colour, alpha: shape.alpha, single: layout.single};
@@ -69,9 +74,8 @@ export function* paletteSteps(rgba, width, height, shape, colorSpace,
   for (let representation = 0; representation < 2; representation++) {
     const global = new BitWriter(256);
     global.write(1, 1); global.write(1, 1);
-    if (representation) sampledPlanes.write(global,
-      [sampledPlanes.prepare(palette.plane, palette.width, palette.height, model)], model,
-      {global: true, transforms: plan.transforms});
+    if (representation) writeCaptureStream(global, [model(palette.plane, palette.width, palette.height)], ANS,
+      {global: true, runs: true, transforms: plan.transforms});
     else {
       const tree = leaf(0);
       writeChannelHistograms(global, writeTree(global, tree), [new Uint32Array(ALPHABET)]);

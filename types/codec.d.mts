@@ -4,6 +4,7 @@ import type {PreparationInput, FitOptions, VariantsOptions} from './types.mjs';
 import type {UploadPreparationInput, UploadFitOptions, UploadVariantsOptions} from './preparation-upload.mjs';
 import type {CaptureCompleteOptions} from './capture-complete.mjs';
 export type {EncodeOptions, UploadOptions, ImageInput, CaptureInput, Bytes, CodecConfig, CodecStats} from './types.mjs';
+export type {ImagePreview, PreviewOptions} from './types.mjs';
 export type {CapturePhotoOptions} from './types.mjs';
 export type {CaptureCompleteOptions} from './capture-complete.mjs';
 /** rapier-jxl/capture-complete's capture options, as a codec over it takes them (rapier-jxl/capture's own are its CaptureOptions). */
@@ -19,9 +20,8 @@ interface ModuleCodec {
 }
 interface EncodingCodec extends ModuleCodec {
   encode(input: ImageInput, options?: EncodeOptions & Handed): Promise<ImageResult>;
-  capture(input: CaptureInput, options?: CaptureCompleteOptions & Handed): Promise<ImageResult>;
   /** Starts the worker and loads the module, compiling its WebAssembly, with no job and no queue slot. */
-  prepare(operation: 'encode' | 'capture'): Promise<void>;
+  prepare(operation: 'encode'): Promise<void>;
 }
 /** The default codec, over rapier-jxl: pictures in. Page capture is a codec over rapier-jxl/capture or capture-complete. */
 export interface StillCodec extends ModuleCodec {
@@ -43,7 +43,7 @@ export interface AnimationCodec extends EncodingCodec {
 }
 export interface FormatCodec extends EncodingCodec {
   format: typeof import('./format.mjs').format;
-  prepare(operation: 'format' | 'encode' | 'capture'): Promise<void>;
+  prepare(operation: 'format' | 'encode'): Promise<void>;
 }
 export interface CaptureCodec extends ModuleCodec {
   capture(input: Exclude<CaptureInput, TextureInput>, options?: CaptureOptions & Handed): Promise<ImageResult>;

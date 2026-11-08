@@ -8,6 +8,8 @@ import {lfCoderFor, monotonicLfCoderFor} from './lf-coding.mjs';
 import {SMALL_PIXELS, SMALL_CLUSTERS, UPLOAD_CLUSTERS} from './photo-v6-settings.mjs';
 import {journalRequest} from './step-journal.mjs';
 
+const CAPTURE_PHOTO = typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true;
+
 const PHOTO_CLUSTERS = {maxClusters: 64, newClusterCost: 100, seeds: 128};
 export const BUDGETS = [{maxClusters: 64, newClusterCost: 80, seeds: 128, switchCost: 5}, {maxClusters: 48, newClusterCost: 130, seeds: 128}, {maxClusters: 64, newClusterCost: 90, seeds: 128, everyConfig: true}];
 const EXTRA_BUDGETS = [{maxClusters: 64, newClusterCost: 70, seeds: 128, switchCost: 4, everyConfig: true}, {maxClusters: 64, newClusterCost: 58, seeds: 128, switchCost: 4, everyConfig: true}];
@@ -73,7 +75,7 @@ export function* coefficientAnsSteps(jpeg, effort, fallback, retain, pooled = fa
     if (bytes) retain?.(bytes, plan);
   };
   const floor = () => coefficientEffortSteps(jpeg, 1, undefined, undefined, {}, pooled);
-  if (!pooled && offloading()) yield prefetch(jpeg, [...(floorFirst || small ? prefixPlans(1) : []),
+  if (!pooled && (!CAPTURE_PHOTO && offloading())) yield prefetch(jpeg, [...(floorFirst || small ? prefixPlans(1) : []),
     ...list.filter(rung => rung.orders !== 'best').map(rung => ansPlan(rung, rung.orders ? 'learned' : null, effort))]);
   if (floorFirst) {
     try { keep(yield* run(floor()), {}); }
@@ -86,7 +88,7 @@ export function* coefficientAnsSteps(jpeg, effort, fallback, retain, pooled = fa
   let named = false;
   for (const rung of list) {
     if (hurry && best) break;
-    if (rung.orders === 'best' && !named && !pooled && offloading()) {
+    if (rung.orders === 'best' && !named && !pooled && (!CAPTURE_PHOTO && offloading())) {
       named = true;
       const plans = list.filter(r => r.orders === 'best' && !written.has(keyOf(r, bestOrders)))
         .map(r => ansPlan(r, bestOrders && (bestOrders === orders ? 'learned' : bestOrders), effort));
@@ -119,16 +121,26 @@ export function* strategyLfSteps(image, effort = 7) {
   for (let g = 0; g < n; g++) { groups.push(complete(varDCTSteps(image, {...plan, lfGroup: g}))); yield (g + 1) / n; }
   seedLfSections(image, plan, groups);
 }
+const STRATEGY_SHARED = new WeakMap();
+const strategyOrderEntry = (image, authored) => {
+  const sd = image.strategyData;
+  if (!sd || image.placement !== undefined) return {img: {...image, authoredOrderPasses: authored}, shared: {acCoding: buildAnsCoding}};
+  let byOrder = STRATEGY_SHARED.get(sd);
+  if (!byOrder) STRATEGY_SHARED.set(sd, byOrder = new Map());
+  let entry = byOrder.get(authored ?? null);
+  if (!entry) byOrder.set(authored ?? null, entry = {img: {...image, authoredOrderPasses: authored}, shared: {acCoding: buildAnsCoding}});
+  return entry;
+};
 export function strategyAnsRuns(image, effort = 7, learned = null, primed = null, both = true) {
   const budgets = effort >= 9 ? [...BUDGETS, ...EXTRA_BUDGETS] : effort >= 8 ? [...BUDGETS, EXTRA_BUDGETS[0]] : BUDGETS.slice(0, Math.max(1, Math.min(3, effort - 6)));
   const lf = effort >= 8 ? monotonicLfCoderFor(effort) : lfCoderFor(Math.max(5, effort)), richContexts = effort >= 8;
-  const plain = () => primed?.image === image ? {img: primed.img, shared: primed.shared} : {img: {...image, authoredOrderPasses: null}, shared: {}};
+  const plain = () => primed?.image === image ? {img: primed.img, shared: primed.shared} : strategyOrderEntry(image, null);
   const authoredOrders = Array.isArray(learned) && (learned.length === 0 || Array.isArray(learned[0])) ? learned.filter(Boolean) : learned ? [learned] : [];
   const orderList = authoredOrders.length ? both ? [null, ...authoredOrders] : authoredOrders : [null];
   const runs = [];
   if (effort <= 6) runs.push({...plain(), plan: {clusters: BUDGETS[0], coding: buildAnsCoding, modularAns: writeModularAnsHistograms, lfCoder: lf}});
   else for (const authored of orderList) {
-    const {img, shared} = authored ? {img: {...image, authoredOrderPasses: authored}, shared: {}} : plain();
+    const {img, shared} = authored ? strategyOrderEntry(image, authored) : plain();
     if (image.width * image.height <= PREFIX_PIXELS) runs.push({img, shared, plan: {clusters: BUDGETS[0]}});
     if (richContexts) runs.push({img, shared, plan: {clusters: BUDGETS[0], coding: buildAnsCoding, modularAns: writeModularAnsHistograms, lfCoder: lf}});
     for (const clusters of budgets) runs.push({img, shared, plan: {clusters, coding: buildAnsCoding, modularAns: writeModularAnsHistograms, lfCoder: lf, ...(richContexts || effort >= 7 ? {richContexts: true} : {})}});

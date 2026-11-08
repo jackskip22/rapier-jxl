@@ -1,46 +1,61 @@
 // SPDX-License-Identifier: MIT
 import {decodeKernels} from './decode-kernels.mjs';
-import {JxlBits,requireDecode} from './decode-bits.mjs';
+import {JxlBits,requireDecode,uint32View} from './decode-bits.mjs';
 import {readDecodeImageHeader,readDecodeFrameHeader,readDecodeTOC,power2} from './decode-header.mjs';
 import {decodeFrameSections,restoreFrame} from './decode-frame.mjs';
 import {part,frameFeatures} from './decode-parts.mjs';
 import {transformColor,convertOutputColor} from './decode-color.mjs';
 import {composeFrame,orientFrame,rgbaPixels} from './decode-compose.mjs';
 import {SIGNATURE,CODESTREAM,PARTIAL,BROB,FTYP,LEVEL} from './decode-tables.mjs';
-import {readContainer} from './decode-container.mjs';
+import {readContainer,readContainerSteps} from './container-advanced.mjs';
 import {canvasArea,misses,emptyFrame,cropFrame} from './decode-region.mjs';
 import {cutPreview} from './decode-prefix.mjs';
-import {iccProfileLimit,admitDecodedICC} from './decode-icc-admission.mjs';
+import {iccProfileLimit,admitDecodedICC,admitDecodedICCSteps} from './decode-icc-admission.mjs';
+import {journalTool,sliceBytes} from './step-journal.mjs';
 
 export const DECODE_LIMITS=Object.freeze({maxPixels:64000000,maxDimension:65536,maxSamples:268435456,maxRetainedSamples:268435456,maxTotalSamples:536870912,maxModularWork:536870912,maxFrames:4096,maxBoxes:65536,maxMetadataBytes:67108864,maxInputBytes:1073741824,maxFeatureBytes:268435456,maxFeatureWork:268435456});
 const fourCC=type=>String.fromCharCode(type>>>24,type>>>16&255,type>>>8&255,type&255);
-function unpackInput(bytes,limits) {
+function admitInput(bytes,limits) {
   requireDecode(bytes instanceof Uint8Array&&bytes.length>=2,'JPEG XL input is a Uint8Array containing a complete image.');
   requireDecode(bytes.length<=limits.maxInputBytes,'JPEG XL input exceeds the byte limit.');
-  if(bytes[0]===255&&bytes[1]===10)return {codestream:bytes,boxes:[],container:null};
-  requireDecode(SIGNATURE.every((b,i)=>bytes[i]===b),'Invalid JPEG XL signature.');
-  let view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength),count=0,rawMetadata=0;
-  for(let at=12;at<bytes.length;) {
-    requireDecode(++count<=limits.maxBoxes,'JPEG XL box count exceeds the limit.');
-    requireDecode(bytes.length-at>=8,'Truncated JPEG XL box header.');
-    const short=view.getUint32(at),type=view.getUint32(at+4),header=short===1?16:8;
-    requireDecode(bytes.length-at>=header,'Truncated extended JPEG XL box header.');
-    let length=short===1?view.getUint32(at+8)*4294967296+view.getUint32(at+12):short||bytes.length-at;
-    if(limits.partial&&(type===CODESTREAM||type===PARTIAL)&&Number.isSafeInteger(length)&&length>bytes.length-at&&bytes.length-at>header+(type===PARTIAL?4:0)){
-      bytes=bytes.slice();view=new DataView(bytes.buffer);length=bytes.length-at;
-      if(short===1){view.setUint32(at+8,Math.floor(length/4294967296));view.setUint32(at+12,length>>>0);}else view.setUint32(at,length);
-      if(type===PARTIAL)view.setUint32(at+header,(view.getUint32(at+header)|0x80000000)>>>0);
-    }
-    requireDecode(Number.isSafeInteger(length)&&length>=header&&length<=bytes.length-at,'Invalid JPEG XL box size.');
-    if(type===FTYP) {
-      rawMetadata+=Math.max(0,length-header-12);
-    } else if(type!==LEVEL&&type!==CODESTREAM&&type!==PARTIAL)rawMetadata+=length-header;
-    requireDecode(rawMetadata<=limits.maxMetadataBytes,'JPEG XL metadata exceeds the byte limit.');at+=length;
+  const prefix=bytes.subarray(0,Math.min(bytes.length,12));
+  if(prefix[0]===255&&prefix[1]===10)return true;
+  requireDecode(SIGNATURE.every((b,i)=>prefix[i]===b),'Invalid JPEG XL signature.');
+  return false;
+}
+function storageNext(bytes,limits,state,view) {
+  const at=state.at;
+  requireDecode(++state.count<=limits.maxBoxes,'JPEG XL box count exceeds the limit.');
+  requireDecode(bytes.length-at>=8,'Truncated JPEG XL box header.');
+  const short=view.getUint32(at),type=view.getUint32(at+4),header=short===1?16:8;
+  requireDecode(bytes.length-at>=header,'Truncated extended JPEG XL box header.');
+  let length=short===1?view.getUint32(at+8)*4294967296+view.getUint32(at+12):short||bytes.length-at,repair=null;
+  if(limits.partial&&(type===CODESTREAM||type===PARTIAL)&&Number.isSafeInteger(length)&&length>bytes.length-at&&bytes.length-at>header+(type===PARTIAL?4:0)){
+    length=bytes.length-at;repair={at,short,type,header,length};
+  }
+  requireDecode(Number.isSafeInteger(length)&&length>=header&&length<=bytes.length-at,'Invalid JPEG XL box size.');
+  if(type===FTYP)state.rawMetadata+=Math.max(0,length-header-12);
+  else if(type!==LEVEL&&type!==CODESTREAM&&type!==PARTIAL)state.rawMetadata+=length-header;
+  requireDecode(state.rawMetadata<=limits.maxMetadataBytes,'JPEG XL metadata exceeds the byte limit.');state.at+=length;
+  return repair;
+}
+function repairedHeader(bytes,{at,short,type,header,length}) {
+  const out=bytes.subarray(at,at+header+(type===PARTIAL?4:0)).slice(),view=new DataView(out.buffer,out.byteOffset,out.byteLength);
+  if(short===1){view.setUint32(8,Math.floor(length/4294967296));view.setUint32(12,length>>>0);}else view.setUint32(0,length);
+  if(type===PARTIAL)view.setUint32(header,(view.getUint32(header)|0x80000000)>>>0);
+  return out;
+}
+function unpackInput(bytes,limits) {
+  if(admitInput(bytes,limits))return {codestream:bytes,boxes:[],container:null};
+  const view=uint32View(bytes),state={at:12,count:0,rawMetadata:0};
+  while(state.at<bytes.length) {
+    const repair=storageNext(bytes,limits,state,view);
+    if(repair){const header=repairedHeader(bytes,repair);bytes=bytes.slice();bytes.set(header,repair.at);}
   }
   const source=readContainer(bytes,{maxBytes:limits.maxInputBytes,maxBoxes:limits.maxBoxes}),metadata=[];let totalMetadata=0;
   for(const box of source.auxiliary) {
     const compressed=box.boxType==='brob';let type=box.boxType,data=box.data;
-    if(compressed){type=fourCC(new DataView(data.buffer,data.byteOffset,data.byteLength).getUint32(0));data=part('brotli').decompressBrotli(data.subarray(4),{maxOutput:limits.maxMetadataBytes-totalMetadata,dictionary:limits.dictionary});}
+    if(compressed){type=fourCC(uint32View(data).getUint32(0));data=part('brotli').decompressBrotli(data.subarray(4),{maxOutput:limits.maxMetadataBytes-totalMetadata,dictionary:limits.dictionary});}
     totalMetadata+=data.length;requireDecode(totalMetadata<=limits.maxMetadataBytes,'JPEG XL metadata exceeds the byte limit.');
     metadata.push({type,data:compressed?data:data.slice(),compressed});
   }
@@ -108,7 +123,7 @@ export function decodeOptions(options) {
 export const outputFormat=(h,options)=>options.format==='auto'?(h.bitDepth.float||h.bitDepth.bits>16?'float32':h.bitDepth.bits>8?'uint16':'uint8'):options.format;
 
 function openImage(bytes,options) {
-  const input=unpackInput(bytes,options),r=new JxlBits(input.codestream),h=readDecodeImageHeader(r,options);
+  const input=unpackInput(bytes,options),r=new JxlBits(options.borrowed?sliceBytes(input.codestream,0):input.codestream,!!options.borrowed),h=readDecodeImageHeader(r,options);
   h.level=input.container?.level??5;
   if(h.colorEncoding.wantICC){
     const level=input.container?.level??5;
@@ -117,6 +132,15 @@ function openImage(bytes,options) {
   }
   r.align();
   return {input,r,h};
+}
+export function* openImageSteps(bytes,options) {
+  return yield* journalTool('openImage')(bytes,options,{admitInput,storageNext,repairedHeader,uint32View,
+    readContainerSteps,fourCC,part,requireDecode,JxlBits,readDecodeImageHeader,iccProfileLimit,admitDecodedICCSteps,
+    readDecodeFrameHeader,readDecodeTOC});
+}
+function reopenImage(opened) {
+  const {input,h,bit}=opened,r=new JxlBits(sliceBytes(input.codestream,0),true);r.bit=bit;
+  return {input,h,r};
 }
 export function openFirstFrame(bytes,options) {
   const {r,h}=openImage(bytes,options),f=h.preview?null:readDecodeFrameHeader(r,h,options);
@@ -168,9 +192,11 @@ function arrived(r,read){
   try{return read();}catch(error){if(r.bit>r.bytes.length*8||/^Truncated JPEG XL/.test(error?.message??''))return null;throw error;}
 }
 
-export function decodeImage(bytes,options,renderFrame=null) {
+export function decodeImage(bytes,options,renderFrame=null,opened=null) {
   decodeKernels();
-  const {input,r,h}=openImage(bytes,options),sharedFeatureWork={spent:0};
+  const {input,r,h}=opened?reopenImage(opened):openImage(bytes,options),sharedFeatureWork={spent:0};
+  const requireRegion=condition=>{if(options.borrowed&&!condition)throw Object.assign(new Error('This file needs whole-frame decoding; bounded verification cannot read its regions.'),{code:'JXL_UNSUPPORTED'});};
+  requireRegion(!h.preview);
   const ph=h.preview?{...h,...h.preview,preview:null,animation:null}:null;
   if(ph)admitPreviewSize(ph,options);
   const pf=ph&&readDecodeFrameHeader(r,ph,options),pr=pf&&readDecodeTOC(r,pf);
@@ -197,6 +223,7 @@ export function decodeImage(bytes,options,renderFrame=null) {
     return decoded([publicFrame(frame,small,f,options)],null,h,input,options,headers,{partial:{scale:8}});
   }
   if(area&&patched){
+    requireRegion(false);
     const whole=decodeImage(bytes,{...options,region:undefined},renderFrame);
     return {...cropFrame(whole,options.region),frames:whole.frames.map(frame=>cropFrame(frame,options.region))};
   }
@@ -230,6 +257,7 @@ export function decodeImage(bytes,options,renderFrame=null) {
     let frame=outside?emptyFrame(h,f):null;
     if(!outside&&(index===0||area)&&renderFrame){admitExpanded(h,f,options);
       frame=renderFrame(readers,h,f,input.codestream,area,index);}
+    requireRegion(!area||outside||frame);
     frame??=renderSections(readers,h,f,references,lf,options,{visibleFrame:visible,nonvisibleFrame:nonvisible},sharedFeatureWork);
     if(f.type===1){lf[f.lfLevel-1]=frame;continue;}
     const canReference=!f.isLast&&(f.duration===0||f.saveAsReference!==0);

@@ -9,7 +9,7 @@ export type {JPEGOptions, JobOptions, WasmBundle};
  * reconstruction payload above 64 MiB refuses JXL_JPEG. Caller bytes use plain Uint8Array;
  * SharedArrayBuffer backing is refused at runtime with JXL_INPUT. */
 export const recompress: ResumableFunction<(input: Uint8Array | Blob, options?: JPEGOptions & {maxPixels?: number}) => Promise<ImageResult>>;
-/** The JPEG a recompressed file was made from, byte for byte. A file with no reconstruction data refuses
+/** The JPEG a recompressed file was made from, restored exactly. A file with no reconstruction data refuses
  * JXL_RECONSTRUCTION. rapier-jxl/metadata header(bytes).reconstruction says, without a decode, whether the bytes hold a
  * reconstruction box; restore alone says whether the JPEG comes back. Inputs over 256 MiB refuse (JXL_LIMIT). */
 export const restore: ResumableFunction<(input: Uint8Array | Blob, options?: JobOptions & {maxPixels?: number}) => Promise<ImageResult>>;

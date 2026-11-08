@@ -24,7 +24,7 @@ export function jpegShifts(sample) {
   const hs=sample.map(v=>v===1||v===2?1:0),vs=sample.map(v=>v===1||v===3?1:0),mh=Math.max(...hs),mv=Math.max(...vs);
   return {hs:hs.map(v=>mh-v),vs:vs.map(v=>mv-v)};
 }
-export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, maxSamples, maxModularWork, band = null, lfOnly = false} = {}) {
+export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, maxSamples, maxModularWork, band = null, region = null, lfOnly = false} = {}) {
   const single = readers.length === 1, r=readers[0];
   const features = readFeatures ? readFeatures(r,h,f) : {};
   requireDecode(readFeatures || !(f.flags & 19n),'JPEG XL frame features need their reader.',r);
@@ -49,7 +49,8 @@ export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, m
   const maxTreeNodes = Math.min(1048576, 1024 + sampleBudget);
   const global = f.modular ? null : readVarDCTGlobal(r);
   const globalTree = r.read(1) ? readMATree(r, {maxNodes: maxTreeNodes}) : null;
-  const modular=createModular(r,channels,{globalTree,groupDim:f.groupDim,bitDepth:h.bitDepth.bits,maxModularWork,...(maxSamples===undefined?{}:{maxSamples})});
+  const modular=createModular(r,channels,{globalTree,groupDim:f.groupDim,bitDepth:h.bitDepth.bits,maxModularWork,region,...(maxSamples===undefined?{}:{maxSamples})});
+  if(region&&!modular.region)return null;
   modular.decodeGlobal(r,0);
   const dct=f.modular?null:createVarDCT({width:f.encodedWidth,height:f.encodedHeight,header:f,global,lfDequant,bitDepth:h.bitDepth.bits,globalTree,imageHeader:h,maxModularWork,modularWork:modular.modularWork,band,lfOnly,maxSection:Math.max(...readers.map(x=>x?x.bytes.length:0))});
   if(!single)r.endSection();
@@ -70,6 +71,7 @@ export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, m
     if(pass===f.passes.count-1)minimum=0;
     for(let g=0;g<f.numGroups;g++) {
       if(band&&(Math.floor(g/dct.groupsX)<band.first||Math.floor(g/dct.groupsX)>=band.end||g%dct.groupsX<(band.left??0)||g%dct.groupsX>=(band.right??dct.groupsX)))continue;
+      if(region){const x=g%f.groupsX*f.groupDim,y=Math.floor(g/f.groupsX)*f.groupDim;if(x+f.groupDim<=region.x||y+f.groupDim<=region.y||x>=region.x+region.width||y>=region.y+region.height)continue;}
       const rr=single?r:readers[2+f.numLFGroups+pass*f.numGroups+g];
       if(dct)dct.readPassGroup(rr,g,pass);
       modular.decodeGroup(rr,{x:g%f.groupsX*f.groupDim,y:Math.floor(g/f.groupsX)*f.groupDim,width:f.groupDim,height:f.groupDim,minShift:minimum,maxShift:maximum,streamIndex:1+3*f.numLFGroups+17+pass*f.numGroups+g});
@@ -90,7 +92,7 @@ export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, m
     planes=kernelSamples([x.data,y.data,b.data],(n,[ax,ay,ab])=>kernels.xybSamples(n,ax,ay,ab,lfDequant[0],lfDequant[1],lfDequant[2]));
   } else planes=decoded.slice(0,colorCount).map(c=>channelSamples(c.data,h.bitDepth));
   const widths=decoded.slice(0,colorCount).map(c=>c.width),heights=decoded.slice(0,colorCount).map(c=>c.height);
-  return {planes,widths,heights,width:f.encodedWidth,height:f.encodedHeight,extraChannels,features,global,lfDequant,filtersApplied:false};
+  return {planes,widths,heights,width:region?.width??f.encodedWidth,height:region?.height??f.encodedHeight,extraChannels,features,global,lfDequant,filtersApplied:false};
 }
 
 export function upsampleJPEG(plane, width, height, targetWidth, targetHeight) {
