@@ -67,7 +67,7 @@ or `Float32Array` samples, including HDR. For animations, use `rapier-jxl/animat
 - `fidelity`: `{quality: 1–100}`, default 90. `'exact'` is lossless.
 - `effort`: 1–9, default 7. Lower is faster; 1–3 suit previews and uploads, 8–9 photography.
 - `webgpu`: efforts 7–9 use WebGPU when available. `'required'` fails without it; `false` turns it off.
-- `maxPixels`: default 40 MP, up to 16,384 × 16,384. Very large images can be passed in strips with `rows(y, count)`.
+- `maxPixels`: default 40 MP, up to 268,435,456 pixels with neither side over 32,767. Very large images can be passed in strips with `rows(y, count)`.
 - `verify(original, result)` from `rapier-jxl/verify` checks a file against its source.
 
 ## Screenshots
