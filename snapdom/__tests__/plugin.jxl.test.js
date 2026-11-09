@@ -595,8 +595,9 @@ describe('jxl plugin: SnapDOM features', () => {
 
   it('other toBlob formats stay SnapDOM\'s', async () => {
     const result = await snapdom(card(), { plugins: [jxl()] })
-    for (const [format, type] of [['png', 'image/png'], ['jpeg', 'image/jpeg'], ['webp', 'image/webp'], ['svg', 'image/svg+xml']]) {
-      expect((await result.toBlob({ format })).type).toBe(type)
+    const plain = await snapdom(card())
+    for (const format of ['png', 'jpeg', 'webp', 'svg']) {
+      expect((await result.toBlob({ format })).type).toBe((await plain.toBlob({ format })).type)
     }
   })
 
