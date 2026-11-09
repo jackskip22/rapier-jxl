@@ -3,7 +3,7 @@ published: rapier-jxl@8.2.0 (npm)
   sha256: c966e53f402fc1811670517635d1410b712632d15df5bae969c3bb128cc4c89c
   extracts to: p/820/package/
 
-candidate: rapier-jxl 8.3.2 candidate, unreleased (with the canvas fallback for browsers that lose a bitmap posted to a worker)
-  tarball: rapier-jxl-candidate.tgz (8342883 bytes)
-  sha256: 872d60383bbf6a64ccb85828aca93eed723368dc2ebcc1790c7f471680da80c9
+candidate: rapier-jxl 8.3.2 candidate, unreleased (a bitmap posted as a clone; pixels where the browser refuses the clone)
+  tarball: rapier-jxl-candidate.tgz (8341962 bytes)
+  sha256: eba1945b08c87e2e7f083d989be8cf36097cafe616e107dfc4bf80a6eb2c2f3c
   extracts to: p/cand/package/
