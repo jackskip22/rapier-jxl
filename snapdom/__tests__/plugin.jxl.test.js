@@ -308,7 +308,7 @@ describe('jxl plugin: text rectangles stay on the text', () => {
     const clip = { x: b.left + scrollX + 6, y: b.top + scrollY + 30, width: 220, height: 80 }
     const { call } = await run(el, { clip })
     // Safari keeps a second rectangle where SnapDOM means the text, since WebKit draws it at the element's
-    // corner instead (Grok's WebKit, 47 px apart here): that one may graze the ink.
+    // corner instead (WebKit 26, 47 px apart here): that one may graze the ink.
     const safari = /AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|Edg/.test(navigator.userAgent)
     check(call, safari ? 48 : 18)
   })
@@ -369,7 +369,7 @@ describe('jxl plugin: text rectangles stay on the text', () => {
     check(call, 40)
   })
 
-  // WebKit draws a clip window's positioned boxes as if it began at the element's corner (Grok's WebKit rows):
+  // WebKit draws a clip window's positioned boxes as if it began at the element's corner (WebKit 26):
   // in Safari the text keeps an exact rectangle there too.
   it('a clip window in Safari also protects the text where WebKit draws it', async () => {
     Object.defineProperty(navigator, 'userAgent', { get: () => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15', configurable: true })
