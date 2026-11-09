@@ -9,7 +9,7 @@ const q = new URLSearchParams(location.search);
 const quality = +(q.get('quality') || 0.8);
 const effort = +(q.get('effort') || 3);
 const rounds = +(q.get('rounds') || 5);
-const base = '/snapdom';
+const base = location.origin + '/snapdom';
 try {
   const demos = await (await fetch('/demo-list')).json();
   const rows = [];

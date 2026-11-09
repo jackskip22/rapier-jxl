@@ -28,11 +28,14 @@ async function waitResult(timeoutSec = 1200) {
   return got ? JSON.parse(got) : null
 }
 
+const CANVAS_NOTE = 'headless VM, willReadFrequently forced'
+const label = r => r && Array.isArray(r.rows) ? { ...r, rows: r.rows.map(x => ({ ...x, canvas: CANVAS_NOTE })) } : r
 const out = {
   safari: caps.browserVersion,
   platform: caps.platformName,
   macos: process.env.MACOS_VERSION || null,
   tip: 'plugins-jxl.patch',
+  canvas: CANVAS_NOTE,
   plugin: null,
   demos: {},
   identity: {},
@@ -41,11 +44,11 @@ const out = {
 
 try {
   await goto(base + 'plugin.html?files=plugin.jxl.test.js')
-  out.plugin = await waitResult(900) || { done: true, error: 'no result', passed: 0, failed: 1, total: 1, rows: [] }
+  out.plugin = label(await waitResult(900)) || { done: true, error: 'no result', passed: 0, failed: 1, total: 1, rows: [] }
 
   for (const effort of [3, 5]) {
     await goto(base + `demos.html?effort=${effort}&quality=0.8`)
-    out.demos[effort] = await waitResult(1800) || { done: true, error: 'no result', rows: [] }
+    out.demos[effort] = label(await waitResult(1800)) || { done: true, error: 'no result', rows: [] }
     const baseRows = JSON.parse(readFileSync(new URL(`./baselines/chromium-e${effort}.json`, import.meta.url), 'utf8'))
     const byChr = Object.fromEntries(baseRows.map(r => [r.name, r]))
     let same = 0, differ = [], missing = []
@@ -69,7 +72,7 @@ try {
 
 writeFileSync('snapdom-safari-results.json', JSON.stringify(out, null, 2))
 const lines = [
-  `## SnapDOM jxl plug-in on real Safari ${out.safari} / ${out.macos || out.platform}`,
+  `## SnapDOM jxl plug-in on real Safari ${out.safari} / ${out.macos || out.platform} (${CANVAS_NOTE})`,
   '',
   `Plugin.jxl: ${out.summary.plugin}`,
   `Demos e3: ${out.summary.e3.pages}/32 pages; JXL ${out.summary.e3.jxlBytes} B / WebP ${out.summary.e3.webpBytes} B; med ${out.summary.e3.jxlMed} ms JXL vs ${out.summary.e3.webpMed} ms toWebp; ≡Chromium ${out.identity[3]?.same}/${out.identity[3]?.total}`,

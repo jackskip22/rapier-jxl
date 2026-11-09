@@ -92,7 +92,7 @@ jobs:
         run: sudo /usr/bin/safaridriver --enable
       - name: Plug-in + 32 demos on real Safari
         run: |
-          nohup node snapdom-harness/server.mjs > snapdom-server.log 2>&1 &
+          SNAPDOM="$PWD/snapdom" RAPIER_JXL="$PWD/p/cand/package" nohup node snapdom-harness/server.mjs > snapdom-server.log 2>&1 &
           echo $! > snapdom-server.pid
           nohup /usr/bin/safaridriver -p 4444 > snapdom-driver.log 2>&1 &
           echo $! > snapdom-driver.pid

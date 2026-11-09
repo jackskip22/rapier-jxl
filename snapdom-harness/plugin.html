@@ -6,7 +6,7 @@
 <script type="module">
 window.__result = { done: false, at: 'boot' };
 const files = (new URLSearchParams(location.search).get('files') || 'plugin.jxl.test.js,plugin.jxl.lifecycle.test.js').split(',');
-const base = '/snapdom';
+const base = location.origin + '/snapdom';
 try {
   const all = [];
   for (const file of files) {
