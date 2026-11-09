@@ -1,0 +1,32 @@
+<!doctype html>
+<meta charset=utf-8>
+<title>SnapDOM jxl plugin on Safari</title>
+<!--IMPORTMAP-->
+<body>
+<script type="module">
+window.__result = { done: false, at: 'boot' };
+const files = (new URLSearchParams(location.search).get('files') || 'plugin.jxl.test.js,plugin.jxl.lifecycle.test.js').split(',');
+const base = '/snapdom';
+try {
+  const all = [];
+  for (const file of files) {
+    window.__result = { done: false, at: 'load:' + file, rows: all.slice() };
+    const testSrc = await (await fetch(`${base}/__tests__/${file}`)).text();
+    const rewritten = testSrc
+      .replaceAll('../src/api/snapdom.js', `${base}/src/api/snapdom.js`)
+      .replaceAll('../src/core/plugins.js', `${base}/src/core/plugins.js`)
+      .replaceAll('../packages/plugins/jxl.js', `${base}/packages/plugins/jxl.js`);
+    const url = URL.createObjectURL(new Blob([rewritten], { type: 'text/javascript' }));
+    await import(url);
+  }
+  window.__result.at = 'run';
+  const { run } = await import('vitest');
+  const results = await run('');
+  let failed = 0;
+  const rows = results.map(r => { if (r.error) failed++; return { name: r.name, ms: r.ms, error: r.error || null }; });
+  window.__result = { done: true, passed: results.length - failed, failed, total: results.length, rows };
+} catch (e) {
+  window.__result = { done: true, passed: 0, failed: 1, total: 1, error: String(e && e.stack || e), rows: [{ name: 'load', error: String(e) }] };
+}
+</script>
+</body>

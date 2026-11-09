@@ -1,0 +1,780 @@
+# SnapDOM: v3 reference
+
+Last updated: 2026-10-28.
+
+SnapDOM (`@zumer/snapdom`) is a high-performance DOM engine that captures a rendered element in the browser and exports it as PNG, SVG or canvas. Plugins turn the same capture into PDF, HTML, editable vector, GIF, video or context for agents. Zero runtime dependencies; about one release a week.
+
+It captures a DOM subtree, its computed styles and its assets into a reusable result. The core exports SVG, PNG, JPG, WebP, canvas and blobs, and reports capture geometry. Plugins add HTML, text or JSON context, annotated element maps, searchable, paginated PDFs and editable vector artwork and recordings.
+
+SnapDOM has two integrated render engines: `svg` (default) and `html-in-canvas`. Both receive the same finished clone; the second uses the browser's native painter (Chrome 157 and newer) and falls back to SVG when unavailable or unsuitable for the capture.
+
+Package: `@zumer/snapdom`. License: MIT. Source: https://github.com/zumerlab/snapdom. Documentation: https://snapdom.dev/docs/.
+
+This reference describes SnapDOM v3.x.x. Release details: https://github.com/zumerlab/snapdom#installation. Preserved v2 branch: https://github.com/zumerlab/snapdom/tree/v2.
+
+## Installation
+
+```bash
+npm install @zumer/snapdom@latest
+```
+
+```js
+import { snapdom } from '@zumer/snapdom';
+```
+
+For a browser script tag, use the IIFE build, which exposes `window.snapdom`:
+
+```html
+<script src="https://cdn.jsdelivr.net/npm/@zumer/snapdom@latest/dist/snapdom.js"></script>
+```
+
+For a browser ES module:
+
+```html
+<script type="module">
+  import { snapdom } from 'https://cdn.jsdelivr.net/npm/@zumer/snapdom@latest/dist/snapdom.mjs';
+</script>
+```
+
+The package entry is ESM; there is no CommonJS build. The core has no runtime dependencies. Official plugins are a separate package. Use `@zumer/snapdom-plugins` 4.x with SnapDOM 3.x; the package major versions do not match. The 4.0.0 plugin release includes MIT-licensed PDF and Vector exports and is published on npm:
+
+```bash
+npm install @zumer/snapdom-plugins@latest
+```
+
+```js
+import { htmlExport, contextExport, agentMap } from '@zumer/snapdom-plugins';
+```
+
+For plugins loaded from a CDN, map the core import and keep it external in the plugin URL so recordings share the same runtime:
+
+```html
+<script type="importmap">
+  { "imports": { "@zumer/snapdom": "https://unpkg.com/@zumer/snapdom@latest/dist/snapdom.mjs" } }
+</script>
+<script type="module">
+  import { snapdom } from '@zumer/snapdom';
+  import { gifExport } from 'https://esm.sh/@zumer/snapdom-plugins@latest/gif-export?external=@zumer/snapdom';
+</script>
+```
+
+The core registry subpath uses the same runtime as the package root:
+
+```js
+import { registerPlugins, clearPlugins, getGlobalPlugins } from '@zumer/snapdom/plugins';
+```
+
+## Choose the output for the task
+
+SnapDOM captures an existing browser interface as pixels, document content, editable artwork or structured data. Choose the result the consumer needs before choosing an exporter. Register the required plugins before capture; an existing result cannot gain a plugin afterward.
+
+| Task | Use | Result |
+| --- | --- | --- |
+| Show appearance, attach a screenshot or compare pixels | Core `toPng()`, `toJpg()`, `toWebp()` | Image element; use `toBlob({ format: 'png' })` for a file Blob |
+| Produce a report, invoice or printable document | `pdf()` → `toPdf()` | PDF Blob with pagination, searchable text, links and optional fields |
+| Edit artwork or paste it into Figma | `vector()` → `toVector()` / `toFigma()` | Native SVG string / clipboard write |
+| Read captured content and field state with an agent | `contextExport()` → `toContext()` | Text outline or JSON tree |
+| Relate interactive elements to their captured appearance | `agentMap()` → `toAgentMap()` | Element map with bounding boxes and optional annotated image |
+| Preserve captured markup, styles and assets | `htmlExport()` → `toHtml()` | HTML document or fragment; captured markup, not restored application behavior |
+| Record changes over time | `gifExport()` / `videoExport()` → `toGif()` / `toMp4()` | Recording Blob from new live frames at export time |
+| Render terminal-style artwork | `asciiExport()` → `toAscii()` | Text |
+
+Core `toSvg()` preserves browser appearance through HTML in SVG `foreignObject`; use Vector when the destination needs editable native SVG shapes and text. For content extraction, start with context JSON or an outline; add an image when appearance matters, and an agent map when element locations matter. Context and maps are bounded capture representations, not complete DOM dumps or browser interaction tools.
+
+## Capture once, export several ways
+
+```js
+const capture = await snapdom(document.querySelector('#card'));
+const png = await capture.toPng({ width: 1200, dpr: 1 });
+const svgBlob = await capture.toBlob();
+await capture.download({ format: 'jpg', filename: 'card.jpg' });
+document.body.appendChild(png);
+```
+
+These exports use the captured state, even if the live element changes later. Call `snapdom(element)` again to capture those changes. Eligible repeated captures may reuse an unchanged result or update a changed subtree.
+
+Recording plugins are an explicit exception: `toGif()` and `toMp4()` take new frames from the live element when the export starts.
+
+## Core API
+
+```text
+snapdom(element, options?)          → Promise<CaptureResult>
+snapdom.fromString(html, options?)  → Promise<CaptureResult>
+snapdom.toRaw(element, options?)    → Promise<string>
+snapdom.toSvg(element, options?)    → Promise<HTMLImageElement>
+snapdom.toPng(element, options?)    → Promise<HTMLImageElement>
+snapdom.toJpg(element, options?)    → Promise<HTMLImageElement>
+snapdom.toWebp(element, options?)   → Promise<HTMLImageElement>
+snapdom.toCanvas(element, options?) → Promise<HTMLCanvasElement>
+snapdom.toBlob(element, options?)   → Promise<Blob>
+snapdom.download(element, options?) → Promise<void>
+snapdom.plugins(...definitions)    → snapdom
+snapdom.preCapture()               → void
+snapdom.version                    → string
+```
+
+Static shortcuts capture and then export. Use `snapdom.toJpg()` for the JPEG shortcut; `result.toJpeg()` is also available on a capture result. `snapdom.toImg()` is a deprecated alias for `snapdom.toSvg()`.
+
+`fromString()` mounts markup offscreen in the live document, lets page CSS and fonts apply, captures it, then removes the mount. A single root element becomes the target; otherwise it captures the wrapper. The markup goes through `innerHTML`: use trusted HTML or sanitize it first. This method requires a browser DOM; it does not render HTML in Node.js.
+
+```js
+const capture = await snapdom.fromString('<article class="card">Hello</article>');
+const image = await capture.toPng();
+```
+
+## CaptureResult
+
+| Member | Result | Meaning |
+| --- | --- | --- |
+| `url` | string | SVG data URL on the SVG engine; lazily encoded PNG after successful native capture |
+| `needs` | `'clone'` or `'render'` | Stage reached by this capture |
+| `meta` | frozen CaptureMeta | Render geometry; throws below render |
+| `warnings` | array | Fallback or degradation records; export-time entries append after export |
+| `toRaw()` | string, synchronous | Same URL as `url`; no rasterization on SVG, PNG encoding on first native read |
+| `toSvg(options?)` | Promise<HTMLImageElement> | SVG-backed image normally; PNG-backed after successful native capture |
+| `toImg(options?)` | Promise<HTMLImageElement> | Deprecated alias for `toSvg()` |
+| `toPng(options?)` | Promise<HTMLImageElement> | PNG image |
+| `toJpg(options?)`, `toJpeg(options?)` | Promise<HTMLImageElement> | JPEG image |
+| `toWebp(options?)` | Promise<HTMLImageElement> | WebP image |
+| `toCanvas(options?)` | Promise<HTMLCanvasElement> | Rasterized canvas |
+| `toBlob(options?)` | Promise<Blob> | SVG on the SVG engine, PNG on the native engine, unless a format was explicitly selected |
+| `download(options?)` | Promise<void> | Triggers a browser download |
+| `to(name, options?)` | Promise<any> | Runs a core or plugin export by name |
+
+Examples of plugin helpers are `toHtml()`, `toContext()` and `toAgentMap()`.
+
+### Choosing an engine
+
+Set `engine: 'html-in-canvas'` to request the second integrated engine. It runs where the browser exposes `drawElementImage()`: Chrome 157 and newer, without a flag. Firefox and Safari have no implementation and get the SVG engine from the same call. A plugin with a `beforeRender` or `afterRender` hook (html-export, pdf, vector, and redact-inputs with `blocks` or `attributes`) sends the capture to SVG; the other official plugins run on the native engine. SVG stays the default because it is faster: the native paint waits for a rendering update, about 35 ms on a small card where SVG takes 3. Pick html-in-canvas when scrollbars, or anything else the SVG image draws differently, have to match the page. Both engines paint the same clone, so `<audio controls>`, `<progress>` and `<meter>` look the same with either one, and not quite like the page. Guide: https://snapdom.dev/how-to/html-in-canvas/
+
+```js
+const capture = await snapdom(element, { engine: 'html-in-canvas' });
+const canvas = await capture.toCanvas();
+```
+
+If the engine/API is unavailable, painting fails, or the capture needs unsupported geometry, SnapDOM runs the SVG engine on the same clone. Examples that currently use SVG fallback include capture-level width/height, clipping, transformed ancestors, and plugins with `beforeRender` or `afterRender` hooks.
+
+A successful native capture retains a bitmap. Raster exporters consume it directly; `url` and `toRaw()` encode PNG only when requested. Despite its method name, `toSvg()` returns a PNG-backed image on this path. There is no serialized SVG: `toBlob({ format: 'svg' })` and a plugin's `ctx.export.svgString()` reject. Select `engine: 'svg'` when SVG source is required.
+
+A plugin may request `needs: 'clone'`. If every attached plugin requests that stage, capture stops before rendering. Its structured plugin exports work, but `url`, `meta` and core image exporters throw. Request render when an image is required; a later export does not recapture a clone-only result.
+
+Warnings have the shape `{ code, message, detail? }`. Examples include missing-image fallbacks, canvas size clamps and Safari image fallbacks. Read them after the export when diagnosing output differences.
+
+### Geometry
+
+All `CaptureMeta` dimensions use capture CSS pixels:
+
+```ts
+interface CaptureMeta {
+  readonly w0: number;        // Logical capture width; clip width when clipped
+  readonly h0: number;        // Logical capture height; clip height when clipped
+  readonly vbW: number;       // Render viewBox width, including bleed/padding
+  readonly vbH: number;       // Render viewBox height, including bleed/padding
+  readonly targetW: number;   // Requested output basis before scale/dpr
+  readonly targetH: number;
+  readonly contentX: number;  // Logical capture origin inside the viewBox
+  readonly contentY: number;
+  readonly clip: Readonly<{ x: number; y: number; width: number; height: number }> | null;
+}
+```
+
+Use this metadata for crop placement or overlays instead of reverse-parsing the SVG URL.
+
+### Format selection
+
+`format` is canonical; `type` is a deprecated, synchronized alias. Named helpers choose their own codec. `download()` defaults to PNG. When neither capture nor export explicitly selected a format, `toBlob()` defaults to SVG on the SVG engine and PNG after a successful native capture. This example uses the default SVG engine:
+
+```js
+const capture = await snapdom(element);
+const svg = await capture.toBlob();
+const png = await capture.toBlob({ format: 'png' });
+const jpeg = await capture.toBlob({ format: 'jpeg', quality: 0.85 });
+
+const pngCapture = await snapdom(element, { format: 'png' });
+const inheritedPng = await pngCapture.toBlob();
+```
+
+### Output size and crop
+
+`width` and `height` set the output size before raster `dpr`. One dimension preserves aspect ratio; specifying both can distort it. Either dimension takes precedence over `scale`. When neither is set, `scale` multiplies the captured size. Set `dpr: 1` when an exact raster pixel count matters. `download()` always uses DPR 1, so pass `scale` (for example `scale: devicePixelRatio`) for a sharper downloaded file.
+
+```js
+const capture = await snapdom(element);
+const image = await capture.toPng({ width: 1200, dpr: 1 });
+const canvas = await capture.toCanvas({
+  crop: { x: 10, y: 20, width: 300, height: 180 },
+  width: 600,
+  dpr: 1
+});
+```
+
+Canvas `crop` is an export window in capture viewBox coordinates. Capture `clip` is a page-coordinate window applied earlier; it can avoid cloning and styling outside subtrees. These coordinate systems are different.
+
+## Capture options
+
+Export methods accept relevant overrides, such as size, background and quality. Options that determine what was captured, such as exclusions and font embedding, belong on `snapdom()`; changing them later cannot rebuild the captured tree.
+
+| Option | Default | Behavior |
+| --- | --- | --- |
+| `scale: number` | `1` | Output multiplier when neither width nor height is set |
+| `dpr: number` | `devicePixelRatio` | Raster density |
+| `width`, `height`: number | unset | Absolute output dimensions; win over scale |
+| `backgroundColor: string or null` | transparent | JPEG/WebP default to white |
+| `quality: number` | `0.92` | JPEG/WebP encoding quality from 0 to 1 |
+| `format` | `'png'` | Format-selecting exports; `toBlob()` has the engine-dependent default described above |
+| `type` | unset | Deprecated alias for format; accepted values are svg, png, jpg, jpeg, webp |
+| `filename: string` | `'snapDOM'` | Download name; adds the format extension if absent |
+| `embedFonts: boolean or 'auto'` | `'auto'` | Embed used webfonts; skip system-font-only captures |
+| `localFonts: LocalFont[]` | `[]` | Explicit font sources |
+| `iconFonts` | `[]` | Additional icon-family string/RegExp matchers, or an array of them |
+| `excludeFonts: ExcludeFonts` | unset | Skip non-icon fonts by family, domain or subset |
+| `fontStylesheetDomains: string[]` | `[]` | Additional domains allowed for cross-origin font CSS fetching |
+| `useProxy: string` | `''` | CORS proxy prefix used as a resource fallback |
+| `exclude` | `[]` | Selector, synchronous true-to-exclude predicate, or a mixed array; any matching rule excludes |
+| `excludeMode` | `'hide'` | Hide keeps layout via an invisible spacer; remove drops the node |
+| `filter` | unset | Synchronous inclusion predicate; truthy keeps a node, falsy filters it out; can be used with exclude |
+| `filterMode` | `'hide'` | Independent hide/remove layout mode for nodes rejected by filter |
+| `excludeStyleProps` | unset | RegExp or predicate selecting computed CSS properties to skip; function decisions are reevaluated on new captures |
+| `outerTransforms: boolean` | `true` | Keep root rotation/scale/skew; false removes root rotation while retaining scale/skew; root translation is normalized in either case |
+| `outerShadows` | `false` | Strip root shadow/outline/drop-shadow; true keeps them; subtree also bounds descendant shadow ink |
+| `clip` | `null` | `'viewport'` or `{ x, y, width, height }` in page coordinates |
+| `captureSelection: boolean` | `false` | Include the live text or focused-field selection |
+| `fallbackURL` | unset | Fixed image URL or callback receiving measured width/height for failed images; callback decisions use current state on each new capture that needs a fallback |
+| `placeholders: boolean` | `true` | Use placeholders for missing resources |
+| `canvas: HTMLCanvasElement` | unset | Reuse a raster output target |
+| `reconcile: boolean` | `false` | Measure the styled clone and pin boxes that differ from the live layout; adds a layout pass |
+| `fast: true, false or 'auto'` | `true` | `false` pauses a long capture about every frame so the page keeps painting and taking input; `'auto'` (experimental) pauses only past 40 ms |
+| `cache` | `'soft'` | Persistent resource/style cache policy; disabled/false clears and bypasses it; legacy auto/full normalize to soft |
+| `invalidate: boolean` | `false` | Force one fresh capture and clear style snapshots after otherwise unobservable changes |
+| `plugins: PluginUse[]` | unset | Per-capture plugin definitions; override globals by name |
+| `engine` | `'svg'` | Select `'svg'` or `'html-in-canvas'` (Chrome 157+, SVG fallback elsewhere; see Choosing an engine) |
+| `debug: boolean` | `false` | Log fallbacks and errors to the console; off, SnapDOM logs nothing and `warnings` carries the degradations |
+
+Root `blur()` remains visible and its bleed is included even with `outerShadows: false`. Explicit clip edges do not expand. Descendant transforms remain part of the capture.
+
+### Fonts
+
+`embedFonts: 'auto'` embeds the webfonts used in the subtree. `true` forces the discovery/embed pass; `false` skips text-font embedding and may leave fallback metrics. Icon glyphs use a separate raster path, so they are not controlled by text-font embedding.
+
+```ts
+interface LocalFont {
+  family: string;
+  src: string;
+  weight?: string | number;
+  style?: string;
+  stretchPct?: number; // 100 by default
+}
+
+interface ExcludeFonts {
+  families?: string[];
+  domains?: string[];
+  subsets?: string[];
+}
+```
+
+```js
+const capture = await snapdom(element, {
+  localFonts: [{ family: 'Inter', src: '/fonts/inter.woff2', weight: 400 }]
+});
+```
+
+Explicit sources avoid remote discovery. Ensure the live layout uses the intended font before capturing; an export cannot repair layout measured with a different font.
+
+### Exclusions and missing assets
+
+```js
+const capture = await snapdom(element, {
+  exclude: ['.export-button', node => node.hasAttribute('data-private')],
+  excludeMode: 'remove',
+  fallbackURL: ({ width = 300, height = 150 }) =>
+    `/image-fallback.svg?width=${width}&height=${height}`
+});
+```
+
+`data-capture="exclude"` also excludes an element. Core password handling masks password values. Use the `redactInputs` plugin for additional selected fields, private subtrees (`blocks`) and named attributes (`attributes`); see the redaction example below.
+
+For cross-origin resources, configure CORS on the asset server or supply a proxy you control:
+
+```js
+const capture = await snapdom(element, {
+  useProxy: 'https://your-proxy.example/?url='
+});
+```
+
+Proxying assets gives that service the requested resource URLs. It does not grant access to cross-origin iframe documents.
+
+### Automatic asset sizing
+
+SnapDOM may reduce oversized embedded bitmap assets based on displayed size, transforms and requested raster density. This can reduce SVG payload size and later decoding work. The SVG result retains the original assets for larger subsequent raster exports. A successful native capture is already a bitmap, so larger exports scale its captured pixels. CSS style compression is internal; there is no public compression switch.
+
+## Cache and preCapture
+
+There are three forms of reuse:
+
+1. Exporting an existing `CaptureResult` uses that capture's state.
+2. Calling `snapdom()` again may reuse an eligible unchanged memo or differentially recapture supported changes.
+3. Persistent caches reuse resource data and style work across captures.
+
+`cache: 'disabled'` or `false` controls the third form. It does not disable automatic repeat memoization. Legacy `cache: 'auto'` and `'full'` are accepted as `'soft'`.
+
+Eligible static captures can be memoized from their first successful capture. DOM, style, font and environment changes observed by the engine invalidate relevant work. Canvas, video and iframe trees capture fresh because their visual contents can change without a DOM mutation. Live selection also requires fresh capture.
+
+Function-valued `filter`, `exclude`, `excludeStyleProps` and `fallbackURL` suspend capture memoization. Applicable callbacks are evaluated again on each new capture; previous callback decisions are not reused through style or fallback caches. A changed closure needs no `invalidate`:
+
+```js
+let privateMode = false;
+const options = {
+  exclude: node => privateMode && node.matches('[data-private]'),
+  excludeMode: 'remove'
+};
+const before = await snapdom(element, options);
+privateMode = true;
+const after = await snapdom(element, options); // applies the current policy
+```
+
+Exporting `before` again keeps the earlier captured content; use a new capture to apply a changed policy. Callbacks run where applicable, so do not depend on an exact invocation count. Keep exclusion predicates synchronous and boolean-returning. This callback behavior does not make direct CSSOM edits observable.
+
+Direct stylesheet edits such as `sheet.insertRule()` or `cssRule.style.color = ...` do not emit the DOM mutations used for style invalidation. After such changes, use:
+
+```js
+const capture = await snapdom(element, { invalidate: true });
+```
+
+That call bypasses the previous memo and clears style snapshots. Its stable fresh result may become the memo for later captures.
+
+Arm intent-based preparation once:
+
+```js
+snapdom.preCapture();
+
+button.addEventListener('click', async () => {
+  const capture = await snapdom(card);
+  await capture.download({ filename: 'card.png' });
+});
+```
+
+An eligible capture started in the same event task as a press, click or Enter/Space activation teaches `preCapture()` which target and top-level options belong to that control. Later pointer-enter, focus or press intent can prefetch it. The options are shallow-copied. An initial unknown pointer/focus intent can warm the viewport once; it cannot yet know an unseen control's target. There are no arguments, declarations or background polling.
+
+`preCache` was removed in v3.
+
+## Plugins
+
+### Registration
+
+```js
+import { filter, htmlExport } from '@zumer/snapdom-plugins';
+
+const capture = await snapdom(element, {
+  plugins: [filter({ preset: 'grayscale' }), htmlExport()]
+});
+const image = await capture.toPng();
+const html = await capture.toHtml();
+```
+
+For global registration, use `snapdom.plugins(plugin, ...)`. Definitions may be instances, factories, `[factory, options]` tuples or `{ plugin: factory, options }` objects. Per-capture definitions override global ones with the same `name`. Clone-only plugins must be passed per capture; global plugins cannot lower every capture's stage.
+
+### Official plugin exports
+
+| Factory | Output or effect | Selected options/defaults |
+| --- | --- | --- |
+| `filter()` | CSS filter on the clone | preset: grayscale, sepia, blur, invert, vintage, dramatic; or a CSS filter string |
+| `colorTint()` | Color overlay | color red, opacity 1 |
+| `replaceText()` | Text substitutions in the clone | replacements: array of `{ find: string or RegExp, replace: string }` |
+| `timestampOverlay()` | Timestamp badge | format datetime, position bottom-right |
+| `redactInputs()` | Masks input/textarea values, excludes blocks and removes named attributes; `<select>` values are not masked, hide them with `blocks` | types, autocomplete, selector, all, mask, blocks, attributes |
+| `asciiExport()` | `toAscii(opts?)` → string; `width`, `charset` and `invert` can be overridden per call | width 80 characters, charset `' .:-=+*#%@'`, invert false |
+| `pdf()` | `toPdf()` → Blob; optional download | selectable text, pagination, links and optional form fields |
+| `vector()` | `toVector()` → SVG string; `toFigma()` → clipboard | supported text and shapes reconstructed as vectors |
+| `htmlExport()` | `toHtml()` → string | fullDocument true, filename capture.html |
+| `contextExport()` | `toContext()` → outline string or JSON | format outline, geometry true, maxTextLength 120, maxNodes 800 |
+| `agentMap()` | `toAgentMap()` → object | image annotated, fields minimal, semantic false, maxImageWidth 1024 |
+| `gifExport()` | `toGif()` → Blob | fps 10, duration 2000 ms, frames overrides duration |
+| `videoExport()` | `toMp4()` → Blob | fps 10, duration 2000 ms, frames overrides duration |
+
+PDF and Vector are MIT source in packages/plugins. PDF and Vector are available on npm in @zumer/snapdom-plugins 4.x and require SnapDOM 3.x. PDF returns a Blob; downloading is an explicit export option.
+
+### Redaction across outputs
+
+```js
+import { redactInputs, htmlExport, contextExport } from '@zumer/snapdom-plugins';
+
+const capture = await snapdom(element, {
+  plugins: [
+    redactInputs({
+      all: true,
+      blocks: ['.private-panel', '[data-private-block]'],
+      attributes: [
+        { selector: '[data-token]', names: ['data-token'] },
+        { selector: '.customer', names: ['title', 'aria-label'] }
+      ]
+    }),
+    htmlExport(),
+    contextExport({ format: 'json' })
+  ]
+});
+const image = await capture.toPng();
+const html = await capture.toHtml();
+const context = await capture.toContext();
+```
+
+The live page stays unchanged. Field selection uses `types` (default email/tel), `autocomplete` (default cc-*, current-password, new-password, one-time-code), an extra `selector`, or `all: true`. `selector` applies only to inputs and textareas; use `blocks` for other elements. The default mask replaces values with same-length bullets; custom `mask(value, element)` can return another string. Glyph widths can differ, so wrapping can change.
+
+`blocks` accepts a CSS selector or an array and combines with `exclude`. It preserves invisible space by default; `excludeMode: 'remove'` removes the subtree from layout. Removing a blocked capture root throws; use `'hide'` for that capture. Selectors match source elements, including nodes in open shadow trees.
+
+`attributes` accepts `{ selector: string, names: string[] }` rules. Each rule removes exact named attributes and their projections in agent maps and context; names are not wildcard patterns. A `value` rule on an input or textarea clears its displayed value and omits structured `state.value`. Attribute removal does not erase copies in visible text, CSS `content` or bitmap pixels; use `blocks` for the subtree that paints that content. The rules do not search arbitrary text or images for sensitive information.
+
+HTML uses the sanitized clone. `agentMap` and `contextExport` share the field, block and attribute policy for source-derived data, regardless of official plugin order. Existing default field masks still apply when you add block or attribute rules.
+
+Custom masks and nonempty `selector`, `blocks` or `attributes` rules disable unchanged-capture memoization, so they run on every capture. Nonempty block or attribute rules add a final `beforeRender` pass; `engine: 'html-in-canvas'` then falls back to SVG. Field-only redaction does not add that pass. Full plugin options: https://github.com/zumerlab/snapdom/blob/main/packages/plugins/README.md#redact-inputs.
+
+### HTML and structured context
+
+```js
+import { htmlExport, contextExport } from '@zumer/snapdom-plugins';
+
+const capture = await snapdom(element, {
+  plugins: [htmlExport(), contextExport()]
+});
+const documentHtml = await capture.toHtml();
+const fragment = await capture.toHtml({ fullDocument: false });
+const outline = await capture.toContext();
+const tree = await capture.toContext({ format: 'json' });
+```
+
+HTML output contains the captured markup, styles and assets. It preserves source event-handler attributes; treat it as untrusted when serving it. It is not a sanitizer. `toHtml({ download: true })` also downloads; a string value for `download` supplies the filename.
+
+Context JSON has `{ root, truncated, nodes }`. Each node may contain `tag`, `id`, `class`, `box`, `text`, `state` and nested `children`. Text and node caps can truncate output. It describes the captured tree; it does not provide interaction commands.
+
+For context alone, skip the render stage:
+
+```js
+const capture = await snapdom(element, {
+  plugins: [contextExport({ needs: 'clone', format: 'json' })]
+});
+const tree = await capture.toContext();
+```
+
+### Annotated maps
+
+```js
+import { agentMap } from '@zumer/snapdom-plugins';
+
+const capture = await snapdom(element, {
+  plugins: [agentMap({ image: 'annotated', fields: 'full' })]
+});
+const annotated = await capture.toAgentMap();
+const raw = await capture.toAgentMap({ image: 'raw' });
+```
+
+The result shape is `{ dimensions: { width, height }, map, image? }`. `image`, when requested, is a data URL. Each map entry uses these keys:
+
+- `i`: numeric label id
+- `n`: accessible name or text label
+- `r`: role
+- `b`: bounding box array `[x, y, width, height]`
+- Interactive entries may add `s` (state). Full fields may add `t` (text) and `a` (attributes). Semantic entries carry `isSemanticOnly`.
+
+The image and map refer to the same captured state. `image: 'raw'` omits labels; `image: false` omits the image. `semantic: true` adds non-interactive semantic elements. `maxImageWidth`, `imageFormat` (png/jpg/webp), `imageQuality`, selectors and `labelStyle` customize the output. For map-only capture, use `{ image: false, needs: 'clone' }`.
+
+Boxes account for capture geometry, but complex transformed ancestors and perspective can limit alignment. Maps are capture data, not a browser automation or action-verification API. Comparing capture URLs only compares serialized output; it does not establish that an interaction succeeded.
+
+### Recordings
+
+```js
+import { gifExport, videoExport } from '@zumer/snapdom-plugins';
+
+const capture = await snapdom(element, {
+  plugins: [gifExport({ fps: 10, duration: 2000 }), videoExport({ fps: 10 })]
+});
+const gif = await capture.toGif();
+const video = await capture.toMp4();
+console.log(video.type); // Actual MP4 or WebM container
+```
+
+Recording starts at export time and captures the live element repeatedly, including its first frame. Capture policies such as exclusions continue to apply. An explicit `frames` count overrides `duration`; scale inherits the original capture unless supplied. The video plugin needs `MediaRecorder` and canvas `captureStream()`, and falls back to WebM when MP4 is unavailable. Check `blob.type` when naming or serving the result. Either recording export accepts `download: true` or a filename string.
+
+### Plugin lifecycle
+
+Capture hooks run in registration order:
+
+```text
+beforeSnap → beforeClone → resolveNode (per node) → afterClone
+→ beforeRender → afterRender → defineExports
+→ [beforeExport → exporter → afterExport] for each export
+→ afterSnap once, after the first successful export
+```
+
+Clone-only captures stop before the render hooks. All hooks can be async. Core exclusions are checked before `resolveNode()`: return a replacement `Node`, `null` to skip, or `undefined` for normal cloning. The first plugin that returns a value wins for that node.
+
+Capture hooks share a context with normalized options at the top level, such as `ctx.scale`, and `ctx.options` refers to that capture context. `beforeSnap` can change those options, except `plugins`, `needs`, `invalidate` and `cache`, which have already been resolved.
+
+`ctx.clone` is available from `afterClone` through `afterRender`, then released. In `afterRender`, copy any serialized data needed later. Keep per-capture state on that capture's context or in the closure created by `defineExports`; shared mutable plugin-factory state can mix separate captures.
+
+Export hooks receive a per-export context view and a payload. `payload.options` is the same merged options object the exporter receives; mutate it in `beforeExport` to change the export. `ctx.export.requestedOptions` preserves the exact explicit overrides. `ctx.export.url` is the capture URL, and `ctx.export.svgString()` lazily reads SVG text when the capture has it; it rejects for a native bitmap. Both `beforeExport` and `afterExport` return values are ignored; `afterExport` cannot replace the result.
+
+Declare a custom exporter to produce another result. Capture the core facade during `defineExports`; its methods bypass hooks, avoiding recursive export calls:
+
+```js
+const imageBundle = {
+  name: 'image-bundle',
+  defineExports({ exports: core, meta }) {
+    return {
+      bundle: async (_context, options) => ({
+        image: (await core.png(options)).src,
+        width: meta.w0,
+        height: meta.h0
+      })
+    };
+  }
+};
+
+const capture = await snapdom(element, { plugins: [imageBundle] });
+const bundle = await capture.toBundle();
+```
+
+The key `bundle` creates both `result.toBundle(options)` and `result.to('bundle', options)`. Using the core facade preserves its geometry, asset-resolution and browser handling. Do not assume `ctx.exports` exists later inside the exporter; retain the facade from `defineExports` as above. Return fresh mutable output objects so one caller cannot corrupt later exports.
+
+Capture-affecting hooks disable automatic memo reuse unless the plugin declares `pure: true`. Use that declaration only for deterministic, idempotent hooks. Pure render hooks can use differential recapture; clone-construction hooks still need a full recapture after a change. Clone-only captures are not memoized. Time-dependent plugins should not claim purity.
+
+## Migrating from v2.x.x
+
+`filter` / `filterMode` and `exclude` / `excludeMode` remain supported together, with independent modes as in v2. `filter(node)` retains a node when truthy and filters it out when falsy. `exclude` adds omissions through selectors or optional new predicates; a truthy exclusion predicate omits the node. This optional predicate form does not replace `filter`. The separate CSS-effect plugin named `filter` is also available.
+
+```js
+// Works in v2 and v3: hide private fields, remove the toolbar.
+await snapdom(element, {
+  filter: node => !node.matches('[data-private]'),
+  filterMode: 'hide',
+  exclude: ['.toolbar'],
+  excludeMode: 'remove'
+});
+```
+
+Both modes default to `hide`, which keeps an invisible spacer; `remove` drops the node and allows reflow. Both omit its content. Per node, the engine checks `data-capture="exclude"`, then `exclude`, then `filter`. The first omission determines the mode and stops evaluation for that node. The attribute or an `exclude` match uses `excludeMode`; it wins even if `filter` would also reject the node with a different `filterMode`. A true filter result cannot override an exclusion.
+
+V3 additionally allows mixed exclusion rules such as `exclude: ['.toolbar', node => node.dataset.export === 'omit']`. Any matching selector or predicate excludes the node. Existing selector exclusions and inclusion filters need no conversion or mode merging.
+
+Other changes from v2.x.x:
+
+- Remove `preCache()`, its subpath and the browser `preCache` global. Normal capture reuse and optional no-argument `preCapture()` replace the preparation workflow; this is not a direct rename.
+- Remove the public `burst` switch. Eligible capture memoization is automatic. `invalidate: true` takes a fresh capture after unobservable changes; `cache: 'disabled'` controls persistent resource/style caches, not memoization.
+- `fast: false` still keeps the page responsive during a long capture, now by pausing about every frame instead of through idle callbacks. `fast: 'auto'` is experimental and pauses only once a capture runs past 40 ms. A capture whose element changes while paused is cloned again in one task when it is memoizable.
+- Remove public `compress`. Embedded bitmap optimization remains automatic; no public switch disables it to preserve original embedded resources verbatim.
+- Remove public `resolvePicturePlaceholders` and `pictureResolver` settings. Responsive/lazy images are still resolved on the clone. There is no replacement core tuning object; handle custom loading, concurrency and timeout requirements in the application before capture.
+- `embedFonts` defaults to `'auto'`. Width or height wins over scale across exporters; pass the final desired dimension instead of relying on multiplication by scale.
+- Core masks passwords only. Other visible fields remain visible unless `redactInputs()` or an exclusion hides them.
+- `cache: 'auto'` and `'full'` map to `'soft'`. Prefer canonical `format` to deprecated `type`.
+- `afterExport` return values no longer become the next hook's payload; hooks receive the same export payload. Those returns never replaced the caller's result in v2.x.x. Use `defineExports` to return another format or shape.
+- The TypeScript name `PluginExportFacade` is no longer exported, but the core-export facade still exists. Infer `ctx.exports` in `defineExports` or derive the type as below.
+
+```ts
+import type { CaptureContext } from '@zumer/snapdom';
+type CoreExports = NonNullable<CaptureContext['exports']>;
+```
+
+For older prerelease/plugin examples: supported stage names are `clone` and `render`, agent maps use `toAgentMap()`, and video uses `toMp4()` with possible WebM fallback. These names are not all new changes from v2.x.x.
+
+## Recipes for agents and multi-output workflows
+
+### Read structured content without rendering an image
+
+Use a local clone-stage plugin when the consumer needs text, field state or a tree. This avoids the image-rendering stage. It still requires a live browser DOM and captures styles/assets according to the requested stage.
+
+```js
+import { snapdom } from '@zumer/snapdom';
+import { contextExport } from '@zumer/snapdom-plugins/context-export';
+import { redactInputs } from '@zumer/snapdom-plugins/redact-inputs';
+
+const capture = await snapdom(element, {
+  plugins: [
+    redactInputs({ all: true, blocks: '.private' }),
+    contextExport({ needs: 'clone', format: 'json', maxNodes: 1200 })
+  ]
+});
+const tree = await capture.toContext({ format: 'json' });
+console.log(tree.root, tree.nodes, tree.truncated);
+const outline = await capture.toContext({ format: 'outline' });
+```
+
+`maxNodes` belongs on the factory; `maxTextLength` limits text per node and can be overridden at export. Check `truncated` and text caps before treating the result as exhaustive. Clone-only results have no image artifact: image exports throw. When combining plugins, the deepest requested stage wins; adding a render-stage plugin means this capture also renders.
+
+### Give an agent an image and an element map
+
+```js
+import { agentMap } from '@zumer/snapdom-plugins/agent-map';
+import { contextExport } from '@zumer/snapdom-plugins/context-export';
+
+const capture = await snapdom(element, {
+  plugins: [
+    agentMap({ fields: 'full', semantic: true }),
+    contextExport({ format: 'json' })
+  ]
+});
+const observation = await capture.toAgentMap({ image: 'annotated' });
+const tree = await capture.toContext({ format: 'json' });
+// observation.image: data URL with numbered interactive-element badges
+// observation.map: entries with i (label), n (name), r (role), b (box)
+// tree: captured content and state, with truncation information
+```
+
+Pass the image and map together so labels refer to the same captured state. `fields` and `semantic` are factory settings, not per-export overrides. For a map without image rendering, create a separate capture with `agentMap({ needs: 'clone', image: false })`.
+
+Map label IDs are capture-local references, not browser handles. Use browser automation to navigate or interact, capture again after the action, and verify the intended postcondition with that automation tool. SnapDOM does not establish that a click landed or that only the intended content changed. See the Ecosystem section for SnapSurf, SnapEye and SnapDIFF roles.
+
+### Produce a PDF, preview, HTML and JSON from one capture
+
+```js
+import { pdf } from '@zumer/snapdom-plugins/pdf';
+import { htmlExport } from '@zumer/snapdom-plugins/html-export';
+import { contextExport } from '@zumer/snapdom-plugins/context-export';
+import { redactInputs } from '@zumer/snapdom-plugins/redact-inputs';
+
+const capture = await snapdom(element, {
+  dpr: 1,
+  embedFonts: true,
+  plugins: [
+    redactInputs({ all: true, blocks: '.private' }),
+    pdf(),
+    htmlExport(),
+    contextExport({ format: 'json' })
+  ]
+});
+const document = await capture.toPdf({ page: 'a4', margin: 36 });
+const preview = await capture.toBlob({ format: 'png' });
+const html = await capture.toHtml();
+const context = await capture.toContext({ format: 'json' });
+console.log(capture.warnings);
+```
+
+These exports reuse the captured state. Store or deliver each artifact using its actual return type; PDF and PNG here are Blobs, HTML is a string and context is an object. This recipe returns artifacts without initiating a download. Use `toPdf({ download: 'report.pdf' })` or core `download()` when downloading is part of the requested workflow.
+
+Redact source content before capture, rather than painting a cover over pixels: selectable PDF text and structured exports can otherwise retain it. HTML export preserves event-handler attributes, so treat it as untrusted when serving it. It preserves a captured representation, not JavaScript listeners, application execution or a complete runnable app.
+
+### Export editable artwork on a user action
+
+```js
+import { vector } from '@zumer/snapdom-plugins/vector';
+
+const artwork = await snapdom(element, {
+  plugins: [vector({ exclude: '.toolbar' })]
+});
+const svg = await artwork.toVector();
+copyButton.addEventListener('click', async () => {
+  await artwork.toFigma();
+});
+```
+
+Keep the source element connected through export and serve the page over HTTPS or localhost with async clipboard support. Call `toFigma()` directly from the click handler so clipboard access starts during the user action. The returned SVG string can be saved as SVG artwork; `toFigma()` resolves without returning a document. Review diagnostics and supported-content limits when exact visual fidelity is required.
+
+### Finish the workflow with the right checks
+
+Wait for the source interface's final layout, fonts and application-managed assets before capture. Read `capture.warnings` after exports, plus PDF's `onReport` when document diagnostics matter. Check actual MIME types for video, truncation for context and destination support for `foreignObject` SVG. Recapture after live content changes; use `invalidate: true` for CSSOM edits without observable browser signals. Recording exports intentionally read new live frames and do not represent the original frozen instant.
+
+## Browser boundaries and troubleshooting
+
+SnapDOM needs a real browser DOM. It captures an existing interface; it does not navigate to arbitrary URLs or automate user actions. Use a browser automation tool for those tasks. Test output in the browsers and viewers you support.
+
+SVG output contains HTML inside `foreignObject`; it is not a set of editable native SVG paths. Some image viewers do not support that content. Use PNG/JPEG/WebP when the destination cannot display it.
+
+Open Shadow DOM and same-origin iframe contents can be captured. Closed shadow roots and cross-origin iframe documents are inaccessible. Tainted canvases, inaccessible images, external fonts and browser raster limits can require fallbacks. An iframe placeholder or partial asset fallback is not a capture of inaccessible content.
+
+If output differs, read `capture.warnings` after export, use `debug: true`, and check the affected resource, font and capture dimensions. Verify the source is laid out with its final styles before capture. A missing webfont changes measurements; inaccessible assets can produce placeholders; oversized output can be clamped. `reconcile: true` adds clone measurement when layout diverges. Do not discard CSS properties or disable font embedding merely to hide a fidelity problem.
+
+## Ecosystem
+
+[SnapDOM Ecosystem](https://snapdom.dev/ecosystem/) compares tools built on SnapDOM:
+
+- SnapEye provides capture, visual diff and recording operations for coding agents, with JSON results and artifacts. It uses SnapDIFF's diff engine and does not navigate or click.
+- SnapSurf provides browser navigation, compact page observations, typed changes and assertions through MCP or CLI. Its semantic verification is different from comparing pixels against a saved visual baseline.
+- SnapDIFF provides repeatable visual regression tests, saved baselines and review tools in the page or a Vitest browser suite in CI.
+
+An agent or test harness can use SnapSurf to reach a state, SnapEye to inspect an edit, and SnapDIFF to maintain regression coverage. These steps require explicit setup; baselines are managed separately. SnapEye's URL trigger reloads the page; use its in-page API for states already reached through interaction.
+
+## Further reading
+
+- API: https://snapdom.dev/docs/api/
+- Options: https://snapdom.dev/docs/options/
+- Plugins: https://snapdom.dev/docs/plugins/
+- Cache and preCapture: https://snapdom.dev/docs/cache/
+- How-to: https://snapdom.dev/how-to/
+- Framework guides: https://snapdom.dev/how-to/#frameworks
+- Compare: https://snapdom.dev/compare/
+- Blog: https://snapdom.dev/blog/
+- SnapDOM v3 release: https://snapdom.dev/blog/snapdom-v3/
+- DOM capture boundaries: https://snapdom.dev/blog/dom-capture-boundaries/
+- Tiled rasterization: https://snapdom.dev/blog/huge-page-mosaic/
+- Plugin gallery: https://snapdom.dev/showcase/#plugins
+- Plugin contract: https://github.com/zumerlab/snapdom/blob/main/PLUGIN_SPEC.md
+
+## PDF and Vector exports
+
+Both exporters live inside the official plugin workspace: packages/plugins/pdf and packages/plugins/vector. Vector includes its internal SVD dependency in packages/plugins/vector/svd. @zumer/snapdom-plugins 4.0.0 is published on npm and available through npm-backed CDNs.
+
+PDF usage:
+
+```js
+import { snapdom } from '@zumer/snapdom';
+import { pdf } from '@zumer/snapdom-plugins/pdf';
+const capture = await snapdom(element, {
+  dpr: 1,
+  embedFonts: true,
+  plugins: [pdf()]
+});
+const file = await capture.toPdf({ page: 'a4', text: true, fields: true });
+// file is a Blob. Add download: 'report.pdf' only when a download is wanted.
+```
+
+### PDF options and behavior
+
+`toPdf(options?)` and `to('pdf', options?)` return `Promise<Blob>` with type `application/pdf`. There is no standalone `toPdf(element)` plugin API. Register `pdf()` before capturing.
+
+Capture-model options belong in `pdf(options)` and cannot be changed by `toPdf()`: `formValues`, `shadow`, `breakAvoid`, `outline` and `forms` all default to true. `outline` also accepts a heading selector. Passing these options at export time warns and ignores them. All export options can also be factory defaults; per-export options win.
+
+| Export options | Defaults and behavior |
+| --- | --- |
+| `page`, `orientation`, `margin` | `'fit'` creates one page at capture size; named paper sizes such as `'a4'` or `'letter'`, or `[width, height]` in PDF points, paginate vertically. Orientation defaults to `'portrait'`, margin to 24 points; both are ignored for `'fit'`. |
+| `repeatHeaders` | true; repeats table headers across pages. Atomic blocks and CSS page breaks guide pagination; blocks taller than a page still split. |
+| `text`, `links`, `fields` | true; selectable/searchable text, link annotations and fillable AcroForm fields. `forms: false` skips field measurement at capture time. |
+| `image`, `codec`, `quality`, `deflate` | image true, codec `'auto'`, quality from capture or 0.92, stream compression true. Codec accepts `'jpeg'` or `'flate'`; auto keeps the smaller encoding. `image: false` omits raster content and element-based furniture. |
+| `embedFonts`, `vectorText` | embedFonts true subsets captured webfonts; `'full'` embeds full fonts, false skips embedding. Requires fonts in the capture (`snapdom(..., { embedFonts: true })`). vectorText false; true paints eligible embedded-font LTR text as vector glyphs, with unsupported runs retained on the raster. |
+| `tagged`, `lang` | tagged true; language from the DOM or null. Tagged structure alone does not guarantee PDF/UA; `onReport` reports whether the exporter earned the PDF/UA-1 identifier. |
+| `header`, `footer`, `pageNumbers`, `cover`, `back`, `toc`, `watermark` | Optional document furniture, front/back matter, table of contents and watermarks. See the full PDF reference for accepted shapes. |
+| `meta`, `encrypt` | Document metadata and optional AES-256 encryption. Encryption requires a nonempty `userPassword`; permission flags are advisory. |
+| `signal`, `onProgress`, `onReport` | Abort between pages, receive progress, and inspect structured warnings/counts, page and byte totals, fields, annotations and embedded fonts. |
+| `download` | Opt-in: true uses `snapdom.pdf`, a string supplies the filename. The Blob is always returned. |
+
+Resolution belongs to `snapdom(...)`: use `scale`, `dpr`, `width` or `height`, not `toPdf()`. Set `dpr` explicitly for consistent document raster resolution across devices. `backgroundColor` can flatten transparency for this PDF export. Lowering JPEG `quality` may leave size unchanged when lossless Flate wins in auto mode.
+
+PDF uses the frozen capture, with a faithful image and an aligned selectable text layer. Form measurement and field export are separate options. Core password masking does not redact ordinary email or telephone fields; use redactInputs for intentional privacy rules.
+
+Vector usage:
+
+```js
+import { snapdom } from '@zumer/snapdom';
+import { vector } from '@zumer/snapdom-plugins/vector';
+const capture = await snapdom(element, { plugins: [vector()] });
+const svg = await capture.toVector();
+// On a later user click in a secure context, call capture.toFigma().
+```
+
+### Vector public API and limits
+
+`toVector(options?)` returns `Promise<string>` containing standalone SVG with native shapes and editable text, without `foreignObject`. `toFigma(options?)` writes a clipboard payload and returns `Promise<void>`; it does not return SVG or a Figma document object.
+
+`exclude` is the only public Vector option. It accepts a selector, a predicate returning true to omit an element, or an array of those rules. A per-export `exclude` overrides the factory default:
+
+```js
+const capture = await snapdom(element, {
+  plugins: [vector({ exclude: '.toolbar' })]
+});
+const svg = await capture.toVector({ exclude: ['.toolbar', '.private'] });
+```
+
+Keep the source element connected through export. Internal SVD documents, emitters and tuning options are not part of this public API. Unsupported paint is diagnosed by the engine; supported content and approximations are described in the Vector reference.
+
+Vector reconstructs supported text and shapes as vector elements; it is distinct from core toSvg(), which embeds HTML in foreignObject. Review engine diagnostics before using artwork that requires exact fidelity. Figma export writes to the async clipboard and requires a secure context and a user action.
+
+Live PDF documentation: https://snapdom.dev/plugins/pdf/. Full API: https://snapdom.dev/plugins/pdf/docs.html.
+Live Vector documentation: https://snapdom.dev/plugins/vector/. Full API: https://snapdom.dev/plugins/vector/docs.html.
+Plugin demos: https://snapdom.dev/showcase/#plugins. Source directory: https://github.com/zumerlab/snapdom/tree/main/packages/plugins.
+Old /pro/ URLs redirect to /plugins/. Current PDF/Vector demos generate outputs in the browser from editable samples rather than serving pre-release files.

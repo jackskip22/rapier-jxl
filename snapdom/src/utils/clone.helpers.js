@@ -1,0 +1,1207 @@
+/**
+ * The parts of a clone that cloneNode cannot produce on its own.
+ *
+ * Shadow DOM: a root's CSS is flattened into a host-scoped <style> with specificity 0
+ * (`rewriteShadowCSS`, `injectScopedStyle`), and slotted subtrees are marked so a parent scope
+ * cannot pierce a child's (#488). <img>: the responsive choice is frozen into `src`
+ * (`freezeImgSrcset`). Same-origin <iframe>: rendered to a bitmap at its content box
+ * (`rasterizeIframe`). Range, checkbox and radio inputs, which Firefox does not paint inside
+ * a foreignObject: rebuilt as inline SVG. And blob: URLs, resolved to data: before the page
+ * can revoke them (`resolveBlobUrlsInTree`).
+ * @module utils/clone.helpers
+ */
+
+import { debugWarn, getStyle } from './index.js'
+import { cache, EvictingMap } from '../core/cache.js'
+import { snapFetch } from '../modules/snapFetch.js'
+import { inlineAllStyles, invalidateSnapshotsUnder } from '../modules/styles.js'
+import { splitTopLevel } from '../modules/styleScan.js'
+import { findRealUrlForPicture, pickSrcsetCandidate, findLazySrcAttr, isPlaceholderSrc } from '../modules/pictureResolver.js'
+import { markInternalNode } from './ownership.js'
+import { isFirefox } from './browser.js'
+
+/** Add the current scope's slotted exclusion at the rightmost compound. */
+function addNotSlottedRightmost(sel, scopeId) {
+  sel = sel.trim()
+  if (!sel) return sel
+  const marker = scopeId ? `[data-sd-slotted~="${scopeId}"]` : '[data-sd-slotted]'
+  if (sel.endsWith(':not([data-sd-slotted])') || sel.endsWith(`:not(${marker})`)) return sel
+  return `${sel}:not(${marker})`
+}
+
+// A trailing pseudo-element (double-colon, or the four legacy single-colon ones). A colon
+// escaped with a backslash is part of a class name (Tailwind's `.md\:after`), not a pseudo.
+// Pinned by __tests__/module.styleScan.test.js.
+const TRAILING_PSEUDO_RE = /::[a-zA-Z-]+(?:\([^)]*\))?$|(?<!\\):(?:before|after|first-letter|first-line)$/
+// The pseudo pass inlines these as spans from the live element's computed style; a native
+// copy in the scoped CSS would paint them twice.
+const SPAN_PSEUDO_RE = /^::?(?:before|after|first-letter)$/
+
+/**
+ * Wrap a selector list with :where(scope ...), lowering specificity to 0.
+ * Optionally excludes slotted elements on the rightmost selector.
+ *
+ * A pseudo-element stays OUTSIDE the wrapper: `:where(… .k::after)` is not a valid selector
+ * and neither is `.k::after:not(…)`, so every scoped pseudo rule used to be dropped by the
+ * parser — a `li::marker` declared inside a shadow root never coloured its marker. ::marker,
+ * ::first-line, ::placeholder and the rest render natively in the foreignObject from the
+ * scoped rule; ::before/::after/::first-letter are the pseudo pass's (span), so their rule is
+ * replaced by a never-matching selector.
+ */
+function wrapWithScope(selectorList, scopeSelector, excludeSlotted = true, scopeId) {
+  // #503: commas inside :is/:not (or attribute strings) belong to one selector.
+  // Splitting them can drop a closing ')' with an inlined pseudo-element and make
+  // the browser consume every following rule, including all generated style classes.
+  return splitTopLevel(selectorList, ',')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(s => {
+      // Already rewritten by THIS rewriter (it carries the scope attr): leave it alone.
+      // An author's own :where() DOES need scoping; without this it leaked into the light DOM.
+      if (s.startsWith(':where(') && s.includes('data-sd')) return s
+
+      // Do not touch @rules here (the caller handles those)
+      if (s.startsWith('@')) return s
+
+      const m = s.match(TRAILING_PSEUDO_RE)
+      if (m && SPAN_PSEUDO_RE.test(m[0])) return ':not(*)'
+      const base = m ? s.slice(0, m.index).trim() : s
+      const body = excludeSlotted ? addNotSlottedRightmost(base, scopeId) : base
+      // Zero specificity for the whole selector:
+      return `:where(${scopeSelector} ${body})${m ? m[0] : ''}`
+    })
+    .join(', ')
+}
+
+/**
+ * Rewrite a shadow root's CSS to a flat, host-scoped form with specificity 0.
+ * - :host(.foo)        => :where([data-sd="sN"]:is(.foo))
+ * - :host              => :where([data-sd="sN"])
+ * - :host-context(Y)   => :where(:where(Y) [data-sd="sN"])     (an approximation)
+ * - ::slotted(X)       => :where([data-sd="sN"] X)              (slotted nodes not excluded)
+ * - anything else      => :where([data-sd="sN"] .x:not([data-sd-slotted~="sN"]))
+ * @param {string} cssText
+ * @param {string} scopeSelector - e.g. [data-sd="s3"]
+ * @param {string} scopeId - e.g. s3
+ * @returns {string}
+ */
+export function rewriteShadowCSS(cssText, scopeSelector, scopeId) {
+  if (!cssText) return ''
+
+  // 1) :host-context(Y) before :host: `\b` sits between the `t` and the `-`, so the bare
+  //    :host pass used to eat its head and leave `-context(Y)`, a selector the parser drops.
+  cssText = cssText.replace(/:host-context\(([^)]+)\)/g, (_, sel) => {
+    return `:where(:where(${sel.trim()}) ${scopeSelector})`
+  })
+
+  // 2) :host(.foo) and :host. `[^)]+` stops at the first `)` of `:host(:not(:first-child))`,
+  //    and the leftover one closes the `:is(` it opened, so the output stays balanced.
+  cssText = cssText.replace(/:host\(([^)]+)\)/g, (_, sel) => {
+    return `:where(${scopeSelector}:is(${sel.trim()}))`
+  })
+  cssText = cssText.replace(/:host\b/g, `:where(${scopeSelector})`)
+
+  // 3) ::slotted(X) -> a descendant inside the scope, without excluding slotted nodes
+  cssText = cssText.replace(/::slotted\(([^)]+)\)/g, (_, sel) => {
+    return `:where(${scopeSelector} ${sel.trim()})`
+  })
+
+  // 4) For every "loose" selector block, wrap it in :where(scope …) and exclude only the
+  //    slotted nodes of THIS scope on the rightmost compound.
+  cssText = cssText.replace(/(^|})(\s*)([^@}{]+){/g, (_, brace, ws, selectorList) => {
+    const wrapped = wrapWithScope(selectorList, scopeSelector, /*excludeSlotted*/ true, scopeId)
+    return `${brace}${ws}${wrapped}{`
+  })
+
+  return cssText
+}
+
+/**
+ * Generate a unique shadow scope id for this session.
+ * @param {{shadowScopeSeq?: number}} sessionCache
+ * @returns {string} like "s1", "s2", ...
+ */
+export function nextShadowScopeId(sessionCache) {
+  sessionCache.shadowScopeSeq = (sessionCache.shadowScopeSeq || 0) + 1
+  return `s${sessionCache.shadowScopeSeq}`
+}
+
+/**
+ * Resolve @media at capture time: the serialized SVG is its own tiny viewport, so a
+ * passed-through condition re-evaluates against the IMAGE size, not the page. Matching
+ * blocks inline unwrapped (recursively), non-matching blocks drop — the capture freezes
+ * the media state the user was seeing. @supports keeps its wrapper (its condition is
+ * viewport-independent); @container/@keyframes/@font-face/etc. pass through verbatim
+ * (@container evaluates against ancestor containers, which the foreignObject preserves —
+ * it must be matched by TYPE, since it shares conditionText with @supports).
+ * @param {CSSRuleList} rules
+ * @returns {string}
+ */
+export function resolveMediaQueries(rules) {
+  let out = ''
+  for (const rule of rules) {
+    if (rule.media && rule.cssRules) { // CSSMediaRule
+      let matches = false
+      try { matches = window.matchMedia(rule.conditionText || rule.media.mediaText).matches } catch { }
+      if (matches) out += resolveMediaQueries(rule.cssRules)
+    } else if (rule.constructor?.name === 'CSSSupportsRule') {
+      // constructor.name instead of instanceof: a rule from an iframe document belongs to
+      // that window's CSSSupportsRule, so the parent realm's constructor never claims it.
+      out += `@supports ${rule.conditionText}{${resolveMediaQueries(rule.cssRules)}}`
+    } else if (rule.cssRules && rule.cssRules.length && /@media/i.test(rule.cssText)) {
+      // Any other rule that can NEST (a CSS-nesting style rule, @scope, @container): passing
+      // its cssText through verbatim would carry an inner @media into the SVG, where the
+      // condition re-evaluates against the image box instead of the page. Rebuild it so the
+      // inner rules go through this same resolution.
+      const head = rule.cssText.slice(0, rule.cssText.indexOf('{') + 1)
+      out += head + (rule.style ? rule.style.cssText : '') + resolveMediaQueries(rule.cssRules) + '}'
+    } else {
+      out += rule.cssText + '\n'
+    }
+  }
+  return out
+}
+
+/**
+ * Extract CSS text from a ShadowRoot: inline <style> plus adoptedStyleSheets (if readable),
+ * with @media resolved against the live viewport (see resolveMediaQueries).
+ * @param {ShadowRoot} sr
+ * @returns {string}
+ */
+export function extractShadowCSS(sr) {
+  let css = ''
+  try {
+    sr.querySelectorAll('style').forEach(s => {
+      let rules = null
+      try { rules = s.sheet && s.sheet.cssRules } catch { /* unreadable */ }
+      css += (rules ? resolveMediaQueries(rules) : (s.textContent || '')) + '\n'
+    })
+    // adoptedStyleSheets (may throw cross-origin; guard)
+    const sheets = sr.adoptedStyleSheets || []
+    for (const sh of sheets) {
+      try {
+        if (sh && sh.cssRules) css += resolveMediaQueries(sh.cssRules)
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+  return css
+}
+
+/**
+ * Inject a <style> as the first child of `hostClone` with rewritten CSS.
+ * @param {Element} hostClone
+ * @param {string} cssText
+ * @param {string} scopeId like s1
+ */
+export function injectScopedStyle(hostClone, cssText, scopeId) {
+  if (!cssText) return
+  const style = document.createElement('style')
+  style.setAttribute('data-sd', scopeId)
+  style.textContent = cssText
+  // prepend to ensure it wins over later subtree
+  hostClone.insertBefore(style, hostClone.firstChild || null)
+}
+
+/**
+ * Freeze the responsive selection of an <img> that has srcset/sizes.
+ * Copies a concrete URL into `src` and removes `srcset`/`sizes` so the clone
+ * doesn't need layout to resolve a candidate.
+ * Works with <picture> because currentSrc reflects the chosen source — except
+ * currentSrc resolves eagerly/synchronously in WebKit but is deferred past this point in
+ * Chromium (confirmed: 5/5 runs froze the wrong, non-selected source under fast:true — the
+ * default). Inside a <picture>, resolve the winning source explicitly via the same
+ * media-query matching logic pictureResolver already uses instead of trusting an
+ * unresolved currentSrc.
+ * The write-once rule below is pinned by __tests__/modules.images.dataUrlPassthrough.test.js.
+ * @param {HTMLImageElement} original - Image in the live DOM.
+ * @param {HTMLImageElement} cloned - Just-created cloned <img>.
+ * @param {{resolvePicturePlaceholders?: boolean}} [options]
+ */
+export function freezeImgSrcset(original, cloned, options = {}) {
+  try {
+    // Element-level `content: url(...)` replaces the <img>'s rendered image and out-ranks
+    // src/srcset in the browser's own resolution. The style snapshot neutralizes non-data
+    // content URLs, so freeze the replacement image as the clone's src here.
+    let contentUrl = null
+    const rawContent = getStyle(original).content
+    if (rawContent && rawContent.includes('url(')) {
+      const m = rawContent.match(/url\(["']?([^"')]+)["']?\)/)
+      if (m) contentUrl = m[1]
+    }
+    const picture = original.closest?.('picture')
+    // A data: src without responsive candidates needs no resolution, and the
+    // currentSrc/src GETTERS would re-serialize its megabytes. With srcset, though,
+    // that attribute is only the fallback: freeze the image the browser selected.
+    const rawSrc = original.getAttribute('src') || ''
+    const srcset = original.getAttribute('srcset') || ''
+    let chosen = contentUrl ||
+      (picture ? findRealUrlForPicture(original, picture)
+        : !srcset.trim() && rawSrc.startsWith('data:') ? rawSrc : original.currentSrc) ||
+      // Chromium/Firefox leave currentSrc empty until the selected candidate has loaded,
+      // so resolve candidates before falling back to src, even when src is present.
+      pickSrcsetCandidate(srcset, original) || original.src || ''
+    // Lazy-load placeholders (tiny data:/blob src with the real URL parked in data-src…):
+    // resolve on the CLONE. The old live-DOM resolver swapped the user's element and
+    // undid it afterwards — visible flicker and an undo dance for something inlineImages
+    // fetches from the clone just as well.
+    if ((!chosen || isPlaceholderSrc(chosen)) && options.resolvePicturePlaceholders !== false) {
+      const lazy = findLazySrcAttr(original)
+      if (lazy) chosen = lazy
+    }
+    if (!chosen) return
+    // Setting src is not free: every assignment re-parses the URL and starts a load, and on a
+    // data: URL that is a base64 decode of the whole payload — 26 MB of gallery sources cost
+    // ~40 ms here for a value cloneNode had already copied. Write only what differs.
+    if (cloned.getAttribute('src') !== chosen) cloned.setAttribute('src', chosen)
+    cloned.removeAttribute('srcset')
+    cloned.removeAttribute('sizes')
+    // Hint deterministic decode/load for capture
+    cloned.loading = 'eager'
+    cloned.decoding = 'sync'
+  } catch { }
+}
+
+/**
+ * Collect all custom properties referenced via var(--foo) in a CSS string.
+ * @param {string} cssText
+ * @returns {Set<string>} e.g. new Set(['--o-fill','--o-gray-light'])
+ */
+export function collectCustomPropsFromCSS(cssText) {
+  const out = new Set()
+  if (!cssText) return out
+  const re = /var\(\s*(--[A-Za-z0-9_-]+)\b/g
+  let m
+  while ((m = re.exec(cssText))) out.add(m[1])
+  return out
+}
+
+/**
+ * Resolve the cascaded value of a custom prop for an element.
+ * Falls back to documentElement if empty.
+ * @param {Element} el
+ * @param {string} name like "--o-fill"
+ * @returns {string} resolved token string or empty if unavailable
+ */
+function resolveCustomProp(el, name) {
+  try {
+    const cs = getComputedStyle(el)
+    let v = cs.getPropertyValue(name).trim()
+    if (v) return v
+  } catch { }
+  try {
+    const rootCS = getComputedStyle(document.documentElement)
+    let v = rootCS.getPropertyValue(name).trim()
+    if (v) return v
+  } catch { }
+  return ''
+}
+
+/**
+ * Build a seed rule that initializes given custom props on the scope.
+ * Placed before the rewritten shadow CSS so later rules (e.g. :hover) can override.
+ * @param {Element} hostEl
+ * @param {Iterable<string>} names
+ * @param {string} scopeSelector e.g. [data-sd="s3"]
+ * @returns {string} CSS rule text (or "" if nothing to seed)
+ */
+export function buildSeedCustomPropsRule(hostEl, names, scopeSelector) {
+  const decls = []
+  for (const name of names) {
+    const val = resolveCustomProp(hostEl, name)
+    if (val) decls.push(`${name}: ${val};`)
+  }
+  if (!decls.length) return ''
+  return `${scopeSelector}{${decls.join('')}}\n`
+}
+
+/**
+ * Mark a flattened slotted subtree with this shadow scope's token. Tokens compose when
+ * nested slots are flattened, so parent CSS cannot pierce a child shadow tree while the
+ * child's own CSS still applies to its internals (#488).
+ * @param {Node} root
+ * @param {string} [scopeId]
+ */
+export function markSlottedSubtree(root, scopeId) {
+  if (!root) return
+  const mark = (el) => {
+    const value = el.getAttribute('data-sd-slotted') || ''
+    if (!scopeId) {
+      el.setAttribute('data-sd-slotted', value)
+    } else if (!(` ${value} `).includes(` ${scopeId} `)) {
+      el.setAttribute('data-sd-slotted', value ? `${value} ${scopeId}` : scopeId)
+    }
+  }
+  if (root.nodeType === Node.ELEMENT_NODE) mark(root)
+  root.querySelectorAll?.('*').forEach(mark)
+}
+
+/**
+ * Wait for an accessible same-origin Document for a given <iframe>.
+ * @param {HTMLIFrameElement} iframe
+ * @param {number} [attempts=3]
+ * @returns {Promise<Document|null>}
+ */
+export async function getAccessibleIframeDocument(iframe, attempts = 3) {
+  const probe = () => {
+    try { return iframe.contentDocument || iframe.contentWindow?.document || null } catch { return null }
+  }
+  let doc = probe()
+  let i = 0
+  while (i < attempts && (!doc || (!doc.body && !doc.documentElement))) {
+    await new Promise(r => setTimeout(r, 0))
+    doc = probe()
+    i++
+  }
+  return doc && (doc.body || doc.documentElement) ? doc : null
+}
+
+/**
+ * Compute the content-box size of an element (client rect minus borders).
+ * @param {Element} el
+ * @returns {{contentWidth:number, contentHeight:number, rect:DOMRect}}
+ */
+function measureContentBox(el) {
+  const rect = el.getBoundingClientRect()
+  let bl = 0, br = 0, bt = 0, bb = 0
+  try {
+    const cs = getComputedStyle(el)
+    bl = parseFloat(cs.borderLeftWidth) || 0
+    br = parseFloat(cs.borderRightWidth) || 0
+    bt = parseFloat(cs.borderTopWidth) || 0
+    bb = parseFloat(cs.borderBottomWidth) || 0
+  } catch { }
+  const contentWidth = Math.max(0, Math.round(rect.width - (bl + br)))
+  const contentHeight = Math.max(0, Math.round(rect.height - (bt + bb)))
+  return { contentWidth, contentHeight, rect }
+}
+
+/**
+ * Layout size before any ancestor transform: offsetWidth/Height first, then computed
+ * width/height, then the width/height attributes, then naturalWidth/Height for images.
+ * getBoundingClientRect returns the transformed box, and a replacement sized from it was
+ * scaled a second time by the inherited transform (#321).
+ * @param {Element} el
+ * @returns {{width: number, height: number}} CSS px
+ */
+export function getUnscaledDimensions(el) {
+  let width = 0
+  let height = 0
+
+  // Priority 1: offsetWidth/offsetHeight (pre-transform layout dimensions)
+  if (el.offsetWidth > 0) width = el.offsetWidth
+  if (el.offsetHeight > 0) height = el.offsetHeight
+
+  // Priority 2: getComputedStyle() if offset dimensions not available
+  if (width === 0 || height === 0) {
+    try {
+      const cs = getComputedStyle(el)
+      if (width === 0) {
+        const w = parseFloat(cs.width)
+        if (!isNaN(w) && w > 0) width = w
+      }
+      if (height === 0) {
+        const h = parseFloat(cs.height)
+        if (!isNaN(h) && h > 0) height = h
+      }
+    } catch { }
+  }
+
+  // Priority 3: getAttribute() for hardcoded dimensions
+  if (width === 0 || height === 0) {
+    try {
+      if (width === 0) {
+        const w = parseFloat(el.getAttribute('width'))
+        if (!isNaN(w) && w > 0) width = w
+      }
+      if (height === 0) {
+        const h = parseFloat(el.getAttribute('height'))
+        if (!isNaN(h) && h > 0) height = h
+      }
+    } catch { }
+  }
+
+  // Priority 4: Intrinsic dimensions (for images)
+  if ((width === 0 || height === 0) && (el.naturalWidth || el.naturalHeight)) {
+    try {
+      if (width === 0 && el.naturalWidth > 0) width = el.naturalWidth
+      if (height === 0 && el.naturalHeight > 0) height = el.naturalHeight
+    } catch { }
+  }
+
+  return { width, height }
+}
+
+/** Pin sheet per frame document, reused so its identity in `adoptedStyleSheets` is stable. */
+const pinSheets = new WeakMap()
+
+/**
+ * Temporarily pin the iframe's internal viewport to (w, h) CSS px.
+ * Adopts a stylesheet into the iframe doc and returns a cleanup function.
+ *
+ * #393: `overflow: hidden` clamps the iframe's root scroll position to 0. Removing
+ * the style later doesn't restore it, so the live iframe ends up scrolled to (0,0).
+ * Snapshot scroll state before pinning and restore it after unpinning.
+ *
+ * #448: pinning body to (w, h) is what makes its background fill the content box
+ * (the browser propagates body background to the viewport). But hard-zeroing body
+ * margin/padding drops the content inset. Instead fold the original body margin into
+ * its padding: body still fills the box (background propagation preserved) while the
+ * content keeps its live offset from the viewport edge.
+ *
+ * @param {Document} doc
+ * @param {number} w
+ * @param {number} h
+ * @returns {() => void}
+ */
+export function pinIframeViewport(doc, w, h) {
+  const win = doc.defaultView
+  const sx = win ? win.scrollX : 0
+  const sy = win ? win.scrollY : 0
+  const bsl = doc.body ? doc.body.scrollLeft : 0
+  const bst = doc.body ? doc.body.scrollTop : 0
+  const hsl = doc.documentElement ? doc.documentElement.scrollLeft : 0
+  const hst = doc.documentElement ? doc.documentElement.scrollTop : 0
+
+  // Fold body margin into padding so content keeps its live inset while body fills the box.
+  let pt = 0, pr = 0, pb = 0, pl = 0
+  try {
+    const cs = win && doc.body ? win.getComputedStyle(doc.body) : null
+    if (cs) {
+      pt = (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.paddingTop) || 0)
+      pr = (parseFloat(cs.marginRight) || 0) + (parseFloat(cs.paddingRight) || 0)
+      pb = (parseFloat(cs.marginBottom) || 0) + (parseFloat(cs.paddingBottom) || 0)
+      pl = (parseFloat(cs.marginLeft) || 0) + (parseFloat(cs.paddingLeft) || 0)
+    }
+  } catch { }
+
+  const css = `html {margin: 0 !important;padding: 0 !important;width: ${w}px !important;height: ${h}px !important;min-width: ${w}px !important;min-height: ${h}px !important;box-sizing: border-box !important;overflow: hidden !important;background-clip: border-box !important;}` +
+    `body {margin: 0 !important;padding: ${pt}px ${pr}px ${pb}px ${pl}px !important;width: ${w}px !important;height: ${h}px !important;min-width: ${w}px !important;min-height: ${h}px !important;box-sizing: border-box !important;overflow: hidden !important;background-clip: border-box !important;}`
+  // Adopted first, so a frame CSP of `style-src 'self'` cannot refuse it (an inline <style> is
+  // refused and the frame is captured unpinned). One sheet per document keeps the frame's
+  // adopted-sheet signature (burst.js renderStateOf) stable across captures; the <style> is
+  // the fallback where constructable sheets are missing.
+  // Pinned by __tests__/snapdom.csp.test.js.
+  let unmount
+  try {
+    let sheet = pinSheets.get(doc)
+    if (!sheet) pinSheets.set(doc, sheet = new win.CSSStyleSheet())
+    sheet.replaceSync(css)
+    doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, sheet]
+    unmount = () => { doc.adoptedStyleSheets = doc.adoptedStyleSheets.filter(s => s !== sheet) }
+  } catch {
+    // Owned, so the frame document's invalidation observer (styles.js, wired per document)
+    // ignores the style's arrival and removal: as an unmarked <head> mutation it bumped the
+    // shared environment epoch twice per capture, which is an unconditional dirtyAll on the
+    // OUTER element's burst memo. The viewport flag itself travels as the nested capture's
+    // `__pinned` option (rasterizeIframe), not as an attribute on this <html>: a record on
+    // <html> is the all-stamp, and it invalidated every snapshot in every document.
+    // Pinned by __tests__/core.burst.nestedIframe.test.js.
+    const style = doc.createElement('style')
+    style.setAttribute('data-sd-iframe-pin', '')
+    markInternalNode(style)
+    style.textContent = css;
+    (doc.head || doc.documentElement).appendChild(style)
+    unmount = () => style.remove()
+  }
+  // The pin is deliberately invisible to the global style epoch, but it still changes used
+  // values inside this document (notably percentages). Clear only this frame's snapshots so
+  // a fresh nested capture cannot reuse geometry from the previous iframe size.
+  invalidateSnapshotsUnder(doc.documentElement)
+
+  // Pinning sets overflow:hidden on html/body, which resets the scroll offset — so a frame
+  // the user had scrolled was captured from the top of its document instead of from what
+  // they were looking at. Put the recorded offset back on whichever box now scrolls; the
+  // nested capture's existing scrolled-root handling takes it from there.
+  if (sx || sy) {
+    try {
+      if (doc.body) { doc.body.scrollLeft = sx; doc.body.scrollTop = sy }
+      if (doc.documentElement) {
+        if (!doc.documentElement.scrollLeft) doc.documentElement.scrollLeft = sx
+        if (!doc.documentElement.scrollTop) doc.documentElement.scrollTop = sy
+      }
+    } catch { }
+  }
+
+  return () => {
+    try { unmount() } catch { }
+    try {
+      if (win && typeof win.scrollTo === 'function') win.scrollTo(sx, sy)
+      if (doc.body) { doc.body.scrollLeft = bsl; doc.body.scrollTop = bst }
+      if (doc.documentElement) { doc.documentElement.scrollLeft = hsl; doc.documentElement.scrollTop = hst }
+    } catch { }
+    // Do not leave snapshots computed under the temporary viewport pin available to a later
+    // direct capture of this document.
+    invalidateSnapshotsUnder(doc.documentElement)
+  }
+}
+
+/**
+ * Rasterize a same-origin iframe exactly at its content-box size, as the user requested:
+ * - Capture iframe.contentDocument.documentElement
+ * - Force a bitmap (toPng) sized to the iframe viewport (not the content height)
+ * - Wrap with a styled container that mimics the <iframe> box (borders, radius, etc.)
+ * Pinned by __tests__/utils.clone.iframe.test.js.
+ *
+ * @param {HTMLIFrameElement} iframe
+ * @param {object} sessionCache
+ * @param {object} options
+ * @returns {Promise<HTMLElement>}
+ */
+export async function rasterizeIframe(iframe, sessionCache, options) {
+  const doc = await getAccessibleIframeDocument(iframe, 3)
+  if (!doc) throw new Error('The iframe document isn\'t ready.')
+
+  const { contentWidth, contentHeight, rect } = measureContentBox(iframe)
+
+  // main() threads the capture entrypoints on the context (context.snap) — no global
+  // window.snapdom dependency anymore. Direct captureDOM/deepClone callers must pass it.
+  const snap = options?.snap
+  if (!snap || typeof snap.toPng !== 'function') {
+    throw new Error('Iframes are only captured through snapdom(el).')
+  }
+
+  // Avoid double scaling; parent capture decides final scale. Drop clip: a visible iframe
+  // is captured whole (offscreen ones were already culled), and 'viewport' would re-resolve
+  // against the iframe's own window.
+  // `__pinned`: the svg engine captures this documentElement at the pinned viewport, not
+  // at scrollHeight (#449); the flag lives here and not on the frame's <html>, see the pin.
+  const nested = { ...options, scale: 1, clip: null, __pinned: true }
+
+  // Pin viewport so body background fills exactly content box (fixes 400x110 → 400x150)
+  const unpin = pinIframeViewport(doc, contentWidth, contentHeight)
+  // Every capture owns its session from its first synchronous tick (createCaptureSession),
+  // so the nested capture can't disturb this one's maps — no save/restore needed.
+  let imgEl
+  try {
+    imgEl = await snap.toPng(doc.documentElement, nested)
+  } finally {
+    unpin()
+  }
+
+  // Build <img> (bitmap) sized to content box
+  imgEl.style.display = 'block'
+  imgEl.style.width = `${contentWidth}px`
+  imgEl.style.height = `${contentHeight}px`
+
+  // Wrapper that preserves the iframe box (border, radius...) and clips
+  const wrapper = document.createElement('div')
+  sessionCache.nodeMap.set(wrapper, iframe)
+  inlineAllStyles(iframe, wrapper, sessionCache, options)
+  wrapper.style.overflow = 'hidden'
+  wrapper.style.display = 'block'
+  if (!wrapper.style.width) wrapper.style.width = `${Math.round(rect.width)}px`
+  if (!wrapper.style.height) wrapper.style.height = `${Math.round(rect.height)}px`
+
+  wrapper.appendChild(imgEl)
+  return wrapper
+}
+
+// ========== Checkbox/Radio replacement (Firefox fix) ==========
+
+/**
+ * The control's accent, as a colour SVG can take. `accent-color` computes to the keyword
+ * `auto` when the author never set one — a truthy string, so falling through a `||` chain
+ * handed SVG an invalid paint and the control rendered black. The UA's own auto accent is
+ * not readable from CSS, so a blue in the range every desktop UA ships stands in for it.
+ * @param {CSSStyleDeclaration | undefined} cs computed style of the control
+ * @returns {string}
+ */
+function resolveAccentColor(cs) {
+  try {
+    const accent = cs && cs.accentColor
+    if (accent && accent !== 'auto' && accent !== 'none') return accent
+    const color = cs && cs.color
+    if (color) return color
+  } catch { /* detached or cross-realm */ }
+  return '#0a6ed1'
+}
+
+/**
+ * Creates a visual replacement for range inputs using inline SVG: a track, the
+ * filled run up to the value, and a thumb, in the control's accent colour.
+ * Firefox does not render native form controls inside SVG foreignObject: a cloned slider
+ * painted none of its accent (verified on v3 as 0 accent-coloured pixels).
+ *
+ * Imported from @frostin/snapdom (element-mirror).
+ * @param {HTMLInputElement} node - Source input
+ * @returns {{ el: HTMLDivElement, applyVisual: () => void }}
+ */
+export function createRangeReplacement(node) {
+  const { width: unscaledW, height: unscaledH } = getUnscaledDimensions(node)
+  const rect = node.getBoundingClientRect()
+  let cs
+  try { cs = window.getComputedStyle(node) } catch { }
+  const parsedW = cs ? parseFloat(cs.width) : NaN
+  const parsedH = cs ? parseFloat(cs.height) : NaN
+  const w = Number.isFinite(parsedW) && parsedW > 0
+    ? parsedW
+    : (unscaledW || rect.width || 128)
+  const h = Number.isFinite(parsedH) && parsedH > 0
+    ? parsedH
+    : (unscaledH || rect.height || 16)
+
+  // Where the value sits between min and max, from the live properties: a
+  // dragged slider updates node.value and nothing in the DOM at all.
+  const min = Number.parseFloat(node.min) || 0
+  const max = Number.isFinite(Number.parseFloat(node.max)) ? Number.parseFloat(node.max) : 100
+  const value = Number.parseFloat(node.value)
+  const span = max - min
+  const fraction = span > 0 && Number.isFinite(value)
+    ? Math.min(1, Math.max(0, (value - min) / span))
+    : 0.5
+
+  // #311: preserve original vertical-align so the replacement doesn't shift inline layout
+  let vAlign = 'middle'
+  try { if (cs && cs.verticalAlign) vAlign = cs.verticalAlign } catch { }
+
+  const box = document.createElement('div')
+  box.setAttribute('data-snapdom-input-replacement', 'range')
+  box.style.cssText = `display:inline-block;width:${w}px;height:${h}px;vertical-align:${vAlign};flex-shrink:0;line-height:0;`
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('width', String(w))
+  svg.setAttribute('height', String(h))
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`)
+  // The thumb is thumb-sized however small the author made the control's box
+  // (a styled slider is often a 4px-tall input), overflowing it the way the
+  // native one does.
+  svg.style.cssText = `width:${w}px;height:${h}px;overflow:visible` // #516, as in the checkbox below
+  box.appendChild(svg)
+
+  function applyVisual() {
+    const accent = resolveAccentColor(cs)
+    const disabled = !!node.disabled
+    const trackH = Math.max(2, Math.min(4, h))
+    const trackY = (h - trackH) / 2
+    const thumbD = Math.max(10, Math.min(14, Math.max(h, 10)))
+    const r = thumbD / 2
+    // The thumb's centre travels between the track's rounded ends, as the
+    // native one keeps the thumb inside the control at either extreme.
+    const cx = r + fraction * Math.max(0, w - thumbD)
+
+    svg.innerHTML = ''
+    const part = (x, width, fill, opacity) => {
+      const el = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+      el.setAttribute('x', String(x))
+      el.setAttribute('y', String(trackY))
+      el.setAttribute('width', String(Math.max(0, width)))
+      el.setAttribute('height', String(trackH))
+      el.setAttribute('rx', String(trackH / 2))
+      el.setAttribute('fill', fill)
+      if (opacity) el.setAttribute('fill-opacity', opacity)
+      svg.appendChild(el)
+    }
+    // Unfilled track first, in a translucent grey that reads on light and
+    // dark alike, then the filled run laid over its left side.
+    part(0, w, '#808080', '0.4')
+    part(0, cx, accent)
+    const thumb = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+    thumb.setAttribute('cx', String(cx))
+    thumb.setAttribute('cy', String(h / 2))
+    thumb.setAttribute('r', String(r))
+    thumb.setAttribute('fill', accent)
+    svg.appendChild(thumb)
+    if (disabled) svg.setAttribute('opacity', '0.5')
+
+    // Force dimensions (inlineAllStyles may copy width:0 from native input)
+    box.style.setProperty('width', `${w}px`, 'important')
+    box.style.setProperty('height', `${h}px`, 'important')
+    box.style.setProperty('min-width', `${w}px`, 'important')
+    box.style.setProperty('min-height', `${h}px`, 'important')
+  }
+  applyVisual()
+  return { el: box, applyVisual }
+}
+
+/**
+ * Creates a visual replacement for checkbox/radio inputs using inline SVG.
+ * Firefox does not render native form controls inside SVG foreignObject; SVG-based
+ * representation avoids CSS class conflicts and renders consistently.
+ * @param {HTMLInputElement} node - Source input
+ * @returns {{ el: HTMLDivElement, applyVisual: () => void }}
+ */
+export function createCheckboxRadioReplacement(node) {
+  const { width: unscaledW, height: unscaledH } = getUnscaledDimensions(node)
+  const rect = node.getBoundingClientRect()
+  let cs
+  try { cs = window.getComputedStyle(node) } catch { }
+  const parsedW = cs ? parseFloat(cs.width) : NaN
+  const parsedH = cs ? parseFloat(cs.height) : NaN
+  const rw = Math.round(unscaledW || rect.width || 0)
+  const rh = Math.round(unscaledH || rect.height || 0)
+  let w = Number.isFinite(parsedW) && parsedW > 0 ? Math.round(parsedW) : Math.max(12, rw || 16)
+  let h = Number.isFinite(parsedH) && parsedH > 0 ? Math.round(parsedH) : Math.max(12, rh || 16)
+  const isCheckbox = (node.type || 'text').toLowerCase() === 'checkbox'
+  const checked = !!node.checked
+  const indeterminate = !!node.indeterminate
+
+  const size = Math.max(Math.min(w, h), 12)
+  const s = size
+  // #516: a flex column or a grid stretches the control across its track, and the engine
+  // paints the glyph centered in that box; shrunk to the glyph, the box sat at the start
+  // edge (93px left of the live control in a 200px column). The svg fills the box, and the
+  // viewBox's default xMidYMid meet centers the glyph in it at scale 1.
+  const bw = Math.max(w, s)
+  const bh = Math.max(h, s)
+
+  // #311: preserve original vertical-align so the replacement doesn't shift inline layout
+  let vAlign = 'middle'
+  try { if (cs && cs.verticalAlign) vAlign = cs.verticalAlign } catch { }
+
+  const box = document.createElement('div')
+  box.setAttribute('data-snapdom-input-replacement', node.type || 'checkbox')
+  box.style.cssText = `display:inline-block;width:${bw}px;height:${bh}px;vertical-align:${vAlign};flex-shrink:0;line-height:0;`
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('width', String(bw))
+  svg.setAttribute('height', String(bh))
+  svg.setAttribute('viewBox', `0 0 ${s} ${s}`)
+  // #516: sized by its attributes alone, Firefox painted it at twice the box under the
+  // engine's layoutZoom (DPR 2: a 14px checkbox drew 28px over its label); CSS lengths zoom once.
+  svg.style.cssText = `width:${bw}px;height:${bh}px`
+  box.appendChild(svg)
+
+  function applyVisual() {
+    const color = resolveAccentColor(cs)
+    const stroke = 2
+    const pad = stroke / 2
+    const inner = s - stroke
+    svg.innerHTML = ''
+    if (isCheckbox) {
+      const rectEl = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+      rectEl.setAttribute('x', String(pad))
+      rectEl.setAttribute('y', String(pad))
+      rectEl.setAttribute('width', String(inner))
+      rectEl.setAttribute('height', String(inner))
+      rectEl.setAttribute('rx', '2')
+      rectEl.setAttribute('ry', '2')
+      rectEl.setAttribute('fill', checked ? color : 'none')
+      rectEl.setAttribute('stroke', color)
+      rectEl.setAttribute('stroke-width', String(stroke))
+      svg.appendChild(rectEl)
+      if (checked) {
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+        path.setAttribute('d', `M ${pad + 2} ${s / 2} L ${s / 2 - 1} ${s - pad - 2} L ${s - pad - 2} ${pad + 2}`)
+        path.setAttribute('stroke', 'white')
+        path.setAttribute('stroke-width', String(Math.max(1.5, stroke)))
+        path.setAttribute('fill', 'none')
+        path.setAttribute('stroke-linecap', 'round')
+        path.setAttribute('stroke-linejoin', 'round')
+        svg.appendChild(path)
+      } else if (indeterminate) {
+        const dash = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+        const dw = Math.max(6, inner - 4)
+        dash.setAttribute('x', String((s - dw) / 2))
+        dash.setAttribute('y', String((s - stroke) / 2))
+        dash.setAttribute('width', String(dw))
+        dash.setAttribute('height', String(stroke))
+        dash.setAttribute('fill', color)
+        dash.setAttribute('rx', '1')
+        svg.appendChild(dash)
+      }
+    } else {
+      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+      circle.setAttribute('cx', String(s / 2))
+      circle.setAttribute('cy', String(s / 2))
+      circle.setAttribute('r', String((s - stroke) / 2))
+      circle.setAttribute('fill', checked ? color : 'none')
+      circle.setAttribute('stroke', color)
+      circle.setAttribute('stroke-width', String(stroke))
+      svg.appendChild(circle)
+      if (checked) {
+        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+        const r = Math.max(2, (s - stroke * 2) * 0.35)
+        dot.setAttribute('cx', String(s / 2))
+        dot.setAttribute('cy', String(s / 2))
+        dot.setAttribute('r', String(r))
+        dot.setAttribute('fill', 'white')
+        svg.appendChild(dot)
+      }
+    }
+    // Force dimensions (inlineAllStyles may copy width:0 from native input)
+    box.style.setProperty('width', `${bw}px`, 'important')
+    box.style.setProperty('height', `${bh}px`, 'important')
+    box.style.setProperty('min-width', `${bw}px`, 'important')
+    box.style.setProperty('min-height', `${bh}px`, 'important')
+  }
+  applyVisual()
+  return { el: box, applyVisual }
+}
+
+// ========== Blob URL Helpers ==========
+
+/** blob: URL -> data URL, or the read still in flight. 80 entries, FIFO. */
+var _blobToDataUrlCache = new EvictingMap(80)
+
+/**
+ * Read a blob: URL as a data URL, once per URL.
+ * Two memos: cache.resource, shared with the other modules, and a local map that also holds
+ * the in-flight promise so concurrent callers share one read. A failed read is dropped from
+ * the local map so the next call can retry.
+ * @param {string} blobUrl
+ * @returns {Promise<string>} data URL
+ */
+export async function blobUrlToDataUrl(blobUrl) {
+  // 1) shared cache
+  if (cache.resource?.has(blobUrl)) return cache.resource.get(blobUrl)
+
+  // 2) local memo (a promise or the resolved string)
+  if (_blobToDataUrlCache.has(blobUrl)) return _blobToDataUrlCache.get(blobUrl)
+
+  // 3) start the read and park the promise for dedupe
+  const p = (async () => {
+    const r = await snapFetch(blobUrl, { as: 'dataURL' })
+    if (!r.ok || typeof r.data !== 'string') {
+      throw new Error(`Couldn't read ${blobUrl}`)
+    }
+    cache.resource?.set(blobUrl, r.data)   // shared cache
+    return r.data
+  })()
+
+  _blobToDataUrlCache.set(blobUrl, p)
+  try {
+    const data = await p
+    // Swap the promise for the resolved string: less to retain
+    _blobToDataUrlCache.set(blobUrl, data)
+    return data
+  } catch (e) {
+    // Drop the failure so a later call can retry
+    _blobToDataUrlCache.delete(blobUrl)
+    throw e
+  }
+}
+
+var BLOB_URL_RE = /\bblob:[^)"'\s]+/g
+
+function isBlobUrl(u) {
+  return typeof u === 'string' && u.startsWith('blob:')
+}
+
+function parseSrcset(srcset) {
+  return (srcset || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((item) => {
+      const m = item.match(/^(\S+)(\s+.+)?$/)
+      return m ? { url: m[1], desc: m[2] || '' } : null
+    })
+    .filter(Boolean)
+}
+
+function stringifySrcset(parts) {
+  return parts.map((p) => (p.desc ? `${p.url} ${p.desc.trim()}` : p.url)).join(', ')
+}
+
+/**
+ * querySelectorAll never matches the element it's called on, so a capture root that IS one of
+ * these tags/attrs (e.g. `snapdom(imgEl)` where imgEl.src is a blob: URL) was silently skipped
+ * — the early resolveBlobUrlsInTree pass missed it, and only the later idle-scheduled
+ * inlineImages/inlineBackgroundImages passes picked it up, losing the race if the caller
+ * revokes the object URL synchronously right after calling snapdom (see #461 for the same
+ * shape in images.js).
+ * @param {Element} root
+ * @param {string} selector
+ * @returns {Element[]}
+ */
+function selfAndDescendants(root, selector) {
+  const nodes = root.querySelectorAll ? Array.from(root.querySelectorAll(selector)) : []
+  if (root.matches?.(selector)) nodes.unshift(root)
+  return nodes
+}
+
+/**
+ * Replace every blob: URL in the clone with a data URL: <img> src and srcset, SVG <image>
+ * href, inline styles, <style> text and <video> poster. Runs inside prepareClone, ahead of
+ * the asset passes: a blob URL dies the moment the page revokes it, and a caller that revokes
+ * right after calling snapdom would beat the later passes to it. A URL that fails to read is
+ * logged under `debug` and left as it is.
+ * @param {Element} root - the clone
+ * @param {object|null} [sessionCache] - read for `options.debug`
+ * @returns {Promise<void>}
+ */
+export async function resolveBlobUrlsInTree(root, sessionCache = null) {
+  if (!root) return
+  const ctx = sessionCache
+  // Plan UNIQUE resources before awaiting: the previous per-node await serialized every
+  // independent fetch + FileReader, including multiple URLs in one CSS value. Four readers
+  // overlap that latency without decoding an unbounded gallery at once. Shared in-flight
+  // dedupe remains blobUrlToDataUrl's job, including callers outside this traversal.
+  const urls = new Set()
+  const writes = []
+  const resolved = new Map()
+  const queueAttribute = (node, name, url, after) => {
+    urls.add(url)
+    writes.push(() => {
+      if (!resolved.has(url)) return
+      node.setAttribute(name, resolved.get(url))
+      after?.()
+    })
+  }
+  const queueCSS = (css, apply) => {
+    if (!css || !css.includes('blob:')) return
+    const matches = css.match(BLOB_URL_RE) || []
+    if (!matches.length) return
+    for (const url of matches) urls.add(url)
+    writes.push(() => {
+      // Replace complete tokens, not split/join prefixes: blob:x and blob:x-long can
+      // coexist and must never rewrite part of each other's URLs.
+      const out = css.replace(BLOB_URL_RE, url => resolved.get(url) || url)
+      if (out !== css) apply(out)
+    })
+  }
+
+  const imgs = selfAndDescendants(root, 'img')
+  for (const img of imgs) {
+    try {
+      const srcAttr = img.getAttribute('src')
+      const effective = srcAttr || img.currentSrc || ''
+      if (isBlobUrl(effective)) {
+        queueAttribute(img, 'src', effective)
+      }
+      const srcset = img.getAttribute('srcset')
+      if (srcset && srcset.includes('blob:')) {
+        const parts = parseSrcset(srcset)
+        for (const p of parts) {
+          if (isBlobUrl(p.url)) urls.add(p.url)
+        }
+        writes.push(() => {
+          let changed = false
+          for (const p of parts) {
+            if (!resolved.has(p.url)) continue
+            p.url = resolved.get(p.url)
+            changed = true
+          }
+          if (changed) img.setAttribute('srcset', stringifySrcset(parts))
+        })
+      }
+    } catch (e) {
+      debugWarn(ctx, 'Couldn\'t inline a blob: image.', e)
+    }
+  }
+
+  const svgImages = selfAndDescendants(root, 'image')
+  for (const node of svgImages) {
+    try {
+      const XLINK_NS = 'http://www.w3.org/1999/xlink'
+      const href = node.getAttribute('href') || node.getAttributeNS?.(XLINK_NS, 'href')
+      if (isBlobUrl(href)) {
+        queueAttribute(node, 'href', href, () => node.removeAttributeNS?.(XLINK_NS, 'href'))
+      }
+    } catch (e) {
+      debugWarn(ctx, 'Couldn\'t inline a blob: SVG image.', e)
+    }
+  }
+
+  const styled = selfAndDescendants(root, "[style*='blob:']")
+  for (const el of styled) {
+    try {
+      const styleText = el.getAttribute('style')
+      queueCSS(styleText, replaced => el.setAttribute('style', replaced))
+    } catch (e) {
+      debugWarn(ctx, 'Couldn\'t inline blob: URLs in a style attribute.', e)
+    }
+  }
+
+  const styleTags = selfAndDescendants(root, 'style')
+  for (const s of styleTags) {
+    try {
+      const css = s.textContent || ''
+      queueCSS(css, replaced => { s.textContent = replaced })
+    } catch (e) {
+      debugWarn(ctx, 'Couldn\'t inline blob: URLs in a <style>.', e)
+    }
+  }
+
+  const urlAttrs = ['poster']
+  for (const attr of urlAttrs) {
+    const nodes = selfAndDescendants(root, `[${attr}^='blob:']`)
+    for (const n of nodes) {
+      try {
+        const u = n.getAttribute(attr)
+        if (isBlobUrl(u)) {
+          queueAttribute(n, attr, u)
+        }
+      } catch (e) {
+        debugWarn(ctx, `Couldn't inline the blob: URL in ${attr}.`, e)
+      }
+    }
+  }
+  if (!urls.size) return
+  const pending = [...urls]
+  let next = 0
+  await Promise.all(Array.from({ length: Math.min(4, pending.length) }, async () => {
+    while (next < pending.length) {
+      const url = pending[next++]
+      try { resolved.set(url, await blobUrlToDataUrl(url)) } catch (e) {
+        debugWarn(ctx, 'Couldn\'t read a blob: URL; kept it as is.', e)
+      }
+    }
+  }))
+  for (const write of writes) {
+    try { write() } catch (e) { debugWarn(ctx, 'Couldn\'t write an inlined blob: URL.', e) }
+  }
+}
+
+// ========== Font inflation (Firefox for Android) ==========
+
+/** The computed properties that decide a word's advance, copied onto the probe. */
+const INFLATION_FONT_PROPS = ['font-family', 'font-size', 'font-style', 'font-weight', 'font-stretch', 'font-variant', 'font-feature-settings', 'font-variation-settings', 'font-kerning', 'letter-spacing', 'text-transform']
+/** Inputs that paint their value as text. A password paints bullets instead. */
+const VALUE_FIELDS = new Set(['text', 'search', 'email', 'url', 'tel', 'number', 'submit', 'reset', 'button'])
+/** A field word to measure between character centers: two or more characters, none of them
+ *  half a surrogate pair. */
+const FIELD_WORD = /[^\s\uD800-\uDFFF]{2,}/
+
+/**
+ * Write the font size and line height Firefox's font inflation paints onto the clone of every
+ * element with text of its own, and of every text field with a value.
+ *
+ * #516: Firefox for Android inflates text on a page laid out wider than the screen (no meta
+ * viewport), and getComputedStyle still reports the authored font-size and line-height. The
+ * clone froze the boxes at their inflated size and the text at the authored one: on the
+ * issue's form demo the labels came out at 16px beside checkboxes sized for 30px text, and a
+ * paragraph with `line-height: 1.5` would stack 29px glyphs 24px apart. The foreignObject
+ * never inflates, so the painted size is measured: a word's width live (for a field, the
+ * distance between the centers of its first and last characters), against the same word in a
+ * probe under a zero-width box, which turns inflation off for everything inside it. Inert unless the layout viewport is
+ * wider than the screen, the only state where Firefox inflates. A field without a value, a
+ * <select> and a field off screen keep the authored size: nothing reads their text without
+ * changing it. Pinned by __tests__/snapdom.issue516.test.js.
+ * @param {Map<Node, Node>} nodeMap - clone -> source, from deepClone
+ * @param {Document} [doc]
+ */
+export function freezeInflatedFontSizes(nodeMap, doc = document) {
+  const view = doc.defaultView || window
+  if (!isFirefox() || !doc.body ||
+    !(view.visualViewport?.scale < 1 || view.screen.width < doc.documentElement.clientWidth)) return
+  /* c8 ignore start -- Firefox font inflation only; coverage runs on chromium */
+  // Owned, so mounting it does not bump the style epoch the snapshot memo is keyed on.
+  const probe = markInternalNode(doc.createElement('div'))
+  probe.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;overflow:hidden;visibility:hidden'
+  const jobs = []
+  for (const [clone, src] of nodeMap) {
+    if (clone.nodeType !== 1 || src.nodeType !== 1) continue
+    const cs = view.getComputedStyle(src)
+    const found = src.localName === 'textarea' || (src.localName === 'input' && VALUE_FIELDS.has(src.type))
+      ? fieldWord(src, cs, doc)
+      : textWord(src, cs.textAlign === 'justify' || cs.textAlignLast === 'justify')
+    if (!found) continue
+    // An ancestor transform scales the live distance and not the probe's.
+    const box = src.getBoundingClientRect()
+    const scale = src.offsetWidth && box.width ? box.width / src.offsetWidth : 1
+    const span = doc.createElement('span')
+    span.style.whiteSpace = 'pre'
+    for (const p of INFLATION_FONT_PROPS) span.style.setProperty(p, cs.getPropertyValue(p))
+    span.textContent = found.word
+    probe.appendChild(span)
+    jobs.push({ clone, cs, span, live: found.distance / scale, centers: found.centers, height: found.height })
+  }
+  if (!jobs.length) return
+  doc.body.appendChild(probe)
+  try {
+    for (const { clone, cs, span, live, centers, height } of jobs) {
+      const text = span.firstChild
+      // letter-spacing is not inflated: it follows every character, the last one included.
+      const spacing = (parseFloat(cs.letterSpacing) || 0) * (centers ? text.length - 1 : text.length)
+      const range = height ? doc.createRange() : null
+      if (range) range.selectNodeContents(span)
+      const ref = height ? range.getBoundingClientRect().height : centers
+        ? Math.abs(centerOf(text, text.length - 1) - centerOf(text, 0))
+        : span.getBoundingClientRect().width
+      let ratio = (live - (height ? 0 : spacing)) / (ref - (height ? 0 : spacing))
+      if (!(ratio > 1.005 && Number.isFinite(ratio))) continue
+      if (height) {
+        // Justification expands Range widths, not glyph heights. Firefox rounds glyph
+        // heights to pixels, so find the middle of the matching font-size interval
+        // instead of amplifying that rounding through a height ratio.
+        const bounds = []
+        for (const strict of [false, true]) {
+          let lo = parseFloat(cs.fontSize), hi = lo * (ratio + 1)
+          for (let i = 0; i < 10; i++) {
+            const mid = (lo + hi) / 2
+            span.style.fontSize = `${mid}px`
+            const h = range.getBoundingClientRect().height
+            if (strict ? h > live : h >= live) hi = mid
+            else lo = mid
+          }
+          bounds.push((lo + hi) / 2)
+        }
+        ratio = (bounds[0] + bounds[1]) / 2 / parseFloat(cs.fontSize)
+      }
+      clone.style.setProperty('font-size', `${parseFloat(cs.fontSize) * ratio}px`)
+      if (cs.lineHeight !== 'normal') clone.style.setProperty('line-height', `${parseFloat(cs.lineHeight) * ratio}px`)
+    }
+  } finally {
+    probe.remove()
+  }
+  /* c8 ignore stop */
+}
+
+/* c8 ignore start -- helpers of freezeInflatedFontSizes, Firefox only */
+/** Horizontal center of character `i` of a text node, in page pixels. */
+function centerOf(text, i) {
+  const range = text.ownerDocument.createRange()
+  range.setStart(text, i)
+  range.setEnd(text, i + 1)
+  const r = range.getBoundingClientRect()
+  return r.left + r.width / 2
+}
+
+/**
+ * The first word of `el`'s own text and its live width (height for justified text).
+ * @param {Element} el
+ * @param {boolean} [height]
+ * @returns {{word: string, distance: number, centers: boolean, height: boolean}|null}
+ */
+function textWord(el, height = false) {
+  for (let n = el.firstChild; n; n = n.nextSibling) {
+    if (n.nodeType !== 3) continue
+    const m = /\S+/.exec(n.data)
+    if (!m) continue
+    const range = el.ownerDocument.createRange()
+    range.setStart(n, m.index)
+    range.setEnd(n, m.index + m[0].length)
+    const rects = range.getClientRects()
+    // A word broken across lines (overflow-wrap) has no single width to compare.
+    return rects.length === 1 ? { word: m[0], distance: height ? rects[0].height : rects[0].width, centers: false, height } : null
+  }
+  return null
+}
+
+/**
+ * The same for the first line of a field's value, read through caret hit-testing: Firefox
+ * paints the value in content no Range reaches. The caret passes offset i + 1 at the center of
+ * character i. Null when the field is scrolled or not hit-testable where it sits.
+ * @param {HTMLInputElement|HTMLTextAreaElement} el
+ * @param {CSSStyleDeclaration} cs
+ * @param {Document} doc
+ * @returns {{word: string, distance: number, centers: boolean}|null}
+ */
+function fieldWord(el, cs, doc) {
+  const m = FIELD_WORD.exec(el.value.split('\n')[0])
+  if (!m || el.scrollLeft || el.scrollTop || !doc.caretPositionFromPoint) return null
+  const r = el.getBoundingClientRect()
+  const y = el.localName === 'textarea'
+    ? r.top + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.paddingTop) || 0) + 3
+    : r.top + r.height / 2
+  const at = (x) => {
+    const p = doc.caretPositionFromPoint(x, y)
+    return p && p.offsetNode === el ? p.offset : -1
+  }
+  // Coarse steps find a bracket (the offset only grows along the line), halving narrows it.
+  const step = r.width / 16
+  const edge = (k) => {
+    let hi = r.left
+    while (hi <= r.right && at(hi) < k) hi += step
+    if (hi > r.right) return NaN
+    let lo = hi - step
+    for (let i = 0; i < 16; i++) {
+      const mid = (lo + hi) / 2
+      if (at(mid) >= k) hi = mid
+      else lo = mid
+    }
+    return hi
+  }
+  const distance = Math.abs(edge(m.index + m[0].length) - edge(m.index + 1))
+  return Number.isFinite(distance) ? { word: m[0], distance, centers: true } : null
+}
+/* c8 ignore stop */

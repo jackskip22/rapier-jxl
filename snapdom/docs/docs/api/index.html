@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><script type="importmap">{"imports": {"@zumer/snapdom": "https://unpkg.com/@zumer/snapdom@latest/dist/snapdom.mjs", "@zumer/snapdom/plugins": "https://unpkg.com/@zumer/snapdom@latest/dist/snapdom.mjs"}}</script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SnapDOM API Reference — Methods, Exporters &amp; Options</title>
+  <meta name="description" content="SnapDOM API reference: the snapdom() reusable object, shortcut methods (toPng, toSvg, toCanvas, toBlob, toJpg, toWebp, download), and exporter-specific options." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://snapdom.dev/docs/api/" />
+
+  <link rel="help" type="text/plain" href="https://snapdom.dev/llms.txt" title="LLM summary">
+  <link rel="help" type="text/plain" href="https://snapdom.dev/llms-full.txt" title="LLM full reference">
+
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="SnapDOM API Reference" />
+  <meta property="og:description" content="Full API reference, every capture option, the plugin system, and cache control for SnapDOM." />
+  <meta property="og:url" content="https://snapdom.dev/docs/api/" />
+  <meta property="og:image" content="https://snapdom.dev/assets/og-card.jpg" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="SnapDOM API Reference" />
+  <meta name="twitter:description" content="SnapDOM 3 methods for reusable captures, image exports, HTML input and capture metadata." />
+  <meta name="twitter:image" content="https://snapdom.dev/assets/og-card.jpg" />
+
+  <link rel="icon" type="image/png" href="../../assets/favicon/favicon-96x96.png" sizes="96x96">
+  <link rel="icon" type="image/svg+xml" href="../../assets/favicon/favicon.svg">
+  <link rel="shortcut icon" href="../../assets/favicon/favicon.ico">
+  <meta name="theme-color" content="#F7F9FC">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "SnapDOM API Reference",
+    "description": "SnapDOM API reference: the snapdom() reusable object, shortcut methods, and exporter-specific options.",
+    "url": "https://snapdom.dev/docs/api/",
+    "image": "https://snapdom.dev/assets/og-card.jpg",
+    "author": { "@type": "Organization", "name": "Zumerlab" },
+    "publisher": { "@type": "Organization", "name": "Zumerlab", "url": "https://snapdom.dev" },
+    "mainEntityOfPage": "https://snapdom.dev/docs/api/"
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "SnapDOM", "item": "https://snapdom.dev/" },
+      { "@type": "ListItem", "position": 2, "name": "Docs", "item": "https://snapdom.dev/docs/" },
+      { "@type": "ListItem", "position": 3, "name": "API", "item": "https://snapdom.dev/docs/api/" }
+    ]
+  }
+  </script>
+
+  <link rel="preconnect" href="https://img.shields.io">
+  <link rel="stylesheet" href="../../shared.css">
+  <link rel="stylesheet" href="../../page.css">
+
+  <link rel="stylesheet" href="../../navigation.css"><link rel="stylesheet" href="../../panes.css">
+  <script type="module" src="../../panes.js"></script>
+<link rel="stylesheet" href="../../code.css"><script defer data-manual src="../../assets/prism/prism.min.js"></script><script defer src="../../code-blocks.js"></script></head>
+<body>
+  <script defer src="../../site.js"></script>
+  <!-- pane:start --><!-- hero {"badge": "Documentation", "title": "SnapDOM <span class=\"accent\">API</span> Reference", "lead": "Create a reusable capture with <code>snapdom(el)</code>, export it in several formats, or use a shortcut for one output. This page documents the v3 API.", "links": [["#methods", "Shortcut methods"], ["../options/", "Capture options"]]} -->
+<header class="site-head"><div class="site-head-inner"><a class="site-shell-brand" href="../../" aria-label="SnapDOM home"><span class="site-shell-mark"></span><span>SnapDOM</span></a><nav class="site-nav" aria-label="Main navigation"><div class="site-nav-group is-current"><button type="button" class="site-nav-button" aria-expanded="false">Learn</button><div class="site-nav-panel"><a class="site-nav-item sec-capture" href="../../docs/" aria-current="page"><span class="sec-dot"></span><span class="site-nav-item-label">Docs</span><span class="site-nav-item-desc">API, options and quick start</span></a><a class="site-nav-item sec-start" href="../../how-to/"><span class="sec-dot"></span><span class="site-nav-item-label">How-to</span><span class="site-nav-item-desc">Recipes and framework guides</span></a><a class="site-nav-item sec-ecosystem" href="../../compare/"><span class="sec-dot"></span><span class="site-nav-item-label">Compare</span><span class="site-nav-item-desc">SnapDOM vs html2canvas and others</span></a></div></div><div class="site-nav-group"><button type="button" class="site-nav-button" aria-expanded="false">Explore</button><div class="site-nav-panel"><a class="site-nav-item sec-labs" href="../../showcase/"><span class="sec-dot"></span><span class="site-nav-item-label">Showcase</span><span class="site-nav-item-desc">Live demos and labs</span></a><a class="site-nav-item sec-ecosystem" href="../../showcase/#plugins"><span class="sec-dot"></span><span class="site-nav-item-label">Plugins</span><span class="site-nav-item-desc">PDF, HTML, vector, GIF, video, agent context</span></a><a class="site-nav-item sec-record" href="../../blog/"><span class="sec-dot"></span><span class="site-nav-item-label">Blog</span><span class="site-nav-item-desc">Engineering notes</span></a></div></div><div class="site-nav-group"><button type="button" class="site-nav-button" aria-expanded="false">Community</button><div class="site-nav-panel"><a class="site-nav-item sec-ecosystem" href="../../ecosystem/"><span class="sec-dot"></span><span class="site-nav-item-label">Ecosystem</span><span class="site-nav-item-desc">SnapDIFF, SnapEye, SnapSurf</span></a><a class="site-nav-item sec-context" href="../../made-with/"><span class="sec-dot"></span><span class="site-nav-item-label">Made with</span><span class="site-nav-item-desc">Projects using SnapDOM</span></a></div></div></nav><button type="button" class="site-menu-button" aria-expanded="false">Menu</button><a class="site-shell-github" aria-label="SnapDOM on GitHub" href="https://github.com/zumerlab/snapdom" target="_blank" rel="noopener"><span>GitHub</span><span class="site-shell-stars">★ <span data-star-count>8K</span></span></a></div></header>
+<main id="main" class="pane no-demo" data-pane>
+<aside class="pane-side"><label class="pane-filter"><span aria-hidden="true">⌕</span><input type="search" placeholder="Filter docs" aria-label="Filter docs"></label><nav class="pane-nav" aria-label="Docs"><div class="sec-start"><button type="button" class="pane-nav-head" aria-expanded="false"><span class="sec-dot"></span>Getting started</button><div class="pane-nav-items"><a href="../">Overview</a></div></div><div class="sec-capture"><button type="button" class="pane-nav-head" aria-expanded="true"><span class="sec-dot"></span>Capture API</button><div class="pane-nav-items"><a href="./" aria-current="page">API reference</a><a href="../cache/">Cache and preCapture</a></div></div><div class="sec-options"><button type="button" class="pane-nav-head" aria-expanded="false"><span class="sec-dot"></span>Options</button><div class="pane-nav-items"><a href="../options/">Options</a></div></div><div class="sec-export"><button type="button" class="pane-nav-head" aria-expanded="false"><span class="sec-dot"></span>Plugins</button><div class="pane-nav-items"><a href="../plugins/">Plugin API</a></div></div></nav></aside>
+
+<article class="pane-read sec-capture" data-title="API reference">
+<header class="doc-head"><div class="doc-head-bar"><nav class="doc-crumbs" aria-label="Breadcrumb"><span>Docs</span><span aria-hidden="true">/</span><span>Capture API</span><span aria-hidden="true">/</span><span>API reference</span></nav><span class="doc-meta">Documentation</span></div><h1>SnapDOM <span class="accent">API</span> Reference</h1><p class="doc-lead">Create a reusable capture with <code>snapdom(el)</code>, export it in several formats, or use a shortcut for one output. This page documents the v3 API.</p><p class="pane-links doc-links"><a href="#methods">Shortcut methods</a><a href="../options/">Capture options</a></p></header>
+<div class="pane-content"><!-- content -->
+    <div class="tldr">
+      <div class="tldr-label">At a glance</div>
+      <p><strong><code>snapdom(el)</code></strong> returns image exporters, capture geometry and diagnostics for one captured state. <strong>Plugins</strong> add outputs such as HTML, JSON context and PDFs. Pass <a href="../options/">capture options</a> when creating the result; later exports can change output size, format and quality without recapturing the page.</p>
+    </div>
+
+    <section class="prose">
+      <h2 id="usage">Usage patterns</h2>
+      <table class="cmp-table">
+        <thead>
+          <tr><th>Pattern</th><th>When to use</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="num">snapdom(el)</td><td><strong>Reusable</strong> — one clone many exports (PNG + JPG + download).</td></tr>
+          <tr><td class="num">snapdom.toPng(el)</td><td><strong>Shortcut</strong> — single export, less code.</td></tr>
+        </tbody>
+      </table>
+
+      <h3 id="reusable-capture">Reusable capture</h3>
+      <p>Capture once, export many times (no re-clone):</p>
+      <pre class="code-block">const el = document.querySelector('#target');
+const result = await snapdom(el);
+
+const img = await result.toPng();
+document.body.appendChild(img);
+await result.download({ format: 'jpg', filename: 'my-capture.jpg' });</pre>
+
+      <h3 id="shortcuts">One-step shortcuts</h3>
+      <p>Direct export when you need a single format:</p>
+      <pre class="code-block">const png = await snapdom.toPng(el);
+const blob = await snapdom.toBlob(el, { format: 'png' });
+document.body.appendChild(png);</pre>
+    </section>
+
+    <section class="prose">
+      <h2 id="reusable">snapdom(el, options?)</h2>
+      <p>Returns a reusable object with export methods. The capture (deep clone + asset inlining) runs once; every export method reuses it, so several formats from the same element never re-clone the DOM.</p>
+      <p>Pass content-selection options when capturing. <a href="../options/#filtering"><code>filter</code> and <code>exclude</code> can be used together</a>, with independent <code>filterMode</code> and <code>excludeMode</code> settings. A new call with a function-valued <code>filter</code>, <code>exclude</code>, <code>excludeStyleProps</code> or <code>fallbackURL</code> re-evaluates the callback instead of reusing the memo, so a closure change needs no <code>invalidate</code>. An existing result stays frozen; its exporters do not reapply a changed policy.</p>
+      <pre class="code-block">{
+  url: string;                    // SVG by default; PNG after native capture
+  needs: 'clone' | 'render';
+  meta: Readonly&lt;CaptureMeta&gt;;
+  warnings: Array&lt;{ code: string; message: string; detail?: unknown }&gt;;
+  toRaw(): string;
+  to(type, options?): Promise&lt;unknown&gt;;
+  toImg(options?): Promise&lt;HTMLImageElement&gt;; // deprecated
+  toSvg(options?): Promise&lt;HTMLImageElement&gt;;
+  toCanvas(options?): Promise&lt;HTMLCanvasElement&gt;;
+  toBlob(options?): Promise&lt;Blob&gt;;
+  toPng(options?): Promise&lt;HTMLImageElement&gt;;
+  toJpeg(options?): Promise&lt;HTMLImageElement&gt;;
+  toJpg(options?): Promise&lt;HTMLImageElement&gt;;
+  toWebp(options?): Promise&lt;HTMLImageElement&gt;;
+  download(options?): Promise&lt;void&gt;;
+}</pre>
+      <p class="muted">With the default SVG engine, <code>url</code> and <code>toRaw()</code> return serialized SVG without drawing pixels. A successful native capture lazily encodes PNG instead. <code>toImg()</code> is deprecated; use <code>toSvg()</code>. Frozen <code>meta</code> records the viewBox size, output target, content origin and clip rectangle. A plugin capture that stops at <code>needs: 'clone'</code> has no rendered image or render metadata; image access throws.</p>
+    </section>
+
+    <section class="prose">
+      <h2 id="methods">Shortcut methods</h2>
+      <p>Each shortcut captures and exports in one call, with the same element and the full set of <a href="../options/">capture options</a>. The table describes the default SVG engine.</p>
+      <table class="cmp-table">
+        <thead>
+          <tr><th>Method</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="num">snapdom.toRaw(el, options?)</td><td>Returns the serialized SVG data URL without rasterizing it.</td></tr>
+          <tr><td class="num">snapdom.toImg(el, options?)</td><td>Deprecated alias of <code>toSvg</code></td></tr>
+          <tr><td class="num">snapdom.toSvg(el, options?)</td><td>Returns a decoded <code>HTMLImageElement</code> backed by SVG.</td></tr>
+          <tr><td class="num">snapdom.toCanvas(el, options?)</td><td>Returns a <code>Canvas</code></td></tr>
+          <tr><td class="num">snapdom.toBlob(el, options?)</td><td>Returns an SVG <code>Blob</code> unless an image format was explicitly requested.</td></tr>
+          <tr><td class="num">snapdom.toPng(el, options?)</td><td>Returns a PNG image</td></tr>
+          <tr><td class="num">snapdom.toJpg(el, options?)</td><td>Returns a JPG image</td></tr>
+          <tr><td class="num">snapdom.toWebp(el, options?)</td><td>Returns a WebP image</td></tr>
+          <tr><td class="num">snapdom.download(el, options?)</td><td>Triggers a download</td></tr>
+        </tbody>
+      </table>
+      <p>SnapDOM's second engine, <code>html-in-canvas</code>, runs in Chrome 157 and newer and falls back to SVG elsewhere; see <a href="../options/#all-options">the engine option</a>. On a successful native capture, <code>toRaw()</code> returns PNG, <code>toSvg()</code> returns a PNG-backed image, and <code>toBlob()</code> defaults to PNG. There is no SVG source; requesting an SVG Blob rejects. SVG fallback uses the table's behavior.</p>
+    </section>
+
+    <section class="prose">
+      <h2 id="top-level">Other top-level API</h2>
+      <table class="cmp-table">
+        <thead>
+          <tr><th>Member</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="num">snapdom.plugins(...defs)</td><td>Register global plugins, chainably. Per-capture plugins still override globals by name.</td></tr>
+          <tr><td class="num">snapdom.preCapture()</td><td>Arm intent-event-driven pre-capture for memo-eligible captures; see the <a href="../cache/">cache guide</a>.</td></tr>
+          <tr><td class="num">snapdom.version</td><td>The package version baked into the bundle.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="prose">
+      <h2 id="fromstring">snapdom.fromString(html, options?)</h2>
+      <p>Capture trusted markup such as a template or SSR output in the browser. SnapDOM mounts
+      it offscreen so the page's CSS and fonts apply, captures it, then removes the mount.
+      A single root element becomes the target; multiple roots use the mount's wrapper.</p>
+      <pre class="code-block">const result = await snapdom.fromString(
+  '&lt;article class="card"&gt;&lt;h2&gt;Hello&lt;/h2&gt;&lt;/article&gt;'
+);
+const png = await result.toPng();</pre>
+      <p class="muted"><strong>Trusted HTML only.</strong> The mount uses <code>innerHTML</code>
+      in your page, so event handlers in the markup can run in your origin. Sanitize untrusted
+      input first; <code>fromString()</code> is not a sanitizer or a server-side renderer.</p>
+    </section>
+
+    <section class="prose">
+      <h2 id="exporter-options">Exporter-specific options</h2>
+      <p>Export options override the values captured with the result. <code>width</code> or <code>height</code> wins over <code>scale</code>; <code>dpr</code> multiplies raster pixels. <code>toCanvas({ crop: { x, y, width, height } })</code> rasterizes one rectangle of the capture, in <code>result.meta</code> coordinates, so a page past the canvas limit can be exported in pieces at full resolution (<a href="../../how-to/capture-full-page/#long-pages">example</a>). To exclude content before capture work runs, use the <a href="../options/#all-options">capture <code>clip</code> option</a>.</p>
+
+      <h3 id="download">download()</h3>
+      <table class="cmp-table">
+        <thead>
+          <tr><th>Option</th><th>Type</th><th>Default</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="num">filename</td><td class="num">string</td><td class="num">snapDOM</td><td>Download name.</td></tr>
+          <tr><td class="num">format</td><td class="num">"png" | "jpeg" | "jpg" | "webp" | "svg"</td><td class="num">"png"</td><td>Output format for the downloaded file.</td></tr>
+        </tbody>
+      </table>
+      <p><code>download()</code> always rasterizes at DPR 1, so the file matches the element's CSS size and a <code>dpr</code> option is ignored. Pass <code>scale: devicePixelRatio</code> for a file as sharp as the screen.</p>
+      <p><strong>Example:</strong></p>
+      <pre class="code-block">await result.download({
+  format: 'jpg',
+  quality: 0.92,
+  filename: 'my-capture'
+});</pre>
+
+      <h3 id="toblob">toBlob()</h3>
+      <table class="cmp-table">
+        <thead>
+          <tr><th>Option</th><th>Type</th><th>Default</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="num">format</td><td class="num">"svg" | "png" | "jpeg" | "jpg" | "webp"</td><td class="num">"svg"</td><td>Blob format. The deprecated <code>type</code> alias remains accepted.</td></tr>
+        </tbody>
+      </table>
+      <p class="muted">Without a format set at capture or export time, <code>toBlob()</code> defaults to SVG on the SVG engine and PNG after successful native capture. A result created with <code>snapdom(el, { format: 'png' })</code> uses PNG for <code>result.toBlob()</code> too.</p>
+      <p><strong>Example:</strong></p>
+      <pre class="code-block">const blob = await result.toBlob({ format: 'jpeg', quality: 0.92 });</pre>
+    </section>
+
+<section class="prose"><h2 id="capture-boundaries">Capture boundaries and working recipes</h2><p>For embedded documents, see the <a href="../../how-to/capture-iframe/">same-origin iframe recipe</a>; browser JavaScript cannot read cross-origin frames. For custom elements, see the <a href="../../how-to/capture-shadow-dom/">open Shadow DOM recipe</a> or the <a href="../../guides/lit/">Lit component guide</a>. For a PNG Blob instead of an image element, use the <a href="../../how-to/html-to-png/#upload">upload recipe</a> and request <code>format: 'png'</code>.</p></section>
+    <section class="related">
+      <div class="section-label">Related</div>
+      <div class="related-grid">
+        <a class="related-card" href="../options/" data-umami-event="Docs api card options">Options: every capture option</a>
+        <a class="related-card" href="../plugins/" data-umami-event="Docs api card plugins">Plugins: extend the pipeline</a>
+        <a class="related-card" href="../cache/" data-umami-event="Docs api card cache">Cache &amp; preCapture: performance</a>
+        <a class="related-card" href="../../compare/html2canvas/" data-umami-event="Docs api card compare">SnapDOM vs html2canvas</a>
+      </div>
+    </section>
+
+    <section class="cta-section">
+      <div class="cta-card">
+        <h2 id="ready-to-capture">Start capturing</h2>
+        <p>Try the browser demo, then pick your output from the methods above.</p>
+        <a href="../../showcase/" class="btn btn-primary" data-umami-event="Docs api cta home">Open the demo</a>
+        <a href="https://www.npmjs.com/package/@zumer/snapdom" class="btn btn-ghost" target="_blank" rel="noopener" data-umami-event="Docs api cta npm">Install from npm</a>
+      </div>
+    </section>
+  <!-- /content --></div>
+<nav class="pager" aria-label="Pages"><a href="../"><span>Previous</span><strong>Overview</strong></a><a class="is-next" href="../cache/"><span>Next</span><strong>Cache and preCapture</strong></a></nav>
+</article>
+</main>
+<footer class="site-foot"><nav class="site-foot-directory" aria-label="Site directory"><div><h2>Learn</h2><a href="../../docs/">Documentation</a><a href="../../docs/#quick-start">Quick start</a><a href="../../how-to/">How-to recipes</a><a href="../../how-to/#frameworks">Framework guides</a><a href="../../compare/">Compare</a></div><div><h2>Explore</h2><a href="../../showcase/">Showcase</a><a href="../../showcase/#plugins">Plugins</a><a href="../../docs/plugins/#build">Writing plugins</a><a href="../../showcase/#labs">Labs</a><a href="../../blog/">Blog</a></div><div><h2>Community</h2><a href="../../ecosystem/">Ecosystem</a><a href="../../made-with/">Made with</a><a href="../../ecosystem/#community-plugins">Community plugins</a><a href="https://github.com/zumerlab/snapdom">GitHub</a><a href="https://www.npmjs.com/package/@zumer/snapdom">npm</a><a href="https://github.com/sponsors/tinchox5">Sponsors</a></div></nav><div class="site-foot-legal"><p>MIT © <a href="https://zumerlab.com/">Zumerlab</a></p></div></footer>
+<!-- pane:end -->
+
+</body>
+</html>

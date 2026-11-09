@@ -1,0 +1,119 @@
+{
+  "name": "@zumer/snapdom",
+  "version": "3.7.2",
+  "description": "High-performance DOM engine: captures a rendered element in the browser and exports it as PNG, SVG or canvas. Plugins add PDF, HTML, vector, GIF, video and agent context.",
+  "type": "module",
+  "main": "./dist/snapdom.js",
+  "module": "./dist/snapdom.mjs",
+  "types": "./types/snapdom.d.ts",
+  "sideEffects": false,
+  "workspaces": [
+    "packages/*"
+  ],
+  "exports": {
+    ".": {
+      "types": "./types/snapdom.d.ts",
+      "import": "./dist/snapdom.mjs",
+      "default": "./dist/snapdom.mjs"
+    },
+    "./plugins": {
+      "types": "./types/snapdom.d.ts",
+      "import": "./dist/snapdom.mjs",
+      "default": "./dist/snapdom.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/",
+    "types/snapdom.d.ts",
+    "README.md"
+  ],
+  "scripts": {
+    "compile": "node esbuild.config.mjs",
+    "lint": "eslint src __tests__ --ext .js",
+    "lint:fix": "eslint src __tests__ --ext .js --fix",
+    "check": "npm run lint && tsc --noEmit && node --test scripts/release-checks.node.mjs scripts/benchmark-statistics.node.mjs && npm run compile && node scripts/verify-legacy-bundle.mjs",
+    "test": "npm run check && REQUIRE_VISUAL=1 node scripts/vitest.mjs run --browser.headless --reporter=verbose",
+    "test:firefox": "npm run check && REQUIRE_VISUAL=1 BROWSER=firefox node scripts/vitest.mjs run --browser.headless --reporter=verbose",
+    "test:webkit": "npm run check && REQUIRE_VISUAL=1 BROWSER=webkit node scripts/vitest.mjs run --browser.headless --reporter=verbose",
+    "test:full": "npm run check && for b in chromium firefox webkit; do REQUIRE_VISUAL=1 BROWSER=$b node scripts/vitest.mjs run --browser.headless --reporter=dot || exit 1; done",
+    "test:parity": "npm run compile && node scripts/live-parity.mjs",
+    "test:visual": "REQUIRE_VISUAL=1 BROWSER=all node scripts/vitest.mjs run __tests__/visual.demos. --browser.headless --reporter=verbose",
+    "test:pdf": "node packages/plugins/pdf/test/verify.mjs && node packages/plugins/pdf/test/megacheck.mjs && node packages/plugins/pdf/test/encryptcheck.mjs",
+    "test:vector": "node packages/plugins/vector/test/verify-vector.mjs && node packages/plugins/vector/test/verify-h2d.mjs && node packages/plugins/vector/test/verify-plugin.mjs && node packages/plugins/vector/test/verify-mathml.mjs",
+    "test:coverage": "npx vitest run --browser.headless --coverage --exclude '__tests__/visual.*'",
+    "cross:report": "node scripts/cross-report.mjs",
+    "test:benchmark": "node scripts/benchmark-stable.mjs",
+    "test:benchmark:legacy": "npx vitest bench --browser.headless --watch=false",
+    "bench:realpage": "node scripts/realpage-bench.mjs",
+    "site": "npm run compile && node scripts/serve-site.mjs",
+    "bump:dry": "npx @zumerbox/bump -d",
+    "bump": "npx @zumerbox/bump && npx @zumerbox/changelog",
+    "release": "git add CHANGELOG.md && git commit -m \"Bumped version\" && git push --follow-tags",
+    "prepack": "npm run compile",
+    "publish:dev": "node scripts/publish-dev.mjs",
+    "bump:plugins:dry": "npm run bump:dry --workspace=@zumer/snapdom-plugins",
+    "bump:plugins": "npm run bump --workspace=@zumer/snapdom-plugins",
+    "release:plugins": "git add packages/plugins/package.json packages/plugins/CHANGELOG.md package-lock.json && git commit -m \"Bumped plugins version\" && git push",
+    "publish:plugins": "npm run test:pdf && npm run test:vector && npm publish --workspace=@zumer/snapdom-plugins --access public",
+    "publish:plugins:dev": "node scripts/publish-dev.mjs --plugins"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zumerlab/snapdom.git"
+  },
+  "keywords": [
+    "zumerlab",
+    "snapDOM",
+    "html2canvas",
+    "html2canvas alternative",
+    "dom-to-image alternative",
+    "html-to-image",
+    "screenshot",
+    "engine",
+    "html capture",
+    "dom capture",
+    "html to image",
+    "dom to image",
+    "html screenshot",
+    "capture element",
+    "html snapshot",
+    "element screenshot",
+    "web capture",
+    "snapshot tool",
+    "render html",
+    "capture dom",
+    "web snapshot",
+    "html export",
+    "dom snapshot",
+    "html to png",
+    "html to svg"
+  ],
+  "author": "Juan Martin Muda",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/zumerlab/snapdom/issues"
+  },
+  "homepage": "https://snapdom.dev/",
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/tinchox5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.36.0",
+    "@vitest/browser": "^4.1.12",
+    "@vitest/browser-playwright": "^4.1.12",
+    "@vitest/coverage-v8": "^4.1.12",
+    "@zumer/snapdiff": "^0.3.0",
+    "esbuild": "^0.28.1",
+    "eslint": "^9.36.0",
+    "globals": "^16.4.0",
+    "pdfjs-dist": "4.10.38",
+    "playwright": "1.55.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.12"
+  },
+  "overrides": {
+    "vite": "^6"
+  }
+}

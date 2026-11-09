@@ -1,0 +1,619 @@
+# @zumer/snapdom-plugins
+
+[![NPM version](https://img.shields.io/npm/v/@zumer/snapdom-plugins?style=flat-square&label=Plugins)](https://www.npmjs.com/package/@zumer/snapdom-plugins)
+[![Core version](https://img.shields.io/npm/v/@zumer/snapdom?style=flat-square&label=SnapDOM)](https://www.npmjs.com/package/@zumer/snapdom)
+
+Official plugins for [SnapDOM](https://github.com/zumerlab/snapdom), a high-performance DOM engine
+that exports a rendered element as PNG, SVG or canvas in the browser. Core exports images and
+canvases; this package adds HTML, structured context, element maps, PDF, editable vectors, ASCII,
+visual transforms, live GIF/video recording and live DOM streaming.
+
+Image, HTML and structured exports use captured state; GIF and video start a sequence of
+live captures when their export method is called.
+
+## Install
+
+Install the plugins next to a core supported by their peer dependency:
+
+```bash
+npm install @zumer/snapdom@latest @zumer/snapdom-plugins@latest
+```
+
+Plugins 4.x in this checkout require SnapDOM 3.4.0 or newer within 3.x. The 4.x release replaces pdf-image with the full PDF exporter and adds Vector. Both are MIT-licensed and available on npm in `@zumer/snapdom-plugins` 4.x. The `@latest` command above installs the published release. See the [migration guide](https://github.com/zumerlab/snapdom#migrating-from-v2) when upgrading from v2.
+
+## Usage
+
+Import plugins individually (recommended for tree-shaking):
+
+```js
+import { snapdom } from '@zumer/snapdom';
+import { filter } from '@zumer/snapdom-plugins/filter';
+import { timestampOverlay } from '@zumer/snapdom-plugins/timestamp-overlay';
+
+const result = await snapdom(element, {
+  plugins: [filter({ preset: 'grayscale' }), timestampOverlay()]
+});
+const png = await result.toPng();
+```
+
+Or use the package entry point:
+
+```js
+import { filter, timestampOverlay, replaceText } from '@zumer/snapdom-plugins';
+```
+
+CDN (no install):
+
+```js
+import { snapdom } from 'https://esm.sh/@zumer/snapdom@latest';
+import { filter } from 'https://esm.sh/@zumer/snapdom-plugins@latest/filter';
+```
+
+---
+
+## Plugins
+
+### `filter`
+
+Applies CSS filter effects to the clone, overriding authored filters. `preset` takes
+precedence over `filter`; an unknown preset logs a warning and `filter` applies.
+
+```js
+import { filter } from '@zumer/snapdom-plugins/filter';
+
+snapdom(el, { plugins: [filter({ preset: 'grayscale' })] });
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `preset` | `string` | — | `'grayscale'` \| `'sepia'` \| `'blur'` \| `'invert'` \| `'vintage'` \| `'dramatic'` |
+| `filter` | `string` | `''` | Raw CSS filter string, e.g. `'blur(2px) contrast(1.2)'` |
+
+---
+
+### `timestamp-overlay`
+
+Adds a timestamp label. The clock or custom formatter runs for every capture.
+
+```js
+import { timestampOverlay } from '@zumer/snapdom-plugins/timestamp-overlay';
+
+snapdom(el, { plugins: [timestampOverlay({ position: 'top-right', format: 'date' })] });
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `format` | `string \| function` | `'datetime'` | `'datetime'` \| `'date'` \| `'time'` \| `'iso'` \| custom `(Date) => string` |
+| `position` | `string` | `'bottom-right'` | `'top-left'` \| `'top-right'` \| `'bottom-left'` \| `'bottom-right'` |
+| `background` | `string` | `'rgba(0,0,0,0.6)'` | Label background color |
+| `color` | `string` | `'#fff'` | Label text color |
+| `fontSize` | `number` | `11` | Font size in px |
+
+---
+
+### `replace-text`
+
+Replaces DOM text in the clone using strings or regular expressions. Stylesheet and script
+text are left unchanged.
+
+```js
+import { replaceText } from '@zumer/snapdom-plugins/replace-text';
+
+snapdom(el, {
+  plugins: [replaceText({
+    replacements: [
+      { find: 'DRAFT', replace: 'APPROVED' },
+      { find: /\d{4}-\d{2}-\d{2}/, replace: '[REDACTED]' }
+    ]
+  })]
+});
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `replacements` | `Array<{ find: string\|RegExp, replace: string }>` | `[]` | List of find/replace pairs |
+
+---
+
+### `redact-inputs`
+
+Masks input and textarea values, excludes selected blocks, and removes named attributes
+from captured outputs. Core already masks password fields to match their visible bullets;
+other field values remain visible unless you redact them. The live page stays unchanged.
+
+```js
+import { redactInputs } from '@zumer/snapdom-plugins/redact-inputs';
+
+// Defaults: email, tel, and the cc-* / current-password / new-password / one-time-code
+// autocomplete tokens.
+snapdom(el, { plugins: [redactInputs()] });
+
+// Everything, including textareas:
+snapdom(el, { plugins: [redactInputs({ all: true })] });
+
+// App-specific fields, blanked rather than bulleted:
+snapdom(el, { plugins: [redactInputs({ selector: '[data-private]', mask: () => '' })] });
+
+// Exclude whole blocks and remove metadata attributes:
+const redaction = redactInputs({
+  blocks: ['.private-panel', '[data-private-block]'],
+  attributes: [
+    { selector: '[data-token]', names: ['data-token'] },
+    { selector: '.customer', names: ['title', 'aria-label'] }
+  ]
+});
+snapdom(el, { plugins: [redaction] });
+
+// Remove those blocks from the layout as well:
+snapdom(el, { excludeMode: 'remove', plugins: [redaction] });
+```
+
+The default mask keeps the string's length. Glyph widths can differ, so wrapping and truncation may change.
+A `<select>` is not masked (its visible option label stays); hide it with a `blocks` rule instead.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `types` | `string[]` | `['email', 'tel']` | Input `type` attribute values to redact |
+| `autocomplete` | `string[]` | `['cc-*', 'current-password', 'new-password', 'one-time-code']` | Autocomplete tokens; a trailing `*` matches by prefix |
+| `selector` | `string` | `''` | Extra CSS selector for inputs and textareas |
+| `all` | `boolean` | `false` | Redact every input and textarea, regardless of `types`, `autocomplete` or `selector` |
+| `mask` | `(value, el) => string` | same-length bullets | Custom masker |
+| `blocks` | `string \| string[]` | `[]` | CSS selectors for whole subtrees to exclude; uses the capture's `excludeMode` |
+| `attributes` | `Array<{ selector: string, names: string[] }>` | `[]` | Remove exact named attributes from clones of matching source elements and their semantic projections; names are not wildcard patterns |
+
+`blocks` keeps an invisible space by default (`excludeMode: 'hide'`); `'remove'` drops the
+subtree from the captured layout. It combines with the capture's existing `exclude` rules.
+If the capture root itself belongs to a blocked subtree, `'remove'` throws; use `'hide'`
+for that capture. Selectors match source elements, including nodes in open shadow trees.
+
+`attributes` removes the listed DOM attributes and their projections in `agent-map` and
+`context-export`, such as accessible names or structured state. It does not erase copies
+of those values already materialized as visible text, CSS `content`, or bitmap pixels.
+Use `blocks` to hide the subtree that paints visible content. A `value` attribute rule on
+an input or textarea clears its displayed value and omits its structured `state.value`.
+Existing default field masks still apply when you add block or attribute rules.
+
+HTML exports use the prepared clone with the selected redaction rules. `agent-map` and `context-export` apply the same
+block, attribute and field rules to their source-derived data, regardless of official
+plugin order. The rules do not search arbitrary text or images for sensitive content.
+
+The built-in mask without custom selectors permits reuse of unchanged captures. Custom
+masks and nonempty `selector`, `blocks` or `attributes` rules run on every capture. Changed
+content runs the full pipeline so no field skips redaction.
+
+Nonempty `blocks` or `attributes` rules add a final `beforeRender` pass, which makes a capture
+requested with `engine: 'html-in-canvas'` use the SVG renderer. Field-only redaction does not
+add this pass.
+
+`agent-map` and `context-export` omit sensitive values and mask other typed values in their
+structured state fields. Ordinary page text and labels remain. An attached image still
+follows core's capture policy; use this plugin to mask its visible fields too.
+
+---
+
+### `color-tint`
+
+Tints an HTML capture with a `mix-blend-mode` overlay. Opacity `0` leaves it unchanged.
+
+```js
+import { colorTint } from '@zumer/snapdom-plugins/color-tint';
+
+snapdom(el, { plugins: [colorTint({ color: 'royalblue', opacity: 0.4 })] });
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `color` | `string` | `'red'` | Any CSS color value |
+| `opacity` | `number` | `1` | Overlay opacity (0–1) |
+
+---
+
+### `ascii-export`
+
+Adds a `toAscii()` export method that converts captures to ASCII art. Plain text remains the default. Use `toAscii({ format: 'html', contrast: 0.8 })` for a colored, compact HTML preview; contrast defaults to zero and does not change existing text exports.
+
+```js
+import { asciiExport } from '@zumer/snapdom-plugins/ascii-export';
+
+const result = await snapdom(el, { plugins: [asciiExport({ width: 100 })] });
+const art = await result.toAscii();
+console.log(art);
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `width` | `number` | `80` | Character width of output |
+| `charset` | `string` | `' .:-=+*#%@'` | Characters from lightest to darkest |
+| `invert` | `boolean` | `false` | Invert luminance mapping |
+| `format` | `'text' \| 'html'` | `'text'` | Plain text, or colored HTML in a `<pre>` |
+| `contrast` | `number` | `0` | Non-negative luminance contrast boost |
+
+`toAscii({ width, charset, invert, format, contrast })` overrides any of them per call.
+
+The conversion is also exported on its own. `asciiFromCanvas(source, options)` turns any
+drawable (a canvas, an image, a video frame) into ASCII with the same options, and
+`asciiStream(element, options)` runs it on every frame of a [`stream()`](stream/README.md):
+
+```js
+import { asciiStream } from '@zumer/snapdom-plugins/ascii-export';
+
+const live = asciiStream(el, { width: 100, fps: 15, onText: (text) => (pre.textContent = text) });
+await live.ready;
+live.stop();
+```
+
+---
+
+### `pdf`
+
+Adds `toPdf()`, returning a PDF Blob with the capture's appearance, selectable text,
+links and pagination. MIT licensed.
+It replaces `pdf-image`; there is no second image-only PDF implementation.
+
+```js
+import { pdf } from '@zumer/snapdom-plugins/pdf';
+
+const result = await snapdom(el, { plugins: [pdf()] });
+const blob = await result.toPdf({ page: 'a4', margin: 36 });
+await result.toPdf({ page: 'letter', download: 'report.pdf' });
+```
+
+Configure capture-time measurement on `pdf({ forms, outline, breakAvoid, shadow,
+formValues })`. Configure paper size, orientation, margins, tagging, metadata,
+headers, footers, compression or encryption on `toPdf()`. Downloads are opt-in;
+ordinary exports return a Blob. See [the PDF overview](pdf/README.md) and [full reference](pdf/REFERENCE.md).
+
+**Migration:** import `pdf` from `/pdf`, replace `pdfImage()` with `pdf()`, and
+replace `toPdfImage()` with `toPdf({ download: 'capture.pdf' })`. Put orientation
+on the export. The old temporary object-URL return becomes a persistent Blob.
+The default page sizing and pagination differ: choose `page: 'a4'` explicitly.
+
+Tagged output alone is not a PDF/UA conformance guarantee. The exporter reports
+eligibility and blockers. Redact source text structurally; covering pixels does
+not remove text from a searchable document.
+
+---
+
+### `agent-map`
+
+Adds `toAgentMap()`: an image with numbered badges on interactive elements and a JSON map
+of their names, roles, bounds and state. This format is often called Set-of-Mark.
+
+```js
+import { agentMap } from '@zumer/snapdom-plugins/agent-map';
+
+const result = await snapdom(el, { plugins: [agentMap()] });
+const { image, map, dimensions } = await result.toAgentMap();
+
+// image: data URL of the screenshot with numbered red badges overlaid
+// map:   [{ i, n, r, b, s? }, …]: index, name, role, bbox, state
+// Agent says "click element 2" → map[2].b gives [x, y, w, h]
+```
+
+Map entry shape (default `fields: 'minimal'`):
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `i` | `number` | Index matching the badge drawn on the image |
+| `n` | `string` | Accessible name: aria-label → labelledby → alt → title → labels → textContent. The textContent fallback is capped at 60 characters |
+| `r` | `string` | Explicit `role` or an implicit role such as `button`, `link`, `checkbox`, `radio`, `textbox`, `combobox`, `slider` or `heading` |
+| `b` | `[x, y, w, h]` | Bounding box in output pixels, scaled with the image and `maxImageWidth` |
+| `s` | `object?` | Meaningful state: `checked`, `disabled`, `focus`, `expanded`, `pressed`, `selected`, `value`, `hasValue`, `open`, `selectedText`, `covered` |
+| `isSemanticOnly` | `true?` | Structural entry added by `semantic: true`; no badge is drawn for it |
+
+Example map for a checkout form:
+
+```js
+[
+  { i: 0, n: 'Email',         r: 'textbox',  b: [28,  80, 280, 34] },
+  { i: 1, n: 'Send product updates', r: 'checkbox', b: [28, 134,  13, 13], s: { checked: true } },
+  { i: 2, n: 'Apply coupon',  r: 'button',   b: [28, 176, 114, 38], s: { expanded: false } },
+  { i: 3, n: 'Remove coupon', r: 'button',   b: [150, 176, 140, 38], s: { disabled: true } },
+  { i: 4, n: 'Pay $53.90',    r: 'button',   b: [28, 220,  97, 38] }
+]
+```
+
+#### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `image` | `'annotated' \| 'raw' \| false` | `'annotated'` | Annotated image, raw image or map only. `false` skips this export's image generation; see `needs` to skip capture rendering too |
+| `fields` | `'minimal' \| 'full'` | `'minimal'` | `'full'` adds `t` (raw text content) and `a` (meaningful attributes) per entry. |
+| `semantic` | `boolean` | `false` | Include structural elements such as headings, paragraphs and landmarks |
+| `maxImageWidth` | `number` | `1024` | Downscale target for the image; bboxes rescale to match. |
+| `imageFormat` | `'png' \| 'jpg' \| 'webp'` | `'png'` | Image format (only used when image is rendered). |
+| `imageQuality` | `number` | `0.8` | Quality for lossy formats. |
+| `interactiveSelector` | `string` | see below | CSS selector for interactive elements. |
+| `semanticSelector` | `string` | see below | CSS selector for semantic elements (used when `semantic: true`). |
+| `labelStyle` | `object` | `{}` | Override badge styles. |
+| `needs` | `'clone' \| 'render'` | `'render'` | Use `'clone'` with `image: false` to skip rendering; only valid on a per-capture plugin |
+
+Defaults:
+
+- Interactive elements: links with `href`, buttons, inputs, selects, textareas, summaries,
+  `[contenteditable="true"]`, and elements with `tabindex` other than `-1`. Also matches
+  roles `button`, `link`, `tab`, `menuitem`, `checkbox`, `radio`, `switch`, `slider`, `combobox`, `textbox`.
+- Structural elements: `h1`–`h6`, `nav`, `main`, `article`, `section`, `header`, `footer`,
+  `figcaption`, `blockquote`, `legend`, `p`.
+
+Per-call overrides: `image`, `imageFormat`, `imageQuality`, `maxImageWidth`, plus image sizing
+(`width`, `height`, `scale`, `dpr`) and `backgroundColor`. Selectors, fields, semantics and badge
+styles are frozen during capture. For a map without rendering:
+
+```js
+const result = await snapdom(el, { plugins: [agentMap({ image: false, needs: 'clone' })] });
+const { map, dimensions } = await result.toAgentMap();
+```
+
+Such a result has no image; `result.url` and image exports throw. The map includes open shadow
+roots and slotted content and respects core's exclusion policy. Sensitive input values are
+omitted; other input/textarea values become up to 12 bullets. This does not redact the image.
+
+Badges are applied only to `toAgentMap({ image: 'annotated' })`; raw images and other exports
+keep the captured page. Bounding boxes are not exact with perspective, rotated ancestors,
+or a root rotation stripped by `outerTransforms: false`.
+
+#### When to use
+
+Use it for visual agents that need element coordinates, visual QA, or image/map datasets.
+It runs inside the web app, including browser extensions and Electron pages, without
+requiring an external browser automation process.
+
+---
+
+### `context-export`
+
+Adds `toContext()`: the captured UI as a text outline or JSON tree containing structure,
+roles, visible text, state and optional bounds. It skips hidden content and collapses
+wrappers that add no information.
+
+```js
+import { contextExport } from '@zumer/snapdom-plugins/context-export';
+
+const result = await snapdom(el, { plugins: [contextExport()] });
+const outline = await result.toContext();
+const { root, truncated, nodes } = await result.toContext({ format: 'json' });
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `format` | `'outline' \| 'json'` | `'outline'` | Text outline or `{ root, truncated, nodes }` |
+| `maxTextLength` | `number` | `120` | Per-node text limit; longer text ends with an ellipsis |
+| `maxNodes` | `number` | `800` | Node limit; output reports truncation |
+| `geometry` | `boolean` | `true` | Include `[x, y, width, height]` relative to the capture root |
+| `needs` | `'clone' \| 'render'` | `'render'` | `'clone'` skips rendering; only valid on a per-capture plugin |
+
+The tree is frozen during capture. Per-call options can change `format`, `maxTextLength`,
+or omit captured geometry. They cannot increase `maxNodes` or restore geometry that was
+not captured. Open shadow roots and slots follow core's exclusion policy. Sensitive input
+values are omitted; other input/textarea values are masked. Ordinary page text and attributes
+remain in the output.
+
+Use `contextExport({ needs: 'clone' })` when you only need structured output. That result
+has no image, so `result.url` and image exports throw.
+
+---
+
+### `html-export`
+
+Adds `toHtml()`, which returns the frozen clone with its captured styles and fonts as an
+HTML document. You can reopen the captured layout without exporting it as a bitmap.
+
+```js
+import { htmlExport } from '@zumer/snapdom-plugins/html-export';
+
+const result = await snapdom(el, { plugins: [htmlExport()] });
+const html = await result.toHtml();              // full <!DOCTYPE html> string
+
+// Or download a .html file:
+await result.toHtml({ download: 'snapshot.html' });
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `fullDocument` | `boolean` | `true` | Wrap output in `<!DOCTYPE html>…`; if `false`, return just `<style>` + the fragment |
+| `filename` | `string` | `'capture.html'` | Download filename when `opts.download` is `true` |
+| `title` | `string` | `'Captured interface'` | Escaped document title |
+| `lang` | `string` | `'en'` | Escaped document language |
+
+Per-call `opts` accepts `fullDocument`, `filename` and `download`. Set `download: true` to
+download, or pass a filename string. The method returns the HTML string either way.
+
+The document retains source markup, including event-handler attributes; it is not sanitized.
+
+---
+
+### `vector`
+
+Adds `toVector()` for standalone SVG with editable text and supported shapes, and
+`toFigma()` for Figma clipboard export. Its source and internal SVD format live in
+`vector/` under the MIT license. Both exporters are available on npm in `@zumer/snapdom-plugins` 4.x.
+
+```js
+import { vector } from '@zumer/snapdom-plugins/vector';
+const result = await snapdom(el, { plugins: [vector()] });
+const svg = await result.toVector({ exclude: '.private' });
+await result.toFigma(); // HTTPS or localhost, from a user action
+```
+
+Register per capture. Unsupported paint is diagnosed; the connected source and
+its styles must remain available during export. See [Vector](./vector/README.md).
+
+---
+
+### `jxl`
+
+Adds `toJxl()`, `toBlob({ format: 'jxl' })` and `download({ format: 'jxl' })`. Text and interface stay
+exact while photos take the quality, in one JPEG XL file. The encoder is [rapier-jxl](https://www.npmjs.com/package/rapier-jxl)
+(MIT), an optional peer: the text measurement loads at the first capture, the encoder at the first export.
+
+```bash
+npm install rapier-jxl
+```
+
+```js
+import { jxl } from '@zumer/snapdom-plugins/jxl';
+
+const result = await snapdom(el, { plugins: [jxl()] });
+const img = await result.toJxl({ quality: 0.8 });
+const blob = await result.toBlob({ format: 'jxl' });
+await result.download({ format: 'jxl', filename: 'card' });
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `module` | `string` | `'rapier-jxl/capture-complete'` | With your `codec`: `'rapier-jxl/capture'` (every pixel exact) or `'rapier-jxl/upload'` (photographic) |
+| `codec` | `object` | — | Your own encoder with `prepare` and `capture` |
+| `decoder` | `object` | — | `createCodec()` from `rapier-jxl/codec/decode`, for `toJxl()` where JPEG XL does not show |
+| `effort` | `number` | `3` | Default effort, 1-9 |
+| `webgpu` | `false \| 'required'` | — | Disable WebGPU, or require a device |
+| `helpers` | `boolean \| object` | — | Helper workers for the encoder the plugin creates |
+
+Exports take `toWebp()`'s options, plus `effort`, `signal`, `onProgress` (0 to 1) and `onEncoded` (once).
+`quality: 1` is exact. The plugin's own encoder takes up to 40 megapixels; `plugin.close()` ends its workers.
+
+Encoding works in every browser: `toBlob()` and `download()` give `image/jxl`. Where the browser cannot show
+JPEG XL (Edge, for one), `toJxl()` shows the `decoder`'s pixels, or rejects with `JXL_NOT_SHOWN` without one.
+
+---
+
+### `gif-export`
+
+Adds `toGif()`, which records the live element and returns an `image/gif` Blob. Its built-in
+GIF89a encoder uses median-cut quantization and LZW, with no encoding dependency.
+
+```js
+import { gifExport } from '@zumer/snapdom-plugins/gif-export';
+
+const result = await snapdom(el, { plugins: [gifExport({ fps: 12, duration: 3000 })] });
+const blob = await result.toGif();
+
+// Or download directly:
+await result.toGif({ download: 'animation.gif' });
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `fps` | `number` | `10` | Frames per second |
+| `duration` | `number` | `2000` | Total duration in ms (ignored if `frames` is set) |
+| `frames` | `number` | — | Explicit frame count (overrides `duration`) |
+| `maxColors` | `number` | `256` | Palette size per frame (2–256) |
+| `background` | `string` | `'#ffffff'` | Color composited under transparent pixels |
+| `scale` | `number` | capture's scale | Capture scale |
+| `repeat` | `number` | `0` | Loop count (`0` = forever, `-1` = play once) |
+| `filename` | `string` | `'capture.gif'` | Download filename |
+
+Per-call `opts` override constructor options and accept `download` (`boolean \| string`).
+Recording starts when `toGif()` runs, including its first frame. It preserves the original
+capture policy, including exclusions and plugins. Frame capture speed limits the sampling rate.
+
+---
+
+### `video-export`
+
+Adds `toMp4()`, which records the live element through `MediaRecorder`. The returned Blob's
+type identifies the recorded container.
+
+```js
+import { videoExport } from '@zumer/snapdom-plugins/video-export';
+
+const result = await snapdom(el, { plugins: [videoExport({ fps: 30, duration: 4000 })] });
+const blob = await result.toMp4();
+
+// Or download directly:
+await result.toMp4({ download: true });
+```
+
+The plugin tries supported MP4 codecs first, then WebM. A WebM fallback logs a warning;
+the default download filename matches the recorded `.mp4` or `.webm` container. Explicit
+filenames and `download` strings are used as supplied.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `fps` | `number` | `10` | Frames per second |
+| `duration` | `number` | `2000` | Total duration in ms (ignored if `frames` is set) |
+| `frames` | `number` | — | Explicit frame count (overrides `duration`) |
+| `background` | `string` | `'#ffffff'` | Color composited under transparent pixels |
+| `scale` | `number` | capture's scale | Capture scale |
+| `bitrate` | `number` | — | `videoBitsPerSecond` passed to `MediaRecorder` |
+| `filename` | `string` | — | Download filename; the default follows the recorded `.mp4` / `.webm` container |
+
+Requires `MediaRecorder` and `canvas.captureStream()`, which may be unavailable in headless
+environments. Per-call `opts` override constructor options and accept `download`
+(`boolean \| string`). Recording starts at the call and preserves capture options as GIF
+recording does. MediaRecorder uses a real-time clock, so slow captures can stretch duration.
+
+### `stream`
+
+Streams a live element into a canvas that repaints only the boxes that changed, for WebGL
+textures and video overlays. `stream(el, options)` is the entry; `streamExport()` adds the same
+as `toStream()`. Includes `streamTexture(gl)`, which uploads only the changed rects, and
+`recordCanvas(canvas)`.
+
+```js
+import { stream, streamTexture } from '@zumer/snapdom-plugins/stream';
+
+const tex = streamTexture(gl);
+const live = stream(panel, { scale: 2, onFrame: (frame) => tex.update(frame) });
+```
+
+Each patched frame matches a full capture of the same DOM state. Full documentation, options
+and limits: [stream/README.md](stream/README.md).
+
+---
+
+## Plugin registration
+
+**Global** (applies to all captures):
+
+```js
+import { snapdom } from '@zumer/snapdom';
+import { filter } from '@zumer/snapdom-plugins/filter';
+
+snapdom.plugins(filter({ preset: 'sepia' }));
+```
+
+**Per-capture** (overrides global for that call):
+
+```js
+const result = await snapdom(element, {
+  plugins: [filter({ preset: 'dramatic' })]
+});
+```
+
+Per-capture plugins run before global ones. Duplicate plugin names are skipped automatically.
+
+---
+
+## Build your own plugin
+
+Start from the plugin template:
+
+```bash
+npx degit zumerlab/snapdom/packages/plugin-template my-plugin
+cd my-plugin && npm install --save-dev @zumer/snapdom@latest
+```
+
+See [PLUGIN_SPEC.md](../../PLUGIN_SPEC.md) for the full hook specification and [CONTRIBUTING_PLUGINS.md](../../CONTRIBUTING_PLUGINS.md) to get your plugin listed on the community page.
+
+---
+
+## Live demos
+
+Run `npm run compile` and `npm run site` from the monorepo root, then open `/showcase/`, `/plugins/pdf/` or `/plugins/vector/`. The demos generate actual files from editable DOM samples.
+
+## Releasing from the repository root
+
+```sh
+npm run bump:plugins:dry
+npm run bump:plugins
+# review packages/plugins/CHANGELOG.md
+npm run release:plugins
+npm run publish:plugins
+```
+
+`release:plugins` commits the plugin version, the lockfile and the changelog, then pushes. `publish:plugins` runs the PDF and vector checks, then publishes only `@zumer/snapdom-plugins` under `latest`. `bump:plugins` runs `@zumerbox/bump` followed by `@zumerbox/changelog` inside the plugin workspace, matching the core's tools. The bump command requires a clean Git working tree and prompts for the next version. It updates the plugin version and root lockfile; the changelog command writes `packages/plugins/CHANGELOG.md`. `bump:plugins:dry` previews the bump without updating the version or changelog. Skip the bump if the version has already been prepared.
+
+## License
+
+MIT

@@ -1,0 +1,290 @@
+[
+  {
+    "name": "d-compress-codecs.html",
+    "capture": 7,
+    "jxlExportMs": 58.79999998211861,
+    "webpExportMs": 7.199999988079071,
+    "jxlBytes": 8114,
+    "webpBytes": 5420,
+    "sha": "b252383e621bf8f91f2e703e4cf00180241aa5f6bf6f06e0cd3402beb4f106d9"
+  },
+  {
+    "name": "d-compress.html",
+    "capture": 737.6999999880791,
+    "jxlExportMs": 307.39999997615814,
+    "webpExportMs": 81.19999998807907,
+    "jxlBytes": 115795,
+    "webpBytes": 74074,
+    "sha": "17bd5fa8fad87e121557817f729eba61bb211e89364ce52ef0d0c455e5bed174"
+  },
+  {
+    "name": "d-element-mirror-import.html",
+    "capture": 2.699999988079071,
+    "jxlExportMs": 23.30000001192093,
+    "webpExportMs": 23,
+    "jxlBytes": 12619,
+    "webpBytes": 14766,
+    "sha": "863c37f6e84b5f7d424548eb6a80002a9aaac98ca5602b12d7a4a41b376ba095"
+  },
+  {
+    "name": "d-modern-css.html",
+    "capture": 3.800000011920929,
+    "jxlExportMs": 30.19999998807907,
+    "webpExportMs": 33.19999998807907,
+    "jxlBytes": 46937,
+    "webpBytes": 28242,
+    "sha": "ec67d6ce9cb782d0878ffe533e94fd16dbcded08ee5cb01160ae1374c5fe9208"
+  },
+  {
+    "name": "d-outer-shadows.html",
+    "capture": 2,
+    "jxlExportMs": 10.599999994039536,
+    "webpExportMs": 2.5999999940395355,
+    "jxlBytes": 3776,
+    "webpBytes": 1962,
+    "sha": "20af79335f269685aec4e774c17328df644534770ffd3ba18fc87bde6ae9f871"
+  },
+  {
+    "name": "d-root-transform.html",
+    "capture": 1.800000011920929,
+    "jxlExportMs": 22.599999994039536,
+    "webpExportMs": 7.399999976158142,
+    "jxlBytes": 13309,
+    "webpBytes": 9398,
+    "sha": "658e196d29647faff4c7953302a9e988bdfca1788057ba7370cc2c900d83d0ca"
+  },
+  {
+    "name": "d-rtl-layout.html",
+    "capture": 8.400000005960464,
+    "jxlExportMs": 24.600000023841858,
+    "webpExportMs": 36,
+    "jxlBytes": 15279,
+    "webpBytes": 20408,
+    "sha": "9efeb275bbc448471b4ec4f1cd8a50f84fccf951caf1176d0529ac542a23ac98"
+  },
+  {
+    "name": "d-text-layout.html",
+    "capture": 5.699999988079071,
+    "jxlExportMs": 27.200000017881393,
+    "webpExportMs": 31.600000023841858,
+    "jxlBytes": 25234,
+    "webpBytes": 34124,
+    "sha": "628011f1e18ff88dfe9b653e6c192162adc2b663b4ae2f5b493d53b2b9c4b6c2"
+  },
+  {
+    "name": "d-visibility-modes.html",
+    "capture": 3.699999988079071,
+    "jxlExportMs": 11.400000005960464,
+    "webpExportMs": 10.300000011920929,
+    "jxlBytes": 1690,
+    "webpBytes": 4738,
+    "sha": "624373cb2db81643d010bb47cab5082ace691bfbea950dc16d13af4934dab561"
+  },
+  {
+    "name": "d11-toblob-test.html",
+    "capture": 1.100000023841858,
+    "jxlExportMs": 3.300000011920929,
+    "webpExportMs": 4.4000000059604645,
+    "jxlBytes": 366,
+    "webpBytes": 1246,
+    "sha": "8cf28f337eb8e3c277e893638466440f0bc254751a45acf228b0ebcc6ac6aef9"
+  },
+  {
+    "name": "d21-font-import-multi-weight.html",
+    "capture": 3.199999988079071,
+    "jxlExportMs": 12,
+    "webpExportMs": 5.4000000059604645,
+    "jxlBytes": 2618,
+    "webpBytes": 5084,
+    "sha": "45a5e00995ac6fbe2b5b03e3e1d1e06a36d88d8d93f61c804624c9ca74dd538c"
+  },
+  {
+    "name": "d23-font-face-local-pure.html",
+    "capture": 1.2999999821186066,
+    "jxlExportMs": 5.4000000059604645,
+    "webpExportMs": 2.9000000059604645,
+    "jxlBytes": 1900,
+    "webpBytes": 4510,
+    "sha": "199fc1f9f72c59591a9b4a83a66aad9d3a9c425e97d5b3df40cfa23c38b373a3"
+  },
+  {
+    "name": "d24-font-local-url-iconfonts.html",
+    "capture": 2.5,
+    "jxlExportMs": 12,
+    "webpExportMs": 5.200000017881393,
+    "jxlBytes": 2796,
+    "webpBytes": 6690,
+    "sha": "224b0032b645bb9f5bd74c7ef147774dac1a83fba1a5a4266602d081530e2761"
+  },
+  {
+    "name": "d25-font-import-multi-weight-2.html",
+    "capture": 3.300000011920929,
+    "jxlExportMs": 12.800000011920929,
+    "webpExportMs": 5.5999999940395355,
+    "jxlBytes": 2618,
+    "webpBytes": 5084,
+    "sha": "45a5e00995ac6fbe2b5b03e3e1d1e06a36d88d8d93f61c804624c9ca74dd538c"
+  },
+  {
+    "name": "d41-iframe-pseudo.html",
+    "capture": 3.7000000178813934,
+    "jxlExportMs": 5.0999999940395355,
+    "webpExportMs": 2.5,
+    "jxlBytes": 780,
+    "webpBytes": 1614,
+    "sha": "b4ce6595cad3a49de8bfb1a51879c1cd0fb1ce4271de2cdacc50b84a9c6388f4"
+  },
+  {
+    "name": "d42-nested-line-clamp.html",
+    "capture": 3.2999999821186066,
+    "jxlExportMs": 7.799999982118607,
+    "webpExportMs": 6.299999982118607,
+    "jxlBytes": 7223,
+    "webpBytes": 9972,
+    "sha": "497282565f172b2af6025529283ea826b3c062b83e2be0122f4bfadcd7e7eb06"
+  },
+  {
+    "name": "d426-margin-top.html",
+    "capture": 1.2000000178813934,
+    "jxlExportMs": 7.0999999940395355,
+    "webpExportMs": 3.199999988079071,
+    "jxlBytes": 3139,
+    "webpBytes": 3392,
+    "sha": "4e34d02a5961a32de12f984bf1fe7c8c08eb13242bcb26af32edbee05ec077e4"
+  },
+  {
+    "name": "d434-table-layout.html",
+    "capture": 1.5999999940395355,
+    "jxlExportMs": 8.400000005960464,
+    "webpExportMs": 3.9000000059604645,
+    "jxlBytes": 2771,
+    "webpBytes": 3930,
+    "sha": "28d99943a5fe1e39606c28c1a88a474cbd91fa7464ab06b33d6dacc9c9b5edeb"
+  },
+  {
+    "name": "d444-audio.html",
+    "capture": 1.5,
+    "jxlExportMs": 7.300000011920929,
+    "webpExportMs": 6.5,
+    "jxlBytes": 2768,
+    "webpBytes": 3968,
+    "sha": "4ccaa13f4f60ac14fdc59ea13bf201c4a11eb10e866214134f96e350c86cb007"
+  },
+  {
+    "name": "d45-scrollbar-styles.html",
+    "capture": 1.300000011920929,
+    "jxlExportMs": 6.5999999940395355,
+    "webpExportMs": 2.7000000178813934,
+    "jxlBytes": 814,
+    "webpBytes": 2682,
+    "sha": "9030f17dcd2e17f8318da77535ea073c74415ce10fd3193b014e1d67157536b7"
+  },
+  {
+    "name": "d452-pseudo-box-size.html",
+    "capture": 1.699999988079071,
+    "jxlExportMs": 6,
+    "webpExportMs": 6.300000011920929,
+    "jxlBytes": 2299,
+    "webpBytes": 4786,
+    "sha": "c1322c8299b7aa536f6b55f6a6a4a8b92724e1204c88e7e9d8c6a2a6b3d64d94"
+  },
+  {
+    "name": "d485-ellipsis-node-identity.html",
+    "capture": 5.800000011920929,
+    "jxlExportMs": 12.800000011920929,
+    "webpExportMs": 15.200000017881393,
+    "jxlBytes": 7875,
+    "webpBytes": 14528,
+    "sha": "a4f9e1fc20f50926266cff948e558ed3516d8d0434566a35a5a269030f0d1e5c"
+  },
+  {
+    "name": "d486-canvas-animation.html",
+    "capture": 9.099999994039536,
+    "jxlExportMs": 8.599999994039536,
+    "webpExportMs": 7.5999999940395355,
+    "jxlBytes": 2757,
+    "webpBytes": 4860,
+    "sha": "4f386cda25307930213a5c4107cca63c872a4392f605bdaa5b6d71b9505af29d"
+  },
+  {
+    "name": "d487-svg-symbol-fill.html",
+    "capture": 3,
+    "jxlExportMs": 11.100000023841858,
+    "webpExportMs": 10.400000005960464,
+    "jxlBytes": 7800,
+    "webpBytes": 13670,
+    "sha": "99bae6f79649bbed8889147acc9fcfd2001bce2beda67e62f18b3dc77a762360"
+  },
+  {
+    "name": "d488-offscreen-web-component.html",
+    "capture": 5.0999999940395355,
+    "jxlExportMs": 6.199999988079071,
+    "webpExportMs": 2.300000011920929,
+    "jxlBytes": 1462,
+    "webpBytes": 1718,
+    "sha": "0adbed59a583aa82218b77747c689db1f8440ff69069809f637fae5605e99bcd"
+  },
+  {
+    "name": "d489-reconcile-transform.html",
+    "capture": 2.5999999940395355,
+    "jxlExportMs": 17.80000001192093,
+    "webpExportMs": 26.099999994039536,
+    "jxlBytes": 10235,
+    "webpBytes": 13314,
+    "sha": "f58a9233d6494fbbab458c3b6d9953809e02929bd34588b940b80fab73aa8455"
+  },
+  {
+    "name": "d498-layout-misalignment.html",
+    "capture": 2.5999999940395355,
+    "jxlExportMs": 21.400000005960464,
+    "webpExportMs": 10.599999994039536,
+    "jxlBytes": 8565,
+    "webpBytes": 16014,
+    "sha": "4284027d7f3e6244356c1cb0b056373cd52da6f25a1ece8e827e28cbc8d636a5"
+  },
+  {
+    "name": "d505-custom-element-defaults.html",
+    "capture": 1.699999988079071,
+    "jxlExportMs": 15.700000017881393,
+    "webpExportMs": 12.699999988079071,
+    "jxlBytes": 8806,
+    "webpBytes": 12804,
+    "sha": "e0d69b320d5a1b07da2db9df83250c1674118818b556bfcd7be95aa673e12c2c"
+  },
+  {
+    "name": "d508-snapped-borders.html",
+    "capture": 5.799999982118607,
+    "jxlExportMs": 14.199999988079071,
+    "webpExportMs": 8.199999988079071,
+    "jxlBytes": 2740,
+    "webpBytes": 14800,
+    "sha": "9c063522e5e914d738dd1121725aa7df839508eb9955e9c4647b14d174a251ba"
+  },
+  {
+    "name": "d523-reconcile-custom-element.html",
+    "capture": 2.100000023841858,
+    "jxlExportMs": 9.199999988079071,
+    "webpExportMs": 10.699999988079071,
+    "jxlBytes": 5044,
+    "webpBytes": 5816,
+    "sha": "99dac504d97d9326459bf337f4f7b6adf51e89bedd90689cb2b7bbd5a29000cb"
+  },
+  {
+    "name": "d548-clip-justify-self.html",
+    "capture": 3.5999999940395355,
+    "jxlExportMs": 18.700000017881393,
+    "webpExportMs": 23.5,
+    "jxlBytes": 12239,
+    "webpBytes": 18790,
+    "sha": "8d40490a99e7552bb5428589b98ce2855160a1a2b3c3f36966adfac790b79fb4"
+  },
+  {
+    "name": "d549-clip-long-page.html",
+    "capture": 3.399999976158142,
+    "jxlExportMs": 16.100000023841858,
+    "webpExportMs": 14.5,
+    "jxlBytes": 11689,
+    "webpBytes": 16154,
+    "sha": "7f8fb59a14d61714645d955a73550367982ff9d4fc9acafba011669314cb6fb3"
+  }
+]

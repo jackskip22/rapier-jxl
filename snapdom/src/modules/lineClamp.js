@@ -1,0 +1,331 @@
+/**
+ * Text truncation, baked into the live text before the clone is taken.
+ *
+ * Firefox and Safari ignore `-webkit-line-clamp` and `text-overflow: ellipsis` inside a
+ * foreignObject, so the ellipsis is resolved here on the real node, against its real layout,
+ * and undone right after cloning. This is the one place the pipeline writes into the LIVE
+ * tree: every write goes through textNodeWriter so node identity survives (#485), and undo
+ * leaves alone any text the page changed meanwhile. capture.js runs it before prepareClone,
+ * diff.js on a dirty subtree before the splice. Pinned by __tests__/module.lineClamp.test.js.
+ * @module lineClamp
+ */
+
+import { isSafari } from '../utils/browser.js'
+
+/**
+ * Bake text truncation for the element AND all descendants that CSS would
+ * truncate: multi-line `-webkit-line-clamp` and single-line
+ * `text-overflow: ellipsis`. Firefox and Safari don't honour either inside a
+ * `<foreignObject>`, so we resolve the ellipsis into the text up front.
+ * Fixes #386 (nested clamp) and #431 (single-line ellipsis on Safari/Firefox).
+ *
+ * @param {Element} el - Root element (and its subtree) to process
+ * @param {{left:number,top:number,right:number,bottom:number}|null} [clipRect] - Clip mode:
+ *   prune subtrees painting entirely outside this viewport-coords window (their clamp work
+ *   is discarded with the culled clone anyway).
+ * @returns {() => void} Combined undo function
+ */
+export function lineClampTree(el, clipRect) {
+  if (!el) return () => {}
+  const undos = []
+  // 200px of slack around the clip window, the same margin capture.js gives the font walk.
+  const M = 200
+  function walk(node) {
+    if (clipRect) {
+      const r = node.getBoundingClientRect()
+      if (r.width > 0 || r.height > 0) {
+        const right = Math.max(r.right, r.left + (node.scrollWidth || 0))
+        const bottom = Math.max(r.bottom, r.top + (node.scrollHeight || 0))
+        if (right < clipRect.left - M || r.left > clipRect.right + M ||
+            bottom < clipRect.top - M || r.top > clipRect.bottom + M) return
+      }
+    }
+    // One computed-style read per node, shared by both passes (hot path).
+    const cs = getComputedStyle(node)
+    const u1 = lineClamp(node, cs)
+    if (u1) undos.push(u1)
+    const u2 = textEllipsis(node, cs)
+    if (u2) undos.push(u2)
+    for (const child of node.children || []) walk(child)
+  }
+  walk(el)
+  return () => undos.forEach((u) => u())
+}
+
+/**
+ * Apply a multi-line ellipsis ONLY if the target element declares
+ * -webkit-line-clamp/line-clamp. Uses the real layout (scrollHeight) and
+ * mutates the ORIGINAL node briefly (binary search on text + '…'),
+ * then returns an undo() that restores everything right after cloning.
+ *
+ * @param {Element} el
+ * @param {CSSStyleDeclaration} [cs]
+ * @returns {() => void} undo function (no-op if nothing changed)
+ */
+export function lineClamp(el, cs) {
+  if (!el) return () => {}
+  cs = cs || getComputedStyle(el)
+
+  const lines = getClamp(cs)
+  if (lines <= 0) return () => {}
+
+  if (!isPlainTextContainer(el)) return () => {}
+
+  // Mutates the live element's text nodes in place (never textContent, #485).
+  const text = textNodeWriter(el)
+  const original = text.text
+
+  // Measure the REAL rendered line height instead of guessing from CSS.
+  // `line-height: normal` is font-metric dependent, and inside a -webkit-box the
+  // line box never shrinks below the font strut, so a value smaller than the
+  // glyph height (e.g. line-height:18px on 20px text) still lays out taller. A
+  // fs*1.2 / raw-CSS guess mis-sizes targetH and clamps to the wrong line count (#443).
+  const pad = vpad(cs)
+  text.write('X')
+  const perLine = el.scrollHeight - pad
+  text.restore()
+  const lineH = perLine > 0 ? perLine : usedLineHeightPx(cs)
+  const targetH = Math.round(lineH * lines + pad)
+  // scrollHeight is an integer, so the one-line probe can be half a pixel short and the
+  // error grows with every line: Firefox lays 14px Arial at 16.45px, the probe reads 16, two
+  // real lines read 33 against a target of 32, and the clamp cut to one line (#529). Still
+  // far short of a whole extra line.
+  const slack = 0.5 * (lines + 1)
+
+  // Already fits in N lines: do nothing, same as the native clamp
+  if (el.scrollHeight <= targetH + slack) {
+    return () => {}
+  }
+
+  // ==== Binary search over the prefix length that fits with an ellipsis ====
+  let lo = 0, hi = original.length, best = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    text.write(original.slice(0, safeCut(original, mid)) + '…')
+    // Reading scrollHeight forces layout.
+    if (el.scrollHeight <= targetH + slack) {
+      best = mid; lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+
+  // Apply the best cut (when nothing fits, only the ellipsis is left)
+  const written = (best >= 0 ? original.slice(0, safeCut(original, best)) : '') + '…'
+  text.write(written)
+
+  // Return undo() so the original DOM is restored after cloning
+  return undoText(el, written, text)
+}
+
+/**
+ * Bake a single-line `text-overflow: ellipsis`. Same strategy as lineClamp but
+ * on the horizontal axis: only when the element is a nowrap, overflow-clipped
+ * plain-text container whose content overflows. Firefox/Safari skip this in a
+ * <foreignObject>, so we resolve it here for every engine (#431).
+ *
+ * @param {Element} el
+ * @param {CSSStyleDeclaration} [cs]
+ * @returns {() => void} undo function (no-op if nothing changed)
+ */
+export function textEllipsis(el, cs) {
+  if (!el) return () => {}
+  cs = cs || getComputedStyle(el)
+
+  if (cs.textOverflow !== 'ellipsis') return () => {}
+  // Single-line ellipsis: content must not wrap and must be clipped.
+  if (cs.whiteSpace !== 'nowrap' && cs.whiteSpace !== 'pre') return () => {}
+  if (cs.overflowX !== 'hidden' && cs.overflowX !== 'clip') return () => {}
+
+  if (!isPlainTextContainer(el)) return () => {}
+
+  // It already fits, so the native clamp would do nothing either.
+  if (el.scrollWidth <= el.clientWidth + 0.5) return () => {}
+
+  // Mutates the live element's text nodes in place (never textContent, #485).
+  const text = textNodeWriter(el)
+  const original = text.text
+  // The browser cuts at the line's END edge, so what stays visible is whatever sits at its
+  // start edge. When the text runs against the box's direction (Arabic in a left-to-right
+  // box, English in a right-to-left one) that is the LOGICAL END of the text, and keeping
+  // the prefix captured the other end of the string.
+  const keepEnd = startsWithLogicalEnd(el, cs, text.nodes)
+  const keep = (k) => {
+    if (!keepEnd) {
+      const i = safeCut(original, k)
+      return original.slice(0, i) + joiner(original, i) + '…'
+    }
+    const i = safeStart(original, original.length - k)
+    return joiner(original, i) + original.slice(i) + '…'
+  }
+
+  let lo = 0, hi = original.length, best = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    text.write(keep(mid))
+    if (el.scrollWidth <= el.clientWidth + 0.5) {
+      best = mid; lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+
+  const written = best >= 0 ? keep(best) : '…'
+  text.write(written)
+
+  return undoText(el, written, text)
+}
+
+/* ---------------- helpers ---------------- */
+
+/** Restore the pre-clamp text — unless the page changed it while the capture was running.
+ *  This is the one place the pipeline writes to the LIVE tree: the ellipsis is baked into
+ *  the real node, the clone is taken, and the text is put back. `prepareClone` is awaited
+ *  in between, which is long enough for the caller's own code to write new text into the
+ *  same node. A blind `el.textContent = original` then reverted that write — the capture
+ *  being stale would have been forgivable, silently undoing the application's update was
+ *  not. If what we wrote is no longer there, the node has a new owner: leave it. */
+function undoText(el, written, text) {
+  return () => {
+    if (el.textContent === written) text.restore()
+  }
+}
+
+/**
+ * Rewrites an element's text WITHOUT replacing its text nodes.
+ *
+ * `el.textContent = value` is destructive: the browser drops every child node and inserts a fresh
+ * text node. Frameworks that keep a reference to the original node (React fibers, Vue vnodes,
+ * Svelte blocks) then fail on their next update with
+ * `NotFoundError: Failed to execute 'removeChild'` — long after the capture, which makes it very
+ * hard to trace back (#485). Writing `node.data` mutates the same node in place, exactly what
+ * React itself does for a single-text-child update, so node identity survives the measurement.
+ *
+ * Callers are gated by isPlainTextContainer(), so the element has no element children: writing
+ * the whole string into the first text node and blanking the rest lays out identically to a
+ * textContent write, and restore() puts every original chunk back where it was.
+ *
+ * @param {Element} el
+ * @returns {{text: string, write: (value: string) => void, restore: () => void}}
+ */
+function textNodeWriter(el) {
+  const nodes = []
+  for (let n = el.firstChild; n; n = n.nextSibling) {
+    if (n.nodeType === Node.TEXT_NODE) nodes.push(n)
+  }
+  const original = nodes.map((n) => n.data)
+  return {
+    nodes,
+    text: original.join(''),
+    write(value) {
+      nodes[0].data = value
+      for (let i = 1; i < nodes.length; i++) nodes[i].data = ''
+    },
+    restore() {
+      for (let i = 0; i < nodes.length; i++) nodes[i].data = original[i]
+    },
+  }
+}
+
+/** A cut index that never lands between the two halves of a surrogate pair. Slicing an
+ *  emoji in half leaves a lone surrogate, and the serialized SVG then fails
+ *  encodeURIComponent — rejecting the WHOLE capture with "URIError: URI malformed",
+ *  not just mangling one glyph. Must be applied to the emitted slice too, not only the
+ *  probes: the last probe is not necessarily the one that wins. */
+function safeCut(text, n) {
+  if (n <= 0 || n >= text.length) return n
+  const c = text.charCodeAt(n - 1)
+  return c >= 0xd800 && c <= 0xdbff ? n - 1 : n
+}
+
+/** The suffix counterpart of safeCut: a start index that never orphans a low surrogate. */
+function safeStart(text, n) {
+  if (n <= 0 || n >= text.length) return n
+  const c = text.charCodeAt(n)
+  return c >= 0xdc00 && c <= 0xdfff ? n - 1 : n
+}
+
+// Scripts whose letters join (Arabic, Syriac, Thaana, N'Ko, Mongolian and the Arabic
+// presentation forms).
+const JOINING = /[\u0600-\u08FF\u1800-\u18AF\uFB50-\uFDFF\uFE70-\uFEFF]/
+
+/**
+ * A zero-width joiner when the cut at `i` splits a word of a joining script. Chromium and
+ * Firefox truncate the shaped line, so the letter at the cut keeps its joined form; cut in
+ * the text, it took its isolated or final form, wider, and the ellipsis fit one character
+ * fewer than the page's (Arabic in a 220px box). WebKit reshapes the truncated text itself
+ * and matches the plain cut, so it gets none.
+ */
+function joiner(text, i) {
+  return i > 0 && i < text.length && JOINING.test(text[i - 1]) && JOINING.test(text[i]) && !isSafari()
+    ? '\u200D'
+    : ''
+}
+
+/**
+ * Whether the line's start edge shows the logical end of the text: its last visible
+ * character sits nearer that edge than its first. Two range reads, only on boxes that
+ * overflow with an ellipsis. Pinned by __tests__/snapdom.rtl.test.js.
+ * @param {Element} el
+ * @param {CSSStyleDeclaration} cs
+ * @param {Text[]} nodes - the element's text nodes, in order
+ */
+function startsWithLogicalEnd(el, cs, nodes) {
+  let first = null, last = null
+  for (const n of nodes) {
+    const a = n.data.search(/\S/)
+    if (a < 0) continue
+    if (!first) first = [n, a]
+    last = [n, n.data.length - n.data.trimEnd().length]
+  }
+  if (!first) return false
+  const range = el.ownerDocument.createRange()
+  const rectOf = (node, start, end) => {
+    range.setStart(node, start)
+    range.setEnd(node, end)
+    return range.getBoundingClientRect()
+  }
+  const [fn, fa] = first
+  const [ln, trail] = last
+  const lastEnd = ln.data.length - trail
+  const head = rectOf(fn, fa, Math.min(fn.data.length, fa + 1))
+  const tail = rectOf(ln, Math.max(0, lastEnd - 1), lastEnd)
+  const box = el.getBoundingClientRect()
+  if (cs.direction === 'rtl') {
+    const edge = box.right - (parseFloat(cs.borderRightWidth) || 0) - (parseFloat(cs.paddingRight) || 0)
+    return Math.abs(tail.right - edge) < Math.abs(head.right - edge)
+  }
+  const edge = box.left + (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.paddingLeft) || 0)
+  return Math.abs(tail.left - edge) < Math.abs(head.left - edge)
+}
+
+/** `-webkit-line-clamp` or `line-clamp` as a positive integer, 0 when neither is set. */
+function getClamp(cs) {
+  let v = cs.getPropertyValue('-webkit-line-clamp') || cs.getPropertyValue('line-clamp')
+  v = (v || '').trim()
+  const n = parseInt(v, 10)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+/** Line height from CSS alone, the fallback when the one-glyph probe measured nothing: px as
+ *  is, unitless and % against font-size, `normal` as 1.2 times it. */
+function usedLineHeightPx(cs) {
+  const lh = (cs.lineHeight || '').trim()
+  const fs = parseFloat(cs.fontSize) || 16
+  if (!lh || lh === 'normal') return Math.round(fs * 1.2)
+  if (lh.endsWith('px')) return parseFloat(lh)
+  if (/^\d+(\.\d+)?$/.test(lh)) return Math.round(parseFloat(lh) * fs)
+  if (lh.endsWith('%')) return Math.round((parseFloat(lh) / 100) * fs)
+  return Math.round(fs * 1.2)
+}
+
+/** Vertical padding in px; scrollHeight includes it, the line count must not. */
+function vpad(cs) {
+  return (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
+}
+
+/** Plain text container: no element children, only text nodes and whitespace. */
+function isPlainTextContainer(el) {
+  if (el.childElementCount > 0) return false
+  return Array.from(el.childNodes).some(n => n.nodeType === Node.TEXT_NODE)
+}

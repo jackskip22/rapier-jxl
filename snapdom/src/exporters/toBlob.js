@@ -1,0 +1,42 @@
+/**
+ * The Blob exporter. `svg` hands back the decoded svg text as a Blob with no raster step;
+ * oversized PNG and JPEG files use bounded raster windows; other raster exports use the native encoder.
+ * @module exporters/toBlob
+ */
+import { toCanvas } from './toCanvas.js'
+import { toLargeImage } from './toLargeImage.js'
+import { fileSvgText } from '../utils/helpers.js'
+
+/**
+ * Converts the rendered output to a Blob.
+ * @param {string} url - Image data URL.
+ * @param {object} options - Context including format and quality.
+ * @param {string} [options.format='svg'] - Output format ('svg', 'png', 'jpeg', 'webp').
+ *   Deprecated `type` remains accepted as an export-level alias for `format`.
+ *   See __tests__/api.export.contract.test.js.
+ * @param {number} [options.quality] - Image quality for lossy formats.
+ * @param {string} [options.backgroundColor] - Optional background color.
+ * @returns {Promise<Blob>} Resolves with the image Blob.
+ */
+export async function toBlob(url, options) {
+  const format = options.format || options.type || 'svg'
+  if (format === 'svg') {
+    // An engine:'html-in-canvas' capture is raster from birth: base64-decoding its PNG and
+    // labeling the bytes image/svg+xml would hand back a corrupt file. Fail with the reason.
+    if (typeof HTMLCanvasElement !== 'undefined' && url instanceof HTMLCanvasElement) {
+      throw new Error('[SnapDOM] html-in-canvas makes a raster capture, not an SVG; ask for png, jpeg or webp.')
+    }
+    // A file, not a browser raster: without the layout-zoom wrapper (#552). download('svg')
+    // comes through here too.
+    const svgText = fileSvgText(decodeURIComponent(url.split(',')[1]), options.__fileSvg)
+    return new Blob([svgText], { type: 'image/svg+xml' })
+  }
+
+  const codec = format === 'jpg' ? 'jpeg' : format
+  const large = (codec === 'png' || codec === 'jpeg') && toLargeImage(url, options, codec)
+  if (large) return large
+  const canvas = await toCanvas(url, { ...options, __encodeFormat: codec }) // backgroundColor inline
+  return new Promise((resolve) =>
+    canvas.toBlob((blob) => resolve(blob), `image/${codec}`, options.quality)
+  )
+}

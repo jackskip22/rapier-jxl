@@ -1,4 +1,4 @@
-# Safari native JPEG XL check for the staged rapier-jxl package on this branch only.
+# Safari native JPEG XL check for the staged rapier-jxl package, plus the SnapDOM jxl plug-in.
 name: safari-check
 on:
   push:
@@ -53,4 +53,68 @@ jobs:
             server.log
             driver.log
           retention-days: 1
+          if-no-files-found: warn
+
+  safari-snapdom:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Versions
+        run: |
+          sw_vers
+          echo "MACOS_VERSION=$(sw_vers -productVersion)" >> "$GITHUB_ENV"
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' /Applications/Safari.app/Contents/Info.plist
+          node --version
+          cat snapdom/TIP.txt
+      - name: Extract candidate package for SnapDOM
+        run: |
+          shasum -a 256 -c rapier-jxl-candidate.tgz.sha256
+          mkdir -p p/cand
+          tar -xzf rapier-jxl-candidate.tgz -C p/cand
+          test -f p/cand/package/dist/capture-complete.worker.mjs
+          mkdir -p snapdom/node_modules
+          rm -rf snapdom/node_modules/rapier-jxl
+          cp -R p/cand/package snapdom/node_modules/rapier-jxl
+      - name: Install SnapDOM test deps
+        working-directory: snapdom
+        run: |
+          # Tip's package-lock expects rapier-jxl ^8.3.2; we already staged the candidate beside it.
+          npm install --ignore-scripts --no-audit --no-fund
+          npx playwright install webkit
+      - name: Safari WebDriver
+        run: sudo /usr/bin/safaridriver --enable
+      - name: Plug-in + 32 demos on real Safari
+        run: |
+          nohup node snapdom-harness/server.mjs > snapdom-server.log 2>&1 &
+          echo $! > snapdom-server.pid
+          nohup /usr/bin/safaridriver -p 4444 > snapdom-driver.log 2>&1 &
+          echo $! > snapdom-driver.pid
+          sleep 3
+          RAPIER_JXL="$PWD/p/cand/package" node snapdom-harness/drive-snapdom.mjs
+          status=$?
+          kill "$(cat snapdom-server.pid)" "$(cat snapdom-driver.pid)" 2>/dev/null || true
+          exit $status
+      - name: Lifecycle + own suite (Playwright WebKit on the Safari runner host)
+        working-directory: snapdom
+        env:
+          REQUIRE_VISUAL: '1'
+          BROWSER: webkit
+        run: |
+          # Real Safari covers plugin.jxl + demos above. Lifecycle needs vi.mock (vitest);
+          # own suite is ~2k tests — Playwright WebKit on macos-15, labelled as Safari-host stand-in.
+          echo "NOTE: Playwright WebKit ≠ Safari.app; real-Safari results are in snapdom-safari-results.json"
+          node scripts/vitest.mjs run __tests__/plugin.jxl.lifecycle.test.js --browser.headless --reporter=dot
+          node scripts/vitest.mjs run --browser.headless --reporter=dot --maxWorkers=2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: safari-snapdom-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            snapdom-safari-results.json
+            snapdom-server.log
+            snapdom-driver.log
+          retention-days: 5
           if-no-files-found: warn

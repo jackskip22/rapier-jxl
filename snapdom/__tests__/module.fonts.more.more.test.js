@@ -1,0 +1,294 @@
+// __tests__/module.fonts.more.more.test.js
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+
+// ====== Mocks HOISTED-SAFE ======
+// helpers: extractURL can stay real; nothing here depends on fetchResource.
+vi.mock('../src/utils/helpers', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    extractURL: actual.extractURL ?? ((cssUrlFn) => {
+      const m = String(cssUrlFn).match(/url\((["']?)([^"')]+)\1\)/i)
+      return m ? m[2] : ''
+    }),
+  }
+})
+
+// iconFonts siempre falso para no excluir
+vi.mock('../src/modules/iconFonts.js', () => ({
+  isIconFont: vi.fn(() => false),
+  isIconFontStylesheet: vi.fn(() => false),
+}))
+
+// 🔴 Nuevo: mock de snapFetch (API no-throw)
+vi.mock('../src/modules/snapFetch.js', () => ({
+  snapFetch: vi.fn(async (url, opts = {}) => {
+    if (opts.as === 'text') {
+      return { ok: true, data: '', status: 200, url, fromCache: false }
+    }
+    // default: return a minimal woff2 dataURL
+    return {
+      ok: true,
+      data: 'data:font/woff2;base64,AA==',
+      status: 200,
+      url,
+      fromCache: false,
+      mime: 'font/woff2',
+    }
+  }),
+}))
+
+// ====== SUT + deps ======
+import { embedCustomFonts, collectUsedFontVariants, fontKeyFamily, FONT_KEY_SEP } from '../src/modules/fonts.js'
+import { cache } from '../src/core/cache.js'
+import { snapFetch } from '../src/modules/snapFetch.js'
+
+// Required-font keys written the readable way; FONT_KEY_SEP is the real separator (#542).
+const key = (k) => k.replaceAll('__', FONT_KEY_SEP)
+
+// ====== utilidades locales ======
+function addStyle (css) {
+  const s = document.createElement('style')
+  s.setAttribute('data-test', 'fonts-extra')
+  s.textContent = css
+  document.head.appendChild(s)
+  return s
+}
+function cleanInjectedStuff () {
+  document.querySelectorAll('link[rel="stylesheet"]').forEach(n => n.remove())
+  document.querySelectorAll('link[data-snapdom="injected-import"]').forEach(n => n.remove())
+  document.querySelectorAll('style[data-test="fonts-extra"]').forEach(n => n.remove())
+  // Limpia styles con @import colgados de otras suites
+  document.querySelectorAll('style').forEach(n => {
+    if ((n.textContent || '').includes('@import')) n.remove()
+  })
+}
+
+/** Minimal document.fonts mock */
+function setDocumentFonts (fontsArray = []) {
+  const items = [...fontsArray]
+  const iter = function * () { yield * items }
+  const fakeSet = {
+    [Symbol.iterator]: iter,
+    values: iter,
+    entries: function * () { for (const it of items) yield [it.family, it] },
+    forEach (cb, thisArg) { for (const it of items) cb.call(thisArg, it, it, fakeSet) },
+    has (ff) { return items.includes(ff) },
+    add (ff) { items.push(ff) },
+    delete (ff) { const i = items.indexOf(ff); if (i >= 0) items.splice(i, 1) },
+    clear () { items.length = 0 },
+    ready: Promise.resolve(),
+    size: items.length
+  }
+  Object.defineProperty(document, 'fonts', {
+    configurable: true,
+    get () { return fakeSet },
+    set () {}
+  })
+  return () => { delete document.fonts }
+}
+
+let restoreFonts = () => {}
+
+// ====== setup/teardown ======
+beforeEach(() => {
+  vi.restoreAllMocks()
+
+  // helper mocks are already installed; just reset the counters
+  // (vitest 4: restoreAllMocks no longer touches vi.fn() mocks, only spies)
+  vi.resetAllMocks()
+
+  // limpiar caches y DOM
+  try { cache.resource?.clear?.() } catch {}
+  cleanInjectedStuff()
+
+  // document.fonts is empty by default
+  restoreFonts?.()
+  restoreFonts = setDocumentFonts([])
+
+  // reset the snapFetch mock in case a test set specific responses
+  vi.mocked(snapFetch).mockImplementation(async (url, opts = {}) => {
+    if (opts.as === 'text') {
+      return { ok: true, data: '', status: 200, url, fromCache: false }
+    }
+    return {
+      ok: true,
+      data: 'data:font/woff2;base64,AA==',
+      status: 200,
+      url,
+      fromCache: false,
+      mime: 'font/woff2',
+    }
+  })
+})
+
+afterEach(() => {
+  restoreFonts?.()
+  cleanInjectedStuff()
+})
+
+/* ----------------- unicode-range & helpers ------------------ */
+describe('embedCustomFonts – unicode-range & helpers', () => {
+  it('incluye la face cuando usedCodepoints intersecta el unicode-range', async () => {
+    const url = 'https://cdn.example.com/cyr.woff2'
+    addStyle(`
+      @font-face {
+        font-family: 'CyrillicOnly';
+        font-style: normal;
+        font-weight: 400;
+        font-stretch: 100%;
+        unicode-range: U+0400-04FF;
+        src: url(${url}) format('woff2');
+      }`)
+
+    // asegurar que el fetch de la fuente devuelva una dataURL conocida
+    vi.mocked(snapFetch).mockResolvedValueOnce({
+      ok: true, data: 'data:font/woff2;base64,CCC=', status: 200, url, fromCache: false, mime: 'font/woff2'
+    })
+
+    const css = await embedCustomFonts({
+      required: new Set([key('CyrillicOnly__400__normal__100')]),
+      usedCodepoints: new Set([0x0410]) // 'А' cirílica ⇒ intersecta
+    })
+
+    expect(css).toMatch(/font-family:\s*['"]?CyrillicOnly['"]?/)
+    expect(css).toMatch(/url\(["']?data:/)
+  })
+})
+
+/* ----------------- cache.resource short-circuit ------------------ */
+describe('embedCustomFonts – cache.resource short-circuit', () => {
+  it('usa cache.resource para inlining y evita snapFetch', async () => {
+    const fontUrl = 'https://cdn.example.com/foo.woff2'
+    const b64 = 'data:font/woff2;base64,AAA'
+    cache.resource.set(fontUrl, b64)
+
+    addStyle(`
+      @font-face {
+        font-family: 'Foo';
+        font-style: normal;
+        font-weight: 400;
+        font-stretch: 100%;
+        src: url(${fontUrl}) format('woff2');
+      }`)
+
+    const css = await embedCustomFonts({
+      required: new Set([key('Foo__400__normal__100')]),
+      usedCodepoints: new Set([0x41])
+    })
+
+    expect(css).toMatch(/font-family:\s*['"]?Foo['"]?/)
+    expect(css).toMatch(/url\(["']?data:font\/woff2;base64,AAA/)
+    expect(snapFetch).not.toHaveBeenCalled()
+  })
+})
+
+/* ----------------- document.fonts con _snapdomSrc ------------------ */
+describe('document.fonts con _snapdomSrc', () => {
+  it('descarga _snapdomSrc (no data:) y lo inyecta como @font-face', async () => {
+    // simulate a dynamically loaded font
+    restoreFonts?.()
+    restoreFonts = setDocumentFonts([
+      { family: 'DynFont', status: 'loaded', style: 'normal', weight: '400', _snapdomSrc: 'https://cdn.example.com/dyn.woff2' }
+    ])
+
+    // se espera 1 fetch → dataURL
+    vi.mocked(snapFetch).mockResolvedValueOnce({
+      ok: true, data: 'data:font/woff2;base64,DYN=', status: 200,
+      url: 'https://cdn.example.com/dyn.woff2', fromCache: false, mime: 'font/woff2'
+    })
+
+    const css = await embedCustomFonts({
+      required: new Set([key('DynFont__400__normal__100')]),
+      usedCodepoints: new Set([0x41])
+    })
+
+    expect(css).toMatch(/font-family:\s*['"]?DynFont['"]?/)
+    expect(css).toMatch(/url\(["']?data:/)
+    expect(snapFetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('si _snapdomSrc ya es data:, no hace fetch', async () => {
+    restoreFonts?.()
+    restoreFonts = setDocumentFonts([
+      { family: 'DynData', status: 'loaded', style: 'normal', weight: '400', _snapdomSrc: 'data:font/woff2;base64,ZZ==' }
+    ])
+
+    const css = await embedCustomFonts({
+      required: new Set([key('DynData__400__normal__100')]),
+      usedCodepoints: new Set([0x41])
+    })
+
+    expect(css).toMatch(/DynData/)
+    expect(css).toMatch(/url\(['"]?data:/)
+    expect(snapFetch).not.toHaveBeenCalled()
+  })
+
+  it('keeps going without breaking when snapFetch returns ok:false', async () => {
+    restoreFonts?.()
+    restoreFonts = setDocumentFonts([
+      { family: 'DynFail', status: 'loaded', style: 'normal', weight: '400', _snapdomSrc: 'https://cdn.example.com/fail.woff2' }
+    ])
+
+    vi.mocked(snapFetch).mockResolvedValueOnce({
+      ok: false, data: null, status: 0, url: 'https://cdn.example.com/fail.woff2', fromCache: false, reason: 'network'
+    })
+
+    const css = await embedCustomFonts({
+      required: new Set([key('DynFail__400__normal__100')]),
+      usedCodepoints: new Set([0x41])
+    })
+
+    // Puede no incluir DynFail si no pudo inlinear — lo importante es que no explote y sea string.
+    expect(typeof css).toBe('string')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #357 — collectUsedFontVariants must register ALL fallback families, not only
+//         the first non-generic one (pickAllFamilies instead of pickPrimaryFamily)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('collectUsedFontVariants – full fallback chain (#357)', () => {
+  afterEach(() => { document.body.innerHTML = '' })
+
+  it('registers keys for every non-generic family in font-family list', () => {
+    const el = document.createElement('div')
+    el.style.fontFamily = '"PrimaryFont", "FallbackFont", sans-serif'
+    document.body.appendChild(el)
+
+    const variants = collectUsedFontVariants(el)
+    const families = new Set([...variants].map(k => fontKeyFamily(k)))
+
+    expect(families.has('PrimaryFont')).toBe(true)
+    expect(families.has('FallbackFont')).toBe(true)
+    // Generic families must be excluded
+    expect(families.has('sans-serif')).toBe(false)
+  })
+
+  it('handles a single non-generic family correctly', () => {
+    const el = document.createElement('div')
+    el.style.fontFamily = '"OnlyFont", serif'
+    document.body.appendChild(el)
+
+    const variants = collectUsedFontVariants(el)
+    const families = new Set([...variants].map(k => fontKeyFamily(k)))
+
+    expect(families.has('OnlyFont')).toBe(true)
+    expect(families.has('serif')).toBe(false)
+  })
+
+  it('collects variants from nested elements too', () => {
+    const parent = document.createElement('div')
+    parent.style.fontFamily = '"ParentFont", sans-serif'
+    const child = document.createElement('span')
+    child.style.fontFamily = '"ChildFont", monospace'
+    parent.appendChild(child)
+    document.body.appendChild(parent)
+
+    const variants = collectUsedFontVariants(parent)
+    const families = new Set([...variants].map(k => fontKeyFamily(k)))
+
+    expect(families.has('ParentFont')).toBe(true)
+    expect(families.has('ChildFont')).toBe(true)
+  })
+})

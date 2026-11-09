@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><script type="importmap">{"imports": {"@zumer/snapdom": "https://unpkg.com/@zumer/snapdom@latest/dist/snapdom.mjs", "@zumer/snapdom/plugins": "https://unpkg.com/@zumer/snapdom@latest/dist/snapdom.mjs"}}</script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebGL Live Mirror — DOM, Live on the GPU — SnapDOM Labs</title>
+  <meta name="description" content="Every keystroke in a contenteditable triggers a SnapDOM capture. A defineExports plugin feeds it into a persistent WebGL texture without stale renders." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://snapdom.dev/labs/webgl-live-mirror/" />
+  <link rel="help" type="text/plain" href="https://snapdom.dev/llms.txt" title="LLM summary">
+  <link rel="help" type="text/plain" href="https://snapdom.dev/llms-full.txt" title="LLM full reference">
+  <meta property="og:type" content="article" />
+  <meta property="og:title" content="WebGL Live Mirror — DOM, Live on the GPU" />
+  <meta property="og:description" content="A SnapDOM plugin streams every keystroke straight into a persistent WebGL texture — no video element, no polling, just a defineExports export wired into a render loop." />
+  <meta property="og:url" content="https://snapdom.dev/labs/webgl-live-mirror/" />
+  <meta property="og:image" content="https://snapdom.dev/assets/og-card.jpg" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" type="image/png" href="../../assets/favicon/favicon-96x96.png" sizes="96x96">
+  <link rel="stylesheet" href="../../shared.css"><link rel="stylesheet" href="../../page.css">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"WebGL Live Mirror — DOM, live on the GPU","description":"Every keystroke in a contenteditable triggers a SnapDOM capture. A defineExports plugin feeds it into a persistent WebGL texture without stale renders.","url":"https://snapdom.dev/labs/webgl-live-mirror/","datePublished":"2026-07-21","dateModified":"2026-10-28","author":{"@type":"Organization","name":"Zumerlab"},"dependencies":"SnapDOM (@zumer/snapdom)"}</script>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"SnapDOM","item":"https://snapdom.dev/"},{"@type":"ListItem","position":2,"name":"Labs","item":"https://snapdom.dev/showcase/#labs"},{"@type":"ListItem","position":3,"name":"WebGL Live Mirror","item":"https://snapdom.dev/labs/webgl-live-mirror/"}]}</script>
+  <style>
+    /* ── Scoped to this lab's live demo only ── */
+    .lab-webgl-mirror { border: 1px solid var(--border); background: var(--surface); padding: 24px; margin: 18px 0 8px; }
+    .lab-webgl-mirror .lwm-toolbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: center; margin-bottom: 16px; }
+    .lab-webgl-mirror .lwm-theme-group { display: flex; align-items: center; gap: 8px; }
+    .lab-webgl-mirror .lwm-theme-group span { font-size: 11px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-muted); font-weight: 700; }
+    .lab-webgl-mirror .lwm-swatch { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--border-soft); cursor: pointer; padding: 0; background: none; }
+    .lab-webgl-mirror .lwm-swatch.active { border-color: var(--border); box-shadow: 0 0 0 2px var(--accent-soft); }
+    .lab-webgl-mirror .lwm-effect { display: flex; align-items: center; gap: 8px; font-size: 11px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-muted); font-weight: 700; }
+    .lab-webgl-mirror .lwm-effect select { font-family: var(--font-mono); font-size: 12px; color: var(--text); background: var(--surface); border: 1px solid var(--border-soft); border-radius: 0; padding: 6px 8px; cursor: pointer; }
+    .lab-webgl-mirror .lwm-effect select:focus { outline: none; border-color: var(--accent); }
+
+    .lab-webgl-mirror .lwm-workspace { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .lab-webgl-mirror .lwm-pane { min-width: 0; border: 1px solid var(--border-soft); background: var(--bg); }
+    .lab-webgl-mirror .lwm-pane-label { display: flex; justify-content: space-between; align-items: center; padding: 9px 12px; border-bottom: 1px solid var(--border-soft); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-muted); font-weight: 700; }
+    .lab-webgl-mirror .lwm-pane-label strong { color: var(--accent); font-weight: 700; }
+    .lab-webgl-mirror .lwm-surface { display: grid; place-items: center; padding: 22px; min-height: 340px; }
+
+    .lab-webgl-mirror #lwmEditable {
+      --lwm-local-accent: #2D5BFF;
+      position: relative;
+      width: min(100%, 320px);
+      aspect-ratio: 4 / 5;
+      overflow: hidden;
+      padding: 26px;
+      border: 1px solid color-mix(in srgb, var(--lwm-local-accent), white 20%);
+      color: #EAF0FF;
+      background:
+        radial-gradient(circle at 84% 16%, color-mix(in srgb, var(--lwm-local-accent), transparent 72%) 0 16%, transparent 16.5%),
+        linear-gradient(150deg, #16234A, #0B1130);
+      box-shadow: 0 20px 40px rgba(15,30,77,0.35), inset 0 0 40px rgba(0,0,0,0.35);
+      outline: none;
+    }
+    .lab-webgl-mirror .lwm-live { position: relative; color: var(--lwm-local-accent); font: 700 10px/1 var(--font-mono); letter-spacing: 0.15em; text-transform: uppercase; }
+    .lab-webgl-mirror .lwm-live::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: var(--lwm-local-accent); box-shadow: 0 0 10px var(--lwm-local-accent); }
+    .lab-webgl-mirror #lwmEditable h3 { position: relative; margin: 84px 0 12px; font-family: var(--font-display); font-weight: 400; font-size: clamp(26px, 4vw, 36px); line-height: 1.05; letter-spacing: 0.3px; color: #FFFFFF; }
+    .lab-webgl-mirror #lwmEditable p { position: relative; max-width: 260px; margin: 0; color: #B9C6EE; font-size: 13.5px; line-height: 1.55; }
+    .lab-webgl-mirror .lwm-edit-hint { position: absolute; right: 20px; bottom: 18px; color: var(--lwm-local-accent); font: 700 9px/1 var(--font-mono); letter-spacing: 0.1em; }
+
+    .lab-webgl-mirror .lwm-gl-wrap { position: relative; width: min(100%, 320px); aspect-ratio: 4 / 5; }
+    .lab-webgl-mirror #lwmGl { display: block; width: 100%; height: 100%; border: 1px solid var(--border-soft); background: #05070F; }
+    .lab-webgl-mirror .lwm-gl-badge { position: absolute; right: 10px; top: 10px; padding: 5px 8px; border: 1px solid rgba(45,91,255,0.4); border-radius: 0; color: var(--accent); background: rgba(11,17,48,0.85); font: 700 8px/1 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; pointer-events: none; }
+
+    .lab-webgl-mirror .flow-strip { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; margin: 18px 0 0; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
+    .lab-webgl-mirror .flow-strip b { color: var(--accent); font-weight: 700; }
+
+    @media (max-width: 640px) {
+      .lab-webgl-mirror .lwm-workspace { grid-template-columns: 1fr; }
+    }
+  </style>
+  <link rel="stylesheet" href="../../navigation.css"><link rel="stylesheet" href="../../panes.css">
+  <script type="module" src="../../panes.js"></script>
+<link rel="stylesheet" href="../../code.css"><script defer data-manual src="../../assets/prism/prism.min.js"></script><script defer src="../../code-blocks.js"></script></head>
+<body>
+  <script defer src="../../site.js"></script>
+  <!-- pane:start --><!-- hero {"badge": "Labs Experiment", "title": "DOM, <span class=\"accent\">live</span> on the GPU", "lead": "Type in the card on the left. Each keystroke re-captures it with SnapDOM and uploads the result into a WebGL texture on the right.", "links": []} -->
+<header class="site-head"><div class="site-head-inner"><a class="site-shell-brand" href="../../" aria-label="SnapDOM home"><span class="site-shell-mark"></span><span>SnapDOM</span></a><nav class="site-nav" aria-label="Main navigation"><div class="site-nav-group"><button type="button" class="site-nav-button" aria-expanded="false">Learn</button><div class="site-nav-panel"><a class="site-nav-item sec-capture" href="../../docs/"><span class="sec-dot"></span><span class="site-nav-item-label">Docs</span><span class="site-nav-item-desc">API, options and quick start</span></a><a class="site-nav-item sec-start" href="../../how-to/"><span class="sec-dot"></span><span class="site-nav-item-label">How-to</span><span class="site-nav-item-desc">Recipes and framework guides</span></a><a class="site-nav-item sec-ecosystem" href="../../compare/"><span class="sec-dot"></span><span class="site-nav-item-label">Compare</span><span class="site-nav-item-desc">SnapDOM vs html2canvas and others</span></a></div></div><div class="site-nav-group is-current"><button type="button" class="site-nav-button" aria-expanded="false">Explore</button><div class="site-nav-panel"><a class="site-nav-item sec-labs" href="../../showcase/" aria-current="page"><span class="sec-dot"></span><span class="site-nav-item-label">Showcase</span><span class="site-nav-item-desc">Live demos and labs</span></a><a class="site-nav-item sec-ecosystem" href="../../showcase/#plugins"><span class="sec-dot"></span><span class="site-nav-item-label">Plugins</span><span class="site-nav-item-desc">PDF, HTML, vector, GIF, video, agent context</span></a><a class="site-nav-item sec-record" href="../../blog/"><span class="sec-dot"></span><span class="site-nav-item-label">Blog</span><span class="site-nav-item-desc">Engineering notes</span></a></div></div><div class="site-nav-group"><button type="button" class="site-nav-button" aria-expanded="false">Community</button><div class="site-nav-panel"><a class="site-nav-item sec-ecosystem" href="../../ecosystem/"><span class="sec-dot"></span><span class="site-nav-item-label">Ecosystem</span><span class="site-nav-item-desc">SnapDIFF, SnapEye, SnapSurf</span></a><a class="site-nav-item sec-context" href="../../made-with/"><span class="sec-dot"></span><span class="site-nav-item-label">Made with</span><span class="site-nav-item-desc">Projects using SnapDOM</span></a></div></div></nav><button type="button" class="site-menu-button" aria-expanded="false">Menu</button><a class="site-shell-github" aria-label="SnapDOM on GitHub" href="https://github.com/zumerlab/snapdom" target="_blank" rel="noopener"><span>GitHub</span><span class="site-shell-stars">★ <span data-star-count>8K</span></span></a></div></header>
+<main id="main" class="pane no-demo" data-pane>
+<aside class="pane-side"><label class="pane-filter"><span aria-hidden="true">⌕</span><input type="search" placeholder="Filter demos" aria-label="Filter demos"></label><nav class="pane-nav" aria-label="Showcase"><div class="sec-labs"><button type="button" class="pane-nav-head" aria-expanded="false"><span class="sec-dot"></span>Showcase</button><div class="pane-nav-items"><a href="../../showcase/">Live demos</a></div></div><div class="sec-labs"><button type="button" class="pane-nav-head" aria-expanded="true"><span class="sec-dot"></span>Labs</button><div class="pane-nav-items"><a href="../video-overlay/">Video overlay <span class="nav-new">New</span></a><a href="../webrtc-overlay/">WebRTC overlay <span class="nav-new">New</span></a><a href="../stop-motion/">Stop motion</a><a href="../paint-canvas/">Paint on a capture</a><a href="../capture-stages/">Capture stages</a><a href="../target-range/">Target range</a><a href="./" aria-current="page">Live mirror</a><a href="../ascii-mirror/">ASCII mirror <span class="nav-new">New</span></a><a href="../webgl-seamless-dom/">Seamless DOM</a><a href="../webgl-shatter/">Shattered capture</a><a href="../html-in-canvas/">html-in-canvas <span class="nav-new">New</span></a><a href="../into-the-dock/">Into the dock <span class="nav-new">New</span></a></div></div></nav></aside>
+
+<article class="pane-read sec-labs" data-title="Live mirror">
+<header class="doc-head"><div class="doc-head-bar"><nav class="doc-crumbs" aria-label="Breadcrumb"><span>Showcase</span><span aria-hidden="true">/</span><span>Labs</span><span aria-hidden="true">/</span><span>Live mirror</span></nav><span class="doc-meta">Labs Experiment</span></div><h1>DOM, <span class="accent">live</span> on the GPU</h1><p class="doc-lead">Type in the card on the left. Each keystroke re-captures it with SnapDOM and uploads the result into a WebGL texture on the right.</p></header>
+<div class="pane-content"><!-- content -->
+
+    <div class="tldr"><div class="tldr-label">TL;DR</div><p>A <code>defineExports</code> plugin adds a <code>webgl</code> export that feeds the captured SVG into an existing WebGL texture. A <code>dirty</code>/<code>working</code> loop collapses fast typing into one trailing capture, so stale captures never queue up.</p></div>
+
+    <section class="prose">
+      <h2 id="what-you-re-looking-at">What you're looking at</h2>
+      <p>The right panel updates within a frame or two. It is a SnapDOM capture of the live element, decoded into an <code>&lt;img&gt;</code> and uploaded as a WebGL <code>TEXTURE_2D</code>. The theme buttons change a CSS custom property the element reads, so a theme switch takes the same capture path. The shader dropdown only changes how the fragment shader samples the texture on the GPU.</p>
+    </section>
+
+    <section class="prose">
+      <h2 id="live-demo">Try it</h2>
+      <p>Edit the text, switch the accent color or swap shaders while typing. The right pane is a WebGL canvas with its own render loop; SnapDOM only refreshes its texture.</p>
+      <div class="lab-webgl-mirror">
+        <div class="lwm-toolbar">
+          <div class="lwm-theme-group">
+            <span>Theme</span>
+            <button type="button" class="lwm-swatch active" data-theme="#2D5BFF" style="background:#2D5BFF" title="Blue" aria-label="Blue theme"></button>
+            <button type="button" class="lwm-swatch" data-theme="#2BA8C9" style="background:#2BA8C9" title="Teal" aria-label="Teal theme"></button>
+            <button type="button" class="lwm-swatch" data-theme="#E63946" style="background:#E63946" title="Rose" aria-label="Rose theme"></button>
+          </div>
+          <label class="lwm-effect">Shader
+            <select id="lwmEffect"><option value="0">Faithful</option><option value="1" selected>Hologram</option><option value="2">Pixelate</option></select>
+          </label>
+        </div>
+
+        <div class="lwm-workspace">
+          <div class="lwm-pane">
+            <div class="lwm-pane-label"><span>Editable DOM</span><strong>contenteditable</strong></div>
+            <div class="lwm-surface">
+              <article id="lwmEditable" contenteditable="true" spellcheck="false">
+                <div class="lwm-live" contenteditable="false">Live signal</div>
+                <h3>Type here</h3>
+                <p>Every edit becomes a WebGL texture through SnapDOM.</p>
+                <div class="lwm-edit-hint" contenteditable="false">EDITABLE DOM_</div>
+              </article>
+            </div>
+          </div>
+
+          <div class="lwm-pane">
+            <div class="lwm-pane-label"><span>WebGL texture</span><strong id="lwmStats">idle</strong></div>
+            <div class="lwm-surface">
+              <div class="lwm-gl-wrap"><canvas id="lwmGl" aria-label="WebGL mirror of the editable DOM element"></canvas><div class="lwm-gl-badge">GPU texture</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="flow-strip">input <b> </b> updateMirror() <b> </b> snapdom() <b> </b> capture.toWebgl() <b> </b> GPU texture</div>
+      </div>
+    </section>
+
+    <section class="prose">
+      <h2 id="how-it-works">How it works</h2>
+      <ol class="steps">
+        <li><h4 aria-level="3">Typing fires an <code>input</code> listener</h4><p>Each keystroke in the <code>contenteditable</code> element fires a native <code>input</code> event, whose one listener calls <code>updateMirror()</code>.</p></li>
+        <li><h4 aria-level="3"><code>updateMirror()</code> sets a <code>dirty</code> flag</h4><p>If a capture is running, it marks the work <code>dirty</code> and returns. Otherwise it enters a <code>while (dirty)</code> loop and captures the element with <code>{ plugins: [mirrorPlugin] }</code>.</p></li>
+        <li><h4 aria-level="3">The plugin's <code>defineExports(ctx)</code> adds a <code>webgl</code> export</h4><p>SnapDOM wires it up as <code>capture.toWebgl()</code>, which passes the capture's context, including <code>ctx.export.url</code>, the rendered SVG data URL.</p></li>
+        <li><h4 aria-level="3">The export loads that SVG into the existing texture</h4><p>It creates an <code>Image</code> from <code>ctx.export.url</code>. Once decoded, the <code>WebGLMirror</code> instance's <code>update()</code> uploads it as a new <code>TEXTURE_2D</code> and returns the canvas.</p></li>
+        <li><h4 aria-level="3">An independent render loop keeps drawing it</h4><p>The mirror's own <code>requestAnimationFrame</code> loop, started once outside SnapDOM, redraws the texture every frame with the selected shader.</p></li>
+        <li><h4 aria-level="3">The <code>dirty</code> re-check collapses bursts of keystrokes</h4><p><code>dirty</code> is re-checked after each capture, so a fast-typed sentence yields one trailing capture of the latest DOM state.</p></li>
+      </ol>
+    </section>
+
+    <section class="prose">
+      <h2 id="why-this-needed-a-plugin">Why this needed a plugin</h2>
+      <p>SnapDOM's core exports (<code>toPng</code>, <code>toCanvas</code> and the rest) return a finished image or canvas. An existing WebGL texture is a destination the caller invents.</p>
+      <p><a href="https://github.com/zumerlab/snapdom/blob/main/PLUGIN_SPEC.md" target="_blank" rel="noopener"><code>defineExports</code></a> is the seam for that: a plugin returns named async functions that get the capture's context and are wired up as <code>capture.to&lt;Name&gt;()</code>. <code>beforeSnap</code>/<code>afterRender</code> here only time each round trip for the readout.</p>
+    </section>
+
+    <section class="prose">
+      <h2 id="copy-paste-example">Copy-paste example</h2>
+      <p>The plugin factory. It needs only <code>ctx.export.url</code>, so it fits any WebGL renderer with an <code>update(url)</code> method:</p>
+      <pre class="code-block">function webglMirror (renderer) {
+  let started = 0
+  let elapsed = 0
+
+  return {
+    name: 'webgl-live-mirror',
+    beforeSnap () { started = performance.now() },
+    afterRender () { elapsed = performance.now() - started },
+    defineExports () {
+      return {
+        webgl: async ctx => {
+          const canvas = await renderer.update(ctx.export.url)
+          statsEl.textContent = `${elapsed.toFixed(0)} ms · GPU updated`
+          return canvas
+        }
+      }
+    }
+  }
+}</pre>
+      <p>The usage. The <code>dirty</code>/<code>working</code> loop collapses a burst of edits into one trailing capture:</p>
+      <pre class="code-block">const mirrorPlugin = webglMirror(renderer)
+let dirty = false
+let working = false
+
+async function updateMirror () {
+  dirty = true
+  if (working) return
+  working = true
+  while (dirty) {
+    dirty = false
+    const capture = await snapdom(editable, { plugins: [mirrorPlugin] })
+    await capture.toWebgl()
+  }
+  working = false
+}
+
+editable.addEventListener('input', updateMirror)</pre>
+    </section>
+
+    <section class="prose">
+      <h2 id="limits-and-things-to-watch">Limits and things to watch</h2>
+      <p>A keystroke can trigger a fresh capture and upload: keep the element small, or debounce the handler for heavier content. SnapDOM 3 reuses eligible work automatically, but this demo's timing hooks are stateful and force a fresh capture; resource caches are still reused.</p>
+    </section>
+
+    <section class="related">
+      <div class="section-label">Related</div>
+      <div class="related-grid">
+        <a class="related-card" href="../webgl-seamless-dom/">WebGL Seamless DOM: no flicker between updates</a>
+        <a class="related-card" href="../webgl-shatter/">WebGL Shatter: a different use of the same texture trick</a>
+        <a class="related-card" href="../../showcase/#plugins">Browse the plugin directory</a>
+        <a class="related-card" href="https://github.com/zumerlab/snapdom/blob/main/PLUGIN_SPEC.md" target="_blank" rel="noopener">Read the plugin spec</a>
+      </div>
+    </section>
+
+    <section class="cta-section"><div class="cta-card"><h2 id="build-your-own-plugin">Build your own plugin</h2><p>Every hook this demo uses (<code>beforeSnap</code>, <code>afterRender</code> and <code>defineExports</code> for new export formats) is documented in the plugin spec.</p><a href="../../showcase/#plugins" class="btn btn-primary">Explore plugins</a><a href="https://github.com/zumerlab/snapdom/blob/main/PLUGIN_SPEC.md" class="btn btn-ghost" target="_blank" rel="noopener">Read PLUGIN_SPEC.md</a></div></section>
+
+  <!-- /content --></div>
+<nav class="pager" aria-label="Pages"><a href="../target-range/"><span>Previous</span><strong>Target range</strong></a><a class="is-next" href="../ascii-mirror/"><span>Next</span><strong>ASCII mirror</strong></a></nav>
+</article>
+</main>
+<footer class="site-foot"><nav class="site-foot-directory" aria-label="Site directory"><div><h2>Learn</h2><a href="../../docs/">Documentation</a><a href="../../docs/#quick-start">Quick start</a><a href="../../how-to/">How-to recipes</a><a href="../../how-to/#frameworks">Framework guides</a><a href="../../compare/">Compare</a></div><div><h2>Explore</h2><a href="../../showcase/">Showcase</a><a href="../../showcase/#plugins">Plugins</a><a href="../../docs/plugins/#build">Writing plugins</a><a href="../../showcase/#labs">Labs</a><a href="../../blog/">Blog</a></div><div><h2>Community</h2><a href="../../ecosystem/">Ecosystem</a><a href="../../made-with/">Made with</a><a href="../../ecosystem/#community-plugins">Community plugins</a><a href="https://github.com/zumerlab/snapdom">GitHub</a><a href="https://www.npmjs.com/package/@zumer/snapdom">npm</a><a href="https://github.com/sponsors/tinchox5">Sponsors</a></div></nav><div class="site-foot-legal"><p>MIT © <a href="https://zumerlab.com/">Zumerlab</a></p></div></footer>
+<!-- pane:end -->
+
+
+  <script type="module">
+    import { snapdom } from 'https://unpkg.com/@zumer/snapdom@latest/dist/snapdom.mjs'
+
+    class WebGLMirror {
+      constructor(canvas) {
+        this.canvas = canvas
+        this.gl = canvas.getContext('webgl', { antialias: true, alpha: false })
+        this.textureAspect = .8
+        this.effect = 1
+        if (!this.gl) throw new Error('WebGL not available')
+        this.setup()
+        requestAnimationFrame(time => this.render(time))
+      }
+
+      compile(type, source) {
+        const shader = this.gl.createShader(type)
+        this.gl.shaderSource(shader, source)
+        this.gl.compileShader(shader)
+        if (!this.gl.getShaderParameter(shader, this.gl.COMPILE_STATUS)) throw new Error(this.gl.getShaderInfoLog(shader))
+        return shader
+      }
+
+      setup() {
+        const gl = this.gl
+        const vertex = this.compile(gl.VERTEX_SHADER, `
+          attribute vec2 position;
+          attribute vec2 uv;
+          uniform vec2 fit;
+          varying vec2 texCoord;
+          void main() { gl_Position = vec4(position * fit, 0.0, 1.0); texCoord = uv; }
+        `)
+        const fragment = this.compile(gl.FRAGMENT_SHADER, `
+          precision mediump float;
+          uniform sampler2D image;
+          uniform float time;
+          uniform int effect;
+          uniform vec2 resolution;
+          varying vec2 texCoord;
+          void main() {
+            vec2 p = texCoord;
+            if (effect == 2) p = floor(p * vec2(90.0, 112.0)) / vec2(90.0, 112.0);
+            vec4 color = texture2D(image, p);
+            if (effect == 1) {
+              float scan = .84 + .16 * sin((texCoord.y * resolution.y + time * 35.0) * .32);
+              float split = .0025;
+              color.r = texture2D(image, vec2(p.x + split, p.y)).r;
+              color.b = texture2D(image, vec2(p.x - split, p.y)).b;
+              color.rgb *= scan;
+              color.rgb += vec3(0.0, .08, .07);
+            }
+            gl_FragColor = vec4(color.rgb, 1.0);
+          }
+        `)
+        this.program = gl.createProgram()
+        gl.attachShader(this.program, vertex)
+        gl.attachShader(this.program, fragment)
+        gl.linkProgram(this.program)
+        gl.useProgram(this.program)
+        const vertices = new Float32Array([-1,-1,0,1, 1,-1,1,1, -1,1,0,0, -1,1,0,0, 1,-1,1,1, 1,1,1,0])
+        const buffer = gl.createBuffer()
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer)
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW)
+        const position = gl.getAttribLocation(this.program, 'position')
+        const uv = gl.getAttribLocation(this.program, 'uv')
+        gl.enableVertexAttribArray(position)
+        gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 16, 0)
+        gl.enableVertexAttribArray(uv)
+        gl.vertexAttribPointer(uv, 2, gl.FLOAT, false, 16, 8)
+        this.fit = gl.getUniformLocation(this.program, 'fit')
+        this.time = gl.getUniformLocation(this.program, 'time')
+        this.effectUniform = gl.getUniformLocation(this.program, 'effect')
+        this.resolution = gl.getUniformLocation(this.program, 'resolution')
+        this.texture = gl.createTexture()
+        gl.bindTexture(gl.TEXTURE_2D, this.texture)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([8, 14, 18, 255]))
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+      }
+
+      update(url) {
+        return new Promise((resolve, reject) => {
+          const image = new Image()
+          image.onload = () => {
+            const gl = this.gl
+            this.textureAspect = image.width / image.height
+            gl.bindTexture(gl.TEXTURE_2D, this.texture)
+            gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true)
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image)
+            resolve(this.canvas)
+          }
+          image.onerror = reject
+          image.src = url
+        })
+      }
+
+      render(time) {
+        const dpr = Math.min(devicePixelRatio || 1, 2)
+        const width = Math.round(this.canvas.clientWidth * dpr)
+        const height = Math.round(this.canvas.clientHeight * dpr)
+        if (this.canvas.width !== width || this.canvas.height !== height) { this.canvas.width = width; this.canvas.height = height }
+        const gl = this.gl
+        gl.viewport(0, 0, width, height)
+        gl.clearColor(.02, .035, .045, 1)
+        gl.clear(gl.COLOR_BUFFER_BIT)
+        const viewAspect = width / height
+        const fit = viewAspect > this.textureAspect ? [this.textureAspect / viewAspect, 1] : [1, viewAspect / this.textureAspect]
+        gl.useProgram(this.program)
+        gl.uniform2f(this.fit, fit[0], fit[1])
+        gl.uniform1f(this.time, time * .001)
+        gl.uniform1i(this.effectUniform, this.effect)
+        gl.uniform2f(this.resolution, width, height)
+        gl.bindTexture(gl.TEXTURE_2D, this.texture)
+        gl.drawArrays(gl.TRIANGLES, 0, 6)
+        requestAnimationFrame(next => this.render(next))
+      }
+    }
+
+    // Adds a `webgl` export: it loads the capture's rendered SVG into an
+    // Image, then hands it to the mirror's own texture-upload method.
+    // beforeSnap/afterRender only measure round-trip time for the readout.
+    function webglMirror(renderer) {
+      let started = 0
+      let elapsed = 0
+      return {
+        name: 'webgl-live-mirror',
+        beforeSnap() { started = performance.now() },
+        afterRender() { elapsed = performance.now() - started },
+        defineExports() {
+          return {
+            webgl: async ctx => {
+              const canvas = await renderer.update(ctx.export.url)
+              document.querySelector('#lwmStats').textContent = `${elapsed.toFixed(0)} ms · GPU updated`
+              return canvas
+            }
+          }
+        }
+      }
+    }
+
+    const editable = document.querySelector('#lwmEditable')
+    const renderer = new WebGLMirror(document.querySelector('#lwmGl'))
+    const mirrorPlugin = webglMirror(renderer)
+    let dirty = false
+    let working = false
+
+    // Rapid typing collapses into exactly one trailing capture: `dirty` is
+    // re-checked right after each capture finishes, so bursts of input never
+    // pile up a queue of stale renders — only the latest edit ever wins.
+    async function updateMirror() {
+      dirty = true
+      if (working) return
+      working = true
+      while (dirty) {
+        dirty = false
+        const capture = await snapdom(editable, { plugins: [mirrorPlugin] })
+        await capture.toWebgl()
+      }
+      working = false
+    }
+
+    editable.addEventListener('input', updateMirror)
+    document.querySelectorAll('[data-theme]').forEach(button => button.addEventListener('click', () => {
+      document.querySelector('.lwm-swatch.active')?.classList.remove('active')
+      button.classList.add('active')
+      editable.style.setProperty('--lwm-local-accent', button.dataset.theme)
+      updateMirror()
+    }))
+    document.querySelector('#lwmEffect').addEventListener('change', event => { renderer.effect = Number(event.target.value) })
+    await updateMirror()
+    editable.focus({ preventScroll: true })
+  </script>
+</body>
+</html>

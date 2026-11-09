@@ -1,0 +1,4 @@
+patch: snapdom-tip/plugins-jxl.patch
+patch_sha256: 1afdd956865396c1d19a7b8c861596a4d83b89fdf1c7134712d5e62bc1c3d585
+base: SnapDOM 5eb0d804638c6ceb1d5d488a7ed6bb6bf2bddbe8
+scope: packages/plugins, its tests, types, README and lockfile entry (no core)

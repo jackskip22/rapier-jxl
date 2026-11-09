@@ -1,0 +1,883 @@
+/**
+ * SVG render engine: the default way a finished clone becomes pixels.
+ *
+ * The capture pipeline splits at the clone. `captureDOM` (src/core/capture.js) owns
+ * `element -> clone`: it freezes the subtree, snapshots styles, inlines images and fonts, and
+ * hands over a self-contained clone plus the CSS that styles it. Everything in this file
+ * owns `clone -> render`: base reset, bbox and bleed math, foreignObject assembly and SVG
+ * data-URL encoding. Those are the same two halves `stages.js` already names.
+ *
+ * This is an ENGINE, not core: it is what core does by default, not what core is. The
+ * html-in-canvas engine (htmlInCanvas.js) is its peer, consuming the same
+ * finished clone rather than reaching back to the live page.
+ *
+ * Also re-entered by burst's differential recapture, which rebuilds only dirty subtrees and
+ * composes again from retained state.
+ *
+ * @module engines/svg
+ */
+
+import { isSafari, getStyle } from '../utils/index.js'
+import { cache } from '../core/cache.js'
+import { runHook } from '../core/plugins.js'
+import { sessionWarn, debugWarn } from '../utils/debug.js'
+import { isInternalNode, markInternalNode } from '../utils/ownership.js'
+import {
+  assembleCaptureCSS,
+  estimateKeptHeight,
+  limitDecimals,
+  reconcileCloneLayout,
+  inertMeasurementCopy,
+  adoptShadowCSS,
+  anchorPagePositioned,
+  composeResidual2D
+} from '../utils/capture.helpers.js'
+import {
+  parseBoxShadow,
+  parseTextShadow,
+  parseFilterBlur,
+  parseOutline,
+  parseFilterDropShadows,
+  bboxWithOriginFull,
+  parseTransformOriginPx,
+  readIndividualTransforms,
+  readTotalTransformMatrix,
+  hasBBoxAffectingTransform,
+  measureSubtreeBleed
+} from '../utils/transforms.helpers.js'
+
+/**
+ * Size a body capture along one axis, measured from the body's own border box. `scroll` is
+ * the container's scroll extent and `boxEnd` the end of its in-flow box: past it, the
+ * extent is content overflowing the body (an absolutely placed box, a body of fixed height)
+ * and counts from the body's start; short of it, the difference is only margins around
+ * the body and the body box is the size. Pinned by __tests__/snapdom.bodyExtent.test.js.
+ * @param {number} scroll
+ * @param {number} boxEnd
+ * @param {number} start - body start, relative to the container
+ * @param {number} end - body end, relative to the container
+ * @returns {number}
+ */
+function bodyExtent(scroll, boxEnd, start, end) {
+  return scroll > boxEnd + 0.5 ? scroll - start : end - start
+}
+
+/**
+ * The page's canvas colour as a declaration for a body capture's container: <html>'s
+ * background, or the body's when <html> has none, which is the box CSS propagates to the
+ * whole canvas. The clone paints the body box only, so the margins and the overflow a body
+ * capture keeps came out transparent where the page shows that colour (the left spill of a
+ * right-to-left page). Colour only: a propagated image keeps painting the body box.
+ * Pinned by __tests__/snapdom.rtl.test.js.
+ * @param {Document} doc
+ * @returns {string}
+ */
+function canvasBackground(doc) {
+  const visible = (c) => c && c !== 'transparent' && !/^rgba\(.*,\s*0\)$/.test(c)
+  const html = getStyle(doc.documentElement).backgroundColor
+  const color = visible(html) ? html : getStyle(doc.body).backgroundColor
+  return visible(color) ? `;background-color:${color} !important` : ''
+}
+
+/** A style signature (getStyleKey, utils/css.js) holding something that paints past the box. */
+const OUTER_INK_SIGNATURE = /(?:^|;)(?:box-shadow|text-shadow|outline-style|filter|-webkit-filter):/
+
+/**
+ * Intern repeated inline style attributes as attribute-selector rules in the serialized
+ * markup. Author inline styles are copied verbatim onto every clone node, so a repetitive
+ * tree (tables, lists, grids) serializes the same declaration block thousands of times:
+ * measured on a 500-row table, 3005 style attributes with 12 distinct values — 1.6MB of
+ * SVG that the raster stage then has to parse, cascade and lay out (52.6ms -> 37.4ms
+ * fresh-decode draw after interning, byte-identical pixels; the encodeURIComponent and
+ * serialize stages shrink with it).
+ *
+ * String-level on purpose: the retained clone is never touched, so burst keeps its
+ * artifacts and a differential recapture — which re-serializes through this same path —
+ * re-interns consistently. A rule carries the exact declaration text the attribute had.
+ * Its 0,1,0 specificity beats generated classes by order, but NOT retained author rules
+ * with IDs (and cannot reproduce inline !important). Those competing signatures stay
+ * inline, as do assets whose styles must remain individually editable by exporters.
+ * Safari is excluded: fixSafariShadows rewrites
+ * shadow values in style attributes and has not been taught to look inside the sheet.
+ * Pinned by __tests__/engine.svg.intern.test.js.
+ * @param {string} foString serialized <foreignObject> markup (first <style> holds the CSS)
+ * @param {Element} fo finished foreignObject, used only if styles compete or assets are editable
+ * @returns {string}
+ */
+function internInlineStyles(foString, fo) {
+  if (isSafari()) return foString
+  const styleClose = foString.indexOf('</style>')
+  if (styleClose === -1) return foString
+  // Author <style> elements survive into the clone and their CSS text may contain the
+  // literal sequence the attribute regex matches (attribute selectors, content strings).
+  // Split the markup into style-element spans and everything else, and transform only the
+  // latter. Span 0 ends inside the engine's own style tag, where the rules are injected.
+  const STYLE_SPAN = /<style\b[^>]*>[\s\S]*?<\/style>/g
+  const segments = []
+  let cursor = styleClose
+  let sm
+  STYLE_SPAN.lastIndex = styleClose
+  while ((sm = STYLE_SPAN.exec(foString))) {
+    segments.push({ text: foString.slice(cursor, sm.index), intern: true })
+    segments.push({ text: sm[0], intern: false })
+    cursor = STYLE_SPAN.lastIndex
+  }
+  segments.push({ text: foString.slice(cursor), intern: true })
+  const counts = new Map()
+  const ATTR = / style="([^"]*)"/g
+  let m
+  for (const seg of segments) {
+    if (!seg.intern) continue
+    ATTR.lastIndex = 0
+    while ((m = ATTR.exec(seg.text))) counts.set(m[1], (counts.get(m[1]) || 0) + 1)
+  }
+  // Worth it only when real bytes repeat: singletons stay inline (a rule per unique node
+  // would add cascade work for nothing), and a page with little repetition skips the pass.
+  let saved = 0
+  for (const [css, n] of counts) { if (n > 1) saved += (n - 1) * css.length }
+  if (saved < 2048) return foString
+  if (foString.includes(' data-sdi=')) return foString
+  const protectedStyles = inlineStylesThatMustStay(fo, segments.some(s => !s.intern), foString.includes('data-snapdom-asset'))
+  if (protectedStyles === null) return foString
+  const tokens = new Map()
+  let nextToken = 0
+  const rules = []
+  const swap = (full, css) => {
+    if ((counts.get(css) || 0) < 2 || protectedStyles.has(css)) return full
+    let t = tokens.get(css)
+    if (t === undefined) {
+      t = 'i' + (nextToken++).toString(36)
+      tokens.set(css, t)
+      rules.push(`[data-sdi="${t}"]{${css}}`)
+    }
+    return ` data-sdi="${t}"`
+  }
+  let out = ''
+  for (const seg of segments) out += seg.intern ? seg.text.replace(ATTR, swap) : seg.text
+  return foString.slice(0, styleClose) + rules.join('') + out
+}
+
+/** Signatures that cannot trade inline precedence for a class-level attribute selector.
+ *  Run only AFTER the byte threshold. Selectors are evaluated against the finished tree;
+ *  conservatively protect every matching element's whole inline block. Unrelated rules
+ *  therefore don't switch the optimization off for the rest of a repetitive capture.
+ *  `null` means we cannot establish safety (CSS nesting/namespace selectors, @import, or
+ *  selectors whose match itself could change when style/data-sdi attributes change).
+ *  No stylesheet is mounted: parsing must never restyle the live page. */
+function inlineStylesThatMustStay(fo, hasAuthorStyles, hasEditableAssets) {
+  const values = new Set()
+  if (!hasAuthorStyles && !hasEditableAssets) return values
+  if (!fo) return null
+  // Public markers cannot prove our ownership, but avoiding a duplicate XML attribute is
+  // necessary regardless of who placed it. Existing data-sdi makes this capture ineligible.
+  if (fo.querySelector('[data-sdi]')) return null
+  const protect = (node) => {
+    const value = node.getAttribute('style')
+    if (value) values.add(value)
+  }
+  if (hasEditableAssets) fo.querySelectorAll('[data-snapdom-asset][style]').forEach(protect)
+  if (hasAuthorStyles) {
+    try {
+      const walk = (rules) => {
+        for (const rule of rules) {
+          if (rule.type === CSSRule.IMPORT_RULE || rule.type === CSSRule.NAMESPACE_RULE) throw new Error('External or namespaced CSS')
+          if (rule.selectorText) {
+            // Attribute-dependent matching can CHANGE after interning, including inside
+            // :not()/:has(). Protecting only the elements that match today is insufficient.
+            if (/\[\s*style\b|data-sdi|\[[^\]]*\\|&/i.test(rule.selectorText)) throw new Error('Attribute-dependent or nested CSS')
+            fo.querySelectorAll(rule.selectorText).forEach(protect)
+          }
+          if (rule.cssRules) walk(rule.cssRules)
+        }
+      }
+      for (const style of [...fo.querySelectorAll('style')].slice(1)) {
+        const css = style.textContent || ''
+        // Constructed stylesheets silently discard @import; don't let that look safe.
+        if (/@import\b/i.test(css)) return null
+        const sheet = new CSSStyleSheet()
+        sheet.replaceSync(css)
+        walk(sheet.cssRules)
+      }
+    } catch { return null }
+  }
+  // counts contains XML-escaped attribute text, whereas DOM getters return decoded text.
+  // Use the serializer itself (only once per protected signature), so quotes, ampersands
+  // and whitespace follow this engine's exact escaping rules.
+  const encoded = new Set()
+  const probe = document.createElement('div')
+  const serializer = new XMLSerializer()
+  for (const value of values) {
+    probe.setAttribute('style', value)
+    const match = serializer.serializeToString(probe).match(/ style="([^"]*)"/)
+    if (match) encoded.add(match[1])
+  }
+  return encoded
+}
+
+/**
+ * Turn the finished clone into an SVG data URL.
+ *
+ * The compose and serialize tail of the pipeline: base reset, bbox and bleed math,
+ * foreignObject assembly and encoding. Shared by captureDOM and burst's differential
+ * recapture, which rebuilds only dirty subtrees and re-enters here with retained state.
+ * `state` is the capture context itself or, from diff, a wrapper carrying element/options/
+ * plugins/clone/classCSS/styleCache/nodeMap that is folded back onto that context. On the
+ * way out it writes `options.meta` (the public geometry) and `options.__artifacts` (the CSS
+ * strings export plugins read), then drops the clone and maps from the context.
+ * @param {object} state - capture context, or diff's wrapper around one
+ * @param {{clipWindow: object|null, outerTransforms: boolean, outerShadows: boolean|'subtree', rootTransform2D: object|null, fontsCSS: string, universe: Set<string>|null}} ex
+ * @returns {Promise<string>} SVG data URL
+ */
+export async function composeAndSerialize(state, ex) {
+  const { clipWindow, outerTransforms, outerShadows, rootTransform2D, fontsCSS, universe } = ex
+  const options = state.options
+  // ONE context: burst's differential recapture hands a wrapper carrying the rebuilt clone,
+  // so fold it onto the capture context and keep every hook below on that single object.
+  // That context is a FRESH one (its call never entered captureDOM), so the self-reference
+  // has to be (re)established here — everything below reads `state.options`. The wrapper's
+  // own `options` is excluded from the fold: it IS the target, so copying it back would
+  // either overwrite the pinned self-reference with an enumerable cycle or, on a context
+  // that already carries it, throw in strict mode.
+  if (state !== options) {
+    const { options: _self, ...stageFields } = state
+    state = Object.assign(options, stageFields)
+    Object.defineProperty(state, 'options', { value: state, configurable: true })
+  }
+  let dataURL
+  let svgString
+  // Stamps baseCSS / scrollbarCSS / fontsCSS onto state; everything below reads them there.
+  assembleCaptureCSS(state, fontsCSS, universe)
+  await runHook('beforeRender', state)
+
+  const csEl = getStyle(state.element)
+
+  const rect = state.element.getBoundingClientRect()
+  let w0 = Math.max(1, limitDecimals(state.element.offsetWidth || parseFloat(csEl.width) || rect.width || 1))
+  let h0 = Math.max(1, limitDecimals(state.element.offsetHeight || parseFloat(csEl.height) || rect.height || 1))
+  // body/documentElement: measure clone in-document to get true content height (Chrome clamps offset/scroll)
+  // Use element's ownerDocument for iframe support (#371)
+  const elDoc = state.element.ownerDocument || document
+  // #449: an iframe doc pinned by rasterizeIframe must be captured at its viewport size.
+  // Expanding to scrollHeight there yields a full-page bitmap that gets squashed into the
+  // iframe box (overflow:hidden still reports the full scrollable extent). The pin flag is
+  // an option of the nested capture, not an attribute on the frame's <html>: an attribute
+  // there was an external record to the frame's own invalidation observer, which stamped
+  // every snapshot in every document and killed the outer element's burst memo.
+  // Clip mode: the viewBox is windowed to the clip rect, so the exact full content
+  // height is irrelevant — skip the scrollHeight expansion AND the expensive
+  // clone-in-document measurement round-trip entirely.
+  const isRoot = !clipWindow && (state.element === elDoc.body || state.element === elDoc.documentElement) &&
+    !state.__pinned
+  // The room between <html> and a captured body, and what the body's descendants paint
+  // into it, per side. Null for every other capture.
+  let bodyRoom = null
+  let bodyInk = null
+  // How far a right-to-left body's content overflows to the left of it.
+  let rtlSpill = 0
+  if (isRoot) {
+    let docH = Math.max(
+      state.element.scrollHeight || 0,
+      elDoc.documentElement?.scrollHeight || 0,
+      elDoc.body?.scrollHeight || 0
+    )
+    let docW = Math.max(
+      state.element.scrollWidth || 0,
+      elDoc.documentElement?.scrollWidth || 0,
+      elDoc.body?.scrollWidth || 0
+    )
+    // The measurement mount lays the clone out at the document's width, whatever box the
+    // capture ends up with.
+    const layoutW = Math.max(w0, limitDecimals(docW))
+    // A body capture starts at the body's border box, but the document extents also count
+    // what sits around it: the body's own margins and child margins that collapse through
+    // it. Taken as the height, those came back as an empty band at the bottom (8px under a
+    // last child's margin-bottom, 16px with the default body margin). bodyExtent keeps the
+    // document extent only where content really overflows the in-flow box.
+    const isBody = state.element === elDoc.body
+    // A right-to-left page overflows to the left, so a body capture grows on that side: the
+    // width beyond the body box goes to rtlSpill, which the bleed below turns into room on
+    // the left. Grown on the right like a left-to-right page, the capture clipped what spilled
+    // left and left as much empty on the right (416px of each under a 1200px child).
+    const rtl = isBody && getStyle(elDoc.documentElement).direction === 'rtl'
+    const growW = (v) => {
+      if (!(v > 0)) return
+      if (rtl) rtlSpill = Math.max(rtlSpill, limitDecimals(v - rect.width))
+      else w0 = Math.max(w0, limitDecimals(v))
+    }
+    if (isBody && elDoc.documentElement) {
+      const hr = elDoc.documentElement.getBoundingClientRect()
+      const room = {
+        top: Math.max(0, rect.top - hr.top),
+        right: Math.max(0, hr.right - rect.right),
+        bottom: Math.max(0, hr.bottom - rect.bottom),
+        left: Math.max(0, rect.left - hr.left)
+      }
+      bodyRoom = room
+      if (outerShadows !== 'subtree' && (room.top || room.right || room.bottom || room.left)) {
+        // Only nodes whose style signature carries an outer effect can ink the room, and
+        // there are far fewer signatures than nodes. On a 600-card body (3001 nodes, 86 with
+        // a shadow, Chromium, 2026-10-23) walking every node cost 1.9 ms of a 57 ms capture,
+        // five computed-style reads each; filtered by signature it costs 0.5 ms. A node
+        // without a signature is measured as before.
+        const styleMap = state.__session?.styleMap
+        const inked = new Map()
+        const candidates = new Map()
+        for (const [clone, source] of state.nodeMap) {
+          const key = styleMap?.get(clone)
+          if (key) {
+            let has = inked.get(key)
+            if (has === undefined) inked.set(key, has = OUTER_INK_SIGNATURE.test(key))
+            if (!has) continue
+          }
+          candidates.set(clone, source)
+        }
+        const ink = measureSubtreeBleed(state.element, candidates, state.styleCache,
+          rect.width > 0 ? w0 / rect.width : 1, rect.height > 0 ? h0 / rect.height : 1)
+        bodyInk = {
+          top: Math.min(ink.top, room.top),
+          right: Math.min(ink.right, room.right),
+          bottom: Math.min(ink.bottom, room.bottom),
+          left: Math.min(ink.left, room.left)
+        }
+      }
+      docH = Math.max(state.element.scrollHeight || 0,
+        bodyExtent(docH, hr.height, rect.top - hr.top, rect.bottom - hr.top))
+      docW = Math.max(state.element.scrollWidth || 0, rtl
+        ? bodyExtent(docW, hr.width, hr.right - rect.right, hr.right - rect.left)
+        : bodyExtent(docW, hr.width, rect.left - hr.left, rect.right - hr.left))
+    }
+    if (docH > 0) h0 = Math.max(h0, limitDecimals(docH))
+    growW(docW)
+    // Also measure clone in a temp container with injected styles (clone may layout differently).
+    // PERF-3: cache result per element — this cloneNode(true) + layout round-trip is expensive
+    // for large DOMs; reuse when the same element is captured with the same total CSS length.
+    //
+    // The hint is combined with Math.max, so a STALE one can only ever make the raster too
+    // big — and it did: the validity test was (css length, w0), neither of which moves when a
+    // list collapses or a route unmounts half the page. The document got shorter, the memo
+    // kept the taller measurement, and the capture came back with a band of empty pixels at
+    // the bottom that no later capture could shrink. docH/docW are already read above and
+    // track exactly that, so they belong in the key.
+    try {
+      const cssLen = (state.scrollbarCSS || '').length + (state.baseCSS || '').length +
+                     (state.fontsCSS || '').length + (state.classCSS || '').length
+      const hint = cache.measureHints.get(state.element)
+      if (hint && hint.cssLen === cssLen && hint.w0 === layoutW && hint.docH === docH && hint.docW === docW) {
+        if (hint.csh > 0) h0 = Math.max(h0, limitDecimals(hint.csh))
+        growW(hint.csw)
+      } else {
+        const wrap = elDoc.createElement('div')
+        markInternalNode(wrap)
+        wrap.style.cssText = 'position:absolute!important;left:-9999px!important;top:0!important;width:' + layoutW + 'px!important;overflow:visible!important;visibility:hidden!important;'
+        // Shadow DOM: keeps baseCSS's global tag rules from restyling the live page
+        // while this mount is attached (#474) — same isolation as reconcileCloneLayout.
+        const mShadow = wrap.attachShadow({ mode: 'open' })
+        adoptShadowCSS(mShadow, (state.scrollbarCSS || '') + state.baseCSS + 'svg{overflow:visible;} foreignObject{overflow:visible;}' + state.classCSS)
+        const copy = mShadow.appendChild(inertMeasurementCopy(state.clone))
+        elDoc.body.appendChild(wrap)
+        let csh = wrap.scrollHeight
+        let csw = wrap.scrollWidth
+        if (isBody) {
+          // Same margins inside the mount: the wrapper plays <html>.
+          const wr = wrap.getBoundingClientRect()
+          const cr = copy.getBoundingClientRect()
+          csh = bodyExtent(csh, wr.height, cr.top - wr.top, cr.bottom - wr.top)
+          csw = rtl
+            ? bodyExtent(csw, wr.width, wr.right - cr.right, wr.right - cr.left)
+            : bodyExtent(csw, wr.width, cr.left - wr.left, cr.right - wr.left)
+        }
+        elDoc.body.removeChild(wrap)
+        cache.measureHints.set(state.element, { cssLen, w0: layoutW, docH, docW, csh, csw })
+        if (csh > 0) h0 = Math.max(h0, limitDecimals(csh))
+        growW(csw)
+      }
+    } catch { /* fallback: use doc dimensions above */ }
+  }
+  // === recompute height using the kept-children span (no offscreen) ===
+  if (state.options?.excludeMode === 'remove' ||
+      (typeof state.options?.filter === 'function' && state.options.filterMode === 'remove')) {
+    const hEst = estimateKeptHeight(state.element, state.options) // border+padding+contentSpan
+    // Safety: never larger than the original, with an epsilon so rounding cannot clip
+    const EPS = 1 // px
+    // …and only shrink a box whose height COMES FROM its content. An author-set height (or
+    // min-height, or a stretched flex/grid item) does not shrink in the live DOM when a
+    // child is removed, so clamping to the kept span produced a sliver: a 400px card with
+    // one excluded button captured 19px tall, losing 381px of visible background. The test
+    // is a measurement, not a parse of the specified value — computed `height` reports the
+    // used px either way — because a content-sized box's own height already equals
+    // border + padding + the span of its children. Boxes whose height comes from
+    // absolutely-positioned children fail it too, which is right: contributesToParentHeight
+    // deliberately ignores those, so their span is not the height to shrink to.
+    const hAll = estimateKeptHeight(state.element, {})
+    // Tolerance is proportional, not absolute: a content-sized box is usually a few px
+    // TALLER than its children's box span (inline line-box leading, margins the span does
+    // not model), and on Firefox a 40px auto card measures a 36px span — an absolute
+    // epsilon rejected it and the clamp stopped working there. An imposed height is not a
+    // few px off, it is multiples: the 400px card measures the same 36px. The residual is a
+    // height set within ~15% of the content height, which mis-shrinks by a few px instead of
+    // by the hundreds this replaces.
+    const slack = Math.max(2, h0 * 0.15)
+    const contentSized = Number.isFinite(hAll) && hAll >= h0 - slack
+    if (contentSized && Number.isFinite(hEst) && hEst > 0) {
+      h0 = Math.max(1, Math.min(h0, limitDecimals(hEst + EPS)))
+    }
+    // Width almost never needs the same adjustment; the analogous helper would be estimateKeptWidth(...)
+  }
+  // Opt-in layout reconciliation: measure the styled clone in-document and pin only the
+  // boxes whose size diverges from the live tree (measurement over heuristics).
+  if (state.options?.reconcile) {
+    try {
+      // No fontsCSS here (#474): every embedded face came from this document, so family
+      // names already resolve to loaded faces. Re-declaring them as data: URLs makes the
+      // fresh (still-loading) faces shadow the loaded ones and both the live tree and the
+      // measured clone briefly re-layout with fallback metrics — poisoning every rect.
+      const cssAll = (state.scrollbarCSS || '') + state.baseCSS +
+        'svg{overflow:visible;} foreignObject{overflow:visible;}' + state.classCSS
+      reconcileCloneLayout(state.element, state.clone, cssAll, state.nodeMap, w0, h0)
+    } catch (e) {
+      sessionWarn(state.options.__session, 'reconcile-failed', 'reconcile pass failed', e)
+      debugWarn(state.options, 'reconcile couldn\'t run; captured without it.', e)
+    }
+  }
+
+  const coerceNum = (v, def = NaN) => {
+    const n = typeof v === 'string' ? parseFloat(v) : v
+    return Number.isFinite(n) ? n : def
+  }
+
+  const optW = coerceNum(state.options.width)
+  const optH = coerceNum(state.options.height)
+  // Output basis: the element box, or the clip window in clip mode (width/height
+  // options and the default output size scale against what will be shown).
+  const baseW = clipWindow ? limitDecimals(clipWindow.width) : w0
+  const baseH = clipWindow ? limitDecimals(clipWindow.height) : h0
+  let w = baseW, h = baseH
+
+  const hasW = Number.isFinite(optW)
+  const hasH = Number.isFinite(optH)
+  const aspect0 = baseH > 0 ? baseW / baseH : 1
+
+  if (hasW && hasH) {
+    w = Math.max(1, limitDecimals(optW))
+    h = Math.max(1, limitDecimals(optH))
+  } else if (hasW) {
+    w = Math.max(1, limitDecimals(optW))
+    h = Math.max(1, limitDecimals(w / (aspect0 || 1)))
+  } else if (hasH) {
+    h = Math.max(1, limitDecimals(optH))
+    w = Math.max(1, limitDecimals(h * (aspect0 || 1)))
+  }
+
+  // ——— BBOX ———
+  let minX = 0, minY = 0, maxX = w0, maxY = h0
+
+  if (clipWindow) {
+    // clipWindow is already element-local (frozen at cull time). When the root carries
+    // a bbox-affecting transform, its gBCR (used to derive the window) includes the
+    // transform's bbox offset while the clone re-applies the residual linear part —
+    // shift the window origin by that residual bbox so it isn't applied twice.
+    let offX = 0, offY = 0
+    if (hasTFBBox(state.element)) {
+      let M0 = null
+      if (!outerTransforms && rootTransform2D && Number.isFinite(rootTransform2D.a)) {
+        M0 = { a: rootTransform2D.a, b: rootTransform2D.b || 0, c: rootTransform2D.c || 0, d: rootTransform2D.d || 1, e: 0, f: 0 }
+      } else {
+        const indR = readIndividualTransforms(state.element)
+        const MR = composeResidual2D(csEl.transform && csEl.transform !== 'none' ? csEl.transform : '', indR)
+        if (MR && MR.is2D) M0 = { a: MR.a, b: MR.b, c: MR.c, d: MR.d, e: 0, f: 0 }
+      }
+      if (M0 && !(M0.a === 1 && M0.b === 0 && M0.c === 0 && M0.d === 1)) {
+        const { ox: cox, oy: coy } = parseTransformOriginPx(csEl, w0, h0)
+        const bbR = bboxWithOriginFull(w0, h0, M0, cox, coy)
+        offX = bbR.minX
+        offY = bbR.minY
+      }
+    }
+    // The window starts on a whole output pixel, as Chromium's own screenshot rounds a clip
+    // origin: x 10.5 is device pixel 21 at dpr 2 and rounds to 11 at dpr 1. A fractional
+    // origin drawn as is blurred every edge by half a pixel. WebKit keeps the origin it was
+    // given (see the translate below).
+    const k = isSafari() ? 0 : (options.dpr || 1) * (hasW || hasH ? w / baseW : options.scale || 1)
+    minX = limitDecimals(k ? Math.round((clipWindow.x + offX) * k) / k : clipWindow.x + offX)
+    minY = limitDecimals(k ? Math.round((clipWindow.y + offY) * k) / k : clipWindow.y + offY)
+    maxX = limitDecimals(minX + clipWindow.width)
+    maxY = limitDecimals(minY + clipWindow.height)
+  } else if (!outerTransforms && rootTransform2D && Number.isFinite(rootTransform2D.a)) {
+    const M2 = {
+      a: rootTransform2D.a,
+      b: rootTransform2D.b || 0,
+      c: rootTransform2D.c || 0,
+      d: rootTransform2D.d || 1,
+      e: 0,
+      f: 0
+    }
+    const bb2 = bboxWithOriginFull(w0, h0, M2, 0, 0)
+    minX = limitDecimals(bb2.minX)
+    minY = limitDecimals(bb2.minY)
+    maxX = limitDecimals(bb2.maxX)
+    maxY = limitDecimals(bb2.maxY)
+  } else {
+    const useTFBBox = outerTransforms && hasTFBBox(state.element)
+    if (useTFBBox) {
+      const baseTransform2 = csEl.transform && csEl.transform !== 'none' ? csEl.transform : ''
+      const ind2 = readIndividualTransforms(state.element)
+      const TOTAL = readTotalTransformMatrix({
+        baseTransform: baseTransform2,
+        rotate: ind2.rotate || '0deg',
+        scale: ind2.scale,
+        translate: ind2.translate,
+        width: w0,
+        height: h0
+      })
+      const { ox: ox2, oy: oy2 } = parseTransformOriginPx(csEl, w0, h0)
+      const M = TOTAL.is2D ? TOTAL : new DOMMatrix(TOTAL.toString())
+      // prepareClone always strips the root's translation (stripTranslate), so the bbox
+      // must be computed WITHOUT it — otherwise the foreignObject compensates a shift the
+      // clone no longer has and the content renders offset/cut (e.g. the fixed-centering
+      // left:50% + translateX(-50%) pattern captured on its own).
+      const M0 = { a: M.a, b: M.b, c: M.c, d: M.d, e: 0, f: 0 }
+      const bb = bboxWithOriginFull(w0, h0, M0, ox2, oy2)
+      minX = limitDecimals(bb.minX)
+      minY = limitDecimals(bb.minY)
+      maxX = limitDecimals(bb.maxX)
+      maxY = limitDecimals(bb.maxY)
+    }
+  }
+
+  // ——— BLEED ———
+  const bleedShadow = parseBoxShadow(csEl)
+  const bleedText = parseTextShadow(csEl)
+  const bleedBlur = parseFilterBlur(csEl)
+  const bleedOutline = parseOutline(csEl)
+  const drop = parseFilterDropShadows(csEl)
+
+  // What a child paints past the root's box (outerShadows: 'subtree'). Measured on the page,
+  // so the ratio between the bbox and the box it was drawn as says how many root pixels a page
+  // pixel is worth: the bbox already carries the root's own transform, so what is left in the
+  // ratio is what an ancestor did, and a rotation stretches both boxes alike and correctly
+  // comes out as one. Imported from @frostin/snapdom (element-mirror).
+  const perX = rect.width > 0 ? (maxX - minX) / rect.width : 1
+  const perY = rect.height > 0 ? (maxY - minY) / rect.height : 1
+  let subtree = outerShadows === 'subtree' && !clipWindow
+    ? measureSubtreeBleed(state.element, state.nodeMap, state.styleCache, perX, perY)
+    : { top: 0, right: 0, bottom: 0, left: 0 }
+  // A body capture keeps what its descendants paint into the margins around it (d40: a
+  // full-width child's 1px outline lies on the body's right margin), so sizing it from the
+  // body box loses no ink the page shows. Bounded by that room, and net of what the content
+  // measurement above already added, it can never outgrow the document extent it replaced.
+  if (bodyInk) {
+    subtree = {
+      top: bodyInk.top,
+      right: Math.max(0, bodyInk.right - (w0 - rect.width)),
+      bottom: Math.max(0, bodyInk.bottom - (h0 - rect.height)),
+      left: bodyInk.left
+    }
+  }
+  if (rtlSpill > 0) subtree = { ...subtree, left: Math.max(subtree.left, rtlSpill) }
+
+  // A region capture defines its own exact edges — never expand it for root bleed.
+  // blur() is not an outer-shadow effect: the root keeps it, so its bleed is
+  // always included; shadows/outline/drop-shadow only under outerShadows.
+  const bleed = clipWindow
+    ? { top: 0, right: 0, bottom: 0, left: 0 }
+    : outerShadows
+      ? {
+        top: limitDecimals(Math.max(bleedShadow.top, bleedText.top, subtree.top) + bleedBlur.top + bleedOutline.top + drop.bleed.top),
+        right: limitDecimals(Math.max(bleedShadow.right, bleedText.right, subtree.right) + bleedBlur.right + bleedOutline.right + drop.bleed.right),
+        bottom: limitDecimals(Math.max(bleedShadow.bottom, bleedText.bottom, subtree.bottom) + bleedBlur.bottom + bleedOutline.bottom + drop.bleed.bottom),
+        left: limitDecimals(Math.max(bleedShadow.left, bleedText.left, subtree.left) + bleedBlur.left + bleedOutline.left + drop.bleed.left)
+      }
+      : {
+        top: limitDecimals(bleedBlur.top + subtree.top),
+        right: limitDecimals(bleedBlur.right + subtree.right),
+        bottom: limitDecimals(bleedBlur.bottom + subtree.bottom),
+        left: limitDecimals(bleedBlur.left + subtree.left)
+      }
+
+  minX = limitDecimals(minX - bleed.left)
+  minY = limitDecimals(minY - bleed.top)
+  maxX = limitDecimals(maxX + bleed.right)
+  maxY = limitDecimals(maxY + bleed.bottom)
+
+  const vbW0 = Math.max(1, limitDecimals(maxX - minX))
+  const vbH0 = Math.max(1, limitDecimals(maxY - minY))
+
+  const svgNS = 'http://www.w3.org/2000/svg'
+  // A transformed root's bbox is fractional, so its far edges land flush against the
+  // raster boundary and browsers shave the last 1-2px at some zoom/display scales
+  // (Safari always did; Chrome at zoom ≠ 100%). Pad the viewBox so rotated corners
+  // never touch the edge. Was Safari-only; the shaving is not.
+  const basePad = hasTFBBox(state.element) ? 2 : 0
+  const extraPad = !outerTransforms ? 1 : 0
+  const pad = limitDecimals(basePad + extraPad)
+
+  // Ceil so a fractional content extent (rotated bbox, fractional bleed) is never
+  // truncated when the svg size is rasterized to whole pixels (bottom/right edge loss).
+  // A stream patch is laid out at the page's subpixel offset (options.__subpixel): padding is
+  // layout, so box backgrounds snap to the same pixels as in the full frame, where a
+  // viewBox shift (a transform) left rounded corners 8 pixels off. Pinned by
+  // __tests__/engine.svg.subpixel.test.js.
+  const phaseX = options.__subpixel?.x || 0
+  const phaseY = options.__subpixel?.y || 0
+  const vbW = Math.ceil(vbW0 + pad * 2 + phaseX)
+  const vbH = Math.ceil(vbH0 + pad * 2 + phaseY)
+
+  // Stable Chrome doesn't paint foreignObject overflow when rasterizing svg-as-image
+  // (headless chromium does — don't trust it): the fo must cover the whole viewBox and
+  // the bbox offset must move the CONTENT. The offset can't be fo x/y (leaves the
+  // top/left band as unpainted overflow) nor position/margin/transform on the fo's
+  // root element (Chrome double-paints those at browser zoom ≠ 100%) — padding on the
+  // container is the one mechanism that survives both.
+  // Negative offsets (clip window right/below the element origin) can't be padding —
+  // there fo x/y is safe: the band it leaves unpainted is exactly the culled region.
+  const offX = limitDecimals(-(limitDecimals(minX) - pad))
+  const offY = limitDecimals(-(limitDecimals(minY) - pad))
+  // Lay the clone out on the live device-pixel grid (#508). Chromium implements the device
+  // pixel ratio AS zoom: at 2.625 it resolves fonts at 84px and rounds each line box of
+  // `line-height: normal` there, and snaps borders to whole device pixels. The svg image lays
+  // out at 1x, so the same text took 2164px where the page took 2203.5px, fifty lines apart.
+  // `zoom` on the container reproduces the page's grid exactly, and scale(1/zoom) on a <g>
+  // outside the foreignObject brings it back to CSS pixels: viewBox, output size and meta
+  // are unchanged. Real Chrome, 40 demos, #target against a live screenshot: mean mismatch
+  // 8.24% -> 6.51% at DPR 2.625, 8.15 -> 6.66 at 2, 8.52 -> 6.10 at 1.5, the few that moved
+  // the other way by under 3% (subpixel text placement); the #508 page itself 10.9% -> 2.3%.
+  // It costs the layout at the larger font size: 37.5 -> 39 ms on a 3,000-cell table at DPR
+  // 2.625, nothing at 1. Firefox rounds line boxes the same way: real Firefox 156 at
+  // devPixelsPerPx 2.625 cut the last of fifty `<br>` lines in three #508 columns at 1x, and
+  // kept all of them zoomed. Not WebKit, which does not round line boxes by DPR. The support
+  // check is for Firefox before 126, where `zoom` does not exist and the scale(1/zoom) group
+  // alone would shrink the capture. Pinned by __tests__/engine.svg.layoutZoom.test.js.
+  // Only when the live page really lays out on that grid: devicePixelRatio alone does not say so.
+  // Device emulation (Playwright/Puppeteer `deviceScaleFactor`, DevTools device mode) reports
+  // dpr 2 but lays the page out at 1x, and zooming the clone there moved line breaks and
+  // `line-height: normal` lines away from the very page it captured (liveLayoutZoom below).
+  const view = elDoc.defaultView || window
+  const layoutZoom = !isSafari() && CSS.supports('zoom', '2') ? liveLayoutZoom(view) : 1
+  // toCanvas rasterizes Firefox exports smaller than this grid at it first (#516).
+  options.__layoutZoom = layoutZoom
+  // fo x/y and padding are layout, and layout snaps them to a whole layout pixel. A clip whose
+  // output grid is finer than that (device emulation reports dpr 2 and lays out at 1x, #526;
+  // or scale 2) lost the fraction: a window from x 10.5 at dpr 2 began at device pixel 20,
+  // not 21 (playwright-lite #302). The fraction goes to an exact translate on the outer <g>
+  // instead, and the fo reaches one more layout pixel left and up so it still covers the
+  // viewBox once moved. Not WebKit: it moves no box with its own layer by an ancestor translate
+  // (cropSvgText, toCanvas.js). Pinned by __tests__/core.clip.test.js.
+  const split = clipWindow && !isSafari()
+  const shiftX = split ? limitDecimals(offX - Math.floor(offX * layoutZoom + 0.01) / layoutZoom) : 0
+  const shiftY = split ? limitDecimals(offY - Math.floor(offY * layoutZoom + 0.01) / layoutZoom) : 0
+  const foX = Math.min(0, offX - shiftX) - (shiftX ? 1 / layoutZoom : 0)
+  const foY = Math.min(0, offY - shiftY) - (shiftY ? 1 / layoutZoom : 0)
+  const padL = offX - shiftX - foX + phaseX
+  const padT = offY - shiftY - foY + phaseY
+  const foW = limitDecimals(vbW - foX)
+  const foH = limitDecimals(vbH - foY)
+  const fo = document.createElementNS(svgNS, 'foreignObject')
+  fo.setAttribute('x', String(foX * layoutZoom))
+  fo.setAttribute('y', String(foY * layoutZoom))
+  fo.setAttribute('width', String(foW * layoutZoom))
+  fo.setAttribute('height', String(foH * layoutZoom))
+  fo.style.overflow = 'visible'
+
+  const styleTag = document.createElement('style')
+  // #349/#351: handled per-element in inlineAllStyles (#406) instead of blanket foreignObject rules
+  // #327: disable WebKit text autosizer inside the foreignObject. iOS WebKit re-applies
+  // text-size-adjust during drawImage, inflating font-size while inlined container heights
+  // stay fixed → text crowding. Rule form (not inline) because WebKit expands `all:initial`
+  // on the container last and clobbers inline overrides. 100% (not `none`) preserves zoom.
+  const foNormalize =
+    'svg{overflow:visible;} foreignObject{overflow:visible;} ' +
+    'foreignObject>div{-webkit-text-size-adjust:100%!important;text-size-adjust:100%!important;}'
+  styleTag.textContent =
+    (state.scrollbarCSS || '') + state.baseCSS + state.fontsCSS + foNormalize + state.classCSS
+  fo.appendChild(styleTag)
+
+  const container = document.createElement('div')
+  container.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml')
+  // #372: isolate wrapper from iframe CSS cascade (e.g. div { border: 10px solid red })
+  // The container spans the whole fo, so the (rotated/bled) content never overflows
+  // its border-box — standalone-SVG Chromium clips fo content at the container box.
+  container.style.cssText =
+    'all:initial;box-sizing:border-box;display:block;overflow:visible;' +
+    // A stream patch needs the root at its exact live width: w0 is offsetWidth, rounded,
+    // and a width:auto root filled the rest, so a 38.69px cell drew 39.31px wide. Keyed on
+    // the option, not on a non-zero phase: a lower third that came to rest on a whole pixel
+    // drew 0.03px narrow and moved its glyphs.
+    `width:${options.__subpixel ? limitDecimals(padL + rect.width) : foW}px;height:${foH}px` +
+    // !important: Chromium 140 serializes the `all:initial` expansion with
+    // `padding-inline: initial` AFTER this shorthand, so on data-URL re-parse it
+    // would reset the left/right padding (rotated-root offset) unless it loses
+    // the cascade to importance.
+    ((padL !== 0 || padT !== 0) ? `;padding:${padT}px 0 0 ${padL}px !important` : '') +
+    // !important for the same `all:initial` serialization order as the padding.
+    (layoutZoom !== 1 ? `;zoom:${layoutZoom} !important` : '') +
+    // `all` leaves `direction` alone, and baseCSS's per-tag defaults inherit the page's: on
+    // a right-to-left page `div{direction:rtl}` reached this box and right-aligned the clone
+    // inside it, 8px off the padding offset everything else assumes. Pinned by
+    // __tests__/snapdom.rtlPage.test.js.
+    ';direction:ltr !important' +
+    (bodyRoom ? canvasBackground(elDoc) : '')
+
+  if (bodyRoom && (padL !== bodyRoom.left || padT !== bodyRoom.top) && state.__session) {
+    anchorPagePositioned(state.element, state.nodeMap, state.__session.styleMap, state.styleCache,
+      padL - bodyRoom.left, padT - bodyRoom.top)
+  }
+
+  //state.clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml')
+  container.appendChild(state.clone)
+  fo.appendChild(container)
+
+  const serializer = new XMLSerializer()
+  const foString = serializer.serializeToString(fo)
+  const wantsSize = hasW || hasH
+
+  // Public export geometry. `contentX/contentY` are the exact viewBox-space origin of
+  // the logical capture box; unlike `(vbW - w0) / 2`, they stay correct for asymmetric
+  // shadow bleed, transformed roots and clip windows.
+  const captureMeta = Object.freeze({
+    w0: baseW, h0: baseH, vbW, vbH, targetW: w, targetH: h,
+    contentX: limitDecimals(offX + (clipWindow ? minX : 0)),
+    contentY: limitDecimals(offY + (clipWindow ? minY : 0)),
+    clip: clipWindow
+      ? Object.freeze({
+        x: limitDecimals(minX), y: limitDecimals(minY),
+        width: baseW, height: baseH,
+      })
+      : null,
+  })
+  // The context continues through afterRender and every later export. Pin the binding as
+  // well as freezing the value so a hook cannot desynchronise the canonical SVG from the
+  // geometry consumers read. Stays CONFIGURABLE: `options` is caller-owned here (a direct
+  // captureDOM call reuses its bag), so a second capture must be able to redefine it
+  // instead of throwing "Cannot redefine property". Strict mode still rejects plain
+  // assignment, which is the write this guards against.
+  Object.defineProperty(options, 'meta', {
+    value: captureMeta, enumerable: true, writable: false, configurable: true,
+  })
+
+  // `width`/`height` are the ABSOLUTE OUTPUT SIZE — "one rule across all exporters"
+  // (types/snapdom.d.ts, README) — and every exporter applies exactly that, mapping the whole
+  // viewBox onto the requested box. The header used to encode a different rule: it sized the
+  // svg so the ELEMENT came out `w` wide, which makes the total larger by the bleed. The same
+  // capture therefore rendered its element at 400px through toRaw()/toBlob({format:'svg'})
+  // and at 308px through toPng()/toCanvas(), for a 200px box with a 30px shadow. The header
+  // follows the documented rule now; the Safari branch is untouched, since toImg patches
+  // these attributes itself to keep that path vector.
+  const svgOutW = (!wantsSize || isSafari())
+    ? vbW
+    : (hasW ? w : limitDecimals(vbW * (h / vbH)))
+  const svgOutH = (!wantsSize || isSafari())
+    ? vbH
+    : (hasH ? h : limitDecimals(vbH * (w / vbW)))
+
+  const rootFontSize = parseFloat(getStyle(elDoc.documentElement)?.fontSize) || 16
+  // The <g> (clip translate, scale(1/zoom)) rides in the header and footer: the line that joins them to the
+  // foreignObject keeps its original shape, which measured 1.4 ms cheaper per capture on a
+  // 3,000-cell table than a conditional expression in the middle of it.
+  const group = [
+    shiftX || shiftY ? `translate(${shiftX} ${shiftY})` : '',
+    layoutZoom !== 1 ? `scale(${1 / layoutZoom})` : ''
+  ].join(' ').trim()
+  const svgHeader = `<svg xmlns="${svgNS}" width="${svgOutW}" height="${svgOutH}" viewBox="0 0 ${vbW} ${vbH}" font-size="${rootFontSize}px">${group ? `<g transform="${group}">` : ''}`
+  const svgFooter = group ? '</g></svg>' : '</svg>'
+  svgString = svgHeader + internInlineStyles(foString, fo) + svgFooter
+  // #552: the layout zoom only pays off when the browser itself rasterizes this svg (canvas,
+  // png, jpeg, webp, an <img>). An svg that leaves as a file is opened by other renderers, and
+  // macOS Preview / Quick Look drew an inline <svg> under the container's `zoom` at twice its
+  // size while the text around it stayed put. File exports (toBlob svg, download svg,
+  // svgString) therefore swap the zoomed wrapper for the one Safari and 1x screens get. Only
+  // the wrapper differs: positions are the same CSS pixels, so the clone markup between the
+  // wrapper tags is shared and only these few short tags are kept. Shallow clones serialize
+  // the tags the way the full pass did. Cleared at zoom 1 so a reused options bag never
+  // carries a previous capture's tags. Pinned by __tests__/engine.svg.layoutZoom.test.js.
+  options.__fileSvg = null
+  if (layoutZoom !== 1) {
+    const openTag = (el) => {
+      const s = serializer.serializeToString(el.cloneNode(false))
+      return s.slice(0, s.indexOf('>') + 1).replace(/\/>$/, '>')
+    }
+    const flatFo = fo.cloneNode(false)
+    flatFo.setAttribute('x', String(foX))
+    flatFo.setAttribute('y', String(foY))
+    flatFo.setAttribute('width', String(foW))
+    flatFo.setAttribute('height', String(foH))
+    const flatContainer = container.cloneNode(false)
+    flatContainer.style.removeProperty('zoom')
+    const flatGroup = shiftX || shiftY ? `translate(${shiftX} ${shiftY})` : ''
+    const flatHeader = svgHeader.slice(0, svgHeader.indexOf('>') + 1) + (flatGroup ? `<g transform="${flatGroup}">` : '')
+    options.__fileSvg = {
+      zoomed: [svgHeader + openTag(fo), openTag(container), svgFooter],
+      flat: [flatHeader + openTag(flatFo), openTag(flatContainer), flatGroup ? '</g></svg>' : '</svg>'],
+    }
+  }
+  dataURL = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgString)}`
+  state.svgString = svgString
+  state.dataURL = dataURL
+  // Render artifacts for export plugins (toHtml et al) — the CSS strings the pipeline
+  // already holds, so export code never reverse-parses its own data URL. svgString stays
+  // OUT (it doubles retained memory): exporters decode it lazily from the url.
+  options.__artifacts = {
+    classCSS: state.classCSS || '',
+    fontsCSS: state.fontsCSS || '',
+    baseCSS: state.baseCSS || '',
+    scrollbarCSS: state.scrollbarCSS || '',
+  }
+  // afterRender(context)
+  await runHook('afterRender', state)
+  // Release the heavy stage fields once the last render hook has seen them: the result closes
+  // over this context, so retaining the clone tree plus a second copy of the SVG source would
+  // double what a live result holds. Export hooks never reached them anyway (the context did
+  // not carry them before), and they read `url` / `__artifacts` instead.
+  state.clone = state.nodeMap = state.styleCache = state.svgString = null
+
+  // The id is public and may belong to the page. Duplicate ids are possible while our
+  // short-lived sandbox exists, so inspect every match and remove only private provenance.
+  const sandbox = [...document.querySelectorAll('#snapdom-sandbox')].find(isInternalNode)
+  if (sandbox && sandbox.style.position === 'absolute') sandbox.remove()
+  return state.dataURL
+}
+
+/** Whether the root carries a transform that moves its bbox. A local name for
+ *  hasBBoxAffectingTransform, nothing more. */
+function hasTFBBox(el) {
+  return hasBBoxAffectingTransform(el)
+}
+
+/**
+ * The zoom the live document is actually laid out at, for the #508 layout zoom.
+ *
+ * On a real hi-DPI screen Chromium lays the page out on the device-pixel grid (zoom-for-DSF):
+ * at dpr 2 a 14.67px Arial line of `line-height: normal` is 17px tall, not 16, and text advances
+ * are the ones a `zoom: 2` box produces. Under CDP device emulation (Playwright/Puppeteer
+ * `deviceScaleFactor`, DevTools device mode) devicePixelRatio reads 2 but layout stays at 1x, so
+ * the zoomed clone drifted from the page it was taken from: 30 `<br>` lines 14.5-38px taller or
+ * shorter, a paragraph re-wrapped (-41.5px on its widest line), `font-variant: small-caps` text
+ * re-wrapped at every width of a sweep, while the unzoomed clone matched the screenshot exactly.
+ *
+ * Signal, font-independent and synchronous: border widths snap to whole pixels of the layout
+ * grid, so a 0.5px border computes to 0.5px on a 2x grid (0.380952px at 2.625, 0.666667px at 1.5)
+ * and to 1px on a 1x grid. A computed value of 1px or more therefore means "this document is
+ * laid out at 1x whatever dpr says" and the clone is laid out at 1x too. An engine that does not
+ * snap computed border widths reports 0.5px and keeps the previous behavior (zoom = dpr).
+ * Not cached: one tiny probe per capture, and dpr, browser zoom (Ctrl +) and the root's own
+ * `zoom` can all change on the same document between captures.
+ * @param {Window} view - the captured element's window
+ * @returns {number} devicePixelRatio, or 1 when the live layout grid is CSS pixels
+ */
+export function liveLayoutZoom(view) {
+  const dpr = view.devicePixelRatio || 1
+  if (dpr === 1) return 1
+  const doc = view.document
+  let zoom = dpr
+  try {
+    const probe = doc.createElement('div')
+    markInternalNode(probe)
+    probe.style.cssText = 'position:absolute!important;left:-9999px!important;top:0!important;' +
+      'width:0!important;height:0!important;visibility:hidden!important;pointer-events:none!important;' +
+      'border:0 solid transparent!important;border-top-width:0.5px!important'
+    ;(doc.body || doc.documentElement).appendChild(probe)
+    const bt = parseFloat(view.getComputedStyle(probe).borderTopWidth)
+    probe.remove()
+    if (bt >= 1) zoom = 1
+  } catch { /* keep dpr */ }
+  return zoom
+}

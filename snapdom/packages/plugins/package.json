@@ -1,0 +1,83 @@
+{
+  "name": "@zumer/snapdom-plugins",
+  "version": "4.4.1",
+  "description": "Official plugins for SnapDOM",
+  "type": "module",
+  "scripts": {
+    "bump:dry": "npx @zumerbox/bump -d",
+    "bump": "npx @zumerbox/bump && npx @zumerbox/changelog"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./timestamp-overlay": "./timestamp-overlay.js",
+    "./ascii-export": "./ascii-export.js",
+    "./replace-text": "./replace-text.js",
+    "./redact-inputs": "./redact-inputs.js",
+    "./filter": "./filter.js",
+    "./color-tint": "./color-tint.js",
+    "./agent-map": "./agent-map.js",
+    "./context-export": "./context-export.js",
+    "./html-export": "./html-export.js",
+    "./gif-export": "./gif-export.js",
+    "./video-export": "./video-export.js",
+    "./pdf": "./pdf.js",
+    "./vector": "./vector.js",
+    "./stream": "./stream.js",
+    "./jxl": "./jxl.js"
+  },
+  "files": [
+    "*.js",
+    "*.d.ts",
+    "README.md",
+    "LICENSE",
+    "pdf/src/",
+    "pdf/README.md",
+    "pdf/REFERENCE.md",
+    "pdf/LICENSE",
+    "CHANGELOG.md",
+    "vector/src/",
+    "vector/svd/",
+    "vector/CONTRACT.md",
+    "vector/LICENSE",
+    "vector/README.md",
+    "stream/src/",
+    "stream/README.md",
+    "stream/LICENSE"
+  ],
+  "types": "./index.d.ts",
+  "keywords": [
+    "snapdom",
+    "snapdom-plugin",
+    "dom-capture",
+    "plugins"
+  ],
+  "author": "Juan Martin Muda",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zumerlab/snapdom.git",
+    "directory": "packages/plugins"
+  },
+  "bugs": {
+    "url": "https://github.com/zumerlab/snapdom/issues"
+  },
+  "homepage": "https://snapdom.dev/",
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/tinchox5"
+  },
+  "peerDependencies": {
+    "@zumer/snapdom": "^3.4.0",
+    "rapier-jxl": "^8.3.2"
+  },
+  "peerDependenciesMeta": {
+    "rapier-jxl": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@zumer/snapdom": "file:../..",
+    "rapier-jxl": "^8.3.2"
+  },
+  "sideEffects": false
+}

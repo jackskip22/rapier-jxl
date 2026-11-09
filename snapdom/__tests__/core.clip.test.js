@@ -1,0 +1,555 @@
+// Region / viewport capture (`clip` option): offscreen subtrees are pruned into
+// layout-preserving husks and the output is windowed to the clip rect.
+import { describe, it, expect, afterEach } from 'vitest'
+import { snapdom } from '../src/index'
+import { isSafari } from '../src/utils/browser.js'
+
+const added = []
+function mount(el) {
+  document.body.appendChild(el)
+  added.push(el)
+  return el
+}
+
+afterEach(() => {
+  while (added.length) added.pop().remove()
+  window.scrollTo(0, 0)
+})
+
+function decodeSvg(url) {
+  return decodeURIComponent(url.replace('data:image/svg+xml;charset=utf-8,', ''))
+}
+
+function buildBlocks(count, height, extra = '') {
+  const wrap = document.createElement('div')
+  wrap.style.cssText = 'width:400px;margin:0;padding:0;'
+  for (let i = 0; i < count; i++) {
+    const b = document.createElement('div')
+    b.style.cssText = `height:${height}px;margin:0;background:#fff;${extra}`
+    b.textContent = `BLOCK_${i}_MARKER`
+    wrap.appendChild(b)
+  }
+  return wrap
+}
+
+describe('clip option (region capture)', () => {
+  it('captures a page-coordinate region: windowed output, offscreen content culled', async () => {
+    const wrap = mount(buildBlocks(10, 400))
+    const target = wrap.children[5]
+    const r = target.getBoundingClientRect()
+    const clip = {
+      x: r.left + window.scrollX,
+      y: r.top + window.scrollY,
+      width: r.width,
+      height: r.height
+    }
+    const url = await snapdom.toRaw(document.body, { clip })
+    const svg = decodeSvg(url)
+
+    expect(svg).toContain('BLOCK_5_MARKER')
+    // adjacent block is inside the 200px cull margin — kept
+    expect(svg).toContain('BLOCK_4_MARKER')
+    // far-away block pruned before styling/inlining
+    expect(svg).not.toContain('BLOCK_0_MARKER')
+    expect(svg).not.toContain('BLOCK_9_MARKER')
+    expect(svg).toMatch(new RegExp(`<svg [^>]*width="${clip.width}"`))
+    expect(svg).toMatch(new RegExp(`height="${clip.height}"`))
+  })
+
+  it('culled siblings keep their layout slot: clipped region pixels match the live DOM', async () => {
+    const wrap = mount(buildBlocks(8, 400))
+    const target = wrap.children[5]
+    target.style.background = 'rgb(255, 0, 0)'
+    const r = target.getBoundingClientRect()
+    const clip = {
+      x: r.left + window.scrollX,
+      y: r.top + window.scrollY,
+      width: r.width,
+      height: r.height
+    }
+    const canvas = await snapdom.toCanvas(document.body, { clip, dpr: 1 })
+    const ctx = canvas.getContext('2d')
+    const sx = canvas.width / clip.width
+    const sy = canvas.height / clip.height
+    const px = ctx.getImageData(Math.round(clip.width / 2 * sx), Math.round(clip.height / 2 * sy), 1, 1).data
+    // if blocks 0–4 hadn't held their space, the red block would miss the window
+    expect(px[0]).toBeGreaterThan(200)
+    expect(px[1]).toBeLessThan(60)
+    expect(px[2]).toBeLessThan(60)
+    expect(px[3]).toBeGreaterThan(200)
+  })
+
+  it("clip: 'viewport' outputs viewport-sized SVG and prunes far content", async () => {
+    const wrap = mount(buildBlocks(30, 400))
+    wrap.children[0].textContent = 'NEAR_TOP_MARKER'
+    wrap.children[29].textContent = 'FAR_BOTTOM_MARKER'
+    const result = await snapdom(document.documentElement, { clip: 'viewport' })
+    const svg = decodeSvg(result.url)
+
+    expect(svg).toMatch(new RegExp(`<svg [^>]*width="${window.innerWidth}"`))
+    expect(svg).toMatch(new RegExp(`height="${window.innerHeight}"`))
+    expect(svg).toContain('NEAR_TOP_MARKER')
+    expect(svg).not.toContain('FAR_BOTTOM_MARKER')
+  })
+
+  it('fixed elements render at their painted position', async () => {
+    mount(buildBlocks(12, 400))
+    const badge = mount(document.createElement('div'))
+    badge.style.cssText =
+      'position:fixed;left:20px;top:20px;width:60px;height:60px;background:rgb(0, 0, 255);z-index:9999;margin:0;'
+    const canvas = await snapdom.toCanvas(document.body, { clip: 'viewport', dpr: 1 })
+    const ctx = canvas.getContext('2d')
+    const sx = canvas.width / window.innerWidth
+    const sy = canvas.height / window.innerHeight
+    const px = ctx.getImageData(Math.round(50 * sx), Math.round(50 * sy), 1, 1).data
+    expect(px[2]).toBeGreaterThan(200)
+    expect(px[0]).toBeLessThan(60)
+  })
+
+  it('sticky stuck inside a scrolled container is frozen at its painted position', async () => {
+    const scroller = mount(document.createElement('div'))
+    // offset from the page origin on purpose: a scroller at (0,0) masks coordinate bugs
+    // where the #364 wrapper origin gets double-counted
+    scroller.style.cssText = 'width:300px;height:300px;overflow:auto;margin:120px 0 0 40px;'
+    const header = document.createElement('div')
+    header.style.cssText = 'position:sticky;top:0;height:40px;background:rgb(255, 0, 0);margin:0;'
+    header.textContent = 'STICKY'
+    const filler = document.createElement('div')
+    filler.style.cssText = 'height:1200px;background:#fff;margin:0;'
+    scroller.appendChild(header)
+    scroller.appendChild(filler)
+    scroller.scrollTop = 150
+
+    const canvas = await snapdom.toCanvas(document.body, { clip: 'viewport', dpr: 1 })
+    const ctx = canvas.getContext('2d')
+    const r = scroller.getBoundingClientRect()
+    const sx = canvas.width / window.innerWidth
+    const sy = canvas.height / window.innerHeight
+    // stuck header paints at the scroller's top edge, not at its flow position (-150px)
+    const px = ctx.getImageData(Math.round((r.left + 150) * sx), Math.round((r.top + 20) * sy), 1, 1).data
+    expect(px[0]).toBeGreaterThan(200)
+    expect(px[1]).toBeLessThan(60)
+  })
+
+  it('keeps a fixed element whose static parent is below the fold', async () => {
+    const parent = mount(document.createElement('div'))
+    parent.style.cssText = 'margin-top:5000px;height:100px;'
+    const badge = document.createElement('div')
+    badge.style.cssText = 'position:fixed;left:30px;top:30px;width:50px;height:50px;background:rgb(255,0,0);z-index:999;margin:0;'
+    parent.appendChild(badge)
+    const canvas = await snapdom.toCanvas(document.body, { clip: 'viewport', dpr: 1 })
+    const ctx = canvas.getContext('2d')
+    const sx = canvas.width / document.documentElement.clientWidth
+    const sy = canvas.height / document.documentElement.clientHeight
+    const px = ctx.getImageData(Math.round(55 * sx), Math.round(55 * sy), 1, 1).data
+    expect(px[0]).toBeGreaterThan(200)
+    expect(px[1]).toBeLessThan(60)
+  })
+
+  it('keeps an absolute element escaping an offscreen static parent', async () => {
+    const cb = mount(document.createElement('div'))
+    // padding-top stops the child's 5000px margin collapsing through this box
+    cb.style.cssText = 'position:relative;width:400px;height:200px;padding-top:1px;'
+    const offscreen = document.createElement('div')
+    offscreen.style.cssText = 'margin-top:5000px;height:100px;'
+    const child = document.createElement('div')
+    child.style.cssText = 'position:absolute;left:10px;top:40px;width:60px;height:60px;background:rgb(0,128,0);margin:0;'
+    offscreen.appendChild(child)
+    cb.appendChild(offscreen)
+    const canvas = await snapdom.toCanvas(document.body, { clip: 'viewport', dpr: 1 })
+    const ctx = canvas.getContext('2d')
+    const r = child.getBoundingClientRect()
+    const sx = canvas.width / document.documentElement.clientWidth
+    const sy = canvas.height / document.documentElement.clientHeight
+    const px = ctx.getImageData(Math.round((r.left + 30) * sx), Math.round((r.top + 30) * sy), 1, 1).data
+    expect(px[1]).toBeGreaterThan(100)
+    expect(px[0]).toBeLessThan(60)
+  })
+
+  it('keeps RTL text overflowing leftward into the window', async () => {
+    const wrap = mount(buildBlocks(3, 400))
+    const box = document.createElement('div')
+    box.style.cssText = 'position:absolute;left:3000px;top:100px;width:50px;direction:rtl;white-space:nowrap;'
+    box.textContent = 'LEFT_OVERFLOW_MARKER '.repeat(200)
+    wrap.appendChild(box)
+    const url = await snapdom.toRaw(document.body, { clip: { x: 0, y: 0, width: 500, height: 500 } })
+    expect(decodeSvg(url)).toContain('LEFT_OVERFLOW_MARKER')
+  })
+
+  it('culls offscreen replaced images (no inlined payload for pruned <img>)', async () => {
+    // 1x1 red png with a recognizable base64 body
+    const MARK = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+    const wrap = mount(buildBlocks(3, 400))
+    const img = document.createElement('img')
+    img.src = `data:image/png;base64,${MARK}`
+    img.style.cssText = 'width:40px;height:40px;'
+    const far = document.createElement('div')
+    far.style.cssText = 'margin-top:5000px;'
+    far.appendChild(img)
+    wrap.appendChild(far)
+    await new Promise(r => (img.complete ? r() : (img.onload = r)))
+    const url = await snapdom.toRaw(document.body, { clip: { x: 0, y: 0, width: 400, height: 400 } })
+    expect(decodeSvg(url)).not.toContain(MARK)
+  })
+
+  it('frozen sticky respects content-box sizing (no inflation)', async () => {
+    const scroller = mount(document.createElement('div'))
+    scroller.style.cssText = 'width:300px;height:300px;overflow:auto;margin:0;'
+    const header = document.createElement('div')
+    header.style.cssText = 'position:sticky;top:0;box-sizing:content-box;padding:20px;height:40px;background:rgb(255,0,0);margin:0;'
+    const filler = document.createElement('div')
+    filler.style.cssText = 'height:1200px;background:rgb(255,255,255);'
+    scroller.appendChild(header)
+    scroller.appendChild(filler)
+    scroller.scrollTop = 150
+    const canvas = await snapdom.toCanvas(document.body, { clip: 'viewport', dpr: 1 })
+    const ctx = canvas.getContext('2d')
+    const r = scroller.getBoundingClientRect()
+    const sx = canvas.width / document.documentElement.clientWidth
+    const sy = canvas.height / document.documentElement.clientHeight
+    // live border-box height is 80px: red at +70, white again at +100
+    const inside = ctx.getImageData(Math.round((r.left + 150) * sx), Math.round((r.top + 70) * sy), 1, 1).data
+    const below = ctx.getImageData(Math.round((r.left + 150) * sx), Math.round((r.top + 100) * sy), 1, 1).data
+    expect(inside[0]).toBeGreaterThan(200)
+    expect(inside[1]).toBeLessThan(60)
+    expect(below[1]).toBeGreaterThan(200)
+  })
+
+  it('fixed element with individual rotate keeps its rotation', async () => {
+    mount(buildBlocks(3, 400))
+    const badge = mount(document.createElement('div'))
+    badge.style.cssText = 'position:fixed;left:100px;top:100px;width:80px;height:80px;background:rgb(0,0,255);z-index:999;margin:0;rotate:45deg;'
+    const canvas = await snapdom.toCanvas(document.body, { clip: 'viewport', dpr: 1 })
+    const ctx = canvas.getContext('2d')
+    const sx = canvas.width / document.documentElement.clientWidth
+    const sy = canvas.height / document.documentElement.clientHeight
+    // center stays blue; the box corner (108,108) shows the white block behind when
+    // rotated 45° (blue channel is 255 for both — discriminate on red)
+    const center = ctx.getImageData(Math.round(140 * sx), Math.round(140 * sy), 1, 1).data
+    const corner = ctx.getImageData(Math.round(108 * sx), Math.round(108 * sy), 1, 1).data
+    expect(center[2]).toBeGreaterThan(200)
+    expect(center[0]).toBeLessThan(60)
+    expect(corner[0]).toBeGreaterThan(200)
+  })
+
+  it('clip + outerShadows keeps the exact requested size (no bleed expansion)', async () => {
+    const el = mount(document.createElement('div'))
+    el.style.cssText = 'width:400px;height:400px;box-shadow:0 0 40px 20px rgba(0,0,0,.5);background:teal;margin:0;'
+    const r = el.getBoundingClientRect()
+    const clip = { x: r.left + window.scrollX + 50, y: r.top + window.scrollY + 50, width: 100, height: 100 }
+    const url = await snapdom.toRaw(document.body, { clip, outerShadows: true })
+    const svg = decodeSvg(url)
+    expect(svg).toMatch(/<svg [^>]*width="100"/)
+    expect(svg).toMatch(/height="100"/)
+  })
+
+  it("clip: 'viewport' on documentElement covers body margins", async () => {
+    document.body.style.margin = '20px'
+    try {
+      const block = mount(document.createElement('div'))
+      block.style.cssText = 'width:100px;height:100px;background:rgb(255,0,255);margin:0;'
+      const canvas = await snapdom.toCanvas(document.documentElement, { clip: 'viewport', dpr: 1 })
+      const ctx = canvas.getContext('2d')
+      const r = block.getBoundingClientRect()
+      const sx = canvas.width / document.documentElement.clientWidth
+      const sy = canvas.height / document.documentElement.clientHeight
+      // the block sits at the body margin offset; the capture must place it there too
+      const px = ctx.getImageData(Math.round((r.left + 50) * sx), Math.round((r.top + 50) * sy), 1, 1).data
+      expect(px[0]).toBeGreaterThan(200)
+      expect(px[2]).toBeGreaterThan(200)
+      expect(px[1]).toBeLessThan(60)
+    } finally {
+      document.body.style.margin = ''
+    }
+  })
+
+  it('viewport capture of a SCROLLED page shows the visible slice (fo must reach the window)', async () => {
+    const wrap = mount(buildBlocks(10, 400))
+    wrap.children[4].style.background = 'rgb(255, 0, 0)' // spans y 1600-2000
+    window.scrollTo(0, 1700)
+    if (window.scrollY !== 1700) return // runner can't scroll: nothing to assert
+    const canvas = await snapdom.toCanvas(document.documentElement, { clip: 'viewport', dpr: 1 })
+    const ctx = canvas.getContext('2d')
+    const sx = canvas.width / document.documentElement.clientWidth
+    const sy = canvas.height / document.documentElement.clientHeight
+    // page y 1800 → viewport y 100 → red
+    const px = ctx.getImageData(Math.round(100 * sx), Math.round(100 * sy), 1, 1).data
+    expect(px[0]).toBeGreaterThan(200)
+    expect(px[1]).toBeLessThan(60)
+    expect(px[3]).toBeGreaterThan(200)
+  })
+
+  it('deep clip window renders content-visibility:auto sections (no blank band)', async () => {
+    const wrap = mount(document.createElement('div'))
+    wrap.style.cssText = 'width:400px;margin:0;'
+    for (let i = 0; i < 10; i++) {
+      const sec = document.createElement('div')
+      sec.style.cssText = 'content-visibility:auto;contain-intrinsic-size:auto 400px;height:400px;margin:0;'
+      const inner = document.createElement('div')
+      inner.style.cssText = 'height:400px;margin:0;background:rgb(255,0,0);'
+      inner.textContent = `CV_SECTION_${i}_MARKER`
+      sec.appendChild(inner)
+      wrap.appendChild(sec)
+    }
+    window.scrollTo(0, 0)
+    // section 8 (y 3200–3600) is far below the real viewport: its cv contents are skipped
+    // by the browser, and pre-fix the clip path never forced them back
+    const target = wrap.children[8]
+    const r = target.getBoundingClientRect()
+    const clip = { x: r.left + window.scrollX, y: r.top + window.scrollY, width: r.width, height: r.height }
+    const canvas = await snapdom.toCanvas(document.body, { clip, dpr: 1 })
+    const ctx = canvas.getContext('2d')
+    const sx = canvas.width / clip.width
+    const sy = canvas.height / clip.height
+    const px = ctx.getImageData(Math.round(clip.width / 2 * sx), Math.round(clip.height / 2 * sy), 1, 1).data
+    expect(px[0]).toBeGreaterThan(200)
+    expect(px[1]).toBeLessThan(60)
+    // forcing is pruned to the window: far sections stay culled
+    const url = await snapdom.toRaw(document.body, { clip })
+    const svg = decodeSvg(url)
+    expect(svg).toContain('CV_SECTION_8_MARKER')
+    expect(svg).not.toContain('CV_SECTION_0_MARKER')
+  })
+
+  it('husks keep the margins that collapsed through culled sections (no cumulative drift)', async () => {
+    // Each section's only child carries 20px margins that escape the section's edges.
+    // An empty husk has no children to escape, so pre-fix every culled section lost its
+    // 20px of separation: by section 15 the flow had drifted 300px and the clip window
+    // captured the wrong band (real-world repro: wikipedia at scroll 73k, +812px drift).
+    const wrap = mount(document.createElement('div'))
+    wrap.style.cssText = 'width:400px;margin:0;'
+    for (let i = 0; i < 20; i++) {
+      const sec = document.createElement('section')
+      sec.style.cssText = 'margin:0;'
+      const inner = document.createElement('div')
+      inner.style.cssText = 'height:160px;margin:20px 0;background:rgb(0,128,255);'
+      inner.textContent = `DRIFT_SEC_${i}`
+      sec.appendChild(inner)
+      wrap.appendChild(sec)
+    }
+    window.scrollTo(0, 0)
+    const target = wrap.children[15].firstElementChild
+    const r = target.getBoundingClientRect()
+    const clip = { x: r.left + window.scrollX, y: r.top + window.scrollY, width: r.width, height: r.height }
+    const canvas = await snapdom.toCanvas(document.body, { clip, dpr: 1 })
+    const ctx = canvas.getContext('2d')
+    const sx = canvas.width / clip.width
+    const sy = canvas.height / clip.height
+    const px = ctx.getImageData(Math.round(clip.width / 2 * sx), Math.round(clip.height / 2 * sy), 1, 1).data
+    expect(px[2]).toBeGreaterThan(200)
+    expect(px[0]).toBeLessThan(60)
+  })
+
+  it('culled siblings with fractional heights do not drift the window', async () => {
+    const wrap = mount(buildBlocks(200, 30.4))
+    const target = document.createElement('div')
+    target.style.cssText = 'height:40px;background:rgb(255,0,0);'
+    wrap.appendChild(target)
+    wrap.appendChild(buildBlocks(50, 30.4))
+    const r = target.getBoundingClientRect()
+    const clip = { x: r.left + window.scrollX, y: r.top + window.scrollY, width: r.width, height: r.height }
+    const canvas = await snapdom.toCanvas(document.body, { clip, dpr: 1 })
+    const ctx = canvas.getContext('2d')
+    for (const y of [1, 20, 38]) {
+      const px = ctx.getImageData(200, y, 1, 1).data
+      expect([px[0], px[1], px[2]]).toEqual([255, 0, 0])
+    }
+  })
+
+  // A culled toolbar above a sticky panel took its margin from the next box's rect. Behind a
+  // display:contents wrapper that rect is all zeros, and a stuck panel's is where the scroll
+  // left it: either way the gap was the scroll distance, and the window below the panel
+  // came out blank (codingcodertg/DELIVERY-APP#550).
+  it.each([
+    ['a display:contents wrapper', '<div style="display:contents">', '</div>'],
+    ['a stuck sticky panel', '', '']
+  ])('a culled box followed by %s keeps its margin', async (_, open, close) => {
+    const main = mount(document.createElement('main'))
+    // Padding closes main's edges, so the root margin collapse pass leaves the culled box alone.
+    main.style.cssText = 'width:400px;margin:0;padding:10px 0;'
+    main.innerHTML = '<div style="height:40px;margin-bottom:8px"></div>' + open +
+      '<div style="position:sticky;top:0;height:60px;background:rgb(0,160,0)"></div><div style="height:1500px"></div>' +
+      '<div class="target" style="height:100px;background:rgb(255,0,0)"></div><div style="height:1000px"></div>' + close
+    const target = main.querySelector('.target')
+    const y = Math.round(target.getBoundingClientRect().top + window.scrollY - 150)
+    window.scrollTo(0, y)
+    if (window.scrollY !== y) return // runner can't scroll: nothing to assert
+    const t = target.getBoundingClientRect()
+    const canvas = await snapdom.toCanvas(document.body, { clip: 'viewport', dpr: 1 })
+    const ctx = canvas.getContext('2d')
+    const k = canvas.width / document.documentElement.clientWidth
+    const at = (x, y) => [...ctx.getImageData(Math.round(x * k), Math.round(y * k), 1, 1).data.slice(0, 3)]
+    expect(at(t.left + 200, t.top + 2)).toEqual([255, 0, 0])
+    expect(at(t.left + 200, t.bottom - 2)).toEqual([255, 0, 0])
+    expect(at(t.left + 200, 30)).toEqual([0, 160, 0])
+  })
+
+  it('a run of culled cards costs one box, not one per card (#549)', async () => {
+    const wrap = mount(document.createElement('main'))
+    wrap.style.cssText = 'width:400px;'
+    wrap.innerHTML = Array.from({ length: 300 }, (_, i) =>
+      `<section style="position:relative;margin:8px;padding:8px;border:1px solid #ccc;line-height:1.3">CARD_${i}<p>text</p></section><!--item-->`).join('\n')
+    const target = wrap.children[150]
+    target.style.background = 'rgb(255,0,0)'
+    const r = target.getBoundingClientRect()
+    const clip = { x: r.left + window.scrollX + 2, y: r.top + window.scrollY + 2, width: 100, height: 20 }
+    const url = await snapdom.toRaw(document.body, { clip })
+    expect((decodeSvg(url).match(/<section/g) || []).length).toBeLessThan(5)
+    const canvas = await snapdom.toCanvas(document.body, { clip, dpr: 1 })
+    const ctx = canvas.getContext('2d')
+    for (const [x, y] of [[1, 1], [98, 18]]) {
+      const px = ctx.getImageData(x, y, 1, 1).data
+      expect([px[0], px[1], px[2]]).toEqual([255, 0, 0])
+    }
+  })
+
+  it('folded siblings stay in the tree when author styles travel with the clone', async () => {
+    // The rule paints even children. Live, the target is the 203rd child and stays clear.
+    // Two kept boxes sit between it and the 200 folded rows: dropping the 199 rows after the
+    // spacer would make it the 4th, and paint it blue.
+    const wrap = mount(document.createElement('div'))
+    wrap.style.cssText = 'width:400px;'
+    wrap.innerHTML = '<div style="height:20px"></div>'.repeat(200) +
+      '<div style="height:300px"></div><div style="height:0"></div><div class="fold-target" style="height:40px"></div>'
+    const style = mount(document.createElement('style'))
+    style.textContent = '.fold-target:nth-child(even){background:rgb(0,0,255)}'
+    const target = wrap.lastElementChild
+    expect(getComputedStyle(target).backgroundColor).toBe('rgba(0, 0, 0, 0)')
+    const r = target.getBoundingClientRect()
+    const clip = { x: r.left + window.scrollX, y: r.top + window.scrollY, width: r.width, height: r.height }
+    const canvas = await snapdom.toCanvas(document.body, { clip, dpr: 1 })
+    const px = canvas.getContext('2d').getImageData(200, 20, 1, 1).data
+    expect(px[2] > 200 && px[0] < 60).toBe(false)
+  })
+
+  it('a culled grid item keeps its slot from placement alone, without its style snapshot', async () => {
+    const wrap = mount(document.createElement('div'))
+    wrap.style.cssText = 'width:400px;display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:40px;gap:4px'
+    // Only the tiles far from the window carry rgb(1, 2, 3); the ones the band keeps do not.
+    const tile = (s = '', bg = 'rgb(1, 2, 3)') => `<div style="background:${bg};border:2px solid #000;${s}"></div>`
+    wrap.innerHTML = tile('grid-column:span 3') + tile('order:-1') + tile('grid-row:span 2') + tile('grid-column:2 / span 2') +
+      Array.from({ length: 32 }, () => tile()).join('') + Array.from({ length: 24 }, () => tile('', '#ccc')).join('') +
+      '<div class="grid-target" style="background:rgb(255,0,0)"></div>'
+    const r = wrap.querySelector('.grid-target').getBoundingClientRect()
+    const clip = { x: r.left + window.scrollX, y: r.top + window.scrollY, width: r.width, height: r.height }
+    expect(decodeSvg(await snapdom.toRaw(document.body, { clip }))).not.toContain('rgb(1, 2, 3)')
+    const canvas = await snapdom.toCanvas(document.body, { clip, dpr: 1 })
+    const ctx = canvas.getContext('2d')
+    for (const [x, y] of [[1, 1], [r.width - 2, 38]]) {
+      expect([...ctx.getImageData(Math.round(x), y, 1, 1).data.slice(0, 3)]).toEqual([255, 0, 0])
+    }
+  })
+
+  // The spacer is the run's first element, so a travelling author rule still matches it.
+  // overflow:hidden made it a block formatting context, which cannot overlap the float, and
+  // the window below came out one float lower.
+  it('a folded run next to a float stays beside it when an author rule makes its head a BFC', async () => {
+    const wrap = mount(document.createElement('div'))
+    wrap.style.cssText = 'width:400px;'
+    wrap.innerHTML = '<div style="float:left;width:100px;height:300px"></div>' +
+      '<div class="fold-bfc" style="height:40px"></div>' + '<div style="height:40px"></div>'.repeat(3) +
+      '<div style="height:600px"></div><div class="fold-target" style="height:40px;background:rgb(255,0,0)"></div>'
+    const style = mount(document.createElement('style'))
+    style.textContent = '.fold-bfc{overflow:hidden}'
+    const r = wrap.querySelector('.fold-target').getBoundingClientRect()
+    const clip = { x: r.left + window.scrollX, y: r.top + window.scrollY, width: r.width, height: r.height }
+    const canvas = await snapdom.toCanvas(document.body, { clip, dpr: 1 })
+    const ctx = canvas.getContext('2d')
+    for (const y of [1, 38]) expect([...ctx.getImageData(200, y, 1, 1).data.slice(0, 3)]).toEqual([255, 0, 0])
+  })
+
+  // A culled box measured its margin to the next element across a line of text or an
+  // inline-block, and the line moved down by its own height.
+  it.each([
+    ['an inline-block', '<span style="display:inline-block;width:10px;height:10px"></span>'],
+    ['a line of text', 'text']
+  ])('a culled block next to %s keeps its own margin', async (_, line) => {
+    const wrap = mount(document.createElement('div'))
+    wrap.style.cssText = 'width:400px;font-size:60px;line-height:80px'
+    wrap.innerHTML = '<div style="height:40px"></div>' + line + '<div style="height:600px"></div>' +
+      '<div class="line-target" style="height:40px;background:rgb(255,0,0)"></div>'
+    const r = wrap.querySelector('.line-target').getBoundingClientRect()
+    const clip = { x: r.left + window.scrollX, y: r.top + window.scrollY, width: r.width, height: r.height }
+    const canvas = await snapdom.toCanvas(document.body, { clip, dpr: 1 })
+    const ctx = canvas.getContext('2d')
+    for (const y of [1, 38]) expect([...ctx.getImageData(200, y, 1, 1).data.slice(0, 3)]).toEqual([255, 0, 0])
+  })
+
+  // playwright-lite #302: at an output grid finer than the layout grid (dpr 2 under device
+  // emulation, here scale 2) the half pixel of the origin was snapped away: 80,60 for 79,59.
+  // WebKit keeps the snap: an ancestor translate does not move its layered boxes.
+  it.skipIf(isSafari())('starts a fractional clip on the output pixel, not the layout pixel', async () => {
+    const box = mount(document.createElement('div'))
+    box.style.cssText = 'position:fixed;left:50px;top:50px;width:20px;height:20px;background:rgb(0,200,0)'
+    const canvas = await snapdom.toCanvas(document.documentElement, {
+      clip: { x: 10.5, y: 20.5, width: 100, height: 50 }, dpr: 1, scale: 2, backgroundColor: null
+    })
+    const ctx = canvas.getContext('2d')
+    const green = (x, y) => {
+      const [r, g] = ctx.getImageData(x, y, 1, 1).data
+      return g > 150 && r < 80
+    }
+    expect([green(79, 59), green(78, 70), green(90, 58)]).toEqual([true, false, false])
+  })
+
+  it('clip: null behaves exactly like a normal capture', async () => {
+    const el = mount(document.createElement('div'))
+    el.style.cssText = 'width:120px;height:80px;background:teal;'
+    const a = await snapdom.toRaw(el)
+    const b = await snapdom.toRaw(el, { clip: null })
+    expect(b).toBe(a)
+  })
+})
+
+// #525: the 200px band is a ceiling, not a constant. A box inside it is kept only when its
+// own painting (shadows, outline, filters, pseudos, ancestor filters) can reach the window.
+describe('clip: ink-aware cull band (#525)', () => {
+  const redAt = async (clip, y) => {
+    const canvas = await snapdom.toCanvas(document.body, { clip, dpr: 1 })
+    const px = canvas.getContext('2d').getImageData(Math.round(clip.width / 2), y, 1, 1).data
+    return px[0] > 200 && px[1] < 60 && px[2] < 60 && px[3] > 200
+  }
+  // A 40px-tall block sitting 60px above a 100px window, so its gap is 60px.
+  const scene = (blockCss, extra = '') => {
+    const wrap = mount(document.createElement('div'))
+    wrap.style.cssText = `position:absolute;left:0;top:0;width:300px;${extra}`
+    wrap.innerHTML = `<div class="b525" style="height:40px;${blockCss}">ABOVE_525</div><div style="height:60px"></div><div class="w525" style="height:100px"></div>`
+    const r = wrap.querySelector('.w525').getBoundingClientRect()
+    return { wrap, clip: { x: r.left + scrollX, y: r.top + scrollY, width: r.width, height: r.height } }
+  }
+
+  it('culls a plain block whose box misses the window by less than 200px', async () => {
+    const { clip } = scene('')
+    expect(decodeSvg(await snapdom.toRaw(document.body, { clip }))).not.toContain('ABOVE_525')
+  })
+
+  it('a content-less ::before/::after rule matching every element does not keep it (Tailwind preflight)', async () => {
+    const style = mount(document.createElement('style'))
+    style.textContent = '*,::before,::after{box-sizing:border-box;border:0 solid}'
+    const { clip } = scene('')
+    expect(decodeSvg(await snapdom.toRaw(document.body, { clip }))).not.toContain('ABOVE_525')
+  })
+
+  it('keeps a block whose box-shadow paints into the window', async () => {
+    // A spread, not a y offset: WebKit flips shadow offsets in svg-as-image.
+    const { clip } = scene('box-shadow:0 0 0 80px rgb(255,0,0)')
+    expect(await redAt(clip, 10)).toBe(true)
+  })
+
+  it('keeps a block whose positioned ::after paints up into the window', async () => {
+    // Upward, so the pseudo is in neither the block's rect nor its scrollHeight.
+    const style = mount(document.createElement('style'))
+    style.textContent = '*,::before,::after{box-sizing:border-box}.a525{position:relative}.a525::after{content:"";position:absolute;left:0;right:0;top:-80px;height:40px;background:rgb(255,0,0)}'
+    const wrap = mount(document.createElement('div'))
+    wrap.style.cssText = 'position:absolute;left:0;top:0;width:300px'
+    wrap.innerHTML = '<div class="w525" style="height:100px"></div><div style="height:60px"></div><div class="a525" style="height:40px">BELOW_525</div>'
+    const r = wrap.querySelector('.w525').getBoundingClientRect()
+    const clip = { x: r.left + scrollX, y: r.top + scrollY, width: r.width, height: r.height }
+    expect(await redAt(clip, 90)).toBe(true)
+  })
+
+  it('keeps a block an ancestor drop-shadow paints into the window', async () => {
+    const { clip } = scene('background:rgb(255,0,0);color:transparent', 'filter:drop-shadow(0 80px 0 rgb(255,0,0))')
+    expect(await redAt(clip, 10)).toBe(true)
+  })
+})

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><script type="importmap">{"imports": {"@zumer/snapdom": "https://unpkg.com/@zumer/snapdom@latest/dist/snapdom.mjs", "@zumer/snapdom/plugins": "https://unpkg.com/@zumer/snapdom@latest/dist/snapdom.mjs"}}</script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Capture a Lit Component as an Image — SnapDOM</title>
+  <meta name="description" content="Capture a Lit component as PNG or SVG with SnapDOM using renderRoot query and the correct browser lifecycle." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://snapdom.dev/guides/lit/" />
+  <link rel="help" type="text/plain" href="https://snapdom.dev/llms.txt" title="LLM summary">
+  <link rel="help" type="text/plain" href="https://snapdom.dev/llms-full.txt" title="LLM full reference">
+  <meta property="og:type" content="article" />
+  <meta property="og:title" content="Capture a Lit Component as an Image" />
+  <meta property="og:description" content="Capture a Lit component as PNG or SVG with SnapDOM using renderRoot query and the correct browser lifecycle." />
+  <meta property="og:url" content="https://snapdom.dev/guides/lit/" />
+  <meta property="og:image" content="https://snapdom.dev/assets/og-card.jpg" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" type="image/png" href="../../assets/favicon/favicon-96x96.png" sizes="96x96">
+  <link rel="stylesheet" href="../../shared.css"><link rel="stylesheet" href="../../page.css">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"Capture a Lit component","description":"Capture a Lit component as PNG or SVG with SnapDOM using renderRoot query and the correct browser lifecycle.","url":"https://snapdom.dev/guides/lit/","datePublished":"2026-07-16","dateModified":"2026-10-28","author":{"@type":"Organization","name":"Zumerlab"},"dependencies":"SnapDOM (@zumer/snapdom)"}</script>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Why can document.querySelector not find my card?","acceptedAnswer":{"@type":"Answer","text":"The card is inside the component\u2019s shadow root. Select it with this.renderRoot.querySelector from the component, or capture the host to include its open shadow tree."}},{"@type":"Question","name":"Does updateComplete include child updates?","acceptedAnswer":{"@type":"Answer","text":"Not by default. Wait for known child components\u2019 updateComplete promises and for any separate data or asset readiness signals before capture."}}]}</script>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"SnapDOM","item":"https://snapdom.dev/"},{"@type":"ListItem","position":2,"name":"How-to","item":"https://snapdom.dev/how-to/"},{"@type":"ListItem","position":3,"name":"Capture a Lit component","item":"https://snapdom.dev/guides/lit/"}]}</script>
+  <link rel="stylesheet" href="../../navigation.css"><link rel="stylesheet" href="../../panes.css">
+  <script type="module" src="../../panes.js"></script>
+<link rel="stylesheet" href="../../code.css"><script defer data-manual src="../../assets/prism/prism.min.js"></script><script defer src="../../code-blocks.js"></script></head>
+<body>
+<script defer src="../../site.js"></script>
+  <!-- pane:start --><!-- hero {"badge": "Framework Guide \u00b7 Lit 3", "title": "Capture a <span class=\"accent\">Lit component</span>", "lead": "Export a Lit card from its open shadow root, wait for updateComplete, and choose whether the image includes the host or only the card.", "links": []} -->
+<header class="site-head"><div class="site-head-inner"><a class="site-shell-brand" href="../../" aria-label="SnapDOM home"><span class="site-shell-mark"></span><span>SnapDOM</span></a><nav class="site-nav" aria-label="Main navigation"><div class="site-nav-group is-current"><button type="button" class="site-nav-button" aria-expanded="false">Learn</button><div class="site-nav-panel"><a class="site-nav-item sec-capture" href="../../docs/"><span class="sec-dot"></span><span class="site-nav-item-label">Docs</span><span class="site-nav-item-desc">API, options and quick start</span></a><a class="site-nav-item sec-start" href="../../how-to/" aria-current="page"><span class="sec-dot"></span><span class="site-nav-item-label">How-to</span><span class="site-nav-item-desc">Recipes and framework guides</span></a><a class="site-nav-item sec-ecosystem" href="../../compare/"><span class="sec-dot"></span><span class="site-nav-item-label">Compare</span><span class="site-nav-item-desc">SnapDOM vs html2canvas and others</span></a></div></div><div class="site-nav-group"><button type="button" class="site-nav-button" aria-expanded="false">Explore</button><div class="site-nav-panel"><a class="site-nav-item sec-labs" href="../../showcase/"><span class="sec-dot"></span><span class="site-nav-item-label">Showcase</span><span class="site-nav-item-desc">Live demos and labs</span></a><a class="site-nav-item sec-ecosystem" href="../../showcase/#plugins"><span class="sec-dot"></span><span class="site-nav-item-label">Plugins</span><span class="site-nav-item-desc">PDF, HTML, vector, GIF, video, agent context</span></a><a class="site-nav-item sec-record" href="../../blog/"><span class="sec-dot"></span><span class="site-nav-item-label">Blog</span><span class="site-nav-item-desc">Engineering notes</span></a></div></div><div class="site-nav-group"><button type="button" class="site-nav-button" aria-expanded="false">Community</button><div class="site-nav-panel"><a class="site-nav-item sec-ecosystem" href="../../ecosystem/"><span class="sec-dot"></span><span class="site-nav-item-label">Ecosystem</span><span class="site-nav-item-desc">SnapDIFF, SnapEye, SnapSurf</span></a><a class="site-nav-item sec-context" href="../../made-with/"><span class="sec-dot"></span><span class="site-nav-item-label">Made with</span><span class="site-nav-item-desc">Projects using SnapDOM</span></a></div></div></nav><button type="button" class="site-menu-button" aria-expanded="false">Menu</button><a class="site-shell-github" aria-label="SnapDOM on GitHub" href="https://github.com/zumerlab/snapdom" target="_blank" rel="noopener"><span>GitHub</span><span class="site-shell-stars">★ <span data-star-count>8K</span></span></a></div></header>
+<main id="main" class="pane no-demo" data-pane>
+<aside class="pane-side"><label class="pane-filter"><span aria-hidden="true">⌕</span><input type="search" placeholder="Filter recipes and guides" aria-label="Filter recipes and guides"></label><nav class="pane-nav" aria-label="How-to"><div class="sec-start"><button type="button" class="pane-nav-head" aria-expanded="false"><span class="sec-dot"></span>Overview</button><div class="pane-nav-items"><a href="../../how-to/">How to capture the DOM</a></div></div><div class="sec-start"><button type="button" class="pane-nav-head" aria-expanded="false"><span class="sec-dot"></span>Basics</button><div class="pane-nav-items"><a href="../../how-to/screenshot-a-div/">Screenshot a div</a><a href="../../how-to/html-to-png/">Convert HTML to PNG</a><a href="../../how-to/html-to-svg/">Convert HTML to SVG</a><a href="../../how-to/html-to-canvas/">Render HTML to Canvas</a><a href="../../how-to/high-resolution-element/">Capture in high resolution</a></div></div><div class="sec-capture"><button type="button" class="pane-nav-head" aria-expanded="false"><span class="sec-dot"></span>Real content</button><div class="pane-nav-items"><a href="../../how-to/export-dashboard-as-image/">Export a dashboard</a><a href="../../how-to/export-react-component-as-image/">Export a React component</a><a href="../../how-to/export-invoice-as-image/">Export an invoice</a><a href="../../how-to/generate-social-card-from-html/">Generate a social card</a><a href="../../how-to/capture-before-pdf/">Capture before a PDF</a><a href="../../how-to/export-chart-as-svg/">Export a chart as SVG</a><a href="../../how-to/save-chart-js-as-png/">Save a Chart.js chart</a></div></div><div class="sec-ecosystem"><button type="button" class="pane-nav-head" aria-expanded="false"><span class="sec-dot"></span>Special cases</button><div class="pane-nav-items"><a href="../../how-to/capture-element-without-puppeteer/">Capture without Puppeteer</a><a href="../../how-to/capture-shadow-dom/">Capture Shadow DOM</a><a href="../../how-to/capture-full-page/">Capture a full page</a><a href="../../how-to/capture-iframe/">Capture an iframe</a><a href="../../how-to/capture-cross-origin-images/">Capture images without CORS</a><a href="../../how-to/html-in-canvas/">Capture with html-in-canvas <span class="nav-new">New</span></a><a href="../../how-to/visual-regression-screenshot/">Visual regression</a></div></div><div class="sec-ecosystem"><button type="button" class="pane-nav-head" aria-expanded="false"><span class="sec-dot"></span>Migrate</button><div class="pane-nav-items"><a href="../../how-to/migrate-from-html2canvas/">Migrate from html2canvas</a></div></div><div class="sec-options"><button type="button" class="pane-nav-head" aria-expanded="true"><span class="sec-dot"></span>Frameworks</button><div class="pane-nav-items"><a href="../react/">React</a><a href="../vue/">Vue</a><a href="../nextjs/">Next.js</a><a href="../svelte/">Svelte</a><a href="../angular/">Angular</a><a href="./" aria-current="page">Lit</a></div></div></nav></aside>
+
+<article class="pane-read sec-options" data-title="Lit">
+<header class="doc-head"><div class="doc-head-bar"><nav class="doc-crumbs" aria-label="Breadcrumb"><span>How-to</span><span aria-hidden="true">/</span><span>Frameworks</span><span aria-hidden="true">/</span><span>Lit</span></nav><span class="doc-meta">Framework Guide · Lit 3</span></div><h1>Capture a <span class="accent">Lit component</span></h1><p class="doc-lead">Export a Lit card from its open shadow root, wait for updateComplete, and choose whether the image includes the host or only the card.</p></header>
+<div class="pane-content"><!-- content --><div class="tldr"><div class="tldr-label">TL;DR</div><p>Wait for <code>this.updateComplete</code>, select the card from <code>this.renderRoot</code>, then export it. SnapDOM can walk open shadow roots; <code>document.querySelector</code> cannot reach their internal nodes.</p></div>
+<section class="prose"><h2 id="install-and-use-snapdom-in-lit">Install and use SnapDOM in Lit</h2><p>Install the capture library in your existing Lit project:</p><pre class="code-block">npm install @zumer/snapdom</pre><p>Load this module in your client entry, then place <code>&lt;export-card&gt;&lt;/export-card&gt;</code> in your page.</p><pre class="code-block">import { LitElement, html, css } from 'lit'
+import { snapdom } from '@zumer/snapdom'
+
+class ExportCard extends LitElement {
+  static properties = {
+    title: { type: String },
+    saving: { state: true },
+    error: { state: true },
+  }
+  static styles = css`
+    article { padding: 24px; background: #eef3ff; border-radius: 12px; }
+  `
+
+  constructor() {
+    super()
+    this.title = 'Monthly report'
+    this.saving = false
+    this.error = ''
+  }
+
+  async save() {
+    this.saving = true
+    this.error = ''
+    try {
+      await this.updateComplete
+      const card = this.renderRoot.querySelector('#card')
+      await document.fonts.ready
+      await Promise.all(Array.from(card.querySelectorAll('img'), img =&gt; img.decode()))
+      await snapdom.download(card, { format: 'png', filename: 'lit-card' })
+    } catch (cause) {
+      this.error = cause instanceof Error ? cause.message : 'Capture failed'
+    } finally {
+      this.saving = false
+    }
+  }
+
+  render() {
+    return html`
+      &lt;label&gt;Card title &lt;input .value=${this.title}
+        @input=${event =&gt; { this.title = event.target.value }} /&gt;&lt;/label&gt;
+      &lt;article id="card"&gt;&lt;h2&gt;${this.title}&lt;/h2&gt;&lt;p&gt;Ready to share.&lt;/p&gt;&lt;/article&gt;
+      &lt;button @click=${this.save} ?disabled=${this.saving}&gt;Download PNG&lt;/button&gt;
+      &lt;p role="status"&gt;${this.error}&lt;/p&gt;
+    `
+  }
+}
+customElements.define('export-card', ExportCard)</pre></section>
+<section class="prose"><h2 id="lifecycle-and-fidelity">Wait for the right Lit element</h2><p><a href="https://lit.dev/docs/components/lifecycle/#updatecomplete">updateComplete</a> resolves after this element finishes its update. It does not promise that every nested Lit component or asynchronous resource is ready. If a known child owns part of the report, await that child’s <code>updateComplete</code> before capture too:</p><pre class="code-block">await this.updateComplete
+const chart = this.renderRoot.querySelector('report-chart')
+await chart.updateComplete
+await snapdom.download(this.renderRoot.querySelector('#card'), { format: 'png' })</pre><p>For third-party charts, use their documented ready signal. Do not add a fixed timeout and assume the subtree has settled.</p></section>
+<section class="prose"><h2 id="shadow-root">Choose the host or the internal card</h2><p>Capturing <code>this</code> exports the custom element host, including its open shadow tree and host-level styles. Capturing <code>this.renderRoot.querySelector('#card')</code> exports only the card, leaving the form controls out of the image. The example uses the latter.</p><p>A closed shadow root is inaccessible to code outside the component. Keep capture inside the component, where the render root reference is available, or provide an explicit export method. SnapDOM cannot bypass that browser boundary. See the <a href="../../how-to/capture-shadow-dom/">Shadow DOM capture recipe</a> for the open-root case.</p></section>
+<section class="prose"><h2 id="browser-only-boundary">Assets and server-rendered Lit</h2><p>Lit’s update lifecycle does not wait for fonts or image downloads; the example waits for those resources explicitly and reports failures. If a child contains a same-origin iframe, also wait for the frame to load and use the <a href="../../how-to/capture-iframe/">iframe capture recipe</a>.</p><p>In a server-rendered application, invoke the export after the browser has upgraded and hydrated the relevant components. Run this module in the client entry and capture from an interaction, rather than from the server rendering pipeline.</p></section>
+<section class="prose faq"><h2 id="faq">Frequently asked questions</h2><details><summary>Why can document.querySelector not find my card?</summary><p>The card is inside the component’s shadow root. Select it with this.renderRoot.querySelector from the component, or capture the host to include its open shadow tree.</p></details><details><summary>Does updateComplete include child updates?</summary><p>Not by default. Wait for known child components’ updateComplete promises and for any separate data or asset readiness signals before capture.</p></details></section>
+    <section class="related"><div class="section-label">Related</div><div class="related-grid"><a class="related-card" href="../../how-to/screenshot-a-div/#pick">Choose the capture root</a><a class="related-card" href="../../how-to/html-to-png/">HTML to PNG</a><a class="related-card" href="../react/">SnapDOM in React</a><a class="related-card" href="../../docs/api/">Export API</a></div></section>
+    <section class="cta-section"><div class="cta-card"><h2 id="capture-it-in-the-browser">Capture, modify and convert any element</h2><p>Install SnapDOM and export the DOM to PNG, SVG, PDF or any other format.</p><a href="../../showcase/" class="btn btn-primary">Open the demo</a><a href="../../docs/" class="btn btn-ghost" target="_blank" rel="noopener">Installation</a></div></section>
+  <!-- /content --></div>
+<nav class="pager" aria-label="Pages"><a href="../angular/"><span>Previous</span><strong>Angular</strong></a></nav>
+</article>
+</main>
+<footer class="site-foot"><nav class="site-foot-directory" aria-label="Site directory"><div><h2>Learn</h2><a href="../../docs/">Documentation</a><a href="../../docs/#quick-start">Quick start</a><a href="../../how-to/">How-to recipes</a><a href="../../how-to/#frameworks">Framework guides</a><a href="../../compare/">Compare</a></div><div><h2>Explore</h2><a href="../../showcase/">Showcase</a><a href="../../showcase/#plugins">Plugins</a><a href="../../docs/plugins/#build">Writing plugins</a><a href="../../showcase/#labs">Labs</a><a href="../../blog/">Blog</a></div><div><h2>Community</h2><a href="../../ecosystem/">Ecosystem</a><a href="../../made-with/">Made with</a><a href="../../ecosystem/#community-plugins">Community plugins</a><a href="https://github.com/zumerlab/snapdom">GitHub</a><a href="https://www.npmjs.com/package/@zumer/snapdom">npm</a><a href="https://github.com/sponsors/tinchox5">Sponsors</a></div></nav><div class="site-foot-legal"><p>MIT © <a href="https://zumerlab.com/">Zumerlab</a></p></div></footer>
+<!-- pane:end -->
+</body>
+</html>

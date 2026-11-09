@@ -1,0 +1,76 @@
+<!doctype html>
+<meta charset=utf-8>
+<title>SnapDOM 32 demos JXL vs toWebp</title>
+<!--IMPORTMAP-->
+<body>
+<script type="module">
+window.__result = { done: false, at: 'boot' };
+const q = new URLSearchParams(location.search);
+const quality = +(q.get('quality') || 0.8);
+const effort = +(q.get('effort') || 3);
+const rounds = +(q.get('rounds') || 5);
+const base = '/snapdom';
+try {
+  const demos = await (await fetch('/demo-list')).json();
+  const rows = [];
+  for (const name of demos) {
+    window.__result = { done: false, at: `demo:${name}`, pages: rows.filter(r => !r.error).length };
+    const iframe = document.createElement('iframe');
+    iframe.style.cssText = 'position:fixed;left:-10000px;width:1280px;height:900px;border:0';
+    document.body.appendChild(iframe);
+    await new Promise((res, rej) => { iframe.onload = () => res(); iframe.onerror = () => rej(new Error('iframe ' + name)); iframe.src = `${base}/demos/${name}`; });
+    await new Promise(r => setTimeout(r, 800));
+    try {
+      const got = await iframe.contentWindow.eval(`(async () => {
+        const { snapdom } = await import('${base}/src/api/snapdom.js');
+        const { jxl } = await import('${base}/packages/plugins/jxl.js');
+        const el = document.querySelector('#target');
+        if (!el) return { error: 'no #target' };
+        const once = async () => {
+          let t = performance.now();
+          const r = await snapdom(el, { plugins: [jxl()], burst: false });
+          const capture = performance.now() - t;
+          t = performance.now();
+          const jxlBlob = await r.toBlob({ format: 'jxl', quality: ${quality}, effort: ${effort}, dpr: 1 });
+          const jxlExportMs = performance.now() - t;
+          const buf = new Uint8Array(await jxlBlob.arrayBuffer());
+          const digest = await crypto.subtle.digest('SHA-256', buf);
+          const sha = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2,'0')).join('');
+          t = performance.now();
+          const img = await r.toWebp({ quality: ${quality}, dpr: 1 });
+          const webpExportMs = performance.now() - t;
+          const webpBlob = await (await fetch(img.src)).blob();
+          return { capture, jxlExportMs, webpExportMs, jxlBytes: jxlBlob.size, webpBytes: webpBlob.size, sha };
+        };
+        await once();
+        const runs = [];
+        for (let i = 0; i < ${rounds}; i++) runs.push(await once());
+        const med = a => a.slice().sort((x,y)=>x-y)[Math.floor(a.length/2)];
+        return {
+          capture: med(runs.map(r => r.capture)),
+          jxlExportMs: med(runs.map(r => r.jxlExportMs)),
+          webpExportMs: med(runs.map(r => r.webpExportMs)),
+          jxlBytes: runs[0].jxlBytes, webpBytes: runs[0].webpBytes, sha: runs[0].sha
+        };
+      })()`);
+      rows.push({ name, ...got });
+    } catch (e) {
+      rows.push({ name, error: String(e && e.message || e).slice(0, 240) });
+    }
+    iframe.remove();
+  }
+  const ok = rows.filter(r => !r.error);
+  const med = a => { const s = a.slice().sort((x,y)=>x-y); return s.length ? s[Math.floor(s.length/2)] : null; };
+  window.__result = {
+    done: true, quality, effort, pages: ok.length,
+    jxlExportMed: med(ok.map(r => r.jxlExportMs)),
+    webpExportMed: med(ok.map(r => r.webpExportMs)),
+    jxlBytes: ok.reduce((s, r) => s + r.jxlBytes, 0),
+    webpBytes: ok.reduce((s, r) => s + r.webpBytes, 0),
+    rows
+  };
+} catch (e) {
+  window.__result = { done: true, error: String(e && e.stack || e), rows: [] };
+}
+</script>
+</body>

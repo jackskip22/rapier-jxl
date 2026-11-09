@@ -1,0 +1,300 @@
+// __tests__/utils.capture.helpers.test.js – 51% → higher coverage
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import {
+  stripRootShadows,
+  sanitizeCloneForXHTML,
+  shrinkAutoSizeBoxes,
+  estimateKeptHeight,
+  limitDecimals,
+  collectScrollbarCSS,
+  neutralizeRootMarginCollapse
+} from '../src/utils/capture.helpers.js'
+
+beforeEach(() => {
+  document.body.innerHTML = ''
+})
+
+afterEach(() => {
+  document.body.innerHTML = ''
+})
+
+describe('stripRootShadows', () => {
+  it('strips box-shadow, text-shadow, outline, blur/drop-shadow from clone root', () => {
+    const orig = document.createElement('div')
+    orig.style.boxShadow = '0 0 10px red'
+    document.body.appendChild(orig)
+    const clone = document.createElement('div')
+    clone.style.boxShadow = 'inherit'
+    stripRootShadows(orig, clone)
+    expect(clone.style.boxShadow).toBe('none')
+  })
+
+  it('keeps blur() but strips drop-shadow() from the root filter chain', () => {
+    const orig = document.createElement('div')
+    orig.style.filter = 'blur(4px) grayscale(50%) drop-shadow(2px 2px 2px black)'
+    document.body.appendChild(orig)
+    const clone = document.createElement('div')
+    stripRootShadows(orig, clone)
+    expect(clone.style.filter).toContain('blur(4px)')
+    expect(clone.style.filter).toContain('grayscale')
+    expect(clone.style.filter).not.toContain('drop-shadow')
+  })
+
+  it('handles null/undefined gracefully', () => {
+    expect(() => stripRootShadows(null, document.createElement('div'))).not.toThrow()
+    expect(() => stripRootShadows(document.createElement('div'), null)).not.toThrow()
+  })
+})
+
+describe('neutralizeRootMarginCollapse (#426, nodeMap alignment)', () => {
+  it('resolves the matching clone child via nodeMap instead of a stale index when the clone has an extra leading node absent from source (e.g. an inserted pseudo-element)', () => {
+    const src = document.createElement('div')
+    const targetSrc = document.createElement('div')
+    targetSrc.style.marginTop = '30px'
+    src.appendChild(targetSrc)
+    document.body.appendChild(src)
+
+    // Clone has a clone-only decoy inserted before the real child (mirrors how
+    // ::before pseudo-elements are unshift'd into the clone, never registered
+    // in nodeMap — see clone.js). Index-based matching would zero the DECOY's
+    // margin (idx 0) instead of the real target's.
+    const clone = document.createElement('div')
+    const decoyCln = document.createElement('div')
+    decoyCln.style.marginTop = '5px'
+    const targetCln = document.createElement('div')
+    targetCln.style.marginTop = '30px'
+    clone.appendChild(decoyCln)
+    clone.appendChild(targetCln)
+
+    const nodeMap = new Map([[targetCln, targetSrc]]) // decoyCln intentionally unmapped
+
+    neutralizeRootMarginCollapse(src, clone, nodeMap)
+
+    expect(targetCln.style.marginTop).toBe('0px')
+    expect(decoyCln.style.marginTop).toBe('5px')
+  })
+
+  it('looks inside a display:contents child for the last block, and leaves the block before it alone', () => {
+    const src = document.createElement('div')
+    src.innerHTML = '<div style="height:40px;margin-bottom:20px"></div><div style="display:contents"><div style="height:40px"></div></div>'
+    document.body.appendChild(src)
+    const clone = src.cloneNode(true)
+    const nodeMap = new Map([[clone.children[0], src.children[0]], [clone.children[1], src.children[1]]])
+
+    neutralizeRootMarginCollapse(src, clone, nodeMap)
+
+    expect(clone.children[0].style.marginBottom).toBe('20px')
+  })
+
+  it('handles null/undefined gracefully', () => {
+    expect(() => neutralizeRootMarginCollapse(null, document.createElement('div'))).not.toThrow()
+    expect(() => neutralizeRootMarginCollapse(document.createElement('div'), null)).not.toThrow()
+  })
+})
+
+describe('sanitizeCloneForXHTML: comments', () => {
+  it('removes all HTML comments from root', () => {
+    const root = document.createElement('div')
+    root.appendChild(document.createComment('test comment'))
+    root.appendChild(document.createTextNode('text'))
+    root.appendChild(document.createComment('another'))
+    sanitizeCloneForXHTML(root)
+    expect(root.childNodes.length).toBe(1)
+    expect(root.childNodes[0].nodeType).toBe(Node.TEXT_NODE)
+  })
+})
+
+describe('sanitizeCloneForXHTML: attributes', () => {
+  // Note: TreeWalker.nextNode() traverses descendants; root is starting point.
+  // Put attributes on a child so the walker visits it.
+  it('removes attributes with unknown : prefix (keeps xml, xlink)', () => {
+    const root = document.createElement('div')
+    const child = document.createElement('span')
+    child.setAttribute('v-bind:foo', '1')
+    child.setAttribute('valid', '2')
+    root.appendChild(child)
+    sanitizeCloneForXHTML(root)
+    expect(child.hasAttribute('v-bind:foo')).toBe(false)
+    expect(child.getAttribute('valid')).toBe('2')
+  })
+
+  it('removes framework directives (x-, v-, :, on:, bind:, let:, class:) when stripFrameworkDirectives', () => {
+    const root = document.createElement('div')
+    const child = document.createElement('span')
+    child.setAttribute('x-show', '1')
+    child.setAttribute('v-if', '2')
+    child.setAttribute(':class', '3')
+    child.setAttribute('data-ok', '4')
+    root.appendChild(child)
+    sanitizeCloneForXHTML(root, { stripFrameworkDirectives: true })
+    expect(child.hasAttribute('x-show')).toBe(false)
+    expect(child.hasAttribute('v-if')).toBe(false)
+    expect(child.hasAttribute(':class')).toBe(false)
+    expect(child.getAttribute('data-ok')).toBe('4')
+  })
+
+  it('keeps framework directives when stripFrameworkDirectives is false', () => {
+    const root = document.createElement('div')
+    const child = document.createElement('span')
+    child.setAttribute('x-show', '1')
+    root.appendChild(child)
+    sanitizeCloneForXHTML(root, { stripFrameworkDirectives: false })
+    expect(child.getAttribute('x-show')).toBe('1')
+  })
+
+  it('removes xmlns attributes set through setAttribute (#511)', () => {
+    const root = document.createElement('div')
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg ')
+    svg.setAttribute('viewBox', '0 0 16 16')
+    root.appendChild(svg)
+    sanitizeCloneForXHTML(root)
+    expect(svg.hasAttribute('xmlns')).toBe(false)
+    expect(svg.getAttribute('viewBox')).toBe('0 0 16 16')
+  })
+})
+
+describe('sanitizeCloneForXHTML', () => {
+  it('sanitizes attributes and removes comments', () => {
+    const root = document.createElement('div')
+    const child = document.createElement('span')
+    child.setAttribute('x-foo', '1')
+    root.appendChild(child)
+    root.appendChild(document.createComment('c'))
+    sanitizeCloneForXHTML(root)
+    expect(child.hasAttribute('x-foo')).toBe(false)
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_COMMENT)
+    let commentCount = 0
+    while (walker.nextNode()) commentCount++
+    expect(commentCount).toBe(0)
+  })
+})
+
+describe('shrinkAutoSizeBoxes', () => {
+  it('shrinks boxes that lost children (excludeMode:remove)', () => {
+    const src = document.createElement('div')
+    src.appendChild(document.createElement('span'))
+    src.appendChild(document.createElement('span'))
+    const cln = document.createElement('div')
+    cln.appendChild(document.createElement('span'))
+    document.body.appendChild(src)
+    document.body.appendChild(cln)
+    shrinkAutoSizeBoxes(src, cln)
+    expect(cln.style.height).toBe('auto')
+    expect(cln.style.width).toBe('auto')
+  })
+
+  it('handles null root', () => {
+    expect(() => shrinkAutoSizeBoxes(null, document.createElement('div'))).not.toThrow()
+  })
+})
+
+describe('estimateKeptHeight', () => {
+  it('estimates height from children', () => {
+    const container = document.createElement('div')
+    const child = document.createElement('div')
+    child.style.height = '50px'
+    child.style.display = 'block'
+    container.appendChild(child)
+    document.body.appendChild(container)
+    const h = estimateKeptHeight(container, {})
+    // >= 0 was satisfied by a function that ignores its input entirely (every term of the
+    // sum is ||0-guarded). The single 50px block child IS the whole content span.
+    expect(h).toBe(50)
+  })
+
+  it('skips excluded elements (data-capture=exclude, excludeMode:remove)', () => {
+    const container = document.createElement('div')
+    const ex = document.createElement('div')
+    ex.setAttribute('data-capture', 'exclude')
+    ex.style.height = '100px'
+    container.appendChild(ex)
+    document.body.appendChild(container)
+    const h = estimateKeptHeight(container, { excludeMode: 'remove' })
+    // The excluded-and-removed only child leaves borders + padding = 0. The old < 120 bound
+    // also passed with the child COUNTED (h = 100), i.e. with the exclusion broken.
+    expect(h).toBe(0)
+  })
+
+  it('skips excluded elements (predicate, excludeMode:remove)', () => {
+    const container = document.createElement('div')
+    const kept = document.createElement('div')
+    kept.className = 'keep'
+    kept.style.height = '20px'
+    const dropped = document.createElement('div')
+    dropped.className = 'drop'
+    dropped.style.height = '100px'
+    container.appendChild(kept)
+    container.appendChild(dropped)
+    document.body.appendChild(container)
+    const h = estimateKeptHeight(container, {
+      excludePredicates: [(el) => el.classList?.contains('drop')],
+      excludeMode: 'remove'
+    })
+    // Only the kept 20px child counts; < 120 also passed with the predicate branch broken.
+    expect(h).toBe(20)
+  })
+})
+
+describe('limitDecimals', () => {
+  it('rounds to n decimals', () => {
+    expect(limitDecimals(1.23456, 2)).toBe(1.23)
+    expect(limitDecimals(1.23456, 3)).toBe(1.235)
+  })
+  it('returns v unchanged for non-finite', () => {
+    expect(limitDecimals(NaN)).toBeNaN()
+    expect(limitDecimals(Infinity)).toBe(Infinity)
+  })
+})
+
+describe('collectScrollbarCSS (#334)', () => {
+  it('extracts ::-webkit-scrollbar rules from document stylesheets', () => {
+    const style = document.createElement('style')
+    style.textContent = `
+      .scroll-area::-webkit-scrollbar { width: 10px; }
+      .scroll-area::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.6); }
+      .other { color: red; }
+    `
+    document.head.appendChild(style)
+
+    const out = collectScrollbarCSS(document)
+    document.head.removeChild(style)
+
+    expect(out).toContain('::-webkit-scrollbar')
+    expect(out).toContain('::-webkit-scrollbar-thumb')
+    if (!navigator.userAgent.includes('Firefox')) {
+      // Gecko's CSSOM drops declarations it can't apply inside ::-webkit-scrollbar rules
+      expect(out).toContain('width: 10px')
+    }
+    expect(out).not.toContain('.other')
+  })
+
+  it('extracts meter, progress and slider part rules (#502)', () => {
+    // A document of its own: the memo is per document and keyed on rule COUNTS, and once an
+    // engine drops the other vendor's two rules this sheet has as many as the one above.
+    const frame = document.createElement('iframe')
+    document.body.appendChild(frame)
+    const doc = frame.contentDocument
+    const style = doc.createElement('style')
+    style.textContent = `
+      meter::-webkit-meter-optimum-value { color: red; }
+      progress::-webkit-progress-value { color: red; }
+      input::-webkit-slider-thumb { color: red; }
+      meter::-moz-meter-bar { color: red; }
+      progress::-moz-progress-bar { color: red; }
+    `
+    doc.head.appendChild(style)
+    const out = collectScrollbarCSS(doc)
+    frame.remove()
+
+    // Each engine keeps only the vendor prefixes it parses; the other rules never reach CSSOM.
+    const moz = navigator.userAgent.includes('Firefox')
+    for (const part of moz ? ['::-moz-meter-bar', '::-moz-progress-bar'] : ['::-webkit-meter-optimum-value', '::-webkit-progress-value', '::-webkit-slider-thumb']) {
+      expect(out).toContain(part)
+    }
+  })
+
+  it('returns empty string for null document', () => {
+    expect(collectScrollbarCSS(null)).toBe('')
+  })
+})

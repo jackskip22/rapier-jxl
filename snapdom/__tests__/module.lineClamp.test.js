@@ -1,0 +1,220 @@
+// __tests__/module.lineClamp.test.js – lineClamp coverage
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { lineClamp, lineClampTree, textEllipsis } from '../src/modules/lineClamp.js'
+
+beforeEach(() => {
+  document.body.innerHTML = ''
+})
+
+afterEach(() => {
+  document.body.innerHTML = ''
+})
+
+describe('lineClamp', () => {
+  it('returns no-op for null element', () => {
+    const undo = lineClamp(null)
+    expect(typeof undo).toBe('function')
+    undo()
+  })
+
+  it('returns no-op when no -webkit-line-clamp', () => {
+    const div = document.createElement('div')
+    div.textContent = 'Hello world'
+    document.body.appendChild(div)
+    lineClamp(div)
+    expect(div.textContent).toBe('Hello world')
+  })
+
+  it('returns no-op when not plain text container (has child elements)', () => {
+    const div = document.createElement('div')
+    div.style.webkitLineClamp = '2'
+    div.appendChild(document.createElement('span'))
+    div.appendChild(document.createTextNode('text'))
+    document.body.appendChild(div)
+    lineClamp(div)
+    expect(div.childNodes.length).toBe(2)
+  })
+
+  it('clamps text and returns undo when content overflows', () => {
+    const div = document.createElement('div')
+    div.style.webkitLineClamp = '2'
+    div.style.lineHeight = '20px'
+    div.style.fontSize = '16px'
+    div.style.padding = '0'
+    div.style.width = '200px'
+    div.style.overflow = 'hidden'
+    const longText = 'Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.'
+    div.textContent = longText
+    document.body.appendChild(div)
+    const undo = lineClamp(div)
+    expect(div.textContent).toContain('…')
+    undo()
+    expect(div.textContent).toBe(longText)
+  })
+
+  it('clamps to the right line count when line-height is below the font strut (#443)', () => {
+    // In a -webkit-box the line box never shrinks below the font metrics, so a
+    // line-height smaller than the glyph height must not over-truncate. The clamp
+    // must keep as much text as a comfortably-sized line-height with the same
+    // width/font would (both fit the same 2 lines) — the old fs-based guess cut
+    // this down to a single line.
+    const make = (lineHeight) => {
+      const div = document.createElement('div')
+      div.style.cssText = `width:200px;font-size:20px;line-height:${lineHeight};word-break:break-word;display:-webkit-box;overflow:hidden;-webkit-line-clamp:2;-webkit-box-orient:vertical`
+      div.textContent = 'Long Long Long Long Long Long Long Long Long Text.'
+      document.body.appendChild(div)
+      lineClamp(div)
+      return div.textContent
+    }
+    const small = make('18px')
+    const normal = make('24px')
+    expect(small).toContain('…')
+    expect(small).toBe(normal)
+  })
+
+  it('returns no-op when content fits in N lines', () => {
+    const div = document.createElement('div')
+    div.style.webkitLineClamp = '5'
+    div.style.lineHeight = '20px'
+    div.style.fontSize = '16px'
+    div.textContent = 'Short'
+    document.body.appendChild(div)
+    lineClamp(div)
+    expect(div.textContent).toBe('Short')
+  })
+})
+
+describe('textEllipsis (#431)', () => {
+  const truncated = (whiteSpace, overflow) => {
+    const div = document.createElement('div')
+    div.style.cssText = `inline-size:200px;font-size:16px;text-overflow:ellipsis;white-space:${whiteSpace};overflow:${overflow}`
+    const longText = 'Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.'
+    div.textContent = longText
+    document.body.appendChild(div)
+    return { div, longText, undo: textEllipsis(div) }
+  }
+
+  it('bakes a single-line ellipsis when text overflows', () => {
+    const { div, longText, undo } = truncated('nowrap', 'hidden')
+    expect(div.textContent).toContain('…')
+    expect(div.textContent.length).toBeLessThan(longText.length)
+    undo()
+    expect(div.textContent).toBe(longText)
+  })
+
+  it('is a no-op without text-overflow:ellipsis', () => {
+    const div = document.createElement('div')
+    div.style.cssText = 'inline-size:200px;white-space:nowrap;overflow:hidden'
+    div.textContent = 'Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor.'
+    document.body.appendChild(div)
+    const before = div.textContent
+    textEllipsis(div)
+    expect(div.textContent).toBe(before)
+  })
+
+  it('is a no-op when the text is not clipped to a single line', () => {
+    // wrapping text (white-space:normal) is not single-line ellipsis
+    const div = document.createElement('div')
+    div.style.cssText = 'inline-size:200px;text-overflow:ellipsis;white-space:normal;overflow:hidden'
+    div.textContent = 'Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor.'
+    document.body.appendChild(div)
+    const before = div.textContent
+    textEllipsis(div)
+    expect(div.textContent).toBe(before)
+  })
+
+  it('is a no-op when content fits', () => {
+    const div = document.createElement('div')
+    div.style.cssText = 'inline-size:200px;text-overflow:ellipsis;white-space:nowrap;overflow:hidden'
+    div.textContent = 'Short'
+    document.body.appendChild(div)
+    textEllipsis(div)
+    expect(div.textContent).toBe('Short')
+  })
+
+  it('lineClampTree bakes single-line ellipsis on descendants', () => {
+    const outer = document.createElement('div')
+    const inner = document.createElement('div')
+    inner.style.cssText = 'inline-size:200px;text-overflow:ellipsis;white-space:nowrap;overflow:hidden'
+    const longText = 'Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt.'
+    inner.textContent = longText
+    outer.appendChild(inner)
+    document.body.appendChild(outer)
+    const undo = lineClampTree(outer)
+    expect(inner.textContent).toContain('…')
+    undo()
+    expect(inner.textContent).toBe(longText)
+  })
+})
+
+describe('lineClampTree (#386)', () => {
+  it('clamps nested element with -webkit-line-clamp', () => {
+    const outer = document.createElement('div')
+    outer.style.width = '200px'
+    const inner = document.createElement('div')
+    inner.style.webkitLineClamp = '2'
+    inner.style.lineHeight = '20px'
+    inner.style.fontSize = '16px'
+    inner.style.padding = '0'
+    inner.style.overflow = 'hidden'
+    const longText = 'Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore.'
+    inner.textContent = longText
+    outer.appendChild(inner)
+    document.body.appendChild(outer)
+
+    const undo = lineClampTree(outer)
+    expect(inner.textContent).toContain('…')
+    undo()
+    expect(inner.textContent).toBe(longText)
+  })
+
+  it('returns no-op for null', () => {
+    const undo = lineClampTree(null)
+    expect(typeof undo).toBe('function')
+    undo()
+  })
+
+  // The binary search slices by UTF-16 index, so a cut landing between the halves of an
+  // emoji leaves a lone surrogate — encodeURIComponent then rejects the WHOLE serialized
+  // capture with "URIError: URI malformed". Only some widths put the cut in that position,
+  // so this sweeps a range instead of asserting one box.
+  it('never splits a surrogate pair (whole capture used to reject)', async () => {
+    const { snapdom } = await import('../src/api/snapdom.js')
+    const failures = []
+    for (let w = 80; w <= 250; w += 2) {
+      const el = document.createElement('div')
+      el.style.cssText = `width:${w}px;font:14px/18px Arial;white-space:nowrap;overflow:hidden;text-overflow:ellipsis`
+      el.textContent = 'Ship it 🚀🎉🥳🍕😀🤝🌟🔥💡🎯 team update from the release channel'
+      document.body.appendChild(el)
+      try {
+        await snapdom(el, { cache: 'disabled' })
+      } catch (e) {
+        failures.push(`${w}px: ${e}`)
+      }
+      el.remove()
+    }
+    expect(failures).toEqual([])
+  })
+})
+
+// #529: scrollHeight is an integer. With a fractional line box the one-line probe read half a
+// pixel short, two real lines overshot the 2x target by a pixel, and Firefox (14px Arial lays
+// out at 16.45px) got one line where the page shows two.
+describe('lineClamp with a fractional line height (#529)', () => {
+  it('keeps every clamped line', () => {
+    const el = document.createElement('div')
+    el.style.cssText = 'width:160px;font:14px Arial;line-height:16.45px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden'
+    el.textContent = 'Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt'
+    document.body.appendChild(el)
+    try {
+      const undo = lineClamp(el)
+      const baked = el.textContent
+      undo()
+      expect(baked.endsWith('…')).toBe(true)
+      // The cut must land on the second line, past the first line's last word.
+      expect(baked).toContain('consectetur')
+    } finally {
+      el.remove()
+    }
+  })
+})

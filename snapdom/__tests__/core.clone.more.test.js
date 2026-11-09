@@ -1,0 +1,1047 @@
+// __tests__/core.clone.more.test.js
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { sanitizeCloneForXHTML } from '../src/utils/capture.helpers.js'
+import { deepClone } from '../src/core/clone.js'
+import { NO_CAPTURE_TAGS } from '../src/utils/css.js'
+import { createCheckboxRadioReplacement } from '../src/utils/clone.helpers.js'
+import { isFirefox } from '../src/utils/browser.js'
+
+// fresh session cache each test
+const makeSession = () => ({
+  styleMap: new Map(),
+  styleCache: new WeakMap(),
+  nodeMap: new Map(),
+})
+
+describe('deepClone – extra coverage', () => {
+  let session
+
+  beforeEach(() => {
+    // reset-ish session structures if available
+    session = makeSession()
+  })
+
+  it('clones a Text node (TEXT_NODE path)', async () => {
+    const t = document.createTextNode('hello')
+    const c = await deepClone(t, session, {})
+    expect(c.nodeType).toBe(Node.TEXT_NODE)
+    expect(c.nodeValue).toBe('hello')
+    expect(c).not.toBe(t)
+  })
+
+  it('freezes a responsive candidate before currentSrc loads and strips srcset/sizes', async () => {
+    const img = document.createElement('img')
+    // An inline fallback must not hide the responsive candidates.
+    img.src = 'data:image/gif;base64,R0lGODlhAQABAAAAACw='
+    img.setAttribute('srcset', 'a.png 1x, b.png 2x')
+    img.setAttribute('sizes', '(max-width: 600px) 100vw, 600px')
+
+    const clone = await deepClone(img, session, {})
+    expect(clone.tagName).toBe('IMG')
+    // Selection may retain a relative attribute; the reflected URL resolves it against
+    // the document. Either density candidate is valid for the test browser's DPR.
+    expect(['a.png', 'b.png'].map(url => new URL(url, img.baseURI).href)).toContain(clone.src)
+    // stripped by freezeImgSrcset
+    expect(clone.hasAttribute('srcset')).toBe(false)
+    expect(clone.hasAttribute('sizes')).toBe(false)
+    // eager/sync hints applied
+    expect(clone.loading).toBe('eager')
+    expect(clone.decoding).toBe('sync')
+  })
+
+  it('does not freeze when no chosen URL (keeps srcset/sizes)', async () => {
+    const img = document.createElement('img')
+    img.setAttribute('srcset', 'a.png 1x')
+    img.setAttribute('sizes', '100vw')
+    // leave src and currentSrc empty
+
+    const clone = await deepClone(img, session, {})
+    // WebKit/Firefox may resolve a currentSrc from srcset even detached; the invariant
+    // is freeze ⇒ responsive attributes stripped, no freeze ⇒ kept intact.
+    if (clone.hasAttribute('src')) {
+      expect(clone.hasAttribute('srcset')).toBe(false)
+      expect(clone.hasAttribute('sizes')).toBe(false)
+    } else {
+      expect(clone.getAttribute('srcset')).toBe('a.png 1x')
+      expect(clone.getAttribute('sizes')).toBe('100vw')
+    }
+  })
+
+  it('does not exclude when selector is invalid; only warns', async () => {
+  const el = document.createElement('div')
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+  const out = await deepClone(el, session, { exclude: ['::bad('], debug: true })
+
+  expect(out).toBeInstanceOf(HTMLElement)
+  expect(out.tagName).toBe('DIV')
+  // It should not return the hidden spacer for invalid selector
+  expect(out.style.visibility).not.toBe('hidden')
+  expect(warn).toHaveBeenCalled()
+
+  warn.mockRestore()
+})
+
+it('exclude by selector with excludeMode = "remove" skips element from clonning', async () => {
+  const el = document.createElement('div')
+  el.classList.add('exclude-me')
+  const out = await deepClone(el, session, { exclude: ['.exclude-me'], excludeMode: 'remove' })
+  expect(out).not.toBeInstanceOf(HTMLElement)
+})
+
+  it('excludes by predicate; and handles a throwing predicate', async () => {
+    // predicate true -> spacer
+    const a = document.createElement('p')
+    const out1 = await deepClone(a, session, { excludePredicates: [() => true], excludeMode: 'hide' })
+    expect(out1).toBeInstanceOf(HTMLElement)
+    expect(out1.style.visibility).toBe('hidden')
+
+    // predicate throws -> warn, node kept (a broken predicate must not silently drop content)
+    const b = document.createElement('p')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const out2 = await deepClone(b, session, { excludePredicates: [() => { throw new Error('boom') }], debug: true })
+    expect(out2).toBeInstanceOf(HTMLElement)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
+  it('exclude predicate with excludeMode "remove" skips the element entirely', async () => {
+    const a = document.createElement('p')
+    const out1 = await deepClone(a, session, { excludePredicates: [() => true], excludeMode: 'remove' })
+    expect(out1).not.toBeInstanceOf(HTMLElement)
+  })
+
+  it('IFRAME fallback uses gradient style and element size', async () => {
+    const frame = document.createElement('iframe')
+    // offset* needs layout the detached iframe does not have; provide getters
+    Object.defineProperty(frame, 'offsetWidth', { configurable: true, get: () => 123 })
+    Object.defineProperty(frame, 'offsetHeight', { configurable: true, get: () => 45 })
+
+   const fallback = await deepClone(frame, session, { placeholders: true })
+    expect(fallback.tagName).toBe('DIV')
+    expect(fallback.style.width).toBe('123px')
+    expect(fallback.style.height).toBe('45px')
+    expect(fallback.style.backgroundImage).toContain('repeating-linear-gradient')
+  })
+
+  it('throws and logs when base clone (node.cloneNode) fails', async () => {
+    const el = document.createElement('div')
+    const err = new Error('fail')
+    const spy = vi.spyOn(el, 'cloneNode').mockImplementation(() => { throw err })
+    const log = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await expect(() => deepClone(el, session, { debug: true })).rejects.toThrow('fail')
+    expect(log).toHaveBeenCalled()
+    spy.mockRestore()
+    log.mockRestore()
+  })
+
+  it('textarea keeps value and explicit size via getBoundingClientRect', async () => {
+    const ta = document.createElement('textarea')
+    ta.value = 'hello'
+    vi.spyOn(ta, 'getBoundingClientRect').mockReturnValue({ width: 80, height: 30 })
+    const clone = await deepClone(ta, session, {})
+    expect(clone.value).toBe('hello')
+    expect(clone.style.width).toBe('80px')
+    expect(clone.style.height).toBe('30px')
+  })
+
+  it('input copies value/checked/attributes and select applies selected on options', async () => {
+    // input
+    const input = document.createElement('input')
+    input.type = 'checkbox'
+    input.checked = true
+    input.value = 'abc'
+    const c1 = await deepClone(input, session, {})
+    if (isFirefox()) {
+      // Firefox can't render input state in foreignObject: deepClone swaps in a visual replacement
+      expect(c1.tagName).not.toBe('INPUT')
+    } else {
+      expect(c1.value).toBe('abc')
+      expect(c1.checked).toBe(true)
+      expect(c1.getAttribute('value')).toBe('abc')
+      expect(c1.hasAttribute('checked')).toBe(true)
+    }
+
+    // select
+    const sel = document.createElement('select')
+    const o1 = document.createElement('option'); o1.value = 'a'; sel.appendChild(o1)
+    const o2 = document.createElement('option'); o2.value = 'b'; sel.appendChild(o2)
+    sel.value = 'b'
+    const c2 = await deepClone(sel, session, {})
+    expect(c2.value).toBe('b')
+    expect([...c2.options].find(o => o.value === 'b')?.hasAttribute('selected')).toBe(true)
+    expect([...c2.options].find(o => o.value === 'a')?.hasAttribute('selected')).toBe(false)
+  })
+
+   it('ShadowRoot with <slot> ShadowRoot with <slot>: injects a scoped style[data-sd] and clones no shadow content', async () => {
+     const host = document.createElement('div')
+     const sr = host.attachShadow({ mode: 'open' })
+     const style = document.createElement('style')
+     style.textContent = '.x{color:red}'
+     const slot = document.createElement('slot')
+     sr.appendChild(style)
+     sr.appendChild(slot)
+
+     const clone = await deepClone(host, session, {})
+    // nuevo comportamiento: se inyecta un <style data-sd="sN"> en el host clone
+    const injected = clone.querySelector && clone.querySelector('style[data-sd]')
+    expect(!!injected).toBe(true)
+    // y no hay otro contenido aparte del style inyectado
+    const nonStyleChildren = Array.from(clone.childNodes || [])
+      .filter(n => !(n.nodeType === 1 && n.tagName === 'STYLE'))
+    expect(nonStyleChildren.length).toBe(0)
+   })
+
+  it('<slot> outside ShadowRoot clones assignedNodes and returns DocumentFragment', async () => {
+    const s = document.createElement('slot')
+    // emulate assignedNodes() API
+    Object.defineProperty(s, 'assignedNodes', {
+      configurable: true,
+      value: () => [document.createTextNode('slotted!')],
+    })
+
+    const frag = await deepClone(s, session, {})
+    expect(frag.nodeType).toBe(Node.DOCUMENT_FRAGMENT_NODE)
+    // fragment should contain a text node "slotted!"
+    const txt = frag.firstChild
+    expect(txt.nodeType).toBe(Node.TEXT_NODE)
+    expect(txt.nodeValue).toBe('slotted!')
+  })
+
+  it('deepClone handles data-capture="exclude" with excludeMode = "remove"', async () => {
+    const el = document.createElement('div')
+    el.setAttribute('data-capture', 'exclude')
+    const out1 = await deepClone(el, session, { excludeMode: 'remove' })
+    expect(out1).not.toBeInstanceOf(HTMLElement)
+  })
+})
+
+describe('deepClone – targeted branches for coverage gaps', () => {
+  let session
+  beforeEach(() => {
+    // soft reset of session containers
+    session = makeSession()
+  })
+
+  /**
+   * Covers: NO_CAPTURE_TAGS early-return (e.g., <script>, <style>…).
+   * Also verifies we truly short-circuit and do not produce spacers.
+   */
+  it('returns null for tags in NO_CAPTURE_TAGS', async () => {
+    const el = document.createElement('script')
+    expect(NO_CAPTURE_TAGS.has('script')).toBe(true) // sanity
+    const out = await deepClone(el, session, {})
+    expect(out).toBeNull()
+  })
+
+  /**
+   * Covers: IMG width/height dataset when BCR is 0 and attributes exist.
+   * Lines around IMG fallback sizing (data-snapdomWidth/Height).
+   */
+  it('IMG sets data-snapdomWidth/Height using attr/prop fallback when BCR is 0', async () => {
+    const img = document.createElement('img')
+    img.setAttribute('width', '33')
+    img.setAttribute('height', '22')
+    // BCR returns 0 → force attribute/prop fallback
+    vi.spyOn(img, 'getBoundingClientRect').mockReturnValue({ width: 0, height: 0 })
+    const clone = await deepClone(img, session, {})
+    expect(clone.dataset.snapdomWidth).toBe('33')
+    expect(clone.dataset.snapdomHeight).toBe('22')
+  })
+
+  /**
+   * Covers: CSS transform double-scale bug
+   * IMG should NOT double-scale when ancestor has transform:scale()
+   * offsetWidth/offsetHeight returns pre-transform dimensions regardless of nesting depth
+   */
+  it('IMG preserves dimensions when parent has transform:scale()', async () => {
+    const container = document.createElement('div')
+    container.style.cssText = 'transform: scale(1.5); width: 200px; height: 200px;'
+
+    const img = document.createElement('img')
+    img.width = 100
+    img.height = 100
+    img.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=='
+
+    container.appendChild(img)
+    document.body.appendChild(container)
+
+    const containerClone = await deepClone(container, session, {})
+    const imgClone = containerClone.querySelector('img')
+
+    // Container should preserve its pre-transform dimensions (200x200)
+    expect(containerClone.style.width).toBe('200px')
+    expect(containerClone.style.height).toBe('200px')
+
+    // Image should have original 100x100, NOT 150x150 (scaled by parent)
+    expect(imgClone.dataset.snapdomWidth).toBe('100')
+    expect(imgClone.dataset.snapdomHeight).toBe('100')
+
+    container.remove()
+  })
+
+  /**
+   * Covers: CANVAS element with parent scale
+   */
+  it('CANVAS handles parent transform:scale()', async () => {
+    const container = document.createElement('div')
+    container.style.transform = 'scale(1.5)'
+
+    const canvas = document.createElement('canvas')
+    canvas.width = 100
+    canvas.height = 100
+
+    container.appendChild(canvas)
+    document.body.appendChild(container)
+
+    const clone = await deepClone(canvas, session, {})
+
+    // Clone should be IMG with original dimensions
+    expect(clone.tagName).toBe('IMG')
+    expect(clone.width).toBe(100)
+    expect(clone.height).toBe(100)
+
+    container.remove()
+  })
+
+  /**
+   * Covers: textarea pendingTextAreaValue → final textContent assignment path.
+   */
+  it('TEXTAREA applies pendingTextAreaValue to clone.textContent', async () => {
+    const ta = document.createElement('textarea')
+    ta.value = 'typed'
+    vi.spyOn(ta, 'getBoundingClientRect').mockReturnValue({ width: 50, height: 20 })
+    const clone = await deepClone(ta, session, {})
+    expect(clone.textContent).toBe('typed')
+    expect(clone.style.width).toBe('50px')
+    expect(clone.style.height).toBe('20px')
+  })
+
+  /**
+   * Covers: input.indeterminate branch and attribute mirroring.
+   */
+  it('INPUT takes the drawn replacement when it is indeterminate', async () => {
+    // `indeterminate` is a DOM property and XMLSerializer cannot emit it, so a cloned native
+    // control captures as plain unchecked — the middle state silently reads as "off".
+    // Measured dark pixels for unchecked / indeterminate / checked on a 30px box:
+    // chromium 116 / 116 / 778 and webkit 10 / 10 / 57 before this, against firefox
+    // 224 / 272 / 826, which already replaced every checkbox. The replacement is now the
+    // path for an indeterminate box on EVERY engine — see core.clone.indeterminate.test.js,
+    // which asserts the dash in pixels.
+    const input = document.createElement('input')
+    input.type = 'checkbox'
+    input.checked = false
+    input.indeterminate = true
+    input.value = 'vv'
+    const c = await deepClone(input, session, {})
+    expect(c.tagName).not.toBe('INPUT')
+  })
+
+  it('INPUT still copies checked/value when it is NOT indeterminate', async () => {
+    const input = document.createElement('input')
+    input.type = 'checkbox'
+    input.checked = false
+    input.value = 'vv'
+    const c = await deepClone(input, session, {})
+    if (isFirefox()) {
+      // Firefox replaces every checkbox: it paints no native control in a foreignObject.
+      expect(c.tagName).not.toBe('INPUT')
+    } else {
+      expect(c.value).toBe('vv')
+      expect(c.checked).toBe(false)
+      expect(c.getAttribute('value')).toBe('vv')
+    }
+  })
+
+  /**
+   * Covers: SLOT fallback path when assignedNodes() is empty → clones childNodes. Fallback
+   * content belongs to the shadow tree itself, so it carries no slotted token and the tree's
+   * own rules still reach it.
+   */
+  it('clones SLOT fallback as part of its own shadow scope', async () => {
+    const host = document.createElement('div')
+    host.attachShadow({ mode: 'open' }).innerHTML = `
+      <style>.fallback { color: red }</style>
+      <slot><span class="fallback">fallback!</span></slot>
+    `
+    document.body.appendChild(host)
+
+    const clone = await deepClone(host, session, {})
+    host.remove()
+    const scope = clone.getAttribute('data-sd')
+    const clonedSpan = clone.querySelector('.fallback')
+
+    expect(clonedSpan.textContent).toBe('fallback!')
+    expect(clonedSpan.hasAttribute('data-sd-slotted')).toBe(false)
+    expect(clone.querySelector('style[data-sd]').textContent)
+      .toContain(`.fallback:not([data-sd-slotted~="${scope}"])`)
+  })
+
+  // Nested components: the leaf is assigned twice over (outer slot → inner slot), so it carries
+  // both tokens; the inner component's own surface only carries the outer one, which is what
+  // keeps the outer CSS from piercing the inner tree while the inner CSS still styles it.
+  it('keeps nested slot markers scoped without duplicating assigned content', async () => {
+    const outer = document.createElement('div')
+    outer.attachShadow({ mode: 'open' }).innerHTML = `
+      <style>.inside { color: red }</style>
+      <slot></slot>
+    `
+
+    const inner = document.createElement('section')
+    inner.attachShadow({ mode: 'open' }).innerHTML = `
+      <style>.inside { color: blue }</style>
+      <div class="inside"><slot></slot></div>
+    `
+    const leaf = document.createElement('span')
+    leaf.className = 'leaf'
+    leaf.textContent = 'once'
+    inner.appendChild(leaf)
+    outer.appendChild(inner)
+    document.body.appendChild(outer)
+
+    const clone = await deepClone(outer, session, {})
+    outer.remove()
+    const outerScope = clone.getAttribute('data-sd')
+    const innerClone = clone.querySelector('section[data-sd]')
+    const innerScope = innerClone.getAttribute('data-sd')
+    const surface = innerClone.querySelector('.inside')
+    const leafClone = innerClone.querySelector('.leaf')
+
+    expect(innerClone.getAttribute('data-sd-slotted').split(/\s+/)).toContain(outerScope)
+    expect(surface.getAttribute('data-sd-slotted').split(/\s+/)).toContain(outerScope)
+    expect(surface.getAttribute('data-sd-slotted').split(/\s+/)).not.toContain(innerScope)
+    expect(leafClone.getAttribute('data-sd-slotted').split(/\s+/)).toEqual(
+      expect.arrayContaining([outerScope, innerScope]),
+    )
+    expect(innerClone.querySelectorAll('.leaf')).toHaveLength(1)
+
+    const css = [...clone.querySelectorAll('style[data-sd]')].map((style) => style.textContent).join('\n')
+    expect(css).toContain(`.inside:not([data-sd-slotted~="${outerScope}"])`)
+    expect(css).toContain(`.inside:not([data-sd-slotted~="${innerScope}"])`)
+  })
+
+  /**
+   * Covers: SLOT assignedNodes path but with Element (not text) to exercise markSlottedSubtree element marking.
+   */
+  it('SLOT assignedNodes path clones elements and flags them as slotted', async () => {
+    const slot = document.createElement('slot')
+    const given = document.createElement('em'); given.textContent = 'slotted!'
+    Object.defineProperty(slot, 'assignedNodes', {
+      configurable: true,
+      value: () => [given],
+    })
+    const frag = await deepClone(slot, session, {})
+    const em = frag.firstChild
+    expect(em.tagName).toBe('EM')
+    expect(em.getAttribute('data-sd-slotted')).toBe('')
+  })
+
+  it('ShadowRoot injects rewritten CSS and seeds custom props used by var()', async () => {
+  const host = document.createElement('div')
+  const sr = host.attachShadow({ mode: 'open' })
+
+  // Host carries the custom prop
+  host.style.setProperty('--brand', 'hotpink')
+
+  const style = document.createElement('style')
+  style.textContent = `
+    .btn { color: var(--brand) }
+    ::slotted(a) { text-decoration: underline }
+  `
+  sr.appendChild(style)
+
+  // ⚠️ important: attach to DOM so computed styles resolve
+  document.body.appendChild(host)
+
+  const out = await deepClone(host, session, {})
+  const injected = out.querySelector('style[data-sd]')
+  expect(!!injected).toBe(true)
+  const css = injected?.textContent || ''
+
+  // Seeding rule present
+  expect(css).toMatch(/--brand:\s*hotpink/)
+  // Rewriting applied
+  expect(css).toMatch(/:where\(\[data-sd="s\d+"\]\s+\.btn:not\(\[data-sd-slotted~="s\d+"\]\)\)/)
+  expect(css).toMatch(/:where\(\[data-sd="s\d+"\]\s+a\)/)
+
+  host.remove()
+})
+
+  it('ShadowRoot cloning skips <style> nodes in child iteration', async () => {
+  const host = document.createElement('div')
+  const sr = host.attachShadow({ mode: 'open' })
+  const style = document.createElement('style')
+  style.textContent = '.x{color:red}'
+  const txt = document.createTextNode('inside')
+  sr.appendChild(style)
+  sr.appendChild(txt)
+
+  const clone = await deepClone(host, session, {})
+
+  // solo debe estar el style inyectado (data-sd), no el <style> original del SR
+  const authoredStyles = Array.from(clone.querySelectorAll('style')).filter(s => !s.hasAttribute('data-sd'))
+  expect(authoredStyles.length).toBe(0)
+
+  // el texto puede estar presente (no lo filtramos)
+  expect((clone.textContent || '')).toContain('inside')
+})
+
+})
+describe('deepClone – extra targets to lift coverage', () => {
+  let session
+  const makeSession = () => ({
+    styleMap: new Map(),
+    styleCache: new WeakMap(),
+    nodeMap: new Map(),
+  })
+
+  beforeEach(() => {
+    session = makeSession()
+  })
+
+  it('ShadowRoot seeds custom props from :root (documentElement) when host has none', async () => {
+    // :root define la var, host no
+    document.documentElement.style.setProperty('--brand', 'deepskyblue')
+
+    const host = document.createElement('div')
+    const sr = host.attachShadow({ mode: 'open' })
+    const style = document.createElement('style')
+    style.textContent = `
+      .btn { color: var(--brand) }
+      /* un selector ya envuelto no debe duplicarse */
+      :where(.already){ opacity: .5 }
+      /* un @rule debe preservarse tal cual */
+      @media (min-width: 1px) { .m { display: block } }
+      /* ::slotted no excluye rightmost */
+      ::slotted(a){ text-decoration: underline }
+    `
+    sr.appendChild(style)
+
+    // anclar para que getComputedStyle(root) funcione estable
+    document.body.appendChild(host)
+
+    const out = await deepClone(host, session, {})
+    const injected = out.querySelector('style[data-sd]')
+    expect(!!injected).toBe(true)
+    const css = injected.textContent || ''
+
+    // seed desde :root
+    expect(css).toMatch(/\[data-sd="s\d+"\]\{[^}]*--brand:\s*deepskyblue/i)
+
+    // ::slotted reescrito como descendiente dentro del scope (sin exclusión slotted)
+    expect(css).toMatch(/:where\(\[data-sd="s\d+"\]\s+a\)/)
+
+     const alreadyMatches = css.match(/:where\(\.already\)/g) || []
+      expect(alreadyMatches.length).toBe(1)
+       expect(css).toMatch(/:where\(\s*\[?data-sd="s\d+"\]?[^)]*\)\s*[\s\S]*:where\(\.already\)\s*:not\(\[data-sd-slotted~="s\d+"\]\)\)/)
+
+    // @media is resolved during extraction: the condition matches (min-width:1px), so the
+    // regla interna se inlinea SIN wrapper (el viewport del SVG no debe re-evaluarla) y
+    // recibe el scope como cualquier otra.
+    expect(css).not.toContain('@media')
+    expect(css).toMatch(/\.m\s*:not\(\[data-sd-slotted~="s\d+"\]\)\)\s*\{\s*display:\s*block/i)
+
+    // limpiar
+    host.remove()
+    document.documentElement.style.removeProperty('--brand')
+  })
+
+  it('nextShadowScopeId increments across hosts (s1, s2) y addNotSlottedRightmost no duplica :not([data-sd-slotted])', async () => {
+    // primer host
+    const h1 = document.createElement('div')
+    const s1 = h1.attachShadow({ mode: 'open' })
+    const st1 = document.createElement('style')
+    st1.textContent = '.x { color: red }'
+    s1.appendChild(st1)
+
+    // segundo host
+    const h2 = document.createElement('div')
+    const s2 = h2.attachShadow({ mode: 'open' })
+    const st2 = document.createElement('style')
+    // ya contiene :not([data-sd-slotted]) → no se debe duplicar al reescribir
+    st2.textContent = '.y:not([data-sd-slotted]) { color: blue }'
+    s2.appendChild(st2)
+
+    const out1 = await deepClone(h1, session, {})
+    const out2 = await deepClone(h2, session, {})
+    const css2 = out2.querySelector('style[data-sd]')?.textContent || ''
+
+    // scopes distintos
+    const sId1 = (out1.getAttribute('data-sd') || '').match(/^s\d+$/)?.[0]
+    const sId2 = (out2.getAttribute('data-sd') || '').match(/^s\d+$/)?.[0]
+    expect(sId1).not.toBeFalsy()
+    expect(sId2).not.toBeFalsy()
+    expect(sId1).not.toBe(sId2)
+
+    // .y already carried :not([data-sd-slotted]), so it must not be duplicated
+    // (checking there is a single occurrence next to .y is enough)
+    const occurrences = (css2.match(/\.y:not\(\[data-sd-slotted\]\)/g) || []).length
+    expect(occurrences).toBe(1)
+  })
+
+  it('IFRAME rasterization path: pin/unpin viewport, border-aware content sizing, wrapper keeps rect size', async () => {
+    const iframe = document.createElement('iframe')
+
+    // Simular same-origin: contentDocument y documentElement disponibles
+    const fakeDoc = document.implementation.createHTMLDocument('inner')
+    // track de estilos inyectados para validar pin/unpin
+    const appended = []
+    const origAppendChild = fakeDoc.head.appendChild.bind(fakeDoc.head)
+    fakeDoc.head.appendChild = (node) => { appended.push(node); return origAppendChild(node) }
+
+    Object.defineProperty(iframe, 'contentDocument', { configurable: true, get: () => fakeDoc })
+    Object.defineProperty(iframe, 'contentWindow', { configurable: true, get: () => ({ document: fakeDoc }) })
+
+    // BCR total del iframe (incluye bordes)
+    vi.spyOn(iframe, 'getBoundingClientRect').mockReturnValue({ width: 200, height: 150 })
+
+    // Bordes para que measureContentBox reste 2px en total por lado (ejemplo)
+    Object.assign(iframe.style, {
+      borderLeftWidth: '2px',
+      borderRightWidth: '2px',
+      borderTopWidth: '1px',
+      borderBottomWidth: '1px',
+    })
+
+    // offsetWidth/Height when placeholders are used, but here it rasterizes
+    Object.defineProperty(iframe, 'offsetWidth', { configurable: true, get: () => 200 })
+    Object.defineProperty(iframe, 'offsetHeight', { configurable: true, get: () => 150 })
+
+    // snapdom simulado en options: toPng devuelve un <img> listo
+    const snap = {
+      toPng: async () => {
+        const img = document.createElement('img')
+        // no setear src real: no es necesario para este test
+        return img
+      }
+    }
+
+    const out = await deepClone(iframe, session, { snap })
+
+    // 1) A pin style was created in the iframe (data-sd-iframe-pin) and removed on exit
+    const hadPin = appended.some(n => n.tagName === 'STYLE' && n.getAttribute('data-sd-iframe-pin') !== null)
+    expect(hadPin).toBe(true)
+    // after rasterizeIframe's finally, that <style> should be gone from the head
+    const stillPinned = !!fakeDoc.head.querySelector('style[data-sd-iframe-pin]')
+    expect(stillPinned).toBe(false)
+
+    // 2) Wrapper sized from the BCR (rounded)
+    expect(out.tagName).toBe('DIV')
+    expect(out.style.width).toBe('200px')
+    expect(out.style.height).toBe('150px')
+
+    // 3) El <img> interno adopta el content-box (resta bordes):
+    const img = out.querySelector('img')
+    expect(img).toBeTruthy()
+    expect(img.style.width).toBe('200px')
+    expect(img.style.height).toBe('150px')
+  })
+
+  it('IFRAME rasterization fails when snapdom.toPng is missing → fallback spacer/placeholder', async () => {
+    const iframe = document.createElement('iframe')
+    // same-origin simulado pero sin snapdom usable
+    const fakeDoc = document.implementation.createHTMLDocument('x')
+    Object.defineProperty(iframe, 'contentDocument', { configurable: true, get: () => fakeDoc })
+    Object.defineProperty(iframe, 'contentWindow', { configurable: true, get: () => ({ document: fakeDoc }) })
+    Object.defineProperty(iframe, 'offsetWidth', { configurable: true, get: () => 80 })
+    Object.defineProperty(iframe, 'offsetHeight', { configurable: true, get: () => 40 })
+
+    // con placeholders → debe devolver fallback DIV con gradiente
+    const out1 = await deepClone(iframe, session, { placeholders: true })
+    expect(out1.tagName).toBe('DIV')
+    expect(out1.style.backgroundImage).toContain('repeating-linear-gradient')
+
+    // without placeholders: an invisible spacer sized from the BCR
+    vi.spyOn(iframe, 'getBoundingClientRect').mockReturnValue({ width: 80, height: 40 })
+    const out2 = await deepClone(iframe, session, { placeholders: false })
+    expect(out2.tagName).toBe('DIV')
+    expect(out2.style.visibility).toBe('hidden')
+    expect(out2.style.width).toBe('80px')
+    expect(out2.style.height).toBe('40px')
+  })
+
+  it('collects multiple custom props in CSS and deduplica', async () => {
+    // Indirect validation through the seed: two distinct props, referenced by var()
+    const host = document.createElement('div')
+    const sr = host.attachShadow({ mode: 'open' })
+    // defino ambas en host y en :root para asegurar valores
+    host.style.setProperty('--a', '1px')
+    document.documentElement.style.setProperty('--b', 'solid')
+
+    const st = document.createElement('style')
+    st.textContent = `
+      .x { border-width: var(--a); border-style: var(--b); }
+    `
+    sr.appendChild(st)
+
+    document.body.appendChild(host)
+    const out = await deepClone(host, session, {})
+    const css = out.querySelector('style[data-sd]')?.textContent || ''
+
+    // ambas aparecen seed-eadas
+    expect(css).toMatch(/--a:\s*1px/)
+    expect(css).toMatch(/--b:\s*solid/)
+
+    host.remove()
+    document.documentElement.style.removeProperty('--b')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tier 2 fix tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('deepClone – Tier 2 fixes', () => {
+  let session
+  beforeEach(() => {
+    session = {
+      styleMap: new Map(),
+      styleCache: new WeakMap(),
+      nodeMap: new Map(),
+    }
+  })
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  // ── #277 ──────────────────────────────────────────────────────────────────
+  it('#277 — <video> is replaced by <img> to prevent canvas tainting', async () => {
+    const video = document.createElement('video')
+    document.body.appendChild(video)
+    const clone = await deepClone(video, session, {})
+    expect(clone.tagName).toBe('IMG')
+  })
+
+  it('#277 — video clone img src is a data URL (frame capture from blank canvas)', async () => {
+    const video = document.createElement('video')
+    document.body.appendChild(video)
+    const clone = await deepClone(video, session, {})
+    // canvas.toDataURL returns a valid data URL even for a blank canvas
+    const src = clone.getAttribute('src') || clone.src || ''
+    expect(src).toMatch(/^data:/)
+  })
+
+  it('#277 — video without frame falls back to poster when canvas is blank', async () => {
+    const video = document.createElement('video')
+    // Stub canvas so toDataURL returns blank to force poster fallback
+    const origCreate = document.createElement.bind(document)
+    vi.spyOn(document, 'createElement').mockImplementation((tag) => {
+      if (tag === 'canvas') {
+        const c = origCreate('canvas')
+        c.getContext = () => null  // simulate no 2d context
+        return c
+      }
+      return origCreate(tag)
+    })
+    video.poster = 'data:image/png;base64,ABC'
+    document.body.appendChild(video)
+    const clone = await deepClone(video, session, {})
+    vi.restoreAllMocks()
+    expect(clone.tagName).toBe('IMG')
+    expect(clone.getAttribute('src') || clone.src).toContain('data:image/png')
+  })
+
+  // ── #365 ──────────────────────────────────────────────────────────────────
+  it('#365 — SVG painting element has CSS fill/stroke inlined as style', async () => {
+    const styleEl = document.createElement('style')
+    styleEl.textContent = '#sd-test-path { fill: rgb(255, 0, 0); stroke: rgb(0, 128, 0); }'
+    document.head.appendChild(styleEl)
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+    path.id = 'sd-test-path'
+    path.setAttribute('d', 'M0 0 L10 10')
+    svg.appendChild(path)
+    document.body.appendChild(svg)
+
+    const clone = await deepClone(path, session, {})
+
+    document.head.removeChild(styleEl)
+
+    expect(clone.style.fill).toBe('rgb(255, 0, 0)')
+    expect(clone.style.stroke).toBe('rgb(0, 128, 0)')
+  })
+
+  it('#365 — non-SVG element is not affected by SVG style inlining', async () => {
+    const div = document.createElement('div')
+    div.style.color = 'red'
+    document.body.appendChild(div)
+    const clone = await deepClone(div, session, {})
+    // div.style.fill should remain empty (only SVG elements get fill inlined)
+    expect(clone.style.fill).toBeFalsy()
+  })
+
+  // ── NEW-7 ─────────────────────────────────────────────────────────────────
+  it('NEW-7 — cross-origin iframe warns under debug, and only there', async () => {
+    const frame = document.createElement('iframe')
+    // Simulate cross-origin: contentDocument access throws
+    Object.defineProperty(frame, 'contentDocument', {
+      configurable: true,
+      get() { throw new DOMException('Blocked by CORS', 'SecurityError') },
+    })
+    Object.defineProperty(frame, 'contentWindow', {
+      configurable: true,
+      get() { return null },
+    })
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await deepClone(frame, session, { placeholders: false })
+    expect(warn).not.toHaveBeenCalled()
+    await deepClone(frame, session, { placeholders: false, debug: true })
+    const called = warn.mock.calls.some(args =>
+      args.join(' ').toLowerCase().includes('cross-origin')
+    )
+    warn.mockRestore()
+    expect(called).toBe(true)
+  })
+
+  // ── #315 ──────────────────────────────────────────────────────────────────
+  it('#315 — input with placeholder carries color as custom properties on the clone', async () => {
+    const styleEl = document.createElement('style')
+    // Give our test input a distinctly non-transparent placeholder color
+    styleEl.textContent = '#sd-ph-input::placeholder { color: rgb(80, 80, 80); }'
+    document.head.appendChild(styleEl)
+
+    const input = document.createElement('input')
+    input.id = 'sd-ph-input'
+    input.placeholder = 'Search…'
+    // No value → satisfies the !node.value guard
+    document.body.appendChild(input)
+
+    const phColor = getComputedStyle(input, '::placeholder').color
+    const clone = await deepClone(input, session, {})
+
+    document.head.removeChild(styleEl)
+
+    // #512: <input> is a void element, so the rule must not be a child of the clone
+    expect(clone.childNodes.length).toBe(0)
+    expect(clone.hasAttribute('data-sd-ph')).toBe(true)
+    expect(clone.style.getPropertyValue('--sd-ph')).toBe(phColor)
+    expect(clone.style.getPropertyValue('--sd-ph-o')).toBeTruthy()
+    // A per-node rule on __pseudoCSS would bail the diff path on recapture.
+    expect(session.__pseudoCSS).toBeFalsy()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NEW-8 — form validation/state attributes are copied to the clone
+// ─────────────────────────────────────────────────────────────────────────────
+describe('deepClone – form validation attrs (NEW-8)', () => {
+  let session
+  beforeEach(() => {
+    session = {
+      styleMap: new Map(),
+      styleCache: new WeakMap(),
+      nodeMap: new Map(),
+    }
+  })
+  afterEach(() => { document.body.innerHTML = '' })
+
+  it('copies disabled attribute from disabled input', async () => {
+    const input = document.createElement('input')
+    input.type = 'text'
+    input.disabled = true
+    document.body.appendChild(input)
+    const clone = await deepClone(input, session, {})
+    expect(clone.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('copies required attribute from required input', async () => {
+    const input = document.createElement('input')
+    input.type = 'text'
+    input.required = true
+    document.body.appendChild(input)
+    const clone = await deepClone(input, session, {})
+    expect(clone.hasAttribute('required')).toBe(true)
+  })
+
+  it('copies readonly attribute from readonly textarea', async () => {
+    const ta = document.createElement('textarea')
+    ta.readOnly = true
+    document.body.appendChild(ta)
+    const clone = await deepClone(ta, session, {})
+    expect(clone.hasAttribute('readonly')).toBe(true)
+  })
+
+  it('copies min/max/pattern from input with constraints', async () => {
+    const input = document.createElement('input')
+    input.type = 'number'
+    input.min = '1'
+    input.max = '10'
+    document.body.appendChild(input)
+    const clone = await deepClone(input, session, {})
+    expect(clone.getAttribute('min')).toBe('1')
+    expect(clone.getAttribute('max')).toBe('10')
+  })
+
+  it('copies aria-invalid from input', async () => {
+    const input = document.createElement('input')
+    input.setAttribute('aria-invalid', 'true')
+    document.body.appendChild(input)
+    const clone = await deepClone(input, session, {})
+    expect(clone.getAttribute('aria-invalid')).toBe('true')
+  })
+
+  it('does not add disabled attribute for enabled input', async () => {
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    const clone = await deepClone(input, session, {})
+    expect(clone.hasAttribute('disabled')).toBe(false)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NEW-9 — nested <foreignObject> inside SVG is skipped (SVG spec limitation)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('deepClone – nested foreignObject skipped (NEW-9)', () => {
+  let session
+  beforeEach(() => {
+    session = {
+      styleMap: new Map(),
+      styleCache: new WeakMap(),
+      nodeMap: new Map(),
+    }
+  })
+  afterEach(() => { document.body.innerHTML = '' })
+
+  it('returns null for a <foreignObject> nested inside another <foreignObject>', async () => {
+    // outer foreignObject in source DOM
+    const outerFO = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject')
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    const innerFO = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject')
+    outerFO.appendChild(svg)
+    svg.appendChild(innerFO)
+    document.body.appendChild(outerFO)
+
+    const result = await deepClone(innerFO, session, {})
+    expect(result).toBeNull()
+  })
+
+  it('does not skip a top-level <foreignObject> (no ancestor FO in source DOM)', async () => {
+    const fo = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject')
+    document.body.appendChild(fo)
+    const result = await deepClone(fo, session, {})
+    expect(result).not.toBeNull()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ROB-3 — XML-invalid control chars are stripped by the single sanitizeCloneForXHTML
+// walk that both serialization paths run on the finished clone (was per-node in deepClone)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('clone pipeline – XML control char sanitization (ROB-3)', () => {
+  let session
+  beforeEach(() => {
+    session = {
+      styleMap: new Map(),
+      styleCache: new WeakMap(),
+      nodeMap: new Map(),
+    }
+  })
+  afterEach(() => { document.body.innerHTML = '' })
+
+  it('strips NULL (\\x00) from data-* attribute values', async () => {
+    const div = document.createElement('div')
+    div.setAttribute('data-label', 'hello\x00world')
+    document.body.appendChild(div)
+    const clone = await deepClone(div, session, {})
+    sanitizeCloneForXHTML(clone)
+    expect(clone.getAttribute('data-label')).toBe('helloworld')
+  })
+
+  it('strips bell (\\x07) control char from attribute value', async () => {
+    const div = document.createElement('div')
+    div.setAttribute('data-info', 'A\x07B')
+    document.body.appendChild(div)
+    const clone = await deepClone(div, session, {})
+    sanitizeCloneForXHTML(clone)
+    expect(clone.getAttribute('data-info')).toBe('AB')
+  })
+
+  it('strips U+FFFE from attribute values', async () => {
+    const div = document.createElement('div')
+    div.setAttribute('data-x', 'ok\uFFFEend')
+    document.body.appendChild(div)
+    const clone = await deepClone(div, session, {})
+    sanitizeCloneForXHTML(clone)
+    expect(clone.getAttribute('data-x')).toBe('okend')
+  })
+
+  it('preserves normal attribute values without control chars', async () => {
+    const div = document.createElement('div')
+    div.setAttribute('data-json', '{"key":"value","n":42}')
+    document.body.appendChild(div)
+    const clone = await deepClone(div, session, {})
+    sanitizeCloneForXHTML(clone)
+    expect(clone.getAttribute('data-json')).toBe('{"key":"value","n":42}')
+  })
+
+  it('preserves TAB, LF, CR (valid in XML 1.0)', async () => {
+    const div = document.createElement('div')
+    div.setAttribute('data-text', 'line1\tline2\nline3\rend')
+    document.body.appendChild(div)
+    const clone = await deepClone(div, session, {})
+    sanitizeCloneForXHTML(clone)
+    expect(clone.getAttribute('data-text')).toBe('line1\tline2\nline3\rend')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #311 — createCheckboxRadioReplacement preserves vertical-align
+// ─────────────────────────────────────────────────────────────────────────────
+describe('createCheckboxRadioReplacement (#311)', () => {
+  afterEach(() => { document.body.innerHTML = '' })
+
+  it('uses vertical-align from the original input computed style', () => {
+    const input = document.createElement('input')
+    input.type = 'checkbox'
+    input.style.verticalAlign = 'top'
+    document.body.appendChild(input)
+
+    const { el } = createCheckboxRadioReplacement(input)
+    expect(el.style.verticalAlign).toBe('top')
+  })
+
+  it('falls back to "middle" when vertical-align is not explicitly set', () => {
+    const input = document.createElement('input')
+    input.type = 'radio'
+    document.body.appendChild(input)
+
+    const { el } = createCheckboxRadioReplacement(input)
+    // Default browser vertical-align for inputs varies; we just check it is set
+    expect(el.style.verticalAlign).toBeTruthy()
+  })
+
+  // accent-color computes to the keyword `auto` when nothing authored one. It is a truthy
+  // string, so it used to reach SVG as a paint value: invalid, and the control painted black.
+  const paints = (el) => [...el.querySelectorAll('*')]
+    .flatMap((node) => [node.getAttribute('fill'), node.getAttribute('stroke')])
+    .filter((v) => v && v !== 'none')
+
+  it('never paints the accent-color keyword `auto` into the SVG', () => {
+    const input = document.createElement('input')
+    input.type = 'checkbox'
+    input.checked = true
+    document.body.appendChild(input)
+    expect(getComputedStyle(input).accentColor).toBe('auto') // guard: the shape of the bug
+
+    const { el } = createCheckboxRadioReplacement(input)
+    const used = paints(el)
+    expect(used.length).toBeGreaterThan(0)
+    for (const value of used) {
+      expect(value).not.toBe('auto')
+      expect(CSS.supports('color', value)).toBe(true)
+    }
+  })
+
+  it('uses an authored accent-color', () => {
+    const input = document.createElement('input')
+    input.type = 'checkbox'
+    input.checked = true
+    input.style.accentColor = 'rgb(255, 0, 128)'
+    document.body.appendChild(input)
+
+    const { el } = createCheckboxRadioReplacement(input)
+    expect(paints(el)).toContain('rgb(255, 0, 128)')
+  })
+})

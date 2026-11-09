@@ -1,0 +1,324 @@
+import { describe, it, expect } from 'vitest'
+import { deepClone } from '../src/core/clone.js'
+import { createContext } from '../src/core/context.js'
+
+let options = createContext()
+const sessionCache = {
+        styleMap: new Map(),
+        styleCache: new WeakMap(),
+        nodeMap: new Map()
+      }
+
+async function runClone(node) {
+  return await deepClone(node, sessionCache, {...options})
+}
+
+describe('deepClone', () => {
+  it('clones a simple div', async () => {
+    const el = document.createElement('div')
+    el.textContent = 'hello'
+    const clone = await runClone(el)
+    expect(clone).not.toBe(el)
+    expect(clone.textContent).toBe('hello')
+  })
+
+  it('clones canvas as an image', async () => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 10
+    canvas.height = 10
+    const ctx = canvas.getContext('2d')
+    if (ctx) {
+      ctx.fillStyle = 'red'
+      ctx.fillRect(0, 0, 10, 10)
+    }
+    const clone = await runClone(canvas)
+    expect(clone.tagName).toBe('IMG')
+    expect(clone.src.startsWith('data:image/')).toBe(true)
+  })
+
+  it('renders <audio controls> as a player image (#444)', async () => {
+    const audio = document.createElement('audio')
+    audio.controls = true
+    document.body.appendChild(audio)
+    const clone = await runClone(audio)
+    document.body.removeChild(audio)
+    expect(clone.tagName).toBe('IMG')
+    expect(clone.src.startsWith('data:image/svg+xml')).toBe(true)
+  })
+
+  it('leaves <audio> without controls to the generic clone (#444)', async () => {
+    const audio = document.createElement('audio')
+    document.body.appendChild(audio)
+    const clone = await runClone(audio)
+    document.body.removeChild(audio)
+    expect(clone.tagName).toBe('AUDIO')
+  })
+
+  it('deepClone handles data-capture="exclude"', async () => {
+    const el = document.createElement('div')
+    el.setAttribute('data-capture', 'exclude')
+    el.textContent = 'SECRETWORD'
+    const clone = await runClone(el)
+    // not.toBeNull passed even for a completely broken exclusion returning a full clone.
+    // The hide-spacer contract is that the content must NOT survive into the clone.
+    expect(clone).not.toBeNull()
+    expect(clone.textContent || '').not.toContain('SECRETWORD')
+  })
+
+  it('deepClone handles data-capture="placeholder"', async () => {
+    const el = document.createElement('div')
+    el.setAttribute('data-capture', 'placeholder')
+    el.setAttribute('data-placeholder-text', 'Placeholder!')
+    const clone = await runClone(el)
+    expect(clone.textContent).toContain('Placeholder!')
+  })
+
+  it('deepClone handles iframe', async () => {
+    const iframe = document.createElement('iframe')
+    iframe.width = 100
+    iframe.height = 50
+    const clone = await runClone(iframe)
+    expect(clone.tagName).toBe('DIV')
+  })
+
+  it('deepClone handles input, textarea, select', async () => {
+    const input = document.createElement('input')
+    input.value = 'foo'
+    input.checked = true
+
+    const textarea = document.createElement('textarea')
+    textarea.value = 'bar'
+
+    const select = document.createElement('select')
+    const opt = document.createElement('option')
+    opt.value = 'baz'
+    select.appendChild(opt)
+    select.value = 'baz'
+
+    // forEach discards its async callbacks' promises, so the old form returned before any
+    // expect ran — a failing assertion surfaced only as an unhandled rejection.
+    for (const el of [input, textarea, select]) {
+      const clone = await runClone(el)
+      expect(clone.value).toBe(el.value)
+    }
+  })
+
+  it('deepClone handles shadow DOM', async () => {
+    const el = document.createElement('div')
+    const shadow = el.attachShadow({ mode: 'open' })
+    const span = document.createElement('span')
+    span.textContent = 'shadow'
+    shadow.appendChild(span)
+    const clone = await runClone(el)
+    expect(clone).not.toBeNull()
+  })
+})
+
+describe('deepClone — slotted light DOM is cloned exactly once', () => {
+  function occurrences(clone, word) {
+    return (clone.textContent.match(new RegExp(word, 'g')) || []).length
+  }
+
+  async function cloneWrap(build) {
+    const wrap = document.createElement('div')
+    document.body.appendChild(wrap)
+    try {
+      build(wrap)
+      return await runClone(wrap)
+    } finally {
+      wrap.remove()
+    }
+  }
+
+  it('does not duplicate a named slot assignment', async () => {
+    const clone = await cloneWrap((wrap) => {
+      wrap.innerHTML = '<div id="host"><span slot="s">SLOTTEDWORD</span></div>'
+      wrap.querySelector('#host').attachShadow({ mode: 'open' }).innerHTML =
+        '<div>shadow: <slot name="s"></slot></div>'
+    })
+    expect(occurrences(clone, 'SLOTTEDWORD')).toBe(1)
+  })
+
+  it('does not duplicate a default slot assignment', async () => {
+    const clone = await cloneWrap((wrap) => {
+      wrap.innerHTML = '<div id="host"><span>DEFAULTWORD</span></div>'
+      wrap.querySelector('#host').attachShadow({ mode: 'open' }).innerHTML =
+        '<div>shadow: <slot></slot></div>'
+    })
+    expect(occurrences(clone, 'DEFAULTWORD')).toBe(1)
+  })
+
+  it('keeps slot fallback content when nothing is assigned', async () => {
+    const clone = await cloneWrap((wrap) => {
+      wrap.innerHTML = '<div id="host"></div>'
+      wrap.querySelector('#host').attachShadow({ mode: 'open' }).innerHTML =
+        '<div><slot>FALLBACKWORD</slot></div>'
+    })
+    expect(occurrences(clone, 'FALLBACKWORD')).toBe(1)
+  })
+
+  it('does not duplicate when a slot is itself assigned to another slot', async () => {
+    const clone = await cloneWrap((wrap) => {
+      wrap.innerHTML = '<div id="outer"><span>NESTEDWORD</span></div>'
+      const outerRoot = wrap.querySelector('#outer').attachShadow({ mode: 'open' })
+      outerRoot.innerHTML = '<div id="inner"><slot></slot></div>'
+      outerRoot.querySelector('#inner').attachShadow({ mode: 'open' }).innerHTML =
+        '<div>inner: <slot></slot></div>'
+    })
+    expect(occurrences(clone, 'NESTEDWORD')).toBe(1)
+  })
+
+  // A shadow host paints its light DOM only through slots. A child no slot accepted is not
+  // in the flat tree, so it must not reach the capture either.
+  it('drops a light child whose slot name matches nothing', async () => {
+    const clone = await cloneWrap((wrap) => {
+      wrap.innerHTML = '<div id="host"><span slot="nowhere">UNASSIGNEDWORD</span></div>'
+      wrap.querySelector('#host').attachShadow({ mode: 'open' }).innerHTML =
+        '<div>shadow: <slot name="s"></slot></div>'
+    })
+    expect(occurrences(clone, 'UNASSIGNEDWORD')).toBe(0)
+  })
+
+  it('drops light DOM when the shadow tree has no <slot> at all', async () => {
+    const clone = await cloneWrap((wrap) => {
+      wrap.innerHTML = '<div id="host"><span>UNSLOTTEDWORD</span></div>'
+      wrap.querySelector('#host').attachShadow({ mode: 'open' }).innerHTML =
+        '<div>only shadow</div>'
+    })
+    expect(occurrences(clone, 'UNSLOTTEDWORD')).toBe(0)
+  })
+
+  // The mirroring component: it reads its light DOM and renders its own copy inside the
+  // shadow tree, with no <slot>. Cloning the light copy too showed the text twice.
+  it('does not duplicate a component that mirrors its light DOM into the shadow tree', async () => {
+    const clone = await cloneWrap((wrap) => {
+      wrap.innerHTML = '<div id="host"><span>MIRROREDWORD</span></div>'
+      wrap.querySelector('#host').attachShadow({ mode: 'open' }).innerHTML =
+        '<div>copy: <span>MIRROREDWORD</span></div>'
+    })
+    expect(occurrences(clone, 'MIRROREDWORD')).toBe(1)
+  })
+
+  it('keeps light DOM of a host without a shadow root', async () => {
+    const clone = await cloneWrap((wrap) => {
+      wrap.innerHTML = '<div id="host"><span slot="nowhere">PLAINWORD</span></div>'
+    })
+    expect(occurrences(clone, 'PLAINWORD')).toBe(1)
+  })
+
+  it('does not duplicate either of two slotted nodes', async () => {
+    const clone = await cloneWrap((wrap) => {
+      wrap.innerHTML = '<div id="host"><span>FIRSTWORD</span><span>SECONDWORD</span></div>'
+      wrap.querySelector('#host').attachShadow({ mode: 'open' }).innerHTML =
+        '<div><slot></slot></div>'
+    })
+    expect(occurrences(clone, 'FIRSTWORD')).toBe(1)
+    expect(occurrences(clone, 'SECONDWORD')).toBe(1)
+  })
+})
+
+describe('deepClone — <picture> sources', () => {
+  const PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+
+  function makePicture() {
+    const picture = document.createElement('picture')
+    picture.innerHTML =
+      '<source media="(min-width: 1367px)" srcset="https://example.com/big.jpg">' +
+      '<source media="(min-width: 0px)" srcset="https://example.com/small.jpg">'
+    const img = document.createElement('img')
+    img.src = PX
+    picture.appendChild(img)
+    document.body.appendChild(picture)
+    return picture
+  }
+
+  // A <source> out-ranks the <img>'s own src, so leaving it in the export re-selects an
+  // external URL that svg-as-image may not load — the picture then rasterizes blank even
+  // though the <img> was inlined correctly.
+  //
+  // Don't assert an exact resolved src here: <picture>'s source-selection algorithm
+  // (which decides img.currentSrc, read by freezeImgSrcset) runs eagerly/synchronously in
+  // WebKit but is deferred past this point in Chromium/Firefox, so the same test observes
+  // PX (unresolved yet) on two engines and the matched source's URL (small.jpg, correctly
+  // resolved already) on the third. Both are valid depending on timing; what the fix
+  // actually guarantees — and what's engine-independent — is that no <source> survives and
+  // the NON-matching source (big.jpg) never leaks in.
+  it('drops <source> children of <picture> so the inlined <img> src wins', async () => {
+    const picture = makePicture()
+    try {
+      const clone = await runClone(picture)
+      expect(clone.querySelectorAll('source').length).toBe(0)
+      const img = clone.querySelector('img')
+      expect(img).not.toBeNull()
+      expect(img.getAttribute('src')).toBeTruthy()
+      expect(clone.outerHTML).not.toContain('big.jpg')
+    } finally {
+      picture.remove()
+    }
+  })
+
+  it('keeps <source> outside a <picture>', async () => {
+    const wrapper = document.createElement('div')
+    wrapper.innerHTML = '<source srcset="https://example.com/x.jpg">'
+    document.body.appendChild(wrapper)
+    try {
+      const clone = await runClone(wrapper)
+      expect(clone.querySelectorAll('source').length).toBe(1)
+    } finally {
+      wrapper.remove()
+    }
+  })
+})
+
+describe('freezeImgSrcset — <picture> currentSrc timing (#464-adjacent, bug-hunt finding)', () => {
+  const OWN_PLACEHOLDER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+
+  it('resolves the matching <source> even when currentSrc has not resolved synchronously yet', async () => {
+    // <picture>'s own source-selection algorithm runs eagerly in WebKit but is deferred past
+    // this synchronous point in Chromium (confirmed empirically: still unresolved across
+    // microtask/macrotask(0) checkpoints, only settling ~1 rAF later) — cloning immediately
+    // after insertion, with no await in between, is exactly that race window.
+    const picture = document.createElement('picture')
+    picture.innerHTML = '<source media="(min-width: 0px)" srcset="https://example.com/selected.jpg">'
+    const img = document.createElement('img')
+    img.src = OWN_PLACEHOLDER
+    picture.appendChild(img)
+    document.body.appendChild(picture)
+    try {
+      const clone = await runClone(picture)
+      const clonedImg = clone.querySelector('img')
+      expect(clonedImg.getAttribute('src')).toBe('https://example.com/selected.jpg')
+    } finally {
+      picture.remove()
+    }
+  })
+
+  it('still freezes a plain (non-picture) <img> to its own src', async () => {
+    const img = document.createElement('img')
+    img.src = OWN_PLACEHOLDER
+    document.body.appendChild(img)
+    try {
+      const clone = await runClone(img)
+      expect(clone.getAttribute('src')).toBe(OWN_PLACEHOLDER)
+    } finally {
+      img.remove()
+    }
+  })
+})
+
+describe('deepClone edge cases', () => {
+  it('clones unsupported node (Comment) as a new Comment', async () => {
+    const fake = document.createComment('not supported')
+    const result = await runClone(fake)
+    expect(result.nodeType).toBe(Node.COMMENT_NODE)
+    expect(result.textContent).toBe('not supported')
+    expect(result).not.toBe(fake)
+  })
+
+  it('clones attributes and children', async () => {
+    const el = document.createElement('div')
+    el.setAttribute('data-test', '1')
+    const result = await runClone(el)
+    expect(result.getAttribute('data-test')).toBe('1')
+  })
+})

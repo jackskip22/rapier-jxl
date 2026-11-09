@@ -82,3 +82,7 @@ Pages heartbeat `window.__result` after each step (`done: true` at end) so a han
 NASA sources are public-domain Apollo / Gemini stills (image ids in the table). Lossy references are djxl 0.12.0 8-bit RGBA; exact references are source pixels. Live pages (`control.mjs`, `capture.mjs`, `p3.mjs`, `codecprobe.mjs`, `stress.mjs`) draw their own pixels or load `photo.jpg` at check time.
 
 Capture/control open 2D contexts with `willReadFrequently: true` (same as `check.mjs`); control also keeps a bare-context probe. `drive.mjs` inserts `about:blank` between pages, maximizes the window, and skips a package's capture/p3 when its control `wrf: getImageData` fails. The summary has one row per step with an 8.2.0 and a candidate column.
+
+## SnapDOM jxl plug-in
+
+The `safari-snapdom` job applies `snapdom-tip/plugins-jxl.patch` to SnapDOM 5eb0d80 (`snapdom/`) and runs, in real Safari, the plug-in's tests and the 32 SnapDOM demos (JPEG XL against `toWebp`, identity against the Chromium baselines in `snapdom-harness/baselines/`). Playwright WebKit on the same host runs the lifecycle tests and SnapDOM's own suite (labelled, not Safari). The package check above is unchanged.
