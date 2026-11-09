@@ -30,8 +30,13 @@ async function waitResult(timeoutSec = 1200) {
 
 const CANVAS_NOTE = 'headless VM, willReadFrequently forced'
 const label = r => r && Array.isArray(r.rows) ? { ...r, rows: r.rows.map(x => ({ ...x, canvas: CANVAS_NOTE })) } : r
+// The package under test: what the server serves (RAPIER_JXL), by its tarball digest; the
+// candidate's package.json can still carry the last published version.
+const jxlDir = process.env.RAPIER_JXL || new URL('../p/cand/package', import.meta.url).pathname
+const tgzSha = (() => { try { return readFileSync(new URL('../rapier-jxl-candidate.tgz.sha256', import.meta.url), 'utf8').split(/\s+/)[0] } catch { return null } })()
 const out = {
   safari: caps.browserVersion,
+  package: { dir: jxlDir, version: JSON.parse(readFileSync(jxlDir + '/package.json', 'utf8')).version, tgzSha256: tgzSha },
   platform: caps.platformName,
   macos: process.env.MACOS_VERSION || null,
   tip: 'plugins-jxl.patch',
@@ -77,7 +82,16 @@ const lines = [
   `Plugin.jxl: ${out.summary.plugin}`,
   `Demos e3: ${out.summary.e3.pages}/32 pages; JXL ${out.summary.e3.jxlBytes} B / WebP ${out.summary.e3.webpBytes} B; med ${out.summary.e3.jxlMed} ms JXL vs ${out.summary.e3.webpMed} ms toWebp; ≡Chromium ${out.identity[3]?.same}/${out.identity[3]?.total}`,
   `Demos e5: ${out.summary.e5.pages}/32 pages; JXL ${out.summary.e5.jxlBytes} B / WebP ${out.summary.e5.webpBytes} B; med ${out.summary.e5.jxlMed} ms JXL vs ${out.summary.e5.webpMed} ms toWebp; ≡Chromium ${out.identity[5]?.same}/${out.identity[5]?.total}`,
+  `rapier-jxl served: ${out.package.dir} (package.json ${out.package.version}, candidate tgz sha256 ${out.package.tgzSha256})`,
 ]
+const probe = out.plugin?.probe
+if (probe) {
+  lines.push('', `Boundary (no SnapDOM) env: ${JSON.stringify(probe.env)}`)
+  for (const [k, v] of Object.entries(probe.rows || {})) lines.push(`- ${k}: ${JSON.stringify(v).slice(0, 700)}`)
+}
+for (const r of (out.plugin?.inputs || []).slice(0, 3)) lines.push(`- plug-in capture() input: ${JSON.stringify(r).slice(0, 900)}`)
+const d3 = (out.demos[3]?.rows || []).find(r => r.inputs)
+if (d3) lines.push(`- demo e3 ${d3.name} capture() input: ${JSON.stringify(d3.inputs[0]).slice(0, 900)}`)
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n')
 console.log(lines.join('\n'))
 if ((out.plugin.failed || 0) > 0) process.exitCode = 1

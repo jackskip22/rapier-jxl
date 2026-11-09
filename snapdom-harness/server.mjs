@@ -12,6 +12,8 @@ const jxlImports = {}
 for (const [k, v] of Object.entries(jxlPkg.exports)) {
   const t = pick(v); if (t && /\.m?js$/.test(t)) jxlImports[k.replace(/^\./, 'rapier-jxl')] = '/rapier-jxl/' + t.replace(/^\.\//, '')
 }
+// The plug-in's encoder goes through the harness probe (same module, inputs recorded).
+jxlImports['rapier-jxl/codec/capture-complete'] = '/snapdom-harness/codec-probe.js'
 const shimTag = '<script src="/snapdom-harness/canvas-shim.js"></script>'
 const mapTag = () => shimTag + `<script type="importmap">${JSON.stringify({ imports: { ...jxlImports, vitest: '/snapdom-harness/vitest-shim.js', '@zumer/snapdom': '/snapdom/src/index.js' } })}</script>`
 const server = createServer(async (req, res) => {

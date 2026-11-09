@@ -19,12 +19,15 @@ try {
     const url = URL.createObjectURL(new Blob([rewritten], { type: 'text/javascript' }));
     await import(url);
   }
+  window.__result.at = 'boundary';
+  const { boundary } = await import('/snapdom-harness/codec-probe.js');
+  const probe = await boundary().catch(e => ({ error: String(e && e.stack || e) }));
   window.__result.at = 'run';
   const { run } = await import('vitest');
   const results = await run('');
   let failed = 0;
   const rows = results.map(r => { if (r.error) failed++; return { name: r.name, ms: r.ms, error: r.error || null }; });
-  window.__result = { done: true, passed: results.length - failed, failed, total: results.length, rows };
+  window.__result = { done: true, passed: results.length - failed, failed, total: results.length, probe, inputs: (globalThis.__jxlInputs || []).slice(0, 12), rows };
 } catch (e) {
   window.__result = { done: true, passed: 0, failed: 1, total: 1, error: String(e && e.stack || e), rows: [{ name: 'load', error: String(e) }] };
 }

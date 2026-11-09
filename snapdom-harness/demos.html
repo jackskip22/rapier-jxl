@@ -42,7 +42,7 @@ try {
           const webpBlob = await (await fetch(img.src)).blob();
           return { capture, jxlExportMs, webpExportMs, jxlBytes: jxlBlob.size, webpBytes: webpBlob.size, sha };
         };
-        await once();
+        try { await once(); } catch (e) { return { error: String(e && e.message || e).slice(0, 240), inputs: (globalThis.__jxlInputs || []).slice(0, 2) }; }
         const runs = [];
         for (let i = 0; i < ${rounds}; i++) runs.push(await once());
         const med = a => a.slice().sort((x,y)=>x-y)[Math.floor(a.length/2)];
