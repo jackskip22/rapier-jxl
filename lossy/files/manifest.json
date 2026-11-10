@@ -1,8 +1,8 @@
 {
   "kind": "lossy-kodak-native-decode-rows",
   "corpus": "Kodak PhotoCD PCD0992 (public domain test images)",
-  "encode": "rapier-jxl encode() q80/q92 \u00d7 effort 3/5/7",
-  "encodeTipDocumented": "8.3.0 development build (same files as the Chrome and Firefox rows)",
+  "encode": "rapier-jxl CLI --quality 80/92 --effort 3/5/7 (Node, CPU)",
+  "encodeTipDocumented": "rapier-jxl 8.3.2 as published on npm",
   "count": 144,
   "subset24": [
     "kodim01-q80-e3",

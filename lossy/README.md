@@ -6,7 +6,7 @@ One row per Kodak lossy JPEG XL file: page and dedicated-worker `createImageBitm
 
 | path | origin |
 |---|---|
-| files/kodimNN-qQQ-eE.jxl | Kodak PhotoCD PCD0992 (public-domain test images), encoded with rapier-jxl `encode()` quality 80/92 × effort 3/5/7 from an 8.3.0 development build (the same files as the Chrome and Firefox rows) |
+| files/kodimNN-qQQ-eE.jxl | Kodak PhotoCD PCD0992 (public-domain test images), encoded with the rapier-jxl 8.3.2 CLI (npm) at quality 80/92 × effort 3/5/7 |
 
 No Gutenberg material.
 
