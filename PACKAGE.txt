@@ -3,7 +3,7 @@ published: rapier-jxl@8.2.0 (npm)
   sha256: c966e53f402fc1811670517635d1410b712632d15df5bae969c3bb128cc4c89c
   extracts to: p/820/package/
 
-candidate: rapier-jxl 8.3.2 candidate, unreleased (a canvas is read on the page where bitmaps cannot be posted to a worker)
-  tarball: rapier-jxl-candidate.tgz (8338848 bytes)
-  sha256: d18a5ce53519f6294e8307615f3d01b68bbbe24fd1d46b25e9365600a5ac68af
+candidate: rapier-jxl@8.3.2 (npm), the published package
+  tarball: rapier-jxl-candidate.tgz (8393687 bytes)
+  sha256: 569c990915e96c8f2838bd6a9531c752f818ee03d773d2430c9701414fb9516e
   extracts to: p/cand/package/
