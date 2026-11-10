@@ -6,6 +6,7 @@ import {wholePhotoSteps} from '../photo-whole-search.mjs';
 import {wholeRebuildMeasure} from '../photo-whole-rebuild.mjs';
 import {fail} from './primitives.mjs';
 import {MEASURED_EFFORT} from '../effort-level.mjs';
+import {textFloorEligible, textFloorCapture} from '../text-floor.mjs';
 
 export function stillPhotoTargetSteps(data, width, height, settings, {intent, signal, exact, selected, maxPixels, fit, preview} = {}) {
   if (intent === undefined || settings.lowWebp === undefined || settings.effort < MEASURED_EFFORT || settings.quality >= 100 ||
@@ -34,6 +35,8 @@ function* measuredSteps(data, width, height, settings, {intent, signal, exact, s
   if (!photo || photoFacts?.bytes !== photo || photoFacts.passed !== true || !Array.isArray(photoFacts.measurements))
     throw fail('JXL_INTERNAL', 'The shared photo owner did not qualify its selected file.');
   if (!photoFacts.measurements.length) throw fail('JXL_INTERNAL', 'A measured photo retained no selected measurement.');
+  const captured = !fit && textFloorEligible(data, width, height, settings.colorSpace) ? yield* textFloorCapture(photo, data, width, height, settings.colorSpace) : null;
+  if (captured) { selected?.({kept: 'pixels', measurements: []}); return captured; }
   selected?.({kept: 'lossy', measurements: photoFacts.measurements, ...(fitted && {fitted})});
   return photo;
 }

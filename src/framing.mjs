@@ -5,8 +5,7 @@ import {fault} from './admit.mjs';
 
 const framingFault = message => fault('JXL_FRAMING', message);
 
-const BIT_WEIGHTS = [1];
-for (let i = 1; i <= 64; i++) BIT_WEIGHTS.push(BIT_WEIGHTS[i - 1] * 2);
+const BIT_WEIGHTS = /* @__PURE__ */ Array.from({length: 65}, (_, i) => 2 ** i);
 
 class BitReader {
   constructor(bytes) { this.bytes = bytes; this.pos = 0; }
@@ -471,4 +470,16 @@ export function compositionMetadataKey(still) {
   if (!defaultTone) copyBits(w, codestream, image.toneAt + 1, image.extensionsAt);
   copyBits(w, codestream, image.extensionsAt, image.payloadEnd);
   return JSON.stringify([image.orientation, image.depth, image.channelInfo, image.xyb]) + ':' + w.bitLength + ':' + w.finish().join(',');
+}
+
+export function frameStarts(stream, iccBits) {
+  const image = readImageHeader(stream, {iccBits}), r = new BitReader(stream);
+  r.pos = image.end * 8;
+  const starts = [];
+  if (image.preview) starts.push(readFrame(r, {...image, ...image.preview}).start);
+  let frame;
+  do { frame = readFrame(r, image, image.animation); starts.push(frame.start); } while (!frame.last && r.pos < stream.length * 8);
+  if (!frame.last) throw framingFault('The codestream has no last frame.');
+  if (r.pos !== stream.length * 8) throw framingFault('Bytes follow the last frame.');
+  return starts;
 }

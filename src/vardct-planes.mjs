@@ -65,10 +65,12 @@ export function copyVarDCTCorrelation(cfl, x0, y0, width, height, colors, from =
   }
 }
 export function copyVarDCTAlphaRows(alpha, rows, sourceWidth, x0, y0, width, out, mask, from = 0, to = out.length / width, rowsOffset = 0) {
-  for (let y = from; y < to; y++) for (let x = 0; x < width; x++) {
-    const value = alpha ? alpha[((y0 + y) * sourceWidth + x0 + x) * 4 + 3] :
-      rows ? rows[((y - rowsOffset) * sourceWidth + x0 + x) * 4 + 3] : 255;
-    out[y * width + x] = mask ? value >> 7 : value;
+  const source = alpha || rows, shift = mask ? 7 : 0;
+  if (!source) { out.fill(mask ? 1 : 255, from * width, to * width); return; }
+  const lift = alpha ? y0 : -rowsOffset;
+  for (let y = from; y < to; y++) {
+    const o = y * width, at = ((lift + y) * sourceWidth + x0) * 4 + 3;
+    for (let x = 0; x < width; x++) out[o + x] = source[at + x * 4] >> shift;
   }
 }
 

@@ -2,7 +2,7 @@
 import {DEFAULT_INPUT_BYTES, DEFAULT_PIXELS, SNAPSHOTS, withCost, record, dimensions, measure, snapshot} from './ownership.mjs';
 import {fail as error, declared, callers, isCaller, LARGEST, JPEG_PIXELS} from './primitives.mjs';
 import {createTransport, REPLACED} from './transport.mjs';
-import {elsewhere, program} from './worker-start.mjs';
+import {elsewhere, program, relocatable} from './worker-start.mjs';
 const DEFAULT_JOBS = 32;
 const HELPER_BYTES = 46137344, PIXEL_BYTES = 56;
 const IDLE = 60000;
@@ -23,7 +23,7 @@ function started(make, cleanup) {
 function browserWorker(spec) {
   if (!spec.url) return started(spec.worker);
   const url = spec.url();
-  return elsewhere(url) ? embeddedWorker(program(url.href)) : started(spec.worker);
+  return elsewhere(url) ? embeddedWorker(program(url.href)) : relocatable(() => started(spec.worker), url);
 }
 
 export function embeddedWorker(program) {

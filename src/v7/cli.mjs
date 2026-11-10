@@ -16,6 +16,7 @@ const VERSION = typeof __RAPIER_JXL_VERSION__ !== 'undefined' ? __RAPIER_JXL_VER
 export const HELP_TEXT = `Usage: rapier-jxl <file|folder...> [options]
        rapier-jxl add emdash
        rapier-jxl remove emdash
+       rapier-jxl selftest
 
 Encode images to JPEG XL (.jxl), or restore recompressed JPEGs.
 JPEGs are recompressed losslessly by default and restore exactly.
@@ -34,6 +35,7 @@ Options:
 
 Examples:
   npx rapier-jxl add emdash
+  npx rapier-jxl selftest
   npx rapier-jxl photo.png
   npx rapier-jxl photo.jpg
   npx rapier-jxl photos/ --effort 6 --jobs 4
@@ -712,6 +714,14 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
       const setup = await import('./cli-emdash.mjs');
       await setup[argv[0] === 'add' ? 'runAddEmdash' : 'runRemoveEmdash'](argv.slice(2), {cwd, version: VERSION, stdout});
       return {exitCode: 0, files: []};
+    } catch (error) { return refuse(error); }
+  }
+  if (argv[0] === 'selftest') {
+    try {
+      const {runSelftest} = await import('./cli-selftest.mjs');
+      const {exitCode} = await runSelftest(argv.slice(1), {cwd, version: VERSION, stdout,
+        modules: {still: getStill, jpeg: getJpeg, decode: getDecode, verify: getVerify}});
+      return {exitCode, files: []};
     } catch (error) { return refuse(error); }
   }
   let parsed;

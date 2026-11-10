@@ -16,40 +16,17 @@ const between = (p, a, b) => {
   return true;
 };
 
+const RUNS = new WeakMap();
 export function photoMasks(data, width, height, regions, exactRects = []) {
   const keyed = pixelKeys(data), words = new Int32Array(keyed.buffer, keyed.byteOffset, keyed.length);
+  let known = RUNS.get(data);
+  if (!known) RUNS.set(data, known = new Map());
   const found = regions.map(r => {
-    const w = r.width, h = r.height, n = w * h, px = new Int32Array(n), mark = new Uint8Array(n);
-    for (let y = 0; y < h; y++) px.set(words.subarray((r.y + y) * width + r.x, (r.y + y) * width + r.x + w), y * w);
-    const flooded = captureMaskRuns(px, w, h);
-    if (flooded) return {px, ...flooded};
-    for (let y = 0, i = 0; y < h; y++) for (let x = 0; x < w; x++, i++) {
-      const c = px[i];
-      if (x + 1 < w && px[i + 1] === c) mark[i] = mark[i + 1] = 1;
-      if (y + 1 < h && px[i + w] === c) mark[i] = mark[i + w] = 1;
-    }
-    const pixels = new Int32Array(n), runs = [];
-    let end = 0, opaque = 0;
-    for (let i = 0; i < n; i++) {
-      if (px[i] >>> 24 !== 255) opaque++;
-      if (mark[i] !== 1) continue;
-      const c = px[i], x0 = i % w;
-      if (!(x0 > 0 && far(c, px[i - 1]) || x0 + 1 < w && far(c, px[i + 1]) || i >= w && far(c, px[i - w]) || i + w < n && far(c, px[i + w]))) continue;
-      const start = end;
-      let top = end, rim = 0, hard = 0;
-      pixels[top++] = i; mark[i] = 2;
-      while (end < top) {
-        const j = pixels[end++], x = j % w;
-        let side = 0;
-        for (const k of [x > 0 ? j - 1 : -1, x + 1 < w ? j + 1 : -1, j - w, j + w < n ? j + w : -1]) if (k >= 0) {
-          if (px[k] !== c) side |= far(c, px[k]) ? 3 : 1; else if (mark[k] === 1) { mark[k] = 2; pixels[top++] = k; }
-        }
-        rim += side & 1; hard += side >> 1;
-      }
-      if (end - start >= CORE && hard >= HARD * rim) runs.push(start, end - start, c);
-      else end = start;
-    }
-    return {px, pixels, runs, transparent: opaque};
+    const key = width + ':' + r.x + ':' + r.y + ':' + r.width + ':' + r.height, had = known.get(key);
+    if (had) return had;
+    const runs = rectangleRuns(words, width, r);
+    known.set(key, runs);
+    return runs;
   });
   let count = 0;
   for (const f of found) count += f.runs.length / 3;
@@ -89,11 +66,14 @@ export function photoMasks(data, width, height, regions, exactRects = []) {
       bordered ||= touches;
       if (c > most) { most = c; fill = runs[q + 2]; }
     }
-    const runAt = new Uint8Array(n);
-    for (let q = 0; q < runs.length; q += 3) for (let k = runs[q]; k < runs[q] + runs[q + 1]; k++) runAt[pixels[k]] = 1;
+    let runAt = null;
     for (const e of exactRects) {
       const x0 = Math.max(0, e.x - r.x), y0 = Math.max(0, e.y - r.y), x1 = Math.min(w, e.x + e.width - r.x), y1 = Math.min(h, e.y + e.height - r.y);
       if (x1 <= x0 || y1 <= y0) continue;
+      if (e.solidText === true && !runAt) {
+        runAt = new Uint8Array(n);
+        for (let q = 0; q < runs.length; q += 3) for (let k = runs[q]; k < runs[q] + runs[q + 1]; k++) runAt[pixels[k]] = 1;
+      }
       const keep = e.solidText === true ? solidText(px, runAt, w, x0, y0, x1, y1) : null, bw = x1 - x0;
       for (let y = y0; y < y1; y++) for (let x = x0, i = y * w + x0, k = (y - y0) * bw; x < x1; x++, i++, k++) if ((!keep || keep[k]) && !exact[i]) { exact[i] = 1; list.push(i); }
     }
@@ -194,4 +174,38 @@ function solidText(px, runAt, w, x0, y0, x1, y1) {
     if (k + bw < n && apart(p, px[i + w], STEP)) { grow(keep, k); grow(keep, k + bw); }
   }
   return keep;
+}
+
+function rectangleRuns(words, width, r) {
+    const w = r.width, h = r.height, n = w * h, px = new Int32Array(n), mark = new Uint8Array(n);
+    for (let y = 0; y < h; y++) px.set(words.subarray((r.y + y) * width + r.x, (r.y + y) * width + r.x + w), y * w);
+    const flooded = captureMaskRuns(px, w, h);
+    if (flooded) return {px, ...flooded};
+    for (let y = 0, i = 0; y < h; y++) for (let x = 0; x < w; x++, i++) {
+      const c = px[i];
+      if (x + 1 < w && px[i + 1] === c) mark[i] = mark[i + 1] = 1;
+      if (y + 1 < h && px[i + w] === c) mark[i] = mark[i + w] = 1;
+    }
+    const pixels = new Int32Array(n), runs = [];
+    let end = 0, opaque = 0;
+    for (let i = 0; i < n; i++) {
+      if (px[i] >>> 24 !== 255) opaque++;
+      if (mark[i] !== 1) continue;
+      const c = px[i], x0 = i % w;
+      if (!(x0 > 0 && far(c, px[i - 1]) || x0 + 1 < w && far(c, px[i + 1]) || i >= w && far(c, px[i - w]) || i + w < n && far(c, px[i + w]))) continue;
+      const start = end;
+      let top = end, rim = 0, hard = 0;
+      pixels[top++] = i; mark[i] = 2;
+      while (end < top) {
+        const j = pixels[end++], x = j % w;
+        let side = 0;
+        for (const k of [x > 0 ? j - 1 : -1, x + 1 < w ? j + 1 : -1, j - w, j + w < n ? j + w : -1]) if (k >= 0) {
+          if (px[k] !== c) side |= far(c, px[k]) ? 3 : 1; else if (mark[k] === 1) { mark[k] = 2; pixels[top++] = k; }
+        }
+        rim += side & 1; hard += side >> 1;
+      }
+      if (end - start >= CORE && hard >= HARD * rim) runs.push(start, end - start, c);
+      else end = start;
+    }
+    return {px, pixels, runs, transparent: opaque};
 }

@@ -46,7 +46,7 @@ function* unpackInput(bytes,limits,owner) {
         bytes=joinedBytes([sliceBytes(bytes,0,batch.repair.at),patch,sliceBytes(bytes,batch.repair.at+patch.length)]);
       }
     }
-    const source=yield* owner.readContainerSteps(bytes,{maxBytes:limits.maxInputBytes,maxBoxes:limits.maxBoxes});
+    const source=yield* unit('decode-container',()=>owner.readContainer(bytes,{maxBytes:limits.maxInputBytes,maxBoxes:limits.maxBoxes}));
     const metadata=[];let totalMetadata=0;
     for(const box of source.auxiliary){
       const value=yield* stage('decode-metadata',function*(){
@@ -119,22 +119,25 @@ function* readICC(reader, {maxBytes, maxProfileBytes}, owner) {
   reader.bit = result.bit; return result.bytes;
 }
 
-function* decodeICC(bytes, {maxBytes}, owner) {
-  return yield* stage('decode-icc-profile', function* () {
-    const first = yield* unit('decode-icc-profile-header', () => owner.start(bytes, maxBytes, windowByte(bytes))); let state = first.state;
-    const parts = [{bytes: first.bytes, from: 0, at: state.at}];
-    while (!state.done) {
-      const part = yield* unit('decode-icc-profile-part', () => {
-        const from = state.at, next = owner.part(bytes, state, previousByte(parts, owner.require), windowByte(bytes)); state = next.state;
-        return {bytes: next.bytes, from, at: state.at};
-      });
-      parts.push(part);
-      const saved = yield* carried('decode-icc-profile-state', () => null, () => state, true);
-      if (saved !== null && saved !== PASSED) state = saved;
-    }
-    return journalJoin(parts.map(part => part.bytes));
-  });
+export function iccProfileSteps(prefix) {
+  return function* (bytes, options, owner) {
+    return yield* stage(prefix, function* () {
+      const first = yield* unit(prefix + '-header', () => owner.start(bytes, options?.maxBytes, windowByte(bytes))); let state = first.state;
+      const parts = [{bytes: first.bytes, from: 0, at: state.at}];
+      while (!state.done) {
+        const part = yield* unit(prefix + '-part', () => {
+          const from = state.at, next = owner.part(bytes, state, previousByte(parts, owner.require), windowByte(bytes)); state = next.state;
+          return {bytes: next.bytes, from, at: state.at};
+        });
+        parts.push(part);
+        const saved = yield* carried(prefix + '-state', () => null, () => state, true);
+        if (saved !== null && saved !== PASSED) state = saved;
+      }
+      return journalJoin(parts.map(part => part.bytes));
+    });
+  };
 }
+const decodeICC = iccProfileSteps('decode-icc-profile');
 
 function* admitDecodedICC(profile, header, level, owner) {
   const cmyk = yield* unit('decode-icc-space', () => owner.cmyk(profile));
@@ -144,93 +147,50 @@ function* admitDecodedICC(profile, header, level, owner) {
   yield* unit('decode-icc-channels', () => { owner.channels(channels, cmyk, header, level); return null; });
 }
 
-function* decodeModels(bytes, head, owner) {
-  return yield* stage('decode-brotli-models', function* () {
-    let bit = head.state.bit; const trees = [];
-    for (const [count, alphabet] of owner.groups(head)) {
-      const group = []; trees.push(group);
-      for (let first = 0; first < count; first += 16) {
-        const part = yield* unit('decode-brotli-trees', () => {
-          const r = owner.reader(bytes, bit); return {trees: owner.trees(r, Math.min(16, count - first), alphabet), bit: r.bit};
+function brotliSteps(p, s, t) {
+  return function* (bytes, options, owner) {
+    const limits = owner.limits(bytes, options);
+    return yield* stage(s, function* () {
+      let state = yield* unit(p + '-window', () => owner.start(bytes)); const parts = [];
+      while (!state.last) {
+        const result = yield* stage(p + '-meta', function* () {
+          const head = yield* unit(p + '-header', () => owner.header(bytes, state, limits)); let cursor = head.state;
+          if (head.kind === 'end' || head.kind === 'skip') return {parts: [], state: cursor};
+          let model = null;
+          if (head.kind === 'compressed') model = yield* stage(p + '-models', function* () {
+            let bit = head.state.bit; const trees = [];
+            for (const [count, alphabet] of owner.groups(head)) {
+              const group = []; trees.push(group);
+              for (let first = 0; first < count; first += 16) {
+                const part = yield* unit(t, () => {
+                  const r = owner.reader(bytes, bit); return {trees: owner.trees(r, Math.min(16, count - first), alphabet), bit: r.bit};
+                });
+                group.push(...part.trees); bit = part.bit;
+              }
+            }
+            return {trees, bit};
+          });
+          if (model) cursor = {...cursor, bit: model.bit};
+          const made = [];
+          while (cursor.at < head.end) {
+            const part = yield* unit(p + '-output', () => {
+              const from = cursor.at, next = owner.part(bytes, head, model, cursor, previousByte([...parts, ...made], owner.require), limits.dictionary); cursor = next.state;
+              return {bytes: next.bytes, from, at: cursor.at};
+            });
+            made.push(part);
+            const saved = yield* carried(p + '-state', () => null, () => cursor, true);
+            if (saved !== null && saved !== PASSED) cursor = saved;
+          }
+          return {parts: made, state: owner.metaEnd(cursor)};
         });
-        group.push(...part.trees); bit = part.bit;
+        parts.push(...result.parts); state = result.state;
       }
-    }
-    return {trees, bit};
-  });
+      yield* unit(p + '-end', () => { owner.end(bytes, state); return null; });
+      return journalJoin(parts.map(part => part.bytes));
+    });
+  };
 }
-
-function* decodeBrotli(bytes, options, owner) {
-  const limits = owner.limits(bytes, options);
-  return yield* stage('decode-brotli', function* () {
-    let state = yield* unit('decode-brotli-window', () => owner.start(bytes)); const parts = [];
-    while (!state.last) {
-      const result = yield* stage('decode-brotli-meta', function* () {
-        const head = yield* unit('decode-brotli-header', () => owner.header(bytes, state, limits)); let cursor = head.state;
-        if (head.kind === 'end' || head.kind === 'skip') return {parts: [], state: cursor};
-        const model = head.kind === 'compressed' ? yield* decodeModels(bytes, head, owner) : null; if (model) cursor = {...cursor, bit: model.bit};
-        const made = [];
-        while (cursor.at < head.end) {
-          const part = yield* unit('decode-brotli-output', () => {
-            const from = cursor.at, next = owner.part(bytes, head, model, cursor, previousByte([...parts, ...made], owner.require), limits.dictionary); cursor = next.state;
-            return {bytes: next.bytes, from, at: cursor.at};
-          });
-          made.push(part);
-          const saved = yield* carried('decode-brotli-state', () => null, () => cursor, true);
-          if (saved !== null && saved !== PASSED) cursor = saved;
-        }
-        return {parts: made, state: owner.metaEnd(cursor)};
-      });
-      parts.push(...result.parts); state = result.state;
-    }
-    yield* unit('decode-brotli-end', () => { owner.end(bytes, state); return null; });
-    return journalJoin(parts.map(part => part.bytes));
-  });
-}
-
-function* readMetaModels(bytes, header, owner) {
-  let pos = header.state.pos;
-  const groups = [];
-  for (const [count, alphabet] of owner.groups(header)) {
-    const models = [];
-    for (let from = 0; from < count; from += 16) {
-      const part = yield* unit('brotli-models', () => owner.trees(bytes, pos, Math.min(16, count - from), alphabet));
-      pos = part.pos; models.push(...part.trees);
-    }
-    groups.push(models);
-  }
-  return owner.model(header, pos, groups);
-}
-
-function* readBrotli(bytes, options, owner) {
-  const {maximum, maxBlocks} = owner.limits(bytes, options);
-  return yield* stage('brotli-read', function* () {
-    let state = yield* unit('brotli-window', () => owner.start(bytes));
-    const parts = [];
-    while (!state.last) {
-      const block = yield* stage('brotli-meta', function* () {
-        const header = yield* unit('brotli-header', () => owner.header(bytes, state, maximum, maxBlocks));
-        if (header.kind === 'empty') return {state: header.state, parts: []};
-        const models = header.kind === 'compressed' ? yield* readMetaModels(bytes, header, owner) : header;
-        let cursor = owner.cursor(header, models);
-        const rows = [];
-        let at = cursor.at;
-        while (at < header.end) {
-          const part = yield* unit('brotli-output', () => {
-            const from = cursor.at, decoded = owner.part(bytes, models, cursor, [...parts, ...rows], options);
-            cursor = decoded.state; return {bytes: decoded.bytes, from, at: cursor.at};
-          });
-          rows.push(part); at = part.at;
-          const saved = yield* carried('brotli-state', () => null, () => cursor, true);
-          if (saved !== null && saved !== PASSED) cursor = saved;
-        }
-        return {parts: rows, state: owner.metaEnd(header, cursor)};
-      });
-      parts.push(...block.parts); state = block.state;
-    }
-    yield* unit('brotli-end', () => owner.end(bytes, state.pos));
-    return journalJoin(parts.map(part => part.bytes));
-  });
-}
+const decodeBrotli = brotliSteps('decode-brotli', 'decode-brotli', 'decode-brotli-trees');
+const readBrotli = brotliSteps('brotli', 'brotli-read', 'brotli-models');
 
 export const metadataTools = Object.freeze({openImage, readEntropyModel, readICC, decodeICC, admitDecodedICC, decodeBrotli, readBrotli});

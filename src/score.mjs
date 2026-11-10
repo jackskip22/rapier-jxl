@@ -11,6 +11,9 @@ import {exactAnswerer, exactPool, exactScores} from './exact-region.mjs';
 import {memoryPlan} from './memory-plan.mjs';
 import {gpuSetup} from './gpu-setup.mjs';
 import {photoTarget} from './photo-quality-search.mjs';
+import {explicitShownMargin} from './photo-whole-policy.mjs';
+import {nativeRGBA} from './photo-output.mjs';
+import {bandedOutputs} from './photo-reconstruct-bands.mjs';
 
 export {PHOTO_LIMITS as LIMITS};
 
@@ -73,7 +76,15 @@ export function* encodeToScoreSteps(data, width, height, options) {
   const {memory, plan} = scoreMemory(data, width, height, options, target.ssimulacra2 !== undefined);
   let whole = null, steps = null;
   try {
-    whole = cpuMeasure(data, width, height, {cacheBytes: plan.cacheBytes});
+    const shown = options?.shownBound && target.ssimulacra2 !== undefined;
+    const nativeBand = (linear, from, count, out, at, y) => out.set(nativeRGBA(
+      linear.map(plane => plane.subarray(from, from + count)), width, count / width, {y}), at * 4);
+    function* shownOutputs(image) {
+      const made = bandedOutputs(image, 256, nativeBand);
+      yield {kind: 'package', rgba: made.package};
+      yield {kind: 'native', rgba: made.native};
+    }
+    whole = cpuMeasure(data, width, height, {cacheBytes: plan.cacheBytes, ...(shown && {native: true, rgbaOutputs: shownOutputs})});
     const measure = (image, want) => {
       const out = exactScores(whole, {rgba: data}, width, height, image, want, plan);
       if (options?.stats) {
@@ -81,6 +92,8 @@ export function* encodeToScoreSteps(data, width, height, options) {
         options.stats.metricCacheBytes = Math.max(options.stats.metricCacheBytes ?? 0, whole.cacheBytes ?? 0);
         options.stats.metricReferenceBytes = Math.max(options.stats.metricReferenceBytes ?? 0, whole.referenceBytes ?? 0);
       }
+      if (shown && want?.ssimulacra2 && Number.isFinite(out?.ssimulacra2))
+        return {...out, ssimulacra2: out.ssimulacra2 - explicitShownMargin(out.ssimulacra2, width, height)};
       return out;
     };
     steps = scoreSteps(prepareV6(data, width, height, {}, memory), target, {candidates, effort, exactSize: true, preview: settings.preview});

@@ -6,7 +6,7 @@ export type ColorSpace = 'srgb' | 'display-p3' | 'rec2020';
 export type SampleFormat = 'uint' | 'float16' | 'float32';
 export type TransferFunction = 'srgb' | 'linear' | 'pq' | 'hlg';
 export interface Limits { readonly pixels: number; readonly edge: number; }
-/** Core limits: 24 million pixels and 16,384 pixels per side. Encoded output is bounded by available memory. */
+/** Core limits: 40 million pixels and 32,767 pixels per side. Encoded output is bounded by available memory. */
 export const LIMITS: Limits;
 export interface EncodeOptions {
   /** 1 to 100; 100 is exact. Lossy XYB photo quantization caps at 99.9 (a quality above it quantizes as 99.9). */ quality?: number | undefined;

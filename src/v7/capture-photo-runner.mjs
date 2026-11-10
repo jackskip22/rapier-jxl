@@ -6,6 +6,8 @@ import {CAPTURE_TOOLS_LEAN} from '../capture-codec.mjs';
 import {kernelsReady} from './kernels-ready.mjs';
 import {webpCoding} from './webp-quality.mjs';
 import {lowCaptureReading} from './low-webp-quality.mjs';
+import {lookingReader, LOOK_FROM} from './capture-region-look.mjs';
+import {captureSmallReading} from './capture-small-reading.mjs';
 import {captureRectangles} from './capture-photo-options.mjs';
 import {planCapturePhotoBands} from './capture-photo-bands.mjs';
 
@@ -22,8 +24,14 @@ export function capturePhotoRunner(tools, {device = null, answerer = null}, runP
     if (fidelity?.qualityIntent === undefined)
       return runCaptureUsing(input, options, hooks, {maxError: fidelity?.maxError ?? 0}, exact);
     const intent = fidelity.qualityIntent, coding = webpCoding(intent);
-    coding.regionQuality = (data, width, rect, offGrid, colorSpace) =>
-      lowCaptureReading(intent, data, width, rect, offGrid, colorSpace);
+    coding.regionQuality = (data, width, rect, offGrid, colorSpace, small = false) => small
+      ? captureSmallReading(intent, data, width, rect, offGrid, colorSpace)
+      : lowCaptureReading(intent, data, width, rect, offGrid, colorSpace);
+    const effort = options.effort ?? 3;
+    if (effort >= LOOK_FROM) coding.wholeQuality = coding.regionQuality;
+    if (effort >= 1) coding.regionQuality = lookingReader(intent, coding.regionQuality, {
+      measureLarge: effort >= LOOK_FROM, measureSmall: effort < 6,
+    });
     return runPhoto ? runPhoto({input, options, hooks, coding, photo, exact})
       : runCaptureUsing(input, options, hooks, coding, photo);
   };

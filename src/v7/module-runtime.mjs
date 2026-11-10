@@ -6,14 +6,14 @@ const encodes = operation => operation === 'encode' || operation === 'fit' || op
 
 export function moduleRuntime(module, {name, gpu = false, helpers, helper: file} = {}) {
   let pool = null;
-  const helper = file && {...file, module: file.module ?? name, protocol: WORKER_PROTOCOL, wasm: module.configureWasm?.[Symbol.for('rapier-jxl.wasm-supplied')]};
-  const closed = new WeakSet();
+  const helper = !(typeof __RAPIER_JXL_JPEG__ !== "undefined" && __RAPIER_JXL_JPEG__ === true || typeof __RAPIER_JXL_CAPTURE_LEAN__ !== "undefined" && __RAPIER_JXL_CAPTURE_LEAN__ === true) && file && {...file, module: file.module ?? name, protocol: WORKER_PROTOCOL, wasm: module.configureWasm?.[Symbol.for('rapier-jxl.wasm-supplied')]};
+  const closed = new WeakSet(), checkOp = op => { if (typeof module[op] !== 'function') throw fail('JXL_OPTIONS', `This codec's module has no ${op}.`); };
   const helperModule = () => {
     if (!helpers || !helper) return Promise.reject(fail('JXL_OPTIONS', 'helpers are for a module that encodes.'));
     if (!pool) { pool = helpers(); pool.catch(() => { pool = null; }); }
     return pool;
   };
-  const lone = hooks => ({
+  const lone = (typeof __RAPIER_JXL_JPEG__ !== "undefined" && __RAPIER_JXL_JPEG__ === true || typeof __RAPIER_JXL_CAPTURE_LEAN__ !== "undefined" && __RAPIER_JXL_CAPTURE_LEAN__ === true) ? null : hooks => ({
     owned: true,
     pool: hooks.alone === false ? undefined : async pixels => {
       const {reservedHelpers, helperPool} = await helperModule();
@@ -26,8 +26,8 @@ export function moduleRuntime(module, {name, gpu = false, helpers, helper: file}
     module: name,
     async run(operation, input, options = {}, hooks = {}) {
       object(options); check(hooks.signal);
-      if (typeof module[operation] !== 'function') throw fail('JXL_OPTIONS', `This codec's module has no ${operation}.`);
-      if (hooks.lane && helpers && helper) {
+      checkOp(operation);
+      if (!(typeof __RAPIER_JXL_JPEG__ !== "undefined" && __RAPIER_JXL_JPEG__ === true || typeof __RAPIER_JXL_CAPTURE_LEAN__ !== "undefined" && __RAPIER_JXL_CAPTURE_LEAN__ === true) && hooks.lane && helpers && helper) {
         try { return await (await helperModule()).helperJob(hooks.owner, hooks.helpers, {kind: 'whole', operation, input, options, maxPixels: hooks.maxPixels, webgpu: hooks.webgpu}, {...hooks, helper}); }
         catch (error) { if (!error?.lost || hooks.signal?.aborted) throw error; }
       }
@@ -40,20 +40,20 @@ export function moduleRuntime(module, {name, gpu = false, helpers, helper: file}
         ...(operation === 'capture' && options.webgpu === undefined && hooks.webgpu !== undefined && {webgpu: hooks.webgpu}), signal: hooks.signal, onProgress: hooks.onProgress,
         ...(hooks.onPreview && {onPreview: hooks.onPreview}),
         ...(operation === 'capture' && hooks.onEncoded && {onEncoded: hooks.onEncoded})};
-      if (isRowBridge(input)) {
+      if (!(typeof __RAPIER_JXL_JPEG__ !== "undefined" && __RAPIER_JXL_JPEG__ === true) && isRowBridge(input)) {
         const port = input.rowsPort;
         try { return await module[operation](bridgedRows(input), call); } finally { port.close(); }
       }
       try {
-        const driven = encodes(operation) && module[operation][DRIVE];
+        const driven = !(typeof __RAPIER_JXL_JPEG__ !== "undefined" && __RAPIER_JXL_JPEG__ === true || typeof __RAPIER_JXL_CAPTURE_LEAN__ !== "undefined" && __RAPIER_JXL_CAPTURE_LEAN__ === true) && encodes(operation) && module[operation][DRIVE];
         if (driven && helpers && helper && hooks.helpers && !hooks.lane) return await driven(input, call, lone(hooks));
         return await module[operation](input, call);
-      } finally { if (typeof ImageBitmap === 'function' && input instanceof ImageBitmap || typeof VideoFrame === 'function' && input instanceof VideoFrame) input.close(); }
+      } finally { if (typeof ImageBitmap !== 'undefined' && input instanceof ImageBitmap || typeof VideoFrame === 'function' && input instanceof VideoFrame) input.close(); }
     },
     async prepare(operation, {webgpu, owner, helpers: reservation} = {}) {
-      if (typeof module[operation] !== 'function') throw fail('JXL_OPTIONS', `This codec's module has no ${operation}.`);
+      checkOp(operation);
       if (gpu && encodes(operation) && webgpu === 'required') await gpu('required');
-      if (encodes(operation) && owner && reservation?.count && helpers && helper) {
+      if (!(typeof __RAPIER_JXL_JPEG__ !== "undefined" && __RAPIER_JXL_JPEG__ === true || typeof __RAPIER_JXL_CAPTURE_LEAN__ !== "undefined" && __RAPIER_JXL_CAPTURE_LEAN__ === true) && encodes(operation) && owner && reservation?.count && helpers && helper) {
         const pool = await helperModule();
         if (!closed.has(owner)) await pool.warmHelpers(owner, reservation, helper);
       }

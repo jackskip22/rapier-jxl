@@ -67,7 +67,7 @@ export function fillPatches(plane, width, patches) {
 }
 
 export function writeCapturePatches(w, patches, alpha) {
-  if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && patches.peel && !patches.ordered) {
+  if (!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true || typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && patches.peel && !patches.ordered) {
     patches.ordered = true;
     const raster = patches.groups.map(g => g.positions), walked = patches.groups.map(g => {
       const n = g.positions.length >> 1;

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {unit, carried, stage, PASSED, journalJoin} from './step-journal.mjs';
+import {iccProfileSteps} from './resumable-metadata.mjs';
 
 export function* jpegScanRows({out, jpeg, writer, preds, ny, per, pad}, owner) {
   const {rows} = owner;
@@ -109,22 +110,7 @@ export function* jpegPayload(data, splitApps, owner) {
   return owner.finish(cuts, offset + data.tail.length);
 }
 
-export function* jpegICC(enc, owner) {
-  return yield* stage('icc-profile', function* () {
-    const first = yield* unit('icc-profile-header', () => owner.start(enc)); let state = first.state;
-    const parts = [{bytes: first.bytes, from: 0, at: state.at}];
-    while (!state.done) {
-      const part = yield* unit('icc-profile-part', () => {
-        const from = state.at, next = owner.part(enc, state, parts); state = next.state;
-        return {bytes: next.bytes, from, at: state.at};
-      });
-      parts.push(part);
-      const saved = yield* carried('icc-profile-state', () => null, () => state, true);
-      if (saved !== null && saved !== PASSED) state = saved;
-    }
-    return journalJoin(parts.map(part => part.bytes));
-  });
-}
+export const jpegICC = iccProfileSteps('icc-profile');
 
 export function* jpegICCEntropy(r, owner) {
   return yield* stage('icc-entropy', function* () {

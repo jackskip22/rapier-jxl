@@ -4,7 +4,7 @@ import {unit, stage, journaling, readAll} from './step-journal.mjs';
 import {lfPlanFor, monotonicLfPlanFor} from './lf-plans.mjs';
 import {planeModel, planeModelOf, planeTreeSteps, weightedTrees} from './capture-trees.mjs';
 import {writeCaptureStream, runModels} from './capture-codec.mjs';
-import {CAPTURE_TOOLS_COMPLETE} from './capture-ans.mjs';
+import {CAPTURE_ANS} from './capture-ans.mjs';
 import {RUNGS} from './lf-options.mjs';
 export {RUNGS} from './lf-options.mjs';
 import {kernelHooks} from './kernel-hooks.mjs';
@@ -60,7 +60,7 @@ const learned = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UP
 
 const LEAST_SAMPLES = 8192;
 const LF_CHARGE = 8;
-const ANS = CAPTURE_TOOLS_COMPLETE.ans;
+const ANS = CAPTURE_ANS;
 const learners = new Map();
 function learnOptions(options) {
   let learn = learners.get(options);
@@ -120,7 +120,7 @@ function* plainOrFixedDcSteps(w, planes, plain, kernels) {
   const fallback = Object.assign(new BitWriter(0), yield* unit('lf-plain', () => { const f = new BitWriter(256); plain(f); return {...f, bytes: f.bytes.slice(0, f.at + 1)}; }));
   w.append(fixed.bitLength < fallback.bitLength ? fixed : fallback);
 }
-export const plainOrFixedLfCoder = Object.freeze({
+export const plainOrFixedLfCoder = /* @__PURE__ */ Object.freeze({
   dc: (w, planes, plain, kernels) => complete(plainOrFixedDcSteps(w, planes, plain, kernels)),
   dcSteps: plainOrFixedDcSteps,
   metadata: (w, _planes, plain) => plain(w),
@@ -141,7 +141,7 @@ export function plainBound(planes) {
   return lower - 1e-9 * Math.max(prefix, ans) - 4;
 }
 
-const quick = lfCoder('quick'), kept = [], KEPT_BYTES = 8 << 20;
+const quick = /* @__PURE__ */ lfCoder('quick'), kept = [], KEPT_BYTES = 8 << 20;
 const planesHash = planes => {
   let h = 2166136261;
   for (const {w, h: ph, data} of planes) { h = Math.imul(h ^ w, 16777619); h = Math.imul(h ^ ph, 16777619); for (let i = 0; i < data.length; i++) h = Math.imul(h ^ data[i], 16777619); }
@@ -153,7 +153,7 @@ const samePlanes = (a, b) => a.length === b.length && a.every((p, i) => {
   for (let j = 0; j < p.data.length; j++) if (p.data[j] !== q.data[j]) return false;
   return true;
 });
-export const quickOrFixedLfCoder = Object.freeze({
+export const quickOrFixedLfCoder = /* @__PURE__ */ Object.freeze({
   *dcSteps(w, planes, plain, kernels) {
     const keep = !stepped(planes), hash = keep && planesHash(planes), hit = keep && kept.find(k => k.hash === hash && k.kernels === kernels && samePlanes(k.planes, planes));
     if (hit) { w.append(hit.bits); return; }
@@ -182,12 +182,12 @@ const smallerLf = (higher, lower) => Object.freeze(Object.fromEntries(['dc', 'me
   const steps = (w, planes, plain, kernels) => smallerSteps(higher, lower, stream, w, planes, plain, kernels);
   return [[stream, (...args) => complete(steps(...args))], [stream + 'Steps', steps]];
 })));
-const richLfCoder = smallerLf(lfCoder('rich'), quickOrFixedLfCoder);
+const richLfCoder = /* @__PURE__ */ smallerLf(lfCoder('rich'), quickOrFixedLfCoder);
 export const jpegBroadLfCoder = /* @__PURE__ */ smallerLf(lfCoder('jpegBroad'), richLfCoder);
-const fastLfCoder = smallerLf(lfCoder('fast'), richLfCoder);
-const broadLfCoder = smallerLf(smallerLf(lfCoder('jpegBroad'), lfCoder('broad')), fastLfCoder);
-export const fastOrFixedLfCoder = smallerLf(lfCoder('fast'), fixedLfCoder);
-export const jpegBroadOrFixedLfCoder = smallerLf(lfCoder('jpegBroad'), fixedLfCoder);
+const fastLfCoder = /* @__PURE__ */ smallerLf(lfCoder('fast'), richLfCoder);
+const broadLfCoder = /* @__PURE__ */ smallerLf(smallerLf(lfCoder('jpegBroad'), lfCoder('broad')), fastLfCoder);
+export const fastOrFixedLfCoder = /* @__PURE__ */ smallerLf(lfCoder('fast'), fixedLfCoder);
+export const jpegBroadOrFixedLfCoder = /* @__PURE__ */ smallerLf(lfCoder('jpegBroad'), fixedLfCoder);
 
 export function lfCoderForPlan(name) {
   switch (name) {

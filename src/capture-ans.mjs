@@ -141,5 +141,6 @@ function bins(plane, stride, origin, w, pieceValue, pieceDistance, minimum, coun
   }
 }
 
-export const CAPTURE_TOOLS_COMPLETE = Object.freeze({top: 9, next: null, ans: Object.freeze({tokens: captureAnsTokens, write: writeCaptureAns, distanceConfig, lengthConfig}),
-  signs: Object.freeze({arena, bins}), trees: Object.freeze({model: learnedModel}), transform: colourTransform, gpu: Object.freeze({pixels: 1 << 20})});
+export const CAPTURE_ANS = /* @__PURE__ */ Object.freeze({tokens: captureAnsTokens, write: writeCaptureAns, distanceConfig, lengthConfig});
+export const CAPTURE_TOOLS_COMPLETE = /* @__PURE__ */ Object.freeze({top: 9, next: null, ans: CAPTURE_ANS,
+  signs: (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : Object.freeze({arena, bins}), trees: Object.freeze({model: learnedModel}), transform: colourTransform, gpu: Object.freeze({pixels: 1 << 20})});

@@ -4,7 +4,7 @@ import {scaled} from './bits.mjs';
 import {buildExactTokenCoding} from './coefficient-coding.mjs';
 
 export function* jpegEffortSteps(jpeg, effort, retain, baseline = coefficientEffortSteps, shared = {}) {
-  if (effort < 8) return yield* baseline(jpeg, effort, undefined, retain, shared);
+  if (effort < 8 || (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true)) return yield* baseline(jpeg, effort, undefined, retain, shared);
   let best, step, hurry;
   const floor = baseline(jpeg, 7, undefined, retain, shared);
   let reply;

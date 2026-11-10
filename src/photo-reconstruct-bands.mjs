@@ -6,6 +6,7 @@ import {BA_MEMORY} from './butteraugli-memory.mjs';
 import {exactPow} from './exact-math.mjs';
 import {memoryPlan} from './memory-plan.mjs';
 import {fault} from './fault.mjs';
+import {bandScratch} from './band-scratch.mjs';
 export const RECON_MARGIN = 8;
 
 export function subBase(base, bx0, by0, bx1, by1) {
@@ -69,23 +70,26 @@ export function bandedRGBA(image, rows = 512, convert = toRGBAInto) {
   return out;
 }
 
-export function bandedOutputs(image, rows, native) {
+export function bandedOutputs(image, rows, native, sink = null) {
   const {width, height} = image, stride = image.components[0].stride, blockRows = image.components[0].rows;
-  const pack = new Uint8ClampedArray(width * height * 4), own = new Uint8ClampedArray(width * height * 4), decoded = rebuildable(image);
+  const pack = sink ? null : new Uint8ClampedArray(width * height * 4), own = sink ? null : new Uint8ClampedArray(width * height * 4), decoded = rebuildable(image);
   for (let y0 = 0; y0 < height; y0 += rows) {
     const y1 = Math.min(height, y0 + rows), by0 = Math.max(0, Math.floor((y0 - RECON_MARGIN) / 64) * 8), by1 = Math.min(blockRows, Math.ceil((y1 + RECON_MARGIN) / 64) * 8);
     const sub = subImage(image, 0, by0, stride, by1), from = (y0 - by0 * 8) * width, count = (y1 - y0) * width;
+    const bandPack = sink ? bandScratch(Uint8ClampedArray, 'band-package', count * 4) : pack, bandOwn = sink ? bandScratch(Uint8ClampedArray, 'band-native', count * 4) : own;
+    const at = sink ? 0 : y0 * width;
     if (decoded) {
       const made = rebuildPicture(sub, {rgba: true, linear: true});
-      pack.set(made.rgba.subarray(from * 4, (from + count) * 4), y0 * width * 4);
-      native(made.linear, from, count, own, y0 * width);
+      bandPack.set(made.rgba.subarray(from * 4, (from + count) * 4), at * 4);
+      native(made.linear, from, count, bandOwn, at, y0);
     } else {
       const linear = reconstruct(sub);
-      toRGBAInto(linear, from, count, pack, y0 * width);
-      native(linear, from, count, own, y0 * width);
+      toRGBAInto(linear, from, count, bandPack, at);
+      native(linear, from, count, bandOwn, at, y0);
     }
+    sink?.(y0, y1 - y0, bandPack, bandOwn);
   }
-  return {package: pack, native: own};
+  return sink ? null : {package: pack, native: own};
 }
 
 export const BAND_ROWS = 128;

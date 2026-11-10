@@ -1,20 +1,24 @@
-name: Hardware check result
-description: Send the JSON from a hardware check in jobs/.
-title: "Hardware check: "
+name: Job
+description: Started a job from jobs/? Title the issue with the job's name, then attach its results file here.
+title: ""
 body:
   - type: markdown
     attributes:
-      value: Results are unchecked until independently repeated. Include failures and partial results.
+      value: Use the job's name as the title, so others know it is taken. Results are unchecked until repeated. Include failures and partial results.
+  - type: input
+    id: job
+    attributes:
+      label: Job
+      description: The job's name, as in jobs/README.md.
+    validations:
+      required: true
   - type: textarea
     id: result
     attributes:
-      label: Result JSON
-      description: Paste the complete output from Copy JSON.
-      render: json
-    validations:
-      required: true
+      label: Results file
+      description: Attach the results file (drag it here). Leave this empty until you have it.
   - type: textarea
     id: notes
     attributes:
       label: Notes
-      description: Anything the result does not show, such as a display problem or interruption.
+      description: Anything the file does not show, such as a display problem or an interruption.

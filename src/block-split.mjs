@@ -86,7 +86,7 @@ function unpack({head, levels}, into) {
   }
 }
 
-export async function pictureBlocksSplit(data, width, height, quality, row, search, helpers, {signal, arena = false} = {}, write = null) {
+export const pictureBlocksSplit = (typeof __RAPIER_JXL_HELPER__ !== 'undefined' && __RAPIER_JXL_HELPER__ === true) ? null : async function pictureBlocksSplit(data, width, height, quality, row, search, helpers, {signal, arena = false} = {}, write = null) {
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), W = stride * 8;
   const bands = splitBands(rows, helpers.length + 1, 8).map(({top, height}) => ({by0: top, by1: top + height}));
   const {id, ticket} = splitIds(), keys = bands.map((_, k) => id + ':blocks:' + k);

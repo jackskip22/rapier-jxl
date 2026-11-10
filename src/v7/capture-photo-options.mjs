@@ -36,10 +36,12 @@ export function captureRectangles(options, width, height) {
 export function admitCapturePhoto(options = {}, carried = null) {
   if (!options || typeof options !== 'object' || Array.isArray(options))
     throw fail('JXL_OPTIONS', 'JPEG XL options must be an object.');
-  const {exactRects, photoRects, ...rest} = options;
+  const {exactRects, photoRects, textComplete, ...rest} = options;
   admitCapture({...rest, fidelity: 'exact'}, carried);
   admitRects('exactRects', exactRects);
   admitRects('photoRects', photoRects);
+  if (textComplete !== undefined && (textComplete !== true || !Array.isArray(exactRects)))
+    throw fail('JXL_OPTIONS', 'textComplete is page-rects measurement metadata and requires its exactRects array.');
   if (options.features?.firstRegion !== undefined)
     throw fail('JXL_UNSUPPORTED', 'firstRegion is for encode, not capture.');
   return capturePhotoFidelity(options.fidelity);

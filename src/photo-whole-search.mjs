@@ -21,6 +21,7 @@ import {admitSize} from './admit.mjs';
 import {s2Dimensions, s2RGBA} from './ssimulacra2-input.mjs';
 import {EDGE} from './limits.mjs';
 import {fault} from './fault.mjs';
+import {bandScratch} from './band-scratch.mjs';
 import {MEASURED_EFFORT, measuredLevel} from './effort-level.mjs';
 
 const check = signal => { if (signal?.aborted) throw signal.reason; };
@@ -73,14 +74,14 @@ function wholeProvider(prepared, signal, device = false) {
         if (bound === null) {
           bound = 0;
           const needMask = filter === 'gaborish' && !devicePlanes.maskWeight, hf = needMask ? new Float64Array(stride * rows) : null;
-          const staged = new Map();
+          const staged = typeof navigator !== 'undefined' && navigator.gpu ? new Map() : null;
           for (let from = 0; from < H; from += ROWS) {
             check(signal);
             const to = Math.min(H, from + ROWS), band = planeRows(from, to), start = (from - band.top) * W, end = start + (to - from) * W, count = end - start;
             if (hf) maskEnergy(band.planes, band.top, stride, from / 8, to / 8, hf);
             const trio = [];
             for (let c = 0; c < 3; c++) {
-              const p = band.planes[c], pairs = new Float32Array(count * 2);
+              const p = band.planes[c], pairs = staged ? new Float32Array(count * 2) : bandScratch(Float32Array, 'plane-pairs', count * 2);
               let worst = 0;
               for (let i = 0; i < count; i++) {
                 const value = p[start + i], hi = Math.fround(value), lo = Math.fround(value - hi);
@@ -96,14 +97,14 @@ function wholeProvider(prepared, signal, device = false) {
               if (b32[0] > bound) bound = b32[0];
               trio.push(pairs);
             }
-            staged.set(from + ':' + to, trio);
+            staged?.set(from + ':' + to, trio);
           }
           if (hf) devicePlanes.maskWeight = maskWeights(hf, stride, rows).weight;
-          devicePlanes.staged = staged;
+          if (staged) devicePlanes.staged = staged;
         }
         return bound;
       };
-      const base = Object.defineProperty({...image, ...(planes && {planes}), planeRows, devicePlanes},
+      const base = Object.defineProperty({...image, components: image.components.map(c => ({...c, coeffs: EMPTY_I16})), ...(planes && {planes}), planeRows, devicePlanes},
         'planeBound', {get: getBound, enumerable: true, configurable: true});
       source = {planeRows, getBound, devicePlanes, base}; sources.set(key, source);
     }
@@ -150,7 +151,7 @@ function wholeProvider(prepared, signal, device = false) {
 const SHARED_SEARCH = {blocks: planeSearchSteps, options: blockSearchOptions, measured: planeMeasuredSteps,
   score: scoreSteps, aq: AQ, candidates: CANDIDATES};
 const WANT_S2 = {ssimulacra2: true, butteraugli: false};
-const DOWN_FROM = 1, DOWN_PROBES = [3, 4, 6], FLOOR_EFFORT = MEASURED_EFFORT - 1;
+const DOWN_FROM = 1, DOWN_PROBES = [4, 4, 6], DOWN_LAST_AIM = 0.35, FLOOR_EFFORT = MEASURED_EFFORT - 1;
 const LEAN_EFFORT = 7, LEAN_PROBES = 6;
 const leanStart = quality => Math.max(1, quality - (quality < 85 ? 7 : 4));
 
@@ -229,9 +230,12 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
     if (!made) throw fault('JXL_INTERNAL', 'A capture image measure needs its writer.');
     return yield* measureOutput(yield* made.provider.write(image, writerEffort, {pass: true}), want);
   } : (image, want) => (rebuilt ??= imageMeasure(data, width, height, color, signal, plan)).measure(image, want);
+  let probe = 0;
   const scoreFile = function* (file, image, want) {
-    let scores = measureOutput ? yield* measureOutput(file, want) : measure(image, want);
-    if (typeof scores?.next === 'function') scores = yield* scores;
+    const scores = yield* stage('whole-score-' + probe++, function* () {
+      const value = measureOutput ? yield* measureOutput(file, want) : measure(image, want);
+      return typeof value?.next === 'function' ? yield* value : value;
+    });
     check(signal);
     announce?.(file, scores.ssimulacra2);
     return scores;
@@ -289,7 +293,8 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
         else if (closest && scores.ssimulacra2 > closest.score) closest = {bytes: file, score: scores.ssimulacra2};
         return {scores, output: {bytes: file, effort: FLOOR_EFFORT}};
       };
-      yield* measured(qualitySteps(lowAt, requested, {start: quality, low: over ? 1 : quality, high: 99.99, probes: over ? DOWN_PROBES[Math.min(effort, 6) - 4] : 2,
+      yield* measured(qualitySteps(lowAt, requested, {start: quality, low: over ? 1 : quality, high: 99.99,
+        lastAim: over && effort === 4 ? DOWN_LAST_AIM : undefined, probes: over ? DOWN_PROBES[Math.min(effort, 6) - 4] : 2,
         initial: {quality, image: floorImage, scores: floorScores, output: {bytes: lowFiles.get(floorImage), effort: FLOOR_EFFORT}},
         measureSteps: checkedLow}), measure, signal);
     }
@@ -307,19 +312,21 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
       return {scores, output: {bytes: file, effort: writerEffort}};
     };
     const scoreOnly = measureOutput ? qualify : function* (image, want) { return {scores: yield* scoreFile(null, image, want.exact ? want : {...want, doubt: true})}; };
-    let written = null;
+    let written = null, kept = 0;
     const sameWriteEffort = (a, b) => a === b || (!measureOutput && a <= 6 && b <= 6);
     const memoAt = (fn, q0 = NaN, img0 = null) => {
       const held = new Map();
       if (img0) held.set(q0, img0);
-      return function* (q) {
+      const at = function* (q) {
         const hit = held.get(q);
         if (hit) { held.delete(q); held.set(q, hit); return hit; }
+        held.clear();
         const img = yield* fn(q);
-        if (held.size >= 2) held.delete(held.keys().next().value);
         held.set(q, img);
         return img;
       };
+      at.clear = () => held.clear();
+      return at;
     };
     const first = measureOutput ? WANT_S2 : {...WANT_S2, doubt: true};
     const exactAt = (at, q) => function* () { return (yield* scoreFile(null, yield* at(q), WANT_S2)).ssimulacra2; };
@@ -328,7 +335,10 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
       if (!found.output?.bytes || !sameWriteEffort(found.output.effort, effort)) {
         const same = written?.imageAt === imageAt && written.quality === found.quality && sameWriteEffort(written.effort, effort);
         let bytes = same ? written.bytes : null;
-        if (!bytes) { const image = yield* imageAt(found.quality); bytes = shown(yield* provider.write(image, effort, {pass: true}), image); }
+        if (!bytes) bytes = yield* stage('whole-keep-' + kept++, function* () {
+          const image = yield* imageAt(found.quality);
+          return shown(yield* provider.write(image, effort, {pass: true}), image);
+        });
         written = {imageAt, quality: found.quality, effort, bytes};
         found = {...found, output: {bytes, effort}};
         announce?.(found.output.bytes, found.scores.ssimulacra2);
@@ -431,6 +441,7 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
       fit.found?.({quality: reported, fits: chosen.fits});
       return chosen.file;
     }
+    const taken = box => { const value = box.v; box.v = null; return value; };
     const probe = (imageAt, start, probes, initial = null, seen = null) => measured(qualitySteps(imageAt,
       requested, {start, low: 1, high: 99.9, probes, initial, measureSteps: scoreOnly, seen}), measure, signal);
     const imageAt = memoAt(q => provider.image(q, {filter: 'gaborish'}));
@@ -442,12 +453,16 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
       yield 0.05;
       const plain = yield* probe(imageAt, leanStart(quality), LEAN_PROBES);
       yield 0.3;
+      imageAt.clear();
       const options = blockOptions(), base = yield* provider.baseSteps(plain.quality, {keepPlanes: true});
-      const searched = yield* search.blocks(base, width, height, options, signal), layout = searched.layout;
+      let searched = yield* search.blocks(base, width, height, options, signal);
+      const layout = searched.layout;
       const shapedAt = memoAt(function* (q) { return yield* planeLayoutSteps(yield* provider.baseSteps(q, {keepPlanes: true}), width, height, layout, options, signal); }, plain.quality, searched.image);
-      const initial = {quality: plain.quality, image: searched.image, ...yield* qualify(searched.image, first)};
+      const initial = {v: {quality: plain.quality, image: searched.image, ...yield* qualify(searched.image, first)}};
+      searched = null;
       yield 0.5;
-      yield* keep(shapedAt, yield* probe(shapedAt, plain.quality, LEAN_PROBES, initial), leanWrite);
+      yield* keep(shapedAt, yield* probe(shapedAt, plain.quality, LEAN_PROBES, taken(initial)), leanWrite);
+      shapedAt.clear();
       yield 0.8;
       yield* keep(imageAt, plain, leanWrite);
       check(signal);
@@ -467,26 +482,35 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
         fine ??= yield* probe(imageAt, quality, 12, null, seen);
         probed = null;
         fine = yield* keep(imageAt, fine, rung);
+        if (rung === effort) imageAt.clear();
         best = fine;
         if (!block16) {
+          imageAt.clear();
           const options = blockOptions([4]), base = yield* provider.baseSteps(best.quality, {keepPlanes: true});
-          const searched = yield* search.blocks(base, width, height, options, signal), layout = searched.layout;
+          let searched = yield* search.blocks(base, width, height, options, signal);
+          const layout = searched.layout;
           block16At = memoAt(function* (q) { return yield* planeLayoutSteps(yield* provider.baseSteps(q, {keepPlanes: true}), width, height, layout, options, signal); }, best.quality, searched.image);
-          const initial = {quality: best.quality, image: searched.image, ...yield* qualify(searched.image, first)};
-          block16 = yield* probe(block16At, best.quality, 6, initial);
+          const initial = {v: {quality: best.quality, image: searched.image, ...yield* qualify(searched.image, first)}};
+          searched = null;
+          block16 = yield* probe(block16At, best.quality, 6, taken(initial));
         }
         block16 = yield* keep(block16At, block16, rung);
+        if (rung === effort) block16At.clear();
       }
       yield 0.3;
       if (rung >= 7) {
         if (!block) {
+          imageAt.clear(); block16At?.clear();
           const options = blockOptions(), base = yield* provider.baseSteps(best.quality, {keepPlanes: true});
-          const searched = yield* search.blocks(base, width, height, options, signal), layout = searched.layout;
+          let searched = yield* search.blocks(base, width, height, options, signal);
+          const layout = searched.layout;
           blockAt = memoAt(function* (q) { return yield* planeLayoutSteps(yield* provider.baseSteps(q, {keepPlanes: true}), width, height, layout, options, signal); }, best.quality, searched.image);
-          const initial = {quality: best.quality, image: searched.image, ...yield* qualify(searched.image, first)};
-          block = yield* probe(blockAt, best.quality, 12, initial);
+          const initial = {v: {quality: best.quality, image: searched.image, ...yield* qualify(searched.image, first)}};
+          searched = null;
+          block = yield* probe(blockAt, best.quality, 12, taken(initial));
         }
         block = yield* keep(blockAt, block, rung);
+        if (rung === effort) blockAt.clear();
         yield 0.6;
       }
       if (rung >= 8) {

@@ -3,10 +3,10 @@
 JPEG XL in JavaScript and WebAssembly with WebGPU for high efforts.
 
 - Uploads over 2x faster than libvips.
-- 48 KB Brotli exact capture.
-- 233 KB Brotli complete capture.
-- 224 KB Brotli upload.
-- 348 KB Brotli full encoder with HDR and parallel workers. Used by [rapier.html](https://rapier.website)
+- 49 KB Brotli exact capture.
+- 242 KB Brotli complete capture.
+- 270 KB Brotli upload.
+- 356 KB Brotli full encoder with HDR and parallel workers. Used by [rapier.html](https://rapier.website)
 - Lossless JPEG transcoding, decoding, verification, serving, metadata, animation, polyfill, CLI and resumable encoding
   for edge isolates. Modules are single files.
 - Browsers, workers, Node, Deno, Bun, Cloudflare Workers.
@@ -41,8 +41,12 @@ leaves finished files untouched.
 import {encode, fit} from 'rapier-jxl/upload';
 
 // file: a File or Blob from an input, a drop or a fetch.
-const compress = async file => new Blob([(await encode(file, {fidelity: {quality: 82}})).bytes], {type: 'image/jxl'});
-const small = file => fit(file, {maxBytes: 100_000}); // best quality under 100 KB
+const compress = async file => {
+  const result = await encode(file, {fidelity: {quality: 82}});
+  if (!result.bytes) throw Object.assign(new Error(result.reason.message), {code: result.reason.code});
+  return new Blob([result.bytes], {type: 'image/jxl'});
+};
+const small = file => fit(file, {maxBytes: 100_000}); // best quality under 100 KB; `fits` says whether it got there
 ```
 
 `variants` makes several sizes from one upload. All calls accept `onProgress` and `signal`, for progress bars and
@@ -61,7 +65,7 @@ await writeFile('picture.jxl', (await encode(picture, {fidelity: {quality: 90}})
 
 Takes RGBA `{data, width, height}`, `ImageData`, a canvas (2D, WebGL or WebGPU), an `ImageBitmap`, a `VideoFrame`, a
 `Blob`, a decoded image or a GPU texture `{texture, device}`, and returns a result record with the output in `result.bytes`. 8 or 16-bit, `Float16Array`
-or `Float32Array` samples, including HDR. For animations, use `rapier-jxl/animation`.
+or `Float32Array` samples, including HDR. For animations, including an animated GIF `Blob`, use `rapier-jxl/animation`.
 
 - Lossless JPEG recompression is `recompress` from `rapier-jxl/jpeg`; in `rapier-jxl/upload`, `encode(jpegFile, {fidelity: 'exact'})` does the same. The full `encode` takes pixels.
 - `fidelity`: `{quality: 1–100}`, default 90. `'exact'` is lossless.
@@ -222,7 +226,8 @@ try {
 }
 ```
 
-- In browsers, the module runs in a worker (upload: 250 KB Brotli). Node, Deno and Bun run it in the calling thread.
+- In browsers, the module runs in a worker (upload: 296 KB Brotli). Node, Deno and Bun run it in the calling thread.
+- With one module, import its codec from `rapier-jxl/codec/<module>`; bundlers then ship only that module's files.
 - `helpers` adds up to 16 worker threads; `helpers: true` sizes them by the device.
 - Errors carry a `code`, such as `JXL_INPUT`, `JXL_OPTIONS`, `JXL_WASM` or `JXL_WEBGPU`.
 
@@ -238,13 +243,14 @@ try {
 - Content Security Policy: `'wasm-unsafe-eval'`; `worker-src blob:` for `rapier-jxl/codec` from a CDN.
 - Every module needs WebAssembly with SIMD (`JXL_WASM` without it), except `restore` and `metadata`.
 - Without native JPEG XL: `import 'rapier-jxl/polyfill'`.
-- Vite: `worker: {format: 'es'}`. webpack 5 and Next.js work as is. Next.js edge routes: import modules directly,
-  not `rapier-jxl/codec`.
-- Parcel: in `package.json`, set `"@parcel/resolver-default": {"packageExports": true}`.
+- Vite, webpack 5, Next.js, Parcel and Astro work as is. A Vite 7 workspace that installs rapier-jxl above the app's
+  folder needs `optimizeDeps: {exclude: ['rapier-jxl']}`. Next.js edge routes: import modules directly, not
+  `rapier-jxl/codec`.
 - Angular: add `{"glob": "*.{worker,helper}.mjs", "input": "node_modules/rapier-jxl/dist", "output": "/"}` to the
-  build's `assets` in `angular.json`.
+  build's `assets` in `angular.json`; with one module, the glob `<module>.*{worker,helper}.mjs`.
 - Rollup: `@web/rollup-plugin-import-meta-assets` with `assetFileNames: 'assets/[name][extname]'`.
-- esbuild: copy `rapier-jxl/dist/*.worker.mjs` and `*.helper.mjs` beside the bundle.
+- esbuild: copy `rapier-jxl/dist/*.worker.mjs` and `*.helper.mjs` beside the bundle; with one module, its
+  `<module>.*{worker,helper}.mjs`.
 
 Node 20.16+ or 22.3+, Deno, Bun, Cloudflare Workers.
 
@@ -254,7 +260,7 @@ MIT. Third-party notices: `THIRD_PARTY_NOTICES`.
 
 ## Contributing
 
-Anybody is welcome to contribute to rapier-jxl, which is intended to be as universal as possible.
+Anybody is welcome to contribute to rapier-jxl, which is intended to be as universal as possible. You can also greatly assist the project by simply performing tests on your computer which is always turning up new edge cases to improve the encoder. Testing on every kind of device is essential for a universal encoder. Check the jobs/ folder in the repo root, open an issue with the job's name as its title if you've started work on it, then please submit your results by attaching them to that issue.
 
 For feedback, requests or questions, feel free to join the discussion. The goal is to make rapier-jxl as easy, fast, small, powerful and reliable as possible for every use case, while keeping the architecture simple and general.
 

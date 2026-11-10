@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 import {complete} from './bits.mjs';
+import {captureSmoothRegions} from './capture-smooth.mjs';
+import {smoothQuantize} from './capture-smooth-quantize.mjs';
 import {admitOptions, admitPixels, admitOutputSize, fault} from './admit.mjs';
-import {encodeCaptureSteps, encodeCaptureBytes, captureBandSteps, CAPTURE_BASE, CAPTURE_TOOLS, CAPTURE_TRACE, CAPTURE_HELPERS, CAPTURE_GPU, DEFAULT_EFFORT} from './capture-codec.mjs';
+import {encodeCaptureSteps, encodeCaptureBytes, captureBandSteps, captureAnswerLevel, CAPTURE_BASE, CAPTURE_TOOLS, CAPTURE_TRACE, CAPTURE_HELPERS, CAPTURE_GPU, DEFAULT_EFFORT} from './capture-codec.mjs';
 import {photoKernels} from './capture-kernels.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
 import {writeImage} from './photo-image-write.mjs';
@@ -9,10 +11,10 @@ import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {lowWholePhotoSteps} from './photo-low.mjs';
 import {flatSamples} from './screen-samples.mjs';
 import {viewPixels} from './screen-crop.mjs';
-import {screenPhotoRegions, screenPhotoTiles, textTiles, photoCells} from './screen-photo-regions.mjs';
+import {screenPhotoRegions, screenPhotoTiles, screenPhotoResample, textTiles, photoCells} from './screen-photo-regions.mjs';
 import {expandPhotoRegions} from './screen-photo-borders.mjs';
 import {photoMasks, fillHoles} from './screen-photo-mask.mjs';
-import {lossyModularFrame, lossyModularSections} from './capture-modular-lossy.mjs';
+import {lossyModularFrame, lossyModularSections, lossyModularLength} from './capture-modular-lossy.mjs';
 import {patchedPageSteps} from './capture-patched.mjs';
 import {CAPTURE_PROTECTION} from './capture-protection.mjs';
 import {BANDED_LIMITS} from './memory-device.mjs';
@@ -92,12 +94,12 @@ function edgeText(data,width,height,r){
   }
   return false;
 }
-export function captureGraphicRegions(data,width,height,hints,exactRects=[]){
+export function captureGraphicRegions(data,width,height,hints,exactRects=[],textComplete=false){
   const boxes=[];
   for(const h of hints){
     const x=Math.max(0,h.x),y=Math.max(0,h.y),r={x,y,width:Math.min(width,h.x+h.width)-x,height:Math.min(height,h.y+h.height)-y};
     const kind=r.width>=GRAPHIC&&r.height>=GRAPHIC?palette(data,width,r):-1;
-    if(kind===0&&!exactRects.length&&(textTiles(data,width,r.x>>5,r.y>>5,Math.min(width>>5,Math.ceil((r.x+r.width)/32))-1,Math.min(height>>5,Math.ceil((r.y+r.height)/32))-1)
+    if(kind===0&&!exactRects.length&&!textComplete&&(textTiles(data,width,r.x>>5,r.y>>5,Math.min(width>>5,Math.ceil((r.x+r.width)/32))-1,Math.min(height>>5,Math.ceil((r.y+r.height)/32))-1)
       ||edgeText(data,width,height,r)))continue;
     if(kind>=0)boxes.push({...r,palette:kind===1,parts:[r]});
   }
@@ -107,19 +109,33 @@ export function captureGraphicRegions(data,width,height,hints,exactRects=[]){
   }
   return boxes;
 }
+const PRICED = new Uint8Array(0);
 function graphicWins(data,width,r,quality,effort,tools){
-  const pixels=crop(data,width,r),sections=lossyModularSections(pixels,r.width,r.height,quality,false);
+  const pixels=crop(data,width,r);
+  if(r.palette===false){
+    const mod=lossyModularLength(pixels,r.width,r.height,quality,false);
+    return mod<encodeCaptureBytes(pixels,r.width,r.height,{effort:1,[CAPTURE_TOOLS]:tools}).length?PRICED:null;
+  }
+  const sections=lossyModularSections(pixels,r.width,r.height,quality,false);
   return sections.reduce((n,s)=>n+s.length,0)<encodeCaptureBytes(pixels,r.width,r.height,{effort:1,[CAPTURE_TOOLS]:tools}).length?sections:null;
 }
 const meets=(p,q)=>p.x<q.x+q.width&&q.x<p.x+p.width&&p.y<q.y+q.height&&q.y<p.y+p.height;
 const HINT = 0.25;
 const HINTED=0.75;
-export function capturePhotoRegions(data,width,height,hints=[],exactRects=[]){
+export function capturePhotoRegions(data,width,height,hints=[],exactRects=[],textComplete=false){
   const kept=[],cells=hints.length?photoCells(data,width,height):null;
   for(const h of hints){
     const r=meet({x:0,y:0,width,height},h);
-    const share=screenPhotoTiles(data,width,height,r,exactRects,cells);
-    if(share>=HINT||share>=0.1&&flatSamples(data,r.width,r.height,0,width,r.x,r.y)<96)kept.push(r);
+    if(r.width<1||r.height<1)continue;
+    const share=screenPhotoTiles(data,width,height,r,exactRects,cells,textComplete);
+    const flat=r.width>=32&&r.height>=32?flatSamples(data,r.width,r.height,0,width,r.x,r.y):256;
+    const bars=share>=HINT||share>=0.1&&flat<96;
+    if(!(bars||textComplete&&flat<192&&screenPhotoResample(data,width,height,r)>=HINT))continue;
+    if(bars&&textComplete){
+      const bare=screenPhotoTiles(data,width,height,r,exactRects,cells,false);
+      if(!(bare>=HINT||bare>=0.1&&flat<96))r.rescued=true;
+    }
+    kept.push(r);
   }
   const seeds=screenPhotoRegions(data,width,height,true,kept,cells);
   if(!validPhotoRegions(data,width,height,seeds))return [];
@@ -130,16 +146,23 @@ export function capturePhotoRegions(data,width,height,hints=[],exactRects=[]){
     const inside=[];
     for(const h of hints){
       const m=meet(r,h);
-      if(m.width>0&&m.height>0&&m.width*m.height>=0.9*h.width*h.height)inside.push(meet({x:0,y:0,width,height},h));
+      if(m.width>0&&m.height>0&&m.width*m.height>=0.9*h.width*h.height){
+        const clip=meet({x:0,y:0,width,height},h),prior=kept.find(k=>k.x===clip.x&&k.y===clip.y&&k.width===clip.width&&k.height===clip.height);
+        if(prior?.rescued)clip.rescued=true;
+        inside.push(clip);
+      }
     }
     for(let a=0;a<inside.length;a++)for(let b=a+1;b<inside.length;b++){
       const p=inside[a],q=inside[b];
       if(p.x<q.x+q.width&&q.x<p.x+p.width&&p.y<q.y+q.height&&q.y<p.y+p.height){
-        const x=Math.min(p.x,q.x),y=Math.min(p.y,q.y);
-        inside[a]={x,y,width:Math.max(p.x+p.width,q.x+q.width)-x,height:Math.max(p.y+p.height,q.y+q.height)-y};inside.splice(b,1);a=-1;break;
+        const x=Math.min(p.x,q.x),y=Math.min(p.y,q.y),box={x,y,width:Math.max(p.x+p.width,q.x+q.width)-x,height:Math.max(p.y+p.height,q.y+q.height)-y};
+        if(p.rescued||q.rescued)box.rescued=true;
+        inside[a]=box;inside.splice(b,1);a=-1;break;
       }
     }
-    if(inside.length>1&&inside.reduce((s,h)=>s+h.width*h.height,0)>=HINTED*r.width*r.height)out.push(...inside);else out.push(r);
+    if(inside.length>1&&inside.reduce((s,h)=>s+h.width*h.height,0)>=HINTED*r.width*r.height)out.push(...inside);
+    else{const box=inside.reduce((b,h)=>{const x=Math.min(b.x,h.x),y=Math.min(b.y,h.y);return {x,y,width:Math.max(b.x+b.width,h.x+h.width)-x,height:Math.max(b.y+b.height,h.y+h.height)-y,rescued:b.rescued||h.rescued};},r);
+      if(!box.rescued)delete box.rescued;out.push(box);}
   }
   return validPhotoRegions(data,width,height,out)?out:expanded;
 }
@@ -157,11 +180,11 @@ function flattenFar(rgba,w,h,exact,far){
   for(let y=0,i=0;y<h;y++)for(let x=0;x<w;x++,i++)if(d[i]>far&&!touched[(y>>3)*bw+(x>>3)]){rgba[i*4]=r;rgba[i*4+1]=g;rgba[i*4+2]=b;}
 }
 export const regionFrameBytes=job=>photoFrameBytes(job);
-function photoFrameBytes({pixels,width,height,quality,areas,colorSpace,effort=7,placement,graphic,sections,exact,far}){
+function photoFrameBytes({pixels,width,height,quality,areas,colorSpace,effort=7,placement,graphic,sections,exact,far,smallRegions}){
   if(exact)fillHoles(pixels,width,height,exact);
   if(far)flattenFar(pixels,width,height,exact,far);
   if(graphic)return lossyModularFrame(pixels,width,height,quality,placement,sections);
-  const image=complete(photoCoefficientSteps(pixels,width,height,quality,colorSpace,false,true,areas));
+  const image=complete(photoCoefficientSteps(pixels,width,height,quality,colorSpace,false,true,areas,{smallRegions}));
   return complete(coefficientAnsSteps(placement===undefined?image:{...image,placement},effort));
 }
 function* photoBlockRegionSteps(job, photoBlocks, photoBlockEffort, readingWebp, signal, photoAdmission) {
@@ -175,13 +198,13 @@ function* photoBlockRegionSteps(job, photoBlocks, photoBlockEffort, readingWebp,
     check(signal);
     return photoAdmission.record(bytes, false);
   }
-  const {pixels,width,height,quality,areas,photoCrops,colorSpace,placement,exact,far} = job;
+  const {pixels,width,height,quality,areas,photoCrops,colorSpace,placement,exact,far,smallRegions} = job;
   const reference = pixels.slice();
   if (exact) fillHoles(pixels,width,height,exact);
   if (far) flattenFar(pixels,width,height,exact,far);
   const rows = (top,count) => pixels.subarray(top*width*4,(top+count)*width*4);
   const floorImage = photoAdmission && photoBlockEffort === 4
-    ? complete(photoCoefficientSteps(pixels,width,height,quality,colorSpace,false,true,areas)) : null;
+    ? complete(photoCoefficientSteps(pixels,width,height,quality,colorSpace,false,true,areas,{smallRegions})) : null;
   const bytes = yield* photoBlocks(rows,width,height,{quality,areas,colorSpace,placement,effort:photoBlockEffort??job.effort,
     photoBlockEffort,readingWebp,signal,photoCrops,photoAdmission,
     ...(floorImage && {floorImage,floorBytes:writeImage(floorImage,job.effort,placement)}),
@@ -306,21 +329,23 @@ export function* composeCapturePhotoSteps(data,width,height,quality,colorSpace,r
       return {source:f,crop:{x:x-r.x,y:y-r.y,width:Math.min(f.x+f.width,r.x+r.width)-x,height:Math.min(f.y+f.height,r.y+r.height)-y}};
     });
   };
-  const own=(r,offGrid=false)=>{
-    const subjects=cropSubjects(r),photoCrops=subjects.map(s=>s.crop);
-    const areas=subjects.map(s=>({...s.crop,quality:regionQuality(data,width,s.source,offGrid,colorSpace)}));
+  const own=(subjects,offGrid=false,small=false)=>{
+    const photoCrops=subjects.map(s=>s.crop);
+    const areas=subjects.map(s=>({...s.crop,quality:regionQuality(data,width,s.source,offGrid,colorSpace,small)}));
     const least=Math.min(...areas.map(a=>a.quality)),most=Math.max(...areas.map(a=>a.quality));
     return least===most?{quality:least,most,photoCrops}:{quality:least,areas,most,photoCrops};
   };
   const jobs=kept.map(({r,exact,masked,graphic,sections,union,offGrid},i)=>{
-    const pixels=crop(data,width,r),last=ends&&i+1===kept.length;
+    const pixels=crop(data,width,r),last=ends&&i+1===kept.length,subjects=cropSubjects(r);
     const modular=graphic&&r.palette;
     const placement={...(modular?{}:{isFirstFrame:false}),isLastFrame:last,saveAsReference:last?0:1,imageWidth:width,imageHeight:band?.imageHeight??height,crop:{...r,y:r.y+top},alphaChannel:alpha,mask:masked};
-    const read=regionQuality?graphic?{quality:own(r).most}:own(r,!!offGrid):{quality};
+    const smallRegions=!graphic&&subjects.length>0&&subjects.every(s=>Math.min(s.source.width,s.source.height)<128);
+    const read=regionQuality?graphic?{quality:own(subjects).most}:own(subjects,!!offGrid,smallRegions):{quality};
     return {pixels,width:r.width,height:r.height,quality:read.quality,...(read.areas&&{areas:read.areas}),
-      photoCrops:read.photoCrops??cropSubjects(r).map(s=>s.crop),colorSpace,effort,placement,graphic:!!modular,...(modular&&!masked&&!alpha&&sections&&read.quality===quality&&{sections}),...(masked&&{exact}),...(union&&{far:1})};
+      photoCrops:read.photoCrops??subjects.map(s=>s.crop),smallRegions,colorSpace,effort,placement,graphic:!!modular,...(modular&&!masked&&!alpha&&sections&&read.quality===quality&&{sections}),...(masked&&{exact}),...(union&&{far:1})};
   });
   if(photoAdmission)for(let i=0;i<jobs.length;i++)jobs[i].photoCropsComplete=completePhotoCrops(photos,kept[i].r,width,band?.imageHeight??height,top);
+  const sources=photoAdmission?.frame?kept.map(k=>cropSubjects(k.r).map(s=>s.source)):null;
   const handle=!photoBlocks&&asks[CAPTURE_HELPERS]&&jobs.length?yield {regions:jobs,ahead:true}:null;
   const parts=[yield* within(band||masked?captureBandSteps(base,width,height,{...(band??{y:0,imageHeight:height}),...level,shape:{colour:3,alpha},colorSpace,[CAPTURE_BASE]:'reference',signal})
     :encodeCaptureSteps(base,width,height,{...level,colorSpace,[CAPTURE_BASE]:'reference',signal}),from,span)];
@@ -330,6 +355,7 @@ export function* composeCapturePhotoSteps(data,width,height,quality,colorSpace,r
     const got=Array.isArray(given)&&given[i] instanceof Uint8Array?given[i]:null;
     parts.push(photoBlocks ? yield* within(photoBlockRegionSteps(jobs[i],photoBlocks,photoBlockEffort,readingWebp,signal,photoAdmission),from+span*(1+i)/(1+kept.length),span/(1+kept.length))
       : got??regionFrameBytes(jobs[i]));jobs[i]=null;
+    if(sources)photoAdmission.frame(sources[i],parts.at(-1));
     yield from+span*(2+i)/(1+kept.length);
   }
   check(signal);const bytes=joined(parts);protection?.record(bytes,selectedProtection);return photoAdmission?photoAdmission.join(bytes,parts):bytes;
@@ -355,18 +381,23 @@ function admitted(data,width,height,options,limits){
 }
 function* photoSteps(data,width,height,options,band,large=false,reading=options.captureReading){
   const {colorSpace,quality,effort,tools,trace,asks,level,exactRects:rects}=admitted(data,width,height,options,large?BANDED_LIMITS:undefined),{signal,photoAdmission}=options;
-  const exactFile=from=>within(band?captureBandSteps(data,width,height,{...band,...level,colorSpace,maxError:0,signal}):encodeCaptureSteps(data,width,height,{...level,colorSpace,maxError:0,signal}),from,1-from);
+  const exactFile=(from,answer=false)=>within(band?captureBandSteps(data,width,height,{...band,...level,colorSpace,maxError:0,signal}):encodeCaptureSteps(data,width,height,{...level,...(answer&&captureAnswerLevel(effort,width*height)),colorSpace,maxError:0,signal}),from,1-from);
   if(quality===100)return yield* exactFile(0);
   const top=band?.y??0,exactRects=rects.filter(e=>e.edge!==true).map(e=>({...e,y:e.y-top})).filter(e=>e.y<height&&e.y+e.height>0),photoRects=(options.photoRects??[]).map(e=>({...e,y:e.y-top}));
   const photoSubjects=(options.photoSubjects??options.photoRects??[]).map(e=>({...e,y:e.y-top}));
-  let regions=options.regions??(yield* unit('photo-regions',()=>capturePhotoRegions(data,width,height,photoRects,exactRects))),exact=null;
+  let regions=options.regions??(yield* unit('photo-regions',()=>capturePhotoRegions(data,width,height,photoRects,exactRects,options.textComplete===true))),exact=null;
   check(signal);
+  const readQuality=options.regionQuality;
+  const regionRead=(pixels,stride,rect,...rest)=>{
+    const q=readQuality?readQuality(pixels,stride,rect,...rest):undefined;
+    return rect?.rescued===true&&typeof q==='number'&&Number.isFinite(q)&&q>=1&&q<99?q+1:q;
+  };
   const small=width*height<SMALL,flat=yield* unit('flat',()=>flatSamples(data,width,height)<=32);
   if(small&&flat)exact=yield* within(exactFile(0),0,0.4);
   const whole=!large&&flat&&!(yield* unit('text-like',()=>textLike(data,width,height)))&&(exact?dense(exact.length,width*height):covers(regions,width,height)||(yield* denseStrips(data,width,height,{...level,colorSpace,maxError:0,signal},0)));
   if(whole&&exactRects.length&&band&&!band.shape.alpha)return exact??(yield* exactFile(0));
   if(whole&&!exactRects.length){
-    const own=options.regionQuality?.(data,width,{x:0,y:0,width,height},false,colorSpace)??quality;
+    const own=(options.wholeQuality??regionRead)?.(data,width,{x:0,y:0,width,height},false,colorSpace)??quality;
     const measuredCrops=photoAdmission&&options.photoBlocks&&(options.photoBlockEffort??effort??DEFAULT_EFFORT)>=4&&photoSubjects.some(r=>r.x>0||r.y>0||r.x+r.width<width||r.y+r.height<height);
     if(!band&&!measuredCrops){
       const route=options.wholePhotoRoute;
@@ -407,23 +438,36 @@ function* photoSteps(data,width,height,options,band,large=false,reading=options.
     return result;
   }
   if(whole)regions=[{x:0,y:0,width,height}];
-  let graphics=yield* unit('graphic-regions',()=>captureGraphicRegions(data,width,height,photoRects,exactRects));
+  let graphics=yield* unit('graphic-regions',()=>captureGraphicRegions(data,width,height,photoRects,exactRects,options.textComplete===true));
+  if(effort>=3&&!band&&!large&&colorSpace==='srgb'&&options.textComplete===true&&!photoRects.length&&!regions.length&&options.readingWebp!==undefined){
+    const smooth=yield* unit('smooth-regions',()=>captureSmoothRegions(data,width,height,rects));
+    if(smooth.length){
+      const quantized=yield* unit('smooth-quantize',()=>smoothQuantize(data,width,height,smooth,rects,options.readingWebp,signal));
+      if(quantized.kept.length){
+        const made=yield* within(encodeCaptureSteps(quantized.pixels,width,height,{...level,colorSpace,maxError:0,signal}),0,1),bytes=made.slice();
+        const protection=options[CAPTURE_PROTECTION];
+        protection?.record(bytes,protection.mixed(width,height,quantized.kept));
+        return photoAdmission?photoAdmission.record(bytes,true,quantized.measurements):bytes;
+      }
+    }
+  }
   if(graphics.length){
     const covered=r=>graphics.reduce((s,g)=>{if(!g.palette)return s;const w=Math.min(r.x+r.width,g.x+g.width)-Math.max(r.x,g.x),h=Math.min(r.y+r.height,g.y+g.height)-Math.max(r.y,g.y);return s+(w>0&&h>0?w*h:0);},0)>=HINTED*r.width*r.height;
     regions=regions.filter(r=>!covered(r));graphics=graphics.filter(g=>!regions.some(r=>meets(g,r)));
   }
   if(!band&&exactRects.length&&(regions.length||graphics.length)&&(yield* unit('opaque',()=>photoKernels().opaque(data,width,0,0,width,height)))){
-    const read=(r,offGrid)=>options.regionQuality?.(data,width,r,offGrid,colorSpace)??quality;
+    const read=(r,offGrid)=>regionRead(data,width,r,offGrid,colorSpace)??quality;
     const look=options.look&&(effort??3)>=4&&options.readingWebp!==undefined?options.look:null;
+    const readRgb=(r,offGrid)=>regionRead(data,width,r,offGrid,colorSpace,false,{coder:'rgb',frameQuality:quality})??quality;
     const qualityOf=look?Object.assign((r,offGrid,dx,dy)=>look(data,width,r,read(r,offGrid),options.readingWebp,dx,dy,exactRects,colorSpace,quality,photoRects),
-      {steps:look.steps&&((r,offGrid,dx,dy)=>look.steps(data,width,r,read(r,offGrid),options.readingWebp,dx,dy,exactRects,colorSpace,quality,photoRects))}):read;
+      {steps:look.steps&&((r,offGrid,dx,dy)=>look.steps(data,width,r,read(r,offGrid),options.readingWebp,dx,dy,exactRects,colorSpace,quality,photoRects))}):readRgb;
     const lossy=[...regions,...graphics];
     const baseline=large?null:function*(pieces,regions){
       const reading={pieces,exact:true,requirePieces:true};
-      const bytes=yield* photoSteps(data,width,height,{...options,wholePhotoRoute:null,exactRects:[],photoRects:[],photoSubjects:photoAdmission?photoSubjects:[],regions},undefined,false,reading);
+      const bytes=yield* photoSteps(data,width,height,{...options,wholePhotoRoute:null,exactRects:[],photoRects:[],textComplete:undefined,photoSubjects:photoAdmission?photoSubjects:[],regions},undefined,false,reading);
       return {bytes,exact:reading.exact,wholePhoto:reading.wholePhoto===true};
     };
-    const page=yield* within(patchedPageSteps(data,width,height,{quality,regions:lossy,unconfirmed:graphics.length>0,qualityOf,exactRects,colorSpace,exactOptions:{...level,signal},
+    const page=yield* within(patchedPageSteps(data,width,height,{quality,regions:lossy,unconfirmed:graphics.length>0,confirmedPhotos:regions.length>0,textComplete:options.textComplete===true,qualityOf,exactRects,colorSpace,exactOptions:{...level,signal},
       photoBlocks:options.photoBlocks,photoBlockEffort:options.photoBlockEffort,readingWebp:options.readingWebp,photoRects:photoSubjects,photoAdmission,photoScoreMemo:options.photoScoreMemo,baseline,textReading:options.textReading,[CAPTURE_PROTECTION]:options[CAPTURE_PROTECTION]}),exact?0.4:0,exact?0.6:1);
     if(page){
       check(signal);return exact&&(exact.length<=page.length||photoAdmission&&!photoAdmission.accepts(page))?exact:page;
@@ -432,14 +476,14 @@ function* photoSteps(data,width,height,options,band,large=false,reading=options.
   if(large)return null;
   const sparse=[...regions,...graphics].reduce((s,r)=>s+r.width*r.height,0)*8<width*height;
   const mixedReading=reading&&{pieces:reading.pieces,exact:true,requirePieces:reading.requirePieces&&!exact&&!sparse};
-  const at=exact?0.4:0,mixed=regions.length||graphics.length?yield* composeCapturePhotoSteps(data,width,height,quality,colorSpace,regions,{signal,band,effort,tools,trace,asks,exactRects,graphics,from:at,regionQuality:options.regionQuality,photos:photoSubjects,reading:mixedReading,
+  const at=exact?0.4:0,mixed=regions.length||graphics.length?yield* composeCapturePhotoSteps(data,width,height,quality,colorSpace,regions,{signal,band,effort,tools,trace,asks,exactRects,graphics,from:at,regionQuality:readQuality?regionRead:undefined,photos:photoSubjects,reading:mixedReading,
     photoBlocks:options.photoBlocks,photoBlockEffort:options.photoBlockEffort,readingWebp:options.readingWebp,photoAdmission,[CAPTURE_PROTECTION]:options[CAPTURE_PROTECTION],...(options.unionCap&&{unionCap:options.unionCap})}):null;
   if(mixedReading?.requirePieces&&mixedReading.exact===false){reading.exact=false;return null;}
   if(mixed&&!exact&&sparse){
     const {bytes,pixels}=yield* stripBytes(data,width,height,{...level,colorSpace,maxError:0,signal},1);
     if(!pixels||mixed.length*pixels>=bytes*width*height)exact=yield* exactFile(1);
   }
-  const result=!mixed||exact&&(exact.length<=mixed.length||photoAdmission&&!photoAdmission.accepts(mixed))?exact??(yield* exactFile(at)):mixed;
+  const result=!mixed||exact&&(exact.length<=mixed.length||photoAdmission&&!photoAdmission.accepts(mixed))?exact??(yield* exactFile(at,!regions.length&&!graphics.length)):mixed;
   if(reading&&result===mixed)reading.exact&&=mixedReading.exact;
   return result;
 }

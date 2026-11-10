@@ -15,7 +15,7 @@ export const BUDGETS = [{maxClusters: 64, newClusterCost: 80, seeds: 128, switch
 const EXTRA_BUDGETS = [{maxClusters: 64, newClusterCost: 70, seeds: 128, switchCost: 4, everyConfig: true}, {maxClusters: 64, newClusterCost: 58, seeds: 128, switchCost: 4, everyConfig: true}];
 
 export function rungs(effort) {
-  if (effort < 4) return [{orders: true, lf: 3, clusters: UPLOAD_CLUSTERS}];
+  if ((typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) || effort < 4) return [{orders: true, lf: 3, clusters: UPLOAD_CLUSTERS}];
   const lf = effort >= 7 ? 7 : 5, list = [...(effort >= 5 ? [{orders: true}] : []), {orders: true, lf}, {lf}];
   for (let i = 0; i < (effort >= 5 ? Math.min(3, effort - 4) : 0); i++) list.push({orders: 'best', lf, clusters: BUDGETS[i]});
   if (effort >= 8) list.push({orders: 'best', lf: 9});

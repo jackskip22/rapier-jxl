@@ -31,7 +31,9 @@ export async function settleFacts(journal, scans, data, width, height, bandBytes
   let flat = 0, screen = width >= 32 && height >= 32;
   if (screen) for (let s = 0; s < 256; s++) { flat += state.flats[s]; if (flat + 255 - s < 192) { flat = 0; break; } }
   screen &&= flat >= 192;
+  const chroma = sum.n ? sum.chroma / sum.n : 0, slots = shape.palette?.colours.length ?? null;
+  const greyPhoto = !screen && chroma < 2 && Math.min(width, height) >= 128 && (slots ?? 0) > 64;
   return {eligible: true, width, height, pixels, shorterSide: Math.min(width, height),
-    gradient: sum.n ? sum.sum / sum.n : 0, palette: Boolean(shape.palette), paletteSlots: shape.palette?.colours.length ?? null,
+    gradient: sum.n ? sum.sum / sum.n : 0, chroma, palette: Boolean(shape.palette) && !greyPhoto, paletteSlots: slots,
     alpha: shape.alpha, screenLike: screen, preferXYB: Math.min(width, height) < 128 || state.xyb <= 0};
 }

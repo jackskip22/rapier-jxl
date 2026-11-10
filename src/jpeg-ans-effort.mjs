@@ -17,15 +17,15 @@ const SHAPED_WIDE = {...WIDE, headerAware: true, shapedMerge: true};
 const WIDEST = {maxClusters: 255, seeds: 255, newClusterCost: 80, headerAware: true, shapedMerge: true, jpeg: JPEG_ANS};
 const NARROW = {maxClusters: 48};
 const EVERY_WIDE = {...SHAPED_WIDE, everyConfig: true}, EVERY_WIDEST = {...WIDEST, everyConfig: true};
-const lfFor = effort => effort >= 9 ? jpegBroadOrFixedLfCoder : effort === 8 ? fastOrFixedLfCoder : effort >= 5 ? lfCoderFor(effort) : effort === 4 ? quickOrFixedLfCoder : fixedLfCoder;
+const lfFor = effort => (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) || effort <= 3 ? fixedLfCoder : effort >= 9 ? jpegBroadOrFixedLfCoder : effort === 8 ? fastOrFixedLfCoder : effort >= 5 ? lfCoderFor(effort) : quickOrFixedLfCoder;
 
 export function* jpegAnsFirstSteps(jpeg, effort, fallback, retain, shared = {}, every = effort >= 9) {
-  const wide = effort === 2 ? NARROW : every ? EVERY_WIDE : effort >= 5 ? SHAPED_WIDE : WIDE;
+  const wide = effort === 2 ? NARROW : !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && every ? EVERY_WIDE : !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && effort >= 5 ? SHAPED_WIDE : WIDE;
   if (effort < 2) return yield* coefficientEffortSteps(jpeg, effort, fallback, retain, shared);
   let ladder = jpeg.width * jpeg.height <= PREFIX_LADDER_PIXELS, best = fallback;
-  const learn = effort >= 5 && !ladder;
+  const learn = !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && effort >= 5 && !ladder;
   const first = effort <= 4 && !ladder ? 'learned' : undefined;
-  if (offloading()) yield prefetch(jpeg, [{orders: first, coding: buildAnsCoding, clusters: wide, modularAns: writeModularAnsHistograms, lfCoder: lfFor(effort)},
+  if (!(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true || typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && offloading()) yield prefetch(jpeg, [{orders: first, coding: buildAnsCoding, clusters: wide, modularAns: writeModularAnsHistograms, lfCoder: lfFor(effort)},
     ...(learn ? [{orders: 'learned', coding: buildAnsCoding, clusters: wide, modularAns: writeModularAnsHistograms, lfCoder: lfFor(effort)}] : [])]);
   try {
     let orders, step, hurry, reply;

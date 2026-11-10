@@ -1,8 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {BitWriter} from './bits.mjs';
 import {unit, carried, stage, PASSED, journalJoin, sliceBytes} from './step-journal.mjs';
-import {VarDCTPrefixWriter} from './vardct-prefix.mjs';
-import {writeTOC, codestreamFromParts} from './frame.mjs';
 
 const VALUES = 8192, MATCH_WORK = 4096;
 const bits = writer => ({bytes: writer.bytes.subarray(0, writer.at), at: writer.at, acc: writer.acc,
@@ -73,7 +70,7 @@ function* payload(data, tokens, owner) {
     for (let from = 0; from < data.length; from += VALUES) {
       const end = Math.min(data.length, from + VALUES);
       const part = yield* stage('icc-write-part', function* () {
-        const writer = new BitWriter(65536);
+        const writer = new owner.BitWriter(65536);
         if (!from) writer.append(model.writer); else { writer.acc = acc; writer.pending = pending; }
         const emit = (value, length, distance) => owner.symbol(writer, model, value, length, distance);
         if (lz) tokenBand(data, tokens, owner, state, end, emit);
@@ -115,7 +112,7 @@ export function* prepareICC(profile, options, owner) {
   });
 }
 
-export function* varDCTFile(writeHeader, writers, level) {
+export function* varDCTFile(writeHeader, writers, level, owner) {
   return yield* stage('codestream', function* () {
     const sections = [];
     for (const writer of writers) sections.push(yield* stage('codestream-section', function* () {
@@ -123,18 +120,35 @@ export function* varDCTFile(writeHeader, writers, level) {
     }, undefined, false, true));
     const sizes = journalJoin(sections).sizes;
     const plan = yield* unit('codestream-header', () => {
-      const writer = new VarDCTPrefixWriter(); writeHeader(writer); writeTOC(writer, sizes); return writer.record();
+      const writer = new owner.BitWriter(256), parts = [], flush = () => {
+        if (writer.at || writer.pending) {
+          parts.push({bytes: writer.bytes, at: writer.at, pending: writer.pending, acc: writer.acc});
+          recorded += writer.at * 8 + writer.pending;
+          writer.bytes = new Uint8Array(256); writer.at = writer.acc = writer.pending = 0;
+        }
+      };
+      let recorded = 0;
+      Object.defineProperties(writer, {
+        bitLength: {get: () => recorded + writer.at * 8 + writer.pending},
+        append: {value: other => {
+          flush();
+          if (other.at || other.pending) { parts.push({bytes: other.bytes, at: other.at, pending: other.pending, acc: other.acc}); recorded += other.at * 8 + other.pending; }
+        }},
+        zeroPadToByte: {value: () => { const n = (-writer.bitLength) & 7; if (n) writer.write(n, 0); }},
+      });
+      writeHeader(writer); owner.writeTOC(writer, sizes); flush();
+      return {bits: recorded, parts};
     });
     const parts = []; let acc = 0, pending = 0;
     for (const span of plan.parts) for (let from = 0; from < span.at || !from && span.pending; from += 65535) {
       const to = Math.min(span.at, from + 65535), last = to === span.at;
       const part = yield* stage('codestream-header-part', function* () {
-        const writer = new BitWriter(to - from + 16); writer.acc = acc; writer.pending = pending;
+        const writer = new owner.BitWriter(to - from + 16); writer.acc = acc; writer.pending = pending;
         writer.append({bytes: span.bytes.subarray(from, to), at: to - from, acc: last ? span.acc : 0, pending: last ? span.pending : 0});
         return bits(writer);
       }, undefined, false, true);
       parts.push(part.bytes); acc = part.acc; pending = part.pending;
     }
-    return codestreamFromParts(journalJoin(parts), sections, level, journalJoin);
+    return owner.codestreamFromParts(journalJoin(parts), sections, level, journalJoin);
   });
 }

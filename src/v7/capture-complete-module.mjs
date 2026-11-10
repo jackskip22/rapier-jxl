@@ -26,5 +26,5 @@ export const supported = async feature => {
 export const prepare = () => prepareCapturePhoto().catch(error => { throw declared(error); });
 const carried = carriedBy('rapier-jxl/capture-complete', CAPTURE_COMPLETE);
 export const capture = captureWith(readTexture, {admit: options => admitCapturePhoto(options, carried), rectangles: captureRectangles, run: captureRunner(CAPTURE_TOOLS_COMPLETE, {device: required, answerer: engineAnswerer(captureEngine, CAPTURE_TOOLS_COMPLETE.gpu)})}, imageResult);
-Object.defineProperty(capture, STEPS, {value: verbSteps('capture-complete:rapier-jxl', capture,
-  {taken: ['fidelity', 'effort', 'webgpu', 'exactRects', 'photoRects', 'maxPixels'], rows: true})});
+if (!(typeof __RAPIER_JXL_UNSTEPPED__ !== 'undefined' && __RAPIER_JXL_UNSTEPPED__ === true)) Object.defineProperty(capture, STEPS, {value: verbSteps('capture-complete:rapier-jxl', capture,
+  {taken: ['fidelity', 'effort', 'webgpu', 'exactRects', 'photoRects', 'textComplete', 'maxPixels'], rows: true})});

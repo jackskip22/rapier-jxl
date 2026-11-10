@@ -18,7 +18,7 @@ export async function measuredAnimation(animation, target, encodeAt, {start = 90
       else if (rebuildable(picture)) pictures.set(bytes, rebuildPicture(picture).rgba);
     });
     let bytes;
-    try { bytes = await encodeAt(quality, progress); } finally { stop(); }
+    try { bytes = await encodeAt(quality, progress, true); } finally { stop(); }
     check(signal);
     if (!(bytes instanceof Uint8Array)) throw fail('JXL_INTERNAL', 'An animation producer must return complete bytes.');
     const timeline = timelines.get(bytes);

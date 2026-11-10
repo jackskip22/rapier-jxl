@@ -1,5 +1,5 @@
 // One settings record for the admin, browser worker and native upload hook.
-export const DEFAULTS = {quality: 90, exact: false, effort: 3, maxKilobytes: 0,
+export const DEFAULTS = {quality: 90, exact: false, effort: 7, maxKilobytes: 0,
   widths: [640, 750, 828, 960, 1080, 1280, 1668, 1920, 2048, 2560, 3200, 3840]};
 
 export function settings(value) {

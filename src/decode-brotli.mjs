@@ -124,113 +124,12 @@ function settings(bytes, {maxOutput = 268435456, maxBlocks = 65536, dictionary} 
     return words;
   }};
 }
-function streamStart(bytes) {
-  const r = readerAt(bytes); let windowBits = 16;
-  if (r.read(1)) {
-    const high = r.read(3);
-    if (high) windowBits = high + 17;
-    else { const low = r.read(3); requireDecode(low !== 1, 'Invalid Brotli window size.', r); windowBits = low ? low + 8 : 17; }
-  }
-  return {window: (1 << windowBits) - 16, history: [4, 11, 15, 16], at: 0, last: false, blocks: 0, bit: r.bit};
-}
-function metaHeader(bytes, previous, limits) {
-  const state = {...previous}, r = readerAt(bytes, state.bit);
-  if (++state.blocks > limits.maxBlocks) throw Object.assign(new RangeError('Brotli meta-block count exceeds the limit.'), {code: 'JXL_LIMIT'});
-  state.last = !!r.read(1);
-  if (state.last && r.read(1)) { state.bit = r.bit; return {state, kind: 'end'}; }
-  const nibbles = r.read(2) + 4;
-  if (nibbles === 7) {
-    requireDecode(!r.read(1), 'Invalid Brotli metadata reserved bit.', r);
-    const n = r.read(2), size = r.read(n * 8);
-    requireDecode(n <= 1 || size >= 1 << (8 * (n - 1)), 'Noncanonical Brotli metadata length.', r);
-    r.align(); r.skip((n ? size + 1 : 0) * 8); state.bit = r.bit; return {state, kind: 'skip'};
-  }
-  const size = r.read(nibbles * 4) + 1, end = state.at + size;
-  requireDecode(nibbles === 4 || size > 1 << (4 * (nibbles - 1)), 'Noncanonical Brotli meta-block length.', r);
-  if (end > limits.maxOutput) throw Object.assign(new Error('Brotli result exceeds maxOutput.'), {code: 'JXL_LIMIT'});
-  if (!state.last && r.read(1)) {
-    r.align(); const body = r.bit / 8; r.skip(size * 8); state.bit = r.bit; return {state, kind: 'stored', end, body};
-  }
-  const literalBlocks = blockTypes(r), commandBlocks = blockTypes(r), distanceBlocks = blockTypes(r);
-  const postfix = r.read(2), direct = r.read(4) << postfix;
-  const modes = Uint8Array.from({length: literalBlocks.count}, () => r.read(2));
-  const literals = contextMap(r, literalBlocks.count * 64), distances = contextMap(r, distanceBlocks.count * 4);
-  state.bit = r.bit;
-  return {state, kind: 'compressed', end, literalBlocks, commandBlocks, distanceBlocks, postfix, direct, modes, literals, distances};
-}
-const treeGroups = head => [[head.literals.count, 256], [head.commandBlocks.count, 704], [head.distances.count, 16 + head.direct + (48 << head.postfix)]];
-const readTrees = (r, count, alphabet) => Array.from({length: count}, () => readPrefixCode(r, alphabet));
-function models(bytes, head) {
-  const r = readerAt(bytes, head.state.bit), trees = treeGroups(head).map(([count, alphabet]) => readTrees(r, count, alphabet));
-  return {trees, bit: r.bit};
-}
-const blockCursor = block => ({current: block.current, previous: block.previous, remaining: block.remaining});
-function outputPart(bytes, head, model, previous, history, dictionary) {
-  const state = {...previous, history: [...previous.history], run: previous.run && {...previous.run}}, from = state.at;
-  const count = Math.min(65536, head.end - from);
-  if (head.kind === 'stored') {
-    const at = head.body + from - head.state.at; state.at += count;
-    return {bytes: bytes.subarray(at, at + count), state};
-  }
-  const out = new Uint8Array(count), get = at => at < from ? history(at) : out[at - from], r = readerAt(bytes, state.bit);
-  const literal = {...head.literalBlocks, ...state.literal}, command = {...head.commandBlocks, ...state.command}, distance = {...head.distanceBlocks, ...state.distance};
-  const [literalTrees, commandTrees, distanceTrees] = model.trees; let work = 0;
-  while (state.at < head.end && work < 4096) {
-    if (!state.run) {
-      const started = state.at, bit = r.bit, value = readPrefixSymbol(r, commandTrees[nextBlock(r, command)]), group = value >>> 6;
-      const insertCode = INSERT_GROUP[group] + ((value >>> 3) & 7), copyCode = COPY_GROUP[group] + (value & 7);
-      const insert = INSERT_BASE[insertCode] + r.read(INSERT_BITS[insertCode]), copy = COPY_BASE[copyCode] + r.read(COPY_BITS[copyCode]);
-      requireDecode(insert <= head.end - state.at, 'Brotli literals exceed their meta-block.', r);
-      state.run = {phase: 'insert', left: insert, copy, value, started, bit}; work++;
-    }
-    const run = state.run;
-    if (run.phase === 'insert') {
-      const n = Math.min(run.left, out.length - (state.at - from));
-      for (let i = 0; i < n; i++) {
-        const type = nextBlock(r, literal), context = literalContext(head.modes[type], state.at ? get(state.at - 1) : 0, state.at > 1 ? get(state.at - 2) : 0);
-        out[state.at++ - from] = readPrefixSymbol(r, literalTrees[head.literals.map[type * 64 + context]]);
-      }
-      run.left -= n; if (run.left) break;
-      if (state.at === head.end) { state.run = null; break; }
-      run.phase = 'distance';
-    }
-    if (run.phase === 'distance') {
-      const symbol = run.value < 128 ? 0 : readPrefixSymbol(r, distanceTrees[head.distances.map[nextBlock(r, distance) * 4 + Math.min(3, run.copy - 2)]]);
-      const d = distanceValue(r, symbol, head.postfix, head.direct, state.history), available = Math.min(state.at, state.window);
-      requireDecode(d > 0, 'Invalid Brotli backward distance.', r);
-      if (d > available) { run.word = dictionaryWord(run.copy, d - available - 1, r, dictionary, head.end - state.at); run.index = 0; run.left = run.word.length; }
-      else {
-        requireDecode(run.copy <= head.end - state.at, 'Brotli copy exceeds its meta-block.', r);
-        if (symbol) { state.history.pop(); state.history.unshift(d); }
-        run.distance = d; run.left = run.copy;
-      }
-      run.phase = 'copy';
-    }
-    const n = Math.min(run.left, out.length - (state.at - from));
-    if (run.word) { out.set(run.word.subarray(run.index, run.index + n), state.at - from); run.index += n; state.at += n; }
-    else if (run.distance === 1) { out.fill(get(state.at - 1), state.at - from, state.at - from + n); state.at += n; }
-    else for (let i = 0; i < n; i++) { out[state.at - from] = get(state.at - run.distance); state.at++; }
-    run.left -= n; if (run.left) break;
-    requireDecode(state.at > run.started || r.bit > run.bit, 'Brotli command does not advance.', r); state.run = null;
-  }
-  state.bit = r.bit; state.literal = blockCursor(literal); state.command = blockCursor(command); state.distance = blockCursor(distance);
-  return {bytes: out.subarray(0, state.at - from), state};
-}
-function metaEnd(state) { const {literal, command, distance, run, ...next} = state; return next; }
-function streamEnd(bytes, state) { readerAt(bytes, state.bit).end(); }
 const sharedBrotli = /* @__PURE__ */ brotliReader(readPrefixCode, readPrefixSymbol, requireDecode, blocks => {
   throw Object.assign(blocks ? new RangeError('Brotli meta-block count exceeds the limit.') : new Error('Brotli result exceeds maxOutput.'), {code: 'JXL_LIMIT'});
-});
-export function decompressBrotli(bytes, {maxOutput = 268435456, maxBlocks = 65536, dictionary} = {}) {
-  requireDecode(bytes instanceof Uint8Array && Number.isSafeInteger(maxOutput) && maxOutput >= 0 &&
-    Number.isSafeInteger(maxBlocks) && maxBlocks > 0, 'Invalid Brotli input or resource limit.');
-  return sharedBrotli(new JxlBits(bytes), maxOutput, maxBlocks, () => {
-    if (dictionary === undefined) throw Object.assign(new Error('This Brotli stream requires the RFC 7932 dictionary.'), {code: 'JXL_DICTIONARY'});
-    return typeof dictionary === 'function' ? dictionary() : dictionary;
-  });
-}
+}, readerAt, settings);
+
+export const decompressBrotli = (bytes, options = {}) => sharedBrotli.read(bytes, options);
 export function* decompressBrotliSteps(bytes, options = {}) {
   if (!journaling()) return decompressBrotli(bytes, options);
-  return yield* journalTool('decodeBrotli')(bytes, options, {limits: settings, start: streamStart, header: metaHeader,
-    groups: treeGroups, reader: readerAt, trees: readTrees, part: outputPart, metaEnd, end: streamEnd, require: requireDecode});
+  return yield* journalTool('decodeBrotli')(bytes, options, sharedBrotli.owner);
 }

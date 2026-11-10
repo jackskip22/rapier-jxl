@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
-const HALVES = [1];
-for (let e = 1; e < 32; e++) HALVES.push(HALVES[e - 1] / 2);
+const HALVES = /* @__PURE__ */ Array.from({length: 32}, (_, e) => 2 ** -e);
 export function entropyLog2(x) {
   let exponent = 0;
   if (x >= 2 && x < 4294967296) { exponent = 31 - Math.clz32(x); x *= HALVES[exponent]; }

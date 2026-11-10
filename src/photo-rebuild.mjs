@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {rebuildKernels} from './rebuild-kernels.mjs';
+import {bandScratch} from './band-scratch.mjs';
 import {renderVarBlock, blockTables, prepareLF, epfSigma, xybKernelConstants} from './vardct-render.mjs';
 import {restorePlanes, restorationStages} from './vardct-inverse.mjs';
 import {TRANSFORMS} from './vardct-bases.mjs';
@@ -150,7 +151,8 @@ export function rebuildPicture(source, {rgba: wantRGBA = true, linear: wantLinea
   if (rendered) { for (const block of blocks) block.source = null; return {rendered: only ? targets : targets.map(p => p.slice())}; }
   let planes = targets;
   if (stages.length) {
-    const restored = restorePlanes(kernels, targets.map(p => p.slice()), width, height, filter, sigma);
+    const restored = restorePlanes(kernels, targets.map((p, c) => { const copy = bandScratch(Float32Array, 'rebuild-in' + c, n); copy.set(p); return copy; }),
+      width, height, filter, sigma, [0, 1, 2].map(c => bandScratch(Float32Array, 'rebuild-out' + c, n)));
     const [x, y, b, out] = kernels.reserve([n * 4, n * 4, n * 4, n * 4]);
     planes = [x, y, b].map((o, c) => { const p = new Float32Array(kernels.buffer, o, n); p.set(restored[c]); return p; });
     planes.rgbaAt = out;

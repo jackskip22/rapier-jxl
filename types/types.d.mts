@@ -252,8 +252,9 @@ export type CaptureRecord = {readonly exact: boolean; readonly bands: number};
 export type CapturePhotoFidelity = CaptureFidelity | PixelFidelity;
 /** A rectangle in whole canvas pixels; width and height are positive safe integers. Parts outside the canvas are ignored. */
 export type CaptureRect = {x: number; y: number; width: number; height: number};
-/** solidText: the rectangle holds plain text of one colour (no shadow, stroke or clipped background); only that text
- * stays exact, and the photo under it stays a photo, where the text stands out from it. */
+/** solidText: the rectangle holds plain text of one color (no shadow, stroke or clipped background).
+ * A box overlapping a region coded as a photo stays exact in full, including its background.
+ * Elsewhere the encoder may keep only its text samples exact. */
 /** edge: the rectangle holds a drawn edge (a border, an outline, a stroke); photographs code as they would without it,
  * and only flat or smooth areas keep it exact. */
 export type ExactRect = CaptureRect & {solidText?: boolean; edge?: boolean};
@@ -264,6 +265,8 @@ type PhotoRect = CaptureRect & {solidText?: never; edge?: never};
 export type CapturePhotoOptions = Omit<CaptureOptions, 'fidelity' | 'effort'> & {
   fidelity?: CapturePhotoFidelity; effort?: Effort;
   exactRects?: ReadonlyArray<ExactRect>; photoRects?: ReadonlyArray<PhotoRect>;
+  /** Complete DOM text coverage produced by page-rects; carry its returned record together, including empty exactRects. */
+  readonly textComplete?: true;
 };
 /** rapier-jxl/upload's capture: efforts 1-3, as its encode. */
 export type UploadCaptureOptions = Omit<CapturePhotoOptions, 'effort'> & {effort?: 1 | 2 | 3};

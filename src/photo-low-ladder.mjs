@@ -2,10 +2,16 @@
 import {part} from './bits.mjs';
 import {coefficientAnsSteps, BUDGETS} from './coefficient-ans.mjs';
 import {candidateSteps} from './coefficient-effort.mjs';
+import {SMALL_CLUSTERS, SMALL_PIXELS} from './photo-v6-settings.mjs';
 
 export const SMALL_BUDGET = [BUDGETS[0]];
-export const fastBudgets = (effort, filter) => effort < 2 ? [] : effort >= 5 ? filter ? [...SMALL_BUDGET, ...BUDGETS.slice(1)] : BUDGETS
-  : filter || effort < 3 ? SMALL_BUDGET : BUDGETS.slice(0, effort - 1);
+const MAP_BUDGET = [{...SMALL_CLUSTERS, mapLz: true}];
+export const fastBudgets = (effort, filter, pixels) => {
+  if (effort < 2) return [];
+  if (effort === 2) return pixels < SMALL_PIXELS ? MAP_BUDGET : [];
+  return effort >= 5 ? filter ? [...SMALL_BUDGET, ...BUDGETS.slice(1)] : BUDGETS
+    : filter ? SMALL_BUDGET : BUDGETS.slice(0, effort - 1);
+};
 export const choose = (incumbent, bytes) => !incumbent || bytes.length < incumbent.length ? bytes : incumbent;
 export const sizeFailure = error => error?.code === 'JXL_SIZE' || error?.code === 'JXL_MEMORY' ||
   (error instanceof RangeError || error?.name === 'RangeError') && !error.code;

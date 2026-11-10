@@ -50,7 +50,7 @@ const prePlanes = (prepared, options) => {
 
 export const gaborishRows = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function gaborishRows(data, width, height, options, sparse = false) {
   const W = Math.ceil(width / 8) * 8, M = PHOTO_BAND_MARGIN, windows = sparse ? new Map() : null;
-  let band = null;
+  let band = null, pool = null;
   return (y0, y1, x0, x1) => {
     if (band && y0 >= band.top && y1 <= band.top + band.rows && (!band.cols || x0 >= band.cols[0] && x1 <= band.cols[1])) return band;
     if (sparse && x1 !== undefined) {
@@ -68,8 +68,9 @@ export const gaborishRows = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __R
     }
     band = null;
     const top = Math.floor(y0 / 64) * 64, rows = Math.max(256, Math.ceil((y1 - top) / 64) * 64);
-    const from = Math.max(0, top - M), to = Math.min(height, top + rows + M);
-    const planes = gaborishPlanes(data.subarray(from * width * 4, to * width * 4), width, to - from, options);
+    const from = Math.max(0, top - M), to = Math.min(height, top + rows + M), need = W * Math.ceil((to - from) / 8) * 8;
+    if (!pool || pool[0].length < need) pool = [0, 1, 2].map(() => new Float64Array(need));
+    const planes = gaborishPlanes(data.subarray(from * width * 4, to * width * 4), width, to - from, options, pool);
     return band = {top, rows, planes: planes.map(p => p.subarray((top - from) * W))};
   };
 };
@@ -273,8 +274,8 @@ function* uploadPictureSteps(data, width, height, quality) {
 }
 
 function* pictureSteps(data, width, height, quality, effort, encodeCoefficients, search, color, gpu, memory, screen = false, floored = false, deferred = false, both = true, pair = null) {
-  if (effort <= 3 && !color && !screen && quality < 100 && smallPicture(width, height)) {
-    const budgets = fastBudgets(effort, false);
+  if (effort <= 5 && !color && !screen && quality < 100 && smallPicture(width, height)) {
+    const budgets = fastBudgets(effort, false, width * height);
     if (splitRoute(width, height)) return yield* photoSplitCandidates(data, width, height, quality, budgets, {screen: false});
     admitV6Memory(data, width, height, memory);
     let image;

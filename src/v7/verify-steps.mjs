@@ -3,7 +3,7 @@ import {SAVED, PASSED, tiledBytes, readEach, journalNext, journalRequest} from '
 import {sha256Start, sha256Update, sha256Finish} from '../sha256.mjs';
 import {boundedHeaderSteps} from './inspect.mjs';
 import {check, fail, JPEG_PIXELS, dimensions, object, pixelLimit, LARGEST} from './primitives.mjs';
-import {decodeGroupFile, restorationSteps, verificationImageSteps, ownJPEGReference, jpegReferenceSteps, nativeVerification, shown} from './verify-decode.mjs';
+import {decodeGroupFile, decodeWholeFile, restorationSteps, verificationImageSteps, ownJPEGReference, jpegReferenceSteps, nativeVerification, shown} from './verify-decode.mjs';
 import {fromDecoded} from './describe.mjs';
 import {pngWalk, pngLayout, pngRows, pngPassRows, pngOrientationLocation, crc32, unfilterRow} from '../source.mjs';
 import {jpegDisplayDimensionsSteps} from './preparation-jpeg.mjs';
@@ -11,6 +11,7 @@ import {scoreInSteps} from './verify-score.mjs';
 import {orientInSteps, resizeInSteps} from './verify-transforms.mjs';
 import {sampleView} from './verify-samples.mjs';
 import {isImageResult} from './result-shape.mjs';
+const WHOLE_FRAME = Symbol.for('rapier-jxl.verify.whole-frame');
 import {storedIdentity} from './identity-record.mjs';
 import {refOf} from '../resumable-encode.mjs';
 
@@ -206,18 +207,22 @@ async function decodedGroups(bytes,options,{journal,unit,tools},hostOnly = false
     for (let x = 0; x < info.width; x += group) {
       const width = Math.min(group,info.width - x), height = Math.min(group,info.height - y);
       const {value} = await unit('verify-decode-group',async () => {
-        const picture = native ? shown(info,await nativePictureWith(bytes.subarray(0,Math.min(bytes.length,32)),
-          {width,height,colorSpace:info.colorEncoding.primaries,maxPixels:options.maxPixels,signal:options.signal},(makeBitmap,BlobType) => {
-            blob ??= fileBlob(bytes,BlobType);
-            return () => makeBitmap.call(globalThis,blob,x,y,width,height,NATIVE_PICTURE_OPTIONS);
-          })) : await decodeGroupFile(bytes,{...decodeOptions(options),region:{x,y,width,height},
-            maxTotalSamples:Math.max(1048576,GROUP * GROUP * 108)},opened);
+        let picture;
+        try {
+          picture = native ? shown(info,await nativePictureWith(bytes.subarray(0,Math.min(bytes.length,32)),
+            {width,height,colorSpace:info.colorEncoding.primaries,maxPixels:options.maxPixels,signal:options.signal},(makeBitmap,BlobType) => {
+              blob ??= fileBlob(bytes,BlobType);
+              return () => makeBitmap.call(globalThis,blob,x,y,width,height,NATIVE_PICTURE_OPTIONS);
+            })) : await decodeGroupFile(bytes,{...decodeOptions(options),region:{x,y,width,height},
+              maxTotalSamples:Math.max(1048576,GROUP * GROUP * 108)},opened);
+        } catch (error) { if (!native && error?.[WHOLE_FRAME] === true) return {whole:true}; throw error; }
         if (![Uint8Array,Uint8ClampedArray,Uint16Array,Float32Array].some(T => picture.data instanceof T) || picture.width !== width || picture.height !== height)
           throw fail('JXL_UNSUPPORTED','Bounded verification needs complete typed RGBA groups.');
         return {type:picture.data instanceof Uint16Array ? 'Uint16Array' : picture.data instanceof Float32Array ? 'Float32Array' : 'Uint8Array',
           data:new Uint8Array(picture.data.buffer,picture.data.byteOffset,picture.data.byteLength),description:Object.fromEntries(DECODE_FIELDS.filter(key => picture[key] !== undefined)
           .map(key => [key,key === 'extraChannels' ? picture[key].map(({data,plane,...channel}) => channel) : picture[key]]))};
       },{cold:true,alone:true});
+      if (value.whole) return wholeDecoded(bytes,info,options,unit);
       description ??= value.description;
       Type ??= {Uint8Array,Uint16Array,Float32Array}[value.type];
       band.push(value.data);
@@ -227,6 +232,18 @@ async function decodedGroups(bytes,options,{journal,unit,tools},hostOnly = false
   const size = Type.BYTES_PER_ELEMENT;
   return {...description,width:info.width,height:info.height,
     data:sampleView(tiledBytes(bands,info.width * size,info.height,group,group * size,journal.touched),Type)};
+}
+
+async function wholeDecoded(bytes,info,options,unit) {
+  const {value} = await unit('verify-decode-whole',async () => {
+    const picture = await decodeWholeFile(bytes,decodeOptions(options));
+    if (![Uint8Array,Uint8ClampedArray,Uint16Array,Float32Array].some(T => picture.data instanceof T) || picture.width !== info.width || picture.height !== info.height)
+      throw fail('JXL_UNSUPPORTED','Verification needs a complete typed RGBA picture.');
+    return {type:picture.data instanceof Uint16Array ? 'Uint16Array' : picture.data instanceof Float32Array ? 'Float32Array' : 'Uint8Array',
+      data:new Uint8Array(picture.data.buffer,picture.data.byteOffset,picture.data.byteLength),description:Object.fromEntries(DECODE_FIELDS.filter(key => picture[key] !== undefined)
+      .map(key => [key,key === 'extraChannels' ? picture[key].map(({data,plane,...channel}) => channel) : picture[key]]))};
+  },{cold:true,alone:true});
+  return {...value.description,width:info.width,height:info.height,data:sampleView(value.data,{Uint8Array,Uint16Array,Float32Array}[value.type])};
 }
 
 async function referenceInSteps(original,options,context) {

@@ -7,8 +7,8 @@ export type * from './types.mjs';
 export type {CaptureCompleteOptions as CaptureOptions, CapturePhotoFidelity as CaptureFidelity, CaptureRecord} from './capture-complete.mjs';
 export type {WasmBundle} from './wasm.mjs';
 /** rapier-jxl: the full still encoder in one file, run in place: efforts 1-9, exact or lossy, measured fidelity, WebGPU
- * at lossy efforts 7-9, HDR and deeper samples, ICC and codestream features. It encodes pixels: a JPEG kept byte for
- * byte is rapier-jxl/jpeg's recompress, and an exact JPEG Blob here refuses with that name. An animation is
+ * at lossy efforts 7-9, HDR and deeper samples, ICC and codestream features. It encodes pixels. For reversible JPEG
+ * storage, use rapier-jxl/jpeg's recompress; an exact JPEG Blob here refuses with that name. An animation is
  * encoded by rapier-jxl/animation; a file's header and metadata are rapier-jxl/metadata's; a worker and queue over any
  * module is rapier-jxl/codec. Page capture is rapier-jxl/capture and rapier-jxl/capture-complete. */
 export const encode: ResumableFunction<(input: ImageInput, options?: EncodeOptions) => Promise<ImageResult>>;

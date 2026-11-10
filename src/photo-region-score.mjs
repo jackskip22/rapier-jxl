@@ -46,7 +46,7 @@ export function cropGuard(width, height, crops, webp, mask, project, signal, col
       if (seen.has(key)) return false;
       seen.add(key); return true;
     }).map(r => ({...r, data: null, done: false, nextRow: r.y}));
-  let failed = checks.length === 0, held = 0;
+  let failed = checks.length === 0, missed = false, held = 0;
   const limit = 128 << 20, pictures = webp === undefined ? 5 : 3;
   const clear = () => { held = 0; for (const r of checks) r.data = null; };
   const add = (pixels, image, plain, top, reference = pixels, exact = null) => {
@@ -100,7 +100,7 @@ export function cropGuard(width, height, crops, webp, mask, project, signal, col
         let own, threshold;
         try { own = score(1); threshold = webp === undefined ? score(3) : webpTarget(webp); }
         finally { prepared.release(); }
-        if (!(own >= threshold)) failed = true;
+        if (!(own >= threshold)) missed = true;
         measured.push({metric: 'ssimulacra2', score: own, floor: threshold, domain: 'encoder-reconstruction',
           region: {x: origin.x + r.x, y: origin.y + r.y, width: r.width, height: r.height}});
         held -= r.data[0].length * pictures; r.data = null; r.done = true;
@@ -108,13 +108,13 @@ export function cropGuard(width, height, crops, webp, mask, project, signal, col
     }
     if (failed) clear();
   };
-  const state = () => ({checks, failed, held, measured});
+  const state = () => ({checks, failed, missed, held, measured});
   const restore = saved => {
     if (saved.checks === checks) return;
     checks.splice(0, checks.length, ...saved.checks); measured.splice(0, measured.length, ...saved.measured);
-    failed = saved.failed; held = saved.held;
+    failed = saved.failed; missed = saved.missed ?? false; held = saved.held;
   };
-  return {add, passed: () => !failed, complete: () => !failed && checks.every(r => r.done), measurements: () => measured, state, restore};
+  return {add, passed: () => !failed && !missed, complete: () => !failed && !missed && checks.every(r => r.done), measurements: () => measured, state, restore};
 }
 
 function dct8Band(image, top, height) {

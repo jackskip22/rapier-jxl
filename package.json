@@ -1,6 +1,6 @@
 {
  "name": "rapier-jxl",
- "version": "8.3.1",
+ "version": "8.3.2",
  "type": "module",
  "license": "MIT",
  "description": "JPEG XL in JavaScript and WebAssembly with WebGPU for high efforts.",
@@ -87,6 +87,34 @@
    "types": "./types/codec.d.mts",
    "import": "./dist/codec.mjs"
   },
+  "./codec/upload": {
+   "types": "./types/codec-upload.d.mts",
+   "import": "./dist/codec-upload.mjs"
+  },
+  "./codec/capture": {
+   "types": "./types/codec-capture.d.mts",
+   "import": "./dist/codec-capture.mjs"
+  },
+  "./codec/capture-complete": {
+   "types": "./types/codec-capture-complete.d.mts",
+   "import": "./dist/codec-capture-complete.mjs"
+  },
+  "./codec/animation": {
+   "types": "./types/codec-animation.d.mts",
+   "import": "./dist/codec-animation.mjs"
+  },
+  "./codec/format": {
+   "types": "./types/codec-format.d.mts",
+   "import": "./dist/codec-format.mjs"
+  },
+  "./codec/decode": {
+   "types": "./types/codec-decode.d.mts",
+   "import": "./dist/codec-decode.mjs"
+  },
+  "./codec/jpeg": {
+   "types": "./types/codec-jpeg.d.mts",
+   "import": "./dist/codec-jpeg.mjs"
+  },
   "./polyfill": {
    "types": "./types/polyfill.d.mts",
    "import": "./dist/polyfill.mjs"
@@ -133,6 +161,34 @@
    "import": "./examples/emdash/index.mjs"
   },
   "./package.json": "./package.json"
+ },
+ "browser": {
+  "./index.js": "./dist/index.mjs",
+  "./upload": "./dist/upload.mjs",
+  "./capture": "./dist/capture.mjs",
+  "./capture-complete": "./dist/capture-complete.mjs",
+  "./animation": "./dist/animation.mjs",
+  "./format": "./dist/format.mjs",
+  "./decode": "./dist/decode.mjs",
+  "./jpeg": "./dist/jpeg.mjs",
+  "./metadata": "./dist/metadata.mjs",
+  "./codec": "./dist/codec.mjs",
+  "./codec/upload": "./dist/codec-upload.mjs",
+  "./codec/capture": "./dist/codec-capture.mjs",
+  "./codec/capture-complete": "./dist/codec-capture-complete.mjs",
+  "./codec/animation": "./dist/codec-animation.mjs",
+  "./codec/format": "./dist/codec-format.mjs",
+  "./codec/decode": "./dist/codec-decode.mjs",
+  "./codec/jpeg": "./dist/codec-jpeg.mjs",
+  "./polyfill": "./dist/polyfill.mjs",
+  "./serve": "./dist/serve.mjs",
+  "./verify": "./dist/verify.mjs",
+  "./storage": "./dist/storage.mjs",
+  "./resumable": "./dist/resumable.mjs",
+  "./wasm": "./dist/wasm.mjs",
+  "./page-rects": "./examples/page-rects.js",
+  "./svg-jxl": "./examples/svg-jxl.js",
+  "./emdash": "./examples/emdash/index.mjs"
  },
  "types": "./types/index.d.mts",
  "sideEffects": [
@@ -205,8 +261,7 @@
   "skills",
   "LICENSE",
   "README.md",
-  "THIRD_PARTY_NOTICES",
-  "CHANGELOG.md"
+  "THIRD_PARTY_NOTICES"
  ],
  "engines": {
   "node": "^20.16.0 || >=22.3.0"

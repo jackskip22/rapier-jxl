@@ -18,7 +18,7 @@ function ladderContexts(image, fast) {
 }
 const ladderSerial = c => ({thresholds: c.thresholds, map: c.map, numDc: c.numDc, numCtxs: c.numCtxs});
 
-export function designAsker(send, count) {
+export const designAsker = (typeof __RAPIER_JXL_HELPER__ !== 'undefined' && __RAPIER_JXL_HELPER__ === true) ? null : function designAsker(send, count) {
   let next = 0;
   return async value => {
     if (value.coding !== buildAnsCoding) return null;
@@ -37,7 +37,7 @@ export function designAsker(send, count) {
   };
 }
 
-export async function encodeSplitLadder(data, width, height, quality, helpers, {signal, effort = 4, arena = false, uploadFlat: knownFlat, grain: knownGrain} = {}) {
+export const encodeSplitLadder = (typeof __RAPIER_JXL_HELPER__ !== 'undefined' && __RAPIER_JXL_HELPER__ === true) ? null : async function encodeSplitLadder(data, width, height, quality, helpers, {signal, effort = 4, arena = false, uploadFlat: knownFlat, grain: knownGrain} = {}) {
   const commonUpload = effort === 4 || effort === 5, flat = commonUpload && (knownFlat ?? uploadFlat(data, width, height));
   const grain = commonUpload && !flat && (knownGrain ?? uploadGrain(data, width, height));
   const {id, ticket} = splitIds(), bands = splitBands(height, helpers.length + 1), keys = bands.map((_, k) => id + ':' + k);

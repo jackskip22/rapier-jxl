@@ -26,7 +26,7 @@ const GROUP_PLANES = [P, PROPERTY, CONTEXT, STATE];
 let holder = null;
 const enteredOf = new Map();
 const entered = f => enteredOf.get(f) ?? enteredOf.set(f, function (...args) { takeArena(holder); return f.apply(this, args); }).get(f);
-const OWN_HOOKS = ['channel', 'weighted', 'fill', 'group', 'screen', 'sampled', 'sampledStore', 'dct', 'ycbcrTile', 'rgbTiles', 'rgbBand', 'photoTile', 'acGroup', 'acGroupPair', 'acDeferred', 'wpTokens', 'nonzero', 'entropy', 'varblock', 'gaborish', 'strategyFill', 'strategyWrite', 'xybPlanes', 'gabBand', 'dcEvents', 'hybridPlan', 'shape'];
+const OWN_HOOKS = ['channel', 'weighted', 'fill', 'group', 'screen', 'sampled', 'sampledStore', 'dct', 'ycbcrTile', 'rgbTiles', 'rgbBand', 'photoTile', 'acGroup', 'acGroupPair', 'acDeferred', 'wpTokens', 'nonzero', 'entropy', 'varblock', 'gaborish', 'strategyFill', 'strategyWrite', 'xybPlanes', 'gabBand', 'dcEvents', 'dcPlan', 'planTokens', 'hybridPlan', 'shape'];
 function createEngine() {
   const {memory, exports} = kernelInstance();
   const views = () => { engine.u8 = new Uint8Array(memory.buffer); engine.i32 = new Int32Array(memory.buffer); };
@@ -713,11 +713,49 @@ const dcEvents = SAMPLE ? null : function dcEvents(planes) {
   return planes.map(({data, w, h}) => {
     u32.fill(0, GE_COUNTS >> 2, (GE_COUNTS >> 2) + 131072 + 33);
     i16.set(data.subarray(0, w * h), GE_PLANE >> 1);
-    engine.simd.gradEvents(GE_PLANE, w, h, GE_COUNTS, GE_TOUCHED, GE_STATS);
+    engine.simd.gradEvents(GE_PLANE, w, h, GE_COUNTS, GE_TOUCHED, GE_STATS, 0, 0, 0);
     const touched = u32[(GE_STATS >> 2) + 2], literalPairs = new Uint32Array(2 * touched);
     for (let i = 0; i < touched; i++) { const v = u32[(GE_TOUCHED >> 2) + i]; literalPairs[2 * i] = v; literalPairs[2 * i + 1] = u32[(GE_COUNTS >> 2) + v]; }
     return {literalPairs, literalPairsLen: 2 * touched, lengths: u32.slice((GE_COUNTS >> 2) + 131072, (GE_COUNTS >> 2) + 131072 + 33)};
   });
+}
+
+const GE_TAGS = GE_STATS + 16, GE_EXTRA = GE_TAGS + 4 * 65536, GE_FREQ = GE_EXTRA + 4 * 65536;
+const dcPlan = SAMPLE ? null : function dcPlan(data, w, h, freq) {
+  if (active !== 'simd' || !(data instanceof Int16Array) || !(w > 0 && h > 0) || w * h > 65536 || data.length < w * h || freq.length !== ALPHABET) return null;
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
+  const buffer = engine.memory.buffer, i16 = new Int16Array(buffer), u32 = new Uint32Array(buffer), n = w * h;
+  let lo = data[0], hi = data[0];
+  for (let i = 1; i < n; i++) { const v = data[i]; if (v < lo) lo = v; else if (v > hi) hi = v; }
+  const values = Math.min(131072, Math.max(2 * (hi - lo), 2 * Math.abs(data[0])) + 2);
+  u32.fill(0, GE_COUNTS >> 2, (GE_COUNTS >> 2) + values);
+  u32.fill(0, (GE_COUNTS >> 2) + 131072, (GE_COUNTS >> 2) + 131072 + 33);
+  u32.fill(0, GE_FREQ >> 2, (GE_FREQ >> 2) + ALPHABET);
+  i16.set(data.subarray(0, n), GE_PLANE >> 1);
+  engine.simd.gradEvents(GE_PLANE, w, h, GE_COUNTS, GE_TOUCHED, GE_STATS, GE_TAGS, GE_EXTRA, GE_FREQ);
+  const touched = u32[(GE_STATS >> 2) + 2], used = u32[(GE_STATS >> 2) + 3], literalPairs = new Uint32Array(2 * touched);
+  let p = 0;
+  for (let pass = 0; pass < 2; pass++) for (let i = 0; i < touched; i++) {
+    const v = u32[(GE_TOUCHED >> 2) + i];
+    if ((v < 4096) === !pass) { literalPairs[p++] = v; literalPairs[p++] = u32[(GE_COUNTS >> 2) + v]; }
+  }
+  for (let s = 0; s < ALPHABET; s++) freq[s] += u32[(GE_FREQ >> 2) + s];
+  return {tags: u32.slice(GE_TAGS >> 2, (GE_TAGS >> 2) + used), extra: u32.slice(GE_EXTRA >> 2, (GE_EXTRA >> 2) + used), used,
+    literalPairs, literalPairsLen: p, lengths: u32.slice((GE_COUNTS >> 2) + 131072, (GE_COUNTS >> 2) + 131072 + 33)};
+}
+
+const planTokens = SAMPLE ? null : function planTokens(plan, config) {
+  const {tags, extra, used} = plan;
+  if (active !== 'simd' || !(tags instanceof Uint32Array) || !(extra instanceof Uint32Array) || !Number.isInteger(used) || used < 0 ||
+      used > 65536 || tags.length < used || extra.length < used || !(config.split >= 0 && config.split <= 30) ||
+      config.splitToken !== 2 ** config.split || !(config.msb >= 0 && config.lsb >= 0 && config.msb + config.lsb <= config.split)) return false;
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
+  const buffer = engine.memory.buffer, u32 = new Uint32Array(buffer), i32 = new Int32Array(buffer);
+  u32.set(tags.subarray(0, used), HP_TAGS >> 2); u32.set(extra.subarray(0, used), HP_EXTRA >> 2);
+  i32.set([config.splitToken, config.split, config.msb, config.lsb], HP_CFGS >> 2);
+  engine.simd.hpTokens(HP_TAGS, HP_EXTRA, used, HP_CFGS);
+  tags.set(u32.subarray(HP_TAGS >> 2, (HP_TAGS >> 2) + used)); extra.set(u32.subarray(HP_EXTRA >> 2, (HP_EXTRA >> 2) + used));
+  return true;
 }
 
 const HP_TAGS = P, HP_EXTRA = P + 262144, HP_LAYOUT = P + 524288, HP_CFGS = HP_LAYOUT + 2048, HP_COUNTS = HP_CFGS + 4096;
@@ -1444,7 +1482,7 @@ function disableEntropyKernels() { entropyAllowed = false; kernelHooks.entropy =
 function configureKernels(mode = 'auto', parts) {
   if (!['off', 'auto', 'simd'].includes(mode)) throw fault('JXL_INPUT', 'Kernel mode is off, auto or simd.');
   explicit = true; acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
-  kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.ycbcrTile = kernelHooks.rgbTiles = kernelHooks.rgbBand = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.acGroupPair = kernelHooks.acDeferred = kernelHooks.wpTokens = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = kernelHooks.dcEvents = kernelHooks.hybridPlan = kernelHooks.shape = null; active = 'off';
+  kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.ycbcrTile = kernelHooks.rgbTiles = kernelHooks.rgbBand = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.acGroupPair = kernelHooks.acDeferred = kernelHooks.wpTokens = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = kernelHooks.dcEvents = kernelHooks.dcPlan = kernelHooks.planTokens = kernelHooks.hybridPlan = kernelHooks.shape = null; active = 'off';
   if (mode === 'off') return active;
   try {
     if (typeof WebAssembly !== 'object' || new Uint8Array(new Uint32Array([1]).buffer)[0] !== 1) return active;
@@ -1462,7 +1500,7 @@ function configureKernels(mode = 'auto', parts) {
     if (!SAMPLE && (!enabled || enabled.get('photoTile'))) kernelHooks.photoTile = photoTile;
     if (!SAMPLE && (!enabled || enabled.get('acGroup'))) { kernelHooks.acGroup = acGroup; kernelHooks.acGroupPair = acGroupPair; kernelHooks.acDeferred = deferredCounts; }
     if (!SAMPLE && (!enabled || enabled.get('nonzero'))) kernelHooks.nonzero = nonzero;
-    if (!SAMPLE && (!enabled || enabled.get('wpTokens'))) { kernelHooks.wpTokens = wpTokens; kernelHooks.dcEvents = dcEvents; kernelHooks.hybridPlan = hybridPlan; }
+    if (!SAMPLE && (!enabled || enabled.get('wpTokens'))) { kernelHooks.wpTokens = wpTokens; kernelHooks.dcEvents = dcEvents; kernelHooks.dcPlan = dcPlan; kernelHooks.planTokens = planTokens; kernelHooks.hybridPlan = hybridPlan; }
     if (!SAMPLE && entropyAllowed && (!enabled || enabled.get('shape'))) kernelHooks.shape = shape;
     if (!SAMPLE && !UPLOAD && !JPEG) {
       if (!enabled || enabled.get('varblock')) kernelHooks.varblock = varblock;
@@ -1473,7 +1511,7 @@ function configureKernels(mode = 'auto', parts) {
     if (!SAMPLE && (!enabled || enabled.get('gabBand'))) kernelHooks.gabBand = gabBand;
     if (!SAMPLE && entropyAllowed && (!enabled || enabled.get('entropy'))) kernelHooks.entropy = entropyKernels;
     for (const name of OWN_HOOKS) if (kernelHooks[name]) kernelHooks[name] = entered(kernelHooks[name]);
-  } catch { active = 'off'; kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.ycbcrTile = kernelHooks.rgbTiles = kernelHooks.rgbBand = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.acGroupPair = kernelHooks.acDeferred = kernelHooks.wpTokens = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = kernelHooks.dcEvents = kernelHooks.hybridPlan = kernelHooks.shape = null; }
+  } catch { active = 'off'; kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.ycbcrTile = kernelHooks.rgbTiles = kernelHooks.rgbBand = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.acGroupPair = kernelHooks.acDeferred = kernelHooks.wpTokens = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = kernelHooks.dcEvents = kernelHooks.dcPlan = kernelHooks.planTokens = kernelHooks.hybridPlan = kernelHooks.shape = null; }
   return active;
 }
 function ensureKernels() {

@@ -7,10 +7,11 @@ import {EMDASH_JOB_STORAGE, createEmDashJobStore} from './job-store.mjs';
 import {createEmDashJobRunner} from './job-runner.mjs';
 import {createLibraryRun, LIBRARY_STORAGE} from './library-jobs.mjs';
 import {WORK_STORAGE} from './work-queue.mjs';
-import {runBackground} from './background.mjs';
+import {runBackground, recoverWake} from './background.mjs';
 import {settings, nativeImageJob} from './media-settings.mjs';
 import {WORDS} from './media-words.mjs';
 import {executionFor, hostLimits, requestBudget, deliveryOnly} from './host-policy.mjs';
+import {createThreadDriver} from './thread-driver.mjs';
 import {stageCandidate} from './browser-candidate.mjs';
 export {DEFAULTS, settings} from './media-settings.mjs';
 
@@ -41,12 +42,23 @@ function storage() {
   if (!value) throw fail(500, 'storage_not_wrapped', 'Add rapier-jxl through jxl(emdash, {...}) in astro.config');
   return value;
 }
+// At most every 30 s on Node: a wake task a restart left locked is replaced (background.mjs recoverWake).
+let wakeChecked = -Infinity;
+async function checkWake(ctx, media, call) {
+  if (media.originals?.platform !== 'node' || Date.now() - wakeChecked < 30000 || typeof ctx?.cron?.cancel !== 'function') return;
+  wakeChecked = Date.now();
+  try { await recoverWake(ctx, {active: nodePumps.has(media), call}); } catch {}
+}
 async function runner(ctx, options = {}) {
   const media = storage(), backend = activeStorageScope();
   if (!backend) throw fail(500, 'storage_scope', 'Native storage has no configured backend scope');
   const scope = await digest(new TextEncoder().encode(JSON.stringify([ID, backend])));
   const host = media.host ?? hostLimits(media.originals?.platform ?? 'node');
-  const service = createEmDashJobRunner(ctx, {media, scope, ms: requestBudget(host), operations: {encode, fit, recompress}, ...options});
+  // Node with no CPU allowance runs each image job in a worker thread (thread-driver.mjs); other hosts step it.
+  const operations = {encode, fit, recompress};
+  const service = createEmDashJobRunner(ctx, {media, scope, ms: requestBudget(host), operations,
+    ...(host.platform === 'node' && host.cpuLimitMs === null && {driver: createThreadDriver(operations)}), ...options});
+  await checkWake(ctx, media, action => service.calls.call(action));
   const queue = service.queue;
   service.queue = async command => {
     const pointer = await mediaJobKey(scope, command.key, command.input);
@@ -499,8 +511,8 @@ export function createPlugin({mediaItem = nativeMediaItem, mediaPage = nativeMed
   const originalPolicy = (ctx, options) => originalsService(ctx, options, {mediaItem, mediaPage});
   return definePlugin({id: ID, version: VERSION, capabilities: ['media:read', 'media:bytes:read'], admin: ADMIN,
     storage: {...EMDASH_JOB_STORAGE, ...LIBRARY_STORAGE, ...WORK_STORAGE},
-    // EmDash's timeout races the handler without canceling it. The pump owns the real host deadline; this largest
-    // valid JavaScript timer lets a Node queue drain without leaving a timed-out loop running behind a retry.
+    // EmDash's timeout races the handler without canceling it. The pump owns the real host deadline (every wake ends at
+    // its allowance); this largest valid JavaScript timer never cuts a wake short behind a retry.
     hooks: {cron: {handler: (event, ctx) => scheduled(event, ctx, {mediaItem, mediaPage}), timeout: 0x7fffffff},
       'media:afterUpload': afterUpload},
     routes: {

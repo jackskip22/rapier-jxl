@@ -1,4 +1,4 @@
-import {settleWebp, webpQuality, gradient, qualityFor, fixedQuality, regionQuality, ceilingFor, smallReading} from './webp-quality.mjs';
+import {settleWebp, webpQuality, gradientRows, qualityFor, fixedQuality, regionQuality, ceilingFor, smallReading} from './webp-quality.mjs';
 import {inspectPixels} from '../lossless.mjs';
 import {screenLike} from '../screen.mjs';
 import {preferXYB} from '../photo-preference.mjs';
@@ -25,10 +25,14 @@ export function lowWebpFacts(picture) {
   const settled = settledFacts.get(picture.data);
   if (settled) return settled;
   if (!lowWebpEligible(picture)) return {eligible: false};
-  const {data, width, height} = picture, shape = inspectPixels(data, width, height);
+  const {data, width, height} = picture, shape = inspectPixels(data, width, height), stats = {sum: 0, n: 0};
+  gradientRows(stats, data, width, height, 1, height);
+  const chroma = stats.n ? stats.chroma / stats.n : 0, screen = screenLike(data, width, height);
+  const slots = shape.palette?.colours.length ?? null;
+  const greyPhoto = !screen && chroma < 2 && Math.min(width, height) >= 128 && (slots ?? 0) > 64;
   return {eligible: true, width, height, pixels: width * height, shorterSide: Math.min(width, height),
-    gradient: gradient(picture), palette: Boolean(shape.palette), paletteSlots: shape.palette?.colours.length ?? null, alpha: shape.alpha,
-    screenLike: screenLike(data, width, height), preferXYB: Math.min(width, height) < 128 || preferXYB(data, width, height)};
+    gradient: stats.n ? stats.sum / stats.n : 0, chroma, palette: Boolean(shape.palette) && !greyPhoto, paletteSlots: slots, alpha: shape.alpha,
+    screenLike: screen, preferXYB: Math.min(width, height) < 128 || preferXYB(data, width, height)};
 }
 
 function anchor(q, values) {

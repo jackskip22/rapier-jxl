@@ -135,7 +135,7 @@ function openImage(bytes,options) {
 }
 export function* openImageSteps(bytes,options) {
   return yield* journalTool('openImage')(bytes,options,{admitInput,storageNext,repairedHeader,uint32View,
-    readContainerSteps,fourCC,part,requireDecode,JxlBits,readDecodeImageHeader,iccProfileLimit,admitDecodedICCSteps,
+    readContainer,readContainerSteps,fourCC,part,requireDecode,JxlBits,readDecodeImageHeader,iccProfileLimit,admitDecodedICCSteps,
     readDecodeFrameHeader,readDecodeTOC});
 }
 function reopenImage(opened) {
@@ -192,10 +192,11 @@ function arrived(r,read){
   try{return read();}catch(error){if(r.bit>r.bytes.length*8||/^Truncated JPEG XL/.test(error?.message??''))return null;throw error;}
 }
 
+export const WHOLE_FRAME=Symbol.for('rapier-jxl.verify.whole-frame');
 export function decodeImage(bytes,options,renderFrame=null,opened=null) {
   decodeKernels();
   const {input,r,h}=opened?reopenImage(opened):openImage(bytes,options),sharedFeatureWork={spent:0};
-  const requireRegion=condition=>{if(options.borrowed&&!condition)throw Object.assign(new Error('This file needs whole-frame decoding; bounded verification cannot read its regions.'),{code:'JXL_UNSUPPORTED'});};
+  const requireRegion=condition=>{if(options.borrowed&&!condition)throw Object.assign(new Error('This file needs whole-frame decoding; bounded verification cannot read its regions.'),{code:'JXL_UNSUPPORTED',[WHOLE_FRAME]:true});};
   requireRegion(!h.preview);
   const ph=h.preview?{...h,...h.preview,preview:null,animation:null}:null;
   if(ph)admitPreviewSize(ph,options);

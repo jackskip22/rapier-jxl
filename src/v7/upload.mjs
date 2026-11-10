@@ -4,6 +4,7 @@ import {JOURNAL, JOURNAL_FILE, journaled, journalFact, JOIN} from '../step-journ
 import {verbSteps, STEPS} from './verb-steps.mjs';
 import {effortJob} from '../effort-job.mjs';
 import {ansTranscodeSteps} from '../jpeg-ans-effort.mjs';
+import {longTail} from '../jpeg-tail.mjs';
 import {readPNG16} from '../source.mjs';
 import {journalPNG} from './journal-png.mjs';
 import {sRGBWithIntent, withRenderingIntent} from './header-intent.mjs';
@@ -252,5 +253,5 @@ function directRoute(read, maxPixels) {
 async function carry(jpeg, effort, hooks) {
   bytes(jpeg); jpegDimensions(jpeg, hooks.maxPixels); check(hooks.signal);
   await kernelsReady();
-  return drain(ansTranscodeSteps(jpeg, {effort}), hooks);
+  return drain(ansTranscodeSteps(jpeg, {effort, maxPixels: hooks.maxPixels, tails: longTail}), hooks);
 }

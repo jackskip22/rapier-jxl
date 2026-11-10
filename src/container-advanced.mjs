@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 import {fault} from './fault.mjs';
 import {SIGNATURE, FTYP, BRAND, CODESTREAM, PARTIAL, LEVEL, BROB, RECONSTRUCTION, fileHeader, boxHeader, boxWords, boxCursor, nextBox, endBoxes as containerEnd} from './container.mjs';
-import {journaling, journalTool} from './step-journal.mjs';
-import {readFrames} from './framing.mjs';
+import {journaling, journalTool, sliceBytes} from './step-journal.mjs';
+import {readFrames, frameStarts} from './framing.mjs';
 import {prepareColorEncoding} from './color-info.mjs';
 import {prepareICC} from './icc-write.mjs';
 
@@ -70,7 +70,7 @@ function scanContainer(bytes, maximum, maxBoxes = Number.MAX_SAFE_INTEGER) {
   const state = containerStart(bytes, maximum);
   if (state.raw) return rawContainer(bytes);
   const words = boxWords(bytes), entries = [], fragments = [], byIndex = new Map();
-  const span = (from, to) => bytes.subarray(from, to);
+  const span = (from, to) => sliceBytes(bytes, from, to);
   while (state.at < bytes.length) {
     const row = containerNext(bytes, maxBoxes, state, words, span, byIndex);
     if (row) { entries.push(row.entry); if (row.fragment) fragments.push(row.fragment); }
@@ -109,6 +109,7 @@ export function* readContainerSteps(bytes, options = {}) {
 }
 
 function validateOrder(order, chunks, stream, options) {
+  const METADATA_ONLY = typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true;
   if (!Array.isArray(order) || order.length !== chunks.length) throw invalid('fragmentOrder lists each fragment exactly once.');
   if (options.allowBufferedFrameEnds !== undefined && typeof options.allowBufferedFrameEnds !== 'boolean') throw invalid('allowBufferedFrameEnds is a boolean.');
   const positions = new Int32Array(chunks.length); positions.fill(-1);
@@ -120,8 +121,7 @@ function validateOrder(order, chunks, stream, options) {
   if (positions.every((value, i) => value === i)) return false;
   let starts = options.frameStarts;
   if (starts === undefined) {
-    const framed = readFrames(stream, {iccBits: options.iccBitLength});
-    starts = [...(framed.preview ? [framed.preview.start] : []), ...framed.frames.map(frame => frame.start)];
+    starts = METADATA_ONLY ? frameStarts(stream, options.iccBitLength) : (framed => [...(framed.preview ? [framed.preview.start] : []), ...framed.frames.map(frame => frame.start)])(readFrames(stream, {iccBits: options.iccBitLength}));
   }
   if (!Array.isArray(starts) || !starts.length) throw invalid('frameStarts declares every frame header byte offset.');
   let previous = -1, chunk = 0;

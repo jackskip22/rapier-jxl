@@ -1,0 +1,8 @@
+name = "rapier-jxl-test"
+main = "worker.mjs"
+compatibility_date = "2026-10-20"
+
+[[rules]]
+type = "Data"
+globs = ["**/*.png", "**/*.jpg"]
+fallthrough = true

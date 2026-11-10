@@ -251,8 +251,28 @@ export function splitImage(done, width, height, data, adaptive = true) {
 const SPLIT_CLUSTERS = UPLOAD_CLUSTERS;
 export const splitShape = (width, height) => width * height < SMALL_PIXELS ? {lf: null, clusters: SMALL_CLUSTERS} : {lf: 3, clusters: SPLIT_CLUSTERS};
 const planOf = shape => ({lf, ...clusters}) => ({...shape, ...(lf !== undefined && {lf}), clusters});
+const sameClusters = (a, b) => {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every(key => Object.hasOwn(b, key) && Object.is(a[key], b[key]));
+};
+const furtherAc = (plans, at) => plans.some((plan, i) => i > at && !sameClusters(plans[at].clusters, plan.clusters));
 const splitOptions = ({clusters}) => ({smallestMap: true, ...clusters, kernels: kernelHooks.entropy?.()});
 const splitCoding = (counts, plan) => buildAnsCoding(counts, splitOptions(plan));
+function* mapCodingSteps(counts, plan, fallback) {
+  const steps = buildAnsCoding.steps(counts, splitOptions(plan));
+  let reply, failed = false;
+  try {
+    for (;;) {
+      let step;
+      try { step = steps.next(reply); }
+      catch (error) { if (candidateSizeFailure(error)) break; throw error; }
+      if (step.done) return step.value;
+      reply = yield step.value;
+    }
+  } catch (error) { failed = true; throw error; }
+  finally { try { steps.return?.(); } catch (error) { if (!failed) throw error; } }
+  return yield* buildAnsCoding.steps(counts, splitOptions(fallback));
+}
 function splitFrame(image, orders, counts, coding, dcGroups, {lf, clusters}) {
   const lfCoder = lf ? lfCoderFor(lf) : undefined;
   const plan = {coding: (c, o) => c === counts && o?.smallestMap && o?.seeds === clusters.seeds ? coding : buildAnsCoding(c, o),
@@ -395,14 +415,14 @@ export function* splitCandidates(split, clusters) {
   finally { splitEnd(split); }
 }
 
-function splitComplete(image, orders, counts, coding, dcGroups, shape, results) {
+function splitComplete(image, orders, counts, coding, dcGroups, shape, results, retain = false) {
   const steps = splitFrame(image, orders, counts, coding, dcGroups, shape);
   let step, answer, answered = false;
   while (!(step = steps.next(answer)).done) {
     answer = undefined;
     if (step.value?.kind !== 'ac-group') continue;
     if (results.length !== step.value.groups) throw new Error('Split sections do not cover the frame.');
-    answer = {results, errors: {}}; answered = true;
+    answer = {results: retain ? results.slice() : results, errors: {}}; answered = true;
   }
   if (!answered) throw new Error('The frame asked for no AC sections.');
   return step.value;
@@ -454,14 +474,19 @@ function* splitCandidateRest(split, data, clusters, hurry = false, observe = nul
     return null;
   }, () => tokenCountsData(counts));
   if (saved) counts = tokenCountsFrom(saved);
-  const shape = splitShape(width, height), dcGroups = {sections: [], modular16bit: true};
+  let shape = splitShape(width, height);
+  let mapFallback = null;
+  if (!hurry && clusters.length === 1 && shape.clusters.mapLz === false && clusters[0].mapLz === true && sameClusters(shape.clusters, {...clusters[0], mapLz: false})) {
+    mapFallback = shape; shape = {...shape, clusters: {...shape.clusters, mapLz: true}}; clusters = [];
+  }
+  const dcGroups = {sections: [], modular16bit: true};
   for (let g = 0, count = vdLfGroupCount(image); g < count; g++) {
     const reply = yield* stage('split-dc', () => dcSteps({image: {...image, components: image.components.map(c => ({...c}))}, groups: [g], lf: shape.lf}));
     dcGroups.modular16bit &&= reply.modular16bit;
     for (const {g: at, ...section} of reply.sections) dcGroups.sections[at] = section;
   }
   const plans = [shape, ...clusters.map(planOf(shape))];
-  let best = null, dcLf3 = shape.lf === 3 ? dcGroups : null;
+  let best = null, dcLf3 = shape.lf === 3 ? dcGroups : null, ac = null;
   for (let p = 0; p < plans.length; p++) {
     let atYield = false;
     try {
@@ -474,18 +499,21 @@ function* splitCandidateRest(split, data, clusters, hurry = false, observe = nul
         }
       }
       const dc = plans[p].lf === 3 ? dcLf3 : dcGroups;
-      const coding = yield* buildAnsCoding.steps(counts, splitOptions(plans[p])), results = [];
-      for (let k = 0; k < bands.length; k++) {
-        results.push(...(yield* unit('write', () => writeStep({key: keys[k], model: coding.model, keep: p + 1 < plans.length, orders})[0].sections)));
+      const reused = ac; ac = null;
+      const coding = reused ? reused.coding : yield* (mapFallback ? mapCodingSteps(counts, plans[p], mapFallback) : buildAnsCoding.steps(counts, splitOptions(plans[p]))), results = reused ? reused.results : [];
+      for (let k = 0; !reused && k < bands.length; k++) {
+        results.push(...(yield* unit('write', () => writeStep({key: keys[k], model: coding.model, keep: furtherAc(plans, p), orders})[0].sections)));
         atYield = true;
         const reply = yield ((2 + p) * bands.length + k + 1) / parts;
         atYield = false; hurry ||= !!reply;
       }
+      const reuseNext = p + 1 < plans.length && sameClusters(plans[p].clusters, plans[p + 1].clusters);
       const bytes = yield* unit('frame-file', () => {
         readEach([...results, ...dc.sections].map(section => () => section.bytes[JOIN]).concat(image.components.map(c => () => c.dc[JOIN]), () => image.cfl?.x[JOIN]));
-        return splitComplete(image, orders, counts, coding, dc, plans[p], results);
+        return splitComplete(image, orders, counts, coding, dc, plans[p], results, reuseNext);
       });
       if (!best || bytes.length < best.length) best = bytes;
+      if (reuseNext) ac = {coding, results};
     } catch (error) {
       if (!atYield && best && candidateSizeFailure(error)) return best;
       throw error;
@@ -566,7 +594,12 @@ async function encodeSplitUsing(data, width, height, quality, helpers, {signal, 
     if (opaque && done.some(reply => reply.meta.alpha)) throw Object.assign(new Error('A band has alpha.'), {alpha: true});
     const {image, orders} = splitImage(done, width, height, data);
     const second = bands.map((_, k) => k ? ask(k, {split: 'count', orders}) : null);
-    const shape = splitShape(width, height), dcCount = vdLfGroupCount(image), writers = Math.max(1, bands.length - 1), dcImage = {...image, alpha: null};
+    let shape = splitShape(width, height), mapFallback = null;
+    if (extraClusters.length === 1 && shape.clusters.mapLz === false && extraClusters[0].mapLz === true && sameClusters(shape.clusters, {...extraClusters[0], mapLz: false})) {
+      mapFallback = shape; shape = {...shape, clusters: {...shape.clusters, mapLz: true}}; extraClusters = [];
+    }
+    const plans = [shape, ...extraClusters.map(planOf(shape))],
+      dcCount = vdLfGroupCount(image), writers = Math.max(1, bands.length - 1), dcImage = {...image, alpha: null};
     const dcOf = slot => Array.from({length: dcCount}, (_, g) => g).filter(g => g % (writers + 1) === slot), dcHere = bands.length > 1 ? dcOf(writers) : [];
     const dcWriters = bands.length > 1
       ? Array.from({length: writers}, (_, h) => dcOf(h)).flatMap((groups, h) => groups.length ? [ask(h + 1, {split: 'dc', image: dcImage, groups, lf: shape.lf, arena})] : [])
@@ -579,10 +612,11 @@ async function encodeSplitUsing(data, width, height, quality, helpers, {signal, 
     const counts = new TokenCounts(blockContexts(new Int32Array(0), 0, false).contexts);
     for (const reply of counted) addCounts(counts, reply);
     mark('merge');
-    const coding = splitCoding(counts, shape);
+    const coding = mapFallback ? complete(mapCodingSteps(counts, shape, mapFallback)) : splitCoding(counts, shape);
     mark('coding');
-    const third = bands.map((_, k) => k ? ask(k, {split: 'write', model: coding.model, ...(extraClusters.length && {keep: true})}) : null);
-    third[0] = ask(0, {split: 'write', model: coding.model, ...(extraClusters.length && {keep: true})});
+    const keep = furtherAc(plans, 0);
+    const third = bands.map((_, k) => k ? ask(k, {split: 'write', model: coding.model, keep}) : null);
+    third[0] = ask(0, {split: 'write', model: coding.model, keep});
     mark('own write');
     if (dcHere.length) globalThis.__jxlTrace?.push(['split: ' + dcHere.length + ' DC groups here', performance.now()]);
     if (dcHere.length) dcWriters.push(Promise.resolve(dcStep({image: {...dcImage, components: dcImage.components.map(c => ({...c}))}, groups: dcHere, lf: shape.lf})));
@@ -590,7 +624,7 @@ async function encodeSplitUsing(data, width, height, quality, helpers, {signal, 
     for (const reply of dcReplies) for (const {g, ...section} of reply.sections) dcGroups.sections[g] = section;
     mark('dc');
     const steps = splitFrame(image, orders, counts, coding, dcGroups, shape);
-    let step, reply, answered = false;
+    let step, reply, answered = false, ac = null;
     while (!(step = steps.next(reply)).done) {
       reply = undefined;
       const value = step.value;
@@ -600,27 +634,35 @@ async function encodeSplitUsing(data, width, height, quality, helpers, {signal, 
       mark('sections');
       for (const answer of written) results.push(...answer.sections);
       if (results.length !== value.groups) throw new Error('Split sections do not cover the frame.');
-      reply = {results, errors: {}}; answered = true;
+      if (plans.length > 1 && sameClusters(shape.clusters, plans[1].clusters)) ac = {coding, results};
+      reply = {results: ac ? results.slice() : results, errors: {}}; answered = true;
     }
     if (!answered) throw new Error('The frame asked for no AC sections.');
     best = step.value;
+    reply = undefined;
     if (extraClusters.length) { await Promise.allSettled(issued); issued.length = 0; third.fill(null); }
     let dcLf3 = shape.lf === 3 ? dcGroups : null;
-    for (let p = 0; p < extraClusters.length; p++) {
+    for (let p = 1; p < plans.length; p++) {
       signal?.throwIfAborted();
-      const plan = planOf(shape)(extraClusters[p]), next = splitCoding(counts, plan);
+      const plan = plans[p], reused = ac; ac = null;
+      const next = reused ? reused.coding : splitCoding(counts, plan);
       if (plan.lf === 3 && !dcLf3) {
         const reply = dcStep({image: {...dcImage, components: dcImage.components.map(c => ({...c}))}, lf: 3});
         dcLf3 = {sections: [], modular16bit: reply.modular16bit};
         for (const {g, ...section} of reply.sections) dcLf3.sections[g] = section;
       }
-      const keep = p + 1 < extraClusters.length;
-      const written = bands.map((_, k) => k ? ask(k, {split: 'write', model: next.model, keep}) : null);
-      written[0] = ask(0, {split: 'write', model: next.model, keep});
-      const sections = (await Promise.all(written)).flatMap(answer => answer.sections);
+      let sections = reused?.results;
+      if (!sections) {
+        const keep = furtherAc(plans, p);
+        const written = bands.map((_, k) => k ? ask(k, {split: 'write', model: next.model, keep}) : null);
+        written[0] = ask(0, {split: 'write', model: next.model, keep});
+        sections = (await Promise.all(written)).flatMap(answer => answer.sections);
+      }
       signal?.throwIfAborted();
-      const bytes = splitComplete(image, orders, counts, next, plan.lf === 3 ? dcLf3 : dcGroups, plan, sections);
+      const reuseNext = p + 1 < plans.length && sameClusters(plan.clusters, plans[p + 1].clusters);
+      const bytes = splitComplete(image, orders, counts, next, plan.lf === 3 ? dcLf3 : dcGroups, plan, sections, reuseNext);
       if (bytes.length < best.length) best = bytes;
+      if (reuseNext) ac = {coding: next, results: sections};
       await Promise.allSettled(issued); issued.length = 0;
     }
     await Promise.allSettled(issued);

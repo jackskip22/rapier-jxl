@@ -320,6 +320,15 @@ export function tokenRate(block, tokens, rc = [4, 3, 2, 0.6]) {
   }
   return R;
 }
+export function slabAllocator() {
+  let slab = null, slabAt = 0, slabSize = 16384;
+  return n => {
+    if (n > 262144) return new Int32Array(n);
+    if (!slab || slabAt + n > slab.length) { slab = new Int32Array(Math.max(slabSize, n)); slabAt = 0; slabSize = Math.min(1 << 20, slabSize * 2); }
+    slabAt += n;
+    return slab.subarray(slabAt - n, slabAt);
+  };
+}
 export function createStrategyBuilder(base, width, height, options = {}) {
   let maps = options.maps, repricing = false, settled = 0, measuredCost = null;
   const {lambda = 1, sizeScale = 1, ids = [5, 10, 11, 4, 6, 7], rate: rc = [4, 3, 2, 0.6], deadzone, weights = [1, 1, 1],
@@ -364,11 +373,13 @@ export function createStrategyBuilder(base, width, height, options = {}) {
   const cellMW = (bx, by) => wholeMask[by * stride + bx];
   let priceOnly = !!options.priceOnly && priced;
   const built = priced ? null : options.built, scratch = new Map(), keepChosen = priceOnly && !!options.keepChosen && !options.chooseOnly;
+  const kept = stride * rows >= 16384 ? slabAllocator() : n => new Int32Array(n);
+  const keepsAll = !!options.layout;
   const lowScratch = new Map();
   const make = c => {
     let b;
     if (c.slot >= 0 && c.epoch === vk.epoch()) {
-      const {id, bx, by, bw, bh, area, size} = c, order = naturalOrder(bw, bh), levels = new Int32Array(3 * (size + area)), coeffs = [], dc = [];
+      const {id, bx, by, bw, bh, area, size} = c, order = naturalOrder(bw, bh), levels = kept(3 * (size + area)), coeffs = [], dc = [];
       vk.copyLevels(c.slot, size, levels);
       const L = Math.max(bw, bh), S = Math.min(bw, bh), tr = area > 1 ? lowScratch.get(size) || lowScratch.set(size, new Float64Array(size)).get(size) : null;
       for (let ch = 0; ch < 3; ch++) {
@@ -393,7 +404,7 @@ export function createStrategyBuilder(base, width, height, options = {}) {
     if (loses) vk.block(rowsOf, top, bx * 8 - left, by * 8, rowW, w, h, 1, 1);
     else vk.block(rowsOf, top, bx * 8 - left, by * 8, rowW, w, h, 0, 2);
     const ti = (by >> 3) * cfl.width + (bx >> 3), fine = fineOf(bx, by), unit = 8 * VB_QS * fine;
-    const levels = priceOnly ? null : new Int32Array(3 * (size + area)), coeffs = priceOnly ? null : [], dc = priceOnly ? null : [];
+    const levels = priceOnly ? null : keepsAll ? kept(3 * (size + area)) : new Int32Array(3 * (size + area)), coeffs = priceOnly ? null : [], dc = priceOnly ? null : [];
     let keep = priceOnly && keepChosen ? vk.reserve(size) : -1, lows = null, wide = false;
     const L = Math.max(bw, bh), S = Math.min(bw, bh);
     let blockMW = 1;
@@ -511,7 +522,7 @@ export function createStrategyBuilder(base, width, height, options = {}) {
     }
     const ti = (by >> 3) * cfl.width + (bx >> 3), factor = [cfl.x[ti] / 84, 0, cfl.b[ti] / 84];
     const high = highOf(id, size);
-    const coeffs = [], dc = [], fine = fineOf(bx, by), levels = priceOnly ? scratch.get(size) || scratch.set(size, new Int32Array(3 * size)).get(size) : new Int32Array(3 * (size + area));
+    const coeffs = [], dc = [], fine = fineOf(bx, by), levels = priceOnly ? scratch.get(size) || scratch.set(size, new Int32Array(3 * size)).get(size) : keepsAll ? kept(3 * (size + area)) : new Int32Array(3 * (size + area));
     if (priceOnly) levels.fill(0);
     let blockMW = 1;
     if (useMask) {
@@ -616,12 +627,13 @@ export function strategyImage(base, chosen, tables, perceptual) {
   const components = comps.map(comp => ({h: 1, v: 1, stride, rows, quant: comp.quant, coeffs: new Int16Array(0), dc: new Int32Array(stride * rows)}));
   let wideCoefficients = false;
   for (const choice of chosen) {
-    const {id, bx, by, bw, bh, area, size, order, coeffs, dc, levels} = choice, block = {id, bx, by, bw, bh, area, size, order, coeffs, dc, levels};
+    const {id, bx, by, bw, bh, area, size, order, coeffs, dc, levels} = choice, block = {id, bx, by, bw, bh, area, size, order,
+      coeffs: [coeffs[0], coeffs[1], coeffs[2]], dc: [dc[0], dc[1], dc[2]], levels};
     byFirst[block.by * stride + block.bx] = block;
     for (let y = 0; y < block.bh; y++) for (let x = 0; x < block.bw; x++) {
       const pos = (block.by + y) * stride + block.bx + x;
       at[pos] = -2;
-      for (let c = 0; c < 3; c++) components[c].dc[pos] = block.dc[c][y * block.bw + x];
+      for (let c = 0; c < 3; c++) components[c].dc[pos] = dc[c][y * block.bw + x];
     }
     if (!wideCoefficients && !choice.narrow) for (const plane of block.coeffs) for (let k = 0; k < plane.length; k++) if (plane[k] < -32768 || plane[k] > 32767) { wideCoefficients = true; break; }
   }

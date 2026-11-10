@@ -31,7 +31,8 @@ export interface ResultReason {
 /** The transform applied to the original for this output. */
 export interface ResultTransform {readonly width: number; readonly height: number; readonly frame?: number;}
 /** Measurements already made by the encoder, or attached by an independent verifier. The domain names
- * what was measured. A lower bound uses floor and an upper bound uses limit. */
+ * what was measured. A lower bound uses floor and an upper bound uses limit. Explicit S2 targets at efforts 1–5
+ * report a guarded reconstruction score: a lower bound for the browser-decoded picture. */
 export type ResultMeasurement = {
   readonly score: number;
   readonly domain: 'encoder-reconstruction' | 'decoded-output';

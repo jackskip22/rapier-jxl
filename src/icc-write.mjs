@@ -147,7 +147,7 @@ export function prepareICC(profile, options = {}) {
 
 export function* prepareICCSteps(profile, options = {}) {
   if (!journaling()) return prepareICC(profile, options);
-  return yield* journalTool('prepareICC')(profile, options, {options: iccOptions, fields: iccFields, inspect: inspectICCSteps,
+  return yield* journalTool('prepareICC')(profile, options, {BitWriter, options: iccOptions, fields: iccFields, inspect: inspectICCSteps,
     transform: transformedICC, matches: screenMatches, match: iccMatch, model: iccModel, symbol: iccSymbol});
 }
 

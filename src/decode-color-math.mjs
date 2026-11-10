@@ -12,8 +12,7 @@ const PRIMARIES = {
   'display-p3':[[0.680,0.320],[0.265,0.690],[0.150,0.060]],
   rec2020:[[0.708,0.292],[0.170,0.797],[0.131,0.046]],
 };
-export function inverse3(m) {
-  const a=m[0],b=m[1],c=m[2],d=m[3],e=m[4],f=m[5],g=m[6],h=m[7],i=m[8];
+export function inverse3([a,b,c,d,e,f,g,h,i]) {
   const p=e*i-f*h,q=f*g-d*i,r=d*h-e*g,det=a*p+b*q+c*r;
   requireDecode(Number.isFinite(det)&&Math.abs(det)>1e-20,'Singular JPEG XL color matrix.');
   return [p,c*h-b*i,b*f-c*e,q,a*i-c*g,c*d-a*f,r,b*g-a*h,a*e-b*d].map(v=>v/det);

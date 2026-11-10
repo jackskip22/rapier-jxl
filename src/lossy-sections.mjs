@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {BitWriter} from './bits.mjs';
 import {groupLayout, finishSections} from './frame.mjs';
-import {ZERO_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, channelTree, streamTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
+import {ZERO_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, MIN_RUN_SYMBOL, leaf, channelTree, streamTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {codeChannel} from './modular-channel.mjs';
 import {forwardSqueeze, defaultSqueezeParams} from './squeeze.mjs';
 
@@ -27,7 +27,16 @@ export function quantiserFor(component, hshift, vshift, distance) {
   return Math.max(1, Math.floor(q));
 }
 
-export function* lossySections(rgba, width, height, quality, shape) {
+const EXTRA = new Uint8Array(ALPHABET);
+for (let s = 1; s < MIN_RUN_SYMBOL; s++) EXTRA[s] = s - 1;
+for (let s = MIN_RUN_SYMBOL + 16; s < ALPHABET; s++) EXTRA[s] = s - (MIN_RUN_SYMBOL + 12);
+const pieceBits = (freq, lengths) => {
+  let bits = 0;
+  for (let s = 0; s < freq.length; s++) if (freq[s]) bits += freq[s] * (lengths[s] + EXTRA[s]);
+  return bits;
+};
+
+export function* lossySections(rgba, width, height, quality, shape, lengthOnly = false) {
   const distance = distanceFromQuality(quality);
   if (!(distance > 0)) throw new Error('lossy encoding needs a quality below 100');
   const {colour, alpha, channels: count} = shape;
@@ -100,11 +109,18 @@ export function* lossySections(rgba, width, height, quality, shape) {
   let done = 1;
   yield done / total;
   for (const section of sections) {
-    for (const piece of section.pieces) codeChannel(null, freqs[histogramOf.get(piece.c)], dataOf(piece), piece.rect.w, piece.rect.h, piece.leaf);
+    for (const piece of section.pieces) {
+      const dest = freqs[histogramOf.get(piece.c)];
+      if (!lengthOnly) { codeChannel(null, dest, dataOf(piece), piece.rect.w, piece.rect.h, piece.leaf); continue; }
+      const freq = piece.freq = new Uint32Array(ALPHABET);
+      codeChannel(null, freq, dataOf(piece), piece.rect.w, piece.rect.h, piece.leaf);
+      for (let s = 0; s < ALPHABET; s++) dest[s] += freq[s];
+    }
     yield ++done / total;
   }
 
   const writers = Array.from({length: layout.single ? 1 : 2 + dcGroups + acGroups}, () => null);
+  const payload = lengthOnly ? new Map() : null;
   const global = writers[0] = new BitWriter(65536);
   global.write(1, 1);
   global.write(1, 1);
@@ -117,8 +133,15 @@ export function* lossySections(rgba, width, height, quality, shape) {
       w = writers[section.index] = new BitWriter(4096);
       if (section.pieces.length) writeModularHeader(w, {useGlobalTree: true, transforms: []});
     }
-    for (const piece of section.pieces) codeChannel(w, histograms[histogramOf.get(piece.c) + 1].code, dataOf(piece), piece.rect.w, piece.rect.h, piece.leaf);
+    if (lengthOnly) {
+      let bits = 0;
+      for (const piece of section.pieces) bits += pieceBits(piece.freq, histograms[histogramOf.get(piece.c) + 1].code.lengths);
+      payload.set(w, (payload.get(w) ?? 0) + bits);
+    } else for (const piece of section.pieces) codeChannel(w, histograms[histogramOf.get(piece.c) + 1].code, dataOf(piece), piece.rect.w, piece.rect.h, piece.leaf);
     yield ++done / total;
   }
-  return finishSections(writers);
+  if (!lengthOnly) return finishSections(writers);
+  let bytes = 0;
+  for (const w of writers) if (w) bytes += (w.bitLength + (payload.get(w) ?? 0) + 7) >> 3;
+  return bytes;
 }

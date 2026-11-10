@@ -11,14 +11,14 @@ export function wasmBundle(modules) {
   return Object.freeze(Object.defineProperty({[BUNDLE]: true}, MODULES, {value: modules ? Object.freeze({...modules}) : null}));
 }
 
-export function configureWasm(bundle) {
+export const configureWasm = /* @__PURE__ */ Object.assign(function configureWasm(bundle) {
   const object = bundle !== null && typeof bundle === 'object', field = object ? Object.getOwnPropertyDescriptor(bundle, MODULES) : undefined;
   const modules = field && 'value' in field ? field.value : undefined;
   if (modules !== null && (modules === undefined || typeof modules !== 'object')) throw error(object && Object.hasOwn(bundle, BUNDLE)
     ? 'This WebAssembly is from another rapier-jxl version; import rapier-jxl/wasm from this package.'
     : 'configureWasm takes the bundle exported by rapier-jxl/wasm.');
   if (modules) configureModules(modules);
-}
+}, {[Symbol.for('rapier-jxl.wasm-supplied')]: seal => suppliedWasm(seal)});
 
 export function configureModules(modules) {
   if (!modules || typeof modules !== 'object' || Array.isArray(modules) || !Object.keys(modules).length)
@@ -70,4 +70,3 @@ export function wasmModule(name, bytes) {
   used.set(name, compiled);
   return compiled;
 }
-configureWasm[Symbol.for('rapier-jxl.wasm-supplied')] = seal => suppliedWasm(seal);

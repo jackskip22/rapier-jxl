@@ -12,9 +12,10 @@ const NATIVE = {nativeTables, nativeByte};
 import {rebuildKernels} from './rebuild-kernels.mjs';
 import {xybKernelConstants} from './vardct-render.mjs';
 import {DEFAULT_OPSIN} from './opsin.mjs';
-import {gaussianCoefficients, s2DeviceTables} from './ssimulacra2-arithmetic.mjs';
+import {gaussianCoefficients, s2DeviceTables, bandsAtSpeed} from './ssimulacra2-arithmetic.mjs';
 import {GAUSS} from './ssimulacra2-constants.mjs';
 import {s2Interval} from './gpu-s2-score.mjs';
+import {s2Stream} from './photo-s2-stream.mjs';
 
 const check = signal => { if (signal?.aborted) throw signal.reason; };
 const ROWS = 256;
@@ -39,8 +40,8 @@ const s2Scores = (lo, hi) => ({ssimulacra2: (lo + hi) / 2, doubt: {ssimulacra2: 
 
 export function wholeRebuildMeasure(data, width, height, color, signal, plan) {
   const reference = color.transform ? () => photoReference(data, width, height, color.transform) : null;
-  const nativeBand = (linear, from, count, out, at) => out.set(nativeRGBA(
-    linear.map(p => p.subarray(from, from + count)), width, count / width, {y: at / width}), at * 4);
+  const nativeBand = (linear, from, count, out, at, y = at / width) => out.set(nativeRGBA(
+    linear.map(p => p.subarray(from, from + count)), width, count / width, {y}), at * 4);
   const cacheBytes = Math.min(64 * 1024 * 1024, Math.max(8 * 1024 * 1024, width * height * 64));
   let cpu = null, device = null, constants = null, s2Tables = null, audits = 0, refused = false, baLooks = 0, baNone = false;
   const rebuildHeld = {}, s2Held = {}, s2Ok = !color.transform && width >= 8 && height >= 8 && ArrayBuffer.isView(data) && data.BYTES_PER_ELEMENT === 1;
@@ -65,6 +66,16 @@ export function wholeRebuildMeasure(data, width, height, color, signal, plan) {
     reconstruct: image => image.ycbcr ? linearFromRGBA(selectedYCbCrRGBA(image, color, signal), width * height)
       : reconstruct(materialize(image)),
     bandedRGBA: image => image.ycbcr ? selectedYCbCrRGBA(image, color, signal) : bandedRGBA(image, ROWS),
+    streamedScores(image) {
+      if (device || image.ycbcr || color.transform || width < 8 || height < 8 || !(data instanceof Uint8Array || data instanceof Uint8ClampedArray)
+        || !bandsAtSpeed() || width * height * 36 <= cacheBytes) return null;
+      const stream = s2Stream({rgba: data}, width, height, 2);
+      try {
+        bandedOutputs(image, ROWS, nativeBand, (y0, rows, pack, own) => { check(signal); stream.push(y0, rows, [pack, own]); });
+        const [pack, own] = stream.finish();
+        return {package: pack, native: own, minimum: Math.min(pack, own)};
+      } finally { stream.release(); }
+    },
     *rgbaOutputs(image, {linear, banded}) {
       if (device) {
         yield {kind: 'package', rgba: device.rgba};
@@ -98,7 +109,7 @@ export function wholeRebuildMeasure(data, width, height, color, signal, plan) {
     return {...(s2 ?? cpuScores(image, {...want, butteraugli: false})), ...scores};
   };
   const baDevice = (image, want) => !refused && !baNone && !image.ycbcr && !image.coefficientRows && !color.transform
-    && width >= 8 && height >= 8 && ArrayBuffer.isView(data) && want?.butteraugli !== false;
+    && width >= 8 && height >= 8 && ArrayBuffer.isView(data) && want?.butteraugli === true;
   return {
     measure: (image, want) => refused || image.ycbcr || color.transform || !want?.ssimulacra2 || want.butteraugli || want.p !== undefined || want.margin !== undefined
       ? (baDevice(image, want) ? baScores(image, want) : cpuScores(image, want)) : (function* () {
@@ -110,7 +121,9 @@ export function wholeRebuildMeasure(data, width, height, color, signal, plan) {
         const request = {kind: 'photo-rebuild', image, rebuild: rebuildPicture, kernels, constants, native: NATIVE,
           held: rebuildHeld, band: rows, keep, ...(s2 && {s2}), submitted: new Promise(done => { submitted = done; })};
         request.onSubmit = submitted;
-        const answer = Promise.resolve(yield {gpu: request, later: true});
+        const pending = yield {gpu: request, later: true};
+        if (!pending) return cpuScores(image, want);
+        const answer = Promise.resolve(pending);
         yield {await: Promise.race([request.submitted, answer.then(() => {}, () => {})])};
         const expected = expect(image, rows);
         let pictures = yield {await: answer};

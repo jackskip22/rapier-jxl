@@ -4,6 +4,7 @@ import {verify} from 'rapier-jxl/verify';
 import {createEmDashJobStore, createEmDashCallCounter} from './job-store.mjs';
 import {createWorkQueue} from './work-queue.mjs';
 import {resourceFailure, canRetireJpeg} from './host-policy.mjs';
+import {nodeEstimate} from './node-admission.mjs';
 import {digest} from './digest.mjs';
 
 const ID = /^[a-f0-9]{32}$/, text = new TextEncoder();
@@ -54,11 +55,18 @@ async function jpegPixels(media, command, signal, call) {
   return value;
 }
 
-function verificationAdmission(host) {
-  if (host?.platform === 'node' && host.cpuLimitMs === null && host.memoryLimitBytes === null) return null;
+export function verificationAdmission(host, result) {
+  if (host?.platform === 'node' && host.cpuLimitMs === null) {
+    // A host record made without hostLimits (no memoryBytes) and no configured allowance stays unbounded, as before.
+    if (host.memoryBytes === undefined && host.memoryLimitBytes === null) return null;
+    // Otherwise the verification's measured whole peak (node-admission.mjs) within the host's memory; unknown fails closed.
+    const memory = host.memoryBytes ?? host.memoryLimitBytes;
+    if (Number.isSafeInteger(memory) && Number.isSafeInteger(result?.width) && Number.isSafeInteger(result?.height) &&
+        Math.ceil(nodeEstimate({operation: 'verify', options: {effort: 1}}, result.width * result.height) * 1.1) <= memory) return null;
+  }
   // A conversion estimate cannot authorize verification. No operation-specific measured bound is wired in yet.
   return {code: 'JXL_UNSUPPORTED', operation: 'verify', reason: 'verification_resource_bound_missing',
-    missing: [host?.cpuLimitMs !== null && 'unitCpu', host?.memoryLimitBytes !== null && 'memory'].filter(Boolean),
+    missing: [host?.cpuLimitMs !== null && 'unitCpu', (host?.memoryLimitBytes !== null || host?.memoryBytes !== undefined) && 'memory'].filter(Boolean),
     message: 'This host has no certified standalone-verification resource bound. The original remains available.'};
 }
 
@@ -143,7 +151,7 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
       if (JSON.stringify(current.value.command) !== JSON.stringify(command)) throw fail('JXL_INPUT', 'This job ID belongs to another request.');
       return current;
     }
-    const refused = command.candidate && verificationAdmission(media.host);
+    const refused = command.candidate && verificationAdmission(media.host, command.candidate?.result);
     const saved = await save(command.id, current, {command, checkpoint: command.archive ? {status: 'done'} : null,
       archive: command.archive ?? null, archiveState: command.archive ? {phase: 'prepared', error: null} : null,
       stage: command.candidate ? 'candidate' : command.operation === 'recompress' ? 'original' : 'delivery', originalPublication: null,
@@ -163,6 +171,9 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
     publishing: !current.value.canceled && !current.value.error && current.value.execution?.location !== 'browser' && current.value.result === null &&
       current.value.archiveState?.phase !== 'blocked' && current.value.candidateState?.phase !== 'blocked' && current.value.checkpoint?.status === 'done',
     result: current.value.result, publication: current.value.publication, error: current.value.error,
+    // A thread job's own progress (thread-driver.mjs), 0 to 1, while it converts; none where the driver reports none.
+    ...(current.value.result === null && Number.isFinite(current.value.checkpoint?.progress) && current.value.checkpoint.status !== 'done' &&
+      {progress: current.value.checkpoint.progress}),
     ...(current.value.retry && {retry: current.value.retry}),
     ...(current.value.execution ? {execution: current.value.execution} : current.value.command.settings ? {
       execution: {location: 'server', reason: null, settings: current.value.command.settings}} : {}),
@@ -220,7 +231,7 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
         publication: {key: command.key, stored: null, reason: 'retirement_disabled'}}));
     const candidate = job.stage === 'candidate' ? command.candidate : null;
     if (candidate) {
-      const refused = verificationAdmission(media.host);
+      const refused = verificationAdmission(media.host, command.candidate?.result);
       if (refused) {
         const candidateState = {phase: 'blocked', error: refused};
         return JSON.stringify(candidateState) === JSON.stringify(job.candidateState) ? view(current)

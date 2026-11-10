@@ -9,7 +9,7 @@ import {s2Dimensions, s2Samples, s2Planes} from './ssimulacra2-input.mjs';
 import {s2CellSums, s2CellMap} from './s2-cells.mjs';
 
 
-export function cpuMeasure(rgba, width, height, {reconstruct, bandedRGBA, rgbaOutputs = null, native = false, reference = null, cacheBytes = 0, immutable = false, distanceDetails = true, maps = 'butteraugli'}) {
+export function cpuMeasure(rgba, width, height, {reconstruct, bandedRGBA, rgbaOutputs = null, streamedScores = null, native = false, reference = null, cacheBytes = 0, immutable = false, distanceDetails = true, maps = 'butteraugli'}) {
   const s2Maps = maps === 's2' || (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true);
   const n = s2Dimensions(width, height);
   let photo = null, inputBytes = 0, supplied = typeof reference === 'function' ? null : reference ?? {rgba};
@@ -100,7 +100,9 @@ export function cpuMeasure(rgba, width, height, {reconstruct, bandedRGBA, rgbaOu
     let lin = null;
     try {
       const out = {};
-      if (wantS2 && native) outputScore(out, rgbaOutputs ? rgbaOutputs(image, {banded: true}) : [bandedRGBA(image)]);
+      const streamed = wantS2 && native ? streamedScores?.(image) ?? null : null;
+      if (streamed) { out.ssimulacra2 = streamed.minimum; out.nativeScores = streamed; }
+      else if (wantS2 && native) outputScore(out, rgbaOutputs ? rgbaOutputs(image, {banded: true}) : [bandedRGBA(image)]);
       else if (wantS2) { lin = s2Planes(reconstruct(image, {banded: true}), n); out.ssimulacra2 = ssimulacra2(s2, lin, width, height).score; }
       lin = null;
       if (wantMaps) cellMaps(out, bandedRGBA(image));
@@ -127,7 +129,7 @@ export function cpuMeasure(rgba, width, height, {reconstruct, bandedRGBA, rgbaOu
     if (busy) throw new Error('CPU measurer is already in use.');
     s2?.release();
     destroyed = true; cellRef = null; photo = null; inputBytes = 0; reference = null; currentReference = null; s2 = null; ba = null;
-    reconstruct = null; bandedRGBA = null; rgbaOutputs = null;
+    reconstruct = null; bandedRGBA = null; rgbaOutputs = null; streamedScores = null;
   };
   return measure;
 }

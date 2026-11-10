@@ -1,12 +1,14 @@
 import type {ImageResult} from './result.mjs';
-import type {CaptureInput, TextureInput, CaptureOptions} from './types.mjs';
+import type {CaptureInput as FullCaptureInput, TextureInput, CaptureOptions} from './types.mjs';
 import type {WasmBundle} from './wasm.mjs';
 import type {ResumableFunction} from './resumable.mjs';
-export type {CaptureOptions, CaptureRecord, CaptureFidelity, MaxError, ImageInput, CaptureInput, CapturePixels, Bytes} from './types.mjs';
+export type {CaptureOptions, CaptureRecord, CaptureFidelity, MaxError, ImageInput, CapturePixels, Bytes} from './types.mjs';
+/** Input admitted by the lean screenshot encoder; GPU textures belong to capture-complete. */
+export type CaptureInput = Exclude<FullCaptureInput, TextureInput>;
 export type {ImagePreview, PreviewOptions} from './types.mjs';
 /** The screenshot encoder in one file, run in place: 8-bit sRGB or Display P3 RGBA, exact or within maxError.
  * Efforts 1-5. `rapier-jxl/capture-complete` adds photographic fidelity, efforts 6-9 and WebGPU. */
-export const capture: ResumableFunction<(input: Exclude<CaptureInput, TextureInput>, options?: CaptureOptions) => Promise<ImageResult>>;
+export const capture: ResumableFunction<(input: CaptureInput, options?: CaptureOptions) => Promise<ImageResult>>;
 /** Compiles the kernels and warms the coder, with no job. */
 export function prepare(): Promise<void>;
 /** True when this realm runs the capture encoder. supported('webgpu') is false: captures run on WebAssembly only. */

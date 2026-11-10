@@ -554,7 +554,9 @@ function ConversionProgress({row, images}) {
   return h('div', {style: column(5)},
     h('div', {style: {...line, justifyContent: 'space-between', gap: 4}}, h('span', {className: 'text-xs text-kumo-subtle'}, label),
       h(Button, {size: 'xs', variant: 'ghost', disabled: row.action || row.job?.publishing, onClick: () => images.cancel(row), 'aria-label': words(WORDS.cancelImage, {name: row.name})}, WORDS.cancel)),
-    h(Progress.Root, {value: row.activity === 'browser' && Number.isFinite(row.progress) ? Math.round(row.progress * 100) : null, 'aria-label': label},
+    // A server job's own progress where its driver reports one (thread-driver.mjs on Node); else the moving bar.
+    h(Progress.Root, {value: row.activity === 'browser' ? (Number.isFinite(row.progress) ? Math.round(row.progress * 100) : null)
+      : !row.job?.publishing && Number.isFinite(row.job?.progress) ? Math.round(row.job.progress * 100) : null, 'aria-label': label},
       h(Progress.Track, {className: 'bg-kumo-fill', style: {height: 4, overflow: 'hidden', borderRadius: 10}},
         h(Progress.Indicator, {className: 'rapier-progress bg-kumo-brand', style: {height: '100%', borderRadius: 10}}))));
 }

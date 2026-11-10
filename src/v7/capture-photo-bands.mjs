@@ -9,7 +9,7 @@ export function planCapturePhotoBands({read, width, height, coding, hooks, coder
   const shorter = async bytes => {
     if (!textReading) return bytes;
     const reading = {pieces: textReading.pieces, exact: true}, facts = {...coding[CAPTURE_FACTS]};
-    const bareCoding = {...coding, exactRects: [], photoRects: [], photoSubjects: coding.photoAdmission ? coding.photoRects : [],
+    const bareCoding = {...coding, exactRects: [], photoRects: [], textComplete: undefined, photoSubjects: coding.photoAdmission ? coding.photoRects : [],
       captureReading: reading, [CAPTURE_FACTS]: facts};
     const bare = await captureLarge(read, width, height, bareCoding, {...hooks, onProgress: undefined}, coder, answer, whole);
     if (reading.exact && bare.length <= bytes.length && (!coding.photoAdmission || coding.photoAdmission.accepts(bare))) {
@@ -20,7 +20,7 @@ export function planCapturePhotoBands({read, width, height, coding, hooks, coder
   return {
     scan(data, y, count) {
       const inBand = rects => rects?.filter(r => r.y < y + count && r.y + r.height > y).map(r => ({...r, y: r.y - y}));
-      found.push(coder.regions(data, width, count, inBand(coding.photoRects), inBand(coding.exactRects?.filter(e => e.edge !== true))));
+      found.push(coder.regions(data, width, count, inBand(coding.photoRects), inBand(coding.exactRects?.filter(e => e.edge !== true)), coding.textComplete === true));
     },
     photos() { return photos = found.some(regions => regions.length); },
     async prepare(shape) {

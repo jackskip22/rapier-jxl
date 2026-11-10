@@ -34,7 +34,9 @@ export const LEVELS = [null,
   {...L3, indexDepth: 4, lazyUnder: 0, nice: 16, tree: {split: 96, min: 512, nodes: 16}, prices: 2, routes: 'one', alphaPlane: 'never', patches: false,
     gradient: true},
   {...L3, routes: 'one', alphaPlane: 'never', patches: false},
-  L3, L4, L5, ...((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) ? deepLevels() : [])];
+  L3, ...((typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true || typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) ? [] : [L4, L5]), ...((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? deepLevels() : [])];
+const L1_ANSWER = {...L3, routes: 'one', alphaPlane: 'never', patches: false, gradient: true};
+export const captureAnswerLevel = (effort, pixels) => effort === 1 && pixels > SMALL_PICTURE ? {[CAPTURE_LEVEL]: L1_ANSWER} : null;
 let L = L3;
 let shapeFloor = null;
 export const CAPTURE_TOOLS = Symbol('capture tools');
@@ -142,14 +144,14 @@ function paletteModel(colours, models, shape) {
   const keys = new Float64Array(rare);
   for (let i = 0, j = 0; i < n; i++) if (uses[i] && uses[i] < (L.common ?? 16)) {
     const c = colours[i];
-    keys[j++] = ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && L.morton ? mortonKey(c) : rgbaKey(c)) * 65536 + i;
+    keys[j++] = ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && L.morton ? mortonKey(c) : rgbaKey(c)) * 65536 + i;
   }
   keys.sort();
   const order = new Int32Array(common.length + rare), sorted = new Uint32Array(order.length), remap = new Int32Array(n);
   order.set(common);
   for (let j = 0; j < rare; j++) order[common.length + j] = keys[j] % 65536;
   for (let j = 0; j < order.length; j++) { sorted[j] = colours[order[j]]; remap[order[j]] = j; }
-  const rows = m => (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && L.rowCopies ? channelModel(m.plane, m.width, m.height, 'rows', 1, models[0]?.minimum ?? 3, true, m.width, 0, false, true)
+  const rows = m => ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && (typeof __RAPIER_JXL_JPEG__ === 'undefined' || !__RAPIER_JXL_JPEG__)) && L.rowCopies ? channelModel(m.plane, m.width, m.height, 'rows', 1, models[0]?.minimum ?? 3, true, m.width, 0, false, true)
     : channelModel(m.plane, m.width, m.height, 'rows');
   let meta = paletteMeta(sorted, shape), model = rows(meta);
   if (rare >= 16 && rare >= 2 * common.length && rare <= NEAREST_LIMIT) {
@@ -197,10 +199,10 @@ function learnContexts(model, remap, common, total) {
   const binsOf = (list, n) => { const bins = new Uint8Array(n); for (let v = 0, b = 0; v < n; v++) { while (b < list.length && v > list[b]) b++; bins[v] = b; } return bins; };
   const yBin = binsOf(cuts[0], h), xBin = binsOf(cuts[1], w), indexBin = binsOf(indexCuts, total), binOf = new Uint8Array(remap.length);
   for (let i = 0; i < remap.length; i++) binOf[i] = indexBin[remap[i]];
-  if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && L.signs && tools.signs) cuts.push([-1, 0], [-1, 0], [-1, 0]);
-  const span = (Math.max(...cuts.map(c => c.length)) + 1) * TREE_TOKENS, arena = (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && cuts.length > 4 ? tools.signs.arena(count, span, cuts.length) : treeArena(count, span), {by, bx, bw, bn, tokens, order} = arena;
+  if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && L.signs && tools.signs) cuts.push([-1, 0], [-1, 0], [-1, 0]);
+  const span = (Math.max(...cuts.map(c => c.length)) + 1) * TREE_TOKENS, arena = (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && cuts.length > 4 ? tools.signs.arena(count, span, cuts.length) : treeArena(count, span), {by, bx, bw, bn, tokens, order} = arena;
   pieceBins(plane, model.stride, model.origin, w, model.pieceValue, model.pieceDistance, model.minimum, count, yBin, xBin, binOf, tokens, by, bx, bw, bn, order);
-  if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && cuts.length > 4) tools.signs.bins(plane, model.stride, model.origin, w, model.pieceValue, model.pieceDistance, model.minimum, count, remap, arena.bins);
+  if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && cuts.length > 4) tools.signs.bins(plane, model.stride, model.origin, w, model.pieceValue, model.pieceDistance, model.minimum, count, remap, arena.bins);
   const s = {cuts, order, nlog: nlogTable(count), context: model.pieceContext, all: arena.all, counts: arena.counts,
     tally: arena.tally, part: arena.part, low: new Uint32Array(TREE_TOKENS), used: new Uint8Array(TREE_TOKENS),
     span, leaves: [], nodes: 0, split: L.tree.split, min: L.tree.min, most: L.tree.nodes, cut: 0};
@@ -331,7 +333,7 @@ export function captureNearestRange(state, left, out, through) {
 function rowsBits({count, pieceValue: V, pieceDistance: D, pieceContext: C, classes}) {
   const counts = new Uint32Array(classes * 512);
   let bits = 0;
-  for (let i = 0; i < count; i++) if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && D[i]) bits += 10 + pieceBits(V[i]) + 31 - Math.clz32(D[i] + 1); else counts[C[i] * 512 + V[i]]++;
+  for (let i = 0; i < count; i++) if (((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && (typeof __RAPIER_JXL_JPEG__ === 'undefined' || !__RAPIER_JXL_JPEG__)) && D[i]) bits += 10 + pieceBits(V[i]) + 31 - Math.clz32(D[i] + 1); else counts[C[i] * 512 + V[i]]++;
   for (let c = 0; c < classes; c++) bits += entropy(counts.subarray(c * 512, c * 512 + 512));
   return bits;
 }
@@ -470,7 +472,7 @@ function channelModel(plane, w, h, kind, step = 1, minimum = 3, weighted = true,
   } else { if (!fastSmooth) predictSmooth(plane, w, h, values, contexts, step); tree = smoothTree(leaves, step); classes = 16; }
   if (classes === 1) { tree.local = 0; leaves.push(tree); }
   const {count, value: pieceValue, distance: pieceDistance, context: pieceContext} = kind === 'rows'
-    ? (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && rowCopies ? rowsPieces(values, w, h, contexts, classes, minimum) : {count: n, value: values, distance: new Int32Array(n), context: contexts}
+    ? ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && (typeof __RAPIER_JXL_JPEG__ === 'undefined' || !__RAPIER_JXL_JPEG__)) && rowCopies ? rowsPieces(values, w, h, contexts, classes, minimum) : {count: n, value: values, distance: new Int32Array(n), context: contexts}
     : captureCopies(values, stride, origin, w, h, contexts, searched ? L.indexDepth : 0, minimum, scale, spatialLookup(w)[0], L.lazyUnder, L.nice);
   const model = {kind, tree, leaves, classes, width: w, height: h, stride, origin, plane, minimum, count, pieceValue, pieceDistance, pieceContext};
   if (kind === 'index' && searched) timed('prune', () => pruneCopies(model));
@@ -745,7 +747,7 @@ function writeChannels(writer, models, trace, ansTools = (typeof __RAPIER_JXL_CA
   let live = histograms.filter(h => h.literals + h.copies);
   const index = new Int32Array(histograms.length);
   for (let i = 0, next = 0; i < histograms.length; i++) index[i] = histograms[i].literals + histograms[i].copies ? next++ : 0;
-  if (live.length > 1 && (live.length > 255 || models.some(model => model.kind === 'index' && !model.group))) {
+  if (!(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && live.length > 1 && (live.length > 255 || models.some(model => model.kind === 'index' && !model.group))) {
     const {groups, of} = clusterHistograms(live, 255 - (distanceValues.length ? 1 : 0));
     for (let i = 0; i < histograms.length; i++) index[i] = of[index[i]];
     live = groups;
@@ -892,12 +894,12 @@ export const runModels = models => models.some(model => model.pieceValue.some(v 
   : models.map(model => model.count > 1 && model.width <= 16384 && model.count <= 1 << 20 ? learnedRuns(model, model.width, model.height) : model);
 export function writeCaptureStream(writer, models, ans = null, {transforms = [], global = false, runs = false} = {}) {
   const write = (target, chosen) => {
-    if (!global) writeModularHeader(target, {useGlobalTree: false, transforms});
+    if (typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true || !global) writeModularHeader(target, {useGlobalTree: false, transforms});
     const data = writeChannels(target, chosen, null, ans, true);
-    if (global) writeModularHeader(target, {transforms});
+    if (!(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && global) writeModularHeader(target, {transforms});
     data();
   };
-  const withRuns = runs && runModels(models);
+  const withRuns = !(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && runs && runModels(models);
   if (!withRuns) { write(writer, models); return; }
   const plain = new BitWriter(256), copied = new BitWriter(256);
   write(plain, models);
@@ -943,7 +945,7 @@ function groupChannels(rgba, stride, x, y, w, h, shape, coding, single = false, 
   const take = name => answered?.get(answerKey(x, y, w, h, rct, name));
   const scanned = (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && !single ? take('scan') : undefined;
   const kept = !single && scanned === undefined && sized.pixels === rgba ? takeScan(`${x},${y},${w},${h}`) : undefined;
-  const scan = single || ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__)) && paletteChannels ? null : scanned !== undefined ? scanned : kept !== undefined ? kept : timed('scan', () => scanColours(rgba, stride, x, y, w, h, Math.min(PALETTE_LIMIT, (w * h) / 20 | 0)));
+  const scan = single || ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__)) && paletteChannels ? null : scanned !== undefined ? scanned : kept !== undefined ? kept : groupScan(rgba, stride, x, y, w, h);
   if (scan) {
     const index = timed('copies', () => channelModel(scan.indices, w, h, 'index', 1, L.minCopy ?? 3)); index.group = true;
     const {meta, model} = timed('palette', () => paletteModel(scan.colours, [index], shape));
@@ -959,7 +961,7 @@ function groupChannels(rgba, stride, x, y, w, h, shape, coding, single = false, 
       const given = take(channel);
       const references = L.references ? coded.slice(0, -1).reverse() : [];
       let learned = timed('trees', () => tools.trees.model(plane, w, h, given, learn, references));
-      if (learned && mode === 'runs') learned = learnedRuns(learned, w, h);
+      if (!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && learned && mode === 'runs') learned = learnedRuns(learned, w, h);
       if (learned) { onPredictor?.(channel, 'learned'); models.push(learned); learnedAt.push(models.length - 1); return true; }
     }
     if (s === 1 && L.gradient && !constantPlane(plane)) { onPredictor?.(channel, 'gradient'); lanes.push({plane, at: models.length, weighted: 0}); models.push(null); return false; }
@@ -1011,6 +1013,21 @@ const SMALL_DIM = 256;
 export const captureGroupThreshold = (dim, fits, groups) => dim === DIM ? 2 * fits > groups : 4 * fits >= 3 * groups;
 const sized = {pixels: null, scans: new Map()};
 const takeScan = key => { const scan = sized.scans.get(key); sized.scans.delete(key); return scan; };
+let stepCache = null;
+const stepCached = (map, key, read) => {
+  if (!stepCache || journaling()) return read();
+  if (map.has(key)) return map.get(key);
+  const value = read();
+  map.set(key, value);
+  return value;
+};
+const scanOf = (rgba, stride, x, y, w, h, limit) => {
+  if (!stepCache || journaling()) return scanColours(rgba, stride, x, y, w, h, limit);
+  let byRect = stepCache.scans.get(rgba);
+  if (!byRect) stepCache.scans.set(rgba, byRect = new Map());
+  return stepCached(byRect, `${stride}:${x},${y},${w},${h},${limit}`, () => scanColours(rgba, stride, x, y, w, h, limit));
+};
+const groupScan = (rgba, stride, x, y, w, h) => timed('scan', () => scanOf(rgba, stride, x, y, w, h, Math.min(PALETTE_LIMIT, (w * h) / 20 | 0)));
 export const captureGroupCache = () => ({pixels: sized.pixels !== null, scans: sized.scans.size});
 const isRows = source => source !== null && typeof source === 'object' && typeof source.rows === 'function';
 const ROW_BAND = DIM;
@@ -1119,7 +1136,7 @@ function groupSize(pixels, stride, px, py, width, height) {
     let fits = 0;
     for (let g = 0; g < groups; g++) {
       const [x, y, w, h] = groupRect(layout, width, height, g, dim);
-      const scan = timed('scan', () => scanColours(pixels, stride, px + x, py + y, w, h, Math.min(PALETTE_LIMIT, (w * h) / 20 | 0)));
+      const scan = groupScan(pixels, stride, px + x, py + y, w, h);
       sized.scans.set(`${px + x},${py + y},${w},${h}`, scan);
       if (scan) fits++;
       if (enough(fits, g + 1, groups)) return true;
@@ -1138,18 +1155,18 @@ function groupSize(pixels, stride, px, py, width, height) {
   } catch (error) { sized.pixels = null; sized.scans.clear(); throw error; } finally { captureRelease(); }
 }
 
-export const capturePredictorModes = level => (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && level.weighted === 'both' ? ['never', 'always'] : [level.weighted];
+export const capturePredictorModes = level => ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && (typeof __RAPIER_JXL_JPEG__ === 'undefined' || !__RAPIER_JXL_JPEG__)) && level.weighted === 'both' ? ['never', 'always'] : [level.weighted];
 
 export function captureGroupAlternatives(level, palette, colour, maxError, single, learned) {
   const modes = capturePredictorModes(level), choices = [];
   if (!palette) {
     for (const mode of modes.slice(1)) choices.push({mode, single, rct: 10});
-    if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && colour !== 1 && maxError === 0)
+    if (((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && (typeof __RAPIER_JXL_JPEG__ === 'undefined' || !__RAPIER_JXL_JPEG__)) && colour !== 1 && maxError === 0)
       for (const rct of level.rcts ?? []) for (const mode of modes) choices.push({mode, single, rct});
     if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && level.trees === 'learned' && learned && maxError === 0)
       if (level.learnSets) { for (const set of level.learnSets) for (const rct of set.rcts) choices.push({mode: 'learned', single, rct, learn: set.learn}); }
       else for (const rct of level.learnOnly ?? [10, ...level.learnRcts ?? []]) choices.push({mode: 'learned', single, rct});
-  } else if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && level.palette === 'both')
+  } else if (((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && (typeof __RAPIER_JXL_JPEG__ === 'undefined' || !__RAPIER_JXL_JPEG__)) && level.palette === 'both')
     for (const mode of modes) choices.push({mode, single: true, rct: 10});
   return choices;
 }
@@ -1296,7 +1313,7 @@ function* frameSteps(pixels, width, height, shape, coding, frame, header, placem
     const two = yield* under(one, captureFrameSteps(pixels, width, height, shape, coding, rgb, copy, placement, pStride, px, py));
     return least(one, two);
   }
-  if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && L.indexPredict && frame && frame.predicted === undefined &&
+  if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && L.indexPredict && frame && frame.predicted === undefined &&
     !frame.alpha && coding.maxError === 0 && tools.trees && frame.colours.length > 2) {
     const copy = new BitWriter(header.bytes.length);
     copy.append(header);
@@ -1304,7 +1321,7 @@ function* frameSteps(pixels, width, height, shape, coding, frame, header, placem
     const two = yield* under(one, captureFrameSteps(pixels, width, height, shape, coding, {...frame, predicted: true}, copy, placement, pStride, px, py));
     return least(one, two);
   }
-  if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && L.indexRamp && frame && frame.predicted === undefined &&
+  if (((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && (typeof __RAPIER_JXL_JPEG__ === 'undefined' || !__RAPIER_JXL_JPEG__)) && L.indexRamp && frame && frame.predicted === undefined &&
     !frame.alpha && coding.maxError === 0 && frame.colours.length >= 256) {
     const copy = new BitWriter(header.bytes.length);
     copy.append(header);
@@ -1322,14 +1339,14 @@ function* frameSteps(pixels, width, height, shape, coding, frame, header, placem
     else writeModularFrameHeader(header, {alpha: shape.alpha, shift, ...placement});
     let total = 0;
     const append = bytes => { total += bytes.length; admitOutputSize(total); if (total > ceiling) throw OVER; sections.push(bytes); };
-    const lit = (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && frame?.predicted === 'ramp' ? keyOrder(frame.colours) : (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && frame?.predicted ? lightOrder(frame.colours) : null;
+    const lit = ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && (typeof __RAPIER_JXL_JPEG__ === 'undefined' || !__RAPIER_JXL_JPEG__)) && frame?.predicted === 'ramp' ? keyOrder(frame.colours) : (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && frame?.predicted ? lightOrder(frame.colours) : null;
     let indexModels = null;
     if (frame) {
       indexModels = new Array(groups);
       for (let g = 0; g < groups; g++) indexModels[g] = yield* unit('index-model', () => {
         const [x, y, w, h] = groupRect(layout, width, height, g, dim), {stride = width, x: fx = 0, y: fy = 0} = frame;
-        if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && frame.predicted === 'ramp') return timed('copies', () => rampIndices(frame.indices, stride, (fy + y) * stride + fx + x, w, h, lit.remap));
-        if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && lit) return timed('trees', () => predictedIndices(frame.indices, stride, (fy + y) * stride + fx + x, w, h, lit.remap));
+        if (((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && (typeof __RAPIER_JXL_JPEG__ === 'undefined' || !__RAPIER_JXL_JPEG__)) && frame.predicted === 'ramp') return timed('copies', () => rampIndices(frame.indices, stride, (fy + y) * stride + fx + x, w, h, lit.remap));
+        if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && lit) return timed('trees', () => predictedIndices(frame.indices, stride, (fy + y) * stride + fx + x, w, h, lit.remap));
         return timed('copies', () => channelModel(frame.indices, w, h, 'index', 1, L.minCopy ?? 3, true, stride, (fy + y) * stride + fx + x));
       });
     }
@@ -1480,7 +1497,7 @@ function* captureSteps(source, imageWidth, imageHeight, colorSpace, coding) {
   if (words && words.buffer === source.buffer) captureHold(words);
   try {
     const mode = coding.maxError === 0 && !coding.base ? coding.patches ?? L.patches : false;
-    const peel = (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && mode === 'peel' ? yield* unit('peel', () => {
+    const peel = ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && (typeof __RAPIER_JXL_JPEG__ === 'undefined' || !__RAPIER_JXL_JPEG__)) && mode === 'peel' ? yield* unit('peel', () => {
       const found = timed('patches', () => capturePeel(source, imageWidth, imageHeight, L.peelLeast ?? 0.03, L.glyph));
       if (found) found.scan = scanColours(found.body, imageWidth, 0, 0, imageWidth, imageHeight, PALETTE_LIMIT);
       return found;
@@ -1500,9 +1517,11 @@ function* captureSteps(source, imageWidth, imageHeight, colorSpace, coding) {
 }
 
 function* markSteps(source, imageWidth, imageHeight, colorSpace, coding, mode) {
-  const patches = mode ? yield* unit('patches', () => timed('patches', () => capturePatches(source, imageWidth, imageHeight, 0.03))) : null;
+  const patches = mode ? yield* unit('patches', () => timed('patches', () => stepCached(stepCache?.patches, source, () => capturePatches(source, imageWidth, imageHeight, 0.03)))) : null;
   if (!patches) return yield* pageSteps(source, imageWidth, imageHeight, colorSpace, coding);
-  const alone = imageWidth * imageHeight > SMALL_PICTURE && patches.cover >= 0.045 && (yield* unit('one-palette', () => onePalette(source, imageWidth, imageHeight)));
+  const alone = imageWidth * imageHeight > SMALL_PICTURE && patches.cover >= 0.045 && (yield* unit('one-palette', () => stepCached(stepCache?.onePalette, source, () => onePalette(source, imageWidth, imageHeight))));
+  if (alone && patches.cover < 2 * patches.width * patches.height / (imageWidth * imageHeight))
+    return yield* pageSteps(source, imageWidth, imageHeight, colorSpace, coding);
   const patched = yield* scaledSteps(within(patchedSteps(source, imageWidth, imageHeight, colorSpace, coding, patches)), 0, alone ? 1 : 1 / 2);
   if (!patched) return yield* pageSteps(source, imageWidth, imageHeight, colorSpace, coding);
   if (alone && patches.dictionary <= patched.length * 4) return patched;
@@ -1522,14 +1541,14 @@ function onePalette(source, width, height) {
 }
 
 function* patchedSteps(source, width, height, colorSpace, coding, patches) {
-  const peeled = (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && patches.peel;
+  const peeled = ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && (typeof __RAPIER_JXL_JPEG__ === 'undefined' || !__RAPIER_JXL_JPEG__)) && patches.peel;
   let scan = yield* unit('scan', () => {
     const found = scanColours(source, width, 0, 0, width, height, PALETTE_LIMIT);
     if (found && !peeled) fillPatches(found.indices, width, patches);
     return found;
   });
   const shape = shapeOf(scan ? scan.colours : pixelKeys(source));
-  const header = new BitWriter(128), atlasScan = yield* unit('atlas-scan', () => scanColours(patches.atlas, patches.width, 0, 0, patches.width, patches.height, PALETTE_LIMIT));
+  const header = new BitWriter(128), atlasScan = yield* unit('atlas-scan', () => scanOf(patches.atlas, patches.width, 0, 0, patches.width, patches.height, PALETTE_LIMIT));
   writeHeaderFields(header, width, height, shape.colour, shape.alpha, {colorSpace});
   const atlas = yield* scaledSteps(captureFrameSteps(atlasScan ? null : patches.atlas, patches.width, patches.height, shape, coding, atlasScan,
     header, {frameHeader: (w, shift) => writeAtlasFrameHeader(w, shape.alpha, patches.width, patches.height, shift)}), 0, 1 / 4);
@@ -1542,7 +1561,7 @@ function* patchedSteps(source, width, height, colorSpace, coding, patches) {
 }
 
 function* atlasSteps(atlas, width, height, imageWidth, imageHeight, colorSpace, coding, dim) {
-  const scan = scanColours(atlas, width, 0, 0, width, height, PALETTE_LIMIT);
+  const scan = scanOf(atlas, width, 0, 0, width, height, PALETTE_LIMIT);
   const shape = shapeOf(scan ? scan.colours : pixelKeys(atlas), undefined, true), header = new BitWriter(128);
   writeHeaderFields(header, imageWidth, imageHeight, 3, false, {colorSpace});
   return yield* captureFrameSteps(scan ? null : atlas, width, height, shape, coding, scan, header,
@@ -1953,10 +1972,10 @@ function drain(steps, check = () => {}) {
 }
 
 export function captureCandidateLevels(coding) {
-  const levels = (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && coding.level.floor ? [FLOOR2, L3, coding.level] : [coding.level];
+  const levels = ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__) && (typeof __RAPIER_JXL_JPEG__ === 'undefined' || !__RAPIER_JXL_JPEG__)) && coding.level.floor ? [FLOOR2, L3, coding.level] : [coding.level];
   if (coding.pixels <= SMALL_FLOOR && coding.effort === 3) levels.unshift(FLOOR2);
-  if (coding.level.orders) levels.push({...coding.level, morton: true});
-  if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && coding.level.also) levels.push(...coding.level.also);
+  if (!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true || typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && coding.level.orders) levels.push({...coding.level, morton: true});
+  if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && coding.level.also) levels.push(...coding.level.also);
   return {levels, own: levels.indexOf(coding.level)};
 }
 
@@ -1969,6 +1988,8 @@ export function captureCombinedLevel(level, levels, sizes, own) {
 function* smallestSteps(coding, run, exactToo) {
   let best = null, bestExact = false;
   stepping = true;
+  const outer = stepCache;
+  stepCache = {patches: new Map(), onePalette: new Map(), scans: new Map()};
   try {
     const {levels, own} = captureCandidateLevels(coding);
     const span = 1 / (levels.length + (coding.level.combine ? 1 : 0)) / (exactToo ? 2 : 1), sizes = [];
@@ -1988,12 +2009,12 @@ function* smallestSteps(coding, run, exactToo) {
       sizes[i] = bytes.length;
       if (!best || bytes.length < best.length) { best = bytes; bestExact = kept; }
       yield exactToo ? start + 2 * span : start + span;
-      if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && coding.level.combine && i === levels.length - 1 && !levels[i].combined) {
+      if ((typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && coding.level.combine && i === levels.length - 1 && !levels[i].combined) {
         const combined = captureCombinedLevel(coding.level, levels, sizes, own);
         if (combined) levels.push(combined);
       }
     }
-  } finally { L = L3; tools = CAPTURE_TOOLS_LEAN; stepping = false; }
+  } finally { L = L3; tools = CAPTURE_TOOLS_LEAN; stepping = false; stepCache = outer; }
   if (bestExact) markCaptureExact(best);
   return best;
 }

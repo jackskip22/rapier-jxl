@@ -88,7 +88,7 @@ export function readGifBytes(bytes, filePath = 'input.gif', maxPixels = 40000000
   };
   const canvas = new Uint8Array(width * height * 4);
   const frames = [];
-  let delayMs = 100, transIdx = -1, disposal = 0, loops = 0;
+  let delayMs = 100, transIdx = -1, disposal = 0, loops = 1;
   while (pos < bytes.length) {
     const block = bytes[pos++];
     if (block === 0x3b) break;
@@ -105,7 +105,8 @@ export function readGifBytes(bytes, filePath = 'input.gif', maxPixels = 40000000
         pos += sz + 1;
       } else if (label === 0xff) {
         const sub = readSubBlocks();
-        if (sub.length >= 14 && sub[11] === 1) loops = sub[12] | (sub[13] << 8);
+        const app = String.fromCharCode(...sub.subarray(0, 11));
+        if ((app === 'NETSCAPE2.0' || app === 'ANIMEXTS1.0') && sub.length >= 14 && sub[11] === 1) { const repeats = sub[12] | (sub[13] << 8); loops = repeats && repeats + 1; }
       } else {
         readSubBlocks();
       }

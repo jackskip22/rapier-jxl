@@ -25,13 +25,16 @@ export type JxlExportOptions = Pick<CaptureOptions, 'onProgress' | 'onEncoded'> 
   {quality?: number; scale?: number; width?: number; height?: number; dpr?: number;
   backgroundColor?: string | null; filename?: string; format?: string; effort?: Effort; signal?: AbortSignal};
 /** The parts of SnapDOM's capture context the plug-in reads. */
-export type JxlContext = {element?: Element; meta?: {clip?: {x?: number; y?: number; width?: number; height?: number} | null; w0?: number; h0?: number};
+export type JxlContext = {element?: Element; nodeMap?: unknown; outerTransforms?: boolean; width?: number; height?: number;
+  meta?: {clip?: {x?: number; y?: number; width?: number; height?: number} | null; contentX?: number; contentY?: number; vbW?: number; vbH?: number;
+    targetW?: number; targetH?: number};
   export?: {requestedOptions?: JxlExportOptions}};
 /** The parts of SnapDOM's built-in exports the plug-in builds on (optional, as SnapDOM's own types have them). */
 export type SnapDOMExports = {canvas?(options: JxlExportOptions): Promise<HTMLCanvasElement>; blob?(options: JxlExportOptions): Promise<Blob>};
 /** The plug-in: result.toJxl() gives an <img>; toBlob({format: 'jxl'}) the file; download({format: 'jxl'}) saves it. */
 export interface JxlPlugin {
   name: string;
+  pure: true;
   afterClone?(context: JxlContext): void;
   defineExports(context: {exports?: SnapDOMExports}): {
     jxl(context: JxlContext, options?: JxlExportOptions): Promise<HTMLImageElement>;

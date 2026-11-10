@@ -31,13 +31,18 @@ export function nativeStillPrediction(intent, facts, sharedQuality, {exactAllowe
     reading = smallReading(intent, facts.shorterSide);
   } else if (!facts.palette && facts.shorterSide >= 256) {
     const g = facts.gradient;
-    if (facts.preferXYB && largePhoto(facts.width, facts.height)) {
+    const greyPhoto = facts.chroma < 2 && (facts.paletteSlots ?? 0) > 64;
+    if (facts.preferXYB && !greyPhoto && largePhoto(facts.width, facts.height)) {
       reading = qualityFor(intent, g);
       if (g <= NATIVE_STILL_CALIBRATION.largeMarginGradient) {
         const anchors = [...NATIVE_STILL_CALIBRATION.largeMinimum];
         anchors[0] = Math.max(anchors[0], qualityFor(0.5, g) + NATIVE_STILL_CALIBRATION.largeLowMargin);
         reading = Math.max(reading, at(intent, anchors));
       }
+      const clip = x => Math.max(0, Math.min(1, x));
+      const weight = clip((g - 23) / 2) * clip((facts.shorterSide - 2048) / 512) * clip((4096 - facts.shorterSide) / 512);
+      const ceiling = 91 + 450 * Math.max(0, intent - 0.9);
+      reading -= weight * Math.max(0, reading - ceiling);
     } else if (!facts.preferXYB) {
       reading = Math.max(reading, at(intent, NATIVE_STILL_CALIBRATION.ordinaryOther));
     } else {

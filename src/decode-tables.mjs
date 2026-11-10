@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: MIT
 
-export const COEFF_FREQ_CONTEXT = [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 15, 16, 16, 17, 17, 18, 18, 19, 19, 20, 20, 21, 21, 22, 22,
-  23, 23, 23, 23, 24, 24, 24, 24, 25, 25, 25, 25, 26, 26, 26, 26, 27, 27, 27, 27, 28, 28, 28, 28, 29, 29, 29, 29, 30, 30, 30, 30];
-export const COEFF_NUM_NONZERO_CONTEXT = [0, 0, 31, 62, 62, 93, 93, 93, 93, 123, 123, 123, 123, 152, 152, 152, 152, 152, 152, 152, 152, 180, 180, 180, 180, 180,
-  180, 180, 180, 180, 180, 180, 180, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206,
-  206, 206, 206, 206, 206, 206, 206, 206];
+export const COEFF_FREQ_CONTEXT = /* @__PURE__ */ Array.from({length: 64}, (_, i) => i < 1 ? 0 : i < 16 ? i - 1 : i < 32 ? 7 + (i >> 1) : 15 + (i >> 2));
+export const COEFF_NUM_NONZERO_CONTEXT = /* @__PURE__ */ Array.from({length: 64}, (_, i) => [0, 0, 31, 62, 93, 123, 152, 180, 206][i < 3 ? i : i < 5 ? 3 : i < 9 ? 4 : i < 13 ? 5 : i < 21 ? 6 : i < 33 ? 7 : 8]);
 
 export const DEFAULT_OPSIN = /* @__PURE__ */ Object.freeze({
   inverseMatrix: Object.freeze([11.031566901960783, -9.866943921568629, -0.16462299647058826,
@@ -99,8 +96,7 @@ export function canonicalCodes(lengths) {
   return codes;
 }
 
-const HALVES = [1];
-for (let e = 1; e < 32; e++) HALVES.push(HALVES[e - 1] / 2);
+const HALVES = /* @__PURE__ */ Array.from({length: 32}, (_, e) => 2 ** -e);
 export function entropyLog2(x) {
   let exponent = 0;
   if (x >= 2 && x < 4294967296) { exponent = 31 - Math.clz32(x); x *= HALVES[exponent]; }

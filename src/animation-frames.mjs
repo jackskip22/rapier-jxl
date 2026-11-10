@@ -17,7 +17,7 @@ import {V6} from './photo-v6.mjs';
 import {screenLike} from './screen.mjs';
 import {readStill, metadataKey, writeAnimatedImageHeader, writeAnimatedFrame, BLEND_MODES} from './framing.mjs';
 import {checkSignal} from './async-job.mjs';
-import {shown as markShown} from './photo-shown.mjs';
+import {shown as markShown, watchShown, EXACT} from './photo-shown.mjs';
 
 export const ANIMATION_LIMITS = Object.freeze({pixels: LIMITS.pixels, edge: LIMITS.edge, frames: 1048576});
 const CANVAS = 2;
@@ -44,8 +44,8 @@ export function admitAnimation(animation, options) {
   const samples = admitSampleFormat(frames[0].data, options);
   if (options.photo !== undefined && typeof options.photo !== 'boolean') throw fault('JXL_INPUT', 'photo is a boolean.');
   checkSignal(options.signal);
-  const {progress, signal, lossless, photo, ...still} = options;
-  return {width, height, loops, frames, quality, colorSpace, effort, filter, samples, photo, signal, still: {...still, quality, effort}};
+  const {progress, signal, lossless, photo, probe, ...still} = options;
+  return {width, height, loops, frames, quality, colorSpace, effort, filter, samples, photo, signal, probe: probe === true, still: {...still, quality, effort}};
 }
 
 export function* animationSteps(a, shared = null) {
@@ -121,7 +121,13 @@ export function* animationSteps(a, shared = null) {
   }
   const paletteSearch = !shared && quality === 100 && a.effort >= 8 && samples.native8 && a.colorSpace === 'srgb';
   const coder = coderOf(a, mode, floor), progress = done => 0.02 + (paletteSearch ? 0.8 : 0.97) * done;
+  let pictured = null, stop = a.probe ? watchShown((bytes, picture) => { if (picture !== EXACT) (pictured ||= new Set()).add(bytes); }) : null;
+  try {
   for (const job of jobs) {
+    if (stop && job !== jobs[0]) {
+      const kept = pictured?.has(jobs[0].bytes); stop(); stop = pictured = null;
+      if (!kept) return new Uint8Array(0);
+    }
     const [, , w, h] = job.rect, [from, to] = job.span;
     if (!shared && job.part.tried?.masked === job.masked) {
       job.bytes = job.part.tried.bytes; delete job.part.tried;
@@ -132,6 +138,7 @@ export function* animationSteps(a, shared = null) {
     try { while (!(step = steps.next(reply)).done) reply = yield progress(from + (to - from) * step.value); } finally { if (!step?.done) steps.return?.(); }
     job.bytes = step.value;
   }
+  } finally { stop?.(); }
   for (const job of jobs) if (!job.part.still || job.bytes.length < job.part.bytes) Object.assign(job.part, {still: job.bytes, bytes: job.bytes.length, masked: job.masked});
   for (const part of parts) { part.file = part.still; part.still = readStill(part.still, frameRead); }
   const key = metadataKey(parts[0].still);

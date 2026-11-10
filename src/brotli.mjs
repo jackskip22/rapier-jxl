@@ -4,17 +4,12 @@ import {BitWriter, floorLog2, ceilLog2, complete} from './bits.mjs';
 import {buildCode, canonicalCodes, writePrefixCode} from './prefix.mjs';
 import {fault} from './fault.mjs';
 import {populationBits} from './entropy.mjs';
-import {brotliReader} from './brotli-read.mjs';
+import {INSERT_BITS, COPY_BITS, INSERT_GROUP, COPY_GROUP, INSERT_BASE, COPY_BASE, literalContext, brotliReader} from './brotli-read.mjs';
 
 const invalid = message => fault('JXL_INPUT', 'Portable Brotli: ' + message);
 const need = (value, message = 'invalid compressed data.') => { if (!value) throw invalid(message); };
 const tooLarge = () => fault('JXL_SIZE', 'The Brotli result exceeds maxOutputLength.');
-const INSERT_BITS = [0,0,0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,7,8,9,10,12,14,24];
-const COPY_BITS = [0,0,0,0,0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,7,8,9,10,24];
-const INSERT_GROUP = [0,0,0,0,8,8,0,16,8,16,16], COPY_GROUP = [0,8,0,8,0,8,16,0,16,8,16];
 const COMMAND_GROUP = [128,192,384,256,320,512,448,576,640];
-const bases = (bits, start) => bits.map(count => { const value = start; start += 1 << count; return value; });
-const INSERT_BASE = bases(INSERT_BITS, 0), COPY_BASE = bases(COPY_BITS, 2);
 
 function admission(bytes, options) {
   if (!(bytes instanceof Uint8Array)) throw invalid('bytes are a Uint8Array.');
@@ -50,7 +45,7 @@ function matchScore(length, distance, history) {
 function matcher(data, windowBits, cache = false, thorough = false) {
   const span = 1 << Math.min(windowBits, Math.max(16, ceilLog2(data.length))), mask = span - 1, reach = (1 << windowBits) - 16;
   const heads = new Int32Array(65536).fill(-1), previous = new Int32Array(span).fill(-1);
-  const heads3 = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : thorough ? new Int32Array(32768).fill(-1) : null;
+  const heads3 = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) || (typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) ? null : thorough ? new Int32Array(32768).fill(-1) : null;
   const hash = at => Math.imul((data[at] | data[at + 1] << 8 | data[at + 2] << 16 | data[at + 3] << 24), 0x1e35a7bd) >>> 16;
   const hash3 = at => Math.imul((data[at] | data[at + 1] << 8 | data[at + 2] << 16), 0x1e35a7bd) >>> 17;
   return {
@@ -71,7 +66,7 @@ function matcher(data, windowBits, cache = false, thorough = false) {
       const available = end - at;
       if (available < (useCache ? 3 : 4)) return {length: 0, distance: 0, score: 0};
       const oldest = Math.max(0, at - reach);
-      if (!useCache) {
+      if ((typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) || !useCache) {
         let probe = heads[hash(at)], length = 3, distance = 0, attempts = 32;
         while (probe >= oldest && attempts--) {
           if (data[probe] === data[at] && data[probe + 1] === data[at + 1] && data[probe + 2] === data[at + 2] && data[probe + length] === data[at + length]) {
@@ -96,7 +91,7 @@ function matcher(data, windowBits, cache = false, thorough = false) {
         const p3 = heads3[hash3(at)];
         if (p3 >= oldest && at - p3 <= 256 && data[p3] === data[at] && data[p3 + 1] === data[at + 1] && data[p3 + 2] === data[at + 2]) {
           const d = at - p3, sc = matchScore(3, d, this.history);
-          if (sc > bestScore) { bestScore = sc; bestLen = 3; bestDist = d; }
+          if (sc > bestScore) { bestLen = 3; bestDist = d; bestScore = sc; }
         }
       }
       if (available >= 4 && bestLen < available) {
@@ -121,12 +116,12 @@ function matchesFor(data, at, to, end, matches, cache, thorough, found) {
   while (at < to) {
     const match = matches.find(at, end, cache); matches.insert(at);
     if (!match.length) { at++; continue; }
-    if (!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && thorough && at + 1 < end && match.length < 32) {
+    if (!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && !(typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) && thorough && at + 1 < end && match.length < 32) {
       const next = matches.find(at + 1, end, true);
       if (next.length && next.score > match.score + 5) { at++; continue; }
     }
     found.push(at, match.length, match.distance);
-    if (!cache || shortCode(matches.history, match.distance)) { matches.history.pop(); matches.history.unshift(match.distance); }
+    if (!(typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) && (!cache || shortCode(matches.history, match.distance))) { matches.history.pop(); matches.history.unshift(match.distance); }
     matches.fill(at + 1, at + match.length);
     at += match.length;
   }
@@ -147,7 +142,7 @@ function commandsFor(data, start, end, found, history, cache, postfix = 0, direc
     const code = COMMAND_GROUP[(insertCode >> 3) * 3 + (copyCode >> 3)] + ((insertCode & 7) << 3) + (copyCode & 7);
     const command = {start: literals, insert, count, insertCode, copyCode, code};
     for (let i = literals; i < position; i++) literalFrequencies[data[i]]++;
-    const short = count && cache ? shortCode(history, distance) : -1;
+    const short = !(typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) && count && cache ? shortCode(history, distance) : -1;
     if (short === 0 && insertCode < 8 && copyCode < 16) {
       command.code = (copyCode >= 8 ? 64 : 0) + (insertCode << 3) + (copyCode & 7); command.implicit = true;
     } else if (short >= 0) {
@@ -157,7 +152,7 @@ function commandsFor(data, start, end, found, history, cache, postfix = 0, direc
       command.distanceCode = enc.code; command.distanceBits = enc.bits; command.distanceExtra = enc.extra;
       distanceFrequencies[enc.code]++;
     }
-    if (count && short !== 0) { history.pop(); history.unshift(distance); }
+    if (!(typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) && count && short !== 0) { history.pop(); history.unshift(distance); }
     if (count) copied += count;
     commands.push(command); commandFrequencies[command.code]++;
   };
@@ -166,7 +161,7 @@ function commandsFor(data, start, end, found, history, cache, postfix = 0, direc
   return {commands, copied, postfix, direct, literalFrequencies, literal: tree(literalFrequencies, 256), command: tree(commandFrequencies, 704), distance: tree(distanceFrequencies, distAlpha)};
 }
 function bestCommands(data, start, end, found, ring, cache) {
-  if (!cache || found.length < 24) return commandsFor(data, start, end, found, ring.slice(), cache, 0, 0);
+  if ((typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) || !cache || found.length < 24) return commandsFor(data, start, end, found, ring.slice(), cache, 0, 0);
   let best = null, bestBits = Infinity;
   for (const [postfix, dcode] of [[0, 0], [0, 4], [1, 4], [2, 3]]) {
     const plan = commandsFor(data, start, end, found, ring.slice(), cache, postfix, dcode << postfix);
@@ -242,7 +237,7 @@ function writeVarLenUint8(writer, value) {
 }
 function writeContextMap(writer, map, trees) {
   writeVarLenUint8(writer, trees - 1);
-  if (trees <= 1) return;
+  if ((typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) || trees <= 1) return;
   const raw = new BitWriter(64), rawCounts = new Uint32Array(trees);
   for (const k of map) rawCounts[k]++;
   const rawCode = tree(rawCounts, trees);
@@ -278,8 +273,9 @@ function writeContextMap(writer, map, trees) {
   writer.append(rle.bitLength < raw.bitLength ? rle : raw);
 }
 function compressedBlock(data, start, end, plan, contexts, kernels, thorough = true, models = null) {
-  const len = end - start, sparse = len >= 8192 && plan.copied < (len >> 5) && histogramBits(plan.literalFrequencies) > len * 7.9;
+  const len = end - start, sparse = !(typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) && len >= 8192 && plan.copied < (len >> 5) && histogramBits(plan.literalFrequencies) > len * 7.9;
   if (sparse && !thorough) return {bytes: new Uint8Array(0), at: len + 8, pending: 0, acc: 0};
+  if ((typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true)) return writeBlock(data, start, end, plan, {mode: 0, map: null, trees: 1, histograms: [plan.literal]});
   const single = sparse && contexts ? null : writeBlock(data, start, end, plan, {mode: 0, map: new Uint8Array(64), trees: 1, histograms: [plan.literal]});
   if (!contexts) return single;
   const model = literalModel(data, plan.commands, kernels, sparse ? [3] : [0, 1, 2, 3], models);
@@ -294,7 +290,7 @@ function writeBlock(data, start, end, plan, model) {
   writer.write(3, 0);
   writer.write(2, plan.postfix); writer.write(4, plan.direct >> plan.postfix);
   writer.write(2, model.mode);
-  writeContextMap(writer, model.map, model.trees);
+  if ((typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true)) writer.write(1, 0); else writeContextMap(writer, model.map, model.trees);
   writer.write(1, 0);
   for (const code of [...literals, plan.command, plan.distance]) writePrefixCode(writer, code);
   for (const command of plan.commands) {
@@ -302,18 +298,24 @@ function writeBlock(data, start, end, plan, model) {
     writer.write(INSERT_BITS[command.insertCode], command.insert - INSERT_BASE[command.insertCode]);
     writer.write(COPY_BITS[command.copyCode], (command.count || 2) - COPY_BASE[command.copyCode]);
     for (let at = command.start; at < command.start + command.insert; at++)
-      symbol(writer, literals[model.trees > 1 ? model.map[literalContext(model.mode, at ? data[at - 1] : 0, at > 1 ? data[at - 2] : 0)] : 0], data[at]);
+      symbol(writer, literals[!(typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) && model.trees > 1 ? model.map[literalContext(model.mode, at ? data[at - 1] : 0, at > 1 ? data[at - 2] : 0)] : 0], data[at]);
     if (command.count && !command.implicit) { symbol(writer, plan.distance, command.distanceCode); writer.write(command.distanceBits, command.distanceExtra); }
   }
   return writer;
 }
 
+const decodedBytes = parts => {
+  const out = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
+  let at = 0; for (const part of parts) { out.set(part, at); at += part.length; } return out;
+};
+const joinDecoded = parts => journaling() ? journalJoin(parts) : decodedBytes(parts);
+
 export const compressBrotli = (bytes, options = {}) => complete(compressBrotliSteps(bytes, options));
 const ran = function* (name, run) { return run(); };
 const MATCH_BYTES = 16384;
 export function* compressBrotliSteps(bytes, options = {}, unit = ran) {
-  const maximum = admission(bytes, options), cache = !!options.literalContexts, thorough = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? false : cache && options.thorough !== false;
-  const reachBytes = options.contextLimit ? Math.min(bytes.length, options.contextLimit) : bytes.length;
+  const maximum = admission(bytes, options), cache = !(typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) && !!options.literalContexts, thorough = !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && !(typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) && cache && options.thorough !== false;
+  const reachBytes = !(typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) && options.contextLimit ? Math.min(bytes.length, options.contextLimit) : bytes.length;
   const windowBits = cache ? Math.min(24, Math.max(16, ceilLog2(reachBytes + 16))) : 16;
   const span = 1 << Math.min(windowBits, Math.max(16, ceilLog2(bytes.length)));
   let matches = bytes.length ? matcher(bytes, windowBits, cache, thorough) : null, matched = 0;
@@ -323,14 +325,14 @@ export function* compressBrotliSteps(bytes, options = {}, unit = ran) {
     else { writer.write(1, 1); writer.write(3, windowBits - 17); }
   };
   const ranges = [];
-  if (options.cuts?.length) {
+  if (!(typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) && options.cuts?.length) {
     const cuts = [0, ...options.cuts, bytes.length];
     for (let i = 0; i + 1 < cuts.length; i++) for (let s = cuts[i]; s < cuts[i + 1]; s += 65536) ranges.push([s, Math.min(cuts[i + 1], s + 65536)]);
   } else for (let s = 0; s < bytes.length; s += 65536) ranges.push([s, Math.min(bytes.length, s + 65536)]);
   const blocks = [];
   let bitLength = windowBits === 16 ? 1 : windowBits === 17 ? 7 : 4;
   for (const [start, end] of ranges) {
-    const ring = matches.history.slice(), parts = [], blockCache = cache && (!options.contextLimit || start < options.contextLimit);
+    const ring = matches.history.slice(), parts = [], blockCache = !(typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) && cache && (!options.contextLimit || start < options.contextLimit);
     let at = start, history = ring, part;
     for (let to = start + MATCH_BYTES; at < end; to += MATCH_BYTES) {
       ({at, found: part, history} = yield* unit('brotli-matches', () => {
@@ -345,14 +347,14 @@ export function* compressBrotliSteps(bytes, options = {}, unit = ran) {
       }));
       parts.push(part);
     }
-    const foundOf = () => { const found = []; for (const part of readAll(parts)) for (const value of part) found.push(value); return found; };
+    const foundOf = () => { const found = []; for (const part of ((typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) ? parts : readAll(parts))) for (const value of part) found.push(value); return found; };
     let models = null;
-    if (blockCache) {
+    if (!(typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) && blockCache) {
       models = [];
       for (const pair of [[0, 1], [2, 3]]) models.push(...yield* unit('brotli-modes', () => { const spans = literalSpans(foundOf(), start, end); return pair.map(mode => modeModel(bytes, spans, options.kernels, mode)); }));
     }
     const compressed = yield* unit('brotli-block', () => {
-      const found = foundOf(), commands = thorough && blockCache ? bestCommands(bytes, start, end, found, ring, true) : commandsFor(bytes, start, end, found, ring.slice(), blockCache, 0, 0);
+      const found = foundOf(), commands = !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && !(typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) && thorough && blockCache ? bestCommands(bytes, start, end, found, ring, true) : commandsFor(bytes, start, end, found, ring.slice(), blockCache, 0, 0);
       const block = compressedBlock(bytes, start, end, commands, blockCache, options.kernels, thorough && blockCache, models);
       return {bytes: block.bytes.subarray(0, block.at), at: block.at, pending: block.pending, acc: block.acc, history: history.slice()};
     });
@@ -463,273 +465,24 @@ function readTree(reader, alphabet) {
   }
   return prefixModel(lengths);
 }
-function windowBits(reader) {
-  if (!reader.read(1)) return 16;
-  const high = reader.read(3); if (high) return 17 + high;
-  const low = reader.read(3); need(low !== 1, 'invalid window size.'); return low ? 8 + low : 17;
-}
-function distanceValue(reader, code, history, postfix = 0, direct = 0) {
-  if (code < 4) return history[code];
-  if (code < 16) { const group = code < 10 ? 0 : 1, delta = code < 10 ? code - 4 : code - 10; return history[group] + ((delta & 1) ? 1 : -1) * ((delta >> 1) + 1); }
-  if (code < 16 + direct) return code - 15;
-  const d = code - direct - 16, bits = 1 + (d >> (postfix + 1)), offset = ((2 + ((d >> postfix) & 1)) << bits) - 4;
-  return ((offset + reader.read(bits)) << postfix) + (d & ((1 << postfix) - 1)) + direct + 1;
-}
-
-const DICT_BITS = [0, 0, 0, 0, 10, 10, 11, 11, 10, 10, 10, 10, 10, 9, 9, 8, 7, 7, 8, 7, 7, 6, 6, 5, 5, 0, 0, 0, 0, 0, 0, 0];
-const DICT_OFFSETS = [0, 0, 0, 0, 0, 4096, 9216, 21504, 35840, 44032, 53248, 63488, 74752, 87040, 93696, 100864, 104704, 106752, 108928, 113536, 115968, 118528, 119872, 121280, 122016, 122784, 122784, 122784, 122784, 122784, 122784, 122784];
-const AFFIX = /* @__PURE__ */ Uint8Array.from([1,32,2,44,32,8,32,111,102,32,116,104,101,32,4,32,111,102,32,2,115,32,1,46,5,32,97,110,100,32,4,32,105,110,32,1,34,4,32,116,111,32,2,34,62,1,10,2,46,32,1,93,5,32,102,111,114,32,3,32,97,32,6,32,116,104,97,116,32,1,39,6,32,119,105,116,104,32,6,32,102,114,111,109,32,4,32,98,121,32,1,40,6,46,32,84,104,101,32,4,32,111,110,32,4,32,97,115,32,4,32,105,115,32,4,105,110,103,32,2,10,9,1,58,3,101,100,32,2,61,34,4,32,97,116,32,3,108,121,32,1,44,2,61,39,5,46,99,111,109,47,7,46,32,84,104,105,115,32,5,32,110,111,116,32,3,101,114,32,3,97,108,32,4,102,117,108,32,4,105,118,101,32,5,108,101,115,115,32,4,101,115,116,32,4,105,122,101,32,2,194,160,4,111,117,115,32,5,32,116,104,101,32,2,101,32,0]);
-const AFFIX_AT = [0,2,5,14,19,22,24,30,35,37,42,45,47,50,52,58,62,69,71,78,85,90,92,99,104,109,114,119,122,124,128,131,136,140,142,145,151,159,165,169,173,178,183,189,194,199,202,207,213,216];
-const WORD_FORMS = /* @__PURE__ */ Uint8Array.from([49,0,49,49,0,0,0,0,0,49,12,49,49,10,0,49,0,47,0,0,49,4,0,0,49,0,3,49,10,49,49,0,6,49,13,49,49,1,49,1,0,0,49,0,1,0,10,0,49,0,7,49,0,9,48,0,0,49,0,8,49,0,5,49,0,10,49,0,11,49,3,49,49,0,13,49,0,14,49,14,49,49,2,49,49,0,15,49,0,16,0,10,49,49,0,12,5,0,49,0,0,1,49,15,49,49,0,18,49,0,17,49,0,19,49,0,20,49,16,49,49,17,49,47,0,49,49,4,49,49,0,22,49,11,49,49,0,23,49,0,24,49,0,25,49,7,49,49,1,26,49,0,27,49,0,28,0,0,12,49,0,29,49,20,49,49,18,49,49,6,49,49,0,21,49,10,1,49,8,49,49,0,31,49,0,32,47,0,3,49,5,49,49,9,49,0,10,1,49,10,8,5,0,21,49,11,0,49,10,10,49,0,30,0,0,5,35,0,49,47,0,2,49,10,17,49,0,36,49,0,33,5,0,0,49,10,21,49,10,5,49,0,37,0,0,30,49,0,38,0,11,0,49,0,39,0,11,49,49,0,34,49,11,8,49,10,12,0,0,21,49,0,40,0,10,12,49,0,41,49,0,42,49,11,17,49,0,43,0,10,5,49,11,10,0,0,34,49,10,33,49,0,44,49,11,5,45,0,49,0,0,33,49,10,30,49,11,30,49,0,46,49,11,1,49,10,34,0,10,33,0,11,30,0,11,1,49,11,33,49,11,21,49,11,12,0,11,5,49,11,34,0,11,12,0,10,30,0,11,34,0,10,34]);
-function affix(id) { const at = AFFIX_AT[id], n = AFFIX[at]; return AFFIX.subarray(at + 1, at + 1 + n); }
-function upperStep(word, at) {
-  const b = word[at];
-  if (b < 0xC0) { if (b >= 97 && b <= 122) word[at] ^= 32; return 1; }
-  if (b < 0xE0) { word[at + 1] ^= 32; return 2; }
-  word[at + 2] ^= 5; return 3;
-}
-function dictionaryWord(dict, offset, length, form) {
-  if (!form) return dict.subarray(offset, offset + length);
-  const prefix = affix(WORD_FORMS[form * 3]), kind = WORD_FORMS[form * 3 + 1], suffix = affix(WORD_FORMS[form * 3 + 2]);
-  let skip = 0, keep = length;
-  if (kind <= 9) keep -= kind;
-  else if (kind >= 12 && kind <= 20) { skip = kind - 11; keep -= skip; }
-  need(skip >= 0 && keep >= 0, 'invalid dictionary transform.');
-  const out = new Uint8Array(prefix.length + keep + suffix.length);
-  out.set(prefix); out.set(dict.subarray(offset + skip, offset + skip + keep), prefix.length); out.set(suffix, prefix.length + keep);
-  const start = prefix.length;
-  if (kind === 10) upperStep(out, start);
-  else if (kind === 11) for (let i = 0, left = keep; left > 0;) { const step = upperStep(out, start + i); i += step; left -= step; }
-  return out;
-}
-
-function varLenUint8(reader) {
-  if (reader.read(1) === 0) return 0;
-  const bits = reader.read(3);
-  return bits === 0 ? 1 : (1 << bits) + reader.read(bits);
-}
-const BLOCK_LEN_OFFSET = [1, 5, 9, 13, 17, 25, 33, 41, 49, 65, 81, 97, 113, 145, 177, 209, 241, 305, 369, 497, 753, 1265, 2289, 4337, 8433, 16625];
-const BLOCK_LEN_BITS = [2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 7, 8, 9, 10, 11, 12, 13, 24];
-function blockLength(reader, tree) {
-  const code = prefixRead(tree, reader);
-  need(code < 26, 'invalid block length symbol.');
-  return BLOCK_LEN_OFFSET[code] + reader.read(BLOCK_LEN_BITS[code]);
-}
-function inverseMoveToFront(values) {
-  const list = Uint8Array.from({length: 256}, (_, i) => i);
-  for (let i = 0; i < values.length; i++) {
-    const index = values[i], value = list[index];
-    values[i] = value;
-    if (index) list.copyWithin(1, 0, index);
-    list[0] = value;
-  }
-}
-function brotliContextMap(reader, size) {
-  const trees = varLenUint8(reader) + 1, map = new Uint8Array(size);
-  if (trees === 1) return {trees, map};
-  const runPrefix = reader.read(1) ? reader.read(4) + 1 : 0, symbols = readTree(reader, trees + runPrefix);
-  for (let i = 0; i < size;) {
-    const code = prefixRead(symbols, reader);
-    if (code === 0) map[i++] = 0;
-    else if (code > runPrefix) { need(code - runPrefix < trees, 'invalid context map item.'); map[i++] = code - runPrefix; }
-    else {
-      const reps = (1 << code) + reader.read(code);
-      need(i + reps <= size, 'context map repeat exceeds the map.');
-      i += reps;
-    }
-  }
-  if (reader.read(1)) inverseMoveToFront(map);
-  return {trees, map};
-}
-const UTF8_LAST = '000000000110010000000000000000002343353467338393bbbbbbbbbb886a733cdddcdddcdddddcdddddcddddd637333efffefffefffffefffffefffff63730';
-const UTF8_BEFORE = '00000000000000000000000000000000011111111111111122222222221111111222222222222222222222222221111113333333333333333333333333311110';
-const SIGNED = i => i ? i < 16 ? 1 : i < 64 ? 2 : i < 128 ? 3 : i < 192 ? 4 : i < 240 ? 5 : i < 255 ? 6 : 7 : 0;
-const CONTEXT = /* @__PURE__ */ (() => {
-  const table = new Uint8Array(2048);
-  for (let i = 0; i < 256; i++) {
-    table[i] = i & 63; table[512 + i] = i >> 2;
-    table[1024 + i] = i < 128 ? parseInt(UTF8_LAST[i], 16) * 4 : (i & 1) + (i >= 192 ? 2 : 0);
-    table[1280 + i] = i < 128 ? +UTF8_BEFORE[i] : i >= 224 ? 2 : 0;
-    table[1536 + i] = SIGNED(i) << 3; table[1792 + i] = SIGNED(i);
-  }
-  return table;
-})();
-const literalContext = (mode, previous, older) => {
-  const base = mode << 9;
-  return CONTEXT[base + previous] | CONTEXT[base + 256 + older];
-};
-const DECODE_BYTES = 65536, DECODE_COMMANDS = 4096;
-const decodedBytes = parts => {
-  const out = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
-  let at = 0; for (const part of parts) { out.set(part, at); at += part.length; } return out;
-};
-const joinDecoded = parts => journaling() ? journalJoin(parts) : decodedBytes(parts);
-function readMetaHeader(bytes, previous, maximum, maxBlocks) {
-  const reader = new Reader(bytes, previous.pos), state = {...previous, blocks: previous.blocks + 1};
-  if (state.blocks > maxBlocks) throw fault('JXL_SIZE', 'The Brotli stream exceeds maxBlocks.');
-  state.last = reader.read(1) === 1;
-  if (state.last && reader.read(1)) return {state: {...state, pos: reader.pos}, kind: 'empty'};
-  const nibbles = reader.read(2) + 4;
-  if (nibbles === 7) {
-    need(reader.read(1) === 0, 'metadata reserved bit must be zero.');
-    const count = reader.read(2), value = reader.read(count * 8);
-    need(count <= 1 || value >= (1 << (8 * (count - 1))), 'noncanonical metadata length.');
-    reader.pad(); const size = count ? value + 1 : 0;
-    need(reader.pos / 8 + size <= bytes.length, 'metadata block is truncated.');
-    return {state: {...state, pos: reader.pos + size * 8}, kind: 'empty'};
-  }
-  const length = reader.read(4 * nibbles) + 1, end = state.at + length;
-  need(nibbles === 4 || length > (1 << (4 * (nibbles - 1))), 'noncanonical meta-block length.');
-  if (end > maximum) throw tooLarge();
-  if (!state.last && reader.read(1)) {
-    reader.pad(); need(reader.pos / 8 + length <= bytes.length, 'stored block is truncated.');
-    return {state: {...state, pos: reader.pos}, kind: 'stored', end};
-  }
-  const categories = [0, 1, 2].map(() => {
-    const numTypes = varLenUint8(reader) + 1;
-    need(numTypes >= 1 && numTypes <= 256, 'invalid block-type count.');
-    if (numTypes === 1) return {numTypes, length: 1 << 28, ring: [1, 0]};
-    const typeTree = readTree(reader, numTypes + 2), lenTree = readTree(reader, 26);
-    return {numTypes, length: blockLength(reader, lenTree), ring: [1, 0], typeTree, lenTree};
-  });
-  const postfix = reader.read(2), direct = reader.read(4) << postfix;
-  const contextModes = Uint8Array.from({length: categories[0].numTypes}, () => reader.read(2));
-  const literalMap = brotliContextMap(reader, categories[0].numTypes << 6), distanceMap = brotliContextMap(reader, categories[2].numTypes << 2);
-  return {state: {...state, pos: reader.pos}, kind: 'compressed', end, categories, postfix, direct, contextModes, literalMap, distanceMap};
-}
-const modelGroups = header => [[header.literalMap.trees, 256], [header.categories[1].numTypes, 704], [header.distanceMap.trees, 16 + header.direct + (48 << header.postfix)]];
-function readTrees(bytes, pos, count, alphabet) {
-  const reader = new Reader(bytes, pos), trees = Array.from({length: count}, () => readTree(reader, alphabet));
-  return {pos: reader.pos, trees};
-}
-const withModels = (header, pos, groups) => ({...header, pos, literal: groups[0], command: groups[1], distance: groups[2]});
-function decodePart(bytes, models, previous, past, options) {
-  const state = {...previous, history: previous.history.slice(), categories: previous.categories?.map(c => ({...c, ring: c.ring.slice()}))};
-  const reader = new Reader(bytes, state.pos), start = state.at, output = new Uint8Array(Math.min(DECODE_BYTES, models.end - start));
-  const old = new Map(); let cached;
-  const byte = at => {
-    if (at < 0) return 0;
-    if (at >= start) return output[at - start];
-    if (!cached || at < cached.from || at >= cached.at) {
-      let low = 0, high = past.length;
-      while (low < high) { const mid = (low + high) >>> 1; if (past[mid].at <= at) low = mid + 1; else high = mid; }
-      const part = past[low]; need(part && part.from <= at, 'invalid backward distance.');
-      let data = old.get(low); if (!data) { data = part.bytes.subarray(0, part.at - part.from); old.set(low, data); }
-      cached = {from: part.from, at: part.at, data};
-    }
-    return cached.data[at - cached.from];
-  };
-  if (models.kind === 'stored') {
-    output.set(bytes.subarray(reader.pos / 8, reader.pos / 8 + output.length));
-    state.at += output.length; state.pos += output.length * 8;
-    return {bytes: output, state};
-  }
-  const switchBlock = index => {
-    const category = state.categories[index], model = models.categories[index];
-    const symbol = prefixRead(model.typeTree, reader);
-    let type = symbol === 0 ? category.ring[0] : symbol === 1 ? category.ring[1] + 1 : symbol - 2;
-    if (type >= model.numTypes) type -= model.numTypes;
-    category.ring[0] = category.ring[1]; category.ring[1] = type;
-    category.length = blockLength(reader, model.lenTree);
-  };
-  const [literalBlocks, commandBlocks, distanceBlocks] = state.categories;
-  const uses = i => models.categories[i].numTypes > 1;
-  let commands = 0, dictionary = options.dictionary;
-  while (state.at < models.end && state.at - start < output.length && commands < DECODE_COMMANDS) {
-    if (state.phase === 'command') {
-      if (uses(1) && commandBlocks.length === 0) switchBlock(1);
-      state.code = prefixRead(models.command[commandBlocks.ring[1]], reader);
-      const group = state.code >> 6, insertCode = INSERT_GROUP[group] + ((state.code >> 3) & 7), copyCode = COPY_GROUP[group] + (state.code & 7);
-      if (uses(1)) commandBlocks.length--;
-      state.insert = INSERT_BASE[insertCode] + reader.read(INSERT_BITS[insertCode]);
-      state.copy = COPY_BASE[copyCode] + reader.read(COPY_BITS[copyCode]);
-      need(state.insert <= models.end - state.at, 'literal run exceeds the meta-block.');
-      state.phase = 'literal'; commands++;
-    }
-    if (state.phase === 'literal') {
-      const count = Math.min(state.insert, output.length - (state.at - start));
-      for (let i = 0; i < count; i++) {
-        if (uses(0) && literalBlocks.length === 0) switchBlock(0);
-        const type = literalBlocks.ring[1];
-        const context = models.literalMap.trees === 1 ? 0 : literalContext(models.contextModes[type], byte(state.at - 1), byte(state.at - 2));
-        output[state.at++ - start] = prefixRead(models.literal[models.literalMap.map[(type << 6) + context]], reader);
-        if (uses(0)) literalBlocks.length--;
-      }
-      state.insert -= count;
-      if (state.at === models.end || state.insert) break;
-      state.phase = 'distance';
-    }
-    if (state.phase === 'distance') {
-      let distanceCode = 0;
-      if (state.code >= 128) {
-        if (uses(2) && distanceBlocks.length === 0) switchBlock(2);
-        const context = models.distanceMap.trees === 1 ? 0 : state.copy > 4 ? 3 : state.copy - 2;
-        distanceCode = prefixRead(models.distance[models.distanceMap.map[(distanceBlocks.ring[1] << 2) + context]], reader);
-      }
-      if (state.code >= 128 && uses(2)) distanceBlocks.length--;
-      state.backward = distanceValue(reader, distanceCode, state.history, models.postfix, models.direct);
-      need(state.backward > 0, 'backward distance must be positive.');
-      const maxDistance = Math.min(state.window, state.at);
-      if (state.backward > maxDistance) {
-        if (typeof dictionary === 'function') dictionary = dictionary();
-        if (!dictionary) throw Object.assign(invalid('static dictionary references require a full decoder or the dictionary.'), {dictionary: true});
-        need(state.backward <= 0x7ffffffc && state.copy >= 4 && state.copy <= 24 && DICT_BITS[state.copy], 'invalid static dictionary reference.');
-        const shift = DICT_BITS[state.copy], address = state.backward - maxDistance - 1, form = address >>> shift;
-        need(form < 121, 'invalid dictionary transform.');
-        state.word = dictionaryWord(dictionary, DICT_OFFSETS[state.copy] + (address & ((1 << shift) - 1)) * state.copy, state.copy, form);
-        need(state.word.length <= models.end - state.at && !(state.word.length === 0 && state.backward <= 120), 'invalid dictionary transform.');
-        state.wordAt = 0; state.phase = 'word';
-      } else {
-        need(state.copy <= models.end - state.at, 'copy run exceeds the meta-block.');
-        if (distanceCode) { state.history.pop(); state.history.unshift(state.backward); }
-        state.phase = 'copy';
-      }
-    }
-    const room = output.length - (state.at - start);
-    if (state.phase === 'copy') {
-      const count = Math.min(state.copy, room);
-      for (let i = 0; i < count; i++, state.at++) output[state.at - start] = byte(state.at - state.backward);
-      state.copy -= count; if (!state.copy) state.phase = 'command';
-    } else if (state.phase === 'word') {
-      const count = Math.min(state.word.length - state.wordAt, room);
-      output.set(state.word.subarray(state.wordAt, state.wordAt + count), state.at - start); state.at += count; state.wordAt += count;
-      if (state.wordAt === state.word.length) { state.word = null; state.phase = 'command'; }
-    }
-  }
-  state.pos = reader.pos;
-  return {bytes: output.subarray(0, state.at - start), state};
-}
-function brotliLimits(bytes, options) {
-  const maximum = admission(bytes, options), maxBlocks = options.maxBlocks ?? 65536;
+const readerAt = (bytes, bit = 0) => new Reader(bytes, bit);
+function brotliLimits(bytes, options = {}) {
+  const maxOutput = admission(bytes, options), maxBlocks = options.maxBlocks ?? 65536, {dictionary} = options;
   need(Number.isSafeInteger(maxBlocks) && maxBlocks > 0, 'maxBlocks is a positive safe integer.');
-  return {maximum, maxBlocks};
-}
-function brotliStart(bytes) {
-  const reader = new Reader(bytes), window = (1 << windowBits(reader)) - 16;
-  return {window, pos: reader.pos, at: 0, history: [4, 11, 15, 16], last: false, blocks: 0};
-}
-const metaCursor = (header, models) => ({...header.state, pos: models.pos ?? header.state.pos, phase: 'command',
-  categories: header.categories?.map(c => ({length: c.length, ring: c.ring.slice()}))});
-const metaEnd = (header, cursor) => ({...header.state, pos: cursor.pos, at: cursor.at, history: cursor.history});
-function brotliEnd(bytes, pos) {
-  const reader = new Reader(bytes, pos); reader.pad();
-  need(reader.pos === bytes.length * 8, 'bytes follow the final meta-block.'); return null;
-}
-const sharedBrotli = /* @__PURE__ */ brotliReader(
-  (reader, alphabet) => { const model = readTree(reader, alphabet); return cursor => prefixRead(model, cursor); },
-  (reader, code) => code(reader), need, blocks => {
-    throw blocks ? fault('JXL_SIZE', 'The Brotli stream exceeds maxBlocks.') : tooLarge();
-  });
-export function decompressBrotli(bytes, options = {}) {
-  const {maximum, maxBlocks} = brotliLimits(bytes, options);
-  return sharedBrotli(new Reader(bytes), maximum, maxBlocks, () => {
-    const words = typeof options.dictionary === 'function' ? options.dictionary() : options.dictionary;
+  let words;
+  return {maxOutput, maxBlocks, dictionary() {
+    if (words) return words;
+    words = typeof dictionary === 'function' ? dictionary() : dictionary;
     if (!words) throw Object.assign(invalid('static dictionary references require a full decoder or the dictionary.'), {dictionary: true});
+    need(words instanceof Uint8Array && words.length === 122784, 'Invalid Brotli dictionary bytes.');
     return words;
-  });
+  }};
 }
+const sharedBrotli = /* @__PURE__ */ brotliReader(readTree, (r, m) => prefixRead(m, r), need, blocks => {
+  throw blocks ? fault('JXL_SIZE', 'The Brotli stream exceeds maxBlocks.') : tooLarge();
+}, readerAt, brotliLimits);
+export const decompressBrotli = (bytes, options = {}) => sharedBrotli.read(bytes, options);
 export function* decompressBrotliSteps(bytes, options = {}) {
   if (!journaling()) return decompressBrotli(bytes, options);
-  return yield* journalTool('readBrotli')(bytes, options, {limits: brotliLimits, start: brotliStart, header: readMetaHeader,
-    groups: modelGroups, trees: readTrees, model: withModels, cursor: metaCursor, part: decodePart, metaEnd, end: brotliEnd});
+  return yield* journalTool('readBrotli')(bytes, options, sharedBrotli.owner);
 }

@@ -8,6 +8,7 @@ import {jpegReconstructionSteps, withJPEGReconstruction, boxes, boxHeader, CODES
 import {guard, admitOutputSize} from './admit.mjs';
 import {fault} from './fault.mjs';
 import {compressBrotliSteps, decompressBrotliSteps} from './brotli.mjs';
+import {iccInverse} from './icc-profile.mjs';
 
 const FOUR = [[0, 1], [0, 2], [0, 3], [0, 4]];
 const COUNTS = [[0, 0], [0, 1], [3, 2], [8, 0]], SYMBOLS = [[2, 0], [2, 4], [4, 8], [8, 1]];
@@ -76,7 +77,9 @@ function structureWindow(bytes, jpeg, previous) {
     state.phase = 'marker';
     if (code === 217) { marker(code); data.tail = sliceBytes(bytes, at); state.ended = true; state.at = at; return {state, data}; }
     if (code === 1) { raw(sliceBytes(bytes, markerStart, at)); state.at = at; return {state, data}; }
+    if (at + 2 > bytes.length) throw jpegError('truncated');
     const size = byte(at) * 256 + byte(at + 1), body = at + 2, end = at + size;
+    if (!(size >= 2) || end > bytes.length) throw jpegError('bad segment');
     let keep = true;
     if (code === 219) {
       const tables = [];
@@ -197,10 +200,10 @@ function payloadApps(parts, splitApps, previous = {curStart: 0, curOff: 0, lastK
     if (seg[0] === 225 && seg.length > 35 && seg[3] === 104 && seg[4] === 116) return 3;
     return seg[0] === 235 ? 4 : 0;
   };
-  const heads = splitApps ? readEach(parts.map(part => () => part.subarray(0, Math.min(36, part.length)))) : null;
+  const heads = !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && splitApps ? readEach(parts.map(part => () => part.subarray(0, Math.min(36, part.length)))) : null;
   for (let i = 0; i < parts.length; i++) {
     const seg = parts[i];
-    if (splitApps) {
+    if (!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && splitApps) {
       const k = appKind(heads[i]);
       if (state.lastKind !== -1 && k !== state.lastKind && state.curOff - state.curStart >= 1024 && seg.length >= 512) { cuts.push(state.curOff); state.curStart = state.curOff; }
       if (seg.length >= 1024) state.lastKind = k;
@@ -335,8 +338,8 @@ function* writeData(data, effort, contextsFrom) {
   if (raw.length > 32) {
     const literalContexts = effort >= 7 || effort >= contextsFrom && raw.length <= CONTEXT_BYTES;
     try {
-      const cuts = yield* stage('jpeg-payload-cuts', () => payloadCuts(data, effort >= 5));
-      const compressed = yield* compressBrotliSteps(raw, {literalContexts, thorough: effort >= 5, cuts, kernels: kernelHooks.entropy?.()}, unit);
+      const cuts = yield* stage('jpeg-payload-cuts', () => payloadCuts(data, !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && effort >= 5));
+      const compressed = yield* compressBrotliSteps(raw, {literalContexts, thorough: !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && effort >= 5, cuts, kernels: kernelHooks.entropy?.()}, unit);
       if (compressed.length < packed.length) packed = compressed;
     }
     catch (error) { if (error.code !== 'JXL_SIZE' && error.code !== 'JXL_INPUT') throw error; }
@@ -344,159 +347,11 @@ function* writeData(data, effort, contextsFrom) {
   const parts = [header, packed]; return journaling() ? journalJoin(parts) : concatenate(parts);
 }
 
-const TAGS = ['cprt', 'wtpt', 'bkpt', 'rXYZ', 'gXYZ', 'bXYZ', 'kXYZ', 'rTRC', 'gTRC', 'bTRC', 'kTRC', 'chad', 'desc', 'chrm', 'dmnd', 'dmdd', 'lumi'];
-const TYPES = ['XYZ ', 'desc', 'text', 'mluc', 'para', 'curv', 'sf32', 'gbd '];
-const HEADER = /* @__PURE__ */ Uint8Array.of(0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 109, 110, 116, 114, 82, 71, 66, 32, 88, 89, 90, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 97, 99, 115, 112, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 246, 214, 0, 1, 0, 0, 0, 0, 211, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-const chars = text => [text.charCodeAt(0), text.charCodeAt(1), text.charCodeAt(2), text.charCodeAt(3)];
-const sameTag = (a, text) => a.length === 4 && chars(text).every((c, i) => a[i] === c);
-function predictByte(data, start, i, stride, width, order) {
-  const predict = (p1, p2, p3, mask) => { const value = order === 0 ? p1 : order === 1 ? 2 * p1 - p2 : 3 * p1 - 3 * p2 + p3; return value & mask; };
-  if (width === 1) return predict(data(start + i - stride), data(start + i - stride * 2), data(start + i - stride * 3), 255);
-  if (width === 2) {
-    const p = start + (i & ~1), pair = at => (data(at) << 8) + data(at + 1), value = predict(pair(p - stride), pair(p - stride * 2), pair(p - stride * 3), 65535);
-    return i & 1 ? value & 255 : value >>> 8;
-  }
-  const p = start + (i & ~3), word = at => at < 0 ? 0 : ((data(at) << 24) | (data(at + 1) << 16) | (data(at + 2) << 8) | data(at + 3)) >>> 0;
-  const value = predict(word(p - stride), word(p - stride * 2), word(p - stride * 3), 0xffffffff);
-  return (value >>> ((3 - (i & 3)) * 8)) & 255;
-}
-function iccBytes(bytes) {
-  const windows = new Map();
-  return at => {
-    if (at < 0 || at >= bytes.length) return undefined;
-    const start = Math.floor(at / 65536) * 65536;
-    let part = windows.get(start);
-    if (!part) {
-      part = bytes.subarray(start, Math.min(bytes.length, start + 65536)); windows.set(start, part);
-      if (windows.size > 8) windows.delete(windows.keys().next().value);
-    }
-    return part[at - start];
-  };
-}
-function iccVarint(bytes, state, key, byte) {
-  let value = 0, scale = 1;
-  for (let i = 0; i < 10; i++, scale *= 128) {
-    requireJPEG(state[key] < bytes.length);
-    const next = byte(state[key]++); value += (next & 127) * scale;
-    if (!(next & 128)) return value;
-  }
-  requireJPEG(false);
-}
-function iccProfileStart(enc) {
-  requireJPEG(enc instanceof Uint8Array && enc.length >= 2);
-  const byte = iccBytes(enc), state = {pos: 0};
-  const osize = iccVarint(enc, state, 'pos', byte), csize = iccVarint(enc, state, 'pos', byte);
-  requireJPEG(osize <= 268435456 && Number.isSafeInteger(csize) && state.pos + csize <= enc.length);
-  Object.assign(state, {osize, commandAt: state.pos, data: state.pos + csize, at: 0, phase: 'count', done: false}); state.pos = state.data;
-  const out = new Uint8Array(Math.min(128, osize)), header = HEADER.slice();
-  header[0] = osize >>> 24; header[1] = (osize >>> 16) & 255; header[2] = (osize >>> 8) & 255; header[3] = osize & 255;
-  for (let i = 0; i <= 128; i++) {
-    if (state.at === osize) { requireJPEG(state.commandAt === state.data && state.pos === enc.length); state.done = true; return {bytes: out, state}; }
-    if (i === 128) break;
-    if (i === 8 && state.at >= 8) header.set(out.subarray(4, 8), 80);
-    if (i === 41 && state.at >= 41) { if (out[40] === 65) header.set([80, 80, 76], 41); if (out[40] === 77) header.set([83, 70, 84], 41); }
-    if (i === 42 && state.at >= 42 && out[40] === 83) { if (out[41] === 71) header.set([73, 32], 42); if (out[41] === 85) header.set([78, 87], 42); }
-    requireJPEG(state.pos < enc.length); out[state.at++] = (byte(state.pos++) + header[i]) & 255;
-  }
-  requireJPEG(state.commandAt < state.data); return {bytes: out, state};
-}
-function iccProfilePart(enc, previous, parts) {
-  const state = {...previous, run: previous.run && {...previous.run}}, start = state.at;
-  const out = new Uint8Array(Math.min(65536, state.osize - start)), input = iccBytes(enc), cache = new Map();
-  const get = at => {
-    if (at < 0) return undefined;
-    if (at >= start) return out[at - start];
-    let low = 0, high = parts.length;
-    while (low < high) { const mid = (low + high) >>> 1; if (parts[mid].at <= at) low = mid + 1; else high = mid; }
-    const part = parts[low]; requireJPEG(part && part.from <= at);
-    let bytes = cache.get(low);
-    if (!bytes) { bytes = part.bytes.subarray(0, part.at - part.from); cache.set(low, bytes); if (cache.size > 8) cache.delete(cache.keys().next().value); }
-    return bytes[at - part.from];
-  };
-  const number = () => iccVarint(enc, state, 'commandAt', input), be = n => [n >>> 24, n >>> 16, n >>> 8, n];
-  const pending = (values, next) => {
-    requireJPEG(values.length <= state.osize - state.at);
-    state.pending = Uint8Array.from(values); state.pendingAt = 0; state.next = next; state.phase = 'pending';
-  };
-  let commands = 0;
-  while (!state.done && commands < 4096) {
-    if (state.phase === 'pending') {
-      const count = Math.min(state.pending.length - state.pendingAt, out.length - (state.at - start));
-      out.set(state.pending.subarray(state.pendingAt, state.pendingAt + count), state.at - start); state.pendingAt += count; state.at += count;
-      if (state.pendingAt < state.pending.length) break;
-      state.pending = null; state.phase = state.next;
-    } else if (state.phase === 'run') {
-      const run = state.run, count = Math.min(run.count - run.i, out.length - (state.at - start));
-      for (let j = 0; j < count; j++, run.i++) {
-        const value = input(run.source + (run.width === 1 ? run.i : run.shuffled));
-        out[state.at++ - start] = (value + (run.predict ? predictByte(get, run.start, run.i, run.stride, run.width, run.order) : 0)) & 255;
-        if (run.width > 1) { run.shuffled += run.height; if (run.shuffled >= run.count) run.shuffled = ++run.column; }
-      }
-      if (run.i < run.count) break;
-      state.run = null; state.phase = 'commands';
-    } else if (state.phase === 'count') {
-      commands++; let numtags = number();
-      if (!numtags) { state.phase = 'commands'; continue; }
-      numtags--; requireJPEG(numtags <= 0xffffffff);
-      state.previousStart = 128 + numtags * 12; state.previousSize = 0; pending(be(numtags), 'tags');
-    } else {
-      requireJPEG(state.at <= state.osize && state.commandAt <= state.data);
-      if (state.commandAt === state.data) {
-        requireJPEG(state.pos === enc.length && state.at === state.osize); state.done = true; break;
-      }
-      const code = input(state.commandAt++); commands++;
-      if (state.phase === 'tags') {
-        const tagcode = code & 63; let tag;
-        if (!tagcode) { state.phase = 'commands'; continue; }
-        if (tagcode === 1) { requireJPEG(state.pos + 4 <= enc.length); tag = Array.from({length: 4}, () => input(state.pos++)); }
-        else if (tagcode === 2) tag = chars('rTRC');
-        else if (tagcode === 3) tag = chars('rXYZ');
-        else { requireJPEG(tagcode >= 4 && tagcode - 4 < TAGS.length); tag = chars(TAGS[tagcode - 4]); }
-        let tagSize = state.previousSize;
-        if (['rXYZ', 'gXYZ', 'bXYZ', 'kXYZ', 'wtpt', 'bkpt', 'lumi'].some(name => sameTag(tag, name))) tagSize = 20;
-        const tagStart = code & 64 ? number() : state.previousStart + state.previousSize; requireJPEG(tagStart <= 0xffffffff);
-        if (code & 128) tagSize = number(); requireJPEG(tagSize <= 0xffffffff);
-        const values = [...tag, ...be(tagStart), ...be(tagSize)];
-        state.previousStart = tagStart; state.previousSize = tagSize;
-        if (tagcode === 2) for (const name of ['gTRC', 'bTRC']) values.push(...chars(name), ...be(tagStart), ...be(tagSize));
-        if (tagcode === 3) {
-          requireJPEG(tagStart + tagSize * 2 <= 0xffffffff);
-          for (const [name, shift] of [['gXYZ', 1], ['bXYZ', 2]]) values.push(...chars(name), ...be(tagStart + tagSize * shift), ...be(tagSize));
-        }
-        pending(values, 'tags');
-      } else if (code >= 1 && code <= 4) {
-        let width = code === 2 ? 2 : code === 3 ? 4 : 1, order = 0, stride = 0;
-        if (code === 4) {
-          requireJPEG(state.commandAt + 2 <= state.data);
-          const flags = input(state.commandAt++); width = (flags & 3) + 1; order = (flags >> 2) & 3;
-          requireJPEG(width !== 3 && order !== 3); stride = flags & 16 ? number() : width;
-          requireJPEG(stride >= width && state.at && ((state.at - 1) >>> 2) >= stride && state.commandAt < state.data);
-        }
-        const count = number(); requireJPEG(state.pos + count <= enc.length && count <= state.osize - state.at);
-        state.run = {source: state.pos, count, i: 0, start: state.at, width, order, stride, predict: code === 4,
-          height: Math.ceil(count / width), shuffled: 0, column: 0};
-        state.pos += count; state.phase = 'run';
-      } else if (code === 10) {
-        requireJPEG(state.pos + 12 <= enc.length);
-        pending([...chars('XYZ '), 0, 0, 0, 0, ...Array.from({length: 12}, () => input(state.pos++))], 'commands');
-      } else if (code >= 16 && code < 16 + TYPES.length) pending([...chars(TYPES[code - 16]), 0, 0, 0, 0], 'commands');
-      else requireJPEG(false);
-    }
-  }
-  return {bytes: out.subarray(0, state.at - start), state};
-}
-export function unpredictICC(enc) {
-  const first = iccProfileStart(enc), out = new Uint8Array(first.state.osize); out.set(first.bytes);
-  const parts = [{bytes: out, from: 0, at: first.state.at}]; let state = first.state;
-  while (!state.done) {
-    const from = state.at, part = iccProfilePart(enc, state, parts); state = part.state;
-    out.set(part.bytes, from); parts[0].at = state.at;
-  }
-  return out;
-}
+const sharedICC = /* @__PURE__ */ iccInverse(requireJPEG, (v, max) => requireJPEG(Number.isSafeInteger(v) && v >= 0 && v <= max));
+export const unpredictICC = enc => sharedICC.decode(enc);
 export function* unpredictICCSteps(enc) {
   if (!journaling()) return unpredictICC(enc);
-  return yield* journalTool('jpegICC')(enc, {start: iccProfileStart, part: iccProfilePart});
+  return yield* journalTool('jpegICC')(enc, undefined, sharedICC.owner);
 }
 
 const EXIF_TAG = /* @__PURE__ */ Uint8Array.of(69, 120, 105, 102, 0, 0), ICC_TAG = /* @__PURE__ */ Uint8Array.of(73, 67, 67, 95, 80, 82, 79, 70, 73, 76, 69, 0);

@@ -56,7 +56,7 @@ async function owned(input, signal) {
 }
 
 export const recompress = resultOperation((input, options) => settle(recompressHere(input, options), options), {fidelity: 'exact', kept: 'jpeg-bytes'});
-Object.defineProperty(recompress, STEPS, {value: recompressSteps(kernels)});
+if (!(typeof __RAPIER_JXL_WORKER__ !== 'undefined' && __RAPIER_JXL_WORKER__ === true)) Object.defineProperty(recompress, STEPS, {value: recompressSteps(kernels)});
 function recompressHere(input, options) {
   try {
     const settings = {...object(options)};
@@ -79,8 +79,10 @@ function recompressHere(input, options) {
 }
 
 export const restore = resultOperation((input, options) => settle(restoreHere(input, options), options), {format: 'jpeg', fidelity: 'exact', kept: 'jpeg-bytes'});
-Object.defineProperty(restore, STEPS, {value: restoreSteps});
-Object.defineProperty(restore, Symbol.for('rapier-jxl.verify.source'), {value: recompress[STEPS]});
+if (!(typeof __RAPIER_JXL_WORKER__ !== 'undefined' && __RAPIER_JXL_WORKER__ === true)) {
+  Object.defineProperty(restore, STEPS, {value: restoreSteps});
+  Object.defineProperty(restore, Symbol.for('rapier-jxl.verify.source'), {value: recompress[STEPS]});
+}
 export {resultJSON} from './result.mjs';
 async function restoreHere(input, options) {
   const settings = {...object(options)};

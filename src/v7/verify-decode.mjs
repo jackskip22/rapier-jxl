@@ -78,6 +78,11 @@ export function verificationImageSteps(bytes,options) {
   if (!open) throw fail('JXL_UNSUPPORTED','Bounded verification' + SETUP);
   return open(bytes,options);
 }
+export async function decodeWholeFile(bytes,options) {
+  const decode = host('decode');
+  if (!decode) throw fail('JXL_UNSUPPORTED','Verifying a JPEG XL file' + SETUP);
+  return admittedPicture(await decode(bytes.slice(),options),options);
+}
 export async function decodeGroupFile(bytes,options,opened) {
   const region = groups()?.region;
   if (!region) throw fail('JXL_UNSUPPORTED','Bounded verification' + SETUP);

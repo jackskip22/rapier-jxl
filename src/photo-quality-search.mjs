@@ -71,7 +71,7 @@ function undecided(tried, pass, options) {
   return false;
 }
 
-export function* qualitySteps(imageAt, target, {start = 85, probes = 8, low = 20, high = 99.99, aim = 0.05, close = 0.12, targetDoubt = null, initial = null, first = null, measureSteps = null, seen = null} = {}) {
+export function* qualitySteps(imageAt, target, {start = 85, probes = 8, low = 20, high = 99.99, aim = 0.05, lastAim = aim, close = 0.12, targetDoubt = null, initial = null, first = null, measureSteps = null, seen = null} = {}) {
   const want = {ssimulacra2: target.ssimulacra2 !== undefined, butteraugli: target.butteraugli3 !== undefined || target.butteraugli !== undefined}, tried = [];
   const options = {low, high, aim, close};
   const targetBound = () => targetDoubt ? marginDoubt({doubt: targetDoubt}, target) : 0;
@@ -83,6 +83,7 @@ export function* qualitySteps(imageAt, target, {start = 85, probes = 8, low = 20
       bestObserved = {quality, ...Object.fromEntries(Object.keys(target).map(key => [key, scores[key]]))};
   };
   for (let i = 0; i < probes; i++) {
+    options.aim = i === probes - 2 ? lastAim : aim;
     const known = !i && initial?.scores && initial.quality === q ? initial : null, kept = known ? null : seen?.get(q);
     let image = known ? known.image : kept ? null : yield* imageAt(q);
     let observed = known ?? kept ?? (yield* read(image, want, {quality: q}));

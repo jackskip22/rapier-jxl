@@ -7,6 +7,8 @@ const regionQuality = quality => Math.min(99, quality < 90 ? quality + 0.25 * (9
 
 export const lossyModularSections = (rgba, width, height, quality, alpha) =>
   complete(lossySections(rgba, width, height, regionQuality(quality), {colour: 3, alpha, channels: alpha ? 4 : 3}));
+export const lossyModularLength = (rgba, width, height, quality, alpha) =>
+  complete(lossySections(rgba, width, height, regionQuality(quality), {colour: 3, alpha, channels: alpha ? 4 : 3}, true));
 
 export function lossyModularFrame(rgba, width, height, quality, placement, sections) {
   const {crop, imageWidth, imageHeight, isLastFrame: last, saveAsReference: reference, alphaChannel: alpha, mask = false} = placement;

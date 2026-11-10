@@ -60,6 +60,8 @@ export function install(port, pending = [], runtime, previewHub) {
     if (message.cancel !== undefined) { running.get(message.cancel)?.abort(Object.assign(new Error('JPEG XL operation was canceled.'), {code: 'JXL_ABORTED'})); return; }
     if (!Number.isSafeInteger(message.id) || message.id < 1) return;
     const {id, operation, input, options, maxPixels, jpegPixels, helpers, webgpu, lane, alone} = message;
+    const arrived = typeof ImageBitmap === 'function' && input instanceof ImageBitmap || typeof VideoFrame === 'function' && input instanceof VideoFrame;
+    if (message.bitmap === true && !arrived) { reply(id, Object.assign(new Error('The bitmap did not reach the worker.'), {code: 'JXL_INPUT'})); return; }
     const beside = lane === 1 && helpers && running.size - here < helpers.count;
     if (running.has(id) || (here && !beside)) { reply(id, Object.assign(new Error('The worker already has an active operation.'), {code: 'JXL_BUSY'})); return; }
     const controller = new AbortController();

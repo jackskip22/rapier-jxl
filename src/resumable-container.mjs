@@ -77,13 +77,8 @@ export function* containerRead(bytes, options, owner) {
   });
 }
 
-export function* boundedHeader(bytes, options, {readContainerSteps, header}) {
+export function* boundedHeader(bytes, options, {header}) {
   return yield* stage('complete-image-header', function* () {
-    const source = yield* readContainerSteps(bytes, {maxBytes: options.maxInputBytes ?? 1073741824, maxBoxes: options.maxBoxes ?? 65536});
-    const info = yield* unit('image-header-prefix', () => header(source.codestream.subarray(0, Math.min(source.codestream.length, 65536)), options));
-    let reconstruction = false;
-    for (let first = 0; first < source.auxiliary.length && !reconstruction; first += 64)
-      reconstruction = yield* unit('image-reconstruction-box', () => source.auxiliary.slice(first, first + 64).some(box => box.boxType === 'jbrd'));
-    return {...info, reconstruction};
+    return yield* unit('image-header-prefix', () => header(bytes, {...options, complete: true}));
   });
 }

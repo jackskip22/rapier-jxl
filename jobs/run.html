@@ -3,7 +3,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' blob:; worker-src blob:; connect-src https://cdn.jsdelivr.net; img-src blob:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
-<title>rapier-jxl hardware check</title>
+<title>rapier-jxl test</title>
 <style>
   * { box-sizing: border-box }
   body { max-width: 48rem; margin: 2rem auto; padding: 0 1rem; color: #171717; background: #fff; font: 16px/1.5 system-ui, sans-serif }
@@ -11,42 +11,172 @@
   input, select, textarea, button { font: inherit; border: 2px solid #555; border-radius: 0; padding: .5rem; background: #fff; color: inherit }
   input, select, textarea { display: block; width: 100% } button { cursor: pointer; margin: 0 .5rem .5rem 0 }
   button:disabled { opacity: .5; cursor: default } textarea { min-height: 20rem; font: 12px/1.5 monospace }
-  canvas { width: 128px; height: 96px; image-rendering: pixelated; border: 2px solid #555; margin-right: .5rem }
   :focus-visible { outline: 3px solid #075ccc; outline-offset: 2px }
 </style>
-<h1>rapier-jxl hardware check</h1>
-<p>Runs fixed images with rapier-jxl <span id="version"></span>. Downloads the pinned modules, then runs locally. It reads no files or screen content and sends no results.</p>
+<h1>rapier-jxl test</h1>
+<p>Tests rapier-jxl <span id="version"></span> on this device with fixed real pictures. Downloads the pinned package and pictures, then runs here. It reads no files or screen content and sends no results.</p>
 <form id="form">
-  <label>Check<select id="job"><option value="safari">Safari 26.0 / 26.1</option><option value="desktop-gpu">Desktop WebGPU</option></select></label>
+  <label>Test<select id="job"><option value="selftest">Self-test: encode, decode and verify</option><option value="webgpu">WebGPU speed</option></select></label>
   <label>Browser and full version<input id="browser" required maxlength="160" placeholder="Safari 26.1"></label>
   <label>Operating system and version<input id="os" required maxlength="160" placeholder="macOS 26.1"></label>
   <label>Device and graphics card<input id="device" required maxlength="200" placeholder="Device model; GPU if known"></label>
-  <button id="run" type="submit">Run</button><button id="copy" type="button" disabled>Copy JSON</button>
+  <button id="run" type="submit">Run</button><button id="download" type="button" disabled>Download results</button><button id="copy" type="button" disabled>Copy</button>
 </form>
-<p id="progress" role="status">Keep this page in front. Safari: about a minute. GPU: up to 10 minutes. Run becomes Stop while working.</p>
-<p>Fixed input / decoded output</p>
-<canvas id="input" width="64" height="48" aria-label="Fixed input"></canvas><canvas id="output" width="64" height="48" aria-label="Decoded output"></canvas>
-<label>Result<textarea id="result" readonly spellcheck="false" aria-label="Result JSON"></textarea></label>
-<p>Paste the JSON into a <a href="https://github.com/jackskip22/rapier-jxl/issues/new?template=job-result.yml" target="_blank" rel="noopener noreferrer">job result issue</a>. Results remain unchecked until independently repeated.</p>
+<p id="progress" role="status">Keep this page in front. Self-test: about 2 minutes on a phone. WebGPU: up to 10 minutes. Run becomes Stop while working.</p>
+<label>Results<textarea id="result" readonly spellcheck="false" aria-label="Results"></textarea></label>
+<p>Attach the results file to your job's issue in the <a href="https://github.com/jackskip22/rapier-jxl/tree/main/jobs" target="_blank" rel="noopener noreferrer">jobs folder</a>, including failures.</p>
 <script>
-const RELEASE = {"version":"8.3.1","packageSha256":null,"modules":{"capture":{"bytes":147332,"sha256":"546f17a804c15d0ee336129dfb6dbcd7d90c7faaf8dc821638b4f7d67ff18268"},"decode":{"bytes":367544,"sha256":"ff3811168796a3d3fcf5b724d7665a1c755e6b4568d6d28b7715f9003e5ceec2"},"index":{"bytes":1175156,"sha256":"94400dd56d2272ba9ae6c7bf884bf26168b7344166f187567c05a9102d61605c"}},"reference":{"width":64,"height":48,"inputSha256":"36c78cc84840d5c9772d15bcc1808b654131997429b978dd81a69e6c4fe28eab","bytes":7765,"sha256":"bca10db4bfbef4f7ade8484bb463317a8f770636fbba8a8525a7730c8325d0b6","base64":"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"},"expected":{"capture":"bca10db4bfbef4f7ade8484bb463317a8f770636fbba8a8525a7730c8325d0b6","encode":"a4d86d6e4b46c1785651b839f24fd1b7546ba10b1461e3e13a99039e22a1c702"}};
-const $ = id => document.getElementById(id);
-const digest = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), n => n.toString(16).padStart(2, '0')).join('');
-function pixels(width, height) {
-  const data = new Uint8ClampedArray(width * height * 4);
-  let s = 0x12345678;
-  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
-    const i = (y * width + x) * 4;
-    data[i] = (x * 3 + y * 5 + (s >>> 28)) & 255;
-    data[i + 1] = (x * 7 + y * 2 + (s >>> 27)) & 255;
-    data[i + 2] = ((x ^ y) * 9 + (s >>> 29)) & 255;
-    data[i + 3] = 255;
+const RELEASE = {"version":"8.3.2","modules":{"index":{"bytes":1217091,"sha256":"ee335df9f56f4d9651ecad47531bf47bdfae914468053f340773b4008ef5346a"},"jpeg":{"bytes":479279,"sha256":"dbec8c233e3babdf378ab5f9ae5323b179ba595846d459705a2cda7062dcb484"},"decode":{"bytes":362748,"sha256":"98b82e2535f333d9ebef360b464bbd20d7c6f96a697306afa26f41668e72e469"},"verify":{"bytes":253475,"sha256":"fe01d4ea27a415e5fcb72484e5b4e211691bf1c53af1e14a4c947c02bacea744"}},"selftest":{"version":"8.3.2","pictures":[{"id":"screenshot","file":"screenshot-mdn.png","kind":"png","width":1920,"height":1080,"sha256":"82cffc076e2219801170d63799974f5e5dfc56096a838ef492305560fc9affa6","rgbaSha256":"9592f20763f9d63414ed0141fab50e74f623b7417c8eb0d9d4005704411b6379","source":"Canvas API page of MDN Web Docs, captured in Chrome 155","sourceURL":"https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API","author":"Mozilla Contributors","license":"CC BY-SA 2.5","licenseURL":"https://creativecommons.org/licenses/by-sa/2.5/"},{"id":"photo","file":"photo-kodim23.png","kind":"png","width":768,"height":512,"sha256":"090880a1dbce96bb7d1db3f583fb830e98ef4de67542cbad2185a1111e04e928","rgbaSha256":"c3b1252504d7aaf3c6b6b12bc037aefae380ec4574b565fb84ce6d99e9158b36","source":"Kodak Lossless True Color Image Suite, kodim23","sourceURL":"https://r0k.us/graphics/kodak/","author":"Eastman Kodak","license":"Released by Eastman Kodak for unrestricted use","licenseURL":"https://r0k.us/graphics/kodak/"},{"id":"camera","file":"camera-iphone16.jpg","kind":"jpeg","width":4032,"height":3024,"sha256":"7166b35f92c1168221cf0211fa755c9495d1883a50b5d7dab8b6bd758da2c5af","source":"Juvenile Atlantic Ghost Crab along the beach in Kitty Hawk, North Carolina; iPhone 16 original","sourceURL":"https://commons.wikimedia.org/wiki/File:2026-09-10_0953_Juvenile_Atlantic_Ghost_Crab_along_the_beach_in_Kitty_Hawk,_North_Carolina.jpg","author":"TheDetroitGeographer","license":"CC0 1.0","licenseURL":"https://creativecommons.org/publicdomain/zero/1.0/"}],"expected":{"screenshot-exact-e1":"8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f","screenshot-exact-e3":"8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f","screenshot-exact-e7":"95009dcc0d48d84a95f33bbc9f00fcff2d7d6d55d8092e70a26e7c35d8609439","screenshot-lossy-e1":"8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f","screenshot-lossy-e3":"8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f","screenshot-lossy-e7":"8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f","photo-exact-e1":"6078d53ef2d1fed193c1439a2a4d7024f570b43cf8606ca39cd05440e3752f8f","photo-exact-e3":"7618cd16bf8dc70dacda68089a5914dc37168024098a858883aca426a4441ac9","photo-exact-e7":"8e51d0b63ef23dc8b21df8c9cf6142d10a28e0aaae2fc4ef0574f1a29caddf83","photo-lossy-e1":"4cdc398d4a86ddacb23b47f43b43eba8f55ae1d839ceb84310327a773c75da27","photo-lossy-e3":"448c42c2fd9672268ae0a2bef5972ea52fbcaee7361fb090082fb2e547eb948d","photo-lossy-e7":"c51d11faed9ad593082611e19571cf87154295ef0a50c91b455b1cf8e47f51b6","camera-recompress-e1":"52431ea23eb7283e2b61bc7be8a378eb9ef758930827af4dd9b7b319c0b74bfb","camera-recompress-e3":"c9502cb07a59f43b5fbeb05720bde392e39e3aacfdb1dd09f66997485fdbef99","camera-recompress-e7":"d761d76c014bb127df97b17ef4312a506bd93713df0be7f6aa69ebb4e57e745d"}}};
+function selftestCore() {
+// selftest.mjs begin
+// rapier-jxl self-test: encodes, decodes and verifies a fixed set of real pictures and returns one results record.
+// No imports and no host APIs beyond the web platform (fetch, crypto.subtle, DecompressionStream, performance), so
+// the command (npx rapier-jxl selftest), the browser page (jobs/run.html) and a Cloudflare Worker run the same steps.
+// It never sends anything: the caller writes or offers the record.
+
+const hex = buffer => Array.from(new Uint8Array(buffer), n => n.toString(16).padStart(2, '0')).join('');
+const sha256 = async bytes => hex(await crypto.subtle.digest('SHA-256', bytes));
+
+// 8-bit RGB or RGBA, non-interlaced PNG to RGBA: the pictures are written that way, so every runtime reads the same pixels.
+async function readPNG(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), idat = [];
+  let width = 0, height = 0, channels = 0;
+  for (let at = 8; at + 8 <= bytes.length;) {
+    const length = view.getUint32(at), type = String.fromCharCode(...bytes.subarray(at + 4, at + 8)), body = bytes.subarray(at + 8, at + 8 + length);
+    if (type === 'IHDR') {
+      width = view.getUint32(at + 8); height = view.getUint32(at + 12);
+      const depth = body[8], color = body[9];
+      if (depth !== 8 || (color !== 2 && color !== 6) || body[12] !== 0) throw new Error('Self-test picture is not 8-bit RGB or RGBA without interlace');
+      channels = color === 6 ? 4 : 3;
+    } else if (type === 'IDAT') idat.push(body);
+    at += 12 + length;
   }
-  return {data, width, height, colorSpace: 'srgb'};
+  const stream = new Blob(idat).stream().pipeThrough(new DecompressionStream('deflate'));
+  const raw = new Uint8Array(await new Response(stream).arrayBuffer()), stride = width * channels;
+  if (raw.length !== (stride + 1) * height) throw new Error('Self-test picture has the wrong data length');
+  const data = new Uint8Array(width * height * 4);
+  let previous = new Uint8Array(stride);
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)], line = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    for (let x = 0; x < stride; x++) {
+      const a = x >= channels ? line[x - channels] : 0, b = previous[x], c = x >= channels ? previous[x - channels] : 0;
+      const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+      line[x] = (line[x] + (filter === 1 ? a : filter === 2 ? b : filter === 3 ? (a + b) >> 1
+        : filter === 4 ? (pa <= pb && pa <= pc ? a : pb <= pc ? b : c) : 0)) & 255;
+    }
+    for (let x = 0, o = y * width * 4; x < width; x++, o += 4) {
+      data[o] = line[x * channels]; data[o + 1] = line[x * channels + 1]; data[o + 2] = line[x * channels + 2];
+      data[o + 3] = channels === 4 ? line[x * channels + 3] : 255;
+    }
+    previous = line;
+  }
+  return {data, width, height};
+}
+
+const error = e => ({name: e?.name || 'Error', code: e?.code || null, message: String(e?.message || e)});
+const QUALITY = 90;
+
+// The rows: each picture at efforts 1, 3 and 7, lossless and lossy; the camera JPEG recompressed and restored.
+function selftestRows(manifest) {
+  const rows = [];
+  for (const picture of manifest.pictures) {
+    if (picture.kind === 'jpeg') {
+      for (const effort of [1, 3, 7]) rows.push({id: `${picture.id}-recompress-e${effort}`, picture: picture.id, operation: 'recompress', effort});
+    } else for (const fidelity of ['exact', 'lossy']) for (const effort of [1, 3, 7])
+      rows.push({id: `${picture.id}-${fidelity}-e${effort}`, picture: picture.id, operation: 'encode', fidelity, effort});
+  }
+  return rows;
+}
+
+// modules: {encode, recompress, restore, decode, verify} from the package, and optionally nativeDecode(bytes), the
+// host's own decoder ({data, width, height}, or null where it has none). picture(file): its bytes.
+// facts: the machine, from the host. expected: {rowId: sha256} for this release, or null to record without comparing.
+async function selftest({modules, manifest, picture, facts = {}, onStep = () => {}, onRow = () => {}, now = () => performance.now()}) {
+  const started = now();
+  const record = {schema: 1, kind: 'rapier-jxl-selftest', version: manifest.version, status: 'running', machine: facts,
+    pictures: [], rows: [], summary: null};
+  const inputs = new Map();
+  for (const item of manifest.pictures) {
+    onStep('Read ' + item.file);
+    const entry = {id: item.id, file: item.file, kind: item.kind};
+    record.pictures.push(entry);
+    try {
+      const bytes = new Uint8Array(await picture(item.file));
+      entry.bytes = bytes.length; entry.sha256 = await sha256(bytes);
+      if (entry.sha256 !== item.sha256) throw new Error(`${item.file} does not match its SHA-256`);
+      if (item.kind === 'jpeg') inputs.set(item.id, {bytes, sha256: entry.sha256});
+      else {
+        const pixels = await readPNG(bytes);
+        entry.width = pixels.width; entry.height = pixels.height; entry.rgbaSha256 = await sha256(pixels.data);
+        if (entry.rgbaSha256 !== item.rgbaSha256) throw new Error(`${item.file} decodes to other pixels`);
+        inputs.set(item.id, {bytes, pixels, rgbaSha256: entry.rgbaSha256});
+      }
+    } catch (e) { entry.error = error(e); }
+  }
+  for (const row of selftestRows(manifest)) {
+    onStep(row.id);
+    const input = inputs.get(row.picture), out = {...row, status: 'fail'};
+    record.rows.push(out);
+    if (!input) { out.error = {name: 'Error', code: null, message: 'The picture could not be read'}; onRow(out); continue; }
+    try {
+      let result, t = now();
+      if (row.operation === 'recompress') result = await modules.recompress(input.bytes, {effort: row.effort});
+      else result = await modules.encode(input.pixels, {fidelity: row.fidelity === 'exact' ? 'exact' : {quality: QUALITY}, effort: row.effort, webgpu: false});
+      out.encodeMs = now() - t;
+      out.bytes = result.bytes.length; out.sha256 = await sha256(result.bytes);
+      const expected = manifest.expected?.[row.id] ?? null;
+      out.expectedSha256 = expected;
+      out.sameBytes = expected === null ? null : out.sha256 === expected;
+      if (row.operation === 'recompress') {
+        t = now();
+        const restored = await modules.restore(result.bytes);
+        out.restoreMs = now() - t;
+        out.restoredSha256 = await sha256(restored.bytes);
+        out.exact = out.restoredSha256 === input.sha256;
+      } else {
+        t = now();
+        const decoded = await modules.decode(result.bytes);
+        out.decodeMs = now() - t;
+        if (decoded.width !== input.pixels.width || decoded.height !== input.pixels.height) throw new Error('Decoded size differs from the picture');
+        out.decodedSha256 = await sha256(decoded.data);
+        if (row.fidelity === 'exact') out.exact = out.decodedSha256 === input.rgbaSha256;
+        // A browser's own JPEG XL decoder, where the host has one: its pixels for every exact file.
+        if (row.fidelity === 'exact' && modules.nativeDecode) {
+          t = now();
+          try {
+            const native = await modules.nativeDecode(result.bytes);
+            out.native = native ? {exact: native.width === input.pixels.width && native.height === input.pixels.height
+              && await sha256(native.data) === input.rgbaSha256, ms: now() - t} : {available: false};
+          } catch (e) { out.native = {exact: false, error: error(e)}; }
+        }
+      }
+      t = now();
+      const receipt = await modules.verify(row.operation === 'recompress' ? input.bytes : input.pixels, result);
+      out.verifyMs = now() - t;
+      out.verified = receipt.verified === true;
+      out.verification = {kind: receipt.kind, ...(receipt.metric && {metric: receipt.metric, score: receipt.score}),
+        ...(receipt.floor !== undefined && {floor: receipt.floor})};
+      out.status = out.verified && out.exact !== false && out.sameBytes !== false ? 'pass' : 'fail';
+    } catch (e) {
+      out.error = error(e);
+      if (e?.verification) out.verification = {verified: false, kind: e.verification.kind, score: e.verification.score, reason: e.verification.reason};
+    }
+    onRow(out);
+  }
+  const passed = record.rows.filter(r => r.status === 'pass').length;
+  record.summary = {rows: record.rows.length, passed, failed: record.rows.length - passed,
+    compared: record.rows.filter(r => r.sameBytes !== null).length,
+    native: modules.nativeDecode ? {checked: record.rows.filter(r => r.native && r.native.available !== false).length,
+      mismatched: record.rows.filter(r => r.native?.exact === false).length} : null};
+  record.status = passed === record.rows.length && record.pictures.every(p => !p.error) ? 'pass' : 'fail';
+  record.elapsedMs = now() - started;
+  return record;
+}
+// selftest.mjs end
+  return {selftest, readPNG, sha256};
 }
 async function workerMain() {
-  const hash = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), n => n.toString(16).padStart(2, '0')).join('');
+  const {selftest, readPNG, sha256} = selftestCore();
   const error = e => ({name: e.name, code: e.code || null, message: String(e.message || e)});
   async function pinnedBytes(response, size) {
     const bytes = new Uint8Array(size), reader = response.body.getReader();
@@ -66,141 +196,130 @@ async function workerMain() {
       reader.releaseLock();
     }
   }
-  self.onmessage = async ({data: {job, release, source}}) => {
+  const get = url => fetch(url, {credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store', redirect: 'error'});
+  self.onmessage = async ({data: {job, release, facts}}) => {
     const step = id => postMessage({type: 'step', id});
     const loaded = {}, assets = [];
     async function load(name) {
       if (loaded[name]) return loaded[name];
       step('Load ' + name);
-      const url = `https://cdn.jsdelivr.net/npm/rapier-jxl@${release.version}/dist/${name}.mjs`;
-      const response = await fetch(url, {credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store', redirect: 'error'});
+      const url = `https://cdn.jsdelivr.net/npm/rapier-jxl@${release.version}/dist/${name}.mjs`, response = await get(url);
       if (!response.ok) throw new Error(name + ': HTTP ' + response.status);
-      const bytes = await pinnedBytes(response, release.modules[name].bytes), sha256 = await hash(bytes);
-      assets.push({path: 'dist/' + name + '.mjs', bytes: bytes.byteLength, sha256, url});
+      const bytes = await pinnedBytes(response, release.modules[name].bytes), sha = await sha256(bytes);
+      assets.push({path: 'dist/' + name + '.mjs', bytes: bytes.byteLength, sha256: sha, url});
       postMessage({type: 'assets', assets});
-      if (sha256 !== release.modules[name].sha256) throw new Error(name + ': published module hash mismatch');
+      if (sha !== release.modules[name].sha256) throw new Error(name + ': published module hash mismatch');
       const objectURL = URL.createObjectURL(new Blob([bytes], {type: 'text/javascript'}));
       try { return loaded[name] = await import(objectURL); }
       finally { URL.revokeObjectURL(objectURL); }
     }
-    async function check(id, run) {
-      step(id);
-      try { await run(); }
-      catch (e) { postMessage({type: 'row', row: {id, status: e.code === 'JXL_WEBGPU' ? 'unavailable' : 'fail', error: error(e)}}); }
+    // The pictures of this release's jobs/pictures/, each checked against the manifest pinned in this page.
+    const base = `https://cdn.jsdelivr.net/gh/jackskip22/rapier-jxl@v${release.version}/jobs/pictures/`;
+    async function picture(file) {
+      const response = await get(base + file);
+      if (!response.ok) throw new Error(file + ': HTTP ' + response.status);
+      return new Uint8Array(await response.arrayBuffer());
+    }
+    // The browser's own JPEG XL decoder, where it has one.
+    async function nativeDecode(bytes) {
+      let bitmap;
+      try { bitmap = await createImageBitmap(new Blob([bytes], {type: 'image/jxl'}), {colorSpaceConversion: 'none', premultiplyAlpha: 'none'}); }
+      catch (e) { if (e.name === 'InvalidStateError' || e.name === 'EncodingError' || e.name === 'NotSupportedError') return null; throw e; }
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), context = canvas.getContext('2d', {colorSpace: 'srgb', willReadFrequently: true});
+      context.drawImage(bitmap, 0, 0); bitmap.close();
+      return {width: canvas.width, height: canvas.height, data: new Uint8Array(context.getImageData(0, 0, canvas.width, canvas.height).data.buffer)};
     }
     try {
-      if (job !== 'desktop-gpu') {
-        const {decode} = await load('decode'), {capture} = await load('capture');
-        const sourceHash = await hash(source.data);
-        if (sourceHash !== release.reference.inputSha256) throw new Error('Fixed input hash mismatch');
-        const reference = Uint8Array.from(atob(release.reference.base64), c => c.charCodeAt(0));
-        if (await hash(reference) !== release.reference.sha256) throw new Error('Reference file hash mismatch');
-        async function decodedRow(id, bytes, timesMs, expectedHash) {
-          const sha256 = await hash(bytes), row = {id, status: sha256 === expectedHash ? 'pass' : 'fail', width: source.width, height: source.height,
-            inputSha256: sourceHash, bytes: bytes.length, sha256, expectedSha256: expectedHash, timesMs};
-          if (row.status === 'fail') { postMessage({type: 'row', row}); return; }
-          const started = performance.now();
-          let preview;
+      if (job === 'selftest') {
+        const [{encode}, {recompress, restore}, {decode}, verifier] = [await load('index'), await load('jpeg'), await load('decode'), await load('verify')];
+        verifier.configureDecoder(decode, restore);
+        const native = typeof createImageBitmap === 'function' && typeof OffscreenCanvas === 'function' ? nativeDecode : undefined;
+        const record = await selftest({modules: {encode, recompress, restore, decode, verify: verifier.verify, nativeDecode: native},
+          manifest: release.selftest, picture, facts, onStep: step, onRow: row => postMessage({type: 'row', row})});
+        postMessage({type: 'done', record});
+        return;
+      }
+      // WebGPU: the photo at efforts 7 and 8, with webgpu false and 'required', one warmup and three timed runs each, the
+      // order alternated. Identical files on both routes; GPU queue submissions counted.
+      const adapters = [];
+      let submissions = 0, observed = false;
+      try {
+        const submit = GPUQueue.prototype.submit;
+        GPUQueue.prototype.submit = function (...args) { submissions++; return submit.apply(this, args); };
+        const request = navigator.gpu.requestAdapter.bind(navigator.gpu);
+        navigator.gpu.requestAdapter = async (...args) => {
+          const adapter = await request(...args);
+          if (adapter) {
+            const info = adapter.info;
+            adapters.push({vendor: info?.vendor || '', architecture: info?.architecture || '', device: info?.device || '',
+              description: info?.description || '', isFallbackAdapter: adapter.isFallbackAdapter ?? info?.isFallbackAdapter ?? null});
+            postMessage({type: 'gpu', adapters});
+          }
+          return adapter;
+        };
+        observed = true;
+      } catch {}
+      const item = release.selftest.pictures.find(p => p.id === 'photo'), file = await picture(item.file);
+      if (await sha256(file) !== item.sha256) throw new Error(item.file + ' does not match its SHA-256');
+      const image = await readPNG(file), inputSha256 = await sha256(image.data), {encode} = await load('index');
+      const median = list => [...list].sort((a, b) => a - b)[Math.floor(list.length / 2)];
+      for (const effort of [7, 8]) {
+        const records = {cpu: [], gpu: []}, errors = {};
+        for (let trial = -1; trial < 3; trial++) for (const route of (trial % 2 === 0 ? ['gpu', 'cpu'] : ['cpu', 'gpu'])) {
+          if (errors[route]) continue;
+          step(`Effort ${effort}, ${route}, ${trial < 0 ? 'warmup' : 'run ' + (trial + 1)}`);
           try {
-            const image = await decode(bytes);
-            row.decodeMs = performance.now() - started;
-            if (image.width !== source.width || image.height !== source.height || image.data.byteLength !== source.data.byteLength)
-              throw new Error('Decoded dimensions or sample length mismatch');
-            row.decodedSha256 = await hash(image.data);
-            row.exact = row.decodedSha256 === sourceHash;
-            if (!row.exact) row.status = 'fail';
-            preview = {data: image.data, width: image.width, height: image.height};
-          } catch (e) { row.status = 'fail'; row.decodeMs = performance.now() - started; row.error = error(e); }
-          postMessage({type: 'row', row, native: id === 'known-file-decode' ? null : bytes, preview});
+            const before = submissions, start = performance.now();
+            const {bytes} = await encode(image, {fidelity: {quality: 90}, effort, webgpu: route === 'cpu' ? false : 'required'});
+            const ms = performance.now() - start;
+            records[route].push({warmup: trial < 0, ms, bytes: bytes.length, sha256: await sha256(bytes), gpuSubmissions: observed ? submissions - before : null});
+          } catch (e) { errors[route] = error(e); }
         }
-        await check('known-file-decode', () => decodedRow('known-file-decode', reference, [], release.reference.sha256));
-        await check('exact-capture', async () => {
-          const start = performance.now(), bytes = (await capture(source, {fidelity: 'exact'})).bytes, elapsed = performance.now() - start;
-          await decodedRow('exact-capture', bytes, [elapsed], release.expected.capture);
-        });
-        await check('exact-encode', async () => {
-          const {encode} = await load('index'), start = performance.now();
-          const bytes = (await encode(source, {fidelity: 'exact', effort: 3, webgpu: false})).bytes, elapsed = performance.now() - start;
-          await decodedRow('exact-encode', bytes, [elapsed], release.expected.encode);
-        });
-      } else {
-        const adapters = [];
-        let submissions = 0, observed = false;
-        try {
-          const submit = GPUQueue.prototype.submit;
-          GPUQueue.prototype.submit = function (...args) { submissions++; return submit.apply(this, args); };
-          const request = navigator.gpu.requestAdapter.bind(navigator.gpu);
-          navigator.gpu.requestAdapter = async (...args) => {
-            const adapter = await request(...args);
-            if (adapter) {
-              const info = adapter.info;
-              adapters.push({vendor: info?.vendor || '', architecture: info?.architecture || '', device: info?.device || '',
-                description: info?.description || '', isFallbackAdapter: adapter.isFallbackAdapter ?? info?.isFallbackAdapter ?? null});
-              postMessage({type: 'gpu', adapters});
-            }
-            return adapter;
-          };
-          observed = true;
-        } catch {}
-        const {encode} = await load('index'), image = pixels(512, 384), inputSha256 = await hash(image.data);
-        const median = list => [...list].sort((a, b) => a - b)[Math.floor(list.length / 2)];
-        for (const effort of [7, 8, 9]) {
-          const records = {cpu: [], gpu: []}, errors = {};
-          for (let trial = -1; trial < 3; trial++) for (const route of (trial % 2 === 0 ? ['gpu', 'cpu'] : ['cpu', 'gpu'])) {
-            if (errors[route]) continue;
-            step(`Effort ${effort}, ${route}, ${trial < 0 ? 'warmup' : 'run ' + (trial + 1)}`);
-            try {
-              const before = submissions, start = performance.now();
-              const {bytes} = await encode(image, {fidelity: {quality: 82}, effort, webgpu: route === 'cpu' ? false : 'required'});
-              const ms = performance.now() - start;
-              records[route].push({warmup: trial < 0, ms, bytes: bytes.length, sha256: await hash(bytes), gpuSubmissions: observed ? submissions - before : null});
-            } catch (e) { errors[route] = error(e); }
-          }
-          const cpu = records.cpu, gpu = records.gpu;
-          const sameBytes = cpu.length === 4 && gpu.length === 4 && [...cpu, ...gpu].every(r => r.sha256 === cpu[0].sha256);
-          const software = adapters.some(a => a.isFallbackAdapter === true || /swiftshader|llvmpipe|software/i.test(Object.values(a).join(' '))) ? true
-            : adapters.length && adapters.every(a => a.isFallbackAdapter === false || /nvidia|amd|intel|apple|qualcomm/i.test(Object.values(a).join(' '))) ? false : null;
-          for (const route of ['cpu', 'gpu']) {
-            const runs = records[route], timesMs = runs.filter(r => !r.warmup).map(r => r.ms);
-            const steady = runs.length === 4 && runs.every(r => r.sha256 === runs[0].sha256);
-            const gpuObserved = observed && runs.length === 4 && runs.every(r => r.gpuSubmissions > 0);
-            const status = errors[route] ? (errors[route].code === 'JXL_WEBGPU' ? 'unavailable' : 'fail')
-              : route === 'cpu' ? (steady && runs.every(r => r.gpuSubmissions === 0 || r.gpuSubmissions === null) ? 'pass' : 'fail')
-              : !sameBytes ? 'fail' : !gpuObserved || software !== false ? 'unqualified' : 'pass';
-            postMessage({type: 'row', row: {id: `effort-${effort}-${route}`, status, width: image.width, height: image.height, inputSha256,
-              effort, quality: 82, webgpu: route === 'cpu' ? false : 'required', bytes: runs[0]?.bytes ?? null, sha256: runs[0]?.sha256 ?? null,
-              timesMs, medianMs: timesMs.length ? median(timesMs) : null, runs, sameBytes: route === 'gpu' ? sameBytes : null,
-              gpuObserved: route === 'gpu' ? gpuObserved : null, softwareAdapter: software,
-              speedup: route === 'gpu' && sameBytes && gpuObserved && software === false ? median(cpu.slice(1).map(r => r.ms)) / median(timesMs) : null,
-              ...(errors[route] && {error: errors[route]})}});
-          }
+        const cpu = records.cpu, gpu = records.gpu;
+        const sameBytes = cpu.length === 4 && gpu.length === 4 && [...cpu, ...gpu].every(r => r.sha256 === cpu[0].sha256);
+        const software = adapters.some(a => a.isFallbackAdapter === true || /swiftshader|llvmpipe|software/i.test(Object.values(a).join(' '))) ? true
+          : adapters.length && adapters.every(a => a.isFallbackAdapter === false || /nvidia|amd|intel|apple|qualcomm|arm|mali|adreno|powervr/i.test(Object.values(a).join(' '))) ? false : null;
+        for (const route of ['cpu', 'gpu']) {
+          const runs = records[route], timesMs = runs.filter(r => !r.warmup).map(r => r.ms);
+          const steady = runs.length === 4 && runs.every(r => r.sha256 === runs[0].sha256);
+          const gpuObserved = observed && runs.length === 4 && runs.every(r => r.gpuSubmissions > 0);
+          const status = errors[route] ? (errors[route].code === 'JXL_WEBGPU' ? 'unavailable' : 'fail')
+            : route === 'cpu' ? (steady && runs.every(r => r.gpuSubmissions === 0 || r.gpuSubmissions === null) ? 'pass' : 'fail')
+            : !sameBytes ? 'fail' : !gpuObserved || software !== false ? 'unqualified' : 'pass';
+          const expected = route === 'cpu' && effort === 7 ? release.selftest.expected['photo-lossy-e7'] ?? null : null;
+          postMessage({type: 'row', row: {id: `photo-e${effort}-${route}`, status: expected && runs[0] && runs[0].sha256 !== expected ? 'fail' : status,
+            width: image.width, height: image.height, inputSha256, effort, quality: 90, webgpu: route === 'cpu' ? false : 'required',
+            bytes: runs[0]?.bytes ?? null, sha256: runs[0]?.sha256 ?? null, ...(expected && {expectedSha256: expected}),
+            timesMs, medianMs: timesMs.length ? median(timesMs) : null, runs, sameBytes: route === 'gpu' ? sameBytes : null,
+            gpuObserved: route === 'gpu' ? gpuObserved : null, softwareAdapter: software,
+            speedup: route === 'gpu' && sameBytes && gpuObserved && software === false ? median(cpu.slice(1).map(r => r.ms)) / median(timesMs) : null,
+            ...(errors[route] && {error: errors[route]})}});
         }
       }
       postMessage({type: 'done'});
     } catch (e) { postMessage({type: 'fatal', error: error(e)}); }
   };
 }
-async function nativeDecode(bytes) {
-  const url = URL.createObjectURL(new Blob([bytes], {type: 'image/jxl'})), image = new Image(), start = performance.now();
-  let timer, decoded = false;
+const $ = id => document.getElementById(id);
+// What the device is, never who.
+async function deviceFacts() {
+  const facts = {userAgent: navigator.userAgent, cores: navigator.hardwareConcurrency ?? null, memoryGB: navigator.deviceMemory ?? null,
+    screen: {width: screen.width, height: screen.height, devicePixelRatio}, webgpu: null};
   try {
-    image.src = url;
-    await Promise.race([image.decode(), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Native decode timed out')), 10000); })]);
-    decoded = true;
-    if (image.naturalWidth !== RELEASE.reference.width || image.naturalHeight !== RELEASE.reference.height)
-      throw new Error('Native dimensions mismatch');
-    const canvas = document.createElement('canvas');
-    canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
-    const context = canvas.getContext('2d', {colorSpace: 'srgb', willReadFrequently: true});
-    context.drawImage(image, 0, 0);
-    const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
-    return {available: true, status: 'pass', width: canvas.width, height: canvas.height, sha256: await digest(data), ms: performance.now() - start};
-  } catch (e) { return {available: decoded ? true : e.name === 'EncodingError' ? false : null,
-    status: !decoded && e.name === 'EncodingError' ? 'unavailable' : 'fail', error: String(e.message || e), ms: performance.now() - start}; }
-  finally { clearTimeout(timer); URL.revokeObjectURL(url); }
+    const hints = await navigator.userAgentData?.getHighEntropyValues(['architecture', 'bitness', 'model', 'platformVersion', 'fullVersionList']);
+    if (hints) facts.userAgentData = {platform: hints.platform, platformVersion: hints.platformVersion, architecture: hints.architecture,
+      bitness: hints.bitness, model: hints.model, mobile: hints.mobile, browsers: (hints.fullVersionList || []).map(b => b.brand + ' ' + b.version)};
+  } catch {}
+  try {
+    const adapter = navigator.gpu && await navigator.gpu.requestAdapter();
+    facts.webgpu = !navigator.gpu ? null : !adapter ? {available: false} : {available: true, vendor: adapter.info?.vendor || '',
+      architecture: adapter.info?.architecture || '', device: adapter.info?.device || '', description: adapter.info?.description || '',
+      isFallbackAdapter: adapter.isFallbackAdapter ?? adapter.info?.isFallbackAdapter ?? null};
+  } catch (e) { facts.webgpu = {available: false, error: String(e.message || e)}; }
+  return facts;
 }
 let worker, workerURL, timer, report, reportStart, runId = 0;
-const render = () => { $('result').value = JSON.stringify(report, null, 2); $('copy').disabled = false; };
+const render = () => { $('result').value = JSON.stringify(report, null, 2); $('copy').disabled = $('download').disabled = false; };
 const lock = busy => { for (const id of ['job', 'browser', 'os', 'device']) $(id).disabled = busy; $('run').textContent = busy ? 'Stop' : 'Run'; };
 function finish(status, message) {
   if (!worker) return;
@@ -211,72 +330,53 @@ function finish(status, message) {
 }
 $('version').textContent = RELEASE.version;
 const selected = new URLSearchParams(location.search).get('job');
-if (['safari', 'desktop-gpu'].includes(selected)) $('job').value = selected;
+if (['selftest', 'webgpu'].includes(selected)) $('job').value = selected;
 const ua = navigator.userAgent;
-const match = ua.match(/Edg\/([\d.]+)/) || ua.match(/Version\/([\d.]+).*Safari/) || ua.match(/Chrome\/([\d.]+)/);
-$('browser').value = match ? (ua.includes('Edg/') ? 'Edge ' : ua.includes('Version/') ? 'Safari ' : 'Chrome ') + match[1] : '';
-const source = pixels(64, 48);
-$('input').getContext('2d', {colorSpace: 'srgb'}).putImageData(new ImageData(source.data, source.width, source.height), 0, 0);
+const match = ua.match(/Edg\/([\d.]+)/) || ua.match(/Version\/([\d.]+).*Safari/) || ua.match(/Firefox\/([\d.]+)/) || ua.match(/Chrome\/([\d.]+)/);
+$('browser').value = match ? (ua.includes('Edg/') ? 'Edge ' : ua.includes('Version/') ? 'Safari ' : ua.includes('Firefox/') ? 'Firefox ' : 'Chrome ') + match[1] : '';
 $('form').addEventListener('submit', async event => {
   event.preventDefault();
-  if (worker) { finish('canceled', 'Stopped. Partial results are ready to copy.'); return; }
+  if (worker) { finish('canceled', 'Stopped. Partial results are ready to download.'); return; }
   const id = ++runId, job = $('job').value;
   reportStart = performance.now();
-  report = {schema: 1, job, verification: 'unchecked', status: 'running', package: {name: 'rapier-jxl', version: RELEASE.version,
-    tarballSha256: RELEASE.packageSha256, modules: []}, environment: {browser: $('browser').value.trim(), os: $('os').value.trim(), device: $('device').value.trim(),
-    userAgent: navigator.userAgent, screen: {width: screen.width, height: screen.height, devicePixelRatio}, gpuAdapters: []}, rows: []};
-  render(); lock(true);
-  const url = URL.createObjectURL(new Blob([pixels.toString(), '\n(', workerMain.toString(), ')();'], {type: 'text/javascript'}));
+  lock(true);
+  const facts = {...await deviceFacts(), entered: {browser: $('browser').value.trim(), os: $('os').value.trim(), device: $('device').value.trim()}};
+  report = {schema: 1, kind: job === 'selftest' ? 'rapier-jxl-selftest' : 'rapier-jxl-webgpu', version: RELEASE.version, status: 'running',
+    machine: facts, package: {name: 'rapier-jxl', version: RELEASE.version, modules: []}, rows: []};
+  render();
+  const url = URL.createObjectURL(new Blob([selftestCore.toString(), '\n(', workerMain.toString(), ')();'], {type: 'text/javascript'}));
   workerURL = url;
   try { worker = new Worker(url, {type: 'module'}); }
-  catch (e) { URL.revokeObjectURL(workerURL); workerURL = null; report.status = 'failed'; report.error = {message: e.message}; lock(false); $('progress').textContent = 'The worker could not start. Copy the JSON.'; render(); return; }
-  const nativeStatus = native => {
-    if (native.available === true) {
-      native.exact = native.width === source.width && native.height === source.height && native.sha256 === RELEASE.reference.inputSha256;
-      if (!native.exact) native.status = 'fail';
-    }
-    return native.status === 'fail' || job === 'safari' && native.available !== true ? 'fail' : native.status;
-  };
-  let processing = job === 'desktop-gpu' ? Promise.resolve() : nativeDecode(Uint8Array.from(atob(RELEASE.reference.base64), c => c.charCodeAt(0))).then(native => {
+  catch (e) { URL.revokeObjectURL(workerURL); workerURL = null; report.status = 'fail'; report.error = {message: e.message}; lock(false); $('progress').textContent = 'The worker could not start. Download the results.'; render(); return; }
+  worker.onmessage = ({data}) => {
     if (id !== runId || !worker) return;
-    report.environment.nativeJxl = native.available;
-    report.rows.push({id: 'native-reference', status: nativeStatus(native), bytes: RELEASE.reference.bytes,
-      sha256: RELEASE.reference.sha256, nativeDecode: native});
+    if (data.type === 'step') { report.currentStep = data.id; $('progress').textContent = data.id; }
+    if (data.type === 'assets') report.package.modules = data.assets;
+    if (data.type === 'gpu') report.machine.gpuAdapters = data.adapters;
+    if (data.type === 'row') report.rows.push(data.row);
+    if (data.type === 'fatal') { report.error = data.error; finish('fail', 'The test failed. Download the results, including the error.'); }
+    if (data.type === 'done') {
+      delete report.currentStep;
+      if (data.record) report = {...data.record, machine: facts, package: report.package};
+      finish(report.rows.some(r => r.status === 'fail') || data.record?.status === 'fail' ? 'fail' : 'pass', 'Finished. Download the results and attach the file to your issue.');
+      return;
+    }
     render();
-  });
-  worker.onmessage = event => {
-    processing = processing.then(async () => {
-      if (id !== runId || !worker) return;
-      const data = event.data;
-      if (data.type === 'step') { report.currentStep = data.id; $('progress').textContent = data.id; }
-      if (data.type === 'assets') report.package.modules = data.assets;
-      if (data.type === 'gpu') report.environment.gpuAdapters = data.adapters;
-      if (data.type === 'row') {
-        if (data.native) {
-          const native = await nativeDecode(data.native);
-          if (id !== runId || !worker) return;
-          data.row.nativeDecode = native;
-          if (nativeStatus(native) === 'fail') data.row.status = 'fail';
-        }
-        if (data.preview) $('output').getContext('2d', {colorSpace: 'srgb'}).putImageData(new ImageData(new Uint8ClampedArray(data.preview.data), data.preview.width, data.preview.height), 0, 0);
-        report.rows.push(data.row);
-      }
-      if (data.type === 'fatal') { report.error = data.error; finish('failed', 'The check failed. Copy the JSON, including the error.'); }
-      if (data.type === 'done') {
-        delete report.currentStep;
-        finish(report.rows.some(r => r.status === 'fail') ? 'failed' : 'complete', 'Finished. Copy the JSON, including any unavailable or unqualified rows.');
-      }
-      render();
-    }).catch(e => { if (id === runId && worker) { report.error = {message: e.message}; finish('failed', 'The check failed. Copy the JSON.'); } });
   };
-  worker.onerror = event => { if (id === runId && worker) { report.error = {message: event.message}; finish('failed', 'The worker failed. Copy the JSON.'); } };
-  timer = setTimeout(() => finish('timed-out', 'Time limit reached. Partial results are ready to copy.'), job === 'desktop-gpu' ? 600000 : 120000);
-  const data = $('input').getContext('2d', {colorSpace: 'srgb'}).getImageData(0, 0, source.width, source.height).data;
-  worker.postMessage({job, release: RELEASE, source: {...source, data}});
+  worker.onerror = event => { if (id === runId && worker) { report.error = {message: event.message}; finish('fail', 'The worker failed. Download the results.'); } };
+  timer = setTimeout(() => finish('timed-out', 'Time limit reached. Partial results are ready to download.'), 600000);
+  worker.postMessage({job, release: RELEASE, facts});
+});
+$('download').addEventListener('click', () => {
+  const name = `rapier-jxl-${report.kind === 'rapier-jxl-webgpu' ? 'webgpu' : 'selftest'}-${RELEASE.version}.json`;
+  const link = Object.assign(document.createElement('a'), {href: URL.createObjectURL(new Blob([$('result').value + '\n'], {type: 'application/json'})), download: name});
+  document.body.append(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 60000);
+  $('progress').textContent = 'Saved ' + name + '.';
 });
 $('copy').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText($('result').value); $('progress').textContent = 'JSON copied.'; }
-  catch { $('result').focus(); $('result').select(); $('progress').textContent = 'Select the JSON and copy it.'; }
+  try { await navigator.clipboard.writeText($('result').value); $('progress').textContent = 'Copied.'; }
+  catch { $('result').focus(); $('result').select(); $('progress').textContent = 'Select the results and copy them.'; }
 });
 </script>
 </html>

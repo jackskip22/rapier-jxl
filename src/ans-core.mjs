@@ -242,6 +242,7 @@ const ALIAS_ALIASES = new Uint16Array(256);
 const ALIAS_OFFSETS = new Int32Array(256);
 const ALIAS_UNDER = new Uint16Array(256);
 const ALIAS_OVER = new Uint16Array(256);
+const ALIAS_IOTA = Uint16Array.from({length: 4096}, (_, i) => i);
 export function reverseAlias(counts, logAlphabet) {
   const size = 1 << logAlphabet, entry = 4096 >> logAlphabet;
   const starts = new Uint16Array(counts.length + 1), reverse = new Uint16Array(4096);
@@ -251,7 +252,7 @@ export function reverseAlias(counts, logAlphabet) {
     if (counts[i] === 4096) single = i;
   }
   if (single >= 0) {
-    for (let i = 0; i < 4096; i++) reverse[i] = i;
+    reverse.set(ALIAS_IOTA);
     return {starts, reverse};
   }
   const cutoffs = size <= 256 ? ALIAS_CUTOFFS : new Int32Array(size);
@@ -275,8 +276,10 @@ export function reverseAlias(counts, logAlphabet) {
   }
   for (let i = 0; i < size; i++) {
     const cutoff = cutoffs[i], start = starts[i], aliased = starts[aliases[i]] + offsets[i], base = i * entry;
-    for (let j = 0; j < cutoff; j++) reverse[start + j] = base + j;
-    for (let j = cutoff; j < entry; j++) reverse[aliased + j] = base + j;
+    if (cutoff >= 16 && start >= 0 && start + cutoff <= 4096) reverse.set(ALIAS_IOTA.subarray(base, base + cutoff), start);
+    else for (let j = 0; j < cutoff; j++) reverse[start + j] = base + j;
+    if (entry - cutoff >= 16 && aliased + cutoff >= 0 && aliased + entry <= 4096) reverse.set(ALIAS_IOTA.subarray(base + cutoff, base + entry), aliased + cutoff);
+    else for (let j = cutoff; j < entry; j++) reverse[aliased + j] = base + j;
   }
   return {starts, reverse};
 }

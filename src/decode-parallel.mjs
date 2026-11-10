@@ -8,7 +8,7 @@ import {rgbaPixels} from './decode-compose.mjs';
 import {plainFrame} from './decode-region.mjs';
 
 const BAND_WORKER = 'rapier-jxl-decode';
-const nodeThreads = (() => { try { return globalThis.process?.getBuiltinModule?.('node:worker_threads'); } catch { return undefined; } })();
+const nodeThreads = /* @__PURE__ */ (() => { try { return globalThis.process?.getBuiltinModule?.('node:worker_threads'); } catch { return undefined; } })();
 const groupRows = f => Math.ceil(f.height / 256);
 const rgbaArray = (format, length) => new (format === 'float32' ? Float32Array : format === 'uint16' ? Uint16Array : Uint8Array)(length);
 

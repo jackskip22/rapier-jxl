@@ -52,6 +52,12 @@ function fusedModule() {
     fusedState = 1; return module;
   } catch { return null; }
 }
+let bandsFused = null;
+export function bandsAtSpeed() {
+  const module = fusedAllowed ? fusedModule() : null;
+  if (!module) return true;
+  return bandsFused ??= WebAssembly.Module.exports(module).some(entry => entry.name === 's2MetricBand');
+}
 export async function compileFusedMetric() {
   if (fusedState || suppliedWasm()) return;
   try { if (WebAssembly.validate(fusedBytes())) await compileWasm('s2-fused', fusedBytes); } catch {}
@@ -137,6 +143,16 @@ function metricScale(...args) {
   }
   kernel.s2MetricScale(...args);
 }
+function metricBand(...args) {
+  if (fused?.s2MetricBand && fusedAllowed && fusedState > 0) {
+    const failed = new Int32Array(memory.buffer,FAILED,1);
+    failed[0] = 0;
+    const made = fused.s2MetricBand(...args);
+    if (!failed[0]) return made;
+    fusedState = -2; fused = null;
+  }
+  return kernel.s2MetricBand(...args);
+}
 function reserve(plan) {
   ready();
   if (plan.arenaBytes <= memory.buffer.byteLength) return;
@@ -186,7 +202,7 @@ export function scaleBand(a,b,w,h,g,first,end,previous = null) {
     new Uint8Array(memory.buffer,plan.scratch,plan.rowBytes).set(previous.scratch);
     new Float64Array(memory.buffer,plan.sums,18).set(previous.sums);
   }
-  const made = kernel.s2MetricBand(w,h,first,end,inputY,inputH,plan.reference,a.rgba ? 0 : 1,
+  const made = metricBand(w,h,first,end,inputY,inputH,plan.reference,a.rgba ? 0 : 1,
     plan.distorted,b.rgba ? 0 : 1,LUT,GAUSS,plan.scratch,plan.sums,KEYS,VALUES);
   if (made !== inputEnd) throw fault('JXL_INTERNAL','SSIMULACRA2 row continuation did not consume its input.');
   return {scratch:new Uint8Array(memory.buffer,plan.scratch,plan.rowBytes).slice(),

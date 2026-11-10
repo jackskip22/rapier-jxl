@@ -10,11 +10,11 @@ const tag = value => Object.prototype.toString.call(value);
 const invalidBytes = value => !(tag(value) === '[object Uint8Array]' && value.byteLength > 0);
 
 function blob(value) { return typeof Blob === 'function' && value instanceof Blob; }
+const isBitmap = value => typeof ImageBitmap === 'function' && value instanceof ImageBitmap || typeof VideoFrame === 'function' && value instanceof VideoFrame;
 function transfers(value, buffers = new Set(), seen = new Set()) {
-  if (!value || typeof value !== 'object' || seen.has(value) || blob(value)) return buffers;
+  if (!value || typeof value !== 'object' || seen.has(value) || blob(value) || isBitmap(value)) return buffers;
   seen.add(value);
-  if (value instanceof ArrayBuffer || typeof ImageBitmap === 'function' && value instanceof ImageBitmap ||
-      typeof VideoFrame === 'function' && value instanceof VideoFrame || typeof MessagePort === 'function' && value instanceof MessagePort) buffers.add(value);
+  if (value instanceof ArrayBuffer || typeof MessagePort === 'function' && value instanceof MessagePort) buffers.add(value);
   else if (ArrayBuffer.isView(value)) buffers.add(value.buffer);
   else for (const item of Object.values(value)) transfers(item, buffers, seen);
   return buffers;
@@ -66,8 +66,9 @@ export function createTransport(host) {
   }
   function send(current, job) {
     if (!current.ready || !job.started || job.sent || job.settled || thread !== current || running.get(job.id) !== job) return;
+    const bitmap = isBitmap(job.input);
     try {
-      current.worker.postMessage({id: job.id, operation: job.operation, input: job.input, options: job.options, ...(job.onPreview && {preview: true}), maxPixels, jpegPixels, helpers, webgpu, lane: job.lane, alone: job.alone}, [...transfers([job.input, job.options])]);
+      current.worker.postMessage({id: job.id, operation: job.operation, input: job.input, options: job.options, ...(bitmap && {bitmap: true}), ...(job.onPreview && {preview: true}), maxPixels, jpegPixels, helpers, webgpu, lane: job.lane, alone: job.alone}, [...transfers([job.input, job.options])]);
       job.sent = true;
       job.input = job.options = null;
     } catch (reason) { try { complete(job, false, reason); } finally { stopThread(); } }

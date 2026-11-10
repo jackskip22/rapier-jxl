@@ -12,7 +12,7 @@ import {MEASURED_EFFORT} from '../effort-level.mjs';
 
 export async function animationPhoto(animation, settings, encodeAt, {signal, maxPixels, onProgress, preview} = {}) {
   const {qualityIntent, ...codec} = settings;
-  const encode = (quality, progress = onProgress) => encodeAt({...codec, quality}, progress);
+  const encode = (quality, progress = onProgress, probe = false) => encodeAt({...codec, quality, ...(probe && {probe})}, progress);
   const fixed = async quality => {
     const bytes = await encode(quality); check(signal);
     return {bytes, quality, exact: quality === 100, measurements: []};

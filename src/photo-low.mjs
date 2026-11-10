@@ -85,10 +85,10 @@ function* pictureSteps(data, width, height, quality, effort, images, color, spli
     if (alone(quality, effort, filter, smooth, Math.min(width, height) < 256)) {
       try { return yield* retainedSteps(part(candidate(filteredQuality(quality, smooth), filteredBudgets(effort), true), 0, 1), null, control); }
       catch (error) { if (!sizeFailure(error)) throw error; }
-      return yield* retainedSteps(part(candidate(quality, fastBudgets(effort, filter)), 0, 1), null, control);
+      return yield* retainedSteps(part(candidate(quality, fastBudgets(effort, filter, width * height)), 0, 1), null, control);
     }
     const stages = effort >= 3 && filter ? 2 : 1;
-    const best = yield* retainedSteps(part(candidate(quality, fastBudgets(effort, filter)), 0, stages), null, control);
+    const best = yield* retainedSteps(part(candidate(quality, fastBudgets(effort, filter, width * height)), 0, stages), null, control);
     if (stages === 1 || control.hurried) return best;
     return yield* retainedSteps(part(candidate(filteredQuality(quality), filteredBudgets(effort), true), 1, stages), best, control);
   }
@@ -130,7 +130,7 @@ export async function encodeLowSplit(data, width, height, quality, effort, helpe
       if (bytes !== null) return bytes;
     } catch (error) { options.signal?.throwIfAborted(); if (!sizeFailure(error)) throw error; }
   }
-  let best = await encodeSplitCandidates(data, width, height, quality, helpers, fastBudgets(effort, filter),
+  let best = await encodeSplitCandidates(data, width, height, quality, helpers, fastBudgets(effort, filter, width * height),
     {...rest, gaborish: false, opaque: true});
   options.signal?.throwIfAborted();
   if (best === null || effort < 3 || !filter || alone(quality, effort, filter, smooth, Math.min(width, height) < 256)) return best;
@@ -159,7 +159,7 @@ export function makeLowUpload(data, width, height, quality, effort, smooth) {
 }
 export function* finishLowUpload(state, effort) {
   if (!state.split) return state.incumbent;
-  return yield* retainedSteps(splitCandidates(state.split, state.filtered ? filteredBudgets(effort) : fastBudgets(effort, state.filter)), state.incumbent);
+  return yield* retainedSteps(splitCandidates(state.split, state.filtered ? filteredBudgets(effort) : fastBudgets(effort, state.filter, state.split.width * state.split.height)), state.incumbent);
 }
 export function closeLowUpload(state) { if (state.split) splitEnd(state.split); }
 

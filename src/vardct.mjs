@@ -9,7 +9,7 @@ import {blockContexts, contextsFromThresholds, acContexts, writeBlockContexts, D
 export {blockContexts, acContexts} from './vardct-contexts.mjs';
 import {kernelHooks} from './kernel-hooks.mjs';
 import {BitWriter, float16Bits, ceilLog2, complete} from './bits.mjs';
-import {finishSections, assembleCodestream, GROUP_DIM, GROUP_TOKENS, varDCTSectionCount} from './frame.mjs';
+import {finishSections, assembleCodestream, writeTOC, codestreamFromParts, GROUP_DIM, GROUP_TOKENS, varDCTSectionCount} from './frame.mjs';
 import {writeImageHeader} from './icc-write.mjs';
 import {ZERO_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, MIN_RUN_SYMBOL, MIN_RUN_LENGTH, RUN_CONFIG, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {codeMetadataPlane, writeModularStream as plainModularStream, writeSmallerModularStream} from './modular-channel.mjs';
@@ -150,6 +150,8 @@ const PLAN_LIT_TOUCHED = new Uint16Array(4096);
 const PLAN_SLOTS = [0, 0, 0];
 
 function planModularChannel(plane, width, height, predictor, freq) {
+  const planned = predictor === GRADIENT_PREDICTOR ? kernelHooks.dcPlan?.(plane, width, height, freq) : null;
+  if (planned) return planned;
   const n = width * height, tags = new Uint32Array(n), extra = new Uint32Array(n), lengths = new Uint32Array(33);
   const litCounts = PLAN_LIT_COUNTS, litTouched = PLAN_LIT_TOUCHED, slots = PLAN_SLOTS;
   let used = 0, run = 0, touchedLen = 0, overflow = null;
@@ -235,7 +237,7 @@ export function writeModularStream(w, planes, predictor, ans, kernels) {
       const f = freqs[c], lengths = histograms[c + 1].code.lengths;
       for (let s = 0; s < lengths.length; s++) if (f[s]) prefixBits += f[s] * (lengths[s] + (s < 224 ? (s > 1 ? s - 1 : 0) : Math.max(0, s - 236)));
       const model = losslessCoding(plan)[1], cfg = model.config, slots = PLAN_SLOTS;
-      if (cfg.split !== 0 || cfg.msb !== 0 || cfg.lsb !== 0) {
+      if ((cfg.split !== 0 || cfg.msb !== 0 || cfg.lsb !== 0) && !kernelHooks.planTokens?.(plan, cfg)) {
         const tags = plan.tags, extra = plan.extra, used = plan.used;
         for (let i = 0; i < used; i++) {
           const symbol = tags[i] & 511;
@@ -398,11 +400,11 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
       else if (field - 1 < -32768 || field - 1 > 32767) modular16bit = false;
     } else if (field - 1 < -32768 || field - 1 > 32767) modular16bit = false;
     const colors = [new Int16Array(cw * ch), new Int16Array(cw * ch)];
-    if ((xyb || directRGB) && jpeg.cfl) copyVarDCTCorrelation(jpeg.cfl, x0, y0, cw, ch, colors);
+    if (!(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && (xyb || directRGB) && jpeg.cfl) copyVarDCTCorrelation(jpeg.cfl, x0, y0, cw, ch, colors);
     const metadata = [
       {w: cw, h: ch, data: colors[0]}, {w: cw, h: ch, data: colors[1]},
       uniformBlocks ? {w: count, h: 2, rowValues: [0, field - 1]} : {w: count, h: 2, data: blocks},
-      uniformSharpness ? {w: rw, h: rh, rowValues: new Int16Array(rh).fill(sharpVal)} : {w: rw, h: rh, data: epf ? sharpnessOf(x0, y0, rw, rh) : new Int16Array(rw * rh)},
+      uniformSharpness ? {w: rw, h: rh, rowValues: new Int16Array(rh).fill(sharpVal)} : {w: rw, h: rh, data: !(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && epf ? sharpnessOf(x0, y0, rw, rh) : new Int16Array(rw * rh)},
     ];
     const plainMetadata = target => writeSmallerModularStream(target, metadata, field > 1 ? GRADIENT_PREDICTOR : ZERO_PREDICTOR);
     if (lfCoder?.metadataSteps) yield* lfCoder.metadataSteps(w, metadata, plainMetadata, kernels);
@@ -789,7 +791,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
       if (single) section(index).append(w);
       else {
         writers[index] = w;
-        if (alphaChannel) writeAlpha(w, [alphaPlane(g % groupsX, Math.floor(g / groupsX))]);
+        if (!(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && alphaChannel) writeAlpha(w, [alphaPlane(g % groupsX, Math.floor(g / groupsX))]);
       }
       checkSection(index);
     }
@@ -808,7 +810,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
       const bracket = progression?.brackets[p] ?? {minimum: 0, maximum: 2};
       auxiliary.group(w, g % groupsX * GROUP_DIM, Math.floor(g / groupsX) * GROUP_DIM, GROUP_DIM, bracket.minimum, bracket.maximum);
     }
-    else if (alphaChannel && numGroups > 1 && p === (progression?.alphaPass ?? 0)) writeAlpha(w, [alphaPlane(g % groupsX, Math.floor(g / groupsX))]);
+    else if (!(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && alphaChannel && numGroups > 1 && p === (progression?.alphaPass ?? 0)) writeAlpha(w, [alphaPlane(g % groupsX, Math.floor(g / groupsX))]);
     return index;
   };
   for (let p = 0; p < numPasses; p++) for (let g = 0; g < numGroups; g += UNIT_GROUPS) {
@@ -827,7 +829,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   }
   const level = isFirstFrame ? jpeg.level ?? 5 : 5, boundedHeader = journaling() && jpeg.profile?.iccData;
   let bytes, sections;
-  if (boundedHeader) bytes = yield* journalTool('varDCTFile')(header => writeVarDCTHeader(header, jpeg, layout, modular16bit, writeImageHeader), writers, level);
+  if (boundedHeader) bytes = yield* journalTool('varDCTFile')(header => writeVarDCTHeader(header, jpeg, layout, modular16bit, writeImageHeader), writers, level, {BitWriter, writeTOC, codestreamFromParts});
   else {
     const header = new BitWriter(256);
     writeVarDCTHeader(header, jpeg, layout, modular16bit, writeImageHeader);

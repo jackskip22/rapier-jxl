@@ -92,7 +92,7 @@ type SavedOptions<Options, Keys extends keyof Options> = Readonly<Pick<Options, 
 /** Capture's data-only saved options. Per-call cancellation is supplied to advance or finish. */
 export type ResumableCaptureOptions = SavedOptions<CaptureOptions, 'fidelity' | 'effort' | 'webgpu'>;
 /** capture-complete's data-only saved options: its rectangles too. */
-export type ResumableCaptureCompleteOptions = Saved<CaptureCompleteOptions, 'fidelity' | 'effort' | 'webgpu' | 'exactRects' | 'photoRects' | 'maxPixels'>;
+export type ResumableCaptureCompleteOptions = Saved<CaptureCompleteOptions, 'fidelity' | 'effort' | 'webgpu' | 'exactRects' | 'photoRects' | 'textComplete' | 'maxPixels'>;
 /** Recompression preserves the JPEG's coefficients and takes these ordinary JPEG settings. */
 export type ResumableJPEGOptions = SavedOptions<JPEGOptions, 'effort' | 'icc' | 'maxPixels'>;
 /** Restoration admits only the pixel bound in its saved plan. */

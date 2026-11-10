@@ -11,8 +11,10 @@ export async function runBackground({event, platform, scope, work, runner, libra
       !Number.isFinite(wakeMs) || wakeMs <= 0 || !Number.isFinite(stepMs) || stepMs <= 0 || stepMs > 60000 ||
       cpuLimitMs !== null && (!Number.isFinite(cpuLimitMs) || cpuLimitMs <= 0))
     throw fail('JXL_OPTIONS', 'Expected this site’s scheduled work and its native host allowance.');
+  // Every wake ends at its allowance, Node's too: EmDash takes back a task 'running' for 10 minutes, so an unbounded Node
+  // wake was claimed twice, and one cut by a restart left the task locked with nothing advancing.
   const started = now(), allowance = cpuLimitMs === null ? wakeMs : Math.min(wakeMs, cpuLimitMs * 0.8);
-  const deadline = platform === 'cloudflare' || cpuLimitMs !== null ? started + allowance : Infinity;
+  const deadline = started + allowance;
   const result = {advances: 0, completed: 0, stopped: 'idle'};
   const remaining = () => Math.min(stepMs, deadline - now());
   const exhausted = () => {
@@ -77,4 +79,18 @@ export async function runBackground({event, platform, scope, work, runner, libra
     if (!page.cursor || seen.has(page.cursor)) throw fail('JXL_IO', 'The work queue repeated a page.');
     seen.add(page.cursor); cursor = page.cursor;
   }
+}
+
+// A task left 'running' by a process that ended mid-wake: EmDash frees it only after 10 minutes. A wake ends within its
+// allowance, so a jxl-work task whose next run is STUCK_MS overdue while this process runs no wake is stuck: it is
+// replaced by a fresh idle one (EmDash's cancel deletes the row; a late finish of the old one updates nothing).
+export const STUCK_MS = 120000;
+export async function recoverWake(ctx, {active = false, now = () => Date.now(), call = action => action()} = {}) {
+  if (active) return false;
+  const tasks = await call(() => ctx.cron.list());
+  const task = Array.isArray(tasks) ? tasks.find(item => item?.name === 'jxl-work') : null, at = Date.parse(task?.nextRunAt ?? '');
+  if (!Number.isFinite(at) || now() - at < STUCK_MS) return false;
+  await call(() => ctx.cron.cancel('jxl-work'));
+  await call(() => ctx.cron.schedule('jxl-work', {schedule: '* * * * * *', data: {kind: 'images'}}));
+  return true;
 }

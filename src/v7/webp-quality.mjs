@@ -35,15 +35,16 @@ export function gradient(picture, {stride = picture.width, origin = 0} = {}) {
 }
 export function gradientRows(acc, data, width, height, from, to, {table = null, float = false, stride = width, origin = 0, row0 = 0} = {}) {
   const rowStride = stride * 4;
-  let {sum, n} = acc;
+  let {sum, n, chroma = 0} = acc;
   for (let y = from + ((1 - from) % 4 + 4) % 4; y < Math.min(to, height - 1); y += 4) {
     let i = (origin + (y - row0) * stride) * 4, here = luma(data, i, table, float);
     for (let x = 0; x < width - 1; x++, i += 4) {
       const right = luma(data, i + 4, table, float);
       sum += Math.abs(right - here) + Math.abs(luma(data, i + rowStride, table, float) - here); here = right; n++;
+      if (!table) chroma += Math.abs(data[i] - data[i + 1]) + Math.abs(data[i + 2] - data[i + 1]);
     }
   }
-  acc.sum = sum; acc.n = n;
+  acc.sum = sum; acc.n = n; acc.chroma = chroma;
 }
 
 function line(at, g) {
@@ -63,8 +64,13 @@ export function qualityFor(q, g) {
 
 const CEILING = [67, 68, 68, 68, 69, 69, 70, 70, 71, 71, 72, 72, 73, 73, 73, 74, 74, 75, 75, 76, 76, 77, 77, 77, 78, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 88, 90, 90, 91, 92, 93, 94, 95, 95, 96, 96, 97, 97];
 const LOW_CEILING = [13, 15, 16, 18, 19, 20, 22, 22, 23, 24, 26, 27, 27, 29, 30, 32, 33, 35, 38, 40, 41, 42, 45, 46, 48, 48, 49, 50, 52, 53, 54, 55, 56, 57, 58, 58, 59, 59, 60, 61, 62, 63, 64, 64, 65, 65, 66, 67, 67];
-export const ceilingFor = q => q > 0.98 ? Infinity : q <= 0.49 ? LOW_CEILING[Math.max(0, Math.ceil(q * 100 - 1e-9) - 1)]
-  : CEILING[Math.max(0, Math.ceil((q - 0.5) * 100 - 1e-9))];
+const ceilingAt = q => q < 50 ? LOW_CEILING[q - 1] : CEILING[q - 50];
+export const ceilingFor = q => {
+  if (q > 0.98) return Infinity;
+  const at = Math.max(1, q * 100), lower = Math.min(98, Math.floor(at + 1e-9));
+  const fraction = Math.max(0, at - lower), low = ceilingAt(lower);
+  return fraction > 1e-9 ? low + (ceilingAt(Math.min(98, lower + 1)) - low) * fraction : low;
+};
 
 const SMALL = [[32, [84, 84, 84, 84, 84, 84, 84, 84, 84, 84, 84, 84, 84, 86, 86, 86, 86, 88, 88, 88, 88, 88, 88, 88, 88, 88, 88, 90, 90, 91, 93, 93, 94, 95, 95, 95, 95, 96, 96, 96, 97, 98, 98, 98, 98, 99, 99, 99, 99, 99]], [64, [90, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90, 91, 91, 91, 91, 91, 91, 91, 91, 91, 91, 92, 92, 92, 92, 93, 94, 95, 95, 95, 95, 95, 96, 96, 96, 97, 97, 97, 98, 98, 99, 99, 99, 99, 99, 99.5, 99.5, 99.5]], [128, [72, 75, 75, 75, 75, 75, 75, 75, 75, 75, 78, 78, 78, 78, 78, 78, 78, 78, 80, 80, 80, 80, 80, 80, 80, 80, 82, 82, 84, 84, 86, 86, 88, 88, 90, 90, 91, 91, 91, 91, 92, 92, 93, 94, 94, 94, 95, 95, 95, 96]], [256, [67, 69, 69, 69, 69, 69, 71, 71, 71, 71, 71, 73, 73, 73, 73, 73, 75, 75, 75, 75, 75, 77, 77, 77, 77, 77, 79, 79, 81, 81, 83, 83, 85, 85, 87, 87, 89, 89, 91, 91, 93, 93, 93, 95, 95, 97, 97, 97, 97]]];
 const SMALL_LOW = [[32, [15, 15, 15, 20, 20, 20, 30, 35, 45, 50, 50, 50, 55, 60, 60, 64, 64, 68, 72, 72, 72, 72, 72, 72, 72, 72, 72, 75, 75, 75, 78, 78, 78, 78, 78, 78, 78, 78, 80, 80, 80, 80, 80, 80, 82, 82, 84, 84, 84]], [64, [60, 64, 68, 68, 72, 72, 75, 75, 75, 75, 75, 75, 75, 75, 78, 78, 78, 78, 78, 78, 80, 80, 80, 80, 80, 80, 82, 84, 84, 84, 84, 84, 84, 86, 86, 86, 86, 86, 86, 86, 86, 88, 88, 88, 88, 88, 90, 90, 90]], [128, [3, 3, 3, 3, 3, 3, 10, 15, 15, 20, 20, 25, 25, 25, 25, 30, 30, 30, 30, 30, 35, 35, 35, 40, 40, 45, 45, 45, 50, 50, 55, 55, 55, 60, 60, 60, 64, 64, 64, 64, 64, 68, 68, 68, 72, 72, 72, 72, 72]]];

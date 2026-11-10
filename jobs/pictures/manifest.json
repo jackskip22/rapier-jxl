@@ -1,0 +1,63 @@
+{
+  "version": "8.3.2",
+  "pictures": [
+    {
+      "id": "screenshot",
+      "file": "screenshot-mdn.png",
+      "kind": "png",
+      "width": 1920,
+      "height": 1080,
+      "sha256": "82cffc076e2219801170d63799974f5e5dfc56096a838ef492305560fc9affa6",
+      "rgbaSha256": "9592f20763f9d63414ed0141fab50e74f623b7417c8eb0d9d4005704411b6379",
+      "source": "Canvas API page of MDN Web Docs, captured in Chrome 155",
+      "sourceURL": "https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API",
+      "author": "Mozilla Contributors",
+      "license": "CC BY-SA 2.5",
+      "licenseURL": "https://creativecommons.org/licenses/by-sa/2.5/"
+    },
+    {
+      "id": "photo",
+      "file": "photo-kodim23.png",
+      "kind": "png",
+      "width": 768,
+      "height": 512,
+      "sha256": "090880a1dbce96bb7d1db3f583fb830e98ef4de67542cbad2185a1111e04e928",
+      "rgbaSha256": "c3b1252504d7aaf3c6b6b12bc037aefae380ec4574b565fb84ce6d99e9158b36",
+      "source": "Kodak Lossless True Color Image Suite, kodim23",
+      "sourceURL": "https://r0k.us/graphics/kodak/",
+      "author": "Eastman Kodak",
+      "license": "Released by Eastman Kodak for unrestricted use",
+      "licenseURL": "https://r0k.us/graphics/kodak/"
+    },
+    {
+      "id": "camera",
+      "file": "camera-iphone16.jpg",
+      "kind": "jpeg",
+      "width": 4032,
+      "height": 3024,
+      "sha256": "7166b35f92c1168221cf0211fa755c9495d1883a50b5d7dab8b6bd758da2c5af",
+      "source": "Juvenile Atlantic Ghost Crab along the beach in Kitty Hawk, North Carolina; iPhone 16 original",
+      "sourceURL": "https://commons.wikimedia.org/wiki/File:2026-09-10_0953_Juvenile_Atlantic_Ghost_Crab_along_the_beach_in_Kitty_Hawk,_North_Carolina.jpg",
+      "author": "TheDetroitGeographer",
+      "license": "CC0 1.0",
+      "licenseURL": "https://creativecommons.org/publicdomain/zero/1.0/"
+    }
+  ],
+  "expected": {
+    "screenshot-exact-e1": "8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f",
+    "screenshot-exact-e3": "8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f",
+    "screenshot-exact-e7": "95009dcc0d48d84a95f33bbc9f00fcff2d7d6d55d8092e70a26e7c35d8609439",
+    "screenshot-lossy-e1": "8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f",
+    "screenshot-lossy-e3": "8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f",
+    "screenshot-lossy-e7": "8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f",
+    "photo-exact-e1": "6078d53ef2d1fed193c1439a2a4d7024f570b43cf8606ca39cd05440e3752f8f",
+    "photo-exact-e3": "7618cd16bf8dc70dacda68089a5914dc37168024098a858883aca426a4441ac9",
+    "photo-exact-e7": "8e51d0b63ef23dc8b21df8c9cf6142d10a28e0aaae2fc4ef0574f1a29caddf83",
+    "photo-lossy-e1": "4cdc398d4a86ddacb23b47f43b43eba8f55ae1d839ceb84310327a773c75da27",
+    "photo-lossy-e3": "448c42c2fd9672268ae0a2bef5972ea52fbcaee7361fb090082fb2e547eb948d",
+    "photo-lossy-e7": "c51d11faed9ad593082611e19571cf87154295ef0a50c91b455b1cf8e47f51b6",
+    "camera-recompress-e1": "52431ea23eb7283e2b61bc7be8a378eb9ef758930827af4dd9b7b319c0b74bfb",
+    "camera-recompress-e3": "c9502cb07a59f43b5fbeb05720bde392e39e3aacfdb1dd09f66997485fdbef99",
+    "camera-recompress-e7": "d761d76c014bb127df97b17ef4312a506bd93713df0be7f6aa69ebb4e57e745d"
+  }
+}

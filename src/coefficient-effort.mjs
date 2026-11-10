@@ -35,7 +35,7 @@ export function* coefficientOrderSteps(components, bucket = 8, adaptiveFast = fa
       if (yield done / total) return null;
     }
     for (let k = 1; k < 64; k++) counts[k] = natural[SCAN[k]];
-    if (adaptiveFast && c === 1) {
+    if (!(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && adaptiveFast && c === 1) {
       const lumaOrder = orderFromHistogram(counts, bucket);
       if (!worthFastOrder(counts, lumaOrder, coeffs.length >> 6)) return null;
     }
@@ -44,7 +44,7 @@ export function* coefficientOrderSteps(components, bucket = 8, adaptiveFast = fa
 }
 
 export function ordersFromCounts(histograms, bucket = 8, adaptiveFast = false, blocks = Infinity) {
-  if (adaptiveFast && histograms.length === 3) {
+  if (!(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && adaptiveFast && histograms.length === 3) {
     const lumaOrder = orderFromHistogram(histograms[1], bucket);
     if (!worthFastOrder(histograms[1], lumaOrder, blocks)) return null;
     return [orderFromHistogram(histograms[0], bucket), lumaOrder, orderFromHistogram(histograms[2], bucket)];
@@ -111,7 +111,7 @@ export function* coefficientEffortSteps(jpeg, effort, fallback, retain, shared =
     if (!keep(first, {}) || hurry || effort < 3) { settled = true; return best; }
     const parts = effort < 4 ? 1 : 3;
     const clustered = yield* write({clusters: CLUSTERED}, done => 0.5 + done / (2 * parts));
-    if (!keep(clustered, {clusters: CLUSTERED}) || hurry || effort < 4) { settled = true; return best; }
+    if (!keep(clustered, {clusters: CLUSTERED}) || hurry || effort < 4 || (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true)) { settled = true; return best; }
     active = coefficientOrderSteps(jpeg.components);
     let step;
     while (!(step = active.next()).done) {

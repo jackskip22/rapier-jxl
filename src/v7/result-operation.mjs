@@ -8,7 +8,7 @@ import {RESULT_REFERENCE, RAW_OPERATION} from './result-reference.mjs';
 export {RESULT_REFERENCE, RAW_OPERATION, resultReference, resultFacts} from './result-reference.mjs';
 
 const CALL_FIELDS = ['fidelity', 'effort', 'features', 'readAs', 'webgpu', 'maxPixels', 'maxBytes', 'icc',
-  'signal', 'onProgress', 'onPreview', 'onEncoded', 'exactRects', 'photoRects', 'outputs'];
+  'signal', 'onProgress', 'onPreview', 'onEncoded', 'exactRects', 'photoRects', 'textComplete', 'outputs'];
 export function completionOptions(given, capture = false) {
   const supplied = object(given), options = {...supplied};
   for (const key of CALL_FIELDS) if (!Object.hasOwn(options, key) && key in supplied) options[key] = supplied[key];

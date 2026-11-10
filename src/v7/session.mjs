@@ -12,6 +12,21 @@ import {admitCapture} from './capture-options.mjs';
 import {fail, pixelLimit, dimensions, LARGEST, lostBlank, proveRead, LOST} from './primitives.mjs';
 import {WHOLE} from '../memory-device.mjs';
 
+export let bitmapClones;
+export const bitmapCloneCheck = typeof createImageBitmap !== 'function' || typeof ImageData !== 'function' || typeof MessageChannel !== 'function'
+  ? (bitmapClones = true, Promise.resolve(true))
+  : createImageBitmap(new ImageData(1, 1)).then(bitmap => {
+      const channel = new MessageChannel();
+      try { channel.port1.postMessage(bitmap); bitmapClones = true; }
+      catch { bitmapClones = false; }
+      finally {
+        try { bitmap.close(); } catch {}
+        try { channel.port1.close(); } catch {}
+        try { channel.port2.close(); } catch {}
+      }
+      return bitmapClones;
+    }, () => (bitmapClones = false)).catch(() => (bitmapClones = false));
+
 export function encoder(client, config = {}, operations, spec = {}) {
   const upload = spec.module === 'rapier-jxl/upload';
   const wrap = name => (input, given) => {
@@ -71,11 +86,11 @@ export function encoder(client, config = {}, operations, spec = {}) {
         return client[name](withCost(bridge.record, 64), fixed).finally(bridge.close);
       }
       const half = (preparation || name === 'encode' && !upload);
-      const handed = client.remote && typeof createImageBitmap === 'function' && snapshot(input, maxPixels, config, options, shape => client.admitSurface(shape, options), half, name === 'capture');
+      const handed = client.remote && snapshot(input, maxPixels, config, options, shape => client.admitSurface(shape, options), half, name === 'capture', bitmapClones === true && typeof createImageBitmap === 'function');
       if (handed?.rows) { const {readAs: _readAs, ...rest} = fixed ?? {}; return wrap(name)(handed, rest); }
       if (handed) {
         const job = client.acquired(name, handed.taking, handed.cost, handed.readAs === undefined ? fixed : {...fixed, readAs: handed.readAs});
-        job.then(() => {}, () => {}).then(() => handed.taking).then(taken => taken.close?.(), () => {});
+        job.then(() => {}, () => {}).then(() => handed.taking).then(taken => { try { taken?.close?.(); } catch {} }, () => {});
         return job;
       }
       let pixels = surface(input, {...config, maxPixels, half, readAs: options?.readAs, admitSurface: shape => client.admitSurface(shape, options)});
@@ -94,7 +109,7 @@ export function encoder(client, config = {}, operations, spec = {}) {
     prepare: client.prepare, close: client.close, get stats() { return client.stats; }});
 }
 
-function snapshot(input, maxPixels, {maxPendingBytes = 268435456}, options, admitSurface, half, capture) {
+function snapshot(input, maxPixels, {maxPendingBytes = 268435456}, options, admitSurface, half, capture, handoff) {
   const frame = typeof VideoFrame === 'function' && input instanceof VideoFrame;
   const bitmap = frame || typeof ImageBitmap === 'function' && input instanceof ImageBitmap;
   if (!bitmap && typeof input?.getContext !== 'function') return null;
@@ -102,6 +117,7 @@ function snapshot(input, maxPixels, {maxPendingBytes = 268435456}, options, admi
   const over = capture && !bitmap && width * height > WHOLE && width * height * 4 > maxPendingBytes;
   dimensions(width, height, maxPixels); if (!over) admitSurface({width, height});
   if (width * height * 4 > maxPendingBytes && !over) throw fail('JXL_MEMORY', 'The image is over maxPendingBytes.');
+  if (!over && handoff !== true) return null;
   const readAs = options?.readAs, context = bitmap ? null : input.getContext('2d', {willReadFrequently: true});
   if (over && !context) return null;
   if (half && context?.getContextAttributes?.().colorType === 'float16') return null;
