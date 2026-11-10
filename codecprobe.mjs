@@ -6,7 +6,11 @@
 // Heartbeat: window.__result after every step (done:true at end).
 import {shape, brief} from './shape.mjs';
 const pkg = document.documentElement.dataset.pkg;
-const {capture} = await import('rapier-jxl');
+// 8.3 returns a result record; 8.2.0 returned the bytes. Rows compare bytes.
+const B = r => (r && r.bytes instanceof Uint8Array) ? r.bytes : r;
+const W = f => f && (async (...a) => B(await f(...a)));
+const _m = await import('rapier-jxl');
+const capture = W(_m.capture ?? (await import('rapier-jxl/capture')).capture);
 const {createCodec} = await import('rapier-jxl/codec');
 const steps = [], probes = [];
 const beat = at => { window.__result = {done: false, at, pkg, userAgent: navigator.userAgent, steps: steps.slice(), probes: probes.slice()}; document.getElementById('state').textContent = at; };
@@ -69,7 +73,7 @@ const viaShim = async (module, input, options) => {
   const file = `./shim-${pkg}-${module.replace('rapier-jxl/', '')}.mjs`, from = probes.length;
   const q = createCodec({module, workerFactory: () => new Worker(file, {type: 'module'})});
   let bytes, error;
-  try { bytes = await q.capture(input, options); } catch (e) { error = e; } finally { await q.close().catch(() => {}); }
+  try { bytes = B(await q.capture(input, options)); } catch (e) { error = e; } finally { await q.close().catch(() => {}); }
   await new Promise(r => setTimeout(r, 300));
   const jobs = probes.slice(from).filter(p => p.kind === 'job'), boot = probes.slice(from).find(p => p.kind === 'boot');
   return {bytes, error, arrived: jobs.map(j => `${j.operation}: ${brief(j.input)} opts=[${j.options}]`).join(' ; ') || (boot ? 'no job message' : 'shim did not boot'), realm: boot?.realm};
@@ -87,7 +91,7 @@ await shimRow('capture({data,width,height})', 'rapier-jxl/capture', () => record
 await shimRow('capture(WRF canvas) q80', 'rapier-jxl/capture-complete', () => canvas, {fidelity: {quality: 80}});
 
 // --- C: the default worker (what a SnapDOM plug-in gets) ---
-const viaDefault = async (input, module = 'rapier-jxl/capture') => { const q = createCodec({module}); try { return await q.capture(input); } finally { await q.close(); } };
+const viaDefault = async (input, module = 'rapier-jxl/capture') => { const q = createCodec({module}); try { return B(await q.capture(input)); } finally { await q.close(); } };
 for (const [name, make] of [['WRF canvas', () => canvas], ['bare canvas', () => bare], ['ImageBitmap', () => createImageBitmap(canvas)], ['ImageData', () => imageData()], ['{data,width,height}', () => record()]])
   await step(`codec default capture: ${name}`, async () => { const b = await viaDefault(await make()); return {pass: !reference || same(b, reference), bytes: b.length}; });
 

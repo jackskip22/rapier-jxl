@@ -1,9 +1,9 @@
-# Converts the existing content pages into the 3-pane template, in place.
+# Converts the existing content pages into the pane template, in place.
 # A page keeps its URL, <head> and content. What changes:
 #   - the old site header (or the new one, on a rerun) becomes the grouped header;
 #   - the hero becomes a DocHeader: breadcrumb, section-coloured title, lead, text links;
 #   - the content moves into the reading column, after the sidebar (every page of the
-#     section, with only group and page levels) and, where set, a live demo;
+#     section, with only group and page levels); where set, a live demo follows the column;
 #   - a Previous / Next pager and the footer directory close the page.
 # Markers (<!-- pane:start --> … <!-- pane:end -->) let a rerun find what it wrote.
 
@@ -34,6 +34,7 @@ SECTIONS = [
                               ('how-to/export-invoice-as-image/index.html','Export an invoice',None),
                               ('how-to/generate-social-card-from-html/index.html','Generate a social card',None),
                               ('how-to/capture-before-pdf/index.html','Capture before a PDF',None),
+                              ('how-to/pdf-cross-origin-images/index.html','PDF with cross-origin images',None),
                               ('how-to/export-chart-as-svg/index.html','Export a chart as SVG',None),
                               ('how-to/save-chart-js-as-png/index.html','Save a Chart.js chart',None)]),
    ('Special cases','ecosystem',[('how-to/capture-element-without-puppeteer/index.html','Capture without Puppeteer',None),
@@ -85,31 +86,26 @@ TARGETS = {'shadow': SAMPLE_SHADOW, 'tricky': TRICKY}
 def strip_tags(s):
     return html.unescape(re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', '', s)).strip())
 
-def rel(frm, to):
-    """Relative href from page `frm` to page `to` (both docs-relative file paths)."""
-    href = os.path.relpath(to, os.path.dirname(frm) or '.').replace(os.sep, '/')
-    return href[:-len('index.html')] or './' if href.endswith('index.html') else href
-
 def no_arrows(s):
     # The design drops arrow glyphs from link text; code samples keep theirs.
     s = re.sub(r'\s*<span class="arrow"[^>]*>\s*→\s*</span>', '', s)
     return re.sub(r'\s*→\s*(</a>)', r'\1', s)
 
-def heading_ids(body):
+def heading_ids(body, levels='2'):
     seen = set()
     def add(m):
-        attrs, inner = m.group(1) or '', m.group(2)
+        level, attrs, inner = m.group(1), m.group(2) or '', m.group(3)
         found = re.search(r'id="([^"]+)"', attrs)
         hid = found.group(1) if found else slug(strip_tags(inner))[:60]
         while hid in seen: hid += '-2'
         seen.add(hid)
-        return (m.group(0) if found else f'<h2 id="{hid}"{attrs}>{inner}</h2>'), hid, strip_tags(inner)
+        return (m.group(0) if found else f'<h{level} id="{hid}"{attrs}>{inner}</h{level}>'), hid, strip_tags(inner)
     heads = []
     def sub(m):
         html_, hid, text = add(m)
         heads.append((hid, text))
         return html_
-    body = re.sub(r'<h2(\s[^>]*)?>(.*?)</h2>', sub, body, flags=re.S)
+    body = re.sub(r'<h([' + levels + r'])(\s[^>]*)?>(.*?)</h\1>', sub, body, flags=re.S)
     return body, heads
 
 def body_region(src, start, end_marker):
@@ -168,7 +164,34 @@ def convert(section, gi, path, title, demo, flat):
     opts = demo or {}
     before, between, hero, content, after, toc = extract(src, opts)
     root = '../' * path.count('/')
-    content, heads = heading_ids(no_arrows(content))
+    docs = section['name'] == 'Docs'
+    content, heads = heading_ids(no_arrows(content), '23' if docs else '2')
+    if path == 'docs/options/index.html':
+        # Keep every option linkable, including options without a longer explanation.
+        table = re.search(r'<table class="cmp-table">.*?</table>', content, re.S)[0]
+        linked = table
+        details = {'scale': 'dimensions', 'width': 'dimensions', 'height': 'dimensions',
+                   'fontStylesheetDomains': 'fonts', 'filter': 'filtering', 'filterMode': 'filtering',
+                   'exclude': 'filtering', 'excludeMode': 'filtering', 'fallbackURL': 'fallback',
+                   'invalidate': 'memoization'}
+        for row in re.finditer(r'<tr(?: id="[^"]+")?><td class="num">(.*?)</td>', table):
+            names = strip_tags(row[1]).split(' / ')
+            labels = []
+            for n, name in enumerate(names):
+                target = details.get(name, name.lower())
+                attr = f' id="option-{name.lower()}"' if n else ''
+                label = f'<a{attr} href="#{target}">{E(name)}</a>' if any(h == target for h, _ in heads) else f'<span{attr}>{E(name)}</span>'
+                labels.append(label)
+            linked = linked.replace(row[0], f'<tr id="option-{names[0].lower()}"><td class="num">' + ' / '.join(labels) + '</td>')
+        content = content.replace(table, linked, 1)
+    elif path == 'docs/api/index.html':
+        for row in list(re.finditer(r'<tr(?: id="[^"]+")?><td class="num">(snapdom\.(\w+)\(el, options\?\))</td>', content)):
+            name = re.sub(r'([a-z])([A-Z])', r'\1-\2', row[2]).lower()
+            text = f'<a href="#download">{row[1]}</a>' if name == 'download' else row[1]
+            content = content.replace(row[0], f'<tr id="{name if name != "download" else "download-method"}"><td class="num">{text}</td>', 1)
+        for name in ('plugins', 'preCapture', 'version'):
+            content = re.sub(r'<tr(?: id="[^"]+")?>(<td class="num">snapdom\.' + name + r'(?:\([^<]*\))?</td>)',
+                             f'<tr id="{name.lower()}">\\1', content)
     heads = toc or heads
     if not opts.get('demo'): demo = None
     label, sec, _ = section['groups'][gi]
@@ -191,6 +214,14 @@ def convert(section, gi, path, title, demo, flat):
         side.append(group_html(glabel, gsec, links, any(p == path for p, _, _ in items)))
     sidebar_html = (f'<aside class="pane-side"><label class="pane-filter"><span aria-hidden="true">⌕</span><input type="search" placeholder="{section["filter"]}" aria-label="{section["filter"]}"></label>'
                     f'<nav class="pane-nav" aria-label="{section["name"]}">{"".join(side)}</nav></aside>')
+    if docs:
+        pages = ''.join(f'<a class="sec-{gs}" href="{rel(path, p)}"{CUR if p == path else ""}><span class="sec-dot"></span>{E(t)}</a>'
+                        for _, gs, items in section['groups'] for p, t, _ in items)
+        outline = ''.join(f'<a href="#{hid}" class="{"is-subsection" if level == "3" else ""}">{E(strip_tags(text))}</a>'
+                          for level, hid, text in re.findall(r'<h([23])\b[^>]*\bid="([^"]+)"[^>]*>(.*?)</h\1>', content, re.S))
+        sidebar_html = (f'<aside class="pane-side docs-side"><details class="docs-menu" open><summary>Docs <span aria-hidden="true">/</span> {E(title)}</summary>'
+                        f'<nav class="docs-pages" aria-label="Docs">{pages}</nav>'
+                        f'<nav class="docs-outline" aria-label="On this page"><p>On this page</p>{outline}</nav></details></aside>')
 
     i = [p for p, _, _ in flat].index(path)
     pager = '<nav class="pager" aria-label="Pages">'
@@ -200,6 +231,8 @@ def convert(section, gi, path, title, demo, flat):
 
     trail = [section['name']] + ([label] if label not in ('Overview', title, section['name']) else []) + [title]
     crumbs = '<span aria-hidden="true">/</span>'.join(f'<span>{E(t)}</span>' for t in trail)
+    if docs:
+        crumbs = f'<a href="{rel(path, "docs/index.html")}">Docs</a><span aria-hidden="true">/</span><span aria-current="page">{E(title)}</span>'
     links = ''.join(f'<a href="{h}">{E(t)}</a>' for h, t in hero['links'])
     doc_header = (f'<header class="doc-head"><div class="doc-head-bar"><nav class="doc-crumbs" aria-label="Breadcrumb">{crumbs}</nav>'
                   f'<span class="doc-meta">{E(hero["badge"])}</span></div><h1>{hero["title"]}</h1>'
@@ -215,9 +248,15 @@ def convert(section, gi, path, title, demo, flat):
     demo_html = demo_panel(TARGETS.get(demo.get('target'))) if demo else ''
 
     hero_json = json.dumps(hero).replace('--', '-\\u002d')  # "--" would end the comment
-    block = (f'{START}<!-- hero {hero_json} -->\n{header(section["menu"], root)}{between}\n'
-             f'<main id="main" class="pane{"" if demo else " no-demo"}" data-pane>\n{sidebar_html}\n{demo_html}\n'
-             f'<article class="pane-read sec-{sec}"{attrs}>\n{doc_header}\n<div class="pane-content"><!-- content -->{content}<!-- /content --></div>\n{pager}\n</article>\n</main>\n'
+    # A page with a demo closes with the demo and then the pager. Without one the pager stays
+    # inside the article and the markup is byte-identical to the previous build, so metadata.py
+    # does not stamp a new dateModified on a page whose content did not change.
+    tail = f'</article>\n{demo_html}\n{pager}\n</main>\n' if demo else f'{pager}\n</article>\n</main>\n'
+    skip = '<a class="docs-skip" href="#doc-content" tabindex="0">Skip to content</a>\n' if docs else ''
+    article_id = ' id="doc-content" tabindex="-1"' if docs else ''
+    block = (f'{START}<!-- hero {hero_json} -->\n{skip}{header(section["menu"], root)}{between}\n'
+             f'<main id="main" class="pane{"" if demo else " no-demo"}" data-pane>\n{sidebar_html}\n\n'
+             f'<article class="pane-read sec-{sec}"{article_id}{attrs}>\n{doc_header}\n<div class="pane-content"><!-- content -->{content}<!-- /content --></div>\n{tail}'
              f'{footer(root)}\n{END}')
     out = before + block + after
     # The old header's star counter had its own small fetch script; site.js fills
@@ -226,7 +265,7 @@ def convert(section, gi, path, title, demo, flat):
                  lambda m: '' if "getElementById('star-count')" in m.group(1) and len(m.group(1)) < 700 else m.group(0), out, flags=re.S)
     links_css = ''.join(f'<link rel="stylesheet" href="{root}{n}">' for n in ('navigation.css', 'panes.css') if f'{root}{n}"' not in out)
     out = out.replace('</head>', f'  {links_css}\n  <script type="module" src="{root}panes.js"></script>\n</head>', 1) if links_css else out
-    open(full, 'w').write(out)
+    open(full, 'w').write(page_navigation(out, path))
 
 for section in SECTIONS:
     flat = [(p, t, d) for _, _, items in section['groups'] for p, t, d in items]

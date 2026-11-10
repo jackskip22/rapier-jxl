@@ -6,7 +6,11 @@
 // Heartbeat: window.__result updates after every step; done:true when finished.
 const steps = [];
 const pkg = document.documentElement.dataset.pkg;
-const {capture} = await import('rapier-jxl');
+// 8.3 returns a result record; 8.2.0 returned the bytes. Rows compare bytes.
+const B = r => (r && r.bytes instanceof Uint8Array) ? r.bytes : r;
+const W = f => f && (async (...a) => B(await f(...a)));
+const _m = await import('rapier-jxl');
+const capture = W(_m.capture ?? (await import('rapier-jxl/capture')).capture);
 const {decode} = await import('rapier-jxl/decode');
 // A capture is right when it decodes to the painted picture (pixel 0,0 is rgb(200,100,50)); a blank read encodes to ~26 B.
 const painted = async b => { const d = (await decode(b)).data; return d[0] === 200 && d[1] === 100 && d[2] === 50 && d[3] === 255; };

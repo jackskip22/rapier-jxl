@@ -21,7 +21,13 @@ vi.mock('rapier-jxl/page-rects', async (importOriginal) => {
     ...real,
     measure: (...args) => { if (seen.measureFails) throw seen.measureFails; return real.measure(...args) },
     // `extra` is a property set, or one per call (the n-th pageRects call of the file).
-    pageRects: (...args) => ({ ...real.pageRects(...args), ...(typeof seen.extra === 'function' ? seen.extra(seen.rects++) : seen.extra) }),
+    // undefined removes that property: measure() already sets textComplete, and {} would leave it.
+    pageRects: (...args) => {
+      const extra = typeof seen.extra === 'function' ? seen.extra(seen.rects++) : seen.extra
+      const result = { ...real.pageRects(...args), ...extra }
+      if (extra && typeof extra === 'object') for (const key of Object.keys(extra)) if (extra[key] === undefined) delete result[key]
+      return result
+    },
   }
 })
 vi.mock('rapier-jxl/codec/capture-complete', async (importOriginal) => { seen.loads.push('capture-complete'); return counted(await importOriginal()) })
@@ -120,7 +126,8 @@ describe('jxl plugin: what reaches the encoder', () => {
     const result = await snapdom(el, { plugins: [jxl({ codec })], clip: { x: b.left + scrollX + 4, y: b.top + scrollY + 4, width: 200, height: 100 } })
     for (const [first, second, complete] of [[true, true, true], [true, false, undefined], [false, true, undefined]]) {
       const start = seen.rects
-      seen.extra = (n) => ({ ...((n - start === 0 ? first : second) && { textComplete: true }) })
+      // Clear the marker on an incomplete measurement. {} would leave measure()'s textComplete.
+      seen.extra = (n) => ((n - start === 0 ? first : second) ? { textComplete: true } : { textComplete: undefined })
       await result.toBlob({ format: 'jxl', dpr: 1, quality: 0.8 })
       expect(seen.rects - start, 'two measurements').toBe(2)
       expect(codec.calls.at(-1).options.textComplete).toBe(complete)

@@ -16,7 +16,7 @@ const options = () => ({ sample:form.elements.sample.value, page:form.elements.p
 const heading = (kicker, title) => `<div class="sample-card-kicker">${kicker}</div><h2 data-title contenteditable="true" aria-label="Edit document title" style="font:700 21px Arial;margin:10px 0">${title}</h2>`
 function updateCode() {
   const s = options()
-  code.textContent = `import { snapdom } from '@zumer/snapdom';\nimport { ${format} } from '@zumer/snapdom-plugins/${format}';\n\nconst result = await snapdom(element, {\n  plugins: [${format}()],\n  dpr: 1\n});\n${format === 'pdf' ? `const blob = await result.toPdf({\n  page: '${s.page}',\n  text: ${s.text},\n  fields: ${s.fields}\n});` : 'const svg = await result.toVector();'}`
+  code.textContent = `import { snapdom } from '@zumer/snapdom';\nimport { ${format} } from '@zumer/snapdom-${format}';\n\nconst result = await snapdom(element, {\n  plugins: [${format}()]\n});\n${format === 'pdf' ? `const blob = await result.toPdf({\n  page: '${s.page}',\n  text: ${s.text},\n  fields: ${s.fields}\n});` : 'const svg = await result.toVector();'}`
 }
 function clearOutput() {
   buttonState(generateButton, 'idle', format === 'pdf' ? 'Generate PDF' : 'Generate Vector')
@@ -37,12 +37,15 @@ function setSample() {
       report: heading('North Studio · October', 'Delivery report') + '<p contenteditable="true" aria-label="Edit report paragraph">Three interface screens shipped, reviewed and ready for implementation.</p><table><tr><th>Milestone</th><th>Status</th></tr><tr><td>Navigation</td><td>Approved</td></tr><tr><td>Capture demos</td><td>In review</td></tr></table><p><a href="https://github.com/zumerlab/snapdom">Read the project source</a></p>',
       ledger: heading('Ledger · A4 pagination', 'Project time ledger') + '<table><thead><tr><th>Item</th><th>Hours</th><th>Amount</th></tr></thead><tbody>' + Array.from({length:60},(_,i)=>`<tr><td>Design task ${i+1}</td><td>${2+i%5}</td><td>$${(2+i%5)*70}</td></tr>`).join('') + '</tbody></table>',
       scripts: heading('Multilingual document', 'Text across scripts') + '<p lang="zh">你好，世界</p><p lang="ru">Привет, мир</p><p lang="el">Γεια σου κόσμε</p><p lang="ar" dir="rtl">مرحباً بالعالم</p><p lang="he" dir="rtl">שלום עולם</p><p>Español · Français · 日本語 · 🌍</p>',
-      controls: heading('Form values → PDF fields', 'Contact details') + '<label class="demo-input">Full name<input name="name" value="Ana Ruiz"></label><label class="demo-input">Email<input type="email" name="email" value="ana@example.com"></label><label class="demo-input">Password<input type="password" name="password" value="demo-password"></label><p><label><input type="checkbox" name="notify" checked> Send updates</label></p><label class="demo-input">Message<textarea name="message">Please send the document.</textarea></label>',
+      controls: heading('Form values → PDF fields', 'Contact details') + '<label>Full name<input name="name" value="Ana Ruiz"></label><label>Email<input type="email" name="email" value="ana@example.com"></label><label>Password<input type="password" name="password" value="demo-password"></label><p><label><input type="checkbox" name="notify" checked> Send updates</label></p><label>Message<textarea name="message">Please send the document.</textarea></label>',
     }
     if (s.sample === 'transparent') { card = mountSample(source,'svg'); card.style.background = 'transparent'; card.style.border = '0' }
     else { source.innerHTML = `<div class="sample-card">${samples[s.sample]}</div>`; card = source.firstElementChild }
     if (s.sample === 'ledger') form.elements.page.value = 'a4'
   }
+  // The exported sample keeps Arial (plugin-demos.css says why); the class sits on the card
+  // because Vector measures a clone mounted outside this panel.
+  card.classList.add('export-sample')
   clearOutput()
   status.textContent = `Edit the source, then generate ${format === 'pdf' ? 'a PDF' : 'vector artwork'}.`
   updateCode()
@@ -100,7 +103,7 @@ form.addEventListener('submit',async event => {
   status.textContent = `Loading ${format} and capturing…`
   try {
     const snapdom = await loadSnapdom(), plugin = (await loadPlugin(format))[format]()
-    const result = await snapdom(card,{ plugins:[plugin], dpr:1, backgroundColor:null })
+    const result = await snapdom(card,{ plugins:[plugin], backgroundColor:null })
     lastResult = result
     const value = format === 'pdf' ? await result.toPdf({ page:s.page, text:s.text, fields:s.fields, pageNumbers:s.page !== 'fit' }) : await result.toVector()
     const blob = format === 'pdf' ? value : new Blob([value],{type:'image/svg+xml'})

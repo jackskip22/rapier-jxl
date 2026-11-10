@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Heartbeat: window.__result updates after every step (done:true at end).
 // readAs 'display-p3' checks. 2D contexts use willReadFrequently (see capture.mjs / check.mjs).
-const {capture} = await import('rapier-jxl/capture');
-const {encode} = await import('rapier-jxl');
-const {capture: capturePhoto} = await import('rapier-jxl/capture-complete');
+// 8.3 returns a result record; 8.2.0 returned the bytes. Rows compare bytes.
+const B = r => (r && r.bytes instanceof Uint8Array) ? r.bytes : r;
+const W = f => f && (async (...a) => B(await f(...a)));
+const capture = W((await import('rapier-jxl/capture')).capture);
+const encode = W((await import('rapier-jxl')).encode);
+const capturePhoto = W((await import('rapier-jxl/capture-complete')).capture);
 const {createCodec} = await import('rapier-jxl/codec');
 const colours = [[200, 100, 50], [40, 160, 90], [90, 80, 220], [250, 250, 250], [128, 128, 128], [230, 30, 40]];
 const steps = [];
@@ -33,7 +36,7 @@ beat('start');
 const srgb = draw();
 await judge('sRGB canvas, no readAs', () => capture(srgb.c), srgb.delivered);
 await judge("sRGB canvas, readAs 'display-p3', in page", () => capture(srgb.c, {readAs: 'display-p3'}), srgb.delivered);
-await judge("sRGB canvas, readAs 'display-p3', codec", async () => { const q = createCodec({module: 'rapier-jxl/capture'}); try { return await q.capture(srgb.c, {readAs: 'display-p3'}); } finally { await q.close(); } }, srgb.delivered);
+await judge("sRGB canvas, readAs 'display-p3', codec", async () => { const q = createCodec({module: 'rapier-jxl/capture'}); try { return B(await q.capture(srgb.c, {readAs: 'display-p3'})); } finally { await q.close(); } }, srgb.delivered);
 await judge("sRGB canvas, readAs 'display-p3', capture-complete", () => capturePhoto(srgb.c, {readAs: 'display-p3'}), srgb.delivered);
 await judge("sRGB canvas, readAs 'display-p3', encode exact", () => encode(srgb.c, {readAs: 'display-p3', fidelity: 'exact'}), srgb.delivered);
 await judge("sRGB canvas, readAs 'display-p3', encode q95", () => encode(srgb.c, {readAs: 'display-p3', fidelity: {quality: 95}}), srgb.delivered);

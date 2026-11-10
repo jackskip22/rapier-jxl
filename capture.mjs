@@ -4,8 +4,12 @@
 // 2D contexts opened with {colorSpace:'srgb', willReadFrequently:true} — same as check.mjs
 // Opening bare getContext('2d') first would pin a non-WRF context (getContext options are sticky).
 // Canvas text is from NASA's public-domain Apollo 12 page (see README).
-const {encode, capture} = await import('rapier-jxl');
-const {capture: capturePhoto} = await import('rapier-jxl/capture-complete');
+// 8.3 returns a result record; 8.2.0 returned the bytes. Rows compare bytes.
+const B = r => (r && r.bytes instanceof Uint8Array) ? r.bytes : r;
+const W = f => f && (async (...a) => B(await f(...a)));
+const _m = await import('rapier-jxl');
+const encode = W(_m.encode), capture = W(_m.capture ?? (await import('rapier-jxl/capture')).capture);
+const capturePhoto = W((await import('rapier-jxl/capture-complete')).capture);
 const {decode} = await import('rapier-jxl/decode');
 const {createCodec} = await import('rapier-jxl/codec');
 const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
@@ -13,7 +17,7 @@ const steps = [], platform = {context2dAttributes: typeof CanvasRenderingContext
   webgl2: !!document.createElement('canvas').getContext('webgl2'), offscreen: typeof OffscreenCanvas, gpu: !!navigator.gpu};
 const beat = (at) => { window.__result = {done: false, at, pkg: document.documentElement.dataset.pkg, userAgent: navigator.userAgent, platform, steps: steps.slice()}; document.getElementById('state').textContent = at; };
 const step = async (name, f) => { beat('before:' + name); try { steps.push({name, ...await f()}); } catch (e) { steps.push({name, pass: false, error: String(e?.message || e).slice(0, 200), code: e?.code, stack: String(e?.stack || '').split('\n').slice(0, 4).join(' | ').slice(0, 400)}); } beat('after:' + name); };
-const viaCodec = async (module, input, options) => { const q = createCodec({module}); try { return await q.capture(input, options); } finally { await q.close(); } };
+const viaCodec = async (module, input, options) => { const q = createCodec({module}); try { return B(await q.capture(input, options)); } finally { await q.close(); } };
 const rAF = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 const host = document.getElementById('host');
 const attach = (c) => { c.style.cssText = `display:block;width:${c.width}px;height:${c.height}px;`; host.appendChild(c); };

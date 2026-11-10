@@ -265,7 +265,7 @@ function loadRects() {
   return rectsLoading;
 }
 
-// SnapDOM 3.7.2 draws <html> without the top margins that collapse through its first children,
+// SnapDOM 3.7.3 draws <html> without the top margins that collapse through its first children,
 // <body>'s own included, so its text is not where the page has it: such a capture stays exact.
 function measured(measure, element, edges, keep) {
   return keep && liftOf(element) ? null : measure(element, { edges, keep });

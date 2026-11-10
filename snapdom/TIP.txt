@@ -1,4 +1,3 @@
-patch: snapdom-tip/plugins-jxl.patch
-patch_sha256: 636b5bf4cf330116413570c0d59123bef27d3b45bb559e8399ad03893a62b5b6
-base: SnapDOM 5eb0d804638c6ceb1d5d488a7ed6bb6bf2bddbe8 (the patch file is the pull request on SnapDOM main e9d1691)
+tree: SnapDOM 3.7.4 (main f1c1ce176e12a2280a811ab9493d6d27a06e80a8) + the pull request commit 4ef7c0b4b172e1e1486840cf970b47b0aec3d444 (jackskip22/snapdom jxl-plugin)
 scope: packages/plugins, its tests, types, README and lockfile entry (no core)
+rapier-jxl: 8.3.2 as published on npm

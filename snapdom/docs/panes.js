@@ -1,19 +1,14 @@
-// The 3-pane template (panes.css): sidebar · live demo · reading column.
-// Two modes, picked by the markup:
-//   topic mode  (Capabilities, Ecosystem): every topic is a .pane-topic section on one page,
-//               one visible at a time, chosen by the URL hash, with a generated pager.
-//   page mode   (Docs, How-to, Guides, Compare, Blog, Labs): each page is its own URL and the
-//               sidebar links between them; the pager is written into the page.
-// The element that carries the demo settings (the visible .pane-topic, or .pane-read in page
-// mode) configures the one demo panel through data attributes:
-//   data-demo="capture" | "diff" | "pair" | "compare"   (absent: no demo column)
-//   data-method="toPng" | "toJpg" | "toCanvas" | "toSvg"
+// The pane template (panes.css): sidebar, reading column, and the live demo below it. Each
+// page is its own URL; the sidebar links between them and the pager is written into the page.
+// The .pane-read article configures the one demo panel through data attributes:
+//   data-demo="capture" | "diff" | "pair" | "compare"   (absent: no demo panel)
+//   data-method="toPng" | "toJpg" | "toCanvas" | "toSvg" | "download"
 //   data-options='{"scale":2}'
-//   data-prepare="redact" | "retitle"       official plugins change only the captured copy
-//   data-transform="ascii" | "map" | "context"   official plugin output
+//   data-sample="form" | "svg" | …   (else sampleFor picks one from the title and the path)
+//   data-prepare="redact" | "retitle" | "filter" | "tint" | "timestamp"   official plugins that change only the captured copy
+//   data-transform="ascii" | "map" | "context" | "pdf" | "vector" | "html" | "gif" | "video"   official plugin outputs
 //   data-lib="html2canvas" | "html-to-image" | "dom-to-image" | "modern-screenshot"   (compare)
 //   data-demo-label, data-note
-// Without JavaScript every topic stays visible as one long page.
 // SnapDOM loads from unpkg on the first run, like demo.js, because the site is served
 // from docs/ and cannot reach the repository's dist/.
 
@@ -23,25 +18,23 @@ import { loadSnapdom, loadPlugin, mountSample, sampleFor } from './demo-runtime.
 customElements.define('sd-shadow-card', class extends HTMLElement {
   connectedCallback() {
     if (this.shadowRoot) return
-    this.attachShadow({ mode: 'open' }).innerHTML = '<style>:host{display:block;margin-top:10px}p{margin:0;padding:8px 10px;border-left:3px solid #1E9F6E;background:#EFFAF5;color:#0F1E4D;font:13px Arial}</style><p>Inside an open shadow root</p>'
+    this.attachShadow({ mode: 'open' }).innerHTML = '<style>:host{display:block;margin-top:10px}p{margin:0;padding:8px 10px;border-left:3px solid #1E9F6E;background:#EFFAF5;color:#0F1E4D;font:13px Roboto, Arial}</style><p>Inside an open shadow root</p>'
   }
 })
 
 const pane = document.querySelector('[data-pane]')
-const topics = [...pane.querySelectorAll('.pane-topic')]
-const navLinks = [...pane.querySelectorAll('.pane-nav-items a')]
 const navGroups = [...pane.querySelectorAll('.pane-nav > div')]
 const panel = pane.querySelector('.demo-panel')
 const secOf = el => [...el.classList].find(c => c.startsWith('sec-'))
 const fail = error => 'Error: ' + (error?.message || error)
-let topic = topics.length ? null : pane.querySelector('.pane-read')
+const topic = pane.querySelector('.pane-read')
 
 navGroups.forEach(g => {
   const head = g.querySelector('.pane-nav-head')
   head.addEventListener('click', () => head.setAttribute('aria-expanded', String(head.getAttribute('aria-expanded') !== 'true')))
 })
 
-pane.querySelector('.pane-filter input').addEventListener('input', event => {
+pane.querySelector('.pane-filter input')?.addEventListener('input', event => {
   const q = event.target.value.trim().toLowerCase()
   navGroups.forEach(g => {
     const links = [...g.querySelectorAll('.pane-nav-items > a')]
@@ -49,7 +42,7 @@ pane.querySelector('.pane-filter input').addEventListener('input', event => {
     g.hidden = links.every(a => a.hidden)
     if (q) g.querySelector('.pane-nav-head').setAttribute('aria-expanded', 'true')
   })
-  if (!q && topics.length) show(topic.id)
+  pane.querySelector('.pane-filter-status').hidden = navGroups.some(g => !g.hidden)
 })
 
 // ── Demo panel ──
@@ -174,9 +167,17 @@ async function run() {
     const snapdom = await loadSnapdom()
     const opts = options ? JSON.parse(options) : {}
     const plugins = []
-    if (prepare === 'redact') plugins.push((await loadPlugin('redact-inputs')).redactInputs())
-    if (prepare === 'retitle') plugins.push((await loadPlugin('replace-text')).replaceText({ replacements: [{ find: card.querySelector('[data-title]').textContent, replace: 'Name hidden for sharing' }] }))
-    const outputs = { ascii: ['ascii-export', 'asciiExport', 'toAscii'], map: ['agent-map', 'agentMap', 'toAgentMap'], context: ['context-export', 'contextExport', 'toContext'], pdf: ['pdf', 'pdf', 'toPdf'], vector: ['vector', 'vector', 'toVector'], html: ['html-export', 'htmlExport', 'toHtml'], gif: ['gif-export', 'gifExport', 'toGif'] }
+    // module, factory, options: the prepare plugins change only the captured copy
+    const prepares = {
+      redact: ['redact-inputs', 'redactInputs'],
+      retitle: ['replace-text', 'replaceText', { replacements: [{ find: card.querySelector('[data-title]').textContent, replace: 'Name hidden for sharing' }] }],
+      filter: ['filter', 'filter', { preset: 'grayscale' }],
+      tint: ['color-tint', 'colorTint', { color: 'royalblue', opacity: 0.35 }],
+      timestamp: ['timestamp-overlay', 'timestampOverlay', { position: 'top-right' }],
+    }
+    const prep = prepares[prepare]
+    if (prep) plugins.push((await loadPlugin(prep[0]))[prep[1]](prep[2]))
+    const outputs = { ascii: ['ascii-export', 'asciiExport', 'toAscii'], map: ['agent-map', 'agentMap', 'toAgentMap'], context: ['context-export', 'contextExport', 'toContext'], pdf: ['pdf', 'pdf', 'toPdf'], vector: ['vector', 'vector', 'toVector'], html: ['html-export', 'htmlExport', 'toHtml'], gif: ['gif-export', 'gifExport', 'toGif'], video: ['video-export', 'videoExport', 'toMp4'] }
     const output = outputs[transform]
     if (output) plugins.push((await loadPlugin(output[0]))[output[1]]())
     opts.plugins = plugins
@@ -189,9 +190,11 @@ async function run() {
     const result = await snapdom(card, opts)
     let node
     if (output) {
-      const value = await result[output[2]](transform === 'map' ? { image: 'annotated' } : transform === 'ascii' ? { width: 46 } : transform === 'gif' ? { fps: 4, duration: 1000 } : {})
+      const value = await result[output[2]](transform === 'map' ? { image: 'annotated' } : transform === 'ascii' ? { width: 46 } : transform === 'gif' ? { fps: 4, duration: 1000 } : transform === 'video' ? { fps: 8, duration: 1500 } : {})
       if (transform === 'gif') {
         node = new Image(); node.src = URL.createObjectURL(value); node.alt = 'Recorded GIF'
+      } else if (transform === 'video') {
+        node = document.createElement('video'); node.src = URL.createObjectURL(value); node.muted = true; node.autoplay = true; node.loop = true; node.playsInline = true; node.controls = true
       } else if (transform === 'map') {
         node = new Image(); node.src = value.image; node.alt = 'Captured element map'
       } else if (transform === 'pdf') {
@@ -286,16 +289,15 @@ async function compare() {
 }
 
 function configureDemo() {
-  pane.classList.toggle('no-demo', !topic.dataset.demo)
   if (!topic.dataset.demo) return
   panel.classList.remove(secOf(panel))
   panel.classList.add(secOf(topic))
   if (!card.querySelector('sd-shadow-card') && !card.classList.contains('tricky-card')) {
     const holder = document.createElement('div')
-    const next = mountSample(holder, sampleFor(topic.dataset.title, location.pathname), topic.dataset.title)
+    const next = mountSample(holder, topic.dataset.sample || sampleFor(topic.dataset.title, location.pathname), topic.dataset.title)
     card.replaceWith(next); card = next
   }
-  panel.querySelector('.demo-panel-title').textContent = topic.dataset.demoLabel || topic.dataset.title
+  panel.querySelector('.demo-panel-sub').textContent = topic.dataset.demoLabel || topic.dataset.title
   note.textContent = topic.dataset.note || (location.pathname.includes('/guides/') ? 'Live DOM example. The article shows how to mount and capture it in your framework.' : '')
   resetDemo()
 }
@@ -307,79 +309,7 @@ if (panel) {
   buttons.reset.addEventListener('click', resetDemo)
 }
 
-// ── Topic mode ──
-const baseTitle = document.title
-const pager = document.createElement('nav')
-pager.className = 'pager'
-pager.setAttribute('aria-label', 'Pages')
-
-function renderPager(i) {
-  pager.replaceChildren()
-  for (const [label, t, cls] of [['Previous', topics[i - 1], ''], ['Next', topics[i + 1], 'is-next']]) {
-    if (!t) continue
-    const a = document.createElement('a')
-    a.href = '#' + t.id
-    if (cls) a.className = cls
-    const small = document.createElement('span')
-    small.textContent = label
-    const strong = document.createElement('strong')
-    strong.textContent = t.dataset.title
-    a.append(small, strong)
-    pager.append(a)
-  }
-  topics[i].append(pager)
-}
-
-function show(id, scroll) {
-  const i = Math.max(0, topics.findIndex(t => t.id === id))
-  topic = topics[i]
-  topics.forEach(t => { t.hidden = t !== topic })
-  navLinks.forEach(a => {
-    if (a.hash === '#' + topic.id) a.setAttribute('aria-current', 'page')
-    else a.removeAttribute('aria-current')
-  })
-  const group = navLinks.find(a => a.hash === '#' + topic.id)?.closest('.pane-nav > div')
-  navGroups.forEach(g => g.querySelector('.pane-nav-head').setAttribute('aria-expanded', String(g === group)))
-  renderPager(i)
-  document.title = i ? `${topic.dataset.title} · ${baseTitle}` : baseTitle
-  configureDemo()
-  // The topic's id is also an anchor; land at the top of the page, not on the section.
-  if (scroll) window.scrollTo({ top: 0, behavior: 'instant' })
-}
-
-if (topics.length) {
-  window.addEventListener('hashchange', () => show(location.hash.slice(1), true))
-  show(location.hash.slice(1), true)
-  document.documentElement.classList.remove('panes-pending')
-  // The browser scrolls to the fragment again once the page has loaded.
-  window.addEventListener('load', () => requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'instant' })), { once: true })
-} else {
-  configureDemo()
-}
-
-// A page of anchored sections (the showcase) marks the section in view in the sidebar
-// and keeps that link visible inside the sidebar's own scroll.
-if (!topics.length) {
-  const links = navLinks.filter(a => a.hash && document.getElementById(a.hash.slice(1)))
-  const targets = links.map(a => document.getElementById(a.hash.slice(1)))
-  const side = document.querySelector('.pane-side')
-  let queued = false
-  const mark = () => {
-    queued = false
-    // The section in view is the last one whose heading sits in the upper half of the viewport.
-    let i = targets.findLastIndex(el => el.querySelector('h2, h3')?.getBoundingClientRect().top <= innerHeight / 2)
-    if (i < 0) i = 0
-    links.forEach((a, j) => {
-      if (j !== i) return a.removeAttribute('aria-current')
-      if (a.getAttribute('aria-current') === 'page') return
-      a.setAttribute('aria-current', 'page')
-      const top = a.getBoundingClientRect().top - side.getBoundingClientRect().top + side.scrollTop
-      if (top < side.scrollTop || top > side.scrollTop + side.clientHeight - 40) side.scrollTo({ top: top - side.clientHeight / 3 })
-    })
-  }
-  addEventListener('scroll', () => { if (!queued) { queued = true; requestAnimationFrame(mark) } }, { passive: true })
-  mark()
-}
+configureDemo()
 
 // ?embed shows only a lab's live demo, for the showcase to frame. Siblings on the way up
 // are hidden rather than the demo moved, so the lab's own selectors and scripts still match.

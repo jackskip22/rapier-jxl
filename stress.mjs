@@ -2,7 +2,10 @@
 // Stress: an intermittent "Out of bounds memory access" in the decoder's kernels in WebKit. Repeats the
 // consumer's decode-region-partial and encode-exact-roundtrip rows (?n=200 times) in one page; records every failure's
 // message and stack (which kernel), the iteration, and whether results stay exact.
-const {encode} = await import('rapier-jxl');
+// 8.3 returns a result record; 8.2.0 returned the bytes. Rows compare bytes.
+const B = r => (r && r.bytes instanceof Uint8Array) ? r.bytes : r;
+const W = f => f && (async (...a) => B(await f(...a)));
+const encode = W((await import('rapier-jxl')).encode);
 const {decode} = await import('rapier-jxl/decode');
 const n = Number(new URLSearchParams(location.search).get('n') || 200);
 const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);

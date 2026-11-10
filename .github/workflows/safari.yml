@@ -81,7 +81,7 @@ jobs:
       - name: Install SnapDOM test deps
         working-directory: snapdom
         run: |
-          # Until rapier-jxl ^8.3.2 is on npm: install everything else, then put the staged candidate in its place.
+          # Install everything else, then put the checked tarball (rapier-jxl 8.3.2 from npm, PACKAGE.txt) in its place.
           node -e "const f='packages/plugins/package.json',p=require('./'+f);delete p.devDependencies['rapier-jxl'];require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
           npm install --ignore-scripts --no-audit --no-fund --legacy-peer-deps --no-package-lock
           rm -rf node_modules/rapier-jxl
