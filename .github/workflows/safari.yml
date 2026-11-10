@@ -101,17 +101,15 @@ jobs:
           status=$?
           kill "$(cat snapdom-server.pid)" "$(cat snapdom-driver.pid)" 2>/dev/null || true
           exit $status
-      - name: Lifecycle + own suite (Playwright WebKit on the Safari runner host)
+      - name: Lifecycle (Playwright WebKit on the Safari runner host)
         working-directory: snapdom
         env:
-          REQUIRE_VISUAL: '1'
           BROWSER: webkit
         run: |
-          # Real Safari covers plugin.jxl + demos above. Lifecycle needs vi.mock (vitest);
-          # own suite is ~2k tests — Playwright WebKit on macos-15, labelled as Safari-host stand-in.
+          # Real Safari covers plugin.jxl + demos above. Lifecycle needs vi.mock (vitest).
+          # SnapDOM's own suite and its visual baselines run on the full Chromium/Firefox/WebKit beds, not here.
           echo "NOTE: Playwright WebKit ≠ Safari.app; real-Safari results are in snapdom-safari-results.json"
           node scripts/vitest.mjs run __tests__/plugin.jxl.lifecycle.test.js --browser.headless --reporter=dot
-          node scripts/vitest.mjs run --browser.headless --reporter=dot --maxWorkers=2
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
