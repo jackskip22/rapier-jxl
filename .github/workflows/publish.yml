@@ -64,3 +64,53 @@ jobs:
           fi
           gh release create "$tag" --verify-tag --title "$version" --notes-file "$notes_file" --latest
           echo "tagged $tag at $release and released $version" | tee -a "$GITHUB_STEP_SUMMARY"
+  vscode:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: package the extension once; both registries get this file
+        id: vsix
+        run: |
+          set -eu
+          [ -f integrations/vscode/package.json ] || { echo "no extension in this tree" | tee -a "$GITHUB_STEP_SUMMARY"; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          cd integrations/vscode
+          id=$(node -p "require('./package.json').publisher + '.' + require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          npx --yes @vscode/vsce@4.1.0 package --no-dependencies --out "$RUNNER_TEMP/extension.vsix"
+          # A brand-new extension is not there: vsce prints "undefined" and no versions.
+          known=$(npx --yes @vscode/vsce@4.1.0 show "$id" --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).versions.map(v=>v.version).join("\n"))}catch{}})' || true)
+          if printf '%s\n' "$known" | grep -qxF "$version"; then new=false; else new=true; fi
+          { echo "skip=false"; echo "id=$id"; echo "version=$version"; echo "marketplace=$new"; echo "vsix=$RUNNER_TEMP/extension.vsix"; } >> "$GITHUB_OUTPUT"
+      - name: publish to the Visual Studio Marketplace unless it has this version (trusted publishing through OIDC; no token)
+        if: steps.vsix.outputs.skip == 'false'
+        run: |
+          set -eu
+          if [ "${{ steps.vsix.outputs.marketplace }}" != "true" ]; then
+            echo "${{ steps.vsix.outputs.id }}@${{ steps.vsix.outputs.version }} is already on the Marketplace: nothing to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
+          fi
+          npx --yes @vscode/vsce@4.1.0 publish --oidc --no-dependencies --packagePath "${{ steps.vsix.outputs.vsix }}"
+          echo "published ${{ steps.vsix.outputs.id }}@${{ steps.vsix.outputs.version }} to the Marketplace" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: publish the same file to Open VSX (a token for the first publish, trusted publishing after it)
+        if: steps.vsix.outputs.skip == 'false'
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          set -u
+          namespace=${{ steps.vsix.outputs.id }}; name=${namespace#*.}; namespace=${namespace%%.*}
+          if [ "$(curl -s -o /dev/null -w '%{http_code}' "https://open-vsx.org/api/$namespace/$name/${{ steps.vsix.outputs.version }}")" = 200 ]; then
+            echo "${{ steps.vsix.outputs.id }}@${{ steps.vsix.outputs.version }} is already on Open VSX: nothing to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
+          fi
+          if [ -n "${OVSX_PAT:-}" ]; then
+            set -e
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' "https://open-vsx.org/api/$namespace")" != 200 ]; then npx --yes ovsx@1.4.0 create-namespace "$namespace" -p "$OVSX_PAT"; fi
+            npx --yes ovsx@1.4.0 publish "${{ steps.vsix.outputs.vsix }}" -p "$OVSX_PAT"
+          elif ! npx --yes ovsx@1.4.0 publish "${{ steps.vsix.outputs.vsix }}" --trusted-publishing; then
+            echo "Open VSX did not take ${{ steps.vsix.outputs.id }}@${{ steps.vsix.outputs.version }}: no OVSX_PAT, and no trusted publisher is registered for it yet. Skipped." | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
+          fi
+          echo "published ${{ steps.vsix.outputs.id }}@${{ steps.vsix.outputs.version }} to Open VSX" | tee -a "$GITHUB_STEP_SUMMARY"

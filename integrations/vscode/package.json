@@ -1,0 +1,158 @@
+{
+  "name": "jxl-convert",
+  "displayName": "JPEG XL Convert: compress images, screenshots and photos",
+  "description": "Convert and compress PNG, JPEG, WebP and GIF files to JPEG XL. Compare, preview, convert back. Offline.",
+  "version": "0.1.0",
+  "publisher": "rapier",
+  "icon": "icon.png",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "keywords": [
+    "jxl",
+    "jpeg xl",
+    "jpegxl",
+    "image",
+    "convert",
+    "converter",
+    "compress",
+    "optimize",
+    "screenshot",
+    "webp",
+    "avif",
+    "png",
+    "jpeg"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jackskip22/rapier-jxl.git",
+    "directory": "integrations/vscode"
+  },
+  "browser": "./dist/extension.js",
+  "activationEvents": [],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": true
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "jxl.convert",
+        "title": "Convert to JPEG XL",
+        "category": "JPEG XL"
+      },
+      {
+        "command": "jxl.compare",
+        "title": "Compare with Original",
+        "category": "JPEG XL"
+      },
+      {
+        "command": "jxl.convertBack",
+        "title": "Convert JPEG XL Back",
+        "category": "JPEG XL"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "jxl.convert",
+          "when": "resourceExtname =~ /\\.(png|jpe?g|webp|gif)$/i || explorerResourceIsFolder",
+          "group": "7_modification@90"
+        },
+        {
+          "command": "jxl.compare",
+          "when": "resourceExtname == .jxl",
+          "group": "7_modification@91"
+        },
+        {
+          "command": "jxl.convertBack",
+          "when": "resourceExtname == .jxl",
+          "group": "7_modification@92"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "jxl.compare",
+          "when": "resourceExtname == .jxl",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "jxl.convert"
+        },
+        {
+          "command": "jxl.compare",
+          "when": "resourceExtname == .jxl"
+        },
+        {
+          "command": "jxl.convertBack",
+          "when": "resourceExtname == .jxl"
+        }
+      ]
+    },
+    "customEditors": [
+      {
+        "viewType": "jxl.preview",
+        "displayName": "JPEG XL Preview",
+        "selector": [
+          {
+            "filenamePattern": "*.jxl"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "configuration": {
+      "title": "JPEG XL",
+      "properties": {
+        "jxl.quality": {
+          "type": "number",
+          "default": 90,
+          "minimum": 1,
+          "maximum": 100,
+          "markdownDescription": "How the picture should look, 1 to 100. Not a bit rate. Photographs and JPEGs re-encoded."
+        },
+        "jxl.exact": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "always",
+            "never"
+          ],
+          "enumDescriptions": [
+            "Screenshots and graphics are exact; photographs use quality.",
+            "Every sample kept.",
+            "Always use quality."
+          ],
+          "description": "Keep every sample."
+        },
+        "jxl.effort": {
+          "type": "integer",
+          "default": 7,
+          "minimum": 1,
+          "maximum": 9,
+          "description": "1 is fastest, 9 is smallest."
+        },
+        "jxl.reencodeJpeg": {
+          "type": "boolean",
+          "default": false,
+          "description": "Re-encode JPEGs at the quality above. Off: lossless, and the original JPEG can be restored."
+        },
+        "jxl.trashOriginal": {
+          "type": "boolean",
+          "default": false,
+          "description": "Move each original to the trash once its JPEG XL file is written and checked. With no trash (VS Code for the Web), it stays."
+        }
+      }
+    }
+  }
+}
