@@ -1,5 +1,5 @@
 {
-  "version": "8.3.2",
+  "version": "8.3.3",
   "pictures": [
     {
       "id": "screenshot",
@@ -54,7 +54,7 @@
     "photo-exact-e3": "7618cd16bf8dc70dacda68089a5914dc37168024098a858883aca426a4441ac9",
     "photo-exact-e7": "8e51d0b63ef23dc8b21df8c9cf6142d10a28e0aaae2fc4ef0574f1a29caddf83",
     "photo-lossy-e1": "4cdc398d4a86ddacb23b47f43b43eba8f55ae1d839ceb84310327a773c75da27",
-    "photo-lossy-e3": "448c42c2fd9672268ae0a2bef5972ea52fbcaee7361fb090082fb2e547eb948d",
+    "photo-lossy-e3": "35dcb14cf7b9cee04b589816dffee9e3dc42978165ecefbed197581d882480e8",
     "photo-lossy-e7": "c51d11faed9ad593082611e19571cf87154295ef0a50c91b455b1cf8e47f51b6",
     "camera-recompress-e1": "52431ea23eb7283e2b61bc7be8a378eb9ef758930827af4dd9b7b319c0b74bfb",
     "camera-recompress-e3": "c9502cb07a59f43b5fbeb05720bde392e39e3aacfdb1dd09f66997485fdbef99",

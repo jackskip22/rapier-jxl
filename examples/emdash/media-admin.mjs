@@ -6,6 +6,7 @@ import {NumberField} from '@cloudflare/kumo/primitives/number-field';
 import {apiFetch} from 'emdash/plugin-utils';
 import {createApi, check, createLibraryClient, createQueue, createSettings, rewriteAndRead, workerResult} from './admin-work.mjs';
 import {DEFAULTS} from './media-settings.mjs';
+import {deliveryWidths} from './deliver.mjs';
 import {WORDS, words} from './media-words.mjs';
 
 const api = createApi(apiFetch), ROUTE = '/_emdash/api/plugins/rapier-media';
@@ -172,10 +173,18 @@ async function browserConvert(item, selected, signal, update, widthsOnly = false
   const deliveryOnly = captured.execution?.deliveryOnly === true;
   const archiveOriginals = captured.execution?.archiveOriginals === true;
   if (!widthsOnly || deliveryOnly) selected = captured.execution?.settings ?? selected;
+  const main = captured.result && {width: captured.result.width, height: captured.result.height, kept: captured.result.kept};
+  if (widthsOnly) {
+    // Reopening the page continues only unfinished widths of this captured source and delivery revision.
+    // A server job owns pending widths; the browser must not encode them while their publication is in flight.
+    const widths = deliveryWidths(main?.width, selected.widths, [...(captured.variantWidths ?? []), ...(captured.pendingWidths ?? [])]);
+    if (!widths.length) return captured;
+    selected = {...selected, widths};
+  }
   update({...measured(item, captured), activity: 'browser', state: WORDS.convertingBrowser, progress: null});
   const file = await fetchFile(item, signal);
-  const main = captured.result && {width: captured.result.width, height: captured.result.height, kept: captured.result.kept};
-  const workerSettings = !widthsOnly && file.type === 'image/jpeg' ? {...selected, widths: []} : selected;
+  // Other hosts first verify and publish the main candidate; only then can its responsive copies be submitted.
+  const workerSettings = !widthsOnly && !deliveryOnly ? {...selected, widths: []} : selected;
   const made = await workerResult(() => new Worker(new URL('./media-worker.mjs', import.meta.url), {type: 'module'}),
     {file, settings: workerSettings, archiveOriginals, ...(deliveryOnly && {deliveryOnly: true}), ...(widthsOnly && {widthsOnly: true, main})},
     {signal, progress: progress => update({progress: Math.max(0, Math.min(1, progress))})});
@@ -193,15 +202,16 @@ async function browserConvert(item, selected, signal, update, widthsOnly = false
     result = original;
   } else if (!widthsOnly && made.result?.fits)
     result = await attach(`${ROUTE}/attach?${query(bound)}&source=${made.source}`, made.result, signal);
+  const variants = [];
   if (result.stored === 'sidecar') for (const copy of made.copies) if (copy.fits)
-    await attach(`${ROUTE}/variant?${query(bound)}&width=${copy.width}&source=${made.source}`, copy, signal);
+    variants.push(await attach(`${ROUTE}/variant?${query(bound)}&width=${copy.width}&source=${made.source}`, copy, signal));
   const stored = await readStored(item, signal);
-  const pending = [original, result].find(reply => reply?.stored === 'pending' && reply.job?.id === stored.nativeJob?.id)
-    ?? (result.stored === 'pending' ? result : original?.stored === 'pending' ? original : null);
+  const submitted = [original, result, ...variants];
+  const pending = submitted.find(reply => reply?.stored === 'pending' && reply.job?.id === stored.nativeJob?.id);
   if (pending) {
-    if (!pending.job?.id) throw new Error('Archive publication returned no saved job');
-    // Keep the durable archive moving while the page is open, even when the selected main is already published.
-    update({...measured(item, {...stored, nativeJob: {id: pending.job.id}}, pending.job), progress: null});
+    if (!pending.job?.id) throw new Error('Publication returned no saved job');
+    // A successful upload can still be awaiting its durable verification and publication.
+    update({...measured(item, stored, pending.job), progress: null});
     return stored;
   }
   update({...measured(item, stored), activity: null, progress: null,
@@ -361,7 +371,7 @@ function useImages({settings, loaded, ready, background, importBusy, blocked}) {
         if (fullRequested || now - lastCatalog >= 60000) await mediaCatalog();
         if (!initialized) {
           // No total is presented until the initial catalog and every stored row have been read.
-          await readRows([...catalog.keys()]); initialized = true; lastDiscovery = now; lastAudit = now; discoverRequested = false; setComplete(true);
+          await readRows([...catalog.keys()]); publish(observed); initialized = true; lastDiscovery = now; lastAudit = now; discoverRequested = false; setComplete(true);
         } else if (discoverRequested || now - lastDiscovery >= 10000) {
           // The host exposes a counted first page. A changed count or new identity triggers metadata reconciliation.
           const head = await api('/_emdash/api/media?mimeType=image%2F&limit=8&page=1', {signal: control.signal});
@@ -410,10 +420,11 @@ function useImages({settings, loaded, ready, background, importBusy, blocked}) {
         if (current.ready && !current.importBusy) for (const row of found) {
           if (row.mode === 'original' || !row.generation || row.activity || current.blocked.has(row.id)) continue;
           const selected = row.execution?.deliveryOnly ? row.execution.settings : current.settings;
-          const expected = selected.widths.filter(w => w < (row.record.result?.width ?? row.width ?? 0));
+          const missing = row.converted ? deliveryWidths(row.record.result?.width ?? row.width, selected.widths,
+            [...(row.record.variantWidths ?? []), ...(row.record.pendingWidths ?? [])]) : [];
           if (row.converted && row.execution?.deliveryOnly && JSON.stringify(selected.widths) !== JSON.stringify(current.settings.widths))
             enqueue(row, structuredClone(current.settings), false, true);
-          else if (row.converted && expected.some(width => !row.record.variantWidths.includes(width))) enqueue(row, structuredClone(selected), true);
+          else if (row.converted && missing.length) enqueue(row, structuredClone(selected), true);
           else if (!row.converted && runsInBrowser(row) && browserReady(row))
             enqueue(row, structuredClone(row.execution?.settings ?? current.settings), false);
         }

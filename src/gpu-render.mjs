@@ -12,7 +12,7 @@ const P_COEF = [-5.135152395e-4, 5.287254571e-3, 3.903842876e-1, 1.474205315, 7.
 const Q_COEF = [1.004519624e-2, 3.036675394e-1, 1.340816930, 9.258482155e-1, 2.424867759e-2];
 const f = v => { const s = Math.fround(v).toString(); return /[.eE]/.test(s) ? s : s + '.0'; };
 
-export const RENDER_SHADER = `${GC_DS}
+const RENDER_SHADER = `${GC_DS}
 struct U { width: u32, height: u32, xsize: u32, count: u32, blocks: u32, one: f32, factor: f32, cap: u32,
   ints: u32, owner: u32, blk: u32, fac: u32, qtab: u32, tabs: u32, grp: u32, maps: u32, lf: u32, consts: u32, cells: u32, pad2: u32 }
 @group(0) @binding(0) var<uniform> P: U;

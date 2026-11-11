@@ -34,6 +34,7 @@ export function decodedFields(decoded) {
 
 const RETAGGABLE = ['colorSpace', 'transferFunction', 'bitDepth', 'sampleFormat', 'intensityTarget'];
 export function decodedDescription(decoded) {
+  if (!Object.hasOwn(FORMATS, decoded.format)) throw fail('JXL_INPUT', 'A decoded picture has uint8, uint16 or float32 samples.');
   const out = decodedFields(decoded);
   if (decoded.rgbaICC) out.icc = decoded.rgbaICC;
   else if (out.colorSpace === undefined || out.transferFunction === undefined)
@@ -44,6 +45,8 @@ export function decodedDescription(decoded) {
   if (!decoded.orientationApplied && decoded.orientation > 1) out.orientation = decoded.orientation;
   for (const key of RETAGGABLE) if (decoded[key] !== undefined && decoded[key] !== out[key])
     throw fail('JXL_INPUT', `${key} is ${String(decoded[key])} but the samples are ${String(out[key] ?? 'unnamed')}; to retag, pass {data, width, height, ${key}}.`);
+  if (decoded.extraChannels != null && !Array.isArray(decoded.extraChannels))
+    throw fail('JXL_INPUT', 'A decoded picture\'s extraChannels is an array.');
   const extra = (decoded.extraChannels ?? []).filter(channel => channel?.type !== 0);
   if (extra.length) throw fail('JXL_UNSUPPORTED', 'Encode drops extra channels beyond alpha; pass {data, width, height}, or use format({kind: \'channels\'}).');
   return out;
@@ -52,6 +55,10 @@ export function decodedDescription(decoded) {
 export function fromDecoded(decoded) {
   const description = decodedDescription(decoded);
   if (decoded.animation) {
+    if (!Array.isArray(decoded.frames)) throw fail('JXL_INPUT', 'A decoded animation has a frames array.');
+    for (const frame of decoded.frames) if (!frame || typeof frame !== 'object' || !ArrayBuffer.isView(frame.data) ||
+        frame.data instanceof DataView || !Number.isFinite(frame.durationSeconds) || frame.durationSeconds < 0)
+      throw fail('JXL_INPUT', 'A decoded frame has sample data and a finite, nonnegative durationSeconds.');
     return {width: decoded.width, height: decoded.height, loops: decoded.animation.loops, ...description,
       frames: decoded.frames.map(frame => ({data: frame.data, duration: frame.durationSeconds * 1000}))};
   }

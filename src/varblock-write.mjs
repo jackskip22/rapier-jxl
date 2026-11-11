@@ -6,6 +6,7 @@ import {strategyAnsSteps} from './coefficient-ans.mjs';
 import {prepareCoefficientOrders, COEFFICIENT_ORDER_BUCKETS} from './coefficient-orders.mjs';
 import {populationBits} from './entropy.mjs';
 import {VB_ZD, VB_TOKENS, token, vbPackSigned} from './varblock-core.mjs';
+import {journaling, unit} from './step-journal.mjs';
 
 const ORDER_BUCKET = TRANSFORMS.map(t => COEFFICIENT_ORDER_BUCKETS.find(b => b.strategies.includes(t.name)));
 const LEARNED_COUNTS = new WeakMap(), LEARNED_ORDERS = new WeakMap(), OPTIMAL_ORDERS = new WeakMap();
@@ -51,6 +52,13 @@ export function encodeStrategyImage(image, orders = true, effort = 7) {
 export function optimalLearnedOrders(image) {
   const sdKey = image.strategyData;
   if (sdKey && OPTIMAL_ORDERS.has(sdKey)) return OPTIMAL_ORDERS.get(sdKey);
+  const out = preparedOrders(optimalOrderValue(image));
+  if (sdKey) OPTIMAL_ORDERS.set(sdKey, out);
+  return out;
+}
+const preparedOrders = value => value && Object.keys(value).length
+  ? prepareCoefficientOrders(Object.fromEntries(Object.entries(value).map(([name, perms]) => [name, perms.map(p => p && Array.from(p))])), 1) : null;
+function optimalOrderValue(image) {
   const byBucket = new Map();
   for (const block of image.strategyData.blocks) {
     const bucket = ORDER_BUCKET[block.id];
@@ -118,20 +126,18 @@ export function optimalLearnedOrders(image) {
       const combined = {[name]: bestPerms};
       const totalH = prepareCoefficientOrders(combined, 1)[0].header.bitLength - 4;
       const rawGain = [0, 1, 2].reduce((s, c) => s + (bestPerms[c] ? baseBits[c] - bestTBits[c] : 0), 0);
-      if (rawGain > totalH) value[name] = bestPerms;
+      if (rawGain > totalH) value[name] = bestPerms.map(p => p && Int32Array.from(p));
     }
   }
-  const out = Object.keys(value).length ? prepareCoefficientOrders(value, 1) : null;
-  if (sdKey) OPTIMAL_ORDERS.set(sdKey, out);
-  return out;
+  return value;
 }
 
-export function encodeStrategyImageSteps(image, orders = true, effort = 7, pooled = false, primed = null, both = true) {
-  if (!orders || effort <= 6) return strategyAnsSteps(image, effort, null, pooled, primed, both);
+export function* encodeStrategyImageSteps(image, orders = true, effort = 7, pooled = false, primed = null, both = true) {
+  if (!orders || effort <= 6) return yield* strategyAnsSteps(image, effort, null, pooled, primed, both);
   const std = learnedOrders(image);
-  if (effort < 8) return strategyAnsSteps(image, effort, std, pooled, primed, both);
-  const opt = optimalLearnedOrders(image);
-  return strategyAnsSteps(image, effort, [std, sameOrderPasses(std, opt) ? null : opt].filter(Boolean), pooled, primed, both);
+  if (effort < 8) return yield* strategyAnsSteps(image, effort, std, pooled, primed, both);
+  const opt = journaling() ? preparedOrders(yield* unit('optimal-orders', () => optimalOrderValue(image))) : optimalLearnedOrders(image);
+  return yield* strategyAnsSteps(image, effort, [std, sameOrderPasses(std, opt) ? null : opt].filter(Boolean), pooled, primed, both);
 }
 function sameOrderPasses(a, b) {
   if (!a || !b || a.length !== b.length) return false;

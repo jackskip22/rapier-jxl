@@ -4,7 +4,7 @@ import {unit, carried, stage, readEach, journaling, JOIN, PASSED} from './step-j
 import {packLevels, unpackLevels, packedOnly} from './photo-levels.mjs';
 import {photoXYBSteps} from './photo-xyb.mjs';
 import {photoXYBBand, PHOTO_BAND_MARGIN} from './photo-bands.mjs';
-import {V6, SMALL_V6, smallPicture, GABORISH, uploadFlat, uploadGrain, uploadBandPicture, SMALL_PIXELS, SMALL_CLUSTERS, UPLOAD_CLUSTERS} from './photo-v6-settings.mjs';
+import {V6, SMALL_V6, smallPicture, GABORISH, uploadFlat, uploadGrain, uploadBandPicture, EFFORT2_PICTURE, SMALL_PIXELS, SMALL_CLUSTERS, UPLOAD_CLUSTERS} from './photo-v6-settings.mjs';
 import {screenLike} from './screen.mjs';
 import {varDCTSteps, blockContexts, acContexts, fillACGroup, DCT8_DENSITY, seedLfSections, vdLfGroupCount} from './vardct.mjs';
 import {lfCoderFor} from './lf-coding.mjs';
@@ -36,7 +36,7 @@ let splitScratch = [];
 function bandStep(message) {
   const {key, width, height, quality, data, screen, gaborish, offset, color} = message;
   const v6 = message.small ? SMALL_V6 : V6;
-  const picture = message.full && !message.upload ? {...v6, ...GABORISH} : uploadBandPicture(!!message.uploadFlat, !!message.grain, quality);
+  const picture = message.light ? EFFORT2_PICTURE : message.full && !message.upload ? {...v6, ...GABORISH} : uploadBandPicture(!!message.uploadFlat, !!message.grain, quality);
   const image = message.image?.() ?? (gaborish ? photoXYBBand(data, width, height, quality, message.pack ? {...picture, packed: true} : picture, offset)
     : complete(photoXYBSteps(data, width, height, quality, color ? {...v6, fast: true, ...color} : screen ? {...v6, fast: true, calibrationRow: 'screen'} : {...v6, fast: true, fastBand: true, packed: !!message.pack})));
   const orderCounts = image.components.map(() => new Uint32Array(64));
@@ -284,15 +284,15 @@ function splitFrame(image, orders, counts, coding, dcGroups, {lf, clusters}) {
 }
 
 const SPLIT_BAND_BYTES = 8 << 20, SPLIT_KEEP_PIXELS = 5 << 20;
-export function* photoSplitSteps(data, width, height, quality, {gaborish = false, uploadFlat: flat, grain} = {}) {
-  const split = splitStart(width, height, flat, grain);
+export function* photoSplitSteps(data, width, height, quality, {gaborish = false, uploadFlat: flat, grain, light = false} = {}) {
+  const split = splitStart(width, height, flat, grain, light);
   try {
     for (let k = 0; k < split.bands.length; k++) { splitBand(split, data, quality, gaborish, k); trace('split: band ' + k); yield (k + 1) / split.parts; }
     return yield* splitRest(split, data);
   } finally { splitEnd(split); }
 }
-export function photoSplitBands(data, width, height, quality, {gaborish = false, uploadFlat: flat, grain} = {}) {
-  const split = splitStart(width, height, flat, grain);
+export function photoSplitBands(data, width, height, quality, {gaborish = false, uploadFlat: flat, grain, light = false} = {}) {
+  const split = splitStart(width, height, flat, grain, light);
   try { for (let k = 0; k < split.bands.length; k++) splitBand(split, data, quality, gaborish, k); }
   catch (error) { splitEnd(split); throw error; }
   return split;
@@ -302,19 +302,19 @@ export function* splitSteps(split) {
   try { return yield* splitRest(split, null); }
   finally { splitEnd(split); }
 }
-function splitStart(width, height, flat, grain) {
+function splitStart(width, height, flat, grain, light = false) {
   const perRow = Math.ceil(width / 8) * (GROUP_DIM / 8) * 64 * 2 * 3, take = Math.max(1, Math.floor((journaling() ? SPLIT_BAND_BYTES / 2 : SPLIT_BAND_BYTES) / perRow));
   const bands = splitBands(height, Math.ceil(Math.ceil(height / GROUP_DIM) / take)), id = ++serial;
-  return {width, height, bands, keys: bands.map((_, k) => id + ':' + k), parts: 3 * bands.length + 1, done: [], screen: null, uploadFlat: flat, grain};
+  return {width, height, bands, keys: bands.map((_, k) => id + ':' + k), parts: 3 * bands.length + 1, done: [], screen: null, uploadFlat: flat, grain, light};
 }
 function splitBand(split, data, quality, gaborish, k, image) {
-  const {width, height, bands} = split, band = bands[k], margin = gaborish ? PHOTO_BAND_MARGIN : 0;
+  const {width, height, bands} = split, band = bands[k], margin = gaborish || split.light ? PHOTO_BAND_MARGIN : 0;
   split.screen ??= !split.color && screenLike(data, width, height);
-  split.uploadFlat ??= gaborish && uploadFlat(data, width, height);
-  split.grain ??= gaborish && !split.uploadFlat && uploadGrain(data, width, height);
+  split.uploadFlat ??= gaborish && !split.light && uploadFlat(data, width, height);
+  split.grain ??= gaborish && !split.light && !split.uploadFlat && uploadGrain(data, width, height);
   const from = Math.max(0, band.top - margin), to = Math.min(height, band.top + band.height + margin);
   split.done.push(bandStep({key: split.keys[k], width, height: band.height, quality, data: image ? null : data.subarray(from * width * 4, to * width * 4),
-    offset: band.top - from, screen: split.screen, gaborish, uploadFlat: split.uploadFlat, grain: split.grain, pack: true, color: split.color, image, small: smallPicture(width, height)})[0]);
+    offset: band.top - from, screen: split.screen, gaborish: gaborish || split.light, light: split.light, uploadFlat: split.uploadFlat, grain: split.grain, pack: true, color: split.color, image, small: smallPicture(width, height)})[0]);
 }
 function* splitRest(split, data) {
   const {width, height, bands, keys, parts} = split;
@@ -348,8 +348,8 @@ function* splitRest(split, data) {
 }
 export function splitEnd(split) { for (const key of split.keys) held.delete(key); split.done = []; splitScratch = []; }
 
-export function* photoSplitCandidates(data, width, height, quality, clusters, {gaborish = false, uploadFlat: flat, grain, observe = null, screen, color} = {}) {
-  const split = splitStart(width, height, flat, grain), plans = clusters.map(plan => ({...plan}));
+export function* photoSplitCandidates(data, width, height, quality, clusters, {gaborish = false, light = false, uploadFlat: flat, grain, observe = null, screen, color} = {}) {
+  const split = splitStart(width, height, flat, grain, light), plans = clusters.map(plan => ({...plan}));
   split.color = color;
   split.parts += plans.length * split.bands.length;
   let hurry = false;
@@ -560,14 +560,15 @@ export function encodeSplitCandidates(data, width, height, quality, helpers, clu
   const pixels = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
   return encodeSplitUsing(pixels, width, height, quality, helpers, options, clusters.map(plan => ({...plan})));
 }
-async function encodeSplitUsing(data, width, height, quality, helpers, {signal, gaborish = false, screen: known, uploadFlat: knownFlat, grain: knownGrain, opaque = false, arena = false} = {}, extraClusters = []) {
+async function encodeSplitUsing(data, width, height, quality, helpers, {signal, gaborish = false, light = false, screen: known, uploadFlat: knownFlat, grain: knownGrain, opaque = false, arena = false} = {}, extraClusters = []) {
   const bands = splitBands(height, helpers.length + 1), id = ++serial;
   const screen = known ?? screenLike(data, width, height);
-  const flat = gaborish && (knownFlat ?? uploadFlat(data, width, height));
-  const grain = gaborish && !flat && (knownGrain ?? uploadGrain(data, width, height));
+  const filtered = gaborish || light;
+  const flat = gaborish && !light && (knownFlat ?? uploadFlat(data, width, height));
+  const grain = gaborish && !light && !flat && (knownGrain ?? uploadGrain(data, width, height));
   const shared = typeof SharedArrayBuffer === 'function' && data.buffer instanceof SharedArrayBuffer;
   const issued = [], call = splitAsker(helpers, serveSplit, issued), ask = (k, message, transfer) => call(k, message, id + ':' + k, transfer);
-  const margin = gaborish ? PHOTO_BAND_MARGIN : 0;
+  const margin = filtered ? PHOTO_BAND_MARGIN : 0;
   const rows = band => {
     const from = Math.max(0, band.top - margin), to = Math.min(height, band.top + band.height + margin);
     return {pixels: data.subarray(from * width * 4, to * width * 4), offset: band.top - from};
@@ -580,13 +581,13 @@ async function encodeSplitUsing(data, width, height, quality, helpers, {signal, 
     const first = bands.map((band, k) => {
       if (!k) return null;
       const {pixels: view, offset} = rows(band), pixels = shared ? view : bandCopy(view);
-      const reply = ask(k, {split: 'band', width, height: band.height, quality, data: pixels, offset, screen, gaborish, uploadFlat: flat, grain, pack: true, giveBack: !shared, small: smallPicture(width, height)}, shared ? [] : [pixels.buffer])
+      const reply = ask(k, {split: 'band', width, height: band.height, quality, data: pixels, offset, screen, gaborish: filtered, light, uploadFlat: flat, grain, pack: true, giveBack: !shared, small: smallPicture(width, height)}, shared ? [] : [pixels.buffer])
         .then(answer => { bandReturned(answer); return answer; });
       reply.catch(() => {});
       return reply;
     });
     const own = rows(bands[0]);
-    first[0] = ask(0, {split: 'band', width, height: bands[0].height, quality, data: own.pixels, offset: own.offset, screen, gaborish, uploadFlat: flat, grain, pack: true, small: smallPicture(width, height)});
+    first[0] = ask(0, {split: 'band', width, height: bands[0].height, quality, data: own.pixels, offset: own.offset, screen, gaborish: filtered, light, uploadFlat: flat, grain, pack: true, small: smallPicture(width, height)});
     mark('own band');
     const done = await Promise.all(first);
     mark('bands');

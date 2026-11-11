@@ -5,7 +5,8 @@ import {v6Image, v6Options} from './photo-v6.mjs';
 import {v6For} from './photo-v6-settings.mjs';
 import {fixedStrategyImage, lazyStrategyImage, materialize} from './varblock-core.mjs';
 import {estimateBytes} from './coefficient-ans.mjs';
-import {writeImage} from './photo-image-write.mjs';
+import {writeImage, writeImageSteps} from './photo-image-write.mjs';
+import {journaling} from './step-journal.mjs';
 export {S2_MARGIN} from './photo-whole-policy.mjs';
 
 export function searchTransforms() { return null; }
@@ -27,7 +28,7 @@ export function stillPhotoProvider(prepared) {
       const exact = yield {varblocks: {kind: 'layout', base, width, height, options: deviceOptions, layout}};
       return fixedStrategyImage(base, width, height, {...options, layout, ...(exact ? {exact} : {})}).image;
     },
-    *write(image, effort) { return writeImage(image, effort); },
+    *write(image, effort) { return journaling() ? yield* writeImageSteps(image, effort) : writeImage(image, effort); },
     estimate(image) { return estimateBytes(materialize(image)); },
   };
 }

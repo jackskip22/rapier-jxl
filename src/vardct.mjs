@@ -237,7 +237,7 @@ export function writeModularStream(w, planes, predictor, ans, kernels) {
       const f = freqs[c], lengths = histograms[c + 1].code.lengths;
       for (let s = 0; s < lengths.length; s++) if (f[s]) prefixBits += f[s] * (lengths[s] + (s < 224 ? (s > 1 ? s - 1 : 0) : Math.max(0, s - 236)));
       const model = losslessCoding(plan)[1], cfg = model.config, slots = PLAN_SLOTS;
-      if ((cfg.split !== 0 || cfg.msb !== 0 || cfg.lsb !== 0) && !kernelHooks.planTokens?.(plan, cfg)) {
+      if ((cfg.split !== 0 || cfg.msb !== 0 || cfg.lsb !== 0) && !(kernelHooks.planTokens?.(plan, cfg) || (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true))) {
         const tags = plan.tags, extra = plan.extra, used = plan.used;
         for (let i = 0; i < used; i++) {
           const symbol = tags[i] & 511;
@@ -445,11 +445,16 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
 
   const nzeros = [0, 1, 2].map(() => new Int32Array(32 * 32));
   const fastBlockCounts = !progression && !grey && jpeg.nonZero ? map.map(i => jpeg.nonZero[i]) : null;
-  let counted = !progression && !!(shared?.blockCounts || fastBlockCounts);
-  const blockCounts = shared?.blockCounts || fastBlockCounts || comps.map((comp, c) => grey && c !== 1 ? null : new Uint8Array(comp.row0 === undefined ? comp.coeffs.length / 64 : comp.stride * comp.rows));
+  let counted = !progression && !!(shared?.blockCounts || fastBlockCounts || ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && !strategyData && !jpeg.band));
+  const blockCounts = shared?.blockCounts || fastBlockCounts || comps.map((comp, c) => {
+    if (grey && c !== 1) return null;
+    const out = new Uint8Array(comp.row0 === undefined ? comp.coeffs.length / 64 : comp.stride * comp.rows);
+    if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && !strategyData && comp.row0 === undefined) for (let b = 0; b < out.length; b++) { let n = 0; for (let k = 1; k < 64; k++) n += comp.coeffs[b * 64 + k] !== 0; out[b] = n; }
+    return out;
+  });
   const buffer = strategyData && progression ? null : tokenBuffer();
   const tokenState = () => ({authoredOrderPasses, groupsX, strategyData, map, progression, contexts, lumaBuckets, lumaW,
-    nzeros, xsizeBlocks, ysizeBlocks, comps, grey, orders, counted, blockCounts, nonZero: jpeg.nonZero, tokenBuffer: buffer,
+    nzeros, xsizeBlocks, ysizeBlocks, comps, grey, orders, counted, blockCounts, nonZero: jpeg.nonZero || ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && !strategyData && counted ? blockCounts : undefined), tokenBuffer: buffer,
     hshifts, vshifts});
   const groupInput = g => {
     const state = tokenState();
@@ -461,7 +466,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
       nonZero: jpeg.nonZero?.map((counts, c) => counts?.subarray((by >> vshift(c)) * comps[c].stride, ((by + rows) >> vshift(c)) * comps[c].stride)),
       lumaBuckets: lumaBuckets.subarray((by >> vshift(1)) * lumaW, ((by + rows) >> vshift(1)) * lumaW)}};
   };
-  const tokens = (g, emit, pass = 0) => { const input = groupInput(g); return walkACGroup(input.state, input.g, emit, pass); };
+  const tokens = (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? null : (g, emit, pass = 0) => { const input = groupInput(g); return walkACGroup(input.state, input.g, emit, pass); };
   let kept = null, renaming = null;
   const fill = (g, pass) => {
     const {state, g: local} = groupInput(g);
@@ -469,6 +474,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
       const n = kernelHooks.strategyFill?.(state, local, pass, COEFF_NUM_NONZERO_CONTEXT, COEFF_FREQ_CONTEXT, ORDER_OF, buffer.ctxs, buffer.values);
       return [n ?? fillStrategyGroup(state, local, pass, buffer.ctxs, buffer.values), buffer.ctxs, buffer.values];
     }
+    if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) return null;
     const filled = kernels?.fill(state, local, pass, DCT8_DENSITY);
     return filled || [fillACGroup(state, local, pass, buffer.ctxs, buffer.values), buffer.ctxs, buffer.values];
   };
@@ -479,7 +485,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     jpeg.unpackBand?.();
     if (!buffer) { tokens(g, (ctx, value) => into.add(ctx, value), pass); return; }
     const [n, ctxs, values] = fill(g, pass);
-    if (!(ctxs.buffer !== buffer.ctxs.buffer && kernels.countFilled(into, n))) into.addTokens(ctxs, values, n);
+    if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && ctxs.buffer !== buffer.ctxs.buffer && kernels.countFilled(into, n)) {} else into.addTokens(ctxs, values, n);
     if (kept && !kernels && !strategyData) kept[g] = shared.tokenStore.keep({ctxs, values}, n);
   };
   const writeTokens = (g, coding, w, pass) => {
@@ -492,6 +498,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
       const flushed = kernelHooks.strategyWrite?.(input.state, input.g, pass, COEFF_NUM_NONZERO_CONTEXT, COEFF_FREQ_CONTEXT, ORDER_OF, coding, w);
       if (flushed) return flushed;
     }
+    if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && !strategyData) return;
     if (!buffer || !coding.writeTokens) { tokens(g, (ctx, value) => coding.write(w, ctx, value), pass); return; }
     if (coding.writeFilled && !strategyData) {
       const filled = kernels.fill(input.state, input.g, pass, DCT8_DENSITY);
@@ -570,23 +577,23 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   const countedMap = contexts;
   const list = [];
   for (const name of designs) for (const buckets of plan.fast ? [wanted] : wanted > 0 && name === 'dcBuckets' ? [0, wanted] : wanted > 0 && name === 'sizesDc' ? [wanted] : [0]) list.push([name, buckets]);
-  const remote = (plan.splitGroups && strategyData || plan.remoteDesigns) && list.length > 1 && counts.length === 1 && !plan.fast
+  const remote = !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && (plan.splitGroups && strategyData || plan.remoteDesigns) && list.length > 1 && counts.length === 1 && !plan.fast
     ? yield {kind: 'designs', list, counts: counts[0], lumaDc: lumaDcOf(), wanted, grey, fine: !!strategyData, clusters: plan.clusters, coding: buildCoding} : null;
   const remoteTotals = Array.isArray(remote) ? remote : remote?.totals ?? null, remotePriced = remote?.priced ?? null;
   let best = Infinity, bestAt = -1;
   for (let i = 0; i < list.length; i++) {
     const [name, buckets] = list[i];
     if (remoteTotals) { if (remoteTotals[i] != null && (bestAt < 0 || remoteTotals[i] < best)) { best = remoteTotals[i]; bestAt = i; } continue; }
-    const priced = yield* designPriceSteps(name, buckets, grey, null, countedMap, counts, buildCoding, {...plan.clusters, smallestMap: true, kernels}, counting.thresholds ?? []);
+    const priced = yield* designPriceSteps(name, buckets, grey, null, countedMap, counts, buildCoding, {...plan.clusters, smallestMap: true, kernels, ...(strategyData && {strategy: true})}, counting.thresholds ?? []);
     if (!priced) continue;
     if (!codings || priced.total < codings.reduce((n, coding) => n + coding.bits, contextHeader.bitLength)) {
       codings = priced.codings; contexts = priced.candidate; contextHeader = priced.header;
     }
   }
-  if (remoteTotals && bestAt >= 0) {
+  if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && remoteTotals && bestAt >= 0) {
     const made = !remotePriced?.[bestAt] && remote.coding?.(bestAt), shape = made ? designShape(list[bestAt][0], list[bestAt][1], grey, lumaDcOf()) : null;
     if (remotePriced?.[bestAt] || shape) globalThis.__jxlTrace?.push(['the kept design built as ' + (shape ? 'a helper priced it' : 'priced here'), performance.now()]);
-    const priced = remotePriced?.[bestAt] ?? (shape && designWith(shape, [made])) ?? designPrice(list[bestAt][0], list[bestAt][1], grey, lumaDcOf(), countedMap, counts, buildCoding, {...plan.clusters, smallestMap: true, kernels});
+    const priced = remotePriced?.[bestAt] ?? (shape && designWith(shape, [made])) ?? designPrice(list[bestAt][0], list[bestAt][1], grey, lumaDcOf(), countedMap, counts, buildCoding, {...plan.clusters, smallestMap: true, kernels, ...(strategyData && {strategy: true})});
     codings = priced.codings; contexts = priced.candidate; contextHeader = priced.header;
   }
   const sameMap = contexts === countedMap || (contexts.numDc === countedMap.numDc && contexts.numCtxs === countedMap.numCtxs && contexts.map.every((v, i) => v === countedMap.map[i]));
@@ -720,7 +727,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     const model = {coding: coding.model, grey, orders, hshifts, vshifts,
       authoredOrderPasses: authoredOrderPasses?.map(({byStrategy, ordinary}) => ({byStrategy, ordinary})),
       contexts: {thresholds: contexts.thresholds, map: contexts.map, numDc: contexts.numDc, numCtxs: contexts.numCtxs}};
-    const job = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : (g, maxInputBytes = Infinity) => {
+    const job = ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) || (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true)) ? null : (g, maxInputBytes = Infinity) => {
       const bx0 = g % groupsX * 32, by0 = Math.floor(g / groupsX) * 32;
       const bw = Math.min(32, xsizeBlocks - bx0), bh = Math.min(32, ysizeBlocks - by0);
       const lw = bw >> hshift(1), lh = bh >> vshift(1);
@@ -775,7 +782,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     };
     reply = yield {kind: 'ac-group', offload: plan.pooled ? undefined : 'groups', image: jpeg, plan, groups: numGroups, model, job,
       ...(plan.splitGroups ? {lumaBuckets, lumaW} : {}),
-      local(g) {
+      local: (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? null : function local(g) {
         try {
           const w = new BitWriter(4096);
           if (writeTokens(g, coding, w, 0) !== 2) coding.flush?.(w); return w;

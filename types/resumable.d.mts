@@ -122,7 +122,8 @@ export type ResumableOptions<Operation extends ResumableOperation> = Operation e
   : ResumableRestoreOptions
   : never;
 type InputOf<Operation extends ResumableOperation> = Operation extends unknown
-  ? Operation extends typeof verify | Uploads ? ResumablePixels | ResumableFile
+  ? Operation extends typeof root.encode | typeof root.fit | typeof upload.encode | typeof upload.fit ? ResumablePixels | ResumableFile | ResumableDecode
+  : Operation extends typeof verify | Uploads ? ResumablePixels | ResumableFile
   : 'fidelity' extends keyof OptionsOf<Operation> ? ResumablePixels & {readonly colorSpace?: 'srgb' | 'display-p3'} : ResumableInput
   : never;
 

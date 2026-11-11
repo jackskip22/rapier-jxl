@@ -270,6 +270,39 @@ export function revertStrategyFamily(chosen, family) {
   return chosen;
 }
 
+const REVERTED = new Set([5, 4, 6]);
+function packChoices(chosen) {
+  const out = [], open = new Set();
+  const put = list => {
+    for (const block of list) {
+      const {id, bx, by} = block, fallback = REVERTED.has(TRANSFORMS[id].table) && !open.has(block) ? block.fallback : null;
+      out.push(id, bx, by, fallback?.length ?? 0);
+      if (fallback) { open.add(block); put(fallback); open.delete(block); }
+    }
+  };
+  put(chosen);
+  return Int32Array.from(out);
+}
+function unpackChoices(packed) {
+  let at = 0;
+  const take = n => Array.from({length: n}, () => {
+    const id = packed[at], bx = packed[at + 1], by = packed[at + 2], count = packed[at + 3];
+    at += 4;
+    return count ? {id, bx, by, fallback: take(count)} : {id, bx, by};
+  });
+  const list = [];
+  while (at < packed.length) list.push(...take(1));
+  return list;
+}
+export function strategyRowsLayout(bands) {
+  const chosen = bands.flatMap(band => unpackChoices(band.chosen));
+  if (bands[0]?.useMask) for (const fam of [5, 4, 6]) {
+    const count = strategyFamilyCount(chosen, fam);
+    if (count > 0 && count < 8) revertStrategyFamily(chosen, fam);
+  }
+  return chosen.map(({id, bx, by}) => ({id, bx, by}));
+}
+
 export function xybStrategies(base, width, height, options = {}) {
   const builder = createStrategyBuilder(base, width, height, options);
   const {lambda, sizeScale, ids, inhom, comps, stride, rows, tables, allowed, rates, costs, certifiedCosts, costDoubt,
@@ -354,7 +387,8 @@ export function xybStrategies(base, width, height, options = {}) {
   const chosen = [];
   if (options.layout) for (const {id, bx, by} of options.layout) chosen.push(candidate(id, bx, by));
   else {
-    for (let cy = 0; cy < rows; cy += region) for (let cx = 0; cx < stride; cx += region) {
+    const [cy0, cy1] = options.regionRows ?? [0, rows];
+    for (let cy = cy0; cy < Math.min(rows, cy1); cy += region) for (let cx = 0; cx < stride; cx += region) {
       if (keepChosen && vk) vk.region();
       let {list, opened} = selector.choose(cx, cy);
       if (opened && certifiedCosts) {
@@ -367,6 +401,7 @@ export function xybStrategies(base, width, height, options = {}) {
       if (opened) open.push({bx: cx, by: cy, size: region});
     }
     if (options.band) return {chosen};
+    if (options.regionRows) return {chosen: packChoices(chosen), useMask};
     if (useMask) {
       for (const fam of [5, 4, 6]) {
         const count = strategyFamilyCount(chosen, fam);

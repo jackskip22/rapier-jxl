@@ -153,6 +153,16 @@ function metricBand(...args) {
   }
   return kernel.s2MetricBand(...args);
 }
+function metricBand2(...args) {
+  if (fused?.s2MetricBand2 && fusedAllowed && fusedState > 0) {
+    const failed = new Int32Array(memory.buffer,FAILED,1);
+    failed[0] = 0;
+    const made = fused.s2MetricBand2(...args);
+    if (!failed[0]) return made;
+    fusedState = -2; fused = null;
+  }
+  return kernel.s2MetricBand2 ? kernel.s2MetricBand2(...args) : null;
+}
 function reserve(plan) {
   ready();
   if (plan.arenaBytes <= memory.buffer.byteLength) return;
@@ -191,15 +201,18 @@ export function downsample(input,width,height,into = null) {
   for (let c = 0; c < 3; c++) planes[c].set(new Float32Array(memory.buffer,output + c * m * 4,m));
   return {planes,width:w,height:h};
 }
-export function scaleBand(a,b,w,h,g,first,end,previous = null) {
-  const inputY = Math.min(h,Math.ceil((first + 4) / 4) * 4);
+export function scaleBand(a,b,w,h,g,first,end,previous = null,from = null) {
+  const inputY = from ?? Math.min(h,Math.ceil((first + 4) / 4) * 4);
   const inputEnd = Math.min(h,Math.ceil((end + 4) / 4) * 4), inputH = inputEnd - inputY;
   const plan = ssimulacra2Layout(w,Math.max(1,inputH),{referenceRgba:!!a.rgba,distortedRgba:!!b.rgba,base});
   reserve(plan); copyGauss(g);
   new Int32Array(memory.buffer,KEYS,1 << 17).fill(-1);
   writeInput(a,plan.reference,w * inputH); writeInput(b,plan.distorted,w * inputH);
   if (previous) {
-    new Uint8Array(memory.buffer,plan.scratch,plan.rowBytes).set(previous.scratch);
+    if (previous.states) {
+      const scratch = new Float32Array(memory.buffer,plan.scratch,plan.rowBytes >> 2);
+      for (let i = 0; i < 15; i++) scratch.set(previous.states.subarray(i * 6 * w,(i + 1) * 6 * w),stateAt(i,w));
+    } else new Uint8Array(memory.buffer,plan.scratch,plan.rowBytes).set(previous.scratch);
     new Float64Array(memory.buffer,plan.sums,18).set(previous.sums);
   }
   const made = metricBand(w,h,first,end,inputY,inputH,plan.reference,a.rgba ? 0 : 1,
@@ -207,6 +220,41 @@ export function scaleBand(a,b,w,h,g,first,end,previous = null) {
   if (made !== inputEnd) throw fault('JXL_INTERNAL','SSIMULACRA2 row continuation did not consume its input.');
   return {scratch:new Uint8Array(memory.buffer,plan.scratch,plan.rowBytes).slice(),
     sums:new Float64Array(memory.buffer,plan.sums,18).slice()};
+}
+export function scaleBandPair(a,b0,b1,w,h,g,first,end,previous0 = null,previous1 = null,from = null) {
+  ready();
+  if (!kernel.s2MetricBand2 && !fused?.s2MetricBand2) return null;
+  const inputY = from ?? Math.min(h,Math.ceil((first + 4) / 4) * 4);
+  const inputEnd = Math.min(h,Math.ceil((end + 4) / 4) * 4), inputH = inputEnd - inputY;
+  const plan = ssimulacra2Layout(w,Math.max(1,inputH),{referenceRgba:!!a.rgba,distortedRgba:!!b0.rgba,base});
+  const more = s2ArenaPlan({base:plan.arenaBytes}), distorted1 = more.take(plan.distortedBytes), scratch1 = more.take(plan.rowBytes), sums1 = more.take(18 * 8);
+  reserve({arenaBytes:more.arenaBytes}); copyGauss(g);
+  new Int32Array(memory.buffer,KEYS,1 << 17).fill(-1);
+  writeInput(a,plan.reference,w * inputH); writeInput(b0,plan.distorted,w * inputH); writeInput(b1,distorted1,w * inputH);
+  for (const [previous,scratch,sums] of [[previous0,plan.scratch,plan.sums],[previous1,scratch1,sums1]]) if (previous) {
+    if (previous.states) {
+      const rows = new Float32Array(memory.buffer,scratch,plan.rowBytes >> 2);
+      for (let i = 0; i < 15; i++) rows.set(previous.states.subarray(i * 6 * w,(i + 1) * 6 * w),stateAt(i,w));
+    } else new Uint8Array(memory.buffer,scratch,plan.rowBytes).set(previous.scratch);
+    new Float64Array(memory.buffer,sums,18).set(previous.sums);
+  }
+  const made = metricBand2(w,h,first,end,inputY,inputH,plan.reference,a.rgba ? 0 : 1,plan.distorted,b0.rgba ? 0 : 1,
+    distorted1,b1.rgba ? 0 : 1,LUT,GAUSS,plan.scratch,plan.sums,scratch1,sums1,KEYS,VALUES);
+  if (made === null) return null;
+  if (made !== inputEnd) throw fault('JXL_INTERNAL','SSIMULACRA2 row continuation did not consume its input.');
+  return [[plan.scratch,plan.sums],[scratch1,sums1]].map(([scratch,sums]) => ({scratch:new Uint8Array(memory.buffer,scratch,plan.rowBytes).slice(),
+    sums:new Float64Array(memory.buffer,sums,18).slice(),pair:true}));
+}
+export function pairState(first,second,w) {
+  const states = second.states.slice();
+  for (let c = 0; c < 3; c++) for (const k of [0,2]) states.set(first.states.subarray((c * 5 + k) * 6 * w,(c * 5 + k + 1) * 6 * w),(c * 5 + k) * 6 * w);
+  return {states,sums:second.sums};
+}
+const BAND_RING = 16, stateAt = (i,w) => (6 * BAND_RING + 8 + i * (BAND_RING + 7) + BAND_RING) * w;
+export function bandState({scratch,sums},w) {
+  const all = new Float32Array(scratch.buffer,scratch.byteOffset,scratch.byteLength >> 2), states = new Float32Array(15 * 6 * w);
+  for (let i = 0; i < 15; i++) states.set(all.subarray(stateAt(i,w),stateAt(i,w) + 6 * w),i * 6 * w);
+  return {states,sums};
 }
 export function scaleSums(a,b,w,h,g,channels,keep,colors,channel = null,terms = null,scale = 0) {
   const mask = channel === null ? 7 : 1 << channel;

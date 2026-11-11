@@ -1,16 +1,27 @@
 // SPDX-License-Identifier: MIT
 import {FRAME_SIZE, packSigned} from './bits.mjs';
 import {pixelKeys} from './screen-crop.mjs';
-import {capturePatchMarks, capturePeelMarks} from './capture-kernels.mjs';
+import {capturePatchMarks, capturePeelMarks, capturePeelBackground, capturePeelTools} from './capture-kernels.mjs';
 import {buildCode, hybridToken, uintConfig, writeHistograms, writeHybrid} from './prefix.mjs';
 
 export const PATCH_SLOT = 2;
 const MAX_SIDE = 128, MAX_MARKS = 1 << 16, token = [0, 0, 0];
 
 export function capturePatches(rgba, width, height, least = 0) {
+  if (width < 16 || height < 16 || width * height > 1 << 25) return null;
+  const keys = pixelKeys(rgba), found = capturePatchGroups(keys, width, height, least);
+  if (!found) return null;
+  const {groups, side, area, placements, cover} = found;
+  const {atlas, atlasKeys, atlasWidth, atlasHeight} = packAtlas(groups, side, area, keys[0]);
+  for (const g of groups)
+    for (let r = 0; r < g.h; r++) atlasKeys.set(keys.subarray((g.y + r) * width + g.x, (g.y + r) * width + g.x + g.w), (g.ay + r) * atlasWidth + g.ax);
+  return {groups, atlas, width: atlasWidth, height: atlasHeight, placements, cover};
+}
+
+export function capturePatchGroups(keys, width, height, least = 0) {
   const n = width * height;
   if (width < 16 || height < 16 || n > 1 << 25) return null;
-  const keys = pixelKeys(rgba), boxes = capturePatchMarks(keys, width, height, MAX_SIDE, MAX_MARKS, 4);
+  const boxes = capturePatchMarks(keys, width, height, MAX_SIDE, MAX_MARKS, 4);
   if (!boxes) return null;
   let marked = 0;
   for (let i = 2; i < boxes.length; i += 4) marked += boxes[i] * boxes[i + 1];
@@ -39,14 +50,11 @@ export function capturePatches(rgba, width, height, least = 0) {
   let placements = 0, area = 0, side = 0, repeats = 0;
   for (const g of kept) { const c = g.positions.length >> 1; placements += c; area += g.w * g.h; repeats += (c - 1) * g.w * g.h; side = Math.max(side, g.w); }
   if (placements * 16 > n || repeats < least * n) return null;
-  const {atlas, atlasKeys, atlasWidth, atlasHeight} = packAtlas(kept, side, area, keys[0]);
-  for (const g of kept)
-    for (let r = 0; r < g.h; r++) atlasKeys.set(keys.subarray((g.y + r) * width + g.x, (g.y + r) * width + g.x + g.w), (g.ay + r) * atlasWidth + g.ax);
-  return {groups: kept, atlas, width: atlasWidth, height: atlasHeight, placements, cover: repeats / n};
+  kept.sort((a, b) => b.h - a.h || b.w - a.w);
+  return {groups: kept, side, area, placements, cover: repeats / n};
 }
 
 function packAtlas(groups, side, area, fill) {
-  groups.sort((a, b) => b.h - a.h || b.w - a.w);
   const atlasWidth = Math.max(side, Math.min(1024, Math.ceil(Math.sqrt(area * 1.25))));
   let ax = 0, ay = 0, rowHeight = 0;
   for (const g of groups) {
@@ -67,7 +75,7 @@ export function fillPatches(plane, width, patches) {
 }
 
 export function writeCapturePatches(w, patches, alpha) {
-  if (!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true || typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && patches.peel && !patches.ordered) {
+  if (!(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && patches.peel && !patches.ordered) {
     patches.ordered = true;
     const raster = patches.groups.map(g => g.positions), walked = patches.groups.map(g => {
       const n = g.positions.length >> 1;
@@ -151,113 +159,45 @@ export function writePatchedFrameHeader(w, alpha, shift = 3) {
 export const PEEL_ADD = 2, PEEL_MUL = 3;
 const WORD_GLYPH = 14, MIN_GLYPH_INK = 12;
 
-function contain(groups, id) {
-  const counts = new Map(), at = new Map();
-  groups.forEach((g, k) => { for (let i = 0; i < g.cells.length; i++) { const v = g.cells[i]; if (v === id) continue; counts.set(v, (counts.get(v) || 0) + 1); const list = at.get(v); if (list) list.push(k, i); else at.set(v, [k, i]); } });
-  for (const t of groups) {
-    let anchor = -1, fewest = Infinity;
-    for (let i = 0; i < t.cells.length; i++) { const v = t.cells[i]; if (v !== id && counts.get(v) < fewest) { fewest = counts.get(v); anchor = i; } }
-    if (anchor < 0 || fewest < 2) continue;
-    const list = at.get(t.cells[anchor]), tx = anchor % t.w, ty = anchor / t.w | 0;
-    for (let j = 0; j < list.length; j += 2) {
-      const g = groups[list[j]];
-      if (g.w * g.h <= t.w * t.h) continue;
-      const ox = list[j + 1] % g.w - tx, oy = (list[j + 1] / g.w | 0) - ty;
-      if (ox < 0 || oy < 0 || ox + t.w > g.w || oy + t.h > g.h) continue;
-      let same = true;
-      for (let y = 0; y < t.h && same; y++) for (let x = 0, a = y * t.w, b = (oy + y) * g.w + ox; x < t.w; x++) if (t.cells[a + x] !== g.cells[b + x]) { same = false; break; }
-      if (same) { t.in = g; t.ox = ox; t.oy = oy; break; }
-    }
-  }
-}
-
 export function capturePeel(rgba, width, height, least = 0, glyph = WORD_GLYPH) {
   const n = width * height;
   if (width < 16 || height < 16 || n > 1 << 25) return null;
-  const keys = pixelKeys(rgba);
-  const counts = new Map(), sample = new Int32Array(keys.buffer, keys.byteOffset, n);
-  for (let i = 0; i < n; i += 61) counts.set(sample[i], (counts.get(sample[i]) || 0) + 1);
-  let bg0 = keys[0], most = 0;
-  for (const [k, c] of counts) if (c > most) { most = c; bg0 = k >>> 0; }
-  const signed = sample, mul = bg0 === 0xffffffff, br = bg0 & 255, bgg = bg0 >>> 8 & 255, bb = bg0 >>> 16 & 255, ba = bg0 >>> 24;
-  const found = capturePeelMarks(keys, width, height, bg0 | 0, MAX_SIDE);
+  const keys = pixelKeys(rgba), bg0 = capturePeelBackground(keys.subarray(0, n)), mul = bg0 === 0xffffffff,
+    found = capturePeelMarks(keys, width, height, bg0 | 0, MAX_SIDE);
   if (!found) return null;
-  const {runs} = found, marks = [];
-  for (let i = 0; i < found.marks.length; i += 6) {
-    const start = found.marks[i + 4], end = found.marks[i + 5];
-    let ok = true, pixels = 0;
-    for (let k = start; k < end && ok; k += 3) for (let p = runs[k] * width + runs[k + 1], q = runs[k] * width + runs[k + 2]; p <= q; p++) {
-      const v = keys[p];
-      pixels++;
-      if (!mul && ((v & 255) < br || (v >>> 8 & 255) < bgg || (v >>> 16 & 255) < bb || v >>> 24 < ba)) { ok = false; break; }
-    }
-    if (!ok) continue;
-    if (pixels >= 1024) {
-      const colours = new Set();
-      for (let k = start; k < end; k += 3) for (let p = runs[k] * width + runs[k + 1], q = runs[k] * width + runs[k + 2]; p <= q; p++) colours.add(signed[p]);
-      if (colours.size >= 1024 && colours.size * 2 > pixels) continue;
-    }
-    marks.push({x: found.marks[i], y: found.marks[i + 1], w: found.marks[i + 2], h: found.marks[i + 3], start, end});
-  }
-  let inked = 0;
-  for (const m of marks) for (let k = m.start; k < m.end; k += 3) inked += runs[k + 2] - runs[k + 1] + 1;
-  if (!marks.length || inked < least * n) return null;
-  const mode = mul ? PEEL_MUL : PEEL_ADD, id = mul ? 0xffffffff : 0, first = [], groups = [];
+  const kernels = capturePeelTools(bg0), {runs} = found, marks = [];
+  const mode = mul ? PEEL_MUL : PEEL_ADD, first = [], groups = [];
   let buckets = new Map();
-  const add = (into, cells, w, h, positions) => {
-    let hash = Math.imul(w, 0x9e3779b1) ^ h;
-    for (let i = 0; i < cells.length; i++) hash = Math.imul(hash ^ cells[i], 16777619);
-    const list = buckets.get(hash), group = list?.find(g => g.w === w && g.h === h && g.cells.every((v, i) => v === cells[i]));
-    if (group) { group.positions.push(...positions); return; }
-    const made = {w, h, mode, cells, positions: [...positions]};
+  const add = (into, cells, w, h, positions, info = kernels.info(cells, w, h)) => {
+    const list = buckets.get(info.hash), group = list?.find(g => g.w === w && g.h === h && kernels.equal(g.cells, cells));
+    if (group) { for (const position of positions) group.positions.push(position); return; }
+    const made = {w, h, mode, cells, positions: [...positions], hash: info.hash, inkCount: info.inkCount};
     into.push(made);
-    if (list) list.push(made); else buckets.set(hash, [made]);
+    if (list) list.push(made); else buckets.set(info.hash, [made]);
   };
-  for (const m of marks) {
-    const cells = new Uint32Array(m.w * m.h).fill(id);
-    for (let k = m.start; k < m.end; k += 3) {
-      const y = runs[k], from = y * width + runs[k + 1], to = y * width + runs[k + 2], at = (y - m.y) * m.w - m.x - y * width;
-      if (mul) cells.set(keys.subarray(from, to + 1), at + from);
-      else for (let p = from; p <= to; p++) cells[at + p] = keys[p] - bg0 >>> 0;
-    }
-    add(first, cells, m.w, m.h, [m.x, m.y]);
+  let inked = 0;
+  for (let i = 0; i < found.marks.length; i += 6) {
+    const mark = {x: found.marks[i], y: found.marks[i + 1], w: found.marks[i + 2], h: found.marks[i + 3],
+      start: found.marks[i + 4], end: found.marks[i + 5]}, extracted = kernels.cells(keys, width, mark, runs);
+    if (extracted) { marks.push(mark); inked += extracted.pixels; add(first, extracted.cells, mark.w, mark.h, [mark.x, mark.y]); }
   }
+  if (!marks.length || inked < least * n) return null;
   buckets = new Map();
-  const inkOf = g => g.cells.reduce((n, v) => n + (v !== id), 0), anchors = new Map();
-  for (const t of first.filter(g => g.w <= glyph && inkOf(g) >= MIN_GLYPH_INK).sort((a, b) => inkOf(b) - inkOf(a))) {
-    t.ink = [];
-    for (let c = t.cells.length - 1; c >= 0; c--) if (t.cells[c] !== id) t.ink.push(c % t.w, c / t.w | 0, t.cells[c]);
-    t.anchor = t.ink.length - 3;
-    const list = anchors.get(t.ink[t.anchor + 2]);
-    if (list) list.push(t); else anchors.set(t.ink[t.anchor + 2], [t]);
-  }
+  const templates = first.filter(g => g.w <= glyph && g.inkCount >= MIN_GLYPH_INK).sort((a, b) => b.inkCount - a.inkCount);
+  for (const t of templates) t.ink = kernels.info(t.cells, t.w, t.h, true).ink;
+  kernels.templates(templates);
   const moved = (positions, dx, dy) => positions.map((v, i) => v + (i & 1 ? dy : dx));
   for (const g of first) {
-    if (g.w <= glyph) { add(groups, g.cells, g.w, g.h, g.positions); continue; }
-    const cells = g.cells.slice();
-    for (let i = 0; i < cells.length; i++) {
-      const list = cells[i] === id ? null : anchors.get(cells[i]);
-      if (list) for (const t of list) {
-        const ox = i % g.w - t.ink[t.anchor], oy = (i / g.w | 0) - t.ink[t.anchor + 1];
-        if (ox < 0 || oy < 0 || ox + t.w > g.w || oy + t.h > g.h) continue;
-        let k = 0;
-        while (k < t.ink.length && cells[(oy + t.ink[k + 1]) * g.w + ox + t.ink[k]] === t.ink[k + 2]) k += 3;
-        if (k < t.ink.length) continue;
-        for (k = 0; k < t.ink.length; k += 3) cells[(oy + t.ink[k + 1]) * g.w + ox + t.ink[k]] = id;
-        add(groups, t.cells, t.w, t.h, moved(g.positions, ox, oy));
-        break;
-      }
+    if (g.w <= glyph) { add(groups, g.cells, g.w, g.h, g.positions, g); continue; }
+    const factored = kernels.factor(g);
+    for (let i = 0; i < factored.matches.length; i += 3) {
+      const t = templates[factored.matches[i]];
+      add(groups, t.cells, t.w, t.h, moved(g.positions, factored.matches[i + 1], factored.matches[i + 2]), t);
     }
-    let x0 = g.w, x1 = -1, y0 = g.h, y1 = -1;
-    for (let i = 0; i < cells.length; i++) if (cells[i] !== id) { const x = i % g.w, y = i / g.w | 0; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
-    if (x1 < 0) continue;
-    const w = x1 - x0 + 1, h = y1 - y0 + 1, rest = new Uint32Array(w * h);
-    for (let y = 0; y < h; y++) rest.set(cells.subarray((y0 + y) * g.w + x0, (y0 + y) * g.w + x0 + w), y * w);
-    add(groups, rest, w, h, moved(g.positions, x0, y0));
+    if (factored.cells) add(groups, factored.cells, factored.width, factored.height, moved(g.positions, factored.x, factored.y));
   }
-  const body = new Uint32Array(keys);
-  for (const m of marks) for (let k = m.start; k < m.end; k += 3) body.fill(bg0, runs[k] * width + runs[k + 1], runs[k] * width + runs[k + 2] + 1);
-  contain(groups, id);
+  kernels.contain(groups);
+  const body = kernels.body(keys, width, height, marks, runs);
   let placements = 0, area = 0, side = 0;
   for (const g of groups) {
     placements += g.positions.length >> 1;
@@ -265,10 +205,10 @@ export function capturePeel(rgba, width, height, least = 0, glyph = WORD_GLYPH) 
     const order = Array.from({length: g.positions.length >> 1}, (_, i) => i).sort((a, b) => g.positions[2 * a + 1] - g.positions[2 * b + 1] || g.positions[2 * a] - g.positions[2 * b]);
     g.positions = order.flatMap(i => [g.positions[2 * i], g.positions[2 * i + 1]]);
   }
-  const {atlas, atlasKeys, atlasWidth, atlasHeight} = packAtlas(groups.filter(g => !g.in), side, area, 0xffffffff);
+  const {atlas, atlasKeys, atlasWidth, atlasHeight} = packAtlas(groups.filter(g => !g.in).sort((a, b) => b.h - a.h || b.w - a.w), side, area, 0xffffffff);
   const place = g => { if (g.in && g.ax === undefined) { place(g.in); g.ax = g.in.ax + g.ox; g.ay = g.in.ay + g.oy; } };
   for (const g of groups) place(g);
   for (const g of groups) if (!g.in) for (let r = 0; r < g.h; r++) atlasKeys.set(g.cells.subarray(r * g.w, (r + 1) * g.w), (g.ay + r) * atlasWidth + g.ax);
-  for (const g of groups) { g.cells = null; g.in = null; }
+  for (const g of groups) { g.cells = null; g.in = null; delete g.hash; delete g.inkCount; }
   return {groups, atlas, width: atlasWidth, height: atlasHeight, placements, cover: inked / n, body: new Uint8Array(body.buffer), peel: true};
 }

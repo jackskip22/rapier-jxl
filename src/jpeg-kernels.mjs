@@ -45,7 +45,7 @@ export function jpegKernels(flushTokens) {
     };
     exports.initTable();
     engine = {
-      memoryBytes: () => memory.buffer.byteLength,
+      memoryBytes: (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? null : () => memory.buffer.byteLength,
       clusters: 256, flatten: flattenSparse,
       row(i, freqs, bits) { u32.set(freqs, (ROWS >> 2) + i * 64); f64[(BITS >> 3) + i] = bits; exports.terms(i); },
       own(freqs) { u32.set(freqs, OWN >> 2); },
@@ -107,7 +107,7 @@ export function jpegKernels(flushTokens) {
         const at = exports.assign(n, k, switchCost, offsets, pairs, tables, back, best, next);
         return [at, i16.subarray(back >> 1, (back >> 1) + n * k)];
       },
-      fill(state, g, pass, density) {
+      fill: (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? null : function fill(state, g, pass, density) {
         const {authoredOrderPasses, groupsX, progression, contexts, lumaBuckets, lumaW, xsizeBlocks, ysizeBlocks, comps, grey,
           orders, counted, blockCounts, nonZero, hshifts, vshifts} = state;
         if (progression || nonZero || contexts.map.length > 2560 ||
@@ -222,7 +222,7 @@ export function jpegKernels(flushTokens) {
         }
       },
       }),
-      prefixFilled(model) {
+      prefixFilled: (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? null : function prefixFilled(model) {
         const {contextMap, histograms} = model;
         if (histograms.length > 255 || contextMap.length > 8192 || histograms.some(h => h.code.lengths.length > 256)) return null;
         const load = () => {
@@ -261,7 +261,7 @@ export function jpegKernels(flushTokens) {
         return kept;
       },
       }),
-      countFilled(into, n) {
+      countFilled: (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? null : function countFilled(into, n) {
         if (into.contexts > 8192) return false;
         reserve(DYNAMIC);
         const m = exports.countFilled(n), large = u32[SCRATCH >> 2], small = into.small, totals = into.totals;
@@ -317,7 +317,7 @@ export function jpegKernels(flushTokens) {
           },
         };
       },
-      ansWriter(model) {
+      ansWriter: (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? () => ({write: true, flush: true}) : function ansWriter(model) {
         const {contextMap, histograms} = model;
         if (histograms.length > 255 || contextMap.length > 8192 || histograms.some(h => h.counts.length > 256)) return null;
         reserve(CTAB);
@@ -359,12 +359,13 @@ export function jpegKernels(flushTokens) {
   return engine;
 }
 export function capJpegKernels(bytes) {
+  if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) return null;
   const kernels = jpegKernels();
   if (!kernels || kernels.memoryBytes() > bytes) return null;
   limit = bytes;
   return kernels;
 }
-export function releaseJpegKernels() { engine = undefined; limit = Infinity; }
+export function releaseJpegKernels() { if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) return; engine = undefined; limit = Infinity; }
 
 function flattenSparse(ordered) {
   let total = 0;

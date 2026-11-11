@@ -365,7 +365,7 @@ function materializeApp(app, raw, sources, previous, iccCount) {
     const n = app.length - 17; requireJPEG(n >= 0 && icc && state.icc + n <= icc.length);
     out[0] = 226; out.set(ICC_TAG, 3); out[15] = ++state.sequence; out[16] = iccCount; out.set(icc.subarray(state.icc, state.icc += n), 17);
   } else if (app.type === 2) {
-    requireJPEG(!state.exif && exif && exif.length >= 4 && app.length === exif.length + 5);
+    requireJPEG(!state.exif && exif && exif.length >= 4 && !(exif[0] | exif[1] | exif[2] | exif[3]) && app.length === exif.length + 5);
     out[0] = 225; out.set(EXIF_TAG, 3); out.set(exif.subarray(4), 9); state.exif = true;
   } else {
     requireJPEG(!state.xml && xml && app.length === xml.length + 32);
@@ -429,7 +429,7 @@ function* scanEvents(bytes, bit, zero, remaining) {
   });
   return {values, bit, count: head.count};
 }
-function* readDataSteps(bytes, sources = {}, dictionary) {
+function* readDataSteps(bytes, sources = {}, dictionary, jpeg) {
   const head = yield* unit('jpeg-data-header', () => readDataHeader(bytes)), data = {...head.data, scans: head.data.scans.map(scan => ({...scan}))};
   let bit = head.bit, events = 0;
   for (const scan of data.scans) for (const key of ['resets', 'zeros']) {
@@ -443,6 +443,7 @@ function* readDataSteps(bytes, sources = {}, dictionary) {
     const padding = r.read(1) ? r.read(24) : null; requireJPEG(padding === null || padding <= 16777216);
     return {inter, tail, padding, bit: r.bit};
   });
+  if (lengths.padding !== null) requireJPEG(lengths.padding <= 7 * data.scans.length * (1 + (data.restart ? Math.floor(Math.ceil(jpeg.width / 8) * Math.ceil(jpeg.height / 8) / data.restart) : 0)));
   data.inter = lengths.inter; data.tail = lengths.tail; bit = lengths.bit; data.padding = null;
   if (lengths.padding !== null) {
     const parts = [];
@@ -821,6 +822,11 @@ function nonzeroMasks(component) {
 }
 const upTo = k => k >= 31 ? -1 : k < 0 ? 0 : (1 << (k + 1)) - 1;
 const bandMask = (ss, se) => [upTo(Math.min(se, 31)) & ~upTo(ss - 1), upTo(se - 32) & ~upTo(ss - 33)];
+function scanGrid(jpeg, scan) {
+  const components = jpeg.components, hmax = Math.max(...components.map(c => c.h)), vmax = Math.max(...components.map(c => c.v));
+  const single = scan.components.length === 1, lead = components[scan.components[0].index];
+  return {hmax, vmax, single, lead, nx: Math.ceil(jpeg.width * (single ? lead.h : 1) / (8 * hmax)), ny: Math.ceil(jpeg.height * (single ? lead.v : 1) / (8 * vmax))};
+}
 function* writeScan(out, jpeg, scan, huffman, restart, progressive, pad, nonzero) {
   const {ss, se, al, ah} = scan, components = jpeg.components, bands = jpeg.rows?.();
   requireJPEG(progressive ? ss === 0 ? se === 0 : scan.components.length === 1 : ss === 0 && se === 63 && !al && !ah);
@@ -834,8 +840,7 @@ function* writeScan(out, jpeg, scan, huffman, restart, progressive, pad, nonzero
   const resets = events.resets, writer = new ScanWriter(out, scan, events.zeros);
   const entries = scan.components.map(entry => ({index: entry.index, co: components[entry.index].coeffs, row0: 0, dc: huffman[entry.dc] || NO_CODE, ac: huffman[16 + entry.ac] || NO_CODE,
     nonzero: progressive && ss && !bands ? nonzero(entry.index) : null}));
-  const hmax = Math.max(...components.map(c => c.h)), vmax = Math.max(...components.map(c => c.v)), single = scan.components.length === 1;
-  const lead = components[scan.components[0].index], nx = Math.ceil(jpeg.width * (single ? lead.h : 1) / (8 * hmax)), ny = Math.ceil(jpeg.height * (single ? lead.v : 1) / (8 * vmax));
+  const {hmax, vmax, single, lead, nx, ny} = scanGrid(jpeg, scan);
   const shapes = entries.map(entry => { const c = components[entry.index]; return {stride: c.stride, h: single ? 1 : c.h, v: single ? 1 : c.v}; });
   if (!progressive && !bands) {
     const written = kernelHooks.entropy?.()?.sequentialScan(out, entries.map((entry, e) => ({...entry, ...shapes[e]})), nx, ny, restart,
@@ -883,6 +888,60 @@ function* writeScan(out, jpeg, scan, huffman, restart, progressive, pad, nonzero
   requireJPEG(scan.resets.every(n => n < blocks) && scan.zeros.every((value, i) => i % 2 || value < blocks)); writer.flush(); out.align(pad);
 }
 const writeJPEG = (jpeg, data, expected, limit) => complete(writeJPEGSteps(jpeg, data, expected, limit));
+function admitInter(run, scanFill, started, jpeg, data) {
+  let sofs = 0;
+  for (let p = 0; p < run.length;) {
+    requireJPEG(run[p] === 255);
+    if (scanFill && run[p + 1] === 0) { p += 2; continue; }
+    scanFill = false;
+    while (run[p + 1] === 255) p++;
+    if (p + 1 === run.length) break;
+    const code = run[p + 1];
+    if (code === 1) { p += 2; continue; }
+    const length = run[p + 2] * 256 + run[p + 3], end = p + 2 + length, body = p + 4;
+    requireJPEG(p + 4 <= run.length && length >= 2 && end <= run.length);
+    if (code === 219) {
+      for (let q = body; q < end;) {
+        const wide = run[q] >> 4, index = run[q++] & 15;
+        requireJPEG(wide <= 1 && index <= 3 && q + 64 * (1 + wide) <= end);
+        const values = new Int32Array(64);
+        for (let k = 0; k < 64; k++, q += 1 + wide) values[ZIGZAG[k]] = wide ? run[q] * 256 + run[q + 1] : run[q];
+        jpeg.components.forEach((c, i) => requireJPEG(c.tq !== index || equal(c.quant, values) || started.has(i)));
+      }
+    } else if (code === 196) requireJPEG(length === 2);
+    else if (code === 192 || code === 193) {
+      const count = jpeg.components.length, factors = run[body + 7];
+      requireJPEG(!started.size && !jpeg.ycbcr && data.scans.every(scan => scan.components.length === 1) && length === 8 + 3 * count && run[body] === 8 &&
+        run[body + 1] * 256 + run[body + 2] === jpeg.height && run[body + 3] * 256 + run[body + 4] === jpeg.width && run[body + 5] === count &&
+        factors >> 4 >= 1 && factors >> 4 <= 4 && (factors & 15) >= 1 && (factors & 15) <= 4);
+      jpeg.components.forEach((c, i) => { const at = body + 6 + 3 * i; requireJPEG(run[at] === c.id && run[at + 1] === factors && run[at + 2] === c.tq); });
+      sofs++;
+    } else requireJPEG(code === 200 || code === 204 || code === 220 || code === 222 || code === 223 || code >= 224 && code <= 254);
+    p = end;
+  }
+  return sofs;
+}
+function admitSyntax(jpeg, data) {
+  let chunk = 0, prev = 0, sofs = 0, scans = 0, restart = 0, scan = null;
+  const started = new Set();
+  for (let i = 0; i < data.markers.length; i++) {
+    const marker = data.markers[i];
+    if (marker === 255) {
+      let n = 1; while (data.markers[i + n] === 255) n++;
+      sofs += admitInter(concatenate(data.inter.slice(chunk, chunk += n)), prev === 218, started, jpeg, data); i += n - 1;
+      continue;
+    }
+    if (marker >= 192 && marker <= 194) { requireJPEG(!started.size); sofs++; }
+    if (marker === 218) { requireJPEG(sofs === 1); scan = data.scans[scans++]; for (const c of scan.components) started.add(c.index); }
+    if (marker >= 208 && marker <= 215) {
+      const {nx, ny} = scanGrid(jpeg, scan ?? requireJPEG(0));
+      requireJPEG(prev === 218 && restart && nx * ny % restart === 0 && marker === 208 + ((nx * ny / restart - 1) & 7));
+    }
+    if (marker === 221) restart = data.restart;
+    prev = marker;
+  }
+  requireJPEG(sofs === 1);
+}
 function* writeJPEGSteps(jpeg, data, expected = null, limit = Infinity) {
   const out = new JPEGOutput(expected, limit), huffman = [], pad = data.padding ? {bits: data.padding, at: 0} : null;
   const metadata = function* (write) {
@@ -974,7 +1033,7 @@ function* restoreSteps(bytes, dictionary, maxPixels, bands, shown = null, depth 
     const stream = boxed.reconstruction; requireJPEG(stream);
     const icc = jpeg.icc ? yield* unpredictICCSteps(jpeg.icc) : null;
     const exif = yield* openBoxSteps(boxed.exif, boxed.exifCompressed, dictionary), xml = yield* openBoxSteps(boxed.xml, boxed.xmlCompressed, dictionary);
-    return yield* readDataSteps(stream, {icc, exif, xml}, dictionary);
+    return yield* readDataSteps(stream, {icc, exif, xml}, dictionary, jpeg);
   });
   shown?.(jpeg, data.apps);
   const banded = bands && (journaling() || data.scans.length === 1 && !data.markers.includes(194));
@@ -994,5 +1053,6 @@ function* restoreSteps(bytes, dictionary, maxPixels, bands, shown = null, depth 
     });
     data.tail = kept.bytes; budget.left = kept.left;
   }
+  admitSyntax(jpeg, data);
   return yield* writeJPEGSteps(jpeg, data, null, depth ? budget.left : Infinity);
 }

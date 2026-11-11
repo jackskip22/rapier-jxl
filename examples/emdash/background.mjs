@@ -37,6 +37,7 @@ export async function runBackground({event, platform, scope, work, runner, libra
           const service = await runner({ms: remaining()});
           const job = await service.resume(data.command, {signal});
           result.advances++;
+          if (job.busy) break;
           if (terminal(job) && !job.publication?.collect && !job.cleanupPending) {
             await work.remove('image', data.id); result.completed++; break;
           }
@@ -66,7 +67,7 @@ export async function runBackground({event, platform, scope, work, runner, libra
             const service = await runner({ms: remaining()});
             job = await service.advance(run.current.jobId, {signal});
             result.advances++;
-            if (job.phase === 'blocked') break;
+            if (job.phase === 'blocked' || job.busy) break;
           }
           revision = JSON.stringify([run.revision, job?.revision]);
         }

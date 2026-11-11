@@ -175,7 +175,8 @@ async function encodePicture({data, width, height, ...source}, codec, hooks, hel
   const coded = low ?? (settings.effort === 1 ? coreSteps(data, width, height, settings)
     : effortJob(data, width, height, settings, !!gpu, undefined, lossy && settings.effort >= 8 ? searchV6 : undefined,
         lossy && settings.effort >= 6 ? photoAnsSteps : undefined, DEEP, HDR));
-  const steps = lossy && !target && textFloorEligible(data, width, height, settings.colorSpace) ? textFloorSteps(coded, data, width, height, settings.colorSpace) : coded;
+  const floored = lossy && !target && await journaled(hooks.journal, 'text-floor', () => textFloorEligible(data, width, height, settings.colorSpace));
+  const steps = floored ? textFloorSteps(coded, data, width, height, settings.colorSpace) : coded;
   return !(typeof __RAPIER_JXL_HELPER__ !== 'undefined' && __RAPIER_JXL_HELPER__ === true) && helpers && (low || settings.effort !== 1) ? driveSteps(steps, hooks, gpu, width * height, helpers, low ? null : parallelJob) : drain(steps, hooks, gpu);
 }
 

@@ -6,7 +6,7 @@ import {exactExp} from './exact-math.mjs';
 import {F64_WGSL, f64Const as D} from './gpu-f64.mjs';
 
 const F = Math.fround, K = v => { const t = String(F(v)); return /[.e]/.test(t) ? t : t + '.0'; };
-export const BA_GAUSSIAN = Float32Array.from([1.2, 7.15593339443, 3.22489901262, 1.56416327805, 2.7].flatMap(value => {
+const BA_GAUSSIAN = Float32Array.from([1.2, 7.15593339443, 3.22489901262, 1.56416327805, 2.7].flatMap(value => {
   const sigma = F(value), radius = Math.trunc(F(2.25 * sigma)), scale = -1 / (2 * sigma * sigma);
   const kernel = Array.from({length: radius * 2 + 1}, (_, i) => F(exactExp(scale * (i - radius) * (i - radius))));
   const inverse = F(1 / kernel.reduce((sum, value) => F(sum + value), 0));
@@ -19,7 +19,7 @@ const MALTA = [[9, 1.10039032555, 71.7800275169, 1], [8, 173.5, 5.0, 1], [7, 18.
 const MC = MALTA.flatMap(([, weight, norm, high]) => { const g = high ? .39905817637 : .611612573796;
   return [F(g * Math.sqrt(.5 * weight) / 8.5 * norm), F(g * Math.sqrt(F(.33) * weight) / 8.5 * norm), F(norm)]; });
 const BIAS = F(F(6.19424080439) * F(12.61050594197)), GLOBAL = F(1 / (F(17.83) * .79079917404));
-export const BA_SHADER = `${GC_DS}
+const BA_SHADER = `${GC_DS}
 ${XFMA}
 ${F64_WGSL}
 struct U { w: u32, h: u32, one: f32, kind: u32, radius: u32, koff: u32, src: u32, dst: u32, tmp: u32, c: u32, pad0: u32, pad1: u32 }
@@ -347,13 +347,7 @@ async function run(device, record) {
     return {got: got.slice(0, -1).map(b => new Float32Array(b)), flagged: new Uint32Array(got.at(-1))[0]};
   } finally { for (const b of made) b.destroy(); }
 }
-export async function gpuBaBands(device, rgb, w, h) {
-  const r = await run(device, at => {
-    const s = at(w, h, 15); device.queue.writeBuffer(s.PL, 12 * s.n * 4, rgb.buffer, rgb.byteOffset, 3 * s.n * 4);
-    s.bands(); return [[s.PL, 0, 10 * s.n * 4]];
-  });
-  return {bands: r.got[0], flagged: r.flagged};
-}
+
 export async function gpuBaMap(device, ref, dist, w, h, {half = (w + 1) >> 1 >= 8 && (h + 1) >> 1 >= 8} = {}) {
   const r = await run(device, (at, buf) => {
     const full = at(w, h, 41), n = full.n, hw = (w + 1) >> 1, hh = (h + 1) >> 1, IN = buf(6 * n * 4);

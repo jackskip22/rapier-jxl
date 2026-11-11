@@ -396,7 +396,7 @@ export function createStrategyBuilder(base, width, height, options = {}) {
     return b;
   };
   const bounded = priced && !priceOnly && !tokens && !options.maps && !rates && !costs && !transforms && !gpuBlocks && !options.exact;
-  const vk = !tokens && !options.maps && !rates && (!costs || certifiedCosts) && !transforms && !gpuBlocks && !options.exact && !built
+  const vk = !tokens && !options.maps && !rates && (!costs || certifiedCosts) && !transforms && !gpuBlocks && !options.exact
     ? kernelHooks.varblock?.(vbLog2Table(), scaledDCTBases) : null, sums = new Float64Array(3);
   const kernelBlock = (id, bx, by, w, h, bw, bh, area, size, table, order, loses) => {
     const {planes: rowsOf, top, left = 0, stride: rowW = W} = planeRows(by * 8, by * 8 + h, bx * 8, bx * 8 + w), slot = vk.table(id, table, size, order, highOf(id, size));
@@ -503,7 +503,7 @@ export function createStrategyBuilder(base, width, height, options = {}) {
     const table = tableFor(id, comps, sizeScale, tables), order = naturalOrder(bw, bh);
     if (vk && !VB_SMALL.has(id)) {
       const block = kernelBlock(id, bx, by, w, h, bw, bh, area, size, table, order, loses);
-      if (block) return block;
+      if (block) { if (!priced) built?.set(id * 16777216 + by * stride + bx, block); return block; }
     }
     const cache = transforms, key = id * 16777216 + by * stride + bx;
     let transformed = cache?.get(key), transformChannel = null;
@@ -600,8 +600,36 @@ export function createStrategyBuilder(base, width, height, options = {}) {
     built?.set(id * 16777216 + by * stride + bx, block);
     return block;
   };
+  const runParams = [];
+  const run8 = (by, bx0, n) => {
+    if (!vk?.row8 || priced || rateBlock && by + 1 > rateFrom) return null;
+    const table = tableFor(0, comps, sizeScale, tables), order = naturalOrder(1, 1);
+    const {planes: rowsOf, top, left = 0, stride: rowW = W} = planeRows(by * 8, by * 8 + 8, bx0 * 8, (bx0 + n) * 8);
+    const slot = vk.table(0, table, 64, order, highOf(0, 64));
+    if (!slot) return null;
+    const params = runParams[0]?.length >= n * 4 ? runParams[0] : (runParams[0] = new Float64Array(n * 4));
+    for (let j = 0; j < n; j++) {
+      const bx = bx0 + j, ti = (by >> 3) * cfl.width + (bx >> 3), fine = fineOf(bx, by);
+      params[j * 4] = cfl.x[ti] / 84; params[j * 4 + 1] = cfl.b[ti] / 84; params[j * 4 + 2] = fine; params[j * 4 + 3] = 8 * VB_QS * fine;
+    }
+    const zones = [0, 1, 2].flatMap(c => [dead ? dead[c * 2] : 0.5, dead ? dead[c * 2 + 1] : 0.5]);
+    const made = vk.row8(rowsOf, top, bx0 * 8 - left, by * 8, rowW, n, slot, params, zones, VB_ONE, rc[1], rc[2]);
+    if (!made) return null;
+    const out = [], steps = [0, 1, 2].map(c => comps[c].quant[0] / VB_QS);
+    for (let j = 0; j < made.done; j++) {
+      const levels = keepsAll ? kept(195) : new Int32Array(195);
+      levels.set(made.levels.subarray(j * 192, j * 192 + 192));
+      for (let c = 0; c < 3; c++) levels[192 + c] = Math.round(made.dc[j * 3 + c] * 8 / steps[c]);
+      const block = {id: 0, bx: bx0 + j, by, bw: 1, bh: 1, area: 1, size: 64, order,
+        coeffs: [levels.subarray(0, 64), levels.subarray(64, 128), levels.subarray(128, 192)],
+        dc: [levels.subarray(192, 193), levels.subarray(193, 194), levels.subarray(194, 195)], levels: levels.subarray(0, 192), R: 0, J: 0, narrow: true};
+      built?.set(by * stride + bx0 + j, block);
+      out.push(block);
+    }
+    return out;
+  };
   return {lambda, sizeScale, ids, inhom, comps, stride, rows, tables, allowed, rates, costs, certifiedCosts, costDoubt,
-    useMask, keepChosen, bounded, vk, candidateRate, candidate, full, make,
+    useMask, keepChosen, bounded, vk, candidateRate, candidate, full, make, run8,
     get settled() { return settled; },
     set repricing(value) { repricing = value; },
     setMeasuredCost(value) { measuredCost = value; },
@@ -616,8 +644,16 @@ export function createStrategyBuilder(base, width, height, options = {}) {
 
 export function fixedStrategyImage(base, width, height, options) {
   if (!options.layout) throw new TypeError('A fixed photographic image needs its layout.');
-  const builder = createStrategyBuilder(base, width, height, options);
-  const chosen = options.layout.map(({id, bx, by}) => builder.candidate(id, bx, by));
+  const builder = createStrategyBuilder(base, width, height, options), layout = options.layout, chosen = [];
+  for (let i = 0; i < layout.length;) {
+    const {id, bx, by} = layout[i];
+    let n = 1;
+    const known = (x, y) => options.built?.has(y * builder.stride + x);
+    if (id === 0 && !known(bx, by)) while (i + n < layout.length && layout[i + n].id === 0 && layout[i + n].by === by && layout[i + n].bx === bx + n && !known(bx + n, by)) n++;
+    const run = n > 1 ? builder.run8(by, bx, n) : null;
+    if (run) { for (const block of run) chosen.push(block); i += run.length; if (run.length === n) continue; n = 1; }
+    for (const end = i + n; i < end; i++) chosen.push(builder.candidate(layout[i].id, layout[i].bx, layout[i].by));
+  }
   return {...builder.finish(chosen), open: [], reprices: [], reverted: 0, settled: builder.settled};
 }
 

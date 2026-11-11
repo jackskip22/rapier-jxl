@@ -42,9 +42,11 @@ export function lowWholePhotoSteps(data, width, height, options) {
 
 const LF3_BUDGET = [{...SMALL_BUDGET[0], lf: 3}], FAST_E5_BUDGETS = [LF3_BUDGET[0], {...BUDGETS[1], passes: 1, mapLz: true, lf: 3}];
 const useFilter = (quality, width, height, nativeOpaque = true) => quality < 95 && !(nativeOpaque && largePhoto(width, height)) && !smallPicture(width, height);
+const lightPicture = (effort, width, height, quality) => effort === 2 && useFilter(quality, width, height);
 const alone = (quality, effort, filter, smooth, small) => filter && effort >= 3 && !small && (quality >= 80 || smooth === false);
 const filteredBudgets = effort => effort >= 5 ? FAST_E5_BUDGETS : effort >= 4 ? LF3_BUDGET : [];
 const filteredQuality = (quality, smooth) => quality >= 85 || quality < 80 && smooth === false ? quality - 0.5 : quality;
+const filteredPredictionFor = (quality, width, height) => Math.min(width, height) >= 256 ? quality : undefined;
 
 export function* lowOtherPhotoSteps(data, width, height, {quality, filter, colorSpace = 'srgb', effort = 4, observe = null}) {
   const control = {hurried: false};
@@ -58,9 +60,10 @@ export function* lowOtherPhotoSteps(data, width, height, {quality, filter, color
   return selected(yield* retainedSteps(part(candidateSteps(image, {...plan, clusters: BUDGETS[0]}, {}), 2, 3), best, control));
 }
 
-export function* lowPhotoPictureSteps(data, width, height, {quality, effort, observe = null, color = {}, split = true, screen, smooth}) {
+export function* lowPhotoPictureSteps(data, width, height, {quality, effort, observe = null, color = {}, split = true, screen, smooth, lowFilteredQuality}) {
+  lowFilteredQuality = filteredPredictionFor(lowFilteredQuality, width, height);
   const images = observe ? new WeakMap() : null;
-  const bytes = yield* pictureSteps(data, width, height, quality, effort, images, color, split, screen, smooth);
+  const bytes = yield* pictureSteps(data, width, height, quality, effort, images, color, split, screen, smooth, lowFilteredQuality);
   if (observe && bytes) observe(images.get(bytes));
   return bytes;
 }
@@ -71,29 +74,31 @@ function* remembered(steps, image, images, incumbent = null) {
   return bytes;
 }
 
-function* pictureSteps(data, width, height, quality, effort, images, color, split, screen, smooth) {
+function* pictureSteps(data, width, height, quality, effort, images, color, split, screen, smooth, lowFilteredQuality) {
   const control = {hurried: false}, filter = useFilter(quality, width, height, split && !color.transform);
   if (split && !color.transform && splitRoute(width, height)) {
     const remote = !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && !images && (yield {split: {pixels: width * height,
-      run: (helpers, options) => encodeLowSplit(data, width, height, quality, effort, helpers, {...options, smooth})}});
+      run: (helpers, options) => encodeLowSplit(data, width, height, quality, effort, helpers, {...options, smooth, lowFilteredQuality})}});
     if (remote) return remote;
-    const candidate = function* (q, budgets, gaborish = false) {
+    const candidate = function* (q, budgets, gaborish = false, light = false) {
       let image;
       return yield* remembered(photoSplitCandidates(data, width, height, q, budgets,
-        {gaborish, screen, ...(images && {observe: value => { image = value; }})}), () => image, images);
+        {gaborish: gaborish || light, light, screen, ...(images && {observe: value => { image = value; }})}), () => image, images);
     };
+    if (lightPicture(effort, width, height, quality))
+      return yield* retainedSteps(part(candidate(quality, fastBudgets(effort, false, width * height), false, true), 0, 1), null, control);
     if (alone(quality, effort, filter, smooth, Math.min(width, height) < 256)) {
-      try { return yield* retainedSteps(part(candidate(filteredQuality(quality, smooth), filteredBudgets(effort), true), 0, 1), null, control); }
+      try { return yield* retainedSteps(part(candidate(lowFilteredQuality ?? filteredQuality(quality, smooth), filteredBudgets(effort), true), 0, 1), null, control); }
       catch (error) { if (!sizeFailure(error)) throw error; }
       return yield* retainedSteps(part(candidate(quality, fastBudgets(effort, filter, width * height)), 0, 1), null, control);
     }
     const stages = effort >= 3 && filter ? 2 : 1;
     const best = yield* retainedSteps(part(candidate(quality, fastBudgets(effort, filter, width * height)), 0, stages), null, control);
     if (stages === 1 || control.hurried) return best;
-    return yield* retainedSteps(part(candidate(filteredQuality(quality), filteredBudgets(effort), true), 1, stages), best, control);
+    return yield* retainedSteps(part(candidate(lowFilteredQuality ?? filteredQuality(quality), filteredBudgets(effort), true), 1, stages), best, control);
   }
   if (alone(quality, effort, filter, smooth, Math.min(width, height) < 256)) {
-    try { const bytes = yield* filteredSteps(data, width, height, quality, effort, null, control, images, color, smooth); if (bytes) return bytes; }
+    try { const bytes = yield* filteredSteps(data, width, height, quality, effort, null, control, images, color, smooth, lowFilteredQuality); if (bytes) return bytes; }
     catch (error) { if (!sizeFailure(error)) throw error; }
   }
   let image;
@@ -105,12 +110,12 @@ function* pictureSteps(data, width, height, quality, effort, images, color, spli
   const stages = effort >= 3 && filter ? 2 : 1;
   const best = yield* retainedSteps(part(remembered(fastSmallSteps(image, effort, control, !filter), image, images), 0, stages), null, control);
   if (stages === 1 || control.hurried || alone(quality, effort, filter, smooth, Math.min(width, height) < 256)) return best;
-  return yield* retainedSteps(part(filteredSteps(data, width, height, quality, effort, best, control, images, color), 1, stages), best, control);
+  return yield* retainedSteps(part(filteredSteps(data, width, height, quality, effort, best, control, images, color, undefined, lowFilteredQuality), 1, stages), best, control);
 }
 
-function* filteredSteps(data, width, height, quality, effort, best, control, images, color, smooth) {
+function* filteredSteps(data, width, height, quality, effort, best, control, images, color, smooth, lowFilteredQuality) {
   const stages = effort >= 4 ? 3 : 2;
-  const q = filteredQuality(quality, smooth);
+  const q = lowFilteredQuality ?? filteredQuality(quality, smooth);
   const image = yield* part(photoXYBBands(data, width, height, q, {...uploadPicture(data, width, height, q), ...color}), 0, stages);
   if (control.hurried) return best;
   best = choose(best, yield* part(remembered(coefficientAnsSteps(image, 3, best), image, images, best), 1, stages));
@@ -120,9 +125,17 @@ function* filteredSteps(data, width, height, quality, effort, best, control, ima
 
 export async function encodeLowSplit(data, width, height, quality, effort, helpers, options = {}) {
   options.signal?.throwIfAborted();
-  const {smooth, ...rest} = options;
-  const filter = useFilter(quality, width, height), gaborish = () => encodeSplitCandidates(data, width, height,
-    filteredQuality(quality, smooth), helpers, filteredBudgets(effort), {...rest, gaborish: true, opaque: true});
+  const {smooth, lowFilteredQuality: predicted, ...rest} = options;
+  const lowFilteredQuality = filteredPredictionFor(predicted, width, height);
+  const filter = useFilter(quality, width, height);
+  if (lightPicture(effort, width, height, quality)) {
+    const bytes = await encodeSplitCandidates(data, width, height, quality, helpers, fastBudgets(effort, false, width * height),
+      {...rest, gaborish: true, light: true, opaque: true});
+    options.signal?.throwIfAborted();
+    return bytes;
+  }
+  const gaborish = () => encodeSplitCandidates(data, width, height,
+    lowFilteredQuality ?? filteredQuality(quality, smooth), helpers, filteredBudgets(effort), {...rest, gaborish: true, opaque: true});
   if (alone(quality, effort, filter, smooth, Math.min(width, height) < 256)) {
     try {
       const bytes = await gaborish();
@@ -142,11 +155,17 @@ export async function encodeLowSplit(data, width, height, quality, effort, helpe
   return best;
 }
 
-export function makeLowUpload(data, width, height, quality, effort, smooth) {
+export function makeLowUpload(data, width, height, quality, effort, smooth, lowFilteredQuality) {
+  lowFilteredQuality = filteredPredictionFor(lowFilteredQuality, width, height);
   const filter = useFilter(quality, width, height);
+  if (lightPicture(effort, width, height, quality)) {
+    const split = photoSplitBands(data, width, height, quality, {gaborish: true, light: true});
+    if (!splitHasAlpha(split)) return {split, incumbent: null, filtered: false, filter, light: true};
+    splitEnd(split);
+  }
   if (alone(quality, effort, filter, smooth, Math.min(width, height) < 256)) {
     try {
-      const split = photoSplitBands(data, width, height, filteredQuality(quality, smooth), {gaborish: true});
+      const split = photoSplitBands(data, width, height, lowFilteredQuality ?? filteredQuality(quality, smooth), {gaborish: true});
       if (!splitHasAlpha(split)) return {split, incumbent: null, filtered: true};
       splitEnd(split);
     } catch (error) { if (!sizeFailure(error)) throw error; }
@@ -154,12 +173,14 @@ export function makeLowUpload(data, width, height, quality, effort, smooth) {
   const split = photoSplitBands(data, width, height, quality);
   if (splitHasAlpha(split) || effort < 3 || !filter || alone(quality, effort, filter, smooth, Math.min(width, height) < 256)) return {split, incumbent: null, filtered: false, filter};
   const incumbent = complete(splitCandidates(split, SMALL_BUDGET));
-  try { return {split: photoSplitBands(data, width, height, filteredQuality(quality), {gaborish: true}), incumbent, filtered: true}; }
+  try { return {split: photoSplitBands(data, width, height, lowFilteredQuality ?? filteredQuality(quality), {gaborish: true}), incumbent, filtered: true}; }
   catch (error) { if (!sizeFailure(error)) throw error; return {split: null, incumbent, filtered: true}; }
 }
 export function* finishLowUpload(state, effort) {
   if (!state.split) return state.incumbent;
-  return yield* retainedSteps(splitCandidates(state.split, state.filtered ? filteredBudgets(effort) : fastBudgets(effort, state.filter, state.split.width * state.split.height)), state.incumbent);
+  const budgets = state.light ? fastBudgets(effort, false, state.split.width * state.split.height)
+    : state.filtered ? filteredBudgets(effort) : fastBudgets(effort, state.filter, state.split.width * state.split.height);
+  return yield* retainedSteps(splitCandidates(state.split, budgets), state.incumbent);
 }
 export function closeLowUpload(state) { if (state.split) splitEnd(state.split); }
 

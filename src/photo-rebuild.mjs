@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 import {rebuildKernels} from './rebuild-kernels.mjs';
 import {bandScratch} from './band-scratch.mjs';
-import {renderVarBlock, blockTables, prepareLF, epfSigma, xybKernelConstants} from './vardct-render.mjs';
-import {restorePlanes, restorationStages} from './vardct-inverse.mjs';
+import {renderVarBlock, renderBlock8, blockTables, prepareLF, epfSigma, xybKernelConstants} from './vardct-render.mjs';
+import {restorePlanes, restorationStages, restorationSizes, RESTORE_ROWS} from './vardct-inverse.mjs';
 import {TRANSFORMS} from './vardct-bases.mjs';
 import {varDCTLayout} from './vardct-header.mjs';
 import {varDCTDCSpec, copyVarDCTDCRows, copyVarDCTCorrelation} from './vardct-planes.mjs';
@@ -45,7 +45,7 @@ function frameFilter(image, epf) {
       pass0SigmaScale: half(0.9), pass2SigmaScale: half(6.5), borderSadMul: half(2 / 3), sigmaForModular: 1} : {iters: 0}};
 }
 
-export function rebuildPicture(source, {rgba: wantRGBA = true, linear: wantLinear = false, gamma: wantGamma = false, rendered = false, inputs = false, only = null} = {}) {
+export function rebuildPicture(source, {rgba: wantRGBA = true, linear: wantLinear = false, gamma: wantGamma = false, rendered = false, inputs = false, only = null, views = false} = {}) {
   const image = materialize(source.lazyStrategy || source.coefficientRows ? coded(source) : source);
   if (!rebuildable(image)) throw Object.assign(new Error('This coefficient image has no decoder rebuild.'), {code: 'JXL_INTERNAL'});
   const kernels = rebuildKernels(), layout = varDCTLayout(image), {width, height} = image, ycbcr = !!image.ycbcr;
@@ -83,7 +83,9 @@ export function rebuildPicture(source, {rgba: wantRGBA = true, linear: wantLinea
   const needPlanes = !inputs;
   const sizes = [...Array(9).fill(cells * 4), ...tableBytes, 65536 + 3 * 1024 * 8, numDcGroups * 8192,
     ...(needPlanes ? [n * 4, n * 4, n * 4] : [0, 0, 0]), coefficientCount * (narrowArena ? 2 : 4), needPlanes && !rendered ? n * 4 : 0];
-  const at = kernels.reserve(sizes);
+  const inPlace = needPlanes && !rendered && !narrowArena && stages.length > 0 && coefficientCount >= 3 * n;
+  const frameBytes = sizes.reduce((sum, size) => sum + Math.ceil(size / 16) * 16, 0);
+  const at = kernels.reserve(inPlace ? [...sizes, ...restorationSizes(width, height, filter, RESTORE_ROWS)] : sizes);
   const lfAt = at.slice(0, 9), weightsAt = at.slice(9, 26), [tablesAt, cflAt, xAt, yAt, bAt, arenaAt, rgbaAt] = at.slice(26);
   const buffer = kernels.buffer;
   const lfDequant = [0, 1, 2].map(c => half(comps[c].quant[0] / dcScale[c] / (255 * 8 * QS) * 128));
@@ -147,10 +149,13 @@ export function rebuildPicture(source, {rgba: wantRGBA = true, linear: wantLinea
   }
   const targets = [xAt, yAt, bAt].map(o => new Float32Array(buffer, o, n));
   if (onlyList) for (const k of onlyList) { if (blocks[k]) renderVarBlock(ctx, blocks[k], targets, zero); }
-  else for (const block of blocks) renderVarBlock(ctx, block, targets, zero);
+  else for (const block of blocks) if (!renderBlock8(ctx, block, targets, zero)) renderVarBlock(ctx, block, targets, zero);
   if (rendered) { for (const block of blocks) block.source = null; return {rendered: only ? targets : targets.map(p => p.slice())}; }
   let planes = targets;
-  if (stages.length) {
+  if (inPlace) {
+    planes = restorePlanes(kernels, targets, width, height, filter, sigma, [0, 1, 2].map(c => new Float32Array(buffer, arenaAt + c * n * 4, n)), at[0] + frameBytes);
+    planes.rgbaAt = rgbaAt;
+  } else if (stages.length) {
     const restored = restorePlanes(kernels, targets.map((p, c) => { const copy = bandScratch(Float32Array, 'rebuild-in' + c, n); copy.set(p); return copy; }),
       width, height, filter, sigma, [0, 1, 2].map(c => bandScratch(Float32Array, 'rebuild-out' + c, n)));
     const [x, y, b, out] = kernels.reserve([n * 4, n * 4, n * 4, n * 4]);
@@ -175,16 +180,15 @@ export function rebuildPicture(source, {rgba: wantRGBA = true, linear: wantLinea
     return result;
   }
   const constants = xybKernelConstants(DEFAULT_OPSIN.inverseMatrix.map(f), DEFAULT_OPSIN.opsinBiases, 255);
+  if (wantLinear) kernels.xyb(n, planes[0], planes[1], planes[2], constants);
   if (wantRGBA) {
     const rgba8 = new Uint8Array(kernels.buffer, planes.rgbaAt, n * 4);
-    kernels.xyb(n, planes[0], planes[1], planes[2], constants, rgba8);
-    result.rgba = rgba8.slice();
+    if (wantLinear) kernels.srgb8(n, planes[0], planes[1], planes[2], rgba8);
+    else kernels.xyb(n, planes[0], planes[1], planes[2], constants, rgba8);
+    result.rgba = views ? rgba8 : rgba8.slice();
     alphaInto(result.rgba);
   }
-  if (wantLinear) {
-    kernels.xyb(n, planes[0], planes[1], planes[2], constants);
-    result.linear = planes.map(p => p.slice());
-  }
+  if (wantLinear) result.linear = views ? planes.slice(0, 3) : planes.map(p => p.slice());
   for (const block of blocks) block.source = null;
   return result;
 }

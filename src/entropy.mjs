@@ -182,8 +182,8 @@ function* refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost
   }
   clusters = clusters.filter(Boolean);
   return null;
-  }, () => packClusters(clusters));
-  if (merges !== null) clusters = unpackClusters(merges);
+  }, (typeof __RAPIER_JXL_UNSTEPPED__ !== 'undefined' && __RAPIER_JXL_UNSTEPPED__ === true) ? undefined : () => packClusters(clusters));
+  if (!(typeof __RAPIER_JXL_UNSTEPPED__ !== 'undefined' && __RAPIER_JXL_UNSTEPPED__ === true) && merges !== null) clusters = unpackClusters(merges);
   const assignments = new Int32Array(numContexts).fill(-1);
   clusters.forEach((cluster, i) => { for (const ctx of cluster.contexts) assignments[ctx] = i; });
   let ordered = null;
@@ -247,9 +247,9 @@ function* refineClusters(clusters, contexts, maxClusters, symbolCosts, modelCost
       for (const ctx of cluster.contexts) assignments[ctx] = i;
     });
     return null;
-    }, () => ({clusters: packClusters(clusters), assignments: assignments.slice(), changed}));
+    }, (typeof __RAPIER_JXL_UNSTEPPED__ !== 'undefined' && __RAPIER_JXL_UNSTEPPED__ === true) ? undefined : () => ({clusters: packClusters(clusters), assignments: assignments.slice(), changed}));
     if (saved === PASSED) continue;
-    if (saved !== null) { clusters = unpackClusters(saved.clusters); assignments.set(saved.assignments); changed = saved.changed; }
+    if (!(typeof __RAPIER_JXL_UNSTEPPED__ !== 'undefined' && __RAPIER_JXL_UNSTEPPED__ === true) && saved !== null) { clusters = unpackClusters(saved.clusters); assignments.set(saved.assignments); changed = saved.changed; }
     if (!changed) break;
   }
   return clusters;
@@ -272,8 +272,8 @@ function* clusterSteps(counts, {maxClusters = 48, newClusterCost = 320, seeds: s
   let clusters = [];
   const seeds = symbolCosts ? Math.min(seedCap, maxClusters * 2) : maxClusters;
   const ready = list => { if (kernel && kernel[LOADED] !== list) { list.forEach((c, i) => kernel.row(i, c.freqs, c.bits)); kernel[LOADED] = list; } };
-  const state = () => ({clusters: packClusters(clusters), contexts: packContexts(contexts)});
-  const restore = saved => {
+  const state = (typeof __RAPIER_JXL_UNSTEPPED__ !== 'undefined' && __RAPIER_JXL_UNSTEPPED__ === true) ? undefined : () => ({clusters: packClusters(clusters), contexts: packContexts(contexts)});
+  const restore = (typeof __RAPIER_JXL_UNSTEPPED__ !== 'undefined' && __RAPIER_JXL_UNSTEPPED__ === true) ? () => {} : saved => {
     if (saved === null || saved === PASSED) return;
     clusters = unpackClusters(saved.clusters); contexts.length = 0; contexts.push(...unpackContexts(saved.contexts));
   };
@@ -450,6 +450,7 @@ export function buildTokenCoding(counts, options) {
   writeHistograms(header, {contextMap, histograms});
   bits += header.bitLength;
   const model = {kind: 'prefix', contextMap, histograms: histograms.map(({config, code}) => ({config, code}))};
-  const {write, writeTokens} = prefixGroupWriter(model), writeFilled = options?.kernels?.prefixFilled(model) || undefined;
+  const bare = (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && !options?.strategy;
+  const {write, writeTokens} = bare ? {} : prefixGroupWriter(model), writeFilled = bare ? undefined : (options?.kernels?.prefixFilled?.(model) || undefined);
   return {contextMap, histograms, model, write, writeTokens, writeFilled, bits, writeHistograms: w => w.append(header)};
 }

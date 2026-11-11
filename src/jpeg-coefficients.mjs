@@ -475,6 +475,7 @@ function coefficientLayout(bytes, head, profile) {
   const {width, height, orientation, grey} = head, r = new JxlBits(bytes); r.bit = head.bit;
   r.align(); r.expect(4, 0); r.expect(2, 2); r.expect(8, 111);
   const ycbcr = !!r.read(1), sampling = ycbcr ? [r.read(2), r.read(2), r.read(2)] : [0, 0, 0];
+  requireJPEG(!grey || sampling[0] === sampling[1] && sampling[1] === sampling[2]);
   const hs = sampling.map(v => v === 1 || v === 2 ? 1 : 0), vs = sampling.map(v => v === 1 || v === 3 ? 1 : 0);
   const mh = Math.max(...hs), mv = Math.max(...vs), hshift = hs.map(v => mh - v), vshift = vs.map(v => mv - v);
   r.expect(7, 0); r.expect(11, 1); r.expect(1, 0); r.align();

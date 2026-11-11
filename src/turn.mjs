@@ -5,7 +5,9 @@ export const turn = () => new Promise(resolve => {
   try { const channel = new MessageChannel(); channel.port1.onmessage = () => { channel.port1.close(); resolve(); }; channel.port2.postMessage(0); return; } catch {}
   setTimeout(resolve, 0);
 });
-let queue = Promise.resolve();
+let queue = Promise.resolve(), held = () => false, active = false;
+export const captureHeld = check => { held = check; };
+export const exclusiveActive = () => active;
 export function exclusive(work, signal) {
   return new Promise((resolve, reject) => {
     const detach = () => {
@@ -19,11 +21,13 @@ export function exclusive(work, signal) {
       try { reason = signal.reason; } catch (error) { reason = error; }
       cancel(reason === undefined ? fault('JXL_ABORTED', 'The job was aborted.') : reason);
     };
-    const run = queue.then(() => {
+    const run = queue.then(async () => {
+      while (work !== null && held()) await turn();
       if (work === null) return;
       const start = work;
       work = null; detach();
-      return start();
+      active = true;
+      try { return await start(); } finally { active = false; }
     });
     queue = run.catch(() => {});
     run.then(resolve, reject);

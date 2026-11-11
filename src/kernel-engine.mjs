@@ -18,8 +18,8 @@ export function createKernelEngine(module) {
       engine.coefficients = [0, 1, 2].map(c => new Float64Array(memory.buffer, c * KERNEL_BLOCK, 65536));
       engine.output = new Float64Array(memory.buffer, KERNEL_OUT, 65536);
     },
-    reserve(sizes) {
-      let at = KERNEL_ARENA;
+    reserve(sizes, from = KERNEL_ARENA) {
+      let at = from;
       const offsets = sizes.map(size => { const offset = at; at += Math.ceil(size / 16) * 16; return offset; });
       const memoryError = message => Object.assign(new RangeError(message), {code: 'JXL_MEMORY'});
       if (!(at <= 0x80000000)) throw memoryError('JPEG XL kernel memory request exceeds its limit.');

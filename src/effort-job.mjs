@@ -21,6 +21,7 @@ import {CAPTURE_TOOLS_COMPLETE} from './capture-ans.mjs';
 import {transformRanking} from './capture-trees.mjs';
 import {FAST_EFFORT} from './effort-level.mjs';
 import {stage, unit, journaling, journalRequest, journalFact, JOIN} from './step-journal.mjs';
+import {exclusiveActive} from './turn.mjs';
 
 export function effortJob(data, width, height, options, gpu = false, limits, search, writer = coefficientAnsSteps, deep = null, hdr = null) {
   const {quality, colorSpace} = admitOptions(options), effort = options?.effort === undefined ? FAST_EFFORT : options.effort;
@@ -212,7 +213,7 @@ function ranking(data, width, height, shape) {
 }
 function* losslessCapture(data, width, height, colorSpace, level) {
   if (typeof colorSpace === 'object') return null;
-  while (captureBusy()) if (yield 0) return null;
+  while (captureBusy() || exclusiveActive()) if (yield 0) return null;
   const source = journaling() && journalFact(data, JOIN) ? {width, height, rows: (y, count) => data.subarray(y * width * 4, (y + count) * width * 4)} : data;
   const steps = encodeCaptureSteps(source, width, height, {colorSpace, effort: 3, [CAPTURE_TOOLS]: CAPTURE_TOOLS_COMPLETE, [CAPTURE_LEVEL]: level, [CAPTURE_FLOOR]: shapeFloors.get(data)});
   let step;

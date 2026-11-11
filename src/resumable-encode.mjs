@@ -245,6 +245,7 @@ export function createStepper(adapter) {
     if (!Number.isSafeInteger(host.expectedRevision) || host.expectedRevision !== c.revision)
       stale('The host revision does not match this checkpoint.');
     if (c.status === 'done') stale('This checkpoint already completed.');
+    if (c.revision === Number.MAX_SAFE_INTEGER) invalid('The checkpoint revision cannot advance.');
     if (!same(planOf(c.plan.options ?? c.plan, c.source, c.plan.verify ?? false), c.plan)) invalid('The normalized codec plan changed.');
     const transition = await digest(encodeData({checkpoint: c.hash, budget}));
     const io = partsIO(host.read, host.signal, true, host.readMany), readSource = sourceRange(host, c.source);

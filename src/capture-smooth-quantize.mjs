@@ -134,9 +134,9 @@ export function smoothQuantize(data, width, height, regions, rectangles, intent,
         if (!hit) break;
         taken++;
         step = hit.step;
-        if (large && taken === 1 && hit.score >= floor) {
+        if (taken === 1 && hit.score >= floor) {
           anchor = hit;
-          active = hit.pieceScores.map(part => part <= hit.score + 2);
+          if (large) active = hit.pieceScores.map(part => part <= hit.score + 2);
         }
         if (hit.score >= floor) {
           if (!passing || hit.score < passing.score) passing = hit;

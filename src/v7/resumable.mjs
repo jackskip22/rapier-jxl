@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {createJournalStepper} from '../resumable-journal.mjs';
+import {encodeData, decodeData} from '../resumable-data.mjs';
 import {verbSteps, fileSize} from './verb-steps-driver.mjs';
 import {bandSummaryTool} from '../band-summary.mjs';
 import {settleFacts} from './settle-facts.mjs';
@@ -106,8 +107,8 @@ export async function start({operation, input, options = {}, store, verify} = {}
     const {steps, stepper} = stepsOf(operation), io = storeOf(store);
     if (steps.id === 'verify' && verify) throw fail('JXL_OPTIONS','A verify operation already returns its verification receipt.');
     if (verify && !boundedVerification()) throw fail('JXL_UNSUPPORTED', BOUNDED_SETUP);
-    if (input?.kind === 'decode' && !configuredDecoder()?.decode) throw fail('JXL_PLATFORM', 'A decode source needs configureDecoder(decode) from rapier-jxl/decode.');
     const {checkpoint, parts} = await stepper.start({source: input, options, verify: !!verify});
+    if (checkpoint.source.kind === 'decode' && !configuredDecoder()?.decode) throw fail('JXL_PLATFORM', 'A decode source needs configureDecoder(decode) from rapier-jxl/decode.');
     hold(io, parts); await keep(io);
     return checkpoint;
   } catch (error) { throw declared(error); }
@@ -115,6 +116,7 @@ export async function start({operation, input, options = {}, store, verify} = {}
 
 export async function advance(checkpoint, {operation, input, store, verify, budget = {ms: 30}, signal} = {}) {
   try {
+    checkpoint = decodeData(encodeData(checkpoint));
     admitSignal(signal);
     const ms = budget?.ms, reads = budget?.reads;
     if (!Number.isFinite(ms) || ms <= 0 || ms > 60000) throw fail('JXL_OPTIONS', 'budget is {ms} from 1 to 60000.');
@@ -123,10 +125,10 @@ export async function advance(checkpoint, {operation, input, store, verify, budg
     await steps.prepare?.();
     check(signal);
     if (checkpoint?.plan?.verify && !verifierOf(verify)) throw fail('JXL_OPTIONS', NEEDS_VERIFY);
-    const options = checkpoint?.plan?.options, fits = (measured, budget) => !!measured && budget >= measured.ms * STRAIGHT_MARGIN;
-    const smallest = admission(steps, options, 1, 1, true, input?.kind);
+    const options = checkpoint?.plan?.options, source = checkpoint?.source, fits = (measured, budget) => !!measured && budget >= measured.ms * STRAIGHT_MARGIN;
+    const smallest = admission(steps, options, 1, 1, true, source?.kind);
     const straight = smallest.admitted && fits(smallest.measured, ms * 0.7) && ((head, budget) => {
-      const size = input?.kind === 'file' || input?.kind === 'decode' ? headSize(head) : {width: input?.width, height: input?.height}, row = size && admission(steps, options, size.width, size.height, true, input?.kind);
+      const size = source?.kind === 'file' || source?.kind === 'decode' ? headSize(head) : {width: source?.width, height: source?.height}, row = size && admission(steps, options, size.width, size.height, true, source?.kind);
       return !!row?.admitted && fits(row.measured, budget);
     });
     const result = await stepper.advance(checkpoint, host(checkpoint, input, io, {signal, verify, deadline: started + ms * 0.7, ...(straight && {straight}), ...(reads && {reads})}), {units: 64});
@@ -138,6 +140,7 @@ export async function advance(checkpoint, {operation, input, store, verify, budg
 
 export async function finish(checkpoint, {operation, input, store, signal} = {}) {
   try {
+    checkpoint = decodeData(encodeData(checkpoint));
     admitSignal(signal);
     const {steps, stepper} = stepsOf(operation), io = storeOf(store), h = host(checkpoint, input, io, {signal});
     const {byteLength, result} = await stepper.completion(checkpoint, h);

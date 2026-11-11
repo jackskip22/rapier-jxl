@@ -6,9 +6,10 @@ import {searchV6} from '../photo-v6-search.mjs';
 import {described, isDecoded, fromDecoded} from './describe.mjs';
 import {isPlainRecord} from './records.mjs';
 import {surface} from './surface.mjs';
-import {check, dimensions, fail, declared, callers, progressOf} from './primitives.mjs';
+import {check, dimensions, fail, declared, callers, progressOf, admitSignal} from './primitives.mjs';
 import {drain, encodeOptions, callOptions} from './common.mjs';
-import {own} from './ownership.mjs';
+import {own, withCost} from './ownership.mjs';
+import {untilAborted} from './rows.mjs';
 import {acceleration} from './acceleration.mjs';
 import {requireWebGPU} from './webgpu.mjs';
 import {encode as encodeStill} from './still.mjs';
@@ -22,16 +23,23 @@ export {supported, configureWasm, prepare} from './still.mjs';
 const read = input => isPlainRecord(input) && isDecoded(input) ? fromDecoded(input) : input;
 const admitted = input => { try { return {input: read(input)}; } catch (error) { return {refused: Promise.reject(declared(error))}; } };
 const GIF = [71, 73, 70];
-async function gifFrames(blob, options) {
+async function gifFrames(blob, options, signal) {
+  check(signal);
   if (options?.readAs !== undefined || blob.size < 13) return null;
-  const head = new Uint8Array(await blob.slice(0, 3).arrayBuffer());
+  const head = new Uint8Array(await untilAborted(blob.slice(0, 3).arrayBuffer(), signal));
+  check(signal);
   if (!GIF.every((b, i) => head[i] === b)) return null;
-  const read = readGifBytes(new Uint8Array(await blob.arrayBuffer()), 'input.gif', options?.maxPixels ?? 40000000);
-  return read.kind === 'animation' ? read.animation : null;
+  const bytes = new Uint8Array(await untilAborted(blob.arrayBuffer(), signal));
+  check(signal);
+  const read = readGifBytes(bytes, 'input.gif', options?.maxPixels ?? 40000000);
+  if (read.kind !== 'animation') return null;
+  for (const {data} of read.animation.frames) withCost(data, data.byteLength);
+  return read.animation;
 }
 const gifOr = (input, options, animated, still) => (async () => {
+  const signal = admitSignal(options?.signal);
   let frames;
-  try { frames = await gifFrames(input, options); } catch (error) { throw declared(error); }
+  try { frames = await gifFrames(input, options, signal); } catch (error) { check(signal); throw declared(error); }
   return frames ? animated(frames) : still();
 })();
 const encodeBytes = (input, options) => {

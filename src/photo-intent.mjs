@@ -24,7 +24,7 @@ export function photoIntentReader(nativeDecision, {signal, maxPixels} = {}) {
         throw fault('JXL_INTERNAL', 'Photo intent must be admitted before source settlement.');
       const domain = photoDomain(picture, {maxPixels});
       if (nativePhotoRGB8(picture, domain)) {
-        const decision = nativeDecision(intent, picture, {exactAllowed});
+        const decision = nativeDecision(intent, picture, {exactAllowed, effort: codec.effort});
         check();
         if (decision !== null) {
           if (!decision || !Number.isFinite(decision.quality) || decision.quality < 1 || decision.quality > 100 ||

@@ -2,6 +2,7 @@
 import {rgbCoefficientSteps} from './photo-dct.mjs';
 import {complete} from './bits.mjs';
 import {reconstructDCT8RGB} from './reconstruct-dct8.mjs';
+import {dct8Band} from './dct8-band.mjs';
 import {toRGBA} from './rgb8-output.mjs';
 import {ssimulacra2Reference} from './ssimulacra2.mjs';
 import {photoNativeScores} from './photo-native-scores.mjs';
@@ -55,7 +56,7 @@ export function prepareCropScores(data, width, r, crops = [r], dx = 0, dy = 0, e
     if (!parts.length) return [];
     const area = {x: r.x - x0, y: r.y - y0, width: r.width, height: r.height, quality};
     const gamma = reconstructDCT8RGB(complete(rgbCoefficientSteps(cutReplicated(pixels, width, x0, y0, w, h),
-      w, h, frameQuality === undefined ? quality : frameQuality, colorSpace, [area])), {planes: true});
+      w, h, frameQuality === undefined ? quality : frameQuality, colorSpace, [area])), dct8Band(), {planes: true});
     for (const e of exactRects) {
       if (e.solidText === true) continue;
       const ex0 = Math.max(e.x, x0), ey0 = Math.max(e.y, y0), ex1 = Math.min(e.x + e.width, x1), ey1 = Math.min(e.y + e.height, y1);

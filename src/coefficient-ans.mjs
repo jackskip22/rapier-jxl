@@ -6,7 +6,7 @@ import {part, complete, scaled} from './bits.mjs';
 import {ansCodingsKept, buildAnsCoding, writeModularAnsHistograms} from './ans.mjs';
 import {lfCoderFor, monotonicLfCoderFor} from './lf-coding.mjs';
 import {SMALL_PIXELS, SMALL_CLUSTERS, UPLOAD_CLUSTERS} from './photo-v6-settings.mjs';
-import {journalRequest} from './step-journal.mjs';
+import {journalRequest, journaling, unit, journalNext, plainJournal} from './step-journal.mjs';
 
 const CAPTURE_PHOTO = typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true;
 
@@ -151,6 +151,25 @@ export function* strategyAnsSteps(image, effort = 7, learned = null, pooled = fa
   const runs = strategyAnsRuns(image, effort, learned, primed, both);
   let best = null;
   ansCodingsKept(true);
+  if (!pooled && journaling()) try {
+    const plain = plainJournal({aborted: false}), drain = steps => { let step; while (!(step = journalNext(steps, undefined, plain)).done); return step.value; };
+    const smallest = list => {
+      let kept = null;
+      for (const {img, shared, plan} of list) { const file = drain(varDCTSteps(img, plan, shared)); if (!kept || file.length < kept.length) kept = {length: file.length, file}; }
+      return kept;
+    };
+    for (let at = 0; at < runs.length;) {
+      let end = at + 1;
+      while (end < runs.length && runs[end].shared === runs[at].shared) end++;
+      for (const list of [runs.slice(at, at + 1), runs.slice(at + 1, end)]) {
+        if (!list.length) continue;
+        const run = yield* unit('ans-run', () => smallest(list));
+        if (!best || run.length < best.length) best = run;
+      }
+      at = end;
+    }
+    return best.file;
+  } finally { ansCodingsKept(false); }
   try {
     for (let at = 0; at < runs.length; at++) {
       const {img, shared, plan} = runs[at], candidate = varDCTSteps(img, pooled ? {...plan, pooled: true, abortable: !!best, ...(pooled === 'split' ? {splitGroups: true} : {})} : plan, shared);

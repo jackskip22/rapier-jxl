@@ -4,7 +4,7 @@ import {captureSmoothRegions} from './capture-smooth.mjs';
 import {smoothQuantize} from './capture-smooth-quantize.mjs';
 import {admitOptions, admitPixels, admitOutputSize, fault} from './admit.mjs';
 import {encodeCaptureSteps, encodeCaptureBytes, captureBandSteps, captureAnswerLevel, CAPTURE_BASE, CAPTURE_TOOLS, CAPTURE_TRACE, CAPTURE_HELPERS, CAPTURE_GPU, DEFAULT_EFFORT} from './capture-codec.mjs';
-import {photoKernels} from './capture-kernels.mjs';
+import {photoKernels, captureMergePhotoHints} from './capture-kernels.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
 import {writeImage} from './photo-image-write.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
@@ -119,6 +119,21 @@ function graphicWins(data,width,r,quality,effort,tools){
   const sections=lossyModularSections(pixels,r.width,r.height,quality,false);
   return sections.reduce((n,s)=>n+s.length,0)<encodeCaptureBytes(pixels,r.width,r.height,{effort:1,[CAPTURE_TOOLS]:tools}).length?sections:null;
 }
+function coveredArea(rects,width,height){
+  const rs=[];
+  for(const r of rects){
+    const x0=Math.max(0,r.x),y0=Math.max(0,r.y),x1=Math.min(width,r.x+r.width),y1=Math.min(height,r.y+r.height);
+    if(x1>x0&&y1>y0)rs.push({x0,y0,x1,y1});
+  }
+  if(rs.length>64)return 0;
+  const xs=[...new Set(rs.flatMap(r=>[r.x0,r.x1]))].sort((a,b)=>a-b),ys=[...new Set(rs.flatMap(r=>[r.y0,r.y1]))].sort((a,b)=>a-b);
+  let area=0;
+  for(let i=0;i+1<xs.length;i++)for(let j=0;j+1<ys.length;j++){
+    const x=xs[i],y=ys[j];
+    if(rs.some(r=>x>=r.x0&&x<r.x1&&y>=r.y0&&y<r.y1))area+=(xs[i+1]-x)*(ys[j+1]-y);
+  }
+  return area;
+}
 const meets=(p,q)=>p.x<q.x+q.width&&q.x<p.x+p.width&&p.y<q.y+q.height&&q.y<p.y+p.height;
 const HINT = 0.25;
 const HINTED=0.75;
@@ -143,7 +158,7 @@ export function capturePhotoRegions(data,width,height,hints=[],exactRects=[],tex
   if(!validPhotoRegions(data,width,height,expanded))return [];
   const out=[];
   for(const r of expanded){
-    const inside=[];
+    let inside=[];
     for(const h of hints){
       const m=meet(r,h);
       if(m.width>0&&m.height>0&&m.width*m.height>=0.9*h.width*h.height){
@@ -152,14 +167,7 @@ export function capturePhotoRegions(data,width,height,hints=[],exactRects=[],tex
         inside.push(clip);
       }
     }
-    for(let a=0;a<inside.length;a++)for(let b=a+1;b<inside.length;b++){
-      const p=inside[a],q=inside[b];
-      if(p.x<q.x+q.width&&q.x<p.x+p.width&&p.y<q.y+q.height&&q.y<p.y+p.height){
-        const x=Math.min(p.x,q.x),y=Math.min(p.y,q.y),box={x,y,width:Math.max(p.x+p.width,q.x+q.width)-x,height:Math.max(p.y+p.height,q.y+q.height)-y};
-        if(p.rescued||q.rescued)box.rescued=true;
-        inside[a]=box;inside.splice(b,1);a=-1;break;
-      }
-    }
+    inside=captureMergePhotoHints(inside);
     if(inside.length>1&&inside.reduce((s,h)=>s+h.width*h.height,0)>=HINTED*r.width*r.height)out.push(...inside);
     else{const box=inside.reduce((b,h)=>{const x=Math.min(b.x,h.x),y=Math.min(b.y,h.y);return {x,y,width:Math.max(b.x+b.width,h.x+h.width)-x,height:Math.max(b.y+b.height,h.y+h.height)-y,rescued:b.rescued||h.rescued};},r);
       if(!box.rescued)delete box.rescued;out.push(box);}
@@ -383,14 +391,16 @@ function* photoSteps(data,width,height,options,band,large=false,reading=options.
   const {colorSpace,quality,effort,tools,trace,asks,level,exactRects:rects}=admitted(data,width,height,options,large?BANDED_LIMITS:undefined),{signal,photoAdmission}=options;
   const exactFile=(from,answer=false)=>within(band?captureBandSteps(data,width,height,{...band,...level,colorSpace,maxError:0,signal}):encodeCaptureSteps(data,width,height,{...level,...(answer&&captureAnswerLevel(effort,width*height)),colorSpace,maxError:0,signal}),from,1-from);
   if(quality===100)return yield* exactFile(0);
-  const top=band?.y??0,exactRects=rects.filter(e=>e.edge!==true).map(e=>({...e,y:e.y-top})).filter(e=>e.y<height&&e.y+e.height>0),photoRects=(options.photoRects??[]).map(e=>({...e,y:e.y-top}));
-  const photoSubjects=(options.photoSubjects??options.photoRects??[]).map(e=>({...e,y:e.y-top}));
+  const top=band?.y??0,exactRects=rects.filter(e=>e.edge!==true).map(e=>({...e,y:e.y-top})).filter(e=>e.y<height&&e.y+e.height>0);
+  const photos=options.photoRects??[],subjects=options.photoSubjects??photos;
+  const photoRects=top?photos.map(e=>({...e,y:e.y-top})):photos;
+  const photoSubjects=subjects===photos?photoRects:top?subjects.map(e=>({...e,y:e.y-top})):subjects;
   let regions=options.regions??(yield* unit('photo-regions',()=>capturePhotoRegions(data,width,height,photoRects,exactRects,options.textComplete===true))),exact=null;
   check(signal);
-  const readQuality=options.regionQuality;
+  const readQuality=options.regionQuality,high=options.readingWebp===undefined||options.readingWebp>=0.9;
   const regionRead=(pixels,stride,rect,...rest)=>{
     const q=readQuality?readQuality(pixels,stride,rect,...rest):undefined;
-    return rect?.rescued===true&&typeof q==='number'&&Number.isFinite(q)&&q>=1&&q<99?q+1:q;
+    return high&&rect?.rescued===true&&typeof q==='number'&&Number.isFinite(q)&&q>=1&&q<99?q+1:q;
   };
   const small=width*height<SMALL,flat=yield* unit('flat',()=>flatSamples(data,width,height)<=32);
   if(small&&flat)exact=yield* within(exactFile(0),0,0.4);
@@ -462,7 +472,7 @@ function* photoSteps(data,width,height,options,band,large=false,reading=options.
     const qualityOf=look?Object.assign((r,offGrid,dx,dy)=>look(data,width,r,read(r,offGrid),options.readingWebp,dx,dy,exactRects,colorSpace,quality,photoRects),
       {steps:look.steps&&((r,offGrid,dx,dy)=>look.steps(data,width,r,read(r,offGrid),options.readingWebp,dx,dy,exactRects,colorSpace,quality,photoRects))}):readRgb;
     const lossy=[...regions,...graphics];
-    const baseline=large?null:function*(pieces,regions){
+    const baseline=large||options.textComplete===true&&(effort??3)>=3&&2*coveredArea(photoRects,width,height)>width*height?null:function*(pieces,regions){
       const reading={pieces,exact:true,requirePieces:true};
       const bytes=yield* photoSteps(data,width,height,{...options,wholePhotoRoute:null,exactRects:[],photoRects:[],textComplete:undefined,photoSubjects:photoAdmission?photoSubjects:[],regions},undefined,false,reading);
       return {bytes,exact:reading.exact,wholePhoto:reading.wholePhoto===true};

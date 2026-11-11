@@ -4,7 +4,7 @@ import {hybridToken, writeUintConfig} from './prefix.mjs';
 import {SCREEN_INTEGER_CONFIGS} from './screen-codes.mjs';
 import {learnedModel} from './capture-trees.mjs';
 import {colourTransform} from './rct-search.mjs';
-import {reverseAlias, shapeHistogram, writeAnsHistograms} from './ans-core.mjs';
+import {ansEncode, reverseAlias, shapeHistogram, writeAnsHistograms} from './ans-core.mjs';
 import {captureAnsWrite} from './kernels.mjs';
 
 export function captureAnsTokens(models, index, configs, copy, histograms) {
@@ -13,6 +13,7 @@ export function captureAnsTokens(models, index, configs, copy, histograms) {
   for (const model of models) for (let k = 0; k < model.count; k++) if (model.pieceDistance[k]) n++;
   const tags = new Uint32Array(n), bits = new Uint32Array(n);
   const offset = copy ? 1 : 0, freqs = Array.from({length: histograms + offset}, () => new Uint32Array(256)), token = [0, 0, 0];
+  const room = copy ? Math.min(copy.minSymbol, 256) : 256;
   let at = 0;
   const put = (h, s) => {
     if (s > 255) return false;
@@ -28,12 +29,12 @@ export function captureAnsTokens(models, index, configs, copy, histograms) {
         if (v < 512) {
           const slot = h << 9 | v;
           let packed = fast[slot];
-          if (packed < 0) { hybridToken(configs[h], v, token); if (token[0] > 255) return null; fast[slot] = packed = token[0] << 8 | token[1]; fastBits[slot] = token[2]; }
+          if (packed < 0) { hybridToken(configs[h], v, token); if (token[0] >= room) return null; fast[slot] = packed = token[0] << 8 | token[1]; fastBits[slot] = token[2]; }
           const target = h + offset, s = packed >> 8;
           tags[at] = target << 16 | (packed & 255) << 9 | s; bits[at++] = fastBits[slot]; freqs[target][s]++;
           continue;
         }
-        hybridToken(configs[h], v, token); if (!put(h + offset, token[0])) return null; continue;
+        hybridToken(configs[h], v, token); if (token[0] >= room || !put(h + offset, token[0])) return null; continue;
       }
       hybridToken(copy.lengthConfig, v, token);
       if (!put(h + offset, copy.minSymbol + token[0])) return null;
@@ -67,8 +68,15 @@ export function writeCaptureAns(header, data, {lz77, contextMap, configs}, token
     writeUintConfig(w, lz77.lengthConfig, 8);
   }
   writeAnsHistograms(w, contextMap, logAlphabet, configs, shapes);
-  captureAnsWrite(data, tags, bits, n, shapes);
+  if (!captureAnsWrite(data, tags, bits, n, shapes)) writeAnsTokens(data, tags, bits, n, shapes);
   return true;
+}
+
+function writeAnsTokens(w, tags, bits, n, shapes) {
+  const ids = new Uint8Array(n), freq = new Int32Array(n), start = new Int32Array(n), emitted = new Uint16Array(n), flagged = new Uint8Array(n);
+  for (let i = 0; i < n; i++) { const h = shapes[ids[i] = tags[i] >>> 16], s = tags[i] & 511; freq[i] = h.counts[s]; start[i] = h.starts[s]; }
+  w.write(32, ansEncode(n, ids, freq, start, shapes.map(h => h.reverse), emitted, flagged));
+  for (let i = 0; i < n; i++) { if (flagged[i]) w.write(16, emitted[i]); const raw = tags[i] >>> 9 & 63; if (raw) w.write(raw, bits[i]); }
 }
 
 function distanceConfig({values, counts}) {

@@ -14,16 +14,27 @@ import {EXACT_LADDER} from '../exact-ladder.mjs';
 import {PHOTO_LIMITS} from '../limits.mjs';
 import {fail} from './primitives.mjs';
 import {photoTarget} from '../photo-quality-search.mjs';
+import {guard, answer} from '../admit.mjs';
+
+function* exactTargetSteps(data, width, height, effort, preview) {
+  const exact = effortJob(data, width, height, {quality: 100, effort}, false,
+    PHOTO_LIMITS, undefined, undefined, EXACT_LADDER);
+  let step, reply;
+  try {
+    while (!(step = effort > 5 ? guard(() => exact.next(reply)) : exact.next(reply)).done) reply = yield step.value;
+    const bytes = effort > 5 ? answer(step.value) : step.value;
+    preview?.(bytes, {width, height, measurements: []});
+    return bytes;
+  } finally { if (!step?.done || effort > 5) exact.return?.(); }
+}
 
 async function lowScoreTarget(data, width, height, effort, target, hooks) {
   if (width < 8 || height < 8) throw fail('JXL_INPUT', 'A score target needs at least 8 x 8 pixels.');
   let metric = null;
   const exact = onProgress => {
     metric?.destroy(); metric = null;
-    return drain(effortJob(data, width, height, {quality: 100, effort}, false,
-      PHOTO_LIMITS, undefined, undefined, EXACT_LADDER), {...hooks, onProgress});
+    return drain(exactTargetSteps(data, width, height, effort), {...hooks, onProgress});
   };
-  if (target.ssimulacra2 === 100) return {bytes: await exact(hooks.onProgress), facts: {kept: 'pixels', measurements: []}};
   const producer = lowWholePhoto(data, width, height, {signal: hooks.signal, smooth: smoothPhoto(data, width, height)});
   const plan = memoryPlan(width * height, {width, height, inputBytes: data.buffer.byteLength});
   metric = wholeRebuildMeasure(data, width, height, producer.color, hooks.signal, plan);
@@ -47,6 +58,11 @@ export async function scoreTarget(data, width, height, source, settings, target,
   targetSource(data, source, settings);
   await acceleration(webgpu, 0, 0, settings.effort, 'a measured fidelity');
   target = photoTarget(target);
+  if (target.ssimulacra2 === 100 && Object.keys(target).length === 1) {
+    if (width < 8 || height < 8) throw fail('JXL_INPUT', 'A score target needs at least 8 x 8 pixels.');
+    const bytes = await drain(exactTargetSteps(data, width, height, settings.effort, settings.effort > 5 ? hooks.preview : undefined), hooks);
+    return {bytes, facts: {kept: 'pixels', measurements: []}};
+  }
   if (settings.effort <= 5 && Object.keys(target).length === 1 && target.ssimulacra2 !== undefined)
     return lowScoreTarget(data, width, height, settings.effort, target, hooks);
   const answer = await drain(encodeToScoreSteps(data, width, height, {target, effort: settings.effort, signal: hooks.signal, preview: hooks.preview,

@@ -3,6 +3,11 @@ import {exactPow} from './exact-math.mjs';
 import {TRANSFORMS} from './vardct-strategies.mjs';
 import {xybStrategies, forcedLayout} from './varblocks.mjs';
 import {lazyStrategyImage} from './varblock-core.mjs';
+import {journaling, stage, unit} from './step-journal.mjs';
+
+const packLayout = layout => { const out = new Int32Array(layout.length * 3); layout.forEach(({id, bx, by}, i) => { out[i * 3] = id; out[i * 3 + 1] = bx; out[i * 3 + 2] = by; }); return out; };
+const unpackLayout = packed => Array.from({length: packed.length / 3}, (_, i) => ({id: packed[i * 3], bx: packed[i * 3 + 1], by: packed[i * 3 + 2]}));
+const sameRates = (a, b) => a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
 
 const VB_LARGE = /* @__PURE__ */ new Set([18, 19, 20]);
 export const RATE_DOUBT = 3e-6, MAP_TOTAL_DOUBT = 2e-6, RATE_TOTAL_DOUBT = 1e-7;
@@ -60,6 +65,28 @@ export function* closedLoopStrategySteps(base, width, height, options = {}) {
   const costs = (yield {varblocks: {kind: 'costs', base, width, height, options: {...options, ids: ids.filter(id => !VB_LARGE.has(id))}}}) || null;
   let mapDoubt = 0;
   const lazy = !costs && !!base.planeRows, {p: _p, initial: _initial, ...build} = options;
+  if (lazy && journaling()) {
+    const layout = unpackLayout(yield* stage('closed-loop', function* () {
+    for (const id of [0, ...ids]) {
+      const forced = {...options, force: id, maps: null, rates};
+      const made = yield* stage('forced', function* () {
+        const priced = yield* unit('forced-layout', () => {
+          const before = new Map([...rates].map(([k, v]) => [k, v.slice()]));
+          const {layout} = xybStrategies(base, width, height, {...forced, chooseOnly: true, priceOnly: true});
+          return {layout: packLayout(layout), rates: [...rates].filter(([k, v]) => !before.has(k) || !sameRates(v, before.get(k))).map(([k, v]) => [k, v.slice()])};
+        });
+        for (const [k, v] of priced.rates) rates.set(k, Float64Array.from(v));
+        const reply = yield {measure: lazyStrategyImage(base, width, height, build, unpackLayout(priced.layout)), want: {p}};
+        if (reply.doubt?.cells) throw new Error('A resumed closed loop takes exact maps.');
+        return {cells: Float64Array.from(reply.cells), rates: priced.rates};
+      });
+      for (const [k, v] of made.rates) rates.set(k, Float64Array.from(v));
+      maps[id] = made.cells;
+    }
+    return yield* unit('closed-choice', () => packLayout(xybStrategies(base, width, height, {...options, maps, rates, chooseOnly: true}).layout));
+    }));
+    return {layout, image: lazyStrategyImage(base, width, height, build, layout)};
+  }
   for (const id of [0, ...ids]) {
     let forced = {...options, force: id, maps: null, rates, ...(costs ? {costs} : {})};
     if (costs?.has(id)) {

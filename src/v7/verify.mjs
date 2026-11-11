@@ -155,12 +155,12 @@ async function complete(pending, result, options, context) {
       if (actual.width !== result.width || actual.height !== result.height) throw refused('JXL_DIMENSIONS', 'The output dimensions differ from the result record.', receipt);
       if (!actual.proof.verified) throw refused(actual.reason?.code ?? 'JXL_TARGET', actual.reason?.message ?? 'The output does not meet its fidelity target.', receipt);
       if (receipt.metric === 'ssimulacra2' && Number.isFinite(receipt.score)) {
-        const claim = Math.max(-Infinity, ...result.measurements.filter(m => m.metric === 'ssimulacra2' && m.region === undefined).map(m => m.score));
+        const claim = result.measurements.reduce((most, m) => m.metric === 'ssimulacra2' && m.region === undefined ? Math.max(most, m.score) : most, -Infinity);
         if (claim > receipt.score + CLAIM_SLACK)
           throw refused('JXL_TARGET', `The result claims a higher score than its file has: ${claim} claimed, ${receipt.score} measured.`, receipt);
       }
       if (receipt.metric === 'max-error' && Number.isFinite(receipt.score)) {
-        const claim = Math.min(Infinity, ...result.measurements.filter(m => m.metric === 'max-error' && m.region === undefined).map(m => m.score));
+        const claim = result.measurements.reduce((least, m) => m.metric === 'max-error' && m.region === undefined ? Math.min(least, m.score) : least, Infinity);
         if (claim < receipt.score - MAX_ERROR_SLACK)
           throw refused('JXL_TARGET', `The result claims a smaller error than its file has: ${claim} claimed, ${receipt.score} measured.`, receipt);
       }

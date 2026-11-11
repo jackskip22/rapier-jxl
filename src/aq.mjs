@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 
+import {journaling, stage} from './step-journal.mjs';
 import {exactExp, exactLog} from './exact-math.mjs';
 import {fieldValues, fieldLogSum, normalizeField, smoothForward, smoothBacktrack, distanceBounds, fieldRangeValues, centralLogSum, intervalLogSums, normalizeRanges, logRanges, appendAimOpen, pathLevels, pathForward, pathBackward, pathOwnCost, appendPathOpen, smoothWinner, fieldPointRange} from './aq-cursor-kernels.mjs';
 function activeCount(active, n, levels = null) {
@@ -32,7 +33,7 @@ export function smoothField(field, levels, switchCost, active = null) {
 }
 
 export function* closedLoopFieldSteps(width, height, imageOf, {rounds = 3, gamma = 0.5, aimQuantile = 0.9, min = 0.6, max = 2,
-  levels = [0.6, 0.7, 0.8, 0.9, 1, 1.12, 1.25, 1.4, 1.6, 1.8, 2], switchCost = 0.01, margin = 2, normalize = true, gammaDown = gamma, start = null, initial = null, active = null} = {}) {
+  levels = [0.6, 0.7, 0.8, 0.9, 1, 1.12, 1.25, 1.4, 1.6, 1.8, 2], switchCost = 0.01, margin = 2, normalize = true, gammaDown = gamma, start = null, initial = null, active = null, staged = false} = {}) {
   const blocks = Math.ceil(width / 8) * Math.ceil(height / 8), count = activeCount(active, blocks, levels);
   if (active) active = active.slice();
   const options = {gamma, aimQuantile, min, max, normalize, gammaDown, active};
@@ -42,7 +43,19 @@ export function* closedLoopFieldSteps(width, height, imageOf, {rounds = 3, gamma
     for (let b = 0; b < blocks; b++) if (!active[b]) field[b] = 1;
     if (!count) return field;
   }
+  if (journaling() && !active && !staged)
+    return yield* stage('aq-loop', () => closedLoopFieldSteps(width, height, imageOf, {rounds, gamma, aimQuantile, min, max, levels, switchCost, margin, normalize, gammaDown, start, initial, active, staged: true}));
   for (let round = 0; round < rounds; round++) {
+    if (journaling() && !active) {
+      const made = field, seed = !round && !start && initial;
+      field = yield* stage('aq-round', function* () {
+        const image = seed ? seed.image : yield* imageOf(round || start ? made : null);
+        const reply = seed ? seed.scores : yield {measure: image, want: {margin}};
+        if (reply.doubt?.blocks) throw new Error('A resumed AQ round takes exact distances.');
+        return smoothField(fieldRaw(reply.blocks, made, blocks, options), levels, switchCost, active);
+      });
+      continue;
+    }
     const first = !round && !start && initial, image = first ? first.image : yield* imageOf(round || start ? field : null);
     const reply = first ? first.scores : yield {measure: image, want: {margin}}, d = reply.blocks, bound = reply.doubt?.blocks ?? 0;
     if (active) {

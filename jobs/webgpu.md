@@ -4,7 +4,7 @@ Why it helps: an identical file and its speed on every kind of GPU.
 
 **Need:** a browser with hardware WebGPU (Chrome, Edge or Safari 26) on a desktop, laptop, tablet or phone. Software adapters do not qualify.
 
-**Package:** `rapier-jxl@8.3.2` and the fixed [photo](pictures/README.md), loaded from jsDelivr with checked hashes. **Time:** up to 10 minutes; **Stop** keeps partial results.
+**Package:** `rapier-jxl@8.3.3` and the fixed [photo](pictures/README.md), loaded from jsDelivr with checked hashes. **Time:** up to 10 minutes; **Stop** keeps partial results.
 
 1. [Open an issue](https://github.com/jackskip22/rapier-jxl/issues/new?template=job-result.yml&title=WebGPU%20on%20your%20graphics%20card) titled **WebGPU on your graphics card**, and name the GPU in its first line.
 2. [Open the test page](https://rapier.website/docs/jxl-job.html?job=webgpu). Enter the browser, OS, device and GPU, and press **Run**. Keep the page in front and other GPU work idle.

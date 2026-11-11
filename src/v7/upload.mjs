@@ -128,7 +128,7 @@ async function encodeOwned(input, options, helpers, codec, maxPixels, reader, jo
   }
   if (direct && helpers?.split) return splitHere(read, direct, helpers, options, maxPixels);
   const low = direct?.lowWebp !== undefined && makeLowUpload(read.input.data, read.input.width, read.input.height, direct.quality, direct.effort,
-    smoothDecides(direct) && smoothPhoto(read.input.data, read.input.width, read.input.height));
+    smoothDecides(direct) && smoothPhoto(read.input.data, read.input.width, read.input.height), direct.lowFilteredQuality);
   const split = low ? low.split : direct && photoSplitBands(read.input.data, read.input.width, read.input.height, direct.quality, {gaborish: direct.gaborish});
   if (split && splitHasAlpha(split)) splitEnd(split);
   else if (split || low?.incumbent) {
@@ -222,9 +222,9 @@ async function splitHere(read, direct, helpers, options, maxPixels) {
   if (direct.lowWebp !== undefined) return encodePicture(captured.input, captured.codec, hooks, helpers);
   return driveSteps(effortJob(owned, width, height, {...source, ...captured.codec}, false), hooks, undefined, width * height, helpers, null);
 }
-function* splitAsk(data, width, height, {quality, gaborish, lowWebp, effort}) {
+function* splitAsk(data, width, height, {quality, gaborish, lowWebp, effort, lowFilteredQuality}) {
   if (lowWebp !== undefined) return (yield {split: {pixels: width * height,
-    run: (helpers, options) => encodeLowSplit(data, width, height, quality, effort, helpers, {...options, smooth: smoothDecides({effort, quality}) && smoothPhoto(data, width, height)})}}) ?? null;
+    run: (helpers, options) => encodeLowSplit(data, width, height, quality, effort, helpers, {...options, smooth: smoothDecides({effort, quality}) && smoothPhoto(data, width, height), lowFilteredQuality})}}) ?? null;
   return (yield {split: {pixels: width * height, run: (helpers, options) =>
     encodeSplit(data, width, height, quality, helpers, {...options, gaborish, screen: false, opaque: true})}}) ?? null;
 }
@@ -247,7 +247,7 @@ function directRoute(read, maxPixels) {
   for (let p = 0, step = Math.max(1, Math.floor(width * height / 16384)); p < width * height; p += step) if (data[p * 4 + 3] !== 255) return null;
   const shape = inspectPixels(data, width, height, {opacity: false});
   if (shape.palette || shape.alpha || !preferXYB(data, width, height) || screenLike(data, width, height)) return null;
-  return {quality, gaborish: settings.effort === 3, effort: settings.effort, lowWebp: settings.lowWebp};
+  return {quality, gaborish: settings.effort === 3, effort: settings.effort, lowWebp: settings.lowWebp, lowFilteredQuality: settings.lowFilteredQuality};
 }
 
 async function carry(jpeg, effort, hooks) {

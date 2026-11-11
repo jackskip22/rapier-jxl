@@ -179,13 +179,13 @@ function* buildAnsCodingOnce(counts, options) {
 
   const model = {kind: 'ans', contextMap: clustered.contextMap,
     histograms: histograms.map(({config, counts, starts, reverse}) => ({config, counts, starts, reverse}))};
-  const {write, writeTokens, writeFilled, flush, reset} = options?.kernels?.ansWriter(model) ?? ansGroupWriter(model);
+  const {write, writeTokens, writeFilled, flush, reset} = (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && !options?.strategy ? {write: true, flush: true} : (options?.kernels?.ansWriter?.(model) ?? ansGroupWriter(model));
   return {bits: bits + header.bitLength, payloadBits: bits, model, histogramHeader: header, write, writeTokens, writeFilled, flush, reset, writeHistograms: w => w.append(header)};
 }
 export const ansCodingParts = ({bits, payloadBits, model, histogramHeader: {bytes, at, pending, acc}}) => ({bits, payloadBits, model, header: {bytes: bytes.slice(0, at + 1), at, pending, acc}});
 export function ansCodingFrom({bits, payloadBits, model, header}, kernels) {
   const histogramHeader = Object.assign(new BitWriter(0), header);
-  const {write, writeTokens, writeFilled, flush, reset} = kernels?.ansWriter(model) ?? ansGroupWriter(model);
+  const {write, writeTokens, writeFilled, flush, reset} = (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? {write: true, flush: true} : (kernels?.ansWriter(model) ?? ansGroupWriter(model));
   return {bits, payloadBits, model, histogramHeader, write, writeTokens, writeFilled, flush, reset, writeHistograms: w => w.append(histogramHeader)};
 }
 
@@ -215,7 +215,7 @@ export function writeModularAnsHistograms(w, orderedLeaves, freqs, histogramOf =
   writeUintConfig(w, LZ77.lengthConfig, 8);
   writeAnsHistograms(w, contextMap, logAlphabet, histograms.map((_, i) => i ? configOf(i - 1) : RESIDUAL_CONFIG), histograms, writeSmallestContextMap);
   const reverses = histograms.map(h => h.reverse);
-  const encode = plans => {
+  const encode = (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? null : plans => {
     const length = plans.reduce((total, plan) => total + plan.used, 0), emitted = new Uint16Array(length), flags = new Uint8Array(length);
     const ids = new Uint16Array(length), freq = new Int32Array(length), start = new Int32Array(length);
     let at = 0, offset = histograms.length - plans.reduce((total, plan) => total + plan.freqs.length, 0), bits = 32;

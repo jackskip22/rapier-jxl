@@ -73,11 +73,20 @@ export async function announceUpload(hooks, response, id = 'rapier-media') {
     await hook.handler({media}, hooks.getContext(id));
 }
 
+// EmDash 1.4 answers its image endpoint without its runtime: there locals.emdash is the storage alone, with no route
+// metadata. That storage is the process's one cached adapter, so the last full request's live route-metadata reader is
+// kept on it: a plug-in disabled since then reads disabled at once, and before any full request the host answers.
+const activation = new WeakMap();
 export async function onRequest(context, next) {
   const emdash = context.locals.emdash, storage = emdash?.storage, request = context.request;
   // Native storage remains configured when a plugin is disabled. Its public route metadata follows activation
   // on both anonymous and signed-in requests, so disabled plugins leave the host's original response in charge.
-  const enabled = emdash?.getPublicPluginRouteMeta?.('rapier-media', 'available')?.public === true;
+  // Until a full request has shown the plug-in enabled, the image endpoint leaves the host's response in charge too.
+  const owned = !!storage && typeof storage === 'object';
+  if (owned && typeof emdash?.getPublicPluginRouteMeta === 'function') activation.set(storage, emdash.getPublicPluginRouteMeta);
+  const meta = typeof emdash?.getPublicPluginRouteMeta === 'function' ? emdash.getPublicPluginRouteMeta
+    : owned ? activation.get(storage) : undefined;
+  const enabled = typeof meta === 'function' && meta('rapier-media', 'available')?.public === true;
   const rendition = enabled ? await serveMedia({request, storage}) ?? await serveWidth({request, storage}) : null;
   if (rendition) return rendition;
   const response = await next(), url = new URL(request.url);

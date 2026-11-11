@@ -1,9 +1,9 @@
 import {fail, check, object} from './primitives.mjs';
-import {encodeCaptureSteps, compileCaptureKernels, CAPTURE_TOOLS} from '../capture-codec.mjs';
+import {encodeCaptureSteps, compileCaptureKernels, captureBusy, CAPTURE_TOOLS} from '../capture-codec.mjs';
 import {screenPhotoSteps} from '../screen-photo-mixed.mjs';
 export {encodeOptions, callOptions} from './encode-options.mjs';
 import {gpuQueue} from '../gpu-queue.mjs';
-import {exclusive, turn} from '../turn.mjs';
+import {exclusive, exclusiveActive, turn} from '../turn.mjs';
 import {journalNext} from '../step-journal.mjs';
 export function targetSource(data, ...descriptions) {
   if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray))
@@ -50,8 +50,9 @@ export async function drain(iterator, hooks = {}, gpuAnswer) {
       if (typeof step.value === 'number' && Number.isFinite(step.value)) last = Math.max(last, Math.min(0.999999, step.value));
       const due = performance.now() - lastTurn >= 8;
       if (last > told && (due || !told)) { told = last; onProgress?.(last); check(signal); }
-      if (due) {
-        if (signal) await turn();
+      const waiting = step.value === 0 && (captureBusy() || exclusiveActive());
+      if (due || waiting) {
+        if (signal || waiting) await turn();
         lastTurn = performance.now();
       }
     }

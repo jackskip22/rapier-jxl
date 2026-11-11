@@ -27,15 +27,20 @@ const nativeOptions = (site, key, archiveOriginals = true) =>
 const mediaJobKey = async (scope, key, source) => 'jxl:media:' + await digest(new TextEncoder().encode(
   JSON.stringify([scope, key, source.generation, source.deliveryRevision])));
 const pointerIds = value => [...new Set((value?.ids ?? [value?.id]).filter(id => /^[a-f0-9]{32}$/.test(id ?? '')))];
-async function pointerJob(service, value) {
-  let last = null;
-  for (const id of pointerIds(value)) {
-    const job = await service.status(id);
-    if (job && !job.done && !job.canceled) return job;
+async function pointerState(service, value) {
+  let active = null, last = null;
+  const widths = new Set();
+  const jobs = await Promise.all(pointerIds(value).map(id => service.status(id)));
+  for (const job of jobs) {
+    if (job && !job.done && !job.canceled) {
+      active ??= job;
+      if (Number.isSafeInteger(job.width)) widths.add(job.width);
+    }
     if (job) last = job;
   }
-  return last;
+  return {job: active ?? last, pendingWidths: [...widths].sort((a, b) => a - b)};
 }
+const pointerJob = async (service, value) => (await pointerState(service, value)).job;
 
 function storage() {
   const value = activeStorage();
@@ -67,7 +72,8 @@ async function runner(ctx, options = {}) {
     if (command.candidate && !job.done && !job.canceled) {
       // Original, main and width candidates have distinct proofs. Retain every pending owner so a page reopened
       // during verification can still find the original's mutation fence instead of replacing its only pointer.
-      for (;;) {
+      for (let attempt = 0; attempt < 8; attempt++) {
+        ctx.request?.signal?.throwIfAborted();
         const ids = pointerIds(previous.value);
         if (ids.includes(job.id)) return job;
         ids.push(job.id);
@@ -77,6 +83,7 @@ async function runner(ctx, options = {}) {
         if (saved?.applied !== false) throw fail(503, 'JXL_IO', 'The candidate job pointer was not acknowledged');
         previous = await service.calls.call(() => ctx.kv.getVersioned(pointer)) ?? {value: null, revision: null};
       }
+      throw fail(409, 'JXL_BUSY', 'The candidate job pointer changed too often. Retry this request.');
     }
     // A revision owns its pointer. Compare against the value seen before queueing so a delayed old library run
     // cannot replace a newer run's pointer; terminal replays also leave it alone.
@@ -236,6 +243,8 @@ async function structuralCandidate(ctx, service, target, site, pointerKey, media
 }
 
 async function pendingCandidate(ctx, width, mediaItem = nativeMediaItem) {
+  if (width !== undefined && (!Number.isSafeInteger(width) || width < 16 || width > 8192))
+    throw fail(422, 'JXL_DIMENSIONS', 'The responsive width must be from 16 to 8192.');
   const {id, key, source, expectedGeneration, expectedDeliveryRevision, replace} = target(ctx);
   const service = await runner(ctx), media = storage(), signal = ctx.request.signal;
   const call = action => service.calls.call(action);
@@ -255,7 +264,8 @@ async function pendingCandidate(ctx, width, mediaItem = nativeMediaItem) {
       result.width * result.height > media.maxPixels || archive && !exact)
     throw fail(422, 'JXL_INPUT', 'Expected the selected image result');
   const floor = archive ? 'exact' : floorOf(site);
-  if (!exact && (floor === 'exact' || typeof result.fidelity?.quality !== 'number' || result.fidelity.quality < floor.quality))
+  if (!exact && (floor === 'exact' || !Number.isFinite(result.fidelity?.quality) || result.fidelity.quality > 100 ||
+      result.fidelity.quality < floor.quality))
     throw fail(422, 'JXL_TARGET', 'The copy does not meet the selected fidelity');
   if (await bound(ctx, id, call) !== source) throw fail(409, 'key_changed', 'The picture changed');
   const before = await media.sourceHead(key, {signal, call}), selected = await media.deliveryState(key, {signal, call});
@@ -577,17 +587,21 @@ export function createPlugin({mediaItem = nativeMediaItem, mediaPage = nativeMed
       }},
       library: {methods: ['POST'], request: {body: 'json', maxBytes: 64 * 1024}, permission: 'media:read', handler: async ctx => {
         const items = ctx.input?.items;
-        if (!Array.isArray(items) || items.length > 8) throw fail(400, 'library_page', 'Send at most 8 items');
+        if (!Array.isArray(items) || items.length > 8 || items.some(item =>
+            !item || typeof item !== 'object' || Array.isArray(item) ||
+            typeof item.id !== 'string' || !/^[0-9A-HJKMNP-TV-Z]{26}$/i.test(item.id) ||
+            item.key != null && typeof item.key !== 'string'))
+          throw fail(400, 'library_page', 'Send at most 8 media item records');
         const rows = [], service = await runner(ctx), selected = settings(await service.calls.call(() => ctx.kv.get('settings')));
         for (const item of items) {
           const row = await libraryRow(storage(), item);
           const pointer = row.generation && row.deliveryRevision
             ? await ctx.kv.get(await mediaJobKey(service.scope, item.key, row)) : null;
-          const job = await pointerJob(service, pointer);
+          const {job, pendingWidths} = await pointerState(service, pointer);
           // A job that ended by handing its picture to the browser says so, whatever the pointer recorded at admission.
           const choice = (job?.execution?.location === 'browser' ? job.execution : job && !job.done && !job.canceled ? job.execution : pointer?.execution ?? job?.execution) ??
             await execution(service, ctx, item.id, selected);
-          rows.push({...row, execution: {...choice, archiveOriginals: (await archivePolicy(service, ctx)).admitting},
+          rows.push({...row, pendingWidths, execution: {...choice, archiveOriginals: (await archivePolicy(service, ctx)).admitting},
             nativeJob: job ? {id: job.id} : null});
         }
         return {items: rows};

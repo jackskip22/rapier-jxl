@@ -97,7 +97,7 @@ function mapParseFlat(values, minLength, chain = 64) {
   }
 }
 
-export function codedMap(map, mtf, minLength, moved, limitBits = Infinity) {
+function codedMap(map, mtf, minLength, moved, limitBits = Infinity) {
   const values = mtf ? moved ?? mapMoveToFront(map) : map, w = new BitWriter(256);
   w.write(1, 0); w.write(1, mtf ? 1 : 0);
   if (!minLength) {

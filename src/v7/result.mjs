@@ -37,6 +37,8 @@ function targetReason(fidelity, measurements, kept) {
     if (metric === 'ssimulacra2' ? measurement.score < bound : measurement.score > bound)
       return targetMiss('The selected output did not meet the explicit ' + metric + ' target.');
   }
+  const unmet = measurements.find(item => item.floor !== undefined && item.score < item.floor || item.limit !== undefined && item.score > item.limit);
+  if (unmet) return targetMiss('The selected output did not reach the look of its quality.');
   if (typeof fidelity?.maxError === 'number') {
     const measurement = measurements.find(item => item.metric === 'max-error' && item.region === undefined);
     if (measurement) { measurement.limit = fidelity.maxError; if (measurement.score > fidelity.maxError) return targetMiss('The selected output did not meet the maximum-error target.'); }

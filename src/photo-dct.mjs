@@ -96,7 +96,7 @@ const regionTable = rows => rows.map(([first, falls, dc]) => {
   });
 const REGION_TABLE = regionTable([[10, [0, -0.3, -0.3, -0.3, -0.3], 2.5], [18, [0, -0.3, -0.3, -0.3, -0.3], 4.5], [18, [0, -0.3, -0.3, -0.3, -0.3], 4.5]]);
 const SMALL_REGION_TABLE = REGION_TABLE.map((row,c)=>c===1?{...row,first:4.5,dc:1.125}:row);
-const RGB_TABLE = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : /* @__PURE__ */ regionTable([[30, [0, -0.3, -0.3, -0.3, -0.3], 4.5], [10, [0, -0.3, -0.3, -0.3, -0.3], 2.5], [30, [0, -0.3, -0.3, -0.3, -0.3], 4.5]]);
+const RGB_TABLE = /* @__PURE__ */ regionTable([[30, [0, -0.3, -0.3, -0.3, -0.3], 4.5], [10, [0, -0.3, -0.3, -0.3, -0.3], 2.5], [30, [0, -0.3, -0.3, -0.3, -0.3], 4.5]]);
 const strengthOf = quality => Math.max(0, Math.min(1, (90 - quality) / 15));
 const distanceOf = (quality, kind) => Math.max(0.1, calibration(quality, kind) * (quality >= 30 ? 0.1 + (100 - quality) * 0.09 : 53 / 3000 * quality * quality - 23 / 20 * quality + 25));
 export const photoQualityStep = (quality, kind) => distanceOf(quality, kind) * (1 - 0.1 * strengthOf(quality));
@@ -196,7 +196,7 @@ function grayTiles(data, width, height, tilesX) {
   return out;
 }
 
-export const rgbCoefficientSteps = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function* rgbCoefficientSteps(data, width, height, quality, colorSpace, areas = null, options = {}) {
+export function* rgbCoefficientSteps(data, width, height, quality, colorSpace, areas = null, options = {}) {
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), quantScale = 16, kind = 'regions';
   const distance = distanceOf(quality, kind), strength = strengthOf(quality), stepScale = 1 - 0.1 * strength;
   const perBlock = options.fieldPlan ? options.fieldPlan.perBlock : areas?.some(a => a.quality !== quality), FIELD = perBlock ? AREA_FIELD : TABLE_FIELD;

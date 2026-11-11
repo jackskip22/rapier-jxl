@@ -481,6 +481,7 @@ async function gcAnswer(device, request, strict) {
     const core = await gcReady(device);
     if (!core) throw new Error('the device did not qualify (double-single arithmetic or its pipelines)');
     if (request.lib) core.lib = request.lib;
+    if (request.height === 1 && request.options?.gaborish) return null;
     if (request.kind === 'blocks16') {
       const asked = {...request, planeBound: B.plane}, mask = request.weight ? null : await gpuBlocks16Mask(device, asked, GC_DS, core);
       return await gpuBlocksCosts(device, {...asked, ...mask, ids: [4]}, GC_DS, core);

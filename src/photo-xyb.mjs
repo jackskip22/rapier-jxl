@@ -160,7 +160,7 @@ function gaborishInverse(planes, W, H, {weights, strength = 1, iterations = 4, a
       for (let i = 0; i < count; i++) gaborishStep(t, orig, W, H, w, ring);
     };
     if (boost === 1) passes(iterations);
-    else {
+    else if (!kernelHooks.gaborish?.(t, orig, W, H, w, iterations, orig, boost)) {
       passes(1);
       const boosted = new Float64Array(n);
       for (let k = 0; k < n; k++) boosted[k] = orig[k] + boost * (t[k] - orig[k]);
@@ -213,8 +213,8 @@ function xybPlanes(data, width, height, T, W, H, into = null) {
 export const gaborishXYB = (planes, W, H, gaborish) => gaborishInverse(planes, W, H, gaborish);
 
 export function gaborishPlanes(data, width, height, options, into = null) {
-  const W = Math.ceil(width / 8) * 8, H = Math.ceil(height / 8) * 8;
-  return gaborishInverse(xybPlanes(data, width, height, options.transform, W, H, into), W, H, options.gaborish);
+  const W = Math.ceil(width / 8) * 8, H = Math.ceil(height / 8) * 8, planes = xybPlanes(data, width, height, options.transform, W, H, into);
+  return height === 1 ? planes : gaborishInverse(planes, W, H, options.gaborish);
 }
 
 const FAST_SCALE32 = /* @__PURE__ */ Float32Array.from(FAST_SCALE);
@@ -339,6 +339,8 @@ export function* photoXYBSteps(data, width, height, quality, options) {
   const fast = !!options?.fast;
   if (fast && options?.fieldScale) throw new Error('The fast path takes no quantization field.');
   const fastBand = fast && !!options?.fastBand;
+  if (!fastBand && options?.gaborish && (options.band ? options.band.data.length / 4 / width : height) === 1)
+    options = {...options, gaborish: null, pre: undefined, dctCache: null, band: undefined};
   const gab = fast ? fastBand ? IDENTITY_GAB : null : options?.gaborish;
   const fastGab = !!(gab && (options.fastGaborish || fastBand));
   const band = gab && !options.pre ? options.band ?? (fastGab ? {data, top: 0} : null) : null;

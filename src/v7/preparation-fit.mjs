@@ -3,6 +3,7 @@ import {fitSearch} from '../target-search.mjs';
 import {ordinaryStillDecision} from './ordinary-still-policy.mjs';
 import {lowWebpFacts} from './low-webp-quality.mjs';
 import {fitOptions} from './preparation-options.mjs';
+import {encodeOptions} from './encode-options.mjs';
 import {check, fail, callers, isCaller, progressOf} from './primitives.mjs';
 import {acquireSource} from './preparation-source.mjs';
 import {preparedResult, preparedEncode, finishPrepared} from './preparation-result.mjs';
@@ -18,9 +19,12 @@ export const intended = (result, source) => result.bytes && sourceIntent(source)
 export const intentPolicy = (policy, source) => sourceIntent(source) && policy.maxBytes > INTENT_BYTES ? {...policy, maxBytes: policy.maxBytes - INTENT_BYTES} : policy;
 import {PREVIEW} from './preview.mjs';
 
-export function fitSettle(picture) {
+export function fitSettle(picture, effort) {
   let facts;
-  return q => (ordinaryStillDecision(q / 100, picture, {facts: facts ??= lowWebpFacts(picture)}) ?? {quality: q}).quality;
+  return q => {
+    const decision = ordinaryStillDecision(q / 100, picture, {facts: facts ??= lowWebpFacts(picture), effort, filteredStill: true});
+    return decision?.lowFilteredQuality !== undefined ? decision.lowFilteredQuality + 0.5 : decision?.quality ?? q;
+  };
 }
 
 export function knownFitProbe(policy) {
@@ -39,8 +43,9 @@ export async function fitPrepared(encode, picture, policy, capabilities = {}) {
     try { report(fraction); } catch (error) { throw callers(error); }
   });
   const initial = policy.probed ? [policy.probed] : null, spent = policy.spentProbes ?? 0;
+  const settleEffort = rest.effort ?? (capabilities.admitEncode ?? encodeOptions)({}).effort;
   const candidates = fitSearch(maxBytes, {...search, maxProbes: search.maxProbes - spent,
-    picture, effort: rest.effort, initial, settle: picture?.data && fitSettle(picture)});
+    picture, effort: rest.effort, initial, settle: picture?.data && fitSettle(picture, settleEffort)});
   const facts = new WeakMap();
   let next = candidates.next(), count = spent + (initial?.length ?? 0), reuse, encoded = false, failed = false;
   try {

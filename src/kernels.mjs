@@ -26,7 +26,7 @@ const GROUP_PLANES = [P, PROPERTY, CONTEXT, STATE];
 let holder = null;
 const enteredOf = new Map();
 const entered = f => enteredOf.get(f) ?? enteredOf.set(f, function (...args) { takeArena(holder); return f.apply(this, args); }).get(f);
-const OWN_HOOKS = ['channel', 'weighted', 'fill', 'group', 'screen', 'sampled', 'sampledStore', 'dct', 'ycbcrTile', 'rgbTiles', 'rgbBand', 'photoTile', 'acGroup', 'acGroupPair', 'acDeferred', 'wpTokens', 'nonzero', 'entropy', 'varblock', 'gaborish', 'strategyFill', 'strategyWrite', 'xybPlanes', 'gabBand', 'dcEvents', 'dcPlan', 'planTokens', 'hybridPlan', 'shape'];
+const OWN_HOOKS = ['channel', 'weighted', 'fill', 'group', 'screen', 'sampled', 'sampledStore', 'dct', 'ycbcrTile', 'rgbTiles', 'rgbBand', 'photoTile', 'acGroup', 'acGroupPair', 'acDeferred', 'wpTokens', 'nonzero', 'entropy', 'varblock', 'gaborish', 'strategyFill', 'strategyWrite', 'xybPlanes', 'gabBand', 'dcEvents', 'dcPlan', 'planTokens', 'hybridPlan', 'shape', 'nativeRGBA', 's2cChannel'];
 function createEngine() {
   const {memory, exports} = kernelInstance();
   const views = () => { engine.u8 = new Uint8Array(memory.buffer); engine.i32 = new Int32Array(memory.buffer); };
@@ -47,12 +47,13 @@ const captureAnsWrite = SAMPLE ? null : function captureAnsWrite(w, tags, extras
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; shapeEpoch = -1; retainEpoch++;
   const tabs = P, at = tabs + shapes.length * 9232, words = at + n * 4, raw = words + (n * 2 + 3 & ~3), out = raw + n * 4;
   const fit = end => {
-    if (end <= engine.memory.buffer.byteLength) return;
+    if (end <= engine.memory.buffer.byteLength) return true;
     try { engine.memory.grow(Math.ceil((end - engine.memory.buffer.byteLength) / 65536)); }
-    catch { throw fault('JXL_MEMORY', 'An ANS stream passes the kernels\' memory.'); }
+    catch { return false; }
     engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
+    return true;
   };
-  fit(out);
+  if (!fit(out)) return false;
   const u16 = new Uint16Array(engine.memory.buffer);
   shapes.forEach((h, k) => {
     const base = (tabs + k * 9232) >> 1;
@@ -60,14 +61,15 @@ const captureAnsWrite = SAMPLE ? null : function captureAnsWrite(w, tags, extras
   });
   engine.i32.set(tags.subarray(0, n), at >> 2); engine.i32.set(extras.subarray(0, n), raw >> 2);
   const bits = engine.simd.tokAnsBack(at, n, tabs, words);
-  fit(out + ((bits + w.pending) >> 3) + 16);
+  if (!fit(out + ((bits + w.pending) >> 3) + 16)) return false;
   const written = engine.simd.tokAnsWrite(at, raw, n, words, w.acc, w.pending, out), whole = written >> 3, rest = written & 7;
   if (w.at + whole + 8 >= w.bytes.length) w.grow(whole + 8);
   w.bytes.set(engine.u8.subarray(out, out + whole), w.at); w.at += whole;
   w.acc = rest ? engine.u8[out + whole] & (1 << rest) - 1 : 0; w.pending = rest;
+  return true;
 };
 
-const initializeTables = SAMPLE ? null : i32 => { weightedTables(i32, DIV, WEIGHTS); i32.set(WEIGHTED_BUCKET, BUCKET >> 2); };
+const initializeTables = (SAMPLE || (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) ? null : i32 => { weightedTables(i32, DIV, WEIGHTS); i32.set(WEIGHTED_BUCKET, BUCKET >> 2); };
 
 const orientBlock = JPEG ? null : function orientBlock(from, to, stride, outStride, x, y, width, height, ox, oy, pixelBytes, orientation) {
   if (active !== 'simd' || !engine.simd.orientRGBA) throw fault('JXL_WASM', 'The sample orientation kernel is unavailable.');
@@ -449,7 +451,7 @@ const flushParked = SAMPLE ? null : function flushParked(pair) {
   takeFlushed(pair.w, args, pair.out);
   return true;
 }
-const flushTokens = SAMPLE ? null : function flushTokens(w, model, values, ids, n) {
+const flushTokens = (SAMPLE || (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) ? null : function flushTokens(w, model, values, ids, n) {
   acClean = false; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   const ans = ansTablesOf(model);
   const A_SMALL = AC_CODES, A_FREQS = A_SMALL + ans.ids * 256, A_STARTS = A_FREQS + ans.ids * 256, A_REVERSE = A_STARTS + ans.ids * 256;
@@ -475,7 +477,7 @@ const flushTokens = SAMPLE ? null : function flushTokens(w, model, values, ids, 
   engine.simd.ansFlush(args);
   takeFlushed(w, args, OUT);
 }
-const entropyKernels = SAMPLE ? null : () => jpegKernels(flushTokens);
+const entropyKernels = SAMPLE ? null : () => jpegKernels((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? null : flushTokens);
 const takeFlushed = SAMPLE ? null : function takeFlushed(w, args, out) {
   const i32 = new Int32Array(engine.memory.buffer), written = i32[(args >> 2) + 17];
   if (w.at + written + 8 >= w.bytes.length) w.grow(written + 8);
@@ -813,10 +815,15 @@ const shape = SAMPLE ? null : function shape(freqs, last, total, omit, tables, h
 const captureOpaque = SAMPLE || JPEG ? null : function captureOpaque(data, width, x, y, w, h) {
   if (active !== 'simd') throw fault('JXL_WASM', 'Photographic capture needs its SIMD kernels.');
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
-  for (let row = y; row < y + h; row++) {
-    const at = (row * width + x) * 4;
-    engine.u8.set(data.subarray(at, at + w * 4), P);
-    if (!engine.simd.opaque(P, w * 4)) return false;
+  const rowBytes = w * 4, rows = Math.max(1, Math.floor((R - P) / rowBytes));
+  for (let row = y; row < y + h; row += rows) {
+    const count = Math.min(rows, y + h - row), at = (row * width + x) * 4;
+    if (w === width) engine.u8.set(data.subarray(at, at + count * rowBytes), P);
+    else for (let r = 0; r < count; r++) {
+      const from = at + r * width * 4;
+      engine.u8.set(data.subarray(from, from + rowBytes), P + r * rowBytes);
+    }
+    if (!engine.simd.opaque(P, count * rowBytes)) return false;
   }
   return true;
 };
@@ -1184,7 +1191,8 @@ const xybPlanesKernel = SAMPLE || UPLOAD || JPEG ? null : function xybPlanesKern
 };
 
 const GAB = 4194304, GAB_LIMIT = 272 * 65536;
-const gaborish = SAMPLE || UPLOAD || JPEG ? null : function gaborish(t, source, W, H, weights, iterations, start = source) {
+const gaborish = SAMPLE || UPLOAD || JPEG ? null : function gaborish(t, source, W, H, weights, iterations, start = source, boost = 1) {
+  if (boost !== 1 && (start !== source || !engine.simd.gabBoost)) return false;
   if (active !== 'simd' || !(t instanceof Float64Array) || !(source instanceof Float64Array) || source.length < W * H || !(start instanceof Float64Array) || start.length < W * H || start === t && start !== source || !Number.isInteger(W) || !Number.isInteger(H) || W < 8 || W % 2 ||
       H < 1 || t.length !== W * H || !Number.isInteger(iterations) || iterations < 1 || iterations > 16) return false;
   const rowBytes = W * 8, room = Math.floor((GAB_LIMIT - GAB) / rowBytes) - 2;
@@ -1203,9 +1211,69 @@ const gaborish = SAMPLE || UPLOAD || JPEG ? null : function gaborish(t, source, 
   for (let a = 0; a < H; a += keep) {
     const b = Math.min(H, a + keep), from = Math.max(0, a - iterations), to = Math.min(H, b + iterations), rowsOf = source.subarray(from * W, to * W);
     f64.set(start === source ? rowsOf : start.subarray(from * W, to * W), GAB >> 3); f64.set(rowsOf, orig >> 3);
-    for (let i = 0; i < iterations; i++) engine.simd.gab(GAB, orig, ring, W, to - from, w1, w2, norm);
+    for (let i = 0; i < iterations; i++) {
+      engine.simd.gab(GAB, orig, ring, W, to - from, w1, w2, norm);
+      if (i === 0 && boost !== 1) engine.simd.gabBoost(GAB, orig, (to - from) * W, boost);
+    }
     t.set(f64.subarray((GAB >> 3) + (a - from) * W, (GAB >> 3) + (b - from) * W), a * W);
   }
+  return true;
+};
+
+const NATIVE = 4194304, NATIVE_LIMIT = 272 * 65536;
+const nativeRGBA = SAMPLE || UPLOAD || JPEG ? null : function nativeRGBA(planes, width, height, ox, oy, tables, rgba) {
+  const n = width * height, k = tables.V.length, rows0 = NATIVE + 96 + 4096 + 24 * k;
+  if (active !== 'simd' || !engine.simd.nativeRows || !Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 ||
+      planes.some(p => !(p instanceof Float32Array) || p.length < n) || !(rgba instanceof Uint8Array) || rgba.length < n * 4) return false;
+  const rows = Math.min(height, Math.floor((NATIVE_LIMIT - rows0) / (16 * width)));
+  if (rows < 1) return false;
+  const end = rows0 + rows * width * 16;
+  if (end > engine.memory.buffer.byteLength) {
+    try { engine.memory.grow(Math.ceil((end - engine.memory.buffer.byteLength) / 65536)); } catch { return false; }
+    engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
+  }
+  const keepVb = vbLoaded === retainEpoch;
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; vbStrip = null; retainEpoch++;
+  if (keepVb) vbLoaded = retainEpoch;
+  const f64 = new Float64Array(engine.memory.buffer), f32 = new Float32Array(engine.memory.buffer), u8 = engine.u8;
+  f64.set(tables.coefficients, NATIVE >> 3); f32.set(tables.dither, (NATIVE + 96) >> 2);
+  const knots = (NATIVE + 4192) >> 3;
+  f64.set(tables.V, knots); f64.set(tables.R, knots + k); f64.set(tables.S, knots + 2 * k);
+  for (let y = 0; y < height; y += rows) {
+    const m = Math.min(rows, height - y) * width, out = rows0 + 12 * m;
+    for (let c = 0; c < 3; c++) f32.set(planes[c].subarray(y * width, y * width + m), (rows0 >> 2) + c * m);
+    engine.simd.nativeRows(rows0, width, m / width, ox, oy + y, NATIVE, tables.low, k, out);
+    rgba.set(u8.subarray(out, out + m * 4), y * width * 4);
+  }
+  return true;
+};
+
+const S2C = 4194304, S2C_LIMIT = 640 * 65536;
+const s2cChannel = SAMPLE || UPLOAD || JPEG ? null : function s2cChannel(P1, P2, w, h, sh, stride, acc1, acc4, span, taps) {
+  if (active !== 'simd' || !engine.simd.s2cChannel || !(P1 instanceof Int16Array) || !(P2 instanceof Int16Array) || P1.length !== P2.length) return false;
+  const y0 = span ? span.y0 : 0, y1 = span ? span.y1 : h, from = span ? span.from : 0, cell0 = span ? span.cellRow0 : 0;
+  const sums = [...acc1, ...acc4], ringAt = S2C + 128, qAt = ringAt + 5 * 9 * w * 4, accAt = qAt + 3 * w * 4;
+  let at = accAt + 112;
+  const places = sums.map(sum => { if (!sum) return 0; const place = at; at += sum.byteLength + 7 & ~7; return place; });
+  const planesAt = at, room = Math.floor((S2C_LIMIT - planesAt) / (4 * w)), rows = room - 8;
+  if (rows < 16) return false;
+  const end = planesAt + Math.min(room, P1.length / w) * 4 * w;
+  if (end > engine.memory.buffer.byteLength) {
+    try { engine.memory.grow(Math.ceil((end - engine.memory.buffer.byteLength) / 65536)); } catch { return false; }
+    engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
+  }
+  const keepVb = vbLoaded === retainEpoch;
+  acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; vbStrip = null; retainEpoch++;
+  if (keepVb) vbLoaded = retainEpoch;
+  const u8 = engine.u8, i32 = engine.i32, i16 = new Int16Array(engine.memory.buffer);
+  i32.set(taps, S2C >> 2); i32.set(places, (S2C + 64) >> 2);
+  for (const place of places) if (place) u8.fill(0, place, place + sums[places.indexOf(place)].byteLength);
+  for (let a = y0; a < y1; a += rows) {
+    const b = Math.min(y1, a + rows), lo = Math.max(from, a - 4), hi = Math.min(h, b + 4, from + P1.length / w), n = (hi - lo) * w;
+    i16.set(P1.subarray((lo - from) * w, (hi - from) * w), planesAt >> 1); i16.set(P2.subarray((lo - from) * w, (hi - from) * w), (planesAt >> 1) + n);
+    engine.simd.s2cChannel(planesAt, planesAt + 2 * n, w, h, sh, stride, a, b, lo, cell0, S2C, ringAt, qAt, accAt, S2C + 64);
+  }
+  sums.forEach((sum, k) => { if (sum) sum.set(new Uint32Array(engine.memory.buffer, places[k], sum.length)); });
   return true;
 };
 
@@ -1397,6 +1465,23 @@ const vbEnter = SAMPLE || UPLOAD || JPEG ? null : function vbEnter(log2, bases) 
     vbLoaded = ++retainEpoch;
   }
 };
+const vbStripAt = SAMPLE || UPLOAD || JPEG ? null : function vbStripAt(planes, top, y, W, h) {
+  const available = planes[0].length / W - (y - top);
+  if (!vbStrip || !vbStrip.planes.has(planes) || vbStrip.W !== W || y < vbStrip.y || y + h > vbStrip.y + vbStrip.rows) {
+    const rows = Math.min(available, Math.max(h, VB_STRIP_ROWS)), end = VB_STRIP + 3 * rows * W * 8;
+    vbStrip = null;
+    let room = end <= engine.memory.buffer.byteLength;
+    if (!room) try {
+      engine.memory.grow(Math.ceil((end - engine.memory.buffer.byteLength) / 65536)); room = true;
+      engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
+    } catch {}
+    if (room) {
+      vbViews();
+      for (let c = 0; c < 3; c++) vbF64.set(planes[c].subarray((y - top) * W, (y - top + rows) * W), (VB_STRIP >> 3) + c * rows * W);
+      vbStrip = {planes: new WeakSet([planes]), W, y, rows};
+    }
+    }
+};
 const vbBasis = size => VB_BASES + 8 * (size === 8 ? 0 : size === 16 ? 128 : 640);
 const varblock = SAMPLE || UPLOAD || JPEG ? null : function varblock(log2, bases) {
   if (active !== 'simd' || !(log2 instanceof Float64Array) || log2.length !== 4096) return null;
@@ -1420,21 +1505,7 @@ const varblock = SAMPLE || UPLOAD || JPEG ? null : function varblock(log2, bases
     },
     block(planes, top, x, y, W, w, h, from, to) {
       vbEnter(log2, bases);
-      const available = planes[0].length / W - (y - top);
-      if (!vbStrip || !vbStrip.planes.has(planes) || vbStrip.W !== W || y < vbStrip.y || y + h > vbStrip.y + vbStrip.rows) {
-        const rows = Math.min(available, Math.max(h, VB_STRIP_ROWS)), end = VB_STRIP + 3 * rows * W * 8;
-        vbStrip = null;
-        let room = end <= engine.memory.buffer.byteLength;
-        if (!room) try {
-          engine.memory.grow(Math.ceil((end - engine.memory.buffer.byteLength) / 65536)); room = true;
-          engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
-        } catch {}
-        if (room) {
-          vbViews();
-          for (let c = 0; c < 3; c++) vbF64.set(planes[c].subarray((y - top) * W, (y - top + rows) * W), (VB_STRIP >> 3) + c * rows * W);
-          vbStrip = {planes: new WeakSet([planes]), W, y, rows};
-        }
-      }
+      vbStripAt(planes, top, y, W, h);
       for (let c = from; c <= to; c++) {
         if (vbStrip) engine.simd.vbDct(VB_STRIP + 8 * (c * vbStrip.rows * W + (y - vbStrip.y) * W + x), W, w, h, vbBasis(w) + 8 * w * w, vbBasis(h), VB_TMP, VB_TR + c * 8192);
         else {
@@ -1442,6 +1513,22 @@ const varblock = SAMPLE || UPLOAD || JPEG ? null : function varblock(log2, bases
           engine.simd.vbDct(VB_PIX, w, w, h, vbBasis(w) + 8 * w * w, vbBasis(h), VB_TMP, VB_TR + c * 8192);
         }
       }
+    },
+    row8(planes, top, x, y, W, n, slot, params, dead, ones, rc1, rc2) {
+      vbEnter(log2, bases);
+      if (slot.epoch !== vbLoaded || slot.size !== 64) return null;
+      vbStripAt(planes, top, y, W, 8);
+      if (!vbStrip) return null;
+      const at = VB_STRIP + 3 * vbStrip.rows * W * 8, deadAt = at + n * 32, onesAt = deadAt + 48, dcAt = onesAt + 32, levelsAt = dcAt + n * 24, end = levelsAt + n * 768;
+      if (end > engine.memory.buffer.byteLength) {
+        try { engine.memory.grow(Math.ceil((end - engine.memory.buffer.byteLength) / 65536)); } catch { return null; }
+        engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
+      }
+      vbViews();
+      vbF64.set(params.subarray(0, n * 4), at >> 3); vbF64.set(dead, deadAt >> 3); vbF64.set(ones, onesAt >> 3);
+      const done = engine.simd.vbRow8(VB_STRIP + 8 * ((y - vbStrip.y) * W + x), 8 * vbStrip.rows * W, W, n, vbBasis(8) + 512, vbBasis(8), VB_TMP, VB_TR,
+        slot.order, slot.steps, slot.high, VB_LOG2, at, deadAt, onesAt, rc1, rc2, levelsAt, dcAt, VB_OUT);
+      return {done, levels: vbI32.subarray(levelsAt >> 2, (levelsAt >> 2) + n * 192), dc: vbF64.subarray(dcAt >> 3, (dcAt >> 3) + n * 3)};
     },
     coefficients(c, size) {
       vbViews();
@@ -1483,6 +1570,7 @@ function configureKernels(mode = 'auto', parts) {
   if (!['off', 'auto', 'simd'].includes(mode)) throw fault('JXL_INPUT', 'Kernel mode is off, auto or simd.');
   explicit = true; acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.ycbcrTile = kernelHooks.rgbTiles = kernelHooks.rgbBand = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.acGroupPair = kernelHooks.acDeferred = kernelHooks.wpTokens = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = kernelHooks.dcEvents = kernelHooks.dcPlan = kernelHooks.planTokens = kernelHooks.hybridPlan = kernelHooks.shape = null; active = 'off';
+  kernelHooks.nativeRGBA = kernelHooks.s2cChannel = null;
   if (mode === 'off') return active;
   try {
     if (typeof WebAssembly !== 'object' || new Uint8Array(new Uint32Array([1]).buffer)[0] !== 1) return active;
@@ -1505,13 +1593,15 @@ function configureKernels(mode = 'auto', parts) {
     if (!SAMPLE && !UPLOAD && !JPEG) {
       if (!enabled || enabled.get('varblock')) kernelHooks.varblock = varblock;
       if (!enabled || enabled.get('gaborish')) kernelHooks.gaborish = gaborish;
+      if (!enabled || enabled.get('nativeRGBA')) kernelHooks.nativeRGBA = nativeRGBA;
+      if (!enabled || enabled.get('s2cChannel')) kernelHooks.s2cChannel = s2cChannel;
       if (!enabled || enabled.get('xybPlanes')) kernelHooks.xybPlanes = xybPlanesKernel;
     }
     if (!SAMPLE && !UPLOAD && !JPEG && (!enabled || enabled.get('strategyFill'))) { kernelHooks.strategyFill = strategyFill; kernelHooks.strategyWrite = strategyWrite; }
     if (!SAMPLE && (!enabled || enabled.get('gabBand'))) kernelHooks.gabBand = gabBand;
     if (!SAMPLE && entropyAllowed && (!enabled || enabled.get('entropy'))) kernelHooks.entropy = entropyKernels;
     for (const name of OWN_HOOKS) if (kernelHooks[name]) kernelHooks[name] = entered(kernelHooks[name]);
-  } catch { active = 'off'; kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.ycbcrTile = kernelHooks.rgbTiles = kernelHooks.rgbBand = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.acGroupPair = kernelHooks.acDeferred = kernelHooks.wpTokens = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = kernelHooks.dcEvents = kernelHooks.dcPlan = kernelHooks.planTokens = kernelHooks.hybridPlan = kernelHooks.shape = null; }
+  } catch { active = 'off'; kernelHooks.channel = kernelHooks.weighted = kernelHooks.fill = kernelHooks.group = kernelHooks.screen = kernelHooks.sampled = kernelHooks.sampledStore = kernelHooks.dct = kernelHooks.ycbcrTile = kernelHooks.rgbTiles = kernelHooks.rgbBand = kernelHooks.photoTile = kernelHooks.acGroup = kernelHooks.acGroupPair = kernelHooks.acDeferred = kernelHooks.wpTokens = kernelHooks.nonzero = kernelHooks.entropy = kernelHooks.varblock = kernelHooks.gaborish = kernelHooks.strategyFill = kernelHooks.strategyWrite = kernelHooks.xybPlanes = kernelHooks.gabBand = kernelHooks.dcEvents = kernelHooks.dcPlan = kernelHooks.planTokens = kernelHooks.hybridPlan = kernelHooks.shape = null; kernelHooks.nativeRGBA = kernelHooks.s2cChannel = null; }
   return active;
 }
 function ensureKernels() {
@@ -1525,9 +1615,9 @@ async function prepareKernels() {
   if (!(kernelsSupported())) return false;
   return compileKernels();
 }
-const arenaKernels = SAMPLE || UPLOAD ? null : capJpegKernels;
-const releaseArena = SAMPLE || UPLOAD ? null : releaseJpegKernels;
-if (!SAMPLE) kernelHooks.arena = {lend: () => capJpegKernels(ARENA_BYTES), release: releaseJpegKernels};
+const arenaKernels = (SAMPLE || UPLOAD || (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) ? null : capJpegKernels;
+const releaseArena = (SAMPLE || UPLOAD || (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) ? null : releaseJpegKernels;
+if (!SAMPLE && !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) kernelHooks.arena = {lend: () => capJpegKernels(ARENA_BYTES), release: releaseJpegKernels};
 kernelHooks.ensure = ensureKernels;
 if (!SAMPLE && !JPEG) kernelHooks.capturePhoto = {prepare: prepareKernels, ready: ensureKernels, opaque: captureOpaque};
 return {configureKernels, ensureKernels, kernelMode, kernelRequest, disableEntropyKernels, prepareKernels, arenaKernels, releaseArena, orientBlock, sampleTable, sampleFilter, sampleSum, sampleFinish, captureAnsWrite};

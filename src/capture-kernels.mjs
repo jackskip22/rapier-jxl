@@ -321,6 +321,31 @@ export function captureScan(words, stride, x0, y0, w, h, limit, rows, blank = nu
   } catch { return undefined; }
 }
 
+const TEXT_DELTA_SLOTS = 65536, TEXT_DELTA_LIMIT = 16384;
+export function captureTextDelta(colours, indices, stride, x, y, width, height) {
+  const pixels = width * height, origin = y * stride + x;
+  if (!(colours instanceof Uint32Array) || !(indices instanceof Uint16Array) || colours.length < 1 || colours.length > TEXT_DELTA_LIMIT ||
+      !Number.isInteger(stride) || stride < width || !Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 ||
+      pixels > (1 << 22) || origin < 0 || origin + (height - 1) * stride + width > indices.length || !prepareCaptureKernels()) return null;
+  try {
+    ready();
+    const colourAt = base, indexAt = colourAt + colours.length * 4, outAt = indexAt + indices.length * 2,
+      slotsAt = (outAt + pixels * 2 + 3) & ~3, deltaAt = slotsAt + TEXT_DELTA_SLOTS * 8, statsAt = (deltaAt + TEXT_DELTA_LIMIT * 6 + 3) & ~3;
+    reserve(statsAt + 16);
+    const buffer = engine.memory.buffer;
+    new Uint32Array(buffer, colourAt, colours.length).set(colours);
+    new Uint16Array(buffer, indexAt, indices.length).set(indices);
+    const count = engine.textDelta(colourAt, colours.length, indexAt, stride, width, height, origin, outAt, slotsAt, TEXT_DELTA_SLOTS - 1, deltaAt, statsAt, TEXT_DELTA_LIMIT);
+    if (count < 1) return null;
+    const stats = new Uint32Array(buffer, statsAt, 4);
+    return {indices: new Uint16Array(buffer.slice(outAt, outAt + pixels * 2)),
+      deltas: new Int16Array(buffer.slice(deltaAt, deltaAt + count * 6)),
+      count, novel: stats[1], l1: stats[2], hits: stats[3]};
+  } catch (error) {
+    throw error?.code ? error : kernelFail(error);
+  }
+}
+
 export function treeArena(count, span) {
   if (!Number.isInteger(count) || count < 1 || count > 1048576 || !Number.isInteger(span) || span < 128 || span > 65536 || !prepareCaptureKernels())
     throw fault('JXL_INTERNAL', 'The capture context tree was called outside its bounds.');
@@ -348,7 +373,7 @@ export function captureLiterals(models, n, remap) {
   try {
     ready();
     const table = base, values = table + n * 4;
-    let uses;
+    let loaded = false;
     for (const model of models) {
       const count = model.count;
       if (!(model.pieceValue instanceof Int32Array) || !(model.pieceDistance instanceof Int32Array) || !Number.isInteger(count) ||
@@ -357,16 +382,17 @@ export function captureLiterals(models, n, remap) {
       const distances = values + count * 4;
       reserve(distances + count * 4);
       const buffer = engine.memory.buffer, i32 = new Int32Array(buffer);
-      if (remap) i32.set(remap.subarray(0, n), table >> 2);
-      else if (!uses) i32.fill(0, table >> 2, (table >> 2) + n);
-      else i32.set(uses, table >> 2);
+      if (!loaded) {
+        if (remap) i32.set(remap.subarray(0, n), table >> 2);
+        else i32.fill(0, table >> 2, (table >> 2) + n);
+        loaded = true;
+      }
       i32.set(model.pieceValue.subarray(0, count), values >> 2);
       i32.set(model.pieceDistance.subarray(0, count), distances >> 2);
       engine.literals(values, distances, count, table, remap ? 1 : 0);
       if (remap) model.pieceValue.set(i32.subarray(values >> 2, (values >> 2) + count));
-      else uses = new Uint32Array(buffer.slice(table, table + n * 4));
     }
-    return remap ? undefined : uses ?? new Uint32Array(n);
+    return remap ? undefined : loaded ? new Uint32Array(engine.memory.buffer.slice(table, table + n * 4)) : new Uint32Array(n);
   } catch (error) {
     throw error?.code ? error : kernelFail(error);
   }
@@ -498,6 +524,140 @@ export function capturePeelMarks(words, width, height, bg, side) {
   } catch { return null; }
 }
 
+export function capturePeelBackground(words) {
+  requireCaptureKernels();
+  ready();
+  const n = words.length, samples = Math.ceil(n / 61), capacity = 2 ** Math.ceil(Math.log2(Math.max(2, samples * 2))),
+    table = base, order = table + capacity * 8, state = order + samples * 4, input = state + 16,
+    at = heldAt(words), band = Math.min(n, SCAN_WORDS);
+  reserve(at < 0 ? input + band * 4 : input);
+  new Uint8Array(engine.memory.buffer, table, capacity * 8).fill(0);
+  new Int32Array(engine.memory.buffer, state, 1)[0] = 0;
+  let bg = 0;
+  for (let offset = 0; offset < n; offset += band) {
+    const size = Math.min(band, n - offset);
+    if (at < 0) new Uint32Array(engine.memory.buffer, input, size).set(words.subarray(offset, offset + size));
+    bg = engine.peelBackground(at < 0 ? input : at + offset * 4, size, offset, table, capacity - 1, order, state, offset + size === n);
+  }
+  return bg >>> 0;
+}
+
+export function capturePeelTools(bg) {
+  requireCaptureKernels();
+  ready();
+  const id = bg === 0xffffffff ? 0xffffffff : 0;
+  let scratch = base, templates = null;
+  const arena = end => { ready(); reserve(end); return engine.memory.buffer; };
+  return {
+    cells(words, width, mark, runs) {
+      const size = mark.w * mark.h, input = scratch, selected = input + size * 4, count = mark.end - mark.start,
+        out = selected + count * 4, table = out + size * 4, buffer = arena(table + 262144), raw = new Uint32Array(buffer, input, size);
+      for (let y = 0; y < mark.h; y++) raw.set(words.subarray((mark.y + y) * width + mark.x, (mark.y + y) * width + mark.x + mark.w), y * mark.w);
+      new Int32Array(buffer, selected, count).set(runs.subarray(mark.start, mark.end));
+      const pixels = engine.peelCellData(input, mark.w, mark.h, mark.x, mark.y, bg, selected, count / 3, out, table);
+      return pixels < 0 ? null : {cells: new Uint32Array(buffer, out, size).slice(), pixels};
+    },
+    info(cells, width, height, ink = false) {
+      const input = scratch, out = input + cells.byteLength, triples = out + 16,
+        buffer = arena(triples + (ink ? cells.length * 12 : 0));
+      new Uint32Array(buffer, input, cells.length).set(cells);
+      const count = engine.peelGlyphs(input, width, height, id, ink ? triples : 0, out);
+      return {hash: new Int32Array(buffer, out, 1)[0], inkCount: count,
+        ink: ink ? new Int32Array(buffer, triples, count * 3).slice() : null};
+    },
+    equal(a, b) {
+      if (a.length !== b.length) return false;
+      const second = scratch + a.byteLength, buffer = arena(second + b.byteLength);
+      new Uint32Array(buffer, scratch, a.length).set(a); new Uint32Array(buffer, second, b.length).set(b);
+      return Boolean(engine.peelEqual(scratch, second, a.length));
+    },
+    templates(list) {
+      const records = scratch, capacity = 2 ** Math.ceil(Math.log2(Math.max(2, list.length * 2))),
+        table = records + list.length * 32, ink = table + capacity * 16,
+        bytes = list.reduce((sum, t) => sum + t.ink.byteLength, 0),
+        resident = ink + bytes + 128 * 128 * 8 + 32 <= MEMORY_BYTES,
+        end = ink + (resident ? bytes : list.reduce((max, t) => Math.max(max, t.ink.byteLength), 0)),
+        buffer = arena(end), values = new Int32Array(buffer);
+      let at = ink;
+      for (let i = 0; i < list.length; i++) {
+        const t = list[i], anchor = t.ink.length - 3;
+        values.set([t.w, t.h, resident ? at : 0, t.ink.length / 3, t.ink[anchor], t.ink[anchor + 1], t.ink[anchor + 2], 0], (records >> 2) + i * 8);
+        if (resident) { values.set(t.ink, at >> 2); at += t.ink.byteLength; }
+      }
+      engine.peelTemplates(records, list.length, table, capacity - 1);
+      templates = {records, table, mask: capacity - 1, ink, list}; scratch = end;
+    },
+    factor(group) {
+      const input = scratch, out = input + group.cells.byteLength, bounds = out + Math.floor(group.cells.length / 12) * 12,
+        state = bounds + 16, buffer = arena(state + 16);
+      new Uint32Array(buffer, input, group.cells.length).set(group.cells);
+      new Int32Array(buffer, state, 4).fill(0);
+      let loaded = 0, next;
+      while ((next = engine.peelFactor(input, group.w, group.h, id, templates.records, templates.table, templates.mask, out, bounds, state, loaded, templates.ink))) {
+        const ink = templates.list[next - 1].ink;
+        new Int32Array(buffer, templates.ink, ink.length).set(ink); loaded = next;
+      }
+      const count = new Int32Array(buffer, state, 3)[2], matches = new Int32Array(buffer, out, count * 3).slice(),
+        [x, y, x1, y1] = new Int32Array(buffer, bounds, 4);
+      if (x1 < 0) return {matches};
+      const width = x1 - x + 1, height = y1 - y + 1, cells = new Uint32Array(width * height), plane = new Uint32Array(buffer, input, group.cells.length);
+      for (let row = 0; row < height; row++) cells.set(plane.subarray((y + row) * group.w + x, (y + row) * group.w + x + width), row * width);
+      return {matches, cells, width, height, x, y};
+    },
+    contain(groups) {
+      scratch = base; templates = null;
+      const space = (count, cells, ink) => {
+        const capacity = 2 ** Math.ceil(Math.log2(Math.max(2, ink * 2)));
+        return {capacity, end: scratch + count * 16 + cells * 4 + capacity * 16 + ink * 12 + 128 * 128 * 4 + 12};
+      };
+      for (let first = 0; first < groups.length;) {
+        let last = first + 1, cells = groups[first].cells.length, ink = groups[first].inkCount, layout = space(1, cells, ink);
+        while (last < groups.length) {
+          const g = groups[last], next = space(last - first + 1, cells + g.cells.length, ink + g.inkCount);
+          if (next.end > MEMORY_BYTES) break;
+          cells += g.cells.length; ink += g.inkCount; layout = next; last++;
+        }
+        const records = scratch, input = records + (last - first) * 16, table = input + cells * 4,
+          nodes = table + layout.capacity * 16, target = nodes + ink * 12, out = target + 128 * 128 * 4,
+          buffer = arena(layout.end), values = new Uint32Array(buffer);
+        let at = input, maxArea = 0, maxWidth = 0, maxHeight = 0;
+        for (let i = first; i < last; i++) {
+          const g = groups[i];
+          values.set([g.w, g.h, at, g.cells.length], (records >> 2) + (i - first) * 4);
+          values.set(g.cells, at >> 2); at += g.cells.byteLength;
+          maxArea = Math.max(maxArea, g.cells.length); maxWidth = Math.max(maxWidth, g.w); maxHeight = Math.max(maxHeight, g.h);
+        }
+        engine.peelContainIndex(records, last - first, id, table, layout.capacity - 1, nodes);
+        for (let i = 0; i < groups.length; i++) {
+          const t = groups[i];
+          if (t.in || t.cells.length >= maxArea || t.w > maxWidth || t.h > maxHeight) continue;
+          const own = i >= first && i < last, at = own ? values[(records >> 2) + (i - first) * 4 + 2] : target;
+          if (!own) new Uint32Array(buffer, target, t.cells.length).set(t.cells);
+          if (engine.peelContain(at, t.w, t.h, id, records, table, layout.capacity - 1, nodes, out)) {
+            const found = new Int32Array(buffer, out, 3); t.in = groups[first + found[0] - 1]; t.ox = found[1]; t.oy = found[2];
+          }
+        }
+        first = last;
+      }
+    },
+    body(words, width, height, marks, runs) {
+      const count = marks.reduce((sum, m) => sum + m.end - m.start, 0), selected = scratch, input = selected + count * 4,
+        band = Math.max(1, Math.min(height, Math.floor(PATCH_BAND / (4 * width)))), buffer = arena(input + band * width * 4),
+        selectedRuns = new Int32Array(buffer, selected, count), body = new Uint32Array(words.length);
+      body.set(words.subarray(width * height), width * height);
+      let next = 0;
+      for (const m of marks) { selectedRuns.set(runs.subarray(m.start, m.end), next); next += m.end - m.start; }
+      for (let y = 0; y < height; y += band) {
+        const rows = Math.min(band, height - y), plane = new Uint32Array(buffer, input, rows * width);
+        plane.set(words.subarray(y * width, (y + rows) * width));
+        engine.peelBody(input, width, y, rows, selected, count / 3, bg); body.set(plane, y * width);
+      }
+      return body;
+    },
+  };
+}
+
+
 export function requireCaptureKernels() {
   if (!prepareCaptureKernels()) throw wasmRequired();
 }
@@ -553,6 +713,35 @@ export function captureDenseTiles(words, stride, x, y, width, height) {
     mask.set(new Uint8Array(buffer, output, tx), by * tx);
   }
   return mask;
+}
+
+export function captureMergePhotoHints(rects) {
+  const n = rects.length;
+  if (n < 2) return rects;
+  if (n > 65536) throw fault('JXL_INTERNAL', 'The photo hints were called outside their bounds.');
+  requireCaptureKernels(); ready();
+  try {
+    const out = base + n * 24;
+    reserve(out + n * 24);
+    const words = new Uint32Array(engine.memory.buffer);
+    for (let i = 0; i < n; i++) {
+      const r = rects[i], right = r.x + r.width, bottom = r.y + r.height, at = (base >> 2) + i * 6;
+      if (![r.x, r.y, right, bottom].every(v => Number.isInteger(v) && v >= 0 && v <= 0xffffffff) || right <= r.x || bottom <= r.y)
+        throw fault('JXL_INTERNAL', 'The photo hints were called outside their bounds.');
+      words[at] = r.x; words[at + 1] = r.y; words[at + 2] = right; words[at + 3] = bottom;
+      words[at + 4] = r.rescued ? 1 : 0; words[at + 5] = i;
+    }
+    const count = engine.mergePhotoHints(base, n, out), ordered = new Array(n);
+    for (let i = 0; i < count; i++) {
+      const at = (out >> 2) + i * 6, x = words[at], y = words[at + 1];
+      const r = {x, y, width: words[at + 2] - x, height: words[at + 3] - y};
+      if (words[at + 4]) r.rescued = true;
+      ordered[words[at + 5]] = r;
+    }
+    return ordered.filter(Boolean);
+  } catch (error) {
+    throw error?.code ? error : kernelFail(error);
+  }
 }
 
 export function captureMaskRuns(px, w, h) {

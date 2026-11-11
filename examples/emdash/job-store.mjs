@@ -3,7 +3,10 @@ export const EMDASH_JOB_STORAGE = Object.freeze({jxlParts: Object.freeze({indexe
 // EmDash's own limit is 1 MiB of JSON a stored value, none a read; a batch is the driver's 128 parts and 8 MiB.
 const MAX_PART = 1024 * 1024, MAX_BATCH = 8 * MAX_PART, FRAGMENT = Math.floor((MAX_PART - 2) / 4) * 3;
 const HASH = /^[a-f0-9]{64}$/;
-const fail = (code, message) => Object.assign(new Error(message), {code});
+// The store's own refusals, so the runner can name one that rapier-jxl/resumable returns as JXL_INTERNAL (its cause kept).
+const OWN = new WeakSet();
+const fail = (code, message) => { const error = Object.assign(new Error(message), {code}); OWN.add(error); return error; };
+export const storeFailure = error => error?.code === 'JXL_INTERNAL' && OWN.has(error.cause) ? error.cause : error;
 
 // Native processing shares the site's server process. The sandbox's ten-subrequest quota is not a native limit.
 export function createEmDashCallCounter() {
@@ -200,3 +203,28 @@ export function createEmDashJobStore(ctx, {readSource, calls = createEmDashCallC
   };
 }
 
+// A lease suppresses duplicate advances from the page and scheduler. It is advisory: a slow invocation can outlive
+// it, so checkpoint CAS, generation checks and immutable-part verification remain the publication fences.
+export async function acquireEmDashAdvance(ctx, {owner, scope, ms, now = () => Date.now(), calls = createEmDashCallCounter()} = {}) {
+  if (!OWNER.test(owner ?? '') || typeof scope !== 'string' || !Number.isFinite(ms) || ms <= 0 || ms > 60000 ||
+      typeof ctx?.kv?.getVersioned !== 'function' || typeof ctx?.kv?.compareAndSet !== 'function')
+    throw fail('JXL_OPTIONS', 'Expected a saved job and the native advance budget.');
+  const key = `jxl:advance:${scope}:${owner}`, at = now();
+  if (!Number.isFinite(at)) throw fail('JXL_OPTIONS', 'Expected a finite lease clock.');
+  const row = await calls.call(() => ctx.kv.getVersioned(key));
+  if (row?.value != null && (!Number.isFinite(row.value.until) || row.value.until < 0))
+    throw fail('JXL_IO', 'The saved advance lease is invalid.');
+  if (row?.value?.until > at) return null;
+  // Allow time for the call's I/O as well as its cooperative CPU budget. A dead process leaves only this short wait.
+  const saved = await calls.call(() => ctx.kv.compareAndSet(key, row?.revision ?? null,
+    {until: at + Math.max(30000, ms * 2)}));
+  if (saved?.applied === false) return null;
+  if (saved?.applied !== true || saved.revision == null)
+    throw fail('JXL_IO', 'The advance lease was not acknowledged.');
+  return async () => {
+    // A late release cannot clear the lease acquired by another invocation after expiry.
+    const released = await calls.call(() => ctx.kv.compareAndSet(key, saved.revision, {until: 0}));
+    if (released?.applied !== true && released?.applied !== false)
+      throw fail('JXL_IO', 'The advance lease release was not acknowledged.');
+  };
+}

@@ -20,7 +20,7 @@ const residentBands = (held, device) => {
   }});
   return held;
 };
-export const captureBlockPlanes = (device, request, signal) => ({
+const captureBlockPlanes = (device, request, signal) => ({
   encodePlanes(_encoder, buffer, _data, _width, _height, from, to) {
     check(signal);
     const held = residentBands(request.devicePlanes, device), key = from + ':' + to, kept = held?.bands.get(key);

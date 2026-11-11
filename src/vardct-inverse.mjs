@@ -69,10 +69,11 @@ export function restorationRegions(kernels, at, from, width, height, filter, row
   return {source: planes(from, held), scratch, next: k + 8};
 }
 
-export function restorePlanes(kernels, planes, width, height, filter, sigma = null, into = null) {
+export const RESTORE_ROWS = 128;
+export function restorePlanes(kernels, planes, width, height, filter, sigma = null, into = null, from = undefined) {
   if (!filter || !restorationStages(filter).length) return planes;
-  const rows = 128, radius = restorationStages(filter).reduce((n, s) => n + s.radius, 0);
-  const at = kernels.reserve(restorationSizes(width, height, filter, rows)), {source, scratch} = restorationRegions(kernels, at, 0, width, height, filter, rows);
+  const rows = RESTORE_ROWS, radius = restorationStages(filter).reduce((n, s) => n + s.radius, 0);
+  const at = kernels.reserve(restorationSizes(width, height, filter, rows), from), {source, scratch} = restorationRegions(kernels, at, 0, width, height, filter, rows);
   if (sigma) new Float32Array(kernels.buffer, scratch.kernel.sigma, sigma.length).set(sigma);
   const output = into ?? planes.map(p => new Float32Array(p.length));
   for (let a = 0; a < height; a += rows) {

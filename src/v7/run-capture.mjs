@@ -92,7 +92,12 @@ export async function runCaptureUsing(input, options, hooks, fidelity, coder) {
   if (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && coder.tools) fidelity = {...fidelity, [CAPTURE_TOOLS]: coder.tools};
   const asked = rest.effort ?? 3, needs = pixels => coder.device && rest.webgpu === 'required' && asked >= GPU_FROM && pixels >= (coder.tools?.gpu?.pixels ?? 0);
   const known = input?.width * input?.height >= 0;
-  if (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && known && coder.rectangles) Object.assign(rest, coder.rectangles(rest, input.width, input.height));
+  if (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && known && coder.rectangles) {
+    const prior = hooks.normalizedRects;
+    if (!prior || prior.normalize !== coder.rectangles || prior.width !== input.width || prior.height !== input.height ||
+        prior.exactRects !== rest.exactRects || prior.photoRects !== rest.photoRects)
+      Object.assign(rest, coder.rectangles(rest, input.width, input.height));
+  }
   if (known && needs(input.width * input.height)) {
     check(hooks.signal);
     await untilAborted(coder.device(), hooks.signal);

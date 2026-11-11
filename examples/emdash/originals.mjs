@@ -988,17 +988,36 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
     }
   }
 
+  const waitForWriter = (ms, signal) => new Promise((resolve, reject) => {
+    signal?.throwIfAborted();
+    const abort = () => { clearTimeout(timer); reject(signal.reason); };
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, ms);
+    signal?.addEventListener('abort', abort, {once: true});
+  });
   async function mutation(key, action, options = {}) {
     if (!jpeg(key)) return action();
-    const saved = await control(options);
-    if (saved.value.mode === 'retiring' && saved.value.removal?.phase === 'complete') {
-      if (saved.value.removal.purpose === 'uninstall') return action();
-      throw fail('JXL_BUSY', 'The originals setting is committing its restored state. Retry this change.');
+    const id = uuid();
+    let acquired;
+    // A native write or archive handoff can settle over several requests. Eight acquisition attempts
+    // bound contention; the seven asynchronous waits total 5750 ms, without extra archive advances.
+    // Never expire a writer or drive its archive work here. Only its acknowledged release admits us.
+    for (let attempt = 0; attempt < 8; attempt++) {
+      if (attempt) await waitForWriter(Math.min(250 * 2 ** (attempt - 1), 1000), options.signal);
+      const saved = await control(options);
+      if (saved.value.mode === 'retiring' && saved.value.removal?.phase === 'complete') {
+        if (saved.value.removal.purpose === 'uninstall') return action();
+        throw fail('JXL_BUSY', 'The originals setting is committing its restored state. Retry this change.');
+      }
+      if (saved.value.writer) {
+        if (saved.value.writer.phase === 'blocked' || attempt === 7)
+          throw fail('JXL_BUSY', 'A JPEG source replacement is in progress. Retry this change.');
+        continue;
+      }
+      acquired = await updateControl(saved, value => {
+        value.writer = {id, key, kind: 'mutation', phase: 'writing', error: null};
+      }, options);
+      if (acquired) break;
     }
-    if (saved.value.writer) throw fail('JXL_BUSY', 'A JPEG source replacement is in progress. Retry this change.');
-    const id = uuid(), acquired = await updateControl(saved, value => {
-      value.writer = {id, key, kind: 'mutation', phase: 'writing', error: null};
-    }, options);
     if (!acquired) throw fail('JXL_BUSY', 'A JPEG source replacement started. Retry this change.');
     let result;
     try { result = await action(); }

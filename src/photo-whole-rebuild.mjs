@@ -16,9 +16,12 @@ import {gaussianCoefficients, s2DeviceTables, bandsAtSpeed} from './ssimulacra2-
 import {GAUSS} from './ssimulacra2-constants.mjs';
 import {s2Interval} from './gpu-s2-score.mjs';
 import {s2Stream} from './photo-s2-stream.mjs';
+import {journaling, carried, unit, readAll, PASSED} from './step-journal.mjs';
+import {s2CellStream, s2CellMap} from './s2-cells.mjs';
+import {memoryPlan} from './memory-plan.mjs';
 
 const check = signal => { if (signal?.aborted) throw signal.reason; };
-const ROWS = 256;
+const ROWS = 256, STEP = 512;
 
 function selectedYCbCrRGBA(image, color, signal, native = false) {
   if (!native && !color.transform && rebuildable(image)) return bandedRGBA(image, ROWS);
@@ -110,7 +113,53 @@ export function wholeRebuildMeasure(data, width, height, color, signal, plan) {
   };
   const baDevice = (image, want) => !refused && !baNone && !image.ycbcr && !image.coefficientRows && !color.transform
     && width >= 8 && height >= 8 && ArrayBuffer.isView(data) && want?.butteraugli === true;
+  const streamsInJournal = (image, want) => !refused && !image.ycbcr && !color.transform && !!want?.ssimulacra2 && !want.butteraugli &&
+    want.p === undefined && want.margin === undefined && width >= 8 && height >= 8 && (data instanceof Uint8Array || data instanceof Uint8ClampedArray) &&
+    (plan ?? memoryPlan(width * height, {width, height})).banded && bandsAtSpeed() && width * height * 36 > cacheBytes;
+  function* streamedSteps(image) {
+    let stream = null, place = null;
+    try {
+      for (let y0 = 0; y0 < height; y0 += STEP) {
+        const saved = yield* carried('score-band', () => {
+          if (!stream) { stream = s2Stream({rgba: data}, width, height, 2, true); if (place) stream.restore(place); }
+          if (stream.rows !== y0) throw new Error('A scored band is out of order.');
+          bandedOutputs(image, STEP, nativeBand, (y, rows, pack, own) => { check(signal); stream.push(y, rows, [pack, own]); }, y0, y0 + STEP);
+          return stream.save();
+        });
+        if (saved !== PASSED && !stream) place = saved;
+      }
+      if (!stream) { stream = s2Stream({rgba: data}, width, height, 2, true); stream.restore(place); }
+      const [pack, own] = stream.finish();
+      return {ssimulacra2: Math.min(pack, own), nativeScores: {package: pack, native: own, minimum: Math.min(pack, own)}};
+    } finally { stream?.release(); }
+  }
+  const mapsInJournal = (image, want) => !image.ycbcr && !color.transform && (want?.p !== undefined || want?.margin !== undefined) &&
+    !want.ssimulacra2 && !want.butteraugli && width >= 8 && height >= 8 && (data instanceof Uint8Array || data instanceof Uint8ClampedArray) &&
+    (plan ?? memoryPlan(width * height, {width, height})).banded;
+  function* mapSteps(image) {
+    let stream = null, place = null;
+    const parts = [], open = () => { stream = s2CellStream({rgba: data}, width, height); if (place) stream.restore(place); };
+    for (let y0 = 0; y0 < height; y0 += ROWS) {
+      parts.push(yield* unit('map-band', () => {
+        if (!stream) open();
+        check(signal);
+        return stream.push(y0, Math.min(ROWS, height - y0), bandedRGBA(image, ROWS, undefined, y0, y0 + ROWS));
+      }, undefined, false, true));
+      const saved = yield* carried('map-place', () => stream.save(), undefined, true);
+      if (saved !== PASSED && !stream) place = saved;
+    }
+    readAll(parts.flatMap(part => part.flatMap(({sums}) => sums)));
+    if (!stream) open();
+    const {cells} = s2CellMap(stream.finish(parts), width, height);
+    return {cells, blocks: cells.slice()};
+  }
   return {
+    *measureSteps(image, want) {
+      if (journaling() && streamsInJournal(image, want)) return yield* streamedSteps(image);
+      if (journaling() && mapsInJournal(image, want)) return yield* mapSteps(image);
+      const value = this.measure(image, want);
+      return typeof value?.next === 'function' ? yield* value : value;
+    },
     measure: (image, want) => refused || image.ycbcr || color.transform || !want?.ssimulacra2 || want.butteraugli || want.p !== undefined || want.margin !== undefined
       ? (baDevice(image, want) ? baScores(image, want) : cpuScores(image, want)) : (function* () {
         const kernels = rebuildKernels();

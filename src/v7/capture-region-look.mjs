@@ -8,7 +8,7 @@ import {webpTarget} from '../photo-quality-table.mjs';
 
 export const LOOK_FROM = 3;
 const WINDOW = 128, SIDE = 128, RGB_SIDE = 96, AIM = 1.25, STEP_DOWN = 1.2, STEP_UP = 0.6, CEILING = 99.99;
-const SMALL_AIM = 0.9, SMALL_KNEE = 82, SMALL_SLOPE_LOW = 0.66, SMALL_SLOPE_HIGH = 1;
+const SMALL_AIM = 0.9, SMALL_KNEE = 82, SMALL_SLOPE_LOW = 0.66, SMALL_SLOPE_HIGH = 1, SMALL_FAR = 3, SMALL_SLOPE_FAR = 1.3;
 
 function cut(data, width, height, r, full = false) {
   let x = Math.max(0, r.x), y = Math.max(0, r.y), w = Math.min(width, r.x + r.width) - x, h = Math.min(height, r.y + r.height) - y;
@@ -57,7 +57,7 @@ export function lookReading(q, data, width, rect, reading, colorSpace = 'srgb', 
   if (small) {
     const aim = webpTarget(q) + SMALL_AIM;
     if (s0 >= aim) return reading;
-    const slope = reading < SMALL_KNEE ? SMALL_SLOPE_LOW : SMALL_SLOPE_HIGH;
+    const slope = reading < SMALL_KNEE ? SMALL_SLOPE_LOW : aim - s0 > SMALL_FAR ? SMALL_SLOPE_FAR : SMALL_SLOPE_HIGH;
     return clamp(reading + (aim - s0) / slope);
   }
   const aim = webpTarget(q) + AIM, T = aim - AIM;

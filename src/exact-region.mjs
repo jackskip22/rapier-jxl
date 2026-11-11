@@ -11,7 +11,7 @@ import {cellSums, blockDistances} from './photo-distance-cells.mjs';
 import {TRANSFORMS} from './vardct-strategies.mjs';
 
 import {subBase, subImage, bandedRGBA, bandedScores, exactScores} from './photo-reconstruct-bands.mjs';
-export {subBase, subImage, bandedRGBA, BAND_ROWS, bandedMap, bandedScores, exactScores} from './photo-reconstruct-bands.mjs';
+export {subBase, subImage, bandedRGBA, bandedScores, exactScores} from './photo-reconstruct-bands.mjs';
 
 export const CROP_MARGIN = 80;
 const CELL = 16, RECON_MARGIN = 8;
@@ -24,12 +24,6 @@ export function cropFor({x0, y0, x1, y1}, width, height, margin = CROP_MARGIN) {
   return {crop: {x0: cx0, y0: cy0, x1: cx1, y1: cy1}, blocks: {bx0, by0, bx1, by1}};
 }
 
-export function regionMeasure(reference, width, height, imageOf, region, {p = 3, margin = 2, refCache = null} = {}) {
-  const job = regionJob(reference, width, height, region, {margin}), key = `${job.crop.x0},${job.crop.y0},${job.crop.x1},${job.crop.y1}`;
-  let ref = refCache?.get(key);
-  if (!ref) { ref = butteraugliReference(job.refPlanes, job.crop.x1 - job.crop.x0, job.crop.y1 - job.crop.y0); refCache?.set(key, ref); }
-  return measureSub(ref, imageOf(job.blocks.bx0, job.blocks.by0, job.blocks.bx1, job.blocks.by1), job, {p, margin});
-}
 
 export function regionJob(reference, width, height, region, {margin = 2} = {}) {
   if (!Number.isSafeInteger(margin) || margin < 0) throw new RangeError('Exact region margin must be a nonnegative integer.');

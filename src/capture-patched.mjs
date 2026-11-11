@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {encodeAtlasSteps, encodeCaptureSteps, captureExact} from './capture-codec.mjs';
 import {WHOLE, bandRows} from './memory-device.mjs';
-import {capturePatches, PEEL_ADD, PEEL_MUL} from './capture-patches.mjs';
+import {capturePatchGroups, PEEL_ADD, PEEL_MUL} from './capture-patches.mjs';
 import {capturePatchMarks} from './capture-kernels.mjs';
 import {pixelKeys} from './screen-crop.mjs';
 import {pageFrameSteps} from './photo-frame-bands.mjs';
@@ -254,7 +254,7 @@ function frameRows(data, width, dx, dy, boxes) {
   };
 }
 
-function textPieces(data, width, height, exactRects, regions = [], protectedBoxes = [], readUnboxed = null) {
+function textPieces(data, width, height, exactRects, regions, protectedBoxes, readUnboxed, readMarks) {
   const own = exactRects.filter(r => r.solidText === true), solid = patchBoxes(own, width, height);
   const plain = [...protectedBoxes, ...patchBoxes(exactRects.filter(r => r.solidText !== true), width, height)];
   const meets = (b, r) => b.x < r.x + r.width && r.x < b.x + b.w && b.y < r.y + r.height && r.y < b.y + b.h;
@@ -262,10 +262,8 @@ function textPieces(data, width, height, exactRects, regions = [], protectedBoxe
   const ground = groundOf(solid.flatMap((b, i) => regions.some(r => meets(b, r)) ? [reads[i]] : []), width, height);
   if (!plain.length && !glyphs.length) return {pieces: [], blocks: []};
   plain.push(...patchBoxes(unboxedMarks(data, width, height, [...plain, ...glyphs], readUnboxed), width, height));
-  const marks = pageMarks(data, width, height), covered = new Uint8Array(width * height);
-  for (const g of marks?.groups ?? []) for (let i = 0; i < g.positions.length; i += 2)
-    for (let r = 0, at = (g.positions[i + 1] * width + g.positions[i]); r < g.h; r++, at += width) covered.fill(1, at, at + g.w);
-  const pieces = (marks?.groups ?? []).map(g => ({x: g.x, y: g.y, w: g.w, h: g.h, positions: g.positions}));
+  const {groups, covered} = readMarks();
+  const pieces = groups.map(g => ({x: g.x, y: g.y, w: g.w, h: g.h, positions: g.positions}));
   const runs = [], rest = [], inked = [];
   for (const b of plain) uniformRuns(data, width, b, covered, runs, rest, 0);
   for (const b of glyphs) uniformRuns(data, width, b, covered, runs, inked, 0);
@@ -443,15 +441,18 @@ function strokes(data, width, height, marks) {
   return list;
 }
 function pageMarks(data, width, height) {
+  if (width < 16 || height < 16) return null;
   const rows = Math.floor((1 << 25) / width);
-  if (rows >= height) return capturePatches(data, width, height, 0);
+  if (rows >= height) return capturePatchGroups(pixelKeys(data), width, height, 0);
   const groups = [], seen = new Map();
   const same = (a, b) => {
     for (let r = 0; r < a.h; r++) for (let i = ((a.y + r) * width + a.x) * 4, j = ((b.y + r) * width + b.x) * 4, e = i + a.w * 4; i < e; i++, j++) if (data[i] !== data[j]) return false;
     return true;
   };
   for (let y0 = 0; y0 < height; y0 += rows) {
-    const h = Math.min(rows, height - y0), part = capturePatches(data.subarray(y0 * width * 4, (y0 + h) * width * 4), width, h, 0);
+    const h = Math.min(rows, height - y0);
+    if (h < 16) continue;
+    const part = capturePatchGroups(pixelKeys(data.subarray(y0 * width * 4, (y0 + h) * width * 4)), width, h, 0);
     for (const g of part?.groups ?? []) {
       const mark = {x: g.x, y: g.y + y0, w: g.w, h: g.h, positions: g.positions.map((v, i) => i & 1 ? v + y0 : v)};
       let hash = Math.imul(mark.w, 0x9e3779b1) ^ mark.h;
@@ -564,21 +565,29 @@ export function* patchedPageSteps(source, width, height, {quality, regions = [],
   const large = width * height > WHOLE, found = yield* unit('protection', () => large ? protectedLargeBoxes(source, width, height) : protectedPageBoxes(source, width, height));
   const protection = textComplete && found && photoRects.length ? outsidePictures(found, photoRects) : found;
   const exact = () => encodeCaptureSteps(source, width, height, {...exactOptions, colorSpace, maxError: 0});
-  let unboxedSource = null;
+  let unboxedSource = null, markCoverage = null;
   const readUnboxed = width * height <= UNBOXED_PIXELS
     ? (y0, h) => unboxedSource ??= unboxedSourceMarks(source, width, height, y0, h) : null;
+  const readMarks = () => {
+    if (markCoverage) return markCoverage;
+    const groups = pageMarks(source, width, height)?.groups ?? [], covered = new Uint8Array(width * height);
+    for (const g of groups) for (let i = 0; i < g.positions.length; i += 2)
+      for (let r = 0, at = g.positions[i + 1] * width + g.positions[i]; r < g.h; r++, at += width) covered.fill(1, at, at + g.w);
+    return markCoverage = {groups, covered};
+  };
   if (!protection && unconfirmed && !confirmedPhotos && !journaling()) return yield* exact();
-  const requested = yield* unit('text-pieces', () => textPieces(source, width, height, exactRects, regions, [], readUnboxed));
-  if (!protection) unboxedSource = null;
-  const requiredPieces = requested.pieces.flatMap(piece => placed(piece).map(position => ({...position, mask: piece.mask})));
+  const requested = baseline || textReading || !protection?.boxes.length
+    ? yield* unit('text-pieces', () => textPieces(source, width, height, exactRects, regions, [], readUnboxed, readMarks)) : null;
+  if (!protection) unboxedSource = markCoverage = null;
+  const requiredPieces = baseline || textReading ? requested.pieces.flatMap(piece => placed(piece).map(position => ({...position, mask: piece.mask}))) : null;
   if (textReading) textReading.pieces = requiredPieces;
   const bare = baseline ? yield* fileStage('baseline', () => scaled(baseline(requiredPieces, protection?.regions), 0, 0), bare => bare.bytes, photoAdmission) : null;
   const exactFile = function* () { return bare && captureExact(bare.bytes) ? bare.bytes : yield* exact(); };
   const shorter = bytes => bare?.exact && bare.bytes.length <= bytes.length && (!photoAdmission || photoAdmission.accepts(bare.bytes)) ? bare.bytes : bytes;
   if (!protection && large) return null;
   if (!protection && unconfirmed && !confirmedPhotos) return shorter(yield* exactFile());
-  let {pieces: all, blocks} = protection?.boxes.length ? yield* unit('text-pieces', () => textPieces(source, width, height, exactRects, regions, protection.boxes, readUnboxed)) : requested;
-  unboxedSource = null;
+  let {pieces: all, blocks} = protection?.boxes.length ? yield* unit('text-pieces', () => textPieces(source, width, height, exactRects, regions, protection.boxes, readUnboxed, readMarks)) : requested;
+  unboxedSource = markCoverage = null;
   if (bare?.wholePhoto && protection?.mayBeExact) ({pieces: all, blocks} = requested);
   const masks = all.filter(r => r.mask), boxes = all.filter(r => !r.mask), muls = masks.map(r => ({...r, role: 'mul'}));
   const pieces = all.map(r => r.mask ? {...r, role: 'add'} : r), layered = [...muls, ...pieces.filter(r => r.role)];

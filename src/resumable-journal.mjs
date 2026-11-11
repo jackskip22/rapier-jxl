@@ -55,6 +55,8 @@ async function writeParts(file, request, io) {
   }
   return refs;
 }
+const HOLD_BYTES = 67108864;
+const OBSERVE = Symbol.for('rapier-jxl.journal.observe');
 const STRAIGHT_HEAD = 65536, SOURCE_AHEAD = 1048576, SOURCE_PIECE = 524288, PROBATION = 256, SOURCE_REFERENCE = 65536, NEARBY_BYTES = 4194304, SPARE_BYTES = 1048576, SIBLING_BYTES = 4194304, META_BYTES = 1024, WRITE_BYTES = 16777216;
 const kindOf = v => !v || typeof v !== 'object' || v.t !== undefined ? undefined
   : Array.isArray(v.a) ? 'a' : Array.isArray(v.o) ? 'o' : Array.isArray(v.m) ? 'm' : Array.isArray(v.s) ? 's' : undefined;
@@ -160,19 +162,40 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
     start: (plan, source) => ({journal: {}, plan, source, hot: []}),
     refs: state => Object.values(state?.journal ?? {}).flatMap(entry => entry.passed || !Array.isArray(entry.bytes) ? [] : entry.bytes.map(slice => slice[0])),
     async step(state, host) {
-      const {journal, plan, source: description, hot = [], tried = false} = state;
+      const {journal, plan, source: description, hot = [], tried = false, costs: lastCosts = {}} = state;
       const io = host, callReads = host.reads ?? Infinity, initialReads = io.callsRead(), hostReads = () => io.callsRead() - initialReads;
       let capped = false;
       if (!journal || typeof journal !== 'object' || Array.isArray(journal) || !plan || !description || !Array.isArray(hot) ||
-          !hot.every(p => typeof p === 'string') || typeof tried !== 'boolean')
+          !hot.every(p => typeof p === 'string') || typeof tried !== 'boolean' || !lastCosts || typeof lastCosts !== 'object' || Array.isArray(lastCosts) ||
+          !Object.values(lastCosts).every(ms => Number.isFinite(ms) && ms >= 0))
         invalid('Invalid journal state.');
       const started = now(), budget = io.budgetMs ?? plan.budgetMs ?? 20;
+      const holdLimit = 2 * description.byteLength + HOLD_BYTES;
+      let peak = 0, lastHeld = 0;
+      const holding = (adding = 0) => {
+        const seen = new Set();
+        let held = adding;
+        const add = view => { const buffer = view?.buffer; if (buffer && !seen.has(buffer)) { seen.add(buffer); held += buffer.byteLength; } };
+        const addRaw = raw => { if (raw instanceof Pieces) raw.spans.forEach(add); else add(raw); };
+        if (source) add(source); else for (const r of ranges) add(r.bytes);
+        for (const raw of loaded.values()) addRaw(raw);
+        for (const {buffers} of kept.values()) for (const buffer of buffers) if (buffer && !seen.has(buffer)) { seen.add(buffer); held += buffer.byteLength; }
+        for (const {bytes} of pending) if (bytes) addRaw(bytes);
+        lastHeld = held - adding;
+        if (held > peak) peak = held;
+        if (held > holdLimit) throw fault('JXL_MEMORY', `A resumable call held ${held} bytes, over its bound of ${holdLimit}.`);
+      };
       const straight = !tried && !Object.keys(journal).length && typeof io.straight === 'function' &&
         await io.straight(await io.readSource(0, Math.min(description.byteLength, STRAIGHT_HEAD)), budget);
       const loaded = new Map(), round = x => +x.toFixed(1);
       const finished = new Set();
       const kept = new Map();
-      const hold = (p, buffers) => { if (buffers?.length && !kept.has(p)) kept.set(p, {buffers, sums: buffers.map(checksum)}); };
+      const hold = (p, buffers) => {
+        if (!buffers?.length || kept.has(p)) return;
+        kept.set(p, {buffers, sums: buffers.map(checksum)});
+        lastHeld += buffers.reduce((n, buffer) => n + (buffer?.byteLength ?? 0), 0);
+        if (lastHeld > holdLimit) holding();
+      };
       const unchanged = p => {
         const k = kept.get(p);
         if (k && k.buffers.every((buffer, i) => checksum(buffer) === k.sums[i])) return k.buffers;
@@ -183,14 +206,14 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
       const pendingOf = new Map(), unpend = entry => {
         const item = pendingOf.get(entry);
         if (!item) return;
-        pendingBytes -= item.bytes.length; item.bytes = null; pendingOf.delete(entry);
+        pendingBytes -= item.bytes.length; if (entry.carry) carriedBytes -= item.bytes.length; item.bytes = null; pendingOf.delete(entry);
       };
       const touched = new Set(), paths = new WeakMap();
-      let pendingBytes = 0, readFull = false;
+      let pendingBytes = 0, carriedBytes = 0, readFull = false, wholeBytes = 0;
       const missedRanges = [];
       let longest = ['', 0], replay = null, attempted = 0, decodeMs = 0;
-      let frontier = null, sourceMissed = false, warming = false;
-      const costs = new Map();
+      let frontier = null, sourceMissed = false, replayMissed = false, warming = false;
+      const costs = new Map(Object.entries(lastCosts));
       let fresh = 0, saveMs = 0, loadMs = 0, sourceMs = 0, readBytes = 0, sourceBytes = 0, attempts = 0, answered = 0, final = null, fileParts = null, source = null;
       const ranges = [];
       const readRanges = async spans => {
@@ -218,24 +241,27 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
       };
       const read = async wanted => {
         if (wanted.includes('source') && !source) {
-          if (!warming) sourceMissed = true;
+          if (!warming) { sourceMissed = true; if (replay === null) replayMissed = true; }
+          holding(description.byteLength);
           const t0 = now();
           source = await io.readSource(0, description.byteLength);
-          sourceMs += now() - t0; sourceBytes += source.length; ranges.length = 0;
+          sourceMs += now() - t0; sourceBytes += source.length; if (!warming) wholeBytes = source.length; ranges.length = 0;
         }
         const spans = source ? [] : wanted.filter(p => p.startsWith('source:')).map(p => p.split(':').slice(1).map(Number));
         if (spans.length) await readRanges(spans);
         const paths = wanted.filter(p => !p.startsWith('source') && journal[p] && !journal[p].passed && !loaded.has(p));
         if (!paths.length) return;
         const l0 = now(), entries = paths.map(p => journal[p]);
+        holding(entries.reduce((n, entry) => n + (Number.isSafeInteger(entry.length) ? entry.length : 0), 0));
         const values = await loadBytes(io, entries);
         for (const [i, p] of paths.entries()) { loaded.set(p, values[i]); readBytes += entries[i].length; }
+        holding();
         loadMs += now() - l0;
       };
       const whole = typeof eager === 'function' ? eager(description) : eager;
-      const sourceStage = hot.find(p => p.startsWith('source@'))?.slice(7);
+      const sourceStage = hot.find(p => p.startsWith('source@'))?.slice(7), prefixSource = sourceStage === '*';
       const sticky = hot.filter(p => p[0] === '!').map(p => p.slice(1)), probation = new Set(hot.filter(p => p[0] === '~').map(p => p.slice(1)));
-      const warm = [...((whole || sourceStage !== undefined) && description.byteLength <= NEARBY_BYTES ? ['source'] : []),
+      const warm = [...(whole && description.byteLength <= NEARBY_BYTES || sourceStage !== undefined ? ['source'] : []),
         ...hot.filter(p => journal[p] || p.startsWith('source:')), ...sticky.filter(p => journal[p])];
       warming = true;
       if (straight) await read(['source']);
@@ -259,6 +285,8 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
       }
       else if (warm.length) await read(warm);
       warming = false;
+      holding();
+      const warmBytes = Math.max(readBytes + sourceBytes, io.bytesRead());
       while (true) {
         attempts++; replay = null; attempted = now();
         const missing = new Set(), miss = p => missing.add(p), input = source ?? lazySource(description.byteLength, miss, ranges);
@@ -278,7 +306,9 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
             const raw = loaded.get(p);
             if (!raw) return null;
             const {meta, bytes} = valueOf(journal[p], raw);
-            const decoded = decodeValue(meta, bytes, resolve, p, miss, sourceRange, undefined, unchanged(p));
+            const given = bytes ? unchanged(p) : null;
+            if (bytes && !given && lastHeld + bytes.length > holdLimit) holding(bytes.length);
+            const decoded = decodeValue(meta, bytes, resolve, p, miss, sourceRange, undefined, given);
             if (bytes) hold(p, decoded.buffers);
             register(p, decoded.buffers);
           }
@@ -312,7 +342,9 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
                 answered++; const lazy = lazyValue(entry.kind, () => miss(path)); paths.set(lazy, path); return {[SAVED]: lazy};
               }
               const {meta, bytes} = valueOf(entry, raw);
-              const d0 = now(), decoded = decodeValue(meta, bytes, resolve, path, miss, sourceRange, (piece, used) => request.touched(piece, used), unchanged(path));
+              const given = bytes ? unchanged(path) : null;
+              if (bytes && !given && lastHeld + bytes.length > holdLimit) holding(bytes.length);
+              const d0 = now(), decoded = decodeValue(meta, bytes, resolve, path, miss, sourceRange, (piece, used) => request.touched(piece, used), given);
               if (bytes) hold(path, decoded.buffers);
               if (raw) used.add(path);
               if (!entry.carry) register(path, bytes ? decoded.buffers : null);
@@ -323,7 +355,7 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
               return {[SAVED]: answer};
             }
             if (fresh && !value.tail && !stack.some(frame => frame.whole) &&
-                (pendingBytes >= WRITE_BYTES || now() - started - sourceMs + (costs.get(value.unit) ?? 0) >= budget)) { stopped = true; throw STOP; }
+                (pendingBytes - carriedBytes >= WRITE_BYTES || now() - started - sourceMs + (costs.get(value.unit) ?? longest[1]) >= budget)) { stopped = true; throw STOP; }
             if (value.tail) readFull = false;
             if (replay === null) replay = now() - attempted;
             frontier = top.path;
@@ -341,7 +373,7 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
           const w0 = now(), made = encodeValue(saving,
             {get: (buffer, from, to) => { const ref = known.get(buffer, from, to); return ref && !(typeof ref[0] === 'string' && ref[0].startsWith(inside)) ? ref : undefined; }});
           if (frame.children) {
-            for (const p of Object.keys(journal)) if (p.startsWith(inside) && !made.refers.has(p)) { unpend(journal[p]); delete journal[p]; owned.delete(p); loaded.delete(p); }
+            for (const p of Object.keys(journal)) if (p.startsWith(inside) && !made.refers.has(p)) { unpend(journal[p]); delete journal[p]; owned.delete(p); loaded.delete(p); kept.delete(p); }
             for (const [buffer, ref] of refs) if (typeof ref[0] === 'string' && ref[0].startsWith(inside)) refs.delete(buffer);
           }
           const {meta, bytes, buffers, spans} = made;
@@ -349,7 +381,7 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
             const parent = frame.path.slice(0, frame.path.lastIndexOf('.') + 1), at = +frame.path.slice(parent.length);
             for (let i = 0; i < at; i++) {
               const p = parent + i, before = journal[p];
-              if (before?.carry && !before.passed && before.name === frame.name) { unpend(before); journal[p] = {name: before.name, carry: true, passed: true}; owned.delete(p); loaded.delete(p); }
+              if (before?.carry && !before.passed && before.name === frame.name) { unpend(before); journal[p] = {name: before.name, carry: true, passed: true}; owned.delete(p); loaded.delete(p); kept.delete(p); }
             }
           }
           const kind = kindOf(meta.v), text = kind !== undefined ? JSON.stringify(meta) : null, own = text !== null && text.length > META_BYTES;
@@ -359,11 +391,12 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
           if (own) parsed.set(plain, {entry, value: {meta, bytes}});
           const item = {entry, bytes: plain, alone: frame.alone};
           pending.push(item); pendingOf.set(entry, item);
-          pendingBytes += plain.length;
+          pendingBytes += plain.length; if (frame.carry) carriedBytes += plain.length;
           loaded.set(frame.path, plain);
           if (frame.carry) owned.set(frame.path, buffers); else register(frame.path, buffers, spans);
           saveMs += now() - w0; fresh++;
-          if (!stack.some(frame => frame.whole)) readFull = Math.max(readBytes + sourceBytes, io.bytesRead()) >= READ_BATCH_BYTES;
+          if (!stack.some(frame => frame.whole)) readFull = Math.max(readBytes + sourceBytes, io.bytesRead()) - warmBytes - wholeBytes >= READ_BATCH_BYTES;
+          holding();
           return undefined;
         };
         let result, parts = null, abandoned = false;
@@ -414,7 +447,9 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
             if (!ahead || !p.startsWith('source:')) return p;
             const [from, to] = p.split(':').slice(1).map(Number);
             return `source:${from}:${Math.min(description.byteLength, Math.max(to, from + ahead))}`;
-          })); continue;
+          }));
+          holding();
+          continue;
         }
         final = stop ? null : result; fileParts = parts;
         break;
@@ -425,7 +460,9 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
       if (final === null) await savePages(io, pending.filter(({entry}) => pathOf.has(entry)));
       const pageMs = now() - p0;
       const work = {phase: 'journal', stepMs: +(now() - started).toFixed(1), decodeMs: +decodeMs.toFixed(1), longest, replayMs: +(replay ?? now() - attempted).toFixed(1), attempts, answered, fresh, entries: Object.keys(journal).length, readBytes, sourceBytes,
-        sourceMs: round(sourceMs), loadMs: round(loadMs), saveMs: round(saveMs), pageMs: round(pageMs), savedBytes: pending.reduce((n, {bytes}) => n + (bytes?.length ?? 0), 0)};
+        sourceMs: round(sourceMs), loadMs: round(loadMs), saveMs: round(saveMs), pageMs: round(pageMs), savedBytes: pending.reduce((n, {bytes}) => n + (bytes?.length ?? 0), 0),
+        hold: {peak, limit: holdLimit}};
+      globalThis[OBSERVE]?.(work);
       if (final !== null) {
         const bytes = final instanceof Uint8Array ? final : final?.bytes, facts = final instanceof Uint8Array ? null : final?.facts ?? null;
         if (!(bytes instanceof Uint8Array)) invalid('The steps returned no file.');
@@ -452,7 +489,7 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
       const live = p => journal[p] && !journal[p].passed;
       const stays = new Set([...sticky, ...[...missed].filter(p => probation.has(p))].filter(p => live(p) && !journal[p].cold));
       const remembered = [...new Set([...hot.filter(p => journal[p] && !keep.has(p)), ...probation])].filter(p => live(p) && !stays.has(p) && !missed.has(p) && !keep.has(p)).slice(0, PROBATION);
-      const stay = description.byteLength > NEARBY_BYTES ? null
+      const stay = prefixSource || replayMissed ? '*' : description.byteLength > NEARBY_BYTES ? null
         : sourceMissed ? frontier : source && sourceStage !== undefined && frontier === sourceStage ? sourceStage : null;
       let nearbyBytes = 0;
       const nearby = stay !== null || source ? [] : [...missedRanges.map(p => {
@@ -461,7 +498,7 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
       }), ...ranges.filter(r => r.used).map(r => r.used)]
         .filter(([from, to]) => (nearbyBytes += to - from) <= NEARBY_BYTES).map(([from, to]) => `source:${from}:${to}`);
       for (const p of finished) if (!missed.has(p)) { keep.delete(p); stays.delete(p); }
-      const next = {journal, plan, source: description, ...(tried && {tried}), hot: [...(stay !== null ? ['source@' + stay] : []), ...nearby, ...[...keep].filter(p => live(p) && !stays.has(p)),
+      const next = {journal, plan, source: description, ...(tried && {tried}), costs: Object.fromEntries([...costs].map(([name, ms]) => [name, Math.round(ms)])), hot: [...(stay !== null ? ['source@' + stay] : []), ...nearby, ...[...keep].filter(p => live(p) && !stays.has(p)),
         ...[...stays].map(p => '!' + p), ...remembered.map(p => '~' + p)]};
       const reads = [];
       let batch = 0;

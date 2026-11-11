@@ -3,7 +3,7 @@ import {shown} from './photo-shown.mjs';
 import {complete} from './bits.mjs';
 import {prepareV6, blockSearchOptions, V6, GABORISH, gaborishRows, v6Options} from './photo-v6.mjs';
 import {v6For, smallPicture} from './photo-v6-settings.mjs';
-import {journalFact, JOIN, unit, stage} from './step-journal.mjs';
+import {journalFact, JOIN, unit, stage, journaling} from './step-journal.mjs';
 import {smoothPhoto} from './v7/low-photo.mjs';
 import {stillPhotoProvider} from './photo-v6-provider.mjs';
 import {photoXYBSteps, XYB_TABLES} from './photo-xyb.mjs';
@@ -11,7 +11,8 @@ import {transformDCT8, dct8Basis} from './photo-dct.mjs';
 import {lowWholePhoto} from './photo-low.mjs';
 import {qualitySteps} from './photo-quality-search.mjs';
 import {plainLayout, planeLayoutSteps} from './photo-plane-levels.mjs';
-import {planeSearchSteps} from './photo-plane-search.mjs';
+import {fixedStrategyImage} from './varblock-core.mjs';
+import {planeSearchSteps, planeSearchLayoutSteps} from './photo-plane-search.mjs';
 import {planeMeasuredSteps} from './photo-plane-measured.mjs';
 import {scoreSteps, AQ, CANDIDATES} from './photo-search.mjs';
 import {maskEnergy, maskWeights} from './photo-mask.mjs';
@@ -59,10 +60,9 @@ function wholeProvider(prepared, signal, device = false) {
       ...(quantFields ? {quantFields, quantFieldBase: 64} : {quantFields: undefined, quantFieldBase: undefined})};
     return Object.defineProperty(out, 'planeBound', {get: source.getBound, enumerable: true, configurable: true});
   };
-  const canonical = (image, filter, quality) => {
-    const key = keyOf(filter, quality);
-    let source = sources.get(key);
-    if (!source) {
+  const journal = journaling();
+  const makeSource = (key, image, filter, quality) => {
+    {
       const stride = image.components[0].stride, rows = image.components[0].rows, W = stride * 8, H = rows * 8;
       const planes = image.planes ?? (filter === 'gaborish' ? prepared.pres?.get(coreAt(quality).gaborish) ?? null : null);
       const rowsOf = planes ? () => ({planes, top: 0, stride: W})
@@ -106,10 +106,28 @@ function wholeProvider(prepared, signal, device = false) {
       };
       const base = Object.defineProperty({...image, components: image.components.map(c => ({...c, coeffs: EMPTY_I16})), ...(planes && {planes}), planeRows, devicePlanes},
         'planeBound', {get: getBound, enumerable: true, configurable: true});
-      source = {planeRows, getBound, devicePlanes, base}; sources.set(key, source);
+      const setBound = (saved, mask) => { bound = saved; if (mask) devicePlanes.maskWeight = mask; };
+      const source = {planeRows, getBound, setBound, devicePlanes, base}; sources.set(key, source);
+      return source;
     }
+  };
+  const canonical = (image, filter, quality) => {
+    const key = keyOf(filter, quality);
+    const source = sources.get(key) ?? makeSource(key, image, filter, quality);
     return Object.defineProperty({...image, ...(source.base.planes && {planes: source.base.planes}), planeRows: source.planeRows, devicePlanes: source.devicePlanes},
       'planeBound', {get: source.getBound, enumerable: true, configurable: true});
+  };
+  const sourceSteps = function* (quality) {
+    const key = keyOf('gaborish', quality);
+    if (sources.has(key)) return;
+    const record = yield* unit('whole-source', () => {
+      const {planeRows: _r, planes: _p, ...image} = still.base(quality, {keepPlanes: true});
+      return Object.fromEntries(Object.entries({...image, components: image.components.map(c => ({...c, coeffs: EMPTY_I16}))}).filter(([, v]) => v !== undefined));
+    });
+    if (!sources.has(key)) makeSource(key, {...record, planeRows: gaborishRows(rgba, width, height, coreAt(quality))}, 'gaborish', quality);
+    const source = sources.get(key);
+    const saved = yield* unit('whole-bound', () => ({bound: source.getBound(), mask: source.devicePlanes.maskWeight ?? null}));
+    source.setBound(saved.bound, saved.mask);
   };
   const provider = {...still,
     blockOptions(base) { return {...still.blockOptions(base), model: 'simple'}; },
@@ -122,6 +140,11 @@ function wholeProvider(prepared, signal, device = false) {
     },
     *baseSteps(quality, options = {}) {
       const filter = options.filter ?? 'gaborish';
+      if (journal && options.keepPlanes && filter === 'gaborish' && !prepared.pres?.get(coreAt(quality).gaborish)) {
+        yield* sourceSteps(quality);
+        check(signal);
+        return retarget(sources.get(keyOf(filter, quality)), quality, options);
+      }
       if (options.keepPlanes && sources.has(keyOf(filter, quality))) {
         check(signal);
         return retarget(sources.get(keyOf(filter, quality)), quality, options);
@@ -140,14 +163,42 @@ function wholeProvider(prepared, signal, device = false) {
       return this.base(quality, options);
     },
     *image(quality, options = {}) {
+      if (journal) {
+        if ((options.filter ?? 'gaborish') === 'gaborish' && !prepared.pres?.get(coreAt(quality).gaborish)) yield* sourceSteps(quality);
+        const self = this;
+        return {deferred: function* () { const base = yield* self.baseSteps(quality, {...options, keepPlanes: true}); return self.lazy(base, plainLayout(base), self.blockOptions(base)); }};
+      }
       const base = yield* this.baseSteps(quality, {...options, keepPlanes: true});
       return yield* planeLayoutSteps(base, width, height, plainLayout(base), this.blockOptions(base), signal);
     },
-    *layout(base, layout, options) { return yield* planeLayoutSteps(base.planeRows && base.devicePlanes ? base : canonical(base, 'gaborish', 75), width, height, layout, options, signal); },
+    *write(image, effort, options) {
+      while (image?.deferred) image = yield* image.deferred();
+      return yield* still.write(image, effort, options);
+    },
+    sourceSteps,
+    lazy(base, layout, options) {
+      const {planeRows: _r, devicePlanes: _d, planes: _p, ...fields} = base;
+      let byRow = null;
+      const rows = (by0, by1) => {
+        if (!byRow) { byRow = Array.from({length: base.components[0].rows}, () => []); for (const entry of layout) byRow[entry.by].push(entry); }
+        base.planeRows?.(by0 * 8, Math.min(byRow.length, by1) * 8);
+        const entries = [];
+        for (let by = by0; by < Math.min(by1, byRow.length); by++) entries.push(...byRow[by]);
+        return fixedStrategyImage(base, width, height, {...options, layout: entries}).image;
+      };
+      return {...fields, width, height, components: base.components, layout,
+        lazyStrategy: {rows, materialize: () => fixedStrategyImage(base, width, height, {...options, layout}).image}};
+    },
+    *layout(base, layout, options) {
+      const kept = base.planeRows && base.devicePlanes ? base : canonical(base, 'gaborish', 75);
+      return journal ? this.lazy(kept, layout, options) : yield* planeLayoutSteps(kept, width, height, layout, options, signal);
+    },
   };
   return {provider, prepared, release: () => { for (const source of sources.values()) source.devicePlanes.release?.(); sources.clear(); }};
 }
 
+const packLayout = layout => { const out = new Int32Array(layout.length * 3); layout.forEach(({id, bx, by}, i) => { out[i * 3] = id; out[i * 3 + 1] = bx; out[i * 3 + 2] = by; }); return out; };
+const unpackLayout = packed => Array.from({length: packed.length / 3}, (_, i) => ({id: packed[i * 3], bx: packed[i * 3 + 1], by: packed[i * 3 + 2]}));
 const SHARED_SEARCH = {blocks: planeSearchSteps, options: blockSearchOptions, measured: planeMeasuredSteps,
   score: scoreSteps, aq: AQ, candidates: CANDIDATES};
 const WANT_S2 = {ssimulacra2: true, butteraugli: false};
@@ -230,10 +281,17 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
     if (!made) throw fault('JXL_INTERNAL', 'A capture image measure needs its writer.');
     return yield* measureOutput(yield* made.provider.write(image, writerEffort, {pass: true}), want);
   } : (image, want) => (rebuilt ??= imageMeasure(data, width, height, color, signal, plan)).measure(image, want);
-  let probe = 0;
+  const measureSteps = function* (image, want) {
+    while (image?.deferred) image = yield* image.deferred();
+    return yield* (rebuilt ??= imageMeasure(data, width, height, color, signal, plan)).measureSteps(image, want);
+  };
+  const journal = !measureOutput && journaling();
+  const defer = make => journal ? function* (q) { yield* made.provider.sourceSteps(q); return {deferred: () => make(q)}; } : make;
+  const resolve = function* (image) { while (image?.deferred) image = yield* image.deferred(); return image; };
   const scoreFile = function* (file, image, want) {
-    const scores = yield* stage('whole-score-' + probe++, function* () {
-      const value = measureOutput ? yield* measureOutput(file, want) : measure(image, want);
+    const scores = yield* stage('whole-score', function* () {
+      const value = measureOutput ? yield* measureOutput(file, want)
+        : journal ? measureSteps(image, want) : measure(image, want);
       return typeof value?.next === 'function' ? yield* value : value;
     });
     check(signal);
@@ -249,12 +307,20 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
   };
   try {
     const lowFiles = new WeakMap();
-    const lowAt = function* (q) {
+    const lowRun = function* (q) {
       let image;
       const file = yield* low({quality: q, effort: FLOOR_EFFORT, observe: selected => { image = selected; }});
       if (!image) throw new Error('The low photo writer did not expose its selected image.');
       lowFiles.set(image, shown(file, image));
       return image;
+    };
+    const lowAt = journal ? function* (q) { return {lowQuality: q}; } : lowRun;
+    const scoredLow = function* (image, want) {
+      if (!journal) { const file = lowFiles.get(image); return {file, scores: yield* scoreFile(file, image, want)}; }
+      return yield* stage('low-probe', function* () {
+        const made = yield* lowRun(image.lowQuality), file = lowFiles.get(made);
+        return {file, scores: yield* scoreFile(file, made, want)};
+      });
     };
     if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && fit) return yield* fitSteps();
     const requested = {ssimulacra2: leanOnly ? wholePhotoTarget(0, readingWebp, false) : 0};
@@ -269,23 +335,24 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
     };
     if (leanOnly) admittedFloor = requested.ssimulacra2;
     else {
+    const floorSteps = function* () {
     let floorImage = yield* lowAt(quality);
-    const floorFile = lowFiles.get(floorImage), bounded = readingWebp !== undefined && !measureOutput;
-    let floorScores = yield* scoreFile(floorFile, floorImage, bounded ? {...WANT_S2, doubt: true} : WANT_S2);
+    const bounded = readingWebp !== undefined && !measureOutput;
+    let {file: floorFile, scores: floorScores} = yield* scoredLow(floorImage, bounded ? {...WANT_S2, doubt: true} : WANT_S2);
     requested.ssimulacra2 = wholePhotoTarget(floorScores.ssimulacra2, readingWebp, !!measureOutput, smallPicture(width, height));
     const floorDoubt = floorScores.doubt?.ssimulacra2 ?? 0, floorGap = floorScores.ssimulacra2 - requested.ssimulacra2;
     if (floorDoubt && (floorGap <= floorDoubt || Math.abs(floorGap - DOWN_FROM) <= floorDoubt))
-      floorScores = yield* scoreFile(floorFile, floorImage, WANT_S2);
+      floorScores = journal ? (yield* scoredLow(floorImage, WANT_S2)).scores : yield* scoreFile(floorFile, floorImage, WANT_S2);
     admittedFloor = wholePhotoFloor(floorScores.ssimulacra2, readingWebp, requested.ssimulacra2);
     if (readingWebp === undefined || floorScores.ssimulacra2 >= requested.ssimulacra2)
       keepBytes(floorFile, floorScores.doubt ? function* () { return (yield* scoreFile(floorFile, yield* lowAt(quality), WANT_S2)).ssimulacra2; } : floorScores.ssimulacra2);
     const needCorrection = readingWebp !== undefined && !bytes;
-    closest = needCorrection ? {bytes: lowFiles.get(floorImage), score: floorScores.ssimulacra2} : null;
+    closest = needCorrection ? {bytes: floorFile, score: floorScores.ssimulacra2} : null;
     const over = readingWebp !== undefined && bytes && floorScores.ssimulacra2 - requested.ssimulacra2 >= DOWN_FROM;
     if (needCorrection || over) {
       const checkedLow = function* (image, want) {
-        const file = lowFiles.get(image), t = requested.ssimulacra2;
-        let scores = yield* scoreFile(file, image, want.exact || measureOutput ? want : {...want, doubt: true});
+        const t = requested.ssimulacra2;
+        let {file, scores} = yield* scoredLow(image, want.exact || measureOutput ? want : {...want, doubt: true});
         const d = scores.doubt?.ssimulacra2 ?? 0;
         if (d && (Math.abs(scores.ssimulacra2 - t) <= d || closest && scores.ssimulacra2 < t && scores.ssimulacra2 + d >= closest.score))
           scores = yield* scoreFile(file, image, {...want, exact: true, doubt: false});
@@ -295,11 +362,20 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
       };
       yield* measured(qualitySteps(lowAt, requested, {start: quality, low: over ? 1 : quality, high: 99.99,
         lastAim: over && effort === 4 ? DOWN_LAST_AIM : undefined, probes: over ? DOWN_PROBES[Math.min(effort, 6) - 4] : 2,
-        initial: {quality, image: floorImage, scores: floorScores, output: {bytes: lowFiles.get(floorImage), effort: FLOOR_EFFORT}},
-        measureSteps: checkedLow}), measure, signal);
+        initial: {quality, image: floorImage, scores: floorScores, output: {bytes: floorFile, effort: FLOOR_EFFORT}},
+        measureSteps: checkedLow}), journal ? measureSteps : measure, signal);
     }
-    if (effort === 4) { yield* settle(); yield* admit(); return bytes; }
     floorImage = null;
+    };
+    if (journal) {
+      const floor = yield* stage('whole-floor', function* () {
+        yield* floorSteps();
+        return {target: requested.ssimulacra2, admittedFloor, bytes, selectedScore, closest};
+      });
+      ({admittedFloor, bytes, selectedScore, closest} = floor);
+      requested.ssimulacra2 = floor.target;
+    } else yield* floorSteps();
+    if (effort === 4) { yield* settle(); yield* admit(); return bytes; }
     }
 
     const prepared = prepareV6(data, width, height, color, {}, {banded: true, upload});
@@ -312,7 +388,7 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
       return {scores, output: {bytes: file, effort: writerEffort}};
     };
     const scoreOnly = measureOutput ? qualify : function* (image, want) { return {scores: yield* scoreFile(null, image, want.exact ? want : {...want, doubt: true})}; };
-    let written = null, kept = 0;
+    let written = null;
     const sameWriteEffort = (a, b) => a === b || (!measureOutput && a <= 6 && b <= 6);
     const memoAt = (fn, q0 = NaN, img0 = null) => {
       const held = new Map();
@@ -330,13 +406,27 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
     };
     const first = measureOutput ? WANT_S2 : {...WANT_S2, doubt: true};
     const exactAt = (at, q) => function* () { return (yield* scoreFile(null, yield* at(q), WANT_S2)).ssimulacra2; };
+    const writtenNow = function* (imageAt, found, effort) {
+      if (!(found.scores.ssimulacra2 >= requested.ssimulacra2) || found.output?.bytes && sameWriteEffort(found.output.effort, effort)) return found;
+      const bytes = yield* stage('whole-keep', function* () {
+        const image = yield* resolve(yield* imageAt(found.quality));
+        return shown(yield* provider.write(image, effort, {pass: true}), image);
+      });
+      return {...found, output: {bytes, effort, unannounced: true}};
+    };
     const keep = function* (imageAt, found, effort) {
       if (!(found.scores.ssimulacra2 >= requested.ssimulacra2)) return found;
+      if (found.output?.unannounced) {
+        const {unannounced: _u, ...output} = found.output;
+        found = {...found, output};
+        written = {imageAt, quality: found.quality, effort: output.effort, bytes: output.bytes};
+        announce?.(output.bytes, found.scores.ssimulacra2);
+      }
       if (!found.output?.bytes || !sameWriteEffort(found.output.effort, effort)) {
         const same = written?.imageAt === imageAt && written.quality === found.quality && sameWriteEffort(written.effort, effort);
         let bytes = same ? written.bytes : null;
-        if (!bytes) bytes = yield* stage('whole-keep-' + kept++, function* () {
-          const image = yield* imageAt(found.quality);
+        if (!bytes) bytes = yield* stage('whole-keep', function* () {
+          const image = yield* resolve(yield* imageAt(found.quality));
           return shown(yield* provider.write(image, effort, {pass: true}), image);
         });
         written = {imageAt, quality: found.quality, effort, bytes};
@@ -348,7 +438,7 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
       return found;
     };
     function* fitSteps() {
-      const families = [() => [lowAt, image => lowFiles.get(image)]];
+      const families = [() => [lowRun, image => lowFiles.get(image)]];
       if (effort > 4) {
         let provider;
         const write = function* (image) { return shown(yield* provider.write(image, writerEffort, {pass: true}), image); };
@@ -443,21 +533,31 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
     }
     const taken = box => { const value = box.v; box.v = null; return value; };
     const probe = (imageAt, start, probes, initial = null, seen = null) => measured(qualitySteps(imageAt,
-      requested, {start, low: 1, high: 99.9, probes, initial, measureSteps: scoreOnly, seen}), measure, signal);
-    const imageAt = memoAt(q => provider.image(q, {filter: 'gaborish'}));
+      requested, {start, low: 1, high: 99.9, probes, initial, measureSteps: scoreOnly, seen}), journal ? measureSteps : measure, signal);
+    const imageAt = memoAt(defer(q => provider.image(q, {filter: 'gaborish'})));
     let probed = new Map();
     const seen = {get: q => { const o = probed?.get(q); return o && {scores: o.scores, ...(o.output && sameWriteEffort(o.output.effort, writerEffort) && {output: o.output})}; },
       set: (q, o) => probed?.set(q, o)};
+    const shapes = function* (q, options) {
+      const base = yield* provider.baseSteps(q, {keepPlanes: true});
+      const searched = journal ? {layout: unpackLayout(yield* stage('whole-shapes', function* () {
+        return packLayout(search.blocks === planeSearchSteps ? yield* planeSearchLayoutSteps(base, width, height, options, signal)
+          : (yield* search.blocks(base, width, height, options, signal)).layout);
+      }))} : yield* search.blocks(base, width, height, options, signal);
+      const layout = searched.layout, at = memoAt(defer(function* (p) {
+        const base = yield* provider.baseSteps(p, {keepPlanes: true});
+        return journal ? provider.lazy(base, layout, options) : yield* planeLayoutSteps(base, width, height, layout, options, signal);
+      }), q, searched.image);
+      return {at, image: journal ? yield* at(q) : searched.image};
+    };
     if (lean) {
       writerEffort = leanWrite;
       yield 0.05;
-      const plain = yield* probe(imageAt, leanStart(quality), LEAN_PROBES);
+      const plain = yield* writtenNow(imageAt, yield* probe(imageAt, leanStart(quality), LEAN_PROBES, null, leanOnly ? null : seen), leanWrite);
       yield 0.3;
       imageAt.clear();
-      const options = blockOptions(), base = yield* provider.baseSteps(plain.quality, {keepPlanes: true});
-      let searched = yield* search.blocks(base, width, height, options, signal);
-      const layout = searched.layout;
-      const shapedAt = memoAt(function* (q) { return yield* planeLayoutSteps(yield* provider.baseSteps(q, {keepPlanes: true}), width, height, layout, options, signal); }, plain.quality, searched.image);
+      let searched = yield* shapes(plain.quality, blockOptions());
+      const shapedAt = searched.at;
       const initial = {v: {quality: plain.quality, image: searched.image, ...yield* qualify(searched.image, first)}};
       searched = null;
       yield 0.5;
@@ -486,10 +586,8 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
         best = fine;
         if (!block16) {
           imageAt.clear();
-          const options = blockOptions([4]), base = yield* provider.baseSteps(best.quality, {keepPlanes: true});
-          let searched = yield* search.blocks(base, width, height, options, signal);
-          const layout = searched.layout;
-          block16At = memoAt(function* (q) { return yield* planeLayoutSteps(yield* provider.baseSteps(q, {keepPlanes: true}), width, height, layout, options, signal); }, best.quality, searched.image);
+          let searched = yield* shapes(best.quality, blockOptions([4]));
+          block16At = searched.at;
           const initial = {v: {quality: best.quality, image: searched.image, ...yield* qualify(searched.image, first)}};
           searched = null;
           block16 = yield* probe(block16At, best.quality, 6, taken(initial));
@@ -501,10 +599,8 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
       if (rung >= 7) {
         if (!block) {
           imageAt.clear(); block16At?.clear();
-          const options = blockOptions(), base = yield* provider.baseSteps(best.quality, {keepPlanes: true});
-          let searched = yield* search.blocks(base, width, height, options, signal);
-          const layout = searched.layout;
-          blockAt = memoAt(function* (q) { return yield* planeLayoutSteps(yield* provider.baseSteps(q, {keepPlanes: true}), width, height, layout, options, signal); }, best.quality, searched.image);
+          let searched = yield* shapes(best.quality, blockOptions());
+          blockAt = searched.at;
           const initial = {v: {quality: best.quality, image: searched.image, ...yield* qualify(searched.image, first)}};
           searched = null;
           block = yield* probe(blockAt, best.quality, 12, taken(initial));
@@ -515,12 +611,12 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
       }
       if (rung >= 8) {
         const found = yield* measured(search.score(provider, requested, {candidates: ['field'], effort: rung,
-          start: best.quality, aq: search.aq, exactSize: true, measureSteps: qualify}), measure, signal);
+          start: best.quality, aq: search.aq, exactSize: true, measureSteps: qualify}), journal ? measureSteps : measure, signal);
         if (found?.pass) keepBytes(found.bytes, found.ssimulacra2);
       }
       if (rung >= 9) {
         const found = yield* measured(search.score(provider, requested, {candidates: search.candidates, effort: rung,
-          start: best.quality, aq: search.aq, exactSize: true, measureSteps: qualify}), measure, signal);
+          start: best.quality, aq: search.aq, exactSize: true, measureSteps: qualify}), journal ? measureSteps : measure, signal);
         if (found?.pass) keepBytes(found.bytes, found.ssimulacra2);
       }
     }

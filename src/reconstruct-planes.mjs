@@ -3,6 +3,7 @@ import {scaledDCT, inverseSmallTransform, TRANSFORMS} from './vardct-strategies.
 import {llfDivisors} from './vardct-bases.mjs';
 import {half, inverseBasis, RECON_ONE as RC_ONE, reconstructDCT8Planes, rgbPixels} from './reconstruct-dct8.mjs';
 export {half, inverseBasis} from './reconstruct-dct8.mjs';
+import {dct8Band} from './dct8-band.mjs';
 
 const rcRecon = (q, c) => q === 0 ? 0 : q === 1 ? RC_ONE[c] : q === -1 ? -RC_ONE[c] : q - 0.145 / q;
 
@@ -198,7 +199,7 @@ export function writeReconstructionLLF(llf, bw, bh, tr, from = 0, end = bw * bh)
 }
 
 function rcXybPlanes(image, rgb = false, ycbcr = false) {
-  if (!image.strategyData) return reconstructDCT8Planes(image, rgb, ycbcr);
+  if (!image.strategyData) return reconstructDCT8Planes(image, rgb, ycbcr, dct8Band());
   const comps = image.components, stride = comps[0].stride, rows = comps[0].rows, W = stride * 8, H = rows * 8;
   const QS = image.quantScale || 256, outPlanes = [0, 1, 2].map(() => new Float32Array(W * H));
   const dcStep = reconstructionDCSteps(comps, QS);

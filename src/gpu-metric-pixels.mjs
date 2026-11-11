@@ -26,7 +26,7 @@ const linearPipelines = gpuPipelineSet({place: metricPlaceShader([
   ['r', 'read'], ['g', 'read'], ['b', 'read'], ['dr', 'read_write'], ['dg', 'read_write'], ['db', 'read_write'],
 ], 'dr[o] = r[k]; dg[o] = g[k]; db[o] = b[k];')});
 
-export class MetricReadback {
+class MetricReadback {
   static fits(device, width, height) {
     const pixels = s2Dimensions(width, height);
     return pixels * 4 <= Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize);

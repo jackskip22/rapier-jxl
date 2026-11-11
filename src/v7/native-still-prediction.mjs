@@ -52,3 +52,11 @@ export function nativeStillPrediction(intent, facts, sharedQuality, {exactAllowe
   }
   return Math.min(NATIVE_STILL_CALIBRATION.maximumLossy, reading);
 }
+
+export function filteredStillQuality(intent, facts, quality, effort) {
+  if (!(effort >= 3 && effort <= 5) || !facts.eligible || facts.alpha !== false || facts.palette ||
+      facts.screenLike || !facts.preferXYB || facts.shorterSide < 256 ||
+      largePhoto(facts.width, facts.height) || quality >= 95) return undefined;
+  const reading = Math.min(quality, 90.5 + 175 * Math.max(0, intent - 0.9));
+  return reading < quality ? reading - 0.5 : undefined;
+}

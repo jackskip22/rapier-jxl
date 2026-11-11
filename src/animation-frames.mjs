@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {LIMITS} from './limits.mjs';
-import {BitWriter, part, complete} from './bits.mjs';
+import {BitWriter, part} from './bits.mjs';
 import {fault, guard, admitOptions, admitPixels, admitSize} from './admit.mjs';
 import {admitSampleFormat} from './admit-samples.mjs';
 import {admitEffort} from './effort-level.mjs';
@@ -58,6 +58,7 @@ export function* animationSteps(a, shared = null) {
   let previous = null, source = null;
   const tolerance = mode === 'modular' ? null : toleranceOf(quality);
   for (let i = 0; i < frames.length; i++) {
+    if (i && i % 16 === 0) yield 0.01 * i / frames.length;
     const {data, duration} = frames[i];
     if (!duration && (i < frames.length - 1 || shown.length)) continue;
     const rects = !previous ? [[0, 0, width, height]] : tolerance ? lossyChanges(source, data, width, height, tolerance) : changes(previous, data, width, height);
@@ -68,7 +69,6 @@ export function* animationSteps(a, shared = null) {
       source ||= new Uint8Array(data.length);
       for (const [x, y, w, h] of rects) for (let row = y; row < y + h; row++) source.set(data.subarray((row * width + x) * 4, (row * width + x + w) * 4), (row * width + x) * 4);
     }
-    if (i % 16 === 15) yield 0.01 * (i + 1) / frames.length;
   }
   shown.at(-1).upTo = frames.length - 1;
   const timing = ticks(shown.map(frame => frame.duration));
@@ -85,11 +85,18 @@ export function* animationSteps(a, shared = null) {
     shown = split; timing.durations = durations;
   }
   const floor = {colour: 1, alpha: false};
-  if (mode !== 'xyb') for (const {data} of shown) {
+  if (mode !== 'xyb') for (let k = 0; k < shown.length; k++) {
+    if (k && k % 16 === 0) yield 0.01;
+    const {data} = shown[k];
     const shape = inspectPixels(data, width, height, {palette: false, samples: samples.native8 ? undefined : samples});
     if (shape.colour === 3) floor.colour = 3;
     if (shape.alpha) floor.alpha = true;
-  } else for (const {data} of shown) if (!floor.alpha) for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) { floor.alpha = true; break; }
+    if (floor.colour === 3 && floor.alpha) break;
+  } else for (let k = 0; k < shown.length && !floor.alpha; k++) {
+    if (k && k % 16 === 0) yield 0.01;
+    const {data} = shown[k];
+    for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) { floor.alpha = true; break; }
+  }
 
   const parts = shown.flatMap((frame, k) => frame.rects.map((rect, r) => ({frame: k, data: frame.data, previous: k ? shown[k - 1].data : null, rect, shows: r === frame.rects.length - 1})));
   const maskable = mode === 'modular' && samples.native8 && !floor.alpha;
@@ -98,10 +105,15 @@ export function* animationSteps(a, shared = null) {
     const eligible = parts.filter(part => part.previous && (part.kept = unchangedShare(part.previous, part.data, width, part.rect)) >= MASK_SHARE);
     const trial = eligible.reduce((best, part) => !best || part.kept * part.rect[2] * part.rect[3] > best.kept * best.rect[2] * best.rect[3] ? part : best, null);
     if (trial) {
-      const [, , w, h] = trial.rect, code = (masked, alpha) => complete(partSteps(coderOf(a, mode, {...floor, alpha}), pixelsOf({...trial, masked}, width), w, h));
+      const [, , w, h] = trial.rect, code = function* (masked, alpha) {
+        const steps = partSteps(coderOf(a, mode, {...floor, alpha}), pixelsOf({...trial, masked}, width), w, h);
+        let step;
+        try { while (!(step = steps.next()).done) if (typeof step.value === 'number') yield 0; } finally { if (!step?.done) steps.return?.(); }
+        return step.value;
+      };
       const fill = inspectPixels(shown[0].data, width, height).palette ? 'zero' : 'up';
       for (const part of eligible) part.fill = fill;
-      const masked = code(true, true), plain = code(false, false);
+      const masked = yield* code(true, true), plain = yield* code(false, false);
       if (masked.length < 0.97 * plain.length) {
         floor.alpha = true;
         for (const part of eligible) part.candidates = a.effort >= 2 ? [false, true] : [true];
@@ -142,7 +154,10 @@ export function* animationSteps(a, shared = null) {
   for (const job of jobs) if (!job.part.still || job.bytes.length < job.part.bytes) Object.assign(job.part, {still: job.bytes, bytes: job.bytes.length, masked: job.masked});
   for (const part of parts) { part.file = part.still; part.still = readStill(part.still, frameRead); }
   const key = metadataKey(parts[0].still);
-  if (parts.some(({still}) => metadataKey(still) !== key)) throw fault('JXL_FRAMING', 'The frames of the animation need different image headers.');
+  if (parts.some(({still}) => metadataKey(still) !== key)) {
+    if (mode === 'modular' && quality < 100 && samples.native8 && a.photo !== true) return yield* animationSteps({...a, photo: true}, shared);
+    throw fault('JXL_FRAMING', 'The frames of the animation need different image headers.');
+  }
   const write = parts => {
     const out = new BitWriter(1 << 16);
     writeAnimatedImageHeader(out, parts[0].still, {width, height, ...timing, loops: a.loops}, parts.every(({still}) => still.image.modular16));
@@ -194,8 +209,12 @@ const frameEncodeSteps = (data, width, height, options) => job(effortJob(data, w
 function* frameMode(a, first, frames) {
   const {width, height, quality, samples, photo, colorSpace} = a;
   if (quality >= 100 || !samples.native8 || photo === false) return 'modular';
-  const rich = photo === true ? first
-    : frames.find(({data, duration}, i) => (duration > 0 || i === frames.length - 1) && !inspectPixels(data, width, height).palette)?.data;
+  let rich = photo === true ? first : undefined;
+  if (photo !== true) for (let i = 0; i < frames.length; i++) {
+    if (i && i % 16 === 0) yield 0;
+    const {data, duration} = frames[i];
+    if ((duration > 0 || i === frames.length - 1) && !inspectPixels(data, width, height).palette) { rich = data; break; }
+  }
   const dct = colorSpace === 'srgb' && preferXYB(rich ?? first, width, height) ? 'xyb' : 'ycbcr';
   if (rich) return dct;
   let alpha = false;

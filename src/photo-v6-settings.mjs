@@ -74,6 +74,10 @@ export const UPLOAD_GAB_90 = {...GABORISH.gaborish, iterations: 2, boost: 1.4,
   weights: [[0.075, 0.028], [0.075, 0.028], [0.075, 0.028]]};
 export const UPLOAD_PICTURE = {...V6, ...GABORISH, deadzone: UPLOAD_DEADZONE, cflScale: 0.75, tune: uploadTune,
   calibrationRow: 'upload', gaborish: {...GABORISH.gaborish, iterations: 2, boost: 1.6}, fastGaborish: true};
+const EFFORT2_DEADZONE = [0.70, 0.74, 0.470, 0.560, 0.520, 0.580];
+export const EFFORT2_PICTURE = {...V6, deadzone: EFFORT2_DEADZONE, cflScale: 0.72, epfScale: 2.4, tune: V6.tune,
+  calibrationRow: 'e2', gaborish: {strength: 1, tilt: 1, iterations: 1, boost: 1.25,
+    weights: [[0.075, 0.028], [0.075, 0.028], [0.075, 0.028]]}, fastGaborish: true};
 export const UPLOAD_FLAT_PICTURE = {...UPLOAD_PICTURE, deadzone: V6.deadzone, cflScale: V6.cflScale, tune: V6.tune, calibrationRow: false};
 export const uploadFlat = (data, width, height) => flatSamples(data, width, height, 33) > 32;
 export const uploadBandPicture = (flat, grain, quality) => flat ? UPLOAD_FLAT_PICTURE : {

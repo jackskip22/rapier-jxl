@@ -3,7 +3,7 @@ import {packLevels} from './photo-levels.mjs';
 const TYPES = ['Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array',
   'Float32Array', 'Float64Array'];
 const DROPPED = new Set(['coeffs', 'levels']);
-export const SUMMARY = 'rapier-jxl.band-summary.1';
+const SUMMARY = 'rapier-jxl.band-summary.1';
 const typedProto = Object.getPrototypeOf(Uint8Array.prototype);
 const isView = v => ArrayBuffer.isView(v) && Object.getPrototypeOf(Object.getPrototypeOf(v)) === typedProto && TYPES.includes(v.constructor.name);
 const isValues = v => Array.isArray(v) && v.length > 0 && v.length <= 4 && v.every(x => isView(x) && x.length === 1);
@@ -73,7 +73,7 @@ function plainComponent(component) {
   return {...kept.components[0], packed: {...kept.components[0].packed, dc, natural}};
 }
 
-export function summarizeBand(band, extra = null) {
+function summarizeBand(band, extra = null) {
   const data = band?.strategyData;
   if (!data && Array.isArray(band?.components)) {
     const components = band.components.map(plainComponent);
@@ -96,7 +96,7 @@ export function summarizeBand(band, extra = null) {
     blocks, groupCount: data.groups.length, lengths: Int32Array.from(lengths), members: Int32Array.from(members), extra};
 }
 
-export function bandOfSummary(saved) {
+function bandOfSummary(saved) {
   if (!saved?.[SUMMARY]) return saved;
   if (saved[SUMMARY] === 'plain') return Object.defineProperties({...saved.band}, {answered: {value: true}, extra: {value: saved.extra}});
   let blocks = null, groups = null;

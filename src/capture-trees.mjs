@@ -439,6 +439,7 @@ function sampleTree(quantized, symbolSets, candidates, population, options, save
   let alphabet = 1; for (const symbols of symbolSets) for (const symbol of symbols) alphabet = Math.max(alphabet, symbol + 1);
   const kinds = candidates.length, rawPrice = Float64Array.from({length: alphabet}, (_, s) => trainRaw(s) * Q);
   const reserve = quantized.some(c => c.property >= 16) ? 2 : 0, scale = population / count;
+  if (!kernelHooks.sampled) kernelHooks.ensure?.();
   const store = kernelHooks.sampled && kernelHooks.sampledStore && count >= RETAIN ? kernelHooks.sampledStore(count, kinds, alphabet, columns) : null;
   const st = {options, clustered, kinds, alphabet, table, rawPrice, columns, symbolSets, candidates, count, population, scale, store,
     clusters: null, maxClusters: Math.min(options.clusters ?? 192, 255 - reserve), epoch: 0,

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {SSIMULACRA2_WEIGHTS, SRGB_TO_LINEAR, gaussianTaps, finalCurve} from './ssimulacra2.mjs';
 import {cbrtTables, IS_BIAS, BLACK} from './int-spec.mjs';
+import {kernelHooks} from './kernel-hooks.mjs';
 
 const R_HALF = Float64Array.from({length: 32}, (_, k) => k ? 2 ** (k - 1) : 0.5), R_INV = Float64Array.from({length: 32}, (_, k) => 2 ** -k);
 const R = (s, k) => Math.floor((s + R_HALF[k]) * R_INV[k]);
@@ -63,12 +64,14 @@ function plane(pic, n, c, out) {
   return out;
 }
 
-function channelSums(P1, P2, w, h, sh, stride, acc1, acc4) {
+function channelSums(P1, P2, w, h, sh, stride, acc1, acc4, span = null) {
+  if (kernelHooks.s2cChannel?.(P1, P2, w, h, sh, stride, acc1, acc4, span, S2C_TAPS)) return;
   const T = S2C_TAPS, T4 = T[N], ring = [0, 1, 2, 3, 4].map(() => new Int32Array(RB * w));
   const q11 = new Int32Array(w), q22 = new Int32Array(w), q12 = new Int32Array(w);
   const [r0, r1, r2, r3, r4] = ring;
+  const y0 = span ? span.y0 : 0, y1 = span ? span.y1 : h, from = span ? span.from : 0, cellRow0 = span ? span.cellRow0 : 0;
   const makeRow = y => {
-    const o = (y % RB) * w, row = y * w;
+    const o = (y % RB) * w, row = (y - from) * w;
     for (let x = 0; x < w; x++) { const p = P1[row + x], q = P2[row + x]; q11[x] = p * p; q22[x] = q * q; q12[x] = p * q; }
     for (let x = 0; x < w; x++) {
       let m1 = 0, m2 = 0, s11 = 0, s22 = 0, s12 = 0;
@@ -99,8 +102,8 @@ function channelSums(P1, P2, w, h, sh, stride, acc1, acc4) {
   };
   const [e1, a1, l1] = acc1, [e4, a4, l4] = acc4, offs = new Int32Array(RB), taps = new Int32Array(RB);
   const [A0, A1, A2, A3, A4] = [0, 1, 2, 3, 4].map(() => new Float64Array(w));
-  let made = 0;
-  for (let y = 0; y < h; y++) {
+  let made = Math.max(from, y0 - N);
+  for (let y = y0; y < y1; y++) {
     while (made < h && made <= y + N) makeRow(made++);
     let nt = 0;
     for (let k = -N; k <= N; k++) { const yy = y + k; if (yy < 0 || yy >= h) continue; offs[nt] = (yy % RB) * w; taps[nt++] = T[k + N]; }
@@ -121,7 +124,7 @@ function channelSums(P1, P2, w, h, sh, stride, acc1, acc4) {
         for (let x = 0; x < w; x++) { A0[x] += t * r0[o + x]; A1[x] += t * r1[o + x]; A2[x] += t * r2[o + x]; A3[x] += t * r3[o + x]; A4[x] += t * r4[o + x]; }
       }
     }
-    const cy = sh < 0 ? y * w : (y >> sh) * stride, row = y * w;
+    const cy = (sh < 0 ? y * w : (y >> sh) * stride) - cellRow0, row = (y - from) * w;
     for (let x = 0; x < w; x++) {
       const m1 = A0[x], m2 = A1[x], s11 = A2[x], s22 = A3[x], s12 = A4[x];
       const mu1 = R16(m1), mu2 = R16(m2), v1 = R16(s11) - mu1 * mu1, v2 = R16(s22) - mu2 * mu2, cov = R16(s12) - mu1 * mu2;
@@ -137,6 +140,101 @@ function channelSums(P1, P2, w, h, sh, stride, acc1, acc4) {
       if (l1) l1[at] += lost; if (l4) push4(l4, at, lost);
     }
   }
+}
+
+export function s2CellStream(reference, width, height) {
+  const scales = s2cScales(width, height), stride = Math.ceil(width / 8), rows = Math.ceil(height / 8);
+  const table = () => ({keys: new Int32Array(COLORS).fill(-1), values: new Int16Array(COLORS * 3)}), tables = [table(), table()];
+  const ref = {rgba: reference.rgba, y: 0}, held = scales.map(() => ({next: 0, have: 0, a: null, b: null}));
+  const terms = scales.map((_, s) => {
+    const list = [];
+    for (let c = 0; c < 3; c++) for (let t = 0; t < 3; t++) for (const p of [1, 4]) {
+      const k = c * scales.length * 6 + s * 6 + t + (p === 4 ? 3 : 0);
+      if (SSIMULACRA2_WEIGHTS[k]) list.push({k, c, t, p});
+    }
+    return list;
+  });
+  const xybRows = (pic, w, from, to, c, out, colors) => {
+    if (pic.rgba) return plane({rgba: pic.rgba.subarray((from - pic.y) * w * 4, (to - pic.y) * w * 4), ...colors}, (to - from) * w, c, out);
+    const v = new Int32Array(3);
+    for (let i = 0, at = (from - pic.y) * w; i < (to - from) * w; i++, at++) { xyb(pic.lin[0][at], pic.lin[1][at], pic.lin[2][at], v, 0); out[i] = v[c]; }
+    return out;
+  };
+  const halve = (pic, pw, ph, w, y, n) => {
+    const lin = [0, 1, 2].map(() => new Uint16Array(w * n));
+    for (let c = 0; c < 3; c++) {
+      const o = lin[c], value = pic.rgba ? k => S2C_LIN[pic.rgba[(k - pic.y * pw) * 4 + c]] : k => pic.lin[c][k - pic.y * pw];
+      for (let r = 0; r < n; r++) for (let x = 0; x < w; x++) {
+        const x0 = 2 * x, y0 = 2 * (y + r), x1 = Math.min(x0 + 1, pw - 1), y1 = Math.min(y0 + 1, ph - 1);
+        o[r * w + x] = R(value(y0 * pw + x0) + value(y0 * pw + x1) + value(y1 * pw + x0) + value(y1 * pw + x1), 2);
+      }
+    }
+    return {y, rows: n, lin};
+  };
+  const join = (old, add, w, keep) => {
+    if (!old) return add;
+    const drop = Math.max(0, keep - old.y), left = old.rows - drop, per = old.rgba ? w * 4 : w;
+    const cat = (x, y) => { const out = new x.constructor((left + add.rows) * per); out.set(x.subarray(drop * per)); out.set(y, left * per); return out; };
+    return old.rgba ? {y: old.y + drop, rows: left + add.rows, rgba: cat(old.rgba, add.rgba)}
+      : {y: old.y + drop, rows: left + add.rows, lin: old.lin.map((x, c) => cat(x, add.lin[c]))};
+  };
+  const cellRow = (s, y) => s <= 3 ? (y >> (3 - s)) * stride : y * scales[s].w;
+  const feed = (s, part) => {
+    const {w, h} = scales[s], at = held[s], sh = s <= 3 ? 3 - s : -1, limit = at.have >= h ? h : Math.max(at.next, at.have - N);
+    if (limit > at.next) {
+      const from = Math.max(0, at.next - N), to = Math.min(h, limit + N), c0 = cellRow(s, at.next), c1 = cellRow(s, limit - 1) + (s <= 3 ? stride : w);
+      const a = s ? at.a : ref, P1 = new Int16Array((to - from) * w), P2 = new Int16Array((to - from) * w), sums = [];
+      for (let c = 0; c < 3; c++) {
+        const active = terms[s].filter(term => term.c === c);
+        if (!active.length) continue;
+        const acc1 = [null, null, null], acc4 = [null, null, null];
+        for (const term of active) sums.push((term.p === 1 ? acc1 : acc4)[term.t] = new Uint32Array(term.p === 1 ? c1 - c0 : 2 * (c1 - c0)));
+        channelSums(xybRows(a, w, from, to, c, P1, tables[0]), xybRows(at.b, w, from, to, c, P2, tables[1]), w, h, sh, stride, acc1, acc4, {y0: at.next, y1: limit, from, cellRow0: c0});
+      }
+      part.push({s, cell: c0, sums});
+      at.next = limit;
+    }
+    if (s + 1 < scales.length) {
+      const below = held[s + 1], {w: nw, h: nh} = scales[s + 1], end = at.have >= h ? nh : at.have >> 1;
+      if (end > below.have) {
+        const y = below.have, n = end - y;
+        below.a = join(below.a, halve(s ? at.a : ref, w, h, nw, y, n), nw, Math.max(0, below.next - N));
+        below.b = join(below.b, halve(at.b, w, h, nw, y, n), nw, Math.max(0, below.next - N));
+        below.have = end;
+        feed(s + 1, part);
+      }
+    }
+    const keep = Math.max(0, Math.min(at.next - N, 2 * (held[s + 1]?.have ?? h)));
+    if (s) at.a = join(at.a, {y: at.a.y + at.a.rows, rows: 0, lin: [0, 1, 2].map(() => new Uint16Array(0))}, w, keep);
+    at.b = join(at.b, at.b.rgba ? {y: at.b.y + at.b.rows, rows: 0, rgba: new Uint8Array(0)} : {y: at.b.y + at.b.rows, rows: 0, lin: [0, 1, 2].map(() => new Uint16Array(0))}, w, keep);
+  };
+  return {
+    push(y, n, rgba) {
+      const top = held[0];
+      if (y !== top.have) throw new RangeError('A streamed cell map takes its rows in order.');
+      top.b = join(top.b, {y, rows: n, rgba}, width, Math.max(0, top.next - N));
+      top.have += n;
+      const part = [];
+      feed(0, part);
+      return part;
+    },
+    save() { return held.map(({next, have, a, b}) => ({next, have, a, b: b && {y: b.y, rows: b.rows, ...(b.rgba ? {rgba: b.rgba} : {lin: b.lin})}})); },
+    restore(saved) { saved.forEach((place, s) => Object.assign(held[s], place)); },
+    finish(parts) {
+      const out = scales.map(({w, h}, s) => ({w, h, sums: terms[s].map(term => ({...term, sum: new Uint32Array((term.p === 1 ? 1 : 2) * (s <= 3 ? stride * rows : w * h))}))}));
+      for (const part of parts) for (const {s, cell, sums} of part) sums.forEach((add, i) => {
+        const {p, sum} = out[s].sums[i];
+        if (p === 1) { for (let j = 0; j < add.length; j++) sum[cell + j] += add[j]; return; }
+        for (let j = 0; j < add.length; j += 2) {
+          const at = 2 * cell + j;
+          let lo = sum[at] + add[j], hi = sum[at + 1] + add[j + 1];
+          if (lo >= TWO32) { lo -= TWO32; hi += 1; }
+          sum[at] = lo; sum[at + 1] = hi;
+        }
+      });
+      return {scales: out.map(({w, h, sums}) => ({w, h, sums: [0, 1, 2].flatMap(c => sums.filter(term => term.c === c))})), stride, rows};
+    },
+  };
 }
 
 export function s2CellSums(reference, candidate, width, height) {

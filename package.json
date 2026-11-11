@@ -1,9 +1,9 @@
 {
  "name": "rapier-jxl",
- "version": "8.3.2",
+ "version": "8.3.3",
  "type": "module",
  "license": "MIT",
- "description": "JPEG XL in JavaScript and WebAssembly with WebGPU for high efforts.",
+ "description": "JPEG XL encoder and decoder in WebAssembly for browsers, Node and Cloudflare Workers, with no native dependencies. Page captures with exact text, fast uploads, animation, lossless JPEG recompression.",
  "repository": {
   "type": "git",
   "url": "git+https://github.com/jackskip22/rapier-jxl.git"
@@ -17,13 +17,30 @@
   "jxl",
   "jpegxl",
   "encoder",
+  "decoder",
   "image-compression",
+  "image-optimization",
   "lossless",
   "lossy",
   "jpeg",
+  "gif",
+  "animation",
   "hdr",
   "webassembly",
-  "browser"
+  "wasm",
+  "browser",
+  "cloudflare-workers",
+  "screenshot",
+  "capture",
+  "upload",
+  "image",
+  "images",
+  "performance",
+  "optimization",
+  "withastro",
+  "astro",
+  "snapdom",
+  "emdash"
  ],
  "bin": {
   "rapier-jxl": "dist/cli.mjs"

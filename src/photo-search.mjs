@@ -4,6 +4,7 @@ import {closedLoopFieldSteps} from './aq.mjs';
 import {closedLoopStrategySteps} from './varblock-measured.mjs';
 import {meets, qualitySteps} from './photo-quality-search.mjs';
 import {fault} from './fault.mjs';
+import {journaling, stage} from './step-journal.mjs';
 import {photoOutputMeasurements} from './photo-output-policy.mjs';
 export {meets, qualitySteps} from './photo-quality-search.mjs';
 
@@ -80,8 +81,8 @@ export function* scoreSteps(provider, target, {candidates = CANDIDATES, effort =
       bestObserved: {candidate: name, ...best.bestObserved}};
     if (measureSteps) {
       if (best.output && !best.output.bytes && best.output.effort === effort) {
-        const image = yield* imageAt(best.quality);
-        best.output = {...best.output, bytes: shown(yield* provider.write(image, effort, {pass: true}), image)};
+        const write = function* () { const image = yield* imageAt(best.quality); return shown(yield* provider.write(image, effort, {pass: true}), image); };
+        best.output = {...best.output, bytes: journaling() ? yield* stage('candidate-file', write) : yield* write()};
       }
       if (!(best.output?.bytes instanceof Uint8Array) || best.output.effort !== effort)
         throw fault('JXL_INTERNAL', 'A complete-output candidate must retain its measured file and writer effort.');
@@ -103,8 +104,11 @@ export function* scoreSteps(provider, target, {candidates = CANDIDATES, effort =
   const pool = candidatePool(found);
   const encode = function* (f) {
     if (initial?.effort === effort && initial.bytes && f.candidate === 'gaborish' && f.quality === initial.quality) return initial.bytes;
-    const image = yield* f.imageAt(f.quality);
-    return pooled ? yield {encode: {image, effort, pass: f.pass}} : yield* provider.write(image, effort, {pass: f.pass});
+    const write = function* () {
+      const image = yield* f.imageAt(f.quality);
+      return pooled ? yield {encode: {image, effort, pass: f.pass}} : yield* provider.write(image, effort, {pass: f.pass});
+    };
+    return journaling() && !pooled ? yield* stage('candidate-file', write) : yield* write();
   };
   let chosen, bytes;
   if (measureSteps) { chosen = outputWinner; bytes = chosen.output.bytes; }

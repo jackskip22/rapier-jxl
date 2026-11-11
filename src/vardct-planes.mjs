@@ -86,44 +86,6 @@ export function varDCTLFMetadataShape(image, layout, geometry, blockCount, plain
     uniformSharpness: plainMetadata && !image.sharpness, sharpVal: layout.epf ? 7 : 0};
 }
 
-export function varDCTLFInputs(image, layout, group, blockCount, plainMetadata) {
-  const geometry = varDCTLFGeometry(layout, group), shape = varDCTLFMetadataShape(image, layout, geometry, blockCount, plainMetadata);
-  const {x0, y0, rw, rh, cw, ch, bits} = geometry, {count, uniformBlocks, uniformSharpness, sharpVal} = shape;
-  const cfl = (image.xyb || layout.directRGB) && image.cfl || null;
-  return {geometry, count, bits, field: layout.field, predictor: layout.field > 1 ? 5 : 0,
-    planes: image.useDCFrame ? null : [1, 0, 2].map(c => varDCTDCSpec(image, layout, c,
-      x0 >> layout.hshifts[c], y0 >> layout.vshifts[c], rw >> layout.hshifts[c], rh >> layout.vshifts[c])),
-    metadata: [
-      {kind: 'correlation', channel: 0, w: cw, h: ch, cfl, x0, y0},
-      {kind: 'correlation', channel: 1, w: cw, h: ch, cfl, x0, y0},
-      uniformBlocks ? {w: count, h: 2, rowValues: [0, layout.field - 1]} :
-        {kind: 'blocks', w: count, h: 2, strategyData: image.strategyData ?? null, fields: image.quantFields ?? null, field: layout.field,
-          shift: layout.shift, stride: layout.xsizeBlocks, x0, y0, rw, rh},
-      uniformSharpness ? {w: rw, h: rh, rowValues: new Int16Array(rh).fill(sharpVal)} :
-        {kind: 'sharpness', w: rw, h: rh, source: layout.epf ? image.sharpness ?? null : null,
-          value: sharpVal, stride: layout.xsizeBlocks, x0, y0},
-    ]};
-}
-
-export function varDCTLFBlockIndices(data, geometry, row, from, to, out, offset = 0) {
-  const start = (geometry.y0 + row) * data.stride + geometry.x0;
-  for (let x = from; x < to; x++) {
-    const index = data.at[start + x];
-    if (index >= 0) { if (out) out[offset] = index; offset++; }
-  }
-  return offset;
-}
-
-export function copyVarDCTLFBlocks(data, fields, shift, field, indices, out, count, offset, from = 0, to = indices.length) {
-  let wide = false;
-  for (let i = from; i < to; i++) {
-    const at = indices[i] * 4, bx = data.catalog[at + 1], by = data.catalog[at + 2];
-    const value = fields ? varDCTField(fields[by * data.stride + bx], shift) : field - 1;
-    out[offset + i - from] = data.catalog[at]; out[count + offset + i - from] = value;
-    if (value < -32768 || value > 32767) wide = true;
-  }
-  return wide;
-}
 
 export function copyVarDCTQuantRows(quant, data, from = 0, to = 8) {
   let wide = false;

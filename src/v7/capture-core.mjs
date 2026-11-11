@@ -36,8 +36,13 @@ async function captureHere(input, options = {}, readTexture, driver, call) {
   if (rest.features !== undefined) rest.features = {};
   check(signal);
   const maxPixels = pixelLimit(rest.maxPixels, LARGEST);
+  let normalizedRects;
   const rectangles = !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && driver.rectangles && (rest.exactRects !== undefined || rest.photoRects !== undefined)
-    ? picture => Object.assign(rest, driver.rectangles(rest, picture.width, picture.height)) : undefined;
+    ? ({width, height}) => {
+      if (normalizedRects?.width === width && normalizedRects?.height === height) return;
+      Object.assign(rest, driver.rectangles(rest, width, height));
+      normalizedRects = {width, height, normalize: driver.rectangles, exactRects: rest.exactRects, photoRects: rest.photoRects};
+    } : undefined;
   if (isPlainRecord(input) && input.texture !== undefined && input.device !== undefined) {
     if ((typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) || !readTexture) throw fail('JXL_UNSUPPORTED', 'Capture GPU textures with rapier-jxl/capture-complete or rapier-jxl.');
     input = await readTexture(input, maxPixels, rectangles && (take => { rectangles(input.texture); return take(); }));
@@ -50,7 +55,8 @@ async function captureHere(input, options = {}, readTexture, driver, call) {
   if (!blob) delete rest.readAs;
   const report = progressOf(onProgress, signal);
   const record = onEncoded && (value => { try { onEncoded(value); } catch (error) { throw callers(error); } });
-  return driver.run(owned, rest, {signal: signal ?? new AbortController().signal, onProgress: report, onEncoded: record, ...(journal && {journal}), ...(preview && {preview})});
+  return driver.run(owned, rest, {signal: signal ?? new AbortController().signal, onProgress: report, onEncoded: record,
+    ...(normalizedRects && {normalizedRects}), ...(journal && {journal}), ...(preview && {preview})});
 }
 
 function journalPicture({data, width, height, colorSpace}, maxPixels, rectangles) {

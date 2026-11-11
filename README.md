@@ -1,12 +1,19 @@
 # rapier-jxl
 
+[![npm](https://img.shields.io/npm/v/rapier-jxl)](https://www.npmjs.com/package/rapier-jxl)
+[![downloads](https://img.shields.io/npm/dw/rapier-jxl)](https://www.npmjs.com/package/rapier-jxl)
+[![license](https://img.shields.io/npm/l/rapier-jxl)](https://github.com/jackskip22/rapier-jxl/blob/main/LICENSE)
+[![types](https://img.shields.io/npm/types/rapier-jxl)](https://www.npmjs.com/package/rapier-jxl)
+
 JPEG XL in JavaScript and WebAssembly with WebGPU for high efforts.
 
+Used by [SnapDOM's official JPEG XL plugin](https://snapdom.dev/plugins/jxl/) and the [EmDash image optimizer](https://plugins.emdashcms.com/plugins/@rapier.website/jxl). [Try it in your browser](https://rapier.website/jxl).
+
 - Uploads over 2x faster than libvips.
-- 49 KB Brotli exact capture.
-- 242 KB Brotli complete capture.
-- 270 KB Brotli upload.
-- 356 KB Brotli full encoder with HDR and parallel workers. Used by [rapier.html](https://rapier.website)
+- 52 KB Brotli exact capture.
+- 244 KB Brotli complete capture.
+- 277 KB Brotli upload.
+- 361 KB Brotli full encoder with HDR and parallel workers. Used by [rapier.html](https://rapier.website)
 - Lossless JPEG transcoding, decoding, verification, serving, metadata, animation, polyfill, CLI and resumable encoding
   for edge isolates. Modules are single files.
 - Browsers, workers, Node, Deno, Bun, Cloudflare Workers.
@@ -226,7 +233,7 @@ try {
 }
 ```
 
-- In browsers, the module runs in a worker (upload: 296 KB Brotli). Node, Deno and Bun run it in the calling thread.
+- In browsers, the module runs in a worker (upload: 301 KB Brotli). Node, Deno and Bun run it in the calling thread.
 - With one module, import its codec from `rapier-jxl/codec/<module>`; bundlers then ship only that module's files.
 - `helpers` adds up to 16 worker threads; `helpers: true` sizes them by the device.
 - Errors carry a `code`, such as `JXL_INPUT`, `JXL_OPTIONS`, `JXL_WASM` or `JXL_WEBGPU`.

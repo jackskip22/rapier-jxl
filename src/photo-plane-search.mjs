@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-import {xybStrategies, auditCosts} from './varblocks.mjs';
+import {xybStrategies, auditCosts, strategyRowsLayout} from './varblocks.mjs';
+import {unit} from './step-journal.mjs';
 import {perceptualMaskField} from './photo-mask.mjs';
 import {planeRequest, planeLayoutSteps} from './photo-plane-levels.mjs';
 export {plainLayout, planeRequest, planeLevelsSteps, planeLayoutSteps} from './photo-plane-levels.mjs';
@@ -18,4 +19,12 @@ export function* planeSearchSteps(base, width, height, options, signal) {
     return {image: yield* planeLayoutSteps(base, width, height, layout, search, signal), layout};
   }
   return xybStrategies(base, width, height, {...search, priceOnly: true, keepChosen: true});
+}
+export function* planeSearchLayoutSteps(base, width, height, options, signal) {
+  const search = {...options, maskWeight: options.maskWeight ?? maskOf(base)}, rows = base.components[0].rows, bands = [];
+  for (let by = 0; by < rows; by += 32) {
+    check(signal);
+    bands.push(yield* unit('shape-band', () => xybStrategies(base, width, height, {...search, priceOnly: true, chooseOnly: true, regionRows: [by, by + 32]})));
+  }
+  return strategyRowsLayout(bands);
 }

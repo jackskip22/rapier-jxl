@@ -111,8 +111,3 @@ export function varDCTContextBuckets(image, layout, fast) {
   const blocksTotal = layout.xsizeBlocks * layout.ysizeBlocks;
   return fast || image.useDCFrame || blocksTotal < 256 ? 0 : Math.max(1, Math.min(7, ceilLog2(blocksTotal) - ceilLog2(quantSum) - (image.xyb ? 6 : 7)));
 }
-export function varDCTAnalysisInputs(image, layout, fast = false) {
-  const {map, dcScale, dcLift, grey, groupsX, groupsY, numGroups, numDcGroups, single, xsizeBlocks, ysizeBlocks, hshifts, vshifts} = layout;
-  return {lumaW: xsizeBlocks >> hshifts[1], lumaH: ysizeBlocks >> vshifts[1], channel: map[1], scale: dcScale[1], lift: dcLift[1], fast,
-    wanted: varDCTContextBuckets(image, layout, fast), grey, groupsX, groupsY, numGroups, numDcGroups, single, xsizeBlocks, ysizeBlocks};
-}
