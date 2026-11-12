@@ -4,7 +4,7 @@ Why it helps: Phone memory and Safari's decoder on iOS.
 
 **Need:** an iPhone or iPad on iOS or iPadOS 26 or later, in Safari.
 
-**Package:** `rapier-jxl@8.3.3` and the fixed [pictures](pictures/README.md), loaded from jsDelivr with checked hashes. **Time:** about 2 minutes.
+**Package:** `rapier-jxl@8.3.4` and the fixed [pictures](pictures/README.md), loaded from jsDelivr with checked hashes. **Time:** about 2 minutes.
 
 1. [Open an issue](https://github.com/jackskip22/rapier-jxl/issues/new?template=job-result.yml&title=iPhone%20or%20iPad) titled **iPhone or iPad**, so others know it is taken.
 2. [Open the test page](https://rapier.website/docs/jxl-job.html?job=selftest) in that browser. Enter the browser, OS and device, and press **Run**. Keep the page in front.

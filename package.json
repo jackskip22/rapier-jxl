@@ -1,6 +1,6 @@
 {
  "name": "rapier-jxl",
- "version": "8.3.3",
+ "version": "8.3.4",
  "type": "module",
  "license": "MIT",
  "description": "JPEG XL encoder and decoder in WebAssembly for browsers, Node and Cloudflare Workers, with no native dependencies. Page captures with exact text, fast uploads, animation, lossless JPEG recompression.",

@@ -1,4 +1,4 @@
-/*! rapier-jxl 8.3.3 | MIT */
+/*! rapier-jxl 8.3.4 | MIT */
 function o(t){if(t?.isContextLost?.()||typeof t?.putImageData!="function"||typeof t.createImageData!="function")return;let o=t.getContextAttributes?.().colorType==="float16",i=()=>t.getImageData(0,0,1,1,o?{pixelFormat:"rgba-float16"}:void 0),a;try{a=i()}catch(t){throw Object.assign(e("JXL_INPUT","The canvas could not be read: "+(t?.message||t)),{cause:t})}if(o&&a.data.BYTES_PER_ELEMENT!==2)return;let n=e=>new Uint8Array(e.buffer,e.byteOffset,e.byteLength).some(Boolean);if(n(a.data))return;let s=t.createImageData(1,1);s.data.fill(255);let l;try{t.putImageData(s,0,0),l=n(i().data)}finally{t.putImageData(a,0,0)}if(!l)throw e("JXL_INPUT",r)}
 function c(e){try{return f.has(e)}catch{return!1}}
 function d(e){try{e!==null&&(typeof e=="object"||typeof e=="function")&&f.add(e)}catch{}return e}
@@ -100,7 +100,7 @@ var J=/^function Object\(\) \{\s*\[native code\]\s*\}$/;
 var S=256*1024*1024,X=4e7,N=new WeakMap,j=(e,t)=>(N.set(e,t),e),R=new WeakSet;
 var k=Object.fromEntries(["buffer","byteOffset","byteLength"].map(e=>[e,Object.getOwnPropertyDescriptor(DataView.prototype,e).get])),M={Uint8Array,Uint8ClampedArray,Int8Array,Uint16Array,Int16Array,Uint32Array,Int32Array,Float32Array,Float64Array,BigInt64Array,BigUint64Array,DataView};
 var C=1048576,D={};
-var z="8.3.3";
+var z="8.3.4";
 var K={kernels:"1u0gfvp",jpeg:"1qxvfd6",decode:"17x8vsf"};
 var Y=e=>{let t=2166136261;for(let r of e.map(e=>e.name+":"+e.kind).sort().join(" "))t=Math.imul(t^r.charCodeAt(0),16777619);return(t>>>0).toString(36)};
 var Q=new Map,H=new Map,Z=Symbol.for("rapier-jxl.wasm"),ee=!1,te=!1,re=e=>Object.assign(new Error(e),{code:"JXL_WASM"}),oe=Symbol.for("rapier-jxl/"+z+" wasm "+Object.entries(K).map(([e,t])=>e+":"+t).join(";"));

@@ -1,4 +1,4 @@
-/*! rapier-jxl 8.3.3 | MIT */
+/*! rapier-jxl 8.3.4 | MIT */
 function e(e){try{e!==null&&(typeof e=="object"||typeof e=="function")&&ft.add(e)}catch{}return e}
 function t(e){try{if(ft.has(e))return e;let t=e?.code;if(typeof t!="string"||!t.startsWith("JXL_")||st.has(t))return e;let r=Object.hasOwn(lt,t)?lt[t]:"JXL_INTERNAL";return Object.assign(new Error(String(e.message??""),{cause:e}),{code:r})}catch{return e}}
 function r(e){if(e!==void 0){if(!e||typeof e!="object"&&typeof e!="function"||typeof e.aborted!="boolean"||typeof e.addEventListener!="function")throw ot("JXL_OPTIONS","signal must be an AbortSignal.");return e}}

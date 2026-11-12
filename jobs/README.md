@@ -9,11 +9,11 @@ Each job runs rapier-jxl on a device we do not have and writes one results file.
 | [Android phone in Chrome](android-chrome.md) | Android phone, Chrome | 2-5 | ARM phones, especially older and low-memory ones | [test page](https://rapier.website/docs/jxl-job.html?job=selftest) |
 | [Edge on Windows](edge-windows.md) | Windows PC, Edge | 1 | Windows on x64 and ARM, where the browser has no JPEG XL decoder | [test page](https://rapier.website/docs/jxl-job.html?job=selftest) |
 | [WebGPU on your graphics card](webgpu.md) | Any GPU with hardware WebGPU | up to 10 | An identical file and its speed on every kind of GPU | [test page](https://rapier.website/docs/jxl-job.html?job=webgpu) |
-| [Deno](deno.md) | Deno 2, any OS | 1 | Deno on your OS and CPU | `deno run -A npm:rapier-jxl@8.3.3 selftest` |
-| [Bun](bun.md) | Bun 1.2 or later, any OS | 1 | Bun on your OS and CPU | `bunx rapier-jxl@8.3.3 selftest` |
+| [Deno](deno.md) | Deno 2, any OS | 1 | Deno on your OS and CPU | `deno run -A npm:rapier-jxl@8.3.4 selftest` |
+| [Bun](bun.md) | Bun 1.2 or later, any OS | 1 | Bun on your OS and CPU | `bunx rapier-jxl@8.3.4 selftest` |
 | [Cloudflare Workers](cloudflare-workers.md) | Node 20 or later | 3-5 | Cloudflare's runtime, run locally with `wrangler dev` | [cloudflare-workers/](cloudflare-workers/) |
 
-On Node, `npx rapier-jxl@8.3.3 selftest` runs the same test on any computer.
+On Node, `npx rapier-jxl@8.3.4 selftest` runs the same test on any computer.
 
 Every job uses the fixed [pictures](pictures/README.md), a real screenshot, photo and camera JPEG, and this release's package. Each picture is encoded at efforts 1, 3 and 7, lossless and lossy, decoded and verified; the camera JPEG is recompressed and restored. Every output's SHA-256 must match this release's. Nothing is installed by the test pages, no files or screen content are read, and no results are sent: you attach them yourself. Results are unchecked until repeated. Answered jobs are removed.
 

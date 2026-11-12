@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "rapier-jxl": "8.3.3"
+    "rapier-jxl": "8.3.4"
   },
   "devDependencies": {
     "wrangler": "4.152.0"

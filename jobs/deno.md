@@ -4,13 +4,13 @@ Why it helps: Deno on your OS and CPU.
 
 **Need:** Deno 2 on any OS.
 
-**Package:** `rapier-jxl@8.3.3`. The fixed [pictures](pictures/README.md) download from jsDelivr with checked hashes. **Time:** under a minute on a desktop.
+**Package:** `rapier-jxl@8.3.4`. The fixed [pictures](pictures/README.md) download from jsDelivr with checked hashes. **Time:** under a minute on a desktop.
 
 1. [Open an issue](https://github.com/jackskip22/rapier-jxl/issues/new?template=job-result.yml&title=Deno) titled **Deno**, so others know it is taken.
 2. In an empty folder, run:
 
    ```sh
-   deno run -A npm:rapier-jxl@8.3.3 selftest
+   deno run -A npm:rapier-jxl@8.3.4 selftest
    ```
 
    Deno 2.9 waits a day before it installs a new version; on release day, add `--min-dep-age=0` after `-A`.
