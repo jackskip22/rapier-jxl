@@ -1,6 +1,6 @@
 {
   "name": "jxl",
-  "displayName": "JPEG XL Convert: compress images, screenshots and photos",
+  "displayName": "JPEG XL Converter: compress images, screenshots and photos",
   "description": "Convert and compress PNG, JPEG, WebP and GIF files to JPEG XL. Compare, preview, convert back. Offline.",
   "version": "0.1.0",
   "publisher": "rapier",

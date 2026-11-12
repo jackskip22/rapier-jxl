@@ -1,4 +1,4 @@
-# JPEG XL Convert
+# JPEG XL Converter
 
 Convert and compress PNG, JPEG, WebP and GIF files to JPEG XL from the Explorer. Offline; nothing leaves your machine.
 
