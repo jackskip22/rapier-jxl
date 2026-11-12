@@ -4,7 +4,7 @@ Why it helps: ARM phones, especially older and low-memory ones.
 
 **Need:** an Android phone with a current Chrome. Older and low-memory phones help most.
 
-**Package:** `rapier-jxl@8.3.4` and the fixed [pictures](pictures/README.md), loaded from jsDelivr with checked hashes. **Time:** 2 to 5 minutes.
+**Package:** `rapier-jxl@8.3.5` and the fixed [pictures](pictures/README.md), loaded from jsDelivr with checked hashes. **Time:** 2 to 5 minutes.
 
 1. [Open an issue](https://github.com/jackskip22/rapier-jxl/issues/new?template=job-result.yml&title=Android%20phone%20in%20Chrome) titled **Android phone in Chrome**, so others know it is taken.
 2. [Open the test page](https://rapier.website/docs/jxl-job.html?job=selftest) in that browser. Enter the browser, OS and device, and press **Run**. Keep the page in front.

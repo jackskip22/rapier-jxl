@@ -117,6 +117,7 @@ function codedMap(map, mtf, minLength, moved, limitBits = Infinity) {
     for (let i = 0; i < values.length; i++) { const v = values[i]; w.write(lengths[v], codes[v]); }
     return w;
   }
+  for (let i = 0; i < values.length; i++) if (values[i] >= MAP_MIN_SYMBOL) return null;
   const count = mapParseFlat(values, minLength);
   const literals = LITERALS_SCRATCH, distances = DISTANCES_SCRATCH;
   literals.fill(0); distances.fill(0);

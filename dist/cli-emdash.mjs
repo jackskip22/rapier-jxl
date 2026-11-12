@@ -1,4 +1,4 @@
-/*! rapier-jxl 8.3.4 | MIT */
+/*! rapier-jxl 8.3.5 | MIT */
 import{readFile as e,writeFile as t,lstat as i,stat as s,realpath as r,mkdtemp as a,rename as n,chmod as o,rm as h}from"node:fs/promises";
 import{join as l,dirname as p,resolve as c,basename as u}from"node:path";
 import{spawn as d}from"node:child_process";

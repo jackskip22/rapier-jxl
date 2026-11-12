@@ -8,7 +8,7 @@ async function readBlob(input, options, hooks, head, png) {
   if (png) {
     const depth = head[24], colourType = head[25];
     if (depth === 16 || hooks.deep && options?.readAs === undefined && (colourType === 4 || colourType === 6 ||
-        typeof createImageBitmap !== 'function' || await transparencyChunk(input, hooks.signal) !== false)) {
+        typeof createImageBitmap !== 'function' || await ownReadingChunk(input, hooks.signal) !== false)) {
       requirePNGReader(options, hooks);
       const {readSource, orient} = await hooks.deep();
       const result = await readSource(new Uint8Array(await input.arrayBuffer()));
@@ -28,14 +28,16 @@ async function readBlob(input, options, hooks, head, png) {
   });
 }
 
-async function transparencyChunk(blob, signal) {
+const OWN_READING = new Set(['tRNS', 'gAMA', 'cHRM', 'iCCP', 'cICP']);
+async function ownReadingChunk(blob, signal) {
   for (let offset = 8, n = 0; n < 64; n++) {
     if (offset + 8 > blob.size) return false;
-    const head = new DataView(await blob.slice(offset, offset + 8).arrayBuffer());
+    const head = new DataView(await blob.slice(offset, offset + 9).arrayBuffer());
     check(signal);
     if (head.byteLength < 8) return false;
     const name = String.fromCharCode(head.getUint8(4), head.getUint8(5), head.getUint8(6), head.getUint8(7));
-    if (name === 'tRNS') return true;
+    if (OWN_READING.has(name)) return true;
+    if (name === 'sRGB' && (head.byteLength < 9 || head.getUint8(8) !== 1)) return true;
     if (name === 'IDAT' || name === 'IEND') return false;
     offset += 12 + head.getUint32(0);
   }
