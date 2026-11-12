@@ -74,7 +74,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-      - name: package the extension once; both registries get this file
+      - name: package the extension (one file for the Marketplace; the same extension named jxl-convert for Open VSX)
         id: vsix
         run: |
           set -eu
@@ -86,7 +86,14 @@ jobs:
           # A brand-new extension is not there: vsce prints "undefined" and no versions.
           known=$(npx --yes @vscode/vsce@4.1.0 show "$id" --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).versions.map(v=>v.version).join("\n"))}catch{}})' || true)
           if printf '%s\n' "$known" | grep -qxF "$version"; then new=false; else new=true; fi
-          { echo "skip=false"; echo "id=$id"; echo "version=$version"; echo "marketplace=$new"; echo "vsix=$RUNNER_TEMP/extension.vsix"; } >> "$GITHUB_OUTPUT"
+          # Open VSX keeps a new extension in the rapier namespace inactive (the namespace is not claimed there). The
+          # listing it shows is rapier.jxl-convert, so Open VSX gets this same extension under that name.
+          cp package.json "$RUNNER_TEMP/package.json"
+          node -e 'const fs=require("fs"),p=JSON.parse(fs.readFileSync("package.json","utf8"));p.name="jxl-convert";fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")'
+          npx --yes @vscode/vsce@4.1.0 package --no-dependencies --out "$RUNNER_TEMP/extension.openvsx.vsix"
+          cp "$RUNNER_TEMP/package.json" package.json
+          publisher=${id%%.*}
+          { echo "skip=false"; echo "id=$id"; echo "version=$version"; echo "marketplace=$new"; echo "vsix=$RUNNER_TEMP/extension.vsix"; echo "ovsxid=$publisher.jxl-convert"; echo "ovsx=$RUNNER_TEMP/extension.openvsx.vsix"; } >> "$GITHUB_OUTPUT"
       - name: publish to the Visual Studio Marketplace unless it has this version (trusted publishing through OIDC; no token)
         if: steps.vsix.outputs.skip == 'false'
         run: |
@@ -96,21 +103,21 @@ jobs:
           fi
           npx --yes @vscode/vsce@4.1.0 publish --oidc --no-dependencies --packagePath "${{ steps.vsix.outputs.vsix }}"
           echo "published ${{ steps.vsix.outputs.id }}@${{ steps.vsix.outputs.version }} to the Marketplace" | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: publish the same file to Open VSX (a token for the first publish, trusted publishing after it)
+      - name: publish to Open VSX as rapier.jxl-convert (a token; trusted publishing once the namespace is owned)
         if: steps.vsix.outputs.skip == 'false'
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: |
           set -u
-          namespace=${{ steps.vsix.outputs.id }}; name=${namespace#*.}; namespace=${namespace%%.*}
+          namespace=${{ steps.vsix.outputs.ovsxid }}; name=${namespace#*.}; namespace=${namespace%%.*}
           if [ "$(curl -s -o /dev/null -w '%{http_code}' "https://open-vsx.org/api/$namespace/$name/${{ steps.vsix.outputs.version }}")" = 200 ]; then
-            echo "${{ steps.vsix.outputs.id }}@${{ steps.vsix.outputs.version }} is already on Open VSX: nothing to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
+            echo "${{ steps.vsix.outputs.ovsxid }}@${{ steps.vsix.outputs.version }} is already on Open VSX: nothing to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
           fi
           if [ -n "${OVSX_PAT:-}" ]; then
             set -e
             if [ "$(curl -s -o /dev/null -w '%{http_code}' "https://open-vsx.org/api/$namespace")" != 200 ]; then npx --yes ovsx@1.4.0 create-namespace "$namespace" -p "$OVSX_PAT"; fi
-            npx --yes ovsx@1.4.0 publish "${{ steps.vsix.outputs.vsix }}" -p "$OVSX_PAT"
-          elif ! npx --yes ovsx@1.4.0 publish "${{ steps.vsix.outputs.vsix }}" --trusted-publishing; then
-            echo "Open VSX did not take ${{ steps.vsix.outputs.id }}@${{ steps.vsix.outputs.version }}: no OVSX_PAT, and no trusted publisher is registered for it yet. Skipped." | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
+            npx --yes ovsx@1.4.0 publish "${{ steps.vsix.outputs.ovsx }}" -p "$OVSX_PAT"
+          elif ! npx --yes ovsx@1.4.0 publish "${{ steps.vsix.outputs.ovsx }}" --trusted-publishing; then
+            echo "Open VSX did not take ${{ steps.vsix.outputs.ovsxid }}@${{ steps.vsix.outputs.version }}: no OVSX_PAT, and no trusted publisher is registered for it yet. Skipped." | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
           fi
-          echo "published ${{ steps.vsix.outputs.id }}@${{ steps.vsix.outputs.version }} to Open VSX" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "published ${{ steps.vsix.outputs.ovsxid }}@${{ steps.vsix.outputs.version }} to Open VSX" | tee -a "$GITHUB_STEP_SUMMARY"
