@@ -34,3 +34,8 @@ mostly canvas exports; they are not a matrix of every exporter.
 Every comparison above runs the unpatched suite first. Two controls separate the patches from the run order: `aa`
 runs the unpatched suite twice in one clone (any difference is the order), and `swap` runs the patched suite first
 and the unpatched second. Each says in one notice whether the two runs fail the same tests by name.
+
+A comparison counts a log only as a finished suite: vitest's summary present with tests run, its failed count equal to
+the failures read from the log, and the two arms' test files the same up to the files the patches add. A rerun alone
+counts only when the test ran. Anything else is printed `inconclusive` and fails the step; it is never read as no
+failures.

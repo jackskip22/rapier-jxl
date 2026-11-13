@@ -83,7 +83,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        browser: [chromium, webkit]
+        browser: [chromium, firefox, webkit]
     env:
       SNAPDOM: 13b1f5c40dabdfa0ffbf4600d8aaa3c23f1f013f
       NO_COLOR: '1'
@@ -166,7 +166,9 @@ jobs:
           BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run --browser.headless --reporter=dot 2>&1 | tee ../logs/aa-${{ matrix.browser }}-2.log
       - name: Same failures by name?
         if: always()
-        run: LISTS='aa (unpatched twice)|first run|second run' node scripts/verdict.mjs logs/aa-${{ matrix.browser }}-1.log logs/aa-${{ matrix.browser }}-2.log ${{ matrix.browser }} snapdom "$SNAPDOM" | tee logs/aa-${{ matrix.browser }}.txt
+        run: |
+          set -o pipefail
+          LISTS='aa (unpatched twice)|first run|second run' node scripts/verdict.mjs logs/aa-${{ matrix.browser }}-1.log logs/aa-${{ matrix.browser }}-2.log ${{ matrix.browser }} snapdom "$SNAPDOM" | tee logs/aa-${{ matrix.browser }}.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -214,7 +216,9 @@ jobs:
           BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run --browser.headless --reporter=dot 2>&1 | tee ../logs/swap-${{ matrix.browser }}-2.log
       - name: Same failures by name?
         if: always()
-        run: LISTS='swap (patched first)|patched|unpatched' node scripts/verdict.mjs logs/swap-${{ matrix.browser }}-1.log logs/swap-${{ matrix.browser }}-2.log ${{ matrix.browser }} snapdom "$SNAPDOM" | tee logs/swap-${{ matrix.browser }}.txt
+        run: |
+          set -o pipefail
+          LISTS='swap (patched first)|patched|unpatched' node scripts/verdict.mjs logs/swap-${{ matrix.browser }}-1.log logs/swap-${{ matrix.browser }}-2.log ${{ matrix.browser }} snapdom "$SNAPDOM" | tee logs/swap-${{ matrix.browser }}.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:

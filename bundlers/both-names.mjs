@@ -59,7 +59,7 @@ const types = {'.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
 async function serve(dir) {
   const server = createServer((req, res) => {
     const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-    try { const body = readFileSync(join(dir, path === '/' ? 'index.html' : path)); res.setHeader('content-type', types[extname(path || '.html')] || 'application/octet-stream'); res.end(body); }
+    try { const body = readFileSync(join(dir, path === '/' ? 'index.html' : path)); res.setHeader('content-type', types[extname(path === '/' ? 'index.html' : path)] || 'application/octet-stream'); res.end(body); }
     catch { res.statusCode = 404; res.end(); }
   });
   await new Promise(done => server.listen(0, '127.0.0.1', done));
@@ -92,7 +92,7 @@ function project(tool, both) {
   if (tool === 'vite') run(process.execPath, ['node_modules/vite/bin/vite.js', 'build', '--logLevel', 'error'], dir);
   else {
     run(process.execPath, ['node_modules/webpack-cli/bin/cli.js', '--no-stats'], dir);
-    writeFileSync(join(dir, 'dist/index.html'), '<!doctype html><script type="module" src="/main.js"></script>');
+    writeFileSync(join(dir, 'dist/index.html'), '<!doctype html><script type="module" src="/main.mjs"></script>');
   }
   return join(dir, 'dist');
 }
