@@ -6,10 +6,10 @@ Subject: [PATCH] feat(exports): css, an export option that styles one export
 
 ---
  PLUGIN_SPEC.md                    |  12 +++
- __tests__/api.exports.css.test.js | 130 ++++++++++++++++++++++++++++++
- src/api/snapdom.js                |  15 ++++
+ __tests__/api.exports.css.test.js | 152 ++++++++++++++++++++++++++++++
+ src/api/snapdom.js                |  15 +++
  types/snapdom.d.ts                |   8 +-
- 4 files changed, 163 insertions(+), 2 deletions(-)
+ 4 files changed, 185 insertions(+), 2 deletions(-)
  create mode 100644 __tests__/api.exports.css.test.js
 
 diff --git a/PLUGIN_SPEC.md b/PLUGIN_SPEC.md
@@ -37,10 +37,10 @@ index bc28745..51a96bd 100644
  ### Official plugins
 diff --git a/__tests__/api.exports.css.test.js b/__tests__/api.exports.css.test.js
 new file mode 100644
-index 0000000..9307683
+index 0000000..b1b6b88
 --- /dev/null
 +++ b/__tests__/api.exports.css.test.js
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,152 @@
 +import { it, expect, afterEach } from 'vitest'
 +import { snapdom } from '../src/api/snapdom.js'
 +import { detectDrawApi } from '../src/engines/htmlInCanvas.js'
@@ -147,6 +147,28 @@ index 0000000..9307683
 +  for (const selector of ['.mark', '[data-mark-i]', 'i']) {
 +    expect(differing(byId, await result.toCanvas({ css: `${selector}{color:transparent!important}` })), selector).toBe(0)
 +  }
++})
++
++it('the engine\'s own <style> is there and first: an empty capture, and content holding <style> and "</style>"', async () => {
++  const empty = document.createElement('div')
++  empty.style.cssText = 'width:40px;height:30px'
++  document.body.append(empty)
++  roots.push(empty)
++  const blank = await snapdom(empty, options)
++  expect(differing(await blank.toCanvas(), await blank.toCanvas({ css: '/* none */' }))).toBe(0)
++  expect(differing(await blank.toCanvas(), await blank.toCanvas({ css: 'div{background:#f00!important}' }))).toBeGreaterThan(0)
++
++  const root = await scene()
++  root.insertAdjacentHTML('afterbegin', '<style>.decoy{color:#00f}</style><i class="decoy" title="</style>">&lt;/style&gt;</i>' +
++    '<svg width="10" height="10"><style><![CDATA[ rect{fill:#0f0} ]]></style><rect width="10" height="10"/></svg>')
++  const { result } = await exportsOf(root)
++  const plain = await result.toCanvas()
++  expect(differing(plain, await result.toCanvas({ css: '/* none */' }))).toBe(0)
++  expect(differing(plain, await result.toCanvas({ css: hide }))).toBeGreaterThan(0)
++  const svg = decodeURIComponent(result.url.slice(result.url.indexOf(',') + 1))
++  // The first <style> in the capture is the engine's, before any of the page's content.
++  expect(svg.indexOf('<style')).toBeLessThan(svg.indexOf('decoy'))
++  expect(svg.indexOf('</style>')).toBeLessThan(svg.indexOf('decoy'))
 +})
 +
 +it('a pseudo-element selector misses: the clone draws ::before as an element', async () => {

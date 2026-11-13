@@ -11,3 +11,6 @@ then refreshes the lockfile with `npm install`, since the patch changes the plug
 The `bundlers` job installs `package/jpegxl.tgz` and the `rapier-jxl` pointer `package/rapier-jxl.tgz` together in
 one Vite 7 app and one webpack 5 app, and checks that each build ships the encoder once, as a jpegxl-only build does
 (`bundlers/both-names.mjs`).
+
+The `flicker` job runs each test in `scripts/flicker-tests.txt` alone, ten times without and ten times with the
+patches, in its engine, and prints the pass counts (`logs/flicker-<engine>.txt`).

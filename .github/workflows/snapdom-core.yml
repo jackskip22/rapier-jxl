@@ -73,8 +73,42 @@ jobs:
           retention-days: 1
       - name: Failures with the patches against without
         if: always()
-        run: node scripts/compare.mjs logs/suite-${{ matrix.browser }}-baseline.log logs/suite-${{ matrix.browser }}.log | tee logs/compare-${{ matrix.browser }}.txt
+        run: |
+          set -o pipefail
+          node scripts/compare.mjs logs/suite-${{ matrix.browser }}-baseline.log logs/suite-${{ matrix.browser }}.log | tee logs/compare-${{ matrix.browser }}.txt
 
+  flicker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
+    env:
+      SNAPDOM: 13b1f5c40dabdfa0ffbf4600d8aaa3c23f1f013f
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: SnapDOM as released at this commit
+        run: |
+          mkdir -p logs
+          git init -q snapdom
+          cd snapdom
+          git fetch -q --depth 1 https://github.com/zumerlab/snapdom "$SNAPDOM"
+          git checkout -q FETCH_HEAD
+          npm ci > ../logs/install.log 2>&1
+          npx playwright install --with-deps ${{ matrix.browser }} > ../logs/playwright-install.log 2>&1
+      - name: Each suspect test alone, ten times, without and with the patches
+        working-directory: snapdom
+        run: |
+          set -o pipefail
+          tests() { grep "^${{ matrix.browser }}|" ../scripts/flicker-tests.txt | cut -d'|' -f2-; }
+          tests | bash ../scripts/flicker.sh ${{ matrix.browser }} without | tee ../logs/flicker-${{ matrix.browser }}.txt
+          git -c user.name=ci -c user.email=ci@example.invalid am ../patches/*.patch > ../logs/am.log 2>&1
+          if git diff --quiet "$SNAPDOM" HEAD -- package.json packages/plugins/package.json; then npm ci > /dev/null 2>&1; else npm install --no-audit --no-fund > /dev/null 2>&1; fi
+          tests | bash ../scripts/flicker.sh ${{ matrix.browser }} with | tee -a ../logs/flicker-${{ matrix.browser }}.txt
   bundlers:
     runs-on: ubuntu-24.04
     timeout-minutes: 30

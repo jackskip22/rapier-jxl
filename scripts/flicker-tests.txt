@@ -1,0 +1,5 @@
+chromium|module.styles.invalidation.test.js|but a <style> added outside <head> still turns narrowing off
+chromium|core.capture.burst.test.js|still memoizes when nothing lands mid-capture
+chromium|module.styles.invalidation.test.js|a mutation in an unrelated component does not re-read the captured subtree
+firefox|core.capture.diff.bailouts.test.js|bails when a scrolled capture root needs fixed-position anchoring
+firefox|plugin.jxl.test.js|efforts 6-9 need no JPEG XL decoder
