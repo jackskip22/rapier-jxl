@@ -390,17 +390,17 @@ differ are the text, kept exact; the photo under it takes the quality.
 On a SnapDOM without the option, a raster capture, or jpegxl before 8.4.0,
 the page is drawn once, as before.
 ---
- __tests__/plugin.jxl.textOverPhoto.test.js |  85 ++++++++++++++++
+ __tests__/plugin.jxl.textOverPhoto.test.js |  87 +++++++++++++++++
  packages/plugins/jxl.js                    | 108 +++++++++++++++++++--
- 2 files changed, 185 insertions(+), 8 deletions(-)
+ 2 files changed, 187 insertions(+), 8 deletions(-)
  create mode 100644 __tests__/plugin.jxl.textOverPhoto.test.js
 
 diff --git a/__tests__/plugin.jxl.textOverPhoto.test.js b/__tests__/plugin.jxl.textOverPhoto.test.js
 new file mode 100644
-index 0000000..4e30939
+index 0000000..771a5bf
 --- /dev/null
 +++ b/__tests__/plugin.jxl.textOverPhoto.test.js
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,87 @@
 +import { it, expect, afterEach } from 'vitest'
 +import { snapdom } from '../src/api/snapdom.js'
 +import { clearPlugins } from '../src/core/plugins.js'
@@ -415,7 +415,9 @@ index 0000000..4e30939
 +  const real = createCodec({ module: 'jpegxl/capture-complete' })
 +  made.push(() => real.close())
 +  const calls = []
-+  return { calls, prepare: k => real.prepare(k), capture: (canvas, options) => { calls.push({ canvas, ...options }); return real.capture(canvas, options) } }
++  // The pixels are copied at the call: the plugin empties its own canvases once the export ends.
++  const pixels = c => ({ width: c.width, height: c.height, data: c.getContext('2d').getImageData(0, 0, c.width, c.height).data })
++  return { calls, prepare: k => real.prepare(k), capture: (canvas, options) => { calls.push({ canvas: pixels(canvas), ...options }); return real.capture(canvas, options) } }
 +}
 +
 +// A noisy photo with a white headline over it, and a caption beside it on white.
@@ -446,7 +448,7 @@ index 0000000..4e30939
 +  const call = codec.calls.find(c => c.withoutText)
 +  expect(call, 'drawn a second time').toBeTruthy()
 +  const { canvas, withoutText } = call
-+  const a = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data
++  const a = canvas.data
 +  let differ = 0, outside = 0
 +  for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
 +    const i = (y * canvas.width + x) * 4
