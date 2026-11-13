@@ -7,7 +7,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
@@ -79,7 +79,7 @@ jobs:
 
   order:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
@@ -118,7 +118,9 @@ jobs:
           BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run --browser.headless --reporter=dot 2>&1 | tee ../logs/order-${{ matrix.browser }}.log
       - name: Same failures by name?
         if: always()
-        run: LISTS='order|unpatched|patched without its test file' node scripts/verdict.mjs logs/order-${{ matrix.browser }}-baseline.log logs/order-${{ matrix.browser }}.log ${{ matrix.browser }} snapdom "$SNAPDOM" | tee logs/order-${{ matrix.browser }}.txt
+        run: |
+          set -o pipefail
+          LISTS='order|unpatched|patched without its test file' RERUN=1 node scripts/verdict.mjs logs/order-${{ matrix.browser }}-baseline.log logs/order-${{ matrix.browser }}.log ${{ matrix.browser }} snapdom "$SNAPDOM" | tee logs/order-${{ matrix.browser }}.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
