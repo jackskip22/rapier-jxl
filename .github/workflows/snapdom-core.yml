@@ -7,34 +7,44 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         browser: [chromium, firefox, webkit]
     env:
       SNAPDOM: 13b1f5c40dabdfa0ffbf4600d8aaa3c23f1f013f
+      NO_COLOR: '1'
+      FORCE_COLOR: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-      - name: SnapDOM with the patches
+      - name: SnapDOM as released at this commit
         run: |
           mkdir -p logs
           git init -q snapdom
           cd snapdom
           git fetch -q --depth 1 https://github.com/zumerlab/snapdom "$SNAPDOM"
           git checkout -q FETCH_HEAD
-          git -c user.name=ci -c user.email=ci@example.invalid am ../patches/*.patch 2>&1 | tee ../logs/am.log
-      - name: Install
+          set -o pipefail
+          npm ci 2>&1 | tee ../logs/install-baseline.log
+          npx playwright install --with-deps ${{ matrix.browser }} > ../logs/playwright-install.log 2>&1
+      - name: The whole suite without the patches (baseline)
+        working-directory: snapdom
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run --browser.headless --reporter=dot 2>&1 | tee ../logs/suite-${{ matrix.browser }}-baseline.log
+      - name: The patches
         working-directory: snapdom
         run: |
           set -o pipefail
+          git -c user.name=ci -c user.email=ci@example.invalid am ../patches/*.patch 2>&1 | tee ../logs/am.log
           # A patch that changes package.json needs its lockfile refreshed; otherwise install exactly.
           if git diff --quiet "$SNAPDOM" HEAD -- package.json packages/plugins/package.json; then npm ci 2>&1 | tee ../logs/install.log
           else npm install --no-audit --no-fund 2>&1 | tee ../logs/install.log; fi
-          npx playwright install --with-deps ${{ matrix.browser }} > ../logs/playwright-install.log 2>&1
       - name: npm run check
         if: matrix.browser == 'chromium'
         working-directory: snapdom
@@ -48,9 +58,10 @@ jobs:
           files=$(git diff --name-only "$SNAPDOM" HEAD -- '__tests__/*.test.js')
           echo "$files"
           BROWSER=${{ matrix.browser }} npx vitest run $files --browser.headless --reporter=verbose 2>&1 | tee ../logs/patch-tests-${{ matrix.browser }}.log
-      - name: The whole suite
+      - name: The whole suite with the patches
         if: always()
         working-directory: snapdom
+        continue-on-error: true
         run: |
           set -o pipefail
           BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run --browser.headless --reporter=dot 2>&1 | tee ../logs/suite-${{ matrix.browser }}.log
@@ -60,6 +71,10 @@ jobs:
           name: logs-${{ matrix.browser }}
           path: logs/
           retention-days: 1
+      - name: Failures with the patches against without
+        if: always()
+        run: node scripts/compare.mjs logs/suite-${{ matrix.browser }}-baseline.log logs/suite-${{ matrix.browser }}.log | tee logs/compare-${{ matrix.browser }}.txt
+
   bundlers:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
