@@ -71,11 +71,11 @@ jobs:
           name: logs-${{ matrix.browser }}
           path: logs/
           retention-days: 1
-      - name: Failures with the patches against without
+      - name: Failures with the patches against without, each new one run alone 10 times both ways
         if: always()
         run: |
           set -o pipefail
-          node scripts/compare.mjs logs/suite-${{ matrix.browser }}-baseline.log logs/suite-${{ matrix.browser }}.log | tee logs/compare-${{ matrix.browser }}.txt
+          node scripts/verdict.mjs logs/suite-${{ matrix.browser }}-baseline.log logs/suite-${{ matrix.browser }}.log ${{ matrix.browser }} snapdom "$SNAPDOM" | tee logs/compare-${{ matrix.browser }}.txt
 
   flicker:
     runs-on: ubuntu-24.04

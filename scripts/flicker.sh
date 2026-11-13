@@ -10,4 +10,5 @@ while IFS='|' read -r file name; do
     if BROWSER=$browser npx vitest run "__tests__/$file" -t "$name" --browser.headless --reporter=dot > /dev/null 2>&1; then passed=$((passed + 1)); fi
   done
   echo "$label $browser $passed/10 $file > $name"
+  echo "::notice title=flicker $browser::$file > $name: $label $passed/10"
 done
