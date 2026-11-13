@@ -109,6 +109,60 @@ jobs:
           git -c user.name=ci -c user.email=ci@example.invalid am ../patches/*.patch > ../logs/am.log 2>&1
           if git diff --quiet "$SNAPDOM" HEAD -- package.json packages/plugins/package.json; then npm ci > /dev/null 2>&1; else npm install --no-audit --no-fund > /dev/null 2>&1; fi
           tests | bash ../scripts/flicker.sh ${{ matrix.browser }} with | tee -a ../logs/flicker-${{ matrix.browser }}.txt
+  plugin:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    env:
+      SNAPDOM: 13b1f5c40dabdfa0ffbf4600d8aaa3c23f1f013f
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: SnapDOM with the core and plugin patches, the encoder from package/
+        run: |
+          set -o pipefail
+          mkdir -p logs
+          git init -q snapdom
+          cd snapdom
+          git fetch -q --depth 1 https://github.com/zumerlab/snapdom "$SNAPDOM"
+          git checkout -q FETCH_HEAD
+          git show "$SNAPDOM":packages/plugins/jxl.js > ../released-jxl.js
+          git -c user.name=ci -c user.email=ci@example.invalid am ../patches/*.patch ../later/*.patch 2>&1 | tee ../logs/am.log
+          npm install --no-audit --no-fund > ../logs/install.log 2>&1
+          npm install --no-audit --no-fund --no-save ../package/jpegxl.tgz ../package/rapier-jxl.tgz >> ../logs/install.log 2>&1
+          npx playwright install --with-deps ${{ matrix.browser }} > ../logs/playwright-install.log 2>&1
+          mkdir -p __measure__
+          cp ../plugin/photos/*.jpg __measure__/
+          cp ../released-jxl.js __tests__/zz-jxl-released.js
+          cp ../plugin/zz-measure.test.js __tests__/
+      - name: The plugin's own tests with the patches
+        working-directory: snapdom
+        run: |
+          set -o pipefail
+          BROWSER=${{ matrix.browser }} npx vitest run __tests__/plugin.jxl.test.js __tests__/plugin.jxl.lifecycle.test.js __tests__/plugin.jxl.textOverPhoto.test.js --browser.headless --reporter=verbose 2>&1 | tee ../logs/plugin-tests-${{ matrix.browser }}.log
+      - name: Released plugin against patched plugin on text over photographs
+        if: always()
+        working-directory: snapdom
+        run: |
+          set -o pipefail
+          BROWSER=${{ matrix.browser }} npx vitest run __tests__/zz-measure.test.js --browser.headless --reporter=verbose 2>&1 | tee ../logs/measure-run-${{ matrix.browser }}.log
+          cp measure-*.jsonl ../logs/
+      - name: The table and N
+        if: always()
+        run: |
+          set -o pipefail
+          node scripts/measure-summary.mjs logs/measure-*.jsonl | tee logs/measure-table-${{ matrix.browser }}.md
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: logs-plugin-${{ matrix.browser }}
+          path: logs/
+          retention-days: 1
   bundlers:
     runs-on: ubuntu-24.04
     timeout-minutes: 30

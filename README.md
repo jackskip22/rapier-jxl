@@ -14,3 +14,10 @@ one Vite 7 app and one webpack 5 app, and checks that each build ships the encod
 
 The `flicker` job runs each test in `scripts/flicker-tests.txt` alone, ten times without and ten times with the
 patches, in its engine, and prints the pass counts (`logs/flicker-<engine>.txt`).
+
+The `plugin` job applies `patches/` and `later/`, installs the encoder from `package/`, runs the plugin's tests, then
+`plugin/zz-measure.test.js`: seven pages with text over a NASA photograph (`plugin/photos/`, public domain) and one
+control page without a photograph, at DPR 1 and 2. Each page is exported by the plugin as released and by the plugin
+with the patches, with the same encoder at its default effort. `scripts/measure-summary.mjs` prints one row a page:
+bytes before and after, median time of three exports, wrong text samples (text samples the decoded file does not
+reproduce exactly), and N, the median size saving on the pages with text over a photograph.
