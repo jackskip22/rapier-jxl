@@ -1,45 +1,46 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Contributor <contributor@example.invalid>
 Date: Fri, 13 Nov 2026 15:44:21 +0000
-Subject: [PATCH 1/3] feat(exports): css, an export option that styles one
- export in the first cascade layer
+Subject: [PATCH] feat(exports): css, an export option that styles one export
+ in the first cascade layer
 
 ---
- PLUGIN_SPEC.md                    |  11 +++
- __tests__/api.exports.css.test.js | 120 ++++++++++++++++++++++++++++++
+ PLUGIN_SPEC.md                    |  12 +++
+ __tests__/api.exports.css.test.js | 130 ++++++++++++++++++++++++++++++
  src/api/snapdom.js                |  15 ++++
  types/snapdom.d.ts                |   8 +-
- 4 files changed, 152 insertions(+), 2 deletions(-)
+ 4 files changed, 163 insertions(+), 2 deletions(-)
  create mode 100644 __tests__/api.exports.css.test.js
 
 diff --git a/PLUGIN_SPEC.md b/PLUGIN_SPEC.md
-index bc28745..47f0657 100644
+index bc28745..51a96bd 100644
 --- a/PLUGIN_SPEC.md
 +++ b/PLUGIN_SPEC.md
-@@ -322,6 +322,17 @@ When export keys collide, priority is **local plugin > global plugin > core**. A
+@@ -322,6 +322,18 @@ When export keys collide, priority is **local plugin > global plugin > core**. A
  plugin can override `toPng`, `toJpg`, `toCanvas` or another exporter. Use `ctx.export.url` or
  `ctx.exports` to build that export from the existing capture.
  
 +To draw the same capture with extra styles (a highlight, a watermark, text hidden), give an export
-+`css`: `result.toPng({ css: '.hit{outline:3px solid #f0f}' })`. The rules apply to that export
-+only, after crop and restore choose its source. They go in a cascade layer declared before any
-+other in the capture, so their `!important` declarations win over every stylesheet rule (an
-+inline `style` with `!important` still wins). A `beforeExport` hook can add to `options.css`, and
-+`ctx.exports.canvas({ ...opts, css })` draws a styled copy beside the plain one. Select by the
-+page's ids, classes, attributes and tag names. SnapDOM's own generated class names are internal
-+and can change, and the clone can wrap scrolling elements, so a child combinator (`>`) may miss. CSS hides; it
-+does not remove, so an SVG export still carries hidden text: redact in `resolveNode`. A raster
-+`html-in-canvas` capture throws.
++`css`: `result.toPng({ css: '.hit{outline:3px solid #f0f}' })`. The rules apply to that export only,
++after crop and restore choose its source. They go in a cascade layer declared before any other in
++the capture, so their `!important` declarations win over every rule in the page's style sheets. A
++`beforeExport` hook can add to `options.css`, and `ctx.exports.canvas({ ...opts, css })` draws a
++styled copy beside the plain one. Select by the page's ids, classes, attributes and tag names.
++SnapDOM's own generated class names are internal and can change. The clone can wrap scrolling
++elements, so a child combinator (`>`) may miss. Pseudo-elements and states are not in the clone:
++SnapDOM draws `::before`, `::after` and `::first-letter` as elements, and `:hover` or `:focus` never
++match, so such selectors miss. CSS hides; it does not remove, so an SVG export still carries hidden
++text: redact in `resolveNode`. A raster `html-in-canvas` capture throws.
 +
  ## Distribution
  
  ### Official plugins
 diff --git a/__tests__/api.exports.css.test.js b/__tests__/api.exports.css.test.js
 new file mode 100644
-index 0000000..ae0e084
+index 0000000..9307683
 --- /dev/null
 +++ b/__tests__/api.exports.css.test.js
-@@ -0,0 +1,120 @@
+@@ -0,0 +1,130 @@
 +import { it, expect, afterEach } from 'vitest'
 +import { snapdom } from '../src/api/snapdom.js'
 +import { detectDrawApi } from '../src/engines/htmlInCanvas.js'
@@ -104,7 +105,7 @@ index 0000000..ae0e084
 +
 +it('rules with &, < and > keep the SVG well formed', async () => {
 +  const { result } = await exportsOf(await scene())
-+  const nested = await result.toCanvas({ css: 'div > b{color:transparent!important} b{&[data-mark]{content:"<&>"}}' })
++  const nested = await result.toCanvas({ css: 'b[data-mark]:not([title="<&>"]){color:transparent!important} b{&[data-mark]{content:"<&>"}}' })
 +  expect(differing(nested, await result.toCanvas({ css: hide }))).toBe(0)
 +})
 +
@@ -146,6 +147,16 @@ index 0000000..ae0e084
 +  for (const selector of ['.mark', '[data-mark-i]', 'i']) {
 +    expect(differing(byId, await result.toCanvas({ css: `${selector}{color:transparent!important}` })), selector).toBe(0)
 +  }
++})
++
++it('a pseudo-element selector misses: the clone draws ::before as an element', async () => {
++  const root = await scene()
++  root.insertAdjacentHTML('afterbegin', '<style>[data-mark]::before{content:"AB";color:#0f0}</style>')
++  const { result } = await exportsOf(root)
++  const plain = await result.toCanvas()
++  const green = c => { const d = pixels(c); let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 1] > 200 && d[i] < 60 && d[i + 2] < 60) n++; return n }
++  expect(green(plain), 'the page drew its ::before').toBeGreaterThan(20)
++  expect(differing(plain, await result.toCanvas({ css: '[data-mark]::before{color:transparent!important}' }))).toBe(0)
 +})
 +
 +it('hides, does not remove: an SVG export still carries the hidden text', async () => {

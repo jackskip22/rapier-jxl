@@ -23,11 +23,15 @@ const tarballs = {jpegxl, 'rapier-jxl': pointer};
 mkdirSync(join(work, 'jpegxl'));
 run('tar', ['xzf', jpegxl, '-C', join(work, 'jpegxl'), '--strip-components=1'], work);
 
-// A run of the upload module's inline WebAssembly: present once in every copy of the encoder.
-const upload = readFileSync(join(work, 'jpegxl/dist/upload.worker.mjs'), 'utf8');
-const longest = upload.split('\n').reduce((a, b) => b.length > a.length ? b : a, '');
-const marker = longest.slice(Math.floor(longest.length / 2), Math.floor(longest.length / 2) + 64);
-if (!/^[A-Za-z0-9+/=_-]{64}$/.test(marker)) throw new Error('no WebAssembly run found in upload.worker.mjs');
+// A run of the encoder's packed WebAssembly: the largest string literal in upload.worker.mjs, and in it the longest
+// run of plain printable ASCII (a bundler may re-escape anything else). It must occur once in that file; every copy
+// of the encoder in a build carries it once.
+const upload = readFileSync(join(work, 'jpegxl/dist/upload.worker.mjs'), 'latin1');
+let literal = '';
+for (const m of upload.matchAll(/"(?:[^"\\]|\\.){10000,}"|'(?:[^'\\]|\\.){10000,}'|`[^`]{10000,}`/g)) if (m[0].length > literal.length) literal = m[0];
+const plain = [...literal.slice(1, -1).matchAll(/[ !#%&(-[\]-_a-z{-~]{64,}/g)].map(m => m[0]).reduce((a, b) => b.length > a.length ? b : a, '');
+const marker = plain.slice(Math.floor((plain.length - 64) / 2), Math.floor((plain.length - 64) / 2) + 64);
+if (marker.length !== 64 || upload.split(marker).length !== 2) throw new Error('no marker found once in upload.worker.mjs');
 
 const page = both => `import {createCodec as a} from 'jpegxl/codec';
 ${both ? "import {createCodec as b} from 'rapier-jxl/codec';" : 'const b = a;'}
