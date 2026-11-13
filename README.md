@@ -5,7 +5,7 @@ Safari native JPEG XL decode, plus rapier-jxl capture, worker and display rows o
 | package | tarball | sha256 |
 |---|---|---|
 | 8.2.0 (published) | `rapier-jxl-8.2.0.tgz` | `c966e53f402fc1811670517635d1410b712632d15df5bae969c3bb128cc4c89c` |
-| candidate (unreleased, packed from source) | `rapier-jxl-candidate.tgz` | `f89674c0c1584b962aa8cbf8b5a9139cdfd31acda7deec6bc182bbe6b88a4084` |
+| candidate (unreleased, packed from the root's build) | `rapier-jxl-candidate.tgz` | `75c167649bebe3a9ed5ae0c5a09ffdec6a6581711782e5dfa46b6b3ff3d81e50` |
 
 The workflow extracts them to `p/820/` and `p/cand/`. Each live page exists once per package (`control-820.html`, `control-cand.html`, …); the import map is the only difference.
 

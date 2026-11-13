@@ -7,7 +7,7 @@
 // skips its capture and p3 pages (canvas reads are dead there).
 import {writeFileSync, appendFileSync, existsSync} from 'node:fs';
 const PACKAGES = [{id: '820', label: '8.2.0'}, {id: 'cand', label: 'candidate'}];
-const PAGES = ['control', 'capture', 'p3', 'codecprobe', 'stress'];
+const PAGES = ['control', 'capture', 'p3', 'codecprobe', 'stress', 'cells'];
 const base = process.env.CHECK_ORIGIN || 'http://127.0.0.1:8000/';
 const wd = async (method, path, body) => { const r = await fetch((process.env.WEBDRIVER || 'http://127.0.0.1:4444') + path, {method, headers: {'content-type': 'application/json'}, body: body && JSON.stringify(body)}); const j = await r.json(); if (!r.ok) throw new Error(JSON.stringify(j).slice(0, 500)); return j.value; };
 const session = await wd('POST', '/session', {capabilities: {alwaysMatch: {browserName: process.env.BROWSER_NAME || 'safari'}}});

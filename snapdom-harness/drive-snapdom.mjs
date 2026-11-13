@@ -1,5 +1,5 @@
 // Real Safari (safaridriver): plug-in suite + 32 demos with JXL vs toWebp and identity vs Chromium baselines.
-import { writeFileSync, appendFileSync, readFileSync } from 'node:fs'
+import { writeFileSync, appendFileSync, readFileSync, existsSync } from 'node:fs'
 const base = process.env.CHECK_ORIGIN || 'http://127.0.0.1:8000/'
 const wdBase = process.env.WEBDRIVER || 'http://127.0.0.1:4444'
 const wd = async (method, path, body) => {
@@ -51,10 +51,11 @@ try {
   await goto(base + 'plugin.html?files=plugin.jxl.test.js')
   out.plugin = label(await waitResult(900)) || { done: true, error: 'no result', passed: 0, failed: 1, total: 1, rows: [] }
 
-  for (const effort of [3, 5]) {
+  for (const effort of [3, 5, 7]) {
     await goto(base + `demos.html?effort=${effort}&quality=0.8`)
     out.demos[effort] = label(await waitResult(1800)) || { done: true, error: 'no result', rows: [] }
-    const baseRows = JSON.parse(readFileSync(new URL(`./baselines/chromium-e${effort}.json`, import.meta.url), 'utf8'))
+    const baseFile = new URL(`./baselines/chromium-e${effort}.json`, import.meta.url); if (!existsSync(baseFile)) continue
+    const baseRows = JSON.parse(readFileSync(baseFile, 'utf8'))
     const byChr = Object.fromEntries(baseRows.map(r => [r.name, r]))
     let same = 0, differ = [], missing = []
     for (const r of (out.demos[effort].rows || [])) {
