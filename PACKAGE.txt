@@ -4,6 +4,6 @@ published: rapier-jxl@8.2.0 (npm)
   extracts to: p/820/package/
 
 candidate: rapier-jxl 8.3.5 candidate, unreleased (packed from the root's build)
-  tarball: rapier-jxl-candidate.tgz (10439500 bytes)
-  sha256: d43f1564c914d71b862b735001a22d6d36d387db997fa720451204beba874b96
+  tarball: rapier-jxl-candidate.tgz (10438990 bytes)
+  sha256: 74a31657af30b28ba9f3afe7548225f9a46fad58ddb4c603597e2d84801445a0
   extracts to: p/cand/package/

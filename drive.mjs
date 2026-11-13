@@ -10,7 +10,11 @@ const PACKAGES = [{id: '820', label: '8.2.0'}, {id: 'cand', label: 'candidate'}]
 const PAGES = ['control', 'capture', 'p3', 'codecprobe', 'stress', 'cells'];
 const base = process.env.CHECK_ORIGIN || 'http://127.0.0.1:8000/';
 const wd = async (method, path, body) => { const r = await fetch((process.env.WEBDRIVER || 'http://127.0.0.1:4444') + path, {method, headers: {'content-type': 'application/json'}, body: body && JSON.stringify(body)}); const j = await r.json(); if (!r.ok) throw new Error(JSON.stringify(j).slice(0, 500)); return j.value; };
-const session = await wd('POST', '/session', {capabilities: {alwaysMatch: {browserName: process.env.BROWSER_NAME || 'safari'}}});
+let session
+for (let attempt = 1; attempt <= 3; attempt++) {
+  try { session = await wd('POST', '/session', {capabilities: {alwaysMatch: {browserName: process.env.BROWSER_NAME || 'safari'}}}); break }
+  catch (error) { if (attempt === 3) throw error; console.error('session attempt ' + attempt + ': ' + String(error.message).slice(0, 200)); await new Promise(r => setTimeout(r, 20000)) }
+}
 const id = session.sessionId, caps = session.capabilities;
 try { await wd('POST', `/session/${id}/window/maximize`, {}); } catch {}
 try { await wd('POST', `/session/${id}/window/rect`, {x: 0, y: 0, width: 1280, height: 900}); } catch {}
