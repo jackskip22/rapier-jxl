@@ -1,0 +1,225 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Contributor <contributor@example.invalid>
+Date: Fri, 13 Nov 2026 15:44:21 +0000
+Subject: [PATCH 1/3] feat(exports): css, an export option that styles one
+ export in the first cascade layer
+
+---
+ PLUGIN_SPEC.md                    |  11 +++
+ __tests__/api.exports.css.test.js | 120 ++++++++++++++++++++++++++++++
+ src/api/snapdom.js                |  15 ++++
+ types/snapdom.d.ts                |   8 +-
+ 4 files changed, 152 insertions(+), 2 deletions(-)
+ create mode 100644 __tests__/api.exports.css.test.js
+
+diff --git a/PLUGIN_SPEC.md b/PLUGIN_SPEC.md
+index bc28745..47f0657 100644
+--- a/PLUGIN_SPEC.md
++++ b/PLUGIN_SPEC.md
+@@ -322,6 +322,17 @@ When export keys collide, priority is **local plugin > global plugin > core**. A
+ plugin can override `toPng`, `toJpg`, `toCanvas` or another exporter. Use `ctx.export.url` or
+ `ctx.exports` to build that export from the existing capture.
+ 
++To draw the same capture with extra styles (a highlight, a watermark, text hidden), give an export
++`css`: `result.toPng({ css: '.hit{outline:3px solid #f0f}' })`. The rules apply to that export
++only, after crop and restore choose its source. They go in a cascade layer declared before any
++other in the capture, so their `!important` declarations win over every stylesheet rule (an
++inline `style` with `!important` still wins). A `beforeExport` hook can add to `options.css`, and
++`ctx.exports.canvas({ ...opts, css })` draws a styled copy beside the plain one. Select by the
++page's ids, classes, attributes and tag names. SnapDOM's own generated class names are internal
++and can change, and the clone can wrap scrolling elements, so a child combinator (`>`) may miss. CSS hides; it
++does not remove, so an SVG export still carries hidden text: redact in `resolveNode`. A raster
++`html-in-canvas` capture throws.
++
+ ## Distribution
+ 
+ ### Official plugins
+diff --git a/__tests__/api.exports.css.test.js b/__tests__/api.exports.css.test.js
+new file mode 100644
+index 0000000..ae0e084
+--- /dev/null
++++ b/__tests__/api.exports.css.test.js
+@@ -0,0 +1,120 @@
++import { it, expect, afterEach } from 'vitest'
++import { snapdom } from '../src/api/snapdom.js'
++import { detectDrawApi } from '../src/engines/htmlInCanvas.js'
++
++const roots = []
++afterEach(() => { for (const root of roots.splice(0)) root.remove() })
++const options = { embedFonts: false, dpr: 1 }
++
++// A photo-like raster (fine stripes, so a restored or resampled source would show) under a line of text.
++async function scene() {
++  const raster = document.createElement('canvas')
++  raster.width = raster.height = 400
++  const ctx = raster.getContext('2d')
++  for (let x = 0; x < 400; x++) {
++    ctx.fillStyle = x % 2 ? '#c84' : '#246'
++    ctx.fillRect(x, 0, 1, 400)
++  }
++  const root = document.createElement('div')
++  root.style.cssText = 'position:relative;width:200px;height:120px;background:white'
++  root.innerHTML = '<img style="position:absolute;inset:0;width:200px;height:120px"><b data-mark style="position:absolute;left:10px;top:40px;font:700 28px sans-serif;color:#fff">Headline</b>'
++  root.querySelector('img').src = raster.toDataURL()
++  document.body.append(root)
++  roots.push(root)
++  await root.querySelector('img').decode()
++  return root
++}
++
++const pixels = c => c.getContext('2d').getImageData(0, 0, c.width, c.height).data
++function differing(a, b) {
++  expect([a.width, a.height]).toEqual([b.width, b.height])
++  const x = pixels(a), y = pixels(b)
++  let n = 0
++  for (let i = 0; i < x.length; i += 4) if (x[i] !== y[i] || x[i + 1] !== y[i + 1] || x[i + 2] !== y[i + 2] || x[i + 3] !== y[i + 3]) n++
++  return n
++}
++const hide = 'b{color:transparent!important}'
++const ring = '[data-mark]{outline:4px solid #f0f!important}'
++const exportsOf = async (root) => {
++  let facade
++  const result = await snapdom(root, { ...options, plugins: [{ name: 'probe', defineExports(ctx) { facade = ctx.exports } }] })
++  return { result, facade }
++}
++const sizes = [{}, { dpr: 2 }, { width: 400 }, { scale: 3 }, { crop: { x: 20, y: 30, width: 150, height: 60 } }]
++
++it('an empty rule set draws the same pixels as none, at every size, through restore and crop', async () => {
++  const { result, facade } = await exportsOf(await scene())
++  for (const o of sizes) {
++    expect(differing(await result.toCanvas(o), await result.toCanvas({ ...o, css: '/* none */' }))).toBe(0)
++    expect(differing(await facade.canvas(o), await facade.canvas({ ...o, css: '/* none */' }))).toBe(0)
++  }
++})
++
++it('the rules win over an author !important stylesheet rule in the capture', async () => {
++  const root = await scene()
++  root.insertAdjacentHTML('afterbegin', '<style>#x b, b[data-mark]{color:#0f0!important}</style>')
++  const { result } = await exportsOf(root)
++  const plain = await result.toCanvas(), hidden = await result.toCanvas({ css: hide })
++  const reference = await (await snapdom(root, { ...options, burst: false })).toCanvas({ css: 'b{visibility:hidden!important}' })
++  expect(differing(plain, hidden)).toBeGreaterThan(0)
++  expect(differing(hidden, reference)).toBe(0)
++})
++
++it('rules with &, < and > keep the SVG well formed', async () => {
++  const { result } = await exportsOf(await scene())
++  const nested = await result.toCanvas({ css: 'div > b{color:transparent!important} b{&[data-mark]{content:"<&>"}}' })
++  expect(differing(nested, await result.toCanvas({ css: hide }))).toBe(0)
++})
++
++it('concurrent exports with different rules each draw their own', async () => {
++  const { facade } = await exportsOf(await scene())
++  for (const o of sizes) {
++    const alone = [await facade.canvas(o), await facade.canvas({ ...o, css: hide }), await facade.canvas({ ...o, css: ring })]
++    const together = await Promise.all([facade.canvas(o), facade.canvas({ ...o, css: hide }), facade.canvas({ ...o, css: ring })])
++    for (let k = 0; k < 3; k++) expect(differing(alone[k], together[k])).toBe(0)
++    expect(differing(alone[0], alone[1])).toBeGreaterThan(0)
++    expect(differing(alone[0], alone[2])).toBeGreaterThan(0)
++  }
++})
++
++it('two beforeExport plugins add their rules to one export', async () => {
++  const add = (name, rule) => ({ name, beforeExport(_ctx, { options }) { options.css = (options.css || '') + rule } })
++  const root = await scene()
++  const both = await snapdom(root, { ...options, plugins: [add('hide', hide), add('ring', ring)] })
++  const plain = await snapdom(root, { ...options, burst: false })
++  expect(differing(await both.toCanvas(), await plain.toCanvas({ css: hide + ring }))).toBe(0)
++  expect(differing(await plain.toCanvas(), await plain.toCanvas({ css: '' }))).toBe(0)
++})
++
++it('a wrong css value rejects only its own export', async () => {
++  const { result } = await exportsOf(await scene())
++  const before = await result.toCanvas()
++  await expect(result.toCanvas({ css: { color: 'red' } })).rejects.toThrow(/css is a string/)
++  expect(differing(before, await result.toCanvas())).toBe(0)
++})
++
++it('selectors match the page: an id, a class, an attribute and a tag name each reach the same element', async () => {
++  const root = await scene()
++  root.insertAdjacentHTML('beforeend', '<i id="mark" class="mark" data-mark-i style="position:absolute;left:10px;top:80px;font:700 20px sans-serif;color:#0f0">Mark</i>')
++  const { result } = await exportsOf(root)
++  const plain = await result.toCanvas()
++  const byId = await result.toCanvas({ css: '#mark{color:transparent!important}' })
++  expect(differing(plain, byId)).toBeGreaterThan(0)
++  // SnapDOM adds its own generated class to every element; the page's class still matches.
++  for (const selector of ['.mark', '[data-mark-i]', 'i']) {
++    expect(differing(byId, await result.toCanvas({ css: `${selector}{color:transparent!important}` })), selector).toBe(0)
++  }
++})
++
++it('hides, does not remove: an SVG export still carries the hidden text', async () => {
++  const { result } = await exportsOf(await scene())
++  expect(await (await result.toBlob({ css: hide })).text()).toContain('Headline')
++})
++
++it.runIf(detectDrawApi())('a raster html-in-canvas capture refuses css on every export', async () => {
++  const result = await snapdom(await scene(), { ...options, engine: 'html-in-canvas' })
++  for (const k of ['toCanvas', 'toPng', 'toImg', 'toSvg', 'toBlob']) {
++    await expect(result[k]({ css: hide })).rejects.toThrow(/Only SVG captures can be styled/)
++    await expect(result[k]({ css: hide })).rejects.toBeInstanceOf(RangeError)
++  }
++})
+diff --git a/src/api/snapdom.js b/src/api/snapdom.js
+index f8f7778..8d24596 100644
+--- a/src/api/snapdom.js
++++ b/src/api/snapdom.js
+@@ -287,7 +287,21 @@ async function buildResult(url, context) {
+     ? (Number.isFinite(context.width) ? meta.targetW / meta.vbW : meta.targetH / meta.vbH) : 1
+   const intrinsicY = sizedSVG
+     ? (Number.isFinite(context.height) ? meta.targetH / meta.vbH : meta.targetW / meta.vbW) : 1
++  // `css` styles one export. Its rules join the engine's <style>, the first in the svg (which
++  // internInlineStyles and fileSvgText already rely on), in a cascade layer that this <style>
++  // declares first: its !important wins over every stylesheet rule in the capture.
+   const exportSource = (options) => {
++    const source = drawnSource(options), css = options.css
++    if (css == null || css === '') return source
++    if (typeof css !== 'string') throw new TypeError('[SnapDOM] css is a string of style rules.')
++    if (typeof source !== 'string') throw new RangeError('[SnapDOM] Only SVG captures can be styled.')
++    const i = source.indexOf(',') + 1, svg = decodeURIComponent(source.slice(i))
++    const open = svg.indexOf('>', svg.indexOf('<style')) + 1, close = svg.indexOf('</style>')
++    const rules = css.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
++    return source.slice(0, i) + encodeURIComponent(svg.slice(0, open) + '@layer snapdom-export;' +
++      svg.slice(open, close) + `@layer snapdom-export{${rules}}` + svg.slice(close))
++  }
++  const drawnSource = (options) => {
+     if (engineCanvas || !originals?.size) return pixelSource
+     let w = meta.vbW, h = meta.vbH
+     const crop = options.crop
+@@ -307,6 +321,7 @@ async function buildResult(url, context) {
+   }
+ 
+   const rasterEngineImage = async (ctx, opts) => {
++    if (opts?.css) throw new RangeError('[SnapDOM] Only SVG captures can be styled.')
+     const { rasterize } = await import('../modules/rasterize.js')
+     return rasterize(pixelSource, { ...ctx, ...(opts || {}), format: 'png' })
+   }
+diff --git a/types/snapdom.d.ts b/types/snapdom.d.ts
+index 59808b3..56a1fc9 100644
+--- a/types/snapdom.d.ts
++++ b/types/snapdom.d.ts
+@@ -80,7 +80,11 @@ export interface CanvasCrop {
+   height: number;
+ }
+ 
+-export type CanvasExportOptions = Partial<SnapdomOptions> & { crop?: CanvasCrop };
++export type CanvasExportOptions = Partial<SnapdomOptions> & {
++  crop?: CanvasCrop;
++  /** Export option: style rules for this export only, in the first cascade layer. */
++  css?: string;
++};
+ 
+ /* =========================
+  * Font & proxy declarations
+@@ -390,7 +394,7 @@ export interface CaptureContext extends Omit<SnapdomOptions, "exclude" | "filter
+ 
+   /** Core export facade for `defineExports`: the built-in exporters without their hooks,
+    *  so a plugin format can build on `png`/`canvas`/… without re-entering the pipeline. */
+-  exports?: Record<string, (opts?: any) => Promise<any>>;
++  exports?: Record<string, (opts?: CanvasExportOptions) => Promise<any>>;
+ }
+ 
+ /* =========================
+-- 
+2.43.0
+

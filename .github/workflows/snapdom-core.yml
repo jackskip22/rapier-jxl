@@ -1,0 +1,62 @@
+name: snapdom-core
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    env:
+      SNAPDOM: 13b1f5c40dabdfa0ffbf4600d8aaa3c23f1f013f
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: SnapDOM with the patches
+        run: |
+          mkdir -p logs
+          git init -q snapdom
+          cd snapdom
+          git fetch -q --depth 1 https://github.com/zumerlab/snapdom "$SNAPDOM"
+          git checkout -q FETCH_HEAD
+          git -c user.name=ci -c user.email=ci@example.invalid am ../patches/*.patch 2>&1 | tee ../logs/am.log
+      - name: Install
+        working-directory: snapdom
+        run: |
+          set -o pipefail
+          # A patch that changes package.json needs its lockfile refreshed; otherwise install exactly.
+          if git diff --quiet "$SNAPDOM" HEAD -- package.json packages/plugins/package.json; then npm ci 2>&1 | tee ../logs/install.log
+          else npm install --no-audit --no-fund 2>&1 | tee ../logs/install.log; fi
+          npx playwright install --with-deps ${{ matrix.browser }} > ../logs/playwright-install.log 2>&1
+      - name: npm run check
+        if: matrix.browser == 'chromium'
+        working-directory: snapdom
+        run: |
+          set -o pipefail
+          npm run check 2>&1 | tee ../logs/check.log
+      - name: The patches' own tests
+        working-directory: snapdom
+        run: |
+          set -o pipefail
+          files=$(git diff --name-only "$SNAPDOM" HEAD -- '__tests__/*.test.js')
+          echo "$files"
+          BROWSER=${{ matrix.browser }} npx vitest run $files --browser.headless --reporter=verbose 2>&1 | tee ../logs/patch-tests-${{ matrix.browser }}.log
+      - name: The whole suite
+        if: always()
+        working-directory: snapdom
+        run: |
+          set -o pipefail
+          BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run --browser.headless --reporter=dot 2>&1 | tee ../logs/suite-${{ matrix.browser }}.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: logs-${{ matrix.browser }}
+          path: logs/
+          retention-days: 1

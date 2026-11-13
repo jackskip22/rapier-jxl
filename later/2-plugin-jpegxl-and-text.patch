@@ -1,0 +1,666 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Contributor <contributor@example.invalid>
+Date: Fri, 13 Nov 2026 15:30:57 +0000
+Subject: [PATCH 2/3] chore(plugins): jxl loads its encoder from jpegxl
+
+rapier-jxl is published on npm as jpegxl. The rapier-jxl package stays and
+re-exports jpegxl, so installs of either keep working.
+---
+ __tests__/plugin.jxl.lifecycle.test.js | 12 +++++-----
+ __tests__/plugin.jxl.test.js           | 33 ++++++++++++++------------
+ docs/llms-full.txt                     |  2 +-
+ docs/llms.txt                          |  2 +-
+ packages/plugins/README.md             |  8 +++----
+ packages/plugins/jxl.d.ts              | 14 +++++------
+ packages/plugins/jxl.js                | 30 ++++++++++++-----------
+ packages/plugins/package.json          |  6 ++---
+ scripts/check-pack.mjs                 |  2 +-
+ 9 files changed, 57 insertions(+), 52 deletions(-)
+
+diff --git a/__tests__/plugin.jxl.lifecycle.test.js b/__tests__/plugin.jxl.lifecycle.test.js
+index bb0ecc0..e117449 100644
+--- a/__tests__/plugin.jxl.lifecycle.test.js
++++ b/__tests__/plugin.jxl.lifecycle.test.js
+@@ -14,7 +14,7 @@ const counted = (real) => ({
+     return { prepare: (k) => codec.prepare(k), capture: (c, o) => codec.capture(c, o), decode: (b, o) => codec.decode(b, o), close: () => { seen.closed++; return codec.close() } }
+   },
+ })
+-vi.mock('rapier-jxl/page-rects', async (importOriginal) => {
++vi.mock('jpegxl/page-rects', async (importOriginal) => {
+   seen.loads.push('page-rects')
+   const real = await importOriginal()
+   return {
+@@ -30,8 +30,8 @@ vi.mock('rapier-jxl/page-rects', async (importOriginal) => {
+     },
+   }
+ })
+-vi.mock('rapier-jxl/codec/capture-complete', async (importOriginal) => { seen.loads.push('capture-complete'); return counted(await importOriginal()) })
+-vi.mock('rapier-jxl/codec/decode', async (importOriginal) => { seen.loads.push('decode'); return counted(await importOriginal()) })
++vi.mock('jpegxl/codec/capture-complete', async (importOriginal) => { seen.loads.push('capture-complete'); return counted(await importOriginal()) })
++vi.mock('jpegxl/codec/decode', async (importOriginal) => { seen.loads.push('decode'); return counted(await importOriginal()) })
+ 
+ const made = []
+ afterEach(async () => { while (made.length) await made.pop()(); clearPlugins(); seen.extra = seen.measureFails = null })
+@@ -90,7 +90,7 @@ describe('jxl plugin: loading', () => {
+   })
+ 
+   it('only the default encoder has a door: the others are your codec', async () => {
+-    for (const module of ['rapier-jxl/upload', 'rapier-jxl/capture']) expect(() => jxl({ module })).toThrow(/needs your codec/)
++    for (const module of ['jpegxl/upload', 'jpegxl/capture']) expect(() => jxl({ module })).toThrow(/needs your codec/)
+     expect(seen.loads).toEqual(['page-rects', 'capture-complete'])
+   })
+ })
+@@ -262,8 +262,8 @@ describe('jxl plugin: resources', () => {
+     URL.createObjectURL = (b) => { const u = createObjectURL(b); live.add(u); return u }
+     URL.revokeObjectURL = (u) => { live.delete(u); revokeObjectURL(u) }
+     made.push(() => { URL.createObjectURL = createObjectURL; URL.revokeObjectURL = revokeObjectURL })
+-    const { createCodec } = await import('rapier-jxl/codec/decode')
+-    const decoder = createCodec({ module: 'rapier-jxl/decode' })
++    const { createCodec } = await import('jpegxl/codec/decode')
++    const decoder = createCodec({ module: 'jpegxl/decode' })
+     made.push(() => decoder.close())
+     const result = await snapdom(card(), { plugins: [jxl({ decoder })] })
+     for (const quality of [0.8, 1]) {
+diff --git a/__tests__/plugin.jxl.test.js b/__tests__/plugin.jxl.test.js
+index 1126843..1a38a2f 100644
+--- a/__tests__/plugin.jxl.test.js
++++ b/__tests__/plugin.jxl.test.js
+@@ -2,12 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+ import { snapdom } from '../src/api/snapdom.js'
+ import { registerPlugins, clearPlugins } from '../src/core/plugins.js'
+ import { jxl as plugin } from '../packages/plugins/jxl.js'
+-import { createCodec } from 'rapier-jxl/codec'
+-import { createCodec as createDecoder } from 'rapier-jxl/codec/decode'
++import { createCodec } from 'jpegxl/codec'
++import { createCodec as createDecoder } from 'jpegxl/codec/decode'
+ 
+ // A real rapier-jxl encoder that records what the plugin asked of it, and where the red text is on
+ // the canvas it was given.
+-function recording(module = 'rapier-jxl/capture-complete') {
++function recording(module = 'jpegxl/capture-complete') {
+   const real = createCodec({ module })
+   // Each encoder holds a worker: closed after its test, or a long run runs out of them.
+   made.push(() => { real.close() })
+@@ -59,7 +59,7 @@ afterEach(async () => { while (made.length) await made.pop()(); clearPlugins() }
+ // Every plugin a test makes closes the encoder it created afterwards.
+ const jxl = (options) => { const p = plugin(options); made.push(() => p.close()); return p }
+ // toJxl() shows JPEG XL through a decoder where the browser cannot.
+-const decoding = () => { const d = createDecoder({ module: 'rapier-jxl/decode' }); made.push(() => d.close()); return d }
++const decoding = () => { const d = createDecoder({ module: 'jpegxl/decode' }); made.push(() => d.close()); return d }
+ 
+ function card(style = '', text = 'Exact text', parent = document.body) {
+   const el = document.createElement('div')
+@@ -136,18 +136,21 @@ describe('jxl plugin', () => {
+     expect(p.name).toBe('jxl')
+     expect(p.pure).toBe(true)
+     expect(typeof p.afterClone).toBe('function')
+-    expect(jxl({ module: 'rapier-jxl/capture', codec: recording('rapier-jxl/capture') }).afterClone).toBeUndefined()
++    expect(jxl({ module: 'jpegxl/capture', codec: recording('jpegxl/capture') }).afterClone).toBeUndefined()
+     const exports = p.defineExports({ exports: {} })
+     expect(Object.keys(exports).sort()).toEqual(['blob', 'download', 'jxl'])
+   })
+ 
+   it('the upload module encodes with your codec; an unknown module is refused', async () => {
+-    expect(() => jxl({ module: 'rapier-jxl' })).toThrow(/module/)
++    expect(() => jxl({ module: 'jpegxl' })).toThrow(/module/)
++    // rapier-jxl's names still name the same encoders.
++    expect(() => jxl({ module: 'rapier-jxl/upload' })).toThrow(/jpegxl\/codec\/upload/)
++    expect(jxl({ module: 'rapier-jxl/capture-complete' })).toBe(jxl())
+     // One codec door: the exact and upload encoders come as your own codec.
+-    expect(() => jxl({ module: 'rapier-jxl/upload' })).toThrow(/rapier-jxl\/codec\/upload/)
+-    const codec = createCodec({ module: 'rapier-jxl/upload' })
++    expect(() => jxl({ module: 'jpegxl/upload' })).toThrow(/jpegxl\/codec\/upload/)
++    const codec = createCodec({ module: 'jpegxl/upload' })
+     made.push(() => codec.close())
+-    const result = await snapdom(el, { plugins: [jxl({ module: 'rapier-jxl/upload', codec })] })
++    const result = await snapdom(el, { plugins: [jxl({ module: 'jpegxl/upload', codec })] })
+     expect((await result.toBlob({ format: 'jxl', dpr: 1, quality: 0.8 })).type).toBe('image/jxl')
+   })
+ 
+@@ -240,11 +243,11 @@ describe('jxl plugin', () => {
+     }
+     // Text and photo rectangles measure photos on the encoder's own reconstruction: the default worker
+     // (no decoder on a browser without JPEG XL) and a module given a decoder write the same file.
+-    const own = createCodec({ module: 'rapier-jxl/capture-complete' })
++    const own = createCodec({ module: 'jpegxl/capture-complete' })
+     made.push(() => own.close())
+     const worker = await encode(own)
+-    const direct = await import('rapier-jxl/capture-complete')
+-    const { decode } = await import('rapier-jxl/decode')
++    const direct = await import('jpegxl/capture-complete')
++    const { decode } = await import('jpegxl/decode')
+     direct.configureDecoder(decode)
+     try {
+       expect(await encode(direct)).toEqual(worker)
+@@ -539,8 +542,8 @@ describe('jxl plugin: SnapDOM features', () => {
+   })
+ 
+   it('two instances with different modules', async () => {
+-    const exact = recording('rapier-jxl/capture'), mixed = recording()
+-    const a = await snapdom(card(), { plugins: [jxl({ module: 'rapier-jxl/capture', codec: exact })] })
++    const exact = recording('jpegxl/capture'), mixed = recording()
++    const a = await snapdom(card(), { plugins: [jxl({ module: 'jpegxl/capture', codec: exact })] })
+     const b = await snapdom(card(), { plugins: [jxl({ codec: mixed })] })
+     await exportOf(a); await exportOf(b)
+     expect(exact.calls[0].fidelity).toBe('exact')
+@@ -631,7 +634,7 @@ describe('jxl plugin: cancellation and saving', () => {
+   }
+ 
+   it('an encoder that finishes after the abort loses to it, and nothing is saved', async () => {
+-    const real = createCodec({ module: 'rapier-jxl/capture-complete' })
++    const real = createCodec({ module: 'jpegxl/capture-complete' })
+     made.push(() => real.close())
+     let late = null
+     const codec = {
+diff --git a/docs/llms-full.txt b/docs/llms-full.txt
+index bc9d6a2..447baf1 100644
+--- a/docs/llms-full.txt
++++ b/docs/llms-full.txt
+@@ -384,7 +384,7 @@ For global registration, use `snapdom.plugins(plugin, ...)`. Definitions may be
+ | `timestampOverlay()` | Timestamp badge | format datetime, position bottom-right |
+ | `redactInputs()` | Masks input/textarea values, excludes blocks and removes named attributes; `<select>` values are not masked, hide them with `blocks` | types, autocomplete, selector, all, mask, blocks, attributes |
+ | `asciiExport()` | `toAscii(opts?)` → string; `width`, `charset` and `invert` can be overridden per call | width 80 characters, charset `' .:-=+*#%@'`, invert false |
+-| `jxl()` | `toJxl()` → `<img>`; `toBlob({ format: 'jxl' })` and `download({ format: 'jxl' })` → `image/jxl` | effort 3 (1-9), quality 0.92 (1 is exact); import from `@zumer/snapdom-plugins/jxl`, needs `rapier-jxl` |
++| `jxl()` | `toJxl()` → `<img>`; `toBlob({ format: 'jxl' })` and `download({ format: 'jxl' })` → `image/jxl` | effort 3 (1-9), quality 0.92 (1 is exact); import from `@zumer/snapdom-plugins/jxl`, needs `jpegxl` |
+ | `pdf()` | `toPdf()` → Blob; optional download | selectable text, pagination, links and optional form fields |
+ | `vector()` | `toVector()` → SVG string; `toFigma()` → clipboard | supported text and shapes reconstructed as vectors |
+ | `htmlExport()` | `toHtml()` → string | fullDocument true, filename capture.html |
+diff --git a/docs/llms.txt b/docs/llms.txt
+index 298fc93..738ee45 100644
+--- a/docs/llms.txt
++++ b/docs/llms.txt
+@@ -156,7 +156,7 @@ Import factories from their packages and pass instances through `plugins`. The t
+ - `timestampOverlay({ format?, position? })`: timestamp badge. Page: https://snapdom.dev/plugins/timestamp-overlay/
+ - `redactInputs({ types?, autocomplete?, selector?, all?, mask?, blocks?, attributes? })`: masks input/textarea values, excludes blocks and removes named attributes; `<select>` values are not masked, hide them with `blocks`. Page: https://snapdom.dev/plugins/redact-inputs/
+ - `asciiExport({ width?, charset?, invert? })`: `toAscii(opts?)` returns text; `width`, `charset` and `invert` can be overridden per call. Page: https://snapdom.dev/plugins/ascii-export/
+-- `jxl({ effort?, decoder? })`: `toJxl()` returns an `<img>`; `toBlob({ format: 'jxl' })` and `download({ format: 'jxl' })` give an `image/jxl` file with exact text and lossy photos. Import it from `@zumer/snapdom-plugins/jxl` (it is not in the package root) and install `rapier-jxl`, its encoder. Page: https://snapdom.dev/plugins/jxl/
++- `jxl({ effort?, decoder? })`: `toJxl()` returns an `<img>`; `toBlob({ format: 'jxl' })` and `download({ format: 'jxl' })` give an `image/jxl` file with exact text and lossy photos. Import it from `@zumer/snapdom-plugins/jxl` (it is not in the package root) and install `jpegxl`, its encoder. Page: https://snapdom.dev/plugins/jxl/
+ - `pdf()`: `toPdf()` returns a PDF Blob with selectable text, pagination, links and optional form fields; `download` is opt-in. Page and reference: https://snapdom.dev/plugins/pdf/
+ - `vector({ exclude? })`: `toVector()` returns a standalone SVG string with editable text and shapes; `toFigma()` returns `Promise<void>` after writing a Figma clipboard payload. Page and reference: https://snapdom.dev/plugins/vector/
+ - `stream(element, { onFrame?, fps?, patches?, animations? })`: a live canvas of the element that repaints only the boxes that changed; returns `{ canvas, ready, stats, stop() }` and accepts every capture option. `streamExport()` adds `toStream()` to a capture result; `streamTexture(gl)` keeps a WebGL texture in step with the stream and `recordCanvas(canvas)` records it. Pixel-exact patches need SnapDOM 3.4.0 or newer. Page and reference: https://snapdom.dev/plugins/stream/
+diff --git a/packages/plugins/README.md b/packages/plugins/README.md
+index 8523e66..0e1085d 100644
+--- a/packages/plugins/README.md
++++ b/packages/plugins/README.md
+@@ -399,11 +399,11 @@ The document retains source markup, including event-handler attributes; it is no
+ ### `jxl`
+ 
+ Adds `toJxl()`, `toBlob({ format: 'jxl' })` and `download({ format: 'jxl' })`. Text and interface stay
+-exact while photos take the quality, in one JPEG XL file. The encoder is [rapier-jxl](https://www.npmjs.com/package/rapier-jxl)
++exact while photos take the quality, in one JPEG XL file. The encoder is rapier-jxl, published on npm as [`jpegxl`](https://www.npmjs.com/package/jpegxl)
+ (MIT), an optional peer: the text measurement loads at the first capture, the encoder at the first export.
+ 
+ ```bash
+-npm install rapier-jxl
++npm install jpegxl
+ ```
+ 
+ ```js
+@@ -417,9 +417,9 @@ await result.download({ format: 'jxl', filename: 'card' });
+ 
+ | Option | Type | Default | Description |
+ |--------|------|---------|-------------|
+-| `module` | `string` | `'rapier-jxl/capture-complete'` | With your `codec`: `'rapier-jxl/capture'` (every pixel exact) or `'rapier-jxl/upload'` (photographic) |
++| `module` | `string` | `'jpegxl/capture-complete'` | With your `codec`: `'jpegxl/capture'` (every pixel exact) or `'jpegxl/upload'` (photographic) |
+ | `codec` | `object` | none | Your own encoder with `prepare` and `capture` |
+-| `decoder` | `object` | none | `createCodec()` from `rapier-jxl/codec/decode`, for `toJxl()` where JPEG XL does not show |
++| `decoder` | `object` | none | `createCodec()` from `jpegxl/codec/decode`, for `toJxl()` where JPEG XL does not show |
+ | `effort` | `number` | `3` | Default effort, 1-9 |
+ | `webgpu` | `false \| 'required'` | none | Disable WebGPU, or require a device |
+ | `helpers` | `boolean \| object` | none | Helper workers for the encoder the plugin creates |
+diff --git a/packages/plugins/jxl.d.ts b/packages/plugins/jxl.d.ts
+index 3b2da12..77d7dd5 100644
+--- a/packages/plugins/jxl.d.ts
++++ b/packages/plugins/jxl.d.ts
+@@ -3,16 +3,16 @@
+  *
+  * The plugin instance type comes from the core package: one definition of what a plugin IS,
+  * so a plugin that stops matching the host's contract fails to typecheck instead of failing
+- * at capture time. Nothing here imports rapier-jxl, an optional peer dependency.
++ * at capture time. Nothing here imports jpegxl, an optional peer dependency.
+  */
+ import type { SnapdomPlugin } from '@zumer/snapdom';
+ 
+ /** Every pixel exact, efforts 1-5. */
+-export type ExactCaptureModule = 'rapier-jxl/capture';
++export type ExactCaptureModule = 'jpegxl/capture' | 'rapier-jxl/capture';
+ /** Photographic capture, efforts 1-3. */
+-export type UploadCaptureModule = 'rapier-jxl/upload';
++export type UploadCaptureModule = 'jpegxl/upload' | 'rapier-jxl/upload';
+ /** Exact text and lossy photos in one file, efforts 1-9. The default. */
+-export type CompleteCaptureModule = 'rapier-jxl/capture-complete';
++export type CompleteCaptureModule = 'jpegxl/capture-complete' | 'rapier-jxl/capture-complete';
+ export type JxlCaptureModule = ExactCaptureModule | UploadCaptureModule | CompleteCaptureModule;
+ 
+ /** Higher effort takes longer to encode, usually for a smaller file. */
+@@ -39,13 +39,13 @@ export interface JxlEncoder {
+ /** `memoryBytes` bounds the helpers' memory; it is required for a `count` above 0. */
+ export type JxlHelpers = boolean | { count: 0; memoryBytes?: number } | { count: number; memoryBytes: number };
+ 
+-/** A decoder for `toJxl()` where the browser cannot show JPEG XL: `createCodec()` from `rapier-jxl/codec/decode`. */
++/** A decoder for `toJxl()` where the browser cannot show JPEG XL: `createCodec()` from `jpegxl/codec/decode`. */
+ export interface JxlDecoder {
+   decode(input: Blob, options: Record<string, unknown>): Promise<{ data: Uint8Array; width: number; height: number }>;
+ }
+ 
+ export interface JxlOptions {
+-  /** Default `'rapier-jxl/capture-complete'`, which the plugin creates; the others need your `codec`. */
++  /** Default `'jpegxl/capture-complete'`, which the plugin creates; the others need your `codec`. */
+   module?: JxlCaptureModule;
+   /** Your own encoder; the plugin then creates none and ignores `helpers`. */
+   codec?: JxlEncoder;
+@@ -79,7 +79,7 @@ export interface JxlExportOptions {
+ 
+ /**
+  * Adds `result.toJxl()` (an `<img>`), `toBlob({ format: 'jxl' })` (the file) and
+- * `download({ format: 'jxl' })`. Install rapier-jxl next to the plugins.
++ * `download({ format: 'jxl' })`. Install jpegxl next to the plugins.
+  */
+ export declare function jxl(options?: JxlOptions): JxlPlugin;
+ 
+diff --git a/packages/plugins/jxl.js b/packages/plugins/jxl.js
+index 6bcb3c5..b598ec0 100644
+--- a/packages/plugins/jxl.js
++++ b/packages/plugins/jxl.js
+@@ -6,19 +6,19 @@
+  *
+  * Text and interface stay exact while photos take the quality, in one file. The plugin
+  * measures where text and photos are on the page in `afterClone`, then encodes the drawn
+- * canvas in the browser with rapier-jxl 8.3.2 or later (MIT), an optional peer dependency:
+- * `npm install rapier-jxl`. The text measurement loads at the first capture, the encoder at the
++ * canvas in the browser with jpegxl 8.3.5 or later (rapier-jxl, MIT), an optional peer dependency:
++ * `npm install jpegxl`. The text measurement loads at the first capture, the encoder at the
+  * first JPEG XL export.
+  *
+  * @param {Object} [options]
+- * @param {string} [options.module='rapier-jxl/capture-complete'] - What the encoder is:
+- *   'rapier-jxl/capture-complete' (efforts 1-9, created by the plugin), or with your own `codec`,
+- *   'rapier-jxl/capture' (every pixel exact, efforts 1-5) or 'rapier-jxl/upload' (photographic,
++ * @param {string} [options.module='jpegxl/capture-complete'] - What the encoder is:
++ *   'jpegxl/capture-complete' (efforts 1-9, created by the plugin), or with your own `codec`,
++ *   'jpegxl/capture' (every pixel exact, efforts 1-5) or 'jpegxl/upload' (photographic,
+  *   efforts 1-3)
+  * @param {Object} [options.codec] - Your own encoder with `prepare` and `capture`: a rapier-jxl
+  *   codec or a directly imported capture module
+  * @param {Object} [options.decoder] - A decoder with `decode` (`createCodec()` from
+- *   'rapier-jxl/codec/decode'): `toJxl()` shows its pixels where the browser cannot show JPEG XL
++ *   'jpegxl/codec/decode'): `toJxl()` shows its pixels where the browser cannot show JPEG XL
+  * @param {number} [options.effort=3] - Default effort for each export; an export's `effort` wins
+  * @param {false|'required'} [options.webgpu] - Disable WebGPU, or require a device
+  * @param {boolean|{count: number, memoryBytes?: number}} [options.helpers] - Helper workers for a
+@@ -26,7 +26,9 @@
+  * @returns {Object} SnapDOM plugin
+  */
+ export function jxl(options = {}) {
+-  const { module = 'rapier-jxl/capture-complete', codec, decoder, effort: preset, webgpu, helpers: asked } = options;
++  const { module: named = 'jpegxl/capture-complete', codec, decoder, effort: preset, webgpu, helpers: asked } = options;
++  // rapier-jxl re-exports jpegxl, so its module names keep meaning the same encoder.
++  const module = typeof named === 'string' ? named.replace(/^rapier-jxl\//, 'jpegxl/') : named;
+   // The same helpers written in another order share one plugin.
+   const helpers = asked && typeof asked === 'object'
+     ? { count: asked.count, ...(asked.memoryBytes !== undefined && { memoryBytes: asked.memoryBytes }) } : asked || undefined;
+@@ -47,13 +49,13 @@ function create(module, codec, decoder, preset, webgpu, helpers) {
+   if (!MODULES.includes(module)) throw new Error(`The jxl plugin's module is ${MODULES.join(', ')} or left out.`);
+   // One codec door, so a bundler ships one encoder's workers: the others come as your own codec.
+   if (module !== MODULES[0] && !codec) throw new Error(`The jxl plugin's ${module} needs your codec: createCodec() from ${module.replace('/', '/codec/')}.`);
+-  const exactOnly = module === 'rapier-jxl/capture';
++  const exactOnly = module === 'jpegxl/capture';
+   // Edges are measured with the page, for any export effort from 4 (a scan of about 0.1 ms on
+   // SnapDOM's demo pages): measuring the page again at export could see it changed.
+-  const edges = module !== 'rapier-jxl/upload';
++  const edges = module !== 'jpegxl/upload';
+   // The encoder this plugin creates, on its first JPEG XL export; `close()` ends it.
+   let own = null;
+-  const ownCodec = () => own ??= import('rapier-jxl/codec/capture-complete').then(
++  const ownCodec = () => own ??= import('jpegxl/codec/capture-complete').then(
+     ({ createCodec }) => createCodec({ module, ...(helpers !== undefined && { helpers }) }),
+     error => { own = null; throw needs(error); });
+ 
+@@ -249,17 +251,17 @@ function drawnPixels(context, options) {
+   return width * height * dpr * dpr;
+ }
+ 
+-// rapier-jxl is an optional peer dependency, imported the first time a capture or export needs it,
++// jpegxl is an optional peer dependency, imported the first time a capture or export needs it,
+ // so calling jxl() and the rest of the plugins load nothing.
+ const checkEffort = effort => {
+   if (effort !== undefined && !(Number.isInteger(effort) && effort >= 1 && effort <= 9)) throw new RangeError('The jxl plugin\'s effort is a whole number from 1 to 9.');
+ };
+-const MODULES = ['rapier-jxl/capture-complete', 'rapier-jxl/capture', 'rapier-jxl/upload'];
+-const needs = error => new Error('The jxl plugin needs rapier-jxl 8.3.2 or later: npm install rapier-jxl', { cause: error });
++const MODULES = ['jpegxl/capture-complete', 'jpegxl/capture', 'jpegxl/upload'];
++const needs = error => new Error('The jxl plugin needs jpegxl 8.3.5 or later: npm install jpegxl', { cause: error });
+ 
+ function loadRects() {
+   if (measuring) return Promise.resolve(measuring);
+-  rectsLoading ??= import('rapier-jxl/page-rects').then(
++  rectsLoading ??= import('jpegxl/page-rects').then(
+     m => (measuring = { measure: m.measure, pageRects: m.pageRects }),
+     error => { rectsLoading = null; throw needs(error); });
+   return rectsLoading;
+diff --git a/packages/plugins/package.json b/packages/plugins/package.json
+index 55aeaec..c5f4cf8 100644
+--- a/packages/plugins/package.json
++++ b/packages/plugins/package.json
+@@ -53,16 +53,16 @@
+   },
+   "peerDependencies": {
+     "@zumer/snapdom": "^3.4.0",
+-    "rapier-jxl": "^8.3.2"
++    "jpegxl": "^8.3.5"
+   },
+   "peerDependenciesMeta": {
+-    "rapier-jxl": {
++    "jpegxl": {
+       "optional": true
+     }
+   },
+   "devDependencies": {
+     "@zumer/snapdom": "file:../..",
+-    "rapier-jxl": "^8.3.2"
++    "jpegxl": "^8.3.5"
+   },
+   "sideEffects": false
+ }
+diff --git a/scripts/check-pack.mjs b/scripts/check-pack.mjs
+index 1bca333..f0bbf28 100644
+--- a/scripts/check-pack.mjs
++++ b/scripts/check-pack.mjs
+@@ -204,7 +204,7 @@ export async function use(el: HTMLElement) {
+     // must register. The helpers (a stream, its WebGL texture and recorder, the overlay
+     // templates, the ASCII converter) are not factories: they take an element or a canvas and
+     // need a DOM, so they are only checked for identity. pdf and vector also export default.
+-    // jxl is the one subpath the barrel must NOT re-export: it imports rapier-jxl, an optional
++    // jxl is the one subpath the barrel must NOT re-export: it imports jpegxl, an optional
+     // peer, and a bundler resolves a barrel's imports whether or not the app uses them.
+     ['official plugins', `(async () => {
+       const HELPERS = new Set(${JSON.stringify(HELPERS)})
+-- 
+2.43.0
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Contributor <contributor@example.invalid>
+Date: Fri, 13 Nov 2026 15:32:28 +0000
+Subject: [PATCH 3/3] feat(plugins/jxl): text over a photo stays exact, the
+ photo under it lossy
+
+Where certified plain text meets a photo, the export is drawn once more
+with the css export option making its text transparent. The samples that
+differ are the text, kept exact; the photo under it takes the quality.
+On a SnapDOM without the option, a raster capture, or jpegxl before 8.4.0,
+the page is drawn once, as before.
+---
+ __tests__/plugin.jxl.textOverPhoto.test.js |  85 ++++++++++++++++
+ packages/plugins/jxl.js                    | 108 +++++++++++++++++++--
+ 2 files changed, 185 insertions(+), 8 deletions(-)
+ create mode 100644 __tests__/plugin.jxl.textOverPhoto.test.js
+
+diff --git a/__tests__/plugin.jxl.textOverPhoto.test.js b/__tests__/plugin.jxl.textOverPhoto.test.js
+new file mode 100644
+index 0000000..4e30939
+--- /dev/null
++++ b/__tests__/plugin.jxl.textOverPhoto.test.js
+@@ -0,0 +1,85 @@
++import { it, expect, afterEach } from 'vitest'
++import { snapdom } from '../src/api/snapdom.js'
++import { clearPlugins } from '../src/core/plugins.js'
++import { jxl as plugin } from '../packages/plugins/jxl.js'
++import { createCodec } from 'jpegxl/codec'
++import { createCodec as createDecoder } from 'jpegxl/codec/decode'
++
++const made = []
++afterEach(async () => { while (made.length) await made.pop()(); clearPlugins(); document.querySelectorAll('[data-t]').forEach(e => e.remove()) })
++
++function recording() {
++  const real = createCodec({ module: 'jpegxl/capture-complete' })
++  made.push(() => real.close())
++  const calls = []
++  return { calls, prepare: k => real.prepare(k), capture: (canvas, options) => { calls.push({ canvas, ...options }); return real.capture(canvas, options) } }
++}
++
++// A noisy photo with a white headline over it, and a caption beside it on white.
++function page(over = true) {
++  const el = document.createElement('div')
++  el.dataset.t = ''
++  el.style.cssText = 'position:absolute;left:0;top:0;width:320px;height:180px;background:#fff;font:700 30px sans-serif'
++  const photo = document.createElement('canvas')
++  photo.width = 200; photo.height = 160
++  const g = photo.getContext('2d'), d = g.createImageData(200, 160)
++  for (let i = 0; i < d.data.length; i += 4) { const v = (i * 2654435761 >>> 24); d.data.set([v, 255 - v, (v * 7) & 255, 255], i) }
++  g.putImageData(d, 0, 0)
++  photo.style.cssText = 'position:absolute;left:10px;top:10px;width:200px;height:160px'
++  const text = document.createElement('span')
++  text.textContent = 'Headline'
++  text.style.cssText = `position:absolute;left:${over ? 24 : 220}px;top:70px;color:#fff`
++  el.append(photo, text)
++  document.body.append(el)
++  return el
++}
++
++it('text over a photo: the encoder gets the page drawn without its text, differing only at the text', async () => {
++  const codec = recording()
++  const p = plugin({ codec }); made.push(() => p.close())
++  const result = await snapdom(page(), { plugins: [p], embedFonts: false, dpr: 1 })
++  const blob = await result.toBlob({ format: 'jxl' })
++  expect(blob.type).toBe('image/jxl')
++  const call = codec.calls.find(c => c.withoutText)
++  expect(call, 'drawn a second time').toBeTruthy()
++  const { canvas, withoutText } = call
++  const a = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data
++  let differ = 0, outside = 0
++  for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
++    const i = (y * canvas.width + x) * 4
++    if (a[i] === withoutText.data[i] && a[i + 1] === withoutText.data[i + 1] && a[i + 2] === withoutText.data[i + 2]) continue
++    differ++
++    if (!withoutText.rects.some(r => x >= r.x && y >= r.y && x < r.x + r.width && y < r.y + r.height)) outside++
++  }
++  expect(differ).toBeGreaterThan(50)
++  expect(outside, 'samples changed outside the released text').toBe(0)
++  // Every sample the text drew comes back exact.
++  const decoder = createDecoder({ module: 'jpegxl/decode' }); made.push(() => decoder.close())
++  const { data } = await decoder.decode(new Uint8Array(await blob.arrayBuffer()))
++  let wrong = 0
++  for (let i = 0; i < a.length; i += 4) {
++    const textSample = a[i] !== withoutText.data[i] || a[i + 1] !== withoutText.data[i + 1] || a[i + 2] !== withoutText.data[i + 2]
++    if (textSample && (data[i] !== a[i] || data[i + 1] !== a[i + 1] || data[i + 2] !== a[i + 2])) wrong++
++  }
++  expect(wrong, 'text samples wrong').toBe(0)
++})
++
++it('text beside a photo: the page is drawn once', async () => {
++  const codec = recording()
++  const p = plugin({ codec }); made.push(() => p.close())
++  const result = await snapdom(page(false), { plugins: [p], embedFonts: false, dpr: 1 })
++  await result.toBlob({ format: 'jxl' })
++  expect(codec.calls.some(c => c.withoutText)).toBe(false)
++})
++
++it('a SnapDOM without the css option: the same page is drawn once', async () => {
++  const codec = recording()
++  const p = plugin({ codec }); made.push(() => p.close())
++  // A released SnapDOM, which ignores the css option. Last in this file: the plugin then draws once for good.
++  const canvas = ctx => o => { const { css, ...rest } = o || {}; return ctx.exports.canvas(rest) }
++  const older = { ...p, name: 'jxl-older-core', defineExports: ctx => p.defineExports({ ...ctx, exports: { ...ctx.exports, canvas: canvas(ctx) } }) }
++  const result = await snapdom(page(), { plugins: [older], embedFonts: false, dpr: 1 })
++  expect((await result.toBlob({ format: 'jxl' })).type).toBe('image/jxl')
++  expect(codec.calls.length).toBeGreaterThan(0)
++  expect(codec.calls.some(c => c.withoutText)).toBe(false)
++})
+diff --git a/packages/plugins/jxl.js b/packages/plugins/jxl.js
+index b598ec0..53def77 100644
+--- a/packages/plugins/jxl.js
++++ b/packages/plugins/jxl.js
+@@ -8,7 +8,9 @@
+  * measures where text and photos are on the page in `afterClone`, then encodes the drawn
+  * canvas in the browser with jpegxl 8.3.5 or later (rapier-jxl, MIT), an optional peer dependency:
+  * `npm install jpegxl`. The text measurement loads at the first capture, the encoder at the
+- * first JPEG XL export.
++ * first JPEG XL export. Where text lies over a photo, the export is drawn a second time with its
++ * text transparent: the samples that differ are the text, kept exact, and the photo under it takes
++ * the quality (jpegxl 8.4.0 or later; earlier ones keep such text whole).
+  *
+  * @param {Object} [options]
+  * @param {string} [options.module='jpegxl/capture-complete'] - What the encoder is:
+@@ -112,7 +114,8 @@ function create(module, codec, decoder, preset, webgpu, helpers) {
+         const ready = Promise.resolve().then(() => encoder.prepare('capture'));
+         ready.catch(() => {});
+         const mine = c => c !== options.canvas;
+-        const drawing = exports.canvas({ ...options, backgroundColor: options.backgroundColor ?? '#ffffff' });
++        const draw = { ...options, backgroundColor: options.backgroundColor ?? '#ffffff' };
++        const drawing = exports.canvas(draw);
+         let canvas;
+         try {
+           canvas = await abortable(drawing, signal);
+@@ -125,7 +128,7 @@ function create(module, codec, decoder, preset, webgpu, helpers) {
+           signal?.throwIfAborted();
+           if (!codec && canvas.width * canvas.height > MAX_PIXELS) throw tooLarge();
+           await abortable(ready, signal);
+-          const blob = await encode(encoder, canvas, context, options, { effort, signal, onProgress, onEncoded, pageRects });
++          const blob = await encode(encoder, canvas, context, options, { effort, signal, onProgress, onEncoded, pageRects, draw });
+           return { blob, canvas, own: mine(canvas) };
+         } catch (error) {
+           if (mine(canvas)) free(canvas);
+@@ -172,7 +175,7 @@ function create(module, codec, decoder, preset, webgpu, helpers) {
+       };
+ 
+       // Maps the measurement onto the drawn canvas and encodes it.
+-      async function encode(encoder, canvas, context, options, { effort, signal, onProgress, onEncoded, pageRects }) {
++      async function encode(encoder, canvas, context, options, { effort, signal, onProgress, onEncoded, pageRects, draw }) {
+         const { quality = 0.92 } = options;
+         const photo = { quality: Math.max(1, quality * 100) };
+         // The canvas shows the capture's viewBox: the measurement moves into it the way SnapDOM
+@@ -206,11 +209,18 @@ function create(module, codec, decoder, preset, webgpu, helpers) {
+         // the page has it, so the rectangles cannot follow: it stays exact.
+         if (below && (!rects?.photoRects?.length || atLimit(canvas))) rects = null;
+ 
++        // Text over a photograph: the canvas drawn again with its text transparent, so the encoder keeps
++        // exactly the samples the text drew exact and codes the photograph under them. A page without
++        // text over a photograph is drawn once.
++        // A raster html-in-canvas capture has no styles to change: drawn once.
++        const withoutText = rects && !unclipped && context.engine !== 'html-in-canvas' ? await released(shot, rects, canvas, area, draw, signal, pageRects) : null;
++        if (withoutText) rects = { ...rects, withoutText };
+         const base = { ...(effort !== undefined && { effort }), ...(webgpu !== undefined && { webgpu }), ...(signal && { signal }) };
+         const hooks = { signal, onProgress, onEncoded };
++        const capture = withoutText ? withoutTextOnce(encoder, canvas) : options => encoder.capture(canvas, options);
+         const file = below && rects
+-          ? await smaller(encoder, canvas, base, [{ ...rects, fidelity: photo }, { fidelity: 'exact' }], hooks)
+-          : await encoder.capture(canvas, {
++          ? await smaller(capture, base, [{ ...rects, fidelity: photo }, { fidelity: 'exact' }], hooks)
++          : await capture({
+             ...(rects ? { ...rects, fidelity: photo } : { fidelity: 'exact' }),
+             ...base, ...(onProgress !== undefined && { onProgress }), ...(onEncoded !== undefined && { onEncoded }),
+           });
+@@ -218,6 +228,55 @@ function create(module, codec, decoder, preset, webgpu, helpers) {
+         signal?.throwIfAborted();
+         return new Blob([bytesOf(file)], { type: 'image/jxl' });
+       }
++
++      // The export drawn again through SnapDOM's own export with its text transparent
++      // (`exports.canvas(options, { css })`), read as the encoder reads samples; null where it draws
++      // nothing comparable. A SnapDOM without the edit is never asked: the page is drawn once.
++      // The certified text lines (page-rects: plain one-color text, no mask, blend or filter above it) in
++      // canvas pixels, grown as their boxes are and bare; the second draw only where one meets a photo. A box
++      // is released only where each of its lines holds a sample the edit changed: a line with none was not
++      // hidden, or shows nothing, and its box stays whole.
++      async function released(shot, rects, canvas, area, draw, signal, pageRects) {
++        const text = shot.text.filter(t => t.certified);
++        if (!text.length) return null;
++        const lines = pageRects({ ...shot, text }, canvas, { area }).exactRects;
++        const bare = pageRects({ ...shot, text: text.map(t => ({ ...t, grow: 0 })) }, canvas, { area }).exactRects;
++        if (lines.length !== bare.length || !overPhoto({ exactRects: lines, photoRects: rects.photoRects })) return null;
++        const without = await textFree(draw, canvas, signal);
++        if (!without) return null;
++        const { data } = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height);
++        const changed = r => {
++          for (let y = r.y; y < r.y + r.height; y++) for (let i = (y * canvas.width + r.x) * 4, end = i + r.width * 4; i < end; i++) if (data[i] !== without.data[i]) return true;
++          return false;
++        };
++        const kept = lines.filter((r, i) => changed(bare[i])).map(({ x, y, width, height }) => ({ x, y, width, height }));
++        return kept.length ? { ...without, rects: kept } : null;
++      }
++
++      async function textFree(draw, canvas, signal) {
++        if (unstyled) return null;
++        // Never into the app's own canvas: it holds the export.
++        const { canvas: app, ...again } = draw;
++        const drawing = exports.canvas({ ...again, css: TEXT_FREE });
++        // SnapDOM refuses css on a raster capture with a RangeError, as it refuses a crop: drawn once.
++        // Any other failure fails the export.
++        const drawn = await abortable(drawing, signal).catch(error => {
++          drawing.then(free, () => {});
++          if (error instanceof RangeError && !signal?.aborted) return null;
++          throw error;
++        });
++        if (!drawn) return null;
++        try {
++          if (drawn.width !== canvas.width || drawn.height !== canvas.height) return null;
++          const { data } = drawn.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, drawn.width, drawn.height);
++          // A SnapDOM from before the css option draws the same pixels: from then on, drawn once.
++          const plain = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height).data;
++          if (data.every((v, i) => v === plain[i])) { unstyled = true; return null; }
++          return { data, width: drawn.width, height: drawn.height };
++        } finally {
++          free(drawn);
++        }
++      }
+     },
+   };
+ }
+@@ -473,12 +532,12 @@ async function save(blob, filename, strict) {
+ 
+ // Below 1:1, encode each candidate quietly, keep the smallest, then report one onEncoded and
+ // a final progress of 1. Progress runs 0 to 1 across the candidates without restarting.
+-async function smaller(encoder, canvas, base, jobs, hooks) {
++async function smaller(capture, base, jobs, hooks) {
+   const span = 1 / jobs.length;
+   let best = null, record = null;
+   for (let i = 0; i < jobs.length; i++) {
+     let got = null;
+-    const result = await encoder.capture(canvas, {
++    const result = await capture({
+       ...base, ...jobs[i],
+       onProgress: hooks.onProgress && (f => { if (f < 1) hooks.onProgress(i * span + f * span); }),
+       onEncoded: r => { got = r; },
+@@ -494,6 +553,39 @@ async function smaller(encoder, canvas, base, jobs, hooks) {
+   return best;
+ }
+ 
++// A text box meets a photo: the only pages drawn twice.
++const overPhoto = ({ exactRects, photoRects }) => exactRects.some(e => photoRects.some(p =>
++  e.x < p.x + p.width && p.x < e.x + e.width && e.y < p.y + p.height && p.y < e.y + e.height));
++
++// An encoder from before rapier-jxl 8.4.0 refuses withoutText by name: it then encodes without it.
++function withoutTextOnce(encoder, canvas) {
++  const refused = reason => reason?.code === 'JXL_OPTIONS' && /withoutText/.test(reason.message ?? '');
++  const plain = ({ withoutText, ...options }) => options;
++  return async options => {
++    let result;
++    try {
++      result = await encoder.capture(canvas, options);
++    } catch (error) {
++      if (!refused(error)) throw error;
++      return encoder.capture(canvas, plain(options));
++    }
++    return result?.fits === false && refused(result.reason) ? encoder.capture(canvas, plain(options)) : result;
++  };
++}
++
++// A SnapDOM that ignores the css export option, found on the first styled draw that changed nothing.
++let unstyled = false;
++
++// Every text transparent, drawn by SnapDOM in its first cascade layer, so these important rules
++// outrank every author rule. Nothing else is meant to change, and what else changes only adds
++// samples kept exact. Text an inline important style keeps visible changes no sample, so its line
++// keeps its box whole (released). Text drawn by a clipped background is never certified.
++const HIDE = 'color:transparent!important;-webkit-text-fill-color:transparent!important;text-shadow:none!important;' +
++  '-webkit-text-stroke-color:transparent!important;text-decoration-color:transparent!important;' +
++  'text-emphasis-color:transparent!important;caret-color:transparent!important';
++const TEXT_FREE = ['', '::before', '::after', '::marker', '::first-line', '::first-letter', '::placeholder', '::selection']
++  .map(p => '*' + p).join(',') + `{${HIDE}}:is(text,tspan,textPath){fill:transparent!important;stroke:transparent!important}`;
++
+ function bytesOf(result) {
+   if (!result?.fits || !result.bytes) {
+     throw Object.assign(new Error(result?.reason?.message ?? 'The JPEG XL file did not meet the requested target.'),
+-- 
+2.43.0
+
