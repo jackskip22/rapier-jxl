@@ -60,3 +60,27 @@ jobs:
           name: logs-${{ matrix.browser }}
           path: logs/
           retention-days: 1
+  bundlers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Playwright's Chromium
+        run: |
+          mkdir -p logs tools && cd tools
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund playwright@1.55.1 > ../logs/playwright-install.log 2>&1
+          npx playwright install --with-deps chromium >> ../logs/playwright-install.log 2>&1
+      - name: Both names in one Vite and one webpack app
+        run: |
+          set -o pipefail
+          NODE_PATH=$PWD/tools/node_modules node bundlers/both-names.mjs package/jpegxl.tgz package/rapier-jxl.tgz --vite 7.3.8 --webpack 5.101.3 2>&1 | tee logs/bundlers.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: logs-bundlers
+          path: logs/
+          retention-days: 1
