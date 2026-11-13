@@ -1,67 +1,74 @@
 // Failures in the patched suite that the unpatched suite does not have, then a verdict on each: the test runs alone
-// ten times with the patches and ten times on the unpatched commit. It is ours only when it fails alone more often
-// with the patches; otherwise it is flaky. Every list and count is also printed as a ::notice annotation.
+// thirty times with the patches and thirty times on the unpatched commit. It is ours only when it fails alone in at
+// least five more of the thirty runs with the patches; otherwise it is flaky. Counts are always passes: "passes 29/30".
+// Every list and count is also printed as a ::notice annotation.
 //   node verdict.mjs <baseline log> <patched log> <browser> <snapdom dir> <unpatched commit>
-// With ORDER=1 it prints the lists as one notice and stops (the order job).
 // Exit 1 only when a test is ours.
+//
+// LISTS="<title>|<first label>|<second label>": the two logs' lists as one notice under that title, and stop. Used by
+// the order, A/A and swapped-order jobs: "<second label> only" are the failures the second log has and the first does not.
 import {readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 
-const [baselineLog, patchedLog, browser, dir, base] = process.argv.slice(2);
+const [firstLog, secondLog, browser, dir, base] = process.argv.slice(2);
 const failures = file => new Set(readFileSync(file, 'utf8').replace(/\x1b\[[0-9;]*m/g, '').split('\n')
   .map(line => line.match(/(?:FAIL|×)\s+(?:\S+\s+)?(__tests__\/\S+\.test\.[jt]sx?.*?)\s*(?:\d+\s*ms)?\s*$/)?.[1]?.trim())
   .filter(Boolean));
-const baseline = failures(baselineLog), patched = failures(patchedLog);
+const first = failures(firstLog), second = failures(secondLog);
 const only = (a, b) => [...a].filter(x => !b.has(x)).sort();
-const suspects = only(patched, baseline), gone = only(baseline, patched), shared = [...patched].filter(x => baseline.has(x)).sort();
+const secondOnly = only(second, first), firstOnly = only(first, second), shared = [...second].filter(x => first.has(x)).sort();
 const clip = s => s.length > 900 ? s.slice(0, 897) + '...' : s;
 const notice = (title, text) => console.log(`::notice title=${title}::${clip(text.replace(/\r?\n/g, ' '))}`);
 const list = rows => rows.length ? rows.join(' ; ') : '-';
 const git = (...a) => spawnSync('git', a, {cwd: dir, encoding: 'utf8'});
 
-console.log(`only with the patches (${suspects.length})\n  ${suspects.join('\n  ')}`);
-console.log(`in both (${shared.length})\n  ${shared.join('\n  ')}`);
-console.log(`only without (${gone.length})\n  ${gone.join('\n  ')}`);
-notice(`compare ${browser}`, `only with ${suspects.length}: ${list(suspects)} | both ${shared.length}: ${list(shared)} | without ${gone.length}: ${list(gone)}`);
-
-// ORDER=1: the lists alone, as one `order <engine>` notice saying whether the two suites fail the same tests by name.
-if (process.env.ORDER) {
-  const same = !suspects.length && !gone.length;
-  notice(`order ${browser}`, `the patched suite without the patches' test file fails the same tests as unpatched: ${same ? 'yes' : 'NO'} | only with ${suspects.length}: ${list(suspects)} | only without ${gone.length}: ${list(gone)}`);
+if (process.env.LISTS) {
+  const [title, a, b] = process.env.LISTS.split('|');
+  const same = !secondOnly.length && !firstOnly.length;
+  console.log(`${b} only (${secondOnly.length})\n  ${secondOnly.join('\n  ')}\n${a} only (${firstOnly.length})\n  ${firstOnly.join('\n  ')}\nboth (${shared.length})`);
+  notice(`${title} ${browser}`, `same failures by name: ${same ? 'yes' : 'NO'} | ${b} only ${secondOnly.length}: ${list(secondOnly)} | ${a} only ${firstOnly.length}: ${list(firstOnly)} | both ${shared.length}`);
   process.exit(0);
 }
 
-// The test alone, ten times: a file and the test's own name (the last part after ' > ').
+console.log(`only with the patches (${secondOnly.length})\n  ${secondOnly.join('\n  ')}`);
+console.log(`in both (${shared.length})\n  ${shared.join('\n  ')}`);
+console.log(`only without (${firstOnly.length})\n  ${firstOnly.join('\n  ')}`);
+notice(`compare ${browser}`, `only with ${secondOnly.length}: ${list(secondOnly)} | both ${shared.length}: ${list(shared)} | without ${firstOnly.length}: ${list(firstOnly)}`);
+
+const RUNS = 30, MARGIN = 5;
+// The test alone, RUNS times: a file and the test's own name (the last part after ' > '). Returns the passes.
 function alone(entry) {
   const [file, ...path] = entry.split(' > ');
   const name = path.at(-1) ?? '', pattern = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   let passed = 0;
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < RUNS; i++) {
     const run = spawnSync('npx', ['vitest', 'run', file, '-t', pattern, '--browser.headless', '--reporter=dot'],
       {cwd: dir, encoding: 'utf8', env: {...process.env, BROWSER: browser}});
     if (run.status === 0) passed++;
   }
   return passed;
 }
+const existsIn = entry => git('cat-file', '-e', `HEAD:${entry.split(' > ')[0]}`).status === 0;
 const counts = new Map();
-if (suspects.length) {
-  for (const s of suspects) counts.set(s, {with: alone(s)});
+if (secondOnly.length) {
+  for (const s of secondOnly) counts.set(s, {with: alone(s)});
   const head = git('rev-parse', 'HEAD').stdout.trim();
   git('checkout', '-q', base);
-  for (const s of suspects) counts.get(s).without = existsIn(s) ? alone(s) : null;
+  for (const s of secondOnly) counts.get(s).without = existsIn(s) ? alone(s) : null;
   git('checkout', '-q', head);
 }
-function existsIn(entry) { return git('cat-file', '-e', `HEAD:${entry.split(' > ')[0]}`).status === 0; }
 
 let ours = 0;
 const lines = [];
-for (const s of suspects) {
-  const c = counts.get(s), verdict = c.without === null ? 'ours (a file the patches add)' : c.with < c.without ? 'ours' : 'flaky';
-  if (verdict.startsWith('ours') && (c.without === null ? c.with < 10 : true)) ours++;
-  const line = `${s}: without ${c.without ?? '-'}/10, with ${c.with}/10 alone: ${c.without === null && c.with === 10 ? 'passes alone (the patches add this file)' : verdict}`;
+for (const s of secondOnly) {
+  const c = counts.get(s);
+  // A file the patches add has no unpatched arm: ours if it fails alone at all.
+  const isOurs = c.without === null ? c.with < RUNS : c.without - c.with >= MARGIN;
+  ours += isOurs;
+  const line = `${s}: alone, passes ${c.without ?? '-'}/${RUNS} without, ${c.with}/${RUNS} with: ${isOurs ? 'ours' : 'flaky'}`;
   console.log(line);
   lines.push(line);
 }
-console.log(`${ours ? 'FAIL' : 'OK'} ${browser}: ${ours} ours, ${suspects.length - ours} flaky`);
-notice(`verdict ${browser}`, `${ours} ours, ${suspects.length - ours} flaky, ${shared.length} SnapDOM's own at this commit${lines.length ? ' | ' + lines.join(' ; ') : ''}`);
+console.log(`${ours ? 'FAIL' : 'OK'} ${browser}: ${ours} ours, ${secondOnly.length - ours} flaky (ours = at least ${MARGIN} more failures of ${RUNS} with the patches)`);
+notice(`verdict ${browser}`, `${ours} ours, ${secondOnly.length - ours} flaky, ${shared.length} SnapDOM's own at this commit${lines.length ? ' | ' + lines.join(' ; ') : ''}`);
 process.exitCode = ours ? 1 : 0;

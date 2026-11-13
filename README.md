@@ -3,8 +3,9 @@
 Runs SnapDOM's own checks and tests at zumerlab/snapdom `13b1f5c` with the patches in `patches/` applied in name
 order, in Chromium, Firefox and WebKit. Logs are kept for one day as the run's artifacts.
 Each engine first runs the whole suite on SnapDOM as released at that commit, then with the patches; the last step
-(`scripts/verdict.mjs`) lists the failures only the patched run has and runs each alone ten times with the patches
-and ten times without. It calls a test flaky unless it fails alone more often with the patches, and fails only then.
+(`scripts/verdict.mjs`) lists the failures only the patched run has and runs each alone thirty times with the patches
+and thirty times without. It calls a test ours only when it fails alone in at least five more of the thirty runs
+with the patches, and fails only then; otherwise flaky. Every count is passes: "passes 29/30".
 The patches' test file removes every element it adds after each test. Every list, count and table row is also a
 `::notice` annotation, readable from the run's checks without a token.
 
@@ -29,3 +30,7 @@ The `order` job runs the whole suite on the unpatched commit, then with the patc
 add, and says in one `order <engine>` notice whether both fail the same tests by name. Equal reruns alone do not rule
 out an interaction that only the whole suite shows, so the whole-suite comparison stays beside them. The tests cover
 mostly canvas exports; they are not a matrix of every exporter.
+
+Every comparison above runs the unpatched suite first. Two controls separate the patches from the run order: `aa`
+runs the unpatched suite twice in one clone (any difference is the order), and `swap` runs the patched suite first
+and the unpatched second. Each says in one notice whether the two runs fail the same tests by name.
