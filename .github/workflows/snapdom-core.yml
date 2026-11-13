@@ -11,11 +11,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        browser: [chromium, firefox, webkit]
+        # WebKit's suite runs in two halves, each inside the two-hour job limit.
+        include:
+          - {browser: chromium, part: '', tag: chromium}
+          - {browser: firefox, part: '', tag: firefox}
+          - {browser: webkit, part: 1, tag: webkit-1of2}
+          - {browser: webkit, part: 2, tag: webkit-2of2}
     env:
       SNAPDOM: 13b1f5c40dabdfa0ffbf4600d8aaa3c23f1f013f
       NO_COLOR: '1'
       FORCE_COLOR: '0'
+      PART: ${{ matrix.part }}
+      SHARD: ${{ matrix.part && format('{0}/2', matrix.part) || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -31,12 +38,15 @@ jobs:
           set -o pipefail
           npm ci 2>&1 | tee ../logs/install-baseline.log
           npx playwright install --with-deps ${{ matrix.browser }} > ../logs/playwright-install.log 2>&1
+          # A half: every other test file of the unpatched commit, by name, the same list in both arms.
+          if [ -n "$PART" ]; then git ls-tree -r --name-only "$SNAPDOM" -- __tests__ | grep '\.test\.js$' | sort | awk -v k="$PART" 'NR % 2 == k % 2' > ../files.txt; else : > ../files.txt; fi
+          wc -l < ../files.txt
       - name: The whole suite without the patches (baseline)
         working-directory: snapdom
         continue-on-error: true
         run: |
           set -o pipefail
-          BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run --browser.headless --reporter=dot 2>&1 | tee ../logs/suite-${{ matrix.browser }}-baseline.log
+          BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run $(cat ../files.txt) --browser.headless --reporter=dot 2>&1 | tee ../logs/suite-${{ matrix.tag }}-baseline.log
       - name: The patches
         working-directory: snapdom
         run: |
@@ -52,6 +62,7 @@ jobs:
           set -o pipefail
           npm run check 2>&1 | tee ../logs/check.log
       - name: The patches' own tests
+        if: matrix.part != 2
         working-directory: snapdom
         run: |
           set -o pipefail
@@ -64,18 +75,18 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run --browser.headless --reporter=dot 2>&1 | tee ../logs/suite-${{ matrix.browser }}.log
+          BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run $(cat ../files.txt) --browser.headless --reporter=dot 2>&1 | tee ../logs/suite-${{ matrix.tag }}.log
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
-          name: logs-${{ matrix.browser }}
+          name: logs-${{ matrix.tag }}
           path: logs/
           retention-days: 1
       - name: Failures with the patches against without, each new one run alone 10 times both ways
         if: always()
         run: |
           set -o pipefail
-          node scripts/verdict.mjs logs/suite-${{ matrix.browser }}-baseline.log logs/suite-${{ matrix.browser }}.log ${{ matrix.browser }} snapdom "$SNAPDOM" | tee logs/compare-${{ matrix.browser }}.txt
+          node scripts/verdict.mjs logs/suite-${{ matrix.tag }}-baseline.log logs/suite-${{ matrix.tag }}.log ${{ matrix.browser }} snapdom "$SNAPDOM" | tee logs/compare-${{ matrix.tag }}.txt
 
   order:
     runs-on: ubuntu-24.04

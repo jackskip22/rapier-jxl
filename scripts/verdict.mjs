@@ -12,6 +12,8 @@ import {readFileSync, readdirSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 
 const [firstLog, secondLog, browser, dir, base] = process.argv.slice(2);
+// A half of the suite (SHARD=1/2) says so in its notices' titles.
+const label = browser + (process.env.SHARD ? ' ' + process.env.SHARD : '');
 // vitest lists failures in sections: "Failed Tests n" (tests, what the summary's "Tests ... n failed" counts) and
 // "Failed Suites n" (a file or describe that failed as a whole, in a hook or at import). A suite line can read
 // "file > describe", like a test, so the section decides. Suite failures stay in the comparison as "[suite] <name>"
@@ -75,7 +77,7 @@ const mockNote = (a, b) => `"${MOCK}": ${a} ${mocks(firstLog)}, ${b} ${mocks(sec
 if (inconclusive.length) {
   const title = process.env.LISTS ? process.env.LISTS.split('|')[0] : 'verdict';
   console.log(`INCONCLUSIVE ${browser}: ${inconclusive.join('; ')}`);
-  notice(`${title} ${browser}`, `inconclusive: ${inconclusive.join('; ')}`);
+  notice(`${title} ${label}`, `inconclusive: ${inconclusive.join('; ')}`);
   process.exit(2);
 }
 
@@ -83,7 +85,7 @@ if (process.env.LISTS) {
   const [title, a, b] = process.env.LISTS.split('|');
   const same = !secondOnly.length && !firstOnly.length;
   console.log(`${b} only (${secondOnly.length})\n  ${secondOnly.join('\n  ')}\n${a} only (${firstOnly.length})\n  ${firstOnly.join('\n  ')}\nboth (${shared.length})`);
-  notice(`${title} ${browser}`, `same failures by name: ${same ? 'yes' : 'NO'} | ${arms(a, b)} | ${mockNote(a, b)} | both ${shared.length} | ${b} only ${secondOnly.length}: ${list(secondOnly)} | ${a} only ${firstOnly.length}: ${list(firstOnly)}`);
+  notice(`${title} ${label}`, `same failures by name: ${same ? 'yes' : 'NO'} | ${arms(a, b)} | ${mockNote(a, b)} | both ${shared.length} | ${b} only ${secondOnly.length}: ${list(secondOnly)} | ${a} only ${firstOnly.length}: ${list(firstOnly)}`);
   if (!process.env.RERUN) process.exit(0);
 }
 const title = process.env.LISTS ? process.env.LISTS.split('|')[0] + ' verdict' : 'verdict';
@@ -91,7 +93,7 @@ const title = process.env.LISTS ? process.env.LISTS.split('|')[0] + ' verdict' :
 console.log(`only with the patches (${secondOnly.length})\n  ${secondOnly.join('\n  ')}`);
 console.log(`in both (${shared.length})\n  ${shared.join('\n  ')}`);
 console.log(`only without (${firstOnly.length})\n  ${firstOnly.join('\n  ')}`);
-if (!process.env.LISTS) notice(`compare ${browser}`, `${arms('without', 'with')} | ${mockNote('without', 'with')} | both ${shared.length} | only with ${secondOnly.length}: ${list(secondOnly)} | only without ${firstOnly.length}: ${list(firstOnly)}`);
+if (!process.env.LISTS) notice(`compare ${label}`, `${arms('without', 'with')} | ${mockNote('without', 'with')} | both ${shared.length} | only with ${secondOnly.length}: ${list(secondOnly)} | only without ${firstOnly.length}: ${list(firstOnly)}`);
 
 // The rule, the same for every rerun test whichever list it came from:
 // - thirty runs alone a side, patched first, then unpatched;
@@ -146,5 +148,5 @@ for (const s of sideOnly) {
   lines.push(line);
 }
 console.log(`${ours || unknown ? 'FAIL' : 'OK'} ${browser}: ${ours} ours, ${flaky} flaky, ${unstable} unstable, ${unknown} inconclusive`);
-notice(`${title} ${browser}`, `${ours} ours, ${flaky} flaky, ${unstable} unstable, ${unknown} inconclusive, ${shared.length} SnapDOM's own at this commit (${shared.filter(x => !x.startsWith('[suite] ')).length} tests, ${shared.filter(x => x.startsWith('[suite] ')).length} suites)${lines.length ? ' | ' + lines.join(' ; ') : ''}`);
+notice(`${title} ${label}`, `${ours} ours, ${flaky} flaky, ${unstable} unstable, ${unknown} inconclusive, ${shared.length} SnapDOM's own at this commit (${shared.filter(x => !x.startsWith('[suite] ')).length} tests, ${shared.filter(x => x.startsWith('[suite] ')).length} suites)${lines.length ? ' | ' + lines.join(' ; ') : ''}`);
 process.exitCode = ours ? 1 : unknown ? 2 : 0;

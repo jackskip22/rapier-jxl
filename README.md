@@ -6,6 +6,9 @@ Each engine first runs the whole suite on SnapDOM as released at that commit, th
 (`scripts/verdict.mjs`) lists the failures only the patched run has and runs each alone thirty times with the patches
 and thirty times without. It calls a test ours only when it fails alone in at least five more of the thirty runs
 with the patches, and fails only then; otherwise flaky. Every count is passes: "passes 29/30".
+WebKit's `test` job runs in two halves (every other test file of the unpatched commit, by name, the same list in
+both arms), each inside GitHub's two-hour job limit; its notices say `webkit 1/2` and `webkit 2/2`. The test files
+the patches add run in the patches' own tests step of the first half.
 The patches' test file removes every element it adds after each test. Every list, count and table row is also a
 `::notice` annotation, readable from the run's checks without a token.
 
