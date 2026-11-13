@@ -77,6 +77,54 @@ jobs:
           set -o pipefail
           node scripts/verdict.mjs logs/suite-${{ matrix.browser }}-baseline.log logs/suite-${{ matrix.browser }}.log ${{ matrix.browser }} snapdom "$SNAPDOM" | tee logs/compare-${{ matrix.browser }}.txt
 
+  order:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit]
+    env:
+      SNAPDOM: 13b1f5c40dabdfa0ffbf4600d8aaa3c23f1f013f
+      NO_COLOR: '1'
+      FORCE_COLOR: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: SnapDOM as released at this commit
+        run: |
+          mkdir -p logs
+          git init -q snapdom
+          cd snapdom
+          git fetch -q --depth 1 https://github.com/zumerlab/snapdom "$SNAPDOM"
+          git checkout -q FETCH_HEAD
+          npm ci > ../logs/install.log 2>&1
+          npx playwright install --with-deps ${{ matrix.browser }} > ../logs/playwright-install.log 2>&1
+      - name: The whole suite without the patches
+        working-directory: snapdom
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run --browser.headless --reporter=dot 2>&1 | tee ../logs/order-${{ matrix.browser }}-baseline.log
+      - name: The whole suite with the patches but without their test file
+        working-directory: snapdom
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          git -c user.name=ci -c user.email=ci@example.invalid am ../patches/*.patch > ../logs/am.log 2>&1
+          for f in $(git diff --name-only --diff-filter=A "$SNAPDOM" HEAD -- '__tests__/*.test.js'); do rm "$f"; echo "removed $f"; done
+          BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run --browser.headless --reporter=dot 2>&1 | tee ../logs/order-${{ matrix.browser }}.log
+      - name: Same failures by name?
+        if: always()
+        run: ORDER=1 node scripts/verdict.mjs logs/order-${{ matrix.browser }}-baseline.log logs/order-${{ matrix.browser }}.log ${{ matrix.browser }} snapdom "$SNAPDOM" | tee logs/order-${{ matrix.browser }}.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: logs-order-${{ matrix.browser }}
+          path: logs/
+          retention-days: 1
   flicker:
     runs-on: ubuntu-24.04
     timeout-minutes: 90

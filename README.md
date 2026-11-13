@@ -24,3 +24,8 @@ control page without a photograph, at DPR 1 and 2. Each page is exported by the 
 with the patches, with the same encoder at its default effort. `scripts/measure-summary.mjs` prints one row a page:
 bytes before and after, median time of three exports, wrong text samples (text samples the decoded file does not
 reproduce exactly), and N, the median size saving on the pages with text over a photograph.
+
+The `order` job runs the whole suite on the unpatched commit, then with the patches but without the test file they
+add, and says in one `order <engine>` notice whether both fail the same tests by name. Equal reruns alone do not rule
+out an interaction that only the whole suite shows, so the whole-suite comparison stays beside them. The tests cover
+mostly canvas exports; they are not a matrix of every exporter.

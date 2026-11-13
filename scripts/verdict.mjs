@@ -2,6 +2,7 @@
 // ten times with the patches and ten times on the unpatched commit. It is ours only when it fails alone more often
 // with the patches; otherwise it is flaky. Every list and count is also printed as a ::notice annotation.
 //   node verdict.mjs <baseline log> <patched log> <browser> <snapdom dir> <unpatched commit>
+// With ORDER=1 it prints the lists as one notice and stops (the order job).
 // Exit 1 only when a test is ours.
 import {readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
@@ -22,6 +23,13 @@ console.log(`only with the patches (${suspects.length})\n  ${suspects.join('\n  
 console.log(`in both (${shared.length})\n  ${shared.join('\n  ')}`);
 console.log(`only without (${gone.length})\n  ${gone.join('\n  ')}`);
 notice(`compare ${browser}`, `only with ${suspects.length}: ${list(suspects)} | both ${shared.length}: ${list(shared)} | without ${gone.length}: ${list(gone)}`);
+
+// ORDER=1: the lists alone, as one `order <engine>` notice saying whether the two suites fail the same tests by name.
+if (process.env.ORDER) {
+  const same = !suspects.length && !gone.length;
+  notice(`order ${browser}`, `the patched suite without the patches' test file fails the same tests as unpatched: ${same ? 'yes' : 'NO'} | only with ${suspects.length}: ${list(suspects)} | only without ${gone.length}: ${list(gone)}`);
+  process.exit(0);
+}
 
 // The test alone, ten times: a file and the test's own name (the last part after ' > ').
 function alone(entry) {

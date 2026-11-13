@@ -5,42 +5,45 @@ Subject: [PATCH] feat(exports): css, an export option that styles one export
  in the first cascade layer
 
 ---
- PLUGIN_SPEC.md                    |  12 +++
- __tests__/api.exports.css.test.js | 152 ++++++++++++++++++++++++++++++
+ PLUGIN_SPEC.md                    |  15 +++
+ __tests__/api.exports.css.test.js | 174 ++++++++++++++++++++++++++++++
  src/api/snapdom.js                |  15 +++
  types/snapdom.d.ts                |   8 +-
- 4 files changed, 185 insertions(+), 2 deletions(-)
+ 4 files changed, 210 insertions(+), 2 deletions(-)
  create mode 100644 __tests__/api.exports.css.test.js
 
 diff --git a/PLUGIN_SPEC.md b/PLUGIN_SPEC.md
-index bc28745..51a96bd 100644
+index bc28745..764912e 100644
 --- a/PLUGIN_SPEC.md
 +++ b/PLUGIN_SPEC.md
-@@ -322,6 +322,18 @@ When export keys collide, priority is **local plugin > global plugin > core**. A
+@@ -322,6 +322,21 @@ When export keys collide, priority is **local plugin > global plugin > core**. A
  plugin can override `toPng`, `toJpg`, `toCanvas` or another exporter. Use `ctx.export.url` or
  `ctx.exports` to build that export from the existing capture.
  
 +To draw the same capture with extra styles (a highlight, a watermark, text hidden), give an export
 +`css`: `result.toPng({ css: '.hit{outline:3px solid #f0f}' })`. The rules apply to that export only,
 +after crop and restore choose its source. They go in a cascade layer declared before any other in
-+the capture, so their `!important` declarations win over every rule in the page's style sheets. A
-+`beforeExport` hook can add to `options.css`, and `ctx.exports.canvas({ ...opts, css })` draws a
-+styled copy beside the plain one. Select by the page's ids, classes, attributes and tag names.
-+SnapDOM's own generated class names are internal and can change. The clone can wrap scrolling
-+elements, so a child combinator (`>`) may miss. Pseudo-elements and states are not in the clone:
-+SnapDOM draws `::before`, `::after` and `::first-letter` as elements, and `:hover` or `:focus` never
-+match, so such selectors miss. CSS hides; it does not remove, so an SVG export still carries hidden
-+text: redact in `resolveNode`. A raster `html-in-canvas` capture throws.
++the capture, so their `!important` declarations win over every rule in the page's style sheets. An
++inline `style` attribute with `!important` can still win, depending on the engine. A `beforeExport`
++hook can add to `options.css`, and `ctx.exports.canvas({ ...opts, css })` draws a styled copy beside
++the plain one. Select by the page's ids, classes, attributes and tag names. SnapDOM's own generated
++class names are internal and can change. The clone can wrap scrolling elements, so a child
++combinator (`>`) may miss. Pseudo-elements and states are not in the clone: SnapDOM draws
++`::before`, `::after` and `::first-letter` as elements, and `:hover` or `:focus` never match, so
++such selectors miss. CSS hides; it does not remove, so an SVG export still carries hidden text:
++redact in `resolveNode`. A raster `html-in-canvas` capture cannot be styled: the export rejects with
++a `RangeError`, as a crop does, and a plugin can check first that `ctx.export.url` starts with
++`data:image/svg`.
 +
  ## Distribution
  
  ### Official plugins
 diff --git a/__tests__/api.exports.css.test.js b/__tests__/api.exports.css.test.js
 new file mode 100644
-index 0000000..b1b6b88
+index 0000000..324c35e
 --- /dev/null
 +++ b/__tests__/api.exports.css.test.js
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,174 @@
 +import { it, expect, afterEach } from 'vitest'
 +import { snapdom } from '../src/api/snapdom.js'
 +import { detectDrawApi } from '../src/engines/htmlInCanvas.js'
@@ -91,6 +94,28 @@ index 0000000..b1b6b88
 +    expect(differing(await result.toCanvas(o), await result.toCanvas({ ...o, css: '/* none */' }))).toBe(0)
 +    expect(differing(await facade.canvas(o), await facade.canvas({ ...o, css: '/* none */' }))).toBe(0)
 +  }
++})
++
++it('a styled export at twice the size draws the restored original: its 1 px stripes survive', async () => {
++  const { result } = await exportsOf(await scene())
++  // Width 400 asks for twice the capture's density, so the compressed photo is restored. Only the 400 px original
++  // has stripes one pixel wide; the compressed copy averages them away.
++  const styled = await result.toCanvas({ width: 400, css: '[data-mark]{outline:2px solid #f0f!important}' })
++  const row = styled.getContext('2d').getImageData(20, 220, 360, 1).data
++  let edges = 0
++  for (let i = 4; i < row.length; i += 4) if (Math.abs(row[i] - row[i - 4]) > 60) edges++
++  expect(edges).toBeGreaterThan(300)
++})
++
++it('an inline style with !important: the rules either win or leave that text as it was, never part of it', async () => {
++  const root = await scene()
++  root.querySelector('b').style.setProperty('color', 'rgb(0, 255, 0)', 'important')
++  const { result } = await exportsOf(root)
++  const plain = await result.toCanvas(), styled = await result.toCanvas({ css: 'b{color:transparent!important}' })
++  const green = c => { const d = pixels(c); let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 1] > 200 && d[i] < 60 && d[i + 2] < 60) n++; return n }
++  expect(green(plain)).toBeGreaterThan(20)
++  // Engines that keep the attribute inline (WebKit) let it win; where the capture moves it into its sheet, the layer wins.
++  expect(green(styled) === 0 || differing(plain, styled) === 0).toBe(true)
 +})
 +
 +it('the rules win over an author !important stylesheet rule in the capture', async () => {
