@@ -12,10 +12,25 @@ import {readFileSync, readdirSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 
 const [firstLog, secondLog, browser, dir, base] = process.argv.slice(2);
-const failures = file => new Set(readFileSync(file, 'utf8').replace(/\x1b\[[0-9;]*m/g, '').split('\n')
-  .map(line => line.match(/(?:FAIL|×)\s+(?:\S+\s+)?(__tests__\/\S+\.test\.[jt]sx?.*?)\s*(?:\d+\s*ms)?\s*$/)?.[1]?.trim())
-  .filter(Boolean));
-const first = failures(firstLog), second = failures(secondLog);
+// vitest lists failures in sections: "Failed Tests n" (tests, what the summary's "Tests ... n failed" counts) and
+// "Failed Suites n" (a file or describe that failed as a whole, in a hook or at import). A suite line can read
+// "file > describe", like a test, so the section decides. Suite failures stay in the comparison as "[suite] <name>"
+// but are not counted against the summary. A log with no section headers is read line by line, all as tests.
+function failures(file) {
+  const tests = new Set(), suites = new Set();
+  let section = null;
+  for (const raw of readFileSync(file, 'utf8').replace(/\x1b\[[0-9;]*m/g, '').split('\n')) {
+    const head = raw.match(/Failed (Tests|Suites) \d+/);
+    if (head) { section = head[1]; continue; }
+    if (/⎯{3,}.*(Unhandled|Errors)/.test(raw)) { section = 'Errors'; continue; }
+    const name = raw.match(/(?:FAIL|×)\s+(?:\S+\s+)?(__tests__\/\S+\.test\.[jt]sx?.*?)\s*(?:\[[^\]]*\]\s*)?(?:\d+\s*ms)?\s*$/)?.[1]?.trim();
+    if (!name || section === 'Errors') continue;
+    (section === 'Suites' ? suites : tests).add(name);
+  }
+  return {tests, suites, all: new Set([...tests, ...[...suites].map(x => `[suite] ${x}`)])};
+}
+const parsedFirst = failures(firstLog), parsedSecond = failures(secondLog);
+const first = parsedFirst.all, second = parsedSecond.all;
 const git = (...a) => spawnSync('git', a, {cwd: dir, encoding: 'utf8'});
 
 // The guard: a log counts only as a finished suite. It needs vitest's "Tests ... (n)" summary with n > 0. The test
@@ -26,20 +41,27 @@ function summary(file) {
   const text = readFileSync(file, 'utf8').replace(/\x1b\[[0-9;]*m/g, '');
   const tests = [...text.matchAll(/^\s*Tests\s+(.+?)\s+\((\d+)\)\s*$/gm)], files = text.match(/^\s*Test Files\s+(.+?)\s+\((\d+)\)\s*$/m);
   if (!tests.length || !files) return null;
-  return {total: +tests[0][2], failed: tests.reduce((n, m) => n + +(m[1].match(/(\d+) failed/)?.[1] ?? 0), 0), files: +files[2]};
+  const count = (m, word) => +(m[1].match(new RegExp(`(\\d+) ${word}`))?.[1] ?? 0);
+  // "Tests (n)" counts skips too: executed is passed + failed of the first (whole-suite) summary.
+  return {total: +tests[0][2], executed: count(tests[0], 'passed') + count(tests[0], 'failed'),
+    failed: tests.reduce((n, m) => n + count(m, 'failed'), 0), files: +files[2],
+    errors: +(text.match(/^\s*Errors\s+(\d+) errors?/m)?.[1] ?? 0)};
 }
 // The test files the patches add, read from patches/*.patch beside this script's folder (the same in every job).
 const patchDir = new URL('../patches/', import.meta.url);
 const added = (() => { try { return readdirSync(patchDir).filter(f => f.endsWith('.patch'))
   .flatMap(f => [...readFileSync(new URL(f, patchDir), 'utf8').matchAll(/^diff --git a\/(__tests__\/\S+\.test\.[jt]sx?) .*\nnew file mode/gm)]).length; } catch { return 0; } })();
 const inconclusive = [];
-for (const [label, file, set] of [['first', firstLog, first], ['second', secondLog, second]]) {
-  const sum = summary(file), tests = [...set].filter(x => x.includes(' > ')).length;
+for (const [label, file, parsed] of [['first', firstLog, parsedFirst], ['second', secondLog, parsedSecond]]) {
+  const sum = summary(file), tests = parsed.tests.size;
   if (!sum) inconclusive.push(`${label} log has no finished vitest summary`);
-  else if (!sum.total) inconclusive.push(`${label} log ran no tests`);
-  else if (sum.failed !== tests) inconclusive.push(`${label} log: summary says ${sum.failed} failed, parsed ${tests}`);
+  else if (!sum.executed) inconclusive.push(`${label} log ran no tests (${sum.total} counted, all skipped)`);
+  else if (sum.failed !== tests) inconclusive.push(`${label} log: summary says ${sum.failed} failed, parsed ${tests} (${[...parsed.tests].join(' ; ')})`);
 }
 const s1 = summary(firstLog), s2 = summary(secondLog);
+// Per arm, apart from test failures: suites that failed whole and vitest's unhandled errors.
+const arms = (a, b) => [[a, s1, parsedFirst], [b, s2, parsedSecond]]
+  .map(([l, sum, p]) => `${l}: ran ${sum?.executed ?? '-'} tests, ${p.suites.size} suites failed, ${sum?.errors ?? '-'} unhandled errors`).join('; ');
 if (s1 && s2 && Math.abs(s1.files - s2.files) > added) inconclusive.push(`test files ${s1.files} against ${s2.files} (the patches add ${added})`);
 const only = (a, b) => [...a].filter(x => !b.has(x)).sort();
 const secondOnly = only(second, first), firstOnly = only(first, second), shared = [...second].filter(x => first.has(x)).sort();
@@ -61,7 +83,7 @@ if (process.env.LISTS) {
   const [title, a, b] = process.env.LISTS.split('|');
   const same = !secondOnly.length && !firstOnly.length;
   console.log(`${b} only (${secondOnly.length})\n  ${secondOnly.join('\n  ')}\n${a} only (${firstOnly.length})\n  ${firstOnly.join('\n  ')}\nboth (${shared.length})`);
-  notice(`${title} ${browser}`, `same failures by name: ${same ? 'yes' : 'NO'} | ${b} only ${secondOnly.length}: ${list(secondOnly)} | ${a} only ${firstOnly.length}: ${list(firstOnly)} | both ${shared.length} | ${mockNote(a, b)}`);
+  notice(`${title} ${browser}`, `same failures by name: ${same ? 'yes' : 'NO'} | ${arms(a, b)} | ${mockNote(a, b)} | both ${shared.length} | ${b} only ${secondOnly.length}: ${list(secondOnly)} | ${a} only ${firstOnly.length}: ${list(firstOnly)}`);
   if (!process.env.RERUN) process.exit(0);
 }
 const title = process.env.LISTS ? process.env.LISTS.split('|')[0] + ' verdict' : 'verdict';
@@ -69,7 +91,7 @@ const title = process.env.LISTS ? process.env.LISTS.split('|')[0] + ' verdict' :
 console.log(`only with the patches (${secondOnly.length})\n  ${secondOnly.join('\n  ')}`);
 console.log(`in both (${shared.length})\n  ${shared.join('\n  ')}`);
 console.log(`only without (${firstOnly.length})\n  ${firstOnly.join('\n  ')}`);
-if (!process.env.LISTS) notice(`compare ${browser}`, `only with ${secondOnly.length}: ${list(secondOnly)} | both ${shared.length}: ${list(shared)} | without ${firstOnly.length}: ${list(firstOnly)} | ${mockNote('without', 'with')}`);
+if (!process.env.LISTS) notice(`compare ${browser}`, `${arms('without', 'with')} | ${mockNote('without', 'with')} | both ${shared.length} | only with ${secondOnly.length}: ${list(secondOnly)} | only without ${firstOnly.length}: ${list(firstOnly)}`);
 
 // The rule, the same for every rerun test whichever list it came from:
 // - thirty runs alone a side, patched first, then unpatched;
@@ -124,5 +146,5 @@ for (const s of sideOnly) {
   lines.push(line);
 }
 console.log(`${ours || unknown ? 'FAIL' : 'OK'} ${browser}: ${ours} ours, ${flaky} flaky, ${unstable} unstable, ${unknown} inconclusive`);
-notice(`${title} ${browser}`, `${ours} ours, ${flaky} flaky, ${unstable} unstable, ${unknown} inconclusive, ${shared.length} SnapDOM's own at this commit${lines.length ? ' | ' + lines.join(' ; ') : ''}`);
+notice(`${title} ${browser}`, `${ours} ours, ${flaky} flaky, ${unstable} unstable, ${unknown} inconclusive, ${shared.length} SnapDOM's own at this commit (${shared.filter(x => !x.startsWith('[suite] ')).length} tests, ${shared.filter(x => x.startsWith('[suite] ')).length} suites)${lines.length ? ' | ' + lines.join(' ; ') : ''}`);
 process.exitCode = ours ? 1 : unknown ? 2 : 0;
