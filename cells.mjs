@@ -96,5 +96,55 @@ await step('round trip: 300 pictures, exact, Safari decodes', async () => {
   return {pass: failed === 0, failed, first: worst};
 });
 
+// layered: text over photographs. Set `layered`: 12 files of a lossy base under cropped exact frames blended through alpha
+// (photo-text-layers.mjs); set `arms`: four pages each as X1 (the patched page, withoutText), X1F (X1 with the layered
+// file's fill) and L2 (the layered file), at X1's look. Safari decodes each: every letter sample equals the source's, each
+// 8x8 block mean within 1 of djxl 0.13.0's; the display time is the median of five createImageBitmap calls.
+for (const set of ['layered', 'arms']) await step(`layered: ${set}, Safari decodes, letter samples exact`, async () => {
+  const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0)), rows = await (await fetch(`./files/${set}-expect.json`)).json();
+  const c = document.createElement('canvas'), g = c.getContext('2d', {willReadFrequently: true}), out = [];
+  for (const r of rows) {
+    const blob = await (await fetch(`./files/${set}-${r.file}`)).blob(), times = [];
+    let bitmap;
+    for (let t = 0; t < 5; t++) { const t0 = performance.now(); bitmap = await createImageBitmap(blob); times.push(performance.now() - t0); }
+    c.width = r.width; c.height = r.height; g.drawImage(bitmap, 0, 0);
+    const px = g.getImageData(0, 0, r.width, r.height).data, runs = new Int32Array(b64(r.runs).buffer), rgb = b64(r.rgb), means = b64(r.means);
+    let wrong = 0, k = 0, blocksOver1 = 0;
+    for (let j = 0; j < runs.length; j += 2) for (let i = runs[j]; i < runs[j] + runs[j + 1]; i++, k++)
+      for (let ch = 0; ch < 3; ch++) wrong += px[i * 4 + ch] !== rgb[k * 3 + ch];
+    const bw = Math.ceil(r.width / 8), bh = Math.ceil(r.height / 8);
+    for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++) for (let ch = 0; ch < 3; ch++) {
+      let s = 0, n = 0;
+      for (let y = by * 8; y < Math.min(r.height, by * 8 + 8); y++) for (let x = bx * 8; x < Math.min(r.width, bx * 8 + 8); x++) { s += px[(y * r.width + x) * 4 + ch]; n++; }
+      if (Math.abs(Math.round(s / n) - means[(by * bw + bx) * 3 + ch]) > 1) blocksOver1++;
+    }
+    out.push({file: r.file, samples: k * 3, wrong, blocksOver1, ms: +times.sort((a, b) => a - b)[2].toFixed(1)});
+  }
+  return {pass: out.every(r => !r.wrong && !r.blocksOver1), files: out.length, wrong: out.reduce((s, r) => s + r.wrong, 0), blocksOver1: out.reduce((s, r) => s + r.blocksOver1, 0), each: out};
+});
+
+// probes: seven hand-made files (one VarDCT, one Modular with alpha, then two and three frames blended, cropped, saved
+// to reference slots), each loaded in an <img> by the browser's own decoder, drawn to an sRGB canvas and compared with
+// its expected picture, every sample. Pass: decodes, every sample within 1 (Chrome 155 and djxl 0.13.0 read max 1;
+// the Modular probe 0).
+const PROBES = ['01-single-vardct-control', '02-single-modular-kalpha', '03-two-frame-fullcanvas-kblend', '04-two-frame-kskipprog-cropped-kblend',
+  '05-three-frame-refslot1-mutation-chain', '06-browser-hardened-kskipprog-single-crop', '07-negative-hazard-refonly-after-ct'];
+const pixels = async src => {
+  const img = new Image(); img.src = src;
+  await img.decode();
+  const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+  const g = c.getContext('2d', {colorSpace: 'srgb', willReadFrequently: true}); g.drawImage(img, 0, 0);
+  return {w: c.width, h: c.height, px: g.getImageData(0, 0, c.width, c.height).data};
+};
+for (const probe of PROBES) await step(`probe ${probe}: the browser decodes, within 1 of the expected picture`, async () => {
+  const want = await pixels(`./files/probe-${probe}.expected.png`);
+  let got;
+  try { got = await pixels(`./files/probe-${probe}.jxl`); } catch (e) { return {pass: false, decodes: false, error: String(e?.message ?? e).slice(0, 120)}; }
+  if (got.w !== want.w || got.h !== want.h) return {pass: false, decodes: true, size: `${got.w}x${got.h}`, expected: `${want.w}x${want.h}`};
+  let max = 0, off = 0;
+  for (let i = 0; i < want.px.length; i++) { const d = Math.abs(got.px[i] - want.px[i]); if (d) off++; if (d > max) max = d; }
+  return {pass: max <= 1, decodes: true, max, off};
+});
+
 window.__result = {done: true, pkg, userAgent: navigator.userAgent, steps};
 document.getElementById('state').textContent = 'done';

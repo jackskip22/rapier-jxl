@@ -29,7 +29,7 @@ jobs:
           mkdir -p p/820 p/cand
           tar -xzf rapier-jxl-8.2.0.tgz -C p/820
           tar -xzf rapier-jxl-candidate.tgz -C p/cand
-          for p in 820 cand; do test -f p/$p/package/dist/index.mjs && test -f p/$p/package/dist/codec.mjs && test -f p/$p/package/dist/capture.worker.mjs; done
+          for p in 820 cand; do test -f p/$p/package/dist/index.mjs && test -f p/$p/package/dist/codec.mjs && { [ $p = cand ] || test -f p/$p/package/dist/capture.worker.mjs; }; done
           cat PACKAGE.txt
       - name: Safari WebDriver
         run: sudo /usr/bin/safaridriver --enable
@@ -74,7 +74,7 @@ jobs:
           shasum -a 256 -c rapier-jxl-candidate.tgz.sha256
           mkdir -p p/cand
           tar -xzf rapier-jxl-candidate.tgz -C p/cand
-          test -f p/cand/package/dist/capture-complete.worker.mjs
+          test -f p/cand/package/dist/capture-complete.mjs
           mkdir -p snapdom/node_modules
           rm -rf snapdom/node_modules/rapier-jxl
           cp -R p/cand/package snapdom/node_modules/rapier-jxl

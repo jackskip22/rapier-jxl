@@ -71,7 +71,7 @@ const channel = new BroadcastChannel('rapier-jxl-probe');
 channel.onmessage = e => probes.push(e.data);
 const viaShim = async (module, input, options) => {
   const file = `./shim-${pkg}-${module.replace('rapier-jxl/', '')}.mjs`, from = probes.length;
-  const q = createCodec({module, workerFactory: () => new Worker(file, {type: 'module'})});
+  const q = createCodec({module, workerFactory: () => new Worker(file, {type: 'module', name: module + ' worker'})});
   let bytes, error;
   try { bytes = B(await q.capture(input, options)); } catch (e) { error = e; } finally { await q.close().catch(() => {}); }
   await new Promise(r => setTimeout(r, 300));
