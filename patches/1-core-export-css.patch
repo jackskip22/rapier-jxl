@@ -1,49 +1,53 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Contributor <contributor@example.invalid>
-Date: Fri, 13 Nov 2026 15:44:21 +0000
+Date: Sat, 14 Nov 2026 03:22:02 +0000
 Subject: [PATCH] feat(exports): css, an export option that styles one export
  in the first cascade layer
 
 ---
- PLUGIN_SPEC.md                    |  15 +++
- __tests__/api.exports.css.test.js | 174 ++++++++++++++++++++++++++++++
- src/api/snapdom.js                |  15 +++
- types/snapdom.d.ts                |   8 +-
- 4 files changed, 210 insertions(+), 2 deletions(-)
+ PLUGIN_SPEC.md                    |  16 +++
+ __tests__/api.exports.css.test.js | 204 ++++++++++++++++++++++++++++++
+ src/api/snapdom.js                |  20 +++
+ src/exporters/toCanvas.js         |   4 +-
+ src/utils/capture.helpers.js      |   2 +-
+ types/snapdom.d.ts                |  27 ++--
+ types/snapdom.test-d.ts           |  16 +++
+ 7 files changed, 276 insertions(+), 13 deletions(-)
  create mode 100644 __tests__/api.exports.css.test.js
 
 diff --git a/PLUGIN_SPEC.md b/PLUGIN_SPEC.md
-index bc28745..764912e 100644
+index bc28745..50945df 100644
 --- a/PLUGIN_SPEC.md
 +++ b/PLUGIN_SPEC.md
-@@ -322,6 +322,21 @@ When export keys collide, priority is **local plugin > global plugin > core**. A
+@@ -322,6 +322,22 @@ When export keys collide, priority is **local plugin > global plugin > core**. A
  plugin can override `toPng`, `toJpg`, `toCanvas` or another exporter. Use `ctx.export.url` or
  `ctx.exports` to build that export from the existing capture.
  
 +To draw the same capture with extra styles (a highlight, a watermark, text hidden), give an export
-+`css`: `result.toPng({ css: '.hit{outline:3px solid #f0f}' })`. The rules apply to that export only,
-+after crop and restore choose its source. They go in a cascade layer declared before any other in
-+the capture, so their `!important` declarations win over every rule in the page's style sheets. An
-+inline `style` attribute with `!important` can still win, depending on the engine. A `beforeExport`
-+hook can add to `options.css`, and `ctx.exports.canvas({ ...opts, css })` draws a styled copy beside
-+the plain one. Select by the page's ids, classes, attributes and tag names. SnapDOM's own generated
-+class names are internal and can change. The clone can wrap scrolling elements, so a child
-+combinator (`>`) may miss. Pseudo-elements and states are not in the clone: SnapDOM draws
-+`::before`, `::after` and `::first-letter` as elements, and `:hover` or `:focus` never match, so
-+such selectors miss. CSS hides; it does not remove, so an SVG export still carries hidden text:
-+redact in `resolveNode`. A raster `html-in-canvas` capture cannot be styled: the export rejects with
-+a `RangeError`, as a crop does, and a plugin can check first that `ctx.export.url` starts with
-+`data:image/svg`.
++`css`: `result.toPng({ css: '.hit{outline:3px solid #f0f!important}' })`. The rules apply to that
++export only. They go in a cascade layer declared before any other in the capture, so a normal
++declaration loses to the capture's own styles and an `!important` one wins over every rule in the
++page's style sheets. An inline `style` attribute with `!important` can still win, depending on the
++engine. A `beforeExport` hook can add to `options.css`, and `ctx.exports.canvas({ ...opts, css })`
++draws a styled copy beside the plain one. Select by the page's ids, classes, attributes and tag
++names. SnapDOM's own generated class names are internal and can change. The clone can wrap
++scrolling elements and flattens shadow roots, so a child combinator (`>`) may miss, and `:host`,
++`::part`, `::slotted`, `:hover` and `:focus` never match. SnapDOM draws the page's `::before`,
++`::after` and `::first-letter` as elements: a rule for the pseudo-element misses, and one that sets
++its `content` and `display` draws a second one. An iframe is already an image. CSS hides; it does not remove, so
++an SVG export still carries hidden text: redact in `resolveNode`. A raster `html-in-canvas` capture
++cannot be styled: the export rejects with a `RangeError`, as a crop does, and a plugin can check
++first that `ctx.export.url` starts with `data:image/svg`.
 +
  ## Distribution
  
  ### Official plugins
 diff --git a/__tests__/api.exports.css.test.js b/__tests__/api.exports.css.test.js
 new file mode 100644
-index 0000000..324c35e
+index 0000000..8cdb455
 --- /dev/null
 +++ b/__tests__/api.exports.css.test.js
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,204 @@
 +import { it, expect, afterEach } from 'vitest'
 +import { snapdom } from '../src/api/snapdom.js'
 +import { detectDrawApi } from '../src/engines/htmlInCanvas.js'
@@ -216,60 +220,140 @@ index 0000000..324c35e
 +  for (const k of ['toCanvas', 'toPng', 'toImg', 'toSvg', 'toBlob']) {
 +    await expect(result[k]({ css: hide })).rejects.toThrow(/Only SVG captures can be styled/)
 +    await expect(result[k]({ css: hide })).rejects.toBeInstanceOf(RangeError)
++    await expect(result[k]({ css: false })).rejects.toBeInstanceOf(TypeError)
++    await expect(result[k]({ css: {} })).rejects.toBeInstanceOf(TypeError)
++  }
++})
++
++it('scrubs XML-illegal control characters (such as CSS form-feed whitespace) and unpaired surrogates', async () => {
++  const { result } = await exportsOf(await scene())
++  const ff = await result.toCanvas({ css: 'b{\fcolor:transparent!important}' })
++  expect(differing(ff, await result.toCanvas({ css: hide }))).toBe(0)
++  const halfEmoji = '🔥'.slice(0, 1)
++  const surr = await result.toCanvas({ css: `b{color:transparent!important;content:"${halfEmoji}"}` })
++  expect(differing(surr, await result.toCanvas({ css: hide }))).toBe(0)
++})
++
++it('refuses a URL that is not the engine\'s percent-encoded SVG with its <style>, as crop refuses', async () => {
++  const swapped = url => {
++    const root = document.body.appendChild(document.createElement('div'))
++    roots.push(root)
++    return snapdom(root, { ...options, plugins: [{ name: 'swap-url', afterRender(ctx) { ctx.dataURL = url(ctx.dataURL) } }] })
++  }
++  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40"/></svg>'
++  for (const url of [
++    () => 'data:image/png;base64,iVBORw0KGgo=',
++    () => 'data:image/svg+xml;base64,' + btoa(svg),
++    () => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg),
++    u => u.replace('%3Cstyle', '%3Cstyle%2F%3E%3Cstyle'),
++  ]) {
++    const result = await swapped(url)
++    await expect(result.toCanvas({ css: hide })).rejects.toThrow(/Only SVG captures can be styled/)
++    await expect(result.toCanvas({ css: hide })).rejects.toBeInstanceOf(RangeError)
 +  }
 +})
 diff --git a/src/api/snapdom.js b/src/api/snapdom.js
-index f8f7778..8d24596 100644
+index f8f7778..688e101 100644
 --- a/src/api/snapdom.js
 +++ b/src/api/snapdom.js
-@@ -287,7 +287,21 @@ async function buildResult(url, context) {
+@@ -21,6 +21,7 @@ import { captureWithBurst, isAutoBurstSafe } from '../core/burst.js'
+ import { bindCapture, noteCapture, preCapture } from './preCapture.js'
+ import { markInternalNode } from '../utils/ownership.js'
+ import { fileSvgText } from '../utils/helpers.js'
++import { stripInvalidXML } from '../utils/capture.helpers.js'
+ import { restoreCompressedAssets } from '../modules/compress.js'
+ 
+ /**
+@@ -287,7 +288,25 @@ async function buildResult(url, context) {
      ? (Number.isFinite(context.width) ? meta.targetW / meta.vbW : meta.targetH / meta.vbH) : 1
    const intrinsicY = sizedSVG
      ? (Number.isFinite(context.height) ? meta.targetH / meta.vbH : meta.targetW / meta.vbW) : 1
 +  // `css` styles one export. Its rules join the engine's <style>, the first in the svg (which
 +  // internInlineStyles and fileSvgText already rely on), in a cascade layer that this <style>
-+  // declares first: its !important wins over every stylesheet rule in the capture.
++  // declares first: its !important wins over every stylesheet rule in the capture. The splice is
++  // made on the URL as the engine encodes it, so the capture is never decoded.
++  const checkCss = (css) => {
++    if (css != null && typeof css !== 'string') throw new TypeError('[SnapDOM] css is a string of style rules.')
++    return css
++  }
    const exportSource = (options) => {
-+    const source = drawnSource(options), css = options.css
-+    if (css == null || css === '') return source
-+    if (typeof css !== 'string') throw new TypeError('[SnapDOM] css is a string of style rules.')
-+    if (typeof source !== 'string') throw new RangeError('[SnapDOM] Only SVG captures can be styled.')
-+    const i = source.indexOf(',') + 1, svg = decodeURIComponent(source.slice(i))
-+    const open = svg.indexOf('>', svg.indexOf('<style')) + 1, close = svg.indexOf('</style>')
-+    const rules = css.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-+    return source.slice(0, i) + encodeURIComponent(svg.slice(0, open) + '@layer snapdom-export;' +
-+      svg.slice(open, close) + `@layer snapdom-export{${rules}}` + svg.slice(close))
++    const source = drawnSource(options), css = checkCss(options.css)
++    if (!css) return source
++    const at = typeof source === 'string' && source.startsWith('data:image/svg+xml;charset=utf-8,') ? source.indexOf('%3Cstyle') : -1
++    const open = at < 0 ? -1 : source.indexOf('%3E', at) + 3, close = open < 3 ? -1 : source.indexOf('%3C%2Fstyle%3E', open)
++    if (close < 0 || source.startsWith('%2F', open - 6)) throw new RangeError('[SnapDOM] Only SVG captures can be styled.')
++    const rules = stripInvalidXML(css).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
++    return source.slice(0, open) + '%40layer%20snapdom-export%3B' + source.slice(open, close) +
++      encodeURIComponent(`@layer snapdom-export{${rules}}`) + source.slice(close)
 +  }
 +  const drawnSource = (options) => {
      if (engineCanvas || !originals?.size) return pixelSource
      let w = meta.vbW, h = meta.vbH
      const crop = options.crop
-@@ -307,6 +321,7 @@ async function buildResult(url, context) {
+@@ -307,6 +326,7 @@ async function buildResult(url, context) {
    }
  
    const rasterEngineImage = async (ctx, opts) => {
-+    if (opts?.css) throw new RangeError('[SnapDOM] Only SVG captures can be styled.')
++    if (checkCss(opts?.css)) throw new RangeError('[SnapDOM] Only SVG captures can be styled.')
      const { rasterize } = await import('../modules/rasterize.js')
      return rasterize(pixelSource, { ...ctx, ...(opts || {}), format: 'png' })
    }
+diff --git a/src/exporters/toCanvas.js b/src/exporters/toCanvas.js
+index f0aa85b..999f075 100644
+--- a/src/exporters/toCanvas.js
++++ b/src/exporters/toCanvas.js
+@@ -335,7 +335,7 @@ function rewriteCssBlock(css) {
+ function rewriteSvgBoxShadowToDropShadow(svgText) {
+   // 1) <style>…</style>
+   svgText = svgText.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (m, css) =>
+-    m.replace(css, rewriteCssBlock(css))
++    m.replace(css, () => rewriteCssBlock(css))
+   )
+   // 2) style="…"
+   svgText = svgText.replace(/style=(['"])([\s\S]*?)\1/gi, (m, q, body) =>
+@@ -420,7 +420,7 @@ function rewriteSvgShadowOffsets(svgText, includeBoxShadow) {
+     return d
+   }).join(';')
+   svgText = svgText.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (m, css) =>
+-    m.replace(css, css.replace(/([^{}]+)\{([^}]*)\}/g, (_m, sel, body) => `${sel}{${rewriteList(body)}}`))
++    m.replace(css, () => css.replace(/([^{}]+)\{([^}]*)\}/g, (_m, sel, body) => `${sel}{${rewriteList(body)}}`))
+   )
+   svgText = svgText.replace(/style=(['"])([\s\S]*?)\1/gi, (m, q, body) => `style=${q}${rewriteList(body)}${q}`)
+   return svgText
+diff --git a/src/utils/capture.helpers.js b/src/utils/capture.helpers.js
+index 474e5d0..47b32a7 100644
+--- a/src/utils/capture.helpers.js
++++ b/src/utils/capture.helpers.js
+@@ -494,7 +494,7 @@ const INVALID_XML_CHARS = /[\uD800-\uDBFF][\uDC00-\uDFFF]|[\x00-\x08\x0B\x0C\x0E
+ /* eslint-enable no-control-regex */
+ 
+ /** Drops the XML-illegal chars above, keeping whole surrogate pairs. */
+-const stripInvalidXML = (s) => s.replace(INVALID_XML_CHARS, (m) => (m.length === 2 ? m : ''))
++export const stripInvalidXML = (s) => s.replace(INVALID_XML_CHARS, (m) => (m.length === 2 ? m : ''))
+ 
+ /** A base64 payload is XML-safe by alphabet, so the scrub below never scans one. */
+ const BASE64_DATA_URL = /^data:[^,]{0,120};base64,/
 diff --git a/types/snapdom.d.ts b/types/snapdom.d.ts
-index 59808b3..56a1fc9 100644
+index 59808b3..d679209 100644
 --- a/types/snapdom.d.ts
 +++ b/types/snapdom.d.ts
-@@ -80,7 +80,11 @@ export interface CanvasCrop {
+@@ -80,7 +80,14 @@ export interface CanvasCrop {
    height: number;
  }
  
 -export type CanvasExportOptions = Partial<SnapdomOptions> & { crop?: CanvasCrop };
-+export type CanvasExportOptions = Partial<SnapdomOptions> & {
-+  crop?: CanvasCrop;
++export type ExportOptions = Partial<SnapdomOptions> & {
 +  /** Export option: style rules for this export only, in the first cascade layer. */
 +  css?: string;
++};
++
++export type CanvasExportOptions = ExportOptions & {
++  crop?: CanvasCrop;
 +};
  
  /* =========================
   * Font & proxy declarations
-@@ -390,7 +394,7 @@ export interface CaptureContext extends Omit<SnapdomOptions, "exclude" | "filter
+@@ -390,7 +397,7 @@ export interface CaptureContext extends Omit<SnapdomOptions, "exclude" | "filter
  
    /** Core export facade for `defineExports`: the built-in exporters without their hooks,
     *  so a plugin format can build on `png`/`canvas`/… without re-entering the pipeline. */
@@ -278,6 +362,70 @@ index 59808b3..56a1fc9 100644
  }
  
  /* =========================
+@@ -562,11 +569,11 @@ export interface CaptureResult {
+    * @deprecated Use `toSvg()` for an <img> representing the capture.
+    * Historical alias kept for compatibility.
+    */
+-  toImg(options?: Partial<SnapdomOptions>): Promise<HTMLImageElement>;
++  toImg(options?: ExportOptions): Promise<HTMLImageElement>;
+ 
+   /** Returns an HTMLImageElement representing the capture (SVG-backed by default,
+    *  PNG-backed after a successful native html-in-canvas capture, SVG-backed on fallback). */
+-  toSvg(options?: Partial<SnapdomOptions>): Promise<HTMLImageElement>;
++  toSvg(options?: ExportOptions): Promise<HTMLImageElement>;
+ 
+   /** Returns a Canvas with the rasterized snapshot. `crop` windows the capture in
+    *  `meta` viewBox coordinates, so a long capture can be rasterized page by page. */
+@@ -578,19 +585,19 @@ export interface CaptureResult {
+    *  Defaults to SVG on the default
+    *  engine and PNG after a successful html-in-canvas capture. An explicit SVG request on
+    *  that raster path rejects because there is no SVG source. */
+-  toBlob(options?: BlobOptions & Partial<SnapdomOptions>): Promise<Blob>;
++  toBlob(options?: BlobOptions & ExportOptions): Promise<Blob>;
+ 
+   /** Convenience raster exports returning an HTMLImageElement. */
+-  toPng(options?: Partial<SnapdomOptions>): Promise<HTMLImageElement>;
+-  toJpeg(options?: Partial<SnapdomOptions>): Promise<HTMLImageElement>;
++  toPng(options?: ExportOptions): Promise<HTMLImageElement>;
++  toJpeg(options?: ExportOptions): Promise<HTMLImageElement>;
+   /** Alias for `toJpeg()`. */
+-  toJpg(options?: Partial<SnapdomOptions>): Promise<HTMLImageElement>;
+-  toWebp(options?: Partial<SnapdomOptions>): Promise<HTMLImageElement>;
++  toJpg(options?: ExportOptions): Promise<HTMLImageElement>;
++  toWebp(options?: ExportOptions): Promise<HTMLImageElement>;
+ 
+   /** Download the snapshot at DPR 1. PNG and JPEG files from SVG captures automatically
+    *  preserve oversized output resolution (PNG needs CompressionStream, JPEG stops at 65535px
+    *  per side). */
+-  download(options?: DownloadOptions & Partial<SnapdomOptions>): Promise<void>;
++  download(options?: DownloadOptions & ExportOptions): Promise<void>;
+ 
+   /**
+    * Custom exporters exposed by plugins: a plugin returning { pdf: (...) => ... } enables
+diff --git a/types/snapdom.test-d.ts b/types/snapdom.test-d.ts
+index d9ef796..c274211 100644
+--- a/types/snapdom.test-d.ts
++++ b/types/snapdom.test-d.ts
+@@ -253,3 +253,19 @@ void pluginShape
+ void normalizedPluginContext
+ void preCaptureHelper
+ void canvasTargetOption
++
++async function exportCssOptionTypes() {
++  const result = await snapdom(el)
++  await result.toPng({ css: '.hit{outline:3px solid #f0f!important}' })
++  await result.toJpg({ css: '.hit{outline:3px solid #f0f!important}' })
++  await result.toCanvas({ css: '.hit{outline:3px solid #f0f!important}', crop: { x: 0, y: 0, width: 10, height: 10 } })
++  await result.toWebp({ css: '.hit{outline:3px solid #f0f!important}' })
++  await result.toBlob({ format: 'png', css: '.hit{outline:3px solid #f0f!important}' })
++  await result.toSvg({ css: '.hit{outline:3px solid #f0f!important}' })
++  await result.toImg({ css: '.hit{outline:3px solid #f0f!important}' })
++  await result.download({ filename: 'styled', css: '.hit{outline:3px solid #f0f!important}' })
++  // @ts-expect-error css is an export option on CaptureResult, not a capture option.
++  const badCapture: SnapdomOptions = { css: '.hit{outline:3px solid #f0f!important}' }
++  void badCapture
++}
++void exportCssOptionTypes
 -- 
 2.43.0
 

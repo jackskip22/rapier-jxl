@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Contributor <contributor@example.invalid>
-Date: Fri, 13 Nov 2026 15:30:57 +0000
-Subject: [PATCH 2/3] chore(plugins): jxl loads its encoder from jpegxl
+Date: Sat, 14 Nov 2026 03:30:48 +0000
+Subject: [PATCH 1/2] chore(plugins): jxl loads its encoder from jpegxl
 
 rapier-jxl is published on npm as jpegxl. The rapier-jxl package stays and
 re-exports jpegxl, so installs of either keep working.
@@ -378,10 +378,11 @@ index 1bca333..f0bbf28 100644
 -- 
 2.43.0
 
+
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Contributor <contributor@example.invalid>
-Date: Fri, 13 Nov 2026 15:32:28 +0000
-Subject: [PATCH 3/3] feat(plugins/jxl): text over a photo stays exact, the
+Date: Sat, 14 Nov 2026 03:30:48 +0000
+Subject: [PATCH 2/2] feat(plugins/jxl): text over a photo stays exact, the
  photo under it lossy
 
 Where certified plain text meets a photo, the export is drawn once more
@@ -390,17 +391,18 @@ differ are the text, kept exact; the photo under it takes the quality.
 On a SnapDOM without the option, a raster capture, or jpegxl before 8.4.0,
 the page is drawn once, as before.
 ---
- __tests__/plugin.jxl.textOverPhoto.test.js |  87 +++++++++++++++++
- packages/plugins/jxl.js                    | 108 +++++++++++++++++++--
- 2 files changed, 187 insertions(+), 8 deletions(-)
+ __tests__/plugin.jxl.textOverPhoto.test.js | 116 +++++++++++++++++++++
+ packages/plugins/jxl.d.ts                  |   2 +
+ packages/plugins/jxl.js                    | 109 +++++++++++++++++--
+ 3 files changed, 219 insertions(+), 8 deletions(-)
  create mode 100644 __tests__/plugin.jxl.textOverPhoto.test.js
 
 diff --git a/__tests__/plugin.jxl.textOverPhoto.test.js b/__tests__/plugin.jxl.textOverPhoto.test.js
 new file mode 100644
-index 0000000..771a5bf
+index 0000000..8ee8d9e
 --- /dev/null
 +++ b/__tests__/plugin.jxl.textOverPhoto.test.js
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,116 @@
 +import { it, expect, afterEach } from 'vitest'
 +import { snapdom } from '../src/api/snapdom.js'
 +import { clearPlugins } from '../src/core/plugins.js'
@@ -480,16 +482,58 @@ index 0000000..771a5bf
 +it('a SnapDOM without the css option: the same page is drawn once', async () => {
 +  const codec = recording()
 +  const p = plugin({ codec }); made.push(() => p.close())
-+  // A released SnapDOM, which ignores the css option. Last in this file: the plugin then draws once for good.
-+  const canvas = ctx => o => { const { css, ...rest } = o || {}; return ctx.exports.canvas(rest) }
++  // A released SnapDOM, which ignores the css option.
++  const canvas = ctx => o => { const { css: _css, ...rest } = o || {}; return ctx.exports.canvas(rest) }
 +  const older = { ...p, name: 'jxl-older-core', defineExports: ctx => p.defineExports({ ...ctx, exports: { ...ctx.exports, canvas: canvas(ctx) } }) }
 +  const result = await snapdom(page(), { plugins: [older], embedFonts: false, dpr: 1 })
 +  expect((await result.toBlob({ format: 'jxl' })).type).toBe('image/jxl')
 +  expect(codec.calls.length).toBeGreaterThan(0)
 +  expect(codec.calls.some(c => c.withoutText)).toBe(false)
 +})
++
++it('the export\'s own css stays in the text-free draw: the two differ only at the text', async () => {
++  const codec = recording()
++  const p = plugin({ codec }); made.push(() => p.close())
++  const result = await snapdom(page(), { plugins: [p], embedFonts: false, dpr: 1 })
++  await result.toBlob({ format: 'jxl', css: '[data-t]{background:#123!important}' })
++  const { canvas, withoutText } = codec.calls.find(c => c.withoutText)
++  let outside = 0
++  for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
++    const i = (y * canvas.width + x) * 4
++    if (canvas.data[i] === withoutText.data[i] && canvas.data[i + 1] === withoutText.data[i + 1] && canvas.data[i + 2] === withoutText.data[i + 2]) continue
++    if (!withoutText.rects.some(r => x >= r.x && y >= r.y && x < r.x + r.width && y < r.y + r.height)) outside++
++  }
++  expect(outside, 'samples changed outside the released text').toBe(0)
++})
++
++it('a capture whose styled draw changes nothing is drawn once; the next capture is drawn twice again', async () => {
++  const codec = recording()
++  const p = plugin({ codec }); made.push(() => p.close())
++  // The first capture's styled draw changes no sample, as when its text stays visible (white on white, an inline
++  // important color) or its SnapDOM ignores css.
++  const canvas = ctx => o => { const { css: _css, ...rest } = o || {}; return ctx.exports.canvas(rest) }
++  const same = { ...p, name: 'jxl-same-draw', defineExports: ctx => p.defineExports({ ...ctx, exports: { ...ctx.exports, canvas: canvas(ctx) } }) }
++  await (await snapdom(page(), { plugins: [same], embedFonts: false, dpr: 1 })).toBlob({ format: 'jxl' })
++  expect(codec.calls.some(c => c.withoutText)).toBe(false)
++  codec.calls.length = 0
++  await (await snapdom(page(), { plugins: [p], embedFonts: false, dpr: 1 })).toBlob({ format: 'jxl' })
++  expect(codec.calls.some(c => c.withoutText)).toBe(true)
++})
+diff --git a/packages/plugins/jxl.d.ts b/packages/plugins/jxl.d.ts
+index 77d7dd5..4730382 100644
+--- a/packages/plugins/jxl.d.ts
++++ b/packages/plugins/jxl.d.ts
+@@ -69,6 +69,8 @@ export interface JxlExportOptions {
+   /** Default `'#ffffff'`. */
+   backgroundColor?: string | null;
+   filename?: string;
++  /** Style rules for this export only: SnapDOM's `css` export option. */
++  css?: string;
+   format?: string;
+   effort?: JxlEffort;
+   signal?: AbortSignal;
 diff --git a/packages/plugins/jxl.js b/packages/plugins/jxl.js
-index b598ec0..53def77 100644
+index b598ec0..64861b4 100644
 --- a/packages/plugins/jxl.js
 +++ b/packages/plugins/jxl.js
 @@ -8,7 +8,9 @@
@@ -572,20 +616,20 @@ index b598ec0..53def77 100644
 +        if (lines.length !== bare.length || !overPhoto({ exactRects: lines, photoRects: rects.photoRects })) return null;
 +        const without = await textFree(draw, canvas, signal);
 +        if (!without) return null;
-+        const { data } = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height);
++        const { data, plain } = without;
 +        const changed = r => {
-+          for (let y = r.y; y < r.y + r.height; y++) for (let i = (y * canvas.width + r.x) * 4, end = i + r.width * 4; i < end; i++) if (data[i] !== without.data[i]) return true;
++          for (let y = r.y; y < r.y + r.height; y++) for (let i = (y * canvas.width + r.x) * 4, end = i + r.width * 4; i < end; i++) if (plain[i] !== data[i]) return true;
 +          return false;
 +        };
 +        const kept = lines.filter((r, i) => changed(bare[i])).map(({ x, y, width, height }) => ({ x, y, width, height }));
-+        return kept.length ? { ...without, rects: kept } : null;
++        return kept.length ? { data, width: without.width, height: without.height, rects: kept } : null;
 +      }
 +
 +      async function textFree(draw, canvas, signal) {
-+        if (unstyled) return null;
-+        // Never into the app's own canvas: it holds the export.
++        if (unstyled.has(exports)) return null;
++        // Never into the app's own canvas: it holds the export. The export's own rules stay, before ours.
 +        const { canvas: app, ...again } = draw;
-+        const drawing = exports.canvas({ ...again, css: TEXT_FREE });
++        const drawing = exports.canvas({ ...again, css: again.css ? `${again.css}\n${TEXT_FREE}` : TEXT_FREE });
 +        // SnapDOM refuses css on a raster capture with a RangeError, as it refuses a crop: drawn once.
 +        // Any other failure fails the export.
 +        const drawn = await abortable(drawing, signal).catch(error => {
@@ -597,10 +641,10 @@ index b598ec0..53def77 100644
 +        try {
 +          if (drawn.width !== canvas.width || drawn.height !== canvas.height) return null;
 +          const { data } = drawn.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, drawn.width, drawn.height);
-+          // A SnapDOM from before the css option draws the same pixels: from then on, drawn once.
++          // A SnapDOM from before the css option draws the same pixels: from then on, this capture is drawn once.
 +          const plain = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height).data;
-+          if (data.every((v, i) => v === plain[i])) { unstyled = true; return null; }
-+          return { data, width: drawn.width, height: drawn.height };
++          if (data.every((v, i) => v === plain[i])) { unstyled.add(exports); return null; }
++          return { data, plain, width: drawn.width, height: drawn.height };
 +        } finally {
 +          free(drawn);
 +        }
@@ -623,7 +667,7 @@ index b598ec0..53def77 100644
        ...base, ...jobs[i],
        onProgress: hooks.onProgress && (f => { if (f < 1) hooks.onProgress(i * span + f * span); }),
        onEncoded: r => { got = r; },
-@@ -494,6 +553,39 @@ async function smaller(encoder, canvas, base, jobs, hooks) {
+@@ -494,6 +553,40 @@ async function smaller(encoder, canvas, base, jobs, hooks) {
    return best;
  }
  
@@ -647,8 +691,9 @@ index b598ec0..53def77 100644
 +  };
 +}
 +
-+// A SnapDOM that ignores the css export option, found on the first styled draw that changed nothing.
-+let unstyled = false;
++// Captures whose styled draw changed nothing: a SnapDOM that ignores the css export option, or a capture whose
++// text all stays visible (white on white, an inline important color). Each is drawn once from then on.
++const unstyled = new WeakSet();
 +
 +// Every text transparent, drawn by SnapDOM in its first cascade layer, so these important rules
 +// outrank every author rule. Nothing else is meant to change, and what else changes only adds

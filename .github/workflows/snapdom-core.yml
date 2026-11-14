@@ -46,7 +46,7 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run $(cat ../files.txt) --browser.headless --reporter=dot 2>&1 | tee ../logs/suite-${{ matrix.tag }}-baseline.log
+          BROWSER=${{ matrix.browser }} bash ../scripts/suite.sh ../logs/suite-${{ matrix.tag }}-baseline.log $(cat ../files.txt)
       - name: The patches
         working-directory: snapdom
         run: |
@@ -75,7 +75,7 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run $(cat ../files.txt) --browser.headless --reporter=dot 2>&1 | tee ../logs/suite-${{ matrix.tag }}.log
+          BROWSER=${{ matrix.browser }} bash ../scripts/suite.sh ../logs/suite-${{ matrix.tag }}.log $(cat ../files.txt)
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -118,7 +118,7 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run --browser.headless --reporter=dot 2>&1 | tee ../logs/order-${{ matrix.browser }}-baseline.log
+          BROWSER=${{ matrix.browser }} bash ../scripts/suite.sh ../logs/order-${{ matrix.browser }}-baseline.log
       - name: The whole suite with the patches but without their test file
         working-directory: snapdom
         continue-on-error: true
@@ -126,7 +126,7 @@ jobs:
           set -o pipefail
           git -c user.name=ci -c user.email=ci@example.invalid am ../patches/*.patch > ../logs/am.log 2>&1
           for f in $(git diff --name-only --diff-filter=A "$SNAPDOM" HEAD -- '__tests__/*.test.js'); do rm "$f"; echo "removed $f"; done
-          BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run --browser.headless --reporter=dot 2>&1 | tee ../logs/order-${{ matrix.browser }}.log
+          BROWSER=${{ matrix.browser }} bash ../scripts/suite.sh ../logs/order-${{ matrix.browser }}.log
       - name: Same failures by name?
         if: always()
         run: |
@@ -140,7 +140,7 @@ jobs:
           retention-days: 1
   aa:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -168,13 +168,13 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run --browser.headless --reporter=dot 2>&1 | tee ../logs/aa-${{ matrix.browser }}-1.log
+          BROWSER=${{ matrix.browser }} bash ../scripts/suite.sh ../logs/aa-${{ matrix.browser }}-1.log
       - name: The unpatched suite again, second run
         working-directory: snapdom
         continue-on-error: true
         run: |
           set -o pipefail
-          BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run --browser.headless --reporter=dot 2>&1 | tee ../logs/aa-${{ matrix.browser }}-2.log
+          BROWSER=${{ matrix.browser }} bash ../scripts/suite.sh ../logs/aa-${{ matrix.browser }}-2.log
       - name: Same failures by name?
         if: always()
         run: |
@@ -188,7 +188,7 @@ jobs:
           retention-days: 1
   swap:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -217,14 +217,14 @@ jobs:
         run: |
           set -o pipefail
           git -c user.name=ci -c user.email=ci@example.invalid am ../patches/*.patch > ../logs/am.log 2>&1
-          BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run --browser.headless --reporter=dot 2>&1 | tee ../logs/swap-${{ matrix.browser }}-1.log
+          BROWSER=${{ matrix.browser }} bash ../scripts/suite.sh ../logs/swap-${{ matrix.browser }}-1.log
       - name: The unpatched suite second
         working-directory: snapdom
         continue-on-error: true
         run: |
           set -o pipefail
           git checkout -q "$SNAPDOM"
-          BROWSER=${{ matrix.browser }} node scripts/vitest.mjs run --browser.headless --reporter=dot 2>&1 | tee ../logs/swap-${{ matrix.browser }}-2.log
+          BROWSER=${{ matrix.browser }} bash ../scripts/suite.sh ../logs/swap-${{ matrix.browser }}-2.log
       - name: Same failures by name?
         if: always()
         run: |

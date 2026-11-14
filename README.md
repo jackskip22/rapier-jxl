@@ -9,6 +9,9 @@ with the patches, and fails only then; otherwise flaky. Every count is passes: "
 WebKit's `test` job runs in two halves (every other test file of the unpatched commit, by name, the same list in
 both arms), each inside GitHub's two-hour job limit; its notices say `webkit 1/2` and `webkit 2/2`. The test files
 the patches add run in the patches' own tests step of the first half.
+Every whole-suite arm runs through `scripts/suite.sh`: it stops any browser an earlier arm left, runs WebKit with two
+workers, ends an arm after 30 minutes, and after a page crash ("Browser connection was closed") keeps that log as
+`<log>.crashed` and runs the arm once more in a fresh browser. Both arms of a comparison take the same path.
 The patches' test file removes every element it adds after each test. Every list, count and table row is also a
 `::notice` annotation, readable from the run's checks without a token.
 
