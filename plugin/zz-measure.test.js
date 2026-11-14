@@ -4,7 +4,9 @@
 // measure-<engine>.jsonl in the project root:
 //   before/after: bytes, the median time of three exports (after one warm-up), whether the three files were identical,
 //   and wrong text samples: text samples (where the page drawn with its text transparent differs) that the decoded
-//   file does not reproduce exactly.
+//   file does not reproduce exactly. Each arm also records its fixture: a digest of the canvas its encoder was given,
+//   its own text-sample count, and how many samples that canvas differs from the reference drawing
+//   (canvasNotExport). measure-summary.mjs admits a row only when both arms had the same fixture.
 import { it, expect } from 'vitest'
 import { server } from 'vitest/browser'
 import { snapdom } from '../src/api/snapdom.js'
@@ -30,6 +32,25 @@ const PAGES = {
 }
 const HIDE = '*{color:transparent!important;-webkit-text-fill-color:transparent!important;text-shadow:none!important}'
 const median = a => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)]
+const u32 = d => new Uint32Array(d.buffer, d.byteOffset, d.length >> 2)
+// Per sample, red, green and blue: text samples (the reference drawing a against the same drawing with its text
+// transparent, b), those the decoded file f does not reproduce from the encoder's canvas d, and the samples where d
+// is not the reference drawing. A plain function, called after the decode: in WebKit the same loop written inside
+// the async closure that awaits the decode counted 187,669 differing samples between arrays whose digests were equal.
+function count(a, b, d, f) {
+  const rgb = 0x00ffffff, A = u32(a), B = u32(b), D = u32(d), F = u32(f)
+  let wrong = 0, text = 0, drawnDiffers = 0
+  for (let i = 0; i < A.length; i++) {
+    const ai = A[i] & rgb, di = D[i] & rgb
+    if (di !== ai) drawnDiffers++
+    if (ai === (B[i] & rgb)) continue
+    text++
+    if ((F[i] & rgb) !== di) wrong++
+  }
+  return { wrong, text, drawnDiffers, fixture: `${d.length}:${digest(d)}` }
+}
+// FNV-1a over the samples: equal only for the same canvas.
+const digest = d => { let h = 0x811c9dc5; for (let i = 0; i < d.length; i++) h = Math.imul(h ^ d[i], 0x01000193); return (h >>> 0).toString(16) }
 const rgba = c => c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, c.width, c.height).data
 
 async function page(html) {
@@ -81,21 +102,11 @@ it('the jxl plugin as released and with the patches, on text over photographs', 
       const plain = await after.result.toCanvas({ backgroundColor: '#ffffff' })
       const bare = await after.result.toCanvas({ backgroundColor: '#ffffff', css: HIDE })
       const a = rgba(plain), b = rgba(bare)
-      const wrong = async (r) => {
-        const { data } = await decoder.decode(r.file)
-        let n = 0, text = 0, drawnDiffers = 0
-        for (let i = 0; i < a.length; i += 4) {
-          if (r.drawn.d[i] !== a[i] || r.drawn.d[i + 1] !== a[i + 1] || r.drawn.d[i + 2] !== a[i + 2]) drawnDiffers++
-          if (a[i] === b[i] && a[i + 1] === b[i + 1] && a[i + 2] === b[i + 2]) continue
-          text++
-          if (data[i] !== r.drawn.d[i] || data[i + 1] !== r.drawn.d[i + 1] || data[i + 2] !== r.drawn.d[i + 2]) n++
-        }
-        return { wrong: n, text, drawnDiffers }
-      }
+      const wrong = async (r) => count(a, b, r.drawn.d, (await decoder.decode(r.file)).data)
       const wb = await wrong(before), wa = await wrong(after)
       lines.push({ engine: server.browser, page: name, dpr, width: plain.width, height: plain.height, textSamples: wa.text,
-        before: { bytes: before.bytes, ms: before.ms, same: before.same, wrongText: wb.wrong, canvasNotExport: wb.drawnDiffers },
-        after: { bytes: after.bytes, ms: after.ms, same: after.same, wrongText: wa.wrong, canvasNotExport: wa.drawnDiffers },
+        before: { bytes: before.bytes, ms: before.ms, same: before.same, wrongText: wb.wrong, canvasNotExport: wb.drawnDiffers, textSamples: wb.text, fixture: wb.fixture },
+        after: { bytes: after.bytes, ms: after.ms, same: after.same, wrongText: wa.wrong, canvasNotExport: wa.drawnDiffers, textSamples: wa.text, fixture: wa.fixture },
         ratio: +(after.bytes / before.bytes).toFixed(4) })
     } finally {
       el.remove()
