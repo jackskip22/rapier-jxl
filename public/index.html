@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' blob:; worker-src blob:; connect-src 'self'; img-src blob:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>rapier-jxl test</title>
+<style>
+  * { box-sizing: border-box }
+  body { max-width: 48rem; margin: 2rem auto; padding: 0 1rem; color: #171717; background: #fff; font: 16px/1.5 system-ui, sans-serif }
+  h1 { font-size: 1.5rem }
+  button { font: inherit; border: 2px solid #555; border-radius: 0; padding: .75rem 1.5rem; background: #fff; color: inherit; cursor: pointer; margin: 0 .5rem .5rem 0; min-height: 3rem }
+  button.main { width: 100%; margin: 0; background: #171717; color: #fff; font-weight: 700 }
+  button:disabled { opacity: .5; cursor: default }
+  dl { margin: 1rem 0; display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem } dt { color: #555 } dd { margin: 0; overflow-wrap: anywhere }
+  #bar { height: 1rem; border: 2px solid #555; margin: 1rem 0 .5rem } #fill { height: 100%; width: 0; background: #171717 }
+  [hidden] { display: none }
+  :focus-visible { outline: 3px solid #075ccc; outline-offset: 2px }
+</style>
+<h1>rapier-jxl test</h1>
+<p>Tests rapier-jxl <span id="version"></span><span id="build"></span> on this device with fixed real pictures. Tap Start and wait 10 to 15 minutes with this page open; it keeps the screen awake.</p>
+<dl id="facts"></dl>
+<p id="sent">Sent when it finishes: the facts above, timings and file fingerprints. Never a picture, a name or an account.</p>
+<form id="form">
+  <button id="run" class="main" type="submit">Start</button>
+</form>
+<div id="running" hidden>
+  <div id="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><div id="fill"></div></div>
+  <p id="left" role="status"></p>
+</div>
+<p id="progress" role="status"></p>
+<p><button id="retry" type="button" hidden>Try again</button><button id="download" type="button" hidden>Download results</button></p>
+<script>
+const RELEASE = {"version":"8.4.0","modules":{"index":{"bytes":1580228,"sha256":"266d4d36a85e14aff96d4798035237ae8eeab0bd17f3badd0c81219c0db43d63"},"jpeg":{"bytes":534186,"sha256":"135806e8a585b4e7dc46abf40ca74a62ea4588fbb1ad31483299016e5eea4a50"},"decode":{"bytes":382339,"sha256":"0240e4b56d4856dc7e8224ef1bec5ead9dc1ee2c572c86b49057800e1cf92d4d"},"verify":{"bytes":300178,"sha256":"95b9012c2fc5f42960ced35fb25642cde6e8b606d2612a4b17cc4f38afb12eb1"}},"selftest":{"version":"8.4.0","pictures":[{"id":"screenshot","file":"screenshot-mdn.png","kind":"png","width":1920,"height":1080,"sha256":"82cffc076e2219801170d63799974f5e5dfc56096a838ef492305560fc9affa6","rgbaSha256":"9592f20763f9d63414ed0141fab50e74f623b7417c8eb0d9d4005704411b6379","source":"Canvas API page of MDN Web Docs, captured in Chrome 155","sourceURL":"https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API","author":"Mozilla Contributors","license":"CC BY-SA 2.5","licenseURL":"https://creativecommons.org/licenses/by-sa/2.5/"},{"id":"photo","file":"photo-kodim23.png","kind":"png","width":768,"height":512,"sha256":"090880a1dbce96bb7d1db3f583fb830e98ef4de67542cbad2185a1111e04e928","rgbaSha256":"c3b1252504d7aaf3c6b6b12bc037aefae380ec4574b565fb84ce6d99e9158b36","source":"Kodak Lossless True Color Image Suite, kodim23","sourceURL":"https://r0k.us/graphics/kodak/","author":"Eastman Kodak","license":"Released by Eastman Kodak for unrestricted use","licenseURL":"https://r0k.us/graphics/kodak/"},{"id":"camera","file":"camera-iphone16.jpg","kind":"jpeg","width":4032,"height":3024,"sha256":"7166b35f92c1168221cf0211fa755c9495d1883a50b5d7dab8b6bd758da2c5af","source":"Juvenile Atlantic Ghost Crab along the beach in Kitty Hawk, North Carolina; iPhone 16 original","sourceURL":"https://commons.wikimedia.org/wiki/File:2026-09-10_0953_Juvenile_Atlantic_Ghost_Crab_along_the_beach_in_Kitty_Hawk,_North_Carolina.jpg","author":"TheDetroitGeographer","license":"CC0 1.0","licenseURL":"https://creativecommons.org/publicdomain/zero/1.0/"}],"expected":{"screenshot-exact-e1":"8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f","screenshot-exact-e3":"d8112da419eb84001d99385588bcb2db8e779ec32d31b5271b25c18d0edbfb62","screenshot-exact-e7":"94c52c56f288eff936bd46190f078045c645c1d1ec82d1696080379975ef2cc4","screenshot-lossy-e1":"8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f","screenshot-lossy-e3":"d8112da419eb84001d99385588bcb2db8e779ec32d31b5271b25c18d0edbfb62","screenshot-lossy-e7":"94c52c56f288eff936bd46190f078045c645c1d1ec82d1696080379975ef2cc4","photo-exact-e1":"6078d53ef2d1fed193c1439a2a4d7024f570b43cf8606ca39cd05440e3752f8f","photo-exact-e3":"7618cd16bf8dc70dacda68089a5914dc37168024098a858883aca426a4441ac9","photo-exact-e7":"d8aadaad21e33c59346b59efcf6e9c997481f3b5c441771595cc08d9f083066a","photo-lossy-e1":"f9d713cdc266049b15efa97000b6f2704d01591103b219ea99e87015b538174a","photo-lossy-e3":"f9d713cdc266049b15efa97000b6f2704d01591103b219ea99e87015b538174a","photo-lossy-e7":"d9716857a74ca0f7be27bbef8e0f7e27d8e84d1c11adf2933b5dc1f1577e7632","camera-recompress-e1":"cae0589ba93c15e26ccd4efa366c61d5aa5412bb1cb4fdf0c0039e34f81dc39e","camera-recompress-e3":"6c72c67d8a1aa9acb262dc560efd65f29d9fa3a559c629d00d0ff90cdb9d6b8d","camera-recompress-e7":"7f0f2aaa769e836d1695545dfef4e18ab2c061708c689e8f14a16869c5f03b89"}}};
+function selftestCore() {
+// selftest.mjs begin
+// rapier-jxl self-test: encodes, decodes and verifies a fixed set of real pictures and returns one results record.
+// No imports and no host APIs beyond the web platform (fetch, crypto.subtle, DecompressionStream, performance), so
+// the command (npx rapier-jxl selftest), the browser page (jobs/run.html) and a Cloudflare Worker run the same steps.
+// It never sends anything: the caller writes or offers the record.
+
+const hex = buffer => Array.from(new Uint8Array(buffer), n => n.toString(16).padStart(2, '0')).join('');
+const sha256 = async bytes => hex(await crypto.subtle.digest('SHA-256', bytes));
+
+// 8-bit RGB or RGBA, non-interlaced PNG to RGBA: the pictures are written that way, so every runtime reads the same pixels.
+async function readPNG(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), idat = [];
+  let width = 0, height = 0, channels = 0;
+  for (let at = 8; at + 8 <= bytes.length;) {
+    const length = view.getUint32(at), type = String.fromCharCode(...bytes.subarray(at + 4, at + 8)), body = bytes.subarray(at + 8, at + 8 + length);
+    if (type === 'IHDR') {
+      width = view.getUint32(at + 8); height = view.getUint32(at + 12);
+      const depth = body[8], color = body[9];
+      if (depth !== 8 || (color !== 2 && color !== 6) || body[12] !== 0) throw new Error('Self-test picture is not 8-bit RGB or RGBA without interlace');
+      channels = color === 6 ? 4 : 3;
+    } else if (type === 'IDAT') idat.push(body);
+    at += 12 + length;
+  }
+  const stream = new Blob(idat).stream().pipeThrough(new DecompressionStream('deflate'));
+  const raw = new Uint8Array(await new Response(stream).arrayBuffer()), stride = width * channels;
+  if (raw.length !== (stride + 1) * height) throw new Error('Self-test picture has the wrong data length');
+  const data = new Uint8Array(width * height * 4);
+  let previous = new Uint8Array(stride);
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)], line = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    for (let x = 0; x < stride; x++) {
+      const a = x >= channels ? line[x - channels] : 0, b = previous[x], c = x >= channels ? previous[x - channels] : 0;
+      const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+      line[x] = (line[x] + (filter === 1 ? a : filter === 2 ? b : filter === 3 ? (a + b) >> 1
+        : filter === 4 ? (pa <= pb && pa <= pc ? a : pb <= pc ? b : c) : 0)) & 255;
+    }
+    for (let x = 0, o = y * width * 4; x < width; x++, o += 4) {
+      data[o] = line[x * channels]; data[o + 1] = line[x * channels + 1]; data[o + 2] = line[x * channels + 2];
+      data[o + 3] = channels === 4 ? line[x * channels + 3] : 255;
+    }
+    previous = line;
+  }
+  return {data, width, height};
+}
+
+const error = e => ({name: e?.name || 'Error', code: e?.code || null, message: String(e?.message || e)});
+const QUALITY = 90;
+
+// The rows: each picture at efforts 1, 3 and 7, lossless and lossy; the camera JPEG recompressed and restored.
+function selftestRows(manifest) {
+  const rows = [];
+  for (const picture of manifest.pictures) {
+    if (picture.kind === 'jpeg') {
+      for (const effort of [1, 3, 7]) rows.push({id: `${picture.id}-recompress-e${effort}`, picture: picture.id, operation: 'recompress', effort});
+    } else for (const fidelity of ['exact', 'lossy']) for (const effort of [1, 3, 7])
+      rows.push({id: `${picture.id}-${fidelity}-e${effort}`, picture: picture.id, operation: 'encode', fidelity, effort});
+  }
+  return rows;
+}
+
+// modules: {encode, recompress, restore, decode, verify} from the package, and optionally nativeDecode(bytes), the
+// host's own decoder ({data, width, height}, or null where it has none). picture(file): its bytes.
+// facts: the machine, from the host. expected: {rowId: sha256} for this release, or null to record without comparing.
+async function selftest({modules, manifest, picture, facts = {}, onStep = () => {}, onRow = () => {}, now = () => performance.now()}) {
+  const started = now();
+  const record = {schema: 1, kind: 'rapier-jxl-selftest', version: manifest.version, status: 'running', machine: facts,
+    pictures: [], rows: [], summary: null};
+  const inputs = new Map();
+  for (const item of manifest.pictures) {
+    onStep('Read ' + item.file);
+    const entry = {id: item.id, file: item.file, kind: item.kind};
+    record.pictures.push(entry);
+    try {
+      const bytes = new Uint8Array(await picture(item.file));
+      entry.bytes = bytes.length; entry.sha256 = await sha256(bytes);
+      if (entry.sha256 !== item.sha256) throw new Error(`${item.file} does not match its SHA-256`);
+      if (item.kind === 'jpeg') inputs.set(item.id, {bytes, sha256: entry.sha256});
+      else {
+        const pixels = await readPNG(bytes);
+        entry.width = pixels.width; entry.height = pixels.height; entry.rgbaSha256 = await sha256(pixels.data);
+        if (entry.rgbaSha256 !== item.rgbaSha256) throw new Error(`${item.file} decodes to other pixels`);
+        inputs.set(item.id, {bytes, pixels, rgbaSha256: entry.rgbaSha256});
+      }
+    } catch (e) { entry.error = error(e); }
+  }
+  for (const row of selftestRows(manifest)) {
+    onStep(row.id);
+    const input = inputs.get(row.picture), out = {...row, status: 'fail'};
+    record.rows.push(out);
+    if (!input) { out.error = {name: 'Error', code: null, message: 'The picture could not be read'}; onRow(out); continue; }
+    try {
+      let result, t = now();
+      if (row.operation === 'recompress') result = await modules.recompress(input.bytes, {effort: row.effort});
+      else result = await modules.encode(input.pixels, {fidelity: row.fidelity === 'exact' ? 'exact' : {quality: QUALITY}, effort: row.effort, webgpu: false});
+      out.encodeMs = now() - t;
+      out.bytes = result.bytes.length; out.sha256 = await sha256(result.bytes);
+      const expected = manifest.expected?.[row.id] ?? null;
+      out.expectedSha256 = expected;
+      out.sameBytes = expected === null ? null : out.sha256 === expected;
+      if (row.operation === 'recompress') {
+        t = now();
+        const restored = await modules.restore(result.bytes);
+        out.restoreMs = now() - t;
+        out.restoredSha256 = await sha256(restored.bytes);
+        out.exact = out.restoredSha256 === input.sha256;
+      } else {
+        t = now();
+        const decoded = await modules.decode(result.bytes);
+        out.decodeMs = now() - t;
+        if (decoded.width !== input.pixels.width || decoded.height !== input.pixels.height) throw new Error('Decoded size differs from the picture');
+        out.decodedSha256 = await sha256(decoded.data);
+        if (row.fidelity === 'exact') out.exact = out.decodedSha256 === input.rgbaSha256;
+        // A browser's own JPEG XL decoder, where the host has one: its pixels for every exact file.
+        if (row.fidelity === 'exact' && modules.nativeDecode) {
+          t = now();
+          try {
+            const native = await modules.nativeDecode(result.bytes);
+            out.native = native ? {exact: native.width === input.pixels.width && native.height === input.pixels.height
+              && await sha256(native.data) === input.rgbaSha256, ms: now() - t} : {available: false};
+          } catch (e) { out.native = {exact: false, error: error(e)}; }
+        }
+      }
+      t = now();
+      const receipt = await modules.verify(row.operation === 'recompress' ? input.bytes : input.pixels, result);
+      out.verifyMs = now() - t;
+      out.verified = receipt.verified === true;
+      out.verification = {kind: receipt.kind, ...(receipt.metric && {metric: receipt.metric, score: receipt.score}),
+        ...(receipt.floor !== undefined && {floor: receipt.floor})};
+      out.status = out.verified && out.exact !== false && out.sameBytes !== false ? 'pass' : 'fail';
+    } catch (e) {
+      out.error = error(e);
+      if (e?.verification) out.verification = {verified: false, kind: e.verification.kind, score: e.verification.score, reason: e.verification.reason};
+    }
+    onRow(out);
+  }
+  const passed = record.rows.filter(r => r.status === 'pass').length;
+  record.summary = {rows: record.rows.length, passed, failed: record.rows.length - passed,
+    compared: record.rows.filter(r => r.sameBytes !== null).length,
+    native: modules.nativeDecode ? {checked: record.rows.filter(r => r.native && r.native.available !== false).length,
+      mismatched: record.rows.filter(r => r.native?.exact === false).length} : null};
+  record.status = passed === record.rows.length && record.pictures.every(p => !p.error) ? 'pass' : 'fail';
+  record.elapsedMs = now() - started;
+  return record;
+}
+// selftest.mjs end
+  return {selftest, selftestRows, readPNG, sha256};
+}
+async function workerMain() {
+  const {selftest, selftestRows, readPNG, sha256} = selftestCore();
+  const error = e => ({name: e.name, code: e.code || null, message: String(e.message || e)});
+  async function pinnedBytes(response, size) {
+    const bytes = new Uint8Array(size), reader = response.body.getReader();
+    let length = 0;
+    try {
+      for (;;) {
+        const {value, done} = await reader.read();
+        if (done) {
+          if (length !== size) throw new Error('Published module length mismatch');
+          return bytes;
+        }
+        if (value.byteLength > size - length) throw new Error('Published module length mismatch');
+        bytes.set(value, length); length += value.byteLength;
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+  }
+  const get = url => fetch(url, {credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store', redirect: 'error'});
+  // What a step costs, in units of one small encode: the page turns finished units into progress and time left.
+  const selftestCost = id => /^Read /.test(id) ? 0 : /^camera/.test(id) ? 6 : /^screenshot/.test(id) ? 2 : 1;
+  const ORDERS = [['default', 'false', 'required'], ['required', 'false', 'default'], ['false', 'required', 'default']];
+  const CAMERA_ORDER = ['false', 'default', 'required'];
+  const CAMERA_COST = 30;
+  self.onmessage = async ({data: {release, facts, build, home}}) => {
+    let current = 0;
+    const step = (id, cost) => postMessage({type: 'step', id, cost});
+    const loaded = {}, assets = [];
+    // This build's modules, served beside the page and pinned to the hashes above.
+    const modulesBase = home + 'build/dist/';
+    async function load(name) {
+      if (loaded[name]) return loaded[name];
+      step('Load ' + name, 0);
+      const url = modulesBase + name + '.mjs', response = await get(url);
+      if (!response.ok) throw new Error(name + ': HTTP ' + response.status);
+      let bytes;
+      bytes = await pinnedBytes(response, release.modules[name].bytes);
+      const sha = await sha256(bytes);
+      assets.push({path: 'dist/' + name + '.mjs', bytes: bytes.byteLength, sha256: sha, url});
+      postMessage({type: 'assets', assets});
+      if (sha !== release.modules[name].sha256) throw new Error(name + ': module hash mismatch');
+      const objectURL = URL.createObjectURL(new Blob([bytes], {type: 'text/javascript'}));
+      try { return loaded[name] = await import(objectURL); }
+      finally { URL.revokeObjectURL(objectURL); }
+    }
+    // The pictures of this release's jobs/pictures/, each checked against the manifest pinned in this page.
+    const base = home + 'pictures/';
+    async function picture(file) {
+      const response = await get(base + file);
+      if (!response.ok) throw new Error(file + ': HTTP ' + response.status);
+      return new Uint8Array(await response.arrayBuffer());
+    }
+    // The browser's own JPEG XL decoder, where it has one.
+    async function nativeDecode(bytes) {
+      let bitmap;
+      try { bitmap = await createImageBitmap(new Blob([bytes], {type: 'image/jxl'}), {colorSpaceConversion: 'none', premultiplyAlpha: 'none'}); }
+      catch (e) { if (e.name === 'InvalidStateError' || e.name === 'EncodingError' || e.name === 'NotSupportedError') return null; throw e; }
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), context = canvas.getContext('2d', {colorSpace: 'srgb', willReadFrequently: true});
+      context.drawImage(bitmap, 0, 0); bitmap.close();
+      return {width: canvas.width, height: canvas.height, data: new Uint8Array(context.getImageData(0, 0, canvas.width, canvas.height).data.buffer)};
+    }
+    try {
+      const manifest = build ? {...release.selftest, expected: {}} : release.selftest;
+      const selftestTotal = selftestRows(manifest).reduce((sum, row) => sum + selftestCost(row.id), 0);
+      const benchTotal = 1 + 2 * 3 * 3 + 3 * CAMERA_COST;
+      postMessage({type: 'plan', total: selftestTotal + benchTotal});
+      // 1. The self-test rows, efforts 1, 3 and 7, with the host's real decoder where there is one.
+      const [{encode}, {recompress, restore}, {decode}, verifier] = [await load('index'), await load('jpeg'), await load('decode'), await load('verify')];
+      verifier.configureDecoder(decode, restore);
+      const native = typeof createImageBitmap === 'function' && typeof OffscreenCanvas === 'function' ? nativeDecode : undefined;
+      const record = await selftest({modules: {encode, recompress, restore, decode, verify: verifier.verify, nativeDecode: native},
+        manifest, picture, facts, onStep: id => step(id, selftestCost(id)), onRow: row => postMessage({type: 'row', row})});
+      postMessage({type: 'record', record});
+      // 2. The WebGPU rows: webgpu left out (the default), false and 'required', each pair checked for the same file.
+      const adapters = [];
+      let submissions = 0, observed = false;
+      try {
+        const submit = GPUQueue.prototype.submit;
+        GPUQueue.prototype.submit = function (...args) { submissions++; return submit.apply(this, args); };
+        const request = navigator.gpu.requestAdapter.bind(navigator.gpu);
+        navigator.gpu.requestAdapter = async (...args) => {
+          const adapter = await request(...args);
+          if (adapter) {
+            const info = adapter.info;
+            adapters.push({vendor: info?.vendor || '', architecture: info?.architecture || '', device: info?.device || '',
+              description: info?.description || '', isFallbackAdapter: adapter.isFallbackAdapter ?? info?.isFallbackAdapter ?? null});
+            postMessage({type: 'gpu', adapters});
+          }
+          return adapter;
+        };
+        observed = true;
+      } catch {}
+      const photoItem = release.selftest.pictures.find(p => p.id === 'photo'), cameraItem = release.selftest.pictures.find(p => p.id === 'camera');
+      const photoFile = await picture(photoItem.file), cameraFile = await picture(cameraItem.file);
+      if (await sha256(photoFile) !== photoItem.sha256) throw new Error(photoItem.file + ' does not match its SHA-256');
+      if (await sha256(cameraFile) !== cameraItem.sha256) throw new Error(cameraItem.file + ' does not match its SHA-256');
+      const image = await readPNG(photoFile), photoInput = await sha256(image.data);
+      const camera = new Blob([cameraFile], {type: 'image/jpeg'});
+      const median = list => [...list].sort((a, b) => a - b)[Math.floor(list.length / 2)];
+      const software = () => adapters.some(a => a.isFallbackAdapter === true || /swiftshader|llvmpipe|software/i.test(Object.values(a).join(' '))) ? true
+        : adapters.length && adapters.every(a => a.isFallbackAdapter === false || /nvidia|amd|intel|apple|qualcomm|arm|mali|adreno|powervr/i.test(Object.values(a).join(' '))) ? false : null;
+      // A measuring build records its stage times in globalThis.__RAPIER_JXL_STAGES, in the realm that runs the encoder.
+      const stagesOf = () => build && globalThis.__RAPIER_JXL_STAGES ? JSON.parse(JSON.stringify(globalThis.__RAPIER_JXL_STAGES)) : undefined;
+      async function timed(input, effort, route) {
+        const before = submissions, start = performance.now();
+        const {bytes} = await encode(input, {fidelity: {quality: 90}, effort, ...(route === 'false' && {webgpu: false}), ...(route === 'required' && {webgpu: 'required'})});
+        const ms = performance.now() - start, stages = stagesOf();
+        return {ms, bytes: bytes.length, sha256: await sha256(bytes), gpuSubmissions: observed ? submissions - before : null, ...(stages && {stages})};
+      }
+      // The first encode of the page's GPU work, timed apart: it pays the one-time start-up and is in no median.
+      step('First WebGPU encode', 1);
+      const first = {id: 'photo-first-encode', status: 'pass', webgpu: 'default', effort: 7};
+      try { Object.assign(first, await timed(image, 7, 'default')); } catch (e) { first.status = 'fail'; first.error = error(e); }
+      postMessage({type: 'row', row: first});
+      async function group(name, input, effort, trials, order, cost, extra) {
+        const records = {default: [], false: [], required: []}, errors = {};
+        for (let trial = 0; trial < trials; trial++) for (const route of order(trial)) {
+          if (errors[route]) continue;
+          step(`${name}, effort ${effort}, ${route === 'default' ? 'WebGPU default' : route === 'false' ? 'WebGPU off' : 'WebGPU required'}, run ${trial + 1} of ${trials}`, cost);
+          try { records[route].push(await timed(input, effort, route)); } catch (e) { errors[route] = error(e); }
+        }
+        const reference = records.false[0]?.sha256 ?? records.default[0]?.sha256 ?? null, all = Object.values(records).flat();
+        const sameBytes = reference !== null && all.every(r => r.sha256 === reference) && (!extra.first || first.sha256 === reference);
+        for (const route of ['false', 'default', 'required']) {
+          const runs = records[route], timesMs = runs.map(r => r.ms);
+          const steady = runs.length === trials && runs.every(r => r.sha256 === runs[0].sha256);
+          const gpuObserved = observed && runs.length === trials && runs.every(r => r.gpuSubmissions > 0);
+          const expected = route === 'false' && extra.expected && !build ? release.selftest.expected[extra.expected] ?? null : null;
+          let status = errors[route] ? (errors[route].code === 'JXL_WEBGPU' ? 'unavailable' : 'fail')
+            : !steady || !sameBytes ? 'fail'
+            : route === 'required' && (!gpuObserved || software() !== false) ? 'unqualified' : 'pass';
+          if (expected && runs[0] && runs[0].sha256 !== expected) status = 'fail';
+          const offMedian = median(records.false.map(r => r.ms));
+          postMessage({type: 'row', row: {id: `${extra.id}-e${effort}-${route}`, status, width: extra.width, height: extra.height, inputSha256: extra.inputSha256,
+            effort, quality: 90, webgpu: route === 'default' ? 'default' : route === 'false' ? false : 'required',
+            bytes: runs[0]?.bytes ?? null, sha256: runs[0]?.sha256 ?? null, ...(expected && {expectedSha256: expected}),
+            timesMs, medianMs: timesMs.length ? median(timesMs) : null, runs, sameBytes, gpuObserved, softwareAdapter: software(),
+            speedup: route !== 'false' && sameBytes && gpuObserved && software() === false && records.false.length ? offMedian / median(timesMs) : null,
+            ...(errors[route] && {error: errors[route]})}});
+        }
+      }
+      for (const effort of [7, 8]) await group('Photo', image, effort, 3, trial => ORDERS[trial % 3], 1,
+        {id: 'photo', width: image.width, height: image.height, inputSha256: photoInput, expected: effort === 7 ? 'photo-lossy-e7' : null, first: effort === 7});
+      await group('Camera photo', camera, 7, 1, () => CAMERA_ORDER, CAMERA_COST,
+        {id: 'camera', width: cameraItem.width, height: cameraItem.height, inputSha256: cameraItem.sha256});
+      postMessage({type: 'done'});
+    } catch (e) { postMessage({type: 'fatal', error: error(e)}); }
+  };
+}
+const $ = id => document.getElementById(id);
+const ua = navigator.userAgent;
+// The device's own words, never who: browser, OS and device class from what the browser says, and what its GPU is.
+function browserName() {
+  const m = ua.match(/(?:Edg|EdgA|EdgiOS)\/([\d.]+)/) ? ['Edge', RegExp.$1] : ua.match(/(?:OPR|OPiOS)\/([\d.]+)/) ? ['Opera', RegExp.$1]
+    : ua.match(/(?:FxiOS|Firefox)\/([\d.]+)/) ? ['Firefox', RegExp.$1] : ua.match(/(?:CriOS|Chrome)\/([\d.]+)/) ? ['Chrome', RegExp.$1]
+    : ua.match(/Version\/([\d.]+).*Safari/) ? ['Safari', RegExp.$1] : null;
+  return m ? m[0] + ' ' + m[1] : 'unknown';
+}
+function osName(hints) {
+  if (/iPhone|iPad|iPod/.test(ua)) { const v = ua.match(/OS (\d+)[_.](\d+)/); return 'iOS' + (v ? ` ${v[1]}.${v[2]}` : ''); }
+  if (/Android/.test(ua)) { const v = ua.match(/Android ([\d.]+)/); return 'Android' + (v ? ' ' + v[1] : ''); }
+  if (/Windows/.test(ua)) return 'Windows' + (hints?.platformVersion ? ' ' + (parseInt(hints.platformVersion) >= 13 ? '11' : '10') : '');
+  if (/Mac OS X/.test(ua)) return 'macOS' + (hints?.platformVersion ? ' ' + hints.platformVersion : '');
+  if (/CrOS/.test(ua)) return 'ChromeOS';
+  if (/Linux/.test(ua)) return 'Linux';
+  return 'unknown';
+}
+const deviceClass = mobile => /iPad|Tablet/.test(ua) || (/Android/.test(ua) && !/Mobile/.test(ua)) ? 'tablet' : mobile || /iPhone|iPod|Mobi/.test(ua) ? 'phone' : 'desktop';
+async function deviceFacts() {
+  let hints = null;
+  try { hints = await navigator.userAgentData?.getHighEntropyValues(['architecture', 'bitness', 'platformVersion']); } catch {}
+  const facts = {browser: browserName(), os: osName(hints), deviceClass: deviceClass(navigator.userAgentData?.mobile),
+    architecture: hints?.architecture || null, bitness: hints?.bitness || null, cores: navigator.hardwareConcurrency ?? null, memoryGB: navigator.deviceMemory ?? null,
+    screen: {width: screen.width, height: screen.height, devicePixelRatio}, webgpu: null};
+  try {
+    const adapter = navigator.gpu && await navigator.gpu.requestAdapter();
+    facts.webgpu = !navigator.gpu ? null : !adapter ? {available: false} : {available: true, vendor: adapter.info?.vendor || '',
+      architecture: adapter.info?.architecture || '', device: adapter.info?.device || '', description: adapter.info?.description || '',
+      isFallbackAdapter: adapter.isFallbackAdapter ?? adapter.info?.isFallbackAdapter ?? null};
+  } catch (e) { facts.webgpu = {available: false, error: String(e.message || e)}; }
+  return facts;
+}
+const gpuName = facts => facts.webgpu?.available ? ([facts.webgpu.vendor, facts.webgpu.architecture, facts.webgpu.description].filter(Boolean).join(' ') || 'WebGPU adapter').slice(0, 160) : 'none';
+const BUILD = "266d4d36a85e";
+const ENDPOINT = '/api/jxl-results';
+let worker, workerURL, timer, report, reportStart, runId = 0, runUuid, wake, started, plan = 0, finishedUnits = 0, lastCost = 0, trace = [], facts, posted = false;
+const minutes = ms => { const m = Math.ceil(ms / 60000); return m <= 1 ? 'Less than a minute left' : `About ${m} minutes left`; };
+function setBar(fraction) {
+  $('fill').style.width = Math.round(fraction * 100) + '%'; $('bar').setAttribute('aria-valuenow', Math.round(fraction * 100));
+  const elapsed = performance.now() - started;
+  $('left').textContent = fraction < 0.05 ? 'About 10 to 15 minutes' : minutes(elapsed * (1 - fraction) / fraction);
+}
+async function keepAwake() {
+  try { wake = await navigator.wakeLock?.request('screen'); } catch { wake = null; }
+}
+const releaseAwake = () => { try { wake?.release(); } catch {} wake = null; };
+document.addEventListener('visibilitychange', () => { if (worker && document.visibilityState === 'visible') keepAwake(); });
+const render = () => { $('download').hidden = !report; };
+function summarize() {
+  const rows = report.rows;
+  report.summary = {rows: rows.length, passed: rows.filter(r => r.status === 'pass').length, failed: rows.filter(r => r.status === 'fail').length,
+    unavailable: rows.filter(r => r.status === 'unavailable').length, unqualified: rows.filter(r => r.status === 'unqualified').length};
+}
+async function send() {
+  $('retry').hidden = true; $('progress').textContent = 'Sending results.';
+  const body = JSON.stringify({id: runUuid, build: BUILD || 'release', version: RELEASE.version, status: report.status, browser: facts.browser, os: facts.os,
+    device: facts.deviceClass, gpu: gpuName(facts), results: report, ...(trace.length && {trace: {encodes: trace}})});
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch(ENDPOINT, {method: 'POST', headers: {'content-type': 'application/json'}, body, credentials: 'omit', referrerPolicy: 'no-referrer'});
+      if (response.ok) { posted = true; $('run').hidden = true; $('progress').textContent = 'Done. Thank you: you can close this page.'; return; }
+      if (response.status === 429 || response.status >= 400 && response.status < 500) break;
+    } catch {}
+    await new Promise(resolve => setTimeout(resolve, 1500 * (attempt + 1)));
+  }
+  $('progress').textContent = 'The results could not be sent. Check the connection and tap Try again.';
+  $('retry').hidden = false;
+}
+function finish(status, message, sendIt) {
+  if (!worker) return;
+  worker.terminate(); worker = null; clearTimeout(timer);
+  URL.revokeObjectURL(workerURL); workerURL = null; releaseAwake();
+  report.status = status; report.elapsedMs = performance.now() - reportStart; summarize();
+  $('running').hidden = true; $('run').hidden = false; $('run').textContent = 'Start again'; $('run').disabled = false;
+  $('progress').textContent = message; render();
+  if (sendIt) send();
+}
+$('version').textContent = RELEASE.version;
+if (BUILD) $('build').textContent = ' (build ' + BUILD.slice(0, 12) + ')';
+deviceFacts().then(f => {
+  facts = f;
+  const show = [['Browser', f.browser], ['System', f.os], ['Device', f.deviceClass], ['Graphics', gpuName(f) === 'none' ? 'no WebGPU' : gpuName(f)]];
+  $('facts').replaceChildren(...show.flatMap(([k, v]) => { const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = k; dd.textContent = v; return [dt, dd]; }));
+});
+$('form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (worker) { finish('canceled', 'Stopped. Nothing was sent.', false); return; }
+  const id = ++runId;
+  reportStart = performance.now(); started = reportStart; plan = 0; finishedUnits = 0; lastCost = 0; trace = []; posted = false;
+  runUuid = crypto.randomUUID();
+  facts = {...await deviceFacts()};
+  $('sent').hidden = true; $('facts').hidden = false; $('running').hidden = false; $('retry').hidden = true; $('download').hidden = true;
+  $('run').textContent = 'Stop'; $('progress').textContent = 'Starting.'; setBar(0);
+  await keepAwake();
+  report = {schema: 1, kind: 'rapier-jxl-phone', version: RELEASE.version, build: BUILD || 'release', status: 'running', machine: facts,
+    package: {name: 'rapier-jxl', version: RELEASE.version, modules: []}, rows: []};
+  const url = URL.createObjectURL(new Blob([selftestCore.toString(), '\n(', workerMain.toString(), ')();'], {type: 'text/javascript'}));
+  workerURL = url;
+  try { worker = new Worker(url, {type: 'module'}); }
+  catch (e) { URL.revokeObjectURL(workerURL); workerURL = null; releaseAwake(); report.status = 'fail'; report.error = {message: e.message}; $('running').hidden = true; $('run').textContent = 'Start again'; $('progress').textContent = 'The worker could not start in this browser.'; summarize(); send(); return; }
+  worker.onmessage = ({data}) => {
+    if (id !== runId || !worker) return;
+    if (data.type === 'plan') plan = data.total;
+    if (data.type === 'step') {
+      finishedUnits += lastCost; lastCost = data.cost; $('progress').textContent = data.id;
+      if (plan) setBar(Math.min(1, finishedUnits / plan));
+    }
+    if (data.type === 'assets') report.package.modules = data.assets;
+    if (data.type === 'gpu') report.machine.gpuAdapters = data.adapters;
+    if (data.type === 'row') {
+      const row = data.row;
+      // A measuring build's stage times travel with the results, apart from the rows.
+      for (const run of [...(row.runs || []), ...(row.stages ? [row] : [])]) if (run.stages) { trace.push({row: row.id, ms: run.ms, sha256: run.sha256, stages: run.stages}); delete run.stages; }
+      report.rows.push(row);
+    }
+    if (data.type === 'record') {
+      // The self-test's own rows are already in the report as they finished; keep its pictures and summary facts.
+      report.pictures = data.record.pictures; report.rows = [...data.record.rows, ...report.rows.filter(r => !data.record.rows.some(s => s.id === r.id))];
+      report.selftest = {status: data.record.status, summary: data.record.summary, elapsedMs: data.record.elapsedMs};
+    }
+    if (data.type === 'fatal') { report.error = data.error; finish('fail', 'The test failed. The result is being sent.', true); return; }
+    if (data.type === 'done') {
+      setBar(1);
+      finish(report.rows.some(r => r.status === 'fail') ? 'fail' : 'pass', 'Verified.', true);
+      return;
+    }
+  };
+  worker.onerror = event => { if (id === runId && worker) { report.error = {message: event.message}; finish('fail', 'The worker failed. The result is being sent.', true); } };
+  timer = setTimeout(() => finish('timed-out', 'Time limit reached. The partial result is being sent.', true), 1800000);
+  worker.postMessage({release: RELEASE, facts, build: BUILD, home: new URL('./', location.href).href});
+});
+$('retry').addEventListener('click', send);
+$('download').addEventListener('click', () => {
+  const link = Object.assign(document.createElement('a'), {href: URL.createObjectURL(new Blob([JSON.stringify(report, null, 2) + '\n'], {type: 'application/json'})), download: `rapier-jxl-phone-${RELEASE.version}.json`});
+  document.body.append(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 60000);
+});
+</script>
+</html>

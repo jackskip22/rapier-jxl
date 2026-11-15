@@ -1,0 +1,6 @@
+{
+  "name": "rapier-jxl-tester",
+  "private": true,
+  "type": "module",
+  "scripts": { "deploy": "wrangler deploy", "dev": "wrangler dev" }
+}
