@@ -24,3 +24,12 @@ jobs:
         working-directory: v7/examples/ios
         run: |
           du -sk Sources/RapierJXL/Web; for f in Sources/RapierJXL/Web/jpegxl/*.mjs; do echo "$f $(wc -c <$f) $(brotli -c -q 11 $f 2>/dev/null | wc -c)"; done
+      - name: jxl-coder-swift sizes
+        if: always()
+        run: |
+          git clone --depth 1 https://github.com/awxkee/jxl-coder-swift /tmp/theirs || true
+          cd /tmp/theirs && git log -1 --format=%h
+          find . -name '*.xcframework' -maxdepth 4 | while read x; do echo "$x"; du -sk "$x"/*/ ; done
+          ls; du -sk .
+          swift package resolve 2>&1 | tail -3 || true
+          find .build -name '*.xcframework' -maxdepth 6 2>/dev/null | while read x; do echo "$x"; du -sk "$x" "$x"/*/; done

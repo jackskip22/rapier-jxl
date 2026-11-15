@@ -19,6 +19,7 @@ async function run({op, id, mime, quality, effort}) {
     const response = await fetch(`/in/${id}`);
     if (!response.ok) throw refusal('JXL_BRIDGE', 'Swift did not send the input.');
     const input = await response.arrayBuffer();
+    say({type: 'started', id});
     if (op === 'restore') await put(id, 'result', bytesOf(await restore(new Uint8Array(input), {signal})));
     else if (op === 'recompress') await put(id, 'result', bytesOf(await recompress(new Uint8Array(input), {effort, signal})));
     else if (op === 'animate') {

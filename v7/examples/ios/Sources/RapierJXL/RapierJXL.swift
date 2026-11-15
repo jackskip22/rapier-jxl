@@ -23,7 +23,19 @@ public final class JXLCodec {
     private var queue: [CheckedContinuation<Void, Never>] = []
     private var busy = false
 
+    /// Called with a job's id when its worker has the input and starts. Tests wait on it before canceling.
+    var onStart: ((String) -> Void)?
+    /// Result and input bytes still held for jobs that are over; zero between calls.
+    var heldBytes: Int { (bridge?.inputs.values.reduce(0) { $0 + $1.count } ?? 0) + (bridge?.outputs.values.reduce(0) { $0 + $1.count } ?? 0) }
+
     public init() {}
+
+    /// Loads the hidden page and its worker now, so the first call does not wait for them. Optional.
+    public func warmUp() async throws {
+        await turn()
+        defer { next() }
+        try await start()
+    }
 
     /// Lossy, `quality` 1 to 100 (SSIMULACRA 2 score) and `effort` 1 to 3.
     public func encode(_ data: Data, quality: Double = 80, effort: Int = 3) async throws -> Data {
@@ -129,6 +141,8 @@ public final class JXLCodec {
             starting = false
             ready.forEach { $0.resume() }
             ready = []
+        case "started":
+            if let id = message["id"] as? String { onStart?(id) }
         case "done":
             if let id = message["id"] as? String, active?.id == id { active?.done.resume(); active = nil }
         case "error":
