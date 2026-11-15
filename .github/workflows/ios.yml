@@ -10,15 +10,19 @@ jobs:
       - name: Package files
         working-directory: v7/examples/ios
         run: JXL_PACKAGE=../../../package node prepare-assets.mjs && cat build/web-assets.json
+      - name: Pick an iPhone simulator
+        run: |
+          id=$(xcrun simctl list devices available -j | node -e 'const d=JSON.parse(require("fs").readFileSync(0)).devices;const k=Object.keys(d).filter(k=>/iOS/.test(k)).sort().reverse();for(const r of k){const p=d[r].find(x=>/iPhone/.test(x.name));if(p){console.log(p.udid);break}}')
+          echo "SIM=$id" >> $GITHUB_ENV; xcrun simctl list devices available | grep "$id"
       - name: Test on an iOS Simulator
         working-directory: v7/examples/ios
-        run: set -o pipefail; xcodebuild test -scheme RapierJXL -destination 'platform=iOS Simulator,name=iPhone 16' | tee test.log
+        run: set -o pipefail; xcodebuild test -scheme RapierJXL -destination "id=$SIM" | tee test.log
       - name: Build the example
         working-directory: v7/examples/ios/Example
         run: |
           brew install xcodegen
           xcodegen
-          set -o pipefail; xcodebuild build -scheme Example -destination 'platform=iOS Simulator,name=iPhone 16' | tail -40
+          set -o pipefail; xcodebuild build -scheme Example -destination "id=$SIM" | tail -40
       - name: Sizes
         if: always()
         working-directory: v7/examples/ios
