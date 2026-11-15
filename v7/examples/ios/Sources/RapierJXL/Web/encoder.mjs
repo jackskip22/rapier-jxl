@@ -32,7 +32,7 @@ async function run({op, id, mime, quality, effort}) {
     say({type: 'done', id});
   } catch (error) {
     const code = error?.name === 'AbortError' ? 'JXL_CANCELED' : /^JXL_[A-Z0-9_]+$/.test(error?.code) ? error.code : 'JXL_MESSAGE';
-    say({type: 'error', id, code, message: error?.message || String(error)});
+    say({type: 'error', id, code, message: (error?.message || String(error)) + (error?.cause?.message ? ` (${error.cause.message})` : '')});
   } finally { running.delete(id); }
 }
 onmessage = ({data}) => {

@@ -57,3 +57,6 @@ bundle on disk is not).
 `node repo/tools/jxl-ios-example.mjs` runs the same page and worker in WebKit against the built package, with a local
 server in the place of Swift: photo, exact JPEG restore, GIF, refusal, cancel, and the next call. The Swift side runs on a
 macOS runner (`ci/ios.yml`). A phone checks the real picker and share sheet.
+
+On the simulator, `UIImage` and ImageIO showed the first frame of an animated JPEG XL only (CI run 4: 1 frame of 2); the page's own
+decoder reads both frames and their timing.
