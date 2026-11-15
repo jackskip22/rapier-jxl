@@ -235,9 +235,9 @@ async function workerMain() {
       return new Uint8Array(await response.arrayBuffer());
     }
     // The browser's own JPEG XL decoder, where it has one.
-    async function nativeDecode(bytes) {
+    async function nativeDecode(bytes, type = 'image/jxl') {
       let bitmap;
-      try { bitmap = await createImageBitmap(new Blob([bytes], {type: 'image/jxl'}), {colorSpaceConversion: 'none', premultiplyAlpha: 'none'}); }
+      try { bitmap = await createImageBitmap(new Blob([bytes], {type}), {colorSpaceConversion: 'none', premultiplyAlpha: 'none'}); }
       catch (e) { if (e.name === 'InvalidStateError' || e.name === 'EncodingError' || e.name === 'NotSupportedError') return null; throw e; }
       const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), context = canvas.getContext('2d', {colorSpace: 'srgb', willReadFrequently: true});
       context.drawImage(bitmap, 0, 0); bitmap.close();
@@ -255,6 +255,26 @@ async function workerMain() {
       const record = await selftest({modules: {encode, recompress, restore, decode, verify: verifier.verify, nativeDecode: native},
         manifest, picture, facts, onStep: id => step(id, selftestCost(id)), onRow: row => postMessage({type: 'row', row})});
       postMessage({type: 'record', record});
+      if (native) {
+        const nativeCheck = [];
+        for (const p of manifest.pictures.filter(p => p.kind === 'png')) {
+          const bytes = await picture(p.file), pixels = await readPNG(bytes);
+          const compare = got => {
+            if (!got) return {available: false};
+            if (got.width !== pixels.width || got.height !== pixels.height) return {width: got.width, height: got.height};
+            let differing = 0, max = 0, alpha = 0, first = null; const by = [0, 0, 0, 0], channel = [0, 0, 0, 0];
+            for (let i = 0; i < got.data.length; i++) { const d = Math.abs(got.data[i] - pixels.data[i]); if (!d) continue;
+              differing++; if (d > max) max = d; channel[i & 3]++; by[Math.min(d, 3)]++;
+              if (first === null) first = {pixel: i >> 2, channel: i & 3, got: got.data[i], want: pixels.data[i]}; }
+            return {differing, values: got.data.length, max, byOne: by[1], byTwo: by[2], byMore: by[3], perChannel: channel, first};
+          };
+          let png, jxl;
+          try { png = compare(await native(bytes, 'image/png')); } catch (e) { png = {error: error(e)}; }
+          try { jxl = compare(await native((await encode(pixels, {fidelity: 'exact', effort: 1, webgpu: false})).bytes)); } catch (e) { jxl = {error: error(e)}; }
+          nativeCheck.push({picture: p.id, png, jxl});
+        }
+        postMessage({type: 'native-check', nativeCheck});
+      }
       // 2. The WebGPU rows: webgpu left out (the default), false and 'required', each pair checked for the same file.
       const adapters = [];
       let submissions = 0, observed = false;
@@ -453,6 +473,7 @@ $('form').addEventListener('submit', async event => {
       report.pictures = data.record.pictures; report.rows = [...data.record.rows, ...report.rows.filter(r => !data.record.rows.some(s => s.id === r.id))];
       report.selftest = {status: data.record.status, summary: data.record.summary, elapsedMs: data.record.elapsedMs};
     }
+    if (data.type === 'native-check') report.nativeCheck = data.nativeCheck;
     if (data.type === 'fatal') { report.error = data.error; finish('fail', 'The test failed. The result is being sent.', true); return; }
     if (data.type === 'done') {
       setBar(1);
