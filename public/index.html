@@ -286,6 +286,7 @@ async function workerMain() {
       // A measuring build records its stage times in globalThis.__RAPIER_JXL_STAGES, in the realm that runs the encoder.
       const stagesOf = () => build && globalThis.__RAPIER_JXL_STAGES ? JSON.parse(JSON.stringify(globalThis.__RAPIER_JXL_STAGES)) : undefined;
       async function timed(input, effort, route) {
+        if (build) globalThis.__RAPIER_JXL_STAGES = {};
         const before = submissions, start = performance.now();
         const {bytes} = await encode(input, {fidelity: {quality: 90}, effort, ...(route === 'false' && {webgpu: false}), ...(route === 'required' && {webgpu: 'required'})});
         const ms = performance.now() - start, stages = stagesOf();
