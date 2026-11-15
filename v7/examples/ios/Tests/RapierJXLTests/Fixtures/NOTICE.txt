@@ -1,0 +1,7 @@
+flower.jpg: photograph by Vultilion, distributed with scikit-learn's sample images.
+Creative Commons Attribution 2.0: https://creativecommons.org/licenses/by/2.0/
+Photographer: https://www.flickr.com/photos/vultilion/
+Source: https://www.flickr.com/photos/vultilion/6056698931/sizes/z/in/photostream/
+Exact cached sample copied without modification. The probe decodes it to PNG in Chromium.
+This fixture replaces the packet's mentioned existing photograph fixture: the supplied
+paint rows contained only synthetic red.png and painted wet-media references.

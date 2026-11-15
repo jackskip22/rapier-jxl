@@ -1,0 +1,11 @@
+name: Example
+options: {bundleIdPrefix: app.rapier.jxlexample, deploymentTarget: {iOS: "16.4"}}
+packages:
+  RapierJXL: {path: ..}
+targets:
+  Example:
+    type: application
+    platform: iOS
+    sources: [ContentView.swift, ExampleApp.swift]
+    dependencies: [{package: RapierJXL}]
+    settings: {GENERATE_INFOPLIST_FILE: YES, INFOPLIST_KEY_UILaunchScreen_Generation: YES}

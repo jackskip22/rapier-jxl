@@ -1,0 +1,26 @@
+name: ios
+on: [push, workflow_dispatch]
+jobs:
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: {node-version: 24}
+      - name: Package files
+        working-directory: v7/examples/ios
+        run: JXL_PACKAGE=../../../package node prepare-assets.mjs && cat build/web-assets.json
+      - name: Test on an iOS Simulator
+        working-directory: v7/examples/ios
+        run: set -o pipefail; xcodebuild test -scheme RapierJXL -destination 'platform=iOS Simulator,name=iPhone 16' | tee test.log
+      - name: Build the example
+        working-directory: v7/examples/ios/Example
+        run: |
+          brew install xcodegen
+          xcodegen
+          set -o pipefail; xcodebuild build -scheme Example -destination 'platform=iOS Simulator,name=iPhone 16' | tail -40
+      - name: Sizes
+        if: always()
+        working-directory: v7/examples/ios
+        run: |
+          du -sk Sources/RapierJXL/Web; for f in Sources/RapierJXL/Web/jpegxl/*.mjs; do echo "$f $(wc -c <$f) $(brotli -c -q 11 $f 2>/dev/null | wc -c)"; done

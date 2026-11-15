@@ -1,0 +1,4 @@
+Sources/RapierJXL/Web/jpegxl/
+.build/
+build/
+*.xcodeproj
