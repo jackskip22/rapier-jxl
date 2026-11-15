@@ -145,7 +145,7 @@ public final class JXLCodec {
     private func receive(_ message: [String: Any]) {
         switch message["type"] as? String {
         case "ready":
-            marks.append((name: "worker ready", at: Date()))
+            if marks.count < 8 { marks.append((name: "worker ready", at: Date())) }
             starting = false
             ready.forEach { $0.resume() }
             ready = []

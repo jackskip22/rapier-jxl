@@ -12,7 +12,7 @@ final class Bridge: NSObject, WKURLSchemeHandler, WKScriptMessageHandler, WKNavi
     var outputs: [String: Data] = [:]
     var onMessage: (([String: Any]) -> Void)?
     var onNavigated: (() -> Void)?
-    /// Every request the page made, with the time it was answered: where a slow first load went.
+    /// The first 64 requests the page made, with the time each was answered: where a slow first load went.
     var requests: [(at: Date, path: String, bytes: Int)] = []
 
     private let web: URL
@@ -54,7 +54,7 @@ final class Bridge: NSObject, WKURLSchemeHandler, WKScriptMessageHandler, WKNavi
     func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
 
     private func finish(_ task: WKURLSchemeTask, _ url: URL, _ status: Int, _ type: String, _ data: Data) {
-        requests.append((Date(), url.path, data.count))
+        if requests.count < 64 { requests.append((Date(), url.path, data.count)) }   // the first load only
         var fields = headers
         fields["Content-Type"] = type
         fields["Content-Length"] = String(data.count)
