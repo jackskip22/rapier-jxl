@@ -1,8 +1,12 @@
 # rapier-jxl in iOS
 
-Write JPEG XL from Swift with no native code. A hidden `WKWebView` runs the encoder in a worker and the package serves its own
-files to it from the app bundle. Nothing touches the network. iOS 17 and later decode JPEG XL natively (`UIImage(data:)`,
-Safari); iOS has no encoder, and this is one.
+A Swift wrapper around the browser encoder in a `WKWebView`: no native JPEG XL codec to build or link. It encodes a photo,
+recompresses a JPEG and restores the same SHA-256, turns a GIF into an animated JPEG XL, keeps every sample of an opaque photo
+in exact mode, cancels a call, and refuses bad input with the package's `JXL_` code. On the iPhone 17 Pro simulator (iOS 26.2),
+`UIImage` decodes the result and ImageIO shows an animation's first frame.
+
+The files under `Sources/RapierJXL/Web` are 3,214,875 bytes (`du -sk` on the macOS runner: 3,160 KB). Brotli 11 module sizes,
+not install sizes: photos 332,209 B, JPEG 166,434 B, animation 494,966 B. Nothing here claims speed.
 
 ## Use
 
