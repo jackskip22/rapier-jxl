@@ -37,7 +37,7 @@ Each call runs one at a time. Cancel a call by canceling its `Task`; the next ca
 - `Sources/RapierJXL/Bridge.swift`: serves the bundle and carries bytes as HTTP bodies, `/in/<id>` and `/out/<id>/result`. No base64.
 - `Sources/RapierJXL/Web/`: the page, its worker, and (after `prepare-assets.mjs`) the modules.
 - `Example/`: a SwiftUI app that picks a photo, writes JPEG XL, shows it, and shares it. `xcodegen` builds its project.
-- `Tests/`: `xcodebuild test -scheme RapierJXL -destination 'platform=iOS Simulator,name=iPhone 16'`.
+- `Tests/`: `xcodebuild test -scheme RapierJXL -destination 'platform=iOS Simulator,name=iPhone 16' (or id=<simulator>)`.
 
 ## Asset bytes
 

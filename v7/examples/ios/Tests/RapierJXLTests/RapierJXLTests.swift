@@ -63,7 +63,8 @@ final class RapierJXLTests: XCTestCase {
             _ = try await task.value
             XCTFail("The call finished after cancel")
         } catch is CancellationError {}
-        XCTAssertFalse(try await codec.encode(photo, quality: 60, effort: 1).isEmpty)
+        let next = try await codec.encode(photo, quality: 60, effort: 1)
+        XCTAssertFalse(next.isEmpty)
     }
 
     func testCancelStopsARunningCall() async throws {
