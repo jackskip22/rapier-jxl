@@ -95,8 +95,8 @@ final class RapierJXLTests: XCTestCase {
 
     func testGIFReadsBack() async throws {
         let jxl = try await codec.animate(gif: try fixture("two-frames", "gif"))
-        // ImageIO on the simulator reads one frame of an animated JPEG XL; the frames and timing are checked in the page
-        // with the package's own decoder.
+        // This floor proves only that iOS recognizes the file's first frame (the simulator's ImageIO reads one of two).
+        // The frames and delays are checked by the package's decoder on the bytes WebKit wrote, in the WebKit proof.
         let source = try XCTUnwrap(CGImageSourceCreateWithData(jxl as CFData, nil))
         XCTAssertGreaterThanOrEqual(CGImageSourceGetCount(source), 1)
         print("ImageIO frames \(CGImageSourceGetCount(source))")
