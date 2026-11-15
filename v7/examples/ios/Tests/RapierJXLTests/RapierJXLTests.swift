@@ -14,6 +14,13 @@ final class RapierJXLTests: XCTestCase {
         let start = Date()
         try await codec.warmUp()
         print("warm-up \(Date().timeIntervalSince(start)) s")
+        let t0 = codec.marks.first?.at ?? start
+        for mark in codec.marks { print("  \(mark.name) at \(mark.at.timeIntervalSince(t0)) s") }
+        let first = Date()
+        _ = try await codec.encode(try fixture("small", "jpg"), quality: 60, effort: 1)
+        print("first call \(Date().timeIntervalSince(first)) s")
+        for request in codec.requestLog { print("  served \(request.path) \(request.bytes) bytes at \(request.at.timeIntervalSince(t0)) s") }
+
     }
 
     private func fixture(_ name: String, _ type: String) throws -> Data {

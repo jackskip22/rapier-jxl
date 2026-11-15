@@ -4,13 +4,16 @@ import WebKit
 /// Serves the package's own files to the hidden page and carries image bytes both ways as HTTP bodies, never base64:
 /// the worker fetches `/in/<id>` and POSTs each result to `/out/<id>/<kind>`. Nothing leaves the device.
 @MainActor
-final class Bridge: NSObject, WKURLSchemeHandler, WKScriptMessageHandler {
+final class Bridge: NSObject, WKURLSchemeHandler, WKScriptMessageHandler, WKNavigationDelegate {
     static let scheme = "rapier"
     static let origin = URL(string: "rapier://app")!
 
     var inputs: [String: Data] = [:]
     var outputs: [String: Data] = [:]
     var onMessage: (([String: Any]) -> Void)?
+    var onNavigated: (() -> Void)?
+    /// Every request the page made, with the time it was answered: where a slow first load went.
+    var requests: [(at: Date, path: String, bytes: Int)] = []
 
     private let web: URL
     private let headers: [String: String]
@@ -26,6 +29,8 @@ final class Bridge: NSObject, WKURLSchemeHandler, WKScriptMessageHandler {
               let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else { return }
         onMessage?(object)
     }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { onNavigated?() }
 
     func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
         guard let url = task.request.url else { return task.didFailWithError(URLError(.badURL)) }
@@ -49,6 +54,7 @@ final class Bridge: NSObject, WKURLSchemeHandler, WKScriptMessageHandler {
     func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
 
     private func finish(_ task: WKURLSchemeTask, _ url: URL, _ status: Int, _ type: String, _ data: Data) {
+        requests.append((Date(), url.path, data.count))
         var fields = headers
         fields["Content-Type"] = type
         fields["Content-Length"] = String(data.count)

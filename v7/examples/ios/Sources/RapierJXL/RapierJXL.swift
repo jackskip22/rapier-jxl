@@ -28,6 +28,10 @@ public final class JXLCodec {
     /// Result and input bytes still held for jobs that are over; zero between calls.
     var heldBytes: Int { (bridge?.inputs.values.reduce(0) { $0 + $1.count } ?? 0) + (bridge?.outputs.values.reduce(0) { $0 + $1.count } ?? 0) }
 
+    /// When the page was created, loaded, and its worker reported ready: the parts of a first call that are not ours to speed up.
+    var marks: [(name: String, at: Date)] = []
+    var requestLog: [(at: Date, path: String, bytes: Int)] { bridge?.requests ?? [] }
+
     public init() {}
 
     /// Loads the hidden page and its worker now, so the first call does not wait for them. Optional.
@@ -128,8 +132,11 @@ public final class JXLCodec {
             configuration.setURLSchemeHandler(bridge, forURLScheme: Bridge.scheme)
             configuration.userContentController.add(bridge, name: "rapier")
             let web = WKWebView(frame: .zero, configuration: configuration)
+            bridge.onNavigated = { [weak self] in self?.marks.append((name: "page loaded", at: Date())) }
+            web.navigationDelegate = bridge
             self.bridge = bridge
             self.web = web
+            marks = [(name: "page created", at: Date())]
             web.load(URLRequest(url: Bridge.origin))
         }
         try await withCheckedThrowingContinuation { ready.append($0) }
@@ -138,6 +145,7 @@ public final class JXLCodec {
     private func receive(_ message: [String: Any]) {
         switch message["type"] as? String {
         case "ready":
+            marks.append((name: "worker ready", at: Date()))
             starting = false
             ready.forEach { $0.resume() }
             ready = []
