@@ -64,6 +64,7 @@ jobs:
         with: {node-version: 24}
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with: {distribution: temurin, java-version: 17}
+      # Xcode 26's Swift 6 mode refuses ExpoModulesJSI's data-race warnings as errors; the app and its pods build in Swift 5 mode.
       - name: Select the newest Xcode
         # ExpoModulesJSI builds a Swift package of tools version 6.2 inside the pod build; older Xcode refuses it with
         # "Could not resolve package dependencies".
@@ -90,7 +91,7 @@ jobs:
           npx expo prebuild --platform ios --no-install
           (cd ios && pod install)
           if ! xcodebuild -workspace ios/JXLExample.xcworkspace -scheme JXLExample -configuration Release -sdk iphonesimulator \
-            -destination "id=$SIM" -derivedDataPath ios/build CODE_SIGNING_ALLOWED=NO build > xcodebuild.log 2>&1; then
+            -destination "id=$SIM" -derivedDataPath ios/build CODE_SIGNING_ALLOWED=NO SWIFT_STRICT_CONCURRENCY=minimal SWIFT_VERSION=5.0 build > xcodebuild.log 2>&1; then
             grep -n -E "error:|ERROR|Error:|\*\* BUILD FAILED|failed with" xcodebuild.log | head -40
             echo '--- the last 80 lines'; tail -80 xcodebuild.log
             exit 1
