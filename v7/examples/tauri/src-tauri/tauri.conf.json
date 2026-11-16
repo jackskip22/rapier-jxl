@@ -12,5 +12,5 @@
       "headers": {"Cross-Origin-Opener-Policy": "same-origin", "Cross-Origin-Embedder-Policy": "require-corp", "Cross-Origin-Resource-Policy": "same-origin"}
     }
   },
-  "bundle": {"active": false, "icon": ["icons/icon.png"]}
+  "bundle": {"active": false, "icon": ["icons/icon.png", "icons/icon.ico"]}
 }
