@@ -26,7 +26,7 @@ const b64 = async name => (await readFile(join(fixtures, name))).toString('base6
 const out = await mkdtemp(join(tmpdir(), 'jxl-tauri-'));
 const report = {status: 'FAIL'};
 const direct = (process.env.TAURI_CHECK ?? (process.platform === 'darwin' ? 'direct' : 'driver')) === 'direct';
-const driver = direct ? null : spawn('tauri-driver', [], {stdio: ['ignore', 'inherit', 'inherit'], env: {...process.env, RAPIER_JXL_CHECK_SAVE_DIR: out}});
+const driver = direct ? null : spawn('tauri-driver', process.env.TAURI_NATIVE_DRIVER ? ['--native-driver', process.env.TAURI_NATIVE_DRIVER] : [], {stdio: ['ignore', 'inherit', 'inherit'], env: {...process.env, RAPIER_JXL_CHECK_SAVE_DIR: out}});
 const base = 'http://127.0.0.1:4444';
 const call = async (method, path, body) => {
   const response = await fetch(base + path, {method, headers: {'Content-Type': 'application/json'}, body: body && JSON.stringify(body)});

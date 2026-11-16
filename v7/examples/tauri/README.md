@@ -29,8 +29,8 @@ npm run build                                          # src-tauri/target/releas
 Found while building it, on WebKitGTK 2.52:
 
 - WebKitGTK is not cross-origin isolated (no `SharedArrayBuffer`), and nothing here needs it.
-- WebKitGTK stamps a video frame with the position sought, not its own time, so reading a 2 s clip walked millisecond by millisecond and
-  took minutes. `jpegxl/animation` now tells the two apart and samples by seeking: seconds.
+- WebKitGTK stamps a video frame with the position sought, not its own time. `jpegxl/animation` tells the two apart and samples by
+  seeking, so a 2 s clip reads in seconds.
 - Which videos play is the system's: on the Linux box here WebKitGTK plays WebM and not H.264. A video the web view cannot play is refused with `JXL_INPUT`.
 - A `<script type="module">` runs about a second after the page is ready to drive; a test waits for `load`.
 - `__TAURI_INTERNALS__.invoke` cannot be replaced, so a test cannot answer the dialog from the page: the check build (`--features check`) writes Save's file

@@ -23,11 +23,22 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $v = (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}').pv
+          # msedgedriver must be the WebView2 runtime's own version, not the browser's.
+          $v = (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue).pv
+          if (-not $v) { $v = (Get-ChildItem 'C:\Program Files (x86)\Microsoft\EdgeWebView\Application' -Directory | Where-Object Name -Match '^\d+\.' | Sort-Object { [version]$_.Name } | Select-Object -Last 1).Name }
           Write-Host "WebView2 $v"
-          Invoke-WebRequest "https://msedgedriver.microsoft.com/$v/edgedriver_win64.zip" -OutFile drv.zip
-          Expand-Archive drv.zip -DestinationPath "$env:RUNNER_TEMP\edgedriver"
-          "$env:RUNNER_TEMP\edgedriver" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          $dir = "$env:RUNNER_TEMP\edgedriver"
+          try { Invoke-WebRequest "https://msedgedriver.microsoft.com/$v/edgedriver_win64.zip" -OutFile drv.zip -ErrorAction Stop }
+          catch {
+            $major = $v.Split('.')[0]
+            Write-Host "No driver for $v; using the newest for $major"
+            Invoke-WebRequest "https://msedgedriver.microsoft.com/LATEST_RELEASE_${major}_WINDOWS" -OutFile latest.txt
+            $latest = ([System.IO.File]::ReadAllText("$PWD\latest.txt", [System.Text.Encoding]::Unicode)).Trim([char]0xFEFF).Trim()
+            Invoke-WebRequest "https://msedgedriver.microsoft.com/$latest/edgedriver_win64.zip" -OutFile drv.zip
+          }
+          Expand-Archive drv.zip -DestinationPath $dir
+          & "$dir\msedgedriver.exe" --version
+          "TAURI_NATIVE_DRIVER=$dir\msedgedriver.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - name: Install
         working-directory: v7/examples/tauri
         run: npm ci
