@@ -13,13 +13,15 @@ const limit = Duration(minutes: 3);
 void stage(String name) => print('[stage] $name');
 void check(String name, Future<void> Function() body) =>
     testWidgets(name, (_) => body().timeout(limit, onTimeout: () => throw TimeoutException('$name: no answer in 3 minutes')), timeout: Timeout(limit + const Duration(seconds: 20)));
-bool isJxl(Uint8List b) => b.length > 2 && b[0] == 0xFF && b[1] == 0x0A;
+// A bare codestream, or the container a JPEG's recompression is written in.
+bool isJxl(Uint8List b) => b.length > 12 && (b[0] == 0xFF && b[1] == 0x0A || b[4] == 0x4A && b[5] == 0x58 && b[6] == 0x4C && b[7] == 0x20);
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   late JXLCodec codec;
 
   setUp(() async {
+    JXLCodec.trace = stage;
     codec = JXLCodec();
     stage('set up: warm up');
     await codec.warmUp().timeout(limit, onTimeout: () => throw TimeoutException('warm up: no answer in 3 minutes'));
@@ -55,8 +57,9 @@ void main() {
     stage('video: reading it back');
     codec.serve('jpegxl/decode.mjs', await fixture('decode.mjs'));
     final read = await codec.callPage('''
-      const {decode} = await import('./jpegxl/decode.mjs');
-      const image = await decode(new Uint8Array(await (await fetch('in/readback')).arrayBuffer()));
+      // The page's own address as the base: this body runs where a relative specifier has none.
+      const {decode} = await import(new URL('jpegxl/decode.mjs', location.href).href);
+      const image = await decode(new Uint8Array(await (await fetch(new URL('in/readback', location.href))).arrayBuffer()));
       return [image.frames.length, image.frames.reduce((sum, frame) => sum + frame.durationSeconds, 0)];
     ''', input: jxl);
     stage('video: read back ${read[0]} frames, ${read[1]} s');

@@ -27,7 +27,7 @@ jobs:
           api-level: 34
           arch: x86_64
           target: google_apis
-          script: cd v7/examples/flutter/example && sh ../ci/platform.sh && flutter pub get && flutter test integration_test
+          script: cd v7/examples/flutter/example && sh ../ci/platform.sh && flutter pub get && flutter test integration_test -r expanded
   ios:
     runs-on: macos-15
     steps:
@@ -46,8 +46,8 @@ jobs:
       - name: Integration tests on an iPhone simulator
         timeout-minutes: 25
         working-directory: v7/examples/flutter/example
-        run: sh ../ci/platform.sh && flutter pub get && flutter test integration_test -d "$SIM" --timeout 4m
+        run: sh ../ci/platform.sh && flutter pub get && flutter test integration_test -d "$SIM" --timeout 4m -r expanded
       - name: Integration tests on macOS
         timeout-minutes: 25
         working-directory: v7/examples/flutter/example
-        run: flutter test integration_test -d macos --timeout 4m
+        run: flutter test integration_test -d macos --timeout 4m -r expanded

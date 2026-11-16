@@ -60,6 +60,9 @@ class JXLCodec {
   _Active? _active;
   Future<void> _tail = Future.value();
 
+  /// Names each stage of starting the hidden page, so a hang names where it waited. Tests set it.
+  static void Function(String stage)? trace;
+
   /// Called with a job's id when its worker has the input and starts. Tests wait on it before canceling.
   void Function(String id)? onStart;
 
@@ -234,13 +237,25 @@ class JXLCodec {
       final headers = (jsonDecode(utf8.decode((await _read('headers.json'))!)) as Map).cast<String, String>();
       final bridge = _bridge = Bridge(read: _read, headers: headers, onMessage: _receive);
       await bridge.start();
+      trace?.call('page: server on ${bridge.origin.port}');
       final web = _web = HeadlessInAppWebView(
         initialUrlRequest: URLRequest(url: WebUri.uri(bridge.origin)),
+        onLoadStop: (_, __) => trace?.call('page: loaded'),
+        onConsoleMessage: (_, message) => trace?.call('page console: ${message.message}'),
+        onReceivedError: (_, request, error) {
+          trace?.call('page: ${request.url} failed: ${error.description}');
+          if (request.isForMainFrame == true) _teardown(JXLException('JXL_BRIDGE', 'The page did not load: ${error.description}'));
+        },
+        onWebContentProcessDidTerminate: (_) {
+          trace?.call('page: its process stopped');
+          _teardown(const JXLException('JXL_BRIDGE', "The page's process stopped; the next call starts a new page."));
+        },
         // The page plays a video, muted and unseen, to read its frames.
         initialSettings: InAppWebViewSettings(
             mediaPlaybackRequiresUserGesture: false, allowsInlineMediaPlayback: true, isInspectable: false),
       );
       await web.run();
+      trace?.call('page: running, waiting for ready');
     } catch (error) {
       _teardown(JXLException('JXL_BRIDGE', '$error'));
     }
@@ -251,6 +266,7 @@ class JXLCodec {
     final id = message['id'];
     switch (message['type']) {
       case 'ready':
+        trace?.call('page: ready');
         _ready?.complete();
       case 'started':
         if (id is String) onStart?.call(id);
