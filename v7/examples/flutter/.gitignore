@@ -1,0 +1,11 @@
+assets/web/jpegxl/*
+!assets/web/jpegxl/.keep
+example/assets/fixtures/decode.mjs
+build/
+.dart_tool/
+.flutter-plugins*
+pubspec.lock
+example/android/
+example/ios/
+example/macos/
+example/.metadata

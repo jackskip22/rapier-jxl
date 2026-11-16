@@ -1,0 +1,25 @@
+#!/bin/sh
+# Adds the example's three platform folders and the two settings a loopback page needs. Run from the example folder.
+set -e
+flutter create --platforms=android,ios,macos --org app.rapier --project-name rapier_jxl_example .
+python3 - <<'PY'
+import re, pathlib
+# Android: the app serves its page on 127.0.0.1, so it needs the INTERNET permission and cleartext to that address only.
+m = pathlib.Path('android/app/src/main/AndroidManifest.xml'); s = m.read_text()
+s = s.replace('<application', '<uses-permission android:name="android.permission.INTERNET"/>\n    <application', 1)
+s = s.replace('<application', '<application android:networkSecurityConfig="@xml/network_security_config"', 1)
+m.write_text(s)
+x = pathlib.Path('android/app/src/main/res/xml'); x.mkdir(parents=True, exist_ok=True)
+(x / 'network_security_config.xml').write_text('<?xml version="1.0" encoding="utf-8"?>\n<network-security-config>\n    <domain-config cleartextTrafficPermitted="true"><domain includeSubdomains="false">127.0.0.1</domain></domain-config>\n</network-security-config>\n')
+# iOS: loopback HTTP is allowed by ATS's local-networking key.
+p = pathlib.Path('ios/Runner/Info.plist'); s = p.read_text()
+s = s.replace('</dict>\n</plist>', '\t<key>NSAppTransportSecurity</key>\n\t<dict><key>NSAllowsLocalNetworking</key><true/></dict>\n</dict>\n</plist>')
+p.write_text(s)
+# macOS: the sandbox needs to open and use a socket.
+for f in ('DebugProfile', 'Release'):
+    p = pathlib.Path(f'macos/Runner/{f}.entitlements'); s = p.read_text()
+    for key in ('network.server', 'network.client'):
+        if f'com.apple.security.{key}' not in s:
+            s = s.replace('</dict>', f'\t<key>com.apple.security.{key}</key>\n\t<true/>\n</dict>')
+    p.write_text(s)
+PY

@@ -1,0 +1,51 @@
+name: flutter
+on: [push, workflow_dispatch]
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: {node-version: 24}
+      - uses: subosito/flutter-action@e938fdf56512cc96ef2f93601a5a40bde3801046 # v2.19.0
+        with: {channel: stable}
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with: {distribution: temurin, java-version: 17}
+      - name: Package files
+        working-directory: v7/examples/flutter
+        run: JXL_PACKAGE=../../package node prepare-assets.mjs
+      - name: flutter test
+        working-directory: v7/examples/flutter
+        run: flutter pub get && flutter test
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: Integration tests on an Android emulator
+        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          script: cd v7/examples/flutter/example && sh ../ci/platform.sh && flutter pub get && flutter test integration_test
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: {node-version: 24}
+      - uses: subosito/flutter-action@e938fdf56512cc96ef2f93601a5a40bde3801046 # v2.19.0
+        with: {channel: stable}
+      - name: Package files
+        working-directory: v7/examples/flutter
+        run: JXL_PACKAGE=../../package node prepare-assets.mjs
+      - name: Pick an iPhone simulator
+        run: |
+          id=$(xcrun simctl list devices available -j | node -e 'const d=JSON.parse(require("fs").readFileSync(0)).devices;const k=Object.keys(d).filter(k=>/iOS/.test(k)).sort().reverse();for(const r of k){const p=d[r].find(x=>/iPhone/.test(x.name));if(p){console.log(p.udid);break}}')
+          echo "SIM=$id" >> $GITHUB_ENV; xcrun simctl boot "$id"
+      - name: Integration tests on an iPhone simulator
+        working-directory: v7/examples/flutter/example
+        run: sh ../ci/platform.sh && flutter pub get && flutter test integration_test -d "$SIM"
+      - name: Integration tests on macOS
+        working-directory: v7/examples/flutter/example
+        run: flutter test integration_test -d macos

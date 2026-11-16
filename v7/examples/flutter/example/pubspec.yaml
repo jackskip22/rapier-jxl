@@ -1,0 +1,24 @@
+name: rapier_jxl_example
+description: Encodes, recompresses and animates with rapier_jxl.
+publish_to: none
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  rapier_jxl:
+    path: ..
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  crypto: ^3.0.3
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/fixtures/

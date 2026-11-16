@@ -1,0 +1,22 @@
+name: rapier_jxl
+description: JPEG XL for Flutter with no native code. A hidden web view runs rapier-jxl from the app's assets.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_inappwebview: ^6.1.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  assets:
+    - assets/web/
+    - assets/web/jpegxl/
