@@ -1,0 +1,9 @@
+{
+  "name": "rapier-jxl-electron-example",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {"assets": "node prepare-assets.mjs", "start": "electron .", "check": "node check.mjs"},
+  "devDependencies": {"electron": "45.3.2", "playwright": "1.58.2"},
+  "engines": {"node": ">=22.12.0"}
+}

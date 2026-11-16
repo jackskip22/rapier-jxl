@@ -1,0 +1,8 @@
+{
+  "name": "rapier-jxl-tauri-example",
+  "private": true,
+  "type": "module",
+  "scripts": {"assets": "node prepare-assets.mjs", "dev": "tauri dev", "build": "tauri build --no-bundle", "build-check": "tauri build --debug --no-bundle -- --features check", "check": "node check.mjs"},
+  "devDependencies": {"@tauri-apps/cli": "2.12.4"},
+  "engines": {"node": ">=22.12.0"}
+}

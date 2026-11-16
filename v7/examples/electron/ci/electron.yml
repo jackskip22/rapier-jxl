@@ -1,0 +1,29 @@
+name: electron
+on: [push, workflow_dispatch]
+jobs:
+  electron:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: {node-version: 24}
+      - name: Install
+        working-directory: v7/examples/electron
+        run: npm ci
+      - name: Package files
+        working-directory: v7/examples/electron
+        shell: bash
+        run: JXL_PACKAGE="$GITHUB_WORKSPACE/package" node prepare-assets.mjs && cat web-assets.json
+      - name: Check on Linux
+        if: runner.os == 'Linux'
+        working-directory: v7/examples/electron
+        run: JXL_PACKAGE="$GITHUB_WORKSPACE/package" xvfb-run -a npm run check
+      - name: Check
+        if: runner.os != 'Linux'
+        working-directory: v7/examples/electron
+        shell: bash
+        run: JXL_PACKAGE="$GITHUB_WORKSPACE/package" npm run check

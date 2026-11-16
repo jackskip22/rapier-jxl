@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>JPEG XL</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { font: 16px/1.5 system-ui, sans-serif; color-scheme: light dark; }
+  body { max-width: 40rem; margin: auto; padding: 1.5rem; }
+  body.over { outline: 4px dashed; outline-offset: -1.5rem; }
+  h1 { font-size: 1.6rem; }
+  button { font: inherit; padding: .6rem 1rem; border: 0; border-radius: 0; cursor: pointer; }
+  nav { display: flex; flex-wrap: wrap; gap: .75rem; }
+  progress { display: block; width: 100%; margin: 1.5rem 0 .5rem; }
+  output { display: block; white-space: pre-wrap; overflow-wrap: anywhere; margin: .75rem 0; }
+</style>
+<h1>JPEG XL</h1>
+<nav aria-label="Convert a file">
+  <button id="photo">Photo</button>
+  <button id="jpeg">JPEG round trip</button>
+  <button id="video">Video</button>
+  <button id="cancel" disabled>Cancel</button>
+  <button id="save" disabled>Save</button>
+</nav>
+<input id="photo-file" type="file" accept="image/*" hidden>
+<input id="jpeg-file" type="file" accept="image/jpeg" hidden>
+<input id="video-file" type="file" accept="video/*" hidden>
+<progress id="progress" max="1" value="0" aria-label="Progress"></progress>
+<output id="status" role="status">Choose a file or drop one here. It stays on this computer.</output>
+<script type="module" src="app.mjs"></script>
+</html>

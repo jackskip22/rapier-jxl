@@ -1,0 +1,22 @@
+[package]
+name = "rapier-jxl-tauri-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+# The check build writes Save's file into RAPIER_JXL_CHECK_SAVE_DIR instead of opening a dialog nobody can answer.
+check = []
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+percent-encoding = "2"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
