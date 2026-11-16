@@ -33,6 +33,9 @@ public final class JXLCodec {
     var marks: [(name: String, at: Date)] = []
     var requestLog: [(at: Date, path: String, bytes: Int)] { bridge?.requests ?? [] }
 
+    /// The page's files. Tests point it at a folder without them to fail the setup once.
+    var webRoot = Bundle.module.resourceURL!.appendingPathComponent("Web")
+
     public init() {}
 
     /// Loads the hidden page and its worker now, so the first call does not wait for them. Optional.
@@ -157,6 +160,11 @@ public final class JXLCodec {
     private func start() async throws {
         if web != nil, !starting { return }
         if !starting {
+            // The setup that can throw comes first: a refused setup leaves nothing half started, and the next call tries again.
+            let bridge: Bridge
+            do { bridge = try Bridge(web: webRoot) } catch {
+                throw JXLError(code: "JXL_BRIDGE", message: "The page's files could not be read: \(error.localizedDescription)")
+            }
             starting = true
             let configuration = WKWebViewConfiguration()
             // The page plays a video, muted and unseen, to read its frames.
@@ -164,7 +172,6 @@ public final class JXLCodec {
             #if os(iOS)
             configuration.allowsInlineMediaPlayback = true
             #endif
-            let bridge = try Bridge(web: Bundle.module.resourceURL!.appendingPathComponent("Web"))
             // A page torn down can still deliver late: only the current page's messages count.
             bridge.onMessage = { [weak self, weak bridge] message in
                 guard let self, let bridge, self.bridge === bridge else { return }

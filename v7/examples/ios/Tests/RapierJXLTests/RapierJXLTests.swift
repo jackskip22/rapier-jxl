@@ -97,6 +97,20 @@ final class RapierJXLTests: XCTestCase {
         }
     }
 
+    func testFailedSetupRefusesOnceAndTheNextCallStarts() async throws {
+        let cold = JXLCodec(), small = try fixture("small", "jpg"), files = cold.webRoot
+        cold.webRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)   // no page files
+        do {
+            _ = try await cold.encode(small, quality: 60, effort: 1)
+            XCTFail("A setup without the page's files went on")
+        } catch let error as JXLError {
+            XCTAssertEqual(error.code, "JXL_BRIDGE")
+        }
+        cold.webRoot = files
+        let next = try await cold.encode(small, quality: 60, effort: 1)
+        XCTAssertEqual(next.prefix(2), Data([0xFF, 0x0A]), "The next call starts a fresh page")
+    }
+
     func testStoppedPageRefusesAndTheNextCallStartsANewOne() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("train.mp4")
         try fixture("train", "mp4").write(to: url)
