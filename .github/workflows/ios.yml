@@ -15,11 +15,14 @@ jobs:
           id=$(xcrun simctl list devices available -j | node -e 'const d=JSON.parse(require("fs").readFileSync(0)).devices;const k=Object.keys(d).filter(k=>/iOS/.test(k)).sort().reverse();for(const r of k){const p=d[r].find(x=>/iPhone/.test(x.name));if(p){console.log(p.udid);break}}')
           echo "SIM=$id" >> $GITHUB_ENV; xcrun simctl list devices available | grep "$id"
       - name: Test on an iOS Simulator
+        timeout-minutes: 30
         working-directory: v7/examples/ios
-        run: set -o pipefail; xcodebuild test -scheme RapierJXL -destination "id=$SIM" | tee test.log
+        run: set -o pipefail; xcodebuild test -scheme RapierJXL -destination "id=$SIM" -test-timeouts-enabled YES -default-test-execution-time-allowance 240 -maximum-test-execution-time-allowance 600 | tee test.log
       - name: Test on macOS
+        if: always()
+        timeout-minutes: 20
         working-directory: v7/examples/ios
-        run: set -o pipefail; xcodebuild test -scheme RapierJXL -destination 'platform=macOS' | tee test-macos.log
+        run: set -o pipefail; xcodebuild test -scheme RapierJXL -destination 'platform=macOS' -test-timeouts-enabled YES -default-test-execution-time-allowance 240 -maximum-test-execution-time-allowance 600 | tee test-macos.log
       - name: Build the example
         working-directory: v7/examples/ios/Example
         run: |
