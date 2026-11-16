@@ -14,6 +14,13 @@ jobs:
         run: |
           id=$(xcrun simctl list devices available -j | node -e 'const d=JSON.parse(require("fs").readFileSync(0)).devices;const k=Object.keys(d).filter(k=>/iOS/.test(k)).sort().reverse();for(const r of k){const p=d[r].find(x=>/iPhone/.test(x.name));if(p){console.log(p.udid);break}}')
           echo "SIM=$id" >> $GITHUB_ENV; xcrun simctl list devices available | grep "$id"
+      - name: Boot the simulator and start its web engine once
+        timeout-minutes: 20
+        run: |
+          xcrun simctl boot "$SIM" || true
+          xcrun simctl bootstatus "$SIM" -b
+          xcrun simctl openurl "$SIM" about:blank
+          sleep 30
       - name: Test on an iOS Simulator
         timeout-minutes: 50
         working-directory: v7/examples/ios
