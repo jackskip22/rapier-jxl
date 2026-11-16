@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-import {exactPow} from './exact-math.mjs';
 import {fault} from './fault.mjs';
+import {srgbLevels} from './srgb-levels.mjs';
 import {S2_WEIGHTS, finalCurve} from './ssimulacra2-weights.mjs';
 import {GAUSS} from './ssimulacra2-constants.mjs';
 import {S2_REFERENCE, SCALES, s2Colors} from './ssimulacra2-reference.mjs';
@@ -30,17 +30,10 @@ export function scoreNorms(norms) {
   return {score,sum};
 }
 
-export const SRGB_TO_LINEAR = Float64Array.from({length: 256}, (_, i) => {
-  const v = i / 255; return v <= 0.04045 ? v / 12.92 : exactPow((v + 0.055) / 1.055, 2.4);
-});
-export function srgbToLinear(v) {
-  const a = Math.abs(v), l = a <= 0.04045 ? a / 12.92 : exactPow((a + 0.055) / 1.055, 2.4);
-  return v < 0 ? -l : l;
-}
 
 export function linearFromRGBA(rgba, pixels) {
-  const planes = [new Float64Array(pixels), new Float64Array(pixels), new Float64Array(pixels)];
-  for (let i = 0; i < pixels; i++) for (let c = 0; c < 3; c++) planes[c][i] = SRGB_TO_LINEAR[rgba[i * 4 + c]];
+  const planes = [new Float64Array(pixels), new Float64Array(pixels), new Float64Array(pixels)], levels = srgbLevels();
+  for (let i = 0; i < pixels; i++) for (let c = 0; c < 3; c++) planes[c][i] = levels[rgba[i * 4 + c]];
   return planes;
 }
 
@@ -50,14 +43,21 @@ export function downsample(input,width,height) {
   try { return down(input,width,height); } finally { close(); }
 }
 
-export function ssimulacra2(reference, distorted, width, height, {wantMap = false} = {}) {
+export function ssimulacra2(reference, distorted, width, height, options = {}) {
+  for (const key of Object.keys(options ?? {})) if (key !== 'wantMap' && key !== 'arithmetic')
+    throw fault('JXL_OPTIONS', 'SSIMULACRA 2 takes wantMap and arithmetic, not ' + key + '.');
+  let {wantMap = false, arithmetic} = options ?? {};
   const pixels = s2Dimensions(width, height), originalWidth = width, originalHeight = height;
   const fixed = reference?.[S2_REFERENCE];
+  arithmetic ??= fixed?.arithmetic ?? 'binary64';
+  if (arithmetic !== 'binary64' && arithmetic !== 'libjxl') throw fault('JXL_INPUT', 'SSIMULACRA2 arithmetic is binary64 or libjxl.');
+  if (fixed && arithmetic !== fixed.arithmetic) throw fault('JXL_INPUT', 'This SSIMULACRA2 reference reads in its own arithmetic.');
+  const libjxl = arithmetic === 'libjxl';
   if (fixed && (fixed.width !== width || fixed.height !== height)) {
-    throw new RangeError('SSIMULACRA2 reference size differs.');
+    throw fault('JXL_INTERNAL', 'SSIMULACRA2 reference size differs.');
   }
-  if (fixed?.busy) throw new Error('SSIMULACRA2 reference is already in use.');
-  if (fixed?.released) throw new Error('SSIMULACRA2 reference is released.');
+  if (fixed?.busy) throw fault('JXL_INTERNAL', 'SSIMULACRA2 reference is already in use.');
+  if (fixed?.released) throw fault('JXL_INTERNAL', 'SSIMULACRA2 reference is released.');
   let lastSourceScale = -1;
   if (fixed) for (let s = 0; s < fixed.scales.length; s++) if (!fixed.scales[s] || fixed.scales[s].length < 3) lastSourceScale = s;
   let a = reference, b = distorted;
@@ -92,9 +92,9 @@ export function ssimulacra2(reference, distorted, width, height, {wantMap = fals
       const channels = fixed?.scales[scale];
       const share = wantMap ? scale ? (sharePlane ??= new Float64Array(half)).subarray(0, n).fill(0) : map : null;
       const terms = wantMap ? {d: termPlanes.d.subarray(0, n), dd: termPlanes.dd.subarray(0, n)} : null;
-      const sums = wantMap ? null : scaleSums(a, b, w, h, GAUSS32, channels, !!channels, colors, null, null, scale);
+      const sums = wantMap ? null : scaleSums(a, b, w, h, GAUSS32, channels, !!channels, colors, null, null, scale, libjxl);
       for (let c = 0; c < 3; c++) {
-        const result = sums ? sums[c] : scaleSums(a, b, w, h, GAUSS32, channels, !!channels, colors, c, terms, scale)[c];
+        const result = sums ? sums[c] : scaleSums(a, b, w, h, GAUSS32, channels, !!channels, colors, c, terms, scale, libjxl)[c];
         if (result.reference) {
           channels[c] = result.reference;
           fixed.cacheBytes += result.reference.bytes;

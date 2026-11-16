@@ -25,5 +25,5 @@ export async function deliveryCopies(source, {width, height}, widths, {variants}
     ...(maxBytes !== undefined && {maxBytes})}));
   const copies = await variants(source, {outputs, signal, onProgress});
   signal?.throwIfAborted();
-  return copies.filter(result => result.fits);
+  return copies.filter(result => result.meetsTarget);
 }

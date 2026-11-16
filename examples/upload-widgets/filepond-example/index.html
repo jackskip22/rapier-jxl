@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FilePond with JPEG XL</title>
+<link rel="stylesheet" href="/node_modules/filepond/dist/filepond.min.css">
+<!-- The package under either npm name: jpegxl, or its pointer rapier-jxl (the paths are the installed package's). -->
+<script type="importmap">
+{"imports": {
+  "filepond": "/node_modules/filepond/dist/filepond.esm.js",
+  "rapier-jxl/upload": "/node_modules/jpegxl/dist/upload.browser.mjs",
+  "rapier-jxl/metadata": "/node_modules/jpegxl/dist/metadata.mjs",
+  "jpegxl/upload": "/node_modules/jpegxl/dist/upload.browser.mjs",
+  "jpegxl/metadata": "/node_modules/jpegxl/dist/metadata.mjs"
+}}
+</script>
+<input type="file" multiple>
+<script type="module" src="main.mjs"></script>

@@ -1,25 +1,24 @@
-import {fail, object, declared} from './primitives.mjs';
+import {fail, snapshotOptions, snapshotArray, declared} from './primitives.mjs';
 import {admitEdit} from './edit-changes.mjs';
 import {copyBytes, encodedByteLength} from './bytes.mjs';
 import {readMetadataAsync, withMetadata, withCompressedMetadata} from '../metadata.mjs';
 import {inspectContainer, reframeContainer} from '../container-advanced.mjs';
-const DEFAULT_MAX_BOXES = 65536;
+const DEFAULT_MAX_BOXES = Number.MAX_SAFE_INTEGER;
 export const capture = options => {
   if (options === undefined) return {maxBoxes: DEFAULT_MAX_BOXES};
-  object(options);
-  const copy = {...options};
+  const copy = snapshotOptions(options);
   for (const key of ['exif', 'xmp', 'jumb']) {
     if (ArrayBuffer.isView(copy[key])) copy[key] = copyBytes(copy[key], true);
-    else if (Array.isArray(copy[key])) copy[key] = copy[key].map(value => ArrayBuffer.isView(value) ? copyBytes(value, true) : value);
+    else if (Array.isArray(copy[key])) copy[key] = snapshotArray(copy[key], key, undefined, 'JXL_INPUT').map(value => ArrayBuffer.isView(value) ? copyBytes(value, true) : value);
   }
   if (copy.maxBoxes === undefined) copy.maxBoxes = DEFAULT_MAX_BOXES;
-  else if (!Number.isSafeInteger(copy.maxBoxes) || copy.maxBoxes < 1) throw fail('JXL_OPTIONS', 'maxBoxes is a positive safe integer.');
+  else if (!Number.isSafeInteger(copy.maxBoxes) || copy.maxBoxes < 1) throw fail('JXL_OPTIONS', "Invalid maxBoxes; use a positive safe integer.");
   return copy;
 };
 const admitContainer = (input, settings) => {
   const maxBytes = settings.maxBytes ?? Number.MAX_SAFE_INTEGER;
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw fail('JXL_OPTIONS', 'maxBytes is a positive safe integer.');
-  if (encodedByteLength(input) > maxBytes) throw fail('JXL_LIMIT', 'The JPEG XL container exceeds maxBytes.');
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw fail('JXL_OPTIONS', "Invalid maxBytes; use a positive safe integer.");
+  if (encodedByteLength(input) > maxBytes) throw fail('JXL_LIMIT', "JPEG XL container exceeds maxBytes; raise it or pass a smaller file.");
 };
 const copyContainer = (input, settings) => {
   admitContainer(input, settings);
@@ -32,9 +31,10 @@ async function readContainer(input, options) {
 }
 export const write = (input, options) => writeContainer(input, options).catch(error => { throw declared(error); });
 async function writeContainer(input, options = {}) {
-  admitContainer(input, object(options));
+  options = snapshotOptions(options);
+  admitContainer(input, options);
   const settings = capture(options), snapshot = copyContainer(input, settings);
-  return settings.compression ? withCompressedMetadata(snapshot, settings) : withMetadata(snapshot, settings);
+  return settings.compression !== undefined || settings.compress !== undefined ? withCompressedMetadata(snapshot, settings) : withMetadata(snapshot, settings);
 }
 export const inspect = (input, options) => inspectBoxes(input, options).catch(error => { throw declared(error); });
 async function inspectBoxes(input, options) {
@@ -49,7 +49,7 @@ async function repackContainer(input, options) {
 export const edit = (input, changes) => editContainer(input, changes).catch(error => { throw declared(error); });
 async function editContainer(input, changes) {
   const {bounds: {maxInputBytes, ...bounds}, metadata, framing} = admitEdit(changes);
-  if (maxInputBytes !== undefined) bounds.maxBytes = maxInputBytes;
+  if (encodedByteLength(input) > (maxInputBytes ?? Number.MAX_SAFE_INTEGER)) throw fail('JXL_LIMIT', 'The JPEG XL container exceeds maxInputBytes; raise it or pass a smaller file.');
   let bytes = input;
   if (Object.keys(metadata).length) bytes = await writeContainer(bytes, {...bounds, ...metadata});
   if (Object.keys(framing).length) bytes = await repackContainer(bytes, {...bounds, ...framing});

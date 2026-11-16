@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: MIT
-import {butteraugliRows, butteraugliLinearTable, pnorm, prepareButteraugli} from './butteraugli.mjs';
 import {ssimulacra2, ssimulacra2Reference} from './ssimulacra2.mjs';
 import {s2Dimensions, s2RGBA} from './ssimulacra2-input.mjs';
 import {GpuLinearPixels} from './gpu-metric-pixels.mjs';
-import {cellSums} from './varblocks.mjs';
-import {blockDistances} from './aq.mjs';
 import {UniformRing} from './gpu-uniforms.mjs';
 import {coefficientPlanes, epfInverseSigma, inverseBasis, half, rcLlfFromDC, toRGBA} from './reconstruct.mjs';
 import {TRANSFORMS} from './vardct-strategies.mjs';
@@ -137,10 +134,10 @@ export class GpuMeasure {
   static async create(device, rgba, width, height, {tile = GR_CORE, signal} = {}) {
     s2RGBA(rgba, s2Dimensions(width, height));
     if (width < 8 || height < 8) return null;
-    if (!Number.isSafeInteger(tile) || tile < 64 || tile % 64) throw new RangeError('GPU metric tile must be a positive multiple of 64.');
+    if (!Number.isSafeInteger(tile) || tile < 64 || tile % 64) throw fault('JXL_INTERNAL', 'GPU metric tile must be a positive multiple of 64.');
     const self = new GpuMeasure();
     return gpuSetup(async () => {
-      const [pipelines] = await Promise.all([grPipelines(device), prepareButteraugli()]);
+      const pipelines = await grPipelines(device);
       if (self.destroyed) throw Object.assign(new Error('GPU metric owner was destroyed during setup.'), {code: 'JXL_GPU'});
       device.pushErrorScope('validation'); device.pushErrorScope('out-of-memory');
       let remaining = 2;
@@ -298,7 +295,7 @@ export class GpuMeasure {
 
   async measure(image, want = {}) {
     if (this.destroyed || this.lost) throw Object.assign(new Error('GPU metric device is unavailable.'), {code: 'JXL_GPU'});
-    if (this.measuring) throw new Error('GPU metric measures must be sequential.');
+    if (this.measuring) throw fault('JXL_INTERNAL', 'GPU metric measures must be sequential.');
     this.measuring = true;
     const device = this.device;
     device.pushErrorScope('validation'); device.pushErrorScope('out-of-memory');
@@ -308,7 +305,7 @@ export class GpuMeasure {
       remaining--; const memory = await device.popErrorScope();
       remaining--; const validation = await device.popErrorScope();
       if (this.lost || memory || validation) throw Object.assign(new Error('GPU metric calculation failed.'), {code: 'JXL_GPU', cause: memory ?? validation ?? this.lost});
-      for (const key of ['butteraugli', 'butteraugli3', 'ssimulacra2', 'ssimulacra2Native'])
+      for (const key of ['ssimulacra2', 'ssimulacra2Native'])
         if (out[key] !== undefined && !Number.isFinite(out[key])) throw Object.assign(new Error('GPU metric result is not finite.'), {code: 'JXL_GPU'});
       this.stats.gpuProbes++;
       return out;
@@ -319,8 +316,8 @@ export class GpuMeasure {
     }
   }
 
-  async measureImage(image, {p = 3, margin = 2, ssimulacra2: wantS2 = false, butteraugli: wantBA = true} = {}) {
-    if (!wantBA && !wantS2) return {};
+  async measureImage(image, {ssimulacra2: wantS2 = false} = {}) {
+    if (!wantS2) return {};
     const onGpu = this.uploadLevels(image);
     const {width, height} = this, {planes, cells, W: planeWidth, stride} = onGpu || coefficientPlanes(image), sigma = image.epf ? epfInverseSigma(image) : null;
     const gab = image.gab ? [0, 1, 2].map(c => image.gab === true ? GR_GAB : image.gab[c]) : null;
@@ -364,30 +361,14 @@ export class GpuMeasure {
     }
     const linear = await this.pixels.readPlanes();
     if (this.destroyed || this.lost) throw Object.assign(new Error('GPU metric device is unavailable.'), {code: 'JXL_GPU'});
-    return this.measurePixels(linear, {p, margin, ssimulacra2: wantS2, butteraugli: wantBA});
+    return this.measurePixels(linear, {ssimulacra2: wantS2});
   }
 
-  measurePixels(linear, {p = 3, margin = 2, ssimulacra2: wantS2 = false, butteraugli: wantBA = true} = {}) {
+  measurePixels(linear, {ssimulacra2: wantS2 = false} = {}) {
     const {width, height} = this, native = wantS2 === 'native';
     this.activePixelBytes = linear.reduce((n, plane) => n + plane.byteLength, 0);
     try {
       const out = {};
-      if (wantBA) {
-        const map = new Float32Array(width * height), referenceRow = new Float32Array(width);
-        const table = butteraugliLinearTable(), rgba = this.rgba;
-        this.activePixelBytes += map.byteLength + referenceRow.byteLength;
-        let score = 0;
-        butteraugliRows((c, y) => {
-          for (let x = 0; x < width; x++) referenceRow[x] = table[rgba[(y * width + x) * 4 + c]];
-          return referenceRow;
-        }, (c, y) => linear[c].subarray(y * width, (y + 1) * width), width, height, (y, row) => {
-          map.set(row, y * width);
-          for (const value of row) score = Math.max(score, value);
-        });
-        Object.assign(out, {butteraugli: score, butteraugli3: pnorm(map, 3),
-          cells: cellSums(map, width, height, p), blocks: blockDistances({map, width, height}, margin)});
-        this.activePixelBytes -= map.byteLength + referenceRow.byteLength;
-      }
       if (wantS2) {
         this.s2Reference ??= ssimulacra2Reference({rgba: this.rgba}, width, height, {immutable: true});
         const candidate = native ? {rgba: toRGBA(linear, width, height)} : linear;

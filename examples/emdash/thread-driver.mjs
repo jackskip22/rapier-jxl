@@ -7,9 +7,9 @@
 // (the measured admission is per job). A restart loses only the running thread: the next advance starts it again.
 // Browser candidates use the same worker for ordinary verification; their immutable uploaded parts stay owned by the job.
 import {createRequire} from 'node:module';
-import {pathToFileURL} from 'node:url';
-import * as resumable from 'rapier-jxl/resumable';
-import {verify} from 'rapier-jxl/verify';
+import {fileURLToPath, pathToFileURL} from 'node:url';
+import * as resumable from 'jpegxl/resumable';
+import {verify} from 'jpegxl/verify';
 import {digest} from './digest.mjs';
 
 const PART = 1024 * 1024, READ = 1024 * 1024, KEEP_MS = 10 * 60 * 1000;
@@ -19,7 +19,7 @@ const tasks = new Map();
 function threads() {
   const builtin = globalThis.process?.getBuiltinModule;
   const module = typeof builtin === 'function' ? builtin('node:worker_threads') : null;
-  if (!module?.Worker) throw fail('JXL_PLATFORM', 'The thread driver needs Node worker threads.');
+  if (!module?.Worker) throw fail('JXL_PLATFORM', "No Node workers; use Node with worker_threads.");
   return module;
 }
 
@@ -28,31 +28,39 @@ async function readInput(input, store, signal) {
   for (let at = 0; at < bytes.length; at += READ) {
     signal?.throwIfAborted();
     const length = Math.min(READ, bytes.length - at), part = await store.readSource(at, length);
-    if (!(part instanceof Uint8Array) || part.length !== length) throw fail('JXL_IO', 'The source could not be read.');
+    if (!(part instanceof Uint8Array) || part.length !== length) throw fail('JXL_IO', "Read failed; check storage and retry.");
     bytes.set(part, at);
   }
-  if (await digest(bytes) !== input.sha256) throw fail('JXL_INPUT', 'The source changed while it was read.');
+  if (await digest(bytes) !== input.sha256) throw fail('JXL_INPUT', "Source changed during reading; reload its record and retry.");
   return bytes;
 }
 
 // Astro bundles this file into dist/server. A relative worker URL then points at that bundle and the
 // site never encodes. Resolve the package that is installed beside the server, and only then the file beside this module.
+const fileExists = url => {
+  try {
+    const fs = globalThis.process?.getBuiltinModule?.('node:fs');
+    return typeof fs?.existsSync === 'function' ? fs.existsSync(fileURLToPath(url)) : true;
+  } catch { return false; }
+};
 export function threadWorkerURL(moduleUrl = import.meta.url) {
   try {
-    const root = createRequire(moduleUrl).resolve('rapier-jxl/package.json');
-    return new URL('./examples/emdash/thread-worker.mjs', pathToFileURL(root));
-  } catch { return new URL('./thread-worker.mjs', moduleUrl); }
+    const root = createRequire(moduleUrl).resolve('jpegxl/package.json');
+    const pkgWorker = new URL('./examples/emdash/thread-worker.mjs', pathToFileURL(root));
+    if (fileExists(pkgWorker)) return pkgWorker;
+  } catch {}
+  return new URL('./thread-worker.mjs', moduleUrl);
 }
 
 async function readCandidate(options, store, signal) {
   const refs = options.parts;
   const parts = store.readMany ? await store.readMany(refs) : await Promise.all(refs.map(ref => store.read(ref)));
   signal?.throwIfAborted();
-  if (!Array.isArray(parts) || parts.length !== refs.length) throw fail('JXL_IO', 'A candidate part is missing.');
+  if (!Array.isArray(parts) || parts.length !== refs.length) throw fail('JXL_IO', "Missing candidate part; restore it.");
   let length = 0;
   for (const [i, part] of parts.entries()) {
-    if (!(part instanceof Uint8Array) || part.length !== refs[i].length) throw fail('JXL_IO', 'A candidate part is missing or truncated.');
-    if (await digest(part) !== refs[i].hash) throw fail('JXL_INPUT', 'A candidate part changed before verification.');
+    if (!(part instanceof Uint8Array) || part.length !== refs[i].length) throw fail('JXL_IO', "Missing or truncated candidate part; restore it.");
+    if (await digest(part) !== refs[i].hash) throw fail('JXL_INPUT', "Candidate part changed; reverify it with the original.");
     length += part.length;
   }
   const bytes = new Uint8Array(length);
@@ -74,7 +82,7 @@ function verificationReceipt(checkpoint, input) {
       JSON.stringify(receipt.fidelity) !== JSON.stringify(result.fidelity) ||
       JSON.stringify(receipt.transform) !== JSON.stringify(result.transform) ||
       JSON.stringify(receipt.readAs) !== JSON.stringify(result.readAs))
-    throw fail('JXL_INPUT', 'The completed verification does not describe its candidate and original.');
+    throw fail('JXL_INPUT', "Job verification mismatches; reverify its original and candidate.");
   return receipt;
 }
 
@@ -96,7 +104,7 @@ function run(job, progress) {
     });
     worker.once('error', error => complete(null, error));
     worker.once('exit', code => {
-      if (!stopping) { stopping = true; reject(fail('JXL_INTERNAL', `The encoder thread exited (${code}).`)); }
+      if (!stopping) { stopping = true; reject(fail('JXL_INTERNAL', `Worker exited (${code}); report input and options.`)); }
     });
   });
 }
@@ -181,26 +189,29 @@ export function createThreadDriver(operations, base = resumable) {
     },
     async start(context) {
       const name = nameOf(context.operation);
-      if (!name || name !== 'verify' && !context.verify || name === 'verify' && context.input?.kind !== 'file') return base.start(context);
-      const {owner, input, options = {}} = context;
-      if (!/^[a-f0-9]{32}$/.test(owner ?? '')) throw fail('JXL_OPTIONS', 'The thread job needs its storage owner.');
-      if (!['file', 'pixels', undefined].includes(input?.kind)) throw fail('JXL_INPUT', 'The thread driver reads a stored file or pixels.');
+      const {owner, ...begin} = context;
+      if (!name || name !== 'verify' && !context.verify || name === 'verify' && context.input?.kind !== 'file') return base.start(begin);
+      const {input, options = {}} = context;
+      if (!/^[a-f0-9]{32}$/.test(owner ?? '')) throw fail('JXL_OPTIONS', "Invalid job ID; use 32 lowercase hex digits.");
+      if (!['file', 'pixels', undefined].includes(input?.kind)) throw fail('JXL_INPUT', "Unsupported source; use a stored file or pixels.");
       // Reuse the public stored-verification validator, without inspecting its checkpoint internals.
-      if (name === 'verify') await base.start(context);
+      if (name === 'verify') await base.start(begin);
       const key = await threadKey(owner, name, input, options);
       return {driver: 'thread', status: 'running', key, owner, operation: name, options};
     },
     async advance(checkpoint, context) {
       if (!ours(checkpoint)) return base.advance(checkpoint, context);
       const {input, store, budget, signal} = context;
+      const deadline = performance.now() + Math.max(1, Math.min(budget?.ms ?? 5000, 60000));
+      const remaining = () => Math.max(0, deadline - performance.now());
       if (context.owner !== checkpoint.owner || nameOf(context.operation) !== checkpoint.operation ||
           await threadKey(context.owner, checkpoint.operation, input, checkpoint.options) !== checkpoint.key)
-        throw fail('JXL_INPUT', 'The thread checkpoint belongs to another operation or original.');
+        throw fail('JXL_INPUT', "Checkpoint is for another job; reload its record.");
       if (checkpoint.status === 'done') return {checkpoint, released: [], done: true};
       let task = tasks.get(checkpoint.key);
       if (!task) {
-        if (slot) await waitFor(slot.available, Math.max(1, Math.min(budget?.ms ?? 5000, 60000)), signal);
-        if (slot) return {checkpoint, released: [], done: false};
+        if (slot) await waitFor(slot.available, remaining(), signal);
+        if (slot || remaining() === 0) return {checkpoint, released: [], done: false};
         task = tasks.get(checkpoint.key);
       }
       if (!task) {
@@ -208,7 +219,7 @@ export function createThreadDriver(operations, base = resumable) {
           bytes: await readInput(input, store, signal),
           ...(checkpoint.operation === 'verify' && {candidate: await readCandidate(checkpoint.options, store, signal)})}));
       }
-      if (!task.settled) await waitFor(task.promise, Math.max(1, Math.min(budget?.ms ?? 5000, 60000)), signal);
+      if (!task.settled && remaining() > 0) await waitFor(task.promise, remaining(), signal);
       // The thread's own progress (its operation's fractions, then verify's), for the plug-in's row.
       if (task.discarded) return {checkpoint, released: [], done: false};
       if (!task.settled) return {checkpoint: {...checkpoint, progress: task.progress}, released: [], done: false};
@@ -228,23 +239,23 @@ export function createThreadDriver(operations, base = resumable) {
     },
     async finish(checkpoint, context) {
       if (!ours(checkpoint)) return base.finish(checkpoint, context);
-      if (checkpoint.status !== 'done') throw fail('JXL_INPUT', 'The image job has not finished.');
+      if (checkpoint.status !== 'done') throw fail('JXL_INPUT', "Job unfinished; advance until done.");
       if (context.owner !== checkpoint.owner || nameOf(context.operation) !== checkpoint.operation ||
           await threadKey(context.owner, checkpoint.operation, context.input, checkpoint.options) !== checkpoint.key)
-        throw fail('JXL_INPUT', 'The thread checkpoint belongs to another operation or original.');
+        throw fail('JXL_INPUT', "Checkpoint is for another job; reload its record.");
       if (checkpoint.operation === 'verify') return verificationReceipt(checkpoint, context.input);
       const parts = checkpoint.parts.length ? await context.store.readMany(checkpoint.parts) : [];
       const length = checkpoint.parts.reduce((sum, ref) => sum + ref.length, 0), bytes = new Uint8Array(length);
       let at = 0;
       // Every part is checked against its name, and the whole file against the receipt's output digest.
-      if (!Array.isArray(parts) || parts.length !== checkpoint.parts.length) throw fail('JXL_IO', 'A finished part is missing.');
+      if (!Array.isArray(parts) || parts.length !== checkpoint.parts.length) throw fail('JXL_IO', "Missing finished part; restore it.");
       for (const [index, part] of parts.entries()) {
         if (!(part instanceof Uint8Array) || part.length !== checkpoint.parts[index].length || await digest(part) !== checkpoint.parts[index].hash)
-          throw fail('JXL_INPUT', 'A finished part changed after verification.');
+          throw fail('JXL_INPUT', "Finished part changed; reverify it with the original.");
         bytes.set(part, at); at += part.length;
       }
       if ('sha256:' + await digest(bytes) !== checkpoint.record?.verification?.outputDigest)
-        throw fail('JXL_INPUT', 'The finished file does not match its verification receipt.');
+        throw fail('JXL_INPUT', "File mismatches its receipt; reverify it with the original.");
       return {...checkpoint.record, bytes};
     },
   };

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {inverseScaledDCT} from './vardct-bases.mjs';
 import {AFV_BASIS} from './afv-basis.mjs';
+import {fault} from './fault.mjs';
 
 const scaledBases = new Map();
 export function scaledBasis(n) {
@@ -31,7 +32,7 @@ export function restorationStages(filter) {
 
 export function restoreRows(planes, top, width, height, filter, sigma, output, outTop, a, b, scratch, kernels) {
   const K = scratch.kernel, stages = restorationStages(filter), epf = filter?.epf, i32 = kernels.i32;
-  if (stages.length && planes.some(p => p.buffer !== kernels.buffer)) throw new Error('Restoration reads the kernels\' memory.');
+  if (stages.length && planes.some(p => p.buffer !== kernels.buffer)) throw fault('JXL_INTERNAL', 'Restoration reads the kernels\' memory.');
   let source = planes, sourceTop = top, after = stages.reduce((n, s) => n + s.radius, 0);
   for (let i = 0; i < stages.length; i++) {
     const stage = stages[i]; after -= stage.radius;
@@ -59,7 +60,7 @@ export function restorationSizes(width, height, filter, rows) {
   return [...Array(3 * Math.max(1, stages.length)).fill(held), ...Array(3).fill(Math.min(height, rows) * width * 4), 21 * width * 8, width * 8, width * 8,
     Math.ceil(width / 8) * Math.ceil(height / 8) * 4, 32];
 }
-export function restorationRegions(kernels, at, from, width, height, filter, rows) {
+function restorationRegions(kernels, at, from, width, height, filter, rows) {
   const stages = restorationStages(filter), radius = stages.reduce((n, s) => n + s.radius, 0), held = Math.min(height, rows + 2 * radius) * width;
   const planes = (k, n) => [0, 1, 2].map(c => new Float32Array(kernels.buffer, at[k + c], n));
   const scratch = [];

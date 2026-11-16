@@ -2,8 +2,8 @@
 import {s2Dimensions} from './ssimulacra2-input.mjs';
 import {fault} from './fault.mjs';
 
-export const S2_MEMORY = Object.freeze({linear:131072, gaussian:132096, colorKeys:132352,
-  colorValues:656640, base:2229504, maximumPages:32767});
+export const S2_MEMORY = Object.freeze({linear:131072, gaussian:132096, colorKeys:132608,
+  colorValues:656896, base:2229760, maximumPages:32767});
 const LIMIT = S2_MEMORY.maximumPages * 65536;
 
 export function s2ArenaPlan({admit = true, base = S2_MEMORY.base} = {}) {
@@ -51,7 +51,7 @@ export const ssimulacra2WorkBytes = (width,height,options) => ssimulacra2Layout(
 export function ssimulacra2Allocation(width,height,{referenceRgba = false,distortedRgba = false,
     wantMap = false,cacheBytes = 0} = {}) {
   const original = s2Dimensions(width,height);
-  if (!Number.isSafeInteger(cacheBytes) || cacheBytes < 0) throw new RangeError('SSIMULACRA2 cacheBytes must be a nonnegative safe integer.');
+  if (!Number.isSafeInteger(cacheBytes) || cacheBytes < 0) throw fault('JXL_INTERNAL', 'SSIMULACRA2 cacheBytes must be a nonnegative safe integer.');
   const fullWidth = Math.max(8,width), fullHeight = Math.max(8,height), padded = fullWidth * fullHeight;
   const candidateBytes = original * (distortedRgba ? 4 : 12), scales = [];
   let w = fullWidth, h = fullHeight, left = cacheBytes, retained = 0, arenaBytes = 0;

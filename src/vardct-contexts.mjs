@@ -17,7 +17,10 @@ export const DESIGNS = {
     return 4 + (row - 1) * 2 + (ORDER_CLASS[ord] ? 1 : 0);
   },
   fine: () => (row, ord, i, n) => (row * 8 + ORDER_CLASS[ord]) * n + i,
+  standard: () => (row, ord) => (row ? STANDARD_CHROMA : STANDARD_LUMA)[ord],
 };
+const STANDARD_LUMA = [0, 1, 2, 2, 3, 3, 4, 5, 6, 6, 6, 6, 6], STANDARD_CHROMA = [7, 8, 9, 9, 10, 11, 12, 13, 14, 14, 14, 14, 14];
+const isStandard = c => !c.thresholds.length && c.map.every((v, i) => v === DESIGNS.standard()(i >= ORDERS ? 1 : 0, i % ORDERS));
 export function blockContexts(luma, thresholdsWanted, grey, design = DESIGNS.dcBuckets(grey)) {
   const thresholds = [];
   if (thresholdsWanted > 0) {
@@ -50,6 +53,8 @@ export function acContexts(map, numDc, numCtxs) {
 }
 
 export function writeBlockContexts(w, contexts) {
+  if (isStandard(contexts)) { w.write(1, 1); return; }
+  w.write(1, 0); w.write(4, 0);
   w.write(4, contexts.thresholds.length);
   for (const t of contexts.thresholds) w.writeU32([[4, 0], [8, 16], [16, 272], [32, 65808]], packSigned(t));
   w.write(4, 0); w.write(4, 0);

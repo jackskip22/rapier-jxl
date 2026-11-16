@@ -7,25 +7,25 @@ import {buildCode, hybridToken, uintConfig, writeHistograms, writeHybrid} from '
 export const PATCH_SLOT = 2;
 const MAX_SIDE = 128, MAX_MARKS = 1 << 16, token = [0, 0, 0];
 
-export function capturePatches(rgba, width, height, least = 0) {
+export function capturePatches(rgba, width, height, least = 0, saving = Infinity) {
   if (width < 16 || height < 16 || width * height > 1 << 25) return null;
-  const keys = pixelKeys(rgba), found = capturePatchGroups(keys, width, height, least);
+  const keys = pixelKeys(rgba), found = capturePatchGroups(keys, width, height, least, saving);
   if (!found) return null;
-  const {groups, side, area, placements, cover} = found;
+  const {groups, side, area, placements, cover, saved} = found;
   const {atlas, atlasKeys, atlasWidth, atlasHeight} = packAtlas(groups, side, area, keys[0]);
   for (const g of groups)
     for (let r = 0; r < g.h; r++) atlasKeys.set(keys.subarray((g.y + r) * width + g.x, (g.y + r) * width + g.x + g.w), (g.ay + r) * atlasWidth + g.ax);
-  return {groups, atlas, width: atlasWidth, height: atlasHeight, placements, cover};
+  return {groups, atlas, width: atlasWidth, height: atlasHeight, placements, cover, saved};
 }
 
-export function capturePatchGroups(keys, width, height, least = 0) {
+export function capturePatchGroups(keys, width, height, least = 0, saving = Infinity) {
   const n = width * height;
   if (width < 16 || height < 16 || n > 1 << 25) return null;
   const boxes = capturePatchMarks(keys, width, height, MAX_SIDE, MAX_MARKS, 4);
   if (!boxes) return null;
   let marked = 0;
   for (let i = 2; i < boxes.length; i += 4) marked += boxes[i] * boxes[i + 1];
-  if (marked < least * n) return null;
+  if (marked < least * n && marked * 3 < saving) return null;
   const same = (ax, ay, bx, by, w, h) => {
     for (let y = 0; y < h; y++) for (let a = (ay + y) * width + ax, b = (by + y) * width + bx, e = a + w; a < e; a++, b++)
       if (keys[a] !== keys[b]) return false;
@@ -47,11 +47,14 @@ export function capturePatchGroups(keys, width, height, least = 0) {
   }
   const kept = groups.filter(g => { const c = g.positions.length >> 1; return c >= 2 && (c - 1) * 3 * g.h > 3.5 * c + 8; });
   if (!kept.length) return null;
-  let placements = 0, area = 0, side = 0, repeats = 0;
-  for (const g of kept) { const c = g.positions.length >> 1; placements += c; area += g.w * g.h; repeats += (c - 1) * g.w * g.h; side = Math.max(side, g.w); }
-  if (placements * 16 > n || repeats < least * n) return null;
+  let placements = 0, area = 0, side = 0, repeats = 0, saved = 0;
+  for (const g of kept) {
+    const c = g.positions.length >> 1;
+    placements += c; area += g.w * g.h; repeats += (c - 1) * g.w * g.h; saved += (c - 1) * 3 * g.h - 3.5 * c - 8; side = Math.max(side, g.w);
+  }
+  if (placements * 16 > n || repeats < least * n && saved < saving) return null;
   kept.sort((a, b) => b.h - a.h || b.w - a.w);
-  return {groups: kept, side, area, placements, cover: repeats / n};
+  return {groups: kept, side, area, placements, cover: repeats / n, saved};
 }
 
 function packAtlas(groups, side, area, fill) {
@@ -75,7 +78,7 @@ export function fillPatches(plane, width, patches) {
 }
 
 export function writeCapturePatches(w, patches, alpha) {
-  if (!(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && patches.peel && !patches.ordered) {
+  if (!(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && patches.peel && !patches.ordered) {
     patches.ordered = true;
     const raster = patches.groups.map(g => g.positions), walked = patches.groups.map(g => {
       const n = g.positions.length >> 1;
@@ -150,9 +153,10 @@ export function writeAtlasFrameHeader(w, alpha, width, height, shift = 3) {
   w.write(13, PATCH_SLOT | 4);
 }
 
-export function writePatchedFrameHeader(w, alpha, shift = 3) {
+export function writePatchedFrameHeader(w, alpha, shift = 3, reference = 0) {
   const u = alpha ? 4 : 2;
-  w.write(17 + 2 * u, 88 | shift << 11 + u | 1 << 16 + 2 * u);
+  w.write(17 + 2 * u, 88 | shift << 11 + u | (reference ? 0 : 1 << 16 + 2 * u));
+  if (reference) w.write(3, reference);
   w.write(10, 0);
 }
 

@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT
 import {BitWriter, ceilLog2, complete} from './bits.mjs';
 import {stage, unit} from './step-journal.mjs';
-import {hybridToken, writeContextMap, writeUintConfig} from './prefix.mjs';
+import {writeContextMap, writeUintConfig} from './prefix.mjs';
 import {TokenCounts, clusterTokenCountsSteps} from './entropy.mjs';
 import {LZ77, RESIDUAL_CONFIG} from './modular.mjs';
 import {writeSmallestContextMap} from './context-map.mjs';
 import {GROUP_TOKENS} from './frame.mjs';
-import {LOG_CODES, LOG_LENGTHS, SYMBOL_BITS, distributionLength, expectedDataBits, normalise, reverseAlias, shapeHistogram, writeDistribution, writeAnsHistograms, ansEncode} from './ans-core.mjs';
+import {fault} from './fault.mjs';
+import {captureModularAnsWrite} from './capture-kernels.mjs';
+import {writeAnsTokens} from './kernels.mjs';
+import {LOG_CODES, LOG_LENGTHS, SYMBOL_BITS, distributionLength, expectedDataBits, normalise, reverseAlias, shapeHistogram, writeDistribution, writeAnsHistograms} from './ans-core.mjs';
 export {LOG_LENGTHS, LOG_CODES, shapeHistogram, reverseAlias};
 
 class BitCount {
@@ -28,56 +31,28 @@ function symbolCosts(freqs) {
   return costs;
 }
 
-export function ansGroupWriter({contextMap, histograms}) {
-  const values = new Uint32Array(GROUP_TOKENS), metadata = new Uint8Array(GROUP_TOKENS), emitted = new Uint16Array(GROUP_TOKENS);
-  const slots = [0, 0, 0];
-  const small = new Int32Array(histograms.length * 64), freqs = new Int32Array(histograms.length * 64), starts = new Int32Array(histograms.length * 64);
-  histograms.forEach((h, id) => {
-    for (let v = 0; v < 64; v++) {
-      hybridToken(h.config, v, slots);
-      small[id * 64 + v] = slots[1] << 6 | slots[2]; freqs[id * 64 + v] = h.counts[slots[0]]; starts[id * 64 + v] = h.starts[slots[0]];
-    }
-  });
-  const g = {values, metadata, emitted, slots, small, freqs, starts, histograms, contextMap, reverses: histograms.map(h => h.reverse), length: 0};
-  return {write: (_w, ctx, value) => ansWrite(g, ctx, value), writeTokens: (_w, ctxs, tokens, n) => ansWriteTokens(g, ctxs, tokens, n),
+export function ansGroupWriter(model) {
+  const g = {model, values: new Uint32Array(GROUP_TOKENS), ids: new Uint8Array(GROUP_TOKENS), length: 0};
+  return {write: (_w, ctx, value) => ansWrite(g, ctx, value),
+    writeTokens: (_w, ctxs, tokens, n) => ansWriteTokens(g, ctxs, tokens, n),
     flush: w => ansFlush(g, w), reset: () => { g.length = 0; }};
 }
 function ansWrite(g, ctx, value) {
-  g.values[g.length] = value; g.metadata[g.length++] = g.contextMap[ctx];
+  g.values[g.length] = value; g.ids[g.length++] = g.model.contextMap[ctx];
 }
 function ansWriteTokens(g, ctxs, tokens, n) {
-  const {values, metadata, contextMap} = g;
+  const {values, ids, model} = g, {contextMap} = model;
   let length = g.length;
-  for (let i = 0; i < n; i++) { values[length] = tokens[i]; metadata[length++] = contextMap[ctxs[i]]; }
+  for (let i = 0; i < n; i++) { values[length] = tokens[i]; ids[length++] = contextMap[ctxs[i]]; }
   g.length = length;
 }
 function ansFlush(g, w) {
-  const {values, metadata, emitted, slots, small, freqs, starts, histograms, reverses, length} = g;
-  if (!g.ids || g.ids.length < length) { g.ids = new Uint8Array(length); g.freq = new Int32Array(length); g.start = new Int32Array(length); g.flags = new Uint8Array(length); }
-  const {ids, freq, start, flags} = g;
-  for (let i = 0; i < length; i++) {
-    const id = metadata[i], value = values[i];
-    ids[i] = id;
-    if (value < 64) { const at = id * 64 + value, entry = small[at]; metadata[i] = entry >> 6; values[i] = entry & 63; freq[i] = freqs[at]; start[i] = starts[at]; }
-    else {
-      const h = histograms[id];
-      hybridToken(h.config, value, slots); metadata[i] = slots[1]; values[i] = slots[2]; freq[i] = h.counts[slots[0]]; start[i] = h.starts[slots[0]];
-    }
-  }
-  flags.fill(0, 0, length);
-  w.write(32, ansEncode(length, ids, freq, start, reverses, emitted, flags));
-  for (let i = 0; i < length; i++) {
-    const bits = metadata[i] & 63;
-    if (flags[i]) {
-      if (bits <= 8) { w.write(16 + bits, emitted[i] | values[i] << 16); continue; }
-      w.write(16, emitted[i]);
-    }
-    if (bits) w.write(bits, values[i]);
-  }
+  writeAnsTokens(w, g.model, g.values, g.ids, g.length);
   g.length = 0;
 }
 
 const BUILT = new Map(), BUILT_KEEP = 64;
+const RESTORED_PARTS = new WeakMap();
 let builtScopes = 0;
 export function ansCodingsKept(open) {
   builtScopes += open ? 1 : -1;
@@ -85,9 +60,8 @@ export function ansCodingsKept(open) {
 }
 const countsHash = counts => {
   let h = counts.contexts | 0;
-  const {totals, small, large} = counts;
+  const {totals, large} = counts;
   for (let i = 0; i < totals.length; i++) h = Math.imul(h ^ totals[i], 0x01000193);
-  for (let i = 0; i < small.length; i++) if (small[i]) h = Math.imul(h ^ (i + Math.imul(small[i], 0x9e3779b1)), 0x01000193);
   for (let c = 0; c < large.length; c++) if (large[c]) for (const [v, n] of large[c]) h = Math.imul(h ^ (c + Math.imul(v, 31) + Math.imul(n, 0x9e3779b1)), 0x01000193);
   return h >>> 0;
 };
@@ -116,7 +90,7 @@ function sameCounts(copy, {contexts, totals, small, large}) {
   return k === l.length;
 }
 const codingKey = options => !options ? '' : [options.maxClusters, options.newClusterCost, options.seeds, options.passes, options.switchCost,
-  !!options.everyConfig, !!options.kernels, options.shifts, options.mapLz, !!options.smallestMap, !!options.headerAware, !!options.shapedMerge, !!options.jpeg].join();
+  !!options.everyConfig, !!options.kernels, options.mapLz, !!options.smallestMap, !!options.headerAware, !!options.shapedMerge, !!options.jpeg].join();
 export function buildAnsCoding(counts, options) { return complete(buildAnsCodingSteps(counts, options)); }
 function* buildAnsCodingSteps(input, options) {
   const made = yield* stage('coding', function* () {
@@ -127,9 +101,21 @@ function* buildAnsCodingSteps(input, options) {
     return {...parts, model: {...parts.model, histograms: parts.model.histograms.map(({config, counts}) => ({config, counts}))}};
   });
   if (made.write) return made;
-  const histograms = made.model.histograms, logAlphabet = Math.max(5, ceilLog2(Math.max(...histograms.map(h => h.counts.length))), ...histograms.map(h => h.config.split));
-  for (const histogram of histograms) Object.assign(histogram, reverseAlias(histogram.counts, logAlphabet));
-  return ansCodingFrom(made, options?.kernels);
+  const histogramHeader = Object.assign(new BitWriter(0), made.header);
+  const result = {bits: made.bits, payloadBits: made.payloadBits, histogramHeader, writeHistograms: w => w.append(histogramHeader)};
+  RESTORED_PARTS.set(result, made);
+  let writer;
+  const ready = () => {
+    if (!writer) {
+      const histograms = made.model.histograms, logAlphabet = Math.max(5, ceilLog2(Math.max(...histograms.map(h => h.counts.length))), ...histograms.map(h => h.config.split));
+      for (const histogram of histograms) Object.assign(histogram, reverseAlias(histogram.counts, logAlphabet));
+      writer = ansCodingFrom(made, options?.kernels);
+    }
+    return writer;
+  };
+  for (const key of ['model', 'write', 'writeTokens', 'writeFilled', 'flush', 'reset'])
+    Object.defineProperty(result, key, {get: () => ready()[key]});
+  return result;
 }
 function* buildAnsCodingCached(counts, options) {
   if (!builtScopes || !(counts instanceof TokenCounts)) return yield* buildAnsCodingOnce(counts, options);
@@ -145,7 +131,7 @@ function* buildAnsCodingOnce(counts, options) {
   const shaped = new WeakMap();
   const headerAware = options?.seeds === 128 || !!options?.headerAware;
   const shapedCost = (freqs, config) => {
-    const header = new BitCount(), shape = shapeHistogram(freqs, options?.shifts, headerAware);
+    const header = new BitCount(), shape = shapeHistogram(freqs, headerAware);
     shaped.set(freqs, shape);
     writeUintConfig(header, config, Math.max(5, ceilLog2(freqs.findLastIndex(Boolean) + 1)));
     return header.bitLength + shape.bits;
@@ -154,7 +140,7 @@ function* buildAnsCodingOnce(counts, options) {
   const shapes = yield* unit('shapes', () => {
     let bits = 32;
     const histograms = clustered.histograms.map(({config, freqs, extra}) => {
-      const {counts, shift, omit} = shaped.get(freqs) ?? shapeHistogram(freqs, options?.shifts, headerAware);
+      const {counts, shift, omit} = shaped.get(freqs) ?? shapeHistogram(freqs, headerAware);
       bits += extra + expectedDataBits(freqs, counts);
       return {config, counts, shift, omit};
     });
@@ -179,10 +165,15 @@ function* buildAnsCodingOnce(counts, options) {
 
   const model = {kind: 'ans', contextMap: clustered.contextMap,
     histograms: histograms.map(({config, counts, starts, reverse}) => ({config, counts, starts, reverse}))};
-  const {write, writeTokens, writeFilled, flush, reset} = (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && !options?.strategy ? {write: true, flush: true} : (options?.kernels?.ansWriter?.(model) ?? ansGroupWriter(model));
+  const {write, writeTokens, writeFilled, flush, reset} = (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? {write: true, flush: true} : (options?.kernels?.ansWriter?.(model) ?? ansGroupWriter(model));
   return {bits: bits + header.bitLength, payloadBits: bits, model, histogramHeader: header, write, writeTokens, writeFilled, flush, reset, writeHistograms: w => w.append(header)};
 }
-export const ansCodingParts = ({bits, payloadBits, model, histogramHeader: {bytes, at, pending, acc}}) => ({bits, payloadBits, model, header: {bytes: bytes.slice(0, at + 1), at, pending, acc}});
+export function ansCodingParts(coding) {
+  const saved = RESTORED_PARTS.get(coding);
+  if (saved) return saved;
+  const {bits, payloadBits, model, histogramHeader: {bytes, at, pending, acc}} = coding;
+  return {bits, payloadBits, model, header: {bytes: bytes.slice(0, at + 1), at, pending, acc}};
+}
 export function ansCodingFrom({bits, payloadBits, model, header}, kernels) {
   const histogramHeader = Object.assign(new BitWriter(0), header);
   const {write, writeTokens, writeFilled, flush, reset} = (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? {write: true, flush: true} : (kernels?.ansWriter(model) ?? ansGroupWriter(model));
@@ -200,11 +191,15 @@ function shapeOnce(freq) {
 
 export function writeModularAnsHistograms(w, orderedLeaves, freqs, histogramOf = leaf => leaf.context, configOf = () => RESIDUAL_CONFIG, kernels = null) {
   const contextMap = new Uint8Array(orderedLeaves.length + 1);
-  for (const leaf of orderedLeaves) contextMap[leaf.context] = histogramOf(leaf) + 1;
+  for (const leaf of orderedLeaves) {
+    const h = histogramOf(leaf) + 1;
+    if (h > 255) throw fault('JXL_INTERNAL', 'A stream names more than 256 histograms.');
+    contextMap[leaf.context] = h;
+  }
   const distance = new Uint32Array(2); distance[1] = 1;
   const shapes = [distance, ...freqs.slice(0, Math.max(...contextMap))].map(shapeOnce);
   const logAlphabet = Math.max(5, ceilLog2(Math.max(...shapes.map(h => h.shape.counts.length))));
-  if (logAlphabet > 8) throw new Error('Modular ANS alphabet exceeds 256');
+  if (logAlphabet > 8) throw fault('JXL_SIZE', 'Modular ANS alphabet exceeds 256');
   const histograms = shapes.map(({shape, aliases}) => {
     if (!aliases.has(logAlphabet)) aliases.set(logAlphabet, reverseAlias(shape.counts, logAlphabet));
     return {...shape, ...aliases.get(logAlphabet)};
@@ -214,40 +209,45 @@ export function writeModularAnsHistograms(w, orderedLeaves, freqs, histogramOf =
   w.writeU32([[0, 3], [0, 4], [2, 5], [8, 9]], LZ77.minLength);
   writeUintConfig(w, LZ77.lengthConfig, 8);
   writeAnsHistograms(w, contextMap, logAlphabet, histograms.map((_, i) => i ? configOf(i - 1) : RESIDUAL_CONFIG), histograms, writeSmallestContextMap);
-  const reverses = histograms.map(h => h.reverse);
-  const encode = (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? null : plans => {
-    const length = plans.reduce((total, plan) => total + plan.used, 0), emitted = new Uint16Array(length), flags = new Uint8Array(length);
-    const ids = new Uint16Array(length), freq = new Int32Array(length), start = new Int32Array(length);
-    let at = 0, offset = histograms.length - plans.reduce((total, plan) => total + plan.freqs.length, 0), bits = 32;
+  const pack = plans => {
+    if (plans.length === 1 && !plans[0].histogramMap) {
+      const plan = plans[0];
+      return {tags: plan.tags, extras: plan.extra, n: plan.used, offset: histograms.length - plan.freqs.length};
+    }
+    const n = plans.reduce((sum, plan) => sum + plan.used, 0),
+      tags = new Uint32Array(n), extras = new Uint32Array(n);
+    let at = 0, offset = histograms.length - plans.reduce((sum, plan) => sum + plan.freqs.length, 0);
     for (const plan of plans) {
-      const map = plan.histogramMap;
+      const {histogramMap: map} = plan;
       for (let i = 0; i < plan.used; i++, at++) {
-        const tag = plan.tags[i], id = offset + (map ? map[tag >>> 16] : tag >>> 16), h = histograms[id], symbol = tag & 511;
-        ids[at] = id; freq[at] = h.counts[symbol]; start[at] = h.starts[symbol];
-        bits += (tag >>> 9) & 63;
+        const tag = plan.tags[i], id = offset + (map ? map[tag >>> 16] : tag >>> 16);
+        tags[at] = id << 16 | tag & 0xffff;
+        extras[at] = plan.extra[i];
       }
       offset += plan.freqs.length;
     }
-    const state = ansEncode(length, ids, freq, start, reverses, emitted, flags);
-    for (let i = 0; i < length; i++) bits += flags[i] << 4;
-    return {plans, emitted, flags, state, bits};
+    return {tags, extras, n, offset: 0};
   };
   const kernel = kernels?.modularAns(histograms);
   let measured = null;
+  const prepare = plans => {
+    const packed = pack(plans),
+      bits = captureModularAnsWrite(null, packed.tags, packed.extras, packed.n, histograms, packed.offset);
+    if (bits === false) throw fault('JXL_INTERNAL', 'The modular ANS kernel refused its token layout.');
+    return {plans, packed, bits};
+  };
   const write = plans => {
     const written = kernel?.write(w, plans);
-    if (written != null && written !== false) return written;
-    const {emitted, flags, state, bits} = measured?.plans === plans ? measured : encode(plans);
+    if (written != null && written !== false) { measured = null; return written; }
+    const {packed} = measured?.plans === plans ? measured : prepare(plans);
     measured = null;
-    w.write(32, state);
-    let at = 0;
-    for (const plan of plans) for (let i = 0; i < plan.used; i++, at++) {
-      if (flags[at]) w.write(16, emitted[at]);
-      const rawBits = (plan.tags[i] >>> 9) & 63;
-      if (rawBits) w.write(rawBits, plan.extra[i]);
-    }
+    const bits = captureModularAnsWrite(w, packed.tags, packed.extras, packed.n, histograms, packed.offset);
+    if (bits === false) throw fault('JXL_INTERNAL', 'The modular ANS kernel refused its BitWriter.');
     return bits;
   };
-  write.measure = plans => kernel ? kernel.bits(plans) : (measured = encode(plans)).bits;
+  write.measure = plans => {
+    const bits = kernel?.bits(plans);
+    return bits != null && bits !== false ? bits : (measured = prepare(plans)).bits;
+  };
   return write;
 }

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {float16Bits} from './bits.mjs';
 import {fault} from './admit.mjs';
-import {entropyLog2} from './entropy.mjs';
 import {QUANT_PARAM_LIBRARY} from './quantization-defaults.mjs';
 import {buildCode, uintConfig, writeHybrid} from './prefix.mjs';
 
@@ -58,14 +57,14 @@ function quantParamAdmit(input, width, height, family) {
   if (!source) throw fault('JXL_INPUT', 'Unknown quantization-table family.');
   const kind = QUANT_PARAM_MODES.indexOf(source.mode), table = {mode, kind, library};
   const positive = (v, divisor = 1) => quantParamNumber(v, divisor, true, library);
-  if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && (kind === 1 || kind === 2)) table.weights = quantParamTriplet(source.weights, kind === 1 ? 3 : 6, v => positive(v, 64));
-  else if (kind === 3) {
+  if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && (kind === 1 || kind === 2))) table.weights = quantParamTriplet(source.weights, kind === 1 ? 3 : 6, v => positive(v, 64));
+  else if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && (kind === 3)) {
     table.multipliers = quantParamTriplet(source.multipliers, 2, v => positive(v));
     table.bands = quantParamBands(source.bands, library);
-  } else if (kind === 4) {
+  } else if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && (kind === 4)) {
     table.multipliers = quantParamVector(source.multipliers, 3, v => positive(v));
     table.bands = quantParamBands(source.bands, library);
-  } else if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && kind === 5) {
+  } else if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && kind === 5)) {
     table.weights = quantParamTriplet(source.weights, 9, (v, i) => quantParamNumber(v, i < 6 ? 64 : 1, i < 6, library));
     table.bands4x8 = quantParamBands(source.bands4x8, library);
     table.bands4x4 = quantParamBands(source.bands4x4, library);
@@ -88,19 +87,11 @@ function quantParamExpandBands(parameters) {
   return bands;
 }
 
-function quantParamPower(base, exponent) {
-  const log = entropyLog2(base) * exponent, whole = Math.round(log), reduced = (log - whole) * .6931471805599453;
-  let term = 1, sum = 1, factor = 1;
-  for (let i = 1; i < 24; i++) sum += term *= reduced / i;
-  for (let i = 0; i < whole; i++) factor *= 2;
-  for (let i = 0; i > whole; i--) factor /= 2;
-  return sum * factor;
-}
 
 function quantParamInterpolate(bands, position) {
   if (bands.length === 1) return bands[0];
   const index = Math.min(bands.length - 2, Math.floor(position)), a = bands[index], b = bands[index + 1];
-  return a * quantParamPower(b / a, position - index);
+  return a * Math.pow(b / a, position - index);
 }
 
 export function fillQuantParamDCT(parameters, width, height, out, from = 0, to = width * height, origin = 0) {
@@ -117,7 +108,7 @@ function quantParamDCT(parameters, width, height) {
 
 export function quantParamMatrix(table, channel, width, height) {
   const {kind} = table;
-  if (kind === 6) return quantParamDCT(table.bands[channel], width, height);
+  if ((typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) || kind === 6) return quantParamDCT(table.bands[channel], width, height);
   const plane = new Float64Array(64), weights = table.weights?.[channel];
   if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && kind === 1) {
     plane.fill(weights[0]); plane[1] = plane[8] = weights[1]; plane[9] = weights[2];
@@ -161,11 +152,11 @@ export function writeQuantParams(writer, table, order) {
   writer.write(3, table.mode);
   if (table.library) return;
   const {kind} = table;
-  if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && (kind === 1 || kind === 2)) for (const channel of order) for (const value of table.weights[channel]) writer.write(16, float16Bits(value / 64));
-  else if (kind === 3 || kind === 4) {
+  if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && (kind === 1 || kind === 2))) for (const channel of order) for (const value of table.weights[channel]) writer.write(16, float16Bits(value / 64));
+  else if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && (kind === 3 || kind === 4)) {
     for (const channel of order) for (const value of kind === 3 ? table.multipliers[channel] : [table.multipliers[channel]]) writer.write(16, float16Bits(value));
     quantParamWriteBands(writer, table.bands, order);
-  } else if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && kind === 5) {
+  } else if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && kind === 5)) {
     for (const channel of order) for (let i = 0; i < 9; i++) writer.write(16, float16Bits(table.weights[channel][i] / (i < 6 ? 64 : 1)));
     quantParamWriteBands(writer, table.bands4x8, order); quantParamWriteBands(writer, table.bands4x4, order);
   } else quantParamWriteBands(writer, table.bands, order);
@@ -189,6 +180,61 @@ export {quantParamAdmit as quantParamDescriptor};
 export function quantParamCoding(counts) {
   const config = uintConfig(0), aggregate = counts.aggregate(Array.from({length: counts.contexts}, (_, i) => i));
   const code = buildCode(aggregate.tokens([0], config, 64)), contextMap = new Uint8Array(counts.contexts);
-  return {contextMap, histograms: [{config, code}], bits: 0,
+  const histograms = [{config, code}];
+  return {contextMap, histograms, model: {kind: 'prefix', contextMap, histograms}, bits: 0,
     write: (writer, context, value) => writeHybrid(writer, code, config, value)};
+}
+
+const DCT8_TWINS = new WeakMap(), TWIN_BANDS = 6;
+const twinAt = k => Math.sqrt((k & 7) * (k & 7) + (k >> 3) * (k >> 3)) / 7 * (TWIN_BANDS - 1) / (1.4142135623730951 + .000001);
+function twinBands(steps, denominator) {
+  const n = TWIN_BANDS, a = Array.from({length: n}, () => new Float64Array(n + 1));
+  for (let k = 1; k < 64; k++) {
+    const at = twinAt(k), i = Math.min(n - 2, Math.floor(at)), t = at - i, y = -Math.log(steps[k] * denominator);
+    a[i][i] += (1 - t) * (1 - t); a[i][i + 1] += (1 - t) * t; a[i + 1][i] += (1 - t) * t; a[i + 1][i + 1] += t * t;
+    a[i][n] += (1 - t) * y; a[i + 1][n] += t * y;
+  }
+  for (let i = 1; i < n; i++) { const f = a[i][i - 1] / a[i - 1][i - 1]; for (let j = i - 1; j <= n; j++) a[i][j] -= f * a[i - 1][j]; }
+  const logs = new Float64Array(n);
+  for (let i = n - 1; i >= 0; i--) logs[i] = (a[i][n] - (i < n - 1 ? a[i][i + 1] * logs[i + 1] : 0)) / a[i][i];
+  const first = quantParamHalfValue(float16Bits(Math.exp(logs[0]) / 64)) * 64, bands = [first];
+  if (!(first > 0) || !Number.isFinite(first)) return null;
+  let previous = first;
+  for (let i = 1; i < n; i++) {
+    const ratio = Math.exp(logs[i]) / previous, fall = quantParamHalfValue(float16Bits(ratio >= 1 ? ratio - 1 : 1 - 1 / ratio));
+    bands.push(fall); previous *= fall > 0 ? 1 + fall : 1 / (1 - fall);
+  }
+  const weights = fillQuantParamDCT(bands, 8, 8, new Float64Array(64));
+  for (let k = 1; k < 64; k++) {
+    const step = 1 / (weights[k] * denominator);
+    if (!(Math.abs(step - steps[k]) <= Math.max(1, steps[k] / 400))) return null;
+  }
+  return {bands, weights};
+}
+export function dct8Twin(steps, field, quantScale) {
+  const denominator = quantParamHalfValue(float16Bits(field / (8 * 255 * quantScale)));
+  let byFirst = DCT8_TWINS.get(steps[0]), bySecond = byFirst?.get(steps[1]), entry = bySecond?.get(steps[2]);
+  if (!entry || entry.denominator !== denominator) {
+    const twins = steps.map(s => twinBands(s, denominator));
+    entry = {denominator, twin: twins.every(Boolean) ? {mode: 6, kind: 6, library: false, bands: twins.map(t => t.bands), weights: twins.map(t => t.weights)} : null};
+    if (!byFirst) DCT8_TWINS.set(steps[0], byFirst = new WeakMap());
+    if (!bySecond) byFirst.set(steps[1], bySecond = new WeakMap());
+    bySecond.set(steps[2], entry);
+  }
+  return entry.twin;
+}
+
+function acZero(comps) {
+  for (const comp of comps) {
+    const coeffs = comp.coeffs;
+    if (!coeffs || comp.row0 !== undefined || coeffs.length < comp.stride * comp.rows * 64) return false;
+    for (let i = 0; i < coeffs.length; i++) if (coeffs[i] && i & 63) return false;
+  }
+  return true;
+}
+const LIBRARY_DCT8 = Object.freeze({mode: 0, library: true});
+const COMPACT_SIDE = 64;
+export function photoDCT8Table(image, steps, field, quantScale, comps = null) {
+  if (!image.xyb || Math.min(image.width, image.height) >= COMPACT_SIDE) return null;
+  return comps && acZero(comps) ? LIBRARY_DCT8 : dct8Twin(steps, field, quantScale);
 }

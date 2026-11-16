@@ -93,7 +93,9 @@ export interface AdvancedPhotoOptions extends PhotoOptions {
   /** Omit to retain the ordinary photo route. Auto chooses DCT8 or DCT16 from coefficient-rate estimates.
    * Explicit names are used wherever their tiles fit; DCT8 fills borders. Names give rows before columns. */
   transforms?: 'auto' | TransformName | readonly TransformName[] | undefined;
+  /** Quantization tables and strengths, in place of the defaults. */
   quantization?: Quantization | undefined;
+  /** The order coefficients are written in, per transform; changes the file, not the picture. */
   coefficientOrders?: CoefficientOrders | undefined;
   /** True means spectral. Final coefficients sum exactly to the nonprogressive reconstruction. */
   progressive?: boolean | 'spectral' | 'successive' | 'responsive' | ProgressivePlan | undefined;

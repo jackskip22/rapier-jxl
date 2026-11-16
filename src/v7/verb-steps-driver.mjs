@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-import {JOURNAL, JOURNAL_FILE, journaled} from '../step-journal.mjs';
-import {configuredDecoder} from '../shown-picture.mjs';
+import {JOURNAL, JOURNAL_FILE, JOIN, SAVED, journaled, journalFact} from '../step-journal.mjs';
+import {configuredDecoder, DECODER_SNAPSHOT} from '../shown-picture.mjs';
 import {sha256Start, sha256Update, sha256Finish} from '../sha256.mjs';
-import {fail} from './primitives.mjs';
+import {fail, dimensions, pixelLimit, PIXELS} from './primitives.mjs';
+import {sourceColor} from './header-intent.mjs';
 
 export function fileSize(bytes) {
   try {
@@ -30,25 +31,28 @@ export function fileSize(bytes) {
 const record = value => value && typeof value === 'object' && !Array.isArray(value);
 const encoded = value => JSON.stringify(value, (key, item) => item === undefined ? null : record(item)
   ? Object.fromEntries(Object.keys(item).sort().map(k => [k, item[k]])) : item);
-async function rebuilt(imageResult, bytes, facts, decode = false) {
-  if (!record(facts)) throw fail('JXL_INPUT', 'A finished job\'s record is a record.');
-  const {width, height, format = 'jxl', fidelity, kept, measurements, transform, readAs} = facts, shown = transform ?? {width, height};
+async function rebuilt(imageResult, bytes, facts, original) {
+  if (!record(facts)) throw fail('JXL_INPUT', "Invalid finished record; pass the result record returned by the job.");
+  const {width, height, format = 'jxl', fidelity, kept, measurements, transform, readAs, originalBytes, usedWebGPU} = facts, shown = transform ?? {width, height};
+  if (originalBytes !== undefined && original.kind === 'file' && originalBytes !== original.byteLength)
+    throw fail('JXL_INPUT', "Finished record has no original size; restore the complete result record.");
   if (bytes && format === 'jxl') {
     const size = fileSize(bytes);
     if (!size || !(size.width === shown.width && size.height === shown.height || size.width === shown.height && size.height === shown.width))
-      throw fail('JXL_INPUT', 'A finished job\'s record does not describe its file.');
+      throw fail('JXL_INPUT', "Finished record describes another file; pass the record belonging to this file.");
   }
   let made;
   try {
     made = await imageResult(bytes, {width, height}, {fidelity, measurements, format, ...(bytes && kept !== undefined && {kept}),
-      ...(transform !== undefined && {transform}), ...(readAs !== undefined && {readAs}), owned: true});
-  } catch { throw fail('JXL_INPUT', 'A finished job\'s record is not a result record.'); }
+      ...(transform !== undefined && {transform}), ...(readAs !== undefined && {readAs}), ...(originalBytes !== undefined && {originalBytes}),
+      ...(usedWebGPU !== undefined && {usedWebGPU}), owned: true});
+  } catch { throw fail('JXL_INPUT', "Invalid finished record; pass the result record returned by the job."); }
   for (const key of new Set([...Object.keys(facts), ...Object.keys(made)])) if (key !== 'bytes' && key !== 'source' && encoded(made[key]) !== encoded(facts[key]))
-    throw fail('JXL_INPUT', 'A finished job\'s record does not describe its file.');
-  const source = decode ? facts.source : undefined;
+    throw fail('JXL_INPUT', "Finished record describes another file; pass the record belonging to this file.");
+  const source = original.kind === 'decode' ? facts.source : undefined;
   if (source === undefined) return made;
   if (!record(source) || source.kind !== 'bytes' || !/^sha256:[0-9a-f]{64}$/.test(source.digest) || Object.keys(source).length !== 2)
-    throw fail('JXL_INPUT', 'A finished job\'s record names no valid original.');
+    throw fail('JXL_INPUT', "Finished record has no valid original; restore the complete result record.");
   return {...made, source: {kind: 'bytes', digest: source.digest}};
 }
 function plain(value, depth = 0) {
@@ -58,19 +62,19 @@ function plain(value, depth = 0) {
   return Object.getPrototypeOf(value) === Object.prototype && Object.values(value).every(item => plain(item, depth + 1));
 }
 
-async function decoded(bytes) {
-  const {decode, restore} = configuredDecoder() ?? {};
-  if (!decode) throw fail('JXL_PLATFORM', 'A decode source needs configureDecoder(decode) from rapier-jxl/decode.');
+async function decoded(bytes, snap) {
+  const {decode, restore} = (snap !== undefined ? snap : configuredDecoder()) ?? {};
+  if (!decode) throw fail('JXL_PLATFORM', "This host has no configured decoder; call configureDecoder(decode) with decode from rapier-jxl/decode.");
   const picture = await decode(bytes);
   if (picture.format !== 'uint8' || typeof picture.colorSpace !== 'string')
-    throw fail('JXL_UNSUPPORTED', 'A decode source is an 8-bit picture in a named color space.');
+    throw fail('JXL_UNSUPPORTED', 'The decoded picture is not 8-bit with a named color space; configure the decoder to return 8-bit pixels in sRGB or another named color space.');
   let source;
   if (restore && picture.header?.reconstruction) {
     const jpeg = (await restore(bytes)).bytes;
     source = 'sha256:' + sha256Finish(sha256Update(sha256Start(), jpeg));
   }
   return {data: new Uint8Array(picture.data.buffer, picture.data.byteOffset, picture.data.length), width: picture.width, height: picture.height,
-    colorSpace: picture.colorSpace, ...(source && {source})};
+    ...(picture.colorEncoding?.renderingIntent === 0 || picture.colorEncoding?.renderingIntent > 1 ? {colorEncoding: picture.colorEncoding} : {colorSpace: picture.colorSpace}), ...(source && {source})};
 }
 const named = async (source, pending) => {
   const made = await pending;
@@ -80,7 +84,7 @@ const named = async (source, pending) => {
 };
 const pictureOf = ({source, ...picture}) => picture;
 const input = (data, source, files) => (source.kind ?? 'pixels') === 'file' ? files ? {[JOURNAL_FILE]: data} : new Blob([data])
-  : {data, width: source.width, height: source.height, ...(source.colorSpace && {colorSpace: source.colorSpace})};
+  : {data, width: source.width, height: source.height, ...sourceColor(source)};
 async function made(pending) {
   const result = await pending;
   if (Array.isArray(result)) {
@@ -93,47 +97,69 @@ async function made(pending) {
   const {bytes, ...facts} = result;
   return {bytes: bytes ?? new Uint8Array(0), facts: {record: facts, missed: !bytes}};
 }
+const HEAD = 65536, PIECE = 1048576;
+async function pieced(pending, journal) {
+  const made = await pending, {bytes} = made;
+  if (!journal || bytes.length <= HEAD || journalFact(bytes, JOIN)) return made;
+  const pieces = [];
+  for (let at = 0; at < bytes.length; at = Math.min(bytes.length, at ? at + PIECE : HEAD)) {
+    const to = Math.min(bytes.length, at ? at + PIECE : HEAD), saved = await journal({unit: 'output-piece', cold: true});
+    if (saved && Object.hasOwn(saved, SAVED)) { pieces.push(saved[SAVED]); continue; }
+    const piece = bytes.slice(at, to);
+    await journal({unitDone: 'output-piece', value: piece});
+    pieces.push(piece);
+  }
+  return {...made, bytes: journal.join(pieces)};
+}
+async function sized(pending, source) {
+  const made = await pending, record = made.facts?.record;
+  if ((source.kind ?? 'pixels') !== 'file' || !record || record.originalBytes !== undefined || !Number.isSafeInteger(source.byteLength) || !made.bytes.length) return made;
+  return {...made, facts: {...made.facts, record: {...record, originalBytes: source.byteLength, largerThanOriginal: made.bytes.length > source.byteLength}}};
+}
 export function verbSteps({id, verb, taken, admit = () => {}, rows = false, files = false, result: imageResult}) {
   return Object.freeze({id,
     eager: source => source.kind === 'decode' || ((source.kind ?? 'pixels') === 'file' ? !files : !rows),
     normalize(options, source) {
-      if (!record(options) || !plain(options)) throw fail('JXL_OPTIONS', 'A resumable job\'s options are plain data.');
+      if (!record(options) || !plain(options)) throw fail('JXL_OPTIONS', "Invalid resumable options; pass plain data values.");
       const unknown = Object.keys(options).find(key => !taken.includes(key));
-      if (unknown) throw fail('JXL_OPTIONS', `A resumable ${id} takes ${taken.join(', ')}; not ${unknown}.`);
+      if (unknown) throw fail('JXL_OPTIONS', `Unknown resumable option: ${unknown}; use ${taken.join(', ')}.`);
       const kind = source.kind ?? 'pixels';
       if (kind === 'pixels') {
         const {width, height} = source;
         if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || source.byteLength !== width * height * 4)
-          throw fail('JXL_INPUT', 'A resumable pixel source is straight RGBA8 rows: byteLength is width * height * 4.');
-      } else if (kind !== 'file' && kind !== 'decode') throw fail('JXL_INPUT', 'A resumable source is pixels, a file or a decode.');
+          throw fail('JXL_INPUT', "Pixel source has the wrong byte count; pass width * height * 4 RGBA8 bytes or kind: 'file' for an encoded image.");
+        dimensions(width, height, pixelLimit(options.maxPixels));
+      } else if (kind !== 'file' && kind !== 'decode') throw fail('JXL_INPUT', "Invalid resumable source kind; use pixels, file, or decode.");
       admit(options);
       return {options: {...options}};
     },
     async run(plan, data, source, journal) {
-      if (source.kind !== 'decode') return made(verb(input(data, source, files), {...plan.options, [JOURNAL]: journal}));
-      const picture = await journaled(journal, 'decode', () => decoded(data));
-      return named(picture.source, made(verb(pictureOf(picture), {...plan.options, [JOURNAL]: journal})));
+      if (source.kind !== 'decode') return pieced(sized(made(verb(input(data, source, files), {...plan.options, [JOURNAL]: journal})), source), journal);
+      const snap = journal?.host && DECODER_SNAPSHOT in journal.host ? journal.host[DECODER_SNAPSHOT] : configuredDecoder();
+      const picture = await journaled(journal, 'decode', () => decoded(data, snap));
+      return pieced(named(picture.source, made(verb(pictureOf(picture), {...plan.options, [JOURNAL]: journal}))), journal);
     },
-    async straight(plan, data, source, signal) {
-      if (source.kind !== 'decode') return made(verb(input(data, source, false), {...plan.options, signal}));
-      const picture = await decoded(data);
+    async straight(plan, data, source, signal, _part, host) {
+      if (source.kind !== 'decode') return sized(made(verb(input(data, source, false), {...plan.options, signal})), source);
+      const snap = host && DECODER_SNAPSHOT in host ? host[DECODER_SNAPSHOT] : configuredDecoder();
+      const picture = await decoded(data, snap);
       return named(picture.source, made(verb(pictureOf(picture), {...plan.options, signal})));
     },
     async record(bytes, plan, source, facts) {
-      if (!record(facts)) throw fail('JXL_INPUT', 'A finished job\'s record is a record.');
+      if (!record(facts)) throw fail('JXL_INPUT', "Invalid finished record; pass the result record returned by the job.");
       if (facts.records !== undefined) {
-        if (!Array.isArray(facts.records) || !facts.records.length) throw fail('JXL_INPUT', 'A finished job\'s records are a list.');
+        if (!Array.isArray(facts.records) || !facts.records.length) throw fail('JXL_INPUT', "Invalid finished records; pass a list of result records.");
         let at = 0;
         const made = [];
         for (const {length, ...facts1} of facts.records) {
           if (length !== null && (!Number.isSafeInteger(length) || length < 1 || at + length > bytes.length))
-            throw fail('JXL_INPUT', 'A finished job\'s records do not cover its file.');
-          made.push(await rebuilt(imageResult, length === null ? null : bytes.slice(at, at += length), facts1, source.kind === 'decode'));
+            throw fail('JXL_INPUT', "Finished records do not cover the file; restore the complete saved records.");
+          made.push(await rebuilt(imageResult, length === null ? null : bytes.slice(at, at += length), facts1, source));
         }
-        if (at !== bytes.length) throw fail('JXL_INPUT', 'A finished job\'s records do not cover its file.');
+        if (at !== bytes.length) throw fail('JXL_INPUT', "Finished records do not cover the file; restore the complete saved records.");
         return made;
       }
-      if (typeof facts.missed !== 'boolean' || facts.missed && bytes.length) throw fail('JXL_INPUT', 'A finished job\'s record does not describe its file.');
-      return rebuilt(imageResult, facts.missed ? null : bytes, facts.record, source.kind === 'decode');
+      if (typeof facts.missed !== 'boolean' || facts.missed && bytes.length) throw fail('JXL_INPUT', "Finished record describes another file; pass the record belonging to this file.");
+      return rebuilt(imageResult, facts.missed ? null : bytes, facts.record, source);
     }});
 }

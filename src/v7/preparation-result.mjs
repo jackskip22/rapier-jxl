@@ -1,7 +1,7 @@
 import {imageResult, missedResult} from './result.mjs';
 // SPDX-License-Identifier: MIT
 import {fail} from './primitives.mjs';
-import {RESULT_REFERENCE} from './result-reference.mjs';
+import {RESULT_REFERENCE, keptOf} from './result-reference.mjs';
 import {PREVIEW} from './preview.mjs';
 
 export async function preparedEncode(encode, picture, options) {
@@ -15,12 +15,13 @@ export async function preparedEncode(encode, picture, options) {
 }
 
 export function preparedResult(bytes, fidelity, {width, height}, reconstruction) {
-  if (!(bytes instanceof Uint8Array) || !bytes.byteLength) throw fail('JXL_INTERNAL', 'The encoder must return a nonempty Uint8Array.');
-  return {fits: true, bytes, width, height, fidelity, ...(reconstruction && {reconstruction})};
+  if (!(bytes instanceof Uint8Array) || !bytes.byteLength) throw fail('JXL_INTERNAL', "Incomplete output file; report the input and options.");
+  return {meetsTarget: true, bytes, width, height, fidelity, ...(reconstruction && {reconstruction})};
 }
 
 export function finishPrepared(result, reference, options) {
-  return result.bytes ? imageResult(result.bytes, reference, {...options, fidelity: result.fidelity,
-    kept: result.kept ?? (result.reconstruction === 'jpeg' ? 'jpeg-bytes' : undefined), measurements: result.measurements, owned: true})
-    : missedResult(reference, {...options, owned: true});
+  const settings = {...options, originalBytes: result.originalBytes ?? options.originalBytes};
+  return result.bytes ? imageResult(result.bytes, reference, {...settings, fidelity: result.fidelity,
+    kept: keptOf(result) ?? (result.reconstruction === 'jpeg' ? 'jpeg-bytes' : undefined), measurements: result.measurements, owned: true})
+    : missedResult(reference, {...settings, owned: true});
 }

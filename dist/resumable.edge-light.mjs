@@ -1,4 +1,4 @@
-import wasm from './wasm.edge-light.mjs';
-import {configureWasm} from './resumable.node.mjs';
-configureWasm(wasm);
+import kernels from './kernels.wasm?module';
+import {provideWasm} from './wasm-modules.mjs';
+provideWasm({kernels});
 export * from './resumable.node.mjs';

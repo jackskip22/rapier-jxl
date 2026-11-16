@@ -1,0 +1,16 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>JPEG XL on a canvas</title>
+<!-- After `npm install jpegxl`, serve the project folder over HTTP and open this page where it is, in
+     node_modules/jpegxl/examples/. Pick a .jxl file. -->
+<input id="pick" type="file" accept=".jxl">
+<canvas id="view"></canvas>
+<script type="module">
+  import {decode} from '../dist/decode.mjs';
+  pick.onchange = async () => {
+    // A canvas takes 8-bit sRGB; auto keeps a 16-bit or float file's own samples, which ImageData refuses.
+    const image = await decode(new Uint8Array(await pick.files[0].arrayBuffer()), {format: 'uint8', colorSpace: 'srgb'});
+    view.width = image.width; view.height = image.height;
+    view.getContext('2d').putImageData(new ImageData(image.data, image.width, image.height), 0, 0);
+  };
+</script>

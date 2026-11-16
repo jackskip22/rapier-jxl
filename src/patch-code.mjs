@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
+import {outOfMemory} from './fault.mjs';
 import {BitWriter, packSigned, scaled} from './bits.mjs';
 import {fault} from './admit.mjs';
 import {buildCode, uintConfig, countToken, writeHistograms, writeHybrid} from './prefix.mjs';
 import {screenPlan, screenFrameSteps} from './screen.mjs';
-import {screenLZ77} from './screen-lz77.mjs';
 import {writePatchFrameHeader} from './screen-patches.mjs';
 
 function* patchTokens(plan, emit) {
@@ -27,12 +27,17 @@ function* patchTokens(plan, emit) {
   yield 1;
 }
 export function* authoredPatchEntropy(plan) {
-  const config = uintConfig(4), freqs = Array.from({length: 10}, () => new Uint32Array(64)), writer = new BitWriter(256);
-  for (const progress of patchTokens(plan, (ctx, value) => countToken(config, value, freqs[ctx]))) yield progress / 2;
-  const histograms = freqs.map(freq => ({config, code: buildCode(freq)})), contextMap = Uint8Array.from({length: 10}, (_, i) => i);
-  writeHistograms(writer, {contextMap, histograms});
-  for (const progress of patchTokens(plan, (ctx, value) => writeHybrid(writer, histograms[ctx].code, config, value))) yield .5 + progress / 2;
-  return writer;
+  const config = uintConfig(4), freqs = Array.from({length: 10}, () => new Uint32Array(64)), one = new Uint32Array(64);
+  for (const progress of patchTokens(plan, (ctx, value) => { countToken(config, value, freqs[ctx]); countToken(config, value, one); })) yield progress / 3;
+  let best = null;
+  for (const [contextMap, histograms] of [[Uint8Array.from({length: 10}, (_, i) => i), freqs.map(freq => ({config, code: buildCode(freq)}))],
+    [new Uint8Array(10), [{config, code: buildCode(one)}]]]) {
+    const writer = new BitWriter(256), shared = histograms.length === 1;
+    writeHistograms(writer, {contextMap, histograms});
+    for (const progress of patchTokens(plan, (ctx, value) => writeHybrid(writer, histograms[shared ? 0 : ctx].code, config, value))) yield (shared ? 2 : 1) / 3 + progress / 3;
+    if (!best || writer.bitLength < best.bitLength) best = writer;
+  }
+  return best;
 }
 
 export function* authoredPatchFrame(data, width, height, options, {reference = false, dictionary = null} = {}) {
@@ -53,7 +58,7 @@ export function* authoredPatchFrame(data, width, height, options, {reference = f
     if (!plan) continue;
     const search = strategy > 1 ? {dim: 1024, depth: strategy} : null;
     const steps = screenFrameSteps(data, width, height, shape, colorSpace, plan, {
-      imageHeader: false, tokenCodec: strategy === 1 ? screenLZ77 : null, search, minLength,
+      imageHeader: false, tokenCodec: strategy === 1 ? 1 : null, search, minLength,
       frameHeader: writer => writePatchFrameHeader(writer, shape.alpha, {reference, width, height, shift: search ? 3 : 1}),
       globalPrefix: dictionary ? writer => writer.append(dictionary) : null
     });
@@ -66,7 +71,7 @@ export function* authoredPatchFrame(data, width, height, options, {reference = f
       } } finally { if (!step?.done) steps.return?.(); }
       if (step.value && (!best || step.value.length < best.length)) best = step.value;
     } catch (error) {
-      if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error;
+      if (error.code !== 'JXL_SIZE' && !outOfMemory(error)) throw error;
       failure = error;
     }
   }

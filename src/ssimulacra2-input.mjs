@@ -31,13 +31,16 @@ const sampleCount = pixels => {
 };
 export const s2RGBA = (rgba, pixels, exact = false) => samples(rgba, sampleCount(pixels) * 4, ['Uint8Array', 'Uint8ClampedArray'], exact);
 
+const finite = new WeakSet();
+export const finitePlanes = planes => { for (const plane of planes) finite.add(plane); return planes; };
 export function s2Planes(planes, pixels) {
   sampleCount(pixels);
   if (!Array.isArray(planes) || planes.length !== 3)
     throw fault('JXL_INPUT', 'SSIMULACRA2 needs three linear RGB planes.');
   const out = [0, 1, 2].map(c => samples(planes[c], pixels, ['Float32Array', 'Float64Array']));
-  for (const plane of out) for (let i = 0; i < pixels; i++)
+  for (let c = 0; c < 3; c++) if (!finite.has(planes[c])) for (let i = 0, plane = out[c]; i < pixels; i++)
     if (!Number.isFinite(Math.fround(plane[i]))) throw fault('JXL_INPUT', 'SSIMULACRA2 samples must be finite binary32 values.');
+  for (let c = 0; c < 3; c++) if (finite.has(planes[c])) finite.add(out[c]);
   return out;
 }
 

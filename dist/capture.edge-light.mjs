@@ -1,4 +1,4 @@
-import wasm from './wasm.edge-light.mjs';
-import {configureWasm} from './capture.mjs';
-configureWasm(wasm);
+import kernels from './kernels.wasm?module';
+import {provideWasm} from './wasm-modules.mjs';
+provideWasm({kernels});
 export * from './capture.mjs';

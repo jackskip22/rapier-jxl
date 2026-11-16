@@ -3,6 +3,7 @@ import {startWorker} from './v7/worker-start.mjs';
 import {replyPreview, clearPreviewReply} from './v7/preview-relay.mjs';
 // SPDX-License-Identifier: MIT
 import {ARENA_BYTES} from './arena.mjs';
+import {fault} from './fault.mjs';
 
 export const canShare = () => typeof SharedArrayBuffer === 'function' && globalThis.crossOriginIsolated !== false;
 const mark = (...entry) => { globalThis.__helperMarks?.push(entry); };
@@ -12,7 +13,12 @@ export function portable(value, copies) {
   let out;
   if (ArrayBuffer.isView(value)) {
     if (!canShare() || value.buffer instanceof SharedArrayBuffer) out = value;
-    else { out = new value.constructor(new SharedArrayBuffer(value.byteLength)); out.set(value); }
+    else {
+      const shared = new SharedArrayBuffer(value.byteLength);
+      new Uint8Array(shared).set(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+      const node = globalThis.Buffer;
+      out = typeof node === 'function' && node.isBuffer(value) ? node.from(shared) : new value.constructor(shared);
+    }
   } else if (Array.isArray(value) || Object.getPrototypeOf(value) === Object.prototype) {
     out = Array.isArray(value) ? [] : {};
     for (const [k, v] of Object.entries(value)) { const p = portable(v, copies); if (p === undefined && v !== undefined) return undefined; out[k] = p; }
@@ -25,12 +31,12 @@ export function workerPool(spawn, count) {
   const members = [], queue = [], inputIds = new Map(), pending = new Map(), retiring = new Set();
   const gated = spawn.module !== undefined, usable = member => !gated || member.loaded;
   let retireFailure = null;
-  let serial = 0, closed = false, copies = new WeakMap();
+  let serial = 0, memberSerial = 0, closed = false, copies = new WeakMap();
   const end = worker => {
     mark('end');
     let result;
     try { result = worker.terminate(); } catch (error) { result = Promise.reject(error); }
-    const retired = Promise.resolve(result).then(() => { retiring.delete(retired); pump(); }, error => {
+    const retired = new Promise(resolve => resolve(result)).then(() => { retiring.delete(retired); pump(); }, error => {
       retiring.delete(retired);
       retireFailure ??= error instanceof Error ? error : new Error('Worker retirement failed.', {cause: error});
       api.failure ??= retireFailure;
@@ -61,9 +67,14 @@ export function workerPool(spawn, count) {
     for (const member of members.splice(0)) { member.dead = true; member.settle(false); end(member.worker); if (member.busy?.lease) member.busy.resolve(); }
     for (const job of [...pending.values()]) finish(job, undefined);
   };
+  const configure = member => {
+    mark('kernels', true);
+    try { member.worker.postMessage({pool: 'parallel', kernels: true, wasmModules: spawn.wasm ? spawn.wasm() : suppliedWasm()}); }
+    catch { drop(member); }
+  };
   const start = () => {
     let settle;
-    const member = {worker: spawn(), busy: null, sent: new Set(), dead: false, loaded: false, ready: new Promise(resolve => { settle = resolve; })};
+    const member = {worker: spawn(), id: ++memberSerial, busy: null, sent: new Set(), dead: false, loaded: false, ready: new Promise(resolve => { settle = resolve; })};
     member.settle = settle;
     mark('spawn');
     members.push(member);
@@ -74,8 +85,8 @@ export function workerPool(spawn, count) {
           api.broken = true; settle(false); drop(member); count = members.length; pump(); return;
         }
         if (gated && !member.loaded && !reply.ready) return;
-        member.loaded = true;
-        if (reply.ready) { mark('ready', reply.module); settle(true); if (gated) pump(); return; }
+        if (reply.ready) { if (gated && !member.loaded) configure(member); member.loaded = true; mark('ready', reply.module); settle(true); if (gated) pump(); return; }
+        member.loaded = true; member.answered = true;
         if (member.busy?.lease) { member.busy.answer(reply); return; }
         const job = member.busy;
         if (!job || reply.id !== job.id) return;
@@ -87,19 +98,22 @@ export function workerPool(spawn, count) {
           return;
         }
         if (reply.error && !job.whole) { drop(member); pump(); return; }
+        if (job.validate) {
+          let valid = false;
+          try { valid = job.validate(reply.result); } catch {}
+          if (!valid) { drop(member); pump(); return; }
+        }
         member.busy = null;
         if (job) finish(job, job.whole ? reply : reply.error ? undefined : reply.result);
         pump();
       }, () => {
-        if (!member.loaded) api.broken = true;
+        if (!member.loaded || gated && !member.answered) api.broken = true;
         settle(false);
         drop(member);
         if (api.broken) count = members.length;
         pump();
       });
-      const kernels = 'auto';
-      mark('kernels', kernels);
-      member.worker.postMessage({pool: 'parallel', kernels, wasmModules: spawn.wasm ? spawn.wasm(true) : suppliedWasm(true)});
+      if (!gated) configure(member);
     } catch (error) { drop(member); throw error; }
     return member;
   };
@@ -131,18 +145,19 @@ export function workerPool(spawn, count) {
       if (!member) break;
       const job = queue.shift();
       member.busy = job;
+      api.used = true;
       try {
         for (const input of job.inputs) if (!member.sent.has(input.n)) { member.worker.postMessage({pool: 'parallel', input: input.n, value: input.shared}); member.sent.add(input.n); }
-        member.worker.postMessage({pool: 'parallel', id: job.id, task: job.task});
-        mark('task', job.task.kind);
+        member.worker.postMessage({pool: 'parallel', id: job.id, task: job.task}, job.transfer);
+        mark('task', job.task.kind, member.id, job.task.y1 - job.task.y0 || 0);
       } catch { drop(member); }
     }
     if (!members.length && !retiring.size) for (const job of [...queue.splice(0), ...pending.values()]) finish(job, undefined);
   }
   const api = {
-    count, limit: count, failure: null, broken: false,
+    count, limit: count, failure: null, broken: false, used: false,
     get waiting() { return pending.size; },
-    run(task, big) {
+    run(task, big, transfer = [], validate = null) {
       if (closed) return api.retired().then(() => undefined);
       const ins = [], message = {...task};
       for (const field of big) {
@@ -153,7 +168,7 @@ export function workerPool(spawn, count) {
       }
       let job;
       const promise = new Promise((resolve, reject) => {
-        job = {id: ++serial, task: message, inputs: ins, resolve, reject};
+        job = {id: ++serial, task: message, inputs: ins, transfer, validate, resolve, reject};
         pending.set(job.id, job); queue.push(job); pump();
       });
       promise.job = job;
@@ -177,6 +192,7 @@ export function workerPool(spawn, count) {
     lease() {
       if (closed) return [];
       return members.filter(m => !m.busy && usable(m)).map(member => {
+        api.used = true;
         mark('lease');
         const waiting = new Map(), stopped = {error: {name: 'Error', message: 'A JPEG XL helper stopped.'}};
         const lease = member.busy = {id: ++serial, lease: true, ended: false, waiting,
@@ -202,7 +218,7 @@ export function workerPool(spawn, count) {
       }
       pump();
     },
-    warm() { while (!closed && members.length + retiring.size < count && tryStart()); },
+    warm() { while (!closed && members.length + retiring.size < (api.bandBytes === undefined ? count : api.limit) && tryStart()); },
     loaded() { return Promise.all(members.map(member => member.ready)).then(states => states.every(Boolean)); },
     promote(promise) {
       for (const dep of promise.deps ?? []) this.promote(dep);
@@ -235,21 +251,60 @@ export function workerPool(spawn, count) {
 const helperPools = new WeakMap();
 const dropped = typeof FinalizationRegistry === 'function' ? new FinalizationRegistry(pool => pool.close().catch(() => {})) : null;
 const residentHelpers = reservation => Math.min(reservation.count, Math.floor(reservation.memoryBytes / (44 * 1048576)));
-function ownerPool(owner, reservation, spawn) {
-  if (closedOwners.has(owner)) throw Object.assign(new Error('The codec is closed.'), {code: 'JXL_CLOSED'});
-  let pool = helperPools.get(owner);
-  if (pool?.failure) throw pool.failure;
-  if (!pool || pool.closed) { helperPools.set(owner, pool = workerPool(spawn, residentHelpers(reservation))); dropped?.register(owner, pool); }
-  return pool;
+async function ownerPool(owner, reservation, spawn) {
+  for (;;) {
+    if (closedOwners.has(owner)) throw Object.assign(new Error('The codec is closed.'), {code: 'JXL_CLOSED'});
+    let pool = helperPools.get(owner);
+    if (pool?.failure) throw pool.failure;
+    if (pool && !pool.closed) return pool;
+    if (pool) {
+      await pool.retired();
+      if (closedOwners.has(owner) || helperPools.get(owner) !== pool) continue;
+    }
+    helperPools.set(owner, pool = workerPool(spawn, residentHelpers(reservation)));
+    dropped?.register(owner, pool);
+    return pool;
+  }
 }
-export async function helperPool(owner, reservation, pixels, helper) {
-  const limit = reservedHelpers(reservation, pixels);
+export async function retireBandHelpers(owner, geometry) {
+  const pool = helperPools.get(owner);
+  if (pool?.failure) throw pool.failure;
+  if (pool?.bandBytes === undefined || pool.bandGeometry === geometry) return;
+  if (pool.busy || pool.jobs) throw fault('JXL_INTERNAL', 'A bounded helper pool is still running its photo.');
+  await pool.trim(0);
+  pool.bandBytes = undefined;
+  pool.bandGeometry = undefined;
+  pool.used = false;
+}
+export async function helperPool(owner, reservation, pixels, helper, jobBytes, geometry) {
+  if (jobBytes !== undefined && (typeof geometry !== 'string' || !geometry)) throw fault('JXL_INTERNAL', 'A bounded helper job names its photo geometry.');
+  let limit = reservedHelpers(reservation, pixels, jobBytes);
   const spawn = await spawnHelper(helper);
-  let pool = ownerPool(owner, reservation, spawn);
-  if (pool.busy || pool.jobs) return Object.assign(workerPool(spawn, reservation.count), {limit, once: true});
+  let pool = await ownerPool(owner, reservation, spawn);
+  if (pool.busy || pool.jobs) return Object.assign(workerPool(spawn, limit), {limit, once: true, bandBytes: jobBytes, bandGeometry: geometry});
+  const changed = (pool.bandBytes === undefined) !== (jobBytes === undefined) || jobBytes !== undefined && pool.bandGeometry !== geometry;
+  if (changed) {
+    if (pool.used) { await pool.trim(0); pool.used = false; }
+    pool.bandBytes = undefined;
+  }
+  if (jobBytes !== undefined) {
+    jobBytes = Math.max(jobBytes, pool.bandBytes ?? 0);
+    limit = reservedHelpers(reservation, pixels, jobBytes);
+  }
+  pool.bandBytes = jobBytes;
+  pool.bandGeometry = geometry;
   pool.hold(true);
   pool.limit = limit;
   await pool.trim(limit);
+  return pool;
+}
+async function ordinaryPool(pool) {
+  if (pool.bandBytes !== undefined && !pool.busy && !pool.jobs) {
+    await pool.trim(0);
+    pool.bandBytes = undefined;
+    pool.bandGeometry = undefined;
+    pool.used = false;
+  }
   return pool;
 }
 const closedOwners = new WeakSet();
@@ -261,7 +316,7 @@ export function closeHelpers(owner, final = false) {
 
 const lost = async pool => { await pool.retired(); return Object.assign(new Error('A JPEG XL helper stopped.'), {code: 'JXL_WORKER', lost: true}); };
 export async function helperJob(owner, reservation, task, {signal, onProgress, onPreview, helper} = {}) {
-  const pool = ownerPool(owner, reservation, await spawnHelper(helper));
+  const pool = await ordinaryPool(await ownerPool(owner, reservation, await spawnHelper(helper)));
   if (signal?.aborted) throw signal.reason;
   if (pool.broken) throw await lost(pool);
   pool.hold(true); pool.limit = pool.count; pool.jobs = (pool.jobs ?? 0) + 1;
@@ -291,7 +346,8 @@ const untilAborted = (promise, signal) => new Promise(resolve => {
 export async function splitOnIdle(owner, reservation, request, signal, helper) {
   const spawn = await spawnHelper(helper);
   if (signal?.aborted) return undefined;
-  const pool = ownerPool(owner, reservation, spawn);
+  const pool = await ordinaryPool(await ownerPool(owner, reservation, spawn));
+  if (signal?.aborted) return undefined;
   pool.warm();
   let leased = pool.lease();
   if (!leased.length && !pool.closed) {
@@ -318,7 +374,8 @@ const helperBytes = pixels => 44 * 1048576 + 4 * pixels + (canShare() ? 0 : 26 *
 const helpersWithin = (budget, pixels) => Math.floor((budget - 16 * pixels) / helperBytes(pixels));
 
 const HELPER_PIXELS = 524288;
-export const reservedHelpers = (reservation, pixels) => reservation && pixels >= HELPER_PIXELS ? Math.max(0, Math.min(reservation.count, helpersWithin(reservation.memoryBytes, pixels))) : 0;
+export const reservedHelpers = (reservation, pixels, jobBytes) => reservation && pixels >= HELPER_PIXELS ? Math.max(0, Math.min(reservation.count,
+  jobBytes === undefined ? helpersWithin(reservation.memoryBytes, pixels) : Math.floor((reservation.memoryBytes - 16 * pixels) / (helperBytes(pixels) + jobBytes)))) : 0;
 
 export const nodeBuiltin = name => { try { return globalThis.process?.getBuiltinModule?.(name); } catch { return undefined; } };
 
@@ -341,7 +398,7 @@ export async function spawnHelper(helper) {
   const {Worker: NodeWorker} = threads;
   const flags = globalThis.process.execArgv, execArgv = flags.some(flag => flag.startsWith('--input-type')) ? flags.filter(flag => !flag.startsWith('--input-type')) : undefined;
   return named(() => {
-    const worker = new NodeWorker(helper.url(), {execArgv}), host = {
+    const worker = new NodeWorker(helper.url(), {execArgv, workerData: helper.role}), host = {
       postMessage: (message, transfer) => worker.postMessage(message, transfer),
       terminate: () => worker.terminate(),
       hold: on => on ? worker.ref() : worker.unref(),
@@ -352,7 +409,7 @@ export async function spawnHelper(helper) {
   });
 }
 export async function warmHelpers(owner, reservation, helper) {
-  const pool = ownerPool(owner, reservation, await spawnHelper(helper));
+  const pool = await ownerPool(owner, reservation, await spawnHelper(helper));
   pool.hold(true); pool.warm(); pool.starting = (pool.starting ?? 0) + 1;
   try { await pool.loaded(); } finally { pool.starting--; idle(pool); }
 }

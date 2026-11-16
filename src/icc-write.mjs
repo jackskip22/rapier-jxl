@@ -152,13 +152,14 @@ export function* prepareICCSteps(profile, options = {}) {
 }
 
 
-const prepared = new WeakMap();
+const prepared = /* @__PURE__ */ new WeakMap();
 export function iccSpace(profile, {level, compression} = {}, made) {
   const space = {icc: profile, level, compression, colorChannels: made?.colorChannels};
   if (made) prepared.set(space, made);
   return space;
 }
 export function headerOf(space, xyb = false) {
+  if (space.header) return space.header;
   if (xyb && !(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true)) {
     if (!named.has(space)) named.set(space, namedHeader(profileFields(space.icc)));
     const made = named.get(space);
@@ -169,7 +170,7 @@ export function headerOf(space, xyb = false) {
   return made;
 }
 
-const named = new WeakMap(), ICC_ENUM = [[0, 0], [0, 1], [4, 2], [6, 18]], ICC_XY = [[19, 0], [19, 524288], [20, 1048576], [21, 2097152]];
+const named = /* @__PURE__ */ new WeakMap(), ICC_ENUM = [[0, 0], [0, 1], [4, 2], [6, 18]], ICC_XY = [[19, 0], [19, 524288], [20, 1048576], [21, 2097152]];
 function namedHeader(fields) {
   if (!fields) return null;
   const colorData = new BitWriter(64), xy = pair => { for (const v of pair) colorData.writeU32(ICC_XY, packSigned(Math.round(v * 1e6))); };

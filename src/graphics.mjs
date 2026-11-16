@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {outOfMemory} from './fault.mjs';
 import {LIMITS} from './limits.mjs';
 import {complete, part} from './bits.mjs';
 import {admitOptions, admitPixels, fault, job} from './admit.mjs';
@@ -44,7 +45,7 @@ function* graphicsPreparationSteps(steps, canStop) {
 }
 
 function graphicsOptionalFailure(error) {
-  return error.code === 'JXL_SIZE' || error.code === 'JXL_MEMORY' || error instanceof RangeError && !error.code;
+  return error.code === 'JXL_SIZE' || error.code === 'JXL_MEMORY' || outOfMemory(error);
 }
 
 function graphicsSquaredError(source, candidate) {

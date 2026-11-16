@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-import {exactPow} from './exact-math.mjs';
 export function blockDistances({map, width, height}, margin = 2) {
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), out = new Float64Array(stride * rows);
   for (let by = 0; by < rows; by++) for (let bx = 0; bx < stride; bx++) {
@@ -17,6 +16,6 @@ export function cellSums(map, width, height, p = 3) {
     for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
       const v = map[y * width + x]; out[(y >> 3) * stride + (x >> 3)] += v * (v * v);
     }
-  } else for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) out[(y >> 3) * stride + (x >> 3)] += exactPow(map[y * width + x], p);
+  } else for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) out[(y >> 3) * stride + (x >> 3)] += Math.pow(map[y * width + x], p);
   return out;
 }

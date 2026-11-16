@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-import {exactCos, EXACT_PI} from './exact-math.mjs';
 
 export const NAMES = ['dct8', 'identity', 'dct2', 'dct4', 'dct16', 'dct32', 'dct16x8', 'dct8x16',
   'dct32x8', 'dct8x32', 'dct32x16', 'dct16x32', 'dct4x8', 'dct8x4', 'afv0', 'afv1', 'afv2', 'afv3',
@@ -59,7 +58,7 @@ export function inverseScaledDCT(coeffs, width, height) {
   return out;
 }
 
-const RC_COS = (n, d) => exactCos(EXACT_PI * n / d);
+const RC_COS = (n, d) => Math.cos(Math.PI * n / d);
 const RC_LLF_DIVISORS = new Map();
 export function llfDivisors(w, h) {
   let d = RC_LLF_DIVISORS.get(w * 64 + h);

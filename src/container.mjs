@@ -57,13 +57,14 @@ export function nextBox(bytes, maxBoxes, state, words) {
   if (!Number.isSafeInteger(length) || length < body - at || length > bytes.length - at) throw invalidBox('Invalid JPEG XL box size.');
   const end = at + length;
   if (state.first) {
-    if (type !== FTYP || end - body < 12 || (end - body) % 4 || words.u32(body) !== BRAND || words.u32(body + 4) > 1)
+    if (type !== FTYP || end - body < 12 || (end - body) % 4 || words.u32(body) !== BRAND)
       throw invalidBox('The second JPEG XL box must declare the jxl file type.');
+    if (words.u32(body + 4) > 1) throw invalidBox('JPEG XL file-format minorVersion is 0 or 1.');
     let compatible = false, p = state.brandAt ?? body + 8;
     const stop = Math.min(end, p + 65536);
     for (; p < stop; p += 4) if (words.u32(p) === BRAND) { compatible = true; break; }
     if (!compatible && p < end) { state.brandAt = p; return null; }
-    if (!compatible) throw invalidBox('The JPEG XL file type lacks the jxl compatibility brand.');
+    if (!compatible) throw invalidBox('The file type lacks the jxl compatibility brand.');
     delete state.brandAt;
     state.minorVersion = words.u32(body + 4); state.first = false;
   } else if (type === FTYP || type === 0x4a584c20) throw invalidBox('Repeated JPEG XL file header.');
@@ -85,24 +86,26 @@ export function nextBox(bytes, maxBoxes, state, words) {
     if (state.complete || state.next) throw invalidBox('Repeated or mixed JPEG XL codestream boxes.');
     state.complete = true;
     for (let data = body; data < end && state.stream < 2;) {
-      if (words.u8(data++) !== (state.stream++ ? 10 : 255)) throw invalidBox('Invalid JPEG XL codestream signature.');
+      if (words.u8(data++) !== (state.stream++ ? 10 : 255)) throw invalidBox('Invalid logical JPEG XL codestream signature.');
     }
   } else if (type === PARTIAL) {
-    if (state.complete) throw invalidBox('Repeated or mixed JPEG XL codestream boxes.');
-    if (end - body < 4) throw invalidBox('Truncated JPEG XL codestream fragment.');
+    if (state.complete && !state.next || end - body < 4) throw invalidBox('Invalid JPEG XL codestream fragment.');
     const field = words.u32(body), index = field & 0x7fffffff, data = body + 4; last = !!(field & 0x80000000);
     sequence = index;
     if (state.minorVersion === 0) {
-      if (index !== state.next++) throw invalidBox('JPEG XL codestream fragments are out of order.');
+      if (index !== state.next++) throw invalidBox('Repeated or out-of-order version 0 codestream fragment.');
+      if (state.complete) throw invalidBox(last ? 'Repeated final codestream fragment.' : 'The JPEG XL container has no complete codestream.');
       state.complete = last;
       for (let p = data; p < end && state.stream < 2;) {
-        if (words.u8(p++) !== (state.stream++ ? 10 : 255)) throw invalidBox('Invalid JPEG XL codestream signature.');
+        if (words.u8(p++) !== (state.stream++ ? 10 : 255)) throw invalidBox('Invalid logical JPEG XL codestream signature.');
       }
     } else {
-      if (state.prefixes.has(index)) throw invalidBox('Repeated JPEG XL codestream fragment.');
+      if (state.prefixes.has(index)) throw invalidBox('Repeated or out-of-order version 0 codestream fragment.');
       const n = Math.min(2, end - data), prefix = n << 16 | (n ? words.u8(data) << 8 : 0) | (n > 1 ? words.u8(data + 1) : 0);
       state.prefixes.set(index, prefix); state.next++;
       if (last) { if (state.lastIndex !== -1) throw invalidBox('Repeated final codestream fragment.'); state.lastIndex = index; }
+      state.highest = Math.max(state.highest ?? -1, index);
+      if (state.lastIndex !== -1 && state.highest > state.lastIndex) throw invalidBox('The JPEG XL container has no complete codestream.');
     }
   }
   state.at = end; state.count++;
@@ -115,7 +118,7 @@ export function endBoxes(state) {
       if (!state.prefixes.has(index)) throw invalidBox('Missing JPEG XL codestream fragment.');
       const prefix = state.prefixes.get(index);
       for (let i = 0; i < prefix >>> 16 && state.stream < 2; i++)
-        if ((prefix >>> (i ? 0 : 8) & 255) !== (state.stream++ ? 10 : 255)) throw invalidBox('Invalid JPEG XL codestream signature.');
+        if ((prefix >>> (i ? 0 : 8) & 255) !== (state.stream++ ? 10 : 255)) throw invalidBox('Invalid logical JPEG XL codestream signature.');
     }
     state.complete = true;
   }

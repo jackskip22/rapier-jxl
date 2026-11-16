@@ -2,7 +2,7 @@
 import {fault} from './fault.mjs';
 import {SIGNATURE, FTYP, BRAND, CODESTREAM, PARTIAL, LEVEL, BROB, RECONSTRUCTION, fileHeader, boxHeader, boxWords, boxCursor, nextBox, endBoxes as containerEnd} from './container.mjs';
 import {journaling, journalTool, sliceBytes} from './step-journal.mjs';
-import {readFrames, frameStarts} from './framing.mjs';
+import {readFrames, frameStarts, codestreamLevel} from './framing.mjs';
 import {prepareColorEncoding} from './color-info.mjs';
 import {prepareICC} from './icc-write.mjs';
 
@@ -18,7 +18,7 @@ function uint(value, maximum, name, minimum = 0) {
   return value;
 }
 function limit(options) { record(options, 'Container options'); return uint(options.maxBytes ?? Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, 'maxBytes', 1); }
-function boxLimit(options) { return uint(options.maxBoxes ?? 65536, Number.MAX_SAFE_INTEGER, 'maxBoxes', 1); }
+function boxLimit(options) { return uint(options.maxBoxes ?? Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, 'maxBoxes', 1); }
 function bounded(length, maximum) {
   if (!Number.isSafeInteger(length) || length > maximum) throw fault('JXL_SIZE', 'The JPEG XL container exceeds maxBytes.');
   return length;
@@ -66,6 +66,7 @@ function containerSignature(codestream) {
   if (signature[0] !== 255 || signature[1] !== 10) throw invalid('Invalid logical JPEG XL codestream signature.');
 }
 const rawContainer = bytes => ({codestream: bytes, level: 5, minorVersion: 0, entries: [], fragments: []});
+const sourceLevel = source => source.entries.length ? source.level : codestreamLevel(source.codestream);
 function scanContainer(bytes, maximum, maxBoxes = Number.MAX_SAFE_INTEGER) {
   const state = containerStart(bytes, maximum);
   if (state.raw) return rawContainer(bytes);
@@ -148,8 +149,8 @@ export function reframeContainer(bytes, options = {}) {
   const maximum = limit(options), source = scanContainer(bytes, maximum, boxLimit(options)), stream = source.codestream;
   const extended = options.extended ?? false;
   if (typeof extended !== 'boolean') throw invalid('extended is a boolean.');
-  const level = options.level ?? source.level;
-  if (level !== 5 && level !== 10 || source.level === 10 && level !== 10) throw invalid('Level is 5 or 10, and a level 10 file stays 10.');
+  const declared = sourceLevel(source), level = options.level ?? declared;
+  if (level !== 5 && level !== 10 || declared === 10 && level !== 10) throw invalid('Level is 5 or 10, and a level 10 file stays 10.');
   const fragmenting = options.chunkSize !== undefined || options.fragmentOrder !== undefined;
   const chunkSize = fragmenting
     ? uint(options.chunkSize === undefined ? Math.max(stream.length, 1) : options.chunkSize, 0x7fffffff, 'chunkSize', 1)
@@ -265,8 +266,8 @@ function admitAttachmentBoxCount(source, type, hasPayload, level, options) {
 function attached(bytes, type, payload, options) {
   const maximum = limit(options), source = scanContainer(bytes, maximum, boxLimit(options)), extended = options.extended ?? false;
   if (typeof extended !== 'boolean') throw invalid('extended is a boolean.');
-  const level = options.level ?? source.level;
-  if (level !== 5 && level !== 10 || source.level === 10 && level !== 10) throw invalid('Level is 5 or 10, and a level 10 file stays 10.');
+  const declared = sourceLevel(source), level = options.level ?? declared;
+  if (level !== 5 && level !== 10 || declared === 10 && level !== 10) throw invalid('Level is 5 or 10, and a level 10 file stays 10.');
   const parts = [];
   if (!source.entries.length) parts.push(fileHeader(level), boxHeader(CODESTREAM, bytes.length), bytes);
   else {
@@ -284,7 +285,7 @@ function attached(bytes, type, payload, options) {
 
 export function withFrameIndex(bytes, index, options = {}) {
   const maximum = limit(options), source = scanContainer(bytes, maximum, boxLimit(options));
-  admitAttachmentBoxCount(source, INDEX, index !== null, options.level ?? source.level, options);
+  admitAttachmentBoxCount(source, INDEX, index !== null, options.level ?? sourceLevel(source), options);
   const payload = index === null ? null : frameIndexPayload(index, options);
   if (index !== null) for (const frame of index.frames) if (integer63(frame.byteOffset, 'byteOffset') >= BigInt(source.codestream.length))
     throw invalid('A frame index byteOffset is outside the codestream.');
@@ -319,7 +320,7 @@ export function gainMapPayload(bundle, options = {}) {
 }
 
 export function withGainMap(bytes, bundle, options = {}) {
-  const source = scanContainer(bytes, limit(options), boxLimit(options)), settings = {...options, level: options.level ?? source.level};
+  const source = scanContainer(bytes, limit(options), boxLimit(options)), settings = {...options, level: options.level ?? sourceLevel(source)};
   admitAttachmentBoxCount(source, GAIN, bundle !== null, settings.level, settings);
   return attached(bytes, GAIN, bundle === null ? null : gainMapPayload(bundle, settings), settings);
 }

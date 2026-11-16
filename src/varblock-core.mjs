@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 import {strategyTableList} from './vardct-tables.mjs';
-import {exactExp, exactLog, exactLog2, exactPow} from './exact-math.mjs';
+import {fitRawSteps} from './vardct-planes.mjs';
 import {perceptualMaskField, maskDoubtOver} from './photo-mask.mjs';
 import {scaledDCT, scaledDCTAt, smallTransform, naturalOrder, lowFrequencies, TRANSFORMS, scaledDCTBases} from './vardct-strategies.mjs';
 import {kernelHooks} from './kernel-hooks.mjs';
-import {fault} from './fault.mjs';
+import {timed} from './stage-trace.mjs';
+import {fault, outOfMemory} from './fault.mjs';
 const noSmall = () => { throw fault('JXL_INTERNAL', 'capture-complete prices no small transform.'); };
 import {zeroDensityContext} from './vardct.mjs';
 import {prepareQuantParams, quantParamSteps} from './quantization-params.mjs';
@@ -28,10 +29,10 @@ function vbWalk(stride, rows, visit) {
   }
 }
 
-export function strategyRatePrediction(r, bx, by) {
+function strategyRatePrediction(r, bx, by) {
   return bx === 0 ? (by === 0 ? 32 : r[(by - 1) * 32]) : by === 0 ? r[bx - 1] : (r[(by - 1) * 32 + bx] + r[by * 32 + bx - 1] + 1) >> 1;
 }
-export function addStrategyRateBlock(coeffs, at, predicted, nz, zd) {
+function addStrategyRateBlock(coeffs, at, predicted, nz, zd) {
   let count = 0;
   for (let k = 1; k < 64; k++) if (coeffs[at + k]) count++;
   nz[nzBucket(predicted) * VB_TOKENS + token(count)[0]]++;
@@ -43,18 +44,18 @@ export function addStrategyRateBlock(coeffs, at, predicted, nz, zd) {
   }
   return count;
 }
-export function addStrategyRateTotals(table, contexts, all) {
+function addStrategyRateTotals(table, contexts, all) {
   for (let i = 0; i < contexts; i++) for (let t = 0; t < VB_TOKENS; t++) all[t] += table[i * VB_TOKENS + t];
   return all;
 }
-export function finishStrategyRateTotals(all) {
+function finishStrategyRateTotals(all) {
   let total = 0; for (const v of all) total += v;
   return total;
 }
-export function fillStrategyRateBits(table, contexts, smoothing, all, total, out) {
+function fillStrategyRateBits(table, contexts, smoothing, all, total, out) {
   for (let i = 0; i < contexts; i++) {
     let n = 0; for (let t = 0; t < VB_TOKENS; t++) n += table[i * VB_TOKENS + t];
-    for (let t = 0; t < VB_TOKENS; t++) out[i * VB_TOKENS + t] = -exactLog2((table[i * VB_TOKENS + t] + smoothing * all[t] / total) / (n + smoothing));
+    for (let t = 0; t < VB_TOKENS; t++) out[i * VB_TOKENS + t] = -Math.log2((table[i * VB_TOKENS + t] + smoothing * all[t] / total) / (n + smoothing));
   }
   return out;
 }
@@ -84,7 +85,7 @@ function buildRateModel(image, stride, rows, smoothing) {
 
 const VB_ONE = [1 - 0.05465007330715401, 1 - 0.07005449891748593, 1 - 0.049935103337343655];
 const VB_LOG2 = new Float64Array(4096).fill(NaN);
-const vbLog2 = q => { if (q >= 4096) return exactLog2(q); const v = VB_LOG2[q]; return v === v ? v : VB_LOG2[q] = exactLog2(q); };
+const vbLog2 = q => { if (q >= 4096) return Math.log2(q); const v = VB_LOG2[q]; return v === v ? v : VB_LOG2[q] = Math.log2(q); };
 const vbLog2Table = () => { for (let q = 1; q < 4096; q++) vbLog2(q); return VB_LOG2; };
 const vbRecon = (m, c) => m === 0 ? 0 : m === 1 ? VB_ONE[c] : m - 0.145 / m;
 const VB_RECON = Float64Array.from({length: 4096}, (_, m) => m > 1 ? m - 0.145 / m : 0);
@@ -140,7 +141,7 @@ function freqOf(id, pos, sizeScale, smallScale = 1) {
   return [wide ? fl : fs, wide ? fs : fl, 8 / Math.sqrt(w * h) * (w * h > 64 ? sizeScale : 1)];
 }
 const VB_PIXEL = new Map();
-export function pixelWeights(id) {
+function pixelWeights(id) {
   let weights = VB_PIXEL.get(id);
   if (weights) return weights;
   const M = Array.from({length: 64}, (_, i) => { const r = new Float64Array(128); r[64 + i] = 1; return r; });
@@ -162,7 +163,7 @@ export function pixelWeights(id) {
   return weights;
 }
 const VB_HIGH = new Map();
-export function fillStrategyHigh(id, out, from = 0, to = out.length, origin = 0) {
+function fillStrategyHigh(id, out, from = 0, to = out.length, origin = 0) {
   for (let pos = from; pos < to; pos++) { const [fx, fy] = freqOf(id, pos, 1); out[pos - origin] = fx >= 4 || fy >= 4 ? 1 : 0; }
   return out;
 }
@@ -176,32 +177,33 @@ function stepAt(quant, id, pos, sizeScale, env) {
   const x0 = Math.min(7, Math.floor(fx)), y0 = Math.min(7, Math.floor(fy)), x1 = Math.min(7, x0 + 1), y1 = Math.min(7, y0 + 1);
   const ax = fx - x0, ay = fy - y0, q = (y, x) => quant[y * 8 + x];
   const v = (q(y0, x0) * (1 - ax) + q(y0, x1) * ax) * (1 - ay) + (q(y1, x0) * (1 - ax) + q(y1, x1) * ax) * ay;
-  return id === 0 ? Math.max(1, Math.round(v * scale)) : v * scale;
+  return id === 0 && !env.compactDct8 ? Math.max(1, Math.round(v * scale)) : v * scale;
 }
 
-export const strategyTableEnvironment = (base, options) => ({field: base.quantFields ? base.quantFieldBase : 32,
-  smallScale: options.smallScale ?? 1, activeBands: options.tableBands ?? (options.perceptual ? 8 : VB_BANDS)});
+const strategyTableEnvironment = (base, options) => ({field: base.quantFields ? base.quantFieldBase : 32,
+  smallScale: options.smallScale ?? 1, activeBands: options.tableBands ?? (options.perceptual ? 8 : VB_BANDS),
+  dct8Bands: options.dct8Bands ?? 8, compactDct8: !!options.compactDct8});
 const searchTables = (base, options) => Object.assign(new Map(), {env: strategyTableEnvironment(base, options)});
 const VB_BANDS = 12;
 
-export function addStrategyBandFit(target, L, S, env, A, y, from = 1, to = L * S, origin = 0) {
+function addStrategyBandFit(target, L, S, env, A, y, from = 1, to = L * S, origin = 0) {
   const B = env.activeBands, scale = (B - 1) / (1.4142135623730951 + .000001);
   for (let k = from; k < to; k++) {
     const x = (k % L) / (L - 1), yy = Math.floor(k / L) / (S - 1), p = Math.sqrt(x * x + yy * yy) * scale;
-    const i = Math.min(B - 2, Math.floor(p)), t = p - i, lw = exactLog(8 * 255 * VB_QS / (env.field * target[k - origin]));
+    const i = Math.min(B - 2, Math.floor(p)), t = p - i, lw = Math.log(8 * 255 * VB_QS / (env.field * target[k - origin]));
     const a = [[i, 1 - t], [i + 1, t]];
     for (const [r, wr] of a) { y[r] += wr * lw; for (const [c2, wc] of a) A[r * B + c2] += wr * wc; }
   }
 }
-export function finishStrategyBandFit(A, y, B) {
+function finishStrategyBandFit(A, y, B) {
   for (let i = 0; i < B; i++) A[i * B + i] += 1e-6;
   for (let i = 0; i < B; i++) {
     for (let r = i + 1; r < B; r++) { const f = A[r * B + i] / A[i * B + i]; for (let c2 = i; c2 < B; c2++) A[r * B + c2] -= f * A[i * B + c2]; y[r] -= f * y[i]; }
   }
   const beta = new Float64Array(B);
   for (let i = B - 1; i >= 0; i--) { let v = y[i]; for (let c2 = i + 1; c2 < B; c2++) v -= A[i * B + c2] * beta[c2]; beta[i] = v / A[i * B + i]; }
-  const bands = [exactExp(beta[0])];
-  for (let i = 1; i < B; i++) { const r = exactExp(beta[i] - beta[i - 1]); bands.push(r >= 1 ? r - 1 : 1 - 1 / r); }
+  const bands = [Math.exp(beta[0])];
+  for (let i = 1; i < B; i++) { const r = Math.exp(beta[i] - beta[i - 1]); bands.push(r >= 1 ? r - 1 : 1 - 1 / r); }
   return bands;
 }
 
@@ -210,16 +212,16 @@ function fitBands(target, L, S, env) {
   addStrategyBandFit(target, L, S, env, A, y);
   return finishStrategyBandFit(A, y, B);
 }
-export function fillStrategyTableTargets(quant, id, sizeScale, env, out, from = 0, to = out.length, origin = 0) {
+function fillStrategyTableTargets(quant, id, sizeScale, env, out, from = 0, to = out.length, origin = 0) {
   for (let k = from; k < to; k++) out[k - origin] = stepAt(quant, id, k, sizeScale, env);
   return out;
 }
-export function strategyBandTarget(id, target) {
+function strategyBandTarget(id, target) {
   if (id === 3) return Float64Array.from({length: 16}, (_, k) => target[2 * (k >> 2) * 8 + 2 * (k & 3)]);
   if (id === 12 || id === 13) return Float64Array.from({length: 32}, (_, k) => target[2 * (k >> 3) * 8 + (k & 7)]);
   return target;
 }
-export function strategyTableParameters(id, targets, bands, env) {
+function strategyTableParameters(id, targets, bands, env) {
   const weight = step => 8 * 255 * VB_QS / (env.field * step);
   if (id === 3) return {mode: 'dct4', bands, multipliers: targets.map((p, c) => [bands[c][0] / weight(p[1]), bands[c][0] / weight(p[9])])};
   if (id === 12 || id === 13) return {mode: 'dct4x8', bands, multipliers: targets.map((p, c) => bands[c][0] / weight(p[8]))};
@@ -232,11 +234,12 @@ function tableFor(id, components, sizeScale, cache) {
   const t = TRANSFORMS[id], w = t.width, h = t.height, L = Math.max(w, h), S = Math.min(w, h);
   const targets = components.map(comp => fillStrategyTableTargets(comp.quant, id, sizeScale, env, new Float64Array(L * S)));
   let table, input;
-  if (id === 0) table = {w: L, h: S, planes: targets.map(p => Int32Array.from(p))};
+  if (id === 0 && !env.compactDct8) table = {w: L, h: S, planes: fitRawSteps(targets.map(p => Int32Array.from(p)))};
   else {
     const lowW = id === 3 ? 4 : id === 12 || id === 13 ? 8 : L, lowH = id === 3 || id === 12 || id === 13 ? 4 : S;
-    const bands = targets.map(p => fitBands(strategyBandTarget(id, p), lowW, lowH, env));
-    input = strategyTableParameters(id, targets, bands, env);
+    const bandEnv = id === 0 ? {...env, activeBands: env.dct8Bands} : env;
+    const bands = targets.map(p => fitBands(strategyBandTarget(id, p), lowW, lowH, bandEnv));
+    input = strategyTableParameters(id, targets, bands, bandEnv);
   }
   if (input) {
     const parameters = prepareQuantParams(input, L, S, t.table);
@@ -246,7 +249,7 @@ function tableFor(id, components, sizeScale, cache) {
   return table;
 }
 
-export function channelNorm(comps, weights, lowScale) {
+function channelNorm(comps, weights, lowScale) {
   const step = c => comps[c].quant[1] / (lowScale?.[c * 64 + 1] ?? 1) / VB_QS, yStep = step(1);
   return [0, 1, 2].map(c => weights[c] * (yStep / step(c)) * (yStep / step(c)) / (yStep * yStep));
 }
@@ -260,7 +263,7 @@ export function strategyInputs(base, width, height, options = {}) {
     const t = TRANSFORMS[id], bw = t.width / 8, bh = t.height / 8, table = tableFor(id, comps, sizeScale, tables);
     transforms.set(id, {w: t.width, h: t.height, bw, bh, order: naturalOrder(bw, bh), high: highOf(id, t.width * t.height), steps: [0, 1, 2].map(c => table.planes[c])});
   }
-  const fine = new Float32Array(stride * rows).fill(1);
+  const fine = new Float64Array(stride * rows).fill(1);
   if (base.quantFields) for (let i = 0; i < fine.length; i++) fine[i] = base.quantFields[i] / base.quantFieldBase;
   return {stride, rows, planes: base.planes, transforms, tokens: !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && options.model !== 'simple' ? rateModel(base, stride, rows, 8) : null,
     norm, dead: deadzone || null, fine, cfl: base.cfl, one: VB_ONE, dcSteps: comps.map(comp => comp.quant[0] / VB_QS), recon: VB_RECON, log2: vbLog2Table()};
@@ -272,7 +275,7 @@ export class TransformCache extends Map {
     if (!(this.maxBytes > 0)) return null;
     if (!this.source) {
       try { this.source = [new WeakRef(planes[0]), new WeakRef(planes[1]), new WeakRef(planes[2]), width, height, stride, rows]; }
-      catch (error) { if (error instanceof RangeError && !error.code) return null; throw error; }
+      catch (error) { if (outOfMemory(error)) return null; throw error; }
     }
     const source = this.source;
     return source[0].deref() === planes[0] && source[1].deref() === planes[1] && source[2].deref() === planes[2]
@@ -283,7 +286,7 @@ export class TransformCache extends Map {
     const bytes = 1024 + planes.reduce((n, p) => n + p.byteLength, 0);
     if (this.bytes + bytes <= this.maxBytes) {
       try { super.set(key, planes); }
-      catch (error) { if (error instanceof RangeError && !error.code) return this; throw error; }
+      catch (error) { if (outOfMemory(error)) return this; throw error; }
       this.bytes += bytes;
     }
     return this;
@@ -329,7 +332,7 @@ export function slabAllocator() {
     return slab.subarray(slabAt - n, slabAt);
   };
 }
-export function createStrategyBuilder(base, width, height, options = {}) {
+export function createStrategyBuilder(base, width, height, options = {}, storage = null) {
   let maps = options.maps, repricing = false, settled = 0, measuredCost = null;
   const {lambda = 1, sizeScale = 1, ids = [5, 10, 11, 4, 6, 7], rate: rc = [4, 3, 2, 0.6], deadzone, weights = [1, 1, 1],
     detailWeight: detailW = 1.25, inhom = 0.08} = options;
@@ -337,6 +340,21 @@ export function createStrategyBuilder(base, width, height, options = {}) {
   const transforms = !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && options.transforms instanceof TransformCache ? options.transforms.forSource(planes, width, height, stride, rows) : null;
   const fineOf = (bx, by) => base.quantFields ? base.quantFields[by * stride + bx] / base.quantFieldBase : 1;
   const tables = searchTables(base, options), cfl = base.cfl, dead = deadzone;
+  const still = !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true);
+  const zoneMap = still && !options.costs && options.deadzoneMap || null, zoneAt = (bx, by) => zoneMap ? zoneMap[by * stride + bx] : 1;
+  const gentleDz = !!options.gentleChromaDz;
+  const deadZonePair = (c, z) => {
+    const d0 = dead ? dead[c * 2] : 0.5, d1 = dead ? dead[c * 2 + 1] : 0.5;
+    if (z === 1) return [d0, d1];
+    if (gentleDz) return [d0 * z, d1 * z];
+    if (z > 1) {
+      const zc = c === 1 ? z : 1 + 1.18 * (z - 1);
+      return [d0 * (1 + 0.90 * (zc - 1)), d1 * (1 + 1.10 * (zc - 1))];
+    }
+    const zc = c === 1 ? z : 1 + 0.55 * (z - 1);
+    return [d0 * zc, d1 * (1 + 0.90 * (zc - 1))];
+  };
+  const rated = still && !!options.layout && !!options.rated;
   const rateBlock = !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && options.rateBlock || null, rateFrom = options.rateFrom ?? 0;
   const plainTables = rateBlock ? searchTables(base, {...options, perceptual: false}) : null;
   if (plainTables) tableFor(0, comps, sizeScale, plainTables);
@@ -350,7 +368,7 @@ export function createStrategyBuilder(base, width, height, options = {}) {
   const costs = options.costs;
   const certifiedCosts = !!costs?.certified;
   if (options.perceptual && (options.maps || options.rates || costs && !(certifiedCosts && options.maskWeight)))
-    throw new Error('The block search takes no maps or rates, and only certified costs with their mask.');
+    throw fault('JXL_INTERNAL', 'The block search takes no maps or rates, and only certified costs with their mask.');
   const costDoubt = options.costDoubt || 0, doubtOf = (bx, by, bw, bh) => maskDoubtOver(costDoubt, stride, bx, by, bw, bh);
   if (costs && rates) for (const [id, c] of costs) if (!rates.has(id)) rates.set(id, c.R);
   const candidate = (id, bx, by, loses = null) => {
@@ -373,7 +391,7 @@ export function createStrategyBuilder(base, width, height, options = {}) {
   const cellMW = (bx, by) => wholeMask[by * stride + bx];
   let priceOnly = !!options.priceOnly && priced;
   const built = priced ? null : options.built, scratch = new Map(), keepChosen = priceOnly && !!options.keepChosen && !options.chooseOnly;
-  const kept = stride * rows >= 16384 ? slabAllocator() : n => new Int32Array(n);
+  const kept = storage ?? (stride * rows >= 16384 ? slabAllocator() : n => new Int32Array(n));
   const keepsAll = !!options.layout;
   const lowScratch = new Map();
   const make = c => {
@@ -420,7 +438,7 @@ export function createStrategyBuilder(base, width, height, options = {}) {
     let D = 0, R = 0;
     for (let i = 0; i < 3; i++) {
       const c = i === 0 ? 1 : i === 1 ? 0 : 2, plane = levels && levels.subarray(c * size, (c + 1) * size);
-      const fc = c === 0 ? cfl.x[ti] / 84 : c === 2 ? cfl.b[ti] / 84 : 0, lo = dead ? dead[c * 2] : 0.5, hi = dead ? dead[c * 2 + 1] : 0.5;
+      const fc = c === 0 ? cfl.x[ti] / 84 : c === 2 ? cfl.b[ti] / 84 : 0, [lo, hi] = deadZonePair(c, zoneAt(bx, by));
       if (levels) {
         const tr = vk.coefficients(c, size), dcStep = comps[c].quant[0] / VB_QS, out = dc[c] = levels.subarray(3 * size + c * area, 3 * size + (c + 1) * area);
         if (area === 1) out[0] = Math.round(tr[0] * 8 / dcStep);
@@ -482,7 +500,7 @@ export function createStrategyBuilder(base, width, height, options = {}) {
     }
     if (priceOnly) return keep >= 0 ? {id, bx, by, bw, bh, area, size, light: true, R, D, J: D + lambda * R, Je: doubtOf(bx, by, bw, bh) * D, slot: keep, lows, epoch: vk.epoch()}
       : {id, bx, by, bw, bh, area, light: true, R, D, J: D + lambda * R, Je: doubtOf(bx, by, bw, bh) * D};
-    if (!priced) return {id, bx, by, bw, bh, area, size, order, coeffs, dc, levels: levels.subarray(0, 3 * size), R: 0, J: 0, narrow: !wide};
+    if (!priced) return {id, bx, by, bw, bh, area, size, order, coeffs, dc, levels: levels.subarray(0, 3 * size), R: rated ? R : 0, J: 0, narrow: !wide};
     return {id, bx, by, bw, bh, area, size, order, coeffs, dc, levels: levels.subarray(0, 3 * size), R, D, J: D + lambda * R, Je: doubtOf(bx, by, bw, bh) * D, narrow: !wide};
   };
   const full = (id, bx, by, loses = null) => {
@@ -493,7 +511,15 @@ export function createStrategyBuilder(base, width, height, options = {}) {
     if (certified) {
       const table = tableFor(id, comps, sizeScale, tables);
       if (certified.uncertain) vbSettle(certified, id, bx, by, w, h, bw, bh, area, size, table, comps, planeRows, W, cfl, fineOf(bx, by), dead);
-      return {id, bx, by, bw, bh, area, size, order: naturalOrder(bw, bh), coeffs: certified.coeffs, dc: certified.dc, R: 0, J: 0, narrow: !!certified.narrow && !certified.uncertain};
+      const order = naturalOrder(bw, bh);
+      let R = 0;
+      if (rated) for (const c of [1, 0, 2]) {
+        const plane = certified.coeffs[c];
+        let zeros = 0, run = 0;
+        for (let k = area; k < size; k++) { const q = Math.abs(plane[order[k]]); if (q) { R += rc[1] + rc[2] * vbLog2(q); zeros += run; run = 0; } else run++; }
+        R += rc[0] + rc[3] * zeros;
+      }
+      return {id, bx, by, bw, bh, area, size, order, coeffs: certified.coeffs, dc: certified.dc, R, J: 0, narrow: !!certified.narrow && !certified.uncertain};
     }
     if (gpuBlocks?.has(id) && !maps) {
       tableFor(id, comps, sizeScale, tables);
@@ -544,14 +570,16 @@ export function createStrategyBuilder(base, width, height, options = {}) {
       let nz = 0, zeros = 0, run = 0, d = 0;
       const R0 = R;
       if (!priced) {
-        const fc = factor[c], luma = transformed[1];
+        const fc = factor[c], luma = transformed[1], zone = zoneAt(bx, by);
         for (let k = area; k < size; k++) {
           const pos = order[k], step = steps[pos];
           const coefficient = tr[pos] - (c !== 1 ? fc * luma[pos] : 0);
           const v = coefficient * 8 * VB_QS / step * fine, a = Math.abs(v);
-          const q = a < (dead ? dead[c * 2 + high[pos]] : 0.5) ? 0 : Math.round(a);
+          const q = a < (dead ? dead[c * 2 + high[pos]] : 0.5) * zone ? 0 : Math.round(a);
           plane[pos] = v < 0 ? -q : q;
+          if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && rated) { if (q) { R += rc[1] + rc[2] * vbLog2(q); zeros += run; run = 0; } else run++; }
         }
+        if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && rated) R += rc[0] + rc[3] * zeros;
         coeffs[c] = plane;
         continue;
       }
@@ -612,8 +640,8 @@ export function createStrategyBuilder(base, width, height, options = {}) {
       const bx = bx0 + j, ti = (by >> 3) * cfl.width + (bx >> 3), fine = fineOf(bx, by);
       params[j * 4] = cfl.x[ti] / 84; params[j * 4 + 1] = cfl.b[ti] / 84; params[j * 4 + 2] = fine; params[j * 4 + 3] = 8 * VB_QS * fine;
     }
-    const zones = [0, 1, 2].flatMap(c => [dead ? dead[c * 2] : 0.5, dead ? dead[c * 2 + 1] : 0.5]);
-    const made = vk.row8(rowsOf, top, bx0 * 8 - left, by * 8, rowW, n, slot, params, zones, VB_ONE, rc[1], rc[2]);
+    const zone = zoneAt(bx0, by), zones = [0, 1, 2].flatMap(c => deadZonePair(c, zone));
+    const made = vk.row8(rowsOf, top, bx0 * 8 - left, by * 8, rowW, n, slot, params, zones, VB_ONE, rc[1], rc[2], rated ? [rc[0], rc[3]] : null);
     if (!made) return null;
     const out = [], steps = [0, 1, 2].map(c => comps[c].quant[0] / VB_QS);
     for (let j = 0; j < made.done; j++) {
@@ -622,7 +650,7 @@ export function createStrategyBuilder(base, width, height, options = {}) {
       for (let c = 0; c < 3; c++) levels[192 + c] = Math.round(made.dc[j * 3 + c] * 8 / steps[c]);
       const block = {id: 0, bx: bx0 + j, by, bw: 1, bh: 1, area: 1, size: 64, order,
         coeffs: [levels.subarray(0, 64), levels.subarray(64, 128), levels.subarray(128, 192)],
-        dc: [levels.subarray(192, 193), levels.subarray(193, 194), levels.subarray(194, 195)], levels: levels.subarray(0, 192), R: 0, J: 0, narrow: true};
+        dc: [levels.subarray(192, 193), levels.subarray(193, 194), levels.subarray(194, 195)], levels: levels.subarray(0, 192), R: rated ? made.rates[j] : 0, J: 0, narrow: true};
       built?.set(by * stride + bx0 + j, block);
       out.push(block);
     }
@@ -637,32 +665,45 @@ export function createStrategyBuilder(base, width, height, options = {}) {
     finish(chosen) {
       priceOnly = false;
       for (let i = 0; i < chosen.length; i++) if (chosen[i].light) chosen[i] = full(chosen[i].id, chosen[i].bx, chosen[i].by);
-      return strategyImage(base, chosen, tables, !!options.perceptual);
+      const out = strategyImage(base, chosen, tables, !!options.perceptual);
+      if (still && options.rated && !options.layout) {
+        const rs = out.image.rates = new Float64Array(stride * rows);
+        for (const b of chosen) rs[b.by * stride + b.bx] = b.R;
+      }
+      return out;
     },
   };
 }
 
-export function fixedStrategyImage(base, width, height, options) {
-  if (!options.layout) throw new TypeError('A fixed photographic image needs its layout.');
-  const builder = createStrategyBuilder(base, width, height, options), layout = options.layout, chosen = [];
+export function fixedStrategyImage(base, width, height, options, storage = null) {
+  if (!options.layout) throw fault('JXL_INTERNAL', 'A fixed photographic image needs its layout.');
+  const builder = createStrategyBuilder(base, width, height, options, storage), layout = options.layout, chosen = [];
   for (let i = 0; i < layout.length;) {
     const {id, bx, by} = layout[i];
     let n = 1;
     const known = (x, y) => options.built?.has(y * builder.stride + x);
-    if (id === 0 && !known(bx, by)) while (i + n < layout.length && layout[i + n].id === 0 && layout[i + n].by === by && layout[i + n].bx === bx + n && !known(bx + n, by)) n++;
+    const zones = options.deadzoneMap, zone = zones ? zones[by * builder.stride + bx] : 1, same = x => !zones || zones[by * builder.stride + x] === zone;
+    if (id === 0 && !known(bx, by)) while (i + n < layout.length && layout[i + n].id === 0 && layout[i + n].by === by && layout[i + n].bx === bx + n && !known(bx + n, by) && same(bx + n)) n++;
     const run = n > 1 ? builder.run8(by, bx, n) : null;
     if (run) { for (const block of run) chosen.push(block); i += run.length; if (run.length === n) continue; n = 1; }
     for (const end = i + n; i < end; i++) chosen.push(builder.candidate(layout[i].id, layout[i].bx, layout[i].by));
   }
-  return {...builder.finish(chosen), open: [], reprices: [], reverted: 0, settled: builder.settled};
+  const made = builder.finish(chosen);
+  if (options.rated) {
+    const rates = made.image.rates = options.ratesOut ?? new Float64Array(builder.stride * builder.rows);
+    for (const b of chosen) rates[b.by * builder.stride + b.bx] = b.R;
+  }
+  return {...made, open: [], reprices: [], reverted: 0, settled: builder.settled};
 }
 
 export function strategyImage(base, chosen, tables, perceptual) {
   const comps = base.components, stride = comps[0].stride, rows = comps[0].rows;
   const at = new Int32Array(stride * rows).fill(-1), byFirst = new Array(stride * rows);
   const components = comps.map(comp => ({h: 1, v: 1, stride, rows, quant: comp.quant, coeffs: new Int16Array(0), dc: new Int32Array(stride * rows)}));
-  let wideCoefficients = false;
+  let wideCoefficients = false, top = rows, bottom = 0;
   for (const choice of chosen) {
+    if (choice.by < top) top = choice.by;
+    if (choice.by + choice.bh > bottom) bottom = choice.by + choice.bh;
     const {id, bx, by, bw, bh, area, size, order, coeffs, dc, levels} = choice, block = {id, bx, by, bw, bh, area, size, order,
       coeffs: [coeffs[0], coeffs[1], coeffs[2]], dc: [dc[0], dc[1], dc[2]], levels};
     byFirst[block.by * stride + block.bx] = block;
@@ -676,7 +717,7 @@ export function strategyImage(base, chosen, tables, perceptual) {
   const groups = [], blocks = [];
   for (let gy = 0; gy < Math.ceil(rows / 32); gy++) for (let gx = 0; gx < Math.ceil(stride / 32); gx++) {
     const group = [];
-    for (let by = gy * 32; by < Math.min(rows, gy * 32 + 32); by++) for (let bx = gx * 32; bx < Math.min(stride, gx * 32 + 32); bx++) {
+    for (let by = Math.max(gy * 32, top); by < Math.min(rows, gy * 32 + 32, bottom); by++) for (let bx = gx * 32; bx < Math.min(stride, gx * 32 + 32); bx++) {
       const block = byFirst[by * stride + bx];
       if (block) { at[by * stride + bx] = blocks.length; blocks.push(block); group.push(block); }
     }
@@ -735,13 +776,13 @@ export function lazyStrategyImage(base, width, height, options, layout) {
   const stride = base.components[0].stride, built = new Map();
   let byRow = null;
   const rows = (by0, by1) => {
-    if (!byRow) { byRow = Array.from({length: base.components[0].rows}, () => []); for (const entry of layout) byRow[entry.by].push(entry); }
+    if (!byRow) { byRow = Array.from({length: base.components[0].rows}, () => []); for (let i = 0; i < layout.length; i++) byRow[layout[i].by].push(layout[i]); }
     for (const key of built.keys()) if (((key % 16777216) / stride | 0) < by0) built.delete(key);
     const entries = [];
     for (let by = by0; by < Math.min(by1, byRow.length); by++) entries.push(...byRow[by]);
     return fixedStrategyImage(base, width, height, {...options, layout: entries, built}).image;
   };
-  return {width, height, components: base.components, layout, lazyStrategy: {rows, materialize: () => fixedStrategyImage(base, width, height, {...options, layout}).image}};
+  return {width, height, components: base.components, layout, lazyStrategy: {rows, materialize: () => timed('materialize', () => fixedStrategyImage(base, width, height, {...options, layout}).image)}};
 }
 export const materialize = image => image?.lazyStrategy ? image.lazyStrategy.materialize() : image;
 

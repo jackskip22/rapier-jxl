@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-import {exactExp, exactLog, exactLog2, exactPow} from './exact-math.mjs';
 import {vbPackSigned, token, VB_SMALL, VB_CONFIG, VB_ZD, VB_NZ, VB_TOKENS, tableFor, createStrategyBuilder, lazyStrategyImage} from './varblock-core.mjs';
 export {nzBucket, token, rateModel, VB_DOUBT, strategyInputs, TransformCache, tokenRate, strategyImage, strategyTables, auditLevels, lazyStrategyImage, materialize} from './varblock-core.mjs';
 import {complete} from './bits.mjs';
@@ -14,6 +13,7 @@ import {prepareQuantParams, quantParamSteps} from './quantization-params.mjs';
 import {ZIGZAG} from './jpeg-tables.mjs';
 import {hybridToken, uintConfig} from './prefix.mjs';
 import {populationBits} from './entropy.mjs';
+import {fault} from './fault.mjs';
 
 export function forcedLayout(id, stride, rows) {
   const t = TRANSFORMS[id], bw = t.width / 8, bh = t.height / 8, layout = [], fits = (bx, by) => bx + bw <= stride && by + bh <= rows;
@@ -69,7 +69,7 @@ export function sumStrategyValues(values, from, to, total = 0) {
   return total;
 }
 export function strategyCertifiedRateError(error) {
-  if (!(error >= 0 && Number.isFinite(error))) throw new Error('Certified measured rates need finite nonnegative Re.');
+  if (!(error >= 0 && Number.isFinite(error))) throw fault('JXL_INTERNAL', 'Certified measured rates need finite nonnegative Re.');
   return error;
 }
 export function addStrategyMapCells(map, stride, bx, by, bw, from, to, m = 0) {
@@ -263,14 +263,21 @@ export function strategyFamilyCount(chosen, family) {
   for (const b of chosen) if (TRANSFORMS[b.id].table === family) count++;
   return count;
 }
+const REVERT_LIMITS = [[14, 6], [15, 6], [3, 4], [5, 8], [6, 8], [4, 8], [2, 4], [7, 6], [1, 6]];
+const REVERTED = new Set(REVERT_LIMITS.map(([f]) => f));
 export function revertStrategyFamily(chosen, family) {
   for (let i = chosen.length - 1; i >= 0; i--) {
-    if (TRANSFORMS[chosen[i].id].table === family && chosen[i].fallback) chosen.splice(i, 1, ...chosen[i].fallback);
+    const b = chosen[i];
+    if (TRANSFORMS[b.id].table !== family) continue;
+    if (b.fallback) chosen.splice(i, 1, ...b.fallback);
+    else {
+      const bw = TRANSFORMS[b.id].width >> 3, bh = TRANSFORMS[b.id].height >> 3, sub = [];
+      for (let dy = 0; dy < bh; dy++) for (let dx = 0; dx < bw; dx++) sub.push({id: 0, bx: b.bx + dx, by: b.by + dy, light: true});
+      chosen.splice(i, 1, ...sub);
+    }
   }
   return chosen;
 }
-
-const REVERTED = new Set([5, 4, 6]);
 function packChoices(chosen) {
   const out = [], open = new Set();
   const put = list => {
@@ -296,9 +303,9 @@ function unpackChoices(packed) {
 }
 export function strategyRowsLayout(bands) {
   const chosen = bands.flatMap(band => unpackChoices(band.chosen));
-  if (bands[0]?.useMask) for (const fam of [5, 4, 6]) {
+  if (bands[0]?.useMask || bands[0]?.pruneRare) for (const [fam, lim] of (bands[0]?.pruneRare ? REVERT_LIMITS : [[5, 8], [4, 8], [6, 8]])) {
     const count = strategyFamilyCount(chosen, fam);
-    if (count > 0 && count < 8) revertStrategyFamily(chosen, fam);
+    if (count > 0 && count < lim) revertStrategyFamily(chosen, fam);
   }
   return chosen.map(({id, bx, by}) => ({id, bx, by}));
 }
@@ -339,7 +346,7 @@ export function xybStrategies(base, width, height, options = {}) {
         rateTotalError = 0;
       }
     }
-    if (certifiedRates && !(rateTotal > 0 && Number.isFinite(rateTotal))) throw new Error('Certified measured rates need a positive finite normalizer.');
+    if (certifiedRates && !(rateTotal > 0 && Number.isFinite(rateTotal))) throw fault('JXL_INTERNAL', 'Certified measured rates need a positive finite normalizer.');
   }
   const doubt = options.mapDoubt || 0, totalDoubt = options.exactTotal ? 0 : options.totalDoubt ?? doubt;
   const rateTotalDoubt = strategyMeasuredRateTotalDoubt(options.exactTotal, certifiedRates, rateTotalError, rateTotal, rateDoubt, options.rateTotalDoubt);
@@ -401,11 +408,11 @@ export function xybStrategies(base, width, height, options = {}) {
       if (opened) open.push({bx: cx, by: cy, size: region});
     }
     if (options.band) return {chosen};
-    if (options.regionRows) return {chosen: packChoices(chosen), useMask};
-    if (useMask) {
-      for (const fam of [5, 4, 6]) {
+    if (options.regionRows) return {chosen: packChoices(chosen), useMask, pruneRare: !!options.pruneRare};
+    if (useMask || options.pruneRare) {
+      for (const [fam, lim] of (options.pruneRare ? REVERT_LIMITS : [[5, 8], [4, 8], [6, 8]])) {
         const count = strategyFamilyCount(chosen, fam);
-        if (count > 0 && count < 8) {
+        if (count > 0 && count < lim) {
           reverted += count;
           revertStrategyFamily(chosen, fam);
         }

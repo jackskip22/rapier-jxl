@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: MIT
-import {encode, fit} from 'rapier-jxl';
-import {recompress} from 'rapier-jxl/jpeg';
-import {workerAdmission} from 'rapier-jxl/resumable';
+import {encode, fit} from 'jpegxl';
+import {recompress} from 'jpegxl/jpeg';
+import {workerAdmission} from 'jpegxl/resumable';
 import {settings, nativeImageJob} from './media-settings.mjs';
 import {nodeEstimate} from './node-admission.mjs';
 
 const WORKER_MEMORY_BYTES = 128 * 1024 * 1024;
 const fail = message => Object.assign(new Error(message), {code: 'JXL_OPTIONS'});
 const positive = (value, name) => {
-  if (!Number.isFinite(value) || value <= 0) throw fail(`${name} is a positive number.`);
+  if (!Number.isFinite(value) || value <= 0) throw fail(`Invalid ${name}; pass a positive number.`);
   return value;
 };
 
 // These are the deployed host's configured allowances. No account-plan guess or sandbox quota belongs here.
 export function hostOptions(value = {}) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw fail('Host limits are an object.');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw fail("Invalid limits; pass an object.");
   if (Object.keys(value).some(key => !['cpuLimitMs', 'memoryLimitBytes'].includes(key)))
-    throw fail('Host limits name cpuLimitMs and memoryLimitBytes.');
+    throw fail("Unknown limits; use cpuLimitMs and memoryLimitBytes.");
   return Object.fromEntries(Object.entries(value).map(([key, number]) => [key, positive(number, key)]));
 }
 
@@ -24,12 +24,12 @@ export function hostOptions(value = {}) {
 // is admitted against: that allowance, else on Node the host's real limit (cgroup v2 memory.max where set, else the
 // machine's), never a tighter one of our own (principle 10). `realMemory` is for tests.
 export function hostLimits(platform, options = {}, realMemory = nodeMemoryBytes) {
-  if (!['node', 'cloudflare'].includes(platform)) throw fail('Expected the native host platform.');
+  if (!['node', 'cloudflare'].includes(platform)) throw fail("Invalid platform; use node or cloudflare.");
   const cpuLimitMs = options.cpuLimitMs === undefined ? null : positive(options.cpuLimitMs, 'cpuLimitMs');
   const requested = options.memoryLimitBytes === undefined ? null : positive(options.memoryLimitBytes, 'memoryLimitBytes');
-  if (requested !== null && !Number.isSafeInteger(requested)) throw fail('memoryLimitBytes is a whole byte count.');
+  if (requested !== null && !Number.isSafeInteger(requested)) throw fail("Invalid memoryLimitBytes; use a safe integer.");
   if (platform === 'cloudflare' && requested > WORKER_MEMORY_BYTES)
-    throw fail('A Cloudflare Worker cannot reserve more than its 128 MiB isolate limit.');
+    throw fail('memoryLimitBytes exceeds the Worker isolate limit; use at most 128 MiB.');
   const memoryLimitBytes = requested ?? (platform === 'cloudflare' ? WORKER_MEMORY_BYTES : null);
   return Object.freeze({platform, cpuLimitMs, memoryLimitBytes,
     memoryBytes: memoryLimitBytes ?? (platform === 'node' ? realMemory() : null)});

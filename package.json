@@ -1,6 +1,6 @@
 {
- "name": "rapier-jxl",
- "version": "8.3.5",
+ "name": "jpegxl",
+ "version": "8.4.0",
  "type": "module",
  "license": "MIT",
  "description": "JPEG XL encoder and decoder in WebAssembly for browsers, Node and Cloudflare Workers, with no native dependencies. Page captures with exact text, fast uploads, animation, lossless JPEG recompression.",
@@ -16,6 +16,8 @@
   "jpeg-xl",
   "jxl",
   "jpegxl",
+  "astro-integration",
+  "vite-plugin",
   "encoder",
   "decoder",
   "image-compression",
@@ -43,43 +45,55 @@
   "emdash"
  ],
  "bin": {
-  "rapier-jxl": "dist/cli.mjs"
+  "jpegxl": "dist/cli.mjs"
  },
  "exports": {
   ".": {
    "types": "./types/index.d.mts",
    "workerd": "./dist/index.workerd.mjs",
    "edge-light": "./dist/index.edge-light.mjs",
+   "node": "./dist/index.mjs",
+   "browser": "./dist/index.browser.mjs",
    "import": "./dist/index.mjs"
   },
   "./upload": {
    "types": "./types/upload.d.mts",
    "workerd": "./dist/upload.workerd.mjs",
    "edge-light": "./dist/upload.edge-light.mjs",
+   "node": "./dist/upload.mjs",
+   "browser": "./dist/upload.browser.mjs",
    "import": "./dist/upload.mjs"
   },
   "./capture": {
    "types": "./types/capture.d.mts",
    "workerd": "./dist/capture.workerd.mjs",
    "edge-light": "./dist/capture.edge-light.mjs",
+   "node": "./dist/capture.mjs",
+   "browser": "./dist/capture.browser.mjs",
    "import": "./dist/capture.mjs"
   },
   "./capture-complete": {
    "types": "./types/capture-complete.d.mts",
    "workerd": "./dist/capture-complete.workerd.mjs",
    "edge-light": "./dist/capture-complete.edge-light.mjs",
+   "node": "./dist/capture-complete.mjs",
+   "browser": "./dist/capture-complete.browser.mjs",
    "import": "./dist/capture-complete.mjs"
   },
   "./animation": {
    "types": "./types/animation.d.mts",
    "workerd": "./dist/animation.workerd.mjs",
    "edge-light": "./dist/animation.edge-light.mjs",
+   "node": "./dist/animation.mjs",
+   "browser": "./dist/animation.browser.mjs",
    "import": "./dist/animation.mjs"
   },
   "./format": {
    "types": "./types/format.d.mts",
    "workerd": "./dist/format.workerd.mjs",
    "edge-light": "./dist/format.edge-light.mjs",
+   "node": "./dist/format.mjs",
+   "browser": "./dist/format.browser.mjs",
    "import": "./dist/format.mjs"
   },
   "./decode": {
@@ -87,6 +101,7 @@
    "workerd": "./dist/decode.workerd.mjs",
    "edge-light": "./dist/decode.edge-light.mjs",
    "node": "./dist/decode.node.mjs",
+   "browser": "./dist/decode.browser.mjs",
    "import": "./dist/decode.mjs"
   },
   "./jpeg": {
@@ -94,43 +109,16 @@
    "workerd": "./dist/jpeg.workerd.mjs",
    "edge-light": "./dist/jpeg.edge-light.mjs",
    "node": "./dist/jpeg.node.mjs",
+   "browser": "./dist/jpeg.browser.mjs",
    "import": "./dist/jpeg.mjs"
   },
   "./metadata": {
    "types": "./types/metadata.d.mts",
    "import": "./dist/metadata.mjs"
   },
-  "./codec": {
-   "types": "./types/codec.d.mts",
-   "import": "./dist/codec.mjs"
-  },
-  "./codec/upload": {
-   "types": "./types/codec-upload.d.mts",
-   "import": "./dist/codec-upload.mjs"
-  },
-  "./codec/capture": {
-   "types": "./types/codec-capture.d.mts",
-   "import": "./dist/codec-capture.mjs"
-  },
-  "./codec/capture-complete": {
-   "types": "./types/codec-capture-complete.d.mts",
-   "import": "./dist/codec-capture-complete.mjs"
-  },
-  "./codec/animation": {
-   "types": "./types/codec-animation.d.mts",
-   "import": "./dist/codec-animation.mjs"
-  },
-  "./codec/format": {
-   "types": "./types/codec-format.d.mts",
-   "import": "./dist/codec-format.mjs"
-  },
-  "./codec/decode": {
-   "types": "./types/codec-decode.d.mts",
-   "import": "./dist/codec-decode.mjs"
-  },
-  "./codec/jpeg": {
-   "types": "./types/codec-jpeg.d.mts",
-   "import": "./dist/codec-jpeg.mjs"
+  "./hdr": {
+   "types": "./types/hdr.d.mts",
+   "import": "./dist/hdr.mjs"
   },
   "./polyfill": {
    "types": "./types/polyfill.d.mts",
@@ -148,22 +136,12 @@
    "node": "./dist/verify.node.mjs",
    "import": "./dist/verify.mjs"
   },
-  "./storage": {
-   "types": "./types/storage.d.mts",
-   "import": "./dist/storage.mjs"
-  },
   "./resumable": {
    "types": "./types/resumable.d.mts",
    "workerd": "./dist/resumable.workerd.mjs",
    "edge-light": "./dist/resumable.edge-light.mjs",
    "node": "./dist/resumable.node.mjs",
    "import": "./dist/resumable.mjs"
-  },
-  "./wasm": {
-   "types": "./types/wasm.d.mts",
-   "workerd": "./dist/wasm.workerd.mjs",
-   "edge-light": "./dist/wasm.edge-light.mjs",
-   "import": "./dist/wasm.mjs"
   },
   "./page-rects": {
    "types": "./examples/page-rects.d.ts",
@@ -175,55 +153,41 @@
   },
   "./emdash": {
    "types": "./examples/emdash/index.d.ts",
+   "browser": "./examples/emdash/server-only.mjs",
    "import": "./examples/emdash/index.mjs"
   },
   "./package.json": "./package.json"
  },
  "browser": {
-  "./index.js": "./dist/index.mjs",
-  "./upload": "./dist/upload.mjs",
-  "./capture": "./dist/capture.mjs",
-  "./capture-complete": "./dist/capture-complete.mjs",
-  "./animation": "./dist/animation.mjs",
-  "./format": "./dist/format.mjs",
-  "./decode": "./dist/decode.mjs",
-  "./jpeg": "./dist/jpeg.mjs",
+  "./index.js": "./dist/index.browser.mjs",
+  "./upload": "./dist/upload.browser.mjs",
+  "./capture": "./dist/capture.browser.mjs",
+  "./capture-complete": "./dist/capture-complete.browser.mjs",
+  "./animation": "./dist/animation.browser.mjs",
+  "./format": "./dist/format.browser.mjs",
+  "./decode": "./dist/decode.browser.mjs",
+  "./jpeg": "./dist/jpeg.browser.mjs",
   "./metadata": "./dist/metadata.mjs",
-  "./codec": "./dist/codec.mjs",
-  "./codec/upload": "./dist/codec-upload.mjs",
-  "./codec/capture": "./dist/codec-capture.mjs",
-  "./codec/capture-complete": "./dist/codec-capture-complete.mjs",
-  "./codec/animation": "./dist/codec-animation.mjs",
-  "./codec/format": "./dist/codec-format.mjs",
-  "./codec/decode": "./dist/codec-decode.mjs",
-  "./codec/jpeg": "./dist/codec-jpeg.mjs",
+  "./hdr": "./dist/hdr.mjs",
   "./polyfill": "./dist/polyfill.mjs",
   "./serve": "./dist/serve.mjs",
   "./verify": "./dist/verify.mjs",
-  "./storage": "./dist/storage.mjs",
   "./resumable": "./dist/resumable.mjs",
-  "./wasm": "./dist/wasm.mjs",
   "./page-rects": "./examples/page-rects.js",
   "./svg-jxl": "./examples/svg-jxl.js",
-  "./emdash": "./examples/emdash/index.mjs"
+  "./emdash": "./examples/emdash/server-only.mjs"
  },
  "types": "./types/index.d.mts",
  "sideEffects": [
   "./dist/polyfill.mjs",
-  "./dist/still.worker.mjs",
-  "./dist/upload.worker.mjs",
-  "./dist/capture.worker.mjs",
-  "./dist/capture-complete.worker.mjs",
-  "./dist/capture-complete.groups.worker.mjs",
-  "./dist/animation.worker.mjs",
-  "./dist/format.worker.mjs",
-  "./dist/decode.worker.mjs",
-  "./dist/jpeg.worker.mjs",
-  "./dist/still.helper.mjs",
-  "./dist/upload.helper.mjs",
-  "./dist/animation.helper.mjs",
-  "./dist/format.helper.mjs",
-  "./dist/capture-complete.helper.mjs",
+  "./dist/index.mjs",
+  "./dist/upload.mjs",
+  "./dist/capture.mjs",
+  "./dist/capture-complete.mjs",
+  "./dist/animation.mjs",
+  "./dist/format.mjs",
+  "./dist/decode.mjs",
+  "./dist/jpeg.mjs",
   "./dist/index.workerd.mjs",
   "./dist/index.edge-light.mjs",
   "./dist/upload.workerd.mjs",
@@ -243,13 +207,11 @@
   "./dist/verify.workerd.mjs",
   "./dist/verify.edge-light.mjs",
   "./dist/resumable.workerd.mjs",
-  "./dist/resumable.edge-light.mjs",
-  "./dist/wasm.workerd.mjs",
-  "./dist/wasm.edge-light.mjs"
+  "./dist/resumable.edge-light.mjs"
  ],
  "peerDependencies": {
-  "emdash": ">=1.4.0",
-  "@emdash-cms/cloudflare": ">=1.4.0",
+  "emdash": ">=1.5.0 <2.0.0",
+  "@emdash-cms/cloudflare": ">=1.5.0 <2.0.0",
   "@cloudflare/kumo": ">=2.6.0",
   "astro": ">=6.0.0",
   "react": ">=18.0.0"

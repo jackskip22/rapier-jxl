@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {leaf, split, writeTree, writeChannelHistograms, ALPHABET, RESIDUAL_CONFIG} from './modular.mjs';
-import {captureResiduals, captureTreeWalk} from './capture-kernels.mjs';
-import {kernelHooks} from './kernel-hooks.mjs';
+import {captureCutHistogram, captureResiduals, captureTreeSample, captureTreeWalk} from './capture-kernels.mjs';
+import {kernelHooks, ensured, missing, declined} from './kernel-hooks.mjs';
 import {BitWriter, packSigned} from './bits.mjs';
 import {transformKeys} from './rct-search.mjs';
 import {unit, carried, journaling, journalFact, FACTS, PASSED} from './step-journal.mjs';
@@ -10,60 +10,6 @@ const PROPERTIES = [15, 9, 10, 11, 12, 13, 14, 4, 5, 6, 7, 8, 2, 3];
 const PREDICTORS = [5, 6, 1, 2, 3, 4, 0, 11, 7, 10, 12];
 const BINS = 32, SAMPLES = 65536;
 
-const token = v => v < 16 ? v : 16 + ((31 - Math.clz32(v) - 4) << 1 | (v >>> (30 - Math.clz32(v))) & 1);
-const rawBits = v => v < 16 ? 0 : 30 - Math.clz32(v);
-const pack = r => r >= 0 ? r * 2 : -r * 2 - 1;
-
-function prediction(p, plane, width, i, x, y, w, n, nw, weighted) {
-  switch (p) {
-    case 0: return 0;
-    case 1: return w;
-    case 2: return n;
-    case 3: return (w + n) / 2 | 0;
-    case 4: { const g = w + n - nw; return Math.abs(g - w) < Math.abs(g - n) ? w : n; }
-    case 5: { const lo = w < n ? w : n, hi = w < n ? n : w, g = w + n - nw; return g < lo ? lo : g > hi ? hi : g; }
-    case 6: return weighted;
-  }
-  const ne = y && x + 1 < width ? plane[i - width + 1] : n;
-  if (p === 7) return ne;
-  if (p === 8) return nw;
-  if (p === 10) return (w + nw) / 2 | 0;
-  if (p === 11) return (nw + n) / 2 | 0;
-  if (p === 12) return (n + ne) / 2 | 0;
-  const ww = x > 1 ? plane[i - 2] : w;
-  if (p === 9) return ww;
-  const nn = y > 1 ? plane[i - 2 * width] : n, nee = y && x + 2 < width ? plane[i - width + 2] : ne;
-  return Math.trunc((6 * n - 2 * nn + 7 * w + ww + nee + 3 * ne + 8) / 16);
-}
-function property(p, plane, width, i, x, y, w, n, nw, wp, references) {
-  if (p >= 16) return reference(references[(p - 16) >> 2], p & 3, width, i, x, y);
-  switch (p) {
-    case 2: return y;
-    case 3: return x;
-    case 4: return Math.abs(n);
-    case 5: return Math.abs(w);
-    case 6: return n;
-    case 7: return w;
-    case 9: return w + n - nw;
-    case 10: return w - nw;
-    case 11: return nw - n;
-    case 12: return n - (y && x + 1 < width ? plane[i - width + 1] : n);
-    case 13: return n - (y > 1 ? plane[i - 2 * width] : n);
-    case 14: return w - (x > 1 ? plane[i - 2] : w);
-    case 15: return wp;
-  }
-  if (!x) return w;
-  const pw = x > 1 ? plane[i - 2] : y ? plane[i - width - 1] : 0, pn = y ? plane[i - width - 1] : pw, pnw = x > 1 && y ? plane[i - width - 2] : pw;
-  return w - (pw + pn - pnw);
-}
-
-function reference(r, kind, width, i, x, y) {
-  const v = r[i];
-  if (kind < 2) return kind ? v : Math.abs(v);
-  const left = x ? r[i - 1] : y ? r[i - width] : 0, top = y ? r[i - width] : left, corner = x && y ? r[i - width - 1] : left;
-  const lo = left < top ? left : top, hi = left < top ? top : left, g = left + top - corner, d = v - (g < lo ? lo : g > hi ? hi : g);
-  return kind === 3 ? d : Math.abs(d);
-}
 
 function weighted(plane, w, h) {
   const residuals = new Uint32Array(w * h), properties = new Int32Array(w * h);
@@ -97,9 +43,6 @@ function positionsOf(length, cap) {
   }
   return positions;
 }
-const trainSymbolSlow = v => { if (v < 16) return v; const top = 31 - Math.clz32(v), below = v - (1 << top); return 16 + (((top - 4) << 3) | ((below >> (top - 1)) << 2) | (below & 3)); };
-const TRAIN_SYMBOLS = Uint8Array.from({length: 2048}, (_, v) => trainSymbolSlow(v));
-const trainSymbol = v => v < 2048 ? TRAIN_SYMBOLS[v] : trainSymbolSlow(v);
 const trainRaw = s => s < 16 ? 0 : ((s - 16) >> 3) + 1;
 function quantize(values, bins) {
   const length = values.length;
@@ -144,15 +87,6 @@ function distinctColumns(columns) {
 function histogramsOf(ids, symbolSets, alphabet, kinds) {
   const out = new Array(kinds), n = ids.length;
   for (let c = 0; c < kinds; c++) { const hist = new Uint32Array(alphabet), symbols = symbolSets[c]; for (let i = 0; i < n; i++) hist[symbols[ids[i]]]++; out[c] = hist; }
-  return out;
-}
-function subtractHistograms(parent, child, alphabet, kinds) {
-  const out = new Array(kinds);
-  for (let c = 0; c < kinds; c++) {
-    const p = parent[c], ch = child[c], diff = new Uint32Array(alphabet);
-    for (let s = 0; s < alphabet; s++) diff[s] = p[s] - ch[s];
-    out[c] = diff;
-  }
   return out;
 }
 function modelBits(tree, leaves, freqs) {
@@ -330,90 +264,15 @@ function guardReferences(tree, predictor, nextLocal) {
   return split(2, 0, split(3, 0, prune(tree), edgeX), edgeY);
 }
 function proposeSplit(st, item) {
-  const {options, kinds, alphabet, table, rawPrice, columns, symbolSets, candidates, count, population, store, lowCounts, highCounts,
-    lowTable, highTable, lowRaw, highRaw, baseTable, baseRaw, slotOf} = st;
-  let {dense, offsets} = st;
+  const {options, alphabet, table, rawPrice, candidates, count, population, store} = st;
   if (item.depth >= options.depth || item.ids.length < 64 || item.ownBits === 0) return null;
   const members = item.ids, total = members.length;
-  const keep = store ? {store, save: total >= RETAIN || !!item.forSibling, parent: item.parent || null, sibling: item.sibling || null, handle: null} : null;
-  let best = kernelHooks.sampled ? kernelHooks.sampled(members, item.hist, symbolSets, columns, table, rawPrice, item.ownBits, keep) : false;
+  const keep = {save: count >= RETAIN && (total >= RETAIN || !!item.forSibling), parent: item.parent || null, sibling: item.sibling || null, handle: null};
+  const best = store.propose(members, item.hist, item.ownBits, keep);
   item.parent = item.sibling = null; item.forSibling = false;
-  if (keep) item.handle = keep.handle;
-  if (best === false) {
-    best = null;
-    for (let c = 0; c < kinds; c++) {
-      let t = 0, r = 0; const h = item.hist[c];
-      for (let s = 0; s < alphabet; s++) if (h[s]) { t += table[h[s]]; r += h[s] * rawPrice[s]; }
-      baseTable[c] = t; baseRaw[c] = r;
-    }
-    let sym = null, present = null, support = null, kept = 0;
-    for (const column of columns) {
-      const cuts = column.cuts.length, bins = cuts + 1, indices = column.indices;
-      if (!cuts) continue;
-      for (let c = 0; c < kinds; c++) { lowCounts[c].fill(0); highCounts[c].set(item.hist[c]); }
-      lowTable.fill(0); lowRaw.fill(0); highTable.set(baseTable); highRaw.set(baseRaw);
-      let lowCount = 0;
-      {
-        if (!sym) {
-          present = []; slotOf.fill(-1);
-          for (let s = 0; s < alphabet; s++) for (let c = 0; c < kinds; c++) if (item.hist[c][s]) { slotOf[s] = present.length; present.push(s); break; }
-          kept = present.length;
-          support = candidates.map((_, c) => { const slots = []; for (let q = 0; q < kept; q++) if (item.hist[c][present[q]]) slots.push(q); return slots; });
-          sym = new Uint8Array(total * kinds);
-          for (let c = 0; c < kinds; c++) { const symbols = symbolSets[c], at = c * total; for (let i = 0; i < total; i++) sym[at + i] = slotOf[symbols[members[i]]]; }
-        }
-        if (offsets.length < total) offsets = new Uint32Array(total);
-        for (let i = 0; i < total; i++) offsets[i] = indices[members[i]] * kept;
-        const size = bins * kinds * kept;
-        if (dense.length < size) dense = new Uint32Array(size); else dense.fill(0, 0, size);
-        for (let c = 0; c < kinds; c++) { const base = c * bins * kept, at = c * total; for (let i = 0; i < total; i++) dense[base + offsets[i] + sym[at + i]]++; }
-      }
-      for (let b = 0; b < cuts; b++) {
-        let moved = 0;
-        {
-          for (let c = 0; c < kinds; c++) {
-            const low = lowCounts[c], high = highCounts[c], row = (c * bins + b) * kept, occupied = support[c];
-            let t = 0, r = 0, u = 0, m = 0;
-            for (let j = 0; j < occupied.length; j++) {
-              const q = occupied[j], v = dense[row + q];
-              if (!v) continue;
-              const s = present[q], l = low[s], h = high[s];
-              t += table[l + v] - table[l]; u += table[h - v] - table[h]; r += v * rawPrice[s]; m += v;
-              low[s] = l + v; high[s] = h - v;
-            }
-            lowTable[c] += t; highTable[c] += u; lowRaw[c] += r; highRaw[c] -= r;
-            if (!c) moved = m;
-          }
-        }
-        const previous = lowCount;
-        lowCount += moved;
-        if (lowCount === previous || lowCount < 24 || total - lowCount < 24) continue;
-        let loSelected = 0, hiSelected = 0, loBits = Infinity, hiBits = Infinity;
-        const lowBase = table[lowCount], highBase = table[total - lowCount];
-        for (let c = 0; c < kinds; c++) {
-          const l = lowBase - lowTable[c] + lowRaw[c], h = highBase - highTable[c] + highRaw[c];
-          if (l < loBits) { loBits = l; loSelected = c; }
-          if (h < hiBits) { hiBits = h; hiSelected = c; }
-        }
-        const gain = item.ownBits - loBits - hiBits;
-        if (!best || gain > best.gain) best = {gain, column, bin: b, lo: {selected: loSelected, bits: loBits}, hi: {selected: hiSelected, bits: hiBits}};
-      }
-    }
-  }
-  st.dense = dense; st.offsets = offsets;
+  item.handle = keep.handle;
   if (!best || best.gain <= 0) return null;
-  const bin = best.column.indices; let below = 0;
-  for (let i = 0; i < total; i++) if (bin[members[i]] <= best.bin) below++;
-  best.lowIds = new Uint32Array(below); best.highIds = new Uint32Array(total - below);
-  for (let i = 0, l = 0, h = 0; i < total; i++) { const id = members[i]; if (bin[id] <= best.bin) best.lowIds[l++] = id; else best.highIds[h++] = id; }
-  if (below <= total - below) {
-    best.low = histogramsOf(best.lowIds, symbolSets, alphabet, kinds);
-    best.high = subtractHistograms(item.hist, best.low, alphabet, kinds);
-  } else {
-    best.high = histogramsOf(best.highIds, symbolSets, alphabet, kinds);
-    best.low = subtractHistograms(item.hist, best.high, alphabet, kinds);
-  }
-  if (((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__)) && st.clustered) {
+  if (((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__)) && st.clustered) {
     best.loStats = best.low.map(h => histStats(h, table, rawPrice));
     best.hiStats = best.high.map(h => histStats(h, table, rawPrice));
     const hBoth = st.scratchHist, hh = best.high[best.hi.selected], hl = best.low[best.lo.selected];
@@ -435,28 +294,25 @@ function learnSampleTree(quantized, symbolSets, candidates, population, options)
   return treeOf(grown);
 }
 function sampleTree(quantized, symbolSets, candidates, population, options, saved = null) {
-  const columns = distinctColumns(quantized), count = symbolSets[0].length, table = nlogQ12(count), clustered = ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__)) && !!options.clustered;
-  let alphabet = 1; for (const symbols of symbolSets) for (const symbol of symbols) alphabet = Math.max(alphabet, symbol + 1);
+  const columns = distinctColumns(quantized), count = symbolSets[0].length, table = nlogQ12(count), clustered = ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__)) && !!options.clustered;
+  let alphabet = 1; for (const symbols of symbolSets) for (let i = 0; i < symbols.length; i++) if (symbols[i] >= alphabet) alphabet = symbols[i] + 1;
   const kinds = candidates.length, rawPrice = Float64Array.from({length: alphabet}, (_, s) => trainRaw(s) * Q);
   const reserve = quantized.some(c => c.property >= 16) ? 2 : 0, scale = population / count;
-  if (!kernelHooks.sampled) kernelHooks.ensure?.();
-  const store = kernelHooks.sampled && kernelHooks.sampledStore && count >= RETAIN ? kernelHooks.sampledStore(count, kinds, alphabet, columns) : null;
+  const store = (kernelHooks.sampled ?? ensured().sampled ?? missing())(count, kinds, alphabet, columns, symbolSets, table, rawPrice);
+  if (!store) throw declined('sampled');
   const st = {options, clustered, kinds, alphabet, table, rawPrice, columns, symbolSets, candidates, count, population, scale, store,
     clusters: null, maxClusters: Math.min(options.clusters ?? 192, 255 - reserve), epoch: 0,
     splitCost: (LEAF_BITS + options.charge + SAMPLE_BIAS * (1 - count / population) * scale) * Q,
     scratchHist: clustered ? new Uint32Array(alphabet) : null,
-    remCluster: clustered ? {freq: new Uint32Array(alphabet), total: 0, sumT: 0, ent: 0, used: 0} : null,
-    lowCounts: candidates.map(() => new Uint32Array(alphabet)), highCounts: candidates.map(() => new Uint32Array(alphabet)),
-    lowTable: new Float64Array(kinds), highTable: new Float64Array(kinds), lowRaw: new Float64Array(kinds), highRaw: new Float64Array(kinds),
-    baseTable: new Float64Array(kinds), baseRaw: new Float64Array(kinds), slotOf: new Int16Array(alphabet),
-    dense: new Uint32Array(0), offsets: new Uint32Array(0)};
+    remCluster: clustered ? {freq: new Uint32Array(alphabet), total: 0, sumT: 0, ent: 0, used: 0} : null};
   if (saved) {
     st.clusters = saved.clusters; st.epoch = saved.epoch;
     return {...saved, st, reserve, active: saved.active.map(item => ({...item, proposal: item.proposal && {...item.proposal, column: columns[item.proposal.column]}}))};
   }
   const cost = hist => { let bits = entropyQ(hist, table); for (let s = 0; s < hist.length; s++) bits += hist[s] * rawPrice[s]; return bits; };
   const cheapest = hist => { let selected = 0, bits = cost(hist[0]); for (let c = 1; c < hist.length; c++) { const next = cost(hist[c]); if (next < bits) { selected = c; bits = next; } } return {selected, bits}; };
-  const ids = Uint32Array.from({length: count}, (_, i) => i), hist = histogramsOf(ids, symbolSets, alphabet, kinds), initial = cheapest(hist), predictor = candidates[initial.selected], root = leaf(predictor);
+  const ids = new Uint32Array(count); for (let i = 0; i < count; i++) ids[i] = i;
+  const hist = histogramsOf(ids, symbolSets, alphabet, kinds), initial = cheapest(hist), predictor = candidates[initial.selected], root = leaf(predictor);
   const rootStats = clustered ? histStats(hist[initial.selected], table, rawPrice) : null;
   st.clusters = clustered ? [makeCluster(hist[initial.selected], rootStats)] : null;
   const active = [{node: root, ids, hist, choice: initial, ownBits: initial.bits, curStats: rootStats, cluster: 0, depth: 0}];
@@ -465,7 +321,7 @@ function sampleTree(quantized, symbolSets, candidates, population, options, save
 }
 function growTree(grown, splits = Infinity) {
   const {st, reserve, active} = grown, {options, candidates, store, clusters, table} = st;
-  const clustered = ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__)) && st.clustered;
+  const clustered = ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__)) && st.clustered;
   for (let made = 0; grown.leaves < options.leaves - reserve; made++) {
     if (made === splits) return false;
     let chosen = -1;
@@ -537,24 +393,24 @@ function growTree(grown, splits = Infinity) {
   return true;
 }
 function treeState({st, active, root, predictor, leaves, done}) {
-  for (const item of active) if (item.handle) { st.store?.release(item.handle); item.handle = null; }
+  for (const item of active) if (item.handle) { st.store.release(item.handle); item.handle = null; }
   return {root, predictor, leaves, done, clusters: st.clusters, epoch: st.epoch, active: active.map(({node, ids, hist, choice, ownBits, curStats, cluster, depth, proposal}) =>
     ({node, ids, hist, choice, ownBits, curStats, cluster, depth, proposal: proposal && (({pairStats, ...rest}) => ({...rest, column: st.columns.indexOf(proposal.column)}))(proposal)}))};
 }
 function treeOf({st, active, root, predictor}) {
-  for (const item of active) if (item.handle) st.store?.release(item.handle);
-  if (((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__)) && st.clustered) {
+  for (const item of active) if (item.handle) st.store.release(item.handle);
+  if (((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__)) && st.clustered) {
     maybeMergeClusters(st, active);
     for (const item of active) item.node.local = item.cluster;
   } else active.forEach((item, i) => { item.node.local = i; });
-  return guardReferences(root, predictor, ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__)) && st.clustered ? st.clusters.length : active.length);
+  return guardReferences(root, predictor, ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__)) && st.clustered ? st.clusters.length : active.length);
 }
 function learnSampled(plane, w, h, options = {}, answer) {
   const {depth = 24, predictors = PREDICTORS, clusters = 192, charge = 32} = options, sampled = sampleColumns(plane, w, h, options, answer);
   let {leaves = 60} = options;
   if (!sampled) return null;
-  const clustered = ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__)) && (!!options.clustered || leaves > 255);
-  if (!((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__))) leaves = Math.min(leaves, 255);
+  const clustered = ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__)) && (!!options.clustered || leaves > 255);
+  if (!((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__))) leaves = Math.min(leaves, 255);
   const tree = learnSampleTree(sampled.quantized, sampled.symbolSets, predictors, w * h, {leaves, depth, clustered, clusters, charge});
   return tree.left ? tree : null;
 }
@@ -562,43 +418,11 @@ function sampleColumns(plane, w, h, {samples = SAMPLES, bins = 32, properties: w
   references = [], referenceKinds = [0, 1, 2, 3], least = 4096} = {}, answer) {
   const n = w * h;
   if (n < least) return null;
-  const {residuals, properties: wp} = answer, positions = positionsOf(n, samples), m = positions.length;
+  const {residuals, properties: wp} = answer, positions = positionsOf(n, samples);
   const properties = [...wanted];
   for (let r = 0; r < references.length; r++) for (const kind of referenceKinds) properties.push(16 + 4 * r + kind);
-  const X = new Int32Array(m), Y = new Int32Array(m), Wn = new Int32Array(m), Nn = new Int32Array(m), NWn = new Int32Array(m);
-  for (let s = 0; s < m; s++) {
-    const i = positions[s], y = i / w | 0, x = i - y * w, W = x ? plane[i - 1] : y ? plane[i - w] : 0;
-    X[s] = x; Y[s] = y; Wn[s] = W; Nn[s] = y ? plane[i - w] : W; NWn[s] = x && y ? plane[i - w - 1] : W;
-  }
-  const values = new Int32Array(m), quantized = properties.map(p => {
-    switch (p) {
-      case 2: values.set(Y); break;
-      case 3: values.set(X); break;
-      case 4: for (let s = 0; s < m; s++) values[s] = Math.abs(Nn[s]); break;
-      case 5: for (let s = 0; s < m; s++) values[s] = Math.abs(Wn[s]); break;
-      case 6: values.set(Nn); break;
-      case 7: values.set(Wn); break;
-      case 9: for (let s = 0; s < m; s++) values[s] = Wn[s] + Nn[s] - NWn[s]; break;
-      case 10: for (let s = 0; s < m; s++) values[s] = Wn[s] - NWn[s]; break;
-      case 11: for (let s = 0; s < m; s++) values[s] = NWn[s] - Nn[s]; break;
-      case 15: for (let s = 0; s < m; s++) values[s] = wp[positions[s]]; break;
-      default: for (let s = 0; s < m; s++) values[s] = property(p, plane, w, positions[s], X[s], Y[s], Wn[s], Nn[s], NWn[s], wp[positions[s]], references);
-    }
-    return {property: p, ...quantize(values, bins)};
-  });
-  const symbolSets = predictors.map(p => {
-    const out = new Uint8Array(m);
-    if (p === 6) for (let s = 0; s < m; s++) out[s] = trainSymbol(residuals[positions[s]]);
-    else if (p === 5) for (let s = 0; s < m; s++) {
-      const W = Wn[s], N = Nn[s], lo = W < N ? W : N, hi = W < N ? N : W, g = W + N - NWn[s], r = plane[positions[s]] - (g < lo ? lo : g > hi ? hi : g);
-      out[s] = trainSymbol(r >= 0 ? r * 2 : -r * 2 - 1);
-    } else for (let s = 0; s < m; s++) {
-      const i = positions[s];
-      out[s] = trainSymbol(pack(plane[i] - prediction(p, plane, w, i, X[s], Y[s], Wn[s], Nn[s], NWn[s], 0)));
-    }
-    return out;
-  });
-  return {quantized, symbolSets};
+  const {columns, symbolSets} = captureTreeSample(plane, w, h, positions, Int32Array.from(properties), Int32Array.from(predictors), residuals, wp, references);
+  return {quantized: columns.map(({property, values}) => ({property, ...quantize(values, bins)})), symbolSets};
 }
 
 const gradient = (w, n, nw) => Math.max(Math.min(w, n), Math.min(Math.max(w, n), w + n - nw));
@@ -622,7 +446,7 @@ export function transformRanking(rgba, width, height, samples = 32768) {
       planes[15 * run + o] = mr + ((r - mr) >> 1); planes[16 * run + o] = mg + ((g - mg) >> 1); planes[17 * run + o] = mb + ((b - mb) >> 1);
     }
   }
-  const prices = new Float64Array(18), hist = new Uint32Array(64);
+  const prices = new Float64Array(18), hist = new Uint32Array(128);
   for (let key = 0; key < 18; key++) {
     if (key === 3 || key === 7 || key === 11) continue;
     hist.fill(0);
@@ -639,13 +463,24 @@ export function transformRanking(rgba, width, height, samples = 32768) {
   }
   const ranked = Array.from({length: 42}, (_, type) => ({type, price: transformKeys(type).reduce((n, key) => n + prices[key], 0)}));
   ranked.sort((a, b) => a.price - b.price || a.type - b.type);
-  return ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__)) ? Object.assign(ranked.map(entry => entry.type), {bits: ranked[0].price / 4096 / count}) : ranked.map(entry => entry.type);
+  return ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true)) ? Object.assign(ranked.map(entry => entry.type), {bits: ranked[0].price / 4096 / count}) : ranked.map(entry => entry.type);
 }
 
 
+const fitted = (nodes, w, h) => Math.min(nodes, 255 + Math.floor(w * h / 16));
+function gradientPassesInt32(plane, w, h) {
+  if (!(plane instanceof Int32Array || plane instanceof Uint32Array)) return false;
+  for (let y = 0, i = 0; y < h; y++) for (let x = 0; x < w; x++, i++) {
+    const left = x ? plane[i - 1] : y ? plane[i - w] : 0, top = y ? plane[i - w] : left, nw = x && y ? plane[i - w - 1] : left;
+    const value = left + top - nw;
+    if (value !== (value | 0)) return true;
+  }
+  return false;
+}
 export function learnTree(plane, w, h, {nodes = 119, samples = SAMPLES, bins = BINS, properties = PROPERTIES, predictors = PREDICTORS,
   references = [], referenceKinds = [0, 1, 2, 3], least = 4096, depth = 24, charge = 32, clustered = false, clusters = 192} = {}, answer = null) {
-  answer ||= weighted(plane, w, h);
+  answer ||= weighted(plane, w, h); nodes = fitted(nodes, w, h);
+  if (properties.includes(9) && gradientPassesInt32(plane, w, h)) properties = properties.filter(p => p !== 9);
   const tree = learnSampled(plane, w, h, {leaves: (nodes + 1) >> 1, depth, samples, bins, properties, predictors, references, referenceKinds, least, charge, clustered, clusters}, answer);
   const learned = tree && numbered(tree);
   return learned && {...learned, ...codePlane(tree, plane, w, h, answer.residuals, answer.properties, references)};
@@ -663,7 +498,8 @@ function numbered(tree) {
 const TREE_SPLITS = 8;
 export function* learnTreeSteps(plane, w, h, {nodes = 119, samples = SAMPLES, bins = BINS, properties = PROPERTIES, predictors = PREDICTORS,
   references = [], referenceKinds = [0, 1, 2, 3], least = 4096, depth = 24, charge = 32, clustered = false, clusters = 192} = {}, answer = null) {
-  const count = (nodes + 1) >> 1, deep = ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__));
+  nodes = fitted(nodes, w, h);
+  const count = (nodes + 1) >> 1, deep = ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__));
   const options = {leaves: deep ? count : Math.min(count, 255), depth, samples, bins, properties, predictors, references, referenceKinds, least, charge, clustered: deep && (clustered || count > 255), clusters};
   if (!journaling()) return learnTree(plane, w, h, {nodes, ...options}, answer);
   const sampled = yield* unit('tree-columns', () => sampleColumns(plane, w, h, options, answer ?? weighted(plane, w, h)));
@@ -692,15 +528,16 @@ export function codePlane(tree, plane, w, h, residuals, wpProperty, references =
 
 let zeros = new Int32Array(0);
 const noCopies = n => { if (zeros.length < n) zeros = new Int32Array(n); return zeros.subarray(0, n); };
-const learnedPlanes = new Map(), KEPT = 256, LEAF_PREDICTORS = [5, 6, 1, 2, 3, 4, 0];
+const learnedPlanes = new Map(), KEPT = 256, LEAF_PREDICTORS = [5, 6, 1, 2, 3, 4, 0], SMOOTH_LEAF = 0.01, SMOOTH_PREDICTORS = [5, 1, 2, 7];
 function planeKey(plane, w, h) {
   let a = 2166136261, b = 0;
   for (let i = 0; i < plane.length; i++) { a = Math.imul(a ^ plane[i], 16777619); b = b + plane[i] * (i + 1) | 0; }
   return w + 'x' + h + ':' + (a >>> 0) + ':' + (b >>> 0);
 }
-const weightedPlanes = [], WEIGHTED_KEPT = 8;
+const weightedPlanes = [], WEIGHTED_KEPT = 1;
 function weightedOf(plane, w, h, key) {
-  const hit = weightedPlanes.find(e => e.key === key && e.plane.length === plane.length && e.plane.every((v, i) => v === plane[i]));
+  const same = a => { if (a.length !== plane.length) return false; for (let i = 0; i < a.length; i++) if (a[i] !== plane[i]) return false; return true; };
+  const hit = weightedPlanes.find(e => e.key === key && same(e.plane));
   if (hit) return hit.answer;
   const answer = weighted(plane, w, h);
   weightedPlanes.unshift({key, plane: plane.slice(), answer});
@@ -708,7 +545,7 @@ function weightedOf(plane, w, h, key) {
   return answer;
 }
 export function learnedModel(plane, w, h, answer = null, options = undefined, references = []) {
-  if (((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__)) && options?.leaf && w * h <= 4096) options = {...options, least: 64, charge: 2, ...options.small};
+  if (((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true)) && options?.leaf && w * h <= 4096) options = {...options, least: 64, charge: 2, ...options.small};
   const own = planeKey(plane, w, h);
   answer ||= weightedOf(plane, w, h, own);
   const key = own + (options ? ':' + JSON.stringify(options) : '') + references.map(r => '|' + planeKey(r, w, h)).join('');
@@ -721,18 +558,23 @@ export function learnedModel(plane, w, h, answer = null, options = undefined, re
     const {residuals, properties} = answer || weighted(plane, w, h);
     learned = {...learned, ...codePlane(learned.tree, plane, w, h, residuals, properties, references)};
   }
-  if (((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && (typeof __RAPIER_JXL_CAPTURE_DEEP__ === 'undefined' || __RAPIER_JXL_CAPTURE_DEEP__)) && !learned && options?.leaf && (w * h <= 4096 || options.whole)) {
-    const {residuals, properties} = answer;
+  if (((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true)) && !learned && options?.leaf) {
+    const {residuals, properties} = answer, any = w * h <= 4096 || options.whole;
     let best = null;
-    for (const predictor of options.predictors ?? LEAF_PREDICTORS) {
+    for (const predictor of options.predictors ?? (any ? LEAF_PREDICTORS : SMOOTH_PREDICTORS)) {
       const node = Object.assign(leaf(predictor), {local: 0}), coded = codePlane(node, plane, w, h, residuals, properties, references);
-      const counts = new Map();
-      for (const v of coded.values) counts.set(v, (counts.get(v) ?? 0) + 1);
-      let bits = 0;
-      for (const c of counts.values()) bits -= c * Math.log2(c / coded.values.length);
+      const values = coded.values, first = values[0];
+      let bits = 0, same = 0;
+      while (same < values.length && values[same] === first) same++;
+      if (same < values.length) {
+        const counts = new Map();
+        for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
+        for (const c of counts.values()) bits -= c * Math.log2(c / values.length);
+      }
       if (!best || bits < best.bits) best = {bits, tree: node, coded};
+      if (!any && bits <= SMOOTH_LEAF * w * h) break;
     }
-    learned = {tree: best.tree, leaves: [best.tree], ...best.coded};
+    if (any || best.bits <= SMOOTH_LEAF * w * h) learned = {tree: best.tree, leaves: [best.tree], ...best.coded};
   }
   if (!learned) return null;
   const {tree, leaves, classes = leaves.length, values, contexts} = learned, n = w * h;
@@ -748,14 +590,7 @@ export function treeModel(plane, w, h, learned = null, references = [], answer =
     count: w * h, pieceValue: learned?.values ? Int32Array.from(values) : values, pieceDistance: noCopies(w * h), pieceContext: contexts};
 }
 function mergedCuts(cuts, residuals, properties, header) {
-  const n = residuals.length, k = cuts.length + 1, TOK = 48, hist = new Float64Array(k * TOK), raw = new Float64Array(k);
-  for (let i = 0; i < n; i++) {
-    const p = properties[i];
-    let lo = 0, hi = cuts.length;
-    while (lo < hi) { const mid = (lo + hi) >> 1; if (p > cuts[mid]) lo = mid + 1; else hi = mid; }
-    const v = residuals[i];
-    hist[lo * TOK + token(v)]++; raw[lo] += rawBits(v);
-  }
+  const k = cuts.length + 1, TOK = 48, {hist, raw} = captureCutHistogram(cuts, residuals, properties);
   const cost = (h, r) => { let total = 0, bits = r, used = 0; for (let t = 0; t < TOK; t++) total += h[t];
     for (let t = 0; t < TOK; t++) if (h[t]) { bits += h[t] * Math.log2(total / h[t]); used++; } return total ? bits + header * used + 16 : 0; };
   let groups = Array.from({length: k}, (_, g) => ({h: hist.slice(g * TOK, (g + 1) * TOK), r: raw[g], cut: g < cuts.length ? cuts[g] : null}));
@@ -800,4 +635,8 @@ const learnOf = (options, references, none) => none
 export function planeModel(plane, w, h, options, references = []) {
   const none = plainAnswer(w, h), learn = learnOf(options, references, none), answer = none ?? weighted(plane, w, h);
   return treeModel(plane, w, h, none && learn.predictors.length < 3 ? null : learnTree(plane, w, h, learn, answer), references, answer);
+}
+export function letGoTrees(keep) {
+  learnedPlanes.clear(); weightedPlanes.length = 0; zeros = new Int32Array(0);
+  if (entropyTable.length > keep) entropyTable = entropyTable.slice(0, keep);
 }

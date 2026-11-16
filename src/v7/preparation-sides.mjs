@@ -2,7 +2,7 @@
 import {dimensions, fail} from './primitives.mjs';
 
 export function outputSides(width, height, maxPixels) {
-  if (width === undefined && height === undefined) throw fail('JXL_OPTIONS', 'An output names its width, its height or both.');
+  if (width === undefined && height === undefined) throw fail('JXL_OPTIONS', "Output has no dimensions; supply width, height, or both.");
   dimensions(width ?? 1, height ?? 1, maxPixels);
 }
 export function outputSize({width, height}, picture, maxPixels) {

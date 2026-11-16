@@ -17,6 +17,7 @@ function record(value, name) {
 }
 
 function enumeration(value, choices, name) {
+  if (name === 'rendering intent' && Number.isInteger(value)) value = Object.keys(choices)[value];
   if (typeof value !== 'string' || !Object.hasOwn(choices, value)) throw fault('JXL_INPUT', 'Unsupported ' + name + ': ' + value + '.');
   return choices[value];
 }

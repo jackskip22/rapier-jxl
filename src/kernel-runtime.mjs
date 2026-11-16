@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: MIT
 import {KERNELS, SIMD_PROBE} from './kernels-bytes.mjs';
 import {wasmBytes} from './wasm-text.mjs';
-import {wasmModule, compileWasm, hasWasmModule, suppliedWasm} from './wasm-modules.mjs';
+import {wasmModule, compileWasm, hasWasmModule} from './wasm-modules.mjs';
 
+const validates = bytes => { try { return WebAssembly.validate(bytes); } catch { return false; } };
 export const kernelsSupported = () => typeof WebAssembly === 'object' &&
   new Uint8Array(new Uint32Array([1]).buffer)[0] === 1 &&
-  (hasWasmModule('kernels') || !suppliedWasm() && WebAssembly.validate(wasmBytes(SIMD_PROBE)));
+  (hasWasmModule('kernels') || validates(wasmBytes(SIMD_PROBE)));
 export const kernelModule = () => wasmModule('kernels', () => wasmBytes(KERNELS));
 export const compileKernels = () => compileWasm('kernels', () => wasmBytes(KERNELS));
 
-const PAGES = 640;
 let instance = null, holder = null;
 const holders = [];
 export function kernelInstance() {
   if (!instance) {
-    const memory = new WebAssembly.Memory({initial: 48, maximum: PAGES});
+    const memory = new WebAssembly.Memory({initial: 48});
     instance = {memory, exports: new WebAssembly.Instance(kernelModule(), {env: {memory}}).exports};
   }
   return instance;

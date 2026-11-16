@@ -1,6 +1,7 @@
 import {fail} from './primitives.mjs';
+import {photoTarget} from '../photo-target.mjs';
 
-const MEASURES = new Set(['ssimulacra2', 'butteraugli', 'butteraugli3']);
+const MEASURES = /* @__PURE__ */ new Set(['ssimulacra2']);
 
 function soleKey(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -17,18 +18,9 @@ export function measuredFidelity(value) {
   return MEASURES.has(key);
 }
 
-const hundredfold = value => Math.round(value * 1e8) / 1e6;
-export const fidelityHint = value => ' Write fidelity: ' + `{quality: ${typeof value === 'number' && value > 0 && value < 1 ? Math.max(1, hundredfold(value))
-  : typeof value === 'number' && value >= 1 && value <= 100 ? value : 90}}.`;
-
-function retiredWebp(value) {
-  const webp = value.webp, number = typeof webp === 'number' && Number.isFinite(webp) && webp >= 0 && webp <= 1;
-  return fail('JXL_OPTIONS', 'webp is not a fidelity. Write fidelity: ' + (number ? webp === 1 ? "'exact'." : `{quality: ${Math.max(1, hundredfold(webp))}}.` : '{quality: 1 to 100}.'));
-}
-
 function qualityOf({quality}) {
   if (typeof quality !== 'number' || !Number.isFinite(quality) || quality < 1 || quality > 100)
-    throw fail('JXL_OPTIONS', 'quality is a number from 1 to 100; 100 is exact.' + (quality > 0 && quality < 1 ? fidelityHint(quality) : ''));
+    throw fail('JXL_OPTIONS', "Invalid quality; use a finite number from 1 to 100.");
   return quality;
 }
 
@@ -43,25 +35,22 @@ export function encodeFidelity(value = {quality: 90}) {
   }
   if (MEASURES.has(key)) {
     const score = value[key];
-    if (typeof score !== 'number' || !Number.isFinite(score)) throw fail('JXL_OPTIONS', `${key} is a finite number.`);
-    return {quality: 90, target: {[key]: score}};
+    if (typeof score !== 'number' || !Number.isFinite(score)) throw fail('JXL_OPTIONS', `Invalid ${key}; use a finite number.`);
+    return {quality: 90, target: photoTarget({[key]: score})};
   }
-  if (key === 'maxError') throw fail('JXL_OPTIONS', 'maxError is a capture setting: capture(screen, {fidelity: {maxError}}).');
-  if (key === 'webp') throw retiredWebp(value);
-  throw fail('JXL_OPTIONS', "fidelity is 'exact', {quality}, {ssimulacra2}, {butteraugli} or {butteraugli3}." + (typeof value === 'number' ? fidelityHint(value) : value === 'lossless' ? " Write fidelity: 'exact'." : ''));
+  throw fail('JXL_OPTIONS', "Invalid encode fidelity; use 'exact', {quality}, or {ssimulacra2}.");
 }
 
 export function captureFidelity(value = 'exact') {
   if (value === 'exact') return 0;
   const key = soleKey(value);
-  if (key === 'webp') throw retiredWebp(value);
-  if (key === 'quality') throw fail('JXL_UNSUPPORTED', 'Photo quality is offered by rapier-jxl/capture-complete.');
+  if (key === 'quality') throw fail('JXL_UNSUPPORTED', "This module does not encode photo quality; use rapier-jxl/capture-complete.");
   if (key === 'maxError') {
     const {maxError} = value;
-    if (!Number.isInteger(maxError) || maxError < 0 || maxError > 8) throw fail('JXL_OPTIONS', 'maxError is an integer from 0 to 8; 0 is exact.');
+    if (!Number.isInteger(maxError) || maxError < 0 || maxError > 8) throw fail('JXL_OPTIONS', "Invalid maxError; use an integer from 0 to 8.");
     return maxError;
   }
-  throw fail('JXL_OPTIONS', "fidelity is 'exact' or {maxError: 0 to 8}.");
+  throw fail('JXL_OPTIONS', "Invalid capture fidelity; use 'exact' or {maxError: 0 to 8}.");
 }
 
 export function capturePhotoFidelity(value = 'exact') {
@@ -71,6 +60,5 @@ export function capturePhotoFidelity(value = 'exact') {
     const qualityIntent = photoIntent(value);
     return qualityIntent === 1 ? {maxError: 0} : {qualityIntent};
   }
-  if (key === 'webp') throw retiredWebp(value);
-  throw fail('JXL_OPTIONS', "fidelity is 'exact', {maxError: 0 to 8} or {quality: 1 to 100}." + (typeof value === 'number' ? fidelityHint(value) : ''));
+  throw fail('JXL_OPTIONS', "Invalid capture fidelity; use 'exact', {maxError: 0 to 8}, or {quality: 1 to 100}.");
 }

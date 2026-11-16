@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 export function previewRelay(post, signal) {
+  const refs = {post, signal};
   let serial = 0, waiting = null, closed = false;
   const ack = sequence => {
     if (waiting?.sequence !== sequence) return;
@@ -7,8 +8,8 @@ export function previewRelay(post, signal) {
   };
   const close = () => {
     closed = true;
-    signal?.removeEventListener('abort', close);
-    signal = post = null;
+    refs.signal?.removeEventListener('abort', close);
+    refs.signal = refs.post = null;
     const pending = waiting; waiting = null; pending?.resolve();
   };
   const send = value => {
@@ -16,7 +17,7 @@ export function previewRelay(post, signal) {
     return new Promise(resolve => {
       const sequence = ++serial;
       waiting = {sequence, resolve};
-      try { post(value, sequence, [value.bytes.buffer]); }
+      try { refs.post(value, sequence, [value.bytes.buffer]); }
       catch { ack(sequence); }
     });
   };

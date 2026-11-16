@@ -1,26 +1,30 @@
 // SPDX-License-Identifier: MIT
+import {DECODER_SNAPSHOT} from '../shown-picture.mjs';
 import {SAVED, PASSED, tiledBytes, readEach, journalNext, journalRequest} from '../step-journal.mjs';
 import {sha256Start, sha256Update, sha256Finish} from '../sha256.mjs';
-import {boundedHeaderSteps} from './inspect.mjs';
-import {check, fail, JPEG_PIXELS, dimensions, object, pixelLimit, LARGEST} from './primitives.mjs';
-import {decodeGroupFile, decodeWholeFile, restorationSteps, verificationImageSteps, ownJPEGReference, jpegReferenceSteps, nativeVerification, shown} from './verify-decode.mjs';
+import {boundedHeaderSteps, firstFrameNoise} from './inspect.mjs';
+import {check, fail, PIXELS, dimensions, object, pixelLimit} from './primitives.mjs';
+import {decodeGroupFile, decodeWholeFile, decodeWithoutNoise, boundedWithoutNoise, needsSetup, readsWithoutNoise, restorationSteps, verificationImageSteps, ownJPEGReference, jpegReferenceSteps, nativeVerification, shown} from './verify-decode.mjs';
 import {fromDecoded} from './describe.mjs';
-import {pngWalk, pngLayout, pngRows, pngPassRows, pngOrientationLocation, crc32, unfilterRow} from '../source.mjs';
+import {pngLayout, pngRows, pngPassRows, pngOrientationLocation, unfilterRow, pngRowKernels} from '../source.mjs';
+import {pngWalk, crc32} from '../png-chunks.mjs';
 import {jpegDisplayDimensionsSteps} from './preparation-jpeg.mjs';
 import {scoreInSteps} from './verify-score.mjs';
 import {orientInSteps, resizeInSteps} from './verify-transforms.mjs';
 import {sampleView} from './verify-samples.mjs';
+import {verificationRows} from './verify-work.mjs';
 import {isImageResult} from './result-shape.mjs';
 const WHOLE_FRAME = Symbol.for('rapier-jxl.verify.whole-frame');
 import {storedIdentity} from './identity-record.mjs';
 import {refOf} from '../resumable-encode.mjs';
 
-const GROUP = 256, ROWS = 64, HASH_BYTES = 1 << 20;
+const GROUP = 256, HASH_BYTES = 1 << 20;
 const PROFILE_BYTES = 65536;
 const DECODE_FIELDS = ['format','extraChannels','colorEncoding','icc','rgbaColorEncoding','rgbaICC','alphaPremultiplied',
-  'orientation','orientationApplied','animation','bitDepth','sampleFormat','colorSpace','transferFunction','header'];
-const decodeOptions = ({signal,maxPixels}) => ({colorSpace:'original',applyOrientation:false,unpremultiplyAlpha:false,
-  renderSpotColors:false,maxPixels,signal});
+  'orientation','orientationApplied','animation','bitDepth','sampleFormat','colorSpace','transferFunction','header','colorScope'];
+const decodeOptions = options => ({colorSpace:'original',applyOrientation:false,unpremultiplyAlpha:false,
+  renderSpotColors:false,maxPixels:options.maxPixels,signal:options.signal,
+  ...(options && DECODER_SNAPSHOT in options && {[DECODER_SNAPSHOT]:options[DECODER_SNAPSHOT]})});
 const displaySize = picture => picture.orientation >= 5 ? {width:picture.height,height:picture.width}
   : {width:picture.width,height:picture.height};
 const isJXL = head => head[0] === 255 && head[1] === 10 || head[0] === 0 && head[4] === 74 && head[5] === 88 && head[6] === 76;
@@ -32,14 +36,16 @@ function fileBlob(bytes,BlobType = Blob) {
 async function pngReference(file,options,{journal},metadata = false) {
   const head = file.subarray(0,Math.min(file.length,32));
   if (![137,80,78,71,13,10,26,10].every((v,i) => head[i] === v)) return null;
-  if (head.length < 24) throw fail('JXL_INPUT','The PNG header is incomplete.');
+  if (head.length < 24) throw fail('JXL_INPUT',"Incomplete PNG header; pass the complete PNG file.");
   const view = new DataView(head.buffer,head.byteOffset,head.byteLength);
   dimensions(view.getUint32(16),view.getUint32(20),options.maxPixels);
-  return journal.tools.pngPixels(journal,file,{readAs:options.readAs,deep:true,orient:true,metadata,
+  await pngRowKernels();
+  const borrowed = Object.assign(request => journal(request.cold ? {...request,borrowed:true} : request),journal);
+  return journal.tools.pngPixels(borrowed,file,{readAs:options.readAs,deep:true,orient:true,metadata,
     reader:{pngWalk,pngLayout,pngRows,pngPassRows,pngOrientationLocation,unfilterRow}});
 }
 
-export async function nativeReferenceInSteps(bytes,size,options,context) {
+async function nativeReferenceInSteps(bytes,size,options,context) {
   const {journal,unit} = context, {nativeBitmap,requirePNGReader} = context.tools, head = bytes.subarray(0,Math.min(bytes.length,32));
   let geometry = size;
   if (head[0] === 255 && head[1] === 216)
@@ -71,8 +77,8 @@ export async function nativeReferenceInSteps(bytes,size,options,context) {
       const {value} = await unit('verify-native-group',async () => {
         blob ??= nativeSource();
         const picture = await nativeBitmap(blob,options,{maxPixels:options.maxPixels,signal:options.signal},
-          {region:{x,y,width:w,height:h},platform:() => 'Pass RGBA pixels, a 16-bit or transparent PNG Blob, or use recompress.'});
-        if (picture.width !== w || picture.height !== h) throw fail('JXL_PLATFORM','The native decoder returned the reference crop at the wrong size.');
+          {region:{x,y,width:w,height:h},platform:() => 'Pass RGBA pixels, or a PNG; for a JPEG use recompress from rapier-jxl/jpeg.'});
+        if (picture.width !== w || picture.height !== h) throw fail('JXL_PLATFORM',"Image decoder returned the wrong crop size; configure a decoder that preserves dimensions.");
         return {data:new Uint8Array(picture.data.buffer,picture.data.byteOffset,picture.data.byteLength),colorSpace:picture.colorSpace};
       },{cold:true,alone:true});
       description ??= {colorSpace:value.colorSpace};
@@ -85,8 +91,8 @@ export async function nativeReferenceInSteps(bytes,size,options,context) {
   return orientInSteps(picture,context);
 }
 
-export const verificationUnit = journal => async (name,run,flags = {}) => {
-  const saved = await journal({unit:name,...flags});
+const verificationUnit = journal => async (name,run,flags = {}) => {
+  const saved = await journal({unit:name,...flags,...(flags.cold && {borrowed:true})});
   if (saved && Object.hasOwn(saved,SAVED)) return {value:saved[SAVED]};
   let value;
   try { value = await run(); } catch (error) { await journal({unitFailed:name}); throw error; }
@@ -107,21 +113,21 @@ export function storedVerificationSteps(verify, ordinary) {
   return Object.freeze({id:'verify',eager:false,
     normalize(given,source) {
       const options = object(given), unknown = Object.keys(options).find(key => !['result','parts','maxPixels'].includes(key));
-      if (unknown) throw fail('JXL_OPTIONS',`A resumable verify takes result, parts and maxPixels; not ${unknown}.`);
+      if (unknown) throw fail('JXL_OPTIONS',`Unknown verification field: ${unknown}; use result, parts or maxPixels.`);
       const result = object(options.result,'Stored result');
       if (Object.hasOwn(result,'bytes') || Object.hasOwn(result,'verification') || !isImageResult({...result,bytes:Uint8Array.of(0)}))
-        throw fail('JXL_INPUT','A stored verification result is ImageResult metadata without bytes or a verification receipt.');
-      const maxPixels = options.maxPixels === undefined && result.kept === 'jpeg-bytes' ? JPEG_PIXELS : pixelLimit(options.maxPixels,LARGEST);
+        throw fail('JXL_INPUT','Stored verification metadata is invalid; pass the encode result without bytes or a verification receipt.');
+      const maxPixels = options.maxPixels === undefined && result.kept === 'jpeg-bytes' ? PIXELS : pixelLimit(options.maxPixels);
       dimensions(result.width,result.height,maxPixels);
       const kind = source.kind ?? 'pixels';
       if (kind === 'pixels') {
         dimensions(source.width,source.height,maxPixels);
         if (source.byteLength !== source.width * source.height * 4)
-          throw fail('JXL_INPUT','A resumable pixel source is straight RGBA8 rows: byteLength is width * height * 4.');
-      } else if (kind !== 'file') throw fail('JXL_INPUT','A resumable verification source is pixels or a file.');
+          throw fail('JXL_INPUT','Pixels need width * height * 4 RGBA8 bytes; pass kind: \'file\' for a PNG or JPEG.');
+      } else if (kind !== 'file') throw fail('JXL_INPUT',"Invalid verification source kind; use pixels or file.");
       if (!Array.isArray(options.parts) || !options.parts.length || options.parts.some(ref => !refOf(ref).length) ||
           options.parts.reduce((size,ref) => size + ref.length,0) > 0xffffffff)
-        throw fail('JXL_INPUT','A stored candidate has a nonempty ordered list of immutable byte parts.');
+        throw fail('JXL_INPUT',"Stored candidate has invalid parts; pass a nonempty ordered list of immutable byte parts.");
       return {options:{...options},maxPixels};
     },
     async run(plan,data,source,journal) {
@@ -137,18 +143,18 @@ export function storedVerificationSteps(verify, ordinary) {
         outputDigest:await outputDigest(bytes,journal),pixelResult:pixelResultInSteps,restored:restoredInSteps,maxPixels:plan.maxPixels});
       return {bytes:new Uint8Array(0),facts};
     },
-    ...(ordinary && {async straight(plan,data,source,signal,part) {
+    ...(ordinary && {async straight(plan,data,source,signal,part,host) {
       const pieces = [];
       for (const ref of plan.options.parts) pieces.push(await part(ref));
       const bytes = new Uint8Array(pieces.reduce((n,p) => n + p.length,0));
       let at = 0;
       for (const piece of pieces) { bytes.set(piece,at); at += piece.length; }
       const original = (source.kind ?? 'pixels') === 'file' ? data : {data,width:source.width,height:source.height,...(source.colorSpace && {colorSpace:source.colorSpace})};
-      const facts = await ordinary(original,{...plan.options.result,bytes},{signal,maxPixels:plan.maxPixels});
+      const facts = await ordinary(original,{...plan.options.result,bytes},{signal,maxPixels:plan.maxPixels,...(host && DECODER_SNAPSHOT in host && {[DECODER_SNAPSHOT]:host[DECODER_SNAPSHOT]})});
       return {bytes:new Uint8Array(0),facts};
     }}),
     record(bytes,plan,source,facts) {
-      if (bytes.length || facts?.verified !== true) throw fail('JXL_INPUT','The verification job has no completed receipt.');
+      if (bytes.length || facts?.verified !== true) throw fail('JXL_INPUT',"Verification job has no completed receipt; finish advancing it before reading its result.");
       return facts;
     }});
 }
@@ -172,9 +178,9 @@ async function drain(steps,journal) {
 }
 
 export async function restoredInSteps(bytes,expected,options,context) {
-  const steps = context.restoreSteps ?? restorationSteps();
-  if (!steps?.open || !steps?.normalize) throw fail('JXL_UNSUPPORTED','Bounded JPEG verification needs rapier-jxl/jpeg\'s restore.');
-  const maxPixels = Math.min(options.maxPixels,JPEG_PIXELS), plan = steps.normalize({maxPixels});
+  const steps = context.restoreSteps ?? restorationSteps(context);
+  if (!steps?.open || !steps?.normalize) throw fail('JXL_PLATFORM','JPEG verification has no restoration function; configureDecoder with restore from rapier-jxl/jpeg.');
+  const maxPixels = Math.min(options.maxPixels,PIXELS), plan = steps.normalize({maxPixels});
   const restored = await drain(steps.open(plan,bytes),context.journal), unit = verificationUnit(context.journal);
   let state = {hash:sha256Start(),equal:restored.bytes.length === expected.length};
   for (let at = 0; at < restored.bytes.length; at += HASH_BYTES) {
@@ -191,59 +197,121 @@ export async function restoredInSteps(bytes,expected,options,context) {
   return {size,equal:state.equal,digest:'sha256:' + sha256Finish(state.hash)};
 }
 
-async function decodedGroups(bytes,options,{journal,unit,tools},hostOnly = false) {
+const GROUP_PIECE_ROWS = 64;
+async function decodedGroups(bytes,options,{journal,unit,tools},hostOnly = false,djxl = false,withoutNoise = false) {
   const {nativePictureWith,NATIVE_PICTURE_OPTIONS} = tools;
   const info = await drain(boundedHeaderSteps(bytes),journal);
   dimensions(info.width,info.height,options.maxPixels);
-  if (info.animation) throw fail('JXL_UNSUPPORTED','Bounded verification requires a still image.');
-  const {value:native} = await unit('verify-decode-reader',() => !hostOnly && nativeVerification(info,decodeOptions(options)));
+  if (info.animation) throw fail('JXL_UNSUPPORTED','Resumable verification cannot read an animation; verify the complete result with verify().');
+  const {value:native} = await unit('verify-decode-reader',() => !hostOnly && nativeVerification(info,decodeOptions(options),true));
+  const complete = () => wholeDecoded(bytes,info,options,unit,djxl && !native ? tools : null,withoutNoise ? withoutNoiseFile : decodeWholeFile);
   const opened = native ? null : await drain(verificationImageSteps(bytes,decodeOptions(options)),journal);
   const group = native ? GROUP : opened.group;
-  if (![128,256,512,1024].includes(group)) throw fail('JXL_DECODE','The decoder returned an invalid physical group size.');
-  const bands = [];
-  let description, Type, blob;
+  if (![128,256,512,1024].includes(group)) throw fail('JXL_DECODE',"Decoder returned an invalid group size; configure a decoder that returns complete JPEG XL groups.");
+  let blob, firstData = null;
+  const decodeTile = async (x,y,width,height) => {
+    let picture;
+    try {
+      picture = native ? shown(info,await nativePictureWith(bytes.subarray(0,Math.min(bytes.length,32)),
+        {width,height,colorSpace:info.colorEncoding.primaries,maxPixels:options.maxPixels,signal:options.signal},(makeBitmap,BlobType) => {
+          blob ??= fileBlob(bytes,BlobType);
+          return () => makeBitmap.call(globalThis,blob,x,y,width,height,NATIVE_PICTURE_OPTIONS);
+        }),native) : await decodeGroupFile(bytes,{...decodeOptions(options),region:{x,y,width,height},
+          maxTotalSamples:Math.max(1048576,GROUP * GROUP * 108)},opened,withoutNoise);
+    } catch (error) { if (!native && error?.[WHOLE_FRAME] === true) return {whole:true}; throw error; }
+    if (![Uint8Array,Uint8ClampedArray,Uint16Array,Float32Array].some(T => picture.data instanceof T) || picture.width !== width || picture.height !== height)
+      throw fail('JXL_UNSUPPORTED',"Decoder returned incomplete sample groups; configure a decoder that returns complete typed RGBA groups.");
+    return {type:picture.data instanceof Uint16Array ? 'Uint16Array' : picture.data instanceof Float32Array ? 'Float32Array' : 'Uint8Array',
+      data:new Uint8Array(picture.data.buffer,picture.data.byteOffset,picture.data.byteLength),description:Object.fromEntries(DECODE_FIELDS.filter(key => picture[key] !== undefined)
+      .map(key => [key,key === 'extraChannels' ? picture[key].map(({data,plane,...channel}) => channel) : picture[key]]))};
+  };
+  const {value:first} = await unit('verify-decode-description',async () => {
+    const picture = await decodeTile(0,0,Math.min(group,info.width),Math.min(group,info.height));
+    if (picture.whole) return picture;
+    firstData = picture.data;
+    return {type:picture.type,description:picture.description};
+  });
+  if (first.whole) return complete();
+  const description = first.description, Type = {Uint8Array,Uint16Array,Float32Array}[first.type], bands = [], size = Type.BYTES_PER_ELEMENT;
+  const dithered = djxl && !native && !!tools.nativeGammaRGBA && first.type === 'Uint8Array' && description.bitDepth === 8 &&
+    description.sampleFormat === 'uint' && description.colorSpace === 'srgb' && description.transferFunction === 'srgb' &&
+    (description.orientation === 1 || description.orientationApplied) && !description.animation;
+  let nativeBands = dithered ? [] : null;
+  const djxlGroup = async (x,y,width,height) => {
+    let float;
+    try { float = await decodeGroupFile(bytes,{...decodeOptions(options),colorSpace:'srgb',format:'float32',region:{x,y,width,height},
+      maxTotalSamples:Math.max(1048576,GROUP * GROUP * 108)},opened,withoutNoise); }
+    catch (error) { check(options.signal); if (error?.code === 'JXL_UNSUPPORTED' || needsSetup(error)) return null; throw error; }
+    const n = width * height, data = float.data, channels = data.length / n;
+    if (!(data instanceof Float32Array) || (channels !== 3 && channels !== 4)) return null;
+    const planes = [new Float32Array(n),new Float32Array(n),new Float32Array(n)];
+    for (let i = 0,at = 0; i < n; i++,at += channels) for (let c = 0; c < 3; c++) planes[c][i] = data[at + c];
+    const out = tools.nativeGammaRGBA(planes,width,height,{x,y});
+    for (let i = 0; i < n; i++) out[i * 4 + 3] = channels === 4 ? Math.round(Math.min(1,Math.max(0,data[i * 4 + 3])) * 255) : 255;
+    return out;
+  };
   for (let y = 0; y < info.height; y += group) {
-    const band = [];
+    const height = Math.min(group,info.height - y), band = Array.from({length:Math.ceil(height / GROUP_PIECE_ROWS)},() => []);
+    const nativeBand = nativeBands && band.map(() => []);
     for (let x = 0; x < info.width; x += group) {
-      const width = Math.min(group,info.width - x), height = Math.min(group,info.height - y);
-      const {value} = await unit('verify-decode-group',async () => {
-        let picture;
-        try {
-          picture = native ? shown(info,await nativePictureWith(bytes.subarray(0,Math.min(bytes.length,32)),
-            {width,height,colorSpace:info.colorEncoding.primaries,maxPixels:options.maxPixels,signal:options.signal},(makeBitmap,BlobType) => {
-              blob ??= fileBlob(bytes,BlobType);
-              return () => makeBitmap.call(globalThis,blob,x,y,width,height,NATIVE_PICTURE_OPTIONS);
-            })) : await decodeGroupFile(bytes,{...decodeOptions(options),region:{x,y,width,height},
-              maxTotalSamples:Math.max(1048576,GROUP * GROUP * 108)},opened);
-        } catch (error) { if (!native && error?.[WHOLE_FRAME] === true) return {whole:true}; throw error; }
-        if (![Uint8Array,Uint8ClampedArray,Uint16Array,Float32Array].some(T => picture.data instanceof T) || picture.width !== width || picture.height !== height)
-          throw fail('JXL_UNSUPPORTED','Bounded verification needs complete typed RGBA groups.');
-        return {type:picture.data instanceof Uint16Array ? 'Uint16Array' : picture.data instanceof Float32Array ? 'Float32Array' : 'Uint8Array',
-          data:new Uint8Array(picture.data.buffer,picture.data.byteOffset,picture.data.byteLength),description:Object.fromEntries(DECODE_FIELDS.filter(key => picture[key] !== undefined)
-          .map(key => [key,key === 'extraChannels' ? picture[key].map(({data,plane,...channel}) => channel) : picture[key]]))};
-      },{cold:true,alone:true});
-      if (value.whole) return wholeDecoded(bytes,info,options,unit);
-      description ??= value.description;
-      Type ??= {Uint8Array,Uint16Array,Float32Array}[value.type];
-      band.push(value.data);
+      const width = Math.min(group,info.width - x), rowBytes = width * 4 * size;
+      let samples = null;
+      for (let p = 0; p < band.length; p++) {
+        const {value} = await unit(p ? 'verify-decode-group-rows' : 'verify-decode-group',async () => {
+          if (!samples) {
+            if (!x && !y && firstData) samples = firstData;
+            else { const picture = await decodeTile(x,y,width,height); if (picture.whole) return picture; samples = picture.data; }
+          }
+          return samples.slice(p * GROUP_PIECE_ROWS * rowBytes,Math.min(height,(p + 1) * GROUP_PIECE_ROWS) * rowBytes);
+        },{cold:true,alone:true,...(p && {tail:true})});
+        if (!(value instanceof Uint8Array) && value.whole) return complete();
+        band[p].push(value);
+      }
+      firstData = null;
+      let shown = null;
+      if (nativeBands) for (let p = 0; p < band.length; p++) {
+        const {value} = await unit(p ? 'verify-djxl-group-rows' : 'verify-djxl-group',async () => {
+          shown ??= await djxlGroup(x,y,width,height);
+          return shown && shown.slice(p * GROUP_PIECE_ROWS * width * 4,Math.min(height,(p + 1) * GROUP_PIECE_ROWS) * width * 4);
+        },{cold:true,alone:true,...(p && {tail:true})});
+        if (value === null) { nativeBands = null; break; }
+        nativeBand[p].push(value);
+      }
     }
-    bands.push(band);
+    bands.push(...band);
+    if (nativeBands) nativeBands.push(...nativeBand);
   }
-  const size = Type.BYTES_PER_ELEMENT;
   return {...description,width:info.width,height:info.height,
-    data:sampleView(tiledBytes(bands,info.width * size,info.height,group,group * size,journal.touched),Type)};
+    data:sampleView(tiledBytes(bands,info.width * size,info.height,GROUP_PIECE_ROWS,group * size,journal.touched),Type),
+    ...(nativeBands && {native:sampleView(tiledBytes(nativeBands,info.width,info.height,GROUP_PIECE_ROWS,group,journal.touched),Uint8Array)})};
 }
 
-async function wholeDecoded(bytes,info,options,unit) {
+async function wholeDecoded(bytes,info,options,unit,tools = null,decodeAll = decodeWholeFile) {
   const {value} = await unit('verify-decode-whole',async () => {
-    const picture = await decodeWholeFile(bytes,decodeOptions(options));
+    const picture = await decodeAll(bytes,decodeOptions(options));
     if (![Uint8Array,Uint8ClampedArray,Uint16Array,Float32Array].some(T => picture.data instanceof T) || picture.width !== info.width || picture.height !== info.height)
-      throw fail('JXL_UNSUPPORTED','Verification needs a complete typed RGBA picture.');
+      throw fail('JXL_UNSUPPORTED',"Decoder returned an incomplete picture; configure a decoder that returns complete typed RGBA samples.");
     return {type:picture.data instanceof Uint16Array ? 'Uint16Array' : picture.data instanceof Float32Array ? 'Float32Array' : 'Uint8Array',
       data:new Uint8Array(picture.data.buffer,picture.data.byteOffset,picture.data.byteLength),description:Object.fromEntries(DECODE_FIELDS.filter(key => picture[key] !== undefined)
       .map(key => [key,key === 'extraChannels' ? picture[key].map(({data,plane,...channel}) => channel) : picture[key]]))};
   },{cold:true,alone:true});
-  return {...value.description,width:info.width,height:info.height,data:sampleView(value.data,{Uint8Array,Uint16Array,Float32Array}[value.type])};
+  const d = value.description, read = tools?.nativeGammaRGBA && value.type === 'Uint8Array' && d.bitDepth === 8 && d.sampleFormat === 'uint' &&
+    d.colorSpace === 'srgb' && d.transferFunction === 'srgb' && (d.orientation === 1 || d.orientationApplied) && !d.animation;
+  let native = null;
+  if (read) ({value:native} = await unit('verify-djxl-whole',async () => {
+    let float;
+    try { float = await decodeAll(bytes,{...decodeOptions(options),colorSpace:'srgb',format:'float32'}); }
+    catch (error) { check(options.signal); if (error?.code === 'JXL_UNSUPPORTED' || needsSetup(error)) return null; throw error; }
+    const n = info.width * info.height, data = float.data, channels = data.length / n;
+    if (!(data instanceof Float32Array) || (channels !== 3 && channels !== 4) || float.width !== info.width || float.height !== info.height) return null;
+    const planes = [new Float32Array(n),new Float32Array(n),new Float32Array(n)];
+    for (let i = 0,at = 0; i < n; i++,at += channels) for (let c = 0; c < 3; c++) planes[c][i] = data[at + c];
+    const out = tools.nativeGammaRGBA(planes,info.width,info.height);
+    for (let i = 0; i < n; i++) out[i * 4 + 3] = channels === 4 ? Math.round(Math.min(1,Math.max(0,data[i * 4 + 3])) * 255) : 255;
+    return out;
+  },{cold:true,alone:true}));
+  return {...d,width:info.width,height:info.height,data:sampleView(value.data,{Uint8Array,Uint16Array,Float32Array}[value.type]),
+    ...(native && {native:sampleView(native,Uint8Array)})};
 }
 
 async function referenceInSteps(original,options,context) {
@@ -254,34 +322,52 @@ async function referenceInSteps(original,options,context) {
     const head = original.subarray(0,Math.min(original.length,32));
     if (isJXL(head)) picture = options.readAs === undefined ? fromDecoded(await decodedGroups(original,options,context))
       : await nativeReferenceInSteps(original,options.size,options,context);
-    else if (head[0] === 255 && head[1] === 216 && options.readAs === undefined && ownJPEGReference()) {
-      const steps = jpegReferenceSteps();
-      if (!steps) throw fail('JXL_UNSUPPORTED','Bounded JPEG references here need configureDecoder(decode, restore) with rapier-jxl/jpeg\'s restore.');
+    else if (head[0] === 255 && head[1] === 216 && options.readAs === undefined && ownJPEGReference(context)) {
+      const steps = jpegReferenceSteps(context);
+      if (!steps) throw fail('JXL_PLATFORM','JPEG verification has no restoration function; configureDecoder with restore from rapier-jxl/jpeg.');
       await steps.prepare?.();
-      const encoded = await drain(steps.open(steps.normalize({effort:1,maxPixels:Math.min(options.maxPixels,JPEG_PIXELS)}),original),context.journal);
+      const encoded = await drain(steps.open(steps.normalize({effort:1,maxPixels:Math.min(options.maxPixels,PIXELS)}),original),context.journal);
       picture = fromDecoded(await decodedGroups(encoded.bytes,options,context,true)); orient = true;
     }
     else { picture = await pngReference(original,options,context); orient = !!picture; }
     if (!picture) {
       if (head[0] === 255 && head[1] === 216 || [137,80,78,71,13,10,26,10].every((v,i) => head[i] === v))
         picture = await nativeReferenceInSteps(original,options.size,options,context);
-      else throw fail('JXL_UNSUPPORTED','This source needs a bounded reference reader for verification.');
+      else throw fail('JXL_UNSUPPORTED','This source cannot be read in resumable verification; verify the complete result with verify().');
     }
   }
   if (orient || options.transform) picture = await orientInSteps(picture,context);
+  if (options.transform?.resizer === 'browser') throw fail('JXL_UNSUPPORTED','Browser-resized output cannot use resumable verification; call verify() on its complete result.');
   if (options.transform) picture = await resizeInSteps(picture,options.transform.width,options.transform.height,options,context);
   return picture;
 }
 
-export async function pixelResultInSteps(bytes,original,{fidelity,format,size,outputDigest,details,options},context) {
+const withoutNoiseFile = async (file,options) => await decodeWithoutNoise(file,options) ?? Promise.reject(fail('JXL_UNSUPPORTED',"Decoder cannot read samples without noise; configure a decoder that provides them."));
+
+async function noiseOffInSteps(bytes,reference,decoded,decodedEvidence,compared,fidelity,options,context) {
+  const decodedScore = decodedEvidence.proof.score, {value:carries} = await context.unit('verify-noise-flag',() => firstFrameNoise(bytes));
+  if (carries === false) return decodedEvidence;
+  if (!readsWithoutNoise(options)) return carries === true && compared.alphaExact ? context.tools.noiseUnread(decodedEvidence) : decodedEvidence;
+  const plain = boundedWithoutNoise(options) ? await decodedGroups(bytes,options,context,true,true,true)
+    : await wholeDecoded(bytes,{width:decoded.width,height:decoded.height},options,context.unit,context.tools,withoutNoiseFile);
+  let readings = 0;
+  const evidence = await context.tools.pixelEvidence(reference,plain,fidelity,options,compared,
+    (before,after,profile,encoding,_options,arithmetic) => scoreInSteps(before,after,profile,encoding,
+      arithmetic === 'libjxl' ? context : readings++ ? namedContext(context,'djxl-') : context,arithmetic));
+  return {...evidence,proof:{...evidence.proof,view:'without-noise',...(Number.isFinite(decodedScore) && {decodedScore})}};
+}
+
+export async function pixelResultInSteps(bytes,original,{fidelity,format,size,outputDigest,details,options,noiseOff = false},context) {
   const {comparison,comparisonContext,pictureICC,conversionProfile,sameBytes,pixelEvidence,protectionDomain,protectionEvidence,
     describedIdentity,sampleBytes,profileTransformSteps} = context.tools;
   const unit = verificationUnit(context.journal), here = {...context,unit};
-  const reference = await referenceInSteps(original,{...options,size},namedContext(here,'reference-'));
+  const withSnap = {...options, ...(context && DECODER_SNAPSHOT in context && {[DECODER_SNAPSHOT]:context[DECODER_SNAPSHOT]})};
+  const reference = await referenceInSteps(original,{...withSnap,size},namedContext(here,'reference-'));
   const outputContext = namedContext(here,'output-');
-  const decoded = format === 'jxl' ? await decodedGroups(bytes,options,outputContext)
+  const djxl = format === 'jxl' && fidelity !== 'exact' && !!context.tools.measurementTarget && context.tools.measurementTarget(fidelity,options).metric === 'ssimulacra2';
+  const decoded = format === 'jxl' ? await decodedGroups(bytes,withSnap,outputContext,false,djxl)
     : await pngReference(bytes,{...options,readAs:undefined},outputContext);
-  if (!decoded) throw fail('JXL_UNSUPPORTED','This output needs a bounded verification reader.');
+  if (!decoded) throw fail('JXL_UNSUPPORTED','This output cannot be read in resumable verification; verify the complete result with verify().');
   if (options.protection) protectionDomain(options.protection,reference,decoded);
   const a = pictureICC(reference), b = pictureICC(decoded);
   let equalICC = !!a && !!b && a.length === b.length;
@@ -295,18 +381,22 @@ export async function pixelResultInSteps(bytes,original,{fidelity,format,size,ou
   const profileInput = conversionProfile(reference,decoded);
   const transform = profileInput ? await drain(profileTransformSteps(profileInput),context.journal) : null;
   const {value:meaning} = await unit('verify-compare-description',() => comparisonContext(reference,decoded,
-    transform && !transform.gray ? transform : null,equalICC));
+    transform,equalICC));
   const knownIdentity = reference === original ? context.sourceIdentity : null;
   let state = {compared:comparison({...reference,data:new reference.data.constructor(0)},{...decoded,data:new decoded.data.constructor(0)},options.protection,0,meaning),
     hash:knownIdentity ? null : sha256Start()};
-  for (let y = 0; y < reference.height; y += ROWS) {
-    const height = Math.min(ROWS,reference.height - y);
+  const rowLimit = verificationRows(reference.width);
+  for (let y = 0; y < reference.height; y += rowLimit) {
+    const height = Math.min(rowLimit,reference.height - y);
     const {value} = await unit('verify-compare-rows',() => {
+      for (const picture of [reference,decoded]) picture.data.ahead?.(y * picture.width * 4,(y + height) * picture.width * 4);
       const [before,after] = readEach([reference,decoded].map(picture => () => ({...picture,height,
         data:picture.data.subarray(y * picture.width * 4,(y + height) * picture.width * 4)})));
       const measured = comparison(before,after,options.protection,y * reference.width,meaning), previous = state.compared;
       const compared = {...previous,...measured,exact:previous.exact && measured.exact,alphaExact:previous.alphaExact && measured.alphaExact,
         supported:previous.supported && measured.supported,maxError:Math.max(previous.maxError,measured.maxError),
+        ...((previous.colorScope || measured.colorScope) && {colourSamples:(previous.colourSamples ?? 0) + (measured.colourSamples ?? 0),
+          visible:Boolean(previous.visible || measured.visible)}),
         ...(options.protection && {protectedSamples:previous.protectedSamples + (measured.protectedSamples ?? 0),
           protectedExact:previous.protectedExact && measured.protectedExact === true})};
       return {compared,hash:state.hash && sha256Update(state.hash,sampleBytes(before.data))};
@@ -322,9 +412,13 @@ export async function pixelResultInSteps(bytes,original,{fidelity,format,size,ou
       }
       return 'sha256:' + sha256Finish(hash);
     });
-  const evidence = protectionEvidence(await pixelEvidence(reference,decoded,fidelity,options,state.compared,
-    (before,after,profile,encoding) => scoreInSteps(before,after,profile,encoding,here)),state.compared,options);
+  let readings = 0, evidence = await pixelEvidence(reference,decoded,fidelity,options,state.compared,
+    (before,after,profile,encoding,_options,arithmetic) => scoreInSteps(before,after,profile,encoding,
+      arithmetic === 'libjxl' ? here : readings++ ? namedContext(here,'djxl-') : here,arithmetic));
+  if (noiseOff && format === 'jxl' && evidence.proof.metric === 'ssimulacra2')
+    evidence = await noiseOffInSteps(bytes,reference,decoded,evidence,state.compared,fidelity,withSnap,namedContext(here,'noise-off-'));
+  evidence = protectionEvidence(evidence,state.compared,options);
   check(options.signal);
   return {...displaySize(decoded),kept:evidence.kept,proof:{...evidence.proof,outputDigest,referenceDigest:referenceIdentity.digest,...details},
-    fits:evidence.proof.verified,...(evidence.reason && {reason:evidence.reason})};
+    meetsTarget:evidence.proof.verified,...(evidence.reason && {reason:evidence.reason})};
 }

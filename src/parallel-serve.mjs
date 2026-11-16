@@ -1,18 +1,22 @@
 // SPDX-License-Identifier: MIT
+import {fault} from './fault.mjs';
 import {complete} from './bits.mjs';
 import {varDCTSteps, seedLfSections} from './vardct.mjs';
 import {coefficientOrders} from './coefficient-effort.mjs';
 import {buildAnsCoding, writeModularAnsHistograms} from './ans.mjs';
-import {lfCoder, lfCoderFor, fixedLfCoder, quickOrFixedLfCoder, fastOrFixedLfCoder, jpegBroadOrFixedLfCoder} from './lf-coding.mjs';
+import {lfCoder, lfCoderFor, monotonicLfCoderFor, fixedLfCoder, quickOrFixedLfCoder, jpegBroadOrFastLfCoder} from './lf-coding.mjs';
 import {photoXYBBand, placeBand} from './photo-bands.mjs';
 import {photoXYBSteps} from './photo-xyb.mjs';
 import {TokenCounts} from './entropy.mjs';
-import {acGroupEncoder} from './ac-group.mjs';
 import {V6, GABORISH, UPLOAD_PICTURE} from './photo-v6.mjs';
 import {uploadBandPicture, SMALL_V6} from './photo-v6-settings.mjs';
-import {configureKernels, disableEntropyKernels} from './kernels.mjs';
+import {ensureKernels, disableEntropyKernels, lendEntropy} from './kernels.mjs';
+import {holdEntropy, releaseEntropy} from './kernel-hooks.mjs';
+import {scoreBandOutputs, scoreBandWorkspace} from './photo-band-score.mjs';
+const scoreBand = (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ||
+  (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : scoreBandOutputs;
 
-const LF_CODERS = [...Array.from({length: 10}, (_, e) => e ? lfCoderFor(e) : null), fixedLfCoder, quickOrFixedLfCoder, lfCoder('jpegBroad'), fastOrFixedLfCoder, jpegBroadOrFixedLfCoder];
+const LF_CODERS = [...Array.from({length: 10}, (_, e) => e ? lfCoderFor(e) : null), fixedLfCoder, quickOrFixedLfCoder, lfCoder('jpegBroad'), monotonicLfCoderFor(8), jpegBroadOrFastLfCoder];
 const PLAN_KEYS = new Set(['fast', 'clusters', 'orders', 'coding', 'modularAns', 'lfCoder']);
 export function describePlan(plan) {
   for (const key of Object.keys(plan)) if (plan[key] !== undefined && !PLAN_KEYS.has(key)) return null;
@@ -38,14 +42,20 @@ function cacheOf(image, plan, counts) {
     dcSections: null, ansDcSections: null, lfSections: null, modularAns: null, lfCoder: null, modular16bit: true} : {};
 }
 
-const inputs = new Map(), encoders = new Map();
+const inputs = new Map();
+let scoreWorkspace = null;
 export function serveParallel(message) {
   disableEntropyKernels();
-  if (message.kernels !== undefined) { configureKernels(message.kernels); return null; }
+  if (message.kernels !== undefined) { ensureKernels(); return null; }
   if (message.input !== undefined) { inputs.set(message.input, message.value); return null; }
-  if (message.drop !== undefined) { inputs.delete(message.drop); encoders.delete(message.drop); return null; }
+  if (message.drop !== undefined) { inputs.delete(message.drop); return null; }
   const {id, task} = message;
   try {
+    if (task.kind === 'score-band' && scoreBand) {
+      scoreWorkspace ??= scoreBandWorkspace(task.width, task.height);
+      const {pack, own} = scoreBand(task.recipe, task.rows, task.top, task.width, task.height, task.y0, task.y1, scoreWorkspace, task.into);
+      return [{id, result: {input: task.input, pack, own}}, [task.input, pack.buffer, own.buffer]];
+    }
     if (task.kind === 'band' || task.kind === 'fast-band') {
       const data = inputs.get(task.data), {width, h, quality, color, from, to, y} = task, v6 = task.small ? SMALL_V6 : V6;
       const picture = task.fast ? uploadBandPicture(task.uploadFlat, task.uploadGrain, quality)
@@ -63,32 +73,31 @@ export function serveParallel(message) {
       if (result.cfl) transfer.push(result.cfl.x.buffer, result.cfl.b.buffer);
       return [{id, result}, transfer];
     }
-    if (task.kind === 'count') {
-      const image = inputs.get(task.image), part = complete(varDCTSteps(image, {...rebuildPlan(task.plan), countGroups: [task.from, task.to]}));
-      return [{id, result: part}, [part.counts.small.buffer, part.counts.totals.buffer, ...part.blockCounts.filter(Boolean).map(b => b.buffer)]];
-    }
-    if (task.kind === 'ac') {
-      let encoder = encoders.get(task.model);
-      if (!encoder) encoders.set(task.model, encoder = acGroupEncoder(inputs.get(task.model)));
-      const results = task.groups.map(data => encoder(data));
-      return [{id, result: results}, results.map(r => r.bytes.buffer)];
-    }
     if (task.kind === 'orders') return [{id, result: coefficientOrders(inputs.get(task.image).components)}, []];
-    if (task.kind === 'lf') {
-      const image = inputs.get(task.image), group = complete(varDCTSteps(image, {...rebuildPlan(task.plan), lfGroup: task.g}));
-      return [{id, result: group}, [group.bytes.buffer]];
-    }
-    if (task.kind === 'vardct') {
-      const image = inputs.get(task.image), plan = rebuildPlan(task.plan);
-      if (task.lf) seedLfSections(image, plan, task.lf);
-      const bytes = complete(varDCTSteps(image, plan, cacheOf(image, plan, task.counts)));
-      return [{id, result: bytes}, [bytes.buffer]];
-    }
-    if (task.kind === 'write') {
-      const image = inputs.get(task.image), plan = rebuildPlan(task.plan);
-      const written = complete(varDCTSteps(image, {...plan, writeGroups: [task.from, task.to]}, cacheOf(image, plan, task.counts)));
-      return [{id, result: written}, written.map(w => w.bytes.buffer)];
-    }
-    throw new Error('Unknown parallel task.');
+    if (VARDCT_TASKS.has(task.kind)) { holdEntropy(lendEntropy); try { return vardctTask(id, task); } finally { releaseEntropy(); } }
+    throw fault('JXL_INTERNAL', 'Unknown parallel task.');
   } catch (error) { return [{id, error: {name: error?.name, code: error?.code, message: error?.message}}, []]; }
+}
+
+const VARDCT_TASKS = new Set(['count', 'lf', 'vardct', 'write']);
+function vardctTask(id, task) {
+  if (task.kind === 'count') {
+    const image = inputs.get(task.image), part = complete(varDCTSteps(image, {...rebuildPlan(task.plan), countGroups: [task.from, task.to]}));
+    return [{id, result: part}, [part.counts.small.buffer, part.counts.totals.buffer, ...part.blockCounts.filter(Boolean).map(b => b.buffer)]];
+  }
+  if (task.kind === 'lf') {
+    const image = inputs.get(task.image), group = complete(varDCTSteps(image, {...rebuildPlan(task.plan), lfGroup: task.g}));
+    return [{id, result: group}, [group.bytes.buffer]];
+  }
+  if (task.kind === 'vardct') {
+    const image = inputs.get(task.image), plan = rebuildPlan(task.plan);
+    if (task.lf) seedLfSections(image, plan, task.lf);
+    const bytes = complete(varDCTSteps(image, plan, cacheOf(image, plan, task.counts)));
+    return [{id, result: bytes}, [bytes.buffer]];
+  }
+  if (task.kind === 'write') {
+    const image = inputs.get(task.image), plan = rebuildPlan(task.plan);
+    const written = complete(varDCTSteps(image, {...plan, writeGroups: [task.from, task.to]}, cacheOf(image, plan, task.counts)));
+    return [{id, result: written}, written.map(w => w.bytes.buffer)];
+  }
 }

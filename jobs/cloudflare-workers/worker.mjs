@@ -1,8 +1,8 @@
 // The rapier-jxl self-test in Cloudflare's runtime (wrangler dev): open http://localhost:8787 for the results file.
-import {encode} from 'rapier-jxl';
-import {recompress, restore} from 'rapier-jxl/jpeg';
-import {decode} from 'rapier-jxl/decode';
-import {verify, configureDecoder} from 'rapier-jxl/verify';
+import {encode} from 'jpegxl';
+import {recompress, restore} from 'jpegxl/jpeg';
+import {decode} from 'jpegxl/decode';
+import {verify, configureDecoder} from 'jpegxl/verify';
 import {selftest} from './selftest.mjs';
 import manifest from '../pictures/manifest.json';
 import screenshot from '../pictures/screenshot-mdn.png';

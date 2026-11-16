@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Image to JPEG XL</title>
+<!-- After `npm install jpegxl`, serve the project folder over HTTP and open this page where it is, in
+     node_modules/jpegxl/examples/. No bundler: the module is a path, as a bare name needs an import map. -->
+<input id="pick" type="file" accept="image/*">
+<a id="save" hidden>Download .jxl</a>
+<p id="out"></p>
+<script type="module">
+  import {encode} from '../dist/upload.mjs';
+  let downloadURL;
+  pick.onchange = async () => {
+    const file = pick.files[0], result = await encode(file, {fidelity: {quality: 82}});
+    const next = URL.createObjectURL(new Blob([result.bytes], {type: 'image/jxl'}));
+    if (downloadURL) URL.revokeObjectURL(downloadURL);
+    save.href = downloadURL = next;
+    save.download = file.name.replace(/\.[^.]+$/, '') + '.jxl';
+    save.hidden = false;
+    out.textContent = `${file.size} -> ${result.bytes.length} bytes, ${result.width}x${result.height}`;
+  };
+  addEventListener('pagehide', event => {
+    if (!event.persisted && downloadURL) URL.revokeObjectURL(downloadURL);
+  });
+</script>

@@ -24,14 +24,6 @@ export function predictDCT8NonZero(row, x, y, count) {
   return predicted;
 }
 
-export function predictStrategyNonZero(row, x, y, count, width, height, area) {
-  const predicted = x === 0 ? (y === 0 ? 32 : row[(y - 1) * 32]) : y === 0 ? row[x - 1] :
-    (row[(y - 1) * 32 + x] + row[y * 32 + x - 1] + 1) >> 1;
-  const average = Math.ceil(count / area);
-  for (let by = 0; by < height; by++) for (let bx = 0; bx < width; bx++) row[(y + by) * 32 + x + bx] = average;
-  return predicted;
-}
-
 export function emitACRanks(coeffs, base, order, from, to, left, prev, offset, area, ctxs, values, n,
   progression, pass = 0, width = 8, height = 8, transpose = false, tail) {
   let k = from;

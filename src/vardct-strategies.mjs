@@ -158,7 +158,7 @@ export function smallTransform(pixels, id, out = new Float64Array(64)) {
 const INV_SMALL_WORK = new Float64Array(64), INV_SMALL_SCRATCH = new Float64Array(64), INV_SMALL_PART = new Float64Array(32);
 export function inverseSmallTransform(coefficients, id, out = new Float64Array(64)) {
   if (![1, 2, 3, 12, 13, 14, 15, 16, 17].includes(id) || coefficients.length < 64 || out.length < 64)
-    throw new RangeError('Invalid small JPEG XL transform.');
+    throw fault('JXL_INTERNAL', 'Invalid small JPEG XL transform.');
   const work = INV_SMALL_WORK, scratch = INV_SMALL_SCRATCH, part = INV_SMALL_PART;
   const copyBlock = (src, left, top, width, height) => {
     for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) out[(top + y) * 8 + left + x] = src[y * width + x];

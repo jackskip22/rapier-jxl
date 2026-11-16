@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: MIT
+import {fault} from './fault.mjs';
+import {gpuDestroy, gpuKernel, gpuAbort, gpuWrite, gpuAlloc, gpuUpload, gpuBind, gpuStep} from './gpu-kit.mjs';
+
 const WEIGHTED_WGSL =  `
 struct Job { offset: u32, width: u32, height: u32, total: u32 }
 @group(0) @binding(0) var<storage, read> plane: array<i32>;
@@ -12,15 +15,12 @@ fn weightOf(sum: i32, most: i32) -> i32 {
   let shift = max(0, 26 - i32(countLeadingZeros(u32(sum + 1))));
   return 4 + ((most * i32(divisors[u32(sum >> u32(shift))])) >> u32(shift));
 }
-// floor(a * d / 2^24) for |a| < 2^31, d < 2^25, as the CPU's double arithmetic gives it.
 fn mulShift24(a: i32, d: u32) -> i32 {
   let m = u32(abs(a)); let ah = m >> 16u; let al = m & 0xffffu; let dh = d >> 16u; let dl = d & 0xffffu;
   let ll = al * dl; let mid = ah * dl + al * dh; let hh = ah * dh;
-  // p = hh 2^32 + mid 2^16 + ll, as (hi, lo).
   var lo = ll + (mid << 16u); var carry = select(0u, 1u, lo < ll);
   var hi = hh + (mid >> 16u) + carry;
   if (a >= 0) { return i32((lo >> 24u) | (hi << 8u)); }
-  // -ceil(p / 2^24) = -floor((p + 2^24 - 1) / 2^24)
   let lo2 = lo + 0xffffffu; hi = hi + select(0u, 1u, lo2 < lo);
   return -i32((lo2 >> 24u) | (hi << 8u));
 }
@@ -44,7 +44,6 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
       var teN = 0; if (y > 0) { teN = terr[up]; }
       var teNW = teN; if (x > 0) { teNW = select(0, terr[up - 1u], y > 0); }
       var teNE = 0; if (y > 0) { teNE = select(terr[up], terr[up + 1u], x < lastX); }
-      // Sub-error sums: the N slot holds row y - 1's error and this row's W, the NW slot row y - 1's NW and this row's WW.
       var eN = vec4<i32>(0); if (y > 0) { eN = errs[up]; }
       if (x > 0) { eN += errs[at - 1u]; }
       var eNE = eN; if (x < lastX) { eNE = select(vec4<i32>(0), errs[up + 1u], y > 0); }
@@ -78,76 +77,61 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
   }
 }`;
 
-const DIVISORS = Uint32Array.from({length: 64}, (_, i) => Math.floor(16777216 / (i + 1)));
+const DIVISORS = /* @__PURE__ */ Uint32Array.from({length: 64}, (_, i) => Math.floor(16777216 / (i + 1)));
 const PLANE_LIMIT = 1 << 20;
-const pipelines = new WeakMap();
 const check = signal => { if (signal?.aborted) throw signal.reason; };
-export async function weightedOnDevice(device, planes, {passSamples = 1 << 21, signal} = {}) {
-  check(signal);
-  let onAbort = null;
-  const abort = signal && new Promise((_, reject) => signal.addEventListener('abort', onAbort = () => reject(signal.reason), {once: true}));
-  abort?.catch(() => {});
-  try { return await predict(device, planes, passSamples, signal, promise => abort ? Promise.race([promise, abort]) : promise); }
-  finally { if (onAbort) signal.removeEventListener?.('abort', onAbort); }
-}
-async function predict(device, planes, passSamples, signal, waits) {
-  for (const p of planes) if (!(p.plane instanceof Int16Array) || !(p.width >= 1 && p.height >= 1 && p.width * p.height <= PLANE_LIMIT) || p.plane.length < p.width * p.height)
-    throw new RangeError('weightedOnDevice: each plane is an Int16Array of at most 2^20 samples.');
-  let pipeline = pipelines.get(device);
-  if (!pipeline) {
-    const made = device.createComputePipelineAsync({layout: 'auto', compute: {module: device.createShaderModule({code: WEIGHTED_WGSL}), entryPoint: 'main'}});
-    made.catch(() => {});
-    pipelines.set(device, pipeline = await waits(made));
-  }
-  const passes = [];
-  for (let k = 0, size = 0; k < planes.length; k++) {
-    const n = planes[k].width * planes[k].height;
-    if (!passes.length || size + n > passSamples || passes.at(-1).length === 65535) { passes.push([]); size = 0; }
-    passes.at(-1).push(k); size += n;
-  }
-  const most = Math.max(...passes.map(pass => pass.reduce((s, k) => s + planes[k].width * planes[k].height, 0)));
-  const S = GPUBufferUsage.STORAGE, D = GPUBufferUsage.COPY_DST, made = [];
-  const buffer = (size, usage) => { const b = device.createBuffer({size: Math.max(16, size), usage}); made.push(b); return b; };
-  const set = divB => {
-    const planeB = buffer(most * 4, S | D), jobsB = buffer(Math.min(65535, planes.length) * 16, S | D), outB = buffer(most * 8, S | GPUBufferUsage.COPY_SRC);
-    const entries = [planeB, jobsB, buffer(most * 16, S), buffer(most * 4, S), outB, divB].map((b, binding) => ({binding, resource: {buffer: b}}));
-    return {planeB, jobsB, outB, readB: buffer(most * 8, GPUBufferUsage.MAP_READ | D), bind: device.createBindGroup({layout: pipeline.getBindGroupLayout(0), entries})};
-  };
-  const results = new Array(planes.length);
-  const collect = async ({buffers, pass, total, mapped}) => {
-    await waits(mapped);
-    const words = buffers.readB.getMappedRange(0, total * 8);
-    let offset = 0;
-    for (const k of pass) {
+
+export function weightedOnDevice(device, planes, {passSamples = 1 << 21, signal} = {}) {
+  return gpuAbort(signal, async waits => {
+    for (const p of planes) if (!(p.plane instanceof Int16Array) || !(p.width >= 1 && p.height >= 1 && p.width * p.height <= PLANE_LIMIT) || p.plane.length < p.width * p.height)
+      throw fault('JXL_INTERNAL', 'weightedOnDevice: each plane is an Int16Array of at most 2^20 samples.');
+    const kernel = await waits(gpuKernel(device, 'weighted', WEIGHTED_WGSL, 1));
+    const passes = [];
+    for (let k = 0, size = 0; k < planes.length; k++) {
       const n = planes[k].width * planes[k].height;
-      results[k] = {residuals: new Uint32Array(words.slice(offset * 4, (offset + n) * 4)), properties: new Int32Array(words.slice((total + offset) * 4, (total + offset + n) * 4))};
-      offset += n;
+      if (!passes.length || size + n > passSamples || passes.at(-1).length === 65535) { passes.push([]); size = 0; }
+      passes.at(-1).push(k); size += n;
     }
-    buffers.readB.unmap();
-  };
-  let pending = null;
-  try {
-    const divB = buffer(256, S | D);
-    device.queue.writeBuffer(divB, 0, DIVISORS);
-    const sets = [set(divB), passes.length > 1 ? set(divB) : null];
-    for (let i = 0; i < passes.length; i++) {
-      check(signal);
-      const pass = passes[i], buffers = sets[i & 1], table = new Uint32Array(pass.length * 4), total = pass.reduce((s, k) => s + planes[k].width * planes[k].height, 0), samples = new Int32Array(total);
+    const most = Math.max(...passes.map(pass => pass.reduce((s, k) => s + planes[k].width * planes[k].height, 0)));
+    const S = GPUBufferUsage.STORAGE, D = GPUBufferUsage.COPY_DST, made = [], alloc = gpuAlloc(device, made);
+    const makeSet = divB => {
+      const planeB = alloc(most * 4, S | D), jobsB = alloc(Math.min(65535, planes.length) * 16, S | D), outB = alloc(most * 8, S | GPUBufferUsage.COPY_SRC);
+      const readB = alloc(most * 8, GPUBufferUsage.MAP_READ | D);
+      return [planeB, jobsB, outB, readB, gpuBind(device, kernel[0].getBindGroupLayout(0), [planeB, jobsB, alloc(most * 16, S), alloc(most * 4, S), outB, divB])];
+    };
+    const results = new Array(planes.length);
+    const collect = async ([readB, pass, total, mapped]) => {
+      await waits(mapped);
+      const words = readB.getMappedRange(0, total * 8);
       let offset = 0;
-      pass.forEach((k, j) => { const {plane, width, height} = planes[k], n = width * height; table.set([offset, width, height, total], j * 4); samples.set(plane.subarray(0, n), offset); offset += n; });
-      device.queue.writeBuffer(buffers.planeB, 0, samples); device.queue.writeBuffer(buffers.jobsB, 0, table);
-      const encoder = device.createCommandEncoder(), compute = encoder.beginComputePass();
-      compute.setPipeline(pipeline); compute.setBindGroup(0, buffers.bind); compute.dispatchWorkgroups(pass.length); compute.end();
-      encoder.copyBufferToBuffer(buffers.outB, 0, buffers.readB, 0, total * 8);
-      device.queue.submit([encoder.finish()]);
-      const next = {buffers, pass, total, mapped: buffers.readB.mapAsync(GPUMapMode.READ, 0, total * 8)};
-      next.mapped.catch(() => {});
-      if (pending) await collect(pending);
-      pending = next;
-    }
-    await collect(pending);
-  } finally {
-    for (const b of made) b.destroy();
-  }
-  return results;
+      for (const k of pass) {
+        const n = planes[k].width * planes[k].height;
+        results[k] = {residuals: new Uint32Array(words.slice(offset * 4, (offset + n) * 4)), properties: new Int32Array(words.slice((total + offset) * 4, (total + offset + n) * 4))};
+        offset += n;
+      }
+      readB.unmap();
+    };
+    let pending = null;
+    try {
+      const divB = gpuUpload(device, alloc, DIVISORS, S | D), sets = [makeSet(divB), passes.length > 1 ? makeSet(divB) : null];
+      for (let i = 0; i < passes.length; i++) {
+        check(signal);
+        const pass = passes[i], [planeB, jobsB, outB, readB, bind] = sets[i & 1];
+        const table = new Uint32Array(pass.length * 4), total = pass.reduce((s, k) => s + planes[k].width * planes[k].height, 0), samples = new Int32Array(total);
+        let offset = 0;
+        pass.forEach((k, j) => { const {plane, width, height} = planes[k], n = width * height; table.set([offset, width, height, total], j * 4); samples.set(plane.subarray(0, n), offset); offset += n; });
+        gpuWrite(device, planeB, samples); gpuWrite(device, jobsB, table);
+        const encoder = device.createCommandEncoder();
+        gpuStep(device, encoder, kernel, bind, pass.length, 1);
+        encoder.copyBufferToBuffer(outB, 0, readB, 0, total * 8);
+        device.queue.submit([encoder.finish()]);
+        const mapped = readB.mapAsync(GPUMapMode.READ, 0, total * 8);
+        mapped.catch(() => {});
+        if (pending) await collect(pending);
+        pending = [readB, pass, total, mapped];
+      }
+      await collect(pending);
+    } finally { gpuDestroy(made); }
+    return results;
+  });
 }

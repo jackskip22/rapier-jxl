@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {reconstruct, toRGBAInto} from './reconstruct.mjs';
 import {rebuildPicture, rebuildable} from './photo-rebuild.mjs';
-import {butteraugli, butteraugliReference, butteraugliRows, butteraugliLinearTable} from './butteraugli.mjs';
-import {BA_MEMORY} from './butteraugli-memory.mjs';
-import {exactPow} from './exact-math.mjs';
 import {memoryPlan} from './memory-plan.mjs';
 import {fault} from './fault.mjs';
 import {bandScratch} from './band-scratch.mjs';
@@ -70,14 +67,26 @@ export function bandedRGBA(image, rows = 512, convert = toRGBAInto, from = 0, to
   return out;
 }
 
-export function bandedOutputs(image, rows, native, sink = null, from = 0, to = image.height) {
+export function bandedOutputs(image, rows, native, sink = null, from = 0, to = image.height, into = null) {
   const {width, height} = image, stride = image.components[0].stride, blockRows = image.components[0].rows;
-  const pack = sink ? null : new Uint8ClampedArray(width * height * 4), own = sink ? null : new Uint8ClampedArray(width * height * 4), decoded = rebuildable(image);
+  if (into) {
+    const end = Math.min(height, to), bytes = width * (end - from) * 4;
+    if (!Number.isSafeInteger(bytes) || bytes <= 0 || end !== Math.min(height, from + rows))
+      throw fault('JXL_INTERNAL', 'Owned photographic outputs cover exactly one band.');
+    if (!(into.package instanceof Uint8Array) || !(into.native instanceof Uint8Array) ||
+        into.package.length !== bytes || into.native.length !== bytes || into.package.buffer === into.native.buffer)
+      throw fault('JXL_INTERNAL', 'Owned photographic outputs need two separate exact byte destinations.');
+  }
+  const band = !!sink || !!into;
+  const pack = band ? null : new Uint8ClampedArray(width * height * 4), own = band ? null : new Uint8ClampedArray(width * height * 4), decoded = rebuildable(image);
   for (let y0 = from; y0 < Math.min(height, to); y0 += rows) {
     const y1 = Math.min(height, y0 + rows), by0 = Math.max(0, Math.floor((y0 - RECON_MARGIN) / 64) * 8), by1 = Math.min(blockRows, Math.ceil((y1 + RECON_MARGIN) / 64) * 8);
-    const sub = subImage(image, 0, by0, stride, by1), from = (y0 - by0 * 8) * width, count = (y1 - y0) * width;
-    const bandPack = sink ? bandScratch(Uint8ClampedArray, 'band-package', count * 4) : pack, bandOwn = sink ? bandScratch(Uint8ClampedArray, 'band-native', count * 4) : own;
-    const at = sink ? 0 : y0 * width;
+    const sub = into && decoded && image.lazyStrategy && by0 === 0 && by1 === blockRows
+      ? image.lazyStrategy.rows(by0, by1) : subImage(image, 0, by0, stride, by1);
+    const from = (y0 - by0 * 8) * width, count = (y1 - y0) * width;
+    const bandPack = into?.package ?? (sink ? bandScratch(Uint8ClampedArray, 'band-package', count * 4) : pack),
+      bandOwn = into?.native ?? (sink ? bandScratch(Uint8ClampedArray, 'band-native', count * 4) : own);
+    const at = band ? 0 : y0 * width;
     if (decoded) {
       const made = rebuildPicture(sub, {rgba: true, linear: true, views: true});
       bandPack.set(made.rgba.subarray(from * 4, (from + count) * 4), at * 4);
@@ -89,115 +98,13 @@ export function bandedOutputs(image, rows, native, sink = null, from = 0, to = i
     }
     sink?.(y0, y1 - y0, bandPack, bandOwn);
   }
-  return sink ? null : {package: pack, native: own};
-}
-
-export const BAND_ROWS = 128;
-
-function readers(reference, width, height, image, rows) {
-  if (!Number.isSafeInteger(rows) || rows < 1) throw new RangeError('Exact band rows must be a positive integer.');
-  const blockRows = image.components[0].rows, stride = image.components[0].stride;
-  let lin = null, top = 0, end = 0, sw = 0, skip = 0;
-  const distorted = (c, y) => {
-    if (y < top || y >= end) {
-      const y0 = y - y % rows, by0 = Math.max(0, Math.floor((y0 - RECON_MARGIN) / 64) * 8), by1 = Math.min(blockRows, Math.ceil((Math.min(height, y0 + rows) + RECON_MARGIN) / 64) * 8);
-      const sub = subImage(image, 0, by0, stride, by1);
-      lin = null; lin = reconstruct(sub); sw = sub.width; top = y0; end = Math.min(height, y0 + rows); skip = by0 * 8;
-    }
-    return lin[c].subarray((y - skip) * sw, (y - skip) * sw + width);
-  };
-  const row = new Float32Array(width), table = reference.rgba && butteraugliLinearTable(), refRow = reference.rgba
-    ? (c, y) => { for (let x = 0, at = y * width * 4 + c; x < width; x++, at += 4) row[x] = table[reference.rgba[at]]; return row; }
-    : (c, y) => reference[c].subarray(y * width, (y + 1) * width);
-  return {refRow, distorted};
-}
-function eachRow(reference, width, height, image, rows, consume) {
-  const {refRow, distorted} = readers(reference, width, height, image, rows);
-  butteraugliRows(refRow, distorted, width, height, consume);
-}
-
-export function bandedMap(reference, width, height, image, rows = BAND_ROWS) {
-  const map = new Float64Array(width * height);
-  eachRow(reference, width, height, image, rows, (y, row) => map.set(row, y * width));
-  return map;
-}
-
-function scorer(width, height, p, margin) {
-  if (!Number.isSafeInteger(margin) || margin < 0) throw new RangeError('Exact block margin must be a nonnegative integer.');
-  const stride = Math.ceil(width / 8), count = Math.ceil(height / 8), cells = new Float64Array(stride * count), blocks = new Float64Array(stride * count);
-  const sums = [0, 0, 0]; let max = 0;
-  const consume = (y, map) => {
-    const by0 = Math.max(0, Math.ceil((y - margin - 7) / 8)), by1 = Math.min(count - 1, Math.floor((y + margin) / 8));
-    for (let x = 0; x < width; x++) {
-      const v = map[x]; max = Math.max(max, v);
-      let d = v * (v * v); sums[0] += d; d *= d; sums[1] += d; d *= d; sums[2] += d;
-      cells[(y >> 3) * stride + (x >> 3)] += exactPow(v, p);
-      const bx0 = Math.max(0, Math.ceil((x - margin - 7) / 8)), bx1 = Math.min(stride - 1, Math.floor((x + margin) / 8));
-      for (let by = by0; by <= by1; by++) for (let bx = bx0; bx <= bx1; bx++) {
-        const at = by * stride + bx; blocks[at] = Math.max(blocks[at], v);
-      }
-    }
-  };
-  const result = () => ({butteraugli: max,
-    butteraugli3: sums.reduce((a, sum, k) => a + exactPow(sum / (width * height), 1 / (3 * (1 << k))), 0) / 3, cells, blocks});
-  return {consume, result};
-}
-export function bandedScores(reference, width, height, image, {p = 3, margin = 2, rows = BAND_ROWS} = {}) {
-  const s = scorer(width, height, p, margin);
-  eachRow(reference, width, height, image, rows, s.consume);
-  return s.result();
-}
-
-export function* deviceBandedScores(reference, width, height, image, {p = 3, margin = 2, rows = BAND_ROWS} = {}, look = 0, failed = () => {}, during = null) {
-  const {refRow, distorted} = readers(reference, width, height, image, rows), core = BA_MEMORY.rowCore, halo = BA_MEMORY.rowHalo;
-  const bands = Math.ceil(height / core), tiles = Math.ceil(width / core), audited = look * 7919 % (bands * tiles);
-  const ab = Math.floor(audited / tiles), ax = audited % tiles * core;
-  const s = scorer(width, height, p, margin), pending = [];
-  let last = null;
-  const windowAt = (top, bottom) => {
-    const h = bottom - top, n = width * h, ref = new Float32Array(3 * n), dist = new Float32Array(3 * n);
-    for (let y = top; y < bottom; y++) for (let c = 0; c < 3; c++) {
-      const at = c * n + (y - top) * width;
-      if (last && y < last.bottom) {
-        const from = c * last.n + (y - last.top) * width;
-        ref.set(last.ref.subarray(from, from + width), at); dist.set(last.dist.subarray(from, from + width), at);
-      } else { ref.set(refRow(c, y).subarray(0, width), at); dist.set(distorted(c, y).subarray(0, width), at); }
-    }
-    return last = {top, bottom, n, ref, dist};
-  };
-  const expect = (w, y) => {
-    const left = Math.max(0, ax - halo), right = Math.min(width, ax + core + halo), cw = right - left, h = w.bottom - w.top;
-    const cut = planes => [0, 1, 2].map(c => { const o = new Float32Array(cw * h); for (let r = 0; r < h; r++) o.set(planes.subarray(c * w.n + r * width + left, c * w.n + r * width + right), r * cw); return o; });
-    return {left, cw, map: butteraugli(butteraugliReference(cut(w.ref), cw, h), cut(w.dist)).map};
-  };
-  const finish = function* (job) {
-    const answer = yield {await: job.answer};
-    if (!answer?.map || answer.flagged) return false;
-    const {y, end, w, check} = job, map = answer.map;
-    if (check) for (let r = y; r < end; r++) for (let x = ax; x < Math.min(width, ax + core); x++)
-      if (!Object.is(map[(r - w.top) * width + x], check.map[(r - w.top) * check.cw + x - check.left])) { failed(); return false; }
-    for (let r = y; r < end; r++) s.consume(r, map.subarray((r - w.top) * width, (r - w.top + 1) * width));
-    return true;
-  };
-  const depth = Math.max(2, Math.floor(256 * 1024 * 1024 / (24 * width * Math.min(height, core + 2 * halo))));
-  let other;
-  const run = () => { if (during) { other = during(); during = null; } };
-  for (let b = 0; b < bands; b++) {
-    const y = b * core, end = Math.min(height, y + core), w = windowAt(Math.max(0, y - halo), Math.min(height, end + halo));
-    const answer = Promise.resolve(yield {gpu: {kind: 'ba-map', ref: w.ref, dist: w.dist, width, height: w.bottom - w.top}, later: true});
-    pending.push({y, end, w, answer, check: b === ab ? expect(w, y) : null});
-    if (pending.length >= depth) { run(); if (!(yield* finish(pending.shift()))) return null; }
-  }
-  run();
-  while (pending.length) if (!(yield* finish(pending.shift()))) return null;
-  return {...s.result(), during: other};
+  return sink ? null : into ?? {package: pack, native: own};
 }
 
 export function exactScores(cpu, reference, width, height, image, want = {}, memory = cpu.memory ?? null) {
   const plan = memory ?? memoryPlan(width * height, {width, height});
   if (!plan.banded) return cpu(image, want);
   if (typeof cpu.banded !== 'function') throw fault('JXL_INPUT', 'Banded scoring requires the CPU reference transaction.');
-  return cpu.banded(image, want, (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? null
-    : ref => bandedScores(ref, width, height, image, {...want, rows: plan.bandRows}));
+  return cpu.banded(image, want);
 }
 

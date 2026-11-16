@@ -26,19 +26,22 @@
 <label>Results<textarea id="result" readonly spellcheck="false" aria-label="Results"></textarea></label>
 <p>Attach the results file to your job's issue in the <a href="https://github.com/jackskip22/rapier-jxl/tree/main/jobs" target="_blank" rel="noopener noreferrer">jobs folder</a>, including failures.</p>
 <script>
-const RELEASE = {"version":"8.3.5","modules":{"index":{"bytes":1224348,"sha256":"7758cadfbcc59e33cd73427e99d57963b6aeaf409cfaac3ff51e23deeacfe22f"},"jpeg":{"bytes":475024,"sha256":"b97af431436902a4ce4613298bcf905f23a83a55ae5293d8268de5ebcdd0b060"},"decode":{"bytes":362268,"sha256":"1b7fd46895f9805ce96e78ca6c7266dec35ff538be987356c9d78f1f590bfecd"},"verify":{"bytes":234266,"sha256":"e12ffbdbcc8c840a82fd8f0fd6790423cd2f48cd8b23df78dba3c7c6882ae02f"}},"selftest":{"version":"8.3.5","pictures":[{"id":"screenshot","file":"screenshot-mdn.png","kind":"png","width":1920,"height":1080,"sha256":"82cffc076e2219801170d63799974f5e5dfc56096a838ef492305560fc9affa6","rgbaSha256":"9592f20763f9d63414ed0141fab50e74f623b7417c8eb0d9d4005704411b6379","source":"Canvas API page of MDN Web Docs, captured in Chrome 155","sourceURL":"https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API","author":"Mozilla Contributors","license":"CC BY-SA 2.5","licenseURL":"https://creativecommons.org/licenses/by-sa/2.5/"},{"id":"photo","file":"photo-kodim23.png","kind":"png","width":768,"height":512,"sha256":"090880a1dbce96bb7d1db3f583fb830e98ef4de67542cbad2185a1111e04e928","rgbaSha256":"c3b1252504d7aaf3c6b6b12bc037aefae380ec4574b565fb84ce6d99e9158b36","source":"Kodak Lossless True Color Image Suite, kodim23","sourceURL":"https://r0k.us/graphics/kodak/","author":"Eastman Kodak","license":"Released by Eastman Kodak for unrestricted use","licenseURL":"https://r0k.us/graphics/kodak/"},{"id":"camera","file":"camera-iphone16.jpg","kind":"jpeg","width":4032,"height":3024,"sha256":"7166b35f92c1168221cf0211fa755c9495d1883a50b5d7dab8b6bd758da2c5af","source":"Juvenile Atlantic Ghost Crab along the beach in Kitty Hawk, North Carolina; iPhone 16 original","sourceURL":"https://commons.wikimedia.org/wiki/File:2026-09-10_0953_Juvenile_Atlantic_Ghost_Crab_along_the_beach_in_Kitty_Hawk,_North_Carolina.jpg","author":"TheDetroitGeographer","license":"CC0 1.0","licenseURL":"https://creativecommons.org/publicdomain/zero/1.0/"}],"expected":{"screenshot-exact-e1":"8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f","screenshot-exact-e3":"8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f","screenshot-exact-e7":"95009dcc0d48d84a95f33bbc9f00fcff2d7d6d55d8092e70a26e7c35d8609439","screenshot-lossy-e1":"8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f","screenshot-lossy-e3":"8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f","screenshot-lossy-e7":"8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f","photo-exact-e1":"6078d53ef2d1fed193c1439a2a4d7024f570b43cf8606ca39cd05440e3752f8f","photo-exact-e3":"7618cd16bf8dc70dacda68089a5914dc37168024098a858883aca426a4441ac9","photo-exact-e7":"8e51d0b63ef23dc8b21df8c9cf6142d10a28e0aaae2fc4ef0574f1a29caddf83","photo-lossy-e1":"4cdc398d4a86ddacb23b47f43b43eba8f55ae1d839ceb84310327a773c75da27","photo-lossy-e3":"35dcb14cf7b9cee04b589816dffee9e3dc42978165ecefbed197581d882480e8","photo-lossy-e7":"c51d11faed9ad593082611e19571cf87154295ef0a50c91b455b1cf8e47f51b6","camera-recompress-e1":"52431ea23eb7283e2b61bc7be8a378eb9ef758930827af4dd9b7b319c0b74bfb","camera-recompress-e3":"c9502cb07a59f43b5fbeb05720bde392e39e3aacfdb1dd09f66997485fdbef99","camera-recompress-e7":"d761d76c014bb127df97b17ef4312a506bd93713df0be7f6aa69ebb4e57e745d"}}};
+const RELEASE = {"version":"8.4.0","modules":{"index":{"bytes":1583956,"sha256":"45428c0618a662d23748c696a883c3ba3ff5f409fcba97d11fc665ea7e825592"},"jpeg":{"bytes":536160,"sha256":"18f1d579e8a0c4351e7f6683edd1003b5a4911bae6e6ef1413079f02c70e9ca0"},"decode":{"bytes":382305,"sha256":"70ab125d0a5bac4e59c104ac3e966ed40c03121c39fc592b7262e2c54199cd44"},"verify":{"bytes":293286,"sha256":"12aaac0d89331f702fe67df103bd16fcd69654715d66b6228af6244b4a3d1461"}},"selftest":{"version":"8.4.0","pictures":[{"id":"screenshot","file":"screenshot-mdn.png","kind":"png","width":1920,"height":1080,"sha256":"82cffc076e2219801170d63799974f5e5dfc56096a838ef492305560fc9affa6","rgbaSha256":"9592f20763f9d63414ed0141fab50e74f623b7417c8eb0d9d4005704411b6379","source":"Canvas API page of MDN Web Docs, captured in Chrome 155","sourceURL":"https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API","author":"Mozilla Contributors","license":"CC BY-SA 2.5","licenseURL":"https://creativecommons.org/licenses/by-sa/2.5/"},{"id":"photo","file":"photo-kodim23.png","kind":"png","width":768,"height":512,"sha256":"090880a1dbce96bb7d1db3f583fb830e98ef4de67542cbad2185a1111e04e928","rgbaSha256":"c3b1252504d7aaf3c6b6b12bc037aefae380ec4574b565fb84ce6d99e9158b36","source":"Kodak Lossless True Color Image Suite, kodim23","sourceURL":"https://r0k.us/graphics/kodak/","author":"Eastman Kodak","license":"Released by Eastman Kodak for unrestricted use","licenseURL":"https://r0k.us/graphics/kodak/"},{"id":"camera","file":"camera-iphone16.jpg","kind":"jpeg","width":4032,"height":3024,"sha256":"7166b35f92c1168221cf0211fa755c9495d1883a50b5d7dab8b6bd758da2c5af","source":"Juvenile Atlantic Ghost Crab along the beach in Kitty Hawk, North Carolina; iPhone 16 original","sourceURL":"https://commons.wikimedia.org/wiki/File:2026-09-10_0953_Juvenile_Atlantic_Ghost_Crab_along_the_beach_in_Kitty_Hawk,_North_Carolina.jpg","author":"TheDetroitGeographer","license":"CC0 1.0","licenseURL":"https://creativecommons.org/publicdomain/zero/1.0/"}],"expected":{"screenshot-exact-e1":"8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f","screenshot-exact-e3":"d8112da419eb84001d99385588bcb2db8e779ec32d31b5271b25c18d0edbfb62","screenshot-exact-e7":"94c52c56f288eff936bd46190f078045c645c1d1ec82d1696080379975ef2cc4","screenshot-lossy-e1":"8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f","screenshot-lossy-e3":"d8112da419eb84001d99385588bcb2db8e779ec32d31b5271b25c18d0edbfb62","screenshot-lossy-e7":"94c52c56f288eff936bd46190f078045c645c1d1ec82d1696080379975ef2cc4","photo-exact-e1":"b9811bb065243410011eb7df49a8dfe0b6d9e64ed79a5f0289f5261c4af93315","photo-exact-e3":"7618cd16bf8dc70dacda68089a5914dc37168024098a858883aca426a4441ac9","photo-exact-e7":"d8aadaad21e33c59346b59efcf6e9c997481f3b5c441771595cc08d9f083066a","photo-lossy-e1":"f9d713cdc266049b15efa97000b6f2704d01591103b219ea99e87015b538174a","photo-lossy-e3":"aee4f9813790ffac8d9b231678587e01baa32d92feab0ad15c7445f7309fc45e","photo-lossy-e7":"d9716857a74ca0f7be27bbef8e0f7e27d8e84d1c11adf2933b5dc1f1577e7632","camera-recompress-e1":"cae0589ba93c15e26ccd4efa366c61d5aa5412bb1cb4fdf0c0039e34f81dc39e","camera-recompress-e3":"6c72c67d8a1aa9acb262dc560efd65f29d9fa3a559c629d00d0ff90cdb9d6b8d","camera-recompress-e7":"eecaded57b29a5db22ab5c8e7e4205003c45a9d5c47ed639507fdbd3fe91186d"}}};
 function selftestCore() {
 // selftest.mjs begin
 // rapier-jxl self-test: encodes, decodes and verifies a fixed set of real pictures and returns one results record.
 // No imports and no host APIs beyond the web platform (fetch, crypto.subtle, DecompressionStream, performance), so
-// the command (npx rapier-jxl selftest), the browser page (jobs/run.html) and a Cloudflare Worker run the same steps.
+// the command (npx jpegxl selftest), the browser page (jobs/run.html) and a Cloudflare Worker run the same steps.
 // It never sends anything: the caller writes or offers the record.
 
 const hex = buffer => Array.from(new Uint8Array(buffer), n => n.toString(16).padStart(2, '0')).join('');
+const pictureError = message => Object.assign(new Error(`${message}; use the unmodified jobs/pictures from this release.`), {code: 'JXL_INPUT'});
 const sha256 = async bytes => hex(await crypto.subtle.digest('SHA-256', bytes));
 
 // 8-bit RGB or RGBA, non-interlaced PNG to RGBA: the pictures are written that way, so every runtime reads the same pixels.
 async function readPNG(bytes) {
+  if (bytes.byteLength < 8 || ![137, 80, 78, 71, 13, 10, 26, 10].every((byte, i) => bytes[i] === byte))
+    throw pictureError('Self-test picture is not a PNG');
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), idat = [];
   let width = 0, height = 0, channels = 0;
   for (let at = 8; at + 8 <= bytes.length;) {
@@ -46,14 +49,19 @@ async function readPNG(bytes) {
     if (type === 'IHDR') {
       width = view.getUint32(at + 8); height = view.getUint32(at + 12);
       const depth = body[8], color = body[9];
-      if (depth !== 8 || (color !== 2 && color !== 6) || body[12] !== 0) throw new Error('Self-test picture is not 8-bit RGB or RGBA without interlace');
+      if (depth !== 8 || (color !== 2 && color !== 6) || body[12] !== 0) throw pictureError('Self-test picture must be 8-bit RGB or RGBA without interlace');
       channels = color === 6 ? 4 : 3;
     } else if (type === 'IDAT') idat.push(body);
     at += 12 + length;
   }
-  const stream = new Blob(idat).stream().pipeThrough(new DecompressionStream('deflate'));
-  const raw = new Uint8Array(await new Response(stream).arrayBuffer()), stride = width * channels;
-  if (raw.length !== (stride + 1) * height) throw new Error('Self-test picture has the wrong data length');
+  if (!width || !height || !channels || !idat.length) throw pictureError('Self-test PNG is missing its image header or data');
+  let raw;
+  try {
+    const stream = new Blob(idat).stream().pipeThrough(new DecompressionStream('deflate'));
+    raw = new Uint8Array(await new Response(stream).arrayBuffer());
+  } catch (cause) { throw Object.assign(pictureError('Self-test PNG pixel data cannot be decompressed'), {cause}); }
+  const stride = width * channels;
+  if (raw.length !== (stride + 1) * height) throw pictureError('Self-test picture has the wrong data length');
   const data = new Uint8Array(width * height * 4);
   let previous = new Uint8Array(stride);
   for (let y = 0; y < height; y++) {
@@ -103,12 +111,12 @@ async function selftest({modules, manifest, picture, facts = {}, onStep = () => 
     try {
       const bytes = new Uint8Array(await picture(item.file));
       entry.bytes = bytes.length; entry.sha256 = await sha256(bytes);
-      if (entry.sha256 !== item.sha256) throw new Error(`${item.file} does not match its SHA-256`);
+      if (entry.sha256 !== item.sha256) throw pictureError(`${item.file} does not match its SHA-256`);
       if (item.kind === 'jpeg') inputs.set(item.id, {bytes, sha256: entry.sha256});
       else {
         const pixels = await readPNG(bytes);
         entry.width = pixels.width; entry.height = pixels.height; entry.rgbaSha256 = await sha256(pixels.data);
-        if (entry.rgbaSha256 !== item.rgbaSha256) throw new Error(`${item.file} decodes to other pixels`);
+        if (entry.rgbaSha256 !== item.rgbaSha256) throw pictureError(`${item.file} decodes to other pixels`);
         inputs.set(item.id, {bytes, pixels, rgbaSha256: entry.rgbaSha256});
       }
     } catch (e) { entry.error = error(e); }
@@ -117,7 +125,9 @@ async function selftest({modules, manifest, picture, facts = {}, onStep = () => 
     onStep(row.id);
     const input = inputs.get(row.picture), out = {...row, status: 'fail'};
     record.rows.push(out);
-    if (!input) { out.error = {name: 'Error', code: null, message: 'The picture could not be read'}; onRow(out); continue; }
+    if (!input) { out.error = record.pictures.find(p => p.id === row.picture)?.error ??
+      {name: 'Error', code: 'JXL_INPUT', message: 'The picture is missing from the manifest; use the unmodified jobs/pictures from this release.'};
+      onRow(out); continue; }
     try {
       let result, t = now();
       if (row.operation === 'recompress') result = await modules.recompress(input.bytes, {effort: row.effort});
@@ -137,7 +147,7 @@ async function selftest({modules, manifest, picture, facts = {}, onStep = () => 
         t = now();
         const decoded = await modules.decode(result.bytes);
         out.decodeMs = now() - t;
-        if (decoded.width !== input.pixels.width || decoded.height !== input.pixels.height) throw new Error('Decoded size differs from the picture');
+        if (decoded.width !== input.pixels.width || decoded.height !== input.pixels.height) throw Object.assign(new Error('Decoded size differs from the picture; attach the self-test results to a rapier-jxl issue.'), {code: 'JXL_INTERNAL'});
         out.decodedSha256 = await sha256(decoded.data);
         if (row.fidelity === 'exact') out.exact = out.decodedSha256 === input.rgbaSha256;
         // A browser's own JPEG XL decoder, where the host has one: its pixels for every exact file.
@@ -203,7 +213,7 @@ async function workerMain() {
     async function load(name) {
       if (loaded[name]) return loaded[name];
       step('Load ' + name);
-      const url = `https://cdn.jsdelivr.net/npm/rapier-jxl@${release.version}/dist/${name}.mjs`, response = await get(url);
+      const url = `https://cdn.jsdelivr.net/npm/jpegxl@${release.version}/dist/${name}.mjs`, response = await get(url);
       if (!response.ok) throw new Error(name + ': HTTP ' + response.status);
       const bytes = await pinnedBytes(response, release.modules[name].bytes), sha = await sha256(bytes);
       assets.push({path: 'dist/' + name + '.mjs', bytes: bytes.byteLength, sha256: sha, url});

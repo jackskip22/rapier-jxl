@@ -2,12 +2,10 @@ import {suppliedWasm} from '../wasm-modules.mjs';
 import {WORKER_PROTOCOL} from './protocol.mjs';
 import {fail as error, callers} from './primitives.mjs';
 import {isImageResult} from './result-shape.mjs';
+import {failure} from './worker-runtime.mjs';
 export const REPLACED = Symbol('replaced');
-const WORKER_UNLOADED = "The JPEG XL worker file did not load. Serve rapier-jxl/dist's *.worker.mjs and *.helper.mjs beside the bundle, or pass workerFactory.";
+const workerUnloaded = file => `The JPEG XL worker did not load. Copy ${file ?? "the module's own file"} from the package's dist folder beside the bundle, or pass workerFactory.`;
 const IMAGE_OPERATIONS = new Set(['encode', 'capture', 'recompress', 'restore', 'fit', 'format']);
-const REFERENCE_BYTES = new Set(['encode', 'capture', 'recompress', 'restore', 'format']);
-const tag = value => Object.prototype.toString.call(value);
-const invalidBytes = value => !(tag(value) === '[object Uint8Array]' && value.byteLength > 0);
 
 function blob(value) { return typeof Blob === 'function' && value instanceof Blob; }
 const isBitmap = value => typeof ImageBitmap === 'function' && value instanceof ImageBitmap || typeof VideoFrame === 'function' && value instanceof VideoFrame;
@@ -30,28 +28,30 @@ function listen(target, type, callback) {
     target.on(type, handler);
     return () => target.off(type, handler);
   }
-  throw error('JXL_OPTIONS', 'workerFactory must return a Worker.');
+  throw error('JXL_OPTIONS', "workerFactory returned no Worker; return a Worker instance.");
 }
 
 export function createTransport(host) {
-  const {factory, module, maxPixels, jpegPixels, helpers, webgpu, workerStartupTimeout, complete, progress, encoded, preview, replyPreview, schedule, running} = host;
+  const {factory, module, maxPixels, helpers, retainInput, webgpu, workerStartupTimeout, complete, progress, preview, replyPreview, schedule, running} = host;
   let thread = null, generation = 0, ended, failed;
-  function stopThread(reason = Object.assign(error('JXL_WORKER', 'The JPEG XL worker stopped.'), {[REPLACED]: true})) {
+  function stopThread(reason = Object.assign(error('JXL_WORKER', "JPEG XL worker stopped; start a fresh worker and retry."), {[REPLACED]: true})) {
     const old = thread;
     if (!old) return;
     thread = null;
     generation++;
     clearTimeout(old.timer);
     for (const waiter of old.prepareWaiters.values()) waiter.reject(reason);
-    for (const remove of old.listeners) remove();
+    for (const remove of old.listeners) {
+      try { remove(); } catch (reason) { failed ??= {reason}; }
+    }
     for (const waiter of old.waiters) waiter.reject(reason);
     let result;
     try { result = old.worker.terminate(); } catch (reason) { result = Promise.reject(reason); }
-    const end = Promise.resolve(result).then(() => {}, reason => { failed ??= {reason}; throw reason; });
+    const end = new Promise(resolve => resolve(result)).then(() => {}, reason => { failed ??= {reason}; throw reason; });
     end.catch(() => {});
     ended = Promise.allSettled([ended, end]).then(() => { if (failed) throw failed.reason; });
     ended.catch(() => {});
-    if (result && typeof result.then === 'function') {
+    if (result && (typeof result === 'object' || typeof result === 'function')) {
       const wait = end.catch(() => {}).finally(() => { if (host.stopping === wait) host.stopping = null; schedule(); });
       host.stopping = wait;
     }
@@ -60,7 +60,7 @@ export function createTransport(host) {
   function crash(current, event) {
     if (thread !== current) return;
     const unloaded = !current.ready && event?.type === 'error' && !event.message && !event.error;
-    const reason = error(typeof event?.code === 'string' && event.code.startsWith('JXL_') ? event.code : 'JXL_WORKER', event?.message || event?.error?.message || (unloaded ? WORKER_UNLOADED : 'The JPEG XL worker stopped.'));
+    const reason = error(typeof event?.code === 'string' && event.code.startsWith('JXL_') ? event.code : 'JXL_WORKER', event?.message || event?.error?.message || (unloaded ? workerUnloaded(host.file) : "JPEG XL worker stopped; start a fresh worker and retry."));
     stopThread(reason);
     schedule();
   }
@@ -68,7 +68,7 @@ export function createTransport(host) {
     if (!current.ready || !job.started || job.sent || job.settled || thread !== current || running.get(job.id) !== job) return;
     const bitmap = isBitmap(job.input);
     try {
-      current.worker.postMessage({id: job.id, operation: job.operation, input: job.input, options: job.options, ...(bitmap && {bitmap: true}), ...(job.onPreview && {preview: true}), maxPixels, jpegPixels, helpers, webgpu, lane: job.lane, alone: job.alone}, [...transfers([job.input, job.options])]);
+      current.worker.postMessage({id: job.id, operation: job.operation, input: job.input, options: job.options, ...(bitmap && {bitmap: true}), ...(job.onPreview && {preview: true}), maxPixels, helpers, webgpu, lane: job.lane, alone: job.alone}, [...transfers([job.input, job.options])]);
       job.sent = true;
       job.input = job.options = null;
     } catch (reason) { try { complete(job, false, reason); } finally { stopThread(); } }
@@ -80,9 +80,12 @@ export function createTransport(host) {
   function openThread() {
     if (thread) return thread;
     let worker;
-    try { worker = factory(); }
+    try {
+      worker = factory();
+      if (worker && typeof worker.then === 'function') Promise.resolve(worker).catch(() => {});
+    }
     catch (cause) { throw callers(cause); }
-    if (!worker || typeof worker.postMessage !== 'function' || typeof worker.terminate !== 'function') throw error('JXL_OPTIONS', 'workerFactory must return a new Worker.');
+    if (!worker || typeof worker.postMessage !== 'function' || typeof worker.terminate !== 'function') throw error('JXL_OPTIONS', "workerFactory reused a Worker; return a fresh Worker for each call.");
     generation++;
     const current = {worker, listeners: [], ready: false, timer: null, waiters: [], preparations: new Map(), prepareWaiters: new Map(), prepareAttempt: 0};
     thread = current;
@@ -91,27 +94,41 @@ export function createTransport(host) {
         if (thread !== current) return;
         if (data?.ready !== undefined) {
           if (current.ready && data.ready === WORKER_PROTOCOL) return;
-          if (data.ready !== WORKER_PROTOCOL) { crash(current, {code: 'JXL_WORKER', message: 'The worker belongs to a different JPEG XL protocol.'}); return; }
-          if (data.module !== module) { crash(current, {code: 'JXL_WORKER', message: `This worker runs ${data.module ?? 'the rapier-jxl queue entry'}; this codec needs ${module ?? 'the rapier-jxl queue entry'}'s worker.`}); return; }
+          if (data.ready !== WORKER_PROTOCOL) { crash(current, {code: 'JXL_WORKER', message: "Worker uses a different protocol; use the worker from this package."}); return; }
+          if (data.module !== module) { crash(current, {code: 'JXL_WORKER', message: `Worker runs ${data.module ?? "no named module"}; use the worker for ${module}.`}); return; }
           current.ready = true; clearTimeout(current.timer);
           for (const waiter of current.waiters.splice(0)) waiter.resolve(current);
           for (const job of running.values()) send(current, job);
           return;
         }
         if (data?.configurationError) { crash(current, data.configurationError); return; }
-        if (!current.ready) { crash(current, {code: 'JXL_WORKER', message: 'The worker replied before identifying its protocol.'}); return; }
+        if (!current.ready) { crash(current, {code: 'JXL_WORKER', message: "Worker replied before it was ready; use the worker from this package."}); return; }
         if (data?.prepared === true) {
           const waiter = current.prepareWaiters.get(data.attempt);
           if (!waiter) return;
           current.prepareWaiters.delete(data.attempt);
           if (data.ok === true) waiter.resolve();
-          else waiter.reject(error(data.error?.code || 'JXL_WASM', data.error?.message || 'Could not prepare the JPEG XL WebAssembly core.'));
+          else waiter.reject(error(data.error?.code || 'JXL_WASM', data.error?.message || 'WebAssembly preparation failed; enable WebAssembly SIMD and retry.'));
           return;
         }
         const job = running.get(data?.id);
         if (!job) return;
+        if ('inputBytes' in data) {
+          if (job.settled) return;
+          let ok = false, refusal;
+          try {
+            if (!Number.isSafeInteger(data.inputSequence) || data.inputSequence !== (job.inputSequence ?? 0) + 1)
+              throw error('JXL_WORKER', 'The worker repeated or skipped an input reservation.');
+            retainInput(job, data.inputBytes); job.inputSequence = data.inputSequence; ok = true;
+          } catch (error) {
+            refusal = failure(error);
+            if (refusal.code === 'JXL_WORKER') { crash(current, refusal); return; }
+          }
+          try { current.worker.postMessage({id: job.id, inputAck: data.inputSequence, ok, ...(!ok && {error: refusal})}); }
+          catch (error) { crash(current, error); }
+          return;
+        }
         if ('progress' in data) { progress(job, data.progress); return; }
-        if ('encoded' in data) { encoded(job, data.encoded); return; }
         if ('preview' in data) {
           if (job.onPreview && !job.settled) replyPreview(job, data.preview, data.previewSequence, value => preview(job, value), () => {
             if (thread === current && running.get(job.id) === job && !job.settled) current.worker.postMessage({id: job.id, previewAck: data.previewSequence});
@@ -119,20 +136,19 @@ export function createTransport(host) {
           return;
         }
         if (data.ok === true) {
-          if (host.bytes ? REFERENCE_BYTES.has(job.operation) && invalidBytes(data.value) :
-              IMAGE_OPERATIONS.has(job.operation) && !isImageResult(data.value) ||
+          if (IMAGE_OPERATIONS.has(job.operation) && !isImageResult(data.value) ||
               job.operation === 'variants' && (!Array.isArray(data.value) || !data.value.length || !data.value.every(isImageResult)))
-            complete(job, false, error('JXL_WORKER', 'The JPEG XL worker returned an invalid result.'));
+            complete(job, false, error('JXL_WORKER', "Worker returned an invalid result; restart it and report the input."));
           else complete(job, true, data.value);
-        } else if (data.ok === false) complete(job, false, Object.assign(new Error(data.error?.message || 'JPEG XL operation failed.'), {name: data.error?.name || 'Error', code: data.error?.code || 'JXL_WORKER'}));
-        else crash(current, {message: 'The JPEG XL worker returned an invalid reply.'});
+        } else if (data.ok === false) complete(job, false, Object.assign(new Error(data.error?.message || 'The JPEG XL operation failed; restart the worker and retry.'), {name: data.error?.name || 'Error', code: data.error?.code || 'JXL_WORKER'}));
+        else crash(current, {message: 'The JPEG XL worker returned an invalid reply; restart it and report the reproducing input.'});
       }));
       current.listeners.push(listen(worker, 'error', event => crash(current, event)));
       current.listeners.push(listen(worker, 'messageerror', event => crash(current, event)));
       if (typeof worker.on === 'function' && typeof worker.off === 'function') current.listeners.push(listen(worker, 'exit', () => crash(current)));
-      current.timer = setTimeout(() => crash(current, {code: 'JXL_WORKER_TIMEOUT', message: `The worker was not ready in ${workerStartupTimeout} ms: check its URL and CSP, or raise workerStartupTimeout.`}), workerStartupTimeout);
+      current.timer = setTimeout(() => crash(current, {code: 'JXL_WORKER', message: `Worker was not ready in ${workerStartupTimeout} ms: check its URL and CSP, or raise workerStartupTimeout.`}), workerStartupTimeout);
       current.timer.unref?.();
-      const modules = suppliedWasm(true);
+      const modules = suppliedWasm();
       if (modules) worker.postMessage({wasmModules: modules});
     } catch (reason) { stopThread(reason?.code === 'JXL_OPTIONS' ? reason : undefined); throw reason; }
     return current;

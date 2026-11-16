@@ -2,9 +2,10 @@
 import {captureAnswer, screenPhotoAnswer} from './screen-floor.mjs';
 import {answer, guard} from './admit.mjs';
 import {gpuQueue} from './gpu-queue.mjs';
+import {deviceTrials} from './device-trial.mjs';
 
 export async function* driven(steps, signal, it, gpu, offload) {
-  const settle = promise => !signal ? promise : new Promise((resolve, reject) => {
+  const settle = promise => !signal || typeof promise?.then !== 'function' ? promise : new Promise((resolve, reject) => {
     const abort = () => reject(signal.reason);
     if (signal.aborted) return abort();
     signal.addEventListener('abort', abort, {once: true});
@@ -16,6 +17,7 @@ export async function* driven(steps, signal, it, gpu, offload) {
   try {
     while (!(step = guard(() => {
       signal?.throwIfAborted();
+      deviceTrials(device.trials, device.generation);
       return offload ? offload.step(steps, reply) : steps.next(reply);
     })).done) {
       const value = step.value;

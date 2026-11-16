@@ -22,6 +22,21 @@ export function expandPhotoRegions(data, width, height, regions, masked = false)
     }
     return count >= 8;
   };
+  const gutterLine = (ax, ay, bx, by) => {
+    if (ax < 0 || ay < 0 || bx >= width || by >= height) return null;
+    const key = words[ay * width + ax];
+    if (key >>> 24 !== 255) return null;
+    for (let y = ay; y <= by; y++) for (let x = ax; x <= bx; x++) if (words[y * width + x] !== key) return null;
+    return key;
+  };
+  const borderLine = (ax, ay, bx, by, gutter) => {
+    if (gutter === null) return false;
+    for (let y = ay; y <= by; y++) for (let x = ax; x <= bx; x++) {
+      const key = words[y * width + x];
+      if (key === gutter || key >>> 24 !== 255) return false;
+    }
+    return true;
+  };
   for (let i = 0; i < out.length; i++) {
     const r = out[i];
     for(let x=Math.min(r.x0+31,r.x1-1);x>=r.x0;x--)if(!photoLine(x,r.y0,x,r.y1-1)){r.x0=x+1;break;}
@@ -33,6 +48,14 @@ export function expandPhotoRegions(data, width, height, regions, masked = false)
     for(let y=Math.max(r.y1-32,r.y0);y<r.y1;y++)if(!photoLine(r.x0,y,r.x1-1,y)){r.y1=y;break;}
     while (r.y0 > Math.max(0, r.y - 31) && free(i, r.x0, r.y0 - 1, r.x1, r.y1) && photoLine(r.x0, r.y0 - 1, r.x1 - 1, r.y0 - 1)) r.y0--;
     while (r.y1 < Math.min(height, r.y + r.height + 31) && free(i, r.x0, r.y0, r.x1, r.y1 + 1) && photoLine(r.x0, r.y1, r.x1 - 1, r.y1)) r.y1++;
+    if (masked) {
+      const left=gutterLine(r.x-1,r.y0,r.x-1,r.y1-1),right=gutterLine(r.x+r.width,r.y0,r.x+r.width,r.y1-1);
+      while(r.x0>r.x&&borderLine(r.x0-1,r.y0,r.x0-1,r.y1-1,left))r.x0--;
+      while(r.x1<r.x+r.width&&borderLine(r.x1,r.y0,r.x1,r.y1-1,right))r.x1++;
+      const top=gutterLine(r.x0,r.y-1,r.x1-1,r.y-1),bottom=gutterLine(r.x0,r.y+r.height,r.x1-1,r.y+r.height);
+      while(r.y0>r.y&&borderLine(r.x0,r.y0-1,r.x1-1,r.y0-1,top))r.y0--;
+      while(r.y1<r.y+r.height&&borderLine(r.x0,r.y1,r.x1-1,r.y1,bottom))r.y1++;
+    }
   }
   return out.map(r => ({x: r.x0, y: r.y0, width: r.x1 - r.x0, height: r.y1 - r.y0}));
 }

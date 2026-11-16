@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 const GRAPHICS_HISTOGRAM_LIMIT = 65536;
-export const GRAPHICS_EDGE_RANGE = 32;
+const GRAPHICS_EDGE_RANGE = 32;
 const graphicsRGB = (rgba, at) => rgba[at] + rgba[at + 1] * 256 + rgba[at + 2] * 65536;
 
 export function* graphicsProtectionSteps(rgba, width, height, preserveEdges, protectedMask) {

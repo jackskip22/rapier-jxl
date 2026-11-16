@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {PHOTO_LIMITS} from './limits.mjs';
+import {LIMITS} from './limits.mjs';
 import {complete} from './bits.mjs';
 import {admitPixels, fault, job, guard, answer} from './admit.mjs';
 import {admitEffort, BALANCED_EFFORT} from './effort-level.mjs';
@@ -7,7 +7,7 @@ import {effortJob} from './effort-job.mjs';
 import {EXACT_LADDER} from './exact-ladder.mjs';
 import {checkSignal} from './async-job.mjs';
 import {prepareV6, scoreSteps, cpuMeasure, runAsync, gpuDoubt, CANDIDATES} from './photo-v6-search.mjs';
-import {exactAnswerer, exactPool, exactScores} from './exact-region.mjs';
+import {exactAnswerer, exactScores} from './exact-region.mjs';
 import {memoryPlan} from './memory-plan.mjs';
 import {gpuSetup} from './gpu-setup.mjs';
 import {photoTarget} from './photo-quality-search.mjs';
@@ -15,12 +15,11 @@ import {explicitShownMargin} from './photo-whole-policy.mjs';
 import {nativeRGBA} from './photo-output.mjs';
 import {bandedOutputs} from './photo-reconstruct-bands.mjs';
 
-export {PHOTO_LIMITS as LIMITS};
+export {LIMITS};
 
 function admitScore(data, width, height, options) {
   if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray)) throw fault('JXL_INPUT', 'Encoding to a score takes 8-bit sRGB RGBA.');
-  admitPixels(data, width, height, PHOTO_LIMITS);
-  if (width < 8 || height < 8) throw fault('JXL_INPUT', 'A score target needs at least 8 x 8 pixels.');
+  admitPixels(data, width, height, LIMITS);
   const candidates = options?.candidates ?? CANDIDATES;
   if (!Array.isArray(candidates) || !candidates.length || candidates.some(c => !CANDIDATES.includes(c))) throw fault('JXL_INPUT', `Candidates are some of ${CANDIDATES.join(', ')}.`);
   const allowLossless = options?.allowLossless === undefined ? true : options.allowLossless, maxBytes = options?.maxBytes ?? Number.MAX_SAFE_INTEGER;
@@ -39,11 +38,11 @@ function scoreMemory(data, width, height, options, exact) {
   return {memory, plan};
 }
 
-const scoreAnswer = r => ({bytes: r.bytes, quality: r.quality, candidate: r.candidate, pass: r.pass, butteraugli: r.butteraugli, butteraugli3: r.butteraugli3,
+const scoreAnswer = r => ({bytes: r.bytes, quality: r.quality, candidate: r.candidate, pass: r.pass,
   ...(r.ssimulacra2 !== undefined ? {ssimulacra2: r.ssimulacra2} : {})});
 
 function scoreRefusal(result, target, code, reason) {
-  const margin = row => Math.min(...Object.entries(target).map(([key, value]) => key === 'ssimulacra2' ? row[key] - value : (value - row[key]) / (0.04 * value)));
+  const margin = row => row.ssimulacra2 - target.ssimulacra2;
   const best = result.tried.map(row => row.bestObserved).reduce((a, b) => margin(b) > margin(a) ? b : a);
   const scores = Object.fromEntries(Object.keys(target).map(key => [key, best[key]]));
   return Object.assign(fault(code, reason + ' Best lossy scores: ' + Object.entries(scores).map(([key, value]) => key + ' ' + value).join(', ') + '.'),
@@ -54,7 +53,7 @@ function* finishScore(result, data, width, height, {target, effort, allowLossles
   if (result.pass && result.bytes.length <= maxBytes) return scoreAnswer(result);
   if (!allowLossless) throw scoreRefusal(result, target, result.pass ? 'JXL_SIZE' : 'JXL_TARGET',
     result.pass ? 'The selected file exceeds maxBytes.' : 'The target was not reached and lossless is off.');
-  const exact = effortJob(data, width, height, {quality: 100, effort}, false, PHOTO_LIMITS, undefined, undefined, EXACT_LADDER);
+  const exact = effortJob(data, width, height, {quality: 100, effort}, false, undefined, undefined, undefined, EXACT_LADDER);
   try {
     let step, reply;
     while (!(step = guard(() => exact.next(reply))).done) {
@@ -65,7 +64,7 @@ function* finishScore(result, data, width, height, {target, effort, allowLossles
     const bytes = answer(step.value);
     if (bytes.length > maxBytes) throw scoreRefusal(result, target, 'JXL_SIZE', 'The lossless file exceeds maxBytes.');
     preview?.(bytes, {width, height, measurements: []});
-    return scoreAnswer({bytes, quality: 100, candidate: 'lossless', pass: true, ssimulacra2: 100, butteraugli: 0, butteraugli3: 0});
+    return scoreAnswer({bytes, quality: 100, candidate: 'lossless', pass: true, ssimulacra2: 100});
   } finally { exact.return(); }
 }
 
@@ -110,6 +109,7 @@ export function* encodeToScoreSteps(data, width, height, options) {
 
 export const S2_DOUBT = 2e-4;
 
+
 export async function encodeToScore(data, width, height, options) {
   checkSignal(options?.signal);
   const settings = admitScore(data, width, height, options), {target, effort, candidates} = settings, gpu = options?.gpu;
@@ -123,7 +123,7 @@ export async function encodeToScore(data, width, height, options) {
     throw fault('JXL_MEMORY_GPU_UNPROVEN', 'The memory envelope gives no GPU allocation bound.');
   }
   if (!gpu) { try { return complete(encodeToScoreSteps(data, width, height, {...options, stats})); } finally { publish(); } }
-  let measurer = null, pool = null, exactAnswer = null, steps = null, cpuOnce = null, metricRgba = null, gpuFailure, gpuFailed = false, completed = false;
+  let measurer = null, exactAnswer = null, steps = null, cpuOnce = null, metricRgba = null, gpuFailure, gpuFailed = false, completed = false;
   const recordMemory = () => {
     stats.gpuBufferBytes = Math.max(stats.gpuBufferBytes, measurer?.gpuBufferBytes ?? 0);
     stats.hostBufferBytes = Math.max(stats.hostBufferBytes, measurer?.hostBufferBytes ?? 0);
@@ -134,13 +134,13 @@ export async function encodeToScore(data, width, height, options) {
   };
   const cleanup = async () => {
     const closing = [];
-    for (const release of [recordMemory, () => pool?.terminate(), () => exactAnswer?.destroy(), () => measurer?.destroy(),
+    for (const release of [recordMemory, () => exactAnswer?.destroy(), () => measurer?.destroy(),
       () => steps?.return(), () => cpuOnce?.destroy?.()]) {
       try { closing.push(Promise.resolve(release())); } catch (error) { closing.push(Promise.reject(error)); }
     }
     const results = await Promise.allSettled(closing), failures = results.filter(result => result.status === 'rejected');
     stats.cleanupFailures = (stats.cleanupFailures ?? 0) + failures.length;
-    pool = exactAnswer = measurer = steps = cpuOnce = metricRgba = null;
+    exactAnswer = measurer = steps = cpuOnce = metricRgba = null;
     return {failed: failures.length > 0, error: failures[0]?.reason};
   };
   const cpu = (image, want) => {
@@ -156,11 +156,10 @@ export async function encodeToScore(data, width, height, options) {
       measurer = await GpuMeasure.create(gpu, metricRgba, width, height, {signal: options?.signal});
       await attachVarblocks(measurer, gpu, {signal: options?.signal});
     } catch (error) { gpuFailure = error; gpuFailed = true; throw error; }
-    const cpuDecisions = options?.decisions === 'cpu';
     const measure = async (image, want) => {
       checkSignal(options?.signal);
       if (want?.exact) { stats.recomputed++; return cpu(image, want); }
-      if (cpuDecisions && want && ('p' in want || 'margin' in want)) {
+      if (want && ('p' in want || 'margin' in want)) {
         stats.cpuDecisions = (stats.cpuDecisions ?? 0) + 1; return cpu(image, want);
       }
       let out;
@@ -179,17 +178,10 @@ export async function encodeToScore(data, width, height, options) {
       stats.varblockGpuBufferPeak = measurer.varblockResources?.peakBufferBytes ?? 0;
       recordMemory(); return result;
     };
-    const admitted = plan.workers;
-    if (options?.poolSize !== undefined && (!Number.isSafeInteger(options.poolSize) || options.poolSize < 0))
-      throw fault('JXL_INPUT', 'poolSize is a nonnegative integer.');
-    const workers = Math.min(options?.poolSize ?? admitted, admitted);
     measure.exact = async request => {
       checkSignal(options?.signal);
       stats.regions += request.regions?.length ?? 1;
-      if (!exactAnswer) {
-        pool = workers ? await exactPool(workers, {signal: options?.signal, reservation: plan.workerReservation}) : null;
-        exactAnswer = exactAnswerer(data, width, height, pool, cpu, pool?.size ?? 0, plan, cpu, options?.signal);
-      }
+      if (!exactAnswer) exactAnswer = exactAnswerer(width, height, cpu, options?.signal);
       const result = await exactAnswer(request);
       stats.regionFallbacks = exactAnswer.fallbacks;
       return result;

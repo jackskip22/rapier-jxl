@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 import {fault, guard} from './admit.mjs';
 import {SIGNATURE, CODESTREAM, PARTIAL, boxes, fileHeader, boxHeader} from './container.mjs';
+import {codestreamLevel} from './framing.mjs';
 
 const invalid = message => fault('JXL_INPUT', message);
 const aborted = signal => { if (signal?.aborted) throw signal.reason ?? fault('JXL_INPUT', 'JPEG XL container streaming was canceled.'); };
 
 function settings(options) {
   if (!options || typeof options !== 'object' || Array.isArray(options)) throw invalid('Container options are an object.');
-  const {chunkSize = 65536, maxBytes = Number.MAX_SAFE_INTEGER, maxBoxes = 65536, signal} = options;
+  const {chunkSize = 65536, maxBytes = Number.MAX_SAFE_INTEGER, maxBoxes = Number.MAX_SAFE_INTEGER, signal} = options;
   if (!Number.isSafeInteger(chunkSize) || chunkSize < 1)
     throw invalid('A container chunk size is a positive safe integer.');
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw invalid('maxBytes is a positive safe integer.');
@@ -59,7 +60,8 @@ function prepareContainer(bytes, options = {}) {
   const payloads = entries.filter(entry => (entry.type === CODESTREAM || entry.type === PARTIAL) &&
     entry.end > entry.body + (entry.type === PARTIAL ? 4 : 0));
   const lastPayload = payloads.at(-1);
-  let size = bare ? 32 : SIGNATURE.length, outputBoxes = bare ? 1 : 0;
+  const head = bare ? fileHeader(codestreamLevel(bytes)) : SIGNATURE;
+  let size = head.length, outputBoxes = bare ? head.length > 32 ? 2 : 1 : 0;
   for (const entry of entries) {
     if (entry.type === CODESTREAM || entry.type === PARTIAL) {
       const length = entry.end - entry.body - (entry.type === PARTIAL ? 4 : 0);
@@ -69,12 +71,12 @@ function prepareContainer(bytes, options = {}) {
   }
   state.count(size);
   state.boxes(outputBoxes);
-  return {state, bare, entries, lastPayload, size};
+  return {state, head, entries, lastPayload, size};
 }
 
 function writeContainer(plan, bytes, emit) {
-  const {state, bare, entries, lastPayload} = plan;
-  emit(bare ? fileHeader() : SIGNATURE.slice());
+  const {state, head, entries, lastPayload} = plan;
+  emit(head.slice());
   let index = 0;
   for (const entry of entries) {
     aborted(state.signal);
@@ -91,7 +93,7 @@ function writeContainer(plan, bytes, emit) {
 
 export function* containerChunks(bytes, options = {}) {
   const plan = prepareContainer(bytes, options);
-  yield plan.bare ? fileHeader() : SIGNATURE.slice();
+  yield plan.head.slice();
   let index = 0;
   const {state, entries, lastPayload} = plan;
   for (const entry of entries) {
@@ -130,8 +132,13 @@ export async function* streamContainer(source, options = {}) {
       if (chunk[i] !== (signature++ ? 10 : 255)) throw invalid('Invalid raw JPEG XL codestream signature.');
     }
     if (!chunk.length) continue;
-    if (tail !== null) { state.boxes(1); state.count(13); yield fragment(Uint8Array.of(tail), index++, false); }
-    for (let at = 0; at < chunk.length - 1; at += state.chunkSize) {
+    let at = 0;
+    if (tail !== null && chunk.length > 1) {
+      const end = Math.min(chunk.length - 1, state.chunkSize - 1), part = new Uint8Array(end + 1);
+      part[0] = tail; part.set(chunk.subarray(0, end), 1); at = end;
+      state.boxes(1); state.count(part.length + 12); yield fragment(part, index++, false);
+    } else if (tail !== null) { state.boxes(1); state.count(13); yield fragment(Uint8Array.of(tail), index++, false); }
+    for (; at < chunk.length - 1; at += state.chunkSize) {
       aborted(state.signal);
       const part = chunk.subarray(at, Math.min(chunk.length - 1, at + state.chunkSize));
       state.boxes(1); state.count(part.length + 12); yield fragment(part, index++, false);

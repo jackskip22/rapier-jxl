@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {fault} from './fault.mjs';
 import {BitWriter} from './bits.mjs';
 import {buildTokenCoding} from './entropy.mjs';
 import {buildCode, uintConfig, hybridToken, writeHybrid, writeHistograms} from './prefix.mjs';
@@ -18,13 +19,13 @@ function validateCoefficientCounts(counts) {
   for (let ctx = 0; ctx < counts.contexts; ctx++) {
     let sum = 0;
     eachCoefficientValue(counts, ctx, (value, frequency) => {
-      if (!Number.isInteger(value) || value < 0 || value > 0xffffffff || !Number.isSafeInteger(frequency) || frequency <= 0) throw new RangeError('invalid coefficient counts');
+      if (!Number.isInteger(value) || value < 0 || value > 0xffffffff || !Number.isSafeInteger(frequency) || frequency <= 0) throw fault('JXL_INTERNAL', 'invalid coefficient counts');
       sum += frequency;
     });
-    if (sum !== counts.totals[ctx]) throw new RangeError('incomplete coefficient counts');
+    if (sum !== counts.totals[ctx]) throw fault('JXL_INTERNAL', 'incomplete coefficient counts');
     total += sum;
   }
-  if (!Number.isSafeInteger(total) || total > 0xffffffff) throw new RangeError('coefficient counts exceed histogram capacity');
+  if (!Number.isSafeInteger(total) || total > 0xffffffff) throw fault('JXL_INTERNAL', 'coefficient counts exceed histogram capacity');
 }
 
 function priceCoefficientHistogram(counts, contexts, config, code) {
@@ -33,7 +34,7 @@ function priceCoefficientHistogram(counts, contexts, config, code) {
   for (const ctx of contexts) eachCoefficientValue(counts, ctx, (value, frequency) => {
     hybridToken(config, value, slots);
     const [token, bits] = slots;
-    if (!Number.isInteger(token) || token < 0 || token >= COEFFICIENT_ALPHABET) throw new RangeError('coefficient token exceeds prefix alphabet');
+    if (!Number.isInteger(token) || token < 0 || token >= COEFFICIENT_ALPHABET) throw fault('JXL_INTERNAL', 'coefficient token exceeds prefix alphabet');
     frequencies[token] += frequency;
     extraBits += frequency * bits;
   });
@@ -41,7 +42,7 @@ function priceCoefficientHistogram(counts, contexts, config, code) {
   let payloadBits = extraBits;
   for (let token = 0; token < COEFFICIENT_ALPHABET; token++) if (frequencies[token]) {
     const length = code.lengths[token], single = code.simple?.length === 1 && code.simple[0] === token;
-    if (token >= code.alphabetSize || !(length > 0 || single)) throw new RangeError('coefficient token is absent from prefix code');
+    if (token >= code.alphabetSize || !(length > 0 || single)) throw fault('JXL_INTERNAL', 'coefficient token is absent from prefix code');
     payloadBits += frequencies[token] * length;
   }
   const histogram = {config, code}, header = new BitWriter(256);

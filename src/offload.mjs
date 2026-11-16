@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
-let depth = 0, workers = 1;
-export const offloading = () => depth > 0;
+let depth = 0, workers = 1, stage = null;
+export const offloading = kind => depth > 0 && (stage === null || stage === kind);
 export const offloadWorkers = () => depth > 0 ? workers : 1;
-export function stepOffloaded(steps, reply, count = 1) {
-  const outer = workers; depth++; workers = count;
-  try { return steps.next(reply); } finally { depth--; workers = outer; }
+export function stepOffloaded(steps, reply, count = 1, only = null) {
+  const outer = [workers, stage]; depth++; workers = count; stage = only;
+  try { return steps.next(reply); } finally { depth--; [workers, stage] = outer; }
 }
-export const sharing = () => depth > 0 && typeof SharedArrayBuffer === 'function' && globalThis.crossOriginIsolated !== false;
+export const sharing = () => offloading() && typeof SharedArrayBuffer === 'function' && globalThis.crossOriginIsolated !== false;
 export const shareable = (Type, length) => sharing() ? new Type(new SharedArrayBuffer(length * Type.BYTES_PER_ELEMENT)) : new Type(length);

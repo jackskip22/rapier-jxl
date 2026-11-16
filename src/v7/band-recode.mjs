@@ -10,15 +10,15 @@ import {P3_TRANSFORM, spaceTransform} from '../icc-transform.mjs';
 import {fail} from './primitives.mjs';
 import {lowPhotoSteps} from './low-photo.mjs';
 
-export function* recodeBand({data, width, height, ...description}, settings, {xyb, alpha, gray}, hdr = null, writer = coefficientAnsSteps, search) {
+export function* recodeBand({data, width, height, ...description}, settings, {xyb, alpha, gray, exact}, hdr = null, writer = coefficientAnsSteps, search) {
   const options = {...description, ...settings}, {quality, effort, colorSpace = 'srgb', filter} = options;
   const eight = data instanceof Uint8Array || data instanceof Uint8ClampedArray;
   if (quality < 100 && xyb && !eight) {
     const coded = hdr && (yield* hdr.lossy(data, width, height, quality, effort, admitSampleFormat(data, options)));
-    if (!coded) throw fail('JXL_INTERNAL', 'A band could not take the picture\'s XYB coding.');
+    if (!coded) throw fail('JXL_INTERNAL', "Invalid image result; report the input and options.");
     return coded;
   }
-  if (quality >= 100 || !eight) {
+  if (exact || quality >= 100 || !eight) {
     shapeFloors.set(data, {colour: gray ? 1 : 3, alpha});
     try { return yield* losslessSteps(data, width, height, {...options, fast: effort < 2}); }
     finally { shapeFloors.delete(data); }

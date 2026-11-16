@@ -3,9 +3,10 @@ import {float16Bits, ceilLog2} from './bits.mjs';
 import {writeHeaderFields, writeFrameHeaderEnd, GROUP_DIM} from './frame.mjs';
 import {writeHistograms, buildCode, uintConfig, countToken, writeHybrid} from './prefix.mjs';
 import {jpegError} from './jpeg-tables.mjs';
+import {fault} from './fault.mjs';
 import {SCAN} from './dct8-contexts.mjs';
 
-export function varDCTGeometry(jpeg, plan = {}) {
+function varDCTGeometry(jpeg, plan = {}) {
   const {width, height, components, xyb, strategyData, progression, authoredOrderPasses} = jpeg;
   const grey = components.length === 1;
   const directRGB = jpeg.cflBase !== undefined;
@@ -15,7 +16,7 @@ export function varDCTGeometry(jpeg, plan = {}) {
   let field = jpeg.quantFieldBase || 1, shift = 1;
   while (field / (8 * 255 * quantScale) < 1 / 16384) { field *= 2; shift *= 2; }
   const ycbcr = !xyb && (jpeg.ycbcr || grey);
-  const map = grey ? [0, 0, 0] : ycbcr ? [1, 0, 2] : [0, 1, 2];
+  const map = grey ? [0, 0, 0] : ycbcr && !jpeg.frameOrder ? [1, 0, 2] : [0, 1, 2];
   const comps = map.map(i => components[i]);
   const hasOrders = Boolean(plan.orders && !authoredOrderPasses && map.some(i => plan.orders[i].some((k, r) => k !== r)));
   const orders = hasOrders ? map.map(i => plan.orders[i].map(k => SCAN[k])) : [SCAN, SCAN, SCAN];
@@ -56,7 +57,10 @@ export function writeVarDCTHeader(header, jpeg, layout, modular16bit, imageHeade
   else {
   if (isFirstFrame) imageHeader(header, imageWidth ?? jpeg.canvasWidth ?? width, imageHeight ?? jpeg.canvasHeight ?? height, grey ? 1 : 3, alphaChannel, {xyb, orientation: jpeg.orientation, colorSpace: jpeg.colorSpace, modular16bit, ...jpeg.profile});
   header.write(1, 0); header.write(2, 0); header.write(1, 0);
-  header.write(2, 2); header.write(8, 128 + (noiseLut ? 1 : 0) + (patches ? 2 : 0) + (splineBits ? 16 : 0) + (useDCFrame ? 32 : 0) - 17);
+  const flags = (jpeg.adaptiveLFSmoothing && !useDCFrame ? 0 : 128) + (noiseLut ? 1 : 0) + (patches ? 2 : 0) + (splineBits ? 16 : 0) + (useDCFrame ? 32 : 0);
+  if (!flags) header.write(2, 0);
+  else if (flags <= 16) { header.write(2, 1); header.write(4, flags - 1); }
+  else { header.write(2, 2); header.write(8, flags - 17); }
   if (!xyb) header.write(1, ycbcr ? 1 : 0);
   if (!useDCFrame) {
   if (ycbcr) for (let c = 0; c < 3; c++) header.write(2, rawH[c] === 0 && rawV[c] === 0 ? 0 : rawH[c] === 1 && rawV[c] === 1 ? 1 : rawH[c] === 1 ? 2 : 3);
@@ -76,10 +80,11 @@ export function writeVarDCTDCFields(writer, jpeg, layout, contextHeader) {
   for (let c = 0; c < 3; c++) writer.write(16, float16Bits(comps[c].quant[0] / dcScale[c] / (255 * 8 * quantScale) * 128));
   writer.write(2, 3); writer.write(16, 65536 - 8193);
   writer.write(2, 1); writer.write(5, 0);
-  writer.write(1, 0); writer.write(4, 0);
   writer.append(contextHeader);
   if (xyb) writer.write(1, 1);
-  else { const base = float16Bits(jpeg.cflBase ?? 0); writer.write(1, 0); writer.write(2, 0); writer.write(16, base); writer.write(16, base); writer.write(8, 128); writer.write(8, 128); }
+  else {
+    if (!(Math.abs(jpeg.cflBase ?? 0) <= 4)) throw fault('JXL_INTERNAL', `A base color correlation of ${jpeg.cflBase} is outside -4 to 4.`);
+    const base = float16Bits(jpeg.cflBase ?? 0); writer.write(1, 0); writer.write(2, 0); writer.write(16, base); writer.write(16, base); writer.write(8, 128); writer.write(8, 128); }
   writer.write(1, 0);
 }
 

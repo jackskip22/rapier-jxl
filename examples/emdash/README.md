@@ -6,7 +6,7 @@ Every upload gets a JPEG XL copy, served to compatible browsers. Browsers which 
 
 JPEGs are kept as JPEG XL, then converted back losslessly when needed. Other formats always keep the original file.
 
-Works with Cloudflare R2 and Node local storage. The native `rapier-jxl/emdash` integration uses the site's existing storage. It selects a full-size JPEG XL representation for delivery only when it meets the selected goal, is smaller, and fits the selected size limit.
+Works with Cloudflare R2 and Node local storage. The native `jpegxl/emdash` integration uses the site's existing storage. It selects a full-size JPEG XL representation for delivery only when it meets the selected goal, is smaller, and fits the selected size limit.
 
 The separate [Registry companion](registry/README.md), `@rapier.website/jxl`, is a setup guide. Installing the guide alone does not enable image conversion or delivery.
 
@@ -17,7 +17,7 @@ The separate [Registry companion](registry/README.md), `@rapier.website/jxl`, is
 Just run this in your site's folder:
 
 ```sh
-npx rapier-jxl add emdash
+npx jpegxl add emdash
 ```
 
 The command checks the installation and updates `astro.config.mjs`, preserving the existing options. On Cloudflare it asks **Workers Paid?** once, unless an explicit 10 ms or 30,000 ms native allowance is already recorded. Answer for the plan you already use. Node needs no question or Workers flag.
@@ -25,13 +25,13 @@ The command checks the installation and updates `astro.config.mjs`, preserving t
 For a coding agent, CI or another noninteractive terminal, choose explicitly:
 
 ```sh
-npx rapier-jxl add emdash --workers-paid
-npx rapier-jxl add emdash --workers-free
+npx jpegxl add emdash --workers-paid
+npx jpegxl add emdash --workers-free
 ```
 
 Use one flag. Paid records `{cpuLimitMs: 30000}` in the third `jxl` argument and sets `limits.cpu_ms` to `30000` in the site's source Wrangler config. Free records `{cpuLimitMs: 10}`, retains physical JPEG originals, and removes an existing custom Wrangler CPU limit while preserving other settings. The choice configures the local project; account plan changes and remote deployment remain separate actions.
 
-If this integration already records a 30,000 ms allowance, setup refuses a switch to Free before installing packages or writing config. Run `npx rapier-jxl remove emdash` under the existing allowance so archived originals are restored, then run `npx rapier-jxl add emdash --workers-free`. A fresh integration may choose either plan even when an unrelated Wrangler CPU limit already exists.
+If this integration already records a 30,000 ms allowance, setup refuses a switch to Free before installing packages or writing config. Run `npx jpegxl remove emdash` under the existing allowance so archived originals are restored, then run `npx jpegxl add emdash --workers-free`. A fresh integration may choose either plan even when an unrelated Wrangler CPU limit already exists.
 
 Automatic edits support one ordinary `wrangler.json` or `wrangler.jsonc` in the site folder. Comments, other options and file permissions are retained. Generated configs, TOML, multiple source configs, named environments and custom config/environment selectors require explicit manual setup; the command explains the part it cannot safely choose. It rechecks source files and deployment selectors after dependency installation and before replacing a config. Rebuild and deploy through the site's normal workflow after setup succeeds.
 
@@ -40,21 +40,21 @@ Automatic edits support one ordinary `wrangler.json` or `wrangler.jsonc` in the 
 Or tell your coding agent:
 
 ```text
-Add rapier-jxl to my EmDash site with npx rapier-jxl add emdash.
+Add rapier-jxl to my EmDash site with npx jpegxl add emdash.
 ```
 
 ### By hand
 
 ```sh
-npm install rapier-jxl @cloudflare/kumo@2.6.0
+npm install jpegxl @cloudflare/kumo@2.6.0
 ```
 
-Kumo 2.6.0 matches EmDash 1.4's admin. For a newer host, use the Kumo version resolved by its installed EmDash admin.
+EmDash 1.5.0 and @emdash-cms/cloudflare must have the same installed version. Use the exact Kumo version resolved by the installed EmDash admin.
 
 In `astro.config.mjs`, add the import and replace `emdash(options)` with `jxl(emdash, options)`. Keep the entire existing options object:
 
 ```js
-import {jxl} from 'rapier-jxl/emdash';
+import {jxl} from 'jpegxl/emdash';
 
 jxl(emdash, options)
 ```
@@ -81,7 +81,7 @@ jxl(emdash, options, {cpuLimitMs: 10})
 
 Use the host's configured allowance. An omitted CPU value does not classify a plan as Free; error 1102 alone also does not distinguish CPU from memory exhaustion. Cloudflare memory defaults to its 128 MiB isolate limit. Worker admission reserves runtime headroom: the measured operation peak plus 10% must fit both 96 MB and any smaller configured memory allowance. A job with no certified memory bound is handed to the browser, as is a job whose bound exceeds that allowance. Node does not inherit the Worker limit.
 
-An explicitly configured Free Worker (`cpuLimitMs: 10`) accepts delivery copies from an authenticated media administrator after the browser verifies them. The server checks the JPEG XL container/header and compares its displayed geometry with one bounded 64 KiB JPEG/PNG source-header read. Responsive geometry comes from the captured Sizes settings and the oriented source aspect ratio. It also enforces the byte limit and source-generation, delivery-revision, native media-identity, and settings fences. The browser receipt is recorded as informational assurance; it never authorizes original retirement. This path returns an immediate sidecar or responsive copy, without server pixel verification or a pending verification job. The original stays in place. Paid, Node, and Workers with an unknown allowance still require independent server verification before publication.
+An explicitly configured Free Worker (`cpuLimitMs: 10`) accepts delivery copies from an authenticated media administrator after the browser verifies them. The server checks the JPEG XL container/header and compares its displayed geometry with one bounded 64 KiB JPEG/PNG source-header read. Responsive geometry comes from the captured Sizes settings and the oriented source aspect ratio. It also enforces the byte limit and source-generation, delivery-revision, native media-identity, and settings fences. The browser receipt is recorded as informational assurance; it never authorizes original retirement. This path returns an immediate sidecar or responsive copy, without server pixel verification or a pending verification job. Here a Size limit takes the quality the uploader's browser chose; where the server verifies pixels, it also refuses a copy when a higher quality fits. The original stays in place. Paid, Node, and Workers with an unknown allowance still require independent server verification before publication.
 
 The structural source check reads pre-scan JPEG Exif or pre-IDAT PNG eXIf; it does not prove anything about metadata after image data, decoded pixel equality, fidelity, or exact reconstruction. Unsupported or incomplete headers within the fixed cap are refused. Normalized orientation is accepted when the displayed geometry agrees. Structural checks still need measurement on the actual Free host; passing source tests is not a 10 ms CPU measurement.
 
@@ -91,7 +91,7 @@ Native admin work uses approximately 5 seconds per request and scheduled Worker 
 
 The server run supports **Pause**, **Resume**, and **Cancel**. Pause lets the current image finish and holds the next one. Cancel stops pending work and requests cancellation of the current job; a job already publishing must settle first. Completed copies remain available. Reopening the page reads the saved selection and progress.
 
-**Import from WordPress** uses EmDash to import images and rewrite post URLs. Its JPEG and PNG uploads receive the same server treatment as other uploads, including before the post rewrite finishes. Browser conversion starts after that rewrite succeeds. A failed or canceled rewrite stops the browser queue; it does not undo server copies already created. Media URLs and original image bytes remain available throughout.
+**Import a site export** uses EmDash to import images and rewrite post URLs. Its JPEG and PNG uploads receive the same server treatment as other uploads, including before the post rewrite finishes. Browser conversion starts after that rewrite succeeds. A failed or canceled rewrite stops the browser queue; it does not undo server copies already created. Media URLs and original image bytes remain available throughout.
 
 ## Mode and Sizes
 
@@ -138,14 +138,27 @@ In **Recent**, **Download original** returns the exact original file and MIME ty
 
 Negotiation applies to EmDash's `/_emdash/api/media/file/…` URLs and matching same-origin width requests. The browser must explicitly accept JPEG XL without preferring the alternative. Original fallback, thumbnails, and downloads continue through the storage wrapper. Both delivery representations vary on `Accept`; JPEG XL responses require cache revalidation. Direct bucket or CDN URLs bypass this wrapper, so use the EmDash media URLs.
 
+EmDash 1.5's `<Image formats={["avif", "webp"]}>` emits a `<picture>`. Its optimized AVIF and WebP width URLs can return an existing JPEG XL variant when the request explicitly prefers or equally accepts `image/jxl`; otherwise the site's image service remains the fallback. The component does not itself emit a JPEG XL `<source>` with this formats array, so a browser that omits `image/jxl` from its `Accept` header receives the ordinary picture.
+
+## AI agents (MCP)
+
+When plugin MCP tools are enabled in EmDash (`mcp:tools` or `mcp:tools:rapier-media`), AI agents can run the optimizer over `/_emdash/api/mcp` with four tools:
+
+| Tool | Permission | What it does |
+| --- | --- | --- |
+| `rapier-media__convertLibrary` | `media:upload` | Start, pause, resume, advance, or cancel converting ready JPEG and PNG files in the media library under the saved settings. |
+| `rapier-media__libraryProgress` | `media:read` | Read the current or most recent library conversion run, active image job, and originals policy state. |
+| `rapier-media__bytesSaved` | `media:read` | Measure original bytes, delivered JPEG XL bytes, visitor bytes saved, and physical storage bytes across the library. |
+| `rapier-media__keepOriginalJpegs` | `media:upload` | Read or change **Keep original JPEG files** (`destructive: true`); turning it off needs `confirm: true` and the policy ID just read, and the host's allowance. |
+
 ## Remove it
 
-`npx rapier-jxl remove emdash` restores every original file.
+`npx jpegxl remove emdash` restores every original file.
 
 Keep the site running with the integration enabled. In its project folder, run:
 
 ```sh
-npx rapier-jxl remove emdash
+npx jpegxl remove emdash
 ```
 
 For a deployed site, pass its HTTPS origin with `--url https://your-site.example` or set `EMDASH_URL`. The command uses `EMDASH_TOKEN` or the matching, unexpired EmDash login and requires `plugins:manage`. The default local URL is `http://localhost:4321`.

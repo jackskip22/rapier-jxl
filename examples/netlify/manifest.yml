@@ -1,0 +1,8 @@
+name: rapier-jxl
+inputs:
+  - name: effort
+    description: 1 (fastest) to 9 (smallest); default 3.
+  - name: quality
+    description: Quality of PNG files, 1 to 100; default 90. JPEG files are kept exactly.
+  - name: exact
+    description: true writes PNG files exactly (screenshots, diagrams); default false.

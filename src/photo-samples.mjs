@@ -7,7 +7,7 @@ import {EDGE} from './limits.mjs';
 
 const INTENTS = ['perceptual', 'relative', 'saturation', 'absolute'];
 
-export const photoLimits = maxPixels => {
+const photoLimits = maxPixels => {
   if (maxPixels !== undefined && (!Number.isSafeInteger(maxPixels) || maxPixels < 1))
     throw fault('JXL_INPUT', 'A photo domain pixel limit is a positive whole number.');
   return maxPixels === undefined ? undefined : {pixels: maxPixels, edge: EDGE};

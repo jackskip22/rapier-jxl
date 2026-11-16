@@ -1,11 +1,11 @@
 // An upload queue in a page: several photos go through one worker, one at a time and in order, each
 // with its own progress, cancel and errors that carry a code. Pick files with the input, or call window.run() for a
 // self-contained demonstration.
-// With a bundler (Vite, webpack, Rollup, esbuild): import {createCodec} from 'rapier-jxl/codec';
-import {createCodec} from './node_modules/rapier-jxl/dist/codec.mjs';
+// With a bundler (Vite, webpack, Rollup, esbuild): import * as queue from 'jpegxl/upload';
+import * as queue from '../dist/upload.browser.mjs';
 
-// One owned queue over the upload module: its own worker, input copied at submission, bounded memory and job count.
-const queue = createCodec({module: 'rapier-jxl/upload', maxPixels: 16_000_000, maxPendingBytes: 64 * 1024 * 1024, maxPendingJobs: 8});
+// The upload module's queue: its own worker, input copied at submission, bounded memory and job count.
+queue.configure({maxPixels: 16_000_000, maxPendingBytes: 64 * 1024 * 1024, maxPendingJobs: 8});
 // Cancel all aborts the uploads already chosen; files chosen after it get a fresh controller.
 let cancelAll = new AbortController();
 const list = document.querySelector('#list');
@@ -26,7 +26,7 @@ function upload(file, {signal = cancelAll.signal, effort = 3, quality = 82} = {}
   const onProgress = fraction => { progress.push(fraction); view.progress.value = fraction; };
   // A page's Content Security Policy must allow 'wasm-unsafe-eval'.
   return queue.encode(file, {effort, fidelity: {quality}, signal, onProgress}).then(result => {
-    if (!result.fits) throw Object.assign(new Error(result.reason.message), {code: result.reason.code});
+    if (!result.meetsTarget) throw Object.assign(new Error(result.reason.message), {code: result.reason.code});
     view.done(`${result.bytes.length} bytes`);
     return {name: file.name, ok: true, bytes: result.bytes.length, progress,
       original: file, result, jxl: new Blob([result.bytes], {type: 'image/jxl'})};
@@ -70,5 +70,5 @@ window.run = async () => {
   const full = await queue.encode({data: new Uint8Array(4), width: 1, height: 1}).then(() => null, error => error.code);
   await Promise.all(blocker);
   return {results: results.map(({name, ok, bytes, code, progress}) => ({name, ok, bytes, code, progress})), order, queueFull: full,
-    stats: queue.stats, ms: Math.round(performance.now() - started)};
+    ms: Math.round(performance.now() - started)};
 };

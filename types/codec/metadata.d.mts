@@ -4,7 +4,7 @@ import type {Bytes} from './index.mjs';
 export interface MetadataOptions {
   /** Optional full encoded input-size limit, enforced before copying (JXL_SIZE on refusal). */
   maxBytes?: number;
-  /** Maximum accepted input boxes. Defaults to 65,536. */
+  /** Maximum accepted input boxes; none by default. */
   maxBoxes?: number;
   /** Raw TIFF bytes, beginning with II or MM; no Exif\0\0 or JPEG APP1 header. */
   exif?: Uint8Array | null | undefined;
@@ -18,19 +18,19 @@ export interface CompressedMetadataOptions extends MetadataOptions {
   /** auto uses brob only when its full payload is smaller; brotli always compresses. Defaults to auto. */
   compression?: 'auto' | 'brotli';
   /** Optional codec. Node uses node:zlib; browsers use native Brotli streams or the portable LZ77/prefix writer. */
-  compress?: BrotliCodec;
+  compress?: BrotliCodec | undefined;
 }
 export interface MetadataReadOptions {
   /** Optional full encoded input-size limit, enforced before copying (JXL_SIZE on refusal). */
   maxBytes?: number;
-  /** Maximum input boxes. Defaults to 65,536. */
+  /** Maximum input boxes; none by default. */
   maxBoxes?: number;
-  /** Optional positive safe-integer budget for combined decoded metadata, 64 MiB (67108864) by default. Beyond it the
-   * read is refused with JXL_SIZE. */
+  /** Optional positive safe-integer budget for combined decoded metadata; none by default. Beyond it the read is
+   * refused with JXL_SIZE. */
   maxDecodedBytes?: number;
   /** Optional full decoder. It must honor a supplied maxOutputLength before allocating output. Without native support,
    * the built-in reader accepts the portable writer's subset; arbitrary external Brotli may need this hook. */
-  decompress?: BrotliCodec;
+  decompress?: BrotliCodec | undefined;
 }
 export interface Metadata {
   /** Raw TIFF bytes, one array per Exif box, in file order. */

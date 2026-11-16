@@ -6,9 +6,10 @@ export interface ContainerOptions {
   chunkSize?: number;
   /** Optional positive safe-integer budget for total container bytes. Defaults to available memory. */
   maxBytes?: number;
-  /** Maximum input and authored output boxes, including ftyp and level. Default 65,536. */
+  /** Maximum input and authored output boxes, including ftyp and level; none by default. */
   maxBoxes?: number;
-  signal?: AbortSignal;
+  /** Aborts the call; it throws the signal's reason. */
+  signal?: AbortSignal | undefined;
 }
 export interface ContainerStreamOptions extends ContainerOptions {
   /** Required codestream level. Level 10 writes jxll immediately after ftyp. Defaults to 5. */

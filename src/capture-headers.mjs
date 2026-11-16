@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {fault} from './fault.mjs';
 import {FRAME_SIZE, packSigned} from './bits.mjs';
 import {writeTOC, fullFrame} from './frame.mjs';
 import {admitOutputSize} from './admit.mjs';
@@ -42,7 +43,7 @@ export function writeCaptureModularHeader(w, {useGlobalTree = true, transforms =
   const beginC = [[3, 0], [6, 8], [10, 72], [13, 1096]];
   for (const t of transforms) {
     if (t.type === 'rct') { w.write(2, 0); w.writeU32(beginC, t.beginC); w.writeU32([[0, 6], [2, 0], [4, 2], [6, 10]], t.rctType ?? 6); continue; }
-    if (t.type !== 'palette') throw new Error('unknown transform ' + t.type);
+    if (t.type !== 'palette') throw fault('JXL_INTERNAL', 'unknown transform ' + t.type);
     w.write(2, 1); w.writeU32(beginC, t.beginC);
     w.writeU32([[0, 1], [0, 3], [0, 4], [13, 1]], t.numC);
     w.writeU32([[8, 0], [10, 256], [12, 1280], [16, 5376]], t.nbColors);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {kernelHooks} from './kernel-hooks.mjs';
+import {fault} from './fault.mjs';
 
 const PACKED_BYTES = 1 << 20, RESULTS = 1024, INVALID = {};
 const coordinates = ['x', 'y', 'width', 'height'];
@@ -72,7 +73,7 @@ export function photoQualityMemo(owned) {
   pixels = null; owned = null;
   const looks = [], crops = [];
   let bytes = 0, results = 0, closed = false;
-  const check = () => { if (closed) throw new Error('Photo quality memo is destroyed.'); };
+  const check = () => { if (closed) throw fault('JXL_INTERNAL', 'Photo quality memo is destroyed.'); };
   const owns = (data, width) => buffer && (data instanceof Uint8Array || data instanceof Uint8ClampedArray)
     && data.buffer === buffer && data.byteOffset === offset && data.byteLength === size && width === sourceWidth;
   const read = (entries, data, width, walk, compute, vector) => {
@@ -104,9 +105,9 @@ export function photoQualityMemo(owned) {
     look(args, compute) {
       check();
       if (!dense(args)) return compute();
-      const [data, width, r, reading, webp, dx = 0, dy = 0, exactRects = [], colorSpace = 'srgb', frameQuality = reading, boxes = []] = args;
+      const [data, width, r, reading, intent, dx = 0, dy = 0, exactRects = [], colorSpace = 'srgb', frameQuality = reading, boxes = []] = args;
       return read(looks, data, width, put => {
-        for (const number of [reading, webp, dx, dy, frameQuality]) put(number);
+        for (const number of [reading, intent, dx, dy, frameQuality]) put(number);
         space(colorSpace, put); rectangle(r, put); rectangles(exactRects, put, true); rectangles(boxes, put);
       }, compute, false);
     },

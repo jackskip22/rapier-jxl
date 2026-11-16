@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: MIT
-import {exactTan, exactSin, exactCos, exactExp, EXACT_PI} from './exact-math.mjs';
 
 export function recursiveGaussian(sigma) {
-  const radius = Math.round(3.2795 * sigma + 0.2546), p = EXACT_PI / (2 * radius), omega = [p, 3 * p, 5 * p];
-  const p1 = 1 / exactTan(0.5 * omega[0]), p3 = -1 / exactTan(0.5 * omega[1]), p5 = 1 / exactTan(0.5 * omega[2]);
-  const r1 = p1 * p1 / exactSin(omega[0]), r3 = -p3 * p3 / exactSin(omega[1]), r5 = p5 * p5 / exactSin(omega[2]);
-  const rho = omega.map(w => exactExp(-0.5 * sigma * sigma * w * w) / radius);
+  const radius = Math.round(3.2795 * sigma + 0.2546), p = Math.PI / (2 * radius), omega = [p, 3 * p, 5 * p];
+  const p1 = 1 / Math.tan(0.5 * omega[0]), p3 = -1 / Math.tan(0.5 * omega[1]), p5 = 1 / Math.tan(0.5 * omega[2]);
+  const r1 = p1 * p1 / Math.sin(omega[0]), r3 = -p3 * p3 / Math.sin(omega[1]), r5 = p5 * p5 / Math.sin(omega[2]);
+  const rho = omega.map(w => Math.exp(-0.5 * sigma * sigma * w * w) / radius);
   const d13 = p1 * r3 - r1 * p3, d35 = p3 * r5 - r3 * p5, d51 = p5 * r1 - r5 * p1;
   const z15 = d35 / d13, z35 = d51 / d13;
   const A = [p1, p3, p5, r1, r3, r5, z15, z35, 1], gamma = [1, radius * radius - sigma * sigma, z15 * rho[0] + z35 * rho[1] + rho[2]];
   const inv = invert3(A), beta = [0, 1, 2].map(i => inv[i * 3] * gamma[0] + inv[i * 3 + 1] * gamma[1] + inv[i * 3 + 2] * gamma[2]);
-  return {radius, n2: omega.map((w, i) => -beta[i] * exactCos(w * (radius + 1))), d1: omega.map(w => -2 * exactCos(w))};
+  return {radius, n2: omega.map((w, i) => -beta[i] * Math.cos(w * (radius + 1))), d1: omega.map(w => -2 * Math.cos(w))};
 }
 
 function invert3(m) {

@@ -1,6 +1,6 @@
 # Self-test pictures
 
-The fixed pictures `npx rapier-jxl selftest`, [run.html](../run.html) and the [Cloudflare Workers job](../cloudflare-workers.md) encode. [manifest.json](manifest.json) holds each file's SHA-256, its decoded pixels' SHA-256 and the SHA-256 every row must produce in this release.
+The fixed pictures `npx jpegxl selftest`, [run.html](../run.html) and the [Cloudflare Workers job](../cloudflare-workers.md) encode. [manifest.json](manifest.json) holds each file's SHA-256, its decoded pixels' SHA-256 and the SHA-256 every row must produce in this release.
 
 | File | Picture | Author | License |
 | --- | --- | --- | --- |

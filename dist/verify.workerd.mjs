@@ -1,4 +1,4 @@
-import wasm from './wasm.workerd.mjs';
-import {configureWasm} from './verify.mjs';
-configureWasm(wasm);
+import kernels from './kernels.wasm';
+import {provideWasm} from './wasm-modules.mjs';
+provideWasm({kernels});
 export * from './verify.mjs';

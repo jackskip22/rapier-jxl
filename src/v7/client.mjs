@@ -1,32 +1,55 @@
 
-import {DEFAULT_INPUT_BYTES, DEFAULT_PIXELS, SNAPSHOTS, withCost, record, dimensions, measure, snapshot} from './ownership.mjs';
-import {fail as error, declared, callers, isCaller, LARGEST, JPEG_PIXELS} from './primitives.mjs';
+import {hostPendingBytes, SNAPSHOTS, withCost, record, dimensions, measure, snapshot} from './ownership.mjs';
+import {fail as error, declared, callers, isCaller, PIXELS, abortError, progressOf, abortable} from './primitives.mjs';
 import {createTransport, REPLACED} from './transport.mjs';
 import {elsewhere, program, relocatable} from './worker-start.mjs';
+import {admitFrames} from './surface.mjs';
 const DEFAULT_JOBS = 32;
 const HELPER_BYTES = 46137344, PIXEL_BYTES = 56;
 const IDLE = 60000;
 
+function admittedFrames(input, plans) {
+  const fields = value => plans.get(value)?.fields ?? [];
+  const value = (record, name) => fields(record).find(([key]) => key === name)?.[1].value;
+  const source = value(input, 'frames');
+  const framePlan = plans.get(source);
+  if (framePlan?.kind !== 'record' || !framePlan.array) return;
+  const frames = [];
+  for (const [key, descriptor] of framePlan.fields) {
+    const frame = descriptor.value;
+    let data = value(frame, 'data');
+    const plan = plans.get(data);
+    if (plan?.kind === 'view' || plan?.kind === 'handed') {
+      try { data = new plan.Type(plan.buffer, plan.byteOffset, plan.byteLength / (plan.Type.BYTES_PER_ELEMENT ?? 1)); }
+      catch { throw error('JXL_INPUT', "ArrayBuffer is detached or too small; pass a live one."); }
+    }
+    Object.defineProperty(frames, key, {value: frame && typeof frame === 'object' ? {data, duration: value(frame, 'duration')} : frame,
+      writable: true, enumerable: true, configurable: true});
+  }
+  admitFrames({width: value(input, 'width'), height: value(input, 'height'), frames});
+}
+
 function positive(value, fallback, name) {
   if (value === undefined) value = fallback;
-  if (!Number.isSafeInteger(value) || value < 1) throw error('JXL_OPTIONS', `${name} must be a positive safe integer.`);
+  if (!Number.isSafeInteger(value) || value < 1) throw error('JXL_OPTIONS', `Invalid ${name}; use a positive safe integer.`);
   return value;
 }
 function aborted(signal) {
-  try { return signal?.reason === undefined ? error('JXL_ABORTED', 'JPEG XL operation was canceled.') : callers(signal.reason); }
+  try { return signal?.reason === undefined ? callers(abortError()) : callers(signal.reason); }
   catch (reason) { return callers(reason); }
 }
-const WORKER_START = 'The worker did not start. Serve the package from the page origin, allow blob: in worker-src, import the module to run in place, or pass workerFactory.';
+const NO_WORKER = "Workers are unavailable here; use a page or worker, or pass workerFactory.";
+const WORKER_START = "Worker did not start; serve the package from the page origin, allow blob: in worker-src, or pass workerFactory.";
 function started(make, cleanup) {
   try { return make(); } catch (cause) { cleanup?.(); throw Object.assign(error('JXL_WORKER', WORKER_START), {cause}); }
 }
 function browserWorker(spec) {
   if (!spec.url) return started(spec.worker);
-  const url = spec.url();
-  return elsewhere(url) ? embeddedWorker(program(url.href)) : relocatable(() => started(spec.worker), url);
+  const url = started(spec.url);
+  return elsewhere(url) ? embeddedWorker(program(url.href), spec.role) : relocatable(() => started(spec.worker), url, {role: spec.role});
 }
 
-export function embeddedWorker(program) {
+export function embeddedWorker(program, name) {
   const source = URL.createObjectURL(new Blob([program], {type: 'text/javascript'}));
   let blocked = false;
   const violation = event => {
@@ -34,11 +57,11 @@ export function embeddedWorker(program) {
   };
   const done = () => { globalThis.document?.removeEventListener('securitypolicyviolation', violation); URL.revokeObjectURL(source); };
   globalThis.document?.addEventListener('securitypolicyviolation', violation);
-  const worker = started(() => new Worker(source, {type: 'module'}), done);
+  const worker = started(() => new Worker(source, {type: 'module', ...name && {name}}), done);
   worker.addEventListener('message', done, {once: true});
   worker.addEventListener('error', event => {
     done();
-    if (blocked) Object.defineProperties(event, {code: {value: 'JXL_WORKER_CSP'}, message: {value: "The CSP blocks the blob: worker. Add blob: to worker-src, or import the module to run in place."}});
+    if (blocked) Object.defineProperties(event, {code: {value: 'JXL_WORKER'}, message: {value: "CSP blocks the worker; allow blob: in worker-src."}});
   }, {once: true});
   const terminate = worker.terminate;
   worker.terminate = function () { done(); return terminate.call(this); };
@@ -51,52 +74,39 @@ function coded(reason, job = null) {
     if (isCaller(reason) || job && reason === job.controller.signal.reason) return reason;
     const code = reason.code;
     if (typeof code === 'string' && code.startsWith('JXL_')) return reason;
+    const memory = declared(reason);
+    if (memory?.code === 'JXL_MEMORY') return memory;
     let message = '';
     try { message = String(reason.message ?? ''); } catch {}
-    return Object.assign(error('JXL_INTERNAL', message || 'The JPEG XL job failed.'), {cause: reason});
+    return Object.assign(error('JXL_INTERNAL', message || "Image job failed; report the input and options."), {cause: reason});
   } catch { return reason; }
 }
 
-export function deviceHelpers(nav = globalThis.navigator) {
-  const reported = nav?.deviceMemory > 0, os = reported ? null : globalThis.process?.getBuiltinModule?.('node:os'), each = 3 * 2 ** 25;
-  const count = Math.min(16, (nav?.hardwareConcurrency || os?.availableParallelism() || 1) - 1,
-    (reported ? nav.deviceMemory * 2 ** (nav.userAgentData?.mobile === false ? 27 : 26) : os ? os.freemem() / 4 : 2 * each) / each | 0);
-  return count > 0 ? Object.freeze({count, memoryBytes: count * each}) : undefined;
-}
-
-export function helperReservation(value) {
-  if (value === undefined) return undefined;
-  if (value === true) return deviceHelpers();
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw error('JXL_OPTIONS', 'helpers is true or {count, memoryBytes}.');
-  for (const key of Object.keys(value)) if (key !== 'count' && key !== 'memoryBytes') throw error('JXL_OPTIONS', `Unknown helpers field: ${key}.`);
-  const {count, memoryBytes} = value;
-  if (!Number.isInteger(count) || count < 0 || count > 16) throw error('JXL_OPTIONS', 'helpers.count is a whole number from 0 to 16.');
-  if (count && (!Number.isSafeInteger(memoryBytes) || memoryBytes < 1)) throw error('JXL_OPTIONS', 'helpers.memoryBytes is a positive safe integer.');
-  return count ? Object.freeze({count, memoryBytes}) : undefined;
-}
+export {deviceHelpers, helperReservation} from './helper-reservation.mjs';
+import {helperReservation} from './helper-reservation.mjs';
 
 export function createCodec(config = {}, spec, replies) {
-  if (!config || typeof config !== 'object' || Array.isArray(config)) throw error('JXL_OPTIONS', 'Codec configuration must be an object.');
+  if (!config || typeof config !== 'object' || Array.isArray(config)) throw error('JXL_OPTIONS', "Invalid configuration; pass an object.");
   for (const key of Object.keys(config)) if (!['workerFactory', 'workerStartupTimeout', 'maxPendingBytes', 'maxPixels', 'maxPendingJobs', 'helpers', 'webgpu'].includes(key))
-    throw error('JXL_OPTIONS', `Unknown encoder configuration: ${key}.`);
-  if (config.workerFactory !== undefined && typeof config.workerFactory !== 'function') throw error('JXL_OPTIONS', 'workerFactory must be a function.');
+    throw error('JXL_OPTIONS', `Unknown configuration option ${key}; remove it.`);
+  if (config.workerFactory !== undefined && typeof config.workerFactory !== 'function') throw error('JXL_OPTIONS', "Invalid workerFactory; pass a function.");
   if (config.webgpu !== undefined && config.webgpu !== 'required' && config.webgpu !== false)
-    throw error('JXL_OPTIONS', "webgpu is 'required' or false, or left out.");
+    throw error('JXL_OPTIONS', "Invalid webgpu; use 'required', false, or omit it.");
   const webgpu = config.webgpu;
-  const maxPendingBytes = positive(config.maxPendingBytes, DEFAULT_INPUT_BYTES, 'maxPendingBytes');
-  const maxPixels = positive(config.maxPixels, DEFAULT_PIXELS, 'maxPixels');
-  if (maxPixels > LARGEST) throw error('JXL_OPTIONS', 'maxPixels is at most ' + LARGEST + ' (16,384 x 16,384).');
+  const maxPendingBytes = positive(config.maxPendingBytes, hostPendingBytes(), 'maxPendingBytes');
+  const maxPixels = positive(config.maxPixels, PIXELS, 'maxPixels');
   const helpers = helperReservation(config.helpers);
   const owner = helpers ? {} : undefined;
   const besideBytes = helpers ? helpers.memoryBytes - helpers.count * HELPER_BYTES : 0;
   const maxPendingJobs = positive(config.maxPendingJobs, DEFAULT_JOBS, 'maxPendingJobs');
   const workerStartupTimeout = positive(config.workerStartupTimeout, 15000, 'workerStartupTimeout');
-  if (workerStartupTimeout > 2147483647) throw error('JXL_OPTIONS', 'workerStartupTimeout must fit a platform timer.');
+  if (workerStartupTimeout > 2147483647) throw error('JXL_OPTIONS', "Invalid workerStartupTimeout; use at most 2147483647 ms.");
   const operations = spec.operations;
-  const factory = config.workerFactory || (!spec.inPlace && typeof document !== 'undefined' && typeof Worker === 'function' ? () => browserWorker(spec) : null);
+  if (!spec.runtime && !config.workerFactory && typeof Worker !== 'function') throw error('JXL_WORKER', NO_WORKER);
+  const factory = config.workerFactory || (!spec.runtime || typeof document !== 'undefined' && typeof Worker === 'function' ? () => browserWorker(spec) : null);
   let closed = false, nextId = 0, retainedBytes = 0, here = null, wide = null, scheduled = false, stopping = null, transport = null, closing = null, runtimeLoaded = false;
   let idleTimer, preparing = 0, retiring = null;
-  const queue = [], running = new Map(), held = new Set();
+  const queue = [], running = new Map(), held = new Set(), preparations = new Set();
   const runningBytes = () => [...running.values()].reduce((sum, job) => sum + job.bytes, 0);
   function lane(job) {
     if (wide) return -1;
@@ -118,6 +128,14 @@ export function createCodec(config = {}, spec, replies) {
     if (scheduled || closed || stopping || !queue.length || lane(queue[0]) < 0) return;
     scheduled = true;
     queueMicrotask(() => { scheduled = false; pump(); });
+  }
+  function retainInput(job, bytes) {
+    if (job.settled || job.released) throw aborted(job.controller.signal);
+    const previous = job.expandedBytes ?? 0;
+    if (!Number.isSafeInteger(bytes) || bytes < previous) throw error('JXL_WORKER', 'The worker reported a smaller or non-whole input byte count; report the failed worker job and its input to rapier-jxl.');
+    const added = bytes - previous;
+    if (added > maxPendingBytes - retainedBytes) throw error('JXL_MEMORY', `Pending input is over maxPendingBytes (${maxPendingBytes} B; expansion needs ${added} B): send less or raise it.`);
+    retainedBytes += added; job.bytes += added; job.expandedBytes = bytes;
   }
   function release(job) {
     if (job.released || job.acquiring) return;
@@ -153,9 +171,9 @@ export function createCodec(config = {}, spec, replies) {
   function cancel(job, reason, caller = true) {
     if (job.settled) return;
     settle(job, false, reason, caller);
+    job.controller.abort(reason);
     if (job.finished) return;
     if (running.get(job.id) === job) {
-      job.controller.abort(reason);
       if (!job.started) release(job);
       else if (running.size > 1 || factory && !job.sent) { if (factory) transport ? transport.cancel(job) : release(job); }
       else if (factory) { transport?.stop(); release(job); }
@@ -175,26 +193,25 @@ export function createCodec(config = {}, spec, replies) {
   function progress(job, fraction) {
     if (job.settled || !Number.isFinite(fraction) || fraction < 0 || fraction > 1 || fraction <= job.progress) return;
     job.progress = fraction;
-    try { job.onProgress?.(fraction); } catch (reason) { cancel(job, reason); }
-  }
-  function encoded(job, record) {
-    if (job.settled) return;
-    try { job.onEncoded?.(record); } catch (reason) { cancel(job, reason); }
+    try { (job.report ??= progressOf(job.onProgress, job.controller.signal, reason => cancel(job, reason)))?.(fraction); }
+    catch (reason) { cancel(job, reason); }
   }
   function preview(job, record) {
     if (job.settled) return;
     const observer = job.onPreview;
-    try { return Promise.resolve(observer?.(record)).catch(() => {}); } catch {}
+    try { return job.observing = Promise.resolve(observer?.(record)).catch(reason => { cancel(job, reason); }); }
+    catch (reason) { cancel(job, reason); }
   }
-  function complete(job, ok, value) {
+  async function complete(job, ok, value) {
+    if (job.finished) return;
     job.finished = true;
     try {
-      if (ok) progress(job, 1);
+      if (ok) { progress(job, 1); await job.report?.finish(); await abortable(job.observing, job.controller.signal); }
       settle(job, ok, value);
-    } finally { release(job); }
+    } catch (reason) { settle(job, false, reason, true); }
+    finally { release(job); }
   }
-  const jpegPixels = Math.min(config.maxPixels ?? JPEG_PIXELS, JPEG_PIXELS);
-  const host = {factory, module: spec.module, bytes: spec.bytes === true, maxPixels, jpegPixels, helpers, webgpu, workerStartupTimeout, complete, progress, encoded, preview, replyPreview: replies?.reply, schedule, running,
+  const host = {factory, module: spec.module, file: (() => { try { return spec.url?.().pathname.split('/').pop(); } catch { return undefined; } })(), maxPixels, helpers, retainInput, webgpu, workerStartupTimeout, complete, progress, preview, replyPreview: replies?.reply, schedule, running,
     get stopping() { return stopping; }, set stopping(value) { stopping = value; }};
   function pump() {
     while (!closed && !stopping && queue.length) {
@@ -221,7 +238,7 @@ export function createCodec(config = {}, spec, replies) {
   function acquiring(job, acquire) {
     let resolve, reject;
     const taking = new Promise((yes, no) => { resolve = yes; reject = no; });
-    job.acquiring = taking.then(input => { job.taken = input; }, reason => { job.refused = reason ?? error('JXL_INPUT', 'The canvas could not be read.'); })
+    job.acquiring = taking.then(input => { job.taken = input; }, reason => { job.refused = reason ?? error('JXL_INPUT', "Canvas read failed; redraw it or pass RGBA pixels."); })
       .then(() => {
         job.acquiring = null; held.delete(job);
         if (job.settled) { try { job.taken?.close?.(); } catch {} job.taken = null; release(job); }
@@ -238,43 +255,43 @@ export function createCodec(config = {}, spec, replies) {
         transport.send(current, job);
       } catch (reason) { transport.stop(); complete(job, false, reason); }
     } else {
-      Promise.resolve(retiring).then(() => spec.runtime()).then(({run}) => { runtimeLoaded = true; return run(job.operation, job.input, job.options, {signal: job.controller.signal, onProgress: fraction => progress(job, fraction), onEncoded: record => encoded(job, record), ...(job.onPreview && {onPreview: record => preview(job, record)}), maxPixels, jpegPixels, helpers, webgpu, owner, lane: job.lane, alone: job.alone}); })
+      Promise.resolve(retiring).then(() => spec.runtime()).then(({run}) => { runtimeLoaded = true; return run(job.operation, job.input, job.options, {signal: job.controller.signal, onProgress: fraction => progress(job, fraction), ...(job.onPreview && {onPreview: record => preview(job, record)}), maxPixels, retainInput: bytes => retainInput(job, bytes), helpers, webgpu, owner, lane: job.lane, alone: job.alone}); })
         .then(value => complete(job, true, value), reason => complete(job, false, coded(reason, job)));
     }
   }
   function admit(options = {}, inputBytes = 0) {
-    if (closed) throw error('JXL_CLOSED', 'The JPEG XL encoder is closed.');
-    if (!options || typeof options !== 'object') throw error('JXL_OPTIONS', 'JPEG XL options must be an object.');
+    if (closed) throw error('JXL_CLOSED', "Queue closed; submit the work to a new queue.");
+    if (!options || typeof options !== 'object') throw error('JXL_OPTIONS', "Invalid options; pass an object.");
     let fields;
     try { fields = record(options); }
-    catch (reason) { throw !reason?.code || reason.code === 'JXL_INPUT' ? error('JXL_OPTIONS', 'JPEG XL options must be a plain record of data fields: ' + reason?.message) : reason; }
-    if (Array.isArray(options)) throw error('JXL_OPTIONS', 'JPEG XL options must be an object.');
-    const {signal, onProgress, onEncoded, onPreview, ...parameters} = Object.fromEntries(fields.map(([key, descriptor]) => [key, descriptor.value]));
-    if (signal !== undefined && (!signal || typeof signal.addEventListener !== 'function' || typeof signal.removeEventListener !== 'function' || typeof signal.aborted !== 'boolean')) throw error('JXL_OPTIONS', 'signal must be an AbortSignal.');
-    if (onProgress !== undefined && typeof onProgress !== 'function') throw error('JXL_OPTIONS', 'onProgress must be a function.');
-    if (onEncoded !== undefined && typeof onEncoded !== 'function') throw error('JXL_OPTIONS', 'onEncoded must be a function.');
-    if (onPreview !== undefined && typeof onPreview !== 'function') throw error('JXL_OPTIONS', 'onPreview must be a function.');
+    catch (reason) { throw !reason?.code || reason.code === 'JXL_INPUT' ? error('JXL_OPTIONS', "Invalid options; pass plain data fields.") : reason; }
+    if (Array.isArray(options)) throw error('JXL_OPTIONS', "Invalid options; pass an object.");
+    const {signal, onProgress, onPreview, ...parameters} = Object.fromEntries(fields.map(([key, descriptor]) => [key, descriptor.value]));
+    if (signal !== undefined && (!signal || typeof signal.addEventListener !== 'function' || typeof signal.removeEventListener !== 'function' || typeof signal.aborted !== 'boolean')) throw error('JXL_OPTIONS', "Invalid signal; pass an AbortSignal.");
+    if (onProgress !== undefined && typeof onProgress !== 'function') throw error('JXL_OPTIONS', "Invalid onProgress; pass a function.");
+    if (onPreview !== undefined && typeof onPreview !== 'function') throw error('JXL_OPTIONS', "Invalid onPreview; pass a function.");
     if (signal?.aborted) throw aborted(signal);
-    if (queue.length + running.size + held.size >= maxPendingJobs) throw error('JXL_MEMORY', 'The encoder queue is full (maxPendingJobs).');
+    if (queue.length + running.size + held.size >= maxPendingJobs) throw error('JXL_MEMORY', "Queue full; wait or raise maxPendingJobs.");
     const optionPlans = new Map();
     let optionBytes;
     try { optionBytes = measure(parameters, Number.MAX_SAFE_INTEGER, optionPlans); }
-    catch (reason) { throw reason?.code === 'JXL_INPUT' ? error('JXL_OPTIONS', 'JPEG XL options must be a plain record of data fields: ' + reason.message) : reason; }
-    if (inputBytes + optionBytes > maxPendingBytes - retainedBytes) throw error('JXL_MEMORY', `Pending input is over maxPendingBytes (${maxPendingBytes} B): send less or raise it.`);
-    return {signal, onProgress, onEncoded, onPreview, parameters, optionBytes, optionPlans};
+    catch (reason) { throw reason?.code === 'JXL_INPUT' ? error('JXL_OPTIONS', "Invalid option data; put callbacks in onProgress or onPreview.") : reason; }
+    if (inputBytes + optionBytes > maxPendingBytes - retainedBytes) throw error('JXL_MEMORY', `Pending input is over maxPendingBytes (${maxPendingBytes} B; this job needs ${inputBytes + optionBytes} B): send less or raise it.`);
+    return {signal, onProgress, onPreview, parameters, optionBytes, optionPlans};
   }
   function submit(operation, input, options = {}, acquire = null, acquiredArea = 0) {
     try {
-      const {signal, onProgress, onEncoded, onPreview, parameters, optionBytes, optionPlans} = admit(options);
-      if (onEncoded !== undefined && operation !== 'capture') throw error('JXL_OPTIONS', 'onEncoded is a capture option.');
-      if (onPreview !== undefined && (!replies || !['encode', 'capture', 'fit', 'variants'].includes(operation))) throw error('JXL_OPTIONS', 'onPreview is an encode, capture, fit, or variants option.');
+      const {signal, onProgress, onPreview, parameters, optionBytes, optionPlans} = admit(options);
+      if (onPreview !== undefined && (!replies || !['encode', 'capture', 'fit', 'variants'].includes(operation))) throw error('JXL_OPTIONS', "This operation has no previews; remove onPreview.");
+      spec.admitInput?.(operation, input);
       const inputPlans = new Map(), bytes = measure(input, maxPixels, inputPlans) + optionBytes;
-      if (bytes > maxPendingBytes - retainedBytes) throw error('JXL_MEMORY', `Pending input is over maxPendingBytes (${maxPendingBytes} B): send less or raise it.`);
-      const ownedInput = snapshot(input, inputPlans), ownedOptions = snapshot(parameters, optionPlans);
+      if (bytes > maxPendingBytes - retainedBytes) throw error('JXL_MEMORY', `Pending input is over maxPendingBytes (${maxPendingBytes} B; this job needs ${bytes} B): send less or raise it.`);
+      if (operation === 'encode') admittedFrames(input, inputPlans);
+      const taken = new Map(), ownedInput = snapshot(input, inputPlans, undefined, taken), ownedOptions = snapshot(parameters, optionPlans, undefined, taken);
       return new Promise((resolve, reject) => {
         const pixels = operation === 'encode' && ArrayBuffer.isView(ownedInput?.data) ? ownedInput.width * ownedInput.height : 0;
         const area = pixels || (operation === 'encode' ? acquiredArea || (SNAPSHOTS.has(input) ? SNAPSHOTS.get(input) / 4 : 0) : 0);
-        const job = {id: ++nextId, operation, input: ownedInput, options: ownedOptions, bytes, pixels, area, signal, onProgress, onEncoded, onPreview, resolve, reject, settled: false, released: false, progress: -1, controller: new AbortController()};
+        const job = {id: ++nextId, operation, input: ownedInput, options: ownedOptions, bytes, pixels, area, signal, onProgress, onPreview, resolve, reject, settled: false, released: false, progress: -1, controller: new AbortController()};
         job.abort = () => cancel(job, aborted(signal));
         retainedBytes += bytes;
         queue.push(job);
@@ -294,24 +311,28 @@ export function createCodec(config = {}, spec, replies) {
     if (shape) {
       const {width, height, byteLength = width * height * 4, colorSpace = 'display-p3'} = shape;
       dimensions({width, height}, maxPixels);
-      if (!Number.isSafeInteger(byteLength) || byteLength < 1) throw error('JXL_INPUT', 'Invalid surface byte length.');
+      if (!Number.isSafeInteger(byteLength) || byteLength < 1) throw error('JXL_INPUT', "Invalid image byte count; pass nonempty RGBA data.");
       inputBytes = byteLength + 8 + measure({width, height, colorSpace}, maxPixels);
     }
     admit(options, inputBytes);
   };
   encoder.remote = !!factory;
   Object.defineProperty(encoder, 'stats', {enumerable: true, get: () => Object.freeze({queuedJobs: queue.length + held.size, queuedBytes: retainedBytes - runningBytes(), activeJobs: running.size, activeBytes: runningBytes(), closed})});
-  encoder.prepare = operation => {
-    const shut = () => error('JXL_CLOSED', 'The JPEG XL encoder is closed.');
+  encoder.prepare = (operation = operations.includes('capture') && !operations.includes('encode') ? 'capture' : operations[0]) => {
+    const shut = () => error('JXL_CLOSED', "Queue closed; submit the work to a new queue.");
     const refuse = reason => { throw closed ? shut() : declared(coded(reason)); };
     if (closed) return Promise.reject(shut());
-    if (!operations.includes(operation)) return Promise.reject(error('JXL_OPTIONS', 'prepare names its operation: ' + operations.join(', ') + '.'));
+    if (!operations.includes(operation)) return Promise.reject(error('JXL_OPTIONS', "Invalid prepare operation; use " + operations.join(', ') + '.'));
     preparing++;
     const settled = () => { preparing--; rest(); };
     if (!factory) {
-      runtimeLoaded = true;
-      return Promise.resolve(retiring).then(() => spec.runtime()).then(({prepare}) => prepare(operation, {webgpu, owner, helpers}))
+      const pending = Promise.resolve(retiring).then(() => { if (closed) throw shut(); return spec.runtime(); })
+        .then(({prepare}) => { runtimeLoaded = true; if (closed) throw shut(); return prepare(operation, {webgpu, owner, helpers}); })
         .finally(settled).then(() => { if (closed) throw shut(); }, refuse);
+      preparations.add(pending);
+      const forget = () => preparations.delete(pending);
+      pending.then(forget, forget);
+      return pending;
     }
     return (async () => {
       await null;
@@ -328,14 +349,15 @@ export function createCodec(config = {}, spec, replies) {
     if (closing) return closing;
     closed = true;
     clearTimeout(idleTimer);
-    const reason = error('JXL_CLOSED', 'The JPEG XL encoder is closed.');
+    const reason = error('JXL_CLOSED', "Queue closed; submit the work to a new queue.");
     const taking = [...queue, ...running.values(), ...held].map(job => job.acquiring).filter(Boolean);
     for (const job of [...queue]) cancel(job, reason, false);
     for (const job of [...running.values()]) cancel(job, reason, false);
     transport?.stop();
-    return closing = Promise.allSettled([stopping, transport?.ended, releaseHelpers(true), ...taking]).then(outcomes => {
+    const prepared = Promise.allSettled([...preparations]).then(() => releaseHelpers(true));
+    return closing = Promise.allSettled([stopping, transport?.ended, prepared, ...taking]).then(outcomes => {
       const failed = outcomes.find(outcome => outcome.status === 'rejected');
-      if (failed) throw Object.assign(error('JXL_WORKER', 'The JPEG XL worker or a helper could not be ended.'), {cause: failed.reason});
+      if (failed) throw Object.assign(error('JXL_WORKER', "Worker cleanup failed; check its termination and listener methods."), {cause: failed.reason});
     });
   };
   return Object.freeze(encoder);

@@ -1,0 +1,6 @@
+{
+  "appId": "app.rapier.jxlexample",
+  "appName": "JPEG XL example",
+  "webDir": "dist",
+  "server": {"androidScheme": "https"}
+}

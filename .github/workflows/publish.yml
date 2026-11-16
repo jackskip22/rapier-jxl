@@ -45,8 +45,6 @@ jobs:
           name=$(node -p "require('./package.json').name")
           version=$(node -p "require('./package.json').version")
           tag="v$version"
-          # The owner retired every version before 8.0.0: none is ever tagged or released again.
-          [ "${version%%.*}" -ge 8 ] || { echo "$version is below 8.0.0: no release" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; }
           if gh release view "$tag" >/dev/null 2>&1; then echo "$tag is already released" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
           # The version just published can take minutes to appear on the registry (npm's scan held 8.3.0 about 25): wait up to 40.
           for try in $(seq 1 80); do [ -n "$(npm view "$name@$version" version 2>/dev/null)" ] && break; [ "$try" = 80 ] || sleep 30; done
@@ -65,6 +63,7 @@ jobs:
           gh release create "$tag" --verify-tag --title "$version" --notes-file "$notes_file" --latest
           echo "tagged $tag at $release and released $version" | tee -a "$GITHUB_STEP_SUMMARY"
   vscode:
+    needs: publish
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -4,16 +4,19 @@ import {inspectICC} from './icc-profile.mjs';
 import {prepareColorEncoding} from './color-info.mjs';
 
 export function admitSampleDomain(data, options = {}) {
+  if (options.colorEncoding?.transferFunction === undefined && options.colorEncoding !== undefined && options.transferFunction !== undefined && options.icc === undefined && options.colorSpace === undefined)
+    options = {...options, colorEncoding: {...options.colorEncoding, transferFunction: options.transferFunction}, transferFunction: undefined};
   admitColorRoute(options);
-  const float32 = data instanceof Float32Array, wide = data instanceof Uint16Array;
-  const sampleFormat = options.sampleFormat ?? (float32 ? 'float32' : 'uint');
-  if (!['uint', 'float16', 'float32'].includes(sampleFormat) || (sampleFormat === 'float32') !== float32 || sampleFormat === 'float16' && !wide)
-    throw fault('JXL_INPUT', 'Use uint with integer arrays, float16 with Uint16Array bits, or float32 with Float32Array.');
+  const float16 = typeof Float16Array === 'function' && data instanceof Float16Array;
+  const float32 = data instanceof Float32Array, wide = data instanceof Uint16Array || float16;
+  const sampleFormat = options.sampleFormat ?? (float32 ? 'float32' : float16 ? 'float16' : 'uint');
+  if (!['uint', 'float16', 'float32'].includes(sampleFormat) || (sampleFormat === 'float32') !== float32 || float16 && sampleFormat !== 'float16' || sampleFormat === 'float16' && !wide)
+    throw fault('JXL_INPUT', 'Use uint with integer arrays, float16 with Float16Array or Uint16Array bits, or float32 with Float32Array.');
   const exponentBits = sampleFormat === 'float32' ? 8 : sampleFormat === 'float16' ? 5 : 0;
   const bitDepth = options.bitDepth ?? (float32 ? 32 : wide ? 16 : 8);
   if (exponentBits ? bitDepth !== (float32 ? 32 : 16) : wide ? ![10, 12, 16].includes(bitDepth) : bitDepth !== 8)
     throw fault('JXL_INPUT', 'Bit depth: 8 for bytes; 10, 12 or 16 for Uint16Array; 16 or 32 for floats.');
-  const encoding = options.colorEncoding === undefined ? null : described(options);
+  const encoding = ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) || options.colorEncoding === undefined) ? null : described(options);
   const colorSpace = encoding ? undefined : options.colorSpace ?? 'srgb';
   if (!encoding && !['srgb', 'display-p3', 'rec2020'].includes(colorSpace)) throw fault('JXL_INPUT', 'The color space is srgb, display-p3 or rec2020.');
   const transferFunction = encoding ? undefined : options.transferFunction ?? (exponentBits ? 'linear' : 'srgb');
@@ -30,11 +33,11 @@ export function admitSampleDomain(data, options = {}) {
   }
   const samples = {sampleFormat, bitDepth, exponentBits, colorSpace, transferFunction, intensityTarget, alphaPremultiplied,
     native8: bitDepth === 8 && transferFunction === 'srgb' && colorSpace !== 'rec2020' && intensityTarget === 255 && !alphaPremultiplied};
-  if (options.icc !== undefined) {
+  if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && options.icc !== undefined) {
     if (options.colorSpace !== undefined || options.transferFunction !== undefined)
       throw fault('JXL_INPUT', 'An ICC profile sets the color; omit other color fields.');
     if (options.level === 5 && (bitDepth > 12 || exponentBits)) throw fault('JXL_INPUT', 'These sample depths require JPEG XL level 10.');
-    const profile = {colorChannels: inspectICC(options.icc, options.level)};
+    const profile = {colorChannels: inspectICC(options.icc, options.level), iccGiven: true};
     if (profile.colorChannels === 1) {
       const words = float32 ? new Uint32Array(data.buffer, data.byteOffset, data.length) : data;
       for (let i = 0; i < words.length; i += 4)
@@ -49,7 +52,7 @@ export function admitSampleDomain(data, options = {}) {
       for (let i = 0; i < words.length; i += 4)
         if (words[i] !== words[i + 1] || words[i] !== words[i + 2]) throw fault('JXL_INPUT', 'GRAY color needs equal R, G and B in every pixel.');
     }
-    Object.assign(samples, {colorData: encoding.colorData, colorChannels: encoding.colorChannels, native8: false});
+    Object.assign(samples, {colorData: encoding.colorData, colorChannels: encoding.colorChannels, colorEncoding: options.colorEncoding, native8: false});
   }
   return samples;
 }

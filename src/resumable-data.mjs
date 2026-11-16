@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {fault} from './fault.mjs';
+import {sha256Start, sha256Update, sha256Finish} from './sha256.mjs';
 
 const RECORD_BYTES = 1 << 20, TOTAL_BYTES = 2 ** 32;
 const encoder = new TextEncoder(), decoder = new TextDecoder('utf-8', {fatal: true, ignoreBOM: true});
@@ -139,7 +140,7 @@ export function decodeData(bytes) {
 export async function digest(bytes) {
   const input = checked(() => bytesOf(bytes));
   try {
-    if (!globalThis.crypto?.subtle) throw invalid('SHA-256 is unavailable.');
+    if (!globalThis.crypto?.subtle) return sha256Finish(sha256Update(sha256Start(), input));
     const result = await globalThis.crypto.subtle.digest('SHA-256', input);
     return Array.from(new Uint8Array(result), byte => byte.toString(16).padStart(2, '0')).join('');
   } catch (error) {

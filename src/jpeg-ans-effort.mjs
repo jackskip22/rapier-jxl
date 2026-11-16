@@ -1,23 +1,30 @@
 // SPDX-License-Identifier: MIT
+import {outOfMemory} from './fault.mjs';
 import {jpegEffortSteps} from './jpeg-effort.mjs';
 import {coefficientEffortSteps, coefficientOrderSteps, candidateSteps, prefetch} from './coefficient-effort.mjs';
 import {buildAnsCoding, writeModularAnsHistograms} from './ans.mjs';
 import {JPEG_ANS} from './jpeg-ans-configs.mjs';
-import {lfCoderFor, fixedLfCoder, quickOrFixedLfCoder, fastOrFixedLfCoder, jpegBroadOrFixedLfCoder} from './lf-coding.mjs';
+import {lfCoderFor, monotonicLfCoderFor, fixedLfCoder, quickOrFixedLfCoder, jpegBroadOrFastLfCoder} from './lf-coding.mjs';
 import {part, scaled} from './bits.mjs';
 import {offloading} from './offload.mjs';
 import {jpegJob} from './jpeg-job.mjs';
 
 export const PREFIX_LADDER_PIXELS = 512 * 512;
 const SMALL_PIXELS = 1 << 21;
-const twins = (jpeg, clusters) => jpeg.width * jpeg.height <= SMALL_PIXELS && clusters.jpeg
-  ? [clusters, {maxClusters: clusters.maxClusters, seeds: clusters.seeds, newClusterCost: clusters.newClusterCost, ...clusters.everyConfig && {everyConfig: true}}] : [clusters];
+const twins = (jpeg, clusters, keepFloor = false) => {
+  const list = [clusters];
+  if (keepFloor && clusters.jpeg && clusters.headerAware)
+    list.push({...clusters, headerAware: false, shapedMerge: false});
+  if (jpeg.width * jpeg.height <= SMALL_PIXELS && clusters.jpeg)
+    list.push({maxClusters: clusters.maxClusters, seeds: clusters.seeds, newClusterCost: clusters.newClusterCost, ...clusters.everyConfig && {everyConfig: true}});
+  return list;
+};
 const WIDE = {maxClusters: 128, seeds: 255, newClusterCost: 160, jpeg: JPEG_ANS};
 const SHAPED_WIDE = {...WIDE, headerAware: true, shapedMerge: true};
 const WIDEST = {maxClusters: 255, seeds: 255, newClusterCost: 80, headerAware: true, shapedMerge: true, jpeg: JPEG_ANS};
 const NARROW = {maxClusters: 48};
 const EVERY_WIDE = {...SHAPED_WIDE, everyConfig: true}, EVERY_WIDEST = {...WIDEST, everyConfig: true};
-const lfFor = effort => (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) || effort <= 3 ? fixedLfCoder : effort >= 9 ? jpegBroadOrFixedLfCoder : effort === 8 ? fastOrFixedLfCoder : effort >= 5 ? lfCoderFor(effort) : quickOrFixedLfCoder;
+const lfFor = effort => (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) || effort <= 3 ? fixedLfCoder : effort >= 9 ? jpegBroadOrFastLfCoder : effort === 8 ? monotonicLfCoderFor(8) : effort >= 5 ? lfCoderFor(effort) : quickOrFixedLfCoder;
 
 export function* jpegAnsFirstSteps(jpeg, effort, fallback, retain, shared = {}, every = effort >= 9) {
   const wide = effort === 2 ? NARROW : !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && every ? EVERY_WIDE : !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && effort >= 5 ? SHAPED_WIDE : WIDE;
@@ -31,10 +38,10 @@ export function* jpegAnsFirstSteps(jpeg, effort, fallback, retain, shared = {}, 
     let orders, step, hurry, reply;
     if (first) {
       const learning = coefficientOrderSteps(jpeg.components);
-      while (!(step = learning.next()).done) yield step.value / 20;
+      try { while (!(step = learning.next()).done) yield step.value / 20; } finally { if (!step?.done) learning.return(); }
       orders = step.value;
     }
-    const firsts = twins(jpeg, wide);
+    const firsts = twins(jpeg, wide, ladder);
     for (const [k, clusters] of firsts.entries()) {
       const at = done => (orders ? 0.05 + 0.95 * done : ladder || learn ? done / 2 : done) * (k + 1) / firsts.length;
       const plan = {orders, coding: buildAnsCoding, clusters, modularAns: writeModularAnsHistograms, lfCoder: lfFor(effort)};
@@ -50,7 +57,7 @@ export function* jpegAnsFirstSteps(jpeg, effort, fallback, retain, shared = {}, 
       if (hurry) return best;
     }
   } catch (error) {
-    if (!(error instanceof RangeError && !error.code) && error.code !== 'JXL_SIZE') throw error;
+    if (!outOfMemory(error) && error.code !== 'JXL_SIZE') throw error;
     if (!best) ladder = true;
   }
   if (ladder) {
@@ -62,7 +69,7 @@ export function* jpegAnsFirstSteps(jpeg, effort, fallback, retain, shared = {}, 
     const learning = coefficientOrderSteps(jpeg.components);
     let step;
     while (!(step = learning.next()).done) if (yield 0.5 + step.value / 4) { learning.return(); return best; }
-    const orders = step.value, list = twins(jpeg, wide);
+    const orders = step.value, list = twins(jpeg, wide, true);
     for (const [k, clusters] of list.entries()) {
       const plan = {orders, coding: buildAnsCoding, clusters, modularAns: writeModularAnsHistograms, lfCoder: lfFor(effort)}, at = done => 0.75 + (k + done) / (4 * list.length);
       const candidate = candidateSteps(jpeg, plan, shared);
@@ -76,7 +83,7 @@ export function* jpegAnsFirstSteps(jpeg, effort, fallback, retain, shared = {}, 
       retain?.(step.value, plan);
     }
   } catch (error) {
-    if (!(error instanceof RangeError && !error.code) && error.code !== 'JXL_SIZE') throw error;
+    if (!outOfMemory(error) && error.code !== 'JXL_SIZE') throw error;
   }
   return best;
 }
@@ -87,7 +94,12 @@ export function* jpegAnsEffortSteps(jpeg, effort, retain) {
   let step, hurry, best;
   const ladder = jpeg.width * jpeg.height <= SMALL_PIXELS;
   const first = effort >= 9 ? (image, e, fallback, keep, cache) => jpegAnsFirstSteps(image, e, fallback, keep, cache, true) : jpegAnsFirstSteps;
-  const floor = ladder ? jpegEffortSteps(jpeg, effort, retain, first, shared) : first(jpeg, effort, undefined, retain, shared);
+  let learnedFloor = null;
+  const keepFloor = (bytes, plan) => {
+    retain?.(bytes, plan);
+    if (!ladder && plan.orders && plan.clusters === (effort === 9 ? EVERY_WIDE : SHAPED_WIDE)) learnedFloor = plan;
+  };
+  const floor = ladder ? jpegEffortSteps(jpeg, effort, retain, first, shared) : first(jpeg, effort, undefined, keepFloor, shared);
   let reply;
   try { while (!(step = floor.next(reply)).done) {
     if (typeof step.value !== 'number') { reply = yield scaled(step.value, done => done / 2); continue; }
@@ -138,9 +150,10 @@ export function* jpegAnsEffortSteps(jpeg, effort, retain) {
       yield* write(orders16, effort === 9 ? EVERY_WIDEST : WIDEST);
       if (hurry) return best;
     }
-    const orders = yield* learn(8);
+    const orders = learnedFloor ? (part++, learnedFloor.orders) : yield* learn(8);
     if (hurry) return best;
     for (const clusters of effort === 9 ? [EVERY_WIDE, EVERY_WIDEST] : [SHAPED_WIDE, WIDEST]) {
+      if (learnedFloor?.clusters === clusters) { part++; continue; }
       yield* write(orders, clusters);
       if (hurry) return best;
     }
@@ -153,7 +166,7 @@ export function* jpegAnsEffortSteps(jpeg, effort, retain) {
     }
     return best;
   } catch (error) {
-    if (!(error instanceof RangeError && !error.code) && error.code !== 'JXL_SIZE') throw error;
+    if (!outOfMemory(error) && error.code !== 'JXL_SIZE') throw error;
     return best;
   }
 }

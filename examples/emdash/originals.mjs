@@ -1,7 +1,7 @@
-import {readAll} from 'rapier-jxl/storage';
-import {restore} from 'rapier-jxl/jpeg';
-import * as resumable from 'rapier-jxl/resumable';
-import {verify} from 'rapier-jxl/verify';
+import {readAll} from './read-all.mjs';
+import {restore} from 'jpegxl/jpeg';
+import * as resumable from 'jpegxl/resumable';
+import {verify} from 'jpegxl/verify';
 import {digest} from './digest.mjs';
 import {ENVELOPE_BYTES, ENVELOPE_PREFIX_BYTES, envelopeIdentity, wrapOriginal, unwrapOriginal} from './original-envelope.mjs';
 
@@ -9,7 +9,7 @@ const ROOT = '__rapier_jxl__/', OWNER = 'rapier-jxl/emdash';
 const CONTROL = ROOT + 'originals.control.json', RECORDS = ROOT + 'originals.record.', RESTORES = ROOT + 'originals.restore.';
 const ID = /^[a-f0-9]{32}$/, HASH = /^[a-f0-9]{64}$/, SHA = /^sha256:[a-f0-9]{64}$/;
 const MAX_JSON = 32 * 1024, MAX_PART = 1024 * 1024, direct = action => action();
-// Public readAll owns at most 256 MiB, including the private ownership envelope.
+// readAll owns at most 256 MiB, including the private ownership envelope.
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024 - ENVELOPE_BYTES;
 const utf8 = value => new TextEncoder().encode(value), uuid = () => crypto.randomUUID().replaceAll('-', '');
 const fail = (code, message, cause) => Object.assign(new Error(message, cause ? {cause} : undefined), {code});
@@ -28,18 +28,18 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
   allowRetirement = platform === 'node', driver = resumable, restoreOperation = restore} = {}) {
   if (!['node', 'cloudflare'].includes(platform) || typeof scope !== 'string' || !scope ||
       [create, compareAndSet, head, replace, delivery].some(value => typeof value !== 'function'))
-    throw fail('JXL_OPTIONS', 'Original archives require the native conditional storage capabilities.');
+    throw fail('JXL_OPTIONS', "Archive cannot write conditionally; configure conditional writes.");
   if (typeof restoreOperation !== 'function' || ['start', 'advance', 'finish'].some(name => typeof driver?.[name] !== 'function'))
-    throw fail('JXL_OPTIONS', 'Original reconstruction requires the shared resumable driver and restore operation.');
-  if (typeof allowRetirement !== 'boolean') throw fail('JXL_OPTIONS', 'Original retirement requires an explicit native host policy.');
+    throw fail('JXL_OPTIONS', "Reconstruction is unconfigured; supply its resumable driver and restore operation.");
+  if (typeof allowRetirement !== 'boolean') throw fail('JXL_OPTIONS', "Originals policy is unset; set allowRetirement from the native host policy.");
   // A create-only write answers true, false, or {created: true, version} (the stored object's own version, used by copy
   // attach). Every original and archive write here reads only whether it created the object.
   const createWithVersion = create;
   create = async (...args) => { const answer = await createWithVersion(...args); return answer?.created === true ? true : answer; };
   if (preserveDelivery !== undefined && typeof preserveDelivery !== 'function')
-    throw fail('JXL_OPTIONS', 'Original delivery preservation requires a private storage callback.');
+    throw fail('JXL_OPTIONS', "Missing archive preservation; supply its storage callback.");
   if (!Number.isSafeInteger(maxDeliveryBytes) || maxDeliveryBytes < 1 || maxDeliveryBytes > MAX_ARCHIVE_BYTES + ENVELOPE_BYTES)
-    throw fail('JXL_OPTIONS', 'Original delivery preservation requires the native copy byte allowance.');
+    throw fail('JXL_OPTIONS', "Missing archive allowance; supply the native byte allowance.");
 
   async function dispatch(action, {signal, call = direct} = {}) {
     signal?.throwIfAborted();
@@ -52,7 +52,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
     try { file = await dispatch(() => inner.download(key, {signal: options.signal}), options); }
     catch (error) { if (error?.code === 'NOT_FOUND') return null; throw error; }
     const bytes = await readAll(file.body, {maxBytes, signal: options.signal});
-    if (file.size !== bytes.length) throw fail('JXL_INPUT', 'Stored archive data has the wrong length.');
+    if (file.size !== bytes.length) throw fail('JXL_INPUT', "Archive data has the wrong length; restore the complete saved archive.");
     return {...file, bytes};
   }
   async function json(key, options) {
@@ -60,12 +60,12 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
     if (!file) return null;
     let value;
     try { value = JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(file.bytes)); }
-    catch { throw fail('JXL_INPUT', 'An original archive record is not valid JSON.'); }
+    catch { throw fail('JXL_INPUT', "Archive record is invalid JSON; restore its saved record."); }
     return {value, etag: file.etag, size: file.size};
   }
   async function cas(key, previous, value, options = {}) {
     const bytes = utf8(JSON.stringify(value));
-    if (bytes.length > MAX_JSON) throw fail('JXL_LIMIT', 'An original archive record exceeds its byte limit.');
+    if (bytes.length > MAX_JSON) throw fail('JXL_LIMIT', "Archive record is too large; store less data.");
     return dispatch(() => compareAndSet(key, bytes, {etag: previous?.etag ?? null,
       contentType: 'application/json', signal: options.signal}), options);
   }
@@ -110,8 +110,8 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
       saved = await json(CONTROL, options);
       if (!saved && uncertain) throw uncertain;
     }
-    if (saved && !validControl(saved.value)) throw fail('JXL_INPUT', 'Original archive control is invalid; removal remains disabled.');
-    if (!saved && initialize) throw fail('JXL_INTERNAL', 'Original archive control could not be created.');
+    if (saved && !validControl(saved.value)) throw fail('JXL_INPUT', "Invalid archive control record; restore it before removing the integration.");
+    if (!saved && initialize) throw fail('JXL_INTERNAL', "Invalid image result; report the input and options.");
     return saved;
   }
   async function updateControl(saved, mutate, options = {}) {
@@ -136,13 +136,14 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
       ['prepared', 'active', 'refused', 'restored'].includes(value.state) &&
       value.result?.format === 'jxl' && value.result.kept === 'jpeg-bytes' && value.result.fidelity === 'exact' &&
       Number.isSafeInteger(value.result.width) && Number.isSafeInteger(value.result.height) &&
-      value.result.width > 0 && value.result.height > 0 && value.result.width * value.result.height <= maxPixels;
+      value.result.width > 0 && value.result.height > 0 && Number.isSafeInteger(value.result.width * value.result.height) &&
+      (maxPixels === undefined || value.result.width * value.result.height <= maxPixels);
   }
   async function owned(key, id, options = {}) {
     const saved = await json(await recordKey(key, id), options);
     if (saved && (!validRecord(saved.value) || saved.value.source !== key || saved.value.id !== id ||
         saved.value.candidate !== await candidateKey(key, id)))
-      throw fail('JXL_INPUT', 'The JPEG archive ownership record is invalid.');
+      throw fail('JXL_INPUT', "Archive ownership is invalid; restore its matching saved record.");
     return saved;
   }
   async function updateRecord(saved, mutate, options = {}) {
@@ -157,22 +158,25 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
     if (!jpeg(key)) return {file, record: null, archived: false};
     let id = file.originalId, archived = file.representation === 'jxl';
     if (!ID.test(id ?? '')) {
-      const prefix = await dispatch(() => inner.download(key, {range: {offset: 0, length: Math.min(file.size, ENVELOPE_PREFIX_BYTES)},
-        signal: options.signal}), options);
+      const length = Math.min(file.size, ENVELOPE_PREFIX_BYTES);
+      const prefix = await dispatch(() => inner.download(key, {range: {offset: 0, length}, signal: options.signal}), options);
       const bytes = await readAll(prefix.body, {maxBytes: ENVELOPE_PREFIX_BYTES, signal: options.signal});
       if (prefix.version !== file.version) {
         if (retry) return physical(key, options, false);
-        throw fail('JXL_INPUT', 'The stored original changed during its read.');
+        throw fail('JXL_INPUT', "Original changed during its read; reload its record and retry.");
       }
+      // A short or misplaced prefix cannot show the archive marker: it must not make an archive look like a JPEG.
+      if (prefix.range && (prefix.range.offset !== 0 || prefix.range.length !== length) || bytes.length !== length)
+        throw fail('JXL_INPUT', "Original prefix has the wrong range or length; check storage range reads.");
       const marker = envelopeIdentity(bytes);
       if (!marker) return {file, record: null, archived: false};
       id = marker.id; archived = true;
     }
     const saved = await owned(key, id, options), record = saved?.value;
     if (!record || archived && file.size !== record.jxlBytes + ENVELOPE_BYTES || !archived && file.size !== record.originalBytes)
-      throw fail('JXL_INPUT', 'The stored JPEG representation has no matching ownership record.');
+      throw fail('JXL_INPUT', "JPEG lacks matching ownership; restore its matching record before continuing.");
     if (archived && record.state === 'refused')
-      throw fail('JXL_INPUT', 'A refused archive identity unexpectedly owns the source.');
+      throw fail('JXL_INPUT', "Archive ownership is inconsistent; reconcile its saved record before continuing.");
     return {file, record, archived};
   }
   function logical(found) {
@@ -185,7 +189,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
   }
   async function archivePayload(found, options = {}) {
     const file = await read(found.record.source, found.record.jxlBytes + ENVELOPE_BYTES, options);
-    if (!file || file.version !== found.file.version) throw fail('JXL_INPUT', 'The archived original changed during its read.');
+    if (!file || file.version !== found.file.version) throw fail('JXL_INPUT', "Archive changed during its read; reload its record and retry.");
     return unwrapOriginal(file.bytes, found.record.id, found.record.jxlBytes);
   }
   const restoreKey = record => RESTORES + record.id + '.json';
@@ -202,7 +206,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
         !ID.test(value.revision ?? '') || !['running', 'cached', 'blocked'].includes(value.phase) ||
         typeof value.done !== 'boolean' || typeof value.version !== 'string' || !value.version ||
         value.checkpoint !== null && (typeof value.checkpoint !== 'object' || Array.isArray(value.checkpoint))))
-      throw fail('JXL_INPUT', 'The original reconstruction checkpoint is invalid.');
+      throw fail('JXL_INPUT', "Invalid reconstruction checkpoint; resume from an intact checkpoint.");
     return saved;
   }
   async function saveRestore(record, saved, value, options) {
@@ -216,17 +220,21 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
       throw error;
     }
   }
-  async function cleanRestoreParts(record, run, options) {
+  // A page of 32 parts a call; `all` (a whole GET, which is not bounded to a step) every page.
+  async function cleanRestoreParts(record, run, options, all = false) {
     const prefix = restoreParts(record, run);
-    const page = await dispatch(() => inner.list({prefix, limit: 32, signal: options.signal}), options);
-    for (const file of page.files) {
-      if (!file.key.startsWith(prefix) || !file.key.endsWith('.part'))
-        throw fail('JXL_INPUT', 'Original reconstruction cleanup found an unexpected object.');
-      await dispatch(() => inner.delete(file.key, {signal: options.signal}), options);
+    for (;;) {
+      const page = await dispatch(() => inner.list({prefix, limit: 32, signal: options.signal}), options);
+      for (const file of page.files) {
+        if (!file.key.startsWith(prefix) || !file.key.endsWith('.part'))
+          throw fail('JXL_INPUT', "Reconstruction cleanup found unknown data; reconcile the saved job before deleting anything.");
+        await dispatch(() => inner.delete(file.key, {signal: options.signal}), options);
+      }
+      if (!page.nextCursor) return true;
+      if (!all) return false;
     }
-    return !page.nextCursor;
   }
-  async function releaseRestore(record, run, options) {
+  async function releaseRestore(record, run, options, all = false) {
     let saved = await restoreState(record, options);
     if (!saved) return true;
     if (saved.value.run !== run) return false;
@@ -236,7 +244,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
     }
     if (!saved || saved.value.run !== run) return false;
     if (saved.value.cleaned) return true;
-    if (await cleanRestoreParts(record, run, options))
+    if (await cleanRestoreParts(record, run, options, all))
       return saveRestore(record, saved, {...saved.value, cleaned: true}, options);
     return false;
   }
@@ -246,11 +254,11 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
       const file = await dispatch(() => inner.download(record.source, {range: {offset, length}, signal: options.signal}), options);
       try {
         if (file.version !== original.version || file.size !== original.size)
-          throw fail('JXL_INPUT', 'The archived original changed during reconstruction.');
+          throw fail('JXL_INPUT', "Archive changed during reconstruction; reload its record and retry.");
         if (file.range?.offset !== offset || file.range.length !== length)
-          throw fail('JXL_UNSUPPORTED', 'Original reconstruction requires native source ranges.');
+          throw fail('JXL_UNSUPPORTED', "Storage cannot read source ranges; enable range reads before reconstruction.");
         const bytes = await readAll(file.body, {maxBytes: length, signal: options.signal});
-        if (bytes.length !== length) throw fail('JXL_INPUT', 'The archived original range is truncated.');
+        if (bytes.length !== length) throw fail('JXL_INPUT', "Archive range is truncated; restore it before resuming.");
         return bytes;
       } catch (error) { cancel(file.body); throw error; }
     }
@@ -259,30 +267,30 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
     let marker;
     const identity = async () => marker ??= (async () => {
       const value = envelopeIdentity(await range(0, Math.min(original.size, ENVELOPE_PREFIX_BYTES)));
-      if (!value || value.id !== record.id) throw fail('JXL_INPUT', 'The original reconstruction identity changed.');
+      if (!value || value.id !== record.id) throw fail('JXL_INPUT', "Reconstruction identity changed; reload its record and retry.");
       return value;
     })();
     const partKey = ref => {
       if (!HASH.test(ref?.hash ?? '') || !Number.isSafeInteger(ref.length) || ref.length < 0 || ref.length > MAX_PART)
-        throw fail('JXL_INPUT', 'Original reconstruction parts are immutable values of at most 1 MiB.');
+        throw fail('JXL_INPUT', "A reconstruction part is mutable or oversized; write immutable parts up to 1 MiB.");
       return restoreParts(record, run) + ref.hash + '.part';
     };
     const readPart = async ref => {
       const file = await read(partKey(ref), MAX_PART, options);
-      if (!file || file.bytes.length !== ref.length) throw fail('JXL_IO', 'An original reconstruction part is missing.');
+      if (!file || file.bytes.length !== ref.length) throw fail('JXL_IO', "Missing reconstruction part; restore it before resuming.");
       return file.bytes;
     };
     const writePart = async (ref, bytes) => {
       const key = partKey(ref);
       if (!(bytes instanceof Uint8Array) || bytes.length !== ref.length)
-        throw fail('JXL_INPUT', 'An original reconstruction part has the wrong length.');
+        throw fail('JXL_INPUT', "Reconstruction part has the wrong length; restore the complete part.");
       const created = await dispatch(() => create(key, bytes, {contentType: 'application/octet-stream', signal: options.signal}), options);
-      if (created !== true && created !== false) throw fail('JXL_IO', 'The original reconstruction part write was not acknowledged.');
+      if (created !== true && created !== false) throw fail('JXL_IO', "Reconstruction part write is unconfirmed; check its state before retrying.");
     };
     return {
       async readSource(offset, length) {
         if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length < 1 ||
-            offset > record.jxlBytes - length) throw fail('JXL_INPUT', 'The original reconstruction source range is invalid.');
+            offset > record.jxlBytes - length) throw fail('JXL_INPUT', "Invalid reconstruction range; request bytes within the saved source.");
         const {offset: insertion} = await identity(), left = Math.max(0, Math.min(length, insertion - offset));
         const bytes = new Uint8Array(length);
         if (left) bytes.set(await range(offset, left));
@@ -296,7 +304,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
     };
   }
   async function restoreAdvance(found, {ms = 5000, ...options} = {}) {
-    if (!Number.isFinite(ms) || ms <= 0 || ms > 60000) throw fail('JXL_OPTIONS', 'Original reconstruction uses an advance budget from 1 to 60000 ms.');
+    if (!Number.isFinite(ms) || ms <= 0 || ms > 60000) throw fail('JXL_OPTIONS', "Invalid reconstruction budget; use 1 to 60000 ms.");
     const {record} = found, cached = await cachedOriginal(record, options);
     if (cached) return {done: true, bytes: cached, cached: true};
     let saved = await restoreState(record, options);
@@ -314,13 +322,13 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
       return {done: false};
     }
     const job = saved.value;
-    if (job.version !== found.file.version) throw fail('JXL_INPUT', 'The archived source generation changed during reconstruction.');
-    if (job.phase === 'blocked') throw fail(job.error?.code ?? 'JXL_INPUT', job.error?.message ?? 'Original reconstruction is blocked.');
+    if (job.version !== found.file.version) throw fail('JXL_INPUT', "Archive generation changed during reconstruction; reload its record and retry.");
+    if (job.phase === 'blocked') throw fail(job.error?.code ?? 'JXL_INPUT', job.error?.message ?? "Reconstruction is blocked; check the archive and saved job.");
     const input = {generation: record.id, sha256: record.outputSha256, byteLength: record.jxlBytes, kind: 'file'};
     const store = restoreStore(found, job.run, options), common = {operation: restoreOperation, input, store, verify, signal: options.signal};
     let checkpoint, done = false;
     try {
-      if (!job.checkpoint) checkpoint = await driver.start({...common, options: {maxPixels}});
+      if (!job.checkpoint) checkpoint = await driver.start({operation: restoreOperation, input, store, verify, options: maxPixels === undefined ? {} : {maxPixels}});
       else if (!job.done) ({checkpoint, done} = await driver.advance(job.checkpoint, {...common, budget: {ms}}));
       else {
         const result = await driver.finish(job.checkpoint, common), receipt = result?.verification;
@@ -330,7 +338,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
             receipt.source?.kind !== 'bytes' || receipt.source.digest !== 'sha256:' + record.outputSha256 ||
             receipt.outputDigest !== 'sha256:' + record.sourceSha256 || receipt.restoredDigest !== 'sha256:' + record.sourceSha256 ||
             receipt.referenceDigest !== 'sha256:' + record.sourceSha256 || receipt.width !== record.result.width || receipt.height !== record.result.height)
-          throw fail('JXL_INPUT', 'The stored archive did not rebuild its byte-exact JPEG original.');
+          throw fail('JXL_INPUT', "Archive did not restore exact JPEG bytes; keep the integration installed and restore a verified archive.");
         return {done: true, bytes: result.bytes, run: job.run};
       }
     } catch (error) {
@@ -352,10 +360,10 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
       const result = await restoreAdvance(found, options);
       if (!result.done) continue;
       if (!result.cached && await cache?.put(cacheKey(found.record), result.bytes, {signal: options.signal}) === true)
-        await releaseRestore(found.record, result.run, options);
+        await releaseRestore(found.record, result.run, options, true);
       else if (result.cached) {
         const saved = await restoreState(found.record, options);
-        if (saved) await releaseRestore(found.record, saved.value.run, options);
+        if (saved) await releaseRestore(found.record, saved.value.run, options, true);
       }
       return result.bytes;
     }
@@ -376,7 +384,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
       if (file.version !== found.file.version) {
         cancel(file.body);
         if (retry) return download(key, options, false);
-        throw fail('JXL_INPUT', 'The stored original changed during its read.');
+        throw fail('JXL_INPUT', "Original changed during its read; reload its record and retry.");
       }
       return {...file, ...meta, body: file.body, ...(file.range ? {range: file.range} : {})};
     }
@@ -401,6 +409,14 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
     if (saved.value.writer?.id !== id) return true;
     return !!await updateControl(saved, value => { value.writer = null; }, options);
   }
+  // A source change that already committed and only awaits its release (a request that stopped before releasing it):
+  // released, so it never holds the gate for later changes. Its work is done; nothing else is.
+  async function settledMutation(saved, options) {
+    const writer = saved.value.writer;
+    if (writer?.kind !== 'mutation' || writer.phase !== 'cleaning' || writer.outcome !== 'mutation-complete') return saved;
+    await releaseWriter(writer.id, options);
+    return control(options);
+  }
   async function blockWriter(saved, error, options = {}) {
     const errorObject = errorValue(error, saved.value.writer?.key ?? '');
     if (saved.value.writer?.phase === 'blocked' && saved.value.writer.error?.code === errorObject.code &&
@@ -416,15 +432,15 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
   }
 
   async function beginArchive(key, result, {source, expectedGeneration, expectedDeliveryRevision, jobIdentity,
-    deliveryEligible = result?.fits === true, deliveryReason = null, receipt, storageOnly = false, ...options} = {}) {
+    deliveryEligible = result?.meetsTarget === true, deliveryReason = null, receipt, storageOnly = false, ...options} = {}) {
     const refuse = reason => ({refused: reason, publication: refusal(key, reason, result && stripBytes(result))});
     if (!jpeg(key)) return refuse('not_jpeg_key');
     // A Free or unknown Worker cannot promise a cold original GET within its CPU allowance.
     // It keeps the uploaded JPEG; a reversible JXL remains eligible as a delivery copy.
     if (!allowRetirement) return refuse('host_cpu_limit');
-    if (typeof storageOnly !== 'boolean') throw fail('JXL_OPTIONS', 'Original custody is a private server policy.');
+    if (typeof storageOnly !== 'boolean') throw fail('JXL_OPTIONS', "Invalid originals policy; set storageOnly to true or false.");
     if (!HASH.test(source ?? '') || !HASH.test(expectedGeneration ?? '') || !ID.test(expectedDeliveryRevision ?? '') || !ID.test(jobIdentity ?? ''))
-      throw fail('JXL_OPTIONS', 'An original archive requires the captured source, delivery revision and server job identity.');
+      throw fail('JXL_OPTIONS', "Incomplete archive identity; pass its source, delivery revision, and server job ID.");
     if (!(result?.bytes instanceof Uint8Array) || result.bytes.length < 2 || result.bytes.length > maxInputBytes ||
         result.format !== 'jxl' || result.kept !== 'jpeg-bytes' || result.fidelity !== 'exact') return refuse('not_reversible_jpeg');
     if (result.bytes.length > MAX_ARCHIVE_BYTES) return refuse('archive_byte_limit');
@@ -432,13 +448,13 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
         receipt.format !== 'jxl' || receipt.source?.kind !== 'bytes' || receipt.source.digest !== 'sha256:' + source ||
         receipt.referenceDigest !== 'sha256:' + source || receipt.restoredDigest !== 'sha256:' + source ||
         !SHA.test(receipt.outputDigest ?? '') || receipt.width !== result.width || receipt.height !== result.height)
-      throw fail('JXL_INPUT', 'Original retirement requires its matching private independent verification receipt.');
+      throw fail('JXL_INPUT', "Missing archive receipt; independently reverify the original and candidate.");
     const checkpoint = {id: jobIdentity, key, generation: expectedGeneration};
     const prior = await owned(key, jobIdentity, options);
     if (prior) {
       if (prior.value.generation !== expectedGeneration || prior.value.sourceSha256 !== source ||
           prior.value.outputSha256 !== receipt.outputDigest.slice(7) || prior.value.jxlBytes !== result.bytes.length)
-        throw fail('JXL_INPUT', 'The original archive identity was reused for different bytes.');
+        throw fail('JXL_INPUT', "Archive ID reused; use a new ID.");
       if (prior.value.state !== 'prepared' || prior.value.staged === true) return checkpoint;
     }
     const gate = await control(options);
@@ -459,11 +475,11 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
       deliveryRevision: expectedDeliveryRevision, deliveryEligible: !storageOnly && deliveryEligible === true, storageOnly,
       deliveryReason, result: stripBytes(result), receipt: structuredClone(receipt), candidate,
       state: 'prepared', staging: 'prepared', staged: false, cleaned: false, reason: null};
-    if (!validRecord(record)) throw fail('JXL_INPUT', 'The original archive metadata is invalid.');
+    if (!validRecord(record)) throw fail('JXL_INPUT', "Archive metadata is invalid; restore its matching saved record.");
     if (!prior) {
       const metadataKey = await recordKey(key, jobIdentity);
       const recordBytes = utf8(JSON.stringify(record));
-      if (recordBytes.length > MAX_JSON) throw fail('JXL_LIMIT', 'An original archive record exceeds its byte limit.');
+      if (recordBytes.length > MAX_JSON) throw fail('JXL_LIMIT', "Archive record is too large; store less data.");
       const created = await dispatch(() => create(metadataKey, recordBytes,
         {contentType: 'application/json', signal: options.signal}), options);
       if (created !== true) return beginArchive(key, result, {source, expectedGeneration, expectedDeliveryRevision, jobIdentity,
@@ -492,7 +508,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
     if (staged.value.state === 'prepared') await updateRecord(staged, value => {
       value.staged = !!acknowledged; value.staging = acknowledged ? 'complete' : 'blocked';
       value.stagingError = acknowledged ? null : errorValue(uncertain ??
-        fail('JXL_ARCHIVE_STAGE_UNRESOLVED', 'The prepared archive has no definitive staging acknowledgement.'), key);
+        fail('JXL_ARCHIVE_STAGE_UNRESOLVED', "Archive staging is unconfirmed; check its state before retrying."), key);
     }, {...options, signal: undefined});
     return checkpoint;
   }
@@ -521,7 +537,9 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
       value => { value.state = 'refused'; value.reason = reason; }, options);
     if (!changed) return {done: false, phase: 'prepared', progressed: false, error: null};
     const latest = await owned(changed.source, changed.id, options);
-    if (!latest.value.cleaned) await cleanRecord(latest, options);
+    // A staging write still unconfirmed can land after its copy is deleted: the record stays uncleaned, so removal
+    // reconciles it (advanceRemoval) before it proves the originals restored.
+    if (!latest.value.cleaned && (latest.value.staged || !['writing', 'blocked'].includes(latest.value.staging))) await cleanRecord(latest, options);
     await releaseWriter(changed.id, options);
     return {done: true, phase: 'complete', progressed: true, publication: refusal(changed.source, reason, changed.result)};
   }
@@ -536,9 +554,9 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
   async function advanceArchive(checkpoint, options = {}) {
     const {key, id, generation: expectedGeneration} = checkpoint ?? {};
     if (!jpeg(key) || !ID.test(id ?? '') || !HASH.test(expectedGeneration ?? ''))
-      throw fail('JXL_OPTIONS', 'Expected a saved original archive checkpoint.');
+      throw fail('JXL_OPTIONS', "Invalid request; pass its saved archive checkpoint.");
     let saved = await owned(key, id, options);
-    if (!saved || saved.value.generation !== expectedGeneration) throw fail('JXL_INPUT', 'The original archive checkpoint is missing or changed.');
+    if (!saved || saved.value.generation !== expectedGeneration) throw fail('JXL_INPUT', "Archive checkpoint is missing or changed; reload its record and retry.");
     if (saved.value.state === 'refused') return finishRefusal(saved, saved.value.reason, options);
     if (saved.value.state === 'restored') return {done: true, phase: 'complete', progressed: false,
       publication: refusal(key, 'retirement_disabled', saved.value.result)};
@@ -553,9 +571,9 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
         return {done: false, phase: 'prepared', progressed: !!staged, error: null};
       }
       return {done: false, phase: 'blocked', progressed: false, error: saved.value.stagingError ??
-        errorValue(fail('JXL_ARCHIVE_STAGE_UNRESOLVED', 'The prepared archive has no definitive staging acknowledgement.'), key)};
+        errorValue(fail('JXL_ARCHIVE_STAGE_UNRESOLVED', "Archive staging is unconfirmed; check its state before retrying."), key)};
     }
-    let gate = await control(options);
+    let gate = await settledMutation(await control(options), options);
     if (options.cancel === true && (!gate.value.writer || gate.value.writer.id === id && gate.value.writer.phase === 'prepared'))
       return finishRefusal(saved, 'canceled', options);
     if (gate.value.writer && gate.value.writer.id !== id) return {done: false, phase: 'prepared', progressed: false, error: null};
@@ -576,7 +594,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
         const acknowledged = await updateRecord(saved, value => { value.state = 'active'; value.physicalVersion = found.file.version; }, options);
         return {done: false, phase: 'cleaning', progressed: !!acknowledged, error: null};
       }
-      const error = fail('JXL_ARCHIVE_UNRESOLVED', 'A JPEG replacement has no definitive acknowledgement. Keep this integration installed.');
+      const error = fail('JXL_ARCHIVE_UNRESOLVED', "JPEG replacement is unconfirmed; keep the integration installed.");
       const progressed = await blockWriter(gate, error, options);
       return {done: false, phase: 'blocked', progressed, error: errorValue(error, key)};
     }
@@ -591,7 +609,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
       return finishRefusal(saved, 'delivery_changed', options);
     const candidate = await read(record.candidate, record.jxlBytes + ENVELOPE_BYTES, options);
     if (!candidate || candidate.bytes.length !== record.jxlBytes + ENVELOPE_BYTES || envelopeIdentity(candidate.bytes)?.id !== id)
-      throw fail('JXL_INPUT', 'The prepared JPEG archive payload is missing or changed.');
+      throw fail('JXL_INPUT', "Prepared archive is missing or changed; reload its record and retry.");
     // The only archive write dispatch in the implementation. A retry that sees writing cannot enter here.
     const armed = await updateControl(gate, value => { value.writer.phase = 'writing'; }, options);
     if (!armed) return {done: false, phase: 'prepared', progressed: false, error: null};
@@ -621,15 +639,15 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
   function requireRemoval(saved, input) {
     const status = removalValue(saved);
     if (!status || input?.id !== status.id || input.siteId !== status.siteId || input.scope !== scope)
-      throw fail('JXL_INPUT', 'The original-restoration operation or storage identity changed.');
+      throw fail('JXL_INPUT', "Restoration or storage identity changed; reload its record and retry.");
     return status;
   }
   async function beginRemoval({id, ...options} = {}) {
-    if (!ID.test(id ?? '')) throw fail('JXL_OPTIONS', 'Removal requires a 32-character operation identity.');
+    if (!ID.test(id ?? '')) throw fail('JXL_OPTIONS', "Invalid removal ID; pass its 32-character ID.");
     const saved = await control(options);
     if (saved.value.removal) {
       if (saved.value.removal.purpose === 'uninstall') {
-        if (saved.value.removal.id !== id) throw fail('JXL_INPUT', 'Another original-restoration operation is already active.');
+        if (saved.value.removal.id !== id) throw fail('JXL_INPUT', "Restoration is active; finish it first.");
         return removalValue(saved);
       }
       // Only the explicit uninstall request acquires the terminal removal gate. A switch's
@@ -648,7 +666,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
     }
     const latest = await control(options);
     if (latest.value.removal?.id !== id || latest.value.removal?.purpose !== 'uninstall')
-      throw fail('JXL_INPUT', 'Another original-restoration operation was started.');
+      throw fail('JXL_INPUT', "A different restoration started; reload its progress.");
     return removalValue(latest);
   }
   async function removalStatus(options = {}) {
@@ -666,7 +684,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
   }
   async function drainRestoreWriter(saved, options) {
     const writer = saved.value.writer, item = await owned(writer.key, writer.archive, options);
-    if (!item) throw fail('JXL_INPUT', 'The pending original restoration lost its ownership record.');
+    if (!item) throw fail('JXL_INPUT', "Missing restoration owner; restore its matching record.");
     if (writer.phase === 'cleaning' && writer.outcome === 'restore-refused') {
       await releaseWriter(writer.id, options);
       return;
@@ -687,11 +705,11 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
     // Neither a missing object nor its old JXL representation proves that an armed put
     // cannot still arrive. A unique restored marker or the original acknowledgement does.
     await blockWriter(saved, fail('JXL_ARCHIVE_UNRESOLVED',
-      'A JPEG restoration has no definitive acknowledgement. Keep this integration installed.'), options);
+      "JPEG restoration is unconfirmed; keep the integration installed."), options);
   }
   async function advanceRemoval(input = {}) {
     const {signal, call = direct, ms = 5000} = input, options = {signal, call};
-    if (!Number.isFinite(ms) || ms <= 0 || ms > 60000) throw fail('JXL_OPTIONS', 'Original reconstruction uses an advance budget from 1 to 60000 ms.');
+    if (!Number.isFinite(ms) || ms <= 0 || ms > 60000) throw fail('JXL_OPTIONS', "Invalid reconstruction budget; use 1 to 60000 ms.");
     let saved = await control(options); requireRemoval(saved, input);
     if (saved.value.removal.phase === 'complete') return removalValue(saved);
     if (saved.value.writer) {
@@ -707,7 +725,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
         await releaseWriter(saved.value.writer.id, options);
         saved = await control(options);
       } else {
-        const error = fail('JXL_ARCHIVE_UNRESOLVED', 'A source mutation has not acknowledged its completion. Keep this integration installed.');
+        const error = fail('JXL_ARCHIVE_UNRESOLVED', "A source change is unconfirmed; keep the integration installed.");
         await blockWriter(saved, error, options); return removalValue(await control(options));
       }
       if (saved.value.writer) return removalValue(saved);
@@ -723,7 +741,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
       const item = await json(file.key, options);
       if (!item || !validRecord(item.value) || await recordKey(item.value.source, item.value.id) !== file.key ||
           item.value.candidate !== await candidateKey(item.value.source, item.value.id))
-        throw fail('JXL_INPUT', 'Original restoration found an invalid ownership record.');
+        throw fail('JXL_INPUT', "Invalid restoration owner; restore its saved record.");
       const record = item.value, found = await physical(record.source, options);
       if (found?.archived && found.record.id === record.id) {
         if (saved.value.removal.phase === 'verifying') { remaining++; continue; }
@@ -731,15 +749,15 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
           try {
             const selected = await delivery(record.source, record.generation, options);
             if (selected.mode === 'copies' && selected.revision === record.deliveryRevision) {
-              if (!preserveDelivery) throw fail('JXL_UNSUPPORTED', 'The selected archive delivery cannot yet be preserved.');
+              if (!preserveDelivery) throw fail('JXL_UNSUPPORTED', "Cannot preserve archive delivery; keep its setting.");
               if (record.jxlBytes > maxDeliveryBytes)
-                throw fail('JXL_LIMIT', 'The selected archive delivery exceeds the bounded copy limit. Keep this setting until it can be preserved.');
+                throw fail('JXL_LIMIT', "Archive delivery exceeds the copy limit; keep its setting until it can be preserved.");
               const bytes = await archivePayload(found, options);
               const kept = await preserveDelivery(record.source, {...structuredClone(record.result), bytes}, {
                 source: record.sourceSha256, expectedGeneration: record.generation, expectedDeliveryRevision: record.deliveryRevision,
                 jobIdentity: record.id, receipt: structuredClone(record.receipt),
                  preservationId: saved.value.removal.id, ...options});
-              if (kept?.preserved !== true) throw fail('JXL_IO', 'The selected archive delivery has no definitive preservation acknowledgement.');
+              if (kept?.preserved !== true) throw fail('JXL_IO', "Archive delivery preservation is unconfirmed; check its state before retrying.");
             }
             await updateRecord(item, value => { value.deliveryPreserved = saved.value.removal.id; }, options);
           } catch (error) {
@@ -774,14 +792,14 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
           return removalValue(await control(settled));
         }
         const latest = await control(settled);
-        if (latest.value.writer?.id !== id) throw fail('JXL_INPUT', 'The original restoration writer changed before acknowledgement.');
+        if (latest.value.writer?.id !== id) throw fail('JXL_INPUT', "Restoration writer changed before confirmation; check its state before retrying.");
         if (acknowledged === null || acknowledged === false) {
           await updateControl(latest, value => {
             value.writer.phase = 'cleaning'; value.writer.outcome = 'restore-refused';
           }, settled);
         } else if (typeof acknowledged?.version === 'string' && acknowledged.version) {
           await acknowledgeRestore(latest, item, acknowledged.version, settled);
-        } else await blockWriter(latest, fail('JXL_ARCHIVE_UNRESOLVED', 'The JPEG restoration returned no definitive write acknowledgement.'), settled);
+        } else await blockWriter(latest, fail('JXL_ARCHIVE_UNRESOLVED', "JPEG restoration write is unconfirmed; check its state before retrying."), settled);
         return removalValue(await control(settled));
       } else if (!record.cleaned && ['writing', 'blocked'].includes(record.staging)) {
         // Even an unarmed archive may have an outstanding immutable staging write. Its
@@ -802,7 +820,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
         }, options);
         else await updateControl(saved, value => {
           value.removal.phase = 'blocked'; value.removal.error = errorValue(fail('JXL_ARCHIVE_STAGE_UNRESOLVED',
-            'An original archive staging write has no definitive acknowledgement.'), record.source);
+            "Archive staging write is unconfirmed; check its state before retrying."), record.source);
         }, options);
         return removalValue(await control(options));
       } else if (!record.cleaned && record.staged) {
@@ -839,7 +857,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
   function policyValue(saved) {
     const {policy, removal, writer, mode, revision} = saved.value;
     const error = removal?.error ?? policy.error ?? (!allowRetirement && policy.enabled
-      ? {code: 'JXL_UNSUPPORTED', message: 'Restore existing JPEG archives under their recorded host allowance.'} : null);
+      ? {code: 'JXL_UNSUPPORTED', message: "Archive allowance unavailable; use a host with the saved allowance."} : null);
     return {available: allowRetirement && removal?.purpose !== 'uninstall', enabled: policy.enabled, desired: policy.desired,
       phase: policy.phase, id: policy.id, revision,
       admitting: allowRetirement && mode === 'enabled' && policy.enabled && policy.desired,
@@ -850,15 +868,15 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
   async function policy(options = {}) { return policyValue(await control(options)); }
   async function setPolicy({enabled, id, expectedId, ...options} = {}) {
     if (typeof enabled !== 'boolean' || !ID.test(id ?? '') || !ID.test(expectedId ?? ''))
-      throw fail('JXL_OPTIONS', 'Choose the originals policy using its current saved identity.');
+      throw fail('JXL_OPTIONS', "Stale originals policy; pass its current identity.");
     const saved = await control(options), previous = saved.value.policy;
-    if (previous.id !== expectedId) throw fail('JXL_POLICY_CHANGED', 'The originals setting changed. Read its current progress.');
-    if (enabled && !allowRetirement) throw fail('JXL_UNSUPPORTED', 'This host must keep the original JPEG files.');
+    if (previous.id !== expectedId) throw fail('JXL_POLICY_CHANGED', "Originals setting changed; read its current progress.");
+    if (enabled && !allowRetirement) throw fail('JXL_UNSUPPORTED', "This host cannot archive JPEG originals; keep the JPEG files.");
     if (saved.value.removal?.purpose === 'uninstall')
-      throw fail('JXL_BUSY', 'Integration removal has closed the originals gate. Finish that removal first.');
+      throw fail('JXL_BUSY', "Integration removal blocks archival; finish removal first.");
     if (previous.desired === enabled) return policyValue(saved);
     if (previous.phase === 'restoring')
-      throw fail('JXL_BUSY', 'Finish restoring the JPEG originals before changing this setting.');
+      throw fail('JXL_BUSY', "Originals are being restored; finish restoration before changing this setting.");
     await updateControl(saved, value => {
       if (enabled) {
         value.mode = 'enabled'; value.removal = null; value.policy = newPolicy(true, id);
@@ -880,7 +898,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
   }
   async function advancePolicy({id, ms = 5000, signal, call = direct, list, prepare, run} = {}) {
     if (!ID.test(id ?? '') || !Number.isFinite(ms) || ms <= 0 || ms > 60000)
-      throw fail('JXL_OPTIONS', 'Expected the saved originals operation and its bounded advance budget.');
+      throw fail('JXL_OPTIONS', "Invalid request; pass the saved originals operation and a budget of 1 to 60000 ms.");
     const options = {signal, call};
     let saved = await control(options), selected = saved.value.policy;
     if (selected.id !== id) return null;
@@ -893,20 +911,20 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
     };
     if (selected.phase === 'restoring') {
       if (selected.current?.command) {
-        if (typeof run !== 'function') throw fail('JXL_OPTIONS', 'Original archive cancellation requires its saved server runner.');
+        if (typeof run !== 'function') throw fail('JXL_OPTIONS', "Archive cancellation is unconfigured; supply its saved server runner.");
         try {
           const stopped = await run(selected.current.command, {ms, signal, cancel: true});
           // A stopped archive job whose part cleanup is still pending keeps its command: the next advance repeats it.
           if (!stopped || (stopped.done || stopped.canceled) && !stopped.cleanupPending)
             await updateControl(saved, value => { value.policy.current = null; value.policy.error = null; }, options);
           else if (stopped.phase === 'blocked') return saveError(stopped.blocked ?? stopped.error ??
-            fail('JXL_ARCHIVE_UNRESOLVED', 'The previous archive operation still needs its write acknowledgement.'));
+            fail('JXL_ARCHIVE_UNRESOLVED', "Previous archive write is unconfirmed; check its state before retrying."));
         } catch (error) { signal?.throwIfAborted(); return saveError(error); }
         return policyValue(await control(options));
       }
       const removal = removalValue(saved);
       if (!removal || saved.value.removal.purpose !== 'policy' || removal.id !== id)
-        throw fail('JXL_INPUT', 'The originals switch lost its restoration operation.');
+        throw fail('JXL_INPUT', "Originals setting lost its restoration; reload the saved operation before continuing.");
       await advanceRemoval({...removal, ms, ...options});
       saved = await control(options);
       if (saved.value.policy.id === id && saved.value.removal?.purpose === 'policy' &&
@@ -921,9 +939,9 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
       }
       return policyValue(await control(options));
     }
-    if (!allowRetirement) return saveError(fail('JXL_UNSUPPORTED', 'This host must keep the original JPEG files.'));
+    if (!allowRetirement) return saveError(fail('JXL_UNSUPPORTED', "This host cannot archive JPEG originals; keep the JPEG files."));
     if ([list, prepare, run].some(value => typeof value !== 'function'))
-      throw fail('JXL_OPTIONS', 'Progressive archival requires the native media list and verified server runner.');
+      throw fail('JXL_OPTIONS', "Progressive archival is unconfigured; supply the native media list and verified server runner.");
     const complete = async (outcome, reason = null) => {
       await updateControl(saved, value => {
         const item = value.policy.current;
@@ -940,13 +958,13 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
         if (!page || !Array.isArray(page.items) || page.items.length > 1 ||
             page.nextCursor !== undefined && (typeof page.nextCursor !== 'string' || !page.nextCursor) ||
             page.nextCursor !== undefined && page.nextCursor === selected.cursor)
-          throw fail('JXL_IO', 'The native JPEG list returned an invalid bounded page.');
+          throw fail('JXL_IO', "JPEG list returned an invalid page; check storage and retry.");
         const item = page.items[0];
         if (!item) {
-          if (page.nextCursor !== undefined) throw fail('JXL_IO', 'The native JPEG list returned an empty nonterminal page.');
+          if (page.nextCursor !== undefined) throw fail('JXL_IO', "JPEG list returned an empty nonterminal page; check storage and retry.");
           await updateControl(saved, value => { value.policy.phase = 'idle'; value.policy.error = null; }, options);
         } else {
-          if (typeof item.id !== 'string' || !jpeg(item.key)) throw fail('JXL_INPUT', 'The native JPEG list returned an invalid original.');
+          if (typeof item.id !== 'string' || !jpeg(item.key)) throw fail('JXL_INPUT', "JPEG list has an invalid original; repair its media record before resuming.");
           const jobId = (await digest(utf8(JSON.stringify(['originals', scope, id, item.id, item.key])))).slice(0, 32);
           await updateControl(saved, value => { value.policy.current = {item: structuredClone(item), jobId,
             nextCursor: page.nextCursor ?? null, stage: 'prepare', command: null}; value.policy.error = null; }, options);
@@ -958,16 +976,16 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
         const command = await prepare(current.item, {id: current.jobId, signal, call});
         if (command?.skip) return complete(command.skip === 'archived' ? 'archived' : 'kept', command.skip);
         if (!command || command.id !== current.jobId || command.key !== current.item.key || command.archiveOnly !== true)
-          throw fail('JXL_INPUT', 'The original archive preparation returned a different server command.');
+          throw fail('JXL_INPUT', "Archive belongs to another command; reload its matching saved command.");
         await updateControl(saved, value => {
           value.policy.current.command = structuredClone(command); value.policy.current.stage = 'run'; value.policy.error = null;
         }, options);
         return policyValue(await control(options));
       }
       const job = await run(current.command, {ms, signal, cancel: false});
-      if (!job) throw fail('JXL_IO', 'The saved original archive job is missing.');
+      if (!job) throw fail('JXL_IO', "Missing saved archive job; restore it before resuming.");
       if (job.phase === 'blocked') return saveError(job.blocked ?? job.error ??
-        fail('JXL_ARCHIVE_UNRESOLVED', 'The JPEG archive still needs its write acknowledgement.'));
+        fail('JXL_ARCHIVE_UNRESOLVED', "JPEG archive write is unconfirmed; check its state before retrying."));
       if ((job.done || job.canceled) && !job.cleanupPending) return complete(job.publication?.stored === 'original' ? 'archived' : job.error ? 'failed' : 'kept',
         job.error?.code ?? job.publication?.reason ?? job.execution?.reason ?? (job.canceled ? 'canceled' : null));
       if (job.cleanupPending) return policyValue(await control(options));
@@ -1003,14 +1021,14 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
     // Never expire a writer or drive its archive work here. Only its acknowledged release admits us.
     for (let attempt = 0; attempt < 8; attempt++) {
       if (attempt) await waitForWriter(Math.min(250 * 2 ** (attempt - 1), 1000), options.signal);
-      const saved = await control(options);
+      const saved = await settledMutation(await control(options), options);
       if (saved.value.mode === 'retiring' && saved.value.removal?.phase === 'complete') {
         if (saved.value.removal.purpose === 'uninstall') return action();
-        throw fail('JXL_BUSY', 'The originals setting is committing its restored state. Retry this change.');
+        throw fail('JXL_BUSY', "Restored originals setting is being saved; retry this change.");
       }
       if (saved.value.writer) {
         if (saved.value.writer.phase === 'blocked' || attempt === 7)
-          throw fail('JXL_BUSY', 'A JPEG source replacement is in progress. Retry this change.');
+          throw fail('JXL_BUSY', "JPEG replacement is in progress; retry this change.");
         continue;
       }
       acquired = await updateControl(saved, value => {
@@ -1018,7 +1036,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
       }, options);
       if (acquired) break;
     }
-    if (!acquired) throw fail('JXL_BUSY', 'A JPEG source replacement started. Retry this change.');
+    if (!acquired) throw fail('JXL_BUSY', "JPEG replacement started; retry this change.");
     let result;
     try { result = await action(); }
     catch (error) {
@@ -1036,7 +1054,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
       }, settledOptions);
     }
     if (!durable || !await releaseWriter(id, settledOptions))
-      throw fail('JXL_ARCHIVE_UNRESOLVED', 'The source changed, but its writer acknowledgement still needs reconciliation.');
+      throw fail('JXL_ARCHIVE_UNRESOLVED', "Source changed without writer confirmation; check its state before retrying.");
     return result;
   }
   const originals = {
@@ -1087,12 +1105,12 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
                 result.push({key: part.key, size: part.size});
             }
             if (!parts.nextCursor) break;
-            if (partCursor === parts.nextCursor) throw fail('JXL_INTERNAL', 'Storage repeated a reconstruction list cursor.');
+            if (partCursor === parts.nextCursor) throw fail('JXL_INTERNAL', "Invalid image result; report the input and options.");
             partCursor = parts.nextCursor;
           }
         }
         if (!page.nextCursor) return result;
-        if (cursor === page.nextCursor) throw fail('JXL_INTERNAL', 'Storage repeated an archive list cursor.');
+        if (cursor === page.nextCursor) throw fail('JXL_INTERNAL', "Invalid image result; report the input and options.");
         cursor = page.nextCursor;
       }
     }
@@ -1103,7 +1121,7 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
     if (property === 'upload') return async options => {
       if (!jpeg(options.key)) return target.upload(options);
       const body = await readAll(options.body, {maxBytes: maxInputBytes, signal: options.signal});
-      if (envelopeIdentity(body)) throw fail('JXL_INPUT', 'Private archived originals cannot be uploaded as JPEG sources.');
+      if (envelopeIdentity(body)) throw fail('JXL_INPUT', "Archive is private storage data; upload the restored JPEG.");
       return mutation(options.key, () => target.upload({...options, body}), options);
     };
     if (property === 'delete') return (key, options) => mutation(key, () => target.delete(key, options), options);

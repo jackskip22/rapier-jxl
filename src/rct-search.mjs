@@ -4,24 +4,11 @@ import {leaf, writeTransform} from './modular.mjs';
 import {codeChannel} from './modular-channel.mjs';
 import {losslessCoding} from './lossless-coding.mjs';
 import {losslessSteps} from './lossless.mjs';
+import {kernelHooks, ensured, missing} from './kernel-hooks.mjs';
 
 export function colourTransform(type, channels) {
-  const permutation = Math.floor(type / 7), custom = type % 7;
-  const a = permutation % 3, b = (permutation + 1 + Math.floor(permutation / 3)) % 3;
-  const c = (permutation + 2 - Math.floor(permutation / 3)) % 3;
   return {type, fill(planes, rgba, stride, x0, y0, w, h) {
-    for (let y = 0; y < h; y++) for (let x = 0, at = y * w, i = ((y0 + y) * stride + x0) * 4; x < w; x++, at++, i += 4) {
-      const first = rgba[i + a], second = rgba[i + b], third = rgba[i + c];
-      if (custom === 6) {
-        const co = first - third, tmp = third + (co >> 1), cg = second - tmp;
-        planes[0][at] = tmp + (cg >> 1); planes[1][at] = co; planes[2][at] = cg;
-      } else {
-        planes[0][at] = first;
-        planes[1][at] = second - ((custom >> 1) === 1 ? first : (custom >> 1) === 2 ? (first + third) >> 1 : 0);
-        planes[2][at] = third - (custom & 1 ? first : 0);
-      }
-      if (channels === 4) planes[3][at] = rgba[i + 3];
-    }
+    (kernelHooks.rct ?? ensured().rct ?? missing())(rgba, stride, x0, y0, w, h, type, channels, planes);
   }};
 }
 

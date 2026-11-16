@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 import {requireDecode} from './decode-bits.mjs';
-import {exactPow} from './exact-math.mjs';
 import {D50,inverse3} from './decode-color-math.mjs';
 import {CURVE,OP,runVector,curveValue} from './decode-color-program.mjs';
 
@@ -57,7 +56,7 @@ function curve(view,at,end,budget) {
   if(form===0)return power(g,12+4*count,formula);
   requireDecode(a!==0,'Invalid ICC curve scale.');
   const cut=form<=2?-b/a:d,add=form===2?c:form===4?e:0,low=form>=3?c:0,base=form===2?c:form===4?f:0;
-  const boundary=exactPow(Math.max(0,a*cut+b),g)+add;
+  const boundary=Math.pow(Math.max(0,a*cut+b),g)+add;
   return {read:{kind:CURVE.para,p:[g,a,b,cut,add,low,base]},inverse:a>0&&low>=0?{kind:CURVE.paraInverse,p:[1/g,a,b,boundary,add,low,base]}:null,bytes:12+4*count,formula};
 }
 

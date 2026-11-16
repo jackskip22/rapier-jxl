@@ -3,13 +3,10 @@ import {QUANT_SHAPE, transformDCT8BlocksFast} from './photo-dct.mjs';
 import {V6} from './photo-v6-settings.mjs';
 import {calibration} from './quality-calibration.mjs';
 import {screenLike} from './screen.mjs';
+import {srgbLevels} from './srgb-levels.mjs';
 
 const BIAS = 0.0037930732552754493, ROOT_BIAS = Math.cbrt(BIAS);
 const ROOTS = Float64Array.from({length: 4113}, (_, i) => i ? Math.cbrt(i / 4096) : 0);
-const LINEAR = Float64Array.from({length: 256}, (_, i) => {
-  const v = i / 255;
-  return i <= 10 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
-});
 const cubeRootFast = v => { const s = v * 4096, a = Math.floor(s); return ROOTS[a] + (ROOTS[a + 1] - ROOTS[a]) * (s - a); };
 const W_AC = [0, 1, 2].map(c => Float64Array.from({length: 64}, (_, k) =>
   k ? [0.84, 7, 5.6][c] * QUANT_SHAPE[k] * (1 + [1, 0, 5][c] * Math.sqrt(((k & 7) * (k & 7) + (k >> 3) * (k >> 3)) / 98)) * V6.tune(c, k) : 1
@@ -27,7 +24,7 @@ const scratchTile = new Float64Array(256 * 192), f32 = new Float32Array(1), i32 
 
 const XYB = new Float64Array(3);
 function xyb(data, at) {
-  const r = LINEAR[data[at]], g = LINEAR[data[at + 1]], b = LINEAR[data[at + 2]];
+  const L = srgbLevels(), r = L[data[at]], g = L[data[at + 1]], b = L[data[at + 2]];
   const l = cubeRootFast(0.3 * r + 0.622 * g + 0.078 * b + BIAS) - ROOT_BIAS;
   const m = cubeRootFast(0.23 * r + 0.692 * g + 0.078 * b + BIAS) - ROOT_BIAS;
   const s = cubeRootFast(0.24342268924547819 * r + 0.20476744424496821 * g + 0.5518098665095536 * b + BIAS) - ROOT_BIAS;
@@ -97,7 +94,7 @@ export function extractFitStats(picture) {
 export function fitTerms(stats, quality, effort = 3) {
   const qc = Math.min(quality, 99.9);
   const dRaw = qc >= 99 ? 0.19 - 0.16 * (qc - 99) : qc >= 30 ? 0.1 + (100 - qc) * 0.09 : 53 / 3000 * qc * qc - 23 / 20 * qc + 25;
-  const dist = Math.max(0.046, calibration(qc, effort === 1 ? 'fast' : 'full') * dRaw);
+  const dist = Math.max(0.0248, calibration(qc, effort === 1 ? 'fast' : 'full') * dRaw);
   if (!stats) return {dist};
   const strength = Math.max(0, Math.min(1, (90 - qc) / 15));
   const stepScale = 1 - 0.1 * strength, acScale = 1.175 + 0.075 * strength;

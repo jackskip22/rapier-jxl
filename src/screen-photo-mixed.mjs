@@ -2,6 +2,7 @@
 import {part} from './bits.mjs';
 import {encodeCaptureBytes, CAPTURE_BASE, compileCaptureKernels} from './capture-codec.mjs';
 export {compileCaptureKernels};
+export {compileJpegKernels} from './jpeg-kernels.mjs';
 import {expandPhotoRegions} from './screen-photo-borders.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';

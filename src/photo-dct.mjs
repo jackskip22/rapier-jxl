@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
-import {kernelHooks} from './kernel-hooks.mjs';
+import {kernelHooks, ensured, missing, declined} from './kernel-hooks.mjs';
 import {fault} from './fault.mjs';
 import {calibration} from './quality-calibration.mjs';
 import {float16Bits} from './bits.mjs';
-import {exactLog, exactExp} from './exact-math.mjs';
+import {quantFieldValue, quantFieldBase} from './vardct-planes.mjs';
+import {grayTiles} from './screen-photo-kernels.mjs';
 
 const COSINES = Float64Array.of(0.3535533905932738, 0.3535533905932738, 0.3535533905932738, 0.3535533905932738,
   0.3535533905932738, 0.3535533905932738, 0.3535533905932738, 0.3535533905932738, 0.4903926402016152,
@@ -27,27 +28,14 @@ const radial = (position, rate) => Float64Array.from({length: 64}, (_, k) => {
 });
 export const QUANT_SHAPE = radial(r => r * 5 / Math.sqrt(98), 0.26236426446749106);
 
-function dctChannel(src, o, mid, dst, d) {
-  for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
-    let sum = 0;
-    for (let k = 0; k < 8; k++) sum += src[o + i * 8 + k] * COSINES[j * 8 + k];
-    mid[i * 8 + j] = sum;
-  }
-  for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
-    let sum = 0;
-    for (let k = 0; k < 8; k++) sum += mid[k * 8 + i] * COSINES[j * 8 + k];
-    dst[d + j * 8 + i] = sum;
-  }
-}
-
-export function transformDCT8(block, intermediate, sums, offset = 0) {
-  for (let c = 0; c < 3; c++) dctChannel(block, offset + c * 64, intermediate, sums, c * 64);
+export function transformDCT8(block, sums, offset = 0) {
+  sums.set(block.subarray(offset, offset + 192));
+  transformDCT8Blocks(sums, 1);
   return sums;
 }
 
-export function transformDCT8Blocks(blocks, count, intermediate) {
-  if (kernelHooks.dct?.(blocks, count, COSINES)) return;
-  for (let n = 0; n < count * 3; n++) dctChannel(blocks, n * 64, intermediate, blocks, n * 64);
+export function transformDCT8Blocks(blocks, count) {
+  if (!(kernelHooks.dct ?? ensured().dct ?? missing())(blocks, count, COSINES)) throw declined('dct');
 }
 
 const FAST_S = /* @__PURE__ */ Float64Array.of(1, 0.7209598223816907, 0.7653668647301796, 0.8504300941521988, 1, 1.2727585826345942, 1.8477590650225744, 3.6245097377961106);
@@ -82,58 +70,76 @@ export function transformDCT8BlocksFast(blocks, count) {
   }
 }
 
-const TABLE_FIELD = 2, AREA_FIELD = 8;
+const TABLE_FIELD = 2;
+export const AREA_FIELD = 16;
 const half = b => (b & 0x8000 ? -1 : 1) * (b & 0x7c00 ? (1024 + (b & 1023)) * 2 ** (((b >> 10) & 31) - 25) : (b & 1023) * 2 ** -24);
 const regionTable = rows => rows.map(([first, falls, dc]) => {
-    const bits = falls.map(float16Bits), rate = bits.map(b => { const v = half(b); return v < 0 ? exactLog(1 - v) : -exactLog(1 + v); });
+    const bits = falls.map(float16Bits), rate = bits.map(b => { const v = half(b); return v < 0 ? Math.log(1 - v) : -Math.log(1 + v); });
     const shape = Float64Array.from({length: 64}, (_, k) => {
       const at = Math.sqrt((k & 7) * (k & 7) + (k >> 3) * (k >> 3)) / 7 * 5 / (Math.SQRT2 + 1e-6), i = Math.min(4, Math.floor(at));
       let sum = 0;
       for (let j = 0; j < i; j++) sum += rate[j];
-      return exactExp(sum + (at - i) * rate[i]);
+      return Math.exp(sum + (at - i) * rate[i]);
     });
     return {first, bits, shape, dc};
   });
 const REGION_TABLE = regionTable([[10, [0, -0.3, -0.3, -0.3, -0.3], 2.5], [18, [0, -0.3, -0.3, -0.3, -0.3], 4.5], [18, [0, -0.3, -0.3, -0.3, -0.3], 4.5]]);
-const SMALL_REGION_TABLE = REGION_TABLE.map((row,c)=>c===1?{...row,first:4.5,dc:1.125}:row);
 const RGB_TABLE = /* @__PURE__ */ regionTable([[30, [0, -0.3, -0.3, -0.3, -0.3], 4.5], [10, [0, -0.3, -0.3, -0.3, -0.3], 2.5], [30, [0, -0.3, -0.3, -0.3, -0.3], 4.5]]);
-const strengthOf = quality => Math.max(0, Math.min(1, (90 - quality) / 15));
+export const strengthOf = quality => Math.max(0, Math.min(1, (90 - quality) / 15));
 const distanceOf = (quality, kind) => Math.max(0.1, calibration(quality, kind) * (quality >= 30 ? 0.1 + (100 - quality) * 0.09 : 53 / 3000 * quality * quality - 23 / 20 * quality + 25));
 export const photoQualityStep = (quality, kind) => distanceOf(quality, kind) * (1 - 0.1 * strengthOf(quality));
-export const areaFieldValue = (base, quality, kind, FIELD) => Math.max(1, Math.round(FIELD * base / photoQualityStep(quality, kind)));
-export function applyAreaField(fields, stride, rows, a, value, from = 0, to = fields.length) {
+export const areaFieldValue = (base, quality, kind, FIELD) => quantFieldValue(FIELD * base / photoQualityStep(quality, kind));
+export function areaFieldQuality(base, value, kind, FIELD) {
+  const step = FIELD * base / value;
+  let lo = 0, hi = 100;
+  for (let i = 0; i < 32; i++) {
+    const mid = (lo + hi) * 0.5;
+    if (photoQualityStep(mid, kind) <= step) hi = mid; else lo = mid;
+  }
+  return hi;
+}
+export function areaFieldBase(areas, quality, kind, perBlock) {
+  if (!perBlock) return {FIELD: TABLE_FIELD, peak: TABLE_FIELD};
+  const base = photoQualityStep(quality, kind);
+  let finest = 1;
+  for (const a of areas ?? []) { const ratio = base / photoQualityStep(a.quality, kind); if (ratio > finest) finest = ratio; }
+  const FIELD = Math.max(TABLE_FIELD, quantFieldBase(AREA_FIELD, finest));
+  let peak = FIELD;
+  for (const a of areas ?? []) { const value = areaFieldValue(base, a.quality, kind, FIELD); if (value > peak) peak = value; }
+  return {FIELD, peak};
+}
+export function applyAreaField(fields, stride, rows, a, value, from = 0, to = fields.length, areaQualities = null) {
   for (let by = Math.max(0, Math.ceil((a.y - 4) / 8), Math.floor(from / stride)); by < rows && by * 8 + 4 < a.y + a.height && by * stride < to; by++)
-    for (let bx = Math.max(0, Math.ceil((a.x - 4) / 8), from - by * stride); bx < stride && bx * 8 + 4 < a.x + a.width && by * stride + bx < to; bx++)
-      if (value > fields[by * stride + bx]) fields[by * stride + bx] = value;
+    for (let bx = Math.max(0, Math.ceil((a.x - 4) / 8), from - by * stride); bx < stride && bx * 8 + 4 < a.x + a.width && by * stride + bx < to; bx++) {
+      const i = by * stride + bx;
+      if (value > fields[i]) { fields[i] = value; if (areaQualities) areaQualities[i] = a.quality; }
+      else if (areaQualities && value === fields[i] && a.quality > areaQualities[i]) areaQualities[i] = a.quality;
+    }
 }
 export function finishAreaFields(fields, FIELD, from = 0, to = fields.length) {
   for (let i = from; i < to; i++) if (!fields[i]) fields[i] = FIELD;
   return fields;
 }
 function areaFields(areas, quality, kind, stride, rows, FIELD) {
-  const fields = new Uint16Array(stride * rows), qualities = new Map();
+  const fields = new Uint16Array(stride * rows), areaQualities = areas ? new Float32Array(stride * rows) : null;
   if (areas) {
     const base = photoQualityStep(quality, kind);
-    for (const a of areas) {
-      const value = areaFieldValue(base, a.quality, kind, FIELD);
-      if (value !== FIELD && !qualities.has(value)) qualities.set(value, a.quality);
-      applyAreaField(fields, stride, rows, a, value);
-    }
+    for (const a of areas) applyAreaField(fields, stride, rows, a, areaFieldValue(base, a.quality, kind, FIELD), 0, fields.length, areaQualities);
   }
   finishAreaFields(fields, FIELD);
-  return {fields, qualities};
+  return {fields, qualities: null, areaQualities};
 }
 export function* photoCoefficientSteps(data, width, height, quality, colorSpace, gray = false, table = false, areas = null, options = {}) {
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), quantScale = 16, kind = table && !gray ? 'regions' : 'ycbcr';
   const distance = distanceOf(quality, kind), strength = strengthOf(quality), stepScale = 1 - 0.1 * strength;
-  const perBlock = options.fieldPlan ? options.fieldPlan.perBlock : table && !gray && areas?.some(a => a.quality !== quality), FIELD = perBlock ? AREA_FIELD : TABLE_FIELD;
-  const {fields, qualities} = options.fieldPlan ?? areaFields(perBlock ? areas : null, quality, kind, stride, rows, FIELD);
+  const perBlock = options.fieldPlan ? options.fieldPlan.perBlock : table && !gray && areas?.some(a => a.quality !== quality), {FIELD} = areaFieldBase(areas, quality, kind, perBlock);
+  const {fields, qualities, areaQualities} = options.fieldPlan ?? areaFields(perBlock ? areas : null, quality, kind, stride, rows, FIELD);
   const components = (gray ? [0] : [0, 1, 2]).map(c => ({h: 1, v: 1, stride, rows,
     quant: Int32Array.from(QUANT_SHAPE, (shape, k) => Math.max(1, Math.round(quantScale * distance * stepScale * (c ? 18 : 10) * (k ? shape : 0.25)))),
     coeffs: new Int16Array(stride * rows * 64)}));
   let quantTable = null;
   if (table && !gray) quantTable = components.map((component, c) => {
-    const {first: ratio, bits, shape, dc} = (options.smallRegions?SMALL_REGION_TABLE:REGION_TABLE)[c], base = quantScale * distance * stepScale, first = float16Bits(8 * 255 * quantScale / (FIELD * base * ratio) / 64);
+    const {first: ratio, bits, shape, dc} = REGION_TABLE[c], base = quantScale * distance * stepScale, first = float16Bits(8 * 255 * quantScale / (FIELD * base * ratio) / 64);
     const quant = component.quant = shape.map(value => 8 * 255 * quantScale / (FIELD * half(first) * 64) * value);
     quant[0] = Math.max(1, Math.round(base * dc));
     return [first, ...bits];
@@ -143,64 +149,91 @@ export function* photoCoefficientSteps(data, width, height, quality, colorSpace,
   const zones = zonesOf(strength);
   const tables = Float64Array.from({length: 396}, (_, i) => i < 192 ? components[i >> 6]?.quant[i & 63] ?? 1 : i < 384 ? zones[i - 192]
     : (gray ? [1, 0, 0, -128] : [0.299, 0.587, 0.114, -128, -0.168735892, -0.331264108, 0.5, 0, 0.5, -0.418687589, -0.081312411, 0])[i - 384] ?? 0);
-  const scaled = new Map([[FIELD, tables]]);
-  const tablesFor = v => {
-    let t = scaled.get(v);
+  const baseStep = distance * stepScale;
+  const scaled = new Map();
+  const tablesFor = (v, q) => {
+    const s = v === FIELD && !qualities?.has(FIELD) ? strength : strengthOf(q);
+    const key = v + s * 65536;
+    let t = scaled.get(key);
     if (!t) {
-      t = tables.slice(); t.set(zonesOf(strengthOf(qualities.get(v) ?? quality)), 192);
-      for (let i = 0; i < 192; i++) if (i & 63) t[i] = tables[i] * FIELD / v;
-      scaled.set(v, t);
+      if (v === FIELD && s === strength) t = tables;
+      else {
+        t = tables.slice(); t.set(zonesOf(s), 192);
+        for (let i = 0; i < 192; i++) if (i & 63) t[i] = tables[i] * FIELD / v;
+      }
+      scaled.set(key, t);
     }
     return t;
   };
-  const coeffs = components.map(c => c.coeffs);
-  if (!kernelHooks.ycbcrTile) kernelHooks.ensure?.();
-  const run = (by, x0, count, t) => {
-    if (!kernelHooks.ycbcrTile?.(data, width, rowAt, x0, count, t, coeffs, (by * stride + x0) * 64, COSINES))
-      throw fault('JXL_WASM', 'The photo tile kernel is unavailable: an encoder needs WebAssembly with SIMD.');
+  const blockTable = i => {
+    const v = fields[i];
+    const q = areaQualities && areaQualities[i] ? areaQualities[i] : qualities?.get(v) ?? (v === FIELD ? quality : areaFieldQuality(baseStep, v, kind, FIELD));
+    return tablesFor(v, q);
   };
-  const band = (from, to) => {
-    for (let by = from; by < to; by++) {
-      for (let y = 0; y < 8; y++) rowAt[y] = Math.min(height - 1, by * 8 + y) * width * 4;
-      for (let x0 = 0; x0 < stride; x0 += 64) {
-        const count = Math.min(64, stride - x0);
-        for (let n = 0; n < count;) {
-          const v = fields[by * stride + x0 + n];
-          let end = n + 1;
-          while (end < count && fields[by * stride + x0 + end] === v) end++;
-          run(by, x0 + n, end - n, tablesFor(v)); n = end;
-        }
+  const coeffs = components.map(c => c.coeffs);
+  if (quantTable ? !kernelHooks.ycbcrTiles : !kernelHooks.ycbcrTile) kernelHooks.ensure?.();
+  let cfl = null, nonZero = null;
+  if (quantTable) {
+    if (!kernelHooks.ycbcrTiles)
+      throw fault('JXL_WASM', 'The photo tile kernel is unavailable: an encoder needs WebAssembly with SIMD.');
+    const tilesX = Math.ceil(stride / 8);
+    cfl = {width: tilesX, x: new Int16Array(tilesX * Math.ceil(rows / 8)), b: new Int16Array(tilesX * Math.ceil(rows / 8))};
+    nonZero = [0, 1, 2].map(() => new Uint8Array(stride * rows));
+    const grayTile = grayTiles(data, width, height), crops = options.crops;
+    if (crops?.length > 1) for (let ty = 0; ty * 8 < rows; ty++) for (let tx = 0; tx * 64 < width; tx++) {
+      const i = ty * tilesX + tx; if (grayTile[i]) continue;
+      let first = null;
+      for (const c of crops) if (c.x < tx * 64 + 64 && c.x + c.width > tx * 64 && c.y < ty * 64 + 64 && c.y + c.height > ty * 64) {
+        if (!first) first = c;
+        else if (c.x >= first.x + first.width || c.x + c.width <= first.x || c.y >= first.y + first.height || c.y + c.height <= first.y) { grayTile[i] = 1; break; }
       }
     }
-  };
-  for (let by = 0; by < rows; by += 32) { band(by, Math.min(rows, by + 32)); yield Math.min(rows, by + 32) / rows; }
+    const cflOf = (index, xy, bySum, yy) => {
+      const off = grayTile[index] === 1;
+      const fx = off ? 0 : Math.max(-128, Math.min(127, Math.round(84 * xy / (yy + 1)))), fb = off ? 0 : Math.max(-128, Math.min(127, Math.round(84 * bySum / (yy + 1))));
+      cfl.x[index] = fx; cfl.b[index] = fb;
+      return [fx / 84, fb / 84];
+    };
+    const tableOf = (by, bx) => blockTable(by * stride + bx);
+    for (let from = 0; from < rows; from += 32) {
+      const to = Math.min(rows, from + 32);
+      for (let ty = from >> 3; ty * 8 < to; ty++) for (let tx = 0; tx < tilesX; tx++)
+        if (!kernelHooks.ycbcrTiles?.(data, width, height, tx * 8, ty * 8, Math.min(stride, tx * 8 + 8) - tx * 8, Math.min(to, ty * 8 + 8) - ty * 8,
+          tableOf, (xy, bySum, yy) => cflOf(ty * tilesX + tx, xy, bySum, yy), coeffs, nonZero, stride, COSINES))
+          throw fault('JXL_WASM', 'The photo tile kernel is unavailable: an encoder needs WebAssembly with SIMD.');
+      yield to / rows;
+    }
+  } else {
+    const run = (by, x0, count, t) => {
+      if (!kernelHooks.ycbcrTile?.(data, width, rowAt, x0, count, t, coeffs, (by * stride + x0) * 64, COSINES))
+        throw fault('JXL_WASM', 'The photo tile kernel is unavailable: an encoder needs WebAssembly with SIMD.');
+    };
+    const band = (from, to) => {
+      for (let by = from; by < to; by++) {
+        for (let y = 0; y < 8; y++) rowAt[y] = Math.min(height - 1, by * 8 + y) * width * 4;
+        for (let x0 = 0; x0 < stride; x0 += 64) {
+          const count = Math.min(64, stride - x0);
+          for (let n = 0; n < count;) {
+            const tbl = blockTable(by * stride + x0 + n);
+            let end = n + 1;
+            while (end < count && blockTable(by * stride + x0 + end) === tbl) end++;
+            run(by, x0 + n, end - n, tbl); n = end;
+          }
+        }
+      }
+    };
+    for (let by = 0; by < rows; by += 32) { band(by, Math.min(rows, by + 32)); yield Math.min(rows, by + 32) / rows; }
+  }
   let alpha = null;
   for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) { alpha = data; break; }
-  return {width, height, components, quantScale, ycbcr: true, orientation: 1, alpha, colorSpace, ...quantTable && {quantTable, quantFieldBase: FIELD}, ...perBlock && {quantFields: fields}};
-}
-
-const GRAY_EDGE = 32;
-function grayTiles(data, width, height, tilesX) {
-  const out = new Uint8Array(tilesX * Math.ceil(height / 64));
-  for (let by = 0; by * 8 < height; by++) for (let bx = 0; bx * 8 < width; bx++) {
-    const t = (by >> 3) * tilesX + (bx >> 3);
-    if (out[t]) continue;
-    let lo = 255, hi = 0, gray = true;
-    for (let y = by * 8; gray && y < Math.min(height, by * 8 + 8); y++) for (let x = bx * 8, at = (y * width + x) * 4; x < Math.min(width, bx * 8 + 8); x++, at += 4) {
-      const g = data[at + 1];
-      if (Math.abs(data[at] - g) > 1 || Math.abs(data[at + 2] - g) > 1) { gray = false; break; }
-      if (g < lo) lo = g; if (g > hi) hi = g;
-    }
-    if (gray && hi - lo >= GRAY_EDGE) out[t] = 1;
-  }
-  return out;
+  return {width, height, components, quantScale, ycbcr: true, orientation: 1, alpha, colorSpace, ...quantTable && {quantTable, quantFieldBase: FIELD, cfl, nonZero}, ...perBlock && {quantFields: fields}};
 }
 
 export function* rgbCoefficientSteps(data, width, height, quality, colorSpace, areas = null, options = {}) {
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), quantScale = 16, kind = 'regions';
   const distance = distanceOf(quality, kind), strength = strengthOf(quality), stepScale = 1 - 0.1 * strength;
-  const perBlock = options.fieldPlan ? options.fieldPlan.perBlock : areas?.some(a => a.quality !== quality), FIELD = perBlock ? AREA_FIELD : TABLE_FIELD;
-  const {fields, qualities} = options.fieldPlan ?? areaFields(perBlock ? areas : null, quality, kind, stride, rows, FIELD);
+  const perBlock = options.fieldPlan ? options.fieldPlan.perBlock : areas?.some(a => a.quality !== quality), {FIELD} = areaFieldBase(areas, quality, kind, perBlock);
+  const {fields, qualities, areaQualities} = options.fieldPlan ?? areaFields(perBlock ? areas : null, quality, kind, stride, rows, FIELD);
   const components = [0, 1, 2].map(() => ({h: 1, v: 1, stride, rows, quant: null, coeffs: options.packed && kernelHooks.rgbBand ? null : new Int16Array(stride * rows * 64)}));
   const quantTable = components.map((component, c) => {
     const {first: ratio, bits, shape, dc} = RGB_TABLE[c], base = quantScale * distance * stepScale, first = float16Bits(8 * 255 * quantScale / (FIELD * base * ratio) / 64);
@@ -210,26 +243,37 @@ export function* rgbCoefficientSteps(data, width, height, quality, colorSpace, a
   });
   const zonesOf = strength => Float64Array.from({length: 192}, (_, i) => !(i & 63) ? 0.5 : i >= 64 && i < 128 ? 0.5 + strength * ((i & 7) >= 4 || ((i & 63) >> 3) >= 4 ? 0.14 : 0.08) : 0.65);
   const steps = Float64Array.from({length: 192}, (_, i) => components[i >> 6].quant[i & 63]);
+  const baseStep = distance * stepScale;
   const scaled = new Map();
-  const tablesFor = v => {
-    let t = scaled.get(v);
+  const tablesFor = (v, q) => {
+    const s = v === FIELD && !qualities?.has(FIELD) ? strength : strengthOf(q);
+    const key = v + s * 65536;
+    let t = scaled.get(key);
     if (!t) {
-      t = new Float64Array(384); t.set(steps); t.set(zonesOf(strengthOf(qualities.get(v) ?? quality)), 192);
+      t = new Float64Array(384); t.set(steps); t.set(zonesOf(s), 192);
       for (let i = 0; i < 192; i++) if (i & 63) t[i] = steps[i] * FIELD / v;
-      scaled.set(v, t);
+      scaled.set(key, t);
     }
     return t;
   };
+  const blockTable = i => {
+    const v = fields[i];
+    const q = areaQualities && areaQualities[i] ? areaQualities[i] : qualities?.get(v) ?? (v === FIELD ? quality : areaFieldQuality(baseStep, v, kind, FIELD));
+    return tablesFor(v, q);
+  };
   const tilesX = Math.ceil(stride / 8);
   const cfl = {width: tilesX, x: new Int16Array(tilesX * Math.ceil(rows / 8)), b: new Int16Array(tilesX * Math.ceil(rows / 8))};
-  const gray = grayTiles(data, width, height, tilesX);
+  if (!kernelHooks.rgbTiles && !(options.packed && kernelHooks.rgbBand)) kernelHooks.ensure?.();
+  if (!kernelHooks.rgbTiles && !(options.packed && kernelHooks.rgbBand))
+    throw fault('JXL_WASM', 'The RGB tile kernel is unavailable: an encoder needs WebAssembly with SIMD.');
+  const gray = grayTiles(data, width, height);
   const cflOf = (index, rg, bg, gg) => {
     const off = gray[index] === 1;
     const fx = off ? 0 : Math.max(-128, Math.min(127, Math.round(84 * rg / (gg + 1)))), fb = off ? 0 : Math.max(-128, Math.min(127, Math.round(84 * bg / (gg + 1))));
     cfl.x[index] = fx; cfl.b[index] = fb;
     return [1 + fx / 84, 1 + fb / 84];
   };
-  const tableOf = (by, bx) => tablesFor(fields[by * stride + bx]);
+  const tableOf = (by, bx) => blockTable(by * stride + bx);
   const result = () => ({width, height, components, quantScale, ycbcr: false, cflBase: 1, cfl, orientation: 1, alpha: null, colorSpace, quantTable, quantFieldBase: FIELD, ...perBlock && {quantFields: fields}});
   if (options.packed && kernelHooks.rgbBand?.(data, width, height, {components, tableOf, cflOf, basis: COSINES, quantScale})) {
     yield 1; return result();

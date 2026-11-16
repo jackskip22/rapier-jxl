@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {PHOTO_LIMITS} from './limits.mjs';
+import {LIMITS} from './limits.mjs';
 import {BitWriter} from './bits.mjs';
 import {admitSize, admitOutputSize} from './admit.mjs';
 import {readFrames, writeStillImageHeader, writeStillFrame, copyBits} from './framing.mjs';
@@ -17,7 +17,7 @@ export function photoLevelContainer(bytes, level) {
 export function padPhotoTiles(data, width, height) {
   const w = Math.ceil(width / 8) * 8, h = Math.ceil(height / 8) * 8;
   if (w === width && h === height) return null;
-  admitSize(w, h, PHOTO_LIMITS);
+  admitSize(w, h, LIMITS);
   const pixels = new Uint8Array(w * h * 4);
   for (let y = 0; y < h; y++) {
     const row = Math.min(height - 1, y) * width * 4;

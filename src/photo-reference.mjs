@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {linearFromTransform} from './color-transform.mjs';
+import {linearFromTransform} from './color-bytes.mjs';
 import {toRGBA} from './rgb8-output.mjs';
 
 export function photoReference(rgba, width, height, transform = null) {

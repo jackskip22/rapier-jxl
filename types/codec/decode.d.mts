@@ -30,7 +30,8 @@ export interface DecodeLimits {
 }
 export const DECODE_LIMITS: Readonly<DecodeLimits>;
 export interface DecodeOptions extends Partial<DecodeLimits> {
-  /** Auto selects 8/16-bit integers from the source depth, or float for floating/over-16-bit input. */
+  /** Auto selects 8/16-bit integers from the source depth, or float for floating/over-16-bit input. For a canvas, pass
+   * `{format: 'uint8', colorSpace: 'srgb'}`: `new ImageData(data, width, height)` takes only 8-bit data. */
   format?: DecodeFormat;
   /** Original preserves the source color meaning. Select sRGB for a display image. */
   colorSpace?: 'original' | 'srgb' | 'linear-srgb' | 'display-p3' | 'rec2020' | 'xyb' | DecodeColorTarget;
@@ -94,9 +95,11 @@ export interface DecodedFrame {
   /** RGBA color meaning; native XYB and non-RGB/gray ICC spaces are converted to sRGB for the RGBA array. */
   rgbaColorEncoding: DecodedColorEncoding;
   rgbaICC: Uint8Array | null;
-  /** Duration in the image's animation tick units. */
+  /** Frame duration in header.animation ticks (NOT milliseconds; multiply durationSeconds by 1000 for ms). */
   duration: number;
+  /** Frame duration in seconds (duration * denominator / numerator). */
   durationSeconds: number;
+  /** Unsigned 32-bit SMPTE timecode when header.animation.timecodes is true; otherwise 0. */
   timecode: number;
   name: string;
   alphaPremultiplied: boolean;
@@ -131,9 +134,3 @@ export interface DecodedImage extends DecodedFrame {
 }
 /** Decode a complete bare JPEG XL codestream or ISOBMFF container. Throws on malformed input or a configured resource limit. */
 export function decode(bytes: Uint8Array, options?: DecodeOptions): DecodedImage;
-export interface DecodeAsyncOptions extends DecodeOptions {
-  /** Worker threads for one image; default the hardware threads, at most 8. Results equal decode()'s. */
-  threads?: number;
-}
-/** decode() on worker threads: a single VarDCT frame is split into bands of rows. Other images decode on the calling thread. */
-export function decodeAsync(bytes: Uint8Array, options?: DecodeAsyncOptions): Promise<DecodedImage>;

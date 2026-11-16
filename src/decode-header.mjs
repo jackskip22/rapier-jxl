@@ -3,6 +3,8 @@ import {JxlBits, requireDecode, unpackSigned} from './decode-bits.mjs';
 import {sliceBytes} from './step-journal.mjs';
 import {readEntropy, readPermutation} from './decode-entropy.mjs';
 import {DEFAULT_OPSIN} from './decode-tables.mjs';
+import {PIXELS} from './limits.mjs';
+const SIDE = 1073741824;
 
 const SIZE = [[9,1],[13,1],[18,1],[30,1]];
 const FRAME_SIZE = [[8,0],[11,256],[14,2304],[30,18688]];
@@ -12,7 +14,7 @@ const DEFAULT_DEPTH = {bits:8, exponentBits:0, float:false};
 const array = (n, fn) => Array.from({length:n}, fn);
 const bool = r => !!r.read(1);
 export function power2(n) { let v = 1; while (n > 0) { v *= 2; n--; } while (n < 0) { v /= 2; n++; } return v; }
-export function readExtensions(r) {
+function readExtensions(r) {
   let flags = r.u64BigInt(); const sizes = [];
   while (flags) { if (flags & 1n) sizes.push(r.u64()); flags >>= 1n; }
   for (const size of sizes) r.skip(size);
@@ -41,7 +43,9 @@ function extraChannel(r) {
   if (bool(r)) return {type:0, bitDepth:{...DEFAULT_DEPTH}, dimShift:0, name:'', associated:false};
   const type = r.enum();
   requireDecode(type <= 6 || type === 15 || type === 16, 'Invalid JPEG XL extra channel type.', r);
-  const bitDepth = depth(r), dimShift = r.u32([[0,0],[0,3],[0,4],[3,1]]), label = name(r);
+  const bitDepth = depth(r), dimShift = r.u32([[0,0],[0,3],[0,4],[3,1]]);
+  requireDecode(dimShift <= 3, 'Invalid JPEG XL extra channel dimension shift.', r);
+  const label = name(r);
   const channel = {type, bitDepth, dimShift, name:label, associated:false};
   if (type === 0) channel.associated = bool(r);
   if (type === 2) channel.spotColor = array(4, () => r.f16());
@@ -86,12 +90,20 @@ function tone(r, extra) {
   }
   return out;
 }
+const count = n => n.toLocaleString('en-US');
+export function overLimit({width, height}, maxPixels, maxDimension, what) {
+  const size = `A ${count(width)} x ${count(height)} ${what}`;
+  if (width > maxDimension || height > maxDimension)
+    throw Object.assign(new Error(`${size} is over maxDimension (${count(maxDimension)} pixels a side): raise maxDimension.`), {code: 'JXL_DIMENSIONS'});
+  if (width * height > maxPixels)
+    throw Object.assign(new Error(`${size} (${count(width * height)} pixels) is over maxPixels (${count(maxPixels)}): raise maxPixels.`), {code: 'JXL_DIMENSIONS'});
+}
 export function readDecodeImageHeader(r, limits = {}) {
   r.expect(16, 0x0aff);
   const h = {...size(r), orientation:1, intrinsicSize:null, preview:null, animation:null};
-  const side = limits.maxDimension ?? 65536;
-  requireDecode(h.width > 0 && h.height > 0 && h.width * h.height <= (limits.maxPixels ?? 64000000), 'JPEG XL image exceeds the pixel limit.', r);
-  requireDecode(h.width <= side && h.height <= side, 'JPEG XL image exceeds the dimension limit.', r);
+  const side = limits.maxDimension ?? SIDE;
+  requireDecode(h.width > 0 && h.height > 0, 'Invalid JPEG XL image size.', r);
+  overLimit(h, limits.maxPixels ?? PIXELS, side, 'picture');
   const defaults = bool(r), extra = !defaults && bool(r);
   if (extra) {
     h.orientation = r.read(3) + 1;
@@ -124,13 +136,13 @@ export function readDecodeImageHeader(r, limits = {}) {
   return h;
 }
 const fullCanvas = (f,h) => f.x0 <= 0 && f.y0 <= 0 && f.x0 + f.width >= h.width && f.y0 + f.height >= h.height;
-function blending(r, h, f, colorMode) {
+function blending(r, h, f) {
   const mode = r.u32([[0,0],[0,1],[0,2],[2,3]]), hasAlpha = h.extraChannels.length > 0 && (mode === 2 || mode === 3);
   requireDecode(mode <= 4, 'Invalid JPEG XL blend mode.', r);
   const alpha = hasAlpha ? r.u32([[0,0],[0,1],[0,2],[3,3]]) : 0;
   requireDecode(!hasAlpha || alpha < h.extraChannels.length, 'Invalid JPEG XL blend alpha channel.', r);
   const clamp = (hasAlpha || mode === 4) && bool(r);
-  const source = (colorMode ?? mode) !== 0 || !fullCanvas(f,h) ? r.read(2) : 0;
+  const source = mode !== 0 || !fullCanvas(f,h) ? r.read(2) : 0;
   return {mode, alpha, clamp, source};
 }
 function filters(r, modular, defaults) {
@@ -149,7 +161,7 @@ function filters(r, modular, defaults) {
       if (!modular) e.quantMul = r.f16();
       e.pass0SigmaScale = r.f16(); e.pass2SigmaScale = r.f16(); e.borderSadMul = r.f16();
     }
-    if (modular) e.sigmaForModular = r.f16();
+    if (modular) { e.sigmaForModular = r.f16(); requireDecode(e.sigmaForModular >= 1e-8, 'Invalid JPEG XL filter sigma.', r); }
   }
   readExtensions(r); return f;
 }
@@ -179,13 +191,13 @@ export function readDecodeFrameHeader(r, h, limits = {}) {
     if (f.type !== 2) { f.x0 = unpackSigned(r.u32(FRAME_SIZE)); f.y0 = unpackSigned(r.u32(FRAME_SIZE)); }
     f.width = r.u32(FRAME_SIZE); f.height = r.u32(FRAME_SIZE);
   }
-  requireDecode(f.width > 0 && f.height > 0 && f.width * f.height <= (limits.maxPixels ?? 64000000), 'JPEG XL frame exceeds the pixel limit.', r);
-  requireDecode(f.width <= (limits.maxDimension ?? 65536) && f.height <= (limits.maxDimension ?? 65536), 'JPEG XL frame exceeds the dimension limit.', r);
+  requireDecode(f.width > 0 && f.height > 0, 'Invalid JPEG XL frame size.', r);
+  overLimit(f, (limits.maxPixels ?? PIXELS) + 8 * (f.width + f.height), limits.maxDimension ?? SIDE, 'frame');
   const normal = f.type === 0 || f.type === 3;
   f.blending = [{mode:0,alpha:0,clamp:false,source:0}, ...array(h.extraChannels.length, () => ({mode:0,alpha:0,clamp:false,source:0}))];
   if (!defaults && normal) {
     f.blending[0] = blending(r,h,f);
-    for (let i=0;i<h.extraChannels.length;i++) f.blending[i+1] = blending(r,h,f,f.blending[0].mode);
+    for (let i=0;i<h.extraChannels.length;i++) f.blending[i+1] = blending(r,h,f);
     if (h.animation) { f.duration = r.u32([[0,0],[0,1],[8,0],[32,0]]); if (h.animation.timecodes) f.timecode = r.read(32); }
     f.isLast = bool(r);
   } else f.isLast = f.type === 0;
@@ -202,6 +214,7 @@ export function readDecodeFrameHeader(r, h, limits = {}) {
   f.lfGroupsX = Math.ceil(f.encodedWidth / (8*f.groupDim)); f.lfGroupsY = Math.ceil(f.encodedHeight / (8*f.groupDim)); f.numLFGroups = f.lfGroupsX*f.lfGroupsY;
   f.encodedColorChannels = f.modular && !f.ycbcr && !h.xyb ? h.colorChannels : 3;
   for (let i=0;i<h.extraChannels.length;i++) requireDecode(f.extraUpsampling[i]*power2(h.extraChannels[i].dimShift) >= f.upsampling, 'Extra channel is smaller than its sampling grid.', r);
+  for (let i=0;i<h.extraChannels.length;i++) requireDecode(f.extraUpsampling[i]*power2(h.extraChannels[i].dimShift) <= 8, 'Extra channel sampling is over 8.', r);
   return f;
 }
 export function readDecodeTOC(r, f, partial = false) {

@@ -1,4 +1,5 @@
-import wasm from './wasm.workerd.mjs';
-import {configureWasm} from './capture-complete.mjs';
-configureWasm(wasm);
+import kernels from './kernels.wasm';
+import jpeg from './jpeg.wasm';
+import {provideWasm} from './wasm-modules.mjs';
+provideWasm({kernels,jpeg});
 export * from './capture-complete.mjs';

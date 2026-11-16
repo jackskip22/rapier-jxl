@@ -23,7 +23,7 @@ export async function measuredFileSearch(target, probe, measure, {start = 90, pr
           const ordinal = count++;
           last = await probe(request.encode, fraction => onProgress?.(photoOutputProgress(fraction, {ordinal, probes})));
           check(signal);
-          if (!(last.bytes instanceof Uint8Array)) throw fail('JXL_INTERNAL', 'A producer must return complete bytes.');
+          if (!(last.bytes instanceof Uint8Array)) throw fail('JXL_INTERNAL', "Incomplete output file; report the input and options.");
         }
         reply = last;
       } else if (request?.measure) {
@@ -34,13 +34,13 @@ export async function measuredFileSearch(target, probe, measure, {start = 90, pr
         reply = candidate.scores;
         if (preferredPhotoOutput(best, candidate, target)) best = candidate;
         else if (!best && (!near || candidate.scores.ssimulacra2 > near.scores.ssimulacra2)) near = candidate;
-      } else throw fail('JXL_INTERNAL', 'Unknown measured quality request.');
+      } else throw fail('JXL_INTERNAL', "Invalid output measurement; report the input and options.");
     }
   } finally { search?.return(); }
   check(signal);
   const kept = best ?? (closest ? near : null);
   if (kept) return {bytes: kept.bytes, quality: kept.quality, exact: false, measurements: photoOutputMeasurements(target, kept.scores, domain)};
-  if (!exact) throw fail('JXL_TARGET', 'No tested output could be measured against the requested quality target.');
+  if (!exact) throw fail('JXL_TARGET', "Requested fidelity could not be measured; configure a decoder or choose an unmeasured quality.");
   const bytes = await exact(fraction => onProgress?.(photoOutputProgress(fraction, {exact: true})));
   check(signal);
   preview?.(bytes, {width, height, measurements: []});

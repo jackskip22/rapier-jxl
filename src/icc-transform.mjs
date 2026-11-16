@@ -2,7 +2,7 @@
 
 import {ln, power, OPSIN, inverse, times} from './color-transform.mjs';
 import {stage, unit, readEach, unread} from './step-journal.mjs';
-export {P3_TRANSFORM, linearFromTransform, linearFromTransformPlanes} from './color-transform.mjs';
+export {P3_TRANSFORM, linearFromTransformPlanes} from './color-transform.mjs';
 
 const s15 = (view, at) => view.getInt32(at) / 65536;
 
@@ -22,8 +22,8 @@ function curveOf(view, offset, length, samples) {
     if (count === undefined || 12 + count * 4 > length) return null;
     const [g, a = 1, b = 0, c = 0, d = 0, e = 0, f = 0] = Array.from({length: count}, (_, i) => s15(view, offset + 12 + i * 4));
     if (form === 0) return x => power(x, g);
-    if (form === 1) return x => x >= -b / a ? power(a * x + b, g) : 0;
-    if (form === 2) return x => x >= -b / a ? power(a * x + b, g) + c : c;
+    if (form === 1) return x => a * x + b >= 0 ? power(a * x + b, g) : 0;
+    if (form === 2) return x => a * x + b >= 0 ? power(a * x + b, g) + c : c;
     if (form === 3) return x => x >= d ? power(a * x + b, g) : c * x;
     return x => x >= d ? power(a * x + b, g) + e : c * x + f;
   }
@@ -149,6 +149,22 @@ export function linearSrgbProfile(icc) {
   if (profile.gray) return {gray: true, tables: profile.tables, curves: profile.curves, matrix: Float64Array.of(1, 0, 0, 0, 1, 0, 0, 0, 1)};
   const matrix = times(LCMS_SRGB_FROM_D50, profile.xyz);
   return matrix.every(Number.isFinite) ? {gray: false, tables: profile.tables, curves: profile.curves, matrix: Float64Array.from(matrix)} : null;
+}
+
+const ENCODING_WHITES = {d65: [0.3127, 0.329], e: [1 / 3, 1 / 3], dci: [0.314, 0.351]};
+const ENCODING_PRIMARIES = {srgb: [[0.64, 0.33], [0.3, 0.6], [0.15, 0.06]], rec2020: [[0.708, 0.292], [0.17, 0.797], [0.131, 0.046]],
+  'display-p3': [[0.68, 0.32], [0.265, 0.69], [0.15, 0.06]]};
+export function encodingSpace(encoding, colorData) {
+  if (!encoding || encoding.space !== 'rgb') return null;
+  const curve = encoding.gamma > 0 && (encoding.transferFunction === undefined || encoding.transferFunction === 'gamma') ? v => power(v, 1 / encoding.gamma)
+    : {linear: v => v, bt709, srgb: TRANSFERS[2][1]}[encoding.transferFunction];
+  const white = typeof encoding.whitePoint === 'string' ? ENCODING_WHITES[encoding.whitePoint] : encoding.whitePoint ?? ENCODING_WHITES.d65;
+  const primaries = typeof encoding.primaries === 'string' ? ENCODING_PRIMARIES[encoding.primaries] : encoding.primaries ?? ENCODING_PRIMARIES.srgb;
+  if (!curve || !white || !primaries) return null;
+  const table = Float64Array.from({length: 256}, (_, v) => Math.max(0, Math.min(1, curve(v / 255))));
+  const xyz = times(adaptation(XYZof(white), D50), primaryMatrix(primaries, white));
+  const transform = matrixTransform({gray: false, tables: [table, table, table], xyz});
+  return transform && {transform, header: {colorData, iccData: null}, colorChannels: 3};
 }
 
 export function spaceTransform(space) {

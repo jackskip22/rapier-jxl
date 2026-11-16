@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {wasmRequired} from './capture-wasm-error.mjs';
+import {fault} from './fault.mjs';
 
 const KERNEL_BLOCK = 65536 * 8, KERNEL_OUT = 3 * KERNEL_BLOCK, KERNEL_TMP = 4 * KERNEL_BLOCK, KERNEL_ROWS = 5 * KERNEL_BLOCK;
 const KERNEL_BASES = KERNEL_ROWS + 4096, KERNEL_TABLES = KERNEL_BASES + 786432, KERNEL_CONSTANTS = KERNEL_TABLES + 81944;
@@ -8,7 +9,7 @@ const KERNEL_SRGB8 = KERNEL_CONSTANTS + 64, KERNEL_ARENA = KERNEL_BASES + 104857
 export function createKernelEngine(module) {
   let exports;
   try { ({exports} = new WebAssembly.Instance(module())); }
-  catch (error) { throw error?.code === 'JXL_WASM' ? error : wasmRequired(); }
+  catch (error) { throw error?.code === 'JXL_WASM' ? error : wasmRequired(error); }
   const memory = exports.memory, bases = new Map();
   let next = KERNEL_BASES;
   const engine = {...exports,
@@ -42,7 +43,7 @@ export function createKernelEngine(module) {
       exports.xyb(n, x.byteOffset, y.byteOffset, b.byteOffset, KERNEL_CONSTANTS, rgba8 ? engine.srgb8Table() : 0, rgba8 ? rgba8.byteOffset : 0);
     },
     srgbTables() { if (!engine.tablesBuilt) { exports.srgbTables(KERNEL_TABLES); engine.tablesBuilt = true; } return KERNEL_TABLES; },
-    srgb8Table() { if (!engine.srgb8Built) { if (exports.srgb8Build(KERNEL_SRGB8)) throw new Error("Invalid sRGB8 table."); engine.srgb8Built = true; } return KERNEL_SRGB8; },
+    srgb8Table() { if (!engine.srgb8Built) { if (exports.srgb8Build(KERNEL_SRGB8)) throw fault('JXL_INTERNAL', "Invalid sRGB8 table."); engine.srgb8Built = true; } return KERNEL_SRGB8; },
     srgb: p => exports.srgb(p.length, p.byteOffset, engine.srgbTables()),
     srgb8: (n, r, g, b, out) => exports.srgb8(n, r.byteOffset, g.byteOffset, b.byteOffset, engine.srgb8Table(), out.byteOffset),
   };

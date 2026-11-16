@@ -1,4 +1,4 @@
-import wasm from './wasm.workerd.mjs';
-import {configureWasm} from './decode.mjs';
-configureWasm(wasm);
+import decode from './decode.wasm';
+import {provideWasm} from './wasm-modules.mjs';
+provideWasm({decode});
 export * from './decode.mjs';

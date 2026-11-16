@@ -49,14 +49,14 @@ const quality = d => d <= 6.4 ? 100 - (d - 0.1) / 0.09
   : (23 / 20 - Math.sqrt((23 / 20) ** 2 - 4 * 53 / 3000 * (25 - d))) / (2 * 53 / 3000);
 const SLOPE = -0.8, AREA = 0.82, FRACTIONS = 2, AIM = .999;
 export {FRACTIONS as FIT_FRACTIONS, AIM as FIT_AIM};
-export function fitSolve(size, cap, minQuality, maxQuality) {
+function fitSolve(size, cap, minQuality, maxQuality) {
   if (!(size(minQuality) <= cap)) return NaN;
   let low = minQuality, high = maxQuality;
   for (let i = 0; i < 28; i++) { const mid = (low + high) / 2; if (size(mid) <= cap) low = mid; else high = mid; }
   return low;
 }
 
-export function fitAim(a, b, cap, model, probeCount, minQuality, maxQuality) {
+function fitAim(a, b, cap, model, probeCount, minQuality, maxQuality) {
   if (!a) return NaN;
   if (!b && model && probeCount === 1) {
     const at = model(a.quality);
@@ -66,7 +66,7 @@ export function fitAim(a, b, cap, model, probeCount, minQuality, maxQuality) {
   return slope < -0.2 ? quality(distance(a.quality) * (cap / a.bytes) ** (1 / slope)) : NaN;
 }
 
-export function fitBracket(probes, best, targetBytes, minQuality, maxQuality) {
+function fitBracket(probes, best, targetBytes, minQuality, maxQuality) {
   const low = best?.quality ?? minQuality;
   const misses = probes.filter(row => (row.bytes ?? Infinity) > targetBytes && row.quality > low)
     .sort((a, b) => a.quality - b.quality);
@@ -74,7 +74,7 @@ export function fitBracket(probes, best, targetBytes, minQuality, maxQuality) {
   return {misses: misses.filter(row => row.bytes !== null), first: Math.floor(low) + 1, last: Math.ceil(top) - 1, top};
 }
 
-export function fitStart(rates, area, targetBytes, minQuality, maxQuality) {
+function fitStart(rates, area, targetBytes, minQuality, maxQuality) {
   const scaled = rates.map(row => ({quality: row.quality, bytes: row.bytes * (area / row.area) ** AREA}));
   const over = scaled.filter(row => row.bytes > targetBytes).reduce((a, b) => !a || b.quality < a.quality ? b : a, null);
   const under = scaled.filter(row => row.bytes <= targetBytes).reduce((a, b) => !a || b.quality > a.quality ? b : a, null);
@@ -82,7 +82,7 @@ export function fitStart(rates, area, targetBytes, minQuality, maxQuality) {
   return !(q < maxQuality) ? maxQuality : q > minQuality ? q : minQuality;
 }
 
-export function fitNearest(probes, best, miss) {
+function fitNearest(probes, best, miss) {
   const fit = probes.find(row => row.quality === best.quality);
   const below = probes.filter(row => row.bytes !== null && row.quality < fit.quality && row.bytes < fit.bytes)
     .reduce((a, b) => !a || b.quality > a.quality ? b : a, null);
@@ -136,6 +136,7 @@ export function* fitSearch(targetBytes, {minQuality, maxQuality, maxProbes, rate
     if (next > last) next = last;
     if (next >= maxQuality) next = maxQuality;
     if (!(next >= first)) { if (!best) { yield* probe(minQuality); continue; } next = first; }
+    next = Math.min(next, maxQuality);
     const span = last - first;
     yield* probe(next);
     const {first: low, last: high} = fitBracket(probes, best, targetBytes, minQuality, maxQuality);

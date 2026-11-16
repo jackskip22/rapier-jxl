@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {outOfMemory} from './fault.mjs';
 import {BitWriter, complete, part, packSigned, ceilLog2} from './bits.mjs';
 import {admitOptions, admitPixels, admitOutputSize, fault, job} from './admit.mjs';
 import {admitSampleFormat} from './admit-samples.mjs';
@@ -6,7 +7,8 @@ import {inspectPixels, losslessSteps} from './lossless.mjs';
 import {writeModularFrameHeader, groupLayout, groupRect, assembleCodestream} from './frame.mjs';
 import {writeImageHeader} from './icc-write.mjs';
 import {ALPHABET, leaf, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
-import {screenResiduals, screenModel, writeScreenModel} from './screen-lz77.mjs';
+import {screenResiduals, screenModel} from './screen-lz77.mjs';
+import {writeCaptureStream} from './capture-modular-stream.mjs';
 import {screenSteps} from './screen-search.mjs';
 import {paletteSteps} from './palette-search.mjs';
 import {localScreenSteps} from './screen-local.mjs';
@@ -77,10 +79,13 @@ function deltaPlan(planes, residuals, width, height, predictor, budget, maxColor
   const colors = new Map(), indices = new Int32Array(pixels), kinds = new Uint8Array(pixels);
   for (let i = 0; i < pixels; i++) {
     const difference = deltaKey(residuals, i);
-    if (deltas.has(difference)) { indices[i] = deltas.get(difference); continue; }
-    if (implicit?.differences.has(difference)) { indices[i] = implicit.differences.get(difference); continue; }
+    const delta = deltas.get(difference);
+    if (delta !== undefined) { indices[i] = delta; continue; }
+    const implicitDelta = implicit?.differences.get(difference);
+    if (implicitDelta !== undefined) { indices[i] = implicitDelta; continue; }
     const color = deltaColorKey(planes, i);
-    if (implicit?.colors.has(color)) { indices[i] = implicit.colors.get(color); kinds[i] = 2; continue; }
+    const implicitColor = implicit?.colors.get(color);
+    if (implicitColor !== undefined) { indices[i] = implicitColor; kinds[i] = 2; continue; }
     let entry = colors.get(color);
     if (!entry) {
       if (colors.size === maxColors) return null;
@@ -107,11 +112,8 @@ function deltaPlan(planes, residuals, width, height, predictor, budget, maxColor
 function deltaSection(plan, width, height, channels, single) {
   const writer = new BitWriter(256);
   if (single) { writer.write(1, 1); writer.write(1, 1); }
-  else writeModularHeader(writer, {useGlobalTree: false, transforms: plan.transforms});
-  const models = [screenModel(plan.table, plan.paletteWidth, channels, 16, 4), screenModel(plan.indices, width, height, 16, 4)];
-  const write = writeScreenModel(writer, models);
-  if (single) writeModularHeader(writer, {transforms: plan.transforms});
-  write();
+  const models = [...plan.paletteWidth ? [screenModel(plan.table, plan.paletteWidth, channels, 16, 4)] : [], screenModel(plan.indices, width, height, 16, 4)];
+  writeCaptureStream(writer, models, null, {global: single, transforms: plan.transforms});
   return writer.finish();
 }
 
@@ -194,13 +196,13 @@ function* deltaEncodeSteps(rgba, width, height, options) {
     try {
       const screen = yield* part(screenSteps(rgba, width, height, shape, options.colorSpace, {effort: options.screenEffort, deep: SCREEN}), 1, 3);
       if (screen && (!best || screen.length < best.length)) best = screen;
-    } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
+    } catch (error) { if (error.code !== 'JXL_SIZE' && !outOfMemory(error)) throw error; }
   }
   if ((yield 2 / 3) && best) return best;
   try {
     const delta = yield* part(deltaFrameSteps(rgba, width, height, shape, options), 2, 3);
     if (delta && (!best || delta.length < best.length)) best = delta;
-  } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
+  } catch (error) { if (error.code !== 'JXL_SIZE' && !outOfMemory(error)) throw error; }
   if (!best) throw oversized;
   return best;
 }

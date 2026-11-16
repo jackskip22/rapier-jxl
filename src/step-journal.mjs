@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 import {fault} from './fault.mjs';
 
-export const SAVED = Symbol.for('rapier-jxl.journal.saved');
-const UNREAD = Symbol.for('rapier-jxl.journal.unread');
-export const JOURNAL = Symbol.for('rapier-jxl.journal');
-export const JOURNAL_FILE = Symbol.for('rapier-jxl.journal.file');
-export const JOIN = Symbol.for('rapier-jxl.journal.join'), FACTS = Symbol.for('rapier-jxl.journal.facts');
+export const SAVED = /* @__PURE__ */ Symbol.for('rapier-jxl.journal.saved');
+const UNREAD = /* @__PURE__ */ Symbol.for('rapier-jxl.journal.unread');
+export const JOURNAL = /* @__PURE__ */ Symbol.for('rapier-jxl.journal');
+export const JOURNAL_FILE = /* @__PURE__ */ Symbol.for('rapier-jxl.journal.file');
+export const JOIN = /* @__PURE__ */ Symbol.for('rapier-jxl.journal.join'), FACTS = /* @__PURE__ */ Symbol.for('rapier-jxl.journal.facts');
 const registry = key => typeof key === 'symbol' && Symbol.keyFor(key)?.startsWith('rapier-jxl.journal');
 const bytesView = (known, all, byte) => new Proxy(new Uint8Array(0), {
   get: (_, key) => Object.hasOwn(known, key) ? known[key] : key === Symbol.toStringTag ? 'Uint8Array' : registry(key) ? undefined
@@ -26,7 +26,7 @@ const byteReader = (length, subarray) => {
 export const journalFact = (value, key) => value !== null && typeof value === 'object' && value[UNREAD] !== true ? value[key] : undefined;
 export const journalRequest = value => value !== null && typeof value === 'object' &&
   (Object.hasOwn(value, 'unit') || Object.hasOwn(value, 'unitDone') || Object.hasOwn(value, 'unitFailed'));
-const ACTIVE = Symbol.for('rapier-jxl.journal.active');
+const ACTIVE = /* @__PURE__ */ Symbol.for('rapier-jxl.journal.active');
 export function journalNext(steps, reply, journal) {
   const outer = globalThis[ACTIVE];
   globalThis[ACTIVE] = journal;
@@ -44,7 +44,7 @@ export function* unit(name, run, save, tail = false, cold = false) {
   if (!globalThis[ACTIVE]) return run();
   return yield* globalThis[ACTIVE].step(name, run, save, 0, tail, cold);
 }
-export const PASSED = Symbol.for('rapier-jxl.journal.passed');
+export const PASSED = /* @__PURE__ */ Symbol.for('rapier-jxl.journal.passed');
 export function* carried(name, run, save, tail = false, cold = false) {
   if (!globalThis[ACTIVE]) return run();
   return yield* globalThis[ACTIVE].step(name, run, save, 1, tail, cold);
@@ -82,15 +82,15 @@ export async function journaled(journal, name, run) {
 }
 
 const TYPED = ['Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array',
-  'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array'];
-const typedProto = Object.getPrototypeOf(Uint8Array.prototype);
+  'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array', 'Float16Array'];
+const typedProto = /* @__PURE__ */ Object.getPrototypeOf(Uint8Array.prototype);
 const invalid = message => fault('JXL_INPUT', message);
 
-const SPAN = Symbol.for('rapier-jxl.journal.span');
-const SLICE = Symbol.for('rapier-jxl.journal.slice');
+const SPAN = /* @__PURE__ */ Symbol.for('rapier-jxl.journal.span');
+const SLICE = /* @__PURE__ */ Symbol.for('rapier-jxl.journal.slice');
 const spanOf = value => value !== null && typeof value === 'object' ? value[SPAN] : undefined;
 const spanInfo = (type, ref, offset, length) => Object.freeze({type, ref: Object.freeze([...ref]), offset, length});
-export class Unread extends Error { get [UNREAD]() { return true; } }
+export const Unread = /* @__PURE__ */ (() => { class Unread extends Error { get [UNREAD]() { return true; } } return Unread; })();
 const READ = JOIN;
 export const readAll = values => (readEach(values.map(value => () => value?.[READ])), values);
 export function readEach(runs) {
@@ -99,11 +99,20 @@ export function readEach(runs) {
   if (unread) throw unread;
   return out;
 }
-function lazyArray(Type, ref, offset, length, miss) {
+function lazyArray(Type, ref, offset, length, miss, borrow = null) {
   const fail = () => { miss(ref[0]); throw new Unread('An unread journal value was used.'); };
+  const read = key => {
+    const saved = borrow?.(ref[0],ref[1]);
+    if (!saved) return fail();
+    const buffer = saved instanceof ArrayBuffer ? saved : saved.buffer, start = saved.byteOffset ?? 0;
+    if (offset + length * Type.BYTES_PER_ELEMENT > saved.byteLength) throw invalid('Invalid unit value.');
+    const view = new Type(buffer,start + offset,length), value = Reflect.get(view,key);
+    return typeof value === 'function' ? value.bind(view) : value;
+  };
   const span = spanInfo(TYPED.indexOf(Type.name), ref, offset, length);
   const proxy = new Proxy(new Type(0), {
-    get: (_, key) => key === UNREAD ? true : key === SPAN ? span : key === SLICE ? (begin, end) => sliceView(proxy, begin, end) : fail(),
+    get: (_, key) => key === UNREAD ? true : key === SPAN ? span : key === SLICE ? (begin, end) => sliceView(proxy, begin, end)
+      : key === 'length' ? length : key === 'byteLength' ? length * Type.BYTES_PER_ELEMENT : key === 'then' ? undefined : borrow ? read(key) : fail(),
     set: fail, has: fail, ownKeys: fail, getOwnPropertyDescriptor: fail, defineProperty: fail, deleteProperty: fail,
     getPrototypeOf: () => Type.prototype});
   return proxy;
@@ -134,7 +143,7 @@ export function lazySource(length, miss, ranges = [], offset = 0, sourceRange = 
   const byte = sourceRange || offset ? byteReader(length, subarray) : null;
   const proxy = new Proxy(new Uint8Array(0), {
     get: (_, key) => key === UNREAD ? true : key === SPAN ? span : key === SLICE ? (begin, end) => sliceView(proxy, begin, end) : key === 'subarray' ? subarray : Object.hasOwn(known, key) ? known[key]
-      : key === Symbol.toStringTag ? 'Uint8Array' : registry(key) ? undefined
+      : key === Symbol.toStringTag ? 'Uint8Array' : registry(key) || key === 'then' ? undefined
         : byte && typeof key === 'string' && /^(0|[1-9]\d*)$/.test(key) ? byte(Number(key)) : fail(),
     set: fail, has: fail, ownKeys: fail, getOwnPropertyDescriptor: fail, defineProperty: fail, deleteProperty: fail,
     getPrototypeOf: () => Uint8Array.prototype});
@@ -143,7 +152,7 @@ export function lazySource(length, miss, ranges = [], offset = 0, sourceRange = 
 export function lazyValue(kind, miss) {
   const target = kind === 'a' ? [] : kind === 'm' ? new Map() : kind === 's' ? new Set() : {}, proto = Object.getPrototypeOf(target);
   const fail = () => { miss(); throw new Unread('An unread journal value was used.'); };
-  return new Proxy(target, {get: (_, key) => key === UNREAD ? true : key === SPAN || key === SLICE ? undefined : fail(), set: fail, has: fail, ownKeys: fail,
+  return new Proxy(target, {get: (_, key) => key === UNREAD ? true : key === SPAN || key === SLICE || key === 'then' ? undefined : fail(), set: fail, has: fail, ownKeys: fail,
     getOwnPropertyDescriptor: fail, defineProperty: fail, deleteProperty: fail, getPrototypeOf: () => proto});
 }
 export const unread = value => value?.[UNREAD] === true;
@@ -197,7 +206,7 @@ function piecedBytes(list, rowBytes, rows, touched, known, scale = 1) {
   return bytesView({length, byteLength: length, byteOffset: 0, BYTES_PER_ELEMENT: 1, constructor: Uint8Array, subarray, rect, ahead, then: undefined,
     [UNREAD]: false, ...known}, all, byteReader(length, subarray));
 }
-const TILES = Symbol.for('rapier-jxl.journal.tiles');
+const TILES = /* @__PURE__ */ Symbol.for('rapier-jxl.journal.tiles');
 export function tiledBytes(grid, width, height, rows, cols, touched = () => {}, facts = undefined) {
   const list = grid.flatMap((band, k) => band.map((piece, c) => [piece, c * cols * 4, k * rows, Math.min(cols, width - c * cols) * 4, Math.min(rows, height - k * rows)]));
   return piecedBytes(list, width * 4, height, touched, {[JOIN]: grid.flat(), [FACTS]: facts, [TILES]: true}, 4);
@@ -267,7 +276,7 @@ export function encodeValue(value, known = null) {
       const k = TYPED.indexOf(v.constructor.name);
       if (k < 0) throw invalid('Unknown typed array in a unit value.');
       const ref = known?.get(v.buffer, v.byteOffset, v.byteOffset + v.byteLength);
-      if (ref) return {t: k, r: [ref[0], ref[1]], o: v.byteOffset - ref[2], l: v.length};
+      if (ref) { refers.add(ref[0]); return {t: k, r: [ref[0], ref[1]], o: v.byteOffset - ref[2], l: v.length}; }
       const id = bufferId(v.buffer), item = list[id], view = {t: k, b: id, o: v.byteOffset, l: v.length};
       item.from = Math.min(item.from, v.byteOffset); item.to = Math.max(item.to, v.byteOffset + v.byteLength);
       views.push(view);
@@ -293,11 +302,11 @@ export function encodeValue(value, known = null) {
   return {meta, bytes, buffers: list.map(item => item.buffer), spans: list.map(item => [item.from, item.to]), refers};
 }
 
-export function decodeValue(meta, bytes, resolve = null, self = null, miss = null, sourceRange = null, touched = undefined, given = null) {
+export function decodeValue(meta, bytes, resolve = null, self = null, miss = null, sourceRange = null, touched = undefined, given = null, borrow = null) {
   if (!meta || !Array.isArray(meta.buffers)) throw invalid('Invalid unit value.');
   for (const entry of meta.buffers) if (!Array.isArray(entry) || entry.length !== 2 || !Number.isSafeInteger(entry[0]) ||
       !Number.isSafeInteger(entry[1]) || entry[0] < 0 || entry[1] < 0 || bytes && entry[0] + entry[1] > bytes.length) throw invalid('Invalid unit value.');
-  const buffers = given ?? (bytes ? meta.buffers.map(([at, length]) => bytes.slice(at, at + length).buffer) : null);
+  const buffers = borrow ? null : given ?? (bytes ? meta.buffers.map(([at, length]) => bytes.slice(at, at + length).buffer) : null);
   const made = [];
   const walk = v => {
     if (v === null || typeof v !== 'object') return v;
@@ -308,6 +317,7 @@ export function decodeValue(meta, bytes, resolve = null, self = null, miss = nul
       if (!Type || !Number.isSafeInteger(v.o) || !Number.isSafeInteger(v.l) || v.o < 0 || v.l < 0 || v.o % Type.BYTES_PER_ELEMENT ||
           (v.r ? !Array.isArray(v.r) || v.r.length !== 2 || typeof v.r[0] !== 'string' || !Number.isSafeInteger(v.r[1]) || v.r[1] < 0
             : !Number.isSafeInteger(v.b) || v.b < 0 || v.b >= meta.buffers.length)) throw invalid('Invalid unit value.');
+      if (borrow && v.r?.[0] !== 'source') return lazyArray(Type,v.r ?? [self,v.b],v.o,v.l,miss,borrow);
       const buffer = v.r ? resolve?.(v.r[0], v.r[1]) : buffers ? buffers[v.b] : null;
       if (buffer === null && v.r?.[0] === 'source' && sourceRange) {
         const to = v.o + v.l * Type.BYTES_PER_ELEMENT, view = sourceRange(v.o, to);
@@ -320,8 +330,9 @@ export function decodeValue(meta, bytes, resolve = null, self = null, miss = nul
       return new Type(buffer, v.o, v.l);
     }
     if (v.j) {
-      const pieces = Array.isArray(v.j) ? v.j.map(walk) : [];
-      if (!pieces.length || !pieces.every(piece => piece instanceof Uint8Array)) throw invalid('Invalid unit value.');
+      if (!Array.isArray(v.j)) throw invalid('Invalid unit value.');
+      const pieces = v.j.map(walk);
+      if (!pieces.every(piece => piece instanceof Uint8Array)) throw invalid('Invalid unit value.');
       return joinedBytes(pieces, touched);
     }
     if (v.p !== undefined) { if (!Number.isSafeInteger(v.p) || v.p < 0 || v.p >= made.length) throw invalid('Invalid unit value.'); return made[v.p]; }

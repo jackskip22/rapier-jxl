@@ -6,10 +6,10 @@ import {sampleView} from './verify-samples.mjs';
 export async function orientInSteps(picture,{journal,unit,tools}) {
   const {prepareKernels,ensureKernels,orientBlock,wasmRequired} = tools;
   const {orientation = 1,width,height,data,...description} = picture;
-  if (!Number.isInteger(orientation) || orientation < 1 || orientation > 8) throw fail('JXL_INPUT','orientation is an integer from 1 through 8.');
+  if (!Number.isInteger(orientation) || orientation < 1 || orientation > 8) throw fail('JXL_INPUT',"Invalid orientation; use an integer from 1 through 8.");
   if (orientation === 1) return {data,width,height,...description};
-  if (description.extraChannels !== undefined) throw fail('JXL_UNSUPPORTED','Orienting extra channels needs a channel transform.');
-  if (!await prepareKernels() || ensureKernels() !== 'simd') throw wasmRequired();
+  if (description.extraChannels !== undefined) throw fail('JXL_UNSUPPORTED',"Extra channels cannot use this orientation transform; supply already oriented samples.");
+  if (!await prepareKernels() || !ensureKernels()) throw wasmRequired();
   const Type = data.constructor, size = Type.BYTES_PER_ELEMENT;
   const from = {subarray:(a,b) => { const row = data.subarray(a / size,b / size); return new Uint8Array(row.buffer,row.byteOffset,row.byteLength); }};
   const source = new Proxy(new Uint8Array(0),{get:(_,key) => key === 'subarray' ? from.subarray : undefined});
@@ -33,35 +33,20 @@ export async function orientInSteps(picture,{journal,unit,tools}) {
 }
 
 export async function resizeInSteps(picture,width,height,options,{journal,unit,tools}) {
-  const {prepareKernels,ensureKernels,sampleFilter,sampleSum,sampleFinish,wasmRequired,sampleResizeConfig,sampleResizeRows,sampleResizeWeight} = tools;
+  const {prepareKernels,ensureKernels,sampleBands,wasmRequired,sampleResizeConfig,sampleResizeStep} = tools;
   dimensions(width,height,options.maxPixels);
   if (width === picture.width && height === picture.height) return picture;
-  if (!await prepareKernels() || ensureKernels() !== 'simd') throw wasmRequired();
+  if (!await prepareKernels() || !ensureKernels()) throw wasmRequired();
   const Type = picture.data.constructor, size = Type.BYTES_PER_ELEMENT;
   const {value:settings} = await unit('verify-resize-config',() => sampleResizeConfig({...picture,data:new Type(0)},options));
   const {config,table,levels} = settings, rowLimit = Math.max(1,Math.min(64,Math.floor(262144 / Math.max(width,picture.width))));
+  const bands = sampleBands(picture.width,picture.height,width,height,config,table,levels,size);
   const advance = state => {
-    let {y,row} = state;
-    const sum = state.sum.slice(), pieces = [];
-    for (let work = 0; y < height && work < rowLimit; work++) {
-      const range = sampleResizeRows(picture.height,height,y);
-      row ??= range.first;
-      const weight = sampleResizeWeight(range,row);
-      if (weight) {
-        const samples = picture.data.subarray(row * picture.width * 4,(row + 1) * picture.width * 4);
-        sampleSum(sum,sampleFilter(samples,0,picture.width,width,config,table),weight);
-      }
-      if (++row === range.end) {
-        const pixels = new Type(width * 4);
-        sampleFinish(sum,pixels,0,width,config,levels); pieces.push(new Uint8Array(pixels.buffer,pixels.byteOffset,pixels.byteLength));
-        y++; row = null; sum.fill(0);
-      }
-    }
-    const bytes = new Uint8Array(pieces.length * width * 4 * size);
-    for (let i = 0; i < pieces.length; i++) bytes.set(pieces[i],i * width * 4 * size);
-    return {bytes,state:{y,row,sum}};
+    const pixels = new Type(Math.min(rowLimit,bands.outRows) * width * 4);
+    const {state:next,written} = sampleResizeStep(bands,picture.data,picture.height,height,state,pixels,0,Math.min(rowLimit,bands.outRows));
+    return {bytes:new Uint8Array(pixels.buffer,0,written * width * 4 * size),state:next};
   };
-  let state = {y:0,row:null,sum:new Float64Array(width * 4)};
+  let state = {y:0,row:null,sum:null};
   const pieces = [];
   do {
     let next;

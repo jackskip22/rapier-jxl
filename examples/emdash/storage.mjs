@@ -7,6 +7,6 @@ const ENTRIES = {
 
 export function rapierStorage(descriptor, options = {}) {
   const entry = ENTRIES[descriptor?.entrypoint];
-  if (!entry) throw new TypeError('rapier-jxl/emdash takes EmDash storage from r2() or local()');
+  if (!entry) throw Object.assign(new TypeError("Invalid storage; use r2() or local()."), {code: 'JXL_OPTIONS'});
   return {entrypoint: fileURLToPath(new URL(entry, import.meta.url)), config: {...descriptor.config, rapier: options}};
 }

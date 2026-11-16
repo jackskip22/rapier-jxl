@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {s2Dimensions, s2Samples} from './ssimulacra2-input.mjs';
 import {releaseReferenceArena} from './ssimulacra2-arithmetic.mjs';
+import {fault} from './fault.mjs';
 export const SCALES = 6, S2_REFERENCE = Symbol('SSIMULACRA2 reference');
 
 export const s2Colors = () => ({});
@@ -18,15 +19,19 @@ function s2ReferenceSnapshot(reference, pixels) {
   return {source, bytes: source.reduce((sum, plane) => sum + plane.byteLength, 0)};
 }
 
-export function ssimulacra2Reference(reference, width, height, {cacheBytes = 0, immutable = false} = {}) {
+export function ssimulacra2Reference(reference, width, height, options = {}) {
+  for (const key of Object.keys(options ?? {})) if (key !== 'cacheBytes' && key !== 'immutable' && key !== 'arithmetic')
+    throw fault('JXL_OPTIONS', 'An SSIMULACRA 2 reference takes cacheBytes, immutable and arithmetic, not ' + key + '.');
+  const {cacheBytes = 0, immutable = false, arithmetic = 'binary64'} = options ?? {};
   const pixels = s2Dimensions(width, height);
-  if (!Number.isSafeInteger(cacheBytes) || cacheBytes < 0) throw new RangeError('SSIMULACRA2 cacheBytes must be a nonnegative safe integer.');
+  if (!Number.isSafeInteger(cacheBytes) || cacheBytes < 0) throw fault('JXL_INTERNAL', 'SSIMULACRA2 cacheBytes must be a nonnegative safe integer.');
   let inputBytes = 0;
   if (typeof reference !== 'function') reference = s2Samples(reference, pixels);
   if (!immutable && typeof reference !== 'function') {
     const snapshot = s2ReferenceSnapshot(reference, pixels); reference = snapshot.source; inputBytes = snapshot.bytes;
   }
-  const state = {reference, width, height, scales: [], sizes: [], cacheBytes: 0, inputBytes, busy: false, arena: null, released: false};
+  if (arithmetic !== 'binary64' && arithmetic !== 'libjxl') throw new RangeError('SSIMULACRA2 arithmetic is binary64 or libjxl.');
+  const state = {reference, width, height, scales: [], sizes: [], cacheBytes: 0, inputBytes, busy: false, arena: null, released: false, arithmetic};
   let w = Math.max(8, width), h = Math.max(8, height), left = cacheBytes;
   for (let scale = 0; scale < SCALES; scale++) {
     if (w < 8 || h < 8) break;
@@ -39,7 +44,7 @@ export function ssimulacra2Reference(reference, width, height, {cacheBytes = 0, 
     get cacheBytes() { return state.cacheBytes; }, get inputBytes() { return state.inputBytes; },
     get arenaBytes() { return state.arena?.memory?.buffer.byteLength ?? 0; },
     release() {
-      if (state.busy) throw new Error('SSIMULACRA2 reference is in use.');
+      if (state.busy) throw fault('JXL_INTERNAL', 'SSIMULACRA2 reference is in use.');
       releaseReferenceArena(state.arena);
       state.released = true; state.arena = null; state.reference = null; state.inputBytes = 0; state.cacheBytes = 0;
       state.scales = state.scales.map(() => null);

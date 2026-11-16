@@ -61,7 +61,7 @@ export function* photoFastBands(data, width, height, quality, options) {
 }
 
 export function* photoXYBBands(data, width, height, quality, options, color) {
-  color = (!CAPTURE_PHOTO && offloading()) ? color : undefined;
+  color = (!CAPTURE_PHOTO && (!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && offloading())) ? color : undefined;
   if (!color) {
     const whole = journaling() ? yield* unit('picture-whole', () => photoXYBBand(data, width, height, quality, options, 0, true))
       : photoXYBBand(data, width, height, quality, options, 0, true);

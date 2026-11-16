@@ -6,6 +6,17 @@ import {ALPHABET} from './modular.mjs';
 const LOSSLESS_INTEGER_CONFIGS = [uintConfig(0), uintConfig(4), uintConfig(4, 1, 1), uintConfig(3, 0, 1), uintConfig(4, 2, 0), uintConfig(4, 2, 1), uintConfig(4, 1, 2)];
 const HEADER_WRITER = new BitWriter(128);
 
+export function losslessPayloadBits(raw, config, code) {
+  const token = [0, 0, 0], end = raw.length - 33;
+  let bits = 0;
+  for (let value = 0; value < end; value++) if (raw[value]) {
+    hybridToken(config, value, token);
+    bits += raw[value] * (code.lengths[token[0]] + token[1]);
+  }
+  for (let s = 0; s < 33; s++) if (raw[end + s]) bits += raw[end + s] * (code.lengths[224 + s] + (s < 16 ? 0 : s - 12));
+  return bits;
+}
+
 export function losslessCoding(raw) {
   const token = [0, 0, 0], literals = [], lengths = raw.lengths || raw.subarray(raw.length - 33);
   if (raw.literalPairs) {

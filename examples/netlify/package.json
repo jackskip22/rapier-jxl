@@ -1,0 +1,6 @@
+{
+  "name": "rapier-jxl-netlify",
+  "private": true,
+  "type": "module",
+  "main": "index.mjs"
+}

@@ -1,159 +1,116 @@
 // SPDX-License-Identifier: MIT
-import {check, dimensions, fail} from './primitives.mjs';
+import {check, dimensions, fail, blobBytes} from './primitives.mjs';
 
-const MAX_META = 16 * 1024 * 1024, MAX_BOXES = 16384;
-const BRANDS = new Set(['heic','heix','hevc','hevx','heim','heis','hevm','hevs','mif1','msf1','avif','avis']);
-const SEQUENCE = new Set(['hevc','hevx','heim','hevm','msf1','avis']);
-const bad = message => fail('JXL_INPUT', `The phone image ${message}.`);
-const unsupported = message => fail('JXL_UNSUPPORTED', `The phone image ${message}.`);
-const text = (bytes, at, length = 4) => String.fromCharCode(...bytes.subarray(at, at + length));
+const SETS = /*#__PURE__*/ (() => ({
+  b: new Set('heic heix hevc hevx heim heis hevm hevs mif1 msf1 avif avis'.split(' ')),
+  s: new Set('hevc hevx heim hevm msf1 avis'.split(' ')),
+}))();
+const bad = message => fail('JXL_INPUT', `Phone image ${message}; pass a complete supported image.`);
+const no = message => fail('JXL_UNSUPPORTED', `Phone image ${message}; decode it with a host reader and pass its pixels.`);
+const txt = (b, a, n = 4) => String.fromCharCode(...b.subarray(a, a + n));
 
-class Reader {
-  constructor(bytes, at = 0) { this.bytes = bytes; this.at = at; }
-  take(length) {
-    if (!Number.isSafeInteger(length) || length < 0 || this.at + length > this.bytes.length) throw bad('container is incomplete');
-    const value = this.bytes.subarray(this.at, this.at + length); this.at += length; return value;
-  }
-  uint(length) {
-    if (length > 8) throw unsupported('uses an unsupported item offset');
-    let value = 0; for (const byte of this.take(length)) value = value * 256 + byte;
-    if (!Number.isSafeInteger(value)) throw bad('item offset exceeds the supported range');
-    return value;
-  }
-  string() { const start = this.at; while (this.at < this.bytes.length && this.bytes[this.at]) { if (this.at - start === 256) throw bad('item name exceeds 256 bytes'); this.at++; } this.take(1); return text(this.bytes, start, this.at - start - 1); }
-  full(versions) { const version = this.uint(1), flags = this.uint(3); if (!versions.includes(version)) throw unsupported('uses an unsupported metadata version'); return {version, flags}; }
+function rdr(b, at = 0) {
+  const take = n => { if (!Number.isSafeInteger(n) || n < 0 || at + n > b.length) throw bad('container is incomplete'); const s = b.subarray(at, at + n); at += n; return s; };
+  const u = n => { if (n > 8) throw no('uses an unsupported item offset'); let v = 0; for (const x of take(n)) v = v * 256 + x; if (!Number.isSafeInteger(v)) throw bad('item offset exceeds the supported range'); return v; };
+  return {
+    get at() { return at; }, take, u,
+    str() { const s = at; while (at < b.length && b[at]) { if (at - s === 256) throw bad('item name exceeds 256 bytes'); at++; } take(1); },
+    full(vs) { const v = u(1), f = u(3); if (!vs.includes(v)) throw no('uses an unsupported metadata version'); return [v, f]; },
+  };
 }
 
-function boxHeader(bytes, remaining) {
-  const r = new Reader(bytes); let size = r.uint(4); const type = text(r.take(4), 0);
-  if (size === 1) size = r.uint(8); else if (size === 0) size = remaining;
-  if (size < r.at || size > remaining) throw bad('box extent is invalid');
-  return {type, size, header: r.at};
+function boxHdr(b, rem) {
+  const r = rdr(b); let sz = r.u(4); const t = txt(r.take(4), 0);
+  if (sz === 1) sz = r.u(8); else if (!sz) sz = rem;
+  if (sz < r.at || sz > rem) throw bad('box extent is invalid');
+  return {t, sz, h: r.at};
 }
+function* kids(b, at = 0) { while (at < b.length) { const bx = boxHdr(b.subarray(at, at + 16), b.length - at); yield {t: bx.t, d: b.subarray(at + bx.h, at + bx.sz)}; at += bx.sz; } }
 
 export async function inspectPhone(blob, head, {maxPixels, signal} = {}) {
-  if (head.length < 12 || text(head, 4) !== 'ftyp') return null;
-  const first = boxHeader(head, blob.size);
-  if (first.size > 65536 || first.size < first.header + 8 || (first.size - first.header) % 4) throw bad('file type box is invalid');
-  const read = async (start, length) => { check(signal); const bytes = new Uint8Array(await blob.slice(start, start + length).arrayBuffer()); check(signal); if (bytes.length !== length) throw bad('container is incomplete'); return bytes; };
-  const ftyp = await read(first.header, first.size - first.header), brands = [text(ftyp, 0)];
-  for (let at = 8; at < ftyp.length; at += 4) brands.push(text(ftyp, at));
-  if (!brands.some(brand => BRANDS.has(brand))) return null;
-  let boxesLeft = MAX_BOXES, meta;
-  const tracks = [];
-  const countBox = () => { if (!boxesLeft--) throw fail('JXL_LIMIT', 'The phone image has too many metadata boxes.'); };
-  const children = function* (bytes, start = 0) {
-    for (let at = start; at < bytes.length;) {
-      countBox(); const box = boxHeader(bytes.subarray(at, at + 16), bytes.length - at);
-      yield {type: box.type, data: bytes.subarray(at + box.header, at + box.size), start: at + box.header}; at += box.size;
-    }
-  };
-  for (let at = first.size; at < blob.size;) {
-    countBox(); const box = boxHeader(await read(at, Math.min(16, blob.size - at)), blob.size - at);
-    if (box.type === 'meta') { if (meta) throw bad('has more than one file-level metadata box'); if (box.size - box.header > MAX_META) throw fail('JXL_MEMORY', 'The phone image metadata exceeds 16 MiB.'); meta = await read(at + box.header, box.size - box.header); }
-    if (box.type === 'moov') tracks.push(at + 4);
-    at += box.size;
+  if (head.length < 12 || txt(head, 4) !== 'ftyp') return null;
+  const f0 = boxHdr(head, blob.size); if (f0.sz < f0.h + 8 || (f0.sz - f0.h) % 4) throw bad('file type box is invalid');
+  const read = async (s, n) => { check(signal); const b = await blobBytes(blob, signal, s, s + n); if (b.length !== n) throw bad('container is incomplete'); return b; };
+  const ftyp = await read(f0.h, f0.sz - f0.h), brands = [txt(ftyp, 0)];
+  for (let a = 8; a < ftyp.length; a += 4) brands.push(txt(ftyp, a));
+  if (!brands.some(x => SETS.b.has(x))) return null;
+  let meta, wAt = 0, win = new Uint8Array(0); const tracks = [];
+  for (let at = f0.sz; at < blob.size;) {
+    const need = Math.min(16, blob.size - at);
+    if (at < wAt || at + need > wAt + win.length) { wAt = at; win = await read(at, Math.min(65536, blob.size - at)); }
+    const bx = boxHdr(win.subarray(at - wAt, at - wAt + need), blob.size - at);
+    if (bx.t === 'meta') { if (meta) throw bad('has more than one file-level metadata box'); meta = await read(at + bx.h, bx.sz - bx.h); }
+    if (bx.t === 'moov') tracks.push(at + 4);
+    at += bx.sz;
   }
   if (!meta) return null;
-  const root = new Reader(meta); root.full([0]);
-  let primary;
-  const items = new Map(), refs = [], properties = [null], associations = new Map(), locations = new Map();
-  for (const {type, data} of children(meta, root.at)) {
-    const r = new Reader(data);
-    if (type === 'pitm') {
-      if (primary !== undefined) throw bad('has more than one primary item');
-      const {version} = r.full([0,1]); primary = r.uint(version ? 4 : 2);
-    } else if (type === 'iinf') {
-      const {version} = r.full([0,1]), count = r.uint(version ? 4 : 2); let found = 0;
-      for (const box of children(data, r.at)) {
-        if (box.type !== 'infe') throw bad('item information is invalid');
-        const item = new Reader(box.data), {version: v} = item.full([2,3]);
-        const id = item.uint(v === 2 ? 2 : 4), protection = item.uint(2), kind = text(item.take(4), 0); item.string();
-        if (items.has(id)) throw bad('repeats an item identifier');
-        items.set(id, {kind, protection}); found++;
+  const rt = rdr(meta); rt.full([0]);
+  let primary; const items = new Map(), refs = new Map(), props = [null], assoc = new Map(), locs = new Map();
+  for (const {t, d} of kids(meta, rt.at)) {
+    const r = rdr(d);
+    if (t === 'pitm') { if (primary !== undefined) throw bad('has more than one primary item'); const [v] = r.full([0, 1]); primary = r.u(v ? 4 : 2); }
+    else if (t === 'iinf') {
+      const [v] = r.full([0, 1]), cnt = r.u(v ? 4 : 2); let n = 0;
+      for (const bx of kids(d, r.at)) {
+        if (bx.t !== 'infe') throw bad('item information is invalid');
+        const ir = rdr(bx.d), [iv] = ir.full([2, 3]), id = ir.u(iv === 2 ? 2 : 4), prot = ir.u(2), kind = txt(ir.take(4), 0); ir.str();
+        if (items.has(id)) throw bad('repeats an item identifier'); items.set(id, {kind, prot}); n++;
       }
-      if (found !== count) throw bad('item count does not match its table');
-    } else if (type === 'iref') {
-      const {version} = r.full([0,1]), size = version ? 4 : 2;
-      for (const box of children(data, r.at)) {
-        const ref = new Reader(box.data), from = ref.uint(size), count = ref.uint(2), to = [];
-        for (let i = 0; i < count; i++) { countBox(); to.push(ref.uint(size)); } refs.push({type: box.type, from, to});
-      }
-    } else if (type === 'iprp') {
-      for (const box of children(data)) {
-        if (box.type === 'ipco') for (const property of children(box.data)) properties.push(property);
-        else if (box.type === 'ipma') {
-          const table = new Reader(box.data), {version, flags} = table.full([0,1]), count = table.uint(4), size = flags & 1 ? 2 : 1;
-          for (let i = 0; i < count; i++) {
-            countBox();
-            const id = table.uint(version ? 4 : 2), n = table.uint(1), list = associations.get(id) ?? [];
-            for (let j = 0; j < n; j++) { countBox(); const value = table.uint(size), index = value & (size === 2 ? 32767 : 127); if (index) list.push(index); }
-            associations.set(id, list);
-          }
+      if (n !== cnt) throw bad('item count does not match its table');
+    } else if (t === 'iref') {
+      const [v] = r.full([0, 1]), sz = v ? 4 : 2;
+      for (const bx of kids(d, r.at)) { const rr = rdr(bx.d), fr = rr.u(sz), cnt = rr.u(2), to = []; for (let i = 0; i < cnt; i++) to.push(rr.u(sz)); if (bx.t === 'dimg') refs.set(fr, [...(refs.get(fr) ?? []), ...to]); }
+    } else if (t === 'iprp') {
+      for (const bx of kids(d)) {
+        if (bx.t === 'ipco') for (const p of kids(bx.d)) props.push(p);
+        else if (bx.t === 'ipma') {
+          const tr = rdr(bx.d), [v, fl] = tr.full([0, 1]), cnt = tr.u(4), sz = fl & 1 ? 2 : 1;
+          for (let i = 0; i < cnt; i++) { const id = tr.u(v ? 4 : 2), n = tr.u(1), l = assoc.get(id) ?? []; for (let j = 0; j < n; j++) { const ix = tr.u(sz) & (sz === 2 ? 32767 : 127); if (ix) l.push(ix); } assoc.set(id, l); }
         }
       }
-    } else if (type === 'iloc') {
-      const {version} = r.full([0,1,2]), sizes = r.uint(1), baseSizes = r.uint(1), count = r.uint(version < 2 ? 2 : 4);
-      const offsetSize = sizes >> 4, lengthSize = sizes & 15, baseSize = baseSizes >> 4, indexSize = version ? baseSizes & 15 : 0;
-      for (let i = 0; i < count; i++) {
-        countBox();
-        const id = r.uint(version < 2 ? 2 : 4); if (version) r.take(2);
-        const external = r.uint(2); r.take(baseSize); const n = r.uint(2);
-        for (let j = 0; j < n; j++) { countBox(); r.take(indexSize + offsetSize + lengthSize); }
-        if (locations.has(id)) throw bad('repeats an item location'); locations.set(id, {external});
-      }
-     
+    } else if (t === 'iloc') {
+      const [v] = r.full([0, 1, 2]), s1 = r.u(1), s2 = r.u(1), cnt = r.u(v < 2 ? 2 : 4), step = (v ? s2 & 15 : 0) + (s1 >> 4) + (s1 & 15);
+      for (let i = 0; i < cnt; i++) { const id = r.u(v < 2 ? 2 : 4); if (v) r.take(2); const ext = r.u(2); r.take(s2 >> 4); r.take(r.u(2) * step); if (locs.has(id)) throw bad('repeats an item location'); locs.set(id, ext); }
     }
   }
   if (primary === undefined) return null;
   if (!items.has(primary)) throw bad('primary item is missing');
-  const byItem = new Map();
-  for (const ref of refs) { let map = byItem.get(ref.from); if (!map) byItem.set(ref.from, map = new Map()); const to = map.get(ref.type) ?? []; to.push(...ref.to); map.set(ref.type,to); }
-  const references = (id, type) => byItem.get(id)?.get(type) ?? [];
-  const propsFor = id => (associations.get(id) ?? []).map(index => { if (!properties[index]) throw bad('item property is missing'); return properties[index]; });
   const spatial = id => {
-    const props = propsFor(id), sizes = props.filter(p => p.type === 'ispe');
-    if (sizes.length !== 1) throw bad('image item needs one spatial extent');
-    const r = new Reader(sizes[0].data); r.full([0]); const width = r.uint(4), height = r.uint(4); dimensions(width, height, maxPixels);
-    return {width, height, props};
+    const ps = (assoc.get(id) ?? []).map(i => { if (!props[i]) throw bad('item property is missing'); return props[i]; }), szs = ps.filter(p => p.t === 'ispe');
+    if (szs.length !== 1) throw bad('image item needs one spatial extent');
+    const r = rdr(szs[0].d); r.full([0]); const w = r.u(4), h = r.u(4); dimensions(w, h, maxPixels); return {w, h, ps};
   };
-  const visited = new Set(), active = new Set();
-  const visit = (id, depth = 0) => {
-    if (active.has(id) || depth > 64) throw bad('derived image dependencies are cyclic or too deep');
-    if (visited.has(id)) return;
-    const item = items.get(id); if (!item) throw bad('derived image item is missing');
-    if (item.protection) throw unsupported('primary image or a dependency is protected');
-    if (locations.get(id)?.external) throw unsupported('primary image or a dependency uses external data');
-    spatial(id); active.add(id);
-    const derived = references(id,'dimg');
-    if (['grid','iden','iovl'].includes(item.kind) && !derived.length) throw bad('derived image has no source items');
-    for (const child of derived) visit(child, depth + 1);
-    active.delete(id); visited.add(id);
+  const vis = new Set(), act = new Set();
+  const visit = (id, d = 0) => {
+    if (act.has(id) || d > 64) throw bad('derived image dependencies are cyclic or too deep'); if (vis.has(id)) return;
+    const it = items.get(id); if (!it) throw bad('derived image item is missing');
+    if (it.prot) throw no('primary image or a dependency is protected');
+    if (locs.get(id)) throw no('primary image or a dependency uses external data');
+    spatial(id); act.add(id); const ch = refs.get(id) ?? [];
+    if ((it.kind === 'grid' || it.kind === 'iden' || it.kind === 'iovl') && !ch.length) throw bad('derived image has no source items');
+    for (const c of ch) visit(c, d + 1);
+    act.delete(id); vis.add(id);
   };
   visit(primary);
-  const original = spatial(primary); let {width, height} = original, transformed = false;
-  for (const {type, data} of original.props) {
-    const r = new Reader(data);
-    if (type === 'irot') { const angle = r.uint(1); if (angle > 3) throw bad('rotation property is invalid'); if (angle & 1) [width, height] = [height, width]; transformed = true; }
-    else if (type === 'imir') { if (r.uint(1) > 1) throw bad('mirror property is invalid'); transformed = true; }
-    else if (type === 'clap') {
-      const fields = Array.from({length: 8}, () => r.uint(4));
-      const [wn,wd,hn,hd,xn,xd,yn,yd] = fields, w = wn/wd, h = hn/hd, x = (xn|0)/xd, y = (yn|0)/yd;
-      if (!Number.isInteger(w) || !Number.isInteger(h) || !Number.isFinite(x) || !Number.isFinite(y)) throw unsupported('uses a fractional clean aperture');
-      dimensions(w, h, maxPixels);
-      if (w + Math.abs(x)*2 > width || h + Math.abs(y)*2 > height) throw bad('clean aperture exceeds its image');
+  const orig = spatial(primary); let width = orig.w, height = orig.h, transformed = false;
+  for (const {t, d} of orig.ps) {
+    const r = rdr(d);
+    if (t === 'irot') { const a = r.u(1); if (a > 3) throw bad('rotation property is invalid'); if (a & 1) [width, height] = [height, width]; transformed = true; }
+    else if (t === 'imir') { if (r.u(1) > 1) throw bad('mirror property is invalid'); transformed = true; }
+    else if (t === 'clap') {
+      const [wn,wd,hn,hd,xn,xd,yn,yd] = Array.from({length: 8}, () => r.u(4)), w = wn / wd, h = hn / hd, x = (xn | 0) / xd, y = (yn | 0) / yd;
+      if (!Number.isInteger(w) || !Number.isInteger(h) || !Number.isFinite(x) || !Number.isFinite(y)) throw no('uses a fractional clean aperture');
+      dimensions(w, h, maxPixels); if (w + Math.abs(x) * 2 > width || h + Math.abs(y) * 2 > height) throw bad('clean aperture exceeds its image');
       width = w; height = h; transformed = true;
     }
   }
-
   let decodeBlob = blob;
-  if (tracks.length || brands.some(brand => SEQUENCE.has(brand))) {
-    const stillBrand = visited.size && [...visited].some(id => items.get(id).kind === 'av01') ? 'avif' : 'mif1';
-    const edits = tracks.map(at => ({at, value: 'free'}));
-    if (SEQUENCE.has(brands[0])) edits.push({at: first.header, value: stillBrand});
-    for (let i = 1; i < brands.length; i++) if (SEQUENCE.has(brands[i])) edits.push({at: first.header + 4 + i*4, value: stillBrand});
-    edits.sort((a,b) => a.at-b.at); const parts = []; let at = 0;
-    for (const edit of edits) { parts.push(blob.slice(at, edit.at), Uint8Array.from(edit.value, c => c.charCodeAt(0))); at = edit.at+4; }
+  if (tracks.length || brands.some(x => SETS.s.has(x))) {
+    const sb = [...vis].some(id => items.get(id).kind === 'av01') ? 'avif' : 'mif1', ed = tracks.map(a => [a, 'free']);
+    if (SETS.s.has(brands[0])) ed.push([f0.h, sb]);
+    for (let i = 1; i < brands.length; i++) if (SETS.s.has(brands[i])) ed.push([f0.h + 4 + i * 4, sb]);
+    ed.sort((a, b) => a[0] - b[0]); const parts = []; let at = 0;
+    for (const [a, v] of ed) { parts.push(blob.slice(at, a), Uint8Array.from(v, c => c.charCodeAt(0))); at = a + 4; }
     parts.push(blob.slice(at)); decodeBlob = new Blob(parts, {type: blob.type});
   }
   return {primary, kind: items.get(primary).kind, width, height, transformed, decodeBlob};

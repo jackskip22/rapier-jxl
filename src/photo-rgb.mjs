@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 import {stage, carried, PASSED, journalRequest} from './step-journal.mjs';
 import {complete} from './bits.mjs';
-import {rgbCoefficientSteps, photoQualityStep} from './photo-dct.mjs';
+import {rgbCoefficientSteps, photoCoefficientSteps, photoQualityStep, areaFieldBase} from './photo-dct.mjs';
+import {quantFieldValue, quantFieldBase} from './vardct-planes.mjs';
 import {fixedStrategyImage} from './varblock-core.mjs';
 import {plainLayout, planeLayoutSteps as layoutImage} from './photo-plane-levels.mjs';
 import {photoMeasuredSteps} from './photo-measured-steps.mjs';
@@ -10,43 +11,56 @@ import {qualitySteps} from './photo-quality-search.mjs';
 import {cpuMeasure} from './photo-measure.mjs';
 import {writeImageSteps} from './photo-image-write.mjs';
 import {pageFrameSteps} from './photo-frame-bands.mjs';
-import {linearPicture, pictureOutputs, cropGuard, qualifyPhotoImage} from './photo-region-score.mjs';
+import {gammaPicture, linearPicture, pictureOutputs, cropGuard, qualifyPhotoImage} from './photo-region-score.mjs';
 import {P3_TRANSFORM} from './color-transform.mjs';
 import {photoReference} from './photo-reference.mjs';
+import {fault} from './fault.mjs';
 
-export {imageRecipe as rgbImageRecipe};
 
 const check = signal => { if (signal?.aborted) throw signal.reason; };
 const LEVEL = [0.65, 0.65, 0.5, 0.5, 0.65, 0.65];
 
-export function fillRGBPhotoPlanes(pixels, width, height, stride, planes, from, to) {
+function fillRGBPhotoPlanes(pixels, width, height, stride, planes, from, to, ycbcr = false) {
   const W = stride * 8;
   for (let at = from, y = Math.floor(from / W); at < to; y++) {
     const end = Math.min(to, (y + 1) * W);
     for (let x = at - y * W; at < end; x++, at++) {
-      const p = (Math.min(height - 1, y) * width + Math.min(width - 1, x)) * 4, g = pixels[p + 1];
-      planes[0][at] = pixels[p] - g; planes[1][at] = g; planes[2][at] = pixels[p + 2] - g;
+      const p = (Math.min(height - 1, y) * width + Math.min(width - 1, x)) * 4;
+      const r = pixels[p], g = pixels[p + 1], b = pixels[p + 2];
+      if (ycbcr) {
+        planes[0][at] = -0.168735892 * r - 0.331264108 * g + 0.5 * b;
+        planes[1][at] = 0.299 * r + 0.587 * g + 0.114 * b - 128;
+        planes[2][at] = 0.5 * r - 0.418687589 * g - 0.081312411 * b;
+      } else {
+        planes[0][at] = r - g; planes[1][at] = g; planes[2][at] = b - g;
+      }
     }
   }
 }
-export function fillRGBPhotoScaledFields(source, fields, from, to) {
-  for (let at = from; at < to; at++) fields[at] = source[at] * 16;
+const rgbPhotoUnit = (areas, quality) => quantFieldBase(16, areaFieldBase(areas, quality, 'regions', areas?.some(a => a.quality !== quality)).peak);
+function fillRGBPhotoScaledFields(source, fields, from, to, unit = 16) {
+  for (let at = from; at < to; at++) fields[at] = source[at] * unit;
   return fields;
 }
-export function rgbPhotoBlockBase(plain, planes, quantFields, planeBound) {
-  return {...plain, quantScale: 256, quantFieldBase: (plain.quantFieldBase || 2) * 16, planes, planeBound, quantFields,
-    components: plain.components.map(c => ({...c, quant: Float64Array.from(c.quant, q => q * 16)}))};
+function rgbPhotoBlockBase(plain, planes, quantFields, planeBound, unit = 16) {
+  const ordered = plain.ycbcr ? [1, 0, 2].map(i => plain.components[i]) : plain.components;
+  return {...plain, ...(plain.ycbcr && {frameOrder: true}), quantScale: 16 * unit, quantFieldBase: (plain.quantFieldBase || 2) * unit, planes, planeBound, quantFields,
+    components: ordered.map(c => ({...c, quant: Float64Array.from(c.quant, q => q * unit)}))};
 }
-function blockBase(pixels, width, height, plain) {
+function plainCoefficients(pixels, width, height, quality, colorSpace, areas, ycbcr, crops) {
+  return complete(ycbcr ? photoCoefficientSteps(pixels, width, height, quality, colorSpace, false, true, areas, {crops})
+    : rgbCoefficientSteps(pixels, width, height, quality, colorSpace, areas));
+}
+function blockBase(pixels, width, height, plain, unit) {
   const stride = plain.components[0].stride, rows = plain.components[0].rows, W = stride * 8, H = rows * 8;
   const planes = [0, 1, 2].map(() => new Float64Array(W * H));
-  fillRGBPhotoPlanes(pixels, width, height, stride, planes, 0, W * H);
+  fillRGBPhotoPlanes(pixels, width, height, stride, planes, 0, W * H, plain.ycbcr === true);
   const planeBound = gcPlaneBound(planes);
-  const fields = plain.quantFields && fillRGBPhotoScaledFields(plain.quantFields, new Uint16Array(plain.quantFields.length), 0, plain.quantFields.length);
-  return {...rgbPhotoBlockBase(plain, planes, fields, planeBound), planeRows: () => ({planes, top: 0, stride: W})};
+  const fields = plain.quantFields && fillRGBPhotoScaledFields(plain.quantFields, new Uint16Array(plain.quantFields.length), 0, plain.quantFields.length, unit);
+  return {...rgbPhotoBlockBase(plain, planes, fields, planeBound, unit), planeRows: () => ({planes, top: 0, stride: W}), devicePlanes: {}};
 }
 
-export function rgbPhotoFieldBlock(fields, stride, bx, by, bw, bh) {
+function rgbPhotoFieldBlock(fields, stride, bx, by, bw, bh) {
   const q = fields[by * stride + bx];
   for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) if (fields[(by + y) * stride + bx + x] !== q) return false;
   return true;
@@ -59,17 +73,16 @@ function fieldAdmission(base) {
 const blockOptions = base => ({perceptual: true, tableBands: 8, deadzone: LEVEL, model: 'simple', rate: [1, 3, 2, 0.6],
   lambda: 0.28, sizeScale: 1.03, ids: [4, 5, 6, 7], validBlock: fieldAdmission(base)});
 
-export {blockOptions as rgbPhotoBlockOptions};
-export function fillRGBPhotoQualityFields(original, active, scale, fieldScale, fields, from, to) {
+function fillRGBPhotoQualityFields(original, active, scale, fieldScale, fields, from, to) {
   for (let i = from; i < to; i++) {
     const v = original[i];
-    fields[i] = Math.max(1, Math.min(65535, Math.round(v * (active[i] ? scale * (fieldScale?.[i] ?? 1) : 1))));
+    fields[i] = quantFieldValue(v * (active[i] ? scale * (fieldScale?.[i] ?? 1) : 1));
   }
   return fields;
 }
 
-function rgbProvider(pixels, width, height, plain, {quality, colorSpace, active, signal, ans, scoreScope}) {
-  const canonical = blockBase(pixels, width, height, plain), original = canonical.quantFields ?? new Uint16Array(canonical.components[0].stride * canonical.components[0].rows).fill(canonical.quantFieldBase);
+function rgbProvider(pixels, width, height, plain, {quality, colorSpace, active, signal, ans, scoreScope, unit}) {
+  const canonical = blockBase(pixels, width, height, plain, unit), original = canonical.quantFields ?? new Uint16Array(canonical.components[0].stride * canonical.components[0].rows).fill(canonical.quantFieldBase);
   const boundaries = canonical.quantFields, layout = plainLayout(canonical), written = new WeakMap();
   const make = (q, {fieldScale, keepPlanes} = {}) => {
     check(signal);
@@ -92,16 +105,16 @@ function rgbProvider(pixels, width, height, plain, {quality, colorSpace, active,
       const bytes = yield* writeImageSteps(image, effort);
       written.set(bytes, image); return bytes;
     },
-    estimate() { throw new Error('The RGB photo engine compares written frames.'); },
+    estimate() { throw fault('JXL_INTERNAL', 'The RGB photo engine compares written frames.'); },
   };
   return {provider, written, canonical};
 }
-export function rgbPhotoActiveBounds(r, width, height) {
+function rgbPhotoActiveBounds(r, width, height) {
   const x0 = Math.max(0, Math.floor(r.x)), x1 = Math.min(width, Math.ceil(r.x + r.width));
   const y0 = Math.max(0, Math.floor(r.y)), y1 = Math.min(height, Math.ceil(r.y + r.height));
   return {x0, x1, y0, y1};
 }
-export function fillRGBPhotoActiveCells(active, width, bounds, exact, pixels, mask, from, to) {
+function fillRGBPhotoActiveCells(active, width, bounds, exact, pixels, mask, from, to) {
   const {x0, x1, y0, y1} = bounds, stride = Math.ceil(width / 8);
   const bx0 = Math.floor(x0 / 8), by0 = Math.floor(y0 / 8), columns = Math.max(0, Math.ceil(x1 / 8) - bx0);
   for (let at = from; at < to; at++) {
@@ -123,21 +136,29 @@ function activeCells(width, height, crops, exact, pixels, mask) {
   }
   return active;
 }
-export function* rgbPhotoBandSteps(pixels, width, height, {quality, colorSpace, areas, effort = 7, signal,
+function* rgbPhotoBandSteps(pixels, width, height, {quality, colorSpace, areas, ycbcr = false, effort = 7, signal,
   reference = pixels, project = null, crops = areas, exact = null, mask = false, ans = null, origin = {x: 0, y: 0}, photoSearch = null, scoreScope = null} = {}) {
   check(signal);
-  if (effort >= 7 && !photoSearch?.blocks) throw new Error('The photographic transform search is unavailable.');
+  if (effort >= 6 && !photoSearch?.blocks) throw fault('JXL_INTERNAL', 'The photographic transform search is unavailable.');
   const measured = photoSearch?.measured ?? photoMeasuredSteps;
-  const plain = complete(rgbCoefficientSteps(pixels, width, height, quality, colorSpace, areas));
+  const plain = plainCoefficients(pixels, width, height, quality, colorSpace, areas, ycbcr, crops);
   const active = activeCells(width, height, crops, exact, pixels, mask), {provider, written, canonical} = rgbProvider(pixels, width, height, plain,
-    {quality, colorSpace, active, signal, ans, scoreScope});
-  let floor = effort >= 7 ? yield* photoSearch.blocks(canonical, width, height, blockOptions(canonical), signal)
+    {quality, colorSpace, active, signal, ans, scoreScope, unit: rgbPhotoUnit(areas, quality)});
+  try { return yield* rgbPhotoSearchSteps(provider, written, canonical, plain, active, pixels, width, height,
+    {quality, colorSpace, effort, signal, reference, project, exact, mask, origin, photoSearch, scoreScope, measured}); }
+  finally { canonical.devicePlanes.release?.(); }
+}
+function* rgbPhotoSearchSteps(provider, written, canonical, plain, active, pixels, width, height,
+  {quality, colorSpace, effort, signal, reference, project, exact, mask, origin, photoSearch, scoreScope, measured}) {
+  let floor = effort >= 6 ? yield* photoSearch.blocks(canonical, width, height, blockOptions(canonical), signal)
     : {image: yield* provider.image(quality, {filter: 'plain'})};
-  if (effort === 7 || !active.some(Boolean)) return {...floor, plain};
-  const toLinear = image => linearPicture(image, {colorSpace, reference, exact, pixels, mask, project});
-  const cpu = cpuMeasure(reference, width, height, {native: true, immutable: true, reconstruct: toLinear, maps: 's2',
+  if (effort === 6 || effort === 7 || !active.some(Boolean)) return {...floor, plain};
+  let rebuilt = null;
+  const gammaOf = image => (rebuilt?.image === image ? rebuilt : rebuilt = {image, planes: gammaPicture(image, {reference, exact, pixels, mask})}).planes;
+  const toLinear = image => linearPicture(image, {colorSpace, reference, exact, pixels, mask, project}, gammaOf(image));
+  const cpu = cpuMeasure(reference, width, height, {native: true, immutable: true, reconstruct: toLinear,
     reference: colorSpace === 'display-p3' ? () => photoReference(reference, width, height, P3_TRANSFORM) : null,
-    rgbaOutputs: image => pictureOutputs(image, {colorSpace, reference, exact, pixels, mask}, origin),
+    rgbaOutputs: image => pictureOutputs(image, {colorSpace, reference, exact, pixels, mask}, origin, gammaOf(image)),
     cacheBytes: Math.min(16 << 20, width * height * 48)});
   const measure = (image, want) => scoreScope ? scoreScope.score(image, want, cpu) : cpu(image, want);
   try {
@@ -145,8 +166,8 @@ export function* rgbPhotoBandSteps(pixels, width, height, {quality, colorSpace, 
     const ownBytes = yield* provider.write(floor.image, effort);
     if (effort < 7) {
       const best = yield* measured(qualitySteps(q => provider.image(q, {filter: 'plain'}), {ssimulacra2: own.ssimulacra2},
-        {start: quality, low: 1, high: 99, probes: effort === 5 ? 6 : 12}), measure, signal);
-      if (best.scores.ssimulacra2 >= own.ssimulacra2) {
+        {start: quality, low: 1, high: 99, probes: effort === 5 ? 6 : 12, initial: {quality, image: floor.image, scores: own}}), measure, signal);
+      if (best.quality !== quality && best.scores.ssimulacra2 >= own.ssimulacra2) {
         const image = yield* provider.image(best.quality, {filter: 'plain'}), bytes = yield* provider.write(image, effort);
         if (bytes.length < ownBytes.length) floor = {image, candidate: 'plain', quality: best.quality};
       }
@@ -158,7 +179,7 @@ export function* rgbPhotoBandSteps(pixels, width, height, {quality, colorSpace, 
       if (found?.pass && found.bytes.length < ownBytes.length) floor = {image: written.get(found.bytes), candidate: found.candidate, quality: found.quality};
     }
     return {...floor, plain};
-  } finally { cpu.destroy(); }
+  } finally { cpu.destroy(); rebuilt = null; }
 }
 
 function imageRecipe(image) {
@@ -167,8 +188,8 @@ function imageRecipe(image) {
   return {layout, fields: image.quantFields?.slice(), perceptual: image.perceptual === true};
 }
 function rebuildImage(pixels, width, height, options, recipe) {
-  const plain = complete(rgbCoefficientSteps(pixels, width, height, options.quality, options.colorSpace, options.areas));
-  const base = blockBase(pixels, width, height, plain);
+  const plain = plainCoefficients(pixels, width, height, options.quality, options.colorSpace, options.areas, options.ycbcr === true, options.crops);
+  const base = blockBase(pixels, width, height, plain, rgbPhotoUnit(options.areas, options.quality));
   base.photoBoundaries = base.quantFields;
   if (recipe.fields) base.quantFields = recipe.fields;
   const layout = Array.from({length: recipe.layout.length / 3}, (_, i) =>
@@ -178,29 +199,30 @@ function rebuildImage(pixels, width, height, options, recipe) {
 
 const GUARD_FAILED = Symbol('crop guard failed');
 export function* regionPhotoFrameSteps(rows, width, height, options) {
-  const {photoBlockEffort: effort = 7, readingWebp, signal, photoCrops, referenceRows = rows, exactRows = null,
+  const {photoBlockEffort: effort = 7, readingIntent, readingLook, readingArithmetic, signal, photoCrops, referenceRows = rows, exactRows = null,
     project = null, photoAdmission = null, photoSearch = null, floorImage = null, floorBytes = null, photoScoreMemo = null, ...frame} = options;
-  const origin = {x: frame.placement?.crop?.x ?? 0, y: frame.placement?.crop?.y ?? 0};
+  const origin = {x: frame.placement?.crop?.x ?? 0, y: frame.placement?.crop?.y ?? 0}, ycbcr = !frame.placement?.patches;
+  const writerEffort = Math.max(effort, frame.effort ?? effort);
   const memoFrame = photoScoreMemo?.frame(rows, width, height, options);
   if (floorImage) {
     const result = qualifyPhotoImage(floorImage, {rows, referenceRows, exactRows, crops: photoCrops ?? frame.areas,
-      readingWebp, mask: frame.placement?.mask === true, project, signal, colorSpace: frame.colorSpace, origin});
+      readingIntent, readingLook, readingArithmetic, mask: frame.placement?.mask === true, project, signal, colorSpace: frame.colorSpace, origin});
     check(signal); photoAdmission?.record(floorBytes, result.passed, result.measurements); return floorBytes;
   }
-  const newGuard = () => cropGuard(width, height, photoCrops ?? frame.areas, readingWebp,
-    frame.placement?.mask === true, project, signal, frame.colorSpace, origin);
+  const newGuard = () => cropGuard(width, height, photoCrops ?? frame.areas, readingIntent,
+    frame.placement?.mask === true, project, signal, frame.colorSpace, origin, readingLook, readingArithmetic);
   const observe = guard => Object.assign((image, pixels, top) => guard.add(pixels, image, image, top,
     referenceRows(top, image.height), exactRows?.(top, image.height)), {state: guard.state, restore: guard.restore});
   if (effort === 4) {
     const guard = newGuard();
-    const bytes = yield* pageFrameSteps(rows, width, height, {...frame, observeBand: observe(guard)});
+    const bytes = yield* pageFrameSteps(rows, width, height, {...frame, ycbcr, crops: photoCrops, observeBand: observe(guard)});
     check(signal); photoAdmission?.record(bytes, guard.complete(), guard.measurements()); return bytes;
   }
   const guard = newGuard(), recipes = new Map();
   const strategy = {*band(pixels, w, h, info) {
     if (info.again) {
       const recipe = recipes.get(info.top);
-      if (!recipe) throw new Error('A photo band has no selected recipe.');
+      if (!recipe) throw fault('JXL_INTERNAL', 'A photo band has no selected recipe.');
       return rebuildImage(pixels, w, h, info, recipe);
     }
     const source = pixels.slice(), reference = referenceRows(info.top, h).slice(), exact = exactRows?.(info.top, h);
@@ -227,10 +249,10 @@ export function* regionPhotoFrameSteps(rows, width, height, options) {
     made = null;
     if (!recipes.has(top)) recipes.set(top, image.extra?.recipe ?? imageRecipe(image));
     const saved = yield* carried('crop-guard', () => {
-      const h = image.height, info = band?.info ?? {width, height: h, quality: frame.quality, colorSpace: frame.colorSpace,
-        areas: frame.areas?.map(a => ({...a, y: a.y - top}))};
+      const h = image.height, info = band?.info ?? {width, height: h, quality: frame.quality, colorSpace: frame.colorSpace, ycbcr,
+        areas: frame.areas?.map(a => ({...a, y: a.y - top})), crops: photoCrops?.map(c => ({...c, y: c.y - top}))};
       const source = band?.source ?? rows(top, h).slice(), picture = band ? image : full();
-      const plain = band?.plain ?? complete(rgbCoefficientSteps(source, info.width, info.height, info.quality, info.colorSpace, info.areas));
+      const plain = band?.plain ?? plainCoefficients(source, info.width, info.height, info.quality, info.colorSpace, info.areas, ycbcr, info.crops);
       guard.add(source, picture, plain, top, band?.reference ?? referenceRows(top, h).slice(), band ? band.exact : exactRows?.(top, h));
       return guard.state();
     });
@@ -239,7 +261,7 @@ export function* regionPhotoFrameSteps(rows, width, height, options) {
   }};
   let made = null;
   let step, reply;
-  const candidate = pageFrameSteps(rows, width, height, {...frame, strategy});
+  const candidate = pageFrameSteps(rows, width, height, {...frame, effort: writerEffort, ycbcr, crops: photoCrops, strategy});
   try {
     while (!(step = candidate.next(reply)).done) {
       if (!guard.passed() && !journalRequest(step.value)) break;
@@ -249,7 +271,7 @@ export function* regionPhotoFrameSteps(rows, width, height, options) {
   check(signal);
   if (step.done && guard.complete()) { photoAdmission?.record(step.value, true, guard.measurements()); return step.value; }
   const fallbackGuard = newGuard();
-  const fallback = pageFrameSteps(rows, width, height, {...frame, observeBand: observe(fallbackGuard)});
+  const fallback = pageFrameSteps(rows, width, height, {...frame, ycbcr, crops: photoCrops, observeBand: observe(fallbackGuard)});
   try {
     while (!(step = fallback.next(reply)).done) reply = yield typeof step.value === 'number' ? 0.95 + step.value * 0.05 : step.value;
     check(signal); photoAdmission?.record(step.value, fallbackGuard.complete(), fallbackGuard.measurements()); return step.value;

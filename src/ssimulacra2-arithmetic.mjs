@@ -36,18 +36,18 @@ import {wasmBytes} from './wasm-text.mjs';
 import {compileWasm, suppliedWasm, wasmModule} from './wasm-modules.mjs';
 export {ssimulacra2WorkBytes} from './ssimulacra2-memory.mjs';
 const {linear:LUT, gaussian:GAUSS, colorKeys:KEYS, colorValues:VALUES} = S2_MEMORY;
-let memory, kernel, fused, lastColors, lastGauss;
+let memory, kernel, fused, lastColors, lastGauss, views;
 
 const PROBE = GAUSS + 176, FAILED = GAUSS + 240, u = 1 + 2 ** -12;
 const PROBE_INPUT = [u, -u, 2 * u, u, u, u, u, -2 * u, -(1 + 2 ** -11), 1 + 2 ** -11, -(2 + 2 ** -10), 2 + 2 ** -10];
 export const FUSED_PROBE = Float32Array.from([...PROBE_INPUT, ...[0, 1, 2, 3].map(i => PROBE_INPUT[i] * PROBE_INPUT[4 + i] + PROBE_INPUT[8 + i])]);
 let fusedState = 0, fusedAllowed = true;
-const fusedBytes = () => wasmBytes(S2_FUSED);
+const fusedBytes = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : () => wasmBytes(S2_FUSED);
 function fusedModule() {
   if (fusedState) return fusedState > 0 ? wasmModule('s2-fused', fusedBytes) : null;
   fusedState = -1;
   try {
-    if (suppliedWasm() || !WebAssembly.validate(fusedBytes())) return null;
+    if (!fusedBytes || suppliedWasm() || !WebAssembly.validate(fusedBytes())) return null;
     const module = wasmModule('s2-fused', fusedBytes);
     fusedState = 1; return module;
   } catch { return null; }
@@ -59,7 +59,7 @@ export function bandsAtSpeed() {
   return bandsFused ??= WebAssembly.Module.exports(module).some(entry => entry.name === 's2MetricBand');
 }
 export async function compileFusedMetric() {
-  if (fusedState || suppliedWasm()) return;
+  if (!fusedBytes || fusedState || suppliedWasm()) return;
   try { if (WebAssembly.validate(fusedBytes())) await compileWasm('s2-fused', fusedBytes); } catch {}
 }
 export function fusedMetric(allow = fusedAllowed) {
@@ -67,21 +67,31 @@ export function fusedMetric(allow = fusedAllowed) {
   return allow && !!fusedModule();
 }
 
-let base = S2_MEMORY.base, resident = null;
+let base = S2_MEMORY.base, resident = null, dirtyEnd = base, colorsUsed = false;
 export function openMetricArena() {
-  const previous = [memory,kernel,fused,lastColors,lastGauss,base,resident];
-  memory = kernel = fused = lastColors = lastGauss = resident = null; base = S2_MEMORY.base;
+  const previous = [memory,kernel,fused,lastColors,lastGauss,views,base,resident,dirtyEnd,colorsUsed];
+  const free = pooled.pop() ?? weak.pop()?.deref();
+  [memory,kernel,fused,lastGauss,views] = free ? [free.memory,free.kernel,free.fused,free.lastGauss,free.views] : [];
+  lastColors = resident = null; base = dirtyEnd = S2_MEMORY.base; colorsUsed = false;
+  if (memory) { refreshViews(); if (fused) views.f32.set(FUSED_PROBE,PROBE >> 2); }
   let closed = false;
-  return () => { if (!closed) { [memory,kernel,fused,lastColors,lastGauss,base,resident] = previous; closed = true; } };
+  return () => {
+    if (closed) return;
+    closed = true;
+    try { if (memory) { clearProbe(); recycle({memory,kernel,fused,lastGauss,views}); } }
+    finally { [memory,kernel,fused,lastColors,lastGauss,views,base,resident,dirtyEnd,colorsUsed] = previous; }
+  };
 }
 
-export function referenceArena(scales) {
+export function referenceArena(scales, pairs = []) {
   let cursor = S2_MEMORY.base;
+  const take = bytes => { const at = cursor; cursor += Math.ceil(bytes / 16) * 16; return at; };
   const planes = scales.map(({width, height, keep}) => {
     if (!keep) return null;
-    return [0,1,2].map(() => { const at = cursor; cursor += Math.ceil(width * height * 12 / 16) * 16; return at; });
+    return [0,1,2].map(() => take(width * height * 12));
   });
-  const arena = {memory:null,kernel:null,fused:null,lastGauss:null,planes,base:cursor};
+  const places = pairs.map(width => { const rowBytes = ssimulacra2Layout(width,1).rowBytes; return {rowBytes, scratch0:take(rowBytes), sums0:take(144), scratch1:take(rowBytes), sums1:take(144)}; });
+  const arena = {memory:null,kernel:null,fused:null,lastGauss:null,views:null,planes,places,base:cursor,dirtyEnd:cursor,colorsUsed:false};
   const free = pooled.pop() ?? weak.pop()?.deref();
   if (free) Object.assign(arena, free);
   return arena;
@@ -89,32 +99,60 @@ export function referenceArena(scales) {
 const pooled = [], weak = [];
 let dropTimer = null;
 const dropPool = () => { dropTimer = null; while (pooled.length) weak.push(new WeakRef(pooled.pop())); weak.splice(0, weak.length - 2); };
-export function releaseReferenceArena(arena) {
-  if (!arena?.memory) return;
-  if (arena.base > S2_MEMORY.base) new Uint8Array(arena.memory.buffer, S2_MEMORY.base, arena.base - S2_MEMORY.base).fill(0);
-  pooled.push({memory: arena.memory, kernel: arena.kernel, fused: arena.fused});
-  arena.memory = arena.kernel = arena.fused = arena.lastGauss = null;
+function recycle(arena) {
+  pooled.push(arena);
   if (pooled.length > 2) weak.push(new WeakRef(pooled.shift()));
   if (dropTimer) clearTimeout(dropTimer);
   dropTimer = setTimeout(dropPool, 1000);
   dropTimer.unref?.();
 }
-export function useReferenceArena(arena) {
-  const previous = [memory,kernel,fused,lastColors,lastGauss,base,resident];
-  [memory,kernel,fused,lastGauss] = [arena.memory,arena.kernel,arena.fused,arena.lastGauss];
-  lastColors = null; base = arena.base; resident = arena;
+function refreshViews() {
+  const buffer = memory.buffer;
+  if (views?.u8.buffer !== buffer) views = {u8:new Uint8Array(buffer),i32:new Int32Array(buffer),f32:new Float32Array(buffer),f64:new Float64Array(buffer)};
+}
+function clearProbe() {
+  refreshViews();
+  views.u8.fill(0,0,65536);
+  if (colorsUsed) {
+    views.i32.fill(-1,KEYS >> 2,(KEYS >> 2) + (1 << 17));
+    views.u8.fill(0,VALUES,S2_MEMORY.base);
+  }
+  views.u8.fill(0,base,dirtyEnd);
+}
+export function releaseReferenceArena(arena) {
+  if (!arena?.memory) return;
+  const u8 = new Uint8Array(arena.memory.buffer), end = Math.max(arena.base, arena.dirtyEnd ?? 0);
+  if (arena.dirtyEnd > arena.base || arena.colorsUsed) u8.fill(0, 0, 65536);
+  if (arena.colorsUsed) {
+    new Int32Array(arena.memory.buffer, KEYS, 1 << 17).fill(-1);
+    u8.fill(0, VALUES, S2_MEMORY.base);
+  }
+  if (end > S2_MEMORY.base) u8.fill(0, S2_MEMORY.base, end);
+  arena.dirtyEnd = arena.base; arena.colorsUsed = false;
+  recycle({memory:arena.memory,kernel:arena.kernel,fused:arena.fused,lastGauss:arena.lastGauss,views:arena.views});
+  arena.memory = arena.kernel = arena.fused = arena.lastGauss = arena.views = null;
+}
+export function useReferenceArena(arena, clear = true) {
+  const previous = [memory,kernel,fused,lastColors,lastGauss,views,base,resident,dirtyEnd,colorsUsed];
+  [memory,kernel,fused,lastGauss,views] = [arena.memory,arena.kernel,arena.fused,arena.lastGauss,arena.views];
+  lastColors = null; base = dirtyEnd = arena.base; resident = arena; colorsUsed = false;
+  if (memory) { refreshViews(); if (fused) views.f32.set(FUSED_PROBE,PROBE >> 2); }
   let closed = false;
   return () => {
     if (closed) return;
     closed = true;
-    if (memory) {
-      new Uint8Array(memory.buffer,0,65536).fill(0);
-      new Int32Array(memory.buffer,KEYS,1 << 17).fill(-1);
-      new Uint8Array(memory.buffer,VALUES,(S2_MEMORY.base - VALUES)).fill(0);
-      if (memory.buffer.byteLength > arena.base) new Uint8Array(memory.buffer,arena.base).fill(0);
+    try {
+      if (memory) {
+        if (clear) clearProbe();
+        else {
+          if (dirtyEnd > (arena.dirtyEnd ?? arena.base)) arena.dirtyEnd = dirtyEnd;
+          if (colorsUsed) arena.colorsUsed = true;
+        }
+      }
+      [arena.memory,arena.kernel,arena.fused,arena.lastGauss,arena.views] = [memory,kernel,fused,lastGauss,views];
+    } finally {
+      [memory,kernel,fused,lastColors,lastGauss,views,base,resident,dirtyEnd,colorsUsed] = previous;
     }
-    [arena.memory,arena.kernel,arena.fused,arena.lastGauss] = [memory,kernel,fused,lastGauss];
-    [memory,kernel,fused,lastColors,lastGauss,base,resident] = previous;
   };
 }
 
@@ -132,53 +170,73 @@ function ready() {
     new Float32Array(owned.buffer,PROBE,16).set(FUSED_PROBE);
     fused = new WebAssembly.Instance(fast,{env:{memory:owned}}).exports;
   }
-  memory = owned; kernel = exports;
+  memory = owned; kernel = exports; refreshViews();
 }
-function metricScale(...args) {
+const metricScale = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? function (...args) {
+  if (args[4] === 0 || args[6] === 0) colorsUsed = true;
+  if (views.i32[(GAUSS + 248) >> 2]) throw fault('JXL_INTERNAL','rapier-jxl/upload does not carry libjxl\'s SSIMULACRA2 arithmetic.');
+  kernel.s2MetricScaleMeter(...args);
+} : function (...args) {
+  if (args[4] === 0 || args[6] === 0) colorsUsed = true;
   if (fused && fusedAllowed && fusedState > 0) {
-    const failed = new Int32Array(memory.buffer,FAILED,1);
-    failed[0] = 0; fused.s2MetricScale(...args);
-    if (!failed[0]) return;
+    const failed = FAILED >> 2;
+    views.i32[failed] = 0; fused.s2MetricScale(...args);
+    if (!views.i32[failed]) return;
     fusedState = -2; fused = null;
   }
   kernel.s2MetricScale(...args);
-}
+};
 function metricBand(...args) {
+  if (args[7] === 0 || args[9] === 0) colorsUsed = true;
   if (fused?.s2MetricBand && fusedAllowed && fusedState > 0) {
-    const failed = new Int32Array(memory.buffer,FAILED,1);
-    failed[0] = 0;
+    const failed = FAILED >> 2;
+    views.i32[failed] = 0;
     const made = fused.s2MetricBand(...args);
-    if (!failed[0]) return made;
+    if (!views.i32[failed]) return made;
     fusedState = -2; fused = null;
   }
   return kernel.s2MetricBand(...args);
 }
 function metricBand2(...args) {
+  if (args[7] === 0 || args[9] === 0 || args[11] === 0) colorsUsed = true;
   if (fused?.s2MetricBand2 && fusedAllowed && fusedState > 0) {
-    const failed = new Int32Array(memory.buffer,FAILED,1);
-    failed[0] = 0;
+    const failed = FAILED >> 2;
+    views.i32[failed] = 0;
     const made = fused.s2MetricBand2(...args);
-    if (!failed[0]) return made;
+    if (!views.i32[failed]) return made;
     fusedState = -2; fused = null;
   }
   return kernel.s2MetricBand2 ? kernel.s2MetricBand2(...args) : null;
 }
 function reserve(plan) {
   ready();
-  if (plan.arenaBytes <= memory.buffer.byteLength) return;
-  try { memory.grow(Math.ceil((plan.arenaBytes - memory.buffer.byteLength) / 65536)); }
-  catch (cause) { throw Object.assign(fault('JXL_MEMORY','Not enough memory for SSIMULACRA2.'),{cause}); }
+  if (plan.arenaBytes > memory.buffer.byteLength) {
+    try { memory.grow(Math.ceil((plan.arenaBytes - memory.buffer.byteLength) / 65536)); }
+    catch (cause) { throw Object.assign(fault('JXL_MEMORY','Not enough memory for SSIMULACRA2.'),{cause}); }
+  }
+  refreshViews();
+  dirtyEnd = Math.max(dirtyEnd,plan.arenaBytes);
 }
 const inputBytes = (input,n) => input.rgba ? n * 4 : n * 12;
 function writeInput(input,at,n) {
   if (!at) return;
-  if (input.rgba) new Uint8Array(memory.buffer,at,n * 4).set(input.rgba.subarray(0,n * 4));
-  else for (let c = 0; c < 3; c++) new Float32Array(memory.buffer,at + c * n * 4,n).set(input[c].subarray(0,n));
+  if (input.rgba) views.u8.set(input.rgba.subarray(0,n * 4),at);
+  else for (let c = 0; c < 3; c++) views.f32.set(input[c].subarray(0,n),(at >> 2) + c * n);
 }
+const arithmeticFlag = libjxl => { new Int32Array(memory.buffer,GAUSS + 248,1)[0] = libjxl ? 1 : 0; };
 function copyGauss(g) {
   if (g === lastGauss) return;
-  new Float32Array(memory.buffer,GAUSS,42).set([...g.n2,...g.d1,...g.coefficients.flatMap(p => [...p.input,...p.previous,...p.previous2])]);
+  views.f32.set([...g.n2,...g.d1,...g.coefficients.flatMap(p => [...p.input,...p.previous,...p.previous2])],GAUSS >> 2);
+  views.f32.set(g.taps,(GAUSS + 256) >> 2);
   lastGauss = g;
+}
+let linearLookup = null;
+export function s2LinearTable() {
+  if (!linearLookup) {
+    const close = openMetricArena();
+    try { ready(); linearLookup = new Float32Array(memory.buffer,LUT,256).slice(); } finally { close(); }
+  }
+  return linearLookup.slice();
 }
 let deviceTables = null;
 export function s2DeviceTables(g) {
@@ -188,7 +246,7 @@ export function s2DeviceTables(g) {
     ready();
     const words = new Uint32Array(512);
     words.set(new Uint32Array(memory.buffer,LUT,256));
-    words.set(new Uint32Array(Float32Array.from([...g.n2,...g.d1,...g.coefficients.flatMap(p => [...p.input,...p.previous,...p.previous2])]).buffer),256);
+    words.set(new Uint32Array(g.taps.buffer, g.taps.byteOffset, 5),256);
     return deviceTables = words;
   } finally { close(); }
 }
@@ -201,12 +259,12 @@ export function downsample(input,width,height,into = null) {
   for (let c = 0; c < 3; c++) planes[c].set(new Float32Array(memory.buffer,output + c * m * 4,m));
   return {planes,width:w,height:h};
 }
-export function scaleBand(a,b,w,h,g,first,end,previous = null,from = null) {
+export function scaleBand(a,b,w,h,g,first,end,previous = null,from = null,libjxl = false) {
   const inputY = from ?? Math.min(h,Math.ceil((first + 4) / 4) * 4);
   const inputEnd = Math.min(h,Math.ceil((end + 4) / 4) * 4), inputH = inputEnd - inputY;
   const plan = ssimulacra2Layout(w,Math.max(1,inputH),{referenceRgba:!!a.rgba,distortedRgba:!!b.rgba,base});
   reserve(plan); copyGauss(g);
-  new Int32Array(memory.buffer,KEYS,1 << 17).fill(-1);
+  if (a.rgba || b.rgba) views.i32.fill(-1,KEYS >> 2,(KEYS >> 2) + (1 << 17));
   writeInput(a,plan.reference,w * inputH); writeInput(b,plan.distorted,w * inputH);
   if (previous) {
     if (previous.states) {
@@ -215,35 +273,44 @@ export function scaleBand(a,b,w,h,g,first,end,previous = null,from = null) {
     } else new Uint8Array(memory.buffer,plan.scratch,plan.rowBytes).set(previous.scratch);
     new Float64Array(memory.buffer,plan.sums,18).set(previous.sums);
   }
+  arithmeticFlag(libjxl);
   const made = metricBand(w,h,first,end,inputY,inputH,plan.reference,a.rgba ? 0 : 1,
     plan.distorted,b.rgba ? 0 : 1,LUT,GAUSS,plan.scratch,plan.sums,KEYS,VALUES);
   if (made !== inputEnd) throw fault('JXL_INTERNAL','SSIMULACRA2 row continuation did not consume its input.');
   return {scratch:new Uint8Array(memory.buffer,plan.scratch,plan.rowBytes).slice(),
     sums:new Float64Array(memory.buffer,plan.sums,18).slice()};
 }
-export function scaleBandPair(a,b0,b1,w,h,g,first,end,previous0 = null,previous1 = null,from = null) {
+export function scaleBandPair(a,b0,b1,w,h,g,first,end,previous0 = null,previous1 = null,from = null,place = null) {
   ready();
   if (!kernel.s2MetricBand2 && !fused?.s2MetricBand2) return null;
   const inputY = from ?? Math.min(h,Math.ceil((first + 4) / 4) * 4);
   const inputEnd = Math.min(h,Math.ceil((end + 4) / 4) * 4), inputH = inputEnd - inputY;
   const plan = ssimulacra2Layout(w,Math.max(1,inputH),{referenceRgba:!!a.rgba,distortedRgba:!!b0.rgba,base});
-  const more = s2ArenaPlan({base:plan.arenaBytes}), distorted1 = more.take(plan.distortedBytes), scratch1 = more.take(plan.rowBytes), sums1 = more.take(18 * 8);
+  if (place && place.rowBytes !== plan.rowBytes || !place && (previous0?.resident || previous1?.resident))
+    throw fault('JXL_INTERNAL','A resident SSIMULACRA2 place does not match its scale.');
+  const more = s2ArenaPlan({base:plan.arenaBytes}), distorted1 = more.take(plan.distortedBytes), scratch1 = place ? place.scratch1 : more.take(plan.rowBytes), sums1 = place ? place.sums1 : more.take(18 * 8);
+  if (place) { plan.scratch = place.scratch0; plan.sums = place.sums0; }
   reserve({arenaBytes:more.arenaBytes}); copyGauss(g);
-  new Int32Array(memory.buffer,KEYS,1 << 17).fill(-1);
+  if (a.rgba || b0.rgba || b1.rgba) views.i32.fill(-1,KEYS >> 2,(KEYS >> 2) + (1 << 17));
   writeInput(a,plan.reference,w * inputH); writeInput(b0,plan.distorted,w * inputH); writeInput(b1,distorted1,w * inputH);
-  for (const [previous,scratch,sums] of [[previous0,plan.scratch,plan.sums],[previous1,scratch1,sums1]]) if (previous) {
+  for (const [previous,scratch,sums] of [[previous0,plan.scratch,plan.sums],[previous1,scratch1,sums1]]) if (previous && !previous.resident) {
     if (previous.states) {
       const rows = new Float32Array(memory.buffer,scratch,plan.rowBytes >> 2);
       for (let i = 0; i < 15; i++) rows.set(previous.states.subarray(i * 6 * w,(i + 1) * 6 * w),stateAt(i,w));
     } else new Uint8Array(memory.buffer,scratch,plan.rowBytes).set(previous.scratch);
     new Float64Array(memory.buffer,sums,18).set(previous.sums);
   }
+  arithmeticFlag(false);
   const made = metricBand2(w,h,first,end,inputY,inputH,plan.reference,a.rgba ? 0 : 1,plan.distorted,b0.rgba ? 0 : 1,
     distorted1,b1.rgba ? 0 : 1,LUT,GAUSS,plan.scratch,plan.sums,scratch1,sums1,KEYS,VALUES);
   if (made === null) return null;
   if (made !== inputEnd) throw fault('JXL_INTERNAL','SSIMULACRA2 row continuation did not consume its input.');
+  if (place) return [plan.sums,sums1].map((sums,k) => ({resident:true,output:k,sums:new Float64Array(memory.buffer,sums,18).slice(),pair:true}));
   return [[plan.scratch,plan.sums],[scratch1,sums1]].map(([scratch,sums]) => ({scratch:new Uint8Array(memory.buffer,scratch,plan.rowBytes).slice(),
     sums:new Float64Array(memory.buffer,sums,18).slice(),pair:true}));
+}
+export function residentScratch(arena,place,k) {
+  return new Uint8Array(arena.memory.buffer,k ? place.scratch1 : place.scratch0,place.rowBytes).slice();
 }
 export function pairState(first,second,w) {
   const states = second.states.slice();
@@ -256,52 +323,55 @@ export function bandState({scratch,sums},w) {
   for (let i = 0; i < 15; i++) states.set(all.subarray(stateAt(i,w),stateAt(i,w) + 6 * w),i * 6 * w);
   return {states,sums};
 }
-export function scaleSums(a,b,w,h,g,channels,keep,colors,channel = null,terms = null,scale = 0) {
+export function scaleSums(a,b,w,h,g,channels,keep,colors,channel = null,terms = null,scale = 0,libjxl = false) {
   const mask = channel === null ? 7 : 1 << channel;
+
   let cached = 0;
   for (let c = 0; c < 3; c++) if (channels?.[c]) cached |= 1 << c;
   const planes = resident?.planes[scale] ?? null;
-  if (planes) return residentSums(a,b,w,h,g,channels,keep,colors,mask,cached,terms,planes);
+  if (planes) return residentSums(a,b,w,h,g,channels,keep,colors,mask,cached,terms,planes,libjxl);
   const plan = ssimulacra2Layout(w,h,{channels:mask,cached,retain:keep ? mask : 0,map:!!terms,
     referenceRgba:!!a?.rgba,distortedRgba:!!b.rgba,base});
   const n = plan.pixels;
   reserve(plan); copyGauss(g);
-  if (colors !== lastColors) { new Int32Array(memory.buffer,KEYS,1 << 17).fill(-1); lastColors = colors; }
+  if ((a?.rgba || b.rgba) && colors !== lastColors) { views.i32.fill(-1,KEYS >> 2,(KEYS >> 2) + (1 << 17)); lastColors = colors; }
   writeInput(a,plan.reference,n); writeInput(b,plan.distorted,n);
   for (let c = 0; c < 3; c++) if (plan.caches[c] && channels?.[c])
     for (const [k,key] of ['p1','mu1','s11'].entries())
       new Float32Array(memory.buffer,plan.caches[c] + k * n * 4,n).set(channels[c][key]);
+  arithmeticFlag(libjxl);
   metricScale(w,h,mask,plan.reference,a?.rgba ? 0 : 1,plan.distorted,b.rgba ? 0 : 1,LUT,GAUSS,
     ...plan.caches,plan.cachedMask,plan.scratch,plan.terms,plan.edgeTerms,plan.sums,KEYS,VALUES);
   if (terms) {
     terms.d.set(new Float64Array(memory.buffer,plan.terms,n));
     terms.dd.set(new Float64Array(memory.buffer,plan.edgeTerms,n));
   }
-  return [0,1,2].map(c => ({sums:new Float64Array(memory.buffer,plan.sums + c * 48,6).slice(),
+  return [0,1,2].map(c => ({sums:views.f64.slice((plan.sums >> 3) + c * 6,(plan.sums >> 3) + (c + 1) * 6),
     reference:keep && (mask & (1 << c)) && !channels?.[c]
       ? Object.fromEntries(['p1','mu1','s11'].map((key,k) => [key,new Float32Array(memory.buffer,plan.caches[c] + k * n * 4,n).slice()]))
       : null}));
 }
-function residentSums(a,b,w,h,g,channels,keep,colors,mask,cached,terms,planes) {
+function residentSums(a,b,w,h,g,channels,keep,colors,mask,cached,terms,planes,libjxl) {
   const plan = ssimulacra2Layout(w,h,{channels:mask,cached,map:!!terms,referenceRgba:!!a?.rgba,distortedRgba:!!b.rgba,
     base,resident:true});
   const n = plan.pixels;
   reserve(plan); copyGauss(g);
-  if (colors !== lastColors) { new Int32Array(memory.buffer,KEYS,1 << 17).fill(-1); lastColors = colors; }
+  if ((a?.rgba || b.rgba) && colors !== lastColors) { views.i32.fill(-1,KEYS >> 2,(KEYS >> 2) + (1 << 17)); lastColors = colors; }
   writeInput(a,plan.reference,n); writeInput(b,plan.distorted,n);
   const at = [0,1,2].map(c => mask & (1 << c) && (keep || cached & (1 << c)) ? planes[c] : 0);
+  arithmeticFlag(libjxl);
   metricScale(w,h,mask,plan.reference,a?.rgba ? 0 : 1,plan.distorted,b.rgba ? 0 : 1,LUT,GAUSS,
     ...at,plan.cachedMask,plan.scratch,plan.terms,plan.edgeTerms,plan.sums,KEYS,VALUES);
   if (terms) {
     terms.d.set(new Float64Array(memory.buffer,plan.terms,n));
     terms.dd.set(new Float64Array(memory.buffer,plan.edgeTerms,n));
   }
-  return [0,1,2].map(c => ({sums:new Float64Array(memory.buffer,plan.sums + c * 48,6).slice(),
+  return [0,1,2].map(c => ({sums:views.f64.slice((plan.sums >> 3) + c * 6,(plan.sums >> 3) + (c + 1) * 6),
     reference:keep && (mask & (1 << c)) && !channels?.[c] ? {resident:true,bytes:n * 12} : null}));
 }
 export function gaussianCoefficients(gauss) {
   const f32 = Math.fround;
-  return {radius: gauss.radius, n2: gauss.n2.map(f32), d1: gauss.d1.map(f32),
+  return {radius: gauss.radius, taps: Float32Array.from(gauss.taps), n2: gauss.n2.map(f32), d1: gauss.d1.map(f32),
     coefficients: gauss.d1.map((d, i) => {
       const n = gauss.n2[i], d2 = d * d;
       return {input: [n, -d * n, d2 * n - n, -d2 * d * n + 2 * d * n].map(f32),
@@ -309,4 +379,3 @@ export function gaussianCoefficients(gauss) {
         previous2: [-1, d, -d2 + 1, d2 * d - 2 * d].map(f32)};
     })};
 }
-

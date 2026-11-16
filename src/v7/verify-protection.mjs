@@ -2,33 +2,32 @@
 import {digestBytes} from './result-identity.mjs';
 import {arrayBufferBytes, typedFields, typedName} from './bytes.mjs';
 import {isPlainRecord} from './records.mjs';
-import {dimensions, fail, LARGEST} from './primitives.mjs';
+import {dimensions, fail, PIXELS} from './primitives.mjs';
 
 const SCOPE_KEYS = new Set(['width', 'height', 'rectangles', 'mask']);
 const RECT_KEYS = new Set(['x', 'y', 'width', 'height']);
-const MAX_RECTANGLES = 65536;
 const PREFIX = new TextEncoder().encode('rapier-jxl:protected-pixels\0');
 const HEADER_BYTES = PREFIX.length + 8;
 const reject = message => { throw fail('JXL_OPTIONS', message); };
 
 function record(value, keys, name) {
-  if (!isPlainRecord(value)) reject(`${name} is a plain data record.`);
+  if (!isPlainRecord(value)) reject(`Invalid ${name}; pass a plain data object.`);
   const descriptors = Object.getOwnPropertyDescriptors(value), copied = {};
   for (const key of Reflect.ownKeys(descriptors)) {
-    if (!keys.has(key)) reject(`${name} has an unsupported field: ${String(key)}.`);
-    if (!('value' in descriptors[key])) reject(`${name} cannot contain getters or setters.`);
+    if (!keys.has(key)) reject(`${name} has an unknown field ${String(key)}; remove it.`);
+    if (!('value' in descriptors[key])) reject(`${name} has accessors; pass data values.`);
     copied[key] = descriptors[key].value;
   }
   return copied;
 }
 
 function binaryMask(value, pixels) {
-  if (typedName.call(value) !== 'Uint8Array') reject('A protection mask is a binary Uint8Array.');
+  if (typedName.call(value) !== 'Uint8Array') reject("Invalid protection mask; pass a Uint8Array containing only 0 and 1.");
   const buffer = typedFields.buffer.call(value), length = typedFields.byteLength.call(value);
   if (arrayBufferBytes(buffer) === null || length !== pixels)
-    reject('A protection mask has one byte per output pixel on an ordinary, attached ArrayBuffer.');
+    reject("Invalid protection mask; pass one byte per output pixel on an ordinary attached ArrayBuffer.");
   try { return new Uint8Array(buffer, typedFields.byteOffset.call(value), length); }
-  catch { reject('A protection mask needs an attached ArrayBuffer.'); }
+  catch { reject("Protection mask buffer is detached; pass an attached ArrayBuffer."); }
 }
 
 function fillBits(bits, start, end) {
@@ -41,15 +40,14 @@ function fillBits(bits, start, end) {
 }
 
 function rectangleEvents(rectangles, width, height) {
-  if (!Array.isArray(rectangles)) reject('Protection rectangles are an array.');
+  if (!Array.isArray(rectangles)) reject("Invalid protection rectangles; pass an array.");
   const length = Object.getOwnPropertyDescriptor(rectangles, 'length')?.value;
-  if (!Number.isSafeInteger(length) || length < 0 || length > MAX_RECTANGLES)
-    reject('At most 65,536 protection rectangles are admitted.');
+  if (!Number.isSafeInteger(length) || length < 0) reject('Protection rectangles do not have a valid array length; pass an ordinary array of rectangles.');
   for (const key of Reflect.ownKeys(rectangles)) {
     if (key === 'length') continue;
     const index = typeof key === 'string' ? Number(key) : NaN;
     if (!Number.isSafeInteger(index) || index < 0 || index >= length || String(index) !== key)
-      reject('Protection rectangle arrays contain only indexed data entries.');
+      reject("Protection array contains extra properties; pass indexed data entries only.");
   }
   let heads = null;
   const events = [];
@@ -58,13 +56,13 @@ function rectangleEvents(rectangles, width, height) {
   };
   for (let i = 0; i < length; i++) {
     const entry = Object.getOwnPropertyDescriptor(rectangles, i);
-    if (!entry || !('value' in entry)) reject('Protection rectangle entries are data values, without holes or accessors.');
+    if (!entry || !('value' in entry)) reject("Protection array has holes or accessors; pass a dense array of data values.");
     const {x, y, width: w, height: h} = record(entry.value, RECT_KEYS, 'A protection rectangle');
     if (![x, y, w, h].every(Number.isSafeInteger) || w < 1 || h < 1)
-      reject('Protection rectangles have safe-integer x and y and positive safe-integer width and height.');
+      reject('A protection rectangle is invalid; pass safe-integer x and y and positive safe-integer width and height.');
     const endX = x + w, endY = y + h;
     if (!Number.isSafeInteger(endX) || !Number.isSafeInteger(endY))
-      reject('Protection rectangle endpoints must not overflow safe integers.');
+      reject('A protection rectangle endpoint overflows; keep x + width and y + height within safe integers.');
     const x0 = Math.max(0, x), x1 = Math.min(width, endX), y0 = Math.max(0, y), y1 = Math.min(height, endY);
     if (x1 <= x0 || y1 <= y0) continue;
     heads ??= new Int32Array(height + 1).fill(-1);
@@ -98,7 +96,7 @@ function addRectangles(bits, width, height, {heads, events}) {
 
 export function protectedScope(given) {
   const {width, height, rectangles = [], mask} = record(given, SCOPE_KEYS, 'A protected scope');
-  dimensions(width, height, LARGEST);
+  dimensions(width, height, PIXELS);
   const pixels = width * height, rects = rectangleEvents(rectangles, width, height);
   const data = mask === undefined ? null : binaryMask(mask, pixels);
   const owned = new Uint8Array(HEADER_BYTES + Math.ceil(pixels / 8)); owned.set(PREFIX);
@@ -107,7 +105,7 @@ export function protectedScope(given) {
   const bits = owned.subarray(HEADER_BYTES);
   if (data) for (let i = 0; i < pixels; i++) {
     const value = data[i];
-    if (value !== 0 && value !== 1) reject('A protection mask contains only 0 and 1.');
+    if (value !== 0 && value !== 1) reject("Protection mask contains other values; use only 0 and 1.");
     if (value) bits[i >>> 3] |= 1 << (i & 7);
   }
   addRectangles(bits, width, height, rects);

@@ -7,10 +7,7 @@ import type {Bytes, CaptureOptions, JPEGOptions, JobOptions, Pixels} from './typ
 import type {VerificationReceipt} from './verify.mjs';
 import type {verify} from './verify.mjs';
 import type {ImageResult} from './result.mjs';
-import type {WasmBundle} from './wasm.mjs';
 
-/** Install this package's precompiled kernels before resumable verification in a restricted WebAssembly host. */
-export function configureWasm(bundle: WasmBundle): void;
 
 type Awaitable<T> = T | PromiseLike<T>;
 
@@ -32,6 +29,8 @@ export interface ResumableInput {
   readonly height?: number;
   /** Defaults to sRGB. */
   readonly colorSpace?: Pixels['colorSpace'];
+  /** The profile's rendering intent where it is not relative (0, 2 or 3); the file's header carries it. */
+  readonly renderingIntent?: 0 | 1 | 2 | 3;
 }
 
 /** Straight RGBA8 rows: positive pixel dimensions; byteLength is width * height * 4. */
@@ -90,11 +89,11 @@ type SavedOptions<Options, Keys extends keyof Options> = Readonly<Pick<Options, 
   readonly [K in Exclude<OptionKeys, Keys>]?: never;
 };
 /** Capture's data-only saved options. Per-call cancellation is supplied to advance or finish. */
-export type ResumableCaptureOptions = SavedOptions<CaptureOptions, 'fidelity' | 'effort' | 'webgpu'>;
+export type ResumableCaptureOptions = SavedOptions<CaptureOptions, 'fidelity' | 'effort'>;
 /** capture-complete's data-only saved options: its rectangles too. */
 export type ResumableCaptureCompleteOptions = Saved<CaptureCompleteOptions, 'fidelity' | 'effort' | 'webgpu' | 'exactRects' | 'photoRects' | 'textComplete' | 'maxPixels'>;
 /** Recompression preserves the JPEG's coefficients and takes these ordinary JPEG settings. */
-export type ResumableJPEGOptions = SavedOptions<JPEGOptions, 'effort' | 'icc' | 'maxPixels'>;
+export type ResumableJPEGOptions = SavedOptions<JPEGOptions, 'effort' | 'maxPixels'>;
 /** Restoration admits only the pixel bound in its saved plan. */
 export type ResumableRestoreOptions = SavedOptions<JobOptions, 'maxPixels'>;
 type StoredResult<Result> = Result extends {readonly bytes: Bytes} ? Omit<Result, 'bytes'> & {readonly bytes?: never; readonly verification?: never} : never;
@@ -110,15 +109,16 @@ type Saved<Options, Keys extends PropertyKey> = Options extends unknown ? Readon
 } : never;
 /** encode, fit and variants save their data options: callbacks, signals and helpers belong to each call. */
 export type ResumableUploadOptions<Operation extends Uploads> =
-  Saved<NonNullable<Parameters<Operation>[1]>, 'fidelity' | 'effort' | 'readAs' | 'maxPixels' | 'features' | 'webgpu' | 'maxBytes' | 'outputs'>;
+  Saved<NonNullable<Parameters<Operation>[1]>, 'fidelity' | 'effort' | 'jpeg' | 'readAs' | 'maxPixels' | 'firstRegion' | 'webgpu' | 'maxBytes' | 'outputs'>;
 
 type OptionsOf<Operation extends ResumableOperation> = NonNullable<Parameters<Operation>[1]>;
+/** The data options an operation saves in its plan; callbacks and signals belong to each call. */
 export type ResumableOptions<Operation extends ResumableOperation> = Operation extends unknown
   ? Operation extends typeof verify ? ResumableVerificationOptions
   : Operation extends Uploads ? ResumableUploadOptions<Operation>
   : Operation extends typeof captureComplete ? ResumableCaptureCompleteOptions
   : 'fidelity' extends keyof OptionsOf<Operation> ? ResumableCaptureOptions
-  : 'icc' extends keyof OptionsOf<Operation> ? ResumableJPEGOptions
+  : 'effort' extends keyof OptionsOf<Operation> ? ResumableJPEGOptions
   : ResumableRestoreOptions
   : never;
 type InputOf<Operation extends ResumableOperation> = Operation extends unknown
@@ -130,7 +130,13 @@ type InputOf<Operation extends ResumableOperation> = Operation extends unknown
 interface OperationContext<Operation extends ResumableOperation = ResumableOperation> {
   /** Pass the imported verb itself: capture, recompress, restore, encode, fit, variants or verify. */
   readonly operation: Operation;
+  /** Where the original, parts and checkpoints live; every call of one job gets the same store. */
   readonly store: ResumableStore;
+  /** Optional memory admission, in bytes, on each call. Uses measured working sets with 10% headroom and
+   * 32,000,000 bytes for the host. Unmeasured sizes, source types or verification choices refuse with JXL_MEMORY.
+   * Measurements cover PNG8 encode/fit and baseline 4:2:0 JPEG recompress. On advance it also bounds what a call holds
+   * of the job's saved values (JXL_MEMORY past it); without it the host's allocation is the limit. */
+  readonly memoryBytes?: number;
 }
 /** The operation alone determines the admitted source and option shapes. */
 export type StartOptions<Operation extends ResumableOperation = ResumableOperation> = Operation extends unknown ? OperationContext<Operation> & {
@@ -144,10 +150,11 @@ export type StartOptions<Operation extends ResumableOperation = ResumableOperati
   : {readonly options: ResumableOptions<NoInfer<Operation>>}) : never;
 export interface FinishOptions<Operation extends ResumableOperation = ResumableOperation> extends OperationContext<Operation> {
   /** The input start was given, the same descriptor: a checkpoint of another original is refused. */
-  readonly input: ResumableInput;
-  readonly signal?: AbortSignal;
+  readonly input: InputOf<NoInfer<Operation>>;
+  /** Aborts this call; the job stays resumable from its last checkpoint. Explicit undefined is accepted. */
+  readonly signal?: AbortSignal | undefined;
 }
-export interface AdvanceOptions extends FinishOptions {
+export interface AdvanceOptions<Operation extends ResumableOperation = ResumableOperation> extends FinishOptions<Operation> {
   /** `ms`: positive milliseconds, at most 60000; defaults to {ms: 30}. A call advances at least one step. `reads`: the store
    * reads a call may make, for a host that allows few calls a request (none by default). */
   readonly budget?: {readonly ms: number; readonly reads?: number};
@@ -162,26 +169,35 @@ export interface AdvanceResult {
   readonly released: readonly PartRef[];
 }
 
-/** Start the operation over the stored original and return its first durable checkpoint. */
+/** Start the operation over the stored original and return its first durable checkpoint.
+ * Invalid operation, store or verification settings refuse JXL_OPTIONS; an operation without resumable steps refuses JXL_UNSUPPORTED; missing decoder or verification setup refuses JXL_PLATFORM. */
 export function start<Operation extends ResumableOperation>(options: OperationContext<Operation> & StartOptions<Operation>): Promise<Checkpoint>;
-/** Advance the latest checkpoint within this call's budget, awaiting every new part's write. */
-export function advance(checkpoint: Checkpoint, options: AdvanceOptions): Promise<AdvanceResult>;
+/** Advance the latest checkpoint within this call's budget, awaiting every new part's write.
+ * Invalid budget.ms or budget.reads, or a missing verifier for a verifying checkpoint, refuses JXL_OPTIONS. */
+export function advance<Operation extends ResumableOperation>(checkpoint: Checkpoint, options: AdvanceOptions<Operation>): Promise<AdvanceResult>;
 type VerifiedResult<Result> = Result extends readonly (infer Item)[] ? Array<VerifiedResult<Item>>
   : Result & {readonly verification?: VerificationReceipt};
 /** Assemble a finished checkpoint's output and return the ordinary result, or variants' list. verification is
  * present only when start asked for it. A verify job returns its receipt without reading either image.
- * finish does no whole-file hashing, decoding or scoring. */
+ * finish does no whole-file hashing, decoding or scoring.
+ * An assembled result beyond memoryBytes or a failed allocation refuses JXL_MEMORY; incomplete or missing saved output refuses JXL_INPUT. */
 export function finish<Operation extends ResumableOperation>(checkpoint: Checkpoint, options: FinishOptions<Operation>): Promise<
   Operation extends typeof verify ? VerificationReceipt : VerifiedResult<Awaited<ReturnType<Operation>>>>;
 
 /** Whether a resumable job runs within a Cloudflare Workers isolate's 128 MB, from rapier-jxl's measured table: the
  * Node estimate (total peak minus bare runtime) x 1.1 <= 96,000,000 B, admitted only where every measured size up to the
- * first at least this large was admitted. A row not measured is not admitted. */
+ * first at least this large was admitted. Pass the imported operation function (encode, recompress, etc.), never
+ * the operation name as a string. The answer rests on the next measured size bucket at least width x height pixels,
+ * which can be larger than the requested picture. A size without a matching row is not admitted. */
 export interface WorkerAdmission {
   readonly admitted: boolean;
-  /** The measured size the answer rests on, and its estimate in bytes; null where nothing was measured. */
+  /** The next measured size at least the requested pixel count, with estimated bytes; null without a row.
+ * Invalid dimensions, kind or operation value refuse JXL_OPTIONS; an operation without resumable steps refuses JXL_UNSUPPORTED. */
   readonly measured: {readonly pixels: number; readonly estimate: number | null} | null;
 }
-export function workerAdmission(options: {readonly operation: ResumableOperation; readonly options?: object; readonly width: number; readonly height: number; readonly kind?: ResumableInput['kind']}): WorkerAdmission;
+export function workerAdmission<Operation extends ResumableOperation>(options: {readonly operation: Operation; readonly options?: ResumableOptions<NoInfer<Operation>>; readonly width: number; readonly height: number; readonly kind?: ResumableInput['kind']}): WorkerAdmission;
 
 export {};
+
+/** Every refusal: a coded Error. */
+export type {CodecError, ErrorCode} from './types.mjs';

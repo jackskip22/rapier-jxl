@@ -64,26 +64,22 @@ function paddedPhotoExtras(channels, width, height, factor) {
   });
 }
 
-export function photoExtraChannelData(channel) {
-  const {data, width, height, shift, factor, hshift, vshift} = channel;
-  return {data, width, height, shift, factor, ...(hshift !== undefined ? {hshift} : {}), ...(vshift !== undefined ? {vshift} : {})};
-}
 
-export function firstGroupedPhotoExtra(channels) {
+function firstGroupedPhotoExtra(channels) {
   let firstGrouped = 0;
   while (firstGrouped < channels.length && channels[firstGrouped].width <= 256 && channels[firstGrouped].height <= 256) firstGrouped++;
   return firstGrouped;
 }
-export function photoExtraGlobalPieces(channels, firstGrouped) {
+function photoExtraGlobalPieces(channels, firstGrouped) {
   const planes = channels.slice(0, firstGrouped);
   if (!planes.length) planes.push({data: new Int32Array(0), width: 0, height: 0, shift: 0});
   return planes.map(channel => ({channel, left: 0, top: 0, width: channel.width, height: channel.height}));
 }
-export function photoExtraGroupPieces(channels, firstGrouped, x, y, extent, minimum, maximum) {
+function photoExtraGroupPieces(channels, firstGrouped, x, y, extent, minimum, maximum) {
   return channels.slice(firstGrouped).filter(channel => channel.shift >= minimum && channel.shift <= maximum)
     .map(channel => channelPiece(channel, x, y, extent)).filter(item => item.width && item.height);
 }
-export function photoExtraStreams(channels) {
+function photoExtraStreams(channels) {
   const firstGrouped = firstGroupedPhotoExtra(channels);
   const write = (writer, pieces) => {
     if (!pieces.length) return;

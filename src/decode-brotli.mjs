@@ -112,7 +112,7 @@ function dictionaryWord(length, wordId, r, dictionary, remaining) {
 }
 
 const readerAt = (bytes, bit = 0) => { const r = new JxlBits(sliceBytes(bytes, 0), true); r.bit = bit; return r; };
-function settings(bytes, {maxOutput = 268435456, maxBlocks = 65536, dictionary} = {}) {
+function settings(bytes, {maxOutput = Number.MAX_SAFE_INTEGER, maxBlocks = Number.MAX_SAFE_INTEGER, dictionary} = {}) {
   requireDecode(bytes instanceof Uint8Array && Number.isSafeInteger(maxOutput) && maxOutput >= 0 &&
     Number.isSafeInteger(maxBlocks) && maxBlocks > 0, 'Invalid Brotli input or resource limit.');
   let words;

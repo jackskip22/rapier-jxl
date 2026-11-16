@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: MIT
 import {fitSearch} from '../target-search.mjs';
 import {ordinaryStillDecision} from './ordinary-still-policy.mjs';
-import {lowWebpFacts} from './low-webp-quality.mjs';
+import {lowIntentFacts} from './low-intent-quality.mjs';
 import {fitOptions} from './preparation-options.mjs';
 import {encodeOptions} from './encode-options.mjs';
-import {check, fail, callers, isCaller, progressOf} from './primitives.mjs';
+import {check, fail, callers, isCaller, progressOf, PIXELS} from './primitives.mjs';
 import {acquireSource} from './preparation-source.mjs';
 import {preparedResult, preparedEncode, finishPrepared} from './preparation-result.mjs';
-import {jpegDisplayDimensions, jpegReconstruction} from './preparation-jpeg.mjs';
-import {admitJpeg} from './input.mjs';
-import {FIT_BYTES} from './result-reference.mjs';
+import {FIT_BYTES, RESULT_REFERENCE, resultFacts, originalSize} from './result-reference.mjs';
+import {JPEG_SOURCE, jpegSource, chooseJpeg} from './jpeg-choice.mjs';
 import {sourceIntent} from './preparation-source.mjs';
 import {withRenderingIntent} from './header-intent.mjs';
 import {journaled} from '../step-journal.mjs';
@@ -19,10 +18,10 @@ export const intended = (result, source) => result.bytes && sourceIntent(source)
 export const intentPolicy = (policy, source) => sourceIntent(source) && policy.maxBytes > INTENT_BYTES ? {...policy, maxBytes: policy.maxBytes - INTENT_BYTES} : policy;
 import {PREVIEW} from './preview.mjs';
 
-export function fitSettle(picture, effort) {
+export function fitSettle(picture, effort, jpeg) {
   let facts;
   return q => {
-    const decision = ordinaryStillDecision(q / 100, picture, {facts: facts ??= lowWebpFacts(picture), effort, filteredStill: true});
+    const decision = ordinaryStillDecision(q / 100, picture, {facts: facts ??= lowIntentFacts(picture), effort, filteredStill: true, jpeg});
     return decision?.lowFilteredQuality !== undefined ? decision.lowFilteredQuality + 0.5 : decision?.quality ?? q;
   };
 }
@@ -44,8 +43,10 @@ export async function fitPrepared(encode, picture, policy, capabilities = {}) {
   });
   const initial = policy.probed ? [policy.probed] : null, spent = policy.spentProbes ?? 0;
   const settleEffort = rest.effort ?? (capabilities.admitEncode ?? encodeOptions)({}).effort;
+  const original = rest[JPEG_SOURCE];
   const candidates = fitSearch(maxBytes, {...search, maxProbes: search.maxProbes - spent,
-    picture, effort: rest.effort, initial, settle: picture?.data && fitSettle(picture, settleEffort)});
+    picture, effort: rest.effort, initial, settle: picture?.data && fitSettle(picture, settleEffort,
+      original?.preserve === false || rest.readAs !== undefined ? undefined : original?.info)});
   const facts = new WeakMap();
   let next = candidates.next(), count = spent + (initial?.length ?? 0), reuse, encoded = false, failed = false;
   try {
@@ -71,7 +72,7 @@ export async function fitPrepared(encode, picture, policy, capabilities = {}) {
           if (result.fitted) {
             onProgress?.(1); check(signal);
             const {fitted: {quality, fits}, ...found} = result, {width, height} = picture;
-            return fits ? {...preparedResult(bytes, {quality}, picture), ...found, bytes} : {fits: false, width, height};
+            return fits ? {...preparedResult(bytes, {quality}, picture), ...found, bytes} : {meetsTarget: false, width, height};
           }
           encoded = true;
         }
@@ -83,7 +84,7 @@ export async function fitPrepared(encode, picture, policy, capabilities = {}) {
       }
       check(signal);
       if (bytes !== null && (!(bytes instanceof Uint8Array) || !bytes.byteLength))
-        throw fail('JXL_INTERNAL', 'The encoder must return a nonempty Uint8Array.');
+        throw fail('JXL_INTERNAL', "Incomplete output file; report the input and options.");
       if (bytes) options[PREVIEW]?.(bytes, {width: picture.width, height: picture.height, measurements: facts.get(bytes)?.measurements ?? []});
       count++;
       next = candidates.next({bytes});
@@ -91,7 +92,7 @@ export async function fitPrepared(encode, picture, policy, capabilities = {}) {
     onProgress?.(1); check(signal);
     const {bytes, quality} = next.value, {width, height} = picture;
     return bytes ? {...preparedResult(bytes, quality === 100 ? 'exact' : {quality}, picture), ...facts.get(bytes)}
-      : {fits: false, width, height};
+      : {meetsTarget: false, width, height};
   } catch (error) { failed = true; throw error; }
   finally {
     let cleanup, broken = false;
@@ -102,49 +103,40 @@ export async function fitPrepared(encode, picture, policy, capabilities = {}) {
 }
 
 export async function fitWith(encode, input, options, hooks = {}) {
-  let policy = fitOptions(options, hooks.admitEncode);
+  const original = options?.[JPEG_SOURCE];
+  if (original !== undefined) options = (({[JPEG_SOURCE]: _jpeg, ...rest}) => rest)(options);
+  const policy = fitOptions(options, hooks.admitEncode);
   policy.encode.onProgress = progressOf(policy.encode.onProgress, policy.encode.signal);
-  if (hooks.carriesJpeg && policy.search.maxQuality === 100 && policy.encode.readAs === undefined && policy.encode.features === undefined && typeof Blob === 'function' && input instanceof Blob) {
-    check(policy.encode.signal);
-    const head = new Uint8Array(await input.slice(0, 2).arrayBuffer());
-    check(policy.encode.signal);
-    let picture = null, original;
-    if (head[0] === 255 && head[1] === 216) {
-      await admitJpeg(input, policy.encode.maxPixels, policy.encode.signal);
-      original = new Uint8Array(await input.arrayBuffer());
-      check(policy.encode.signal);
-      try { picture = jpegDisplayDimensions(original, policy.encode.maxPixels); }
-      catch (error) { if (error?.code !== 'JXL_JPEG') throw error; }
-    }
-    check(policy.encode.signal);
-    if (picture) {
-      const {signal, onProgress: report} = policy.encode, probes = policy.search.maxProbes;
-      let previous = -1;
-      const progress = report && (fraction => {
-        if (!Number.isFinite(fraction) || fraction <= previous) return;
-        previous = fraction;
-        try { report(fraction); } catch (error) { throw callers(error); }
-      });
-      const bytes = await encode(input, {...policy.encode, fidelity: 'exact',
-        ...(progress && {onProgress: fraction => progress(fraction / probes)})});
-      check(signal);
-      const result = preparedResult(bytes, 'exact', picture, jpegReconstruction(bytes));
-      policy.encode[PREVIEW]?.(bytes, {width: picture.width, height: picture.height, measurements: []});
-      if (bytes.byteLength <= policy.maxBytes) {
-        progress?.(1); check(signal);
-        return finishPrepared(result, original,
-          {fidelity: policy.requestedFidelity, maxBytes: policy.maxBytes, signal});
-      }
-      policy = {...policy, spentProbes: 1,
-        encode: {...policy.encode, ...(progress && {onProgress: progress})}};
-    }
-  }
-  let orientation;
-  const taking = acquireSource(input, policy.encode, {...hooks, reference: value => { orientation = value.orientation; }});
-  const picture = await taking;
-  const {readAs: _spent, ...encodeOptions} = policy.encode;
-  const result = intended(await fitPrepared(encode, picture, {...intentPolicy(policy, picture), encode: encodeOptions}, hooks), picture);
+  const source = jpegSource(input, original), selected = {};
+  let orientation, picture, fitted;
+  const choosing = {...policy.encode, [RESULT_REFERENCE]: (reference, _source, facts) => {
+    if (reference) picture = reference;
+    if (facts) Object.assign(selected, facts);
+  }};
+  const pixels = async (settings = policy.encode, jpeg, spentProbes = 0) => {
+    picture = await acquireSource(input, settings, {...hooks, reference: value => { orientation = value.orientation; }});
+    const {readAs: _spent, ...encoding} = settings;
+    const context = jpeg ? {[JPEG_SOURCE]: {bytes: source, info: jpeg,
+      preserve: original?.preserve !== false && settings.readAs === undefined}, jpeg: 'pixels'} : {};
+    fitted = intended(await fitPrepared(encode, picture, {...intentPolicy(policy, picture),
+      spentProbes: spentProbes + (original?.spentProbes ?? 0),
+      encode: {...encoding, ...context}}, hooks), picture);
+    resultFacts(settings, fitted);
+    return fitted.bytes;
+  };
+  const effort = policy.encode.effort ?? (hooks.admitEncode ? hooks.admitEncode({}).effort : hooks.carriesJpeg ? 3 : 7);
+  const bytes = source ? await chooseJpeg(source, {effort, quality: policy.search.maxQuality === 100 ? 100 : 90,
+    qualityIntent: policy.search.maxQuality / 100}, choosing, {signal: policy.encode.signal,
+      maxPixels: policy.encode.maxPixels ?? PIXELS, maxBytes: policy.maxBytes, probes: policy.search.maxProbes,
+      journal: hooks.journal, preserve: original?.preserve !== false,
+      carry: (original, effort, carryHooks) => encode(new Blob([original], {type: 'image/jpeg'}), {
+        fidelity: 'exact', effort, maxPixels: carryHooks.maxPixels, signal: carryHooks.signal,
+        onProgress: carryHooks.onProgress})}, pixels) : await pixels();
+  const result = bytes ? {...preparedResult(bytes, selected.fidelity ?? fitted?.fidelity ?? 'exact', picture,
+    selected.kept === 'jpeg-bytes' ? 'jpeg' : undefined), ...fitted, ...selected, bytes} : fitted;
+  const originalBytes = selected.originalBytes ?? originalSize(input);
+  if (originalBytes !== undefined) result.originalBytes = originalBytes;
   return finishPrepared(result, picture, {
     fidelity: policy.requestedFidelity, readAs: policy.encode.readAs, maxBytes: policy.maxBytes, signal: policy.encode.signal,
-    ...(orientation > 1 && {transform: {width: picture.width, height: picture.height}})});
+    ...(result.kept !== 'jpeg-bytes' && orientation > 1 && {transform: {width: picture.width, height: picture.height}})});
 }

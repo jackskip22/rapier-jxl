@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
+import {traced, tracing} from './stage-trace.mjs';
+import {fault} from './fault.mjs';
 import {GC_DS} from './gpu-arithmetic.mjs';
-import {XFMA, gpuS2Prepare, gpuS2Record, gpuS2Decode} from './gpu-s2.mjs';
-import {gpuComputeSet, gpuBuffers} from './gpu-kit.mjs';
+import {XFMA, gpuS2Prepare, gpuS2Record, gpuS2Decode, gpuS2Pipelines} from './gpu-s2.mjs';
+import {gpuSplits as split, gpuDestroy, gpuComputeSet, gpuScoped, gpuWrite, gpuAlloc, gpuStep, gpuRead, gpuHeld} from './gpu-kit.mjs';
 import {TRANSFORMS, basis, basisT, llfDivisors} from './vardct-bases.mjs';
 import {scaledBasis, restorePlanes} from './vardct-inverse.mjs';
 
@@ -14,30 +16,33 @@ const f = v => { const s = Math.fround(v).toString(); return /[.eE]/.test(s) ? s
 
 const RENDER_SHADER = `${GC_DS}
 struct U { width: u32, height: u32, xsize: u32, count: u32, blocks: u32, one: f32, factor: f32, cap: u32,
-  ints: u32, owner: u32, blk: u32, fac: u32, qtab: u32, tabs: u32, grp: u32, maps: u32, lf: u32, consts: u32, cells: u32, pad2: u32 }
+  ints: u32, owner: u32, blk: u32, fac: u32, qtab: u32, tabs: u32, grp: u32, maps: u32, lf: u32, consts: u32, cells: u32, pad2: u32,
+  ibase: u32, bbase: u32, rbase: u32, lrows: u32, py0: u32, wh: u32, pad3: u32, pad4: u32 }
 @group(0) @binding(0) var<uniform> P: U;
 @group(0) @binding(1) var<storage, read> M: array<u32>;
 @group(0) @binding(2) var<storage, read_write> C: array<vec4f>;
 @group(0) @binding(3) var<storage, read_write> outp: array<u32>;
 @group(0) @binding(4) var<storage, read_write> cnt: array<atomic<u32>>;
 @group(0) @binding(5) var<storage, read_write> lst: array<u32>;
+@group(0) @binding(6) var<storage, read_write> R0: array<vec4f>;
 fn flag(t: u32, v: u32) { let k = atomicAdd(&cnt[0], 1u); if (k < P.cap) { lst[2u * k] = t; lst[2u * k + 1u] = v; } }
-fn ints(i: u32) -> i32 {
+fn ints(g: u32) -> i32 {
+  let i = g - P.ibase;
   if (P.owner != 0u) {
     let w = bitcast<i32>(M[P.ints + (i >> 1u)]);
     return select((w << 16) >> 16, w >> 16, (i & 1u) != 0u);
   }
   return bitcast<i32>(M[P.ints + i]);
 }
-fn blk(i: u32) -> u32 { return M[P.blk + i]; }
-fn fac(i: u32) -> f32 { return bitcast<f32>(M[P.fac + i]); }
+fn blk(i: u32) -> u32 { return M[P.blk + i - P.bbase * ${BW}u]; }
+fn fac(i: u32) -> f32 { return bitcast<f32>(M[P.fac + i - P.bbase * 6u]); }
 fn qtab(i: u32) -> f32 { return bitcast<f32>(M[P.qtab + i]); }
 fn tabs(i: u32) -> f32 { return bitcast<f32>(M[P.tabs + i]); }
 fn grp(i: u32) -> u32 { return M[P.grp + i]; }
 fn maps(i: u32) -> i32 { return bitcast<i32>(M[P.maps + i]); }
 fn lf(i: u32) -> f32 { return bitcast<f32>(M[P.lf + i]); }
 fn consts(i: u32) -> f32 { return bitcast<f32>(M[P.consts + i]); }
-fn cells(i: u32) -> u32 { return M[P.cells + i]; }
+fn cells(i: u32) -> u32 { return M[P.cells + i - P.rbase * P.xsize]; }
 fn gcOne() -> f32 { return P.one; }
 fn ds(at: u32) -> vec2f { return vec2f(tabs(at), tabs(at + 1u)); }
 fn cs(k: u32) -> vec2f { return vec2f(consts(2u * k), consts(2u * k + 1u)); }
@@ -57,10 +62,10 @@ fn dq(b: u32, c: u32, i: u32) -> vec4f {
 fn coefficients(@builtin(global_invocation_id) id: vec3u) {
   let e = id.x + id.y * 65535u * 64u; if (e >= P.count) { return; }
   // The block holding e: blocks lie in the arena in order, each its X, Y and B coefficients in turn.
-  var lo = 0u;
-  if (P.pad2 != 0u) { lo = e / 192u; }
-  else { var hi = P.blocks; while (hi - lo > 1u) { let mid = (lo + hi) / 2u; if (blk(mid * ${BW}u) <= e) { lo = mid; } else { hi = mid; } } }
-  let b = lo; let o = b * ${BW}u; let size = blk(o + 6u) * blk(o + 7u); let c = (e - blk(o)) / size; let i = (e - blk(o)) % size;
+  let eg = e + P.ibase; var lo = P.bbase;
+  if (P.pad2 != 0u) { lo = eg / 192u; }
+  else { var hi = P.bbase + P.blocks; while (hi - lo > 1u) { let mid = (lo + hi) / 2u; if (blk(mid * ${BW}u) <= eg) { lo = mid; } else { hi = mid; } } }
+  let b = lo; let o = b * ${BW}u; let size = blk(o + 6u) * blk(o + 7u); let c = (eg - blk(o)) / size; let i = (eg - blk(o)) % size;
   var r = dq(b, c, i);
   if (c != 1u) {
     let y = dq(b, 1u, i);
@@ -84,11 +89,12 @@ fn coefficients(@builtin(global_invocation_id) id: vec3u) {
 @compute @workgroup_size(64)
 fn lowFrequencies(@builtin(global_invocation_id) id: vec3u) {
   let t = id.x + id.y * 65535u * 64u; if (t >= P.blocks * 3u * 1024u) { return; }
-  let b = t / 3072u; let c = (t / 1024u) % 3u; let k = t % 1024u; let o = b * ${BW}u;
+  let b = P.bbase + t / 3072u; let c = (t / 1024u) % 3u; let k = t % 1024u; let o = b * ${BW}u;
   let bw = blk(o + 12u); let bh = blk(o + 13u); let area = bw * bh; if (k >= area || ((blk(o + 3u) & 0x100u) != 0u)) { return; }
-  let bx = blk(o + 4u); let by = blk(o + 5u); let plane = c * P.xsize * ((P.height + 7u) / 8u);
+  let bx = blk(o + 4u); let by = blk(o + 5u); let plane = c * P.xsize * P.lrows;
   let W = max(bw, bh); let canon = blk(o + 11u); let pos = (k / W) * canon + k % W; let at = blk(o + c) + pos;
-  if (area == 1u) { C[at] = vec4f(lf(plane + by * P.xsize + bx), 0.0, 0.0, abs(lf(plane + by * P.xsize + bx))); return; }
+  let ly = by - P.rbase;
+  if (area == 1u) { C[at - P.ibase] = vec4f(lf(plane + ly * P.xsize + bx), 0.0, 0.0, abs(lf(plane + ly * P.xsize + bx))); return; }
   let tall = bh >= bw; var kk: u32; var v: u32;
   if (tall) { kk = k / bh; v = k % bh; } else { v = k / bw; kk = k % bw; }
   let bt = blk(o + 14u); let bb = blk(o + 15u);
@@ -96,41 +102,59 @@ fn lowFrequencies(@builtin(global_invocation_id) id: vec3u) {
   for (var y = 0u; y < bh; y++) {
     var row = vec2f(0.0); var rs = 0.0;
     for (var x = 0u; x < bw; x++) {
-      let m = vec2f(lf(plane + (by + y) * P.xsize + bx + x), 0.0); let p = dmul(m, ds(bt + 2u * (x * bw + kk)));
+      let m = vec2f(lf(plane + (ly + y) * P.xsize + bx + x), 0.0); let p = dmul(m, ds(bt + 2u * (x * bw + kk)));
       row = dadd(row, p); rs += abs(p.x);
     }
     let q = dmul(row, ds(bb + 2u * (v * bh + y))); low = dadd(low, q); S += rs * abs(tabs(bb + 2u * (v * bh + y)));
   }
   let d = ds(blk(o + 16u) + 2u * k); let r = ddiv(low, d); let ad = abs(d.x);
-  C[at] = vec4f(r, (S / ad) * ${f(1.01)} * (f32(2u * area + 8u) * ${f(OP + F64)} + ${f(3 * REP)}), abs(r.x));
+  C[at - P.ibase] = vec4f(r, (S / ad) * ${f(1.01)} * (f32(2u * area + 8u) * ${f(OP + F64)} + ${f(3 * REP)}), abs(r.x));
 }
-// One sample of one plane: the block's inverse transform at that position, certified against the binary32 store.
+// Separable 1D horizontal inverse DCT pass over padded block rows, followed by vertical 1D pass in samples.
+@compute @workgroup_size(64)
+fn samplesRow(@builtin(global_invocation_id) id: vec3u) {
+  let w8 = P.xsize * 8u; let h8 = P.lrows * 8u; let n8 = w8 * h8;
+  let t = id.x + id.y * 65535u * 64u; if (t >= 3u * n8) { return; }
+  let c = t / n8; let s = t % n8; let gx = s % w8; let gy = s / w8;
+  let b = cells((gy >> 3u) * P.xsize + (gx >> 3u)); let o = b * ${BW}u;
+  if ((blk(o + 3u) & 0x100u) != 0u) { R0[t] = vec4f(0.0); return; }
+  let w = blk(o + 6u); let h = blk(o + 7u); let x = gx - blk(o + 4u) * 8u; let v = gy - (blk(o + 5u) - P.rbase) * 8u;
+  let tall = h >= w; let cb = blk(o + c) - P.ibase; let tw = blk(o + 17u);
+  var acc = vec2f(0.0); var S = 0.0; var E = 0.0; var terms = 0u;
+  for (var u = 0u; u < w; u++) {
+    let k = C[cb + select(v * w + u, u * h + v, tall)];
+    if (k.w == 0.0 && k.x == 0.0) { continue; }
+    let bw = ds(tw + 2u * (u * w + x)); let p = dmul(k.xy, bw); let aw = abs(bw.x);
+    acc = dadd(acc, p); S += k.w * aw; E += k.z * aw; terms++;
+  }
+  if (terms == 0u) { R0[t] = vec4f(0.0); return; }
+  let Er = (E + S * (f32(2u * terms + 2u) * ${f(OP)} + f32(w + 12u) * ${f(F64)} + ${f(2 * REP)})) * ${f(1.01)};
+  R0[t] = vec4f(acc, Er, abs(acc.x));
+}
+// One sample of one plane: vertical 1D inverse transform from R0, certified against the binary32 store.
 @compute @workgroup_size(64)
 fn samples(@builtin(global_invocation_id) id: vec3u) {
-  let t = id.x + id.y * 65535u * 64u; let n = P.width * P.height; if (t >= 3u * n) { return; }
-  let c = t / n; let s = t % n; let px = s % P.width; let py = s / P.width;
+  let t = id.x + id.y * 65535u * 64u; let n = P.width * P.wh; if (t >= 3u * n) { return; }
+  let c = t / n; let s = t % n; let px = s % P.width; let py = P.py0 + s / P.width; let tg = c * P.width * P.height + py * P.width + px;
   let b = cells((py >> 3u) * P.xsize + (px >> 3u)); let o = b * ${BW}u;
-  if ((blk(o + 3u) & 0x100u) != 0u) { outp[t] = 0u; flag(t, 0xffffffffu); return; }
-  let w = blk(o + 6u); let h = blk(o + 7u); let x = px - blk(o + 4u) * 8u; let y = py - blk(o + 5u) * 8u; let tall = h >= w;
-  let cb = blk(o + c); let tw = blk(o + 17u); let th = blk(o + 18u);
+  if ((blk(o + 3u) & 0x100u) != 0u) { outp[t] = 0u; if (P.pad3 == 0u) { flag(tg, 0xffffffffu); } return; }
+  let w = blk(o + 6u); let h = blk(o + 7u); let y = py - blk(o + 5u) * 8u; let th = blk(o + 18u);
+  let w8 = P.xsize * 8u; let rBase = c * w8 * (P.lrows * 8u) + px; let gy0 = (blk(o + 5u) - P.rbase) * 8u;
   var acc = vec2f(0.0); var S = 0.0; var E = 0.0; var terms = 0u;
   for (var v = 0u; v < h; v++) {
-    let bh = ds(th + 2u * (v * h + y)); let ah = abs(bh.x);
-    for (var u = 0u; u < w; u++) {
-      let k = C[cb + select(v * w + u, u * h + v, tall)];
-      if (k.w == 0.0 && k.x == 0.0) { continue; }
-      let bw = ds(tw + 2u * (u * w + x)); let p = dmul(dmul(k.xy, bw), bh); let aw = abs(bw.x);
-      acc = dadd(acc, p); S += k.w * aw * ah; E += k.z * aw * ah; terms++;
-    }
+    let q = R0[rBase + (gy0 + v) * w8];
+    if (q.w == 0.0 && q.x == 0.0 && q.z == 0.0) { continue; }
+    let bh = ds(th + 2u * (v * h + y)); let p = dmul(q.xy, bh); let ah = abs(bh.x);
+    acc = dadd(acc, p); S += q.w * ah; E += q.z * ah; terms++;
   }
-  let B = E * ${f(1.01)} + S * ${f(1.01)} * (f32(3u * terms + 4u) * ${f(OP)} + f32(w + h + 24u) * ${f(F64)} + ${f(4 * REP)});
+  let B = E * ${f(1.01)} + S * ${f(1.01)} * (f32(2u * terms + 4u) * ${f(OP)} + f32(w + h + 24u) * ${f(F64)} + ${f(2 * REP)});
   let hi = acc.x; let valBits = bitcast<u32>(hi); outp[t] = valBits;
-  if (S == 0.0) { return; }
+  if (S == 0.0 && E == 0.0) { return; }
   let a = abs(hi); let bits = bitcast<u32>(a);
-  if (a < 1e-30) { flag(t, valBits); return; }
+  if (a < 1e-30) { flag(tg, valBits); return; }
   var ulp = bitcast<f32>(bits & 0x7f800000u) * ${f(2 ** -23)};
   if ((bits & 0x007fffffu) == 0u) { ulp = ulp * 0.5; }
-  if (!(abs(acc.y) + B < 0.5 * ulp)) { flag(t, valBits); }
+  if (!(abs(acc.y) + B < 0.5 * ulp)) { flag(tg, valBits); }
 }`;
 
 
@@ -139,7 +163,7 @@ const EPF_WINDOW = [[0, -2], [-1, -1], [0, -1], [1, -1], [-2, 0], [-1, 0], [0, 0
 const RESTORE_SHADER = `${GC_DS}
 ${XFMA}
 struct R { width: u32, height: u32, sw: u32, cap: u32, one: f32, side: f32, sideLo: f32, diag: f32, diagLo: f32, normal: f32, normalLo: f32,
-  border: f32, borderLo: f32, count: u32, knots: u32, low: u32, stage: u32, lbase: u32, pad0: u32, pad1: u32 }
+  border: f32, borderLo: f32, count: u32, knots: u32, low: u32, stage: u32, lbase: u32, wy0: u32, wh: u32, oy0: u32, oy1: u32, base: u32, pad0: u32 }
 @group(0) @binding(0) var<uniform> P: R;
 @group(0) @binding(1) var<storage, read> src: array<f32>;
 @group(0) @binding(2) var<storage, read> aux: array<f32>;
@@ -149,7 +173,7 @@ struct R { width: u32, height: u32, sw: u32, cap: u32, one: f32, side: f32, side
 @group(0) @binding(6) var<storage, read_write> lst: array<u32>;
 @group(0) @binding(7) var<storage, read_write> px: array<u32>;
 fn gcOne() -> f32 { return P.one; }
-fn at(c: u32, x: u32, y: u32) -> f32 { return src[c * P.width * P.height + y * P.width + x]; }
+fn at(c: u32, x: u32, y: u32) -> f32 { return src[c * P.width * P.wh + (y - P.wy0) * P.width + x]; }
 fn mir(v: i32, n: i32) -> u32 { if (v < 0) { return u32(-v - 1); } if (v >= n) { return u32(2 * n - v - 1); } return u32(v); }
 fn slot(stride: u32) -> u32 { let k = atomicAdd(&cnt[P.stage], 1u); return select(0xffffffffu, P.lbase + k * stride, k < P.cap); }
 // Whether the CPU's binary64 value, within B of v, stores as v.x.
@@ -163,8 +187,8 @@ fn sure(v: vec2f, B: f32, any: bool) -> bool {
 }
 @compute @workgroup_size(64)
 fn gaborish(@builtin(global_invocation_id) id: vec3u) {
-  let t = id.x + id.y * 65535u * 64u; let n = P.width * P.height; if (t >= 3u * n) { return; }
-  let c = t / n; let s = t % n; let x = s % P.width; let y = s / P.width;
+  let t = id.x + id.y * 65535u * 64u; let n = P.width * (P.oy1 - P.oy0); if (t >= 3u * n) { return; }
+  let c = t / n; let s = t % n; let x = s % P.width; let y = P.oy0 + s / P.width;
   let l = select(x - 1u, 0u, x == 0u); let r = min(x + 1u, P.width - 1u); let u = select(y - 1u, 0u, y == 0u); let d = min(y + 1u, P.height - 1u);
   let q = array<f32, 9>(at(c, x, y), at(c, l, y), at(c, r, y), at(c, x, u), at(c, x, d), at(c, l, u), at(c, r, u), at(c, l, d), at(c, r, d));
   let s12 = ts(q[1], q[2]); let s34 = ts(q[3], q[4]); let sides = dadd(s12, s34);
@@ -175,7 +199,7 @@ fn gaborish(@builtin(global_invocation_id) id: vec3u) {
   let S = abs(P.normal) * (abs(q[0]) + abs(P.side) * sSides + abs(P.diag) * sDiags);
   let bits = bitcast<u32>(v.x); dst[t] = bits;
   if (!sure(v, S * ${f(1.01 * (14 * OP + 20 * F64 + 4 * REP))}, S != 0.0)) {
-    let k = slot(11u); if (k != 0xffffffffu) { lst[k] = t; lst[k + 1u] = bits; for (var j = 0u; j < 9u; j++) { lst[k + 2u + j] = bitcast<u32>(q[j]); } }
+    let k = slot(11u); if (k != 0xffffffffu) { lst[k] = c * P.width * P.height + y * P.width + x; lst[k + 1u] = bits; for (var j = 0u; j < 9u; j++) { lst[k + 2u + j] = bitcast<u32>(q[j]); } }
   }
 }
 fn epfAt(c: u32, x: i32, y: i32) -> f32 { return at(c, mir(x, i32(P.width)), mir(y, i32(P.height))); }
@@ -189,8 +213,8 @@ fn sad(c: u32, x: i32, y: i32, dx: i32, dy: i32) -> vec2f {
 }
 @compute @workgroup_size(64)
 fn epf1(@builtin(global_invocation_id) id: vec3u) {
-  let t = id.x + id.y * 65535u * 64u; let n = P.width * P.height; if (t >= n) { return; }
-  let x = t % P.width; let y = t / P.width; let sg = aux[(y >> 3u) * P.sw + (x >> 3u)];
+  let t = id.x + id.y * 65535u * 64u; let n = P.width * (P.oy1 - P.oy0); if (t >= n) { return; }
+  let x = t % P.width; let y = P.oy0 + t / P.width; let sg = aux[(y >> 3u) * P.sw + (x >> 3u)];
   if (sg < 0.3) { for (var c = 0u; c < 3u; c++) { dst[c * n + t] = bitcast<u32>(at(c, x, y)); } return; }
   let border = (x & 7u) == 0u || (x & 7u) == 7u || (y & 7u) == 0u || (y & 7u) == 7u;
   var factor = ddiv(vec2f(${f(-1.9330952441687866)}, ${f(-1.9330952441687866 - Math.fround(-1.9330952441687866))}), vec2f(sg, 0.0));
@@ -219,7 +243,7 @@ fn epf1(@builtin(global_invocation_id) id: vec3u) {
   if (!ok) {
     let k = slot(${6 + 3 * EPF_WINDOW.length}u);
     if (k != 0xffffffffu) {
-      lst[k] = t; lst[k + 1u] = bitcast<u32>(sg); lst[k + 2u] = select(0u, 1u, border);
+      lst[k] = y * P.width + x; lst[k + 1u] = bitcast<u32>(sg); lst[k + 2u] = select(0u, 1u, border);
       lst[k + 3u] = rbits[0]; lst[k + 4u] = rbits[1]; lst[k + 5u] = rbits[2];
       const OX = array<i32, 13>(0, -1, 0, 1, -2, -1, 0, 1, 2, -1, 0, 1, 0);
       const OY = array<i32, 13>(-2, -1, -1, -1, 0, 0, 0, 0, 0, 1, 1, 1, 2);
@@ -235,7 +259,7 @@ fn level(w: u32) -> u32 {
 // aux: root (3), bias (3), m (9), as the kernels' xyb reads them.
 @compute @workgroup_size(64)
 fn color(@builtin(global_invocation_id) id: vec3u) {
-  let t = id.x + id.y * 65535u * 64u; let n = P.width * P.height; if (t >= n) { return; }
+  let t = id.x + id.y * 65535u * 64u; let n = P.width * (P.oy1 - P.oy0); if (t >= n) { return; }
   let x = gcO(src[t]); let y = gcO(src[n + t]); let b = gcO(src[2u * n + t]);
   let l = gcO(gcO(y + x) - aux[0]); let q = gcO(gcO(y - x) - aux[1]); let s = gcO(b - aux[2]);
   let a = xfma(gcO(l * l), l, aux[3]);
@@ -248,15 +272,15 @@ fn color(@builtin(global_invocation_id) id: vec3u) {
     bad += inner.y + v.y; dst[k * n + t] = bitcast<u32>(v.x); word |= level(bitcast<u32>(v.x)) << (8u * k);
   }
   px[t] = word;
-  if (bad != 0.0) { let k = slot(4u); if (k != 0xffffffffu) { lst[k] = t; lst[k + 1u] = bitcast<u32>(x); lst[k + 2u] = bitcast<u32>(y); lst[k + 3u] = bitcast<u32>(b); } }
+  if (bad != 0.0) { let k = slot(4u); if (k != 0xffffffffu) { lst[k] = P.oy0 * P.width + t; lst[k + 1u] = bitcast<u32>(x); lst[k + 2u] = bitcast<u32>(y); lst[k + 3u] = bitcast<u32>(b); } }
 }
 // The native byte (photo-output.mjs encodedByte): the transfer's knots in aux from P.knots (V, R, S as double-single
 // pairs), the dither in aux[0..1024), and the exact rational polynomial fallback when a knot interval straddles a half step.
 fn byteOf(s: f32, d: f32) -> u32 { return u32(round(clamp(gcO(gcO(s * 255.0) + d), 0.0, 255.0))); }
 @compute @workgroup_size(64)
 fn native(@builtin(global_invocation_id) id: vec3u) {
-  let t = id.x + id.y * 65535u * 64u; let n = P.width * P.height; if (t >= n) { return; }
-  let col = t % P.width; let row = t / P.width; var word = 0xff000000u;
+  let t = id.x + id.y * 65535u * 64u; let n = P.width * (P.oy1 - P.oy0); if (t >= n) { return; }
+  let col = t % P.width; let row = P.oy0 + t / P.width; var word = 0xff000000u;
   for (var c = 0u; c < 3u; c++) {
     let v = src[c * n + t]; let d = aux[((row + 13u * c) & 31u) * 32u + ((col + select(select(0u, 23u, c == 1u), 14u, c == 2u)) & 31u)];
     var byte = 0u; var known = true; let low = bitcast<f32>(P.low);
@@ -279,7 +303,7 @@ fn native(@builtin(global_invocation_id) id: vec3u) {
       }
     }
     word |= byte << (8u * c);
-    if (!known) { let k = slot(3u); if (k != 0xffffffffu) { lst[k] = t * 3u + c; lst[k + 1u] = bitcast<u32>(v); lst[k + 2u] = bitcast<u32>(d); } }
+    if (!known) { let k = slot(3u); if (k != 0xffffffffu) { lst[k] = (P.oy0 * P.width + t) * 3u + c; lst[k + 1u] = bitcast<u32>(v); lst[k + 2u] = bitcast<u32>(d); } }
   }
   px[n + t] = word;
 }
@@ -287,28 +311,80 @@ fn native(@builtin(global_invocation_id) id: vec3u) {
 @compute @workgroup_size(64)
 fn scatter(@builtin(global_invocation_id) id: vec3u) {
   let t = id.x + id.y * 65535u * 64u; if (t >= P.count) { return; }
-  dst[table[2u * t]] = table[2u * t + 1u];
+  dst[table[2u * t] - P.base] = table[2u * t + 1u];
 }
 @compute @workgroup_size(64)
 fn scatterPx(@builtin(global_invocation_id) id: vec3u) {
   let t = id.x + id.y * 65535u * 64u; if (t >= P.count) { return; }
-  let i = table[3u * t]; px[i] = (px[i] & ~table[3u * t + 1u]) | table[3u * t + 2u];
+  let i = table[3u * t] - P.base; px[i] = (px[i] & ~table[3u * t + 1u]) | table[3u * t + 2u];
 }`;
 const ENTRIES = ['gaborish', 'epf1', 'color', 'native', 'scatter', 'scatterPx'];
+function rebuildBands(blocks, parts, width, height, xsize, ysize, total, narrow, most, maxBuffer) {
+  if (12 * width * height > maxBuffer) return false;
+  const groupRows = Math.ceil(height / 256), first = new Int32Array(groupRows + 1);
+  let row = 0;
+  for (let k = 0; k < blocks.length; k++) {
+    const b = blocks[k], r = b.y >> 5;
+    if (r < row - 1 || (b.y + b.bh - 1) >> 5 !== r || r >= groupRows) return false;
+    while (row <= r) first[row++] = k;
+  }
+  while (row <= groupRows) first[row++] = blocks.length;
+  const small = [], words = k => parts[k].length;
+  let at = 0;
+  for (const k of [4, 5, 6, 7, 9]) { small[k] = at; at += words(k); }
+  const coefAt = k => k < blocks.length ? blocks[k].coefficients[0] : total;
+  const band = (r0, r1) => {
+    const k0 = first[r0], k1 = first[r1], cy0 = r0 * 32, rc = Math.min(ysize, r1 * 32) - cy0, py0 = r0 * 256, wh = Math.min(height, r1 * 256) - py0;
+    const ibase = coefAt(k0), cnt = coefAt(k1) - ibase;
+    return {k0, nb: k1 - k0, ibase, cnt, intsWords: narrow ? Math.ceil(cnt / 2) : cnt, cy0, rc, py0, wh};
+  };
+  const window = list => {
+    const top = key => Math.max(...list.map(b => b[key]));
+    const ints = at, blk = ints + top('intsWords'), fac = blk + top('nb') * BW, lf = fac + top('nb') * 6, cells = lf + 3 * xsize * top('rc');
+    return {layout: {ints, blk, fac, lf, cells}, most: {C: top('cnt') * 16, R0: 3 * xsize * top('rc') * 64 * 16, O: 3 * width * top('wh') * 4, M: cells + xsize * top('rc')}};
+  };
+  const fits = list => { const {most: m} = window(list); return Math.max(m.C, m.R0, m.O, m.M * 4) <= most; };
+  const list = [];
+  for (let r0 = 0; r0 < groupRows;) {
+    let r1 = r0 + 1;
+    if (!fits([...list, band(r0, r1)])) return false;
+    while (r1 < groupRows && fits([...list, band(r0, r1 + 1)])) r1++;
+    list.push(band(r0, r1)); r0 = r1;
+  }
+  const tall = Math.min(height, Math.floor(most / (12 * width)) - 4);
+  if (tall < 1) return false;
+  const rows = [];
+  for (let y = 0; y < height; y += tall) rows.push([y, Math.min(height, y + tall)]);
+  return {render: {list, ...window(list)}, rows: {list: rows, most: tall}, small};
+}
+function scatterRuns(entries, words, span) {
+  if (span === Infinity) return [[0, entries]];
+  const m = entries.length / words, order = Array.from({length: m}, (_, k) => k).sort((a, b) => entries[a * words] - entries[b * words]), runs = [];
+  for (let j = 0; j < m;) {
+    const base = Math.floor(entries[order[j] * words] / span) * span;
+    let k = j; while (k < m && entries[order[k] * words] < base + span) k++;
+    const out = new Uint32Array((k - j) * words);
+    for (let q = j; q < k; q++) out.set(entries.subarray(order[q] * words, order[q] * words + words), (q - j) * words);
+    runs.push([base, out]); j = k;
+  }
+  return runs;
+}
+
 const pipelineSet = device => Promise.all([
-  gpuComputeSet(device, 'render', RENDER_SHADER, ['uniform', 'read-only-storage', 'storage', 'storage', 'storage', 'storage'], ['coefficients', 'lowFrequencies', 'samples']),
-  gpuComputeSet(device, 'restore', RESTORE_SHADER, ['uniform', 'read-only-storage', 'read-only-storage', 'storage', 'read-only-storage', 'storage', 'storage', 'storage'], ENTRIES),
-]).then(([r, o]) => ({...r, ...o, render: r.group, restore: o.group}));
+  gpuComputeSet(device, 'render', RENDER_SHADER, 'ursssss', ['coefficients', 'lowFrequencies', 'samplesRow', 'samples']),
+  gpuComputeSet(device, 'restore', RESTORE_SHADER, 'urrsrsss', ENTRIES),
+]).then(([r, o]) => ({...r, ...o}));
+export const gpuRebuildPipelines = device => Promise.all([pipelineSet(device), gpuS2Pipelines(device)]);
+
 const auxes = new WeakMap(), auxOf = (dither, fast) => {
   let aux = auxes.get(fast);
   if (!aux) {
     const K = fast.V.length; aux = new Float32Array(1024 + 6 * K); aux.set(dither);
-    for (let k = 0; k < K; k++) split([fast.V[k], fast.R[k], fast.S[k]], aux.subarray(1024 + 6 * k, 1030 + 6 * k));
+    for (let k = 0; k < K; k++) split([fast.V[k], fast.R[k], fast.S[k]], aux, 1024 + 6 * k);
     auxes.set(fast, aux);
   }
   return aux;
 };
-const split = (values, out = new Float32Array(values.length * 2)) => { values.forEach((v, i) => { const hi = Math.fround(v); out[2 * i] = hi; out[2 * i + 1] = Math.fround(v - hi); }); return out; };
 const f32 = new Float32Array(1), u32 = new Uint32Array(f32.buffer), asF = w => { u32[0] = w; return f32[0]; }, asU = v => { f32[0] = v; return u32[0]; };
 
 const GAB_AT = [[1, 1], [0, 1], [2, 1], [1, 0], [1, 2], [0, 0], [2, 0], [0, 2], [2, 2]];
@@ -338,213 +414,311 @@ function epfSettle(kernels, list, stride, width, n, epf) {
   return new Uint32Array(pairs);
 }
 
+
 export async function gpuRebuild(device, image, lib) {
   const [set, s2State] = await Promise.all([
     pipelineSet(device),
     lib.held && lib.s2 ? gpuS2Prepare(device, lib.s2.held, lib.s2.tables, lib.s2.reference, lib.s2.width, lib.s2.height) : null,
   ]);
-  const {rebuild, kernels, constants, native} = lib, {inputs} = rebuild(image, {inputs: true});
+  const whole = image.lazyStrategy ? image.lazyStrategy.materialize() : image;
+  const tIn = tracing() ? performance.now() : 0;
+  const {rebuild, kernels, constants, native} = lib, {inputs} = rebuild(whole, {inputs: true});
+  if (tIn) traced('rebuild:inputs', performance.now() - tIn);
   const {width, height, xsize, ysize, arena, tables, lf, groups, global, bias, numerator, blocks, filter, sigma} = inputs, n = width * height;
   const gab = filter.gaborish === true ? [0.115169525, 0.061248592] : filter.gaborish ? filter.gaborish[0] : null;
   if (inputs.ycbcr || image.alpha || width < 3 || height < 3 || (filter.epf.iters ?? 0) > 1 || filter.gaborish && filter.gaborish !== true &&
-    !filter.gaborish.every(([sd, dg]) => sd === gab[0] && dg === gab[1])) return null;
-  const cap = Math.max(4096, n >> 6), made = [];
+    !filter.gaborish.every(([sd, dg]) => sd === gab[0] && dg === gab[1])) { traced('rebuild-left:inputs', 0); return null; }
+  const bindMax = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize);
+  const cap = Math.min(Math.max(4096, n >> 6), Math.floor(bindMax / 260));
   const held = lib.held && (!lib.held.device || lib.held.device === device) ? lib.held : null;
-  const {kept, upKept, once, read: readAt, dispatch: run, bind} = gpuBuffers(device, held, made);
-  const dispatch = (encoder, pipeline, group, buffers, count) => run(encoder, pipeline, bind(group, buffers), count);
-  const read = async (source, bytes, name, offset = 0) => (await readAt([[source, offset, bytes]], name))[0];
-  device.pushErrorScope('validation'); device.pushErrorScope('out-of-memory');
-  let scopes = 2;
+  const made = [], alloc = gpuAlloc(device, made), [kept, upKept, once] = gpuHeld(device, held, alloc);
+  const dispatch = (target, kernel, buffers, count) => gpuStep(device, target, kernel, buffers, count);
+  const read = async (source, bytes, name, offset = 0) => (await gpuRead(device, alloc, [[source, offset, bytes]], undefined, name, kept))[0];
+  const tPack = tracing() ? performance.now() : 0;
   try {
-    const narrow = arena.BYTES_PER_ELEMENT === 2 ? 1 : 0, arenaWords = new Int32Array(arena.buffer, arena.byteOffset, Math.ceil(arena.byteLength / 4));
-    const qList = [], qAt = new Map();
-    let qTotal = 0;
-    for (const [t, m] of tables) {
-      qAt.set(t, qTotal);
-      const len = m[0].length, q = new Float32Array(len * 3);
-      q.set(m[0]); q.set(m[1], len); q.set(m[2], len * 2);
-      qList.push(q); qTotal += q.length;
-    }
-    const qtab = new Float32Array(qTotal); { let at = 0; for (const q of qList) { qtab.set(q, at); at += q.length; } }
-    const lfAll = new Float32Array(3 * xsize * ysize); lf.forEach((p, c) => lfAll.set(p.subarray(0, xsize * ysize), c * xsize * ysize));
-    let layout = held?.layout, sameLayout = !!(layout && layout.xsize === xsize && layout.ysize === ysize && layout.len === blocks.length && layout.arenaWordsLen === arenaWords.length);
-    if (sameLayout) {
-      for (let k = 0; k < blocks.length; k++) {
-        const b = blocks[k], o = k * BW;
-        if (layout.blk[o + 3] !== (b.id | (SPECIAL(b.id) ? 0x100 : 0)) || layout.blk[o + 4] !== b.x || layout.blk[o + 5] !== b.y) { sameLayout = false; break; }
+    return await gpuScoped(device, 'gpu-render', async () => {
+      const narrow = arena.BYTES_PER_ELEMENT === 2 ? 1 : 0, arenaWords = new Int32Array(arena.buffer, arena.byteOffset, Math.ceil(arena.byteLength / 4));
+      const qList = [], qAt = new Map();
+      let qTotal = 0;
+      for (const [t, m] of tables) {
+        qAt.set(t, qTotal);
+        const len = m[0].length, q = new Float32Array(len * 3);
+        q.set(m[0]); q.set(m[1], len); q.set(m[2], len * 2);
+        qList.push(q); qTotal += q.length;
       }
-    }
-    let blk, cells, tabs, plainGrid;
-    if (sameLayout) {
-      ({blk, cells, tabs, plainGrid} = layout);
-    } else {
-      const tabList = [], tabAt = new Map(), table = (key, make) => {
-        if (!tabAt.has(key)) { let at = 0; for (const t of tabList) at += t.length * 2; tabList.push(make()); tabAt.set(key, at); }
-        return tabAt.get(key);
-      };
-      blk = new Uint32Array(blocks.length * BW); cells = new Uint32Array(xsize * ysize); plainGrid = blocks.length === xsize * ysize ? 1 : 0;
-      for (let k = 0; k < blocks.length; k++) {
-        const b = blocks[k], o = k * BW, shape = TRANSFORMS[b.id], w = shape.width, h = shape.height, W = Math.max(b.bw, b.bh), H = Math.min(b.bw, b.bh), spec = SPECIAL(b.id);
-        if (b.id !== 0) plainGrid = 0;
-        blk[o] = b.coefficients[0]; blk[o + 1] = b.coefficients[1]; blk[o + 2] = b.coefficients[2];
-        blk[o + 3] = b.id | (spec ? 0x100 : 0); blk[o + 4] = b.x; blk[o + 5] = b.y; blk[o + 6] = w; blk[o + 7] = h;
-        blk[o + 8] = qAt.get(shape.table); blk[o + 9] = b.lfGroup; blk[o + 10] = !spec && h >= w ? 1 : 0; blk[o + 11] = Math.max(w, h);
-        blk[o + 12] = b.bw; blk[o + 13] = b.bh;
-        blk[o + 14] = b.area > 1 ? table('T' + b.bw, () => basisT(b.bw)) : 0;
-        blk[o + 15] = b.area > 1 ? table('B' + b.bh, () => basis(b.bh)) : 0;
-        blk[o + 16] = b.area > 1 ? table('D' + W + 'x' + H, () => llfDivisors(W, H)) : 0;
-        blk[o + 17] = table('S' + w, () => scaledBasis(w));
-        blk[o + 18] = table('S' + h, () => scaledBasis(h));
-        for (let y = 0; y < b.bh; y++) cells.fill(k, (b.y + y) * xsize + b.x, (b.y + y) * xsize + b.x + b.bw);
+      const qtab = new Float32Array(qTotal); { let at = 0; for (const q of qList) { qtab.set(q, at); at += q.length; } }
+      const lfAll = new Float32Array(3 * xsize * ysize); lf.forEach((p, c) => lfAll.set(p.subarray(0, xsize * ysize), c * xsize * ysize));
+      let layout = held?.layout, sameLayout = !!(layout && layout.xsize === xsize && layout.ysize === ysize && layout.len === blocks.length && layout.arenaWordsLen === arenaWords.length);
+      if (sameLayout) {
+        for (let k = 0; k < blocks.length; k++) {
+          const b = blocks[k], o = k * BW;
+          if (layout.blk[o + 3] !== (b.id | (SPECIAL(b.id) ? 0x100 : 0)) || layout.blk[o + 4] !== b.x || layout.blk[o + 5] !== b.y) { sameLayout = false; break; }
+        }
       }
-      tabs = new Float32Array(tabList.reduce((s, t) => s + t.length * 2, 0));
-      let at = 0; for (const t of tabList) { split(t, tabs.subarray(at, at + t.length * 2)); at += t.length * 2; }
-    }
-    const uniformMult = !image.quantFields ? blocks[0]?.multiplier ?? 32 : null;
-    const sameFac = !!(sameLayout && uniformMult !== null && layout.uniformMult === uniformMult && layout.globalScale === global.globalScale);
-    let fac;
-    if (sameFac) fac = layout.fac;
-    else {
-      fac = new Float32Array(blocks.length * 6);
-      for (let k = 0; k < blocks.length; k++) {
-        const factor = 65536 / (global.globalScale * blocks[k].multiplier), hi = Math.fround(factor), lo = Math.fround(factor - hi), o = k * 6;
-        fac[o] = fac[o + 2] = fac[o + 4] = hi; fac[o + 1] = fac[o + 3] = fac[o + 5] = lo;
+      let blk, cells, tabs, plainGrid;
+      if (sameLayout) ({blk, cells, tabs, plainGrid} = layout);
+      else {
+        const tabList = [], tabAt = new Map(), table = (key, make) => {
+          if (!tabAt.has(key)) { let at = 0; for (const t of tabList) at += t.length * 2; tabList.push(make()); tabAt.set(key, at); }
+          return tabAt.get(key);
+        };
+        blk = new Uint32Array(blocks.length * BW); cells = new Uint32Array(xsize * ysize); plainGrid = blocks.length === xsize * ysize ? 1 : 0;
+        for (let k = 0; k < blocks.length; k++) {
+          const b = blocks[k], o = k * BW, shape = TRANSFORMS[b.id], w = shape.width, h = shape.height, W = Math.max(b.bw, b.bh), H = Math.min(b.bw, b.bh), spec = SPECIAL(b.id);
+          if (b.id !== 0) plainGrid = 0;
+          blk[o] = b.coefficients[0]; blk[o + 1] = b.coefficients[1]; blk[o + 2] = b.coefficients[2];
+          blk[o + 3] = b.id | (spec ? 0x100 : 0); blk[o + 4] = b.x; blk[o + 5] = b.y; blk[o + 6] = w; blk[o + 7] = h;
+          blk[o + 8] = qAt.get(shape.table); blk[o + 9] = b.lfGroup; blk[o + 10] = !spec && h >= w ? 1 : 0; blk[o + 11] = Math.max(w, h);
+          blk[o + 12] = b.bw; blk[o + 13] = b.bh;
+          blk[o + 14] = b.area > 1 ? table('T' + b.bw, () => basisT(b.bw)) : 0;
+          blk[o + 15] = b.area > 1 ? table('B' + b.bh, () => basis(b.bh)) : 0;
+          blk[o + 16] = b.area > 1 ? table('D' + W + 'x' + H, () => llfDivisors(W, H)) : 0;
+          blk[o + 17] = table('S' + w, () => scaledBasis(w));
+          blk[o + 18] = table('S' + h, () => scaledBasis(h));
+          for (let y = 0; y < b.bh; y++) cells.fill(k, (b.y + y) * xsize + b.x, (b.y + y) * xsize + b.x + b.bw);
+        }
+        tabs = new Float32Array(tabList.reduce((s, t) => s + t.length * 2, 0));
+        let at = 0; for (const t of tabList) { split(t, tabs, at); at += t.length * 2; }
       }
-    }
-    const sameCfl = !!(sameLayout && image.cfl && layout.cfl === image.cfl);
-    let grp, maps, consts;
-    if (sameCfl) {
-      grp = layout.grp; maps = layout.maps; consts = layout.consts;
-    } else {
-      grp = new Uint32Array(groups.length * 5); maps = new Int32Array(groups.reduce((s, g) => s + g.xFromY.length + g.bFromY.length, 0));
-      let mapAt = 0;
-      groups.forEach((g, k) => { grp.set([mapAt, mapAt + g.xFromY.length, g.width, g.bx, g.by], k * 5); maps.set(g.xFromY, mapAt); maps.set(g.bFromY, mapAt + g.xFromY.length); mapAt += g.xFromY.length + g.bFromY.length; });
-      consts = split([bias[0], bias[1], bias[2], numerator, global.correlation.baseX, global.correlation.baseB]);
-    }
-    const parts = [arenaWords, new Uint32Array(0), blk, fac, qtab, tabs, grp, maps, lfAll, consts, cells];
-    const offsets = [], words = parts.reduce((s, p) => (offsets.push(s), s + p.length), 0), MB = kept('MB', words * 4);
-    const mbFresh = layout?.mb !== MB;
-    for (let k = 0; k < parts.length; k++) {
-      const p = parts[k];
-      if (!p.length) continue;
-      if (!mbFresh && sameLayout && (k === 2 || k === 5 || k === 9 || k === 10)) continue;
-      if (!mbFresh && sameFac && k === 3) continue;
-      if (!mbFresh && sameCfl && (k === 6 || k === 7)) continue;
-      device.queue.writeBuffer(MB, offsets[k] * 4, p.buffer, p.byteOffset, p.byteLength);
-    }
-    if (held) held.layout = {xsize, ysize, len: blocks.length, arenaWordsLen: arenaWords.length, blk, cells, tabs, plainGrid, fac, uniformMult, globalScale: global.globalScale, cfl: image.cfl, grp, maps, consts, mb: MB};
+      const uniformMult = !image.quantFields ? blocks[0]?.multiplier ?? 32 : null;
+      const sameFac = !!(sameLayout && uniformMult !== null && layout.uniformMult === uniformMult && layout.globalScale === global.globalScale);
+      let fac;
+      if (sameFac) fac = layout.fac;
+      else {
+        fac = new Float32Array(blocks.length * 6);
+        for (let k = 0; k < blocks.length; k++) {
+          const factor = 65536 / (global.globalScale * blocks[k].multiplier), hi = Math.fround(factor), lo = Math.fround(factor - hi), o = k * 6;
+          fac[o] = fac[o + 2] = fac[o + 4] = hi; fac[o + 1] = fac[o + 3] = fac[o + 5] = lo;
+        }
+      }
+      const sameCfl = !!(sameLayout && image.cfl && layout.cfl === image.cfl);
+      let grp, maps, consts;
+      if (sameCfl) ({grp, maps, consts} = layout);
+      else {
+        grp = new Uint32Array(groups.length * 5); maps = new Int32Array(groups.reduce((s, g) => s + g.xFromY.length + g.bFromY.length, 0));
+        let mapAt = 0;
+        groups.forEach((g, k) => { grp.set([mapAt, mapAt + g.xFromY.length, g.width, g.bx, g.by], k * 5); maps.set(g.xFromY, mapAt); maps.set(g.bFromY, mapAt + g.xFromY.length); mapAt += g.xFromY.length + g.bFromY.length; });
+        consts = split([bias[0], bias[1], bias[2], numerator, global.correlation.baseX, global.correlation.baseB]);
+      }
+      const parts = [arenaWords, new Uint32Array(0), blk, fac, qtab, tabs, grp, maps, lfAll, consts, cells];
+      const offsets = [], words = parts.reduce((s, p) => (offsets.push(s), s + p.length), 0), MB = kept('MB', words * 4);
+      const mbFresh = layout?.mb !== MB;
+      for (let k = 0; k < parts.length; k++) {
+        const p = parts[k];
+        if (!p.length) continue;
+        if (!mbFresh && sameLayout && (k === 2 || k === 5 || k === 9 || k === 10)) continue;
+        if (!mbFresh && sameFac && k === 3) continue;
+        if (!mbFresh && sameCfl && (k === 6 || k === 7)) continue;
+        gpuWrite(device, MB, p, offsets[k] * 4);
+      }
+      if (held) held.layout = {xsize, ysize, len: blocks.length, arenaWordsLen: arenaWords.length, blk, cells, tabs, plainGrid, fac, uniformMult, globalScale: global.globalScale, cfl: image.cfl, grp, maps, consts, mb: MB};
 
-    const uni = new ArrayBuffer(80), u32Uni = new Uint32Array(uni);
-    u32Uni.set([width, height, xsize, blocks.reduce((s, b) => s + b.area * 192, 0), blocks.length, 0, 0, cap, ...offsets]);
-    u32Uni[9] = narrow; u32Uni[19] = plainGrid;
-    new Float32Array(uni)[5] = 1; new Float32Array(uni)[6] = global.correlation.factor;
-    const P0 = kept('P0', 3 * n * 4), P1 = gab ? kept('P1', 3 * n * 4) : P0, P2 = filter.epf.iters === 1 ? kept('P2', 3 * n * 4) : P1, P3 = kept('P3', 3 * n * 4);
-    const PX = kept('PX', 2 * n * 4), CNT = kept('CNT', 32);
-    const STRIDE2 = 6 + 3 * EPF_WINDOW.length;
-    const LBASE0 = 0, LBASE1 = cap * 2, LBASE2 = LBASE1 + cap * 11, LBASE3 = LBASE2 + cap * STRIDE2, LBASE4 = LBASE3 + cap * 4;
-    const LST = kept('LST', (LBASE4 + cap * 3) * 4);
-    const ub = upKept('UB', new Uint8Array(uni), GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    const render = [ub, MB, kept('C', blocks.reduce((s, b) => s + b.area * 192, 0) * 16), P0, CNT, LST];
-    const restoreUniform = (name, extra = {}) => {
-      const u = new ArrayBuffer(80), U = new Uint32Array(u), F = new Float32Array(u), hl = v => [Math.fround(v), Math.fround(v - Math.fround(v))];
-      U.set([width, height, Math.ceil(width / 8), cap]); F[4] = 1;
-      if (gab) F.set([...hl(gab[0]), ...hl(gab[1]), ...hl(1 / (1 + 4 * gab[0] + 4 * gab[1]))], 5);
-      F.set(hl(filter.epf.borderSadMul ?? 2 / 3), 11);
-      U[13] = extra.count ?? 0; U[14] = extra.knots ?? 0; U[15] = extra.low ?? 0; U[16] = extra.stage ?? 0; U[17] = extra.lbase ?? 0;
-      return upKept(name, new Uint8Array(u), GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    };
-    const none = kept('N0', 16), spare = kept('N1', 16);
-    const srgb8 = once('S8', () => { const tAt = kernels.srgb8Table(); return new Uint32Array(kernels.buffer.slice(tAt, tAt + 33796)); });
-    const kColor = once('KC', () => Float32Array.from([...constants.root, ...constants.bias, ...constants.m]));
-    const {dither, fast} = native.nativeTables(), kNative = once('AX', () => auxOf(dither, fast));
-    const sgBuf = filter.epf.iters === 1 ? upKept('SG', sigma) : none;
-    const ur1 = gab ? restoreUniform('UR1', {stage: 1, lbase: LBASE1}) : null;
-    const ur2 = filter.epf.iters === 1 ? restoreUniform('UR2', {stage: 2, lbase: LBASE2}) : null;
-    const ur3 = restoreUniform('UR3', {stage: 3, lbase: LBASE3});
-    const ur4 = restoreUniform('UR4', {stage: 4, lbase: LBASE4, knots: 1024, low: fast.low});
-
-    const PREF = [512, 2816, 5760, 256, 192], LBASES = [LBASE0, LBASE1, LBASE2, LBASE3, LBASE4], STRIDES = [2, 11, STRIDE2, 4, 3];
-    const wantBand = !!(held && lib.keep && lib.band), wantFull = !(held && lib.keep);
-    const bandY0 = wantBand ? lib.band[0] : 0, bandBytes = wantBand ? (lib.band[1] - bandY0) * width * 4 : 0;
-    const offPrefs = [];
-    let rbTotal = 32;
-    for (let s = 0; s < 5; s++) { offPrefs.push(rbTotal); rbTotal += PREF[s] * 4; }
-    const offPx = rbTotal; rbTotal += wantBand ? bandBytes * 2 : wantFull ? 2 * n * 4 : 0;
-    const offS2 = rbTotal; rbTotal += s2State ? s2State.sBytes + 16 : 0;
-    const RB = kept('RBS', rbTotal, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
-    const stages = [[set.gaborish, [ur1, P0, none, P1, none, CNT, LST, PX], 3 * n, gab], [set.epf1, [ur2, P1, sgBuf, P2, none, CNT, LST, PX], n, filter.epf.iters === 1],
-      [set.color, [ur3, P2, kColor, P3, srgb8, CNT, LST, PX], n, true], [set.native, [ur4, P3, kNative, spare, none, CNT, LST, PX], n, true]];
-    const run = async (from, tail = true) => {
-      device.queue.writeBuffer(CNT, 0, new Uint32Array(8));
-      const e = device.createCommandEncoder(), pass = e.beginComputePass(), go = (pipeline, group, buffers, count) => {
-        const all = Math.ceil(count / 64), gx = Math.min(all, 65535);
-        pass.setPipeline(pipeline); pass.setBindGroup(0, bind(group, buffers)); pass.dispatchWorkgroups(gx, Math.ceil(all / gx));
+      const specialBlocks = [];
+      for (let k = 0; k < blocks.length; k++) if (SPECIAL(blocks[k].id)) specialBlocks.push(k);
+      const r0Bytes = 3 * xsize * ysize * 64 * 16;
+      const uni = new ArrayBuffer(112), u32Uni = new Uint32Array(uni);
+      u32Uni.set([width, height, xsize, blocks.reduce((s, b) => s + b.area * 192, 0), blocks.length, 0, 0, cap, ...offsets]);
+      u32Uni[9] = narrow; u32Uni[19] = plainGrid; u32Uni[23] = ysize; u32Uni[25] = height; u32Uni[26] = specialBlocks.length ? 1 : 0;
+      new Float32Array(uni)[5] = 1; new Float32Array(uni)[6] = global.correlation.factor;
+      const bands = Math.max(u32Uni[3] * 16, r0Bytes, 3 * n * 4, words * 4) <= bindMax ? null : rebuildBands(blocks, parts, width, height, xsize, ysize, u32Uni[3], narrow, bindMax, device.limits.maxBufferSize);
+      if (bands === false) { traced('rebuild-left:band', 0); return null; }
+      const P0 = kept('P0', 3 * n * 4), P1 = gab ? kept('P1', 3 * n * 4) : P0, P2 = filter.epf.iters === 1 ? kept('P2', 3 * n * 4) : P1, P3 = kept('P3', 3 * n * 4);
+      const PX = kept('PX', 2 * n * 4), CNT = kept('CNT', 32);
+      const STRIDE2 = 6 + 3 * EPF_WINDOW.length;
+      const LBASE0 = 0, LBASE1 = cap * 2, LBASE2 = LBASE1 + cap * 11, LBASE3 = LBASE2 + cap * STRIDE2, LBASE4 = LBASE3 + cap * 4;
+      const LST = kept('LST', (LBASE4 + cap * 3) * 4);
+      const uniUse = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
+      const ub = upKept('UB', new Uint8Array(uni), uniUse);
+      const render = bands ? null : [ub, MB, kept('C', u32Uni[3] * 16), P0, CNT, LST, kept('R0', r0Bytes)];
+      const restoreUniform = (name, extra = {}) => {
+        const u = new ArrayBuffer(96), U = new Uint32Array(u), F = new Float32Array(u);
+        U.set([width, height, Math.ceil(width / 8), cap]); F[4] = 1;
+        if (gab) split([gab[0], gab[1], 1 / (1 + 4 * gab[0] + 4 * gab[1])], F, 5);
+        split([filter.epf.borderSadMul ?? 2 / 3], F, 11);
+        U.set([extra.count ?? 0, extra.knots ?? 0, extra.low ?? 0, extra.stage ?? 0, extra.lbase ?? 0, extra.wy0 ?? 0, extra.wh ?? height, extra.oy0 ?? 0, extra.oy1 ?? height, extra.base ?? 0], 13);
+        return upKept(name, new Uint8Array(u), uniUse);
       };
-      if (!from) { go(set.coefficients, set.render, render, u32Uni[3]); go(set.lowFrequencies, set.render, render, blocks.length * 3072); go(set.samples, set.render, render, 3 * n); }
-      stages.forEach(([pipeline, buffers, count, on], k) => { if (on && from <= k + 1) go(pipeline, set.restore, buffers, count); });
-      pass.end();
-      if (tail && s2State) gpuS2Record(device, e, s2State, PX, RB, offS2);
-      e.copyBufferToBuffer(CNT, 0, RB, 0, 20);
-      for (let s = 0; s < 5; s++) e.copyBufferToBuffer(LST, LBASES[s] * 4, RB, offPrefs[s], PREF[s] * 4);
-      if (tail && wantBand) { e.copyBufferToBuffer(PX, bandY0 * width * 4, RB, offPx, bandBytes); e.copyBufferToBuffer(PX, (n + bandY0 * width) * 4, RB, offPx + bandBytes, bandBytes); }
-      else if (tail && wantFull) e.copyBufferToBuffer(PX, 0, RB, offPx, 2 * n * 4);
-      device.queue.submit([e.finish()]); lib.onSubmit?.();
-      await RB.mapAsync(GPUMapMode.READ, 0, rbTotal);
-      const snap = RB.getMappedRange(0, rbTotal).slice(0); RB.unmap(); return snap;
-    };
-    const scatter = (into, pairs, words = 2) => {
-      if (!pairs.length) return false;
-      const corrections = upKept('CR', pairs instanceof Uint32Array ? pairs : Uint32Array.from(pairs)), e = device.createCommandEncoder(), count = pairs.length / words;
-      dispatch(e, words === 2 ? set.scatter : set.scatterPx, set.restore, [restoreUniform('URS', {count}), none, none, words === 2 ? into : spare, corrections, CNT, LST, words === 2 ? PX : into], count);
-      device.queue.submit([e.finish()]);
-      return true;
-    };
-    const settle = [list => {
-      const only = new Set(), diff = [];
-      for (let k = 0; k < list.length; k += 2) { const i = list[k] % n; only.add(cells[((i / width | 0) >> 3) * xsize + ((i % width) >> 3)]); }
-      const {rendered} = rebuild(image, {rendered: true, only});
-      for (let k = 0; k < list.length; k += 2) { const t = list[k], u = asU(rendered[t / n | 0][t % n]); if (u !== list[k + 1]) diff.push(t, u); }
-      return scatter(P0, diff);
-    }, list => scatter(P1, gaborishSettle(kernels, list, filter.gaborish)), list => scatter(P2, epfSettle(kernels, list, STRIDE2, width, n, filter.epf)), list => {
-      const m = list.length / 4;
-      const [x, y, b, o] = kernels.reserve([m * 4, m * 4, m * 4, m * 4]), X = new Float32Array(kernels.buffer, x, m), Y = new Float32Array(kernels.buffer, y, m), Bp = new Float32Array(kernels.buffer, b, m);
-      for (let k = 0; k < m; k++) { X[k] = asF(list[4 * k + 1]); Y[k] = asF(list[4 * k + 2]); Bp[k] = asF(list[4 * k + 3]); }
-      const rgba8 = new Uint8Array(kernels.buffer, o, m * 4); kernels.xyb(m, X, Y, Bp, constants, rgba8);
-      const words = [];
-      for (let k = 0; k < m; k++) words.push(list[4 * k], 0x00ffffff, rgba8[4 * k] | rgba8[4 * k + 1] << 8 | rgba8[4 * k + 2] << 16);
-      scatter(PX, words, 3);
-      kernels.xyb(m, X, Y, Bp, constants);
-      const pairs = [];
-      for (let k = 0; k < m; k++) pairs.push(list[4 * k], asU(X[k]), n + list[4 * k], asU(Y[k]), 2 * n + list[4 * k], asU(Bp[k]));
-      return scatter(P3, pairs);
-    }, list => {
-      const byPixel = new Map(), words = [];
-      for (let k = 0; k < list.length; k += 3) {
-        const t = list[k] / 3 | 0, c = list[k] % 3, byte = native.nativeByte(asF(list[k + 1]), asF(list[k + 2]));
-        const w = byPixel.get(t) ?? [0, 0]; w[0] |= 255 << (8 * c); w[1] |= byte << (8 * c); byPixel.set(t, w);
+      const none = kept('N0', 16), spare = kept('N1', 16);
+      const srgb8 = once('S8', () => { const tAt = kernels.srgb8Table(); return new Uint32Array(kernels.buffer.slice(tAt, tAt + 33796)); });
+      const kColor = once('KC', () => Float32Array.from([...constants.root, ...constants.bias, ...constants.m]));
+      const {dither, fast} = native.nativeTables(), kNative = once('AX', () => auxOf(dither, fast));
+      const sgBuf = filter.epf.iters === 1 ? upKept('SG', sigma) : none;
+      const ur1 = gab ? restoreUniform('UR1', {stage: 1, lbase: LBASE1}) : null;
+      const ur2 = filter.epf.iters === 1 ? restoreUniform('UR2', {stage: 2, lbase: LBASE2}) : null;
+      const ur3 = restoreUniform('UR3', {stage: 3, lbase: LBASE3});
+      const ur4 = restoreUniform('UR4', {stage: 4, lbase: LBASE4, knots: 1024, low: fast.low});
+
+      const PREF = [512, 2816, 5760, 256, 192], LBASES = [LBASE0, LBASE1, LBASE2, LBASE3, LBASE4], STRIDES = [2, 11, STRIDE2, 4, 3];
+      const wantBand = !!(held && lib.keep && lib.band), wantFull = !(held && lib.keep);
+      const bandY0 = wantBand ? lib.band[0] : 0, bandBytes = wantBand ? (lib.band[1] - bandY0) * width * 4 : 0;
+      const offPrefs = [];
+      let rbTotal = 32;
+      for (let s = 0; s < 5; s++) { offPrefs.push(rbTotal); rbTotal += PREF[s] * 4; }
+      const offPx = rbTotal; rbTotal += wantBand ? bandBytes * 2 : wantFull ? 2 * n * 4 : 0;
+      const offS2 = rbTotal; rbTotal += s2State ? s2State.sBytes + 16 : 0;
+      const RB = kept('RBS', rbTotal, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
+      const stages = [[set.gaborish, [ur1, P0, none, P1, none, CNT, LST, PX], 3 * n, gab], [set.epf1, [ur2, P1, sgBuf, P2, none, CNT, LST, PX], n, filter.epf.iters === 1],
+        [set.color, [ur3, P2, kColor, P3, srgb8, CNT, LST, PX], n, true], [set.native, [ur4, P3, kNative, spare, none, CNT, LST, PX], n, true]];
+      let recordBands = null;
+      if (bands) {
+        const {render: rb, rows, small} = bands, C = kept('CW', rb.most.C), R0W = kept('R0W', rb.most.R0), O = kept('P0W', rb.most.O), MW = kept('MW', rb.most.M * 4);
+        const SW = kept('SW', 3 * width * (rows.most + 4) * 4), DW = kept('DW', 3 * width * rows.most * 4), PW = kept('PXW', 2 * width * rows.most * 4);
+        const bandRender = rb.list.map((b, j) => {
+          const u = new Uint32Array(uni.slice(0)), L = rb.layout;
+          u.set([b.cnt, b.nb], 3);
+          u[8] = L.ints; u[10] = L.blk; u[11] = L.fac; u[12] = small[4]; u[13] = small[5]; u[14] = small[6]; u[15] = small[7]; u[16] = L.lf; u[17] = small[9]; u[18] = L.cells;
+          u.set([b.ibase, b.k0, b.cy0, b.rc, b.py0, b.wh], 20);
+          return [upKept('UB' + j, new Uint8Array(u.buffer), uniUse), MW, C, O, CNT, LST, R0W];
+        });
+        const io = [[P0, P1, 1], [P1, P2, 2], [P2, P3, 0], [P3, null, 0]];
+        const bandRestore = stages.map(([, buffers], k) => rows.list.map(([y0, y1], j) => {
+          const h = io[k][2], wy0 = Math.max(0, y0 - h), wh = Math.min(height, y1 + h) - wy0;
+          const u = restoreUniform('UR' + (k + 1) + '-' + j, {stage: k + 1, lbase: [LBASE1, LBASE2, LBASE3, LBASE4][k], ...(k === 3 ? {knots: 1024, low: fast.low} : {}), wy0, wh, oy0: y0, oy1: y1});
+          return {wy0, wh, y0, y1, buffers: [u, SW, buffers[2], k === 3 ? spare : DW, buffers[4], CNT, LST, PW]};
+        }));
+        recordBands = (e, from) => {
+          const copy = (a, at, b, bt, words) => { if (words) e.copyBufferToBuffer(a, at * 4, b, bt * 4, words * 4); };
+          if (!from) {
+            for (const [k, at] of [[4, small[4]], [5, small[5]], [6, small[6]], [7, small[7]], [9, small[9]]]) copy(MB, offsets[k], MW, at, parts[k].length);
+            rb.list.forEach((b, j) => {
+              const L = rb.layout;
+              copy(MB, offsets[0] + (narrow ? b.ibase / 2 : b.ibase), MW, L.ints, b.intsWords);
+              copy(MB, offsets[2] + b.k0 * BW, MW, L.blk, b.nb * BW); copy(MB, offsets[3] + b.k0 * 6, MW, L.fac, b.nb * 6);
+              for (let c = 0; c < 3; c++) copy(MB, offsets[8] + c * xsize * ysize + b.cy0 * xsize, MW, L.lf + c * xsize * b.rc, xsize * b.rc);
+              copy(MB, offsets[10] + b.cy0 * xsize, MW, L.cells, xsize * b.rc);
+              dispatch(e, set.coefficients, bandRender[j], b.cnt); dispatch(e, set.lowFrequencies, bandRender[j], b.nb * 3072);
+              dispatch(e, set.samplesRow, bandRender[j], 3 * xsize * b.rc * 64); dispatch(e, set.samples, bandRender[j], 3 * width * b.wh);
+              for (let c = 0; c < 3; c++) copy(O, c * width * b.wh, P0, c * n + b.py0 * width, width * b.wh);
+            });
+          }
+          stages.forEach(([kernel, , count, on], k) => {
+            if (!on || from > k + 1) return;
+            const [src, dst] = io[k];
+            for (const {wy0, wh, y0, y1, buffers} of bandRestore[k]) {
+              const m = width * (y1 - y0);
+              for (let c = 0; c < 3; c++) copy(src, c * n + wy0 * width, SW, c * width * wh, width * wh);
+              dispatch(e, kernel, buffers, count / n * m);
+              if (dst) for (let c = 0; c < 3; c++) copy(DW, c * m, dst, c * n + y0 * width, m);
+              if (k === 2) copy(PW, 0, PX, y0 * width, m);
+              if (k === 3) copy(PW, m, PX, n + y0 * width, m);
+            }
+          });
+        };
       }
-      for (const [t, [mask, value]] of byPixel) words.push(n + t, mask, value);
-      return scatter(PX, words, 3);
-    }];
-    let snap = await run(0), again = false;
-    for (let s = 0; s < 5; s++) {
-      const c = new Uint32Array(snap, 0, 5)[s], words = c * STRIDES[s];
-      if (c > cap) return null;
-      if (!c) continue;
-      const list = words <= PREF[s] ? new Uint32Array(snap, offPrefs[s], words) : new Uint32Array(await read(LST, words * 4, 'R lists', LBASES[s] * 4));
-      if (settle[s](list)) { snap = await run(s + 1, false); again = true; }
-    }
-    if (again) snap = await run(5);
-    const readAll = async () => { const out = new Uint8Array(await read(PX, 2 * n * 4, 'R')); return {rgba: out.subarray(0, 4 * n), native: out.subarray(4 * n)}; };
-    const s2 = s2State ? {s2: gpuS2Decode(s2State, snap, offS2)} : {};
-    const answer = held && lib.keep ? {px: PX, band: wantBand ? {rgba: new Uint8Array(snap, offPx, bandBytes), native: new Uint8Array(snap, offPx + bandBytes, bandBytes)} : null, readAll, ...s2}
-      : {rgba: new Uint8Array(snap, offPx, 4 * n), native: new Uint8Array(snap, offPx + 4 * n, 4 * n), ...s2};
-    scopes--; const memory = await device.popErrorScope();
-    scopes--; const invalid = await device.popErrorScope();
-    if (memory || invalid) { held?.release(); throw new Error('gpu-render: ' + (memory || invalid).message); }
-    return answer;
-  } finally {
-    while (scopes-- > 0) await device.popErrorScope().catch(() => null);
-    for (const b of made) b.destroy();
-  }
+      const pendingScatters = [];
+      let scatterSeq = 0;
+      const scatter = (into, pairs, words = 2) => {
+        if (!pairs.length) return false;
+        pendingScatters.push([into, pairs instanceof Uint32Array ? pairs : Uint32Array.from(pairs), words]);
+        return true;
+      };
+      const flushScatters = target => {
+        if (!pendingScatters.length) return;
+        for (const [into, arr, words] of pendingScatters.splice(0)) {
+          for (const [base, list] of scatterRuns(arr, words, bands ? Math.floor(bindMax / 256) * 64 : Infinity)) {
+            const slot = scatterSeq++, corrections = upKept('CR' + slot, list), count = list.length / words;
+            const view = bands ? {buffer: into, offset: base * 4, size: Math.min(into.size - base * 4, Math.floor(bindMax / 256) * 256)} : into;
+            dispatch(target, words === 2 ? set.scatter : set.scatterPx, [restoreUniform('URS' + slot, {count, base}), none, none, words === 2 ? view : spare, corrections, CNT, LST, words === 2 ? PX : view], count);
+          }
+        }
+      };
+      let preSpecial = null;
+      if (specialBlocks.length) {
+        const {rendered} = rebuild(whole, {rendered: true, only: new Set(specialBlocks)}), pairs = [];
+        for (const k of specialBlocks) {
+          const b = blocks[k], x0 = b.x * 8, y0 = b.y * 8, xs = Math.min(b.bw * 8, width - x0), ys = Math.min(b.bh * 8, height - y0);
+          for (let c = 0; c < 3; c++) for (let dy = 0; dy < ys; dy++) for (let dx = 0; dx < xs; dx++) {
+            const idx = (y0 + dy) * width + x0 + dx;
+            pairs.push(c * n + idx, asU(rendered[c][idx]));
+          }
+        }
+        preSpecial = new Uint32Array(pairs);
+      }
+      const run = async (from, tail = true) => {
+        scatterSeq = 0;
+        gpuWrite(device, CNT, new Uint32Array(8));
+        const e = device.createCommandEncoder();
+        if (bands) {
+          flushScatters(e);
+          if (!from && preSpecial?.length) {
+            recordBands(e, 0);
+          } else recordBands(e, from);
+        } else {
+          const pass = e.beginComputePass();
+          flushScatters(pass);
+          if (!from) {
+            dispatch(pass, set.coefficients, render, u32Uni[3]); dispatch(pass, set.lowFrequencies, render, blocks.length * 3072);
+            dispatch(pass, set.samplesRow, render, 3 * xsize * ysize * 64); dispatch(pass, set.samples, render, 3 * n);
+            if (preSpecial?.length) { scatter(P0, preSpecial); flushScatters(pass); }
+          }
+          stages.forEach(([kernel, buffers, count, on], k) => { if (on && from <= k + 1) dispatch(pass, kernel, buffers, count); });
+          pass.end();
+        }
+        if (bands && !from && preSpecial?.length) {
+          scatter(P0, preSpecial); flushScatters(e); recordBands(e, 1);
+        }
+        if (tail && s2State) gpuS2Record(device, e, s2State, PX, RB, offS2);
+        e.copyBufferToBuffer(CNT, 0, RB, 0, 20);
+        for (let s = 0; s < 5; s++) e.copyBufferToBuffer(LST, LBASES[s] * 4, RB, offPrefs[s], PREF[s] * 4);
+        if (tail && wantBand) { e.copyBufferToBuffer(PX, bandY0 * width * 4, RB, offPx, bandBytes); e.copyBufferToBuffer(PX, (n + bandY0 * width) * 4, RB, offPx + bandBytes, bandBytes); }
+        else if (tail && wantFull) e.copyBufferToBuffer(PX, 0, RB, offPx, 2 * n * 4);
+        device.queue.submit([e.finish()]); lib.onSubmit?.();
+        const tWait = tracing() ? performance.now() : 0;
+        await RB.mapAsync(GPUMapMode.READ, 0, rbTotal);
+        if (tWait) traced('rebuild:wait', performance.now() - tWait);
+        const snap = RB.getMappedRange(0, rbTotal).slice(0); RB.unmap(); return snap;
+      };
+      const settle = [list => {
+        const only = new Set(), diff = [];
+        for (let k = 0; k < list.length; k += 2) { const i = list[k] % n; only.add(cells[((i / width | 0) >> 3) * xsize + ((i % width) >> 3)]); }
+        const {rendered} = rebuild(whole, {rendered: true, only});
+        for (let k = 0; k < list.length; k += 2) { const t = list[k], u = asU(rendered[t / n | 0][t % n]); if (u !== list[k + 1]) diff.push(t, u); }
+        return scatter(P0, diff);
+      }, list => scatter(P1, gaborishSettle(kernels, list, filter.gaborish)), list => scatter(P2, epfSettle(kernels, list, STRIDE2, width, n, filter.epf)), list => {
+        const m = list.length / 4;
+        const [x, y, b, o] = kernels.reserve([m * 4, m * 4, m * 4, m * 4]), X = new Float32Array(kernels.buffer, x, m), Y = new Float32Array(kernels.buffer, y, m), Bp = new Float32Array(kernels.buffer, b, m);
+        for (let k = 0; k < m; k++) { X[k] = asF(list[4 * k + 1]); Y[k] = asF(list[4 * k + 2]); Bp[k] = asF(list[4 * k + 3]); }
+        const rgba8 = new Uint8Array(kernels.buffer, o, m * 4); kernels.xyb(m, X, Y, Bp, constants, rgba8);
+        const words = [];
+        for (let k = 0; k < m; k++) words.push(list[4 * k], 0x00ffffff, rgba8[4 * k] | rgba8[4 * k + 1] << 8 | rgba8[4 * k + 2] << 16);
+        scatter(PX, words, 3);
+        kernels.xyb(m, X, Y, Bp, constants);
+        const pairs = [];
+        for (let k = 0; k < m; k++) pairs.push(list[4 * k], asU(X[k]), n + list[4 * k], asU(Y[k]), 2 * n + list[4 * k], asU(Bp[k]));
+        return scatter(P3, pairs);
+      }, list => {
+        const byPixel = new Map(), words = [];
+        for (let k = 0; k < list.length; k += 3) {
+          const t = list[k] / 3 | 0, c = list[k] % 3, byte = native.nativeByte(asF(list[k + 1]), asF(list[k + 2]));
+          const w = byPixel.get(t) ?? [0, 0]; w[0] |= 255 << (8 * c); w[1] |= byte << (8 * c); byPixel.set(t, w);
+        }
+        for (const [t, [mask, value]] of byPixel) words.push(n + t, mask, value);
+        return scatter(PX, words, 3);
+      }];
+      if (tPack) traced('rebuild:pack', performance.now() - tPack);
+      let snap = await run(0, true);
+      for (let s = 0; s < 3; s++) {
+        const c = new Uint32Array(snap, 0, 5)[s], words = c * STRIDES[s];
+        if (c > cap) { traced('rebuild-left:settle-cap', 0); return null; }
+        if (!c) continue;
+        const list = words <= PREF[s] ? new Uint32Array(snap, offPrefs[s], words) : new Uint32Array(await read(LST, words * 4, 'R lists', LBASES[s] * 4));
+        const tSettle = tracing() ? performance.now() : 0, changed = settle[s](list);
+        if (tSettle) traced('rebuild:settle-' + s, performance.now() - tSettle);
+        if (changed) snap = await run(s + 1, true);
+      }
+      for (const s of [3, 4]) {
+        const c = new Uint32Array(snap, 0, 5)[s], words = c * STRIDES[s];
+        if (c > cap) { traced('rebuild-left:settle-cap', 0); return null; }
+        if (!c) continue;
+        const list = words <= PREF[s] ? new Uint32Array(snap, offPrefs[s], words) : new Uint32Array(await read(LST, words * 4, 'R lists', LBASES[s] * 4));
+        const tSettle = tracing() ? performance.now() : 0, changed = settle[s](list);
+        if (tSettle) traced('rebuild:settle-' + s, performance.now() - tSettle);
+        if (changed) snap = await run(s + 1, true);
+      }
+      const readAll = async () => { const out = new Uint8Array(await read(PX, 2 * n * 4, 'R')); return {rgba: out.subarray(0, 4 * n), native: out.subarray(4 * n)}; };
+      const s2 = s2State ? {s2: gpuS2Decode(s2State, snap, offS2)} : {};
+      return held && lib.keep ? {px: PX, band: wantBand ? {rgba: new Uint8Array(snap, offPx, bandBytes), native: new Uint8Array(snap, offPx + bandBytes, bandBytes)} : null, readAll, ...s2}
+        : {rgba: new Uint8Array(snap, offPx, 4 * n), native: new Uint8Array(snap, offPx + 4 * n, 4 * n), ...s2};
+    }, true, err => { held?.release(); throw fault('JXL_WEBGPU', 'gpu-render: ' + err.message); });
+  } finally { gpuDestroy(made); }
 }

@@ -99,7 +99,7 @@ export interface ChannelOptions extends ChannelPrecision {
   progressive?: boolean | 'resolution' | {passes: readonly (1 | 2 | 4 | 8)[]};
   /** Supplying coefficients selects weighted prediction; an explicit different predictor is refused. */
   weightedPredictor?: WeightedPredictor;
-  /** Retained transform scratch bound, default 256 MiB; integer 1..2 GiB. Source arrays stay caller-owned. */
+  /** Retained transform scratch bound, a positive safe integer; none by default. Source arrays stay caller-owned. */
   maxTransformBytes?: number;
   /** Stored color dimensions are ceil(width/upsampling) by ceil(height/upsampling). */
   upsampling?: 1 | 2 | 4 | 8;

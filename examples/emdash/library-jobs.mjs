@@ -10,13 +10,13 @@ const RETRY_LIMIT = 9;
 const terminal = state => state === 'done' || state === 'canceled';
 const normalize = items => {
   if (!Array.isArray(items) || !items.length || items.length > 100)
-    throw fail('JXL_INPUT', 'Send 1 to 100 selected images.');
+    throw fail('JXL_INPUT', "Invalid selection; send 1 to 100 images.");
   return items.map(item => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) throw fail('JXL_INPUT', 'Expected a media id and storage key.');
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw fail('JXL_INPUT', "Invalid image reference; pass its ID and key.");
     const {id, key, name} = item;
     if (typeof id !== 'string' || !MEDIA.test(id) || typeof key !== 'string' || !KEY.test(key) ||
         name !== undefined && typeof name !== 'string')
-      throw fail('JXL_INPUT', 'Expected a media id and storage key.');
+      throw fail('JXL_INPUT', "Invalid image reference; pass its ID and key.");
     return {id, key, name: name ?? key};
   });
 };
@@ -26,7 +26,7 @@ export function createLibraryRun(ctx, {scope, service, prepare, validate, now = 
   const pages = ctx.storage?.jxl_library;
   if (!scope || typeof pages?.get !== 'function' || typeof pages?.compareAndSet !== 'function' ||
       typeof pages?.put !== 'function' || typeof prepare !== 'function' || typeof validate !== 'function')
-    throw fail('JXL_OPTIONS', 'Expected EmDash library storage and the image job runner.');
+    throw fail('JXL_OPTIONS', "Missing library storage or runner; configure both.");
   const call = action => service.calls.call(action), runKey = `jxl:library:${scope}`;
   const pageKey = (id, page) => `${scope}:${id}:${page}`;
   const read = async () => await call(() => ctx.kv.getVersioned(runKey)) ?? {value: null, revision: null};
@@ -42,11 +42,11 @@ export function createLibraryRun(ctx, {scope, service, prepare, validate, now = 
     const changed = await call(() => ctx.kv.compareAndSet(runKey, row.revision, value));
     if (changed?.applied === true) return {value, revision: changed.revision};
     if (changed?.applied === false) return read();
-    throw fail('JXL_IO', 'The library checkpoint was not acknowledged.');
+    throw fail('JXL_IO', "Library checkpoint unconfirmed; check it before retrying.");
   }
   function own(row, id) {
     if (typeof id !== 'string' || !ID.test(id) || row.value?.id !== id)
-      throw fail('JXL_INPUT', 'This library run is no longer current.');
+      throw fail('JXL_INPUT', "Stale library run; reload it.");
     return row.value;
   }
   const schedule = id => service.work.schedule('library', id);
@@ -88,7 +88,9 @@ export function createLibraryRun(ctx, {scope, service, prepare, validate, now = 
         // Persist a canceled job so a concurrent queue cannot recreate it later.
         await service.queue(run.current.command);
         const job = await service.cancel(run.current.jobId);
-        if (!job?.canceled && !job?.done) return view(row);
+        // A job in its final publication cannot be canceled: it is queued now, so the background waits for it.
+        if (!job?.canceled && !job?.done)
+          return view(run.current.stage === 'queue' ? await save(row, {...run, current: {...run.current, stage: 'waiting'}}) : row);
         return view(await save(row, completed(run, undefined, job)));
       }
       // Include the next page: its write may have succeeded before its checkpoint was acknowledged.
@@ -106,7 +108,7 @@ export function createLibraryRun(ctx, {scope, service, prepare, validate, now = 
       if (!item) {
         const latest = await read();
         if (latest.revision !== row.revision) return view(latest);
-        throw fail('JXL_IO', 'A selected image page is missing.');
+        throw fail('JXL_IO', "Missing selection page; restore it.");
       }
       const jobId = (await digest(new TextEncoder().encode(JSON.stringify([scope, id, item.id, item.key])))).slice(0, 32);
       return view(await save(row, {...run, current: {...item, jobId, stage: 'prepare', pageLength: page.items.length, command: null}}));
@@ -138,7 +140,7 @@ export function createLibraryRun(ctx, {scope, service, prepare, validate, now = 
       return view(await save(row, {...run, current: {...item, stage: 'waiting'}}));
     }
     const job = await service.status(item.jobId);
-    if (!job) throw fail('JXL_IO', 'The saved image job is missing.');
+    if (!job) throw fail('JXL_IO', "Missing image job; restore it.");
     if (item.invalid) {
       const stopped = job.done || job.canceled ? job : await service.cancel(item.jobId);
       if (!stopped?.canceled && !stopped?.done) return view(row);
@@ -159,14 +161,14 @@ export function createLibraryRun(ctx, {scope, service, prepare, validate, now = 
     async start({id, total, settings}) {
       if (typeof id !== 'string' || !ID.test(id) || !Number.isSafeInteger(total) || total < 1 ||
           !settings || typeof settings !== 'object' || Array.isArray(settings))
-        throw fail('JXL_INPUT', 'Expected a library run id, the number of selected images, and the site settings.');
+        throw fail('JXL_INPUT', "Incomplete request; pass run ID, selection count, and site settings.");
       const selectedSettings = normalizeSettings(settings);
       const row = await read(), old = row.value;
       if (old?.id === id) {
-        if (old.expected !== total) throw fail('JXL_INPUT', 'The saved selection has a different size.');
+        if (old.expected !== total) throw fail('JXL_INPUT', "Selection count changed; reload it.");
         return view(row);
       }
-      if (old && !terminal(old.state)) throw fail('JXL_INPUT', 'Finish or cancel the current library run first.');
+      if (old && !terminal(old.state)) throw fail('JXL_INPUT', "Library run active; finish or cancel it.");
       if (old?.cleanup !== null && old?.cleanup !== undefined) await clean(old);
       if (old) await service.work.remove('library', old.id);
       return view(await save(row, {id, scope, state: 'preparing', expected: total, settings: selectedSettings, pages: 0, total: 0,
@@ -176,36 +178,36 @@ export function createLibraryRun(ctx, {scope, service, prepare, validate, now = 
     async append({id, page, items}) {
       const selection = normalize(items), row = await read(), run = own(row, id);
       if (!Number.isSafeInteger(page) || page < 0 || page > run.pages)
-        throw fail('JXL_INPUT', 'Append the next selection page.');
+        throw fail('JXL_INPUT', "Page out of order; append the next page.");
       const key = pageKey(id, page), data = {items: selection};
       if (page < run.pages) {
         const prior = await call(() => pages.get(key));
-        if (JSON.stringify(prior) !== JSON.stringify(data)) throw fail('JXL_INPUT', 'This selection page is already saved.');
+        if (JSON.stringify(prior) !== JSON.stringify(data)) throw fail('JXL_INPUT', "Page already saved; append the next page.");
         return view(row);
       }
       if (run.state !== 'preparing' || run.total + selection.length > run.expected)
-        throw fail('JXL_INPUT', 'The library selection is closed.');
+        throw fail('JXL_INPUT', "Selection closed; start a new selection.");
       let previous = run.lastId;
       for (const item of selection) {
         const normalized = item.id.toUpperCase();
-        if (normalized <= previous) throw fail('JXL_INPUT', 'Select each media id once, in ascending order.');
+        if (normalized <= previous) throw fail('JXL_INPUT', "IDs repeat or are unordered; use unique IDs in ascending order.");
         previous = normalized;
       }
       const put = await call(() => pages.compareAndSet(key, null, data));
       if (put?.applied !== true) {
-        if (put?.applied !== false) throw fail('JXL_IO', 'The selection page was not acknowledged.');
+        if (put?.applied !== false) throw fail('JXL_IO', "Selection page unconfirmed; check it before retrying.");
         const prior = await call(() => pages.get(key));
-        if (JSON.stringify(prior) !== JSON.stringify(data)) throw fail('JXL_INPUT', 'This selection page has different images.');
+        if (JSON.stringify(prior) !== JSON.stringify(data)) throw fail('JXL_INPUT', "Selection page changed; reload it.");
       }
       return view(await save(row, {...run, pages: page + 1, total: run.total + selection.length, lastId: previous}));
     },
     async control({id, action}) {
-      if (!['resume', 'pause', 'cancel'].includes(action)) throw fail('JXL_INPUT', 'Choose resume, pause, or cancel.');
+      if (!['resume', 'pause', 'cancel'].includes(action)) throw fail('JXL_INPUT', "Unknown library action; use resume, pause, or cancel.");
       let row = await read();
       for (let attempt = 0; attempt < 3; attempt++) {
         const run = own(row, id);
         if (terminal(run.state) || run.state === 'canceling') return view(row);
-        if (action === 'resume' && run.total !== run.expected) throw fail('JXL_INPUT', 'Finish queuing the selected images first.');
+        if (action === 'resume' && run.total !== run.expected) throw fail('JXL_INPUT', "Incomplete selection; queue its remaining images.");
         if (action === 'pause' && run.state === 'preparing') return view(row);
         // Schedule before the checkpoint so an interrupted acknowledgement cannot strand an accepted run.
         if (action !== 'pause') await schedule(id);
@@ -214,11 +216,11 @@ export function createLibraryRun(ctx, {scope, service, prepare, validate, now = 
         if (saved.value?.id !== id || saved.value?.state === state) return view(saved);
         row = saved;
       }
-      throw fail('JXL_IO', 'The library run changed; read its current progress.');
+      throw fail('JXL_IO', "Library run changed; read its progress.");
     },
     advance,
     async resume(id) {
-      if (typeof id !== 'string' || !ID.test(id)) throw fail('JXL_INPUT', 'Expected the saved library run ID.');
+      if (typeof id !== 'string' || !ID.test(id)) throw fail('JXL_INPUT', "Invalid run ID; use the saved run ID.");
       const row = await read();
       if (row.value?.id !== id) {
         await service.work.remove('library', id);

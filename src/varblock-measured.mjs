@@ -1,32 +1,32 @@
 // SPDX-License-Identifier: MIT
-import {exactPow} from './exact-math.mjs';
 import {TRANSFORMS} from './vardct-strategies.mjs';
 import {xybStrategies, forcedLayout} from './varblocks.mjs';
 import {lazyStrategyImage} from './varblock-core.mjs';
 import {journaling, stage, unit} from './step-journal.mjs';
+import {fault} from './fault.mjs';
 
 const packLayout = layout => { const out = new Int32Array(layout.length * 3); layout.forEach(({id, bx, by}, i) => { out[i * 3] = id; out[i * 3 + 1] = bx; out[i * 3 + 2] = by; }); return out; };
 const unpackLayout = packed => Array.from({length: packed.length / 3}, (_, i) => ({id: packed[i * 3], bx: packed[i * 3 + 1], by: packed[i * 3 + 2]}));
 const sameRates = (a, b) => a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
 
 const VB_LARGE = /* @__PURE__ */ new Set([18, 19, 20]);
-export const RATE_DOUBT = 3e-6, MAP_TOTAL_DOUBT = 2e-6, RATE_TOTAL_DOUBT = 1e-7;
-export function sameDct8ImageValue(a, b) {
+const RATE_DOUBT = 3e-6, MAP_TOTAL_DOUBT = 2e-6, RATE_TOTAL_DOUBT = 1e-7;
+function sameDct8ImageValue(a, b) {
   return Object.is(a, b) || !!a && !!b && a.length === b.length && typeof a.every === 'function'
     && sameDct8ImageValues(a, b, 0, a.length);
 }
-export function sameDct8ImageValues(a, b, from, to) {
+function sameDct8ImageValues(a, b, from, to) {
   for (let i = from; i < to; i++) {
     const v = a[i];
     if (Array.isArray(v) || ArrayBuffer.isView(v) ? !sameDct8ImageValue(v, b[i]) : !Object.is(v, b[i])) return false;
   }
   return true;
 }
-export function sameDct8QuantTable(quant, table) {
+function sameDct8QuantTable(quant, table) {
   for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) if (table[x * 8 + y] !== quant[y * 8 + x]) return false;
   return true;
 }
-export function sameDct8Block(plain, strategy, block) {
+function sameDct8Block(plain, strategy, block) {
   if (block.id !== 0) return false;
   for (let c = 0; c < 3; c++) {
     const source = plain.components[c].coeffs, at = block.by * plain.components[c].stride + block.bx;
@@ -36,7 +36,7 @@ export function sameDct8Block(plain, strategy, block) {
   return true;
 }
 
-export function sameDct8Image(plain, strategy, part = false) {
+function sameDct8Image(plain, strategy, part = false) {
   if (strategy?.lazyStrategy) {
     if (!plain || plain.strategyData || plain.width !== strategy.width || plain.height !== strategy.height) return false;
     const rows = plain.components[0].rows, stride = plain.components[0].stride;
@@ -77,7 +77,7 @@ export function* closedLoopStrategySteps(base, width, height, options = {}) {
         });
         for (const [k, v] of priced.rates) rates.set(k, Float64Array.from(v));
         const reply = yield {measure: lazyStrategyImage(base, width, height, build, unpackLayout(priced.layout)), want: {p}};
-        if (reply.doubt?.cells) throw new Error('A resumed closed loop takes exact maps.');
+        if (reply.doubt?.cells) throw fault('JXL_INTERNAL', 'A resumed closed loop takes exact maps.');
         return {cells: Float64Array.from(reply.cells), rates: priced.rates};
       });
       for (const [k, v] of made.rates) rates.set(k, Float64Array.from(v));

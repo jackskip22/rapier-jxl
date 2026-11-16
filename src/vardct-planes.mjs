@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: MIT
 import {ceilLog2} from './bits.mjs';
-export const varDCTField = (value, shift) => value * shift - 1;
+import {fault} from './fault.mjs';
+export const QUANT_FIELD_MAX = 256;
+export const quantFieldValue = scaled => Math.max(1, Math.min(QUANT_FIELD_MAX, Math.round(scaled)));
+export const quantFieldBase = (preferred, finest) => Math.max(1, Math.min(preferred, Math.ceil((QUANT_FIELD_MAX + 0.5) / finest) - 1));
+export const varDCTField = (value, shift) => {
+  const stored = value * shift;
+  if (!(stored >= 1 && stored <= QUANT_FIELD_MAX)) throw fault('JXL_INTERNAL', `A quantization multiplier of ${stored} is outside 1 to ${QUANT_FIELD_MAX}.`);
+  return stored - 1;
+};
 export function varDCTDCSpec(image, layout, channel, x, y, width, height) {
   const component = layout.comps[channel];
   const empty = component.row0 !== undefined && layout.grey && channel !== 1;
@@ -10,7 +18,7 @@ export function varDCTDCSpec(image, layout, channel, x, y, width, height) {
     scale: layout.dcScale[channel], lift: layout.dcLift[channel]};
 }
 
-export function copyVarDCTDCSegment(spec, data, row, from = 0, to = spec.w, stop) {
+function copyVarDCTDCSegment(spec, data, row, from = 0, to = spec.w, stop) {
   const {source, stride, x, y, step, scale, lift, w} = spec;
   if (!source) { data.fill(lift, row * w + from, row * w + to); if (stop) { stop.column = to; stop.wide = false; } return data; }
   if (step === 1 && source instanceof Int16Array && scale === 1 && lift === 0) {
@@ -41,27 +49,21 @@ export function copyVarDCTStrategies(blocks, out, from = 0, to = blocks.length) 
   for (let i = from; i < to; i++) out[i] = blocks[i].id;
 }
 export function copyVarDCTStrategyFields(fields, stride, shift, blocks, out, from = 0, to = blocks.length) {
-  let wide = false;
   for (let i = from; i < to; i++) {
-    const block = blocks[i], value = varDCTField(fields[block.by * stride + block.bx], shift);
-    out[blocks.length + i] = value;
-    if (value < -32768 || value > 32767) wide = true;
+    const block = blocks[i];
+    out[blocks.length + i] = varDCTField(fields[block.by * stride + block.bx], shift);
   }
-  return wide;
 }
 export function copyVarDCTFieldRows(fields, stride, shift, x0, y0, width, height, out, from = 0, to = height) {
-  let wide = false;
-  for (let y = from; y < to; y++) for (let x = 0; x < width; x++) {
-    const value = varDCTField(fields[(y0 + y) * stride + x0 + x], shift);
-    out[width * height + y * width + x] = value;
-    if (value < -32768 || value > 32767) wide = true;
-  }
-  return wide;
+  for (let y = from; y < to; y++) for (let x = 0; x < width; x++)
+    out[width * height + y * width + x] = varDCTField(fields[(y0 + y) * stride + x0 + x], shift);
 }
 export function copyVarDCTCorrelation(cfl, x0, y0, width, height, colors, from = 0, to = height) {
   for (let y = from; y < to; y++) for (let x = 0; x < width; x++) {
     const at = ((y0 >> 3) + y) * cfl.width + (x0 >> 3) + x;
-    colors[0][y * width + x] = cfl.x[at]; colors[1][y * width + x] = cfl.b[at];
+    const fx = cfl.x[at] ?? 0, fb = cfl.b[at] ?? 0;
+    if (!(fx >= -128 && fx <= 127 && fb >= -128 && fb <= 127)) throw fault('JXL_INTERNAL', `A color correlation of ${fx}, ${fb} is outside -128 to 127.`);
+    colors[0][y * width + x] = fx; colors[1][y * width + x] = fb;
   }
 }
 export function copyVarDCTAlphaRows(alpha, rows, sourceWidth, x0, y0, width, out, mask, from = 0, to = out.length / width, rowsOffset = 0) {
@@ -87,6 +89,22 @@ export function varDCTLFMetadataShape(image, layout, geometry, blockCount, plain
 }
 
 
+const RAW_TOP = 32767;
+export function fitRawSteps(quants) {
+  let top = 0;
+  for (const quant of quants) for (const value of quant) top = Math.max(top, value);
+  if (top <= RAW_TOP) return quants;
+  const unit = 2 ** Math.ceil(Math.log2(top / RAW_TOP));
+  for (const quant of quants) for (let i = 0; i < quant.length; i++) quant[i] = Math.max(unit, Math.round(quant[i] / unit) * unit);
+  return quants;
+}
+export function rawStepShift(quants) {
+  let top = 0, common = 0;
+  for (const quant of quants) for (const value of quant) { top = Math.max(top, value); common |= value; }
+  if (top <= RAW_TOP) return 0;
+  const shift = Math.ceil(Math.log2(top / RAW_TOP));
+  return common & (2 ** shift - 1) ? 0 : shift;
+}
 export function copyVarDCTQuantRows(quant, data, from = 0, to = 8) {
   let wide = false;
   for (let y = from; y < to; y++) for (let x = 0; x < 8; x++) {

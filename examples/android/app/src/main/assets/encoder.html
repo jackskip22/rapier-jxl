@@ -1,0 +1,49 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>rapier-jxl encoder</title>
+<link rel="icon" href="data:,">
+<script type="module">
+let connected = false;
+addEventListener('message', event => {
+  if (connected || event.data !== 'connect' || event.ports.length !== 1) return;
+  if (event.source && (event.source !== window || event.origin !== location.origin)) return;
+  connected = true;
+  const port = event.ports[0];
+  let worker;
+  const fail = message => port.postMessage(JSON.stringify({type: 'error', id: null, code: 'JXL_WORKER', message}));
+  try {
+    worker = new Worker(new URL('./encoder.mjs', location.href), {type: 'module'});
+    worker.onmessage = ({data}) => port.postMessage(data, data instanceof ArrayBuffer ? [data] : []);
+    worker.onerror = event => { event.preventDefault(); fail(event.message || 'The encoder worker stopped.'); worker.terminate(); };
+    worker.onmessageerror = () => { fail('The encoder reply could not be read.'); worker.terminate(); };
+    // A video is read here, where the browser plays it; rapier-jxl/animation encodes it in its own worker.
+    const say = value => port.postMessage(JSON.stringify(value));
+    let video = null;
+    const animate = async (job, bytes) => {
+      try {
+        const {encode} = await import('./jpegxl/animation.browser.mjs');
+        const result = await encode(new Blob([bytes], {type: job.mime}), {effort: 3, fidelity: {quality: 80},
+          onProgress: value => say({type: 'progress', id: job.id, stage: 'video', progress: value})});
+        if (!result.bytes) throw Object.assign(new Error(result.reason.message), {code: result.reason.code});
+        const out = result.bytes.slice().buffer;
+        say({type: 'result', id: job.id, byteLength: out.byteLength});
+        port.postMessage(out, [out]);
+      } catch (error) {
+        say({type: 'error', id: job.id, code: /^JXL_[A-Z0-9_]+$/.test(error.code) ? error.code : 'JXL_MESSAGE', message: error.message || String(error)});
+      }
+    };
+    port.onmessage = ({data}) => {
+      try {
+        if (video && data instanceof ArrayBuffer) { const job = video; video = null; return animate(job, data); }
+        const job = typeof data === 'string' && !video ? JSON.parse(data) : null;
+        if (job?.type === 'video' && typeof job.id === 'string' && job.id && /^video\//.test(job.mime)) { video = job; return; }
+        worker.postMessage(data, data instanceof ArrayBuffer ? [data] : []);
+      }
+      catch (error) { fail(error.message); }
+    };
+    port.onmessageerror = () => fail('The input message could not be read.');
+    port.start();
+    addEventListener('pagehide', () => { worker.terminate(); port.close(); }, {once: true});
+  } catch (error) { fail(error.message); }
+});
+</script>

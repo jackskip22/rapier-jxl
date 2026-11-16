@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: MIT
+import {realmAdapter, adopted, adapterRefused, limited} from './gpu-gate.mjs';
+import {deviceLost} from './device-trial.mjs';
 let current;
 export function gpuDevice() {
-  if (current) return current;
+  if (current) return limited(current);
   const pending = (async () => {
-    const adapter = await globalThis.navigator?.gpu?.requestAdapter({powerPreference: 'high-performance'});
-    if (!adapter || adapter.info.isFallbackAdapter) return null;
-    const device = await adapter.requestDevice({requiredLimits: {maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxBufferSize: adapter.limits.maxBufferSize}});
-    device.lost.then(() => { if (current === pending) current = undefined; });
+    const adapter = await realmAdapter();
+    if (!adapter) return null;
+    adopted(adapter);
+    const device = await adapter.requestDevice({requiredLimits: {maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxBufferSize: adapter.limits.maxBufferSize}}).catch(error => { adapterRefused(adapter); throw error; });
+    device.lost.then(() => { if (current === pending) current = undefined; deviceLost(device); });
     return device;
   })().catch(() => null).then(device => {
     if (!device && current === pending) current = undefined;
     return device;
   });
-  return current = pending;
+  return limited(current = pending);
 }

@@ -1,11 +1,12 @@
 // Types for page-rects.js, beside it.
-import type {ExactRect, CaptureRect} from 'rapier-jxl/capture-complete';
+import type {ExactRect, CaptureRect} from 'jpegxl/capture-complete';
 
 type Rect = {left: number; top: number; right: number; bottom: number};
 /** The element's box, text, photos and (with edges) edges, in CSS pixels. */
 export type Measurement = {
   readonly box: {left: number; top: number; width: number; height: number};
-  readonly text: ReadonlyArray<{r: Rect; grow: number; solidText: boolean}>;
+  /** certified: solidText with no mask, blend mode or filter on it or an ancestor in the element. */
+  readonly text: ReadonlyArray<{r: Rect; grow: number; solidText: boolean; certified?: true}>;
   readonly photos: ReadonlyArray<Rect>;
   /** Produced by measure(): every drawn DOM text box is represented, including when text is empty. */
   readonly textComplete?: true;

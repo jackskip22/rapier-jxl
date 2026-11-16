@@ -11,7 +11,7 @@ export function* perceptualMaskSteps(stride, rows, rowsOf) {
 export function maskEnergy(planes, top, stride, by0, by1, hf) {
   maskEnergyRange(planes, top, stride, by0 * stride, by1 * stride, hf);
 }
-export function maskEnergyRange([X, Y, B], top, stride, from, to, hf) {
+function maskEnergyRange([X, Y, B], top, stride, from, to, hf) {
   const W = stride * 8, endRow = Math.ceil(to / stride);
   for (let by = Math.floor(from / stride); by < endRow; by++) for (let bx = Math.max(0, from - by * stride); bx < Math.min(stride, to - by * stride); bx++) {
     let s = 0;
@@ -35,7 +35,7 @@ export function maskWeightDoubts(bound, stride, rows, eroded = null) {
   normalizeMaskDoubts(rel, b, 0, n);
   return rel;
 }
-export function maskDoubtSumsRange(bound, stride, rows, eroded, rel, from, to, total) {
+function maskDoubtSumsRange(bound, stride, rows, eroded, rel, from, to, total) {
   const endRow = Math.ceil(to / stride);
   for (let by = Math.floor(from / stride); by < endRow; by++) for (let bx = Math.max(0, from - by * stride); bx < Math.min(stride, to - by * stride); bx++) {
     let E = 0;
@@ -51,7 +51,7 @@ export function maskDoubtSumsRange(bound, stride, rows, eroded, rel, from, to, t
   }
   return total;
 }
-export function normalizeMaskDoubts(rel, b, from, to) {
+function normalizeMaskDoubts(rel, b, from, to) {
   if (!(b < 0.5)) { rel.fill(Infinity, from, to); return; }
   for (let i = from; i < to; i++) rel[i] = (rel[i] + b) / (1 - b) + 1e-12;
 }
@@ -68,7 +68,7 @@ export function maskWeights(hf, stride, rows) {
   normalizeMaskWeights(weight, norm, 0, n);
   return {hf, eroded, weight};
 }
-export function maskWeightsRange(hf, stride, rows, eroded, weight, from, to, wSum) {
+function maskWeightsRange(hf, stride, rows, eroded, weight, from, to, wSum) {
   const endRow = Math.ceil(to / stride);
   for (let by = Math.floor(from / stride); by < endRow; by++) for (let bx = Math.max(0, from - by * stride); bx < Math.min(stride, to - by * stride); bx++) {
     let m0 = Infinity, m1 = Infinity, m2 = Infinity;
@@ -87,7 +87,7 @@ export function maskWeightsRange(hf, stride, rows, eroded, weight, from, to, wSu
   }
   return wSum;
 }
-export function normalizeMaskWeights(weight, norm, from, to) {
+function normalizeMaskWeights(weight, norm, from, to) {
   for (let b = from; b < to; b++) weight[b] *= norm;
 }
 

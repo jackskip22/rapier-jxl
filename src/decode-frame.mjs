@@ -24,7 +24,7 @@ export function jpegShifts(sample) {
   const hs=sample.map(v=>v===1||v===2?1:0),vs=sample.map(v=>v===1||v===3?1:0),mh=Math.max(...hs),mv=Math.max(...vs);
   return {hs:hs.map(v=>mh-v),vs:vs.map(v=>mv-v)};
 }
-export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, maxSamples, maxModularWork, band = null, region = null, lfOnly = false} = {}) {
+export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, maxSamples, maxModularWork, band = null, region = null, lfOnly = false, partial = false} = {}) {
   const single = readers.length === 1, r=readers[0];
   const features = readFeatures ? readFeatures(r,h,f) : {};
   requireDecode(readFeatures || !(f.flags & 19n),'JPEG XL frame features need their reader.',r);
@@ -73,17 +73,18 @@ export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, m
       if(band&&(Math.floor(g/dct.groupsX)<band.first||Math.floor(g/dct.groupsX)>=band.end||g%dct.groupsX<(band.left??0)||g%dct.groupsX>=(band.right??dct.groupsX)))continue;
       if(region){const x=g%f.groupsX*f.groupDim,y=Math.floor(g/f.groupsX)*f.groupDim;if(x+f.groupDim<=region.x||y+f.groupDim<=region.y||x>=region.x+region.width||y>=region.y+region.height)continue;}
       const rr=single?r:readers[2+f.numLFGroups+pass*f.numGroups+g];
+      if(partial&&!rr)continue;
       if(dct)dct.readPassGroup(rr,g,pass);
       modular.decodeGroup(rr,{x:g%f.groupsX*f.groupDim,y:Math.floor(g/f.groupsX)*f.groupDim,width:f.groupDim,height:f.groupDim,minShift:minimum,maxShift:maximum,streamIndex:1+3*f.numLFGroups+17+pass*f.numGroups+g});
       if(!single)rr.endSection();
-      if(dct&&pass===f.passes.count-1&&(g%dct.groupsX===(band?.right??dct.groupsX)-1||g===f.numGroups-1))dct.renderRow(Math.floor(g/dct.groupsX),lfReference);
+      if(!partial&&dct&&pass===f.passes.count-1&&(g%dct.groupsX===(band?.right??dct.groupsX)-1||g===f.numGroups-1))dct.renderRow(Math.floor(g/dct.groupsX),lfReference);
     }
     maximum=minimum;
   }
   if(single)r.endSection();
   if(band)return {dct,features};
   const decoded=modular.finish(),colorCount=f.modular?f.encodedColorChannels:0;
-  const rendered=dct?.render({lfReference});
+  const rendered=dct?.render({lfReference,partial});
   const extraChannels=decoded.slice(colorCount).map((c,i)=>({...h.extraChannels[i],width:c.width,height:c.height,data:channelSamples(c.data,h.extraChannels[i].bitDepth)}));
   if(dct) return {...rendered,width:f.encodedWidth,height:f.encodedHeight,extraChannels,features,global,lfDequant};
   let planes;
@@ -95,7 +96,7 @@ export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, m
   return {planes,widths,heights,width:region?.width??f.encodedWidth,height:region?.height??f.encodedHeight,extraChannels,features,global,lfDequant,filtersApplied:false};
 }
 
-export function upsampleJPEG(plane, width, height, targetWidth, targetHeight) {
+function upsampleJPEG(plane, width, height, targetWidth, targetHeight) {
   if(width>=targetWidth&&height>=targetHeight)return plane;
   const kernels=decodeKernels(),across=width<targetWidth,down=height<targetHeight,tw=across?targetWidth:width,th=down?targetHeight:height;
   const rows=Math.max(2,Math.min(th,Math.floor(1048576/tw))),held=down?(rows>>1)+3:rows;

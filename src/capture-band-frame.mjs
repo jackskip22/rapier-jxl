@@ -6,11 +6,12 @@ import {buildCode, writeHistograms} from './prefix.mjs';
 import {SCREEN_INTEGER_CONFIGS} from './screen-codes.mjs';
 import {writeCaptureHeaderFields, writeCaptureFrameHeader, writeCaptureModularHeader, assembleCaptureCodestream} from './capture-headers.mjs';
 import {captureGroupBytes, CAPTURE_TOOLS_LEAN} from './capture-codec.mjs';
+import {fault} from './fault.mjs';
 
-export const FRAME_GROUP = 1024;
+const FRAME_GROUP = 1024;
 export const frameBandRows = (width, pixels) => Math.max(FRAME_GROUP, Math.floor(pixels / width / FRAME_GROUP) * FRAME_GROUP);
 
-export function bandGroupRects(width, rows) {
+function bandGroupRects(width, rows) {
   const rects = [];
   for (let y = 0; y < rows; y += FRAME_GROUP) for (let x = 0; x < width; x += FRAME_GROUP)
     rects.push({x, y, width: Math.min(FRAME_GROUP, width - x), height: Math.min(FRAME_GROUP, rows - y)});
@@ -31,7 +32,7 @@ export function* bandGroupSteps(data, width, rows, level, shape, tools = CAPTURE
 
 export function bandFrameFile(width, height, shape, colorSpace, groups) {
   const layout = groupLayout(width, height, FRAME_GROUP);
-  if (groups.length !== layout.groupsX * layout.groupsY || layout.single) throw new Error('A band frame needs every one of its groups.');
+  if (groups.length !== layout.groupsX * layout.groupsY || layout.single) throw fault('JXL_INTERNAL', 'A band frame needs every one of its groups.');
   const header = new BitWriter(128);
   writeCaptureHeaderFields(header, width, height, shape.colour, shape.alpha, {colorSpace});
   writeCaptureFrameHeader(header, {alpha: shape.alpha});

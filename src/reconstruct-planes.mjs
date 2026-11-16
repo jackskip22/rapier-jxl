@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 import {scaledDCT, inverseSmallTransform, TRANSFORMS} from './vardct-strategies.mjs';
 import {llfDivisors} from './vardct-bases.mjs';
-import {half, inverseBasis, RECON_ONE as RC_ONE, reconstructDCT8Planes, rgbPixels} from './reconstruct-dct8.mjs';
+import {rgbPixels} from './color-band.mjs';
+import {half, inverseBasis, RECON_ONE as RC_ONE, reconstructDCT8Planes} from './reconstruct-dct8.mjs';
 export {half, inverseBasis} from './reconstruct-dct8.mjs';
 import {dct8Band} from './dct8-band.mjs';
+import {colorPixels} from './color-band.mjs';
 
 const rcRecon = (q, c) => q === 0 ? 0 : q === 1 ? RC_ONE[c] : q === -1 ? -RC_ONE[c] : q - 0.145 / q;
 
@@ -22,7 +24,7 @@ export function coefficientPlanes(image) {
   const cfl = image.cfl, base = image.quantFieldBase || 1, fields = image.quantFields;
   const dcStep = comps.map(c => half(c.quant[0] / (255 * 8 * QS) * 128) / 128 * 255 * 8);
   const strategy = image.strategyData;
-  if (!strategy) {
+  if ((typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) || !strategy) {
     const y = new Float64Array(64), coef = new Float64Array(64), order = [1, 0, 2];
     const quants = comps.map(c => c.quant), coeffs = comps.map(c => c.coeffs), one = [RC_ONE[0], RC_ONE[1], RC_ONE[2]];
     for (let by = 0; by < rows; by++) for (let bx = 0; bx < stride; bx++) {
@@ -164,7 +166,7 @@ export function reconstructionBlockScale(image, bx, by, rgb) {
   const QS = image.quantScale || 256, base = image.quantFieldBase || 1, fields = image.quantFields;
   const stride = image.components[0].stride, cfl = image.cfl;
   const f = fields ? fields[by * stride + bx] / base : 1, ct = (by >> 3) * cfl.width + (bx >> 3);
-  return [(rgb ? 1 : 0) + cfl.x[ct] / 84, 8 * QS * f, 1 + cfl.b[ct] / 84];
+  return [(rgb ? 1 : 0) + cfl.x[ct] / 84, 8 * QS * f, (image.ycbcr ? 0 : 1) + cfl.b[ct] / 84];
 }
 export function dequantizeStrategyAC(q, steps, order, from, end, divisor, c, tr, lumaAC, lumaNz, count = 0) {
   const r1 = RC_ONE[c];
@@ -184,13 +186,13 @@ export function dequantizeStrategyAC(q, steps, order, from, end, divisor, c, tr,
 export function addStrategyChroma(tr, lumaAC, lumaNz, from, end, factor) {
   for (let i = from; i < end; i++) { const pos = lumaNz[i]; tr[pos] += factor * lumaAC[pos]; }
 }
-export function reconstructionBlockDC(comps, dcStep, c, rgb, pos) {
-  return ((comps[c].dc[pos] * dcStep[c] + (c !== 1 && (rgb || c === 2) ? comps[1].dc[pos] * dcStep[1] : 0)) / 8 + 0) / RC_LLF_ONE;
+export function reconstructionBlockDC(comps, dcStep, c, rgb, pos, baseB = true) {
+  return ((comps[c].dc[pos] * dcStep[c] + (c !== 1 && (rgb || baseB && c === 2) ? comps[1].dc[pos] * dcStep[1] : 0)) / 8 + 0) / RC_LLF_ONE;
 }
-export function reconstructionBlockMeans(comps, dcStep, c, rgb, bx, by, bw, stride, means, from = 0, end = means.length) {
+export function reconstructionBlockMeans(comps, dcStep, c, rgb, bx, by, bw, stride, means, from = 0, end = means.length, baseB = true) {
   for (let i = from; i < end; i++) {
     const y = Math.floor(i / bw), x = i % bw, pos = (by + y) * stride + bx + x;
-    means[i] = (comps[c].dc[pos] * dcStep[c] + (c !== 1 && (rgb || c === 2) ? comps[1].dc[pos] * dcStep[1] : 0)) / 8;
+    means[i] = (comps[c].dc[pos] * dcStep[c] + (c !== 1 && (rgb || baseB && c === 2) ? comps[1].dc[pos] * dcStep[1] : 0)) / 8;
   }
 }
 export function writeReconstructionLLF(llf, bw, bh, tr, from = 0, end = bw * bh) {
@@ -199,7 +201,7 @@ export function writeReconstructionLLF(llf, bw, bh, tr, from = 0, end = bw * bh)
 }
 
 function rcXybPlanes(image, rgb = false, ycbcr = false) {
-  if (!image.strategyData) return reconstructDCT8Planes(image, rgb, ycbcr, dct8Band());
+  if ((typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) || !image.strategyData) return reconstructDCT8Planes(image, rgb, ycbcr, dct8Band());
   const comps = image.components, stride = comps[0].stride, rows = comps[0].rows, W = stride * 8, H = rows * 8;
   const QS = image.quantScale || 256, outPlanes = [0, 1, 2].map(() => new Float32Array(W * H));
   const dcStep = reconstructionDCSteps(comps, QS);
@@ -224,12 +226,12 @@ function rcXybPlanes(image, rgb = false, ycbcr = false) {
       if (c !== 1 && k3[c] !== 0) addStrategyChroma(tr, lumaAC, lumaNz, 0, nLumaNz, k3[c]);
       if (bw === 1 && bh === 1) {
         const pos = by * stride + bx;
-        tr[0] = reconstructionBlockDC(comps, dcStep, c, rgb, pos);
+        tr[0] = reconstructionBlockDC(comps, dcStep, c, rgb, pos, !ycbcr);
         if (id !== 0) { rcBlockIdct(scaledDCT(inverseSmallTransform(tr, id, smallPx), 8, 8, smallDct), 8, 8, true, Bw, Bh, outPlanes[c], x0, y0, W); continue; }
       } else {
         let means = meansScratch.get(area);
         if (!means) meansScratch.set(area, means = new Float64Array(area));
-        reconstructionBlockMeans(comps, dcStep, c, rgb, bx, by, bw, stride, means);
+        reconstructionBlockMeans(comps, dcStep, c, rgb, bx, by, bw, stride, means, 0, means.length, !ycbcr);
         const llf = rcLlfFromDC(means, bw, bh);
         writeReconstructionLLF(llf, bw, bh, tr);
       }
@@ -261,24 +263,12 @@ export function reconstructRGB(image, {planes: floating = false} = {}) {
 
 export function reconstructYCbCr(image, {planes: floating = false} = {}) {
   const {width, height} = image;
-  return ycbcrPixels(rcXybPlanes({...image, components: [1, 0, 2].map(c => image.components[c])}, false, true), width, height, floating, image.alpha);
+  const components = image.frameOrder ? image.components : [1, 0, 2].map(c => image.components[c]);
+  return ycbcrPixels(rcXybPlanes({...image, components}, false, true), width, height, floating, image.alpha);
 }
 
 export function ycbcrPixels({planes, W}, width, height, floating, alpha = null) {
-  const rgba = floating ? null : new Uint8Array(width * height * 4);
-  const output = floating ? [0, 1, 2].map(() => new Float32Array(width * height)) : null;
-  for (let y = 0, at = 0; y < height; y++) for (let x = 0; x < width; x++, at += 4) {
-    const p = y * W + x, cb = planes[0][p], luma = planes[1][p] + 128 / 255, cr = planes[2][p];
-    const r = luma + 1.402 * cr, g = luma - 0.344136286 * cb - 0.714136286 * cr, b = luma + 1.772 * cb;
-    if (floating) { output[0][at >> 2] = r; output[1][at >> 2] = g; output[2][at >> 2] = b; }
-    else {
-      rgba[at] = Math.max(0, Math.min(255, Math.round(255 * r)));
-      rgba[at + 1] = Math.max(0, Math.min(255, Math.round(255 * g)));
-      rgba[at + 2] = Math.max(0, Math.min(255, Math.round(255 * b)));
-      rgba[at + 3] = alpha?.[at + 3] ?? 255;
-    }
-  }
-  return output ?? rgba;
+  return colorPixels(planes, width, height, W, floating ? 3 : 1, alpha, 4);
 }
 
 export {toRGBA, toRGBAInto} from './rgb8-output.mjs';

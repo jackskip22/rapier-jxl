@@ -5,15 +5,17 @@ import {coefficientOrders} from './coefficient-effort.mjs';
 import {TokenCounts} from './entropy.mjs';
 import {stepOffloaded} from './offload.mjs';
 import {describePlan} from './parallel-serve.mjs';
+import {scoreBandTransfers, scoreBandReply} from './photo-band-storage.mjs';
 
 function taskKey(task, idOf) {
+  if (task.kind === 'score-band') return `score-band|${idOf(task.look)}|${task.y0}|${task.y1}`;
   if (task.kind === 'fast-band') return `fast-band|${idOf(task.data)}|${task.width}|${task.quality}|${task.y}|${task.h}|${!!task.small}`;
   if (task.kind === 'band') return `band|${idOf(task.data)}|${idOf(task.color)}|${task.width}|${task.quality}|${task.y}|${task.h}|${task.from}|${task.to}|${!!task.fast}|${!!task.uploadFlat}|${!!task.uploadProfile}|${!!task.uploadGrain}|${!!task.small}`;
   const plan = describePlan(task.plan);
   if (task.kind === 'lf') return plan && `lf|${idOf(task.image)}|${plan.lf}|${plan.modularAns}|${task.g}`;
   return plan && `vardct|${idOf(task.image)}|${JSON.stringify({...plan, orders: plan.orders?.join() ?? null})}`;
 }
-const BIG = {orders: ['image'], band: ['data', 'target'], 'fast-band': ['data', 'target'], vardct: ['image'], lf: ['image'], count: ['image'], write: ['image'], ac: ['model']};
+const BIG = {'score-band': [], orders: ['image'], band: ['data', 'target'], 'fast-band': ['data', 'target'], vardct: ['image'], lf: ['image'], count: ['image'], write: ['image']};
 function dcGroupCount({width, height, components}) {
   const hs = components.map(c => c.h), vs = components.map(c => c.v), log2 = v => v === 1 ? 0 : 1;
   const maxhs = log2(Math.max(...hs) / Math.min(...hs)), maxvs = log2(Math.max(...vs) / Math.min(...vs));
@@ -22,15 +24,14 @@ function dcGroupCount({width, height, components}) {
 }
 
 const kept = promise => { promise.catch(() => {}); return promise; };
-
 function driver(owner) {
   let ended = false;
   const pool = Object.create(owner);
-  pool.run = (task, big) => ended ? Promise.resolve(undefined) : owner.run(task, big);
+  pool.run = (task, big, transfer, validate) => ended ? Promise.resolve(undefined) : owner.run(task, big, transfer, validate);
   const ids = new WeakMap(), memo = new Map();
   let next = 0;
   const idOf = value => { if (value === null || typeof value !== 'object') return String(value); let id = ids.get(value); if (id === undefined) ids.set(value, id = ++next); return id; };
-  const message = task => task.kind === 'lf' ? {kind: 'lf', image: task.image, plan: describePlan(task.plan), g: task.g}
+  const message = task => task.kind === 'score-band' ? {...task, look: null} : task.kind === 'lf' ? {kind: 'lf', image: task.image, plan: describePlan(task.plan), g: task.g}
     : task.kind === 'fast-band' ? {kind: 'fast-band', data: task.data, target: task.target, width: task.width, h: task.h, quality: task.quality, y: task.y, small: task.small}
     : task.kind === 'vardct' ? {kind: 'vardct', image: task.image, plan: describePlan(task.plan)}
     : {kind: 'band', data: task.data, target: task.target, width: task.width, h: task.h, quality: task.quality, color: task.color, fast: task.fast, uploadFlat: task.uploadFlat, uploadProfile: task.uploadProfile, uploadGrain: task.uploadGrain, from: task.from, to: task.to, y: task.y, small: task.small};
@@ -78,7 +79,8 @@ function driver(owner) {
       promise = Promise.all([counts, ...lf]).then(([counted, ...groups]) =>
         pool.run({...msg, ...(counted && {counts: counted}), ...(lf.length && groups.every(Boolean) && {lf: groups})}, BIG.vardct));
       promise.deps = [counts, ...lf];
-    } else if (task.kind === 'lf') promise = lfGroup(task.image, msg.plan, task.g);
+    } else if (task.kind === 'score-band') promise = pool.run(msg, [], scoreBandTransfers(msg), result => scoreBandReply(msg, result));
+    else if (task.kind === 'lf') promise = lfGroup(task.image, msg.plan, task.g);
     else promise = pool.run(msg, BIG[task.kind]);
     memo.set(key, kept(promise));
     return promise;
@@ -91,17 +93,9 @@ function driver(owner) {
     },
     async groups(request) {
       const plan = describePlan(request.plan), counted = plan && await countsFor(request.image, plan);
-      if (counted) {
-        const parts = await Promise.all(ranges(request.groups).map(([from, to]) => pool.run({kind: 'write', image: request.image, plan, counts: counted, from, to}, BIG.write)));
-        if (parts.every(Boolean)) return {results: parts.flat(), errors: {}};
-      }
-      const parts = await Promise.all(ranges(request.groups).map(([from, to]) => {
-        const datas = [];
-        for (let g = from; g < to; g++) datas.push(request.job(g).data);
-        return pool.run({kind: 'ac', model: request.model, groups: datas}, BIG.ac);
-      }));
-      if (!parts.every(Boolean)) return undefined;
-      return {results: parts.flat(), errors: {}};
+      if (!counted) return undefined;
+      const parts = await Promise.all(ranges(request.groups).map(([from, to]) => pool.run({kind: 'write', image: request.image, plan, counts: counted, from, to}, BIG.write)));
+      return parts.every(Boolean) ? {results: parts.flat(), errors: {}} : undefined;
     },
     prefetch(tasks, after) {
       if (after) {
@@ -139,19 +133,19 @@ function driver(owner) {
   };
 }
 
-function offloaded(pool) {
+function offloaded(pool, stage = null) {
   if (!pool) return undefined;
   return Object.assign(driver(pool), {step(steps, reply) {
     if (pool.failure) throw pool.failure;
-    return stepOffloaded(steps, reply, pool.limit);
+    return stepOffloaded(steps, reply, pool.limit, stage);
   }});
 }
 
-export function parallelJob(steps, {signal, gpu, pool = null, kept = null} = {}) {
+export function parallelJob(steps, {signal, gpu, pool = null, kept = null, stage = null} = {}) {
   if (kept) { pool = kept; kept.busy = true; }
   const it = (async function* () {
     let ended = false;
-    try { yield* driven(steps, signal, it, gpu, offloaded(pool)); ended = true; }
+    try { yield* driven(steps, signal, it, gpu, offloaded(pool, stage)); ended = true; }
     finally {
       pool?.release(!ended);
       const stays = kept && !kept.once, retired = stays ? pool.retired() : pool?.close();

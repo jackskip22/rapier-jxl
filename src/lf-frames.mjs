@@ -84,11 +84,11 @@ function modularLF(image, level) {
 function intermediateLF(parent, level, useDCFrame = true) {
   const source = dcImage(parent), {width, height} = source, stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), quantScale = 1024;
   const components = source.planes.map(() => ({h: 1, v: 1, stride, rows, quant: new Int32Array(64).fill(1), coeffs: new Int32Array(stride * rows * 64)}));
-  const block = new Float64Array(192), intermediate = new Float64Array(64), sums = new Float64Array(192);
+  const block = new Float64Array(192), sums = new Float64Array(192);
   for (let by = 0; by < rows; by++) for (let bx = 0; bx < stride; bx++) {
     for (let c = 0; c < 3; c++) for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++)
       block[c * 64 + y * 8 + x] = source.planes[c][Math.min(height - 1, by * 8 + y) * width + Math.min(width - 1, bx * 8 + x)] * source.scales[c] / 128 * 255;
-    transformDCT8(block, intermediate, sums);
+    transformDCT8(block, sums);
     for (let c = 0; c < 3; c++) for (let k = 0; k < 64; k++) components[c].coeffs[(by * stride + bx) * 64 + k] = Math.round(sums[c * 64 + k] * quantScale);
   }
   const alpha = source.alpha && Uint8Array.from({length: width * height * 4}, (_, i) => i % 4 === 3 ? source.alpha[i >> 2] : 0);
@@ -101,8 +101,9 @@ function intermediateLF(parent, level, useDCFrame = true) {
 function lfCoding(counts) {
   const config = uintConfig(0), aggregate = counts.aggregate(Array.from({length: counts.contexts}, (_, i) => i));
   const code = buildCode(aggregate.tokens([0], config, 64)), contextMap = new Uint8Array(counts.contexts);
-  return {contextMap, histograms: [{config, code}], bits: 0,
-    write: (writer, context, value) => writeHybrid(writer, code, config, value)};
+  const write = (writer, context, value) => writeHybrid(writer, code, config, value);
+  return {contextMap, histograms: [{config, code}], bits: 0, write,
+    writeTokens: (writer, contexts, values, n) => { for (let i = 0; i < n; i++) write(writer, contexts[i], values[i]); }};
 }
 
 export function* lfFrameSteps(image, levels) {

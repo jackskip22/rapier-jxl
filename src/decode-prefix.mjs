@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 import {requireDecode} from './decode-bits.mjs';
 import {readDecodeFrameHeader, readDecodeTOC} from './decode-header.mjs';
-import {decodeFrameSections} from './decode-frame.mjs';
+import {decodeFrameSections, restoreFrame} from './decode-frame.mjs';
+import {power2} from './decode-header.mjs';
 import {frameFeatures} from './decode-parts.mjs';
 import {transformColor} from './decode-color.mjs';
 import {composeFrame} from './decode-compose.mjs';
@@ -30,7 +31,34 @@ export function cutPreview(r, h, options, arrived, renderLF) {
     } else {
       if (readers.length === 1) { if (f.cut || f.isLast) break; continue; }
       if (readers.slice(0, 1 + f.numLFGroups).some(reader => !reader)) break;
-      lf = decodeFrameSections(readers, h, f, {readFeatures: (r, h, f) => frameFeatures(r, h, f, options), maxSamples: options.maxSamples,
+      if (f.passes.count > 1 && f.isLast && headers.length === 1 && !f.useLFFrame && readers[1 + f.numLFGroups]) {
+        let completedPasses = 0, arrivedGroups = 0;
+        for (let p = 0; p < f.passes.count; p++) {
+          let all = true;
+          for (let g = 0; g < f.numGroups; g++) {
+            if (readers[2 + f.numLFGroups + p * f.numGroups + g]) arrivedGroups++;
+            else all = false;
+          }
+          if (all && completedPasses === p) completedPasses++;
+        }
+        let scale = SCALE;
+        for (let p = 0; p < completedPasses; p++) {
+          if (p === f.passes.count - 1) scale = 1;
+          else {
+            const idx = f.passes.lastPass.indexOf(p);
+            if (idx >= 0) scale = Math.min(scale, f.passes.downsample[idx]);
+          }
+        }
+        let full = restoreFrame(decodeFrameSections(readers, h, f, {
+          readFeatures: frameFeatures, maxSamples: options.maxSamples, maxModularWork: options.maxModularWork, partial: true,
+        }), f);
+        const width = Math.ceil(f.width / power2(3 * f.lfLevel)), height = Math.ceil(f.height / power2(3 * f.lfLevel));
+        full.width = width; full.height = height; full.widths = full.planes.map(() => width); full.heights = full.planes.map(() => height);
+        full = transformColor(full, h, f, {colorSpace: 'original', inPlace: true});
+        full = composeFrame(full, h, f, references, false);
+        return {frame: full, small: h, f, headers, partialInfo: {scale, completedPasses, arrivedGroups, totalGroups: f.numGroups * f.passes.count}};
+      }
+      lf = decodeFrameSections(readers, h, f, {readFeatures: frameFeatures, maxSamples: options.maxSamples,
         maxModularWork: options.maxModularWork, lfOnly: true});
     }
     const {width, height} = lf;
@@ -47,5 +75,5 @@ export function cutPreview(r, h, options, arrived, renderLF) {
       small, last, {colorSpace: 'original', inPlace: true});
   }
   requireDecode(canvas, 'Truncated JPEG XL data.', r);
-  return {frame: canvas, small, f: last, headers};
+  return {frame: canvas, small, f: last, headers, partialInfo: {scale: SCALE}};
 }

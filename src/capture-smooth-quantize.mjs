@@ -1,6 +1,40 @@
 // SPDX-License-Identifier: MIT
 import {ssimulacra2, ssimulacra2Reference} from './ssimulacra2.mjs';
-import {webpTarget} from './photo-quality-table.mjs';
+import {askedLook} from './photo-quality-table.mjs';
+import {call} from './capture-kernels.mjs';
+import {both, out, room} from './kernel-call.mjs';
+import {fault} from './fault.mjs';
+import {S2_MEMORY} from './ssimulacra2-memory.mjs';
+
+export function smoothColors(source, exact) {
+  const n = source.length / 4, band = Math.min(n, 1 << 20);
+  let capacity = 4096, used = 0, slots = new Uint32Array(capacity * 2), words = new Uint32Array(capacity), counts = new Uint32Array(capacity);
+  const pixels = from => source.subarray(from * 4, (from + Math.min(band, n - from)) * 4), mask = from => exact.subarray(from, from + Math.min(band, n - from));
+  for (let from = 0, result; from < n;) {
+    [result, slots, words, counts] = call(k => k.smoothCount, [pixels(from), mask(from), Math.min(band, n - from),
+      both(Uint32Array, slots), capacity * 2 - 1, both(Uint32Array, words), both(Uint32Array, counts), used, capacity]);
+    if (result >= 0) { used = result; from += Math.min(band, n - from); continue; }
+    from += -result - 1; used = capacity; capacity *= 2;
+    [, words, counts, slots] = call(k => k.smoothRehash, [words, counts, out(Uint32Array, capacity, 1), out(Uint32Array, capacity, 1),
+      out(Uint32Array, capacity * 2), capacity * 2 - 1, used]);
+  }
+  return {
+    size: used,
+    remap(step) {
+      const [, table] = call(k => k.smoothPalette, [words, counts, used, step, out(Uint32Array, used), room(used * 4), room(used * 4), room(1024)]);
+      let candidate;
+      try { candidate = new Uint8Array(source.length); }
+      catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'The smooth-field candidate could not allocate its pixels.'), {cause}); }
+      for (let from = 0; from < n; from += band) {
+        const [lost, made] = call(k => k.smoothApply, [both(Uint8Array, pixels(from)), mask(from), Math.min(band, n - from), slots, capacity * 2 - 1, words, table]);
+        if (lost) throw fault('JXL_INTERNAL', 'The smooth-field palette lost a source color.');
+        candidate.set(made, from * 4);
+      }
+      return candidate;
+    },
+    close() { slots = words = counts = null; },
+  };
+}
 
 function fieldPieces(r, rectangles) {
   const ys = [r.y, r.y + r.height], blocks = [];
@@ -47,7 +81,7 @@ function edgeChanges(candidate, width, height) {
 }
 
 export function smoothQuantize(data, width, height, regions, rectangles, intent, signal) {
-  const floor = webpTarget(intent), pixels = new (data instanceof Uint8ClampedArray ? Uint8ClampedArray : Uint8Array)(data), kept = [], measurements = [];
+  const floor = askedLook(intent), pixels = new (data instanceof Uint8ClampedArray ? Uint8ClampedArray : Uint8Array)(data), kept = [], measurements = [];
   const check = () => { if (signal?.aborted) throw signal.reason; };
   for (const r of regions) {
     check();
@@ -63,19 +97,12 @@ export function smoothQuantize(data, width, height, regions, rectangles, intent,
     let covered = 0;
     for (let i = 0; i < n; i++) covered += exact[i];
     if (covered * 2 >= n) continue;
-    const colours = new Map(), indexes = new Uint32Array(n), words = [], counts = [];
-    for (let p = 0; p < n; p++) if (!exact[p]) {
-      const word = source[p * 4] | source[p * 4 + 1] << 8 | source[p * 4 + 2] << 16;
-      let index = colours.get(word);
-      if (index === undefined) { index = words.length; colours.set(word, index); words.push(word); counts.push(0); }
-      indexes[p] = index; counts[index]++;
-    }
-    if (words.length < 256) continue;
+    const palette = smoothColors(source, exact);
+    if (palette.size < 256) { palette.close(); continue; }
     const pieces = fieldPieces(r, rectangles);
-    if (!pieces.length) continue;
+    if (!pieces.length) { palette.close(); continue; }
     const large = n > 65536;
-    const refs = pieces.map(p => ({p, reference: ssimulacra2Reference({rgba: cropOf(source, r.width, p, r.x, r.y)}, p.width, p.height,
-      {immutable: true, cacheBytes: Math.min(16 << 20, p.width * p.height * 48)})}));
+    const refs = [];
     const seen = new Set();
     let active = null;
     const scorePiece = (candidate, index) => {
@@ -106,22 +133,7 @@ export function smoothQuantize(data, width, height, regions, rectangles, intent,
       const step = Math.round(raw * 64) / 64;
       if (step <= 1 || step > 128 || seen.has(step)) return null;
       seen.add(step); check();
-      const candidate = source.slice(), bins = new Map(), keys = new Uint32Array(words.length), table = new Uint32Array(words.length);
-      for (let i = 0; i < words.length; i++) {
-        const v = words[i], key = Math.floor((v & 255) / step) | Math.floor((v >> 8 & 255) / step) << 8 | Math.floor((v >> 16 & 255) / step) << 16;
-        keys[i] = key;
-        let bin = bins.get(key);
-        if (!bin) bins.set(key, bin = {count: 0, r: 0, g: 0, b: 0, cost: Infinity, index: i});
-        const count = counts[i]; bin.count += count; bin.r += (v & 255) * count; bin.g += (v >> 8 & 255) * count; bin.b += (v >> 16 & 255) * count;
-      }
-      for (let i = 0; i < words.length; i++) {
-        const v = words[i], bin = bins.get(keys[i]), cost = ((v & 255) - bin.r / bin.count) ** 2 + ((v >> 8 & 255) - bin.g / bin.count) ** 2 + ((v >> 16 & 255) - bin.b / bin.count) ** 2;
-        if (cost < bin.cost || cost === bin.cost && counts[i] > counts[bin.index]) { bin.cost = cost; bin.index = i; }
-      }
-      for (let i = 0; i < words.length; i++) table[i] = words[bins.get(keys[i]).index];
-      for (let p = 0; p < n; p++) if (!exact[p]) {
-        const v = table[indexes[p]], i = p * 4; candidate[i] = v & 255; candidate[i + 1] = v >> 8 & 255; candidate[i + 2] = v >> 16 & 255;
-      }
+      const candidate = palette.remap(step);
       const scored = scoreField(candidate);
       return {candidate, step, changes: 0, ...scored};
     };
@@ -129,6 +141,13 @@ export function smoothQuantize(data, width, height, regions, rectangles, intent,
     let step = large ? Math.max(4, Math.min(48, (100 - floor) * 0.9)) : Math.max(2, Math.min(128, 2 * Math.sqrt(Math.max(0, 100 - floor))));
     let taken = 0;
     try {
+      let cacheLeft = S2_MEMORY.base + Math.min(16 << 20, n * 48);
+      for (const p of pieces) {
+        const reference = ssimulacra2Reference({rgba: cropOf(source, r.width, p, r.x, r.y)}, p.width, p.height,
+          {immutable: true, cacheBytes: Math.max(0, cacheLeft - S2_MEMORY.base)});
+        if (reference.reservedBytes) cacheLeft -= S2_MEMORY.base + reference.reservedBytes;
+        refs.push({p, reference});
+      }
       for (let round = 0; round < 6; round++) {
         const hit = measure(step);
         if (!hit) break;
@@ -176,7 +195,9 @@ export function smoothQuantize(data, width, height, regions, rectangles, intent,
           if (!clears(passing)) passing = anchor && anchor !== passing && clears(fillPieces(anchor)) && anchor.score >= floor ? anchor : null;
         } finally { whole.release(); }
       }
-    } finally { for (const ref of refs) ref.reference.release(); }
+    } finally {
+      try { for (const ref of refs) ref.reference.release(); } finally { palette.close(); }
+    }
     if (!passing) continue;
     for (let y = 0; y < r.height; y++) pixels.set(passing.candidate.subarray(y * r.width * 4, (y + 1) * r.width * 4), ((r.y + y) * width + r.x) * 4);
     kept.push({r, exact, masked: true});

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {fault} from './fault.mjs';
 import {gpuDevice} from './gpu-device.mjs';
+import {gpuCached} from './gpu-kit.mjs';
 import {weightedOnDevice} from './gpu-weighted.mjs';
 import {compileCaptureKernels, captureWeighted} from './capture-kernels.mjs';
 
@@ -9,6 +10,7 @@ export async function captureDevice(webgpu) {
   if (!device && webgpu === 'required') throw fault('JXL_WEBGPU', "webgpu: 'required', and this realm has no WebGPU device. Leave webgpu out for the same file on WebAssembly.");
   return device;
 }
+
 export const CAPTURE_GPU_PIXELS = 1 << 20;
 
 export const WEIGHTED = Object.freeze({
@@ -35,12 +37,9 @@ const refused = new WeakSet(), tested = new WeakMap();
 export async function captureEngine(webgpu, kinds = [WEIGHTED], {note = () => {}} = {}) {
   const device = await captureDevice(webgpu);
   if (!device) { note('unavailable'); return null; }
-  let passed = tested.get(device);
-  if (!passed) tested.set(device, passed = new Map());
-  for (const kind of kinds) if (!passed.has(kind.name)) passed.set(kind.name, kind.selfTest(device).catch(() => false));
-  const ok = !refused.has(device) && (await Promise.all(kinds.map(kind => passed.get(kind.name)))).every(Boolean);
-  if (!ok) {
-    refused.add(device);
+  const answers = await Promise.all(kinds.map(kind => gpuCached(tested, device, kind.name, () => Promise.resolve().then(() => kind.selfTest(device))))).catch(() => null);
+  if (refused.has(device) || !answers?.every(Boolean)) {
+    if (answers) refused.add(device);
     if (webgpu === 'required') throw fault('JXL_WEBGPU', "webgpu: 'required', and this device failed its check. Leave webgpu out for the same file on WebAssembly.");
     note('device-refused');
     return null;

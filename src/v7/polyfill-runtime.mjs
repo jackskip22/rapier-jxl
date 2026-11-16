@@ -1,5 +1,8 @@
+import {PIXELS} from '../limits.mjs';
+import {abortError} from '../fault.mjs';
 const jxlURL = value => { try { return /\.jxl$/i.test(new URL(value, 'https://local.invalid/').pathname) || /^data:image\/jxl[;,]/i.test(value); } catch { return false; } };
 const fail = (code, message) => Object.assign(new Error(message), {code});
+const cancelRead = source => { try { source?.cancel().catch(() => {}); } catch {} };
 export function srcset(value) {
   const entries = []; let at = 0;
   while (at < value.length) {
@@ -63,16 +66,32 @@ export function cssURLs(value) {
   }
   return result.sort((a, b) => a.start - b.start);
 }
+function pngClock(decoded) {
+  const {animation, frames} = decoded;
+  if (!animation || !frames?.length) return decoded;
+  const seconds = frames.map(frame => frame.duration * animation.denominator / animation.numerator);
+  const rate = seconds.every(value => value * 60000 <= 65535.5) ? 60000 : 1000;
+  let total = 0, at = 0;
+  return {...decoded, animation: {...animation, numerator: rate, denominator: 1}, frames: frames.map((frame, i) => {
+    total += seconds[i] * rate; const next = Math.round(total), duration = Math.min(65535, Math.max(0, next - at)); at = next;
+    return {...frame, duration};
+  })};
+}
 export function installFallback(document, options) {
   const window = document.defaultView, root = options.root ?? document;
-  const maxBytes = options.maxDecodedBytes ?? 134217728, maxInputBytes = options.maxInputBytes ?? 33554432;
+  if (!window || ['MutationObserver', 'matchMedia', 'addEventListener', 'removeEventListener', 'getComputedStyle', 'reportError'].some(name => typeof window[name] !== 'function'))
+    throw fail('JXL_PLATFORM', "Polyfill needs a browser window with DOM observers; pass a document from an open browser page.");
+  const maxBytes = options.maxDecodedBytes ?? Number.MAX_SAFE_INTEGER, maxInputBytes = options.maxInputBytes ?? Number.MAX_SAFE_INTEGER;
   const concurrency = options.workers ?? 2;
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 4 || !Number.isSafeInteger(maxInputBytes) || maxInputBytes < 1 || !Number.isInteger(concurrency) || concurrency < 1 || concurrency > 4)
-    throw fail('JXL_OPTIONS', 'Polyfill limits are positive integers; workers 1 to 4.');
+    throw fail('JXL_OPTIONS', 'Polyfill limits are invalid; use positive whole numbers and workers from 1 to 4.');
   const states = new Set(), elements = new Map(), cache = new Map(), jobs = [], clients = [], mediaListeners = new Map(), styleWrites = new WeakMap();
   let stopped = false, scheduled = false, active = 0, retainedBytes = 0, imageMode = 'blob';
   const controller = {status: 'active', refresh, disconnect, get stats() { return {elements: states.size, resources: cache.size, active, queued: jobs.length}; }};
-  function report(error, element) { try { options.onError?.(error, element); } catch {} }
+  function report(error, element) {
+    try { Promise.resolve(options.onError?.(error, element)).catch(reason => window.reportError(reason)); }
+    catch (reason) { window.reportError(reason); }
+  }
   function changeStyle(element, action) {
     const before = element.getAttribute('style'); action(); const after = element.getAttribute('style');
     if (before !== after) { let writes = styleWrites.get(element); if (!writes) styleWrites.set(element, writes = []); writes.push({before, after}); }
@@ -85,7 +104,7 @@ export function installFallback(document, options) {
     for (let i = jobs.length - 1; i >= 0; i--) {
       if (jobs[i].entry === entry) {
         const [job] = jobs.splice(i, 1);
-        job.reject(entry.abort.signal.reason ?? fail('JXL_ABORTED', 'JPEG XL operation was canceled.'));
+        job.reject(entry.abort.signal.reason ?? abortError());
       }
     }
   }
@@ -116,14 +135,14 @@ export function installFallback(document, options) {
         if (candidate.media) { watchMedia(candidate.media); if (!window.matchMedia(candidate.media).matches) continue; }
         const type = read(candidate, 'type').toLowerCase();
         if (type && type !== 'image/jxl' && !/^(image\/(png|jpeg|webp|avif|gif|svg\+xml))$/.test(type)) continue;
-        if (!read(candidate, 'srcset')) continue;
+        if (!srcset(read(candidate, 'srcset')).length) continue;
         source = candidate; typed = type === 'image/jxl'; break;
       }
     }
     const set = read(source, 'srcset');
     const candidates = srcset(set);
     if (candidates.some(row => row.width)) width = sourceSize(read(source, 'sizes') || read(element, 'sizes'), element, window, document, watchMedia);
-    else if (source === element && read(element, 'src') && candidates.length && !candidates.some(row => row.density === 1)) candidates.push({url: read(element, 'src'), density: 1});
+    else if (source === element && read(element, 'src') && !candidates.some(row => row.density === 1)) candidates.push({url: read(element, 'src'), density: 1});
     const candidate = set ? selectCandidate(candidates, width, window.devicePixelRatio || 1) : null;
     const selected = set ? candidate?.url : read(element, 'src');
     const descriptor = candidate ? candidate.width ? ` ${candidate.width}w` : ` ${candidate.density ?? 1}x` : '';
@@ -182,8 +201,8 @@ export function installFallback(document, options) {
   async function decoder() {
     if (options.decode) return options.decode;
     const {createDecodeCodec} = await import('./decode-codec.mjs');
-    if (stopped) throw fail('JXL_CLOSED', 'Polyfill disconnected.');
-    const client = createDecodeCodec({maxPendingBytes: maxInputBytes, maxPixels: Math.min(40000000, Math.floor(maxBytes / 32)), maxPendingJobs: 1, ...(options.workerFactory ? {workerFactory: options.workerFactory} : {})});
+    if (stopped) throw fail('JXL_CLOSED', "Polyfill is disconnected; call install() again.");
+    const client = createDecodeCodec({maxPendingBytes: maxInputBytes, maxPixels: Math.min(PIXELS, Math.floor(maxBytes / 32)), maxPendingJobs: 1, ...(options.workerFactory ? {workerFactory: options.workerFactory} : {})});
     clients.push(client); return (bytes, settings) => client.decode(bytes, settings);
   }
   const decoders = [];
@@ -191,7 +210,7 @@ export function installFallback(document, options) {
     while (!stopped && active < concurrency && jobs.length) {
       const job = jobs.shift();
       if (job.entry.abort.signal.aborted) {
-        job.reject(job.entry.abort.signal.reason ?? fail('JXL_ABORTED', 'JPEG XL operation was canceled.'));
+        job.reject(job.entry.abort.signal.reason ?? abortError());
         continue;
       }
       const lane = decoders.findIndex(row => !row.busy);
@@ -210,37 +229,56 @@ export function installFallback(document, options) {
   async function run({entry, credentials, referrerPolicy}, row) {
     const signal = entry.abort.signal; signal.throwIfAborted();
     const response = await fetch(entry.url, {signal, mode: 'cors', credentials, referrerPolicy});
-    if (!response.ok) throw fail('JXL_FETCH', `Image request failed (${response.status}).`);
-    const declared = Number(response.headers.get('content-length')); if (declared > maxInputBytes) throw fail('JXL_LIMIT', 'Image exceeds maxInputBytes.');
+    try {
+      if (!response.ok) throw fail('JXL_IO', `Image request failed (${response.status}); check the image URL and access.`);
+      const declared = Number(response.headers.get('content-length')); if (declared > maxInputBytes) throw fail('JXL_LIMIT', 'Image exceeds maxInputBytes; raise it or use a smaller image.');
+    } catch (error) { cancelRead(response.body); throw error; }
     const reader = response.body?.getReader(); let bytes;
     if (reader) {
       const chunks = []; let length = 0;
-      try { for (;;) { const {done, value} = await reader.read(); if (done) break; length += value.length; if (length > maxInputBytes) throw fail('JXL_LIMIT', 'Image exceeds maxInputBytes.'); chunks.push(value); } }
-      catch (error) { await reader.cancel().catch(() => {}); throw error; }
+      try { for (;;) { const {done, value} = await reader.read(); if (done) break; length += value.length; if (length > maxInputBytes) throw fail('JXL_LIMIT', 'Image exceeds maxInputBytes; raise it or use a smaller image.'); chunks.push(value); } }
+      catch (error) { cancelRead(reader); throw error; }
+      finally { reader.releaseLock(); }
       bytes = new Uint8Array(length); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-    } else { bytes = new Uint8Array(await response.arrayBuffer()); if (bytes.length > maxInputBytes) throw fail('JXL_LIMIT', 'Image exceeds maxInputBytes.'); }
+    } else { bytes = new Uint8Array(await response.arrayBuffer()); if (bytes.length > maxInputBytes) throw fail('JXL_LIMIT', 'Image exceeds maxInputBytes; raise it or use a smaller image.'); }
     signal.throwIfAborted();
-    const decoded = await (await row.decode)(bytes, {signal, format: 'auto', colorSpace: 'original', applyOrientation: true, unpremultiplyAlpha: true,
-      maxPixels: Math.floor(maxBytes / 32), maxTotalSamples: Math.floor(maxBytes / 8), maxInputBytes});
-    const {decodedPNG} = await import('./polyfill-png.mjs'); const blob = await decodedPNG(decoded, {signal, maxBytes});
+    const decode = await row.decode, limits = {maxPixels: Math.min(PIXELS, Math.floor(maxBytes / 32)), maxTotalSamples: Math.floor(maxBytes / 8), maxInputBytes};
+    const decoded = await bounded(decode(bytes, {signal, format: 'auto', colorSpace: 'original', applyOrientation: true, unpremultiplyAlpha: true, ...limits}));
+    const {decodedPNG, unshown} = await import('./polyfill-png.mjs'); let blob;
+    try { blob = await decodedPNG(decoded, {signal, maxBytes}); }
+    catch (error) {
+      if (!unshown.has(error)) throw error;
+      signal.throwIfAborted();
+      const shown = await bounded(decode(bytes, {signal, format: 'uint16', colorSpace: 'srgb', applyOrientation: true, unpremultiplyAlpha: true, ...limits}));
+      blob = await decodedPNG(pngClock(shown), {signal, maxBytes});
+    }
     signal.throwIfAborted();
-    if (retainedBytes + blob.size > maxBytes) throw fail('JXL_MEMORY', 'Visible decoded images exceed maxDecodedBytes.');
+    if (retainedBytes + blob.size > maxBytes) throw fail('JXL_MEMORY', 'Visible decoded images exceed maxDecodedBytes; raise it or show fewer images.');
     let mode = imageMode, output = await displayURL(blob);
     if (mode !== imageMode) { URL.revokeObjectURL(output); output = await displayURL(blob); }
-    if (signal.aborted || stopped) { URL.revokeObjectURL(output); signal.throwIfAborted(); throw fail('JXL_CLOSED', 'Polyfill disconnected.'); }
-    if (retainedBytes + blob.size > maxBytes) { URL.revokeObjectURL(output); throw fail('JXL_MEMORY', 'Visible decoded images exceed maxDecodedBytes.'); }
+    if (signal.aborted || stopped) { URL.revokeObjectURL(output); signal.throwIfAborted(); throw fail('JXL_CLOSED', "Polyfill is disconnected; call install() again."); }
+    if (retainedBytes + blob.size > maxBytes) { URL.revokeObjectURL(output); throw fail('JXL_MEMORY', 'Visible decoded images exceed maxDecodedBytes; raise it or show fewer images.'); }
     entry.bytes = blob.size; retainedBytes += blob.size; entry.blob = blob; entry.objectURL = output; return output;
+  }
+  function bounded(pending) {
+    return Promise.resolve(pending).catch(error => {
+      const total = /total sample limit/.test(error?.message ?? '');
+      if (error?.code !== 'JXL_DIMENSIONS' && !total || /maxDimension/.test(error?.message ?? '')) throw error;
+      const size = /^A ([\d,]+ x [\d,]+) \w+/.exec(error.message)?.[1];
+      throw fail('JXL_DIMENSIONS', `${size ? `This ${size} picture` : 'This picture'} exceeds maxDecodedBytes (${Math.floor(maxBytes / 2 ** 20).toLocaleString('en-US')} MiB); ` +
+        'raise maxDecodedBytes in install() or use a smaller picture.');
+    });
   }
   async function displayURL(blob) {
     if (imageMode === 'blob') return URL.createObjectURL(blob);
-    if (imageMode !== 'data') throw fail('JXL_IMAGE_CSP', 'Image policy refuses decoded images.');
+    if (imageMode !== 'data') throw fail('JXL_PLATFORM', 'Image policy refuses decoded images; allow blob: or data: in img-src.');
     return new Promise((resolve, reject) => { const reader = new window.FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => reject(reader.error); reader.readAsDataURL(blob); });
   }
   async function load(state) {
     if (stopped || state.busy || state.failed || state.writes.length || !state.desired) return;
     if (imageMode === 'blocked') {
       state.failed = true;
-      report(fail('JXL_IMAGE_CSP', 'Image policy refuses decoded image URLs.'), state.element);
+      report(fail('JXL_PLATFORM', 'Image policy refuses decoded image URLs; allow blob: or data: in img-src.'), state.element);
       return;
     }
     state.busy = true; const version = state.version, item = state.desired;
@@ -326,13 +364,13 @@ export function installFallback(document, options) {
       for (const state of states) if (state.writes.length || state.busy) { restore(state, true); if (state.visible) load(state); }
     } else if (imageMode === 'data' && /^(data|data:)/.test(event.blockedURI)) {
       imageMode = 'blocked';
-      for (const state of states) { restore(state); state.failed = true; report(fail('JXL_IMAGE_CSP', 'Image policy refuses decoded image URLs.'), state.element); }
+      for (const state of states) { restore(state); state.failed = true; report(fail('JXL_PLATFORM', 'Image policy refuses decoded image URLs; allow blob: or data: in img-src.'), state.element); }
     }
   };
   document.addEventListener('securitypolicyviolation', policy);
   function disconnect() { if (stopped) return; stopped = true; mutations.disconnect(); observer?.disconnect(); window.removeEventListener('resize', refresh); document.removeEventListener('load', refresh, true); document.removeEventListener('securitypolicyviolation', policy);
     for (const media of mediaListeners.values()) media.removeEventListener?.('change', refresh); mediaListeners.clear();
-    for (const state of states.values()) restore(state); states.clear(); elements.clear(); for (const client of clients) client.close(); for (const job of jobs.splice(0)) job.reject(fail('JXL_CLOSED', 'Polyfill disconnected.')); measures.get(document)?.remove(); measures.delete(document); controller.status = 'closed';
+    for (const state of states.values()) restore(state); states.clear(); elements.clear(); for (const client of clients) client.close(); for (const job of jobs.splice(0)) job.reject(fail('JXL_CLOSED', "Polyfill is disconnected; call install() again.")); measures.get(document)?.remove(); measures.delete(document); controller.status = 'closed';
   }
   scan(); return controller;
 }

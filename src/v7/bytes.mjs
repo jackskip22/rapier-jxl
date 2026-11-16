@@ -10,15 +10,20 @@ export function arrayBufferBytes(value) {
 export function encodedByteLength(value, allowEmpty = false) {
   if (typedName.call(value) !== 'Uint8Array' || arrayBufferBytes(typedFields.buffer.call(value)) === null ||
       !allowEmpty && typedFields.byteLength.call(value) === 0)
-    throw error('JXL_INPUT', 'Encoded input is a nonempty Uint8Array on an ordinary ArrayBuffer.');
+    throw error('JXL_INPUT', "Invalid encoded input; pass a nonempty Uint8Array on an attached ArrayBuffer.");
   return typedFields.byteLength.call(value);
+}
+const BOX = [0, 0, 0, 12, 74, 88, 76, 32, 13, 10, 135, 10];
+export function admitSignature(bytes, code) {
+  if (!(bytes[0] === 255 && bytes[1] === 10) && !(bytes.length >= 12 && BOX.every((byte, i) => bytes[i] === byte))) throw error(code, "Invalid JPEG XL signature; pass a JPEG XL file.");
 }
 export function copyBytes(value, allowEmpty = false) {
   encodedByteLength(value, allowEmpty);
   try { return new Uint8Array(value); }
-  catch { throw error('JXL_INPUT', 'Encoded input is a Uint8Array on an ordinary, attached ArrayBuffer.'); }
+  catch { throw error('JXL_INPUT', "Invalid encoded input; pass a Uint8Array on an attached ArrayBuffer."); }
 }
-export function viewBytes(value) {
-  const length = encodedByteLength(value);
-  return new Uint8Array(typedFields.buffer.call(value), typedFields.byteOffset.call(value), length);
+export function viewBytes(value, allowEmpty = false) {
+  const length = encodedByteLength(value, allowEmpty);
+  try { return new Uint8Array(typedFields.buffer.call(value), typedFields.byteOffset.call(value), length); }
+  catch { throw error('JXL_INPUT', "Input buffer is detached; pass bytes from an attached ArrayBuffer."); }
 }

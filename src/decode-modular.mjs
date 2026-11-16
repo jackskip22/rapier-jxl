@@ -16,7 +16,7 @@ function emptyRefList() {
 }
 function workLimit(modularWork, remaining) {
   modularWork.remaining = remaining;
-  throw Object.assign(new RangeError('JPEG XL Modular work exceeds the limit.'), {code: 'JXL_LIMIT'});
+  throw Object.assign(new RangeError('JPEG XL Modular work exceeds the limit; maxPixels sets it, 104 steps a pixel.'), {code: 'JXL_LIMIT'});
 }
 
 export function readMATree(r, {maxNodes = 1048576, maxDepth = 2048} = {}) {
@@ -29,7 +29,7 @@ export function readMATree(r, {maxNodes = 1048576, maxDepth = 2048} = {}) {
     const node = nodes[i], property = coding.read(1);
     if (property) {
       node.property = property - 1; node.value = unpackSigned(coding.read(0));
-      requireDecode(node.property <= 0xffffffff, 'Invalid MA property.', r);
+      requireDecode(node.property <= 255, 'Invalid MA property.', r);
       node.left = nodes.length; node.right = nodes.length + 1;
       nodes.push({depth: node.depth + 1}, {depth: node.depth + 1});
       weighted ||= node.property === 15;

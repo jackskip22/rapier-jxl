@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 import {requireDecode} from './decode-bits.mjs';
-import {exactPow, exactLog} from './exact-math.mjs';
 import {CURVE} from './decode-color-program.mjs';
 import {decodeKernels} from './decode-kernels.mjs';
 
@@ -47,7 +46,7 @@ export function primariesXYZ(primaries='srgb',white='d65') {
   const scale=vector3(inverse3(m),whiteXYZ(white),[]);
   return m.map((v,i)=>v*scale[i%3]);
 }
-export const SRGB_XYZ=Object.freeze(primariesXYZ());
+const SRGB_XYZ=Object.freeze(primariesXYZ());
 export const SRGB_D50=Object.freeze(multiply3(adaptWhite(whiteXYZ(),D50),SRGB_XYZ));
 export const D50_SRGB=Object.freeze(inverse3(SRGB_D50));
 
@@ -77,12 +76,12 @@ export function transferCurve(encoding,inverse=false,intensityTarget=255) {
   requireDecode(false,'Cannot convert an unknown JPEG XL transfer function.');
 }
 
-export function srgb8Table() {
+function srgb8Table() {
   const kernels=decodeKernels(),at=kernels.srgb8Table();
   return {steps:new Uint8Array(kernels.buffer,at,32768).slice(),thresholds:new Uint32Array(kernels.buffer,at+32768,257).slice()};
 }
 
 export function hlgScale(intensityTarget,inverse=false) {
-  const gamma=1.2*exactPow(1.111,exactLog(intensityTarget/1000)/Math.LN2);
+  const gamma=1.2*Math.pow(1.111,Math.log(intensityTarget/1000)/Math.LN2);
   return inverse?1/gamma-1:gamma-1;
 }

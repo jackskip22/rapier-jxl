@@ -24,16 +24,16 @@ function mapMoveToFront(map) {
 
 const HEAD = new Int32Array(1 << 15).fill(-1);
 let PREV = new Int32Array(0);
-let RUNS = new Uint16Array(0);
+let RUNS = new Uint32Array(0);
 let PIECE_VAL = new Uint8Array(4096);
-let PIECE_LEN = new Uint16Array(4096);
-let PIECE_DIST = new Uint16Array(4096);
+let PIECE_LEN = new Uint32Array(4096);
+let PIECE_DIST = new Uint32Array(4096);
 let TOK_L0 = new Uint8Array(4096);
 let TOK_L1 = new Uint8Array(4096);
-let TOK_L2 = new Uint16Array(4096);
+let TOK_L2 = new Uint32Array(4096);
 let TOK_D0 = new Uint8Array(4096);
 let TOK_D1 = new Uint8Array(4096);
-let TOK_D2 = new Uint16Array(4096);
+let TOK_D2 = new Uint32Array(4096);
 const LITERALS_SCRATCH = new Uint32Array(MAP_MIN_SYMBOL + 40);
 const DISTANCES_SCRATCH = new Uint32Array(40);
 const mapSlots = [0, 0, 0];
@@ -41,17 +41,17 @@ const mapSlots = [0, 0, 0];
 function mapParseFlat(values, minLength, chain = 64) {
   const n = values.length, head = HEAD;
   if (PREV.length < n) PREV = new Int32Array(n);
-  if (RUNS.length < n) RUNS = new Uint16Array(n);
+  if (RUNS.length < n) RUNS = new Uint32Array(n);
   if (PIECE_VAL.length < n) {
     PIECE_VAL = new Uint8Array(n);
-    PIECE_LEN = new Uint16Array(n);
-    PIECE_DIST = new Uint16Array(n);
+    PIECE_LEN = new Uint32Array(n);
+    PIECE_DIST = new Uint32Array(n);
     TOK_L0 = new Uint8Array(n);
     TOK_L1 = new Uint8Array(n);
-    TOK_L2 = new Uint16Array(n);
+    TOK_L2 = new Uint32Array(n);
     TOK_D0 = new Uint8Array(n);
     TOK_D1 = new Uint8Array(n);
-    TOK_D2 = new Uint16Array(n);
+    TOK_D2 = new Uint32Array(n);
   }
   const prev = PREV, runs = RUNS, pVal = PIECE_VAL, pLen = PIECE_LEN, pDist = PIECE_DIST;
   if (n > 0) {

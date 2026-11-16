@@ -18,10 +18,11 @@ function advanceSqueezeShape(list, step) {
     list[c] = low; list.splice(offset + c - step.beginC, 0, residual);
   }
 }
-export function admitPlanarSqueeze(value, channels, groupSize, memoryLimit = 268435456, metaCount = 0) {
-  squeezeInteger(memoryLimit, 1, 2147483648, 'maxTransformBytes');
+export function admitPlanarSqueeze(value, channels, groupSize, memoryLimit = Number.MAX_SAFE_INTEGER, metaCount = 0) {
+  squeezeInteger(memoryLimit, 1, Number.MAX_SAFE_INTEGER, 'maxTransformBytes');
   if (value === undefined || value === false) return null;
   if (value !== 'default' && !Array.isArray(value)) throw fault('JXL_INPUT', 'squeeze is false, default, or an array of explicit steps.');
+  if (Array.isArray(value) && value.length > 4096) throw fault('JXL_INPUT', 'Squeeze exceeds the admitted transform or channel count.');
   const planned = channels.map(squeezeShape), steps = [];
   const add = step => {
     if (steps.length >= 4096 || planned.length + step.numC > 65536) throw fault('JXL_INPUT', 'Squeeze exceeds the admitted transform or channel count.');

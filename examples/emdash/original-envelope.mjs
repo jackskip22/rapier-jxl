@@ -1,12 +1,12 @@
 // An ordinary JPEG XL container with one private UUID box after its file-type box.
-// Removing that box returns the independently verified payload byte-for-byte, including
+// Removing that box returns the independently verified payload exactly, including
 // a final zero-length box. Ownership never depends on a filename or MIME claim alone.
 const SIGNATURE = Uint8Array.of(0, 0, 0, 12, 74, 88, 76, 32, 13, 10, 135, 10);
 const UUID = Uint8Array.of(0x65, 0x6d, 0x64, 0x61, 0x73, 0x68, 0x4a, 0x58, 0x8c, 0xb9, 0x2b, 0x8c, 0x77, 0x10, 0x83, 0x01);
 export const ENVELOPE_BYTES = 40;
 export const ENVELOPE_PREFIX_BYTES = 4096;
 const equal = (a, b) => a.length === b.length && a.every((value, i) => value === b[i]);
-const fail = () => Object.assign(new Error('Expected a JPEG XL container with a bounded file-type box.'), {code: 'JXL_INPUT'});
+const fail = () => Object.assign(new Error("Invalid archive input; use an unwrapped JPEG XL container and a 32-digit hex ID."), {code: 'JXL_INPUT'});
 function insertion(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 20 || !equal(bytes.subarray(0, 12), SIGNATURE) ||
       String.fromCharCode(...bytes.subarray(16, 20)) !== 'ftyp') throw fail();
@@ -36,7 +36,7 @@ export function wrapOriginal(payload, id) {
 export function unwrapOriginal(bytes, id, payloadBytes) {
   const marker = envelopeIdentity(bytes);
   if (!marker || marker.id !== id || bytes.length !== payloadBytes + ENVELOPE_BYTES)
-    throw Object.assign(new Error('The stored original does not match its ownership record.'), {code: 'JXL_INPUT'});
+    throw Object.assign(new Error("Archive owner mismatch; restore the matching original."), {code: 'JXL_INPUT'});
   const payload = new Uint8Array(payloadBytes);
   payload.set(bytes.subarray(0, marker.offset));
   payload.set(bytes.subarray(marker.offset + ENVELOPE_BYTES), marker.offset);

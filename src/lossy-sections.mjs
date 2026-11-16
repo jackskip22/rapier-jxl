@@ -4,6 +4,7 @@ import {groupLayout, finishSections} from './frame.mjs';
 import {ZERO_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, MIN_RUN_SYMBOL, leaf, channelTree, streamTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {codeChannel} from './modular-channel.mjs';
 import {forwardSqueeze, defaultSqueezeParams} from './squeeze.mjs';
+import {fault} from './fault.mjs';
 
 const QUALITY_FACTOR = 0.35, LUMA_FACTOR = 1.1;
 const SQUEEZE_GROUP = 1024, SQUEEZE_DC_GROUP = 8 * SQUEEZE_GROUP;
@@ -12,17 +13,11 @@ export function distanceFromQuality(quality) {
   return quality >= 100 ? 0 : quality >= 30 ? 0.1 + (100 - quality) * 0.09 : 53 / 3000 * quality * quality - 23 / 20 * quality + 25;
 }
 
-function distancePower(distance) {
-  let root = 1;
-  for (let i = 0; i < 24; i++) root = (4 * root + distance / (root * root * root * root)) / 5;
-  return distance * root;
-}
-
 export function quantiserFor(component, hshift, vshift, distance) {
   let shift = Math.min(16, hshift + vshift);
   if (shift > 0) shift--;
   if (component === 3) return 1;
-  const base = 0.25 * distancePower(distance), scale = 1 << shift;
+  const base = 0.25 * distance ** 1.2, scale = 1 << shift;
   const q = component === 1 || component === 2 ? base * QUALITY_FACTOR * Math.max(0.5, 1024 / scale) : base * QUALITY_FACTOR * LUMA_FACTOR * (163.84 / scale);
   return Math.max(1, Math.floor(q));
 }
@@ -38,7 +33,7 @@ const pieceBits = (freq, lengths) => {
 
 export function* lossySections(rgba, width, height, quality, shape, lengthOnly = false) {
   const distance = distanceFromQuality(quality);
-  if (!(distance > 0)) throw new Error('lossy encoding needs a quality below 100');
+  if (!(distance > 0)) throw fault('JXL_OPTIONS', 'lossy encoding needs a quality below 100');
   const {colour, alpha, channels: count} = shape;
   const pixels = width * height;
   const planes = Array.from({length: count}, () => new Int16Array(pixels));

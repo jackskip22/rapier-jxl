@@ -1,40 +1,47 @@
 // SPDX-License-Identifier: MIT
 import {readFile, writeFile, lstat, stat, realpath, mkdtemp, rename, chmod, rm} from 'node:fs/promises';
-import {join, dirname, resolve, basename} from 'node:path';
+import {join, dirname, resolve, relative, isAbsolute, sep, basename} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createHash, randomUUID} from 'node:crypto';
 import {gunzipSync} from 'node:zlib';
 import {homedir} from 'node:os';
-import {pathToFileURL} from 'node:url';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 import {createInterface} from 'node:readline/promises';
 import acorn from '../vendor/acorn.mjs';
 import {WORDS, CLI_WORDS, words} from './examples/emdash/media-words.mjs';
+import {installs} from './package-name.mjs';
+import {lockfileManagers, managerSpawn, PACKAGE_FILES} from './package-manager.mjs';
+import {writeProjectEdits, removeProjectEdits, projectEditFiles} from './project-edits.mjs';
+import {cliError, cliArgs} from './cli-error.mjs';
 
 const text = (key, values) => words(CLI_WORDS[key], {name: WORDS.name, ...values});
 export const ADD_EMDASH_HELP = text('addHelp');
 export const REMOVE_EMDASH_HELP = text('removeHelp');
-const error = (message, fix = CLI_WORDS.manual) => Object.assign(new Error(text('error', {message, fix})), {code: 'JXL_SETUP', fix});
+const error = (message, fix = CLI_WORDS.manual) => cliError('JXL_SETUP', message, fix);
 
 export async function runAddEmdash(args, options) {
+  args = cliArgs(args);
   if (args.length === 1 && ['--help', '-h'].includes(args[0])) { options.stdout(ADD_EMDASH_HELP.trimEnd()); return; }
-  let packagePath, workersPaid;
+  let packagePath, workersPaid, dryRun = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--package' && packagePath === undefined && args[i + 1] && !String(args[i + 1]).startsWith('-'))
       packagePath = args[++i];
     else if (['--workers-paid', '--workers-free'].includes(args[i]) && workersPaid === undefined)
       workersPaid = args[i] === '--workers-paid';
+    else if (args[i] === '--dry-run' && !dryRun) dryRun = true;
     else
-      throw Object.assign(error(CLI_WORDS.addOption, CLI_WORDS.addHelpFix), {code: 'JXL_OPTIONS'});
+      throw Object.assign(error(text('addOption', {option: args[i]}), CLI_WORDS.addHelpFix), {code: 'JXL_OPTIONS'});
   }
-  return addEmdash({...options, packagePath, workersPaid});
+  return addEmdash({...options, packagePath, workersPaid, dryRun});
 }
 
 export async function runRemoveEmdash(args, options) {
+  args = cliArgs(args);
   if (args.length === 1 && ['--help', '-h'].includes(args[0])) { options.stdout(REMOVE_EMDASH_HELP.trimEnd()); return; }
   let url;
   if (args.length) {
     if (args.length !== 2 || args[0] !== '--url' || !args[1] || String(args[1]).startsWith('-'))
-      throw Object.assign(error(CLI_WORDS.removeOption, CLI_WORDS.removeHelpFix), {code: 'JXL_OPTIONS'});
+      throw Object.assign(error(text('removeOption', {option: args.find(arg => arg !== '--url') ?? args[0]}), CLI_WORDS.removeHelpFix), {code: 'JXL_OPTIONS'});
     url = args[1];
   }
   return removeEmdash({...options, url});
@@ -57,15 +64,15 @@ function property(object, name) {
 }
 
 export const planEmdashConfig = (source, options) => planConfig(source, false, options);
-export function planEmdashRemoval(source) {
-  try { return planConfig(source, true); }
+export function planEmdashRemoval(source, name) {
+  try { return planConfig(source, true, {name}); }
   catch (cause) {
-    const message = cause?.fix ? cause.message.slice(0, cause.message.lastIndexOf(' Fix: ')) : String(cause?.message ?? cause);
+    const message = cause?.fix ? cause.message.slice(0, -cause.fix.length - 3) : String(cause?.message ?? cause);
     throw error(message, CLI_WORDS.removeFix);
   }
 }
 
-function planConfig(source, remove, {cpuLimitMs, inspect = false} = {}) {
+function planConfig(source, remove, {cpuLimitMs, inspect = false, name = 'rapier-jxl'} = {}) {
   let ast;
   const tokens = [];
   try { ast = acorn.parse(source, {sourceType: 'module', ecmaVersion: 'latest', onToken: tokens}); }
@@ -88,7 +95,7 @@ function planConfig(source, remove, {cpuLimitMs, inspect = false} = {}) {
   const react = imported('@astrojs/react', 'default');
   if (!remove && !list.elements.some(node => react.some(item => called(node, item.name))))
     throw error(CLI_WORDS.reactMissing, CLI_WORDS.reactFix);
-  const wrappers = imported('rapier-jxl/emdash', 'jxl');
+  const wrappers = imported(`${name}/emdash`, 'jxl');
   const wrapped = node => wrappers.some(wrapper => called(node, wrapper.name)) && node.arguments[0]?.type === 'Identifier'
     && node.arguments[0].name === emdash.name;
   const matches = list.elements.filter(node => called(node, emdash.name) || wrapped(node));
@@ -201,7 +208,7 @@ function planConfig(source, remove, {cpuLimitMs, inspect = false} = {}) {
   if (!wrappers.length) {
     const quote = source[emdash.node.source.start] === '"' ? '"' : "'", newline = source.includes('\r\n') ? '\r\n' : '\n';
     edits.push({start: emdash.node.start, end: emdash.node.start,
-      text: `import {jxl${binding === 'jxl' ? '' : ` as ${binding}`}} from ${quote}rapier-jxl/emdash${quote};${newline}`});
+      text: `import {jxl${binding === 'jxl' ? '' : ` as ${binding}`}} from ${quote}${name}/emdash${quote};${newline}`});
   }
   let output = source;
   for (const edit of edits.sort((a, b) => b.start - a.start)) output = output.slice(0, edit.start) + edit.text + output.slice(edit.end);
@@ -354,10 +361,14 @@ function importTarget(value) {
   return null;
 }
 
-async function hasEmdash(pkg) {
-  const target = importTarget(pkg?.pkg.exports?.['./emdash']);
-  return !!target && target.startsWith('./') && !target.split('/').includes('..') && (await stat(join(pkg.root, target)).catch(() => null))?.isFile() === true;
+const withinRoot = (root, target) => { const r = relative(root, target); return r !== '' && r !== '..' && !r.startsWith('..' + sep) && !isAbsolute(r); };
+async function safePackageExport(pkg, key) {
+  const target = importTarget(pkg?.pkg.exports?.[key]);
+  if (typeof target !== 'string' || !target.startsWith('./') || target.includes('\\') || target.split('/').includes('..')) return null;
+  const full = await realpath(join(pkg.root, target)).catch(() => null);
+  return full && withinRoot(pkg.root, full) && (await stat(full).catch(() => null))?.isFile() ? full : null;
 }
+async function hasEmdash(pkg) { return Boolean(await safePackageExport(pkg, './emdash')); }
 
 export async function emdashConnection({cwd, url, env = process.env, signal}) {
   let base;
@@ -386,14 +397,13 @@ export async function emdashConnection({cwd, url, env = process.env, signal}) {
   }
   if (!token && !local || token !== undefined && typeof token !== 'string') throw error(CLI_WORDS.credentials, login);
   const host = await installed(cwd, 'emdash');
-  const clientEntry = importTarget(host?.pkg.exports?.['./client']);
-  const headersEntry = importTarget(host?.pkg.exports?.['./client/cf-access']);
-  const safe = target => typeof target === 'string' && target.startsWith('./') && !target.split('/').includes('..');
-  if (!host || !safe(clientEntry) || !safe(headersEntry)) throw error(CLI_WORDS.removalClient, CLI_WORDS.removalClientFix);
+  const clientPath = host && await safePackageExport(host, './client');
+  const headersPath = host && await safePackageExport(host, './client/cf-access');
+  if (!clientPath || !headersPath) throw error(CLI_WORDS.removalClient, CLI_WORDS.removalClientFix);
   let client, headerTools;
   try {
-    client = await import(pathToFileURL(join(host.root, clientEntry)).href);
-    headerTools = await import(pathToFileURL(join(host.root, headersEntry)).href);
+    client = await import(pathToFileURL(clientPath).href);
+    headerTools = await import(pathToFileURL(headersPath).href);
   } catch { throw error(CLI_WORDS.removalClient, CLI_WORDS.removalClientFix); }
   if (['createTransport', 'csrfInterceptor', 'tokenInterceptor', 'devBypassInterceptor'].some(name => typeof client[name] !== 'function') ||
       typeof headerTools.parseHeaderStrings !== 'function') throw error(CLI_WORDS.removalClient, CLI_WORDS.removalClientFix);
@@ -432,67 +442,78 @@ function atLeast(version, minimum) {
   return true;
 }
 
-async function packageSource(cwd, requested, env, version) {
+function checkEmdashAdapter(host, adapter) {
+  if (host && adapter && host.pkg.version !== adapter.pkg.version)
+    throw error(`EmDash ${host.pkg.version} and @emdash-cms/cloudflare ${adapter.pkg.version} must match.`,
+      `Install emdash@${host.pkg.version} and @emdash-cms/cloudflare@${host.pkg.version} together.`);
+}
+
+const PACKAGE_TAR_BYTES = 256 * 1024 * 1024;
+async function packageSource(cwd, requested, env, version, name) {
   const candidates = requested ? [requested] : String(env.npm_config_package ?? '').split('\n\n').filter(Boolean);
   if (!requested && candidates.length > 1 && candidates.some(candidate => /\.tgz$/i.test(candidate)))
     throw error(CLI_WORDS.ambiguousPackage, CLI_WORDS.ambiguousPackageFix);
   const selected = candidates.length === 1 && /\.tgz$/i.test(candidates[0]) ? candidates[0] : null;
   if (requested && !selected) throw error(CLI_WORDS.localPackage, CLI_WORDS.localPackageFix);
-  if (!selected) return {spec: `rapier-jxl@${version}`, local: null};
-  const path = resolve(cwd, selected.replace(/^file:/, ''));
-  let tar, pkg, digest;
+  if (!selected) return {spec: `${name}@${version}`, name, local: null};
+  let path;
+  try { path = selected.startsWith('file://') ? fileURLToPath(selected) : resolve(cwd, selected.replace(/^file:/, '')); }
+  catch (cause) { throw error(text('packageRead', {detail: cause.message}), CLI_WORDS.packageReadFix); }
+  let tar, pkg, digest, manifests = 0;
   try {
     const bytes = await readFile(path);
     digest = createHash('sha512').update(bytes).digest('base64');
-    tar = gunzipSync(bytes);
+    tar = gunzipSync(bytes, {maxOutputLength: PACKAGE_TAR_BYTES});
     for (let at = 0; at + 512 <= tar.length;) {
-      const name = tar.toString('utf8', at, at + 100).replace(/\0.*$/, '');
-      if (!name) break;
+      const base = tar.toString('utf8', at, at + 100).replace(/\0.*$/, '');
+      const prefix = tar.toString('utf8', at + 345, at + 500).replace(/\0.*$/, '');
+      const entryName = prefix ? `${prefix}/${base}` : base;
+      if (!entryName) break;
       const size = Number.parseInt(tar.toString('ascii', at + 124, at + 136).replace(/\0.*$/, '').trim(), 8);
       if (!Number.isSafeInteger(size) || size < 0 || at + 512 + size > tar.length) throw new Error('invalid tar header');
-      if (name === 'package/package.json') { pkg = JSON.parse(tar.toString('utf8', at + 512, at + 512 + size)); break; }
+      if (entryName.replace(/^\/+/, '') === 'package/package.json') {
+        if (++manifests > 1) throw new Error('duplicate package/package.json in tarball');
+        pkg = JSON.parse(tar.toString('utf8', at + 512, at + 512 + size));
+      }
       at += 512 + Math.ceil(size / 512) * 512;
     }
   } catch (cause) { throw error(text('packageRead', {detail: cause.message}), CLI_WORDS.packageReadFix); }
-  if (pkg?.name !== 'rapier-jxl' || !importTarget(pkg.exports?.['./emdash']))
+  if (pkg?.name !== name || !importTarget(pkg.exports?.['./emdash']))
     throw error(CLI_WORDS.packageMissing, CLI_WORDS.packageMissingFix);
-  return {spec: path, local: path, version: pkg.version, digest};
+  return {spec: path, name: pkg.name, local: path, version: pkg.version, digest};
 }
 
 async function packageManager(cwd, pkg) {
   if (pkg.packageManager !== undefined && typeof pkg.packageManager !== 'string')
     throw error(CLI_WORDS.managerType, CLI_WORDS.managerTypeFix);
   const declared = pkg.packageManager?.split('@')[0];
-  const found = new Set();
-  for (const [file, manager] of [['package-lock.json', 'npm'], ['npm-shrinkwrap.json', 'npm'], ['pnpm-lock.yaml', 'pnpm'], ['yarn.lock', 'yarn'], ['bun.lock', 'bun'], ['bun.lockb', 'bun']])
-    if (await stat(join(cwd, file)).catch(() => null)) found.add(manager);
+  const found = new Set(await lockfileManagers(cwd));
   if (declared && !['npm', 'pnpm', 'yarn', 'bun'].includes(declared))
     throw error(text('managerUnsupported', {manager: declared}), CLI_WORDS.managerUnsupportedFix);
   if (found.size > 1 && !declared) throw error(CLI_WORDS.managerAmbiguous, CLI_WORDS.managerAmbiguousFix);
   return declared ?? [...found][0] ?? 'npm';
 }
 
-function install(cwd, manager, specs, env) {
+function install(cwd, manager, specs, env, quiet = false) {
   const args = manager === 'npm' ? ['install', '--save-prod', '--save-exact', '--no-audit', '--no-fund', ...specs]
     : manager === 'pnpm' ? ['add', '--save-prod', '--save-exact', ...specs]
       : ['add', '--exact', ...specs];
-  const npm = manager === 'npm' && env.npm_execpath && /(?:^|[/\\])npm(?:-cli)?\.(?:c?js|mjs)$/.test(env.npm_execpath);
   return new Promise((accept, reject) => {
-    const child = spawn(npm ? process.execPath : manager, npm ? [env.npm_execpath, ...args] : args, {cwd, env, stdio: 'inherit', shell: false});
+    const child = spawn(...managerSpawn(manager, args, {cwd, env, quiet}));
     child.once('error', cause => reject(error(text('managerRun', {manager, detail: cause.message}), text('managerRunFix', {manager}))));
     child.once('exit', (code, signal) => code === 0 ? accept() : reject(error(text('managerExit', {manager,
       reason: signal ?? text('managerExitCode', {code})}), CLI_WORDS.managerExitFix)));
   });
 }
 
-export async function addEmdash({cwd, version, packagePath, workersPaid, confirmWorkersPaid = askWorkersPaid,
-  stdout, env = process.env, installPackages = install}) {
+export async function addEmdash({cwd, version, name: own = 'rapier-jxl', packagePath, workersPaid, dryRun = false, confirmWorkersPaid = askWorkersPaid,
+  stdout, env = process.env, quiet = false, installPackages = install}) {
   const path = join(cwd, 'astro.config.mjs'), info = await lstat(path).catch(() => null);
   if (!info?.isFile() || info.isSymbolicLink() || info.nlink !== 1)
     throw error(CLI_WORDS.configFile, CLI_WORDS.configFileFix);
   const source = await readFile(path, 'utf8');
-  let plan = planEmdashConfig(source), worker = null, cpuLimitMs;
   const pkg = await manifest(join(cwd, 'package.json'));
+  let name = own, plan = planEmdashConfig(source, {name}), worker = null, cpuLimitMs;
   const dependency = name => pkg?.dependencies?.[name] ?? pkg?.devDependencies?.[name] ?? pkg?.optionalDependencies?.[name];
   if (!pkg || !dependency('emdash') || !dependency('astro'))
     throw error(CLI_WORDS.siteMissing, CLI_WORDS.siteMissingFix);
@@ -511,7 +532,7 @@ export async function addEmdash({cwd, version, packagePath, workersPaid, confirm
       if (typeof workersPaid !== 'boolean') throw error(CLI_WORDS.workersAnswer, CLI_WORDS.workersChoiceFix);
     }
     cpuLimitMs = workersPaid ? 30000 : 10;
-    plan = planEmdashConfig(source, {cpuLimitMs});
+    plan = planEmdashConfig(source, {cpuLimitMs, name});
     worker.plan = planWranglerAllowance(worker.source, {filename: worker.name, cpuLimitMs});
     await unchangedFile({path, info, source}); await unchangedFile(worker, true);
   }
@@ -525,8 +546,11 @@ export async function addEmdash({cwd, version, packagePath, workersPaid, confirm
     if (selected.path !== worker.path) throw error(CLI_WORDS.workersChanged, CLI_WORDS.workersChangedFix);
     await unchangedFile(worker, true);
   };
-  const selected = await packageSource(cwd, packagePath, env, version), current = await installed(cwd, 'rapier-jxl');
+  const selected = await packageSource(cwd, packagePath, env, version, name);
+  if (selected.name !== name) { name = selected.name; plan = planEmdashConfig(source, {cpuLimitMs, name}); }
+  const current = await installed(cwd, name);
   const host = await installed(cwd, 'emdash');
+  if (plan.storage === 'r2') checkEmdashAdapter(host, await installed(cwd, '@emdash-cms/cloudflare'));
   const admin = host && await installed(host.root, '@emdash-cms/admin');
   const hostKumo = admin && await installed(admin.root, '@cloudflare/kumo');
   if (!hostKumo || !atLeast(hostKumo.pkg.version, '2.6.0'))
@@ -534,10 +558,10 @@ export async function addEmdash({cwd, version, packagePath, workersPaid, confirm
   const siteKumo = await installed(cwd, '@cloudflare/kumo');
   if (pkg.dependencies?.['@cloudflare/kumo'] && siteKumo && siteKumo.pkg.version !== hostKumo.pkg.version)
     throw error(text('kumoMismatch', {siteVersion: siteKumo.pkg.version, hostVersion: hostKumo.pkg.version}), text('kumoMismatchFix', {hostVersion: hostKumo.pkg.version}));
-  const requirements = [['emdash', '1.4.0'], ['astro', '6.0.0'], ['@astrojs/react', '5.0.0'], ['react', '18.0.0'], ['@cloudflare/kumo', '2.6.0'],
-    ...(plan.storage === 'r2' ? [['@emdash-cms/cloudflare', '1.4.0']] : [])];
+  const requirements = [['emdash', '1.5.0'], ['astro', '6.0.0'], ['@astrojs/react', '5.0.0'], ['react', '18.0.0'], ['@cloudflare/kumo', '2.6.0'],
+    ...(plan.storage === 'r2' ? [['@emdash-cms/cloudflare', '1.5.0']] : [])];
   const specs = [];
-  if (selected.local || !pkg.dependencies?.['rapier-jxl'] || !await hasEmdash(current)) specs.push(selected.spec);
+  if (selected.local || !pkg.dependencies?.[name] || !await hasEmdash(current)) specs.push(selected.spec);
   if (!pkg.dependencies?.['@cloudflare/kumo'] || !siteKumo) specs.push(`@cloudflare/kumo@${hostKumo.pkg.version}`);
   for (const [name, minimum] of requirements) {
     const item = await installed(cwd, name);
@@ -545,52 +569,46 @@ export async function addEmdash({cwd, version, packagePath, workersPaid, confirm
       throw error(text('dependencyOld', {dependency: name, minimum, version: item.pkg.version}), text('dependencyOldFix', {dependency: name}));
     if (!item && !specs.length) specs.push(selected.spec);
   }
-  if (specs.length) {
-    const manager = await packageManager(cwd, pkg);
-    stdout(text('installing', {packages: specs.map(spec => spec === selected.local ? CLI_WORDS.tarball : spec).join(CLI_WORDS.packageSeparator), manager}));
-    await installPackages(cwd, manager, specs, env);
+  if (dryRun) {
+    const changes = [...(worker?.plan.changed ? [worker.name] : []), ...(plan.changed ? ['astro.config.mjs'] : [])];
+    const packages = specs.map(spec => spec === selected.local ? CLI_WORDS.tarball : spec);
+    stdout(text('dryRun', {packages: packages.length ? packages.join(CLI_WORDS.packageSeparator) : CLI_WORDS.dryRunNone,
+      files: changes.length ? changes.join(CLI_WORDS.packageSeparator) : CLI_WORDS.dryRunNone}));
+    return {changed: changes.length > 0, installed: false, dryRun: true, packages, files: changes, ...(worker ? {cpuLimitMs} : {})};
   }
-  const ready = await installed(cwd, 'rapier-jxl');
-  if (!await hasEmdash(ready))
-    throw error(CLI_WORDS.installedMissing, CLI_WORDS.installedMissingFix);
-  if (selected.local && (ready.pkg.version !== selected.version || createHash('sha512').update(await readFile(selected.local)).digest('base64') !== selected.digest))
-    throw error(CLI_WORDS.packageChanged, CLI_WORDS.packageChangedFix);
-  for (const [name, minimum] of requirements) {
-    const item = await installed(cwd, name);
-    if (!item || !atLeast(item.pkg.version, minimum))
-      throw error(text('dependencyMissing', {dependency: name, minimum}), text('dependencyMissingFix', {dependency: name}));
-  }
-  if ((await installed(cwd, '@cloudflare/kumo'))?.pkg.version !== hostKumo.pkg.version)
-    throw error(CLI_WORDS.kumoInstalledMismatch, text('kumoInstalledFix', {hostVersion: hostKumo.pkg.version}));
   const files = [...(worker ? [{...worker, worker: true}] : []), {path, info, source, plan, worker: false}];
-  await unchangedWorkerTarget();
-  for (const file of files) await unchangedFile(file, file.worker);
-  if (files.some(file => file.plan.changed)) {
-    const temporary = await mkdtemp(join(cwd, '.rapier-jxl-'));
-    try {
-      for (const file of files.filter(file => file.plan.changed)) {
-        file.next = join(temporary, basename(file.path));
-        await writeFile(file.next, file.plan.source, {mode: file.info.mode & 0o777});
-        await chmod(file.next, file.info.mode & 0o777);
+  const manager = specs.length ? await packageManager(cwd, pkg) : null;
+  const writes = new Map(files.filter(file => file.plan.changed).map(file => [basename(file.path), file.plan.source]));
+  await writeProjectEdits(cwd, 'emdash', version, writes, {
+    ...(specs.length && {install: {files: PACKAGE_FILES, run: async () => {
+      stdout(text('installing', {packages: specs.map(spec => spec === selected.local ? CLI_WORDS.tarball : spec).join(CLI_WORDS.packageSeparator), manager}));
+      await installPackages(cwd, manager, specs, env, quiet);
+    }}}),
+    beforeWrite: async () => {
+      const ready = await installed(cwd, name);
+      if (!await hasEmdash(ready))
+        throw error(CLI_WORDS.installedMissing, CLI_WORDS.installedMissingFix);
+      if (selected.local && (ready.pkg.version !== selected.version || createHash('sha512').update(await readFile(selected.local)).digest('base64') !== selected.digest))
+        throw error(CLI_WORDS.packageChanged, CLI_WORDS.packageChangedFix);
+      for (const [name, minimum] of requirements) {
+        const item = await installed(cwd, name);
+        if (!item || !atLeast(item.pkg.version, minimum))
+          throw error(text('dependencyMissing', {dependency: name, minimum}), text('dependencyMissingFix', {dependency: name}));
       }
+      if (plan.storage === 'r2') checkEmdashAdapter(await installed(cwd, 'emdash'), await installed(cwd, '@emdash-cms/cloudflare'));
+      if ((await installed(cwd, '@cloudflare/kumo'))?.pkg.version !== hostKumo.pkg.version)
+        throw error(CLI_WORDS.kumoInstalledMismatch, text('kumoInstalledFix', {hostVersion: hostKumo.pkg.version}));
       await unchangedWorkerTarget();
       for (const file of files) await unchangedFile(file, file.worker);
-      for (const file of files.filter(file => file.plan.changed)) {
-        await unchangedWorkerTarget();
-        await unchangedFile(file, file.worker);
-        await rename(file.next, file.path);
-        if (file.worker) {
-          worker.source = file.plan.source;
-          worker.info = await lstat(file.path);
-        }
-      }
-    } finally { await rm(temporary, {recursive: true, force: true}); }
-  }
+    },
+  });
   if (worker?.plan.changed) stdout(text('updatedWrangler', {file: worker.name}));
   stdout(plan.changed ? CLI_WORDS.updated : text('alreadyAdded'));
   stdout(text('added', {setupAfter: WORDS.setupAfter}));
   stdout(CLI_WORDS.nativePage);
   return {changed: plan.changed || worker?.plan.changed === true, installed: specs.length > 0,
+    packages: specs.map(spec => spec === selected.local ? CLI_WORDS.tarball : spec),
+    files: files.filter(file => file.plan.changed).map(file => file.worker ? worker.name : 'astro.config.mjs'),
     ...(worker ? {cpuLimitMs} : {})};
 }
 
@@ -616,11 +634,14 @@ function removalState(value, expected) {
   return value;
 }
 
-export async function removeEmdash({cwd, url, stdout, env = process.env, signal, connect = emdashConnection}) {
+export async function removeEmdash({cwd, url, name = 'rapier-jxl', stdout, env = process.env, signal, connect = emdashConnection}) {
   const path = join(cwd, 'astro.config.mjs'), info = await lstat(path).catch(() => null);
   if (!info?.isFile() || info.isSymbolicLink() || info.nlink !== 1) throw error(CLI_WORDS.configFile, CLI_WORDS.removeFix);
-  const source = await readFile(path, 'utf8'), plan = planEmdashRemoval(source);
-  if (!plan.changed) { stdout(text('alreadyRemoved')); return {changed: false}; }
+  const source = await readFile(path, 'utf8'), plan = planEmdashRemoval(source, name);
+  const recorded = await projectEditFiles(cwd, 'emdash');
+  if (!plan.changed && !recorded) { stdout(text('alreadyRemoved')); return {changed: false}; }
+  const undo = args => removeProjectEdits('emdash', args, {cwd, stdout() {}});
+  if (recorded) await undo(['--dry-run']);
   const pkg = await manifest(join(cwd, 'package.json'));
   const dependency = name => pkg?.dependencies?.[name] ?? pkg?.devDependencies?.[name] ?? pkg?.optionalDependencies?.[name];
   if (!pkg || !dependency('emdash') || !dependency('astro')) throw error(CLI_WORDS.siteMissing, CLI_WORDS.siteMissingFix);
@@ -653,13 +674,16 @@ export async function removeEmdash({cwd, url, stdout, env = process.env, signal,
   if (!freshInfo?.isFile() || freshInfo.isSymbolicLink() || freshInfo.nlink !== 1 || freshInfo.ino !== info.ino || freshInfo.dev !== info.dev || freshInfo.mode !== info.mode ||
       await readFile(path, 'utf8') !== source)
     throw error(text('configChanged', {action: CLI_WORDS.removal}), CLI_WORDS.configChangedFix);
-  const temporary = await mkdtemp(join(cwd, '.rapier-jxl-'));
-  try {
-    const next = join(temporary, 'astro.config.mjs');
-    await writeFile(next, plan.source, {mode: info.mode & 0o777});
-    await chmod(next, info.mode & 0o777);
-    await rename(next, path);
-  } finally { await rm(temporary, {recursive: true, force: true}); }
+  if (recorded) await undo([]);
+  if (!recorded?.includes('astro.config.mjs')) {
+    const temporary = await mkdtemp(join(cwd, '.rapier-jxl-'));
+    try {
+      const next = join(temporary, 'astro.config.mjs');
+      await writeFile(next, plan.source, {mode: info.mode & 0o777});
+      await chmod(next, info.mode & 0o777);
+      await rename(next, path);
+    } finally { await rm(temporary, {recursive: true, force: true}); }
+  }
   stdout(text('removed')); stdout(CLI_WORDS.restartRemoved);
   return {changed: true, origin: connection.origin, proof: completed.proof};
 }

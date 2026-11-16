@@ -1,51 +1,80 @@
-// Any SVG (text, Blob or File) with its embedded raster pictures as JPEG XL: import { svgJxl } from 'rapier-jxl/svg-jxl';
-//   const { svg, record } = await svgJxl(input, { quality: 0.92 }); // smallest of lossy, exact and the original
-//   await svgJxl(input, { exact: true });                             // JPEGs restorable, the rest lossless
+// Any SVG (text, Blob or File) with its embedded raster pictures as JPEG XL: import { svgJxl } from 'jpegxl/svg-jxl';
+//   const { svg, record } = await svgJxl(input, { fidelity: { quality: 92 } }); // smallest of lossy, exact and the original
+//   await svgJxl(input, { fidelity: 'exact' });                                 // JPEGs restorable, the rest lossless
 // Not a sanitizer: the SVG's own scripts, styles and links pass through unchanged. Sanitize an untrusted SVG yourself.
-import { createCodec } from 'rapier-jxl/codec';
-
+// Each module is loaded on first use; in a browser each runs in its own worker.
 let jpeg, capture, still;
+// The browser's own cost, measured: drawing a 774 KB, 16,000 x 16,000 PNG to a canvas took Chrome 155 25.7 s and
+// 3.1 GB, before an encoder could refuse it. This example skips pictures over 40 MP.
 const MAX_PIXELS = 40_000_000;
-const jpegCodec = () => jpeg ??= createCodec({ module: 'rapier-jxl/jpeg' });
-const stillCodec = () => still ??= createCodec({ module: 'rapier-jxl' });
+const jpegModule = () => jpeg ??= import('jpegxl/jpeg');
+const stillModule = () => still ??= import('jpegxl');
 
-export async function svgJxl(input, { quality = 0.92, exact, effort, webgpu, signal, onProgress, codec, cache = new Map() } = {}) {
+const KEYS = ['fidelity', 'effort', 'webgpu', 'signal', 'onProgress', 'codec', 'cache'];
+export async function svgJxl(input, options = {}) {
+  if (typeof input !== 'string' && !(typeof Blob === 'function' && input instanceof Blob)) throw Object.assign(new TypeError("Invalid input; use SVG text or a Blob."), { code: 'JXL_INPUT' });
+  if (options === null || typeof options !== 'object' || Array.isArray(options)) throw Object.assign(new TypeError("Invalid options; pass an object."), { code: 'JXL_OPTIONS' });
+  const refuse = message => Object.assign(new TypeError(message), { code: 'JXL_OPTIONS' });
+  for (const key of Object.keys(options)) if (!KEYS.includes(key)) throw refuse(`Unknown svgJxl option ${key}; remove it.`);
+  const { fidelity = { quality: 92 }, effort, webgpu, signal, onProgress, codec, cache = new Map() } = options;
+  // fidelity as encode takes it: 'exact', or {quality} from 1 to 100 (100 is exact).
+  const named = fidelity !== null && typeof fidelity === 'object' && !Array.isArray(fidelity) && Object.keys(fidelity).join() === 'quality';
+  if (fidelity !== 'exact' && !(named && typeof fidelity.quality === 'number' && fidelity.quality >= 1 && fidelity.quality <= 100))
+    throw refuse("Invalid fidelity; use 'exact' or {quality: 1 to 100}.");
+  const exact = fidelity === 'exact', quality = exact ? 1 : fidelity.quality / 100;
+  if (effort !== undefined && !(Number.isInteger(effort) && effort >= 1 && effort <= 9)) throw refuse("Invalid effort; use an integer from 1 to 9.");
+  if (webgpu !== undefined && webgpu !== 'required' && webgpu !== false) throw refuse("Invalid webgpu; use 'required', false, or omit it.");
+  if (codec !== undefined && typeof codec?.capture !== 'function') throw refuse("Invalid codec; pass a capture module, such as import * as codec from 'jpegxl/capture-complete'.");
+  if (signal !== undefined && (!signal || typeof signal !== 'object' || typeof signal.aborted !== 'boolean' ||
+      ['throwIfAborted', 'addEventListener', 'removeEventListener'].some(key => typeof signal[key] !== 'function'))) throw refuse("Invalid signal; pass an AbortSignal.");
+  if (onProgress !== undefined && typeof onProgress !== 'function') throw refuse("Invalid onProgress; pass a function.");
+  if (cache === null || typeof cache !== 'object' || typeof cache.has !== 'function' || typeof cache.get !== 'function' || typeof cache.set !== 'function') throw refuse("Invalid cache; use a Map.");
   signal?.throwIfAborted();
   // A Blob or File is scanned as one character per byte and written back unchanged, whatever its encoding.
   const text = typeof input === 'string', svg = text ? input : latin1(new Uint8Array(await abortable(input.arrayBuffer(), signal)));
-  const captureCodec = () => codec ?? (capture ??= createCodec({ module: 'rapier-jxl/capture-complete' }));
+  const captureCodec = async () => codec ?? await (capture ??= import('jpegxl/capture-complete'));
   const decoder = !!codec || typeof createImageBitmap === 'function', lossy = decoder && !exact && quality < 1;
   const found = pictures(svg), done = [];
+  let callbackFault;
+  const report = onProgress && (async fraction => {
+    try { await abortable(onProgress(fraction), signal); } catch (reason) { callbackFault = {reason}; throw reason; }
+  });
+  const captureCall = async (input, options) => {
+    try { return await (await captureCodec()).capture(input, options); }
+    // An app's codec refusing one picture with a code (JXL_INPUT for a file it cannot read) is that picture's answer, as
+    // the module's own refusal is; any other failure of the app's codec is the call's.
+    catch (reason) { if (codec && !(typeof reason?.code === 'string' && reason.code.startsWith('JXL_'))) callbackFault = {reason}; throw reason; }
+  };
   for (const p of found) if (p.bytes && !p.kept) p.route = p.kind === 'jpeg' ? 'jpeg' : p.kind === 'png' || decoder ? 'lossless' : (p.kept = 'no-decoder', undefined);
   const key = p => `${codecId(codec)} ${lossy ? quality : 'exact'} ${effort} ${webgpu} ${p.uri}`;
   const queue = [...new Set(found.filter(p => p.route && !cache.has(key(p))).map(key))];
   let count = 0;
   const total = queue.length;
-  onProgress?.(0);
+  await report?.(0); signal?.throwIfAborted();
   const code = async p => {
     // Sized by its header as a browser sizes it, before any decode or draw.
     const size = dimensions(p.bytes, p.kind);
-    if (!size || size[0] * size[1] > MAX_PIXELS) { count++; return { out: null, kept: size ? 'JXL_DIMENSIONS' : 'no-size', tries: {} }; }
+    if (!size || !size[0] || !size[1] || size[0] * size[1] > MAX_PIXELS) { count++; return { out: null, kept: size?.[0] && size[1] ? 'JXL_DIMENSIONS' : 'no-size', tries: {} }; }
     // Under 64 pixels a side (below the photo check's floor) a picture takes the exact route only.
     const tryLossy = lossy && Math.min(size[0], size[1]) >= 64;
     const blob = new Blob([p.bytes], { type: `image/${p.kind}` }), part = tryLossy ? 0.5 : 1;
     const encode = async (route, from) => {
       const job = { maxPixels: MAX_PIXELS, ...(effort !== undefined && { effort }), ...(signal && { signal }),
-        ...(onProgress && { onProgress: fraction => onProgress((count + from + fraction * part) / total) }) },
+        ...(report && { onProgress: fraction => report((count + from + fraction * part) / total) }) },
         gpu = webgpu !== undefined && { webgpu };
       if (route === 'quality') {
         // The whole picture one photo (a box past an oriented side is cut to the picture); capture-complete makes the look.
         const side = Math.max(size[0], size[1]);
-        return { out: await captureCodec().capture(blob, { ...job, fidelity: { quality: Math.max(1, quality * 100) }, ...gpu, photoRects: [{ x: 0, y: 0, width: side, height: side }] }) };
+        return { out: await captureCall(blob, { ...job, fidelity: { quality: Math.max(1, quality * 100) }, ...gpu, photoRects: [{ x: 0, y: 0, width: side, height: side }] }) };
       }
-      if (route === 'jpeg') return { out: await jpegCodec().recompress(p.bytes, job) };
+      if (route === 'jpeg') return { out: await (await jpegModule()).recompress(p.bytes, job) };
       let reader;
       if (p.alpha || !decoder) {
         // The file's own samples (the browser premultiplies); on refusal the browser's decode, named in `reader`.
-        try { return { out: await stillCodec().encode(blob, { ...job, fidelity: 'exact' }) }; }
-        catch (error) { if (signal?.aborted || !decoder) throw error; reader = error.code ?? error.name ?? 'error'; }
+        try { return { out: await (await stillModule()).encode(blob, { ...job, fidelity: 'exact' }) }; }
+        catch (error) { if (callbackFault && Object.is(callbackFault.reason, error) || signal?.aborted || !decoder) throw error; reader = error?.code ?? error?.name ?? 'error'; }
       }
-      return { out: await captureCodec().capture(blob, { ...job, fidelity: 'exact', ...gpu }), reader };
+      return { out: await captureCall(blob, { ...job, fidelity: 'exact', ...gpu }), reader };
     };
     const tries = {};
     let out = null, route, reader, kept;
@@ -53,13 +82,14 @@ export async function svgJxl(input, { quality = 0.92, exact, effort, webgpu, sig
       try {
         const made = await encode(r, from);
         const result = made.out;
-        if (!result.fits) throw Object.assign(new Error(result.reason.message), {code: result.reason.code});
+        if (!result.meetsTarget) throw Object.assign(new Error(result.reason.message), {code: result.reason.code});
         made.out = result.bytes;
         tries[r] = made.out.length;
         if (!out || made.out.length < out.length) ({ out, reader } = made), route = r;
       } catch (error) {
+        if (callbackFault && Object.is(callbackFault.reason, error)) throw error;
         if (signal?.aborted) throw signal.reason;
-        kept ??= error.code ?? error.name ?? 'error';
+        kept ??= error?.code ?? error?.name ?? 'error';
       }
     }
     if (out && out.length >= p.bytes.length) { out = null; kept = 'larger'; }
@@ -79,7 +109,7 @@ export async function svgJxl(input, { quality = 0.92, exact, effort, webgpu, sig
   parts.push(svg.slice(at));
   const out = parts.join('');
   const record = { bytes: text ? new TextEncoder().encode(svg).length : input.size, jxl: text ? new TextEncoder().encode(out).length : out.length, pictures: done, fonts: fonts(svg) };
-  onProgress?.(1);
+  await report?.(1); signal?.throwIfAborted();
   if (text) return { svg: out, record };
   const type = input.type || 'image/svg+xml';
   const bytes = Uint8Array.from(out, c => c.charCodeAt(0));
@@ -92,12 +122,23 @@ const codecId = codec => { if (!codec) return 0; if (!codecs.has(codec)) codecs.
 const latin1 = bytes => { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return s; };
 
 function abortable(promise, signal) {
-  if (!signal) return promise;
+  if (!signal) return Promise.resolve(promise);
   return new Promise((resolve, reject) => {
-    const stop = () => reject(signal.reason);
-    signal.addEventListener('abort', stop, { once: true });
-    if (signal.aborted) stop();
-    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', stop));
+    let done = false;
+    const finish = (accept, value) => {
+      if (done) return;
+      done = true;
+      try { signal.removeEventListener('abort', stop); }
+      catch (reason) { if (accept === resolve) { reject(reason); return; } }
+      accept(value);
+    };
+    const stop = () => {
+      try { if (signal.aborted) finish(reject, signal.reason); }
+      catch (reason) { finish(reject, reason); }
+    };
+    Promise.resolve(promise).then(value => finish(resolve, value), reason => finish(reject, reason));
+    try { signal.addEventListener('abort', stop, { once: true }); stop(); }
+    catch (reason) { finish(reject, reason); }
   });
 }
 
@@ -107,11 +148,10 @@ const MAGIC = [[0, [0xFF, 0xD8, 0xFF], 'jpeg'], [0, [0x89, 0x50, 0x4E, 0x47], 'p
   [8, [0x57, 0x45, 0x42, 0x50], 'webp'], [4, [0x66, 0x74, 0x79, 0x70], 'avif'], [0, [0xFF, 0x0A], 'jxl'], [0, [0, 0, 0, 0x0C, 0x4A, 0x58, 0x4C, 0x20], 'jxl']];
 const sniff = b => MAGIC.find(([at, magic]) => magic.every((v, i) => b[at + i] === v))?.[2] ?? 'unknown';
 function* resources(svg) {
-  let i = 0, inStyle = false;
-  const name = /[A-Za-z][\w:.-]*/y, space = /\s*/y;
+  let i = 0;
+  const name = /[A-Za-z][\w:.-]*/y, space = /\s*/y, styleEnd = /<\/(?:[A-Za-z][\w.-]*:)?style\s*>/g;
   while (i < svg.length) {
     const lt = svg.indexOf('<', i);
-    if (inStyle) yield* cssUrls(svg, i, lt < 0 ? svg.length : lt, false);
     if (lt < 0) break;
     if (svg.startsWith('<!--', lt)) { const e = svg.indexOf('-->', lt + 4); i = e < 0 ? svg.length : e + 3; continue; }
     if (svg.startsWith('<![CDATA[', lt)) { const e = svg.indexOf(']]>', lt + 9); i = e < 0 ? svg.length : e + 3; continue; }
@@ -141,8 +181,20 @@ function* resources(svg) {
       if (key === attribute0 || (attribute0 === 'href' && key.endsWith(':href'))) yield { start, end };
       else if (key === 'style') yield* cssUrls(svg, start, end, true);
     }
-    if (element === 'style') inStyle = !closing && svg[p - 2] !== '/';
     i = p;
+    // A style's text runs to its end tag, CDATA included: a `<` in it (`width < 600px`, as an HTML page's inline SVG
+    // writes it) opens no tag. Its XML comments are left as they are.
+    if (element === 'style' && !closing && svg[p - 2] !== '/') {
+      styleEnd.lastIndex = p;
+      const close = styleEnd.exec(svg), stop = close ? close.index : svg.length;
+      for (let at = p; at < stop;) {
+        const comment = svg.indexOf('<!--', at), to = comment < 0 || comment >= stop ? stop : comment;
+        yield* cssUrls(svg, at, to, false);
+        const e = to < stop ? svg.indexOf('-->', to + 4) : -1;
+        at = e < 0 ? stop : e + 3;
+      }
+      i = close ? close.index + close[0].length : svg.length;
+    }
   }
 }
 function* cssUrls(svg, from, to, attribute) {
@@ -177,7 +229,8 @@ function pictures(svg) {
     list.push(p);
     // As a browser does, whitespace in base64 is dropped.
     const text = payload.replace(/\s+/g, '');
-    if (!/;base64$/i.test(m[2] ?? '') || !text || /[^A-Za-z0-9+/=]/.test(text)) { p.kept = 'malformed'; continue; }
+    // Base64 as a browser reads it (Fetch's data: URL): the type ends with ';', any spaces, then 'base64'.
+    if (!/; *base64$/i.test((m[2] ?? '').trim()) || !text || /[^A-Za-z0-9+/=]/.test(text)) { p.kept = 'malformed'; continue; }
     try { p.bytes = unbase64(text); } catch { p.kept = 'malformed'; continue; }
     p.kind = sniff(p.bytes);
     if (p.kind === 'png') p.alpha = alpha(p.bytes) || p.bytes[24] === 16;
@@ -209,7 +262,7 @@ function chunkBeforeData(b, name) {
 }
 const apng = b => chunkBeforeData(b, 'acTL'), alpha = b => b[25] === 4 || b[25] === 6 || chunkBeforeData(b, 'tRNS');
 function dimensions(b, kind) {
-  const be16 = i => (b[i] << 8) | b[i + 1], le16 = i => b[i] | (b[i + 1] << 8), le32 = i => Math.abs(b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24));
+  const be16 = i => (b[i] << 8) | b[i + 1], le16 = i => b[i] | (b[i + 1] << 8), le32 = i => b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24);
   if (kind === 'png') return [((b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19]) >>> 0, ((b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23]) >>> 0];
   // A GIF: its logical screen grown to its first image's extent, as browsers grow it (input.mjs reads it the same way).
   if (kind === 'gif') {
@@ -222,12 +275,14 @@ function dimensions(b, kind) {
     }
     return [width, height];
   }
-  // A BMP: the 12-byte core header's 16-bit sides, or the info header's 32-bit ones (a negative height is top-down).
-  if (kind === 'bmp') return b[14] === 12 && !b[15] && !b[16] && !b[17] ? [le16(18), le16(20)] : [le32(18), le32(22)];
+  // A BMP: the 12-byte core header's 16-bit sides, or the info header's 32-bit ones (a negative height is top-down; a
+  // negative width is no picture, as browsers read it).
+  if (kind === 'bmp') return b[14] === 12 && !b[15] && !b[16] && !b[17] ? [le16(18), le16(20)] : le32(18) > 0 ? [le32(18), Math.abs(le32(22))] : null;
   if (kind === 'jpeg') for (let p = 2; p + 9 < b.length && b[p] === 0xFF;) {
     if (b[p + 1] === 0xFF) { p++; continue; }  // a fill byte
     const marker = b[p + 1];
     if (marker >= 0xC0 && marker <= 0xCF && marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC) return [be16(p + 7), be16(p + 5)];
+    if (marker === 0xDA || marker === 0xD9) return null;  // a scan or the end before any frame: no size
     p += marker === 0xD8 || (marker >= 0xD0 && marker <= 0xD7) || marker === 0x01 ? 2 : 2 + be16(p + 2);
   }
   return null;

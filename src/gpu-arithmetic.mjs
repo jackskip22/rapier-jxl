@@ -1,20 +1,23 @@
 // SPDX-License-Identifier: MIT
-export const GC_BOUNDS = Object.freeze({op: 4e-14, plane: 2e-8, planeMax: 1300, sum: 1e-11, rel: 1e-12, frac: 2.4e-7, floor: 1e-30});
-export const gcF = v => { const s = Math.fround(v).toString(); return /[.eE]/.test(s) ? s : s + '.0'; };
-export const gcSplit = (v, out, at) => { const hi = Math.fround(v); out[at] = hi; out[at + 1] = Math.fround(v - hi); };
+import {fault} from './fault.mjs';
+import {gpuFloat as gcF, gpuSplit as gcSplit, gpuDestroy, gpuCached, gpuKernel, gpuScoped, gpuAlloc, gpuUpload, gpuUni, gpuStep, gpuStage} from './gpu-kit.mjs';
+export {gcF, gcSplit};
+export const GC_BOUNDS = /* @__PURE__ */ Object.freeze({op: 4e-14, plane: 2e-8, planeMax: 1300, sum: 1e-11, rel: 1e-12, frac: 2.4e-7, floor: 1e-30});
+
 export function gcPlaneBound(planes) {
   let worst = 0;
   for (const plane of planes) for (const value of plane) {
     const hi = Math.fround(value), lo = Math.fround(value - hi);
     if (!Number.isFinite(value) || !Number.isFinite(hi) || !Number.isFinite(lo))
-      throw new Error('A photo plane cannot be represented by finite double-single samples.');
+      throw fault('JXL_INTERNAL', 'A photo plane cannot be represented by finite double-single samples.');
     worst = Math.max(worst, Math.abs(value - (hi + lo)));
   }
   const bound = new Float32Array([worst]);
   if (bound[0] < worst) new Uint32Array(bound.buffer)[0]++;
-  if (!Number.isFinite(bound[0])) throw new Error('A photo plane split error has no finite f32 bound.');
+  if (!Number.isFinite(bound[0])) throw fault('JXL_INTERNAL', 'A photo plane split error has no finite f32 bound.');
   return bound[0];
 }
+
 export const GC_DS = `
 fn gcO(x: f32) -> f32 { return bitcast<f32>(bitcast<u32>(x) | (bitcast<u32>(gcOne()) ^ 0x3f800000u)); }
 fn ts(a0: f32, b0: f32) -> vec2f { let a = gcO(a0); let b = gcO(b0); let s = gcO(a + b); let v = gcO(s - a); let w = gcO(s - v); return vec2f(s, gcO(gcO(a - w) + gcO(b - v))); }
@@ -32,12 +35,12 @@ fn ddiv(a: vec2f, b: vec2f) -> vec2f {
   return dadd(fs(q1, q2), vec2f(gcO(r2.x / b.x), 0.0));
 }
 fn dabs(a: vec2f) -> vec2f { return select(a, -a, a.x < 0.0); }
-// Round half up (Math.round): the level, and 1 where the fraction lies within e of the half step.
 fn dround(v: vec2f, half: vec2f, e: f32) -> vec2f {
   let w = dadd(v, half); var n = floor(w.x); var f = gcO(gcO(w.x - n) + w.y);
   if (f < 0.0) { n -= 1.0; f = gcO(f + 1.0); } else if (f >= 1.0) { n += 1.0; f = gcO(f - 1.0); }
   return vec2f(n, select(0.0, 1.0, f <= e || f >= 1.0 - e));
 }`;
+
 export const GC_CBRT = `
 fn dcbrt(v: vec2f, third: vec2f) -> vec2f {
   var r = exp2(log2(v.x) / 3.0); r = (2.0 * r + v.x / (r * r)) / 3.0; r = (2.0 * r + v.x / (r * r)) / 3.0;
@@ -72,6 +75,7 @@ export function gcQualificationCases(count = 65536) {
   }
   return cases;
 }
+
 export function gcQualificationCheck(cases, out) {
   const tol = GC_BOUNDS.op, failures = {twoSum: 0, twoProd: 0, add: 0, mul: 0, div: 0, cbrt: 0};
   for (let i = 0; i < cases.length / 4; i++) {
@@ -87,40 +91,25 @@ export function gcQualificationCheck(cases, out) {
   return failures;
 }
 
-const gcQualifications = new WeakMap();
+const gcQualifications = /* @__PURE__ */ new WeakMap();
 export async function gpuCoreQualification(device, ds = GC_DS) {
-  const cases = gcQualificationCases(), made = [];
-  const buffer = (size, usage) => { const b = device.createBuffer({size, usage}); made.push(b); return b; };
-  device.pushErrorScope('validation');
-  let scoped = true;
+  const cases = gcQualificationCases(), made = [], alloc = gpuAlloc(device, made);
   try {
-    const pipeline = await device.createComputePipelineAsync({layout: 'auto', compute: {module: device.createShaderModule({code: GC_QUALIFY(ds)}), entryPoint: 'main'}});
-    const inp = buffer(cases.byteLength, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST), out = buffer(cases.byteLength * 3, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
-    const read = buffer(cases.byteLength * 3, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
-    const one = buffer(16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    device.queue.writeBuffer(inp, 0, cases); device.queue.writeBuffer(one, 0, new Float32Array([1, 0, 0, 0]));
-    const encoder = device.createCommandEncoder(), pass = encoder.beginComputePass();
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(0, device.createBindGroup({layout: pipeline.getBindGroupLayout(0), entries: [inp, out, one].map((b, k) => ({binding: k, resource: {buffer: b}}))}));
-    pass.dispatchWorkgroups(Math.ceil(cases.length / 4 / 64)); pass.end();
-    encoder.copyBufferToBuffer(out, 0, read, 0, cases.byteLength * 3);
-    device.queue.submit([encoder.finish()]);
-    await read.mapAsync(GPUMapMode.READ);
-    scoped = false;
-    const invalid = await device.popErrorScope();
-    if (invalid) throw new Error('GpuCore qualification: ' + invalid.message);
-    const failures = gcQualificationCheck(cases, new Float32Array(read.getMappedRange()));
-    read.unmap();
+    const take = await gpuScoped(device, 'GpuCore qualification', async () => {
+      const kernel = ds === GC_DS ? await gpuKernel(device, 'qualify', () => GC_QUALIFY(ds), 64)
+        : [await device.createComputePipelineAsync({layout: 'auto', compute: {module: device.createShaderModule({code: GC_QUALIFY(ds)}), entryPoint: 'main'}}), 64];
+      const inp = gpuUpload(device, alloc, cases), out = alloc(cases.byteLength * 3), one = gpuUni(device, alloc, null, null, 0, 16);
+      const encoder = device.createCommandEncoder();
+      gpuStep(device, encoder, kernel, [inp, out, one], cases.length / 4);
+      const [map, take] = gpuStage(alloc, encoder, [[out, 0, cases.byteLength * 3]]);
+      device.queue.submit([encoder.finish()]);
+      await map();
+      return take;
+    }, false);
+    const failures = gcQualificationCheck(cases, new Float32Array(take()[0]));
     return {ok: Object.values(failures).every(n => n === 0), cases: cases.length / 4, failures};
-  } finally {
-    for (const b of made) b.destroy();
-    if (scoped) await device.popErrorScope().catch(() => null);
-  }
-}
-export function gpuCoreQualified(device) {
-  let q = gcQualifications.get(device);
-  if (!q) gcQualifications.set(device, q = gpuCoreQualification(device).then(r => r.ok, () => false));
-  return q;
+  } finally { gpuDestroy(made); }
 }
 
-
+export const gpuCoreQualified = device =>
+  gpuCached(gcQualifications, device, 'ok', () => gpuCoreQualification(device).then(r => r.ok));

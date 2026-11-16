@@ -1,23 +1,19 @@
-import {serve} from 'rapier-jxl/serve';
+import {serve, acceptsJxl as accepts} from 'jpegxl/serve';
 
 const FILE = /^\/_emdash\/api\/media\/file\/([0-9A-HJKMNP-TV-Z]{26}(?:\.[0-9A-HJKMNP-TV-Z]{26})*\.(?:jpe?g|jpe|jfif|png|webp|avif))$/i;
+const REPLACE = /^\/_emdash\/api\/media\/[0-9A-HJKMNP-TV-Z]{26}\/replace$/i;
+const WIDTH_FORMATS = new Map([[null, 'image/webp'], ['webp', 'image/webp'], ['avif', 'image/avif'],
+  ['jpeg', 'image/jpeg'], ['jpg', 'image/jpeg'], ['png', 'image/png']]);
+const NAMED_QUALITY = new Map([['low', 25], ['mid', 50], ['high', 80], ['max', 100]]);
+const ALLOWED_PARAMS = new Set(['href', 'w', 'h', 'f', 'q', 'fit', 'pos', 'position']);
+const CENTERED_POSITION = new Set(['center', 'centre', '50%', '50% 50%', 'center center', 'centre centre']);
+const BOUNDING_FITS = new Set(['contain', 'inside', 'scale-down']);
+const EXACT_BOX_FITS = new Set([null, 'cover', 'fill', 'outside']);
 const SANDBOX = "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'";
 export const mediaKey = url => FILE.exec(new URL(url).pathname)?.[1] ?? null;
 
-// Explicit support; honor exclusions.
-export function acceptsJxl(value, alternative = 'image/webp') {
-  const weights = new Map();
-  const parts = String(value ?? '').match(/(?:[^,"]|"(?:\\.|[^"\\])*")+/g) ?? [];
-  for (const part of parts) {
-    const [type, ...parameters] = part.trim().toLowerCase().split(';').map(p => p.trim());
-    if (!['image/jxl', alternative, 'image/*', '*/*'].includes(type)) continue;
-    if (parameters.some(p => p && !/^q=(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/.test(p))) continue;
-    const weight = parameters.length ? Number(parameters.at(-1).slice(2)) : 1;
-    weights.set(type, Math.max(weights.get(type) ?? 0, weight));
-  }
-  const other = weights.get(alternative) ?? weights.get('image/*') ?? weights.get('*/*') ?? 0;
-  return (weights.get('image/jxl') ?? 0) > 0 && weights.get('image/jxl') >= other;
-}
+// Explicit support, honoring exclusions: serve()'s own negotiation, against the media file's own type.
+export const acceptsJxl = (value, alternative = 'image/webp') => accepts(value, alternative);
 const secure = response => {
   response.headers.set('x-content-type-options', 'nosniff');
   response.headers.set('content-security-policy', SANDBOX);
@@ -27,8 +23,30 @@ const secure = response => {
 const requestForJxl = request => ({method: request.method,
   headers: {accept: 'image/jxl', 'if-none-match': request.headers.get('if-none-match') ?? ''}});
 
+function askedQuality(raw) {
+  if (raw === null) return null;
+  if (NAMED_QUALITY.has(raw)) return NAMED_QUALITY.get(raw);
+  return /^(?:[1-9][0-9]?|100)$/.test(raw) ? Number(raw) : undefined;
+}
+
+function centeredPosition(url) {
+  const pos = url.searchParams.get('pos'), position = url.searchParams.get('position');
+  if (pos !== null && position !== null && pos !== position) return false;
+  const raw = position ?? pos;
+  return raw === null || CENTERED_POSITION.has(raw.trim().toLowerCase().replace(/\s+/g, ' '));
+}
+
+function matchesQuality(result, format, requestedQuality) {
+  const fidelity = result?.fidelity;
+  const exact = fidelity === 'exact' || fidelity?.maxError === 0 || fidelity?.quality === 100;
+  if (format === 'png') return exact || result?.kept === 'pixels';
+  if (requestedQuality === null) return true;
+  const storedQuality = exact ? 100 : fidelity?.quality;
+  return requestedQuality === 85 || requestedQuality === storedQuality;
+}
+
 export async function serveMedia({request, storage}) {
-  if (!['GET', 'HEAD'].includes(request.method) || typeof storage?.sidecar !== 'function') return null;
+  if (!['GET', 'HEAD'].includes(request.method) || request.headers.has('range') || typeof storage?.sidecar !== 'function') return null;
   const key = mediaKey(request.url);
   if (!key) return null;
   const type = /\.(?:jpe?g|jpe|jfif)$/i.test(key) ? 'image/jpeg' : /\.png$/i.test(key) ? 'image/png' :
@@ -42,38 +60,89 @@ export async function serveMedia({request, storage}) {
 
 export async function serveWidth({request, storage, endpoint = '/_image'}) {
   const url = new URL(request.url);
-  if (url.pathname !== endpoint || !['GET', 'HEAD'].includes(request.method) || typeof storage?.variants !== 'function' ||
-      !acceptsJxl(request.headers.get('accept'))) return null;
-  if ([...url.searchParams.keys()].some(k => !['href', 'w', 'h', 'f', 'q'].includes(k)) ||
-      ![null, 'webp'].includes(url.searchParams.get('f')) || ![null, '85'].includes(url.searchParams.get('q'))) return null;
-  const href = url.searchParams.get('href'), width = Number(url.searchParams.get('w'));
-  if (!href || !Number.isSafeInteger(width) || width < 1) return null;
+  if (url.pathname !== endpoint || !['GET', 'HEAD'].includes(request.method) || request.headers.has('range') ||
+      (typeof storage?.variants !== 'function' && typeof storage?.sidecar !== 'function')) return null;
+  if ([...url.searchParams.keys()].some(k => !ALLOWED_PARAMS.has(k)) || !centeredPosition(url)) return null;
+  const format = url.searchParams.get('f'), alternative = WIDTH_FORMATS.get(format);
+  if (!alternative || !acceptsJxl(request.headers.get('accept'), alternative)) return null;
+  const requestedQuality = askedQuality(url.searchParams.get('q'));
+  if (requestedQuality === undefined) return null;
+  const fit = url.searchParams.get('fit');
+  if (!EXACT_BOX_FITS.has(fit) && !BOUNDING_FITS.has(fit)) return null;
+  const href = url.searchParams.get('href');
+  if (!href) return null;
+  const hasW = url.searchParams.has('w'), hasH = url.searchParams.has('h');
+  const width = hasW ? Number(url.searchParams.get('w')) : null;
+  const height = hasH ? Number(url.searchParams.get('h')) : null;
+  if (hasW && (!Number.isSafeInteger(width) || width < 1)) return null;
+  if (hasH && (!Number.isSafeInteger(height) || height < 1)) return null;
   let source;
   try { source = new URL(href, url); } catch { return null; }
   if (source.origin !== url.origin) return null;
   const key = mediaKey(source);
   if (!key) return null;
-  const file = (await storage.variants(key, {signal: request.signal})).find(v => v.width === width);
-  if (!file) return null;
-  const bytes = await storage.readVariant(file, {signal: request.signal});
-  if (!bytes) return null;
-  if (url.searchParams.has('h') && Number(url.searchParams.get('h')) !== file.result.height) return null;
-  return secure(await serve(bytes, requestForJxl(request), {maxPixels: storage.maxPixels, signal: request.signal,
-    ...(typeof file.sha256 === 'string' && {etag: file.sha256.slice(0, 32)})}));
+
+  const list = typeof storage.variants === 'function' ? await storage.variants(key, {signal: request.signal}) : [];
+  let targetW = width, targetH = height, main = undefined;
+  const readMain = async () => {
+    if (main === undefined) main = typeof storage.sidecar === 'function' ? await storage.sidecar(key, {signal: request.signal}) : null;
+    return main;
+  };
+
+  if (BOUNDING_FITS.has(fit)) {
+    // Bounding-box fits (contain, inside, scale-down) never crop; resolve the proportional target from the full rendition.
+    const full = await readMain();
+    if (!full || !Number.isSafeInteger(full.width) || !Number.isSafeInteger(full.height)) {
+      if (!hasW) return null;
+      const direct = list.find(v => v.width === width && (!hasH || v.result.height === height));
+      if (!direct || !matchesQuality(direct.result, format, requestedQuality)) return null;
+      const bytes = await storage.readVariant(direct, {signal: request.signal});
+      return bytes ? secure(await serve(bytes, requestForJxl(request), {maxPixels: storage.maxPixels, signal: request.signal,
+        ...(typeof direct.sha256 === 'string' && {etag: direct.sha256.slice(0, 32)})})) : null;
+    }
+    const scaleW = hasW ? width / full.width : 1, scaleH = hasH ? height / full.height : 1;
+    const rawScale = Math.min(scaleW, scaleH);
+    if (rawScale > 1 && fit !== 'scale-down') return null;
+    const scale = Math.min(1, rawScale);
+    targetW = Math.max(1, Math.round(full.width * scale));
+    targetH = Math.max(1, Math.round(full.height * scale));
+  } else if (!hasW && hasH) {
+    const full = await readMain();
+    if (!full || !Number.isSafeInteger(full.width) || !Number.isSafeInteger(full.height) || height > full.height) return null;
+    targetW = Math.max(1, Math.round(full.width * height / full.height));
+    targetH = height;
+  }
+
+  if (targetW !== null) {
+    const file = list.find(v => v.width === targetW);
+    if (file && (targetH === null || targetH === file.result.height) && matchesQuality(file.result, format, requestedQuality)) {
+      const bytes = await storage.readVariant(file, {signal: request.signal});
+      if (bytes) return secure(await serve(bytes, requestForJxl(request), {maxPixels: storage.maxPixels, signal: request.signal,
+        ...(typeof file.sha256 === 'string' && {etag: file.sha256.slice(0, 32)})}));
+    }
+  }
+
+  // Full-size hits (intrinsic width in responsive srcset, 2x density at source width, scale-down clamp, or bare href)
+  // use the verified main rendition when its displayed width and height match the uncropped request.
+  const full = await readMain();
+  if (!full || (targetW !== null && full.width !== targetW) || (targetH !== null && full.height !== targetH) ||
+      !matchesQuality(full, format, requestedQuality)) return null;
+  return secure(await serve(full.bytes, requestForJxl(request), {maxPixels: storage.maxPixels, signal: request.signal,
+    ...(typeof full.etag === 'string' && {etag: full.etag})}));
 }
 
-// EmDash 1.4 fires media:afterUpload only after signed and plug-in uploads; its admin uploads to R2 bindings and local
-// storage directly, so the plug-in's hook gets those uploads here, and no other plug-in's.
+// EmDash fires media:afterUpload only after signed and plug-in uploads; its admin uploads and replaces on R2 bindings
+// and local storage directly, so the plug-in's hook gets those writes here, and no other plug-in's.
 export async function announceUpload(hooks, response, id = 'rapier-media') {
-  if (response.status !== 201 || typeof hooks?.getTypedHooks !== 'function' || typeof hooks.getContext !== 'function') return;
-  const item = (await response.clone().json().catch(() => null))?.data?.item;
+  if (![200, 201].includes(response.status) || typeof hooks?.getTypedHooks !== 'function' || typeof hooks.getContext !== 'function') return;
+  const data = (await response.clone().json().catch(() => null))?.data, item = data?.item ?? data;
   if (!item?.id || typeof item.url !== 'string') return;
   const media = {id: item.id, filename: item.filename, mimeType: item.mimeType, size: item.size, url: item.url, createdAt: item.createdAt};
   for (const hook of hooks.getTypedHooks('media:afterUpload').filter(hook => hook.pluginId === id))
     await hook.handler({media}, hooks.getContext(id));
 }
 
-// EmDash 1.4 answers its image endpoint without its runtime: there locals.emdash is the storage alone, with no route
+// EmDash answers its image endpoint without its runtime: there locals.emdash is the storage alone, with no route
 // metadata. That storage is the process's one cached adapter, so the last full request's live route-metadata reader is
 // kept on it: a plug-in disabled since then reads disabled at once, and before any full request the host answers.
 const activation = new WeakMap();
@@ -90,7 +159,9 @@ export async function onRequest(context, next) {
   const rendition = enabled ? await serveMedia({request, storage}) ?? await serveWidth({request, storage}) : null;
   if (rendition) return rendition;
   const response = await next(), url = new URL(request.url);
-  if (enabled && request.method === 'POST' && url.pathname === '/_emdash/api/media') {
+  const directWrite = request.method === 'POST' && url.pathname === '/_emdash/api/media' && response.status === 201 ||
+    request.method === 'PUT' && REPLACE.test(url.pathname) && response.status === 200;
+  if (enabled && directWrite) {
     const work = announceUpload(emdash?.hooks, response).catch(error => console.error('[rapier-jxl] upload', error));
     context.locals.cfContext?.waitUntil?.(work);
     return response;

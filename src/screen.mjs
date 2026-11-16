@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: MIT
-import {BitWriter, packSigned, complete} from './bits.mjs';
+import {BitWriter, complete} from './bits.mjs';
 import {writeModularFrameHeader, groupLayout, groupPass, assembleCodestream, GROUP_DIM} from './frame.mjs';
 import {writeImageHeader} from './icc-write.mjs';
-import {buildCode, writePrefixCode} from './prefix.mjs';
-import {screenModel, writeScreenModel} from './screen-lz77.mjs';
+import {screenModel} from './screen-lz77.mjs';
 import {admitOutputSize} from './admit.mjs';
-import {ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
-import {codeChannel} from './modular-channel.mjs';
+import {ALPHABET, leaf, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
+import {writeCaptureStream} from './capture-modular-stream.mjs';
 
-export {CAPTURE_FLAT, flatSamples, screenLike} from './screen-samples.mjs';
+export {CAPTURE_FLAT, flatSamples, sharedFlatSamples, flatSampleAt, flatSampleX, flatSampleY, FLAT, screenLike, flatSurround} from './screen-samples.mjs';
 
 const screenValueAt = (rgba, i, c, shape) => rgba[i + (shape.colour === 1 && c === 1 ? 3 : c)];
 const screenPacked = (rgba, i) => (rgba[i] + rgba[i + 1] * 256 + rgba[i + 2] * 65536 + rgba[i + 3] * 16777216) >>> 0;
@@ -80,9 +79,7 @@ function screenPlanned(rgba, width, meta, transforms, setup) {
 }
 
 export function screenPlan(rgba, width, height, shape, mode = 'global') {
-  const channels = shape.channels,
-    meta = [],
-    transforms = [];
+  const channels = shape.channels, meta = [], transforms = [];
   if (mode === 'global' || mode === 'frequency') {
     const table = scanPalette(rgba, mode === 'frequency');
     if (!table) return null;
@@ -101,10 +98,7 @@ export function screenPlan(rgba, width, height, shape, mode = 'global') {
     const palettes = maps.map(map => Array.from({length: 256}, (_, i) => i).filter(v => map[v] === 0));
     for (let c = channels - 1; c >= 0; c--) {
       const values = palettes[c];
-      if (values.length > 192 || values.length >= values.at(-1) - values[0] + 1) {
-        maps[c] = null;
-        continue;
-      }
+      if (values.length > 192 || values.length >= values.at(-1) - values[0] + 1) { maps[c] = null; continue; }
       values.forEach((v, i) => (maps[c][v] = i));
       transforms.push({type: 'palette', beginC: c + meta.length, numC: 1, nbColors: values.length});
       meta.unshift({plane: Int16Array.from(values), width: values.length, height: 1});
@@ -116,120 +110,13 @@ export function screenPlan(rgba, width, height, shape, mode = 'global') {
     {mode: 'direct', count: channels, channels, colour: shape.colour});
 }
 
-function screenPrefixPrice(freq) {
-  const code = buildCode(freq),
-    w = new BitWriter(128);
-  writePrefixCode(w, code);
-  let bits = w.bitLength;
-  for (let s = 0; s < freq.length; s++)
-    if (freq[s]) bits += freq[s] * (code.lengths[s] + Math.max(0, s < 224 ? s - 1 : s - 236));
-  return bits;
-}
-
 export function* screenFrameSteps(
-  rgba,
-  width,
-  height,
-  shape,
-  colorSpace,
-  plan,
+  rgba, width, height, shape, colorSpace, plan,
   {predictor = null, frameHeader = null, globalPrefix = null, imageHeader = true, tokenCodec = null, search = null, minLength = 7} = {}
 ) {
-  if (search) return yield* screenDetailedFrameSteps(rgba, width, height, shape, colorSpace, plan, {frameHeader, globalPrefix, imageHeader, minLength, ...search});
-  const layout = groupLayout(width, height),
-    groups = layout.groupsX * layout.groupsY;
-  const count = layout.single ? plan.meta.length + plan.count : Math.max(plan.meta.length, plan.count);
-  const leaves = Array.from({length: count}, () => leaf(5));
-  const planes = Array.from({length: plan.count}, () => new Int16Array(GROUP_DIM * GROUP_DIM));
-  const slot = c => (layout.single ? plan.meta.length + c : c);
-  const visit = (g, fn) => {
-    const x = (g % layout.groupsX) * GROUP_DIM,
-      y = ((g / layout.groupsX) | 0) * GROUP_DIM,
-      w = Math.min(GROUP_DIM, width - x),
-      h = Math.min(GROUP_DIM, height - y);
-    plan.fill(planes, x, y, w, h);
-    fn(w, h);
-  };
-  if (predictor !== null) for (const l of leaves) l.predictor = predictor;
-  else {
-    const candidates = [0, 1, 2, 5].map(p => ({
-      p,
-      freqs: Array.from({length: plan.count}, () => new Uint32Array(ALPHABET))
-    }));
-    const w = Math.min(64, width),
-      h = Math.min(32, height);
-    for (const fraction of [0, 1, 2]) {
-      plan.fill(planes, Math.floor(((width - w) * fraction) / 2), Math.floor(((height - h) * fraction) / 2), w, h);
-      for (const c of candidates)
-        for (let k = 0; k < plan.count; k++) codeChannel(null, c.freqs[k], planes[k], w, h, leaf(c.p));
-    }
-    for (let c = 0; c < plan.count; c++) {
-      let best = candidates[0],
-        cost = screenPrefixPrice(best.freqs[c]);
-      for (const choice of candidates.slice(1)) {
-        const p = screenPrefixPrice(choice.freqs[c]);
-        if (p < cost) {
-          best = choice;
-          cost = p;
-        }
-      }
-      leaves[slot(c)].predictor = best.p;
-    }
-  }
-  const freqs = leaves.map(() => new Uint32Array(ALPHABET));
-  const distances = tokenCodec ? new Uint32Array(64) : null, custom = tokenCodec?.create({distances, minLength});
-  const code = (writer, target, plane, w, h, l, s) =>
-    custom ? custom.code(writer, target, plane, w, h, l, s) : codeChannel(writer, target, plane, w, h, l);
-  for (let c = 0; c < plan.meta.length; c++) {
-    const m = plan.meta[c];
-    code(null, freqs[c], m.plane, m.width, m.height, leaves[c], c);
-  }
-  if ((yield* groupPass({at: g => (g + 1) / (2 * groups), stop: () => true}, groups, g => {
-    visit(g, (w, h) => {
-      for (let c = 0; c < plan.count; c++) {
-        const s = slot(c);
-        code(null, freqs[s], planes[c], w, h, leaves[s], s);
-      }
-    });
-  })) === null) return null;
-  const header = new BitWriter(256);
-  if (imageHeader) writeImageHeader(header, width, height, shape.colour, shape.alpha, {colorSpace});
-  if (frameHeader) frameHeader(header);
-  else writeModularFrameHeader(header, {alpha: shape.alpha});
-  const global = new BitWriter(4096);
-  if (globalPrefix) globalPrefix(global);
-  global.write(1, 1);
-  global.write(1, 1);
-  const ordered = writeTree(global, channelTree(leaves));
-  const histograms = custom
-    ? custom.histograms(global, ordered, freqs, l => leaves.indexOf(l))
-    : writeChannelHistograms(global, ordered, freqs, l => leaves.indexOf(l));
-  writeModularHeader(global, {transforms: plan.transforms});
-  for (let c = 0; c < plan.meta.length; c++) {
-    const m = plan.meta[c];
-    code(global, histograms[c + 1].code, m.plane, m.width, m.height, leaves[c], c);
-  }
-  const sections = [];
-  if (!layout.single) {
-    sections.push(global.finish());
-    for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
-  }
-  if ((yield* groupPass({at: g => 0.5 + (g + 1) / (2 * groups), stop: () => true}, groups, g => {
-    visit(g, (w, h) => {
-      const out = layout.single ? global : new BitWriter(w * h * plan.count + 64);
-      if (!layout.single) writeModularHeader(out);
-      for (let c = 0; c < plan.count; c++) {
-        const s = slot(c);
-        code(out, histograms[s + 1].code, planes[c], w, h, leaves[s], s);
-      }
-      sections.push(out.finish());
-    });
-  })) === null) return null;
-  return assembleCodestream(header, sections);
-}
-
-function* screenDetailedFrameSteps(rgba, width, height, shape, colorSpace, plan,
-  {dim = 1024, depth = 4, frameHeader = null, globalPrefix = null, imageHeader = true, minLength = 7, predictors = undefined, codeBudget = 15}) {
+  const dim = search ? search.dim ?? 1024 : GROUP_DIM;
+  const depth = search ? search.depth ?? 4 : tokenCodec ? 4 : 0;
+  const predictors = predictor !== null ? [predictor] : search?.predictors;
   const layout = groupLayout(width, height, dim), groups = layout.groupsX * layout.groupsY,
     header = new BitWriter(256), global = new BitWriter(4096), sections = [];
   let planes;
@@ -242,9 +129,11 @@ function* screenDetailedFrameSteps(rgba, width, height, shape, colorSpace, plan,
   let sectionBytes = 0;
   const append = section => { sectionBytes += section.length; admitOutputSize(sectionBytes); sections.push(section); };
   if (!layout.single) {
-    const write = writeScreenModel(global, meta.length ? meta : [screenModel(new Int16Array(1), 1, 1, depth, minLength)], codeBudget);
-    writeModularHeader(global, {transforms: plan.transforms});
-    if (meta.length) write();
+    if (meta.length) writeCaptureStream(global, meta, null, {global: true, transforms: plan.transforms});
+    else {
+      writeChannelHistograms(global, writeTree(global, leaf(0)), [new Uint32Array(ALPHABET)]);
+      writeModularHeader(global, {transforms: plan.transforms});
+    }
     append(global.finish());
     for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
   }
@@ -255,10 +144,11 @@ function* screenDetailedFrameSteps(rgba, width, height, shape, colorSpace, plan,
     plan.fill(planes, x, y, w, h);
     const models = planes.map(plane => screenModel(plane, w, h, depth, minLength, predictors)),
       section = layout.single ? global : new BitWriter(w * h * plan.count + 256);
-    if (!layout.single) writeModularHeader(section, {useGlobalTree: false});
-    const write = writeScreenModel(section, layout.single ? [...meta, ...models] : models, codeBudget);
-    if (layout.single) writeModularHeader(section, {transforms: plan.transforms});
-    write(); append(section.finish());
+    writeCaptureStream(section, layout.single ? [...meta, ...models] : models, null, {
+      global: layout.single,
+      transforms: layout.single ? plan.transforms : [],
+    });
+    append(section.finish());
   })) === null) return null;
   return assembleCodestream(header, sections);
 }

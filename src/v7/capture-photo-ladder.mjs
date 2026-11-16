@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
-import {captureExact, markCaptureExact} from '../capture-codec.mjs';
+import {captureExact, markCaptureExact, holdCaptureMemory} from '../capture-codec.mjs';
 import {journaled} from '../step-journal.mjs';
-import {resultFacts} from './result-reference.mjs';
-import {LOW_WEBP_CALIBRATION} from './low-webp-quality.mjs';
+import {resultFacts, resultReference} from './result-reference.mjs';
+import {LOW_INTENT_CALIBRATION} from './low-intent-quality.mjs';
 import {measuredLevel} from '../effort-level.mjs';
+import {exactCouldWin} from './exact-cap.mjs';
 
 const key = r => `${r.x},${r.y},${r.width},${r.height}`;
 export function photoAdmission() {
@@ -41,21 +42,23 @@ export function photoAdmission() {
       }
     },
     watch() { notes = new Map(); },
-    verdicts(file) {
-      const seen = notes, out = new Map();
-      notes = null;
-      if (!seen) return [];
-      const visit = (bytes, depth) => {
-        if (!bytes || depth > 16) return;
-        for (const [k, v] of seen.get(bytes) ?? []) combine(out, k, v);
-        for (const p of parts.get(bytes) ?? []) visit(p, depth + 1);
-      };
-      visit(file, 0);
-      return [...out];
-    }};
+    verdicts(file) { const out = notesOf(file); notes = null; return out; },
+    notesOf,
+    restore(file, list) { if (notes && list?.length && !notes.has(file) && !parts.has(file)) notes.set(file, new Map(list)); }};
+  function notesOf(file) {
+    const out = new Map();
+    if (!notes) return [];
+    const visit = (bytes, depth) => {
+      if (!bytes || depth > 16) return;
+      for (const [k, v] of notes.get(bytes) ?? []) combine(out, k, v);
+      for (const p of parts.get(bytes) ?? []) visit(p, depth + 1);
+    };
+    visit(file, 0);
+    return [...out];
+  }
 }
 
-const RAISES = [0.15, 0.5, 1], CEILING = LOW_WEBP_CALIBRATION.maximumLossy;
+const RAISES = [0.15, 0.5, 1], CEILING = LOW_INTENT_CALIBRATION.maximumLossy;
 const ROUNDS = 5, AIM = 0.3, CLOSE = 0.75, STEP_DOWN = 1.2, STEP_UP = 0.6, DOWN = 32;
 function nextQuality(s) {
   if (s.hi !== null && s.sHi !== undefined && s.sHi - s.floor < CLOSE) return null;
@@ -76,9 +79,10 @@ function raised(coding, t) {
 }
 
 export async function keepSmaller({input, options, hooks, coding, photo, runCaptureUsing, finished, wholePhotoRoute}, candidates, exact = null) {
-  const admission = exact && photoAdmission(), n = candidates.length + (admission ? ROUNDS + 1 + RAISES.length + 2 : 0), span = 1 / n;
-  let best = null, record = null;
+  const admission = exact && photoAdmission(), n = candidates.length + (admission ? ROUNDS + 2 * RAISES.length + 1 + 3 : 0), span = 1 / n;
+  let best = null, record = null, picture = null;
   let slot = 0;
+  if (hooks.journal) resultReference(options, input);
   const run = async (candidate, coder = photo, ownOptions = options) => {
     const from = slot++ * span;
     const made = await journaled(hooks.journal, 'candidate', async () => {
@@ -89,11 +93,14 @@ export async function keepSmaller({input, options, hooks, coding, photo, runCapt
         ...hooks,
         onProgress: hooks.onProgress && (f => { if (f < 1) hooks.onProgress(from + f * span); }),
         onEncoded: r => { got = r; },
-      }, read ? {...candidate, regionQuality: (...a) => { const q = read(...a); if (a[2]) asked.set(key(a[2]), q); return q; }} : candidate, coder);
+        onPicture: p => { picture ??= p; },
+      }, read ? {...candidate, regionQuality: Object.assign((...a) => { const q = read(...a); if (a[2]) asked.set(key(a[2]), q); return q; },
+        {seen: (r, q) => asked.set(key(r), q)})} : candidate, coder);
       return {bytes, got, exact: captureExact(bytes), passed: admission ? admission.accepts(bytes) : null, measured: admission ? admission.measurements(bytes) : null,
-        asked: [...asked], frames: admission && coder === photo ? admission.verdicts(bytes) : []};
+        asked: [...asked], frames: admission && coder === photo ? admission.verdicts(bytes) : [], route: candidate.pageRoute?.smaller ?? null};
     });
     const {bytes, got} = made;
+    if (candidate.pageRoute && candidate.pageRoute.smaller === undefined && made.route) candidate.pageRoute.smaller = made.route;
     if (made.exact && !captureExact(bytes)) markCaptureExact(bytes);
     if (admission && made.passed !== admission.accepts(bytes)) admission.record(bytes, made.passed, made.measured);
     hooks.preview?.(bytes, {measurements: admission?.measurements(bytes) ?? []});
@@ -118,17 +125,28 @@ export async function keepSmaller({input, options, hooks, coding, photo, runCapt
     if (!state.size) return null;
     const table = pick => (...a) => a[2] && state.has(key(a[2])) ? pick(key(a[2]), state.get(key(a[2]))) : read(...a);
     const settled = (_k, s) => s.hi ?? CEILING;
+    const written = new Map();
+    const write = async pick => {
+      const sig = [...state].map(([k, s]) => `${k}=${pick(k, s)}`).join(';');
+      if (!written.has(sig)) written.set(sig, await run({...coding, ...candidates[0], photoAdmission: admission, regionQuality: table(pick)}));
+      return written.get(sig);
+    };
     let last = null;
     for (let round = 0; round < ROUNDS; round++) {
       const next = new Map([...state].map(([k, s]) => [k, nextQuality(s)]));
       if (![...next.values()].some(q => q !== null)) break;
-      last = await run({...coding, ...candidates[0], photoAdmission: admission, regionQuality: table((k, s) => next.get(k) ?? settled(k, s))});
+      last = await write((k, s) => next.get(k) ?? settled(k, s));
       learn(last, false);
+    }
+    for (const t of RAISES) {
+      if (![...state.values()].some(s => s.hi === null && s.lo !== null)) break;
+      last = await write((k, s) => s.hi === null && s.lo !== null ? raise(s.lo, t) : settled(k, s));
+      const seen = new Map(last.frames);
+      for (const [k, q] of last.asked) { const s = state.get(k), v = seen.get(k); if (s?.hi === null && v?.pass) { s.hi = q; s.sHi = v.score; } }
     }
     const searched = table(settled);
     const held = last && new Map(last.asked);
-    if (!held || [...state].some(([k, s]) => held.get(k) !== settled(k, s)))
-      await run({...coding, ...candidates[0], photoAdmission: admission, regionQuality: searched});
+    if (!held || [...state].some(([k, s]) => held.get(k) !== settled(k, s))) await write(settled);
     return searched;
   };
   let searched = null;
@@ -139,25 +157,32 @@ export async function keepSmaller({input, options, hooks, coding, photo, runCapt
     if (admission && i === 0 && !best) await run({maxError: 0}, exact, {...options, effort: photo.effortCap});
     if (wholePhotoRoute?.complete) break;
   }
+  if (admission && best && coding.lowerRegionQuality && !wholePhotoRoute?.complete) await run({...coding, ...candidates[0], photoAdmission: admission, regionQuality: coding.lowerRegionQuality});
   if (admission && !best) await run({maxError: 0}, exact, {...options, effort: photo.effortCap});
   if (admission && best && captureExact(best) && (options.effort ?? 3) > photo.effortCap) await run({maxError: 0}, exact, options);
+  else if (admission && best && exactCouldWin(best, picture ?? input, options.effort ?? 3)) await run({maxError: 0}, exact, options);
   const measurements = admission?.measurements(best);
   if (measurements) resultFacts(options, {measurements});
   return finished(best, hooks, {bands: record?.bands ?? 1, ...(measurements && {measurements})});
 }
 
+const SMALL_REGION = 128;
+const smallRegionsOnly = ({photoRects}, input) => Array.isArray(photoRects) && photoRects.length > 0 &&
+  Number.isFinite(input?.width) && Number.isFinite(input?.height) &&
+  photoRects.every(r => Math.max(r.width, r.height) < SMALL_REGION && r.width * r.height < input.width * input.height);
 export async function runPhotoLadder(call) {
   const {policy, input, options, exact} = call, asked = options.effort ?? 3;
-  const looks = policy.qualityLooks(input);
+  const looks = policy.qualityLooks(input), release = holdCaptureMemory();
   let failed = false;
   try {
     const wholePhotoRoute = {effort: asked, complete: false, preview: call.hooks.preview};
-    const engine = {photoBlocks: policy.regionPhotoFrameSteps, photoSearch: policy.photoSearch, photoScoreMemo: looks.scoreMemo, wholePhotoRoute};
-    const level = measuredLevel(asked), candidates = [{...engine, photoBlockEffort: 4}];
-    if (level >= 5) candidates.push({look: looks.coarse, ...engine, photoBlockEffort: 5});
+    const engine = {photoBlocks: policy.regionPhotoFrameSteps, photoSearch: policy.photoSearch, photoScoreMemo: looks.scoreMemo, baseMemo: new Map(), regionMemo: new Map(), wholePhotoRoute, pageRoute: {}};
+    const level = measuredLevel(asked === 7 && smallRegionsOnly(options, input) ? 6 : asked), candidates = [{...engine, photoBlockEffort: 4}];
+    const hasExactRects = Array.isArray(options.exactRects) && options.exactRects.length > 0;
+    if (level >= 5 && hasExactRects) candidates.push({look: looks.coarse, ...engine, photoBlockEffort: 5});
     if (level >= 6) candidates.push({look: looks.fine, ...engine, photoBlockEffort: 6});
     for (let e = 7; e <= level; e++) candidates.push({look: looks.fine, ...engine, photoBlockEffort: e});
     return await keepSmaller({...call, wholePhotoRoute}, candidates, exact);
   } catch (error) { failed = true; throw error; }
-  finally { try { looks.destroy(); } catch (error) { if (!failed) throw error; } }
+  finally { release(); try { looks.destroy(); } catch (error) { if (!failed) throw error; } }
 }

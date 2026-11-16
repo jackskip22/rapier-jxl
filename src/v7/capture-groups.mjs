@@ -2,6 +2,7 @@
 import {GROUPS} from './groups.mjs';
 import {WORKER_PROTOCOL} from './protocol.mjs';
 import {startWorker} from './worker-start.mjs';
+import {suppliedWasm} from '../wasm-modules.mjs';
 const IDLE = 60000;
 const HELPER_BYTES = 48 << 20;
 const nodeThreads = () => { try { return globalThis.process?.getBuiltinModule?.('node:worker_threads'); } catch { return undefined; } };
@@ -20,7 +21,7 @@ function start(file) {
   const threads = nodeThreads();
   if (!threads) return null;
   const flags = globalThis.process.execArgv, execArgv = flags.some(flag => flag.startsWith('--input-type')) ? flags.filter(flag => !flag.startsWith('--input-type')) : undefined;
-  const worker = new threads.Worker(file.url(), {execArgv});
+  const worker = new threads.Worker(file.url(), {execArgv, workerData: file.role});
   return {post: (message, transfer) => worker.postMessage(message, transfer), end: () => worker.terminate(), hold: on => on ? worker.ref() : worker.unref(),
     listen: (receive, fail) => { worker.on('message', receive); worker.on('error', fail); worker.on('exit', fail); }};
 }
@@ -67,7 +68,7 @@ export function groupHelpers(file) {
     const all = ending.get(owner);
     if (final) ending.delete(owner);
     try { await all; }
-    catch (cause) { throw Object.assign(new Error('A capture group helper could not be ended.', {cause}), {code: 'JXL_WORKER'}); }
+    catch (cause) { throw Object.assign(new Error("Capture worker could not be stopped; close the queue and retry with a fresh worker.", {cause}), {code: 'JXL_WORKER'}); }
   }
   const idle = (owner, pool) => { if (pools.get(owner) === pool && !pool.queue.length && !pool.members.some(member => member.task)) { pool.timer = setTimeout(() => end(owner), IDLE); pool.timer.unref?.(); } };
   const spawn = pool => {
@@ -80,10 +81,19 @@ export function groupHelpers(file) {
     pool.members.push(member);
     try {
       host.listen(data => {
-        if (data?.ready) { const own = data.module === file.module && data.protocol === file.protocol; host.hold(false); member.announce(); member.ready(own); if (!own) drop(pool, member); else { member.up = true; pump(pool); } return; }
+        if (data?.ready) {
+          if (data.module === file.module && data.protocol === file.protocol) {
+            try { host.post({groupsInit: true, wasmModules: file.wasm?.(false)}); return; } catch {}
+          }
+          host.hold(false); member.announce(); member.ready(false); drop(pool, member); return;
+        }
+        if (data?.configured || data?.refused) {
+          host.hold(false); member.announce(); member.ready(!!data.configured);
+          if (data.refused) drop(pool, member); else { member.up = true; pump(pool); }
+          return;
+        }
         receive(pool, member, data);
       }, () => { member.announce(); drop(pool, member); });
-      host.post({groupsInit: true, wasmModules: file.wasm?.(false)});
     } catch { member.announce(); drop(pool, member); return null; }
     return member;
   };
@@ -164,14 +174,22 @@ export function groupHelpers(file) {
   return {answer, warm, release};
 }
 
-export function withGroups(runtime, module, name, file) {
-  const pool = groupHelpers({...file, module: name, protocol: WORKER_PROTOCOL, wasm: module.configureWasm?.[Symbol.for('rapier-jxl.wasm-supplied')]});
+export function withGroups(runtime, module, name, file, ready) {
+  const pool = groupHelpers({...file, module: name, protocol: WORKER_PROTOCOL, wasm: suppliedWasm});
   const closed = new WeakSet();
+  const answer = (hooks, request, signal) => {
+    const owner = hooks.owner ?? hooks.helpers;
+    const run = () => closed.has(owner) || signal?.aborted ? null : pool.answer(owner, hooks.helpers, request, signal);
+    const waiting = ready?.(signal);
+    return waiting ? waiting.then(run) : run();
+  };
   return Object.freeze({...runtime,
     run: (operation, input, options, hooks = {}) => runtime.run(operation, input, operation === 'capture' && hooks.helpers?.count && !hooks.lane
-      ? {...options, [GROUPS]: (request, signal) => pool.answer(hooks.owner ?? hooks.helpers, hooks.helpers, request, signal)} : options, hooks),
+      ? {...options, [GROUPS]: (request, signal) => answer(hooks, request, signal)} : options, hooks),
     prepare: async (operation, settings = {}) => {
       const prepared = await runtime.prepare(operation, settings);
+      const waiting = ready?.();
+      if (waiting) await waiting;
       if (operation === 'capture' && settings.owner && settings.helpers?.count && !closed.has(settings.owner)) await pool.warm(settings.owner, settings.helpers);
       return prepared;
     },

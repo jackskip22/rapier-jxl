@@ -1,27 +1,34 @@
-import {fail, object, declared} from './primitives.mjs';
-import {copyBytes, encodedByteLength} from './bytes.mjs';
+import {fail, snapshotOptions, snapshotArray, declared} from './primitives.mjs';
+import {copyBytes, encodedByteLength, viewBytes, admitSignature} from './bytes.mjs';
 import {admitEdit} from './edit-changes.mjs';
-import {header} from './inspect.mjs';
+import {boundedHeader} from './inspect.mjs';
 import {read as readBoxes, inspect as inspectBoxes, edit as editBoxes} from './container.mjs';
 import {headerFields} from './header-fields.mjs';
+import {isSourceHeader, inspectSource} from './source-header.mjs';
 export async function inspect(input, options) {
   try { return await readHeader(input, options); } catch (error) { throw declared(error); }
 }
 const DETAILS = ['metadata', 'layout'];
 async function readHeader(input, options) {
-  const {details: asked = [], decompress, ...settings} = {...object(options)}, maxBytes = settings.maxInputBytes ?? 1073741824;
+  const {details: asked = [], decompress, ...settings} = snapshotOptions(options), maxBytes = settings.maxInputBytes ?? Number.MAX_SAFE_INTEGER;
   for (const key of Object.keys(settings)) if (!['maxPixels', 'maxDimension', 'maxMetadataBytes', 'maxInputBytes', 'maxBoxes'].includes(key))
-    throw fail('JXL_OPTIONS', `Unknown inspect option: ${key}.`);
-  if (!Array.isArray(asked)) throw fail('JXL_OPTIONS', 'details lists metadata and layout.');
-  const details = [...asked];
-  if (details.some(detail => !DETAILS.includes(detail))) throw fail('JXL_OPTIONS', 'details lists metadata and layout.');
+    throw fail('JXL_OPTIONS', `Unknown inspect option ${key}; remove it.`);
+  if (!Array.isArray(asked)) throw fail('JXL_OPTIONS', "Invalid details; list metadata, layout or both.");
+  const details = snapshotArray(asked, 'details');
+  if (details.some(detail => !DETAILS.includes(detail))) throw fail('JXL_OPTIONS', "Invalid details; list metadata, layout or both.");
   if (decompress !== undefined && (typeof decompress !== 'function' || !details.includes('metadata')))
-    throw fail('JXL_OPTIONS', 'decompress is a function, for details metadata.');
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw fail('JXL_OPTIONS', 'maxInputBytes is a positive safe integer.');
-  if (encodedByteLength(input) > maxBytes) throw fail('JXL_LIMIT', 'Encoded input exceeds maxInputBytes.');
-  const snapshot = copyBytes(input);
-  const info = headerFields(header(snapshot, settings));
+    throw fail('JXL_OPTIONS', "Invalid decompress; use a function with details: [\"metadata\"].");
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw fail('JXL_OPTIONS', "Invalid maxInputBytes; use a positive safe integer.");
+  if (encodedByteLength(input) > maxBytes) throw fail('JXL_LIMIT', 'Encoded input exceeds maxInputBytes; raise it or pass a smaller file.');
+  if (isSourceHeader(viewBytes(input))) {
+    if (details.length) throw fail('JXL_OPTIONS', 'Metadata details require JPEG XL; omit details for a PNG or JPEG.');
+    for (const key of ['maxPixels', 'maxDimension', 'maxMetadataBytes'])
+      if (settings[key] !== undefined && !(Number.isSafeInteger(settings[key]) && settings[key] > 0)) throw fail('JXL_OPTIONS', `Invalid ${key}; use a positive safe integer.`);
+    return inspectSource(viewBytes(input), settings);
+  }
+  const info = headerFields(boundedHeader(viewBytes(input), settings));
   if (!details.length) return info;
+  const snapshot = copyBytes(input);
   const bounds = {maxBytes, ...(settings.maxBoxes !== undefined && {maxBoxes: settings.maxBoxes})};
   const out = {...info};
   if (details.includes('metadata'))
@@ -37,10 +44,11 @@ export async function edit(input, changes) {
 }
 function ownEdit(input, changes) {
   const {bounds, maxBytes, metadata, framing} = admitEdit(changes);
-  if (encodedByteLength(input) > maxBytes) throw fail('JXL_LIMIT', 'The JPEG XL container exceeds maxInputBytes.');
+  if (encodedByteLength(input) > maxBytes) throw fail('JXL_LIMIT', "JPEG XL container exceeds maxInputBytes; raise it or pass a smaller file.");
+  admitSignature(viewBytes(input), 'JXL_INPUT');
   for (const key of ['exif', 'xmp', 'jumb']) {
     if (ArrayBuffer.isView(metadata[key])) metadata[key] = copyBytes(metadata[key], true);
-    else if (Array.isArray(metadata[key])) metadata[key] = metadata[key].map(value => ArrayBuffer.isView(value) ? copyBytes(value, true) : value);
+    else if (Array.isArray(metadata[key])) metadata[key] = snapshotArray(metadata[key], key, undefined, 'JXL_INPUT').map(value => ArrayBuffer.isView(value) ? copyBytes(value, true) : value);
   }
   return {input: copyBytes(input), changes: {...bounds, ...metadata, ...framing}};
 }

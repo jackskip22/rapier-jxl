@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {check, fail, LARGEST, JPEG_PIXELS} from './primitives.mjs';
+import {check, fail, PIXELS} from './primitives.mjs';
 import {copyBytes} from './bytes.mjs';
 import {own} from './ownership.mjs';
 import {captureFidelity} from './fidelity.mjs';
@@ -9,25 +9,39 @@ let jpegDisplay = null;
 export const useJpegDisplay = reader => { jpegDisplay = reader; };
 const displaySize = picture => picture.orientation >= 5 ? {width: picture.height, height: picture.width} : {width: picture.width, height: picture.height};
 export const targetMiss = message => ({code: 'JXL_TARGET', message});
+export function originalByteFacts(originalBytes, bytes) {
+  if (originalBytes === undefined) return {};
+  if (!Number.isSafeInteger(originalBytes) || originalBytes < 1)
+    throw fail('JXL_INTERNAL', "Invalid image result; report the input and options.");
+  return {originalBytes, ...(bytes && {largerThanOriginal: bytes.byteLength > originalBytes})};
+}
 function settingsOf(options) {
   const {signal, source, owned, ...given} = options;
-  return {...own(given, LARGEST, Number.MAX_SAFE_INTEGER), signal};
+  return {...own(given, PIXELS, Number.MAX_SAFE_INTEGER), signal};
 }
 function dimensionsOf(bytes, reference, options) {
   if (options.transform) return {width: options.transform.width, height: options.transform.height};
   if (Number.isSafeInteger(reference?.width) && Number.isSafeInteger(reference?.height)) return displaySize(reference);
-  if (jpegDisplay && options.format === 'jpeg' && bytes) return jpegDisplay(bytes, JPEG_PIXELS);
+  if (jpegDisplay && options.format === 'jpeg' && bytes) return jpegDisplay(bytes, PIXELS);
   const original = reference instanceof Uint8Array ? reference : null;
-  if (jpegDisplay && isJPEG(original)) return jpegDisplay(original, JPEG_PIXELS);
-  throw fail('JXL_INTERNAL', 'The image job did not retain its admitted dimensions.');
+  if (jpegDisplay && isJPEG(original)) return jpegDisplay(original, PIXELS);
+  throw fail('JXL_INTERNAL', "Invalid image result; report the input and options.");
 }
 function sourceOf(source) {
   if (source === undefined || source === null) return null;
   if (!source || !['bytes', 'pixels'].includes(source.kind) || typeof source.digest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(source.digest))
-    throw fail('JXL_INTERNAL', 'A supplied source identity names its byte or pixel domain and SHA-256 digest.');
+    throw fail('JXL_INTERNAL', "Invalid result source identity; report the input and options.");
   return {kind: source.kind, digest: source.digest};
 }
 
+function missWords(fidelity) {
+  if (fidelity === 'exact') return 'No exact file fits maxBytes; raise maxBytes or allow a lossy quality.';
+  const range = fidelity?.quality;
+  if (range === undefined) return 'No file fits maxBytes; raise maxBytes.';
+  const min = typeof range === 'object' ? range.min : range, max = typeof range === 'object' ? range.max : range;
+  const searched = min === max ? `quality ${max}` : `quality ${min} to ${max}`;
+  return `No file at ${searched} fits maxBytes; raise maxBytes` + (min > 1 ? ' or lower the minimum quality.' : '.');
+}
 export async function imageResultRecord(bytes, reference, options = {}, describe, fidelityOf) {
   const settings = settingsOf(options), {signal} = settings;
   check(signal);
@@ -36,31 +50,36 @@ export async function imageResultRecord(bytes, reference, options = {}, describe
   const fidelity = fidelityOf(settings.fidelity, missed);
   const format = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ ? 'jxl' : settings.format ?? 'jxl';
   if (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__) && !['jxl', 'jpeg', 'png'].includes(format))
-    throw fail('JXL_INTERNAL', 'An image result format is jxl, jpeg or png.');
+    throw fail('JXL_INTERNAL', "Invalid result format; report the input and options.");
   const size = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__
     ? {width: reference?.width, height: reference?.height} : dimensionsOf(bytes, reference, {...settings, format});
   if (!Number.isSafeInteger(size.width) || !Number.isSafeInteger(size.height) || size.width < 1 || size.height < 1)
-    throw fail('JXL_INTERNAL', 'The image job did not retain valid dimensions.');
+    throw fail('JXL_INTERNAL', "Invalid image result; report the input and options.");
   const source = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ ? null : sourceOf(options.source);
+  const originalBytes = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ ? undefined : settings.originalBytes;
   const description = {...size, format, source, fidelity,
-    ...(!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__) && settings.transform && {transform: {...settings.transform}}),
+    ...originalByteFacts(originalBytes, missed ? null : bytes),
+    ...(!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__) && settings.transform && {transform: {...settings.transform, ...(settings.transform.via && {via: settings.transform.via.map(({width, height}) => ({width, height}))})}}),
     ...(settings.readAs && {readAs: settings.readAs})};
   if (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__) && missed)
-    return {bytes: null, ...description, kept: null, fits: false, measurements: [], reason: targetMiss('No tested output met the requested byte and fidelity targets.')};
+    return {bytes: null, ...description, kept: null, meetsTarget: false, measurements: [], ...(typeof settings.usedWebGPU === 'boolean' && {usedWebGPU: settings.usedWebGPU}), reason: targetMiss(missWords(fidelity))};
   const output = options.owned ? bytes : copyBytes(bytes);
-  if (!(output instanceof Uint8Array) || !output.length) throw fail('JXL_INTERNAL', 'The encoder must return a nonempty Uint8Array.');
+  if (!(output instanceof Uint8Array) || !output.length) throw fail('JXL_INTERNAL', "Incomplete output file; report the input and options.");
   const kept = settings.kept ?? (fidelity === 'exact' ? 'pixels' : 'lossy');
-  if (!PRESERVATION.includes(kept)) throw fail('JXL_INTERNAL', 'The image job did not state a preservation promise.');
+  if (!PRESERVATION.includes(kept)) throw fail('JXL_INTERNAL', "Invalid image result; report the input and options.");
   const {measurements, reason: target} = describe(settings, fidelity, kept);
   const reason = fidelity === 'exact' && kept === 'lossy'
-    ? targetMiss('The selected output does not promise exact preservation.') : target;
+    ? targetMiss("The output does not preserve every sample; use fidelity 'exact'.") : target;
   check(signal);
-  return {bytes: output, ...description, kept, fits: !reason, measurements, ...(reason && {reason})};
+  return {bytes: output, ...description, kept, meetsTarget: !reason, measurements,
+    ...(reason && {reason}), ...(settings.otherDecoders && {otherDecoders: settings.otherDecoders}),
+    ...(settings.timing && {timing: settings.timing}), ...(settings.textMarks && {textMarks: settings.textMarks}),
+    ...(typeof settings.usedWebGPU === 'boolean' && {usedWebGPU: settings.usedWebGPU})};
 }
 
 function noMeasurements(settings) {
   if (settings.measurements !== undefined && (!Array.isArray(settings.measurements) || settings.measurements.length))
-    throw fail('JXL_INTERNAL', 'This operation produces no measurements.');
+    throw fail('JXL_INTERNAL', "Invalid output measurement; report the input and options.");
   return {measurements: []};
 }
 const captureResultFidelity = value => captureFidelity(value) === 0 ? 'exact' : value;
@@ -73,6 +92,8 @@ function base64Bytes(bytes) {
   return chunks.join('');
 }
 export function resultJSON(result) {
-  const record = own(result, LARGEST, Number.MAX_SAFE_INTEGER);
+  const record = own(result, PIXELS, Number.MAX_SAFE_INTEGER);
+  if (record === null || typeof record !== 'object') throw fail('JXL_INPUT', "Invalid result; pass the object returned by encode().");
   return {...record, bytes: record.bytes === null ? null : base64Bytes(copyBytes(record.bytes)), byteEncoding: 'base64'};
 }
+

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
+import {fault} from './fault.mjs';
 
+export const QUANT_FIELD_MAX = 256;
 export const COEFF_FREQ_CONTEXT = /* @__PURE__ */ Array.from({length: 64}, (_, i) => i < 1 ? 0 : i < 16 ? i - 1 : i < 32 ? 7 + (i >> 1) : 15 + (i >> 2));
 export const COEFF_NUM_NONZERO_CONTEXT = /* @__PURE__ */ Array.from({length: 64}, (_, i) => [0, 0, 31, 62, 93, 123, 152, 180, 206][i < 3 ? i : i < 5 ? 3 : i < 9 ? 4 : i < 13 ? 5 : i < 21 ? 6 : i < 33 ? 7 : 8]);
 
@@ -73,7 +75,7 @@ export function float16Bits(value) {
   const sign = value < 0 || Object.is(value, -0) ? 0x8000 : 0;
   if (value === 0) return sign;
   value = Math.abs(value);
-  if (!(value < 65520)) throw new Error('half float out of range: ' + value);
+  if (!(value < 65520)) throw fault('JXL_INTERNAL', 'half float out of range: ' + value);
   let exponent = 0, mantissa = value;
   while (mantissa >= 2) { mantissa /= 2; exponent++; }
   while (mantissa < 1) { mantissa *= 2; exponent--; }
@@ -96,14 +98,3 @@ export function canonicalCodes(lengths) {
   return codes;
 }
 
-const HALVES = /* @__PURE__ */ Array.from({length: 32}, (_, e) => 2 ** -e);
-export function entropyLog2(x) {
-  let exponent = 0;
-  if (x >= 2 && x < 4294967296) { exponent = 31 - Math.clz32(x); x *= HALVES[exponent]; }
-  while (x >= 1.4142135623730951) { x /= 2; exponent++; }
-  while (x < 0.7071067811865476) { x *= 2; exponent--; }
-  const z = (x - 1) / (x + 1), z2 = z * z;
-  let term = z, sum = z;
-  for (let k = 3; k < 30; k += 2) sum += (term *= z2) / k;
-  return exponent + sum * 2.885390081777927;
-}

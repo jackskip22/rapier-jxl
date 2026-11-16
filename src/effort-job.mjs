@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {outOfMemory} from './fault.mjs';
 import {BitWriter, part, scaled, complete} from './bits.mjs';
 import {writeModularFrameHeader, groupLayout, groupRect, groupPass, assembleCodestream, GROUP_DIM} from './frame.mjs';
 import {writeImageHeader} from './icc-write.mjs';
@@ -6,23 +7,30 @@ import {buildCode, writePrefixCode} from './prefix.mjs';
 import {AVERAGE_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, leaf, split, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {codeChannel} from './modular-channel.mjs';
 import {inspectPixels, inspectPixelsSteps, losslessSteps, planeFill, nativeSteps, iccShape, shapeFloors} from './lossless.mjs';
+import {encodeNativeModular} from './native-modular.mjs';
 import {lossySteps} from './lossy.mjs';
 import {photoSteps, admitPhotoFilter, screenImageSteps, screenRouted} from './photo-job.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {preferXYB} from './photo-xyb.mjs';
+import {softPicture} from './v7/intent-quality.mjs';
 import {smallPalette, SMALL_SCREEN, SMALL_PHOTO} from './small-palette.mjs';
 import {WEIGHTED_PREDICTOR, WEIGHTED_PROPERTY, WEIGHTED_CUTS, codeWeighted} from './weighted.mjs';
 import {fault, admitOptions, admitPixels} from './admit.mjs';
-import {admitSampleFormat} from './admit-samples.mjs';
-import {screenLike, flatSamples, CAPTURE_FLAT} from './screen.mjs';
+import {admitSampleFormat, statedSpace} from './admit-samples.mjs';
+import {screenLike, flatSamples, flatSurround, CAPTURE_FLAT} from './screen.mjs';
+import {captureFillClear} from './capture-kernels.mjs';
+import {filledClear} from './core-steps.mjs';
 import {screenPhotoRegions} from './screen-photo-regions.mjs';
-import {encodeCaptureSteps, captureBusy, CAPTURE_TOOLS, CAPTURE_LEVEL, CAPTURE_FLOOR, LEVELS} from './capture-codec.mjs';
+import {exactSignal, signalSpace} from './color-signal.mjs';
+import {encodeCaptureSteps, captureBusy, captureExact, CAPTURE_TOOLS, CAPTURE_LEVEL, CAPTURE_FLOOR, LEVELS, markCaptureExact} from './capture-codec.mjs';
 import {CAPTURE_TOOLS_COMPLETE} from './capture-ans.mjs';
 import {transformRanking} from './capture-trees.mjs';
 import {FAST_EFFORT} from './effort-level.mjs';
 import {stage, unit, journaling, journalRequest, journalFact, JOIN} from './step-journal.mjs';
 import {exclusiveActive} from './turn.mjs';
+import {recall, spaceKey, capture} from './call-memo.mjs';
 
+const UPLOAD = typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true;
 export function effortJob(data, width, height, options, gpu = false, limits, search, writer = coefficientAnsSteps, deep = null, hdr = null) {
   const {quality, colorSpace} = admitOptions(options), effort = options?.effort === undefined ? FAST_EFFORT : options.effort;
   const filter = admitPhotoFilter(options);
@@ -32,17 +40,71 @@ export function effortJob(data, width, height, options, gpu = false, limits, sea
   const samples = admitSampleFormat(data, options);
   if (samples.iccSpace)
     return iccShape(data, samples.iccSpace, effortSteps(data, width, height, quality, samples.iccSpace, effort, options?.photo !== false, filter, false, search, writer, deep));
-  if (!samples.native8) return hdr?.route(data, samples, quality) ? hdr.steps(data, width, height, quality, effort, samples, () => nativeSteps(data, width, height, {quality, samples, effort}))
-    : nativeSteps(data, width, height, {quality, samples, effort});
-  return effortSteps(data, width, height, quality, colorSpace, effort, options?.photo !== false, filter, gpu, search, writer, deep);
+  if (!samples.native8 && quality >= 100 && exactSignal(samples)) return effortSteps(data, width, height, 100, signalSpace(samples), effort, false, filter, gpu, search, writer, deep);
+  const stated = quality < 100 && statedSpace(samples);
+  if (stated) return iccShape(data, stated, effortSteps(data, width, height, quality, stated, effort, options?.photo !== false, filter, false, search, writer, deep));
+  if (!samples.native8) return hdr?.route(data, samples, quality) ? hdr.steps(data, width, height, quality, effort, samples, ef => exactNativeSteps(data, width, height, 100, samples, ef, deep), hdr.report)
+    : exactNativeSteps(data, width, height, quality, samples, effort, deep, hdr?.report);
+  return quality >= 100 ? exactSteps(data, width, height, colorSpace, effort, options?.photo !== false, deep)
+    : effortSteps(data, width, height, quality, colorSpace, effort, options?.photo !== false, filter, gpu, search, writer, deep);
 }
 
+const exactSteps = (data, width, height, colorSpace, effort, photo, deep) => {
+  const steps = recall(data, spaceKey(colorSpace) && `exact:${effort}:${spaceKey(colorSpace)}:${photo}:${!!deep?.frame}`,
+    () => effortSteps(data, width, height, 100, colorSpace, effort, photo, undefined, false, undefined, undefined, deep));
+  return colorSpace?.header ? markedExact(steps) : steps;
+};
+function* markedExact(steps) { return markCaptureExact(yield* steps); }
+
+const CUTOUT_AT = [56.8, 57.8, 58.8, 60.2, 61.6, 63.3, 65, 67.5, 70, 72.5, 75, 77.5, 80, 82.5, 85, 87.5, 90, 92];
+const CUTOUT_GRAY = [29.2, 30.5, 31.1, 33.6, 35.8, 38.4, 42.8, 47.3, 47.7, 51.2, 55.1, 62.8, 66.2, 71.5, 75.4, 85.8, 91.5, 91.5];
+function cutoutQuality(quality, gray) {
+  if (!gray) return quality + 2 * Math.max(0, Math.min(1, (quality - 80) / 2, (94 - quality) / 2));
+  if (quality > CUTOUT_AT.at(-1)) return quality;
+  let i = 1;
+  while (i < CUTOUT_AT.length - 1 && CUTOUT_AT[i] < quality) i++;
+  const u = Math.max(0, Math.min(1, (quality - CUTOUT_AT[i - 1]) / (CUTOUT_AT[i] - CUTOUT_AT[i - 1])));
+  return Math.min(quality, CUTOUT_GRAY[i - 1] + u * (CUTOUT_GRAY[i] - CUTOUT_GRAY[i - 1]));
+}
+
+export const paletteCutout = (data, width, height, colorSpace, shape) => typeof colorSpace !== 'object' && !!shape.palette && !!shape.alpha &&
+  flatSurround(data, width, height) && !screenLike(data, width, height);
+
+const EXACT_BITS = 6, SMALL_PIXELS = 16384;
+function* exactNativeSteps(data, width, height, quality, samples, effort, deep, report) {
+  let facts = null, step, reply, hurried = false;
+  const native = nativeSteps(data, width, height, {quality, samples, effort: quality < 100 ? effort : 1, deep, report: quality < 100 ? found => { facts = found; } : report});
+  try { while (!(step = native.next(reply)).done) { reply = yield step.value; hurried ||= !!reply && !journalRequest(step.value); } } finally { if (!step?.done) native.return?.(); }
+  const floor = step.value, answered = quality < 100 && facts?.kept !== 'pixels';
+  const compare = answered && effort > 1 && (!UPLOAD && effort >= 6 || width * height < SMALL_PIXELS) && floor.length * 8 >= EXACT_BITS * width * height;
+  if (answered && !compare || hurried || effort < 2 || samples.icc || (journaling() && data instanceof Uint8Array)) {
+    if (quality < 100 && facts) report?.(facts);
+    return floor;
+  }
+  const shape = inspectPixels(data, width, height, {samples});
+  let best = floor;
+  const found = {};
+  if (!shape.palette) {
+    const learned = encodeNativeModular(data, width, height, samples, shape, effort, best, deep?.capture, found);
+    if (learned.length < best.length) best = learned;
+  }
+  if (!found.compacted && !(quality < 100 && !compare)) {
+    const exact = yield* nativeSteps(data, width, height, {quality: 100, samples, effort, deep});
+    if (exact.length < best.length) best = exact;
+  }
+  if (quality < 100 && (facts || best !== floor)) report?.(best === floor ? facts : {kept: 'pixels', measurements: []});
+  return best;
+}
+
+const exactAnswers = new WeakSet();
+export const exactAnswer = bytes => exactAnswers.has(bytes) || captureExact(bytes);
 function* effortSteps(data, width, height, quality, colorSpace, effort, photo = true, filter, gpu = false, search, writer = coefficientAnsSteps, deep = null) {
   const shape = yield* inspectPixelsSteps(data, width, height);
   if (quality < 100) {
     if (!shape.palette) {
-      const lossy = photo ? photoSteps(data, width, height, quality, colorSpace, effort,
-        writer, filter, search, gpu) : lossySteps(data, width, height, {quality, shape, colorSpace});
+      const pixels = shape.alpha ? yield* filledClear(data, width, height) : data;
+      const lossy = photo ? photoSteps(pixels, width, height, quality, colorSpace, effort,
+        writer, filter, search, gpu) : lossySteps(pixels, width, height, {quality, shape, colorSpace});
       const screen = photo && effort >= 2 ? yield* screenProbe(data, width, height, quality, colorSpace, filter, search, gpu, writer) : null;
       if (screen?.exact) { lossy.return?.(); return screen.captured; }
       if (screen) {
@@ -50,70 +112,98 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, photo = 
         if (shared) lossy.return?.();
         const bytes = yield* within(shared ? coefficientAnsSteps(screen.image, effort) : lossy, 0.1, 0.9);
         let best = screen.captured.length <= bytes.length ? screen.captured : bytes;
-        const regions = best === bytes ? screenPhotoRegions(data, width, height) : [];
+        const regions = screenPhotoRegions(data, width, height);
         if (regions.length) {
           const mixed = yield {screenPhoto: {data, width, height, quality, regions, effort}};
           if (mixed instanceof Uint8Array && mixed.length < best.length) best = mixed;
         }
         return best;
       }
-      return yield* capturedFloor(data, width, height, colorSpace, yield* lossy, true);
+      const lower = !UPLOAD && shape.alpha && effort >= 6;
+      const answer = yield* capturedFloor(data, width, height, colorSpace, yield* (lower ? within(lossy, 0, 0.5) : lossy), true);
+      return lower ? yield* within(lowerFile(data, width, height, quality, colorSpace, effort, photo, filter, search, gpu, writer, deep, answer), 0.5, 0.5) : answer;
+    }
+    if (effort <= 5 && paletteCutout(data, width, height, colorSpace, shape)) {
+      const captured = yield* capture({data, width, height, colorSpace});
+      if (captured instanceof Uint8Array) {
+        if (effort < 2) return captured;
+        let bytes = captured;
+        try { bytes = yield* lossySteps(data, width, height, {quality: cutoutQuality(quality, shape.colour === 1), shape, colorSpace}); }
+        catch (error) { if (error.code !== 'JXL_SIZE' && !outOfMemory(error)) throw error; }
+        return bytes.length < captured.length ? bytes : captured;
+      }
     }
     const palette = (function* () {
       const screen = effort >= 2 && typeof colorSpace !== 'object' && screenLike(data, width, height);
       const small = smallPalette(data, width, height, colorSpace);
-      const captured = screen || small === SMALL_SCREEN ? yield {capture: {data, width, height, colorSpace}} : null;
-      const photograph = photo && effort >= 2 && typeof colorSpace !== 'object' && (small ? small === SMALL_PHOTO : !screen && preferXYB(data, width, height)), parts = photograph ? 3 : 2;
-      const exact = captured instanceof Uint8Array ? captured : yield* part(effortSteps(data, width, height, 100, colorSpace, effort, true, undefined, false, undefined, undefined, deep), 0, parts);
+      const captured = (screen || small === SMALL_SCREEN) && !deep?.frame ? yield* capture({data, width, height, colorSpace}) : null;
+      const photograph = photo && effort >= 2 && typeof colorSpace !== 'object' && (small ? small === SMALL_PHOTO : !screen && (preferXYB(data, width, height) || (yield* soft(data, width, height)))), parts = photograph ? 3 : 2;
+      const exact = captured instanceof Uint8Array ? captured : yield* part(exactSteps(data, width, height, colorSpace, effort, true, deep), 0, parts);
       let bytes = exact;
       if (!small) try { bytes = yield* part(lossySteps(data, width, height, {quality, shape, colorSpace}), 1, parts); }
-      catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; bytes = exact; }
+      catch (error) { if (error.code !== 'JXL_SIZE' && !outOfMemory(error)) throw error; bytes = exact; }
       let best = exact.length <= bytes.length ? exact : bytes;
       if (photograph) {
         const file = yield* part(photoSteps(data, width, height, quality, colorSpace, effort, writer, filter, search, gpu), 2, 3);
         if (file.length < best.length) best = file;
       }
+      if (best === exact) exactAnswers.add(best);
       return best;
     })();
     return yield* palette;
   }
   if (effort < 2) {
-    const steps = losslessSteps(data, width, height, {shape, colorSpace, fast: true});
-    return yield* (screenLike(data, width, height) || typeof colorSpace === 'object' || flatSamples(data, width, height) < CAPTURE_FLAT
-      ? screenFirst(data, width, height, colorSpace, steps) : capturedFloor(data, width, height, colorSpace, yield* steps, false, true));
+    const steps = losslessSteps(data, width, height, {shape, colorSpace});
+    if (screenLike(data, width, height) || typeof colorSpace === 'object') return yield* screenFirst(data, width, height, colorSpace, steps);
+    const pixels = width * height, flat = flatSamples(data, width, height) >= CAPTURE_FLAT || pixels >= 4096 && pixels <= 524288;
+    return yield* (!flat || deep?.frame ? screenFirst(data, width, height, colorSpace, steps, flat)
+      : capturedFloor(data, width, height, colorSpace, yield* steps, false, true));
   }
   const analysis = {};
-  const stream = journaling() ? yield* stage('core-stream', () => unitsOnly(losslessSteps(data, width, height, {shape, colorSpace, fast: true, units: true})))
-    : complete(losslessSteps(data, width, height, {shape, colorSpace, fast: true}));
+  let made = null;
+  const streamOf = function* () {
+    return made ??= journaling() ? yield* stage('core-stream', () => unitsOnly(losslessSteps(data, width, height, {shape, colorSpace, units: true})))
+      : complete(losslessSteps(data, width, height, {shape, colorSpace}));
+  };
   const screen = losslessScreenCandidate(data, width, height, shape, effort);
-  const screenish = typeof colorSpace !== 'object' && (journaling() ? yield* unit('screenish', () => screenLike(data, width, height) || flatSamples(data, width, height) >= CAPTURE_FLAT)
-    : screenLike(data, width, height) || flatSamples(data, width, height) >= CAPTURE_FLAT);
-  const captured = screenish || typeof colorSpace !== 'object' && shape.palette
-    ? yield {capture: {data, width, height, colorSpace, effort: Math.max(effort, 3), tools: deep?.capture}} : null;
-  if (screenish && captured instanceof Uint8Array && captured.length <= PROBE * stream.length) {
+  const isScreen = journaling() ? yield* unit('screen-only', () => screenLike(data, width, height)) : screenLike(data, width, height);
+  const screenish = isScreen || (journaling() ? yield* unit('screenish', () => flatSamples(data, width, height) >= CAPTURE_FLAT)
+    : flatSamples(data, width, height) >= CAPTURE_FLAT);
+  const stream = effort < 3 || isScreen ? yield* streamOf() : null;
+  const captureSizes = {};
+  const greyPalette = !isScreen && !!shape.palette && shape.colour === 1 && !deep?.frame && width * height > 65536;
+  const captured = screenish || shape.palette && !deep?.frame
+    ? yield* exactCapture({data, width, height, colorSpace, effort: greyPalette && effort <= 5 ? 3 : Math.max(effort, 3), patchEffort: effort, tools: deep?.capture, sizes: captureSizes}) : null;
+  if (!deep?.frame && typeof colorSpace !== 'object' && isScreen && captured instanceof Uint8Array && captured.length <= PROBE * stream.length && (!UPLOAD && effort >= 6 || captureSizes.three <= PROBE * stream.length)) {
     if ((typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) || effort < 6) return captured;
     try {
-      const bytes = yield* losslessCapture(data, width, height, colorSpace, losslessLevel(effort, ...(yield* rankingOf(data, width, height, shape, colorSpace))));
+      const bytes = yield* losslessCapture(data, width, height, colorSpace, losslessLevel(effort, ...(yield* rankingOf(data, width, height, shape, colorSpace)), deep?.frame));
       if (bytes && bytes.length < captured.length) return bytes;
-    } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
+    } catch (error) { if (error.code !== 'JXL_SIZE' && !outOfMemory(error)) throw error; }
     return captured;
   }
-  const fast = captured instanceof Uint8Array && captured.length < stream.length ? captured : stream;
-  const alone = !screen && (effort < 4 || !shape.palette);
+  const fast = captured instanceof Uint8Array && (!stream || captured.length < stream.length) ? captured : stream;
+  const paletteAlone = !isScreen && !!shape.palette && captured instanceof Uint8Array && !deep?.frame && !deep?.screenSteps &&
+    typeof colorSpace !== 'object' && width * height > 65536;
+  const alone = !screen && (effort < 4 || !shape.palette) || paletteAlone;
   const core = alone ? (function* () { return fast; })() : losslessSteps(data, width, height, {shape, colorSpace, analysis});
   let step, reply, hurried = false;
   try { while (!(step = core.next(reply)).done) { reply = yield scaled(step.value, done => done / 2); hurried ||= !!reply && !journalRequest(step.value); } } finally { if (!step?.done) core.return?.(); }
-  let best = step.value !== fast && step.value.length < fast.length ? step.value : fast;
-  if (hurried) return best;
+  let best = step.value !== fast && step.value && (!fast || step.value.length < fast.length) ? step.value : fast;
+  if (hurried) return best ?? (yield* streamOf());
   const direct = shape.palette ? {...shape, palette: null} : shape;
   if (effort >= 4 || screen) {
     const searches = alone ? [] : [() => searchSteps(data, width, height, direct, colorSpace, 3, analysis, screen ? best.length : Infinity)];
     if (!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true)) {
-      if (effort >= 4 && shape.palette) searches.push(() => deep.localSteps(data, width, height, shape, colorSpace, 4, true, best.length));
-      if (effort >= 6 && shape.palette) searches.push(() => deep.localSteps(data, width, height, shape, colorSpace, 6, true, best.length));
+      if (effort >= 4 && shape.palette && !paletteAlone) searches.push(() => deep.localSteps(data, width, height, shape, colorSpace, 4, true, best?.length ?? Infinity));
+      if (effort >= 6 && shape.palette) searches.push(() => deep.localSteps(data, width, height, shape, colorSpace, 6, true, best?.length ?? Infinity));
       if (effort >= 4 && !alone) searches.push(() => deep.rctSearchSteps(data, width, height, shape, colorSpace));
     }
-    const level = losslessLevel(effort, ...(yield* rankingOf(data, width, height, shape, colorSpace)));
+    const [ranked, estimate, pixels] = yield* rankingOf(data, width, height, shape, colorSpace), colours = shape.palette?.colours.length ?? 0;
+    const held = captured instanceof Uint8Array && !deep?.frame && typeof colorSpace !== 'object' && colours > 1 && colours * 32 <= pixels &&
+      (pixels > 262144 || colours <= 512) && (estimate === undefined || estimate < 1.35 * captured.length);
+    const level = held ? Object.freeze({...losslessLevel(effort, ranked, estimate, pixels, deep?.frame), paletteBytes: captured})
+      : losslessLevel(effort, ranked, estimate, pixels, deep?.frame);
     searches.unshift(() => losslessCapture(data, width, height, colorSpace, level));
     const older = !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && deep?.screenSteps;
     if (older && screen) searches.unshift(() => older(data, width, height, shape, colorSpace, {fastFloor: effort === 3 ? best.length : 0, effort, deep: deep.screen}));
@@ -125,27 +215,28 @@ function* effortSteps(data, width, height, quality, colorSpace, effort, photo = 
         const search = searches[i]();
         let step, reply, hurried = false;
         try { while (!(step = search.next(reply)).done) hurried = !!(reply = yield scaled(step.value, done => 0.5 + (i + done) / (2 * count))) && !journalRequest(step.value); } finally { if (!step?.done) search.return?.(); }
-        if (step.value && step.value.length < best.length) best = step.value;
-        if (hurried) return best;
-      } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
+        if (step.value && (!best || step.value.length < best.length)) best = step.value;
+        if (hurried) return best ?? (yield* streamOf());
+      } catch (error) { if (error.code !== 'JXL_SIZE' && !outOfMemory(error)) throw error; }
     }
-    return best;
+    return best ?? (yield* streamOf());
   }
   try {
-    const bytes = yield* part(losslessCapture(data, width, height, colorSpace, losslessLevel(3, ...(yield* rankingOf(data, width, height, shape, colorSpace)))), 1, 2);
-    if (bytes && bytes.length < best.length) best = bytes;
-  } catch (error) { if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error; }
-  return best;
+    const level = losslessLevel(3, ...(yield* rankingOf(data, width, height, shape, colorSpace)));
+    const bytes = yield* part(losslessCapture(data, width, height, colorSpace, level), 1, 2);
+    if (bytes && (!best || bytes.length < best.length)) best = bytes;
+  } catch (error) { if (error.code !== 'JXL_SIZE' && !outOfMemory(error)) throw error; }
+  return best ?? (yield* streamOf());
 }
 
 export function losslessScreenCandidate(data, width, height, shape, effort) {
-  return effort === 3 ? !!shape.palette : effort >= 4 && screenLike(data, width, height);
+  return effort === 3 ? !!shape.palette : !UPLOAD && effort >= 4 && screenLike(data, width, height);
 }
 
 
-function* screenFirst(data, width, height, colorSpace, steps) {
-  if (typeof colorSpace !== 'object' && screenLike(data, width, height)) {
-    const captured = yield {capture: {data, width, height, colorSpace}};
+function* screenFirst(data, width, height, colorSpace, steps, flat = false) {
+  if (typeof colorSpace !== 'object' && (flat || screenLike(data, width, height))) {
+    const captured = yield* capture({data, width, height, colorSpace, patchEffort: 1});
     if (captured instanceof Uint8Array) return captured;
   }
   return yield* steps;
@@ -154,12 +245,21 @@ function* screenFirst(data, width, height, colorSpace, steps) {
 const PROBE = 0.7;
 function* screenProbe(data, width, height, quality, colorSpace, filter, search, gpu, writer = coefficientAnsSteps) {
   if (typeof colorSpace === 'object' || !screenLike(data, width, height)) return null;
-  const captured = yield {capture: {data, width, height, colorSpace}};
+  const captured = yield* capture({data, width, height, colorSpace});
   if (!(captured instanceof Uint8Array)) return null;
   const image = screenRouted(data, width, height, colorSpace, 1) ? yield* part(screenImageSteps(data, width, height, quality), 0, 20) : null;
   const probe = image ? yield* part(coefficientAnsSteps(image, 1), 1, 20)
     : yield* part(photoSteps(data, width, height, quality, colorSpace, 1, writer, filter, search, gpu), 0, 10);
   return {captured, image, exact: captured.length <= PROBE * probe.length};
+}
+
+function* lowerFile(data, width, height, quality, colorSpace, effort, photo, filter, search, gpu, writer, deep, answer) {
+  const lower = yield* effortSteps(data, width, height, quality, colorSpace, 5, photo, filter, false, search, writer, deep);
+  return lower.length < answer.length ? lower : answer;
+}
+
+function* soft(data, width, height) {
+  return journaling() ? yield* unit('soft', () => softPicture(data, width, height)) : softPicture(data, width, height);
 }
 
 function* within(steps, from, span) {
@@ -172,37 +272,49 @@ function* within(steps, from, span) {
 
 function* capturedFloor(data, width, height, colorSpace, bytes, lossy = false, flat = false) {
   if (typeof colorSpace === 'object' || !flat && !screenLike(data, width, height)) return bytes;
-  const captured = yield {capture: {data, width, height, colorSpace}};
+  const captured = yield* capture({data, width, height, colorSpace, ...(!lossy && {patchEffort: 1})});
   return captured instanceof Uint8Array && (lossy ? captured.length <= bytes.length : captured.length < bytes.length) ? captured : bytes;
 }
 
-const LOSSLESS = Object.freeze({...LEVELS[3], ans: true, trees: 'learned', references: true, noRuns: true, fixedFallback: true, needs: ['trees', 'ans'], floor: false, patches: false, routes: 'one'});
-const PRECISE = Object.freeze([5, 3, 6, 1, 2, 4, 7, 8, 9, 10, 11, 12, 13, 0]);
-const BROAD = Object.freeze([5, 3, 6, 1, 2, 4, 13, 0]);
+const LOSSLESS = Object.freeze({...LEVELS[3], lane: false, channelsToo: false, ans: true, trees: 'learned', references: true, noRuns: true, fixedFallback: true, needs: ['trees', 'ans'], floor: false, patches: false, routes: 'one'});
+const PRECISE = /* @__PURE__ */ Object.freeze([5, 3, 6, 1, 2, 4, 7, 8, 9, 10, 11, 12, 13, 0]);
+const BROAD = /* @__PURE__ */ Object.freeze([5, 3, 6, 1, 2, 4, 13, 0]);
 const SMALL_FAST = Object.freeze({referenceKinds: Object.freeze([]), properties: Object.freeze([15, 9, 10, 11, 12, 13, 14])});
 export function losslessSets(effort, ranked = [6, 6]) {
   const [first, second] = ranked, small = !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && effort >= 6 ? Object.freeze({charge: 0, predictors: PRECISE, bins: 255, nodes: 255, clustered: false}) : SMALL_FAST;
   const set = (rcts, learn) => Object.freeze({rcts: [...new Set(rcts)], learn: Object.freeze({...learn, leaf: true, small})});
   if (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) return [set([first], {samples: 4096, nodes: 31})];
-  const five = {samples: 32768, nodes: 127}, six = {samples: 65536, nodes: 169}, seven = {samples: 131072, nodes: 255, bins: 128, predictors: BROAD};
+  const five = {samples: 32768, nodes: 127}, six = {samples: 65536, nodes: 169}, seven = {samples: 196608, nodes: 1023, bins: 64, charge: 8, predictors: BROAD};
+  const grown = {...seven, samples: 262144};
   const eight = {samples: 131072, nodes: 575, predictors: PRECISE, bins: 128, charge: 8, clustered: true}, nine = {...eight, samples: 262144, nodes: 1663, bins: 192};
-  if (effort >= 9) return [set([first, second], nine), set([first, second], eight), set([first], seven)];
-  if (effort >= 8) return [set([first, second], eight), set([first], seven)];
+  if (effort >= 9) return [set([first, second], nine), set([first], grown), set([first, second], eight), set([first], seven)];
+  if (effort >= 8) return [set([first], grown), set([first, second], eight), set([first], seven)];
   if (effort >= 7) return [set([first], seven), set([first], six)];
   if (effort >= 6) return [set([first], six), set([first], five)];
   return [effort >= 5 ? set([first], five)
     : effort >= 4 ? set([first], {samples: 16384, nodes: 63}) : set([first], {samples: 4096, nodes: 31})];
 }
+const PUBLISHED_SEVEN = /* @__PURE__ */ Object.freeze({samples: 131072, nodes: 255, bins: 128, predictors: BROAD}), PUBLISHED_PIXELS = 8192;
+function publishedSeven(ranked) {
+  const [own] = losslessSets(7, ranked);
+  return Object.freeze({rcts: own.rcts, learn: Object.freeze({...PUBLISHED_SEVEN, leaf: true, small: own.learn.small})});
+}
 function smallSets(effort, ranked, pixels) {
-  const seen = new Map(), wide = pixels <= 4096 && effort >= 6 ? 16 : 2;
+  const seen = new Map(), wide = !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && pixels <= 4096 && effort >= 6 ? 16 : 2;
   for (let e = pixels <= 4096 && effort <= 5 ? effort : 2; e <= effort; e++) for (const set of losslessSets(e, ranked)) seen.set(JSON.stringify(set), set);
+  if (!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && effort >= 7 && pixels <= PUBLISHED_PIXELS) { const set = publishedSeven(ranked); seen.set(JSON.stringify(set), set); }
   return [...seen.values()].map(set => Object.freeze({...set, rcts: [...new Set([...set.rcts, ...ranked.slice(0, wide), 6])]}));
 }
+function frameSets(effort, ranked, pixels) {
+  const seen = new Map();
+  for (const set of [...losslessSets(effort, ranked), ...smallSets(5, ranked, pixels)]) seen.set(JSON.stringify(set), set);
+  if (effort === 7 && pixels <= PUBLISHED_PIXELS) { const set = publishedSeven(ranked); seen.set(JSON.stringify(set), set); }
+  return [...seen.values()];
+}
 const NOISE = Object.freeze({rcts: Object.freeze([0]), learn: Object.freeze({leaf: true, whole: true, least: Infinity})});
-export const losslessLevel = (effort, ranked, estimate, pixels = Infinity) => Object.freeze({...LOSSLESS, estimate, gate: effort >= 6 ? 2 : 1.5,
-  learnSets: estimate * 8 >= 16 * pixels ? [...losslessSets(Math.min(effort, 3), ranked), ...!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && effort >= 7 ? [NOISE] : []] : pixels <= 65536 ? smallSets(effort, ranked, pixels) : losslessSets(effort, ranked)});
+export const losslessLevel = (effort, ranked, estimate, pixels = Infinity, frame = false) => Object.freeze({...LOSSLESS, estimate, treeContexts: !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && effort >= 7, gate: !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && effort >= 6 ? 2 : 1.5,
+  learnSets: estimate * 8 >= 16 * pixels ? [...losslessSets(Math.min(effort, 3), ranked), NOISE] : pixels > 65536 ? losslessSets(effort, ranked) : !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && frame && effort >= 6 && effort <= 7 ? frameSets(effort, ranked, pixels) : smallSets(effort, ranked, pixels)});
 function* rankingOf(data, width, height, shape, colorSpace) {
-  if (typeof colorSpace === 'object') return [[6, 6], undefined, width * height];
   if (!journaling() || shape.colour !== 3) return ranking(data, width, height, shape);
   return yield* unit('ranking', () => { const [ranked, estimate, pixels] = ranking(data, width, height, shape); return [Array.from(ranked), estimate, pixels]; });
 }
@@ -211,10 +323,39 @@ function ranking(data, width, height, shape) {
   const ranked = transformRanking(data, width, height);
   return [ranked, ranked.bits * width * height / 8, width * height];
 }
+export function* exactCapture(request) {
+  const {data, width, height, colorSpace, sizes} = request;
+  if (typeof colorSpace !== 'object') return yield {capture: request};
+  const floor = {...shapeFloors.get(data), ...request.floor, colour: colorSpace.colorChannels ?? 3};
+  const bytes = yield {capture: {...request, colorSpace: 'srgb', floor}};
+  if (!(bytes instanceof Uint8Array)) return null;
+  const profiled = withProfile(bytes, width, height, colorSpace);
+  if (profiled && sizes) for (const key of Object.keys(sizes)) sizes[key] += profiled.length - bytes.length;
+  return profiled;
+}
+
+function withProfile(bytes, width, height, space) {
+  const colour = space.colorChannels ?? 3;
+  for (const alpha of [false, true]) {
+    const plain = new BitWriter(64);
+    writeImageHeader(plain, width, height, colour, alpha, {colorSpace: 'srgb'});
+    const head = plain.finish();
+    if (head.length >= bytes.length || head.some((byte, i) => byte !== bytes[i])) continue;
+    const profiled = new BitWriter(1024);
+    writeImageHeader(profiled, width, height, colour, alpha, {colorSpace: space});
+    const out = profiled.finish(), file = new Uint8Array(out.length + bytes.length - head.length);
+    file.set(out); file.set(bytes.subarray(head.length), out.length);
+    return file;
+  }
+  return null;
+}
 function* losslessCapture(data, width, height, colorSpace, level) {
-  if (typeof colorSpace === 'object') return null;
+  if (typeof colorSpace === 'object') {
+    const bytes = yield* losslessCapture(data, width, height, 'srgb', level);
+    return bytes && withProfile(bytes, width, height, colorSpace);
+  }
   while (captureBusy() || exclusiveActive()) if (yield 0) return null;
-  const source = journaling() && journalFact(data, JOIN) ? {width, height, rows: (y, count) => data.subarray(y * width * 4, (y + count) * width * 4)} : data;
+  const source = journaling() && journalFact(data, JOIN) ? {width, height, rows: (y, count) => data.subarray(y * width * 4, (y + count) * width * 4), ...(typeof data.rect === 'function' && {rect: (x, y, w, h) => data.rect(x, y, w, h), ahead: (a, b, x, w) => data.ahead?.(a, b, x, w)})} : data;
   const steps = encodeCaptureSteps(source, width, height, {colorSpace, effort: 3, [CAPTURE_TOOLS]: CAPTURE_TOOLS_COMPLETE, [CAPTURE_LEVEL]: level, [CAPTURE_FLOOR]: shapeFloors.get(data)});
   let step;
   try {

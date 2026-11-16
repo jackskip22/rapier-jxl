@@ -14,7 +14,7 @@ const COMMAND_GROUP = [128,192,384,256,320,512,448,576,640];
 function admission(bytes, options) {
   if (!(bytes instanceof Uint8Array)) throw invalid('bytes are a Uint8Array.');
   if (!options || typeof options !== 'object' || Array.isArray(options)) throw invalid('options are an object.');
-  const maximum = options.maxOutputLength ?? 67108864;
+  const maximum = options.maxOutputLength ?? Number.MAX_SAFE_INTEGER;
   if (!Number.isSafeInteger(maximum) || maximum < 0) throw invalid('maxOutputLength is a nonnegative safe integer.');
   return maximum;
 }
@@ -311,6 +311,10 @@ const decodedBytes = parts => {
 const joinDecoded = parts => journaling() ? journalJoin(parts) : decodedBytes(parts);
 
 export const compressBrotli = (bytes, options = {}) => complete(compressBrotliSteps(bytes, options));
+const placed = (bytes, from, to) => {
+  if (ArrayBuffer.isView(bytes)) return bytes;
+  const out = new Uint8Array(bytes.length); out.set(bytes.subarray(from, Math.min(bytes.length, to + 8)), from); return out;
+};
 const ran = function* (name, run) { return run(); };
 const MATCH_BYTES = 16384;
 export function* compressBrotliSteps(bytes, options = {}, unit = ran) {
@@ -336,12 +340,13 @@ export function* compressBrotliSteps(bytes, options = {}, unit = ran) {
     let at = start, history = ring, part;
     for (let to = start + MATCH_BYTES; at < end; to += MATCH_BYTES) {
       ({at, found: part, history} = yield* unit('brotli-matches', () => {
-        if (matched !== at) {
-          matches = matcher(bytes, windowBits, cache, thorough);
+        const data = placed(bytes, Math.max(0, at - span), end);
+        if (matched !== at || data !== bytes) {
+          matches = matcher(data, windowBits, cache, thorough);
           matches.fill(Math.max(0, at - span), at);
         }
         matches.history = history.slice();
-        const list = [], next = matchesFor(bytes, at, Math.min(end, to), end, matches, blockCache, thorough && blockCache, list);
+        const list = [], next = matchesFor(data, at, Math.min(end, to), end, matches, blockCache, thorough && blockCache, list);
         matched = next;
         return {at: next, found: Int32Array.from(list), history: matches.history.slice()};
       }));
@@ -351,11 +356,12 @@ export function* compressBrotliSteps(bytes, options = {}, unit = ran) {
     let models = null;
     if (!(typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) && blockCache) {
       models = [];
-      for (const pair of [[0, 1], [2, 3]]) models.push(...yield* unit('brotli-modes', () => { const spans = literalSpans(foundOf(), start, end); return pair.map(mode => modeModel(bytes, spans, options.kernels, mode)); }));
+      for (const pair of [[0, 1], [2, 3]]) models.push(...yield* unit('brotli-modes', () => { const spans = literalSpans(foundOf(), start, end), data = placed(bytes, Math.max(0, start - span), end); return pair.map(mode => modeModel(data, spans, options.kernels, mode)); }));
     }
     const compressed = yield* unit('brotli-block', () => {
-      const found = foundOf(), commands = !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && !(typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) && thorough && blockCache ? bestCommands(bytes, start, end, found, ring, true) : commandsFor(bytes, start, end, found, ring.slice(), blockCache, 0, 0);
-      const block = compressedBlock(bytes, start, end, commands, blockCache, options.kernels, thorough && blockCache, models);
+      const data = placed(bytes, Math.max(0, start - span), end);
+      const found = foundOf(), commands = !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && !(typeof __RAPIER_JXL_METADATA__ !== 'undefined' && __RAPIER_JXL_METADATA__ === true) && thorough && blockCache ? bestCommands(data, start, end, found, ring, true) : commandsFor(data, start, end, found, ring.slice(), blockCache, 0, 0);
+      const block = compressedBlock(data, start, end, commands, blockCache, options.kernels, thorough && blockCache, models);
       return {bytes: block.bytes.subarray(0, block.at), at: block.at, pending: block.pending, acc: block.acc, history: history.slice()};
     });
     const rawBits = 20 + ((8 - (bitLength + 20) % 8) % 8) + (end - start) * 8;
@@ -467,7 +473,7 @@ function readTree(reader, alphabet) {
 }
 const readerAt = (bytes, bit = 0) => new Reader(bytes, bit);
 function brotliLimits(bytes, options = {}) {
-  const maxOutput = admission(bytes, options), maxBlocks = options.maxBlocks ?? 65536, {dictionary} = options;
+  const maxOutput = admission(bytes, options), maxBlocks = options.maxBlocks ?? Number.MAX_SAFE_INTEGER, {dictionary} = options;
   need(Number.isSafeInteger(maxBlocks) && maxBlocks > 0, 'maxBlocks is a positive safe integer.');
   let words;
   return {maxOutput, maxBlocks, dictionary() {

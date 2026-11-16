@@ -1,35 +1,21 @@
 // SPDX-License-Identifier: MIT
 import {fault} from './fault.mjs';
 
-export function photoTarget(target) {
-  if (!target || typeof target !== 'object' || Array.isArray(target))
-    throw fault('JXL_INPUT', 'Target names ssimulacra2, butteraugli or butteraugli3.');
-  const out = {};
-  for (const [key, value] of Object.entries(target)) {
-    if (!['ssimulacra2', 'butteraugli', 'butteraugli3'].includes(key))
-      throw fault('JXL_INPUT', `Target ${key} is not ssimulacra2, butteraugli or butteraugli3.`);
-    if (typeof value !== 'number' || !Number.isFinite(value) || (key === 'ssimulacra2' ? value > 100 : value <= 0))
-      throw fault('JXL_INPUT', `Target ${key} is out of range.`);
-    out[key] = value;
-  }
-  if (!Object.keys(out).length) throw fault('JXL_INPUT', 'Target names ssimulacra2, butteraugli or butteraugli3.');
-  return out;
-}
+export {photoTarget} from './photo-target.mjs';
 
 export function meets(scores, target) {
-  return (target.ssimulacra2 === undefined || scores.ssimulacra2 >= target.ssimulacra2)
-    && (target.butteraugli3 === undefined || scores.butteraugli3 <= target.butteraugli3)
-    && (target.butteraugli === undefined || scores.butteraugli <= target.butteraugli);
+  return target.ssimulacra2 === undefined || scores.ssimulacra2 >= target.ssimulacra2;
 }
 function margin(scores, target) {
   const m = [];
   if (target.ssimulacra2 !== undefined) m.push(scores.ssimulacra2 - target.ssimulacra2);
-  if (target.butteraugli3 !== undefined) m.push((target.butteraugli3 - scores.butteraugli3) / (0.04 * target.butteraugli3));
-  if (target.butteraugli !== undefined) m.push((target.butteraugli - scores.butteraugli) / (0.04 * target.butteraugli));
   return Math.min(...m);
 }
 
-function searchStep(tried, pass, {low, high, aim, close}) {
+const RAISES = [0.15, 0.5, 1];
+const SETTLES = [0.15, 0.5];
+
+function searchStep(tried, pass, {low, high, aim, close, slope: initialSlope}) {
   const {q, m} = tried[tried.length - 1];
   if (pass && m < close) return {stop: true};
   const passes = tried.filter(t => t.m >= 0), fails = tried.filter(t => t.m < 0);
@@ -41,8 +27,10 @@ function searchStep(tried, pass, {low, high, aim, close}) {
     next = Math.min(p.q - 0.01, Math.max(f.q + 0.1, next));
   } else {
     const [a, b] = tried.length > 1 ? tried.slice(-2) : [null, null];
-    const slope = a && b.q !== a.q ? Math.max(0.2, (b.m - a.m) / (b.q - a.q)) : 0.8;
-    next = Math.max(low, Math.min(high, q + (aim - m) / slope));
+    const slope = a && b.q !== a.q ? Math.max(0.2, (b.m - a.m) / (b.q - a.q)) : (initialSlope ?? 0.8);
+    const stepAim = !pass && initialSlope !== undefined ? Math.max(aim, 0.06) : aim;
+    next = Math.max(low, Math.min(high, q + (stepAim - m) / slope));
+    if (initialSlope !== undefined && !pass && next < q + 0.1 && q + 0.1 <= high) next = q + 0.1;
     if (next === q) return {stop: true};
   }
   return {next: Math.round(next * 100) / 100};
@@ -53,8 +41,6 @@ function marginDoubt(scores, target) {
   if (!d) return 0;
   let out = 0;
   if (target.ssimulacra2 !== undefined) out = Math.max(out, d.ssimulacra2 ?? 0);
-  if (target.butteraugli3 !== undefined) out = Math.max(out, (d.butteraugli3 ?? 0) / (0.04 * target.butteraugli3));
-  if (target.butteraugli !== undefined) out = Math.max(out, (d.butteraugli ?? 0) / (0.04 * target.butteraugli));
   return out;
 }
 
@@ -71,9 +57,9 @@ function undecided(tried, pass, options) {
   return false;
 }
 
-export function* qualitySteps(imageAt, target, {start = 85, probes = 8, low = 20, high = 99.99, aim = 0.05, lastAim = aim, close = 0.12, targetDoubt = null, initial = null, first = null, measureSteps = null, seen = null} = {}) {
-  const want = {ssimulacra2: target.ssimulacra2 !== undefined, butteraugli: target.butteraugli3 !== undefined || target.butteraugli !== undefined}, tried = [];
-  const options = {low, high, aim, close};
+export function* qualitySteps(imageAt, target, {start = 85, probes = 8, low = 20, high = 99.99, aim = 0.05, lastAim = aim, close = 0.12, slope, targetDoubt = null, initial = null, first = null, measureSteps = null, seen = null, settle = Infinity} = {}) {
+  const want = {ssimulacra2: target.ssimulacra2 !== undefined, butteraugli: false}, tried = [];
+  const options = {low, high, aim, close, ...(slope !== undefined && {slope})};
   const targetBound = () => targetDoubt ? marginDoubt({doubt: targetDoubt}, target) : 0;
   const view = () => tried.map(t => ({q: t.q, m: margin(t.scores, target), d: (t.exact ? 0 : marginDoubt(t.scores, target)) + targetBound()}));
   let q = start, best = null, bestObserved = null;
@@ -112,10 +98,54 @@ export function* qualitySteps(imageAt, target, {start = 85, probes = 8, low = 20
     if (step.stop) break;
     q = step.next;
   }
+  if (best && margin(best.scores, target) >= settle) {
+    const start = Math.max(-Infinity, ...tried.filter(t => !meets(t.scores, target) && t.q < best.quality).map(t => t.q));
+    for (const t of SETTLES) {
+      const q = Math.round((start + (best.quality - start) * t) * 100) / 100;
+      if (!(q > start && q < best.quality)) continue;
+      const observed = yield* read(yield* imageAt(q), {...want, exact: true}, {quality: q});
+      remember(q, observed.scores);
+      tried.push({q, scores: observed.scores, exact: true});
+      seen?.set(q, observed);
+      if (meets(observed.scores, target)) { best = {quality: q, scores: observed.scores, ...(observed.output && {output: observed.output})}; break; }
+    }
+    let from = low, failed = false;
+    for (const probe of tried) if (!meets(probe.scores, target) && probe.q >= from && probe.q < best.quality) {
+      from = probe.q; failed = true;
+    }
+    while (margin(best.scores, target) >= settle) {
+      const middle = Math.round((from + best.quality) * 50) / 100;
+      const q = middle > from && middle < best.quality ? middle : failed ? NaN : from;
+      if (!(q >= low && q < best.quality)) break;
+      const observed = yield* read(yield* imageAt(q), {...want, exact: true}, {quality: q});
+      remember(q, observed.scores);
+      seen?.set(q, observed);
+      if (meets(observed.scores, target)) best = {quality: q, scores: observed.scores, ...(observed.output && {output: observed.output})};
+      else { from = q; failed = true; }
+    }
+  }
   if (!best) {
-    const observed = yield* read(yield* imageAt(high), {...want, exact: true}, {quality: high});
-    best = {quality: high, scores: observed.scores, ...(observed.output && {output: observed.output})};
-    remember(high, best.scores);
+    const top = tried.reduce((a, b) => b.q > a.q ? b : a);
+    let from = top.q;
+    if (slope !== undefined) {
+      const topM = margin(top.scores, target);
+      if (topM > -1.0) {
+        const q = Math.min(high, Math.round((from + Math.max(0.15, (0.05 - topM) / slope)) * 100) / 100);
+        if (q > from && q < high) {
+          const observed = yield* read(yield* imageAt(q), {...want, exact: true}, {quality: q});
+          remember(q, observed.scores);
+          if (meets(observed.scores, target)) best = {quality: q, scores: observed.scores, ...(observed.output && {output: observed.output})};
+          else from = q;
+        }
+      }
+    }
+    if (!best) for (const t of RAISES) {
+      const q = t < 1 ? Math.round((from + (high - from) * t) * 100) / 100 : high;
+      if (t < 1 && !(q > from && q < high)) continue;
+      const observed = yield* read(yield* imageAt(q), {...want, exact: true}, {quality: q});
+      remember(q, observed.scores);
+      if (t === 1 || meets(observed.scores, target)) { best = {quality: q, scores: observed.scores, ...(observed.output && {output: observed.output})}; break; }
+    }
   }
   return {...best, bestObserved};
 }

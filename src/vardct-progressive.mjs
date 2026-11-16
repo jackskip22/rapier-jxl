@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 import {BitWriter} from './bits.mjs';
 import {fault} from './admit.mjs';
+import {prepareCoefficientOrders} from './coefficient-orders.mjs';
+import {naturalOrder} from './coefficient-layout.mjs';
 
 export function progressiveValue(passes, coefficient, position, width, height, passIndex) {
   if (!coefficient) return 0;
@@ -35,6 +37,12 @@ export function progressivePasses(option) {
   for (let i = 1; i < passes.length; i++) if (passes[i].downsample > passes[i - 1].downsample || passes[i].shift > passes[i - 1].shift)
     throw fault('JXL_INPUT', 'Passes must refine resolution and precision in order.');
   if (passes.at(-1).downsample !== 1 || passes.at(-1).shift !== 0) throw fault('JXL_INPUT', 'The last pass must be full resolution at shift 0.');
+  return passesHeader(passes);
+}
+
+export const spectralPasses = () => passesHeader([1, 2, 4].map(d => ({downsample: 4 / d, shift: 0, scale: 1})));
+
+function passesHeader(passes) {
   const header = new BitWriter(32), hints = [];
   header.writeU32([[0, 1], [0, 2], [0, 3], [3, 4]], passes.length);
   for (let i = 0; i < passes.length - 1 && i < 8; i++) {
@@ -53,4 +61,21 @@ export function progressivePasses(option) {
     const bracket = {minimum, maximum}; maximum = minimum - 1; return bracket;
   });
   return {passes, count: passes.length, header: {bytes: header.bytes, at: header.at, pending: header.pending, acc: header.acc}, brackets, alphaPass: hints.find(hint => hint.downsample === 1)?.last ?? passes.length - 1};
+}
+
+export function progressiveOrders(progression) {
+  if (!progression) return null;
+  const natural = naturalOrder(1, 1), {passes} = progression;
+  const inside = (position, downsample) => position % 8 < 8 / downsample && position >> 3 < 8 / downsample;
+  let changed = false;
+  const maps = passes.map((pass, p) => {
+    if (!passes.slice(0, p).some(earlier => earlier.shift === 0)) return {dct8: [null, null, null]};
+    const live = rank => inside(natural[rank], pass.downsample) &&
+      !passes.slice(0, p).some(earlier => earlier.shift === 0 && inside(natural[rank], earlier.downsample));
+    const ranks = Array.from({length: 63}, (_, i) => i + 1), order = [0, ...ranks.filter(live), ...ranks.filter(rank => !live(rank))];
+    if (order.every((rank, i) => rank === i)) return {dct8: [null, null, null]};
+    changed = true;
+    return {dct8: [order, order, order]};
+  });
+  return changed ? prepareCoefficientOrders({passes: maps}, passes.length) : null;
 }

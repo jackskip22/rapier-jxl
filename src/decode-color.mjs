@@ -3,7 +3,6 @@ import {xybKernelConstants} from './vardct-render.mjs';
 import {requireDecode} from './decode-bits.mjs';
 import {signature, nativeEncoding} from './color-encoding.mjs';
 export {nativeEncoding};
-import {exactCbrt} from './exact-math.mjs';
 import {part} from './decode-parts.mjs';
 import {decodeKernels} from './decode-kernels.mjs';
 import {D50,SRGB_D50,D50_SRGB,IDENTITY3,adaptWhite,whiteXYZ,primariesXYZ,floatColorMatrix,inverse3,multiply3,transferCurve,hlgScale} from './decode-color-math.mjs';
@@ -73,7 +72,7 @@ function xybToEnum(frame,h,encoding,inPlace=false,rgba8=null) {
   return finish(frame,planes,encoding);
 }
 function xybForward(h) {
-  const m=inverse3(h.opsinInverseMatrix.inverseMatrix),bias=h.opsinInverseMatrix.opsinBiases,root=bias.map(exactCbrt),scale=h.toneMapping.intensityTarget/255;
+  const m=inverse3(h.opsinInverseMatrix.inverseMatrix),bias=h.opsinInverseMatrix.opsinBiases,root=bias.map(Math.cbrt),scale=h.toneMapping.intensityTarget/255;
   return {op:OP.xybForward,data:Float64Array.of(...m,...bias,...root,scale)};
 }
 function enumToPCS(encoding,h) {
@@ -126,6 +125,7 @@ function convert(frame,h,source,target,sourceICC,targetICC,preserveAssociation=f
   const n=frame.width*frame.height,inputCount=inputProfile?.channels??(source.space==='gray'?1:3),outputCount=outputProfile?.channels??(target.space==='gray'?1:3);
   const black=frame.extraChannels?.findIndex(c=>c.type===4)??-1;
   requireDecode(inputCount!==4||black>=0,'CMYK JPEG XL image is missing its black channel.');
+  requireDecode(inputCount!==4||frame.extraChannels[black].data?.length===n,'CMYK JPEG XL black channel is not the frame\'s size.');
   const planes=Array.from({length:Math.min(3,outputCount)},()=>new Float32Array(n)),k=outputCount===4?new Float32Array(n):null;
   const inputInk=inputCount===4&&source.invertedCMYK!==false,outputInk=outputCount===4&&target.invertedCMYK!==false;
   const firstAlpha=preserveAssociation?frame.extraChannels?.find(c=>c.type===0):null,alpha=firstAlpha?.associated?firstAlpha.data:null;

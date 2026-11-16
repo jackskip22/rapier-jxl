@@ -6,8 +6,6 @@ export type {Orientation} from './jpeg.mjs';
 
 /** Unchecked composition layers. Call the admission helpers before allocating or writing caller input. */
 export const LIMITS: Limits;
-export const PHOTO_LIMITS: Limits;
-export const JPEG_LIMITS: Limits;
 export type Numbers = ArrayLike<number> & Iterable<number>;
 export type Plane = Int16Array | Int32Array;
 export type Steps<Output = Bytes> = Generator<number, Output, boolean | undefined>;

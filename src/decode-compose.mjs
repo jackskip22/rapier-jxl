@@ -20,13 +20,14 @@ export function blendRows(channels,rows,span) {
   }
 }
 
-export function composeFrame(frame,h,f,references,inPlace=false) {
+export function composeFrame(frame,h,f,references,inPlace=false,owned=false) {
   const colors=frame.planes.length, source=channels(frame), count=source.length;
   const width=h.width,height=h.height,exact=f.x0===0&&f.y0===0&&frame.width===width&&frame.height===height;
   const replace=c=>f.blending[c<colors?0:c-colors+1].mode===0;
   const base=inPlace?references[f.blending[0].source]:null;
+  const cutInside=owned&&!base&&!exact&&f.x0<=0&&f.y0<=0&&f.x0+frame.width>=width&&f.y0+frame.height>=height&&source.every((_,c)=>replace(c));
   if(base)requireDecode(base.width===width&&base.height===height&&!(base.x0??0)&&!(base.y0??0)&&base.planes.length===colors&&channels(base).length===count,'JPEG XL frame blending needs a full canvas.');
-  const planes=base?channels(base):source.map((p,c)=>exact&&replace(c)?p:new Float32Array(width*height));
+  const planes=base?channels(base):source.map((p,c)=>exact&&replace(c)||cutInside?p:new Float32Array(width*height));
   const alphaCount=h.extraChannels.length, hasAlpha=h.extraChannels.some(e=>e.type===0);
   const coversCanvas=f.x0<=0&&f.y0<=0&&f.x0+frame.width>=width&&f.y0+frame.height>=height;
   for(let c=0;c<count;c++) {
@@ -46,7 +47,14 @@ export function composeFrame(frame,h,f,references,inPlace=false) {
     }
   }
   const x0=Math.max(0,f.x0),y0=Math.max(0,f.y0),x1=Math.min(width,f.x0+frame.width),y1=Math.min(height,f.y0+frame.height);
-  for(let c=0;c<count;c++)if(replace(c)&&planes[c]!==source[c]&&x1>x0){
+  if(cutInside) {
+    for(let c=0;c<count;c++) {
+      const p=source[c];
+      for(let y=0;y<height;y++) {const from=(y-f.y0)*frame.width-f.x0;p.copyWithin(y*width,from,from+width);}
+      planes[c]=p.subarray(0,width*height);
+    }
+  }
+  for(let c=0;c<count;c++)if(!cutInside&&replace(c)&&planes[c]!==source[c]&&x1>x0){
     const src=source[c],dst=planes[c],fw=frame.width,fx0=f.x0,fy0=f.y0,span=x1-x0;
     if(fx0===0&&fw===width&&span===width) {
       dst.set(src.subarray((y0-fy0)*fw,(y1-fy0)*fw),y0*width);

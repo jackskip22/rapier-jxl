@@ -1,5 +1,5 @@
-export const WEIGHTED_PREDICTOR = 6, WEIGHTED_PROPERTY = 15;
 // SPDX-License-Identifier: MIT
+export const WEIGHTED_PREDICTOR = 6, WEIGHTED_PROPERTY = 15;
 const magnitudes = [];
 for (let value = 1, i = 0; i < 16; i++) {
   magnitudes.push(value);

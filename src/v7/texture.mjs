@@ -6,7 +6,8 @@ import {own, measure, DEFAULT_INPUT_BYTES} from './ownership.mjs';
 const FORMATS = {rgba8unorm: [4, 0], 'rgba8unorm-srgb': [4, 0], bgra8unorm: [4, 1], 'bgra8unorm-srgb': [4, 1], rgba16float: [8, 0], rgba32float: [16, 0]};
 const CHANNEL_FORMATS = {depth16unorm: [2, 'depth-only', {bitDepth: 16}], depth32float: [4, 'depth-only', {}], r16uint: [2, 'all', {bitDepth: 16}],
   r16float: [2, 'all', {sampleFormat: 'float16'}], r32float: [4, 'all', {}]};
-const FIELDS = new Set(['texture', 'device', 'layer', ...DESCRIPTION]);
+let fieldsSet = null;
+const textureFields = () => fieldsSet ??= new Set(['texture', 'device', 'layer', ...DESCRIPTION]);
 export const isTexture = input => isPlainRecord(input) && input.texture !== undefined && input.device !== undefined && input.data === undefined;
 
 function copyOut(device, texture, layer, bytes, aspect, refused) {
@@ -32,31 +33,32 @@ function copyOut(device, texture, layer, bytes, aspect, refused) {
   }).catch(cause => { throw refused(cause); }).finally(() => buffer.destroy());
 }
 
-export function readTexture(input, maxPixels, acquire) {
-  for (const key of Object.keys(input)) if (!FIELDS.has(key))
-    throw fail('JXL_INPUT', `Unknown texture field: ${key}.`);
+export const readTexture = ((typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) || (typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true)) ? null : function readTexture(input, maxPixels, acquire) {
+  const fields = textureFields();
+  for (const key of Object.keys(input)) if (!fields.has(key))
+    throw fail('JXL_INPUT', `Unknown texture field ${key}; remove it.`);
   const {texture, device, layer = 0} = input, layout = FORMATS[texture?.format];
-  if (!layout) throw fail('JXL_INPUT', 'A texture is rgba8unorm, bgra8unorm (or -srgb), rgba16float or rgba32float.');
-  if (texture.dimension !== '2d' || texture.sampleCount > 1) throw fail('JXL_INPUT', 'A texture input is a 2D texture with one sample.');
-  if (!(texture.usage & 1)) throw fail('JXL_INPUT', 'The texture needs COPY_SRC usage to be read.');
+  if (!layout) throw fail('JXL_INPUT', "Texture format is unsupported; use rgba8unorm, bgra8unorm, their -srgb variants, rgba16float, or rgba32float.");
+  if (texture.dimension !== '2d' || texture.sampleCount > 1) throw fail('JXL_INPUT', "Texture shape is unsupported; pass a 2D texture with one sample.");
+  if (!(texture.usage & 1)) throw fail('JXL_INPUT', "Texture cannot be copied; create it with COPY_SRC usage.");
   const layers = texture.depthOrArrayLayers ?? 1;
-  if (!Number.isSafeInteger(layer) || layer < 0 || layer >= layers) throw fail('JXL_INPUT', `layer is a whole number below ${layers}.`);
+  if (!Number.isSafeInteger(layer) || layer < 0 || layer >= layers) throw fail('JXL_INPUT', `Invalid texture layer; use a whole number below ${layers}.`);
   const {width, height} = texture, [bytes, swap] = layout;
   dimensions(width, height, maxPixels);
   const description = described(input);
   if (bytes > 4) description.transferFunction ??= 'linear';
   else if (texture.format.endsWith('-srgb') && description.transferFunction !== undefined && description.transferFunction !== 'srgb')
-    throw fail('JXL_INPUT', 'An -srgb texture format holds sRGB-encoded samples.');
-  const refused = cause => Object.assign(fail('JXL_INPUT', 'The texture could not be read: ' + (cause?.message || cause)), {cause});
+    throw fail('JXL_INPUT', "The -srgb texture has inconsistent color metadata; declare its samples as sRGB.");
+  const refused = cause => Object.assign(fail('JXL_INPUT', "Texture read failed; use a live device and a texture with COPY_SRC usage."), {cause});
   const channels = Array.isArray(description.extraChannels) ? description.extraChannels.map(channel => {
     if (!isPlainRecord(channel) || channel.texture === undefined) return null;
-    if (channel.data !== undefined) throw fail('JXL_INPUT', 'An extra channel takes data or a texture, not both.');
+    if (channel.data !== undefined) throw fail('JXL_INPUT', "Extra channel has two data sources; pass data or a texture.");
     const format = CHANNEL_FORMATS[channel.texture?.format], shift = channel.dimShift ?? 0, scale = 2 ** shift;
-    if (!format) throw fail('JXL_INPUT', 'A channel texture is depth16unorm, depth32float, r16uint, r16float or r32float.');
+    if (!format) throw fail('JXL_INPUT', "Channel texture format is unsupported; use depth16unorm, depth32float, r16uint, r16float, or r32float.");
     const t = channel.texture;
-    if (t.dimension !== '2d' || t.sampleCount > 1 || !(t.usage & 1)) throw fail('JXL_INPUT', 'A channel texture is 2D, one sample, COPY_SRC.');
+    if (t.dimension !== '2d' || t.sampleCount > 1 || !(t.usage & 1)) throw fail('JXL_INPUT', "Channel texture cannot be read; create a 2D, single-sample texture with COPY_SRC.");
     if (t.width !== Math.ceil(width / scale) || t.height !== Math.ceil(height / scale) || layer >= (t.depthOrArrayLayers ?? 1))
-      throw fail('JXL_INPUT', 'A channel texture matches the picture\'s size (or 2^dimShift less) and layer.');
+      throw fail('JXL_INPUT', "Channel texture has mismatched geometry; match the picture size, dimShift, and layer.");
     return format;
   }) : [];
   const extras = description.extraChannels;
@@ -88,4 +90,4 @@ export function readTexture(input, maxPixels, acquire) {
     });
   };
   return acquire ? acquire(take, cost, width * height) : take();
-}
+};

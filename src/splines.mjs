@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-import {PHOTO_LIMITS} from './limits.mjs';
+import {admitSplineCount} from './splines-bound.mjs';
+import {LIMITS} from './limits.mjs';
 import {BitWriter, complete, part, packSigned} from './bits.mjs';
 import {admitOptions, admitPixels, fault, job} from './admit.mjs';
 import {admitSampleFormat} from './admit-samples.mjs';
@@ -62,7 +63,7 @@ function admitSplines(width, height, options) {
   if (!Array.isArray(supplied) || !supplied.length) throw fault('JXL_INPUT', 'splines is a nonempty array of authored curves.');
   const pixelCount = width * height, pointLimit = Math.min(1048576, Math.floor(pixelCount / 2));
   if (options.level !== undefined && options.level !== 5 && options.level !== 10) throw fault('JXL_INPUT', 'JPEG XL level is 5 or 10.');
-  if (supplied.length > Math.min(pointLimit, Math.floor(pixelCount / 4))) throw fault('JXL_INPUT', 'Too many splines: at most one per four pixels.');
+  admitSplineCount(supplied.length, width, height);
   const quantizationAdjustment = splineAdjustment(options.quantizationAdjustment ?? supplied[0]?.quantizationAdjustment);
   const inverse = quantizationAdjustment >= 0 ? 1 / (1 + quantizationAdjustment / 8) : 1 - quantizationAdjustment / 8;
   const areaLimit = Math.min(4398046511104, 1024 * pixelCount + 4294967296);
@@ -143,7 +144,7 @@ function* splineImageSteps(data, width, height, quality, effort, filter, orienta
 export function encodeSplines(data, width, height, options) { return complete(encodeSplinesSteps(data, width, height, options)); }
 export function encodeSplinesSteps(data, width, height, options = {}) {
   const {quality, colorSpace} = admitOptions(options, 90), effort = admitEffort(options), filter = admitPhotoFilter(options);
-  admitPixels(data, width, height, PHOTO_LIMITS);
+  admitPixels(data, width, height, LIMITS);
   if (quality === 100 || colorSpace !== 'srgb' || !admitSampleFormat(data, options).native8)
     throw fault('JXL_INPUT', 'Splines need straight sRGB8 and quality below 100.');
   const orientation = options.orientation ?? 1;

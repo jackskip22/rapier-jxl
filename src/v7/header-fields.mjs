@@ -1,6 +1,6 @@
 const COLOR = ['whitePoint', 'primaries', 'transferFunction', 'gamma', 'renderingIntent', 'iccSpace', 'invertedCMYK'];
 const copy = value => Array.isArray(value) ? value.map(copy) : value;
-export function colorFields(encoding) {
+function colorFields(encoding) {
   if (!encoding) return encoding;
   if (encoding.wantICC) {
     const out = {space: encoding.space, transferFunction: 'icc'};

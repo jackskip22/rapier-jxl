@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {fault} from './fault.mjs';
+import {fault, abortError} from './fault.mjs';
 export const turn = () => new Promise(resolve => {
   try { setImmediate(resolve); return; } catch {}
   try { const channel = new MessageChannel(); channel.port1.onmessage = () => { channel.port1.close(); resolve(); }; channel.port2.postMessage(0); return; } catch {}
@@ -19,7 +19,7 @@ export function exclusive(work, signal) {
       if (work === null) return;
       let reason;
       try { reason = signal.reason; } catch (error) { reason = error; }
-      cancel(reason === undefined ? fault('JXL_ABORTED', 'The job was aborted.') : reason);
+      cancel(reason === undefined ? abortError() : reason);
     };
     const run = queue.then(async () => {
       while (work !== null && held()) await turn();

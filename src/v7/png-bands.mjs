@@ -2,11 +2,12 @@
 import {SAVED, PASSED, tiledBytes, joinedBytes, readAll} from '../step-journal.mjs';
 import {fault} from '../fault.mjs';
 import {sampleView} from './verify-samples.mjs';
+import {FLAT, HOLE} from '../screen-samples.mjs';
 
 const refuse = message => { throw fault('JXL_INPUT', message); };
-const invalid = () => refuse('The source contains an invalid deflate stream.');
-const exceeds = () => refuse('Compressed source data exceeds its declared dimensions.');
-const NATIVE_STREAM = 8 << 20, NATIVE_ROWS = 16 << 20, BAND_ROWS = 32, PIECE_COLS = 1024, WALK_BYTES = 2 << 20, WINDOW = 32768, FAST = 10, MASK = (1 << FAST) - 1;
+const invalid = () => refuse("Source contains an invalid deflate stream; pass a valid PNG file.");
+const exceeds = () => refuse("Compressed source data exceeds its declared dimensions; pass a valid PNG file.");
+const BAND_ROWS = 32, PIECE_COLS = 1024, WALK_BYTES = 2 << 20, WINDOW = 32768, FAST = 10, MASK = (1 << FAST) - 1;
 const LENGTH_EXTRA = Array.from({length: 29}, (_, i) => i < 8 || i === 28 ? 0 : (i - 4) >> 2), DIST_EXTRA = Array.from({length: 30}, (_, i) => i < 4 ? 0 : (i - 2) >> 1);
 const bases = (extra, first) => extra.map((_, i) => first += i && 1 << extra[i - 1]);
 const LENGTH_BASE = bases(LENGTH_EXTRA, 3), DIST_BASE = bases(DIST_EXTRA, 1);
@@ -117,7 +118,7 @@ export function inflateBand(state, need, last, stream) {
     if (distance > o - lowest || distance > (state.windowSize ?? WINDOW)) invalid();
     copy = length;
   }
-  if (o < end) refuse('Compressed source data is incomplete.');
+  if (o < end) refuse("Compressed source data is incomplete; pass a valid PNG file.");
   const output = out.subarray(WINDOW, o);
   for (let i = 0; i < output.length;) {
     for (const stop = Math.min(output.length, i + 5552); i < stop; i++) { a += output[i]; b += a; }
@@ -142,7 +143,7 @@ async function unit(journal, name, run, carry = false, cold = false, alone = fal
   return {value};
 }
 
-export async function pngPixels(journal, file, {readAs, deep = true, orient = false, metadata = false, reader: {pngWalk, pngLayout, pngRows, pngPassRows, pngOrientationLocation, unfilterRow, inflate, shapeScan, shapeScanPixels, flatSampleX, flatSampleY, rankingPositions, photoPreferenceDifference}} = {}) {
+export async function pngPixels(journal, file, {readAs, deep = true, orient = false, metadata = false, reader: {pngWalk, pngLayout, pngRows, pngPassRows, pngOrientationLocation, unfilterRow, smoothProbes, smoothProbe, grainSteps, grainRow, grainShares, gradientRows, shapeScan, shapeScanPixels, flatSampleX, flatSampleY, rankingPositions, photoPreferenceDifference}} = {}) {
   if (readAs !== undefined && !metadata || !deep) return null;
   let walk = null;
   do {
@@ -157,7 +158,7 @@ export async function pngPixels(journal, file, {readAs, deep = true, orient = fa
     const {width, height, depth, colourType, channels, interlace, expected, palette, paletteAlpha, transparent, colour, orientation, parts} = await pngLayout(walk, false);
     const stream = parts.reduce((n, [, length]) => n + length, 0), [cmf, flg] = parts.length ? file.subarray(parts[0][0], parts[0][0] + 2) : [];
     const taken = (!shapeScan || depth <= 8 && !interlace) && (orient || !(orientation > 1)) && parts[0]?.[1] >= 2 &&
-      (shapeScan ? cmf === 0x78 : (cmf & 15) === 8 && cmf >>> 4 <= 7) && !((cmf * 256 + flg) % 31) && !(flg & 32);
+      (cmf & 15) === 8 && cmf >>> 4 <= 7 && !((cmf * 256 + flg) % 31) && !(flg & 32);
     return {taken, width, height, depth, colourType, channels, interlace, expected, palette, paletteAlpha, transparent, colour, orientation,
       windowSize:1 << ((cmf >>> 4) + 8),parts, stream};
   });
@@ -184,26 +185,23 @@ export async function pngPixels(journal, file, {readAs, deep = true, orient = fa
     return passPixels(journal,s,zlib,{pngRows,pngPassRows,unfilterRow});
   const bands = [], count = Math.ceil(height / BAND_ROWS), span = Math.ceil(stream / count * 1.25) + 4096;
   const opaque = (s.colourType === 0 || s.colourType === 2 || s.colourType === 3) && !s.transparent && !s.paletteAlpha;
-  const rawBytes = height * (rowBytes + 1), native = !!inflate && typeof DecompressionStream === 'function' && stream <= NATIVE_STREAM && rawBytes <= NATIVE_ROWS;
-  let whole = null;
-  const inflated = () => whole ??= inflate(parts.map(([at, length]) => file.subarray(at, at + length)), rawBytes);
-  let state = {native, pos: 2, bits: 0, count: 0, final: 0, type: -1, left: 0, lengths: null, hlit: 0, copy: 0, distance: 0, a: 1, b: 0, produced: 0, span,
+  const probes = smoothProbes?.(width, height) ?? null, [grainY, grainX] = grainSteps?.(width, height) ?? [Infinity, 1];
+  let state = {pos: 2, bits: 0, count: 0, final: 0, type: -1, left: 0, lengths: null, hlit: 0, copy: 0, distance: 0, a: 1, b: 0, produced: 0, span,
     windowSize:s.windowSize,window: new Uint8Array(0), previous: new Uint8Array(rowBytes),
-    scans: shapeScan ? [null, {colour: 3}].map(floor => shapeScan(width * height, {opacity: !opaque}, floor)) : [], flags: new Uint8Array(256), edge: [], xyb: 0, tail: null};
+    scans: shapeScan ? [null, {colour: 3}].map(floor => shapeScan(width * height, {opacity: !opaque}, floor)) : [], flags: new Uint8Array(256), edge: [], xyb: 0, tail: null,
+    smooth: !!probes, grain: [0, 0, 0, 0], gradient: gradientRows ? {sum: 0, n: 0} : null, carried: null};
   const positions = rankingPositions?.(width * height) ?? [], taken = [], rowStep = Math.max(1, height / 32 | 0);
   for (let k = 0; k < count; k++) {
     const top = k * BAND_ROWS, rows = Math.min(BAND_ROWS, height - top);
     let next = null, picks = null, pieces = null;
     const band = async () => {
-      if (!!state.native !== native) refuse('This PNG\'s rows were read by another inflater.');
       const length = rows * (rowBytes + 1);
-      const {output, state: after} = native ? {output: (await inflated()).subarray(state.produced, state.produced + length), state: {...state, produced: state.produced + length}}
-        : inflateBand(state, length, k === count - 1, zlib);
+      const {output, state: after} = inflateBand(state, length, k === count - 1, zlib);
       const pixels = new Uint8Array(rows * width * 4), write = pngRows(s, pixels, top);
       let previous = state.previous.slice(), row = new Uint8Array(rowBytes);
       for (let y = 0, at = 0; y < rows; y++) {
         const filter = output[at++];
-        if (filter > 4) refuse('The PNG contains an unknown row filter.');
+        if (filter > 4) refuse("PNG contains an unknown row filter; pass a valid PNG file.");
         unfilterRow(filter, output, at, row, previous, rowBytes, bpp);
         at += rowBytes;
         write(row, width, 0, top + y, 1, 1, 0);
@@ -212,18 +210,27 @@ export async function pngPixels(journal, file, {readAs, deep = true, orient = fa
       const scans = structuredClone(state.scans);
       for (const scan of scans) shapeScanPixels(scan, pixels, top * width, rows * width);
       const words = new Uint32Array(pixels.buffer), flags = state.flags.slice(), edge = [];
-      for (const [k, ok, colour] of state.edge) flags[k] = ok && colour === words[flatSampleX(width, k)] ? 1 : 0;
+      for (const [k, ok, colour, clear] of state.edge) flags[k] = (ok && colour === words[flatSampleX(width, k)] ? FLAT : 0) | (clear && !(words[flatSampleX(width, k)] >>> 24) ? HOLE : 0);
       for (let k = 0; flatSampleX && k < 256; k++) {
         const x = flatSampleX(width, k), y = flatSampleY(height, k) - top, p = y * width + x;
         if (y < 0 || y >= rows) continue;
-        const ok = words[p] === words[p + 1];
-        if (y + 1 < rows) flags[k] = ok && words[p] === words[p + width] ? 1 : 0; else edge.push([k, ok, words[p]]);
+        const ok = words[p] === words[p + 1], clear = !(words[p] >>> 24 | words[p + 1] >>> 24);
+        if (y + 1 < rows) flags[k] = (ok && words[p] === words[p + width] ? FLAT : 0) | (clear && !(words[p + width] >>> 24) ? HOLE : 0); else edge.push([k, ok, words[p], clear]);
       }
       let xyb = state.xyb;
       if (state.tail) { const two = new Uint8Array(width * 8); two.set(state.tail); two.set(pixels.subarray(0, width * 4), width * 4); xyb += photoPreferenceDifference(two, width, height, top - 1, top, top - 1); }
       const last = k === count - 1, tail = photoPreferenceDifference && !last && (top + rows - 1) % rowStep === 0 ? pixels.slice((rows - 1) * width * 4) : null;
       xyb += photoPreferenceDifference?.(pixels, width, height, top, last ? top + rows : top + rows - 1, top) ?? 0;
-      next = {...after, previous, scans, flags, edge, xyb, tail};
+      const stride = width * 4, rowOf = y => y >= top ? pixels.subarray((y - top) * stride, (y - top + 1) * stride)
+        : state.carried.subarray((y - top + 2) * stride, (y - top + 3) * stride);
+      let smooth = state.smooth;
+      if (smooth) for (const y of probes.ys) if (y >= top && y < top + rows && smooth) for (const x of probes.xs) if (!smoothProbe(rowOf(y), rowOf(y - 1), x)) { smooth = false; break; }
+      const grain = state.grain.slice(), before = k ? top - 1 : 1, until = last ? height - 1 : top + rows - 1;
+      for (let y = 1 + Math.ceil(Math.max(0, before - 1) / grainY) * grainY; y < until; y += grainY) grainRow(grain, rowOf(y - 1), rowOf(y), rowOf(y + 1), width, grainX);
+      let gradient = null;
+      if (state.gradient) { gradient = structuredClone(state.gradient); gradientRows(gradient, pixels, width, height, top, top + rows, {row0: top}); }
+      const carried = last ? null : rows >= 2 ? pixels.slice((rows - 2) * stride) : null;
+      next = {...after, previous, scans, flags, edge, xyb, tail, smooth, grain, gradient, carried};
       const list = [], end = (top + rows) * width;
       let at = 0;
       for (let hi = positions.length; at < hi;) { const mid = (at + hi) >> 1; if (positions[mid] < top * width) at = mid + 1; else hi = mid; }
@@ -252,7 +259,8 @@ export async function pngPixels(journal, file, {readAs, deep = true, orient = fa
     for (const list of readAll(taken)) for (let i = 0; i < list.length; i += 2) words[list[i]] = list[i + 1];
     return new Uint8Array(words.buffer);
   }, xyb = state.xyb, preference = () => xyb;
-  const data = tiledBytes(bands, width, height, BAND_ROWS, PIECE_COLS, journal.touched, {opaque, scans: state.scans, flats: state.flags, ranking, preference});
+  const data = tiledBytes(bands, width, height, BAND_ROWS, PIECE_COLS, journal.touched,
+    {opaque, scans: state.scans, flats: state.flags, smooth: state.smooth, ...(grainShares && {grain: grainShares(state.grain)}), ranking, preference, ...(state.gradient && {gradient: state.gradient})});
   return {data, width, height, bitDepth: 8, sampleFormat: 'uint', ...s.colour, alphaPremultiplied: false,
     ...(s.orientation > 1 && {orientation:s.orientation})};
 }
@@ -274,7 +282,7 @@ async function passPixels(journal,s,zlib,{pngRows,pngPassRows,unfilterRow}) {
         let previous = y ? state.previous.slice() : new Uint8Array(rowBytes), row = new Uint8Array(rowBytes);
         for (let k = 0,at = 0; k < rows; k++) {
           const filter = output[at++];
-          if (filter > 4) refuse('The PNG contains an unknown row filter.');
+          if (filter > 4) refuse("PNG contains an unknown row filter; pass a valid PNG file.");
           unfilterRow(filter,output,at,row,previous,rowBytes,bpp); at += rowBytes;
           raw.set(row,k * rowBytes); [previous,row] = [row,previous];
         }
@@ -295,6 +303,7 @@ async function passPixels(journal,s,zlib,{pngRows,pngPassRows,unfilterRow}) {
       for (let p = 0; p < passes.length; p++) {
         const [x,y,dx,dy,w,h,rowBytes] = passes[p], first = Math.max(0,Math.ceil((top - y) / dy)), end = Math.min(h,Math.ceil((top + rows - y) / dy));
         if (end <= first) continue;
+        rawPasses[p].ahead(first * rowBytes,end * rowBytes);
         const raw = rawPasses[p].subarray(first * rowBytes,end * rowBytes);
         for (let row = first; row < end; row++) write(raw.subarray((row - first) * rowBytes,(row - first + 1) * rowBytes),w,x,y,dx,dy,row);
       }

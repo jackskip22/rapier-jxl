@@ -7,17 +7,17 @@ import {designAsker} from './photo-split-ladder.mjs';
 import {PHOTO_BAND_MARGIN, photoXYBBand, appendPhotoBand} from './photo-bands.mjs';
 import {V6, GABORISH} from './photo-v6-settings.mjs';
 import {BitWriter, complete} from './bits.mjs';
-import {varDCTSteps, vdLfGroupCount, seedLfSections, acContexts, walkACGroup, designPriced, COEFF_NUM_NONZERO_CONTEXT, COEFF_FREQ_CONTEXT, ORDER_OF} from './vardct.mjs';
+import {varDCTSteps, vdLfGroupCount, seedLfSections, acContexts, strategyGroup, designPriced} from './vardct.mjs';
 import {arenaKernels, releaseArena} from './kernels.mjs';
 import {ARENA_BYTES} from './arena.mjs';
 import {TokenCounts} from './entropy.mjs';
 import {lfCoderFor} from './lf-coding.mjs';
-import {writeModularAnsHistograms, ansGroupWriter, buildAnsCoding, ansCodingParts} from './ans.mjs';
-import {kernelHooks} from './kernel-hooks.mjs';
+import {writeModularAnsHistograms, buildAnsCoding, ansCodingParts} from './ans.mjs';
+import {fault} from './fault.mjs';
 
 function searchBand({key, orderCounts, stride, by0, by1, W, quant, cfl, quantFields, quantFieldBase, mask, search}) {
   const rows = by1 - by0, band = bandsHeld.get(key);
-  if (!band) throw new Error('No picture band is held for this search.');
+  if (!band) throw fault('JXL_INTERNAL', 'No picture band is held for this search.');
   const planes = band.planes; band.planes = null;
   const base = {components: quant.map(q => ({stride, rows, quant: q})), planes, cfl, ...(quantFields ? {quantFields, quantFieldBase} : {})};
   const {chosen} = xybStrategies(base, W, rows * 8, {...search, maskWeight: mask, priceOnly: true, keepChosen: true, band: true});
@@ -70,7 +70,7 @@ export function serveBlockSplit(message) {
   try { const answer = step(message); answer[0].ticket = message.ticket; return answer; }
   catch (error) {
     if (kind === 'picture-band') bandsHeld.delete(message.key);
-    return [{split: kind, ticket: message.ticket, error: {name: String(error?.name ?? 'Error'), message: String(error?.message ?? error)}}, []];
+    return [{split: kind, ticket: message.ticket, error: {name: String(error?.name ?? 'Error'), message: String(error?.message ?? error), ...(typeof error?.code === 'string' && {code: error.code})}}, []];
   } finally { if (kind === 'designs') releaseArena(); }
 }
 
@@ -86,7 +86,8 @@ function unpack({head, levels}, into) {
   }
 }
 
-export const pictureBlocksSplit = (typeof __RAPIER_JXL_HELPER__ !== 'undefined' && __RAPIER_JXL_HELPER__ === true) ? null : async function pictureBlocksSplit(data, width, height, quality, row, search, helpers, {signal, arena = false} = {}, write = null) {
+export const pictureBlocksSplit = async function pictureBlocksSplit(data, width, height, quality, row, search, helpers, {signal, arena = false} = {}, write = null) {
+  if (data.constructor !== Uint8Array) data = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), W = stride * 8;
   const bands = splitBands(rows, helpers.length + 1, 8).map(({top, height}) => ({by0: top, by1: top + height}));
   const {id, ticket} = splitIds(), keys = bands.map((_, k) => id + ':blocks:' + k);
@@ -182,16 +183,12 @@ function groupState(model, band, g, groupsX, stride, rows, buckets, lumaW) {
 const withContexts = c => ({...c, ...acContexts(c.map, c.numDc, c.numCtxs)});
 function groupRows({key, rowsList, model, groupsX, stride, rows, buckets, lumaW}) {
   const band = bandsHeld.get(key);
-  if (!band?.chosen) throw new Error('No blocks are held for these groups.');
+  if (!band?.chosen) throw fault('JXL_INTERNAL', 'No blocks are held for these groups.');
   const state0 = {...model, contexts: withContexts(model.contexts)};
-  const coding = {...ansGroupWriter(model.coding), model: model.coding}, sections = [];
+  const coding = {model: model.coding}, sections = [];
   for (let i = 0; i < rowsList.length; i++) for (let gx = 0; gx < groupsX; gx++) {
     const g = rowsList[i] * groupsX + gx, state = groupState(state0, band, g, groupsX, stride, rows, buckets[i], lumaW), w = new BitWriter(4096);
-    try {
-      if (kernelHooks.strategyWrite?.(state, 0, 0, COEFF_NUM_NONZERO_CONTEXT, COEFF_FREQ_CONTEXT, ORDER_OF, coding, w) !== 2) {
-        walkACGroup(state, 0, (ctx, value) => coding.write(w, ctx, value)); coding.flush(w);
-      }
-    } finally { coding.reset?.(); }
+    strategyGroup(state, 0, 0, coding, w);
     sections.push({g, bytes: w.bytes.slice(0, w.at + 8), at: w.at, pending: w.pending, acc: w.acc});
   }
   return [{split: 'group-rows', sections}, sections.map(s => s.bytes.buffer)];
@@ -216,8 +213,8 @@ function askLfGroups(image, effort, bands, ask) {
   return asked;
 }
 const nextTurn = () => new Promise(resolve => {
-  if (typeof MessageChannel === 'function') { const {port1, port2} = new MessageChannel(); port1.onmessage = () => { port1.close(); resolve(); }; port2.postMessage(0); }
-  else setTimeout(resolve, 0);
+  if (typeof MessageChannel === 'function') try { const {port1, port2} = new MessageChannel(); port1.onmessage = () => { port1.close(); resolve(); }; port2.postMessage(0); return; } catch {}
+  setTimeout(resolve, 0);
 });
 
 async function writeOnHelpers(steps, {bands, keys, ask, stride, rows, image, effort, arena}) {

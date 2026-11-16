@@ -1,12 +1,16 @@
 import {encodeLayersSteps} from '../layers-core.mjs';
 import {readStill, compositionMetadataKey} from '../framing.mjs';
 import {prepareICC} from '../icc-write.mjs';
+import {exactAnswer} from '../effort-job.mjs';
 import {check, fail} from './primitives.mjs';
 
 import {WHOLE, BANDED_LIMITS, bandRows} from './band-size.mjs';
 export {WHOLE};
 
-const shapeOf = (bytes, frameRead) => { const {image, frames} = readStill(bytes, frameRead); return {xyb: image.xyb, alpha: image.alpha, gray: image.colorChannels === 1, one: frames.length === 1}; };
+const shapeOf = (bytes, frameRead) => {
+  const {image, frames} = readStill(bytes, frameRead), one = frames.length === 1;
+  return {xyb: image.xyb, alpha: image.alpha, gray: image.colorChannels === 1, one, text: !image.xyb && (!one || exactAnswer(bytes))};
+};
 
 export async function encodeBands({width, height, read}, encodeBand, recode, drain, hooks) {
   const rows = bandRows(width), count = Math.ceil(height / rows), bands = [];
@@ -23,21 +27,21 @@ export async function encodeBands({width, height, read}, encodeBand, recode, dra
     }
     bands.push({y, h, bytes, shape: shapeOf(bytes, frameRead)});
   }
-  const target = {xyb: float ? bands.every(b => b.shape.xyb) : bands.some(b => b.shape.xyb), alpha: bands.some(b => b.shape.alpha),
-    gray: bands.every(b => b.shape.gray)};
+  const target = {xyb: !bands.some(b => b.shape.text) && (float ? bands.every(b => b.shape.xyb) : bands.some(b => b.shape.xyb)),
+    alpha: bands.some(b => b.shape.alpha), gray: bands.every(b => b.shape.gray)};
   for (const band of bands) {
     if (band.shape.one && band.shape.xyb === target.xyb && band.shape.alpha === target.alpha && band.shape.gray === target.gray) continue;
     const pixels = await read(band.y, band.h);
     check(hooks.signal);
-    band.bytes = await drain(recode(pixels, target), {...hooks, preview: undefined, onProgress: undefined});
+    band.bytes = await drain(recode(pixels, {...target, exact: band.shape.text}), {...hooks, preview: undefined, onProgress: undefined});
   }
   const key = bytes => compositionMetadataKey(readStill(bytes, frameRead)), apart = () => bands.some(band => key(band.bytes) !== key(bands[0].bytes));
   if (apart() && target.gray) for (const band of bands) {
     const pixels = await read(band.y, band.h);
     check(hooks.signal);
-    band.bytes = await drain(recode(pixels, {...target, gray: false}), {...hooks, preview: undefined, onProgress: undefined});
+    band.bytes = await drain(recode(pixels, {...target, gray: false, exact: band.shape.text}), {...hooks, preview: undefined, onProgress: undefined});
   }
-  if (apart()) throw fail('JXL_INTERNAL', 'The bands of one picture did not share an image header.');
+  if (apart()) throw fail('JXL_INTERNAL', "Invalid image result; report the input and options.");
   const layers = bands.map(({bytes, y}) => ({bytes, y}));
   return drain(encodeLayersSteps({width, height, layers}, {icc}, null, BANDED_LIMITS), hooks);
 }

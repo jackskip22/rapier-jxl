@@ -6,7 +6,7 @@ import {admitAnimation, animationSteps, partSteps, useMeasuredSearch} from './an
 import {searchV6} from './photo-v6-search.mjs';
 import {losslessSteps, inspectPixels, shapeFloors} from './lossless.mjs';
 import {writeImageHeader} from './icc-write.mjs';
-import {readStill, readFrames, metadataKey, writeStillFrame} from './framing.mjs';
+import {readStill, metadataKey, writeStillFrame} from './framing.mjs';
 import {authoredPatchEntropy, authoredPatchFrame} from './patch-code.mjs';
 import {atlasSearchOptions, discoverAtlasSteps, validateAtlasPlan, atlasCropPlan, buildAnimationAtlas} from './atlas-plan.mjs';
 
@@ -67,15 +67,13 @@ function sharedAtlas(plan, forced) {
 }
 
 function* atlasAnimationSteps(animation, search, mode, supplied) {
-  const baseline = yield* span(animationSteps(animation), 0, mode === 'off' ? 1 : .45);
+  const baseline = yield* span(animationSteps(animation, null, true), 0, mode === 'off' ? 1 : .45);
   if (mode === 'off') return baseline;
   if ((yield .45) && mode !== 'force') { yield 1; return baseline; }
   if (!animation.samples.native8 || animation.quality !== 100) {
     if (mode === 'force') throw fault('JXL_INPUT', 'A forced shared atlas needs exact straight RGBA8.');
     yield 1; return baseline;
   }
-  const original = readFrames(baseline);
-  if (original.frames.some(frame => frame.reference === 3)) throw fault('JXL_FRAMING', 'Reference slot 3 is already in use.');
   let plan = supplied;
   if (!plan) {
     const discovered = yield* span(discoverAtlasSteps(animation, search), .45, .1);
@@ -88,7 +86,7 @@ function* atlasAnimationSteps(animation, search, mode, supplied) {
   }
   const shared = sharedAtlas(plan, mode === 'force');
   let candidate;
-  try { candidate = yield* span(animationSteps(animation, shared), .55, .45); }
+  try { candidate = yield* span(animationSteps(animation, shared, false), .55, .45); }
   catch (error) { if (mode === 'force' || error.code !== 'JXL_SIZE') throw error; }
   if (mode === 'force' && !shared.used) throw fault('JXL_INPUT', 'No atlas placement fits a displayed animation rectangle.');
   yield 1;
@@ -101,7 +99,7 @@ export function encodeAnimationAtlas(animation, options) {
   progress?.(1); return steps.bytes;
 }
 
-export function encodeAnimationAtlasSteps(animation, options = {}) {
+export function encodeAnimationAtlasSteps(animation, options = {}, captures = false) {
   useMeasuredSearch(searchV6);
   const admitted = admitAnimation(animation, options), mode = options.atlasMode ?? 'auto', search = atlasSearchOptions(options.atlasSearch);
   if (!['auto', 'force', 'off'].includes(mode)) throw fault('JXL_INPUT', 'atlasMode is auto, force or off.');
@@ -111,9 +109,11 @@ export function encodeAnimationAtlasSteps(animation, options = {}) {
   const supplied = options.atlas === undefined ? null : validateAtlasPlan(admitted, options.atlas);
   const iterator = (function* () {
     const steps = atlasAnimationSteps(admitted, search, mode, supplied);
-    let step, last = 0;
-    try { while (!(step = guard(() => steps.next(iterator.hurry))).done) {
-      checkSignal(admitted.signal); last = step.value; yield last;
+    let step, last = 0, reply;
+    try { while (!(step = guard(() => steps.next(reply ?? iterator.hurry))).done) {
+      checkSignal(admitted.signal);
+      if (typeof step.value === 'number') { reply = undefined; yield last = Math.max(last, step.value); }
+      else reply = captures ? yield step.value : undefined;
     } } finally { if (!step?.done) steps.return?.(); }
     if (last < 1) yield 1;
     return iterator.bytes = step.value;

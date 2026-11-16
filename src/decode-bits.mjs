@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: MIT
+import {fault} from './fault.mjs';
 export function requireDecode(condition, message = 'Invalid JPEG XL data.', reader) {
   if (condition) return;
   const error = Object.assign(new Error(message), {code: 'JXL_DECODE'});
   if (reader) error.bitOffset = reader.bit;
   throw error;
+}
+
+export function requireSize(condition, message) {
+  if (!condition) throw Object.assign(new Error(message), {code: 'JXL_DIMENSIONS'});
 }
 
 export const unpackSigned = value => (value >>> 1) ^ -(value & 1);
@@ -17,7 +22,7 @@ export function borrowedBytes(source, begin = 0, end = source.length) {
   return new Proxy(new Uint8Array(0), {get: (_target, key) => {
     if (Object.hasOwn(known, key)) return known[key];
     if (key === Symbol.toStringTag) return 'Uint8Array';
-    if (typeof key !== 'string' || !/^\d+$/.test(key)) throw new Error('A borrowed decoder input is read by ranges.');
+    if (typeof key !== 'string' || !/^\d+$/.test(key)) throw fault('JXL_INTERNAL', 'A borrowed decoder input is read by ranges.');
     const n = +key;
     if (n >= length) return undefined;
     if (n < start || n >= start + window.length) { start = Math.floor(n / 16384) * 16384; window = subarray(start, Math.min(length, start + 16384)); }
@@ -29,7 +34,7 @@ export const uint32View = bytes => ArrayBuffer.isView(bytes) ? new DataView(byte
 
 export class JxlBits {
   constructor(bytes, borrowed = false) {
-    if (!(bytes instanceof Uint8Array)) throw new TypeError('JPEG XL bytes must be a Uint8Array.');
+    if (!(bytes instanceof Uint8Array)) throw fault('JXL_INPUT', 'JPEG XL bytes must be a Uint8Array.');
     this.bytes = bytes;
     this.borrowed = borrowed;
     const buf = !borrowed && bytes.length <= 67108864 ? new Uint8Array(bytes.length + 8) : bytes;

@@ -11,6 +11,8 @@ It is good for three things today:
 
 Built on [rapier-jxl](https://github.com/jackskip22/rapier-jxl), an MIT-licensed JPEG XL encoder in WebAssembly.
 
+rapier-jxl is the encoder inside [rapier.website](https://rapier.website), the free Markdown editor and painting app. Rapier is also a free [Android app](https://play.google.com/store/apps/details?id=app.rapier&referrer=utm_source%3Dvscode-jxl) that opens and converts JPEG XL pictures.
+
 ## Commands
 
 - **Convert to JPEG XL**: right-click files or a folder in the Explorer. `name.jxl` is written beside each file.

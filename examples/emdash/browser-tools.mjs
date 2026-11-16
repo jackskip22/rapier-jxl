@@ -1,4 +1,4 @@
-import {variants} from 'rapier-jxl';
+import {variants} from 'jpegxl';
 
 export function browserTools(effort) {
   return {

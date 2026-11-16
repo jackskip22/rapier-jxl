@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {decodeKernels} from './decode-kernels.mjs';
+import {fault} from './fault.mjs';
 
 export const CURVE = Object.freeze({identity: 0, iccGamma: 1, sampled: 2, sampledInverse: 3, para: 4, paraInverse: 5, segmented: 6, srgb: 7, srgbInverse: 8,
   bt709: 9, bt709Inverse: 10, gamma: 11, pq: 12, pqInverse: 13, hlg: 14, hlgInverse: 15, linear: 16});
@@ -12,7 +13,7 @@ const f64Bytes = values => values ? align8(values.length * 8) : 0;
 function curveBytes(c) {
   return CURVE_BYTES + f64Bytes(c.table) + f64Bytes(c.breaks) + (c.segments ?? []).reduce((n, s) => n + SEGMENT_BYTES + f64Bytes(s.table), 0);
 }
-export function programBytes(ops) {
+function programBytes(ops) {
   return (ops.length + 1) * OP_BYTES + ops.reduce((n, o) => n + f64Bytes(o.data) + (o.grid ? align8(o.grid.length * 4) : 0) + (o.curve ? curveBytes(o.curve) : 0), 0);
 }
 function writer(kernels, at) {
@@ -77,14 +78,14 @@ export function curveTable(curve) {
 export function convertPixels(n, job) {
   const kernels = decodeKernels(), {inputs, black = null, alpha = null, outputs, blackOut = null, flags = 0, to, from = [], quantized = null} = job;
   const planes = [...inputs, black, alpha, ...outputs, blackOut].filter(Boolean), inPlace = planes.every(p => p.buffer === kernels.buffer);
-  if (!inPlace && planes.some(p => p.buffer === kernels.buffer)) throw new Error('Color planes are partly in the kernels\' memory.');
+  if (!inPlace && planes.some(p => p.buffer === kernels.buffer)) throw fault('JXL_INTERNAL', 'Color planes are partly in the kernels\' memory.');
   const tables = quantized ? [...new Set(quantized.tables)] : [];
   const bytes = programBytes(to) + programBytes(from) + (quantized ? 168 + quantized.curves.reduce((n, c) => n + curveBytes(c), 0) : 0);
   let w, chunk = n;
   const buffers = [], tableAt = new Map();
   if (inPlace && !quantized && bytes <= SMALL_END - SMALL) w = writer(kernels, SMALL);
   else {
-    if (inPlace) throw new Error('A color program in place exceeds its region.');
+    if (inPlace) throw fault('JXL_INTERNAL', 'A color program in place exceeds its region.');
     chunk = Math.min(n, CHUNK);
     const count = inputs.length + (black ? 1 : 0) + (alpha ? 1 : 0) + outputs.length + (blackOut ? 1 : 0);
     const at = kernels.reserve([bytes, ...tables.map(() => TABLE_BYTES), ...Array(count).fill(chunk * 4)]);

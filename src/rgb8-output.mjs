@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-import {exactPow} from './exact-math.mjs';
 import {RGB8_THRESHOLDS} from './rgb8-thresholds.mjs';
 
 export function toRGBA(linear, width, height) { return toRGBAInto(linear, 0, width * height, new Uint8ClampedArray(width * height * 4), 0); }
@@ -39,8 +38,8 @@ export function toRGBAInto(linear, from, count, out, at) {
   }
   return toRGBAExact(linear, from, count, out, at);
 }
-export function toRGBAExact(linear, from, count, out, at) {
-  const enc = v => v <= 0.0031308 ? 12.92 * v : 1.055 * exactPow(v, 1 / 2.4) - 0.055;
+function toRGBAExact(linear, from, count, out, at) {
+  const enc = v => v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
   for (let i = 0; i < count; i++) {
     for (let c = 0; c < 3; c++) out[(at + i) * 4 + c] = Math.round(255 * Math.min(1, Math.max(0, enc(linear[c][from + i]))));
     out[(at + i) * 4 + 3] = 255;

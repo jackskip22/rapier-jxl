@@ -24,7 +24,8 @@ export function sampleView(bytes,Type) {
     if (part.byteOffset % size) part = part.slice();
     return new Type(part.buffer,part.byteOffset,part.byteLength / size);
   };
-  const known = {length,byteLength:bytes.length,byteOffset:0,BYTES_PER_ELEMENT:size,constructor:Type,subarray,then:undefined};
+  const known = {length,byteLength:bytes.length,byteOffset:0,BYTES_PER_ELEMENT:size,constructor:Type,subarray,then:undefined,
+    ahead:typeof bytes.ahead === 'function' ? (from,to) => bytes.ahead(from * size,to * size) : undefined};
   return new Proxy(new Type(0),{get:(_,key) => Object.hasOwn(known,key) ? known[key]
     : key === Symbol.toStringTag ? Type.name : typeof key === 'symbol' && Symbol.keyFor(key)?.startsWith('rapier-jxl.journal') ? undefined
     : (all => { const value = Reflect.get(all,key); return typeof value === 'function' ? value.bind(all) : value; })(subarray()),

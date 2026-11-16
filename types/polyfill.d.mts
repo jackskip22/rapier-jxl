@@ -1,23 +1,33 @@
 import type {Bytes, WorkerLike, DecodeOptions, DecodedImage} from './types.mjs';
+/** Options for install(); all are optional. */
 export interface PolyfillOptions {
+  /** The document to patch; default the global one. */
   document?: Document;
+  /** Where to look for images: a document, element or shadow root; default the document. */
   root?: Document | Element | ShadowRoot;
+  /** A JPEG XL data or image URL the native test loads; default a built-in one. */
   probeURL?: string;
+  /** true decodes every image here, even where the browser shows JPEG XL itself; default false. */
   force?: boolean;
+  /** Images decoded at once, 1 to 4; default 2. */
   workers?: 1 | 2 | 3 | 4;
-  /** Bytes for decoded images (default 128 MiB): each decode, one per worker at once, is bounded by it alone, and the
-   * images shown together stay under it. Not one cap on all the polyfill's memory. */
+  /** Bytes for decoded images, none by default: when set, each decode, one per worker at once, is bounded by it alone,
+   * and the images shown together stay under it. A decode holds about 32 bytes a pixel. A larger picture fails with
+   * JXL_DIMENSIONS, naming its size and this limit. */
   maxDecodedBytes?: number;
+  /** Largest file fetched, in bytes; none by default. A larger one fails with JXL_LIMIT. */
   maxInputBytes?: number;
+  /** How far off screen an image starts decoding, in pixels or percent; default '1000px'. */
   rootMargin?: string;
-  workerFactory?: () => WorkerLike;
+  /** Makes the decode worker; for a bundler or a Content Security Policy that needs your own URL. */
+  workerFactory?: (() => WorkerLike) | undefined;
   /** Your own decoder in place of the package's (a native or a server-side one): it receives owned bytes and may
    * return the decoded image directly or asynchronously. */
-  decode?: (bytes: Bytes, options: DecodeOptions) => DecodedImage | PromiseLike<DecodedImage>;
-  /** An image that could not be shown. `error.code` is the decoder's ErrorCode, or one of the polyfill's own:
-   * JXL_FETCH (the image request failed), JXL_IMAGE_CSP (the page's image policy refuses decoded images) or
-   * JXL_DISPLAY (the decoded picture could not be put on screen). */
-  onError?: (error: unknown, element: Element) => void;
+  decode?: ((bytes: Bytes, options: DecodeOptions) => DecodedImage | PromiseLike<DecodedImage>) | undefined;
+  /** An image that could not be shown, with its ErrorCode: JXL_IO where the image request failed, JXL_PLATFORM where the
+   * page's image policy refuses decoded images or the decoded picture could not be put on screen.
+   * A value this callback throws or rejects is reported unchanged through the window's reportError. */
+  onError?: ((error: unknown, element: Element) => void) | ((error: unknown, element: Element) => PromiseLike<void>) | undefined;
 }
 export interface PolyfillController {
   readonly status: 'active' | 'native' | 'probe-blocked' | 'unavailable' | 'closed';
@@ -25,10 +35,13 @@ export interface PolyfillController {
   refresh(): void;
   disconnect(): void;
 }
-/** null means policy or a timeout prevented detection, not lack of native support. */
+/** null means policy or a timeout prevented detection, not lack of native support.
+ * A document unable to create images, or a non-string probeURL, refuses JXL_OPTIONS. */
 export function supportsJXL(document?: Document, probeURL?: string): Promise<boolean | null>;
-/** Explicit installation supersedes automatic installation. Repeated explicit calls reuse it until disconnected.
+/** Shows JPEG XL images where the browser does not: those on the page and those added later. Importing installs
+ * nothing. One installation a document: a later call returns it until disconnect(). refresh() rereads the page at once.
  * Options are read once, at the call; invalid ones reject with JXL_OPTIONS and leave any earlier installation connected. */
 export function install(options?: PolyfillOptions): Promise<PolyfillController>;
-/** Initial installation. If already settled, its controller can later be closed by explicit installation. */
-export const ready: Promise<PolyfillController | null>;
+
+/** Every refusal: a coded Error. */
+export type {CodecError, ErrorCode} from './types.mjs';

@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MIT
+import {fault} from './fault.mjs';
+import {outOfMemory} from './fault.mjs';
 import {coefficientEffortSteps, coefficientOrderSteps, candidateSteps, prefetch, prefixPlans} from './coefficient-effort.mjs';
 import {offloading} from './offload.mjs';
 import {varDCTSteps, vdLfGroupCount, seedLfSections} from './vardct.mjs';
 import {part, complete, scaled} from './bits.mjs';
 import {ansCodingsKept, buildAnsCoding, writeModularAnsHistograms} from './ans.mjs';
+import {applyProgressive, spectralOrders, spectralProgression} from './progressive-mode.mjs';
 import {lfCoderFor, monotonicLfCoderFor} from './lf-coding.mjs';
 import {SMALL_PIXELS, SMALL_CLUSTERS, UPLOAD_CLUSTERS} from './photo-v6-settings.mjs';
 import {journalRequest, journaling, unit, journalNext, plainJournal} from './step-journal.mjs';
@@ -12,7 +15,7 @@ const CAPTURE_PHOTO = typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __R
 
 const PHOTO_CLUSTERS = {maxClusters: 64, newClusterCost: 100, seeds: 128};
 export const BUDGETS = [{maxClusters: 64, newClusterCost: 80, seeds: 128, switchCost: 5}, {maxClusters: 48, newClusterCost: 130, seeds: 128}, {maxClusters: 64, newClusterCost: 90, seeds: 128, everyConfig: true}];
-const EXTRA_BUDGETS = [{maxClusters: 64, newClusterCost: 70, seeds: 128, switchCost: 4, everyConfig: true}, {maxClusters: 64, newClusterCost: 58, seeds: 128, switchCost: 4, everyConfig: true}];
+const EXTRA_BUDGETS = [{maxClusters: 64, newClusterCost: 70, seeds: 128, switchCost: 4, everyConfig: true}, {maxClusters: 64, newClusterCost: 58, seeds: 128, switchCost: 4, everyConfig: true}, {maxClusters: 64, newClusterCost: 44, seeds: 128, switchCost: 3, everyConfig: true}, {maxClusters: 32, newClusterCost: 175, seeds: 128, everyConfig: true}];
 
 export function rungs(effort) {
   if ((typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) || effort < 4) return [{orders: true, lf: 3, clusters: UPLOAD_CLUSTERS}];
@@ -32,17 +35,17 @@ function* quiet(steps) { let step; try { while (!(step = steps.next()).done) yie
 
 const FAST_LAST = 3;
 
-export const ansPlan = (rung, orders, effort) => ({coding: buildAnsCoding, modularAns: writeModularAnsHistograms, ...(effort <= FAST_LAST ? {fast: true} : {}),
+export const ansPlan = (rung, orders, effort) => ({coding: buildAnsCoding, modularAns: writeModularAnsHistograms, ...((typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) || effort <= FAST_LAST ? {fast: true} : {}),
   ...(rung.lf ? {lfCoder: lfCoderFor(rung.lf)} : {}), ...(orders ? {orders} : {}), clusters: rung.clusters ?? PHOTO_CLUSTERS});
 
-const isSizeFailure = error => error instanceof RangeError && !error?.code || error?.code === 'JXL_SIZE';
+const isSizeFailure = error => outOfMemory(error) || error?.code === 'JXL_SIZE';
 
 const PREFIX_PIXELS = 128 * 128;
 const FLOOR_BYTES = 2048;
 
 export function coefficientAnsPolicy(jpeg, effort) {
   const list = effort <= 3 && jpeg.xyb && jpeg.width * jpeg.height < SMALL_PIXELS ? [{orders: true, clusters: SMALL_CLUSTERS}] : rungs(effort), learn = list.some(rung => rung.orders) ? 1 : 0, small = jpeg.width * jpeg.height <= PREFIX_PIXELS;
-  const lazyFloor = effort >= 4 && effort <= 6 && !small && !!jpeg.xyb, floorFirst = effort >= 4 && !lazyFloor, parts = learn + list.length + 1;
+  const lazyFloor = !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && effort >= 4 && effort <= 6 && !small && !!jpeg.xyb, floorFirst = !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && effort >= 4 && !lazyFloor, parts = learn + list.length + 1;
   return {list, learn, small, lazyFloor, floorFirst, parts, adaptiveFast: !!(jpeg.xyb && !jpeg.strategyData && effort <= FAST_LAST)};
 }
 export const coefficientAnsKey = (rung, use, orders) => (use === orders && use ? 'o' : use ? '?' : 'n') + ':' + (rung.lf ?? 0) + ':' + (rung.clusters ? BUDGETS.indexOf(rung.clusters) : -1);
@@ -51,7 +54,9 @@ export const coefficientAnsNeedsFloor = ({floorFirst, small, lazyFloor}, best, h
 export {isSizeFailure as coefficientSizeFailure};
 
 export function* coefficientAnsSteps(jpeg, effort, fallback, retain, pooled = false) {
+  if ((typeof __RAPIER_JXL_PROGRESSIVE__ === 'undefined' || __RAPIER_JXL_PROGRESSIVE__ === true) && !jpeg.progression) jpeg = applyProgressive(jpeg);
   const shared = retain ? {} : {acCoding: buildAnsCoding};
+  if (!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && jpeg.progressiveOrders && effort <= 5) jpeg = {...jpeg, authoredOrderPasses: jpeg.progressiveOrders, progressiveOrders: null};
   if (effort < 2) return yield* part(coefficientEffortSteps(jpeg, effort, fallback, retain, shared, pooled), 0, 1);
   const policy = coefficientAnsPolicy(jpeg, effort), {list, learn, small, lazyFloor, floorFirst, parts, adaptiveFast} = policy;
   let best = fallback, hurry = false, at = 0, orders;
@@ -69,13 +74,14 @@ export function* coefficientAnsSteps(jpeg, effort, fallback, retain, pooled = fa
       return step.value;
     } finally { at++; closeCandidate(steps, !settled); }
   }
+  let bestPlan = null;
   const keep = (bytes, plan) => {
-    if (pooled && bytes === null) { if (!best) throw new Error('Incomplete AC group stream.'); return; }
-    if (bytes && (!best || bytes.length < best.length)) best = bytes;
+    if (pooled && bytes === null) { if (!best) throw fault('JXL_INTERNAL', 'Incomplete AC group stream.'); return; }
+    if (bytes && (!best || bytes.length < best.length)) { best = bytes; bestPlan = plan; }
     if (bytes) retain?.(bytes, plan);
   };
   const floor = () => coefficientEffortSteps(jpeg, 1, undefined, undefined, {}, pooled);
-  if (!pooled && (!CAPTURE_PHOTO && offloading())) yield prefetch(jpeg, [...(floorFirst || small ? prefixPlans(1) : []),
+  if (!pooled && (!CAPTURE_PHOTO && (!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && offloading()))) yield prefetch(jpeg, [...(floorFirst || small ? prefixPlans(1) : []),
     ...list.filter(rung => rung.orders !== 'best').map(rung => ansPlan(rung, rung.orders ? 'learned' : null, effort))]);
   if (floorFirst) {
     try { keep(yield* run(floor()), {}); }
@@ -88,7 +94,7 @@ export function* coefficientAnsSteps(jpeg, effort, fallback, retain, pooled = fa
   let named = false;
   for (const rung of list) {
     if (hurry && best) break;
-    if (rung.orders === 'best' && !named && !pooled && (!CAPTURE_PHOTO && offloading())) {
+    if (rung.orders === 'best' && !named && !pooled && (!CAPTURE_PHOTO && (!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && offloading()))) {
       named = true;
       const plans = list.filter(r => r.orders === 'best' && !written.has(keyOf(r, bestOrders)))
         .map(r => ansPlan(r, bestOrders && (bestOrders === orders ? 'learned' : bestOrders), effort));
@@ -104,6 +110,10 @@ export function* coefficientAnsSteps(jpeg, effort, fallback, retain, pooled = fa
       keep(yield* run(candidateSteps(jpeg, pooled ? {...plan, pooled: true, abortable: !!best} : plan, shared)), plan);
       if (best !== before) bestOrders = use;
     } catch (error) { if (!isSizeFailure(error)) throw error; }
+  }
+  if (!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && jpeg.progressiveOrders && bestPlan?.coding && !hurry) {
+    try { keep(yield* run(candidateSteps({...jpeg, authoredOrderPasses: jpeg.progressiveOrders}, {...bestPlan, orders: undefined}, retain ? {} : {acCoding: buildAnsCoding})), bestPlan); }
+    catch (error) { if (!isSizeFailure(error)) throw error; }
   }
   if (coefficientAnsNeedsFloor(policy, best, hurry)) {
     try { keep(yield* run(floor()), {}); }
@@ -124,7 +134,7 @@ export function* strategyLfSteps(image, effort = 7) {
 const STRATEGY_SHARED = new WeakMap();
 const strategyOrderEntry = (image, authored) => {
   const sd = image.strategyData;
-  if (!sd || image.placement !== undefined) return {img: {...image, authoredOrderPasses: authored}, shared: {acCoding: buildAnsCoding}};
+  if (!sd || image.placement !== undefined || (typeof __RAPIER_JXL_PROGRESSIVE__ === 'undefined' || __RAPIER_JXL_PROGRESSIVE__ === true) && image.progression === spectralProgression()) return {img: {...image, authoredOrderPasses: authored}, shared: {acCoding: buildAnsCoding}};
   let byOrder = STRATEGY_SHARED.get(sd);
   if (!byOrder) STRATEGY_SHARED.set(sd, byOrder = new Map());
   let entry = byOrder.get(authored ?? null);
@@ -132,6 +142,8 @@ const strategyOrderEntry = (image, authored) => {
   return entry;
 };
 export function strategyAnsRuns(image, effort = 7, learned = null, primed = null, both = true) {
+  if ((typeof __RAPIER_JXL_PROGRESSIVE__ === 'undefined' || __RAPIER_JXL_PROGRESSIVE__ === true) && !image.progression) image = applyProgressive(image);
+  if ((typeof __RAPIER_JXL_PROGRESSIVE__ === 'undefined' || __RAPIER_JXL_PROGRESSIVE__ === true) && image.progression === spectralProgression()) { learned = [spectralOrders()].filter(Boolean); primed = null; }
   const budgets = effort >= 9 ? [...BUDGETS, ...EXTRA_BUDGETS] : effort >= 8 ? [...BUDGETS, EXTRA_BUDGETS[0]] : BUDGETS.slice(0, Math.max(1, Math.min(3, effort - 6)));
   const lf = effort >= 8 ? monotonicLfCoderFor(effort) : lfCoderFor(Math.max(5, effort)), richContexts = effort >= 8;
   const plain = () => primed?.image === image ? {img: primed.img, shared: primed.shared} : strategyOrderEntry(image, null);
@@ -148,6 +160,7 @@ export function strategyAnsRuns(image, effort = 7, learned = null, primed = null
   return runs;
 }
 export function* strategyAnsSteps(image, effort = 7, learned = null, pooled = false, primed = null, both = true) {
+  if ((typeof __RAPIER_JXL_PROGRESSIVE__ === 'undefined' || __RAPIER_JXL_PROGRESSIVE__ === true) && !image.progression) image = applyProgressive(image);
   const runs = strategyAnsRuns(image, effort, learned, primed, both);
   let best = null;
   ansCodingsKept(true);
@@ -182,7 +195,7 @@ export function* strategyAnsSteps(image, effort = 7, learned = null, pooled = fa
           if (typeof value === 'number' ? response : !value?.gpu && !journalRequest(value) && (response === null || response?.hurried)) hurry = true;
         }
         if (pooled && step.value === null) {
-          if (!best) throw new Error('Incomplete AC group stream.');
+          if (!best) throw fault('JXL_INTERNAL', 'Incomplete AC group stream.');
           settled = true; return best;
         }
         if (!best || step.value.length < best.length) best = step.value;
@@ -197,9 +210,10 @@ export function* strategyAnsSteps(image, effort = 7, learned = null, pooled = fa
 }
 
 export function estimateBytes(image, primed = null) {
+  if ((typeof __RAPIER_JXL_PROGRESSIVE__ === 'undefined' || __RAPIER_JXL_PROGRESSIVE__ === true) && !image.progression) image = applyProgressive(image);
   const plan = {clusters: BUDGETS[0], coding: buildAnsCoding, modularAns: writeModularAnsHistograms, lfCoder: lfCoderFor(5), estimate: true};
   const img = {...image, authoredOrderPasses: null}, shared = {};
-  if (primed) Object.assign(primed, {image, img, shared});
+  if (primed && !((typeof __RAPIER_JXL_PROGRESSIVE__ === 'undefined' || __RAPIER_JXL_PROGRESSIVE__ === true) && image.progression === spectralProgression())) Object.assign(primed, {image, img, shared});
   const value = complete(varDCTSteps(img, plan, shared));
   return typeof value === 'number' ? value : value.length;
 }

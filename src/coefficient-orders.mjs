@@ -2,13 +2,13 @@
 import {BitWriter} from './bits.mjs';
 import {fault} from './admit.mjs';
 import {uintConfig, countToken, buildCode, writeHistograms, writeHybrid} from './prefix.mjs';
-import {TRANSFORMS} from './vardct-strategies.mjs';
+import {TRANSFORMS} from './vardct-bases.mjs';
 import {naturalOrder, ORDER_STRATEGY_BUCKETS} from './coefficient-layout.mjs';
 export {ORDER_STRATEGY_BUCKETS} from './coefficient-layout.mjs';
 
 const ORDER_BUCKET_NAMES = ['dct8', 'small', 'dct16', 'dct32', 'dct16x8', 'dct32x8', 'dct32x16',
   'dct64', 'dct64x32', 'dct128', 'dct128x64', 'dct256', 'dct256x128'];
-export const COEFFICIENT_ORDER_BUCKETS = Object.freeze(ORDER_BUCKET_NAMES.map((name, id) => {
+export const COEFFICIENT_ORDER_BUCKETS = /* @__PURE__ */ Object.freeze(ORDER_BUCKET_NAMES.map((name, id) => {
   const strategies = TRANSFORMS.filter(strategy => ORDER_STRATEGY_BUCKETS[strategy.id] === id), first = strategies[0];
   const width = Math.max(first.width, first.height), height = Math.min(first.width, first.height);
   return Object.freeze({name, id, width, height, lowFrequencyCount: width * height / 64,

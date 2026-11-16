@@ -7,9 +7,10 @@ export const channelUpsampling = (value, name) => { if (![1, 2, 4, 8].includes(v
 export const requireChannelObject = (value, name) => { if (!value || typeof value !== 'object' || Array.isArray(value)) throw fault('JXL_INPUT', name + ' is an object.'); return value; };
 
 export function admitChannelPrecision(data, options) {
-  if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray || data instanceof Uint16Array || data instanceof Uint32Array || data instanceof Float32Array))
-    throw fault('JXL_INPUT', 'Channel samples are unsigned typed arrays or Float32Array.');
-  const sampleFormat = options.sampleFormat ?? (data instanceof Float32Array ? 'float32' : 'uint');
+  const float16 = typeof Float16Array === 'function' && data instanceof Float16Array;
+  if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray || data instanceof Uint16Array || data instanceof Uint32Array || data instanceof Float32Array || float16))
+    throw fault('JXL_INPUT', 'Channel samples are unsigned typed arrays, Float16Array or Float32Array.');
+  const sampleFormat = options.sampleFormat ?? (data instanceof Float32Array ? 'float32' : float16 ? 'float16' : 'uint');
   if (!['uint', 'float', 'float16', 'float32'].includes(sampleFormat)) throw fault('JXL_INPUT', 'sampleFormat is uint, float16, float32 or float (raw words).');
   const bitDepth = options.bitDepth ?? (sampleFormat === 'float16' ? 16 : data.BYTES_PER_ELEMENT * 8);
   const exponentBits = sampleFormat === 'uint' ? 0 : options.exponentBits ?? (sampleFormat === 'float16' ? 5 : 8);
@@ -21,12 +22,14 @@ export function admitChannelPrecision(data, options) {
   if (exponentBits) {
     checkInteger(exponentBits, 2, 8, 'exponentBits');
     checkInteger(bitDepth - exponentBits - 1, 2, 23, 'Mantissa precision');
-  } else if (data instanceof Float32Array) throw fault('JXL_INPUT', 'Float32Array needs floating-point sample metadata.');
+  } else if (data instanceof Float32Array || float16) throw fault('JXL_INPUT', 'Float32Array needs floating-point sample metadata.');
   if (data instanceof Float32Array && (bitDepth !== 32 || exponentBits !== 8)) throw fault('JXL_INPUT', 'Float32Array has 32 bits and eight exponent bits.');
+  if (float16 && (bitDepth !== 16 || exponentBits !== 5)) throw fault('JXL_INPUT', 'Float16Array has 16 bits and five exponent bits.');
   if (bitDepth > data.BYTES_PER_ELEMENT * 8) throw fault('JXL_INPUT', 'The channel array cannot hold the declared precision.');
-  const words = data instanceof Float32Array ? new Int32Array(data.buffer, data.byteOffset, data.length) : data;
+  const words = data instanceof Float32Array ? new Int32Array(data.buffer, data.byteOffset, data.length)
+    : float16 ? new Uint16Array(data.buffer, data.byteOffset, data.length) : data;
   const maximum = channelPowers[bitDepth] - 1;
-  if (!(data instanceof Float32Array)) for (const value of words) if (value > maximum) throw fault('JXL_INPUT', 'A channel sample exceeds its declared precision.');
+  if (!(data instanceof Float32Array || float16)) for (const value of words) if (value > maximum) throw fault('JXL_INPUT', 'A channel sample exceeds its declared precision.');
   return {data: words, bitDepth, exponentBits, sampleFormat};
 }
 

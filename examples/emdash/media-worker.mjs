@@ -1,5 +1,5 @@
-import {recompress} from 'rapier-jxl/jpeg';
-import {encode, fit} from 'rapier-jxl';
+import {recompress} from 'jpegxl/jpeg';
+import {encode, fit} from 'jpegxl';
 import {deliveryCopies} from './deliver.mjs';
 import {browserTools} from './browser-tools.mjs';
 import {digest} from './digest.mjs';
@@ -15,17 +15,17 @@ function copyOptions(site) {
 // pixels can differ, so server-verified candidates use that same complete color, orientation and sample record.
 async function jpegReference(input, original) {
   const kept = original ?? await recompress(input, {effort: 1});
-  const {decode} = await import('rapier-jxl/decode');
+  const {decode} = await import('jpegxl/decode');
   return decode(kept.bytes);
 }
 
 async function browserVerified(file, result, progress) {
   const [{verify, configureDecoder}, {decode}, {restore}] = await Promise.all([
-    import('rapier-jxl/verify'), import('rapier-jxl/decode'), import('rapier-jxl/jpeg')]);
+    import('jpegxl/verify'), import('jpegxl/decode'), import('jpegxl/jpeg')]);
   configureDecoder(decode, restore);
   const browserVerification = await verify(file, result, {onProgress: progress});
   if (browserVerification?.verified !== true)
-    throw Object.assign(new Error('The browser verifier did not verify this delivery.'), {code: 'JXL_INPUT'});
+    throw Object.assign(new Error("Delivery unverified; verify its original and candidate."), {code: 'JXL_INPUT'});
   // Informational browser assurance is deliberately separate from the private server receipt.
   const {verification: ignored, ...candidate} = result;
   return {...candidate, browserVerification};
@@ -41,7 +41,7 @@ export async function makeWidths(file, selected, main, progress = () => {}, {del
   if (deliveryOnly) {
     copies = copies.filter(copy => site.widths.includes(copy.width) && copy.width < main.width);
     const checked = [];
-    for (const copy of copies) checked.push(copy.fits ? await browserVerified(file, copy, () => {}) : copy);
+    for (const copy of copies) checked.push(copy.meetsTarget ? await browserVerified(file, copy, () => {}) : copy);
     copies = checked;
   }
   progress(1);
@@ -59,13 +59,13 @@ export async function make(file, selected, progress = () => {}, {deliveryOnly = 
   const reference = () => jpeg && !deliveryOnly ? (decoded ??= jpegReference(input, original)) : file;
   const made = operation === 'recompress' ? original : await ({encode, fit}[operation])(await reference(), options);
   const limit = site.maxKilobytes ? site.maxKilobytes * 1024 : Infinity;
-  const eligible = result => result?.fits === true && result.bytes instanceof Uint8Array && result.bytes.length <= limit;
+  const eligible = result => result?.meetsTarget === true && result.bytes instanceof Uint8Array && result.bytes.length <= limit;
   let result = eligible(original) && (!eligible(made) || original.bytes.length <= made.bytes.length) ? original : made;
   const over = !eligible(result);
   const kind = result?.kept === 'jpeg-bytes' ? 'jpeg' : result?.kept === 'pixels' ? 'exact' : 'photo';
   const archiveIsDelivery = archive !== null && result === archive;
   progress(0.5);
-  if (over || !result?.fits) {
+  if (over || !result?.meetsTarget) {
     progress(1);
     return {kind, over, original: archive, archiveIsDelivery: false, result, source, bytes: input.byteLength, copies: []};
   }

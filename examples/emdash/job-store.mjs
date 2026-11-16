@@ -26,7 +26,7 @@ const OWNER = /^[a-f0-9]{32}$/;
 const WRITE_HORIZON_MS = 24 * 60 * 60 * 1000;
 function fragments(ref, owner) {
   if (!HASH.test(ref?.hash ?? '') || !Number.isSafeInteger(ref.length) || ref.length < 0 || ref.length > MAX_PART)
-    throw fail('JXL_INPUT', 'Expected an immutable part of at most 1 MiB.');
+    throw fail('JXL_INPUT', "Invalid part; pass immutable bytes of at most 1 MiB.");
   return Array.from({length: Math.max(1, Math.ceil(ref.length / FRAGMENT))}, (_, index) => ({
     key: `jxl:${owner}:${ref.hash}:${index}`, offset: index * FRAGMENT,
     length: Math.min(FRAGMENT, ref.length - index * FRAGMENT),
@@ -52,38 +52,40 @@ const base64 = bytes => {
 // Only the JSON transport splits a part. The shared driver owns all source pages and journal records.
 const randomHex = () => [...crypto.getRandomValues(new Uint8Array(8))].map(byte => byte.toString(16).padStart(2, '0')).join('');
 export function createEmDashJobStore(ctx, {readSource, calls = createEmDashCallCounter(), owner, now = () => Date.now()} = {}) {
-  if (!OWNER.test(owner ?? '')) throw fail('JXL_OPTIONS', 'Expected the job ID that owns these parts.');
+  if (!OWNER.test(owner ?? '')) throw fail('JXL_OPTIONS', "Invalid owner; pass the job ID for these parts.");
   const parts = ctx?.storage?.jxlParts;
   if (typeof parts?.getMany !== 'function' || typeof parts?.putMany !== 'function' || typeof readSource !== 'function')
-    throw fail('JXL_OPTIONS', 'Expected EmDash jxlParts storage and an immutable source reader.');
+    throw fail('JXL_OPTIONS', "Missing job storage or source; supply jxlParts and a source reader.");
   const cache = new Map();
+  let known = null;
   async function readMany(refs) {
     if (!Array.isArray(refs) || refs.length > 128 || refs.reduce((n, ref) => n + ref.length, 0) > MAX_BATCH)
-      throw fail('JXL_LIMIT', 'Read at most 128 parts and 8 MiB per batch.');
+      throw fail('JXL_LIMIT', "Part batch too large; read at most 128 parts and 8 MiB.");
     const groups = refs.map(ref => fragments(ref, owner)), keys = [...new Set(groups.flat().map(part => part.key))].filter(key => !cache.has(key));
     if (keys.length) {
       const found = await calls.call(() => parts.getMany(keys));
-      if (!(found instanceof Map)) throw fail('JXL_IO', 'EmDash returned an invalid part batch.');
-      for (const key of keys) cache.set(key, found.get(key));
+      if (!(found instanceof Map)) throw fail('JXL_IO', "Invalid part batch; check storage and retry.");
+      // Only a part that exists: a missing one stays unknown, so a later write of it is not skipped.
+      for (const key of keys) if (found.has(key)) cache.set(key, found.get(key));
     }
     return refs.map((ref, index) => {
       const bytes = new Uint8Array(ref.length);
       for (const part of groups[index]) {
         const saved = cache.get(part.key);
         if (typeof saved !== 'string' || saved.length !== 4 * Math.ceil(part.length / 3))
-          throw fail('JXL_IO', 'An immutable part is missing or truncated.');
+          throw fail('JXL_IO', "Missing or truncated part; restore its saved data.");
         // The runtime's own decoder where it has one (setFromBase64: strict, written in place, about a tenth of the
         // time of atob and a loop over its string); else atob.
         if (typeof bytes.setFromBase64 === 'function') {
           let done;
           try { done = bytes.subarray(part.offset, part.offset + part.length).setFromBase64(saved, {lastChunkHandling: 'strict'}); }
-          catch { throw fail('JXL_IO', 'An immutable part is not base64 data.'); }
-          if (done.read !== saved.length || done.written !== part.length) throw fail('JXL_IO', 'An immutable part has the wrong length.');
+          catch { throw fail('JXL_IO', "Invalid part base64; check storage and retry."); }
+          if (done.read !== saved.length || done.written !== part.length) throw fail('JXL_IO', "Wrong part length; check storage and retry.");
           continue;
         }
         let text;
-        try { text = atob(saved); } catch { throw fail('JXL_IO', 'An immutable part is not base64 data.'); }
-        if (text.length !== part.length) throw fail('JXL_IO', 'An immutable part has the wrong length.');
+        try { text = atob(saved); } catch { throw fail('JXL_IO', "Invalid part base64; check storage and retry."); }
+        if (text.length !== part.length) throw fail('JXL_IO', "Wrong part length; check storage and retry.");
         for (let i = 0; i < text.length; i++) bytes[part.offset + i] = text.charCodeAt(i);
       }
       return bytes;
@@ -95,61 +97,106 @@ export function createEmDashJobStore(ctx, {readSource, calls = createEmDashCallC
     const rows = [], named = new Set();
     for (const {ref, bytes} of items) {
       const pieces = fragments(ref, owner);
-      if (!(bytes instanceof Uint8Array) || bytes.length !== ref.length) throw fail('JXL_INPUT', 'Part length differs from its bytes.');
+      if (!(bytes instanceof Uint8Array) || bytes.length !== ref.length) throw fail('JXL_INPUT', "Wrong part length; reload its record and retry.");
       for (const part of pieces) {
         if (cache.has(part.key) || named.has(part.key)) continue;
         named.add(part.key);
         rows.push({id: part.key, data: base64(bytes.subarray(part.offset, part.offset + part.length))});
       }
     }
-    const token = cleaning ? randomHex() : null;
+    let token = cleaning && rows.length ? randomHex() : null;
+    // The keys whose putMany answered: the ledger stops counting them as writes that may still land.
+    const confirmed = [];
     try {
     for (let at = 0; at < rows.length;) {
       let end = at, size = 0;
       while (end < rows.length && end - at < 128 && size + rows[end].data.length + 2 <= MAX_BATCH) size += rows[end++].data.length + 2;
-      const batch = rows.slice(at, end);
+      const batch = rows.slice(at, end), own = batch.map(row => row.id), finalBatch = end === rows.length;
       // The ledger names the keys before they exist, so a part can never be written that its job cannot find again.
-      await ledger(batch.map(row => row.id), [], false, {admit: token});
+      await ledger(own, [], false, {admit: token});
       await calls.call(() => parts.putMany(batch));
-      if (cleaning && ledgerOf(await calls.call(() => parts.getVersioned(ledgerKey))).closed) {
-        const own = batch.map(row => row.id);
-        await deleteKeys(own); await ledger([], own, true, {done: token}); throw closedError();
+      confirmed.push(...own);
+      if (cleaning) {
+        // Optimistic post-commit CAS both retires the active token on the final batch and proves the ledger
+        // stayed open across putMany without an extra getVersioned round-trip unless clear() raced.
+        if (finalBatch) {
+          try { await ledger([], [], false, {done: token}, confirmed); token = null; }
+          catch (error) {
+            if (error?.code === 'JXL_IO' && known?.held?.closed) {
+              await deleteKeys(own); await ledger([], own, true, {done: token}); token = null;
+            }
+            throw error;
+          }
+        } else {
+          const row = await calls.call(() => parts.getVersioned(ledgerKey)), held = ledgerOf(row);
+          known = row ? {revision: row.revision ?? null, held} : null;
+          if (held.closed) {
+            await deleteKeys(own); await ledger([], own, true, {done: token}); token = null; throw closedError();
+          }
+        }
       }
       for (const row of batch) cache.set(row.id, row.data);
       at = end;
     }
     } finally {
-      // Each admitted write has its own entry; clear() waits for it. A lost release only costs a wait up to the horizon.
-      if (token) await ledger([], [], true, {done: token}).catch(() => {});
+      // Each admitted write has its own entry; clear() waits for it. Reset cached state and retry once if a transient
+      // storage glitch accompanied an interrupted write, so a recoverable restart never strands pending[token] for 24 h.
+      if (token) {
+        known = null;
+        await ledger([], [], true, {done: token}, confirmed).catch(async () => {
+          known = null;
+          await ledger([], [], true, {done: token}, confirmed).catch(() => {});
+        });
+      }
     }
   }
-  // One row lists every key the job holds: {closed, keys}. Closing it (by compare-and-set, with the revision read) ends
+  // One row lists every key the job holds: {closed, keys, unconfirmed}: `unconfirmed`, the keys whose write was admitted
+  // and not answered (a ledger without it counts every key so). Closing it (by compare-and-set, with the revision read) ends
   // the job's right to write; a write that was admitted before the close deletes its own parts when it sees the close.
   const cleaning = typeof parts.deleteMany === 'function' && typeof parts.getVersioned === 'function' &&
     typeof parts.compareAndSet === 'function';
   const ledgerKey = `jxl:led:${owner}`;
-  const closedError = () => fail('JXL_IO', 'This job has ended; its parts are no longer kept.');
+  const closedError = () => fail('JXL_IO', "Job closed; use an active job.");
   const ledgerOf = row => ({closed: row?.value?.closed === true, keys: Array.isArray(row?.value?.keys) ? row.value.keys : [],
+    unconfirmed: Array.isArray(row?.value?.unconfirmed) ? row.value.unconfirmed : Array.isArray(row?.value?.keys) ? row.value.keys : [],
     at: Number.isFinite(row?.value?.at) ? row.value.at : 0,
     pending: row?.value?.pending && typeof row.value.pending === 'object' ? {...row.value.pending} : {}});
-  const valueOf = (held, keys, pending, closed = held.closed, at = held.at) =>
-    ({...(closed ? {closed: true, at} : {closed: false}), keys: [...keys], ...(Object.keys(pending).length ? {pending} : {})});
-  async function ledger(add, remove, closedOk = false, writer = {}) {
+  const valueOf = (held, keys, pending, closed = held.closed, at = held.at, unconfirmed = held.unconfirmed) => {
+    const named = new Set(keys);
+    return {...(closed ? {closed: true, at} : {closed: false}), keys: [...named], unconfirmed: unconfirmed.filter(key => named.has(key)),
+      ...(Object.keys(pending).length ? {pending} : {})};
+  };
+  async function ledger(add, remove, closedOk = false, writer = {}, answered = []) {
     if (!cleaning) return;
     for (let attempt = 0; attempt < 8; attempt++) {
-      const row = await calls.call(() => parts.getVersioned(ledgerKey)), held = ledgerOf(row);
+      let revision, held, hadRow;
+      if (attempt === 0 && known) {
+        revision = known.revision; held = known.held; hadRow = revision !== null;
+      } else {
+        const row = await calls.call(() => parts.getVersioned(ledgerKey));
+        revision = row?.revision ?? null; held = ledgerOf(row); hadRow = !!row;
+        known = row ? {revision, held} : null;
+      }
       if (held.closed && !closedOk) throw closedError();
-      const keys = new Set(held.keys), pending = {...held.pending};
-      for (const key of add) keys.add(key);
+      const keys = new Set(held.keys), pending = {...held.pending}, unconfirmed = new Set(held.unconfirmed);
+      for (const key of add) { keys.add(key); unconfirmed.add(key); }
       for (const key of remove) keys.delete(key);
+      for (const key of answered) unconfirmed.delete(key);
       if (writer.admit) pending[writer.admit] = pending[writer.admit] ?? now();
       if (writer.done) delete pending[writer.done];
-      if (row && keys.size === held.keys.length && !add.length && Object.keys(pending).length === Object.keys(held.pending).length) return;
-      const saved = await calls.call(() => parts.compareAndSet(ledgerKey, row?.revision ?? null, valueOf(held, keys, pending)));
-      if (saved?.applied === true) return;
-      if (saved?.applied !== false) throw fail('JXL_IO', 'The part ledger write was not acknowledged.');
+      const open = [...unconfirmed].filter(key => keys.has(key));
+      if (hadRow && keys.size === held.keys.length && !add.length && Object.keys(pending).length === Object.keys(held.pending).length &&
+          open.length === held.unconfirmed.filter(key => keys.has(key)).length) return;
+      const nextValue = valueOf(held, keys, pending, held.closed, held.at, open);
+      const saved = await calls.call(() => parts.compareAndSet(ledgerKey, revision, nextValue));
+      if (saved?.applied === true) {
+        known = {revision: saved.revision ?? null, held: ledgerOf({value: nextValue})};
+        return;
+      }
+      known = null;
+      if (saved?.applied !== false) throw fail('JXL_IO', "Part ledger write unconfirmed; check it before retrying.");
     }
-    throw fail('JXL_IO', 'The part ledger changed too often.');
+    throw fail('JXL_IO', "Part ledger changed; reload its record and retry.");
   }
   async function deleteKeys(keys) {
     let deleted = 0;
@@ -175,26 +222,31 @@ export function createEmDashJobStore(ctx, {readSource, calls = createEmDashCallC
     // deletes it) or the 24-hour horizon passes (wall time, not a fence). A clean pass drops the names. Repeating clear() is always safe.
     async clear() {
       if (!cleaning) return 0;
+      known = null;
       for (let attempt = 0; attempt < 8; attempt++) {
         const row = await calls.call(() => parts.getVersioned(ledgerKey)), held = ledgerOf(row);
         let revision = row?.revision ?? null, closedAt = held.at;
         if (!held.closed) {
           closedAt = now();
-          const saved = await calls.call(() => parts.compareAndSet(ledgerKey, revision, valueOf(held, held.keys, held.pending, true, closedAt)));
+          const saved = await calls.call(() => parts.compareAndSet(ledgerKey, revision, valueOf(held, held.keys, held.pending, true, closedAt, held.unconfirmed)));
           if (saved?.applied === false) continue;
-          if (saved?.applied !== true) throw fail('JXL_IO', 'The part ledger close was not acknowledged.');
+          if (saved?.applied !== true) throw fail('JXL_IO', "Part ledger close unconfirmed; check it before retrying.");
           revision = saved.revision;
         }
         const keys = held.keys.filter(key => typeof key === 'string' && key.startsWith(`jxl:${owner}:`));
-        const deleted = await deleteKeys(keys), absent = keys.length - deleted;
+        // Only a key whose write was never answered may still land: an answered key already gone (an earlier release()
+        // or clear() that stopped before its ledger write) is no write to wait for.
+        const open = new Set(held.unconfirmed), waiting = keys.filter(key => open.has(key));
+        const deletedOpen = await deleteKeys(waiting), absent = waiting.length - deletedOpen;
         const live = Object.values(held.pending).filter(at => Number.isFinite(at) && now() - at < WRITE_HORIZON_MS).length;
         if ((absent > 0 && now() - closedAt < WRITE_HORIZON_MS) || live > 0)
-          throw fail('JXL_BUSY', 'A write admitted before this job ended may still commit; its parts are reclaimed on a later wake.');
+          throw fail('JXL_BUSY', "Write may still commit; check its saved state before cleanup.");
+        const deleted = deletedOpen + await deleteKeys(keys.filter(key => !open.has(key)));
         if (keys.length || Object.keys(held.pending).length)
-          await calls.call(() => parts.compareAndSet(ledgerKey, revision, valueOf(held, [], {}, true, closedAt)));
+          await calls.call(() => parts.compareAndSet(ledgerKey, revision, valueOf(held, [], {}, true, closedAt, [])));
         return deleted;
       }
-      throw fail('JXL_IO', 'The part ledger changed too often.');
+      throw fail('JXL_IO', "Part ledger changed; reload its record and retry.");
     },
     read: async ref => (await readMany([ref]))[0],
     readMany,
@@ -208,23 +260,23 @@ export function createEmDashJobStore(ctx, {readSource, calls = createEmDashCallC
 export async function acquireEmDashAdvance(ctx, {owner, scope, ms, now = () => Date.now(), calls = createEmDashCallCounter()} = {}) {
   if (!OWNER.test(owner ?? '') || typeof scope !== 'string' || !Number.isFinite(ms) || ms <= 0 || ms > 60000 ||
       typeof ctx?.kv?.getVersioned !== 'function' || typeof ctx?.kv?.compareAndSet !== 'function')
-    throw fail('JXL_OPTIONS', 'Expected a saved job and the native advance budget.');
+    throw fail('JXL_OPTIONS', "Invalid advance; pass a saved job and its budget.");
   const key = `jxl:advance:${scope}:${owner}`, at = now();
-  if (!Number.isFinite(at)) throw fail('JXL_OPTIONS', 'Expected a finite lease clock.');
+  if (!Number.isFinite(at)) throw fail('JXL_OPTIONS', "Invalid lease clock; pass a finite number.");
   const row = await calls.call(() => ctx.kv.getVersioned(key));
   if (row?.value != null && (!Number.isFinite(row.value.until) || row.value.until < 0))
-    throw fail('JXL_IO', 'The saved advance lease is invalid.');
+    throw fail('JXL_IO', "Invalid advance lease; check storage and retry.");
   if (row?.value?.until > at) return null;
   // Allow time for the call's I/O as well as its cooperative CPU budget. A dead process leaves only this short wait.
   const saved = await calls.call(() => ctx.kv.compareAndSet(key, row?.revision ?? null,
     {until: at + Math.max(30000, ms * 2)}));
   if (saved?.applied === false) return null;
   if (saved?.applied !== true || saved.revision == null)
-    throw fail('JXL_IO', 'The advance lease was not acknowledged.');
+    throw fail('JXL_IO', "Advance lease unconfirmed; check it before retrying.");
   return async () => {
     // A late release cannot clear the lease acquired by another invocation after expiry.
     const released = await calls.call(() => ctx.kv.compareAndSet(key, saved.revision, {until: 0}));
     if (released?.applied !== true && released?.applied !== false)
-      throw fail('JXL_IO', 'The advance lease release was not acknowledged.');
+      throw fail('JXL_IO', "Lease release unconfirmed; check it before retrying.");
   };
 }

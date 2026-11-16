@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {fault} from './fault.mjs';
 
-export const READ_BATCH_PARTS = 128;
+const READ_BATCH_PARTS = 128;
 export const READ_BATCH_BYTES = 8 * 1048576;
 const fail = message => { throw fault('JXL_INPUT', message); };
 

@@ -1,27 +1,44 @@
 // Rapier's JPEG XL encoder: lossless pictures. MIT (images/jxl/LICENSE).
-import {kernelHooks} from './kernel-hooks.mjs';
-import {BitWriter, complete, part, LITTLE_ENDIAN} from './bits.mjs';
-import {writeModularFrameHeader, groupLayout, groupRect, groupPass, assembleCodestream, GROUP_DIM} from './frame.mjs';
+import {outOfMemory} from './fault.mjs';
+import {kernelHooks, ensured, missing, declined} from './kernel-hooks.mjs';
+import {wasmRequired} from './capture-wasm-error.mjs';
+import {BitWriter, complete, part} from './bits.mjs';
+import {writeModularFrameHeader, groupLayout, groupRect, groupPass, assembleCodestream, writeTOC, addCounts, GROUP_DIM} from './frame.mjs';
 import {writeImageHeader} from './icc-write.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
-import {AVERAGE_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, RESIDUAL_CONFIG, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
+import {AVERAGE_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, RESIDUAL_CONFIG, leaf, channelTree, streamTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {codeChannel} from './modular-channel.mjs';
-import {losslessCoding} from './lossless-coding.mjs';
+import {captureNativeFill, captureDistinctWords, captureNativeShape, captureWordsOr, INTEGER_WORDS} from './capture-kernels.mjs';
+import {losslessCoding, losslessPayloadBits} from './lossless-coding.mjs';
 import {admitSampleFormat} from './admit-samples.mjs';
+import {halfWords} from './half-samples.mjs';
 import {unit, carried, stage, journaling, journalRequest, readAll, readEach, journalJoin, journalFact, JOIN, FACTS, PASSED} from './step-journal.mjs';
 
 const MAX_PALETTE = 2048, PROBE_BITS = 13, PROBE_SIZE = 1 << PROBE_BITS;
 
-export const shapeFloors = new WeakMap();
+export const shapeFloors = /* @__PURE__ */ new WeakMap();
 
 export const paletteKey = (rgba, i, grey, alpha) => grey
   ? (alpha ? rgba[i] + rgba[i + 3] * 256 : rgba[i])
   : rgba[i] + rgba[i + 1] * 256 + rgba[i + 2] * 65536 + (alpha ? rgba[i + 3] * 16777216 : 0);
 
+export function opaquePixels(rgba, from = 0, to = rgba.length) {
+  if (rgba instanceof Uint8Array || rgba instanceof Uint8ClampedArray) {
+    if (!kernelHooks.opaque) kernelHooks.ensure?.();
+    const native = kernelHooks.opaque?.(rgba.subarray(from, to));
+    if (native === undefined) throw wasmRequired();
+    return native;
+  }
+  for (let i = from + 3; i < to; i += 4) if (rgba[i] !== 255) return false;
+  return true;
+}
+
 
 export function inspectPixels(rgba, width, height, {palette: wantPalette = true, opacity = true, samples, ...options} = {}) {
-  if (!samples && (rgba instanceof Uint16Array || rgba instanceof Float32Array)) samples = admitSampleFormat(rgba, options);
-  if (samples) return inspectNativePixels(rgba, width, height, samples, wantPalette);
+  if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) {
+    if (!samples && (rgba instanceof Uint16Array || rgba instanceof Float32Array)) samples = admitSampleFormat(rgba, options);
+    if (samples) return inspectNativePixels(rgba, width, height, samples, wantPalette);
+  }
   const pixels = width * height, scan = shapeScan(pixels, {palette: wantPalette, opacity}, shapeFloors.get(rgba));
   shapeScanPixels(scan, rgba, 0, pixels);
   return shapeResult(scan);
@@ -30,10 +47,6 @@ export function inspectPixels(rgba, width, height, {palette: wantPalette = true,
 const SHAPE_BAND_BYTES = 2 << 20;
 export function* inspectPixelsSteps(rgba, width, height) {
   if (!journaling() || rgba instanceof Uint16Array || rgba instanceof Float32Array) return inspectPixels(rgba, width, height);
-  if (!journalFact(rgba, JOIN)) {
-    const saved = yield* unit('shape', () => { const shape = inspectPixels(rgba, width, height); return shape.palette ? {palette: true} : shape; });
-    return saved.palette ? inspectPixels(rgba, width, height) : saved;
-  }
   const pixels = width * height, rows = Math.max(1, Math.floor(SHAPE_BAND_BYTES / (width * 4)));
   const scan = yield* stage('shape', function* () {
     const floor = shapeFloors.get(rgba), facts = journalFact(rgba, FACTS), scanned = facts?.scans;
@@ -64,14 +77,8 @@ export function shapeScanPixels(scan, rgba, base, count) {
     } else if (scan.pass === 1) {
       let p = scan.p;
       if (!inside(p)) return false;
-      const at = rgba.byteOffset + (p - base) * 4;
-      if (LITTLE_ENDIAN && at % 4 === 0) {
-        const words = new Uint32Array(rgba.buffer, at, end - p), n = words.length;
-        let w = 0;
-        while (w < n && words[w] >= 0xff000000) w++;
-        if (w < n) scan.opaque = false;
-        p += w;
-      } else for (let i = (p - base) * 4 + 3; p < end; p++, i += 4) if (rgba[i] !== 255) { scan.opaque = false; break; }
+      if (!opaquePixels(rgba, (p - base) * 4, (end - base) * 4)) scan.opaque = false;
+      p = end;
       scan.p = p;
       if (scan.opaque && p < pixels) return false;
       scan.pass = 2;
@@ -139,24 +146,13 @@ export function shapeResult(scan) {
   return {colour, alpha, channels, palette};
 }
 
-export function planeFill({channels, alpha, palette, samples}, rct) {
-  const grey = channels - (alpha ? 1 : 0) === 1, index = palette && new Map(palette.map((k, at) => [k, at]));
-  if (samples) return nativePlaneFill(channels, alpha, index, samples, rct);
+export function planeFill({channels, alpha, palette, samples, chan, lattice}, rct) {
+  const grey = channels - (alpha ? 1 : 0) === 1;
+  if (samples) return nativePlaneFill(channels, alpha, palette, samples, rct, chan, lattice);
   return (planes, rgba, stride, x0, y0, w, h) => {
     if (rct && !palette && channels >= 3) { rct.fill(planes, rgba, stride, x0, y0, w, h); return; }
-    if (!palette && kernelHooks.fill?.(rgba, stride, x0, y0, w, h, channels, planes)) return;
-    for (let y = 0; y < h; y++) {
-      let i = ((y0 + y) * stride + x0) * 4, at = y * w;
-      for (let x = 0; x < w; x++, i += 4, at++) {
-        if (palette) { planes[0][at] = index.get(paletteKey(rgba, i, grey, alpha)); continue; }
-        if (channels >= 3) {
-          const r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
-          const co = r - b, tmp = b + (co >> 1), cg = g - tmp;
-          planes[0][at] = tmp + (cg >> 1); planes[1][at] = co; planes[2][at] = cg;
-          if (channels === 4) planes[3][at] = rgba[i + 3];
-        } else { planes[0][at] = rgba[i]; if (channels === 2) planes[1][at] = rgba[i + 3]; }
-      }
-    }
+    if (palette) (kernelHooks.palette ?? ensured().palette ?? missing())(rgba, stride, x0, y0, w, h, palette, grey, alpha, planes[0]);
+    else (kernelHooks.fill ?? ensured().fill ?? missing())(rgba, stride, x0, y0, w, h, channels, planes);
   };
 }
 
@@ -182,10 +178,11 @@ function fallbackPlanGroup(setup, rct) {
   const planes = picture.map(() => new Plane(GROUP_DIM * GROUP_DIM));
   return (rgba, stride, x0, y0, w, h, target) => {
     fill(planes, rgba, stride, x0, y0, w, h);
-    if (!codes) { picture.forEach((l, c) => codeChannel(null, target[l], planes[c], w, h, leaves[l], !setup.samples)); return; }
+    const own = l => setup.lattice ? {...l, multiplier: 1} : l;
+    if (!codes) { picture.forEach((l, c) => codeChannel(null, target[l], planes[c], w, h, own(leaves[l]), !setup.samples || setup.raw?.[l])); return; }
     const section = target || new BitWriter(w * h * picture.length + 64);
     if (!target) writeModularHeader(section, {useGlobalTree: true, transforms: []});
-    picture.forEach((l, c) => codeChannel(section, codes[l], planes[c], w, h, leaves[l]));
+    picture.forEach((l, c) => codeChannel(section, codes[l], planes[c], w, h, own(leaves[l])));
     return target ? undefined : section.finish();
   };
 }
@@ -201,36 +198,50 @@ export function encodeLossless(rgba, width, height, options) { return complete(l
 export function* losslessSteps(rgba, width, height, options = {}) {
   const {colorSpace, rct, analysis} = options;
   let {samples} = options;
-  if (!samples && !(colorSpace && typeof colorSpace === 'object')) { const format = admitSampleFormat(rgba, options); if (!format.native8) samples = format; }
+  if (!samples && !(colorSpace && typeof colorSpace === 'object') && !(typeof colorSpace === 'string' && colorSpace.includes(';'))) { const format = admitSampleFormat(rgba, options); if (!format.native8) samples = format; }
   const shape = options.shape || inspectPixels(rgba, width, height, {samples});
   let best, oversized;
-  const candidates = shape.palette ? [shape, {...shape, palette: null}] : [shape];
+  const chan = samples && !shape.palette && !samples.drop ? channelTables(rgba, width, height, shape, samples) : null;
+  const candidates = shape.palette ? [shape, {...shape, palette: null}] : chan ? options.effort >= 2 ? [{...shape, chan}, shape] : [{...shape, chan}] : [shape];
+  const lattice = samples && !shape.palette && !samples.drop ? nativeLattice(rgba, width, height, shape.channels, shape.alpha, samples, rct?.type) : null;
+  if (lattice && (lattice.rctType !== 0 && samples.exponentBits || lattice.shifts.some(Boolean))) candidates.push({...shape, lattice});
   for (let i = 0; i < candidates.length; i++) {
     try {
-      const bytes = yield* part(planSteps(rgba, width, height, candidates[i], colorSpace, rct, samples, analysis, options.fast, options.units && journaling()), i, candidates.length);
+      const bytes = yield* part(planSteps(rgba, width, height, candidates[i], colorSpace, rct, samples, analysis, options.units && journaling()), i, candidates.length);
       if (!best || bytes.length < best.length) best = bytes;
     } catch (error) { if (error.code !== 'JXL_SIZE') throw error; oversized = error; }
+  }
+  if (chan && best && options.deep && options.effort >= 3) {
+    for (const rung of options.effort >= 6 ? [4, 6] : [4]) {
+      const candidate = yield* options.deep.nativeLocalSteps(rgba, width, height, {...shape, chan}, samples, rung, best.length);
+      if (candidate && candidate.length < best.length) best = candidate;
+    }
   }
   if (!best) throw oversized;
   return best;
 }
 
 const UNIT_GROUPS = 2;
-function* planSteps(rgba, width, height, shape, colorSpace, rct, samples, analysis, fast, units = false) {
-  const {channels, alpha, palette} = shape;
+function* planSteps(rgba, width, height, shape, colorSpace, rct, samples, analysis, units = false) {
+  const {channels, alpha, palette, chan, lattice} = shape;
   const layout = groupLayout(width, height), groups = layout.groupsX * layout.groupsY;
-  const streamChannels = palette ? 2 : channels;
+  const tabled = chan ? chan.flatMap((table, c) => table ? [c] : []) : [], metaCount = tabled.length;
+  const streamChannels = palette ? 2 : chan ? metaCount + channels : channels;
   const step = samples?.drop && !samples.exponentBits ? 1 << samples.drop : 1;
   const leaves = Array.from({length: streamChannels}, (_, c) => {
-    let multiplier = 1;
-    if (!palette && step > 1 && c < channels - Number(alpha)) {
+    let multiplier = lattice ? 1 << lattice.shifts[c] : 1;
+    if (!lattice && !palette && step > 1 && c < channels - Number(alpha)) {
       multiplier = channels >= 3 && rct?.type !== 0
         ? [Math.max(1, step >> 2), step, Math.max(1, step >> 1)][c] : step >> 1;
     }
     return leaf(GRADIENT_PREDICTOR, 0, multiplier);
   });
-  const tree = channelTree(leaves);
-  const setup = {channels, alpha, palette: palette && palette.colours, rct: rct?.type, samples, leaves, picture: palette ? [layout.single ? 1 : 0] : leaves.map((_, c) => c)};
+  const treeOf = leaves => chan && !layout.single
+    ? streamTree([{streamId: 0, tree: channelTree(leaves.slice(0, metaCount))}, {streamId: 1, tree: channelTree(leaves.slice(metaCount))}])
+    : channelTree(leaves);
+  const raw = chan ? leaves.map((_, i) => i >= metaCount && !!chan[i - metaCount]) : null;
+  const setup = {channels, alpha, palette: palette && palette.colours, rct: lattice ? lattice.rctType : rct?.type, lattice, samples, leaves, chan, raw,
+    picture: palette ? [layout.single ? 1 : 0] : chan ? Array.from({length: channels}, (_, c) => metaCount + c) : leaves.map((_, c) => c)};
   const Plane = samples ? Int32Array : Int16Array;
   const rect = g => groupRect(layout, width, height, g);
   const rows = g => {
@@ -249,7 +260,9 @@ function* planSteps(rgba, width, height, shape, colorSpace, rct, samples, analys
     palette.colours.forEach((k, at) => { for (let c = 0; c < channels; c++) paletteRows[c * n + at] = palette.byte(k, c); });
   }
 
-  if (!palette && !fast) {
+  const metaPlanes = tabled.map(c => Int32Array.from(chan[c])).reverse();
+  let spatialLeaves;
+  if (!palette) {
     const choose = () => {
       const fill = planeFill(setup, rct), planes = Array.from({length: channels}, () => new Plane(32 * 32));
       const cost = freqs => {
@@ -260,36 +273,56 @@ function* planSteps(rgba, width, height, shape, colorSpace, rct, samples, analys
         return bits;
       };
       const sw = Math.min(width, 32), sh = Math.min(height, 32);
-      const predictors = samples ? [GRADIENT_PREDICTOR, AVERAGE_PREDICTOR, 1, 2, 0] : [GRADIENT_PREDICTOR, AVERAGE_PREDICTOR];
+      const predictors = samples ? [GRADIENT_PREDICTOR, AVERAGE_PREDICTOR, 1, 2, 0] : [GRADIENT_PREDICTOR, AVERAGE_PREDICTOR, 0];
       const candidates = predictors.map(predictor => ({predictor, freqs: leaves.map(() => new Uint32Array(ALPHABET))}));
       const at = [0, 0.5, 1].map(fraction => [Math.floor((width - sw) * fraction), Math.floor((height - sh) * fraction)]);
       const squares = journalFact(rgba, JOIN) ? readEach(at.map(([x, y]) => () => [rgba.rect(x, y, sw, sh), sw, 0])) : at.map(([x, y]) => [rgba.subarray(y * width * 4, (y + sh) * width * 4), width, x]);
       for (const [pixels, stride, x] of squares) {
         fill(planes, pixels, stride, x, 0, sw, sh);
         for (const candidate of candidates) for (let c = 0; c < channels; c++) {
-          const multiplier = leaves[c].multiplier;
+          const multiplier = leaves[metaCount + c].multiplier;
           if (multiplier > 1 && candidate.predictor === AVERAGE_PREDICTOR) continue;
-          codeChannel(null, candidate.freqs[c], planes[c], sw, sh, leaf(candidate.predictor, 0, multiplier));
+          codeChannel(null, candidate.freqs[metaCount + c], planes[c], sw, sh, leaf(candidate.predictor, 0, lattice ? 1 : multiplier));
         }
       }
-      leaves.forEach((l, c) => {
-        const costs = candidates.map(candidate => l.multiplier > 1 && candidate.predictor === AVERAGE_PREDICTOR ? Infinity : cost(candidate.freqs[c]));
-        let choice = 0;
-        for (let p = 1; p < costs.length; p++) if (costs[p] < costs[choice]) choice = p;
-        l.predictor = candidates[choice].predictor;
+      return leaves.map((l, i) => {
+        if (i < metaCount) return [l.predictor, l.predictor];
+        const costs = candidates.map(candidate => l.multiplier > 1 && candidate.predictor === AVERAGE_PREDICTOR ? Infinity : cost(candidate.freqs[i]));
+        const select = count => {
+          let choice = 0;
+          for (let p = 1; p < count; p++) if (costs[p] < costs[choice]) choice = p;
+          return candidates[choice].predictor;
+        };
+        return [select(samples ? costs.length : 2), select(costs.length)];
       });
-      return leaves.map(l => l.predictor);
     };
     const chosen = units ? yield* unit('predictors', choose) : choose();
-    leaves.forEach((l, c) => { l.predictor = chosen[c]; });
+    if (!samples) spatialLeaves = leaves.map((l, c) => ({...l, predictor: chosen[c][0]}));
+    leaves.forEach((l, c) => { l.predictor = chosen[c][1]; });
   }
   const transforms = palette
     ? [{type: 'palette', beginC: 0, numC: channels, nbColors: palette.colours.length}]
-    : channels >= 3 && !samples?.exponentBits && rct?.type !== 0 ? [{type: 'rct', beginC: 0, rctType: rct?.type ?? 6}] : [];
+    : chan ? tabled.map((c, at) => ({type: 'palette', beginC: at + c, numC: 1, nbColors: chan[c].length}))
+    : channels >= 3 && (lattice ? lattice.rctType !== 0 : !samples?.exponentBits && rct?.type !== 0)
+      ? [{type: 'rct', beginC: 0, rctType: lattice ? lattice.rctType : (rct?.type ?? 6)}] : [];
 
-  let freqs = leaves.map(() => new Uint32Array(samples ? ALPHABET : (palette ? 4096 : 1024) + 33));
+  const emptyCounts = () => leaves.map((_, i) => new Uint32Array(raw?.[i] ? 2 * chan[i - metaCount].length + 34 : samples ? ALPHABET : (palette ? 4096 : 1024) + 33));
+  let freqs = emptyCounts();
   if (paletteRows) codeChannel(null, freqs[0], paletteRows, palette.colours.length, channels, leaves[0], !samples);
+  metaPlanes.forEach((plane, j) => codeChannel(null, freqs[j], plane, plane.length, 1, leaves[j]));
   const count = planGroup(setup, rct);
+  const proposals = spatialLeaves ? [leaves.map(l => ({...l, predictor: GRADIENT_PREDICTOR})), spatialLeaves, leaves] : [leaves];
+  const models = proposals.filter((model, i) => !proposals.slice(0, i).some(previous => previous.every((l, c) => l.predictor === model[c].predictor)));
+  const compare = models.length > 1;
+  const counters = compare && models.map(leaves => planGroup({...setup, leaves}, rct));
+  const grouped = compare && models.map(() => []), modelFreqs = compare && models.map(() => emptyCounts());
+  const counted = g => {
+    const pixels = units ? rows(g) : [rgba, width, ...rect(g)];
+    return counters.map(counter => { const freqs = emptyCounts(); counter(...pixels, freqs); return freqs; });
+  };
+  const keepCounts = (g, counts) => counts.forEach((freqs, i) => {
+    grouped[i][g] = freqs; addCounts(modelFreqs[i], freqs);
+  });
   let chunks;
   if (units) {
     chunks = [];
@@ -298,7 +331,17 @@ function* planSteps(rgba, width, height, shape, colorSpace, rct, samples, analys
       chunks.push([g, to]); g = to;
     }
   }
-  if (units) freqs = yield* stage('counts', function* () {
+  if (compare && units) {
+    const countedChunks = [];
+    for (const [from, to] of chunks) {
+      countedChunks.push(yield* unit('predictor-counts', () => Array.from({length: to - from}, (_, i) => counted(from + i))));
+      yield to / (2 * groups);
+    }
+    readAll(countedChunks);
+    readEach(countedChunks.map(list => () => readAll(list.flat(2))));
+    countedChunks.forEach((list, i) => list.forEach((counts, j) => keepCounts(chunks[i][0] + j, counts)));
+  } else if (compare) yield* groupPass({at: g => (g + 1) / (2 * groups), stop: () => false}, groups, g => keepCounts(g, counted(g)));
+  else if (units) freqs = yield* stage('counts', function* () {
     for (const [from, to] of chunks) {
       const total = yield* carried('counts', () => { for (let g = from; g < to; g++) count(...rows(g), freqs); return freqs.map(f => f.slice()); });
       if (total !== PASSED) freqs = total;
@@ -308,26 +351,59 @@ function* planSteps(rgba, width, height, shape, colorSpace, rct, samples, analys
   });
   else yield* groupPass({at: g => (g + 1) / (2 * groups), stop: () => false}, groups, g => count(rgba, width, ...rect(g), freqs));
 
-  if (!samples) {
-  const pairs = freqs.map(losslessCoding);
-  if (analysis && !palette && !rct) analysis.direct = {first: leaves.map(l => l.predictor), freqs: pairs.map(pair => pair[0].freqs)};
-  const saving = pairs.reduce((n, pair) => n + pair[0].bits - pair[1].bits, 0);
-  const choice = saving > 27 * (layout.single ? 1 : groups + 1) + 8 ? 1 : 0;
-  leaves.forEach((l, i) => { l.config = pairs[i][choice].config; });
-  freqs = pairs.map(pair => pair[choice].freqs);
-  }
+  const prepare = (freqs, leaves) => {
+    let direct = null;
+    if (chan) {
+      const rawLeaves = leaves.flatMap((_, i) => raw[i] ? [i] : []), pairs = rawLeaves.map(i => losslessCoding(freqs[i]));
+      const saving = pairs.reduce((n, pair) => n + pair[0].bits - pair[1].bits, 0), choice = saving > 27 * (layout.single ? 1 : groups + 1) + 8 ? 1 : 0;
+      rawLeaves.forEach((i, k) => { leaves[i].config = pairs[k][choice].config; freqs[i] = pairs[k][choice].freqs; });
+    }
+    if (!samples) {
+      const pairs = freqs.map(losslessCoding);
+      if (analysis && !palette && !rct) direct = {first: leaves.map(l => l.predictor), freqs: pairs.map(pair => pair[0].freqs)};
+      const saving = pairs.reduce((n, pair) => n + pair[0].bits - pair[1].bits, 0);
+      const choice = saving > 27 * (layout.single ? 1 : groups + 1) + 8 ? 1 : 0;
+      leaves.forEach((l, i) => { l.config = pairs[i][choice].config; });
+      freqs = pairs.map(pair => pair[choice].freqs);
+    }
 
-  const header = new BitWriter(256);
-  writeImageHeader(header, width, height, shape.colour, shape.alpha, samples || {colorSpace});
-  writeModularFrameHeader(header, {alpha: shape.alpha});
-  const global = new BitWriter(4096);
-  global.write(1, 1);
-  global.write(1, 1);
-  const ordered = writeTree(global, tree);
-  const histograms = writeChannelHistograms(global, ordered, freqs, l => leaves.indexOf(l), i => leaves[i].config || RESIDUAL_CONFIG);
-  const written = {...setup, codes: leaves.map((_, i) => histograms[i + 1]?.code)}, write = planGroup(written, rct);
-  writeModularHeader(global, {useGlobalTree: true, transforms});
-  if (paletteRows) codeChannel(global, written.codes[0], paletteRows, palette.colours.length, channels, leaves[0]);
+    const header = new BitWriter(256);
+    writeImageHeader(header, width, height, shape.colour, shape.alpha, samples || {colorSpace});
+    writeModularFrameHeader(header, {alpha: shape.alpha});
+    const global = new BitWriter(4096);
+    global.write(1, 1);
+    global.write(1, 1);
+    const ordered = writeTree(global, treeOf(leaves));
+    const histograms = writeChannelHistograms(global, ordered, freqs, l => leaves.indexOf(l), i => leaves[i].config || RESIDUAL_CONFIG);
+    const written = {...setup, leaves, codes: leaves.map((_, i) => histograms[i + 1]?.code)};
+    writeModularHeader(global, {useGlobalTree: true, transforms});
+    if (paletteRows) codeChannel(global, written.codes[0], paletteRows, palette.colours.length, channels, leaves[0]);
+    metaPlanes.forEach((plane, j) => codeChannel(global, written.codes[j], plane, plane.length, 1, leaves[j]));
+    return {header, global, written, direct};
+  };
+  let plan;
+  if (compare) {
+    const size = (plan, counts) => {
+      const groupHeader = new BitWriter(1);
+      writeModularHeader(groupHeader, {useGlobalTree: true, transforms: []});
+      const sizes = counts.map(counts => {
+        let bits = layout.single ? plan.global.bitLength : groupHeader.bitLength;
+        counts.forEach((raw, c) => { bits += losslessPayloadBits(raw, plan.written.leaves[c].config, plan.written.codes[c]); });
+        return Math.ceil(bits / 8);
+      });
+      if (!layout.single) sizes.unshift(Math.ceil(plan.global.bitLength / 8), ...Array(layout.dcGroupsX * layout.dcGroupsY + 1).fill(0));
+      const header = new BitWriter(256);
+      header.append(plan.header); writeTOC(header, sizes);
+      return header.at + sizes.reduce((sum, bytes) => sum + bytes, 0);
+    };
+    let least = Infinity;
+    models.forEach((leaves, i) => {
+      const candidate = prepare(modelFreqs[i], leaves), bytes = size(candidate, grouped[i]);
+      if (bytes < least) { plan = candidate; least = bytes; }
+    });
+  } else plan = prepare(freqs, leaves);
+  const {header, global, written} = plan, write = planGroup(written, rct);
+  if (analysis && plan.direct) analysis.direct = plan.direct;
   const sections = [];
   if (layout.single) {
     write(rgba, width, 0, 0, width, height, global);
@@ -339,7 +415,7 @@ function* planSteps(rgba, width, height, shape, colorSpace, rct, samples, analys
     const first = sections.length, place = (g, section) => { sections[first + g] = section; };
     if (units) {
       const written = [];
-      for (const [from, to] of chunks) { written.push(yield* unit('sections', () => { const out = []; for (let g = from; g < to; g++) out.push(write(...rows(g))); return out; })); yield (groups + to) / (2 * groups); }
+      for (const [from, to] of chunks) { written.push(yield* unit('sections', () => { const out = []; for (let g = from; g < to; g++) out.push(write(...rows(g))); return out; }, undefined, false, true)); yield (groups + to) / (2 * groups); }
       readAll(written);
       written.forEach((list, i) => list.forEach((section, j) => place(chunks[i][0] + j, section)));
     }
@@ -348,19 +424,21 @@ function* planSteps(rgba, width, height, shape, colorSpace, rct, samples, analys
   return assembleCodestream(header, sections, samples && (samples.level === 10 || samples.bitDepth > 12 || samples.exponentBits) ? 10 : 5, units && !layout.single && journalJoin);
 }
 
-export function* nativeSteps(data, width, height, {samples, quality = 100, effort = 1} = {}) {
-  const choices = [{samples}];
-  if (effort >= 2 && !samples.exponentBits) choices.push({samples, rct: {type: 0}});
+export function* nativeSteps(data, width, height, {samples, quality = 100, effort = 1, deep, report} = {}) {
+  const floor = shapeFloors.get(data), half = samples.sampleFormat === 'float32' && !samples.iccSpace && !floor?.float32 ? halfWords(data) : null;
+  if (half) { if (floor) shapeFloors.set(half, floor); data = half; samples = {...samples, sampleFormat: 'float16', bitDepth: 16, exponentBits: 5}; }
+  const choices = [{samples, effort, deep}];
+  if (effort >= 2 && !samples.exponentBits) choices.push({samples, effort, deep, rct: {type: 0}});
   if (quality < 100) {
     const precision = samples.exponentBits ? samples.bitDepth - samples.exponentBits - 1 : samples.bitDepth - 1;
     const drop = Math.floor((100 - quality) * precision / 100);
     if (drop) {
       const quantized = {...samples, drop};
-      choices.push({samples: quantized});
-      if (effort >= 2 && !samples.exponentBits) choices.push({samples: quantized, rct: {type: 0}});
+      choices.push({samples: quantized, effort, deep});
+      if (effort >= 2 && !samples.exponentBits) choices.push({samples: quantized, effort, deep, rct: {type: 0}});
     }
   }
-  let best, failure, hurried = false;
+  let best, failure, hurried = false, winner = -1;
   for (let i = 0; i < choices.length; i++) {
     try {
       const steps = part(journaling() && data instanceof Uint8Array ? stage('native', function* () {
@@ -371,14 +449,15 @@ export function* nativeSteps(data, width, height, {samples, quality = 100, effor
         reply = yield step.value;
         hurried ||= !!reply && !journalRequest(step.value);
       } } finally { if (!step?.done) steps.return?.(); }
-      if (!best || step.value.length < best.length) best = step.value;
-      if (hurried) return best;
+      if (!best || step.value.length < best.length) { best = step.value; winner = i; }
+      if (hurried) { if (quality < 100) report?.({kept: choices[winner].samples.drop ? 'lossy' : 'pixels', measurements: []}); return best; }
     } catch (error) {
-      if (error.code !== 'JXL_SIZE' && (!(error instanceof RangeError) || error.code)) throw error;
+      if (error.code !== 'JXL_SIZE' && !outOfMemory(error)) throw error;
       failure = error;
     }
   }
   if (!best) throw failure;
+  if (quality < 100) report?.({kept: choices[winner].samples.drop ? 'lossy' : 'pixels', measurements: []});
   return best;
 }
 
@@ -414,16 +493,20 @@ function* inspectNativeSteps(data, width, height, samples, wantPalette = true) {
   const banded = journaling() && journalFact(data, JOIN), rows = banded ? Math.max(1, Math.floor(SHAPE_BAND_BYTES / 2 / (width * 4))) : height;
   const quantize = nativeQuantizer(samples), floor = shapeFloors.get(data);
   const opaqueValue = samples.exponentBits ? samples.bitDepth === 32 ? 0x3f800000 : 0x3c00 : (1 << samples.bitDepth) - 1;
+  const qmode = !samples.drop ? 0 : !samples.exponentBits ? 1 : samples.bitDepth === 32 ? 2 : 3;
   const passes = function* () {
     let state = {opaque: !floor?.alpha, grey: (samples.colorChannels === 1 || (samples.colorChannels === undefined && samples.colorSpace === 'srgb')) && floor?.colour !== 3,
       keys: [], known: !!journalFact(data, FACTS)?.opaque};
     for (const pass of [0, 1]) for (let top = 0; top < height && (pass ? wantPalette && state.keys.length < MAX_PALETTE : state.known ? state.grey : state.opaque || state.grey); top += rows) {
       const from = state, run = () => {
         const bottom = Math.min(height, top + rows), words = nativeWords(data.subarray(top * width * 4, bottom * width * 4), samples), next = {...from};
-        if (!pass) for (let i = 0; i < words.length; i += 4) {
-          if (!next.known && words[i + 3] !== opaqueValue) next.opaque = false;
-          if (quantize(words[i]) !== quantize(words[i + 1]) || quantize(words[i]) !== quantize(words[i + 2])) next.grey = false;
-          if (!next.grey && (next.known || !next.opaque)) break;
+        if (!pass) {
+          if (INTEGER_WORDS.some(kind => words instanceof kind)) Object.assign(next, captureNativeShape(words, opaqueValue, next.known, next.opaque, next.grey, qmode, samples.drop ?? 0));
+          else for (let i = 0; i < words.length; i += 4) {
+            if (!next.known && words[i + 3] !== opaqueValue) next.opaque = false;
+            if (quantize(words[i]) !== quantize(words[i + 1]) || quantize(words[i]) !== quantize(words[i + 2])) next.grey = false;
+            if (!next.grey && (next.known || !next.opaque)) break;
+          }
         } else {
           const seen = new Set(from.keys), alpha = !next.opaque, zero = Array(next.grey ? 1 + alpha : 3 + alpha).fill(0).join(',');
           for (let i = 0; i < words.length && seen.size < MAX_PALETTE; i += 4) { const key = nativePaletteKey(words, i, next.grey, alpha, quantize); if (key !== zero) seen.add(key); }
@@ -445,26 +528,110 @@ function* inspectNativeSteps(data, width, height, samples, wantPalette = true) {
   return {colour, alpha, channels, palette};
 }
 
-function nativePlaneFill(channels, alpha, index, samples, rct) {
-  const grey = channels - (alpha ? 1 : 0) === 1, quantize = nativeQuantizer(samples);
-  const transform = !samples.exponentBits && !grey && rct?.type !== 0;
+function nativePlaneFill(channels, alpha, palette, samples, rct, chan, lattice = null) {
+  const grey = channels - (alpha ? 1 : 0) === 1;
+  const rctMode = grey || chan ? 0 : lattice ? lattice.rctType : (!samples.exponentBits && rct?.type !== 0 ? 6 : 0);
+  const [s0, s1, s2] = lattice ? lattice.shifts : [0, 0, 0], sa = lattice && alpha ? lattice.shifts[channels - 1] : 0;
+  const qmode = !samples.drop ? 0 : !samples.exponentBits ? 1 : samples.bitDepth === 32 ? 2 : 3;
+  const kernel = palette ? {channels, alpha, grey, rct: 0, shifts: [0, 0, 0, 0], tables: null, drop: samples.drop ?? 0, qmode}
+    : {channels, alpha, grey, rct: rctMode, shifts: [s0, s1, s2, sa], tables: chan ?? null, drop: samples.drop ?? 0, qmode};
+  const keys = palette && palette.map(key => key.split(',').map(Number)), raw = palette && Array.from({length: channels}, () => new Int32Array(GROUP_DIM * GROUP_DIM));
   return (planes, data, stride, x0, y0, w, h) => {
-    const words = nativeWords(data, samples);
-    for (let y = 0; y < h; y++) {
-      let i = ((y0 + y) * stride + x0) * 4, at = y * w;
-      for (let x = 0; x < w; x++, i += 4, at++) {
-        if (index) { planes[0][at] = index.get(nativePaletteKey(words, i, grey, alpha, quantize)); continue; }
-        const r = quantize(words[i]);
-        if (grey) planes[0][at] = r;
-        else {
-          const g = quantize(words[i + 1]), b = quantize(words[i + 2]);
-          if (transform) {
-            const co = r - b, tmp = b + (co >> 1), cg = g - tmp;
-            planes[0][at] = tmp + (cg >> 1); planes[1][at] = co; planes[2][at] = cg;
-          } else { planes[0][at] = r; planes[1][at] = g; planes[2][at] = b; }
-        }
-        if (alpha) planes[channels - 1][at] = words[i + 3];
+    const words = nativeWords(data, samples), n = w * h;
+    if (keys) for (let c = 0; c < channels; c++) if (raw[c].length < n) raw[c] = new Int32Array(n);
+    if (!captureNativeFill(keys ? raw : planes, words, stride, x0, y0, w, h, kernel)) throw declined('nativeFill');
+    if (keys) (kernelHooks.tuple ?? ensured().tuple ?? missing())(raw.map(p => p.subarray(0, n)), n, keys, planes[0]);
+  };
+}
+
+export function nativeLattice(data, width, height, channels, alpha, samples, rctType) {
+  if (!samples || samples.drop) return null;
+  const words = nativeWords(data, samples), colour = channels - Number(alpha), orCh = new Int32Array(channels), float = !!samples.exponentBits;
+  let nonNegative = true;
+  if (INTEGER_WORDS.some(kind => words instanceof kind)) {
+    const scan = captureWordsOr(words, width * height * 4, colour, alpha, channels, float ? samples.bitDepth : 0);
+    nonNegative = scan.nonNegative; orCh.set(scan.or);
+  } else for (let i = 0, end = width * height * 4; i < end; i += 4) {
+    for (let c = 0; c < colour; c++) {
+      const w = words[i + c]; orCh[c] |= w;
+      if (float && (samples.bitDepth === 32 ? w < 0 : (w & 0x8000) !== 0)) nonNegative = false;
+    }
+    if (alpha) orCh[channels - 1] |= words[i + 3];
+  }
+  const zeros = m => m ? Math.min(30, 31 - Math.clz32(m & -m)) : 0, bitLength = v => 32 - Math.clz32((v < 0 ? -v : v) | 1);
+  let subtractGreen = colour === 3 && float && rctType !== 0 && nonNegative;
+  if (subtractGreen && width >= 4) {
+    const [t0, t1, t2] = [0, 1, 2].map(c => zeros(orCh[c])), common = Math.min(t0, t1, t2), rows = Math.min(height, 16), columns = Math.min(width - 1, 16);
+    let plain = 0, green = 0;
+    for (let ry = 0; ry < rows; ry++) {
+      const y = Math.floor(ry * (height - 1) / Math.max(1, rows - 1));
+      for (let rx = 0; rx < columns; rx++) {
+        const i = (y * width + 1 + Math.floor(rx * (width - 2) / Math.max(1, columns - 1))) * 4, j = i - 4;
+        const r0 = words[j], g0 = words[j + 1], b0 = words[j + 2], r1 = words[i], g1 = words[i + 1], b1 = words[i + 2];
+        plain += bitLength((r1 - r0) >> t0) + bitLength((g1 - g0) >> t1) + bitLength((b1 - b0) >> t2);
+        green += bitLength((g1 - g0) >> common) + bitLength(((b1 - g1) - (b0 - g0)) >> common) + bitLength(((r1 - g1) - (r0 - g0)) >> common);
       }
     }
+    if (green >= plain) subtractGreen = false;
+  }
+  const chosen = colour === 3 ? (float ? (subtractGreen ? 10 : 0) : (rctType ?? 6)) : 0;
+  const common = colour === 3 && chosen !== 0 ? Math.min(zeros(orCh[0]), zeros(orCh[1]), zeros(orCh[2])) : 0;
+  const signed = alpha && float && (samples.bitDepth === 32 ? orCh[channels - 1] < 0 : (orCh[channels - 1] & 0x8000) !== 0);
+  const shifts = Array.from({length: channels}, (_, c) => {
+    if (alpha && c === channels - 1) return signed ? 0 : zeros(orCh[c]);
+    if (chosen === 6 || (float && !nonNegative && samples.bitDepth === 16)) return 0;
+    return chosen !== 0 ? common : zeros(orCh[c]);
+  });
+  return {rctType: chosen, shifts};
+}
+
+function channelTables(data, width, height, shape, samples) {
+  const words = nativeWords(data, samples), stripRows = Math.max(1, Math.min(height, Math.floor(16384 / width)));
+  const strips = [0, 0.5, 1].map(fraction => Math.floor((height - stripRows) * fraction));
+  const cost = (plane, rows, size, bins) => {
+    if (bins) {
+      const counts = new Uint32Array(bins + 34);
+      codeChannel(null, counts, plane, size, rows, leaf(GRADIENT_PREDICTOR), true);
+      return losslessCoding(counts)[1].bits;
+    }
+    const counts = new Uint32Array(ALPHABET);
+    codeChannel(null, counts, plane, size, rows, leaf(GRADIENT_PREDICTOR));
+    const code = buildCode(counts);
+    let bits = 0;
+    for (let s = 0; s < ALPHABET; s++) if (counts[s]) bits += counts[s] * (code.lengths[s] + Math.max(0, s < 224 ? s - 1 : s - 236));
+    return bits;
   };
+  const scale = height * width / (3 * stripRows * width), info = [], planes = [];
+  for (let c = 0; c < shape.channels; c++) {
+    const from = c < shape.colour ? c : 3;
+    let distinct;
+    if (INTEGER_WORDS.some(kind => words instanceof kind)) distinct = captureDistinctWords(words, from, 65536);
+    else {
+      const seen = new Set();
+      for (let i = from; i < words.length; i += 4) { seen.add(words[i]); if (seen.size > 65536) break; }
+      distinct = seen.size > 65536 ? null : Int32Array.from(seen).sort();
+    }
+    const strip = strips.map(top => { const plane = new Int32Array(stripRows * width); for (let i = 0; i < plane.length; i++) plane[i] = words[(top * width + i) * 4 + from]; return plane; });
+    planes.push(strip);
+    const direct = strip.reduce((n, plane) => n + cost(plane, stripRows, width, 0), 0) * scale;
+    if (!distinct) { info.push({direct}); continue; }
+    const table = distinct, rank = new Map();
+    table.forEach((value, at) => rank.set(value, at));
+    const indexed = strip.reduce((n, plane) => n + cost(plane.map(value => rank.get(value)), stripRows, width, 2 * table.length), 0) * scale + cost(table, 1, table.length, 0);
+    info.push({table, direct, indexed});
+  }
+  const joint = !samples.exponentBits && shape.colour === 3;
+  let useColour = null;
+  if (joint) {
+    const colourStrips = strips.map((_, k) => {
+      const out = [0, 1, 2].map(() => new Int32Array(stripRows * width));
+      for (let i = 0; i < out[0].length; i++) { const r = planes[0][k][i], g = planes[1][k][i], b = planes[2][k][i], co = r - b, tmp = b + (co >> 1), cg = g - tmp; out[0][i] = tmp + (cg >> 1); out[1][i] = co; out[2][i] = cg; }
+      return out;
+    });
+    const rct = colourStrips.reduce((n, planes3) => n + planes3.reduce((m, plane) => m + cost(plane, stripRows, width, 0), 0), 0) * scale;
+    const tabled = info.slice(0, 3).reduce((n, entry) => n + (entry.table ? Math.min(entry.indexed, entry.direct) : entry.direct), 0);
+    useColour = info.slice(0, 3).every(entry => entry.table) && tabled < 0.97 * rct;
+  }
+  const tables = info.map((entry, c) => entry.table && (joint ? (c < 3 ? useColour : useColour) : entry.indexed < entry.direct) ? entry.table : null);
+  return tables.some(Boolean) ? tables : null;
 }

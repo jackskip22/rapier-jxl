@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {fault} from './fault.mjs';
 import {kernelModule} from './kernel-runtime.mjs';
 
 export const FRAME_ROWS_BUDGET = 512 * 65536;
@@ -12,9 +13,10 @@ const instance = memory => {
 const ownArena = () => {
   if (own === undefined) try {
     const memory = new WebAssembly.Memory({initial: 1, maximum: FRAME_ROWS_BUDGET / 65536});
-    own = {memory, base: 0, limit: FRAME_ROWS_BUDGET, grow: end => memory.grow(Math.ceil((end - memory.buffer.byteLength) / 65536))};
+    const arena = {memory, base: 0, limit: FRAME_ROWS_BUDGET, grow: end => memory.grow(Math.ceil((end - memory.buffer.byteLength) / 65536))};
     instance(memory);
-  } catch { own = null; }
+    own = arena;
+  } catch { return null; }
   return own;
 };
 
@@ -35,7 +37,7 @@ export function fusedFrameRows(data, width, dx, dy, boxes, most = 256, arena = o
   const rowBytes = width * 4, frameBytes = rowWidth * 4;
   return (y, count) => {
     const end = band + frameBytes * count;
-    if (count > most) throw new RangeError('A band of more rows than the reader was made for.');
+    if (count > most) throw fault('JXL_INTERNAL', 'A band of more rows than the reader was made for.');
     if (end > memory.buffer.byteLength) arena.grow(end);
     const u8 = new Uint8Array(memory.buffer), u32 = new Uint32Array(memory.buffer);
     new Int32Array(memory.buffer, at, 4 * n).set(placed);

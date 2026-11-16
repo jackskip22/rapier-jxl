@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {captureSmoothCells} from './capture-kernels.mjs';
 export function captureSmoothRegions(data, width, height, exactRects) {
   const exact = new Uint8Array(width * height);
   for (const r of exactRects) {
@@ -6,29 +7,7 @@ export function captureSmoothRegions(data, width, height, exactRects) {
     const x0 = Math.max(0, r.x), x1 = Math.min(width, r.x + r.width), y0 = Math.max(0, r.y), y1 = Math.min(height, r.y + r.height);
     for (let y = y0; y < y1; y++) exact.fill(1, y * width + x0, y * width + x1);
   }
-  const cw = Math.ceil(width / 16), ch = Math.ceil(height / 16), grid = new Uint8Array(cw * ch);
-  for (let cy = 0; cy < ch; cy++) for (let cx = 0; cx < cw; cx++) {
-    const x0 = cx * 16, y0 = cy * 16, x1 = Math.min(width, x0 + 16), y1 = Math.min(height, y0 + 16), seen = new Set();
-    for (let y = y0; y < y1 && seen.size < 3; y += 2) for (let x = x0; x < x1 && seen.size < 3; x += 2) {
-      const p = y * width + x, i = p * 4;
-      if (!exact[p] && data[i + 3] === 255) seen.add(data[i] | data[i + 1] << 8 | data[i + 2] << 16);
-    }
-    if (seen.size < 3) continue;
-    seen.clear();
-    let smooth = 0, sharp = 0, samples = 0;
-    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
-      const p = y * width + x, i = p * 4;
-      if (exact[p] || data[i + 3] !== 255) continue;
-      samples++; if (seen.size < 20) seen.add(data[i] | data[i + 1] << 8 | data[i + 2] << 16);
-      for (let axis = 0; axis < 2; axis++) {
-        const delta = axis ? y + 1 < y1 ? width : 0 : x + 1 < x1 ? 1 : 0;
-        if (!delta || exact[p + delta]) continue;
-        const j = i + delta * 4, d = Math.max(Math.abs(data[i] - data[j]), Math.abs(data[i + 1] - data[j + 1]), Math.abs(data[i + 2] - data[j + 2]));
-        if (d >= 1 && d <= 16) smooth++; else if (d > 24) sharp++;
-      }
-    }
-    if (samples >= 64 && (seen.size >= 20 && smooth >= 14 || seen.size >= 3 && smooth >= 16 && sharp <= 8)) grid[cy * cw + cx] = 1;
-  }
+  const cw = Math.ceil(width / 16), ch = Math.ceil(height / 16), grid = captureSmoothCells(data, exact, width, height);
   const closed = grid.slice();
   for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
     if (closed[y * cw + x]) continue;
@@ -58,8 +37,8 @@ export function captureSmoothRegions(data, width, height, exactRects) {
       }
     }
     const columns = x1 - x0 + 1, rows = y1 - y0 + 1;
+    if (columns * 4 >= cw * 3 && rows * 4 >= ch * 3 && cells >= columns + rows) { regions.push({x: 0, y: 0, width, height}); continue; }
     if (Math.min(columns, rows) < 3 || Math.max(columns, rows) < 4 || cells < 12 || cells * 2 < columns * rows) continue;
-    if (columns * 4 >= cw * 3 && rows * 4 >= ch * 3) { regions.push({x: 0, y: 0, width, height}); continue; }
     const x = Math.max(0, (x0 - 1) * 16), y = Math.max(0, (y0 - 1) * 16);
     const region = {x, y, width: Math.min(width, (x1 + 2) * 16) - x, height: Math.min(height, (y1 + 2) * 16) - y};
     if (Math.min(region.width, region.height) < 80) continue;

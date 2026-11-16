@@ -1,0 +1,21 @@
+{
+  "name": "rapier-jxl-capacitor-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "android": "cap add android",
+    "sync": "cap sync android",
+    "open": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.6.2",
+    "@capacitor/core": "8.6.2",
+    "@capacitor/filesystem": "8.1.5"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.2",
+    "vite": "8.3.8"
+  },
+  "engines": {"node": ">=22.12.0"}
+}

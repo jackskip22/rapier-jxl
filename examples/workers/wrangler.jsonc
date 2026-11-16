@@ -1,0 +1,14 @@
+{
+  "name": "jxl",
+  "main": "jxl-worker.mjs",
+  "compatibility_date": "2026-10-01",
+  // In front of the site: every request on these routes passes through the Worker.
+  "routes": [{"pattern": "example.com/*", "zone_name": "example.com"}]
+  // Workers Free (this file): the Worker serves the JPEG XL files made before the site was deployed
+  // (`npx jpegxl <folder>` writes photo.jxl beside photo.jpg), and the original otherwise. No image work.
+  //
+  // Workers Paid, to convert in the Worker, add (or run `npx jpegxl add workers --paid`):
+  //   "r2_buckets": [{"binding": "JXL", "bucket_name": "jxl"}],
+  //   "vars": {"JXL_CONVERT": "on", "JXL_CPU_MS": "30000"},
+  //   "limits": {"cpu_ms": 30000}
+}

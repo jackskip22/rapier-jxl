@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {outOfMemory} from './fault.mjs';
 import {coefficientEffortSteps, coefficientOrderSteps, candidateSteps} from './coefficient-effort.mjs';
 import {scaled} from './bits.mjs';
 import {buildExactTokenCoding} from './coefficient-coding.mjs';
@@ -55,7 +56,7 @@ export function* jpegEffortSteps(jpeg, effort, retain, baseline = coefficientEff
     }
     return best;
   } catch (error) {
-    if (!(error instanceof RangeError && !error.code) && error.code !== 'JXL_SIZE') throw error;
+    if (!outOfMemory(error) && error.code !== 'JXL_SIZE') throw error;
     return best;
   }
 }

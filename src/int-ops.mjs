@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-export const inRange = (v, lo, hi, what) => { if (!(v >= lo && v <= hi)) throw new RangeError(`int-ops: ${what} ${v} outside [${lo}, ${hi}]`); return v; };
+import {fault} from './fault.mjs';
+export const inRange = (v, lo, hi, what) => { if (!(v >= lo && v <= hi)) throw fault('JXL_INTERNAL', `int-ops: ${what} ${v} outside [${lo}, ${hi}]`); return v; };
 
 export const R = (s, k) => (s + (1 << (k - 1))) >> k;
 export const Rn = (s, k) => Math.floor((s + 2 ** (k - 1)) / 2 ** k);
@@ -32,11 +33,9 @@ export function shr64s([lo, hi], k) {
 }
 export const toBig = ([lo, hi]) => (BigInt(hi) << 32n) | BigInt(lo);
 export const toBigS = ([lo, hi]) => (BigInt(hi | 0) << 32n) | BigInt(lo);
-export const fromBig = v => { const u = BigInt.asUintN(64, v); return [Number(u & 0xffffffffn), Number(u >> 32n)]; };
 export function isqrt(n) { let r = Math.min(65535, Math.floor(Math.sqrt(n))); while (r * r > n) r--; while (r < 65535 && (r + 1) * (r + 1) <= n) r++; return r; }
 export const udiv = (a, b) => { inRange(b, 1, 2 ** 53, 'divisor'); inRange(a, 0, 2 ** 53, 'dividend'); return Math.floor(a / b); };
-export const floorDivB = (p, q) => { const d = p / q; return p % q !== 0n && (p < 0n) !== (q < 0n) ? d - 1n : d; };
-export const roundDivB = (p, q) => floorDivB(2n * p + q, 2n * q);
+const floorDivB = (p, q) => { const d = p / q; return p % q !== 0n && (p < 0n) !== (q < 0n) ? d - 1n : d; };
 
 export const INT_WGSL =  `
 fn mul64(a: u32, b: u32) -> vec2u {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-import {PHOTO_LIMITS} from './limits.mjs';
+import {outOfMemory} from './fault.mjs';
+import {LIMITS} from './limits.mjs';
 import {targetSearch} from './target-search.mjs';
 import {complete, part, scaled} from './bits.mjs';
 import {admitOptions, admitPixels, fault, guard, job, answer} from './admit.mjs';
@@ -19,7 +20,7 @@ import {prepareCoefficientOrders} from './coefficient-orders.mjs';
 import {admitPhotoLayout, padPhotoLayout, applyPhotoLayout} from './photo-layout.mjs';
 import {admitPhotoExtras, snapshotPhotoExtras, applyPhotoExtras} from './photo-extras.mjs';
 
-const PLAN_LIMITS = Object.freeze({...PHOTO_LIMITS, retainedBytes: 256 * 1024 * 1024});
+const PLAN_LIMITS = Object.freeze({...LIMITS, retainedBytes: Number.MAX_SAFE_INTEGER});
 export {PLAN_LIMITS as LIMITS};
 
 function planQuality(value) {
@@ -60,7 +61,7 @@ export function createPhotoPlanSteps(data, width, height, options = {}) {
   const {quality, colorSpace} = admitOptions(options, 90), effort = admitEffort(options);
   planQuality(quality);
   const layout = admitPhotoLayout(width, height, options, quality);
-  admitPixels(data, layout.codedWidth, layout.codedHeight, PHOTO_LIMITS);
+  admitPixels(data, layout.codedWidth, layout.codedHeight, LIMITS);
   const samples = admitSampleFormat(data, options);
   if (!samples.native8) throw fault('JXL_INPUT', 'Retained plans need 8-bit sRGB without ICC.');
   const extras = admitPhotoExtras(data, layout, options);
@@ -70,8 +71,8 @@ export function createPhotoPlanSteps(data, width, height, options = {}) {
   admitPhotoFilter(options);
   if (lfLevels && colorSpace !== 'srgb') throw fault('JXL_INPUT', 'LF frame pyramids need sRGB photo pixels.');
   const maxRetainedBytes = options.maxRetainedBytes ?? PLAN_LIMITS.retainedBytes;
-  if (!Number.isSafeInteger(maxRetainedBytes) || maxRetainedBytes < 1 || maxRetainedBytes > 2147483648)
-    throw fault('JXL_INPUT', 'maxRetainedBytes is a whole number up to 2 GiB.');
+  if (!Number.isSafeInteger(maxRetainedBytes) || maxRetainedBytes < 1)
+    throw fault('JXL_INPUT', 'maxRetainedBytes is a positive whole number.');
   const codedPixels = Math.ceil(layout.codedWidth / 8) * Math.ceil(layout.codedHeight / 8) * 64;
   const shapes = new Map(admitted.ids.map(id => {
     const shape = TRANSFORMS[id]; return [Math.max(shape.width, shape.height) + ':' + Math.min(shape.width, shape.height), shape.width * shape.height * 4];
@@ -146,7 +147,7 @@ function* encodeRetainedSteps(retained, quality, settings) {
     }
     return finish(next.value.length < prefix.length ? next.value : prefix);
   } catch (error) {
-    if (!(error instanceof RangeError && !error.code) && error.code !== 'JXL_SIZE') throw error;
+    if (!outOfMemory(error) && error.code !== 'JXL_SIZE') throw error;
     return finish(prefix);
   }
 }

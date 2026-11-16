@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
-import {exactLog, exactPow} from './exact-math.mjs';
+import {fault} from './fault.mjs';
 
 export function fieldValues(d, field, raw, active, aim, gamma, gammaDown, min, max, from, to) {
   for (let b = from; b < to; b++) if (!active || active[b])
-    raw[b] = Math.max(min, Math.min(max, field[b] * exactPow(Math.max(1e-3, d[b] / aim), d[b] > aim ? gamma : gammaDown)));
+    raw[b] = Math.max(min, Math.min(max, field[b] * Math.pow(Math.max(1e-3, d[b] / aim), d[b] > aim ? gamma : gammaDown)));
 }
 export function fieldLogSum(raw, active, from, to, sum = 0) {
-  for (let b = from; b < to; b++) if (!active || active[b]) sum += exactLog(raw[b]);
+  for (let b = from; b < to; b++) if (!active || active[b]) sum += Math.log(raw[b]);
   return sum;
 }
 export function normalizeField(raw, active, mean, min, max, from, to) {
@@ -15,7 +15,7 @@ export function normalizeField(raw, active, mean, min, max, from, to) {
 export function smoothForward(field, levels, logs, switchCost, active, cost, next, back, from, to) {
   const L = levels.length;
   for (let i = from; i < to; i++) {
-    const fixed = active && !active[i], lf = fixed ? 0 : exactLog(field[i]);
+    const fixed = active && !active[i], lf = fixed ? 0 : Math.log(field[i]);
     let bestPrev = 0;
     for (let j = 1; j < L; j++) if (cost[j] < cost[bestPrev]) bestPrev = j;
     for (let j = 0; j < L; j++) {
@@ -39,17 +39,17 @@ export function fieldRangeValues(dLow, dHigh, field, active, low, high, aimLo, a
   for (let b = from; b < to; b++) if (!active || active[b]) {
     const lowRatio = Math.max(1e-3, dLow[b] / aimHi), highRatio = Math.max(1e-3, dHigh[b] / aimLo);
     const es = dHigh[b] <= aimLo ? [gammaDown] : dLow[b] > aimHi ? [gamma] : [gamma, gammaDown];
-    low[b] = clamp(field[b] * Math.min(...es.map(e => exactPow(lowRatio, e))));
-    high[b] = clamp(field[b] * Math.max(...es.map(e => exactPow(highRatio, e))));
+    low[b] = clamp(field[b] * Math.min(...es.map(e => Math.pow(lowRatio, e))));
+    high[b] = clamp(field[b] * Math.max(...es.map(e => Math.pow(highRatio, e))));
   }
 }
 export function centralLogSum(d, field, aim, gamma, gammaDown, min, max, from, to, sum = 0) {
   const clamp = value => Math.max(min, Math.min(max, value));
-  for (let b = from; b < to; b++) sum += exactLog(clamp(field[b] * exactPow(Math.max(1e-3, d[b] / aim), d[b] > aim ? gamma : gammaDown)));
+  for (let b = from; b < to; b++) sum += Math.log(clamp(field[b] * Math.pow(Math.max(1e-3, d[b] / aim), d[b] > aim ? gamma : gammaDown)));
   return sum;
 }
 export function intervalLogSums(low, high, active, from, to, sl = 0, sh = 0) {
-  for (let b = from; b < to; b++) if (!active || active[b]) { sl += exactLog(low[b]); sh += exactLog(high[b]); }
+  for (let b = from; b < to; b++) if (!active || active[b]) { sl += Math.log(low[b]); sh += Math.log(high[b]); }
   return [sl, sh];
 }
 export function normalizeRanges(low, high, active, meanLo, meanHi, min, max, from, to) {
@@ -60,7 +60,7 @@ export function normalizeRanges(low, high, active, meanLo, meanHi, min, max, fro
 }
 export function logRanges(low, high, active, lo, hi, from, to) {
   const slack = 1e-12;
-  for (let b = from; b < to; b++) if (!active || active[b]) { lo[b] = exactLog(low[b]) - slack; hi[b] = exactLog(high[b]) + slack; }
+  for (let b = from; b < to; b++) if (!active || active[b]) { lo[b] = Math.log(low[b]) - slack; hi[b] = Math.log(high[b]) + slack; }
 }
 export function appendAimOpen(low, high, doubt, active, aimLo, aimHi, from, to, output) {
   if (aimLo < aimHi) for (let b = from; b < to; b++)
@@ -68,11 +68,11 @@ export function appendAimOpen(low, high, doubt, active, aimLo, aimHi, from, to, 
 }
 export function pathLevels(path, levels, active, level, from, to) {
   for (let i = from; i < to; i++) {
-    if (active && !active[i] && path[i] !== 1) throw new RangeError('An AQ path must keep inactive cells at 1.');
+    if (active && !active[i] && path[i] !== 1) throw fault('JXL_INTERNAL', 'An AQ path must keep inactive cells at 1.');
     level[i] = levels.indexOf(path[i]);
   }
 }
-export function pathTerm(lo, hi, level, levels, logs, active, i, j) {
+function pathTerm(lo, hi, level, levels, logs, active, i, j) {
   if (active && !active[i]) return levels[j] === 1 ? 0 : Infinity;
   const a = lo[i] - logs[j], b = hi[i] - logs[j], least = a <= 0 && b >= 0 ? 0 : Math.min(a * a, b * b), most = Math.max(a * a, b * b);
   return j === level[i] ? most : least;
@@ -110,5 +110,5 @@ export function smoothWinner(cost) {
   return j;
 }
 export function fieldPointRange(field, active, point, from, to) {
-  for (let b = from; b < to; b++) point[b] = active[b] ? exactLog(field[b]) : 0;
+  for (let b = from; b < to; b++) point[b] = active[b] ? Math.log(field[b]) : 0;
 }

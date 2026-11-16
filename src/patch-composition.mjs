@@ -93,6 +93,12 @@ function patchCompositionInput(input, options) {
   }, referenceLimit, references.keys().next().value);
   if (geometry.placements * (extras.length + 1) > referenceLimit * 16)
     throw fault('JXL_INPUT', 'Patch blending exceeds the decoder budget.');
+  let reserve = 1, placed = 0;
+  for (const group of geometry.groups) {
+    placed += group.positions.length;
+    if (reserve < placed) reserve = Math.min(reserve * 2, referenceLimit * 4);
+    if (reserve * (extras.length + 1) > referenceLimit * 16) throw fault('JXL_INPUT', 'Patch blending exceeds the decoder budget.');
+  }
   patchCoverage(geometry.area, width * height, options.level ?? 10);
   return {base, references, ...geometry, codedPixels: width * height, requestedLevel: options.level,
     extraChannels: extras.length, tokens: patchTokenCount(geometry.groups, extras.length)};

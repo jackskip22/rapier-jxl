@@ -1,6 +1,6 @@
 import {wasmBytes} from '../wasm-text.mjs';
 import {decodeBands} from '../decode-parallel.mjs';
-import {decodeOptions, openImageSteps} from '../decode-image.mjs';
+import {decodeOptions, openImageSteps, admitContainer, unreadAfterLastFrame} from '../decode-image.mjs';
 import {PUBLIC_DECODE_LIMITS, decodeLimits} from './decode-limits.mjs';
 import {addPart} from '../decode-parts.mjs';
 import {readFeatures, applyPatches, applySplines, applyNoise} from '../decode-features.mjs';
@@ -10,29 +10,28 @@ import {upsamplePlane} from '../decode-upsample.mjs';
 import {decompressBrotli, decompressBrotliSteps} from '../decode-brotli.mjs';
 import {readModularTransforms, inverseModularTransforms} from '../decode-modular-transforms.mjs';
 import {brotliDictionary} from '../brotli-dictionary.mjs';
-import {compileWasm} from '../wasm-modules.mjs';
+import {compileWasm, wasmFailure} from '../wasm-modules.mjs';
 import {DECODE_KERNELS} from '../decode-kernels-bytes.mjs';
 import {wasmRequired} from '../capture-wasm-error.mjs';
 import {decodedFields} from './describe.mjs';
-import {bytes, check, fail, declared, object, pixelLimit, LARGEST, admitSignal, progressOf} from './primitives.mjs';
+import {bytes, check, fail, declared, snapshotOptions, snapshotArray, pixelLimit, PIXELS, admitSignal, progressOf, blobBytes, preparedAlone} from './primitives.mjs';
 import {header} from './inspect.mjs';
 import {publicDecoded} from './header-fields.mjs';
-import {copyBytes, encodedByteLength} from './bytes.mjs';
+import {copyBytes, encodedByteLength, viewBytes, admitSignature} from './bytes.mjs';
 import {admitRegion} from './region.mjs';
-export {configureWasm} from '../wasm-modules.mjs';
 
 addPart('features', {readFeatures, applyPatches, applySplines, applyNoise}); addPart('icc', {readICC, readICCSteps}); addPart('iccColor', {readICCColor});
 addPart('upsample', {upsamplePlane}); addPart('brotli', {decompressBrotli, decompressBrotliSteps}); addPart('transforms', {readModularTransforms, inverseModularTransforms});
 
 const compileKernels = () => compileWasm('decode', () => wasmBytes(DECODE_KERNELS));
-export async function prepare() {
+const prepare = preparedAlone(async () => {
   let compiled;
   try { compiled = await compileKernels(); } catch (error) { throw declared(error); }
-  if (!compiled) throw wasmRequired();
-}
+  if (!compiled) throw wasmRequired(wasmFailure('decode'));
+});
 export async function supported(feature) {
   if (feature === 'webgpu') return false;
-  if (feature !== undefined) throw fail('JXL_OPTIONS', "supported takes nothing, or 'webgpu'.");
+  if (feature !== undefined) throw fail('JXL_OPTIONS', "supported() accepts no argument or 'webgpu'; call supported() or supported('webgpu').");
   try { return await compileKernels(); } catch { return false; }
 }
 const HDR = ['pq', 'hlg'];
@@ -41,20 +40,32 @@ const KEYS = new Set([...PUBLIC_DECODE_LIMITS, ...FLAGS, 'format', 'colorSpace',
 const NAMED_SPACES = ['original', 'srgb', 'linear-srgb', 'display-p3', 'rec2020', 'xyb'];
 const TARGET = {space: ['rgb', 'gray', 'xyb'], whitePoint: ['d65', 'dci', 'e', 'd50'], primaries: ['srgb', 'display-p3', 'rec2020'],
   transferFunction: ['srgb', 'linear', 'bt709', 'dci', 'pq', 'hlg', 'gamma']};
-const point = value => Array.isArray(value) && value.length === 2 && value.every(Number.isFinite);
+const point = value => {
+  if (!Array.isArray(value)) return null;
+  const copy = snapshotArray(value, 'Color point', 2);
+  return copy.every(Number.isFinite) ? copy : null;
+};
 function colorTarget(value) {
   if (value === undefined) return undefined;
-  const refuse = () => fail('JXL_OPTIONS', "colorSpace is 'original', 'srgb', 'linear-srgb', 'display-p3', 'rec2020', 'xyb' or {space, whitePoint?, primaries?, transferFunction?, gamma?, renderingIntent?}.");
+  const refuse = () => fail('JXL_OPTIONS', "The requested colorSpace is not supported; use 'original', 'srgb', 'linear-srgb', 'display-p3', 'rec2020', 'xyb' or {space, whitePoint?, primaries?, transferFunction?, gamma?, renderingIntent?}.");
   if (typeof value === 'string') { if (!NAMED_SPACES.includes(value)) throw refuse(); return value; }
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw refuse();
-  const own = {...value};
+  const own = snapshotOptions(value, 'colorSpace');
   for (const key of Object.keys(own)) if (!['space', 'whitePoint', 'primaries', 'transferFunction', 'gamma', 'renderingIntent'].includes(key)) throw refuse();
   const {space, whitePoint, primaries, transferFunction, gamma, renderingIntent} = own, target = {space};
   if (!TARGET.space.includes(space)) throw refuse();
-  if (whitePoint !== undefined) { if (!TARGET.whitePoint.includes(whitePoint) && !point(whitePoint)) throw refuse(); target.whitePoint = Array.isArray(whitePoint) ? [...whitePoint] : whitePoint; }
+  if (whitePoint !== undefined) {
+    target.whitePoint = TARGET.whitePoint.includes(whitePoint) ? whitePoint : point(whitePoint);
+    if (!target.whitePoint) throw refuse();
+  }
   if (primaries !== undefined) {
-    if (!TARGET.primaries.includes(primaries) && !(Array.isArray(primaries) && primaries.length === 3 && primaries.every(point))) throw refuse();
-    target.primaries = Array.isArray(primaries) ? primaries.map(pair => [...pair]) : primaries;
+    if (TARGET.primaries.includes(primaries)) target.primaries = primaries;
+    else {
+      if (!Array.isArray(primaries)) throw refuse();
+      const copy = snapshotArray(primaries, 'Color primaries', 3);
+      target.primaries = copy.map(point);
+      if (target.primaries.some(pair => !pair)) throw refuse();
+    }
   }
   if (transferFunction !== undefined) { if (!TARGET.transferFunction.includes(transferFunction)) throw refuse(); target.transferFunction = transferFunction; }
   if (gamma !== undefined) {
@@ -62,55 +73,69 @@ function colorTarget(value) {
     target.gamma = gamma;
   }
   if (renderingIntent !== undefined) { if (![0, 1, 2, 3].includes(renderingIntent)) throw refuse(); target.renderingIntent = renderingIntent; }
-  if (transferFunction === 'gamma' && gamma === undefined) throw fail('JXL_OPTIONS', "A 'gamma' transferFunction needs gamma.");
+  if (transferFunction === 'gamma' && gamma === undefined) throw fail('JXL_OPTIONS', "The gamma transfer setting has no gamma value; set gamma alongside transferFunction: 'gamma'.");
   if (space === 'xyb' && (gamma !== undefined && gamma !== 1 / 3 || transferFunction !== undefined && transferFunction !== 'gamma'))
-    throw fail('JXL_OPTIONS', 'XYB has its own transfer: gamma 1/3, set or left out.');
+    throw fail('JXL_OPTIONS', 'XYB uses gamma 1/3; set gamma to 1/3 or leave out gamma and transferFunction.');
   return target;
 }
 function admitDecode(options) {
-  const given = {...object(options)};
-  for (const key of Object.keys(given)) if (!KEYS.has(key)) throw fail('JXL_OPTIONS', `Unknown decode option: ${key}.`);
-  for (const key of FLAGS) if (given[key] !== undefined && typeof given[key] !== 'boolean') throw fail('JXL_OPTIONS', `${key} is a boolean.`);
-  if (given.format !== undefined && !['auto', 'uint8', 'uint16', 'float32'].includes(given.format)) throw fail('JXL_OPTIONS', 'format is auto, uint8, uint16 or float32.');
+  const given = snapshotOptions(options);
+  for (const key of Object.keys(given)) if (!KEYS.has(key)) throw fail('JXL_OPTIONS', `Unknown decode option ${key}; remove it or use an option listed for decode().`);
+  for (const key of FLAGS) if (given[key] !== undefined && typeof given[key] !== 'boolean') throw fail('JXL_OPTIONS', `${key} must be true or false; pass a boolean.`);
+  if (given.format !== undefined && !['auto', 'uint8', 'uint16', 'float32'].includes(given.format)) throw fail('JXL_OPTIONS', "The requested pixel format is not supported; use 'auto', 'uint8', 'uint16' or 'float32'.");
   for (const key of PUBLIC_DECODE_LIMITS) if (key !== 'maxPixels' && given[key] !== undefined && !(Number.isSafeInteger(given[key]) && given[key] > 0))
-    throw fail('JXL_OPTIONS', `${key} is a positive safe integer.`);
+    throw fail('JXL_OPTIONS', `${key} must be a positive whole number; pass a positive safe integer.`);
   admitSignal(given.signal);
   if (given.colorSpace !== undefined) given.colorSpace = colorTarget(given.colorSpace);
   if (given.region !== undefined) given.region = admitRegion(given.region);
   if (given.partial && given.region) throw fail('JXL_OPTIONS', 'Use partial or region, not both.');
   return given;
 }
-export const decode = (input, options) => decodeHere(input, options).catch(error => { throw error === options?.signal?.reason ? error : declared(error); });
-const limitsOf = bounds => decodeOptions({...bounds, ...decodeLimits(bounds), maxPixels: pixelLimit(bounds.maxPixels, LARGEST), dictionary: brotliDictionary});
+const decode = (input, options) => decodeHere(input, options).catch(error => { throw declared(error); });
+const limitsOf = bounds => decodeOptions({...bounds, ...decodeLimits(bounds), maxPixels: pixelLimit(bounds.maxPixels), dictionary: brotliDictionary});
 decode[Symbol.for('rapier-jxl.verify.groups')] = Object.freeze({
   *open(input, options = {}) {
     bytes(input); const limits = {...limitsOf(admitDecode(options)), borrowed: true};
-    if (input.length > limits.maxInputBytes) throw fail('JXL_LIMIT', 'Encoded input exceeds maxInputBytes.');
+    if (input.length > limits.maxInputBytes) throw fail('JXL_LIMIT', 'The encoded file exceeds maxInputBytes; raise maxInputBytes or use a smaller file.');
     try { return yield* openImageSteps(input, limits); } catch (error) { throw declared(error); }
   },
-  region(input, options, opened) {
-    if (!options?.region) return Promise.reject(fail('JXL_OPTIONS', 'A bounded verification decode needs its region.'));
-    if (!opened) return Promise.reject(fail('JXL_INTERNAL', 'A bounded verification region needs its opened image.'));
-    return decodeHere(input, options, opened).catch(error => { throw error === options?.signal?.reason ? error : declared(error); });
-  },
+  region: (input, options, opened) => decodeRegion(input,options,opened,false),
+  withoutNoise: (input, options, opened) => decodeRegion(input,options,opened,true),
 });
-async function decodeHere(input, options, opened = null) {
+function decodeRegion(input,options,opened,withoutNoise) {
+  if (!options?.region) return Promise.reject(fail('JXL_OPTIONS', 'The image region to verify is missing; pass a region before verifying part of a file.'));
+  if (!opened) return Promise.reject(fail('JXL_INTERNAL', 'The image to verify was not opened; report this verification call and its input to rapier-jxl.'));
+  return decodeHere(input,options,opened,withoutNoise).catch(error => { throw declared(error); });
+}
+decode[Symbol.for('rapier-jxl.verify.unread')] = (input, options) => {
+  bytes(input);
+  try { return unreadAfterLastFrame(input, limitsOf(admitDecode(options))); } catch (error) { throw declared(error); }
+};
+decode[Symbol.for('rapier-jxl.verify.without-noise')] = (input, options) =>
+  decodeHere(input, options, null, true).catch(error => { throw declared(error); });
+async function decodeHere(input, options, opened = null, withoutNoise = false) {
   const {signal, onProgress, ...bounds} = admitDecode(options);
   check(signal);
-  if (onProgress !== undefined && typeof onProgress !== 'function') throw fail('JXL_OPTIONS', 'onProgress is a function.');
+  if (onProgress !== undefined && typeof onProgress !== 'function') throw fail('JXL_OPTIONS', 'onProgress must be a function; pass a callback or leave it out.');
   const limits = limitsOf(bounds);
   const borrowed = opened !== null;
   if (borrowed) limits.borrowed = true;
+  if (withoutNoise) limits.withoutNoise = true;
   let owned;
   if (borrowed) {
     bytes(input);
-    if (input.length > limits.maxInputBytes) throw fail('JXL_LIMIT', 'Encoded input exceeds maxInputBytes.');
+    if (input.length > limits.maxInputBytes) throw fail('JXL_LIMIT', 'The encoded file exceeds maxInputBytes; raise maxInputBytes or use a smaller file.');
     owned = input;
   } else if (typeof Blob !== 'undefined' && input instanceof Blob) {
-    if (input.size > limits.maxInputBytes) throw fail('JXL_LIMIT', 'Encoded input exceeds maxInputBytes.');
-    owned = new Uint8Array(await input.arrayBuffer()); check(signal);
+    if (input.size > limits.maxInputBytes) throw fail('JXL_LIMIT', 'The encoded file exceeds maxInputBytes; raise maxInputBytes or use a smaller file.');
+    owned = await blobBytes(input, signal);
   } else {
-    if (encodedByteLength(input) > limits.maxInputBytes) throw fail('JXL_LIMIT', 'Encoded input exceeds maxInputBytes.');
+    if (encodedByteLength(input) > limits.maxInputBytes) throw fail('JXL_LIMIT', 'The encoded file exceeds maxInputBytes; raise maxInputBytes or use a smaller file.');
+    const view = viewBytes(input);
+    admitSignature(view, 'JXL_DECODE');
+    if (!limits.partial) admitContainer(view, limits);
+    try { header(view, {maxBoxes: limits.maxBoxes, maxPixels: limits.maxPixels, maxDimension: limits.maxDimension}); }
+    catch (error) { if (error?.code && error.code !== 'JXL_INPUT' && error.code !== 'JXL_LIMIT') throw error; }
     owned = copyBytes(input);
   }
   bytes(owned);
@@ -129,7 +154,20 @@ async function decodeHere(input, options, opened = null) {
     const data = frame?.data;
     if (data instanceof Uint8Array) frame.data = new Uint8ClampedArray(data.buffer, data.byteOffset, data.length);
   }
-  progressOf(onProgress, signal)?.(1);
+  const progress = progressOf(onProgress, signal);
+  progress?.(1); await progress?.finish();
   check(signal);
   return result;
 }
+
+import * as self from './decode.mjs';
+import {serveRole} from './module-roles.mjs';
+import {moduleRuntime} from './module-runtime.mjs';
+import {install, workerPort} from './worker-runtime.mjs';
+serveRole('rapier-jxl/decode', {worker: () => install(workerPort(), [], moduleRuntime(self, {name: 'rapier-jxl/decode'}))});
+
+import {inPlace} from './module-roles.mjs';
+const here = inPlace('rapier-jxl/decode', {decode, prepare}, {url: () => new URL(import.meta.url)});
+const decodeIn = here.wrap('decode'), prepareIn = here.wrap('prepare');
+export {decodeIn as decode, prepareIn as prepare};
+export const {configure, close} = here;

@@ -8,14 +8,15 @@ import {journaling, stage} from './step-journal.mjs';
 import {photoOutputMeasurements} from './photo-output-policy.mjs';
 export {meets, qualitySteps} from './photo-quality-search.mjs';
 
+const CAPTURE_PHOTO = typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true;
 export const AQ = {rounds: 3, switchCost: 0.01, gamma: 0.5, aimQuantile: 0.9};
 export const VARBLOCK_IDS = [5, 10, 11, 4, 6, 7];
 export const CANDIDATES = ['gaborish', 'blocks', 'field', 'closed', 'plain'];
 
-export const candidateApplies = (name, width, height) => width >= 8 && height >= 8 || name === 'gaborish' || name === 'plain';
-export const candidateOrder = (a, b) => CANDIDATES.indexOf(a) - CANDIDATES.indexOf(b);
-export const smallerCandidate = (a, b) => b.size < a.size ? b : a;
-export function candidatePool(found) {
+const candidateApplies = (name, width, height) => width >= 8 && height >= 8 || name === 'gaborish' || name === 'plain';
+const candidateOrder = (a, b) => CANDIDATES.indexOf(a) - CANDIDATES.indexOf(b);
+const smallerCandidate = (a, b) => b.size < a.size ? b : a;
+function candidatePool(found) {
   const passing = found.filter(f => f.pass);
   return passing.length ? passing : found;
 }
@@ -50,7 +51,7 @@ export function* candidateImageSteps(provider, name, quality, decisions) {
 }
 
 
-export function* scoreSteps(provider, target, {candidates = CANDIDATES, effort = 7, start = 85, aq = AQ, ids = VARBLOCK_IDS, lambda = 1, field = true, targetDoubt = null, initial = null, reuseDecisions = true, pooled = false, exactSize = false, measureSteps = null, preview = null} = {}) {
+export function* scoreSteps(provider, target, {candidates = CANDIDATES, effort = 7, start = 85, aq = AQ, ids = VARBLOCK_IDS, lambda = 1, field = true, targetDoubt = null, initial = null, reuseDecisions = true, pooled = false, exactSize = false, measureSteps = null, preview = null, libjxlOf = null} = {}) {
   if (provider.width < 8 || provider.height < 8)
     candidates = candidates.filter(name => candidateApplies(name, provider.width, provider.height));
   if (!candidates.length) return null;
@@ -77,12 +78,12 @@ export function* scoreSteps(provider, target, {candidates = CANDIDATES, effort =
       gaborishQuality = best.quality;
       const {output, ...probe} = best; gaborish = {...probe, imageAt};
     }
-    const candidate = {candidate: name, quality: best.quality, imageAt, ...best.scores, pass: meets(best.scores, target),
+    const candidate = {candidate: name, quality: best.quality, imageAt, ...(!CAPTURE_PHOTO && {decisions}), ...best.scores, pass: meets(best.scores, target),
       bestObserved: {candidate: name, ...best.bestObserved}};
     if (measureSteps) {
-      if (best.output && !best.output.bytes && best.output.effort === effort) {
+      if (best.output && (!best.output.bytes && best.output.effort === effort || best.output.bytes && best.output.effort !== effort)) {
         const write = function* () { const image = yield* imageAt(best.quality); return shown(yield* provider.write(image, effort, {pass: true}), image); };
-        best.output = {...best.output, bytes: journaling() ? yield* stage('candidate-file', write) : yield* write()};
+        best.output = {...best.output, effort, bytes: journaling() ? yield* stage('candidate-file', write) : yield* write()};
       }
       if (!(best.output?.bytes instanceof Uint8Array) || best.output.effort !== effort)
         throw fault('JXL_INTERNAL', 'A complete-output candidate must retain its measured file and writer effort.');
@@ -125,7 +126,8 @@ export function* scoreSteps(provider, target, {candidates = CANDIDATES, effort =
       measurements: photoOutputMeasurements(target, chosen, 'encoder-reconstruction')});
   }
   const {output, ...selected} = chosen;
-  return {...selected, bytes, size: bytes.length, imageAt: undefined, cells: undefined, blocks: undefined,
-    tried: found.map(({imageAt, cells, blocks, output, ...rest}) => rest)};
+  const libjxlScore = libjxlOf && chosen.imageAt ? yield* libjxlOf(yield* chosen.imageAt(chosen.quality), bytes) : undefined;
+  return {...selected, bytes, size: bytes.length, ...(libjxlScore !== undefined && {libjxlScore}), imageAt: undefined, cells: undefined, blocks: undefined,
+    tried: found.map(({imageAt, cells, blocks, output, decisions, ...rest}) => rest)};
 }
 

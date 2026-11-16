@@ -1,41 +1,78 @@
-import {check, declared, callers, fail, object, admitSignal} from './primitives.mjs';
+import {check, declared, callers, fail, snapshotOptions, admitSignal} from './primitives.mjs';
 import {header as readHeader} from './inspect.mjs';
 import {headerFields} from './header-fields.mjs';
 import {streamContainer} from '../container-stream.mjs';
-import {viewBytes} from './bytes.mjs';
+import {viewBytes, arrayBufferBytes} from './bytes.mjs';
+import {placeholder as rawPlaceholder, slice as rawSlice} from '../progressive-slice.mjs';
 
 const BOUNDS = ['maxPixels', 'maxDimension', 'maxInputBytes', 'maxBoxes'];
 function bounds(options) {
-  let settings;
-  try { settings = {...object(options)}; } catch (error) { throw callers(error); }
-  for (const key of Object.keys(settings)) if (!BOUNDS.includes(key)) throw fail('JXL_OPTIONS', `Unknown header option: ${key}.`);
+  const settings = snapshotOptions(options);
+  for (const key of Object.keys(settings)) if (!BOUNDS.includes(key)) throw fail('JXL_OPTIONS', `Unknown header option ${key}; remove it.`);
   return settings;
 }
 
 export function header(input, options) {
   try {
-    const settings = bounds(options);
-    return headerFields(readHeader(viewBytes(input), settings));
+    const settings = bounds(options), bytes = viewBytes(input);
+    return headerFields(readHeader(bytes, settings));
   } catch (error) { throw declared(error); }
 }
 
 export {inspect, edit} from './inspect-edit.mjs';
+export function placeholder(input, options) {
+  try { return rawPlaceholder(input, options); } catch (error) { throw declared(error); }
+}
+export function slice(input, options) {
+  try { return rawSlice(input, options); } catch (error) { throw declared(error); }
+}
 
 function watched(source) {
-  let iterable;
-  try { iterable = !!source && (typeof source[Symbol.asyncIterator] === 'function' || typeof source[Symbol.iterator] === 'function'); }
+  if (ArrayBuffer.isView(source) || arrayBufferBytes(source) !== null)
+    throw fail('JXL_INPUT', 'stream needs byte chunks; pass an iterable of Uint8Array chunks.');
+  let method;
+  try { method = source && (source[Symbol.asyncIterator] ?? source[Symbol.iterator]); }
   catch (error) { throw callers(error); }
-  if (!iterable) return source;
-  return (async function* () { try { yield* source; } catch (error) { throw callers(error); } })();
+  const invalid = () => fail('JXL_INPUT', "Invalid chunk iterator; return iterator results with done and a Uint8Array value.");
+  const record = value => value !== null && (typeof value === 'object' || typeof value === 'function');
+  if (typeof method !== 'function') throw invalid();
+  return (async function* () {
+    let iterator, next, close = false;
+    try { iterator = method.call(source); } catch (error) { throw callers(error); }
+    if (!record(iterator)) throw invalid();
+    try { next = iterator.next; } catch (error) { throw callers(error); }
+    if (typeof next !== 'function') throw invalid();
+    try {
+      for (;;) {
+        close = false;
+        let step, done, value;
+        try { step = await next.call(iterator); } catch (error) { throw callers(error); }
+        if (!record(step)) throw invalid();
+        try { done = step.done; if (!done) value = await step.value; } catch (error) { throw callers(error); }
+        if (done) return;
+        close = true;
+        yield viewBytes(value, true);
+      }
+    } finally {
+      if (close) {
+        let stop, result;
+        try { stop = iterator.return; } catch (error) { throw callers(error); }
+        if (stop != null) {
+          if (typeof stop !== 'function') throw invalid();
+          try { result = await stop.call(iterator); } catch (error) { throw callers(error); }
+          if (!record(result)) throw invalid();
+        }
+      }
+    }
+  })();
 }
 const STREAM = ['chunkSize', 'maxBytes', 'maxBoxes', 'signal', 'level'];
 function streamOptions(options) {
-  let settings;
-  try { settings = {...object(options)}; } catch (error) { throw callers(error); }
-  for (const key of Object.keys(settings)) if (!STREAM.includes(key)) throw fail('JXL_OPTIONS', `Unknown stream option: ${key}.`);
+  const settings = snapshotOptions(options);
+  for (const key of Object.keys(settings)) if (!STREAM.includes(key)) throw fail('JXL_OPTIONS', `Unknown stream option ${key}; remove it.`);
   for (const key of ['chunkSize', 'maxBytes', 'maxBoxes'])
-    if (settings[key] !== undefined && !(Number.isSafeInteger(settings[key]) && settings[key] > 0)) throw fail('JXL_OPTIONS', `${key} is a positive safe integer.`);
-  if (settings.level !== undefined && settings.level !== 5 && settings.level !== 10) throw fail('JXL_OPTIONS', 'level is 5 or 10.');
+    if (settings[key] !== undefined && !(Number.isSafeInteger(settings[key]) && settings[key] > 0)) throw fail('JXL_OPTIONS', `Invalid ${key}; use a positive safe integer.`);
+  if (settings.level !== undefined && settings.level !== 5 && settings.level !== 10) throw fail('JXL_OPTIONS', "Invalid level; use 5 or 10.");
   admitSignal(settings.signal);
   return settings;
 }
@@ -46,6 +83,6 @@ export function stream(source, options = {}) {
     try {
       if (refused) throw refusal;
       check(settings.signal); yield* streamContainer(watched(source), settings);
-    } catch (error) { throw error === settings?.signal?.reason ? error : declared(error); }
+    } catch (error) { throw declared(error); }
   })();
 }

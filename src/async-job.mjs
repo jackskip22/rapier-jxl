@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
+import {fault} from './fault.mjs';
 export function checkSignal(signal) {
-  if (signal !== undefined && typeof signal?.throwIfAborted !== 'function') throw new TypeError('signal must be an AbortSignal.');
+  if (signal !== undefined && typeof signal?.throwIfAborted !== 'function') throw fault('JXL_OPTIONS', 'signal must be an AbortSignal.');
   signal?.throwIfAborted();
 }
 
 export async function finishEncoding(job, {progress, signal, hurrySignal} = {}) {
   checkSignal(signal);
   if (hurrySignal !== undefined && typeof hurrySignal?.throwIfAborted !== 'function')
-    throw new TypeError('hurrySignal must be an AbortSignal.');
+    throw fault('JXL_OPTIONS', 'hurrySignal must be an AbortSignal.');
   let channel = typeof MessageChannel === 'function' ? undefined : false, immediate = typeof setImmediate === 'function', lastTurn = performance.now();
   const hurry = () => { job.hurry = true; };
   const turn = () => new Promise(resolve => {

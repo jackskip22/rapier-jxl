@@ -1,18 +1,20 @@
 // SPDX-License-Identifier: MIT
 import {memoryPlan} from './memory-plan.mjs';
+import {retainsWhole, RETAINED_BYTES} from './memory-device.mjs';
 import {fault} from './fault.mjs';
 import {complete, part, scaled} from './bits.mjs';
 import {transformDCT8, dct8Basis} from './photo-dct.mjs';
 import {photoXYBSteps, gaborishPlanes, FAST_RANGE, XYB_TABLES} from './photo-xyb.mjs';
 import {photoXYBBands, photoXYBBand, appendPhotoBand, PHOTO_BAND_MARGIN, photoFastBands} from './photo-bands.mjs';
-import {screenLike} from './screen.mjs';
+import {screenLike} from './screen-samples.mjs';
 import {offloading} from './offload.mjs';
 import {photoSplitSteps, photoSplitCandidates, splitRoute, encodeSplit} from './photo-split.mjs';
 import {fastBudgets, fastSmallSteps} from './photo-low-ladder.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
+const UPLOAD = typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true;
 const effortOne = (width, height, quality, effort, screen) => effort === 1 && quality < 100 && !screen && splitRoute(width, height);
 import {SPLIT_HOOKS} from './split-hooks.mjs';
-import {stage, unit} from './step-journal.mjs';
+import {stage, unit, journaling} from './step-journal.mjs';
 import {V6, v6For, smallPicture, GABORISH, UPLOAD_PICTURE, UPLOAD_FLAT_PICTURE, uploadFlat, uploadGrain, uploadBandPicture} from './photo-v6-settings.mjs';
 
 export {V6, GABORISH, UPLOAD_PICTURE, UPLOAD_FLAT_PICTURE};
@@ -22,18 +24,36 @@ export const blockSearchOptions = (data, width, height, deadzone = v6For(width, 
 
 const JOURNAL_JOIN = Symbol.for('rapier-jxl.journal.join');
 export function admitV6Memory(rgba, width, height, memory) {
-  const inputBytes = rgba[JOURNAL_JOIN] ? rgba.byteLength : rgba.buffer?.byteLength ?? rgba.byteLength;
-  if (memory?.inputBytes !== undefined && memory.inputBytes < inputBytes) throw fault('JXL_MEMORY', 'Memory reservation omits retained input bytes.');
-  const plan = memoryPlan(width * height, {...memory, inputBytes: memory?.inputBytes ?? inputBytes, width, height});
-  if (plan.known && !plan.fits) throw fault('JXL_MEMORY', 'Photo encoding exceeds the supplied memory reservation.');
-  return plan;
+  if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) return {known: false, fits: false, dct: false, banded: width * height > 524288};
+  else {
+    const inputBytes = rgba[JOURNAL_JOIN] ? rgba.byteLength : rgba.buffer?.byteLength ?? rgba.byteLength;
+    if (memory?.inputBytes !== undefined && memory.inputBytes < inputBytes) throw fault('JXL_MEMORY', 'Memory reservation omits retained input bytes.');
+    const plan = memoryPlan(width * height, {...memory, inputBytes: memory?.inputBytes ?? inputBytes, width, height});
+    if (plan.known && !plan.fits) throw fault('JXL_MEMORY', 'Photo encoding exceeds the supplied memory reservation.');
+    return plan;
+  }
 }
 export const prepareV6 = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function prepareV6(rgba, width, height, color = {}, memory = {}, {banded = false, upload = false} = {}) {
   const plan = admitV6Memory(rgba, width, height, memory), cache = plan.dct, whole = !(banded && plan.banded);
-  const prepared = {rgba, width, height, color, memory: plan, pre: null, whole, pres: new Map(), upload,
+  const retain = !whole && !plan.known && retainsWhole(width * height, RETAINED_BYTES);
+  const prepared = {rgba, width, height, color, memory: plan, pre: null, whole, retain, pres: new Map(), upload,
     dct: whole && cache ? {} : null, dctPlain: cache ? {} : null};
   if (whole) prepared.pre = prePlanes(prepared, v6Options(prepared, 75));
+  if (retain && !color?.transform && journaling()) {
+    const held = journalPlanes;
+    if (held && held.width === width && held.height === height && held.upload === upload && sameBytes(held.rgba, rgba)) prepared.pres = held.pres;
+    else journalPlanes = {rgba: rgba.slice(), width, height, upload, pres: prepared.pres};
+  }
   return prepared;
+};
+let journalPlanes = null;
+const sameBytes = (a, b) => {
+  if (a.length !== b.length) return false;
+  const words = a.length >> 2, x = new Uint32Array(a.buffer, a.byteOffset, words), y = b.byteOffset % 4 ? null : new Uint32Array(b.buffer, b.byteOffset, words);
+  if (y) { for (let i = 0; i < words; i++) if (x[i] !== y[i]) return false; }
+  else for (let i = 0; i < words * 4; i++) if (a[i] !== b[i]) return false;
+  for (let i = words * 4; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 };
 export const v6Options = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function v6Options(prepared, quality) {
   if (!prepared.upload) return {...v6For(prepared.width, prepared.height), ...GABORISH, ...prepared.color};
@@ -48,9 +68,9 @@ const prePlanes = (prepared, options) => {
   return planes;
 };
 
-export const gaborishRows = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function gaborishRows(data, width, height, options, sparse = false) {
+export const gaborishRows = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function gaborishRows(data, width, height, options, sparse = false, into = null, scratch = null) {
   const W = Math.ceil(width / 8) * 8, M = PHOTO_BAND_MARGIN, windows = sparse ? new Map() : null;
-  let band = null, pool = null;
+  let band = null, pool = into;
   return (y0, y1, x0, x1) => {
     if (band && y0 >= band.top && y1 <= band.top + band.rows && (!band.cols || x0 >= band.cols[0] && x1 <= band.cols[1])) return band;
     if (sparse && x1 !== undefined) {
@@ -69,8 +89,11 @@ export const gaborishRows = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __R
     band = null;
     const top = Math.floor(y0 / 64) * 64, rows = Math.max(256, Math.ceil((y1 - top) / 64) * 64);
     const from = Math.max(0, top - M), to = Math.min(height, top + rows + M), need = W * Math.ceil((to - from) / 8) * 8;
-    if (!pool || pool[0].length < need) pool = [0, 1, 2].map(() => new Float64Array(need));
-    const planes = gaborishPlanes(data.subarray(from * width * 4, to * width * 4), width, to - from, options, pool);
+    if (!pool || pool[0].length < need) {
+      if (into) throw fault('JXL_INTERNAL', 'A photographic plane workspace is too small.');
+      pool = [0, 1, 2].map(() => new Float64Array(need));
+    }
+    const planes = gaborishPlanes(data.subarray(from * width * 4, to * width * 4), width, to - from, options, pool, scratch);
     return band = {top, rows, planes: planes.map(p => p.subarray((top - from) * W))};
   };
 };
@@ -79,9 +102,9 @@ export const photoV6Image = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __R
 
 export const v6Image = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function v6Image(prepared, quality, extra = {}, cache = true) {
   const {rgba, width, height, color, dct} = prepared, options = {...v6Options(prepared, quality), ...(extra.calibrationRow ? {calibrationRow: extra.calibrationRow} : {})};
-  const pre = prepared.whole === false || !prepared.pres ? prepared.pre : prePlanes(prepared, options);
+  const pre = prepared.whole === false && !prepared.retain || !prepared.pres ? prepared.pre : prePlanes(prepared, options);
   if (pre) return complete(photoXYBSteps(rgba, width, height, quality, {...options, pre, dctCache: cache ? dctOf(prepared, options) : null, ...extra}));
-  const image = bandedImage(rgba, width, height, quality, options, extra.fieldScale);
+  const image = bandedImage(rgba, width, height, quality, extra.noLevels ? {...options, noLevels: true} : options, extra.fieldScale);
   if (extra.keepPlanes) image.planeRows = gaborishRows(rgba, width, height, options);
   return image;
 };
@@ -136,7 +159,7 @@ export const v6Trace = label => { const t = globalThis.__jxlTrace; if (t) t.push
 const SMALL_LADDER = 512 * 512;
 export function* photoV6Steps(data, width, height, quality, effort, encodeCoefficients, search, color, gpu, memory, screen = false, both = false) {
   const blocks8 = !screen && effort >= 8 && quality < 100 && width >= 128 && height >= 128 && encodeCoefficients.splits;
-  if (effort <= 3 || color && !blocks8) return yield* pictureSteps(data, width, height, quality, color ? Math.min(effort, 8) : effort, encodeCoefficients, color ? undefined : search, color, gpu, memory, screen, false, false, both);
+  if (UPLOAD || effort <= 3 || color && !blocks8) return yield* pictureSteps(data, width, height, quality, color ? Math.min(effort, 8) : effort, encodeCoefficients, color ? undefined : search, color, gpu, memory, screen, false, false, both);
   if (color) search = undefined;
   let hurry = false;
   function* share(steps, from, to) {
@@ -212,10 +235,12 @@ export function idleWork(steps) {
   return work;
 }
 const nextTurn = () => new Promise(resolve => {
-  if (typeof MessageChannel !== 'function') return setTimeout(() => resolve(null), 0);
-  const {port1, port2} = new MessageChannel();
-  port1.onmessage = () => { port1.close(); port2.close(); resolve(null); };
-  port2.postMessage(0);
+  if (typeof MessageChannel === 'function') try {
+    const {port1, port2} = new MessageChannel();
+    port1.onmessage = () => { port1.close(); port2.close(); resolve(null); };
+    port2.postMessage(0); return;
+  } catch {}
+  setTimeout(() => resolve(null), 0);
 });
 const overlapped = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function* overlapped(steps, scale = 1) {
   const names = ['full picture', '16x16 picture'], ranges = [[0, 0.8 * scale], [0, 0.4 * scale]];
@@ -284,29 +309,29 @@ function* pictureSteps(data, width, height, quality, effort, encodeCoefficients,
     return yield* fastSmallSteps(image, effort, {hurried: false}, true);
   }
   if (effort <= 3 && !color) {
-    const gaborish = effort === 3 && quality < 100 && !screen;
+    const gaborish = quality < 100 && !screen;
     const picture = gaborish && (yield* uploadPictureSteps(data, width, height, quality)), flat = picture === UPLOAD_FLAT_PICTURE, grain = !!picture?.uploadGrain;
     if (quality < 100 && splitRoute(width, height) && (encodeCoefficients.splits || effort === 1)) {
-      const bytes = yield {split: {pixels: width * height, run: (helpers, options) =>
-        encodeSplit(data, width, height, quality, helpers, {...options, gaborish, uploadFlat: flat, grain})}};
-      if (bytes) return bytes;
-      if (!offloading()) {
-        if (gaborish) admitV6Memory(data, width, height, memory);
-        return yield* photoSplitSteps(data, width, height, quality, {gaborish, uploadFlat: flat, grain});
+      if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) {
+        const bytes = yield {split: {pixels: width * height, run: (helpers, options) =>
+          encodeSplit(data, width, height, quality, helpers, {...options, gaborish, uploadFlat: flat, grain})}};
+        if (bytes) return bytes;
       }
+      if (gaborish) admitV6Memory(data, width, height, memory);
+      return yield* photoSplitSteps(data, width, height, quality, {gaborish, uploadFlat: flat, grain});
     }
     if (gaborish) {
       admitV6Memory(data, width, height, memory);
-      if (offloading()) return yield* bandsThenCoefficients(photoXYBBands(data, width, height, quality, picture, {}), image => encodeCoefficients(image, 3));
+      if ((!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && offloading())) return yield* bandsThenCoefficients(photoXYBBands(data, width, height, quality, picture, {}), image => encodeCoefficients(image, 3));
       const image = yield* part(photoXYBBands(data, width, height, quality, picture), 0, 2);
       return yield* part(encodeCoefficients(image, 3), 1, 2);
     }
-    const image = offloading() && !screen ? yield* part(photoFastBands(data, width, height, quality, {...v6For(width, height), fast: true, fastBand: true}), 0, 2)
+    const image = (!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && offloading()) && !screen ? yield* part(photoFastBands(data, width, height, quality, {...v6For(width, height), fast: true, fastBand: true}), 0, 2)
       : complete(photoXYBSteps(data, width, height, quality, screen ? {...v6For(width, height), fast: true, calibrationRow: 'screen'} : {...v6For(width, height), fast: true, fastBand: true}));
     const coded = effortOne(width, height, quality, effort, screen) ? coefficientAnsSteps(image, 2) : encodeCoefficients(image, effort);
-    return yield* (offloading() ? part(coded, 1, 2) : coded);
+    return yield* ((!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && offloading()) ? part(coded, 1, 2) : coded);
   }
-  if (effort <= 3 && color?.transform && !color.transform.gray) {
+  if (effort <= 3 && color?.transform && !color.transform.gray && smallPicture(width, height)) {
     if (quality < 100 && splitRoute(width, height)) {
       try { return yield* photoSplitCandidates(data, width, height, quality, [], {color, screen: false}); } catch (error) { if (error !== FAST_RANGE) throw error; }
     }
@@ -315,27 +340,37 @@ function* pictureSteps(data, width, height, quality, effort, encodeCoefficients,
     try { image = complete(photoXYBSteps(data, width, height, quality, {...v6For(width, height), fast: true, ...color})); } catch (error) { if (error !== FAST_RANGE) throw error; }
     if (image) return yield* (effortOne(width, height, quality, effort, false) ? coefficientAnsSteps(image, 2) : encodeCoefficients(image, effort));
   }
-  const blockDesign = screen ? (effort >= 8 ? 'full' : null) : effort === 6 || effort === 7 ? 'fast' : effort === 8 ? 'full' : null;
+  const blockDesign = UPLOAD ? null : screen ? (effort >= 8 ? 'full' : null) : effort === 6 || effort === 7 ? 'fast' : effort === 8 ? 'full' : null;
   const perceptualBlocks = blockDesign !== null && quality < 100 && width >= 128 && height >= 128 &&
     (!color || color.space || color.transform && !color.transform.gray);
   if (perceptualBlocks && !encodeCoefficients.blocks) throw fault('JXL_INTERNAL', 'The block picture needs photoAnsSteps (photo-v6-blocks.mjs).');
-  const commonUpload = (effort === 4 || effort === 5) && quality < 100 && !screen && (!color || color.transform && !color.transform.gray);
+  if (!UPLOAD && (effort === 4 || effort === 5) && quality < 100 && !screen && color?.transform && !color.transform.gray && smallPicture(width, height)) {
+    if (splitRoute(width, height)) {
+      try { return yield* photoSplitCandidates(data, width, height, quality, fastBudgets(effort, false, width * height), {color, screen: false}); } catch (error) { if (error !== FAST_RANGE) throw error; }
+    }
+    admitV6Memory(data, width, height, memory);
+    let image;
+    try { image = complete(photoXYBSteps(data, width, height, quality, {...v6For(width, height), fast: true, ...color})); }
+    catch (error) { if (error !== FAST_RANGE) throw error; image = complete(photoXYBSteps(data, width, height, quality, {...v6For(width, height), ...color})); }
+    return yield* fastSmallSteps(image, effort, {hurried: false}, true);
+  }
+  const commonUpload = (effort <= 5 && (effort >= 4 || !!color)) && quality < 100 && !screen && (!color || color.transform && !color.transform.gray);
   const picture = commonUpload && (yield* uploadPictureSteps(data, width, height, quality));
-  if (gpu && effort <= 7 && !color && !screen && !perceptualBlocks && !commonUpload) {
+  if (!UPLOAD && gpu && effort <= 7 && !color && !screen && !perceptualBlocks && !commonUpload) {
     const image = yield {gpu: {kind: 'v6image', data, width, height, quality, options: {...v6For(width, height), ...GABORISH}, lib: {complete, photoXYBSteps, transformDCT8, dct8Basis, xyb: XYB_TABLES}}};
     if (image) return yield* encodeCoefficients(image, effort);
   }
   if (perceptualBlocks) return yield* encodeCoefficients.blocks({data, width, height, quality, effort, encodeCoefficients, color, gpu, memory, screen, floored, blockDesign, deferred, both, pair});
-  if (effort <= 7 || !search || width < 8 || height < 8) {
-    if ((effort === 4 || effort === 5) && !color && !screen && quality < 100 && width * height > 512 * 512 && encodeCoefficients.splits && SPLIT_HOOKS.ladder) {
+  if (UPLOAD || effort <= 7 || !search || width < 8 || height < 8) {
+    if (!UPLOAD && !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && (effort === 4 || effort === 5) && !color && !screen && quality < 100 && width * height > 512 * 512 && encodeCoefficients.splits && SPLIT_HOOKS.ladder) {
       const bytes = yield {split: {pixels: width * height, run: (leased, options) => SPLIT_HOOKS.ladder(data, width, height, quality, leased, {...options, effort, uploadFlat: picture === UPLOAD_FLAT_PICTURE, grain: !!picture?.uploadGrain})}};
       if (bytes) return bytes;
     }
     admitV6Memory(data, width, height, memory);
     const options = picture && color ? {...v6For(width, height), ...GABORISH, tune: picture.tune, calibrationRow: picture.calibrationRow, ...color}
       : picture || {...v6For(width, height), ...GABORISH, ...color};
-    const write = image => encodeCoefficients(image, effort);
-    if (offloading()) return yield* bandsThenCoefficients(photoXYBBands(data, width, height, quality, options, color || {}), write);
+    const write = image => effortOne(width, height, quality, effort, screen) ? coefficientAnsSteps(image, 2) : encodeCoefficients(image, effort);
+    if ((!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && offloading())) return yield* bandsThenCoefficients(photoXYBBands(data, width, height, quality, options, color || {}), write);
     const image = yield* part(stage('floor-picture', () => photoXYBBands(data, width, height, quality, options)), 0, 2);
     return yield* part(write(image), 1, 2);
   }

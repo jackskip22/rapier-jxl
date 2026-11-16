@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
-import * as resumable from 'rapier-jxl/resumable';
-import {verify} from 'rapier-jxl/verify';
+import * as resumable from 'jpegxl/resumable';
+import {verify} from 'jpegxl/verify';
 import {createEmDashJobStore, createEmDashCallCounter, storeFailure, acquireEmDashAdvance} from './job-store.mjs';
 import {createWorkQueue} from './work-queue.mjs';
 import {resourceFailure, canRetireJpeg} from './host-policy.mjs';
 import {nodeEstimate} from './node-admission.mjs';
 import {digest} from './digest.mjs';
+import {jpegPixels as prepareJpegPixels, pixelColor} from './jpeg-source.mjs';
 
 const ID = /^[a-f0-9]{32}$/, text = new TextEncoder();
 const fail = (code, message) => Object.assign(new Error(message), {code});
@@ -28,38 +29,60 @@ const PERMANENT = new Set(['JXL_INPUT', 'JXL_OPTIONS', 'JXL_DIMENSIONS', 'JXL_JP
 const RETRY_LIMIT = 9;
 const unreadable = error => error?.code === 'JXL_UNSUPPORTED' || error?.code === 'JXL_PLATFORM';
 
-// A lossy copy of a JPEG needs its pixels. On Node they come from the picture's lossless JPEG XL read by the package's
-// decoder, once per process and kept for the job's advances (a restart decodes again). Workers keep browser work.
+// A lossy JPEG's pixels come from its lossless JPEG XL read by the package's decoder. The Node worker prepares
+// its own source; bounded resumable advances keep one prepared source per process (a restart decodes again).
 const PART_BYTES = 1024 * 1024, JPEG_KEY = /\.(?:jpe?g|jpe|jfif)$/i;
 const pixelCache = {id: null, value: null};
-async function jpegPixels(media, command, signal, call) {
-  const {input} = command, id = input.generation + ':' + input.sha256;
-  if (pixelCache.id === id) return pixelCache.value;
-  const bytes = new Uint8Array(input.byteLength);
+async function sourceBytes(media, command, signal, call) {
+  const {input} = command, bytes = new Uint8Array(input.byteLength);
   for (let offset = 0; offset < bytes.length; offset += PART_BYTES) {
     signal?.throwIfAborted();
     const part = await media.readSource(command.key, offset, Math.min(PART_BYTES, bytes.length - offset), {generation: input.generation, signal, call});
-    if (!(part instanceof Uint8Array) || part.length !== Math.min(PART_BYTES, bytes.length - offset)) throw fail('JXL_IO', 'The JPEG could not be read.');
+    if (!(part instanceof Uint8Array) || part.length !== Math.min(PART_BYTES, bytes.length - offset)) throw fail('JXL_IO', "Picture read failed; check storage and retry.");
     bytes.set(part, offset);
   }
-  if (await digest(bytes) !== input.sha256) throw fail('JXL_INPUT', 'The JPEG changed while it was read.');
-  const [{recompress}, {decode}] = await Promise.all([import('rapier-jxl/jpeg'), import('rapier-jxl/decode')]);
-  const kept = await recompress(bytes, {effort: 1});
-  if (!(kept?.bytes instanceof Uint8Array)) throw fail('JXL_UNSUPPORTED', 'This JPEG has no lossless JPEG XL form.');
-  signal?.throwIfAborted();
-  const image = await decode(kept.bytes), data = new Uint8Array(image.data.buffer, image.data.byteOffset, image.data.byteLength);
-  if (data.length !== image.width * image.height * 4) throw fail('JXL_UNSUPPORTED', 'This JPEG has no plain pixel form.');
-  const value = {data, input: {generation: input.generation, sha256: await digest(data), byteLength: data.length, kind: 'pixels',
-    width: image.width, height: image.height}};
+  if (await digest(bytes) !== input.sha256) throw fail('JXL_INPUT', "Picture changed during its read; reload its record and retry.");
+  return bytes;
+}
+async function jpegPixels(media, command, signal, call) {
+  const {input} = command, id = JSON.stringify([input.generation, input.sha256, media.maxPixels ?? null]);
+  if (pixelCache.id === id) return pixelCache.value;
+  const bytes = await sourceBytes(media, command, signal, call);
+  const value = await prepareJpegPixels(bytes, input, {maxPixels: media.maxPixels, signal});
   pixelCache.id = id; pixelCache.value = value;
   return value;
 }
 
+// A Size limit asks for the best quality that fits. Where the server verifies a browser candidate's pixels it also
+// proves that no better one fits: the source at the claimed quality plus 2 (at most 100), at the site's effort, must
+// miss the limit. Only Node without a CPU cap verifies candidates, so this runs whole.
+async function betterFits(media, command, candidate, result, signal, call) {
+  const claimed = result.fidelity?.quality;
+  if (command.maxBytes === undefined || candidate.kind === 'original' || result.kept === 'jpeg-bytes' || !(claimed < 100)) return false;
+  const quality = Math.min(100, claimed + 2), target = {maxBytes: command.maxBytes, fidelity: {quality: {min: quality, max: quality}}};
+  const effort = command.settings?.effort, options = {...(effort !== undefined && {effort}), ...(signal && {signal})};
+  const pixels = JPEG_KEY.test(command.key) ? await jpegPixels(media, command, signal, call) : null;
+  const input = pixels ? {data: pixels.data, width: pixels.input.width, height: pixels.input.height,
+      ...pixelColor(pixels.input),
+      ...(pixels.input.transferFunction && {transferFunction: pixels.input.transferFunction}),
+      ...(pixels.input.intensityTarget !== undefined && {intensityTarget: pixels.input.intensityTarget}),
+      ...(pixels.icc && {icc: pixels.icc})}
+    : new Blob([await sourceBytes(media, command, signal, call)], {type: 'image/png'});
+  const {fit, variants} = await import('jpegxl');
+  const proof = candidate.kind === 'variant' ? (await variants(input, {...options, outputs: [{width: candidate.width, ...target}]}))[0]
+    : await fit(input, {...options, ...target});
+  return proof?.meetsTarget === true;
+}
+
 // The public verifier enforces this source-pixel cap before JPEG/PNG sample allocation.
-// Derive it from the existing measured photo bound; thumbnail dimensions never stand in for the original.
-export function verificationPixelLimit(host, configured) {
-  if (!Number.isSafeInteger(configured) || configured < 1 || host?.platform !== 'node' || host.cpuLimitMs !== null) return null;
-  if (host.memoryBytes === undefined && host.memoryLimitBytes === null) return configured;
+// An explicit caller allowance or the captured original geometry supplies the ceiling. The existing measured
+// photo bound can reduce it for this host; thumbnail dimensions never stand in for the original.
+export function verificationPixelLimit(host, configured, source) {
+  const sourcePixels = Number.isSafeInteger(source?.width) && source.width > 0 &&
+    Number.isSafeInteger(source?.height) && source.height > 0 ? source.width * source.height : null;
+  const ceiling = configured === undefined ? sourcePixels : configured;
+  if (!Number.isSafeInteger(ceiling) || ceiling < 1 || host?.platform !== 'node' || host.cpuLimitMs !== null) return null;
+  if (host.memoryBytes === undefined && host.memoryLimitBytes === null) return ceiling;
   const memory = host.memoryBytes ?? host.memoryLimitBytes;
   if (!Number.isSafeInteger(memory) || memory < 1) return null;
   const fits = pixels => {
@@ -67,7 +90,7 @@ export function verificationPixelLimit(host, configured) {
     return Number.isSafeInteger(estimate) && estimate > 0 && Math.ceil(estimate * 1.1) <= memory;
   };
   if (!fits(1)) return null;
-  let low = 1, high = configured;
+  let low = 1, high = ceiling;
   while (low < high) {
     const middle = low + Math.ceil((high - low) / 2);
     if (fits(middle)) low = middle; else high = middle - 1;
@@ -88,29 +111,29 @@ export function verificationAdmission(host, result, maxPixels) {
   }
   return {code: 'JXL_UNSUPPORTED', operation: 'verify', reason: 'verification_resource_bound_missing',
     missing: [host?.cpuLimitMs !== null && 'unitCpu', (host?.memoryLimitBytes !== null || host?.memoryBytes !== undefined) && 'memory'].filter(Boolean),
-    message: 'This host has no certified standalone-verification resource bound. The original remains available.'};
+    message: "This host cannot verify within its allowance; keep the original or use a capable host."};
 }
 
 async function candidateResult(candidate, receipt, input, store, signal) {
   // The public driver has already verified preservation. Reassembly authenticates publication bytes only.
-  if (!candidateOf(candidate)) throw fail('JXL_INPUT', 'The saved candidate exceeds its bounded part contract.');
+  if (!candidateOf(candidate)) throw fail('JXL_INPUT', "Invalid saved candidate parts; create a new candidate.");
   if (receipt?.verified !== true || receipt.source?.kind !== 'bytes' || receipt.source.digest !== 'sha256:' + input.sha256 ||
       !/^sha256:[a-f0-9]{64}$/.test(receipt.outputDigest ?? '') ||
       ['width', 'height', 'format', 'kept'].some(key => receipt[key] !== candidate.result[key]) ||
       JSON.stringify(receipt.fidelity) !== JSON.stringify(candidate.result.fidelity))
-    throw fail('JXL_INPUT', 'The public verifier returned no matching candidate receipt.');
+    throw fail('JXL_INPUT', "Candidate lacks a matching receipt; independently reverify it with the original.");
   const bytes = new Uint8Array(candidate.byteLength);
   let offset = 0;
   for (const ref of candidate.parts) {
     signal?.throwIfAborted();
     const part = await store.read(ref);
     if (!(part instanceof Uint8Array) || part.length !== ref.length)
-      throw fail('JXL_IO', 'A verified candidate part is missing or truncated.');
+      throw fail('JXL_IO', "A verified candidate part is missing or truncated; restore it before resuming.");
     bytes.set(part, offset); offset += part.length;
   }
   signal?.throwIfAborted();
   if ('sha256:' + await digest(bytes) !== receipt.outputDigest)
-    throw fail('JXL_INPUT', 'The candidate bytes changed after independent verification.');
+    throw fail('JXL_INPUT', "Candidate changed after verification; independently reverify it with the original.");
   signal?.throwIfAborted();
   return {...candidate.result, bytes, verification: receipt};
 }
@@ -120,20 +143,24 @@ async function candidateResult(candidate, receipt, input, store, signal) {
 // the whole request's CPU and memory are measured separately on the actual host.
 export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 5000, driver = resumable, now = () => Date.now(), pixelSource = jpegPixels} = {}) {
   if (!Number.isFinite(ms) || ms <= 0 || ms > 60000 || typeof scope !== 'string' || !ctx?.cron || !ctx?.kv)
-    throw fail('JXL_OPTIONS', 'Expected EmDash scheduling, versioned KV and an advance budget from 1 to 60000 ms.');
+    throw fail('JXL_OPTIONS', "Incomplete job configuration; supply EmDash scheduling, versioned KV, and a budget of 1 to 60000 ms.");
+  // Each invocation keeps the Worker allowance it began with, including when it resumes an older checkpoint.
+  // Node admission already measures its whole threaded job; it does not use the Worker-only core table.
+  const worker = media.host?.platform === 'cloudflare', memory = worker
+    ? {memoryBytes: media.host.memoryBytes ?? media.host.memoryLimitBytes ?? null} : {};
   const calls = createEmDashCallCounter();
   const work = createWorkQueue(ctx, {scope, call: action => calls.call(action)});
   const read = async id => {
-    if (typeof id !== 'string' || !ID.test(id)) throw fail('JXL_INPUT', 'Expected the saved image job ID.');
+    if (typeof id !== 'string' || !ID.test(id)) throw fail('JXL_INPUT', "Invalid image job ID; pass the saved job ID.");
     const current = await calls.call(() => ctx.kv.getVersioned(keyOf(id))) ?? {value: null, revision: null};
-    if (current.value && current.value.command.scope !== scope) throw fail('JXL_INPUT', 'The job belongs to another media backend.');
+    if (current.value && current.value.command.scope !== scope) throw fail('JXL_INPUT', "Job belongs to another backend; reload its record and retry.");
     return current;
   };
   async function save(id, current, value) {
     const saved = await calls.call(() => ctx.kv.compareAndSet(keyOf(id), current.revision, value));
     if (saved?.applied === true) return {value, revision: saved.revision};
     if (saved?.applied === false) return read(id);
-    throw fail('JXL_IO', 'The checkpoint write was not acknowledged.');
+    throw fail('JXL_IO', "Checkpoint write is unconfirmed; check its state before retrying.");
   }
   const browserExecution = async (reason, selected, signal) => ({location: 'browser', reason, settings: selected,
     archiveOriginals: canRetireJpeg(media.host) && (await media.originals.policy({signal, call: action => calls.call(action)})).admitting});
@@ -150,7 +177,7 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
         value.maxBytes !== undefined && (!Number.isSafeInteger(value.maxBytes) || value.maxBytes < 1) ||
         value.archive !== undefined && (!record(value.archive) || value.archive.id !== value.id ||
           value.archive.key !== value.key || value.archive.generation !== value.input.generation))
-      throw fail('JXL_OPTIONS', 'Expected a job ID, original key and encoder operation.');
+      throw fail('JXL_OPTIONS', "Incomplete job request; pass its ID, original key, and encoding operation.");
     const command = {id: value.id, key: value.key, scope, operation: value.operation, input: value.input, options: value.options ?? {},
       ...(value.settings !== undefined && {settings: value.settings}),
       ...(value.archiveOnly === true && {archiveOnly: true}),
@@ -161,25 +188,25 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
     let json;
     try { json = JSON.stringify(command, (_, item) => {
       if (['undefined', 'function', 'symbol', 'bigint'].includes(typeof item) || typeof item === 'number' && !Number.isFinite(item))
-        throw fail('JXL_OPTIONS', 'Image requests contain JSON data.');
+        throw fail('JXL_OPTIONS', "Request contains non-JSON values; pass JSON data only.");
       return record(item) ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item;
-    }); } catch { throw fail('JXL_OPTIONS', 'Expected an acyclic JSON image request.'); }
-    if (text.encode(json).length > 4096) throw fail('JXL_LIMIT', 'The image request exceeds the scheduler limit.');
+    }); } catch { throw fail('JXL_OPTIONS', "Request contains a cycle; pass acyclic JSON data."); }
+    if (text.encode(json).length > 4096) throw fail('JXL_LIMIT', "Request exceeds the scheduler limit; store large values separately and pass references.");
     return JSON.parse(json);
   }
   async function ensure(command, current) {
     if (current.value) {
-      if (JSON.stringify(current.value.command) !== JSON.stringify(command)) throw fail('JXL_INPUT', 'This job ID belongs to another request.');
+      if (JSON.stringify(current.value.command) !== JSON.stringify(command)) throw fail('JXL_INPUT', "This job ID belongs to another request; reload its record and retry.");
       return current;
     }
     const refused = command.candidate && verificationAdmission(media.host, command.candidate?.result,
-      verificationPixelLimit(media.host, media.maxPixels));
+      verificationPixelLimit(media.host, media.maxPixels, command.input));
     const saved = await save(command.id, current, {command, checkpoint: command.archive ? {status: 'done'} : null,
       archive: command.archive ?? null, archiveState: command.archive ? {phase: 'prepared', error: null} : null,
       stage: command.candidate ? 'candidate' : command.operation === 'recompress' ? 'original' : 'delivery', originalPublication: null,
       candidateState: command.candidate ? {phase: refused ? 'blocked' : 'verifying', error: refused || null} : null,
       execution: null, result: null, publication: null, error: null, canceled: false});
-    if (JSON.stringify(saved.value?.command) !== JSON.stringify(command)) throw fail('JXL_INPUT', 'This job ID belongs to another request.');
+    if (JSON.stringify(saved.value?.command) !== JSON.stringify(command)) throw fail('JXL_INPUT', "This job ID belongs to another request; reload its record and retry.");
     return saved;
   }
   const view = current => current?.value ? {id: current.value.command.id, revision: current.revision,
@@ -205,17 +232,29 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
 
   // A job that has ended (done, failed, canceled, or handed to the browser) keeps none of its parts. Its work row stays
   // until that is acknowledged: a failed delete is shown as cleanupPending and the next wake repeats it.
-  async function step(current, signal) {
-    if (!current?.value) throw fail('JXL_INPUT', 'The image job is missing.');
+  async function stepById(id, signal, prepare = null) {
+    if (typeof id !== 'string' || !ID.test(id)) throw fail('JXL_INPUT', "Invalid request; pass the saved job ID.");
     signal?.throwIfAborted();
-    const id = current.value.command.id;
     const release = await acquireEmDashAdvance(ctx, {owner: id, scope, ms, now, calls});
-    if (!release) return {...view(await read(id)), busy: true};
-    try { return await advanceClaimed(await read(id), signal); }
-    finally {
+    if (!release) {
+      let current = await read(id);
+      if (prepare) current = await prepare(current);
+      if (!current?.value) throw fail('JXL_INPUT', "Missing image job; restore it before resuming.");
+      return {...view(current), busy: true};
+    }
+    try {
+      let current = await read(id);
+      if (prepare) current = await prepare(current);
+      if (!current?.value) throw fail('JXL_INPUT', "Missing image job; restore it before resuming.");
+      return await advanceClaimed(current, signal);
+    } finally {
       // A lost release expires. A durably saved result remains successful if this advisory write fails.
       await release().catch(() => {});
     }
+  }
+  async function step(current, signal) {
+    if (!current?.value) throw fail('JXL_INPUT', "Missing image job; restore it before resuming.");
+    return stepById(current.value.command.id, signal);
   }
   async function advanceClaimed(current, signal) {
     const was = current?.value, ended = !!was && !was.archive && !was.publication?.collect &&
@@ -223,17 +262,26 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
     const shown = await advanceOnce(current, signal), command = was?.command;
     // A job found already ended is cleaned below. A step that ends it, including archive completion and retired-publication collection, cleans here.
     if (!command || ended || !(shown?.done || shown?.canceled) || shown.publication?.collect) return shown;
-    try { await clearParts(command); } catch (error) { signal?.throwIfAborted(); return {...shown, cleanupPending: true}; }
+    try { await clearParts(command); }
+    catch (error) {
+      signal?.throwIfAborted();
+      if (error?.code === 'JXL_BUSY') {
+        const latest = await read(command.id);
+        if (latest.value && !latest.value.cleanupRetry)
+          await save(command.id, latest, {...latest.value, cleanupRetry: {attempts: 1, next: now() + 1000}});
+      }
+      return {...shown, cleanupPending: true};
+    }
     return shown;
   }
   const clearParts = async command => {
     await driver.discard?.(command.id);
     return createEmDashJobStore(ctx, {calls, owner: command.id, now,
-      readSource: () => { throw fail('JXL_IO', 'No source is read here.'); }}).clear();
+      readSource: () => { throw fail('JXL_IO', "This operation cannot read sources; use its saved job input."); }}).clear();
   };
   async function advanceOnce(current, signal) {
     let job = current?.value;
-    if (!job) throw fail('JXL_INPUT', 'The image job is missing.');
+    if (!job) throw fail('JXL_INPUT', "Missing image job; restore it before resuming.");
     signal?.throwIfAborted();
     const {command} = job;
     // A refused publication's retired payload is removed in its own call (media-storage.mjs collect).
@@ -260,18 +308,33 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
       return view(await save(command.id, current, {...job, archiveState}));
     }
     if (job.result !== null || job.error || job.canceled || job.execution?.location === 'browser') {
+      if (job.cleanupRetry && now() < job.cleanupRetry.next) return {...view(current), cleanupPending: true};
       // The work row goes only after the job's parts are gone; a failed delete is retried by the next wake.
-      try { await clearParts(command); } catch (error) { signal?.throwIfAborted(); return {...view(current), cleanupPending: true}; }
+      try { await clearParts(command); }
+      catch (error) {
+        signal?.throwIfAborted();
+        if (error?.code === 'JXL_BUSY') {
+          const attempts = (job.cleanupRetry?.attempts ?? 0) + 1;
+          const saved = await save(command.id, current, {...job,
+            cleanupRetry: {attempts, next: now() + Math.min(1000 * 2 ** (attempts - 1), 300000)}});
+          return {...view(saved), cleanupPending: true};
+        }
+        return {...view(current), cleanupPending: true};
+      }
+      if (job.cleanupRetry) {
+        const {cleanupRetry: _cleared, ...cleanJob} = job;
+        current = await save(command.id, current, cleanJob);
+      }
       if (!command.archiveOnly) await work.remove('image', command.id);
       return view(current);
     }
     if (command.archiveOnly && (!canRetireJpeg(media.host) || !(await media.originals.policy({signal, call: action => calls.call(action)})).admitting))
-      return view(await save(command.id, current, {...job, result: {fits: false, reason: {code: 'retirement_disabled'}},
+      return view(await save(command.id, current, {...job, result: {meetsTarget: false, reason: {code: 'retirement_disabled'}},
         publication: {key: command.key, stored: null, reason: 'retirement_disabled'}}));
     const candidate = job.stage === 'candidate' ? command.candidate : null;
     let verificationMaxPixels;
     if (candidate) {
-      const ceiling = verificationPixelLimit(media.host, media.maxPixels);
+      const ceiling = verificationPixelLimit(media.host, media.maxPixels, command.input);
       // Resume the exact enforced cap that created this checkpoint. A changed host must not silently authorize
       // its older, larger allocation, nor reinterpret an opaque public checkpoint that lacks this host pin.
       verificationMaxPixels = job.checkpoint ? job.verificationMaxPixels : ceiling;
@@ -290,7 +353,8 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
     const selected = job.stage === 'delivery' && command.delivery ? command.delivery : command;
     const operation = candidate ? verify : operations[selected.operation];
     const options = candidate ? {result: candidate.result, parts: candidate.parts,
-      maxPixels: verificationMaxPixels} : selected.options;
+      maxPixels: verificationMaxPixels} : {
+      ...(driver.discard && media.maxPixels !== undefined && {maxPixels: media.maxPixels}), ...selected.options};
     let pixels = null;
     const store = createEmDashJobStore(ctx, {calls, owner: command.id, readSource: (offset, length) => pixels
       ? pixels.data.slice(offset, offset + length)
@@ -299,16 +363,20 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
     const finishing = job.checkpoint?.status === 'done';
     let checkpoint, result, released = [];
     try {
-      if (!candidate && job.stage === 'delivery' && selected.operation !== 'recompress' && command.input.kind === 'file' &&
+      // The Node thread prepares JPEG pixels itself, leaving the server's event loop free.
+      if (!driver.discard && !candidate && job.stage === 'delivery' && selected.operation !== 'recompress' && command.input.kind === 'file' &&
           JPEG_KEY.test(command.key) && media.host?.platform === 'node')
         pixels = await pixelSource(media, command, signal, action => calls.call(action));
       const input = pixels?.input ?? command.input;
-      if (!job.checkpoint) checkpoint = await driver.start({owner: command.id, operation, input, options, store, ...(!candidate && {verify})});
+      // Public start takes no owner; a driver that keys its work by owner (the thread driver) is given it.
+      if (!job.checkpoint) checkpoint = await driver.start({...(driver.discard && {owner: command.id}), operation, input, options, store, ...memory, ...(!candidate && {verify})});
       else if (!finishing)
-        ({checkpoint, released = []} = await driver.advance(job.checkpoint, {owner: command.id, operation, input, store, ...(!candidate && {verify}), budget: {ms}, signal}));
+        ({checkpoint, released = []} = await driver.advance(job.checkpoint, {...(driver.discard && {owner: command.id}), operation, input, store, ...memory, ...(!candidate && {verify}), budget: {ms}, signal}));
       else {
-        const finished = await driver.finish(job.checkpoint, {owner: command.id, operation, input, store, signal});
+        const finished = await driver.finish(job.checkpoint, {...(driver.discard && {owner: command.id}), operation, input, store, ...memory, signal});
         result = candidate ? await candidateResult(candidate, finished, command.input, store, signal) : finished;
+        if (candidate && await betterFits(media, command, candidate, result, signal, action => calls.call(action)))
+          throw fail('JXL_TARGET', "A higher quality fits; request that quality.");
       }
     } catch (thrown) {
       signal?.throwIfAborted();
@@ -316,7 +384,7 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
       const error = storeFailure(thrown);
       const resource = resourceFailure(error);
       if (candidate) {
-        if (error?.code === 'JXL_DIMENSIONS' && verificationMaxPixels < media.maxPixels)
+        if (error?.code === 'JXL_DIMENSIONS' && verificationMaxPixels < (media.maxPixels ?? command.input.width * command.input.height))
           return view(await save(command.id, current, {...job, candidateState: {phase: 'blocked', error: {
             code: error.code, message: String(error.message), operation: 'verify',
             reason: 'verification_pixel_limit', maxPixels: verificationMaxPixels}}}));
@@ -342,11 +410,14 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
       if (error?.code === 'JXL_TARGET') {
         const prior = job.originalPublication;
         return view(await save(command.id, current, {...job,
-          result: prior?.deliveryEligible ? prior.result : {fits: false, reason: {code: 'JXL_TARGET', message: String(error.message)}},
+          result: prior?.deliveryEligible ? prior.result : {meetsTarget: false, reason: {code: 'JXL_TARGET', message: String(error.message)}},
           publication: prior?.deliveryEligible ? prior : {key: command.key, stored: null, reason: 'JXL_TARGET'}}));
       }
       if (error?.name === 'AbortError') throw error;
-      if (!PERMANENT.has(error?.code)) {
+      if (!(worker && resource) && !PERMANENT.has(error?.code)) {
+        // If an expired lease let another invocation advance and release parts ahead of us, return the winning checkpoint.
+        const latest = await read(command.id);
+        if (latest.revision !== current.revision) return view(latest);
         // 1 s, 2 s, 4 s ... capped at 4 minutes; after the bound the image fails with the reason recorded.
         const attempts = (job.retry?.attempts ?? 0) + 1, reason = {code: String(error?.code ?? 'JXL_INTERNAL'), message: String(error?.message)};
         if (attempts > RETRY_LIMIT) return view(await save(command.id, current, {...job, retry: null,
@@ -371,10 +442,10 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
     // Saving the completed checkpoint ends cancellation before any rendition can be published.
     // Completion is its own call; a retry reuses the same publication identity.
     signal?.throwIfAborted();
-    if (result.fits === true && result.verification?.verified !== true)
-      throw fail('JXL_INPUT', 'The saved image job has no independent verification receipt.');
-    if (command.archiveOnly && (result.fits !== true || result.kept !== 'jpeg-bytes' || result.fidelity !== 'exact')) {
-      if (result.fits === true) throw fail('JXL_INPUT', 'An originals policy job must preserve exact JPEG bytes.');
+    if (result.meetsTarget === true && result.verification?.verified !== true)
+      throw fail('JXL_INPUT', "Image job lacks a verified receipt; independently reverify the original and candidate.");
+    if (command.archiveOnly && (result.meetsTarget !== true || result.kept !== 'jpeg-bytes' || result.fidelity !== 'exact')) {
+      if (result.meetsTarget === true) throw fail('JXL_INPUT', "Job would change JPEG bytes; request exact preservation.");
       return view(await save(command.id, current, {...job, result: summary(result),
         publication: {key: command.key, stored: null, reason: result.reason?.code ?? 'JXL_TARGET'}}));
     }
@@ -388,7 +459,7 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
         : await media.attachVariant(command.key, candidate.width, result, publicationOptions);
       return view(await save(command.id, current, {...job, result: summary(result), publication}));
     }
-    if (result.fits === true && result.kept === 'jpeg-bytes' && (job.stage === 'original' || candidate?.kind === 'original')) {
+    if (result.meetsTarget === true && result.kept === 'jpeg-bytes' && (job.stage === 'original' || candidate?.kind === 'original')) {
       const archiveAllowed = canRetireJpeg(media.host) && (await media.originals.policy({signal, call: action => calls.call(action)})).admitting;
       if (!archiveAllowed) {
         if (command.archiveOnly) return view(await save(command.id, current, {...job, result: summary(result),
@@ -406,7 +477,7 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
         return view(await save(command.id, current, {...job, result: summary(result),
           publication: {key: command.key, stored: null, reason: 'key_changed'}}));
       const receipt = result.verification;
-      if (receipt?.verified !== true) throw fail('JXL_INPUT', 'The saved JPEG job has no independent verification receipt.');
+      if (receipt?.verified !== true) throw fail('JXL_INPUT', "JPEG job lacks a verified receipt; independently reverify the original and candidate.");
       const deliveryEligible = !command.archiveOnly && !over && result.bytes.byteLength < before.size;
       const archive = await media.originals.beginArchive(command.key, result, {receipt, source: command.input.sha256,
         expectedGeneration: command.input.generation, expectedDeliveryRevision: command.input.deliveryRevision,
@@ -419,9 +490,9 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
         : {...job, archive, archiveState: {phase: 'prepared', error: null}}));
     }
     const prior = job.originalPublication;
-    if (prior?.deliveryEligible && (!result.fits || prior.jxlBytes <= result.bytes.byteLength))
+    if (prior?.deliveryEligible && (!result.meetsTarget || prior.jxlBytes <= result.bytes.byteLength))
       return view(await save(command.id, current, {...job, result: prior.result, publication: prior}));
-    const publication = over ? {key: command.key, stored: null, reason: 'JXL_TARGET'} : result.fits === true
+    const publication = over ? {key: command.key, stored: null, reason: 'JXL_TARGET'} : result.meetsTarget === true
       ? await media.attach(command.key, result, publicationOptions) : null;
     return view(await save(command.id, current, {...job, result: summary(result), publication}));
   }
@@ -429,14 +500,14 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
     calls, work,
     async queue(value) {
       const command = commandOf({...value, scope});
-      if (command.archiveOnly) throw fail('JXL_OPTIONS', 'Originals policy work owns archive-only command recovery.');
+      if (command.archiveOnly) throw fail('JXL_OPTIONS', "Archive command cannot resume directly; use the originals policy.");
       const current = await read(command.id);
       if (current.value) return view(await ensure(command, current));
       // The recurring intent recovers an interruption before the first checkpoint is saved.
       await work.schedule('image', command.id, command);
       return view(await ensure(command, current));
     },
-    async advance(id, {signal} = {}) { return step(await read(id), signal); },
+    async advance(id, {signal} = {}) { return stepById(id, signal); },
     async status(id) { return view(await read(id)); },
     async defer(id, execution) {
       let current = await read(id);
@@ -444,7 +515,7 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
       // An armed archive mutation first drains to its acknowledged state. The page never races its removal proof.
       if (!job || job.archive || job.candidateState || job.publication?.collect || job.canceled) return view(current);
       if (execution?.location !== 'browser' || !['cpu', 'memory', 'format'].includes(execution.reason) || !record(execution.settings))
-        throw fail('JXL_OPTIONS', 'Expected the host-selected browser execution.');
+        throw fail('JXL_OPTIONS', "Host did not select browser execution; request a new server job.");
       if (!job.result && !job.error) current = await save(id, current, {...job, execution});
       return view(current);
     },
@@ -453,7 +524,7 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
       let attempt = 0;
       while (current.value && current.value.result === null && !current.value.error && current.value.execution?.location !== 'browser' &&
           current.value.checkpoint?.status !== 'done' && !current.value.canceled) {
-        if (attempt++ === 8) throw fail('JXL_BUSY', 'The image job changed too often. Retry cancellation.');
+        if (attempt++ === 8) throw fail('JXL_BUSY', "Job changed too often; retry cancellation.");
         current = await save(id, current, {...current.value, canceled: true});
       }
       return view(current);
@@ -461,17 +532,18 @@ export function createEmDashJobRunner(ctx, {operations, media, scope = '', ms = 
     async resume(value, {signal, cancel = false} = {}) {
       const command = commandOf(value), id = command.id;
       if (typeof cancel !== 'boolean' || cancel && !command.archiveOnly)
-        throw fail('JXL_OPTIONS', 'Only the originals controller cancels its private archive command through resume.');
+        throw fail('JXL_OPTIONS', "Archive command cannot be canceled here; use the originals controller.");
+      if (!cancel) return stepById(id, signal, current => ensure(command, current));
       let current = await read(id);
       // The durable queue recovers an interruption before the initial checkpoint was acknowledged.
       current = await ensure(command, current);
       // Cancellation fences even a completed codec checkpoint. An already armed archive still drains through
       // advanceArchive(cancel:true); a not-yet-armed command cannot publish or retire the source afterwards.
-      if (cancel && !current.value.canceled) {
+      if (!current.value.canceled) {
         current = await save(id, current, {...current.value, canceled: true});
         if (!current.value.canceled) return view(current); // A concurrent checkpoint won; retry cancellation before any work.
       }
-      return step(current, signal);
+      return stepById(id, signal);
     },
   };
 }

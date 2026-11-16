@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
-import {check, dimensions, fail, LARGEST} from './primitives.mjs';
+import {check, dimensions, fail, PIXELS, callers, snapshotOptions, snapshotArray, blobBytes} from './primitives.mjs';
 import {arrayBufferBytes, copyBytes, typedName} from './bytes.mjs';
-import {described, fromDecoded, isDecoded} from './describe.mjs';
+import {isPlainRecord} from './records.mjs';
+import {DESCRIPTION, described, fromDecoded, isDecoded} from './describe.mjs';
 import {pixels} from './input.mjs';
 import {admitRows, readBand} from './rows.mjs';
 import {isTexture, readTexture} from './texture.mjs';
@@ -14,7 +15,7 @@ export {sampleDescription};
 export class SampleHash {
   constructor() { this.state = sha256Start(); }
   update(bytes) {
-    if (this.done) throw fail('JXL_INTERNAL', 'A completed identity cannot accept more samples.');
+    if (this.done) throw fail('JXL_INTERNAL', "Source identity is already complete; start a new identity for another source.");
     this.state = sha256Update(this.state, bytes);
     return this;
   }
@@ -30,9 +31,9 @@ export async function digestBytes(bytes) {
 }
 const littleEndian = new Uint8Array(Uint16Array.of(1).buffer)[0] === 1;
 export function sampleBytes(data) {
-  if (!ArrayBuffer.isView(data) || arrayBufferBytes(data.buffer) === null) throw fail('JXL_INPUT', 'Samples need an ordinary, attached ArrayBuffer.');
+  if (!ArrayBuffer.isView(data) || arrayBufferBytes(data.buffer) === null) throw fail('JXL_INPUT', "Invalid sample buffer; pass an ordinary attached ArrayBuffer.");
   let bytes; try { bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength); }
-  catch { throw fail('JXL_INPUT', 'The sample buffer is detached.'); }
+  catch { throw fail('JXL_INPUT', "Sample buffer is detached; pass an attached ArrayBuffer."); }
   const size = data.BYTES_PER_ELEMENT;
   if (littleEndian || size === 1) return bytes;
   const out = new Uint8Array(bytes.length);
@@ -40,10 +41,15 @@ export function sampleBytes(data) {
   return out;
 }
 const recordDigest = value => digestBytes(new TextEncoder().encode(JSON.stringify(stable(value))));
-export const isIdentity = value => value && ['bytes', 'pixels'].includes(value.kind) && /^sha256:[a-f0-9]{64}$/.test(value.digest);
+export function isIdentity(value) {
+  let kind, digest;
+  try { kind = value?.kind; if (kind === 'bytes' || kind === 'pixels') digest = value.digest; }
+  catch (error) { throw callers(error); }
+  return typeof digest === 'string' && /^sha256:[a-f0-9]{64}$/.test(digest);
+}
 export const isBlob = value => typeof Blob === 'function' && value instanceof Blob;
 export async function encodedSourceBytes(source) {
-  if (isBlob(source)) return new Uint8Array(await source.arrayBuffer());
+  if (isBlob(source)) return blobBytes(source);
   return typedName.call(source) === 'Uint8Array' ? source : null;
 }
 export const isRows = value => value && typeof value.rows === 'function' && value.data === undefined;
@@ -51,7 +57,7 @@ export const isRows = value => value && typeof value.rows === 'function' && valu
 function descriptionCopy(value) {
   const description = described(value);
   if (value.colorEncoding !== undefined) description.colorEncoding = value.colorEncoding;
-  return own(description, LARGEST, Number.MAX_SAFE_INTEGER);
+  return own(description, PIXELS, Number.MAX_SAFE_INTEGER);
 }
 const sampleKinds = {Uint8Array, Uint8ClampedArray, Uint16Array, Float32Array};
 function copiedSamples(data, description) {
@@ -64,7 +70,8 @@ function copiedSamples(data, description) {
 }
 export function snapshotSource(source, options = {}) {
   check(options.signal);
-  const maxPixels = options.maxPixels ?? LARGEST;
+  const maxPixels = options.maxPixels ?? PIXELS;
+  if (isPlainRecord(source)) source = snapshotOptions(source, 'Original', ['data', 'width', 'height', 'rows', 'frames', 'description', 'loops', ...DESCRIPTION]);
   if (isIdentity(source)) return {...source};
   if (isBlob(source)) return source;
   if (typedName.call(source) === 'Uint8Array') return copyBytes(source);
@@ -77,21 +84,29 @@ export function snapshotSource(source, options = {}) {
   if (isDecoded(source)) source = fromDecoded(source);
   if (source?.frames) {
     dimensions(source.width, source.height, maxPixels);
-    if (!Array.isArray(source.frames) || !source.frames.length || !Number.isSafeInteger(source.loops ?? 0) || (source.loops ?? 0) < 0)
-      throw fail('JXL_INPUT', 'An animation needs frames and a nonnegative whole loop count.');
+    const invalid = () => fail('JXL_INPUT', "Invalid animation; pass frames and a nonnegative whole loop count.");
+    if (!Array.isArray(source.frames) || !Number.isSafeInteger(source.loops ?? 0) || (source.loops ?? 0) < 0)
+      throw invalid();
+    const list = snapshotArray(source.frames, 'frames', undefined, 'JXL_INPUT');
+    if (!list.length) throw invalid();
+    const frames = list.map(frame => {
+      if (!frame || typeof frame !== 'object' || Array.isArray(frame))
+        throw fail('JXL_INPUT', 'An animation frame is invalid; pass data and duration in an object.');
+      return snapshotOptions(frame, 'Frame', ['data', 'duration']);
+    });
     const description = descriptionCopy(source);
-    if (typedName.call(source.frames[0]?.data) === 'Float16Array') description.sampleFormat ??= 'float16';
+    if (typedName.call(frames[0]?.data) === 'Float16Array') description.sampleFormat ??= 'float16';
     return {width: source.width, height: source.height, loops: source.loops ?? 0, ...description,
-      frames: source.frames.map(frame => {
+      frames: frames.map(frame => {
         if (!frame || !ArrayBuffer.isView(frame.data) || frame.data.length !== source.width * source.height * 4)
-          throw fail('JXL_INPUT', 'A frame has width times height times four samples.');
-        if (!Number.isFinite(frame.duration) || frame.duration < 0) throw fail('JXL_INPUT', 'A frame duration is a finite nonnegative number of milliseconds.');
+          throw fail('JXL_INPUT', "Invalid frame sample count; pass width * height * 4 samples.");
+        if (!Number.isFinite(frame.duration) || frame.duration < 0) throw fail('JXL_INPUT', "Invalid frame duration; use finite nonnegative milliseconds.");
         return {data: copiedSamples(frame.data, description), duration: frame.duration};
       })};
   }
   if (!source || !ArrayBuffer.isView(source.data)) source = pixels(source, {readAs: options.readAs}, maxPixels, true);
   dimensions(source.width, source.height, maxPixels);
-  if (source.data.length !== source.width * source.height * 4) throw fail('JXL_INPUT', 'A picture has width times height times four samples.');
+  if (source.data.length !== source.width * source.height * 4) throw fail('JXL_INPUT', "Invalid picture sample count; pass width * height * 4 samples.");
   const description = descriptionCopy(source);
   if (typedName.call(source.data) === 'Float16Array') description.sampleFormat ??= 'float16';
   return {width: source.width, height: source.height, ...description, data: copiedSamples(source.data, description)};
@@ -115,7 +130,7 @@ export async function rowsIdentity(source, {signal, consume} = {}) {
     check(signal);
     const band = await readBand(source, y, Math.min(256, source.height - y), signal);
     first ??= {...band, data: new band.data.constructor(0)};
-    if (JSON.stringify(sampleDescription(first)) !== JSON.stringify(sampleDescription(band))) throw fail('JXL_INPUT', 'Every band has the same sample description.');
+    if (JSON.stringify(sampleDescription(first)) !== JSON.stringify(sampleDescription(band))) throw fail('JXL_INPUT', "Band sample descriptions differ; use the same description for every band.");
     hash.update(sampleBytes(band.data));
     if (consume) await consume(band, y);
   }
@@ -125,7 +140,7 @@ export async function identityOfSnapshot(source, options = {}) {
   if (source && typeof source.then === 'function') source = await source;
   check(options.signal);
   if (isIdentity(source)) return {...source};
-  if (isBlob(source)) source = new Uint8Array(await source.arrayBuffer());
+  if (isBlob(source)) source = await blobBytes(source, options.signal);
   if (typedName.call(source) === 'Uint8Array') return {kind: 'bytes', digest: await digestBytes(source)};
   if (isRows(source)) return rowsIdentity(source, options);
   if (source.frames) {

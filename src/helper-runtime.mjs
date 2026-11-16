@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 import {configureModules} from './wasm-modules.mjs';
-import {configureKernels, disableEntropyKernels} from './kernels.mjs';
+import {ensureKernels, disableEntropyKernels, lendEntropy} from './kernels.mjs';
+import {holdEntropy, releaseEntropy} from './kernel-hooks.mjs';
 import {previewRelay} from './v7/preview-relay.mjs';
 
-disableEntropyKernels();
 
 const helperPort = () => {
   try { const port = globalThis.process?.getBuiltinModule?.('node:worker_threads')?.parentPort; if (port) return port; } catch {}
@@ -13,6 +13,7 @@ const described = error => ({name: String(error?.name ?? 'Error'), ...(typeof er
 
 export function serveHelper(load, port = helperPort()) {
   if (!port || typeof port.postMessage !== 'function') return;
+  disableEntropyKernels();
   const fatal = error => setTimeout(() => { throw error; });
   const post = (reply, transfer, answer) => { try { port.postMessage(reply, transfer); } catch (error) { port.postMessage(answer(error)); } };
   const loaded = Promise.resolve().then(load);
@@ -23,17 +24,17 @@ export function serveHelper(load, port = helperPort()) {
   async function whole({id, task}, {run}) {
     const preview = task.preview === true ? previewRelay((value, sequence, transfer) => port.postMessage({id, preview: value, previewSequence: sequence}, transfer)) : null;
     if (preview) (previews ??= new Map()).set(id, preview);
+    holdEntropy(lendEntropy);
     try {
       const result = await run(task.operation, task.input, task.options, {maxPixels: task.maxPixels, webgpu: task.webgpu, onProgress: progress => port.postMessage({id, progress}), ...(preview && {onPreview: preview.send})});
       post({id, result}, ArrayBuffer.isView(result) ? [result.buffer] : [], error => ({id, error: described(error)}));
     } catch (error) { port.postMessage({id, error: described(error)}); }
-    finally { preview?.close(); previews?.delete(id); }
+    finally { releaseEntropy(); preview?.close(); previews?.delete(id); }
   }
   const serve = data => {
     if (data?.previewAck !== undefined) { previews?.get(data.id)?.ack(data.previewAck); return; }
     if (data?.kernels !== undefined && data.input === undefined && data.task === undefined) {
-      next(({name, protocol}) => { if (data.wasmModules) configureModules(data.wasmModules); configureKernels(data.kernels);
-        port.postMessage({ready: true, ...(name && {module: name}), ...(protocol && {protocol})}); });
+      next(() => { if (data.wasmModules) configureModules(data.wasmModules); ensureKernels(); });
       return;
     }
     if (data?.task?.kind === 'whole') { order.then(async () => { if (await ok) await whole(data, await loaded); }).catch(fatal); return; }
@@ -54,4 +55,5 @@ export function serveHelper(load, port = helperPort()) {
     });
   };
   if (port.on) port.on('message', serve); else port.onmessage = event => serve(event.data);
+  loaded.then(({name, protocol}) => port.postMessage({ready: true, ...(name && {module: name}), ...(protocol && {protocol})}), () => {});
 }

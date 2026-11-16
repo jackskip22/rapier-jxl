@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 const signature = new Uint8Array([137,80,78,71,13,10,26,10]);
-const error = message => Object.assign(new Error(message), {code: 'JXL_DISPLAY'});
+export const unshown = new WeakSet();
+const error = message => { const failed = Object.assign(new Error(message), {code: 'JXL_PLATFORM'}); unshown.add(failed); return failed; };
 const check = signal => signal?.throwIfAborted();
 const integer = (value, min, max) => Number.isSafeInteger(value) && value >= min && value <= max;
 const text = value => Uint8Array.from(value, c => c.charCodeAt(0));
@@ -92,9 +93,9 @@ function rows(frame, type, signal) {
   }});
 }
 
-export async function decodedPNG(image, {signal, maxBytes = 268435456} = {}) {
+export async function decodedPNG(image, {signal, maxBytes = Number.MAX_SAFE_INTEGER} = {}) {
   check(signal);
-  if (!integer(maxBytes, 1, 0x7fffffff)) throw error('maxBytes must be a positive PNG byte budget.');
+  if (!integer(maxBytes, 1, Number.MAX_SAFE_INTEGER)) throw error('maxBytes must be a positive PNG byte budget.');
   const frames = image?.frames?.length ? image.frames : [image], first = frames[0];
   if (!first || !integer(first.width, 1, 0x7fffffff) || !integer(first.height, 1, 0x7fffffff) ||
       first.width * first.height > Math.floor(maxBytes / 4)) throw error('PNG dimensions exceed the display budget.');

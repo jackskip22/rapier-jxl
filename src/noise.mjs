@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {admitSize, fault} from './admit.mjs';
-import {PHOTO_LIMITS} from './limits.mjs';
+import {LIMITS} from './limits.mjs';
 
 const NOISE_MAX = 1023 / 1024, PHOTON_BIAS = .0037930732552754493;
 function noiseCubeRoot(value) {
@@ -12,7 +12,7 @@ function noiseCubeRoot(value) {
 }
 
 export function photonNoise(width, height, iso = 800) {
-  admitSize(width, height, PHOTO_LIMITS);
+  admitSize(width, height, LIMITS);
   if (!Number.isFinite(iso) || iso < 1 || iso > 1000000000) throw fault('JXL_INPUT', 'Photon noise ISO is from 1 to 1e9.');
   const exposure = 10 / iso, area = 36000 * 24000 / (width * height), electrons18 = .2 * 11260 * exposure * area;
   const biasRoot = noiseCubeRoot(PHOTON_BIAS), norm = .22 * 1.4142135623730951 * 1.13;

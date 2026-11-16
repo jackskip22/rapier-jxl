@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {admitSignal, check} from './primitives.mjs';
+import {admitSignal, check, callers, abortable} from './primitives.mjs';
 export const PREVIEW = Symbol('preview');
 
 export function previewCall(options, geometry) {
@@ -12,17 +12,22 @@ export function previewCall(options, geometry) {
 }
 
 export function createPreview(callback, signal) {
-  let pending, timer, busy = false, closed = false, last = -Infinity;
+  const refs = {callback, signal};
+  let pending, timer, active, rejected, cleanup, busy = false, closed = false, last = -Infinity;
   const sent = new WeakSet();
   const close = () => {
     if (closed) return;
-    closed = true; pending = undefined; callback = undefined;
+    closed = true; pending = undefined; refs.callback = undefined;
     clearTimeout(timer); timer = undefined;
-    signal?.removeEventListener?.('abort', close); signal = undefined;
+    try { refs.signal?.removeEventListener?.('abort', close); } catch (reason) { cleanup = {reason}; }
+    refs.signal = undefined;
   };
   const ready = () => { busy = false; pump(); };
+  const failed = reason => { rejected ??= {reason}; busy = false; };
+  const checked = () => { if (rejected) throw callers(rejected.reason); check(signal); };
   const pump = () => {
-    if (closed || signal?.aborted) { close(); return; }
+    if (closed) return;
+    try { checked(); } catch (reason) { failed(reason); close(); return; }
     if (busy || !pending || timer !== undefined) return;
     const delay = last + 100 - performance.now();
     if (delay > 0) {
@@ -37,18 +42,27 @@ export function createPreview(callback, signal) {
         width: orientation >= 5 ? height : width, height: orientation >= 5 ? width : height,
         measurements: measurements.map(value => ({...value, ...(value.region && {region: {...value.region}})}))};
       last = performance.now();
-      Promise.resolve(callback(preview)).then(ready, ready);
-    } catch { ready(); }
+      active = Promise.resolve(refs.callback(preview)).then(ready, failed);
+    } catch (reason) { failed(reason); }
   };
-  signal?.addEventListener('abort', close, {once: true});
+  try { signal?.addEventListener('abort', close, {once: true}); if (signal?.aborted) close(); }
+  catch (reason) { close(); throw callers(reason); }
   return {
     offer(bytes, details) {
-      if (closed || signal?.aborted || sent.has(bytes) || pending?.bytes === bytes) return;
+      if (closed) return;
+      checked();
+      if (sent.has(bytes) || pending?.bytes === bytes) return;
       if (!(bytes instanceof Uint8Array) || !bytes.length ||
           !Number.isSafeInteger(details?.width) || !Number.isSafeInteger(details?.height) ||
           details.width < 1 || details.height < 1) return;
       pending = {bytes, ...details};
       pump();
+      checked();
+    },
+    async finish() {
+      close(); checked();
+      try { await abortable(active, signal); } finally { checked(); }
+      if (cleanup) throw callers(cleanup.reason);
     },
     close,
   };

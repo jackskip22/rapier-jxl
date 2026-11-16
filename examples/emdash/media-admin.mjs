@@ -24,7 +24,7 @@ const why = reason => REASONS[reason] ?? WORDS.failed;
 const failure = error => error.name === 'AbortError' ? WORDS.canceled : error.phase === 'rewrite' ? WORDS.linksNotUpdated : why(error.code);
 const activeRun = run => run && ['preparing', 'running', 'paused', 'canceling'].includes(run.state);
 const post = (path, body, signal) => api(ROUTE + path, {method: 'POST', signal, type: 'application/json', body: JSON.stringify(body)});
-const runsInBrowser = row => BROWSER.has(row.mimeType) || row.execution?.location === 'browser';
+const runsInBrowser = row => BROWSER.has(row.mimeType) || SERVER.has(row.mimeType) && row.execution?.location === 'browser';
 const browserReady = row => !row.nativeJob || Boolean(row.job?.done && !row.job?.canceled && !row.job?.publishing && !row.job?.blocked);
 const pollingJob = job => !job?.done && !job?.canceled && !job?.blocked && !job?.advanceError;
 
@@ -188,22 +188,22 @@ async function browserConvert(item, selected, signal, update, widthsOnly = false
   const made = await workerResult(() => new Worker(new URL('./media-worker.mjs', import.meta.url), {type: 'module'}),
     {file, settings: workerSettings, archiveOriginals, ...(deliveryOnly && {deliveryOnly: true}), ...(widthsOnly && {widthsOnly: true, main})},
     {signal, progress: progress => update({progress: Math.max(0, Math.min(1, progress))})});
-  if (deliveryOnly && [made.result, ...made.copies].some(result => result?.fits && result.browserVerification?.verified !== true))
-    throw Object.assign(new Error('The browser verifier did not verify this delivery.'), {code: 'JXL_INPUT'});
+  if (deliveryOnly && [made.result, ...made.copies].some(result => result?.meetsTarget && result.browserVerification?.verified !== true))
+    throw Object.assign(new Error("Browser verifier did not verify this delivery; verify its original and candidate."), {code: 'JXL_INPUT'});
   const bound = {...item, generation: captured.generation, deliveryRevision: captured.deliveryRevision};
   // A JPEG's exact archive is independent of its selected delivery goal. A missed Size limit must not discard it.
   let original;
-  if (!widthsOnly && archiveOriginals && !deliveryOnly && made.original?.fits)
+  if (!widthsOnly && archiveOriginals && !deliveryOnly && made.original?.meetsTarget)
     original = await attach(`${ROUTE}/attach?${query(bound)}&source=${made.source}`, made.original, signal);
   if (original?.stored === 'pending' && !original.job?.id) throw new Error('Archive publication returned no saved job');
   let result = {stored: widthsOnly ? 'sidecar' : 'original', reason: made.result?.reason?.code};
   if (!widthsOnly && archiveOriginals && !deliveryOnly && made.archiveIsDelivery) {
     if (!original) throw new Error('The selected JPEG archive was not submitted.');
     result = original;
-  } else if (!widthsOnly && made.result?.fits)
+  } else if (!widthsOnly && made.result?.meetsTarget)
     result = await attach(`${ROUTE}/attach?${query(bound)}&source=${made.source}`, made.result, signal);
   const variants = [];
-  if (result.stored === 'sidecar') for (const copy of made.copies) if (copy.fits)
+  if (result.stored === 'sidecar') for (const copy of made.copies) if (copy.meetsTarget)
     variants.push(await attach(`${ROUTE}/variant?${query(bound)}&width=${copy.width}&source=${made.source}`, copy, signal));
   const stored = await readStored(item, signal);
   const submitted = [original, result, ...variants];
@@ -547,7 +547,7 @@ function YourImages({images, background, ready, onImport}) {
           h(Button, {variant: 'primary', className: 'w-full', style: {justifyContent: 'center'}, disabled: !ready || background.busy, onClick: stage}, words(older.length === 1 ? WORDS.convertOlderOne : WORDS.convertOlder, {count: older.length})),
           h('p', {className: 'text-sm text-kumo-subtle'}, WORDS.serverNote))
         : !pending && rows.every(row => row.converted) && h('p', {className: 'text-sm text-kumo-subtle'}, WORDS.allConverted)),
-    h('div', {style: {display: 'flex', justifyContent: 'center'}}, h(Button, {variant: 'ghost', className: 'rapier-import-link', onClick: onImport}, WORDS.importWordPress)),
+    h('div', {style: {display: 'flex', justifyContent: 'center'}}, h(Button, {variant: 'ghost', className: 'rapier-import-link', onClick: onImport}, WORDS.importSiteExport)),
     images.error && h('div', {role: 'alert', style: {...line, justifyContent: 'center'}}, h('p', {className: 'text-sm'}, WORDS.imagesError),
       h(Button, {size: 'sm', variant: 'secondary', onClick: images.refresh}, WORDS.retry)));
 }
@@ -658,7 +658,7 @@ function Settings({settings, save, error, loaded, retry, draft}) {
     error && (!loaded || error.phase?.startsWith('originals-')) && h(Button, {variant: 'secondary', onClick: retry}, WORDS.retry));
 }
 
-function WordPress({open, setOpen, ready, refresh, setImportBusy, blocked}) {
+function ImportExport({open, setOpen, ready, refresh, setImportBusy, blocked}) {
   const queue = useQueue(), input = useRef(), [found, setFound] = useState(null), [message, setMessage] = useState(null);
   async function choose(event) {
     const file = event.target.files[0]; event.target.value = '';
@@ -688,7 +688,7 @@ function WordPress({open, setOpen, ready, refresh, setImportBusy, blocked}) {
   return h(Dialog.Root, {open, onOpenChange: setOpen},
     h(Dialog, {style: {width: 'min(32rem, calc(100vw - 32px))', maxWidth: 'calc(100vw - 32px)', padding: 24}},
       h('div', {style: column(16)},
-        h(Dialog.Title, null, WORDS.importWordPress),
+        h(Dialog.Title, null, WORDS.importSiteExport),
         h(Dialog.Description, null, WORDS.importDescription),
         h('div', {style: line}, h(Button, {variant: 'secondary', disabled: queue.busy || !ready, onClick: () => input.current.click()}, WORDS.chooseExport),
           h('input', {ref: input, type: 'file', accept: '.xml,application/xml,text/xml', hidden: true, onChange: choose}),
@@ -731,6 +731,6 @@ function ImagesPage() {
         ...originalsControl(originals), onCheckedChange: originals.setKeep}),
       h('label', {htmlFor: 'rapier-originals'}, WORDS.originals), h(Info, {label: WORDS.originals,
         text: WORDS.originalsInfo + (originals.value?.available === false ? ' ' + WORDS.originalsPaid : ''), side: 'top'})),
-    h(WordPress, {open: importOpen, setOpen: setImportOpen, ready, refresh: images.refresh, setImportBusy, blocked}));
+    h(ImportExport, {open: importOpen, setOpen: setImportOpen, ready, refresh: images.refresh, setImportBusy, blocked}));
 }
 export const pages = {'/jpeg-xl': ImagesPage};

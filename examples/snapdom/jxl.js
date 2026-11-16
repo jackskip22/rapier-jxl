@@ -1,34 +1,33 @@
 // JPEG XL for SnapDOM 3: snapdom(element, { plugins: [jxl()] }), then result.toJxl(), or toBlob or download with
-// { format: 'jxl' }; toWebp()'s options and defaults, plus effort, signal, onProgress and onEncoded.
+// { format: 'jxl' }; toWebp()'s options and defaults except the background (transparent unless you set backgroundColor), plus effort, signal, onProgress and onEncoded.
 // Copy jxl.js and jxl.d.ts into your app; rapier-jxl/page-rects comes from the package.
-import { measure, pageRects } from 'rapier-jxl/page-rects';
+import { measure, pageRects } from 'jpegxl/page-rects';
 
-// Options: module ('rapier-jxl/capture-complete', 'rapier-jxl/capture' or 'rapier-jxl/upload'), codec (your own
-// encoder with prepare and capture), effort (each export's default), webgpu (false or 'required') and helpers.
+// Options: module ('rapier-jxl/capture-complete', 'rapier-jxl/capture' or 'rapier-jxl/upload'), codec (the capture
+// module you imported, or any encoder with prepare and capture), effort (each export's default) and, for
+// capture-complete, webgpu (false or 'required'; the lean modules run on WebAssembly). Helpers are the module's own setting: configure({helpers}) from the module.
 export function jxl(options = {}) {
-  const { module = 'rapier-jxl/capture-complete', codec, effort: preset, webgpu, helpers: asked } = options;
-  // The same helpers written in another order share one codec.
-  const helpers = asked && typeof asked === 'object'
-    ? { count: asked.count, ...(asked.memoryBytes !== undefined && { memoryBytes: asked.memoryBytes }) } : asked || undefined;
+  const { module = 'rapier-jxl/capture-complete', codec, effort: preset, webgpu } = options;
   // Equal options give the same plugin, so SnapDOM's memo of an unchanged capture holds for an
   // inline `jxl()` too.
-  const id = JSON.stringify([module, helpers, preset, webgpu]);
+  const id = JSON.stringify([module, preset, webgpu]);
   const made = codec ? byCodec.get(codec) ?? byCodec.set(codec, new Map()).get(codec) : plugins;
-  if (!made.has(id)) made.set(id, create(module, codec, preset, webgpu, helpers));
+  if (!made.has(id)) made.set(id, create(module, codec, preset, webgpu));
   return made.get(id);
 }
 
 const plugins = new Map(), byCodec = new WeakMap();
 
-function create(module, codec, preset, webgpu, helpers) {
-  const key = JSON.stringify([module, helpers]);
+function create(module, codec, preset, webgpu) {
   const exactOnly = module === 'rapier-jxl/capture';
   // Edges are measured with the page, for any export effort from 4 (a scan of about 0.1 ms on
   // SnapDOM's demo pages): measuring the page again at export could see it changed.
   const edges = module !== 'rapier-jxl/upload';
-  if (!DOORS[module]) throw new Error(`The jxl plugin's module is ${Object.keys(DOORS).join(', ')} or left out.`);
+  if (!MODULES.includes(module)) throw new Error(`The jxl plugin's module is ${MODULES.join(', ')} or left out.`);
+  if (webgpu !== undefined && module !== COMPLETE) throw new Error(`jxl({module: '${module}'}) runs on WebAssembly; remove webgpu.`);
+  if (!codec && module !== COMPLETE) throw new Error(`jxl({module: '${module}'}) needs its codec: import * as codec from '${module}' and pass {codec}.`);
   // Start loading now, so the first export does not wait on the network.
-  if (!codec) DOORS[module]().catch(() => {});
+  if (!codec) door().catch(() => {});
   return {
     name: 'jxl',
     // The measurement reads the live DOM and nothing else, so SnapDOM can keep memoizing
@@ -42,70 +41,115 @@ function create(module, codec, preset, webgpu, helpers) {
         const element = context.element;
         // Only what SnapDOM cloned is drawn: exclude, filter and unslotted children add nothing.
         const keep = context.nodeMap ? new Set(context.nodeMap.values()) : undefined;
-        context[SNAPSHOT] = element ? { ...measured(measure, element, edges, keep), frame: frameOf(element, context.outerTransforms !== false) } : null;
+        // The measurement serves this plugin's exports only: one that fails rejects a JPEG XL export, never another.
+        try {
+          context[SNAPSHOT] = element ? { ...measured(measure, element, edges, keep), frame: frameOf(element, context.outerTransforms !== false) } : null;
+        } catch (error) {
+          context[SNAPSHOT] = { error };
+        }
       },
     }),
 
     defineExports: ({ exports }) => {
-      const encoded = async (context, options) => {
+      const encodedOnce = async (context, options, callbacks) => {
         // The export's own options first: a beforeExport plugin may have changed them, and a
         // direct call has nothing else.
         const asked = context.export?.requestedOptions ?? {}, pick = k => options[k] !== undefined ? options[k] : asked[k];
         const effort = pick('effort') ?? preset, signal = pick('signal'), onProgress = pick('onProgress'), onEncoded = pick('onEncoded');
+        const observe = async (callback, value) => {
+          try { await abortable(Promise.resolve(callback(value)), signal); }
+          catch (error) { callbacks.failed = true; throw error; }
+        };
         signal?.throwIfAborted();
-        if (!codec && !codecs.has(key)) {
-          codecs.set(key, DOORS[module]().then(({ createCodec }) => createCodec({ module, maxPixels: MAX_PIXELS, ...(helpers !== undefined && { helpers }) }),
-            error => { codecs.delete(key); throw needs(error); }));
+        if (context[SNAPSHOT]?.error) throw context[SNAPSHOT].error;
+        const encoder = codec ?? await abortable(door(), signal);
+        // Upload carries two coders: the capture one is warmed; every other module prepares its own.
+        (module === 'rapier-jxl/upload' ? encoder.prepare('capture') : encoder.prepare()).catch(() => {});
+        const drawOptions = { ...options }, suppliedCanvas = drawOptions.canvas;
+        let canvas;
+        try {
+          await abortable(Promise.resolve(exports.canvas(drawOptions)).then(drawn => {
+            if (signal?.aborted) {
+              if (drawn !== suppliedCanvas) free(drawn);
+              signal.throwIfAborted();
+            }
+            canvas = drawn;
+          }), signal);
+          signal?.throwIfAborted();
+
+          // A quality outside 0 to 1 is ignored for the default, as toWebp's canvas.toBlob ignores it.
+          const quality = Number.isFinite(options.quality) && options.quality >= 0 && options.quality <= 1 ? options.quality : 0.92;
+          const photo = { quality: Math.max(1, quality * 100) };
+          // The canvas shows the capture's viewBox: the measurement moves into it the way SnapDOM
+          // drew the root (its outer shadow, transform and clip window), or, where it cannot, the
+          // whole capture stays exact.
+          const both = o => Number.isFinite(o.width) && Number.isFinite(o.height);
+          const fitted = both(context) && !safari(), exported = both(options) && firefox() && options;
+          const shot = inView(context[SNAPSHOT], context.meta, fitted, exported, options.crop);
+          // WebKit draws a clip window's positioned boxes as if the window began at the element's corner
+          // (SnapDOM 3.7.2): in Safari the text stays exact in both places.
+          const unclipped = shot && safari() && context.meta?.clip ? inView(context[SNAPSHOT], { ...context.meta, clip: null }, fitted, exported, options.crop) : null;
+          const area = {};
+
+          // Below 1:1, text boxes map through the drawn scale (outward to whole pixels) so glyphs
+          // stay exact, and photos still take the quality. With no photos left the page stays exact;
+          // with photos, the smaller of that file and the whole page exact wins, so a scaled export
+          // is never larger.
+          const naturalW = shot?.box.width, naturalH = shot?.box.height;
+          const below = !!(shot && naturalW && naturalH &&
+            (canvas.width < Math.floor(naturalW) || canvas.height < Math.floor(naturalH)));
+          const measured = [shot, unclipped].filter(Boolean).map(s => pageRects(s, canvas, { area, edges: !below && (effort ?? 3) >= 4 }));
+          let rects = quality < 1 && !exactOnly && measured.length
+            ? { exactRects: measured.flatMap(r => r.exactRects), photoRects: measured.flatMap(r => r.photoRects),
+              ...(measured.every(r => r.textComplete === true) && { textComplete: true }) } : null;
+          // A page SnapDOM had to shrink to its canvas limit is drawn with its text moved from where
+          // the page has it, so the rectangles cannot follow: it stays exact.
+          if (below && (!rects?.photoRects?.length || atLimit(canvas))) rects = null;
+          // Text over a photograph: one more draw, the capture with its text alone (textMask), gives the encoder the
+          // page without its text, so the photograph under the letters takes the quality and the letters stay exact.
+          if (rects && !below) {
+            const under = await abortable(withoutText(context, options, canvas, rects), signal).catch(error => { if (signal?.aborted) throw error; return null; });
+            if (under) rects = { ...rects, withoutText: under };
+          }
+
+          const base = { ...(effort !== undefined && { effort }), ...(webgpu !== undefined && { webgpu }), ...(signal && { signal }) };
+          // The encoder's progress up to 1; the export's 1 comes after its record (the record, the abort check, then 1).
+          const rising = onProgress && (f => { if (f < 1) return observe(onProgress, f); });
+          const file = below && rects
+            ? await smaller(encoder, canvas, base, [{ fidelity: photo, ...rects }, { fidelity: 'exact' }], { signal, onProgress: rising })
+            : await encoder.capture(canvas, {
+              ...(rects ? { fidelity: photo, ...rects } : { fidelity: 'exact' }),
+              ...base, ...(rising && { onProgress: rising }),
+            });
+          // An encoder that finished after the abort still loses to it.
+          signal?.throwIfAborted();
+          bytesOf(file);
+          // The capture's record, read from its result: exact, and whether unboxed text was looked for.
+          const record = { exact: file.kept === 'pixels', ...(file.textMarks && { textMarks: file.textMarks }) }, { exact } = record;
+          if (onEncoded != null) await observe(onEncoded, record);
+          signal?.throwIfAborted();
+          if (onProgress != null) await observe(onProgress, 1);
+          signal?.throwIfAborted();
+          return { blob: new Blob([bytesOf(file)], { type: 'image/jxl' }), canvas, exact, own: canvas !== suppliedCanvas };
+        } catch (error) {
+          if (canvas !== suppliedCanvas) free(canvas);
+          throw error;
         }
-        const encoder = codec ?? await abortable(codecs.get(key), signal);
-        encoder.prepare('capture').catch(() => {});
-        const canvas = await abortable(exports.canvas({ ...options, backgroundColor: options.backgroundColor ?? '#ffffff' }), signal);
-        signal?.throwIfAborted();
-
-        const { quality = 0.92 } = options;
-        const photo = { quality: Math.max(1, quality * 100) };
-        // The canvas shows the capture's viewBox: the measurement moves into it the way SnapDOM
-        // drew the root (its outer shadow, transform and clip window), or, where it cannot, the
-        // whole capture stays exact.
-        const both = o => Number.isFinite(o.width) && Number.isFinite(o.height);
-        const fitted = both(context) && !safari(), exported = both(options) && firefox() && options;
-        const shot = inView(context[SNAPSHOT], context.meta, fitted, exported);
-        // WebKit draws a clip window's positioned boxes as if the window began at the element's corner
-        // (SnapDOM 3.7.2): in Safari the text stays exact in both places.
-        const unclipped = shot && safari() && context.meta?.clip ? inView(context[SNAPSHOT], { ...context.meta, clip: null }, fitted, exported) : null;
-        const area = {};
-
-        // Below 1:1, text boxes map through the drawn scale (outward to whole pixels) so glyphs
-        // stay exact, and photos still take the quality. With no photos left the page stays exact;
-        // with photos, the smaller of that file and the whole page exact wins, so a scaled export
-        // is never larger.
-        const naturalW = shot?.box.width, naturalH = shot?.box.height;
-        const below = !!(shot && naturalW && naturalH &&
-          (canvas.width < Math.floor(naturalW) || canvas.height < Math.floor(naturalH)));
-        const measured = [shot, unclipped].filter(Boolean).map(s => pageRects(s, canvas, { area, edges: !below && (effort ?? 3) >= 4 }));
-        let rects = quality < 1 && !exactOnly && measured.length
-          ? { exactRects: measured.flatMap(r => r.exactRects), photoRects: measured.flatMap(r => r.photoRects),
-            ...(measured.every(r => r.textComplete === true) && { textComplete: true }) } : null;
-        // A page SnapDOM had to shrink to its canvas limit is drawn with its text moved from where
-        // the page has it, so the rectangles cannot follow: it stays exact.
-        if (below && (!rects?.photoRects?.length || atLimit(canvas))) rects = null;
-
-        let exact = false;
-        const base = { ...(effort !== undefined && { effort }), ...(webgpu !== undefined && { webgpu }), ...(signal && { signal }) };
-        const hooks = { signal, onProgress, onEncoded: record => { exact = record?.exact; onEncoded?.(record); } };
-        const file = below && rects
-          ? await smaller(encoder, canvas, base, [{ fidelity: photo, ...rects }, { fidelity: 'exact' }], hooks)
-          : await encoder.capture(canvas, {
-            ...(rects ? { fidelity: photo, ...rects } : { fidelity: 'exact' }),
-            ...base, ...(onProgress !== undefined && { onProgress }), onEncoded: hooks.onEncoded,
-          });
-        // An encoder that finished after the abort still loses to it.
-        signal?.throwIfAborted();
-        return { blob: new Blob([bytesOf(file)], { type: 'image/jxl' }), canvas, exact };
+      };
+      // A canvas the browser handed over blank (WebKit under load: a white canvas where the page has photographs) is
+      // refused by the capture with JXL_PLATFORM; SnapDOM draws it once more. A canvas the caller supplied is not redrawn.
+      const encoded = async (context, options) => {
+        const callbacks = {failed: false};
+        try { return await encodedOnce(context, options, callbacks); } catch (error) {
+          if (callbacks.failed) throw error;
+          const asked = context.export?.requestedOptions ?? {}, signal = options.signal !== undefined ? options.signal : asked.signal;
+          if (!blankCanvas(error) || options.canvas || signal?.aborted) throw error;
+          return encodedOnce(context, options, callbacks);
+        }
       };
       const encode = async (context, options) => {
-        const { blob, canvas } = await encoded(context, options);
-        if (canvas !== options.canvas) free(canvas);
+        const { blob, canvas, own } = await encoded(context, options);
+        if (own) free(canvas);
         return blob;
       };
       // `type` is SnapDOM's older name for `format`, which it keeps for its own formats only. A format
@@ -120,8 +164,8 @@ function create(module, codec, preset, webgpu, helpers) {
 
       return {
         jxl: async (context, options = {}) => {
-          const { blob, canvas: drawn, exact } = await encoded(context, options);
-          return image(blob, drawn, drawn !== options.canvas, options.dpr || 1, signalOf(context, options), exact);
+          const { blob, canvas: drawn, exact, own } = await encoded(context, options);
+          return image(blob, drawn, own, options.dpr || 1, signalOf(context, options), exact);
         },
         blob: (context, options = {}) => isJxl(context, options) ? encode(context, options) : exports.blob(options),
         async download(context, options = {}) {
@@ -142,17 +186,14 @@ const SNAPSHOT = Symbol('jxl measurement');
 // SnapDOM's raster limits: 32767 pixels a side (16384 in Safari) and 16384 * 16384 in all.
 const atLimit = ({ width, height }) => [16384, 32767].includes(Math.max(width, height)) || width * height > 0.99 * 16384 * 16384;
 const MAX_PIXELS = 16384 * 16384;
-const codecs = new Map();
-let decoder = null;
+let decoder = null, complete = null;
 
-// Each module's codec comes through its own door, named in full, so a bundler ships the workers of
-// these three modules and no others; a page loads only the one it uses.
-const DOORS = {
-  'rapier-jxl/capture-complete': () => import('rapier-jxl/codec/capture-complete'),
-  'rapier-jxl/capture': () => import('rapier-jxl/codec/capture'),
-  'rapier-jxl/upload': () => import('rapier-jxl/codec/upload'),
-};
-const needs = error => new Error('The jxl plugin needs rapier-jxl 8.3.2 or later: npm install rapier-jxl', { cause: error });
+// The default module, the one encoder import here (in a browser it runs in its own worker), so a bundler ships no
+// other module; capture and upload arrive only as the `codec` the app imports.
+const COMPLETE = 'rapier-jxl/capture-complete';
+const MODULES = [COMPLETE, 'rapier-jxl/capture', 'rapier-jxl/upload'];
+const door = () => complete ??= import('jpegxl/capture-complete').catch(error => { complete = null; throw needs(error); });
+const needs = error => new Error('The jxl plugin needs rapier-jxl 8.4.0 or later: npm install jpegxl', { cause: error });
 
 // SnapDOM draws <html> without the top margins that collapse through its first children (<body>'s
 // own included), so what lies in <body>'s flow is drawn higher by that much; a box positioned on the
@@ -279,14 +320,23 @@ function scaleSkew({ a, b, c, d }) {
 // The box is what the canvas shows, in viewBox units. A capture given both width and height fits its
 // viewBox inside them, centered (Safari stretches it instead), and Firefox draws an export given
 // both fitted and centered too (the others stretch it): mapping the box onto the canvas is a stretch.
-function inView(shot, meta, fitted, exported) {
+// An export's crop is a window of the viewBox, drawn 1:1 (SnapDOM's cropSvgText), never a downscale: the box is the
+// window; over a fitted capture or a fitted export the capture stays exact.
+function inView(shot, meta, fitted, exported, crop) {
   if (!shot?.frame || !meta || !Number.isFinite(meta.vbW)) return null;
   const { contentX = 0, contentY = 0, vbW, vbH, clip, targetW, targetH } = meta, { toDrawn } = shot.frame;
-  let width = vbW, height = vbH;
+  let width = vbW, height = vbH, left = 0, top = 0;
   const fit = (w, h) => { const k = Math.min(w / width, h / height); width = w / k; height = h / k; };
-  if (fitted && targetW && targetH) fit(targetW, targetH);
-  if (exported) fit(exported.width, exported.height);
-  const dx = contentX - (clip?.x ?? 0) + (width - vbW) / 2, dy = contentY - (clip?.y ?? 0) + (height - vbH) / 2;
+  if (crop) {
+    if (fitted && targetW && targetH || exported) return null;
+    left = Math.max(0, crop.x); top = Math.max(0, crop.y);
+    width = Math.min(vbW, crop.x + crop.width) - left; height = Math.min(vbH, crop.y + crop.height) - top;
+    if (!(width > 0 && height > 0)) return null;
+  } else {
+    if (fitted && targetW && targetH) fit(targetW, targetH);
+    if (exported) fit(exported.width, exported.height);
+  }
+  const dx = contentX - (clip?.x ?? 0) - left + (crop ? 0 : (width - vbW) / 2), dy = contentY - (clip?.y ?? 0) - top + (crop ? 0 : (height - vbH) / 2);
   const move = r => {
     const ps = [[r.left, r.top], [r.right, r.top], [r.left, r.bottom], [r.right, r.bottom]].map(([x, y]) => toDrawn({ x, y }));
     const xs = ps.map(p => p.x + dx), ys = ps.map(p => p.y + dy);
@@ -299,6 +349,70 @@ function inView(shot, meta, fitted, exported) {
     ...(shot.textComplete === true && { textComplete: true }),
     ...(shot.edges && { edges: shot.edges.map(move) }),
   };
+}
+
+// Text over a photograph, SnapDOM's way: the export's own SVG drawn once more with every text white and all else
+// transparent (a layer first in its first <style>, so its important rules win), on the export's canvas (the crop as the
+// source rectangle). Its alpha is the text. Images are hidden, so a capture whose originals an export restored draws the
+// same mask. WebKit redraws a page's shadows as filters and moves its letters by up to 2 px, so there the mask grows by
+// 2 px; a first draw that comes back empty is drawn again (WebKit). null where there is no SVG, no text over a
+// photograph, or no mask: the text boxes stay exact.
+const MASK = encodeURIComponent('@layer snapdom-mask{*{color:#fff!important;-webkit-text-fill-color:#fff!important;' +
+  'background:none!important;border-color:transparent!important;box-shadow:none!important;text-shadow:none!important;' +
+  'outline:none!important}img,video,canvas,iframe,foreignObject svg{visibility:hidden!important}}');
+async function withoutText(context, options, canvas, rects) {
+  if (typeof HTMLCanvasElement === 'undefined' || !(canvas instanceof HTMLCanvasElement)) return null;
+  const over = rects.exactRects.filter(r => !r.edge && rects.photoRects.some(p => r.x < p.x + p.width && p.x < r.x + r.width && r.y < p.y + p.height && p.y < r.y + r.height));
+  const url = over.length ? context.export?.url : null, meta = context.meta;
+  if (typeof url !== 'string' || !url.startsWith('data:image/svg+xml') || !meta || !Number.isFinite(meta.vbW)) return null;
+  // SnapDOM's URL is encodeURIComponent of the SVG: the layer goes in after the first <style ...>, the URL left encoded.
+  const at = url.search(/%3Cstyle(%20|%3E)/), end = at < 0 ? -1 : url.indexOf('%3E', at) + 3;
+  if (end < 3) return null;
+  const img = new Image();
+  img.src = url.slice(0, end) + MASK + url.slice(end);
+  await img.decode();
+  const { width: w, height: h } = canvas, crop = options.crop, kx = img.naturalWidth / meta.vbW, ky = img.naturalHeight / meta.vbH;
+  const draw = document.createElement('canvas');
+  draw.width = w; draw.height = h;
+  const g = draw.getContext('2d', { willReadFrequently: true });
+  let alpha = null;
+  try {
+    for (let tries = 0; tries < 2 && !alpha; tries++) {
+      g.clearRect(0, 0, w, h);
+      if (crop) {
+        const x = Math.max(0, crop.x), y = Math.max(0, crop.y);
+        g.drawImage(img, x * kx, y * ky, (Math.min(meta.vbW, crop.x + crop.width) - x) * kx, (Math.min(meta.vbH, crop.y + crop.height) - y) * ky, 0, 0, w, h);
+      } else g.drawImage(img, 0, 0, w, h);
+      const a = g.getImageData(0, 0, w, h).data;
+      for (let i = 3; i < a.length; i += 4) if (a[i]) { alpha = a; break; }
+    }
+  } finally { free(draw); }
+  if (!alpha) return null;
+  // A shadow with a length, read in the encoded URL (a declaration ends at ;, } or ").
+  const grow = safari() && /(box|text)-shadow%3A(?:[^%]|%(?!3B|7D|22))*?px/i.test(url) ? 2 : 0;
+  let mask = new Uint8Array(w * h);
+  for (let i = 0; i < mask.length; i++) mask[i] = alpha[i * 4 + 3] ? 1 : 0;
+  if (grow) {
+    const out = new Uint8Array(mask.length);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (mask[y * w + x])
+      for (let dy = Math.max(0, y - grow); dy <= Math.min(h - 1, y + grow); dy++) out.fill(1, dy * w + Math.max(0, x - grow), dy * w + Math.min(w - 1, x + grow) + 1);
+    mask = out;
+  }
+  // The page without its text: each text sample takes the nearest sample left of it on its row that is not text (or
+  // right of it, at a row's start), changed where it would equal the drawn one, so every text sample differs.
+  const data = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data, under = new Uint8ClampedArray(data);
+  for (let y = 0; y < h; y++) {
+    let last = -1;
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (!mask[i]) { last = i; continue; }
+      let from = last;
+      if (from < 0) for (let r = x + 1; r < w; r++) if (!mask[y * w + r]) { from = y * w + r; break; }
+      if (from >= 0) under.set(data.subarray(from * 4, from * 4 + 4), i * 4);
+      if (under[i * 4] === data[i * 4] && under[i * 4 + 1] === data[i * 4 + 1] && under[i * 4 + 2] === data[i * 4 + 2]) under[i * 4] ^= 1;
+    }
+  }
+  return { data: under, width: w, height: h, rects: over.map(({ x, y, width, height }) => ({ x, y, width, height })) };
 }
 
 // Where JPEG XL does not display (found on the first try, then remembered), a PNG of the exact
@@ -318,8 +432,7 @@ async function image(blob, drawn, own, dpr, signal, exact) {
       if (signal?.aborted) throw signal.reason;
       if (showsJxl === undefined) showsJxl = false;
       if (!exact) {
-        decoder ??= import('rapier-jxl/codec/decode').then(({ createCodec }) => createCodec({ module: 'rapier-jxl/decode', maxPixels: MAX_PIXELS }),
-          error => { decoder = null; throw needs(error); });
+        decoder ??= import('jpegxl/decode').catch(error => { decoder = null; throw needs(error); });
         const { data, width: w, height: h } = await wait((await wait(decoder)).decode(blob, { format: 'uint8', colorSpace: 'srgb', maxPixels: MAX_PIXELS, ...(signal && { signal }) }));
         decoded = document.createElement('canvas');
         decoded.width = w;
@@ -341,6 +454,9 @@ async function image(blob, drawn, own, dpr, signal, exact) {
 
 // A canvas holds its pixels until it is emptied, even once nothing reads it. Only the export's own
 // canvases are emptied, never one the app passed as `canvas`.
+// The capture's refusal of a canvas read back blank where its rectangles hold content (its words, which cross a worker).
+const blankCanvas = error => error?.code === 'JXL_PLATFORM' && /read back blank/.test(error?.message ?? '');
+
 function free(canvas) {
   if (typeof HTMLCanvasElement !== 'undefined' && canvas instanceof HTMLCanvasElement) canvas.width = canvas.height = 0;
 }
@@ -377,43 +493,49 @@ async function save(blob, filename) {
   }
 }
 
-// Below 1:1, encode each candidate quietly, keep the smallest, then report one onEncoded and
-// a final progress of 1. Progress runs 0 to 1 across the candidates without restarting.
+// Below 1:1, encode each candidate quietly and keep the smallest. Progress runs 0 to 1 across the candidates without
+// restarting; the export reports its 1 after the record.
 async function smaller(encoder, canvas, base, jobs, hooks) {
   const span = 1 / jobs.length;
-  let best = null, record = null;
+  let best = null;
   for (let i = 0; i < jobs.length; i++) {
-    let got = null;
     const result = await encoder.capture(canvas, {
       ...base, ...jobs[i],
-      onProgress: hooks.onProgress && (f => { if (f < 1) hooks.onProgress(i * span + f * span); }),
-      onEncoded: r => { got = r; },
+      onProgress: hooks.onProgress && (f => { if (f < 1) return hooks.onProgress(i * span + f * span); }),
     });
-    if (result.fits && result.bytes && (!best || result.bytes.byteLength < best.bytes.byteLength)) { best = result; record = got; }
+    if (result.meetsTarget && result.bytes && (!best || result.bytes.byteLength < best.bytes.byteLength)) best = result;
   }
   hooks.signal?.throwIfAborted();
   bytesOf(best);
-  hooks.onEncoded(record ?? { exact: false });
-  hooks.signal?.throwIfAborted();
-  hooks.onProgress?.(1);
   hooks.signal?.throwIfAborted();
   return best;
 }
 
 function bytesOf(result) {
-  if (!result?.fits || !result.bytes) {
-    throw Object.assign(new Error(result?.reason?.message ?? 'The JPEG XL file did not meet the requested target.'),
+  if (!result?.meetsTarget || !result.bytes) {
+    throw Object.assign(new Error(result?.reason?.message ?? "No output meets the target; adjust fidelity or size."),
       { code: result?.reason?.code ?? 'JXL_UNSUPPORTED' });
   }
   return result.bytes;
 }
 
 function abortable(promise, signal) {
-  if (!signal) return promise;
+  if (!signal) return Promise.resolve(promise);
   return new Promise((resolve, reject) => {
-    const stop = () => reject(signal.reason);
-    signal.addEventListener('abort', stop, { once: true });
-    if (signal.aborted) stop();
-    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', stop));
+    let done = false;
+    const finish = (settle, value) => {
+      if (done) return;
+      done = true;
+      try { signal.removeEventListener('abort', stop); }
+      catch (reason) { if (settle === resolve) { reject(reason); return; } }
+      settle(value);
+    };
+    const stop = () => {
+      try { if (signal.aborted) finish(reject, signal.reason); }
+      catch (reason) { finish(reject, reason); }
+    };
+    Promise.resolve(promise).then(value => finish(resolve, value), error => finish(reject, error));
+    try { signal.addEventListener('abort', stop, { once: true }); stop(); }
+    catch (reason) { finish(reject, reason); }
   });
 }

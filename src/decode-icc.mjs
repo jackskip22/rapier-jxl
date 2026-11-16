@@ -9,7 +9,7 @@ function limit(value, maxBytes) {
     throw Object.assign(new RangeError('JPEG XL ICC profile exceeds its allocation limit.'), {code: 'JXL_LIMIT'});
 }
 
-function context(i, a, b) {
+export function context(i, a, b) {
   if (i <= 128) return 0;
   const alpha = v => v >= 65 && v <= 90 || v >= 97 && v <= 122;
   const digit = v => v >= 48 && v <= 57 || v === 44 || v === 46;

@@ -6,13 +6,16 @@ import {BitWriter} from '../bits.mjs';
 import {fail} from './primitives.mjs';
 export {takeFirstRegion} from './first-region-option.mjs';
 
+export function admitRegion(region, {width, height}) {
+  if (region.x + region.width > width || region.y + region.height > height) throw fail('JXL_OPTIONS', "firstRegion is outside the picture; pass a region within its bounds.");
+}
 const TOC_ENTRY = [[10, 0], [14, 1024], [22, 17408], [30, 4211712]];
 export function orderRegion(bytes, region) {
   if (!region) return bytes;
   let parsed;
-  try { parsed = readFrames(bytes); } catch (cause) { throw Object.assign(fail('JXL_UNSUPPORTED', 'firstRegion does not take an ICC profile.'), {cause}); }
+  try { parsed = readFrames(bytes); } catch (cause) { throw Object.assign(fail('JXL_UNSUPPORTED', "firstRegion cannot use an ICC profile; remove firstRegion or pass pixels with a named color space."), {cause}); }
   const {codestream, level, image, frames} = parsed;
-  if (region.x + region.width > image.width || region.y + region.height > image.height) throw fail('JXL_OPTIONS', 'firstRegion lies inside the picture.');
+  if (region.x + region.width > image.width || region.y + region.height > image.height) throw fail('JXL_OPTIONS', "firstRegion is outside the picture; pass a region within its bounds.");
   const parts = [codestream.subarray(0, image.end)];
   for (const frame of frames) {
     if (frame.dcLevel || frame.sizes.length === 1) { parts.push(codestream.subarray(frame.start, frame.end)); continue; }

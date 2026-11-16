@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
-import {JPEG_LIMITS} from './limits.mjs';
+import {LIMITS} from './limits.mjs';
 import {ceilLog2, complete} from './bits.mjs';
 import {unit, stage, journaling, journalTool, sliceBytes} from './step-journal.mjs';
 import {canonicalCodes} from './prefix.mjs';
-import {LOG_LENGTHS, LOG_CODES, reverseAlias} from './ans.mjs';
+import {LOG_LENGTHS, LOG_CODES, reverseAlias} from './ans-core.mjs';
 import {ZIGZAG} from './jpeg-tables.mjs';
 import {zeroDensityContext} from './vardct.mjs';
 import {fault} from './admit.mjs';
@@ -187,10 +187,12 @@ function contextMap(r, count, depth = 0) {
 function entropyModel(r, contexts, {depth = 0, byteHistory = false, history = false} = {}) {
   const lz = r.read(1), minimum = lz ? r.u32([[0, 224], [0, 512], [0, 4096], [15, 8]]) : 0;
   const minLength = lz ? r.u32([[0, 3], [0, 4], [2, 5], [8, 9]]) : 0, lengthConfig = lz ? config(r, 8) : null;
-  const map = contexts + lz > 1 ? contextMap(r, contexts + lz, depth) : new Uint8Array(1);
+  const map = contexts + lz === 1 ? new Uint8Array(1) : contextMap(r, contexts + lz, depth);
   if (byteHistory) requireJPEG(map.subarray(0, contexts).every(value => value === map[0]));
-  byteHistory ||= history;
-  const count = 1 + Math.max(...map), prefix = r.read(1), log = prefix ? 15 : r.read(2) + 5;
+  return {contexts, lz, minimum, minLength, lengthConfig, map, ...histograms(r, 1 + Math.max(...map)), byteHistory: byteHistory || history};
+}
+function histograms(r, count) {
+  const prefix = r.read(1), log = prefix ? 15 : r.read(2) + 5;
   const configs = Array.from({length: count}, () => config(r, log));
   let decoders, aliases;
   if (prefix) {
@@ -201,7 +203,7 @@ function entropyModel(r, contexts, {depth = 0, byteHistory = false, history = fa
     for (let s = 0; s < counts.length; s++) for (let i = 0; i < counts[s]; i++) { const at = reverse[starts[s] + i]; symbols[at] = s; offsets[at] = i; }
     return {counts, symbols, offsets};
   });
-  return {contexts, lz, minimum, minLength, lengthConfig, map, prefix, configs, decoders, aliases, byteHistory};
+  return {prefix, configs, decoders, aliases};
 }
 function entropyReader(model, r, values, multiplier = 0) {
   requireJPEG(Number.isSafeInteger(values) && values >= 0);
@@ -446,14 +448,14 @@ export function modular(r, shapes, shared, stream, work) {
 }
 
 export const readJPEGCoefficients = (bytes, options) => complete(readJPEGCoefficientsSteps(bytes, options));
-export function* readJPEGCoefficientsSteps(bytes, {reconstruction = false, maxPixels = JPEG_LIMITS.pixels, rows = false} = {}) {
+export function* readJPEGCoefficientsSteps(bytes, {reconstruction = false, maxPixels = LIMITS.pixels, rows = false} = {}) {
   const header = yield* stage('coefficient-header', () => coefficientHeaderSteps(bytes, maxPixels));
   return coefficientReader(header, reconstruction, rows);
 }
 function coefficientPreamble(bytes, maxPixels) {
   requireJPEG(bytes instanceof Uint8Array && bytes.length > 0);
   const r = new JxlBits(bytes), {width, height} = readSize(r);
-  requireJPEG(width <= JPEG_LIMITS.edge && height <= JPEG_LIMITS.edge && width * height <= JPEG_LIMITS.pixels);
+  requireJPEG(width <= LIMITS.edge && height <= LIMITS.edge && width * height <= LIMITS.pixels);
   if (width * height > maxPixels) throw fault('JXL_DIMENSIONS', 'The JPEG XL image exceeds maxPixels.');
   r.expect(1, 0); const extra = r.read(1), orientation = extra ? r.read(3) + 1 : 1;
   if (extra) r.expect(3, 0);
@@ -465,7 +467,8 @@ function coefficientPreamble(bytes, maxPixels) {
     if (!icc) {
       r.expect(2, 1);
       if (!grey) { const primaries = r.u32([[0, 0], [0, 1], [4, 2], [6, 18]]); requireJPEG(primaries === 1 || primaries === 11); }
-      r.expect(1, 0); requireJPEG(r.u32([[0, 0], [0, 1], [4, 2], [6, 18]]) === 13); r.expect(2, 1);
+      r.expect(1, 0); requireJPEG(r.u32([[0, 0], [0, 1], [4, 2], [6, 18]]) === 13);
+      requireJPEG(r.u32([[0, 0], [0, 1], [4, 2], [6, 18]]) <= 3);
     }
   }
   if (extra) r.expect(1, 1);
@@ -473,7 +476,9 @@ function coefficientPreamble(bytes, maxPixels) {
 }
 function coefficientLayout(bytes, head, profile) {
   const {width, height, orientation, grey} = head, r = new JxlBits(bytes); r.bit = head.bit;
-  r.align(); r.expect(4, 0); r.expect(2, 2); r.expect(8, 111);
+  r.align(); r.expect(4, 0);
+  const flagSelector = r.read(2), flags = flagSelector === 0 ? 0 : flagSelector === 2 ? 17 + r.read(8) : -1;
+  requireJPEG(flags === 0 || flags === 128);
   const ycbcr = !!r.read(1), sampling = ycbcr ? [r.read(2), r.read(2), r.read(2)] : [0, 0, 0];
   requireJPEG(!grey || sampling[0] === sampling[1] && sampling[1] === sampling[2]);
   const hs = sampling.map(v => v === 1 || v === 2 ? 1 : 0), vs = sampling.map(v => v === 1 || v === 3 ? 1 : 0);
@@ -558,7 +563,7 @@ function* coefficientHeaderSteps(bytes, maxPixels) {
     for (let c = 0; c < 3; c++) {
       const values = quant[c] = Int32Array.from({length: 64}, (_, k) => matrices[c][(k % 8) * 8 + (k >> 3)]);
       requireJPEG(values.every(q => q > 0 && q < 65536));
-      requireJPEG(transcodedLf(lfDequant[c], values[0]));
+      if (!transcodedLf(lfDequant[c], values[0])) throw fault('JXL_RECONSTRUCTION', 'The LF dequantization is not a JPEG transcode\'s.');
     }
     ac.expect(32, 0); ac.expect(16, 0);
     if (groups > 1) ac.expect(ceilLog2(groups), 0);
@@ -661,7 +666,8 @@ function coefficientReader(header, reconstruction, rows) {
       const scale = reconstruction ? 1 : p.quant[0] / divisor;
       for (let b = (gy * 32 >> vshift[c]) * p.stride; b < Math.min(p.rows, (gy + 1) * 32 >> vshift[c]) * p.stride; b++) {
         const dc = ycbcr ? p.dc[b] : (p.dc[b] - lift) / scale;
-        requireJPEG(Number.isInteger(dc) && dc >= -32768 && dc <= 32767); target[c][(b - row0[c] * p.stride) * 64] = dc;
+        if (!(Number.isInteger(dc) && dc >= -32768 && dc <= 32767)) throw fault('JXL_RECONSTRUCTION', 'A DC coefficient is not one a JPEG holds.');
+        target[c][(b - row0[c] * p.stride) * 64] = dc;
       }
     });
   };

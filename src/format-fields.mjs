@@ -33,7 +33,7 @@ export function prepareImageFields({orientation = 1, intrinsicSize, preview} = {
   return writer;
 }
 
-export function writeDepth(writer, bits, exponent) {
+function writeDepth(writer, bits, exponent) {
   writer.write(1, exponent ? 1 : 0);
   writer.writeU32(exponent ? [[0, 32], [0, 16], [0, 24], [6, 1]] : [[0, 8], [0, 10], [0, 12], [6, 1]], bits);
   if (exponent) writer.write(4, exponent - 1);

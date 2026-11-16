@@ -8,3 +8,7 @@ let kernelEngine, streamEngine;
 const module = () => wasmModule('decode', () => wasmBytes(DECODE_KERNELS));
 export function decodeKernels() { return kernelEngine ??= createKernelEngine(module); }
 export function streamKernels() { decodeKernels(); return streamEngine ??= createKernelEngine(module); }
+export function trimDecodeKernels() {
+  const held = (kernelEngine?.buffer.byteLength ?? 0) + (streamEngine?.buffer.byteLength ?? 0);
+  if (held > 16777216 * 2) kernelEngine = streamEngine = undefined;
+}

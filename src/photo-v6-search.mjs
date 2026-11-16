@@ -14,7 +14,7 @@ import {coefficientAnsSteps, estimateBytes} from './coefficient-ans.mjs';
 
 import {memoryPlan, s2Admitted} from './memory-plan.mjs';
 import {fault} from './fault.mjs';
-import {linearFromTransform} from './color-transform.mjs';
+import {linearFromTransform} from './color-bytes.mjs';
 
 export {prepareV6, V6, GABORISH};
 import {AQ, VARBLOCK_IDS, CANDIDATES, meets, decisionSteps as sharedDecisionSteps,
@@ -30,12 +30,10 @@ export function nativeSsimulacra2(reference, linear, width, height) {
 
 export const NATIVE_DOUBT = 1e-4;
 
-export const BA3_DOUBT = 1e-6, BA_DOUBT = 1e-5;
 export const CELL_DOUBT = 2e-4, BLOCK_DOUBT = 1e-4;
 export function gpuDoubt(scores, ssimulacra2 = 0) {
   const doubt = {};
   if (ssimulacra2) doubt.ssimulacra2 = ssimulacra2;
-  if (scores.butteraugli3 !== undefined) { doubt.butteraugli3 = BA3_DOUBT * scores.butteraugli3; doubt.butteraugli = BA_DOUBT * scores.butteraugli; }
   if (scores.cells) doubt.cells = CELL_DOUBT;
   if (scores.blocks) doubt.blocks = BLOCK_DOUBT;
   return Object.keys(doubt).length ? doubt : null;
@@ -114,8 +112,8 @@ export function* searchV6(prepared, own, quality, effort, floor = null, gpu = fa
   }
   if (typeof own === 'function') own = own();
   const ownBytes = writeImage(own, effort), whole = cpuMeasure(rgba, width, height, color?.transform
-    ? {reference: linearFromTransform(rgba, width * height, color.transform), cacheBytes: plan.cacheBytes, maps: 's2'}
-    : {native: true, cacheBytes: plan.cacheBytes, maps: 's2'});
+    ? {reference: linearFromTransform(rgba, width * height, color.transform), cacheBytes: plan.cacheBytes}
+    : {native: true, cacheBytes: plan.cacheBytes});
   try {
     const measure = (image, want) => exactScores(whole, null, width, height, image, want, plan);
     const scores = measure(own, {ssimulacra2: true}), target = {ssimulacra2: scores.ssimulacra2 + S2_MARGIN};

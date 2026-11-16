@@ -2,6 +2,8 @@
 import {fault, guard, admitOutputSize} from './admit.mjs';
 import {SIGNATURE, FTYP, LEVEL, CODESTREAM, EXIF, XML, JUMBF, BROB, RECONSTRUCTION, boxes, fileHeader, boxHeader} from './container.mjs';
 import {compressBrotli, decompressBrotli} from './brotli.mjs';
+import {callers, isCaller} from './v7/primitives.mjs';
+import {codestreamLevel} from './framing.mjs';
 
 const invalid = message => fault('JXL_INPUT', message);
 const keys = new Map([[EXIF, 'exif'], [XML, 'xmp'], [JUMBF, 'jumb']]);
@@ -23,7 +25,7 @@ function utf8Length(text) {
 function sourceBoxes(bytes, options = {}) {
   if (options === null || typeof options !== 'object') throw invalid('Metadata options are an object.');
   if (!(bytes instanceof Uint8Array) || bytes.length < 2) throw invalid('JPEG XL input is a Uint8Array.');
-  const maxBoxes = options.maxBoxes ?? 65536;
+  const maxBoxes = options.maxBoxes ?? Number.MAX_SAFE_INTEGER;
   if (!Number.isSafeInteger(maxBoxes) || maxBoxes < 1) throw invalid('maxBoxes is an integer from 1 to ' + Number.MAX_SAFE_INTEGER + '.');
   const maxBytes = options.maxBytes ?? Number.MAX_SAFE_INTEGER;
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw invalid('maxBytes is an integer from 1 to ' + Number.MAX_SAFE_INTEGER + '.');
@@ -62,21 +64,26 @@ function prepare(options) {
   return {changed, entries};
 }
 
-function attach(bytes, plan, source) {
+function attach(bytes, plan, source, maxBoxes = Number.MAX_SAFE_INTEGER) {
   const {changed, entries} = plan, edited = changed.size > 0;
   const added = entries.reduce((sum, entry) => sum + entry.data.length + 8, 0);
+  const head = source === null && added ? fileHeader(codestreamLevel(bytes)) : null;
   let prefix = 0, length = bytes.length + added;
-  if (source === null) { if (added) length += 40; }
+  if (source === null) { if (added) length += head.length + 8; }
   else for (const box of source) {
     if (box.type === FTYP || box.type === LEVEL && box.at === prefix) prefix = box.end;
     if (edited && box.decoded === RECONSTRUCTION) throw invalid('Metadata edits would break JPEG reconstruction; keep the original file.');
     if (changed.has(box.decoded)) length -= box.end - box.at;
+    else if (box.type === EXIF) metadataValue(EXIF, bytes.subarray(box.body, box.end));
   }
+  const count = source === null ? (added ? (head.length > 32 ? 2 : 1) + entries.length + 1 : 0)
+    : source.reduce((n, box) => n + Number(!changed.has(box.decoded)), 0) + entries.length;
+  if (count > maxBoxes) throw invalid('JPEG XL box count exceeds the limit.');
   admitOutputSize(length);
   if (!edited || source === null && !added) return new Uint8Array(bytes);
   const output = new Uint8Array(length);
-  let at = source === null ? 32 : prefix;
-  output.set(source === null ? fileHeader() : bytes.subarray(0, prefix));
+  let at = source === null ? head.length : prefix;
+  output.set(source === null ? head : bytes.subarray(0, prefix));
   for (const entry of entries) {
     output.set(boxHeader(entry.type, entry.data.length), at); at += 8;
     output.set(entry.data, at); at += entry.data.length;
@@ -88,7 +95,7 @@ function attach(bytes, plan, source) {
   return output;
 }
 
-export function withMetadata(bytes, options = {}) { return guard(() => { const source = sourceBoxes(bytes, options), plan = prepare(options); return attach(bytes, plan, source); }); }
+export function withMetadata(bytes, options = {}) { return guard(() => { const source = sourceBoxes(bytes, options), plan = prepare(options); return attach(bytes, plan, source, options.maxBoxes); }); }
 
 function limit(value) {
   if (!Number.isSafeInteger(value) || value < 1) throw invalid('The decoded metadata limit is a positive safe integer.');
@@ -146,7 +153,10 @@ async function codec(data, direction, provided, maximum) {
   let result;
   if (provided !== undefined) {
     if (typeof provided !== 'function') throw invalid('The Brotli codec is a function.');
-    result = await provided(data, maximum === Number.MAX_SAFE_INTEGER ? {} : {maxOutputLength: maximum});
+    try { result = await provided(data, maximum === Number.MAX_SAFE_INTEGER ? {} : {maxOutputLength: maximum}); }
+    catch (error) { throw callers(error); }
+  } else if (direction === 'compress') {
+    result = compressBrotli(data, {maxOutputLength: maximum});
   } else if (direction === 'decompress' && nativeBrotliUnsafe(globalThis.process?.versions)) {
     try { result = decompressBrotli(data, {maxOutputLength: maximum}); }
     catch (error) {
@@ -156,7 +166,7 @@ async function codec(data, direction, provided, maximum) {
     }
   } else if (nodeZlib()) {
     const zlib = nodeZlib();
-    const method = direction === 'compress' ? zlib.brotliCompress : zlib.brotliDecompress;
+    const method = zlib.brotliDecompress;
     try {
       const settings = maximum === Number.MAX_SAFE_INTEGER ? {} : {maxOutputLength: Math.max(1, maximum)};
       result = await new Promise((resolve, reject) => method(data, settings, (error, output) => error ? reject(error) : resolve(output)));
@@ -167,19 +177,23 @@ async function codec(data, direction, provided, maximum) {
   } else {
     let stream;
     try {
-      const Constructor = direction === 'compress' ? globalThis.CompressionStream : globalThis.DecompressionStream;
-      stream = new Constructor('brotli');
+      stream = new globalThis.DecompressionStream('brotli');
     } catch {
-      return (direction === 'compress' ? compressBrotli : decompressBrotli)(data, {maxOutputLength: maximum});
+      return decompressBrotli(data, {maxOutputLength: maximum});
     }
     const reader = new Blob([data]).stream().pipeThrough(stream).getReader(), chunks = [];
     let size = 0;
     try {
       while (true) {
-        const {done, value} = await reader.read();
+        let step;
+        try { step = await reader.read(); } catch (error) { throw invalid('Invalid Brotli metadata: ' + (error?.message || error?.code || 'unreadable stream')); }
+        const {done, value} = step;
         if (done) break;
         size += value.length;
-        if (size > maximum) { await reader.cancel(); throw fault('JXL_SIZE', 'Decoded metadata exceeds maxDecodedBytes.'); }
+        if (size > maximum) {
+          try { await reader.cancel(); } catch {}
+          throw fault('JXL_SIZE', 'Decoded metadata exceeds maxDecodedBytes.');
+        }
         chunks.push(value);
       }
     } finally { reader.releaseLock(); }
@@ -196,6 +210,7 @@ export async function withCompressedMetadata(bytes, options = {}) {
     const source = sourceBoxes(bytes, options), plan = prepare(options), snapshot = new Uint8Array(bytes);
     const {compression = 'auto', compress} = options;
     if (compression !== 'auto' && compression !== 'brotli') throw invalid('Metadata compression is auto or brotli.');
+    if (compress !== undefined && typeof compress !== 'function') throw invalid('The Brotli codec is a function.');
     if (plan.changed.size && source?.some(box => box.decoded === RECONSTRUCTION))
       throw invalid('Metadata edits would break JPEG reconstruction; keep the original file.');
     for (const entry of plan.entries) {
@@ -205,11 +220,11 @@ export async function withCompressedMetadata(bytes, options = {}) {
       new DataView(payload.buffer).setUint32(0, entry.type); payload.set(compressed, 4);
       entry.type = BROB; entry.data = payload;
     }
-    return guard(() => attach(snapshot, plan, source));
-  } catch (error) { return guard(() => { throw error; }); }
+    return guard(() => attach(snapshot, plan, source, options.maxBoxes));
+  } catch (error) { if (isCaller(error)) throw error; return guard(() => { throw error; }); }
 }
 
-export const METADATA_DECODED_BYTES = 67108864;
+export const METADATA_DECODED_BYTES = Number.MAX_SAFE_INTEGER;
 export async function readMetadataAsync(bytes, options = {}) {
   try {
     if (!options || typeof options !== 'object' || Array.isArray(options)) throw invalid('Metadata reader options are an object.');
@@ -228,5 +243,5 @@ export async function readMetadataAsync(bytes, options = {}) {
       result[keys.get(entry.type)].push(!entry.compressed && entry.type !== EXIF ? data : metadataValue(entry.type, data));
     }
     return result;
-  } catch (error) { return guard(() => { throw error; }); }
+  } catch (error) { if (isCaller(error)) throw error; return guard(() => { throw error; }); }
 }

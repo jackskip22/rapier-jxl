@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {TRANSFORMS, basis, basisT, llfDivisors} from './vardct-bases.mjs';
 import {scaledBasis, inverseBlock} from './vardct-inverse.mjs';
-import {exactCbrt} from './exact-math.mjs';
 
 const WIRE_ORDER = [1, 0, 2];
 const fail = message => { throw Object.assign(new Error(message), {code: 'JXL_DECODE'}); };
@@ -28,7 +27,7 @@ export function renderVarBlock(ctx, block, targets, tops) {
   const {kernels, lf, widths, heights, bias, numerator, qmScale, global, dcWidth, ox, hshift, vshift, cflBlock} = ctx, group = ctx.group(block.lfGroup);
   const {id, area, multiplier, bw, bh} = block, shape = TRANSFORMS[id], size = area * 64, quant = ctx.quant(shape.table);
   const transpose = !(id === 1 || id === 2 || id === 3 || id >= 12 && id <= 17) && shape.height >= shape.width;
-  const held = block.coefficients, K = ctx.weights, arena = block.arena.byteOffset, table = shape.table;
+  const held = block.coefficients, K = ctx.weights, arena = block.arena?.byteOffset, table = shape.table;
   const wide = Math.max(shape.width, shape.height), coefficients = ctx.blockPlanes, i32 = kernels.i32, tiles = ctx.blocks.tables;
   coefficients[0] = coefficients[1] = coefficients[2] = null;
   if (cflBlock) {
@@ -96,6 +95,6 @@ export const epfSigma = (epf, globalScale, multiplier, sharp) =>
   (epf.quantMul ?? .46) * 65536 / globalScale / multiplier * (epf.sharpLut || [0, 1 / 7, 2 / 7, 3 / 7, 4 / 7, 5 / 7, 6 / 7, 1])[sharp];
 
 export function xybKernelConstants(raw, opsinBiases, intensityTarget) {
-  const f = Math.fround, bias = opsinBiases.map(f), root = bias.map(v => f(exactCbrt(v))), scale = f(255 / intensityTarget);
+  const f = Math.fround, bias = opsinBiases.map(f), root = bias.map(v => f(Math.cbrt(v))), scale = f(255 / intensityTarget);
   return {bias, root, m: raw.map(v => f(v * scale))};
 }

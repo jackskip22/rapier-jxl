@@ -25,8 +25,8 @@ function transformTable(input, count, maximum, name) {
   });
 }
 
-export function admitPlanarTransforms(value, colorCount, memoryLimit = 268435456) {
-  transformInteger(memoryLimit, 1, 2147483648, 'maxTransformBytes');
+export function admitPlanarTransforms(value, colorCount, memoryLimit = Number.MAX_SAFE_INTEGER) {
+  transformInteger(memoryLimit, 1, Number.MAX_SAFE_INTEGER, 'maxTransformBytes');
   if (value === undefined || value === false) return null;
   if (!Array.isArray(value) || value.length > 273) throw fault('JXL_INPUT', 'transforms is false or up to 273 recipes.');
   if (!value.length) return null;
@@ -118,7 +118,7 @@ function* residualPlanes(planes, width, height, predictor, weighted) {
     if (predictor === 6) yield* part(customWeightedResiduals(planes[c], width, height, weighted, output), c, planes.length);
     else for (let start = 0, rowBatch = Math.max(1, Math.floor(16384 / Math.max(1, width))); start < height; start += rowBatch) {
       const end = Math.min(height, start + rowBatch);
-      codeChannel(null, null, planes[c], width, end, leaf(predictor), false, undefined, output, start);
+      codeChannel(null, null, planes[c], width, end, leaf(predictor), false, output, start);
       yield (c + end / height) / planes.length;
     }
   }

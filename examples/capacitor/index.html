@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>JPEG XL example</title>
+<script type="importmap">{"imports":{"jpegxl/upload":"./jpegxl/upload.browser.mjs","jpegxl/jpeg":"./jpegxl/jpeg.browser.mjs"}}</script>
+<style>
+  :root { font: 17px/1.5 system-ui, sans-serif; color-scheme: light dark; }
+  body { max-width: 36rem; margin: auto; padding: max(1.5rem, env(safe-area-inset-top)) 1.5rem max(1.5rem, env(safe-area-inset-bottom)); }
+  h1 { font-size: 1.7rem; }
+  button { font: inherit; padding: .7rem 1rem; border: 0; border-radius: 0; cursor: pointer; }
+  nav { display: flex; flex-wrap: wrap; gap: .75rem; }
+  progress { display: block; width: 100%; margin: 1.5rem 0 .5rem; }
+  output { display: block; white-space: pre-wrap; overflow-wrap: anywhere; margin: .75rem 0; }
+</style>
+<h1>JPEG XL</h1>
+<nav aria-label="Convert an image">
+  <button id="photo">Choose photo</button>
+  <button id="jpeg">JPEG round trip</button>
+  <button id="share" disabled>Share</button>
+</nav>
+<input id="photo-file" type="file" accept="image/*" hidden>
+<input id="jpeg-file" type="file" accept="image/jpeg" hidden>
+<progress id="progress" max="1" value="0" aria-label="Conversion progress"></progress>
+<output id="status" role="status">Choose an image. It stays on this device.</output>
+<script type="module">
+import {encode} from 'jpegxl/upload';
+import {recompress, restore} from 'jpegxl/jpeg';
+import {saveJxl} from './save.mjs';
+
+const photo = document.querySelector('#photo'), jpeg = document.querySelector('#jpeg');
+const share = document.querySelector('#share'), status = document.querySelector('#status');
+const progress = document.querySelector('#progress');
+let busy = false, resultFile;
+const failure = (code, message) => Object.assign(new Error(message), {code});
+const bytes = result => {
+  if (!result.bytes) throw failure(result.reason.code, result.reason.message);
+  return result.bytes;
+};
+const digest = async data => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', data)), b => b.toString(16).padStart(2, '0')).join('');
+const report = phase => fraction => { status.value = phase; progress.value = fraction; };
+const showError = (error, code) => { status.value = `${/^JXL_/.test(error?.code) ? error.code : code}: ${error?.message || error}`; };
+
+async function convert(file, roundTrip) {
+  if (!file || busy) return;
+  busy = true; resultFile = undefined;
+  photo.disabled = jpeg.disabled = share.disabled = true; progress.value = 0;
+  let phaseCode = 'JXL_ENCODE';
+  try {
+    let output, checked = '';
+    if (roundTrip) {
+      const original = new Uint8Array(await file.arrayBuffer());
+      const expected = await digest(original);
+      output = bytes(await recompress(original, {onProgress: report('Recompressing JPEG…')}));
+      const restored = bytes(await restore(output, {onProgress: report('Restoring JPEG…')}));
+      const actual = await digest(restored);
+      if (actual !== expected || restored.byteLength !== file.size) throw failure('JXL_VERIFY', 'The restored JPEG differs from the original.');
+      checked = `\nRestored SHA-256 matches: ${actual}`;
+    } else {
+      output = bytes(await encode(file, {effort: 3, fidelity: {quality: 80}, onProgress: report('Encoding photo…')}));
+    }
+    const stem = file.name.replace(/\.[^.]*$/, '').replace(/[\\/]/g, '_') || 'image';
+    const converted = new File([output], `${stem}.jxl`, {type: 'image/jxl'});
+    phaseCode = 'JXL_SAVE'; status.value = 'Saving…';
+    const saved = await saveJxl(converted, converted.name);
+    resultFile = converted; progress.value = 1;
+    status.value = `Saved ${converted.size.toLocaleString()} bytes\n${saved.uri}${checked}`;
+  } catch (error) { showError(error, phaseCode); }
+  finally { busy = false; photo.disabled = jpeg.disabled = false; share.disabled = !resultFile; }
+}
+
+for (const [button, input, roundTrip] of [[photo, document.querySelector('#photo-file'), false], [jpeg, document.querySelector('#jpeg-file'), true]]) {
+  button.onclick = () => input.click();
+  input.onchange = () => { const file = input.files[0]; input.value = ''; void convert(file, roundTrip); };
+}
+share.onclick = async () => {
+  if (!resultFile) return;
+  try {
+    if (!navigator.canShare?.({files: [resultFile]}) || !navigator.share) throw failure('JXL_SHARE_UNAVAILABLE', 'This WebView cannot share files. The saved file is still in the app data directory.');
+    await navigator.share({files: [resultFile]});
+  } catch (error) { if (error.name !== 'AbortError') showError(error, 'JXL_SHARE'); }
+};
+</script>
+</html>

@@ -4,7 +4,7 @@ import {writeModularFrameHeader, groupLayout, groupRect, assembleCodestream} fro
 import {writeImageHeader} from './icc-write.mjs';
 import {ALPHABET, leaf, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {planeModel} from './capture-trees.mjs';
-import {writeCaptureStream} from './capture-codec.mjs';
+import {writeCaptureStream} from './capture-modular-stream.mjs';
 import {CAPTURE_TOOLS_COMPLETE} from './capture-ans.mjs';
 import {screenPlan, lookupPalette} from './screen.mjs';
 import {admitOutputSize} from './admit.mjs';

@@ -9,13 +9,8 @@ import {inspectContainer, readFrameIndex, withFrameIndex} from './container-adva
 import {prepareUpsamplingWeights} from './format-fields.mjs';
 
 export {LIMITS};
-export const DEFAULT_OPSIN = Object.freeze({
-  inverseMatrix: Object.freeze([11.031566901960783, -9.866943921568629, -0.16462299647058826,
-    -3.254147380392157, 4.418770392156863, -0.16462299647058826,
-    -3.6588512862745097, 2.7129230470588235, 1.9459282392156863]),
-  opsinBiases: Object.freeze(Array(3).fill(-0.0037930732552754493)),
-  quantizationBiases: Object.freeze([0.945349926692846, 0.9299455010825141, 0.9500648966626563, 0.145]),
-});
+import {DEFAULT_OPSIN} from './opsin-defaults.mjs';
+export {DEFAULT_OPSIN};
 const opsinError = message => fault('JXL_INPUT', message);
 function opsinOptions(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw opsinError('Opsin options are an object.');

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
+import {fault} from './fault.mjs';
 import {BitWriter, complete} from './bits.mjs';
 import {unit, stage, journaling, readAll} from './step-journal.mjs';
 import {lfPlanFor, monotonicLfPlanFor} from './lf-plans.mjs';
 import {planeModel, planeModelOf, planeTreeSteps, weightedTrees} from './capture-trees.mjs';
-import {writeCaptureStream, runModels} from './capture-codec.mjs';
+import {writeCaptureStream, runModels} from './capture-modular-stream.mjs';
 import {CAPTURE_ANS} from './capture-ans.mjs';
 import {RUNGS} from './lf-options.mjs';
 export {RUNGS} from './lf-options.mjs';
@@ -186,8 +187,7 @@ const richLfCoder = /* @__PURE__ */ smallerLf(lfCoder('rich'), quickOrFixedLfCod
 export const jpegBroadLfCoder = /* @__PURE__ */ smallerLf(lfCoder('jpegBroad'), richLfCoder);
 const fastLfCoder = /* @__PURE__ */ smallerLf(lfCoder('fast'), richLfCoder);
 const broadLfCoder = /* @__PURE__ */ smallerLf(smallerLf(lfCoder('jpegBroad'), lfCoder('broad')), fastLfCoder);
-export const fastOrFixedLfCoder = /* @__PURE__ */ smallerLf(lfCoder('fast'), fixedLfCoder);
-export const jpegBroadOrFixedLfCoder = /* @__PURE__ */ smallerLf(lfCoder('jpegBroad'), fixedLfCoder);
+export const jpegBroadOrFastLfCoder = /* @__PURE__ */ smallerLf(lfCoder('jpegBroad'), fastLfCoder);
 
 export function lfCoderForPlan(name) {
   switch (name) {
@@ -199,7 +199,7 @@ export function lfCoderForPlan(name) {
     case 'monotonic-8': return fastLfCoder;
     case 'monotonic-9': return broadLfCoder;
     case null: case undefined: return undefined;
-    default: throw new TypeError('Unknown named LF policy.');
+    default: throw fault('JXL_INTERNAL', 'Unknown named LF policy.');
   }
 }
 export const monotonicLfCoderFor = effort => lfCoderForPlan(monotonicLfPlanFor(effort));

@@ -46,6 +46,12 @@ function* unpackInput(bytes,limits,owner) {
         bytes=joinedBytes([sliceBytes(bytes,0,batch.repair.at),patch,sliceBytes(bytes,batch.repair.at+patch.length)]);
       }
     }
+    const cut=owner.cutEnd(state);
+    if(cut.end!==undefined)bytes=sliceBytes(bytes,0,cut.end);
+    if(cut.last){
+      const patch=yield* unit('decode-cut-fragment',()=>owner.repairedHeader(bytes,cut.last));
+      bytes=joinedBytes([sliceBytes(bytes,0,cut.last.at),patch,sliceBytes(bytes,cut.last.at+patch.length)]);
+    }
     const source=yield* unit('decode-container',()=>owner.readContainer(bytes,{maxBytes:limits.maxInputBytes,maxBoxes:limits.maxBoxes}));
     const metadata=[];let totalMetadata=0;
     for(const box of source.auxiliary){
@@ -74,7 +80,8 @@ function* openImage(bytes,options,owner) {
     let h=head.h;const r=new owner.JxlBits(sliceBytes(input.codestream,0),true);r.bit=head.bit;
     if(h.colorEncoding.wantICC){
       const level=input.container?.level??5;
-      const icc=yield* owner.part('icc').readICCSteps(r,{maxBytes:options.maxMetadataBytes,maxProfileBytes:owner.iccProfileLimit(level,options.maxMetadataBytes)});
+      const iccBytes=Math.min(options.maxMetadataBytes,268435456);
+      const icc=yield* owner.part('icc').readICCSteps(r,{maxBytes:iccBytes,maxProfileBytes:owner.iccProfileLimit(level,iccBytes)});
       h={...h,icc};yield* owner.admitDecodedICCSteps(icc,h,level);
     }
     const bit=yield* unit('decode-image-align',()=>{r.align();return r.bit;});

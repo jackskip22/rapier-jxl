@@ -2,7 +2,7 @@
 import {fault} from './fault.mjs';
 export {naturalOrder} from './coefficient-layout.mjs';
 import {QUANT_PARAM_LIBRARY} from './decode-quant-defaults.mjs';
-import {float16Bits, entropyLog2} from './decode-tables.mjs';
+import {float16Bits} from './decode-tables.mjs';
 
 export {TRANSFORMS, basis, basisT, inverseScaledDCT, llfDivisors} from './vardct-bases.mjs';
 const QUANT_PARAM_MODES = ['library', 'identity', 'dct2', 'dct4', 'dct4x8', 'afv', 'dct'];
@@ -79,18 +79,10 @@ function quantParamExpandBands(parameters) {
   }
   return bands;
 }
-function quantParamPower(base, exponent) {
-  const log = entropyLog2(base) * exponent, whole = Math.round(log), reduced = (log - whole) * .6931471805599453;
-  let term = 1, sum = 1, factor = 1;
-  for (let i = 1; i < 24; i++) sum += term *= reduced / i;
-  for (let i = 0; i < whole; i++) factor *= 2;
-  for (let i = 0; i > whole; i--) factor /= 2;
-  return sum * factor;
-}
 function quantParamInterpolate(bands, position) {
   if (bands.length === 1) return bands[0];
   const index = Math.min(bands.length - 2, Math.floor(position)), a = bands[index], b = bands[index + 1];
-  return a * quantParamPower(b / a, position - index);
+  return a * Math.pow(b / a, position - index);
 }
 function quantParamDCT(parameters, width, height) {
   const bands = quantParamExpandBands(parameters), scale = (bands.length - 1) / (1.4142135623730951 + .000001);

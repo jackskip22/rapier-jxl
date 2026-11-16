@@ -9,8 +9,8 @@ const fail = (code, message) => Object.assign(new Error(message), {code});
 export async function stageCandidate(store, result, {signal} = {}) {
   signal?.throwIfAborted();
   if (!store || typeof store.write !== 'function' || !(result?.bytes instanceof Uint8Array) ||
-      result.bytes.byteLength < 2 || result.bytes.byteLength > MAX_BYTES || result.fits !== true || result.format !== 'jxl')
-    throw fail('JXL_INPUT', 'Expected a JPEG XL candidate of at most 8 MiB.');
+      result.bytes.byteLength < 2 || result.bytes.byteLength > MAX_BYTES || result.meetsTarget !== true || result.format !== 'jxl')
+    throw fail('JXL_INPUT', "Invalid upload candidate; pass a fitting JPEG XL result of at most 8 MiB and storage with a write function.");
   const {bytes, verification: ignoredReceipt, ...metadata} = result;
   const record = JSON.parse(JSON.stringify(metadata));
   const parts = [];

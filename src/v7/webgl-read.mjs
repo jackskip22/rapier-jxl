@@ -11,11 +11,17 @@ function context(canvas) {
   for (const id of ['webgl2', 'webgl', 'experimental-webgl']) {
     let gl; try { gl = canvas.getContext(id); } catch {}
     if (gl && !gl.isContextLost() && gl.drawingBufferWidth === canvas.width && gl.drawingBufferHeight === canvas.height)
-      return gl;
+      return gl.drawingBufferFormat === undefined || (gl.drawingBufferFormat === 0x8058 || gl.drawingBufferFormat === 0x8c43) ? gl : null;
   }
   return null;
 }
 function packed(gl, buffer, read) {
+  if (!isWebGL2(gl)) {
+    const savedFb = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+    const align = gl.getParameter(gl.PACK_ALIGNMENT);
+    try { gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.pixelStorei(gl.PACK_ALIGNMENT, 4); return read(); }
+    finally { gl.bindFramebuffer(gl.FRAMEBUFFER, savedFb); gl.pixelStorei(gl.PACK_ALIGNMENT, align); }
+  }
   const saved = [gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING), gl.getParameter(gl.READ_FRAMEBUFFER_BINDING), PACK.map(p => gl.getParameter(p))];
   try {
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
@@ -27,18 +33,7 @@ function packed(gl, buffer, read) {
     PACK.forEach((p, i) => gl.pixelStorei(p, saved[2][i]));
   }
 }
-function packedWebGL1(gl, read) {
-  const savedFb = gl.getParameter(gl.FRAMEBUFFER_BINDING);
-  const align = gl.getParameter(gl.PACK_ALIGNMENT);
-  try {
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.pixelStorei(gl.PACK_ALIGNMENT, 4);
-    return read();
-  } finally {
-    gl.bindFramebuffer(gl.FRAMEBUFFER, savedFb);
-    gl.pixelStorei(gl.PACK_ALIGNMENT, align);
-  }
-}
+
 function straighten(data, {alpha, premultipliedAlpha}) {
   if (!alpha) for (let i = 3; i < data.length; i += 4) data[i] = 255;
   else if (premultipliedAlpha) for (let i = 0; i < data.length; i += 4) {
@@ -51,14 +46,15 @@ function place(data, rows, y0, count, width, height, attrs) {
   for (let r = 0; r < count; r++) data.set(rows.subarray(r * line, (r + 1) * line), (height - 1 - y0 - r) * line);
   straighten(data.subarray((height - y0 - count) * line, (height - y0) * line), attrs);
 }
-const space = gl => gl.drawingBufferColorSpace ?? 'srgb', lost = () => fail('JXL_INPUT', 'The canvas lost its WebGL context; draw it again.');
+const space = gl => gl.drawingBufferColorSpace ?? 'srgb';
+const lost = () => fail('JXL_INPUT', "Canvas lost its WebGL context; draw it again.");
+const readFailed = cause => Object.assign(fail('JXL_INPUT', "WebGL canvas read failed; draw it again or pass RGBA pixels."), {cause});
 
 export function readWebGLNow(canvas) {
   const gl = context(canvas);
   if (!gl) return null;
   const {width, height} = canvas, rows = new Uint8Array(width * height * 4), data = new Uint8Array(rows.length);
-  if (isWebGL2(gl)) packed(gl, null, () => gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, rows));
-  else packedWebGL1(gl, () => gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, rows));
+  packed(gl, null, () => gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, rows));
   if (gl.isContextLost()) throw lost();
   place(data, rows, 0, height, width, height, gl.getContextAttributes());
   return {data, width, height, colorSpace: space(gl)};
@@ -87,7 +83,7 @@ export function readWebGL(canvas) {
       return made;
     });
     if (!fence) throw new Error('no fence');
-  } catch (cause) { done(); throw Object.assign(fail('JXL_INPUT', 'The WebGL canvas could not be read: ' + (cause?.message || cause)), {cause}); }
+  } catch (cause) { done(); throw readFailed(cause); }
   return new Promise((resolve, reject) => {
     const poll = () => {
       try {
@@ -109,7 +105,7 @@ export function readWebGL(canvas) {
         resolve({data, width, height, colorSpace});
       } catch (cause) { failed(cause); }
     };
-    const failed = cause => { done(); reject(Object.assign(fail('JXL_INPUT', 'The WebGL canvas could not be read: ' + (cause?.message || cause)), {cause})); };
+    const failed = cause => { done(); reject(readFailed(cause)); };
     poll();
   });
 }

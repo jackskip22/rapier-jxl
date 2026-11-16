@@ -1,5 +1,5 @@
 // JPEG coefficient reader. MIT (images/jxl/LICENSE).
-import {JPEG_LIMITS} from './limits.mjs';
+import {LIMITS} from './limits.mjs';
 import {prepareICCSteps} from './icc-write.mjs';
 import {inspectICCSteps} from './icc-profile.mjs';
 import {kernelHooks} from './kernel-hooks.mjs';
@@ -7,6 +7,7 @@ import {complete} from './bits.mjs';
 import {carried, PASSED, unit, stage, journaling, journalJoin, readAll, sliceBytes, journalTool} from './step-journal.mjs';
 import {ZIGZAG, jpegError} from './jpeg-tables.mjs';
 import {exifOrientation} from './exif-orientation.mjs';
+import {jpegYCbCr} from './jpeg-color.mjs';
 
 export {ZIGZAG, jpegError};
 
@@ -49,6 +50,10 @@ function srgbLinear(value) {
   return base * base * root * root;
 }
 export const profileSpace = profile => complete(profileSpaceSteps(profile));
+const INTENTS = ['perceptual', 'relative', 'saturation', 'absolute'];
+export const namedEncoding = (space, renderingIntent) => space === 'display-p3'
+  ? {space: 'rgb', whitePoint: 'd65', primaries: space, transferFunction: 'srgb', renderingIntent} : {space: 'rgb', transferFunction: 'srgb', renderingIntent};
+export const profileIntent = profile => INTENTS[profile.length >= 68 ? (profile[64] << 24 | profile[65] << 16 | profile[66] << 8 | profile[67]) >>> 0 : 1] ?? 'relative';
 function* profileSpaceSteps(profile) {
   return yield* stage('icc-space', function* () {
     const size = profile.length;
@@ -106,13 +111,13 @@ function* profileSpaceSteps(profile) {
 }
 
 export const parseJPEG = (bytes, retainScans, options, kernels) => complete(parseJPEGSteps(bytes, retainScans, options, kernels));
-export function* parseJPEGSteps(bytes, retainScans = false, {preserveICC = false, compression = 'auto', bands = false, maxPixels = JPEG_LIMITS.pixels} = {}, kernels = true) {
+export function* parseJPEGSteps(bytes, retainScans = false, {preserveICC = false, compression = 'auto', bands = false, maxPixels = LIMITS.pixels, allowFourComponents = false} = {}, kernels = true) {
   bytes = sliceBytes(bytes);
   if (!(bytes.length > 4) || bytes[0] !== 0xFF || bytes[1] !== 0xD8) throw jpegError('not a JPEG');
   const quant = [], huffman = [[], []], badDC = new Set(), icc = {count: 0, parts: []}, scanChoices = retainScans ? [] : null;
   const lookup = (kind, slot) => { const table = huffman[kind][slot]; return table && (table.lookup ??= buildHuffman(table.counts, table.symbols)); };
   const definition = (kind, slot) => { const table = huffman[kind][slot]; return table ? {counts: table.counts, symbols: table.symbols} : null; };
-  let frame = null, restartInterval = 0, adobeTransform = -1, jfif = false, orientation = null, pos = 2;
+  let frame = null, restartInterval = 0, adobeTransform = -1, jfif = false, orientation = null, isoGain = false, pos = 2;
   let markerCount = 0, huffmanCount = 0;
   const padding = retainScans ? {bits: [], zero: false, kernelScans: 0} : null;
   const u16 = at => (bytes[at] << 8) | bytes[at + 1];
@@ -166,10 +171,11 @@ export function* parseJPEGSteps(bytes, retainScans = false, {preserveICC = false
       if (bytes[segment] !== 8) throw jpegError('only 8-bit samples');
       const height = u16(segment + 1), width = u16(segment + 3), count = bytes[segment + 5];
       if (!width || !height) throw jpegError('a height left to a DNL marker');
-      if (count !== 1 && count !== 3) throw jpegError('only gray or three components');
+      if (count === 4 && !allowFourComponents) throw jpegError('four-component CMYK or YCCK JPEG cannot be preserved by JPEG XL reconstruction; decode its pixels instead');
+      if (count !== 1 && count !== 3 && !(allowFourComponents && count === 4)) throw jpegError('only gray, RGB/YCbCr or four-component CMYK/YCCK JPEGs');
       if (end - segment < 6 + count * 3) throw jpegError('bad frame header');
-      if (width > JPEG_LIMITS.edge || height > JPEG_LIMITS.edge) throw jpegError('a picture past ' + JPEG_LIMITS.edge + ' pixels on a side', 'JXL_DIMENSIONS');
-      const most = Math.min(JPEG_LIMITS.pixels, maxPixels);
+      if (width > LIMITS.edge || height > LIMITS.edge) throw jpegError('a picture past ' + LIMITS.edge + ' pixels on a side', 'JXL_DIMENSIONS');
+      const most = Math.min(LIMITS.pixels, maxPixels);
       if (width * height > most) throw jpegError('a picture past ' + most + ' pixels', 'JXL_DIMENSIONS');
       const components = [];
       for (let i = 0, at = segment + 6; i < count; i++, at += 3) {
@@ -186,6 +192,9 @@ export function* parseJPEGSteps(bytes, retainScans = false, {preserveICC = false
       for (const c of components) {
         c.blocksW = Math.ceil(Math.ceil(width * c.h / hmax) / 8); c.blocksH = Math.ceil(Math.ceil(height * c.v / vmax) / 8);
         c.stride = mcusX * c.h; c.rows = mcusY * c.v;
+      }
+      if ((bytes.length - end) * 8 < components.reduce((n, c) => n + c.blocksW * c.blocksH, 0)) throw jpegError('a scan cut short');
+      for (const c of components) {
         if (banded) {
           c.dc = new Int16Array(c.stride * c.rows); c.natural = new Uint32Array(64); c.coeffs = null; c.row0 = -1;
           if (marker === 0xC2) c.parts = [];
@@ -229,46 +238,48 @@ export function* parseJPEGSteps(bytes, retainScans = false, {preserveICC = false
         const seq = bytes[segment + 12], count = bytes[segment + 13];
         if (!seq || !count || seq > count || (icc.count && icc.count !== count) || icc.parts[seq]) throw jpegError('a color profile cut short');
         icc.count = count; icc.parts[seq] = sliceBytes(bytes, segment + 14, end);
-      }
+      } else if (length >= 35 && signatureAt(segment, 'urn:iso:std:iso:ts:21496:-1\0')) isoGain = true;
     } else if (marker === 0xEE) {
       if (length >= 14 && signatureAt(segment, 'Adobe')) adobeTransform = bytes[segment + 11];
     }
   }
   if (!frame || !frame.scans) throw jpegError('no picture');
-  if (padding?.zero && padding.kernelScans) return yield* parseJPEGSteps(bytes, retainScans, {preserveICC, compression, bands, maxPixels}, false);
+  if (padding?.zero && padding.kernelScans) return yield* parseJPEGSteps(bytes, retainScans, {preserveICC, compression, bands, maxPixels, allowFourComponents}, false);
   for (const c of frame.components) {
     for (let k = 0; k < 64; k++) if (c.coverage[k] !== 0) throw jpegError(frame.progressive ? 'a progressive JPEG whose scans do not finish every coefficient' : 'a component without its scan');
   }
   if (frame.progressive && frame.bands) yield* journalTool('jpegSummary')(frame);
-  let colorSpace = 'srgb', profile;
+  if (frame.components.length === 4 && icc.count && allowFourComponents) {
+    throw jpegError('CMYK/YCCK JPEG with an ICC profile needs a color-managed pixel decoder; pass its decoded RGBA.', 'JXL_UNSUPPORTED');
+  }
+  let colorSpace = 'srgb', profile, iccBytes, renderingIntent;
   if (icc.count) {
     const prepared = yield* stage('jpeg-profile', function* () {
       const parts = [];
       for (let i = 1; i <= icc.count; i++) { if (!icc.parts[i]) throw jpegError('a color profile cut short'); parts.push(icc.parts[i]); }
       const original = journaling() ? journalJoin(parts) : new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
       if (!journaling()) for (let i = 0, at = 0; i < parts.length; at += parts[i].length, i++) original.set(parts[i], at);
-      const expected = frame.components.length === 1 ? 'gray' : 'rgb';
+      const expected = frame.components.length === 1 ? 'gray' : frame.components.length === 4 ? 'cmyk' : 'rgb';
       const declared = original.length >= 4 ? ((original[0] << 24) | (original[1] << 16) | (original[2] << 8) | original[3]) >>> 0 : 0;
       const color = declared >= 132 && declared < original.length ? sliceBytes(original, 0, declared) : original;
       try {
-        yield* inspectICCSteps(color, undefined, expected);
+        const channels = yield* inspectICCSteps(color, undefined, retainScans && !preserveICC && isoGain && expected === 'gray' ? undefined : expected);
+        if (channels !== frame.components.length) return {colorSpace: 'srgb', profile: undefined};
         const named = yield* profileSpaceSteps(color);
-        return {colorSpace: named || 'srgb', profile: preserveICC || !named ? yield* prepareICCSteps(color, {compression, colorSpace: expected}) : undefined};
+        const keep = preserveICC || !named;
+        return {colorSpace: named || 'srgb', profile: keep ? yield* prepareICCSteps(color, {compression, colorSpace: expected}) : undefined,
+          iccBytes: named ? undefined : color, renderingIntent: keep ? undefined : profileIntent(color)};
       } catch (error) {
         if (error.code === 'JXL_INPUT') throw jpegError('invalid or incompatible color profile: ' + error.message);
         throw error;
       }
     });
-    colorSpace = prepared.colorSpace; profile = prepared.profile;
+    ({colorSpace, profile, iccBytes, renderingIntent} = prepared);
   }
-  let rgb = false;
-  if (frame.components.length === 3 && !jfif) {
-    if (adobeTransform >= 0) rgb = adobeTransform === 0;
-    else rgb = frame.components[0].id === 0x52 && frame.components[1].id === 0x47 && frame.components[2].id === 0x42;
-  }
+  const ycbcr = jpegYCbCr(frame.components, jfif, adobeTransform);
   const banded = frame.bands ? groupRows(bytes, frame) : {};
-  return {...banded, end: pos, width: frame.width, height: frame.height, components: frame.components, progressive: frame.progressive, ycbcr: !rgb, orientation: orientation ?? 1, colorSpace,
-    ...(profile ? {profile, level: profile.level} : {}), ...(scanChoices ? {scanChoices} : {}), ...(padding?.zero ? {padding: Uint8Array.from(padding.bits)} : {})};
+  return {...banded, end: pos, width: frame.width, height: frame.height, components: frame.components, progressive: frame.progressive, ycbcr, adobeTransform, orientation: orientation ?? 1, colorSpace,
+    ...(renderingIntent && renderingIntent !== 'relative' && {renderingIntent}), ...(profile ? {profile, level: profile.level} : {}), ...(iccBytes ? {iccBytes} : {}), ...(scanChoices ? {scanChoices} : {}), ...(padding?.zero ? {padding: Uint8Array.from(padding.bits)} : {})};
 }
 
 export function admitScan(frame, scan, ss, se, ah, al) {

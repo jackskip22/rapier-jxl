@@ -69,12 +69,31 @@ function readBitDepth(r) {
 
 function readCustomXY(r) { for (let i = 0; i < 2; i++) r.u32([[19, 0], [19, 524288], [20, 1048576], [21, 2097152]]); }
 
-export function readImageHeader(bytes, {iccBits} = {}) {
+export function readImageSize(bytes) {
+  const r = new BitReader(bytes);
+  if (r.read(16) !== 0x0AFF) throw framingFault('Not a JPEG XL codestream.');
+  const {width, height} = readSizeHeader(r);
+  return {width, height, orientation: !r.bool() && r.bool() ? r.read(3) + 1 : 1};
+}
+export function codestreamLevel(bytes) {
+  let header;
+  try { header = readImageFields(bytes); } catch { return 5; }
+  return header.defaults && header.width <= 262144 && header.height <= 262144 && header.width * header.height <= 268435456 ||
+    !header.defaults && levelFive(header) ? 5 : 10;
+}
+const levelFive = h => h.modular16 && h.extraChannels <= 4 && !h.channelInfo.some(channel => channel.kind === 4) &&
+  h.width <= 262144 && h.height <= 262144 && h.width * h.height <= 268435456;
+export function readImageHeader(bytes, options) {
+  const header = readImageFields(bytes, options ?? {});
+  if (header.defaults) throw framingFault('Default image metadata is not produced by this encoder.');
+  return header;
+}
+function readImageFields(bytes, options) {
   const r = new BitReader(bytes);
   if (r.read(16) !== 0x0AFF) throw framingFault('Not a JPEG XL codestream.');
   const {width, height} = readSizeHeader(r);
   const header = {width, height, metadataAt: r.pos, orientation: 1};
-  if (r.bool()) throw framingFault('Default image metadata is not produced by this encoder.');
+  if (r.bool()) return {...header, defaults: true};
   header.extraAt = r.pos;
   header.extra = r.bool();
   if (header.extra) {
@@ -109,6 +128,8 @@ export function readImageHeader(bytes, {iccBits} = {}) {
     else if (type === 5) info.cfa = r.u32([[0, 1], [2, 0], [4, 3], [8, 19]]);
     header.channelInfo.push(info);
   }
+  if (!options) return header;
+  let {iccBits} = options;
   header.xyb = r.bool(); header.colorAt = r.pos;
   header.defaultColor = true;
   if (!r.bool()) {
@@ -352,21 +373,26 @@ export function writeStillFrame(w, still, frame, placement) {
     w.writeU32(NAME, name.length); for (const value of name) w.write(8, value);
   }
   copyBits(w, bytes, frame.filterAt, frame.tocAt);
-  const sections = []; let at = frame.sectionsAt;
-  for (let i = 0; i < frame.sizes.length; i++) {
-    const start = frame.sectionOffsets?.[i] ?? at, size = frame.sizes[i];
-    sections.push(bytes.subarray(start, start + size)); at += size;
-  }
-  if (placement.patchDictionary) {
-    const first = new BitWriter(Math.ceil(placement.patchDictionary.bitLength / 8) + sections[0].length + 16);
-    first.append(placement.patchDictionary);
-    first.append({bytes: sections[0], at: sections[0].length, pending: 0, acc: 0});
-    sections[0] = first.finish();
-  }
+  const sections = frameSections(still, frame, placement.patchDictionary);
   w.write(1, 0); w.zeroPadToByte();
   for (const section of sections) w.writeU32(TOC_ENTRY, section.length);
   w.zeroPadToByte();
   for (const section of sections) w.append({bytes: section, at: section.length, pending: 0, acc: 0});
+}
+
+function frameSections(still, frame, patchDictionary) {
+  const sections = []; let at = frame.sectionsAt;
+  for (let i = 0; i < frame.sizes.length; i++) {
+    const start = frame.sectionOffsets?.[i] ?? at, size = frame.sizes[i];
+    sections.push(still.codestream.subarray(start, start + size)); at += size;
+  }
+  if (patchDictionary) {
+    const first = new BitWriter(Math.ceil(patchDictionary.bitLength / 8) + sections[0].length + 16);
+    first.append(patchDictionary);
+    first.append({bytes: sections[0], at: sections[0].length, pending: 0, acc: 0});
+    sections[0] = first.finish();
+  }
+  return sections;
 }
 
 function writeFrameFlags(w, flags) {
@@ -422,16 +448,24 @@ export function writeAnimatedImageHeader(w, still, {width, height, numerator, de
 
 export function writeAnimatedFrame(w, still, frame, placement) {
   const bytes = still.codestream, image = placement.canvas;
-  copyBits(w, bytes, frame.start * 8, frame.fieldsAt);
+  if (placement.patchDictionary) {
+    if (!Number.isInteger(frame.flags) || frame.flags < 0 || frame.flags > 4095) throw framingFault('Unsupported frame flags.');
+    if (frame.type === REFERENCE_ONLY || frame.flags & 2) throw framingFault('A frame already has its own patch dictionary.');
+    if (placement.dropYCbCr && (still.image.xyb || frame.ycbcr)) throw framingFault('A YCbCr frame cannot join an XYB image.');
+    copyBits(w, bytes, frame.start * 8, frame.flagsAt);
+    writeFrameFlags(w, frame.flags | 2);
+    copyBits(w, bytes, frame.flagsEnd + (placement.dropYCbCr ? 1 : 0), frame.fieldsAt);
+  } else copyBits(w, bytes, frame.start * 8, frame.fieldsAt);
   if (frame.type === REFERENCE_ONLY) {
     if (placement.reference === frame.reference) throw framingFault('A reference frame would overwrite the animation canvas.');
     copyBits(w, bytes, frame.fieldsAt, frame.end * 8);
     return;
   }
   const {x0 = 0, y0 = 0, duration, last, reference, source, mode = REPLACE} = placement;
-  const full = x0 === 0 && y0 === 0 && frame.width === image.width && frame.height === image.height;
-  w.write(1, full ? 0 : 1);
-  if (!full) {
+  const same = x0 === 0 && y0 === 0 && frame.width === image.width && frame.height === image.height;
+  const full = x0 <= 0 && y0 <= 0 && x0 + frame.width >= image.width && y0 + frame.height >= image.height;
+  w.write(1, same ? 0 : 1);
+  if (!same) {
     const pack = v => v < 0 ? -2 * v - 1 : 2 * v;
     w.writeU32(FRAME_SIZE, pack(x0)); w.writeU32(FRAME_SIZE, pack(y0));
     w.writeU32(FRAME_SIZE, frame.width); w.writeU32(FRAME_SIZE, frame.height);
@@ -446,13 +480,14 @@ export function writeAnimatedFrame(w, still, frame, placement) {
   w.writeU32(DURATION, duration);
   w.write(1, last ? 1 : 0);
   if (!last) w.write(2, reference);
-  if (full && mode === REPLACE && !last && (duration === 0 || reference !== 0)) w.write(1, 0);
+  if (full && mode === REPLACE && !last && (duration === 0 || reference !== 0)) w.write(1, placement.beforeColorTransform ? 1 : 0);
   copyBits(w, bytes, frame.nameAt, frame.tocAt);
   w.write(1, 0);
   w.zeroPadToByte();
-  for (const size of frame.sizes) w.writeU32(TOC_ENTRY, size);
+  const sections = frameSections(still, frame, placement.patchDictionary);
+  for (const section of sections) w.writeU32(TOC_ENTRY, section.length);
   w.zeroPadToByte();
-  w.append({bytes: bytes.subarray(frame.sectionsAt, frame.end), at: frame.end - frame.sectionsAt, pending: 0, acc: 0});
+  for (const section of sections) w.append({bytes: section, at: section.length, pending: 0, acc: 0});
 }
 
 export function metadataKey(still) {
