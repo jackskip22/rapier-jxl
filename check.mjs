@@ -16,7 +16,7 @@ window.clip = async url => {
   const back = await decode(made.bytes);
   const frames = back.frames ?? [back];
   return {bytes: made.bytes.length, frames: frames.length, ms: Math.round(performance.now() - started),
-    durationMs: Math.round(frames.reduce((sum, f) => sum + (f.duration ?? 0), 0))};
+    durationMs: Math.round(frames.reduce((sum, f) => sum + (f.durationSeconds ?? 0) * 1000, 0))};
 };
 window.cancel = async url => { const stop = new AbortController(); setTimeout(() => stop.abort(), 50);
   return code(async () => encode(await blob(url), {effort: 1, signal: stop.signal})); };
