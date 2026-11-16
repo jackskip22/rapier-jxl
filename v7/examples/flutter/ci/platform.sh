@@ -3,6 +3,9 @@
 set -e
 flutter create --platforms=android,ios,macos --org app.rapier --project-name rapier_jxl_example .
 rm -f test/widget_test.dart
+# iOS: the package's plug-in needs iOS 15.1 (the Podfile and the project agree).
+sed -i "s/^\(# *\)\{0,1\}platform :ios, .*/platform :ios, '15.1'/" ios/Podfile
+sed -i 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.1;/' ios/Runner.xcodeproj/project.pbxproj
 python3 - <<'PY'
 import re, pathlib
 # Android: the app serves its page on 127.0.0.1, so it needs the INTERNET permission and cleartext to that address only.

@@ -4,7 +4,7 @@ A Dart package around the browser encoder in one hidden web view: no native JPEG
 recompresses a JPEG and restores the same SHA-256, turns a GIF or a video into an animated JPEG XL, cancels a call, and refuses
 bad input with the package's `JXL_` code.
 
-**Status:** `flutter test` and `flutter analyze` pass on Linux (Flutter 3.50.0). The device runs are not done yet.
+**Status:** `flutter test` and `flutter analyze` pass on Linux (Flutter 3.50.0). The iPhone video path is checked by reading only, until `ci/flutter.yml` has run it.
 
 ## Use
 
@@ -36,6 +36,14 @@ cancel.cancel();                                                      // pending
 `animateVideo` and `animateGif` report progress from 0 to 1 through `onProgress`. Each call runs one at a time. A canceled call
 throws `JXLCanceledException`; the next call runs normally. A refusal throws `JXLException` with the package's `JXL_` code.
 `warmUp()` loads the page early; `dispose()` stops it.
+
+## Video on an iPhone
+
+A hidden web view does not play video on iOS, so there the package reads the frames with AVFoundation in a small iOS plug-in
+(`ios/Classes/RapierJxlPlugin.swift`, system frameworks only) and sends them to the page in parts of about 16 MB. The encoder
+still runs in the web view. Every frame is kept with its time, turned as the file asks, unchanged frames merge, and the loop
+count is 0, as in the Swift package. A cancel acts between parts and in the encode; `onProgress` reports each part (the first
+half) and then the encode (the second). Android and macOS play the video in the web view as before.
 
 ## Platform settings
 
@@ -74,6 +82,7 @@ documentation, not on a run.
 
 - `lib/rapier_jxl.dart`: `JXLCodec`, `JXLCancel`, `JXLException`.
 - `lib/src/bridge.dart`: the loopback server.
+- `ios/`: the iOS plug-in that reads a video's frames.
 - `assets/web/`: the page (videos and GIFs), its worker (photos and JPEGs), and (after `prepare-assets.mjs`) the modules.
 - `example/`: an app with three buttons on bundled files, and `integration_test/` for the real app.
 - `test/`: `flutter test`, the server's rules.

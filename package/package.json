@@ -153,6 +153,7 @@
   },
   "./emdash": {
    "types": "./examples/emdash/index.d.ts",
+   "browser": "./examples/emdash/server-only.mjs",
    "import": "./examples/emdash/index.mjs"
   },
   "./package.json": "./package.json"
@@ -174,7 +175,7 @@
   "./resumable": "./dist/resumable.mjs",
   "./page-rects": "./examples/page-rects.js",
   "./svg-jxl": "./examples/svg-jxl.js",
-  "./emdash": "./examples/emdash/index.mjs"
+  "./emdash": "./examples/emdash/server-only.mjs"
  },
  "types": "./types/index.d.mts",
  "sideEffects": [

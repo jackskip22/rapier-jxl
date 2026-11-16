@@ -3,9 +3,11 @@ library rapier_jxl;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Directory, File, Platform;
+import 'dart:math' show min;
 import 'dart:typed_data';
 
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show MethodChannel, PlatformException, rootBundle;
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import 'src/bridge.dart';
@@ -86,12 +88,16 @@ class JXLCodec {
   /// The JPEG a recompressed file was made from, byte for byte.
   Future<Uint8List> restore(Uint8List jxl, {JXLCancel? cancel}) => _run('restore', jxl, 'image/jxl', cancel: cancel);
 
-  /// A video as an animated JPEG XL: every frame the web view plays, each with its own time. [type] is its MIME type,
-  /// for example `video/mp4`. [effort] 1 to 9; [onProgress] gets 0 to 1. A clip longer than the device's memory holds is
-  /// refused with its `JXL_` code.
+  /// A video as an animated JPEG XL: every frame, each with its own time. On an iPhone the system reads the frames (a hidden
+  /// web view does not play video) and sends them to the page in parts; elsewhere the web view plays the video. [type] is its
+  /// MIME type, for example `video/mp4`. [effort] 1 to 9; [onProgress] gets 0 to 1. A clip longer than the device's memory
+  /// holds is refused with its `JXL_` code.
   Future<Uint8List> animateVideo(Uint8List video, {required String type, double quality = 80, int effort = 3,
           void Function(double)? onProgress, JXLCancel? cancel}) =>
-      _run('animate', video, type, quality: quality, effort: effort, progress: onProgress, cancel: cancel);
+      Platform.isIOS
+          ? _run('animate', Uint8List(0), 'video/frames', quality: quality, effort: effort, progress: onProgress, cancel: cancel,
+              frames: (id, report) => _readFrames(id, video, type, report, cancel))
+          : _run('animate', video, type, quality: quality, effort: effort, progress: onProgress, cancel: cancel);
 
   /// An animated GIF as an animated JPEG XL, with its timing and loops. [effort] 1 to 9.
   Future<Uint8List> animateGif(Uint8List gif, {double quality = 80, int effort = 3,
@@ -130,20 +136,24 @@ class JXLCodec {
   }
 
   Future<Uint8List> _run(String op, Uint8List input, String mime, {double quality = 80, int effort = 3,
-          void Function(double)? progress, JXLCancel? cancel}) =>
+          void Function(double)? progress, JXLCancel? cancel, Future<double> Function(String id, void Function(double)? report)? frames}) =>
       _turn(() async {
         if (cancel?.isCanceled ?? false) throw const JXLCanceledException();
         await _start();
         if (cancel?.isCanceled ?? false) throw const JXLCanceledException();
         final id = '${DateTime.now().microsecondsSinceEpoch}-${identityHashCode(input)}';
         final bridge = _bridge!;
-        bridge.inputs[id] = input;
+        if (frames == null) bridge.inputs[id] = input;
         final done = Completer<void>();
-        _active = _Active(id, done, progress);
+        // A video read by the system is half the work: the frames, then the encode.
+        _active = _Active(id, done, frames == null || progress == null ? progress : (fraction) => progress(0.5 + fraction / 2));
         void stop() => _web?.webViewController?.evaluateJavascript(source: 'rapier.cancel(${jsonEncode(id)})');
-        cancel?._listeners.add(stop);
         try {
-          final job = jsonEncode({'op': op, 'id': id, 'mime': mime, 'quality': quality, 'effort': effort});
+          // The frames reach the page in parts; a cancel acts between parts.
+          final end = frames == null ? null : await frames(id, progress);
+          if (cancel?.isCanceled ?? false) throw const JXLCanceledException();
+          cancel?._listeners.add(stop);
+          final job = jsonEncode({'op': op, 'id': id, 'mime': mime, 'quality': quality, 'effort': effort, if (end != null) 'end': end});
           await _web!.webViewController!.evaluateJavascript(source: 'rapier.run($job)');
           await done.future;
           final output = bridge.outputs['$id/result'];
@@ -159,6 +169,61 @@ class JXLCodec {
           bridge.outputs.remove('$id/result');
         }
       });
+
+  static const _video = MethodChannel('app.rapier.jxl/video');
+  static const _partBytes = 16 << 20;
+
+  /// iPhone: the iOS plug-in reads the frames with AVFoundation, a part at a time, and each part goes to the page. Returns
+  /// when the last frame ends, in seconds.
+  Future<double> _readFrames(String id, Uint8List video, String type, void Function(double)? report, JXLCancel? cancel) async {
+    final bridge = _bridge!, web = _web!.webViewController!;
+    JXLException stopped() => const JXLException('JXL_BRIDGE', "The page's process stopped; the next call starts a new page.");
+    final folder = await Directory.systemTemp.createTemp('rapier_jxl');
+    var part = 0, frames = 0, held = 0;
+    try {
+      final file = File('${folder.path}/clip.${type == 'video/quicktime' ? 'mov' : type == 'video/x-m4v' ? 'm4v' : 'mp4'}');
+      await file.writeAsBytes(video, flush: true);
+      final clip = (await _video.invokeMapMethod<String, dynamic>('open', {'id': id, 'path': file.path}))!;
+      final duration = (clip['duration'] as num).toDouble(), budget = (clip['memory'] as int) ~/ 8;
+      while (true) {
+        if (cancel?.isCanceled ?? false) throw const JXLCanceledException();
+        final batch = await _video.invokeMapMethod<String, dynamic>('read', {'id': id, 'bytes': _partBytes});
+        if (cancel?.isCanceled ?? false) throw const JXLCanceledException();
+        if (!identical(_bridge, bridge)) throw stopped();
+        if (batch == null) break;
+        final data = batch['data'] as Uint8List, times = (batch['times'] as List).map((t) => (t as num).toDouble()).toList();
+        final width = batch['width'] as int, height = batch['height'] as int;
+        frames += times.length;
+        held += data.length;
+        // Held on the page until the encoder takes it: an eighth of the device's memory at most, as the browser path holds.
+        if (held > budget) {
+          throw JXLException('JXL_MEMORY', 'Video is too long for this device\'s memory at $width x $height ($frames frames read); shorten or shrink the clip.');
+        }
+        bridge.inputs['$id.$part'] = data;
+        try {
+          final result = await web.callAsyncJavaScript(functionBody: 'await rapier.frames(job); return true;',
+              arguments: {'job': {'id': id, 'part': part, 'width': width, 'height': height, 'times': times}});
+          if (result?.error != null) throw JXLException('JXL_BRIDGE', 'The page did not take the frames: ${result!.error}');
+        } catch (error) {
+          if (!identical(_bridge, bridge)) throw stopped();
+          rethrow;
+        } finally {
+          bridge.inputs.remove('$id.$part');
+        }
+        part++;
+        if (duration > 0 && duration.isFinite) report?.call(min(1.0, times.last / duration) / 2);
+      }
+      if (frames == 0) throw const JXLException('JXL_INPUT', 'Video has no frames.');
+      return (await _video.invokeMethod<num>('end', {'id': id}))!.toDouble();
+    } catch (error) {
+      if (identical(_bridge, bridge)) web.evaluateJavascript(source: 'rapier.drop(${jsonEncode(id)})');
+      if (error is PlatformException) throw JXLException(error.code, error.message ?? '');
+      rethrow;
+    } finally {
+      try { await _video.invokeMethod('close', {'id': id}); } catch (_) {}
+      try { await folder.delete(recursive: true); } catch (_) {}
+    }
+  }
 
   // The hidden page.
 

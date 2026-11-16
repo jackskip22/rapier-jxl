@@ -1,6 +1,8 @@
 // Relays Dart's calls to the worker and the worker's answers to Dart. An animation (a GIF or a video) is made here,
-// where the browser plays a video: rapier-jxl/animation reads it on the page and encodes in its own worker. Bytes never
-// pass through Dart's messages: each call reads its input from in/<id> and writes its output to out/<id>/<kind>.
+// where the browser plays a video: rapier-jxl/animation reads it on the page and encodes in its own worker. On an iPhone
+// a hidden web view does not play video, so the iOS plug-in reads the frames and Dart sends them in parts (frames).
+// Bytes never pass through Dart's messages: each call reads its input from in/<id> (a part from in/<id>.<part>) and
+// writes its output to out/<id>/<kind>.
 // Messages to Dart are POSTs to msg, sent one after another so they arrive in order.
 let sending = Promise.resolve();
 const tell = message => { sending = sending.then(() => fetch('msg', {method: 'POST', body: JSON.stringify(message)})).catch(() => {}); };
@@ -10,19 +12,41 @@ worker.onmessage = ({data}) => tell(data);
 worker.onerror = event => { event.preventDefault(); fail(event.message || 'The encoder worker stopped.'); worker.terminate(); };
 worker.onmessageerror = () => { fail('The encoder reply could not be read.'); worker.terminate(); };
 
-const running = new Map();
+const running = new Map(), clips = new Map();
 const refusal = (code, message) => Object.assign(new Error(message), {code});
-async function animate({id, mime, quality, effort}) {
+// One part of a video's frames: RGBA, one frame after another, each with its time in seconds.
+async function frames({id, part, width, height, times}) {
+  const response = await fetch(`in/${id}.${part}`);
+  if (!response.ok) throw refusal('JXL_BRIDGE', 'Dart did not send the frames.');
+  const buffer = await response.arrayBuffer(), size = width * height * 4;
+  if (buffer.byteLength !== size * times.length) throw refusal('JXL_BRIDGE', 'Dart sent part of a frame.');
+  if (!clips.has(id)) clips.set(id, {width, height, frames: []});
+  const clip = clips.get(id);
+  times.forEach((time, i) => clip.frames.push({data: new Uint8ClampedArray(buffer, i * size, size), time}));
+}
+// A video's frames, each lasting until the next one's time and the last until `end`, looping forever.
+function clipOf(id, end) {
+  const clip = clips.get(id);
+  clips.delete(id);
+  if (!clip?.frames.length) throw refusal('JXL_INPUT', 'Video has no frames.');
+  const {width, height, frames} = clip;
+  return {width, height, loops: 0, frames: frames.map(({data, time}, i) => ({data, duration: ((frames[i + 1]?.time ?? end) - time) * 1000}))};
+}
+async function animate({id, mime, quality, effort, end}) {
   const controller = new AbortController(), {signal} = controller;
   running.set(id, controller);
   try {
-    const response = await fetch(`in/${id}`);
-    if (!response.ok) throw refusal('JXL_BRIDGE', 'Dart did not send the input.');
-    const input = new Blob([await response.arrayBuffer()], {type: mime});
+    let input;
+    if (mime === 'video/frames') input = clipOf(id, end);
+    else {
+      const response = await fetch(`in/${id}`);
+      if (!response.ok) throw refusal('JXL_BRIDGE', 'Dart did not send the input.');
+      input = new Blob([await response.arrayBuffer()], {type: mime});
+    }
     tell({type: 'started', id});
     const {encode} = await import('./jpegxl/animation.browser.mjs');
     let shown = -1;
-    const result = await encode(input, {effort, fidelity: {quality}, signal, onProgress: fraction => {
+    const result = await encode(input, {effort, fidelity: {quality}, signal, ...(!(input instanceof Blob) && {transfer: true}), onProgress: fraction => {
       const step = Math.floor(fraction * 100);
       if (step > shown) { shown = step; tell({type: 'progress', id, fraction}); }
     }});
@@ -37,5 +61,7 @@ async function animate({id, mime, quality, effort}) {
 }
 globalThis.rapier = {
   run: job => job.op === 'animate' ? animate(job) : worker.postMessage(job),
+  frames,
+  drop: id => clips.delete(id),
   cancel: id => running.has(id) ? running.get(id).abort() : worker.postMessage({type: 'cancel', id})
 };
