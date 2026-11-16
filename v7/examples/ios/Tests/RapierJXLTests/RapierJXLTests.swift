@@ -70,7 +70,10 @@ final class RapierJXLTests: XCTestCase {
         let read = try await readBack(jxl)
         print("video \(mp4.count) → \(jxl.count) bytes, \(read.frames) frames, \(read.seconds) s")
         XCTAssertGreaterThan(read.frames, 1)
-        XCTAssertEqual(read.frames, 24, "Every frame of the clip")
+        // 24 frames at 12 a second; the last decodes the same as the one before it, so it lengthens that one: 23 frames,
+        // the last lasting 2/12 s, as a browser reading the clip writes them.
+        XCTAssertEqual(read.frames, 23, "Every distinct frame of the clip")
+        XCTAssertEqual(read.durations.last ?? 0, 2.0 / 12, accuracy: 0.001, "The merged last frame")
         XCTAssertEqual(read.seconds, 2.0, accuracy: 0.01, "The clip's duration")
     }
 
