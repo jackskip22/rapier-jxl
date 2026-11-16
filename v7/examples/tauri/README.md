@@ -40,5 +40,5 @@ Found while building it, on WebKitGTK 2.52:
 
 `npm run build-check`, then `npm run check` (`JXL_PACKAGE` set). The scenario runs in the app's own web view: a dropped photo,
 a chosen JPEG whose restored file has the same SHA-256, a video read back as 23 frames over 2 s, cancel and the next call, a bad
-file's `JXL_` code. On Linux and Windows `tauri-driver` drives it (WebKitWebDriver, msedgedriver); WKWebView has no WebDriver,
-so on macOS the check build runs the same scenario itself. `ci/tauri.yml` runs all three. A person checks the real dialog.
+file's `JXL_` code. On Linux `tauri-driver` drives it (WebKitWebDriver); WKWebView and the Windows runners' msedgedriver cannot drive it,
+so on macOS and Windows the check build runs the same scenario itself. `ci/tauri.yml` runs all three. A person checks the real dialog.

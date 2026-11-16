@@ -1,7 +1,7 @@
 // Runs a scenario in the built app's own web view: a dropped photo, a chosen JPEG's round trip, a video, cancel, a refusal, and
 // Save (the check build writes the file where this test says, with no dialog). The files are read back here with the package's
-// decoder. Linux and Windows are driven through tauri-driver (WebKitWebDriver, msedgedriver); macOS has no WebDriver for WKWebView,
-// so there the check build runs the same scenario itself (`TAURI_CHECK=direct`, the default on macOS).
+// decoder. Linux is driven through tauri-driver (WebKitWebDriver); macOS has no WebDriver for WKWebView and msedgedriver could not start
+// the app on the Windows runners ("DevToolsActivePort file doesn't exist" with a matching driver), so on those two the check build runs the same scenario itself (`TAURI_CHECK=direct`, the default off Linux).
 // cd examples/tauri && npm install && JXL_PACKAGE=/built/package npm run assets && npm run build && npm run check
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
@@ -25,7 +25,7 @@ const {restore} = await import(pathToFileURL(join(pkg, 'dist/jpeg.node.mjs')).hr
 const b64 = async name => (await readFile(join(fixtures, name))).toString('base64');
 const out = await mkdtemp(join(tmpdir(), 'jxl-tauri-'));
 const report = {status: 'FAIL'};
-const direct = (process.env.TAURI_CHECK ?? (process.platform === 'darwin' ? 'direct' : 'driver')) === 'direct';
+const direct = (process.env.TAURI_CHECK ?? (process.platform === 'linux' ? 'driver' : 'direct')) === 'direct';
 const driver = direct ? null : spawn('tauri-driver', process.env.TAURI_NATIVE_DRIVER ? ['--native-driver', process.env.TAURI_NATIVE_DRIVER] : [], {stdio: ['ignore', 'inherit', 'inherit'], env: {...process.env, RAPIER_JXL_CHECK_SAVE_DIR: out}});
 const base = 'http://127.0.0.1:4444';
 const call = async (method, path, body) => {
