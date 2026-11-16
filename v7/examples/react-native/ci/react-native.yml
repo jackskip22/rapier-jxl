@@ -93,4 +93,6 @@ jobs:
       - name: Sizes
         if: always()
         working-directory: v7/examples/react-native
-        run: du -sk ios/build/Build/Products/Release-iphonesimulator/JXLExample.app
+        run: |
+          app=ios/build/Build/Products/Release-iphonesimulator/JXLExample.app
+          if [ -d "$app" ]; then du -sk "$app"; else echo 'No app was built; see the build step.'; fi

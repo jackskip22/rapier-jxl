@@ -1,7 +1,6 @@
 node_modules/
 build/
 src/generated/
-assets/fixtures/
 android/
 ios/
 .expo/

@@ -28,10 +28,6 @@ export async function prepareAssets({example = here, packageDir = process.env.JX
     await writeFile(join(out, `${names[name]}.ts`), `// ${path} of ${manifest.name} ${manifest.version}, unchanged. Written by prepare-assets.mjs.\nexport default ${JSON.stringify(text)};\n`);
   }
   await copyFile(join(pkg, 'LICENSE'), join(out, 'LICENSE'));
-  // The self-test's inputs are the iOS example's, copied beside the app so Metro can bundle them.
-  await mkdir(join(example, 'assets/fixtures'), {recursive: true});
-  for (const name of ['photo.jpg', 'two-frames.gif', 'train.mp4'])
-    await copyFile(join(example, '../ios/Tests/RapierJXLTests/Fixtures', name), join(example, 'assets/fixtures', name));
   const worker = await readFile(join(here, 'web/worker.js'), 'utf8');
   const script = (await readFile(join(here, 'web/page.js'), 'utf8')).replace('WORKER_SOURCE', JSON.stringify(worker));
   const csp = [`default-src 'none'`, `script-src 'sha256-${createHash('sha256').update(script).digest('base64')}' blob: 'wasm-unsafe-eval'`,

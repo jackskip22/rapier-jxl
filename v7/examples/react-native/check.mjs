@@ -9,7 +9,7 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 import {prepareAssets} from './prepare-assets.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const fixtures = join(here, '../ios/Tests/RapierJXLTests/Fixtures');
+const fixtures = join(here, 'assets/fixtures');
 const report = {status: 'FAIL', cases: []};
 let browser;
 try {
