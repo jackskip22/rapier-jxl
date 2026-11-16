@@ -1,0 +1,14 @@
+name: video-browsers
+on: push
+jobs:
+  video:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: {node-version: 24}
+      - name: Browsers
+        run: npm install --no-save playwright@1.63.0 && npx playwright install --with-deps chromium firefox webkit
+      - name: Video in, three engines
+        run: node check.mjs clips/phone-train-406x720.webm clips/screen-r-1440x1080.webm clips/cartoon-bunny-1920x1080.webm
