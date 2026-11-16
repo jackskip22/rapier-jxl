@@ -19,7 +19,7 @@ jobs:
         run: |
           xcrun simctl boot "$SIM" || true
           xcrun simctl bootstatus "$SIM" -b
-          xcrun simctl openurl "$SIM" about:blank
+          xcrun simctl launch "$SIM" com.apple.mobilesafari || true
           sleep 30
       - name: Test on an iOS Simulator
         timeout-minutes: 50
