@@ -64,6 +64,12 @@ jobs:
         with: {node-version: 24}
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with: {distribution: temurin, java-version: 17}
+      - name: Select the newest Xcode
+        # ExpoModulesJSI builds a Swift package of tools version 6.2 inside the pod build; older Xcode refuses it with
+        # "Could not resolve package dependencies".
+        run: |
+          x=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          sudo xcode-select -s "$x"; xcodebuild -version
       - name: Package files
         working-directory: v7/examples/react-native
         run: JXL_PACKAGE=../../../package node prepare-assets.mjs && cat build/assets.json
