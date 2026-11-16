@@ -4,8 +4,7 @@ A Dart package around the browser encoder in one hidden web view: no native JPEG
 recompresses a JPEG and restores the same SHA-256, turns a GIF or a video into an animated JPEG XL, cancels a call, and refuses
 bad input with the package's `JXL_` code.
 
-**Status: written, not yet run.** No Flutter SDK, Android emulator or iPhone simulator was available where this was written.
-Nothing here has been compiled or tested; the checks below are what `ci/flutter.yml` runs.
+**Status:** `flutter test` and `flutter analyze` pass on Linux (Flutter 3.50.0). The device runs are not done yet.
 
 ## Use
 

@@ -23,7 +23,8 @@ class _HomeState extends State<Home> {
   Future<void> run(String name, Future<String> Function(JXLCodec codec) body) async {
     setState(() => status = '$name…');
     try {
-      setState(() => status = await body(codec));
+      final result = await body(codec);
+      setState(() => status = result);
     } on JXLException catch (error) {
       setState(() => status = error.toString());
     }

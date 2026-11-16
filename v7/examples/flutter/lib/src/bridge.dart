@@ -37,27 +37,27 @@ class Bridge {
       final parts = request.uri.pathSegments.where((s) => s.isNotEmpty).toList();
       final host = request.headers.host;
       if (host != '127.0.0.1' || request.headers.port != _server.port || parts.isEmpty || parts.first != _token || parts.contains('..')) {
-        return _finish(request, 404, 'text/plain', Uint8List(0));
+        return await _finish(request, 404, 'text/plain', Uint8List(0));
       }
       final rest = parts.sublist(1);
       if (request.method == 'GET' && rest.length == 2 && rest[0] == 'in') {
         final data = inputs[rest[1]];
-        if (data == null) return _finish(request, 404, 'text/plain', Uint8List(0));
-        return _finish(request, 200, 'application/octet-stream', data);
+        if (data == null) return await _finish(request, 404, 'text/plain', Uint8List(0));
+        return await _finish(request, 200, 'application/octet-stream', data);
       }
       if (request.method == 'POST' && rest.length == 3 && rest[0] == 'out') {
         outputs['${rest[1]}/${rest[2]}'] = await _body(request);
-        return _finish(request, 204, 'text/plain', Uint8List(0));
+        return await _finish(request, 204, 'text/plain', Uint8List(0));
       }
       if (request.method == 'POST' && rest.length == 1 && rest[0] == 'msg') {
         final message = jsonDecode(utf8.decode(await _body(request)));
         if (message is Map<String, dynamic>) onMessage(message);
-        return _finish(request, 204, 'text/plain', Uint8List(0));
+        return await _finish(request, 204, 'text/plain', Uint8List(0));
       }
       final name = rest.isEmpty ? 'encoder.html' : rest.join('/');
       final data = request.method == 'GET' && name != 'headers.json' ? (served[name] ?? await read(name)) : null;
-      if (data == null) return _finish(request, 404, 'text/plain', Uint8List(0));
-      _finish(request, 200, _mime(name), data);
+      if (data == null) return await _finish(request, 404, 'text/plain', Uint8List(0));
+      await _finish(request, 200, _mime(name), data);
     } catch (_) {
       try { await _finish(request, 400, 'text/plain', Uint8List(0)); } catch (_) {}
     }

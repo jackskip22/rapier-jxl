@@ -2,6 +2,7 @@
 # Adds the example's three platform folders and the two settings a loopback page needs. Run from the example folder.
 set -e
 flutter create --platforms=android,ios,macos --org app.rapier --project-name rapier_jxl_example .
+rm -f test/widget_test.dart
 python3 - <<'PY'
 import re, pathlib
 # Android: the app serves its page on 127.0.0.1, so it needs the INTERNET permission and cleartext to that address only.
