@@ -104,6 +104,40 @@ final class RapierJXLTests: XCTestCase {
         }
     }
 
+    func testQueuedCallsCancelWhileAnotherRuns() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("train.mp4")
+        try fixture("train", "mp4").write(to: url)
+        let small = try fixture("small", "jpg")
+        let reading = expectation(description: "the first call is reading the clip")
+        reading.assertForOverFulfill = false
+        let firstEnded = Flag()
+        let first = Task { defer { firstEnded.value = true }; return try await codec.animate(video: url, effort: 3) { _ in reading.fulfill() } }
+        await fulfillment(of: [reading], timeout: 30)
+        let queuedEncode = Task { try await codec.encode(small, quality: 60, effort: 1) }
+        let queuedWarmUp = Task { try await codec.warmUp() }
+        while codec.waiting < 2 { await Task.yield() }
+        queuedEncode.cancel()
+        queuedWarmUp.cancel()
+        do { _ = try await queuedEncode.value; XCTFail("A canceled queued encode ran") } catch is CancellationError {}
+        do { try await queuedWarmUp.value; XCTFail("A canceled queued warmUp succeeded") } catch is CancellationError {}
+        XCTAssertFalse(firstEnded.value, "The queued calls settled while the first still ran")
+        XCTAssertEqual(codec.waiting, 0)
+        let video = try await first.value
+        XCTAssertEqual(video.prefix(2), Data([0xFF, 0x0A]), "The running call is untouched")
+        // A cancel racing the hand-over: each call either runs or refuses, once.
+        for _ in 0..<5 {
+            let running = Task { try await codec.encode(small, quality: 60, effort: 1) }
+            let queued = Task { try await codec.encode(small, quality: 60, effort: 1) }
+            while codec.waiting < 1 { await Task.yield() }
+            Task { _ = try? await running.value; queued.cancel() }
+            _ = try await running.value
+            do { _ = try await queued.value } catch is CancellationError {}
+        }
+        let next = try await codec.encode(small, quality: 60, effort: 1)
+        XCTAssertEqual(next.prefix(2), Data([0xFF, 0x0A]), "The next call runs")
+        XCTAssertEqual(codec.heldBytes, 0, "Nothing is held")
+    }
+
     func testFailedSetupRefusesOnceAndTheNextCallStarts() async throws {
         let cold = JXLCodec(), small = try fixture("small", "jpg"), files = cold.webRoot
         cold.webRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)   // no page files
@@ -232,3 +266,6 @@ final class RapierJXLTests: XCTestCase {
         return bytes
     }
 }
+
+/// A mark a task sets on the main actor.
+@MainActor final class Flag { var value = false }

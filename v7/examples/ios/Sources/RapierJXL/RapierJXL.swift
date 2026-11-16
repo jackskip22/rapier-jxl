@@ -21,7 +21,7 @@ public final class JXLCodec {
     private var ready: [UUID: CheckedContinuation<Void, Error>] = [:]
     private var starting = false
     private var active: (id: String, done: CheckedContinuation<Void, Error>, progress: ((Double) -> Void)?)?
-    private var queue: [CheckedContinuation<Void, Never>] = []
+    private var queue: [(id: UUID, go: CheckedContinuation<Void, Error>)] = []
     private var busy = false
 
     /// Called with a job's id when its worker has the input and starts. Tests wait on it before canceling.
@@ -40,8 +40,9 @@ public final class JXLCodec {
 
     /// Loads the hidden page and its worker now, so the first call does not wait for them. Optional.
     public func warmUp() async throws {
-        await turn()
+        try await turn()
         defer { next() }
+        try Task.checkCancellation()
         try await start()
     }
 
@@ -119,7 +120,7 @@ public final class JXLCodec {
 
     private func run(_ op: String, _ input: Data, mime: String, quality: Double = 80, effort: Int = 3,
                      progress: ((Double) -> Void)? = nil) async throws -> Data {
-        await turn()
+        try await turn()
         defer { next() }
         try Task.checkCancellation()
         try await start()
@@ -146,13 +147,28 @@ public final class JXLCodec {
         return output
     }
 
-    private func turn() async {
+    /// Calls waiting for their turn. Tests only.
+    var waiting: Int { queue.count }
+
+    /// Waits for this call's turn. A cancel while waiting leaves the queue and throws at once; a turn handed over just
+    /// before the cancel is kept, and the caller's own check refuses it. Each waiter is removed before it is resumed,
+    /// so it is resumed once. A call that throws here does not hold the turn.
+    private func turn() async throws {
         if !busy { busy = true; return }
-        await withCheckedContinuation { queue.append($0) }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (go: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled { go.resume(throwing: CancellationError()) } else { queue.append((id, go)) }
+            }
+        } onCancel: {
+            Task { @MainActor in
+                if let index = self.queue.firstIndex(where: { $0.id == id }) { self.queue.remove(at: index).go.resume(throwing: CancellationError()) }
+            }
+        }
     }
 
     private func next() {
-        if queue.isEmpty { busy = false } else { queue.removeFirst().resume() }
+        if queue.isEmpty { busy = false } else { queue.removeFirst().go.resume() }
     }
 
     // MARK: - The hidden page
