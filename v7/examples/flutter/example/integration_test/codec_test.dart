@@ -13,7 +13,10 @@ const limit = Duration(minutes: 3);
 void stage(String name) => print('[stage] $name');
 void check(String name, Future<void> Function() body) =>
     testWidgets(name, (_) => body().timeout(limit, onTimeout: () => throw TimeoutException('$name: no answer in 3 minutes')), timeout: Timeout(limit + const Duration(seconds: 20)));
-bool isJxl(Uint8List b) => b.length > 2 && b[0] == 0xFF && b[1] == 0x0A;
+// A bare codestream starts FF 0A; a JPEG's recompression is a container, which starts with its 12-byte signature box.
+bool isJxl(Uint8List b) =>
+    (b.length > 2 && b[0] == 0xFF && b[1] == 0x0A) ||
+    (b.length > 12 && b[3] == 0x0C && b[4] == 0x4A && b[5] == 0x58 && b[6] == 0x4C && b[7] == 0x20);
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -55,8 +58,9 @@ void main() {
     stage('video: reading it back');
     codec.serve('jpegxl/decode.mjs', await fixture('decode.mjs'));
     final read = await codec.callPage('''
-      const {decode} = await import('./jpegxl/decode.mjs');
-      const image = await decode(new Uint8Array(await (await fetch('in/readback')).arrayBuffer()));
+      // The page's own address, not a relative one: this body runs where relative addresses have no base on Android.
+      const {decode} = await import(new URL('./jpegxl/decode.mjs', document.baseURI).href);
+      const image = await decode(new Uint8Array(await (await fetch(new URL('in/readback', document.baseURI))).arrayBuffer()));
       return [image.frames.length, image.frames.reduce((sum, frame) => sum + frame.durationSeconds, 0)];
     ''', input: jxl);
     stage('video: read back ${read[0]} frames, ${read[1]} s');
