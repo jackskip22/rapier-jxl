@@ -17,6 +17,9 @@ jobs:
       - name: Test on an iOS Simulator
         working-directory: v7/examples/ios
         run: set -o pipefail; xcodebuild test -scheme RapierJXL -destination "id=$SIM" | tee test.log
+      - name: Test on macOS
+        working-directory: v7/examples/ios
+        run: set -o pipefail; xcodebuild test -scheme RapierJXL -destination 'platform=macOS' | tee test-macos.log
       - name: Build the example
         working-directory: v7/examples/ios/Example
         run: |

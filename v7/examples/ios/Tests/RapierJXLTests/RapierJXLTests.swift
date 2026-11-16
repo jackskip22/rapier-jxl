@@ -1,6 +1,8 @@
 import CryptoKit
 import ImageIO
+#if canImport(UIKit)
 import UIKit
+#endif
 import XCTest
 @testable import RapierJXL
 
@@ -30,11 +32,16 @@ final class RapierJXLTests: XCTestCase {
 
     func testPhotoEncodesAndDecodesAtItsSize() async throws {
         let photo = try fixture("photo", "jpg")
-        let original = try XCTUnwrap(UIImage(data: photo))
-        let jxl = try await codec.encode(original, quality: 80, effort: 3)
+        let original = try Self.image(photo)
+        #if canImport(UIKit)
+        let jxl = try await codec.encode(try XCTUnwrap(UIImage(data: photo)), quality: 80, effort: 3)
+        #else
+        let jxl = try await codec.encode(photo, quality: 80, effort: 3)
+        #endif
         XCTAssertEqual(jxl.prefix(2), Data([0xFF, 0x0A]))
-        let decoded = try XCTUnwrap(UIImage(data: jxl), "UIImage reads JPEG XL on iOS 17 and later")
-        XCTAssertEqual(decoded.size, original.size)
+        let decoded = try Self.image(jxl)   // ImageIO reads JPEG XL on iOS 17 and macOS 14 and later
+        XCTAssertEqual(decoded.width, original.width)
+        XCTAssertEqual(decoded.height, original.height)
     }
 
     func testJPEGRestoresToTheSameSHA256() async throws {
@@ -189,10 +196,9 @@ final class RapierJXLTests: XCTestCase {
     }
 
     func testExactKeepsEverySample() async throws {
-        let photo = try XCTUnwrap(UIImage(data: try fixture("photo", "jpg")))
-        let png = try XCTUnwrap(photo.pngData())
+        let png = try Self.png(try Self.image(try fixture("photo", "jpg")))
         let jxl = try await codec.encodeExact(png)
-        let before = try Self.samples(UIImage(data: png)!), after = try Self.samples(try XCTUnwrap(UIImage(data: jxl)))
+        let before = try Self.samples(try Self.image(png)), after = try Self.samples(try Self.image(jxl))
         XCTAssertEqual(before, after)
     }
 
@@ -205,8 +211,20 @@ final class RapierJXLTests: XCTestCase {
         print("ImageIO frames \(CGImageSourceGetCount(source))")
     }
 
-    private static func samples(_ image: UIImage) throws -> [UInt8] {
-        let cg = try XCTUnwrap(image.cgImage)
+    private static func image(_ data: Data) throws -> CGImage {
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(data as CFData, nil))
+        return try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil), "ImageIO reads the file")
+    }
+
+    private static func png(_ image: CGImage) throws -> Data {
+        let data = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
+
+    private static func samples(_ cg: CGImage) throws -> [UInt8] {
         var bytes = [UInt8](repeating: 0, count: cg.width * cg.height * 4)
         let context = CGContext(data: &bytes, width: cg.width, height: cg.height, bitsPerComponent: 8, bytesPerRow: cg.width * 4,
                                 space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
