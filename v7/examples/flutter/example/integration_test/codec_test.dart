@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' show sha256;
@@ -7,6 +8,11 @@ import 'package:integration_test/integration_test.dart';
 import 'package:rapier_jxl/rapier_jxl.dart';
 
 Future<Uint8List> fixture(String name) async => (await rootBundle.load('assets/fixtures/$name')).buffer.asUint8List();
+// Every test has a three-minute limit, so a hang names the test; the setup has the same limit.
+const limit = Duration(minutes: 3);
+void stage(String name) => print('[stage] $name');
+void check(String name, Future<void> Function() body) =>
+    testWidgets(name, (_) => body().timeout(limit, onTimeout: () => throw TimeoutException('$name: no answer in 3 minutes')), timeout: Timeout(limit + const Duration(seconds: 20)));
 bool isJxl(Uint8List b) => b.length > 2 && b[0] == 0xFF && b[1] == 0x0A;
 
 void main() {
@@ -15,49 +21,56 @@ void main() {
 
   setUp(() async {
     codec = JXLCodec();
-    await codec.warmUp();
-    await codec.encode(await fixture('small.jpg'), quality: 60, effort: 1);
+    stage('set up: warm up');
+    await codec.warmUp().timeout(limit, onTimeout: () => throw TimeoutException('warm up: no answer in 3 minutes'));
+    stage('set up: first encode');
+    await codec.encode(await fixture('small.jpg'), quality: 60, effort: 1)
+        .timeout(limit, onTimeout: () => throw TimeoutException('first encode: no answer in 3 minutes'));
   });
   tearDown(() => codec.dispose());
 
-  testWidgets('a photo encodes', (_) async {
+  check('a photo encodes', () async {
     final jxl = await codec.encode(await fixture('photo.jpg'));
     expect(isJxl(jxl), isTrue);
   });
 
-  testWidgets('a JPEG restores to the same SHA-256', (_) async {
+  check('a JPEG restores to the same SHA-256', () async {
     final jpeg = await fixture('photo.jpg');
     final jxl = await codec.recompress(jpeg);
     expect(jxl.length, lessThan(jpeg.length));
     expect(sha256.convert(await codec.restore(jxl)), sha256.convert(jpeg));
   });
 
-  testWidgets('a GIF animates', (_) async {
+  check('a GIF animates', () async {
     expect(isJxl(await codec.animateGif(await fixture('two-frames.gif'))), isTrue);
   });
 
-  testWidgets('a video animates, with progress, frames and its length', (_) async {
+  check('a video animates, with progress, frames and its length', () async {
     final seen = <double>[];
+    stage('video: animate');
     final jxl = await codec.animateVideo(await fixture('train.mp4'), type: 'video/mp4', effort: 1, onProgress: seen.add);
+    stage('video: animated, ${seen.length} progress calls');
     expect(isJxl(jxl), isTrue);
     expect(seen, isNotEmpty);
+    stage('video: reading it back');
     codec.serve('jpegxl/decode.mjs', await fixture('decode.mjs'));
     final read = await codec.callPage('''
       const {decode} = await import('./jpegxl/decode.mjs');
       const image = await decode(new Uint8Array(await (await fetch('in/readback')).arrayBuffer()));
       return [image.frames.length, image.frames.reduce((sum, frame) => sum + frame.durationSeconds, 0)];
     ''', input: jxl);
+    stage('video: read back ${read[0]} frames, ${read[1]} s');
     expect(read[0], greaterThan(1));
     expect(read[1], closeTo(2.0, 0.1));
   });
 
-  testWidgets('a bad input refuses with its code, and the next call recovers', (_) async {
+  check('a bad input refuses with its code, and the next call recovers', () async {
     await expectLater(codec.recompress(Uint8List.fromList([0, 1, 2])),
         throwsA(isA<JXLException>().having((e) => e.code, 'code', startsWith('JXL_'))));
     expect(isJxl(await codec.recompress(await fixture('photo.jpg'))), isTrue);
   });
 
-  testWidgets('cancel before the start, and during a call, then the next call runs', (_) async {
+  check('cancel before the start, and during a call, then the next call runs', () async {
     final photo = await fixture('photo.jpg');
     final early = JXLCancel()..cancel();
     await expectLater(codec.encodeExact(photo, cancel: early), throwsA(isA<JXLCanceledException>()));

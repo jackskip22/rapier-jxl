@@ -44,8 +44,10 @@ jobs:
           id=$(xcrun simctl list devices available -j | node -e 'const d=JSON.parse(require("fs").readFileSync(0)).devices;const k=Object.keys(d).filter(k=>/iOS/.test(k)).sort().reverse();for(const r of k){const p=d[r].find(x=>/iPhone/.test(x.name));if(p){console.log(p.udid);break}}')
           echo "SIM=$id" >> $GITHUB_ENV; xcrun simctl boot "$id"
       - name: Integration tests on an iPhone simulator
+        timeout-minutes: 25
         working-directory: v7/examples/flutter/example
-        run: sh ../ci/platform.sh && flutter pub get && flutter test integration_test -d "$SIM"
+        run: sh ../ci/platform.sh && flutter pub get && flutter test integration_test -d "$SIM" --timeout 4m
       - name: Integration tests on macOS
+        timeout-minutes: 25
         working-directory: v7/examples/flutter/example
-        run: flutter test integration_test -d macos
+        run: flutter test integration_test -d macos --timeout 4m
