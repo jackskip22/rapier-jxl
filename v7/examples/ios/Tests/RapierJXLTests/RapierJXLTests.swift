@@ -51,6 +51,50 @@ final class RapierJXLTests: XCTestCase {
         XCTAssertEqual(jxl.prefix(2), Data([0xFF, 0x0A]))
     }
 
+    func testVideoAnimates() async throws {
+        let mp4 = try fixture("train", "mp4")   // 2 s, 24 frames of H.264
+        var seen: [Double] = []
+        let jxl = try await codec.animate(video: mp4, type: "video/mp4", effort: 1) { seen.append($0) }
+        XCTAssertEqual(jxl.prefix(2), Data([0xFF, 0x0A]))
+        XCTAssertFalse(seen.isEmpty, "Progress was reported")
+        let read = try await readBack(jxl)
+        print("video \(mp4.count) → \(jxl.count) bytes, \(read.frames) frames, \(read.seconds) s")
+        XCTAssertGreaterThan(read.frames, 1)
+        XCTAssertEqual(read.seconds, 2.0, accuracy: 0.1, "The clip's duration")
+    }
+
+    func testVideoFileCancels() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("train.mp4")
+        try fixture("train", "mp4").write(to: url)
+        let reading = expectation(description: "the page is reading the clip")
+        reading.assertForOverFulfill = false
+        let task = Task { try await codec.animate(video: url, effort: 3) { _ in reading.fulfill() } }
+        await fulfillment(of: [reading], timeout: 30)
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("A canceled call returned a result")
+        } catch is CancellationError {}
+        let next = try await codec.animate(video: url, effort: 1)
+        XCTAssertFalse(next.isEmpty, "A new call runs after a cancel")
+        XCTAssertEqual(codec.heldBytes, 0, "No late result is held")
+    }
+
+    /// Frames and total seconds of an animated JPEG XL, read by the package's decoder in the page.
+    private func readBack(_ jxl: Data) async throws -> (frames: Int, seconds: Double) {
+        let bridge = try XCTUnwrap(codec.bridge)
+        bridge.served["jpegxl/decode.mjs"] = try XCTUnwrap(Bundle.module.url(forResource: "decode", withExtension: "mjs", subdirectory: "Fixtures"))
+        bridge.inputs["readback"] = jxl
+        defer { bridge.inputs["readback"] = nil }
+        let value = try await codec.callPage("""
+            const {decode} = await import('./jpegxl/decode.mjs');
+            const image = await decode(new Uint8Array(await (await fetch('/in/readback')).arrayBuffer()));
+            return [image.frames.length, image.frames.reduce((sum, frame) => sum + frame.durationSeconds, 0)];
+            """)
+        let pair = try XCTUnwrap(value as? [Any])
+        return (try XCTUnwrap((pair[0] as? NSNumber)?.intValue), try XCTUnwrap((pair[1] as? NSNumber)?.doubleValue))
+    }
+
     func testBadInputRefusesWithItsCode() async throws {
         do {
             _ = try await codec.recompress(jpeg: Data([0, 1, 2]))

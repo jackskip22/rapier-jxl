@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 import WebKit
 #if canImport(UIKit)
 import UIKit
@@ -16,10 +17,10 @@ public struct JXLError: Error, LocalizedError, Equatable {
 @MainActor
 public final class JXLCodec {
     private var web: WKWebView?
-    private var bridge: Bridge?
+    private(set) var bridge: Bridge?
     private var ready: [CheckedContinuation<Void, Error>] = []
     private var starting = false
-    private var active: (id: String, done: CheckedContinuation<Void, Error>)?
+    private var active: (id: String, done: CheckedContinuation<Void, Error>, progress: ((Double) -> Void)?)?
     private var queue: [CheckedContinuation<Void, Never>] = []
     private var busy = false
 
@@ -61,9 +62,25 @@ public final class JXLCodec {
         try await run("restore", jxl, mime: "image/jxl")
     }
 
+    /// A video as an animated JPEG XL: every frame the browser plays, each with its own time. `type` is its MIME type,
+    /// for example `video/mp4` or `video/quicktime`. `effort` 1 to 9; `progress` gets 0 to 1 (reading the clip, then encoding).
+    /// A clip longer than the device's memory holds is refused with its `JXL_` code.
+    public func animate(video: Data, type: String, quality: Double = 80, effort: Int = 3,
+                        progress: ((Double) -> Void)? = nil) async throws -> Data {
+        try await run("animate", video, mime: type, quality: quality, effort: effort, progress: progress)
+    }
+
+    /// A video file, for example the movie a `PhotosPicker` gives, as an animated JPEG XL. Its type is read from its extension.
+    public func animate(video url: URL, quality: Double = 80, effort: Int = 3,
+                        progress: ((Double) -> Void)? = nil) async throws -> Data {
+        let type = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "video/mp4"
+        return try await animate(video: try Data(contentsOf: url, options: .mappedIfSafe), type: type,
+                                 quality: quality, effort: effort, progress: progress)
+    }
+
     /// An animated GIF as an animated JPEG XL, with its timing and loops. `effort` 1 to 9.
-    public func animate(gif: Data, quality: Double = 80, effort: Int = 3) async throws -> Data {
-        try await run("animate", gif, mime: "image/gif", quality: quality, effort: effort)
+    public func animate(gif: Data, quality: Double = 80, effort: Int = 3, progress: ((Double) -> Void)? = nil) async throws -> Data {
+        try await run("animate", gif, mime: "image/gif", quality: quality, effort: effort, progress: progress)
     }
 
     #if canImport(UIKit)
@@ -81,9 +98,16 @@ public final class JXLCodec {
     }
     #endif
 
+    /// Runs `body` as an async function on the page with `arguments`, and returns its value. Tests only.
+    func callPage(_ body: String, arguments: [String: Any] = [:]) async throws -> Any? {
+        try await start()
+        return try await web!.callAsyncJavaScript(body, arguments: arguments, contentWorld: .page)
+    }
+
     // MARK: - One job at a time
 
-    private func run(_ op: String, _ input: Data, mime: String, quality: Double = 80, effort: Int = 3) async throws -> Data {
+    private func run(_ op: String, _ input: Data, mime: String, quality: Double = 80, effort: Int = 3,
+                     progress: ((Double) -> Void)? = nil) async throws -> Data {
         await turn()
         defer { next() }
         try Task.checkCancellation()
@@ -96,7 +120,7 @@ public final class JXLCodec {
         do {
             try await withTaskCancellationHandler {
                 try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, Error>) in
-                    active = (id, done)
+                    active = (id, done, progress)
                     web!.evaluateJavaScript("rapier.run(\(json))")
                 }
             } onCancel: {
@@ -127,6 +151,11 @@ public final class JXLCodec {
         if !starting {
             starting = true
             let configuration = WKWebViewConfiguration()
+            // The page plays a video, muted and unseen, to read its frames.
+            configuration.mediaTypesRequiringUserActionForPlayback = []
+            #if os(iOS)
+            configuration.allowsInlineMediaPlayback = true
+            #endif
             let bridge = try Bridge(web: Bundle.module.resourceURL!.appendingPathComponent("Web"))
             bridge.onMessage = { [weak self] in self?.receive($0) }
             configuration.setURLSchemeHandler(bridge, forURLScheme: Bridge.scheme)
@@ -151,6 +180,8 @@ public final class JXLCodec {
             ready = []
         case "started":
             if let id = message["id"] as? String { onStart?(id) }
+        case "progress":
+            if let id = message["id"] as? String, active?.id == id, let fraction = message["fraction"] as? Double { active?.progress?(fraction) }
         case "done":
             if let id = message["id"] as? String, active?.id == id { active?.done.resume(); active = nil }
         case "error":

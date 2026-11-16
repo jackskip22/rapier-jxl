@@ -2,3 +2,4 @@ Sources/RapierJXL/Web/jpegxl/
 .build/
 build/
 *.xcodeproj
+Tests/RapierJXLTests/Fixtures/decode.mjs

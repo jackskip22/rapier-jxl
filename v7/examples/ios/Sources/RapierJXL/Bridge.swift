@@ -15,6 +15,9 @@ final class Bridge: NSObject, WKURLSchemeHandler, WKScriptMessageHandler, WKNavi
     /// The first 64 requests the page made, with the time each was answered: where a slow first load went.
     var requests: [(at: Date, path: String, bytes: Int)] = []
 
+    /// Files served beside the bundle's, by path. Tests add the package's decoder here; an app adds nothing.
+    var served: [String: URL] = [:]
+
     private let web: URL
     private let headers: [String: String]
 
@@ -45,7 +48,7 @@ final class Bridge: NSObject, WKURLSchemeHandler, WKScriptMessageHandler, WKNavi
         }
         let name = parts.isEmpty ? "encoder.html" : parts.joined(separator: "/")
         guard task.request.httpMethod == "GET", !parts.contains(".."), name != "headers.json",
-              let data = try? Data(contentsOf: web.appendingPathComponent(name)) else {
+              let data = try? Data(contentsOf: served[name] ?? web.appendingPathComponent(name)) else {
             return finish(task, url, 404, "text/plain", Data())
         }
         finish(task, url, 200, Self.mime(name), data)

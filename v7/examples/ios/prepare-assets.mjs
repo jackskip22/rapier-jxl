@@ -6,7 +6,8 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
-const modules = ['upload', 'jpeg', 'animation'];
+// animation.browser.mjs reads a video on the page and runs animation.mjs as its worker.
+const modules = ['upload', 'jpeg', 'animation'], browserFiles = ['animation.browser'];
 export async function prepareAssets({example = here, packageDir = process.env.JXL_PACKAGE && resolve(process.env.JXL_PACKAGE)} = {}) {
   const pkg = packageDir || resolve(example, 'node_modules/jpegxl');
   const web = join(example, 'Sources/RapierJXL/Web'), out = join(web, 'jpegxl');
@@ -18,9 +19,17 @@ export async function prepareAssets({example = here, packageDir = process.env.JX
       throw new Error(`JXL_PACKAGE: ${pkg} is not a built package with ./${name}.`);
     await copyFile(join(pkg, path), join(out, `${name}.mjs`));
   }
+  for (const name of browserFiles) {
+    if (manifest.exports?.[`./${name.replace('.browser', '')}`]?.browser !== `./dist/${name}.mjs`)
+      throw new Error(`JXL_PACKAGE: ${pkg} has no browser file for ./${name.replace('.browser', '')}.`);
+    await copyFile(join(pkg, `dist/${name}.mjs`), join(out, `${name}.mjs`));
+  }
   await copyFile(join(pkg, 'LICENSE'), join(out, 'LICENSE'));
+  // The tests read an animation back with the package's decoder in the page; the app does not carry it.
+  if (manifest.exports?.['./decode']?.import !== './dist/decode.mjs') throw new Error(`JXL_PACKAGE: ${pkg} has no ./decode.`);
+  await copyFile(join(pkg, 'dist/decode.mjs'), join(example, 'Tests/RapierJXLTests/Fixtures/decode.mjs'));
   const files = [];
-  for (const path of ['encoder.html', 'page.mjs', 'encoder.mjs', 'headers.json', ...modules.map(n => `jpegxl/${n}.mjs`), 'jpegxl/LICENSE']) {
+  for (const path of ['encoder.html', 'page.mjs', 'encoder.mjs', 'headers.json', ...[...modules, ...browserFiles].map(n => `jpegxl/${n}.mjs`), 'jpegxl/LICENSE']) {
     const bytes = await readFile(join(web, path));
     files.push({path, bytes: bytes.length, sha256: digest(bytes)});
   }

@@ -1,3 +1,4 @@
+// Stills run here; an animation runs on the page (page.mjs), where the browser plays a video.
 import {encode} from './jpegxl/upload.mjs';
 import {recompress, restore} from './jpegxl/jpeg.mjs';
 
@@ -22,10 +23,7 @@ async function run({op, id, mime, quality, effort}) {
     say({type: 'started', id});
     if (op === 'restore') await put(id, 'result', bytesOf(await restore(new Uint8Array(input), {signal})));
     else if (op === 'recompress') await put(id, 'result', bytesOf(await recompress(new Uint8Array(input), {effort, signal})));
-    else if (op === 'animate') {
-      const {encode: animate} = await import('./jpegxl/animation.mjs');
-      await put(id, 'result', bytesOf(await animate(new Blob([input], {type: 'image/gif'}), {effort, fidelity: {quality}, signal})));
-    } else if (op === 'encode' || op === 'encodeExact')
+    else if (op === 'encode' || op === 'encodeExact')
       await put(id, 'result', bytesOf(await encode(new Blob([input], {type: mime}),
         {effort, fidelity: op === 'encodeExact' ? 'exact' : {quality}, signal})));
     else throw refusal('JXL_MESSAGE', 'Unknown operation.');
