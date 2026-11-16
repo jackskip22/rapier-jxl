@@ -1,0 +1,26 @@
+{
+  "name": "rapier-jxl-react-native-example",
+  "private": true,
+  "version": "1.0.0",
+  "main": "index.ts",
+  "scripts": {
+    "prepare-assets": "node prepare-assets.mjs",
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "typecheck": "tsc --noEmit",
+    "check": "node check.mjs"
+  },
+  "dependencies": {
+    "expo": "58.0.25",
+    "expo-asset": "58.0.21",
+    "expo-image-picker": "58.0.10",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-webview": "14.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "typescript": "6.0.3"
+  }
+}

@@ -1,0 +1,8 @@
+# The app runs its self-test at start (EXPO_PUBLIC_RAPIER_SELFTEST=1) and shows its verdict.
+appId: app.rapier.jxlexample.reactnative
+---
+- launchApp
+- extendedWaitUntil:
+    visible: 'SELFTEST (PASS|FAIL)'
+    timeout: 900000
+- assertVisible: 'SELFTEST PASS'

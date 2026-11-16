@@ -1,0 +1,247 @@
+{
+ "name": "rapier-jxl",
+ "version": "8.4.0",
+ "type": "module",
+ "license": "MIT",
+ "description": "JPEG XL encoder and decoder in WebAssembly for browsers, Node and Cloudflare Workers, with no native dependencies. Page captures with exact text, fast uploads, animation, lossless JPEG recompression.",
+ "repository": {
+  "type": "git",
+  "url": "git+https://github.com/jackskip22/rapier-jxl.git"
+ },
+ "homepage": "https://github.com/jackskip22/rapier-jxl#readme",
+ "bugs": {
+  "url": "https://github.com/jackskip22/rapier-jxl/issues"
+ },
+ "keywords": [
+  "jpeg-xl",
+  "jxl",
+  "jpegxl",
+  "astro-integration",
+  "vite-plugin",
+  "encoder",
+  "decoder",
+  "image-compression",
+  "image-optimization",
+  "lossless",
+  "lossy",
+  "jpeg",
+  "gif",
+  "animation",
+  "hdr",
+  "webassembly",
+  "wasm",
+  "browser",
+  "cloudflare-workers",
+  "screenshot",
+  "capture",
+  "upload",
+  "image",
+  "images",
+  "performance",
+  "optimization",
+  "withastro",
+  "astro",
+  "snapdom",
+  "emdash"
+ ],
+ "bin": {
+  "rapier-jxl": "dist/cli.mjs"
+ },
+ "exports": {
+  ".": {
+   "types": "./types/index.d.mts",
+   "workerd": "./dist/index.workerd.mjs",
+   "edge-light": "./dist/index.edge-light.mjs",
+   "node": "./dist/index.mjs",
+   "browser": "./dist/index.browser.mjs",
+   "import": "./dist/index.mjs"
+  },
+  "./upload": {
+   "types": "./types/upload.d.mts",
+   "workerd": "./dist/upload.workerd.mjs",
+   "edge-light": "./dist/upload.edge-light.mjs",
+   "node": "./dist/upload.mjs",
+   "browser": "./dist/upload.browser.mjs",
+   "import": "./dist/upload.mjs"
+  },
+  "./capture": {
+   "types": "./types/capture.d.mts",
+   "workerd": "./dist/capture.workerd.mjs",
+   "edge-light": "./dist/capture.edge-light.mjs",
+   "node": "./dist/capture.mjs",
+   "browser": "./dist/capture.browser.mjs",
+   "import": "./dist/capture.mjs"
+  },
+  "./capture-complete": {
+   "types": "./types/capture-complete.d.mts",
+   "workerd": "./dist/capture-complete.workerd.mjs",
+   "edge-light": "./dist/capture-complete.edge-light.mjs",
+   "node": "./dist/capture-complete.mjs",
+   "browser": "./dist/capture-complete.browser.mjs",
+   "import": "./dist/capture-complete.mjs"
+  },
+  "./animation": {
+   "types": "./types/animation.d.mts",
+   "workerd": "./dist/animation.workerd.mjs",
+   "edge-light": "./dist/animation.edge-light.mjs",
+   "node": "./dist/animation.mjs",
+   "browser": "./dist/animation.browser.mjs",
+   "import": "./dist/animation.mjs"
+  },
+  "./format": {
+   "types": "./types/format.d.mts",
+   "workerd": "./dist/format.workerd.mjs",
+   "edge-light": "./dist/format.edge-light.mjs",
+   "node": "./dist/format.mjs",
+   "browser": "./dist/format.browser.mjs",
+   "import": "./dist/format.mjs"
+  },
+  "./decode": {
+   "types": "./types/decode.d.mts",
+   "workerd": "./dist/decode.workerd.mjs",
+   "edge-light": "./dist/decode.edge-light.mjs",
+   "node": "./dist/decode.node.mjs",
+   "browser": "./dist/decode.browser.mjs",
+   "import": "./dist/decode.mjs"
+  },
+  "./jpeg": {
+   "types": "./types/jpeg.d.mts",
+   "workerd": "./dist/jpeg.workerd.mjs",
+   "edge-light": "./dist/jpeg.edge-light.mjs",
+   "node": "./dist/jpeg.node.mjs",
+   "browser": "./dist/jpeg.browser.mjs",
+   "import": "./dist/jpeg.mjs"
+  },
+  "./metadata": {
+   "types": "./types/metadata.d.mts",
+   "import": "./dist/metadata.mjs"
+  },
+  "./hdr": {
+   "types": "./types/hdr.d.mts",
+   "import": "./dist/hdr.mjs"
+  },
+  "./polyfill": {
+   "types": "./types/polyfill.d.mts",
+   "import": "./dist/polyfill.mjs"
+  },
+  "./serve": {
+   "types": "./types/serve.d.mts",
+   "node": "./dist/serve.node.mjs",
+   "import": "./dist/serve.mjs"
+  },
+  "./verify": {
+   "types": "./types/verify.d.mts",
+   "workerd": "./dist/verify.workerd.mjs",
+   "edge-light": "./dist/verify.edge-light.mjs",
+   "node": "./dist/verify.node.mjs",
+   "import": "./dist/verify.mjs"
+  },
+  "./resumable": {
+   "types": "./types/resumable.d.mts",
+   "workerd": "./dist/resumable.workerd.mjs",
+   "edge-light": "./dist/resumable.edge-light.mjs",
+   "node": "./dist/resumable.node.mjs",
+   "import": "./dist/resumable.mjs"
+  },
+  "./page-rects": {
+   "types": "./examples/page-rects.d.ts",
+   "import": "./examples/page-rects.js"
+  },
+  "./svg-jxl": {
+   "types": "./examples/svg-jxl.d.ts",
+   "import": "./examples/svg-jxl.js"
+  },
+  "./emdash": {
+   "types": "./examples/emdash/index.d.ts",
+   "import": "./examples/emdash/index.mjs"
+  },
+  "./package.json": "./package.json"
+ },
+ "browser": {
+  "./index.js": "./dist/index.browser.mjs",
+  "./upload": "./dist/upload.browser.mjs",
+  "./capture": "./dist/capture.browser.mjs",
+  "./capture-complete": "./dist/capture-complete.browser.mjs",
+  "./animation": "./dist/animation.browser.mjs",
+  "./format": "./dist/format.browser.mjs",
+  "./decode": "./dist/decode.browser.mjs",
+  "./jpeg": "./dist/jpeg.browser.mjs",
+  "./metadata": "./dist/metadata.mjs",
+  "./hdr": "./dist/hdr.mjs",
+  "./polyfill": "./dist/polyfill.mjs",
+  "./serve": "./dist/serve.mjs",
+  "./verify": "./dist/verify.mjs",
+  "./resumable": "./dist/resumable.mjs",
+  "./page-rects": "./examples/page-rects.js",
+  "./svg-jxl": "./examples/svg-jxl.js",
+  "./emdash": "./examples/emdash/index.mjs"
+ },
+ "types": "./types/index.d.mts",
+ "sideEffects": [
+  "./dist/polyfill.mjs",
+  "./dist/index.mjs",
+  "./dist/upload.mjs",
+  "./dist/capture.mjs",
+  "./dist/capture-complete.mjs",
+  "./dist/animation.mjs",
+  "./dist/format.mjs",
+  "./dist/decode.mjs",
+  "./dist/jpeg.mjs",
+  "./dist/index.workerd.mjs",
+  "./dist/index.edge-light.mjs",
+  "./dist/upload.workerd.mjs",
+  "./dist/upload.edge-light.mjs",
+  "./dist/capture.workerd.mjs",
+  "./dist/capture.edge-light.mjs",
+  "./dist/capture-complete.workerd.mjs",
+  "./dist/capture-complete.edge-light.mjs",
+  "./dist/animation.workerd.mjs",
+  "./dist/animation.edge-light.mjs",
+  "./dist/format.workerd.mjs",
+  "./dist/format.edge-light.mjs",
+  "./dist/decode.workerd.mjs",
+  "./dist/decode.edge-light.mjs",
+  "./dist/jpeg.workerd.mjs",
+  "./dist/jpeg.edge-light.mjs",
+  "./dist/verify.workerd.mjs",
+  "./dist/verify.edge-light.mjs",
+  "./dist/resumable.workerd.mjs",
+  "./dist/resumable.edge-light.mjs"
+ ],
+ "peerDependencies": {
+  "emdash": ">=1.5.0 <2.0.0",
+  "@emdash-cms/cloudflare": ">=1.5.0 <2.0.0",
+  "@cloudflare/kumo": ">=2.6.0",
+  "astro": ">=6.0.0",
+  "react": ">=18.0.0"
+ },
+ "peerDependenciesMeta": {
+  "emdash": {
+   "optional": true
+  },
+  "@emdash-cms/cloudflare": {
+   "optional": true
+  },
+  "@cloudflare/kumo": {
+   "optional": true
+  },
+  "astro": {
+   "optional": true
+  },
+  "react": {
+   "optional": true
+  }
+ },
+ "files": [
+  "dist",
+  "types",
+  "examples",
+  "skills",
+  "LICENSE",
+  "README.md",
+  "THIRD_PARTY_NOTICES"
+ ],
+ "engines": {
+  "node": "^20.16.0 || >=22.3.0"
+ }
+}

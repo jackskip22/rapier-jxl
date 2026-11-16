@@ -1,0 +1,96 @@
+name: react-native
+on: [push, workflow_dispatch]
+env:
+  MAESTRO_VERSION: 1.41.0
+  EXPO_PUBLIC_RAPIER_SELFTEST: '1'
+  RAPIER_NO_INTERNET: '1'
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: {node-version: 24}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with: {distribution: temurin, java-version: 17}
+      - name: Package files
+        working-directory: v7/examples/react-native
+        run: JXL_PACKAGE=../../../package node prepare-assets.mjs && cat build/assets.json
+      - name: Install and typecheck
+        working-directory: v7/examples/react-native
+        run: npm ci --no-audit --no-fund && npm run typecheck
+      - name: Page and calls in Chromium
+        working-directory: v7/examples/react-native
+        run: npm install --no-save --no-audit --no-fund playwright@1.56.1 && npx playwright install --with-deps chromium && JXL_PACKAGE=../../../package node check.mjs
+      - name: Build the release app, with no INTERNET permission
+        working-directory: v7/examples/react-native
+        run: |
+          npx expo prebuild --platform android --no-install
+          cd android && ./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon
+      - name: Allow the emulator to use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: Start an Android emulator
+        run: |
+          sdk=$ANDROID_HOME; export PATH=$sdk/cmdline-tools/latest/bin:$sdk/platform-tools:$sdk/emulator:$PATH
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "emulator" "system-images;android-34;google_apis;x86_64" >/dev/null
+          echo no | avdmanager create avd -n ci -k "system-images;android-34;google_apis;x86_64" -d pixel_6
+          nohup emulator -avd ci -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot > emulator.log 2>&1 &
+          adb wait-for-device
+          until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1 ]; do sleep 5; done
+          adb shell getprop ro.build.version.sdk
+          adb shell dumpsys webviewupdate | grep -i "current webview"
+      - name: Install Maestro
+        run: curl -Ls "https://get.maestro.mobile.dev" | bash && echo "$HOME/.maestro/bin" >> $GITHUB_PATH
+      - name: Run the app on the emulator
+        working-directory: v7/examples/react-native
+        run: |
+          export PATH=$ANDROID_HOME/platform-tools:$PATH
+          adb install android/app/build/outputs/apk/release/app-release.apk
+          if adb shell dumpsys package app.rapier.jxlexample.reactnative | grep -q 'android.permission.INTERNET'; then echo 'The app asks for INTERNET.'; exit 1; fi
+          maestro test ci/flow.yaml --format junit --output maestro.xml
+      - name: App log
+        if: always()
+        run: $ANDROID_HOME/platform-tools/adb logcat -d -s ReactNativeJS:V | tail -60
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: {node-version: 24}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with: {distribution: temurin, java-version: 17}
+      - name: Package files
+        working-directory: v7/examples/react-native
+        run: JXL_PACKAGE=../../../package node prepare-assets.mjs && cat build/assets.json
+      - name: Install and typecheck
+        working-directory: v7/examples/react-native
+        run: npm ci --no-audit --no-fund && npm run typecheck
+      - name: Pick an iPhone simulator
+        run: |
+          id=$(xcrun simctl list devices available -j | node -e 'const d=JSON.parse(require("fs").readFileSync(0)).devices;const k=Object.keys(d).filter(k=>/iOS/.test(k)).sort().reverse();for(const r of k){const p=d[r].find(x=>/iPhone/.test(x.name));if(p){console.log(p.udid);break}}')
+          echo "SIM=$id" >> $GITHUB_ENV; xcrun simctl list devices available | grep "$id"
+      - name: Build the release app for the simulator
+        working-directory: v7/examples/react-native
+        run: |
+          npx expo prebuild --platform ios --no-install
+          (cd ios && pod install)
+          set -o pipefail
+          xcodebuild -workspace ios/JXLExample.xcworkspace -scheme JXLExample -configuration Release -sdk iphonesimulator \
+            -destination "id=$SIM" -derivedDataPath ios/build CODE_SIGNING_ALLOWED=NO build | tail -30
+      - name: Install Maestro
+        run: curl -Ls "https://get.maestro.mobile.dev" | bash && echo "$HOME/.maestro/bin" >> $GITHUB_PATH
+      - name: Run the app on the simulator
+        working-directory: v7/examples/react-native
+        run: |
+          xcrun simctl boot "$SIM" && xcrun simctl bootstatus "$SIM"
+          xcrun simctl install "$SIM" ios/build/Build/Products/Release-iphonesimulator/JXLExample.app
+          maestro test ci/flow.yaml --format junit --output maestro.xml
+      - name: Sizes
+        if: always()
+        working-directory: v7/examples/react-native
+        run: du -sk ios/build/Build/Products/Release-iphonesimulator/JXLExample.app
