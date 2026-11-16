@@ -76,12 +76,20 @@ jobs:
           echo "SIM=$id" >> $GITHUB_ENV; xcrun simctl list devices available | grep "$id"
       - name: Build the release app for the simulator
         working-directory: v7/examples/react-native
+        # Expo's prebuilt-module scripts (ExpoModulesJSI xcframework) failed on the runner, so every pod builds from source.
+        # The whole build log is kept, and on a failure its errors and the failing script's output are printed.
+        env:
+          EXPO_USE_PRECOMPILED_MODULES: '0'
         run: |
           npx expo prebuild --platform ios --no-install
           (cd ios && pod install)
-          set -o pipefail
-          xcodebuild -workspace ios/JXLExample.xcworkspace -scheme JXLExample -configuration Release -sdk iphonesimulator \
-            -destination "id=$SIM" -derivedDataPath ios/build CODE_SIGNING_ALLOWED=NO build | tail -30
+          if ! xcodebuild -workspace ios/JXLExample.xcworkspace -scheme JXLExample -configuration Release -sdk iphonesimulator \
+            -destination "id=$SIM" -derivedDataPath ios/build CODE_SIGNING_ALLOWED=NO build > xcodebuild.log 2>&1; then
+            grep -n -E "error:|ERROR|Error:|\*\* BUILD FAILED|failed with" xcodebuild.log | head -40
+            echo '--- the last 80 lines'; tail -80 xcodebuild.log
+            exit 1
+          fi
+          tail -5 xcodebuild.log
       - name: Install Maestro
         run: curl -Ls "https://get.maestro.mobile.dev" | bash && echo "$HOME/.maestro/bin" >> $GITHUB_PATH
       - name: Run the app on the simulator
@@ -95,4 +103,4 @@ jobs:
         working-directory: v7/examples/react-native
         run: |
           app=ios/build/Build/Products/Release-iphonesimulator/JXLExample.app
-          if [ -d "$app" ]; then du -sk "$app"; else echo 'No app was built; see the build step.'; fi
+          if [ -f "$app/Info.plist" ]; then du -sk "$app"; else echo 'No app was built; see the build step.'; fi
