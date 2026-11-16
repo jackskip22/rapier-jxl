@@ -18,7 +18,7 @@ public struct JXLError: Error, LocalizedError, Equatable {
 public final class JXLCodec {
     private var web: WKWebView?
     private(set) var bridge: Bridge?
-    private var ready: [CheckedContinuation<Void, Error>] = []
+    private var ready: [UUID: CheckedContinuation<Void, Error>] = [:]
     private var starting = false
     private var active: (id: String, done: CheckedContinuation<Void, Error>, progress: ((Double) -> Void)?)?
     private var queue: [CheckedContinuation<Void, Never>] = []
@@ -104,6 +104,14 @@ public final class JXLCodec {
         return try await web!.callAsyncJavaScript(body, arguments: arguments, contentWorld: .page)
     }
 
+    /// Stops the page's WebContent process, as iOS does under memory pressure. Tests only.
+    func stopPage() {
+        guard let web, let bridge else { return }
+        let kill = NSSelectorFromString("_killWebContentProcess")
+        if web.responds(to: kill) { web.perform(kill) }
+        bridge.webViewWebContentProcessDidTerminate(web)   // WebKit does not report a stop the app asked for
+    }
+
     // MARK: - One job at a time
 
     private func run(_ op: String, _ input: Data, mime: String, quality: Double = 80, effort: Int = 3,
@@ -157,7 +165,15 @@ public final class JXLCodec {
             configuration.allowsInlineMediaPlayback = true
             #endif
             let bridge = try Bridge(web: Bundle.module.resourceURL!.appendingPathComponent("Web"))
-            bridge.onMessage = { [weak self] in self?.receive($0) }
+            // A page torn down can still deliver late: only the current page's messages count.
+            bridge.onMessage = { [weak self, weak bridge] message in
+                guard let self, let bridge, self.bridge === bridge else { return }
+                self.receive(message)
+            }
+            bridge.onFailed = { [weak self, weak bridge] error in
+                guard let self, let bridge, self.bridge === bridge else { return }
+                self.teardown(error)
+            }
             configuration.setURLSchemeHandler(bridge, forURLScheme: Bridge.scheme)
             configuration.userContentController.add(bridge, name: "rapier")
             let web = WKWebView(frame: .zero, configuration: configuration)
@@ -168,7 +184,16 @@ public final class JXLCodec {
             marks = [(name: "page created", at: Date())]
             web.load(URLRequest(url: Bridge.origin))
         }
-        try await withCheckedThrowingContinuation { ready.append($0) }
+        // A cancel while the page loads refuses this call only; the page goes on loading for the next one. The waiter
+        // is removed before it is resumed, so ready, teardown and cancel resume it once.
+        let waiter = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled { done.resume(throwing: CancellationError()) } else { ready[waiter] = done }
+            }
+        } onCancel: {
+            Task { @MainActor in self.ready.removeValue(forKey: waiter)?.resume(throwing: CancellationError()) }
+        }
     }
 
     private func receive(_ message: [String: Any]) {
@@ -176,8 +201,9 @@ public final class JXLCodec {
         case "ready":
             if marks.count < 8 { marks.append((name: "worker ready", at: Date())) }
             starting = false
-            ready.forEach { $0.resume() }
-            ready = []
+            let waiting = ready.values
+            ready = [:]
+            waiting.forEach { $0.resume() }
         case "started":
             if let id = message["id"] as? String { onStart?(id) }
         case "progress":
@@ -197,16 +223,19 @@ public final class JXLCodec {
         }
     }
 
-    /// The page or its worker stopped: refuse what waits, and build a new page for the next call.
+    /// The page did not load, its process stopped, or its worker stopped: refuse what waits, and build a new page for
+    /// the next call.
     private func teardown(_ error: JXLError) {
-        web?.stopLoading()
+        let old = web
         web = nil
         bridge = nil
         starting = false
-        ready.forEach { $0.resume(throwing: error) }
-        ready = []
-        active?.done.resume(throwing: error)
+        old?.stopLoading()
+        let waiting = ready.values, current = active
+        ready = [:]
         active = nil
+        waiting.forEach { $0.resume(throwing: error) }
+        current?.done.resume(throwing: error)
     }
 
     // MARK: - Input type

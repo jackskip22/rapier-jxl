@@ -35,7 +35,7 @@ let shown = UIImage(data: jxl)                                      // iOS 17 an
 
 The page plays a video to read its frames, so any video WebKit plays works (`animate(video: Data, type: "video/mp4")` takes bytes).
 `animate` reports progress from 0 to 1 through its `progress` closure. Each call runs one at a time. Cancel a call by canceling its `Task`; the next call runs normally. A refusal throws
-`JXLError` with the package's own `JXL_` code.
+`JXLError` with the package's own `JXL_` code. A page that stops (iOS can end its process) refuses the call with `JXL_BRIDGE`, and the next call starts a new page.
 
 ## Files
 

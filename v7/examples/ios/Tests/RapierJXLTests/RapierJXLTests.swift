@@ -80,6 +80,44 @@ final class RapierJXLTests: XCTestCase {
         XCTAssertEqual(codec.heldBytes, 0, "No late result is held")
     }
 
+    func testCancelDuringColdStartRefuses() async throws {
+        let small = try fixture("small", "jpg")
+        for warm in [true, false] {
+            let cold = JXLCodec()
+            let task = Task { if warm { try await cold.warmUp() } else { _ = try await cold.encode(small, quality: 60, effort: 1) } }
+            while cold.marks.isEmpty { await Task.yield() }   // the page is created and loading, not ready
+            task.cancel()
+            do {
+                try await task.value
+                XCTFail("A call canceled while the page loaded went on")
+            } catch is CancellationError {}
+            let next = try await cold.encode(small, quality: 60, effort: 1)
+            XCTAssertEqual(next.prefix(2), Data([0xFF, 0x0A]), "The next call starts after a cold cancel")
+            XCTAssertEqual(cold.heldBytes, 0)
+        }
+    }
+
+    func testStoppedPageRefusesAndTheNextCallStartsANewOne() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("train.mp4")
+        try fixture("train", "mp4").write(to: url)
+        let reading = expectation(description: "the page is reading the clip")
+        reading.assertForOverFulfill = false
+        let task = Task { try await codec.animate(video: url, effort: 3) { _ in reading.fulfill() } }
+        await fulfillment(of: [reading], timeout: 30)
+        let page = codec.bridge
+        codec.stopPage()
+        do {
+            _ = try await task.value
+            XCTFail("A call on a stopped page returned a result")
+        } catch let error as JXLError {
+            XCTAssertEqual(error.code, "JXL_BRIDGE")
+        }
+        let next = try await codec.encode(try fixture("small", "jpg"), quality: 60, effort: 1)
+        XCTAssertEqual(next.prefix(2), Data([0xFF, 0x0A]), "The next call starts a new page")
+        XCTAssertFalse(codec.bridge === page)
+        XCTAssertEqual(codec.heldBytes, 0)
+    }
+
     /// Frames and total seconds of an animated JPEG XL, read by the package's decoder in the page.
     private func readBack(_ jxl: Data) async throws -> (frames: Int, seconds: Double) {
         let bridge = try XCTUnwrap(codec.bridge)

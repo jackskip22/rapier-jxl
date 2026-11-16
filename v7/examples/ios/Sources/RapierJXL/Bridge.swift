@@ -12,6 +12,8 @@ final class Bridge: NSObject, WKURLSchemeHandler, WKScriptMessageHandler, WKNavi
     var outputs: [String: Data] = [:]
     var onMessage: (([String: Any]) -> Void)?
     var onNavigated: (() -> Void)?
+    /// The page did not load, or its process stopped: it will never report ready or finish a call.
+    var onFailed: ((JXLError) -> Void)?
     /// The first 64 requests the page made, with the time each was answered: where a slow first load went.
     var requests: [(at: Date, path: String, bytes: Int)] = []
 
@@ -35,6 +37,18 @@ final class Bridge: NSObject, WKURLSchemeHandler, WKScriptMessageHandler, WKNavi
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { onNavigated?() }
 
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        onFailed?(JXLError(code: "JXL_BRIDGE", message: "The page did not load: \(error.localizedDescription)"))
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        onFailed?(JXLError(code: "JXL_BRIDGE", message: "The page did not load: \(error.localizedDescription)"))
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        onFailed?(JXLError(code: "JXL_BRIDGE", message: "The page's process stopped; the next call starts a new page."))
+    }
+
     func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
         guard let url = task.request.url else { return task.didFailWithError(URLError(.badURL)) }
         let parts = url.path.split(separator: "/").map(String.init)
@@ -47,6 +61,10 @@ final class Bridge: NSObject, WKURLSchemeHandler, WKScriptMessageHandler, WKNavi
             return finish(task, url, 204, "text/plain", Data())
         }
         let name = parts.isEmpty ? "encoder.html" : parts.joined(separator: "/")
+        // A page that cannot be served fails its navigation, so the start is refused rather than left waiting.
+        if name == "encoder.html", served[name] == nil, !FileManager.default.fileExists(atPath: web.appendingPathComponent(name).path) {
+            return task.didFailWithError(URLError(.fileDoesNotExist))
+        }
         guard task.request.httpMethod == "GET", !parts.contains(".."), name != "headers.json",
               let data = try? Data(contentsOf: served[name] ?? web.appendingPathComponent(name)) else {
             return finish(task, url, 404, "text/plain", Data())
