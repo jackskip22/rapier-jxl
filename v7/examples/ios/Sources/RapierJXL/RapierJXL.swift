@@ -12,7 +12,7 @@ public struct JXLError: Error, LocalizedError, Equatable {
     public var errorDescription: String? { "\(code): \(message)" }
 }
 
-/// JPEG XL for iOS with no native code: a hidden WKWebView runs rapier-jxl in a worker.
+/// JPEG XL for iOS and macOS with no native code: a hidden WKWebView runs rapier-jxl in a worker; AVFoundation reads a video's frames.
 /// Decoding needs nothing from this package: `UIImage(data:)` reads JPEG XL natively on iOS 17 and later.
 @MainActor
 public final class JXLCodec {
@@ -66,21 +66,81 @@ public final class JXLCodec {
         try await run("restore", jxl, mime: "image/jxl")
     }
 
-    /// A video as an animated JPEG XL: every frame the browser plays, each with its own time. `type` is its MIME type,
-    /// for example `video/mp4` or `video/quicktime`. `effort` 1 to 9; `progress` gets 0 to 1 (reading the clip, then encoding).
-    /// A clip longer than the device's memory holds is refused with its `JXL_` code.
+    /// A video as an animated JPEG XL: every frame the file holds, each with its own time, read with AVFoundation. `type` is
+    /// its MIME type, for example `video/mp4` or `video/quicktime`. `effort` 1 to 9; `progress` gets 0 to 1 (reading the clip,
+    /// then encoding). A clip longer than the device's memory holds is refused with its `JXL_` code.
     public func animate(video: Data, type: String, quality: Double = 80, effort: Int = 3,
                         progress: ((Double) -> Void)? = nil) async throws -> Data {
-        try await run("animate", video, mime: type, quality: quality, effort: effort, progress: progress)
+        let name = UUID().uuidString + "." + (UTType(mimeType: type)?.preferredFilenameExtension ?? "mp4")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+        do { try video.write(to: url) } catch {
+            throw JXLError(code: "JXL_INPUT", message: "The video could not be staged for reading: \(error.localizedDescription)")
+        }
+        defer { try? FileManager.default.removeItem(at: url) }
+        return try await animate(video: url, quality: quality, effort: effort, progress: progress)
     }
 
-    /// A video file, for example the movie a `PhotosPicker` gives, as an animated JPEG XL. Its type is read from its extension.
+    /// A video file, for example the movie a `PhotosPicker` gives, as an animated JPEG XL. AVFoundation reads its frames
+    /// faster than real time, with no playback; they reach the page in parts, so a cancel or a stopped page acts between parts.
     public func animate(video url: URL, quality: Double = 80, effort: Int = 3,
                         progress: ((Double) -> Void)? = nil) async throws -> Data {
-        let type = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "video/mp4"
-        return try await animate(video: try Data(contentsOf: url, options: .mappedIfSafe), type: type,
-                                 quality: quality, effort: effort, progress: progress)
+        try await turn()
+        defer { next() }
+        try Task.checkCancellation()
+        try await start()
+        let id = UUID().uuidString
+        trace?("video \(id.prefix(8)): opening")
+        let clip = try await VideoFrames.open(url)
+        guard let page = bridge, let web else { throw Self.stopped }
+        // Held on the page until the encoder takes it: an eighth of the device's memory at most, as the browser path holds.
+        let budget = Int(ProcessInfo.processInfo.physicalMemory / 8)
+        var part = 0, held = 0
+        let partBytes = Self.partBytes
+        do {
+            while true {
+                try Task.checkCancellation()
+                guard let batch = try await Task.detached(operation: { try clip.read(bytes: partBytes) }).value else { break }
+                try Task.checkCancellation()
+                guard bridge === page else { throw Self.stopped }
+                held += batch.data.count
+                if held > budget {
+                    throw JXLError(code: "JXL_MEMORY", message: "Video is too long for this device's memory at \(clip.width) x \(clip.height) (\(clip.times.count) frames read); shorten or shrink the clip.")
+                }
+                let key = "\(id).\(part)"
+                page.inputs[key] = batch.data
+                defer { page.inputs[key] = nil }
+                trace?("video \(id.prefix(8)): part \(part), \(batch.times.count) frames to \(batch.times.last ?? 0) s")
+                do {
+                    _ = try await web.callAsyncJavaScript("await rapier.frames(job); return true", arguments: ["job": [
+                        "id": id, "part": part, "width": clip.width, "height": clip.height, "times": batch.times,
+                    ] as [String: Any]], contentWorld: .page)
+                } catch {
+                    if bridge !== page { throw Self.stopped }
+                    throw JXLError(code: "JXL_BRIDGE", message: "The page did not take the frames: \(error.localizedDescription)")
+                }
+                part += 1
+                if clip.duration > 0, clip.duration.isFinite { progress?(min(1, (batch.times.last ?? 0) / clip.duration) / 2) }
+            }
+            guard !clip.times.isEmpty else { throw JXLError(code: "JXL_INPUT", message: "Video has no frames.") }
+            try Task.checkCancellation()
+            guard bridge === page else { throw Self.stopped }
+            trace?("video \(id.prefix(8)): \(clip.times.count) frames read, encoding")
+            let job: [String: Any] = ["op": "animate", "id": id, "mime": "video/frames", "end": clip.end, "quality": quality, "effort": effort]
+            let result = try await perform(job, id: id) { progress?(0.5 + $0 / 2) }
+            trace?("video \(id.prefix(8)): done, \(result.count) bytes")
+            return result
+        } catch {
+            trace?("video \(id.prefix(8)): stopped at part \(part): \(error)")
+            if bridge === page { web.evaluateJavaScript("rapier.drop(\"\(id)\")", completionHandler: nil) }
+            throw error
+        }
     }
+
+    /// Frames reach the page in parts of about this many bytes.
+    static let partBytes = 16 << 20
+    private static let stopped = JXLError(code: "JXL_BRIDGE", message: "The page's process stopped; the next call starts a new page.")
+    /// Where a call is, for the tests' log.
+    var trace: ((String) -> Void)?
 
     /// An animated GIF as an animated JPEG XL, with its timing and loops. `effort` 1 to 9.
     public func animate(gif: Data, quality: Double = 80, effort: Int = 3, progress: ((Double) -> Void)? = nil) async throws -> Data {
@@ -126,14 +186,20 @@ public final class JXLCodec {
         try await start()
         let id = UUID().uuidString
         bridge!.inputs[id] = input
-        defer { bridge?.inputs[id] = nil; bridge?.outputs["\(id)/result"] = nil }
-        let job: [String: Any] = ["op": op, "id": id, "mime": mime, "quality": quality, "effort": effort]
+        defer { bridge?.inputs[id] = nil }
+        return try await perform(["op": op, "id": id, "mime": mime, "quality": quality, "effort": effort], id: id, progress: progress)
+    }
+
+    /// Runs one job on the current page and returns its result; a cancel asks the page to stop it.
+    private func perform(_ job: [String: Any], id: String, progress: ((Double) -> Void)?) async throws -> Data {
+        defer { bridge?.outputs["\(id)/result"] = nil }
         let json = String(data: try JSONSerialization.data(withJSONObject: job), encoding: .utf8)!
         do {
             try await withTaskCancellationHandler {
                 try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, Error>) in
+                    guard let web else { return done.resume(throwing: Self.stopped) }
                     active = (id, done, progress)
-                    web!.evaluateJavaScript("rapier.run(\(json))")
+                    web.evaluateJavaScript("rapier.run(\(json))")
                 }
             } onCancel: {
                 Task { @MainActor in self.web?.evaluateJavaScript("rapier.cancel(\"\(id)\")") }
@@ -183,11 +249,6 @@ public final class JXLCodec {
             }
             starting = true
             let configuration = WKWebViewConfiguration()
-            // The page plays a video, muted and unseen, to read its frames.
-            configuration.mediaTypesRequiringUserActionForPlayback = []
-            #if os(iOS)
-            configuration.allowsInlineMediaPlayback = true
-            #endif
             // A page torn down can still deliver late: only the current page's messages count.
             bridge.onMessage = { [weak self, weak bridge] message in
                 guard let self, let bridge, self.bridge === bridge else { return }

@@ -33,15 +33,17 @@ let moving = try await codec.animate(gif: gifData)                  // a GIF, wi
 let shown = UIImage(data: jxl)                                      // iOS 17 and later
 ```
 
-The page plays a video to read its frames, so any video WebKit plays works (`animate(video: Data, type: "video/mp4")` takes bytes).
+AVFoundation reads a video's frames (every frame, each with its own time, faster than real time and with no playback), so any
+video the system reads works (`animate(video: Data, type: "video/mp4")` takes bytes); the page encodes them.
 `animate` reports progress from 0 to 1 through its `progress` closure. Each call runs one at a time. Cancel a call by canceling its `Task`; the next call runs normally. A refusal throws
 `JXLError` with the package's own `JXL_` code. A page that stops (iOS can end its process) refuses the call with `JXL_BRIDGE`, and the next call starts a new page.
 
 ## Files
 
 - `Sources/RapierJXL/RapierJXL.swift`: `JXLCodec` and its calls.
+- `Sources/RapierJXL/Video.swift`: reads a video's frames with AVFoundation, turned as the file is shown.
 - `Sources/RapierJXL/Bridge.swift`: serves the bundle and carries bytes as HTTP bodies, `/in/<id>` and `/out/<id>/result`. No base64.
-- `Sources/RapierJXL/Web/`: the page (videos and GIFs), its worker (photos and JPEGs), and (after `prepare-assets.mjs`) the modules.
+- `Sources/RapierJXL/Web/`: the page (video frames and GIFs), its worker (photos and JPEGs), and (after `prepare-assets.mjs`) the modules.
 - `Example/`: a SwiftUI app that picks a video, photo or GIF, writes JPEG XL, shows it, and shares it. `xcodegen` builds its project.
 - `Tests/`: `xcodebuild test -scheme RapierJXL -destination 'platform=iOS Simulator,name=iPhone 16' (or id=<simulator>)`.
 

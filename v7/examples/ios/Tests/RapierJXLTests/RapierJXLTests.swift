@@ -12,7 +12,10 @@ final class RapierJXLTests: XCTestCase {
 
     /// The page's first load is timed apart, so each test's own time reads cleanly.
     override func setUp() async throws {
+        // A video test that hangs names itself in two minutes.
+        if name.contains("Video") || name.contains("testQueuedCalls") || name.contains("testStoppedPage") { executionTimeAllowance = 120 }
         codec = JXLCodec()
+        codec.trace = { print($0) }
         let start = Date()
         try await codec.warmUp()
         print("warm-up \(Date().timeIntervalSince(start)) s")
@@ -67,7 +70,32 @@ final class RapierJXLTests: XCTestCase {
         let read = try await readBack(jxl)
         print("video \(mp4.count) → \(jxl.count) bytes, \(read.frames) frames, \(read.seconds) s")
         XCTAssertGreaterThan(read.frames, 1)
-        XCTAssertEqual(read.seconds, 2.0, accuracy: 0.1, "The clip's duration")
+        XCTAssertEqual(read.frames, 24, "Every frame of the clip")
+        XCTAssertEqual(read.seconds, 2.0, accuracy: 0.01, "The clip's duration")
+    }
+
+    /// A clip stored on its side (a phone held upright) is turned as it is shown, and unchanged frames merge.
+    func testVideoTurnsAsItIsShown() async throws {
+        // 64 x 32 stored, shown turned a quarter clockwise as 32 x 64; red at the stored top left, so at the shown top right.
+        // Four frames at 4 a second: a white square appears in the third, so two distinct frames of half a second each.
+        let jxl = try await codec.animate(video: try fixture("turned", "mp4"), type: "video/mp4", effort: 1)
+        let read = try await readBack(jxl)
+        print("turned \(read.width) x \(read.height), \(read.frames) frames, \(read.durations), corners \(read.corners)")
+        XCTAssertEqual([read.width, read.height], [32, 64], "Shown size")
+        XCTAssertEqual(read.frames, 2, "Unchanged frames merge")
+        XCTAssertEqual(read.seconds, 1.0, accuracy: 0.01)
+        XCTAssertGreaterThan(read.corners[1][0], 200, "Red at the top right")
+        XCTAssertLessThan(read.corners[0][0], 60, "Black at the top left")
+    }
+
+    func testUnreadableVideoRefuses() async throws {
+        do {
+            _ = try await codec.animate(video: Data("not a video".utf8), type: "video/mp4")
+            XCTFail("A refusal was expected")
+        } catch let error as JXLError {
+            XCTAssertEqual(error.code, "JXL_INPUT", error.message)
+        }
+        XCTAssertEqual(codec.heldBytes, 0)
     }
 
     func testVideoFileCancels() async throws {
@@ -173,19 +201,27 @@ final class RapierJXLTests: XCTestCase {
         XCTAssertEqual(codec.heldBytes, 0)
     }
 
-    /// Frames and total seconds of an animated JPEG XL, read by the package's decoder in the page.
-    private func readBack(_ jxl: Data) async throws -> (frames: Int, seconds: Double) {
+    /// An animated JPEG XL read by the package's decoder in the page: its size, frames, each frame's seconds, and the red,
+    /// green and blue of the first frame 4 pixels in from each corner (top left, top right, bottom left, bottom right).
+    private func readBack(_ jxl: Data) async throws
+        -> (width: Int, height: Int, frames: Int, seconds: Double, durations: [Double], corners: [[Int]]) {
         let bridge = try XCTUnwrap(codec.bridge)
         bridge.served["jpegxl/decode.mjs"] = try XCTUnwrap(Bundle.module.url(forResource: "decode", withExtension: "mjs", subdirectory: "Fixtures"))
         bridge.inputs["readback"] = jxl
         defer { bridge.inputs["readback"] = nil }
         let value = try await codec.callPage("""
             const {decode} = await import('./jpegxl/decode.mjs');
-            const image = await decode(new Uint8Array(await (await fetch('/in/readback')).arrayBuffer()));
-            return [image.frames.length, image.frames.reduce((sum, frame) => sum + frame.durationSeconds, 0)];
+            const image = await decode(new Uint8Array(await (await fetch('/in/readback')).arrayBuffer()), {format: 'uint8'});
+            const {width, height} = image, first = image.frames[0].data, channels = first.length / (width * height);
+            const at = (x, y) => [0, 1, 2].map(c => first[(y * width + x) * channels + c]);
+            const corners = [at(4, 4), at(width - 5, 4), at(4, height - 5), at(width - 5, height - 5)];
+            return [width, height, image.frames.map(frame => frame.durationSeconds), corners];
             """)
-        let pair = try XCTUnwrap(value as? [Any])
-        return (try XCTUnwrap((pair[0] as? NSNumber)?.intValue), try XCTUnwrap((pair[1] as? NSNumber)?.doubleValue))
+        let items = try XCTUnwrap(value as? [Any])
+        let durations = try XCTUnwrap(items[2] as? [NSNumber]).map(\.doubleValue)
+        let corners = try XCTUnwrap(items[3] as? [[NSNumber]]).map { $0.map(\.intValue) }
+        return (try XCTUnwrap((items[0] as? NSNumber)?.intValue), try XCTUnwrap((items[1] as? NSNumber)?.intValue),
+                durations.count, durations.reduce(0, +), durations, corners)
     }
 
     func testBadInputRefusesWithItsCode() async throws {
