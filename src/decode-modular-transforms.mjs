@@ -9,12 +9,12 @@ const invalid = message => { throw Object.assign(new Error(message), {code: 'JXL
 const shape = c => ({width: c.width, height: c.height, hshift: c.hshift, vshift: c.vshift, data: EMPTY_I32, decoded: 0, regions: null});
 
 function range(channels, begin, count, meta, mixed = false) {
-  if (!count || begin + count > channels.length || !mixed && begin < meta && begin + count > meta) invalid('Invalid Modular transform channels.');
+  if (!count || begin + count > channels.length || !mixed && begin < meta && begin + count > meta) invalid('Modular transform channels');
   return channels.slice(begin, begin + count);
 }
 function equalShapes(channels) {
   const first = channels[0];
-  if (channels.some(c => c.width !== first.width || c.height !== first.height)) invalid('Modular transform channels have different dimensions.');
+  if (channels.some(c => c.width !== first.width || c.height !== first.height)) invalid('Modular transform size mismatch');
 }
 function defaultSqueezes(channels, meta) {
   if (channels.length === meta) return [];
@@ -39,7 +39,7 @@ export function readModularTransforms(r, channels, count, parameters, checkSize,
     const type = r.read(2);
     if (type === 0) {
       const begin = r.u32(BEGIN), rct = r.u32([[0, 6], [2, 0], [4, 2], [6, 10]]);
-      if (rct > 41) invalid('Invalid reversible color transform.');
+      if (rct > 41) invalid('RCT type');
       const selected = range(channels, begin, 3, meta, true); equalShapes(selected);
       chargeWork(3 * selected[0].width * selected[0].height);
       transforms.push({type, begin, rct});
@@ -47,10 +47,10 @@ export function readModularTransforms(r, channels, count, parameters, checkSize,
       const begin = r.u32(BEGIN), components = r.u32([[0, 1], [0, 3], [0, 4], [13, 1]]);
       const colors = r.u32([[8, 0], [10, 256], [12, 1280], [16, 5376]]);
       const deltas = r.u32([[0, 0], [8, 1], [10, 257], [16, 1281]]), predictor = r.read(4);
-      if (predictor > 13) invalid('Invalid palette predictor.');
+      if (predictor > 13) invalid('palette predictor');
       const selected = range(channels, begin, components, meta); equalShapes(selected);
       chargeWork(components * selected[0].width * selected[0].height);
-      if (channels.length + 2 - components > 65536) invalid('Too many transformed channels.');
+      if (channels.length + 2 - components > 65536) invalid('channels: max 65536');
       chargeWork(2 * channels.length);
       transforms.push({type, begin, components, colors, deltas, predictor, parameters, original: selected.map(shape)});
       channels.splice(begin, components, shape(selected[0]));
@@ -63,17 +63,17 @@ export function readModularTransforms(r, channels, count, parameters, checkSize,
       for (const p of params) {
         const selected = range(channels, p.begin, p.count, meta);
         if (p.begin < meta) {
-          if (!p.inPlace) invalid('A meta channel squeeze must be in place.');
+          if (!p.inPlace) invalid('meta squeeze: not in place');
           meta += p.count;
         }
         p.original = selected.map(shape);
         chargeWork(selected.reduce((sum, channel) => sum + channel.width * channel.height, 0));
-        if (channels.length + p.count > 65536) invalid('Too many transformed channels.');
+        if (channels.length + p.count > 65536) invalid('channels: max 65536');
         chargeWork(channels.length + p.count);
         const residuals = [];
         for (let k = 0; k < p.count; k++) {
           const before = selected[k], low = shape(before), high = shape(before);
-          if (!before.width || !before.height || before.hshift > 30 || before.vshift > 30) invalid('Invalid squeeze dimensions.');
+          if (!before.width || !before.height || before.hshift > 30 || before.vshift > 30) invalid('squeeze dimensions');
           const dimension = p.horizontal ? 'width' : 'height', shift = p.horizontal ? 'hshift' : 'vshift';
           low[dimension] = Math.ceil(before[dimension] / 2); high[dimension] = Math.floor(before[dimension] / 2);
           if (low[shift] >= 0) { low[shift]++; high[shift]++; }
@@ -82,8 +82,8 @@ export function readModularTransforms(r, channels, count, parameters, checkSize,
         channels.splice(p.inPlace ? p.begin + p.count : channels.length, 0, ...residuals);
       }
       transforms.push({type, params});
-    } else invalid('Reserved Modular transform.');
-    if (channels.length > 65536) invalid('Too many transformed channels.');
+    } else invalid('Modular transform type');
+    if (channels.length > 65536) invalid('channels: max 65536');
     checkSize(channels);
   }
   return {transforms, meta};

@@ -320,7 +320,7 @@ function keepsPieces(kept,pieces,top=0){
 }
 
 export const composeCapturePhoto=(...args)=>drain(composeCapturePhotoSteps(...args));
-export function* composeCapturePhotoSteps(data,width,height,quality,colorSpace,regions,{signal,band,effort,baseEffort,baseMemo,regionMemo,tools,trace,asks={},exactRects=[],graphics=[],from=0,regionQuality,photos=[],unionCap=UNION_CAP,photoBlocks=null,photoBlockEffort,readingIntent,readingLook,photoAdmission,reading,textComplete=false,[CAPTURE_PROTECTION]:protection}={}){
+export function* composeCapturePhotoSteps(data,width,height,quality,colorSpace,regions,{signal,band,effort,baseEffort,baseMemo,regionMemo,tools,trace,asks={},exactRects=[],graphics=[],from=0,regionQuality,photos=[],unhintedBase=false,unionCap=UNION_CAP,photoBlocks=null,photoBlockEffort,readingIntent,readingLook,photoAdmission,reading,textComplete=false,[CAPTURE_PROTECTION]:protection}={}){
   if(regions.length&&!validPhotoRegions(data,width,height,regions)||!validPhotoRegions(data,width,height,[...regions,...graphics]))return null;
   check(signal);
   if(!textComplete){
@@ -472,8 +472,9 @@ export function* composeCapturePhotoSteps(data,width,height,quality,colorSpace,r
   const completeCrops=photoAdmission?jobs.map((j,i)=>j.photoCropsComplete=completePhotoCrops(photos,kept[i].r,width,band?.imageHeight??height,top)):null;
   const subjectLists=photoAdmission?.frame?kept.map(k=>cropSubjects(k.r)):null;
   const handle=(UPLOAD||!photoBlocks)&&asks[CAPTURE_HELPERS]&&jobs.length?yield {regions:jobs,ahead:true}:null;
-  const targetBaseEffort=!UPLOAD&&!band&&!photos.length&&(baseEffort??effort??3)>=4?Math.min(baseEffort??effort,7):effort;
-  const richBase=!UPLOAD&&!band&&!photos.length&&(targetBaseEffort??3)>=4;
+  const unhinted=!photos.length||(typeof __RAPIER_JXL_PAGE_RECTS__==='undefined'||__RAPIER_JXL_PAGE_RECTS__===true)&&unhintedBase;
+  const targetBaseEffort=!UPLOAD&&!band&&unhinted&&(baseEffort??effort??3)>=4?Math.min(baseEffort??effort,7):effort;
+  const richBase=!UPLOAD&&!band&&unhinted&&(targetBaseEffort??3)>=4;
   const baseKey=richBase?`${width}x${height}:${colorSpace}:${targetBaseEffort}:${alpha}:${kept.map(c=>`${c.r.x},${c.r.y},${c.r.width},${c.r.height},${c.photo},${c.fill}`).join(';')}`:null;
   const memoed=baseKey&&!asks.journal&&baseMemo?.get(baseKey);
   let baseBytes=memoed&&memoed.data===data?memoed.bytes:null;
@@ -542,9 +543,9 @@ function completePhotoCrops(photos,region,width,imageHeight,top=0){
 
 function admitted(data,width,height,options,limits){
   check(options.signal);admitPixels(data,width,height,limits);
-  if(!(data instanceof Uint8Array||data instanceof Uint8ClampedArray))throw fault('JXL_INPUT','Captures use straight RGBA8 samples.');
+  if(!(data instanceof Uint8Array||data instanceof Uint8ClampedArray))throw fault('JXL_INPUT','data: Uint8Array/Uint8ClampedArray RGBA8');
   const {colorSpace}=admitOptions({colorSpace:options.colorSpace}),quality=options.quality;
-  if(typeof quality!=='number'||!Number.isFinite(quality)||quality<1||quality>100)throw fault('JXL_OPTIONS','quality is a number from 1 through 100; 100 is exact.');
+  if(typeof quality!=='number'||!Number.isFinite(quality)||quality<1||quality>100)throw fault('JXL_OPTIONS','quality: 1-100, 100 exact');
   const effort=options.effort??DEFAULT_EFFORT,tools=options[CAPTURE_TOOLS],trace=options[CAPTURE_TRACE],asks={[CAPTURE_HELPERS]:options[CAPTURE_HELPERS],[CAPTURE_GPU]:options[CAPTURE_GPU]};
   return {colorSpace,quality,effort,tools,trace,asks,level:{effort,[CAPTURE_TOOLS]:tools,[CAPTURE_TRACE]:trace,...asks},exactRects:(typeof __RAPIER_JXL_PAGE_RECTS__==='undefined'||__RAPIER_JXL_PAGE_RECTS__===true)?options.exactRects??[]:[]};
 }
@@ -605,7 +606,7 @@ function* photoSteps(data,width,height,options,band,large=false,reading=options.
   if(unlettered)exact??=yield* within(exactFile(0),0,0.4);
   const whole=classified||unlettered;
   if((typeof __RAPIER_JXL_PAGE_RECTS__==='undefined'||__RAPIER_JXL_PAGE_RECTS__===true)&&whole&&exactRects.length&&band&&!band.shape.alpha)return exact??(yield* exactFile(0));
-  if(whole&&!exactRects.length){
+  if(whole&&!exactRects.length&&!((typeof __RAPIER_JXL_PAGE_RECTS__==='undefined'||__RAPIER_JXL_PAGE_RECTS__===true)&&reading?.exactRects?.length)){
     const own=(options.wholeQuality??regionRead)?.(data,width,{x:0,y:0,width,height},false,colorSpace)??quality;
     const partial=photoSubjects.some(r=>r.x>0||r.y>0||r.x+r.width<width||r.y+r.height<height);
     const route=UPLOAD?null:options.wholePhotoRoute,measuredWhole=partial&&route&&route.effort>=MEASURED_EFFORT;
@@ -687,10 +688,18 @@ function* photoSteps(data,width,height,options,band,large=false,reading=options.
     const at=(UPLOAD?undefined:options.wholePhotoRoute)?.effort??effort??3,noHintFirst=covered&&at>=3&&at<MEASURED_EFFORT&&spread(regions);
     const pageMargin=covered&&at>=MEASURED_EFFORT;
     const baseline=large?null:function*(pieces,unhintedRegions){
-      const reading={pieces,exact:true,requirePieces:true,textComplete:options.textComplete===true||Boolean(withoutText)};
+      const released=pieces.filter(p=>p.released);
+      let bareRects=[];
+      if(released.length){
+        const diff=new Uint8Array(width*height);
+        for(const p of released)for(let y=0;y<p.h;y++)for(let x=0;x<p.w;x++)if(p.mask[y*p.w+x])diff[(p.y+y)*width+p.x+x]=1;
+        const boxes=captureProtectedBoxes(width,height,[{x:0,y:0,width,height}],[{exact:diff}],null).boxes;
+        bareRects=(boxes?.map(r=>({x:r.x,y:r.y,width:r.w,height:r.h}))??maskComponents(diff,width,height)).map(r=>({...r,solidText:true}));
+      }
+      const reading={pieces,exactRects:bareRects,exact:true,requirePieces:true,textComplete:options.textComplete===true||Boolean(withoutText)};
       const hinted=options.textComplete===true&&photoRects.length>0;
       const reads=[],read=readQuality&&((...a)=>{const q=pageMargin?readQuality(a[0],a[1],a[2],a[3],a[4],...a.slice(5),PAGE_MARGIN):readQuality(...a);const r=a[2];if(r)reads.push([{x:r.x,y:r.y,width:r.width,height:r.height},q]);return q;});
-      const bytes=yield* photoSteps(data,width,height,{...options,...(read&&{regionQuality:read}),wholePhotoRoute:null,exactRects:[],photoRects:[],withoutText:undefined,textComplete:undefined,photoSubjects:photoAdmission||hinted&&photoSubjects.length<=256?photoSubjects:[],regions:hinted&&regions.length?regions:unhintedRegions},undefined,false,reading);
+      const bytes=yield* photoSteps(data,width,height,{...options,...(read&&{regionQuality:read}),wholePhotoRoute:null,...(!UPLOAD&&{baseEffort:at}),exactRects:[],photoRects:[],withoutText:undefined,textComplete:undefined,photoSubjects:photoAdmission||hinted&&photoSubjects.length<=256?photoSubjects:[],regions:hinted&&regions.length?regions:unhintedRegions},undefined,false,reading);
       return {bytes,exact:reading.exact,wholePhoto:reading.wholePhoto===true,reads};
     };
     if(baseline)baseline.seen=reads=>{for(const [r,q] of reads)readQuality?.seen?.(r,q);};
@@ -705,7 +714,7 @@ function* photoSteps(data,width,height,options,band,large=false,reading=options.
   if(large)return null;
   const sparse=[...regions,...graphics].reduce((s,r)=>s+r.width*r.height,0)*8<width*height;
   const mixedReading=reading&&{pieces:reading.pieces,exact:true,requirePieces:reading.requirePieces&&!exact&&!sparse};
-  const at=exact?0.4:0,mixed=regions.length||graphics.length?yield* composeCapturePhotoSteps(data,width,height,quality,colorSpace,regions,{signal,band,effort,baseEffort:(UPLOAD?undefined:options.wholePhotoRoute)?.effort??effort,baseMemo:UPLOAD?undefined:options.baseMemo,regionMemo:UPLOAD?undefined:options.regionMemo,tools,trace,asks,exactRects,graphics,from:at,regionQuality:readQuality?regionRead:undefined,photos:photoSubjects,reading:mixedReading,
+  const at=exact?0.4:0,mixed=regions.length||graphics.length?yield* composeCapturePhotoSteps(data,width,height,quality,colorSpace,regions,{signal,band,effort,baseEffort:((typeof __RAPIER_JXL_PAGE_RECTS__==='undefined'||__RAPIER_JXL_PAGE_RECTS__===true)&&!UPLOAD?options.baseEffort:undefined)??(UPLOAD?undefined:options.wholePhotoRoute)?.effort??effort,baseMemo:UPLOAD?undefined:options.baseMemo,regionMemo:UPLOAD?undefined:options.regionMemo,tools,trace,asks,exactRects:(typeof __RAPIER_JXL_PAGE_RECTS__==='undefined'||__RAPIER_JXL_PAGE_RECTS__===true)&&reading?.exactRects?.length?reading.exactRects:exactRects,graphics,from:at,regionQuality:readQuality?regionRead:undefined,photos:photoSubjects,...((typeof __RAPIER_JXL_PAGE_RECTS__==='undefined'||__RAPIER_JXL_PAGE_RECTS__===true)&&!UPLOAD&&!photoRects.length&&photoSubjects.length&&{unhintedBase:true}),reading:mixedReading,
     photoBlocks:options.photoBlocks,photoBlockEffort:options.photoBlockEffort,readingIntent:options.readingIntent,readingLook:options.readingLook,photoAdmission,textComplete:options.textComplete===true||Boolean(withoutText)||reading?.textComplete===true,[CAPTURE_PROTECTION]:options[CAPTURE_PROTECTION],...(options.unionCap&&{unionCap:options.unionCap})}):null;
   if(mixedReading?.requirePieces&&mixedReading.exact===false){reading.exact=false;return null;}
   if(mixed&&!exact&&sparse){

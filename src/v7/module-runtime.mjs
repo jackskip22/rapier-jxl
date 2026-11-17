@@ -11,10 +11,10 @@ const encodes = operation => operation === 'encode' || operation === 'fit' || op
 export function moduleRuntime(module, {name, gpu = false, helpers, helper: file, ready} = {}) {
   let pool = null;
   const helper = !(typeof __RAPIER_JXL_JPEG__ !== "undefined" && __RAPIER_JXL_JPEG__ === true || typeof __RAPIER_JXL_CAPTURE_LEAN__ !== "undefined" && __RAPIER_JXL_CAPTURE_LEAN__ === true || (typeof __RAPIER_JXL_UNSTEPPED__ !== 'undefined' && __RAPIER_JXL_UNSTEPPED__ === true)) && file && {...file, module: file.module ?? name, protocol: WORKER_PROTOCOL, wasm: suppliedWasm};
-  const closed = new WeakSet(), checkOp = op => { if (typeof module[op] !== 'function') throw fail('JXL_OPTIONS', `This module has no ${op}; use a module that exports that operation.`); };
+  const closed = new WeakSet(), checkOp = op => { if (typeof module[op] !== 'function') throw fail('JXL_OPTIONS', `unknown operation: ${op}`); };
   const helperModule = signal => {
     const load = () => {
-      if (!helpers || !helper) return Promise.reject(fail('JXL_OPTIONS', "This module has no encoding work for helpers; remove helpers."));
+      if (!helpers || !helper) return Promise.reject(fail('JXL_OPTIONS', 'helpers: unsupported here'));
       if (!pool) { pool = helpers(); pool.catch(() => { pool = null; }); }
       return pool;
     };

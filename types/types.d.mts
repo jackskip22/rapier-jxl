@@ -74,7 +74,7 @@ export interface GPUTextureLike {readonly width: number; readonly height: number
 /** An extra channel read from a texture of the input's device (a depth buffer: depth16unorm, depth32float, r16uint,
  * r16float or r32float), from the input's layer, at the picture's size or its 2^dimShift reduction. */
 export type TextureChannel = Omit<NonNullable<AdvancedPhotoOptions['extraChannels']>[number], 'data' | 'bitDepth' | 'sampleFormat' | 'exponentBits'> & {texture: GPUTextureLike; data?: never};
-/** A GPU texture read from its own device, at the encoder's size; rapier-jxl and capture-complete take it. */
+/** A GPU texture read from its own device, at the encoder's size; jpegxl and capture-complete take it. */
 export interface TextureInput extends Omit<SampleDescription, 'extraChannels'> {
   texture: GPUTextureLike;
   /** Required to contain failed texture copies, including destroyed or invalid source textures. */
@@ -185,7 +185,7 @@ type Sole<K extends FidelityKey, V = number> = {[P in K]: V} & {[P in Exclude<Fi
 export interface SampleDescription {
   colorSpace?: CoreOptions['colorSpace'];
   /** The primaries and white point as a file states them, for a picture that is none of the named color spaces (what
-   * `read()` from rapier-jxl/hdr returns); the picture's transferFunction names its curve. Instead of colorSpace, not beside it. */
+   * `read()` from jpegxl/hdr returns); the picture's transferFunction names its curve. Instead of colorSpace, not beside it. */
   colorEncoding?: ColorEncoding;
   transferFunction?: CoreOptions['transferFunction'];
   bitDepth?: CoreOptions['bitDepth'];
@@ -231,7 +231,7 @@ type EncodingExecution = JobOptions & PreviewOptions & Described & Handed & {
   /** 1 (fastest) to 9 (smallest file); default 7. Same fidelity, same file on every host. */
   effort?: Effort;
   /** Lossy pictures in three passes over the 1:8 image (1:4, 1:2, then the rest): a browser loading the file sharpens
-   * it in steps, and rapier-jxl/metadata slice() cuts each size from it. The same picture in a file a few percent
+   * it in steps, and jpegxl/metadata slice() cuts each size from it. The same picture in a file a few percent
    * larger. A picture the encoder codes as graphics (Modular) keeps one pass. Exact fidelity refuses JXL_OPTIONS. */
   progressive?: boolean;
   /** Space a canvas, bitmap or Blob is read in: 'srgb' or 'display-p3'; omitted, sRGB or the source's own. Pixels you pass say their own. */
@@ -260,8 +260,8 @@ export type VariantRequest = OutputSize & {/** As encode's effort. */ effort?: E
 export type VariantsOptions = EncodeOptions & {
   /** One entry per file wanted: its size, and its own effort, fidelity, JPEG policy or maxBytes. */
   outputs: readonly VariantRequest[]};
-/** rapier-jxl/upload's options: efforts 1-3 (default 3), 'exact' or a quality, with the full encoder's meanings. Lossy
- * float (HDR) samples, a GPU texture and firstRegion are rapier-jxl's: refused JXL_UNSUPPORTED. Upload runs on
+/** jpegxl/upload's options: efforts 1-3 (default 3), 'exact' or a quality, with the full encoder's meanings. Lossy
+ * float (HDR) samples, a GPU texture and firstRegion are jpegxl's: refused JXL_UNSUPPORTED. Upload runs on
  * WebAssembly: it takes no webgpu. */
 export type UploadOptions = JobOptions & PreviewOptions & Described & Handed & {
   /** Encode a JPEG's decoded pixels without reconstruction data. Omitted, an unchanged 'exact' JPEG preserves the original file. */
@@ -289,13 +289,13 @@ export type AnimationOptions = JobOptions & PreviewOptions & Described & Handed 
   effort?: Effort;
   /** Left out: use WebGPU where it helps. 'required' fails with JXL_WEBGPU without a WebGPU device, and at efforts 1-6 or exact, which run on WebAssembly. */
   webgpu?: 'required' | false};
-/** A capture's effort in rapier-jxl/capture (1-5); rapier-jxl/upload takes 1-3, and
- * rapier-jxl/capture-complete takes every Effort, 1-9. The root still encoder has no capture() export. */
+/** A capture's effort in jpegxl/capture (1-5); jpegxl/upload takes 1-3, and
+ * jpegxl/capture-complete takes every Effort, 1-9. The root still encoder has no capture() export. */
 export type CaptureEffort = 1 | 2 | 3 | 4 | 5;
 /** A capture runs on WebAssembly; the pixels say their colorSpace, readAs reads a canvas, bitmap or Blob in a chosen one.
  * effort: 3 by default; higher is slower and smaller, with the same pixels at the same quality, and each effort writes its
  * own file. A module refuses an effort it does not carry (JXL_UNSUPPORTED) and names the module that does; every module
- * that carries an effort writes the same file for the same call. rapier-jxl/capture and upload's capture run on
+ * that carries an effort writes the same file for the same call. jpegxl/capture and upload's capture run on
  * WebAssembly and take no webgpu; capture-complete's is CapturePhotoOptions.webgpu. */
 export type CaptureOptions = JobOptions & PreviewOptions & Described & Handed & {
   /** 'exact' (default), or {maxError} 0 to 8: every sample within that many levels of the input. */
@@ -304,7 +304,7 @@ export type CaptureOptions = JobOptions & PreviewOptions & Described & Handed & 
   effort?: CaptureEffort;
   /** Space a canvas, bitmap or Blob is read in: 'srgb' or 'display-p3'; omitted, sRGB or the source's own. Pixels you pass say their own. */
   readAs?: ReadAs};
-/** Photographic capture's options (rapier-jxl/capture-complete, efforts 1-9; rapier-jxl/upload's are UploadCaptureOptions). */
+/** Photographic capture's options (jpegxl/capture-complete, efforts 1-9; jpegxl/upload's are UploadCaptureOptions). */
 /** Exact by default. A maxError is integer 0–8; quality 1–100 offers photographic capture, with 100 normalized to exact:
  * each photo gets its own coding, aimed at the measured SSIMULACRA 2 look that number names.
  * Fidelity is one exclusive choice. The picture itself continues to describe its samples. */
@@ -340,7 +340,7 @@ export type CapturePhotoOptions = Omit<CaptureOptions, 'fidelity' | 'effort'> & 
    * solidText box over a photo is coded with the photo. rects: the boxes whose text was made transparent for certain. */
   withoutText?: CapturePixels & {rects?: ReadonlyArray<CaptureRect>};
 };
-/** rapier-jxl/upload's capture: efforts 1-3, as its encode. */
+/** jpegxl/upload's capture: efforts 1-3, as its encode. */
 export type UploadCaptureOptions = Omit<CapturePhotoOptions, 'effort' | 'webgpu'> & {
   /** 1 (fastest) to 3 (smallest file). */
   effort?: 1 | 2 | 3};
@@ -404,7 +404,7 @@ export interface ImageHeader {
    * read no profile. */
   icc?: Uint8Array;
 }
-/** The header alone, read synchronously (rapier-jxl/metadata header): no metadata is read, so no maxMetadataBytes. */
+/** The header alone, read synchronously (jpegxl/metadata header): no metadata is read, so no maxMetadataBytes. */
 export type HeaderOptions = Omit<InspectOptions, 'details' | 'decompress' | 'maxMetadataBytes'>;
 /** edit's changes: the metadata (exif, xmp, jumb; null removes, undefined keeps; compression) first, then the
  * container's framing (chunkSize, fragmentOrder, ...); the codestream and every other box stay exact. Caller metadata
@@ -450,7 +450,7 @@ export type DecodedImageOf<F> = F extends 'uint8' ? DecodedImage & {format: 'uin
  * closed); a job canceled through its signal rejects with that signal's reason, an AbortError DOMException unless you
  * passed one. Not done by this version: JXL_UNSUPPORTED, a valid request or file asking for
  * something this version does not do. The setup commands: JXL_SETUP (`add` or `remove` cannot change a project's files
- * safely; its message names the step to do by hand). Ours: JXL_INTERNAL (a fault in rapier-jxl itself). A code keeps its meaning through 8.x; a later 8.x may add one.
+ * safely; its message names the step to do by hand). Ours: JXL_INTERNAL (a fault in jpegxl itself). A code keeps its meaning through 8.x; a later 8.x may add one.
  */
 export type ErrorCode =
   | 'JXL_OPTIONS' | 'JXL_INPUT' | 'JXL_DIMENSIONS' | 'JXL_JPEG' | 'JXL_DECODE' | 'JXL_RECONSTRUCTION' | 'JXL_TARGET' | 'JXL_PLATFORM'
@@ -473,8 +473,9 @@ export type WorkerLike = {
   on(type: string, listener: (...args: any[]) => void): unknown;
   off(type: string, listener: (...args: any[]) => void): unknown;
 });
-/** A module's settings. Inside a worker of your own the module runs there, in place, and takes only helpers, webgpu
- * and maxPixels; the queue's settings (workerFactory, maxPendingBytes, ...) are refused. */
+/** A module's settings. When it runs in place it accepts the same keys and validates the queue settings.
+ * maxPendingJobs bounds calls pending at once. No worker starts and no input is copied for a queue, so
+ * workerFactory, workerStartupTimeout and maxPendingBytes have no effect there. */
 export interface CodecConfig {
   /** Returns a fresh worker running this module's own file as its worker each time it is called: in a browser
    * `new Worker(url, {type: 'module', name: '<module> worker'})` (such as `'rapier-jxl/upload worker'`), in Node a worker
@@ -519,7 +520,7 @@ export interface CodecConfig {
   webgpu?: 'required' | false;
 }
 
-/** A host's JPEG XL decoder for measured capture where no browser decodes JPEG XL: rapier-jxl/decode's decode, or any
+/** A host's JPEG XL decoder for measured capture where no browser decodes JPEG XL: jpegxl/decode's decode, or any
  * function answering the whole file in the asked color space, straight alpha. An sRGB file is asked for floats (straight RGB
  * or RGBA, 0 to 1); a decoder that gives none throws an error with code 'JXL_UNSUPPORTED' and is asked for 8-bit RGBA.
  * Hooks receive owned bytes and supplied options. */
@@ -527,10 +528,10 @@ type CapturePicture = {data: Uint8Array | Uint8ClampedArray | Float32Array, widt
 /** (bytes, {colorSpace, format, signal}) returning 8-bit RGBA, or floats where format is 'float32', with width and height. */
 export type CaptureDecoder = (bytes: Bytes, options: {colorSpace: 'srgb' | 'display-p3', format: 'uint8' | 'float32', signal?: AbortSignal}) =>
   CapturePicture | PromiseLike<CapturePicture>;
-/** A full decoded description; configureDecoder accepts rapier-jxl/decode's decode as it is. */
+/** A full decoded description; configureDecoder accepts jpegxl/decode's decode as it is. */
 export type PackageDecode = (input: Bytes, options: DecodeOptions) => DecodedImage | PromiseLike<DecodedImage>;
-/** rapier-jxl/jpeg's restore: the JPEG a recompressed file holds. */
+/** jpegxl/jpeg's restore: the JPEG a recompressed file holds. */
 type RestoredJPEG = Uint8Array | {bytes: Uint8Array} | import('./result.mjs').ImageResult;
 export type JpegRestore = (file: Bytes, options: {maxPixels?: number, signal?: AbortSignal}) => RestoredJPEG | PromiseLike<RestoredJPEG>;
-/** rapier-jxl/jpeg's recompress: how an encoder reads a JPEG where the host has none (Node, Deno, Bun). */
+/** jpegxl/jpeg's recompress: how an encoder reads a JPEG where the host has none (Node, Deno, Bun). */
 export type JpegRecompress = (file: Bytes, options: {effort?: Effort, maxPixels?: number, signal?: AbortSignal}) => {bytes: Uint8Array | null} | PromiseLike<{bytes: Uint8Array | null}>;

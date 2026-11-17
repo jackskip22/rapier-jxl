@@ -40,7 +40,7 @@ async function lowScoreTarget(data, width, height, effort, target, hooks) {
   const probe = async (quality, onProgress) => {
     let picture;
     const bytes = await drain(producer.steps({quality, effort, observe: image => { picture = image; }}), {...hooks, onProgress});
-    if (!picture) throw fail('JXL_INTERNAL', "Invalid image result; report the input and options.");
+    if (!picture) throw fail('JXL_INTERNAL', 'score-target:result');
     let scores = metric.measure(picture, {ssimulacra2: true, butteraugli: false});
     if (typeof scores?.next === 'function') scores = await drain(scores, {signal: hooks.signal});
     const margin = explicitShownMargin(scores.ssimulacra2, width, height);

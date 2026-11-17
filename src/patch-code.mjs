@@ -75,7 +75,7 @@ export function* authoredPatchFrame(data, width, height, options, {reference = f
       failure = error;
     }
   }
-  if (!best) throw failure || fault('JXL_SIZE', 'No complete patch frame fits the output budget.');
+  if (!best) throw failure || fault('JXL_SIZE', 'patches: over maxBytes');
   yield 1;
   return best;
 }

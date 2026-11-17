@@ -18,38 +18,38 @@ function quantParamHalfValue(bits) {
 }
 function quantParamNumber(value, divisor, positive, library) {
   if (typeof value !== 'number' || !Number.isFinite(value) || positive && value <= 0)
-    throw fault('JXL_INPUT', 'Quantization parameters are finite; weights and multipliers positive.');
+    throw fault('JXL_INPUT', 'quantization params: finite positive');
   if (library) return value;
-  if (Math.abs(value / divisor) >= 65520) throw fault('JXL_INPUT', 'Quantization parameter exceeds its binary16 field.');
+  if (Math.abs(value / divisor) >= 65520) throw fault('JXL_INPUT', 'quantization param: overflows float16');
   const decoded = quantParamHalfValue(float16Bits(value / divisor)) * divisor;
-  if (positive && decoded <= 0) throw fault('JXL_INPUT', 'A quantization parameter rounds to zero in binary16.');
+  if (positive && decoded <= 0) throw fault('JXL_INPUT', 'quantization param: underflows float16');
   return decoded;
 }
 function quantParamVector(value, count, convert) {
   if ((!Array.isArray(value) && !ArrayBuffer.isView(value)) || value.length !== count)
-    throw fault('JXL_INPUT', 'A quantization parameter vector has the wrong length.');
+    throw fault('JXL_INPUT', 'quantization vector length');
   return Array.from(value, convert);
 }
 function quantParamTriplet(value, count, convert) {
   if (!Array.isArray(value) || value.length !== 3)
-    throw fault('JXL_INPUT', 'Quantization parameters are three vectors, Y/Cb/Cr.');
+    throw fault('JXL_INPUT', 'quantization params: 3 vectors');
   return value.map(vector => quantParamVector(vector, count, convert));
 }
 function quantParamBands(value, library) {
   const count = value?.[0]?.length;
   if (!Number.isInteger(count) || count < 1 || count > 16)
-    throw fault('JXL_INPUT', 'DCT distance bands: 1 to 16 values per channel.');
+    throw fault('JXL_INPUT', 'bands: 1-16 per channel');
   return quantParamTriplet(value, count, (v, i) => quantParamNumber(v, i ? 1 : 64, !i, library));
 }
 function quantParamAdmit(input, width, height, family) {
   if (!input || typeof input !== 'object' || Array.isArray(input) || ArrayBuffer.isView(input))
-    throw fault('JXL_INPUT', 'A compact quantization table is a descriptor with a mode.');
+    throw fault('JXL_INPUT', 'quantization table: {mode}');
   const mode = QUANT_PARAM_MODES.indexOf(input.mode), library = mode === 0;
-  if (mode < 0) throw fault('JXL_INPUT', 'Quantization mode is library, identity, dct2, dct4, dct4x8, afv or dct.');
+  if (mode < 0) throw fault('JXL_INPUT', 'mode: library, identity, dct2, dct4, dct4x8, afv or dct');
   if (mode > 0 && mode < 6 && width * height !== 64)
-    throw fault('JXL_INPUT', 'Compact quantization modes need an 8x8 table family.');
+    throw fault('JXL_INPUT', 'compact mode: 8x8 family required');
   const source = library ? QUANT_PARAM_LIBRARY[family] : input;
-  if (!source) throw fault('JXL_INPUT', 'Unknown quantization-table family.');
+  if (!source) throw fault('JXL_INPUT', 'unknown quantization family');
   const kind = QUANT_PARAM_MODES.indexOf(source.mode), table = {mode, kind, library};
   const positive = (v, divisor = 1) => quantParamNumber(v, divisor, true, library);
   if (kind === 1 || kind === 2) table.weights = quantParamTriplet(source.weights, kind === 1 ? 3 : 6, v => positive(v, 64));
@@ -68,7 +68,7 @@ function quantParamAdmit(input, width, height, family) {
 }
 function quantParamWeight(value) {
   if (!Number.isFinite(value) || value < 1e-8 || value >= 1e8)
-    throw fault('JXL_INPUT', 'Quantization weights are from 1e-8 to below 1e8.');
+    throw fault('JXL_INPUT', 'weights: 1e-8 to 1e8');
   return value;
 }
 function quantParamExpandBands(parameters) {

@@ -26,8 +26,8 @@ export async function insideProject(cwd, paths, refuse) {
       if (error?.code === 'ELOOP') throw refuse(`${relative(cwd, resolve(cwd, path)) || path} has a symbolic link loop`, 'replace the link with a folder or file');
       throw error;
     }
-    if (!within(root, to)) throw refuse(`${relative(cwd, resolve(cwd, path)) || path} leads outside this folder, to ${to}`,
-      'replace the link with the file itself, or run it in the folder the file is in');
+    if (!within(root, to)) throw refuse(`${relative(cwd, resolve(cwd, path)) || path}: outside folder (${to})`,
+      'replace symlink or run in target folder');
     const rel = relative(root, to);
     if (process.platform === 'win32' && rel.split(/[\\/]/).some(seg => RESERVED_WIN.test(seg) || /[ .]$/.test(seg)))
       throw refuse(`${rel} uses a reserved Windows file name`, 'rename the file or folder');
@@ -42,7 +42,7 @@ export async function readManifest(cwd, refuse) {
   if (text === null) return null;
   let manifest;
   try { manifest = JSON.parse(text); }
-  catch (error) { throw refuse(`package.json is not JSON (${error.message})`, 'correct package.json'); }
+  catch (error) { throw refuse(`package.json: invalid JSON (${error.message})`, 'fix package.json'); }
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest))
     throw refuse('package.json is not a JSON object', 'correct package.json');
   return {text, manifest};

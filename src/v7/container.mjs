@@ -12,13 +12,13 @@ export const capture = options => {
     else if (Array.isArray(copy[key])) copy[key] = snapshotArray(copy[key], key, undefined, 'JXL_INPUT').map(value => ArrayBuffer.isView(value) ? copyBytes(value, true) : value);
   }
   if (copy.maxBoxes === undefined) copy.maxBoxes = DEFAULT_MAX_BOXES;
-  else if (!Number.isSafeInteger(copy.maxBoxes) || copy.maxBoxes < 1) throw fail('JXL_OPTIONS', "Invalid maxBoxes; use a positive safe integer.");
+  else if (!Number.isSafeInteger(copy.maxBoxes) || copy.maxBoxes < 1) throw fail('JXL_OPTIONS', 'maxBoxes: positive integer');
   return copy;
 };
 const admitContainer = (input, settings) => {
   const maxBytes = settings.maxBytes ?? Number.MAX_SAFE_INTEGER;
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw fail('JXL_OPTIONS', "Invalid maxBytes; use a positive safe integer.");
-  if (encodedByteLength(input) > maxBytes) throw fail('JXL_LIMIT', "JPEG XL container exceeds maxBytes; raise it or pass a smaller file.");
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw fail('JXL_OPTIONS', 'maxBytes: positive integer');
+  if (encodedByteLength(input) > maxBytes) throw fail('JXL_LIMIT', 'container: over maxBytes');
 };
 const copyContainer = (input, settings) => {
   admitContainer(input, settings);
@@ -49,7 +49,7 @@ async function repackContainer(input, options) {
 export const edit = (input, changes) => editContainer(input, changes).catch(error => { throw declared(error); });
 async function editContainer(input, changes) {
   const {bounds: {maxInputBytes, ...bounds}, metadata, framing} = admitEdit(changes);
-  if (encodedByteLength(input) > (maxInputBytes ?? Number.MAX_SAFE_INTEGER)) throw fail('JXL_LIMIT', 'The JPEG XL container exceeds maxInputBytes; raise it or pass a smaller file.');
+  if (encodedByteLength(input) > (maxInputBytes ?? Number.MAX_SAFE_INTEGER)) throw fail('JXL_LIMIT', 'container: over maxInputBytes');
   let bytes = input;
   if (Object.keys(metadata).length) bytes = await writeContainer(bytes, {...bounds, ...metadata});
   if (Object.keys(framing).length) bytes = await repackContainer(bytes, {...bounds, ...framing});

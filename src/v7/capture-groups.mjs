@@ -68,7 +68,7 @@ export function groupHelpers(file) {
     const all = ending.get(owner);
     if (final) ending.delete(owner);
     try { await all; }
-    catch (cause) { throw Object.assign(new Error("Capture worker could not be stopped; close the queue and retry with a fresh worker.", {cause}), {code: 'JXL_WORKER'}); }
+    catch (cause) { throw Object.assign(new Error('worker stop failed: close() and retry', {cause}), {code: 'JXL_WORKER'}); }
   }
   const idle = (owner, pool) => { if (pools.get(owner) === pool && !pool.queue.length && !pool.members.some(member => member.task)) { pool.timer = setTimeout(() => end(owner), IDLE); pool.timer.unref?.(); } };
   const spawn = pool => {

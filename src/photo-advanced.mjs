@@ -31,7 +31,7 @@ export {TRANSFORMS, photonNoise, COEFFICIENT_ORDER_BUCKETS};
 export {LIMITS};
 const STILL = typeof __RAPIER_JXL_STILL__ !== 'undefined' && __RAPIER_JXL_STILL__ === true;
 export function admitFeatures(options, width, height, quality) {
-  if (options.level !== undefined && options.level !== 5 && options.level !== 10) throw fault('JXL_INPUT', 'JPEG XL level is 5 or 10.');
+  if (options.level !== undefined && options.level !== 5 && options.level !== 10) throw fault('JXL_INPUT', 'level: 5 or 10');
   admitPhotoLayout(width, height, options, quality);
   const progression = progressivePasses(options.progressive);
   admitNoise(options.noise, width, height); admitLFFrames(options.lfFrames);
@@ -40,27 +40,27 @@ export function admitFeatures(options, width, height, quality) {
 export function encodePhoto(data, width, height, options) { return complete(encodePhotoSteps(data, width, height, options)); }
 export function encodePhotoSteps(data, width, height, options = {}) {
   const {quality, colorSpace} = admitOptions(options, 90), effort = admitEffort(options);
-  if (options.level !== undefined && options.level !== 5 && options.level !== 10) throw fault('JXL_INPUT', 'JPEG XL level is 5 or 10.');
+  if (options.level !== undefined && options.level !== 5 && options.level !== 10) throw fault('JXL_INPUT', 'level: 5 or 10');
   const layout = STILL ? {width, height, factor: 1, codedWidth: width, codedHeight: height} : admitPhotoLayout(width, height, options, quality);
   admitPixels(data, layout.codedWidth, layout.codedHeight, LIMITS);
   const samples = admitSampleFormat(data, options), progression = STILL ? null : progressivePasses(options.progressive);
   const noiseLut = STILL ? null : admitNoise(options.noise, width, height), lfLevels = STILL ? 0 : admitLFFrames(options.lfFrames);
   const authoredOrderPasses = STILL ? null : prepareCoefficientOrders(options.coefficientOrders, progression?.count || 1);
   if (STILL && options.orientation !== undefined && (!Number.isInteger(options.orientation) || options.orientation < 1 || options.orientation > 8))
-    throw fault('JXL_INPUT', 'Invalid orientation; use an integer from 1 to 8.');
+    throw fault('JXL_INPUT', 'orientation: integer 1-8');
   const strategyOptions = STILL ? {variable: false} : admitStrategyOptions(options), filter = admitPhotoFilter(options);
   if (quality === 100 && options.extraChannels !== undefined && (!Array.isArray(options.extraChannels) || options.extraChannels.length)) {
     if (typeof __RAPIER_JXL_STILL__ !== 'undefined' && __RAPIER_JXL_STILL__ === true)
-      throw fault('JXL_UNSUPPORTED', 'Exact extra channels are written by rapier-jxl/format.');
+      throw fault('JXL_UNSUPPORTED', 'exact extraChannels: use jpegxl/format');
     else return exactPhotoExtraSteps(data, width, height, options, samples);
   }
   const extras = admitPhotoExtras(data, layout, options);
   if (options.orientation !== undefined && options.orientation !== 1 && (quality >= 100 || !samples.native8))
-    throw fault('JXL_UNSUPPORTED', 'Orientation needs a lossy 8-bit sRGB photo; rotate the pixels.');
+    throw fault('JXL_UNSUPPORTED', 'orientation: 8-bit lossy sRGB only');
   if (!samples.native8 && quality < 100 && (strategyOptions.variable || progression || noiseLut || lfLevels || authoredOrderPasses || extras || layout.factor !== 1 || layout.colorTransform))
-    throw fault('JXL_INPUT', 'Advanced VarDCT transforms need 8-bit sRGB.');
+    throw fault('JXL_INPUT', 'transforms: 8-bit sRGB only');
   if (quality < 100 && lfLevels) {
-    if (colorSpace !== 'srgb') throw fault('JXL_INPUT', 'LF frame pyramids need sRGB photo pixels.');
+    if (colorSpace !== 'srgb') throw fault('JXL_INPUT', 'lfFrames: sRGB only');
   }
   return job(steps(data, layout.codedWidth, layout.codedHeight, {quality, colorSpace, effort, samples, options, progression, noiseLut, strategyOptions, filter, lfLevels, authoredOrderPasses, layout, extras}));
 }

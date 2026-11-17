@@ -14,7 +14,7 @@ function transferable(value, buffers = new Set(), seen = new Set()) {
 const INSTALLED = Symbol.for('rapier-jxl.worker-runtime');
 
 export function failure(reason, named = false) {
-  let name = 'Error', code = 'JXL_INTERNAL', message = "Image job failed; report the input and options.";
+  let name = 'Error', code = 'JXL_INTERNAL', message = "worker:job";
   try { const value = reason?.name; if (typeof value === 'string' && value) name = value; } catch {}
   try { const value = reason?.code; if (typeof value === 'string' && value.startsWith('JXL_')) code = value; } catch {}
   try {
@@ -24,7 +24,7 @@ export function failure(reason, named = false) {
   } catch {}
   if (code === 'JXL_INTERNAL' && outOfMemory(reason)) {
     code = 'JXL_MEMORY';
-    message = `Not enough memory for this picture${message ? ` (${message})` : ''}; free memory or use a smaller picture.`;
+    message = `memory: shrink picture${message ? ` (${message})` : ''}`;
   }
   return named ? {name, code, message} : {code, message};
 }
@@ -49,7 +49,7 @@ export function install(port, pending = [], runtime, previewHub) {
     if (previews?.ack(message)) return;
     if (message.wasmModules) {
       try { configureModules(message.wasmModules); }
-      catch (error) { configurationError = {code: error?.code || 'JXL_WASM', message: error?.message || 'The precompiled WebAssembly modules are invalid; prepare them again in this host.'}; port.postMessage({configurationError}); }
+      catch (error) { configurationError = {code: error?.code || 'JXL_WASM', message: error?.message || 'WebAssembly: prepare modules again'}; port.postMessage({configurationError}); }
       return;
     }
     if (configurationError) {
@@ -67,16 +67,16 @@ export function install(port, pending = [], runtime, previewHub) {
       const job = running.get(message.id), waiting = job?.waiting;
       if (waiting?.sequence === message.inputAck) {
         job.waiting = null;
-        message.ok === true ? waiting.resolve() : waiting.reject(Object.assign(new Error(message.error?.message || 'Input reservation refused.'), {code: message.error?.code || 'JXL_WORKER'}));
+        message.ok === true ? waiting.resolve() : waiting.reject(Object.assign(new Error(message.error?.message || 'input reservation'), {code: message.error?.code || 'JXL_WORKER'}));
       }
       return;
     }
     if (!Number.isSafeInteger(message.id) || message.id < 1) return;
     const {id, operation, input, options, maxPixels, helpers, webgpu, lane, alone} = message;
     const arrived = typeof ImageBitmap === 'function' && input instanceof ImageBitmap || typeof VideoFrame === 'function' && input instanceof VideoFrame;
-    if (message.bitmap === true && !arrived) { reply(id, Object.assign(new Error("Bitmap did not reach the worker; pass a live bitmap and retry."), {code: 'JXL_INPUT'})); return; }
+    if (message.bitmap === true && !arrived) { reply(id, Object.assign(new Error("bitmap: live transfer required"), {code: 'JXL_INPUT'})); return; }
     const beside = lane === 1 && helpers && running.size - here < helpers.count;
-    if (running.has(id) || (here && !beside)) { reply(id, Object.assign(new Error("Worker already has an active operation; wait for it to finish."), {code: 'JXL_BUSY'})); return; }
+    if (running.has(id) || (here && !beside)) { reply(id, Object.assign(new Error("worker: active operation"), {code: 'JXL_BUSY'})); return; }
     const controller = new AbortController();
     const preview = message.preview === true ? previews?.start(id, controller.signal) : undefined;
     const job = {controller, sequence: 0, waiting: null};

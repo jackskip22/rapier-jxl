@@ -6,7 +6,7 @@ export const DESCRIPTION = ['colorSpace','colorEncoding','transferFunction','bit
 
 export function refuseDescription(options, where = 'options') {
   for (const key of DESCRIPTION) if (options?.[key] !== undefined)
-    throw fail('JXL_OPTIONS', `${key} is an image property; move it from ${where} to the image.`);
+    throw fail('JXL_OPTIONS', `${key}: move from ${where} to image`);
 }
 
 const INTENTS = ['perceptual', 'relative', 'saturation', 'absolute'];
@@ -48,39 +48,39 @@ export function decodedFields(decoded) {
 const RETAGGABLE = ['colorSpace', 'transferFunction', 'bitDepth', 'sampleFormat', 'intensityTarget'];
 const same = (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b);
 export function decodedDescription(decoded) {
-  if (!Object.hasOwn(FORMATS, decoded.format)) throw fail('JXL_INPUT', "Invalid decoded sample format; use uint8, uint16, or float32.");
+  if (!Object.hasOwn(FORMATS, decoded.format)) throw fail('JXL_INPUT', "decoded format: uint8, uint16, float32");
   const out = decodedFields(decoded), header = decoded.header;
   const intensity = header?.toneMapping?.intensityTarget;
   if (typeof intensity === 'number') out.intensityTarget = intensity;
   for (const key of RETAGGABLE) if (decoded[key] !== undefined && decoded[key] !== out[key])
-    throw fail('JXL_INPUT', `${key} is ${String(decoded[key])} but the samples are ${String(out[key] ?? 'unnamed')}; to retag, pass {data, width, height, ${key}}.`);
+    throw fail('JXL_INPUT', `${key}: ${String(decoded[key])} vs ${String(out[key] ?? 'unnamed')}, use {data, width, height, ${key}}`);
   const first = decoded.frames?.[0], changed = first && ['icc', 'colorEncoding', 'alphaPremultiplied'].find(key => !same(decoded[key] ?? null, first[key] ?? null)) ||
     header && decoded.orientation !== header.orientation && 'orientation';
-  if (changed) throw fail('JXL_INPUT', `${changed} on a decoded picture is the file's; to retag, pass {data, width, height, ${changed}}.`);
+  if (changed) throw fail('JXL_INPUT', `${changed}: file-owned, use {data, width, height, ${changed}}`);
   const encoding = decoded.rgbaColorEncoding;
   if (decoded.rgbaICC) out.icc = decoded.rgbaICC;
   else if (out.colorSpace === undefined || out.transferFunction === undefined || encoding?.space !== 'rgb' || (encoding.renderingIntent ?? 1) !== 1) {
     if (!['rgb', 'gray'].includes(encoding?.space) || ['unknown', 'icc'].includes(encoding.transferFunction))
-      throw fail('JXL_INPUT', 'Encode cannot name this color; decode with colorSpace srgb, display-p3 or rec2020.');
+      throw fail('JXL_INPUT', 'colorSpace: srgb, display-p3 or rec2020');
     delete out.colorSpace; delete out.transferFunction;
     out.colorEncoding = ownEncoding(encoding);
   }
   if (decoded.alphaPremultiplied) out.alphaPremultiplied = true;
   if (!decoded.orientationApplied && decoded.orientation > 1) out.orientation = decoded.orientation;
   if (decoded.extraChannels != null && !Array.isArray(decoded.extraChannels))
-    throw fail('JXL_INPUT', "Invalid decoded extraChannels field; pass an array.");
+    throw fail('JXL_INPUT', "extraChannels: array");
   const extra = (decoded.extraChannels ?? []).filter(channel => channel?.type !== 0);
-  if (extra.length) throw fail('JXL_UNSUPPORTED', 'Encode drops extra channels beyond alpha; pass {data, width, height}, or use format({kind: \'channels\'}).');
+  if (extra.length) throw fail('JXL_UNSUPPORTED', 'extraChannels: use format({kind: \'channels\'}) or pixels');
   return out;
 }
 
 export function fromDecoded(decoded) {
   const description = decodedDescription(decoded);
   if (decoded.animation) {
-    if (!Array.isArray(decoded.frames)) throw fail('JXL_INPUT', "Decoded animation has no frame list; pass its frames array.");
+    if (!Array.isArray(decoded.frames)) throw fail('JXL_INPUT', "frames: array");
     for (const frame of decoded.frames) if (!frame || typeof frame !== 'object' || !ArrayBuffer.isView(frame.data) ||
         frame.data instanceof DataView || !Number.isFinite(frame.durationSeconds) || frame.durationSeconds < 0)
-      throw fail('JXL_INPUT', "Invalid decoded frame; pass sample data and finite, nonnegative durationSeconds.");
+      throw fail('JXL_INPUT', "frame: data, durationSeconds >=0");
     return {width: decoded.width, height: decoded.height, loops: decoded.animation.loops, ...description,
       frames: decoded.frames.map(frame => ({data: frame.data, duration: frame.durationSeconds * 1000}))};
   }

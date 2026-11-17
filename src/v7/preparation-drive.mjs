@@ -8,14 +8,14 @@ import {browserResizable, browserResizer} from './browser-resize.mjs';
 
 export async function mapPrepared(input, outputs, options, consume, hooks = {}) {
   const settings = object(options), maxPixels = pixelLimit(settings.maxPixels), {signal, readAs} = settings;
-  if (typeof consume !== 'function') throw fail('JXL_OPTIONS', "Missing prepared-image consumer; pass a function.");
-  if (!Array.isArray(outputs) || !outputs.length) throw fail('JXL_OPTIONS', "Invalid outputs; pass a nonempty array of dimensions.");
+  if (typeof consume !== 'function') throw fail('JXL_OPTIONS', 'consume: function');
+  if (!Array.isArray(outputs) || !outputs.length) throw fail('JXL_OPTIONS', 'outputs: nonempty array');
   const requests = own(outputs, maxPixels, Math.max(DEFAULT_INPUT_BYTES, maxPixels * 16));
-  if (requests.length !== outputs.length) throw fail('JXL_OPTIONS', "A prepared output has no dimensions; supply width or height.");
+  if (requests.length !== outputs.length) throw fail('JXL_OPTIONS', 'output: width or height');
   for (const value of requests) {
-    const request = object(value, 'An output');
+    const request = object(value, 'output');
     for (const key of Object.keys(request)) if (key !== 'width' && key !== 'height')
-      throw fail('JXL_OPTIONS', "Invalid prepared output dimensions; supply width and height.");
+      throw fail('JXL_OPTIONS', 'output: {width, height} only');
     outputSides(request.width, request.height, maxPixels);
   }
   check(signal);

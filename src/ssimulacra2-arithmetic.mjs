@@ -90,7 +90,7 @@ export function referenceArena(scales, pairs = []) {
     if (!keep) return null;
     return [0,1,2].map(() => take(width * height * 12));
   });
-  const places = pairs.map(width => { const rowBytes = ssimulacra2Layout(width,1).rowBytes; return {rowBytes, scratch0:take(rowBytes), sums0:take(144), scratch1:take(rowBytes), sums1:take(144)}; });
+  const places = pairs.map(width => { const rowBytes = ssimulacra2Layout(Math.abs(width),1).rowBytes, p = {rowBytes, scratch0:take(rowBytes), sums0:take(144)}; return width < 0 ? p : {...p, scratch1:take(rowBytes), sums1:take(144)}; });
   const arena = {memory:null,kernel:null,fused:null,lastGauss:null,views:null,planes,places,base:cursor,dirtyEnd:cursor,colorsUsed:false};
   const free = pooled.pop() ?? weak.pop()?.deref();
   if (free) Object.assign(arena, free);
@@ -161,7 +161,7 @@ function ready() {
   const module = kernelModule();
   let owned;
   try { owned = new WebAssembly.Memory({initial:Math.ceil(S2_MEMORY.base / 65536), maximum:S2_MEMORY.maximumPages}); }
-  catch (cause) { throw Object.assign(fault('JXL_MEMORY','Cannot prepare SSIMULACRA2 memory.'),{cause}); }
+  catch (cause) { throw Object.assign(fault('JXL_MEMORY','SSIMULACRA2 memory'),{cause}); }
   const exports = new WebAssembly.Instance(module,{env:{memory:owned}}).exports;
   exports.s2MetricInit(LUT);
   new Int32Array(owned.buffer,KEYS,1 << 17).fill(-1);
@@ -174,7 +174,7 @@ function ready() {
 }
 const metricScale = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? function (...args) {
   if (args[4] === 0 || args[6] === 0) colorsUsed = true;
-  if (views.i32[(GAUSS + 248) >> 2]) throw fault('JXL_INTERNAL','rapier-jxl/upload does not carry libjxl\'s SSIMULACRA2 arithmetic.');
+  if (views.i32[(GAUSS + 248) >> 2]) throw fault('JXL_INTERNAL','ssimulacra2-arithmetic:upload');
   kernel.s2MetricScaleMeter(...args);
 } : function (...args) {
   if (args[4] === 0 || args[6] === 0) colorsUsed = true;
@@ -212,7 +212,7 @@ function reserve(plan) {
   ready();
   if (plan.arenaBytes > memory.buffer.byteLength) {
     try { memory.grow(Math.ceil((plan.arenaBytes - memory.buffer.byteLength) / 65536)); }
-    catch (cause) { throw Object.assign(fault('JXL_MEMORY','Not enough memory for SSIMULACRA2.'),{cause}); }
+    catch (cause) { throw Object.assign(fault('JXL_MEMORY','SSIMULACRA2 memory'),{cause}); }
   }
   refreshViews();
   dirtyEnd = Math.max(dirtyEnd,plan.arenaBytes);
@@ -259,14 +259,15 @@ export function downsample(input,width,height,into = null) {
   for (let c = 0; c < 3; c++) planes[c].set(new Float32Array(memory.buffer,output + c * m * 4,m));
   return {planes,width:w,height:h};
 }
-export function scaleBand(a,b,w,h,g,first,end,previous = null,from = null,libjxl = false) {
+export function scaleBand(a,b,w,h,g,first,end,previous = null,from = null,libjxl = false,place = null) {
   const inputY = from ?? Math.min(h,Math.ceil((first + 4) / 4) * 4);
   const inputEnd = Math.min(h,Math.ceil((end + 4) / 4) * 4), inputH = inputEnd - inputY;
   const plan = ssimulacra2Layout(w,Math.max(1,inputH),{referenceRgba:!!a.rgba,distortedRgba:!!b.rgba,base});
+  if (place) { plan.scratch = place.scratch0; plan.sums = place.sums0; }
   reserve(plan); copyGauss(g);
-  if (a.rgba || b.rgba) views.i32.fill(-1,KEYS >> 2,(KEYS >> 2) + (1 << 17));
+  if ((a.rgba || b.rgba) && !resident) views.i32.fill(-1,KEYS >> 2,(KEYS >> 2) + (1 << 17));
   writeInput(a,plan.reference,w * inputH); writeInput(b,plan.distorted,w * inputH);
-  if (previous) {
+  if (previous && !previous.resident) {
     if (previous.states) {
       const scratch = new Float32Array(memory.buffer,plan.scratch,plan.rowBytes >> 2);
       for (let i = 0; i < 15; i++) scratch.set(previous.states.subarray(i * 6 * w,(i + 1) * 6 * w),stateAt(i,w));
@@ -276,22 +277,22 @@ export function scaleBand(a,b,w,h,g,first,end,previous = null,from = null,libjxl
   arithmeticFlag(libjxl);
   const made = metricBand(w,h,first,end,inputY,inputH,plan.reference,a.rgba ? 0 : 1,
     plan.distorted,b.rgba ? 0 : 1,LUT,GAUSS,plan.scratch,plan.sums,KEYS,VALUES);
-  if (made !== inputEnd) throw fault('JXL_INTERNAL','SSIMULACRA2 row continuation did not consume its input.');
-  return {scratch:new Uint8Array(memory.buffer,plan.scratch,plan.rowBytes).slice(),
-    sums:new Float64Array(memory.buffer,plan.sums,18).slice()};
+  if (made !== inputEnd) throw fault('JXL_INTERNAL','ssimulacra2-arithmetic:rows-1');
+  const sums = new Float64Array(memory.buffer,plan.sums,18).slice();
+  return place ? {resident:true,output:0,sums} : {scratch:new Uint8Array(memory.buffer,plan.scratch,plan.rowBytes).slice(),sums};
 }
-export function scaleBandPair(a,b0,b1,w,h,g,first,end,previous0 = null,previous1 = null,from = null,place = null) {
+export function scaleBandPair(a,b0,b1,w,h,g,first,end,previous0 = null,previous1 = null,from = null,place = null,libjxl = false) {
   ready();
   if (!kernel.s2MetricBand2 && !fused?.s2MetricBand2) return null;
   const inputY = from ?? Math.min(h,Math.ceil((first + 4) / 4) * 4);
   const inputEnd = Math.min(h,Math.ceil((end + 4) / 4) * 4), inputH = inputEnd - inputY;
   const plan = ssimulacra2Layout(w,Math.max(1,inputH),{referenceRgba:!!a.rgba,distortedRgba:!!b0.rgba,base});
   if (place && place.rowBytes !== plan.rowBytes || !place && (previous0?.resident || previous1?.resident))
-    throw fault('JXL_INTERNAL','A resident SSIMULACRA2 place does not match its scale.');
+    throw fault('JXL_INTERNAL','ssimulacra2-arithmetic:scale');
   const more = s2ArenaPlan({base:plan.arenaBytes}), distorted1 = more.take(plan.distortedBytes), scratch1 = place ? place.scratch1 : more.take(plan.rowBytes), sums1 = place ? place.sums1 : more.take(18 * 8);
   if (place) { plan.scratch = place.scratch0; plan.sums = place.sums0; }
   reserve({arenaBytes:more.arenaBytes}); copyGauss(g);
-  if (a.rgba || b0.rgba || b1.rgba) views.i32.fill(-1,KEYS >> 2,(KEYS >> 2) + (1 << 17));
+  if ((a.rgba || b0.rgba || b1.rgba) && !resident) views.i32.fill(-1,KEYS >> 2,(KEYS >> 2) + (1 << 17));
   writeInput(a,plan.reference,w * inputH); writeInput(b0,plan.distorted,w * inputH); writeInput(b1,distorted1,w * inputH);
   for (const [previous,scratch,sums] of [[previous0,plan.scratch,plan.sums],[previous1,scratch1,sums1]]) if (previous && !previous.resident) {
     if (previous.states) {
@@ -300,11 +301,11 @@ export function scaleBandPair(a,b0,b1,w,h,g,first,end,previous0 = null,previous1
     } else new Uint8Array(memory.buffer,scratch,plan.rowBytes).set(previous.scratch);
     new Float64Array(memory.buffer,sums,18).set(previous.sums);
   }
-  arithmeticFlag(false);
+  arithmeticFlag(libjxl);
   const made = metricBand2(w,h,first,end,inputY,inputH,plan.reference,a.rgba ? 0 : 1,plan.distorted,b0.rgba ? 0 : 1,
     distorted1,b1.rgba ? 0 : 1,LUT,GAUSS,plan.scratch,plan.sums,scratch1,sums1,KEYS,VALUES);
   if (made === null) return null;
-  if (made !== inputEnd) throw fault('JXL_INTERNAL','SSIMULACRA2 row continuation did not consume its input.');
+  if (made !== inputEnd) throw fault('JXL_INTERNAL','ssimulacra2-arithmetic:rows-2');
   if (place) return [plan.sums,sums1].map((sums,k) => ({resident:true,output:k,sums:new Float64Array(memory.buffer,sums,18).slice(),pair:true}));
   return [[plan.scratch,plan.sums],[scratch1,sums1]].map(([scratch,sums]) => ({scratch:new Uint8Array(memory.buffer,scratch,plan.rowBytes).slice(),
     sums:new Float64Array(memory.buffer,sums,18).slice(),pair:true}));

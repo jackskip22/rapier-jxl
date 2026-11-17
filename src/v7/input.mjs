@@ -35,7 +35,7 @@ async function readBlob(input, options, hooks, head, png) {
   }
   const own = hooks.deep && typeof createImageBitmap === 'function' ? await ownProfile(input, head, hooks.signal) : null;
   if (own?.unread) {
-    if (options?.exact) throw fail('JXL_UNSUPPORTED', `This color profile ${own.unread}; decode the image and pass pixels with their icc or colorEncoding, or request a quality.`);
+    if (options?.exact) throw fail('JXL_UNSUPPORTED', `ICC ${own.unread}: pass pixels with icc or use lossy`);
   } else if (own) {
     if (options?.readAs !== undefined && options.readAs !== own.space) throw convertRefusal(own.space, options.readAs);
     const {colorSpace: _srgb, ...picture} = await nativeBitmap(own.plain, {}, hooks, browserPolicy(input, options, head, hooks));
@@ -43,7 +43,7 @@ async function readBlob(input, options, hooks, head, png) {
   }
   return nativeBitmap(input, options, hooks, browserPolicy(input, options, head, hooks));
 }
-const convertRefusal = (space, readAs) => fail('JXL_OPTIONS', `readAs '${readAs}' would change this picture's samples; remove readAs to preserve its color space.`);
+const convertRefusal = (space, readAs) => fail('JXL_OPTIONS', `readAs '${readAs}': not with exact`);
 function ownSpace({icc, colorEncoding, colorSpace = 'srgb', transferFunction = 'srgb'}) {
   if (icc) { try { return profileSpace(icc); } catch { return null; } }
   return colorEncoding || transferFunction !== 'srgb' || !['srgb', 'display-p3'].includes(colorSpace) ? null : colorSpace;
@@ -56,8 +56,8 @@ async function ownProfile(blob, head, signal) {
   const found = await blobProfile(blob, head, signal);
   check(signal);
   if (!found) return null;
-  if (found.unread) return {unread: 'cannot be read from this file'};
-  try { if (inspectICC(found.icc, undefined, 'rgb') !== 3) throw 0; } catch { return {unread: 'is not an RGB profile this encoder carries'}; }
+  if (found.unread) return {unread: 'unreadable'};
+  try { if (inspectICC(found.icc, undefined, 'rgb') !== 3) throw 0; } catch { return {unread: 'not RGB'}; }
   let space = null;
   try { space = profileSpace(found.icc); } catch {}
   return space === 'srgb' && profileIntent(found.icc) === 'relative' ? null : {...found, space};
@@ -65,12 +65,12 @@ async function ownProfile(blob, head, signal) {
 function browserPolicy(input, options, head, hooks) {
   return {
     prepare: () => hooks.phone?.(input, head, hooks),
-    platform: () => options?.readAs !== undefined ? 'leave readAs out here.' : hooks.deep ? 'pass RGBA pixels or a PNG, or use recompress() for exact JPEG bytes.' : undefined,
+    platform: () => options?.readAs !== undefined ? 'omit readAs' : hooks.deep ? 'pass RGBA pixels, PNG, or use recompress()' : undefined,
     blob: phone => phone?.decodeBlob,
-    failure: phone => phone ? 'This browser cannot decode the phone image; pass RGBA pixels.' : undefined,
+    failure: phone => phone ? 'phone image: pass RGBA pixels' : undefined,
     admit(bitmap, phone) {
       if (phone && (bitmap.width !== phone.width || bitmap.height !== phone.height))
-        throw fail('JXL_INPUT', "Native decoder returned the wrong image size; use a different decoder and pass its pixels.");
+        throw fail('JXL_INPUT', 'native decode: size mismatch; pass pixels');
     },
   };
 }

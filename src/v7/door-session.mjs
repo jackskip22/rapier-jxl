@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {shownEntry} from './entry-name.mjs';
 import {isVideo, videoFrame} from './video.mjs';
 import {SNAPSHOTS, withCost, HANDED, dimensions as ownDimensions, measure} from './ownership.mjs';
 import {readWebGL, readWebGLNow} from './webgl-read.mjs';
@@ -51,45 +52,45 @@ export const variantsResult = check => (v, op) => op === 'variants' ? Array.isAr
 export const jpegSourceKeys = /* @__PURE__ */ Object.freeze({inKey: JPEG_SOURCE, wireKey: JPEG_SOURCE_WIRE});
 
 function checkReadAs(v) {
-  if (v !== undefined && !isSpace(v)) throw fail('JXL_OPTIONS', "Invalid readAs; use srgb or display-p3.");
+  if (v !== undefined && !isSpace(v)) throw fail('JXL_OPTIONS', "readAs: srgb|display-p3");
 }
 
 export function admitEncodeDoor(value) {
   const opt = object(value);
-  if ('features' in opt) throw fail('JXL_OPTIONS', 'Unknown option: features; remove it.');
+  if ('features' in opt) throw fail('JXL_OPTIONS', 'unknown option: features');
   refuseDescription(opt);
   for (const k of Object.keys(opt)) if (!ENCODE_KEYS.has(k))
-    throw fail('JXL_OPTIONS', `Unknown encode option: ${k}; use the options listed for this function.`);
+    throw fail('JXL_OPTIONS', `unknown option: ${k}`);
   const fid = encodeFidelity(opt.fidelity), {effort = 7} = opt;
-  if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fail('JXL_OPTIONS', "Invalid effort; pass a whole number from 1 to 9.");
+  if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fail('JXL_OPTIONS', "effort: integer 1-9");
   checkReadAs(opt.readAs);
-  if (opt.jpeg !== undefined && opt.jpeg !== 'pixels') throw fail('JXL_OPTIONS', "Invalid jpeg; use 'pixels' or leave it out.");
+  if (opt.jpeg !== undefined && opt.jpeg !== 'pixels') throw fail('JXL_OPTIONS', "jpeg: pixels or omit");
   webgpuSetting(opt.webgpu);
   return {effort, target: fid.target !== undefined, maxPixels: opt.maxPixels !== undefined ? pixelLimit(opt.maxPixels) : undefined};
 }
 
 export function admitUploadDoor(value) {
   const opt = object(value);
-  if ('webgpu' in opt) throw fail('JXL_OPTIONS', 'Unknown option: webgpu; remove it (upload runs on WebAssembly).');
+  if ('webgpu' in opt) throw fail('JXL_OPTIONS', 'unknown option: webgpu');
   const res = admitEncodeDoor({...opt, effort: opt.effort ?? 3});
-  if (res.effort > 3) throw fail('JXL_UNSUPPORTED', "Upload encoder does not run this effort; use rapier-jxl for efforts 4–9.");
-  if (res.target) throw fail('JXL_OPTIONS', "Upload encoder cannot measure fidelity; use rapier-jxl.");
-  if (opt.firstRegion !== undefined) throw fail('JXL_UNSUPPORTED', "Upload encoder does not support firstRegion; use rapier-jxl.");
+  if (res.effort > 3) throw fail('JXL_UNSUPPORTED', "effort 4-9: use jpegxl");
+  if (res.target) throw fail('JXL_OPTIONS', "measured fidelity: use jpegxl");
+  if (opt.firstRegion !== undefined) throw fail('JXL_UNSUPPORTED', "firstRegion: use jpegxl");
   return res;
 }
 
 export function admitFitDoor(value, checkEnc = admitEncodeDoor) {
   const {maxBytes, fidelity = {quality: 90}, ...encode} = object(value);
-  if (!isInt(maxBytes) || maxBytes < 1) throw fail('JXL_OPTIONS', "Invalid maxBytes; use a positive safe integer byte count.");
+  if (!isInt(maxBytes) || maxBytes < 1) throw fail('JXL_OPTIONS', "maxBytes: positive safe integer");
   let maxQ = 100;
   if (fidelity !== 'exact') {
     const keys = isObj(fidelity) && !Array.isArray(fidelity) && Object.keys(fidelity);
     const q = fidelity?.quality, r = typeof q === 'number' ? {min: 1, max: q} : q;
     if (!keys || keys.length !== 1 || keys[0] !== 'quality' || !isObj(r) || Array.isArray(r) ||
         Object.keys(r).length !== 2 || !Object.hasOwn(r, 'min') || !Object.hasOwn(r, 'max'))
-      throw fail('JXL_OPTIONS', "Invalid fit fidelity; use 'exact', {quality: max}, or {quality: {min, max}}.");
+      throw fail('JXL_OPTIONS', "fidelity: exact|{quality:max}|{quality:{min,max}}");
     if (!Number.isFinite(r.min) || !Number.isFinite(r.max) || r.min < 1 || r.max > 100 || r.min > r.max)
-      throw fail('JXL_OPTIONS', "Invalid quality range; use finite values with 1 <= min <= max <= 100.");
+      throw fail('JXL_OPTIONS', "quality: 1<=min<=max<=100");
     maxQ = r.max;
   }
   return checkEnc({...encode, fidelity: {quality: maxQ}}).maxPixels;
@@ -98,12 +99,12 @@ export function admitFitDoor(value, checkEnc = admitEncodeDoor) {
 export function admitVariantsDoor(value, currentMax, checkEnc = admitEncodeDoor) {
   const {outputs, ...shared} = object(value);
   const limit = checkEnc(shared).maxPixels, bound = limit !== undefined ? Math.min(currentMax, limit) : currentMax;
-  if (!Array.isArray(outputs) || !outputs.length) throw fail('JXL_OPTIONS', "Invalid outputs; pass a nonempty array of image requests.");
+  if (!Array.isArray(outputs) || !outputs.length) throw fail('JXL_OPTIONS', "outputs: nonempty array");
   for (const out of outputs) {
     const {width, height, firstRegion, ...settings} = object(out, 'An output');
     outputSides(width, height, bound);
     for (const k of Object.keys(settings)) if (k !== 'fidelity' && k !== 'effort' && k !== 'jpeg' && k !== 'maxBytes')
-      throw fail('JXL_OPTIONS', `Unknown output option ${k}; remove it.`);
+      throw fail('JXL_OPTIONS', `unknown option: ${k}`);
     const merged = {...shared, ...settings, ...(firstRegion !== undefined && {firstRegion})};
     if (settings.maxBytes !== undefined) admitFitDoor(merged, checkEnc);
     else checkEnc(merged);
@@ -113,20 +114,20 @@ export function admitVariantsDoor(value, currentMax, checkEnc = admitEncodeDoor)
 
 export function admitCaptureDoor(value, levels) {
   const opt = object(value);
-  if ('features' in opt) throw fail('JXL_OPTIONS', 'Unknown option: features; remove it.');
-  if (opt.firstRegion !== undefined) throw fail('JXL_UNSUPPORTED', "capture does not take firstRegion; use encode or remove firstRegion.");
+  if ('features' in opt) throw fail('JXL_OPTIONS', 'unknown option: features');
+  if (opt.firstRegion !== undefined) throw fail('JXL_UNSUPPORTED', "firstRegion: use encode or omit");
   refuseDescription(opt);
   for (const k of Object.keys(opt)) if (!CAP_KEYS.has(k) && k !== 'exactRects' && k !== 'photoRects')
-    throw fail('JXL_OPTIONS', `Unknown capture option ${k}; remove it.`);
+    throw fail('JXL_OPTIONS', `unknown option: ${k}`);
   checkReadAs(opt.readAs);
   const lim = opt.maxPixels !== undefined ? pixelLimit(opt.maxPixels) : undefined;
   if (opt.effort !== undefined && (!Number.isInteger(opt.effort) || opt.effort < 1 || opt.effort > 9))
-    throw fail('JXL_OPTIONS', "Invalid effort; use an integer from 1 to 9.");
+    throw fail('JXL_OPTIONS', "effort: integer 1-9");
   if (levels && opt.effort > levels.top)
-    throw fail('JXL_UNSUPPORTED', `${levels.module} does not offer this effort; use an effort from 1 to ${levels.top}, or import ${levels.next}.`);
+    throw fail('JXL_UNSUPPORTED', `${shownEntry(levels.module)} effort: 1-${levels.top}, or use ${levels.next}`);
   captureFidelity(opt.fidelity);
   for (const name of ['exactRects', 'photoRects']) if (opt[name] !== undefined)
-    throw fail('JXL_UNSUPPORTED', `${name} is unavailable in this module; use rapier-jxl/capture-complete.`);
+    throw fail('JXL_UNSUPPORTED', `${name}: use jpegxl/capture-complete`);
   return lim;
 }
 
@@ -140,31 +141,31 @@ export function checkFrames(input, plans) {
     const p = plans.get(d);
     if (p?.kind === 'view' || p?.kind === 'handed') {
       try { d = new p.Type(p.buffer, p.byteOffset, p.byteLength / (p.Type.BYTES_PER_ELEMENT ?? 1)); }
-      catch { throw fail('JXL_INPUT', "ArrayBuffer is detached or too small; pass a live one."); }
+      catch { throw fail('JXL_INPUT', "ArrayBuffer: detached or too small"); }
     }
     if (ArrayBuffer.isView(d) && !(d instanceof DataView) && d.length !== w * h * 4)
-      throw fail('JXL_INPUT', "Wrong pixel data length; pass width * height * 4 straight RGBA samples.");
+      throw fail('JXL_INPUT', "pixels: width*height*4 straight RGBA");
     const dur = val(f, 'duration');
     if (isObj(f) && (typeof dur !== 'number' || !Number.isFinite(dur) || dur < 0 || dur > 0xFFFFFFFF))
-      throw fail('JXL_INPUT', "Invalid frame duration; use finite nonnegative milliseconds.");
+      throw fail('JXL_INPUT', "duration: nonnegative finite milliseconds");
   }
 }
 
 function context2d(canvas) {
   try { return canvas.getContext('2d', {willReadFrequently: true}); }
-  catch (cause) { throw Object.assign(fail('JXL_INPUT', "Canvas has no readable 2D context; pass its OffscreenCanvas if transferred, or pass RGBA pixels."), {cause}); }
+  catch (cause) { throw Object.assign(fail('JXL_INPUT', "canvas: OffscreenCanvas or RGBA"), {cause}); }
 }
 
 function foreignSpace(canvas) {
   for (const id of ['webgl2', 'webgl', 'webgpu']) {
     let c; try { c = canvas.getContext(id); } catch {}
-    if (c?.isContextLost?.()) throw fail('JXL_INPUT', "Canvas lost its context; draw it again.");
+    if (c?.isContextLost?.()) throw fail('JXL_INPUT', "canvas: context lost, redraw");
     if (c) return c.drawingBufferColorSpace ?? c.getConfiguration?.()?.colorSpace ?? 'srgb';
   }
-  throw fail('JXL_INPUT', "Canvas has no readable context; create a 2D, WebGL, or WebGPU context.");
+  throw fail('JXL_INPUT', "canvas: 2D|WebGL|WebGPU context");
 }
 
-const canvasReadFail = cause => { throw Object.assign(fail('JXL_INPUT', "Canvas read failed; draw it again or pass RGBA pixels."), {cause}); };
+const canvasReadFail = cause => { throw Object.assign(fail('JXL_INPUT', "canvas: redraw or RGBA"), {cause}); };
 
 function readOrTakeSurface(input, req, maxPixels, halfOk, maxBytes, checkShape, allowClone, banded) {
   const canvas = isFn(input?.getContext), frame = isFn(globalThis.VideoFrame) && input instanceof VideoFrame;
@@ -175,7 +176,7 @@ function readOrTakeSurface(input, req, maxPixels, halfOk, maxBytes, checkShape, 
   dimensions(width, height, maxPixels);
   const admit = b => {
     checkShape?.({width, height, byteLength: b});
-    if (b > maxBytes) throw fail('JXL_MEMORY', "Image exceeds maxPendingBytes; pass a smaller image or raise maxPendingBytes.");
+    if (b > maxBytes) throw fail('JXL_MEMORY', "maxPendingBytes: raise or smaller image");
   };
   if (!over) admit(width * height * 4);
   let ctx = canvas ? context2d(input) : null;
@@ -204,7 +205,7 @@ function readOrTakeSurface(input, req, maxPixels, halfOk, maxBytes, checkShape, 
     const c = isFn(globalThis.OffscreenCanvas) ? new OffscreenCanvas(width, height) : document.createElement('canvas');
     copied = c; c.width = width; c.height = height;
     const drawn = c.getContext('2d', {willReadFrequently: true, colorSpace: sp});
-    if (!drawn) throw fail('JXL_PLATFORM', 'No 2D canvas here; pass RGBA pixels.');
+    if (!drawn) throw fail('JXL_PLATFORM', 'no 2D canvas: pass RGBA pixels');
     drawn.drawImage(from, 0, 0);
     return {canvas: c, drawn};
   };
@@ -239,7 +240,7 @@ export function bandedCanvas(input, width, height, own, readAs, ctx, lostAtStart
     const band = new OffscreenCanvas(width, count);
     try {
       const drawn = band.getContext('2d', {willReadFrequently: true, colorSpace: own});
-      if (!drawn) throw fail('JXL_PLATFORM', 'No 2D canvas here; pass RGBA pixels.');
+      if (!drawn) throw fail('JXL_PLATFORM', 'no 2D canvas: pass RGBA pixels');
       drawn.drawImage(input, 0, y, width, count, 0, 0, width, count);
       let data;
       try { data = drawn.getImageData(0, 0, width, count, {colorSpace}).data; } catch (cause) { canvasReadFail(cause); }
@@ -253,10 +254,10 @@ export function bandedCanvas(input, width, height, own, readAs, ctx, lostAtStart
 }
 
 function openRowBridge(input, maxPixels) {
-  for (const k of Object.keys(input)) if (!ROW_FIELDS.has(k)) throw fail('JXL_INPUT', `Unknown row source field ${k}; remove it.`);
+  for (const k of Object.keys(input)) if (!ROW_FIELDS.has(k)) throw fail('JXL_INPUT', `unknown field: ${k}`);
   dimensions(input.width, input.height, maxPixels);
   if (input.orientation !== undefined || input.extraChannels !== undefined)
-    throw fail('JXL_UNSUPPORTED', 'A banded picture takes no orientation or extra channels.');
+    throw fail('JXL_UNSUPPORTED', 'row source: no orientation/extra channels');
   const desc = {};
   for (const k of DESCRIPTION) if (input[k] !== undefined) desc[k] = input[k];
   const {port1, port2} = new MessageChannel();
@@ -273,18 +274,18 @@ function openRowBridge(input, maxPixels) {
       let out;
       if (isPlainRecord(band)) {
         const snap = snapshotOptions(band, 'The row band', ['data']);
-        if (Object.keys(snap).some(k => k !== 'data')) throw fail('JXL_INPUT', "Invalid band description; pass {data} and set size and color on the row source.");
+        if (Object.keys(snap).some(k => k !== 'data')) throw fail('JXL_INPUT', "band: {data}, source owns size/color");
         const {data} = snap;
         if (!ArrayBuffer.isView(data) || data instanceof DataView || data.length !== input.width * count * 4)
-          throw fail('JXL_INPUT', `Wrong band sample count; pass ${input.width} x ${count} x 4 samples.`);
-        try { out = plainCopy(data); } catch { throw fail('JXL_INPUT', "Band's buffer is detached or too small; pass an attached buffer covering the view."); }
+          throw fail('JXL_INPUT', `band: ${input.width}x${count}x4 samples`);
+        try { out = plainCopy(data); } catch { throw fail('JXL_INPUT', "band buffer: detached or too small"); }
       } else {
         const sp = desc.colorSpace ?? 'srgb';
         if (!isSpace(sp) || desc.icc || desc.sampleFormat || desc.bitDepth || desc.transferFunction)
-          throw fail('JXL_INPUT', 'A canvas, bitmap or video frame band is 8-bit sRGB or Display P3.');
+          throw fail('JXL_INPUT', 'band: 8-bit sRGB|display-p3');
         const read = readOrTakeSurface(band, sp, input.width * count, false, Number.MAX_SAFE_INTEGER, null, false, null)?.pixels;
         if (!read || read.width !== input.width || read.height !== count)
-          throw fail('JXL_INPUT', `Invalid band shape; pass {data} or a canvas, bitmap, or video frame of ${input.width} x ${count}.`);
+          throw fail('JXL_INPUT', `band: {data} or ${input.width}x${count} canvas/bitmap/video`);
         out = read.data;
       }
       if (!closed) port1.postMessage({data: out}, [out.buffer]);
@@ -304,23 +305,23 @@ function openRowBridge(input, maxPixels) {
 }
 
 function checkPlainBase(input, readAs) {
-  if (readAs !== undefined) throw fail('JXL_OPTIONS', "readAs does not apply to raw pixels; set colorSpace on the image.");
+  if (readAs !== undefined) throw fail('JXL_OPTIONS', "readAs: set image.colorSpace");
   if (Object.values(Object.getOwnPropertyDescriptors(input)).some(d => !('value' in d)))
-    throw fail('JXL_INPUT', "Queue records contain accessors; pass plain data values.");
+    throw fail('JXL_INPUT', "queue: plain data values");
 }
 
 export function admitCapturePlain(input, readAs) {
   checkPlainBase(input, readAs);
   if (isDecoded(input)) {
-    if (input.format !== 'uint8') throw fail('JXL_INPUT', "Capture inputs use 8-bit RGBA pixels.");
+    if (input.format !== 'uint8') throw fail('JXL_INPUT', "format: RGBA8");
     return input;
   }
   for (const k of Object.keys(input)) if (!STILL_FIELDS.has(k))
-    throw fail('JXL_INPUT', `Unknown picture field: ${k}; use {data, width, height} and ${DESCRIPTION.join(", ")}.`);
+    throw fail('JXL_INPUT', `unknown field: ${k}; {data,width,height}, ${DESCRIPTION.join(", ")}`);
   const data = ArrayBuffer.isView(input.data) && !(input.data instanceof DataView) ? plainView(input.data) : input.data;
   if (sized(input.width, input.height) && ArrayBuffer.isView(data) && !(data instanceof DataView) &&
       (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray) || data.length !== input.width * input.height * 4))
-    throw fail('JXL_INPUT', "Capture inputs use width * height * 4 straight 8-bit RGBA samples.");
+    throw fail('JXL_INPUT', "pixels: width*height*4 straight RGBA8");
   return data !== input.data ? {...input, data} : input;
 }
 
@@ -329,25 +330,25 @@ export function admitEncodePlain(input, readAs) {
   if (isDecoded(input)) return input;
   const anim = Array.isArray(input.frames), known = anim ? ANIM_FIELDS : STILL_FIELDS;
   for (const k of Object.keys(input)) if (!known.has(k))
-    throw fail('JXL_INPUT', `Unknown picture field: ${k}; use {data, width, height} and ${DESCRIPTION.join(", ")}.`);
+    throw fail('JXL_INPUT', `unknown field: ${k}; {data,width,height}, ${DESCRIPTION.join(", ")}`);
   const hasF16 = isFn(globalThis.Float16Array);
   if (anim) {
     if (hasF16 && input.frames.some(f => f?.data instanceof Float16Array)) {
-      if (input.sampleFormat !== undefined && input.sampleFormat !== 'float16') throw fail('JXL_INPUT', "Float16Array sample format conflicts; use sampleFormat float16.");
-      if (!input.frames.every(f => f?.data instanceof Float16Array)) throw fail('JXL_INPUT', "Frame sample arrays differ; pass the same sample array type for every frame.");
+      if (input.sampleFormat !== undefined && input.sampleFormat !== 'float16') throw fail('JXL_INPUT', "sampleFormat: float16");
+      if (!input.frames.every(f => f?.data instanceof Float16Array)) throw fail('JXL_INPUT', "frames: same sample array type");
       return {...input, frames: input.frames.map(f => ({...f, data: new Uint16Array(f.data.buffer, f.data.byteOffset, f.data.length)})), sampleFormat: 'float16'};
     }
     return input;
   }
   const halves = hasF16 && input.data instanceof Float16Array;
-  if (halves && input.sampleFormat !== undefined && input.sampleFormat !== 'float16') throw fail('JXL_INPUT', "Float16Array sample format conflicts; use sampleFormat float16.");
+  if (halves && input.sampleFormat !== undefined && input.sampleFormat !== 'float16') throw fail('JXL_INPUT', "sampleFormat: float16");
   const words = halves ? new Uint16Array(input.data.buffer, input.data.byteOffset, input.data.length) : input.data;
   const data = ArrayBuffer.isView(words) && !(words instanceof DataView) ? plainView(words) : words;
   if (sized(input.width, input.height) && ArrayBuffer.isView(data) && !(data instanceof DataView)) {
     const n = input.width * input.height;
     const packedOk = (data instanceof Float32Array || (halves || input.sampleFormat === 'float16') && data instanceof Uint16Array) && data.length === n * 3;
     if (data.length !== n * 4 && !packedOk)
-      throw fail('JXL_INPUT', "Wrong pixel data length; pass width * height * 4 straight RGBA samples.");
+      throw fail('JXL_INPUT', "pixels: width*height*4 straight RGBA");
   }
   return halves || data !== input.data ? {...input, data, ...(halves && {sampleFormat: 'float16'})} : input;
 }
@@ -363,7 +364,7 @@ function admitSurface(q, shape, opt) {
   if (shape) {
     const {width, height, byteLength = width * height * 4, colorSpace = 'display-p3'} = shape;
     ownDimensions({width, height}, q.maxPixels);
-    if (!isInt(byteLength) || byteLength < 1) throw fail('JXL_INPUT', "Invalid image byte count; pass nonempty RGBA data.");
+    if (!isInt(byteLength) || byteLength < 1) throw fail('JXL_INPUT', "image bytes: nonempty RGBA");
     bytes = byteLength + 8 + measure({width, height, colorSpace}, q.maxPixels);
   }
   q.admit(opt, bytes);
@@ -373,7 +374,7 @@ function submitAcquired(q, op, acquire, cost, opt, area = cost / 4) {
   return q.submit(op, withCost({}, cost), opt, (j, done, reserve) => {
     let yes, no;
     j.q = new Promise((y, n) => { yes = y; no = n; })
-      .then(v => { j.k = v; }, r => { j.e = r ?? fail('JXL_INPUT', "Canvas read failed; redraw it or pass RGBA pixels."); })
+      .then(v => { j.k = v; }, r => { j.e = r ?? fail('JXL_INPUT', "canvas: redraw or RGBA"); })
       .then(() => { j.q = null; if (j.d) { try { j.k?.close?.(); } catch {} j.k = null; } done(); });
     try { yes(isFn(acquire) ? acquire(j.c, reserve) : acquire); } catch (r) { no(r); }
   }, op === 'encode' ? area : 0);
@@ -390,15 +391,15 @@ export function surfaceCall(door, name, rules) {
       if (isObj(given)) {
         let desc, proto;
         try { desc = Object.getOwnPropertyDescriptors(given); proto = Object.getPrototypeOf(given); }
-        catch { admitSurface(q, null, given); throw fail('JXL_OPTIONS', "Invalid encoding options; pass a plain record of data values."); }
+        catch { admitSurface(q, null, given); throw fail('JXL_OPTIONS', "options: plain data record"); }
         const tk = desc.transfer, js = jk && desc[jk.inKey];
         if (js) {
           if (!('value' in js) || cap || !ArrayBuffer.isView(input?.data))
-            throw fail('JXL_OPTIONS', "Missing original JPEG; pass it alongside the decoded pixels.");
+            throw fail('JXL_OPTIONS', "jpeg: original alongside pixels");
           jpegSrc = js.value;
         }
         if (tk || js) {
-          if (tk && (!('value' in tk) || tk.value !== true)) throw fail('JXL_OPTIONS', "Invalid transfer; set it to true or omit it.");
+          if (tk && (!('value' in tk) || tk.value !== true)) throw fail('JXL_OPTIONS', "transfer: true or omit");
           transfer = !!tk; opt = Object.create(proto);
           for (const k of Reflect.ownKeys(desc)) if (k !== 'transfer' && (!jk || k !== jk.inKey)) Object.defineProperty(opt, k, desc[k]);
         }
@@ -414,13 +415,13 @@ export function surfaceCall(door, name, rules) {
       }
       if (isVideo(input)) { const f = videoFrame(input); try { return run(f, fixed); } finally { f.close(); } }
       if (isTextureInput(input)) {
-        if (!isFn(rules.texture)) throw fail('JXL_UNSUPPORTED', `This module cannot read GPU textures; use ${rules.texture}.`);
-        if (fixed?.readAs !== undefined) throw fail('JXL_OPTIONS', "A texture sets its own color; remove readAs and set colorSpace on the texture.");
+        if (!isFn(rules.texture)) throw fail('JXL_UNSUPPORTED', `texture: use ${rules.texture}`);
+        if (fixed?.readAs !== undefined) throw fail('JXL_OPTIONS', "readAs: set texture.colorSpace");
         return rules.texture(input, maxPixels, (take, cost, area) => submitAcquired(q, name, take, cost, fixed, area));
       }
       if (isRowSource(input)) {
-        if (prep) throw fail('JXL_UNSUPPORTED', 'Preparation takes a still image; encode row sources directly.');
-        if (opt?.readAs !== undefined) throw fail('JXL_OPTIONS', "A row source sets its own color; remove readAs and set colorSpace on the source.");
+        if (prep) throw fail('JXL_UNSUPPORTED', 'row source: encode directly');
+        if (opt?.readAs !== undefined) throw fail('JXL_OPTIONS', "readAs: set source.colorSpace");
         const br = openRowBridge(input, maxPixels);
         return br.wait(q.submit(name, withCost(br.record, 64), fixed));
       }
@@ -428,7 +429,7 @@ export function surfaceCall(door, name, rules) {
       const checkShape = s => admitSurface(q, s, opt);
       let px;
       if (isFn(globalThis.ImageData) && input instanceof ImageData) {
-        if (opt?.readAs !== undefined) throw fail('JXL_OPTIONS', "readAs does not apply to raw pixels; set colorSpace on the image.");
+        if (opt?.readAs !== undefined) throw fail('JXL_OPTIONS', "readAs: set image.colorSpace");
         const {data, width, height, colorSpace = 'srgb'} = input;
         dimensions(width, height, maxPixels);
         checkShape({width, height, byteLength: data.byteLength, colorSpace});

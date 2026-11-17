@@ -34,8 +34,8 @@ const UPLOAD = typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLO
 export function effortJob(data, width, height, options, gpu = false, limits, search, writer = coefficientAnsSteps, deep = null, hdr = null) {
   const {quality, colorSpace} = admitOptions(options), effort = options?.effort === undefined ? FAST_EFFORT : options.effort;
   const filter = admitPhotoFilter(options);
-  if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fault('JXL_INPUT', 'Effort is a whole number from 1 to 9.');
-  if (effort >= 4 && !deep) throw fault('JXL_INTERNAL', 'Efforts 4-9 need their exact ladder (local.mjs, rct-search.mjs).');
+  if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fault('JXL_INPUT', 'effort: integer 1-9');
+  if (effort >= 4 && !deep) throw fault('JXL_INTERNAL', 'effort-job:exact-ladder');
   admitPixels(data, width, height, limits);
   const samples = admitSampleFormat(data, options);
   if (samples.iccSpace)
@@ -286,8 +286,8 @@ export function losslessSets(effort, ranked = [6, 6]) {
   if (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) return [set([first], {samples: 4096, nodes: 31})];
   const five = {samples: 32768, nodes: 127}, six = {samples: 65536, nodes: 169}, seven = {samples: 196608, nodes: 1023, bins: 64, charge: 8, predictors: BROAD};
   const grown = {...seven, samples: 262144};
-  const eight = {samples: 131072, nodes: 575, predictors: PRECISE, bins: 128, charge: 8, clustered: true}, nine = {...eight, samples: 262144, nodes: 1663, bins: 192};
-  if (effort >= 9) return [set([first, second], nine), set([first], grown), set([first, second], eight), set([first], seven)];
+  const eight = {samples: 131072, nodes: 575, predictors: PRECISE, bins: 128, charge: 8, clustered: true, clusters: 80, histBase: 38, histSym: 4.2}, nine = {...eight, samples: 393216, nodes: 1919, bins: 192, charge: 4, leafBits: 18, clusters: 84};
+  if (effort >= 9) return [set([first], nine), set([first], grown), set([first, second], eight), set([first], seven)];
   if (effort >= 8) return [set([first], grown), set([first, second], eight), set([first], seven)];
   if (effort >= 7) return [set([first], seven), set([first], six)];
   if (effort >= 6) return [set([first], six), set([first], five)];

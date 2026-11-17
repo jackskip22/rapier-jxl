@@ -6,8 +6,8 @@ import {browserResizable, browserResized} from './browser-resize.mjs';
 export async function upsampledSamples({data, width, height, ...source}, features, {signal, maxPixels} = {}) {
   const factor = features?.upsampling ?? 1;
   if (factor === 1) return data;
-  if (![2, 4, 8].includes(factor)) throw fail('JXL_OPTIONS', "Invalid upsampling; use 2, 4, or 8.");
-  if (source.extraChannels !== undefined) throw fail('JXL_UNSUPPORTED', "upsampling cannot carry extra channels; remove upsampling or the extra channels.");
+  if (![2, 4, 8].includes(factor)) throw fail('JXL_OPTIONS', 'upsampling: 2, 4 or 8');
+  if (source.extraChannels !== undefined) throw fail('JXL_UNSUPPORTED', 'upsampling: not with extraChannels');
   const w = Math.ceil(width / factor), h = Math.ceil(height / factor), W = w * factor, H = h * factor;
   let samples = data;
   if (W !== width || H !== height) {

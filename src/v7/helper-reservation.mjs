@@ -11,11 +11,11 @@ export function deviceHelpers(nav = globalThis.navigator) {
 export function helperReservation(value) {
   if (value === undefined) return undefined;
   if (value === true) return deviceHelpers();
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw error('JXL_OPTIONS', "Invalid helpers; use true or {count, memoryBytes}.");
-  for (const key of Object.keys(value)) if (key !== 'count' && key !== 'memoryBytes') throw error('JXL_OPTIONS', `Unknown helpers field ${key}; remove it.`);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw error('JXL_OPTIONS', 'helpers: true or {count, memoryBytes}');
+  for (const key of Object.keys(value)) if (key !== 'count' && key !== 'memoryBytes') throw error('JXL_OPTIONS', `unknown helpers field: ${key}`);
   const {count, memoryBytes} = value;
-  if (!Number.isInteger(count) || count < 0) throw error('JXL_OPTIONS', "Invalid helpers.count; use a whole number, 0 or more.");
-  if (count && (!Number.isSafeInteger(memoryBytes) || memoryBytes < 1)) throw error('JXL_OPTIONS', "Invalid helpers.memoryBytes; use a positive safe integer.");
+  if (!Number.isInteger(count) || count < 0) throw error('JXL_OPTIONS', 'helpers.count: nonnegative integer');
+  if (count && (!Number.isSafeInteger(memoryBytes) || memoryBytes < 1)) throw error('JXL_OPTIONS', 'helpers.memoryBytes: positive integer');
   return count ? Object.freeze({count, memoryBytes}) : undefined;
 }
 

@@ -29,12 +29,12 @@ async function gifFrames(blob, options, signal) {
   check(signal);
   if (blob.size < 13) return null;
   const head = await blobBytes(blob, signal, 0, 32);
-  if (videoHead(blob.type, head)) throw fail('JXL_PLATFORM', "Video is read by a browser page; call encode on the page, or pass decoded frames {width, height, frames}.");
+  if (videoHead(blob.type, head)) throw fail('JXL_PLATFORM', "video: browser page or decoded frames {width, height, frames}");
   if (!GIF.every((b, i) => head[i] === b)) return null;
   const bytes = await blobBytes(blob, signal);
   const read = await readGifTape(bytes, 'input.gif', options?.maxPixels, undefined, options?.[RETAIN_INPUT]);
   if (read.kind !== 'animation') { if (options?.readAs !== undefined) return null; withCost(read.picture.data, read.picture.data.byteLength); return {still: read.picture}; }
-  if (options?.readAs !== undefined) throw fail('JXL_OPTIONS', "readAs does not apply to an animated GIF; remove readAs.");
+  if (options?.readAs !== undefined) throw fail('JXL_OPTIONS', "readAs: not with GIF");
   return read.animation;
 }
 const READ = READ_GIFS;
@@ -46,7 +46,7 @@ const gifOr = (input, options, animated, still) => (async () => {
 })();
 const animated = input => {
   const field = input !== null && typeof input === 'object' ? Object.getOwnPropertyDescriptor(input, 'frames') : undefined;
-  if (field && !('value' in field)) throw fail('JXL_INPUT', "Queue records contain accessors; pass plain data values.");
+  if (field && !('value' in field)) throw fail('JXL_INPUT', "queue records: plain values");
   return Array.isArray(field ? field.value : input?.frames);
 };
 const encodeBytes = (input, options) => {
@@ -65,8 +65,8 @@ async function animate(input, options = {}) {
   options = featureless(options);
   const {codec: {target, ...settings}, hooks: {webgpu, maxPixels}} = callOptions(encodeOptions(options));
   check(options.signal);
-  if (target !== undefined || options.features !== undefined) throw fail('JXL_OPTIONS', "Animation options are incompatible; use fidelity 'exact' or {quality} and remove features.");
-  if (input.orientation !== undefined || input.extraChannels !== undefined) throw fail('JXL_INPUT', "An animation cannot carry orientation or extra channels; remove those fields.");
+  if (target !== undefined || options.features !== undefined) throw fail('JXL_OPTIONS', "animation: fidelity 'exact' or {quality}, no features");
+  if (input.orientation !== undefined || input.extraChannels !== undefined) throw fail('JXL_INPUT', "animation: no orientation or extraChannels");
   const read = READ.has(input) ? input : surface(input, {maxPixels, readAs: options.readAs});
   dimensions(read.width, read.height, maxPixels);
   if (!READ.has(input)) admitFrames(read);

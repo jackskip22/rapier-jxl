@@ -159,7 +159,7 @@ function* deltaFrameSteps(rgba, width, height, shape, options) {
     }
     if (!best) {
       if (paletteMode === 'auto') return null;
-      throw fault('JXL_SIZE', 'The group needs more palette entries: raise maxPaletteColors or maxDeltaEntries, or use paletteMode auto.');
+      throw fault('JXL_SIZE', 'palette overflow: raise limits or use paletteMode auto');
     }
     append(best);
   }
@@ -170,18 +170,18 @@ function deltaOptions(rgba, width, height, options = {}) {
   const {quality, colorSpace} = admitOptions(options);
   admitPixels(rgba, width, height);
   if (quality !== 100 || !admitSampleFormat(rgba, options).native8)
-    throw fault('JXL_INPUT', 'Delta palettes need exact straight RGBA8, sRGB transfer, sRGB or Display P3.');
+    throw fault('JXL_INPUT', 'delta palette: exact straight RGBA8 sRGB or Display P3');
   const paletteMode = options.paletteMode ?? 'auto', deltaPredictor = options.deltaPredictor ?? 'auto';
   const maxDeltaEntries = options.maxDeltaEntries ?? 256, maxPaletteColors = options.maxPaletteColors ?? 4096;
   const groupSize = options.groupSize ?? 1024, screenEffort = options.screenEffort ?? 5;
-  if (!['auto', 'explicit', 'implicit', 'hybrid'].includes(paletteMode)) throw fault('JXL_INPUT', 'paletteMode is auto, explicit, implicit or hybrid.');
-  if (deltaPredictor !== 'auto' && !DELTA_PREDICTORS.has(deltaPredictor)) throw fault('JXL_INPUT', 'deltaPredictor is auto, left, top, average, gradient or weighted.');
+  if (!['auto', 'explicit', 'implicit', 'hybrid'].includes(paletteMode)) throw fault('JXL_INPUT', 'paletteMode: auto, explicit, implicit or hybrid');
+  if (deltaPredictor !== 'auto' && !DELTA_PREDICTORS.has(deltaPredictor)) throw fault('JXL_INPUT', 'deltaPredictor: auto, left, top, average, gradient or weighted');
   if (!Number.isInteger(maxDeltaEntries) || maxDeltaEntries < 1 || maxDeltaEntries > 4096)
-    throw fault('JXL_INPUT', 'maxDeltaEntries is an integer from 1 to 4096.');
+    throw fault('JXL_INPUT', 'maxDeltaEntries: integer 1-4096');
   if (!Number.isInteger(maxPaletteColors) || maxPaletteColors < 1 || maxPaletteColors > 65536)
-    throw fault('JXL_INPUT', 'maxPaletteColors is an integer from 1 to 65536.');
-  if (![128, 256, 512, 1024].includes(groupSize)) throw fault('JXL_INPUT', 'groupSize is 128, 256, 512 or 1024.');
-  if (!Number.isInteger(screenEffort) || screenEffort < 1 || screenEffort > 9) throw fault('JXL_INPUT', 'screenEffort is an integer from 1 to 9.');
+    throw fault('JXL_INPUT', 'maxPaletteColors: integer 1-65536');
+  if (![128, 256, 512, 1024].includes(groupSize)) throw fault('JXL_INPUT', 'groupSize: 128, 256, 512 or 1024');
+  if (!Number.isInteger(screenEffort) || screenEffort < 1 || screenEffort > 9) throw fault('JXL_INPUT', 'screenEffort: integer 1-9');
   return {colorSpace, paletteMode, deltaPredictor, maxDeltaEntries, maxPaletteColors, groupSize, screenEffort};
 }
 

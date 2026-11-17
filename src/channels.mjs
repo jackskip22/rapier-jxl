@@ -23,27 +23,27 @@ function admitPicture(input, options) {
   requireChannelObject(input, 'Planar image'); requireChannelObject(options, 'Channel options');
   const {width, height, color, extraChannels = []} = input;
   admitSize(width, height);
-  if (options.quality !== undefined && options.quality !== 100) throw fault('JXL_INPUT', 'Planar channels keep exact sample words; quality is 100.');
-  if (!Array.isArray(color) || color.length !== 1 && color.length !== 3) throw fault('JXL_INPUT', 'color contains one gray plane or three RGB planes.');
+  if (options.quality !== undefined && options.quality !== 100) throw fault('JXL_INPUT', 'quality: 100 with channels');
+  if (!Array.isArray(color) || color.length !== 1 && color.length !== 3) throw fault('JXL_INPUT', 'color: 1 gray or 3 RGB planes');
   const upsampling = channelUpsampling(options.upsampling ?? 1, 'upsampling');
   const codedWidth = Math.ceil(width / upsampling), codedHeight = Math.ceil(height / upsampling);
   const channels = color.map(data => ({...admitChannelPrecision(data, options), width: codedWidth, height: codedHeight, shift: 0}));
   for (const channel of channels) {
-    if (channel.data.length !== codedWidth * codedHeight) throw fault('JXL_INPUT', 'Each color plane has ceil(width/upsampling) * ceil(height/upsampling) samples.');
+    if (channel.data.length !== codedWidth * codedHeight) throw fault('JXL_INPUT', 'color plane: ceil(width/upsampling)*ceil(height/upsampling)');
     if (channel.bitDepth !== channels[0].bitDepth || channel.exponentBits !== channels[0].exponentBits)
-      throw fault('JXL_INPUT', 'Color planes share one sample precision.');
+      throw fault('JXL_INPUT', 'color planes: shared precision');
   }
   const extras = admitExtraChannels(extraChannels, width, height, upsampling);
   channels.push(...extras);
   const groupSize = options.groupSize ?? 256;
-  if (![128, 256, 512, 1024].includes(groupSize)) throw fault('JXL_INPUT', 'groupSize is 128, 256, 512 or 1024.');
+  if (![128, 256, 512, 1024].includes(groupSize)) throw fault('JXL_INPUT', 'groupSize: 128/256/512/1024');
   const predictors = new Map([['zero', 0], ['left', 1], ['top', 2], ['average', 3], ['gradient', 5], ['weighted', 6]]);
   let predictor = new Map(Object.entries(options)).get('predictor') ?? 'auto';
   if (options.weightedPredictor !== undefined) {
-    if (predictor !== 'auto' && predictor !== 'weighted') throw fault('JXL_INPUT', 'weightedPredictor requires the weighted predictor.');
+    if (predictor !== 'auto' && predictor !== 'weighted') throw fault('JXL_INPUT', 'weightedPredictor: predictor auto/weighted');
     predictor = 'weighted';
   }
-  if (predictor !== 'auto' && !predictors.has(predictor)) throw fault('JXL_INPUT', 'predictor is auto, zero, left, top, average, gradient or weighted.');
+  if (predictor !== 'auto' && !predictors.has(predictor)) throw fault('JXL_INPUT', 'predictor: auto/zero/left/top/average/gradient/weighted');
   const weighted = predictor === 'weighted' ? admitWeightedPredictor(options.weightedPredictor) : null;
   const progression = modularPasses(options.progressive);
   const transformPlan = admitPlanarTransforms(new Map(Object.entries(options)).get('transforms'), color.length, options.maxTransformBytes);
@@ -52,23 +52,23 @@ function admitPicture(input, options) {
   const squeezeSource = Array.isArray(squeezeValue) ? squeezeValue.map(step => ({...step})) : squeezeValue;
   const requiredLevel = extras.length > 4 || extras.some(c => c.kind === 4) || channels.some(c => c.bitDepth > 12 || c.exponentBits) ||
     squeezePlan?.count > 256 || squeezePlan?.transforms.length > 8 ? 10 : 5;
-  if (options.level !== undefined && options.level !== 5 && options.level !== 10) throw fault('JXL_INPUT', 'JPEG XL level is 5 or 10.');
-  if (options.level === 5 && requiredLevel === 10) throw fault('JXL_INPUT', 'These channels require JPEG XL level 10.');
+  if (options.level !== undefined && options.level !== 5 && options.level !== 10) throw fault('JXL_INPUT', 'level: 5 or 10');
+  if (options.level === 5 && requiredLevel === 10) throw fault('JXL_INPUT', 'level: 10 for channels');
   const metadata = {bitDepth: channels[0].bitDepth, exponentBits: channels[0].exponentBits,
     modular16bit: channels.every(c => c.bitDepth <= 12 && !c.exponentBits), extraChannelData: prepareExtraChannels(extras),
     transformData: prepareUpsamplingWeights(options.upsamplingWeights)};
   if (options.icc !== undefined) {
     if (options.colorSpace !== undefined || options.transferFunction !== undefined)
-      throw fault('JXL_INPUT', 'ICC sets the color; omit other color fields.');
+      throw fault('JXL_INPUT', 'ICC: omit colorSpace/transferFunction');
     Object.assign(metadata, prepareICC(options.icc, {level: options.level, compression: options.iccCompression,
       colorSpace: extras.some(channel => channel.kind === 4) ? 'cmyk' : undefined, colorEncoding: options.colorEncoding}));
   } else {
     if (options.colorEncoding?.space === 'xyb' && (options.colorSpace !== undefined || options.transferFunction !== undefined))
-      throw fault('JXL_INPUT', 'XYB color is implicit; omit colorSpace and transferFunction.');
+      throw fault('JXL_INPUT', 'XYB: omit colorSpace/transferFunction');
     Object.assign(metadata, prepareColorEncoding(options.colorEncoding ?? {space: color.length === 1 ? 'gray' : 'rgb'},
       {...options, transferFunction: options.transferFunction ?? (channels[0].exponentBits ? 'linear' : 'srgb')}));
   }
-  if (metadata.colorChannels !== color.length) throw fault('JXL_INPUT', 'The declared color encoding and color plane count differ.');
+  if (metadata.colorChannels !== color.length) throw fault('JXL_INPUT', 'color encoding: match plane count');
   metadata.intensityTarget = options.intensityTarget ?? (metadata.transferFunction === 'pq' ? 10000 : metadata.transferFunction === 'hlg' ? 1000 : 255);
   if (options.toneMapping !== undefined) Object.assign(metadata, prepareToneMapping(options.toneMapping, metadata.intensityTarget));
   else if (options.intensityTarget !== undefined) Object.assign(metadata, prepareToneMapping({intensityTarget: options.intensityTarget}));
@@ -137,10 +137,10 @@ function* frameSteps(config) {
     const squeezePlan = admitPlanarSqueeze(config.squeezeSource, prepared.channels, config.groupSize, config.transformPlan.memoryLimit, prepared.metaCount);
     const squeezed = squeezePlan ? yield* part(applyPlanarSqueeze(prepared.channels, squeezePlan), 1, 3) : prepared;
     const modularTransforms = [...prepared.transforms, ...(squeezePlan?.transforms ?? [])];
-    if (modularTransforms.length > 273) throw fault('JXL_INPUT', 'The complete Modular recipe has at most 273 transforms.');
+    if (modularTransforms.length > 273) throw fault('JXL_INPUT', 'modularTransforms: max 273');
     if (prepared.wide || squeezed.wide) config.metadata.modular16bit = false;
     if (prepared.wide || squeezed.wide || prepared.maximumChannels > 256 || squeezePlan?.count > 256 || modularTransforms.length > 8) {
-      if (config.requestedLevel === 5) throw fault('JXL_INPUT', 'This Modular transform recipe requires JPEG XL level 10.');
+      if (config.requestedLevel === 5) throw fault('JXL_INPUT', 'level: 10 for Modular recipe');
       config.level = 10;
     }
     return yield* part(planarFrameSteps({...config, channels: squeezed.channels, squeezePlan, modularTransforms,
@@ -149,7 +149,7 @@ function* frameSteps(config) {
   if (config.squeezePlan) {
     const transformed = yield* part(applyPlanarSqueeze(config.channels, config.squeezePlan), 0, 2);
     if (transformed.wide) {
-      if (config.requestedLevel === 5) throw fault('JXL_INPUT', 'These Squeeze residuals require JPEG XL level 10.');
+      if (config.requestedLevel === 5) throw fault('JXL_INPUT', 'level: 10 for Squeeze residuals');
       config.metadata.modular16bit = false; config.level = 10;
     }
     return yield* part(planarFrameSteps({...config, channels: transformed.channels}), 1, 2);
@@ -215,7 +215,7 @@ export function encodeChannelsSteps(image, options = {}) {
     const a = config.metadata.extraChannelData, b = preview.metadata.extraChannelData;
     const bytes = a.finish(), other = b.finish();
     if (config.colorCount !== preview.colorCount || config.metadata.bitDepth !== preview.metadata.bitDepth || config.metadata.exponentBits !== preview.metadata.exponentBits ||
-        a.bitLength !== b.bitLength || bytes.some((value, i) => value !== other[i])) throw fault('JXL_INPUT', 'Preview channels must match the main image\'s colors, precision and extra channels.');
+        a.bitLength !== b.bitLength || bytes.some((value, i) => value !== other[i])) throw fault('JXL_INPUT', 'preview: match color/precision/extra channels');
     config.preview = preview;
     config.metadata.modular16bit &&= preview.metadata.modular16bit;
     config.metadata.imageFields = prepareImageFields({...options, preview: {width: preview.width, height: preview.height}});

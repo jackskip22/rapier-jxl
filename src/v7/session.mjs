@@ -36,15 +36,15 @@ export function encoder(client, config = {}, operations, spec = {}) {
       if (given && typeof given === 'object') {
         let descriptors, proto;
         try { descriptors = Object.getOwnPropertyDescriptors(given); proto = Object.getPrototypeOf(given); }
-        catch { client.admitSurface(null, given); throw fail('JXL_OPTIONS', "Invalid encoding options; pass a plain record of data values."); }
+        catch { client.admitSurface(null, given); throw fail('JXL_OPTIONS', "options: plain data record"); }
         const taken = descriptors.transfer, source = descriptors[JPEG_SOURCE];
         if (source) {
           if (!('value' in source) || !['encode', 'fit', 'variants'].includes(name) || !ArrayBuffer.isView(input?.data))
-            throw fail('JXL_OPTIONS', "Missing original JPEG; pass it alongside the decoded pixels.");
+            throw fail('JXL_OPTIONS', "jpeg: original alongside pixels");
           originalJpeg = source.value;
         }
         if (taken || source) {
-          if (taken && (!('value' in taken) || taken.value !== true)) throw fail('JXL_OPTIONS', "Invalid transfer; set it to true or omit it.");
+          if (taken && (!('value' in taken) || taken.value !== true)) throw fail('JXL_OPTIONS', "transfer: true or omit");
           transfer = !!taken;
           options = Object.create(proto);
           for (const key of Reflect.ownKeys(descriptors)) if (key !== 'transfer' && key !== JPEG_SOURCE) Object.defineProperty(options, key, descriptors[key]);
@@ -78,14 +78,14 @@ export function encoder(client, config = {}, operations, spec = {}) {
         try { return wrap(name)(frame, fixed); } finally { frame.close(); }
       }
       if (isTexture(input)) {
-        if (spec.module === 'rapier-jxl/capture') throw fail('JXL_UNSUPPORTED', "This module cannot read GPU textures; use rapier-jxl/capture-complete or rapier-jxl.");
-        if (upload) throw fail('JXL_UNSUPPORTED', "This module cannot read GPU textures; use rapier-jxl.");
-        if (fixed?.readAs !== undefined) throw fail('JXL_OPTIONS', "A texture sets its own color; remove readAs and set colorSpace on the texture.");
+        if (spec.module === 'rapier-jxl/capture') throw fail('JXL_UNSUPPORTED', "texture: use jpegxl/capture-complete or jpegxl");
+        if (upload) throw fail('JXL_UNSUPPORTED', "texture: use jpegxl");
+        if (fixed?.readAs !== undefined) throw fail('JXL_OPTIONS', "readAs: set texture.colorSpace");
         return readTexture(input, maxPixels, (take, cost, area) => client.acquired(name, take, cost, fixed, area));
       }
       if (isRowSource(input)) {
-        if (preparation) throw fail('JXL_UNSUPPORTED', 'Preparation takes a still image; encode row sources directly.');
-        if (options?.readAs !== undefined) throw fail('JXL_OPTIONS', "A row source sets its own color; remove readAs and set colorSpace on the source.");
+        if (preparation) throw fail('JXL_UNSUPPORTED', 'row source: encode directly');
+        if (options?.readAs !== undefined) throw fail('JXL_OPTIONS', "readAs: set source.colorSpace");
         const source = admitRows(input, maxPixels);
         if (!client.remote) return client[name](withCost(input, 64), fixed);
         const bridge = rowBridge(source);
@@ -125,7 +125,7 @@ function snapshot(input, maxPixels, {maxPendingBytes = DEFAULT_INPUT_BYTES}, opt
   const {width, height} = frame ? {width: input.displayWidth, height: input.displayHeight} : input;
   const over = capture && !bitmap && width * height > WHOLE && width * height * 4 > maxPendingBytes;
   dimensions(width, height, maxPixels); if (!over) admitSurface({width, height});
-  if (width * height * 4 > maxPendingBytes && !over) throw fail('JXL_MEMORY', "Image exceeds maxPendingBytes; pass a smaller image or raise maxPendingBytes.");
+  if (width * height * 4 > maxPendingBytes && !over) throw fail('JXL_MEMORY', "maxPendingBytes: raise or smaller image");
   if (!over && handoff !== true) return null;
   const readAs = options?.readAs, context = bitmap ? null : context2d(input);
   if (over && !context) return null;
@@ -140,13 +140,13 @@ function snapshot(input, maxPixels, {maxPendingBytes = DEFAULT_INPUT_BYTES}, opt
     const asked = readAs ?? own;
     let colorSpace;
     try { colorSpace = context.getImageData(0, 0, 1, 1, {colorSpace: asked}).colorSpace ?? 'srgb'; }
-    catch (cause) { throw Object.assign(fail('JXL_INPUT', "Canvas read failed; draw it again or pass RGBA pixels."), {cause}); }
+    catch (cause) { throw Object.assign(fail('JXL_INPUT', "canvas: redraw or RGBA"), {cause}); }
     let read = false;
     return {width, height, colorSpace, rows: (y, count) => {
       const band = new OffscreenCanvas(width, count);
       try {
         const drawn = band.getContext('2d', {colorSpace: own});
-        if (!drawn) throw fail('JXL_PLATFORM', 'No 2D canvas here; pass RGBA pixels.');
+        if (!drawn) throw fail('JXL_PLATFORM', 'no 2D canvas: pass RGBA pixels');
         drawn.drawImage(input, 0, y, width, count, 0, 0, width, count);
         let {data} = surface(band, {readAs: colorSpace});
         for (let i = 3; i < data.length; i += 4) if (data[i] !== 255 && data[i] !== 0) { data = context.getImageData(0, y, width, count, {colorSpace}).data; break; }
@@ -157,7 +157,7 @@ function snapshot(input, maxPixels, {maxPendingBytes = DEFAULT_INPUT_BYTES}, opt
       } finally { band.width = band.height = 0; }
     }};
   }
-  const refused = cause => { throw Object.assign(fail('JXL_INPUT', "Canvas read failed; draw it again or pass RGBA pixels."), {cause}); };
+  const refused = cause => { throw Object.assign(fail('JXL_INPUT', "canvas: redraw or RGBA"), {cause}); };
   const cost = width * height * 4, taken = taking => ({taking, cost, readAs: readAs ?? own});
   const pixels = !bitmap && !context && (readAs === undefined || readAs === own) ? readWebGL(input) : null;
   if (pixels) return {taking: pixels, cost};

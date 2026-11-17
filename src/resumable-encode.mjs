@@ -29,7 +29,7 @@ function byteCache(limit) {
 }
 const readsOf = refs => {
   if (!Array.isArray(refs) || refs.length > READS || refs.reduce((n, ref) => n + refOf(ref).length, 0) > READ_BATCH_BYTES)
-    invalid('Invalid checkpoint reads.');
+    invalid('checkpoint reads: <=64, <=8 MiB');
   return refs;
 };
 const invalid = message => { throw fault('JXL_INPUT', message); };
@@ -44,7 +44,7 @@ const verifyBytes = byteLength => Math.max(VERIFY_BYTES, chunkBytes(byteLength))
 const stopped = signal => { if (signal?.aborted) throw abortReason(signal); };
 const refOf = ref => {
   if (!ref || !HASH.test(ref.hash) || !Number.isSafeInteger(ref.length) || ref.length < 0 || ref.length > MAX_PART_BYTES ||
-      Object.keys(ref).length !== 2) invalid('Invalid immutable part reference.');
+      Object.keys(ref).length !== 2) invalid('part reference: hash, length');
   return ref;
 };
 export {refOf};
@@ -53,13 +53,13 @@ const sourceOf = source => {
   if (!s || typeof s !== 'object' || Array.isArray(s) || !HASH.test(s.sha256) ||
       typeof s.generation !== 'string' || !s.generation.length || s.generation.length > 256 ||
       !Number.isSafeInteger(s.byteLength) || s.byteLength < 1 || s.byteLength > 0xffffffff)
-    throw fault('JXL_INPUT', 'The input needs generation (text), sha256 (64 lowercase hex digits, no "sha256:" prefix) and byteLength (1 to 4294967295).');
+    throw fault('JXL_INPUT', 'source: generation, sha256(64 lowercase hex), byteLength(1-4294967295)');
   return s;
 };
 const budgetOf = budget => {
   if (!budget || typeof budget !== 'object' || Array.isArray(budget) || Object.keys(budget).some(k => k !== 'units') ||
       !Number.isSafeInteger(budget.units) || budget.units < 1 || budget.units > 64)
-    throw fault('JXL_INPUT', 'A work budget is {units: 1..64}.');
+    throw fault('JXL_INPUT', 'budget: {units: 1-64}');
   return {units: budget.units};
 };
 
@@ -68,7 +68,7 @@ export function partsIO(read, signal, retain = true, readMany) {
   let readBytes = 0, readCalls = 0;
   const write = async bytes => {
     stopped(signal);
-    if (!(bytes instanceof Uint8Array) || bytes.length > MAX_PART_BYTES) invalid('An immutable part is at most 1 MiB.');
+    if (!(bytes instanceof Uint8Array) || bytes.length > MAX_PART_BYTES) invalid('part: Uint8Array <=1 MiB');
     const owned = new Uint8Array(bytes), hash = await digest(owned), ref = {hash, length: owned.length};
     stopped(signal);
     if (!pending.has(hash)) pending.set(hash, {ref, bytes: owned});
@@ -79,58 +79,58 @@ export function partsIO(read, signal, retain = true, readMany) {
     refOf(ref); stopped(signal);
     let bytes = pending.get(ref.hash)?.bytes ?? cache.get(ref.hash);
     if (!bytes) {
-      if (typeof read !== 'function') invalid('The host must read immutable parts.');
+      if (typeof read !== 'function') invalid('read: function');
       readCalls++;
       const found = await read(ref);
       stopped(signal);
-      if (!(found instanceof Uint8Array) || found.length !== ref.length) invalid('Missing or truncated immutable part.');
+      if (!(found instanceof Uint8Array) || found.length !== ref.length) invalid('immutable part: missing/truncated');
       bytes = new Uint8Array(found);
-      if (await digest(bytes) !== ref.hash) invalid('Corrupted immutable part.');
+      if (await digest(bytes) !== ref.hash) invalid('immutable part: digest mismatch');
       stopped(signal); readBytes += bytes.length; if (retain) cache.set(ref.hash, bytes);
     }
-    if (bytes.length !== ref.length) invalid('Part length does not match its digest.');
+    if (bytes.length !== ref.length) invalid('part length: digest mismatch');
     if (!retain) cache.delete(ref.hash);
     return bytes;
   };
   const prefetch = async refs => {
     stopped(signal);
-    if (!Array.isArray(refs) || refs.length > 128) invalid('A part read batch has at most 128 references.');
+    if (!Array.isArray(refs) || refs.length > 128) invalid('part batch: <=128 references');
     let bytes = 0;
     const wanted = new Map();
     for (const ref of refs) {
       refOf(ref); bytes += ref.length;
-      if (bytes > READ_BATCH_BYTES) invalid('A part read batch is at most 8 MiB.');
+      if (bytes > READ_BATCH_BYTES) invalid('part batch: <=8 MiB');
       const known = pending.get(ref.hash)?.bytes ?? cache.get(ref.hash);
       if (wanted.has(ref.hash) && wanted.get(ref.hash).length !== ref.length ||
           known && known.length !== ref.length)
-        invalid('Part length does not match its digest.');
+        invalid('part length: digest mismatch');
       if (!known) wanted.set(ref.hash, {hash: ref.hash, length: ref.length});
     }
     if (!wanted.size) return;
-    if (typeof readMany !== 'function') invalid('The host must provide bounded batched part reads.');
+    if (typeof readMany !== 'function') invalid('readMany: function');
     const expected = [...wanted.values()];
     readCalls++;
     const found = await readMany(expected.map(ref => ({...ref})));
     stopped(signal);
-    if (!Array.isArray(found) || found.length !== expected.length) invalid('A part read batch has the wrong number of results.');
+    if (!Array.isArray(found) || found.length !== expected.length) invalid('part batch: result count mismatch');
     const owned = found.map((value, i) => {
-      if (!(value instanceof Uint8Array) || value.length !== expected[i].length) invalid('Missing or truncated immutable part.');
+      if (!(value instanceof Uint8Array) || value.length !== expected[i].length) invalid('immutable part: missing/truncated');
       return new Uint8Array(value);
     });
     const hashes = await Promise.all(owned.map(digest));
     stopped(signal);
-    for (let i = 0; i < hashes.length; i++) if (hashes[i] !== expected[i].hash) invalid('Corrupted immutable part.');
+    for (let i = 0; i < hashes.length; i++) if (hashes[i] !== expected[i].hash) invalid('immutable part: digest mismatch');
     for (let i = 0; i < owned.length; i++) { cache.set(expected[i].hash, owned[i]); readBytes += owned[i].length; }
   };
   const fetch = async refs => {
     stopped(signal);
-    if (!Array.isArray(refs) || refs.length > 128 || refs.reduce((n, ref) => n + refOf(ref).length, 0) > READ_BATCH_BYTES) invalid('Invalid part read batch.');
-    if (typeof readMany !== 'function') invalid('The host must provide bounded batched part reads.');
+    if (!Array.isArray(refs) || refs.length > 128 || refs.reduce((n, ref) => n + refOf(ref).length, 0) > READ_BATCH_BYTES) invalid('part batch: <=128, <=8 MiB');
+    if (typeof readMany !== 'function') invalid('readMany: function');
     readCalls++;
     const found = await readMany(refs.map(ref => ({hash: ref.hash, length: ref.length})));
     stopped(signal);
-    if (!Array.isArray(found) || found.length !== refs.length) invalid('A part read batch has the wrong number of results.');
-    found.forEach((value, i) => { if (!(value instanceof Uint8Array) || value.length !== refs[i].length) invalid('Missing or truncated immutable part.'); readBytes += value.length; });
+    if (!Array.isArray(found) || found.length !== refs.length) invalid('part batch: result count mismatch');
+    found.forEach((value, i) => { if (!(value instanceof Uint8Array) || value.length !== refs[i].length) invalid('immutable part: missing/truncated'); readBytes += value.length; });
     return found;
   };
   return {read: async ref => new Uint8Array(await load(ref)), write, durable: true, fetch,
@@ -141,66 +141,66 @@ export function partsIO(read, signal, retain = true, readMany) {
 
 async function seal(manifest) {
   const bytes = encodeData(manifest);
-  if (bytes.length > MAX_MANIFEST_BYTES) invalid('The checkpoint manifest exceeds 16 KiB.');
+  if (bytes.length > MAX_MANIFEST_BYTES) invalid('checkpoint manifest: <=16 KiB');
   return {...manifest, hash: await digest(bytes)};
 }
 
 async function verify(checkpoint, codec, build) {
   const c = own(checkpoint);
-  if (!c || c.format !== 'rapier-jxl/checkpoint') invalid('This is not a rapier-jxl checkpoint.');
-  if (c.codec !== codec) invalid('This checkpoint is of another operation.');
-  if (c.build !== build) invalid('This checkpoint was written by another rapier-jxl version; start the job again.');
+  if (!c || c.format !== 'rapier-jxl/checkpoint') invalid("checkpoint: expected format 'rapier-jxl/checkpoint'");
+  if (c.codec !== codec) invalid('checkpoint: codec mismatch');
+  if (c.build !== build) invalid('checkpoint: build mismatch; restart');
   if (!HASH.test(c.hash) || !HASH.test(c.job) || !Number.isSafeInteger(c.revision) || c.revision < 0 ||
-      !['active', 'done'].includes(c.status) || c.previous !== null && !HASH.test(c.previous)) invalid('Invalid checkpoint manifest.');
+      !['active', 'done'].includes(c.status) || c.previous !== null && !HASH.test(c.previous)) invalid('checkpoint: manifest fields');
   const {hash, ...body} = c, bytes = encodeData(body);
-  if (bytes.length > MAX_MANIFEST_BYTES || await digest(bytes) !== hash) invalid('Corrupted checkpoint manifest.');
+  if (bytes.length > MAX_MANIFEST_BYTES || await digest(bytes) !== hash) invalid('checkpoint: digest mismatch');
   sourceOf(c.source);
   if (c.status !== 'done' || c.state !== null) refOf(c.state);
   readsOf(c.reads);
   if (await digest(encodeData({codec, build, source: c.source, plan: c.plan})) !== c.job)
-    invalid('The checkpoint job identity changed.');
+    invalid('checkpoint: job mismatch');
   if (c.status === 'done') {
     if (!c.output || !Number.isSafeInteger(c.output.byteLength) || c.output.byteLength < 0 || c.output.byteLength > MAX_OUTPUT_BYTES)
-      invalid('Invalid completed output.');
+      invalid('output: byteLength, refs, result');
     const {refs, index} = c.output;
     if (!c.output.byteLength ? refs !== null || index !== null : refs === null ? (refOf(index), false) : !Array.isArray(refs) || !refs.length ||
         refs.length > OUTPUT_REFS || index !== null || (refs.forEach(refOf), refs.reduce((n, r) => n + r.length, 0) !== c.output.byteLength))
-      invalid('Invalid completed output.');
-    if (c.output.result === undefined) invalid('Invalid completed output.');
-  } else if (c.output !== null) invalid('An unfinished checkpoint cannot expose output.');
+      invalid('output: byteLength, refs, result');
+    if (c.output.result === undefined) invalid('output: byteLength, refs, result');
+  } else if (c.output !== null) invalid('checkpoint: output only when done');
   return c;
 }
 
 function smallData(value) {
   const bytes = encodeData(value);
-  if (bytes.length > MAX_MANIFEST_BYTES) invalid('Completion metadata exceeds 16 KiB.');
+  if (bytes.length > MAX_MANIFEST_BYTES) invalid('completion metadata: <=16 KiB');
   return decodeData(bytes);
 }
 
 function sourceRange(host, source) {
   return async (offset, length) => {
     if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(length) || offset < 0 || length < 0 || offset + length > source.byteLength)
-      invalid('A source read is a bounded byte range.');
+      invalid('source read: bounded range');
     if (!length) return new Uint8Array();
-    if (typeof host.readSource !== 'function') invalid('The host must read the original (readSource).');
+    if (typeof host.readSource !== 'function') invalid('readSource: function');
     const found = await host.readSource(offset, length);
     stopped(host.signal);
-    if (!(found instanceof Uint8Array) || found.length !== length) invalid('Missing or truncated source range.');
+    if (!(found instanceof Uint8Array) || found.length !== length) invalid('source range: missing/truncated');
     return new Uint8Array(found);
   };
 }
 function checkedSource(range, source, signal, chunks) {
   const size = chunkBytes(source.byteLength), count = Math.ceil(source.byteLength / size), held = byteCache(SOURCE_CACHE_BYTES);
-  if (!Array.isArray(chunks) || chunks.length !== count || !chunks.every(sum => HASH.test(sum))) invalid('Invalid source chunk digests.');
+  if (!Array.isArray(chunks) || chunks.length !== count || !chunks.every(sum => HASH.test(sum))) invalid('source chunks: sha256 list');
   const check = async (first, bytes) => {
     const sums = await Promise.all(Array.from({length: Math.ceil(bytes.length / size)}, (_, i) =>
       digest(bytes.subarray(i * size, Math.min(bytes.length, (i + 1) * size)))));
     stopped(signal);
-    for (let i = 0; i < sums.length; i++) if (sums[i] !== chunks[first + i]) throw fault('JXL_INPUT', 'The source bytes do not match their pinned digest.');
+    for (let i = 0; i < sums.length; i++) if (sums[i] !== chunks[first + i]) throw fault('JXL_INPUT', 'source bytes: digest mismatch');
   };
   return async (offset, length) => {
     if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(length) || offset < 0 || length < 0 || offset + length > source.byteLength)
-      invalid('A source read is a bounded byte range.');
+      invalid('source read: bounded range');
     if (!length) return new Uint8Array();
     const first = Math.floor(offset / size), last = Math.ceil((offset + length) / size);
     if (!offset && length === source.byteLength && !held.size) { const bytes = await range(0, length); await check(0, bytes); return bytes; }
@@ -229,11 +229,11 @@ function checkedSource(range, source, signal, chunks) {
 export function createStepper(adapter) {
   if (!adapter || typeof adapter.id !== 'string' || !adapter.id.length || adapter.id.length > 128 || !HASH.test(adapter.build) ||
       !['normalize', 'start', 'step'].every(k => typeof adapter[k] === 'function'))
-    throw fault('JXL_INPUT', 'A stepper needs a named codec, exact build digest and data-state operations.');
+    throw fault('JXL_INPUT', 'stepper: id, build, normalize/start/step');
   const {normalize, start: begin, step} = adapter, codec = adapter.id, build = adapter.build;
 
   const planOf = (options, source, verifyOutput = false) => {
-    if (typeof verifyOutput !== 'boolean') throw fault('JXL_OPTIONS', 'verify is a boolean.');
+    if (typeof verifyOutput !== 'boolean') throw fault('JXL_OPTIONS', 'verify: boolean');
     const plan = own(normalize(own(options), source));
     return verifyOutput ? {...plan, verify: true} : plan;
   };
@@ -254,12 +254,12 @@ export function createStepper(adapter) {
     stopped(host?.signal);
     budget = budgetOf(budget);
     const c = await verify(checkpoint, codec, build);
-    if (!host || !same(sourceOf(host.source), c.source)) throw fault('JXL_INPUT', 'The source generation or digest changed.');
+    if (!host || !same(sourceOf(host.source), c.source)) throw fault('JXL_INPUT', 'source: generation/digest mismatch');
     if (!Number.isSafeInteger(host.expectedRevision) || host.expectedRevision !== c.revision)
-      stale('The host revision does not match this checkpoint.');
-    if (c.status === 'done') stale('This checkpoint already completed.');
-    if (c.revision === Number.MAX_SAFE_INTEGER) invalid('The checkpoint revision cannot advance.');
-    if (!same(planOf(c.plan.options ?? c.plan, c.source, c.plan.verify ?? false), c.plan)) invalid('The normalized codec plan changed.');
+      stale('expectedRevision: checkpoint mismatch');
+    if (c.status === 'done') stale('checkpoint: completed');
+    if (c.revision === Number.MAX_SAFE_INTEGER) invalid('checkpoint revision: at maximum');
+    if (!same(planOf(c.plan.options ?? c.plan, c.source, c.plan.verify ?? false), c.plan)) invalid('codec plan: mismatch');
     await host.admit?.(c.plan, c.source);
     const transition = await digest(encodeData({checkpoint: c.hash, budget}));
     const io = partsIO(host.read, host.signal, true, host.readMany), readSource = sourceRange(host, c.source);
@@ -282,7 +282,7 @@ export function createStepper(adapter) {
             !Array.isArray(h.h) || h.h.length !== 8 || !h.h.every(Number.isSafeInteger) || !Array.isArray(h.tail) ||
             h.tail.length !== state.offset % 64 || !h.tail.every(v => Number.isInteger(v) && v >= 0 && v < 256) ||
             !Array.isArray(state.chunks) || state.offset % verifyBytes(c.source.byteLength) || state.chunks.length !== state.offset / chunkBytes(c.source.byteLength) ||
-            !state.chunks.every(sum => HASH.test(sum))) invalid('Invalid source checkpoint.');
+            !state.chunks.every(sum => HASH.test(sum))) invalid('source checkpoint: phase/chunks');
         const count = Math.min(verifyBytes(c.source.byteLength), c.source.byteLength - state.offset), at = state.offset, size = chunkBytes(c.source.byteLength);
         const whole = !at && c.source.byteLength <= WHOLE_BYTES, length = whole ? c.source.byteLength : count;
         const bytes = await readSource(at, length);
@@ -291,7 +291,7 @@ export function createStepper(adapter) {
         state = {...state, hash: whole ? h : sha256Update(h, bytes), offset: at + length, chunks: [...state.chunks, ...sums]};
         work.push({phase: 'source', offset: at, bytes: length});
         if (state.offset === c.source.byteLength) {
-          if ((sum ?? sha256Finish(state.hash)) !== c.source.sha256) throw fault('JXL_INPUT', 'The source bytes do not match their pinned digest.');
+          if ((sum ?? sha256Finish(state.hash)) !== c.source.sha256) throw fault('JXL_INPUT', 'source bytes: digest mismatch');
           state = {phase: 'encode', codec: begin(c.plan, c.source), chunks: state.chunks};
         }
       } else if (state.phase === 'encode') {
@@ -305,16 +305,16 @@ export function createStepper(adapter) {
           ...(Number.isFinite(budgetMs) && budgetMs > 0 && {budgetMs}), ...(host.reads && {reads: host.reads}), ...(host.memoryBytes !== undefined && {memoryBytes: host.memoryBytes}), ...(host.straight && {straight: host.straight}),
           ...(host.verify && {verify: host.verify}), ...(DECODER_SNAPSHOT in host && {[DECODER_SNAPSHOT]: host[DECODER_SNAPSHOT]})});
         stopped(host.signal);
-        if (!result || !Object.hasOwn(result, 'state')) invalid('The codec returned no next state.');
+        if (!result || !Object.hasOwn(result, 'state')) invalid('step: state required');
         state = {phase: 'encode', codec: result.state, chunks: state.chunks};
         reads = result.reads ?? [];
         work.push(result.work ?? {phase: 'encode'});
         if (result.output !== undefined) {
           const bytes = result.output;
-          if (bytes !== null && !(bytes instanceof Uint8Array)) invalid('A codec output is its bytes.');
+          if (bytes !== null && !(bytes instanceof Uint8Array)) invalid('output: Uint8Array');
           const refs = [];
           if (result.outputRefs) {
-            if (!Array.isArray(result.outputRefs) || result.outputRefs.reduce((n, ref) => n + refOf(ref).length, 0) !== (bytes?.length ?? 0)) invalid('Invalid codec output parts.');
+            if (!Array.isArray(result.outputRefs) || result.outputRefs.reduce((n, ref) => n + refOf(ref).length, 0) !== (bytes?.length ?? 0)) invalid('outputRefs: byteLength mismatch');
             refs.push(...result.outputRefs);
           } else if (bytes) for (let at = 0; at < bytes.length; at += MAX_PART_BYTES) refs.push(await io.write(bytes.subarray(at, Math.min(bytes.length, at + MAX_PART_BYTES))));
           outputRefs = refs;
@@ -323,7 +323,7 @@ export function createStepper(adapter) {
           state = null;
         }
         if (result.yield) break;
-      } else invalid('Invalid codec phase.');
+      } else invalid('codec phase: unknown');
     }
     stopped(host.signal);
     const done = output !== undefined, nextState = done ? null : await io.writeJSON(state), {hash: previousHash, ...body} = c;
@@ -338,10 +338,10 @@ export function createStepper(adapter) {
   async function completed(checkpoint, host) {
     stopped(host?.signal);
     const c = await verify(checkpoint, codec, build);
-    if (c.status !== 'done') invalid('The encode is not complete.');
-    if (!host || !same(sourceOf(host.source), c.source)) invalid('The source generation or digest changed.');
-    if (host.expectedRevision !== c.revision) stale('The host revision does not match this checkpoint.');
-    if (!same(planOf(c.plan.options ?? c.plan, c.source, c.plan.verify ?? false), c.plan)) invalid('The normalized codec plan changed.');
+    if (c.status !== 'done') invalid('checkpoint: not done');
+    if (!host || !same(sourceOf(host.source), c.source)) invalid('source: generation/digest mismatch');
+    if (host.expectedRevision !== c.revision) stale('expectedRevision: checkpoint mismatch');
+    if (!same(planOf(c.plan.options ?? c.plan, c.source, c.plan.verify ?? false), c.plan)) invalid('codec plan: mismatch');
     await host.admit?.(c.plan, c.source);
     return c;
   }
@@ -353,10 +353,10 @@ export function createStepper(adapter) {
     const c = await completed(checkpoint, host);
     if (!c.output.byteLength) return file(0);
     const io = partsIO(host.read, host.signal, false, host.readMany), refs = c.output.refs ?? await io.readJSON(c.output.index);
-    if (!Array.isArray(refs) || !refs.length) invalid('Invalid output index.');
+    if (!Array.isArray(refs) || !refs.length) invalid('output index: nonempty array');
     let total = 0;
     for (const ref of refs) { refOf(ref); total += ref.length; }
-    if (total !== c.output.byteLength) invalid('The output index does not cover the finished file.');
+    if (total !== c.output.byteLength) invalid('output index: length mismatch');
     let bytes = null, at = 0;
     for (let i = 0; i < refs.length;) {
       let end = i + 1, size = refs[i].length;
@@ -366,7 +366,7 @@ export function createStepper(adapter) {
       for (let k = 0; k < batch.length; k++) {
         const ref = batch[k];
         bytes.set(found[k], at); found[k] = null;
-        if (await digest(bytes.subarray(at, at + ref.length)) !== ref.hash) invalid('Corrupted immutable part.');
+        if (await digest(bytes.subarray(at, at + ref.length)) !== ref.hash) invalid('immutable part: digest mismatch');
         stopped(host.signal); at += ref.length;
       }
     }

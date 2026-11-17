@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {fault} from './fault.mjs';
-export const inRange = (v, lo, hi, what) => { if (!(v >= lo && v <= hi)) throw fault('JXL_INTERNAL', `int-ops: ${what} ${v} outside [${lo}, ${hi}]`); return v; };
+export const inRange = (v, lo, hi, what) => { if (!(v >= lo && v <= hi)) throw fault('JXL_INTERNAL', `int-ops:${what} ${v}`); return v; };
 
 export const R = (s, k) => (s + (1 << (k - 1))) >> k;
 export const Rn = (s, k) => Math.floor((s + 2 ** (k - 1)) / 2 ** k);

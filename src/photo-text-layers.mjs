@@ -45,7 +45,7 @@ function overlayFrame(file, head, {x, y, width, height}, last, canvas) {
   const bit = i => file[i >> 3] >> (i & 7) & 1, read = (at, n) => { let v = 0; for (let i = 0; i < n; i++) v |= bit(at + i) << i; return v; };
   const at = head * 8;
   if (read(at, 7) !== 8 || read(at + 7, 4) || read(at + 13, 3) || read(at + 16, 4) || read(at + 20, 1) !== 1 || read(at + 21, 11))
-    throw fault('JXL_INPUT', 'Each encoded layer is one frame; use the atlas and LF encoders for those.');
+    throw fault('JXL_INPUT', 'layer: single frame required');
   const shift = read(at + 11, 2), w = new BitWriter(64);
   w.write(13, 8 | shift << 11);
   const cropped = x || y || width !== canvas.width || height !== canvas.height;

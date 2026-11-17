@@ -13,26 +13,26 @@ import {DEFAULT_OPSIN} from './opsin-defaults.mjs';
 export {DEFAULT_OPSIN};
 const opsinError = message => fault('JXL_INPUT', message);
 function opsinOptions(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw opsinError('Opsin options are an object.');
-  if (value.reset !== undefined && typeof value.reset !== 'boolean') throw opsinError('Opsin reset is boolean.');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw opsinError('options: object');
+  if (value.reset !== undefined && typeof value.reset !== 'boolean') throw opsinError('reset: boolean');
   if (value.reset && ['inverseMatrix', 'opsinBiases', 'quantizationBiases'].some(name => value[name] !== undefined))
-    throw opsinError('Reset cannot also replace custom opsin fields.');
+    throw opsinError('reset: omit custom opsin fields');
   if (value.inverseMatrix !== undefined) opsinMatrix(value.inverseMatrix);
-  if (value.opsinBiases !== undefined) opsinValues(value.opsinBiases, 3, 'Opsin biases');
-  if (value.quantizationBiases !== undefined) opsinValues(value.quantizationBiases, 4, 'Quantization biases');
+  if (value.opsinBiases !== undefined) opsinValues(value.opsinBiases, 3, 'opsinBiases');
+  if (value.quantizationBiases !== undefined) opsinValues(value.quantizationBiases, 4, 'quantizationBiases');
 }
 function opsinValues(value, length, label) {
-  if (!value || typeof value !== 'object' || value.length !== length) throw opsinError(label + ' has ' + length + ' finite values.');
+  if (!value || typeof value !== 'object' || value.length !== length) throw opsinError(label + ': ' + length + ' numbers');
   return Array.from(value, number => {
     if (typeof number !== 'number' || !Number.isFinite(number) || Math.abs(number) >= 65520)
-      throw opsinError(label + ' values must round to finite binary16 numbers.');
+      throw opsinError(label + ': finite float16');
     return number;
   });
 }
 function opsinMatrix(value) {
   if (Array.isArray(value) && value.length === 3 && value.every(row => row && typeof row === 'object' && row.length === 3))
     value = value.flatMap(row => Array.from(row));
-  return opsinValues(value, 9, 'The inverse opsin matrix');
+  return opsinValues(value, 9, 'inverseMatrix');
 }
 function opsinData(options, existing) {
   const weights = options.upsamplingWeights === undefined ? existing?.weights : prepareUpsamplingWeights(options.upsamplingWeights);
@@ -42,8 +42,8 @@ function opsinData(options, existing) {
   writer.write(1, 0); writer.write(1, custom ? 0 : 1);
   if (custom) {
     const matrix = opsinMatrix(options.inverseMatrix ?? existing?.inverseMatrix ?? DEFAULT_OPSIN.inverseMatrix);
-    const biases = opsinValues(options.opsinBiases ?? existing?.opsinBiases ?? DEFAULT_OPSIN.opsinBiases, 3, 'Opsin biases');
-    const quant = opsinValues(options.quantizationBiases ?? existing?.quantizationBiases ?? DEFAULT_OPSIN.quantizationBiases, 4, 'Quantization biases');
+    const biases = opsinValues(options.opsinBiases ?? existing?.opsinBiases ?? DEFAULT_OPSIN.opsinBiases, 3, 'opsinBiases');
+    const quant = opsinValues(options.quantizationBiases ?? existing?.quantizationBiases ?? DEFAULT_OPSIN.quantizationBiases, 4, 'quantizationBiases');
     for (const value of [...matrix, ...biases, ...quant]) writer.write(16, float16Bits(value));
   }
   if (weights) copyBits(writer, weights.finish(), 1, weights.bitLength);
@@ -54,7 +54,7 @@ export function prepareOpsinTransform(options = {}) { opsinOptions(options); ret
 
 function opsinHalf(bits) {
   const sign = bits & 32768 ? -1 : 1, exponent = bits >> 10 & 31, mantissa = bits & 1023;
-  if (exponent === 31) throw opsinError('Nonfinite existing opsin fields are unsupported.');
+  if (exponent === 31) throw opsinError('opsin field: nonfinite');
   let value = exponent ? 1 + mantissa / 1024 : mantissa / 1024;
   let power = exponent ? exponent - 15 : -14;
   while (power > 0) { value *= 2; power--; } while (power < 0) { value /= 2; power++; }
@@ -75,18 +75,18 @@ function readOpsinFields(bytes, image) {
 }
 function opsinICCSpan(bytes, at) { const reader = new JxlBits(bytes); reader.bit = at; skipICC(reader); return reader.bit - at; }
 export function withOpsin(bytes, options = {}) {
-  if (!(bytes instanceof Uint8Array) || !bytes.length) throw opsinError('Opsin input is a nonempty JPEG XL Uint8Array.');
+  if (!(bytes instanceof Uint8Array) || !bytes.length) throw opsinError('input: nonempty Uint8Array');
   admitOutputSize(bytes.length);
   opsinOptions(options);
   const maxBoxes = options.maxBoxes === undefined ? 65536 : options.maxBoxes;
-  if (!Number.isSafeInteger(maxBoxes) || maxBoxes < 1) throw opsinError('maxBoxes is a positive safe integer.');
+  if (!Number.isSafeInteger(maxBoxes) || maxBoxes < 1) throw opsinError('maxBoxes: positive integer');
   const raw = bytes[0] === 255 && bytes[1] === 10, source = raw ? null : inspectContainer(bytes, {maxBoxes});
   const codestream = raw ? bytes : source.codestream, image = readImageHeader(codestream, {iccBits: opsinICCSpan});
-  if (!image.xyb) throw opsinError('Custom inverse opsin needs an XYB image.');
+  if (!image.xyb) throw opsinError('custom opsin: XYB image required');
   if (!options.reset && !['inverseMatrix', 'opsinBiases', 'quantizationBiases', 'upsamplingWeights'].some(name => options[name] !== undefined)) return bytes.slice();
-  if (source?.auxiliary.some(box => box.boxType === 'jbrd')) throw opsinError('Custom opsin does not apply to JPEG reconstruction.');
+  if (source?.auxiliary.some(box => box.boxType === 'jbrd')) throw opsinError('custom opsin: not with JPEG reconstruction');
   const index = source?.auxiliary.some(box => box.boxType === 'jxli') ? readFrameIndex(bytes, {maxBoxes}) : null;
-  if (index?.frames.some(frame => frame.byteOffset < image.end)) throw opsinError('A frame index must point after the image header.');
+  if (index?.frames.some(frame => frame.byteOffset < image.end)) throw opsinError('jxli: before image header end');
   const fields = opsinData(options, readOpsinFields(codestream, image)), head = new BitWriter(256);
   copyBits(head, codestream, 0, image.transformAt); head.append(fields);
   copyBits(head, codestream, image.iccAt, image.payloadEnd); head.zeroPadToByte();

@@ -30,30 +30,30 @@ const PIXEL_KINDS = ['patches', 'splines', 'graphics', 'hybrid', 'palette', 'pho
 const NO_ORIENTATION = ['graphics', 'palette', 'profile'], NO_EXTRA_CHANNELS = ['patches', 'splines', 'graphics', 'palette', 'profile'];
 function refuseLost(kind, image) {
   if (NO_ORIENTATION.includes(kind) && image.orientation !== undefined && image.orientation !== 1)
-    throw fail('JXL_UNSUPPORTED', `A ${kind} file has no orientation; rotate the pixels, or use kind 'photo'.`);
+    throw fail('JXL_UNSUPPORTED', `${kind} orientation: rotate pixels or kind 'photo'`);
   if (NO_EXTRA_CHANNELS.includes(kind) && image.extraChannels !== undefined && !(Array.isArray(image.extraChannels) && !image.extraChannels.length))
-    throw fail('JXL_UNSUPPORTED', `A ${kind} file has no extra channels; use kind 'photo' or 'channels'.`);
+    throw fail('JXL_UNSUPPORTED', `${kind} extra channels: kind 'photo' or 'channels'`);
 }
 export function admitFormat(request, options) {
-  if (!request || typeof request !== 'object') throw fail('JXL_INPUT', "Invalid format request; pass an object with a kind.");
+  if (!request || typeof request !== 'object') throw fail('JXL_INPUT', "format request: {kind}");
   options = object(options);
-  if (!KINDS.includes(request.kind)) throw fail('JXL_OPTIONS', "Format kind is unknown; use a documented kind.");
-  for (const key of Object.keys(options)) if (!TAKES[request.kind].includes(key)) throw fail('JXL_OPTIONS', `Unknown ${request.kind} option ${key}; remove it.`);
-  if (PIXEL_KINDS.includes(request.kind)) { refuseDescription(options, `options of a ${request.kind} request; set it on the request`); admitSamples(request); }
-  if (options.effort !== undefined && (!Number.isInteger(options.effort) || options.effort < 1 || options.effort > 9)) throw fail('JXL_OPTIONS', "Invalid effort; use an integer from 1 to 9.");
+  if (!KINDS.includes(request.kind)) throw fail('JXL_OPTIONS', "kind: 'photo', 'channels', 'layers' or 'atlas'");
+  for (const key of Object.keys(options)) if (!TAKES[request.kind].includes(key)) throw fail('JXL_OPTIONS', `unknown ${request.kind} option: ${key}`);
+  if (PIXEL_KINDS.includes(request.kind)) { refuseDescription(options, `a ${request.kind} request's options`); admitSamples(request); }
+  if (options.effort !== undefined && (!Number.isInteger(options.effort) || options.effort < 1 || options.effort > 9)) throw fail('JXL_OPTIONS', "effort: integer 1-9");
   if (options.fidelity === undefined) return;
   const read = encodeFidelity(options.fidelity);
-  if (read.target !== undefined) throw fail('JXL_OPTIONS', "Invalid format fidelity; use 'exact' or {quality}.");
+  if (read.target !== undefined) throw fail('JXL_OPTIONS', "fidelity: 'exact' or {quality}");
   if (read.quality === 100) {
     const loss = (options.preset !== undefined && options.preset !== 'exact') ? `preset '${options.preset}'` :
       options.maxColorError > 0 ? 'maxColorError' : options.baseError > 0 ? 'baseError' : options.undither === true ? 'undither' : undefined;
-    if (loss) throw fail('JXL_OPTIONS', `Fidelity settings conflict; choose 'exact' or ${loss}.`);
+    if (loss) throw fail('JXL_OPTIONS', `fidelity conflict: 'exact' or ${loss}`);
   }
 }
 const isFloat16 = value => typeof Float16Array === 'function' && value instanceof Float16Array;
 function normalizeFloat16Picture(picture) {
   if (!picture || !isFloat16(picture.data)) return picture;
-  if (picture.sampleFormat !== undefined && picture.sampleFormat !== 'float16') throw fail('JXL_INPUT', "Float16Array sample format conflicts; use sampleFormat float16.");
+  if (picture.sampleFormat !== undefined && picture.sampleFormat !== 'float16') throw fail('JXL_INPUT', "Float16Array: sampleFormat float16");
   return {...picture, data: new Uint16Array(picture.data.buffer, picture.data.byteOffset, picture.data.length), sampleFormat: 'float16'};
 }
 export async function author(request, options, hooks) {
@@ -69,8 +69,8 @@ export async function author(request, options, hooks) {
     if (isFloat16(image.base?.image?.data) || image.references?.some(ref => isFloat16(ref?.image?.data))) codec.sampleFormat ??= 'float16';
     image = {...image, base: mapFrame(image.base), ...(image.references && {references: image.references.map(mapFrame)})};
   } else if (request.kind === 'atlas' && Array.isArray(image.frames) && image.frames.some(frame => isFloat16(frame?.data))) {
-    if (codec.sampleFormat !== undefined && codec.sampleFormat !== 'float16') throw fail('JXL_INPUT', "Float16Array sample format conflicts; use sampleFormat float16.");
-    if (!image.frames.every(frame => isFloat16(frame?.data))) throw fail('JXL_INPUT', "Frame sample arrays differ; pass the same sample array type for every frame.");
+    if (codec.sampleFormat !== undefined && codec.sampleFormat !== 'float16') throw fail('JXL_INPUT', "Float16Array: sampleFormat float16");
+    if (!image.frames.every(frame => isFloat16(frame?.data))) throw fail('JXL_INPUT', "frames: same sample array type");
     image = {...image, frames: image.frames.map(frame => ({...frame, data: new Uint16Array(frame.data.buffer, frame.data.byteOffset, frame.data.length)}))};
     codec.sampleFormat = 'float16';
   }
@@ -90,6 +90,6 @@ export async function author(request, options, hooks) {
     case 'photo': return finish(encodePhotoSteps(image.data, image.width, image.height, codec));
     case 'profile': return finish(encodeProfileSteps(image.data, image.width, image.height, codec));
     case 'atlas': return finish(encodeAnimationAtlasSteps(image, codec, true));
-    default: throw fail('JXL_OPTIONS', "Format kind is unknown; use a documented kind.");
+    default: throw fail('JXL_OPTIONS', "kind: 'photo', 'channels', 'layers' or 'atlas'");
   }
 }

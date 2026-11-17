@@ -7,9 +7,9 @@ export function modularPasses(option) {
   const passes = option === true || option === 'resolution' ? [4, 2, 1] : option?.passes;
   if (!Array.isArray(passes) || passes.length < 2 || passes.length > 4 ||
       Array.from(passes).some((value, index) => ![1, 2, 4, 8].includes(value) || index && value >= passes[index - 1]) || passes.at(-1) !== 1)
-    throw fault('JXL_INPUT', 'Modular progressive is false, true, resolution, or {passes}: 2 to 4 decreasing scales from 8, 4, 2, 1, ending at 1.');
+    throw fault('JXL_INPUT', 'progressive: false, true, resolution or {passes: 8,4,2,1..1}');
   if (typeof option === 'object' && (Array.isArray(option) || Object.keys(option).some(key => key !== 'passes')))
-    throw fault('JXL_INPUT', 'A Modular progression object contains only passes.');
+    throw fault('JXL_INPUT', 'progressive: {passes} only');
   const plan = progressivePasses({passes: passes.map(downsample => ({downsample, shift: 0}))});
   return {count: plan.count, header: plan.header, brackets: plan.brackets};
 }

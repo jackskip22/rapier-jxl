@@ -9,7 +9,7 @@ import {kernelHooks} from './kernel-hooks.mjs';
 import {RGB8_THRESHOLDS} from './rgb8-thresholds.mjs';
 import {inCall, onCallEnd} from './call-scope.mjs';
 import {kernelCaller, into, both, rect, out, outUpTo, room, made} from './kernel-call.mjs';
-const outside = () => { throw fault('JXL_INTERNAL', 'A capture kernel was called outside its bounds.'); };
+const outside = () => { throw fault('JXL_INTERNAL', 'capture-kernels:outside-bounds'); };
 const copyOut = (T, buffer, at, n) => new T(buffer.slice(at, at + n * T.BYTES_PER_ELEMENT));
 
 export const WEIGHTED_BANDS = [-200, -100, -50, -25, -12, -6, -3, -1, 0, 2, 4, 7, 13, 26, 51, 101, 201];
@@ -19,7 +19,7 @@ export const LOG_MANTISSA = Uint8Array.of(0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14
 const MEMORY_PAGES = 640;
 const P = 65536, DIV = 16, WEIGHTS = 272, BANDS = 32768, CONTEXTS = 33280, LOG = 33792, HEADS = 262144, SCRATCH = 832;
 export const kernelFail = cause => wasmRefused() ? wasmRequired(cause)
-  : Object.assign(new Error('The capture WebAssembly kernel could not run: check memory.', {cause}), {code: 'JXL_WASM'});
+  : Object.assign(new Error('capture kernel: unavailable', {cause}), {code: 'JXL_WASM'});
 let compiled, engine, simd, resident;
 
 const SIMD_OK = kernelsSupported;
@@ -77,7 +77,7 @@ export function captureStripMargin(plane, width, height, keep = 2) {
       keep < 1 || keep > Math.max(2, height))
     outside();
   if (n < 4096 || height < 8) return {chooseW: 1, marginBpp: 1};
-  if (keep < 2) throw fault('JXL_INTERNAL', 'The capture predictor sample needs its smooth residuals.');
+  if (keep < 2) throw fault('JXL_INTERNAL', 'capture-kernels:smooth-residuals');
   return run(() => {
     const stripN = width * 8, cap = keep > 2 ? width * keep : stripN;
     const countsOffset = cap * 12 + (width + 2) * 40 + 2 * (stripN * 2 + 15 & ~15) + stripN + 31 & ~15;
@@ -369,7 +369,7 @@ export function captureLocalWrite(writer, values, properties, cuts, codes, mappi
     stateIn(buffer, state, writer);
     for (let i = 0; i < n;) {
       i = k.localWrite(at, i, n, props, mode, cutsAt, ncuts, table, alphabet, cfg, cfg + 16, lz77.minLength, lz77.minSymbol, mapping ? map : 0, out, out + LOCAL_OUT, state);
-      if (i < 0) throw fault('JXL_INTERNAL', 'A token has no code.');
+      if (i < 0) throw fault('JXL_INTERNAL', 'capture-kernels:token-code');
       drain(writer, u8, out, i32[(state >> 2) + 3] - out);
     }
     stateOut(buffer, state, writer);
@@ -491,7 +491,7 @@ export function captureDistinct(words, from, limit, sort, plane = null) {
     for (let start = 0; start < words.length; start += bandWords) {
       const band = words.subarray(start, Math.min(words.length, start + bandWords));
       i32.set(band, at >> 2);
-      if (k.distinctIndex(at, band.length, from, keys, used, slots, ranks, out) < 0) throw fault('JXL_INTERNAL', 'A sample left its set.');
+      if (k.distinctIndex(at, band.length, from, keys, used, slots, ranks, out) < 0) throw fault('JXL_INTERNAL', 'capture-kernels:sample-set');
       plane.set(new Int16Array(buffer, out, band.length >> 2), start >> 2);
     }
     return {table, plane};
@@ -658,7 +658,7 @@ export function treeArena(count, span, props = 4, plane = {w: 0, h: 0, colours: 
         new Uint8Array(memory, yBins, h).set(yBin); new Uint8Array(memory, xBins, w).set(xBin); new Uint8Array(memory, binOfAt, colours).set(binOf);
         if (props > 4) new Int32Array(memory, remapAt, colours).set(remap.subarray(0, colours));
         if (engine.pieceBins(samples, w, values, distances, count, minimum, yBins, xBins, binOfAt, remapAt, colours, tokens, bins, order, props) < 0)
-          throw fault('JXL_INTERNAL', 'A palette index passed its palette.');
+          throw fault('JXL_INTERNAL', 'capture-kernels:palette-index');
       },
       learn(cuts, split, min, most, context) {
         if (cuts.length !== props || !(context instanceof Uint8Array) || context.length < count || most < 1 || most > 4096)

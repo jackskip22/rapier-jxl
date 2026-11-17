@@ -49,7 +49,7 @@ export function serveHelper(load, port = helperPort()) {
     }
     next(({serveParallel}) => {
       let reply;
-      if (!serveParallel) { if (data?.task === undefined) return; reply = [{id: data?.id, error: described(Object.assign(new Error('This helper runs no stage task.'), {code: 'JXL_INTERNAL'}))}, []]; }
+      if (!serveParallel) { if (data?.task === undefined) return; reply = [{id: data?.id, error: described(Object.assign(new Error('helper-runtime:task'), {code: 'JXL_INTERNAL'}))}, []]; }
       else try { reply = serveParallel(data); } catch (error) { reply = [{id: data?.id, error: described(error)}, []]; }
       if (reply) post(reply[0], reply[1], error => ({id: data?.id, error: described(error)}));
     });

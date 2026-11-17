@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 import {gaborishRows} from './photo-v6.mjs';
 import {bandedOutputs} from './photo-reconstruct-bands.mjs';
+import {rebuildPicture} from './photo-rebuild.mjs';
+import {codedBytesFromLinear} from './color-bytes.mjs';
 import {nativeRGBA} from './photo-output.mjs';
 import {layoutPicture, unpackLayout} from './photo-layout-picture.mjs';
 import {restorationSizes, RESTORE_ROWS} from './vardct-inverse.mjs';
@@ -30,11 +32,11 @@ export function scoreBandWorkspace(width, height) {
   let at = 0;
   return {width, height, planes, gaborish, coefficients,
     reset(w, h) {
-      if (w !== width || h !== height) throw fault('JXL_INTERNAL', 'A score-band workspace belongs to one photo geometry.');
+      if (w !== width || h !== height) throw fault('JXL_INTERNAL', 'photo-band-score:geometry');
       at = 0;
     },
     allocate(n) {
-      if (!Number.isSafeInteger(n) || n < 0 || at + n > coefficients.length) throw fault('JXL_INTERNAL', 'A score-band coefficient workspace is too small.');
+      if (!Number.isSafeInteger(n) || n < 0 || at + n > coefficients.length) throw fault('JXL_INTERNAL', 'photo-band-score:workspace');
       const values = coefficients.subarray(at, at += n);
       values.fill(0);
       return values;
@@ -43,11 +45,11 @@ export function scoreBandWorkspace(width, height) {
 }
 
 export function scoreBandOutputs(recipe, rows, top, width, height, y0, y1, workspace, into) {
-  if (!into) throw fault('JXL_INTERNAL', 'A score-band producer needs its owned output destinations.');
+  if (!into) throw fault('JXL_INTERNAL', 'photo-band-score:into');
   workspace?.reset(width, height);
   const end = top + rows.length / (width * 4), origin = recipe.origin;
   const source = {subarray(a, b) {
-    if (a < top * width * 4 || b > end * width * 4) throw fault('JXL_INTERNAL', 'A photo helper read outside its source band.');
+    if (a < top * width * 4 || b > end * width * 4) throw fault('JXL_INTERNAL', 'photo-band-score:bounds');
     return rows.subarray(a - top * width * 4, b - top * width * 4);
   }};
   const planes = gaborishRows(source, width, height, recipe.gaborish, false, workspace?.planes, workspace?.gaborish);
@@ -56,6 +58,12 @@ export function scoreBandOutputs(recipe, rows, top, width, height, y0, y1, works
     return {...band, top: band.top - origin, stride: Math.ceil(width / 8) * 8};
   }};
   const image = layoutPicture(base, width, base.height, unpackLayout(recipe.layout), recipe.options, false, workspace?.allocate);
+  if (recipe.gaborish?.transform) {
+    const made = rebuildPicture(image.lazyStrategy.rows(0, image.components[0].rows), {rgba: false, linear: true, views: true});
+    const from = (y0 - origin) * width, count = (y1 - y0) * width;
+    codedBytesFromLinear(made.linear.map(p => p.subarray(from, from + count)), count, recipe.gaborish.transform, into.package);
+    return {pack: into.package, own: into.native};
+  }
   const {package: pack, native: own} = bandedOutputs(image, y1 - y0, nativeBandOf(width, origin), null,
     y0 - origin, y1 - origin, into);
   return {pack, own};

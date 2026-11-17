@@ -10,10 +10,10 @@ export const pixelColor = samples => samples.renderingIntent !== undefined ? {co
 export async function jpegPixels(bytes, input, {maxPixels, signal} = {}) {
   const [{recompress}, {decode}] = await Promise.all([import('jpegxl/jpeg'), import('jpegxl/decode')]);
   const kept = await recompress(bytes, {effort: 1, ...(maxPixels === undefined ? {} : {maxPixels})});
-  if (!(kept?.bytes instanceof Uint8Array)) throw fail('JXL_UNSUPPORTED', "JPEG recompression failed; keep the original JPEG.");
+  if (!(kept?.bytes instanceof Uint8Array)) throw fail('JXL_UNSUPPORTED', "JPEG recompression: keep original");
   signal?.throwIfAborted();
   const image = await decode(kept.bytes, maxPixels === undefined ? {} : {maxPixels}), data = new Uint8Array(image.data.buffer, image.data.byteOffset, image.data.byteLength);
-  if (data.length !== image.width * image.height * 4) throw fail('JXL_UNSUPPORTED', "JPEG unreadable here; pass pixels from a host reader.");
+  if (data.length !== image.width * image.height * 4) throw fail('JXL_UNSUPPORTED', "JPEG: host reader pixels");
   const icc = image.rgbaICC instanceof Uint8Array && image.rgbaICC.byteLength > 0 && image.rgbaICC.byteLength <= 2048 ? image.rgbaICC : null;
   const enc = image.rgbaColorEncoding ?? {};
   const primaries = enc.space === 'gray' ? 'srgb' : enc.primaries;

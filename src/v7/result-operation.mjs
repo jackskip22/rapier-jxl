@@ -14,11 +14,11 @@ const CALL_FIELDS = ['fidelity', 'effort', 'firstRegion', 'readAs', 'jpeg', 'web
   'signal', 'onProgress', 'onPreview', 'exactRects', 'photoRects', 'textComplete', 'withoutText', 'outputs'];
 export function completionOptions(given, capture = false) {
   let options = snapshotOptions(given, undefined, [...CALL_FIELDS, 'features']);
-  if ('features' in options) throw fail('JXL_OPTIONS', 'Unknown option: features; use the options listed for this function.');
+  if ('features' in options) throw fail('JXL_OPTIONS', 'unknown option: features');
   options = publicVocabulary(options);
   const {signal, onProgress, onPreview} = options;
-  if (onProgress !== undefined && typeof onProgress !== 'function') throw fail('JXL_OPTIONS', "Invalid onProgress; pass a function.");
-  if (onPreview !== undefined && typeof onPreview !== 'function') throw fail('JXL_OPTIONS', "Invalid onPreview; pass a function.");
+  if (onProgress !== undefined && typeof onProgress !== 'function') throw fail('JXL_OPTIONS', 'onProgress: function');
+  if (onPreview !== undefined && typeof onPreview !== 'function') throw fail('JXL_OPTIONS', 'onPreview: function');
   const progress = progressOf(onProgress, signal);
   let encoded;
   if (onProgress) options.onProgress = fraction => { if (fraction < 1) progress(Math.min(0.999, fraction)); };
@@ -51,7 +51,7 @@ export function resultOperationWith(record, raw, {format = 'jxl', fidelity: defa
       const run = helpers && raw[DRIVE];
       const bytes = await (run ? run(input, options, helpers) : raw(input, options));
       check(options.signal);
-      if (!reference) throw fail('JXL_INTERNAL', "Image job lost its admitted dimensions; report the input and options.");
+      if (!reference) throw fail('JXL_INTERNAL', 'result-operation:dimensions');
       if (capture) {
         facts.kept = completion.encoded?.exact ? 'pixels' : 'lossy';
         if (completion.encoded?.textMarks) facts.textMarks = completion.encoded.textMarks;

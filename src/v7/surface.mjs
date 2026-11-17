@@ -5,7 +5,7 @@ import {dimensions, fail, plainView, lostBlank, proveRead, LOST, PIXELS} from '.
 import {isPlainRecord} from './records.mjs';
 import {withCost, DEFAULT_INPUT_BYTES} from './ownership.mjs';
 import {DESCRIPTION, described, isDecoded, fromDecoded} from './describe.mjs';
-const STILL_FIELDS = /* @__PURE__ */ new Set(['data', 'width', 'height', ...DESCRIPTION]);
+const STILL_FIELDS = /* @__PURE__ */ new Set(['data', 'width', 'height', 'parts', ...DESCRIPTION]);
 const ANIMATION_FIELDS = /* @__PURE__ */ new Set(['width', 'height', 'frames', 'loops', ...DESCRIPTION]);
 
 function opaque(data, width, height, half, defer) {
@@ -25,7 +25,7 @@ export function admitFrames({width, height, frames}) {
   if (sized(width, height)) for (const frame of frames) {
     samples(frame?.data, width, height);
     if (frame && typeof frame === 'object' && (typeof frame.duration !== 'number' || !Number.isFinite(frame.duration) || frame.duration < 0 || frame.duration > 0xFFFFFFFF))
-      throw fail('JXL_INPUT', "Invalid frame duration; use finite nonnegative milliseconds.");
+      throw fail('JXL_INPUT', "frame duration: finite ms >=0");
   }
 }
 export function surface(input, options = {}) {
@@ -33,28 +33,32 @@ export function surface(input, options = {}) {
   const {maxPixels = PIXELS, maxPendingBytes = DEFAULT_INPUT_BYTES, retainedBytes = 0, admitSurface, readAs: requested, half: halfAllowed = false, deferPacked = false} = options;
   const typed = typeof ImageData === 'function' && input instanceof ImageData;
   if ((typed || isPlainRecord(input)) && requested !== undefined)
-    throw fail('JXL_OPTIONS', "readAs does not apply to raw pixels; set colorSpace on the image.");
+    throw fail('JXL_OPTIONS', "readAs: raw pixels use colorSpace");
   if (isPlainRecord(input) && Object.values(Object.getOwnPropertyDescriptors(input)).some(field => !('value' in field)))
-    throw fail('JXL_INPUT', "Queue records contain accessors; pass plain data values.");
+    throw fail('JXL_INPUT', "record: data values only");
   if (isPlainRecord(input) && isDecoded(input)) return fromDecoded(input);
   if (isPlainRecord(input)) {
     const animation = Array.isArray(input.frames), known = animation ? ANIMATION_FIELDS : STILL_FIELDS;
     for (const key of Object.keys(input)) if (!known.has(key))
-      throw fail('JXL_INPUT', `Unknown picture field: ${key}; use {data, width, height} and ${DESCRIPTION.join(", ")}.`);
+      throw fail('JXL_INPUT', `picture.${key}: {data, width, height}, ${DESCRIPTION.join(", ")}`);
     if (animation) {
-      const description = described(input);
+      if (input.parts !== undefined && (!Number.isSafeInteger(input.parts) || input.parts < 1))
+      throw fail('JXL_INPUT', 'Invalid picture parts count; use a positive integer.');
+    const description = described(input);
       if (typeof Float16Array === 'function' && input.frames.some(frame => frame?.data instanceof Float16Array)) {
-        if (description.sampleFormat !== undefined && description.sampleFormat !== 'float16') throw fail('JXL_INPUT', "Float16Array sample format conflicts; use sampleFormat float16.");
-        if (!input.frames.every(frame => frame?.data instanceof Float16Array)) throw fail('JXL_INPUT', "Frame sample arrays differ; pass the same sample array type for every frame.");
+        if (description.sampleFormat !== undefined && description.sampleFormat !== 'float16') throw fail('JXL_INPUT', "sampleFormat: float16 for Float16Array");
+        if (!input.frames.every(frame => frame?.data instanceof Float16Array)) throw fail('JXL_INPUT', "frames: matching sample array types");
         return {width: input.width, height: input.height, ...(input.loops !== undefined && {loops: input.loops}),
           frames: input.frames.map(frame => ({...frame, data: new Uint16Array(frame.data.buffer, frame.data.byteOffset, frame.data.length)})),
           ...description, sampleFormat: 'float16'};
       }
       return {width: input.width, height: input.height, ...(input.loops !== undefined && {loops: input.loops}), frames: input.frames, ...description};
     }
+    if (input.parts !== undefined && (!Number.isSafeInteger(input.parts) || input.parts < 1))
+      throw fail('JXL_INPUT', 'Invalid picture parts count; use a positive integer.');
     const description = described(input);
     const halves = typeof Float16Array === 'function' && input.data instanceof Float16Array;
-    if (halves && description.sampleFormat !== undefined && description.sampleFormat !== 'float16') throw fail('JXL_INPUT', "Float16Array sample format conflicts; use sampleFormat float16.");
+    if (halves && description.sampleFormat !== undefined && description.sampleFormat !== 'float16') throw fail('JXL_INPUT', "sampleFormat: float16 for Float16Array");
     const words = halves ? new Uint16Array(input.data.buffer, input.data.byteOffset, input.data.length) : input.data;
     const floats = opaque(words, input.width, input.height, halves || description.sampleFormat === 'float16', deferPacked);
     const data = floats ?? (ArrayBuffer.isView(words) && !(words instanceof DataView) ? plainView(words) : words);
@@ -77,21 +81,21 @@ export function surface(input, options = {}) {
   dimensions(width, height, maxPixels);
   const admit = byteLength => {
     admitSurface?.({width, height, byteLength});
-    if (byteLength + retainedBytes > maxPendingBytes) throw fail('JXL_MEMORY', "Image exceeds maxPendingBytes; pass a smaller image or raise maxPendingBytes.");
+    if (byteLength + retainedBytes > maxPendingBytes) throw fail('JXL_MEMORY', "image: raise maxPendingBytes");
   };
   admit(width * height * 4);
   let context = canvas ? context2d(input) : null;
   const half = halfAllowed && context?.getContextAttributes?.().colorType === 'float16';
   if (half) admit(width * height * 8);
   if (requested !== undefined && requested !== 'srgb' && requested !== 'display-p3')
-    throw fail('JXL_OPTIONS', "Invalid readAs; use srgb or display-p3.");
+    throw fail('JXL_OPTIONS', "readAs: srgb or display-p3");
   let copied;
   const copy = (from, space) => {
     const canvas = typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(width, height) : document.createElement('canvas');
     copied = canvas;
     canvas.width = width; canvas.height = height;
     const drawn = canvas.getContext('2d', {willReadFrequently: true, colorSpace: space});
-    if (!drawn) throw fail('JXL_PLATFORM', 'No 2D canvas here; pass RGBA pixels.');
+    if (!drawn) throw fail('JXL_PLATFORM', 'no 2D canvas: pass RGBA pixels');
     drawn.drawImage(from, 0, 0);
     return {canvas, drawn};
   };
@@ -109,7 +113,7 @@ export function surface(input, options = {}) {
     proveRead(context);
     let pixels;
     try { pixels = context.getImageData(0, 0, width, height, half ? {colorSpace, pixelFormat: 'rgba-float16'} : {colorSpace}); }
-    catch (cause) { throw Object.assign(fail('JXL_INPUT', "Canvas read failed; draw it again or pass RGBA pixels."), {cause}); }
+    catch (cause) { throw Object.assign(fail('JXL_INPUT', "canvas read: redraw or RGBA pixels"), {cause}); }
     if (lostBlank(context, pixels.data)) throw fail('JXL_INPUT', LOST);
     const halfRead = half && pixels.data.BYTES_PER_ELEMENT === 2;
     const data = halfRead ? new Uint16Array(pixels.data.buffer, pixels.data.byteOffset, pixels.data.length) : pixels.data;
@@ -123,13 +127,13 @@ export function surface(input, options = {}) {
 export function foreignSpace(canvas) {
   for (const id of ['webgl2', 'webgl', 'webgpu']) {
     let c; try { c = canvas.getContext(id); } catch {}
-    if (c?.isContextLost?.()) throw fail('JXL_INPUT', "Canvas lost its context; draw it again.");
+    if (c?.isContextLost?.()) throw fail('JXL_INPUT', "canvas lost: redraw");
     if (c) return c.drawingBufferColorSpace ?? c.getConfiguration?.()?.colorSpace ?? 'srgb';
   }
-  throw fail('JXL_INPUT', "Canvas has no readable context; create a 2D, WebGL, or WebGPU context.");
+  throw fail('JXL_INPUT', "canvas context: 2D, WebGL or WebGPU");
 }
 
 export function context2d(canvas) {
   try { return canvas.getContext('2d', {willReadFrequently: true}); }
-  catch (cause) { throw Object.assign(fail('JXL_INPUT', "Canvas has no readable 2D context; pass its OffscreenCanvas if transferred, or pass RGBA pixels."), {cause}); }
+  catch (cause) { throw Object.assign(fail('JXL_INPUT', "canvas 2D: OffscreenCanvas or RGBA pixels"), {cause}); }
 }

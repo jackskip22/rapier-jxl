@@ -23,15 +23,15 @@ function varDCTGeometry(jpeg, plan = {}) {
   const log2 = v => v === 1 ? 0 : v === 2 ? 1 : -1;
   const minH = ycbcr ? 1 : Math.min(...comps.map(c => c.h)), minV = ycbcr ? 1 : Math.min(...comps.map(c => c.v));
   const rawH = comps.map(c => c.h % minH ? -1 : log2(c.h / minH)), rawV = comps.map(c => c.v % minV ? -1 : log2(c.v / minV));
-  if (rawH.includes(-1) || rawV.includes(-1)) throw jpegError('sampling factors other than one or two');
+  if (rawH.includes(-1) || rawV.includes(-1)) throw jpegError('sampling factors: 1 or 2');
   const maxhs = Math.max(...rawH), maxvs = Math.max(...rawV);
   const hshifts = rawH.map(value => maxhs - value), vshifts = rawV.map(value => maxvs - value);
-  if (!ycbcr && (maxhs || maxvs)) throw jpegError('an RGB JPEG with subsampling');
+  if (!ycbcr && (maxhs || maxvs)) throw jpegError('subsampled RGB');
   const xsizeBlocks = Math.ceil(width / (8 << maxhs)) << maxhs, ysizeBlocks = Math.ceil(height / (8 << maxvs)) << maxvs;
   const groupsX = Math.ceil(width / GROUP_DIM), groupsY = Math.ceil(height / GROUP_DIM), numGroups = groupsX * groupsY;
   const dcGroupsX = Math.ceil(xsizeBlocks / 256), dcGroupsY = Math.ceil(ysizeBlocks / 256), numDcGroups = dcGroupsX * dcGroupsY;
   const single = numGroups === 1 && numPasses === 1;
-  if (strategyData && (maxhs || maxvs || plan.orders && !authoredOrderPasses)) throw jpegError('variable transforms with subsampling or DCT8-only learned orders');
+  if (strategyData && (maxhs || maxvs || plan.orders && !authoredOrderPasses)) throw jpegError('subsampled variable transforms');
 
   return {grey, directRGB, numPasses, epf, quantScale, field, shift, ycbcr, map, comps, hasOrders, orders,
     rawH, rawV, maxhs, maxvs, hshifts, vshifts, xsizeBlocks, ysizeBlocks, groupsX, groupsY, numGroups,
@@ -83,7 +83,7 @@ export function writeVarDCTDCFields(writer, jpeg, layout, contextHeader) {
   writer.append(contextHeader);
   if (xyb) writer.write(1, 1);
   else {
-    if (!(Math.abs(jpeg.cflBase ?? 0) <= 4)) throw fault('JXL_INTERNAL', `A base color correlation of ${jpeg.cflBase} is outside -4 to 4.`);
+    if (!(Math.abs(jpeg.cflBase ?? 0) <= 4)) throw fault('JXL_INTERNAL', `vardct-header:cfl ${jpeg.cflBase}`);
     const base = float16Bits(jpeg.cflBase ?? 0); writer.write(1, 0); writer.write(2, 0); writer.write(16, base); writer.write(16, base); writer.write(8, 128); writer.write(8, 128); }
   writer.write(1, 0);
 }

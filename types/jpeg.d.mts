@@ -15,7 +15,7 @@ export interface RecompressOptions extends JPEGOptions {
   gainMap?: boolean; }
 export const recompress: ResumableFunction<(input: Uint8Array | Blob, options?: RecompressOptions) => Promise<EncodedResult>>;
 /** The JPEG a recompressed file was made from, restored exactly. A file with no reconstruction data refuses
- * JXL_RECONSTRUCTION. rapier-jxl/metadata header(bytes).reconstruction says, without a decode, whether the bytes hold a
+ * JXL_RECONSTRUCTION. jpegxl/metadata header(bytes).reconstruction says, without a decode, whether the bytes hold a
  * reconstruction box; restore alone says whether the JPEG comes back.
  * Unknown restore options refuse JXL_OPTIONS. */
 export const restore: ResumableFunction<(input: Uint8Array | Blob, options?: JobOptions) => Promise<EncodedResult>>;

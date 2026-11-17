@@ -9,13 +9,13 @@ const statedPicture = picture => {
   if (!picture || picture.icc !== undefined || picture.orientation !== undefined || picture.extraChannels !== undefined) return false;
   try { return !!statedSpace(admitSampleFormat(picture.data, picture)); } catch { return false; }
 };
-import {measuredLook} from '../photo-quality-table.mjs';
+import {measuredLook, usesRegionalCalibration} from '../photo-quality-table.mjs';
 import {MEASURED_EFFORT} from '../effort-level.mjs';
 import {profileTransform} from '../icc-transform.mjs';
 import {largePhoto} from '../photo-low-settings.mjs';
-import {needsStillWindow, ordinaryStillWindow} from './ordinary-still-window.mjs';
+import {needsStillWindow, ownedStillWindow, ordinaryStillWindow, ordinaryStillWindowNow, earlierStillWindow} from './ordinary-still-window.mjs';
 
-export function ordinaryStillDecision(intent, picture, {exactAllowed = true, facts: suppliedFacts, effort, filteredStill = false, wide = false, jpeg} = {}) {
+export function ordinaryStillDecision(intent, picture, {exactAllowed = true, facts: suppliedFacts, effort, filteredStill = false, wide = false, jpeg, shared: sharedLow = true} = {}) {
   if (!exactAllowed) return null;
   const read = suppliedFacts ?? lowIntentFacts(picture, {wide});
   if (!read.eligible) return null;
@@ -34,23 +34,38 @@ export function ordinaryStillDecision(intent, picture, {exactAllowed = true, fac
   }
   if (facts.smooth === true && effort >= 1) return {quality: 100, route: 'exact', facts};
   const shared = lowIntentDecision(intent, picture, {facts});
-  const predicted = nativeStillPrediction(intent, facts, shared.quality, {effort: wide && effort < MEASURED_EFFORT ? 1 : effort, jpeg});
+  const commonLow = sharedLow && usesRegionalCalibration(intent) && filteredStill && !wide && effort >= 1 && effort < MEASURED_EFFORT &&
+    facts.shorterSide >= 256 && !facts.palette && facts.preferXYB;
+  const predictionEffort = wide && effort < MEASURED_EFFORT ? 1 : commonLow ? 3 : effort;
+  const predicted = nativeStillPrediction(intent, facts, shared.quality, {effort: predictionEffort, jpeg});
   const reading = wide && predicted < 100 ? lowPhotoReading(intent, picture, predicted) : predicted;
   const quality = wide && predicted < 100 && intent <= 0.92 && smallReading(intent, facts.shorterSide) === Infinity
     ? Math.max(1, p3StillQuality(intent, reading, largePhoto(facts.width, facts.height))) : reading;
-  const lowFilteredQuality = filteredStill ? filteredStillQuality(intent, facts, quality, effort, jpeg) : undefined;
+  const lowFilteredQuality = filteredStill ? filteredStillQuality(intent, facts, quality, commonLow ? 3 : effort, jpeg) : undefined;
   return {quality, route: quality === 100 ? 'exact' : 'photo', facts,
     ...(lowFilteredQuality !== undefined && {lowFilteredQuality})};
 }
 
 const smoothScreenLift = q => 3 * Math.max(0, Math.min(1, (0.6 - q) / 0.1)) + 3 * Math.max(0, Math.min(1, (q - 0.85) / 0.07));
 
+export const lowerOf = (reading, earlier) => {
+  const lower = (a, b) => a < b - 0.011 ? a : b;
+  const {lowFilteredQuality: filtered, ...rest} = reading;
+  const low = earlier.lowFilteredQuality === undefined ? undefined : filtered === undefined ? earlier.lowFilteredQuality : lower(filtered, earlier.lowFilteredQuality);
+  return {...rest, quality: lower(reading.quality, earlier.quality), ...(low !== undefined && {lowFilteredQuality: low})};
+};
+
 export function ordinaryStillReader(options) {
   const filteredStill = options?.filteredStill !== false;
   let pending = null;
   const reader = photoIntentReader((intent, picture, capabilities) => {
     const decision = ordinaryStillDecision(intent, picture, {...capabilities, filteredStill});
-    if (filteredStill && needsStillWindow(decision, capabilities.effort, intent)) { pending = decision; return null; }
+    if (filteredStill && needsStillWindow(decision, capabilities.effort, intent)) {
+      const earlier = usesRegionalCalibration(intent) ? ordinaryStillDecision(intent, picture, {...capabilities, filteredStill, shared: false}) : null;
+      const now = earlier && !ownedStillWindow(earlier, capabilities.effort, intent) && ordinaryStillWindowNow(intent, picture, decision, capabilities.effort, options?.signal);
+      if (now) return lowerOf(now, earlier);
+      pending = {decision, earlier}; return null;
+    }
     return decision;
   }, options);
   const coding = (codec, decision) => {
@@ -63,7 +78,7 @@ export function ordinaryStillReader(options) {
   let closed = false;
   const number = codec => {
     if (options?.signal?.aborted) throw options.signal.reason;
-    if (closed) throw fault('JXL_INTERNAL', "Invalid image result; report the input and options.");
+    if (closed) throw fault('JXL_INTERNAL', 'ordinary-still-policy:result');
     return coding(codec, {quality: codec.qualityIntent * 100, route: 'photo', settled: true});
   };
   return {
@@ -80,13 +95,19 @@ export function ordinaryStillReader(options) {
       const native = pending; pending = null;
       const projected = await reader.project(ownedPicture);
       if (native) {
-        const decision = await ordinaryStillWindow(codec.qualityIntent, ownedPicture, native, codec.effort, options?.signal);
-        if (closed) throw fault('JXL_INTERNAL', 'The photo intent reader is closed.');
+        let decision = await ordinaryStillWindow(codec.qualityIntent, ownedPicture, native.decision, codec.effort, options?.signal);
+        if (native.earlier) decision = lowerOf(decision, ownedStillWindow(native.earlier, codec.effort, codec.qualityIntent)
+          ? await earlierStillWindow(codec.qualityIntent, ownedPicture, native.earlier, codec.effort, options?.signal) : native.earlier);
+        if (closed) throw fault('JXL_INTERNAL', 'ordinary-still-policy:closed');
         return coding(codec, decision);
       }
       if (codec.qualityIntent === undefined || ownedPicture?.icc && !profileTransform(ownedPicture.icc)) return coding(codec, projected);
       if (ownedPicture?.colorSpace === 'display-p3') {
-        const decision = ordinaryStillDecision(codec.qualityIntent, ownedPicture, {effort: codec.effort, filteredStill, wide: true, jpeg});
+        let decision = ordinaryStillDecision(codec.qualityIntent, ownedPicture, {effort: codec.effort, filteredStill, wide: true, jpeg});
+        if (decision && filteredStill && usesRegionalCalibration(codec.qualityIntent) && needsStillWindow(decision, codec.effort, codec.qualityIntent)) {
+          decision = lowerOf(await ordinaryStillWindow(codec.qualityIntent, ownedPicture, decision, codec.effort, options?.signal, true), decision);
+          if (closed) throw fault('JXL_INTERNAL', 'ordinary-still-policy:closed');
+        }
         if (decision) return coding(codec, decision);
       }
       if (statedPicture(ownedPicture)) {

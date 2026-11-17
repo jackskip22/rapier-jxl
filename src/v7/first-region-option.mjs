@@ -21,7 +21,7 @@ export function takeFirstRegion(given) {
   const region = requested && typeof requested === 'object' ? snapshotOptions(requested, 'firstRegion', KEYS) : requested;
   if (!region || typeof region !== 'object' || KEYS.some(key => !Number.isSafeInteger(region[key]) || region[key] < (key === 'x' || key === 'y' ? 0 : 1)) ||
       Object.keys(requested).some(key => !KEYS.includes(key)))
-    throw fail('JXL_OPTIONS', "Invalid firstRegion; pass {x, y, width, height} in whole pixels inside the picture.");
+    throw fail('JXL_OPTIONS', 'firstRegion: {x, y, width, height} in picture');
   const {firstRegion: _region, ...features} = options.features;
   return {region, options: {...options, features: Object.keys(features).length ? features : undefined}};
 }

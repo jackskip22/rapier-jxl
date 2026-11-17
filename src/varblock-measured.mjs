@@ -77,7 +77,7 @@ export function* closedLoopStrategySteps(base, width, height, options = {}) {
         });
         for (const [k, v] of priced.rates) rates.set(k, Float64Array.from(v));
         const reply = yield {measure: lazyStrategyImage(base, width, height, build, unpackLayout(priced.layout)), want: {p}};
-        if (reply.doubt?.cells) throw fault('JXL_INTERNAL', 'A resumed closed loop takes exact maps.');
+        if (reply.doubt?.cells) throw fault('JXL_INTERNAL', 'varblock-measured:maps');
         return {cells: Float64Array.from(reply.cells), rates: priced.rates};
       });
       for (const [k, v] of made.rates) rates.set(k, Float64Array.from(v));

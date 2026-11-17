@@ -14,11 +14,11 @@ export async function prepareAssets({example = here, packageDir = process.env.JX
   for (const name of ['upload', 'jpeg']) {
     const path = `dist/${name}.mjs`;
     if (manifest.exports?.[`./${name}`]?.import !== `./${path}`)
-      throw new Error(`JXL_PACKAGE: ${pkg} is not a built package with ./${name}.`);
+      throw Object.assign(new Error(`${pkg} is not a built package with ./${name}.`), {code: 'JXL_PACKAGE'});
     await copyFile(join(pkg, path), join(generated, 'jpegxl', `${name}.mjs`));
   }
   if (manifest.exports?.['./animation']?.browser !== './dist/animation.browser.mjs' || manifest.exports['./animation'].import !== './dist/animation.mjs')
-    throw new Error(`JXL_PACKAGE: ${pkg} is not a built package with ./animation.`);
+    throw Object.assign(new Error(`${pkg} is not a built package with ./animation.`), {code: 'JXL_PACKAGE'});
   for (const name of ['animation', 'animation.browser']) await copyFile(join(pkg, `dist/${name}.mjs`), join(generated, 'jpegxl', `${name}.mjs`));
   await copyFile(join(pkg, 'LICENSE'), join(generated, 'jpegxl/LICENSE'));
   const page = await readFile(join(source, 'encoder.html'), 'utf8');

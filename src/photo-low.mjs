@@ -48,7 +48,15 @@ const filteredBudgets = (effort, pixels) => (effort = plannedEffort(effort, pixe
 const filteredQuality = (quality, smooth) => quality >= 85 || quality < 80 && smooth === false ? quality - 0.5 : quality;
 const filteredPredictionFor = (quality, width, height) => Math.min(width, height) >= 256 ? quality : undefined;
 
-export function lowPhotoWindow(data, width, height, {quality, effort, smooth, lowFilteredQuality}) {
+export function lowPhotoWindow(data, width, height, {quality, effort, smooth, lowFilteredQuality, colorSpace = 'srgb'}) {
+  const p3 = colorSpace === 'display-p3', color = p3 ? {space: 'display-p3', transform: P3_TRANSFORM} : null;
+  if (p3) {
+    const picture = uploadPicture(data, width, height, quality);
+    const opts = {...v6For(width, height), ...GABORISH, tune: picture.tune, calibrationRow: picture.calibrationRow, ...color};
+    return {quality, filtered: false, image({pixels, width: w, height: h}) {
+      return complete(photoXYBBands(pixels, w, h, quality, opts));
+    }};
+  }
   lowFilteredQuality = filteredPredictionFor(lowFilteredQuality, width, height);
   const filter = useFilter(quality, width, height, true, lowFilteredQuality !== undefined);
   if (filter && !alone(quality, effort, filter, smooth, Math.min(width, height) < 256)) return null;

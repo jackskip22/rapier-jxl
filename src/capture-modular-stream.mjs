@@ -205,7 +205,7 @@ export function writeChannels(writer, models, trace, ansTools = null, own = fals
     larges += counted.larges.length; copies += counted.lengths.length;
     for (let c = 0; c < model.classes; c++) histograms.push({small: counted.counts.subarray(c * SMALL, (c + 1) * SMALL), large: NO_COUNTS, lengths: NO_COUNTS, literals: counted.literals[c], copies: counted.copies[c], constant: model.constant});
     if (copies > copiesBefore) {
-      if (copyMinimum && copyMinimum !== model.minimum) throw fault('JXL_INTERNAL', 'The planes of one stream copy with different minimum lengths.');
+      if (copyMinimum && copyMinimum !== model.minimum) throw fault('JXL_INTERNAL', 'capture-modular-stream:minimum');
       copyMinimum = model.minimum;
     }
   }
@@ -276,7 +276,7 @@ export function writeChannels(writer, models, trace, ansTools = null, own = fals
     distance.code.codes = canonicalCodes(distance.code.lengths);
   });
   const offset = distance ? 1 : 0, contextMap = new Uint8Array(ordered.length + offset);
-  if (live.length + offset > 256) throw fault('JXL_INTERNAL', 'A stream names more than 256 histograms.');
+  if (live.length + offset > 256) throw fault('JXL_INTERNAL', 'capture-modular-stream:histograms');
   for (const model of models) for (const node of model.leaves) contextMap[node.context] = index[model.base + node.local] + offset;
   const lz77 = distance ? {minSymbol: minSymbol, minLength: copyMinimum, lengthConfig: length.config} : null;
   const copy = distance ? {lengthConfig: length.config, distanceConfig: distance.config, code: distance.code, minSymbol, spatial: distance.spatial, sCodes} : null;

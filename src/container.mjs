@@ -11,9 +11,9 @@ const MAX_RECONSTRUCTION_BOXES = 65536;
 
 export function boxHeader(type, length, wide = false) {
   if (!Number.isSafeInteger(length) || length < 0 || !Number.isInteger(type) || type < 0 || type > 0xffffffff)
-    throw invalidBox('A box has a four-byte type and a safe byte length.');
+    throw invalidBox('box: 4-byte type and safe length');
   const size = length + (wide || length > 0xffffffff - 8 ? 16 : 8);
-  if (!Number.isSafeInteger(size)) throw invalidBox('The JPEG XL box length exceeds the safe integer range.');
+  if (!Number.isSafeInteger(size)) throw invalidBox('box length: too large');
   const out = new Uint8Array(wide || size > 0xffffffff ? 16 : 8), view = new DataView(out.buffer);
   view.setUint32(0, out.length === 16 ? 1 : size); view.setUint32(4, type);
   if (out.length === 16) { view.setUint32(8, Math.floor(size / 4294967296)); view.setUint32(12, size % 4294967296); }
@@ -21,7 +21,7 @@ export function boxHeader(type, length, wide = false) {
 }
 
 export function fileHeader(level = 5) {
-  if (level !== 5 && level !== 10) throw invalidBox('The JPEG XL level is 5 or 10.');
+  if (level !== 5 && level !== 10) throw invalidBox('level: 5 or 10');
   const out = new Uint8Array(level === 10 ? 41 : 32), view = new DataView(out.buffer);
   out.set(SIGNATURE); view.setUint32(12, 20); view.setUint32(16, FTYP); view.setUint32(20, BRAND); view.setUint32(28, BRAND);
   if (level === 10) { view.setUint32(32, 9); view.setUint32(36, LEVEL); out[40] = 10; }
@@ -39,73 +39,73 @@ export function boxWords(bytes) {
   return {u32(at) { ready(at, 4); return view.getUint32(at - start); }, u8(at) { ready(at, 1); return data[at - start]; }};
 }
 function admitBoxes(bytes, maxBoxes) {
-  if (!(bytes instanceof Uint8Array)) throw invalidBox('JPEG XL container is a Uint8Array.');
-  if (!Number.isSafeInteger(maxBoxes) || maxBoxes < 1) throw invalidBox('maxBoxes is a positive safe integer.');
+  if (!(bytes instanceof Uint8Array)) throw invalidBox('container: Uint8Array');
+  if (!Number.isSafeInteger(maxBoxes) || maxBoxes < 1) throw invalidBox('maxBoxes: positive integer');
 }
 export const boxCursor = () => ({at: SIGNATURE.length, first: true, next: 0, complete: false, stream: 0, minorVersion: 0, level: 5,
   lastIndex: -1, count: 0, levelSeen: false, indexBoxes: 0, gainBoxes: 0, prefixes: new Map()});
 export function nextBox(bytes, maxBoxes, state, words) {
   const at = state.at;
-  if (state.count >= maxBoxes) throw invalidBox('JPEG XL box count exceeds the limit.');
-  if (bytes.length - at < 8) throw invalidBox('Truncated JPEG XL box header.');
+  if (state.count >= maxBoxes) throw invalidBox('boxes: over maxBoxes');
+  if (bytes.length - at < 8) throw invalidBox('box header: incomplete');
   const short = words.u32(at); let length = short, body = at + 8;
   const type = words.u32(at + 4);
   if (length === 1) {
-    if (bytes.length - at < 16) throw invalidBox('Truncated extended JPEG XL box header.');
+    if (bytes.length - at < 16) throw invalidBox('extended box header: incomplete');
     length = words.u32(at + 8) * 4294967296 + words.u32(at + 12); body += 8;
   } else if (!length) length = bytes.length - at;
-  if (!Number.isSafeInteger(length) || length < body - at || length > bytes.length - at) throw invalidBox('Invalid JPEG XL box size.');
+  if (!Number.isSafeInteger(length) || length < body - at || length > bytes.length - at) throw invalidBox('box size');
   const end = at + length;
   if (state.first) {
     if (type !== FTYP || end - body < 12 || (end - body) % 4 || words.u32(body) !== BRAND)
-      throw invalidBox('The second JPEG XL box must declare the jxl file type.');
-    if (words.u32(body + 4) > 1) throw invalidBox('JPEG XL file-format minorVersion is 0 or 1.');
+      throw invalidBox('second box: jxl file type');
+    if (words.u32(body + 4) > 1) throw invalidBox('minorVersion: 0 or 1');
     let compatible = false, p = state.brandAt ?? body + 8;
     const stop = Math.min(end, p + 65536);
     for (; p < stop; p += 4) if (words.u32(p) === BRAND) { compatible = true; break; }
     if (!compatible && p < end) { state.brandAt = p; return null; }
-    if (!compatible) throw invalidBox('The file type lacks the jxl compatibility brand.');
+    if (!compatible) throw invalidBox('file type: jxl brand required');
     delete state.brandAt;
     state.minorVersion = words.u32(body + 4); state.first = false;
-  } else if (type === FTYP || type === 0x4a584c20) throw invalidBox('Repeated JPEG XL file header.');
+  } else if (type === FTYP || type === 0x4a584c20) throw invalidBox('file header: duplicate');
   if (type === LEVEL) {
     if (state.count !== 1 || state.levelSeen || end - body !== 1 || words.u8(body) !== 5 && words.u8(body) !== 10)
-      throw invalidBox('The level box (5 or 10) follows the file type.');
+      throw invalidBox('level box: 5 or 10 after file type');
     state.levelSeen = true; state.level = words.u8(body);
   }
   let decoded = type, sequence, last;
   if (type === BROB) {
-    if (end - body < 4) throw invalidBox('Truncated compressed JPEG XL metadata.');
+    if (end - body < 4) throw invalidBox('brob box: incomplete');
     decoded = words.u32(body);
     if (decoded === BROB || decoded === RECONSTRUCTION || decoded >>> 8 === 0x6a786c)
-      throw invalidBox('Brotli cannot wrap codestream, index, reconstruction or Brotli boxes.');
+      throw invalidBox('Brotli box: not codestream/index/reconstruction/Brotli');
   }
   if (decoded === 0x6a786c69 && ++state.indexBoxes > 1 || decoded === 0x6a68676d && ++state.gainBoxes > 1)
-    throw invalidBox('At most one frame index and one gain map.');
+    throw invalidBox('duplicate jxli or jhgm');
   if (type === CODESTREAM) {
-    if (state.complete || state.next) throw invalidBox('Repeated or mixed JPEG XL codestream boxes.');
+    if (state.complete || state.next) throw invalidBox('codestream boxes: duplicate or mixed');
     state.complete = true;
     for (let data = body; data < end && state.stream < 2;) {
-      if (words.u8(data++) !== (state.stream++ ? 10 : 255)) throw invalidBox('Invalid logical JPEG XL codestream signature.');
+      if (words.u8(data++) !== (state.stream++ ? 10 : 255)) throw invalidBox('logical codestream signature');
     }
   } else if (type === PARTIAL) {
-    if (state.complete && !state.next || end - body < 4) throw invalidBox('Invalid JPEG XL codestream fragment.');
+    if (state.complete && !state.next || end - body < 4) throw invalidBox('jxlp box');
     const field = words.u32(body), index = field & 0x7fffffff, data = body + 4; last = !!(field & 0x80000000);
     sequence = index;
     if (state.minorVersion === 0) {
-      if (index !== state.next++) throw invalidBox('Repeated or out-of-order version 0 codestream fragment.');
-      if (state.complete) throw invalidBox(last ? 'Repeated final codestream fragment.' : 'The JPEG XL container has no complete codestream.');
+      if (index !== state.next++) throw invalidBox('fragment v0: duplicate or unordered');
+      if (state.complete) throw invalidBox(last ? 'final fragment: duplicate' : 'codestream: incomplete');
       state.complete = last;
       for (let p = data; p < end && state.stream < 2;) {
-        if (words.u8(p++) !== (state.stream++ ? 10 : 255)) throw invalidBox('Invalid logical JPEG XL codestream signature.');
+        if (words.u8(p++) !== (state.stream++ ? 10 : 255)) throw invalidBox('logical codestream signature');
       }
     } else {
-      if (state.prefixes.has(index)) throw invalidBox('Repeated or out-of-order version 0 codestream fragment.');
+      if (state.prefixes.has(index)) throw invalidBox('fragment v0: duplicate or unordered');
       const n = Math.min(2, end - data), prefix = n << 16 | (n ? words.u8(data) << 8 : 0) | (n > 1 ? words.u8(data + 1) : 0);
       state.prefixes.set(index, prefix); state.next++;
-      if (last) { if (state.lastIndex !== -1) throw invalidBox('Repeated final codestream fragment.'); state.lastIndex = index; }
+      if (last) { if (state.lastIndex !== -1) throw invalidBox('final fragment: duplicate'); state.lastIndex = index; }
       state.highest = Math.max(state.highest ?? -1, index);
-      if (state.lastIndex !== -1 && state.highest > state.lastIndex) throw invalidBox('The JPEG XL container has no complete codestream.');
+      if (state.lastIndex !== -1 && state.highest > state.lastIndex) throw invalidBox('codestream: incomplete');
     }
   }
   state.at = end; state.count++;
@@ -113,16 +113,16 @@ export function nextBox(bytes, maxBoxes, state, words) {
 }
 export function endBoxes(state) {
   if (state.minorVersion === 1 && state.next) {
-    if (state.lastIndex !== state.next - 1) throw invalidBox('The JPEG XL container has no complete codestream.');
+    if (state.lastIndex !== state.next - 1) throw invalidBox('codestream: incomplete');
     for (let index = 0; index < state.next; index++) {
-      if (!state.prefixes.has(index)) throw invalidBox('Missing JPEG XL codestream fragment.');
+      if (!state.prefixes.has(index)) throw invalidBox('missing jxlp fragment');
       const prefix = state.prefixes.get(index);
       for (let i = 0; i < prefix >>> 16 && state.stream < 2; i++)
-        if ((prefix >>> (i ? 0 : 8) & 255) !== (state.stream++ ? 10 : 255)) throw invalidBox('Invalid logical JPEG XL codestream signature.');
+        if ((prefix >>> (i ? 0 : 8) & 255) !== (state.stream++ ? 10 : 255)) throw invalidBox('logical codestream signature');
     }
     state.complete = true;
   }
-  if (state.first || !state.complete || state.stream < 2) throw invalidBox('The JPEG XL container has no complete codestream.');
+  if (state.first || !state.complete || state.stream < 2) throw invalidBox('codestream: incomplete');
 }
 export function* boxes(bytes, maxBoxes = 65536) {
   admitBoxes(bytes, maxBoxes); const state = boxCursor(), words = boxWords(bytes);
@@ -131,10 +131,10 @@ export function* boxes(bytes, maxBoxes = 65536) {
 }
 function reconstructionBox(row, state) {
   if (row.entry.decoded === RECONSTRUCTION) {
-    if (state.reconstructionSeen) throw invalidBox('Repeated JPEG reconstruction data.');
+    if (state.reconstructionSeen) throw invalidBox('duplicate jbrd');
     state.reconstructionSeen = true;
   }
-  if (row.sequence >= MAX_RECONSTRUCTION_BOXES) throw invalidBox('JPEG XL box count exceeds the limit.');
+  if (row.sequence >= MAX_RECONSTRUCTION_BOXES) throw invalidBox('boxes: over maxBoxes');
 }
 export function* containerBoxesSteps(bytes, maxBoxes = 65536, reconstruction = false) {
   return yield* journalTool('containerBoxes')(bytes, maxBoxes, reconstruction,
@@ -148,7 +148,7 @@ function concatenate(parts) {
 
 export function withJPEGReconstruction(bytes, reconstruction) {
   if (!(bytes instanceof Uint8Array) || !(reconstruction instanceof Uint8Array))
-    throw invalidBox('Codestream and JPEG reconstruction data are Uint8Array.');
+    throw invalidBox('codestream and reconstruction: Uint8Array');
   const join = pieces => {
     const length = pieces.reduce((n, part) => n + part.length, 0); admitOutputSize(length);
     if (journaling()) return journalJoin(pieces);
@@ -156,11 +156,11 @@ export function withJPEGReconstruction(bytes, reconstruction) {
   };
   const prefix = bytes.subarray(0, Math.min(SIGNATURE.length, bytes.length));
   if (prefix[0] !== 255 || prefix[1] !== 10) {
-    if (!SIGNATURE.every((byte, i) => prefix[i] === byte)) throw invalidBox('Invalid JPEG XL signature.');
+    if (!SIGNATURE.every((byte, i) => prefix[i] === byte)) throw invalidBox('signature');
     let insertion = -1, boxCount = 0;
     for (const entry of boxes(bytes)) {
-      if (++boxCount >= MAX_RECONSTRUCTION_BOXES) throw invalidBox('JPEG XL box count exceeds the limit.');
-      if (entry.decoded === RECONSTRUCTION) throw invalidBox('JPEG reconstruction data is already present.');
+      if (++boxCount >= MAX_RECONSTRUCTION_BOXES) throw invalidBox('boxes: over maxBoxes');
+      if (entry.decoded === RECONSTRUCTION) throw invalidBox('jbrd: already present');
       if (insertion < 0 && (entry.type === CODESTREAM || entry.type === PARTIAL)) insertion = entry.at;
     }
     return join([sliceBytes(bytes, 0, insertion), boxHeader(RECONSTRUCTION, reconstruction.length), reconstruction, sliceBytes(bytes, insertion)]);
@@ -169,11 +169,11 @@ export function withJPEGReconstruction(bytes, reconstruction) {
 }
 
 function reconstructionStart(bytes) {
-  if (!(bytes instanceof Uint8Array) || bytes.length < 2) throw invalidBox('JPEG XL input is a Uint8Array.');
+  if (!(bytes instanceof Uint8Array) || bytes.length < 2) throw invalidBox('input: Uint8Array');
   admitOutputSize(bytes.length);
   const prefix = bytes.subarray(0, Math.min(SIGNATURE.length, bytes.length));
   if (prefix[0] === 255 && prefix[1] === 10) return null;
-  if (!SIGNATURE.every((byte, i) => prefix[i] === byte)) throw invalidBox('Invalid JPEG XL signature.');
+  if (!SIGNATURE.every((byte, i) => prefix[i] === byte)) throw invalidBox('signature');
   return {reconstruction: null, exif: null, xml: null, exifCompressed: false, xmlCompressed: false, parts: []};
 }
 function reconstructionPart(found, {entry: box, sequence}, take) {

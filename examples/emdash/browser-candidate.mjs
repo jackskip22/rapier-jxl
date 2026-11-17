@@ -10,7 +10,7 @@ export async function stageCandidate(store, result, {signal} = {}) {
   signal?.throwIfAborted();
   if (!store || typeof store.write !== 'function' || !(result?.bytes instanceof Uint8Array) ||
       result.bytes.byteLength < 2 || result.bytes.byteLength > MAX_BYTES || result.meetsTarget !== true || result.format !== 'jxl')
-    throw fail('JXL_INPUT', "Invalid upload candidate; pass a fitting JPEG XL result of at most 8 MiB and storage with a write function.");
+    throw fail('JXL_INPUT', "candidate: fitting JXL <=8MiB; storage write()");
   const {bytes, verification: ignoredReceipt, ...metadata} = result;
   const record = JSON.parse(JSON.stringify(metadata));
   const parts = [];

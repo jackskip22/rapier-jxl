@@ -30,7 +30,7 @@ function run(a, b, width, height, region, align, size, call, stop = false) {
   const {dx = 0, dy = 0, x0 = 0, x1 = width, y0 = 0, y1 = height} = region;
   if (![dx, dy, x0, x1, y0, y1].every(Number.isSafeInteger) || x0 < 0 || y0 < 0 || x1 > width || y1 > height ||
       x0 + dx < 0 || y0 + dy < 0 || x1 + dx > width || y1 + dy > height)
-    throw fault('JXL_INTERNAL', 'Animation comparison window is outside its source.');
+    throw fault('JXL_INTERNAL', 'animation-diff:window');
   if (x1 <= x0 || y1 <= y0) return {out: new Uint8Array(0), hits: 0};
   const stride = (x1 - x0) * pixelBytes, n = stride / 4, total = y1 - y0;
   const frameBytes = width * height * pixelBytes;

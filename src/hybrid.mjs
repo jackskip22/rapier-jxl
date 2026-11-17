@@ -18,17 +18,17 @@ const HYBRID_KEYS = new Set(['quality', 'colorSpace', 'effort', 'regions', 'orie
 function hybridAdmission(data, width, height, options) {
   const {quality, colorSpace} = admitOptions(options, 90), effort = admitEffort(options);
   admitPixels(data, width, height);
-  for (const key of Object.keys(options)) if (!HYBRID_KEYS.has(key)) throw fault('JXL_INPUT', 'Unknown hybrid option: ' + key + '.');
-  if (!admitSampleFormat(data, options).native8) throw fault('JXL_INPUT', 'Hybrid layers need 8-bit sRGB or Display P3.');
+  for (const key of Object.keys(options)) if (!HYBRID_KEYS.has(key)) throw fault('JXL_INPUT', 'unknown option: ' + key);
+  if (!admitSampleFormat(data, options).native8) throw fault('JXL_INPUT', 'hybrid: 8-bit sRGB or Display P3');
   const orientation = options.orientation ?? 1;
-  if (!Number.isInteger(orientation) || orientation < 1 || orientation > 8) throw fault('JXL_INPUT', 'orientation is an Exif value from one through eight.');
+  if (!Number.isInteger(orientation) || orientation < 1 || orientation > 8) throw fault('JXL_INPUT', 'orientation: integer 1-8');
   const automatic = options.regions === undefined || options.regions === 'auto';
-  if (!automatic && (!Array.isArray(options.regions) || options.regions.length > 255)) throw fault('JXL_INPUT', 'regions is auto or at most 255 source rectangles.');
+  if (!automatic && (!Array.isArray(options.regions) || options.regions.length > 255)) throw fault('JXL_INPUT', 'regions: auto or <= 255 rectangles');
   const regions = automatic ? null : options.regions.map(region => {
-    if (!region || typeof region !== 'object') throw fault('JXL_INPUT', 'A hybrid region is {x, y, width, height}.');
+    if (!region || typeof region !== 'object') throw fault('JXL_INPUT', 'region: {x, y, width, height}');
     const {x, y, width: w, height: h} = region;
     if (![x, y, w, h].every(Number.isSafeInteger) || x < 0 || y < 0 || w < 1 || h < 1 || x + w > width || y + h > height)
-      throw fault('JXL_INPUT', 'Each hybrid region is a nonempty rectangle inside the image.');
+      throw fault('JXL_INPUT', 'region: inside image');
     const left = x & ~7, top = y & ~7;
     return {x: left, y: top, width: Math.min(width, Math.ceil((x + w) / 8) * 8) - left,
       height: Math.min(height, Math.ceil((y + h) / 8) * 8) - top};
@@ -38,7 +38,7 @@ function hybridAdmission(data, width, height, options) {
 
 export function hybridRegions(data, width, height) {
   admitPixels(data, width, height);
-  if (!(data instanceof Uint8Array) && !(data instanceof Uint8ClampedArray)) throw fault('JXL_INPUT', 'Hybrid regions require eight-bit RGBA samples.');
+  if (!(data instanceof Uint8Array) && !(data instanceof Uint8ClampedArray)) throw fault('JXL_INPUT', 'data: RGBA8');
   const rectangles = [], tile = 32;
   let previous = new Map();
   for (let y = 0; y < height; y += tile) {

@@ -13,11 +13,11 @@ export const isRowBridge = input => isPlainRecord(input) && typeof MessagePort =
 
 export function admitRows(source, maxPixels) {
   for (const key of Object.keys(source)) if (!FIELDS.has(key))
-    throw fail('JXL_INPUT', `Unknown row source field ${key}; remove it.`);
+    throw fail('JXL_INPUT', `unknown row source field: ${key}`);
   dimensions(source.width, source.height, maxPixels);
   const description = described(source);
   if (description.orientation !== undefined || description.extraChannels !== undefined)
-    throw fail('JXL_UNSUPPORTED', 'A row source takes no orientation or extra channels: give the picture as pixels, a canvas or a Blob.');
+    throw fail('JXL_UNSUPPORTED', 'row source: no orientation or extraChannels');
   return {width: source.width, height: source.height, rows: source.rows, description};
 }
 
@@ -26,25 +26,25 @@ export async function readBand({width, rows, description}, y, count, signal) {
   try { band = await untilAborted(rows(y, count), signal); } catch (error) { throw callers(error); }
   check(signal);
   if (isPlainRecord(band)) {
-    band = snapshotOptions(band, 'The row band', ['data']);
-    if (Object.keys(band).some(key => key !== 'data')) throw fail('JXL_INPUT', "Invalid band description; pass {data} and set size and color on the row source.");
+    band = snapshotOptions(band, 'band', ['data']);
+    if (Object.keys(band).some(key => key !== 'data')) throw fail('JXL_INPUT', 'band: {data} only');
     const {data} = band;
     if (!ArrayBuffer.isView(data) || data instanceof DataView || data.length !== width * count * 4)
-      throw fail('JXL_INPUT', `Wrong band sample count; pass ${width} x ${count} x 4 samples.`);
+      throw fail('JXL_INPUT', `band samples: ${width} x ${count} x 4`);
     const pixels = surface({...description, data, width, height: count});
-    try { pixels.data = plainCopy(pixels.data); } catch { throw fail('JXL_INPUT', "Band's buffer is detached or too small; pass an attached buffer covering the view."); }
+    try { pixels.data = plainCopy(pixels.data); } catch { throw fail('JXL_INPUT', 'band buffer: detached or short'); }
     return pixels;
   }
   const space = description.colorSpace ?? 'srgb';
   if (space !== 'srgb' && space !== 'display-p3' || description.icc || description.sampleFormat || description.bitDepth || description.transferFunction)
-    throw fail('JXL_INPUT', 'The canvas, bitmap or video frame band has an unsupported color format; provide 8-bit sRGB or Display P3 pixels.');
+    throw fail('JXL_INPUT', 'band color: 8-bit sRGB or Display P3');
   const read = surface(band, {readAs: space, maxPixels: width * count});
-  if (read === band || read.width !== width || read.height !== count) throw fail('JXL_INPUT', `Invalid band shape; pass {data} or a canvas, bitmap, or video frame of ${width} x ${count}.`);
+  if (read === band || read.width !== width || read.height !== count) throw fail('JXL_INPUT', `band: {data} or ${width} x ${count} surface`);
   return {...description, data: read.data, width, height: count};
 }
 
 function rowFailure(error) {
-  let code = 'JXL_INPUT', message = "Row source failed; check its callback.";
+  let code = 'JXL_INPUT', message = 'row source failed';
   try { const value = error?.code; if (typeof value === 'string') code = value; } catch {}
   try {
     const value = error?.message ?? error;

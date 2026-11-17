@@ -95,7 +95,7 @@ export function* hdrLossySteps(data, width, height, quality, effort, samples, no
   const planes = [0, 1, 2].map(() => new Float64Array(W * H)), [X, Y, B] = planes;
   const curve = samples.exponentBits ? null : srgbLight(samples.bitDepth);
   const value = curve ? i => curve[data[i]] : samples.exponentBits === 5 ? i => half(data[i]) : i => data[i];
-  const measuring = effort >= 6, measured = (measuring || width * height <= SMALL_PIXELS) && width >= 8 && height >= 8 && !!note;
+  const measuring = effort >= 6, measured = (measuring || width * height <= SMALL_PIXELS) && !!note;
   const nits = measured ? hdrNits(data, samples, width, height) : null;
   const target = samples.intensityTarget ?? 255, lift = target === 255 ? 1 : half(float16Bits(target)) / 255;
   let clear = false;

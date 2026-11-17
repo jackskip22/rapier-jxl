@@ -18,37 +18,37 @@ const contentType = key => /\.(?:jpe?g|jpe|jfif)$/i.test(key) ? 'image/jpeg' : /
 export function localStore(inner, directory, maxBytes = 256 * 1024 * 1024) {
   const root = resolve(directory), privateDirectory = join(root, PRIVATE);
   function filePath(key) {
-    if (typeof key !== 'string' || !key || key.includes('\0')) throw invalid("Key escapes storage; use a key within its directory.");
+    if (typeof key !== 'string' || !key || key.includes('\0')) throw invalid("key: within storage directory");
     const path = resolve(root, key.replace(/^\//, ''));
-    if (!path.startsWith(root + sep)) throw invalid("Key escapes storage; use a key within its directory.");
+    if (!path.startsWith(root + sep)) throw invalid("key: within storage directory");
     return path;
   }
   async function confinedPath(key) {
     const target = filePath(key);
-    try { if ((await lstat(target)).isSymbolicLink()) throw invalid("Invalid media path; symbolic links are not permitted in storage."); }
+    try { if ((await lstat(target)).isSymbolicLink()) throw invalid("media path: no symlinks"); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     let baseReal;
     try { baseReal = await realpath(root); } catch (error) { if (error.code === 'ENOENT') baseReal = root; else throw error; }
     for (let current = dirname(target); current.startsWith(root + sep); current = dirname(current)) {
       try {
         const info = await lstat(current);
-        if (info.isSymbolicLink()) throw invalid("Invalid media path; symbolic links are not permitted in storage.");
+        if (info.isSymbolicLink()) throw invalid("media path: no symlinks");
         const actual = await realpath(current);
         if (actual !== baseReal && !actual.startsWith(baseReal + sep))
-          throw invalid("Key escapes storage; use a key within its directory.");
+          throw invalid("key: within storage directory");
         break;
       } catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
     try {
       const leaf = await lstat(target);
-      if (leaf.isSymbolicLink()) throw invalid("Invalid media file; use a regular file.");
+      if (leaf.isSymbolicLink()) throw invalid("media file: regular file");
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
     return target;
   }
   const revisionPath = key => join(privateDirectory, createHash('sha256').update(key).digest('hex') + '.revision.json');
   async function ensurePrivate(create = false) {
     try {
-      if (!(await lstat(privateDirectory)).isDirectory()) throw invalid("Invalid revision directory; use a regular directory.");
+      if (!(await lstat(privateDirectory)).isDirectory()) throw invalid("revision directory: regular directory");
       return true;
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
@@ -61,7 +61,7 @@ export function localStore(inner, directory, maxBytes = 256 * 1024 * 1024) {
     const target = await confinedPath(key);
     try {
       const value = await lstat(target, {bigint: true});
-      if (!value.isFile()) throw invalid("Invalid media file; use a regular file.");
+      if (!value.isFile()) throw invalid("media file: regular file");
       return [value.dev, value.ino, value.size, value.mtimeNs, value.ctimeNs, value.birthtimeNs].map(String);
     } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
   }
@@ -80,20 +80,20 @@ export function localStore(inner, directory, maxBytes = 256 * 1024 * 1024) {
     const path = revisionPath(key);
     let info;
     try { info = await lstat(path); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
-    if (!info.isFile() || info.size > MAX_REVISION_BYTES) throw invalid("Invalid revision; restore its saved record.");
+    if (!info.isFile() || info.size > MAX_REVISION_BYTES) throw invalid("revision: restore saved record");
     const bytes = await readFile(path);
     let value;
     try { value = JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(bytes)); }
-    catch { throw invalid("Invalid revision; restore its saved record."); }
+    catch { throw invalid("revision: restore saved record"); }
     if (bytes.length > MAX_REVISION_BYTES || value?.owner !== OWNER || value.kind !== 'revision' ||
         value.source !== key || !UUID.test(value.version ?? '') ||
         !(value.stat === null || Array.isArray(value.stat) && value.stat.length === 6 &&
           value.stat.every(item => typeof item === 'string' && /^-?[0-9]+$/.test(item))))
-      throw invalid("Invalid revision; restore its saved record.");
+      throw invalid("revision: restore saved record");
     return {value, bytes};
   }
   async function writeRevision(key, value, bytes = Buffer.from(JSON.stringify(value))) {
-    if (bytes.length > MAX_REVISION_BYTES) throw invalid("Revision too large; reduce its contents.");
+    if (bytes.length > MAX_REVISION_BYTES) throw invalid("revision: too large");
     await ensurePrivate(true);
     const path = revisionPath(key), temporary = path + '.' + randomUUID() + '.tmp';
     try { await writeFile(temporary, bytes, {flag: 'wx', mode: 0o600}); await rename(temporary, path); }
@@ -175,7 +175,7 @@ export function localStore(inner, directory, maxBytes = 256 * 1024 * 1024) {
         options?.signal?.throwIfAborted();
         if (!publicSource(key)) return key.startsWith(PRIVATE) ? {...result, ...(key.endsWith('.json') && {etag: await privateEtag(key)}), version: await privateEtag(key)} : result;
         const saved = await currentRevision(key, await identity(key));
-        if (!saved) throw invalid("Media file disappeared; restore it before retrying.");
+        if (!saved) throw invalid("media file: restore missing");
         const version = saved.value.version;
         const metadata = saved.value.originalId ? {originalId: saved.value.originalId, representation: saved.value.representation,
           contentType: saved.value.contentType ?? result.contentType} : {};
@@ -202,7 +202,7 @@ export function localStore(inner, directory, maxBytes = 256 * 1024 * 1024) {
   });
   const compareAndSet = (key, body, {etag, contentType, signal} = {}) => locked(key, async () => {
     if (!key.startsWith(PRIVATE) || !key.endsWith('.json') || etag !== null && (typeof etag !== 'string' || !etag))
-      throw invalid("Missing revision; pass the stored revision.");
+      throw invalid("revision: stored revision");
     signal?.throwIfAborted();
     if (await privateEtag(key) !== etag) return false;
     const result = await privateWrite({key, body, contentType, signal}, etag === null);
@@ -224,7 +224,7 @@ export function localStore(inner, directory, maxBytes = 256 * 1024 * 1024) {
     if (!publicSource(key) || !/\.(?:jpe?g|jpe|jfif)$/i.test(key) ||
         !UUID.test(options.expectedVersion ?? '') || options.etag !== options.expectedVersion ||
         !/^[a-f0-9]{32}$/.test(options.originalId ?? '') || !['jxl', 'jpeg'].includes(options.representation))
-      throw invalid("Missing replacement identities; pass source and archive identities.");
+      throw invalid("replacement: source and archive identities");
     options.signal?.throwIfAborted();
     const before = await identity(key), prior = await currentRevision(key, before);
     if (!before || prior?.value.version !== options.expectedVersion) return null;
@@ -241,7 +241,7 @@ export function localStore(inner, directory, maxBytes = 256 * 1024 * 1024) {
       options.signal?.throwIfAborted();
       if (options.lastModified) {
         const time = new Date(options.lastModified);
-        if (!Number.isFinite(time.getTime())) throw invalid("Invalid modification time; correct the file metadata.");
+        if (!Number.isFinite(time.getTime())) throw invalid("mtime: valid file timestamp");
         await utimes(filePath(temporary), time, time);
       }
       await rename(filePath(temporary), filePath(key));

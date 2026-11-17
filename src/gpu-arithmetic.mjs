@@ -9,12 +9,12 @@ export function gcPlaneBound(planes) {
   for (const plane of planes) for (const value of plane) {
     const hi = Math.fround(value), lo = Math.fround(value - hi);
     if (!Number.isFinite(value) || !Number.isFinite(hi) || !Number.isFinite(lo))
-      throw fault('JXL_INTERNAL', 'A photo plane cannot be represented by finite double-single samples.');
+      throw fault('JXL_INTERNAL', 'gpu-arithmetic:ds');
     worst = Math.max(worst, Math.abs(value - (hi + lo)));
   }
   const bound = new Float32Array([worst]);
   if (bound[0] < worst) new Uint32Array(bound.buffer)[0]++;
-  if (!Number.isFinite(bound[0])) throw fault('JXL_INTERNAL', 'A photo plane split error has no finite f32 bound.');
+  if (!Number.isFinite(bound[0])) throw fault('JXL_INTERNAL', 'gpu-arithmetic:bound');
   return bound[0];
 }
 

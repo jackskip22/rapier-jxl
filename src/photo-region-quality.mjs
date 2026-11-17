@@ -33,7 +33,7 @@ const cutReplicated = (src, sw, x0, y0, w, h) => {
 export function prepareCropScores(data, width, r, crops = [r], dx = 0, dy = 0, exactRects = [], colorSpace = 'srgb', frameQuality,
   {cacheBytes = 16 << 20} = {}) {
   if (!Number.isSafeInteger(cacheBytes) || cacheBytes < 0 || cacheBytes > (16 << 20))
-    throw fault('JXL_INTERNAL', 'Photo crop reference cacheBytes must be a nonnegative integer at most 16 MiB.');
+    throw fault('JXL_INTERNAL', 'photo-region-quality:cacheBytes');
   const height = data.length / 4 / width, rx1 = r.x + r.width, ry1 = r.y + r.height;
   const parts = crops.map(c => { const x = Math.max(c.x, r.x), y = Math.max(c.y, r.y); return {x, y, width: Math.min(c.x + c.width, rx1) - x, height: Math.min(c.y + c.height, ry1) - y}; })
     .filter(c => c.width >= SMALLEST && c.height >= SMALLEST);
@@ -53,7 +53,7 @@ export function prepareCropScores(data, width, r, crops = [r], dx = 0, dy = 0, e
   const x1 = Math.min(width, ((Math.max(...parts.map(c => c.x + c.width)) + dx + 63) & ~63) - dx), y1 = Math.min(height, ((Math.max(...parts.map(c => c.y + c.height)) + dy + 63) & ~63) - dy);
   const w = x1 - x0, h = y1 - y0;
   const scores = quality => {
-    if (destroyed) throw fault('JXL_INTERNAL', 'Photo crop scorer is destroyed.');
+    if (destroyed) throw fault('JXL_INTERNAL', 'photo-region-quality:destroyed');
     if (!parts.length) return [];
     const area = {x: r.x - x0, y: r.y - y0, width: r.width, height: r.height, quality};
     const gamma = reconstructDCT8RGB(complete(rgbCoefficientSteps(cutReplicated(pixels, width, x0, y0, w, h),

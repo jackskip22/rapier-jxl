@@ -20,7 +20,7 @@ const STRAIGHT_MARGIN = 1.25;
 const VERIFY_STEPS = Symbol.for('rapier-jxl.verify.steps');
 const text = new TextEncoder();
 const verifierOf = verify => typeof verify === 'function' && typeof verify[VERIFY_STEPS] === 'function' ? verify : null;
-const NEEDS_VERIFY = "Missing verifier; pass verify from rapier-jxl/verify with each call.";
+const NEEDS_VERIFY = "verify: pass verify from jpegxl/verify";
 async function verifyResult(steps, result, plan, data, source, journal, host) {
   const verifier = verifierOf(host?.verify);
   if (!verifier) throw fail('JXL_OPTIONS', NEEDS_VERIFY);
@@ -33,10 +33,10 @@ async function verifyResult(steps, result, plan, data, source, journal, host) {
     const named = (Array.isArray(records) ? records[0] : records)?.source;
     if (named?.digest && named.digest !== sourceIdentity.digest) {
       const restore = (host && DECODER_SNAPSHOT in host ? host[DECODER_SNAPSHOT] : configuredDecoder())?.restore;
-      if (!restore) throw fail('JXL_PLATFORM', "Missing JPEG reconstruction reader; call configureDecoder(decode, restore).");
+      if (!restore) throw fail('JXL_PLATFORM', "restore: configureDecoder(decode, restore)");
       const jpeg = await journaled(journal, 'verify-decode-original', async () => (await restore(data)).bytes);
       const digest = sha256Finish(sha256Update(sha256Start(), jpeg));
-      if ('sha256:' + digest !== named.digest) throw fail('JXL_INPUT', "Stored JPEG XL does not restore its named JPEG; use the matching original and result.");
+      if ('sha256:' + digest !== named.digest) throw fail('JXL_INPUT', "stored JPEG: original/result mismatch");
       original = jpeg; sourceIdentity = {kind: 'bytes', digest: named.digest};
       checked = {kind: 'file', generation: source.generation, sha256: digest, byteLength: jpeg.length};
     } else checked = {...source, kind: 'file'};
@@ -56,9 +56,9 @@ async function verifyResult(steps, result, plan, data, source, journal, host) {
 const made = new WeakMap(), drivers = {verb: verbSteps, verify: (descriptor, operation) => storedVerificationSteps(operation[VERIFY_STEPS], operation)};
 const stepsOfVerb = (descriptor, operation) => made.get(descriptor) ?? made.set(descriptor, drivers[descriptor.kind](descriptor, operation)).get(descriptor);
 function stepsOf(operation) {
-  if (typeof operation !== 'function') throw fail('JXL_OPTIONS', "Invalid operation; pass an imported function such as capture from rapier-jxl/capture.");
+  if (typeof operation !== 'function') throw fail('JXL_OPTIONS', "operation: imported function");
   const given = typeof operation === 'function' ? operation[STEPS] : undefined, steps = Object.hasOwn(drivers, given?.kind ?? '') ? stepsOfVerb(given, operation) : given;
-  if (!steps) throw fail('JXL_UNSUPPORTED', 'This operation has no resumable steps; pass the verb itself, such as capture from rapier-jxl/capture.');
+  if (!steps) throw fail('JXL_UNSUPPORTED', 'operation: resumable verb');
   let stepper = steppers.get(steps);
   if (!stepper) {
     const build = sha256Finish(sha256Update(sha256Start(), text.encode(BUILD_VERSION + '\0' + steps.id)));
@@ -73,7 +73,7 @@ function storeOf(store) {
   if (typeof methods.readSource !== 'function' || typeof methods.read !== 'function' ||
       typeof methods.write !== 'function' && typeof methods.writeMany !== 'function' ||
       ['readMany', 'write', 'writeMany'].some(key => methods[key] !== undefined && typeof methods[key] !== 'function'))
-    throw fail('JXL_OPTIONS', "Store cannot read and keep parts; provide readSource, read and write or writeMany functions.");
+    throw fail('JXL_OPTIONS', "store: readSource/read and write/writeMany functions");
   const call = async (name, ...args) => {
     try { return await Reflect.apply(methods[name], store, args); } catch (error) { throw callers(error); }
   };
@@ -84,7 +84,7 @@ function storeOf(store) {
     const found = !away.length ? [] : methods.readMany ? await call('readMany', away.map(ref => ({hash: ref.hash, length: ref.length})))
       : await Promise.all(away.map(ref => call('read', {hash: ref.hash, length: ref.length})));
     if (!Array.isArray(found) || found.length !== away.length)
-      throw fail('JXL_INPUT', "Store readMany answered the wrong number of parts; return one entry for each reference asked.");
+      throw fail('JXL_INPUT', "readMany: one part per reference");
     let i = 0;
     return refs.map(ref => unsaved.get(ref.hash) ?? found[i++]);
   };
@@ -103,25 +103,28 @@ const host = (checkpoint, input, io, extra) => ({source: input, expectedRevision
 
 function takes(params, name, keys) {
   params = snapshotOptions(params, `${name} options`);
-  if (keys) for (const key of Object.keys(params)) if (!keys.includes(key)) throw fail('JXL_OPTIONS', `Unknown ${name} option ${key}; remove it.`);
+  if (keys) for (const key of Object.keys(params)) if (!keys.includes(key)) throw fail('JXL_OPTIONS', `unknown option: ${name}.${key}`);
   return params;
 }
 export async function start(params) {
   const decoder = configuredDecoder();
   try {
     const {operation, input, options = {}, store, verify, memoryBytes} = takes(params, 'start', ['operation', 'input', 'options', 'store', 'verify', 'memoryBytes']);
-    if (verify !== undefined && !verifierOf(verify)) throw fail('JXL_OPTIONS', "Invalid verifier; import verify from rapier-jxl/verify.");
+    if (verify !== undefined && !verifierOf(verify)) throw fail('JXL_OPTIONS', "verify: pass verify from jpegxl/verify");
     const {steps, stepper} = stepsOf(operation), io = storeOf(store);
-    if (steps.id === 'verify' && verify) throw fail('JXL_OPTIONS','A verify operation already returns its receipt; remove the extra verify option.');
+    if (steps.id === 'verify' && verify) throw fail('JXL_OPTIONS','verify: omit for verify operation');
     if (verify && !boundedVerification({[DECODER_SNAPSHOT]: decoder})) throw fail('JXL_PLATFORM', BOUNDED_SETUP);
     const admit = memoryAdmission(steps, io, memoryBytes);
     const {checkpoint, parts} = await stepper.start({source: input, options, verify: !!verify, admit});
-    if (checkpoint.source.kind === 'decode' && !decoder?.decode) throw fail('JXL_PLATFORM', "Source has no decoder; call configureDecoder(decode) with decode from rapier-jxl/decode.");
+    if (checkpoint.source.kind === 'decode' && !decoder?.decode) throw fail('JXL_PLATFORM', "decoder: configureDecoder(decode) with decode from jpegxl/decode");
     const fidelity = options.fidelity;
-    if (checkpoint.source.kind === 'file' && /^(encode|fit|variants):/.test(steps.id) && fidelity !== 'exact' && fidelity?.quality !== 100 && (typeof createImageBitmap !== 'function' || typeof OffscreenCanvas !== 'function')) {
+    const canReadJpegPixels = (typeof createImageBitmap === 'function' && typeof OffscreenCanvas === 'function') ||
+      typeof decoder?.recompress?.[Symbol.for('rapier-jxl.jpeg.pixels')] === 'function';
+    if (checkpoint.source.kind === 'file' && /^(encode|fit|variants):/.test(steps.id) &&
+        (fidelity !== 'exact' && fidelity?.quality !== 100 || options.jpeg === 'pixels') && !canReadJpegPixels) {
       const head = await io.readSource(0, Math.min(2, checkpoint.source.byteLength));
       if (head?.[0] === 0xff && head[1] === 0xd8)
-        throw fail('JXL_PLATFORM', "Host cannot read this JPEG; use recompress() from jpegxl/jpeg or pass RGBA8 pixels.");
+        throw fail('JXL_PLATFORM', "JPEG: use jpegxl/jpeg or RGBA8");
     }
     hold(io, parts); await keep(io);
     return checkpoint;
@@ -134,10 +137,10 @@ export async function advance(checkpoint, params) {
     const {operation, input, store, verify, budget = {ms: 30}, signal, memoryBytes} = takes(params, 'advance', ['operation', 'input', 'options', 'store', 'verify', 'budget', 'signal', 'memoryBytes']);
     checkpoint = decodeData(encodeData(checkpoint));
     admitSignal(signal);
-    if (budget === null || typeof budget !== 'object' || Array.isArray(budget)) throw fail('JXL_OPTIONS', "Invalid budget; pass {ms} with a value from 1 to 60000.");
+    if (budget === null || typeof budget !== 'object' || Array.isArray(budget)) throw fail('JXL_OPTIONS', "budget.ms: 1-60000");
     const {ms, reads} = takes(budget, 'budget', ['ms', 'reads']);
-    if (!Number.isFinite(ms) || ms <= 0 || ms > 60000) throw fail('JXL_OPTIONS', "Invalid budget; pass {ms} with a value from 1 to 60000.");
-    if (reads !== undefined && (!Number.isSafeInteger(reads) || reads < 1 || reads > 1e6)) throw fail('JXL_OPTIONS', "Invalid budget.reads; pass a positive whole number.");
+    if (!Number.isFinite(ms) || ms <= 0 || ms > 60000) throw fail('JXL_OPTIONS', "budget.ms: 1-60000");
+    if (reads !== undefined && (!Number.isSafeInteger(reads) || reads < 1 || reads > 1e6)) throw fail('JXL_OPTIONS', "budget.reads: positive integer");
     const {steps, stepper} = stepsOf(operation), io = storeOf(store), started = performance.now(), admit = memoryAdmission(steps, io, memoryBytes);
     check(signal);
     if (checkpoint?.plan?.verify && !verifierOf(verify)) throw fail('JXL_OPTIONS', NEEDS_VERIFY);
@@ -167,10 +170,10 @@ export async function finish(checkpoint, params) {
     const {steps, stepper} = stepsOf(operation), io = storeOf(store), h = host(checkpoint, input, io, {signal, admit: memoryAdmission(steps, io, memoryBytes), ...(memoryBytes !== undefined && {memoryBytes})});
     const {byteLength, result} = await stepper.completion(checkpoint, h);
     if (memoryBytes !== undefined && byteLength + MEMORY_HOST_BYTES > memoryBytes)
-      throw fail('JXL_MEMORY', `Finished file needs ${byteLength} bytes, above memoryBytes ${memoryBytes}; raise that allowance or keep its output parts in storage.`);
+      throw fail('JXL_MEMORY', `memoryBytes ${memoryBytes}: need ${byteLength} or store parts`);
     const bytes = await stepper.output(checkpoint, h, length => {
-      if (length !== byteLength) throw fail('JXL_INPUT', "Saved output parts are incomplete; read every saved part before finishing the job.");
-      try { return new Uint8Array(length); } catch { throw fail('JXL_MEMORY', "This runtime cannot allocate the finished file; keep its output parts in persistent storage."); }
+      if (length !== byteLength) throw fail('JXL_INPUT', "saved output: incomplete parts");
+      try { return new Uint8Array(length); } catch { throw fail('JXL_MEMORY', "allocation: store output parts"); }
     });
     check(signal);
     const made = await steps.record(bytes, checkpoint.plan, checkpoint.source, result?.facts ?? null);
@@ -180,7 +183,7 @@ export async function finish(checkpoint, params) {
       const verification = Array.isArray(made) ? result?.verification?.[index] : result?.verification;
       if (!verification?.verified || verification.source?.kind !== value.source?.kind || verification.source?.digest !== value.source?.digest ||
           verification.width !== value.width || verification.height !== value.height || verification.format !== value.format)
-        throw fail('JXL_INPUT', "Verification does not describe its result; verify the matching original and result again.");
+        throw fail('JXL_INPUT', "verification: missing result");
       return {...value, verification};
     };
     return Array.isArray(made) ? made.map(named) : named(made);
@@ -191,10 +194,10 @@ export function workerAdmission(params) {
   try {
     const {operation, options = {}, width, height, kind} = takes(params, 'workerAdmission', ['operation', 'options', 'width', 'height', 'kind']);
     const {steps} = stepsOf(operation);
-    if (kind !== undefined && kind !== 'pixels' && kind !== 'file' && kind !== 'decode') throw fail('JXL_OPTIONS', "Invalid source kind; use 'pixels', 'file', or 'decode'.");
+    if (kind !== undefined && kind !== 'pixels' && kind !== 'file' && kind !== 'decode') throw fail('JXL_OPTIONS', "source kind: pixels|file|decode");
     if (steps.id !== 'verify') steps.normalize?.(options, {kind: kind ?? 'pixels', width: 1, height: 1, byteLength: 4});
     if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1)
-      throw fail('JXL_OPTIONS', "Invalid worker dimensions; pass width and height in whole pixels.");
+      throw fail('JXL_OPTIONS', "dimensions: positive integer pixels");
     return admission(steps, options, width, height, false, kind);
   } catch (error) { throw declared(error); }
 }
@@ -216,13 +219,13 @@ function admission(steps, options, width, height, straight = false, kind, memory
 const MEMORY_HOST_BYTES = 32_000_000, MEMORY_HEAD_BYTES = 65536;
 function memoryAdmission(steps, io, memoryBytes) {
   if (memoryBytes === undefined) return undefined;
-  if (!Number.isSafeInteger(memoryBytes) || memoryBytes < 1) throw fail('JXL_OPTIONS', "Invalid memoryBytes; use a positive safe integer byte count.");
+  if (!Number.isSafeInteger(memoryBytes) || memoryBytes < 1) throw fail('JXL_OPTIONS', "memoryBytes: positive safe integer");
   return async (plan, source) => {
     let size = source.kind === 'file' || source.kind === 'decode' ? null : {width: source.width, height: source.height};
     let format;
     if (!size) {
       const length = Math.min(source.byteLength, MEMORY_HEAD_BYTES), head = viewBytes(await io.readSource(0, length));
-      if (head.length !== length) throw fail('JXL_INPUT', "Source header is missing or truncated; pass a complete original file.");
+      if (head.length !== length) throw fail('JXL_INPUT', "source header: incomplete");
       size = headSize(head);
       format = size?.jpeg420 ? 'jpeg420'
         : head.length >= 29 && head[0] === 0x89 && head[1] === 0x50 && head[24] === 8 ? 'png8' : undefined;
@@ -231,8 +234,8 @@ function memoryAdmission(steps, io, memoryBytes) {
     const measuredSource = !plan.verify && source.kind === 'file' &&
       (steps.id === 'jpeg:recompress' ? format === 'jpeg420' : /^(encode|fit):rapier-jxl(?:\/upload)?$/.test(steps.id) && format === 'png8');
     const row = measuredSource && size && admission(steps, plan.options ?? plan, size.width, size.height, false, source.kind, memoryBytes);
-    if (!row?.admitted) throw fail('JXL_MEMORY', `${shape} cannot be admitted within memoryBytes ${memoryBytes}: ` +
-      (row?.measured ? `the admission row at ${row.measured.pixels} pixels needs ${Math.ceil(row.measured.estimate * 1.1 + MEMORY_HOST_BYTES)} bytes including host allowance.` : 'no measured working-set bound covers this operation, source representation and verification choice.'));
+    if (!row?.admitted) throw fail('JXL_MEMORY', `${shape}: memoryBytes ${memoryBytes}; ` +
+      (row?.measured ? `${row.measured.pixels} pixels: ${Math.ceil(row.measured.estimate * 1.1 + MEMORY_HOST_BYTES)} bytes needed` : 'no measured bound'));
   };
 }
 function headSize(b) {

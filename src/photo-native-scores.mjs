@@ -16,16 +16,16 @@ export function nativeOutputScores(outputs, source, width, height, {reference = 
   for (const output of outputs) {
     let rgba = ArrayBuffer.isView(output) ? output : output?.rgba;
     const kind = ArrayBuffer.isView(output) ? null : output?.kind ?? null;
-    if (kind !== null && kind !== 'package' && kind !== 'native') throw fault('JXL_INPUT', 'Unknown photographic output kind.');
+    if (kind !== null && kind !== 'package' && kind !== 'native') throw fault('JXL_INPUT', 'kind: package or native');
     try { rgba = s2RGBA(rgba, width * height, true); }
-    catch { throw fault('JXL_INPUT', 'A photographic score needs one complete RGB8 output.'); }
-    if (kind !== null && scores[kind] !== null) throw fault('JXL_INPUT', 'A photographic output kind was supplied twice.');
+    catch { throw fault('JXL_INPUT', 'output: complete RGB8'); }
+    if (kind !== null && scores[kind] !== null) throw fault('JXL_INPUT', 'duplicate output kind');
     const score = ssimulacra2(prepared, {rgba}, width, height).score;
     if (kind !== null) scores[kind] = score;
     scores.minimum = Math.min(scores.minimum, score); count++;
   }
   } finally { if (!reference) prepared.release(); }
-  if (!count) throw fault('JXL_INPUT', 'A native photo measure needs an output representation.');
+  if (!count) throw fault('JXL_INPUT', 'outputs: empty');
   return scores;
 }
 
@@ -44,11 +44,11 @@ function* reconstructedOutputs(picture, width, height, origin) {
 export function photoNativeScores(picture, source, width, height, {origin = {x: 0, y: 0}, reference = null, cacheBytes = 0} = {}) {
   dimensions(width, height);
   if (!picture || ['linear', 'gamma', 'outputs'].filter(key => picture[key] !== undefined).length !== 1)
-    throw fault('JXL_INPUT', 'A photographic score needs one explicit reconstruction domain or output provider.');
+    throw fault('JXL_INPUT', 'picture: needs domain or outputs');
   const outputs = picture.outputs === undefined ? reconstructedOutputs(picture, width, height, origin)
     : typeof picture.outputs === 'function' ? picture.outputs() : picture.outputs;
   const scores = nativeOutputScores(outputs, source, width, height, {reference, cacheBytes});
   if (!Number.isFinite(scores.package) || !Number.isFinite(scores.native))
-    throw fault('JXL_INPUT', 'A photographic score needs both named package and native outputs.');
+    throw fault('JXL_INPUT', 'outputs: needs package and native');
   return scores;
 }

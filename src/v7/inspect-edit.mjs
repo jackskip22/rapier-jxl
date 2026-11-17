@@ -12,18 +12,18 @@ const DETAILS = ['metadata', 'layout'];
 async function readHeader(input, options) {
   const {details: asked = [], decompress, ...settings} = snapshotOptions(options), maxBytes = settings.maxInputBytes ?? Number.MAX_SAFE_INTEGER;
   for (const key of Object.keys(settings)) if (!['maxPixels', 'maxDimension', 'maxMetadataBytes', 'maxInputBytes', 'maxBoxes'].includes(key))
-    throw fail('JXL_OPTIONS', `Unknown inspect option ${key}; remove it.`);
-  if (!Array.isArray(asked)) throw fail('JXL_OPTIONS', "Invalid details; list metadata, layout or both.");
+    throw fail('JXL_OPTIONS', `unknown option: ${key}`);
+  if (!Array.isArray(asked)) throw fail('JXL_OPTIONS', "details: metadata or layout");
   const details = snapshotArray(asked, 'details');
-  if (details.some(detail => !DETAILS.includes(detail))) throw fail('JXL_OPTIONS', "Invalid details; list metadata, layout or both.");
+  if (details.some(detail => !DETAILS.includes(detail))) throw fail('JXL_OPTIONS', "details: metadata or layout");
   if (decompress !== undefined && (typeof decompress !== 'function' || !details.includes('metadata')))
-    throw fail('JXL_OPTIONS', "Invalid decompress; use a function with details: [\"metadata\"].");
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw fail('JXL_OPTIONS', "Invalid maxInputBytes; use a positive safe integer.");
-  if (encodedByteLength(input) > maxBytes) throw fail('JXL_LIMIT', 'Encoded input exceeds maxInputBytes; raise it or pass a smaller file.');
+    throw fail('JXL_OPTIONS', "decompress: function; details: [\"metadata\"]");
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw fail('JXL_OPTIONS', "maxInputBytes: positive safe integer");
+  if (encodedByteLength(input) > maxBytes) throw fail('JXL_LIMIT', 'maxInputBytes: exceeded');
   if (isSourceHeader(viewBytes(input))) {
-    if (details.length) throw fail('JXL_OPTIONS', 'Metadata details require JPEG XL; omit details for a PNG or JPEG.');
+    if (details.length) throw fail('JXL_OPTIONS', 'details: jxl only');
     for (const key of ['maxPixels', 'maxDimension', 'maxMetadataBytes'])
-      if (settings[key] !== undefined && !(Number.isSafeInteger(settings[key]) && settings[key] > 0)) throw fail('JXL_OPTIONS', `Invalid ${key}; use a positive safe integer.`);
+      if (settings[key] !== undefined && !(Number.isSafeInteger(settings[key]) && settings[key] > 0)) throw fail('JXL_OPTIONS', `${key}: positive safe integer`);
     return inspectSource(viewBytes(input), settings);
   }
   const info = headerFields(boundedHeader(viewBytes(input), settings));
@@ -44,7 +44,7 @@ export async function edit(input, changes) {
 }
 function ownEdit(input, changes) {
   const {bounds, maxBytes, metadata, framing} = admitEdit(changes);
-  if (encodedByteLength(input) > maxBytes) throw fail('JXL_LIMIT', "JPEG XL container exceeds maxInputBytes; raise it or pass a smaller file.");
+  if (encodedByteLength(input) > maxBytes) throw fail('JXL_LIMIT', "maxInputBytes: exceeded");
   admitSignature(viewBytes(input), 'JXL_INPUT');
   for (const key of ['exif', 'xmp', 'jumb']) {
     if (ArrayBuffer.isView(metadata[key])) metadata[key] = copyBytes(metadata[key], true);

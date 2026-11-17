@@ -10,7 +10,7 @@ const PLANAR_PALETTE_PREDICTORS = new Map([['zero', 0], ['left', 1], ['top', 2],
 const TRANSFORM_POWERS = [1]; for (let i = 1; i <= 32; i++) TRANSFORM_POWERS.push(TRANSFORM_POWERS[i - 1] * 2);
 const transformInteger = (value, minimum, maximum, name) => {
   if (!Number.isInteger(value) || value < minimum || value > maximum)
-    throw fault('JXL_INPUT', name + ' is an integer from ' + minimum + ' through ' + maximum + '.');
+    throw fault('JXL_INPUT', name + ': integer ' + minimum + '-' + maximum);
   return value;
 };
 const transformShape = channel => ({...channel, hshift: channel.hshift ?? channel.shift, vshift: channel.vshift ?? channel.shift});
@@ -18,9 +18,9 @@ const transformKey = (planes, at) => planes.map(plane => plane[at] | 0).join(','
 
 function transformTable(input, count, maximum, name) {
   if (input === undefined) return undefined;
-  if (!Array.isArray(input) || input.length > maximum) throw fault('JXL_INPUT', name + ' is an array of at most ' + maximum + ' word vectors.');
+  if (!Array.isArray(input) || input.length > maximum) throw fault('JXL_INPUT', name + ': <= ' + maximum + ' word vectors');
   return Array.from(input, vector => {
-    if (!vector || typeof vector !== 'object' || vector.length !== count) throw fault('JXL_INPUT', name + ' vectors have channelCount words.');
+    if (!vector || typeof vector !== 'object' || vector.length !== count) throw fault('JXL_INPUT', name + ': channelCount words/vector');
     return Int32Array.from({length: count}, (_, c) => transformInteger(vector[c], -2147483648, 4294967295, name + ' word') | 0);
   });
 }
@@ -28,33 +28,33 @@ function transformTable(input, count, maximum, name) {
 export function admitPlanarTransforms(value, colorCount, memoryLimit = Number.MAX_SAFE_INTEGER) {
   transformInteger(memoryLimit, 1, Number.MAX_SAFE_INTEGER, 'maxTransformBytes');
   if (value === undefined || value === false) return null;
-  if (!Array.isArray(value) || value.length > 273) throw fault('JXL_INPUT', 'transforms is false or up to 273 recipes.');
+  if (!Array.isArray(value) || value.length > 273) throw fault('JXL_INPUT', 'transforms: false|<=273 recipes');
   if (!value.length) return null;
   let authoredBytes = 0;
   const recipes = Array.from(value, input => {
-    if (!input || typeof input !== 'object' || Array.isArray(input)) throw fault('JXL_INPUT', 'Each planar transform is an object.');
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw fault('JXL_INPUT', 'transform: object');
     const fields = new Map(Object.entries(input)), type = fields.get('type');
     const allowed = type === 'rct' ? ['type', 'beginChannel', 'rctType'] : type === 'palette'
       ? ['type', 'beginChannel', 'channelCount', 'mode', 'predictor', 'colors', 'deltas', 'maxColors', 'maxDeltaEntries'] : [];
-    if (!allowed.length) throw fault('JXL_INPUT', 'A planar transform type is rct or palette.');
-    for (const key of fields.keys()) if (!allowed.includes(key)) throw fault('JXL_INPUT', 'Unknown ' + type + ' field: ' + key + '.');
+    if (!allowed.length) throw fault('JXL_INPUT', 'type: rct|palette');
+    for (const key of fields.keys()) if (!allowed.includes(key)) throw fault('JXL_INPUT', 'unknown ' + type + ' field: ' + key);
     const beginC = transformInteger(fields.get('beginChannel') ?? 0, 0, 9287, 'Transform beginChannel');
     if (type === 'rct') return {type, beginC, rctType: transformInteger(fields.get('rctType') ?? 6, 0, 41, 'rctType'), numC: 3};
     const numC = transformInteger(fields.get('channelCount') ?? colorCount, 1, 8192, 'Palette channelCount');
     const mode = fields.get('mode') ?? 'colors', name = fields.get('predictor') ?? (mode === 'colors' ? 'zero' : 'left');
-    if (!['colors', 'implicit', 'explicit', 'hybrid'].includes(mode)) throw fault('JXL_INPUT', 'Palette mode is colors, implicit, explicit or hybrid.');
-    if (!PLANAR_PALETTE_PREDICTORS.has(name)) throw fault('JXL_INPUT', 'Palette predictor is zero, left, top, average, select, gradient or weighted.');
+    if (!['colors', 'implicit', 'explicit', 'hybrid'].includes(mode)) throw fault('JXL_INPUT', 'mode: colors|implicit|explicit|hybrid');
+    if (!PLANAR_PALETTE_PREDICTORS.has(name)) throw fault('JXL_INPUT', 'predictor: zero|left|top|average|select|gradient|weighted');
     const predictor = PLANAR_PALETTE_PREDICTORS.get(name);
     if (numC === 1 && predictor === 0 && (mode === 'implicit' || mode === 'hybrid'))
-      throw fault('JXL_INPUT', 'A one-channel implicit palette needs a nonzero predictor.');
+      throw fault('JXL_INPUT', 'implicit palette: nonzero predictor');
     for (const key of ['colors', 'deltas']) if (Array.isArray(fields.get(key))) authoredBytes += fields.get(key).length * numC * 4;
-    if (authoredBytes > memoryLimit) throw fault('JXL_MEMORY', 'Authored palette words exceed maxTransformBytes.');
+    if (authoredBytes > memoryLimit) throw fault('JXL_MEMORY', 'palette: maxTransformBytes exceeded');
     const colors = transformTable(fields.get('colors'), numC, 70911, 'colors'), deltas = transformTable(fields.get('deltas'), numC, 66816, 'deltas');
-    if (deltas !== undefined && mode !== 'explicit' && mode !== 'hybrid') throw fault('JXL_INPUT', 'Authored deltas require explicit or hybrid palette mode.');
+    if (deltas !== undefined && mode !== 'explicit' && mode !== 'hybrid') throw fault('JXL_INPUT', 'deltas: explicit|hybrid mode');
     const maxColors = transformInteger(fields.get('maxColors') ?? (colors ? colors.length : 4096), 0, 70911, 'maxColors');
     const maxDeltaEntries = transformInteger(fields.get('maxDeltaEntries') ?? (deltas ? deltas.length : 256), 0, 66816, 'maxDeltaEntries');
     if (colors && colors.length > maxColors || deltas && deltas.length > maxDeltaEntries)
-      throw fault('JXL_INPUT', 'An authored palette exceeds its declared entry limit.');
+      throw fault('JXL_INPUT', 'palette: entry limit exceeded');
     return {type, beginC, numC, mode, predictor, colors, deltas, maxColors, maxDeltaEntries};
   });
   return {recipes, memoryLimit, authoredBytes};
@@ -62,12 +62,12 @@ export function admitPlanarTransforms(value, colorCount, memoryLimit = Number.MA
 
 function transformRange(channels, metaCount, recipe) {
   const {beginC, numC} = recipe, end = beginC + numC;
-  if (end > channels.length) throw fault('JXL_INPUT', 'A transform selects an absent channel.');
-  if (beginC < metaCount && end > metaCount) throw fault('JXL_INPUT', 'A transform cannot mix meta and image channels.');
+  if (end > channels.length) throw fault('JXL_INPUT', 'transform: missing channel');
+  if (beginC < metaCount && end > metaCount) throw fault('JXL_INPUT', 'transform: no mixed meta/image channels');
   const selected = channels.slice(beginC, end), first = selected[0];
   for (const channel of selected) if (channel.width !== first.width || channel.height !== first.height ||
     channel.hshift !== first.hshift || channel.vshift !== first.vshift)
-    throw fault('JXL_INPUT', 'Transformed channels must share size and sampling.');
+    throw fault('JXL_INPUT', 'transform: channels same size/sampling');
   return selected;
 }
 
@@ -129,7 +129,7 @@ function* palettePlanes(selected, recipe, bitDepth, weighted, available) {
   const {width, height} = selected[0], count = width * height, components = selected.length;
   const delta = recipe.mode !== 'colors', explicit = recipe.mode === 'explicit' || recipe.mode === 'hybrid';
   let scratch = count * (components * (delta ? 8 : 4) + 5);
-  const charge = bytes => { scratch += bytes; if (scratch > available) throw fault('JXL_MEMORY', 'Palette preparation exceeds maxTransformBytes.'); };
+  const charge = bytes => { scratch += bytes; if (scratch > available) throw fault('JXL_MEMORY', 'palette: maxTransformBytes exceeded'); };
   charge(0);
   const implicit = recipe.mode === 'implicit' || recipe.mode === 'hybrid' ? implicitPlanarPalette(components, bitDepth) : null;
   if (implicit) for (const map of [implicit.differences, implicit.colors]) for (const key of map.keys()) charge(96 + key.length * 2);
@@ -161,7 +161,7 @@ function* palettePlanes(selected, recipe, bitDepth, weighted, available) {
       else {
         let index = colors.get(key);
         if (index === undefined) {
-          if (recipe.colors || absolute.length >= recipe.maxColors) throw fault('JXL_INPUT', 'The palette needs another color; supply it or raise maxColors.');
+          if (recipe.colors || absolute.length >= recipe.maxColors) throw fault('JXL_INPUT', 'palette: add color or raise maxColors');
           charge(96 + key.length * 2); index = absolute.length; colors.set(key, index); absolute.push({key, at});
         }
         indices[at] = entries.length + index; kinds[at] = 1;
@@ -197,7 +197,7 @@ export function* applyPlanarTransforms(channels, plan, bitDepth, weighted) {
     const recipe = plan.recipes[index], selected = transformRange(result, metaCount, recipe);
     const retained = result.reduce((sum, channel) => sum + channel.data.length * 4, 0), available = plan.memoryLimit - retained - plan.authoredBytes;
     if (recipe.type === 'rct') {
-      if (selected[0].data.length * 12 > available) throw fault('JXL_MEMORY', 'RCT preparation exceeds maxTransformBytes.');
+      if (selected[0].data.length * 12 > available) throw fault('JXL_MEMORY', 'RCT: maxTransformBytes exceeded');
       const transformed = yield* part(rctPlanes(selected, recipe.rctType), index, plan.recipes.length);
       result.splice(recipe.beginC, 3, ...transformed.channels); wide ||= transformed.wide;
       transforms.push({type: 'rct', beginC: recipe.beginC, rctType: recipe.rctType});

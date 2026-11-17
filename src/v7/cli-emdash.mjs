@@ -67,7 +67,7 @@ export const planEmdashConfig = (source, options) => planConfig(source, false, o
 export function planEmdashRemoval(source, name) {
   try { return planConfig(source, true, {name}); }
   catch (cause) {
-    const message = cause?.fix ? cause.message.slice(0, -cause.fix.length - 3) : String(cause?.message ?? cause);
+    const message = cause?.fix ? cause.message.slice(0, -cause.fix.length - 2) : String(cause?.message ?? cause);
     throw error(message, CLI_WORDS.removeFix);
   }
 }
@@ -444,8 +444,8 @@ function atLeast(version, minimum) {
 
 function checkEmdashAdapter(host, adapter) {
   if (host && adapter && host.pkg.version !== adapter.pkg.version)
-    throw error(`EmDash ${host.pkg.version} and @emdash-cms/cloudflare ${adapter.pkg.version} must match.`,
-      `Install emdash@${host.pkg.version} and @emdash-cms/cloudflare@${host.pkg.version} together.`);
+    throw error(`emdash: versions ${host.pkg.version} vs ${adapter.pkg.version}`,
+      `install: emdash@${host.pkg.version} @emdash-cms/cloudflare@${host.pkg.version}`);
 }
 
 const PACKAGE_TAR_BYTES = 256 * 1024 * 1024;
@@ -470,7 +470,7 @@ async function packageSource(cwd, requested, env, version, name) {
       const entryName = prefix ? `${prefix}/${base}` : base;
       if (!entryName) break;
       const size = Number.parseInt(tar.toString('ascii', at + 124, at + 136).replace(/\0.*$/, '').trim(), 8);
-      if (!Number.isSafeInteger(size) || size < 0 || at + 512 + size > tar.length) throw new Error('invalid tar header');
+      if (!Number.isSafeInteger(size) || size < 0 || at + 512 + size > tar.length) throw new Error('tar: header');
       if (entryName.replace(/^\/+/, '') === 'package/package.json') {
         if (++manifests > 1) throw new Error('duplicate package/package.json in tarball');
         pkg = JSON.parse(tar.toString('utf8', at + 512, at + 512 + size));

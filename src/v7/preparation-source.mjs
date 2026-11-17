@@ -21,8 +21,8 @@ export async function acquireSource(input, options, hooks = {}) {
   const budget = Math.max(DEFAULT_INPUT_BYTES, maxPixels * 16);
   let picture;
   if (isTexture(input)) {
-    if (readAs !== undefined) throw fail('JXL_OPTIONS', "A texture sets its own color; remove readAs.");
-    if (!hooks.readTexture) throw fail('JXL_UNSUPPORTED', 'This entry does not read GPU textures; use rapier-jxl.');
+    if (readAs !== undefined) throw fail('JXL_OPTIONS', 'readAs: not with texture');
+    if (!hooks.readTexture) throw fail('JXL_UNSUPPORTED', 'texture: use jpegxl');
     picture = await hooks.readTexture(input, maxPixels);
   } else if (hooks.journal !== undefined && input?.[JOURNAL_FILE] !== undefined) {
     const file = input[JOURNAL_FILE];
@@ -35,11 +35,11 @@ export async function acquireSource(input, options, hooks = {}) {
     picture = {data, width, height, ...(colorSpace && {colorSpace}), ...(colorEncoding && {colorEncoding})};
   } else {
     const source = isDecoded(input) ? fromDecoded(input) : input;
-    if (source?.frames) throw fail('JXL_UNSUPPORTED', "Image preparation cannot read this source; pass one still image.");
+    if (source?.frames) throw fail('JXL_UNSUPPORTED', 'source: single still image required');
     picture = own(pixels(source, {readAs}, maxPixels, true), maxPixels, budget);
   }
   check(signal);
-  if (picture?.frames) throw fail('JXL_UNSUPPORTED', "Image preparation cannot read this source; pass one still image.");
+  if (picture?.frames) throw fail('JXL_UNSUPPORTED', 'source: single still image required');
   dimensions(picture?.width, picture?.height, maxPixels);
   admitPixels(picture.data, picture.width, picture.height, {edge: EDGE, pixels: maxPixels});
   admitSampleFormat(picture.data, picture);

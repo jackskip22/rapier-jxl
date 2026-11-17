@@ -1,2 +1,2 @@
 // SPDX-License-Identifier: MIT
-throw Object.assign(new Error('This integration needs a server; import jpegxl/emdash from astro.config.mjs on the server.'), {code: 'JXL_PLATFORM'});
+throw Object.assign(new Error('server: import jpegxl/emdash in astro.config.mjs'), {code: 'JXL_PLATFORM'});

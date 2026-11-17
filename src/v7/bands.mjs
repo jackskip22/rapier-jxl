@@ -41,7 +41,7 @@ export async function encodeBands({width, height, read}, encodeBand, recode, dra
     check(hooks.signal);
     band.bytes = await drain(recode(pixels, {...target, gray: false, exact: band.shape.text}), {...hooks, preview: undefined, onProgress: undefined});
   }
-  if (apart()) throw fail('JXL_INTERNAL', "Invalid image result; report the input and options.");
+  if (apart()) throw fail('JXL_INTERNAL', 'bands:result');
   const layers = bands.map(({bytes, y}) => ({bytes, y}));
   return drain(encodeLayersSteps({width, height, layers}, {icc}, null, BANDED_LIMITS), hooks);
 }

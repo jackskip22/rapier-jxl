@@ -12,23 +12,23 @@ const stillModule = () => still ??= import('jpegxl');
 
 const KEYS = ['fidelity', 'effort', 'webgpu', 'signal', 'onProgress', 'codec', 'cache'];
 export async function svgJxl(input, options = {}) {
-  if (typeof input !== 'string' && !(typeof Blob === 'function' && input instanceof Blob)) throw Object.assign(new TypeError("Invalid input; use SVG text or a Blob."), { code: 'JXL_INPUT' });
-  if (options === null || typeof options !== 'object' || Array.isArray(options)) throw Object.assign(new TypeError("Invalid options; pass an object."), { code: 'JXL_OPTIONS' });
+  if (typeof input !== 'string' && !(typeof Blob === 'function' && input instanceof Blob)) throw Object.assign(new TypeError("input: SVG string or Blob"), { code: 'JXL_INPUT' });
+  if (options === null || typeof options !== 'object' || Array.isArray(options)) throw Object.assign(new TypeError("options: object"), { code: 'JXL_OPTIONS' });
   const refuse = message => Object.assign(new TypeError(message), { code: 'JXL_OPTIONS' });
-  for (const key of Object.keys(options)) if (!KEYS.includes(key)) throw refuse(`Unknown svgJxl option ${key}; remove it.`);
+  for (const key of Object.keys(options)) if (!KEYS.includes(key)) throw refuse(`unknown option: ${key}`);
   const { fidelity = { quality: 92 }, effort, webgpu, signal, onProgress, codec, cache = new Map() } = options;
   // fidelity as encode takes it: 'exact', or {quality} from 1 to 100 (100 is exact).
   const named = fidelity !== null && typeof fidelity === 'object' && !Array.isArray(fidelity) && Object.keys(fidelity).join() === 'quality';
   if (fidelity !== 'exact' && !(named && typeof fidelity.quality === 'number' && fidelity.quality >= 1 && fidelity.quality <= 100))
-    throw refuse("Invalid fidelity; use 'exact' or {quality: 1 to 100}.");
+    throw refuse("fidelity: 'exact' or quality 1-100");
   const exact = fidelity === 'exact', quality = exact ? 1 : fidelity.quality / 100;
-  if (effort !== undefined && !(Number.isInteger(effort) && effort >= 1 && effort <= 9)) throw refuse("Invalid effort; use an integer from 1 to 9.");
-  if (webgpu !== undefined && webgpu !== 'required' && webgpu !== false) throw refuse("Invalid webgpu; use 'required', false, or omit it.");
-  if (codec !== undefined && typeof codec?.capture !== 'function') throw refuse("Invalid codec; pass a capture module, such as import * as codec from 'jpegxl/capture-complete'.");
+  if (effort !== undefined && !(Number.isInteger(effort) && effort >= 1 && effort <= 9)) throw refuse("effort: integer 1-9");
+  if (webgpu !== undefined && webgpu !== 'required' && webgpu !== false) throw refuse("webgpu: 'required', false or omit");
+  if (codec !== undefined && typeof codec?.capture !== 'function') throw refuse("codec: capture module");
   if (signal !== undefined && (!signal || typeof signal !== 'object' || typeof signal.aborted !== 'boolean' ||
-      ['throwIfAborted', 'addEventListener', 'removeEventListener'].some(key => typeof signal[key] !== 'function'))) throw refuse("Invalid signal; pass an AbortSignal.");
-  if (onProgress !== undefined && typeof onProgress !== 'function') throw refuse("Invalid onProgress; pass a function.");
-  if (cache === null || typeof cache !== 'object' || typeof cache.has !== 'function' || typeof cache.get !== 'function' || typeof cache.set !== 'function') throw refuse("Invalid cache; use a Map.");
+      ['throwIfAborted', 'addEventListener', 'removeEventListener'].some(key => typeof signal[key] !== 'function'))) throw refuse("signal: AbortSignal");
+  if (onProgress !== undefined && typeof onProgress !== 'function') throw refuse("onProgress: function");
+  if (cache === null || typeof cache !== 'object' || typeof cache.has !== 'function' || typeof cache.get !== 'function' || typeof cache.set !== 'function') throw refuse("cache: Map");
   signal?.throwIfAborted();
   // A Blob or File is scanned as one character per byte and written back unchanged, whatever its encoding.
   const text = typeof input === 'string', svg = text ? input : latin1(new Uint8Array(await abortable(input.arrayBuffer(), signal)));

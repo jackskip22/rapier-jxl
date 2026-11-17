@@ -8,7 +8,7 @@ export const LITTLE_ENDIAN = new Uint8Array(Uint32Array.of(1).buffer)[0] === 1;
 
 export class BitWriter {
   constructor(capacity = 4096, maxBytes = Infinity) {
-    if (maxBytes !== Infinity && (!Number.isSafeInteger(maxBytes) || maxBytes < 0)) throw fault('JXL_INTERNAL', 'Invalid encoded picture allocation limit.');
+    if (maxBytes !== Infinity && (!Number.isSafeInteger(maxBytes) || maxBytes < 0)) throw fault('JXL_INTERNAL', 'bits:maxBytes');
     this.bytes = new Uint8Array(maxBytes === Infinity ? capacity : Math.min(capacity, maxBytes));
     this.maxBytes = maxBytes;
     this.at = 0;
@@ -16,7 +16,7 @@ export class BitWriter {
     this.pending = 0;
   }
   write(count, value) {
-    if (!(value >= 0 && value < POWERS[count])) throw fault('JXL_INTERNAL', 'bit write out of range: ' + count + ' bits, ' + value);
+    if (!(value >= 0 && value < POWERS[count])) throw fault('JXL_INTERNAL', 'bits:write ' + count + ' ' + value);
     let pending = this.pending + count;
     if (this.at + 5 >= this.bytes.length) this.grow();
     const bytes = this.bytes;
@@ -34,7 +34,7 @@ export class BitWriter {
       const [bits, offset] = choices[selector];
       if (value >= offset && value - offset < POWERS[bits]) { this.write(2, selector); if (bits) this.write(bits, value - offset); return; }
     }
-    throw fault('JXL_INTERNAL', 'U32 value out of range: ' + value);
+    throw fault('JXL_INTERNAL', 'bits:u32 ' + value);
   }
   zeroPadToByte() {
     if (!this.pending) return;
@@ -44,8 +44,8 @@ export class BitWriter {
   get bitLength() { return this.at * 8 + this.pending; }
   grow(need = 0) {
     const required = this.at + need + 16;
-    if (!Number.isSafeInteger(required) || required < 0) throw fault('JXL_INTERNAL', 'The encoded picture cannot be allocated.');
-    if (required > this.maxBytes) throw Object.assign(new RangeError('The encoded picture exceeds its allocation limit.'), {code: 'JXL_MEMORY'});
+    if (!Number.isSafeInteger(required) || required < 0) throw fault('JXL_INTERNAL', 'bits:alloc');
+    if (required > this.maxBytes) throw Object.assign(new RangeError('output: over maxBytes'), {code: 'JXL_MEMORY'});
     const capacity = Math.min(this.maxBytes, Math.max(this.bytes.length * 2, required));
     let next;
     try { next = new Uint8Array(capacity); }
@@ -95,7 +95,7 @@ export function float16Bits(value) {
   const sign = value < 0 || Object.is(value, -0) ? 0x8000 : 0;
   if (value === 0) return sign;
   value = Math.abs(value);
-  if (!(value < 65520)) throw fault('JXL_INTERNAL', 'half float out of range: ' + value);
+  if (!(value < 65520)) throw fault('JXL_INTERNAL', 'bits:f16 ' + value);
   let exponent = 0, mantissa = value;
   while (mantissa >= 2) { mantissa /= 2; exponent++; }
   while (mantissa < 1) { mantissa *= 2; exponent--; }

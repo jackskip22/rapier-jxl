@@ -10,7 +10,7 @@ import {readImageSize, codestreamOf} from '../framing.mjs';
 import {encode} from './still.mjs';
 export {supported} from './still.mjs';
 const prepare = (operation = 'format') => operation === 'format' ? acceleration(false, 0, 0).then(() => {}, error => { throw declared(error); })
-  : operation === 'encode' ? prepareStill() : Promise.reject(fail('JXL_OPTIONS', "Preparation operation is unknown; use prepare('format') or prepare('encode')."));
+  : operation === 'encode' ? prepareStill() : Promise.reject(fail('JXL_OPTIONS', "prepare: format or encode"));
 prepare.operations = ['format', 'encode'];
 
 const format = (input, options) => formatHere(input, options).catch(error => { throw declared(error); });
@@ -32,7 +32,7 @@ async function formatHere(input, given = {}) {
   if (input && typeof input === 'object' && input.kind === 'photo') return photoKind(input, options, webgpu);
   const {signal, onProgress, maxPixels: limit, ...rest} = options, maxPixels = pixelLimit(limit);
   admitSignal(signal);
-  if (onProgress !== undefined && typeof onProgress !== 'function') throw fail('JXL_OPTIONS', "Invalid onProgress; pass a function.");
+  if (onProgress !== undefined && typeof onProgress !== 'function') throw fail('JXL_OPTIONS', "onProgress: function");
   admitFormat(input, rest);
   admitFormatRequest('format', input);
   const budget = Math.max(DEFAULT_INPUT_BYTES, maxPixels * 16);

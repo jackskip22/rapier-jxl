@@ -19,7 +19,7 @@ const tasks = new Map();
 function threads() {
   const builtin = globalThis.process?.getBuiltinModule;
   const module = typeof builtin === 'function' ? builtin('node:worker_threads') : null;
-  if (!module?.Worker) throw fail('JXL_PLATFORM', "No Node workers; use Node with worker_threads.");
+  if (!module?.Worker) throw fail('JXL_PLATFORM', "workers: Node worker_threads");
   return module;
 }
 
@@ -28,10 +28,10 @@ async function readInput(input, store, signal) {
   for (let at = 0; at < bytes.length; at += READ) {
     signal?.throwIfAborted();
     const length = Math.min(READ, bytes.length - at), part = await store.readSource(at, length);
-    if (!(part instanceof Uint8Array) || part.length !== length) throw fail('JXL_IO', "Read failed; check storage and retry.");
+    if (!(part instanceof Uint8Array) || part.length !== length) throw fail('JXL_IO', "read: storage failure");
     bytes.set(part, at);
   }
-  if (await digest(bytes) !== input.sha256) throw fail('JXL_INPUT', "Source changed during reading; reload its record and retry.");
+  if (await digest(bytes) !== input.sha256) throw fail('JXL_INPUT', "source: changed; reload record");
   return bytes;
 }
 
@@ -56,11 +56,11 @@ async function readCandidate(options, store, signal) {
   const refs = options.parts;
   const parts = store.readMany ? await store.readMany(refs) : await Promise.all(refs.map(ref => store.read(ref)));
   signal?.throwIfAborted();
-  if (!Array.isArray(parts) || parts.length !== refs.length) throw fail('JXL_IO', "Missing candidate part; restore it.");
+  if (!Array.isArray(parts) || parts.length !== refs.length) throw fail('JXL_IO', "candidate part: restore missing");
   let length = 0;
   for (const [i, part] of parts.entries()) {
-    if (!(part instanceof Uint8Array) || part.length !== refs[i].length) throw fail('JXL_IO', "Missing or truncated candidate part; restore it.");
-    if (await digest(part) !== refs[i].hash) throw fail('JXL_INPUT', "Candidate part changed; reverify it with the original.");
+    if (!(part instanceof Uint8Array) || part.length !== refs[i].length) throw fail('JXL_IO', "candidate part: restore missing/truncated");
+    if (await digest(part) !== refs[i].hash) throw fail('JXL_INPUT', "candidate part: reverify original");
     length += part.length;
   }
   const bytes = new Uint8Array(length);
@@ -82,7 +82,7 @@ function verificationReceipt(checkpoint, input) {
       JSON.stringify(receipt.fidelity) !== JSON.stringify(result.fidelity) ||
       JSON.stringify(receipt.transform) !== JSON.stringify(result.transform) ||
       JSON.stringify(receipt.readAs) !== JSON.stringify(result.readAs))
-    throw fail('JXL_INPUT', "Job verification mismatches; reverify its original and candidate.");
+    throw fail('JXL_INPUT', "verification: reverify original/candidate");
   return receipt;
 }
 
@@ -192,8 +192,8 @@ export function createThreadDriver(operations, base = resumable) {
       const {owner, ...begin} = context;
       if (!name || name !== 'verify' && !context.verify || name === 'verify' && context.input?.kind !== 'file') return base.start(begin);
       const {input, options = {}} = context;
-      if (!/^[a-f0-9]{32}$/.test(owner ?? '')) throw fail('JXL_OPTIONS', "Invalid job ID; use 32 lowercase hex digits.");
-      if (!['file', 'pixels', undefined].includes(input?.kind)) throw fail('JXL_INPUT', "Unsupported source; use a stored file or pixels.");
+      if (!/^[a-f0-9]{32}$/.test(owner ?? '')) throw fail('JXL_OPTIONS', "job ID: 32 lowercase hex");
+      if (!['file', 'pixels', undefined].includes(input?.kind)) throw fail('JXL_INPUT', "source: stored file or pixels");
       // Reuse the public stored-verification validator, without inspecting its checkpoint internals.
       if (name === 'verify') await base.start(begin);
       const key = await threadKey(owner, name, input, options);
@@ -206,7 +206,7 @@ export function createThreadDriver(operations, base = resumable) {
       const remaining = () => Math.max(0, deadline - performance.now());
       if (context.owner !== checkpoint.owner || nameOf(context.operation) !== checkpoint.operation ||
           await threadKey(context.owner, checkpoint.operation, input, checkpoint.options) !== checkpoint.key)
-        throw fail('JXL_INPUT', "Checkpoint is for another job; reload its record.");
+        throw fail('JXL_INPUT', "checkpoint: reload matching job");
       if (checkpoint.status === 'done') return {checkpoint, released: [], done: true};
       let task = tasks.get(checkpoint.key);
       if (!task) {
@@ -239,23 +239,23 @@ export function createThreadDriver(operations, base = resumable) {
     },
     async finish(checkpoint, context) {
       if (!ours(checkpoint)) return base.finish(checkpoint, context);
-      if (checkpoint.status !== 'done') throw fail('JXL_INPUT', "Job unfinished; advance until done.");
+      if (checkpoint.status !== 'done') throw fail('JXL_INPUT', "job: advance until done");
       if (context.owner !== checkpoint.owner || nameOf(context.operation) !== checkpoint.operation ||
           await threadKey(context.owner, checkpoint.operation, context.input, checkpoint.options) !== checkpoint.key)
-        throw fail('JXL_INPUT', "Checkpoint is for another job; reload its record.");
+        throw fail('JXL_INPUT', "checkpoint: reload matching job");
       if (checkpoint.operation === 'verify') return verificationReceipt(checkpoint, context.input);
       const parts = checkpoint.parts.length ? await context.store.readMany(checkpoint.parts) : [];
       const length = checkpoint.parts.reduce((sum, ref) => sum + ref.length, 0), bytes = new Uint8Array(length);
       let at = 0;
       // Every part is checked against its name, and the whole file against the receipt's output digest.
-      if (!Array.isArray(parts) || parts.length !== checkpoint.parts.length) throw fail('JXL_IO', "Missing finished part; restore it.");
+      if (!Array.isArray(parts) || parts.length !== checkpoint.parts.length) throw fail('JXL_IO', "finished part: restore missing");
       for (const [index, part] of parts.entries()) {
         if (!(part instanceof Uint8Array) || part.length !== checkpoint.parts[index].length || await digest(part) !== checkpoint.parts[index].hash)
-          throw fail('JXL_INPUT', "Finished part changed; reverify it with the original.");
+          throw fail('JXL_INPUT', "finished part: reverify original");
         bytes.set(part, at); at += part.length;
       }
       if ('sha256:' + await digest(bytes) !== checkpoint.record?.verification?.outputDigest)
-        throw fail('JXL_INPUT', "File mismatches its receipt; reverify it with the original.");
+        throw fail('JXL_INPUT', "file receipt: reverify original");
       return {...checkpoint.record, bytes};
     },
   };

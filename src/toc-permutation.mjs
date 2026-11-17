@@ -4,7 +4,7 @@ import {ceilLog2, floorLog2} from './bits.mjs';
 import {buildCode, canonicalCodes, uintConfig, countToken, writeHybrid, writeHistograms} from './prefix.mjs';
 
 const invalid = message => fault('JXL_FRAMING', message);
-const need = (condition, message = 'Invalid JPEG XL TOC permutation.') => { if (!condition) throw invalid(message); };
+const need = (condition, message = 'TOC permutation') => { if (!condition) throw invalid(message); };
 const CONFIG = uintConfig(0);
 
 function available(size) {
@@ -51,7 +51,7 @@ function symbolReader(lengths, explicit) {
       bits += reader.read(1) << (length - 1);
       const value = byLength[length]?.get(bits); if (value !== undefined) return value;
     }
-    throw invalid('Invalid permutation prefix code.');
+    throw invalid('TOC prefix code');
   };
 }
 
@@ -96,10 +96,10 @@ function readPrefix(reader, size) {
 
 export function readTOCPermutation(reader, size) {
   need(Number.isInteger(size) && size >= 1 && size <= 65536);
-  need(reader.read(1) === 0, 'Delivery reads prefix permutations without LZ77.');
-  need(reader.read(1) === 1 && reader.read(2) === 0, 'Delivery reads a single shared permutation histogram.');
-  need(reader.read(1) === 1, 'Delivery reads prefix-coded permutations; ANS permutations are not supported.');
-  need(reader.read(4) === 0, 'Delivery reads hybrid integer configuration 0,0,0.');
+  need(reader.read(1) === 0, 'TOC permutation: LZ77 unsupported');
+  need(reader.read(1) === 1 && reader.read(2) === 0, 'TOC permutation: multiple histograms');
+  need(reader.read(1) === 1, 'TOC permutation: ANS unsupported');
+  need(reader.read(4) === 0, 'TOC permutation: hybrid config');
   const alphabet = reader.read(1) ? (bits => (1 << bits) + reader.read(bits) + 1)(reader.read(4)) : 1;
   need(alphabet <= 18);
   const symbol = readPrefix(reader, alphabet), value = () => {

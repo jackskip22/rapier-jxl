@@ -17,7 +17,7 @@ import {fault} from './fault.mjs';
 
 function searchBand({key, orderCounts, stride, by0, by1, W, quant, cfl, quantFields, quantFieldBase, mask, search}) {
   const rows = by1 - by0, band = bandsHeld.get(key);
-  if (!band) throw fault('JXL_INTERNAL', 'No picture band is held for this search.');
+  if (!band) throw fault('JXL_INTERNAL', 'block-split:band');
   const planes = band.planes; band.planes = null;
   const base = {components: quant.map(q => ({stride, rows, quant: q})), planes, cfl, ...(quantFields ? {quantFields, quantFieldBase} : {})};
   const {chosen} = xybStrategies(base, W, rows * 8, {...search, maskWeight: mask, priceOnly: true, keepChosen: true, band: true});
@@ -183,7 +183,7 @@ function groupState(model, band, g, groupsX, stride, rows, buckets, lumaW) {
 const withContexts = c => ({...c, ...acContexts(c.map, c.numDc, c.numCtxs)});
 function groupRows({key, rowsList, model, groupsX, stride, rows, buckets, lumaW}) {
   const band = bandsHeld.get(key);
-  if (!band?.chosen) throw fault('JXL_INTERNAL', 'No blocks are held for these groups.');
+  if (!band?.chosen) throw fault('JXL_INTERNAL', 'block-split:blocks');
   const state0 = {...model, contexts: withContexts(model.contexts)};
   const coding = {model: model.coding}, sections = [];
   for (let i = 0; i < rowsList.length; i++) for (let gx = 0; gx < groupsX; gx++) {

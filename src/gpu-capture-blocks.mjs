@@ -8,7 +8,7 @@ import {gpuBlocksCosts, gpuBlocksLevels} from './gpu-blocks.mjs';
 const check = signal => { if (signal?.aborted) throw signal.reason; };
 const refused = new WeakSet();
 const unavailable = (webgpu, why) => {
-  if (webgpu === 'required') throw fault('JXL_WEBGPU', `webgpu: 'required', and the device could not run the photo block search (${why}). Leave webgpu out for the same file on WebAssembly.`);
+  if (webgpu === 'required') throw fault('JXL_WEBGPU', `block search (${why}): omit webgpu`);
   return null;
 };
 
@@ -40,21 +40,21 @@ const captureBlockPlanes = (device, request, signal) => {
       if (kept) return {planes: kept, row: 0};
       const bound = request.planeBound;
       if (!(Number.isFinite(bound) && bound >= 0 && Math.fround(bound) === bound))
-        throw fault('JXL_INTERNAL', 'Photo block plane bound must be a finite nonnegative f32.');
+        throw fault('JXL_INTERNAL', 'gpu-capture-blocks:bound');
       const staged = held?.staged?.get(key);
       if (staged) { held.staged.delete(key); return storeBand(held, key, staged, buffer); }
       const {planes, top, stride} = request.planeRows(from, to), width = request.input.stride * 8;
       if (!Array.isArray(planes) || planes.length !== 3 || stride !== width || !Number.isSafeInteger(top) || top < 0 || top > from)
-        throw fault('JXL_INTERNAL', 'Photo block planes do not cover the requested band.');
+        throw fault('JXL_INTERNAL', 'gpu-capture-blocks:band');
       const count = width * (to - from), offset = width * (from - top);
       const split = planes.map(plane => {
-        if (!ArrayBuffer.isView(plane) || plane.length < offset + count) throw fault('JXL_INTERNAL', 'Photo block plane is too short.');
+        if (!ArrayBuffer.isView(plane) || plane.length < offset + count) throw fault('JXL_INTERNAL', 'gpu-capture-blocks:length');
         const pairs = new Float32Array(count * 2);
         for (let i = 0; i < count; i++) {
           const value = plane[offset + i], hi = Math.fround(value), lo = Math.fround(value - hi);
           if (!Number.isFinite(value) || !Number.isFinite(hi) || !Number.isFinite(lo))
-            throw fault('JXL_INTERNAL', 'Photo block plane has no finite double-single representation.');
-          if (Math.abs(value - (hi + lo)) > bound) throw fault('JXL_INTERNAL', 'Photo block plane exceeds its supplied error bound.');
+            throw fault('JXL_INTERNAL', 'gpu-capture-blocks:ds');
+          if (Math.abs(value - (hi + lo)) > bound) throw fault('JXL_INTERNAL', 'gpu-capture-blocks:error');
           pairs[i * 2] = hi; pairs[i * 2 + 1] = lo;
         }
         return pairs;
@@ -69,22 +69,22 @@ export async function captureBlockRequest(webgpu, request, signal) {
   if (webgpu === false) return null;
   const device = await gpuDevice();
   check(signal);
-  if (!device || refused.has(device)) return unavailable(webgpu, device ? 'an earlier answer of this device failed its check against the CPU' : 'no device');
+  if (!device || refused.has(device)) return unavailable(webgpu, device ? 'prior audit failed' : 'no device');
   const qualified = await gpuCoreQualified(device).catch(() => false);
   check(signal);
-  if (!qualified) return unavailable(webgpu, "the device's arithmetic did not qualify");
+  if (!qualified) return unavailable(webgpu, 'unqualified arithmetic');
   const run = request.kind === 'photo-block-costs' ? gpuBlocksCosts : request.kind === 'photo-block-levels' ? gpuBlocksLevels : null;
   if (!run) return null;
   let answer;
   try { answer = await run(device, request, GC_DS, captureBlockPlanes(device, request, signal)); } catch (error) {
     check(signal);
-    return unavailable(webgpu, `the device run failed: ${error?.message ?? error}`);
+    return unavailable(webgpu, `${error?.message ?? error}`);
   }
   check(signal);
   const audited = request.kind === 'photo-block-costs' || request.audit ? request.audit(answer) : 0;
   if (!(audited <= 1)) {
     refused.add(device);
-    return unavailable(webgpu, `its ${request.kind} answer differs from the CPU's by ${audited} times the bound the device claimed, over 1`);
+    return unavailable(webgpu, `${request.kind} audit ${audited} > 1`);
   }
   return answer;
 }

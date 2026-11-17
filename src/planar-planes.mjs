@@ -45,7 +45,7 @@ function selectedPredictor(data, width, height, forced) {
 
 export function writePlanarPlanes(writer, pieces, predictor, afterModel, weighted, maxTreeNodes = Infinity) {
   if (!pieces.length) return;
-  if (2 * pieces.length - 1 > maxTreeNodes) throw fault('JXL_INPUT', 'The channel tree exceeds the decoder limit.');
+  if (2 * pieces.length - 1 > maxTreeNodes) throw fault('JXL_INPUT', 'channel tree: over limit');
   const leaves = [], histograms = Array.from({length: Math.min(pieces.length, 254)}, () => new Uint32Array(ALPHABET));
   pieces.forEach((item, c) => {
     const data = plane(item), model = leaf(selectedPredictor(data, item.width, item.height, predictor)); leaves.push(model);

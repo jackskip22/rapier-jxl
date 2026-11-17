@@ -105,7 +105,7 @@ export function* searchV6(prepared, own, quality, effort, floor = null, gpu = fa
   prepared.transforms ??= searchTransforms(prepared, 0);
   const {rgba, width, height, color} = prepared;
   const plan = prepared.memory ?? memoryPlan(width * height, {width, height, exact: false});
-  if (plan.known && !plan.fits) throw fault('JXL_MEMORY', 'Measured search exceeds its memory reservation.');
+  if (plan.known && !plan.fits) throw fault('JXL_MEMORY', 'over memory reservation');
   if (floor?.image && width >= 128 && height >= 128 && !color?.transform) {
     if (!s2Admitted(plan, width, height)) return deeperFloor(floor, effort);
     return yield* s2EffortSearchSteps(prepared, quality, effort, floor, gpu);

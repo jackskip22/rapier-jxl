@@ -8,18 +8,18 @@ const CUSTOM_WEIGHTED_DEFAULTS = [16, 10, 7, 7, 7, 0, 0, 13, 12, 12, 12];
 const CUSTOM_WEIGHTED_DIVISORS = Uint32Array.from({length: 64}, (_, i) => Math.floor(16777216 / (i + 1)));
 export function admitWeightedPredictor(value) {
   if (value === undefined) return {values: CUSTOM_WEIGHTED_DEFAULTS, custom: false};
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw fault('JXL_INPUT', 'weightedPredictor is an object.');
-  for (const key of Object.keys(value)) if (!['p1', 'p2', 'p3', 'weights'].includes(key)) throw fault('JXL_INPUT', 'Unknown weighted predictor field: ' + key + '.');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw fault('JXL_INPUT', 'weightedPredictor: object');
+  for (const key of Object.keys(value)) if (!['p1', 'p2', 'p3', 'weights'].includes(key)) throw fault('JXL_INPUT', 'unknown weightedPredictor field: ' + key);
   const vector = (input, count, fallback, maximum, label) => {
     if (input === undefined) return fallback;
-    if (!input || typeof input !== 'object' || input.length !== count) throw fault('JXL_INPUT', label + ' contains ' + count + ' integers.');
+    if (!input || typeof input !== 'object' || input.length !== count) throw fault('JXL_INPUT', label + ': ' + count + ' integers');
     const result = Array.from({length: count}, (_, i) => input[i]);
-    if (result.some(x => !Number.isInteger(x) || x < 0 || x > maximum)) throw fault('JXL_INPUT', label + ' values are from zero through ' + maximum + '.');
+    if (result.some(x => !Number.isInteger(x) || x < 0 || x > maximum)) throw fault('JXL_INPUT', label + ': integers 0-' + maximum);
     return result;
   };
   const values = [value.p1 ?? 16, value.p2 ?? 10, ...vector(value.p3, 5, [7, 7, 7, 0, 0], 31, 'p3'),
     ...vector(value.weights, 4, [13, 12, 12, 12], 15, 'weights')];
-  if (values.slice(0, 2).some(x => !Number.isInteger(x) || x < 0 || x > 31)) throw fault('JXL_INPUT', 'p1 and p2 are integers from zero through 31.');
+  if (values.slice(0, 2).some(x => !Number.isInteger(x) || x < 0 || x > 31)) throw fault('JXL_INPUT', 'p1, p2: integers 0-31');
   return {values, custom: true};
 }
 

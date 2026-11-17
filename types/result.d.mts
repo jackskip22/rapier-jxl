@@ -66,19 +66,20 @@ interface ResultDescription<F = ResultFidelity> {
   readonly originalBytes?: number;
   /** True exactly when the returned file exceeds originalBytes; omitted when no file was returned. */
   readonly largerThanOriginal?: boolean;
-  /** rapier-jxl/jpeg's recompress, when another decoder returns less than the whole JPEG. */
+  /** jpegxl/jpeg's recompress, when another decoder returns less than the whole JPEG. */
   readonly otherDecoders?: ResultOtherDecoders;
   /** An animation's durations: 'rounded' when one was rounded to the file's tick (each frame still ends within half a tick). */
   readonly timing?: 'exact' | 'rounded';
   /** A capture: 'skipped' where the page held more marks of ink than the reader takes; the caller's boxes and the
    * repeated marks stayed exact, and unboxed text was not looked for. */
   readonly textMarks?: 'skipped';
-  /** From the entries that can run stages on WebGPU (rapier-jxl's encode, fit and variants, animation, format's encode,
+  /** From the entries that can run stages on WebGPU (jpegxl's encode, fit and variants, animation, format's encode,
    * capture-complete): true when a stage of this call ran on the device. The file is the same either way. */
   readonly usedWebGPU?: boolean;
 }
-/** Another decoder (libjxl's djxl) returns this JPEG without its last `missing` bytes; rapier-jxl/jpeg's restore returns
- * all of it. 'past-jbrd': the data after the JPEG's end is longer than the 4,260,096 bytes the reconstruction box holds. */
+/** Another decoder (libjxl's djxl) returns this JPEG without its last `missing` bytes; jpegxl/jpeg's restore returns
+ * all of it. 'past-jbrd': data after the JPEG's end travels outside the reconstruction box. This happens for tails
+ * longer than the 4,260,096 bytes the box holds, or when gainMap: true keeps the gain map in a jhgm bundle. */
 export interface ResultOtherDecoders {
   readonly missing: number;
   readonly reason: 'past-jbrd';

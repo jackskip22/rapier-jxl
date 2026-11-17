@@ -27,9 +27,9 @@ export function photoJobSteps(data, width, height, options, coefficients, search
 }
 
 export function admitPhotoFilter(options) {
-  if (options?.photo !== undefined && typeof options.photo !== 'boolean') throw fault('JXL_INPUT', 'Photo is a boolean.');
+  if (options?.photo !== undefined && typeof options.photo !== 'boolean') throw fault('JXL_INPUT', 'photo: boolean');
   const filter = options?.filter;
-  if (filter !== undefined && filter !== 'auto' && filter !== 'off') throw fault('JXL_INPUT', 'Photo filter is "auto" or "off".');
+  if (filter !== undefined && filter !== 'auto' && filter !== 'off') throw fault('JXL_INPUT', 'filter: auto or off');
   return filter;
 }
 

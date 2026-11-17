@@ -11,7 +11,7 @@ const LIBRARY_BATCH = 8;
 
 function boundedInt(name, value, min, max) {
   if (!Number.isSafeInteger(value) || value < min || value > max)
-    throw new RangeError(`${name} must be an integer from ${min} to ${max}`);
+    throw new RangeError(`${name}: integer ${min}-${max}`);
   return value;
 }
 
@@ -19,12 +19,12 @@ export async function backfill({site, token, apply = false, fetch: send = fetch,
   cursor: initialCursor, pageSize = LIBRARY_BATCH, concurrency = 1, effort, signal, maxPixels}) {
   const base = new URL(site);
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || !token)
-    throw new TypeError('Expected a site URL and token');
+    throw new TypeError('site: URL and token');
   boundedInt('pageSize', pageSize, 1, 100);
   boundedInt('concurrency', concurrency, 1, 16);
   if (effort !== undefined) boundedInt('effort', effort, 1, 9);
   if (initialCursor !== undefined && (typeof initialCursor !== 'string' || !initialCursor.length))
-    throw new TypeError('Expected a non-empty cursor string');
+    throw new TypeError('cursor: nonempty string');
   const call = async (path, init = {}) => {
     const response = await send(new URL(path, base), {...init, signal, redirect: 'error', headers: {Authorization: `Bearer ${token}`,
       'X-EmDash-Request': '1', Accept: 'application/json', ...init.headers}});
@@ -131,7 +131,7 @@ export async function backfill({site, token, apply = false, fetch: send = fetch,
     signal?.throwIfAborted();
     onPage({cursor: cursor ?? null, nextCursor: page.nextCursor ?? null, items: page.items.length});
     if (!page.nextCursor) break;
-    if (page.nextCursor === cursor) throw new Error('Repeated media cursor');
+    if (page.nextCursor === cursor) throw new Error('media cursor: repeated');
     cursor = page.nextCursor;
   }
   return totals;

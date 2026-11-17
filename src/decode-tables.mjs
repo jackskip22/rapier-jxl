@@ -75,7 +75,7 @@ export function float16Bits(value) {
   const sign = value < 0 || Object.is(value, -0) ? 0x8000 : 0;
   if (value === 0) return sign;
   value = Math.abs(value);
-  if (!(value < 65520)) throw fault('JXL_INTERNAL', 'half float out of range: ' + value);
+  if (!(value < 65520)) throw fault('JXL_INTERNAL', 'decode-tables:f16 ' + value);
   let exponent = 0, mantissa = value;
   while (mantissa >= 2) { mantissa /= 2; exponent++; }
   while (mantissa < 1) { mantissa *= 2; exponent--; }

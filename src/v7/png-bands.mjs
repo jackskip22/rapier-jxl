@@ -5,8 +5,8 @@ import {sampleView} from './verify-samples.mjs';
 import {FLAT, HOLE} from '../screen-samples.mjs';
 
 const refuse = message => { throw fault('JXL_INPUT', message); };
-const invalid = () => refuse("Source contains an invalid deflate stream; pass a valid PNG file.");
-const exceeds = () => refuse("Compressed source data exceeds its declared dimensions; pass a valid PNG file.");
+const invalid = () => refuse("PNG deflate: invalid");
+const exceeds = () => refuse("PNG dimensions: exceeded");
 const BAND_ROWS = 32, PIECE_COLS = 1024, WALK_BYTES = 2 << 20, WINDOW = 32768, FAST = 10, MASK = (1 << FAST) - 1;
 const LENGTH_EXTRA = Array.from({length: 29}, (_, i) => i < 8 || i === 28 ? 0 : (i - 4) >> 2), DIST_EXTRA = Array.from({length: 30}, (_, i) => i < 4 ? 0 : (i - 2) >> 1);
 const bases = (extra, first) => extra.map((_, i) => first += i && 1 << extra[i - 1]);
@@ -118,7 +118,7 @@ export function inflateBand(state, need, last, stream) {
     if (distance > o - lowest || distance > (state.windowSize ?? WINDOW)) invalid();
     copy = length;
   }
-  if (o < end) refuse("Compressed source data is incomplete; pass a valid PNG file.");
+  if (o < end) refuse("PNG data: incomplete");
   const output = out.subarray(WINDOW, o);
   for (let i = 0; i < output.length;) {
     for (const stop = Math.min(output.length, i + 5552); i < stop; i++) { a += output[i]; b += a; }
@@ -201,7 +201,7 @@ export async function pngPixels(journal, file, {readAs, deep = true, orient = fa
       let previous = state.previous.slice(), row = new Uint8Array(rowBytes);
       for (let y = 0, at = 0; y < rows; y++) {
         const filter = output[at++];
-        if (filter > 4) refuse("PNG contains an unknown row filter; pass a valid PNG file.");
+        if (filter > 4) refuse("PNG row filter: 0-4");
         unfilterRow(filter, output, at, row, previous, rowBytes, bpp);
         at += rowBytes;
         write(row, width, 0, top + y, 1, 1, 0);
@@ -282,7 +282,7 @@ async function passPixels(journal,s,zlib,{pngRows,pngPassRows,unfilterRow}) {
         let previous = y ? state.previous.slice() : new Uint8Array(rowBytes), row = new Uint8Array(rowBytes);
         for (let k = 0,at = 0; k < rows; k++) {
           const filter = output[at++];
-          if (filter > 4) refuse("PNG contains an unknown row filter; pass a valid PNG file.");
+          if (filter > 4) refuse("PNG row filter: 0-4");
           unfilterRow(filter,output,at,row,previous,rowBytes,bpp); at += rowBytes;
           raw.set(row,k * rowBytes); [previous,row] = [row,previous];
         }

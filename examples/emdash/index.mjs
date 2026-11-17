@@ -17,9 +17,9 @@ function rapierMediaPlugin() {
 
 export function jxl(emdash, config = {}, limits = {}) {
   const refuse = (code, message) => Object.assign(new TypeError(message), {code});
-  if (config !== null && typeof config === 'object' && config.plugins != null && !Array.isArray(config.plugins)) throw refuse('JXL_OPTIONS', "Invalid plugins; pass an array.");
-  if (typeof emdash !== 'function') throw refuse('JXL_INPUT', "Missing integration; pass jxl(emdash, {database, storage}).");
-  if (config === null || typeof config !== 'object' || !config.storage) throw refuse('JXL_OPTIONS', "Missing storage; pass jxl(emdash, {storage: r2({binding}) or local({directory})}).");
+  if (config !== null && typeof config === 'object' && config.plugins != null && !Array.isArray(config.plugins)) throw refuse('JXL_OPTIONS', "plugins: array");
+  if (typeof emdash !== 'function') throw refuse('JXL_INPUT', "integration: jxl(emdash, {database, storage})");
+  if (config === null || typeof config !== 'object' || !config.storage) throw refuse('JXL_OPTIONS', "storage: jxl(emdash, {storage: r2({binding}) or local({directory})})");
   return [emdash({...config, storage: rapierStorage(config.storage, hostOptions(limits)), plugins: [...(config.plugins ?? []), rapierMediaPlugin()]}),
     {name: 'rapier-jxl', hooks: {'astro:config:setup': ({addMiddleware}) => addMiddleware({entrypoint: file('./middleware.mjs'), order: 'pre'})}}];
 }

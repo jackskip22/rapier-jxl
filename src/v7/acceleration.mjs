@@ -15,7 +15,7 @@ async function deviceRoute(webgpu, width, height, effort, route) {
   if (webgpu === false) return undefined;
   const required = webgpu === 'required';
   if (route !== 'still') {
-    if (required) throw fail('JXL_WEBGPU', `${route} runs on WebAssembly only; leave webgpu out.`);
+    if (required) throw fail('JXL_WEBGPU', `${route}: WebAssembly only`);
     return undefined;
   }
   if (effort < GPU_EFFORT) { if (required) throw fail('JXL_WEBGPU', NOT_DEVICE); return undefined; }
@@ -50,7 +50,7 @@ export async function deviceAgain(webgpu, code) {
     return code(false);
   }
 }
-const gpuFailed = cause => Object.assign(fail('JXL_WEBGPU', "Required WebGPU device could not run this job; use a capable device or leave webgpu out."), cause ? {cause} : {});
+const gpuFailed = cause => Object.assign(fail('JXL_WEBGPU', "webgpu: capable device or omit"), cause ? {cause} : {});
 
 export function describedRoute(data, codec) {
   if (codec.icc !== undefined) return 'a picture with an ICC profile';

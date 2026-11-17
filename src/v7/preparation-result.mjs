@@ -15,7 +15,7 @@ export async function preparedEncode(encode, picture, options) {
 }
 
 export function preparedResult(bytes, fidelity, {width, height}, reconstruction) {
-  if (!(bytes instanceof Uint8Array) || !bytes.byteLength) throw fail('JXL_INTERNAL', "Incomplete output file; report the input and options.");
+  if (!(bytes instanceof Uint8Array) || !bytes.byteLength) throw fail('JXL_INTERNAL', 'preparation-result:empty');
   return {meetsTarget: true, bytes, width, height, fidelity, ...(reconstruction && {reconstruction})};
 }
 

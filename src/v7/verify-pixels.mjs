@@ -28,12 +28,12 @@ const proofKind = fidelity => fidelity === 'exact' ? 'pixels' : measurementTarge
 const displaySize = picture => picture.orientation >= 5 ? {width: picture.height, height: picture.width}
   : {width: picture.width, height: picture.height};
 export function protectionDomain(scope, reference, decoded) {
-  if (reference.frames || decoded.animation) throw fail('JXL_UNSUPPORTED', 'Protected samples cannot be checked across animation frames; verify a still output.');
+  if (reference.frames || decoded.animation) throw fail('JXL_UNSUPPORTED', 'protected frames: still only');
   const orientation = picture => picture.orientationApplied ? 1 : picture.orientation ?? picture.description?.orientation ?? 1;
   if (orientation(reference) !== 1 || orientation(decoded) !== 1)
-    throw fail('JXL_UNSUPPORTED', "Protected coordinates are not upright; verify upright reference and output pictures.");
+    throw fail('JXL_UNSUPPORTED', "protected coordinates: upright pictures");
   if (scope.width !== reference.width || scope.height !== reference.height || scope.width !== decoded.width || scope.height !== decoded.height)
-    throw fail('JXL_DIMENSIONS', "Protected scope has different dimensions; match the reference and output pictures.");
+    throw fail('JXL_DIMENSIONS', "protected dimensions: mismatch");
 }
 export function protectionEvidence(evidence, compared, options) {
   const scope = options.protection;
@@ -41,7 +41,7 @@ export function protectionEvidence(evidence, compared, options) {
   const exact = compared.supported && compared.protectedExact === true && compared.protectedSamples === scope.count * 4;
   return {...evidence, proof: {...evidence.proof, verified: evidence.proof.verified && exact,
     protection: {digest: options.protectionDigest, pixels: scope.count, exact}},
-    ...(!exact && !evidence.reason && {reason: targetMiss('The protected RGBA samples differ or were not all compared; encode those pixels exactly and verify again.')})};
+    ...(!exact && !evidence.reason && {reason: targetMiss('protected RGBA: mismatch or incomplete')})};
 }
 async function readPNG(bytes, options) {
   check(options.signal);
@@ -72,7 +72,7 @@ export function noiseUnread(decodedEvidence) {
   const unread = {...decodedEvidence, proof: {...decodedEvidence.proof, notChecked: 'noise'}};
   if (decodedEvidence.proof.verified || decodedEvidence.reason?.code !== 'JXL_TARGET' || !Number.isFinite(decodedEvidence.proof.score)) return unread;
   return {...unread,
-    reason: unsupported('This file carries noise and its look was searched without it; reading it without the noise here needs configureDecoder(decode, restore) from rapier-jxl/verify, with decode from rapier-jxl/decode.')};
+    reason: unsupported('noise-free read: configureDecoder(decode, restore) with decode from jpegxl/decode')};
 }
 export const searchedWithoutNoise = record => Array.isArray(record?.measurements) &&
   record.measurements.some(m => m.metric === 'ssimulacra2' && m.view === 'without-noise' && m.region === undefined);
@@ -81,7 +81,7 @@ async function withoutNoise(bytes, picture, decodedEvidence, compared, fidelity,
   if (carries === false) return decodedEvidence;
   let plain = await decodeWithoutNoise(bytes, decodeOptions(options));
   if (!plain) return carries === true && compared.alphaExact ? noiseUnread(decodedEvidence) : decodedEvidence;
-  const read = async (file, given) => await decodeWithoutNoise(file, given) ?? Promise.reject(fail('JXL_UNSUPPORTED', "Decoder cannot read the picture without noise; configure decode from rapier-jxl/decode."));
+  const read = async (file, given) => await decodeWithoutNoise(file, given) ?? Promise.reject(fail('JXL_UNSUPPORTED', "noise-free decode: use decode from jpegxl/decode"));
   const native = await djxlSamples(bytes, plain, options, read);
   if (native) plain = {...plain, native};
   const evidence = await pixelEvidence(picture, plain, fidelity, options, compared);
@@ -98,7 +98,7 @@ export async function pixelResult(bytes, picture, {record, referenceIdentity, fi
   if (!picture.frames && picture.orientation > 1 && decoded.orientation === 1 && !decoded.orientationApplied)
     picture = await orientSamples(picture, options);
   if (options.protection) protectionDomain(options.protection, picture, decoded);
-  if (!picture.frames && decoded.animation) throw fail('JXL_TARGET', "Output is animated; verify a still image result.");
+  if (!picture.frames && decoded.animation) throw fail('JXL_TARGET', "output: still only");
   const compared = picture.frames ? null : comparison(picture, decoded, options.protection);
   let evidence = picture.frames ? await animationEvidence(picture, decoded, fidelity, options)
     : await pixelEvidence(picture, decoded, fidelity, options, compared);
@@ -112,12 +112,12 @@ export async function pixelResult(bytes, picture, {record, referenceIdentity, fi
 }
 
 export async function rowResult(bytes, reference, original, {fidelity, format, size, outputDigest, details, options}) {
-  if (options.transform) throw fail('JXL_UNSUPPORTED', 'Row verification cannot resize the reference; supply its already transformed rows.');
+  if (options.transform) throw fail('JXL_UNSUPPORTED', 'rows: supply transformed reference');
   let compared = {exact: true, alphaExact: true, maxError: 0, supported: true,
     ...(options.protection && {protectedSamples: 0, protectedExact: true})}, unavailable;
-  try { if (format !== 'jxl') throw fail('JXL_UNSUPPORTED', "Banded output format is unsupported; verify a JPEG XL result."); const info = header(bytes);
+  try { if (format !== 'jxl') throw fail('JXL_UNSUPPORTED', "banded format: jxl only"); const info = header(bytes);
     if (options.protection) protectionDomain(options.protection, reference, info);
-    if (info.animation) throw fail('JXL_TARGET', "Output is animated but the source supplies rows; verify against the original animation."); size = displaySize(info); }
+    if (info.animation) throw fail('JXL_TARGET', "animated output: use original animation"); size = displaySize(info); }
   catch (error) { unavailable = error; }
   const referenceIdentity = await rowsIdentity(reference, {signal: options.signal, consume: async (band, y) => {
     if (unavailable) return;
@@ -137,11 +137,11 @@ export async function rowResult(bytes, reference, original, {fidelity, format, s
   const source = original === reference ? referenceIdentity : await identityOfSnapshot(original, options);
   let evidence;
   if (unavailable) evidence = {kept: 'lossy', proof: {kind: proofKind(fidelity), verified: false},
-    reason: unsupported("Row verification failed; check the file and decoder setup: " + unavailable.message)};
+    reason: unsupported("rows: " + unavailable.message)};
   else if (fidelity === 'exact' || measurementTarget(fidelity, options).kind === 'max-error')
     evidence = await pixelEvidence(reference, null, fidelity, options, compared);
   else evidence = {kept: 'lossy', proof: {...measurementTarget(fidelity, options), verified: false},
-    reason: unsupported('This score cannot be verified from picture rows alone; supply a complete still picture for perceptual verification.')};
+    reason: unsupported('perceptual score: complete still picture')};
   if (unavailable) compared.supported = false;
   evidence = protectionEvidence(evidence, compared, options);
   check(options.signal);
@@ -155,10 +155,10 @@ async function transformed(picture, options) {
   if (!transform) return picture;
   if (transform.frame !== undefined) {
     if (!Number.isSafeInteger(transform.frame) || transform.frame < 0 || !picture.frames?.[transform.frame])
-      throw fail('JXL_INPUT', "Referenced animation frame is absent; pass the complete original animation.");
+      throw fail('JXL_INPUT', "animation frame: original animation required");
     picture = {width: picture.width, height: picture.height, ...described(picture), data: picture.frames[transform.frame].data};
   }
-  if (picture.frames || isRows(picture)) throw fail('JXL_UNSUPPORTED', "Reference transform cannot use rows or animation; pass a complete still picture.");
+  if (picture.frames || isRows(picture)) throw fail('JXL_UNSUPPORTED', "reference transform: complete still picture");
   picture = await orientSamples(picture, options);
   return transform.resizer === 'browser' ? browserReference(picture, transform) : resizeSamples(picture, transform.width, transform.height, options);
 }
@@ -168,13 +168,13 @@ async function nativeReference(original, options) {
     deep: async () => ({readSource: readPNG16, orient: orientSamples})});
 }
 export async function referenceFromOriginal(original, options, readJPEG) {
-  if (isIdentity(original)) throw fail('JXL_INPUT', "Reference contains only an identity; pass the original samples or file.");
+  if (isIdentity(original)) throw fail('JXL_INPUT', "reference: original samples or file");
   const bytes = await rawBytes(original);
   if (!bytes) return transformed(original, options);
   let picture;
   if (starts(bytes, [71,73,70])) {
     const gif = readGifBytes(bytes, 'original.gif', options.maxPixels);
-    if (gif.kind === 'animation' && options.readAs !== undefined) throw fail('JXL_OPTIONS', "readAs does not apply to an animated GIF; remove readAs.");
+    if (gif.kind === 'animation' && options.readAs !== undefined) throw fail('JXL_OPTIONS', "readAs: not with animated GIF");
     picture = options.readAs !== undefined ? await nativeReference(original, options) : gif.kind === 'still' ? gif.picture : gif.animation;
   } else if (options.readAs !== undefined) picture = await nativeReference(original, options);
   else if (isJXL(bytes)) picture = fromDecoded(await decodeFile(bytes, decodeOptions(options)));
@@ -186,7 +186,7 @@ export async function referenceFromOriginal(original, options, readJPEG) {
     catch (error) {
       check(options.signal);
       if (typeof error?.code === 'string' && error.code !== 'JXL_PLATFORM') throw error;
-      throw fail(error?.code ?? 'JXL_INPUT', "The original's bytes are read as an image file, which this host cannot decode; pass raw RGBA as {data, width, height}.");
+      throw fail(error?.code ?? 'JXL_INPUT', "original bytes: raw RGBA {data, width, height}");
     }
   }
   return transformed(picture, options);

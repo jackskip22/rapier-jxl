@@ -32,27 +32,27 @@ const record = value => value && typeof value === 'object' && !Array.isArray(val
 const encoded = value => JSON.stringify(value, (key, item) => item === undefined ? null : record(item)
   ? Object.fromEntries(Object.keys(item).sort().map(k => [k, item[k]])) : item);
 async function rebuilt(imageResult, bytes, facts, original) {
-  if (!record(facts)) throw fail('JXL_INPUT', "Invalid finished record; pass the result record returned by the job.");
+  if (!record(facts)) throw fail('JXL_INPUT', "finished record: job result record");
   const {width, height, format = 'jxl', fidelity, kept, measurements, transform, readAs, originalBytes, usedWebGPU} = facts, shown = transform ?? {width, height};
   if (originalBytes !== undefined && original.kind === 'file' && originalBytes !== original.byteLength)
-    throw fail('JXL_INPUT', "Finished record has no original size; restore the complete result record.");
+    throw fail('JXL_INPUT', "finished record: original size required");
   if (bytes && format === 'jxl') {
     const size = fileSize(bytes);
     if (!size || !(size.width === shown.width && size.height === shown.height || size.width === shown.height && size.height === shown.width))
-      throw fail('JXL_INPUT', "Finished record describes another file; pass the record belonging to this file.");
+      throw fail('JXL_INPUT', "finished record: file mismatch");
   }
   let made;
   try {
     made = await imageResult(bytes, {width, height}, {fidelity, measurements, format, ...(bytes && kept !== undefined && {kept}),
       ...(transform !== undefined && {transform}), ...(readAs !== undefined && {readAs}), ...(originalBytes !== undefined && {originalBytes}),
       ...(usedWebGPU !== undefined && {usedWebGPU}), owned: true});
-  } catch { throw fail('JXL_INPUT', "Invalid finished record; pass the result record returned by the job."); }
+  } catch { throw fail('JXL_INPUT', "finished record: job result record"); }
   for (const key of new Set([...Object.keys(facts), ...Object.keys(made)])) if (key !== 'bytes' && key !== 'source' && encoded(made[key]) !== encoded(facts[key]))
-    throw fail('JXL_INPUT', "Finished record describes another file; pass the record belonging to this file.");
+    throw fail('JXL_INPUT', "finished record: file mismatch");
   const source = original.kind === 'decode' ? facts.source : undefined;
   if (source === undefined) return made;
   if (!record(source) || source.kind !== 'bytes' || !/^sha256:[0-9a-f]{64}$/.test(source.digest) || Object.keys(source).length !== 2)
-    throw fail('JXL_INPUT', "Finished record has no valid original; restore the complete result record.");
+    throw fail('JXL_INPUT', "finished record: original required");
   return {...made, source: {kind: 'bytes', digest: source.digest}};
 }
 function plain(value, depth = 0) {
@@ -64,10 +64,10 @@ function plain(value, depth = 0) {
 
 async function decoded(bytes, snap) {
   const {decode, restore} = (snap !== undefined ? snap : configuredDecoder()) ?? {};
-  if (!decode) throw fail('JXL_PLATFORM', "This host has no configured decoder; call configureDecoder(decode) with decode from rapier-jxl/decode.");
+  if (!decode) throw fail('JXL_PLATFORM', "decoder: configureDecoder(decode) with decode from jpegxl/decode");
   const picture = await decode(bytes);
   if (picture.format !== 'uint8' || typeof picture.colorSpace !== 'string')
-    throw fail('JXL_UNSUPPORTED', 'The decoded picture is not 8-bit with a named color space; configure the decoder to return 8-bit pixels in sRGB or another named color space.');
+    throw fail('JXL_UNSUPPORTED', 'decoded pixels: 8-bit named colorSpace');
   let source;
   if (restore && picture.header?.reconstruction) {
     const jpeg = (await restore(bytes)).bytes;
@@ -120,16 +120,16 @@ export function verbSteps({id, verb, taken, admit = () => {}, rows = false, file
   return Object.freeze({id,
     eager: source => source.kind === 'decode' || ((source.kind ?? 'pixels') === 'file' ? !files : !rows),
     normalize(options, source) {
-      if (!record(options) || !plain(options)) throw fail('JXL_OPTIONS', "Invalid resumable options; pass plain data values.");
+      if (!record(options) || !plain(options)) throw fail('JXL_OPTIONS', "resumable options: plain data");
       const unknown = Object.keys(options).find(key => !taken.includes(key));
-      if (unknown) throw fail('JXL_OPTIONS', `Unknown resumable option: ${unknown}; use ${taken.join(', ')}.`);
+      if (unknown) throw fail('JXL_OPTIONS', `unknown option: ${unknown}; use ${taken.join(', ')}`);
       const kind = source.kind ?? 'pixels';
       if (kind === 'pixels') {
         const {width, height} = source;
         if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || source.byteLength !== width * height * 4)
-          throw fail('JXL_INPUT', "Pixel source has the wrong byte count; pass width * height * 4 RGBA8 bytes or kind: 'file' for an encoded image.");
+          throw fail('JXL_INPUT', "pixels: width*height*4 RGBA8 or kind:file");
         dimensions(width, height, pixelLimit(options.maxPixels));
-      } else if (kind !== 'file' && kind !== 'decode') throw fail('JXL_INPUT', "Invalid resumable source kind; use pixels, file, or decode.");
+      } else if (kind !== 'file' && kind !== 'decode') throw fail('JXL_INPUT', "source kind: pixels|file|decode");
       admit(options);
       return {options: {...options}};
     },
@@ -146,20 +146,20 @@ export function verbSteps({id, verb, taken, admit = () => {}, rows = false, file
       return named(picture.source, made(verb(pictureOf(picture), {...plan.options, signal})));
     },
     async record(bytes, plan, source, facts) {
-      if (!record(facts)) throw fail('JXL_INPUT', "Invalid finished record; pass the result record returned by the job.");
+      if (!record(facts)) throw fail('JXL_INPUT', "finished record: job result record");
       if (facts.records !== undefined) {
-        if (!Array.isArray(facts.records) || !facts.records.length) throw fail('JXL_INPUT', "Invalid finished records; pass a list of result records.");
+        if (!Array.isArray(facts.records) || !facts.records.length) throw fail('JXL_INPUT', "finished records: nonempty array");
         let at = 0;
         const made = [];
         for (const {length, ...facts1} of facts.records) {
           if (length !== null && (!Number.isSafeInteger(length) || length < 1 || at + length > bytes.length))
-            throw fail('JXL_INPUT', "Finished records do not cover the file; restore the complete saved records.");
+            throw fail('JXL_INPUT', "finished records: incomplete file");
           made.push(await rebuilt(imageResult, length === null ? null : bytes.slice(at, at += length), facts1, source));
         }
-        if (at !== bytes.length) throw fail('JXL_INPUT', "Finished records do not cover the file; restore the complete saved records.");
+        if (at !== bytes.length) throw fail('JXL_INPUT', "finished records: incomplete file");
         return made;
       }
-      if (typeof facts.missed !== 'boolean' || facts.missed && bytes.length) throw fail('JXL_INPUT', "Finished record describes another file; pass the record belonging to this file.");
+      if (typeof facts.missed !== 'boolean' || facts.missed && bytes.length) throw fail('JXL_INPUT', "finished record: file mismatch");
       return rebuilt(imageResult, facts.missed ? null : bytes, facts.record, source);
     }});
 }

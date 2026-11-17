@@ -179,7 +179,7 @@ function dct8Band(image, top, height) {
 }
 export function qualifyPhotoImage(image, {rows, referenceRows = rows, exactRows = null, crops, readingIntent: intent, readingLook, readingArithmetic,
   mask = false, project = null, signal, colorSpace, origin = {x: 0, y: 0}}) {
-  if (image.strategyData || image.lazyStrategy) throw fault('JXL_INTERNAL', 'An existing photo floor must be DCT8.');
+  if (image.strategyData || image.lazyStrategy) throw fault('JXL_INTERNAL', 'photo-region-score:floor');
   const {width, height} = image, guard = cropGuard(width, height, crops, intent, mask, project, signal, colorSpace, origin, readingLook, readingArithmetic);
   for (let top = 0; top < height && guard.passed(); top += 256) {
     check(signal);

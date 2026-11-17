@@ -60,7 +60,7 @@ export async function measuredAnimation(animation, target, encodeAt, {start = 90
     try {
       const bytes = await encodeAt(quality, progress, true, prepare);
       check(signal);
-      if (!(bytes instanceof Uint8Array)) throw fail('JXL_INTERNAL', "Incomplete output file; report the input and options.");
+      if (!(bytes instanceof Uint8Array)) throw fail('JXL_INTERNAL', "animation-search:output");
       return {quality, bytes, scores: result?.bytes === bytes ? result.scores : null};
     } finally { observer?.destroy(); }
   };

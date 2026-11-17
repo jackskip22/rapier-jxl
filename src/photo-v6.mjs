@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {memoryPlan} from './memory-plan.mjs';
-import {retainsWhole, RETAINED_BYTES} from './memory-device.mjs';
+import {retainsWhole, WHOLE_BYTES, BANDED_BYTES, ONE_PLANE_BYTES, BAND_CACHE_BYTES} from './memory-device.mjs';
 import {fault} from './fault.mjs';
 import {complete, part, scaled} from './bits.mjs';
 import {transformDCT8, dct8Basis} from './photo-dct.mjs';
@@ -27,15 +27,15 @@ export function admitV6Memory(rgba, width, height, memory) {
   if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) return {known: false, fits: false, dct: false, banded: width * height > 524288};
   else {
     const inputBytes = rgba[JOURNAL_JOIN] ? rgba.byteLength : rgba.buffer?.byteLength ?? rgba.byteLength;
-    if (memory?.inputBytes !== undefined && memory.inputBytes < inputBytes) throw fault('JXL_MEMORY', 'Memory reservation omits retained input bytes.');
+    if (memory?.inputBytes !== undefined && memory.inputBytes < inputBytes) throw fault('JXL_MEMORY', 'inputBytes: below retained input');
     const plan = memoryPlan(width * height, {...memory, inputBytes: memory?.inputBytes ?? inputBytes, width, height});
-    if (plan.known && !plan.fits) throw fault('JXL_MEMORY', 'Photo encoding exceeds the supplied memory reservation.');
+    if (plan.known && !plan.fits) throw fault('JXL_MEMORY', 'over memory reservation');
     return plan;
   }
 }
 export const prepareV6 = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? null : function prepareV6(rgba, width, height, color = {}, memory = {}, {banded = false, upload = false} = {}) {
   const plan = admitV6Memory(rgba, width, height, memory), cache = plan.dct, whole = !(banded && plan.banded);
-  const retain = !whole && !plan.known && retainsWhole(width * height, RETAINED_BYTES);
+  const retain = !whole && !plan.known && retainsWhole(width * height, BANDED_BYTES - WHOLE_BYTES + 2 * ONE_PLANE_BYTES + BAND_CACHE_BYTES);
   const prepared = {rgba, width, height, color, memory: plan, pre: null, whole, retain, pres: new Map(), upload,
     dct: whole && cache ? {} : null, dctPlain: cache ? {} : null};
   if (whole) prepared.pre = prePlanes(prepared, v6Options(prepared, 75));
@@ -90,7 +90,7 @@ export const gaborishRows = (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __R
     const top = Math.floor(y0 / 64) * 64, rows = Math.max(256, Math.ceil((y1 - top) / 64) * 64);
     const from = Math.max(0, top - M), to = Math.min(height, top + rows + M), need = W * Math.ceil((to - from) / 8) * 8;
     if (!pool || pool[0].length < need) {
-      if (into) throw fault('JXL_INTERNAL', 'A photographic plane workspace is too small.');
+      if (into) throw fault('JXL_INTERNAL', 'photo-v6:workspace');
       pool = [0, 1, 2].map(() => new Float64Array(need));
     }
     const planes = gaborishPlanes(data.subarray(from * width * 4, to * width * 4), width, to - from, options, pool, scratch);
@@ -343,7 +343,7 @@ function* pictureSteps(data, width, height, quality, effort, encodeCoefficients,
   const blockDesign = UPLOAD ? null : screen ? (effort >= 8 ? 'full' : null) : effort === 6 || effort === 7 ? 'fast' : effort === 8 ? 'full' : null;
   const perceptualBlocks = blockDesign !== null && quality < 100 && width >= 128 && height >= 128 &&
     (!color || color.space || color.transform && !color.transform.gray);
-  if (perceptualBlocks && !encodeCoefficients.blocks) throw fault('JXL_INTERNAL', 'The block picture needs photoAnsSteps (photo-v6-blocks.mjs).');
+  if (perceptualBlocks && !encodeCoefficients.blocks) throw fault('JXL_INTERNAL', 'photo-v6:blocks');
   if (!UPLOAD && (effort === 4 || effort === 5) && quality < 100 && !screen && color?.transform && !color.transform.gray && smallPicture(width, height)) {
     if (splitRoute(width, height)) {
       try { return yield* photoSplitCandidates(data, width, height, quality, fastBudgets(effort, false, width * height), {color, screen: false}); } catch (error) { if (error !== FAST_RANGE) throw error; }

@@ -25,7 +25,7 @@ export function hdrSpace(samples) {
   const encoding = samples.colorEncoding;
   if (!encoding) return samples.iccGiven ? undefined : samples.colorSpace ?? 'srgb';
   if (encoding.space !== 'rgb' || samples.colorChannels === 1) return undefined;
-  const primaries = encoding.primaries ?? 'srgb';
+  const primaries = encoding.primaries ?? samples.colorSpace ?? 'srgb';
   if (typeof primaries === 'string') return ['srgb', 'display-p3', 'rec2020'].includes(primaries) && (encoding.whitePoint ?? 'd65') === 'd65' ? primaries : undefined;
   return {primaries, whitePoint: encoding.whitePoint};
 }
@@ -41,7 +41,9 @@ export function hdrDomain(data, samples) {
   for (let i = 0; i < data.length; i++) { const v = value(i); if (!Number.isFinite(v) || (i & 3) === 3 && !(v >= 0)) return false; }
   return true;
 }
-export const hdrCurve = samples => samples.colorEncoding ? samples.colorEncoding.transferFunction : samples.transferFunction;
+export const hdrCurve = samples => samples.colorEncoding
+  ? (samples.colorEncoding.gamma !== undefined ? 'gamma' : samples.colorEncoding.transferFunction ?? samples.transferFunction)
+  : samples.transferFunction;
 export function srgbLight(bits) {
   const top = 2 ** bits - 1, table = new Float64Array(top + 1);
   for (let v = 0; v <= top; v++) { const e = v / top; table[v] = e <= 0.04045 ? e / 12.92 : ((e + 0.055) / 1.055) ** 2.4; }

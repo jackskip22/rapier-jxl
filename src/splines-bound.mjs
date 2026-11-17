@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {fault} from './fault.mjs';
 export const splineCurveLimit = (width, height) => Math.min(1048576, Math.floor(width * height / 2), Math.floor(width * height / 4));
-const TOO_MANY = 'Too many splines: at most one per four pixels.';
+const TOO_MANY = 'splines: <=pixels/4';
 export function admitSplineCount(count, width, height) {
   if (count > splineCurveLimit(width, height)) throw fault('JXL_INPUT', TOO_MANY);
 }

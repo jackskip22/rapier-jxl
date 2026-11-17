@@ -34,7 +34,7 @@ export function writeTree(w, root, separate = false) {
   const contexts = !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && separate ? [] : null;
   for (const node of queue) {
     if (node.left) {
-      if (!(node.property >= 0 && node.property <= 255)) throw fault('JXL_INTERNAL', `An MA tree property of ${node.property} is outside 0 to 255.`);
+      if (!(node.property >= 0 && node.property <= 255)) throw fault('JXL_INTERNAL', `modular:property ${node.property}`);
       tokens.push(node.property + 1, packSigned(node.splitval)); contexts?.push(1, 0); queue.push(node.left, node.right); continue; }
     node.context = leaves.length; leaves.push(node);
     const mulLog = node.multiplier === 1 ? 0 : 31 - Math.clz32(node.multiplier & -node.multiplier);
@@ -125,7 +125,7 @@ export function writeTransform(w, transform) {
       w.write(1, p.horizontal ? 1 : 0); w.write(1, p.inPlace ? 1 : 0);
       w.writeU32(beginC, p.beginC); w.writeU32([[0, 1], [0, 2], [0, 3], [4, 4]], p.numC);
     }
-  } else throw fault('JXL_INTERNAL', 'unknown transform ' + transform.type);
+  } else throw fault('JXL_INTERNAL', 'modular:transform ' + transform.type);
 }
 
 export function writeModularHeader(w, {useGlobalTree = true, transforms = []} = {}) {
@@ -141,7 +141,7 @@ export function writeChannelHistograms(w, orderedLeaves, freqs, histogramOf = le
   const contextMap = new Uint8Array(orderedLeaves.length + 1);
   for (const leaf of orderedLeaves) {
     const h = histogramOf(leaf) + 1;
-    if (h > 255) throw fault('JXL_INTERNAL', 'A stream names more than 256 histograms.');
+    if (h > 255) throw fault('JXL_INTERNAL', 'modular:histograms');
     contextMap[leaf.context] = h;
   }
   const distance = new Uint32Array(2); distance[1] = 1;

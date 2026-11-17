@@ -384,7 +384,7 @@ export function modular(r, shapes, shared, stream, work) {
       const prediction = wp ? wp.predict(x, y, w, n, ne) : 0;
       let leaf = root;
       while (leaf.left) {
-        if (--work.left < 0) throw fault('JXL_LIMIT', 'JPEG reconstruction Modular work exceeds the limit.');
+        if (--work.left < 0) throw fault('JXL_LIMIT', 'modular work: exceeds limit');
         const p = leaf.property;
         let value;
         if (p >= 16) {
@@ -456,7 +456,7 @@ function coefficientPreamble(bytes, maxPixels) {
   requireJPEG(bytes instanceof Uint8Array && bytes.length > 0);
   const r = new JxlBits(bytes), {width, height} = readSize(r);
   requireJPEG(width <= LIMITS.edge && height <= LIMITS.edge && width * height <= LIMITS.pixels);
-  if (width * height > maxPixels) throw fault('JXL_DIMENSIONS', 'The JPEG XL image exceeds maxPixels.');
+  if (width * height > maxPixels) throw fault('JXL_DIMENSIONS', 'image: exceeds maxPixels');
   r.expect(1, 0); const extra = r.read(1), orientation = extra ? r.read(3) + 1 : 1;
   if (extra) r.expect(3, 0);
   r.expect(3, 0); r.read(1); r.expect(2, 0); r.expect(1, 0);
@@ -563,7 +563,7 @@ function* coefficientHeaderSteps(bytes, maxPixels) {
     for (let c = 0; c < 3; c++) {
       const values = quant[c] = Int32Array.from({length: 64}, (_, k) => matrices[c][(k % 8) * 8 + (k >> 3)]);
       requireJPEG(values.every(q => q > 0 && q < 65536));
-      if (!transcodedLf(lfDequant[c], values[0])) throw fault('JXL_RECONSTRUCTION', 'The LF dequantization is not a JPEG transcode\'s.');
+      if (!transcodedLf(lfDequant[c], values[0])) throw fault('JXL_RECONSTRUCTION', 'LF dequantization: not a JPEG transcode');
     }
     ac.expect(32, 0); ac.expect(16, 0);
     if (groups > 1) ac.expect(ceilLog2(groups), 0);
@@ -666,7 +666,7 @@ function coefficientReader(header, reconstruction, rows) {
       const scale = reconstruction ? 1 : p.quant[0] / divisor;
       for (let b = (gy * 32 >> vshift[c]) * p.stride; b < Math.min(p.rows, (gy + 1) * 32 >> vshift[c]) * p.stride; b++) {
         const dc = ycbcr ? p.dc[b] : (p.dc[b] - lift) / scale;
-        if (!(Number.isInteger(dc) && dc >= -32768 && dc <= 32767)) throw fault('JXL_RECONSTRUCTION', 'A DC coefficient is not one a JPEG holds.');
+        if (!(Number.isInteger(dc) && dc >= -32768 && dc <= 32767)) throw fault('JXL_RECONSTRUCTION', 'DC coefficient: outside signed 16-bit JPEG range');
         target[c][(b - row0[c] * p.stride) * 64] = dc;
       }
     });

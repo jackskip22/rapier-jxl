@@ -20,10 +20,10 @@ export async function orientSamples(picture, {signal} = {}) {
   check(signal);
   const {orientation = 1, width, height, data, ...description} = picture;
   if (!Number.isInteger(orientation) || orientation < 1 || orientation > 8)
-    throw fail('JXL_INPUT', 'orientation is an integer from 1 through 8.');
+    throw fail('JXL_INPUT', 'orientation: integer 1-8');
   if (orientation === 1) return {data, width, height, ...description};
   if (description.extraChannels !== undefined)
-    throw fail('JXL_UNSUPPORTED', 'Orienting extra channels needs a channel transform.');
+    throw fail('JXL_UNSUPPORTED', 'extraChannels: orientation unsupported');
   if (!await prepareKernels() || !ensureKernels()) throw wasmRequired();
   check(signal);
   if (orientation <= 4) return {data: await orientInPlace(data, width, height, orientation, signal), width, height, ...description};
@@ -82,9 +82,9 @@ function lumaOf(primaries, white = 'd65') {
 }
 export async function sampleResizeConfig(picture, {signal} = {}) {
   if (picture.orientation !== undefined && picture.orientation !== 1)
-    throw fail('JXL_INPUT', 'Orient the source before resizing.');
+    throw fail('JXL_INPUT', 'orientation: orient before resize');
   if (picture.extraChannels !== undefined)
-    throw fail('JXL_UNSUPPORTED', 'Resizing extra channels needs a sampling policy.');
+    throw fail('JXL_UNSUPPORTED', 'extraChannels: resize unsupported');
   if (picture.icc !== undefined) picture = {...picture, icc: undefined, colorEncoding: undefined, colorSpace: 'srgb', transferFunction: undefined};
   const samples = admitSampleDomain(picture.data, picture), {data} = picture;
   const [named] = sRGBWithIntent(picture);

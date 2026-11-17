@@ -6,7 +6,7 @@ import {scaledDCT, scaledDCTAt, smallTransform, naturalOrder, lowFrequencies, TR
 import {kernelHooks} from './kernel-hooks.mjs';
 import {timed} from './stage-trace.mjs';
 import {fault, outOfMemory} from './fault.mjs';
-const noSmall = () => { throw fault('JXL_INTERNAL', 'capture-complete prices no small transform.'); };
+const noSmall = () => { throw fault('JXL_INTERNAL', 'varblock-core:small'); };
 import {zeroDensityContext} from './vardct.mjs';
 import {prepareQuantParams, quantParamSteps} from './quantization-params.mjs';
 import {SCAN as VB_SCAN} from './dct8-contexts.mjs';
@@ -368,7 +368,7 @@ export function createStrategyBuilder(base, width, height, options = {}, storage
   const costs = options.costs;
   const certifiedCosts = !!costs?.certified;
   if (options.perceptual && (options.maps || options.rates || costs && !(certifiedCosts && options.maskWeight)))
-    throw fault('JXL_INTERNAL', 'The block search takes no maps or rates, and only certified costs with their mask.');
+    throw fault('JXL_INTERNAL', 'varblock-core:args');
   const costDoubt = options.costDoubt || 0, doubtOf = (bx, by, bw, bh) => maskDoubtOver(costDoubt, stride, bx, by, bw, bh);
   if (costs && rates) for (const [id, c] of costs) if (!rates.has(id)) rates.set(id, c.R);
   const candidate = (id, bx, by, loses = null) => {
@@ -676,7 +676,7 @@ export function createStrategyBuilder(base, width, height, options = {}, storage
 }
 
 export function fixedStrategyImage(base, width, height, options, storage = null) {
-  if (!options.layout) throw fault('JXL_INTERNAL', 'A fixed photographic image needs its layout.');
+  if (!options.layout) throw fault('JXL_INTERNAL', 'varblock-core:layout');
   const builder = createStrategyBuilder(base, width, height, options, storage), layout = options.layout, chosen = [];
   for (let i = 0; i < layout.length;) {
     const {id, bx, by} = layout[i];

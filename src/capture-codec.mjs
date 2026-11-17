@@ -45,7 +45,7 @@ let L = L3;
 setStreamLevel(L3);
 let shapeFloor = null;
 export const CAPTURE_TOOLS = Symbol('capture tools');
-export const CAPTURE_TOOLS_LEAN = Object.freeze({top: 5, next: 'rapier-jxl/capture-complete'});
+export const CAPTURE_TOOLS_LEAN = Object.freeze({top: 5, next: 'jpegxl/capture-complete'});
 let tools = CAPTURE_TOOLS_LEAN;
 const writeHeaderFields = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true ? writeCaptureHeaderFields : generalHeader;
 const writeModularFrameHeader = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true ? writeCaptureFrameHeader : generalFrame;
@@ -529,7 +529,7 @@ const ROW_BAND = DIM;
 function readRows(source, y, count) {
   const rows = source.rows(y, count);
   if (!(rows instanceof Uint8Array || rows instanceof Uint8ClampedArray) || rows.length !== count * source.width * 4)
-    throw fault('JXL_INPUT', 'A row source answers RGBA8 rows of its width.');
+    throw fault('JXL_INPUT', 'row source: width-sized RGBA8 rows');
   return rows;
 }
 const wholeOf = new WeakMap();
@@ -863,7 +863,7 @@ function* frameSteps(pixels, width, height, shape, coding, frame, header, placem
   }
   captureRelease();
   const rows = ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true)) && !frame && isRows(pixels);
-  if (rows && (pStride !== pixels.width || px || py || width !== pixels.width || height !== pixels.height)) throw fault('JXL_INTERNAL', 'A row source is written whole.');
+  if (rows && (pStride !== pixels.width || px || py || width !== pixels.width || height !== pixels.height)) throw fault('JXL_INTERNAL', 'capture:row-source-whole');
   const dim = placement.dim ?? (frame ? DIM : rows ? rowDim(rowFactsOf.get(pixels)) : groupSize(pixels, pStride, px, py, width, height)), shift = 31 - Math.clz32(dim >> 7);
   try {
     const layout = groupLayout(width, height, dim), groups = layout.groupsX * layout.groupsY, sections = [];
@@ -1432,22 +1432,22 @@ function blanked(source, regions, imageWidth, background) {
   return body;
 }
 export function admitCapture(data, width, height, options) {
-  if (options === null || typeof options !== 'object' || Array.isArray(options)) throw fault('JXL_INPUT', 'Capture options are an object.');
+  if (options === null || typeof options !== 'object' || Array.isArray(options)) throw fault('JXL_INPUT', 'capture options: object');
   const maxError = options.maxError ?? 0;
   if (!Number.isInteger(maxError) || maxError < 0 || maxError > 8)
-    throw fault('JXL_INPUT', 'maxError is a whole number from 0 to 8.');
+    throw fault('JXL_INPUT', 'maxError: integer 0-8');
   const tools = options[CAPTURE_TOOLS] ?? CAPTURE_TOOLS_LEAN, effort = options.effort ?? DEFAULT_EFFORT;
-  if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fault('JXL_INPUT', 'effort is a whole number from 1 to 9; 3 is the default.');
+  if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fault('JXL_INPUT', 'effort: integer 1-9, default 3');
   const level = options[CAPTURE_LEVEL] ?? LEVELS[effort];
   if (effort > tools.top || level.needs.some(tool => !tools[tool]))
-    throw fault('JXL_UNSUPPORTED', `Capture effort ${effort} is ${tools.next}'s; this module carries efforts 1-${tools.top}.`);
+    throw fault('JXL_UNSUPPORTED', `effort ${effort}: use ${tools.next}; available 1-${tools.top}`);
   const {colorSpace} = admitOptions({colorSpace: options.colorSpace});
   if (((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true)) && isRows(data)) {
     admitSize(width, height);
-    if (data.width !== width || data.height !== height) throw fault('JXL_INPUT', 'A row source has the picture\'s width and height.');
+    if (data.width !== width || data.height !== height) throw fault('JXL_INPUT', 'row source: picture dimensions');
   } else {
     admitPixels(data, width, height);
-    if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray)) throw fault('JXL_INPUT', 'Captures use straight RGBA8 samples.');
+    if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray)) throw fault('JXL_INPUT', 'data: Uint8Array/Uint8ClampedArray RGBA8');
   }
   const base = options[CAPTURE_BASE];
   return {colorSpace, coding: {maxError, onPredictor: typeof __RAPIER_JXL_PROBES__ === 'undefined' ? options[CAPTURE_PREDICTOR_PROBE] : null, base: base === true || base === 'reference',
@@ -1473,7 +1473,7 @@ export function captureBand(data, width, rows, options) {
 }
 
 let stepping = false;
-const idle = () => { if (stepping) throw fault('JXL_INTERNAL', 'A capture is already running; the next waits.'); };
+const idle = () => { if (stepping) throw fault('JXL_INTERNAL', 'capture:active-call'); };
 export const captureBusy = () => stepping;
 captureHeld(captureBusy);
 export function* encodeCaptureSteps(data, width, height, options = {}) {

@@ -11,7 +11,7 @@ export const MODULES = ['upload.mjs', 'upload.browser.mjs', 'jpeg.mjs', 'jpeg.br
 export async function copyModules({packageDir, to}) {
   const manifest = JSON.parse(await readFile(join(packageDir, 'package.json'), 'utf8').catch(() => 'null') ?? 'null');
   for (const name of ['upload', 'jpeg']) if (manifest?.exports?.[`./${name}`]?.browser !== `./dist/${name}.browser.mjs`)
-    throw new Error(`JXL_PACKAGE: ${packageDir} is not a built package with ./${name}.`);
+    throw Object.assign(new Error(`${packageDir} is not a built package with ./${name}.`), {code: 'JXL_PACKAGE'});
   await mkdir(to, {recursive: true});
   for (const name of MODULES) await copyFile(join(packageDir, 'dist', name), join(to, name));
   await copyFile(join(packageDir, 'LICENSE'), join(to, 'LICENSE'));
@@ -22,5 +22,5 @@ export async function prepareAssets({example = here, packageDir = process.env.JX
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try { await prepareAssets(); }
-  catch (error) { console.error(`${error.message}\nSet JXL_PACKAGE to a built package, or run npm install --no-save jpegxl in this example.`); process.exitCode = 1; }
+  catch (error) { console.error(`${error.code || 'JXL_PACKAGE'}: ${error.message}\nSet JXL_PACKAGE to a built package, or run npm install --no-save jpegxl in this example.`); process.exitCode = 1; }
 }

@@ -47,8 +47,8 @@ function place(data, rows, y0, count, width, height, attrs) {
   straighten(data.subarray((height - y0 - count) * line, (height - y0) * line), attrs);
 }
 const space = gl => gl.drawingBufferColorSpace ?? 'srgb';
-const lost = () => fail('JXL_INPUT', "Canvas lost its WebGL context; draw it again.");
-const readFailed = cause => Object.assign(fail('JXL_INPUT', "WebGL canvas read failed; draw it again or pass RGBA pixels."), {cause});
+const lost = () => fail('JXL_INPUT', 'WebGL context lost: redraw');
+const readFailed = cause => Object.assign(fail('JXL_INPUT', 'WebGL read failed: pass RGBA pixels'), {cause});
 
 export function readWebGLNow(canvas) {
   const gl = context(canvas);
@@ -82,7 +82,7 @@ export function readWebGL(canvas) {
       gl.flush();
       return made;
     });
-    if (!fence) throw new Error('no fence');
+    if (!fence) throw new Error('no sync fence');
   } catch (cause) { done(); throw readFailed(cause); }
   return new Promise((resolve, reject) => {
     const poll = () => {
@@ -90,7 +90,7 @@ export function readWebGL(canvas) {
         if (gl.isContextLost()) { done(); reject(lost()); return; }
         const state = gl.clientWaitSync(fence, 0, 0);
         if (state === gl.TIMEOUT_EXPIRED) { setTimeout(poll, 2); return; }
-        if (state === gl.WAIT_FAILED) throw new Error('the copy did not complete');
+        if (state === gl.WAIT_FAILED) throw new Error('copy failed');
         fetch(0);
       } catch (cause) { failed(cause); }
     };

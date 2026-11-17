@@ -13,7 +13,7 @@ const LOADERS = {
 export function addPart(name, module) { parts[name] = module; }
 
 export function part(name) {
-  if (!parts[name]) throw Object.assign(new Error('This JPEG XL file needs the decoder part ' + name + '.'), {code: 'JXL_PART', part: name});
+  if (!parts[name]) throw Object.assign(new Error('missing part: ' + name), {code: 'JXL_PART', part: name});
   return parts[name];
 }
 

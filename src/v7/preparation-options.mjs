@@ -9,7 +9,7 @@ import {PREVIEW} from './preview.mjs';
 export function fitOptions(value, admitEncode = encodeOptions) {
   const {maxBytes, fidelity = {quality: 90}, ...encode} = featureless(object(value));
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
-    throw fail('JXL_OPTIONS', "Invalid maxBytes; use a positive safe integer byte count.");
+    throw fail('JXL_OPTIONS', 'maxBytes: positive integer');
   let minQuality, maxQuality, requestedFidelity;
   if (fidelity === 'exact') { minQuality = maxQuality = 100; requestedFidelity = 'exact'; }
   else {
@@ -17,10 +17,10 @@ export function fitOptions(value, admitEncode = encodeOptions) {
     const quality = fidelity?.quality, range = typeof quality === 'number' ? {min: 1, max: quality} : quality;
     if (!keys || keys.length !== 1 || keys[0] !== 'quality' || !range || typeof range !== 'object' ||
         Array.isArray(range) || Object.keys(range).length !== 2 || !Object.hasOwn(range, 'min') || !Object.hasOwn(range, 'max'))
-      throw fail('JXL_OPTIONS', "Invalid fit fidelity; use 'exact', {quality: max}, or {quality: {min, max}}.");
+      throw fail('JXL_OPTIONS', "fidelity: 'exact', {quality} or {quality: {min, max}}");
     minQuality = range.min; maxQuality = range.max;
     if (!Number.isFinite(minQuality) || !Number.isFinite(maxQuality) || minQuality < 1 || maxQuality > 100 || minQuality > maxQuality)
-      throw fail('JXL_OPTIONS', "Invalid quality range; use finite values with 1 <= min <= max <= 100.");
+      throw fail('JXL_OPTIONS', 'quality: 1 <= min <= max <= 100');
     requestedFidelity = {quality: {min: minQuality, max: maxQuality}};
   }
   admitEncode({...encode, fidelity: {quality: maxQuality}});
@@ -35,14 +35,14 @@ export function variantsOptions(value, admitEncode = encodeOptions) {
   const {outputs, ...shared} = object(value);
   admitEncode(shared);
   const maxPixels = pixelLimit(shared.maxPixels);
-  if (!Array.isArray(outputs) || !outputs.length) throw fail('JXL_OPTIONS', "Invalid outputs; pass a nonempty array of image requests.");
+  if (!Array.isArray(outputs) || !outputs.length) throw fail('JXL_OPTIONS', 'outputs: nonempty array');
   const fixed = own(outputs), {signal, onProgress, onPreview, [PREVIEW]: preview, ...data} = shared;
   const common = {...own(data), signal, onProgress, ...(onPreview !== undefined && {onPreview}), ...(preview && {[PREVIEW]: preview})};
   const requests = fixed.map(output => {
-    const {width, height, firstRegion, ...settings} = object(output, 'An output');
+    const {width, height, firstRegion, ...settings} = object(output, 'output');
     outputSides(width, height, maxPixels);
     for (const key of Object.keys(settings)) if (!['fidelity', 'effort', 'progressive', 'jpeg', 'maxBytes'].includes(key))
-      throw fail('JXL_OPTIONS', `Unknown output option ${key}; remove it.`);
+      throw fail('JXL_OPTIONS', `unknown output option: ${key}`);
     const options = {...common, ...settings, ...(firstRegion !== undefined && {features: {firstRegion}})};
     if (settings.maxBytes !== undefined) return {width, height, policy: fitOptions(options, admitEncode)};
     admitEncode(options);

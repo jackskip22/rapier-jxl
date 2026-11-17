@@ -12,7 +12,7 @@ export async function image(input, options, hooks = {}, readBlob = nativeBlob) {
     const png = [137, 80, 78, 71, 13, 10, 26, 10].every((byte, i) => head[i] === byte);
     if (png) {
       if (head.length < 29 || head[12] !== 73 || head[13] !== 72 || head[14] !== 68 || head[15] !== 82)
-        throw fail('JXL_INPUT', "Incomplete PNG header; pass a valid PNG file.");
+        throw fail('JXL_INPUT', "PNG header: incomplete");
       const view = new DataView(head.buffer);
       dimensions(view.getUint32(16), view.getUint32(20), hooks.maxPixels);
       const chunks = await pngChunks(input, hooks.signal) ?? await pngChunks(input, hooks.signal, Infinity);
@@ -27,7 +27,7 @@ export async function image(input, options, hooks = {}, readBlob = nativeBlob) {
   return pixels(input, options, hooks.maxPixels);
 }
 
-const animated = kind => fail('JXL_UNSUPPORTED', `This is an animated ${kind}: decode its frames and pass {width, height, frames} to rapier-jxl/animation.`);
+const animated = kind => fail('JXL_UNSUPPORTED', `animated ${kind}: use jpegxl/animation`);
 function riffDimensions(head, maxPixels) {
   const kind = String.fromCharCode(...head.subarray(12, 16)), u24 = i => head[i] | head[i + 1] << 8 | head[i + 2] << 16;
   if (kind === 'VP8X') {
@@ -105,8 +105,8 @@ export const blobProfile = ((typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' 
 };
 
 export function requirePNGReader(options, hooks) {
-  if (options?.readAs !== undefined) throw fail('JXL_OPTIONS', "A 16-bit PNG keeps its declared color; remove readAs.");
-  if (!hooks?.deep) throw fail('JXL_INPUT', 'This encoder takes 8-bit samples; for 16-bit PNG use rapier-jxl.');
+  if (options?.readAs !== undefined) throw fail('JXL_OPTIONS', "readAs: not with PNG16");
+  if (!hooks?.deep) throw fail('JXL_INPUT', '16-bit PNG: use jpegxl');
 }
 function nativeBlob(input, options, hooks, head, png) {
   if (png && head[24] === 16) requirePNGReader(options);
@@ -115,15 +115,16 @@ function nativeBlob(input, options, hooks, head, png) {
 
 export async function nativeBitmap(input, options, hooks, policy) {
   const prepared = await policy?.prepare?.();
+  check(hooks.signal);
   if (typeof createImageBitmap !== 'function' || typeof OffscreenCanvas !== 'function')
-    throw fail('JXL_PLATFORM', 'This host has no image decoder for this file; ' + (policy?.platform?.() ?? 'pass decoded 8-bit RGBA pixels.'));
+    throw fail('JXL_PLATFORM', 'image decoder: unavailable; ' + (policy?.platform?.() ?? 'use 8-bit RGBA pixels'));
   let bitmap;
   try {
     const source = policy?.blob?.(prepared) ?? input, region = policy?.region;
     bitmap = region ? await createImageBitmap(source, region.x, region.y, region.width, region.height, {imageOrientation: 'from-image'})
       : await createImageBitmap(source, {imageOrientation: 'from-image'});
   }
-  catch (cause) { check(hooks.signal); throw Object.assign(fail('JXL_INPUT', policy?.failure?.(prepared) ?? 'The browser could not decode this image; pass a complete supported file or its RGBA pixels.'), {cause}); }
+  catch (cause) { check(hooks.signal); throw Object.assign(fail('JXL_INPUT', policy?.failure?.(prepared) ?? 'image decode: complete file or RGBA pixels'), {cause}); }
   try {
     check(hooks.signal); dimensions(bitmap.width, bitmap.height, hooks.maxPixels);
     policy?.admit?.(bitmap, prepared);
@@ -141,7 +142,7 @@ function scanGif(b, width, height, maxPixels) {
     if (tag === 0x3B) { complete = true; break; }
     if (tag === 0x21) { p++; while (p < b.length && b[p]) p += b[p] + 1; p++; continue; }
     if (tag !== 0x2C || p + 8 >= b.length) { complete = tag !== 0x2C; break; }
-    if (images++) throw fail('JXL_UNSUPPORTED', "GIF contains multiple frames; encode it with rapier-jxl/animation.");
+    if (images++) throw fail('JXL_UNSUPPORTED', "animated GIF: use jpegxl/animation");
     width = Math.max(width, le16(p) + le16(p + 4)); height = Math.max(height, le16(p + 2) + le16(p + 6));
     dimensions(width || 1, height || 1, maxPixels);
     p += 9 + (b[p + 8] & 0x80 ? 3 << ((b[p + 8] & 7) + 1) : 0) + 1;
@@ -180,7 +181,7 @@ export function pixels(input, options, maxPixels, half = false) {
   if (!result || !ArrayBuffer.isView(result.data) || result.data instanceof DataView)
     throw fail('JXL_INPUT', inputHint(input));
   for (const side of ['width', 'height']) if (result[side] === undefined)
-    throw fail('JXL_INPUT', `Pixels need their ${side}: pass {data, width, height}.`);
+    throw fail('JXL_INPUT', `${side}: {data, width, height}`);
   dimensions(result.width, result.height, maxPixels);
   return result;
 }
@@ -221,9 +222,9 @@ export async function admitJpeg(blob, maxPixels, signal) {
   catch (error) { check(signal); if (error?.code !== 'JXL_JPEG') throw error; }
 }
 
-const NOT_JPEG = "Input is not a JPEG; pass a valid JPEG file.", BAD_MARKER = "Invalid JPEG marker; pass a valid JPEG file.",
-  DEFERRED = "JPEG defers its height to a scan marker; decode it with a host reader and pass its pixels.",
-  NO_SIZE = "JPEG dimensions are missing or truncated; pass a valid JPEG file.";
+const NOT_JPEG = "JPEG signature", BAD_MARKER = "JPEG marker",
+  DEFERRED = "JPEG deferred height: use host pixels",
+  NO_SIZE = "JPEG dimensions: missing or truncated";
 const SOF = [192, 193, 194, 195, 197, 198, 199, 201, 202, 203, 205, 206, 207];
 function* sizeScan(length, maxPixels, maxDimension) {
   let input = yield 0;
@@ -265,7 +266,7 @@ function* frameScan(length, maxPixels) {
       input = yield at;
       const size = input(at) * 256 + input(at + 1), count = input(at + 2), ids = [];
       if (!count || size !== 6 + count * 2 || at + size > length)
-        throw fail('JXL_JPEG', "Invalid JPEG scan components; pass a valid JPEG file.");
+        throw fail('JXL_JPEG', "JPEG scan components");
       for (let i = 0; i < count; i++) { input = yield at + 3 + i * 2; ids.push(input(at + 3 + i * 2)); }
       input = yield at + size - 3;
       const allComponentsInFirstScan = ids.length === frame.components.length &&
@@ -298,12 +299,12 @@ function* frameScan(length, maxPixels) {
         input = yield p;
         const kind = input(p++), precision = kind >> 4, id = kind & 15;
         if (precision > 1 || id > 3 || p + 64 * (precision + 1) > end)
-          throw fail('JXL_JPEG', "Invalid JPEG quantization table; pass a valid JPEG file.");
+          throw fail('JXL_JPEG', "quantization table");
         let sum = 0, low = 0, dc;
         for (let k = 0; k < 64; k++, p += precision + 1) {
           if ((k & 7) === 0) input = yield p;
           const value = precision ? input(p) * 256 + input(p + 1) : input(p);
-          if (!(value > 0)) throw fail('JXL_JPEG', "A JPEG quantization value is zero; pass a valid JPEG file.");
+          if (!(value > 0)) throw fail('JXL_JPEG', "quantization value: nonzero");
           if (k === 0) dc = value;
           else if (k <= 9) low += value;
           sum += value;
@@ -318,7 +319,7 @@ function* frameScan(length, maxPixels) {
       if (!width || !height) throw fail('JXL_JPEG', DEFERRED);
       dimensions(width, height, maxPixels);
       const precision = input(at + 2), count = input(at + 7), components = [];
-      if (!count || size !== 8 + count * 3) throw fail('JXL_JPEG', "Invalid JPEG frame components; pass a valid JPEG file.");
+      if (!count || size !== 8 + count * 3) throw fail('JXL_JPEG', "JPEG frame components");
       for (let p = at + 8; p < at + size; p += 3) {
         input = yield p;
         const hv = input(p + 1);

@@ -24,10 +24,10 @@ export function smoothColors(source, exact) {
       const [, table] = call(k => k.smoothPalette, [words, counts, used, step, out(Uint32Array, used), room(used * 4), room(used * 4), room(1024)]);
       let candidate;
       try { candidate = new Uint8Array(source.length); }
-      catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'The smooth-field candidate could not allocate its pixels.'), {cause}); }
+      catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'smooth field: out of memory'), {cause}); }
       for (let from = 0; from < n; from += band) {
         const [lost, made] = call(k => k.smoothApply, [both(Uint8Array, pixels(from)), mask(from), Math.min(band, n - from), slots, capacity * 2 - 1, words, table]);
-        if (lost) throw fault('JXL_INTERNAL', 'The smooth-field palette lost a source color.');
+        if (lost) throw fault('JXL_INTERNAL', 'capture-smooth-quantize:palette');
         candidate.set(made, from * 4);
       }
       return candidate;

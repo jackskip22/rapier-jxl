@@ -9,7 +9,7 @@ const ROWS = [[0.3, 10.56, 10.165], [0.4, 11.82, 14.049], [0.5, 22.73, 13.492], 
 
 function linearOf({data, sampleFormat, transferFunction, icc}) {
   const named = icc === undefined ? transferFunction ?? (data instanceof Float32Array || sampleFormat === 'float16' ? 'linear' : 'srgb') : 'srgb';
-  if (named === 'pq' || named === 'hlg') throw fail('JXL_OPTIONS', `The photo reading has no ${named.toUpperCase()}; use 'exact'.`);
+  if (named === 'pq' || named === 'hlg') throw fail('JXL_OPTIONS', `${named.toUpperCase()}: use 'exact'`);
   return named === 'linear';
 }
 
@@ -18,7 +18,7 @@ export function gradient(picture, {stride = picture.width, origin = 0} = {}) {
   const float = data instanceof Float32Array, halves = sampleFormat === 'float16', wide = data instanceof Uint16Array;
   const depth = wide ? bitDepth ?? 16 : 8;
   if (wide && !halves && ![10, 12, 16].includes(depth))
-    throw fail('JXL_INPUT', 'Uint16Array integer samples use 10, 12 or 16 bits.');
+    throw fail('JXL_INPUT', 'bitDepth: 10, 12 or 16');
   const top = halves || float ? 65535 : 2 ** depth - 1;
   let table = null;
   if (wide || float || linear) {
@@ -41,7 +41,7 @@ const wholeTable = table => {
 };
 function sweep(acc, data, width, height, from, to, stride, origin, row0, blocks, table) {
   const kind = !table ? 0 : data instanceof Float32Array ? 2 : data instanceof Uint16Array ? 1 : 3, T = data.constructor === Uint8ClampedArray ? Uint8Array : data.constructor;
-  if (!kind && !(data instanceof Uint8Array || data instanceof Uint8ClampedArray)) throw fault('JXL_INTERNAL', 'The gradient sweep reads 8-bit samples; wider ones read through a table.');
+  if (!kind && !(data instanceof Uint8Array || data instanceof Uint8ClampedArray)) throw fault('JXL_INTERNAL', 'intent-quality:depth');
   const columns = (width - 1) >> 3, sample = kind === 2 ? 4 : kind === 1 ? 2 : 1, pair = width * 8, pairBytes = pair * sample, band = Math.max(1, (4 << 20) / pairBytes | 0), rowSamples = stride * 4;
   const wordTable = kind ? wholeTable(table) : new Float64Array(1);
   let sums = Float64Array.of(acc.sum, acc.n, acc.chroma ?? 0, acc.clear ?? 0, acc.edge ?? 0, acc.leaves ?? (kind ? 0 : 0x7fff));

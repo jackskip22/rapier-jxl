@@ -17,11 +17,19 @@ export function subImage(image, bx0, by0, bx1, by1) {
   const sub = sliceBlocks(image, bx0, by0, bx1, by1), sd = image.strategyData;
   if (!sd) return sub;
   const stride = bx1 - bx0, rows = by1 - by0, at = new Int32Array(stride * rows).fill(-1), blocks = [];
-  for (const b of sd.blocks) if (b.bx >= bx0 && b.bx < bx1 && b.by >= by0 && b.by < by1) {
-    const moved = {...b, bx: b.bx - bx0, by: b.by - by0};
-    for (let y = 0; y < b.bh; y++) for (let x = 0; x < b.bw; x++) at[(moved.by + y) * stride + moved.bx + x] = blocks.length;
-    blocks.push(moved);
-  }
+  const push = b => {
+    if (b.bx >= bx0 && b.bx < bx1 && b.by >= by0 && b.by < by1) {
+      const moved = {...b, bx: b.bx - bx0, by: b.by - by0};
+      for (let y = 0; y < b.bh; y++) for (let x = 0; x < b.bw; x++) at[(moved.by + y) * stride + moved.bx + x] = blocks.length;
+      blocks.push(moved);
+    }
+  };
+  if (!sd.packed && Array.isArray(sd.groups)) {
+    const gxN = Math.ceil(image.components[0].stride / 32), gyN = Math.ceil(image.components[0].rows / 32);
+    for (let gy = Math.max(0, (by0 >> 5) - 1), gy1 = Math.min(gyN, Math.ceil(by1 / 32)); gy < gy1; gy++)
+      for (let gx = bx0 >> 5, gx1 = Math.min(gxN, Math.ceil(bx1 / 32)); gx < gx1; gx++)
+        for (const b of sd.groups[gy * gxN + gx] ?? []) push(b);
+  } else for (const b of sd.blocks) push(b);
   sub.strategyData = {groups: [blocks], blocks, at, tables: sd.tables, stride};
   return sub;
 }
@@ -72,10 +80,10 @@ export function bandedOutputs(image, rows, native, sink = null, from = 0, to = i
   if (into) {
     const end = Math.min(height, to), bytes = width * (end - from) * 4;
     if (!Number.isSafeInteger(bytes) || bytes <= 0 || end !== Math.min(height, from + rows))
-      throw fault('JXL_INTERNAL', 'Owned photographic outputs cover exactly one band.');
+      throw fault('JXL_INTERNAL', 'photo-reconstruct-bands:band');
     if (!(into.package instanceof Uint8Array) || !(into.native instanceof Uint8Array) ||
         into.package.length !== bytes || into.native.length !== bytes || into.package.buffer === into.native.buffer)
-      throw fault('JXL_INTERNAL', 'Owned photographic outputs need two separate exact byte destinations.');
+      throw fault('JXL_INTERNAL', 'photo-reconstruct-bands:into');
   }
   const band = !!sink || !!into;
   const pack = band ? null : new Uint8ClampedArray(width * height * 4), own = band ? null : new Uint8ClampedArray(width * height * 4), decoded = rebuildable(image);
@@ -104,7 +112,6 @@ export function bandedOutputs(image, rows, native, sink = null, from = 0, to = i
 export function exactScores(cpu, reference, width, height, image, want = {}, memory = cpu.memory ?? null) {
   const plan = memory ?? memoryPlan(width * height, {width, height});
   if (!plan.banded) return cpu(image, want);
-  if (typeof cpu.banded !== 'function') throw fault('JXL_INPUT', 'Banded scoring requires the CPU reference transaction.');
+  if (typeof cpu.banded !== 'function') throw fault('JXL_INPUT', 'cpu.banded: function');
   return cpu.banded(image, want);
 }
-

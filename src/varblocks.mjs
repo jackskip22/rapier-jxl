@@ -69,7 +69,7 @@ export function sumStrategyValues(values, from, to, total = 0) {
   return total;
 }
 export function strategyCertifiedRateError(error) {
-  if (!(error >= 0 && Number.isFinite(error))) throw fault('JXL_INTERNAL', 'Certified measured rates need finite nonnegative Re.');
+  if (!(error >= 0 && Number.isFinite(error))) throw fault('JXL_INTERNAL', 'varblocks:Re');
   return error;
 }
 export function addStrategyMapCells(map, stride, bx, by, bw, from, to, m = 0) {
@@ -346,7 +346,7 @@ export function xybStrategies(base, width, height, options = {}) {
         rateTotalError = 0;
       }
     }
-    if (certifiedRates && !(rateTotal > 0 && Number.isFinite(rateTotal))) throw fault('JXL_INTERNAL', 'Certified measured rates need a positive finite normalizer.');
+    if (certifiedRates && !(rateTotal > 0 && Number.isFinite(rateTotal))) throw fault('JXL_INTERNAL', 'varblocks:rateTotal');
   }
   const doubt = options.mapDoubt || 0, totalDoubt = options.exactTotal ? 0 : options.totalDoubt ?? doubt;
   const rateTotalDoubt = strategyMeasuredRateTotalDoubt(options.exactTotal, certifiedRates, rateTotalError, rateTotal, rateDoubt, options.rateTotalDoubt);

@@ -6,9 +6,9 @@ import {sampleView} from './verify-samples.mjs';
 export async function orientInSteps(picture,{journal,unit,tools}) {
   const {prepareKernels,ensureKernels,orientBlock,wasmRequired} = tools;
   const {orientation = 1,width,height,data,...description} = picture;
-  if (!Number.isInteger(orientation) || orientation < 1 || orientation > 8) throw fail('JXL_INPUT',"Invalid orientation; use an integer from 1 through 8.");
+  if (!Number.isInteger(orientation) || orientation < 1 || orientation > 8) throw fail('JXL_INPUT',"orientation: integer 1-8");
   if (orientation === 1) return {data,width,height,...description};
-  if (description.extraChannels !== undefined) throw fail('JXL_UNSUPPORTED',"Extra channels cannot use this orientation transform; supply already oriented samples.");
+  if (description.extraChannels !== undefined) throw fail('JXL_UNSUPPORTED',"extraChannels: supply oriented samples");
   if (!await prepareKernels() || !ensureKernels()) throw wasmRequired();
   const Type = data.constructor, size = Type.BYTES_PER_ELEMENT;
   const from = {subarray:(a,b) => { const row = data.subarray(a / size,b / size); return new Uint8Array(row.buffer,row.byteOffset,row.byteLength); }};

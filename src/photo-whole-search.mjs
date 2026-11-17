@@ -98,14 +98,14 @@ function wholeProvider(prepared, signal, device = false, banded = false) {
               for (let i = 0; i < count; i++) {
                 const value = p[start + i], hi = Math.fround(value), lo = Math.fround(value - hi);
                 if (!Number.isFinite(value) || !Number.isFinite(hi) || !Number.isFinite(lo))
-                  throw fault('JXL_INTERNAL', 'A photo plane cannot be represented by finite double-single samples.');
+                  throw fault('JXL_INTERNAL', 'photo-whole-search:ds');
                 const err = Math.abs(value - (hi + lo));
                 if (err > worst) worst = err;
                 pairs[i * 2] = hi; pairs[i * 2 + 1] = lo;
               }
               const b32 = new Float32Array([worst]);
               if (b32[0] < worst) new Uint32Array(b32.buffer)[0]++;
-              if (!Number.isFinite(b32[0])) throw fault('JXL_INTERNAL', 'A photo plane split error has no finite f32 bound.');
+              if (!Number.isFinite(b32[0])) throw fault('JXL_INTERNAL', 'photo-whole-search:bound');
               if (b32[0] > bound) bound = b32[0];
               trio.push(pairs);
             }
@@ -327,7 +327,7 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
   if (effort >= MEASURED_EFFORT) {
     if (maxPixels !== undefined) {
       if (!Number.isSafeInteger(maxPixels) || maxPixels < 1)
-        throw fault('JXL_INPUT', 'A whole-photo pixel limit is a positive whole number.');
+        throw fault('JXL_INPUT', 'maxPixels: positive integer');
       admitSize(width, height, {pixels: maxPixels, edge: EDGE});
     }
     if (journalFact(data, JOIN)) data = data.subarray(0, data.length);
@@ -347,9 +347,9 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
   const plan = memoryPlan(width * height, {width, height, inputBytes: data.buffer.byteLength});
   const banded = !CAPTURE_PHOTO && !measureOutput && plan.banded && !(!plan.known && !journaling() && !offloading('score-band') && retainsWhole(width * height, RETAINED_BYTES));
   let rebuilt = null, made = null, writerEffort = Math.max(5, firstEffort);
-  if (!measureOutput && typeof imageMeasure !== 'function') throw fault('JXL_INTERNAL', 'A measured whole photo needs its picture provider.');
+  if (!measureOutput && typeof imageMeasure !== 'function') throw fault('JXL_INTERNAL', 'photo-whole-search:provider');
   const measure = measureOutput ? function* (image, want) {
-    if (!made) throw fault('JXL_INTERNAL', 'A capture image measure needs its writer.');
+    if (!made) throw fault('JXL_INTERNAL', 'photo-whole-search:writer');
     return yield* measureOutput(yield* made.provider.write(image, writerEffort, {pass: true}), want);
   } : (image, want) => provided().measure(image, want);
   const measureSteps = function* (image, want) {
@@ -389,7 +389,7 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
     const lowRun = function* (q) {
       let image;
       const file = yield* floorPart(low({quality: q, effort: FLOOR_EFFORT, observe: selected => { image = selected; }}));
-      if (!image) throw fault('JXL_INTERNAL', 'The low photo writer did not expose its selected image.');
+      if (!image) throw fault('JXL_INTERNAL', 'photo-whole-search:low');
       lowFiles.set(image, shown(file, image));
       return image;
     };
@@ -588,21 +588,28 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
       const file = shown(yield* provider.write(image, PROBE_WRITE, {pass: true}), image);
       return {scores: yield* scoreFile(file, image, want), output: {bytes: file, effort: PROBE_WRITE}};
     };
-    const scoreOnly = measureOutput ? qualify : function* (image, want) { return {scores: yield* scoreFile(null, image, want.exact ? want : {...want, doubt: true})}; };
+    let bestQ = Infinity;
+    const scoreOnly = measureOutput ? qualify : function* (image, want, at = {}) {
+      const scores = yield* scoreFile(null, image, want.exact ? want : {...want, doubt: true});
+      if (!journal && scores.ssimulacra2 >= requested.ssimulacra2 && !(at.quality >= bestQ)) { bestQ = at.quality ?? bestQ; rebuilt?.pin?.(image, true); }
+      return {scores};
+    };
     let written = null;
     const sameWriteEffort = (a, b) => a === b || (!measureOutput && a <= 6 && b <= 6);
     const memoAt = (fn, q0 = NaN, img0 = null) => {
-      const held = new Map();
-      if (img0) held.set(q0, img0);
+      const held = new Map(), tags = CAPTURE_PHOTO ? null : new Map(), tag = q => tags.get(q) ?? tags.set(q, {}).get(q);
+      if (img0) { if (tags) img0.lookTag = tag(q0); held.set(q0, img0); }
       const at = function* (q) {
         const hit = held.get(q);
         if (hit) { held.delete(q); held.set(q, hit); return hit; }
         held.clear();
         const img = yield* fn(q);
+        if (tags && img) img.lookTag = tag(q);
         held.set(q, img);
         return img;
       };
       at.clear = () => held.clear();
+      if (tags) at.tag = tag;
       return at;
     };
     const first = measureOutput ? WANT_S2 : {...WANT_S2, doubt: true};
@@ -645,7 +652,7 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
         if (needBytes || libjxlScore >= requested.ssimulacra2 - SEARCH_BOUND) bytes ??= yield* write();
         return {bytes, score, libjxlScore, quality: q};
       };
-      return {quality, redo, ...(imageAt.lean && {lean: true}), libjxl: function* () { return yield* libjxlOfImage(yield* imageAt(quality), file); }};
+      return {quality, redo, ...(imageAt.lean && {lean: true}), libjxl: function* () { const t = !measureOutput && !journal && imageAt.tag?.(quality); return t && rebuilt?.pin?.(t) ? (yield* scoreFile(file, {lookTag: t, xyb: true}, LIBJXL_WANT)).ssimulacra2 : yield* libjxlOfImage(yield* imageAt(quality), file); }};
     };
     function* fitSteps() {
       const families = [() => [lowRun, image => lowFiles.get(image)]];
@@ -750,8 +757,8 @@ function* wholeSteps(data, width, height, {quality, colorSpace = 'srgb', effort,
       return chosen.file;
     }
     const taken = box => { const value = box.v; box.v = null; return value; };
-    const probe = (imageAt, start, probes, initial = null, seen = null, extra = null) => measured(qualitySteps(imageAt,
-      requested, {start, low: 1, high: 99.9, probes, ...extra, initial, measureSteps: scoreOnly, seen}), journal ? measureSteps : measure, signal);
+    const probe = (imageAt, start, probes, initial = null, seen = null, extra = null) => (bestQ = initial?.scores?.ssimulacra2 >= requested.ssimulacra2 ? (rebuilt?.pin?.(initial.image, true), initial.quality) : Infinity,
+      measured(qualitySteps(imageAt, requested, {start, low: 1, high: 99.9, probes, ...extra, initial, measureSteps: scoreOnly, seen}), journal ? measureSteps : measure, signal));
     const imageAt = memoAt(defer(q => provider.image(q, {filter: 'gaborish'})));
     if (!CAPTURE_PHOTO) imageAt.recipe = {};
     imageAt.lean = lean;

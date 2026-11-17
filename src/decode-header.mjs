@@ -23,7 +23,7 @@ function name(r) {
   const n = r.u32([[0,0],[4,0],[5,16],[10,48]]), data = new Uint8Array(n);
   for (let i = 0; i < n; i++) data[i] = r.read(8);
   try { return new TextDecoder('utf-8', {fatal:true}).decode(data); }
-  catch { requireDecode(false, 'Invalid UTF-8 JPEG XL name.', r); }
+  catch { requireDecode(false, 'name: UTF-8', r); }
 }
 function size(r, preview = false) {
   const small = bool(r);
@@ -36,15 +36,15 @@ function size(r, preview = false) {
 function depth(r) {
   const float = bool(r), bits = r.u32(float ? [[0,32],[0,16],[0,24],[6,1]] : [[0,8],[0,10],[0,12],[6,1]]);
   const exponentBits = float ? r.read(4) + 1 : 0;
-  requireDecode(bits <= (float ? 32 : 31) && (!float || exponentBits <= 8 && bits > exponentBits + 1), 'Invalid JPEG XL sample depth.', r);
+  requireDecode(bits <= (float ? 32 : 31) && (!float || exponentBits <= 8 && bits > exponentBits + 1), 'bit depth', r);
   return {float, bits, exponentBits};
 }
 function extraChannel(r) {
   if (bool(r)) return {type:0, bitDepth:{...DEFAULT_DEPTH}, dimShift:0, name:'', associated:false};
   const type = r.enum();
-  requireDecode(type <= 6 || type === 15 || type === 16, 'Invalid JPEG XL extra channel type.', r);
+  requireDecode(type <= 6 || type === 15 || type === 16, 'extra channel type', r);
   const bitDepth = depth(r), dimShift = r.u32([[0,0],[0,3],[0,4],[3,1]]);
-  requireDecode(dimShift <= 3, 'Invalid JPEG XL extra channel dimension shift.', r);
+  requireDecode(dimShift <= 3, 'extra channel shift', r);
   const label = name(r);
   const channel = {type, bitDepth, dimShift, name:label, associated:false};
   if (type === 0) channel.associated = bool(r);
@@ -57,52 +57,52 @@ function color(r) {
   const c = {space:'rgb', spaceId:0, wantICC:false, whitePoint:'d65', whitePointId:1, primaries:'srgb', primariesId:1, transferFunction:'srgb', transferId:13, renderingIntent:1};
   if (bool(r)) return c;
   c.wantICC = bool(r); c.spaceId = r.enum();
-  requireDecode(c.spaceId <= 3, 'Invalid JPEG XL color space.', r);
+  requireDecode(c.spaceId <= 3, 'color space', r);
   c.space = ['rgb','gray','xyb','unknown'][c.spaceId];
   if (c.wantICC) return c;
   if (c.spaceId !== 2) {
     c.whitePointId = r.enum();
-    requireDecode([1,2,10,11].includes(c.whitePointId), 'Invalid JPEG XL white point.', r);
+    requireDecode([1,2,10,11].includes(c.whitePointId), 'white point', r);
     c.whitePoint = c.whitePointId === 2 ? xy(r) : ({1:'d65',10:'e',11:'dci'})[c.whitePointId];
   }
   if (c.spaceId !== 1 && c.spaceId !== 2) {
     c.primariesId = r.enum();
-    requireDecode([1,2,9,11].includes(c.primariesId), 'Invalid JPEG XL primaries.', r);
+    requireDecode([1,2,9,11].includes(c.primariesId), 'primaries', r);
     c.primaries = c.primariesId === 2 ? array(3, () => xy(r)) : ({1:'srgb',9:'rec2020',11:'display-p3'})[c.primariesId];
   }
   if (c.spaceId === 2) { c.transferFunction = 'gamma'; c.gamma = 1 / 3; c.transferId = null; }
   else if (bool(r)) {
     c.transferId = null; c.transferFunction = 'gamma'; c.gamma = r.read(24) / 10000000;
-    requireDecode(c.gamma > 0, 'Invalid JPEG XL gamma.', r);
+    requireDecode(c.gamma > 0, 'gamma', r);
   } else {
     c.transferId = r.enum();
     c.transferFunction = ({1:'bt709',2:'unknown',8:'linear',13:'srgb',16:'pq',17:'dci',18:'hlg'})[c.transferId];
-    requireDecode(c.transferFunction !== undefined, 'Invalid JPEG XL transfer function.', r);
+    requireDecode(c.transferFunction !== undefined, 'transfer function', r);
   }
-  c.renderingIntent = r.enum(); requireDecode(c.renderingIntent <= 3, 'Invalid JPEG XL rendering intent.', r);
+  c.renderingIntent = r.enum(); requireDecode(c.renderingIntent <= 3, 'rendering intent', r);
   return c;
 }
 function tone(r, extra) {
   const out = {intensityTarget:255, minNits:0, relativeToMaxDisplay:false, linearBelow:0};
   if (extra && !bool(r)) {
     out.intensityTarget = r.f16(); out.minNits = r.f16(); out.relativeToMaxDisplay = bool(r); out.linearBelow = r.f16();
-    requireDecode(out.intensityTarget > 0 && out.minNits >= 0 && out.minNits <= out.intensityTarget && out.linearBelow >= 0 && (!out.relativeToMaxDisplay || out.linearBelow <= 1), 'Invalid JPEG XL tone mapping.', r);
+    requireDecode(out.intensityTarget > 0 && out.minNits >= 0 && out.minNits <= out.intensityTarget && out.linearBelow >= 0 && (!out.relativeToMaxDisplay || out.linearBelow <= 1), 'tone mapping', r);
   }
   return out;
 }
 const count = n => n.toLocaleString('en-US');
 export function overLimit({width, height}, maxPixels, maxDimension, what) {
-  const size = `A ${count(width)} x ${count(height)} ${what}`;
+  const size = `${what} ${count(width)} x ${count(height)}`;
   if (width > maxDimension || height > maxDimension)
-    throw Object.assign(new Error(`${size} is over maxDimension (${count(maxDimension)} pixels a side): raise maxDimension.`), {code: 'JXL_DIMENSIONS'});
+    throw Object.assign(new Error(`${size}: over maxDimension ${count(maxDimension)}`), {code: 'JXL_DIMENSIONS'});
   if (width * height > maxPixels)
-    throw Object.assign(new Error(`${size} (${count(width * height)} pixels) is over maxPixels (${count(maxPixels)}): raise maxPixels.`), {code: 'JXL_DIMENSIONS'});
+    throw Object.assign(new Error(`${size}: over maxPixels ${count(maxPixels)}`), {code: 'JXL_DIMENSIONS'});
 }
 export function readDecodeImageHeader(r, limits = {}) {
   r.expect(16, 0x0aff);
   const h = {...size(r), orientation:1, intrinsicSize:null, preview:null, animation:null};
   const side = limits.maxDimension ?? SIDE;
-  requireDecode(h.width > 0 && h.height > 0, 'Invalid JPEG XL image size.', r);
+  requireDecode(h.width > 0 && h.height > 0, 'image size', r);
   overLimit(h, limits.maxPixels ?? PIXELS, side, 'picture');
   const defaults = bool(r), extra = !defaults && bool(r);
   if (extra) {
@@ -114,7 +114,7 @@ export function readDecodeImageHeader(r, limits = {}) {
   h.bitDepth = defaults ? {...DEFAULT_DEPTH} : depth(r);
   h.modular16 = defaults || bool(r);
   const count = defaults ? 0 : r.u32([[0,0],[0,1],[4,2],[12,1]]);
-  requireDecode(count <= 256, 'Too many JPEG XL extra channels.', r);
+  requireDecode(count <= 256, 'extra channels: max 256', r);
   h.extraChannels = array(count, () => extraChannel(r));
   h.xyb = defaults || bool(r);
   const colorFrom = r.bit;
@@ -138,9 +138,9 @@ export function readDecodeImageHeader(r, limits = {}) {
 const fullCanvas = (f,h) => f.x0 <= 0 && f.y0 <= 0 && f.x0 + f.width >= h.width && f.y0 + f.height >= h.height;
 function blending(r, h, f) {
   const mode = r.u32([[0,0],[0,1],[0,2],[2,3]]), hasAlpha = h.extraChannels.length > 0 && (mode === 2 || mode === 3);
-  requireDecode(mode <= 4, 'Invalid JPEG XL blend mode.', r);
+  requireDecode(mode <= 4, 'blend mode', r);
   const alpha = hasAlpha ? r.u32([[0,0],[0,1],[0,2],[3,3]]) : 0;
-  requireDecode(!hasAlpha || alpha < h.extraChannels.length, 'Invalid JPEG XL blend alpha channel.', r);
+  requireDecode(!hasAlpha || alpha < h.extraChannels.length, 'blend alpha channel', r);
   const clamp = (hasAlpha || mode === 4) && bool(r);
   const source = mode !== 0 || !fullCanvas(f,h) ? r.read(2) : 0;
   return {mode, alpha, clamp, source};
@@ -151,7 +151,7 @@ function filters(r, modular, defaults) {
   if (!bool(r)) f.gaborish = null;
   else if (bool(r)) {
     f.gaborish = array(3, () => [r.f16(),r.f16()]);
-    requireDecode(f.gaborish.every(w => Math.abs(1 + 4 * (w[0] + w[1])) > 1e-8), 'Invalid JPEG XL Gaborish weights.', r);
+    requireDecode(f.gaborish.every(w => Math.abs(1 + 4 * (w[0] + w[1])) > 1e-8), 'Gaborish weights', r);
   }
   const e = f.epf; e.iters = r.read(2);
   if (e.iters) {
@@ -161,7 +161,7 @@ function filters(r, modular, defaults) {
       if (!modular) e.quantMul = r.f16();
       e.pass0SigmaScale = r.f16(); e.pass2SigmaScale = r.f16(); e.borderSadMul = r.f16();
     }
-    if (modular) { e.sigmaForModular = r.f16(); requireDecode(e.sigmaForModular >= 1e-8, 'Invalid JPEG XL filter sigma.', r); }
+    if (modular) { e.sigmaForModular = r.f16(); requireDecode(e.sigmaForModular >= 1e-8, 'filter sigma', r); }
   }
   readExtensions(r); return f;
 }
@@ -179,10 +179,10 @@ export function readDecodeFrameHeader(r, h, limits = {}) {
     const p = f.passes; p.count = r.u32([[0,1],[0,2],[0,3],[3,4]]);
     if (p.count > 1) {
       const n = r.u32([[0,0],[0,1],[0,2],[1,3]]);
-      requireDecode(n <= p.count, 'Invalid JPEG XL progressive pass count.', r);
+      requireDecode(n <= p.count, 'progressive pass count', r);
       p.shift = [...array(p.count-1, () => r.read(2)),0];
       p.downsample = array(n, () => r.u32(SCALE)); p.lastPass = array(n, () => r.u32([[0,0],[0,1],[0,2],[3,0]]));
-      requireDecode(p.lastPass.every((v,i) => v < p.count && (!i || v > p.lastPass[i-1] && p.downsample[i] < p.downsample[i-1])), 'Invalid JPEG XL progressive pass order.', r);
+      requireDecode(p.lastPass.every((v,i) => v < p.count && (!i || v > p.lastPass[i-1] && p.downsample[i] < p.downsample[i-1])), 'progressive pass order', r);
     }
   }
   if (f.type === 1) f.lfLevel = 1 + r.read(2);
@@ -191,7 +191,7 @@ export function readDecodeFrameHeader(r, h, limits = {}) {
     if (f.type !== 2) { f.x0 = unpackSigned(r.u32(FRAME_SIZE)); f.y0 = unpackSigned(r.u32(FRAME_SIZE)); }
     f.width = r.u32(FRAME_SIZE); f.height = r.u32(FRAME_SIZE);
   }
-  requireDecode(f.width > 0 && f.height > 0, 'Invalid JPEG XL frame size.', r);
+  requireDecode(f.width > 0 && f.height > 0, 'frame size', r);
   overLimit(f, (limits.maxPixels ?? PIXELS) + 8 * (f.width + f.height), limits.maxDimension ?? SIDE, 'frame');
   const normal = f.type === 0 || f.type === 3;
   f.blending = [{mode:0,alpha:0,clamp:false,source:0}, ...array(h.extraChannels.length, () => ({mode:0,alpha:0,clamp:false,source:0}))];
@@ -213,20 +213,20 @@ export function readDecodeFrameHeader(r, h, limits = {}) {
   f.groupsX = Math.ceil(f.encodedWidth / f.groupDim); f.groupsY = Math.ceil(f.encodedHeight / f.groupDim); f.numGroups = f.groupsX*f.groupsY;
   f.lfGroupsX = Math.ceil(f.encodedWidth / (8*f.groupDim)); f.lfGroupsY = Math.ceil(f.encodedHeight / (8*f.groupDim)); f.numLFGroups = f.lfGroupsX*f.lfGroupsY;
   f.encodedColorChannels = f.modular && !f.ycbcr && !h.xyb ? h.colorChannels : 3;
-  for (let i=0;i<h.extraChannels.length;i++) requireDecode(f.extraUpsampling[i]*power2(h.extraChannels[i].dimShift) >= f.upsampling, 'Extra channel is smaller than its sampling grid.', r);
-  for (let i=0;i<h.extraChannels.length;i++) requireDecode(f.extraUpsampling[i]*power2(h.extraChannels[i].dimShift) <= 8, 'Extra channel sampling is over 8.', r);
+  for (let i=0;i<h.extraChannels.length;i++) requireDecode(f.extraUpsampling[i]*power2(h.extraChannels[i].dimShift) >= f.upsampling, 'extra channel upsampling', r);
+  for (let i=0;i<h.extraChannels.length;i++) requireDecode(f.extraUpsampling[i]*power2(h.extraChannels[i].dimShift) <= 8, 'extra channel sampling: max 8', r);
   return f;
 }
 export function readDecodeTOC(r, f, partial = false) {
   const count = f.numGroups === 1 && f.passes.count === 1 ? 1 : 2 + f.numLFGroups + f.numGroups*f.passes.count;
-  requireDecode(count <= 1000000, 'JPEG XL table of contents is too large.', r);
+  requireDecode(count <= 1000000, 'TOC: max 1000000', r);
   let order = null;
   if (bool(r)) { const code = readEntropy(r,8); order = readPermutation(code,count); code.finish(); }
   r.align(); const sizes = array(count, () => r.u32([[10,0],[14,1024],[22,17408],[30,4211712]])); r.align();
   let offset = r.bit / 8; const physical = [];
   for (const length of sizes) {
     const cut = length > r.bytes.length-offset;
-    requireDecode(!cut || partial, 'Truncated JPEG XL frame section.', r);
+    requireDecode(!cut || partial, 'truncated frame section', r, true);
     f.cut ||= cut; physical.push({offset,length,cut}); offset += length;
   }
   const sections = order ? Array.from(order, i => physical[i]) : physical;

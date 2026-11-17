@@ -73,7 +73,7 @@ export function photoQualityMemo(owned) {
   pixels = null; owned = null;
   const looks = [], crops = [];
   let bytes = 0, results = 0, closed = false;
-  const check = () => { if (closed) throw fault('JXL_INTERNAL', 'Photo quality memo is destroyed.'); };
+  const check = () => { if (closed) throw fault('JXL_INTERNAL', 'photo-quality-cache:destroyed'); };
   const owns = (data, width) => buffer && (data instanceof Uint8Array || data instanceof Uint8ClampedArray)
     && data.buffer === buffer && data.byteOffset === offset && data.byteLength === size && width === sourceWidth;
   const read = (entries, data, width, walk, compute, vector) => {

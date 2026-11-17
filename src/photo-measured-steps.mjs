@@ -11,7 +11,7 @@ export function* photoMeasuredSteps(steps, measure, signal, transforms = null) {
       if (value?.measure) { reply = yield* scored(value.measure, value.want); yield {photoMeasure: true}; }
       else if (value?.varblocks && transforms) reply = yield* transforms(value.varblocks);
       else if (value?.exact) {
-        if (!value.exact.image) throw fault('JXL_INTERNAL', 'An exact capture measure needs its canonical image.');
+        if (!value.exact.image) throw fault('JXL_INTERNAL', 'photo-measured-steps:image');
         reply = yield* scored(value.exact.image, {ssimulacra2: true, p: value.exact.p, margin: value.exact.margin});
       } else reply = yield value;
     }

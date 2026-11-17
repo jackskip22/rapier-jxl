@@ -79,8 +79,8 @@ type FormatCall = {[K in FormatKind]: [input: Extract<FormatRequest, {kind: K}>,
 export function format(...args: FormatCall): Promise<import('./result.mjs').EncodedResult>;
 
 /** Where the host reads no JPEG (Node, Deno, Bun), the one setup step for a JPEG input: `configureDecoder(decode, restore,
- * recompress)` with rapier-jxl/decode's decode and rapier-jxl/jpeg's recompress (restore may be null). Without it a JPEG
- * refuses JXL_PLATFORM. One call serves every rapier-jxl module in the realm; null alone clears it, while null with helpers keeps them. */
+ * recompress)` with jpegxl/decode's decode and jpegxl/jpeg's recompress (restore may be null). Without it a JPEG
+ * refuses JXL_PLATFORM. One call serves every jpegxl module in the realm; null alone clears it, while null with helpers keeps them. */
 export function configureDecoder(decode: PackageDecode | null, restore?: JpegRestore | null, recompress?: JpegRecompress | null): void;
 export type {ImageJob, ImageVerb, Digest, ResultSource, ResultReason, ResultTransform, ResultFidelity, ResultMeasurement, ImageResult, EncodedResult} from './result.mjs';
 

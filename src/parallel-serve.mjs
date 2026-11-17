@@ -75,7 +75,7 @@ export function serveParallel(message) {
     }
     if (task.kind === 'orders') return [{id, result: coefficientOrders(inputs.get(task.image).components)}, []];
     if (VARDCT_TASKS.has(task.kind)) { holdEntropy(lendEntropy); try { return vardctTask(id, task); } finally { releaseEntropy(); } }
-    throw fault('JXL_INTERNAL', 'Unknown parallel task.');
+    throw fault('JXL_INTERNAL', 'parallel-serve:task');
   } catch (error) { return [{id, error: {name: error?.name, code: error?.code, message: error?.message}}, []]; }
 }
 

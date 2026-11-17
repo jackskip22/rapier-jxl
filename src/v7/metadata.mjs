@@ -8,7 +8,7 @@ import {placeholder as rawPlaceholder, slice as rawSlice} from '../progressive-s
 const BOUNDS = ['maxPixels', 'maxDimension', 'maxInputBytes', 'maxBoxes'];
 function bounds(options) {
   const settings = snapshotOptions(options);
-  for (const key of Object.keys(settings)) if (!BOUNDS.includes(key)) throw fail('JXL_OPTIONS', `Unknown header option ${key}; remove it.`);
+  for (const key of Object.keys(settings)) if (!BOUNDS.includes(key)) throw fail('JXL_OPTIONS', `unknown option: ${key}`);
   return settings;
 }
 
@@ -29,11 +29,11 @@ export function slice(input, options) {
 
 function watched(source) {
   if (ArrayBuffer.isView(source) || arrayBufferBytes(source) !== null)
-    throw fail('JXL_INPUT', 'stream needs byte chunks; pass an iterable of Uint8Array chunks.');
+    throw fail('JXL_INPUT', 'stream: iterable Uint8Array chunks');
   let method;
   try { method = source && (source[Symbol.asyncIterator] ?? source[Symbol.iterator]); }
   catch (error) { throw callers(error); }
-  const invalid = () => fail('JXL_INPUT', "Invalid chunk iterator; return iterator results with done and a Uint8Array value.");
+  const invalid = () => fail('JXL_INPUT', "chunk iterator: {done, value: Uint8Array}");
   const record = value => value !== null && (typeof value === 'object' || typeof value === 'function');
   if (typeof method !== 'function') throw invalid();
   return (async function* () {
@@ -69,10 +69,10 @@ function watched(source) {
 const STREAM = ['chunkSize', 'maxBytes', 'maxBoxes', 'signal', 'level'];
 function streamOptions(options) {
   const settings = snapshotOptions(options);
-  for (const key of Object.keys(settings)) if (!STREAM.includes(key)) throw fail('JXL_OPTIONS', `Unknown stream option ${key}; remove it.`);
+  for (const key of Object.keys(settings)) if (!STREAM.includes(key)) throw fail('JXL_OPTIONS', `unknown option: ${key}`);
   for (const key of ['chunkSize', 'maxBytes', 'maxBoxes'])
-    if (settings[key] !== undefined && !(Number.isSafeInteger(settings[key]) && settings[key] > 0)) throw fail('JXL_OPTIONS', `Invalid ${key}; use a positive safe integer.`);
-  if (settings.level !== undefined && settings.level !== 5 && settings.level !== 10) throw fail('JXL_OPTIONS', "Invalid level; use 5 or 10.");
+    if (settings[key] !== undefined && !(Number.isSafeInteger(settings[key]) && settings[key] > 0)) throw fail('JXL_OPTIONS', `${key}: positive safe integer`);
+  if (settings.level !== undefined && settings.level !== 5 && settings.level !== 10) throw fail('JXL_OPTIONS', "level: 5 or 10");
   admitSignal(settings.signal);
   return settings;
 }

@@ -36,13 +36,13 @@ function at(quality) {
 
 export function qualityTarget(quality) {
   if (typeof quality !== 'number' || !Number.isFinite(quality) || quality < 1 || quality > 100)
-    throw fault('JXL_OPTIONS', 'quality must be a finite number from 1 to 100.');
+    throw fault('JXL_OPTIONS', 'quality: number 1-100');
   return at(quality);
 }
 
 export function askedLook(quality) {
   if (typeof quality !== 'number' || !Number.isFinite(quality) || quality < 0 || quality > 1)
-    throw fault('JXL_OPTIONS', 'quality must be a finite number from 0 to 1.');
+    throw fault('JXL_OPTIONS', 'quality: number 0-1');
   return at(quality * 100);
 }
 
@@ -57,6 +57,10 @@ export function measuredLook(q) {
   const to = lower === 99 ? 100 : MEASURED_ABOVE[lower - 92];
   return from + (to - from) * (x - lower);
 }
+
+export const worstRegionFloor = floor => floor >= 100 ? 100 : floor - (0.8 + 0.20 * Math.max(0, 100 - floor));
+
+export const usesRegionalCalibration = intent => intent >= 0.7 && intent <= 0.9;
 
 export const SMALL_SIDE = 128;
 export const smallPicture = (width, height) => Math.min(width, height) < SMALL_SIDE;

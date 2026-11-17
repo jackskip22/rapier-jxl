@@ -16,17 +16,17 @@ export async function prepareAssets({example = here, packageDir = process.env.JX
   for (const name of modules) {
     const path = `dist/${name}.mjs`;
     if (manifest.exports?.[`./${name}`]?.import !== `./${path}`)
-      throw new Error(`JXL_PACKAGE: ${pkg} is not a built package with ./${name}.`);
+      throw Object.assign(new Error(`${pkg} is not a built package with ./${name}.`), {code: 'JXL_PACKAGE'});
     await copyFile(join(pkg, path), join(out, `${name}.mjs`));
   }
   for (const name of browserFiles) {
     if (manifest.exports?.[`./${name.replace('.browser', '')}`]?.browser !== `./dist/${name}.mjs`)
-      throw new Error(`JXL_PACKAGE: ${pkg} has no browser file for ./${name.replace('.browser', '')}.`);
+      throw Object.assign(new Error(`${pkg} has no browser file for ./${name.replace('.browser', '')}.`), {code: 'JXL_PACKAGE'});
     await copyFile(join(pkg, `dist/${name}.mjs`), join(out, `${name}.mjs`));
   }
   await copyFile(join(pkg, 'LICENSE'), join(out, 'LICENSE'));
   // The tests read an animation back with the package's decoder in the page; the app does not carry it.
-  if (manifest.exports?.['./decode']?.import !== './dist/decode.mjs') throw new Error(`JXL_PACKAGE: ${pkg} has no ./decode.`);
+  if (manifest.exports?.['./decode']?.import !== './dist/decode.mjs') throw Object.assign(new Error(`${pkg} has no ./decode.`), {code: 'JXL_PACKAGE'});
   await copyFile(join(pkg, 'dist/decode.mjs'), join(example, 'Tests/RapierJXLTests/Fixtures/decode.mjs'));
   const files = [];
   for (const path of ['encoder.html', 'page.mjs', 'encoder.mjs', 'headers.json', ...[...modules, ...browserFiles].map(n => `jpegxl/${n}.mjs`), 'jpegxl/LICENSE']) {

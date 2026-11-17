@@ -40,13 +40,13 @@ export function brotliDictionary() {
   let bytes;
   try {
     const inflate = globalThis.process?.getBuiltinModule?.('node:zlib')?.brotliDecompressSync;
-    if (typeof inflate !== 'function') throw new Error('no node:zlib brotliDecompressSync');
+    if (typeof inflate !== 'function') throw new Error('no brotliDecompressSync');
     bytes = new Uint8Array(inflate(stream(), {maxOutputLength: SIZE}));
   } catch (cause) {
-    throw Object.assign(fault('JXL_DICTIONARY', 'This runtime has no Brotli decoder for RFC 7932\'s dictionary.'), {cause});
+    throw Object.assign(fault('JXL_UNAVAILABLE', 'no Brotli decoder'), {cause});
   }
   let hash = 0x811c9dc5;
   for (let i = 0; i < bytes.length; i++) hash = Math.imul(hash ^ bytes[i], 16777619) >>> 0;
-  if (bytes.length !== SIZE || hash !== FNV) throw fault('JXL_DICTIONARY', 'This runtime\'s Brotli decoder returned a different dictionary.');
+  if (bytes.length !== SIZE || hash !== FNV) throw fault('JXL_DICTIONARY', 'wrong Brotli dictionary');
   return words = bytes;
 }

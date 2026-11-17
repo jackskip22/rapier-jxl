@@ -41,23 +41,23 @@ export const packLayout = layout => { const out = new Int32Array(layout.length *
 export const unpackLayout = packed => Array.from({length: packed.length / 3}, (_, i) => ({id: packed[i * 3], bx: packed[i * 3 + 1], by: packed[i * 3 + 2]}));
 
 const allocated = (Type, length) => new Type(length);
-const owned = (value, allocate) => {
+const owned = (value, allocate, seen = new Map()) => {
   if (ArrayBuffer.isView(value)) {
-    const out = allocate(value instanceof Uint8Array ? Uint8Array : value.constructor, value.length);
-    out.set(value);
+    let out = seen.get(value);
+    if (!out) { out = allocate(value instanceof Uint8Array ? Uint8Array : value.constructor, value.length); out.set(value); seen.set(value, out); }
     return out;
   }
-  return Array.isArray(value) ? value.map(entry => owned(entry, allocate))
-    : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, owned(entry, allocate)])) : value;
+  return Array.isArray(value) ? value.map(entry => owned(entry, allocate, seen))
+    : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, owned(entry, allocate, seen)])) : value;
 };
 const FIXED_OPTIONS = ['deadzone', 'deadzoneMap', 'compactDct8', 'dct8Bands', 'sizeScale', 'smallScale', 'tableBands', 'perceptual', 'model', 'ids', 'rate',
   'lambda', 'weights', 'detailWeight', 'inhom', 'lowScale'];
-const fixedOptions = (options, allocate) => Object.fromEntries(FIXED_OPTIONS.filter(key => options[key] !== undefined).map(key => [key, owned(options[key], allocate)]));
+const fixedOptions = (options, allocate, seen) => Object.fromEntries(FIXED_OPTIONS.filter(key => options[key] !== undefined).map(key => [key, owned(options[key], allocate, seen)]));
 
 export function bandRecipe(recipe, y0, y1, allocate = allocated) {
-  const source = recipe.base, stride = source.components[0].stride;
-  const origin = Math.max(0, Math.floor((y0 - 8) / 64) * 64), by0 = origin / 8;
-  const by1 = Math.min(source.components[0].rows, Math.ceil((y1 + 8) / 64) * 8), rows = by1 - by0;
+  const source = recipe.base, stride = source.components[0].stride, seen = new Map();
+  const at = Math.max(0, Math.floor((y0 - 8) / 64) * 64), by1 = Math.min(source.components[0].rows, Math.ceil((y1 + 8) / 64) * 8);
+  const origin = by1 - at / 8 < 8 ? Math.max(0, at - 64) : at, by0 = origin / 8, rows = by1 - by0;
   const base = {width: source.width, height: Math.min(source.height, by1 * 8) - origin,
     components: source.components.map(c => ({h: c.h, v: c.v, stride, rows, quant: owned(c.quant, allocate), coeffs: allocate(Int16Array, 0)})),
     quantScale: source.quantScale, epf: source.epf, xyb: source.xyb, ycbcr: source.ycbcr,
@@ -78,11 +78,11 @@ export function bandRecipe(recipe, y0, y1, allocate = allocated) {
   for (let i = 0; i < recipe.layout.length; i += 3) {
     const by = recipe.layout[i + 2];
     if (by >= by0 && by < by1) {
-      if (used + 3 > layout.length) throw fault('JXL_INTERNAL', 'A score-band layout has more blocks than covered cells.');
+      if (used + 3 > layout.length) throw fault('JXL_INTERNAL', 'photo-layout-picture:blocks');
       layout[used++] = recipe.layout[i]; layout[used++] = recipe.layout[i + 1]; layout[used++] = by - by0;
     }
   }
-  const options = fixedOptions({...recipe.options, deadzoneMap: undefined}, allocate), zones = recipe.options.deadzoneMap;
+  const options = fixedOptions({...recipe.options, deadzoneMap: undefined}, allocate, seen), zones = recipe.options.deadzoneMap;
   if (zones) options.deadzoneMap = owned(zones.subarray(by0 * stride, by1 * stride), allocate);
-  return {base, layout: layout.subarray(0, used), options, gaborish: owned(recipe.gaborish, allocate), origin};
+  return {base, layout: layout.subarray(0, used), options, gaborish: owned(recipe.gaborish, allocate, seen), origin};
 }

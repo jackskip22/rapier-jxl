@@ -59,12 +59,12 @@ Examples:
 const withoutBytes = ({bytes, byteEncoding, ...record}) => record;
 export function parseByteSize(raw) {
   if (typeof raw !== 'string' && typeof raw !== 'number')
-    throw cliError('JXL_OPTIONS', 'The byte size is invalid', 'pass a byte count or size such as 100KB');
+    throw cliError('JXL_OPTIONS', 'byte size: positive', 'size: 100KB');
   const text = String(raw ?? '').trim();
   const match = /^(\d+(?:\.\d+)?)\s*(b|kb|k|kib|mb|m|mib)?$/i.exec(text);
   if (!match) {
-    throw cliError('JXL_OPTIONS', `Invalid --max-bytes "${raw}" (expected a positive byte count such as 80000, 80KB, or 1.5MB)`,
-      `pass a positive size, for example: npx ${COMMAND} photo.png --max-bytes 100KB`);
+    throw cliError('JXL_OPTIONS', `--max-bytes "${raw}": positive size`,
+      `run: npx ${COMMAND} photo.png --max-bytes 100KB`);
   }
   const value = Number(match[1]);
   const unit = (match[2] || 'b').toLowerCase();
@@ -75,15 +75,15 @@ export function parseByteSize(raw) {
     : 1;
   const bytes = value * scale;
   if (!Number.isSafeInteger(bytes) || bytes < 1) {
-    throw cliError('JXL_OPTIONS', `Invalid --max-bytes "${raw}" (must be a positive whole number of bytes)`,
-      `pass a positive byte budget, for example: npx ${COMMAND} photo.png --max-bytes 50KB`);
+    throw cliError('JXL_OPTIONS', `--max-bytes "${raw}": positive integer`,
+      `run: npx ${COMMAND} photo.png --max-bytes 50KB`);
   }
   return bytes;
 }
 
 export function formatBytes(bytes) {
   if (!Number.isSafeInteger(bytes) || bytes < 0)
-    throw cliError('JXL_INPUT', 'The byte count is invalid', 'pass a nonnegative safe integer');
+    throw cliError('JXL_INPUT', 'byte count: nonnegative safe integer', 'use: nonnegative safe integer');
   if (bytes < 1000) return `${bytes} B`;
   if (bytes < 1000000) return `${(bytes / 1000).toFixed(1)} KB`;
   return `${(bytes / 1000000).toFixed(2)} MB`;
@@ -123,12 +123,12 @@ export function parseCliArgs(argv) {
     const inlineValue = eq >= 0 ? arg.slice(eq + 1) : undefined;
     const takeValue = (name, example) => {
       if (inlineValue !== undefined) {
-        if (inlineValue === '') throw cliError('JXL_OPTIONS', `Missing value for ${name}`, `pass a value, for example: ${example}`);
+        if (inlineValue === '') throw cliError('JXL_OPTIONS', `${name}: value required`, `run: ${example}`);
         return inlineValue;
       }
-      if (i + 1 >= argv.length) throw cliError('JXL_OPTIONS', `Missing value for ${name}`, `pass a value, for example: ${example}`);
+      if (i + 1 >= argv.length) throw cliError('JXL_OPTIONS', `${name}: value required`, `run: ${example}`);
       if (String(argv[i + 1]).startsWith('-'))
-        throw cliError('JXL_OPTIONS', `${name} needs a value, and "${argv[i + 1]}" starts with -`, `for a value that starts with -, write ${name}=${argv[i + 1]} or ./${argv[i + 1]}`);
+        throw cliError('JXL_OPTIONS', `${name}: value "${argv[i + 1]}" needs =`, `use: ${name}=${argv[i + 1]} or ./${argv[i + 1]}`);
       return String(argv[++i]);
     };
 
@@ -137,31 +137,31 @@ export function parseCliArgs(argv) {
     } else if (flag === '-v' || flag === '--version') {
       options.version = true;
     } else if (flag === '--json') {
-      if (inlineValue !== undefined) throw cliError('JXL_OPTIONS', `--json takes no value (got "${arg}")`, 'write --json without a value');
+      if (inlineValue !== undefined) throw cliError('JXL_OPTIONS', `--json: no value "${arg}"`, 'use: --json');
       options.json = true;
     } else if (flag === '--verify') {
-      if (inlineValue !== undefined) throw cliError('JXL_OPTIONS', `--verify takes no value (got "${arg}")`, 'write --verify without a value');
+      if (inlineValue !== undefined) throw cliError('JXL_OPTIONS', `--verify: no value "${arg}"`, 'use: --verify');
       options.verify = true;
     } else if (flag === '--exact') {
-      if (inlineValue !== undefined) throw cliError('JXL_OPTIONS', `--exact takes no value (got "${arg}")`, 'write --exact without a value');
+      if (inlineValue !== undefined) throw cliError('JXL_OPTIONS', `--exact: no value "${arg}"`, 'use: --exact');
       options.exact = true;
     } else if (flag === '--jpeg-pixels') {
-      if (inlineValue !== undefined) throw cliError('JXL_OPTIONS', `--jpeg-pixels takes no value (got "${arg}")`, 'write --jpeg-pixels without a value');
+      if (inlineValue !== undefined) throw cliError('JXL_OPTIONS', `--jpeg-pixels: no value "${arg}"`, 'use: --jpeg-pixels');
       options.jpegPixels = true;
     } else if (flag === '-q' || flag === '--quality') {
       const val = takeValue('--quality', `npx ${COMMAND} photo.png --quality 85`);
       const num = Number(val);
       if (!Number.isFinite(num) || num < 1 || num > 100) {
-        throw cliError('JXL_OPTIONS', `Invalid --quality "${val}" (must be a number from 1 to 100)`,
-          `pass a quality between 1 and 100, for example: npx ${COMMAND} photo.png --quality 85`);
+        throw cliError('JXL_OPTIONS', `--quality "${val}": number 1-100`,
+          `run: npx ${COMMAND} photo.png --quality 85`);
       }
       options.quality = num;
     } else if (flag === '-e' || flag === '--effort') {
       const val = takeValue('--effort', `npx ${COMMAND} photo.png --effort 7`);
       const num = Number(val);
       if (!Number.isInteger(num) || num < 1 || num > 9) {
-        throw cliError('JXL_OPTIONS', `Invalid --effort "${val}" (must be an integer from 1 to 9)`,
-          `pass an integer effort from 1 (fastest) to 9 (smallest), for example: npx ${COMMAND} photo.png --effort 6`);
+        throw cliError('JXL_OPTIONS', `--effort "${val}": integer 1-9`,
+          `run: npx ${COMMAND} photo.png --effort 6`);
       }
       options.effort = num;
       options.effortExplicit = true;
@@ -174,19 +174,19 @@ export function parseCliArgs(argv) {
       const val = takeValue('--jobs', `npx ${COMMAND} photos/ --jobs 4`);
       const num = Number(val);
       if (!Number.isInteger(num) || num < 0) {
-        throw cliError('JXL_OPTIONS', `Invalid --jobs "${val}" (must be a whole number, 0 or more)`,
-          `pass a helper count, for example: npx ${COMMAND} photos/ --jobs 4`);
+        throw cliError('JXL_OPTIONS', `--jobs "${val}": integer >=0`,
+          `run: npx ${COMMAND} photos/ --jobs 4`);
       }
       options.jobs = num;
     } else {
-      throw cliError('JXL_OPTIONS', `Unknown option "${flag}"`,
-        `run npx ${COMMAND} --help to see supported options (--quality, --effort, --max-bytes, --exact, --out, --jobs, --verify)`);
+      throw cliError('JXL_OPTIONS', `unknown option: "${flag}"`,
+        `run: npx ${COMMAND} --help`);
     }
   }
 
   if (options.exact && options.quality !== undefined && options.quality < 100) {
-    throw cliError('JXL_OPTIONS', `Cannot combine --exact with --quality ${options.quality}`,
-      `remove --exact for quality ${options.quality}, or remove --quality ${options.quality} to keep every pixel`);
+    throw cliError('JXL_OPTIONS', `--exact: not with --quality ${options.quality}`,
+      `remove: --exact or --quality ${options.quality}`);
   }
   return {inputs, options};
 }
@@ -258,24 +258,24 @@ function pngColorChunks(decoded) {
   if (colorSpace === undefined && transferFunction === undefined && decoded.rgbaColorEncoding === undefined) return [];
   if (colorSpace === 'srgb' && transferFunction === 'srgb') return [makePngChunk('sRGB', Buffer.from([decoded.rgbaColorEncoding?.renderingIntent ?? 1]))];
   if (CICP_PRIMARIES[colorSpace] && CICP_TRANSFER[transferFunction]) return [makePngChunk('cICP', Buffer.from([CICP_PRIMARIES[colorSpace], CICP_TRANSFER[transferFunction], 0, 1]))];
-  throw cliError('JXL_UNSUPPORTED', 'PNG cannot state this picture\'s colors', `keep it as .jxl, or decode it with ${COMMAND}/decode in code`);
+  throw cliError('JXL_UNSUPPORTED', 'PNG colors: unavailable', `use: .jxl or ${COMMAND}/decode`);
 }
 
 const EXTRA_CHANNELS = {1: 'depth', 2: 'spot color', 3: 'selection mask', 4: 'black', 5: 'CFA', 6: 'thermal'};
 function pngOutput(decoded) {
-  if (!isPlainRecord(decoded)) throw fail('JXL_INPUT', "Invalid decoded picture; pass its data, width, and height.");
+  if (!isPlainRecord(decoded)) throw fail('JXL_INPUT', "decoded picture: data, width, height");
   let {width, height, data, bitDepth = 8} = decoded;
   dimensions(width, height);
   const kind = typedName.call(data), sampleBytes = {Uint8Array: 1, Uint8ClampedArray: 1, Uint16Array: 2, Float32Array: 4}[kind];
   if (!sampleBytes || typedFields.byteLength.call(data) !== width * height * 4 * sampleBytes)
-    throw fail('JXL_INPUT', "PNG samples are incomplete; pass width * height * 4 attached RGBA samples.");
+    throw fail('JXL_INPUT', "PNG RGBA: width * height * 4 samples");
   if (decoded.rgbaICC != null && !(decoded.rgbaICC instanceof Uint8Array))
-    throw fail('JXL_INPUT', "Invalid ICC profile; pass its bytes as a Uint8Array.");
+    throw fail('JXL_INPUT', "ICC profile: Uint8Array");
   let fidelity = 'exact', kept = 'pixels';
   const measurements = [];
   if (data instanceof Float32Array) {
     const signal = !decoded.rgbaICC?.length && CICP_PRIMARIES[decoded.colorSpace] && (decoded.transferFunction === 'pq' || decoded.transferFunction === 'hlg');
-    if (!signal || data.some(v => !(v >= 0 && v <= 1))) throw cliError('JXL_UNSUPPORTED', 'PNG cannot hold this picture\'s floating-point samples exactly', `keep it as .jxl, or decode it with ${COMMAND}/decode in code`);
+    if (!signal || data.some(v => !(v >= 0 && v <= 1))) throw cliError('JXL_UNSUPPORTED', 'PNG floating-point: not exact', `use: .jxl or ${COMMAND}/decode`);
     let maximum = 0;
     data = Uint16Array.from(data, value => {
       const sample = Math.round(value * 65535);
@@ -330,8 +330,8 @@ async function jpegPixels(raw, displayIn, effort, existing, refusal = null, keep
     return {exact, decoded: await recompress[Symbol.for('rapier-jxl.jpeg.pixels')](raw, {scale: 8})};
   }
   catch (error) {
-    throw cliError(error?.code || 'JXL_JPEG', `Could not read the JPEG "${displayIn}"`,
-      `convert it to PNG first, then run: npx ${COMMAND} "${replaceExtension(displayIn, '.png')}"`);
+    throw cliError(error?.code || 'JXL_JPEG', `JPEG "${displayIn}": unreadable`,
+      `convert to PNG; run: npx ${COMMAND} "${replaceExtension(displayIn, '.png')}"`);
   }
 }
 
@@ -342,16 +342,16 @@ async function decodeViaRuntime(bytes, format, filePath, maxPixels = PIXELS) {
     try {
       bitmap = await createImageBitmap(new Blob([bytes], {type: mime}));
     } catch (cause) {
-      throw cliError('JXL_INPUT', `Could not decode ${format.toUpperCase()} file "${filePath}"`,
-        `check that "${filePath}" is a valid ${format.toUpperCase()} image`);
+      throw cliError('JXL_INPUT', `${format.toUpperCase()} "${filePath}": decode failed`,
+        `check: "${filePath}" ${format.toUpperCase()}`);
     }
     try {
       const {width, height} = bitmap;
       dimensions(width, height, maxPixels);
       const canvas = new OffscreenCanvas(width, height);
       const ctx = canvas.getContext('2d', {willReadFrequently: true});
-      if (!ctx) throw cliError('JXL_PLATFORM', `This runtime has no Canvas 2D context to read ${format.toUpperCase()} ("${filePath}")`,
-        `use a runtime with a Canvas 2D context or convert "${filePath}" to PNG first`);
+      if (!ctx) throw cliError('JXL_PLATFORM', `Canvas 2D unavailable: ${format.toUpperCase()} "${filePath}"`,
+        `use: Canvas 2D or PNG "${filePath}"`);
       ctx.drawImage(bitmap, 0, 0);
       const imageData = ctx.getImageData(0, 0, width, height);
       return {data: new Uint8Array(imageData.data.buffer, imageData.data.byteOffset, imageData.data.byteLength), width, height};
@@ -361,8 +361,8 @@ async function decodeViaRuntime(bytes, format, filePath, maxPixels = PIXELS) {
   }
   const stem = basename(filePath, extname(filePath)) || 'image';
   throw cliError('JXL_PLATFORM',
-    `This runtime does not decode ${format.toUpperCase()} natively ("${filePath}")`,
-    `convert "${filePath}" to PNG or JPEG first (for example: ffmpeg -i "${filePath}" "${stem}.png"), then run: npx ${COMMAND} "${stem}.png"`);
+    `${format.toUpperCase()} "${filePath}": no native decoder`,
+    `convert: ffmpeg -i "${filePath}" "${stem}.png"; run: npx ${COMMAND} "${stem}.png"`);
 }
 
 async function fitAnimation(encode, picture, {maxBytes, fidelity, effort}) {
@@ -477,8 +477,8 @@ async function decodeFile(raw, displayIn, outputPath, named) {
     try { return {result: await restore(raw), note: 'exact JPEG', outputPath}; }
     catch (error) {
       if (error?.code !== 'JXL_RECONSTRUCTION') throw error;
-      if (named) throw cliError('JXL_RECONSTRUCTION', `"${displayIn}" was not made from a JPEG, so it has no JPEG to restore`,
-        `write a PNG instead: npx ${COMMAND} "${displayIn}" --out "${replaceExtension(displayIn, '.png')}"`);
+      if (named) throw cliError('JXL_RECONSTRUCTION', `"${displayIn}": no JPEG restoration`,
+        `run: npx ${COMMAND} "${displayIn}" --out "${replaceExtension(displayIn, '.png')}"`);
       outputPath = replaceExtension(outputPath, '.png');
     }
   }
@@ -503,11 +503,11 @@ async function writeWhole(path, bytes) {
 async function processSingleTask(task, options, runner) {
   const {inputPath, displayIn, named} = task;
   const raw = new Uint8Array(await readFile(inputPath));
-  if (!raw.byteLength) throw cliError('JXL_INPUT', `"${displayIn}" is empty`, 'pass an image file');
+  if (!raw.byteLength) throw cliError('JXL_INPUT', `"${displayIn}": empty`, 'use: image file');
   const format = detectFormat(raw, inputPath);
-  if (!format) throw cliError('JXL_INPUT', `"${displayIn}" is not a PNG, JPEG, GIF, WebP, AVIF, JPEG XL, OpenEXR or Radiance file`, `pass one of those, for example: npx ${COMMAND} photo.png`);
+  if (!format) throw cliError('JXL_INPUT', `"${displayIn}": unsupported format (expected PNG/JPEG/GIF/WebP/AVIF/JXL/EXR/HDR)`, `run: npx ${COMMAND} photo.png`);
   if (format === 'jxl' && options.maxBytes !== undefined)
-    throw cliError('JXL_OPTIONS', `"${displayIn}" is already JPEG XL, and --max-bytes fits an encode`, `omit --max-bytes to restore "${displayIn}"`);
+    throw cliError('JXL_OPTIONS', `"${displayIn}": --max-bytes not with JXL`, `remove: --max-bytes`);
   const made = format === 'jxl' ? await decodeFile(raw, displayIn, task.outputPath, named)
     : {...await encodeFile(raw, format, displayIn, options, runner), outputPath: task.outputPath};
   let verification;
@@ -518,17 +518,17 @@ async function processSingleTask(task, options, runner) {
     line: formatLine(displayIn, replaceExtension(task.displayOut, extname(made.outputPath)), raw.byteLength,
       made.result.bytes?.byteLength ?? 0, made.note)});
   if (!made.result.meetsTarget) return record(false, false);
-  if (await samePath(made.outputPath, inputPath)) throw cliError('JXL_OPTIONS', `The output "${displayIn}" is the input itself`, 'pass another --out path');
-  if (options.verify && made.dropped?.length) throw cliError('JXL_UNSUPPORTED', `"${displayIn}" has ${made.dropped.join(' and ')}, which a PNG cannot hold, so --verify cannot check it`,
-    `decode it without --verify: npx ${COMMAND} "${displayIn}" --out "${task.displayOut}"`);
+  if (await samePath(made.outputPath, inputPath)) throw cliError('JXL_OPTIONS', `"${displayIn}": output equals input`, '--out: different path');
+  if (options.verify && made.dropped?.length) throw cliError('JXL_UNSUPPORTED', `--verify: "${displayIn}" ${made.dropped.join(' and ')}: PNG cannot hold`,
+    `run: npx ${COMMAND} "${displayIn}" --out "${task.displayOut}"`);
   if (options.verify) verification = await (await getVerify()).verify(format === 'hdr' ? await (await getHdr()).read(raw) : raw, made.result);
   const shownPath = replaceExtension(task.displayOut, extname(made.outputPath));
   try { await writeWhole(made.outputPath, made.result.bytes); }
   catch (error) {
     if (error.code !== 'EEXIST' || !await stat(made.outputPath).catch(() => null)) throw writeError(error, shownPath);
     const existing = await readFile(made.outputPath).catch(() => null);
-    if (!existing || !Buffer.from(made.result.bytes).equals(existing)) throw cliError('JXL_OPTIONS', `"${shownPath}" already exists${existing ? ' and differs from what this run writes' : ''}`,
-      `name another file: npx ${COMMAND} "${displayIn}" --out "${replaceExtension(shownPath, '')}-${format !== 'jxl' ? 'new' : extname(made.outputPath) === '.png' ? 'decoded' : 'restored'}${extname(made.outputPath)}"`);
+    if (!existing || !Buffer.from(made.result.bytes).equals(existing)) throw cliError('JXL_OPTIONS', `"${shownPath}": exists${existing ? ', differing' : ''}`,
+      `run: npx ${COMMAND} "${displayIn}" --out "${replaceExtension(shownPath, '')}-${format !== 'jxl' ? 'new' : extname(made.outputPath) === '.png' ? 'decoded' : 'restored'}${extname(made.outputPath)}"`);
     return record(true, false);
   }
   return record(false, true);
@@ -536,11 +536,11 @@ async function processSingleTask(task, options, runner) {
 
 function writeError(error, shown) {
   if (typeof error?.code === 'string' && error.code.startsWith('JXL_')) return error;
-  const why = {EEXIST: 'a folder on its path is a file', ENOTDIR: 'a folder on its path is a file', EACCES: 'this user may not write there',
-    EPERM: 'this user may not write there', EROFS: 'the disk is read-only', ENOSPC: 'the disk is full', EDQUOT: 'the disk quota is full',
-    ENAMETOOLONG: 'the name is too long'}[error?.code];
-  return Object.assign(cliError('JXL_IO', `"${shown}" could not be written: ${why ?? "the host refused the write"}`,
-    why === 'a folder on its path is a file' ? 'pass an --out path inside a folder' : 'pass another --out path'), {cause: error});
+  const why = {EEXIST: 'folder is file', ENOTDIR: 'folder is file', EACCES: 'permission denied',
+    EPERM: 'permission denied', EROFS: 'disk read-only', ENOSPC: 'disk full', EDQUOT: 'quota full',
+    ENAMETOOLONG: 'name too long'}[error?.code];
+  return Object.assign(cliError('JXL_IO', `"${shown}": ${why ?? "host refused"}`,
+    why === 'folder is file' ? '--out: inside folder' : '--out: different path'), {cause: error});
 }
 
 async function samePath(a, b) {
@@ -552,14 +552,14 @@ function friendlyError(error) {
   const own = typeof error?.code === 'string' && error.code.startsWith('JXL_');
   const code = error?.code === 'JXL_SETUP' ? 'JXL_SETUP' : own ? declared(error).code : error?.code ? 'JXL_IO' : 'JXL_INTERNAL';
   if (error?.fix) return {code, message: error.message, hint: error.fix};
-  const message = String(error?.message || error).replace(/\.?$/, '.');
-  const hint = code === 'JXL_WASM' ? 'enable WebAssembly with SIMD in the runtime.'
-    : code === 'JXL_DIMENSIONS' ? 'check the picture dimensions and maxPixels.'
-    : code === 'JXL_MEMORY' || code === 'JXL_LIMIT' ? 'lower --jobs, or pass a smaller picture.'
-    : code === 'JXL_IO' ? 'check that the file exists and this process may read or write it.'
-    : code === 'JXL_INTERNAL' ? 'report the command, input type and options to rapier-jxl.'
-    : `run npx ${COMMAND} --help for examples.`;
-  return {code, message: own ? message : `${message.slice(0, -1)}; ${hint}`, hint};
+  const message = String(error?.message || error).replace(/\.$/, '');
+  const hint = code === 'JXL_WASM' ? 'WebAssembly: SIMD'
+    : code === 'JXL_DIMENSIONS' ? 'check: dimensions and maxPixels'
+    : code === 'JXL_MEMORY' || code === 'JXL_LIMIT' ? 'reduce: --jobs or picture size'
+    : code === 'JXL_IO' ? 'check: path permissions'
+    : code === 'JXL_INTERNAL' ? 'report: command, input, options'
+    : `run: npx ${COMMAND} --help`;
+  return {code, message: own ? message : `${message}; ${hint}`, hint};
 }
 
 function formatFriendlyError(error) {
@@ -585,25 +585,25 @@ async function verifyFiles(argv, {cwd, json, emit, stdout, stderr}, caller) {
   const split = argv.findIndex(arg => String(arg) === '--'), words = split < 0 ? argv : argv.slice(0, split), after = split < 0 ? [] : argv.slice(split + 1);
   const paths = [...words.filter(arg => String(arg) !== '--json'), ...after];
   if (paths.length !== 2 || words.some(path => String(path).startsWith('-') && String(path) !== '--json'))
-    throw cliError('JXL_OPTIONS', 'verify takes an original and its JPEG XL file, or two folders', `run npx ${COMMAND} verify photos/kodim23.png out/kodim23.jxl, or npx ${COMMAND} verify photos/ out/`);
+    throw cliError('JXL_OPTIONS', 'verify: source + JXL, or two folders', `run: npx ${COMMAND} verify photos/ out/`);
   const [from, to] = paths.map(path => resolve(cwd, path)), show = path => relative(cwd, path) || basename(path);
   const kinds = await Promise.all([from, to].map(path => stat(path).then(
     info => info.isFile() || info.isDirectory() ? info.isDirectory() : undefined,
     cause => {
       if (cause?.code === 'ENOENT' || cause?.code === 'ENOTDIR') return null;
-      throw Object.assign(cliError('JXL_IO', `"${show(path)}" could not be inspected`,
-        'check the path and read permissions'), {cause});
+      throw Object.assign(cliError('JXL_IO', `"${show(path)}": inspection failed`,
+        'check: path permissions'), {cause});
     })));
-  kinds.forEach((kind, i) => { if (kind === undefined) throw cliError('JXL_INPUT', `"${paths[i]}" is not a file or a folder`, 'pass a picture file or a folder of pictures'); });
-  kinds.forEach((kind, i) => { if (kind === null) throw cliError('JXL_INPUT', `"${paths[i]}" does not exist`, 'check the path'); });
-  if (kinds[0] !== kinds[1]) throw cliError('JXL_OPTIONS', 'Pass two files or two folders', `run npx ${COMMAND} verify photos/ out/`);
+  kinds.forEach((kind, i) => { if (kind === undefined) throw cliError('JXL_INPUT', `"${paths[i]}": not a file or folder`, 'use: picture file or folder'); });
+  kinds.forEach((kind, i) => { if (kind === null) throw cliError('JXL_INPUT', `"${paths[i]}": missing`, 'check: path'); });
+  if (kinds[0] !== kinds[1]) throw cliError('JXL_OPTIONS', 'verify: two files or two folders', `run: npx ${COMMAND} verify photos/ out/`);
   let pairs = [{original: from, file: to}];
   if (kinds[0]) {
     const items = await collectDirectoryImages(from, to), exact = new Map(items.map(item => [item.relPath, item.inputPath])), stems = new Map();
     for (const item of items) { const stem = replaceExtension(item.relPath, ''); stems.set(stem, stems.has(stem) ? null : item.inputPath); }
     const originalOf = name => { const stem = replaceExtension(name, ''); return exact.get(stem) ?? stems.get(stem) ?? null; };
     const files = (await readdir(to, {recursive: true})).filter(name => extname(name).toLowerCase() === '.jxl').sort();
-    if (!files.length) throw cliError('JXL_INPUT', `"${paths[1]}" holds no .jxl files`, `make them: npx ${COMMAND} "${paths[0]}" --out "${paths[1]}"`);
+    if (!files.length) throw cliError('JXL_INPUT', `"${paths[1]}": no .jxl files`, `run: npx ${COMMAND} "${paths[0]}" --out "${paths[1]}"`);
     pairs = files.map(name => ({original: originalOf(name), file: join(to, name)}));
   }
   const [{verify}, {header}] = await Promise.all([getVerify(), import('./metadata.mjs')]);
@@ -611,16 +611,16 @@ async function verifyFiles(argv, {cwd, json, emit, stdout, stderr}, caller) {
   for (const {original, file} of pairs) {
     const line = {type: 'verify', original: original && show(original), file: show(file)};
     try {
-      if (!original) throw cliError('JXL_INPUT', `"${show(file)}" has no original of the same name in "${paths[0]}"`, `name its original: npx ${COMMAND} verify <original> "${show(file)}"`);
+      if (!original) throw cliError('JXL_INPUT', `"${show(file)}": no matching original in "${paths[0]}"`, `run: npx ${COMMAND} verify <original> "${show(file)}"`);
       const bytes = new Uint8Array(await readFile(file).catch(cause => {
         if (cause?.code === 'ENOENT' || cause?.code === 'ENOTDIR')
-          throw cliError('JXL_INPUT', `"${show(file)}" does not exist`, `make it: npx ${COMMAND} "${show(original)}" --out "${show(file)}"`);
-        throw Object.assign(cliError('JXL_IO', `"${show(file)}" could not be read`, 'check the file permissions and retry'), {cause});
+          throw cliError('JXL_INPUT', `"${show(file)}": missing`, `run: npx ${COMMAND} "${show(original)}" --out "${show(file)}"`);
+        throw Object.assign(cliError('JXL_IO', `"${show(file)}": unreadable`, 'check: file permissions'), {cause});
       }));
       const source = new Uint8Array(await readFile(original).catch(cause => {
         if (cause?.code === 'ENOENT' || cause?.code === 'ENOTDIR')
-          throw cliError('JXL_INPUT', `"${show(original)}" does not exist`, 'check the original file path');
-        throw Object.assign(cliError('JXL_IO', `"${show(original)}" could not be read`, 'check the file permissions and retry'), {cause});
+          throw cliError('JXL_INPUT', `"${show(original)}": missing`, 'check: original path');
+        throw Object.assign(cliError('JXL_IO', `"${show(original)}": unreadable`, 'check: file permissions'), {cause});
       })), kind = detectFormat(source, original), jpeg = kind === 'jpeg';
       const reference = kind === 'hdr' ? await (await getHdr()).read(source) : new Blob([source]);
       const h = header(bytes), [width, height] = h.orientation > 4 ? [h.height, h.width] : [h.width, h.height];
@@ -631,8 +631,8 @@ async function verifyFiles(argv, {cwd, json, emit, stdout, stderr}, caller) {
         catch (error) { refusal = error; if (!['JXL_TARGET', 'JXL_RECONSTRUCTION'].includes(error?.code)) break; }
       }
       checked++;
-      if (!receipt) throw cliError(refusal?.code || 'JXL_TARGET', `"${show(file)}" is not a copy of "${show(original)}": ${String(refusal?.message || refusal).replace(/\.$/, '')}`,
-        `make it again from its original: npx ${COMMAND} "${show(original)}" --out "${replaceExtension(show(file), '')}-new.jxl"`);
+      if (!receipt) throw cliError(refusal?.code || 'JXL_TARGET', `"${show(file)}": not copy of "${show(original)}": ${String(refusal?.message || refusal).replace(/\.$/, '')}`,
+        `run: npx ${COMMAND} "${show(original)}" --out "${replaceExtension(show(file), '')}-new.jxl"`);
       const kept = receipt.kind === 'jpeg-restore' ? 'jpeg-bytes' : receipt.kind === 'pixels' ? 'pixels' : 'lossy';
       const score = kept === 'lossy' ? Math.round(receipt.score * 100) / 100 : undefined;
       if (json) await emit({...line, verified: true, kept, ...(score !== undefined && {metric: receipt.metric, score})});
@@ -650,11 +650,11 @@ async function verifyFiles(argv, {cwd, json, emit, stdout, stderr}, caller) {
 
 export async function runCli(argv = process.argv.slice(2), io = {}) {
   argv = cliArgs(argv);
-  if (!isPlainRecord(io)) throw cliError('JXL_OPTIONS', 'Command output options are invalid', 'pass an object');
+  if (!isPlainRecord(io)) throw cliError('JXL_OPTIONS', 'io: object', 'use: object');
   const {cwd, stdout, stderr} = io;
-  if (cwd !== undefined && typeof cwd !== 'string') throw cliError('JXL_OPTIONS', 'cwd is invalid', 'pass a folder path as a string');
+  if (cwd !== undefined && typeof cwd !== 'string') throw cliError('JXL_OPTIONS', 'cwd: string path', 'use: folder string');
   for (const callback of [stdout, stderr]) if (callback !== undefined && typeof callback !== 'function')
-    throw cliError('JXL_OPTIONS', 'The output callback is invalid', 'pass stdout and stderr as functions');
+    throw cliError('JXL_OPTIONS', 'output callback: function', 'stdout/stderr: functions');
   const caller = {failed: false}, pending = [];
   const remember = reason => { if (!caller.failed) { caller.failed = true; caller.reason = reason; } };
   const output = callback => callback === undefined ? undefined : value => {
@@ -693,10 +693,10 @@ async function runCliHere(argv, io, caller) {
     try {
       const verb = words[0], target = words[1], host = Object.hasOwn(INTEGRATIONS, target) ? INTEGRATIONS[target] : null, names = Object.keys(INTEGRATIONS);
       const removable = names.filter(n => INTEGRATIONS[n].remove);
-      if (!host?.[verb]) throw cliError('JXL_OPTIONS', target === undefined || String(target).startsWith('-') ? `Name the integration to ${verb}`
-        : host ? `${COMMAND} ${verb} ${target} does not exist; its files are yours to delete` : `There is no ${COMMAND} integration named "${target}"; the ones that exist: ${names.join(', ')}`,
-        verb === 'add' ? `run npx ${COMMAND} add <name> in its project folder: ${names.join(', ')}`
-          : `run npx ${COMMAND} remove <name> in its project folder: ${removable.join(', ')}`);
+      if (!host?.[verb]) throw cliError('JXL_OPTIONS', target === undefined || String(target).startsWith('-') ? `integration: name for ${verb}`
+        : host ? `${verb} ${target}: no integration` : `unknown integration: "${target}"; use ${names.join(', ')}`,
+        verb === 'add' ? `run: npx ${COMMAND} add <name>`
+          : `run: npx ${COMMAND} remove <name>: ${removable.join(', ')}`);
       const setup = await host.load(), tail = words.slice(2);
       if (tail.length === 1 && ['--help', '-h'].includes(String(tail[0]))) {
         const helpLines = [];
@@ -729,22 +729,22 @@ async function runCliHere(argv, io, caller) {
   json = options.json;
   if (options.help) { if (json) await emit({type: 'help', usage: HELP_TEXT.trimEnd()}); else await stdout(HELP_TEXT.trimEnd()); return {exitCode: 0, files: []}; }
   if (options.version) { if (json) await emit({type: 'version', version: VERSION}); else await stdout(VERSION); return {exitCode: 0, files: []}; }
-  if (!inputs.length) return refuse(cliError('JXL_OPTIONS', 'No picture or folder given', `pass one, for example: npx ${COMMAND} photo.png`));
+  if (!inputs.length) return refuse(cliError('JXL_OPTIONS', 'input: picture or folder required', `run: npx ${COMMAND} photo.png`));
 
   let configured = null;
   try {
     const found = [];
     for (const rawInput of inputs) {
-      if (rawInput === '-') throw cliError('JXL_INPUT', 'Standard input is not read', 'save it to a file and pass that, or write ./- for a file named -');
+      if (rawInput === '-') throw cliError('JXL_INPUT', 'stdin: file required', 'use: file or ./-');
       const fullInput = resolve(cwd, rawInput);
       let info;
       try { info = await stat(fullInput); }
       catch (cause) {
-        if (cause?.code === 'ENOENT' || cause?.code === 'ENOTDIR') throw cliError('JXL_INPUT', `"${rawInput}" does not exist`, 'check the path');
-        throw Object.assign(cliError('JXL_IO', `"${rawInput}" could not be inspected`,
-          'check the path and read permissions'), {cause});
+        if (cause?.code === 'ENOENT' || cause?.code === 'ENOTDIR') throw cliError('JXL_INPUT', `"${rawInput}": missing`, 'check: path');
+        throw Object.assign(cliError('JXL_IO', `"${rawInput}": inspection failed`,
+          'check: path permissions'), {cause});
       }
-      if (!info.isFile() && !info.isDirectory()) throw cliError('JXL_INPUT', `"${rawInput}" is not a file or a folder`, 'pass a picture file or a folder of pictures');
+      if (!info.isFile() && !info.isDirectory()) throw cliError('JXL_INPUT', `"${rawInput}": not a file or folder`, 'use: picture file or folder');
       found.push({rawInput, fullInput, isDirectory: info.isDirectory()});
     }
     const many = found.length > 1 || found[0].isDirectory;
@@ -753,13 +753,13 @@ async function runCliHere(argv, io, caller) {
     if (out !== null) {
       const outInfo = await stat(out).catch(() => null);
       if (outInfo?.isDirectory()) outIsDir = true;
-      if (many && outInfo?.isFile()) throw cliError('JXL_OPTIONS', `--out "${options.out}" is a file, but several pictures were given`, 'pass a folder, for example: --out dist/');
+      if (many && outInfo?.isFile()) throw cliError('JXL_OPTIONS', `--out "${options.out}": folder for multiple inputs`, 'use: --out dist/');
     }
     const tasks = [], show = path => relative(cwd, path) || basename(path);
     for (const {rawInput, fullInput, isDirectory} of found) {
       if (isDirectory) {
         const items = await collectDirectoryImages(fullInput, out);
-        if (!items.length) throw cliError('JXL_INPUT', `"${rawInput}" holds no PNG, JPEG, GIF, WebP or AVIF files`, 'pass a folder of pictures, or a picture');
+        if (!items.length) throw cliError('JXL_INPUT', `"${rawInput}": no supported images`, 'use: picture or image folder');
         for (const item of items) {
           const outputPath = replaceExtension(out ? join(out, item.relPath) : item.inputPath, '.jxl');
           tasks.push({inputPath: item.inputPath, outputPath, displayIn: show(item.inputPath), displayOut: show(outputPath), named: false, inFolder: true});
@@ -769,8 +769,8 @@ async function runCliHere(argv, io, caller) {
         const outputPath = out ? (outIsDir ? join(out, replaceExtension(basename(fullInput), ext)) : out) : replaceExtension(fullInput, ext);
         const named = out !== null && !outIsDir, want = ext === '.jxl' ? ['.jxl'] : ['.jpg', '.jpeg', '.png'];
         if (named && !want.includes(extname(out).toLowerCase())) throw cliError('JXL_OPTIONS',
-          `--out "${options.out}" names a ${extname(out) || 'file without an extension'}, but ${COMMAND} writes ${ext === '.jxl' ? 'JPEG XL' : 'a JPEG or a PNG'} here`,
-          `name it ${want.map(e => `"${replaceExtension(options.out, e)}"`).join(' or ')}`);
+          `--out "${options.out}": need ${ext === '.jxl' ? '.jxl' : '.jpg/.jpeg/.png'}`,
+          `use: ${want.map(e => `"${replaceExtension(options.out, e)}"`).join(' or ')}`);
         tasks.push({inputPath: fullInput, outputPath, displayIn: show(fullInput), displayOut: show(outputPath), named: out !== null && !outIsDir});
       }
     }
@@ -788,8 +788,8 @@ async function runCliHere(argv, io, caller) {
     const seen = new Map();
     for (const task of tasks) {
       const key = task.outputPath.toLowerCase(), other = seen.get(key);
-      if (other) throw cliError('JXL_OPTIONS', `"${other.displayIn}" and "${task.displayIn}" would both be written to "${task.displayOut}"`,
-        `rename one of them, or convert them one at a time with --out`);
+      if (other) throw cliError('JXL_OPTIONS', `"${other.displayIn}" + "${task.displayIn}": same output "${task.displayOut}"`,
+        `use: distinct --out paths`);
       seen.set(key, task);
     }
 
@@ -814,7 +814,7 @@ async function runCliHere(argv, io, caller) {
           if (!accepted) failed++;
           if (!json) {
             if (accepted) await stdout(result.line);
-            else await stderr(formatFriendlyError(result.result.reason ?? fail('JXL_TARGET', "Requested output target was not met; raise maxBytes or reduce the requested quality.")));
+            else await stderr(formatFriendlyError(result.result.reason ?? fail('JXL_TARGET', "target: raise maxBytes or lower quality")));
           } else await emit({type: 'file', input: task.displayIn, output: replaceExtension(task.displayOut, extname(result.outputPath)),
             inputBytes: result.inputBytes, outputBytes: result.outputBytes, ...(result.written || result.skipped ? withoutBytes(resultJSON({...result.result, bytes: null})) : resultJSON(result.result)),
             effort: result.effort, ms: elapsed(begun), skipped: result.skipped, written: result.written,

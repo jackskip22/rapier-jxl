@@ -18,23 +18,23 @@ import {bandedOutputs} from './photo-reconstruct-bands.mjs';
 export {LIMITS};
 
 function admitScore(data, width, height, options) {
-  if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray)) throw fault('JXL_INPUT', 'Encoding to a score takes 8-bit sRGB RGBA.');
+  if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray)) throw fault('JXL_INPUT', 'samples: 8-bit sRGB RGBA');
   admitPixels(data, width, height, LIMITS);
   const candidates = options?.candidates ?? CANDIDATES;
-  if (!Array.isArray(candidates) || !candidates.length || candidates.some(c => !CANDIDATES.includes(c))) throw fault('JXL_INPUT', `Candidates are some of ${CANDIDATES.join(', ')}.`);
+  if (!Array.isArray(candidates) || !candidates.length || candidates.some(c => !CANDIDATES.includes(c))) throw fault('JXL_INPUT', `candidates: ${CANDIDATES.join(', ')}`);
   const allowLossless = options?.allowLossless === undefined ? true : options.allowLossless, maxBytes = options?.maxBytes ?? Number.MAX_SAFE_INTEGER;
-  if (typeof allowLossless !== 'boolean') throw fault('JXL_INPUT', 'allowLossless is a boolean.');
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || options?.maxBytes === null) throw fault('JXL_INPUT', 'maxBytes is a positive safe integer.');
+  if (typeof allowLossless !== 'boolean') throw fault('JXL_INPUT', 'allowLossless: boolean');
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || options?.maxBytes === null) throw fault('JXL_INPUT', 'maxBytes: positive integer');
   return {target: photoTarget(options?.target), effort: admitEffort(options ?? {}, BALANCED_EFFORT), candidates, allowLossless, maxBytes};
 }
 
 function scoreMemory(data, width, height, options, exact) {
   const inputBytes = data.buffer.byteLength, metricInputBytes = width * height * 4, scope = options?.memory;
-  if (scope?.inputBytes !== undefined && scope.inputBytes < inputBytes) throw fault('JXL_MEMORY', 'Memory reservation omits retained input bytes.');
-  if (scope?.metricInputBytes !== undefined && scope.metricInputBytes < metricInputBytes) throw fault('JXL_MEMORY', 'Memory reservation omits the metric input snapshot.');
+  if (scope?.inputBytes !== undefined && scope.inputBytes < inputBytes) throw fault('JXL_MEMORY', 'inputBytes: below retained input');
+  if (scope?.metricInputBytes !== undefined && scope.metricInputBytes < metricInputBytes) throw fault('JXL_MEMORY', 'metricInputBytes: below snapshot');
   const memory = {...scope, inputBytes: scope?.inputBytes ?? inputBytes, metricInputBytes: scope?.metricInputBytes ?? metricInputBytes, width, height, exact};
   const plan = memoryPlan(width * height, memory);
-  if (plan.known && !plan.fits) throw fault('JXL_MEMORY', 'Score encoding exceeds the supplied memory reservation.');
+  if (plan.known && !plan.fits) throw fault('JXL_MEMORY', 'over memory reservation');
   return {memory, plan};
 }
 
@@ -45,14 +45,14 @@ function scoreRefusal(result, target, code, reason) {
   const margin = row => row.ssimulacra2 - target.ssimulacra2;
   const best = result.tried.map(row => row.bestObserved).reduce((a, b) => margin(b) > margin(a) ? b : a);
   const scores = Object.fromEntries(Object.keys(target).map(key => [key, best[key]]));
-  return Object.assign(fault(code, reason + ' Best lossy scores: ' + Object.entries(scores).map(([key, value]) => key + ' ' + value).join(', ') + '.'),
+  return Object.assign(fault(code, reason + '; best: ' + Object.entries(scores).map(([key, value]) => key + ' ' + value).join(', ')),
     {target: {...target}, best: {...scores, candidate: best.candidate, quality: best.quality}});
 }
 
 function* finishScore(result, data, width, height, {target, effort, allowLossless, maxBytes, preview}) {
   if (result.pass && result.bytes.length <= maxBytes) return scoreAnswer(result);
   if (!allowLossless) throw scoreRefusal(result, target, result.pass ? 'JXL_SIZE' : 'JXL_TARGET',
-    result.pass ? 'The selected file exceeds maxBytes.' : 'The target was not reached and lossless is off.');
+    result.pass ? 'over maxBytes' : 'missed target (allowLossless: false)');
   const exact = effortJob(data, width, height, {quality: 100, effort}, false, undefined, undefined, undefined, EXACT_LADDER);
   try {
     let step, reply;
@@ -62,7 +62,7 @@ function* finishScore(result, data, width, height, {target, effort, allowLossles
       else { reply = undefined; if (!value?.split && !value?.gpu) yield 0.95 + 0.05 * value; }
     }
     const bytes = answer(step.value);
-    if (bytes.length > maxBytes) throw scoreRefusal(result, target, 'JXL_SIZE', 'The lossless file exceeds maxBytes.');
+    if (bytes.length > maxBytes) throw scoreRefusal(result, target, 'JXL_SIZE', 'lossless: over maxBytes');
     preview?.(bytes, {width, height, measurements: []});
     return scoreAnswer({bytes, quality: 100, candidate: 'lossless', pass: true, ssimulacra2: 100});
   } finally { exact.return(); }
@@ -120,7 +120,7 @@ export async function encodeToScore(data, width, height, options) {
   const publish = () => { if (options?.stats) Object.assign(options.stats, stats); };
   if (gpu && plan.known) {
     stats.backend = 'refused'; stats.gpuFailure = 'JXL_MEMORY_GPU_UNPROVEN'; publish();
-    throw fault('JXL_MEMORY_GPU_UNPROVEN', 'The memory envelope gives no GPU allocation bound.');
+    throw fault('JXL_MEMORY_GPU_UNPROVEN', 'no GPU memory bound');
   }
   if (!gpu) { try { return complete(encodeToScoreSteps(data, width, height, {...options, stats})); } finally { publish(); } }
   let measurer = null, exactAnswer = null, steps = null, cpuOnce = null, metricRgba = null, gpuFailure, gpuFailed = false, completed = false;

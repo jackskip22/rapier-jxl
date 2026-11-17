@@ -11,7 +11,7 @@ const kinds = {Uint8Array, Uint8ClampedArray, Float32Array, Float64Array};
 export function s2Dimensions(width, height) {
   if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1
       || width > LIMITS.edge || height > LIMITS.edge || width * height > LIMITS.pixels)
-    throw fault('JXL_DIMENSIONS', 'SSIMULACRA2 needs positive image dimensions within the picture limits.');
+    throw fault('JXL_DIMENSIONS', 'dimensions: out of bounds');
   return width * height;
 }
 
@@ -21,12 +21,12 @@ function samples(value, count, allowed, exact = false) {
     const name = kind.call(value), memory = buffer.call(value), size = length.call(value);
     if (!allowed.includes(name) || size < count || exact && size !== count || byteLength.call(memory) < 1) throw 0;
     return new kinds[name](memory, offset.call(value), count);
-  } catch { throw fault('JXL_INPUT', 'SSIMULACRA2 needs complete, nonshared typed sample arrays.'); }
+  } catch { throw fault('JXL_INPUT', 'samples: nonshared typed arrays'); }
 }
 
 const sampleCount = pixels => {
   if (!Number.isSafeInteger(pixels) || pixels < 1 || pixels > LIMITS.pixels)
-    throw fault('JXL_DIMENSIONS', 'SSIMULACRA2 needs a positive sample count within the picture limits.');
+    throw fault('JXL_DIMENSIONS', 'pixels: out of bounds');
   return pixels;
 };
 export const s2RGBA = (rgba, pixels, exact = false) => samples(rgba, sampleCount(pixels) * 4, ['Uint8Array', 'Uint8ClampedArray'], exact);
@@ -36,10 +36,10 @@ export const finitePlanes = planes => { for (const plane of planes) finite.add(p
 export function s2Planes(planes, pixels) {
   sampleCount(pixels);
   if (!Array.isArray(planes) || planes.length !== 3)
-    throw fault('JXL_INPUT', 'SSIMULACRA2 needs three linear RGB planes.');
+    throw fault('JXL_INPUT', 'planes: 3 linear RGB arrays');
   const out = [0, 1, 2].map(c => samples(planes[c], pixels, ['Float32Array', 'Float64Array']));
   for (let c = 0; c < 3; c++) if (!finite.has(planes[c])) for (let i = 0, plane = out[c]; i < pixels; i++)
-    if (!Number.isFinite(Math.fround(plane[i]))) throw fault('JXL_INPUT', 'SSIMULACRA2 samples must be finite binary32 values.');
+    if (!Number.isFinite(Math.fround(plane[i]))) throw fault('JXL_INPUT', 'samples: finite float32');
   for (let c = 0; c < 3; c++) if (finite.has(planes[c])) finite.add(out[c]);
   return out;
 }

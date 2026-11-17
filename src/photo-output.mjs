@@ -107,19 +107,19 @@ export const nativeByte = (v, d) => byteOf(encoded(f(v)), d);
 function outputPixels(planes, width, height, x, y, alpha) {
   const pixels = width * height;
   if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || !Number.isSafeInteger(pixels * 4))
-    throw fault('JXL_INTERNAL', 'Photographic output dimensions must be positive safe integers.');
-  if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y)) throw fault('JXL_INTERNAL', 'Photographic output origin must use safe integers.');
+    throw fault('JXL_INTERNAL', 'photo-output:dimensions');
+  if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y)) throw fault('JXL_INTERNAL', 'photo-output:origin');
   if (!Array.isArray(planes) || planes.length !== 3 || planes.some(p => !(p instanceof Float32Array || p instanceof Float64Array) || p.length < pixels))
-    throw fault('JXL_INTERNAL', 'Photographic output needs three complete floating-point planes.');
+    throw fault('JXL_INTERNAL', 'photo-output:planes');
   if (alpha !== null && (!(alpha instanceof Uint8Array || alpha instanceof Uint8ClampedArray) || alpha.length < pixels))
-    throw fault('JXL_INTERNAL', 'Photographic output alpha needs one byte per pixel.');
+    throw fault('JXL_INTERNAL', 'photo-output:alpha');
   return pixels;
 }
 function outputSetup(planes, width, height, {x = 0, y = 0, alpha = null} = {}, into = null) {
   const pixels = outputPixels(planes, width, height, x, y, alpha);
   if (into !== null && (!(into instanceof Uint8Array) || into.length !== pixels * 4 ||
       planes.some(p => p.buffer === into.buffer) || alpha?.buffer === into.buffer))
-    throw fault('JXL_INTERNAL', 'Photographic output needs an exact byte destination separate from its inputs.');
+    throw fault('JXL_INTERNAL', 'photo-output:into');
   return {pixels, alpha, rgba: into ?? new Uint8Array(pixels * 4), ox: (x % 32 + 32) % 32, oy: (y % 32 + 32) % 32};
 }
 export function nativeRGBA(planes, width, height, options, into = null) {

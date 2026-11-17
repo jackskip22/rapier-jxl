@@ -23,28 +23,29 @@ function append(held, more, rows, w, keep) {
 
 const AGAIN = 12;
 export function s2Stream(reference, width, height, outputs, resumable = false, libjxl = false, refCache = null) {
-  if (width < 8 || height < 8) throw fault('JXL_INTERNAL', 'A streamed SSIMULACRA 2 needs at least 8 x 8 pixels.');
+  if (width < 8 || height < 8) throw fault('JXL_INTERNAL', 'photo-s2-stream:size');
   const scales = [];
   for (let s = 0, w = width, h = height; s < SCALES; s++) {
     if (s) { if (w < 8 || h < 8) break; w = (w + 1) >> 1; h = (h + 1) >> 1; }
     scales.push({w, h, have: 0, ref: {y: 0, rows: 0}, out: Array.from({length: outputs}, () => ({y: 0, rows: 0})),
       first: -4, state: new Array(outputs).fill(null), odd: null, halves: Array.from({length: outputs + 1}, () => null)});
   }
-  const arena = referenceArena([], outputs === 2 && !libjxl ? scales.map(sc => sc.w) : []);
+  const arena = referenceArena([], outputs <= 2 ? scales.map(sc => outputs === 1 ? -sc.w : sc.w) : []);
   const feed = (s, ref, outs, rows) => {
     const sc = scales[s], {w, h} = sc, from = sc.have;
     const keep = Math.min(h, Math.ceil((sc.first + 4) / 4) * 4), kept = resumable ? Math.max(0, keep - AGAIN) : keep;
-    sc.ref = append(sc.ref, ref, rows, w, kept);
+    sc.ref = !resumable && (!s && reference.rgba || refCache?.[s]?.h >= from + rows) ? {y: 0, rows: from + rows, ...(s ? {planes: refCache[s].p} : {rgba: reference.rgba})} : append(sc.ref, ref, rows, w, kept);
     sc.out = sc.out.map((held, k) => append(held, outs[k], rows, w, kept));
     sc.have += rows;
     const end = sc.have >= h ? h : Math.floor(sc.have / 4) * 4 - 4;
     if (end > sc.first) {
       const again = sc.state[0]?.states !== undefined, next = Math.ceil((sc.first + 4) / 4) * 4, inputY = again ? Math.max(0, next - AGAIN) : Math.min(h, next);
       const inputEnd = Math.min(h, Math.ceil((end + 4) / 4) * 4), a = rowsOf(sc.ref, inputY, inputEnd - inputY, w);
-      const pair = outputs === 2 && !libjxl ? scaleBandPair(a, rowsOf(sc.out[0], inputY, inputEnd - inputY, w), rowsOf(sc.out[1], inputY, inputEnd - inputY, w),
-        w, h, GAUSS32, sc.first, end, sc.state[0], sc.state[1], again ? inputY : null, arena.places[s] ?? null) : null;
+      const place = arena.places[s] ?? null;
+      const pair = outputs === 2 ? scaleBandPair(a, rowsOf(sc.out[0], inputY, inputEnd - inputY, w), rowsOf(sc.out[1], inputY, inputEnd - inputY, w),
+        w, h, GAUSS32, sc.first, end, sc.state[0], sc.state[1], again ? inputY : null, place, libjxl) : null;
       if (pair) sc.state = pair;
-      else for (let k = 0; k < outputs; k++) sc.state[k] = scaleBand(a, rowsOf(sc.out[k], inputY, inputEnd - inputY, w), w, h, GAUSS32, sc.first, end, sc.state[k], again ? inputY : null, libjxl);
+      else for (let k = 0; k < outputs; k++) sc.state[k] = scaleBand(a, rowsOf(sc.out[k], inputY, inputEnd - inputY, w), w, h, GAUSS32, sc.first, end, sc.state[k], again ? inputY : null, libjxl, outputs === 1 ? place : null);
       sc.first = end;
     }
     if (s + 1 >= scales.length) return;
@@ -73,13 +74,13 @@ export function s2Stream(reference, width, height, outputs, resumable = false, l
   };
   return {
     push(y, rows, pictures) {
-      if (y !== scales[0].have || pictures.length !== outputs) throw fault('JXL_INTERNAL', 'A streamed SSIMULACRA 2 takes its rows in order.');
+      if (y !== scales[0].have || pictures.length !== outputs) throw fault('JXL_INTERNAL', 'photo-s2-stream:order');
       const close = useReferenceArena(arena, false);
       try { feed(0, reference.rgba ? {rgba: reference.rgba.subarray(y * width * 4, (y + rows) * width * 4)} : reference(y, rows), pictures.map(p => Array.isArray(p) ? p : {rgba: p}), rows); }
       finally { close(); }
     },
     finish() {
-      if (scales[0].have !== height) throw fault('JXL_INTERNAL', 'A streamed SSIMULACRA 2 is missing rows.');
+      if (scales[0].have !== height) throw fault('JXL_INTERNAL', 'photo-s2-stream:missing');
       return Array.from({length: outputs}, (_, k) => {
         const norms = scales.map(({w, h, state}) => {
           const per = {ssim: new Float64Array(6), edge: new Float64Array(12)};
@@ -104,7 +105,7 @@ export function s2Stream(reference, width, height, outputs, resumable = false, l
       });
     },
     restore(saved) {
-      if (!Array.isArray(saved) || saved.length !== scales.length) throw fault('JXL_INTERNAL', 'A streamed SSIMULACRA 2 place does not match its picture.');
+      if (!Array.isArray(saved) || saved.length !== scales.length) throw fault('JXL_INTERNAL', 'photo-s2-stream:place');
       saved.forEach(({have, ref, out, first, state, odd}, s) => Object.assign(scales[s], {have, ref, out: out.slice(), first, state: state.slice(), odd}));
     },
     get rows() { return scales[0].have; },

@@ -15,7 +15,7 @@ async function pngColour(chunks, colourType) {
   if (!statement.packed) return statement;
   const space = colourType === 0 || colourType === 4 ? 'gray' : 'rgb';
   const icc = await inflate([statement.packed]), channels = inspectICC(icc, undefined, space);
-  if (channels !== (space === 'gray' ? 1 : 3)) refuse('PNG channels and ICC space differ.');
+  if (channels !== (space === 'gray' ? 1 : 3)) refuse('PNG: ICC channel mismatch');
   return {icc};
 }
 
@@ -37,13 +37,13 @@ export function pngOrientationLocation({chunks, exifAt}) {
 }
 
 export async function pngLayout({chunks, parts, ended}, named) {
-  if (!ended) refuse('PNG image data or its end marker is missing.');
+  if (!ended) refuse('PNG: truncated');
   const header = chunks.get('IHDR'), width = view(header).getUint32(0), height = view(header).getUint32(4), depth = header[8],
     colourType = header[9], channels = PNG_CHANNELS[colourType], interlace = header[12];
   const palette = chunks.get('PLTE');
-  if (colourType === 3 && !palette) refuse('A palette PNG requires a PLTE chunk.');
+  if (colourType === 3 && !palette) refuse('palette PNG: missing PLTE');
   const colour = await pngColour(chunks, colourType);
-  if (named && colour.colorEncoding && sRGBWithIntent(colour)[0] === colour) throw fault('JXL_UNSUPPORTED', 'fit and variants need a named color space; this PNG sets gamma, primaries or intent. Use encode.');
+  if (named && colour.colorEncoding && sRGBWithIntent(colour)[0] === colour) throw fault('JXL_UNSUPPORTED', 'PNG color chunks: use encode');
   const passes = interlace ? pngPasses : [[0, 0, 1, 1]], bitsPerPixel = channels * depth;
   let expected = 0;
   for (const [x, y, dx, dy] of passes) {
@@ -76,7 +76,7 @@ export function pngRows({width, depth, colourType, channels, palette, paletteAlp
       const dst = ((startY + y * dy - row0) * width + startX + x * dx) * 4;
       if (colourType === 3) {
         const index = sample(x);
-        if (index >= entries) refuse('A PNG palette index is past its palette.');
+        if (index >= entries) refuse('palette index: out of range');
         result[dst] = palette[index * 3]; result[dst + 1] = palette[index * 3 + 1]; result[dst + 2] = palette[index * 3 + 2];
         result[dst + 3] = index < (paletteAlpha?.length ?? 0) ? paletteAlpha[index] : 255;
         continue;
@@ -106,7 +106,7 @@ async function png(bytes, named, maxPixels) {
     let previous = new Uint8Array(rowBytes), row = new Uint8Array(rowBytes);
     for (let y = 0; y < h; y++) {
       const filter = raw[cursor++];
-      if (filter > 4) refuse('The PNG contains an unknown row filter.');
+      if (filter > 4) refuse('PNG row filter: invalid (expected 0-4)');
       unfilterRow(filter, raw, cursor, row, previous, rowBytes, bytesPerPixel);
       cursor += rowBytes;
       write(row, w, startX, startY, dx, dy, y);
@@ -118,11 +118,11 @@ async function png(bytes, named, maxPixels) {
 
 async function read(input, reader) {
   try {
-    if (!(input instanceof Uint8Array) && !(input instanceof ArrayBuffer) || input.byteLength === 0) refuse('Source bytes are a nonempty Uint8Array or ArrayBuffer.');
+    if (!(input instanceof Uint8Array) && !(input instanceof ArrayBuffer) || input.byteLength === 0) refuse('input: nonempty Uint8Array or ArrayBuffer');
     const bytes = input instanceof ArrayBuffer ? new Uint8Array(input.slice(0)) : new Uint8Array(input);
     return await reader(bytes);
   } catch (error) {
-    if (outOfMemory(error)) throw Object.assign(fault('JXL_MEMORY', `Not enough memory to read this source picture${hostWords(error)}.`), {cause: error});
+    if (outOfMemory(error)) throw Object.assign(fault('JXL_MEMORY', `out of memory${hostWords(error)}`), {cause: error});
     throw error;
   }
 }
@@ -130,9 +130,9 @@ const isPNG = bytes => bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].ev
 export function readSource(input, {maxPixels} = {}) {
   return read(input, bytes => {
     if (isPNG(bytes)) return png(bytes, false, maxPixels);
-    refuse('Source must be a PNG; OpenEXR and Radiance files are rapier-jxl/hdr\'s.');
+    refuse('not PNG: use jpegxl/hdr for EXR or HDR');
   });
 }
 export function readPNG16(input, {named = false, maxPixels} = {}) {
-  return read(input, bytes => { if (isPNG(bytes)) return png(bytes, named, maxPixels); refuse('Source bytes must contain a PNG.'); });
+  return read(input, bytes => { if (isPNG(bytes)) return png(bytes, named, maxPixels); refuse('not PNG'); });
 }

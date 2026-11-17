@@ -76,7 +76,7 @@ function writeColorEnum(w, value) { w.writeU32([[0, 0], [0, 1], [4, 2], [6, 18]]
 
 export function fullFrame(crop, canvas) {
   if (!crop) return true;
-  if (!canvas) throw fault('JXL_INTERNAL', 'A crop needs its canvas.');
+  if (!canvas) throw fault('JXL_INTERNAL', 'frame:canvas');
   return crop.x <= 0 && crop.y <= 0 && crop.x + crop.width >= canvas.width && crop.y + crop.height >= canvas.height;
 }
 
@@ -91,7 +91,7 @@ export function writeModularFrameHeader(w, {alpha, shift = 1, extraChannels = Nu
 export function writeFrameHeaderEnd(w, alpha, epf = 0, passes, epfIterations = 1, gab = null, placement) {
   const channels = typeof alpha === 'number' ? alpha : Number(!!alpha);
   const {crop, canvas, last = true, reference = 0, mask = false} = placement ?? {}, full = fullFrame(crop, canvas);
-  if (mask && channels !== 1) throw fault('JXL_INTERNAL', 'A mask is one extra channel.');
+  if (mask && channels !== 1) throw fault('JXL_INTERNAL', 'frame:mask');
   if (passes) w.append(passes); else w.write(2, 0);
   w.write(1, crop ? 1 : 0);
   if (crop) {
@@ -164,7 +164,7 @@ export function codestreamFromParts(head, sections, level = 5, join = null) {
   const prefix = level === 10 ? 49 : 0;
   const length = prefix + head.length + sizes.reduce((a, b) => a + b, 0);
   admitOutputSize(length);
-  if (prefix && length - 41 > 0xffffffff) throw fault('JXL_SIZE', 'The codestream exceeds a 4 GiB JPEG XL box.');
+  if (prefix && length - 41 > 0xffffffff) throw fault('JXL_SIZE', 'codestream: over 4 GiB');
   const out = new Uint8Array(join ? prefix : length);
   if (prefix) {
     out.set([0,0,0,12,74,88,76,32,13,10,135,10,

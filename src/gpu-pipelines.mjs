@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 const gpDevices = new WeakMap();
-const gpLost = () => Object.assign(new Error('GPU pipeline device is unavailable.'), {code: 'JXL_GPU'});
+const gpLost = () => Object.assign(new Error('device unavailable'), {code: 'JXL_GPU'});
 
 export function gpuPipelineSet(shaders) {
   const sources = Object.entries(shaders);

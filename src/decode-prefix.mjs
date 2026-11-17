@@ -12,7 +12,7 @@ const SCALE = 8;
 const previewable = f => plainFrame(f, true) && f.x0 % SCALE === 0 && f.y0 % SCALE === 0 && f.blending[0].mode === 0;
 
 export function cutPreview(r, h, options, arrived, renderLF) {
-  requireDecode(!h.preview && !h.animation && !h.extraChannels.length, 'Truncated JPEG XL data.', r);
+  requireDecode(!h.preview && !h.animation && !h.extraChannels.length, 'preview: unsupported layout', r);
   const small = {...h, width: Math.ceil(h.width / SCALE), height: Math.ceil(h.height / SCALE)}, references = new Array(4), headers = [];
   let lfFrame = null;
   let canvas = null, last = null;
@@ -22,7 +22,7 @@ export function cutPreview(r, h, options, arrived, renderLF) {
     const {f, readers} = read;
     headers.push(f);
     if (f.type === 1 && f.lfLevel === 1 && !f.cut) { lfFrame = renderLF(readers, f); last = f; continue; }
-    requireDecode(previewable(f) && (!f.useLFFrame || f.lfLevel === 0 && lfFrame), 'Truncated JPEG XL data.', r);
+    requireDecode(previewable(f) && (!f.useLFFrame || f.lfLevel === 0 && lfFrame), 'preview: unsupported layout', r);
     let lf;
     if (f.useLFFrame) {
       const width = Math.ceil(f.width / SCALE), height = Math.ceil(f.height / SCALE);
@@ -74,6 +74,6 @@ export function cutPreview(r, h, options, arrived, renderLF) {
     canvas = transformColor({planes: lfFrame.planes, width, height, widths: [width, width, width], heights: [height, height, height], extraChannels: [], features: {}, filtersApplied: true},
       small, last, {colorSpace: 'original', inPlace: true});
   }
-  requireDecode(canvas, 'Truncated JPEG XL data.', r);
+  requireDecode(canvas, 'truncated', r, true);
   return {frame: canvas, small, f: last, headers, partialInfo: {scale: SCALE}};
 }

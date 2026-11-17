@@ -64,13 +64,13 @@ export async function variantsWith(encode, input, options, hooks = {}) {
       }
       const {bytes} = answer;
       check(signal);
-      if (!(bytes instanceof Uint8Array) || !bytes.byteLength) throw fail('JXL_INTERNAL', "Incomplete output file; report the input and options.");
+      if (!(bytes instanceof Uint8Array) || !bytes.byteLength) throw fail('JXL_INTERNAL', 'preparation-variants:empty');
       result = {...preparedResult(bytes, settings.fidelity ?? {quality: 90}, resized), ...answer};
     }
     if (result.kept !== 'jpeg-bytes') result = intended(result, source);
     if (jpeg) result.originalBytes = jpeg.originalBytes;
     if (result.bytes && (retained += result.bytes.byteLength) > budget)
-      throw fail('JXL_MEMORY', "Prepared outputs exceed the retained byte budget; request fewer or smaller outputs.");
+      throw fail('JXL_MEMORY', 'outputs: over retained budget');
     return finishPrepared(result, resized, {
       fidelity: request.policy?.requestedFidelity ?? request.options?.fidelity, readAs: common.readAs,
       maxBytes: request.policy?.maxBytes, signal, transform: {width: resized.width, height: resized.height, ...resize}});

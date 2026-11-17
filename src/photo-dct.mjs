@@ -175,7 +175,7 @@ export function* photoCoefficientSteps(data, width, height, quality, colorSpace,
   let cfl = null, nonZero = null;
   if (quantTable) {
     if (!kernelHooks.ycbcrTiles)
-      throw fault('JXL_WASM', 'The photo tile kernel is unavailable: an encoder needs WebAssembly with SIMD.');
+      throw fault('JXL_WASM', 'WebAssembly SIMD required');
     const tilesX = Math.ceil(stride / 8);
     cfl = {width: tilesX, x: new Int16Array(tilesX * Math.ceil(rows / 8)), b: new Int16Array(tilesX * Math.ceil(rows / 8))};
     nonZero = [0, 1, 2].map(() => new Uint8Array(stride * rows));
@@ -200,13 +200,13 @@ export function* photoCoefficientSteps(data, width, height, quality, colorSpace,
       for (let ty = from >> 3; ty * 8 < to; ty++) for (let tx = 0; tx < tilesX; tx++)
         if (!kernelHooks.ycbcrTiles?.(data, width, height, tx * 8, ty * 8, Math.min(stride, tx * 8 + 8) - tx * 8, Math.min(to, ty * 8 + 8) - ty * 8,
           tableOf, (xy, bySum, yy) => cflOf(ty * tilesX + tx, xy, bySum, yy), coeffs, nonZero, stride, COSINES))
-          throw fault('JXL_WASM', 'The photo tile kernel is unavailable: an encoder needs WebAssembly with SIMD.');
+          throw fault('JXL_WASM', 'WebAssembly SIMD required');
       yield to / rows;
     }
   } else {
     const run = (by, x0, count, t) => {
       if (!kernelHooks.ycbcrTile?.(data, width, rowAt, x0, count, t, coeffs, (by * stride + x0) * 64, COSINES))
-        throw fault('JXL_WASM', 'The photo tile kernel is unavailable: an encoder needs WebAssembly with SIMD.');
+        throw fault('JXL_WASM', 'WebAssembly SIMD required');
     };
     const band = (from, to) => {
       for (let by = from; by < to; by++) {
@@ -265,7 +265,7 @@ export function* rgbCoefficientSteps(data, width, height, quality, colorSpace, a
   const cfl = {width: tilesX, x: new Int16Array(tilesX * Math.ceil(rows / 8)), b: new Int16Array(tilesX * Math.ceil(rows / 8))};
   if (!kernelHooks.rgbTiles && !(options.packed && kernelHooks.rgbBand)) kernelHooks.ensure?.();
   if (!kernelHooks.rgbTiles && !(options.packed && kernelHooks.rgbBand))
-    throw fault('JXL_WASM', 'The RGB tile kernel is unavailable: an encoder needs WebAssembly with SIMD.');
+    throw fault('JXL_WASM', 'WebAssembly SIMD required');
   const gray = grayTiles(data, width, height);
   const cflOf = (index, rg, bg, gg) => {
     const off = gray[index] === 1;
@@ -285,7 +285,7 @@ export function* rgbCoefficientSteps(data, width, height, quality, colorSpace, a
     for (let ty = from >> 3; ty * 8 < to; ty++) for (let tx = 0; tx < tilesX; tx++)
       if (!kernelHooks.rgbTiles?.(data, width, height, tx * 8, ty * 8, Math.min(stride, tx * 8 + 8) - tx * 8, Math.min(to, ty * 8 + 8) - ty * 8,
         tableOf, (rg, bg, gg) => cflOf(ty * tilesX + tx, rg, bg, gg), components.map(c => c.coeffs), stride, COSINES, quantScale))
-        throw fault('JXL_WASM', 'The RGB tile kernel is unavailable: an encoder needs WebAssembly with SIMD.');
+        throw fault('JXL_WASM', 'WebAssembly SIMD required');
     yield to / rows;
   }
   return result();

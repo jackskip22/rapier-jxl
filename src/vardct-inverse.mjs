@@ -32,7 +32,7 @@ export function restorationStages(filter) {
 
 export function restoreRows(planes, top, width, height, filter, sigma, output, outTop, a, b, scratch, kernels) {
   const K = scratch.kernel, stages = restorationStages(filter), epf = filter?.epf, i32 = kernels.i32;
-  if (stages.length && planes.some(p => p.buffer !== kernels.buffer)) throw fault('JXL_INTERNAL', 'Restoration reads the kernels\' memory.');
+  if (stages.length && planes.some(p => p.buffer !== kernels.buffer)) throw fault('JXL_INTERNAL', 'vardct-inverse:buffer');
   let source = planes, sourceTop = top, after = stages.reduce((n, s) => n + s.radius, 0);
   for (let i = 0; i < stages.length; i++) {
     const stage = stages[i]; after -= stage.radius;

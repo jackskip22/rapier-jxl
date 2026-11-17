@@ -27,15 +27,15 @@ function view(value) {
   try { name = typedName.call(value); typedFields.buffer.call(value); }
   catch { fields = viewFields; name = 'DataView'; }
   const buffer = fields.buffer.call(value), byteOffset = fields.byteOffset.call(value), byteLength = fields.byteLength.call(value);
-  if (arrayBufferBytes(buffer) === null) throw error('JXL_INPUT', "Queue does not accept shared buffers; copy the input to an ArrayBuffer.");
+  if (arrayBufferBytes(buffer) === null) throw error('JXL_INPUT', "shared buffer: copy to ArrayBuffer");
   reach(buffer, byteOffset, byteLength);
   const Type = constructors[name];
-  if (!Type) throw error('JXL_INPUT', 'This sample array type cannot be transferred to the worker; use a standard typed array such as Uint8Array or Float32Array.');
+  if (!Type) throw error('JXL_INPUT', 'samples: Uint8Array or Float32Array');
   return {kind: 'view', buffer, byteOffset, byteLength, Type};
 }
 function reach(buffer, byteOffset, byteLength) {
   try { if (new Uint8Array(buffer, byteOffset, byteLength).byteLength !== byteLength) throw 0; }
-  catch { throw error('JXL_INPUT', "ArrayBuffer is detached or too small; pass a live one."); }
+  catch { throw error('JXL_INPUT', "ArrayBuffer: live and sized"); }
 }
 const NODE_BYTES = 512;
 class Over extends Error {}
@@ -47,10 +47,10 @@ export function record(value) {
     throw error('JXL_INPUT', unreadInput(value));
   }
   if (Object.getOwnPropertySymbols(value).some(key => Object.getOwnPropertyDescriptor(value, key).enumerable))
-    throw error('JXL_INPUT', "Queue records contain symbol keys; remove those keys.");
+    throw error('JXL_INPUT', "record keys: no symbols");
   return Object.entries(Object.getOwnPropertyDescriptors(value)).filter(([key, descriptor]) => {
     if (!descriptor.enumerable) return false;
-    if (!('value' in descriptor)) throw error('JXL_INPUT', "Queue records contain accessors; pass plain data values.");
+    if (!('value' in descriptor)) throw error('JXL_INPUT', "record: data values only");
     return true;
   });
 }
@@ -64,22 +64,22 @@ export function dimensions(value, maxPixels, fields) {
   if (given(w) !== given(h) && absent(given(w) ? 'height' : 'width')) {
     const side = (given(w) ? w : h).value;
     if (!Number.isSafeInteger(side) || side < 1 || side > EDGE)
-      throw error('JXL_DIMENSIONS', 'An image side is outside the supported 1 to 1,073,741,824 pixel range; resize it to a whole number of pixels.');
+      throw error('JXL_DIMENSIONS', 'side: integer 1-1073741824');
     return;
   }
-  if (!w || !h) throw error('JXL_INPUT', "Invalid image dimensions; pass numeric width and height values.");
-  if (!('value' in w) || !('value' in h)) throw error('JXL_INPUT', "Invalid image dimensions; pass numeric width and height values.");
+  if (!w || !h) throw error('JXL_INPUT', "dimensions: numeric width, height");
+  if (!('value' in w) || !('value' in h)) throw error('JXL_INPUT', "dimensions: numeric width, height");
   const width = w.value, height = h.value;
   if (!Number.isSafeInteger(width) || width < 1 || !Number.isSafeInteger(height) || height < 1)
-    throw error('JXL_DIMENSIONS', "Invalid image dimensions; pass positive safe integers for width and height.");
+    throw error('JXL_DIMENSIONS', "dimensions: positive safe integers");
   if (width > EDGE || height > EDGE || width > Math.floor(maxPixels / height))
-    throw error('JXL_DIMENSIONS', 'Over maxPixels or the JPEG XL size field (2^30 a side); resize, or raise maxPixels in createCodec().');
+    throw error('JXL_DIMENSIONS', 'dimensions: over maxPixels or 2^30 px per side; raise maxPixels');
 }
 export function measure(value, maxPixels, plans = new Map(), limit = Infinity) {
   try { return walk(value, maxPixels, plans, limit); }
   catch (cause) {
     if (cause instanceof Over) return Infinity;
-    if (cause instanceof RangeError) throw error('JXL_MEMORY', "Queue input is nested deeper than the host allows; pass a flatter record.");
+    if (cause instanceof RangeError) throw error('JXL_MEMORY', "input nesting: flatten record");
     throw cause;
   }
 }
@@ -88,7 +88,7 @@ function walk(value, maxPixels, plans, limit) {
   if (typeof value === 'string') return value.length * 2;
   if (typeof value === 'number' || typeof value === 'bigint') return 8;
   if (typeof value === 'boolean') return 1;
-  if (typeof value !== 'object') throw error('JXL_INPUT', "Input cannot be copied; pass structured-cloneable image data.");
+  if (typeof value !== 'object') throw error('JXL_INPUT', "input: structured-cloneable data");
   const seen = plans.get(value);
   if (seen) return seen.cost ?? 0;
   if (SNAPSHOTS.has(value)) {
@@ -126,7 +126,7 @@ function walk(value, maxPixels, plans, limit) {
   let bytes = NODE_BYTES * (1 + fields.length);
   for (const [key, descriptor] of fields) {
     bytes += key.length * 2 + walk(descriptor.value, maxPixels, plans, limit);
-    if (!Number.isSafeInteger(bytes)) throw error('JXL_MEMORY', "Queue input exceeds its byte budget; pass a smaller input or raise maxPendingBytes.");
+    if (!Number.isSafeInteger(bytes)) throw error('JXL_MEMORY', "input bytes: raise maxPendingBytes");
   }
   plan.cost = bytes;
   return bytes;
@@ -139,7 +139,7 @@ export function snapshot(value, plans, seen, moved = new Map()) {
     if (buffers.length) {
       let taken;
       try { taken = structuredClone(buffers, {transfer: buffers}); }
-      catch { throw error('JXL_INPUT', "ArrayBuffer cannot be transferred; copy it to a new ArrayBuffer."); }
+      catch { throw error('JXL_INPUT', "ArrayBuffer: copy before transfer"); }
       for (let i = 0; i < buffers.length; i++) moved.set(buffers[i], taken[i]);
     }
   }
@@ -164,6 +164,6 @@ export function snapshot(value, plans, seen, moved = new Map()) {
 export const MiB = bytes => (bytes / 2 ** 20).toFixed(bytes < 2 ** 20 ? 2 : 0);
 export function own(value, maxPixels = PIXELS, maxBytes = DEFAULT_INPUT_BYTES, refusal) {
   const plans = new Map(), need = measure(value, maxPixels, plans, maxBytes);
-  if (need > maxBytes) throw error('JXL_MEMORY', refusal && need !== Infinity ? refusal(need, maxBytes) : `The input needs ${need === Infinity ? 'more than ' + MiB(maxBytes) : MiB(need)} MiB, above the ${MiB(maxBytes)} MiB allowance; pass a smaller input or raise maxPendingBytes.`);
+  if (need > maxBytes) throw error('JXL_MEMORY', refusal && need !== Infinity ? refusal(need, maxBytes) : `input: ${need === Infinity ? 'more than ' + MiB(maxBytes) : MiB(need)} MiB > ${MiB(maxBytes)} MiB, raise maxPendingBytes`);
   return snapshot(value, plans);
 }

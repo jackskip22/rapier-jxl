@@ -12,7 +12,7 @@ function capacity(width, height) {
 
 function activeBytes({width, height, y0, y1}) {
   if (!Number.isSafeInteger(y0) || y0 < 0 || y0 >= height || y0 % SCORE_BAND_ROWS || y1 !== Math.min(height, y0 + SCORE_BAND_ROWS))
-    throw fault('JXL_INTERNAL', 'Score-band transport covers one canonical output band.');
+    throw fault('JXL_INTERNAL', 'photo-band-storage:band');
   return 4 * width * (y1 - y0);
 }
 
@@ -34,10 +34,10 @@ export function scoreBandTransfers(task) {
       !byteView(rows, (end - top) * width * 4, inputBytes) || rows.buffer !== input ||
       !byteView(into?.package, bytes, outputBytes) || !byteView(into?.native, bytes, outputBytes) ||
       into.package.buffer === into.native.buffer || into.package.buffer === input || into.native.buffer === input)
-    throw fault('JXL_INTERNAL', 'Score-band transport needs one input slab and two separate output backings.');
+    throw fault('JXL_INTERNAL', 'photo-band-storage:slabs');
   const check = value => {
     if (ArrayBuffer.isView(value)) {
-      if (value.buffer !== input) throw fault('JXL_INTERNAL', 'Every score-band recipe view belongs to its input slab.');
+      if (value.buffer !== input) throw fault('JXL_INTERNAL', 'photo-band-storage:view');
     } else if (value && typeof value === 'object') for (const child of Object.values(value)) check(child);
   };
   check(task.recipe);
@@ -47,16 +47,16 @@ export function scoreBandTransfers(task) {
 export function scoreBandStorage(width, height, count, recipeAt) {
   const {sourceBytes, inputBytes, outputBytes} = capacity(width, height);
   if (![width, height, count, inputBytes, outputBytes].every(n => Number.isSafeInteger(n) && n > 0) || count > Math.ceil(height / SCORE_BAND_ROWS))
-    throw fault('JXL_INTERNAL', 'Score-band storage belongs to one photo geometry and a bounded task count.');
+    throw fault('JXL_INTERNAL', 'photo-band-storage:geometry');
   const inputs = Array.from({length: count}, () => new ArrayBuffer(inputBytes));
   const outputs = Array.from({length: count + 1}, () => ({pack: new ArrayBuffer(outputBytes), own: new ArrayBuffer(outputBytes)}));
   const pending = new Map(), held = new Map();
   let closed = false;
-  const open = () => { if (closed) throw fault('JXL_INTERNAL', 'Score-band storage has ended.'); };
+  const open = () => { if (closed) throw fault('JXL_INTERNAL', 'photo-band-storage:closed'); };
   const entry = task => {
     open();
     const value = pending.get(task);
-    if (!value) throw fault('JXL_INTERNAL', 'A score-band task is not owned by this photo.');
+    if (!value) throw fault('JXL_INTERNAL', 'photo-band-storage:task');
     return value;
   };
   const hold = (task, result) => {
@@ -71,17 +71,17 @@ export function scoreBandStorage(width, height, count, recipeAt) {
     take({data, recipe, look, y0, y1}) {
       open();
       const bytes = activeBytes({width, height, y0, y1});
-      if (!inputs.length || !outputs.length) throw fault('JXL_INTERNAL', 'All score-band transport slots are in use.');
+      if (!inputs.length || !outputs.length) throw fault('JXL_INTERNAL', 'photo-band-storage:slots');
       const input = inputs.pop(), pair = outputs.pop();
       try {
         let at = sourceBytes;
         const allocate = (Type, length) => {
           const size = Type.BYTES_PER_ELEMENT;
           if (!Number.isSafeInteger(length) || length < 0 || ![1, 2, 4, 8].includes(size))
-            throw fault('JXL_INTERNAL', 'A score-band recipe needs bounded typed views.');
+            throw fault('JXL_INTERNAL', 'photo-band-storage:type');
           at = Math.ceil(at / size) * size;
           const end = at + length * size;
-          if (!Number.isSafeInteger(end) || end > inputBytes) throw fault('JXL_INTERNAL', 'A score-band recipe exceeds its input slab.');
+          if (!Number.isSafeInteger(end) || end > inputBytes) throw fault('JXL_INTERNAL', 'photo-band-storage:overflow');
           const out = new Type(input, at, length); at = end;
           return out;
         };
@@ -95,13 +95,13 @@ export function scoreBandStorage(width, height, count, recipeAt) {
     },
     receive(task, result) {
       entry(task);
-      if (!scoreBandReply(task, result)) throw fault('JXL_INTERNAL', 'A score-band reply did not return its bounded storage.');
+      if (!scoreBandReply(task, result)) throw fault('JXL_INTERNAL', 'photo-band-storage:reply');
       return hold(task, result);
     },
     release(result) {
       open();
       const pair = held.get(result);
-      if (!pair) throw fault('JXL_INTERNAL', 'A score-band output is not held by this photo.');
+      if (!pair) throw fault('JXL_INTERNAL', 'photo-band-storage:output');
       held.delete(result); outputs.push(pair);
     },
     lost(task) {

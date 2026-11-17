@@ -7,7 +7,7 @@ export type {CaptureOptions, CaptureFidelity, MaxError, ImageInput, CapturePixel
 export type CaptureInput = Exclude<FullCaptureInput, TextureInput>;
 export type {ImagePreview, PreviewOptions} from './types.mjs';
 /** The screenshot encoder in one file: a page's calls run in its own worker; calls in a worker, Node and edge hosts run in place. 8-bit sRGB or Display P3 RGBA, exact or within maxError.
- * Efforts 1-5. `rapier-jxl/capture-complete` adds photographic fidelity, efforts 6-9 and WebGPU. Invalid options refuse JXL_OPTIONS, unsupported efforts and textures JXL_UNSUPPORTED, and unreadable canvas data JXL_PLATFORM. */
+ * Efforts 1-5. `jpegxl/capture-complete` adds photographic fidelity, efforts 6-9 and WebGPU. Invalid options refuse JXL_OPTIONS, unsupported efforts and textures JXL_UNSUPPORTED, and unreadable canvas data JXL_PLATFORM. */
 export const capture: ResumableFunction<(input: CaptureInput, options?: CaptureOptions) => Promise<EncodedResult>>;
 /** Compiles the kernels and warms the coder, with no job. */
 export function prepare(): Promise<void>;

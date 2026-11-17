@@ -16,8 +16,8 @@ const GC_GAB = [0.115169525, 0.061248592], GC_MARGIN = 8;
 
 function gcTemplate(lib, data, width, height, quality, options) {
   const {complete, photoXYBSteps} = lib;
-  const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8);
-  const probe = complete(photoXYBSteps(new Uint8Array(256).fill(128), 8, 8, quality, options));
+  const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), pw = Math.min(width, 24), ph = Math.min(height, 24);
+  const probe = complete(photoXYBSteps(new Uint8Array(pw * ph * 4).fill(128), pw, ph, quality, {...options, noLevels: true}));
   let alpha = null;
   for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) { alpha = data; break; }
   const tileWidth = Math.ceil(stride / 8), tiles = tileWidth * Math.ceil(rows / 8);
@@ -366,7 +366,7 @@ async function gcImageBand(device, lib, pipelines, checkAudit, data, width, heig
           }
         });
         readAudit.unmap();
-        if (!(auditWorst <= 1)) throw new GpuCoreAuditError(`GpuCore audit: a coefficient is ${auditWorst} times its bound`);
+        if (!(auditWorst <= 1)) throw new GpuCoreAuditError(`GpuCore audit: ${auditWorst} > 1`);
       }
       if (!noLevels) {
         const all = new Int16Array(readLevels.getMappedRange(0, n64 * 6));
@@ -464,7 +464,7 @@ export function gpuCoreImage(device, request, strict = false) {
 async function gcAnswer(device, request, strict) {
   try {
     const core = await gcReady(device);
-    if (!core) throw fault('JXL_WEBGPU', 'the device did not qualify (double-single arithmetic or its pipelines)');
+    if (!core) throw fault('JXL_WEBGPU', 'device unqualified');
     if (request.lib) core.lib = request.lib;
     if (request.height === 1 && request.options?.gaborish) return null;
     if (request.kind === 'blocks16') {
@@ -483,7 +483,7 @@ async function gcAnswer(device, request, strict) {
       return pictures;
     }
     if (request.kind === 's2-cells') return await gpuS2Cells(device, request);
-    if (request.kind === 'audit-failed') throw new GpuCoreAuditError('gpu-blocks16 audit: a cost past its bound');
+    if (request.kind === 'audit-failed') throw new GpuCoreAuditError('gpu-blocks16 audit');
     if (!gcGabPlan(request.options)) return null;
     const energy = request.energy ? await gpuBlocks16EnergyHook(device, GC_DS, request.width, request.height, B.plane) : null;
     const {image, auditBlocks, auditWorst} = await gcImage(device, core.lib, core.pipelines, undefined, request.data, request.width, request.height, request.quality, request.options, {idle: request.idle, band: energy?.band ?? request.band});

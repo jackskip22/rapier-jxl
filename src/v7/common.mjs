@@ -9,13 +9,13 @@ import {journalNext} from '../step-journal.mjs';
 import {deviceTrials} from '../device-trial.mjs';
 export function targetSource(data, ...descriptions) {
   if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray))
-    throw fail('JXL_INPUT', 'Measured quality targets cannot use these samples; pass 8-bit straight sRGB RGBA pixels or choose exact fidelity.');
+    throw fail('JXL_INPUT', 'measured fidelity: 8-bit straight sRGB RGBA, or use exact');
   const compatible = {colorSpace: 'srgb', bitDepth: 8, sampleFormat: 'uint', transferFunction: 'srgb', alphaPremultiplied: false, intensityTarget: 255};
   for (const description of descriptions) {
     for (const [key, value] of Object.entries(compatible)) if (description[key] !== undefined && description[key] !== value)
-      throw fail('JXL_INPUT', `Measured targets need 8-bit straight sRGB RGBA; ${key} is not.`);
+      throw fail('JXL_INPUT', `${key}: not with measured fidelity`);
     if (description.icc !== undefined)
-      throw fail('JXL_INPUT', "Measured target cannot use this ICC profile; pass sRGB pixels or choose fidelity 'exact'.");
+      throw fail('JXL_INPUT', 'icc: not with measured fidelity');
   }
 }
 export async function drain(iterator, hooks = {}, gpuAnswer) {

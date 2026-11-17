@@ -45,23 +45,23 @@ function joinParts(parts) {
 }
 
 function unpackSource(bytes, allowCut) {
-  if (bytes.length < 2) throw fail('JXL_INPUT', 'JPEG XL input is empty; pass a JPEG XL file or prefix.');
+  if (bytes.length < 2) throw fail('JXL_INPUT', 'JPEG XL: empty input');
   if (bytes[0] === 0xff && bytes[1] === 0x0a) return {codestream: bytes, prefixBoxes: null, suffixBoxes: null, level: 5};
   if (bytes.length < 12 || !SIGNATURE.every((b, i) => bytes[i] === b))
-    throw fail('JXL_INPUT', 'Invalid JPEG XL signature; pass a JPEG XL file or prefix.');
+    throw fail('JXL_INPUT', 'not JPEG XL: invalid signature');
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const prefixBoxes = [], suffixBoxes = [], bySequence = new Map();
   let level = 5, minorVersion = 0, boxes = 0, seenLevel = false, full = null;
   let fragments = 0, finalIndex = -1, highest = -1, indexBoxes = 0, gainBoxes = 0, cut = false;
   for (let at = 12; at < bytes.length;) {
     if (boxes >= 65536) throw fail('JXL_LIMIT', 'JPEG XL box count exceeds the limit.');
-    if (bytes.length - at < 8) { if (allowCut) { cut = true; break; } throw fail('JXL_INPUT', 'Truncated JPEG XL container box.'); }
+    if (bytes.length - at < 8) { if (allowCut) { cut = true; break; } throw fail('JXL_INPUT', 'container box: incomplete'); }
     const short = view.getUint32(at), type = view.getUint32(at + 4), head = short === 1 ? 16 : 8;
-    if (bytes.length - at < head) { if (allowCut) { cut = true; break; } throw fail('JXL_INPUT', 'Truncated JPEG XL extended box.'); }
+    if (bytes.length - at < head) { if (allowCut) { cut = true; break; } throw fail('JXL_INPUT', 'extended box: incomplete'); }
     const declared = short === 1 ? view.getUint32(at + 8) * 4294967296 + view.getUint32(at + 12) : short || (bytes.length - at);
-    if (!Number.isSafeInteger(declared) || declared < head) throw fail('JXL_INPUT', 'Invalid JPEG XL box length.');
+    if (!Number.isSafeInteger(declared) || declared < head) throw fail('JXL_INPUT', 'box length: >= header');
     cut = declared > bytes.length - at;
-    if (cut && !allowCut) throw fail('JXL_INPUT', 'Truncated JPEG XL container box.');
+    if (cut && !allowCut) throw fail('JXL_INPUT', 'container box: incomplete');
     const end = cut ? bytes.length : at + declared, body = at + head, dataLen = end - body;
     if (!boxes) {
       if (type !== FTYP) throw fail('JXL_INPUT', 'Second JPEG XL box must declare the jxl file type.');
@@ -128,9 +128,9 @@ function unpackSource(bytes, allowCut) {
     if (!allowCut && parts.length !== fragments) throw fail('JXL_INPUT', 'Missing JPEG XL codestream fragment.');
     if (parts.length) codestream = parts.length === 1 ? parts[0] : joinParts(parts);
   }
-  if (!codestream || !codestream.length) throw fail('JXL_INPUT', 'JPEG XL prefix does not reach the codestream.');
+  if (!codestream || !codestream.length) throw fail('JXL_INPUT', 'prefix: codestream missing');
   if (codestream.length < 2) {
-    if (allowCut) throw fail('JXL_INPUT', 'JPEG XL prefix does not reach the codestream.');
+    if (allowCut) throw fail('JXL_INPUT', 'prefix: codestream missing');
     throw fail('JXL_INPUT', 'Invalid logical JPEG XL codestream signature.');
   }
   if (codestream[0] !== 0xff || codestream[1] !== 0x0a)
@@ -158,7 +158,7 @@ function wrapContainer(codestream, unpacked) {
 function locateFrameSpliceBits(codestream, h, frameStartBit) {
   const r = new JxlBits(codestream, true);
   r.bit = frameStartBit;
-  if (r.read(1)) throw fail('JXL_UNSUPPORTED', 'All-default frame headers carry no separable LF sections.');
+  if (r.read(1)) throw fail('JXL_UNSUPPORTED', 'frame header: no separable LF');
   const type = r.read(2), encoding = r.read(1), flags = r.u64BigInt();
   const doYCbCr = !h.xyb ? r.read(1) : 0;
   if (!(flags & 32n)) {
@@ -212,9 +212,9 @@ function locateFrameSpliceBits(codestream, h, frameStartBit) {
       if (r.read(1)) for (let i = 0; i < (encoding ? 3 : 4); i++) r.f16();
       if (encoding) r.f16();
     }
-    if (r.u64BigInt() !== 0n) throw fail('JXL_UNSUPPORTED', 'Frame filter extensions are unsupported.');
+    if (r.u64BigInt() !== 0n) throw fail('JXL_UNSUPPORTED', 'frame filters: extensions unsupported');
   }
-  if (r.u64BigInt() !== 0n) throw fail('JXL_UNSUPPORTED', 'Frame header extensions are unsupported.');
+  if (r.u64BigInt() !== 0n) throw fail('JXL_UNSUPPORTED', 'frame header: extensions unsupported');
   return {passesBit, afterPassesBit, tocBit: r.bit, flags};
 }
 
@@ -238,7 +238,7 @@ function readVarDCTClusters(lfBytes, flags, allowGlobalTree = false) {
   const r = new JxlBits(lfBytes, true);
   if (flags & 19n) {
     if (allowGlobalTree) return 1;
-    throw fail('JXL_UNSUPPORTED', 'Patches, splines or noise are unsupported in compressed-domain pass slicing.');
+    throw fail('JXL_UNSUPPORTED', 'slice: no patches/splines/noise');
   }
   const lfDequant = r.read(1) ? [1 / 32, 1 / 4, 1 / 2] : [r.f16(), r.f16(), r.f16()];
   requireDecode(lfDequant.every(v => v >= 1e-8), 'Invalid JPEG XL LF dequantization.', r);
@@ -266,14 +266,14 @@ function readVarDCTClusters(lfBytes, flags, allowGlobalTree = false) {
     r.read(8); r.read(8);
   }
   const hasGlobalTree = r.read(1) === 1;
-  if (hasGlobalTree && !allowGlobalTree) throw fail('JXL_UNSUPPORTED', 'Global Modular tree in VarDCT LFGlobal is unsupported in slice().');
+  if (hasGlobalTree && !allowGlobalTree) throw fail('JXL_UNSUPPORTED', 'slice: no VarDCT global modular tree');
   return clusters;
 }
 
 function skipRawQuantTable(r, width, height, streamIndex) {
-  if (r.read(1)) throw fail('JXL_UNSUPPORTED', 'A raw quantization table on the global tree is unsupported in slice().');
+  if (r.read(1)) throw fail('JXL_UNSUPPORTED', 'slice: no raw quantization');
   if (!r.read(1)) for (let i = 0; i < 11; i++) r.read(i < 7 ? 5 : 4);
-  if (r.u32([[0, 0], [0, 1], [4, 2], [8, 18]]) !== 0) throw fail('JXL_UNSUPPORTED', 'A transformed raw quantization table is unsupported in slice().');
+  if (r.u32([[0, 0], [0, 1], [4, 2], [8, 18]]) !== 0) throw fail('JXL_UNSUPPORTED', 'slice: no transformed quantization');
   const samplesPerChannel = width * height, totalSamples = 3 * samplesPerChannel;
   const maxNodes = Math.min(1048576, 1024 + totalSamples);
   const tree = readEntropy(r, 6, {values: maxNodes * 5, distanceMultiplier: 0});
@@ -290,7 +290,7 @@ function skipRawQuantTable(r, width, height, streamIndex) {
       node.leaf = leaves++;
     } else {
       if (property !== 1 && property !== 2)
-        throw fail('JXL_UNSUPPORTED', 'A raw quantization table whose tree reads sample properties is unsupported in slice().');
+        throw fail('JXL_UNSUPPORTED', 'slice: quantization channel tree only');
       node.property = property - 1;
       node.value = unpackSigned(tree.read(0));
       node.left = nodes.length;
@@ -389,15 +389,15 @@ function skipICC(r, level = 5) {
 function openSingleVarDCT(codestream, allowCut, level = 5) {
   const r = new JxlBits(codestream, true);
   const h = readDecodeImageHeader(r, {maxPixels: Infinity, maxDimension: 1073741824});
-  if (h.preview || h.animation) throw fail('JXL_UNSUPPORTED', 'Preview or animated codestreams are not single-frame VarDCT stills.');
-  if (h.extraChannels.length) throw fail('JXL_UNSUPPORTED', 'A picture with alpha or other extra channels has no smaller size to cut.');
+  if (h.preview || h.animation) throw fail('JXL_UNSUPPORTED', 'slice: single-frame VarDCT only');
+  if (h.extraChannels.length) throw fail('JXL_UNSUPPORTED', 'slice: no extra channels');
   if (h.colorEncoding.wantICC) skipICC(r, level);
   r.align();
   const imageEndByte = r.bit >>> 3;
   const frameStartBit = r.bit;
   const f = readDecodeFrameHeader(r, h, {maxPixels: Infinity, maxDimension: 1073741824});
   if (f.modular || f.type !== 0 || !f.isLast || f.useLFFrame || f.haveCrop || f.upsampling > 1 || f.blending[0].mode !== 0)
-    throw fail('JXL_UNSUPPORTED', 'Compressed-domain slicing requires a full-canvas single-frame VarDCT image with embedded LF.');
+    throw fail('JXL_UNSUPPORTED', 'slice: full-canvas single-frame VarDCT with LF');
   const readers = readDecodeTOC(r, f, allowCut);
   if (!allowCut && f.end !== codestream.length)
     throw fail('JXL_INPUT', 'Unexpected bytes after the JPEG XL codestream.');
@@ -444,16 +444,16 @@ function admitLFSections(opened) {
 export function placeholder(input, options) {
   const settings = snapshotOptions(options);
   for (const key of Object.keys(settings)) if (key !== 'format')
-    throw fail('JXL_OPTIONS', `Unknown placeholder option ${key}; use format ('jxl' or 'dataUrl').`);
+    throw fail('JXL_OPTIONS', `unknown option: ${key}`);
   const format = settings.format ?? 'jxl';
   if (format !== 'jxl' && format !== 'dataUrl')
-    throw fail('JXL_OPTIONS', "Invalid placeholder format; use 'jxl' or 'dataUrl'.");
+    throw fail('JXL_OPTIONS', "format: jxl|dataUrl");
   const raw = viewBytes(input);
   const unpacked = unpackSource(raw, true);
   const effectiveLevel = unpacked.prefixBoxes ? unpacked.level : codestreamLevel(unpacked.codestream);
   const opened = openSingleVarDCT(unpacked.codestream, true, effectiveLevel);
   const {h, f, readers} = opened;
-  if (readers.length === 1) throw fail('JXL_UNSUPPORTED', 'Single-section 1-group non-progressive frame shares bit alignment between LF and HF.');
+  if (readers.length === 1) throw fail('JXL_UNSUPPORTED', 'slice: progressive LF/HF separation required');
   const lfSections = admitLFSections(opened);
   const emittedPasses = f.numGroups === 1 ? 2 : 1;
   const hfZero = buildZeroAcHFGlobal(f.numGroups, emittedPasses);
@@ -522,14 +522,14 @@ function buildScaleCandidate(raw, unpacked, opened, targetScale) {
 export function slice(input, options) {
   const settings = snapshotOptions(options);
   for (const key of Object.keys(settings)) if (!['scale', 'maxWidth', 'maxBytes'].includes(key))
-    throw fail('JXL_OPTIONS', `Unknown slice option ${key}; use scale, maxWidth or maxBytes.`);
+    throw fail('JXL_OPTIONS', `unknown option: ${key}`);
   const {scale, maxWidth, maxBytes} = settings;
   if (scale !== undefined && ![1, 2, 4, 8].includes(scale))
-    throw fail('JXL_OPTIONS', 'Invalid scale; use 1, 2, 4 or 8.');
+    throw fail('JXL_OPTIONS', 'scale: 1|2|4|8');
   if (maxWidth !== undefined && (!Number.isSafeInteger(maxWidth) || maxWidth < 1))
-    throw fail('JXL_OPTIONS', 'Invalid maxWidth; use a positive safe integer.');
+    throw fail('JXL_OPTIONS', 'maxWidth: positive safe integer');
   if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 1))
-    throw fail('JXL_OPTIONS', 'Invalid maxBytes; use a positive safe integer.');
+    throw fail('JXL_OPTIONS', 'maxBytes: positive safe integer');
 
   const raw = viewBytes(input);
   const unpacked = unpackSource(raw, false);
@@ -548,7 +548,7 @@ export function slice(input, options) {
 
   let chosen = scale ?? 1;
   if (scale !== undefined && !available.includes(scale))
-    throw fail('JXL_UNSUPPORTED', `Requested scale 1:${scale} is not present in this codestream.`);
+    throw fail('JXL_UNSUPPORTED', `scale 1:${scale}: unavailable`);
   if (scale === undefined && maxWidth !== undefined) {
     for (const s of [...available].reverse()) {
       if (Math.ceil(width / s) >= maxWidth) { chosen = s; break; }
@@ -570,6 +570,6 @@ export function slice(input, options) {
   }
   if (!smallest) smallest = buildScaleCandidate(raw, unpacked, opened, available.at(-1));
   if (smallest.bytes.byteLength > maxBytes)
-    throw fail('JXL_LIMIT', `Even the smallest slice (${smallest.bytes.byteLength} B at 1:${smallest.scale}) exceeds maxBytes (${maxBytes}).`);
+    throw fail('JXL_LIMIT', `maxBytes ${maxBytes}: minimum ${smallest.bytes.byteLength} B at 1:${smallest.scale}`);
   return smallest;
 }

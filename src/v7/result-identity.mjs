@@ -15,7 +15,7 @@ export {sampleDescription};
 export class SampleHash {
   constructor() { this.state = sha256Start(); }
   update(bytes) {
-    if (this.done) throw fail('JXL_INTERNAL', "Source identity is already complete; start a new identity for another source.");
+    if (this.done) throw fail('JXL_INTERNAL', "result-identity:complete");
     this.state = sha256Update(this.state, bytes);
     return this;
   }
@@ -31,9 +31,9 @@ export async function digestBytes(bytes) {
 }
 const littleEndian = new Uint8Array(Uint16Array.of(1).buffer)[0] === 1;
 export function sampleBytes(data) {
-  if (!ArrayBuffer.isView(data) || arrayBufferBytes(data.buffer) === null) throw fail('JXL_INPUT', "Invalid sample buffer; pass an ordinary attached ArrayBuffer.");
+  if (!ArrayBuffer.isView(data) || arrayBufferBytes(data.buffer) === null) throw fail('JXL_INPUT', "samples: attached ArrayBuffer");
   let bytes; try { bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength); }
-  catch { throw fail('JXL_INPUT', "Sample buffer is detached; pass an attached ArrayBuffer."); }
+  catch { throw fail('JXL_INPUT', "samples: attached ArrayBuffer"); }
   const size = data.BYTES_PER_ELEMENT;
   if (littleEndian || size === 1) return bytes;
   const out = new Uint8Array(bytes.length);
@@ -71,7 +71,11 @@ function copiedSamples(data, description) {
 export function snapshotSource(source, options = {}) {
   check(options.signal);
   const maxPixels = options.maxPixels ?? PIXELS;
-  if (isPlainRecord(source)) source = snapshotOptions(source, 'Original', ['data', 'width', 'height', 'rows', 'frames', 'description', 'loops', ...DESCRIPTION]);
+  if (isPlainRecord(source)) {
+    source = snapshotOptions(source, 'Original', ['data', 'width', 'height', 'parts', 'rows', 'frames', 'description', 'loops', ...DESCRIPTION]);
+    if (source.parts !== undefined && (!Number.isSafeInteger(source.parts) || source.parts < 1 || source.frames || isRows(source)))
+      throw fail('JXL_INPUT', 'Invalid picture parts count; use a positive integer.');
+  }
   if (isIdentity(source)) return {...source};
   if (isBlob(source)) return source;
   if (typedName.call(source) === 'Uint8Array') return copyBytes(source);
@@ -84,14 +88,14 @@ export function snapshotSource(source, options = {}) {
   if (isDecoded(source)) source = fromDecoded(source);
   if (source?.frames) {
     dimensions(source.width, source.height, maxPixels);
-    const invalid = () => fail('JXL_INPUT', "Invalid animation; pass frames and a nonnegative whole loop count.");
+    const invalid = () => fail('JXL_INPUT', "animation: frames; nonnegative integer loops");
     if (!Array.isArray(source.frames) || !Number.isSafeInteger(source.loops ?? 0) || (source.loops ?? 0) < 0)
       throw invalid();
     const list = snapshotArray(source.frames, 'frames', undefined, 'JXL_INPUT');
     if (!list.length) throw invalid();
     const frames = list.map(frame => {
       if (!frame || typeof frame !== 'object' || Array.isArray(frame))
-        throw fail('JXL_INPUT', 'An animation frame is invalid; pass data and duration in an object.');
+        throw fail('JXL_INPUT', 'frame: {data, duration}');
       return snapshotOptions(frame, 'Frame', ['data', 'duration']);
     });
     const description = descriptionCopy(source);
@@ -99,14 +103,14 @@ export function snapshotSource(source, options = {}) {
     return {width: source.width, height: source.height, loops: source.loops ?? 0, ...description,
       frames: frames.map(frame => {
         if (!frame || !ArrayBuffer.isView(frame.data) || frame.data.length !== source.width * source.height * 4)
-          throw fail('JXL_INPUT', "Invalid frame sample count; pass width * height * 4 samples.");
-        if (!Number.isFinite(frame.duration) || frame.duration < 0) throw fail('JXL_INPUT', "Invalid frame duration; use finite nonnegative milliseconds.");
+          throw fail('JXL_INPUT', "frame samples: width*height*4");
+        if (!Number.isFinite(frame.duration) || frame.duration < 0) throw fail('JXL_INPUT', "duration: finite nonnegative ms");
         return {data: copiedSamples(frame.data, description), duration: frame.duration};
       })};
   }
   if (!source || !ArrayBuffer.isView(source.data)) source = pixels(source, {readAs: options.readAs}, maxPixels, true);
   dimensions(source.width, source.height, maxPixels);
-  if (source.data.length !== source.width * source.height * 4) throw fail('JXL_INPUT', "Invalid picture sample count; pass width * height * 4 samples.");
+  if (source.data.length !== source.width * source.height * 4) throw fail('JXL_INPUT', "picture samples: width*height*4");
   const description = descriptionCopy(source);
   if (typedName.call(source.data) === 'Float16Array') description.sampleFormat ??= 'float16';
   return {width: source.width, height: source.height, ...description, data: copiedSamples(source.data, description)};
@@ -130,7 +134,7 @@ export async function rowsIdentity(source, {signal, consume} = {}) {
     check(signal);
     const band = await readBand(source, y, Math.min(256, source.height - y), signal);
     first ??= {...band, data: new band.data.constructor(0)};
-    if (JSON.stringify(sampleDescription(first)) !== JSON.stringify(sampleDescription(band))) throw fail('JXL_INPUT', "Band sample descriptions differ; use the same description for every band.");
+    if (JSON.stringify(sampleDescription(first)) !== JSON.stringify(sampleDescription(band))) throw fail('JXL_INPUT', "bands: same sample description");
     hash.update(sampleBytes(band.data));
     if (consume) await consume(band, y);
   }

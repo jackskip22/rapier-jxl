@@ -586,7 +586,7 @@ export function* planAnimationPatches(shown, width, height, {tolerance, changes,
     }
     ({copies} = chosen);
     const {predicted, rects: residuals, sheet} = chosen;
-    if (residuals.length > 1) throw fault('JXL_INTERNAL', 'An animation frame has more than one residual part.');
+    if (residuals.length > 1) throw fault('JXL_INTERNAL', 'animation-moves:residuals');
     plans.push({copies, rects: residuals, sheet});
     plainArea += plainAreas[k]; codedArea += own ? plainAreas[k] : residuals.reduce((sum, rect) => sum + area(rect), 0);
     if (k === 8 && plainArea - codedArea < 384 * k) return null;

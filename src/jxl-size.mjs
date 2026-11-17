@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {fault} from './admit.mjs';
 
-export const invalidJPEGData = () => fault('JXL_RECONSTRUCTION', 'Invalid or unsupported JPEG reconstruction data.');
+export const invalidJPEGData = () => fault('JXL_RECONSTRUCTION', 'reconstruction data');
 export function requireJPEG(condition) { if (!condition) throw invalidJPEGData(); }
 export class JxlBits {
   constructor(bytes) { this.bytes = bytes; this.bit = 0; this.offset = 0; this.input = null; this.part = null; }

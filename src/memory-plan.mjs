@@ -18,13 +18,13 @@ export function reconstructionBytes(width, padded, blocks) {
 }
 
 export function integer(value, name, minimum = 0) {
-  if (!Number.isSafeInteger(value) || value < minimum) throw fault('JXL_INTERNAL', `${name} must be a safe integer >= ${minimum}`);
+  if (!Number.isSafeInteger(value) || value < minimum) throw fault('JXL_INTERNAL', `memory-plan:${name}`);
   return value;
 }
 export function memorySum(...values) {
-  return integer(values.reduce((a, b) => a + b, 0), 'memory byte total');
+  return integer(values.reduce((a, b) => a + b, 0), 'sum');
 }
-export function mul(a, b) { return integer(a * b, 'memory byte product'); }
+export function mul(a, b) { return integer(a * b, 'mul'); }
 
 export function memoryGeometry(pixels, {width, height} = {}) {
   integer(pixels, 'pixels');
@@ -33,7 +33,7 @@ export function memoryGeometry(pixels, {width, height} = {}) {
   if (width === undefined || pixels === 0) return null;
   height ??= pixels / width;
   integer(height, 'height', 1);
-  if (mul(width, height) !== pixels) throw fault('JXL_INTERNAL', 'width * height must equal pixels');
+  if (mul(width, height) !== pixels) throw fault('JXL_INTERNAL', 'memory-plan:pixels');
   const stride = Math.ceil(width / 8), rows = Math.ceil(height / 8), blocks = mul(stride, rows);
   return {width, height, pixels, stride, rows, blocks, padded: mul(blocks, 64),
     tiles: mul(Math.ceil(stride / 8), Math.ceil(rows / 8))};
@@ -69,7 +69,7 @@ export function memoryPlan(pixels, options = {}) {
   const workerOutput = integer(options.workerOutputBytes ?? 0, 'workerOutputBytes');
   const workerReady = workerKnown && workerRuntime > 0 && workerInput > 0 && workerOutput > 0;
   if (requestedWorkers > 0 && workerReady && memorySum(workerInput, mul(2, workerOutput), WORKER_SCRATCH_BYTES) > workerJob)
-    throw fault('JXL_INTERNAL', 'workerJobBytes must include input, two output buffers and the helper ANS scratch');
+    throw fault('JXL_INTERNAL', 'memory-plan:workerJobBytes');
   const known = unknown.length === 0;
   if (!g) return {known: false, fits: false, used: 0, budgetBytes, unknown, dct: false, workers: 0,
     poolBytes: 0, cacheBytes: 0, banded: options.banded !== false, bandRows: 8, stages: {}, reservations: reserve,
@@ -77,7 +77,7 @@ export function memoryPlan(pixels, options = {}) {
       scratchBytes: WORKER_SCRATCH_BYTES, totalBytes: 0})};
   const {width, height, padded, blocks, tiles} = g;
   const input = integer(options.inputBytes ?? mul(4, pixels), 'inputBytes');
-  if (input < mul(4, pixels)) throw fault('JXL_INTERNAL', 'inputBytes does not cover the RGBA input');
+  if (input < mul(4, pixels)) throw fault('JXL_INTERNAL', 'memory-plan:inputBytes');
   const metricInput = integer(options.metricInputBytes ?? mul(4, pixels), 'metricInputBytes');
   const extraReference = integer(options.referenceBytes ?? 0, 'referenceBytes');
   const ambient = memorySum(reserve.externalBytes, reserve.gpuBytes);
@@ -114,7 +114,7 @@ export function memoryPlan(pixels, options = {}) {
   else if (banded) bandRows = MEMORY_BAND_ROWS[0];
   if (options.bandRows !== undefined) {
     integer(options.bandRows, 'bandRows', 8);
-    if (!MEMORY_BAND_ROWS.includes(options.bandRows)) throw fault('JXL_INTERNAL', 'bandRows must be 8, 16, 32, 64 or 128');
+    if (!MEMORY_BAND_ROWS.includes(options.bandRows)) throw fault('JXL_INTERNAL', 'memory-plan:bandRows');
     if (known) bandRows = options.bandRows;
   }
   let stages = stagesFor(banded, bandRows), used = maximum(stages), dct = false, workers = 0, cacheBytes = 0;

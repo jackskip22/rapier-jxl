@@ -15,7 +15,7 @@ export async function photoOutputOperation(source, {cacheBytes = 0, signal, maxP
     let failed = false, failure;
     const release = work => { try { work(); } catch (error) { if (!failed) { failed = true; failure = error; } } };
     release(() => signal?.removeEventListener?.('abort', stop));
-    release(() => lifetime.abort(fail('JXL_INTERNAL', "Invalid output measurement; report the input and options.")));
+    release(() => lifetime.abort(fail('JXL_INTERNAL', 'photo-output-operation:measure-1')));
     release(() => current?.destroy());
     if (failed) throw failure;
   };
@@ -29,15 +29,15 @@ export async function photoOutputOperation(source, {cacheBytes = 0, signal, maxP
     domain: metric.domain,
     async measure(bytes, want) {
       check(signal); check(operationSignal);
-      if (!metric || busy) throw fail('JXL_INTERNAL', "Invalid output measurement; report the input and options.");
-      if (!(bytes instanceof Uint8Array)) throw fail('JXL_INTERNAL', "Invalid output measurement; report the input and options.");
+      if (!metric || busy) throw fail('JXL_INTERNAL', 'photo-output-operation:measure-2');
+      if (!(bytes instanceof Uint8Array)) throw fail('JXL_INTERNAL', 'photo-output-operation:measure-3');
       busy = true;
       let restored = null;
       try {
         restored = await read(bytes, {...readOptions, format: metric.format});
         check(signal); check(operationSignal);
-        if (!metric) throw fail('JXL_INTERNAL', "Invalid output measurement; report the input and options.");
-        if (!animation && restored.animation) throw fail('JXL_INTERNAL', "Invalid output measurement; report the input and options.");
+        if (!metric) throw fail('JXL_INTERNAL', 'photo-output-operation:measure-4');
+        if (!animation && restored.animation) throw fail('JXL_INTERNAL', 'photo-output-operation:measure-5');
         return metric.measure(restored, want);
       } finally { restored = null; busy = false; }
     },

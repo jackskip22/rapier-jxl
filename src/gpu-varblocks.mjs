@@ -269,7 +269,7 @@ class GpuVarblockSession {
       const failed = Promise.all([device.popErrorScope(), device.popErrorScope()]); scopes = 0;
       const [errors] = await Promise.all([failed, readBuffer.mapAsync(GPUMapMode.READ)]);
       owner.assertOpen();
-      if (errors.some(Boolean)) throw fault('JXL_WEBGPU', 'GPU varblocks: ' + errors.find(Boolean).message);
+      if (errors.some(Boolean)) throw fault('JXL_WEBGPU', 'varblocks: ' + errors.find(Boolean).message);
       const values = new Float32Array(readBuffer.getMappedRange().slice(0));
       readBuffer.unmap();
       return {values, gridW, gridH, t, size, area, per};
@@ -340,7 +340,7 @@ export class GpuVarblockCosts {
     self.pipeline = (await vbPipelines(device)).main;
     return self;
   }
-  assertOpen() { if (this.destroyed) throw fault('JXL_INTERNAL', 'GPU varblock owner is closed.'); }
+  assertOpen() { if (this.destroyed) throw fault('JXL_INTERNAL', 'gpu-varblocks:closed'); }
   planeBuffers(planes) {
     this.assertOpen();
     if (this.planesOf !== planes) {

@@ -20,7 +20,7 @@ export function measuredFidelity(value) {
 
 function qualityOf({quality}) {
   if (typeof quality !== 'number' || !Number.isFinite(quality) || quality < 1 || quality > 100)
-    throw fail('JXL_OPTIONS', "Invalid quality; use a finite number from 1 to 100.");
+    throw fail('JXL_OPTIONS', 'quality: number 1-100');
   return quality;
 }
 
@@ -35,22 +35,22 @@ export function encodeFidelity(value = {quality: 90}) {
   }
   if (MEASURES.has(key)) {
     const score = value[key];
-    if (typeof score !== 'number' || !Number.isFinite(score)) throw fail('JXL_OPTIONS', `Invalid ${key}; use a finite number.`);
+    if (typeof score !== 'number' || !Number.isFinite(score)) throw fail('JXL_OPTIONS', `${key}: finite number`);
     return {quality: 90, target: photoTarget({[key]: score})};
   }
-  throw fail('JXL_OPTIONS', "Invalid encode fidelity; use 'exact', {quality}, or {ssimulacra2}.");
+  throw fail('JXL_OPTIONS', "fidelity: 'exact', {quality} or {ssimulacra2}");
 }
 
 export function captureFidelity(value = 'exact') {
   if (value === 'exact') return 0;
   const key = soleKey(value);
-  if (key === 'quality') throw fail('JXL_UNSUPPORTED', "This module does not encode photo quality; use rapier-jxl/capture-complete.");
+  if (key === 'quality') throw fail('JXL_UNSUPPORTED', 'quality: use jpegxl/capture-complete');
   if (key === 'maxError') {
     const {maxError} = value;
-    if (!Number.isInteger(maxError) || maxError < 0 || maxError > 8) throw fail('JXL_OPTIONS', "Invalid maxError; use an integer from 0 to 8.");
+    if (!Number.isInteger(maxError) || maxError < 0 || maxError > 8) throw fail('JXL_OPTIONS', 'maxError: integer 0-8');
     return maxError;
   }
-  throw fail('JXL_OPTIONS', "Invalid capture fidelity; use 'exact' or {maxError: 0 to 8}.");
+  throw fail('JXL_OPTIONS', "fidelity: 'exact' or {maxError: 0-8}");
 }
 
 export function capturePhotoFidelity(value = 'exact') {
@@ -60,5 +60,5 @@ export function capturePhotoFidelity(value = 'exact') {
     const qualityIntent = photoIntent(value);
     return qualityIntent === 1 ? {maxError: 0} : {qualityIntent};
   }
-  throw fail('JXL_OPTIONS', "Invalid capture fidelity; use 'exact', {maxError: 0 to 8}, or {quality: 1 to 100}.");
+  throw fail('JXL_OPTIONS', "fidelity: 'exact', {maxError: 0-8} or {quality: 1-100}");
 }

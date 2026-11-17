@@ -55,13 +55,13 @@ function* measuredSteps(data, width, height, settings, {intent, signal, exact, s
   }), 0, 1);
   if (photo && photo === exactFloor) {
     if (photoFacts && (photoFacts.bytes !== photo || photoFacts.passed !== true || !Array.isArray(photoFacts.measurements) || photoFacts.measurements.length))
-      throw fail('JXL_INTERNAL', "Invalid output measurement; report the input and options.");
+      throw fail('JXL_INTERNAL', 'still-photo-target:measure-1');
     selected?.({kept: 'pixels', measurements: [], ...(fitted && {fitted})});
     return photo;
   }
   if (!photo || photoFacts?.bytes !== photo || photoFacts.passed !== true || !Array.isArray(photoFacts.measurements))
-    throw fail('JXL_INTERNAL', "Invalid output measurement; report the input and options.");
-  if (!photoFacts.measurements.length) throw fail('JXL_INTERNAL', "Invalid output measurement; report the input and options.");
+    throw fail('JXL_INTERNAL', 'still-photo-target:measure-2');
+  if (!photoFacts.measurements.length) throw fail('JXL_INTERNAL', 'still-photo-target:measure-3');
   if (!fit && (yield* unit('palette-floor', () => Boolean(inspectPixels(data, width, height).palette)))) {
     const exactFile = exactFloor ?? (yield* exact());
     if (exactFile instanceof Uint8Array && exactFile.length <= photo.length) { selected?.({kept: 'pixels', measurements: []}); return exactFile; }

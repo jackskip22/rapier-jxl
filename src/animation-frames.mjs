@@ -30,29 +30,29 @@ const REFERENCE_ONLY = 2;
 export const ANIMATION_OBSERVER = Symbol('animation frame observer');
 
 export function admitAnimation(animation, options) {
-  if (animation === null || typeof animation !== 'object') throw fault('JXL_INPUT', 'An animation is {width, height, loops, frames}.');
-  if (options === null || typeof options !== 'object') throw fault('JXL_INPUT', 'Options are an object.');
+  if (animation === null || typeof animation !== 'object') throw fault('JXL_INPUT', 'animation: {width,height,loops,frames}');
+  if (options === null || typeof options !== 'object') throw fault('JXL_INPUT', 'options: object');
   const {width, height, loops = 0, frames} = animation;
   admitSize(width, height);
-  if (!Number.isInteger(loops) || loops < 0 || loops > 0xFFFFFFFF) throw fault('JXL_INPUT', 'Loops is a whole number; 0 plays forever.');
-  if (!Array.isArray(frames) || !frames.length) throw fault('JXL_INPUT', 'An animation has at least one frame.');
-  if (frames.length > ANIMATION_LIMITS.frames) throw fault('JXL_DIMENSIONS', 'An animation has at most ' + ANIMATION_LIMITS.frames + ' frames.');
+  if (!Number.isInteger(loops) || loops < 0 || loops > 0xFFFFFFFF) throw fault('JXL_INPUT', 'loops: integer 0-4294967295, 0 infinite');
+  if (!Array.isArray(frames) || !frames.length) throw fault('JXL_INPUT', 'frames: nonempty array');
+  if (frames.length > ANIMATION_LIMITS.frames) throw fault('JXL_DIMENSIONS', 'frames: max ' + ANIMATION_LIMITS.frames);
   const kind = frames[0]?.data?.constructor;
   if (!READ_GIFS.has(animation)) for (const frame of frames) {
-    if (frame === null || typeof frame !== 'object') throw fault('JXL_INPUT', 'A frame is {data, duration}.');
+    if (frame === null || typeof frame !== 'object') throw fault('JXL_INPUT', 'frame: {data,duration}');
     admitPixels(frame.data, width, height);
-    if (frame.data.constructor !== kind) throw fault('JXL_INPUT', 'Every frame uses the same sample array type.');
+    if (frame.data.constructor !== kind) throw fault('JXL_INPUT', 'frames: matching sample type');
     if (typeof frame.duration !== 'number' || !Number.isFinite(frame.duration) || frame.duration < 0 || frame.duration > 0xFFFFFFFF)
-      throw fault('JXL_INPUT', 'A frame duration is a number of milliseconds, 0 or more.');
+      throw fault('JXL_INPUT', 'duration: milliseconds >=0');
   }
-  if (options.lossless !== undefined && typeof options.lossless !== 'boolean') throw fault('JXL_INPUT', 'lossless is a boolean.');
+  if (options.lossless !== undefined && typeof options.lossless !== 'boolean') throw fault('JXL_INPUT', 'lossless: boolean');
   const {quality, colorSpace} = admitOptions(options.lossless ? {...options, quality: 100} : options);
   const effort = admitEffort(options), filter = admitPhotoFilter(options);
   const samples = admitSampleFormat(frames[0].data, options);
-  if (options.photo !== undefined && typeof options.photo !== 'boolean') throw fault('JXL_INPUT', 'photo is a boolean.');
+  if (options.photo !== undefined && typeof options.photo !== 'boolean') throw fault('JXL_INPUT', 'photo: boolean');
   checkSignal(options.signal);
   const {progress, signal, lossless, photo, probe, [ANIMATION_OBSERVER]: observe, ...still} = options;
-  if (observe !== undefined && typeof observe !== 'function') throw fault('JXL_INTERNAL', 'An animation observer is a per-call factory.');
+  if (observe !== undefined && typeof observe !== 'function') throw fault('JXL_INTERNAL', 'animation:observer-factory');
   if (!(typeof __RAPIER_JXL_FORMAT__ !== 'undefined' && __RAPIER_JXL_FORMAT__ === true)) {
     const {xybSteps, ...cleanStill} = still;
     return {width, height, loops, frames, quality, colorSpace, effort, filter, samples, photo, signal, probe: probe === true, observe, xybSteps, still: {...cleanStill, quality, effort, xybProbe: probe === true}};
@@ -238,7 +238,7 @@ export function* animationSteps(a, shared = null, allowRegions = !(typeof __RAPI
   const key = metadataKey(parts[0].still);
   if (parts.some(({still}) => metadataKey(still) !== key)) {
     if (mode === 'modular' && quality < 100 && samples.native8 && a.photo !== true) return yield* animationSteps({...a, photo: true}, shared, allowRegions);
-    throw fault('JXL_FRAMING', 'The frames of the animation need different image headers.');
+    throw fault('JXL_FRAMING', 'frames: mismatched headers');
   }
   const xyb = mode === 'xyb';
   const patchable = ({image, frames: children}) => image.xyb === xyb && children.every((frame, i) =>
@@ -255,7 +255,7 @@ export function* animationSteps(a, shared = null, allowRegions = !(typeof __RAPI
       view.frames[0].passes === 1 && !(view.frames[0].flags & 32) && !view.image.xyb &&
       view.image.extraChannels === extraChannels && (xyb || metadataKey(view) === key);
     if (!fits || !parts.every(part => patchable(part.still)))
-      throw fault('JXL_INTERNAL', 'An admitted animation motion part violated its shared frame/reference contract.');
+      throw fault('JXL_INTERNAL', 'animation:motion-contract');
     viewPatches = [];
     for (const groups of viewGroups) viewPatches.push(yield* quiet(encodeFrameView(groups, extraChannels)));
   }
@@ -268,7 +268,7 @@ export function* animationSteps(a, shared = null, allowRegions = !(typeof __RAPI
       for (const part of parts) grouped[part.frame].push(part);
       for (let k = 0; k < shown.length; k++) {
         if (new Set(grouped[k].map(part => part.slot)).size < grouped[k].length)
-          throw fault('JXL_INTERNAL', 'An animation frame saves two parts to one reference slot.');
+          throw fault('JXL_INTERNAL', 'animation:duplicate-reference-slot');
         for (const {still, slot} of grouped[k]) still.frames.forEach((frame, i) => {
           if (i < still.frames.length - 1) writeAnimatedFrame(out, still, frame, {canvas, reference: CANVAS});
           else writeStillFrame(out, still, frame, {canvas, frameType: REFERENCE_ONLY, reference: slot, beforeColorTransform: true});

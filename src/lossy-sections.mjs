@@ -33,7 +33,7 @@ const pieceBits = (freq, lengths) => {
 
 export function* lossySections(rgba, width, height, quality, shape, lengthOnly = false) {
   const distance = distanceFromQuality(quality);
-  if (!(distance > 0)) throw fault('JXL_OPTIONS', 'lossy encoding needs a quality below 100');
+  if (!(distance > 0)) throw fault('JXL_OPTIONS', 'quality: < 100');
   const {colour, alpha, channels: count} = shape;
   const pixels = width * height;
   const planes = Array.from({length: count}, () => new Int16Array(pixels));

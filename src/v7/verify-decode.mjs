@@ -7,7 +7,9 @@ import {configuredDecoder, DECODER_SNAPSHOT} from '../shown-picture.mjs';
 import {ownDecoder} from './verify-own.mjs';
 import {boxes} from '../container.mjs';
 
-const SETUP = " is unavailable here; call configureDecoder(decode, restore) from rapier-jxl/verify, with decode from rapier-jxl/decode and restore from rapier-jxl/jpeg.";
+const SETUP = ": configureDecoder(decode, restore); decode: jpegxl/decode; restore: jpegxl/jpeg";
+const NEEDS_SETUP = Symbol('setup');
+const setup = what => Object.assign(fail('JXL_PLATFORM', what + SETUP), {[NEEDS_SETUP]: true});
 const activeDecoder = options => options && DECODER_SNAPSHOT in options ? options[DECODER_SNAPSHOT] : configuredDecoder();
 const host = (name, options) => activeDecoder(options)?.[name] ?? ownDecoder?.[name];
 async function decodeWith(read, bytes, options, opened) {
@@ -47,12 +49,12 @@ export async function nativeVerification(info,options,bitmap = false) {
   if (!info.extraChannels.length) return true;
   return activeDecoder(options)?.decode ? false : keeps.alpha || 'opaque';
 }
-const P3_LOST = 'Verifying a Display P3 file in this browser';
+const P3_LOST = 'display-p3 verify';
 
 export async function decodeFile(bytes, options) {
   const info = header(bytes), why = whyHost(info, options);
   if (!options.region && options.maxPixels !== undefined && info.width * info.height > options.maxPixels)
-    throw fail('JXL_DIMENSIONS', `JPEG XL image exceeds maxPixels (${options.maxPixels}); raise it or pass a smaller picture.`);
+    throw fail('JXL_DIMENSIONS', `maxPixels: ${options.maxPixels} exceeded`);
   const native = await nativeVerification(info,options);
   if (native) {
     check(options.signal);
@@ -62,7 +64,7 @@ export async function decodeFile(bytes, options) {
   const decode = host('decode', options);
   if (!decode) {
     const reason = why ?? (info.colorEncoding.primaries === 'display-p3' && await decodesJXL() ? P3_LOST : null);
-    throw fail('JXL_PLATFORM', (reason ?? 'Verifying a JPEG XL file') + SETUP);
+    throw setup(reason ?? 'jxl verify');
   }
   const decoded = await decodeWith(decode, bytes.slice(), options);
   return admittedPicture(decoded,options);
@@ -71,7 +73,7 @@ function admittedPicture(decoded,options) {
   check(options.signal);
   if (activeDecoder(options)?.decode && decoded && typeof decoded === 'object' && !Array.isArray(decoded))
     decoded = snapshotOptions(decoded, 'Decoder result');
-  if (!isDecoded(decoded)) throw fail('JXL_PLATFORM', "Invalid decoder output; configure decode from rapier-jxl/decode.");
+  if (!isDecoded(decoded)) throw fail('JXL_PLATFORM', "decoder output: use jpegxl/decode");
   return decoded;
 }
 
@@ -93,11 +95,11 @@ export async function restoreFile(bytes, options) {
     check(signal);
     let out;
     try { out = restored?.bytes ?? restored; } catch (error) { throw callers(error); }
-    if (!(out instanceof Uint8Array)) throw fail('JXL_PLATFORM', "Invalid restored JPEG; configure restore from rapier-jxl/jpeg.");
+    if (!(out instanceof Uint8Array)) throw fail('JXL_PLATFORM', "restored jpeg: use jpegxl/jpeg");
     return out;
   }
   if (ownDecoder) return ownDecoder.restore(bytes, {maxPixels});
-  throw fail('JXL_PLATFORM', 'Verifying a recompressed JPEG' + SETUP);
+  throw setup('jpeg verify');
 }
 
 export async function restoredByJbrd(bytes, options) {
@@ -111,6 +113,13 @@ export async function restoredByJbrd(bytes, options) {
 }
 
 export const jpegReader = () => ownDecoder?.readJPEG;
+export function jpegPixelReader(options) {
+  if (ownDecoder?.readJPEGPixels) return ownDecoder.readJPEGPixels;
+  const read = activeDecoder(options)?.recompress?.[Symbol.for('rapier-jxl.jpeg.pixels')];
+  return typeof read === 'function'
+    ? (bytes, settings) => read(bytes, {maxPixels: Math.min(settings.maxPixels, PIXELS), signal: settings.signal, scale: 8})
+    : null;
+}
 const configuredJPEGSource = options => activeDecoder(options)?.restore?.[Symbol.for('rapier-jxl.verify.source')];
 export const ownJPEGReference = options => ownDecoder !== null ||
   (typeof globalThis.createImageBitmap !== 'function' || typeof globalThis.OffscreenCanvas !== 'function') &&
@@ -120,21 +129,21 @@ export const restorationSteps = options => activeDecoder(options)?.restore?.[Sym
 const groups = options => host('decode', options)?.[Symbol.for('rapier-jxl.verify.groups')];
 export const boundedVerification = options => !!groups(options)?.open && !!groups(options)?.region;
 export const boundedWithoutNoise = options => !!groups(options)?.open && !!groups(options)?.withoutNoise;
-export const BOUNDED_SETUP = 'Bounded verification' + SETUP;
-export const needsSetup = error => error?.code === 'JXL_PLATFORM' && typeof error.message === 'string' && error.message.endsWith(SETUP);
+export const BOUNDED_SETUP = 'bounded verify' + SETUP;
+export const needsSetup = error => error?.[NEEDS_SETUP] === true;
 export function verificationImageSteps(bytes,options) {
   const open = groups(options)?.open;
-  if (!open) throw fail('JXL_PLATFORM','Bounded verification' + SETUP);
+  if (!open) throw setup('bounded verify');
   return open(bytes,options);
 }
 export async function decodeWholeFile(bytes,options) {
   const decode = host('decode', options);
-  if (!decode) throw fail('JXL_PLATFORM','Verifying a JPEG XL file' + SETUP);
+  if (!decode) throw setup('jxl verify');
   return admittedPicture(await decodeWith(decode,bytes.slice(),options),options);
 }
 export async function decodeGroupFile(bytes,options,opened,withoutNoise = false) {
   const region = groups(options)?.[withoutNoise ? 'withoutNoise' : 'region'];
-  if (!region) throw fail('JXL_PLATFORM','Bounded verification' + SETUP);
+  if (!region) throw setup('bounded verify');
   const {maxTotalSamples,...bounded} = options;
   return admittedPicture(await decodeWith(region,bytes,bounded,opened),options);
 }

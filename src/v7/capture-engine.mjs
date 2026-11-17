@@ -33,7 +33,7 @@ export const engineAnswerer = (captureEngine, gpu) => async (coding, pixels, ran
     }
     if (value.await) ahead.delete(value.await);
     return Promise.resolve(value.await ?? dispatch(value.gpu, signal).then(noted)).then(reply => {
-      if (!reply && required) throw fail('JXL_WEBGPU', "WebGPU device could not run this job; leave webgpu out or use another device.");
+      if (!reply && required) throw fail('JXL_WEBGPU', 'WebGPU job failed: omit webgpu');
       return reply;
     });
   };

@@ -202,7 +202,7 @@ function serveOne(message) {
     if (message.split === 'write') return writeStep(message);
     if (message.split === 'dc') { const reply = arenaDcStep(message); return [reply, reply.sections.map(s => s.bytes.buffer)]; }
     if (message.split === 'drop') { held.delete(message.key); return [{split: 'drop', key: message.key}, []]; }
-    throw fault('JXL_INTERNAL', 'Unknown split message.');
+    throw fault('JXL_INTERNAL', 'photo-split:message');
   } catch (error) {
     held.delete(message?.key);
     return [{split: message?.split, key: message?.key, error: {name: String(error?.name ?? 'Error'), message: String(error?.message ?? error), ...(typeof error?.code === 'string' && {code: error.code})}}, []];
@@ -311,7 +311,7 @@ function splitBand(split, data, quality, gaborish, k, image) {
 }
 function* splitRest(split, data) {
   const {width, height, bands, keys, parts} = split;
-  if (!data && split.done.some(reply => reply.meta.alpha)) throw fault('JXL_INTERNAL', 'A split without pixels has alpha.');
+  if (!data && split.done.some(reply => reply.meta.alpha)) throw fault('JXL_INTERNAL', 'photo-split:alpha-1');
   const {image, orders} = splitImage(split.done, width, height, data);
   trace('split: image');
   split.done = [];
@@ -332,10 +332,10 @@ function* splitRest(split, data) {
   while (!(step = steps.next(answer)).done) {
     answer = undefined;
     if (step.value?.kind !== 'ac-group') continue;
-    if (results.length !== step.value.groups) throw fault('JXL_INTERNAL', 'Split sections do not cover the frame.');
+    if (results.length !== step.value.groups) throw fault('JXL_INTERNAL', 'photo-split:sections-1');
     answer = {results, errors: {}}; answered = true;
   }
-  if (!answered) throw fault('JXL_INTERNAL', 'The frame asked for no AC sections.');
+  if (!answered) throw fault('JXL_INTERNAL', 'photo-split:ac-1');
   trace('split: frame');
   return step.value;
 }
@@ -414,10 +414,10 @@ function splitComplete(image, orders, counts, coding, dcGroups, shape, results, 
   while (!(step = steps.next(answer)).done) {
     answer = undefined;
     if (step.value?.kind !== 'ac-group') continue;
-    if (results.length !== step.value.groups) throw fault('JXL_INTERNAL', 'Split sections do not cover the frame.');
+    if (results.length !== step.value.groups) throw fault('JXL_INTERNAL', 'photo-split:sections-2');
     answer = {results: retain ? results.slice() : results, errors: {}}; answered = true;
   }
-  if (!answered) throw fault('JXL_INTERNAL', 'The frame asked for no AC sections.');
+  if (!answered) throw fault('JXL_INTERNAL', 'photo-split:ac-2');
   return step.value;
 }
 
@@ -448,7 +448,7 @@ function observedImage(split, image) {
 function* splitCandidateRest(split, data, clusters, hurry = false, observe = null) {
   const {width, height, bands, keys, parts} = split;
   const {image, orders} = yield* unit('split-image', () => {
-    if (!data && split.done.some(reply => reply.meta.alpha)) throw fault('JXL_INTERNAL', 'A split without pixels has alpha.');
+    if (!data && split.done.some(reply => reply.meta.alpha)) throw fault('JXL_INTERNAL', 'photo-split:alpha-2');
     return splitImage(split.done, width, height, data);
   });
   if (observe) observe(observedImage(split, image));
@@ -590,7 +590,7 @@ async function encodeSplitUsing(data, width, height, quality, helpers, {signal, 
     const done = await Promise.all(first);
     mark('bands');
     signal?.throwIfAborted();
-    if (opaque && done.some(reply => reply.meta.alpha)) throw Object.assign(new Error('A band has alpha.'), {alpha: true});
+    if (opaque && done.some(reply => reply.meta.alpha)) throw Object.assign(new Error('band: alpha'), {alpha: true});
     const {image, orders} = splitImage(done, width, height, data);
     const second = bands.map((_, k) => k ? ask(k, {split: 'count', orders}) : null);
     let shape = splitShape(width, height), mapFallback = null;
@@ -632,11 +632,11 @@ async function encodeSplitUsing(data, width, height, quality, helpers, {signal, 
       const written = await Promise.all(third), results = [];
       mark('sections');
       for (const answer of written) results.push(...answer.sections);
-      if (results.length !== value.groups) throw fault('JXL_INTERNAL', 'Split sections do not cover the frame.');
+      if (results.length !== value.groups) throw fault('JXL_INTERNAL', 'photo-split:sections-3');
       if (plans.length > 1 && sameClusters(shape.clusters, plans[1].clusters)) ac = {coding, results};
       reply = {results: ac ? results.slice() : results, errors: {}}; answered = true;
     }
-    if (!answered) throw fault('JXL_INTERNAL', 'The frame asked for no AC sections.');
+    if (!answered) throw fault('JXL_INTERNAL', 'photo-split:ac-3');
     best = step.value;
     reply = undefined;
     if (extraClusters.length) { await Promise.allSettled(issued); issued.length = 0; third.fill(null); }

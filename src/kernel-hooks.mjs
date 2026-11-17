@@ -14,4 +14,4 @@ export function releaseEntropy() {
   if (--holds > 0 || !held) return;
   held = null; kernelHooks.entropy = null; kernelHooks.arena?.release();
 }
-export const declined = name => fault('JXL_INTERNAL', `The ${name} kernel refused a call it takes.`);
+export const declined = name => fault('JXL_INTERNAL', `kernel-hooks:${name}`);

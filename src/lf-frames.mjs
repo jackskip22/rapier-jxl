@@ -13,7 +13,7 @@ import {photoLevelContainer} from './photo-crop.mjs';
 export function admitLFFrames(value) {
   if (value === undefined || value === false) return 0;
   if (value === true) return 1;
-  if (!Number.isInteger(value) || value < 1 || value > 4) throw fault('JXL_INPUT', 'lfFrames is false or 1 to 4.');
+  if (!Number.isInteger(value) || value < 1 || value > 4) throw fault('JXL_INPUT', 'lfFrames: false or integer 1-4');
   return value;
 }
 
@@ -107,7 +107,7 @@ function lfCoding(counts) {
 }
 
 export function* lfFrameSteps(image, levels) {
-  if (!image.xyb && !image.ycbcr) throw fault('JXL_INPUT', 'LF frame pyramids need XYB or YCbCr photo pixels.');
+  if (!image.xyb && !image.ycbcr) throw fault('JXL_INPUT', 'lfFrames: XYB or YCbCr only');
   const images = [image];
   for (let level = 1; level < levels; level++) images.push(intermediateLF(images.at(-1), level));
   const modular = image.xyb && !image.auxiliary && modularLF(images.at(-1), levels);

@@ -74,7 +74,7 @@ export function relocatable(start, url, {fetcher, base = import.meta.url, versio
     } catch (error) {
       held = null; worker = null;
       try { made?.terminate(); } catch {}
-      relay.dispatchEvent(copy({message: error?.message || 'The JPEG XL worker did not start; check the worker source and startup configuration.', error, code: error?.code}));
+      relay.dispatchEvent(copy({message: error?.message || 'worker: check source/config', error, code: error?.code}));
     }
   });
   return Object.assign(relay, {

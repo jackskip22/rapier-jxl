@@ -15,7 +15,7 @@ export function* recodeBand({data, width, height, ...description}, settings, {xy
   const eight = data instanceof Uint8Array || data instanceof Uint8ClampedArray;
   if (quality < 100 && xyb && !eight) {
     const coded = hdr && (yield* hdr.lossy(data, width, height, quality, effort, admitSampleFormat(data, options)));
-    if (!coded) throw fail('JXL_INTERNAL', "Invalid image result; report the input and options.");
+    if (!coded) throw fail('JXL_INTERNAL', 'band-recode:result');
     return coded;
   }
   if (exact || quality >= 100 || !eight) {

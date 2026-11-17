@@ -158,7 +158,7 @@ export function smallTransform(pixels, id, out = new Float64Array(64)) {
 const INV_SMALL_WORK = new Float64Array(64), INV_SMALL_SCRATCH = new Float64Array(64), INV_SMALL_PART = new Float64Array(32);
 export function inverseSmallTransform(coefficients, id, out = new Float64Array(64)) {
   if (![1, 2, 3, 12, 13, 14, 15, 16, 17].includes(id) || coefficients.length < 64 || out.length < 64)
-    throw fault('JXL_INTERNAL', 'Invalid small JPEG XL transform.');
+    throw fault('JXL_INTERNAL', 'vardct-strategies:small');
   const work = INV_SMALL_WORK, scratch = INV_SMALL_SCRATCH, part = INV_SMALL_PART;
   const copyBlock = (src, left, top, width, height) => {
     for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) out[(top + y) * 8 + left + x] = src[y * width + x];
@@ -249,38 +249,38 @@ function radialShape(x, y, width, height) {
 function admitTransforms(value) {
   if (value === undefined || value === 'auto') return [4, 0];
   const names = Array.isArray(value) ? value : [value];
-  if (!names.length || names.length > 27) throw fault('JXL_INPUT', 'transforms names one or more strategies.');
+  if (!names.length || names.length > 27) throw fault('JXL_INPUT', 'transforms: 1-27 strategies');
   const ids = names.map(name => NAMES.indexOf(name));
-  if (ids.some(id => id < 0)) throw fault('JXL_INPUT', 'transforms names a TRANSFORMS strategy, or auto.');
+  if (ids.some(id => id < 0)) throw fault('JXL_INPUT', 'transforms: TRANSFORMS name or auto');
   return [...new Set([...ids, 0])].sort((a, b) => WIDTHS[b] * HEIGHTS[b] - WIDTHS[a] * HEIGHTS[a]);
 }
 
 function admitQuantization(value) {
   if (value === undefined) return {};
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw fault('JXL_INPUT', 'quantization maps transforms to three positive step arrays.');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw fault('JXL_INPUT', 'quantization: object');
   const out = {};
   for (const [name, matrices] of Object.entries(value)) {
     if (name === 'dc') {
       if ((!Array.isArray(matrices) && !ArrayBuffer.isView(matrices)) || matrices.length !== 3)
-        throw fault('JXL_INPUT', 'quantization.dc is three positive steps, Y/Cb/Cr.');
+        throw fault('JXL_INPUT', 'quantization.dc: 3 positive numbers');
       out.dc = Int32Array.from(matrices, value => {
-        if (!Number.isFinite(value) || value < 1 / 16 || value > 4095) throw fault('JXL_INPUT', 'DC steps are finite numbers from 1/16 through 4095.');
+        if (!Number.isFinite(value) || value < 1 / 16 || value > 4095) throw fault('JXL_INPUT', 'quantization.dc: 1/16 to 4095');
         return Math.round(value * 16);
       });
       continue;
     }
     const id = NAMES.indexOf(name), area = id < 0 ? 0 : WIDTHS[id] * HEIGHTS[id] * 64;
-    if (!area) throw fault('JXL_INPUT', 'Quantization keys are TRANSFORMS families.');
-    if (out[TABLES[id]]) throw fault('JXL_INPUT', 'Transposed strategies share a family; give it once.');
+    if (!area) throw fault('JXL_INPUT', 'quantization: unknown family');
+    if (out[TABLES[id]]) throw fault('JXL_INPUT', 'quantization: duplicate family');
     if (matrices && typeof matrices === 'object' && !Array.isArray(matrices) && !ArrayBuffer.isView(matrices)) {
       const parameters = prepareQuantParams(matrices, Math.max(WIDTHS[id], HEIGHTS[id]) * 8, Math.min(WIDTHS[id], HEIGHTS[id]) * 8, TABLES[id]);
       out[TABLES[id]] = {parameters, planes: quantParamSteps(parameters, 16, 2, [1, 0, 2])};
       continue;
     }
     if (!Array.isArray(matrices) || matrices.length !== 3 || matrices.some(matrix => !matrix || matrix.length !== area))
-      throw fault('JXL_INPUT', 'Each quantization family has three step matrices or a compact descriptor.');
+      throw fault('JXL_INPUT', 'quantization family: 3 matrices or descriptor');
     out[TABLES[id]] = matrices.map(matrix => Int32Array.from(matrix, value => {
-      if (!Number.isFinite(value) || value < 1 / 16 || value > 4095) throw fault('JXL_INPUT', 'Steps are from 1/16 to 4095.');
+      if (!Number.isFinite(value) || value < 1 / 16 || value > 4095) throw fault('JXL_INPUT', 'steps: 1/16 to 4095');
       return Math.round(value * 16);
     }));
   }
@@ -289,7 +289,7 @@ function admitQuantization(value) {
 
 export function admitStrategyOptions(options) {
   if (options.orientation !== undefined && (!Number.isInteger(options.orientation) || options.orientation < 1 || options.orientation > 8))
-    throw fault('JXL_INPUT', 'orientation is 1 to 8.');
+    throw fault('JXL_INPUT', 'orientation: integer 1-8');
   const selection = new Map(Object.entries(options)).get('transforms');
   return {ids: admitTransforms(selection), custom: admitQuantization(options.quantization),
     automatic: selection === undefined || selection === 'auto', variable: selection !== undefined || options.quantization !== undefined};
@@ -341,7 +341,7 @@ export function* strategyCoefficientSteps(data, width, height, quality, colorSpa
       for (let k = area; k < size; k++) {
         const pos = order[k], step = table.planes[c][pos] / quantScale, value = Math.round(transformed[pos] * 8 / step);
         if (!Number.isSafeInteger(value) || value < -2147483648 || value > 2147483647)
-          throw fault('JXL_INPUT', 'Quantization overflows signed 32-bit.');
+          throw fault('JXL_INPUT', 'quantization: int32 overflow');
         wide ||= value < -32768 || value > 32767;
         plane[pos] = value;
         if (value) cost += 2 + ceilLog2(1 + Math.abs(value));
@@ -407,7 +407,7 @@ export function* requantizeStrategySteps(retained, quality, admitted) {
         for (let k = area; k < size; k++) {
           const pos = order[k], step = table.planes[c][pos] / quantScale, value = Math.round(transformed[pos] * 8 / step);
           if (!Number.isSafeInteger(value) || value < -2147483648 || value > 2147483647)
-            throw fault('JXL_INPUT', 'Quantization overflows signed 32-bit.');
+            throw fault('JXL_INPUT', 'quantization: int32 overflow');
           wideCoefficients ||= value < -32768 || value > 32767;
           plane[pos] = value;
         }

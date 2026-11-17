@@ -44,8 +44,8 @@ export interface ResumableFile extends ResumableInput {
   readonly kind: 'file';
 }
 
-/** A stored JPEG XL, such as a JPEG's lossless one, whose picture is its decode: rapier-jxl/decode's decode, set once with
- * configureDecoder(decode) from rapier-jxl/verify. The job encodes the decoded pixels, as encode() of them would. */
+/** A stored JPEG XL, such as a JPEG's lossless one, whose picture is its decode: jpegxl/decode's decode, set once with
+ * configureDecoder(decode) from jpegxl/verify. The job encodes the decoded pixels, as encode() of them would. */
 export interface ResumableDecode extends ResumableInput {
   readonly kind: 'decode';
 }
@@ -80,8 +80,8 @@ export interface Checkpoint {
 }
 
 type Uploads = typeof root.encode | typeof root.fit | typeof root.variants | typeof upload.encode | typeof upload.fit | typeof upload.variants;
-/** Resumable verbs: encode/fit/variants from rapier-jxl or rapier-jxl/upload, capture from rapier-jxl/capture or
- * rapier-jxl/capture-complete (every effort), recompress/restore from rapier-jxl/jpeg, and verify from rapier-jxl/verify. */
+/** Resumable verbs: encode/fit/variants from jpegxl or jpegxl/upload, capture from jpegxl/capture or
+ * jpegxl/capture-complete (every effort), recompress/restore from jpegxl/jpeg, and verify from jpegxl/verify. */
 export type ResumableOperation = typeof capture | typeof captureComplete | typeof recompress | typeof restore | typeof verify | Uploads;
 
 type OptionKeys = keyof CaptureOptions | keyof JPEGOptions;
@@ -141,7 +141,7 @@ interface OperationContext<Operation extends ResumableOperation = ResumableOpera
 /** The operation alone determines the admitted source and option shapes. */
 export type StartOptions<Operation extends ResumableOperation = ResumableOperation> = Operation extends unknown ? OperationContext<Operation> & {
   readonly input: InputOf<NoInfer<Operation>>;
-  /** rapier-jxl/verify's verify: verify in the advances and return the whole-file verifier's receipt at
+  /** jpegxl/verify's verify: verify in the advances and return the whole-file verifier's receipt at
    * result.verification. The plan saves that verification was chosen; pass the same verify to every advance. The host
    * supplies a decoder through configureDecoder where needed. */
   readonly verify?: Operation extends typeof verify ? never : typeof verify;
@@ -158,7 +158,7 @@ export interface AdvanceOptions<Operation extends ResumableOperation = Resumable
   /** `ms`: positive milliseconds, at most 60000; defaults to {ms: 30}. A call advances at least one step. `reads`: the store
    * reads a call may make, for a host that allows few calls a request (none by default). */
   readonly budget?: {readonly ms: number; readonly reads?: number};
-  /** rapier-jxl/verify's verify, for a job started with it (an advance without it refuses with JXL_OPTIONS). */
+  /** jpegxl/verify's verify, for a job started with it (an advance without it refuses with JXL_OPTIONS). */
   readonly verify?: typeof verify;
 }
 export interface AdvanceResult {
@@ -184,7 +184,7 @@ type VerifiedResult<Result> = Result extends readonly (infer Item)[] ? Array<Ver
 export function finish<Operation extends ResumableOperation>(checkpoint: Checkpoint, options: FinishOptions<Operation>): Promise<
   Operation extends typeof verify ? VerificationReceipt : VerifiedResult<Awaited<ReturnType<Operation>>>>;
 
-/** Whether a resumable job runs within a Cloudflare Workers isolate's 128 MB, from rapier-jxl's measured table: the
+/** Whether a resumable job runs within a Cloudflare Workers isolate's 128 MB, from jpegxl's measured table: the
  * Node estimate (total peak minus bare runtime) x 1.1 <= 96,000,000 B, admitted only where every measured size up to the
  * first at least this large was admitted. Pass the imported operation function (encode, recompress, etc.), never
  * the operation name as a string. The answer rests on the next measured size bucket at least width x height pixels,

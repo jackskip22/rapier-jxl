@@ -21,16 +21,16 @@ function s2ReferenceSnapshot(reference, pixels) {
 
 export function ssimulacra2Reference(reference, width, height, options = {}) {
   for (const key of Object.keys(options ?? {})) if (key !== 'cacheBytes' && key !== 'immutable' && key !== 'arithmetic')
-    throw fault('JXL_OPTIONS', 'An SSIMULACRA 2 reference takes cacheBytes, immutable and arithmetic, not ' + key + '.');
+    throw fault('JXL_OPTIONS', 'unknown option: ' + key);
   const {cacheBytes = 0, immutable = false, arithmetic = 'binary64'} = options ?? {};
   const pixels = s2Dimensions(width, height);
-  if (!Number.isSafeInteger(cacheBytes) || cacheBytes < 0) throw fault('JXL_INTERNAL', 'SSIMULACRA2 cacheBytes must be a nonnegative safe integer.');
+  if (!Number.isSafeInteger(cacheBytes) || cacheBytes < 0) throw fault('JXL_INTERNAL', 'ssimulacra2-reference:cacheBytes');
   let inputBytes = 0;
   if (typeof reference !== 'function') reference = s2Samples(reference, pixels);
   if (!immutable && typeof reference !== 'function') {
     const snapshot = s2ReferenceSnapshot(reference, pixels); reference = snapshot.source; inputBytes = snapshot.bytes;
   }
-  if (arithmetic !== 'binary64' && arithmetic !== 'libjxl') throw new RangeError('SSIMULACRA2 arithmetic is binary64 or libjxl.');
+  if (arithmetic !== 'binary64' && arithmetic !== 'libjxl') throw new RangeError('arithmetic: binary64 or libjxl');
   const state = {reference, width, height, scales: [], sizes: [], cacheBytes: 0, inputBytes, busy: false, arena: null, released: false, arithmetic};
   let w = Math.max(8, width), h = Math.max(8, height), left = cacheBytes;
   for (let scale = 0; scale < SCALES; scale++) {
@@ -44,7 +44,7 @@ export function ssimulacra2Reference(reference, width, height, options = {}) {
     get cacheBytes() { return state.cacheBytes; }, get inputBytes() { return state.inputBytes; },
     get arenaBytes() { return state.arena?.memory?.buffer.byteLength ?? 0; },
     release() {
-      if (state.busy) throw fault('JXL_INTERNAL', 'SSIMULACRA2 reference is in use.');
+      if (state.busy) throw fault('JXL_INTERNAL', 'ssimulacra2-reference:busy');
       releaseReferenceArena(state.arena);
       state.released = true; state.arena = null; state.reference = null; state.inputBytes = 0; state.cacheBytes = 0;
       state.scales = state.scales.map(() => null);

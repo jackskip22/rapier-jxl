@@ -11,7 +11,7 @@ import {digestBytes, identityOfSnapshot, isIdentity, isRows, snapshotSource, enc
 import {pixelResult, rowResult, referenceFromOriginal, searchedWithoutNoise} from './verify-pixels.mjs';
 import {isImageResult} from './result-shape.mjs';
 import {protectedScope} from './verify-protection.mjs';
-import {restoreFile, restoredByJbrd, jpegReader, unreadBytes} from './verify-decode.mjs';
+import {restoreFile, restoredByJbrd, jpegReader, jpegPixelReader, unreadBytes} from './verify-decode.mjs';
 import {comparison, comparisonContext, pictureICC, conversionProfile, sameBytes as sameProfileBytes, pixelEvidence, metricSamples, measurementTarget, opaque, composedOver} from './verify-compare.mjs';
 import {nativeGammaRGBA} from '../photo-output.mjs';
 import {protectionDomain, protectionEvidence, noiseUnread} from './verify-pixels.mjs';
@@ -61,9 +61,9 @@ async function foreignContent(candidate, source, options) {
 }
 function settingsOf(options, result) {
   const given = snapshotOptions(options);
-  for (const key of Object.keys(given)) if (!['signal', 'onProgress', 'maxPixels', 'protection'].includes(key)) throw fail('JXL_OPTIONS', `Unknown verification option ${key}; remove it.`);
+  for (const key of Object.keys(given)) if (!['signal', 'onProgress', 'maxPixels', 'protection'].includes(key)) throw fail('JXL_OPTIONS', `unknown option: ${key}`);
   admitSignal(given.signal);
-  if (given.onProgress !== undefined && typeof given.onProgress !== 'function') throw fail('JXL_OPTIONS', "Invalid onProgress; pass a function.");
+  if (given.onProgress !== undefined && typeof given.onProgress !== 'function') throw fail('JXL_OPTIONS', "onProgress: function");
   const kept = result && typeof result === 'object' ? Object.getOwnPropertyDescriptor(result, 'kept')?.value : undefined;
   const maxPixels = given.maxPixels === undefined && kept === 'jpeg-bytes' ? PIXELS : pixelLimit(given.maxPixels);
   return {...given, maxPixels};
@@ -72,17 +72,17 @@ function protectionOf(given, result) {
   if (given === undefined) return undefined;
   const source = object(given, 'Verification protection');
   if (![Object.prototype, null].includes(Object.getPrototypeOf(source)))
-    throw fail('JXL_OPTIONS', 'Verification protection is invalid; pass a plain object.');
+    throw fail('JXL_OPTIONS', 'protection: plain object');
   const fields = Object.getOwnPropertyDescriptors(source);
   for (const key of Reflect.ownKeys(fields)) {
-    if (!['exactRects', 'mask'].includes(key)) throw fail('JXL_OPTIONS', `Unknown verification protection field ${String(key)}; remove it.`);
-    if (!Object.hasOwn(fields[key], 'value')) throw fail('JXL_OPTIONS', 'Verification protection has accessors; pass plain values.');
+    if (!['exactRects', 'mask'].includes(key)) throw fail('JXL_OPTIONS', `unknown protection: ${String(key)}`);
+    if (!Object.hasOwn(fields[key], 'value')) throw fail('JXL_OPTIONS', 'protection: plain values');
   }
   return protectedScope({width: result.width, height: result.height, rectangles: fields.exactRects?.value, mask: fields.mask?.value});
 }
 function targetOf(fidelity, measurements = [], width, height) {
   if (fidelity && typeof fidelity === 'object' && Object.keys(fidelity).length === 1 && Object.hasOwn(fidelity, 'maxError')) {
-    if (!Number.isFinite(fidelity.maxError) || fidelity.maxError < 0) throw fail('JXL_OPTIONS', "Invalid maxError; use a finite nonnegative number.");
+    if (!Number.isFinite(fidelity.maxError) || fidelity.maxError < 0) throw fail('JXL_OPTIONS', "maxError: finite nonnegative");
     return {fidelity: fidelity.maxError === 0 ? 'exact' : fidelity, targetOrigin: 'explicit'};
   }
   const admitted = encodeFidelity(fidelity);
@@ -106,10 +106,10 @@ export function verify(original, output, options) {
     const decoder = configuredDecoder();
     const settings = settingsOf(options, output); check(settings.signal);
     settings[DECODER_SNAPSHOT] = decoder;
-    if (isIdentity(original)) throw fail('JXL_INPUT', 'Verification received a source identity; pass the original samples or bytes.');
+    if (isIdentity(original)) throw fail('JXL_INPUT', 'original: samples or bytes');
     const result = own(output, settings.maxPixels, Number.MAX_SAFE_INTEGER);
     if (!isImageResult(result) || result.fidelity === undefined)
-      throw fail('JXL_INPUT', 'Verification needs an encode result; pass verify(original, result) with its bytes.');
+      throw fail('JXL_INPUT', 'result: encode result with bytes');
     if (!result.meetsTarget) throw fail(result.reason.code, result.reason.message);
     dimensions(result.width, result.height, settings.maxPixels);
     settings.protection = protectionOf(settings.protection, result);
@@ -127,7 +127,7 @@ const verifySteps = (original,result,context) => {
   const options = settingsOf({maxPixels:context.maxPixels},result);
   options[DECODER_SNAPSHOT] = context && DECODER_SNAPSHOT in context ? context[DECODER_SNAPSHOT] : configuredDecoder();
   if (!isImageResult(result) || result.fidelity === undefined)
-    throw fail('JXL_INPUT','Verification needs an encode result; pass verify(original, result) with its bytes.');
+    throw fail('JXL_INPUT','result: encode result with bytes');
   if (!result.meetsTarget) throw fail(result.reason.code,result.reason.message);
   dimensions(result.width,result.height,options.maxPixels);
   return complete(original,result,options,{...context,tools:VERIFY_TOOLS}).catch(error => { throw declared(error); });
@@ -147,15 +147,15 @@ async function complete(pending, result, options, context) {
   try {
     const source = context?.sourceIdentity ?? (isRows(original) ? null : await identityOfSnapshot(original, options));
     if (source) receipt.source = source;
-    if (source && result.source && !sameIdentity(source, result.source)) throw refused('JXL_INPUT', "Original does not match the recorded source; pass the original used to encode this result.", receipt);
+    if (source && result.source && !sameIdentity(source, result.source)) throw refused('JXL_INPUT', "original: source mismatch", receipt);
     tell?.(0.15);
     if (result.kept === 'jpeg-bytes') {
-      if (options.protection) throw fail('JXL_UNSUPPORTED', 'Pixel protection cannot verify JPEG bytes; pass a result made from decoded pixels.');
-      if (target.fidelity !== 'exact') throw fail('JXL_UNSUPPORTED', 'JPEG byte restoration verifies exact preservation; encode decoded pixels to verify a perceptual target.');
+      if (options.protection) throw fail('JXL_UNSUPPORTED', 'protection: decoded pixels only');
+      if (target.fidelity !== 'exact') throw fail('JXL_UNSUPPORTED', 'jpeg: exact only; decode pixels for lossy');
       const raw = context ? original : await encodedSourceBytes(original);
-      if (!raw) throw fail('JXL_INPUT', 'JPEG verification has no original bytes; pass the original JPEG as a Uint8Array.');
+      if (!raw) throw fail('JXL_INPUT', 'original jpeg: Uint8Array');
       const compressed = result.format === 'jxl' ? result.bytes : result.format === 'jpeg' ? raw : null;
-      if (!compressed || result.format === 'jxl' && !isJPEG(context ? raw.subarray(0,2) : raw)) throw fail('JXL_INPUT', 'JPEG verification received incompatible files; pass the original JPEG and its recompress result.');
+      if (!compressed || result.format === 'jxl' && !isJPEG(context ? raw.subarray(0,2) : raw)) throw fail('JXL_INPUT', 'jpeg: original and recompress result');
       check(options.signal);
       const expected = result.format === 'jxl' ? raw : result.bytes;
       let size, restoredDigest, equal;
@@ -165,7 +165,7 @@ async function complete(pending, result, options, context) {
       } else {
         const restoring = {maxPixels: Math.min(options.maxPixels, PIXELS), signal: options.signal, ...(DECODER_SNAPSHOT in settings && {[DECODER_SNAPSHOT]: settings[DECODER_SNAPSHOT]})};
         const restored = await restoreFile(compressed, restoring);
-        if (!restored) throw fail('JXL_RECONSTRUCTION', 'This file has no JPEG reconstruction data; use a file made by recompress().');
+        if (!restored) throw fail('JXL_RECONSTRUCTION', 'reconstruction: use recompress()');
         size = result.format === 'jxl' ? displaySize(header(compressed)) : jpegDisplayDimensions(result.bytes, options.maxPixels);
         restoredDigest = await digestBytes(restored); equal = sameBytes(restored,expected);
         const others = equal && result.format === 'jxl' ? await restoredByJbrd(compressed, restoring) : null;
@@ -173,46 +173,91 @@ async function complete(pending, result, options, context) {
       }
       receipt = {...receipt, kind: 'jpeg-restore', restoredDigest,
         referenceDigest: result.format === 'jxl' ? receipt.source.digest : receipt.outputDigest};
-      if (!equal) throw refused('JXL_RECONSTRUCTION', 'Restored JPEG bytes differ from the original; recompress the original JPEG again.', receipt);
-      if (size.width !== result.width || size.height !== result.height) throw refused('JXL_DIMENSIONS', 'Output dimensions differ from the result record; pass the unmodified encode result.', receipt);
+      if (!equal) throw refused('JXL_RECONSTRUCTION', 'restored jpeg: mismatch; recompress', receipt);
+      if (size.width !== result.width || size.height !== result.height) throw refused('JXL_DIMENSIONS', 'dimensions: result mismatch', receipt);
     } else {
-      if (result.format === 'jpeg') throw fail('JXL_UNSUPPORTED', 'JPEG verification needs its recompress result; pass the unmodified result.');
+      if (result.format === 'jpeg') throw fail('JXL_UNSUPPORTED', 'jpeg: recompress result');
       const carried = result.format === 'jxl' && await foreignContent(result.bytes,
         async () => context ? (ArrayBuffer.isView(original) ? original : null) : encodedSourceBytes(original), settings);
-      if (carried) throw refused('JXL_TARGET', `File carries ${carried} absent from its source; pass the unmodified encode result.`, receipt);
+      if (carried) throw refused('JXL_TARGET', `unexpected metadata: ${carried}`, receipt);
       const proofDetails = {...(result.transform && {transform: result.transform}), ...(result.readAs && {readAs: result.readAs})};
+      const needsJpegPixelFallback = candidate => {
+        if (!candidate.proof.verified) return true;
+        if (result.kept === 'pixels' && candidate.kept !== 'pixels') return true;
+        if (candidate.proof.metric === 'ssimulacra2' && Number.isFinite(candidate.proof.score)) {
+          const claim = result.measurements.reduce((most, m) => m.metric === 'ssimulacra2' && m.domain !== 'predicted' && m.region === undefined &&
+            !(candidate.proof.notChecked === 'noise' && m.view === 'without-noise') ? Math.max(most, m.score) : most, -Infinity);
+          if (claim > candidate.proof.score + CLAIM_SLACK) return true;
+        }
+        if (candidate.proof.metric === 'max-error' && Number.isFinite(candidate.proof.score)) {
+          const claim = result.measurements.reduce((least, m) => m.metric === 'max-error' && m.region === undefined ? Math.min(least, m.score) : least, Infinity);
+          if (claim < candidate.proof.score - MAX_ERROR_SLACK) return true;
+        }
+        return false;
+      };
       let actual;
-      if (context) actual = await context.pixelResult(result.bytes,original,{fidelity:target.fidelity,format:result.format,
-        size:{width:result.width,height:result.height},outputDigest:receipt.outputDigest,details:proofDetails,options:settings,noiseOff:searchedWithoutNoise(result)},context);
-      else if (isRows(original)) actual = await rowResult(result.bytes, original, original, {fidelity: target.fidelity, format: result.format,
+      if (context) {
+        const callBounded = ctx => context.pixelResult(result.bytes,original,{fidelity:target.fidelity,format:result.format,
+          size:{width:result.width,height:result.height},outputDigest:receipt.outputDigest,details:proofDetails,options:settings,noiseOff:searchedWithoutNoise(result)},ctx);
+        const pixelRead = context.source?.kind === 'file' && settings.readAs === undefined && isJPEG(original.subarray(0,2)) ? jpegPixelReader(settings) : null;
+        try {
+          actual = await callBounded(context);
+          if (pixelRead && needsJpegPixelFallback(actual)) {
+            const altRef = await referenceFromOriginal(original, settings, pixelRead);
+            const alt = await callBounded({...context, reference: altRef});
+            if (!needsJpegPixelFallback(alt) || (!actual.proof.verified && alt.proof.verified)) actual = alt;
+          }
+        } catch (err) {
+          if (pixelRead && err?.code === 'JXL_JPEG') {
+            const altRef = await referenceFromOriginal(original, settings, pixelRead);
+            actual = await callBounded({...context, reference: altRef});
+          } else throw err;
+        }
+      } else if (isRows(original)) actual = await rowResult(result.bytes, original, original, {fidelity: target.fidelity, format: result.format,
         size: {width: result.width, height: result.height}, outputDigest: receipt.outputDigest, details: proofDetails, options: settings});
       else {
-        const reference = await referenceFromOriginal(original, settings, jpegReader());
-        actual = await pixelResult(result.bytes, reference, {record: result, referenceIdentity: reference === original ? receipt.source : undefined,
-          fidelity: target.fidelity, format: result.format, size: displaySize(result.format === 'jxl' ? header(result.bytes) : result),
-          outputDigest: receipt.outputDigest, details: proofDetails, options: settings});
+        const rawBytes = await encodedSourceBytes(original);
+        const pixelRead = rawBytes && isJPEG(rawBytes) && settings.readAs === undefined ? jpegPixelReader(settings) : null;
+        const outSize = displaySize(result.format === 'jxl' ? header(result.bytes) : result);
+        const checkRef = ref => pixelResult(result.bytes, ref, {record: result, referenceIdentity: ref === original ? receipt.source : undefined,
+          fidelity: target.fidelity, format: result.format, size: outSize, outputDigest: receipt.outputDigest, details: proofDetails, options: settings});
+        let usedPixels = false, reference;
+        try {
+          reference = await referenceFromOriginal(original, settings, jpegReader());
+        } catch (err) {
+          if (pixelRead && err?.code === 'JXL_JPEG') {
+            reference = await referenceFromOriginal(original, settings, pixelRead);
+            usedPixels = true;
+          } else throw err;
+        }
+        actual = await checkRef(reference);
+        if (!usedPixels && pixelRead && jpegReader() && needsJpegPixelFallback(actual)) {
+          const altRef = await referenceFromOriginal(original, settings, pixelRead);
+          const alt = await checkRef(altRef);
+          if (!needsJpegPixelFallback(alt) || (!actual.proof.verified && alt.proof.verified)) actual = alt;
+        }
       }
       receipt = {...receipt, ...actual.proof, source: actual.source ?? receipt.source,
         ...(actual.proof.metric && {domain: 'decoded-output', targetOrigin: target.targetOrigin}),
         ...(actual.proof.metric === 'ssimulacra2' && {arithmetic: 'binary64'})};
-      if (result.source && !sameIdentity(receipt.source, result.source)) throw refused('JXL_INPUT', "Original does not match the recorded source; pass the original used to encode this result.", receipt);
-      if (actual.width !== result.width || actual.height !== result.height) throw refused('JXL_DIMENSIONS', 'Output dimensions differ from the result record; pass the unmodified encode result.', receipt);
-      if (!actual.proof.verified) throw refused(actual.reason?.code ?? 'JXL_TARGET', actual.reason?.message ?? 'The output misses its fidelity target; encode again with that target.', receipt);
+      if (result.source && !sameIdentity(receipt.source, result.source)) throw refused('JXL_INPUT', "original: source mismatch", receipt);
+      if (actual.width !== result.width || actual.height !== result.height) throw refused('JXL_DIMENSIONS', 'dimensions: result mismatch', receipt);
+      if (!actual.proof.verified) throw refused(actual.reason?.code ?? 'JXL_TARGET', actual.reason?.message ?? 'fidelity: target missed; reencode', receipt);
       if (receipt.metric === 'ssimulacra2' && Number.isFinite(receipt.score)) {
         const claim = result.measurements.reduce((most, m) => m.metric === 'ssimulacra2' && m.domain !== 'predicted' && m.region === undefined &&
           !(receipt.notChecked === 'noise' && m.view === 'without-noise') ? Math.max(most, m.score) : most, -Infinity);
         if (claim > receipt.score + CLAIM_SLACK)
-          throw refused('JXL_TARGET', `Result claims ${claim} but measures ${receipt.score}; pass the unmodified encode result.`, receipt);
+          throw refused('JXL_TARGET', `claimed: ${claim}; measured: ${receipt.score}`, receipt);
       }
       if (receipt.metric === 'max-error' && Number.isFinite(receipt.score)) {
         const claim = result.measurements.reduce((least, m) => m.metric === 'max-error' && m.region === undefined ? Math.min(least, m.score) : least, Infinity);
         if (claim < receipt.score - MAX_ERROR_SLACK)
-          throw refused('JXL_TARGET', `Result claims error ${claim} but measures ${receipt.score}; pass the unmodified encode result.`, receipt);
+          throw refused('JXL_TARGET', `claimed error: ${claim}; measured: ${receipt.score}`, receipt);
       }
       const unchecked = result.measurements.filter(m => m.region !== undefined || m.metric !== receipt.metric)
         .map(m => ({metric: m.metric, ...(m.region && {region: {...m.region}})}));
       if (unchecked.length) receipt = {...receipt, unchecked};
-      if (result.kept === 'pixels' && actual.kept !== 'pixels') throw refused('JXL_TARGET', 'Decoded pixels differ from the exact target; encode the original again with exact fidelity.', receipt);
+      if (result.kept === 'pixels' && actual.kept !== 'pixels') throw refused('JXL_TARGET', 'exact pixels: mismatch; reencode', receipt);
     }
   } catch (error) {
     check(options.signal);

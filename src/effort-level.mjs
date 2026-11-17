@@ -7,8 +7,8 @@ export const measuredLevel = effort => effort >= 9 ? 9 : effort >= 8 ? 7 : effor
 export const BALANCED_EFFORT = 7;
 
 export function admitEffort(options = {}, fallback = FAST_EFFORT) {
-  if (options === null || typeof options !== 'object') throw fault('JXL_INPUT', 'Options are an object.');
+  if (options === null || typeof options !== 'object') throw fault('JXL_INPUT', 'options: object');
   const effort = options.effort === undefined ? fallback : options.effort;
-  if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fault('JXL_INPUT', 'Effort is a whole number from 1 to 9.');
+  if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fault('JXL_INPUT', 'effort: integer 1-9');
   return effort;
 }

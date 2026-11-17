@@ -27,7 +27,7 @@ function buildHuffman(counts, symbols) {
   for (let length = 1; length <= 16; length++) {
     for (let i = 0; i < counts[length - 1]; i++) {
       const symbol = symbols[k++], start = code << (16 - length), n = 1 << (16 - length);
-      if (start + n >= 65536) throw jpegError('bad Huffman table');
+      if (start + n >= 65536) throw jpegError('Huffman table');
       lookup.fill((length << 8) | symbol, start, start + n);
       code++;
     }
@@ -40,7 +40,7 @@ function validateHuffman(counts) {
   let code = 0;
   for (let length = 1; length <= 16; length++) {
     const n = counts[length - 1];
-    if (n && (code + n) * (1 << (16 - length)) >= 65536) throw jpegError('bad Huffman table');
+    if (n && (code + n) * (1 << (16 - length)) >= 65536) throw jpegError('Huffman table');
     code = (code + n) * 2;
   }
 }
@@ -109,7 +109,7 @@ function resolveIcc(iccParts, count, componentCount, isoGain) {
   if (!count) return {colorSpace: 'srgb', icc: undefined};
   const parts = [];
   for (let i = 1; i <= count; i++) {
-    if (!iccParts[i]) throw jpegError('a color profile cut short');
+    if (!iccParts[i]) throw jpegError('ICC profile: incomplete');
     parts.push(iccParts[i]);
   }
   const original = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
@@ -128,7 +128,7 @@ function resolveIcc(iccParts, count, componentCount, isoGain) {
     if (named && ICC_CACHE.size < 64) ICC_CACHE.set(cacheKey, out);
     return out;
   } catch (error) {
-    if (error.code === 'JXL_INPUT') throw jpegError('invalid or incompatible color profile: ' + error.message);
+    if (error.code === 'JXL_INPUT') throw jpegError('ICC profile: ' + error.message);
     throw error;
   }
 }
@@ -164,7 +164,7 @@ function finishAfterScan(bytes, pos, total, restartInterval, orientation) {
 }
 
 function trySequentialScaled(bytes, maxPixels, outputs, onBandOut) {
-  if (!(bytes.length > 4) || bytes[0] !== 0xFF || bytes[1] !== 0xD8) throw jpegError('not a JPEG');
+  if (!(bytes.length > 4) || bytes[0] !== 0xFF || bytes[1] !== 0xD8) throw jpegError('invalid signature');
   const quant = [], huffman = [[], []], badDC = new Set(), icc = {count: 0, parts: []};
   const lookup = (kind, slot) => { const t = huffman[kind][slot]; return t && (t.lookup ??= buildHuffman(t.counts, t.symbols)); };
   const u16 = at => (bytes[at] << 8) | bytes[at + 1];
@@ -175,38 +175,38 @@ function trySequentialScaled(bytes, maxPixels, outputs, onBandOut) {
 
   for (;;) {
     if (pos >= bytes.length) throw jpegError('truncated');
-    if (bytes[pos] !== 0xFF) throw jpegError('marker expected');
+    if (bytes[pos] !== 0xFF) throw jpegError('marker');
     while (bytes[pos] === 0xFF) pos++;
     const marker = bytes[pos++];
-    if (++markerCount > 16384) throw jpegError('more than 16384 JPEG markers');
-    if (marker === 0xD9) throw jpegError('no picture');
-    if (marker === 0xD8) throw jpegError('a second start');
-    if (marker >= 0xD0 && marker <= 0xD7) throw jpegError('a restart marker outside a scan');
+    if (++markerCount > 16384) throw jpegError('markers: max 16384');
+    if (marker === 0xD9) throw jpegError('missing frame');
+    if (marker === 0xD8) throw jpegError('duplicate SOI');
+    if (marker >= 0xD0 && marker <= 0xD7) throw jpegError('restart outside scan');
     if (marker === 0x01) continue;
     if (pos + 2 > bytes.length) throw jpegError('truncated');
     const length = u16(pos), segment = pos + 2, end = pos + length;
-    if (length < 2 || end > bytes.length) throw jpegError('bad segment');
+    if (length < 2 || end > bytes.length) throw jpegError('segment length');
     pos = end;
 
     if (marker === 0xDB) {
       for (let at = segment; at < end;) {
         const pq = bytes[at] >> 4, tq = bytes[at] & 15;
-        if (pq > 1 || tq > 3 || at + 1 + (pq ? 128 : 64) > end) throw jpegError('bad quantisation table');
+        if (pq > 1 || tq > 3 || at + 1 + (pq ? 128 : 64) > end) throw jpegError('quantization table');
         at++;
         const table = new Int32Array(64);
-        for (let k = 0; k < 64; k++) { table[ZIGZAG[k]] = pq ? u16(at) : bytes[at]; at += pq ? 2 : 1; if (!table[ZIGZAG[k]]) throw jpegError('a zero quantisation step'); }
+        for (let k = 0; k < 64; k++) { table[ZIGZAG[k]] = pq ? u16(at) : bytes[at]; at += pq ? 2 : 1; if (!table[ZIGZAG[k]]) throw jpegError('zero quantization step'); }
         quant[tq] = table;
       }
     } else if (marker === 0xC4) {
       for (let at = segment; at < end;) {
-        if (++huffmanCount > 89) throw jpegError('more than 89 JPEG Huffman tables');
+        if (++huffmanCount > 89) throw jpegError('Huffman tables: max 89');
         const tc = bytes[at] >> 4, th = bytes[at] & 15;
-        if (tc > 1 || th > 3 || at + 17 > end) throw jpegError('bad Huffman table');
+        if (tc > 1 || th > 3 || at + 17 > end) throw jpegError('Huffman table');
         at++;
         const counts = bytes.subarray(at, at + 16);
         let total = 0;
         for (const c of counts) total += c;
-        if (total > 256 || at + 16 + total > end) throw jpegError('bad Huffman table');
+        if (total > 256 || at + 16 + total > end) throw jpegError('Huffman table');
         const symbols = bytes.subarray(at + 16, at + 16 + total);
         validateHuffman(counts);
         huffman[tc][th] = {counts, symbols, lookup: null};
@@ -214,22 +214,22 @@ function trySequentialScaled(bytes, maxPixels, outputs, onBandOut) {
         at += 16 + total;
       }
     } else if (marker === 0xC0 || marker === 0xC1) {
-      if (frame) throw jpegError('two frames');
-      if (end - segment < 6) throw jpegError('bad frame header');
-      if (bytes[segment] !== 8) throw jpegError('only 8-bit samples');
+      if (frame) throw jpegError('multiple frames');
+      if (end - segment < 6) throw jpegError('frame header');
+      if (bytes[segment] !== 8) throw jpegError('bit depth: 8');
       const height = u16(segment + 1), width = u16(segment + 3), count = bytes[segment + 5];
-      if (!width || !height) throw jpegError('a height left to a DNL marker');
+      if (!width || !height) throw jpegError('DNL height');
       if (count === 4) return null;
-      if (count !== 1 && count !== 3) throw jpegError('only gray or three components');
-      if (end - segment < 6 + count * 3) throw jpegError('bad frame header');
-      if (width > LIMITS.edge || height > LIMITS.edge) throw jpegError('a picture past ' + LIMITS.edge + ' pixels on a side', 'JXL_DIMENSIONS');
-      if (width * height > most) throw jpegError('a picture past ' + most + ' pixels', 'JXL_DIMENSIONS');
+      if (count !== 1 && count !== 3) throw jpegError('components: 1 or 3');
+      if (end - segment < 6 + count * 3) throw jpegError('frame header');
+      if (width > LIMITS.edge || height > LIMITS.edge) throw jpegError('side: max ' + LIMITS.edge, 'JXL_DIMENSIONS');
+      if (width * height > most) throw jpegError('pixels: max ' + most, 'JXL_DIMENSIONS');
       const components = [];
       for (let i = 0, at = segment + 6; i < count; i++, at += 3) {
         const h = bytes[at + 1] >> 4, v = bytes[at + 1] & 15, tq = bytes[at + 2];
-        if (h < 1 || h > 4 || v < 1 || v > 4) throw jpegError('bad sampling');
-        if (tq > 3) throw jpegError('bad quantisation table');
-        if (components.some(c => c.id === bytes[at])) throw jpegError('two components with one id');
+        if (h < 1 || h > 4 || v < 1 || v > 4) throw jpegError('sampling factors');
+        if (tq > 3) throw jpegError('quantization table');
+        if (components.some(c => c.id === bytes[at])) throw jpegError('duplicate component id');
         components.push({id: bytes[at], h, v, tq, pred: 0});
       }
       const hmax = Math.max(...components.map(c => c.h)), vmax = Math.max(...components.map(c => c.v));
@@ -243,14 +243,14 @@ function trySequentialScaled(bytes, maxPixels, outputs, onBandOut) {
     } else if (marker === 0xC2) {
       return null;
     } else if (marker === 0xC3 || (marker >= 0xC5 && marker <= 0xC7) || (marker >= 0xC9 && marker <= 0xCB) || (marker >= 0xCD && marker <= 0xCF)) {
-      throw jpegError('lossless, hierarchical or arithmetic coding');
+      throw jpegError('coding: baseline or progressive');
     } else if (marker === 0xDD) {
-      if (length < 4) throw jpegError('bad segment');
+      if (length < 4) throw jpegError('segment length');
       restartInterval = u16(segment);
     } else if (marker === 0xDC) {
-      throw jpegError('a DNL marker');
+      throw jpegError('DNL marker');
     } else if (marker === 0xDA) {
-      if (!frame) throw jpegError('a scan before the frame');
+      if (!frame) throw jpegError('scan before frame');
       const n = bytes[segment];
       if (n !== frame.components.length || segment + 1 + n * 2 + 3 > end) return null;
       const scan = [];
@@ -259,16 +259,16 @@ function trySequentialScaled(bytes, maxPixels, outputs, onBandOut) {
         const component = frame.components[i];
         if (component.id !== bytes[at]) return null;
         component.quant = quant[component.tq];
-        if (!component.quant) throw jpegError('a scan without its quantisation table');
+        if (!component.quant) throw jpegError('missing quantization table');
         const td = bytes[at + 1] >> 4, ta = bytes[at + 1] & 15;
-        if (td > 3 || ta > 3) throw jpegError('a scan table selector above 3');
-        if (badDC.has(td)) throw jpegError('bad Huffman table');
+        if (td > 3 || ta > 3) throw jpegError('table selector: 0-3');
+        if (badDC.has(td)) throw jpegError('Huffman table');
         scan.push({component, dc: lookup(0, td), ac: lookup(1, ta)});
       }
-      if (n > 1 && scan.reduce((sum, s) => sum + s.component.h * s.component.v, 0) > 10) throw jpegError('bad sampling');
+      if (n > 1 && scan.reduce((sum, s) => sum + s.component.h * s.component.v, 0) > 10) throw jpegError('sampling factors');
       const ss = bytes[at], se = bytes[at + 1], ah = bytes[at + 2] >> 4, al = bytes[at + 2] & 15;
-      if (ss !== 0 || se !== 63 || ah !== 0 || al !== 0) throw jpegError('a bad spectral selection');
-      if ((bytes.length - end) * 8 < frame.components.reduce((sum, c) => sum + c.blocksW * c.blocksH, 0)) throw jpegError('a scan cut short');
+      if (ss !== 0 || se !== 63 || ah !== 0 || al !== 0) throw jpegError('spectral selection');
+      if ((bytes.length - end) * 8 < frame.components.reduce((sum, c) => sum + c.blocksW * c.blocksH, 0)) throw jpegError('scan: incomplete');
 
       const prelimOrient = orientation ?? 1;
       if (onBandOut && prelimOrient > 1) return null;
@@ -312,7 +312,7 @@ function trySequentialScaled(bytes, maxPixels, outputs, onBandOut) {
     } else if (marker === 0xE2) {
       if (length >= 16 && sig(segment, 'ICC_PROFILE\0')) {
         const seq = bytes[segment + 12], count = bytes[segment + 13];
-        if (!seq || !count || seq > count || (icc.count && icc.count !== count) || icc.parts[seq]) throw jpegError('a color profile cut short');
+        if (!seq || !count || seq > count || (icc.count && icc.count !== count) || icc.parts[seq]) throw jpegError('ICC profile: incomplete');
         icc.count = count; icc.parts[seq] = sliceBytes(bytes, segment + 14, end);
       } else if (length >= 35 && sig(segment, 'urn:iso:std:iso:ts:21496:-1\0')) isoGain = true;
     } else if (marker === 0xEE) {
@@ -341,12 +341,12 @@ export async function decodeJpegPixels(bytes, {maxPixels, signal, outputs, scale
       plan = makeSubsamplingPlan(parsed.width, parsed.height, parsed.components, parsed.ycbcr, 8);
     }
     if (parsed.components.length === 4 && (parsed.iccBytes || parsed.profile)) {
-      throw jpegError('CMYK or YCCK JPEG with an ICC profile requires a host color-managed pixel decoder; pass its RGBA pixels.', 'JXL_UNSUPPORTED');
+      throw jpegError('CMYK/YCCK with ICC: pass RGBA pixels', 'JXL_UNSUPPORTED');
     }
     if (parsed.components.length === 4 && ![0, 2].includes(parsed.adobeTransform)) {
       throw jpegError(parsed.adobeTransform < 0
-        ? 'Four-component CMYK/YCCK JPEG without Adobe APP14 has ambiguous ink polarity; decode its pixels with a color-managed host.'
-        : 'CMYK/YCCK JPEG has an unrecognized Adobe APP14 color transform; decode its pixels with a color-managed host.', 'JXL_UNSUPPORTED');
+        ? 'CMYK/YCCK without APP14: pass RGBA pixels'
+        : 'CMYK/YCCK APP14: pass RGBA pixels', 'JXL_UNSUPPORTED');
     }
     let rgba, outW = parsed.width, outH = parsed.height;
     if (plan) {

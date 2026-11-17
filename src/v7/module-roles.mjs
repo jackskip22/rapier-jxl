@@ -43,10 +43,10 @@ const handing = call => function (input, options) {
   catch { return call.apply(this, arguments); }
   if (!taken) return call.apply(this, arguments);
   try {
-    if (!('value' in taken) || taken.value !== true) throw fail('JXL_OPTIONS', "Invalid transfer; set it to true or omit it.");
+    if (!('value' in taken) || taken.value !== true) throw fail('JXL_OPTIONS', 'transfer: true');
     const buffers = buffersOf(input);
     if (buffers.some(buffer => !(buffer instanceof ArrayBuffer) || buffer.detached))
-      throw fail('JXL_INPUT', "ArrayBuffer cannot be transferred; copy it to a new ArrayBuffer.");
+      throw fail('JXL_INPUT', 'ArrayBuffer: not transferable');
     const rest = Object.create(Object.getPrototypeOf(options));
     for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(options))) if (key !== 'transfer') Object.defineProperty(rest, key, descriptor);
     for (const key of Object.getOwnPropertySymbols(options)) Object.defineProperty(rest, key, Object.getOwnPropertyDescriptor(options, key));
@@ -59,7 +59,7 @@ const handing = call => function (input, options) {
 const jpegBlob = blob => {
   let type;
   try { type = blob.type; } catch (reason) { throw callers(reason); }
-  if (typeof type !== 'string') throw fail('JXL_INPUT', 'The Blob type is invalid; use a string type.');
+  if (typeof type !== 'string') throw fail('JXL_INPUT', 'blob.type: string');
   return type ? /^image\/p?jpe?g$/i.test(type) : blobHead(blob).then(head => head[0] === 255 && head[1] === 216, () => false);
 };
 const QUEUED = /* @__PURE__ */ new Set(['workerFactory', 'workerStartupTimeout', 'maxPendingBytes', 'maxPendingJobs']);
@@ -76,7 +76,7 @@ export function inPlace(name, raw, {gpu = false, webgpu = !!gpu, pool, url, prep
     ...(pool && {helpers: async () => pool, helper: ownFile(roleName(name, 'helper'), url)})});
   const release = (ending, final) => new Promise(resolve => resolve(runtime.release(ending, final))).catch(cause => {
     if (own) throw cause;
-    throw Object.assign(fail('JXL_WORKER', 'Helper cleanup failed; check the worker terminate() method.'), {cause});
+    throw Object.assign(fail('JXL_WORKER', 'terminate() failed'), {cause});
   });
   const retire = () => {
     if (retirement) return;
@@ -85,21 +85,21 @@ export function inPlace(name, raw, {gpu = false, webgpu = !!gpu, pool, url, prep
     held.promise.then(() => { if (retirement === held) retirement = null; }, () => {});
     settle(release(owner, false));
   };
-  const shut = () => fail('JXL_CLOSED', 'The module is closing; call again once close() has resolved.');
+  const shut = () => fail('JXL_CLOSED', 'closing');
   const configure = given => {
-    const config = snapshotOptions(given, 'configure options');
+    const config = snapshotOptions(given, 'options');
     for (const key of Object.keys(config)) {
       if (QUEUED.has(key)) { if (config[key] !== undefined) queued(key, config[key]); continue; }
-      if (!keys.includes(key)) throw fail('JXL_OPTIONS', `Unknown configuration option: ${key}; use only ${keys.join(', ')}.`);
+      if (!keys.includes(key)) throw fail('JXL_OPTIONS', `unknown option: ${key} (allowed: ${keys.join(', ')})`);
     }
-    if (closing) throw fail('JXL_OPTIONS', 'The module is closing; configure it after close() resolves.');
-    if (running || pending) throw fail('JXL_OPTIONS', 'A call is active; wait for it to settle before configuring the module.');
-    maxJobs = config.maxPendingJobs ?? Infinity;
+    if (closing) throw fail('JXL_OPTIONS', 'closing: wait for close()');
+    if (running || pending) throw fail('JXL_OPTIONS', 'configure: call active');
+    const jobs = config.maxPendingJobs ?? Infinity;
     for (const key of QUEUED) delete config[key];
     pixelLimit(config.maxPixels); webgpuSetting(config.webgpu);
     const helpers = !((typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) || (typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) || (typeof __RAPIER_JXL_UNSTEPPED__ !== 'undefined' && __RAPIER_JXL_UNSTEPPED__ === true)) && helps ? helperReservation(config.helpers) : undefined;
     const changed = reservation && (helpers?.count !== reservation.count || helpers?.memoryBytes !== reservation.memoryBytes);
-    settings = Object.keys(config).length ? config : null; reservation = helpers;
+    settings = Object.keys(config).length ? config : null; reservation = helpers; maxJobs = jobs;
     if (runtime && changed) retire();
   };
   const close = () => {

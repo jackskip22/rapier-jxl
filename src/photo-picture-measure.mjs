@@ -40,10 +40,10 @@ export function pictureMeasure(source, {cacheBytes = 0, signal, maxPixels} = {})
   return {
     domain: 'decoded-output',
     measure(picture, want) {
-      if (closed) throw fault('JXL_INTERNAL', 'The picture measurement is closed.');
+      if (closed) throw fault('JXL_INTERNAL', 'photo-picture-measure:closed');
       check(signal);
       if (picture.width !== width || picture.height !== height || !picture.rgba)
-        throw fault('JXL_DIMENSIONS', 'The shown picture differs from the measurement reference.');
+        throw fault('JXL_DIMENSIONS', 'shown picture: size mismatch');
       const scores = measure(picture, want); check(signal); return scores;
     },
     destroy() { if (closed) return; closed = true; measure.destroy(); source = null; },

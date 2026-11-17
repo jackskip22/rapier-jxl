@@ -11,23 +11,23 @@ const HEADER_BYTES = PREFIX.length + 8;
 const reject = message => { throw fail('JXL_OPTIONS', message); };
 
 function record(value, keys, name) {
-  if (!isPlainRecord(value)) reject(`Invalid ${name}; pass a plain data object.`);
+  if (!isPlainRecord(value)) reject(`${name}: plain object`);
   const descriptors = Object.getOwnPropertyDescriptors(value), copied = {};
   for (const key of Reflect.ownKeys(descriptors)) {
-    if (!keys.has(key)) reject(`${name} has an unknown field ${String(key)}; remove it.`);
-    if (!('value' in descriptors[key])) reject(`${name} has accessors; pass data values.`);
+    if (!keys.has(key)) reject(`unknown ${name}: ${String(key)}`);
+    if (!('value' in descriptors[key])) reject(`${name}: plain values`);
     copied[key] = descriptors[key].value;
   }
   return copied;
 }
 
 function binaryMask(value, pixels) {
-  if (typedName.call(value) !== 'Uint8Array') reject("Invalid protection mask; pass a Uint8Array containing only 0 and 1.");
+  if (typedName.call(value) !== 'Uint8Array') reject("mask: Uint8Array 0 or 1");
   const buffer = typedFields.buffer.call(value), length = typedFields.byteLength.call(value);
   if (arrayBufferBytes(buffer) === null || length !== pixels)
-    reject("Invalid protection mask; pass one byte per output pixel on an ordinary attached ArrayBuffer.");
+    reject("mask: one byte per pixel, attached ArrayBuffer");
   try { return new Uint8Array(buffer, typedFields.byteOffset.call(value), length); }
-  catch { reject("Protection mask buffer is detached; pass an attached ArrayBuffer."); }
+  catch { reject("mask: attached ArrayBuffer"); }
 }
 
 function fillBits(bits, start, end) {
@@ -40,14 +40,14 @@ function fillBits(bits, start, end) {
 }
 
 function rectangleEvents(rectangles, width, height) {
-  if (!Array.isArray(rectangles)) reject("Invalid protection rectangles; pass an array.");
+  if (!Array.isArray(rectangles)) reject("rectangles: array");
   const length = Object.getOwnPropertyDescriptor(rectangles, 'length')?.value;
-  if (!Number.isSafeInteger(length) || length < 0) reject('Protection rectangles do not have a valid array length; pass an ordinary array of rectangles.');
+  if (!Number.isSafeInteger(length) || length < 0) reject('rectangles: ordinary array length');
   for (const key of Reflect.ownKeys(rectangles)) {
     if (key === 'length') continue;
     const index = typeof key === 'string' ? Number(key) : NaN;
     if (!Number.isSafeInteger(index) || index < 0 || index >= length || String(index) !== key)
-      reject("Protection array contains extra properties; pass indexed data entries only.");
+      reject("rectangles: indexed entries only");
   }
   let heads = null;
   const events = [];
@@ -56,13 +56,13 @@ function rectangleEvents(rectangles, width, height) {
   };
   for (let i = 0; i < length; i++) {
     const entry = Object.getOwnPropertyDescriptor(rectangles, i);
-    if (!entry || !('value' in entry)) reject("Protection array has holes or accessors; pass a dense array of data values.");
+    if (!entry || !('value' in entry)) reject("rectangles: dense data values");
     const {x, y, width: w, height: h} = record(entry.value, RECT_KEYS, 'A protection rectangle');
     if (![x, y, w, h].every(Number.isSafeInteger) || w < 1 || h < 1)
-      reject('A protection rectangle is invalid; pass safe-integer x and y and positive safe-integer width and height.');
+      reject('rectangle: safe x,y; positive safe width,height');
     const endX = x + w, endY = y + h;
     if (!Number.isSafeInteger(endX) || !Number.isSafeInteger(endY))
-      reject('A protection rectangle endpoint overflows; keep x + width and y + height within safe integers.');
+      reject('rectangle endpoint: safe integers');
     const x0 = Math.max(0, x), x1 = Math.min(width, endX), y0 = Math.max(0, y), y1 = Math.min(height, endY);
     if (x1 <= x0 || y1 <= y0) continue;
     heads ??= new Int32Array(height + 1).fill(-1);
@@ -105,7 +105,7 @@ export function protectedScope(given) {
   const bits = owned.subarray(HEADER_BYTES);
   if (data) for (let i = 0; i < pixels; i++) {
     const value = data[i];
-    if (value !== 0 && value !== 1) reject("Protection mask contains other values; use only 0 and 1.");
+    if (value !== 0 && value !== 1) reject("mask values: 0 or 1");
     if (value) bits[i >>> 3] |= 1 << (i & 7);
   }
   addRectangles(bits, width, height, rects);

@@ -3,7 +3,7 @@ import {requireDecode} from './decode-bits.mjs';
 
 export function canvasArea(h, region, oriented) {
   const o = oriented ? h.orientation - 1 : 0, W = h.width, H = h.height, swap = o >= 4, w = swap ? H : W, ht = swap ? W : H;
-  if (region.x + region.width > w || region.y + region.height > ht) throw Object.assign(new Error(`region lies inside the picture (${w} x ${ht}).`), {code: 'JXL_OPTIONS'});
+  if (region.x + region.width > w || region.y + region.height > ht) throw Object.assign(new Error(`region: outside ${w} x ${ht}`), {code: 'JXL_OPTIONS'});
   let [x, y, cw, ch] = swap ? [region.y, region.x, region.height, region.width] : [region.x, region.y, region.width, region.height];
   if (0b11000110 >> o & 1) x = W - x - cw;
   if (0b01101100 >> o & 1) y = H - y - ch;
@@ -31,7 +31,7 @@ export function cropFrame(frame, region) {
   };
   return {...frame, width, height, data: cut(frame.data, frame.width, 4), planes: frame.planes.map(p => cut(p, frame.width, 1)),
     extraChannels: frame.extraChannels.map(e => {
-      requireDecode(e.width === frame.width && e.height === frame.height, 'JPEG XL extra channel does not cover the picture.');
+      requireDecode(e.width === frame.width && e.height === frame.height, 'extra channel: size mismatch');
       return {...e, width, height, data: cut(e.data, frame.width, 1)};
     })};
 }

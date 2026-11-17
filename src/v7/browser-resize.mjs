@@ -20,7 +20,7 @@ const resized = (bitmap, width, height) => createImageBitmap(bitmap, {resizeWidt
 function pixelsOf(bitmap, picture) {
   const {width, height} = bitmap, colorSpace = spaceOf(picture), canvas = new OffscreenCanvas(width, height);
   const context = canvas.getContext('2d', {willReadFrequently: true, colorSpace});
-  if (!context) throw fail('JXL_UNSUPPORTED', "This browser cannot resize through a 2D canvas; resize the image before passing its pixels.");
+  if (!context) throw fail('JXL_UNSUPPORTED', 'no 2D canvas resize: pass resized pixels');
   context.drawImage(bitmap, 0, 0);
   const {data} = context.getImageData(0, 0, width, height, {colorSpace});
   const {data: _data, width: _width, height: _height, ...description} = picture;
@@ -79,8 +79,8 @@ export async function browserResized(picture, width, height) {
   finally { whole.close(); }
 }
 export async function browserReference(picture, transform) {
-  if (!hosted()) throw fail('JXL_UNSUPPORTED', 'This output was resized by a browser: verify it in a browser, with the original.');
-  if (!browserResizable(picture)) throw fail('JXL_UNSUPPORTED', "Original does not match this resized output; pass the original 8-bit picture.");
+  if (!hosted()) throw fail('JXL_UNSUPPORTED', 'browser-resized output: verify in browser');
+  if (!browserResizable(picture)) throw fail('JXL_UNSUPPORTED', 'original: 8-bit picture required');
   const opened = [];
   try {
     let bitmap = await bitmapOf(picture); opened.push(bitmap);

@@ -56,10 +56,11 @@ import {runCaptureComplete} from './capture-complete-run.mjs';
 import {configuredDecoder, DECODER_SNAPSHOT} from '../shown-picture.mjs';
 import {remember} from '../call-memo.mjs';
 import {withProgressive} from '../progressive-mode.mjs';
+import {admitSampleFormat} from '../admit-samples.mjs';
 export {supported} from './capture-support.mjs';
 
-const FEATURED = 'Orientation, extra channels and features need 8-bit lossy.';
-const EXTRA_EXACT = "An exact picture with extra channels is written by format({kind: 'channels'}) from jpegxl/format; encode writes them lossy.";
+const FEATURED = 'orientation, extraChannels, features: 8-bit lossy only';
+const EXTRA_EXACT = "exact extraChannels: use format({kind: 'channels'}) from jpegxl/format";
 
 let prepared;
 export const prepare = preparedAlone(() => prepared ||= (async () => {
@@ -98,10 +99,10 @@ async function encodeOwned(input, options, helpers, {codec, target, webgpu, maxP
   const readAs = options.readAs;
   check(options.signal);
   if (isPlainRecord(input) && isDecoded(input)) input = fromDecoded(input);
-  if (Array.isArray(input?.frames)) throw fail('JXL_UNSUPPORTED', "This entry encodes still images; use rapier-jxl/animation for an animation.");
+  if (Array.isArray(input?.frames)) throw fail('JXL_UNSUPPORTED', 'animated input: use jpegxl/animation');
   if (isRowSource(input)) {
-    if (readAs !== undefined) throw fail('JXL_OPTIONS', "A row source sets its own color; remove readAs and set colorSpace on the source.");
-    if (options.features !== undefined) throw fail('JXL_UNSUPPORTED', "A row source takes no features; pass the picture as pixels, a canvas or a Blob.");
+    if (readAs !== undefined) throw fail('JXL_OPTIONS', 'readAs: not with row source');
+    if (options.features !== undefined) throw fail('JXL_UNSUPPORTED', 'features: not with row source');
     const source = admitRows(input, maxPixels), report = options.onProgress;
     source.description = own(source.description, maxPixels);
     resultReference(options, source);
@@ -125,7 +126,7 @@ async function encodeOwned(input, options, helpers, {codec, target, webgpu, maxP
   }
   const budget = Math.max(DEFAULT_INPUT_BYTES, maxPixels * 16);
   const features = owned ? owned.features : own(options.features, maxPixels, budget);
-  if ((typeof __RAPIER_JXL_STILL__ !== 'undefined' && __RAPIER_JXL_STILL__ === true) && features !== undefined) throw fail('JXL_OPTIONS', 'This encoder does not accept features; remove features from the options.');
+  if ((typeof __RAPIER_JXL_STILL__ !== 'undefined' && __RAPIER_JXL_STILL__ === true) && features !== undefined) throw fail('JXL_OPTIONS', 'unknown option: features');
   const settle = picture => {
     if (picture.extraChannels !== undefined && codec.qualityIntent === undefined && codec.quality === 100)
       throw fail('JXL_UNSUPPORTED', EXTRA_EXACT);
@@ -198,11 +199,25 @@ async function encodeOwned(input, options, helpers, {codec, target, webgpu, maxP
       () => encodePicture({data, width, height, ...source}, exactCodec(settled), hooks, helpers, false))
       .then(bytes => unlettered({data, width, height, ...source}, bytes, true))));
   const screenFirst = picture => codec.effort >= MEASURED_EFFORT && codec.qualityIntent < 1 && screenLike(picture.data, picture.width, picture.height);
-  if (captured && captured.input.orientation !== undefined && codec.quality < 100 && codec.effort >= MEASURED_EFFORT &&
-      captured.input.extraChannels === undefined && captured.features === undefined && captured.target === undefined) {
-    const {orientation, ...shown} = await orientSamples(captured.input, {signal: hooks.signal});
-    captured.input = shown;
-  }
+  const normalizeCaptured = async (state, activeCodec) => {
+    if (!state || state.features !== undefined || state.target !== undefined) return;
+    if (Array.isArray(state.input.extraChannels) && !state.input.extraChannels.length) {
+      const {extraChannels: _extra, ...rest} = state.input;
+      state.input = rest;
+    }
+    if (state.input.orientation === 1) {
+      const {orientation: _ori, ...rest} = state.input;
+      state.input = rest;
+    }
+    if (state.input.orientation !== undefined && state.input.extraChannels === undefined) {
+      const {data: d, width: _w, height: _h, ...desc} = state.input;
+      if (activeCodec.quality === 100 || activeCodec.effort >= MEASURED_EFFORT || !admitSampleFormat(d, {...desc, ...activeCodec}).native8) {
+        const {orientation: _ori, ...shown} = await orientSamples(state.input, {signal: hooks.signal});
+        state.input = shown;
+      }
+    }
+  };
+  await normalizeCaptured(captured, codec);
   const admitRequiredStill = async picture => {
     if (webgpu === 'required' && codec.quality < 100 && captured.features === undefined && captured.target === undefined) {
       const {data: d, width: w, height: h, ...desc} = picture;
@@ -222,6 +237,7 @@ async function encodeOwned(input, options, helpers, {codec, target, webgpu, maxP
     [picture, carried.intent] = namedPicture(options, picture, codec.quality < 100);
     captured = own({input: picture, codec, features, target}, maxPixels, budget);
     resultReference(options, captured.input, input);
+    await normalizeCaptured(captured, codec);
     if (!journal && codec.qualityIntent !== undefined && features === undefined && target === undefined && lowIntentEligible(captured.input))
       settledFacts.set(captured.input.data, lowIntentFacts(captured.input));
     await admitRequiredStill(captured.input);
@@ -231,10 +247,7 @@ async function encodeOwned(input, options, helpers, {codec, target, webgpu, maxP
     const late = !early && await page(captured.input, captured.codec);
     if (late) return late;
   }
-  if (captured.codec.quality === 100 && captured.input.orientation !== undefined && captured.input.extraChannels === undefined && captured.features === undefined) {
-    const {orientation, ...shown} = await orientSamples(captured.input, {signal: hooks.signal});
-    captured.input = shown;
-  }
+  await normalizeCaptured(captured, captured.codec);
   const {data, width, height, ...source} = captured.input;
   check(hooks.signal);
   const settings = {...source, ...captured.codec};
@@ -243,7 +256,7 @@ async function encodeOwned(input, options, helpers, {codec, target, webgpu, maxP
   const featured = captured.features !== undefined || source.orientation !== undefined || source.extraChannels !== undefined;
   if (captured.target !== undefined) {
     if (featured)
-      throw fail('JXL_INPUT', "A measured fidelity cannot carry orientation, extra channels, or features; remove them or use exact fidelity.");
+      throw fail('JXL_INPUT', 'measured fidelity: no orientation, extraChannels or features');
     if (width * height > WHOLE) return bandedScore({width, height, read: (y, rows) => ({...source, data: data.subarray(y * width * 4, (y + rows) * width * 4), width, height: rows})},
       () => captured.codec, captured.target, (band, shared) => recodeBand(band, captured.codec, shared, HDR, ...bandCoders(captured.codec)), hooks, webgpu, options);
     if (!hooks.journal && !needsBands(width, height, {...settings, quality: 90}, data) &&
@@ -262,7 +275,9 @@ async function encodeOwned(input, options, helpers, {codec, target, webgpu, maxP
     const coded = (typeof __RAPIER_JXL_STILL__ !== 'undefined' && __RAPIER_JXL_STILL__ === true) ? data : await upsampledSamples(captured.input, captured.features, hooks);
     const measured = (typeof __RAPIER_JXL_STILL__ !== 'undefined' && __RAPIER_JXL_STILL__ === true) ? null : await measuredFeatures(captured.input, captured.features, settings, codec.qualityIntent, hooks, coded);
     if (measured) { resultFacts(options, {kept: 'lossy', measurements: measured.measurements}); return measured.bytes; }
-    return drain(encodePhotoSteps(coded, width, height, {...settings, ...captured.features}), hooks);
+    const rawSteps = encodePhotoSteps(coded, width, height, {...settings, ...captured.features});
+    const steps = settings.progressive && !captured.features?.progressive ? withProgressive(true, rawSteps) : rawSteps;
+    return drain(steps, hooks);
   }
   if (needsBands(width, height, settings, data)) {
     const facts = new Map(), recoded = new Set(), at = band => band.data.byteOffset;

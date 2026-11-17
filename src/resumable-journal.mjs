@@ -15,7 +15,7 @@ function checksum(buffer) {
   return (a ^ Math.imul(b, 0x27d4eb2f)) >>> 0;
 }
 const invalid = message => { throw fault('JXL_INPUT', message); };
-const STOP = Object.freeze(new Error('A resumable call ended its attempt.'));
+const STOP = Object.freeze(new Error('attempt ended'));
 const unitRequest = value => value?.unit !== undefined || value?.unitDone !== undefined || value?.unitFailed !== undefined;
 async function driveSteps(steps, request) {
   let reply, step, ended = false;
@@ -23,7 +23,7 @@ async function driveSteps(steps, request) {
     while (!(step = journalNext(steps, reply, request)).done) {
       const value = step.value;
       reply = unitRequest(value) ? await request(value) : undefined;
-      if (!unitRequest(value) && value?.gpu === undefined && typeof value !== 'number') invalid('A resumable step made a request it cannot answer here.');
+      if (!unitRequest(value) && value?.gpu === undefined && typeof value !== 'number') invalid('step: unsupported request');
     }
     ended = true;
     return step.value;
@@ -36,7 +36,7 @@ async function drainPlain(steps, signal) {
     while (!(step = journalNext(steps, undefined, plain)).done) {
       if (signal.aborted) throw signal.reason;
       const value = step.value;
-      if (value?.gpu === undefined && typeof value !== 'number' && value !== undefined) invalid('A resumable step made a request it cannot answer here.');
+      if (value?.gpu === undefined && typeof value !== 'number' && value !== undefined) invalid('step: unsupported request');
     }
     ended = true;
     return step.value;
@@ -66,9 +66,9 @@ function valueOf(entry, raw) {
   const known = parsed.get(raw);
   if (known && known.entry === entry) return known.value;
   if (!Number.isSafeInteger(entry.metaLength) || entry.metaLength < 2 || entry.metaLength > raw.length || !['a', 'o', 'm', 's'].includes(entry.kind))
-    invalid('Invalid journal value.');
+    invalid('invalid journal value');
   const head = raw.subarray(0, entry.metaLength), meta = parseData(head instanceof Pieces ? head.slice(0) : head);
-  if (kindOf(meta?.v) !== entry.kind) invalid('Invalid journal value.');
+  if (kindOf(meta?.v) !== entry.kind) invalid('invalid journal value');
   const value = {meta, bytes: raw.subarray(entry.metaLength)};
   parsed.set(raw, {entry, value});
   return value;
@@ -101,26 +101,26 @@ async function savePages(io, pending) {
 }
 const slicesOf = entry => {
   if (!Array.isArray(entry.bytes) || entry.bytes.some(s => !Array.isArray(s) || s.length !== 3 || !Number.isSafeInteger(s[1]) ||
-      !Number.isSafeInteger(s[2]) || s[1] < 0 || s[2] < 0 || s[1] + s[2] > MAX_PART_BYTES)) invalid('Invalid journal value pages.');
+      !Number.isSafeInteger(s[2]) || s[1] < 0 || s[2] < 0 || s[1] + s[2] > MAX_PART_BYTES)) invalid('invalid journal pages');
   return entry.bytes;
 };
 const checkLength = entry => {
   if (!Number.isSafeInteger(entry.length) || entry.length < 0 || slicesOf(entry).reduce((n, slice) => n + slice[2], 0) !== entry.length ||
-      !entry.length && entry.bytes.length) invalid('A journal value has the wrong length.');
+      !entry.length && entry.bytes.length) invalid('journal value length');
 };
 async function loadBytes(io, entries) {
   const pages = new Map(), values = entries.map(entry => {
-    if (!Number.isSafeInteger(entry.length) || entry.length < 0) invalid('A journal value has the wrong length.');
+    if (!Number.isSafeInteger(entry.length) || entry.length < 0) invalid('journal value length');
     const value = {length: entry.length, spans: []};
     let at = 0;
     for (const [ref, from, length] of slicesOf(entry)) {
       refOf(ref);
-      if (from + length > ref.length) invalid('A journal value lies outside its page.');
+      if (from + length > ref.length) invalid('journal slice: out of bounds');
       const page = pages.get(ref.hash) ?? {ref, spans: []};
-      if (page.ref.length !== ref.length) invalid('Part length does not match its digest.');
+      if (page.ref.length !== ref.length) invalid('part length mismatch');
       page.spans.push({value, from, length, at}); pages.set(ref.hash, page); at += length;
     }
-    if (at !== entry.length || !entry.length && slicesOf(entry).length) invalid('A journal value has the wrong length.');
+    if (at !== entry.length || !entry.length && slicesOf(entry).length) invalid('journal value length');
     return value;
   });
   await prefetchParts(io, [...pages.values()].map(page => page.ref), async batch => {
@@ -192,7 +192,7 @@ function expandJournal(journal,metas) {
 
 export function createJournalStepper({id, build, normalize, open, run, verify, eager = false, tools = {}, straight: ordinary}) {
   ordinary ??= open && ((plan, data, description, signal) => drainPlain(open(plan, data, description, true), signal));
-  const toolOf = name => { if (!Object.hasOwn(tools, name)) invalid('A step names a journal tool this build has not.'); return tools[name]; };
+  const toolOf = name => { if (!Object.hasOwn(tools, name)) invalid('unknown journal tool'); return tools[name]; };
   return createStepper({id, build, normalize,
     start: (plan, source) => ({journal: {}, plan, source, hot: []}),
     refs: state => Object.values(state?.journal ?? {}).flatMap(entry => entry.passed || !Array.isArray(entry.bytes) ? [] : entry.bytes.map(slice => slice[0])),
@@ -203,7 +203,7 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
       if (!journal || typeof journal !== 'object' || Array.isArray(journal) || !plan || !description || !Array.isArray(hot) ||
           !hot.every(p => typeof p === 'string') || typeof tried !== 'boolean' || !lastCosts || typeof lastCosts !== 'object' || Array.isArray(lastCosts) ||
           !Object.values(lastCosts).every(ms => Number.isFinite(ms) && ms >= 0))
-        invalid('Invalid journal state.');
+        invalid('invalid journal state');
       expandJournal(journal,state.metas);
       const started = now(), budget = io.budgetMs ?? plan.budgetMs ?? 20;
       const holdLimit = host.memoryBytes ?? Infinity;
@@ -219,7 +219,7 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
         for (const {bytes} of pending) if (bytes) addRaw(bytes);
         lastHeld = held - adding;
         if (held > peak) peak = held;
-        if (held > holdLimit) throw (refused = fault('JXL_MEMORY', `A resumable call held ${held} bytes, over the host's memoryBytes (${holdLimit}).`));
+        if (held > holdLimit) throw (refused = fault('JXL_MEMORY', `held ${held} B: over memoryBytes ${holdLimit}`));
       };
       const straight = !tried && !Object.keys(journal).length && typeof io.straight === 'function' &&
         await io.straight(await io.readSource(0, Math.min(description.byteLength, STRAIGHT_HEAD)), budget);
@@ -316,7 +316,7 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
           return {state: {...state, tried: true}, work: {phase: 'straight', stepMs: +(now() - started).toFixed(1)}, reads: [], yield: true};
         }
         const bytes = made instanceof Uint8Array ? made : made?.bytes, facts = made instanceof Uint8Array ? null : made?.facts ?? null;
-        if (!(bytes instanceof Uint8Array)) invalid('The steps returned no file.');
+        if (!(bytes instanceof Uint8Array)) invalid('steps: missing output');
         return {state: {journal: {}, plan, source: description, hot: []}, work: {phase: 'straight', stepMs: +(now() - started).toFixed(1)},
           output: bytes.length ? bytes : null, result: {length: bytes.length, facts}};
       }
@@ -342,7 +342,7 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
         const resolve = (p, i) => {
           if (p === 'source') return i !== 0 ? undefined : source ? source.buffer : null;
           if (!owned.has(p)) {
-            if (!journal[p]) invalid('A journal value refers to a missing value.');
+            if (!journal[p]) invalid('journal reference: missing');
             const raw = loaded.get(p);
             if (!raw) return null;
             const {meta, bytes} = valueOf(journal[p], raw);
@@ -379,14 +379,14 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
           if (straight) {
             if (now() - started >= budget) { stopped = true; throw STOP; }
             if (value.unit !== undefined) { stack.push({name: value.unit}); return undefined; }
-            if (stack.pop()?.name !== (value.unitDone ?? value.unitFailed)) invalid('Unbalanced unit steps.');
+            if (stack.pop()?.name !== (value.unitDone ?? value.unitFailed)) invalid('journal units: unbalanced');
             return undefined;
           }
           if (value.unit !== undefined) {
             if (readFull && !value.tail && !stack.some(frame => frame.whole)) { stopped = true; throw STOP; }
             const top = stack.at(-1), path = (top.path ? top.path + '.' : '') + top.children++, entry = journal[path];
             if (entry) {
-              if (entry.name !== value.unit || !!entry.carry !== !!value.carry) invalid('The journal does not match this operation\'s steps.');
+              if (entry.name !== value.unit || !!entry.carry !== !!value.carry) invalid('journal: step mismatch');
               if (entry.passed) { answered++; return {[SAVED]: PASSED}; }
               const raw = loaded.get(path) ?? null;
               if (entry.metaLength !== undefined && !raw) {
@@ -425,7 +425,7 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
           const frame = stack.pop(), ran = now() - frame.started;
           if (frame?.name && !frame.whole) costs.set(frame.name, ran);
           if (ran > longest[1]) longest = [stack.map(f => f.name).filter(Boolean).concat(frame.name).join('/'), +ran.toFixed(1)];
-          if (!frame?.name || frame.name !== (value.unitDone ?? value.unitFailed)) invalid('Unbalanced unit steps.');
+          if (!frame?.name || frame.name !== (value.unitDone ?? value.unitFailed)) invalid('journal units: unbalanced');
           if (value.unitFailed !== undefined) return undefined;
           const inside = frame.path + '.';
           const saving = typeof value.save === 'function' ? value.save(value.value)
@@ -491,7 +491,7 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
         try {
           result = await (run ? run(plan, input, description, request) : driveSteps(open(plan, input, description), request));
           if (plan.verify) {
-            if (typeof verify !== 'function') invalid('This operation has no resumable verification.');
+            if (typeof verify !== 'function') invalid('verify: unsupported');
             result = await verify(result, plan, input, description, request, host);
           }
           const file = result instanceof Uint8Array ? result : result?.bytes;
@@ -540,7 +540,7 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
       globalThis[OBSERVE]?.(work);
       if (final !== null) {
         const bytes = final instanceof Uint8Array ? final : final?.bytes, facts = final instanceof Uint8Array ? null : final?.facts ?? null;
-        if (!(bytes instanceof Uint8Array)) invalid('The steps returned no file.');
+        if (!(bytes instanceof Uint8Array)) invalid('steps: missing output');
         return {state: {journal: {}, plan, source: description, hot: []}, work, output: bytes.length ? bytes : null, ...(fileParts && {outputRefs: fileParts}),
           result: {length: bytes.length, facts, ...(plan.verify && {verification: final.verification})}};
       }

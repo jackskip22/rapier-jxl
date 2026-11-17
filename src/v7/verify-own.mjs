@@ -3,6 +3,7 @@ import {decode} from './decode.mjs';
 import {restoreJPEG} from '../jpeg-reconstruction.mjs';
 import {brotliDictionary} from '../brotli-dictionary.mjs';
 import {transcode} from '../jpeg.mjs';
+import {decodeJpegPixels} from '../jpeg-scaled-decode.mjs';
 import {prepareKernels} from '../kernels.mjs';
 import {compileJpegKernels} from '../jpeg-kernels.mjs';
 import {fromDecoded} from './describe.mjs';
@@ -23,6 +24,7 @@ export const ownDecoder = {
   restoreSteps,
   readJPEGSteps:() => referenceSteps,
   restore: (bytes, {maxPixels}) => restoreJPEG(bytes, brotliDictionary, {maxPixels}),
+  readJPEGPixels: (bytes, options) => decodeJpegPixels(bytes, {maxPixels: Math.min(options.maxPixels, PIXELS), signal: options.signal, scale: 8}),
   async readJPEG(bytes, options) {
     await prepareKernels(); await compileJpegKernels(); check(options.signal);
     return fromDecoded(await decode(transcode(bytes, {effort: 1, maxPixels: Math.min(options.maxPixels, PIXELS)}).bytes,

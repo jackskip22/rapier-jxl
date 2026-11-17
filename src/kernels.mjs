@@ -34,7 +34,7 @@ function createEngine() {
   const {memory, exports} = kernelInstance();
   const views = () => { engine.u8 = new Uint8Array(memory.buffer); engine.i32 = new Int32Array(memory.buffer); };
   holder = arenaHolder(() => {
-    if (acDeferred) throw fault('JXL_INTERNAL', 'The kernels\' arena was taken under deferred AC counts.');
+    if (acDeferred) throw fault('JXL_INTERNAL', 'kernels:arena-deferred-ac');
     acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; tileTables = null; acResident = null;
     vbStrip = null; vbLoaded = -1; shapeEpoch = -1; sampleTableEpoch = -1; heldLevelsKey = ''; retainEpoch++;
   }, views, () => initializeTables?.(new Int32Array(memory.buffer)));
@@ -56,7 +56,7 @@ const captureAnsWrite = SAMPLE ? null : function captureAnsWrite(w, tags, extras
     engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
     return true;
   };
-  if (!fit(out)) throw fault('JXL_MEMORY', 'The ANS writer cannot grow its kernel memory.');
+  if (!fit(out)) throw fault('JXL_MEMORY', 'ANS writer: grow failed');
   const u16 = new Uint16Array(engine.memory.buffer);
   shapes.forEach((h, k) => {
     const base = (tabs + k * 9232) >> 1;
@@ -64,7 +64,7 @@ const captureAnsWrite = SAMPLE ? null : function captureAnsWrite(w, tags, extras
   });
   engine.i32.set(tags.subarray(0, n), at >> 2); engine.i32.set(extras.subarray(0, n), raw >> 2);
   const bits = engine.simd.tokAnsBack(at, n, tabs, words);
-  if (!fit(out + ((bits + w.pending) >> 3) + 16)) throw fault('JXL_MEMORY', 'The ANS stream exceeds available kernel memory.');
+  if (!fit(out + ((bits + w.pending) >> 3) + 16)) throw fault('JXL_MEMORY', 'ANS stream: too large');
   const written = engine.simd.tokAnsWrite(at, raw, n, words, w.acc, w.pending, out), whole = written >> 3, rest = written & 7;
   if (w.at + whole + 8 >= w.bytes.length) w.grow(whole + 8);
   w.bytes.set(engine.u8.subarray(out, out + whole), w.at); w.at += whole;
@@ -84,11 +84,11 @@ const pngRow = JPEG ? null : function pngRow(row, n, above, raw, at, filter, bpp
 };
 
 const orientBlock = JPEG ? null : function orientBlock(from, to, stride, outStride, x, y, width, height, ox, oy, pixelBytes, orientation) {
-  if (active !== 'simd' || !engine.simd.orientRGBA) throw fault('JXL_WASM', 'The sample orientation kernel is unavailable.');
+  if (active !== 'simd' || !engine.simd.orientRGBA) throw fault('JXL_WASM', 'orientation kernel: unavailable');
   if (!(from instanceof Uint8Array) || !(to instanceof Uint8Array) || ![4, 8, 16].includes(pixelBytes) ||
       !Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width > 256 || height > 256 ||
       !Number.isInteger(orientation) || orientation < 1 || orientation > 8)
-    throw fault('JXL_INTERNAL', 'Invalid sample orientation block.');
+    throw fault('JXL_INTERNAL', 'kernels:orientation-block');
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   const bytes = width * height * pixelBytes, destination = P + bytes;
   const view = new Uint8Array(engine.memory.buffer), rowBytes = width * pixelBytes;
@@ -108,25 +108,25 @@ const SAMPLE_TABLE = P, SAMPLE_LEVELS = SAMPLE_TABLE + 65536 * 8, SAMPLE_SAFE = 
   SAMPLE_BAND_AT = SAMPLE_SAFE + 131072, SAMPLE_BAND_PIXELS = 262144;
 let heldSampleTable = null, sampleTableEpoch = -1;
 const sampleScratch = JPEG ? null : function sampleScratch(end = SAMPLE_BAND_AT + 65536 * 8) {
-  if (active !== 'simd' || !engine.simd.sampleBand) throw fault('JXL_WASM', 'The sample resampling kernel is unavailable.');
+  if (active !== 'simd' || !engine.simd.sampleBand) throw fault('JXL_WASM', 'resampling kernel: unavailable');
   const held = sampleTableEpoch === retainEpoch;
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   if (held) sampleTableEpoch = retainEpoch;
   if (engine.memory.buffer.byteLength < end) {
     try { engine.memory.grow(Math.ceil((end - engine.memory.buffer.byteLength) / 65536)); }
-    catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'Not enough memory for the resampling kernel.'), {cause}); }
+    catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'resampling kernel: grow failed'), {cause}); }
     engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
   }
   return engine.memory.buffer;
 };
 const sampleStatus = JPEG ? null : function sampleStatus(status) {
-  if (status) throw fault('JXL_INPUT', [null, 'Resampling requires finite alpha between zero and one.',
-    'Resampling requires finite color samples.', 'PQ resampling requires samples between zero and one.',
-    'HLG resampling requires nonnegative samples.', 'The resampled value exceeds the sample format.'][status]);
+  if (status) throw fault('JXL_INPUT', [null, 'alpha: finite 0-1',
+    'color samples: finite', 'PQ samples: 0-1',
+    'HLG samples: nonnegative', 'resampled value: out of range'][status]);
 };
 const sampleTable = JPEG ? null : function sampleTable(maximum, transfer) {
   if (![255, 1023, 4095, 65535].includes(maximum) || !(Number.isInteger(transfer) && (transfer >= 0 && transfer <= 4 || transfer >= 1221 && transfer <= 1e7)))
-    throw fault('JXL_INTERNAL', 'Invalid sample transfer table.');
+    throw fault('JXL_INTERNAL', 'kernels:sample-transfer-table');
   const buffer = sampleScratch(); engine.simd.sampleTable(transfer, maximum, SAMPLE_TABLE, 0);
   heldSampleTable = new Float64Array(buffer, SAMPLE_TABLE, maximum + 1).slice();
   sampleTableEpoch = retainEpoch;
@@ -136,7 +136,7 @@ let heldLevels = null, heldSafe = null, heldLevelsKey = '';
 const sampleBands = JPEG ? null : function sampleBands(width, height, target, rows, config, table, levels, bytesPerSample) {
   if (![width, height, target, rows].every(n => Number.isInteger(n) && n >= 1) || ![1, 2, 4].includes(bytesPerSample) ||
       levels && !(config[0] < 2 && [255, 1023, 4095].includes(config[1]) && !config[3] && config[4] === 1))
-    throw fault('JXL_INTERNAL', 'Invalid sample resampling band.');
+    throw fault('JXL_INTERNAL', 'kernels:resample-band-config');
   const stride = Math.max(width, target) * 32, rowBytes = width * 4 * bytesPerSample, outBytes = target * 4 * bytesPerSample;
   const sourceRows = Math.max(1, Math.min(height, Math.floor(SAMPLE_BAND_PIXELS / width)));
   const outRows = Math.max(1, Math.min(rows, Math.floor(SAMPLE_BAND_PIXELS / target)));
@@ -145,7 +145,7 @@ const sampleBands = JPEG ? null : function sampleBands(width, height, target, ro
   return {sourceRows, outRows, run(data, first, last, y0, y1, out, outY, carry, open) {
     if (last - first > sourceRows || last <= first || y1 - y0 > outRows || y0 < 0 || y1 > rows || y0 >= y1 || first < 0 || last > height ||
         carry && carry.length !== target * 4)
-      throw fault('JXL_INTERNAL', 'Invalid sample resampling band.');
+      throw fault('JXL_INTERNAL', 'kernels:resample-band-carry');
     const buffer = sampleScratch(end), bytes = new Uint8Array(buffer);
     if (table && (heldSampleTable !== table || sampleTableEpoch !== retainEpoch)) {
       new Float64Array(buffer).set(table, SAMPLE_TABLE >> 3);
@@ -216,7 +216,7 @@ const weightedPlane = SAMPLE ? null : (p, w, h, offset) => p instanceof Int16Arr
 const weightedGrow = SAMPLE ? null : function weightedGrow(bytes) {
   if (bytes <= engine.memory.buffer.byteLength) return;
   try { engine.memory.grow(Math.ceil((bytes - engine.memory.buffer.byteLength) / 65536)); }
-  catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'Not enough memory for the weighted predictor.'), {cause}); }
+  catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'weighted predictor: grow failed'), {cause}); }
   engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
 };
 const weightedBands = SAMPLE ? null : function weightedBands(plane, width, height, offset, residuals, properties) {
@@ -238,7 +238,7 @@ const weighted = SAMPLE ? null : function weighted(w, targets, plane, width, hei
   acClean = false; ansStamp = null; zdLoaded = false; acBucketsZero = false; tileBand = null; acResident = null; retainEpoch++;
   if (!weightedPlane(plane, width, height, offset) || !acceptableWriter(w)) return false;
   const n = width * height;
-  if (w && w.at + n * 8 + 32 > 0x7fffffff) throw fault('JXL_MEMORY', 'The weighted predictor\'s output would pass 2 GB.');
+  if (w && w.at + n * 8 + 32 > 0x7fffffff) throw fault('JXL_MEMORY', 'weighted predictor: output >2GB');
   if (residuals && (!(residuals instanceof Uint32Array) || residuals.length < n)) return false;
   if (properties && (!(properties instanceof Int32Array) || properties.length < n)) return false;
   if (contextOf.length !== 34 || contextOf.some(c => !Number.isInteger(c) || c < 0 || c >= 34)) return false;
@@ -604,7 +604,7 @@ const flushTokens = (SAMPLE || (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefin
   const A_RAWS = A_IDS + n + 8 & ~7, A_META = A_RAWS + n * 4, A_EMITTED = A_META + n + 8 & ~7, OUT = A_EMITTED + n * 2 + 8 & ~7, end = OUT + n * 8 + 16;
   if (end > engine.memory.buffer.byteLength) {
     try { engine.memory.grow(Math.ceil((end - engine.memory.buffer.byteLength) / 65536)); }
-    catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'The ANS writer cannot grow its kernel memory.'), {cause}); }
+    catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'ANS writer: grow failed'), {cause}); }
     engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
   }
   const buffer = engine.memory.buffer, u8 = new Uint8Array(buffer), i32 = new Int32Array(buffer), u16 = new Uint16Array(buffer);
@@ -694,7 +694,7 @@ const acGroupRow = SAMPLE ? null : function acGroupRow(comps, source, by0, xsize
   const need = whole ? next : AC_ROWS_AT + Math.max(...chunks.flat().map(k => k.cnt - k.at + (k.y1 - k.y0) * stride)) + 16;
   if (need > engine.memory.buffer.byteLength) {
     try { engine.memory.grow(Math.ceil((need - engine.memory.buffer.byteLength) / 65536)); }
-    catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'The AC writer cannot hold a group row in its kernel memory.'), {cause}); }
+    catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'AC writer: row too large'), {cause}); }
     engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
   }
   return {by0, stride, packs: comps.map(cp => cp.packed), counts: [source[0], source[1], source[2]], chunks, whole, offs: AC_ROWS_OFFS, current: null};
@@ -746,7 +746,7 @@ const acGroup = SAMPLE ? null : function acGroup(state, g, pass, sink, zd, pair 
   const tokens = 3 * blocks * 64;
   const histBytes = contexts.contexts * 256, HIST = AC_CODES + Math.max(8, codes ? codes.length * alphabet * 8 : 8);
   const defer = !!(sink.counts && sink.defer);
-  if (acDeferred && (!defer || acDeferred.counts !== sink.counts || acDeferred.hist !== HIST_KEY(contexts))) throw fault('JXL_INTERNAL', 'Deferred AC counts were not taken.');
+  if (acDeferred && (!defer || acDeferred.counts !== sink.counts || acDeferred.hist !== HIST_KEY(contexts))) throw fault('JXL_INTERNAL', 'kernels:ac-counts-missing');
   let TOUCHED = HIST + histBytes, OVERFLOW = TOUCHED + (defer ? Math.max(tokens * 4, histBytes) : tokens * 4), OUT = OVERFLOW + tokens * 8, end = OUT + tokens * 8 + 16;
   const stage = () => end + 15 & ~15;
   let A_SMALL, A_FREQS, A_STARTS, A_REVERSE, A_CONFIGS, A_COUNTS, A_SYMBOL_STARTS, A_RECIPS, A_VALUES, A_IDS, A_RAWS, A_META, A_EMITTED;
@@ -767,7 +767,7 @@ const acGroup = SAMPLE ? null : function acGroup(state, g, pass, sink, zd, pair 
   if (!sink.counts) acClean = false;
   else {
     if (!acClean || acCleanBytes < histBytes) {
-      if (acDeferred) throw fault('JXL_INTERNAL', 'Deferred AC counts were overwritten.');
+      if (acDeferred) throw fault('JXL_INTERNAL', 'kernels:ac-counts-zeroing');
       u8.fill(0, HIST, HIST + histBytes); acClean = true;
     }
     acCleanBytes = histBytes;
@@ -860,7 +860,7 @@ const acGroup = SAMPLE ? null : function acGroup(state, g, pass, sink, zd, pair 
     }
     i32.set([A_VALUES, A_IDS, n, ...tables, A_RAWS, A_META, A_EMITTED, OUT, w.acc, w.pending, 0, A_RECIPS], args >> 2);
     if (pair) {
-      if (pair.model !== sink.coding.model) throw fault('JXL_INTERNAL', 'A pair of AC groups crosses models.');
+      if (pair.model !== sink.coding.model) throw fault('JXL_INTERNAL', 'kernels:ac-group-model');
       const first = AC_CONFIGS + 4096 - 256;
       i32.set(pair.args, first >> 2);
       engine.simd.ansFlush2(first, args);
@@ -892,7 +892,7 @@ const deferredCounts = SAMPLE || JPEG ? null : function deferredCounts() {
   if (!acDeferred) return;
   const {counts, at, list, touched, bytes} = acDeferred;
   acDeferred = null;
-  if (!acClean) throw fault('JXL_INTERNAL', 'Deferred AC counts were overwritten.');
+  if (!acClean) throw fault('JXL_INTERNAL', 'kernels:ac-counts-release');
   takeCounts(counts, at, list, touched, bytes);
 }
 
@@ -997,7 +997,7 @@ const opaqueBytes = SAMPLE || JPEG ? null : function opaqueBytes(rgba) {
 const captureOpaque = SAMPLE || JPEG ? null : function captureOpaque(data, width, x, y, w, h) {
   for (let row = y, rows = w === width ? h : 1; row < y + h; row += rows) {
     const at = (row * width + x) * 4, opaque = opaqueBytes(data.subarray(at, at + rows * w * 4));
-    if (opaque === undefined) throw fault('JXL_WASM', 'Photographic capture needs its SIMD kernels.');
+    if (opaque === undefined) throw fault('JXL_WASM', 'photo: SIMD kernels');
     if (!opaque) return false;
   }
   return true;
@@ -1085,7 +1085,7 @@ const screen = SAMPLE || JPEG ? null : function screen(plane, width, height, pre
     map = rows + height * 4, capacity = 1 << (32 - Math.clz32(height * 2 - 1)), needed = map + capacity * 8;
   if (needed > engine.memory.buffer.byteLength) {
     try { engine.memory.grow(Math.ceil((needed - engine.memory.buffer.byteLength) / 65536)); }
-    catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'Not enough memory for the screen matcher.'), {cause}); }
+    catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'screen matcher: grow failed'), {cause}); }
     engine.u8 = new Uint8Array(engine.memory.buffer);
     engine.i32 = new Int32Array(engine.memory.buffer);
   }
@@ -1154,7 +1154,7 @@ const sampled = SAMPLE ? null : function sampled(count, kinds, alphabet, columns
       if (!(members instanceof Uint32Array) || total < 64 || total > count || histograms.length !== kinds ||
           histograms.some(h => !(h instanceof Uint32Array) || h.length !== alphabet) || !Number.isSafeInteger(choiceBits)) throw declined('sampled');
       if (!tree.live()) {
-        if (!reserve(needed)) throw fault('JXL_MEMORY', 'Not enough memory for the learned tree.');
+        if (!reserve(needed)) throw fault('JXL_MEMORY', 'learned tree: grow failed');
         const {u8, i32} = engine, f64 = new Float64Array(engine.memory.buffer);
         for (let c = 0; c < kinds; c++) u8.set(symbolSets[c], resSym + c * count);
         for (let k = 0; k < C; k++) { u8.set(columns[k].indices, resIdx + k * count); i32[(cutsAt >>> 2) + k] = columns[k].cuts.length; }
@@ -1379,7 +1379,7 @@ const gaborish = SAMPLE || UPLOAD || JPEG ? null : function gaborish(t, source, 
   const end = GAB + (2 * rows + 2) * rowBytes;
   if (end > engine.memory.buffer.byteLength) {
     try { engine.memory.grow(Math.ceil((end - engine.memory.buffer.byteLength) / 65536)); }
-    catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'Not enough memory for the Gaborish inverse.'), {cause}); }
+    catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'Gaborish inverse: grow failed'), {cause}); }
     engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
   }
   const keepVb = vbLoaded === retainEpoch;
@@ -1435,10 +1435,10 @@ const s2cChannel = SAMPLE || UPLOAD || JPEG ? null : function s2cChannel(P1, P2,
   let at = accAt + 112;
   const places = sums.map(sum => { if (!sum) return 0; const place = at; at += sum.byteLength + 7 & ~7; return place; });
   const planesAt = at, room = Math.floor((S2C_LIMIT - planesAt) / (4 * w)), rows = room - 8;
-  if (rows < 16) throw fault('JXL_MEMORY', 'A picture this wide does not fit the SSIMULACRA 2 cell kernel.');
+  if (rows < 16) throw fault('JXL_MEMORY', 'SSIMULACRA 2 cell: width too large');
   const end = planesAt + Math.min(room, P1.length / w) * 4 * w;
   if (end > engine.memory.buffer.byteLength) {
-    try { engine.memory.grow(Math.ceil((end - engine.memory.buffer.byteLength) / 65536)); } catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'Not enough memory for the SSIMULACRA 2 cell kernel.'), {cause}); }
+    try { engine.memory.grow(Math.ceil((end - engine.memory.buffer.byteLength) / 65536)); } catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'SSIMULACRA 2 cell: grow failed'), {cause}); }
     engine.u8 = new Uint8Array(engine.memory.buffer); engine.i32 = new Int32Array(engine.memory.buffer);
   }
   const keepVb = vbLoaded === retainEpoch;
@@ -1562,7 +1562,7 @@ const gabBand = SAMPLE || JPEG ? null : function gabBand(data, width, total, top
 const packTileRow = SAMPLE ? null : function packTileRow(packed, levels, counts, bh, blocks, stride, first, u8) {
   const entries = 3 * 8 * blocks, starts = counts + entries + 3 & ~3, dc = starts + 4 * entries, at = dc + 2 * entries, val = at + 63 * entries + 9 & ~1;
   const end = val + 126 * entries + 16;
-  if (end > engine.memory.buffer.byteLength) throw fault('JXL_INTERNAL', 'The packed tile row passes the arena.');
+  if (end > engine.memory.buffer.byteLength) throw fault('JXL_INTERNAL', 'kernels:tile-row-arena');
   const n = engine.simd.packLevels(levels, counts, bh, blocks, at, val, starts, dc, GB_KEYS, 0, GB_ROOTS);
   const buffer = engine.memory.buffer, i32 = new Int32Array(buffer, starts, entries), i16 = new Int16Array(buffer, dc, entries);
   for (let c = 0; c < 3; c++) {

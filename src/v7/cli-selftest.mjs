@@ -51,13 +51,13 @@ export function parseSelftestArgs(argv) {
     const arg = String(argv[i]), [flag, inline] = arg.startsWith('--') && arg.includes('=') ? [arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)] : [arg];
     const value = () => {
       if (inline !== undefined) return inline;
-      if (i + 1 >= argv.length || String(argv[i + 1]).startsWith('-')) throw fixError(`${flag} needs a value`, `write ${flag} <${flag === '--pictures' ? 'folder' : 'file'}>`);
+      if (i + 1 >= argv.length || String(argv[i + 1]).startsWith('-')) throw fixError(`${flag}: value required`, `use ${flag} <${flag === '--pictures' ? 'folder' : 'file'}>`);
       return String(argv[++i]);
     };
     if (flag === '-h' || flag === '--help') options.help = true;
     else if (flag === '-o' || flag === '--out') options.out = value();
     else if (flag === '--pictures') options.pictures = value();
-    else throw fixError(`Unknown selftest option "${arg}"`, `run npx ${COMMAND} selftest --help`);
+    else throw fixError(`unknown option: "${arg}"`, `run npx ${COMMAND} selftest --help`);
   }
   return options;
 }
@@ -67,34 +67,34 @@ export async function runSelftest(argv, {version, cwd = process.cwd(), stdout = 
   if (options.help) { stdout(SELFTEST_HELP.trimEnd()); return {exitCode: 0}; }
   const base = `https://cdn.jsdelivr.net/gh/jackskip22/rapier-jxl@v${version}/jobs/pictures/`;
   const pictureFix = options.pictures
-    ? "check --pictures for the missing file, or use this release's complete jobs/pictures folder"
-    : `pass --pictures with jobs/pictures from rapier-jxl ${version}`;
+    ? "check: --pictures file"
+    : `--pictures: jobs/pictures ${version}`;
   const picture = async file => {
     try {
       if (options.pictures) return await readFile(join(resolve(cwd, options.pictures), file));
       const response = await fetch(base + file, {redirect: 'error'});
-      if (!response.ok) throw cliError('JXL_IO', `Test picture "${file}" is unavailable (HTTP ${response.status})`, pictureFix);
+      if (!response.ok) throw cliError('JXL_IO', `picture "${file}": HTTP ${response.status}`, pictureFix);
       return new Uint8Array(await response.arrayBuffer());
     } catch (cause) {
       if (typeof cause?.code === 'string' && cause.code.startsWith('JXL_')) throw cause;
-      throw Object.assign(cliError('JXL_IO', options.pictures ? 'The test pictures could not be read'
-        : 'The test pictures could not be downloaded', pictureFix), {cause});
+      throw Object.assign(cliError('JXL_IO', options.pictures ? 'pictures: unreadable'
+        : 'pictures: download failed', pictureFix), {cause});
     }
   };
   let manifest;
   try { manifest = JSON.parse(new TextDecoder().decode(await picture('manifest.json'))); }
   catch (cause) {
     if (typeof cause?.code === 'string' && cause.code.startsWith('JXL_')) throw cause;
-    throw Object.assign(cliError('JXL_INPUT', 'The test picture manifest is not valid JSON',
-      `use jobs/pictures from rapier-jxl ${version}`), {cause});
+    throw Object.assign(cliError('JXL_INPUT', 'manifest.json: invalid JSON',
+      `jobs/pictures: jpegxl ${version}`), {cause});
   }
   if (!manifest || !Array.isArray(manifest.pictures) || manifest.pictures.some(item =>
     !item || typeof item.file !== 'string' || typeof item.id !== 'string' ||
       typeof item.kind !== 'string' || typeof item.sha256 !== 'string'))
-    throw cliError('JXL_INPUT', 'The test picture manifest is incomplete', `use jobs/pictures from rapier-jxl ${version}`);
+    throw cliError('JXL_INPUT', 'manifest.json: incomplete', `jobs/pictures: jpegxl ${version}`);
   if (manifest.version !== version) throw cliError('JXL_INPUT',
-    `The pictures are for rapier-jxl ${manifest.version}, not ${version}`,
-    `use jobs/pictures from rapier-jxl ${version}`);
+    `pictures: ${manifest.version}, need ${version}`,
+    `jobs/pictures: jpegxl ${version}`);
   const [{encode}, {recompress, restore}, {decode}, verifier] = await Promise.all([modules.still(), modules.jpeg(), modules.decode(), modules.verify()]);
   verifier.configureDecoder?.(decode, restore);
   const facts = await machineFacts();
@@ -104,8 +104,8 @@ export async function runSelftest(argv, {version, cwd = process.cwd(), stdout = 
     onRow: row => stdout(`${row.status === 'pass' ? 'pass' : 'FAIL'}  ${row.id}  ${row.bytes ?? '-'} B  ${Math.round(row.encodeMs ?? 0)} ms${row.error ? '  ' + row.error.message : ''}`)});
   try { await writeFile(out, JSON.stringify(record, null, 2) + '\n'); }
   catch (cause) {
-    throw Object.assign(cliError('JXL_IO', `Self-test results could not be written to "${out}"`,
-      'choose a writable --out file path'), {cause});
+    throw Object.assign(cliError('JXL_IO', `results "${out}": unwritable`,
+      '--out: writable path'), {cause});
   }
   stdout(`${record.summary.passed} of ${record.summary.rows} passed in ${(record.elapsedMs / 1000).toFixed(1)} s. Attach ${out} to your job's issue.`);
   return {exitCode: record.status === 'pass' ? 0 : 1, record, out};

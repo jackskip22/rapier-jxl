@@ -54,13 +54,13 @@ async function admitImageDimensions(bytes, key, maxPixels = MAX_PIXELS) {
 }
 
 async function read(env, key, what = 'key') {
-  if (!env?.JXL_BUCKET) throw refuse('JXL_SETUP', 'The Worker has no R2 binding JXL_BUCKET; run npx jpegxl add agents in the project');
+  if (!env?.JXL_BUCKET) throw refuse('JXL_SETUP', 'JXL_BUCKET: bind R2; run npx jpegxl add agents');
   admitKey(key, what);
   const object = await env.JXL_BUCKET.get(key);
-  if (!object) throw refuse('JXL_INPUT', `No object at ${what} ${safeLabel(key)}; check the key.`);
+  if (!object) throw refuse('JXL_INPUT', `${what}: missing ${safeLabel(key)}`);
   if (object.size > MAX_BYTES) {
     object.body?.cancel();
-    throw refuse('JXL_LIMIT', `${safeLabel(key)} is over ${MAX_BYTES / 1e6} MB; larger pictures convert in the bucket Worker (npx jpegxl add r2).`);
+    throw refuse('JXL_LIMIT', `${safeLabel(key)}: over ${MAX_BYTES / 1e6} MB; run npx jpegxl add r2`);
   }
   return new Uint8Array(await object.arrayBuffer());
 }
@@ -72,7 +72,7 @@ async function write(env, key, bytes, overwrite, meta, contentType = 'image/jxl'
     httpMetadata: {contentType},
     ...!overwrite && {onlyIf: new Headers({'if-none-match': '*'})},
   });
-  if (!put) throw refuse('JXL_OPTIONS', `${safeLabel(key)} already exists; pass another out, or overwrite: true.`);
+  if (!put) throw refuse('JXL_OPTIONS', `${safeLabel(key)}: exists; set overwrite: true`);
 }
 const summary = (key, out, from, to, extra) => ({key: out, from: key, fromBytes: from, bytes: to, saved: Math.round((1 - to / from) * 1000) / 10 + '%', ...extra});
 
@@ -88,7 +88,7 @@ export function defineTools(z) {
       input: z.object({key, out, overwrite, effort: recompressEffort}).strict(),
       async run(env, {key, out, overwrite, effort = 3}) {
         const bytes = await read(env, key);
-        if (!isJpeg(bytes)) throw refuse('JXL_INPUT', `${safeLabel(key)} is not a JPEG; use jxl_convert.`);
+        if (!isJpeg(bytes)) throw refuse('JXL_INPUT', `${safeLabel(key)}: not a JPEG; use jxl_convert`);
         out = admitDistinctOut(key, out ?? besideKey(key, '.jxl'));
         await admitImageDimensions(bytes, key);
         const result = await recompress(bytes, {effort, maxPixels: MAX_PIXELS});
@@ -112,7 +112,7 @@ export function defineTools(z) {
       input: z.object({key, out, overwrite}).strict(),
       async run(env, {key, out, overwrite}) {
         const bytes = await read(env, key);
-        if (!isJxl(bytes)) throw refuse('JXL_INPUT', `${safeLabel(key)} is not a JPEG XL file.`);
+        if (!isJxl(bytes)) throw refuse('JXL_INPUT', `${safeLabel(key)}: JPEG XL required`);
         out = admitDistinctOut(key, out ?? besideKey(key, '.restored.jpg'));
         await admitImageDimensions(bytes, key, MAX_JPEG_PIXELS);
         const result = await restore(bytes, {maxPixels: MAX_JPEG_PIXELS});
@@ -125,7 +125,7 @@ export function defineTools(z) {
         ensureDecoders();
         const source = await read(env, original, 'original'), file = await read(env, jxl, 'jxl');
         if (!isJpeg(source) && !isPng(source)) throw refuse('JXL_INPUT', `${safeLabel(original)} is not a JPEG or PNG.`);
-        if (!isJxl(file)) throw refuse('JXL_INPUT', `${safeLabel(jxl)} is not a JPEG XL file.`);
+        if (!isJxl(file)) throw refuse('JXL_INPUT', `${safeLabel(jxl)}: JPEG XL required`);
         const sourceLimit = isJpeg(source) ? MAX_JPEG_PIXELS : MAX_PIXELS;
         await admitImageDimensions(source, original, sourceLimit);
         const h = header(file, {maxPixels: sourceLimit, maxBoxes: MAX_BOXES, maxInputBytes: MAX_BYTES});
@@ -167,6 +167,6 @@ export async function runTool(tool, env, args) {
       return {isError: true, content: [{type: 'text', text: `JXL_OPTIONS: Invalid argument${issue?.path?.length ? ' ' + issue.path.join('.') : ''}; ${issue?.message ?? 'check tool arguments'}.`}]};
     }
     const code = String(error?.code).startsWith('JXL_') ? error.code : 'JXL_INTERNAL';
-    return {isError: true, content: [{type: 'text', text: `${code}: ${code === 'JXL_INTERNAL' ? 'The tool failed; try again or use a smaller picture.' : error.message}`}]};
+    return {isError: true, content: [{type: 'text', text: `${code}: ${code === 'JXL_INTERNAL' ? 'jxl-tools:dispatch' : error.message}`}]};
   }
 }

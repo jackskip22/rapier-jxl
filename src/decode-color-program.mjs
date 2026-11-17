@@ -78,14 +78,14 @@ export function curveTable(curve) {
 export function convertPixels(n, job) {
   const kernels = decodeKernels(), {inputs, black = null, alpha = null, outputs, blackOut = null, flags = 0, to, from = [], quantized = null} = job;
   const planes = [...inputs, black, alpha, ...outputs, blackOut].filter(Boolean), inPlace = planes.every(p => p.buffer === kernels.buffer);
-  if (!inPlace && planes.some(p => p.buffer === kernels.buffer)) throw fault('JXL_INTERNAL', 'Color planes are partly in the kernels\' memory.');
+  if (!inPlace && planes.some(p => p.buffer === kernels.buffer)) throw fault('JXL_INTERNAL', 'decode-color-program:planes');
   const tables = quantized ? [...new Set(quantized.tables)] : [];
   const bytes = programBytes(to) + programBytes(from) + (quantized ? 168 + quantized.curves.reduce((n, c) => n + curveBytes(c), 0) : 0);
   let w, chunk = n;
   const buffers = [], tableAt = new Map();
   if (inPlace && !quantized && bytes <= SMALL_END - SMALL) w = writer(kernels, SMALL);
   else {
-    if (inPlace) throw fault('JXL_INTERNAL', 'A color program in place exceeds its region.');
+    if (inPlace) throw fault('JXL_INTERNAL', 'decode-color-program:region');
     chunk = Math.min(n, CHUNK);
     const count = inputs.length + (black ? 1 : 0) + (alpha ? 1 : 0) + outputs.length + (blackOut ? 1 : 0);
     const at = kernels.reserve([bytes, ...tables.map(() => TABLE_BYTES), ...Array(count).fill(chunk * 4)]);

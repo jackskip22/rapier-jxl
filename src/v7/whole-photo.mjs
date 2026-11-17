@@ -7,7 +7,7 @@ import {MEASURED_EFFORT} from '../effort-level.mjs';
 export function* wholePhotoOutputSteps(data, width, height, options, outputMeasure) {
   if (options.effort < MEASURED_EFFORT || options.quality >= 100) return yield* wholePhotoSteps(data, width, height, options);
   if (typeof outputMeasure !== 'function')
-    throw fail('JXL_INTERNAL', "Invalid output measurement; report the input and options.");
+    throw fail('JXL_INTERNAL', 'whole-photo:measure');
   let output = null, closed = false, failed = false;
   try {
     const prepared = outputMeasure({data, width, height, colorSpace: options.colorSpace ?? 'srgb'},

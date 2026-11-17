@@ -34,7 +34,7 @@ export function jpegKernels(flushTokens) {
     };
     views();
     const grow = end => {
-      if (end > limit) throw fault('JXL_MEMORY', 'Past the arena charge.');
+      if (end > limit) throw fault('JXL_MEMORY', 'arena: too large');
       memory.grow(Math.ceil((end - memory.buffer.byteLength) / 65536));
     };
     const reserve = end => {
@@ -373,8 +373,8 @@ export function jpegKernels(flushTokens) {
           if (!await compileWasm('general', binary)) throw 0;
           render = new WebAssembly.Instance(wasmModule('general', binary), {env: {memory}}).exports.jpegGeneralRows;
         } catch {
-          throw fault('JXL_WASM', 'JPEG layout ' + comps.map(c => c.h + 'x' + c.v).join('/')
-            + (count === 4 ? ' CMYK/YCCK' : '') + ': WebAssembly sample kernel cannot run in this host.');
+          throw fault('JXL_WASM', 'JPEG layout: ' + comps.map(c => c.h + 'x' + c.v).join('/')
+            + (count === 4 ? ' CMYK/YCCK' : '') + ': kernel unavailable');
         }
         const mode = count === 1 ? 0 : count === 3 ? (parsed.ycbcr ? 1 : 2)
           : parsed.adobeTransform === 2 ? 5 : parsed.adobeTransform === 0 ? 3 : 4;
@@ -617,7 +617,7 @@ export function jpegKernels(flushTokens) {
           },
           writeFilled(_w, n) { load(); exports.tokensIn(length, n); length += n; },
           flush(w) {
-            if (!tokenFlush) throw fault('JXL_INTERNAL', 'The ANS writer is not installed.');
+            if (!tokenFlush) throw fault('JXL_INTERNAL', 'jpeg-kernels:ans-writer');
             tokenFlush(w, model, u32.subarray(VALUES >> 2, (VALUES >> 2) + length), u8.subarray(IDS, IDS + length), length); length = 0;
           },
           reset() { length = 0; },

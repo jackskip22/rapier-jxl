@@ -32,7 +32,7 @@ function prefixToken(r, code) {
   const entry = code.table[word & code.mask], len = entry & 31;
   if (!len || bit + len > r.bytes.length * 8) {
     requireDecode(len !== 0, 'Invalid JPEG XL prefix symbol.', r);
-    requireDecode(false, 'Truncated JPEG XL data.', r);
+    requireDecode(false, 'truncated', r, true);
   }
   r.bit = bit + len;
   return entry >>> 5;
@@ -113,7 +113,7 @@ export function readHybridUint(r, token, {split, msb, lsb}) {
   let extra = 0;
   if (bits > 0) {
     const bit = r.bit;
-    if (bit + bits > r.bytes.length * 8) requireDecode(false, 'Truncated JPEG XL data.', r);
+    if (bit + bits > r.bytes.length * 8) requireDecode(false, 'truncated', r, true);
     const at = bit < 4294967296 ? bit >>> 3 : Math.floor(bit / 8), shift = bit & 7, b = r.buf;
     let word = (b[at] >>> shift) | (b[at + 1] << (8 - shift)) | (b[at + 2] << (16 - shift)) | (b[at + 3] << (24 - shift));
     if (shift) word |= b[at + 4] << (32 - shift);
@@ -376,13 +376,13 @@ export function writeStream(kernels, stream, at) {
   return writeBlock(kernels, stream, at[0], at[1], writeModel(kernels, stream.model, at.slice(2, 7)), at[7]);
 }
 export const STREAM_BLOCK_BYTES = BLOCK_BYTES, HISTORY_BYTES = WINDOW * 4;
-const STREAM_FAULTS = {1: 'Invalid JPEG XL entropy read.', 2: 'Truncated JPEG XL data.', 3: 'JPEG XL integer exceeds 32 bits.', 6: 'Invalid JPEG XL prefix symbol.', 7: 'Invalid JPEG XL LZ77 run.'};
+const STREAM_FAULTS = {1: 'Invalid JPEG XL entropy read.', 2: 'truncated', 3: 'JPEG XL integer exceeds 32 bits.', 6: 'Invalid JPEG XL prefix symbol.', 7: 'Invalid JPEG XL LZ77 run.'};
 export function syncStream(kernels, stream, block, fault = 0) {
   const i32 = kernels.i32, f64 = kernels.f64, r = stream.reader;
   r.bit = stream.base * 8 + i32[block / 4 + 2];
   if (!stream.model.prefix) stream.state = i32[block / 4 + 3] >>> 0;
   stream.remaining = f64[block / 8 + 2]; stream.position = f64[block / 8 + 3]; stream.left = f64[block / 8 + 4]; stream.distance = i32[block / 4 + 10];
-  if (STREAM_FAULTS[fault]) requireDecode(false, STREAM_FAULTS[fault], r);
+  if (STREAM_FAULTS[fault]) requireDecode(false, STREAM_FAULTS[fault], r, fault === 2);
 }
 
 export function readPermutation(code, size, skip = 0) {

@@ -150,7 +150,7 @@ function mergedCounts(source, counts, target, orders) {
 
 function planModularChannel(plane, width, height, predictor, freq) {
   if (!width || !height) return {tags: new Uint32Array(0), extra: new Uint32Array(0), used: 0, literalPairs: new Uint32Array(0), literalPairsLen: 0, lengths: new Uint32Array(33)};
-  if (predictor !== GRADIENT_PREDICTOR) throw fault('JXL_INTERNAL', 'A modular stream plan is gradient-predicted.');
+  if (predictor !== GRADIENT_PREDICTOR) throw fault('JXL_INTERNAL', 'vardct:modular-plan');
   const planned = (kernelHooks.dcPlan ?? ensured().dcPlan ?? missing())(plane, width, height, freq);
   if (!planned) throw declined('dcPlan');
   return planned;
@@ -231,7 +231,7 @@ export function encodeVarDCT(jpeg, plan) { return complete(varDCTSteps(jpeg, pla
 export function strategyGroup(state, g, pass, coding, w) {
   if (!kernelHooks.strategyWrite) kernelHooks.ensure?.();
   const written = kernelHooks.strategyWrite?.(state, g, pass, COEFF_NUM_NONZERO_CONTEXT, COEFF_FREQ_CONTEXT, ORDER_OF, coding, w);
-  if (!written) throw fault('JXL_INTERNAL', 'The kernels did not write a block picture\'s AC group.');
+  if (!written) throw fault('JXL_INTERNAL', 'vardct:strategy-write');
   return written;
 }
 
@@ -246,7 +246,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   const noiseLut = (typeof __RAPIER_JXL_FORMAT__ === 'undefined' || __RAPIER_JXL_FORMAT__ === true) ? jpeg.noiseLut : null;
   const {isFirstFrame = true, isLastFrame = true, crop = null, saveAsReference = 0, imageWidth, imageHeight,
     alphaChannel = Boolean(alpha), mask = false, patches = null} = jpeg.placement ?? {};
-  if (mask && (!alphaChannel || !crop)) throw fault('JXL_INTERNAL', 'A mask needs alpha and a crop.');
+  if (mask && (!alphaChannel || !crop)) throw fault('JXL_INTERNAL', 'vardct:mask');
   const layout = varDCTLayout(jpeg, plan);
   const {directRGB, numPasses, epf, quantScale, field, shift, ycbcr, map, comps: rawComps, hasOrders, orders,
     rawH, rawV, maxhs, maxvs, hshifts, vshifts, xsizeBlocks, ysizeBlocks, groupsX, groupsY, numGroups,
@@ -398,9 +398,9 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     const {state, g: local} = groupInput(g, pass);
     if (((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null)) {
       if (!kernelHooks.strategyFill) kernelHooks.ensure?.();
-      if (!kernelHooks.strategyFill) throw fault('JXL_WASM', 'The block-strategy writer is unavailable: an encoder needs WebAssembly with SIMD.');
+      if (!kernelHooks.strategyFill) throw fault('JXL_WASM', 'WebAssembly SIMD required');
       const n = kernelHooks.strategyFill(state, local, pass, COEFF_NUM_NONZERO_CONTEXT, COEFF_FREQ_CONTEXT, ORDER_OF, buffer.ctxs, buffer.values);
-      if (n == null) throw fault('JXL_INTERNAL', 'The kernels did not fill a block picture\'s AC group.');
+      if (n == null) throw fault('JXL_INTERNAL', 'vardct:strategy-fill');
       return [n, buffer.ctxs, buffer.values];
     }
     if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) return null;
@@ -682,7 +682,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
       }
       if (maxInputBytes !== Infinity && (!Number.isSafeInteger(maxInputBytes) || maxInputBytes < 0) ||
           !Number.isSafeInteger(inputBytes) || inputBytes > maxInputBytes)
-        throw Object.assign(new RangeError('AC group exceeds its input reservation.'), {code: 'JXL_MEMORY'});
+        throw Object.assign(new RangeError('AC group: over reservation'), {code: 'JXL_MEMORY'});
       const buckets = new Uint8Array(lw * lh);
       for (let y = 0; y < lh; y++) {
         const from = ((by0 >> vshift(1)) + y) * lumaW + (bx0 >> hshift(1));
@@ -769,7 +769,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     }
   }
   }
-  if (jpeg.level === 5 && !modular16bit) throw fault('JXL_INPUT', 'This picture needs level 10: its samples exceed 16-bit buffers.');
+  if (jpeg.level === 5 && !modular16bit) throw fault('JXL_INPUT', 'samples > 16-bit: use level 10');
   const level = isFirstFrame && !jpeg.frameHeader ? Math.max(jpeg.level ?? 5, modular16bit ? 5 : 10) : 5, boundedHeader = journaling() && jpeg.profile?.iccData, joined = journaling() && !single && !boundedHeader;
   let bytes, sections;
   if (boundedHeader) bytes = yield* journalTool('varDCTFile')(header => writeVarDCTHeader(header, jpeg, layout, modular16bit, writeImageHeader), writers, level, {BitWriter, writeTOC, codestreamFromParts});

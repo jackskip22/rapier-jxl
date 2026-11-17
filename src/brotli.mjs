@@ -6,16 +6,16 @@ import {fault} from './fault.mjs';
 import {populationBits} from './entropy.mjs';
 import {INSERT_BITS, COPY_BITS, INSERT_GROUP, COPY_GROUP, INSERT_BASE, COPY_BASE, literalContext, brotliReader} from './brotli-read.mjs';
 
-const invalid = message => fault('JXL_INPUT', 'Portable Brotli: ' + message);
-const need = (value, message = 'invalid compressed data.') => { if (!value) throw invalid(message); };
-const tooLarge = () => fault('JXL_SIZE', 'The Brotli result exceeds maxOutputLength.');
+const invalid = message => fault('JXL_INPUT', 'Brotli: ' + message);
+const need = (value, message = 'corrupt stream') => { if (!value) throw invalid(message); };
+const tooLarge = () => fault('JXL_SIZE', 'Brotli: over maxOutputLength');
 const COMMAND_GROUP = [128,192,384,256,320,512,448,576,640];
 
 function admission(bytes, options) {
-  if (!(bytes instanceof Uint8Array)) throw invalid('bytes are a Uint8Array.');
-  if (!options || typeof options !== 'object' || Array.isArray(options)) throw invalid('options are an object.');
+  if (!(bytes instanceof Uint8Array)) throw invalid('bytes: Uint8Array');
+  if (!options || typeof options !== 'object' || Array.isArray(options)) throw invalid('options: object');
   const maximum = options.maxOutputLength ?? Number.MAX_SAFE_INTEGER;
-  if (!Number.isSafeInteger(maximum) || maximum < 0) throw invalid('maxOutputLength is a nonnegative safe integer.');
+  if (!Number.isSafeInteger(maximum) || maximum < 0) throw invalid('maxOutputLength: nonnegative integer');
   return maximum;
 }
 function lengthCode(length, base) {
@@ -402,7 +402,7 @@ class Reader {
     return this.part[at - this.start];
   }
   read(count) {
-    need(this.pos + count <= this.bytes.length * 8, 'the compressed stream is truncated.');
+    need(this.pos + count <= this.bytes.length * 8, 'truncated');
     let value = 0, shift = 0;
     while (count) {
       const available = Math.min(count, 8 - (this.pos & 7));
@@ -411,11 +411,11 @@ class Reader {
     }
     return value;
   }
-  pad() { need(this.read((8 - this.pos % 8) % 8) === 0, 'padding bits must be zero.'); }
+  pad() { need(this.read((8 - this.pos % 8) % 8) === 0, 'nonzero padding'); }
   get bit() { return this.pos; }
-  skip(count) { need(this.pos + count <= this.bytes.length * 8, 'the compressed stream is truncated.'); this.pos += count; }
+  skip(count) { need(this.pos + count <= this.bytes.length * 8, 'truncated'); this.pos += count; }
   align() { this.pad(); }
-  end() { this.align(); need(this.pos === this.bytes.length * 8, 'bytes follow the final meta-block.'); }
+  end() { this.align(); need(this.pos === this.bytes.length * 8, 'trailing bytes'); }
 }
 function prefixModel(lengths, explicit) {
   const codes = explicit ?? canonicalCodes(lengths), levels = Array(16).fill(null); let used = 0, only = 0, maximum = 0, space = 0;
@@ -423,7 +423,7 @@ function prefixModel(lengths, explicit) {
     const count = lengths[i]; need(count <= 15);
     (levels[count] ??= new Map()).set(codes[i], i); maximum = Math.max(maximum, count); space += 32768 >> count; used++; only = i;
   }
-  need(used > 0 && (used === 1 || space === 32768), 'invalid prefix-code lengths.');
+  need(used > 0 && (used === 1 || space === 32768), 'prefix lengths');
   return {levels, maximum, only: used === 1 ? only : -1};
 }
 function prefixRead(model, reader) {
@@ -432,13 +432,13 @@ function prefixRead(model, reader) {
   for (let count = 1; count <= model.maximum; count++) {
     value |= reader.read(1) << (count - 1); const symbol = model.levels[count]?.get(value); if (symbol !== undefined) return symbol;
   }
-  throw invalid('invalid prefix symbol.');
+  throw invalid('prefix symbol');
 }
 function readTree(reader, alphabet) {
   const form = reader.read(2), lengths = new Uint8Array(alphabet);
   if (form === 1) {
     const count = reader.read(2) + 1, symbols = Array.from({length: count}, () => reader.read(ceilLog2(alphabet)));
-    need(new Set(symbols).size === count && symbols.every(value => value < alphabet), 'invalid simple prefix tree.');
+    need(new Set(symbols).size === count && symbols.every(value => value < alphabet), 'simple prefix tree');
     if (count === 1) return {only: symbols[0], maximum: 0, levels: []};
     const depths = count === 2 ? [1,1] : count === 3 ? [1,2,2] : reader.read(1) ? [1,2,3,3] : [2,2,2,2];
     for (let i = 0; i < count; i++) lengths[symbols[i]] = depths[i];
@@ -449,7 +449,7 @@ function readTree(reader, alphabet) {
       const length = prefixRead(fixed, reader); codeLengths[order[i]] = length;
       if (length) { space -= 32 >> length; used++; }
     }
-    need(space === 0 || used === 1, 'invalid code-length prefix tree.');
+    need(space === 0 || used === 1, 'code-length tree');
     const next = prefixModel(codeLengths); let at = 0, previous = 8, repeated = -1, repeat = 0;
     space = 32768;
     while (at < alphabet && space > 0) {
@@ -461,31 +461,31 @@ function readTree(reader, alphabet) {
         const length = value === 16 ? previous : 0, bits = value === 16 ? 2 : 3;
         if (length !== repeated) repeat = 0;
         const old = repeat; repeat = (repeat ? (repeat - 2) * (1 << bits) : 0) + reader.read(bits) + 3;
-        const amount = repeat - old; need(amount > 0 && at + amount <= alphabet, 'prefix repeat exceeds the alphabet.');
+        const amount = repeat - old; need(amount > 0 && at + amount <= alphabet, 'prefix repeat');
         lengths.fill(length, at, at + amount); at += amount; repeated = length;
         if (length) space -= amount * (32768 >> length);
       }
-      need(space >= 0, 'oversubscribed prefix tree.');
+      need(space >= 0, 'oversubscribed tree');
     }
-    need(space === 0, 'incomplete prefix tree.');
+    need(space === 0, 'incomplete tree');
   }
   return prefixModel(lengths);
 }
 const readerAt = (bytes, bit = 0) => new Reader(bytes, bit);
 function brotliLimits(bytes, options = {}) {
   const maxOutput = admission(bytes, options), maxBlocks = options.maxBlocks ?? Number.MAX_SAFE_INTEGER, {dictionary} = options;
-  need(Number.isSafeInteger(maxBlocks) && maxBlocks > 0, 'maxBlocks is a positive safe integer.');
+  need(Number.isSafeInteger(maxBlocks) && maxBlocks > 0, 'maxBlocks: positive integer');
   let words;
   return {maxOutput, maxBlocks, dictionary() {
     if (words) return words;
     words = typeof dictionary === 'function' ? dictionary() : dictionary;
-    if (!words) throw Object.assign(invalid('static dictionary references require a full decoder or the dictionary.'), {dictionary: true});
-    need(words instanceof Uint8Array && words.length === 122784, 'Invalid Brotli dictionary bytes.');
+    if (!words) throw Object.assign(invalid('needs dictionary or full decoder'), {dictionary: true});
+    need(words instanceof Uint8Array && words.length === 122784, 'dictionary: 122784-byte Uint8Array');
     return words;
   }};
 }
 const sharedBrotli = /* @__PURE__ */ brotliReader(readTree, (r, m) => prefixRead(m, r), need, blocks => {
-  throw blocks ? fault('JXL_SIZE', 'The Brotli stream exceeds maxBlocks.') : tooLarge();
+  throw blocks ? fault('JXL_SIZE', 'Brotli: over maxBlocks') : tooLarge();
 }, readerAt, brotliLimits);
 export const decompressBrotli = (bytes, options = {}) => sharedBrotli.read(bytes, options);
 export function* decompressBrotliSteps(bytes, options = {}) {

@@ -6,8 +6,7 @@ import {outOfMemory} from '../fault.mjs';
 const EXPANSION = [1, 64, 1032, 1032, 454, 1032, 3, 11, 66048, 66048];
 const LITTLE = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
 const fail = (code, message) => refuse(/^HDR_(DIMENSIONS|LIMIT)$/.test(code) ? 'JXL_DIMENSIONS' : 'JXL_INPUT',
-  message.replace(/\.$/, '') + '; ' + (code === 'HDR_UNSUPPORTED' ? 'export an uncompressed OpenEXR with HALF or FLOAT RGB.'
-    : /^HDR_(DIMENSIONS|LIMIT)$/.test(code) ? 'check the picture size and maxPixels.' : 'export a complete OpenEXR or Radiance file.'));
+  message);
 
 const EXR_MAGIC = 20000630;
 const VERSION_TILED = 0x0200, VERSION_LONG_NAMES = 0x0400, VERSION_NON_IMAGE = 0x0800, VERSION_MULTIPART = 0x1000;
@@ -17,8 +16,8 @@ const SCANLINES_PER_BLOCK = [1, 1, 1, 16, 32, 16, 32, 32, 32, 256];
 async function inflateExact(packed, expectedBytes) {
   let present = false;
   try { present = typeof DecompressionStream === 'function'; } catch {}
-  if (!present) throw refuse('JXL_PLATFORM', 'Compressed OpenEXR needs DecompressionStream; use a runtime that provides it (on Next.js, the Node.js runtime).');
-  if (packed.byteLength * 1032 < expectedBytes) throw fail('HDR_MALFORMED', 'OpenEXR zlib block is shorter than its size.');
+  if (!present) throw refuse('JXL_PLATFORM', 'compressed EXR: DecompressionStream required');
+  if (packed.byteLength * 1032 < expectedBytes) throw fail('HDR_MALFORMED', 'EXR zlib: short');
   const out = new Uint8Array(expectedBytes);
   const reader = new ReadableStream({start(controller) { controller.enqueue(packed); controller.close(); }})
     .pipeThrough(new DecompressionStream('deflate')).getReader();
@@ -27,19 +26,19 @@ async function inflateExact(packed, expectedBytes) {
     for (;;) {
       const {value, done} = await reader.read();
       if (done) break;
-      if (offset + value.byteLength > expectedBytes) throw fail('HDR_MALFORMED', 'OpenEXR zlib block is larger than its size.');
+      if (offset + value.byteLength > expectedBytes) throw fail('HDR_MALFORMED', 'EXR zlib: too large');
       out.set(value, offset); offset += value.byteLength;
     }
   } catch (error) {
     await reader.cancel().catch(() => {});
-    throw /^JXL_/.test(error.code) ? error : fail('HDR_MALFORMED', 'OpenEXR zlib block is corrupt.');
+    throw /^JXL_/.test(error.code) ? error : fail('HDR_MALFORMED', 'EXR zlib: corrupt');
   }
-  if (offset !== expectedBytes) throw fail('HDR_MALFORMED', 'OpenEXR zlib block is shorter than its size.');
+  if (offset !== expectedBytes) throw fail('HDR_MALFORMED', 'EXR zlib: short');
   return out;
 }
 
 function unrollRle(packed, expected) {
-  if (packed.length * 64 < expected) throw fail('HDR_MALFORMED', 'OpenEXR RLE block did not produce expected byte count.');
+  if (packed.length * 64 < expected) throw fail('HDR_MALFORMED', 'EXR RLE: size mismatch');
   const raw = new Uint8Array(expected);
   let src = 0, dst = 0;
   while (src < packed.length) {
@@ -47,7 +46,7 @@ function unrollRle(packed, expected) {
     if (count < 0) {
       const length = -count;
       if (src + length > packed.length || dst + length > expected) {
-        throw fail('HDR_MALFORMED', 'OpenEXR RLE literal span exceeds block bounds.');
+        throw fail('HDR_MALFORMED', 'EXR RLE literal: bounds');
       }
       raw.set(packed.subarray(src, src + length), dst);
       src += length;
@@ -55,13 +54,13 @@ function unrollRle(packed, expected) {
     } else {
       const run = count + 1;
       if (src >= packed.length || dst + run > expected) {
-        throw fail('HDR_MALFORMED', 'OpenEXR RLE repeat run exceeds block bounds.');
+        throw fail('HDR_MALFORMED', 'EXR RLE repeat: bounds');
       }
       raw.fill(packed[src++], dst, dst + run);
       dst += run;
     }
   }
-  if (dst !== expected) throw fail('HDR_MALFORMED', 'OpenEXR RLE block did not produce expected byte count.');
+  if (dst !== expected) throw fail('HDR_MALFORMED', 'EXR RLE: size mismatch');
   return raw;
 }
 
@@ -103,7 +102,7 @@ function parseHeader(bytes) {
   const nextLine = () => {
     const start = pos;
     while (pos < limit && bytes[pos] !== 0x0a) pos++;
-    if (pos >= limit) throw fail('HDR_MALFORMED', 'Radiance header is truncated or lacks a blank line.');
+    if (pos >= limit) throw fail('HDR_MALFORMED', 'Radiance header: incomplete');
     let end = pos;
     if (end > start && bytes[end - 1] === 0x0d) end--;
     pos++;
@@ -112,7 +111,7 @@ function parseHeader(bytes) {
 
   const first = nextLine();
   if (!first.startsWith('#?RADIANCE') && !first.startsWith('#?RGBE') && !first.startsWith('FORMAT=')) {
-    throw fail('HDR_FORMAT', 'Input does not begin with a Radiance RGBE signature.');
+    throw fail('HDR_FORMAT', 'not Radiance RGBE: missing #?RADIANCE or #?RGBE signature');
   }
   const parseDirective = line => {
     const trimmed = line.trim();
@@ -125,7 +124,7 @@ function parseHeader(bytes) {
       format = val.toLowerCase();
     } else if (key === 'EXPOSURE') {
       const num = Number(val);
-      if (!Number.isFinite(num) || num <= 0) throw fail('HDR_MALFORMED', 'Radiance EXPOSURE must be finite and positive.');
+      if (!Number.isFinite(num) || num <= 0) throw fail('HDR_MALFORMED', 'EXPOSURE: positive finite');
       exposure *= num;
       exposureSeen = true;
     } else if (key === 'PIXASPECT') {
@@ -134,13 +133,13 @@ function parseHeader(bytes) {
     } else if (key === 'COLORCORR') {
       const parts = val.split(/\s+/).filter(Boolean).map(Number);
       if (parts.length !== 3 || parts.some(v => !Number.isFinite(v) || v <= 0)) {
-        throw fail('HDR_MALFORMED', 'Radiance COLORCORR requires three positive numbers.');
+        throw fail('HDR_MALFORMED', 'COLORCORR: 3 positive numbers');
       }
       colorCorr = [colorCorr[0] * parts[0], colorCorr[1] * parts[1], colorCorr[2] * parts[2]];
     } else if (key === 'PRIMARIES') {
       const parts = val.split(/\s+/).filter(Boolean).map(Number);
       if (parts.length !== 8 || parts.some(v => !Number.isFinite(v))) {
-        throw fail('HDR_MALFORMED', 'Radiance PRIMARIES requires eight finite numbers.');
+        throw fail('HDR_MALFORMED', 'PRIMARIES: 8 finite numbers');
       }
       primaries = parts;
     }
@@ -153,17 +152,17 @@ function parseHeader(bytes) {
     parseDirective(line);
   }
   if (format !== '32-bit_rle_rgbe' && format !== '32-bit_rle_xyze') {
-    throw fail('HDR_UNSUPPORTED', `Unsupported or missing Radiance FORMAT: ${format ?? 'none'}.`);
+    throw fail('HDR_UNSUPPORTED', `Radiance FORMAT: 32-bit_rle_rgbe, got ${format ?? 'none'}`);
   }
 
   const resLine = nextLine();
   const match = ORIENTATION_RE.exec(resLine);
-  if (!match) throw fail('HDR_MALFORMED', `Invalid Radiance resolution string: ${resLine}`);
+  if (!match) throw fail('HDR_MALFORMED', `Radiance resolution: ${resLine}`);
   const [, axis1, len1Str, axis2, len2Str] = match;
-  if (axis1[1] === axis2[1]) throw fail('HDR_MALFORMED', 'Radiance resolution axes must name both X and Y.');
+  if (axis1[1] === axis2[1]) throw fail('HDR_MALFORMED', 'Radiance axes: X and Y');
   const scanCount = Number(len1Str), scanWidth = Number(len2Str);
   if (!Number.isSafeInteger(scanCount) || !Number.isSafeInteger(scanWidth) || scanCount < 1 || scanWidth < 1) {
-    throw fail('HDR_DIMENSIONS', 'Radiance dimensions must be positive integers.');
+    throw fail('HDR_DIMENSIONS', 'Radiance dimensions: positive integers');
   }
   return {
     dataStart: pos,
@@ -185,30 +184,30 @@ function decodeScanlines(bytes, cursor, scanWidth, scanCount) {
   const all = new Uint8Array(scanCount * scanWidth * 4);
 
   for (let s = 0; s < scanCount; s++) {
-    if (cursor + 4 > bytes.length) throw fail('HDR_TRUNCATED', 'Radiance scanline is truncated.');
+    if (cursor + 4 > bytes.length) throw fail('HDR_TRUNCATED', 'Radiance scanline: incomplete');
     const b0 = bytes[cursor], b1 = bytes[cursor + 1], b2 = bytes[cursor + 2], b3 = bytes[cursor + 3];
 
     if (scanWidth >= 8 && scanWidth <= 0x7fff && b0 === 2 && b1 === 2 && (b2 & 0x80) === 0) {
       const encodedWidth = (b2 << 8) | b3;
       if (encodedWidth !== scanWidth) {
-        throw fail('HDR_MALFORMED', `Radiance adaptive RLE width ${encodedWidth} does not match ${scanWidth}.`);
+        throw fail('HDR_MALFORMED', `Radiance RLE width: ${encodedWidth} vs ${scanWidth}`);
       }
       cursor += 4;
       for (let ch = 0; ch < 4; ch++) {
         let x = 0;
         while (x < scanWidth) {
-          if (cursor >= bytes.length) throw fail('HDR_TRUNCATED', 'Radiance RLE stream ended prematurely.');
+          if (cursor >= bytes.length) throw fail('HDR_TRUNCATED', 'Radiance RLE: incomplete');
           const code = bytes[cursor++];
           if (code > 128) {
             const run = code - 128;
             if (cursor >= bytes.length || x + run > scanWidth) {
-              throw fail('HDR_MALFORMED', 'Radiance RLE run exceeds scanline bounds.');
+              throw fail('HDR_MALFORMED', 'Radiance RLE run: bounds');
             }
             const val = bytes[cursor++];
             for (let k = 0; k < run; k++, x++) rowRgbe[x * 4 + ch] = val;
           } else {
             if (code === 0 || cursor + code > bytes.length || x + code > scanWidth) {
-              throw fail('HDR_MALFORMED', 'Radiance RLE literal span is zero or exceeds scanline bounds.');
+              throw fail('HDR_MALFORMED', 'Radiance RLE literal: bounds');
             }
             for (let k = 0; k < code; k++, x++) rowRgbe[x * 4 + ch] = bytes[cursor++];
           }
@@ -219,8 +218,8 @@ function decodeScanlines(bytes, cursor, scanWidth, scanCount) {
     }
 
     for (let x = 0; x < scanWidth; x++) {
-      if (cursor + 4 > bytes.length) throw fail('HDR_TRUNCATED', 'Radiance scanline is truncated.');
-      if (bytes[cursor] === 1 && bytes[cursor + 1] === 1 && bytes[cursor + 2] === 1) throw fail('HDR_UNSUPPORTED', 'Radiance old-style run-length rows are not supported.');
+      if (cursor + 4 > bytes.length) throw fail('HDR_TRUNCATED', 'Radiance scanline: incomplete');
+      if (bytes[cursor] === 1 && bytes[cursor + 1] === 1 && bytes[cursor + 2] === 1) throw fail('HDR_UNSUPPORTED', 'Radiance RLE: old-style unsupported');
       rowRgbe.set(bytes.subarray(cursor, cursor + 4), x * 4);
       cursor += 4;
     }
@@ -250,8 +249,8 @@ function colour(vals, tolerance) {
 function box(dv, start, label, most) {
   const minX = dv.getInt32(start, true), minY = dv.getInt32(start + 4, true), maxX = dv.getInt32(start + 8, true), maxY = dv.getInt32(start + 12, true);
   const width = maxX - minX + 1, height = maxY - minY + 1;
-  if (width < 1 || height < 1) throw fail('HDR_DIMENSIONS', `OpenEXR ${label} must have positive dimensions.`);
-  if (most !== undefined && width * height > most) throw fail('HDR_DIMENSIONS', `OpenEXR ${label} exceeds the caller's maxPixels (${most}).`);
+  if (width < 1 || height < 1) throw fail('HDR_DIMENSIONS', `EXR ${label}: positive dimensions`);
+  if (most !== undefined && width * height > most) throw fail('HDR_DIMENSIONS', `EXR ${label}: exceeds maxPixels ${most}`);
   return {minX, minY, maxX, maxY, width, height};
 }
 function levelSize(full, level, roundUp) {
@@ -267,7 +266,7 @@ function levelCount(full, roundUp) {
 
 
 function huffman(src, count) {
-  const malformed = () => fail('HDR_MALFORMED', 'OpenEXR Huffman block is malformed.');
+  const malformed = () => fail('HDR_MALFORMED', 'EXR Huffman block: malformed');
   if (src.length < 20) throw malformed();
   const word = at => (src[at] | src[at + 1] << 8 | src[at + 2] << 16 | src[at + 3] << 24) >>> 0;
   const low = word(0), high = word(4), dataBits = word(12);
@@ -286,7 +285,7 @@ function huffman(src, count) {
       if (l === 63) { if (20 + (at + 8 >> 3) > src.length) throw malformed(); run = peek(20, at, 8) + 6; at += 8; }
       if (i + run > high + 1) throw malformed();
       i += run;
-    } else if (l > 52) throw fail('HDR_UNSUPPORTED', 'OpenEXR Huffman codes longer than 52 bits are not supported.');
+    } else if (l > 52) throw fail('HDR_UNSUPPORTED', 'EXR Huffman: max 52 bits');
     else { lengths[i++] = l; if (l) perLength[l]++; }
   }
   const base = 20 + Math.ceil(at / 8);
@@ -402,7 +401,7 @@ const wordsToBytes = words => {
 };
 
 function piz(packed, chunk, channels, expected) {
-  const malformed = () => fail('HDR_MALFORMED', 'OpenEXR PIZ block is malformed.');
+  const malformed = () => fail('HDR_MALFORMED', 'EXR PIZ block: malformed');
   if (packed.length < 8) throw malformed();
   const min = packed[0] | packed[1] << 8, max = packed[2] | packed[3] << 8;
   if (max >= 8192) throw malformed();
@@ -466,7 +465,7 @@ function b44Log() {
   return (B44_LOG = t);
 }
 function b44(packed, chunk, channels, expected) {
-  const malformed = () => fail('HDR_MALFORMED', 'OpenEXR B44 block is malformed.');
+  const malformed = () => fail('HDR_MALFORMED', 'EXR B44 block: malformed');
   const planes = new Uint8Array(expected), s = new Uint16Array(16);
   let p = 0, o = 0;
   for (let c = 0; c < channels.length; c++) {
@@ -574,11 +573,11 @@ const DWA_ZIG = [0,1,5,6,14,15,27,28,2,4,7,13,16,26,29,42,3,8,12,17,25,30,41,43,
 const DEFAULT_RULES = [['R',1,1,0],['R',1,2,0],['G',1,1,1],['G',1,2,1],['B',1,1,2],['B',1,2,2],['Y',1,1,-1],['Y',1,2,-1],['BY',1,1,-1],['BY',1,2,-1],['RY',1,1,-1],['RY',1,2,-1],['A',2,0,-1],['A',2,1,-1],['A',2,2,-1]];
 
 async function dwa(packed, chunk, channels, expected) {
-  const malformed = () => fail('HDR_MALFORMED', 'OpenEXR DWA block is malformed.');
+  const malformed = () => fail('HDR_MALFORMED', 'EXR DWA block: malformed');
   if (packed.length < 88) throw malformed();
   const dv = new DataView(packed.buffer, packed.byteOffset, packed.byteLength);
   const sz = []; for (let i = 0; i < 11; i++) { const v = Number(dv.getBigUint64(i * 8, true)); if (v < 0 || !Number.isSafeInteger(v)) throw malformed(); sz.push(v); }
-  const version = sz[0]; if (version > 2) throw fail('HDR_UNSUPPORTED', 'OpenEXR DWA version is newer than this reader.');
+  const version = sz[0]; if (version > 2) throw fail('HDR_UNSUPPORTED', 'EXR DWA version: max 2');
   let p = 88, rules = DEFAULT_RULES;
   if (version >= 2) {
     if (p + 2 > packed.length) throw malformed();
@@ -592,7 +591,7 @@ async function dwa(packed, chunk, channels, expected) {
   let off = p; const unkOff = off; off += unkC; const acOff = off; off += acC; const dcOff = off; off += dcC; const rleOff = off; off += rleC;
   if (off > packed.length) throw malformed();
   if (acComp > 1) throw malformed();
-  if (unkUnc > expected || rleRaw > expected || rleUnc > 2 * rleRaw || acCnt > expected || dcCnt > expected) throw fail('HDR_LIMIT', 'OpenEXR DWA block claims more data than its picture.');
+  if (unkUnc > expected || rleRaw > expected || rleUnc > 2 * rleRaw || acCnt > expected || dcCnt > expected) throw fail('HDR_LIMIT', 'EXR DWA: too large');
   const suffix = n => { const i = n.lastIndexOf('.'); return i < 0 ? n : n.slice(i + 1); };
   const prefix = n => { const i = n.lastIndexOf('.'); return i < 0 ? '' : n.slice(0, i); };
   const scheme = new Array(channels.length).fill(0), cscMap = new Map();
@@ -681,7 +680,7 @@ function luminanceWeights(c) {
   const sg = fr(fr(fr(fr(X * fr(ry - by)) + fr(rx * fr(fr(1 * fr(by - 1)) + fr(by * XZ)))) - fr(bx * fr(fr(1 * fr(ry - 1)) + fr(ry * XZ)))) / d);
   const sb = fr(fr(fr(fr(X * fr(gy - ry)) - fr(rx * fr(fr(1 * fr(gy - 1)) + fr(gy * XZ)))) + fr(gx * fr(fr(1 * fr(ry - 1)) + fr(ry * XZ)))) / d);
   const m = [fr(sr * ry), fr(sg * gy), fr(sb * by)], sum = fr(fr(m[0] + m[1]) + m[2]);
-  if (!Number.isFinite(sum) || sum === 0) throw fail('HDR_MALFORMED', 'OpenEXR chromaticities give no luminance.');
+  if (!Number.isFinite(sum) || sum === 0) throw fail('HDR_MALFORMED', 'EXR chromaticities: no luminance');
   return m.map(v => fr(v / sum));
 }
 function lumaChromaToRgba(Y, RY, BY, A, W, H, minY, yw) {
@@ -763,8 +762,8 @@ function lumaChromaToRgba(Y, RY, BY, A, W, H, minY, yw) {
 async function decompressBlock(packed, compression, chunk, channels) {
   const expected = chunk.expected;
   if (packed.byteLength === expected) return packed;
-  if (compression === 0) throw fail('HDR_MALFORMED', 'OpenEXR uncompressed block has the wrong size.');
-  if (packed.byteLength > expected) throw fail('HDR_MALFORMED', 'OpenEXR compressed block is larger than its picture data.');
+  if (compression === 0) throw fail('HDR_MALFORMED', 'EXR uncompressed: size mismatch');
+  if (packed.byteLength > expected) throw fail('HDR_MALFORMED', 'EXR compressed block: too large');
   if (compression === 1) return undoBytePrediction(unrollRle(packed, expected));
   if (compression <= 3) return undoBytePrediction(await inflateExact(packed, expected));
   if (compression === 4) return piz(packed, chunk, channels, expected);
@@ -774,20 +773,20 @@ async function decompressBlock(packed, compression, chunk, channels) {
 }
 
 async function readExr(bytes, windowMode, maxPixels) {
-  if (bytes.byteLength < 32) throw fail('HDR_TRUNCATED', 'OpenEXR file is too short.');
+  if (bytes.byteLength < 32) throw fail('HDR_TRUNCATED', 'EXR file: incomplete');
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (dv.getUint32(0, true) !== EXR_MAGIC) throw fail('HDR_FORMAT', 'Not an OpenEXR file.');
+  if (dv.getUint32(0, true) !== EXR_MAGIC) throw fail('HDR_FORMAT', 'not OpenEXR: invalid signature');
   const versionWord = dv.getUint32(4, true);
-  if ((versionWord & 255) !== 2) throw fail('HDR_UNSUPPORTED', `OpenEXR version ${versionWord & 255} is not supported.`);
-  if (versionWord & VERSION_NON_IMAGE) throw fail('HDR_UNSUPPORTED', 'OpenEXR deep files are not supported.');
-  if (versionWord & ~(VERSION_TILED | VERSION_LONG_NAMES | VERSION_MULTIPART | 255)) throw fail('HDR_MALFORMED', 'OpenEXR version field has unknown flags.');
+  if ((versionWord & 255) !== 2) throw fail('HDR_UNSUPPORTED', `EXR version ${versionWord & 255}: unsupported`);
+  if (versionWord & VERSION_NON_IMAGE) throw fail('HDR_UNSUPPORTED', 'EXR deep: unsupported');
+  if (versionWord & ~(VERSION_TILED | VERSION_LONG_NAMES | VERSION_MULTIPART | 255)) throw fail('HDR_MALFORMED', 'EXR version: unknown flags');
   const multipart = Boolean(versionWord & VERSION_MULTIPART);
   const nameLimit = versionWord & VERSION_LONG_NAMES ? 255 : 31;
   let cursor = 8;
   const cString = (end = bytes.length) => {
     const start = cursor;
     while (cursor < end && bytes[cursor] !== 0 && cursor - start <= nameLimit) cursor++;
-    if (cursor >= end || cursor - start > nameLimit) throw fail('HDR_MALFORMED', 'An OpenEXR name is unterminated or too long.');
+    if (cursor >= end || cursor - start > nameLimit) throw fail('HDR_MALFORMED', 'EXR name: unterminated or long');
     const text = ascii(bytes, start, cursor);
     cursor++;
     return text;
@@ -796,27 +795,27 @@ async function readExr(bytes, windowMode, maxPixels) {
   for (;;) {
     const map = new Map();
     for (;;) {
-      if (cursor >= bytes.length) throw fail('HDR_TRUNCATED', 'OpenEXR header is truncated.');
+      if (cursor >= bytes.length) throw fail('HDR_TRUNCATED', 'EXR header: incomplete');
       const name = cString();
       if (!name) break;
       const type = cString();
-      if (!type || cursor + 4 > bytes.length || map.has(name)) throw fail('HDR_MALFORMED', `OpenEXR header has a bad or duplicate attribute (${name}).`);
+      if (!type || cursor + 4 > bytes.length || map.has(name)) throw fail('HDR_MALFORMED', `EXR attribute ${name}: invalid or duplicate`);
       const length = dv.getInt32(cursor, true);
       cursor += 4;
-      if (length < 0 || cursor + length > bytes.length) throw fail('HDR_MALFORMED', `OpenEXR attribute ${name} is truncated.`);
+      if (length < 0 || cursor + length > bytes.length) throw fail('HDR_MALFORMED', `EXR attribute ${name}: incomplete`);
       map.set(name, {type, start: cursor, length});
       cursor += length;
     }
     parts.push(map);
     if (!multipart) break;
-    if (cursor >= bytes.length) throw fail('HDR_TRUNCATED', 'OpenEXR header list is truncated.');
+    if (cursor >= bytes.length) throw fail('HDR_TRUNCATED', 'EXR header list: incomplete');
     if (bytes[cursor] === 0) { cursor++; break; }
   }
   const partCount = parts.length;
   const attrFrom = map => (name, type, length, required = true) => {
     const found = map.get(name);
-    if (!found) { if (required) throw fail('HDR_MALFORMED', `OpenEXR header lacks ${name}.`); return null; }
-    if (found.type !== type || (length !== undefined && found.length !== length)) throw fail('HDR_MALFORMED', `OpenEXR ${name} has the wrong type or size.`);
+    if (!found) { if (required) throw fail('HDR_MALFORMED', `EXR header: missing ${name}`); return null; }
+    if (found.type !== type || (length !== undefined && found.length !== length)) throw fail('HDR_MALFORMED', `EXR ${name}: type or size`);
     return found;
   };
   const isDeep = map => { const t = map.get('type'); return t?.type === 'string' && /deep/.test(ascii(bytes, t.start, t.start + Math.min(t.length, 64))); };
@@ -828,60 +827,60 @@ async function readExr(bytes, windowMode, maxPixels) {
     if (!multipart) break;
     const found = attrFrom(parts[p])('chunkCount', 'int', 4);
     const count = dv.getInt32(found.start, true);
-    if (count < 0) throw fail('HDR_MALFORMED', 'OpenEXR chunkCount is invalid.');
+    if (count < 0) throw fail('HDR_MALFORMED', 'EXR chunkCount: invalid');
     allTablesEnd += count * 8;
-    if (allTablesEnd > bytes.byteLength) throw fail('HDR_TRUNCATED', 'OpenEXR offset table is truncated.');
+    if (allTablesEnd > bytes.byteLength) throw fail('HDR_TRUNCATED', 'EXR offset table: incomplete');
     tableCounts.push(count);
   }
-  if (chosen < 0) throw fail('HDR_UNSUPPORTED', parts.some(isDeep) ? 'OpenEXR deep files are not supported.' : 'OpenEXR has no scan-line or tiled image part to read.');
+  if (chosen < 0) throw fail('HDR_UNSUPPORTED', parts.some(isDeep) ? 'EXR deep: unsupported' : 'EXR image part: required');
   const attributes = parts[chosen], partNumber = chosen, partPrefix = multipart ? 4 : 0;
   const tableStart = partTableStart;
   const attribute = attrFrom(attributes);
-  if (isDeep(attributes)) throw fail('HDR_UNSUPPORTED', 'OpenEXR deep files are not supported.');
+  if (isDeep(attributes)) throw fail('HDR_UNSUPPORTED', 'EXR deep: unsupported');
 
   const compression = bytes[attribute('compression', 'compression', 1).start];
-  if (compression > 9) throw fail('HDR_UNSUPPORTED', compression < 14 ? `OpenEXR ${COMPRESSION_NAMES[compression]} compression is not supported.` : `OpenEXR compression ${compression} is not supported.`);
+  if (compression > 9) throw fail('HDR_UNSUPPORTED', compression < 14 ? `EXR ${COMPRESSION_NAMES[compression]} compression: unsupported` : `EXR compression ${compression}: unsupported`);
   const dataWin = box(dv, attribute('dataWindow', 'box2i', 16).start, 'data window', maxPixels);
   const displayWin = box(dv, attribute('displayWindow', 'box2i', 16).start, 'display window', windowMode === 'display' ? maxPixels : undefined);
   const outWin = windowMode === 'display' ? displayWin : dataWin;
-  if (bytes[attribute('lineOrder', 'lineOrder', 1).start] > 2) throw fail('HDR_MALFORMED', 'OpenEXR line order is invalid.');
+  if (bytes[attribute('lineOrder', 'lineOrder', 1).start] > 2) throw fail('HDR_MALFORMED', 'EXR lineOrder: 0-2');
 
   const chlist = attribute('channels', 'chlist');
   cursor = chlist.start;
   const chEnd = chlist.start + chlist.length, channels = [];
   for (;;) {
-    if (cursor >= chEnd) throw fail('HDR_MALFORMED', 'OpenEXR channel list is not closed.');
+    if (cursor >= chEnd) throw fail('HDR_MALFORMED', 'EXR channels: unterminated');
     if (bytes[cursor] === 0) { cursor++; break; }
     const name = cString(chEnd);
-    if (cursor + 16 > chEnd) throw fail('HDR_MALFORMED', 'OpenEXR channel list is truncated.');
+    if (cursor + 16 > chEnd) throw fail('HDR_MALFORMED', 'EXR channels: incomplete');
     const kind = dv.getInt32(cursor, true), linear = bytes[cursor + 4], xs = dv.getInt32(cursor + 8, true), ys = dv.getInt32(cursor + 12, true);
     cursor += 16;
-    if (kind < 0 || kind > 2) throw fail('HDR_MALFORMED', `OpenEXR channel ${name} has an invalid pixel type.`);
-    if (linear > 1) throw fail('HDR_MALFORMED', `OpenEXR channel ${name} has an invalid pLinear value.`);
-    if (xs < 1 || ys < 1) throw fail('HDR_MALFORMED', `OpenEXR channel ${name} has an invalid sampling.`);
-    if (!keeps(dataWin.minX, xs) || !keeps(dataWin.minY, ys) || dataWin.width % xs || dataWin.height % ys) throw fail('HDR_MALFORMED', `OpenEXR channel ${name}'s sampling does not divide the data window.`);
-    if (channels.some(channel => channel.name === name)) throw fail('HDR_MALFORMED', 'OpenEXR channel list repeats a channel.');
+    if (kind < 0 || kind > 2) throw fail('HDR_MALFORMED', `EXR ${name} pixel type: 0-2`);
+    if (linear > 1) throw fail('HDR_MALFORMED', `EXR ${name} pLinear: 0-1`);
+    if (xs < 1 || ys < 1) throw fail('HDR_MALFORMED', `EXR ${name} sampling: positive`);
+    if (!keeps(dataWin.minX, xs) || !keeps(dataWin.minY, ys) || dataWin.width % xs || dataWin.height % ys) throw fail('HDR_MALFORMED', `EXR ${name} sampling: divide dataWindow`);
+    if (channels.some(channel => channel.name === name)) throw fail('HDR_MALFORMED', 'EXR channels: duplicate');
     channels.push({name, kind, xs, ys, sampleBytes: kind === 1 ? 2 : 4, linear: linear === 1});
   }
-  if (cursor !== chEnd || !channels.length) throw fail('HDR_MALFORMED', 'OpenEXR channel list is empty or has trailing bytes.');
+  if (cursor !== chEnd || !channels.length) throw fail('HDR_MALFORMED', 'EXR channels: nonempty no trailing');
   channels.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
   const find = name => channels.findIndex(channel => channel.name === name);
   const rgb = [find('R'), find('G'), find('B')], gray = find('Y'), alphaAt = find('A'), ry = find('RY'), by = find('BY');
   const lumaChroma = !rgb.some(i => i >= 0) && gray >= 0 && ry >= 0 && by >= 0;
   const targets = rgb.some(i => i >= 0) ? rgb.map((c, k) => [c, k]).filter(([c]) => c >= 0) : gray >= 0 ? [[gray, -1]] : null;
-  if (!targets) throw fail('HDR_UNSUPPORTED', 'OpenEXR needs an R, G, B or Y channel.');
+  if (!targets) throw fail('HDR_UNSUPPORTED', 'EXR channels: R G B or Y');
   if (alphaAt >= 0) targets.push([alphaAt, 3]);
   const used = targets.map(([c]) => c);
-  if ([...used, ...(lumaChroma ? [ry, by] : [])].some(i => channels[i].kind === 0)) throw fail('HDR_UNSUPPORTED', 'OpenEXR UINT color and alpha channels are not supported.');
-  if (used.some(i => channels[i].xs !== 1 || channels[i].ys !== 1)) throw fail('HDR_UNSUPPORTED', 'OpenEXR subsampled color channels other than luminance-chroma (RY and BY) are not supported.');
-  if (lumaChroma && [ry, by].some(i => channels[i].xs !== 2 || channels[i].ys !== 2)) throw fail('HDR_UNSUPPORTED', 'OpenEXR luminance-chroma with RY and BY not sampled 2 by 2 is not supported.');
+  if ([...used, ...(lumaChroma ? [ry, by] : [])].some(i => channels[i].kind === 0)) throw fail('HDR_UNSUPPORTED', 'EXR UINT color: unsupported');
+  if (used.some(i => channels[i].xs !== 1 || channels[i].ys !== 1)) throw fail('HDR_UNSUPPORTED', 'EXR subsampled color: Y RY BY only');
+  if (lumaChroma && [ry, by].some(i => channels[i].xs !== 2 || channels[i].ys !== 2)) throw fail('HDR_UNSUPPORTED', 'EXR RY/BY sampling: 2x2');
   const half = lumaChroma || used.every(i => channels[i].kind === 1);
 
   const chroma = attribute('chromaticities', 'chromaticities', 32, false);
   let look = {colorSpace: 'srgb'}, primaries = [0.64, 0.33, 0.3, 0.6, 0.15, 0.06, 0.3127, 0.329];
   if (chroma) {
     const vals = Array.from({length: 8}, (_, i) => dv.getFloat32(chroma.start + i * 4, true));
-    if (vals.some(v => !Number.isFinite(v))) throw fail('HDR_MALFORMED', 'OpenEXR chromaticities must be finite.');
+    if (vals.some(v => !Number.isFinite(v))) throw fail('HDR_MALFORMED', 'EXR chromaticities: finite');
     look = colour(vals, 1e-4);
     primaries = vals;
   }
@@ -889,7 +888,7 @@ async function readExr(bytes, windowMode, maxPixels) {
   const white = attribute('whiteLuminance', 'float', 4, false);
   if (white) {
     const value = dv.getFloat32(white.start, true);
-    if (!Number.isFinite(value) || value <= 0) throw fail('HDR_MALFORMED', 'OpenEXR whiteLuminance is not a finite positive number.');
+    if (!Number.isFinite(value) || value <= 0) throw fail('HDR_MALFORMED', 'EXR whiteLuminance: positive finite');
     intensityTarget = value;
   }
 
@@ -898,17 +897,17 @@ async function readExr(bytes, windowMode, maxPixels) {
   let firstDataByte;
   if (!tiled) {
     const rowsPerBlock = SCANLINES_PER_BLOCK[compression], count = Math.ceil(dataWin.height / rowsPerBlock);
-    if (multipart && tableCounts[chosen] !== count) throw fail('HDR_MALFORMED', 'OpenEXR chunkCount does not match its scan-line blocks.');
+    if (multipart && tableCounts[chosen] !== count) throw fail('HDR_MALFORMED', 'EXR chunkCount: scan-line count mismatch');
     firstDataByte = multipart ? allTablesEnd : tableStart + count * 8;
-    if (firstDataByte > bytes.byteLength) throw fail('HDR_TRUNCATED', 'OpenEXR scan-line offset table is truncated.');
+    if (firstDataByte > bytes.byteLength) throw fail('HDR_TRUNCATED', 'EXR scan-line offset table: incomplete');
     const seen = new Uint8Array(count);
     for (let i = 0; i < count; i++) {
       const offset = Number(dv.getBigUint64(tableStart + i * 8, true));
-      if (!Number.isSafeInteger(offset) || offset < firstDataByte || offset + partPrefix + 8 > bytes.byteLength) throw fail('HDR_MALFORMED', 'An OpenEXR scan-line offset is outside the file.');
-      if (partPrefix && dv.getInt32(offset, true) !== partNumber) throw fail('HDR_MALFORMED', 'An OpenEXR scan-line block names the wrong part.');
+      if (!Number.isSafeInteger(offset) || offset < firstDataByte || offset + partPrefix + 8 > bytes.byteLength) throw fail('HDR_MALFORMED', 'EXR scan-line offset: bounds');
+      if (partPrefix && dv.getInt32(offset, true) !== partNumber) throw fail('HDR_MALFORMED', 'EXR scan-line part: mismatch');
       const y = dv.getInt32(offset + partPrefix, true), size = dv.getInt32(offset + partPrefix + 4, true), row = y - dataWin.minY;
-      if (size < 0 || offset + partPrefix + 8 + size > bytes.byteLength || row < 0 || row >= dataWin.height || row % rowsPerBlock) throw fail('HDR_MALFORMED', 'An OpenEXR scan-line block header is invalid.');
-      if (seen[row / rowsPerBlock]) throw fail('HDR_MALFORMED', 'OpenEXR repeats a scan-line block.');
+      if (size < 0 || offset + partPrefix + 8 + size > bytes.byteLength || row < 0 || row >= dataWin.height || row % rowsPerBlock) throw fail('HDR_MALFORMED', 'EXR scan-line header: invalid');
+      if (seen[row / rowsPerBlock]) throw fail('HDR_MALFORMED', 'EXR scan-line block: duplicate');
       seen[row / rowsPerBlock] = 1;
       chunks.push({offset, header: partPrefix + 8, size, x: dataWin.minX, y, width: dataWin.width, rows: Math.min(rowsPerBlock, dataWin.height - row)});
     }
@@ -916,7 +915,7 @@ async function readExr(bytes, windowMode, maxPixels) {
     const tiles = attribute('tiles', 'tiledesc', 9);
     const tileX = dv.getUint32(tiles.start, true), tileY = dv.getUint32(tiles.start + 4, true);
     const mode = bytes[tiles.start + 8], levelMode = mode & 15, roundUp = (mode >> 4) === 1;
-    if (!tileX || !tileY || levelMode > 2 || (mode >> 4) > 1) throw fail('HDR_MALFORMED', 'OpenEXR tile description is invalid.');
+    if (!tileX || !tileY || levelMode > 2 || (mode >> 4) > 1) throw fail('HDR_MALFORMED', 'EXR tiles: invalid description');
     const grid = (w, h) => Math.ceil(w / tileX) * Math.ceil(h / tileY);
     let total = 0;
     if (levelMode === 0) total = grid(dataWin.width, dataWin.height);
@@ -928,33 +927,33 @@ async function readExr(bytes, windowMode, maxPixels) {
         for (let lx = 0, nx = levelCount(dataWin.width, roundUp); lx < nx; lx++)
           total += grid(levelSize(dataWin.width, lx, roundUp), levelSize(dataWin.height, ly, roundUp));
     }
-    if (total < 1) throw fail('HDR_MALFORMED', 'OpenEXR has no tiles.');
-    if (multipart && tableCounts[chosen] !== total) throw fail('HDR_MALFORMED', 'OpenEXR chunkCount does not match its tiles.');
+    if (total < 1) throw fail('HDR_MALFORMED', 'EXR tiles: empty');
+    if (multipart && tableCounts[chosen] !== total) throw fail('HDR_MALFORMED', 'EXR chunkCount: tile count mismatch');
     firstDataByte = multipart ? allTablesEnd : tableStart + total * 8;
-    if (firstDataByte > bytes.byteLength) throw fail('HDR_TRUNCATED', 'OpenEXR tile offset table is truncated.');
+    if (firstDataByte > bytes.byteLength) throw fail('HDR_TRUNCATED', 'EXR tile offset table: incomplete');
     const nx0 = Math.ceil(dataWin.width / tileX), ny0 = Math.ceil(dataWin.height / tileY), seen = new Uint8Array(nx0 * ny0);
     let found = 0;
     for (let i = 0; i < total; i++) {
       const offset = Number(dv.getBigUint64(tableStart + i * 8, true));
-      if (!Number.isSafeInteger(offset) || offset < firstDataByte || offset + partPrefix + 20 > bytes.byteLength) throw fail('HDR_MALFORMED', 'An OpenEXR tile offset is outside the file.');
-      if (partPrefix && dv.getInt32(offset, true) !== partNumber) throw fail('HDR_MALFORMED', 'An OpenEXR tile names the wrong part.');
+      if (!Number.isSafeInteger(offset) || offset < firstDataByte || offset + partPrefix + 20 > bytes.byteLength) throw fail('HDR_MALFORMED', 'EXR tile offset: bounds');
+      if (partPrefix && dv.getInt32(offset, true) !== partNumber) throw fail('HDR_MALFORMED', 'EXR tile part: mismatch');
       const dx = dv.getInt32(offset + partPrefix, true), dy = dv.getInt32(offset + partPrefix + 4, true), lx = dv.getInt32(offset + partPrefix + 8, true), ly = dv.getInt32(offset + partPrefix + 12, true), size = dv.getInt32(offset + partPrefix + 16, true);
-      if (size < 0 || offset + partPrefix + 20 + size > bytes.byteLength || lx < 0 || ly < 0 || dx < 0 || dy < 0) throw fail('HDR_MALFORMED', 'An OpenEXR tile header is invalid.');
-      if (levelMode === 0 && (lx || ly) || levelMode === 1 && lx !== ly) throw fail('HDR_MALFORMED', 'An OpenEXR tile names a level the file does not have.');
+      if (size < 0 || offset + partPrefix + 20 + size > bytes.byteLength || lx < 0 || ly < 0 || dx < 0 || dy < 0) throw fail('HDR_MALFORMED', 'EXR tile header: invalid');
+      if (levelMode === 0 && (lx || ly) || levelMode === 1 && lx !== ly) throw fail('HDR_MALFORMED', 'EXR tile level: invalid');
       if (lx || ly) continue;
-      if (dx >= nx0 || dy >= ny0 || seen[dy * nx0 + dx]) throw fail('HDR_MALFORMED', 'An OpenEXR tile is outside the grid or repeated.');
+      if (dx >= nx0 || dy >= ny0 || seen[dy * nx0 + dx]) throw fail('HDR_MALFORMED', 'EXR tiles: bounds or duplicate');
       seen[dy * nx0 + dx] = 1; found++;
       const x = dataWin.minX + dx * tileX, y = dataWin.minY + dy * tileY;
       chunks.push({offset, header: partPrefix + 20, size, x, y, width: Math.min(tileX, dataWin.maxX - x + 1), rows: Math.min(tileY, dataWin.maxY - y + 1)});
     }
-    if (found !== nx0 * ny0) throw fail('HDR_MALFORMED', 'OpenEXR is missing tiles of its full-size level.');
+    if (found !== nx0 * ny0) throw fail('HDR_MALFORMED', 'EXR tiles: missing full level');
   }
   const physical = [...chunks].sort((a, b) => a.offset - b.offset);
-  for (let i = 1; i < physical.length; i++) if (physical[i].offset < physical[i - 1].offset + physical[i - 1].header + physical[i - 1].size) throw fail('HDR_MALFORMED', 'OpenEXR blocks overlap.');
+  for (let i = 1; i < physical.length; i++) if (physical[i].offset < physical[i - 1].offset + physical[i - 1].header + physical[i - 1].size) throw fail('HDR_MALFORMED', 'EXR blocks: overlap');
   for (const chunk of chunks) {
     chunk.expected = blockBytes(chunk, channels);
     const made = compression === 5 ? blockBytes(chunk, channels, pxr24Bytes) : chunk.expected;
-    if (chunk.size < chunk.expected && chunk.size * EXPANSION[compression] < made) throw fail('HDR_MALFORMED', 'An OpenEXR block is shorter than its picture data.');
+    if (chunk.size < chunk.expected && chunk.size * EXPANSION[compression] < made) throw fail('HDR_MALFORMED', 'EXR block: too short');
   }
 
   const one = half ? 0x3c00 : 0x3f800000;
@@ -1046,7 +1045,7 @@ function radianceColour(primaries) {
   if (!primaries || primaries.every(v => v === 0) || near(primaries, RADIANCE_DEFAULT, 1.5e-3)) return {colorSpace: 'srgb'};
   for (let i = 0; i < 8; i += 2) {
     const x = primaries[i], y = primaries[i + 1];
-    if (x <= 0 || y <= 0 || x + y > 1.0001) throw fail('HDR_MALFORMED', 'Radiance PRIMARIES lie outside the CIE xy gamut.');
+    if (x <= 0 || y <= 0 || x + y > 1.0001) throw fail('HDR_MALFORMED', 'PRIMARIES: outside CIE xy');
   }
   return colour(primaries, 1.5e-3);
 }
@@ -1054,13 +1053,13 @@ function radianceColour(primaries) {
 function readRadianceBytes(bytes, maxPixels) {
   const hdr = parseHeader(bytes);
   const {scanCount, scanWidth, axis1, axis2, format} = hdr;
-  if (format !== '32-bit_rle_rgbe') throw fail('HDR_UNSUPPORTED', 'Radiance XYZE pictures are not supported.');
-  if (axis1[1] !== 'Y' || axis2[1] !== 'X') throw fail('HDR_UNSUPPORTED', `Radiance orientation ${axis1} ${scanCount} ${axis2} ${scanWidth} is not supported; the rows must be Y and the columns X.`);
+  if (format !== '32-bit_rle_rgbe') throw fail('HDR_UNSUPPORTED', 'Radiance FORMAT: XYZE unsupported');
+  if (axis1[1] !== 'Y' || axis2[1] !== 'X') throw fail('HDR_UNSUPPORTED', `Radiance orientation ${axis1} ${scanCount} ${axis2} ${scanWidth}: Y rows X columns`);
   const flipY = axis1[0] === '+', flipX = axis2[0] === '-';
   const width = scanWidth, height = scanCount;
-  if (maxPixels !== undefined && width * height > maxPixels) throw fail('HDR_DIMENSIONS', `Radiance picture exceeds the caller's maxPixels (${maxPixels}).`);
+  if (maxPixels !== undefined && width * height > maxPixels) throw fail('HDR_DIMENSIONS', `Radiance: exceeds maxPixels ${maxPixels}`);
   const rowBytes = scanWidth >= 8 && scanWidth <= 0x7fff ? Math.min(4 * scanWidth, 4 + 8 * Math.ceil(scanWidth / 127)) : 4 * scanWidth;
-  if (bytes.length - hdr.dataStart < scanCount * rowBytes) throw fail('HDR_TRUNCATED', 'Radiance file is shorter than its picture.');
+  if (bytes.length - hdr.dataStart < scanCount * rowBytes) throw fail('HDR_TRUNCATED', 'Radiance picture: incomplete');
   const look = radianceColour(hdr.primaries);
   const rgbe = decodeScanlines(bytes, hdr.dataStart, scanWidth, scanCount);
   const out = new Float32Array(width * height * 4);
@@ -1101,23 +1100,23 @@ const isRadianceHeader = b => /^(#\?RADIANCE|#\?RGBE|FORMAT=32-bit_rle_(rgbe|xyz
 export async function read(input, options = {}) {
   const settings = snapshotOptions(options);
   for (const key of Object.keys(settings)) if (key !== 'window' && key !== 'maxPixels')
-    throw refuse('JXL_OPTIONS', `Unknown HDR option: ${key}; use window or maxPixels.`);
+    throw refuse('JXL_OPTIONS', `unknown option: ${key}`);
   const window = settings.window ?? 'data', maxPixels = settings.maxPixels;
-  if (window !== 'data' && window !== 'display') throw refuse('JXL_OPTIONS', "Invalid window; use 'data' or 'display'.");
+  if (window !== 'data' && window !== 'display') throw refuse('JXL_OPTIONS', "window: data or display");
   if (maxPixels !== undefined && (!Number.isSafeInteger(maxPixels) || maxPixels < 1))
-    throw refuse('JXL_OPTIONS', "Invalid maxPixels; use a positive safe integer.");
+    throw refuse('JXL_OPTIONS', "maxPixels: positive safe integer");
   let bytes;
   if (typeof Blob === 'function' && input instanceof Blob) bytes = await blobBytes(input);
   else {
     if (arrayBufferBytes(input) !== null) {
       try { input = new Uint8Array(input); }
-      catch { throw refuse('JXL_INPUT', "ArrayBuffer is detached; pass an attached buffer."); }
+      catch { throw refuse('JXL_INPUT', "ArrayBuffer: detached"); }
     }
     bytes = copyBytes(input);
   }
   try {
     if (bytes.length >= 4 && new DataView(bytes.buffer).getUint32(0, true) === EXR_MAGIC) return await readExr(bytes, window, maxPixels);
     if (isRadianceHeader(bytes)) return readRadianceBytes(bytes, maxPixels);
-    throw fail('HDR_FORMAT', 'Input is not an OpenEXR (.exr) or Radiance (.hdr) file.');
+    throw fail('HDR_FORMAT', 'not OpenEXR (.exr) or Radiance (.hdr)');
   } catch (error) { throw declared(error); }
 }

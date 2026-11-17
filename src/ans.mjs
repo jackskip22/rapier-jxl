@@ -193,13 +193,13 @@ export function writeModularAnsHistograms(w, orderedLeaves, freqs, histogramOf =
   const contextMap = new Uint8Array(orderedLeaves.length + 1);
   for (const leaf of orderedLeaves) {
     const h = histogramOf(leaf) + 1;
-    if (h > 255) throw fault('JXL_INTERNAL', 'A stream names more than 256 histograms.');
+    if (h > 255) throw fault('JXL_INTERNAL', 'ans:histograms');
     contextMap[leaf.context] = h;
   }
   const distance = new Uint32Array(2); distance[1] = 1;
   const shapes = [distance, ...freqs.slice(0, Math.max(...contextMap))].map(shapeOnce);
   const logAlphabet = Math.max(5, ceilLog2(Math.max(...shapes.map(h => h.shape.counts.length))));
-  if (logAlphabet > 8) throw fault('JXL_SIZE', 'Modular ANS alphabet exceeds 256');
+  if (logAlphabet > 8) throw fault('JXL_SIZE', 'ANS alphabet: max 256');
   const histograms = shapes.map(({shape, aliases}) => {
     if (!aliases.has(logAlphabet)) aliases.set(logAlphabet, reverseAlias(shape.counts, logAlphabet));
     return {...shape, ...aliases.get(logAlphabet)};
@@ -233,7 +233,7 @@ export function writeModularAnsHistograms(w, orderedLeaves, freqs, histogramOf =
   const prepare = plans => {
     const packed = pack(plans),
       bits = captureModularAnsWrite(null, packed.tags, packed.extras, packed.n, histograms, packed.offset);
-    if (bits === false) throw fault('JXL_INTERNAL', 'The modular ANS kernel refused its token layout.');
+    if (bits === false) throw fault('JXL_INTERNAL', 'ans:layout');
     return {plans, packed, bits};
   };
   const write = plans => {
@@ -242,7 +242,7 @@ export function writeModularAnsHistograms(w, orderedLeaves, freqs, histogramOf =
     const {packed} = measured?.plans === plans ? measured : prepare(plans);
     measured = null;
     const bits = captureModularAnsWrite(w, packed.tags, packed.extras, packed.n, histograms, packed.offset);
-    if (bits === false) throw fault('JXL_INTERNAL', 'The modular ANS kernel refused its BitWriter.');
+    if (bits === false) throw fault('JXL_INTERNAL', 'ans:writer');
     return bits;
   };
   write.measure = plans => {

@@ -26,6 +26,8 @@ function ycbcrToRGB([cb, y, cr], n) {
 }
 const uniform = image => image.components.every(c => (c.h ?? 1) === 1 && (c.v ?? 1) === 1);
 const GAB = [0.115169525, 0.061248592], SHARP = Array.from({length: 8}, (_, i) => i / 7);
+const TABLE_BYTES = /* @__PURE__ */ TRANSFORMS.reduce((sizes, t) => (sizes[t.table] = t.width * t.height * 12, sizes), new Array(17).fill(0)), BIAS3 = /* @__PURE__ */ DEFAULT_OPSIN.quantizationBiases.slice(0, 3);
+let DEFAULT_XYB = null;
 const LIBRARY = new Map();
 const libraryMatrix = table => {
   let m = LIBRARY.get(table);
@@ -54,7 +56,7 @@ function frameFilter(image, epf) {
 export function rebuildPicture(source, {rgba: wantRGBA = true, linear: wantLinear = false, gamma: wantGamma = false, rendered = false, inputs = false, only = null, views = false, upsample = null} = {}) {
   const image = materialize(source.lazyStrategy || source.coefficientRows ? coded(source) : source);
   const factor = upsample && rebuildableUpsampled(image) && !inputs && !rendered && !only ? image.upsampling : 1;
-  if (factor === 1 && !rebuildable(image)) throw Object.assign(new Error('This coefficient image has no decoder rebuild.'), {code: 'JXL_INTERNAL'});
+  if (factor === 1 && !rebuildable(image)) throw Object.assign(new Error('photo-rebuild:unsupported'), {code: 'JXL_INTERNAL'});
   const kernels = rebuildKernels(), layout = varDCTLayout(image), {width, height} = image, ycbcr = !!image.ycbcr;
   const global = ycbcr ? YCBCR_GLOBAL : GLOBAL, map = layout.map;
   const {comps, dcScale, quantScale: QS, field, shift, xsizeBlocks: BW, ysizeBlocks: BH, dcGroupsX, numDcGroups, epf} = layout;
@@ -107,7 +109,7 @@ export function rebuildPicture(source, {rgba: wantRGBA = true, linear: wantLinea
     }
     return m;
   };
-  const tableBytes = TRANSFORMS.reduce((sizes, t) => (sizes[t.table] = t.width * t.height * 12, sizes), new Array(17).fill(0));
+  const tableBytes = TABLE_BYTES;
   const needPlanes = !inputs;
   const sizes = [...Array(9).fill(cells * 4), ...tableBytes, 65536 + 3 * 1024 * 8, numDcGroups * 8192,
     ...(needPlanes ? [n * 4, n * 4, n * 4] : [0, 0, 0]), coefficientCount * (narrowArena ? 2 : 4), needPlanes && !rendered ? n * 4 : 0];
@@ -165,7 +167,7 @@ export function rebuildPicture(source, {rgba: wantRGBA = true, linear: wantLinea
       }
     }
   }
-  const ctx = {kernels, lf, widths: [width, width, width], heights: [height, height, height], bias: DEFAULT_OPSIN.quantizationBiases.slice(0, 3),
+  const ctx = {kernels, lf, widths: [width, width, width], heights: [height, height, height], bias: BIAS3,
     numerator: DEFAULT_OPSIN.quantizationBiases[3], qmScale: [1, 1, 1], global, dcWidth: dims, ox: 0, hshift: zero, vshift: zero,
     cflBlock: true, weights: {offsets: weightsAt, loaded: []}, blocks: blockTables(tablesAt, cflAt), blockPlanes: [null, null, null],
     quant, group: g => groups[g]};
@@ -183,7 +185,7 @@ export function rebuildPicture(source, {rgba: wantRGBA = true, linear: wantLinea
   if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && onlyList) for (const k of onlyList) { if (blocks[k]) renderVarBlock(ctx, blocks[k], targets, zero); }
   else for (const block of blocks) if (!renderBlock8(ctx, block, targets, zero)) {
     if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true)) renderVarBlock(ctx, block, targets, zero);
-    else throw fault('JXL_INTERNAL', 'A low-effort rebuild needs DCT8 blocks.');
+    else throw fault('JXL_INTERNAL', 'photo-rebuild:dct8');
   }
   if (rendered) { for (const block of blocks) block.source = null; return {rendered: only ? targets : targets.map(p => p.slice())}; }
   let planes = targets;
@@ -231,7 +233,7 @@ export function rebuildPicture(source, {rgba: wantRGBA = true, linear: wantLinea
     for (const block of blocks) block.source = null;
     return result;
   }
-  const constants = xybKernelConstants(DEFAULT_OPSIN.inverseMatrix.map(f), DEFAULT_OPSIN.opsinBiases, 255);
+  const constants = DEFAULT_XYB ??= xybKernelConstants(DEFAULT_OPSIN.inverseMatrix.map(f), DEFAULT_OPSIN.opsinBiases, 255);
   if (wantLinear) kernels.xyb(count, planes[0], planes[1], planes[2], constants);
   if (wantRGBA) {
     const rgba8 = new Uint8Array(kernels.buffer, planes.rgbaAt, count * 4);

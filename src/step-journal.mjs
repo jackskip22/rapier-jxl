@@ -100,7 +100,7 @@ export function readEach(runs) {
   return out;
 }
 function lazyArray(Type, ref, offset, length, miss, borrow = null) {
-  const fail = () => { miss(ref[0]); throw new Unread('An unread journal value was used.'); };
+  const fail = () => { miss(ref[0]); throw new Unread('unread value'); };
   const read = key => {
     const saved = borrow?.(ref[0],ref[1]);
     if (!saved) return fail();
@@ -121,7 +121,7 @@ function lazyArray(Type, ref, offset, length, miss, borrow = null) {
 export function lazySource(length, miss, ranges = [], offset = 0, sourceRange = null) {
   const known = {length, byteLength: length, byteOffset: 0, BYTES_PER_ELEMENT: 1, constructor: Uint8Array};
   const span = spanInfo(TYPED.indexOf('Uint8Array'), ['source', 0], offset, length);
-  const fail = () => { miss(offset || sourceRange ? `source:${offset}:${offset + length}` : 'source'); throw new Unread('An unread source was used.'); };
+  const fail = () => { miss(offset || sourceRange ? `source:${offset}:${offset + length}` : 'source'); throw new Unread('unread source'); };
   const at = (value, fallback) => {
     if (value === undefined) return fallback;
     const n = Math.trunc(Number(value)) || 0;
@@ -132,13 +132,13 @@ export function lazySource(length, miss, ranges = [], offset = 0, sourceRange = 
     if (sourceRange) {
       const view = sourceRange(offset + from, offset + to); if (view) return view;
       if (from === to) return new Uint8Array(0);
-      miss(`source:${offset + from}:${offset + to}`); throw new Unread('An unread source range was used.');
+      miss(`source:${offset + from}:${offset + to}`); throw new Unread('unread range');
     }
     const range = ranges.find(r => r.at <= offset + from && offset + to <= r.at + r.bytes.length);
     if (range) { range.used = [Math.min(range.used?.[0] ?? offset + from, offset + from), Math.max(range.used?.[1] ?? offset + to, offset + to)]; return range.bytes.subarray(offset + from - range.at, offset + to - range.at); }
     if (from === to) return new Uint8Array(0);
     miss(`source:${offset + from}:${offset + to}`);
-    throw new Unread('An unread source range was used.');
+    throw new Unread('unread range');
   };
   const byte = sourceRange || offset ? byteReader(length, subarray) : null;
   const proxy = new Proxy(new Uint8Array(0), {
@@ -151,7 +151,7 @@ export function lazySource(length, miss, ranges = [], offset = 0, sourceRange = 
 }
 export function lazyValue(kind, miss) {
   const target = kind === 'a' ? [] : kind === 'm' ? new Map() : kind === 's' ? new Set() : {}, proto = Object.getPrototypeOf(target);
-  const fail = () => { miss(); throw new Unread('An unread journal value was used.'); };
+  const fail = () => { miss(); throw new Unread('unread value'); };
   return new Proxy(target, {get: (_, key) => key === UNREAD ? true : key === SPAN || key === SLICE || key === 'then' ? undefined : fail(), set: fail, has: fail, ownKeys: fail,
     getOwnPropertyDescriptor: fail, defineProperty: fail, deleteProperty: fail, getPrototypeOf: () => proto});
 }
@@ -266,15 +266,15 @@ export function encodeValue(value, known = null) {
       case 'boolean': case 'string': return v;
       case 'number': return Number.isFinite(v) && !Object.is(v, -0) ? v : {n: Object.is(v, -0) ? '-0' : String(v)};
       case 'object': break;
-      default: throw invalid(`A unit value cannot hold a ${typeof v}.`);
+      default: throw invalid(`unit value: ${typeof v}`);
     }
     const lazy = spanOf(v), pieces = !lazy && journalFact(v, JOIN);
     if (lazy) { refers.add(lazy.ref[0]); return {t: lazy.type, r: lazy.ref, o: lazy.offset, l: lazy.length}; }
-    if (!lazy && journalFact(v, TILES)) throw invalid('A unit value holds a picture\'s pixels.');
+    if (!lazy && journalFact(v, TILES)) throw invalid('unit value: holds pixels');
     if (pieces) return {j: pieces.map(walk)};
     if (ArrayBuffer.isView(v) && Object.getPrototypeOf(Object.getPrototypeOf(v)) === typedProto) {
       const k = TYPED.indexOf(v.constructor.name);
-      if (k < 0) throw invalid('Unknown typed array in a unit value.');
+      if (k < 0) throw invalid('unit value: typed array');
       const ref = known?.get(v.buffer, v.byteOffset, v.byteOffset + v.byteLength);
       if (ref) { refers.add(ref[0]); return {t: k, r: [ref[0], ref[1]], o: v.byteOffset - ref[2], l: v.length}; }
       const id = bufferId(v.buffer), item = list[id], view = {t: k, b: id, o: v.byteOffset, l: v.length};
@@ -285,7 +285,7 @@ export function encodeValue(value, known = null) {
     if (seen.has(v)) return {p: seen.get(v)};
     const proto = Object.getPrototypeOf(v);
     if (!Array.isArray(v) && !(v instanceof Map) && !(v instanceof Set) && proto !== Object.prototype && proto !== null)
-      throw invalid(`A unit value holds a ${v.constructor?.name ?? 'class'} instance.`);
+      throw invalid(`unit value: ${v.constructor?.name ?? 'class'}`);
     seen.set(v, seen.size);
     if (Array.isArray(v)) return {a: v.map(walk)};
     if (v instanceof Map) return {m: [...v].map(([key, item]) => [walk(key), walk(item)])};
@@ -303,9 +303,9 @@ export function encodeValue(value, known = null) {
 }
 
 export function decodeValue(meta, bytes, resolve = null, self = null, miss = null, sourceRange = null, touched = undefined, given = null, borrow = null) {
-  if (!meta || !Array.isArray(meta.buffers)) throw invalid('Invalid unit value.');
+  if (!meta || !Array.isArray(meta.buffers)) throw invalid('unit value');
   for (const entry of meta.buffers) if (!Array.isArray(entry) || entry.length !== 2 || !Number.isSafeInteger(entry[0]) ||
-      !Number.isSafeInteger(entry[1]) || entry[0] < 0 || entry[1] < 0 || bytes && entry[0] + entry[1] > bytes.length) throw invalid('Invalid unit value.');
+      !Number.isSafeInteger(entry[1]) || entry[0] < 0 || entry[1] < 0 || bytes && entry[0] + entry[1] > bytes.length) throw invalid('unit value');
   const buffers = borrow ? null : given ?? (bytes ? meta.buffers.map(([at, length]) => bytes.slice(at, at + length).buffer) : null);
   const made = [];
   const walk = v => {
@@ -316,7 +316,7 @@ export function decodeValue(meta, bytes, resolve = null, self = null, miss = nul
       const Type = globalThis[TYPED[v.t]];
       if (!Type || !Number.isSafeInteger(v.o) || !Number.isSafeInteger(v.l) || v.o < 0 || v.l < 0 || v.o % Type.BYTES_PER_ELEMENT ||
           (v.r ? !Array.isArray(v.r) || v.r.length !== 2 || typeof v.r[0] !== 'string' || !Number.isSafeInteger(v.r[1]) || v.r[1] < 0
-            : !Number.isSafeInteger(v.b) || v.b < 0 || v.b >= meta.buffers.length)) throw invalid('Invalid unit value.');
+            : !Number.isSafeInteger(v.b) || v.b < 0 || v.b >= meta.buffers.length)) throw invalid('unit value');
       if (borrow && v.r?.[0] !== 'source') return lazyArray(Type,v.r ?? [self,v.b],v.o,v.l,miss,borrow);
       const buffer = v.r ? resolve?.(v.r[0], v.r[1]) : buffers ? buffers[v.b] : null;
       if (buffer === null && v.r?.[0] === 'source' && sourceRange) {
@@ -326,16 +326,16 @@ export function decodeValue(meta, bytes, resolve = null, self = null, miss = nul
           : lazyArray(Type, v.r, v.o, v.l, () => miss?.(`source:${v.o}:${to}`));
       }
       if (buffer === null) return lazyArray(Type, v.r ?? [self, v.b], v.o, v.l, miss);
-      if (!buffer || v.o + v.l * Type.BYTES_PER_ELEMENT > buffer.byteLength) throw invalid('Invalid unit value.');
+      if (!buffer || v.o + v.l * Type.BYTES_PER_ELEMENT > buffer.byteLength) throw invalid('unit value');
       return new Type(buffer, v.o, v.l);
     }
     if (v.j) {
-      if (!Array.isArray(v.j)) throw invalid('Invalid unit value.');
+      if (!Array.isArray(v.j)) throw invalid('unit value');
       const pieces = v.j.map(walk);
-      if (!pieces.every(piece => piece instanceof Uint8Array)) throw invalid('Invalid unit value.');
+      if (!pieces.every(piece => piece instanceof Uint8Array)) throw invalid('unit value');
       return joinedBytes(pieces, touched);
     }
-    if (v.p !== undefined) { if (!Number.isSafeInteger(v.p) || v.p < 0 || v.p >= made.length) throw invalid('Invalid unit value.'); return made[v.p]; }
+    if (v.p !== undefined) { if (!Number.isSafeInteger(v.p) || v.p < 0 || v.p >= made.length) throw invalid('unit value'); return made[v.p]; }
     if (v.a) { const a = []; made.push(a); for (const item of v.a) a.push(walk(item)); return a; }
     if (v.m) { const m = new Map(); made.push(m); for (const [key, item] of v.m) m.set(walk(key), walk(item)); return m; }
     if (v.s) { const set = new Set(); made.push(set); for (const item of v.s) set.add(walk(item)); return set; }
@@ -348,7 +348,7 @@ export function decodeValue(meta, bytes, resolve = null, self = null, miss = nul
       }
       return o;
     }
-    throw invalid('Invalid unit value.');
+    throw invalid('unit value');
   };
   return {value: walk(meta.v), buffers};
 }

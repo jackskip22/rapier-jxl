@@ -20,13 +20,13 @@ function runCells(label, pad, needScratch, data, width, minX, minY, maxX, maxY, 
   if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray) ||
       ![width, minX, minY, maxX, maxY].every(Number.isSafeInteger) || width < 1 || minX < 0 || minY < 0 ||
       (maxX + 1) * 32 > width || ((maxY + 1) * 32 - 1) * width * 4 + (maxX + 1) * 128 > data.length)
-    throw fault('JXL_INTERNAL', label + ' requires whole cells inside the picture.');
+    throw fault('JXL_INTERNAL', 'screen-photo-kernels:cells ' + label);
   const spanX = maxX - minX + 1, spanY = maxY - minY + 1;
   const strideOut = outStride === undefined ? spanX : outStride;
   if (classified !== undefined && (!(classified instanceof Int8Array) ||
       (outStride === undefined ? classified.length !== spanX * spanY
         : !Number.isSafeInteger(outStride) || outStride < spanX || (spanY - 1) * outStride + spanX > classified.length)))
-    throw fault('JXL_INTERNAL', label + ' requires one output per cell.');
+    throw fault('JXL_INTERNAL', 'screen-photo-kernels:output ' + label);
   return withArena(needScratch ? SCRATCH + 8200 : OUTPUT + BAND_CELLS, (exports, bytes) => {
     const stepY = Math.max(1, Math.floor(BAND_CELLS / spanX));
     let total = 0;

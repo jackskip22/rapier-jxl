@@ -33,24 +33,24 @@ export function nativePicture(bytes, options = {}) {
 
 export async function nativePictureWith(bytes, options, prepare) {
   if (!options || typeof options !== 'object' || Array.isArray(options))
-    throw fault('JXL_INPUT', 'Native picture options are an object.');
+    throw fault('JXL_INPUT', 'options: object');
   const {width, height, colorSpace = 'srgb', signal, maxPixels = LIMITS.pixels, orientation = 1,
     sampleFormat = 'uint', bitDepth = 8, alphaPremultiplied = false, animation = false, alpha, ...other} = options;
   if (signal?.aborted) throw signal.reason;
   if (!(bytes instanceof Uint8Array) || !bytes.length)
-    throw fault('JXL_INPUT', 'Native picture bytes are a nonempty Uint8Array.');
+    throw fault('JXL_INPUT', 'bytes: nonempty Uint8Array');
   if (!Number.isSafeInteger(maxPixels) || maxPixels < 1)
-    throw fault('JXL_INPUT', 'Native picture maxPixels is a positive whole number.');
+    throw fault('JXL_INPUT', 'maxPixels: positive integer');
   admitSize(width, height, {pixels: maxPixels, edge: EDGE});
   if (!['srgb', 'display-p3'].includes(colorSpace) || orientation !== 1 || sampleFormat !== 'uint' ||
       bitDepth !== 8 || alphaPremultiplied !== false || animation !== false || ![undefined, true, false].includes(alpha) || Object.keys(other).length)
-    throw platform('Native picture readback supports only orientation-1 still RGB8, unassociated alpha, and sRGB or Display-P3; other sample, color, ICC and animation metadata is unsupported.');
+    throw platform('readback: upright still 8-bit sRGB or Display P3');
   if (signal != null && (typeof signal.aborted !== 'boolean' || typeof signal.addEventListener !== 'function' ||
       typeof signal.removeEventListener !== 'function'))
-    throw fault('JXL_INPUT', 'Native picture signal must support abort events.');
+    throw fault('JXL_INPUT', 'signal: AbortSignal');
   const makeBitmap = globalThis.createImageBitmap, Canvas = globalThis.OffscreenCanvas, BlobType = globalThis.Blob;
   if (typeof makeBitmap !== 'function' || typeof Canvas !== 'function' || typeof BlobType !== 'function')
-    throw fault('JXL_PLATFORM', 'Measuring a photo needs a browser that decodes JPEG XL (createImageBitmap and OffscreenCanvas). Use effort 3 or lower here.');
+    throw fault('JXL_PLATFORM', 'no JPEG XL decode: use effort 1-3');
 
   let bitmap, canvas, context, texture, framebuffer, result, failure, failed = false, listening = false;
   const remember = error => { if (!failed) { failed = true; failure = error; } };
@@ -65,44 +65,44 @@ export async function nativePictureWith(bytes, options, prepare) {
   try {
     if (signal) { listening = true; signal.addEventListener('abort', abort, {once: true}); }
     check();
-    const acquire = native('Native picture bytes could not be placed in a Blob.', () => prepare(makeBitmap,BlobType));
+    const acquire = native('Blob failed', () => prepare(makeBitmap,BlobType));
     check();
     try {
       bitmap = await acquire();
-    } catch (cause) { remember(platform('This browser could not decode the JPEG XL file.', cause)); }
+    } catch (cause) { remember(platform('browser JPEG XL decode failed', cause)); }
     check();
-    if (!bitmap || typeof bitmap.close !== 'function') throw platform('Native JPEG XL decoding did not return a closable ImageBitmap.');
-    const shape = native('Native picture dimensions could not be read.', () => [bitmap.width, bitmap.height]);
+    if (!bitmap || typeof bitmap.close !== 'function') throw platform('ImageBitmap: not closable');
+    const shape = native('dimensions unreadable', () => [bitmap.width, bitmap.height]);
     if (shape[0] !== width || shape[1] !== height)
-      throw fault('JXL_DIMENSIONS', 'Native picture dimensions differ from the admitted still producer.');
-    canvas = native('This realm could not allocate the native picture canvas.', () => new Canvas(1, 1));
+      throw fault('JXL_DIMENSIONS', 'decoded size mismatch');
+    canvas = native('canvas allocation failed', () => new Canvas(1, 1));
     check();
-    const gl = native('This realm could not create the native picture WebGL2 context.',
+    const gl = native('no WebGL2 context',
       () => canvas.getContext('webgl2', {alpha: true, premultipliedAlpha: false, antialias: false, depth: false, stencil: false}));
     context = gl;
     if (!gl) {
-      if (colorSpace !== 'srgb') throw platform('Reading back a Display P3 JPEG XL decode needs WebGL2, which this realm lacks.');
-      context = null; native('The native picture canvas could not be sized.', () => { canvas.width = width; canvas.height = height; });
-      const flat = native('This realm could not create the native picture 2D context.', () => canvas.getContext('2d', {willReadFrequently: true}));
+      if (colorSpace !== 'srgb') throw platform('Display P3 readback: needs WebGL2');
+      context = null; native('canvas resize failed', () => { canvas.width = width; canvas.height = height; });
+      const flat = native('no 2D context', () => canvas.getContext('2d', {willReadFrequently: true}));
       if (!flat || typeof flat.drawImage !== 'function' || typeof flat.getImageData !== 'function')
-        throw platform('Native picture readback needs a WebGL2 or a 2D context.');
-      const data = native('The native JPEG XL picture could not be read back.', () => {
+        throw platform('readback: needs WebGL2 or 2D context');
+      const data = native('readback failed', () => {
         flat.drawImage(bitmap.image ?? bitmap, 0, 0);
         return flat.getImageData(0, 0, width, height).data;
       });
       for (let i = 3; i < data.length; i += 4) if (data[i] !== 255)
-        throw platform('Reading back a JPEG XL decode with transparency needs WebGL2, which this realm lacks.');
+        throw platform('alpha readback: needs WebGL2');
       check();
       result = {data: new Uint8ClampedArray(data.buffer, data.byteOffset, data.length), width, height, colorSpace, sampleFormat: 'uint', bitDepth: 8, alphaPremultiplied: false};
     } else {
       if (GL_METHODS.some(name => typeof gl[name] !== 'function'))
-        throw platform('Native picture readback needs a WebGL2 context.');
-      if (native('Native picture context loss state could not be read.', () => gl.isContextLost()) !== false)
-        throw platform('The native picture WebGL2 context is lost.');
+        throw platform('readback: needs WebGL2');
+      if (native('WebGL2 context state unreadable', () => gl.isContextLost()) !== false)
+        throw platform('WebGL2 context lost');
       const data = new Uint8ClampedArray(width * height * 4);
-      native('The native JPEG XL picture could not be read back.', () => {
+      native('readback failed', () => {
         const side = Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE), 4096);
-        if (!Number.isSafeInteger(side) || side < 1) throw new Error('No texture size.');
+        if (!Number.isSafeInteger(side) || side < 1) throw new Error('no texture size');
         texture = gl.createTexture(); framebuffer = gl.createFramebuffer();
         gl.bindTexture(gl.TEXTURE_2D, texture); gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
         gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false); gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
@@ -113,27 +113,27 @@ export async function nativePictureWith(bytes, options, prepare) {
           gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, x); gl.pixelStorei(gl.UNPACK_SKIP_ROWS, y);
           gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, bitmap.image ?? bitmap);
           gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
-          if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error('Incomplete framebuffer.');
+          if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error('framebuffer: incomplete');
           gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, data, (y * width + x) * 4);
         }
         const error = gl.getError();
-        if (error !== gl.NO_ERROR) throw new Error('WebGL error ' + error + '.');
+        if (error !== gl.NO_ERROR) throw new Error('WebGL: ' + error);
       });
       check();
-      if (native('Native picture context loss state could not be read.', () => gl.isContextLost()) !== false)
-        throw platform('The native picture WebGL2 context was lost during readback.');
+      if (native('WebGL2 context state unreadable', () => gl.isContextLost()) !== false)
+        throw platform('WebGL2 context lost');
       result = {data, width, height, colorSpace, sampleFormat: 'uint', bitDepth: 8, alphaPremultiplied: false};
     }
   } catch (error) { remember(error); }
   finally {
-    if (bitmap) release('The native picture ImageBitmap could not be closed.', () => bitmap.close());
-    if (texture) release('The native picture texture could not be deleted.', () => context.deleteTexture(texture));
-    if (framebuffer) release('The native picture framebuffer could not be deleted.', () => context.deleteFramebuffer(framebuffer));
+    if (bitmap) release('ImageBitmap close failed', () => bitmap.close());
+    if (texture) release('texture delete failed', () => context.deleteTexture(texture));
+    if (framebuffer) release('framebuffer delete failed', () => context.deleteFramebuffer(framebuffer));
     if (canvas) {
-      release('The native picture canvas width could not be released.', () => { canvas.width = 0; });
-      release('The native picture canvas height could not be released.', () => { canvas.height = 0; });
+      release('canvas release failed', () => { canvas.width = 0; });
+      release('canvas release failed', () => { canvas.height = 0; });
     }
-    if (listening) release('The native picture abort listener could not be removed.', () => signal.removeEventListener('abort', abort));
+    if (listening) release('abort listener remove failed', () => signal.removeEventListener('abort', abort));
   }
   check();
   return result;

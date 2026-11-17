@@ -65,10 +65,10 @@ function lzwDecode(minCodeSize, data, pixelCount, bad) {
 }
 
 function* gifTape(bytes, filePath, maxPixels, maxBytes) {
-  const cut = () => inputError('JXL_INPUT', `"${filePath}" is truncated`, 'pass a complete GIF file');
+  const cut = () => inputError('JXL_INPUT', `"${filePath}": GIF incomplete`, 'pass a complete GIF');
   if (bytes.length < 13) throw cut();
   if (bytes[0] !== 71 || bytes[1] !== 73 || bytes[2] !== 70 || bytes[3] !== 56 || bytes[4] !== 55 && bytes[4] !== 57 || bytes[5] !== 97)
-    throw inputError('JXL_INPUT', `"${filePath}" is not a GIF (GIF87a or GIF89a)`, `pass a GIF file`);
+    throw inputError('JXL_INPUT', `"${filePath}": not GIF87a or GIF89a`, `pass a GIF file`);
   const width = bytes[6] | (bytes[7] << 8), height = bytes[8] | (bytes[9] << 8);
   dimensions(width, height, maxPixels);
   const packed = bytes[10];
@@ -98,7 +98,7 @@ function* gifTape(bytes, filePath, maxPixels, maxBytes) {
     for (const c of chunks) { merged.set(c, at); at += c.length; }
     return merged;
   };
-  const canvasBytes = width * height * 4, memory = () => fail('JXL_MEMORY', `"${filePath}" expands past its ${maxBytes} B input budget; release other work or raise maxPendingBytes if the host can hold it.`);
+  const canvasBytes = width * height * 4, memory = () => fail('JXL_MEMORY', `"${filePath}": exceeds ${maxBytes} B; maxPendingBytes`);
   if (canvasBytes > maxBytes) throw memory();
   yield canvasBytes;
   let canvas = null;
@@ -140,13 +140,13 @@ function* gifTape(bytes, filePath, maxPixels, maxBytes) {
         pal = bytes.subarray(pos, pos + count * 3);
         pos += count * 3;
       }
-      if (!pal) throw inputError('JXL_INPUT', `"${filePath}" GIF frame has no color table`, `re-export "${filePath}"`);
-      if (!fw || !fh || fw * fh > maxPixels) throw inputError('JXL_DIMENSIONS', `"${filePath}" has a ${fw} x ${fh} GIF frame`, `re-export "${filePath}"`);
+      if (!pal) throw inputError('JXL_INPUT', `"${filePath}": GIF color table missing`, `re-export "${filePath}"`);
+      if (!fw || !fh || fw * fh > maxPixels) throw inputError('JXL_DIMENSIONS', `"${filePath}": GIF frame ${fw}x${fh}, check maxPixels`, `re-export "${filePath}"`);
       if (pos >= bytes.length) throw cut();
       const minCodeSize = bytes[pos++];
-      if (!(minCodeSize >= 2 && minCodeSize <= 8)) throw inputError('JXL_INPUT', `"${filePath}" is not a valid GIF (LZW code size ${minCodeSize})`, `re-export "${filePath}"`);
+      if (!(minCodeSize >= 2 && minCodeSize <= 8)) throw inputError('JXL_INPUT', `"${filePath}": invalid GIF LZW code size ${minCodeSize} (expected 2-8)`, `re-export "${filePath}"`);
       const lzwData = readSubBlocks();
-      const indices = lzwDecode(minCodeSize, lzwData, fw * fh, () => { throw inputError('JXL_INPUT', `"${filePath}" has a cut or corrupted GIF image`, `re-export "${filePath}"`); });
+      const indices = lzwDecode(minCodeSize, lzwData, fw * fh, () => { throw inputError('JXL_INPUT', `"${filePath}": GIF pixels incomplete`, `re-export "${filePath}"`); });
       canvas ??= new Uint8Array(canvasBytes);
       const prevCanvas = disposal === 3 ? canvas.slice() : null;
       const interlaced = !!(fpack & 0x40);
@@ -191,10 +191,10 @@ function* gifTape(bytes, filePath, maxPixels, maxBytes) {
       }
       delayMs = 100; transIdx = -1; disposal = 0;
     } else {
-      throw inputError('JXL_INPUT', `"${filePath}" is not a valid GIF (block ${block})`, `re-export "${filePath}"`);
+      throw inputError('JXL_INPUT', `"${filePath}": GIF block ${block} invalid`, `re-export "${filePath}"`);
     }
   }
-  if (!frames.length) throw inputError('JXL_INPUT', `"${filePath}" contains no GIF frames`, `pass a valid GIF image`);
+  if (!frames.length) throw inputError('JXL_INPUT', `"${filePath}": GIF frames missing`, `GIF image`);
   if (frames.length === 1) return {kind: 'still', picture: {data: frames[0].data, width, height}};
   const animation = {width, height, loops, frames};
   READ_GIFS.add(animation);
@@ -204,8 +204,8 @@ function* gifTape(bytes, filePath, maxPixels, maxBytes) {
 export function readGifTape(bytes, filePath = 'input.gif', maxPixels = PIXELS, maxBytes = Infinity, retain) {
   bytes = viewBytes(bytes);
   pixelLimit(maxPixels);
-  if (typeof filePath !== 'string') throw fail('JXL_OPTIONS', "Invalid file label; pass a string.");
-  if (maxBytes !== Infinity && (!Number.isSafeInteger(maxBytes) || maxBytes < 1)) throw fail('JXL_OPTIONS', "Invalid maxBytes; pass a positive safe integer.");
+  if (typeof filePath !== 'string') throw fail('JXL_OPTIONS', "filePath: string");
+  if (maxBytes !== Infinity && (!Number.isSafeInteger(maxBytes) || maxBytes < 1)) throw fail('JXL_OPTIONS', "maxBytes: positive safe integer");
   const steps = gifTape(bytes, filePath, maxPixels, maxBytes), next = () => { try { return steps.next(); } catch (error) { throw declared(error); } };
   if (retain) return (async () => {
     try {

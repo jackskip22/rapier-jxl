@@ -6,7 +6,7 @@ export const quantFieldValue = scaled => Math.max(1, Math.min(QUANT_FIELD_MAX, M
 export const quantFieldBase = (preferred, finest) => Math.max(1, Math.min(preferred, Math.ceil((QUANT_FIELD_MAX + 0.5) / finest) - 1));
 export const varDCTField = (value, shift) => {
   const stored = value * shift;
-  if (!(stored >= 1 && stored <= QUANT_FIELD_MAX)) throw fault('JXL_INTERNAL', `A quantization multiplier of ${stored} is outside 1 to ${QUANT_FIELD_MAX}.`);
+  if (!(stored >= 1 && stored <= QUANT_FIELD_MAX)) throw fault('JXL_INTERNAL', `vardct-planes:quant ${stored}`);
   return stored - 1;
 };
 export function varDCTDCSpec(image, layout, channel, x, y, width, height) {
@@ -62,7 +62,7 @@ export function copyVarDCTCorrelation(cfl, x0, y0, width, height, colors, from =
   for (let y = from; y < to; y++) for (let x = 0; x < width; x++) {
     const at = ((y0 >> 3) + y) * cfl.width + (x0 >> 3) + x;
     const fx = cfl.x[at] ?? 0, fb = cfl.b[at] ?? 0;
-    if (!(fx >= -128 && fx <= 127 && fb >= -128 && fb <= 127)) throw fault('JXL_INTERNAL', `A color correlation of ${fx}, ${fb} is outside -128 to 127.`);
+    if (!(fx >= -128 && fx <= 127 && fb >= -128 && fb <= 127)) throw fault('JXL_INTERNAL', `vardct-planes:cfl ${fx},${fb}`);
     colors[0][y * width + x] = fx; colors[1][y * width + x] = fb;
   }
 }

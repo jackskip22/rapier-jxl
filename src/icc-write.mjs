@@ -107,8 +107,8 @@ function lzICC(data) {
 }
 
 function iccOptions({level, compression = 'auto'} = {}) {
-  if (level !== undefined && level !== 5 && level !== 10) throw fault('JXL_INPUT', 'JPEG XL level is 5 or 10.');
-  if (!['auto', 'prefix', 'lz77'].includes(compression)) throw fault('JXL_INPUT', 'ICC compression is auto, prefix or lz77.');
+  if (level !== undefined && level !== 5 && level !== 10) throw fault('JXL_INPUT', 'level: 5 or 10');
+  if (!['auto', 'prefix', 'lz77'].includes(compression)) throw fault('JXL_INPUT', 'compression: auto, prefix or lz77');
   return compression;
 }
 function iccFields(profile, {level, colorSpace, colorEncoding} = {}, colorChannels) {
@@ -116,10 +116,10 @@ function iccFields(profile, {level, colorSpace, colorEncoding} = {}, colorChanne
   if (colorEncoding !== undefined) {
     if (!colorEncoding || typeof colorEncoding !== 'object' || Array.isArray(colorEncoding) ||
         Object.entries(colorEncoding).some(([key, value]) => key !== 'space' && value !== undefined))
-      throw fault('JXL_INPUT', 'With ICC, colorEncoding gives only space.');
+      throw fault('JXL_INPUT', 'colorEncoding: space only with icc');
     space = new Map([['rgb', 0], ['gray', 1], ['xyb', 2], ['unknown', 3]]).get(colorEncoding.space);
     if (space === undefined || (space === 1) !== (colorChannels === 1))
-      throw fault('JXL_INPUT', 'ICC colorEncoding.space does not match the channel count.');
+      throw fault('JXL_INPUT', 'colorEncoding.space: channel mismatch');
   }
   const selectedLevel = level ?? (colorSpace === 'cmyk' || profile.length > ICC_LEVEL5_BYTES ? 10 : 5);
   const colorData = new BitWriter(16);
@@ -188,7 +188,7 @@ function namedHeader(fields) {
   return {colorData, iccData: null};
 }
 
-const noProfile = () => { throw fault('JXL_INTERNAL', 'A page capture carries no ICC profile.'); };
+const noProfile = () => { throw fault('JXL_INTERNAL', 'icc-write:capture'); };
 export function writeImageHeader(w, width, height, colour, alpha, options = {}) {
   return writeHeaderFields(w, width, height, colour, alpha, options,
     (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? noProfile : headerOf);

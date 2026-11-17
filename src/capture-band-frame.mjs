@@ -32,7 +32,7 @@ export function* bandGroupSteps(data, width, rows, level, shape, tools = CAPTURE
 
 export function bandFrameFile(width, height, shape, colorSpace, groups) {
   const layout = groupLayout(width, height, FRAME_GROUP);
-  if (groups.length !== layout.groupsX * layout.groupsY || layout.single) throw fault('JXL_INTERNAL', 'A band frame needs every one of its groups.');
+  if (groups.length !== layout.groupsX * layout.groupsY || layout.single) throw fault('JXL_INTERNAL', 'capture-band-frame:groups');
   const header = new BitWriter(128);
   writeCaptureHeaderFields(header, width, height, shape.colour, shape.alpha, {colorSpace});
   writeCaptureFrameHeader(header, {alpha: shape.alpha});

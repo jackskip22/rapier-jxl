@@ -76,7 +76,7 @@ export function* coefficientAnsSteps(jpeg, effort, fallback, retain, pooled = fa
   }
   let bestPlan = null;
   const keep = (bytes, plan) => {
-    if (pooled && bytes === null) { if (!best) throw fault('JXL_INTERNAL', 'Incomplete AC group stream.'); return; }
+    if (pooled && bytes === null) { if (!best) throw fault('JXL_INTERNAL', 'coefficient-ans:ac-1'); return; }
     if (bytes && (!best || bytes.length < best.length)) { best = bytes; bestPlan = plan; }
     if (bytes) retain?.(bytes, plan);
   };
@@ -195,7 +195,7 @@ export function* strategyAnsSteps(image, effort = 7, learned = null, pooled = fa
           if (typeof value === 'number' ? response : !value?.gpu && !journalRequest(value) && (response === null || response?.hurried)) hurry = true;
         }
         if (pooled && step.value === null) {
-          if (!best) throw fault('JXL_INTERNAL', 'Incomplete AC group stream.');
+          if (!best) throw fault('JXL_INTERNAL', 'coefficient-ans:ac-2');
           settled = true; return best;
         }
         if (!best || step.value.length < best.length) best = step.value;

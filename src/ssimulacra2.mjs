@@ -26,7 +26,7 @@ export function scoreNorms(norms) {
     sum += S2_WEIGHTS[i++] * Math.abs(norms[s].edge[c * 4 + k + 2]);
   }
   const score = finalCurve(sum);
-  if (!Number.isFinite(score)) throw fault('JXL_INPUT','SSIMULACRA2 samples exceed the metric arithmetic range.');
+  if (!Number.isFinite(score)) throw fault('JXL_INPUT','samples: overflow');
   return {score,sum};
 }
 
@@ -45,19 +45,19 @@ export function downsample(input,width,height) {
 
 export function ssimulacra2(reference, distorted, width, height, options = {}) {
   for (const key of Object.keys(options ?? {})) if (key !== 'wantMap' && key !== 'arithmetic')
-    throw fault('JXL_OPTIONS', 'SSIMULACRA 2 takes wantMap and arithmetic, not ' + key + '.');
+    throw fault('JXL_OPTIONS', 'unknown option: ' + key);
   let {wantMap = false, arithmetic} = options ?? {};
   const pixels = s2Dimensions(width, height), originalWidth = width, originalHeight = height;
   const fixed = reference?.[S2_REFERENCE];
   arithmetic ??= fixed?.arithmetic ?? 'binary64';
-  if (arithmetic !== 'binary64' && arithmetic !== 'libjxl') throw fault('JXL_INPUT', 'SSIMULACRA2 arithmetic is binary64 or libjxl.');
-  if (fixed && arithmetic !== fixed.arithmetic) throw fault('JXL_INPUT', 'This SSIMULACRA2 reference reads in its own arithmetic.');
+  if (arithmetic !== 'binary64' && arithmetic !== 'libjxl') throw fault('JXL_INPUT', 'arithmetic: binary64 or libjxl');
+  if (fixed && arithmetic !== fixed.arithmetic) throw fault('JXL_INPUT', 'arithmetic: reference mismatch');
   const libjxl = arithmetic === 'libjxl';
   if (fixed && (fixed.width !== width || fixed.height !== height)) {
-    throw fault('JXL_INTERNAL', 'SSIMULACRA2 reference size differs.');
+    throw fault('JXL_INTERNAL', 'ssimulacra2:size');
   }
-  if (fixed?.busy) throw fault('JXL_INTERNAL', 'SSIMULACRA2 reference is already in use.');
-  if (fixed?.released) throw fault('JXL_INTERNAL', 'SSIMULACRA2 reference is released.');
+  if (fixed?.busy) throw fault('JXL_INTERNAL', 'ssimulacra2:busy');
+  if (fixed?.released) throw fault('JXL_INTERNAL', 'ssimulacra2:released');
   let lastSourceScale = -1;
   if (fixed) for (let s = 0; s < fixed.scales.length; s++) if (!fixed.scales[s] || fixed.scales[s].length < 3) lastSourceScale = s;
   let a = reference, b = distorted;

@@ -249,7 +249,12 @@ function maskedText(data, width, height, mask, boxes, whole) {
   }
   const ground = new Uint8Array(width * height), pieces = patchBoxes(parts, width, height);
   for (const u of pieces) for (let y = u.y; y < u.y + u.h; y++) for (let x = u.x, p = y * width + x; x < u.x + u.w; x++, p++) if (keep[p] !== 2) ground[p] = 1;
-  return pieces.map(u => { const m = masked(data, width, u, ground); return m ? {...m, under: true} : u; });
+  return pieces.map(u => {
+    const text = new Uint8Array(u.w * u.h);
+    for (let y = 0; y < u.h; y++) for (let x = 0, p = (u.y + y) * width + u.x; x < u.w; x++, p++) if (keep[p] === 2 && mask[p] === 2) text[y * u.w + x] = 1;
+    const m = masked(data, width, u, ground);
+    return m ? {...m, text, under: true} : {...u, text};
+  });
 }
 const EDGE_BITS = 6, MASKED_BITS = 512, PAGE_BITS = 0.5;
 function masked(data, width, u, ground) {
@@ -316,7 +321,7 @@ const MARKS_SPENT = Symbol('marks spent');
 function unboxedSourceMarks(data, width, height, y0, h) {
   const part = data.subarray(y0 * width * 4, (y0 + h) * width * 4);
   const marks = capturePatchMarks(pixelKeys(part), width, h, MARK_LONG, 1 << 16, 1);
-  if (!marks) throw Object.assign(fault('JXL_LIMIT', 'The text-mark budget was exhausted; exact text could not be proved.'), {[MARKS_SPENT]: true});
+  if (!marks) throw Object.assign(fault('JXL_LIMIT', 'text marks: budget exhausted'), {[MARKS_SPENT]: true});
   const small = [];
   for (let i = 0; i < marks.length; i += 4) if (Math.min(marks[i + 2], marks[i + 3]) <= MARK_SIDE) small.push(marks[i], marks[i + 1] + y0, marks[i + 2], marks[i + 3]);
   return captureMarkStrokes(data, width, height, y0, h, Int32Array.from(small));
@@ -475,13 +480,17 @@ export function* patchedPageSteps(source, width, height, {quality, regions = [],
   const requested = baseline || textReading || !protection?.boxes.length
     ? yield* unit('text-pieces', () => textPiecesOf([])) : null;
   if (!protection) unboxedSource = markCoverage = null;
-  const requiredPieces = baseline || textReading ? requested.pieces.flatMap(piece => placed(piece).map(position => ({...position, mask: piece.mask}))) : null;
+  const requiredPieces = baseline || textReading ? requested.pieces.flatMap(piece => placed(piece).map(position => ({...position, mask: piece.text ?? piece.mask, ...(piece.text && {released: true})}))) : null;
   if (textReading) textReading.pieces = requiredPieces;
   const bare = baseline ? yield* fileStage('baseline', () => scaled(baseline(requiredPieces, protection?.regions), 0, 0), bare => bare.bytes, photoAdmission) : null;
   if (bare?.reads?.length) baseline.seen?.(bare.reads);
   if (noHintFirst && bare?.exact && bare.bytes && !captureExact(bare.bytes) && (!photoAdmission || photoAdmission.accepts(bare.bytes))) return bare.bytes;
   const exactFile = function* () { return bare && captureExact(bare.bytes) ? bare.bytes : yield* exact(); };
-  const shorter = bytes => bare?.exact && bare.bytes.length <= bytes.length && (!photoAdmission || photoAdmission.accepts(bare.bytes)) ? bare.bytes : bytes;
+  const shorter = bytes => {
+    if (!(bare?.exact && bare.bytes.length <= bytes.length && (!photoAdmission || photoAdmission.accepts(bare.bytes)))) return bytes;
+    if (bare.reads?.length) baseline.seen?.(bare.reads);
+    return bare.bytes;
+  };
   if (!protection && large) return null;
   if (!protection && unconfirmed && !confirmedPhotos) return shorter(yield* exactFile());
   let {pieces: all, blocks} = protection?.boxes.length ? yield* unit('text-pieces', () => textPiecesOf(protection.boxes)) : requested;

@@ -14,18 +14,18 @@ export async function prepareAssets({example = here, packageDir = process.env.JX
   for (const name of modules) {
     const path = `dist/${name}.mjs`;
     if (manifest.exports?.[`./${name}`]?.import !== `./${path}`)
-      throw new Error(`JXL_PACKAGE: ${pkg} is not a built package with ./${name}.`);
+      throw Object.assign(new Error(`${pkg} is not a built package with ./${name}.`), {code: 'JXL_PACKAGE'});
     await copyFile(join(pkg, path), join(out, `${name}.mjs`));
   }
   for (const name of browserFiles) {
     if (manifest.exports?.[`./${name.replace('.browser', '')}`]?.browser !== `./dist/${name}.mjs`)
-      throw new Error(`JXL_PACKAGE: ${pkg} has no browser file for ./${name.replace('.browser', '')}.`);
+      throw Object.assign(new Error(`${pkg} has no browser file for ./${name.replace('.browser', '')}.`), {code: 'JXL_PACKAGE'});
     await copyFile(join(pkg, `dist/${name}.mjs`), join(out, `${name}.mjs`));
   }
   await copyFile(join(pkg, 'LICENSE'), join(out, 'LICENSE'));
   // The tests read an animation back with the package's decoder in the page, and its .wasm names what a host says when it
   // refuses the decoder; the app carries neither.
-  if (manifest.exports?.['./decode']?.import !== './dist/decode.mjs') throw new Error(`JXL_PACKAGE: ${pkg} has no ./decode.`);
+  if (manifest.exports?.['./decode']?.import !== './dist/decode.mjs') throw Object.assign(new Error(`${pkg} has no ./decode.`), {code: 'JXL_PACKAGE'});
   for (const name of ['decode.mjs', 'decode.wasm']) await copyFile(join(pkg, 'dist', name), join(example, 'example/assets/fixtures', name));
   return {package: {name: manifest.name, version: manifest.version}};
 }

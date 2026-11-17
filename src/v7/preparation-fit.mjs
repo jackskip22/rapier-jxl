@@ -84,7 +84,7 @@ export async function fitPrepared(encode, picture, policy, capabilities = {}) {
       }
       check(signal);
       if (bytes !== null && (!(bytes instanceof Uint8Array) || !bytes.byteLength))
-        throw fail('JXL_INTERNAL', "Incomplete output file; report the input and options.");
+        throw fail('JXL_INTERNAL', 'preparation-fit:empty');
       if (bytes) options[PREVIEW]?.(bytes, {width: picture.width, height: picture.height, measurements: facts.get(bytes)?.measurements ?? []});
       count++;
       next = candidates.next({bytes});

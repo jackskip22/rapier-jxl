@@ -12,20 +12,20 @@ function graphicsOptions(data, width, height, options = {}) {
   const {quality, colorSpace} = admitOptions(options);
   admitPixels(data, width, height);
   if (quality !== 100 || !admitSampleFormat(data, options).native8)
-    throw fault('JXL_INPUT', 'Graphics keeps exact sRGB RGBA8; for loss, set maxColorError or a graphics preset.');
+    throw fault('JXL_INPUT', 'graphics: exact sRGB RGBA8, or set maxColorError or preset');
   const preset = options.preset ?? 'exact';
-  if (!['exact', 'screen', 'dither'].includes(preset)) throw fault('JXL_INPUT', 'The graphics preset is exact, screen or dither.');
+  if (!['exact', 'screen', 'dither'].includes(preset)) throw fault('JXL_INPUT', 'preset: exact, screen or dither');
   const maxColorError = options.maxColorError ?? (preset === 'screen' ? 2 : preset === 'dither' ? 8 : 0);
   const paletteColors = options.paletteColors ?? 256, preserveEdges = options.preserveEdges ?? true;
   const undither = options.undither ?? preset === 'dither', protectedMask = options.protectedMask;
   if (!Number.isInteger(maxColorError) || maxColorError < 0 || maxColorError > 32)
-    throw fault('JXL_INPUT', 'maxColorError is a whole number from 0 to 32.');
+    throw fault('JXL_INPUT', 'maxColorError: integer 0-32');
   if (!Number.isInteger(paletteColors) || paletteColors < 1 || paletteColors > 4096)
-    throw fault('JXL_INPUT', 'paletteColors is a whole number from 1 to 4096.');
+    throw fault('JXL_INPUT', 'paletteColors: integer 1-4096');
   if (typeof preserveEdges !== 'boolean' || typeof undither !== 'boolean')
-    throw fault('JXL_INPUT', 'preserveEdges and undither are booleans.');
+    throw fault('JXL_INPUT', 'preserveEdges, undither: boolean');
   if (protectedMask !== undefined && (!(protectedMask instanceof Uint8Array) && !(protectedMask instanceof Uint8ClampedArray) || protectedMask.length !== width * height))
-    throw fault('JXL_INPUT', 'protectedMask is a byte array, one entry per pixel; nonzero keeps that pixel exact.');
+    throw fault('JXL_INPUT', 'protectedMask: 1 byte per pixel');
   const exact = {colorSpace, paletteMode: 'auto', deltaPredictor: options.deltaPredictor,
     maxPaletteColors: options.maxPaletteColors, groupSize: options.groupSize, screenEffort: options.screenEffort};
   const baseline = encodeDeltaPaletteSteps(data, width, height, exact);

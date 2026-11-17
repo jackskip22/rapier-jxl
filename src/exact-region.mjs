@@ -5,16 +5,16 @@ import {xybStrategies} from './varblocks.mjs';
 export {subImage, bandedRGBA, exactScores} from './photo-reconstruct-bands.mjs';
 
 export function exactAnswerer(width, height, wholeMeasure, signal = null) {
-  if (typeof wholeMeasure !== 'function') throw fault('JXL_INTERNAL', 'Exact requests need the whole-picture measure.');
+  if (typeof wholeMeasure !== 'function') throw fault('JXL_INTERNAL', 'exact-region:measure');
   let destroyed = false, busy = false;
   const answer = async request => {
     if (signal?.aborted) throw signal.reason;
-    if (destroyed) throw Object.assign(new Error('Exact answerer is closed.'), {name: 'AbortError'});
-    if (busy) throw fault('JXL_MEMORY', 'Exact requests must run sequentially.');
+    if (destroyed) throw Object.assign(new Error('closed'), {name: 'AbortError'});
+    if (busy) throw fault('JXL_MEMORY', 'concurrent exact request');
     busy = true;
     try {
       const {p = 3, margin = 2} = request;
-      if (!Number.isSafeInteger(margin) || margin < 0) throw fault('JXL_INTERNAL', 'Exact block margin must be a nonnegative integer.');
+      if (!Number.isSafeInteger(margin) || margin < 0) throw fault('JXL_INTERNAL', 'exact-region:margin');
       const measured = image => { const {cells, blocks} = wholeMeasure(image, {p, margin, ssimulacra2: false}); return {whole: true, cells, blocks}; };
       if (request.kind === 'whole') return measured(request.image);
       if (request.kind !== 'cells' && request.kind !== 'blocks') return null;

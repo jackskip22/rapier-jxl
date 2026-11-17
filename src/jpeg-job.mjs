@@ -24,10 +24,10 @@ export function jpegJob(jpeg, options, coefficients) {
 
 export function jpegSteps(jpeg, options, coefficients, shown) {
   const effort = admitEffort(options);
-  if (options?.icc !== undefined && options.icc !== 'preserve') throw fault('JXL_INPUT', 'JPEG icc is preserve, or omitted.');
+  if (options?.icc !== undefined && options.icc !== 'preserve') throw fault('JXL_INPUT', 'icc: preserve');
   if (options?.iccCompression !== undefined && (options.icc !== 'preserve' || !['auto', 'prefix', 'lz77'].includes(options.iccCompression)))
-    throw fault('JXL_INPUT', 'JPEG ICC compression is auto, prefix or lz77, with icc: preserve.');
-  if (!(jpeg instanceof Uint8Array) || !jpeg.length) throw fault('JXL_INPUT', 'A JPEG is a non-empty Uint8Array.');
+    throw fault('JXL_INPUT', 'iccCompression: auto, prefix or lz77 with icc: preserve');
+  if (!(jpeg instanceof Uint8Array) || !jpeg.length) throw fault('JXL_INPUT', 'input: nonempty Uint8Array');
   const profileOptions = {preserveICC: options?.icc === 'preserve', compression: options?.iccCompression, maxPixels: options?.maxPixels, bands: options?.bands};
   const outside = typeof options?.outside === 'function' ? options.outside : null;
   return carry(jpeg, effort, shown, coefficients, profileOptions, typeof options?.tails === 'function' ? options.tails : null, 0, outside, typeof options?.gainMap === 'function' ? options.gainMap : null);

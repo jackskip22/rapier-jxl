@@ -4,7 +4,7 @@ import {UniformRing} from './gpu-uniforms.mjs';
 import {gpuPipelineSet} from './gpu-pipelines.mjs';
 
 const METRIC_PLACE_WG = 128;
-const unavailable = () => Object.assign(new Error('Metric pixel owner is unavailable.'), {code: 'JXL_GPU'});
+const unavailable = () => Object.assign(new Error('owner unavailable'), {code: 'JXL_GPU'});
 
 export function metricPlaceShader(bindings, body, extra = '') {
   return `struct Params { w: u32, h: u32, stride: u32, width: u32, source: u32, target: u32, z: u32, k: u32 }

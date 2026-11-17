@@ -199,7 +199,7 @@ export function lfCoderForPlan(name) {
     case 'monotonic-8': return fastLfCoder;
     case 'monotonic-9': return broadLfCoder;
     case null: case undefined: return undefined;
-    default: throw fault('JXL_INTERNAL', 'Unknown named LF policy.');
+    default: throw fault('JXL_INTERNAL', 'lf-coding:policy');
   }
 }
 export const monotonicLfCoderFor = effort => lfCoderForPlan(monotonicLfPlanFor(effort));

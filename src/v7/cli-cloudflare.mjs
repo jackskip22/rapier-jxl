@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {readFile, rm, rmdir, stat} from 'node:fs/promises';
 import {dirname, join, basename, relative, isAbsolute} from 'node:path';
+import {normalize} from 'node:path/posix';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {atomicWrite, insideProject, readManifest} from './project-files.mjs';
@@ -46,7 +47,7 @@ a file you edited is left as it is. remove deletes exactly what add wrote. Nothi
 async function examples() {
   for (const url of [new URL('./examples/', import.meta.url), new URL('../examples/', import.meta.url)])
     if (await present(join(fileURLToPath(url), 'r2'))) return fileURLToPath(url);
-  throw setup('The installed package is incomplete', `reinstall ${COMMAND}`);
+  throw setup('package: incomplete', `reinstall: ${COMMAND}`);
 }
 
 function flags(place, verb, args) {
@@ -58,18 +59,34 @@ function flags(place, verb, args) {
     if (arg === '--dry-run') out.dryRun = true;
     else if (arg === '--json') out.json = true;
     else if (arg === '--bucket' && verb === 'add' && out.bucket === undefined && args[i + 1] && !String(args[i + 1]).startsWith('-')) out.bucket = String(args[++i]);
-    else throw fail('JXL_OPTIONS', `Unknown option ${arg}`, `run npx ${COMMAND} ${verb} ${place} --help`);
+    else throw fail('JXL_OPTIONS', `unknown option: ${arg}`, `run: npx ${COMMAND} ${verb} ${place} --help`);
   }
-  if (out.bucket !== undefined && !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(out.bucket)) throw fail('JXL_OPTIONS', `"${out.bucket}" is not a bucket name`, 'use 3 to 63 lowercase letters, digits and hyphens');
+  if (out.bucket !== undefined && !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(out.bucket)) throw fail('JXL_OPTIONS', `bucket "${out.bucket}": 3-63 [a-z0-9-]`, 'use: 3-63 lowercase letters/digits/hyphens');
   return out;
 }
 
+const jsonc = text => JSON.parse(text.replace(/("(?:[^"\\]|\\.)*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (all, string) => string ?? '')
+  .replace(/("(?:[^"\\]|\\.)*")|,(\s*[}\]])/g, (all, string, end) => string ?? end));
 async function configOf(cwd) {
   const file = (await Promise.all(CONFIGS.map(async name => await present(join(cwd, name)) && name))).find(Boolean);
-  if (!file) return {file: null, config: null};
-  let config = null;
-  if (file !== 'wrangler.toml') try { config = JSON.parse(await readFile(join(cwd, file), 'utf8')); } catch {}
-  return {file, config};
+  if (!file) return {file: null, config: null, seen: null};
+  const text = (await readFile(join(cwd, file), 'utf8')).replace(/^\ufeff/, '');
+  if (file === 'wrangler.toml') {
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.replace(/#.*$/, '').trim();
+      if (line.startsWith('[')) break;
+      const m = line.match(/^main\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+))$/);
+      if (m) return {file, config: null, seen: {main: m[1] ?? m[2] ?? m[3]}};
+    }
+    return {file, config: null, seen: {}};
+  }
+  let config = null, seen = null;
+  try { config = JSON.parse(text); } catch {
+    try { seen = jsonc(text); } catch { throw setup(`${file} could not be read as JSON`, `fix ${file}, then run add again`); }
+  }
+  const read = config ?? seen;
+  if (read === null || typeof read !== 'object' || Array.isArray(read)) throw setup(`${file} is not a JSON object`, `make ${file} one {...} object`);
+  return {file, config, seen: read};
 }
 const dig = (object, path) => path.reduce((at, key) => at?.[key], object);
 function put(config, op) {
@@ -123,15 +140,17 @@ export async function runAddCloudflare(place, args, {cwd, version, stdout, name:
   if (given.help) { stdout(HELP(place)); return; }
   const {dryRun, json: asJson} = given, spec = PLACES[place], manifest = (await readManifest(cwd, setup))?.manifest ?? null;
   own ??= await ownName();
-  const {file: configFile, config} = await configOf(cwd), deps = {...manifest?.dependencies, ...manifest?.devDependencies};
+  const {file: configFile, config, seen} = await configOf(cwd), deps = {...manifest?.dependencies, ...manifest?.devDependencies};
   const found = place === 'agents' ? deps.agents && configFile : configFile || deps.wrangler;
-  if (!found) throw setup(`This folder is not ${spec.kind} project: looked for ${spec.looked}`, `run npx ${COMMAND} add ${place} in the project's folder`);
+  if (!found) throw setup(`${spec.kind}: need ${spec.looked}`, `run: npx ${COMMAND} add ${place} in the Worker folder`);
 
   const recordPath = `.rapier-jxl-${place}.json`, before = await recordOf(cwd, recordPath, place);
   const changes = [], writes = new Map(), files = {...before?.files}, next = [], ops = [...before?.config?.ops ?? []];
-  if (config?.main !== undefined && (typeof config.main !== 'string' || !config.main.trim()))
+  if (seen?.main !== undefined && (typeof seen.main !== 'string' || !seen.main.trim()))
     throw setup(`main in ${configFile} is not a file path`, `set main to the Worker's entry file, or remove it`);
-  const dir = place === 'agents' && config?.main && dirname(config.main) !== '.' ? dirname(config.main) : '';
+  const main = seen?.main === undefined ? null : normalize(posix(seen.main));
+  if (main !== null && badRel(main)) throw setup(`main in ${configFile} is outside the project`, `set main to the Worker's entry file inside it`);
+  const dir = place === 'agents' && main && dirname(main) !== '.' ? dirname(main) : '';
   const root = templates ? null : await examples();
   const project = (manifest?.name ?? basename(cwd)).toLowerCase().replace(/^@[^/]+\//, '').replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'site';
 
@@ -145,10 +164,11 @@ export async function runAddCloudflare(place, args, {cwd, version, stdout, name:
   }
 
   const entry = posix(join(dir, spec.files[0][0]));
-  const bucket = given.bucket ?? config?.r2_buckets?.find(b => b.binding === 'JXL_BUCKET')?.bucket_name ??
-    (config?.r2_buckets?.length === 1 ? config.r2_buckets[0].bucket_name : undefined) ?? `${project}-images`.slice(0, 63).replace(/-+$/, '');
-  if (config?.r2_buckets?.length > 1 && !given.bucket && !config.r2_buckets.some(b => b.binding === 'JXL_BUCKET'))
-    throw fail('JXL_OPTIONS', 'The config has several R2 buckets', 'name the one to use: --bucket <name>');
+  const buckets = Array.isArray(seen?.r2_buckets) ? seen.r2_buckets : null;
+  const bucket = given.bucket ?? buckets?.find(b => b?.binding === 'JXL_BUCKET')?.bucket_name ??
+    (buckets?.length === 1 ? buckets[0]?.bucket_name : undefined) ?? `${project}-images`.slice(0, 63).replace(/-+$/, '');
+  if (buckets?.length > 1 && !given.bucket && !buckets.some(b => b?.binding === 'JXL_BUCKET'))
+    throw fail('JXL_OPTIONS', 'r2_buckets: --bucket required', 'use: --bucket <name>');
   const wanted = [{op: 'push', path: ['r2_buckets'], value: {binding: 'JXL_BUCKET', bucket_name: bucket}}];
   if (place === 'r2') wanted.push(
     {op: 'push', path: ['queues', 'consumers'], value: {queue: `${bucket}-jxl`, max_batch_size: 1, max_retries: 3}},
@@ -163,7 +183,9 @@ export async function runAddCloudflare(place, args, {cwd, version, stdout, name:
     writes.set('wrangler.jsonc', Buffer.from(json(fresh))); files['wrangler.jsonc'] = sha(json(fresh)); created = 'wrangler.jsonc';
     changes.push({file: 'wrangler.jsonc', action: 'created'});
   } else if (!config) {
-    next.push(`in ${configFile}, with bucket ${guide}${place === 'r2' ? `; main = "${entry}"` : ''}`);
+    next.push(`in ${configFile}, with bucket ${guide}${place === 'r2' && !main ? `; main = "${entry}"` : ''}`);
+    if (place === 'r2' && main && main.replace(/^\.\//, '') !== entry)
+      next.push(`in ${main}: import jxlR2, {JxlWorkflow} from '${(rel => rel.startsWith('.') ? rel : './' + rel)(posix(relative(dirname(main), entry)))}'; export {JxlWorkflow}; and answer fetch and queue with jxlR2.fetch and jxlR2.queue`);
   } else {
     const edited = structuredClone(config), done = [];
     if (place === 'r2') {
@@ -184,8 +206,11 @@ export async function runAddCloudflare(place, args, {cwd, version, stdout, name:
   }
   if (place === 'r2') next.push(`npx wrangler r2 bucket create ${bucket}`, `npx wrangler queues create ${bucket}-jxl`,
     `npx wrangler r2 bucket notification create ${bucket} --event-type object-create --queue ${bucket}-jxl`);
-  else next.push("in the Worker's fetch: import {jxlMcp} from './jxl-mcp.mjs'; and if (new URL(request.url).pathname === '/mcp') return jxlMcp(request, env, ctx)",
-    'in an AIChatAgent: import {jxlAgentTools} from its jxl-agent.mjs, and pass tools: jxlAgentTools(this.env) to streamText');
+  else {
+    const from = file => (rel => rel.startsWith('.') ? rel : './' + rel)(posix(relative(main ? dirname(main) : '.', join(dir, file))));
+    next.push(`in the Worker's fetch${main ? ` (${main})` : ''}: import {jxlMcp} from '${from('jxl-mcp.mjs')}'; and if (new URL(request.url).pathname === '/mcp') return jxlMcp(request, env, ctx)`,
+      `in an AIChatAgent: import {jxlAgentTools} from its ${posix(join(dir, 'jxl-agent.mjs'))}, and pass tools: jxlAgentTools(this.env) to streamText`);
+  }
   if (place === 'agents') {
     const missing = ['@modelcontextprotocol/server', 'zod', 'ai'].filter(dep => !deps[dep]);
     if (missing.length) next.unshift(`npm install ${missing.join(' ')}`);
@@ -224,7 +249,7 @@ export async function runRemoveCloudflare(place, args, {cwd, stdout, name: own})
   if (given.help) { stdout(HELP(place)); return; }
   const {dryRun, json: asJson} = given, recordPath = `.rapier-jxl-${place}.json`;
   const record = await recordOf(cwd, recordPath, place);
-  if (!record) throw setup(`There is nothing to remove: npx ${COMMAND} add ${place} has not written files here`, `delete the files yourself, or run npx ${COMMAND} add ${place} first`);
+  if (!record) throw setup(`${place}: no record to remove`, 'nothing to remove; delete any files you added by hand');
   own ??= await ownName();
   const changes = [], deletes = [], rewrites = new Map(), entries = Object.entries(record.files);
   const fileLands = await insideProject(cwd, entries.map(([path]) => path), setup);

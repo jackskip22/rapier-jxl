@@ -12,6 +12,7 @@ const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const setup = message => cliError('JXL_SETUP', message, 'restore the files recorded by add, then try again');
 const read = path => readFile(path).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
 const digest = bytes => bytes === null ? null : sha(bytes);
+const asLeft = (bytes, after) => digest(bytes) === after || bytes !== null && sha(Buffer.from(bytes.toString('latin1').replace(/\r\n/g, '\n'), 'latin1')) === after;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const config = (name, extensions) => extensions.map(ext => name + '.config.' + ext);
 const core = ['rapier-jxl-files.mjs'];
@@ -64,7 +65,7 @@ export async function writeProjectEdits(cwd, place, version, writes, {dryRun = f
   const current = new Map(), files = {...before?.files}, dirs = new Set(before?.dirs ?? []);
   for (const [i, file] of paths.entries()) {
     const bytes = await read(lands[i + 1]); current.set(file, bytes);
-    if (files[file] && digest(bytes) !== files[file].after) throw setup(`${file} changed after add wrote it`);
+    if (files[file] && !asLeft(bytes, files[file].after)) throw setup(`${file} changed after add wrote it`);
     files[file] = {before: files[file] ? files[file].before : (bytes === null ? null : bytes.toString('base64')),
       mode: files[file] ? files[file].mode : (bytes === null ? null : (await stat(lands[i + 1])).mode & 0o777),
       after: writes.has(file) ? sha(writes.get(file)) : digest(bytes)};
@@ -103,7 +104,7 @@ export async function removeProjectEdits(place, args, {cwd, stdout}) {
   for (const [i, file] of paths.entries()) {
     const entry = saved.files[file], bytes = await read(lands[i]), original = entry.before === null ? null : Buffer.from(entry.before, 'base64');
     if (digest(bytes) === digest(original)) continue;
-    if (digest(bytes) !== entry.after) throw setup(`${file} changed after add wrote it; no files were removed`);
+    if (!asLeft(bytes, entry.after)) throw setup(`${file} changed after add wrote it; no files were removed`);
     changes.push({file, action: original === null ? 'removed' : 'restored', original, index: i});
   }
   if (!dryRun) {

@@ -29,12 +29,12 @@ export async function runAddWorkers(args, {cwd, version, name, stdout, template}
     else if ((arg === '--paid' || arg === '--free') && plan === undefined) plan = arg.slice(2);
     else if (arg === '--dry-run') dryRun = true;
     else if (arg === '--json') asJson = true;
-    else throw fail('JXL_OPTIONS', `Unknown option ${arg}`, `run npx ${COMMAND} add workers --help`);
+    else throw fail('JXL_OPTIONS', `unknown option: ${arg}`, `run: npx ${COMMAND} add workers --help`);
   }
   if (template === undefined) {
     for (const url of [new URL('../examples/workers/jxl-worker.mjs', import.meta.url), new URL('./examples/workers/jxl-worker.mjs', import.meta.url)])
       try { template = await readFile(url, 'utf8'); break; } catch {}
-    if (template === undefined) throw fail('JXL_SETUP', 'The installed rapier-jxl package is incomplete', `reinstall ${COMMAND}`);
+    if (template === undefined) throw fail('JXL_SETUP', 'The installed jpegxl package is incomplete', `reinstall ${COMMAND}`);
   }
   const report = await addWorkers({cwd, version, name, route, plan, dryRun, template});
   if (asJson) stdout(JSON.stringify({type: 'add', host: 'workers', dryRun, changed: report.changed ?? report['would change'] ?? [], kept: report.kept, next: report.next}));
@@ -50,14 +50,14 @@ export async function addWorkers({cwd, version, name: own = 'rapier-jxl', route,
   const workerPath = join(cwd, WORKER);
   if (!await exists(workerPath)) { writes.push([workerPath, template]); changed.push(`${WORKER} written`); }
   else if (await readFile(workerPath, 'utf8') === template) kept.push(`${WORKER} unchanged`);
-  else kept.push(`${WORKER} has your edits and stays as it is; the current template is examples/workers/jxl-worker.mjs in rapier-jxl`);
+  else kept.push(`${WORKER} has your edits and stays as it is; the current template is examples/workers/jxl-worker.mjs in jpegxl`);
 
   const found = (await Promise.all(CONFIGS.map(async name => await exists(join(cwd, name)) && name))).find(Boolean);
   const name = basename(cwd).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'site';
   const bucket = `${name}-jxl`.slice(0, 63);
   if (!found) {
-    if (!route) throw fail('JXL_OPTIONS', 'No wrangler config here, and no site named',
-      'pass --route example.com/* with the site\'s address, or run this in the folder of the site\'s Worker project');
+    if (!route) throw fail('JXL_OPTIONS', 'wrangler: config or --route required',
+      'use: --route example.com/* or Worker project');
     const zone = route.replace(/^https?:\/\//, '').split('/')[0].replace(/^\*\.?/, '');
     writes.push([join(cwd, 'wrangler.jsonc'), json({name: `${name}-jxl`, main: WORKER, compatibility_date: '2026-10-01',
       routes: [{pattern: route, zone_name: zone}], ...paid && {r2_buckets: [{binding: 'JXL', bucket_name: bucket}],

@@ -21,7 +21,7 @@ export function capturePictureMeasure(source, {cacheBytes = 0, signal, maxPixels
   const {width, height, colorSpace = 'srgb'} = source;
   if (maxPixels !== undefined) {
     if (!Number.isSafeInteger(maxPixels) || maxPixels < 1)
-      throw fault('JXL_INPUT', 'A capture measurement pixel limit is a positive whole number.');
+      throw fault('JXL_INPUT', 'maxPixels: positive integer');
     admitSize(width, height, {pixels: maxPixels, edge: EDGE});
   }
   const pixels = s2Dimensions(width, height), native = colorSpace === 'srgb';
@@ -51,19 +51,19 @@ export function capturePictureMeasure(source, {cacheBytes = 0, signal, maxPixels
     format: 'rgba-unorm8',
     domain: 'decoded-output',
     measure(picture, want) {
-      if (closed) throw fault('JXL_INTERNAL', 'The capture picture measurement is closed.');
+      if (closed) throw fault('JXL_INTERNAL', 'capture-picture-measure:closed');
       check(signal);
       if (picture.width !== width || picture.height !== height)
-        throw fault('JXL_DIMENSIONS', 'Native picture dimensions differ from the measurement reference.');
+        throw fault('JXL_DIMENSIONS', 'decoded size mismatch');
       captureDomain(picture);
       if ((picture.colorSpace ?? 'srgb') !== colorSpace)
-        throw fault('JXL_PLATFORM', 'Native picture readback did not preserve the capture color domain.');
+        throw fault('JXL_PLATFORM', 'readback: colorSpace mismatch');
       const data = s2RGBA(picture.data, pixels, true);
       for (let y = 0; y < height; y++) {
         check(signal);
         for (let at = y * width * 4 + 3, end = (y + 1) * width * 4; at < end; at += 4)
           if (referencePixels[at] !== data[at])
-            throw fault('JXL_PLATFORM', 'Native picture readback did not preserve the capture alpha samples.');
+            throw fault('JXL_PLATFORM', 'readback: alpha mismatch');
       }
       let scores = measure({data}, want); check(signal);
       const nat = picture.native && native && Number.isFinite(scores?.ssimulacra2) ? s2RGBA(picture.native, pixels, true) : null;

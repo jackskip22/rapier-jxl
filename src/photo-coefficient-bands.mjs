@@ -69,7 +69,7 @@ export function* rgbCoefficientBandsSteps(rows, width, height, {quality, colorSp
     } else if (band.quantScale !== image.quantScale || (band.quantFieldBase || 1) !== (image.quantFieldBase || 1)
       || band.cflBase !== image.cflBase || !!band.strategyData !== !!image.strategyData
       || !samePlanes(image.components.map(c => c.quant), band.components.map(c => c.quant)))
-      throw fault('JXL_INTERNAL', 'Bands of one photo frame must share their quantization domain and prediction base.');
+      throw fault('JXL_INTERNAL', 'photo-coefficient-bands:domain');
     let bytes = 0;
     if (!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && band.strategyData) {
       if (band.summary) band.extra?.orders?.forEach((c3, id) => {
@@ -83,7 +83,7 @@ export function* rgbCoefficientBandsSteps(rows, width, height, {quality, colorSp
         if (!table) continue;
         const previous = owner.tables[family];
         if (previous && (previous.w !== table.w || previous.h !== table.h || !samePlanes(previous.planes, table.planes)))
-          throw fault('JXL_INTERNAL', 'Bands of one photo frame must share each transform family\'s quantization table.');
+          throw fault('JXL_INTERNAL', 'photo-coefficient-bands:quant');
         if (!previous) owner.tables[family] = table;
       }
       const coefficientBuffers = new Set();

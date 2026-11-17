@@ -56,7 +56,7 @@ import {compileCaptureKernels} from '../capture-codec.mjs';
 export {wasmOnlySupported as supported} from './capture-support.mjs';
 export {configureDecoder} from '../shown-picture.mjs';
 
-const FULL = 'the full encoder, rapier-jxl';
+const FULL = 'jpegxl';
 
 const WARM_UPLOADS = 8;
 let prepared;
@@ -71,7 +71,7 @@ function warmUpload() {
 }
 function prepare(operation = 'encode') {
   if (operation === 'capture') return prepareCapture();
-  if (operation !== 'encode') return Promise.reject(fail('JXL_OPTIONS', "Preparation operation is unknown; use prepare('encode') or prepare('capture')."));
+  if (operation !== 'encode') return Promise.reject(fail('JXL_OPTIONS', 'operation: encode or capture'));
   return prepared ||= (async () => { await kernelsReady(); await compileCaptureKernels(); if (typeof document === 'undefined') for (let i = 0; i < WARM_UPLOADS; i++) await warmUpload(); })()
     .catch(error => { prepared = undefined; throw declared(error); });
 }
@@ -86,7 +86,7 @@ Object.defineProperty(encode, STEPS, {value: verbSteps('encode:rapier-jxl/upload
 Object.defineProperty(fit, STEPS, {value: verbSteps('fit:rapier-jxl/upload', fit, {taken: ['maxBytes', ...TAKEN], admit: options => { fitOptions(options, uploadOptions); }, rows: true, files: true})});
 Object.defineProperty(variants, STEPS, {value: verbSteps('variants:rapier-jxl/upload', variants, {taken: ['outputs', ...TAKEN], admit: options => { variantsOptions(options, uploadOptions); }})});
 async function encodeHere(input, given = {}, helpers = null) {
-  if (!given || typeof given !== 'object' || Array.isArray(given)) throw fail('JXL_OPTIONS', "Invalid encoding options; pass an object.");
+  if (!given || typeof given !== 'object' || Array.isArray(given)) throw fail('JXL_OPTIONS', 'options: object');
   const journal = given[JOURNAL], original = given[JPEG_SOURCE];
   const options = journal === undefined && original === undefined ? given : (({[JOURNAL]: _journal, [JPEG_SOURCE]: _jpeg, ...rest}) => rest)(given);
   const {codec, hooks: {webgpu: _webgpu, maxPixels}} = callOptions(uploadOptions(options));
@@ -113,9 +113,9 @@ async function encodeOwned(input, options, helpers, codec, maxPixels, reader, jo
     if (!decoded) input = new Blob([file.subarray(0, file.length)]);
   }
   if (isPlainRecord(input) && isDecoded(input)) input = fromDecoded(input);
-  if (Array.isArray(input?.frames)) throw fail('JXL_UNSUPPORTED', "This entry encodes still images; use rapier-jxl/animation for an animation.");
+  if (Array.isArray(input?.frames)) throw fail('JXL_UNSUPPORTED', 'animated input: use jpegxl/animation');
   if (isRowSource(input)) {
-    if (readAs !== undefined) throw fail('JXL_OPTIONS', "A row source sets its own color; remove readAs and set colorSpace on the source.");
+    if (readAs !== undefined) throw fail('JXL_OPTIONS', 'readAs: not with row source');
     const source = admitRows(input, maxPixels), report = options.onProgress;
     source.description = own(source.description, maxPixels);
     resultReference(options, source);
@@ -133,7 +133,7 @@ async function encodeOwned(input, options, helpers, codec, maxPixels, reader, jo
     if (exact) resultFacts(options, {kept: 'pixels', measurements: []});
     return bytes;
   }
-  if (isPlainRecord(input) && input.texture !== undefined && input.device !== undefined) throw fail('JXL_UNSUPPORTED', 'This entry does not read GPU textures; use rapier-jxl.');
+  if (isPlainRecord(input) && input.texture !== undefined && input.device !== undefined) throw fail('JXL_UNSUPPORTED', 'texture: use jpegxl');
   const blob = decoded !== null || typeof Blob !== 'undefined' && input instanceof Blob;
   let borrowed = blob ? null : journal ? admitPicture(journalPixels(input, maxPixels)) : admitPicture(pixels(input, {readAs}, maxPixels, true));
   if (borrowed) [borrowed, intended.intent] = namedPicture(options, borrowed, codec.quality < 100);
@@ -213,13 +213,13 @@ function journalPixels({data, width, height, colorSpace, colorEncoding}, maxPixe
 
 function admitPicture(picture) {
   if (picture.orientation !== undefined || picture.extraChannels !== undefined)
-    throw fail('JXL_UNSUPPORTED', 'This entry does not write orientation or extra channels; use rapier-jxl.');
+    throw fail('JXL_UNSUPPORTED', 'orientation or extraChannels: use jpegxl');
   return picture;
 }
 
 async function encodePicture({data, width, height, ...source}, codec, hooks, helpers, intent, selected, route = null) {
   const settings = {...source, ...codec};
-  if (settings.quality < 100 && (data instanceof Float32Array || settings.sampleFormat === 'float16')) throw fail('JXL_UNSUPPORTED', `Lossy float (HDR) needs ${FULL}; this module encodes it exactly.`);
+  if (settings.quality < 100 && (data instanceof Float32Array || settings.sampleFormat === 'float16')) throw fail('JXL_UNSUPPORTED', `lossy float: use ${FULL}`);
   if (intent !== undefined && await journaled(hooks.journal, 'page-route', () => pagePicture(data, width, height, settings))) {
     if (route) route.page = true;
     return pageFile(runCapture, {data, width, height}, {qualityIntent: intent}, settings.effort, hooks, selected, undefined,

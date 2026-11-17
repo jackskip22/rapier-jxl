@@ -20,7 +20,7 @@ export function inverseBasis(n) {
 }
 
 export function reconstructDCT8Planes(image, rgb = false, ycbcr = false, band) {
-  if (image.strategyData) throw fault('JXL_INTERNAL', 'The fixed-DCT8 inverse does not accept variable transforms.');
+  if (image.strategyData) throw fault('JXL_INTERNAL', 'reconstruct-dct8:strategy');
   const comps = image.components, stride = comps[0].stride, rows = comps[0].rows, W = stride * 8, H = rows * 8;
   const QS = image.quantScale || 256;
   const cfl = image.cfl, base = image.quantFieldBase || 1, fields = image.quantFields;

@@ -17,17 +17,17 @@ function bufferBytes(value) {
 // A Uint8Array on an ordinary, attached ArrayBuffer: its length.
 function viewLength(value) {
   if (typedName.call(value) !== 'Uint8Array' || bufferBytes(typedBuffer.call(value)) === null)
-    throw fail('JXL_INPUT', "Invalid body; use bytes, a Blob, or a byte stream.");
+    throw fail('JXL_INPUT', "body: bytes, Blob or stream");
   return typedLength.call(value);
 }
 function copy(value) {
   viewLength(value);
   try { return new Uint8Array(value); }
-  catch { throw fail('JXL_INPUT', "Detached body; use an attached buffer."); }
+  catch { throw fail('JXL_INPUT', "body: attached buffer"); }
 }
 // An aborted signal throws its own reason.
 function check(signal) {
-  if (signal?.aborted) throw signal.reason ?? fail('JXL_IO', "Read aborted; use a new signal.");
+  if (signal?.aborted) throw signal.reason ?? fail('JXL_IO', "read: new signal");
 }
 function wait(promise, signal) {
   if (!signal) return promise;
@@ -42,15 +42,15 @@ function wait(promise, signal) {
 }
 function settings(value) {
   if (value === undefined) return {};
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw fail('JXL_OPTIONS', "Invalid options; use an object.");
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw fail('JXL_OPTIONS', "options: object");
   if (Object.values(Object.getOwnPropertyDescriptors(value)).some(field => !('value' in field)))
-    throw fail('JXL_OPTIONS', "Options have accessors; use plain values.");
-  for (const key of Object.keys(value)) if (key !== 'maxBytes' && key !== 'signal') throw fail('JXL_OPTIONS', `Unknown option ${key}; remove it.`);
+    throw fail('JXL_OPTIONS', "options: plain values");
+  for (const key of Object.keys(value)) if (key !== 'maxBytes' && key !== 'signal') throw fail('JXL_OPTIONS', `unknown option: ${key}`);
   const {maxBytes = MAX_BYTES, signal} = value;
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_BYTES)
-    throw fail('JXL_OPTIONS', "Invalid maxBytes; use whole bytes from 1 to 256 MiB.");
+    throw fail('JXL_OPTIONS', "maxBytes: integer 1-268435456");
   if (signal !== undefined && (!signal || typeof signal.aborted !== 'boolean' || typeof signal.addEventListener !== 'function'))
-    throw fail('JXL_OPTIONS', "Invalid signal; use an AbortSignal.");
+    throw fail('JXL_OPTIONS', "signal: AbortSignal");
   return {maxBytes, signal};
 }
 
@@ -58,23 +58,23 @@ function settings(value) {
 export async function readAll(body, options) {
   const {maxBytes, signal} = settings(options);
   check(signal);
-  const over = () => fail('JXL_LIMIT', `Body exceeds maxBytes (${maxBytes}); raise it or send less.`);
+  const over = () => fail('JXL_LIMIT', `body: >maxBytes ${maxBytes}`);
   if (typeof Blob !== 'undefined' && body instanceof Blob) {
     if (body.size > maxBytes) throw over();
     let buffer;
     try { buffer = await wait(body.arrayBuffer(), signal); }
-    catch (cause) { if (signal?.aborted) throw cause; throw Object.assign(fail('JXL_IO', "Read failed; check storage and retry."), {cause}); }
-    if (buffer.byteLength !== body.size) throw fail('JXL_INPUT', "File changed; reread it.");
+    catch (cause) { if (signal?.aborted) throw cause; throw Object.assign(fail('JXL_IO', "read: storage failure"), {cause}); }
+    if (buffer.byteLength !== body.size) throw fail('JXL_INPUT', "file: changed; reread");
     return new Uint8Array(buffer);
   }
   const length = bufferBytes(body);
   if (length !== null) {
     if (length > maxBytes) throw over();
     try { return new Uint8Array(new Uint8Array(body)); }
-    catch { throw fail('JXL_INPUT', "Detached body; use an attached buffer."); }
+    catch { throw fail('JXL_INPUT', "body: attached buffer"); }
   }
   if (ArrayBuffer.isView(body)) { if (viewLength(body) > maxBytes) throw over(); return copy(body); }
-  if (!body || typeof body.getReader !== 'function') throw fail('JXL_INPUT', "Invalid body; use bytes, a Blob, or a byte stream.");
+  if (!body || typeof body.getReader !== 'function') throw fail('JXL_INPUT', "body: bytes, Blob or stream");
   const reader = body.getReader(), chunks = [];
   let total = 0, ended = false;
   try {
@@ -85,7 +85,7 @@ export async function readAll(body, options) {
       catch (cause) {
         // The stream's own failure (a dropped connection, a source that throws) is JXL_IO; an abort is the caller's.
         if (signal?.aborted || typeof cause?.code === 'string' && cause.code.startsWith('JXL_')) throw cause;
-        throw Object.assign(fail('JXL_IO', "Read failed; check storage and retry."), {cause});
+        throw Object.assign(fail('JXL_IO', "read: storage failure"), {cause});
       }
       check(signal);
       if (done) {

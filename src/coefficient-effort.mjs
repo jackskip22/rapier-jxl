@@ -73,7 +73,7 @@ export function* coefficientEffortSteps(jpeg, effort, fallback, retain, shared =
   if (effort <= 3 && !fallback && !retain) {
     const fast = jpeg.xyb ? {fast: true} : {};
     const bytes = yield* part(varDCTSteps(jpeg, pooled ? {...fast, pooled: true, abortable: false} : fast, shared), 0, 1);
-    if (pooled && bytes === null) throw fault('JXL_INTERNAL', 'Incomplete AC group stream.');
+    if (pooled && bytes === null) throw fault('JXL_INTERNAL', 'coefficient-effort:ac-1');
     return bytes;
   }
   let best = fallback, active, settled = false, suspended = false, hurry = false, interrupted = false;
@@ -96,7 +96,7 @@ export function* coefficientEffortSteps(jpeg, effort, fallback, retain, shared =
   }
   const keep = (bytes, plan) => {
     if (interrupted || pooled && bytes === null) {
-      if (!best) throw fault('JXL_INTERNAL', 'Incomplete AC group stream.');
+      if (!best) throw fault('JXL_INTERNAL', 'coefficient-effort:ac-2');
       return false;
     }
     if (!best || bytes.length < best.length) best = bytes;

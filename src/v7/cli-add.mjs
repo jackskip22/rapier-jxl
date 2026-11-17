@@ -48,7 +48,7 @@ const firstFound = async (cwd, names) => (await Promise.all(names.map(n => exist
 async function shipped(path) {
   for (const url of [new URL('../examples/' + path, import.meta.url), new URL('./examples/' + path, import.meta.url)])
     try { return await readFile(url, 'utf8'); } catch {}
-  throw fail('JXL_SETUP', 'The installed jpegxl package is incomplete', `reinstall ${COMMAND}`);
+  throw fail('JXL_SETUP', 'package: incomplete', `reinstall: ${COMMAND}`);
 }
 
 function stamped(version, host, body) {
@@ -104,10 +104,10 @@ function factoryObject(factory, ast) {
 }
 
 export function configEdit(source, config, {importPath, name: wanted = 'jxl', define = /^define(Config)?$/, inside}) {
-  const manual = `import {jxl} from '${importPath}' in ${config}, then add jxl() to ${inside ? inside + '.' : ''}plugins`;
+  const manual = `add: import {jxl} from '${importPath}'; ${inside ? inside + '.' : ''}plugins: [jxl()]`;
   let ast;
   try { ast = parseConfig(source); }
-  catch { if (source.includes(importPath)) return null; throw fail('JXL_SETUP', `${config} could not be read as JavaScript or TypeScript, so it was not changed`, manual); }
+  catch { if (source.includes(importPath)) return null; throw fail('JXL_SETUP', `${config}: JS/TS parse failed`, manual); }
   const isRequire = n => n?.type === 'CallExpression' && n.callee.name === 'require' && n.arguments[0]?.value === importPath;
   const imports = ast.body.filter(n => n.type === 'ImportDeclaration' || n.type === 'VariableDeclaration' && n.declarations.some(d => d.init?.type === 'CallExpression' && d.init.callee.name === 'require'));
   const ours = ast.body.find(n => n.type === 'ImportDeclaration' && n.source.value === importPath || n.type === 'VariableDeclaration' && n.declarations.some(d => isRequire(d.init)));
@@ -122,16 +122,16 @@ export function configEdit(source, config, {importPath, name: wanted = 'jxl', de
     : exported?.type === 'CallExpression' && define.test(exported.callee.name ?? exported.callee.property?.name ?? '') && exported.arguments[0]?.type === 'ObjectExpression' ? exported.arguments[0]
     : factoryObject(exported, ast);
   if (!object && ours) return null;
-  if (!object) throw fail('JXL_SETUP', `${config} does not export one object, defineConfig({...}) or a factory returning one object, so it was not changed`, manual);
+  if (!object) throw fail('JXL_SETUP', `${config}: object, defineConfig({...}) or factory`, manual);
   let outer = null;
   if (inside) {
     const found = object.properties.filter(p => p.type === 'Property' && !p.computed && (p.key.name ?? p.key.value) === inside);
-    if (found.length > 1 || found[0] && found[0].value.type !== 'ObjectExpression') throw fail('JXL_SETUP', `${inside} in ${config} is not one object, so it was not changed`, manual);
+    if (found.length > 1 || found[0] && found[0].value.type !== 'ObjectExpression') throw fail('JXL_SETUP', `${inside} in ${config}: one object`, manual);
     if (found[0]) object = found[0].value; else { outer = object; object = {properties: []}; }
   }
   const plugins = object.properties.filter(p => p.type === 'Property' && !p.computed && (p.key.name ?? p.key.value) === 'plugins');
   if (plugins.length > 1 || plugins[0] && plugins[0].value.type !== 'ArrayExpression')
-    throw fail('JXL_SETUP', `plugins in ${config} is not one array, so it was not changed`, manual);
+    throw fail('JXL_SETUP', `plugins in ${config}: array`, manual);
   const list = plugins[0]?.value;
   let name = local ?? wanted, suffix = 1;
   if (!local) while (new RegExp(`\\b${name}\\b`).test(source)) { name = suffix === 1 ? 'rapierJxl' : `rapierJxl${suffix}`; suffix++; }
@@ -161,7 +161,8 @@ export function configEdit(source, config, {importPath, name: wanted = 'jxl', de
     edits.push(comma >= 0 ? {at: comma + 1, text: ' ' + call + ','} : {at: end, text: ', ' + call});
   } else if (list.elements.length) edits.push({at: list.end - 1, text: ' ' + call});
   else edits.push({at: list.start + 1, text: call});
-  const updated = edits.sort((a, b) => b.at - a.at).reduce((text, e) => text.slice(0, e.at) + e.text + text.slice(e.at), source);
+  const eol = source.includes('\r\n') ? '\r\n' : '\n';
+  const updated = edits.sort((a, b) => b.at - a.at).reduce((text, e) => text.slice(0, e.at) + e.text.replace(/\r?\n/g, eol) + text.slice(e.at), source);
   try { parseConfig(updated); } catch { throw fail('JXL_SETUP', `${config} could not be updated safely, so it was not changed`, manual); }
   return updated;
 }
@@ -180,13 +181,13 @@ export async function runAdd(host, args, {cwd, version, name = 'rapier-jxl', std
   if (args.length === 1 && ['--help', '-h'].includes(args[0])) { stdout(addHelp(host, as)); return; }
   const dryRun = args.includes('--dry-run'), json = args.includes('--json');
   const unknown = args.find(a => a !== '--dry-run' && a !== '--json');
-  if (unknown) throw fail('JXL_OPTIONS', `add ${as} takes --dry-run and --json, not ${unknown}`, `run npx ${COMMAND} add ${as} --help`);
+  if (unknown) throw fail('JXL_OPTIONS', `add ${as}: unknown option ${unknown}`, `run: npx ${COMMAND} add ${as} --help`);
   const setup = (message, fix) => fail('JXL_SETUP', message, fix);
   const read = await readManifest(cwd, setup);
-  if (!read) throw fail('JXL_SETUP', 'There is no package.json here', `run npx ${COMMAND} add ${as} in the project's folder`);
+  if (!read) throw fail('JXL_SETUP', 'package.json: missing', `run: npx ${COMMAND} add ${as} in the project folder`);
   const {text: pkgText, manifest: pkg} = read, changes = [], next = [];
   const wanted = FRAMEWORK_PACKAGE[as], kind = KIND[host];
-  if (wanted && !installs(pkg, wanted)) throw setup(`This folder is not a ${VITE_FRAMEWORKS[as]} project: looked for ${wanted} in package.json`, `run npx ${COMMAND} add ${as} in the ${VITE_FRAMEWORKS[as]} project's folder`);
+  if (wanted && !installs(pkg, wanted)) throw setup(`${VITE_FRAMEWORKS[as]}: missing ${wanted} in package.json`, `run: npx ${COMMAND} add ${as} in the ${VITE_FRAMEWORKS[as]} project folder`);
   if (!wanted && !kind.packages.some(p => installs(pkg, p)) && !await firstFound(cwd, kind.files))
     throw setup(`This folder is not ${kind.name} project: looked for ${[...kind.packages, ...kind.files].join(', ')}`, `run npx ${COMMAND} add ${as} in the project's folder`);
   const writes = new Map(), write = async (file, text) => { writes.set(file, text); };

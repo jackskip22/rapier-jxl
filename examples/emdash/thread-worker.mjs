@@ -12,7 +12,7 @@ const {name, input, options, bytes, candidate} = workerData;
 try {
   configureDecoder(decode, restore);
   const operation = {encode, fit, recompress}[name];
-  if (!operation && name !== 'verify') throw Object.assign(new Error("Unknown operation; use encode, fit, recompress, or verify."), {code: 'JXL_OPTIONS'});
+  if (!operation && name !== 'verify') throw Object.assign(new Error("operation: encode, fit, recompress, verify"), {code: 'JXL_OPTIONS'});
   const png = bytes[0] === 0x89 && bytes[1] === 0x50;
   const jpeg = bytes[0] === 255 && bytes[1] === 216;
   const maxPixels = options?.maxPixels ?? input.maxPixels;
@@ -36,9 +36,9 @@ try {
     // Classify the authenticated source bytes; the public readers still own every size and format check.
     const photo = bytes[0] === 255 && bytes[1] === 216 ||
       [137, 80, 78, 71, 13, 10, 26, 10].every((value, i) => bytes[i] === value);
-    if (!photo) throw Object.assign(new Error("Unsupported original; use JPEG or PNG."), {code: 'JXL_UNSUPPORTED'});
+    if (!photo) throw Object.assign(new Error("original: JPEG or PNG"), {code: 'JXL_UNSUPPORTED'});
     if (options.result.format !== 'jxl' || header(candidate).animation)
-      throw Object.assign(new Error("Unsupported candidate; use a still JPEG XL result."), {code: 'JXL_UNSUPPORTED'});
+      throw Object.assign(new Error("candidate: still JPEG XL"), {code: 'JXL_UNSUPPORTED'});
     const receipt = await verify(source(), {...options.result, bytes: candidate},
       {maxPixels: options.maxPixels, onProgress: report(0, 1)});
     parentPort.postMessage({receipt});

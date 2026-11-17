@@ -11,7 +11,7 @@ export function s2ArenaPlan({admit = true, base = S2_MEMORY.base} = {}) {
   return {
     take(bytes) {
     if (!Number.isSafeInteger(bytes) || bytes < 0 || !Number.isSafeInteger(cursor + bytes + 15) || admit && bytes > LIMIT - cursor - 15)
-      throw fault('JXL_MEMORY','SSIMULACRA2 exceeds its memory allowance.');
+      throw fault('JXL_MEMORY','SSIMULACRA2: over limit');
     const at = cursor; cursor += Math.ceil(bytes / 16) * 16; return at;
     },
     get arenaBytes() { return cursor; },
@@ -24,7 +24,7 @@ export function ssimulacra2Layout(width, height, options = {}) {
   const mask = options.channels ?? (map ? 1 : 7), cached = options.cached ?? 0, retain = options.retain ?? 0;
   if (![mask,cached,retain].every(n => Number.isInteger(n) && n >= 0 && n <= 7) || !mask
       || map && (mask & (mask - 1)))
-    throw fault('JXL_INPUT','SSIMULACRA2 needs valid channel/cache masks and one map channel.');
+    throw fault('JXL_INPUT','masks or mapChannel');
   const cachedMask = cached & mask, needReference = !!(mask & ~cachedMask);
   const arena = s2ArenaPlan({admit:options.admit !== false, base:options.base}), take = bytes => arena.take(bytes);
   const referenceBytes = needReference ? pixels * (options.referenceRgba ? 4 : 12) : 0;
@@ -51,7 +51,7 @@ export const ssimulacra2WorkBytes = (width,height,options) => ssimulacra2Layout(
 export function ssimulacra2Allocation(width,height,{referenceRgba = false,distortedRgba = false,
     wantMap = false,cacheBytes = 0} = {}) {
   const original = s2Dimensions(width,height);
-  if (!Number.isSafeInteger(cacheBytes) || cacheBytes < 0) throw fault('JXL_INTERNAL', 'SSIMULACRA2 cacheBytes must be a nonnegative safe integer.');
+  if (!Number.isSafeInteger(cacheBytes) || cacheBytes < 0) throw fault('JXL_INTERNAL', 'ssimulacra2-memory:cacheBytes');
   const fullWidth = Math.max(8,width), fullHeight = Math.max(8,height), padded = fullWidth * fullHeight;
   const candidateBytes = original * (distortedRgba ? 4 : 12), scales = [];
   let w = fullWidth, h = fullHeight, left = cacheBytes, retained = 0, arenaBytes = 0;

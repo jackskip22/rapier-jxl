@@ -15,10 +15,10 @@ function displayedOutputs(decoded) {
 }
 
 const FAILURES = {
-  missing: ['JXL_TARGET', 'Animation loop count or timeline is missing.'],
-  empty: ['JXL_TARGET', 'The animation has no displayed frame.'],
-  duration: ['JXL_UNSUPPORTED', 'The animation duration was rounded; exact timeline verification is unavailable.'],
-  terminal: ['JXL_TARGET', 'The animation timeline differs from the source.'],
+  missing: ['JXL_TARGET', 'timeline: missing'],
+  empty: ['JXL_TARGET', 'frames: none displayed'],
+  duration: ['JXL_UNSUPPORTED', 'duration rounded: exact timeline unavailable'],
+  terminal: ['JXL_TARGET', 'timeline: mismatch'],
 };
 export function animationTimelineFailure(kind) {
   const [code, message] = FAILURES[kind];

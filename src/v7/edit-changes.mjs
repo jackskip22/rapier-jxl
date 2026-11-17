@@ -6,13 +6,13 @@ export const BOUNDS = ['maxInputBytes', 'maxBoxes'];
 export function admitEdit(changes) {
   changes = snapshotOptions(changes, 'changes');
   for (const key of Object.keys(changes)) if (![...METADATA, ...FRAMING, ...BOUNDS].includes(key))
-    throw fail('JXL_OPTIONS', `Unknown edit change ${key}; remove it.`);
+    throw fail('JXL_OPTIONS', `unknown change: ${key}`);
   const maxBytes = changes.maxInputBytes ?? Number.MAX_SAFE_INTEGER, maxBoxes = changes.maxBoxes ?? 65536;
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw fail('JXL_OPTIONS', "Invalid maxInputBytes; use a positive safe integer.");
-  if (!Number.isSafeInteger(maxBoxes) || maxBoxes < 1) throw fail('JXL_OPTIONS', "Invalid maxBoxes; use a positive safe integer.");
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw fail('JXL_OPTIONS', 'maxInputBytes: positive integer');
+  if (!Number.isSafeInteger(maxBoxes) || maxBoxes < 1) throw fail('JXL_OPTIONS', 'maxBoxes: positive integer');
   const pick = keys => Object.fromEntries(Object.entries(changes).filter(([key, value]) => keys.includes(key) && value !== undefined));
   const bounds = pick(BOUNDS), metadata = pick(METADATA), framing = pick(FRAMING);
-  if (!Object.keys(metadata).length && !Object.keys(framing).length) throw fail('JXL_OPTIONS', 'edit has no change; supply metadata or framing options.');
+  if (!Object.keys(metadata).length && !Object.keys(framing).length) throw fail('JXL_OPTIONS', 'changes: supply metadata or framing');
   for (const key of ['fragmentOrder', 'frameStarts']) if (Array.isArray(framing[key])) framing[key] = snapshotArray(framing[key], key, undefined, 'JXL_INPUT');
   return {bounds, maxBytes, metadata, framing};
 }

@@ -5,10 +5,10 @@ import {helperReservation} from './helper-reservation.mjs';
 import {pixelLimit, fail} from './primitives.mjs';
 import {surfaceCall, bandedCanvas, variantsResult, doorPreviews, admitUploadDoor, admitFitDoor, admitVariantsDoor, admitEncodePlain, admitCapturePlain, jpegSourceKeys} from './door-session.mjs';
 const levels = {module: UPLOAD_SPEC.module, ...UPLOAD_SPEC.captureLevels};
-const rules = {texture: 'rapier-jxl', banded: bandedCanvas, upload: true, richCapture: true, plain: admitEncodePlain, capPlain: admitCapturePlain, jpeg: jpegSourceKeys,
+const rules = {texture: 'jpegxl', banded: bandedCanvas, upload: true, richCapture: true, plain: admitEncodePlain, capPlain: admitCapturePlain, jpeg: jpegSourceKeys,
   admit: (name, opt, currentMax) => {
     if (name === 'capture') {
-      if (opt && typeof opt === 'object' && 'features' in opt) throw fail('JXL_OPTIONS', 'Unknown option: features; remove it.');
+      if (opt && typeof opt === 'object' && 'features' in opt) throw fail('JXL_OPTIONS', 'unknown option: features');
       const {signal: _s, onProgress: _p, onPreview: _v, firstRegion, ...rest} = opt ?? {};
       UPLOAD_SPEC.captureAdmission(firstRegion === undefined ? rest : {...rest, features: {firstRegion}}, levels);
       return rest.maxPixels !== undefined ? pixelLimit(rest.maxPixels) : undefined;

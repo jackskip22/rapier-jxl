@@ -418,7 +418,7 @@ function* scanEvents(bytes, bit, zero, remaining) {
       const r = new JxlBits(bytes); r.bit = bit;
       const count = Math.min(8192, head.count - from), values = new Uint32Array(count * (zero ? 2 : 1)); let last = previous;
       for (let i = 0; i < count; i++) {
-        if (from + i >= remaining) throw fault('JXL_RECONSTRUCTION', `JPEG reconstruction data has over ${RECONSTRUCTION_SCAN_EVENTS} scan events.`);
+        if (from + i >= remaining) throw fault('JXL_RECONSTRUCTION', `reconstruction scans: max ${RECONSTRUCTION_SCAN_EVENTS}`);
         const run = zero ? r.u32([[0, 1], [2, 2], [4, 5], [8, 20]]) : 0;
         last += 1 + r.u32(BLOCK); requireJPEG(last < 201326592 && run <= 4);
         values[i * (zero ? 2 : 1)] = last; if (zero) values[i * 2 + 1] = run;
@@ -1095,7 +1095,7 @@ function* openBrotliSteps(input, maxOutputLength, dictionary) {
   try { return yield* decompressBrotliSteps(input, {maxOutputLength, dictionary: typeof dictionary === 'function' ? dictionary : undefined}); }
   catch (error) {
     if (error.dictionary !== true) throw error;
-    throw fault('JXL_DICTIONARY', 'This file\'s JPEG data refers to the Brotli dictionary.');
+    throw fault('JXL_DICTIONARY', 'JPEG data: Brotli dictionary required');
   }
 }
 function* openBoxSteps(part, compressed, dictionary) {

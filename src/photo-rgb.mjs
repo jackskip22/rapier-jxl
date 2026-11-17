@@ -105,7 +105,7 @@ function rgbProvider(pixels, width, height, plain, {quality, colorSpace, active,
       const bytes = yield* writeImageSteps(image, effort);
       written.set(bytes, image); return bytes;
     },
-    estimate() { throw fault('JXL_INTERNAL', 'The RGB photo engine compares written frames.'); },
+    estimate() { throw fault('JXL_INTERNAL', 'photo-rgb:estimate'); },
   };
   return {provider, written, canonical};
 }
@@ -139,7 +139,7 @@ function activeCells(width, height, crops, exact, pixels, mask) {
 function* rgbPhotoBandSteps(pixels, width, height, {quality, colorSpace, areas, ycbcr = false, effort = 7, signal,
   reference = pixels, project = null, crops = areas, exact = null, mask = false, ans = null, origin = {x: 0, y: 0}, photoSearch = null, scoreScope = null} = {}) {
   check(signal);
-  if (effort >= 6 && !photoSearch?.blocks) throw fault('JXL_INTERNAL', 'The photographic transform search is unavailable.');
+  if (effort >= 6 && !photoSearch?.blocks) throw fault('JXL_INTERNAL', 'photo-rgb:search');
   const measured = photoSearch?.measured ?? photoMeasuredSteps;
   const plain = plainCoefficients(pixels, width, height, quality, colorSpace, areas, ycbcr, crops);
   const active = activeCells(width, height, crops, exact, pixels, mask), {provider, written, canonical} = rgbProvider(pixels, width, height, plain,
@@ -222,7 +222,7 @@ export function* regionPhotoFrameSteps(rows, width, height, options) {
   const strategy = {*band(pixels, w, h, info) {
     if (info.again) {
       const recipe = recipes.get(info.top);
-      if (!recipe) throw fault('JXL_INTERNAL', 'A photo band has no selected recipe.');
+      if (!recipe) throw fault('JXL_INTERNAL', 'photo-rgb:recipe');
       return rebuildImage(pixels, w, h, info, recipe);
     }
     const source = pixels.slice(), reference = referenceRows(info.top, h).slice(), exact = exactRows?.(info.top, h);

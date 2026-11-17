@@ -16,20 +16,20 @@ function emptyRefList() {
 }
 function workLimit(modularWork, remaining) {
   modularWork.remaining = remaining;
-  throw Object.assign(new RangeError('JPEG XL Modular work exceeds the limit; maxPixels sets it, 104 steps a pixel.'), {code: 'JXL_LIMIT'});
+  throw Object.assign(new RangeError('Modular work: over maxPixels budget'), {code: 'JXL_LIMIT'});
 }
 
 export function readMATree(r, {maxNodes = 1048576, maxDepth = 2048} = {}) {
-  requireDecode(Number.isSafeInteger(maxNodes) && maxNodes > 0 && maxNodes <= 1048576, 'Invalid MA tree bound.', r);
+  requireDecode(Number.isSafeInteger(maxNodes) && maxNodes > 0 && maxNodes <= 1048576, 'MA tree bound', r);
   const coding = readEntropy(r, 6, {values: maxNodes * 5, distanceMultiplier: 0});
   const nodes = [{depth: 0}];
   let leaves = 0, weighted = false;
   for (let i = 0; i < nodes.length; i++) {
-    requireDecode(nodes.length <= maxNodes && nodes[i].depth <= maxDepth, 'JPEG XL MA tree exceeds its bound.', r);
+    requireDecode(nodes.length <= maxNodes && nodes[i].depth <= maxDepth, 'MA tree: over limit', r);
     const node = nodes[i], property = coding.read(1);
     if (property) {
       node.property = property - 1; node.value = unpackSigned(coding.read(0));
-      requireDecode(node.property <= 255, 'Invalid MA property.', r);
+      requireDecode(node.property <= 255, 'MA property', r);
       node.left = nodes.length; node.right = nodes.length + 1;
       nodes.push({depth: node.depth + 1}, {depth: node.depth + 1});
       weighted ||= node.property === 15;
@@ -37,7 +37,7 @@ export function readMATree(r, {maxNodes = 1048576, maxDepth = 2048} = {}) {
       node.property = -1; node.context = leaves++; node.predictor = coding.read(2);
       node.offset = unpackSigned(coding.read(3));
       const exponent = coding.read(4), mantissa = coding.read(5);
-      requireDecode(node.predictor <= 13 && exponent <= 30 && mantissa <= POWERS[31 - exponent] - 2, 'Invalid MA leaf.', r);
+      requireDecode(node.predictor <= 13 && exponent <= 30 && mantissa <= POWERS[31 - exponent] - 2, 'MA leaf', r);
       node.multiplier = (mantissa + 1) * POWERS[exponent];
       weighted ||= node.predictor === 6;
     }
@@ -52,9 +52,9 @@ function channelSamples(channels, maximum) {
   for (const c of channels) {
     requireDecode(Number.isSafeInteger(c.width) && Number.isSafeInteger(c.height) && c.width >= 0 && c.height >= 0 &&
       Number.isInteger(c.hshift) && Number.isInteger(c.vshift) && c.hshift >= -1 && c.vshift >= -1 && c.hshift <= 31 && c.vshift <= 31,
-      'Invalid Modular channel dimensions.');
+      'Modular channel dimensions');
     const samples = c.width * c.height;
-    if (!Number.isSafeInteger(samples) || samples > maximum - total) throw Object.assign(new RangeError('JPEG XL Modular samples exceed the memory limit.'), {code: 'JXL_MEMORY'});
+    if (!Number.isSafeInteger(samples) || samples > maximum - total) throw Object.assign(new RangeError('Modular samples: over limit'), {code: 'JXL_MEMORY'});
     total += samples;
   }
   return total;
@@ -108,9 +108,9 @@ function streamChannels(entropy, tree, channels) {
   const sizes = [...stream, nodes * 32, 4096 * 8, 44, 5 * stride * 8, 65 * 4, 128, channels.length * 4, ...channels.map(c => c.width * c.height * 4)];
   let end = kernels.arena;
   for (const size of sizes) {
-    requireDecode(Number.isSafeInteger(size) && size >= 0, 'Invalid Modular channel dimensions.');
+    requireDecode(Number.isSafeInteger(size) && size >= 0, 'Modular channel dimensions');
     end += Math.ceil(size / 16) * 16;
-    if (end > 0x80000000) throw Object.assign(new RangeError('JPEG XL kernel memory request exceeds its limit.'), {code: 'JXL_MEMORY'});
+    if (end > 0x80000000) throw Object.assign(new RangeError('kernel memory: over 2 GiB'), {code: 'JXL_MEMORY'});
   }
   const at = kernels.reserve(sizes), [nodeAt, leafAt, parametersAt, weightedAt, reciprocalsAt, io, refsAt] = at.slice(stream.length, stream.length + 7);
   const block = writeStream(kernels, entropy, at.slice(0, stream.length)), i32 = kernels.i32;
@@ -195,11 +195,11 @@ function decodeChannels(r, channels, tree, parameters, streamIndex, modularWork)
 
 export function createModular(r, inputChannels, options = {}) {
   const {globalTree, groupDim = 256, bitDepth = 8, maxSamples = DEFAULT_MAX_SAMPLES, maxModularWork = DEFAULT_MAX_WORK} = options;
-  requireDecode(Number.isSafeInteger(maxSamples) && maxSamples >= 0 && maxSamples <= 2147483647, 'Invalid Modular memory bound.');
-  requireDecode(Number.isSafeInteger(maxModularWork) && maxModularWork >= 0, 'Invalid Modular work bound.');
+  requireDecode(Number.isSafeInteger(maxSamples) && maxSamples >= 0 && maxSamples <= 2147483647, 'maxSamples: integer 0-2147483647');
+  requireDecode(Number.isSafeInteger(maxModularWork) && maxModularWork >= 0, 'maxModularWork: nonnegative integer');
   const modularWork = options.modularWork ?? {remaining: maxModularWork};
-  requireDecode(typeof modularWork === 'object' && Number.isSafeInteger(modularWork.remaining) && modularWork.remaining >= 0, 'Invalid shared Modular work budget.');
-  requireDecode(Number.isInteger(bitDepth) && bitDepth >= 1 && bitDepth <= 32, 'Invalid Modular bit depth.');
+  requireDecode(typeof modularWork === 'object' && Number.isSafeInteger(modularWork.remaining) && modularWork.remaining >= 0, 'modularWork: {remaining}');
+  requireDecode(Number.isInteger(bitDepth) && bitDepth >= 1 && bitDepth <= 32, 'bitDepth: integer 1-32');
   const channels = inputChannels.map(c => ({width: c.width, height: c.height, hshift: c.hshift ?? 0, vshift: c.vshift ?? 0, data: EMPTY_I32, decoded: 0, regions: null}));
   const size = list => channelSamples(list, maxSamples);
   size(channels);
@@ -214,13 +214,13 @@ export function createModular(r, inputChannels, options = {}) {
       modularWork.remaining = remaining;
     };
     if (count) ({transforms, meta} = part('transforms').readModularTransforms(r, channels, count, parameters, size, chargeTransform));
-    if (useGlobal) requireDecode(!!tree, 'JPEG XL Modular stream has no global tree.', r);
+    if (useGlobal) requireDecode(!!tree, 'missing global MA tree', r);
     else tree = readMATree(r, {maxNodes: Math.min(1048576, 1024 + size(channels))});
   }
   const region = options.region && transforms.length <= 1 && transforms.every(t => t.type === 0 || t.type === 1 && t.predictor === 0) &&
     channels.slice(meta).every(c => c.hshift === 0 && c.vshift === 0) ? options.region : null;
   let globalCount = 0, closed = false;
-  const admitOpen = () => requireDecode(!closed, 'Modular image has already been finished.');
+  const admitOpen = () => requireDecode(!closed, 'Modular: already finished');
   const state = {
     channels, transforms, metaChannels: meta, tree, groupDim, bitDepth, modularWork, region,
     decodeAll(reader, streamIndex = 0) {
@@ -231,7 +231,7 @@ export function createModular(r, inputChannels, options = {}) {
     },
     decodeGlobal(reader, streamIndex = 0) {
       admitOpen();
-      requireDecode(globalCount === 0, 'Modular global stream was already decoded.');
+      requireDecode(globalCount === 0, 'duplicate Modular global stream');
       while (globalCount < channels.length && (globalCount < meta || channels[globalCount].width <= groupDim && channels[globalCount].height <= groupDim)) globalCount++;
       if (globalCount) decodeChannels(reader, channels.slice(0, globalCount), tree, parameters, streamIndex, modularWork);
       else if (channels.length) { const entropy = tree.entropy.start(reader, {values: 0}); entropy.begin(); entropy.finish(); }
@@ -239,12 +239,12 @@ export function createModular(r, inputChannels, options = {}) {
     },
     decodeGroup(reader, {x, y, width, height, minShift = 0, maxShift = 3, lf = false, streamIndex = 0}) {
       admitOpen();
-      requireDecode([x, y, width, height].every(n => Number.isSafeInteger(n) && n >= 0), 'Invalid Modular group region.');
+      requireDecode([x, y, width, height].every(n => Number.isSafeInteger(n) && n >= 0), 'Modular group region');
       const selection = [], destinations = [];
       for (let i = globalCount; i < channels.length; i++) {
         const c = channels[i], shift = Math.min(c.hshift, c.vshift);
         if (lf ? shift < 3 : shift < minShift || shift >= maxShift || shift >= 3) continue;
-        requireDecode(c.hshift >= 0 && c.vshift >= 0, 'A Modular meta channel escaped the global stream.');
+        requireDecode(c.hshift >= 0 && c.vshift >= 0, 'meta channel outside global stream');
         const scaleX = POWERS[c.hshift], scaleY = POWERS[c.vshift];
         const left = Math.floor(x / scaleX), top = Math.floor(y / scaleY);
         const right = Math.min(c.width, Math.ceil((x + width) / scaleX)), bottom = Math.min(c.height, Math.ceil((y + height) / scaleY));
@@ -258,7 +258,7 @@ export function createModular(r, inputChannels, options = {}) {
       for (let i = 0; i < destinations.length; i++) {
         const {channel: c, left, top, width: w, height: h} = destinations[i];
         c.regions ??= [];
-        requireDecode(!c.regions.some(q => left < q[0] + q[2] && left + w > q[0] && top < q[1] + q[3] && top + h > q[1]), 'Overlapping Modular groups.');
+        requireDecode(!c.regions.some(q => left < q[0] + q[2] && left + w > q[0] && top < q[1] + q[3] && top + h > q[1]), 'overlapping Modular groups');
         c.regions.push([left, top, w, h]);
         const area = region ?? {x: 0, y: 0, width: c.width, height: c.height};
         const x0 = Math.max(left, area.x), y0 = Math.max(top, area.y), x1 = Math.min(left + w, area.x + area.width), y1 = Math.min(top + h, area.y + area.height);
@@ -273,7 +273,7 @@ export function createModular(r, inputChannels, options = {}) {
       for (let i = 0; i < channels.length; i++) {
         const c = channels[i], cropped = region && i >= meta, global = i < globalCount;
         const count = cropped && !global ? region.width * region.height : c.width * c.height;
-        requireDecode((c.decoded ?? 0) === count, 'JPEG XL Modular image has missing groups.');
+        requireDecode((c.decoded ?? 0) === count, 'missing Modular groups');
         if (!c.data) c.data = EMPTY_I32;
         if (cropped) {
           if (global) {

@@ -37,7 +37,7 @@ export function fusedFrameRows(data, width, dx, dy, boxes, most = 256, arena = o
   const rowBytes = width * 4, frameBytes = rowWidth * 4;
   return (y, count) => {
     const end = band + frameBytes * count;
-    if (count > most) throw fault('JXL_INTERNAL', 'A band of more rows than the reader was made for.');
+    if (count > most) throw fault('JXL_INTERNAL', 'capture-fused:rows');
     if (end > memory.buffer.byteLength) arena.grow(end);
     const u8 = new Uint8Array(memory.buffer), u32 = new Uint32Array(memory.buffer);
     new Int32Array(memory.buffer, at, 4 * n).set(placed);

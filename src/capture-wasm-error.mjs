@@ -9,7 +9,7 @@ const simdMissing = () => {
   catch { return true; }
 };
 export const wasmRequired = (cause = wasmFailure()) => Object.assign(fault('JXL_WASM', wasmRefused()
-  ? "Host refuses WebAssembly; allow 'wasm-unsafe-eval' in script-src or use the workerd or edge-light condition."
-  : simdMissing() ? "WebAssembly SIMD is unavailable; use a host with SIMD."
+  ? "allow 'wasm-unsafe-eval' or use workerd/edge-light"
+  : simdMissing() ? 'WebAssembly SIMD required'
   : `The WebAssembly module failed${hostWords(cause)}; check the host's memory.`),
   cause ? {cause} : {});

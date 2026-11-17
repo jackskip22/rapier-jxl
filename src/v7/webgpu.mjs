@@ -12,11 +12,11 @@ export function webgpuUsable(fresh = false) {
 export {webgpuSetting} from './primitives.mjs';
 let kernelCheck = null;
 export const checkKernelsFirst = check => { kernelCheck = check; };
-export const NOT_DEVICE = "Required WebGPU runs only lossy jobs at efforts 7-9; use one of those efforts with a quality, or leave webgpu out.";
+export const NOT_DEVICE = 'lossy efforts 7-9 only, or omit webgpu';
 export async function requireWebGPU(setting, lossy = true, effort = GPU_EFFORT) {
   if (setting !== 'required') return;
   if (!lossy || effort < GPU_EFFORT) throw fail('JXL_WEBGPU', NOT_DEVICE);
   if (await webgpuUsable(true)) return;
   if (kernelCheck) await kernelCheck();
-  throw fail('JXL_WEBGPU', 'This host has no required WebGPU device; use a capable device or leave webgpu out.');
+  throw fail('JXL_WEBGPU', 'no WebGPU device: omit webgpu');
 }

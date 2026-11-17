@@ -16,15 +16,15 @@ function admitPatches(data, width, height, options = {}) {
   const {quality, colorSpace} = admitOptions(options), effort = admitEffort(options);
   admitPixels(data, width, height);
   if (quality !== 100 || !admitSampleFormat(data, options).native8)
-    throw fault('JXL_INPUT', 'Patches need straight sRGB or Display P3 RGBA8; baseError sets base quantization.');
+    throw fault('JXL_INPUT', 'patches: straight RGBA8 (sRGB or Display P3) at quality 100; use baseError for lossy base');
   const atlas = options.atlas;
-  if (!atlas || typeof atlas !== 'object') throw fault('JXL_INPUT', 'atlas needs data, width and height.');
+  if (!atlas || typeof atlas !== 'object') throw fault('JXL_INPUT', 'atlas: {data, width, height}');
   admitPixels(atlas.data, atlas.width, atlas.height);
   if (!(atlas.data instanceof Uint8Array) && !(atlas.data instanceof Uint8ClampedArray))
-    throw fault('JXL_INPUT', 'The atlas must match the base image\'s samples and color.');
+    throw fault('JXL_INPUT', 'atlas: sample or color mismatch');
   const baseError = patchWhole(options.baseError ?? 0, 127, 'baseError');
   const orientation = patchWhole(options.orientation ?? 1, 8, 'orientation', 1), level = options.level ?? 5;
-  if (level !== 5 && level !== 10) throw fault('JXL_INPUT', 'JPEG XL level is 5 or 10.');
+  if (level !== 5 && level !== 10) throw fault('JXL_INPUT', 'level: 5 or 10');
   const referenceLimit = Math.min(16777216, Math.floor(width * height / 16));
   let forceAlpha = false;
   const {groups, area} = patchGeometry(options.patches, width, height, new Map([[1, atlas]]), position => {

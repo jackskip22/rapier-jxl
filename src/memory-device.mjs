@@ -13,7 +13,7 @@ export function wholeBudget({deviceMemory, mobile, processMemory, unknownNode = 
   return (Number.isFinite(deviceMemory) && deviceMemory > 0 ? deviceMemory <= 4 ? BAND_PIXELS : COMPACT_WHOLE : unknownPixels) * WHOLE_BYTES;
 }
 export const RETAINED_BYTES = 200;
-export const ONE_PLANE_BYTES = 24, BAND_CACHE_BYTES = 40;
+export const BANDED_BYTES = 72, ONE_PLANE_BYTES = 24, BAND_CACHE_BYTES = 20;
 export const retainsWhole = (pixels, bytes) => wholeBudget(undefined, 0) >= pixels * (WHOLE_BYTES + bytes);
 const positive = value => Number.isFinite(value) && value > 0 ? value : 0;
 const attempt = fn => { try { return positive(fn()); } catch { return 0; } };

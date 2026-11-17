@@ -24,14 +24,14 @@ async function kernels() {
 const prepare = preparedAlone(async () => { try { await kernels(); } catch (error) { throw declared(error); } });
 export async function supported(feature) {
   if (feature === 'webgpu') return false;
-  if (feature !== undefined) throw fail('JXL_OPTIONS', "supported received an unknown feature; omit it or use 'webgpu'.");
+  if (feature !== undefined) throw fail('JXL_OPTIONS', "supported(): no argument or 'webgpu'");
   try { await kernels(); return true; } catch { return false; }
 }
 
 function hooks(options) {
   const {signal, onProgress} = options;
   admitSignal(signal);
-  if (onProgress !== undefined && typeof onProgress !== 'function') throw fail('JXL_OPTIONS', "Invalid onProgress; pass a function.");
+  if (onProgress !== undefined && typeof onProgress !== 'function') throw fail('JXL_OPTIONS', "onProgress: function");
   return {signal, progress: progressOf(onProgress, signal) ?? (() => {})};
 }
 async function drain(steps, {signal, progress}) {
@@ -63,9 +63,9 @@ function recompressHere(input, options) {
   try {
     const settings = snapshotOptions(options);
     for (const key of Object.keys(settings)) if (!['effort', 'maxPixels', 'gainMap', 'signal', 'onProgress'].includes(key))
-      throw fail('JXL_OPTIONS', `Unknown JPEG option ${key}; remove it.`);
+      throw fail('JXL_OPTIONS', `unknown option: ${key}`);
     if (settings.gainMap !== undefined && typeof settings.gainMap !== 'boolean')
-      throw fail('JXL_OPTIONS', 'Invalid gainMap; pass true or false.');
+      throw fail('JXL_OPTIONS', 'gainMap: boolean');
     const {signal} = settings, run = hooks(settings), effort = jpegSettings(settings), maxPixels = pixelBound(settings.maxPixels);
     let otherDecoders;
     const coding = {effort, maxPixels, ...(settings.gainMap && {gainMap: promotedGainMap}), tails: longTail, outside: missing => { otherDecoders = {missing, reason: 'past-jbrd'}; }};
@@ -90,7 +90,7 @@ Object.defineProperty(restore, Symbol.for('rapier-jxl.verify.source'), {value: r
 Object.defineProperty(recompress, JPEG_PIXELS_SYMBOL, {value: decodeJpegPixels});
 async function restoreHere(input, options) {
   const settings = snapshotOptions(options);
-  for (const key of Object.keys(settings)) if (!['maxPixels', 'signal', 'onProgress'].includes(key)) throw fail('JXL_OPTIONS', `Unknown restore option ${key}; remove it.`);
+  for (const key of Object.keys(settings)) if (!['maxPixels', 'signal', 'onProgress'].includes(key)) throw fail('JXL_OPTIONS', `unknown option: ${key}`);
   const {signal} = settings, run = hooks(settings), maxPixels = pixelBound(settings.maxPixels);
   check(signal);
   input = await owned(input, signal, view => {

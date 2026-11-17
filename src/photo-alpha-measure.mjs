@@ -25,7 +25,7 @@ function worse(a, b) {
 export function alphaRebuildMeasure(data, width, height, color, signal, plan) {
   const n = width * height, check = () => { if (signal?.aborted) throw signal.reason; };
   const over = (rgba, background) => {
-    if (!captureComposeOver(rgba, data, width, height, background)) throw fault('JXL_WASM', 'The alpha look needs the WebAssembly kernels.');
+    if (!captureComposeOver(rgba, data, width, height, background)) throw fault('JXL_WASM', 'WebAssembly SIMD required');
     return rgba;
   };
   const nativeBand = (linear, from, count, out, at, y = at / width) => out.set(nativeRGBA(

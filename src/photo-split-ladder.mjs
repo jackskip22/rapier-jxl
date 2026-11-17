@@ -109,10 +109,10 @@ export const encodeSplitLadder = async function encodeSplitLadder(data, width, h
         if (value?.kind !== 'ac-group') continue;
         const written = await (ac.written ??= Promise.all(bands.map((_, k) => ask(bands.length - 1 - k, {split: 'write', frame: value.model, keep: true})).reverse()));
         const results = written.flatMap(answer => answer.sections);
-        if (results.length !== value.groups) throw fault('JXL_INTERNAL', 'Split sections do not cover the frame.');
+        if (results.length !== value.groups) throw fault('JXL_INTERNAL', 'photo-split-ladder:sections');
         reply = {results, errors: {}}; answered = true;
       }
-      if (!answered) throw fault('JXL_INTERNAL', 'The frame asked for no AC sections.');
+      if (!answered) throw fault('JXL_INTERNAL', 'photo-split-ladder:ac');
       return step.value;
     }
     const written = new Set(), keyOf = (rung, use) => (use === orders && use ? 'o' : use ? '?' : 'n') + ':' + (rung.lf ?? 0) + ':' + (rung.clusters ? BUDGETS.indexOf(rung.clusters) : -1);

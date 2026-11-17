@@ -10,60 +10,60 @@ export {LIMITS};
 export const LAYER_BLEND_MODES = Object.freeze({replace: 0, add: 1, blend: 2, muladd: 3, multiply: 4});
 const layerModes = new Map(Object.entries(LAYER_BLEND_MODES));
 function layerInteger(value, low, high, label) {
-  if (!Number.isInteger(value) || value < low || value > high) throw fault('JXL_INPUT', label + ' is an integer from ' + low + ' to ' + high + '.');
+  if (!Number.isInteger(value) || value < low || value > high) throw fault('JXL_INPUT', label + ': integer ' + low + '-' + high);
   return value;
 }
 function layerObject(value, label) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw fault('JXL_INPUT', label + ' is an object.');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw fault('JXL_INPUT', label + ': object');
 }
 function layerBlend(value, fallback, extras) {
   if (typeof value === 'string') value = {blend: value};
   layerObject(value, 'Layer blending');
   const name = value.blend ?? fallback.blend ?? 'replace', mode = layerModes.get(name);
-  if (mode === undefined) throw fault('JXL_INPUT', 'Layer blend is replace, add, blend, muladd or multiply.');
+  if (mode === undefined) throw fault('JXL_INPUT', 'blend: replace/add/blend/muladd/multiply');
   const source = layerInteger(value.source ?? fallback.source ?? 0, 0, 3, 'Reference source');
   const alpha = layerInteger(value.alpha ?? fallback.alpha ?? 0, 0, Math.min(10, Math.max(0, extras - 1)), 'Alpha selector');
   const clamp = value.clamp ?? fallback.clamp ?? false;
-  if (typeof clamp !== 'boolean') throw fault('JXL_INPUT', 'Layer clamp is boolean.');
+  if (typeof clamp !== 'boolean') throw fault('JXL_INPUT', 'clamp: boolean');
   return {mode, source, alpha, clamp};
 }
 function layerAdmission(input, options, encodeChannels, limits) {
   layerObject(input, 'Layered image'); layerObject(options, 'Layer options');
   const {width, height, layers} = input; admitSize(width, height, limits);
-  if (!Array.isArray(layers) || !layers.length || layers.length > 256) throw fault('JXL_INPUT', 'A still has one to 256 authored layers.');
+  if (!Array.isArray(layers) || !layers.length || layers.length > 256) throw fault('JXL_INPUT', 'layers: array 1-256');
   if ((typeof __RAPIER_JXL_FORMAT__ === 'undefined' || __RAPIER_JXL_FORMAT__ === true) && options.preview !== undefined && (!options.preview || options.preview.maxDimension !== undefined))
-    throw fault('JXL_INPUT', 'A layered preview is a planar image of the composition.');
+    throw fault('JXL_INPUT', 'preview: planar composition');
   const iccBits = options.icc === undefined ? undefined : prepareICC(options.icc, {compression: options.iccCompression,
     level: options.level, colorSpace: layers[0].image?.extraChannels?.some(channel => new Map(Object.entries(channel)).get('type') === 'black') ? 'cmyk' : undefined}).iccData.bitLength;
   const admitted = layers.map((layer, index) => {
     layerObject(layer, 'Layer ' + index);
-    if ((layer.image === undefined) === (layer.bytes === undefined)) throw fault('JXL_INPUT', 'Each layer gives a planar image or encoded bytes.');
+    if ((layer.image === undefined) === (layer.bytes === undefined)) throw fault('JXL_INPUT', 'layer: image or bytes');
     const x0 = layerInteger(layer.x ?? 0, -536870911, 536870911, 'Layer x'), y0 = layerInteger(layer.y ?? 0, -536870911, 536870911, 'Layer y');
     const saved = () => layerInteger(layer.saveAs ?? (index === layers.length - 1 ? 0 : 3), 0, 3, 'Reference destination');
     if (typeof __RAPIER_JXL_FORMAT__ !== 'undefined' && __RAPIER_JXL_FORMAT__ !== true) {
       const reference = saved();
-      if (!(layer.bytes instanceof Uint8Array) || !layer.bytes.length) throw fault('JXL_INPUT', 'Encoded layer bytes are a nonempty Uint8Array.');
+      if (!(layer.bytes instanceof Uint8Array) || !layer.bytes.length) throw fault('JXL_INPUT', 'layer.bytes: nonempty Uint8Array');
       return {layer, x0, y0, frameType: 0, reference, still: readStill(layer.bytes, {iccBits})};
     }
     const frameType = layer.referenceOnly ? 2 : layer.skipProgressive ? 3 : 0;
     if (layer.referenceOnly !== undefined && typeof layer.referenceOnly !== 'boolean' || layer.skipProgressive !== undefined && typeof layer.skipProgressive !== 'boolean')
-      throw fault('JXL_INPUT', 'referenceOnly and skipProgressive are boolean.');
-    if (layer.referenceOnly && layer.skipProgressive || frameType === 2 && (x0 || y0)) throw fault('JXL_INPUT', 'A reference-only frame has no origin or progressive role.');
-    if (index === layers.length - 1 && frameType === 2) throw fault('JXL_INPUT', 'The final layer displays the finished canvas.');
+      throw fault('JXL_INPUT', 'referenceOnly/skipProgressive: boolean');
+    if (layer.referenceOnly && layer.skipProgressive || frameType === 2 && (x0 || y0)) throw fault('JXL_INPUT', 'referenceOnly: no origin/progressive');
+    if (index === layers.length - 1 && frameType === 2) throw fault('JXL_INPUT', 'final layer: display frame');
     if (layer.name !== undefined && (typeof layer.name !== 'string' || new TextEncoder().encode(layer.name).length > 1071))
-      throw fault('JXL_INPUT', 'A layer name is at most 1071 UTF-8 bytes.');
+      throw fault('JXL_INPUT', 'layer.name: max 1071 UTF-8 bytes');
     const reference = saved();
-    if (layer.beforeColorTransform !== undefined && typeof layer.beforeColorTransform !== 'boolean') throw fault('JXL_INPUT', 'beforeColorTransform is boolean.');
+    if (layer.beforeColorTransform !== undefined && typeof layer.beforeColorTransform !== 'boolean') throw fault('JXL_INPUT', 'beforeColorTransform: boolean');
     let still, operation;
     if (layer.bytes !== undefined) {
-      if (!(layer.bytes instanceof Uint8Array) || !layer.bytes.length) throw fault('JXL_INPUT', 'Encoded layer bytes are a nonempty Uint8Array.');
+      if (!(layer.bytes instanceof Uint8Array) || !layer.bytes.length) throw fault('JXL_INPUT', 'layer.bytes: nonempty Uint8Array');
       still = readStill(layer.bytes, {iccBits});
-      if (!index && options.preview !== undefined) throw fault('JXL_INPUT', 'The first encoded layer holds the image header; put its preview there.');
+      if (!index && options.preview !== undefined) throw fault('JXL_INPUT', 'preview: first encoded layer');
     } else {
       layerObject(layer.options ?? {}, 'Per-layer encoding options');
       for (const name of Object.keys(layer.options ?? {})) if (!['groupSize', 'predictor', 'upsampling'].includes(name))
-        throw fault('JXL_INPUT', 'Per-layer options are groupSize, predictor and upsampling.');
-      if (!encodeChannels) throw fault('JXL_INTERNAL', 'A planar layer needs the channel encoder (layers.mjs).');
+        throw fault('JXL_INPUT', 'layer.options: groupSize/predictor/upsampling');
+      if (!encodeChannels) throw fault('JXL_INTERNAL', 'layers:channel-encoder');
       operation = encodeChannels(layer.image, {...options, ...layer.options,
         progressive: layer.referenceOnly ? false : options.progressive, preview: index ? undefined : options.preview});
     }
@@ -82,32 +82,32 @@ function* layerSteps(config) {
       item.still = readStill(step.value, {iccBits});
     }
     const {still, layer} = item, key = compositionMetadataKey(still);
-    if (i && key !== metadata) throw fault('JXL_INPUT', 'Layers must share channels, color, orientation and transforms.');
+    if (i && key !== metadata) throw fault('JXL_INPUT', 'layers: shared channels/color/orientation/transforms');
     metadata = key; modular16 &&= still.image.modular16; level = Math.max(level, still.level);
-    if (still.frames.length !== 1) throw fault('JXL_INPUT', 'Each encoded layer is one frame; use the atlas and LF encoders for those.');
+    if (still.frames.length !== 1) throw fault('JXL_INPUT', 'layer: single frame; use atlas/LF');
     const frame = still.frames[0];
     compositePixels += frame.width * frame.height;
-    if (frame.type !== 0 && frame.type !== 3) throw fault('JXL_INPUT', 'A layer starts with a regular or skip-progressive frame.');
+    if (frame.type !== 0 && frame.type !== 3) throw fault('JXL_INPUT', 'layer frame: regular/skip-progressive');
     const blend = layerBlend(layer, {source: canvasReference}, still.image.extraChannels);
     if ((typeof __RAPIER_JXL_FORMAT__ === 'undefined' || __RAPIER_JXL_FORMAT__ === true) && layer.extraBlending !== undefined && (!Array.isArray(layer.extraBlending) || layer.extraBlending.length !== still.image.extraChannels))
-      throw fault('JXL_INPUT', 'extraBlending supplies one description per extra channel.');
+      throw fault('JXL_INPUT', 'extraBlending: one per extra channel');
     let extraBlending = (typeof __RAPIER_JXL_FORMAT__ === 'undefined' || __RAPIER_JXL_FORMAT__ === true) ? layer.extraBlending?.map(value => layerBlend(value, {...layer, source: blend.source}, still.image.extraChannels)) : undefined;
     const hasAlpha = still.image.channelInfo.some(channel => channel.kind === 0);
     for (const selection of [blend, ...(extraBlending ?? [])]) if (hasAlpha && (selection.mode === 2 || selection.mode === 3) && still.image.channelInfo[selection.alpha]?.kind !== 0)
-      throw fault('JXL_INPUT', 'An alpha-dependent blend selects an alpha extra channel.');
+      throw fault('JXL_INPUT', 'blend.alpha: alpha extra channel');
     if (blend.mode === 2 && hasAlpha) {
       extraBlending ??= Array.from({length: still.image.extraChannels}, () => ({...blend}));
       extraBlending[blend.alpha] = {...extraBlending[blend.alpha], mode: 2, alpha: blend.alpha, clamp: blend.clamp};
     }
     const full = item.x0 <= 0 && item.y0 <= 0 && item.x0 + frame.width >= width && item.y0 + frame.height >= height;
-    if ((typeof __RAPIER_JXL_FORMAT__ === 'undefined' || __RAPIER_JXL_FORMAT__ === true) && item.frameType === 2 && !layer.beforeColorTransform && !full) throw fault('JXL_INPUT', 'A reference saved after color conversion covers the canvas.');
+    if ((typeof __RAPIER_JXL_FORMAT__ === 'undefined' || __RAPIER_JXL_FORMAT__ === true) && item.frameType === 2 && !layer.beforeColorTransform && !full) throw fault('JXL_INPUT', 'reference: full canvas after color');
     if ((typeof __RAPIER_JXL_FORMAT__ === 'undefined' || __RAPIER_JXL_FORMAT__ === true) && layer.beforeColorTransform && item.frameType !== 2 && (!full || blend.mode !== 0 || i === layers.length - 1))
-      throw fault('JXL_INPUT', 'A before-color-transform reference is reference-only or a full nonfinal replacement.');
+      throw fault('JXL_INPUT', 'beforeColorTransform: reference-only/full nonfinal replacement');
     encoded.push({...item, frame, blend, extraBlending, full});
     if (item.frameType !== 2 && i < layers.length - 1) canvasReference = item.reference;
   }
   if (!modular16 || compositePixels > 268435456) level = 10;
-  if (config.requestedLevel === 5 && level === 10) throw fault('JXL_INPUT', 'This frame area or channel buffer needs level 10.');
+  if (config.requestedLevel === 5 && level === 10) throw fault('JXL_INPUT', 'level: 10 for frame/buffer');
   const first = encoded[0].still, writer = new BitWriter(256), canvas = {...first.image, width, height}, available = new Set([0]), before = new Set();
   writeStillImageHeader(writer, first, {width, height, modular16});
   if ((typeof __RAPIER_JXL_FORMAT__ === 'undefined' || __RAPIER_JXL_FORMAT__ === true) && first.preview) copyBits(writer, first.codestream, first.preview.start * 8, first.preview.end * 8);
@@ -117,8 +117,8 @@ function* layerSteps(config) {
     const blends = item.x0 || item.y0 || item.frame.width !== width || item.frame.height !== height || selections.some(selection => selection.mode);
     if (frameType !== 2) for (const selection of selections) {
       const slot = selection.mode || !full ? selection.source : 0;
-      if (!available.has(slot)) throw fault('JXL_INPUT', 'A layer reads a reference slot before it is saved.');
-      if ((typeof __RAPIER_JXL_FORMAT__ === 'undefined' || __RAPIER_JXL_FORMAT__ === true) && blends && before.has(slot)) throw fault('JXL_INPUT', `Layer ${i} blends onto slot ${slot}, saved before the color transform: drop beforeColorTransform there or use another slot.`);
+      if (!available.has(slot)) throw fault('JXL_INPUT', 'reference slot: save before read');
+      if ((typeof __RAPIER_JXL_FORMAT__ === 'undefined' || __RAPIER_JXL_FORMAT__ === true) && blends && before.has(slot)) throw fault('JXL_INPUT', `layer ${i} slot ${slot}: drop beforeColorTransform or change slot`);
     }
     writeStillFrame(writer, item.still, item.frame, {canvas, x0: item.x0, y0: item.y0, frameType, last,
       reference: item.reference, ...blend, extraBlending, ...((typeof __RAPIER_JXL_FORMAT__ === 'undefined' || __RAPIER_JXL_FORMAT__ === true) && {beforeColorTransform: layer.beforeColorTransform, name: layer.name})});

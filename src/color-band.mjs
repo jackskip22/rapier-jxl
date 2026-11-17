@@ -4,10 +4,11 @@ import {reconstructDCT8Planes} from './reconstruct-dct8.mjs';
 let views;
 export function colorPixels(planes, width, height, stride, mode, alpha = null, alphaStep = 1) {
   const band = dct8Band(), buffer = band.buffer();
-  const {f64, f32, u8} = views ??= {
+  if (views?.buffer !== buffer) views = {buffer,
     f64: band.coeffViews,
     f32: band.coeff.map(at => new Float32Array(buffer, at, band.blocks * 64)), u8: new Uint8Array(buffer),
   };
+  const {f64, f32, u8} = views;
   const floating = mode & 2, count = width * height, capacity = band.blocks * 64;
   const output = floating ? [0, 1, 2].map(() => new Float32Array(count)) : new Uint8Array(count * 4);
   for (let from = 0; from < count; from += capacity) {

@@ -23,7 +23,7 @@ const setup = (message, fix) => fail('JXL_SETUP', message, fix);
 async function examples() {
   for (const url of [new URL('../examples/', import.meta.url), new URL('./examples/', import.meta.url)])
     if (await present(join(fileURLToPath(url), 'android'))) return fileURLToPath(url);
-  throw setup('The installed package is incomplete', `reinstall ${COMMAND}`);
+  throw setup('package: incomplete', `reinstall: ${COMMAND}`);
 }
 
 const SOURCES = {
@@ -38,7 +38,7 @@ const SOURCES = {
 
 async function packageFolder(given) {
   const dir = given ?? fileURLToPath(new URL('../', import.meta.url));
-  if (!await present(join(dir, 'dist', 'upload.mjs'))) throw setup('The installed package has no built browser files (dist/upload.mjs)', `reinstall ${COMMAND}`);
+  if (!await present(join(dir, 'dist', 'upload.mjs'))) throw setup('browser files: dist/upload.mjs missing', `reinstall: ${COMMAND}`);
   return dir;
 }
 
@@ -66,7 +66,7 @@ async function prepared(place, root, packageDir) {
     await walk(stage);
     return files;
   } catch (error) {
-    throw /^JXL_PACKAGE/.test(error.message) ? setup(error.message.replace(/^JXL_PACKAGE: /, ''), `reinstall ${COMMAND}`) : error;
+    throw error?.code === 'JXL_PACKAGE' ? setup(error.message, `reinstall: ${COMMAND}`) : error;
   } finally { await rm(scratch, {recursive: true, force: true}); }
 }
 
@@ -109,7 +109,7 @@ const PLACES = {
         const gradle = rawGradle.replace(/\/\*[\s\S]*?\*\/|^[ \t]*\/\/[^\r\n]*/gm, '');
         const cleanXml = manifest.replace(/<!--[\s\S]*?-->/g, '');
         const namespace = gradle.match(/\bnamespace\s*=?\s*["']([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)["']/)?.[1] ?? cleanXml.match(/<manifest[^>]*\bpackage="([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)"/)?.[1];
-        if (!namespace) throw setup('This Android module has no namespace', `add namespace = "com.example.app" to the android block of ${posix(join(module, 'build.gradle.kts'))}`);
+        if (!namespace) throw setup('Android namespace: missing', `add: namespace = "com.example.app" in ${posix(join(module, 'build.gradle.kts'))}`);
         return {module, namespace};
       }
       return null;
@@ -245,13 +245,13 @@ function flags(place, verb, args) {
   args = cliArgs(args);
   if (args.length === 1 && ['--help', '-h'].includes(args[0])) return {help: true};
   const unknown = args.find(a => a !== '--dry-run' && a !== '--json');
-  if (unknown) throw fail('JXL_OPTIONS', `${verb} ${place} takes --dry-run and --json, not ${unknown}`, `run npx ${COMMAND} ${verb} ${place} --help`);
+  if (unknown) throw fail('JXL_OPTIONS', `${verb} ${place}: unknown option ${unknown}`, `run: npx ${COMMAND} ${verb} ${place} --help`);
   return {dryRun: args.includes('--dry-run'), json: args.includes('--json')};
 }
 
 async function locate(place, cwd) {
   const found = await PLACES[place].find(cwd);
-  if (!found) throw setup(`This folder is not ${kind[place]} project: looked for ${PLACES[place].looked}`, `run npx ${COMMAND} add ${place} in the project's folder`);
+  if (!found) throw setup(`${kind[place]}: need ${PLACES[place].looked}`, `run: npx ${COMMAND} add ${place} in the project folder`);
   return found;
 }
 function allowedPrefixes(place, spec, found) {
@@ -329,7 +329,7 @@ export async function runRemovePlace(place, args, {cwd, stdout}) {
   if (given.help) { stdout(HELP(place)); return; }
   const {dryRun, json} = given, spec = PLACES[place], found = await locate(place, cwd);
   const recordPath = posix(join(spec.anchor(found), RECORD)), record = await recordOf(cwd, recordPath, place, spec, found);
-  if (!record) throw setup(`There is nothing to remove: npx ${COMMAND} add ${place} has not written files here`, `delete the files yourself, or run npx ${COMMAND} add ${place} first`);
+  if (!record) throw setup(`${place}: no record to remove`, 'nothing to remove; delete any files you added by hand');
   const fileEntries = Object.entries(record.files), dirList = [...record.dirs];
   const fileLands = await insideProject(cwd, fileEntries.map(([p]) => p), setup);
   const dirLands = await insideProject(cwd, dirList, setup);

@@ -134,8 +134,8 @@ function removeFromCluster(cluster, hist, table) {
   }
   cluster.ent = table[cluster.total] - cluster.sumT; cluster.members--;
 }
-function marginalCost(cluster, stats, table, scale) {
-  if (!cluster || cluster.total === 0) return stats.bits * scale + (HIST_BASE + HIST_SYM * stats.used) * Q;
+function marginalCost(cluster, stats, table, scale, histBase, histSym) {
+  if (!cluster || cluster.total === 0) return stats.bits * scale + (histBase + histSym * stats.used) * Q;
   const freq = cluster.freq, {nzSym, nzVal} = stats;
   let dSumT = 0, newUsed = 0;
   for (let j = 0; j < nzSym.length; j++) {
@@ -143,10 +143,10 @@ function marginalCost(cluster, stats, table, scale) {
     dSumT += table[cur + v] - table[cur];
     if (!cur) newUsed++;
   }
-  return ((table[cluster.total + stats.total] - (cluster.sumT + dSumT) - cluster.ent) + stats.raw) * scale + HIST_SYM * newUsed * Q;
+  return ((table[cluster.total + stats.total] - (cluster.sumT + dSumT) - cluster.ent) + stats.raw) * scale + histSym * newUsed * Q;
 }
 function scoreClusterProposal(st, item, prop) {
-  const {table, scale, clusters, maxClusters, splitCost, kinds, alphabet, remCluster} = st;
+  const {table, scale, clusters, maxClusters, splitCost, kinds, alphabet, remCluster, histBase, histSym} = st;
   const g0 = item.cluster, c0 = clusters[g0], h0 = item.hist[item.choice.selected];
   let rem = null;
   if (c0.members > 1) {
@@ -163,9 +163,9 @@ function scoreClusterProposal(st, item, prop) {
     remCluster.total = total; remCluster.sumT = sumT; remCluster.ent = table[total] - sumT; remCluster.used = used;
     rem = remCluster;
   }
-  const before = marginalCost(rem, item.curStats, table, scale);
+  const before = marginalCost(rem, item.curStats, table, scale, histBase, histSym);
   const freeSlots = maxClusters - clusters.length + (rem ? 0 : 1), K = clusters.length;
-  const maxExtra = (HIST_BASE + alphabet * HIST_SYM) * Q;
+  const maxExtra = (histBase + alphabet * histSym) * Q;
   const evalSide = (statsList, bestPred, minBits) => {
     let b1 = null, b2 = null;
     const limit = minBits * scale + maxExtra;
@@ -177,10 +177,10 @@ function scoreClusterProposal(st, item, prop) {
       const c = step === 0 ? bestPred : step <= bestPred ? step - 1 : step;
       const stc = statsList[c];
       if (stc.bits * scale > (b2 ? b2.cost + Q : limit)) continue;
-      if (freeSlots >= 1) consider(c, -1, marginalCost(null, stc, table, scale));
+      if (freeSlots >= 1) consider(c, -1, marginalCost(null, stc, table, scale, histBase, histSym));
       for (let g = 0; g < K; g++) {
         const target = g === g0 ? rem : clusters[g];
-        if (target) consider(c, g, marginalCost(target, stc, table, scale));
+        if (target) consider(c, g, marginalCost(target, stc, table, scale, histBase, histSym));
       }
     }
     return [b1, b2];
@@ -196,13 +196,13 @@ function scoreClusterProposal(st, item, prop) {
   const evalShared = (ch, cl, bothStats) => {
     if (bothStats.bits * scale >= bestAfter) return;
     if (freeSlots >= 1) {
-      const c = marginalCost(null, bothStats, table, scale);
+      const c = marginalCost(null, bothStats, table, scale, histBase, histSym);
       if (c < bestAfter) { bestAfter = c; hiChoice = {pred: ch, cl: -1}; loChoice = {pred: cl, cl: -1}; shared = true; }
     }
     for (let g = 0; g < K; g++) {
       const target = g === g0 ? rem : clusters[g];
       if (!target) continue;
-      const c = marginalCost(target, bothStats, table, scale);
+      const c = marginalCost(target, bothStats, table, scale, histBase, histSym);
       if (c < bestAfter) { bestAfter = c; hiChoice = {pred: ch, cl: g}; loChoice = {pred: cl, cl: g}; shared = true; }
     }
   };
@@ -223,7 +223,7 @@ function scoreClusterProposal(st, item, prop) {
   return prop.score;
 }
 function maybeMergeClusters(st, active) {
-  const {clusters, table, scale, alphabet} = st;
+  const {clusters, table, scale, alphabet, histBase, histSym} = st;
   for (;;) {
     let bestDelta = 0, ba = -1, bb = -1;
     for (let a = 0; a < clusters.length; a++) {
@@ -232,7 +232,7 @@ function maybeMergeClusters(st, active) {
         const cb = clusters[b], fb = cb.freq;
         let sumT = 0, used = 0;
         for (let s = 0; s < alphabet; s++) { const v = fa[s] + fb[s]; if (v) { sumT += table[v]; used++; } }
-        const delta = (table[ca.total + cb.total] - sumT - ca.ent - cb.ent) * scale + (HIST_SYM * (used - ca.used - cb.used) - HIST_BASE) * Q;
+        const delta = (table[ca.total + cb.total] - sumT - ca.ent - cb.ent) * scale + (histSym * (used - ca.used - cb.used) - histBase) * Q;
         if (delta < bestDelta) { bestDelta = delta; ba = a; bb = b; }
       }
     }
@@ -302,7 +302,8 @@ function sampleTree(quantized, symbolSets, candidates, population, options, save
   if (!store) throw declined('sampled');
   const st = {options, clustered, kinds, alphabet, table, rawPrice, columns, symbolSets, candidates, count, population, scale, store,
     clusters: null, maxClusters: Math.min(options.clusters ?? 192, 255 - reserve), epoch: 0,
-    splitCost: (LEAF_BITS + options.charge + SAMPLE_BIAS * (1 - count / population) * scale) * Q,
+    histBase: options.histBase ?? HIST_BASE, histSym: options.histSym ?? HIST_SYM,
+    splitCost: ((options.leafBits ?? LEAF_BITS) + options.charge + SAMPLE_BIAS * (1 - count / population) * scale) * Q,
     scratchHist: clustered ? new Uint32Array(alphabet) : null,
     remCluster: clustered ? {freq: new Uint32Array(alphabet), total: 0, sumT: 0, ent: 0, used: 0} : null};
   if (saved) {
@@ -406,12 +407,12 @@ function treeOf({st, active, root, predictor}) {
   return guardReferences(root, predictor, ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__)) && st.clustered ? st.clusters.length : active.length);
 }
 function learnSampled(plane, w, h, options = {}, answer) {
-  const {depth = 24, predictors = PREDICTORS, clusters = 192, charge = 32} = options, sampled = sampleColumns(plane, w, h, options, answer);
+  const {depth = 24, predictors = PREDICTORS, clusters = 192, charge = 32, leafBits, histBase, histSym} = options, sampled = sampleColumns(plane, w, h, options, answer);
   let {leaves = 60} = options;
   if (!sampled) return null;
   const clustered = ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__)) && (!!options.clustered || leaves > 255);
   if (!((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__))) leaves = Math.min(leaves, 255);
-  const tree = learnSampleTree(sampled.quantized, sampled.symbolSets, predictors, w * h, {leaves, depth, clustered, clusters, charge});
+  const tree = learnSampleTree(sampled.quantized, sampled.symbolSets, predictors, w * h, {leaves, depth, clustered, clusters, charge, leafBits, histBase, histSym});
   return tree.left ? tree : null;
 }
 function sampleColumns(plane, w, h, {samples = SAMPLES, bins = 32, properties: wanted = PROPERTIES, predictors = PREDICTORS,
@@ -478,10 +479,10 @@ function gradientPassesInt32(plane, w, h) {
   return false;
 }
 export function learnTree(plane, w, h, {nodes = 119, samples = SAMPLES, bins = BINS, properties = PROPERTIES, predictors = PREDICTORS,
-  references = [], referenceKinds = [0, 1, 2, 3], least = 4096, depth = 24, charge = 32, clustered = false, clusters = 192} = {}, answer = null) {
+  references = [], referenceKinds = [0, 1, 2, 3], least = 4096, depth = 24, charge = 32, leafBits, histBase, histSym, clustered = false, clusters = 192} = {}, answer = null) {
   answer ||= weighted(plane, w, h); nodes = fitted(nodes, w, h);
   if (properties.includes(9) && gradientPassesInt32(plane, w, h)) properties = properties.filter(p => p !== 9);
-  const tree = learnSampled(plane, w, h, {leaves: (nodes + 1) >> 1, depth, samples, bins, properties, predictors, references, referenceKinds, least, charge, clustered, clusters}, answer);
+  const tree = learnSampled(plane, w, h, {leaves: (nodes + 1) >> 1, depth, samples, bins, properties, predictors, references, referenceKinds, least, charge, leafBits, histBase, histSym, clustered, clusters}, answer);
   const learned = tree && numbered(tree);
   return learned && {...learned, ...codePlane(tree, plane, w, h, answer.residuals, answer.properties, references)};
 }
@@ -497,10 +498,10 @@ function numbered(tree) {
 }
 const TREE_SPLITS = 8;
 export function* learnTreeSteps(plane, w, h, {nodes = 119, samples = SAMPLES, bins = BINS, properties = PROPERTIES, predictors = PREDICTORS,
-  references = [], referenceKinds = [0, 1, 2, 3], least = 4096, depth = 24, charge = 32, clustered = false, clusters = 192} = {}, answer = null) {
+  references = [], referenceKinds = [0, 1, 2, 3], least = 4096, depth = 24, charge = 32, leafBits, histBase, histSym, clustered = false, clusters = 192} = {}, answer = null) {
   nodes = fitted(nodes, w, h);
   const count = (nodes + 1) >> 1, deep = ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ === 'undefined' || !__RAPIER_JXL_CAPTURE_PHOTO__) && !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && (typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || !__RAPIER_JXL_UPLOAD__));
-  const options = {leaves: deep ? count : Math.min(count, 255), depth, samples, bins, properties, predictors, references, referenceKinds, least, charge, clustered: deep && (clustered || count > 255), clusters};
+  const options = {leaves: deep ? count : Math.min(count, 255), depth, samples, bins, properties, predictors, references, referenceKinds, least, charge, leafBits, histBase, histSym, clustered: deep && (clustered || count > 255), clusters};
   if (!journaling()) return learnTree(plane, w, h, {nodes, ...options}, answer);
   const sampled = yield* unit('tree-columns', () => sampleColumns(plane, w, h, options, answer ?? weighted(plane, w, h)));
   if (!sampled) return null;

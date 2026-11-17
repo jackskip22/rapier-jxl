@@ -12,7 +12,7 @@ export interface ServeOptions {
   /** The largest picture served, in pixels; none by default. A larger one refuses JXL_DIMENSIONS. */
   maxPixels?: number;
   /** To an image/jxl client, the smallest of the file's sizes (1:8, 1:4, 1:2, 1:1) at least this many pixels wide, cut
-   * from the file without decoding (rapier-jxl/metadata slice). A file with no passes to cut is served whole. */
+   * from the file without decoding (jpegxl/metadata slice). A file with no passes to cut is served whole. */
   width?: number;
   /** To an image/jxl client, the largest of the file's sizes in at most this many bytes; none refuses JXL_LIMIT. */
   maxBytes?: number;

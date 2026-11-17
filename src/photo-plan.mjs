@@ -25,7 +25,7 @@ export {PLAN_LIMITS as LIMITS};
 
 function planQuality(value) {
   if (!Number.isFinite(value) || value < 1 || value >= 100)
-    throw fault('JXL_INPUT', 'A retained plan takes quality 1 to below 100; use lossless for exact.');
+    throw fault('JXL_INPUT', "quality: 1 to <100; for exact use fidelity 'exact'");
   return value;
 }
 
@@ -63,23 +63,23 @@ export function createPhotoPlanSteps(data, width, height, options = {}) {
   const layout = admitPhotoLayout(width, height, options, quality);
   admitPixels(data, layout.codedWidth, layout.codedHeight, LIMITS);
   const samples = admitSampleFormat(data, options);
-  if (!samples.native8) throw fault('JXL_INPUT', 'Retained plans need 8-bit sRGB without ICC.');
+  if (!samples.native8) throw fault('JXL_INPUT', 'retained plan: straight 8-bit sRGB or Display P3 without ICC');
   const extras = admitPhotoExtras(data, layout, options);
   const admitted = admitStrategyOptions(options), progression = progressivePasses(options.progressive);
   const authoredOrderPasses = prepareCoefficientOrders(options.coefficientOrders, progression?.count || 1);
   const noiseLut = admitNoise(options.noise, width, height), lfLevels = admitLFFrames(options.lfFrames);
   admitPhotoFilter(options);
-  if (lfLevels && colorSpace !== 'srgb') throw fault('JXL_INPUT', 'LF frame pyramids need sRGB photo pixels.');
+  if (lfLevels && colorSpace !== 'srgb') throw fault('JXL_INPUT', 'LF pyramid: sRGB pixels');
   const maxRetainedBytes = options.maxRetainedBytes ?? PLAN_LIMITS.retainedBytes;
   if (!Number.isSafeInteger(maxRetainedBytes) || maxRetainedBytes < 1)
-    throw fault('JXL_INPUT', 'maxRetainedBytes is a positive whole number.');
+    throw fault('JXL_INPUT', 'maxRetainedBytes: positive integer');
   const codedPixels = Math.ceil(layout.codedWidth / 8) * Math.ceil(layout.codedHeight / 8) * 64;
   const shapes = new Map(admitted.ids.map(id => {
     const shape = TRANSFORMS[id]; return [Math.max(shape.width, shape.height) + ':' + Math.min(shape.width, shape.height), shape.width * shape.height * 4];
   }));
   const estimate = codedPixels * (24 + 3 / 8 + 1 / 16 + 4) + [...shapes.values()].reduce((a, b) => a + b, 0)
     + retainedMemory(admitted.custom, noiseLut, authoredOrderPasses, layout, extras);
-  if (estimate > maxRetainedBytes) throw fault('JXL_MEMORY', 'The retained estimate exceeds maxRetainedBytes (' + Math.ceil(estimate) + ' bytes required).');
+  if (estimate > maxRetainedBytes) throw fault('JXL_MEMORY', 'maxRetainedBytes: need ' + Math.ceil(estimate) + ' B');
   return planJob(preparePlanSteps(data, layout.codedWidth, layout.codedHeight, {quality, colorSpace, effort, admitted, progression, noiseLut,
     lfLevels, maxRetainedBytes, authoredOrderPasses, orientation: options.orientation ?? 1, layout, extras: snapshotPhotoExtras(extras)}));
 }
@@ -96,7 +96,7 @@ function* preparePlanSteps(data, width, height, settings) {
   }
   delete retained.components; delete retained.strategyData.tables;
   const retainedBytes = retainedMemory(retained, settings.admitted.custom, settings.noiseLut, settings.authoredOrderPasses, settings.layout, settings.extras);
-  if (retainedBytes > settings.maxRetainedBytes) throw fault('JXL_MEMORY', 'Retained buffers exceed maxRetainedBytes (' + retainedBytes + ' bytes required).');
+  if (retainedBytes > settings.maxRetainedBytes) throw fault('JXL_MEMORY', 'maxRetainedBytes: need ' + retainedBytes + ' B');
   return makePhotoPlan(retained, {...settings, originalWidth, originalHeight, padded: !!padded, retainedBytes});
 }
 
@@ -104,7 +104,7 @@ function makePhotoPlan(retained, settings) {
   const tally = new Map();
   for (const block of retained.strategyData.blocks) tally.set(block.id, (tally.get(block.id) || 0) + 1);
   const strategies = Object.freeze([...tally].map(([id, blocks]) => Object.freeze({name: TRANSFORMS[id].name, blocks})));
-  const ensure = () => { if (!retained) throw fault('JXL_INPUT', 'This photographic plan has been disposed.'); };
+  const ensure = () => { if (!retained) throw fault('JXL_INPUT', 'plan: disposed'); };
   const encodeSteps = (quality = settings.quality) => {
     ensure(); planQuality(quality);
     return job(encodeRetainedSteps(retained, quality, {...settings}));
@@ -154,14 +154,14 @@ function* encodeRetainedSteps(retained, quality, settings) {
 
 function admitTarget(targetBytes, options) {
   if (!Number.isSafeInteger(targetBytes) || targetBytes < 1)
-    throw fault('JXL_INPUT', 'targetBytes is a positive safe integer number of bytes.');
-  if (!options || typeof options !== 'object' || Array.isArray(options)) throw fault('JXL_INPUT', 'Target search options are an object.');
+    throw fault('JXL_INPUT', 'targetBytes: positive safe integer');
+  if (!options || typeof options !== 'object' || Array.isArray(options)) throw fault('JXL_INPUT', 'target options: object');
   const minQuality = planQuality(options.minQuality ?? 1), maxQuality = planQuality(options.maxQuality ?? 99.9), maxProbes = options.maxProbes ?? 12;
   const initialQuality = options.initialQuality === undefined ? null : planQuality(options.initialQuality);
-  if (minQuality > maxQuality) throw fault('JXL_INPUT', 'minQuality does not exceed maxQuality.');
+  if (minQuality > maxQuality) throw fault('JXL_INPUT', 'minQuality: <=maxQuality');
   if (initialQuality !== null && (initialQuality < minQuality || initialQuality > maxQuality))
-    throw fault('JXL_INPUT', 'initialQuality lies between minQuality and maxQuality.');
-  if (!Number.isInteger(maxProbes) || maxProbes < 2 || maxProbes > 32) throw fault('JXL_INPUT', 'maxProbes is an integer from 2 through 32.');
+    throw fault('JXL_INPUT', 'initialQuality: minQuality..maxQuality');
+  if (!Number.isInteger(maxProbes) || maxProbes < 2 || maxProbes > 32) throw fault('JXL_INPUT', 'maxProbes: integer 2-32');
   return {minQuality, maxQuality, maxProbes, initialQuality};
 }
 
@@ -193,7 +193,7 @@ function* targetSteps(encodeSteps, targetBytes, search) {
     next = candidates.next({bytes, stop: hurry});
   }
   const {bytes, quality, probes, smallestBytes} = next.value;
-  if (!bytes) throw fault('JXL_SIZE', 'No probed quality fits the ' + targetBytes + '-byte target; ' +
-    (smallestBytes === null ? 'all candidates exceed the encoded-file limit.' : 'the smallest measured candidate has ' + smallestBytes + ' bytes.'));
+  if (!bytes) throw fault('JXL_SIZE', 'targetBytes ' + targetBytes + ': ' +
+    (smallestBytes === null ? 'encoded-file limit' : 'minimum ' + smallestBytes + ' B'));
   return Object.freeze({bytes, quality, targetBytes, probes});
 }

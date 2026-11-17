@@ -44,7 +44,7 @@ function nextBlock(r, block) {
   if (!block.remaining) {
     const code = readPrefixSymbol(r, block.types);
     const type = code === 0 ? block.previous : code === 1 ? (block.current + 1) % block.count : code - 2;
-    requireDecode(type < block.count, 'Invalid Brotli block type.', r);
+    requireDecode(type < block.count, 'Brotli block type', r);
     block.previous = block.current; block.current = type; block.remaining = codeCount(r, block.lengths);
   }
   block.remaining--; return block.current;
@@ -58,7 +58,7 @@ function contextMap(r, size) {
     const symbol = readPrefixSymbol(r, tree);
     if (symbol > 0 && symbol <= runBits) {
       const run = (1 << symbol) + r.read(symbol);
-      requireDecode(run <= size - at, 'Brotli context run exceeds its map.', r); at += run;
+      requireDecode(run <= size - at, 'Brotli context run', r); at += run;
     } else map[at++] = symbol ? symbol - runBits : 0;
   }
   if (r.read(1)) {
@@ -70,7 +70,7 @@ function contextMap(r, size) {
   }
   const seen = new Uint8Array(count);
   for (const value of map) seen[value] = 1;
-  requireDecode(seen.every(v => v), 'Brotli context map has a hole.', r);
+  requireDecode(seen.every(v => v), 'Brotli context map', r);
   return {count,map};
 }
 
@@ -86,13 +86,13 @@ function distanceValue(r, symbol, postfix, direct, history) {
 }
 
 function dictionaryWord(length, wordId, r, dictionary, remaining) {
-  requireDecode(length >= 4 && length <= 24, 'Invalid Brotli dictionary word length.', r);
+  requireDecode(length >= 4 && length <= 24, 'Brotli word length', r);
   const words = 1 << WORD_BITS[length], transform = BROTLI_TRANSFORMS[Math.floor(wordId / words)];
-  requireDecode(transform, 'Invalid Brotli dictionary transformation.', r);
+  requireDecode(transform, 'Brotli transform', r);
   const [prefix, action, suffix] = transform, start = action >= 3 && action <= 11 ? Math.min(length,action-2) : 0;
   const stop = action >= 12 ? Math.max(0,length-(action-11)) : length, wordLength = Math.max(0,stop-start);
   const total = prefix.length + wordLength + suffix.length;
-  requireDecode(total <= remaining, 'Brotli dictionary word exceeds its meta-block.', r);
+  requireDecode(total <= remaining, 'Brotli word: over meta-block', r);
   const output = new Uint8Array(total); let at = 0;
   for (let i = 0; i < prefix.length; i++) output[at++] = prefix.charCodeAt(i);
   const wordStart = at, base = WORD_BASE[length] + (wordId % words) * length + start;
@@ -114,18 +114,18 @@ function dictionaryWord(length, wordId, r, dictionary, remaining) {
 const readerAt = (bytes, bit = 0) => { const r = new JxlBits(sliceBytes(bytes, 0), true); r.bit = bit; return r; };
 function settings(bytes, {maxOutput = Number.MAX_SAFE_INTEGER, maxBlocks = Number.MAX_SAFE_INTEGER, dictionary} = {}) {
   requireDecode(bytes instanceof Uint8Array && Number.isSafeInteger(maxOutput) && maxOutput >= 0 &&
-    Number.isSafeInteger(maxBlocks) && maxBlocks > 0, 'Invalid Brotli input or resource limit.');
+    Number.isSafeInteger(maxBlocks) && maxBlocks > 0, 'Brotli input or limit');
   let words;
   return {maxOutput, maxBlocks, dictionary() {
     if (words) return words;
-    if (dictionary === undefined) throw Object.assign(new Error('This Brotli stream requires the RFC 7932 dictionary.'), {code: 'JXL_DICTIONARY'});
+    if (dictionary === undefined) throw Object.assign(new Error('needs RFC 7932 dictionary'), {code: 'JXL_DICTIONARY'});
     words = typeof dictionary === 'function' ? dictionary() : dictionary;
-    requireDecode(words instanceof Uint8Array && words.length === 122784, 'Invalid Brotli dictionary bytes.');
+    requireDecode(words instanceof Uint8Array && words.length === 122784, 'dictionary: 122784-byte Uint8Array');
     return words;
   }};
 }
 const sharedBrotli = /* @__PURE__ */ brotliReader(readPrefixCode, readPrefixSymbol, requireDecode, blocks => {
-  throw Object.assign(blocks ? new RangeError('Brotli meta-block count exceeds the limit.') : new Error('Brotli result exceeds maxOutput.'), {code: 'JXL_LIMIT'});
+  throw Object.assign(blocks ? new RangeError('Brotli: over maxBlocks') : new Error('Brotli: over maxOutput'), {code: 'JXL_LIMIT'});
 }, readerAt, settings);
 
 export const decompressBrotli = (bytes, options = {}) => sharedBrotli.read(bytes, options);

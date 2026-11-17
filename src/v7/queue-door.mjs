@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {shownEntry} from './entry-name.mjs';
 import {hostPendingBytes, record, measure, snapshot} from './ownership.mjs';
 import {fail, declared, callers, isCaller, PIXELS, abortError, progressOf, abortable, pixelLimit} from './primitives.mjs';
 import {WORKER_PROTOCOL} from './protocol.mjs';
@@ -16,7 +17,7 @@ const optErr = m => fail('JXL_OPTIONS', m), workErr = m => fail('JXL_WORKER', m)
 const closedErr = () => fail('JXL_CLOSED', "Queue closed; submit the work to a new queue.");
 const isBitmap = v => isFn(globalThis.ImageBitmap) && v instanceof ImageBitmap || isFn(globalThis.VideoFrame) && v instanceof VideoFrame;
 const overBytes = (need, max, cur) => {
-  if (need > max - cur) throw memErr(`Pending input is over maxPendingBytes (${max} B; need ${need} B): send less or raise it.`);
+  if (need > max - cur) throw memErr(`maxPendingBytes ${max}: need ${need} B`);
 };
 
 export const isResult = v => isObj(v) && isInt(v.width) && v.width > 0 && isInt(v.height) && v.height > 0 && Array.isArray(v.measurements) &&
@@ -42,12 +43,12 @@ function listen(t, type, cb) {
     t.on(type, fn);
     return () => t.off(type, fn);
   }
-  throw optErr("workerFactory returned no Worker; return a Worker instance.");
+  throw optErr("workerFactory: Worker instance");
 }
 
 function positive(v, def, name) {
   const n = v === undefined ? def : v;
-  if (!isInt(n) || n < 1) throw optErr(`Invalid ${name}; use a positive safe integer.`);
+  if (!isInt(n) || n < 1) throw optErr(`${name}: positive safe integer`);
   return n;
 }
 
@@ -64,13 +65,13 @@ function coded(r, sig) {
     if (memory?.code === 'JXL_MEMORY') return memory;
     let m = '';
     try { m = String(r.message ?? ''); } catch {}
-    return Object.assign(fail('JXL_INTERNAL', m || "Image job failed; report the input and options."), {cause: r});
+    return Object.assign(fail('JXL_INTERNAL', m || "queue:job"), {cause: r});
   } catch { return r; }
 }
 
 function started(make, cleanup) {
   try { return make(); }
-  catch (cause) { cleanup?.(); throw Object.assign(workErr("Worker did not start; serve the package from the page origin, allow blob: in worker-src, or pass workerFactory."), {cause}); }
+  catch (cause) { cleanup?.(); throw Object.assign(workErr("worker: same-origin|blob: worker-src|workerFactory"), {cause}); }
 }
 
 function browserWorker(spec) {
@@ -84,42 +85,43 @@ function browserWorker(spec) {
   globalThis.document?.addEventListener('securitypolicyviolation', onCsp);
   const w = started(() => new Worker(src, {type: 'module', ...spec.role && {name: spec.role}}), done);
   w.addEventListener('message', done, {once: true});
-  w.addEventListener('error', e => { done(); if (blocked) Object.defineProperties(e, {code: {value: 'JXL_WORKER'}, message: {value: "CSP blocks the worker; allow blob: in worker-src."}}); }, {once: true});
+  w.addEventListener('error', e => { done(); if (blocked) Object.defineProperties(e, {code: {value: 'JXL_WORKER'}, message: {value: "CSP worker-src: allow blob:"}}); }, {once: true});
   const term = w.terminate;
   w.terminate = function () { done(); return term.call(this); };
   return w;
 }
 
 function checkKeys(cfg, allowed, suffix = '') {
-  if (!isObj(cfg) || Array.isArray(cfg)) throw optErr("Invalid configuration; pass an object.");
+  if (!isObj(cfg) || Array.isArray(cfg)) throw optErr("config: object");
   const bad = Object.keys(cfg).filter(k => !allowed.has(k));
-  if (bad.length) throw optErr('Unknown configuration options: ' + bad.join(', ') + ';' + suffix + ' use only ' + [...allowed].join(', ') + '.');
+  if (bad.length) throw optErr('unknown options: ' + bad.join(', ') + ';' + suffix + ' allowed: ' + [...allowed].join(', '));
 }
 
 const checkSupported = async (f, gpu, needW) => f === 'webgpu' ? (gpu ? gpu() : false)
-  : f !== undefined ? Promise.reject(optErr("Feature is unknown; call supported() or supported('webgpu')."))
+  : f !== undefined ? Promise.reject(optErr("feature: use supported()|supported('webgpu')"))
   : simd() && (!needW || isFn(globalThis.Worker));
 
 function validateSettings(cfg, caps) {
   checkKeys(cfg, SETTINGS);
   const {workerFactory: wf, helpers: rawH, webgpu: gpu} = cfg;
-  if (wf !== undefined && !isFn(wf)) throw optErr("Invalid workerFactory; pass a function.");
-  if (rawH !== undefined && !caps.helpers) throw optErr("This module has no encoding work for helpers; remove helpers.");
+  if (wf !== undefined && !isFn(wf)) throw optErr("workerFactory: function");
+  if (rawH !== undefined && !caps.helpers) throw optErr("helpers: unsupported module");
   const helpers = caps.helpers && rawH !== undefined ? caps.helpers(rawH) : undefined;
-  if (gpu !== undefined && !caps.gpu) throw optErr("This module has no WebGPU work; remove webgpu.");
-  if (gpu !== undefined && gpu !== 'required' && gpu !== false) throw optErr("Invalid webgpu; use 'required', false, or omit it.");
+  if (gpu !== undefined && !caps.gpu) throw optErr("webgpu: unsupported module");
+  if (gpu !== undefined && gpu !== 'required' && gpu !== false) throw optErr("webgpu: required|false|omit");
   const maxBytes = positive(cfg.maxPendingBytes, hostPendingBytes(), 'maxPendingBytes');
   const maxPixels = positive(cfg.maxPixels, PIXELS, 'maxPixels');
-  if (maxPixels > PIXELS) throw optErr('maxPixels is at most ' + PIXELS + ' (16,384 x 16,384).');
+  if (maxPixels > PIXELS) throw optErr('maxPixels: <= ' + PIXELS);
   const maxJobs = positive(cfg.maxPendingJobs, 32, 'maxPendingJobs');
   const startupMs = positive(cfg.workerStartupTimeout, 15000, 'workerStartupTimeout');
-  if (startupMs > 2147483647) throw optErr("Invalid workerStartupTimeout; use at most 2147483647 ms.");
-  if (!wf && !isFn(globalThis.Worker)) throw workErr("Workers are unavailable here; use a page or worker, or pass workerFactory.");
+  if (startupMs > 2147483647) throw optErr("workerStartupTimeout: <=2147483647 ms");
+  if (!wf && !isFn(globalThis.Worker)) throw workErr("workers: page/worker or workerFactory");
   return [wf, helpers, gpu, maxBytes, maxPixels, maxJobs, startupMs];
 }
 
 function inPlaceDoor(spec, caps) {
-  let own = null, loading = null, settings = null, dec = null;
+  let own = null, loading = null, settings = null, dec = null, closing = null;
+  const shut = () => fail('JXL_CLOSED', "The module is closing; call again once close() has resolved.");
   const load = () => own ? Promise.resolve(own) : loading ??= spec.load().then(m => {
     if (settings) m.configure(settings);
     if (dec) m.configureDecoder(...dec);
@@ -128,24 +130,46 @@ function inPlaceDoor(spec, caps) {
   return Object.freeze({
     inPlace: true,
     configure(cfg = {}) {
+      if (closing) throw optErr("The module is closing; await close() before configuring it.");
+      if (loading) throw optErr("active call: settle or close()");
       checkKeys(cfg, IN_PLACE, ' in a worker the module runs in place:');
-      if (cfg.helpers !== undefined && !caps.helpers) throw optErr("This module has no encoding work for helpers; remove helpers.");
+      if (cfg.workerFactory !== undefined && !isFn(cfg.workerFactory)) throw optErr("workerFactory: function");
+      positive(cfg.maxPendingBytes, 1, 'maxPendingBytes'); positive(cfg.maxPendingJobs, 32, 'maxPendingJobs');
+      if (positive(cfg.workerStartupTimeout, 15000, 'workerStartupTimeout') > 2147483647) throw optErr("workerStartupTimeout: <=2147483647 ms");
+      if (cfg.helpers !== undefined && !caps.helpers) throw optErr("helpers: unsupported module");
       if (cfg.helpers !== undefined) caps.helpers(cfg.helpers);
-      if (cfg.webgpu !== undefined && !caps.gpu) throw optErr("This module has no WebGPU work; remove webgpu.");
-      if (cfg.webgpu !== undefined && cfg.webgpu !== 'required' && cfg.webgpu !== false) throw optErr("Invalid webgpu; use 'required', false, or omit it.");
+      if (cfg.webgpu !== undefined && !caps.gpu) throw optErr("webgpu: unsupported module");
+      if (cfg.webgpu !== undefined && cfg.webgpu !== 'required' && cfg.webgpu !== false) throw optErr("webgpu: required|false|omit");
       if (cfg.maxPixels !== undefined) pixelLimit(cfg.maxPixels);
       if (own) own.configure(cfg);
       settings = Object.keys(cfg).length ? {...cfg} : null;
     },
-    call: name => (...args) => load().then(m => m[name](...args)),
-    close: () => own ? own.close() : Promise.resolve(),
+    call: name => (...args) => {
+      if (closing) return Promise.reject(shut());
+      if (own) { try { return Promise.resolve(own[name](...args)); } catch (error) { return Promise.reject(error); } }
+      return load().then(m => {
+        if (closing) throw shut();
+        return m[name](...args);
+      });
+    },
+    close() {
+      if (closing) return closing;
+      if (!own && !loading) return Promise.resolve();
+      const pending = loading ?? Promise.resolve(own);
+      return closing = pending.then(m => m.close(), () => {}).finally(() => { closing = null; });
+    },
     supported: f => checkSupported(f, caps.gpu, false),
-    decoder(...args) { if (own) return own.configureDecoder(...args); dec = args; },
+    decoder(...args) {
+      if (closing) throw optErr("The module is closing; await close() before configuring it.");
+      if (loading) throw optErr("active call: settle or close()");
+      if (own) return own.configureDecoder(...args);
+      dec = args;
+    },
   });
 }
 
 export const decoderOf = door => door.inPlace ? (...args) => door.decoder(...args) : () => {
-  throw fail('JXL_UNSUPPORTED', "A browser queue uses its native decoder; call configureDecoder only in Node, Deno, Bun, or an edge host.");
+  throw fail('JXL_UNSUPPORTED', "configureDecoder: Node|Deno|Bun|edge only");
 };
 
 export function helperLanes(defaultEffort = 7) {
@@ -180,16 +204,16 @@ export function inputExpansion(j, data, maxBytes, retained, addBytes, crash, pos
   if (j.d) return;
   let ok = false, err;
   try {
-    if (!isInt(data.inputSequence) || data.inputSequence !== (j.S ?? 0) + 1) throw workErr('Invalid worker input sequence.');
+    if (!isInt(data.inputSequence) || data.inputSequence !== (j.S ?? 0) + 1) throw workErr('worker input sequence: invalid');
     if (j.l) throw aborted(j.c.signal);
     const prev = j.E ?? 0, bytes = data.inputBytes;
-    if (!isInt(bytes) || bytes < prev) throw workErr('Invalid worker input bytes.');
+    if (!isInt(bytes) || bytes < prev) throw workErr('worker input bytes: invalid');
     const added = bytes - prev;
     overBytes(added, maxBytes, retained());
     addBytes(added); j.b += added; j.E = bytes; j.S = data.inputSequence; ok = true;
   } catch (e) {
     const classified = declared(e);
-    err = {code: typeof classified?.code === 'string' && classified.code.startsWith('JXL_') ? classified.code : 'JXL_INTERNAL', message: String(classified?.message ?? 'Input reservation refused.')};
+    err = {code: typeof classified?.code === 'string' && classified.code.startsWith('JXL_') ? classified.code : 'JXL_INTERNAL', message: String(classified?.message ?? 'input reservation')};
     if (err.code === 'JXL_WORKER') { crash(err); return; }
   }
   try { post({id: j.i, inputAck: data.inputSequence, ok, ...(!ok && {error: err})}); }
@@ -267,7 +291,7 @@ function makeQueue([userFactory, helpers, webgpu, maxBytes, maxPixels, maxJobs, 
     finally { release(j); }
   };
 
-  function stopThread(reason = Object.assign(workErr("JPEG XL worker stopped; start a fresh worker and retry."), {[REPLACED]: true})) {
+  function stopThread(reason = Object.assign(workErr("worker: restart"), {[REPLACED]: true})) {
     const old = thread;
     if (!old) return;
     thread = null;
@@ -286,8 +310,8 @@ function makeQueue([userFactory, helpers, webgpu, maxBytes, maxPixels, maxJobs, 
   function crash(cur, ev) {
     if (thread !== cur) return;
     const unloaded = !cur.r() && ev?.type === 'error' && !ev.message && !ev.error;
-    const msg = unloaded ? `The JPEG XL worker did not load. Copy ${file ?? "the module's own file"} from the package's dist folder beside the bundle, or pass workerFactory.`
-      : "JPEG XL worker stopped; start a fresh worker and retry.";
+    const msg = unloaded ? `worker: copy ${file ?? "the module's own file"} beside bundle or workerFactory`
+      : "worker: restart";
     stopThread(fail(typeof ev?.code === 'string' && ev.code.startsWith('JXL_') ? ev.code : 'JXL_WORKER', ev?.message || ev?.error?.message || msg));
     schedule();
   }
@@ -305,7 +329,7 @@ function makeQueue([userFactory, helpers, webgpu, maxBytes, maxPixels, maxJobs, 
     let w;
     try { w = factory(); if (w && isFn(w.then)) Promise.resolve(w).catch(noop); }
     catch (cause) { throw callers(cause); }
-    if (!w || !isFn(w.postMessage) || !isFn(w.terminate)) throw optErr("workerFactory reused a Worker; return a fresh Worker for each call.");
+    if (!w || !isFn(w.postMessage) || !isFn(w.terminate)) throw optErr("workerFactory: fresh Worker per call");
     let ready = false, timer = null, attempt = 0;
     const offs = [], preps = new Map(), waiters = new Map();
     const cur = thread = {
@@ -334,19 +358,19 @@ function makeQueue([userFactory, helpers, webgpu, maxBytes, maxPixels, maxJobs, 
         if (thread !== cur) return;
         if (data?.ready !== undefined) {
           if (ready && data.ready === WORKER_PROTOCOL) return;
-          if (data.ready !== WORKER_PROTOCOL) return crash(cur, {code: 'JXL_WORKER', message: "Worker uses a different protocol; use the worker from this package."});
-          if (data.module !== spec.module) return crash(cur, {code: 'JXL_WORKER', message: `Worker runs ${data.module ?? "no named module"}; use the worker for ${spec.module}.`});
+          if (data.ready !== WORKER_PROTOCOL) return crash(cur, {code: 'JXL_WORKER', message: "worker protocol: mismatch"});
+          if (data.module !== spec.module) return crash(cur, {code: 'JXL_WORKER', message: `worker module ${data.module ? shownEntry(data.module) : "unnamed"}: use ${shownEntry(spec.module)}`});
           ready = true; clearTimeout(timer);
           for (const j of running.values()) send(cur, j);
           return;
         }
         if (data?.configurationError) return crash(cur, data.configurationError);
-        if (!ready) return crash(cur, {code: 'JXL_WORKER', message: "Worker replied before it was ready; use the worker from this package."});
+        if (!ready) return crash(cur, {code: 'JXL_WORKER', message: "worker: reply before ready"});
         if (data?.prepared === true) {
           const wt = waiters.get(data.attempt);
           if (!wt) return;
           waiters.delete(data.attempt);
-          data.ok === true ? wt[0]() : wt[1](fail(data.error?.code || 'JXL_WASM', data.error?.message || 'WebAssembly preparation failed; enable WebAssembly SIMD and retry.'));
+          data.ok === true ? wt[0]() : wt[1](fail(data.error?.code || 'JXL_WASM', data.error?.message || 'WebAssembly SIMD: enable'));
           return;
         }
         const j = running.get(data?.id);
@@ -358,14 +382,14 @@ function makeQueue([userFactory, helpers, webgpu, maxBytes, maxPixels, maxJobs, 
         }
         if (data.ok === true) {
           const ok = !checkResult || checkResult(data.value, j.o);
-          complete(j, ok, ok ? data.value : workErr("Worker returned an invalid result; restart it and report the input."));
+          complete(j, ok, ok ? data.value : workErr("worker result: invalid"));
         } else if (data.ok === false) {
-          complete(j, false, Object.assign(new Error(data.error?.message || 'The JPEG XL operation failed; restart the worker and retry.'), {name: data.error?.name || 'Error', code: data.error?.code || 'JXL_WORKER'}));
-        } else crash(cur, {message: 'The JPEG XL worker returned an invalid reply; restart it and report the reproducing input.'});
+          complete(j, false, Object.assign(new Error(data.error?.message || 'worker: retry operation'), {name: data.error?.name || 'Error', code: data.error?.code || 'JXL_WORKER'}));
+        } else crash(cur, {message: 'worker reply: invalid'});
       }));
       offs.push(listen(w, 'error', e => crash(cur, e)), listen(w, 'messageerror', e => crash(cur, e)));
       if (isFn(w.on) && isFn(w.off)) offs.push(listen(w, 'exit', () => crash(cur)));
-      timer = setTimeout(() => crash(cur, {code: 'JXL_WORKER', message: `Worker was not ready in ${startupMs} ms: check its URL and CSP, or raise workerStartupTimeout.`}), startupMs);
+      timer = setTimeout(() => crash(cur, {code: 'JXL_WORKER', message: `worker startup ${startupMs}ms: check URL/CSP/workerStartupTimeout`}), startupMs);
       timer.unref?.();
       const mods = globalThis[WASM_KEY];
       if (mods) w.postMessage({wasmModules: {...mods}});
@@ -399,21 +423,21 @@ function makeQueue([userFactory, helpers, webgpu, maxBytes, maxPixels, maxJobs, 
 
   function admit(options = {}, inBytes = 0) {
     if (closed) throw closedErr();
-    if (!isObj(options) || Array.isArray(options)) throw optErr("Invalid options; pass an object.");
+    if (!isObj(options) || Array.isArray(options)) throw optErr("options: object");
     let fields;
     try { fields = record(options); }
-    catch (r) { throw !r?.code || r.code === 'JXL_INPUT' ? optErr("Invalid options; pass plain data fields.") : r; }
+    catch (r) { throw !r?.code || r.code === 'JXL_INPUT' ? optErr("options: plain data fields") : r; }
     const {signal, onProgress, onPreview, ...params} = Object.fromEntries(fields.map(([k, d]) => [k, d.value]));
     if (signal !== undefined && (!signal || !isFn(signal.addEventListener) || !isFn(signal.removeEventListener) || typeof signal.aborted !== 'boolean'))
-      throw optErr("Invalid signal; pass an AbortSignal.");
-    if (onProgress !== undefined && !isFn(onProgress)) throw optErr("Invalid onProgress; pass a function.");
-    if (onPreview !== undefined && !isFn(onPreview)) throw optErr("Invalid onPreview; pass a function.");
+      throw optErr("signal: AbortSignal");
+    if (onProgress !== undefined && !isFn(onProgress)) throw optErr("onProgress: function");
+    if (onPreview !== undefined && !isFn(onPreview)) throw optErr("onPreview: function");
     if (signal?.aborted) throw aborted(signal);
-    if (queue.length + running.size + held.size >= maxJobs) throw memErr("Queue full; wait or raise maxPendingJobs.");
+    if (queue.length + running.size + held.size >= maxJobs) throw memErr("maxPendingJobs: queue full");
     const optPlans = new Map();
     let optBytes;
     try { optBytes = measure(params, Number.MAX_SAFE_INTEGER, optPlans); }
-    catch (r) { throw r?.code === 'JXL_INPUT' ? optErr("Invalid option data; put callbacks in onProgress or onPreview.") : r; }
+    catch (r) { throw r?.code === 'JXL_INPUT' ? optErr("callbacks: onProgress|onPreview") : r; }
     overBytes(inBytes + optBytes, maxBytes, retained);
     return [signal, onProgress, onPreview, params, optBytes, optPlans];
   }
@@ -421,7 +445,7 @@ function makeQueue([userFactory, helpers, webgpu, maxBytes, maxPixels, maxJobs, 
   function submit(op, input, options = {}, acquire = null, area = 0) {
     try {
       const [signal, onProgress, onPreview, params, optBytes, optPlans] = admit(options);
-      if (onPreview !== undefined && !replies?.ops.has(op)) throw optErr("This operation has no previews; remove onPreview.");
+      if (onPreview !== undefined && !replies?.ops.has(op)) throw optErr("onPreview: unsupported operation");
       spec.admitInput?.(op, input);
       const inPlans = new Map(), bytes = measure(input, maxPixels, inPlans) + optBytes;
       overBytes(bytes, maxBytes, retained);
@@ -461,7 +485,7 @@ function makeQueue([userFactory, helpers, webgpu, maxBytes, maxPixels, maxJobs, 
     },
     prepare(op = spec.operations[0]) {
       if (closed) return Promise.reject(closedErr());
-      if (!spec.operations.includes(op)) return Promise.reject(optErr("Invalid prepare operation; use " + spec.operations.join(', ') + '.'));
+      if (!spec.operations.includes(op)) return Promise.reject(optErr("prepare operation: " + spec.operations.join(', ')));
       preparing++;
       return (async () => {
         await null;
@@ -482,7 +506,7 @@ function makeQueue([userFactory, helpers, webgpu, maxBytes, maxPixels, maxJobs, 
       stopThread();
       return closing = Promise.allSettled([stopping, ended, ...taking]).then(list => {
         const bad = list.find(o => o.status === 'rejected');
-        if (bad) throw Object.assign(workErr("Worker cleanup failed; check its termination and listener methods."), {cause: bad.reason});
+        if (bad) throw Object.assign(workErr("worker: cleanup failed"), {cause: bad.reason});
       });
     },
   };
@@ -492,15 +516,15 @@ export function queueDoor(spec, caps = {}) {
   if (isFn(globalThis.WorkerGlobalScope) && globalThis instanceof WorkerGlobalScope) return inPlaceDoor(spec, caps);
   let parsed = null, q = null, closing = null;
   const active = () => {
-    if (closing) throw fail('JXL_CLOSED', "Queue is closing; call again once close() has resolved.");
+    if (closing) throw fail('JXL_CLOSED', "closing");
     return q ??= makeQueue(parsed ??= validateSettings({}, caps), spec, caps);
   };
   return Object.freeze({
     queue: active,
     configure(cfg = {}) {
       const next = validateSettings(cfg, caps);
-      if (closing) throw optErr("Queue is closing; await close() before calling configure().");
-      if (q && !q.idle()) throw optErr("A call is active; wait for pending work to settle or await close() before calling configure().");
+      if (closing) throw optErr("closing: await close()");
+      if (q && !q.idle()) throw optErr("active call: settle or close()");
       parsed = next;
       if (q) q.reconfigure(next);
     },

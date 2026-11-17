@@ -7,7 +7,7 @@ import {compileCaptureKernels, captureWeighted} from './capture-kernels.mjs';
 
 export async function captureDevice(webgpu) {
   const device = webgpu === false ? null : await gpuDevice();
-  if (!device && webgpu === 'required') throw fault('JXL_WEBGPU', "webgpu: 'required', and this realm has no WebGPU device. Leave webgpu out for the same file on WebAssembly.");
+  if (!device && webgpu === 'required') throw fault('JXL_WEBGPU', 'no WebGPU device: omit webgpu');
   return device;
 }
 
@@ -40,7 +40,7 @@ export async function captureEngine(webgpu, kinds = [WEIGHTED], {note = () => {}
   const answers = await Promise.all(kinds.map(kind => gpuCached(tested, device, kind.name, () => Promise.resolve().then(() => kind.selfTest(device))))).catch(() => null);
   if (refused.has(device) || !answers?.every(Boolean)) {
     if (answers) refused.add(device);
-    if (webgpu === 'required') throw fault('JXL_WEBGPU', "webgpu: 'required', and this device failed its check. Leave webgpu out for the same file on WebAssembly.");
+    if (webgpu === 'required') throw fault('JXL_WEBGPU', 'device check failed: omit webgpu');
     note('device-refused');
     return null;
   }

@@ -19,19 +19,19 @@ const take = () => {
 
 export function configureModules(modules) {
   if (!modules || typeof modules !== 'object' || Array.isArray(modules) || !Object.keys(modules).length)
-    throw error('Supply named precompiled WebAssembly.Module objects.');
+    throw error('modules: {name: WebAssembly.Module}');
   const entries = Object.entries(modules);
   for (const [name, module] of entries) {
-    if (!Object.hasOwn(INTERFACES, name)) throw error(`Unknown WebAssembly module: ${name}.`);
+    if (!Object.hasOwn(INTERFACES, name)) throw error(`unknown module: ${name}`);
     let imports, exports;
     try { imports = WebAssembly.Module.imports(module); exports = WebAssembly.Module.exports(module); }
-    catch { throw error(`${name} must be a compiled WebAssembly.Module.`); }
+    catch { throw error(`${name}: WebAssembly.Module`); }
     const importedMemory = name === 'kernels' || name === 'general';
     if (interfaceOf(exports) !== INTERFACES[name] ||
         (importedMemory ? imports.length !== 1 || imports[0].module !== 'env' || imports[0].name !== 'memory' || imports[0].kind !== 'memory' : imports.length !== 0))
-      throw error(`The ${name} module does not match; use this package's.`);
+      throw error(`${name}: interface mismatch`);
     if (supplied.has(name) && supplied.get(name) !== module || used.has(name) && used.get(name) !== module)
-      throw error(`The ${name} module is already set; configure modules before any work.`);
+      throw error(`${name}: already configured`);
   }
   for (const [name, module] of entries) supplied.set(name, module);
   configured = true;
@@ -66,7 +66,7 @@ export function wasmModule(name, bytes) {
   const module = supplied.get(name);
   if (module) { used.set(name, module); return module; }
   let compiled;
-  try { compiled = new WebAssembly.Module(bytes()); } catch (cause) { if (configured) throw error(`The ${name} module is missing; supply this package's.`); throw cause; }
+  try { compiled = new WebAssembly.Module(bytes()); } catch (cause) { if (configured) throw error(`${name}: missing`); throw cause; }
   used.set(name, compiled);
   return compiled;
 }

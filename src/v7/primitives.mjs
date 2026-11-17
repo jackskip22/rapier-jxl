@@ -9,21 +9,21 @@ export const unreadInput = input => {
   try { element = input?.nodeType === 1; } catch {  }
   return element ? 'A page element is not an image; capture it with SnapDOM, or ' + PASS : 'The image input is invalid; ' + PASS;
 };
-export const preparedAlone = run => operation => operation === undefined ? run() : Promise.reject(fail('JXL_OPTIONS', 'This module has one operation; call prepare() without an argument.'));
+export const preparedAlone = run => operation => operation === undefined ? run() : Promise.reject(fail('JXL_OPTIONS', 'prepare(): no argument'));
 export const lostBlank = (context, data) => {
   if (!context?.isContextLost?.()) return false;
   const words = new Uint32Array(data.buffer, data.byteOffset, data.byteLength >> 2);
   for (let i = 0; i < words.length; i++) if (words[i]) return false;
   return true;
 };
-export const LOST = "Canvas lost its 2D context; draw it again.";
+export const LOST = "canvas lost: redraw";
 export function proveRead(context) {
   if (context?.isContextLost?.() || typeof context?.putImageData !== 'function' || typeof context.createImageData !== 'function') return;
   const half = context.getContextAttributes?.().colorType === 'float16';
   const native = () => context.getImageData(0, 0, 1, 1, half ? {pixelFormat: 'rgba-float16'} : undefined);
   let saved;
   try { saved = native(); }
-  catch (cause) { throw Object.assign(fail('JXL_INPUT', "Canvas read failed; redraw it with readable image sources."), {cause}); }
+  catch (cause) { throw Object.assign(fail('JXL_INPUT', "canvas read failed: redraw with readable sources or pass RGBA pixels"), {cause}); }
   if (half && saved.data.BYTES_PER_ELEMENT !== 2) return;
   const bits = data => new Uint8Array(data.buffer, data.byteOffset, data.byteLength).some(Boolean);
   if (bits(saved.data)) return;
@@ -55,10 +55,8 @@ export function callers(value) {
 export function declared(error) {
   try {
     if (CALLER.has(error)) return error;
-    if (outOfMemory(error)) return Object.assign(new Error(`Not enough memory for this picture${hostWords(error)}; free memory or use a smaller picture.`, {cause: error}), {code: 'JXL_MEMORY'});
+    if (outOfMemory(error)) return Object.assign(new Error(`memory: shrink picture${hostWords(error)}`, {cause: error}), {code: 'JXL_MEMORY'});
     const code = error?.code;
-    if (code === 'JXL_DICTIONARY' && error?.message === "This runtime has no Brotli decoder for RFC 7932's dictionary.")
-      return Object.assign(new Error("This runtime has no Brotli decoder for RFC 7932's dictionary; use a runtime with Brotli support.", {cause: error}), {code: 'JXL_PLATFORM'});
     if (typeof code !== 'string' || !code.startsWith('JXL_') || DECLARED.has(code)) return error;
     const named = Object.hasOwn(AS, code) ? AS[code] : 'JXL_INTERNAL';
     return Object.assign(new Error(String(error.message ?? ''), {cause: error}), {code: named});
@@ -66,10 +64,10 @@ export function declared(error) {
 }
 export function admitSignal(signal) {
   if (signal === undefined) return undefined;
-  if (!signal || typeof signal !== 'object' && typeof signal !== 'function') throw fail('JXL_OPTIONS', "Invalid signal; pass an AbortSignal.");
+  if (!signal || typeof signal !== 'object' && typeof signal !== 'function') throw fail('JXL_OPTIONS', "signal: AbortSignal");
   let aborted, listen;
   try { aborted = signal.aborted; listen = signal.addEventListener; } catch (error) { throw callers(error); }
-  if (typeof aborted !== 'boolean' || typeof listen !== 'function') throw fail('JXL_OPTIONS', "Invalid signal; pass an AbortSignal.");
+  if (typeof aborted !== 'boolean' || typeof listen !== 'function') throw fail('JXL_OPTIONS', "signal: AbortSignal");
   return signal;
 }
 export function check(signal) {
@@ -102,15 +100,15 @@ async function blobRead(blob, signal, start, end) {
     if (stopped) read.catch(() => {});
     const buffer = await (stopped ? Promise.race([read, stopped]) : read);
     check(signal);
-    if (!(buffer instanceof ArrayBuffer) || buffer.byteLength !== part.size) throw fail('JXL_INPUT', "File changed while it was read; select it again.");
+    if (!(buffer instanceof ArrayBuffer) || buffer.byteLength !== part.size) throw fail('JXL_INPUT', "file changed: reselect");
     return new Uint8Array(buffer);
   } catch (cause) {
     if (isCaller(cause) || (typeof cause?.code === 'string' && cause.code.startsWith('JXL_'))) throw cause;
     let aborted = false; try { aborted = signal?.aborted === true && Object.is(signal.reason, cause); } catch {}
     if (aborted) throw cause;
-    throw Object.assign(outOfMemory(cause) ? fail('JXL_MEMORY', `Not enough memory to read this file${hostWords(cause)}; free memory and retry.`)
-      : cause?.name === 'NotReadableError' ? fail('JXL_INPUT', "File changed while it was read; select it again.")
-      : fail('JXL_IO', "File read failed; check that it is available and retry."), {cause});
+    throw Object.assign(outOfMemory(cause) ? fail('JXL_MEMORY', `file read: memory${hostWords(cause)}`)
+      : cause?.name === 'NotReadableError' ? fail('JXL_INPUT', "file changed: reselect")
+      : fail('JXL_IO', "file read: retry"), {cause});
   } finally { if (stop) try { signal.removeEventListener?.('abort', stop); } catch {} }
 }
 export function abortable(pending, signal, discard) {
@@ -135,7 +133,7 @@ export function abortable(pending, signal, discard) {
 }
 export function progressOf(onProgress, signal, onRejected) {
   if (onProgress === undefined) return undefined;
-  if (typeof onProgress !== 'function') throw fail('JXL_OPTIONS', "Invalid onProgress; pass a function.");
+  if (typeof onProgress !== 'function') throw fail('JXL_OPTIONS', "onProgress: function");
   let last = -1, rejected = null, pending;
   const checked = () => { if (rejected) throw callers(rejected.reason); check(signal); };
   const tell = fraction => {
@@ -161,7 +159,7 @@ export function progressOf(onProgress, signal, onRejected) {
 }
 export function object(value, name = 'Options') {
   if (value === undefined) return {};
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw fail('JXL_OPTIONS', `${name} must be an object; pass named fields in {}.`);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw fail('JXL_OPTIONS', `${name}: object`);
   return value;
 }
 export function snapshotOptions(value, name, fields = []) {
@@ -173,18 +171,18 @@ export function snapshotOptions(value, name, fields = []) {
   } catch (error) { throw callers(error); }
 }
 export function snapshotArray(value, name = 'The list', exactLength, code = 'JXL_OPTIONS') {
-  if (!Array.isArray(value)) throw fail(code, `Invalid ${name}; pass an array.`);
+  if (!Array.isArray(value)) throw fail(code, `${name}: array`);
   let length;
   try { length = value.length; } catch (error) { throw callers(error); }
   if (!Number.isInteger(length) || length < 0 || length > 0xffffffff)
-    throw fail(code, `${name} has an invalid length; pass an array.`);
+    throw fail(code, `${name}: array length`);
   if (exactLength !== undefined && length !== exactLength)
-    throw fail(code, `${name} has the wrong length; pass exactly ${exactLength} items.`);
+    throw fail(code, `${name}: ${exactLength} items`);
   const copy = [];
   for (let i = 0; i < length; i++) {
     let present, item;
     try { present = i in value; if (present) item = value[i]; } catch (error) { throw callers(error); }
-    if (!present) throw fail(code, `${name} has a missing item; pass an array without holes.`);
+    if (!present) throw fail(code, `${name}: no holes`);
     copy[i] = item;
   }
   return copy;
@@ -192,23 +190,23 @@ export function snapshotArray(value, name = 'The list', exactLength, code = 'JXL
 
 export function dimensions(width, height, maxPixels = PIXELS, maxDimension = EDGE) {
   if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || width > maxDimension || height > maxDimension)
-    throw fail('JXL_DIMENSIONS', `Image sides must be whole numbers from 1 to ${maxDimension} pixels${maxDimension === EDGE ? ', the JPEG XL size field' : ''}; resize the image to fit.`);
+    throw fail('JXL_DIMENSIONS', `sides: integer 1-${maxDimension}${maxDimension === EDGE ? ', JPEG XL size field' : ''}`);
   if (width * height > maxPixels)
-    throw fail('JXL_DIMENSIONS', `${width * height} pixels is over maxPixels (${maxPixels}): resize or raise maxPixels.`);
+    throw fail('JXL_DIMENSIONS', `${width * height} pixels: maxPixels ${maxPixels} exceeded`);
 }
-export const JPEG_ELSEWHERE = 'This input is a JPEG file; call recompress(bytes) from rapier-jxl/jpeg.';
-export const NO_JPEG = "File contains no original JPEG to restore; decode it for its pixels or pass a file made by recompress().";
+export const JPEG_ELSEWHERE = 'JPEG: use jpegxl/jpeg recompress(bytes)';
+export const NO_JPEG = "original JPEG: absent, use recompress()";
 export function pixelLimit(value) {
   if (value === undefined) return PIXELS;
-  if (!Number.isSafeInteger(value) || value < 1) throw fail('JXL_OPTIONS', 'Invalid maxPixels; use a positive whole number.');
+  if (!Number.isSafeInteger(value) || value < 1) throw fail('JXL_OPTIONS', 'maxPixels: positive integer');
   return value;
 }
 export function bytes(input) {
-  if (!(input instanceof Uint8Array) || !input.length) throw fail('JXL_INPUT', "Encoded input is empty or invalid; pass a nonempty Uint8Array.");
+  if (!(input instanceof Uint8Array) || !input.length) throw fail('JXL_INPUT', "input: nonempty Uint8Array");
   return input;
 }
 export function webgpuSetting(value) {
   if (value !== undefined && value !== 'required' && value !== false)
-    throw fail('JXL_OPTIONS', "Invalid webgpu; pass 'required' or false, or leave it out.");
+    throw fail('JXL_OPTIONS', "webgpu: 'required', false or omitted");
   return value;
 }

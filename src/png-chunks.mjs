@@ -14,17 +14,17 @@ const primaries = {
 function colourFromChromaticities(values, tolerance, required = true) {
   for (const [name, expected] of Object.entries(primaries))
     if (expected.every((value, i) => Math.abs(value - values[i]) <= tolerance)) return name;
-  if (required) refuse('Primaries must be sRGB, Display P3 or Rec. 2020, D65.');
+  if (required) refuse('primaries: srgb|display-p3|rec2020, D65');
 }
 
 const DEFLATE_RATIO = 1032, FIRST_OUTPUT = 64 * 1024;
 export async function inflate(parts, expected, maxBytes) {
   let present = false;
   try { present = typeof DecompressionStream === 'function'; } catch {}
-  if (!present) throw fault('JXL_PLATFORM', 'This runtime has no DecompressionStream, which reads a PNG; pass pixels ({data, width, height}) read where a PNG can be decoded, or run on a runtime that has it (on Next.js, the Node.js runtime).');
+  if (!present) throw fault('JXL_PLATFORM', 'DecompressionStream: required; use pixels {data,width,height} or Node.js runtime');
   const ceiling = parts.reduce((n, part) => n + part.length, 0) * DEFLATE_RATIO;
   const profile = expected === undefined;
-  const incomplete = profile ? 'The compressed ICC profile is incomplete.' : 'Compressed source data is incomplete.';
+  const incomplete = profile ? 'ICC profile: incomplete' : 'source data: incomplete';
   if (!profile && expected > ceiling) refuse(incomplete);
   let output = new Uint8Array(profile ? 4 : Math.min(expected, FIRST_OUTPUT));
   const stream = new ReadableStream({start(controller) {
@@ -44,10 +44,10 @@ export async function inflate(parts, expected, maxBytes) {
         if (offset < 4) continue;
         expected = view(output).getUint32(0);
         if (expected < 132) refuse(incomplete);
-        if (maxBytes !== undefined && expected > maxBytes) throw fault('JXL_LIMIT', 'Decoded metadata exceeds maxMetadataBytes; raise it or pass a smaller picture.');
+        if (maxBytes !== undefined && expected > maxBytes) throw fault('JXL_LIMIT', 'maxMetadataBytes: increase or smaller input');
         if (expected > ceiling) refuse(incomplete);
       }
-      if (offset + bytes.length > expected) refuse(profile ? 'The ICC profile expands beyond its declared size.' : 'Compressed source data exceeds its declared dimensions.');
+      if (offset + bytes.length > expected) refuse(profile ? 'ICC profile: exceeds declared size' : 'source data: exceeds declared dimensions');
       if (offset + bytes.length > output.length) {
         const grown = new Uint8Array(Math.min(expected, Math.max(offset + bytes.length, output.length * 4)));
         grown.set(output.subarray(0, offset)); output = grown;
@@ -59,7 +59,7 @@ export async function inflate(parts, expected, maxBytes) {
   } catch (error) {
     await reader.cancel().catch(() => {});
     if (String(error?.code).startsWith('JXL_') || outOfMemory(error)) throw error;
-    refuse('The source contains an invalid deflate stream.');
+    refuse('deflate stream: malformed');
   } finally { reader.releaseLock(); }
 }
 
@@ -99,7 +99,7 @@ export function pngColourStatement(chunks, colourType) {
     const colorSpace = {1: 'srgb', 9: 'rec2020', 11: 'display-p3', 12: 'display-p3'}[cicp[0]];
     const transferFunction = {1: 'bt709', 8: 'linear', 13: 'srgb', 16: 'pq', 17: 'dci', 18: 'hlg'}[cicp[1]];
     if (!colorSpace || !transferFunction || cicp[2] !== 0 || cicp[3] !== 1)
-      refuse('PNG cICP needs supported RGB primaries and transfer, full range, identity matrix.');
+      refuse('cICP: RGB primaries/transfer, full range, identity');
     if (cicp[0] === 11 || transferFunction === 'bt709' || transferFunction === 'dci')
       return explicitPNGColor(space, {whitePoint: cicp[0] === 11 ? 'dci' : 'd65', ...(space === 'rgb' ? {primaries: colorSpace} : {}), transferFunction});
     return {colorSpace, transferFunction};
@@ -109,7 +109,7 @@ export function pngColourStatement(chunks, colourType) {
     const end = packedProfile.indexOf(0), name = packedProfile.subarray(0, end);
     if (end < 1 || end > 79 || end + 2 >= packedProfile.length || packedProfile[end + 1] !== 0 ||
         name[0] === 32 || name[name.length - 1] === 32 || name.some((value, i) => value < 32 || value > 126 && value < 161 || value === 32 && name[i - 1] === 32))
-      refuse('PNG iCCP needs a valid name, method 0 and a complete deflate stream.');
+      refuse('iCCP: name, method 0, complete deflate');
     return {packed: packedProfile.subarray(end + 2)};
   }
   const srgb = chunks.get('sRGB');
@@ -141,9 +141,9 @@ export function pngWalk(w, bytes, at, size, maxPixels) {
     const going = offset < at;
     if (!going) length = data.getUint32(offset - at);
     const end = offset + 12 + length;
-    if (length > 0x7fffffff || end > size) refuse('The PNG contains a truncated chunk.');
+    if (length > 0x7fffffff || end > size) refuse('PNG chunk: incomplete');
     const nameBytes = going ? [] : bytes.subarray(offset + 4 - at, offset + 8 - at), name = going ? 'IDAT' : String.fromCharCode(...nameBytes);
-    if (!/^[A-Za-z]{4}$/.test(name) || nameBytes[2] & 32) refuse('The PNG contains an invalid chunk name.');
+    if (!/^[A-Za-z]{4}$/.test(name) || nameBytes[2] & 32) refuse('PNG chunk name: four letters');
     if (crcAt < offset + 4) { crcAt = offset + 4; crc = 0; }
     const checked = Math.min(end - 4, stop);
     crc = crc32(bytes.subarray(crcAt - at, checked - at), crc); crcAt = checked;
@@ -152,43 +152,43 @@ export function pngWalk(w, bytes, at, size, maxPixels) {
       crcAt = 0;
       return walk(offset, end - offset);
     }
-    if (crc !== data.getUint32(end - 4 - at)) refuse('A PNG chunk checksum does not match.');
+    if (crc !== data.getUint32(end - 4 - at)) refuse('PNG chunk: checksum mismatch');
     const part = name === 'IDAT' ? null : bytes.slice(offset + 8 - at, end - 4 - at);
-    if (offset === 8 && name !== 'IHDR') refuse('PNG must begin with IHDR.');
+    if (offset === 8 && name !== 'IHDR') refuse('PNG: IHDR first');
     if (seen === 1 && name !== 'IDAT') seen = 2;
     const header = name === 'IHDR' ? part : chunks.get('IHDR'), depth = header?.[8], colourType = header?.[9];
     if (name === 'IHDR') {
-      if (chunks.has(name) || length !== 13) refuse('PNG requires one complete IHDR.');
+      if (chunks.has(name) || length !== 13) refuse('IHDR: exactly one complete');
       admitSize(view(part).getUint32(0), view(part).getUint32(4), maxPixels);
       const channels = PNG_CHANNELS[colourType];
       const depthOK = depth === 16 ? channels && colourType !== 3 : depth === 8 ? channels : (depth === 1 || depth === 2 || depth === 4) && (colourType === 0 || colourType === 3);
       if (!depthOK || part[10] || part[11] || part[12] > 1)
-        refuse('PNG must be 8- or 16-bit gray, RGB or RGBA, palette up to 8 bits, or gray at 1, 2 or 4 bits.');
+        refuse('depth: gray 1|2|4|8|16, RGB(A) 8|16, palette <=8');
       chunks.set(name, part);
     } else if (name === 'IDAT') {
-      if (seen === 2) refuse('PNG image data chunks must be consecutive.');
+      if (seen === 2) refuse('IDAT: consecutive');
       seen = 1; parts.push([offset + 8, length]);
     } else if (name === 'IEND') {
-      if (length || !seen || end !== size) refuse('PNG requires a final empty IEND after image data.');
+      if (length || !seen || end !== size) refuse('IEND: final empty after IDAT');
       ended = true;
     } else if (name === 'eXIf') {
       if (!seen && !chunks.has(name)) { chunks.set(name, part); exifAt = offset + 8; }
     } else if (name === 'acTL' || name === 'fcTL' || name === 'fdAT') {
-      throw fault('JXL_UNSUPPORTED', 'This is an animated PNG: decode its frames and pass {width, height, frames} to rapier-jxl/animation.');
+      throw fault('JXL_UNSUPPORTED', 'animated PNG: use jpegxl/animation');
     } else if (['cICP', 'sRGB', 'iCCP', 'gAMA', 'cHRM', 'tRNS', 'sBIT', 'PLTE', 'mDCV', 'cLLI'].includes(name)) {
-      if (seen || chunks.has(name)) refuse('PNG color and transparency chunks occur once, before image data.');
+      if (seen || chunks.has(name)) refuse('PNG color/transparency: once before IDAT');
       const sizes = {cICP: 4, sRGB: 1, gAMA: 4, cHRM: 32, mDCV: 24, cLLI: 8};
-      if (sizes[name] !== undefined && length !== sizes[name]) refuse('A PNG color chunk has an invalid size.');
-      if (name === 'sRGB' && part[0] > 3) refuse('PNG sRGB rendering intent is invalid.');
+      if (sizes[name] !== undefined && length !== sizes[name]) refuse('PNG color chunk: invalid length');
+      if (name === 'sRGB' && part[0] > 3) refuse('sRGB intent: 0-3');
       if (name === 'sBIT' && (length !== {0: 1, 2: 3, 3: 3, 4: 2, 6: 4}[colourType] || part.some(value => value < 1 || value > (colourType === 3 ? 8 : depth))))
-        refuse('PNG significant sample depths are invalid.');
+        refuse('sBIT: invalid channel depths');
       if (name === 'tRNS' && !((colourType === 0 && length === 2) || (colourType === 2 && length === 6) ||
           (colourType === 3 && length >= 1 && length <= (chunks.get('PLTE')?.length ?? 0) / 3)))
-        refuse('PNG transparency does not match the channels or palette.');
+        refuse('tRNS: channel/palette mismatch');
       if (name === 'PLTE' && (colourType === 0 || colourType === 4 || !length || length > 768 || length % 3 || (colourType === 3 && length / 3 > 1 << depth)))
-        refuse('The PNG palette is invalid for its channel layout.');
+        refuse('PLTE: invalid for channel layout');
       chunks.set(name, part);
-    } else if (!(nameBytes[0] & 32)) refuse('The PNG has an unsupported critical chunk.');
+    } else if (!(nameBytes[0] & 32)) refuse('PNG critical chunk: unknown');
     offset = end;
   }
 }

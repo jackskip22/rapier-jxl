@@ -168,7 +168,7 @@ export function createSettings(initial, {read, write, change = () => {}}) {
 // Unique media IDs are then read in bounded parallel batches while preserving exact import order.
 export async function rewriteAndRead(result, {rewrite, read, signal, concurrency = 8}) {
   if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 32)
-    throw new RangeError('concurrency must be an integer from 1 to 32');
+    throw new RangeError('concurrency: integer 1-32');
   check(signal);
   try { await rewrite(result.urlMap, signal); }
   catch (error) { check(signal); throw atPhase(error, 'rewrite'); }

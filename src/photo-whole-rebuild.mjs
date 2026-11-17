@@ -22,7 +22,7 @@ import {s2Stream} from './photo-s2-stream.mjs';
 import {journaling, carried, unit, readAll, PASSED} from './step-journal.mjs';
 import {s2CellStream, s2CellMap} from './s2-cells.mjs';
 import {memoryPlan} from './memory-plan.mjs';
-import {retainsWhole, BAND_PIXELS, RETAINED_BYTES, ONE_PLANE_BYTES, BAND_CACHE_BYTES} from './memory-device.mjs';
+import {retainsWhole, BAND_PIXELS, WHOLE_BYTES, BANDED_BYTES, RETAINED_BYTES, ONE_PLANE_BYTES, BAND_CACHE_BYTES} from './memory-device.mjs';
 import {bandScratch} from './band-scratch.mjs';
 import {offloading, offloadWorkers} from './offload.mjs';
 import {nativeBandOf} from './photo-band-score.mjs';
@@ -72,17 +72,17 @@ export function wholeRebuildMeasure(data, width, height, color, signal, plan) {
   const bandedPlan = journaling() || (plan ?? memoryPlan(pixels, {width, height})).banded;
   const retain = bandedPlan && !journaling() && !plan?.known && !offloading('score-band') && retainsWhole(pixels, RETAINED_BYTES);
   const cacheBytes = retain ? pixels * 64 : bandedPlan ? 0 : Math.min(64 * 1024 * 1024, Math.max(8 * 1024 * 1024, pixels * 64));
-  const keepBand = !plan?.known && retainsWhole(pixels, (retain ? RETAINED_BYTES : ONE_PLANE_BYTES) + BAND_CACHE_BYTES);
-  let ref32 = null, refHave = 0, refCache = keepBand ? [] : null, outs = [null, null], outTurn = 0;
-  const refBand = (y, rows) => {
-    const n = rows * width, src = data.subarray(y * width * 4, (y + rows) * width * 4);
-    if (!keepBand || journaling()) return linearFromTransform(src, n, color.transform, [0, 1, 2].map(c => bandScratch(Float32Array, 'rl' + c, n)));
-    if (!ref32 || refHave < height && refHave !== y) { ref32 = f32x3(pixels); refHave = 0; }
-    const out = ref32.map(p => p.subarray(y * width, (y + rows) * width));
-    if (refHave < height) { linearFromTransform(src, n, color.transform, out); refHave = y + rows; }
-    return out;
-  };
-  const reference = color.transform ? () => finitePlanes(refHave === height && ref32 || linearFromTransform(data, pixels, color.transform, f32x3(pixels))) : null;
+  const keepBand = !plan?.known && retainsWhole(pixels, (retain ? RETAINED_BYTES : bandedPlan ? BANDED_BYTES - WHOLE_BYTES : ONE_PLANE_BYTES) + (color.transform ? 12 : BAND_CACHE_BYTES));
+  let probe32 = null, refCache = keepBand ? [] : null, outs = [null, null], outTurn = 0, pinned = null;
+  const tagOf = image => image?.lookTag ?? image, findOut = image => outs.find(e => e?.img === tagOf(image))?.buf ?? null;
+  const makeBuf = tr => tr ? [new Uint8Array(pixels * 4)] : [new Uint8ClampedArray(pixels * 4), new Uint8ClampedArray(pixels * 4)];
+  const takeSlot = init => outs[outs[0]?.img === pinned ? 1 : outs[1]?.img === pinned ? 0 : (outTurn ^= 1) ^ 1] ??= {img: null, buf: init()};
+  const openSlot = tr => { const sl = takeSlot(() => makeBuf(tr)); sl.img = null; if (sl.buf?.length !== (tr ? 1 : 2) || sl.buf[0].length !== pixels * 4) sl.buf = makeBuf(tr); return sl; };
+  const finishStream = (stream, slot, filled, image, tr) => { const [pack, own] = stream.finish(); if (slot && filled === height) slot.img = tagOf(image); return tr ? {ssimulacra2: pack} : {ssimulacra2: Math.min(pack, own), nativeScores: {package: pack, native: own, minimum: Math.min(pack, own)}}; };
+  const linBand = (u8, n, tag = 'cl') => linearFromTransform(u8, n, color.transform, [0, 1, 2].map(c => bandScratch(Float32Array, tag + c, n)));
+  const refBand = (y, rows) => linBand(data.subarray(y * width * 4, (y + rows) * width * 4), rows * width, 'rl');
+  const trBand = (img, y0, y1, out8) => { const {made, skip, count} = bandSub(img, y0, y1, {rgba: false, linear: true, views: true}); return linearOfCodedBytes(made.linear.map(x => x.subarray(skip, skip + count)), count, color.transform, [0, 1, 2].map(c => bandScratch(Float32Array, 'cl' + c, count)), out8); };
+  const reference = color.transform ? () => finitePlanes(linearFromTransform(data, pixels, color.transform, f32x3(pixels))) : null;
   let cpu = null, device = null, constants = null, s2Tables = null, audits = 0, refused = false, bandStorage = null;
   const rebuildHeld = {}, s2Held = {}, s2Ok = !color.transform && width >= 8 && height >= 8 && ArrayBuffer.isView(data) && data.BYTES_PER_ELEMENT === 1;
   let s2Checked = false, s2Refused = false, s2Pending = null;
@@ -95,7 +95,7 @@ export function wholeRebuildMeasure(data, width, height, color, signal, plan) {
     try { exact = cpuScores(image, want); } finally { device = null; }
     if (!(Math.abs(exact.ssimulacra2 - scores.ssimulacra2) <= scores.doubt.ssimulacra2)) {
       s2Refused = true;
-      throw Object.assign(fault('JXL_WEBGPU', "The device's score left its bound on this photo."), {again: true});
+      throw Object.assign(fault('JXL_WEBGPU', 'device score out of bounds'), {again: true});
     }
   };
   const auditRows = () => {
@@ -117,26 +117,23 @@ export function wholeRebuildMeasure(data, width, height, color, signal, plan) {
       if (!color.transform) return image.ycbcr ? linearFromRGBA(selectedYCbCrRGBA(image, color, signal), width * height)
         : reconstruct(materialize(image));
       if (image.ycbcr) return finitePlanes(linearOfCodedBytes(selectedYCbCrLinear(image, color, signal), pixels, color.transform, f32x3(pixels)));
-      const reuse = keepBand && !journaling() && !offloading('score-band'), hit = reuse ? outs.find(e => e?.img === image)?.buf : null;
-      if (hit) return hit;
-      const slot = reuse ? (outs[outTurn] ??= {img: null, buf: f32x3(pixels)}) : null;
-      const out = slot ? slot.buf : f32x3(pixels);
-      if (slot) slot.img = null;
+      const out = probe32 ??= f32x3(pixels), reuse = keepBand && !journaling(), hit = reuse ? findOut(image) : null;
+      if (hit) return finitePlanes(linearFromTransform(hit[0], pixels, color.transform, out));
+      const slot = reuse ? openSlot(true) : null;
       if (rebuildable(image)) {
         if (pixels <= BAND_PIXELS) {
           check(signal);
-          const made = rebuildPicture(image, {rgba: false, linear: true, views: true});
-          linearOfCodedBytes(made.linear, pixels, color.transform, out);
+          linearOfCodedBytes(rebuildPicture(image, {rgba: false, linear: true, views: true}).linear, pixels, color.transform, out, slot?.buf[0]);
         } else {
           for (let k = 0, y0 = 0; y0 < height; y0 = edgeAt(++k, height)) {
             check(signal);
             const y1 = edgeAt(k + 1, height), {made, skip, count} = bandSub(image, y0, y1, {rgba: false, linear: true, views: true});
-            linearOfCodedBytes(made.linear.map(x => x.subarray(skip, skip + count)), count, color.transform, out.map(p => p.subarray(y0 * width, y1 * width)));
+            linearOfCodedBytes(made.linear.map(x => x.subarray(skip, skip + count)), count, color.transform, out.map(p => p.subarray(y0 * width, y1 * width)), slot?.buf[0].subarray(y0 * width * 4, y1 * width * 4));
           }
         }
-      } else linearOfCodedBytes(reconstruct(materialize(image)), pixels, color.transform, out);
+      } else linearOfCodedBytes(reconstruct(materialize(image)), pixels, color.transform, out, slot?.buf[0]);
       finitePlanes(out);
-      if (slot) { slot.img = image; outTurn ^= 1; }
+      if (slot) slot.img = tagOf(image);
       return out;
     },
     bandedRGBA: image => image.ycbcr ? selectedYCbCrRGBA(image, color, signal) : bandedRGBA(image, ROWS),
@@ -150,17 +147,17 @@ export function wholeRebuildMeasure(data, width, height, color, signal, plan) {
         return {package: pack, native: own, minimum: Math.min(pack, own)};
       } finally { stream.release(); }
     },
-    *rgbaOutputs(image, {linear, banded}) {
-      const reuse = !device && !image.ycbcr && banded && keepBand && !journaling() && !offloading('score-band');
-      const hit = reuse ? outs.find(e => e?.img === image)?.buf : null;
+    *rgbaOutputs(image, output) {
+      const {banded} = output, reuse = !device && !image.ycbcr && keepBand && !journaling();
+      const hit = reuse ? findOut(image) : null;
       let a, b;
       if (hit) [a, b] = hit;
       else {
         [a, b] = device ? [device.rgba, device.native]
           : image.ycbcr ? [selectedYCbCrRGBA(image, color, signal), selectedYCbCrRGBA(image, color, signal, true)]
           : banded ? (o => [o.package, o.native])(bandedOutputs(image, retain && pixels <= BAND_PIXELS ? Math.ceil(height / 64) * 64 : ROWS, nativeBand))
-          : [toRGBA(linear, width, height), nativeRGBA(linear, width, height)];
-        if (reuse) { outs[outTurn] = {img: image, buf: [a, b]}; outTurn ^= 1; }
+          : (lin => [toRGBA(lin, width, height), nativeRGBA(lin, width, height)])(output.linear);
+        if (reuse) Object.assign(takeSlot(() => null), {img: tagOf(image), buf: [a, b]});
       }
       yield {kind: 'package', rgba: a};
       yield {kind: 'native', rgba: b};
@@ -170,7 +167,7 @@ export function wholeRebuildMeasure(data, width, height, color, signal, plan) {
     () => image.coefficientRows || image.ycbcr ? reconstruction().banded(image, {...want, butteraugli: false})
       : exactScores(reconstruction(), null, width, height, image, want, plan));
   const okBytes = width >= 8 && height >= 8 && (data instanceof Uint8Array || data instanceof Uint8ClampedArray);
-  const canStream = image => !image.ycbcr && (!color.transform || rebuildable(image)) && okBytes;
+  const canStream = image => !image.ycbcr && (!color.transform || !!findOut(image) || rebuildable(image)) && okBytes;
   const plainS2 = want => !!want?.ssimulacra2 && !want.butteraugli && want.p === undefined && want.margin === undefined;
   const streamsInJournal = (image, want) => canStream(image) && plainS2(want) && (want.arithmetic ?? 'binary64') === 'binary64' &&
     bandedPlan && (color.transform ? pixels * 36 > cacheBytes : bandsAtSpeed() && pixels * 36 > cacheBytes);
@@ -193,25 +190,21 @@ export function wholeRebuildMeasure(data, width, height, color, signal, plan) {
   };
   function* streamedSteps(image, libjxl = false) {
     const resume = journaling(), tr = !!color.transform, nOut = tr ? 1 : 2, ref = tr ? refBand : {rgba: data}, cache = resume ? null : refCache;
-    const reuse = keepBand && !resume, hit = reuse ? outs.find(e => e?.img === image)?.buf : null;
-    const slot = reuse && !hit ? (outs[outTurn] ??= {img: null, buf: tr ? f32x3(pixels) : [new Uint8ClampedArray(pixels * 4), new Uint8ClampedArray(pixels * 4)]}) : null;
-    if (slot) slot.img = null;
+    const reuse = keepBand && !resume, hit = reuse ? findOut(image) : null;
+    const slot = reuse && !hit ? openSlot(tr) : null;
     let stream = null, place = null, filled = 0;
     try {
       for (let k = 0, y0 = 0; y0 < height; y0 = edgeAt(++k, height)) {
         const y1 = edgeAt(k + 1, height);
         const saved = yield* carried('score-band', () => {
           if (!stream) { stream = s2Stream(ref, width, height, nOut, resume, libjxl, cache); if (place) stream.restore(place); }
-          if (stream.rows !== y0) throw fault('JXL_INTERNAL', 'A scored band is out of order.');
+          if (stream.rows !== y0) throw fault('JXL_INTERNAL', 'photo-whole-rebuild:order');
           if (hit) {
             check(signal);
-            stream.push(y0, y1 - y0, tr ? [hit.map(p => p.subarray(y0 * width, y1 * width))] : hit.map(b => b.subarray(y0 * width * 4, y1 * width * 4)));
+            stream.push(y0, y1 - y0, tr ? [linBand(hit[0].subarray(y0 * width * 4, y1 * width * 4), (y1 - y0) * width)] : hit.map(b => b.subarray(y0 * width * 4, y1 * width * 4)));
           } else if (tr) {
             check(signal);
-            const {made, skip, count} = bandSub(image, y0, y1, {rgba: false, linear: true, views: true});
-            const p = linearOfCodedBytes(made.linear.map(x => x.subarray(skip, skip + count)), count, color.transform, [0, 1, 2].map(c => bandScratch(Float32Array, 'cl' + c, count)));
-            if (slot && filled === y0) { p.forEach((c, i) => slot.buf[i].set(c, y0 * width)); filled = y1; }
-            stream.push(y0, y1 - y0, [p]);
+            stream.push(y0, y1 - y0, [trBand(image, y0, y1, slot && filled === y0 ? (filled = y1, slot.buf[0].subarray(y0 * width * 4, y1 * width * 4)) : null)]);
           } else bandedOutputs(image, y1 - y0, nativeBand, (y, r, pack, own) => {
             check(signal);
             if (slot && filled === y) { slot.buf[0].set(pack.subarray(0, r * width * 4), y * width * 4); slot.buf[1].set(own.subarray(0, r * width * 4), y * width * 4); filled = y + r; }
@@ -223,11 +216,7 @@ export function wholeRebuildMeasure(data, width, height, color, signal, plan) {
         if (!resume) yield 0;
       }
       if (!stream) { stream = s2Stream(ref, width, height, nOut, resume, libjxl, cache); stream.restore(place); }
-      const scores = stream.finish();
-      if (slot && filled === height) { slot.img = image; outTurn ^= 1; }
-      if (tr) return {ssimulacra2: scores[0]};
-      const [pack, own] = scores;
-      return {ssimulacra2: Math.min(pack, own), nativeScores: {package: pack, native: own, minimum: Math.min(pack, own)}};
+      return finishStream(stream, slot, filled, image, tr);
     } finally { stream?.release(); }
   }
   const mapsInJournal = (image, want) => !image.ycbcr && !color.transform && (want?.p !== undefined || want?.margin !== undefined) &&
@@ -250,45 +239,43 @@ export function wholeRebuildMeasure(data, width, height, color, signal, plan) {
     const {cells} = s2CellMap(stream.finish(parts), width, height);
     return {cells, blocks: cells.slice()};
   }
-  const helped = image => image.recipe && image.lazyStrategy && offloading('score-band') && !image.ycbcr && !color.transform &&
-    width >= 8 && height >= 8 && (data instanceof Uint8Array || data instanceof Uint8ClampedArray) &&
-    (plan ?? memoryPlan(width * height, {width, height})).banded && bandsAtSpeed() && width * height * 36 > cacheBytes;
+  const helped = image => image.recipe && image.lazyStrategy && offloading('score-band') && canStream(image) && bandedPlan &&
+    (color.transform ? pixels * 36 > cacheBytes : bandsAtSpeed() && pixels * 36 > cacheBytes);
   function* helpedSteps(image, libjxl = false) {
+    const tr = !!color.transform, reuse = keepBand && !journaling();
+    if (reuse && findOut(image)) return yield* streamedSteps(image, libjxl);
+    const slot = reuse ? openSlot(tr) : null;
     const look = {}, count = Math.ceil(height / ROWS), ahead = Math.min(count, offloadWorkers()), tasks = new Map();
     bandStorage ??= scoreBandStorage(width, height, ahead, bandRecipe);
-    if (bandStorage.count !== ahead) throw fault('JXL_INTERNAL', 'A photo keeps one score-band task count across its probes.');
+    if (bandStorage.count !== ahead) throw fault('JXL_INTERNAL', 'photo-whole-rebuild:ahead');
     const storage = bandStorage;
     const taskAt = k => {
-      const y0 = k * ROWS, y1 = Math.min(height, y0 + ROWS);
-      const task = storage.take({data, recipe: image.recipe, look, y0, y1});
+      const y0 = k * ROWS, y1 = Math.min(height, y0 + ROWS), task = storage.take({data, recipe: image.recipe, look, y0, y1});
       tasks.set(k, task);
       return task;
     };
-    const stream = s2Stream({rgba: data}, width, height, 2, false, libjxl, refCache);
-    let finished = false;
+    const stream = s2Stream(tr ? refBand : {rgba: data}, width, height, tr ? 1 : 2, false, libjxl, refCache);
+    let finished = false, filled = 0;
     try {
       yield {offload: 'prefetch', tasks: Array.from({length: ahead}, (_, k) => taskAt(k))};
       for (let k = 0; k < count; k++) {
         const task = tasks.get(k), made = yield {offload: 'run', task};
         check(signal);
-        if (made) {
-          storage.receive(task, made);
-          tasks.delete(k);
-          if (k + ahead < count) yield {offload: 'prefetch', tasks: [taskAt(k + ahead)]};
-          stream.push(task.y0, task.y1 - task.y0, [made.pack, made.own]);
-          storage.release(made);
-        } else {
-          const replay = storage.lost(task);
-          bandedOutputs(image, ROWS, nativeBand, null, task.y0, task.y1, {package: replay.pack, native: replay.own});
-          stream.push(task.y0, task.y1 - task.y0, [replay.pack, replay.own]);
-          storage.release(replay);
-          tasks.delete(k);
-          if (k + ahead < count) yield {offload: 'prefetch', tasks: [taskAt(k + ahead)]};
+        const box = made ? (storage.receive(task, made), made) : storage.lost(task), {y0, y1} = task, rows = y1 - y0;
+        tasks.delete(k);
+        if (made && k + ahead < count) yield {offload: 'prefetch', tasks: [taskAt(k + ahead)]};
+        if (!made && tr) stream.push(y0, rows, [trBand(image, y0, y1, slot && filled === y0 ? (filled = y1, slot.buf[0].subarray(y0 * width * 4, y1 * width * 4)) : null)]);
+        else {
+          if (!made) bandedOutputs(image, ROWS, nativeBand, null, y0, y1, {package: box.pack, native: box.own});
+          if (slot && filled === y0) { slot.buf[0].set(box.pack, y0 * width * 4); if (!tr) slot.buf[1].set(box.own, y0 * width * 4); filled = y1; }
+          stream.push(y0, rows, tr ? [linBand(box.pack, rows * width, 'hl')] : [box.pack, box.own]);
         }
+        storage.release(box);
+        if (!made && k + ahead < count) yield {offload: 'prefetch', tasks: [taskAt(k + ahead)]};
       }
-      const [pack, own] = stream.finish();
+      const out = finishStream(stream, slot, filled, image, tr);
       finished = true;
-      return {ssimulacra2: Math.min(pack, own), nativeScores: {package: pack, native: own, minimum: Math.min(pack, own)}};
+      return out;
     } finally {
       stream.release(); tasks.clear();
       if (!finished) { storage.destroy(); bandStorage = null; }
@@ -362,6 +349,7 @@ export function wholeRebuildMeasure(data, width, height, color, signal, plan) {
     } finally { device = null; }
     };
   return {
+    pin(image, set) { if (set) pinned = tagOf(image); return keepBand && !journaling() && !!findOut(image); },
     *measureSteps(image, want) {
       if (journaling() && streamsInJournal(image, want)) return yield* timedSteps('band-score', streamedSteps(image));
       if (journaling() && mapsInJournal(image, want)) return yield* mapSteps(image);
@@ -385,6 +373,6 @@ export function wholeRebuildMeasure(data, width, height, color, signal, plan) {
     },
     later() { s2Later = true; },
     settle: settleCheck,
-    destroy() { s2Pending = null; cpu?.destroy(); cpu = null; bandStorage?.destroy(); bandStorage = null; ref32 = null; outs = [null, null]; refHave = 0; if (refCache) refCache.length = 0; s2Held.state?.release(); rebuildHeld.release?.(); },
+    destroy() { s2Pending = null; cpu?.destroy(); cpu = null; bandStorage?.destroy(); bandStorage = null; probe32 = null; outs = [null, null]; pinned = null; if (refCache) refCache.length = 0; s2Held.state?.release(); rebuildHeld.release?.(); },
   };
 }

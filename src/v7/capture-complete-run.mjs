@@ -7,6 +7,6 @@ import {engineAnswerer} from './capture-engine.mjs';
 import {fail} from './primitives.mjs';
 
 const required = async () => {
-  if (!await webgpuUsable(true)) throw fail('JXL_WEBGPU', "This host has no WebGPU device; leave webgpu out or use a WebGPU-capable host.");
+  if (!await webgpuUsable(true)) throw fail('JXL_WEBGPU', 'no WebGPU device: omit webgpu');
 };
 export const runCaptureComplete = captureRunner(CAPTURE_TOOLS_COMPLETE, {device: required, answerer: engineAnswerer(captureEngine, CAPTURE_TOOLS_COMPLETE.gpu)});

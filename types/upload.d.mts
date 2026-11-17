@@ -10,7 +10,7 @@ export type {UploadCaptureOptions, CapturePhotoFidelity as CaptureFidelity} from
 export type {UploadPreparationInput, UploadFitOptions, UploadVariantRequest, UploadVariantsOptions, UploadPreparation} from './preparation-upload.mjs';
 /** The upload encoder in one file: a page's calls run in its own worker; calls in a worker, Node and edge hosts run in place: a File, Blob, canvas or pixels in; efforts 1-3. An exact, unchanged
  * JPEG preserves the original file; jpeg: 'pixels' requires pixel encoding instead.
- * `encode` from `rapier-jxl` writes the same file at the same effort, and runs efforts 4-9 too.
+ * `encode` from `jpegxl` writes the same file at the same effort, and runs efforts 4-9 too.
  * For JPEG input in Node, Deno or Bun, the setup call is configureDecoder, exported here as from the root entry.
  * Efforts 4-9 refuse JXL_UNSUPPORTED; passing webgpu refuses JXL_OPTIONS. */
 export function configureDecoder(decode: PackageDecode | null, restore?: JpegRestore | null, recompress?: JpegRecompress | null): void;

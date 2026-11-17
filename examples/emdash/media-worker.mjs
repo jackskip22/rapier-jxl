@@ -25,7 +25,7 @@ async function browserVerified(file, result, progress) {
   configureDecoder(decode, restore);
   const browserVerification = await verify(file, result, {onProgress: progress});
   if (browserVerification?.verified !== true)
-    throw Object.assign(new Error("Delivery unverified; verify its original and candidate."), {code: 'JXL_INPUT'});
+    throw Object.assign(new Error("delivery: verify original/candidate"), {code: 'JXL_INPUT'});
   // Informational browser assurance is deliberately separate from the private server receipt.
   const {verification: ignored, ...candidate} = result;
   return {...candidate, browserVerification};

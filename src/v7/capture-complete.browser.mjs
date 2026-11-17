@@ -8,7 +8,7 @@ import {pixelLimit, fail} from './primitives.mjs';
 import {surfaceCall, bandedCanvas, doorPreviews, admitCapturePlain} from './door-session.mjs';
 const levels = {module: CAPTURE_COMPLETE_SPEC.module, ...CAPTURE_COMPLETE_SPEC.captureLevels};
 const rules = {texture: readTexture, banded: bandedCanvas, richCapture: true, capPlain: admitCapturePlain, admit: (_n, opt) => {
-  if (opt && typeof opt === 'object' && 'features' in opt) throw fail('JXL_OPTIONS', 'Unknown option: features; remove it.');
+  if (opt && typeof opt === 'object' && 'features' in opt) throw fail('JXL_OPTIONS', 'unknown option: features');
   const {signal: _s, onProgress: _p, onPreview: _v, firstRegion, ...rest} = opt ?? {};
   CAPTURE_COMPLETE_SPEC.captureAdmission(firstRegion === undefined ? rest : {...rest, features: {firstRegion}}, levels);
   return rest.maxPixels !== undefined ? pixelLimit(rest.maxPixels) : undefined;

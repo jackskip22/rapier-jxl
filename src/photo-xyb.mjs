@@ -61,7 +61,7 @@ function correlate(tile, count, cfl, index, cflScale) {
   cfl.x[index] = Math.max(-128, Math.min(127, Math.round(cflScale * 84 * xy / (yy + 1))));
   cfl.b[index] = Math.max(-128, Math.min(127, Math.round(cflScale * 84 * bySum / (yy + 1))));
 }
-export const FAST_RANGE = /* @__PURE__ */ new Error('A fast-path level is outside Int16.');
+export const FAST_RANGE = /* @__PURE__ */ new Error('fast level overflow');
 function quantFastTile(tile, bw, bh, by0, bx0, stride, components, scale, fx, fb, thresholds, nonZero, strict = false) {
   const ratios = [fx / 84, 0, fb / 84];
   for (let c = 0; c < 3; c++) {
@@ -146,7 +146,7 @@ function gaborishInverse(planes, W, H, {weights, strength = 1, iterations = 4, a
     const median = Float64Array.from(tex).sort()[tex.length >> 1] || 1;
     for (let b = 0; b < tex.length; b++) scale[b] = Math.max(floor, Math.min(1, 1 - adapt * Math.log2(Math.max(1, tex[b] / median))));
   }
-  if (scratch && scratch.original.length < planes[0].length) throw fault('JXL_INTERNAL', 'A photographic inverse workspace is too small.');
+  if (scratch && scratch.original.length < planes[0].length) throw fault('JXL_INTERNAL', 'photo-xyb:workspace');
   const orig = scratch ? scratch.original.subarray(0, planes[0].length) : bandScratch(Float64Array, 'gaborish-orig', planes[0].length);
   for (let c = 0; c < planes.length; c++) {
     const t = planes[c], w = weights?.[c] ?? GAB_DEFAULT, s = Array.isArray(strength) ? strength[c] : strength, n = t.length;
@@ -333,7 +333,7 @@ function fastV6Tables(q, distance, strength, stepScale, acScale, quantScale, opt
 
 export function* photoXYBSteps(data, width, height, quality, options) {
   const fast = !!options?.fast;
-  if (fast && options?.fieldScale) throw fault('JXL_INTERNAL', 'The fast path takes no quantization field.');
+  if (fast && options?.fieldScale) throw fault('JXL_INTERNAL', 'photo-xyb:field');
   const fastBand = fast && !!options?.fastBand;
   if (!fastBand && options?.gaborish && (options.band ? options.band.data.length / 4 / width : height) === 1)
     options = {...options, gaborish: null, pre: undefined, dctCache: null, band: undefined};
@@ -391,7 +391,7 @@ export function* photoXYBSteps(data, width, height, quality, options) {
   const cfl = {width: tileWidth, x: new Int8Array(tileWidth * tileRows), b: new Int8Array(tileWidth * tileRows)};
   let intermediate = null, tile = null;
   let colors = null;
-  if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && (options?.roundtrip || options?.biasedRound || options?.keepValues)) throw fault('JXL_INTERNAL', 'capture-complete takes no gpu-search flags.');
+  if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && (options?.roundtrip || options?.biasedRound || options?.keepValues)) throw fault('JXL_INTERNAL', 'photo-xyb:flags');
   const roundtrip = !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && !!options?.roundtrip, lumaBack = new Float64Array(64), biased = !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && !!options?.biasedRound;
   const planes = options?.keepPlanes && (pre || [0, 1, 2].map(() => new Float64Array(stride * rows * 64)));
   const dctCache = options?.dctCache && !options?.roundtrip ? options.dctCache : null;

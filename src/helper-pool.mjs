@@ -38,7 +38,7 @@ export function workerPool(spawn, count) {
     try { result = worker.terminate(); } catch (error) { result = Promise.reject(error); }
     const retired = new Promise(resolve => resolve(result)).then(() => { retiring.delete(retired); pump(); }, error => {
       retiring.delete(retired);
-      retireFailure ??= error instanceof Error ? error : new Error('Worker retirement failed.', {cause: error});
+      retireFailure ??= error instanceof Error ? error : new Error('worker terminate failed', {cause: error});
       api.failure ??= retireFailure;
       stop();
     });
@@ -194,7 +194,7 @@ export function workerPool(spawn, count) {
       return members.filter(m => !m.busy && usable(m)).map(member => {
         api.used = true;
         mark('lease');
-        const waiting = new Map(), stopped = {error: {name: 'Error', message: 'A JPEG XL helper stopped.'}};
+        const waiting = new Map(), stopped = {error: {name: 'Error', message: 'helper stopped'}};
         const lease = member.busy = {id: ++serial, lease: true, ended: false, waiting,
           answer: reply => {
             waiting.get(reply.ticket)?.(reply); waiting.delete(reply.ticket);
@@ -253,7 +253,7 @@ const dropped = typeof FinalizationRegistry === 'function' ? new FinalizationReg
 const residentHelpers = reservation => Math.min(reservation.count, Math.floor(reservation.memoryBytes / (44 * 1048576)));
 async function ownerPool(owner, reservation, spawn) {
   for (;;) {
-    if (closedOwners.has(owner)) throw Object.assign(new Error('The codec is closed.'), {code: 'JXL_CLOSED'});
+    if (closedOwners.has(owner)) throw Object.assign(new Error('closed'), {code: 'JXL_CLOSED'});
     let pool = helperPools.get(owner);
     if (pool?.failure) throw pool.failure;
     if (pool && !pool.closed) return pool;
@@ -270,14 +270,14 @@ export async function retireBandHelpers(owner, geometry) {
   const pool = helperPools.get(owner);
   if (pool?.failure) throw pool.failure;
   if (pool?.bandBytes === undefined || pool.bandGeometry === geometry) return;
-  if (pool.busy || pool.jobs) throw fault('JXL_INTERNAL', 'A bounded helper pool is still running its photo.');
+  if (pool.busy || pool.jobs) throw fault('JXL_INTERNAL', 'helper-pool:busy');
   await pool.trim(0);
   pool.bandBytes = undefined;
   pool.bandGeometry = undefined;
   pool.used = false;
 }
 export async function helperPool(owner, reservation, pixels, helper, jobBytes, geometry) {
-  if (jobBytes !== undefined && (typeof geometry !== 'string' || !geometry)) throw fault('JXL_INTERNAL', 'A bounded helper job names its photo geometry.');
+  if (jobBytes !== undefined && (typeof geometry !== 'string' || !geometry)) throw fault('JXL_INTERNAL', 'helper-pool:geometry');
   let limit = reservedHelpers(reservation, pixels, jobBytes);
   const spawn = await spawnHelper(helper);
   let pool = await ownerPool(owner, reservation, spawn);
@@ -314,7 +314,7 @@ export function closeHelpers(owner, final = false) {
   return pool ? pool.close() : Promise.resolve();
 }
 
-const lost = async pool => { await pool.retired(); return Object.assign(new Error('A JPEG XL helper stopped.'), {code: 'JXL_WORKER', lost: true}); };
+const lost = async pool => { await pool.retired(); return Object.assign(new Error('helper stopped'), {code: 'JXL_WORKER', lost: true}); };
 export async function helperJob(owner, reservation, task, {signal, onProgress, onPreview, helper} = {}) {
   const pool = await ordinaryPool(await ownerPool(owner, reservation, await spawnHelper(helper)));
   if (signal?.aborted) throw signal.reason;
@@ -390,11 +390,11 @@ export const defaultWorkers = async () => {
   try { return nodeBuiltin('node:os').availableParallelism(); } catch { return 1; }
 };
 export async function spawnHelper(helper) {
-  if (!helper) throw Object.assign(new Error('A helper spawn names its file.'), {code: 'JXL_INTERNAL'});
+  if (!helper) throw Object.assign(new Error('helper-pool:file'), {code: 'JXL_INTERNAL'});
   const named = spawn => Object.assign(spawn, {module: helper.module, protocol: helper.protocol, wasm: helper.wasm});
   if (typeof Worker === 'function') return named(() => startWorker(helper));
   const threads = nodeBuiltin('node:worker_threads');
-  if (!threads) throw Object.assign(new Error('This runtime starts no helper worker.'), {code: 'JXL_WORKER', lost: true});
+  if (!threads) throw Object.assign(new Error('no worker support'), {code: 'JXL_WORKER', lost: true});
   const {Worker: NodeWorker} = threads;
   const flags = globalThis.process.execArgv, execArgv = flags.some(flag => flag.startsWith('--input-type')) ? flags.filter(flag => !flag.startsWith('--input-type')) : undefined;
   return named(() => {

@@ -7,7 +7,7 @@ const LAYOUT_PREVIEW_SIZE = [[6, 1], [8, 65], [10, 321], [12, 1345]];
 export const EXTRA_CHANNEL_TYPES = Object.freeze({alpha: 0, depth: 1, spot: 2, selection: 3, black: 4, cfa: 5, thermal: 6, optional: 16});
 const extraTypes = new Map(Object.entries(EXTRA_CHANNEL_TYPES));
 export const checkInteger = (value, min, max, name) => {
-  if (!Number.isInteger(value) || value < min || value > max) throw fault('JXL_INPUT', name + ' is an integer from ' + min + ' to ' + max + '.');
+  if (!Number.isInteger(value) || value < min || value > max) throw fault('JXL_INPUT', name + ': integer ' + min + '-' + max);
   return value;
 };
 
@@ -18,15 +18,15 @@ export function prepareImageFields({orientation = 1, intrinsicSize, preview} = {
   writer.write(3, orientation - 1);
   writer.write(1, intrinsicSize === undefined ? 0 : 1);
   if (intrinsicSize !== undefined) {
-    if (!intrinsicSize || typeof intrinsicSize !== 'object') throw fault('JXL_INPUT', 'intrinsicSize is {width, height}.');
-    const width = checkInteger(intrinsicSize.width, 1, 1073741824, 'Intrinsic width');
-    const height = checkInteger(intrinsicSize.height, 1, 1073741824, 'Intrinsic height');
+    if (!intrinsicSize || typeof intrinsicSize !== 'object') throw fault('JXL_INPUT', 'intrinsicSize: {width, height}');
+    const width = checkInteger(intrinsicSize.width, 1, 1073741824, 'intrinsicSize.width');
+    const height = checkInteger(intrinsicSize.height, 1, 1073741824, 'intrinsicSize.height');
     writer.write(1, 0); writer.writeU32(LAYOUT_SIZE, height); writer.write(3, 0); writer.writeU32(LAYOUT_SIZE, width);
   }
   writer.write(1, preview === undefined ? 0 : 1);
   if (preview !== undefined) {
-    const width = checkInteger(preview.width, 1, 5440, 'Preview width');
-    const height = checkInteger(preview.height, 1, 5440, 'Preview height');
+    const width = checkInteger(preview.width, 1, 5440, 'preview.width');
+    const height = checkInteger(preview.height, 1, 5440, 'preview.height');
     writer.write(1, 0); writer.writeU32(LAYOUT_PREVIEW_SIZE, height); writer.write(3, 0); writer.writeU32(LAYOUT_PREVIEW_SIZE, width);
   }
   writer.write(1, 0);
@@ -40,7 +40,7 @@ function writeDepth(writer, bits, exponent) {
 }
 
 export function extraChannelType(name) {
-  if (!extraTypes.has(name)) throw fault('JXL_INPUT', 'Extra channel type is alpha, depth, spot, selection, black, cfa, thermal or optional.');
+  if (!extraTypes.has(name)) throw fault('JXL_INPUT', 'extraChannel type: alpha, depth, spot, selection, black, cfa, thermal or optional');
   return extraTypes.get(name);
 }
 
@@ -64,15 +64,15 @@ export function prepareExtraChannels(channels) {
 
 export function prepareUpsamplingWeights(weights, {xyb = false} = {}) {
   if (weights === undefined) return undefined;
-  if (!weights || typeof weights !== 'object' || Array.isArray(weights)) throw fault('JXL_INPUT', 'upsamplingWeights maps 2, 4 or 8 to symmetric kernel coefficients.');
+  if (!weights || typeof weights !== 'object' || Array.isArray(weights)) throw fault('JXL_INPUT', 'upsamplingWeights: object');
   const entries = new Map(Object.entries(weights)), counts = new Map([['2', 15], ['4', 55], ['8', 210]]);
-  if (!entries.size || [...entries.keys()].some(key => !counts.has(key))) throw fault('JXL_INPUT', 'Custom upsampling factors are 2, 4 and 8.');
+  if (!entries.size || [...entries.keys()].some(key => !counts.has(key))) throw fault('JXL_INPUT', 'upsamplingWeights: keys 2, 4 or 8');
   let mask = 0;
   for (const [key, count] of counts) if (entries.has(key)) {
     const values = entries.get(key);
     if (!(Array.isArray(values) || ArrayBuffer.isView(values)) || values.length !== count ||
         Array.from(values).some(value => typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > 65504))
-      throw fault('JXL_INPUT', 'Factor ' + key + ' needs ' + count + ' finite binary16 kernel coefficients.');
+      throw fault('JXL_INPUT', 'upsamplingWeights[' + key + ']: ' + count + ' float16 numbers');
     mask |= Number(key) / 2;
   }
   const writer = new BitWriter(1024); writer.write(1, 0);

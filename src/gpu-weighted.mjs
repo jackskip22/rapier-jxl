@@ -84,7 +84,7 @@ const check = signal => { if (signal?.aborted) throw signal.reason; };
 export function weightedOnDevice(device, planes, {passSamples = 1 << 21, signal} = {}) {
   return gpuAbort(signal, async waits => {
     for (const p of planes) if (!(p.plane instanceof Int16Array) || !(p.width >= 1 && p.height >= 1 && p.width * p.height <= PLANE_LIMIT) || p.plane.length < p.width * p.height)
-      throw fault('JXL_INTERNAL', 'weightedOnDevice: each plane is an Int16Array of at most 2^20 samples.');
+      throw fault('JXL_INTERNAL', 'gpu-weighted:plane');
     const kernel = await waits(gpuKernel(device, 'weighted', WEIGHTED_WGSL, 1));
     const passes = [];
     for (let k = 0, size = 0; k < planes.length; k++) {

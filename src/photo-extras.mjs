@@ -7,7 +7,7 @@ import {writeModularHeader} from './modular.mjs';
 import {encodeChannelsSteps} from './channels.mjs';
 
 export function exactPhotoExtraSteps(data, width, height, options, samples) {
-  if (!Array.isArray(options.extraChannels)) throw fault('JXL_INPUT', 'Extra channels are an array.');
+  if (!Array.isArray(options.extraChannels)) throw fault('JXL_INPUT', 'extraChannels: array');
   const source = data instanceof Float32Array ? new Uint32Array(data.buffer, data.byteOffset, data.length) : data;
   const count = width * height, colorCount = samples.colorChannels ?? 3;
   const color = Array.from({length: colorCount}, (_, c) => source.constructor.from({length: count}, (_, i) => source[i * 4 + c]));
@@ -31,19 +31,19 @@ export function admitPhotoExtras(data, layout, options) {
   const channels = admitExtraChannels(options.extraChannels, layout.width, layout.height, layout.factor);
   if (!channels.length) return null;
   if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray))
-    throw fault('JXL_INPUT', 'Photo color with extra channels needs 8-bit RGBA; otherwise use encodeChannels.');
+    throw fault('JXL_INPUT', 'extraChannels: RGBA8 only, or use encodeChannels');
   let alpha = false;
   for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) { alpha = true; break; }
   if (alpha) {
-    if (channels.length === 256) throw fault('JXL_INPUT', 'At most 256 extra channels.');
+    if (channels.length === 256) throw fault('JXL_INPUT', 'extraChannels: max 256');
     const plane = Uint8Array.from({length: data.length / 4}, (_, i) => data[i * 4 + 3]);
     channels.unshift(...admitExtraChannels([{...Object.fromEntries([['type', 'alpha']]), data: plane, upsampling: layout.factor}], layout.width, layout.height, layout.factor));
   }
   if (options.lfFrames !== undefined && options.lfFrames !== false && channels.some(channel => channel.factor !== 1))
-    throw fault('JXL_INPUT', 'LF frames cannot signal extra-channel upsampling.');
+    throw fault('JXL_INPUT', 'lfFrames: no extraChannel upsampling');
   const requiredLevel = channels.length > 4 || channels.some(channel => channel.kind === 4 || channel.bitDepth > 12 || channel.exponentBits) ? 10 : 5;
-  if (options.level !== undefined && options.level !== 5 && options.level !== 10) throw fault('JXL_INPUT', 'JPEG XL level is 5 or 10.');
-  if (options.level === 5 && requiredLevel === 10) throw fault('JXL_INPUT', 'These extra channels require JPEG XL level 10.');
+  if (options.level !== undefined && options.level !== 5 && options.level !== 10) throw fault('JXL_INPUT', 'level: 5 or 10');
+  if (options.level === 5 && requiredLevel === 10) throw fault('JXL_INPUT', 'extraChannels: needs level 10');
   return {channels, metadata: prepareExtraChannels(channels), level: Math.max(options.level ?? 5, requiredLevel),
     modular16bit: channels.every(channel => channel.bitDepth <= 12 && !channel.exponentBits)};
 }

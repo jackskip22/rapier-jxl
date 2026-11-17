@@ -21,7 +21,7 @@ export function screenEligible(rgba, width, height, shape, effort = 3) {
 }
 
 export function* screenSteps(rgba, width, height, shape, colorSpace, {fastFloor = 0, effort = 3, deep} = {}) {
-  if (effort >= 8 && !deep) throw fault('JXL_INTERNAL', 'Efforts 8-9 need their screen candidates (palette-search.mjs, screen-local.mjs).');
+  if (effort >= 8 && !deep) throw fault('JXL_INTERNAL', 'screen-search:candidates');
   let best = null;
   for (const [pass, minLength] of [7, 4].entries()) {
     const steps = screenPass(rgba, width, height, shape, colorSpace, {fastFloor, effort, minLength, deep});

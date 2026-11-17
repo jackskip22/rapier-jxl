@@ -68,7 +68,7 @@ export function appendAimOpen(low, high, doubt, active, aimLo, aimHi, from, to, 
 }
 export function pathLevels(path, levels, active, level, from, to) {
   for (let i = from; i < to; i++) {
-    if (active && !active[i] && path[i] !== 1) throw fault('JXL_INTERNAL', 'An AQ path must keep inactive cells at 1.');
+    if (active && !active[i] && path[i] !== 1) throw fault('JXL_INTERNAL', 'aq-cursor-kernels:inactive');
     level[i] = levels.indexOf(path[i]);
   }
 }

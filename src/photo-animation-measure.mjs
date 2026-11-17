@@ -16,7 +16,7 @@ function copyRect(into, source, x, y, w, h, sx = 0, sy = 0) {
   if (into.planes && source.kind !== into.kind) return false;
   if (![x, y, w, h, sx, sy].every(Number.isSafeInteger) || w < 1 || h < 1 || x < 0 || y < 0 || sx < 0 || sy < 0 ||
       x + w > into.width || y + h > into.height || sx + w > source.width || sy + h > source.height)
-    throw internal('An animation measurement copy exceeds its source or canvas.');
+    throw internal('photo-animation-measure:copy');
   for (let row = 0; row < h; row++) {
     const from = (sy + row) * source.width + sx, to = (y + row) * into.width + x;
     into.rgba.set(source.rgba.subarray(from * 4, (from + w) * 4), to * 4);
@@ -63,10 +63,10 @@ export function photoAnimationMeasure(source, {cacheBytes = 0, signal, maxPixels
     };
     return {
       frame(index, picture) {
-        if (stopped || index !== outputIndex++) throw internal('Animation measurement frames must finish in order.');
+        if (stopped || index !== outputIndex++) throw internal('photo-animation-measure:order-1');
         check(signal);
         if (picture.width !== source.width || picture.height !== source.height)
-          throw fault('JXL_DIMENSIONS', 'The shown animation differs from its measurement reference.');
+          throw fault('JXL_DIMENSIONS', 'shown animation: size mismatch');
         while (!step.done && step.value.outputIndex === index) {
           const pair = step.value;
           check(signal);
@@ -96,7 +96,7 @@ export function photoAnimationMeasure(source, {cacheBytes = 0, signal, maxPixels
   return {
     domain: 'decoded-output',
     measure(shown, want) {
-      if (closed) throw internal('The animation measurement is closed.');
+      if (closed) throw internal('photo-animation-measure:closed-1');
       check(signal);
       const read = stream({...shown, ...shown.animation, durations: shown.frames.map(frame => frame.durationSeconds)}, want);
       try {
@@ -106,7 +106,7 @@ export function photoAnimationMeasure(source, {cacheBytes = 0, signal, maxPixels
       } finally { read.destroy(); }
     },
     observe(rebuild, {want, native = true} = {}) {
-      if (closed) throw internal('The animation measurement is closed.');
+      if (closed) throw internal('photo-animation-measure:closed-2');
       active?.destroy();
       let timeline = null, read = null, canvas = null, slots = [null, null, null, null], scope = null;
       let pending = new Map(), rebuilt = new Map(), failed = false, retired = false, nextFrame = 0, opened = false, alpha = null, scratch = null;
@@ -137,9 +137,9 @@ export function photoAnimationMeasure(source, {cacheBytes = 0, signal, maxPixels
       const observer = {
         begin(description) {
           if (!usable()) return false;
-          if (timeline) throw internal('An animation measurement begins once per encoder instance.');
+          if (timeline) throw internal('photo-animation-measure:restarted');
           if (description.width !== source.width || description.height !== source.height)
-            throw fault('JXL_DIMENSIONS', 'The shown animation differs from its measurement reference.');
+            throw fault('JXL_DIMENSIONS', 'shown animation: size mismatch');
           const {width, height, loops, numerator, denominator, durations, patches, alpha} = description;
           timeline = {width, height, loops, numerator, denominator, durations: durations.slice(), patches, alpha};
           read = stream(timeline, want);
@@ -157,14 +157,14 @@ export function photoAnimationMeasure(source, {cacheBytes = 0, signal, maxPixels
         },
         settlePart({scope: part, file, rect, saveSlot}) {
           if (!usable()) return false;
-          if (!timeline) throw internal('An animation measurement needs its timeline before its parts.');
+          if (!timeline) throw internal('photo-animation-measure:timeline');
           const entry = scope === part ? pending.get(file) : null;
           if (!entry) return unavailable();
           lose();
           if (entry.width !== rect[2] || entry.height !== rect[3])
-            throw internal('The chosen animation rebuild differs from its coded rectangle.');
+            throw internal('photo-animation-measure:rect');
           if (saveSlot !== undefined && saveSlot !== null) {
-            if (saveSlot !== 0 && saveSlot !== 3) throw internal('An animation part cannot replace its canvas or internal dictionary reference.');
+            if (saveSlot !== 0 && saveSlot !== 3) throw internal('photo-animation-measure:slot');
             slots[saveSlot] = entry;
           } else {
             if (!hold(entry)) return unavailable();
@@ -178,11 +178,11 @@ export function photoAnimationMeasure(source, {cacheBytes = 0, signal, maxPixels
         },
         finishFrame(index, groups = null) {
           if (!usable()) return false;
-          if (!timeline || index !== nextFrame++) throw internal('Animation measurement frames must finish in order.');
+          if (!timeline || index !== nextFrame++) throw internal('photo-animation-measure:order-2');
           if (groups) {
             for (const group of groups) {
               const entry = slots[group.reference];
-              if (!entry) throw internal('An animation view reads an unavailable reference slot.');
+              if (!entry) throw internal('photo-animation-measure:ref');
               if (!hold(entry)) return unavailable();
               for (const position of group.positions) {
                 if (!position.blending?.length || position.blending.some(blend => blend.mode !== 1)) return unavailable();
@@ -204,7 +204,7 @@ export function photoAnimationMeasure(source, {cacheBytes = 0, signal, maxPixels
           if (retired) return null;
           try {
             check(signal);
-            if (!(bytes instanceof Uint8Array)) throw internal('An animation producer must return complete bytes.');
+            if (!(bytes instanceof Uint8Array)) throw internal('photo-animation-measure:bytes');
             return failed || !bytes.length || !read ? null : {bytes, scores: read.finish()};
           } finally { observer.destroy(); }
         },

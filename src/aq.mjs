@@ -5,18 +5,18 @@ import {fieldValues, fieldLogSum, normalizeField, smoothForward, smoothBacktrack
 import {fault} from './fault.mjs';
 function activeCount(active, n, levels = null) {
   if (active === null) return n;
-  if (!(active instanceof Uint8Array) || active.length !== n) throw fault('JXL_INTERNAL', 'AQ active is a Uint8Array with one entry per 8x8 cell.');
+  if (!(active instanceof Uint8Array) || active.length !== n) throw fault('JXL_INTERNAL', 'aq:active');
   let count = 0;
   for (const value of active) count += value !== 0;
-  if (levels && count < n && !levels.includes(1)) throw fault('JXL_INTERNAL', 'AQ levels must include 1 for inactive cells.');
+  if (levels && count < n && !levels.includes(1)) throw fault('JXL_INTERNAL', 'aq:levels');
   return count;
 }
 const activeValues = (values, active) => active ? Float64Array.from(values).filter((_, i) => active[i]) : Float64Array.from(values);
 const zeroDistances = (distances, active) => distances.every((value, i) => !active[i] || value === 0);
 function checkActiveDistances(distances, active) {
-  if (!distances || distances.length !== active.length) throw fault('JXL_INTERNAL', 'Masked AQ needs one distance per 8x8 cell.');
+  if (!distances || distances.length !== active.length) throw fault('JXL_INTERNAL', 'aq:distances');
   for (let b = 0; b < active.length; b++) if (active[b] && (!Number.isFinite(distances[b]) || distances[b] < 0))
-    throw fault('JXL_INTERNAL', 'Masked AQ active distances must be finite and nonnegative.');
+    throw fault('JXL_INTERNAL', 'aq:distance-range');
 }
 
 export {blockDistances} from './photo-distance-cells.mjs';
@@ -39,7 +39,7 @@ export function* closedLoopFieldSteps(width, height, imageOf, {rounds = 3, gamma
   const options = {gamma, aimQuantile, min, max, normalize, gammaDown, active};
   let field = start ? Float64Array.from(start) : new Float64Array(blocks).fill(1);
   if (active) {
-    if (field.length !== blocks) throw fault('JXL_INTERNAL', 'AQ start has one value per 8x8 cell.');
+    if (field.length !== blocks) throw fault('JXL_INTERNAL', 'aq:start');
     for (let b = 0; b < blocks; b++) if (!active[b]) field[b] = 1;
     if (!count) return field;
   }
@@ -51,7 +51,7 @@ export function* closedLoopFieldSteps(width, height, imageOf, {rounds = 3, gamma
       field = yield* stage('aq-round', function* () {
         const image = seed ? seed.image : yield* imageOf(round || start ? made : null);
         const reply = seed ? seed.scores : yield {measure: image, want: {margin}};
-        if (reply.doubt?.blocks) throw fault('JXL_INTERNAL', 'A resumed AQ round takes exact distances.');
+        if (reply.doubt?.blocks) throw fault('JXL_INTERNAL', 'aq:resumed');
         return smoothField(fieldRaw(reply.blocks, made, blocks, options), levels, switchCost, active);
       });
       continue;
@@ -60,7 +60,7 @@ export function* closedLoopFieldSteps(width, height, imageOf, {rounds = 3, gamma
     const reply = first ? first.scores : yield {measure: image, want: {margin}}, d = reply.blocks, bound = reply.doubt?.blocks ?? 0;
     if (active) {
       checkActiveDistances(d, active);
-      if (!Number.isFinite(bound) || bound < 0) throw fault('JXL_INTERNAL', 'Masked AQ distance doubt must be finite and nonnegative.');
+      if (!Number.isFinite(bound) || bound < 0) throw fault('JXL_INTERNAL', 'aq:bound');
     }
     if (active && zeroDistances(d, active)) return field;
     if (!bound || (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) { field = smoothField(fieldRaw(d, field, blocks, options), levels, switchCost, active); continue; }
@@ -73,7 +73,7 @@ export function* closedLoopFieldSteps(width, height, imageOf, {rounds = 3, gamma
       for (const b of aimOpen) open.push(b);
       const exact = attempt < 2 ? yield {exact: {kind: 'blocks', image, margin, regions: blockRegions(open, width, height)}} : yield {exact: {kind: 'whole', image, margin}};
       if (!exact) {
-        if (active) throw fault('JXL_INTERNAL', 'Masked AQ needs an exact measurement to settle an uncertain field.');
+        if (active) throw fault('JXL_INTERNAL', 'aq:uncertain');
         next = path; break;
       }
       if (exact.blocks instanceof Map) for (const [k, v] of exact.blocks) { dist[k] = v; doubt[k] = 0; }
@@ -85,7 +85,7 @@ export function* closedLoopFieldSteps(width, height, imageOf, {rounds = 3, gamma
       const path = smoothField(fieldRaw(dist, field, blocks, options), levels, switchCost, active);
       const {lo, hi} = fieldRanges(dist, doubt, field, blocks, options);
       if (doubt.some((value, b) => active[b] && value > 0) && certifyPath(lo, hi, path, levels, switchCost, active).length)
-        throw fault('JXL_INTERNAL', 'Masked AQ exact measurements did not settle its field.');
+        throw fault('JXL_INTERNAL', 'aq:unsettled');
       next = path;
     }
     field = next ?? smoothField(fieldRaw(dist, field, blocks, options), levels, switchCost, active);
@@ -111,9 +111,9 @@ export function fieldRanges(d, doubt, field, blocks, {gamma, aimQuantile, min, m
   const count = activeCount(active, blocks);
   if (active) {
     checkActiveDistances(d, active);
-    if (!doubt || doubt.length !== blocks) throw fault('JXL_INTERNAL', 'Masked AQ needs one doubt per 8x8 cell.');
+    if (!doubt || doubt.length !== blocks) throw fault('JXL_INTERNAL', 'aq:doubts');
     for (let b = 0; b < blocks; b++) if (active[b] && (!Number.isFinite(doubt[b]) || doubt[b] < 0))
-      throw fault('JXL_INTERNAL', 'Masked AQ active distance doubts must be finite and nonnegative.');
+      throw fault('JXL_INTERNAL', 'aq:doubt-range');
   }
   if (active && (!count || zeroDistances(d, active))) {
     const point = new Float64Array(field.length);

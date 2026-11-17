@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 
 const hex = buffer => Array.from(new Uint8Array(buffer), n => n.toString(16).padStart(2, '0')).join('');
-const pictureError = message => Object.assign(new Error(`${message}; use the unmodified jobs/pictures from this release.`), {code: 'JXL_INPUT'});
+const pictureError = message => Object.assign(new Error(`${message}: use unmodified jobs/pictures`), {code: 'JXL_INPUT'});
 export const sha256 = async bytes => hex(await crypto.subtle.digest('SHA-256', bytes));
 
 export async function readPNG(bytes) {
   if (bytes.byteLength < 8 || ![137, 80, 78, 71, 13, 10, 26, 10].every((byte, i) => bytes[i] === byte))
-    throw pictureError('Self-test picture is not a PNG');
+    throw pictureError('picture: not PNG');
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), idat = [];
   let width = 0, height = 0, channels = 0;
   for (let at = 8; at + 8 <= bytes.length;) {
@@ -14,19 +14,19 @@ export async function readPNG(bytes) {
     if (type === 'IHDR') {
       width = view.getUint32(at + 8); height = view.getUint32(at + 12);
       const depth = body[8], color = body[9];
-      if (depth !== 8 || (color !== 2 && color !== 6) || body[12] !== 0) throw pictureError('Self-test picture must be 8-bit RGB or RGBA without interlace');
+      if (depth !== 8 || (color !== 2 && color !== 6) || body[12] !== 0) throw pictureError('picture: RGB8|RGBA8 noninterlaced');
       channels = color === 6 ? 4 : 3;
     } else if (type === 'IDAT') idat.push(body);
     at += 12 + length;
   }
-  if (!width || !height || !channels || !idat.length) throw pictureError('Self-test PNG is missing its image header or data');
+  if (!width || !height || !channels || !idat.length) throw pictureError('PNG: header/data missing');
   let raw;
   try {
     const stream = new Blob(idat).stream().pipeThrough(new DecompressionStream('deflate'));
     raw = new Uint8Array(await new Response(stream).arrayBuffer());
-  } catch (cause) { throw Object.assign(pictureError('Self-test PNG pixel data cannot be decompressed'), {cause}); }
+  } catch (cause) { throw Object.assign(pictureError('PNG: decompress failed'), {cause}); }
   const stride = width * channels;
-  if (raw.length !== (stride + 1) * height) throw pictureError('Self-test picture has the wrong data length');
+  if (raw.length !== (stride + 1) * height) throw pictureError('picture: wrong data length');
   const data = new Uint8Array(width * height * 4);
   let previous = new Uint8Array(stride);
   for (let y = 0; y < height; y++) {
@@ -72,12 +72,12 @@ export async function selftest({modules, manifest, picture, facts = {}, onStep =
     try {
       const bytes = new Uint8Array(await picture(item.file));
       entry.bytes = bytes.length; entry.sha256 = await sha256(bytes);
-      if (entry.sha256 !== item.sha256) throw pictureError(`${item.file} does not match its SHA-256`);
+      if (entry.sha256 !== item.sha256) throw pictureError(`${item.file}: sha256 mismatch`);
       if (item.kind === 'jpeg') inputs.set(item.id, {bytes, sha256: entry.sha256});
       else {
         const pixels = await readPNG(bytes);
         entry.width = pixels.width; entry.height = pixels.height; entry.rgbaSha256 = await sha256(pixels.data);
-        if (entry.rgbaSha256 !== item.rgbaSha256) throw pictureError(`${item.file} decodes to other pixels`);
+        if (entry.rgbaSha256 !== item.rgbaSha256) throw pictureError(`${item.file}: pixel mismatch`);
         inputs.set(item.id, {bytes, pixels, rgbaSha256: entry.rgbaSha256});
       }
     } catch (e) { entry.error = error(e); }
@@ -87,7 +87,7 @@ export async function selftest({modules, manifest, picture, facts = {}, onStep =
     const input = inputs.get(row.picture), out = {...row, status: 'fail'};
     record.rows.push(out);
     if (!input) { out.error = record.pictures.find(p => p.id === row.picture)?.error ??
-      {name: 'Error', code: 'JXL_INPUT', message: 'The picture is missing from the manifest; use the unmodified jobs/pictures from this release.'};
+      {name: 'Error', code: 'JXL_INPUT', message: 'picture: missing from manifest'};
       onRow(out); continue; }
     try {
       let result, t = now();
@@ -108,7 +108,7 @@ export async function selftest({modules, manifest, picture, facts = {}, onStep =
         t = now();
         const decoded = await modules.decode(result.bytes);
         out.decodeMs = now() - t;
-        if (decoded.width !== input.pixels.width || decoded.height !== input.pixels.height) throw Object.assign(new Error('Decoded size differs from the picture; attach the self-test results to a rapier-jxl issue.'), {code: 'JXL_INTERNAL'});
+        if (decoded.width !== input.pixels.width || decoded.height !== input.pixels.height) throw Object.assign(new Error('selftest: decoded size mismatch'), {code: 'JXL_INTERNAL'});
         out.decodedSha256 = await sha256(decoded.data);
         if (row.fidelity === 'exact') out.exact = out.decodedSha256 === input.rgbaSha256;
         if (row.fidelity === 'exact' && modules.nativeDecode) {

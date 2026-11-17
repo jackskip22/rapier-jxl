@@ -12,7 +12,7 @@ function blockTable(ctx, key, values) {
   let at = K.bases.get(key);
   if (at === undefined) {
     const v = values(); at = K.next; K.next += v.byteLength;
-    if (K.next > K.tables + 65536) fail('JPEG XL block tables exceed their region.');
+    if (K.next > K.tables + 65536) fail('block tables: over 64 KiB');
     K.bases.set(key, at); new v.constructor(ctx.kernels.buffer, at, v.length).set(v);
   }
   return at;

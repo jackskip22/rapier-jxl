@@ -86,7 +86,7 @@ export function* scoreSteps(provider, target, {candidates = CANDIDATES, effort =
         best.output = {...best.output, effort, bytes: journaling() ? yield* stage('candidate-file', write) : yield* write()};
       }
       if (!(best.output?.bytes instanceof Uint8Array) || best.output.effort !== effort)
-        throw fault('JXL_INTERNAL', 'A complete-output candidate must retain its measured file and writer effort.');
+        throw fault('JXL_INTERNAL', 'photo-search:candidate');
       candidate.size = best.output.bytes.length;
       if (!outputWinner || candidate.pass && !outputWinner.pass || candidate.pass === outputWinner.pass && candidate.size < outputWinner.size) {
         if (outputWinner) outputWinner.output = null;

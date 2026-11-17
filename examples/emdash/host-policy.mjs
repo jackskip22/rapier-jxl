@@ -8,15 +8,15 @@ import {nodeEstimate} from './node-admission.mjs';
 const WORKER_MEMORY_BYTES = 128 * 1024 * 1024;
 const fail = message => Object.assign(new Error(message), {code: 'JXL_OPTIONS'});
 const positive = (value, name) => {
-  if (!Number.isFinite(value) || value <= 0) throw fail(`Invalid ${name}; pass a positive number.`);
+  if (!Number.isFinite(value) || value <= 0) throw fail(`${name}: positive number`);
   return value;
 };
 
 // These are the deployed host's configured allowances. No account-plan guess or sandbox quota belongs here.
 export function hostOptions(value = {}) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw fail("Invalid limits; pass an object.");
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw fail("limits: object");
   if (Object.keys(value).some(key => !['cpuLimitMs', 'memoryLimitBytes'].includes(key)))
-    throw fail("Unknown limits; use cpuLimitMs and memoryLimitBytes.");
+    throw fail("limits: cpuLimitMs, memoryLimitBytes");
   return Object.fromEntries(Object.entries(value).map(([key, number]) => [key, positive(number, key)]));
 }
 
@@ -24,12 +24,12 @@ export function hostOptions(value = {}) {
 // is admitted against: that allowance, else on Node the host's real limit (cgroup v2 memory.max where set, else the
 // machine's), never a tighter one of our own (principle 10). `realMemory` is for tests.
 export function hostLimits(platform, options = {}, realMemory = nodeMemoryBytes) {
-  if (!['node', 'cloudflare'].includes(platform)) throw fail("Invalid platform; use node or cloudflare.");
+  if (!['node', 'cloudflare'].includes(platform)) throw fail("platform: node or cloudflare");
   const cpuLimitMs = options.cpuLimitMs === undefined ? null : positive(options.cpuLimitMs, 'cpuLimitMs');
   const requested = options.memoryLimitBytes === undefined ? null : positive(options.memoryLimitBytes, 'memoryLimitBytes');
-  if (requested !== null && !Number.isSafeInteger(requested)) throw fail("Invalid memoryLimitBytes; use a safe integer.");
+  if (requested !== null && !Number.isSafeInteger(requested)) throw fail("memoryLimitBytes: safe integer");
   if (platform === 'cloudflare' && requested > WORKER_MEMORY_BYTES)
-    throw fail('memoryLimitBytes exceeds the Worker isolate limit; use at most 128 MiB.');
+    throw fail('memoryLimitBytes: <=128MiB');
   const memoryLimitBytes = requested ?? (platform === 'cloudflare' ? WORKER_MEMORY_BYTES : null);
   return Object.freeze({platform, cpuLimitMs, memoryLimitBytes,
     memoryBytes: memoryLimitBytes ?? (platform === 'node' ? realMemory() : null)});

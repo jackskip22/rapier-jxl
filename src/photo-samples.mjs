@@ -9,7 +9,7 @@ const INTENTS = ['perceptual', 'relative', 'saturation', 'absolute'];
 
 const photoLimits = maxPixels => {
   if (maxPixels !== undefined && (!Number.isSafeInteger(maxPixels) || maxPixels < 1))
-    throw fault('JXL_INPUT', 'A photo domain pixel limit is a positive whole number.');
+    throw fault('JXL_INPUT', 'maxPixels: positive integer');
   return maxPixels === undefined ? undefined : {pixels: maxPixels, edge: EDGE};
 };
 export function photoDomain(picture, {maxPixels} = {}) {

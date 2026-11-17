@@ -73,7 +73,7 @@ export function* longTail(jpeg, end, file, depth, next, maxPixels, gainMap = nul
   }
   if (!out) { admitTail(tailLength); out = withTail(file, 0, tailLength, [yield* packTailSteps(jpeg.subarray(end))]); }
   if (!depth) {
-    if (!(yield* exactTail(jpeg, out, maxPixels))) throw fault('JXL_JPEG', 'JPEG: JPEG syntax cannot be reconstructed exactly');
+    if (!(yield* exactTail(jpeg, out, maxPixels))) throw fault('JXL_JPEG', 'syntax: not exact');
   }
   return out;
 }

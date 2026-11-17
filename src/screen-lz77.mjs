@@ -21,7 +21,7 @@ export function screenResiduals(plane, width, height, predictor) {
         else if (predictor === 5) {
           const tl = x && y ? plane[i - width - 1] : left, g = left + top - tl;
           pred = Math.max(Math.min(left, top), Math.min(Math.max(left, top), g));
-        } else throw fault('JXL_INTERNAL', 'screen LZ77 predictor ' + predictor);
+        } else throw fault('JXL_INTERNAL', 'screen-lz77:predictor ' + predictor);
       }
       out[i] = packSigned(plane[i] - pred);
     }

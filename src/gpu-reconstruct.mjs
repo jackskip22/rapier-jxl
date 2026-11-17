@@ -134,21 +134,21 @@ export class GpuMeasure {
   static async create(device, rgba, width, height, {tile = GR_CORE, signal} = {}) {
     s2RGBA(rgba, s2Dimensions(width, height));
     if (width < 8 || height < 8) return null;
-    if (!Number.isSafeInteger(tile) || tile < 64 || tile % 64) throw fault('JXL_INTERNAL', 'GPU metric tile must be a positive multiple of 64.');
+    if (!Number.isSafeInteger(tile) || tile < 64 || tile % 64) throw fault('JXL_INTERNAL', 'gpu-reconstruct:tile');
     const self = new GpuMeasure();
     return gpuSetup(async () => {
       const pipelines = await grPipelines(device);
-      if (self.destroyed) throw Object.assign(new Error('GPU metric owner was destroyed during setup.'), {code: 'JXL_GPU'});
+      if (self.destroyed) throw Object.assign(new Error('owner destroyed'), {code: 'JXL_GPU'});
       device.pushErrorScope('validation'); device.pushErrorScope('out-of-memory');
       let remaining = 2;
       try {
         self.init(device, rgba, width, height, tile, pipelines);
         const pixels = await GpuLinearPixels.create(device, width, height);
-        if (self.destroyed) { pixels.destroy(); throw Object.assign(new Error('GPU metric owner was destroyed during setup.'), {code: 'JXL_GPU'}); }
+        if (self.destroyed) { pixels.destroy(); throw Object.assign(new Error('owner destroyed'), {code: 'JXL_GPU'}); }
         self.pixels = pixels;
         remaining--; const memory = await device.popErrorScope();
         remaining--; const validation = await device.popErrorScope();
-        if (self.lost || memory || validation) throw Object.assign(new Error('GPU metric creation failed.'), {code: 'JXL_GPU', cause: memory ?? validation ?? self.lost});
+        if (self.lost || memory || validation) throw Object.assign(new Error('creation failed'), {code: 'JXL_GPU', cause: memory ?? validation ?? self.lost});
         return self;
       } catch (error) { self.destroy(); throw error; }
       finally { while (remaining-- > 0) await device.popErrorScope().catch(() => null); }
@@ -179,7 +179,7 @@ export class GpuMeasure {
 
   init(device, rgba, width, height, tile, pipelines) {
     const count = s2Dimensions(width, height);
-    if (width < 8 || height < 8) throw fault('JXL_DIMENSIONS', 'A GPU metric image needs at least 8 x 8 pixels.');
+    if (width < 8 || height < 8) throw fault('JXL_DIMENSIONS', 'dimensions: min 8 x 8');
     this.rgba = new Uint8Array(s2RGBA(rgba, count)); this.destroyed = false; this.measuring = false;
     this.stats = {gpuProbes: 0, failures: 0};
     const lossState = this.lossState = {info: null};
@@ -294,8 +294,8 @@ export class GpuMeasure {
   }
 
   async measure(image, want = {}) {
-    if (this.destroyed || this.lost) throw Object.assign(new Error('GPU metric device is unavailable.'), {code: 'JXL_GPU'});
-    if (this.measuring) throw fault('JXL_INTERNAL', 'GPU metric measures must be sequential.');
+    if (this.destroyed || this.lost) throw Object.assign(new Error('device unavailable'), {code: 'JXL_GPU'});
+    if (this.measuring) throw fault('JXL_INTERNAL', 'gpu-reconstruct:busy');
     this.measuring = true;
     const device = this.device;
     device.pushErrorScope('validation'); device.pushErrorScope('out-of-memory');
@@ -304,9 +304,9 @@ export class GpuMeasure {
       const out = await this.measureImage(image, want);
       remaining--; const memory = await device.popErrorScope();
       remaining--; const validation = await device.popErrorScope();
-      if (this.lost || memory || validation) throw Object.assign(new Error('GPU metric calculation failed.'), {code: 'JXL_GPU', cause: memory ?? validation ?? this.lost});
+      if (this.lost || memory || validation) throw Object.assign(new Error('calculation failed'), {code: 'JXL_GPU', cause: memory ?? validation ?? this.lost});
       for (const key of ['ssimulacra2', 'ssimulacra2Native'])
-        if (out[key] !== undefined && !Number.isFinite(out[key])) throw Object.assign(new Error('GPU metric result is not finite.'), {code: 'JXL_GPU'});
+        if (out[key] !== undefined && !Number.isFinite(out[key])) throw Object.assign(new Error('nonfinite result'), {code: 'JXL_GPU'});
       this.stats.gpuProbes++;
       return out;
     } catch (error) { this.stats.failures++; throw error; }
@@ -360,7 +360,7 @@ export class GpuMeasure {
       this.device.queue.submit([encoder.finish()]);
     }
     const linear = await this.pixels.readPlanes();
-    if (this.destroyed || this.lost) throw Object.assign(new Error('GPU metric device is unavailable.'), {code: 'JXL_GPU'});
+    if (this.destroyed || this.lost) throw Object.assign(new Error('device unavailable'), {code: 'JXL_GPU'});
     return this.measurePixels(linear, {ssimulacra2: wantS2});
   }
 

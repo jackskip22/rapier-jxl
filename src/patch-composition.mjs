@@ -19,26 +19,26 @@ const patchRead = bytes => readStill(bytes, {iccBits: patchICCSpan, tocPermutati
 function patchFrameSource(source, options, reference) {
   patchObject(source, reference ? 'Patch reference' : 'Patch base');
   if ((source.image === undefined) === (source.bytes === undefined))
-    throw fault('JXL_INPUT', 'Each patch source gives a planar image or encoded bytes.');
+    throw fault('JXL_INPUT', 'patch source: planar image|encoded bytes');
   let still, operation, width, height, upsampling, extras;
   if (source.bytes !== undefined) {
-    if (!(source.bytes instanceof Uint8Array) || !source.bytes.length) throw fault('JXL_INPUT', 'An encoded patch source is a nonempty Uint8Array.');
-    if (source.options !== undefined) throw fault('JXL_INPUT', 'Encoded patch sources already own their coding options.');
-    if (!reference && options.preview !== undefined) throw fault('JXL_INPUT', 'An encoded patch base already owns its preview.');
+    if (!(source.bytes instanceof Uint8Array) || !source.bytes.length) throw fault('JXL_INPUT', 'patch bytes: nonempty Uint8Array');
+    if (source.options !== undefined) throw fault('JXL_INPUT', 'encoded patch: no source options');
+    if (!reference && options.preview !== undefined) throw fault('JXL_INPUT', 'encoded base: no preview');
     still = patchRead(source.bytes);
-    if (still.frames.length !== 1) throw fault('JXL_INPUT', 'An encoded patch source is one independent frame.');
+    if (still.frames.length !== 1) throw fault('JXL_INPUT', 'encoded patch: single frame');
     const frame = still.frames[0];
     if (frame.type !== 0 && frame.type !== 3 || frame.x0 || frame.y0 || frame.width !== still.image.width || frame.height !== still.image.height ||
         frame.blending.some(blend => blend.mode !== 0) || frame.flags & 34)
-      throw fault('JXL_INPUT', 'A patch source is a full replacement without patch or LF references.');
-    if (reference && frame.passes !== 1) throw fault('JXL_INPUT', 'A saved patch reference has one coding pass.');
+      throw fault('JXL_INPUT', 'patch source: no patch/LF references');
+    if (reference && frame.passes !== 1) throw fault('JXL_INPUT', 'patch reference: one pass');
     ({width, height} = still.image); upsampling = frame.upsampling; extras = still.image.channelInfo;
   } else {
     patchObject(source.options ?? {}, 'Per-source patch options');
     for (const name of Object.keys(source.options ?? {}))
       if (!['groupSize', 'predictor', 'weightedPredictor', 'upsampling', 'transforms', 'squeeze', 'progressive', 'maxTransformBytes'].includes(name))
-        throw fault('JXL_INPUT', 'Per-source options are Modular coding and sampling.');
-    if (reference && source.options?.progressive) throw fault('JXL_INPUT', 'A saved patch reference has one coding pass.');
+        throw fault('JXL_INPUT', 'source options: Modular coding/sampling');
+    if (reference && source.options?.progressive) throw fault('JXL_INPUT', 'patch reference: one pass');
     const settings = {...options, ...source.options, preview: reference ? undefined : options.preview,
       progressive: reference ? false : source.options?.progressive ?? options.progressive};
     operation = encodeChannelsSteps(source.image, settings);
@@ -49,7 +49,7 @@ function patchFrameSource(source, options, reference) {
   admitSize(width, height);
   if (!reference && upsampling !== 1 && extras.some((channel, i) =>
     (still ? still.frames[0].extraUpsampling[i] : channel.factor) * channelPowers[channel.dimShift] !== upsampling))
-    throw fault('JXL_INPUT', 'Patches on an upsampled base need one sampling factor for all channels.');
+    throw fault('JXL_INPUT', 'upsampled base: uniform sampling factor');
   return {still, operation, width, height, upsampling, extras};
 }
 
@@ -60,22 +60,22 @@ function patchChannelBlend(value, fallback, extras) {
   const alpha = patchWhole(value.alpha ?? fallback.alpha ?? 0, Math.max(0, extras.length - 1), 'Patch alpha selector');
   const clamp = patchClamp(value.clamp ?? (mode >= 3 ? fallback.clamp : undefined), mode, 'Patch clamp');
   if (mode >= 4 && extras.length && extras[alpha].kind !== 0)
-    throw fault('JXL_INPUT', 'An alpha-dependent blend needs an alpha channel.');
+    throw fault('JXL_INPUT', 'blend: alpha channel required');
   return {mode, alpha, clamp};
 }
 
 function patchCompositionInput(input, options) {
   patchObject(input, 'Patch composition'); patchObject(options, 'Patch composition options');
-  if (options.level !== undefined && options.level !== 5 && options.level !== 10) throw fault('JXL_INPUT', 'JPEG XL level is 5 or 10.');
+  if (options.level !== undefined && options.level !== 5 && options.level !== 10) throw fault('JXL_INPUT', 'level: 5|10');
   if (options.preview !== undefined && (!options.preview || options.preview.maxDimension !== undefined))
-    throw fault('JXL_INPUT', 'A patch preview is a planar image of the result.');
+    throw fault('JXL_INPUT', 'preview: planar result image');
   const base = patchFrameSource(input.base, options, false), references = new Map();
   if (!Array.isArray(input.references) || !input.references.length || input.references.length > 4)
-    throw fault('JXL_INPUT', 'A patch composition has 1 to 4 reference images.');
+    throw fault('JXL_INPUT', 'patch references: 1-4');
   for (const source of input.references) {
     patchObject(source, 'Patch reference');
     const slot = patchWhole(source.slot, 3, 'Reference slot');
-    if (references.has(slot)) throw fault('JXL_INPUT', 'Every patch reference uses a distinct slot.');
+    if (references.has(slot)) throw fault('JXL_INPUT', 'patch references: distinct slots');
     references.set(slot, {...patchFrameSource(source, options, true), slot});
   }
   const width = Math.ceil(base.width / base.upsampling), height = Math.ceil(base.height / base.upsampling);
@@ -84,7 +84,7 @@ function patchCompositionInput(input, options) {
   const geometry = patchGeometry(input.patches, width, height, references, position => {
     const defaults = {alpha: firstAlpha}, color = patchChannelBlend(position, defaults, extras);
     if (position.extraBlending !== undefined && (!Array.isArray(position.extraBlending) || position.extraBlending.length !== extras.length))
-      throw fault('JXL_INPUT', 'extraBlending has one description for each extra channel.');
+      throw fault('JXL_INPUT', 'extraBlending: one per extra channel');
     const fallback = {blend: position.blend, alpha: color.alpha, clamp: color.clamp};
     const blending = [color, ...Array.from({length: extras.length}, (_, i) => patchChannelBlend(position.extraBlending?.[i] ?? {}, fallback, extras))];
     if ((color.mode === 4 || color.mode === 5) && extras[color.alpha]?.kind === 0)
@@ -92,12 +92,12 @@ function patchCompositionInput(input, options) {
     return {blending};
   }, referenceLimit, references.keys().next().value);
   if (geometry.placements * (extras.length + 1) > referenceLimit * 16)
-    throw fault('JXL_INPUT', 'Patch blending exceeds the decoder budget.');
+    throw fault('JXL_INPUT', 'patch blending: decoder budget exceeded');
   let reserve = 1, placed = 0;
   for (const group of geometry.groups) {
     placed += group.positions.length;
     if (reserve < placed) reserve = Math.min(reserve * 2, referenceLimit * 4);
-    if (reserve * (extras.length + 1) > referenceLimit * 16) throw fault('JXL_INPUT', 'Patch blending exceeds the decoder budget.');
+    if (reserve * (extras.length + 1) > referenceLimit * 16) throw fault('JXL_INPUT', 'patch blending: decoder budget exceeded');
   }
   patchCoverage(geometry.area, width * height, options.level ?? 10);
   return {base, references, ...geometry, codedPixels: width * height, requestedLevel: options.level,
@@ -123,10 +123,10 @@ function* patchCompositionEncode(config) {
   for (const reference of references.values()) {
     const source = reference.still;
     if (source.frames.length !== 1 || source.frames[0].passes !== 1 || compositionMetadataKey(source) !== key || source.frames[0].ycbcr !== frame.ycbcr)
-      throw fault('JXL_INPUT', 'Patch sources must share channel, color and transform metadata.');
+      throw fault('JXL_INPUT', 'patch sources: same channels/color/transforms');
   }
   if (!modular16 || compositePixels > 268435456) level = 10;
-  if (config.requestedLevel === 5 && level === 10) throw fault('JXL_INPUT', 'These patch sources require JPEG XL level 10.');
+  if (config.requestedLevel === 5 && level === 10) throw fault('JXL_INPUT', 'level: 10 required');
   patchCoverage(config.area, config.codedPixels, level);
   const steps = authoredPatchEntropy(config); let step;
   try { while (!(step = steps.next()).done) yield .85 + .05 * step.value; } finally { if (!step?.done) steps.return?.(); }

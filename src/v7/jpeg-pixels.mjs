@@ -5,7 +5,7 @@ import {configuredDecoder} from '../shown-picture.mjs';
 const JPEG_PIXELS = Symbol.for('rapier-jxl.jpeg.pixels');
 
 const reader = () => configuredDecoder()?.recompress?.[JPEG_PIXELS];
-const SETUP = 'Reading a JPEG here needs configureDecoder(decode, null, recompress) with decode from jpegxl/decode and recompress from jpegxl/jpeg, or pass RGBA pixels.';
+const SETUP = 'jpeg pixels: configureDecoder(decode, null, recompress); jpegxl/decode, jpegxl/jpeg or RGBA pixels';
 
 export function jpegPixelsReady() {
   if (typeof createImageBitmap !== 'function' && !reader()) throw fail('JXL_PLATFORM', SETUP);

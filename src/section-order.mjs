@@ -36,11 +36,11 @@ function groupRectangle(frame, group, details) {
 }
 
 export function admitRegion(frame, region, image) {
-  if (frame.dcLevel) throw invalid('Region delivery takes an image or preview frame; use sectionOrder for LF frames.');
-  if (!region || typeof region !== 'object' || Array.isArray(region)) throw invalid('region is {x, y, width, height} in canvas pixels.');
+  if (frame.dcLevel) throw invalid('region: not on LF frame; use sectionOrder');
+  if (!region || typeof region !== 'object' || Array.isArray(region)) throw invalid('region: {x, y, width, height}');
   for (const [key, minimum] of [['x', 0], ['y', 0], ['width', 1], ['height', 1]])
-    if (!Number.isSafeInteger(region[key]) || region[key] < minimum) throw invalid('region is whole nonnegative coordinates and positive size.');
-  if (region.x + region.width > image.width || region.y + region.height > image.height) throw invalid('region lies outside the canvas.');
+    if (!Number.isSafeInteger(region[key]) || region[key] < minimum) throw invalid('region: whole x, y >= 0; width, height >= 1');
+  if (region.x + region.width > image.width || region.y + region.height > image.height) throw invalid('region: outside canvas');
 }
 
 export function regionOrder(frame, region, strategy) {

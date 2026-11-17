@@ -47,7 +47,7 @@ function createOriginalsClient({request, change = () => {}}) {
   const accept = next => {
     check(control.signal);
     if (!next || typeof next.available !== 'boolean' || typeof next.enabled !== 'boolean' || typeof next.desired !== 'boolean'
-      || !['idle', 'restoring', 'archiving'].includes(next.phase)) throw new Error('The originals policy is unavailable.');
+      || !['idle', 'restoring', 'archiving'].includes(next.phase)) throw new Error('originals policy: unavailable');
     if (held && held.stamp !== originalsStamp(next)) held = null;
     if (wanted !== undefined && next.desired === wanted) wanted = undefined;
     value = next; report(); return value;
@@ -74,7 +74,7 @@ function createOriginalsClient({request, change = () => {}}) {
     load: () => serial('originals-load', async () => accept(await call('/originals-policy'))),
     tick: () => serial('originals-advance', async () => {accept(await call('/originals-policy')); return advance();}),
     save: enabled => serial('originals-save', async () => {
-      if (typeof enabled !== 'boolean') throw new TypeError('The originals policy is a boolean.');
+      if (typeof enabled !== 'boolean') throw new TypeError('originals policy: boolean');
       if (!value) accept(await call('/originals-policy'));
       if (enabled && !value.available || value.phase === 'restoring') return value;
       wanted = enabled; held = null;
@@ -164,7 +164,7 @@ async function browserConvert(item, selected, signal, update, widthsOnly = false
   // Queued work cannot claim a newer source or delivery decision with its older settings.
   if (item.generation && captured.generation !== item.generation || item.deliveryRevision && captured.deliveryRevision !== item.deliveryRevision
     || claimed && captured.mode !== 'copies')
-    throw Object.assign(new Error('The picture or delivery setting changed.'), {code: 'key_changed'});
+    throw Object.assign(new Error('picture/delivery: changed'), {code: 'key_changed'});
   if (!widthsOnly && !claimed) {
     // A fresh revision owns this main conversion; older upload work cannot publish over it.
     captured = {...captured, ...await post('/delivery', {...identity(item), generation: captured.generation,
@@ -189,16 +189,16 @@ async function browserConvert(item, selected, signal, update, widthsOnly = false
     {file, settings: workerSettings, archiveOriginals, ...(deliveryOnly && {deliveryOnly: true}), ...(widthsOnly && {widthsOnly: true, main})},
     {signal, progress: progress => update({progress: Math.max(0, Math.min(1, progress))})});
   if (deliveryOnly && [made.result, ...made.copies].some(result => result?.meetsTarget && result.browserVerification?.verified !== true))
-    throw Object.assign(new Error("Browser verifier did not verify this delivery; verify its original and candidate."), {code: 'JXL_INPUT'});
+    throw Object.assign(new Error("delivery: verify original/candidate"), {code: 'JXL_INPUT'});
   const bound = {...item, generation: captured.generation, deliveryRevision: captured.deliveryRevision};
   // A JPEG's exact archive is independent of its selected delivery goal. A missed Size limit must not discard it.
   let original;
   if (!widthsOnly && archiveOriginals && !deliveryOnly && made.original?.meetsTarget)
     original = await attach(`${ROUTE}/attach?${query(bound)}&source=${made.source}`, made.original, signal);
-  if (original?.stored === 'pending' && !original.job?.id) throw new Error('Archive publication returned no saved job');
+  if (original?.stored === 'pending' && !original.job?.id) throw new Error('archive publication: missing job');
   let result = {stored: widthsOnly ? 'sidecar' : 'original', reason: made.result?.reason?.code};
   if (!widthsOnly && archiveOriginals && !deliveryOnly && made.archiveIsDelivery) {
-    if (!original) throw new Error('The selected JPEG archive was not submitted.');
+    if (!original) throw new Error('JPEG archive: not submitted');
     result = original;
   } else if (!widthsOnly && made.result?.meetsTarget)
     result = await attach(`${ROUTE}/attach?${query(bound)}&source=${made.source}`, made.result, signal);
@@ -209,7 +209,7 @@ async function browserConvert(item, selected, signal, update, widthsOnly = false
   const submitted = [original, result, ...variants];
   const pending = submitted.find(reply => reply?.stored === 'pending' && reply.job?.id === stored.nativeJob?.id);
   if (pending) {
-    if (!pending.job?.id) throw new Error('Publication returned no saved job');
+    if (!pending.job?.id) throw new Error('publication: missing job');
     // A successful upload can still be awaiting its durable verification and publication.
     update({...measured(item, stored, pending.job), progress: null});
     return stored;
@@ -307,7 +307,7 @@ function useImages({settings, loaded, ready, background, importBusy, blocked}) {
         }
         const nextCursor = page.nextCursor;
         if (!nextCursor) break;
-        if (seenCursors.has(nextCursor) || nextCursor === cursor) throw new Error('Media pagination repeated a cursor');
+        if (seenCursors.has(nextCursor) || nextCursor === cursor) throw new Error('media page: repeated cursor');
         seenCursors.add(nextCursor); cursor = nextCursor;
       }
       check(control.signal);
@@ -481,7 +481,7 @@ function useImages({settings, loaded, ready, background, importBusy, blocked}) {
           records.current.set(row.id, admitted);
           enqueue({...current, ...measured(row, admitted)}, structuredClone(job.execution.settings), false, true, true);
         } else {
-          if (!job.id) throw new Error('Server conversion returned no saved job.');
+          if (!job.id) throw new Error('server conversion: missing job');
           jobViews.current.set(job.id, job);
           queue.update(row.id, {nativeJob: {id: job.id}, job, activity: job.done ? null : 'server'});
         }

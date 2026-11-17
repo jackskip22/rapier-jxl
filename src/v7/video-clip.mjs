@@ -7,7 +7,7 @@ const STEP = 1 / 60;
 const waitFor = (video, signal, ready) => new Promise((resolve, reject) => {
   let cleanup, settled = false, position = video.currentTime;
   const end = () => { settled = true; clearTimeout(timer); video.removeEventListener('timeupdate', advanced); video.removeEventListener('error', broken); signal?.removeEventListener('abort', stop); if (typeof cleanup === 'function') cleanup(); };
-  const broken = () => { end(); reject(fail('JXL_INPUT', `Video cannot be played: ${video.error?.message || 'the browser cannot decode it'}.`)); };
+  const broken = () => { end(); reject(fail('JXL_INPUT', `video play: ${video.error?.message || 'decode failed'}`)); };
   const stop = () => { end(); try { check(signal); } catch (error) { reject(error); } };
   const stalled = () => { end(); reject(fail('JXL_INPUT', "Video did not become ready or advance for 10 seconds; try another browser or pass decoded frames.")); };
   let timer = setTimeout(stalled, 10000);
@@ -24,9 +24,9 @@ const waitFor = (video, signal, ready) => new Promise((resolve, reject) => {
 const once = (video, type) => resolve => { video.addEventListener(type, resolve, {once: true}); return () => video.removeEventListener(type, resolve); };
 
 export async function readVideo(source, signal, read, maxPixels = Infinity, reserve) {
-  if (typeof document === 'undefined') throw fail('JXL_PLATFORM', "Video is read by a page; call encode on the page, or pass decoded frames {width, height, frames}.");
+  if (typeof document === 'undefined') throw fail('JXL_PLATFORM', "video: browser page or decoded frames {width, height, frames}");
   const video = document.createElement('video'), blob = !(source instanceof HTMLVideoElement);
-  if (!blob && source.srcObject) throw fail('JXL_INPUT', "Live video has no end; record it to a Blob first.");
+  if (!blob && source.srcObject) throw fail('JXL_INPUT', "live video: record Blob");
   const address = blob ? URL.createObjectURL(source) : source.currentSrc || source.src;
   let attached = false;
   const attach = () => {
@@ -35,7 +35,7 @@ export async function readVideo(source, signal, read, maxPixels = Infinity, rese
     video.setAttribute('aria-hidden', 'true');
     (document.body || document.documentElement).append(video); attached = true;
   };
-  if (!address) throw fail('JXL_INPUT', "Video has no source; set its src.");
+  if (!address) throw fail('JXL_INPUT', "video src: required");
   if (!blob && source.crossOrigin !== null) video.crossOrigin = source.crossOrigin;
   video.muted = true; video.playsInline = true; video.preload = 'auto';
   try {
@@ -48,8 +48,8 @@ export async function readVideo(source, signal, read, maxPixels = Infinity, rese
       await waitFor(video, signal, done => Promise.race([known, new Promise(resolve => setTimeout(resolve, 2000))]).then(done));
     }
     const length = video.duration;
-    if (!Number.isFinite(length)) throw fail('JXL_INPUT', "Video has no known length; save it as a finished file, or pass its decoded frames.");
-    if (!video.videoWidth || !video.videoHeight) throw fail('JXL_INPUT', "Video has no frames.");
+    if (!Number.isFinite(length)) throw fail('JXL_INPUT', "video duration: finished file or decoded frames");
+    if (!video.videoWidth || !video.videoHeight) throw fail('JXL_INPUT', "video frames: missing");
     let width, height, context;
     const frames = [];
     let last = null;
@@ -73,7 +73,7 @@ export async function readVideo(source, signal, read, maxPixels = Infinity, rese
         const fw = frame ? frame.visibleRect.width : video.videoWidth, fh = frame ? frame.visibleRect.height : video.videoHeight;
         if (!context) {
           width = fw; height = fh;
-          if (width * height > maxPixels) throw fail('JXL_DIMENSIONS', `Video is ${width} x ${height}, over maxPixels; pass a smaller clip or raise maxPixels.`);
+          if (width * height > maxPixels) throw fail('JXL_DIMENSIONS', `video ${width}x${height} px: exceeds maxPixels; resize or raise maxPixels`);
           room();
           context = new OffscreenCanvas(width, height).getContext('2d', {willReadFrequently: true});
           context.globalCompositeOperation = 'copy';
@@ -86,8 +86,8 @@ export async function readVideo(source, signal, read, maxPixels = Infinity, rese
         return {time, data};
       } catch (cause) {
         if (cause?.code === 'JXL_INPUT' || cause?.code === 'JXL_DIMENSIONS' || cause?.code === 'JXL_MEMORY') throw cause;
-        throw Object.assign(cause instanceof RangeError ? fail('JXL_MEMORY', `Not enough memory for frame ${frames.length + 1} of this video; pass a shorter or smaller clip.`)
-          : fail('JXL_INPUT', `Video cannot be read: ${cause?.message || cause}; serve it with CORS.`), {cause});
+        throw Object.assign(cause instanceof RangeError ? fail('JXL_MEMORY', `video frame ${frames.length + 1}: smaller clip`)
+          : fail('JXL_INPUT', `video read: ${cause?.message || cause}, CORS`), {cause});
       } finally { frame?.close(); }
     };
     let latest = -1;
@@ -98,7 +98,7 @@ export async function readVideo(source, signal, read, maxPixels = Infinity, rese
     let held = 0, pending = 0, pendingFrames = 0;
     const room = () => {
       const need = header + held + pending + frameBytes(frames.length + pendingFrames);
-      if (need > budget) throw fail('JXL_MEMORY', `Video is too long for this device's memory at ${width} x ${height} (${frames.length + pendingFrames} frames held); shorten or shrink the clip.`);
+      if (need > budget) throw fail('JXL_MEMORY', `video ${width}x${height}: memory ${frames.length + pendingFrames} frames, shorten`);
       reserve?.(need);
     };
     const push = ({time, data}) => {
@@ -139,7 +139,7 @@ export async function readVideo(source, signal, read, maxPixels = Infinity, rese
       for (const shown of found.reverse()) { pending -= shown.cost; pendingFrames--; push(shown); }
     };
     const sample = async () => {
-      if (!Number.isFinite(length)) throw fail('JXL_INPUT', "Video has no known length to step through; keep the page visible, or pass its decoded frames.");
+      if (!Number.isFinite(length)) throw fail('JXL_INPUT', "video duration: visible page or decoded frames");
       let at = -1, shortest = Infinity, checkedAgain = false;
       for (let index = 0; index * (STEP / 2) < length; index++) {
         const time = index * (STEP / 2);
@@ -185,7 +185,7 @@ export async function readVideo(source, signal, read, maxPixels = Infinity, rese
         const stopped = new Promise((resolve, reject) => { donePlay = () => resolve(null); stop = reject; });
         stopped.catch(() => {});
         const play = () => video.ended ? donePlay() : video.play().catch(error => video.ended && error?.name === 'AbortError' ? donePlay()
-          : stop(fail('JXL_INPUT', `Video cannot be played: ${error?.message || error}.`)));
+          : stop(fail('JXL_INPUT', `video play: ${error?.message || error}`)));
         let end = ended(), next = presented();
         play();
         for (let meta; (meta = await waitFor(video, signal, (done, refuse) => Promise.race([next, end, stopped]).then(done, refuse))); ) {
@@ -217,7 +217,7 @@ export async function readVideo(source, signal, read, maxPixels = Infinity, rese
         if (frameClock && Number.isFinite(length)) await between(at, length + 1e-3);
       }
     } else await sample();
-    if (!frames.length) throw fail('JXL_INPUT', "Video has no frames.");
+    if (!frames.length) throw fail('JXL_INPUT', "video frames: missing");
     const end = length;
     return {width, height, loops: 0, frames: frames.map(({data}, i) => ({data, duration: ((frames[i + 1]?.time ?? end) - frames[i].time) * 1000}))};
   } finally {

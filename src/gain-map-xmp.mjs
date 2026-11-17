@@ -13,7 +13,6 @@ function xmpText(jpeg) {
     if (marker !== 0xE1 || end > jpeg.length || end <= body) continue;
     const seg = jpeg.subarray(body, end).slice();
     if (primary === null && named(seg, XMP)) {
-      if (seg.length - XMP.length > MAX_XMP_BYTES) return '';
       primary = UTF8.decode(seg.subarray(XMP.length));
     } else if (named(seg, XMP_EXT) && seg.length >= XMP_EXT.length + 40) {
       const at = XMP_EXT.length;

@@ -21,7 +21,7 @@ function* span(steps, start, length) {
 function sharedAtlas(plan, forced) {
   let reference = null, used = false;
   const rejectSlot = still => {
-    if (still.frames.some(frame => frame.reference === 3)) throw fault('JXL_FRAMING', 'Reference slot 3 is already in use.');
+    if (still.frames.some(frame => frame.reference === 3)) throw fault('JXL_FRAMING', 'reference slot 3: in use');
   };
   return {
     *partSteps(coder, crop, width, height, job) {
@@ -37,7 +37,7 @@ function sharedAtlas(plan, forced) {
       writeImageHeader(header, width, height, shape.colour, shape.alpha, {colorSpace: coder.colorSpace});
       header.append({bytes: frame, at: frame.length, pending: 0, acc: 0});
       const candidate = header.finish(), still = readStill(candidate);
-      if (metadataKey(still) !== metadataKey(ordinary)) throw fault('JXL_FRAMING', 'The shared atlas needs the animation\'s exact color and channel metadata.');
+      if (metadataKey(still) !== metadataKey(ordinary)) throw fault('JXL_FRAMING', 'atlas: metadata mismatch');
       if (!forced && candidate.length >= baseline.length) { yield 1; return baseline; }
       if (!reference) {
         const pixels = new Uint8Array(plan.atlas.data);
@@ -53,13 +53,13 @@ function sharedAtlas(plan, forced) {
           {shape: atlasShape, colorSpace: coder.colorSpace}), .8, .2);
         reference = readStill(bytes); rejectSlot(reference);
         if (reference.frames.length !== 1 || metadataKey(reference) !== metadataKey(ordinary))
-          throw fault('JXL_FRAMING', 'The shared atlas needs one compatible Modular reference frame.');
+          throw fault('JXL_FRAMING', 'atlas: needs Modular reference frame');
       }
       used = true; yield 1; return candidate;
     },
     writeReferences(writer, canvas, key) {
       if (!used) return;
-      if (!reference || metadataKey(reference) !== key) throw fault('JXL_FRAMING', 'The atlas and animation metadata differ.');
+      if (!reference || metadataKey(reference) !== key) throw fault('JXL_FRAMING', 'atlas: metadata mismatch');
       writeStillFrame(writer, reference, reference.frames[0], {canvas, frameType: 2, reference: 3, beforeColorTransform: true});
     },
     get used() { return used; }
@@ -71,7 +71,7 @@ function* atlasAnimationSteps(animation, search, mode, supplied) {
   if (mode === 'off') return baseline;
   if ((yield .45) && mode !== 'force') { yield 1; return baseline; }
   if (!animation.samples.native8 || animation.quality !== 100) {
-    if (mode === 'force') throw fault('JXL_INPUT', 'A forced shared atlas needs exact straight RGBA8.');
+    if (mode === 'force') throw fault('JXL_INPUT', 'atlasMode force: exact straight RGBA8 required');
     yield 1; return baseline;
   }
   let plan = supplied;
@@ -81,14 +81,14 @@ function* atlasAnimationSteps(animation, search, mode, supplied) {
   }
   if ((yield .55) && mode !== 'force') { yield 1; return baseline; }
   if (!plan) {
-    if (mode === 'force') throw fault('JXL_INPUT', 'No repeated atlas rectangles meet the search bounds.');
+    if (mode === 'force') throw fault('JXL_INPUT', 'atlas: no repeated rectangles');
     yield 1; return baseline;
   }
   const shared = sharedAtlas(plan, mode === 'force');
   let candidate;
   try { candidate = yield* span(animationSteps(animation, shared, false), .55, .45); }
   catch (error) { if (mode === 'force' || error.code !== 'JXL_SIZE') throw error; }
-  if (mode === 'force' && !shared.used) throw fault('JXL_INPUT', 'No atlas placement fits a displayed animation rectangle.');
+  if (mode === 'force' && !shared.used) throw fault('JXL_INPUT', 'atlas: no placement fits');
   yield 1;
   return candidate && shared.used && (mode === 'force' || candidate.length < baseline.length) ? candidate : baseline;
 }
@@ -102,10 +102,10 @@ export function encodeAnimationAtlas(animation, options) {
 export function encodeAnimationAtlasSteps(animation, options = {}, captures = false) {
   useMeasuredSearch(searchV6);
   const admitted = admitAnimation(animation, options), mode = options.atlasMode ?? 'auto', search = atlasSearchOptions(options.atlasSearch);
-  if (!['auto', 'force', 'off'].includes(mode)) throw fault('JXL_INPUT', 'atlasMode is auto, force or off.');
-  if (options.progress !== undefined && typeof options.progress !== 'function') throw fault('JXL_INPUT', 'progress is a function.');
+  if (!['auto', 'force', 'off'].includes(mode)) throw fault('JXL_INPUT', 'atlasMode: auto, force or off');
+  if (options.progress !== undefined && typeof options.progress !== 'function') throw fault('JXL_INPUT', 'progress: function');
   if (mode === 'force' && (!admitted.samples.native8 || admitted.quality !== 100))
-    throw fault('JXL_INPUT', 'A forced shared atlas needs exact straight RGBA8.');
+    throw fault('JXL_INPUT', 'atlasMode force: exact straight RGBA8 required');
   const supplied = options.atlas === undefined ? null : validateAtlasPlan(admitted, options.atlas);
   const iterator = (function* () {
     const steps = atlasAnimationSteps(admitted, search, mode, supplied);

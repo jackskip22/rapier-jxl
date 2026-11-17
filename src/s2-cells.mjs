@@ -15,7 +15,7 @@ const OPSIN = [0.30, 0.622, 0.078, 0.23, 0.692, 0.078, 0.24342268924547819, 0.20
 export const S2C_MIX = Int32Array.from({length: 9}, (_, j) => j % 3 < 2 ? Math.round(OPSIN[j] * 16384)
   : 16384 - Math.round(OPSIN[j - 2] * 16384) - Math.round(OPSIN[j - 1] * 16384));
 export const S2C_TAPS = (() => { const t = Array.from(gaussianTaps(), v => Math.round(v * 65536)); t[N] += 65536 - t.reduce((a, b) => a + b, 0); return Int32Array.from(t); })();
-const check = (v, bound, what) => { if (!(Math.abs(v) < bound)) throw fault('JXL_INTERNAL', `s2-cells: ${what} ${v} outside ${bound}`); return v; };
+const check = (v, bound, what) => { if (!(Math.abs(v) < bound)) throw fault('JXL_INTERNAL', `s2-cells:${what} ${v}`); return v; };
 let ROOTS = null;
 const cbrt = v => { const {lo, hi} = ROOTS ??= cbrtTables(); return v < 65536 ? lo[v] : hi[Math.floor((v + 8) * 0.0625)]; };
 
@@ -39,7 +39,7 @@ function linPlanes([R0, G0, B0], n) {
     const s = root((M6 * r + M7 * g + M8 * b + 256 >> 9) + IS_BIAS) - BLACK, x = 7 * (l - m) + 440530 >> 8, y = l + m + 21228 >> 9, z = 2 * s - (l + m) + 1153690 >> 9;
     X[i] = x; Y[i] = y; B[i] = z; bad |= x >= 8192 || x <= -8192 || y >= 8192 || y <= -8192 || z >= 8192 || z <= -8192;
   }
-  if (bad) throw fault('JXL_INTERNAL', 's2-cells: XYB outside 8192');
+  if (bad) throw fault('JXL_INTERNAL', 's2-cells:xyb-1');
   return [X, Y, B];
 }
 
@@ -53,7 +53,7 @@ function rgbaChannel(rgba, n, c, out) {
     const v = c === 1 ? l + m + 21228 >> 9 : c === 0 ? 7 * (l - m) + 440530 >> 8 : 2 * (root((t6[r] + t7[g] + t8[b] + 256 >> 9) + IS_BIAS) - BLACK) - (l + m) + 1153690 >> 9;
     out[i] = v; bad |= v >= 8192 || v <= -8192;
   }
-  if (bad) throw fault('JXL_INTERNAL', 's2-cells: XYB outside 8192');
+  if (bad) throw fault('JXL_INTERNAL', 's2-cells:xyb-2');
   return out;
 }
 
@@ -97,7 +97,7 @@ function plane(pic, n, c, out) {
 
 function kernelSums(P1, P2, w, h, sh, stride, acc1, acc4, span = null) {
   if (!kernelHooks.s2cChannel?.(P1, P2, w, h, sh, stride, acc1, acc4, span, S2C_TAPS))
-    throw fault('JXL_WASM', 'The SSIMULACRA 2 cell kernel is unavailable.');
+    throw fault('JXL_WASM', 'WebAssembly SIMD required');
 }
 
 export function s2CellStream(reference, width, height) {
@@ -168,7 +168,7 @@ export function s2CellStream(reference, width, height) {
   return {
     push(y, n, rgba) {
       const top = held[0];
-      if (y !== top.have) throw fault('JXL_INTERNAL', 'A streamed cell map takes its rows in order.');
+      if (y !== top.have) throw fault('JXL_INTERNAL', 's2-cells:order');
       top.b = join(top.b, {y, rows: n, rgba}, width, Math.max(0, top.next - N));
       top.have += n;
       const part = [];

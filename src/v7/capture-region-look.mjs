@@ -7,6 +7,7 @@ import {gammaPicture, padPhotoCrop, photoRegionTarget} from '../photo-region-sco
 import {gammaRGBA} from '../photo-output.mjs';
 import {ssimulacra2} from '../ssimulacra2.mjs';
 import {MEASURED_EFFORT} from '../effort-level.mjs';
+import {usesRegionalCalibration} from '../photo-quality-table.mjs';
 import {PAGE_MARGIN} from './page-margin.mjs';
 
 export const LOOK_FROM = 2;
@@ -266,7 +267,8 @@ function lookReading(q, data, width, rect, reading, colorSpace = 'srgb', frame =
     ? Math.min(SLOPE_HIGH[0] + (SLOPE_HIGH[1] - SLOPE_HIGH[0]) * t, Math.max(SLOPE_LOW[0] + (SLOPE_LOW[1] - SLOPE_LOW[0]) * t, dot(x, B)))
     : six ? SA6_SLOPE[0] + SA6_SLOPE[1] * t + SA6_SLOPE[2] * dot(x, B) : SA_SLOPE[0] + SA_SLOPE[1] * u + SA_SLOPE[2] * dot(x, B) + SA_SLOPE[3] * u * u;
   const z = frame || six && pageMargin ? Z : six ? SA6_Z : SA_Z, zt = frame || six ? t : Math.max(0, u);
-  const margin = (z[0] + (z[1] - z[0]) * zt) * Math.max(SIGMA_FLOOR, Math.exp(dot(x, S)) - 0.25) + EXTRA;
+  const monoGuard = usesRegionalCalibration(q) && spectrum.cs < 0.035 && q < 0.86 ? 2.8 * (0.86 - q) / 0.16 : 0;
+  const margin = (z[0] + (z[1] - z[0]) * zt) * Math.max(SIGMA_FLOOR, Math.exp(dot(x, S)) - 0.25) + EXTRA + monoGuard;
   const top = bend < 0 ? -slope / (2 * bend) : Infinity;
   const clears = d => { const e = Math.min(d, top); return s0 + offset + e * slope + e * e * bend >= target + margin; };
   const [landed, d] = (() => {

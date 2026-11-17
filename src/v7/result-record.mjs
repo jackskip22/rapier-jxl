@@ -12,7 +12,7 @@ export const targetMiss = message => ({code: 'JXL_TARGET', message});
 export function originalByteFacts(originalBytes, bytes) {
   if (originalBytes === undefined) return {};
   if (!Number.isSafeInteger(originalBytes) || originalBytes < 1)
-    throw fail('JXL_INTERNAL', "Invalid image result; report the input and options.");
+    throw fail('JXL_INTERNAL', 'result-record:image-3');
   return {originalBytes, ...(bytes && {largerThanOriginal: bytes.byteLength > originalBytes})};
 }
 function settingsOf(options) {
@@ -25,12 +25,12 @@ function dimensionsOf(bytes, reference, options) {
   if (jpegDisplay && options.format === 'jpeg' && bytes) return jpegDisplay(bytes, PIXELS);
   const original = reference instanceof Uint8Array ? reference : null;
   if (jpegDisplay && isJPEG(original)) return jpegDisplay(original, PIXELS);
-  throw fail('JXL_INTERNAL', "Invalid image result; report the input and options.");
+  throw fail('JXL_INTERNAL', 'result-record:image-1');
 }
 function sourceOf(source) {
   if (source === undefined || source === null) return null;
   if (!source || !['bytes', 'pixels'].includes(source.kind) || typeof source.digest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(source.digest))
-    throw fail('JXL_INTERNAL', "Invalid result source identity; report the input and options.");
+    throw fail('JXL_INTERNAL', 'result-record:source');
   return {kind: source.kind, digest: source.digest};
 }
 
@@ -50,11 +50,11 @@ export async function imageResultRecord(bytes, reference, options = {}, describe
   const fidelity = fidelityOf(settings.fidelity, missed);
   const format = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ ? 'jxl' : settings.format ?? 'jxl';
   if (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__) && !['jxl', 'jpeg', 'png'].includes(format))
-    throw fail('JXL_INTERNAL', "Invalid result format; report the input and options.");
+    throw fail('JXL_INTERNAL', 'result-record:format');
   const size = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__
     ? {width: reference?.width, height: reference?.height} : dimensionsOf(bytes, reference, {...settings, format});
   if (!Number.isSafeInteger(size.width) || !Number.isSafeInteger(size.height) || size.width < 1 || size.height < 1)
-    throw fail('JXL_INTERNAL', "Invalid image result; report the input and options.");
+    throw fail('JXL_INTERNAL', 'result-record:image-2');
   const source = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ ? null : sourceOf(options.source);
   const originalBytes = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ ? undefined : settings.originalBytes;
   const description = {...size, format, source, fidelity,
@@ -64,12 +64,12 @@ export async function imageResultRecord(bytes, reference, options = {}, describe
   if (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__) && missed)
     return {bytes: null, ...description, kept: null, meetsTarget: false, measurements: [], ...(typeof settings.usedWebGPU === 'boolean' && {usedWebGPU: settings.usedWebGPU}), reason: targetMiss(missWords(fidelity))};
   const output = options.owned ? bytes : copyBytes(bytes);
-  if (!(output instanceof Uint8Array) || !output.length) throw fail('JXL_INTERNAL', "Incomplete output file; report the input and options.");
+  if (!(output instanceof Uint8Array) || !output.length) throw fail('JXL_INTERNAL', 'result-record:empty');
   const kept = settings.kept ?? (fidelity === 'exact' ? 'pixels' : 'lossy');
-  if (!PRESERVATION.includes(kept)) throw fail('JXL_INTERNAL', "Invalid image result; report the input and options.");
+  if (!PRESERVATION.includes(kept)) throw fail('JXL_INTERNAL', 'result-record:image-4');
   const {measurements, reason: target} = describe(settings, fidelity, kept);
   const reason = fidelity === 'exact' && kept === 'lossy'
-    ? targetMiss("The output does not preserve every sample; use fidelity 'exact'.") : target;
+    ? targetMiss("lossy output: does not preserve exact samples") : target;
   check(signal);
   return {bytes: output, ...description, kept, meetsTarget: !reason, measurements,
     ...(reason && {reason}), ...(settings.otherDecoders && {otherDecoders: settings.otherDecoders}),
@@ -79,7 +79,7 @@ export async function imageResultRecord(bytes, reference, options = {}, describe
 
 function noMeasurements(settings) {
   if (settings.measurements !== undefined && (!Array.isArray(settings.measurements) || settings.measurements.length))
-    throw fail('JXL_INTERNAL', "Invalid output measurement; report the input and options.");
+    throw fail('JXL_INTERNAL', 'result-record:measurements');
   return {measurements: []};
 }
 const captureResultFidelity = value => captureFidelity(value) === 0 ? 'exact' : value;
@@ -93,7 +93,7 @@ function base64Bytes(bytes) {
 }
 export function resultJSON(result) {
   const record = own(result, PIXELS, Number.MAX_SAFE_INTEGER);
-  if (record === null || typeof record !== 'object') throw fail('JXL_INPUT', "Invalid result; pass the object returned by encode().");
+  if (record === null || typeof record !== 'object') throw fail('JXL_INPUT', 'result: encode() record');
   return {...record, bytes: record.bytes === null ? null : base64Bytes(copyBytes(record.bytes)), byteEncoding: 'base64'};
 }
 

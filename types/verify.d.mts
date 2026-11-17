@@ -2,10 +2,10 @@ import type {AnimationInput, CaptureRect, ErrorCode, ImageInput, JobOptions, Rea
 import type {Digest, ImageResult, ResultOtherDecoders, ResultSource, ResultTransform} from './result.mjs';
 
 /** In a browser, direct verify() reads 8-bit sRGB and Display P3 stills with the browser's own JPEG XL decode, and direct
- * verify() in Node, Deno and Bun needs nothing. Resumable verification (rapier-jxl/resumable with verify), and elsewhere
+ * verify() in Node, Deno and Bun needs nothing. Resumable verification (jpegxl/resumable with verify), and elsewhere
  * for recompressed JPEGs, row sources, animations, more than 8 bits, float samples or
- * other color, the one setup step is `configureDecoder(decode, restore)` with rapier-jxl/decode's decode and
- * rapier-jxl/jpeg's restore; without it those refuse JXL_PLATFORM, naming it. One call serves every rapier-jxl module. */
+ * other color, the one setup step is `configureDecoder(decode, restore)` with jpegxl/decode's decode and
+ * jpegxl/jpeg's restore; without it those refuse JXL_PLATFORM, naming it. One call serves every jpegxl module. */
 export function configureDecoder(decode: PackageDecode | null, restore?: JpegRestore | null, recompress?: JpegRecompress | null): void;
 
 /** Explicit exact-pixel obligations in output-canvas coordinates, snapshotted at verify().
@@ -53,7 +53,7 @@ interface VerificationDetails {
   /** The record's measurements this verification did not measure (another metric, or a region): not vouched for. */
   readonly unchecked?: readonly {readonly metric: 'ssimulacra2' | 'max-error'; readonly region?: {readonly x: number; readonly y: number; readonly width: number; readonly height: number}}[];
   /** 'without-noise': the record's look was searched with the noise off, and `score` is the file's noise-off reading
-   * (rapier-jxl/decode's alone gives it); 'pu21': a high dynamic range file read through PU21. */
+   * (jpegxl/decode's alone gives it); 'pu21': a high dynamic range file read through PU21. */
   readonly view?: 'pu21' | 'without-noise';
   /** Beside a noise-off reading: the decoded reading, what every decoder shows. */
   readonly decodedScore?: number;

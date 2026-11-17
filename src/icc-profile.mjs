@@ -4,23 +4,23 @@ import {journaling, journalTool} from './step-journal.mjs';
 
 function profileHeader(profile, level, expectedColorSpace) {
   if (expectedColorSpace !== undefined && !['rgb', 'gray', 'cmyk'].includes(expectedColorSpace))
-    throw fault('JXL_INPUT', 'The expected ICC source space is rgb, gray or cmyk.');
-  if (!(profile instanceof Uint8Array) || profile.length < 132) throw fault('JXL_INPUT', 'ICC is a Uint8Array of the complete profile.');
+    throw fault('JXL_INPUT', 'expectedColorSpace: rgb, gray or cmyk');
+  if (!(profile instanceof Uint8Array) || profile.length < 132) throw fault('JXL_INPUT', 'icc: Uint8Array');
   if (level === 5 && profile.length > 4 * 1024 * 1024)
-    throw fault('JXL_SIZE', 'Level 5 ICC profiles are at most 4 MiB.');
+    throw fault('JXL_SIZE', 'level 5 icc: max 4 MiB');
   const head = profile.subarray(0, 132), view = new DataView(head.buffer, head.byteOffset, head.byteLength);
   const signature = at => String.fromCharCode(head[at], head[at + 1], head[at + 2], head[at + 3]);
-  if (view.getUint32(0) !== profile.length || signature(36) !== 'acsp') throw fault('JXL_INPUT', 'ICC size or profile signature is invalid.');
+  if (view.getUint32(0) !== profile.length || signature(36) !== 'acsp') throw fault('JXL_INPUT', 'icc header');
   const space = signature(16), connection = signature(20);
   if (!['RGB ', 'XYZ ', 'Lab ', 'Luv ', 'YCbr', 'Yxy ', 'HSV ', 'HLS ', 'CMY ', '3CLR', 'GRAY'].includes(space) &&
       !(space === 'CMYK' && expectedColorSpace === 'cmyk'))
-    throw fault('JXL_INPUT', 'ICC needs RGB, GRAY, or CMYK with a planar-channel context.');
+    throw fault('JXL_INPUT', 'icc space: RGB, GRAY or planar CMYK');
   if (expectedColorSpace !== undefined && space !== {rgb: 'RGB ', gray: 'GRAY', cmyk: 'CMYK'}[expectedColorSpace])
-    throw fault('JXL_INPUT', 'The ICC space does not match the channels.');
-  if (space === 'CMYK' && level === 5) throw fault('JXL_INPUT', 'CMYK and black channels need level 10.');
-  if (connection !== 'XYZ ' && connection !== 'Lab ') throw fault('JXL_INPUT', 'ICC profile connection space must be XYZ or Lab.');
+    throw fault('JXL_INPUT', 'icc space: channel mismatch');
+  if (space === 'CMYK' && level === 5) throw fault('JXL_INPUT', 'CMYK: needs level 10');
+  if (connection !== 'XYZ ' && connection !== 'Lab ') throw fault('JXL_INPUT', 'icc PCS: XYZ or Lab');
   const count = view.getUint32(128);
-  if (count > Math.floor((profile.length - 132) / 12)) throw fault('JXL_INPUT', 'ICC tag table exceeds the profile.');
+  if (count > Math.floor((profile.length - 132) / 12)) throw fault('JXL_INPUT', 'icc tag table: truncated');
   return {count, end: 132 + count * 12, channels: space === 'GRAY' ? 1 : 3};
 }
 function profileTags(profile, head, first, last) {
@@ -28,7 +28,7 @@ function profileTags(profile, head, first, last) {
   for (let i = 0; i < last - first; i++) {
     const at = i * 12, offset = view.getUint32(at + 4), length = view.getUint32(at + 8);
     if (offset < head.end || offset % 4 || length < 8 || offset > profile.length || length > profile.length - offset)
-      throw fault('JXL_INPUT', 'ICC tag data is unaligned or outside the profile.');
+      throw fault('JXL_INPUT', 'icc tag extent');
   }
 }
 export function inspectICC(profile, level, expectedColorSpace) {
@@ -60,31 +60,31 @@ export class IccCursor {
   constructor(bytes, requireValue, at = 0, end = bytes.length, read = windowBytes(bytes)) {
     this.bytes = bytes; this.require = requireValue; this.at = at; this.end = end; this.read = read;
   }
-  byte() { this.require(this.at < this.end, 'Truncated JPEG XL ICC stream.'); return this.read(this.at++); }
+  byte() { this.require(this.at < this.end, 'truncated ICC stream'); return this.read(this.at++); }
   integer() {
     let value = 0, factor = 1;
     for (let n = 0; n < 10; n++) {
       const byte = this.byte();
-      if (n === 9) this.require(byte < 2, 'Invalid JPEG XL ICC integer.');
+      if (n === 9) this.require(byte < 2, 'ICC varint');
       value += (byte & 127) * factor;
-      this.require(Number.isSafeInteger(value), 'JPEG XL ICC integer exceeds the safe range.');
+      this.require(Number.isSafeInteger(value), 'ICC varint: too large');
       if (!(byte & 128)) return value;
       factor *= 128;
     }
-    this.require(false, 'Invalid JPEG XL ICC integer.');
+    this.require(false, 'ICC varint');
   }
   take(length) {
-    this.require(length >= 0 && length <= this.end - this.at, 'Truncated JPEG XL ICC payload.');
+    this.require(length >= 0 && length <= this.end - this.at, 'truncated ICC payload');
     return Array.from({length}, () => this.byte());
   }
 }
 
 export function iccInverse(requireValue, limit) {
   function start(bytes, maxBytes = 268435456, read = windowBytes(bytes)) {
-    requireValue(bytes instanceof Uint8Array && bytes.length >= 2, 'Invalid JPEG XL ICC bytes.');
+    requireValue(bytes instanceof Uint8Array && bytes.length >= 2, 'ICC bytes');
     const preamble = new IccCursor(bytes, requireValue, 0, bytes.length, read), size = preamble.integer(), commandSize = preamble.integer();
     limit(size, maxBytes);
-    requireValue(commandSize <= bytes.length - preamble.at, 'Invalid JPEG XL ICC command size.');
+    requireValue(commandSize <= bytes.length - preamble.at, 'ICC command size');
     const state = {size, at: 0, commandAt: preamble.at, commandEnd: preamble.at + commandSize,
       dataAt: preamble.at + commandSize, phase: 'count', done: false};
     const data = new IccCursor(bytes, requireValue, state.dataAt, bytes.length, read), out = new Uint8Array(Math.min(size, 128)), prediction = new Uint8Array(128);
@@ -106,7 +106,7 @@ export function iccInverse(requireValue, limit) {
   }
   function end(state, length) {
     requireValue(state.at === state.size && state.commandAt === state.commandEnd && state.dataAt === length,
-      'JPEG XL ICC stream has trailing or missing bytes.');
+      'ICC stream length');
     state.done = true;
   }
   function part(bytes, previous, history, input = windowBytes(bytes)) {
@@ -116,10 +116,10 @@ export function iccInverse(requireValue, limit) {
     const pending = (values, next) => { state.pending = Uint8Array.from(values); state.pendingAt = 0; state.next = next; state.phase = 'pending'; };
     const fields = () => {
       const values = [];
-      const append = p => { requireValue(p.length <= state.size - state.at - values.length, 'JPEG XL ICC command exceeds output size.'); values.push(...p); };
+      const append = p => { requireValue(p.length <= state.size - state.at - values.length, 'ICC command: over output size'); values.push(...p); };
       const text = name => append(Array.from(name, c => c.charCodeAt(0)));
       const word = value => {
-        requireValue(Number.isInteger(value) && value >= 0 && value <= 0xffffffff, 'JPEG XL ICC field exceeds 32 bits.');
+        requireValue(Number.isInteger(value) && value >= 0 && value <= 0xffffffff, 'ICC field: over 32 bits');
         append([value >>> 24, value >>> 16, value >>> 8, value]);
       };
       return {values, append, text, word};
@@ -160,7 +160,7 @@ export function iccInverse(requireValue, limit) {
         if (state.phase === 'tags') {
           const tag = command & 63;
           if (!tag) { state.phase = 'commands'; continue; }
-          requireValue(tag <= 20, 'Invalid JPEG XL ICC tag command.');
+          requireValue(tag <= 20, 'ICC tag command');
           const name = tag === 1 ? String.fromCharCode(...data.take(4)) : TAGS[tag - 2];
           const offset = command & 64 ? commands.integer() : state.previousStart + state.previousSize;
           const length = command & 128 ? commands.integer() : XYZ_TAGS.has(name) ? 20 : state.previousSize;
@@ -172,21 +172,21 @@ export function iccInverse(requireValue, limit) {
           let width = command === 2 ? 2 : command === 3 ? 4 : 1, order = 0, stride = 0;
           if (command === 4) {
             const flags = commands.byte(); width = (flags & 3) + 1; order = (flags >>> 2) & 3;
-            requireValue(width !== 3 && order !== 3, 'Invalid JPEG XL ICC predictor.');
+            requireValue(width !== 3 && order !== 3, 'ICC predictor');
             stride = flags & 16 ? commands.integer() : width;
-            requireValue(stride >= width && state.at && ((state.at - 1) >>> 2) >= stride && commands.at < commands.end, 'Invalid JPEG XL ICC prediction stride.');
+            requireValue(stride >= width && state.at && ((state.at - 1) >>> 2) >= stride && commands.at < commands.end, 'ICC prediction stride');
           }
           const length = commands.integer();
-          if (command === 4) requireValue(length <= state.size - state.at, 'JPEG XL ICC predictor exceeds output size.');
-          requireValue(length >= 0 && length <= bytes.length - data.at, 'Truncated JPEG XL ICC payload.');
-          if (command !== 4) requireValue(length <= state.size - state.at, 'JPEG XL ICC command exceeds output size.');
+          if (command === 4) requireValue(length <= state.size - state.at, 'ICC predictor: over output size');
+          requireValue(length >= 0 && length <= bytes.length - data.at, 'truncated ICC payload');
+          if (command !== 4) requireValue(length <= state.size - state.at, 'ICC command: over output size');
           state.run = {source: data.at, length, width, order, stride, predict: command === 4, i: 0, shuffled: 0, column: 0, height: Math.ceil(length / width)};
           data.at += length; state.phase = 'run';
         } else {
           const f = fields();
           if (command === 10) { f.text('XYZ '); f.word(0); f.append(data.take(12)); }
           else if (command >= 16 && command < 24) { f.text(TYPES[command - 16]); f.word(0); }
-          else requireValue(false, 'Invalid JPEG XL ICC command.');
+          else requireValue(false, 'ICC command');
           pending(f.values, 'commands');
         }
       }

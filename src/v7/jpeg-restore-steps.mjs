@@ -7,9 +7,9 @@ import {jpegDisplayDimensionsSteps} from './preparation-jpeg.mjs';
 
 const record = value => value && typeof value === 'object' && !Array.isArray(value);
 export const keys = (options, taken) => {
-  if (!record(options)) throw fail('JXL_OPTIONS', "Invalid JPEG options; pass a plain record.");
+  if (!record(options)) throw fail('JXL_OPTIONS', "jpeg options: plain record");
   const unknown = Object.keys(options).find(key => !taken.includes(key));
-  if (unknown) throw fail('JXL_OPTIONS', `Unknown resumable JPEG option: ${unknown}; use ${taken.join(", ")}.`);
+  if (unknown) throw fail('JXL_OPTIONS', `unknown option: ${unknown}; use ${taken.join(", ")}`);
 };
 
 export const restoreSteps = Object.freeze({id: 'jpeg:restore', prepare: null, eager: false,

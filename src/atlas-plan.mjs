@@ -6,18 +6,18 @@ import {admitAnimation} from './animation-frames.mjs';
 const MAX_POSITIONS = 262144, MAX_CANDIDATES = 65536;
 const pixel = (data, at) => data[at] + data[at + 1] * 256 + data[at + 2] * 65536 + data[at + 3] * 16777216;
 const whole = (value, min, max, name) => {
-  if (!Number.isInteger(value) || value < min || value > max) throw fault('JXL_INPUT', name + ' is an integer from ' + min + ' to ' + max + '.');
+  if (!Number.isInteger(value) || value < min || value > max) throw fault('JXL_INPUT', name + ': integer ' + min + '-' + max);
   return value;
 };
 
 export function atlasSearchOptions(options = {}) {
-  if (!options || typeof options !== 'object' || Array.isArray(options)) throw fault('JXL_INPUT', 'Atlas search options are an object.');
+  if (!options || typeof options !== 'object' || Array.isArray(options)) throw fault('JXL_INPUT', 'options: object');
   const strategy = options.strategy ?? 'auto', tileSize = options.tileSize ?? 16;
-  if (!['auto', 'glyphs', 'tiles'].includes(strategy)) throw fault('JXL_INPUT', 'Atlas strategy is auto, glyphs or tiles.');
-  if (![4, 8, 16, 32, 64].includes(tileSize)) throw fault('JXL_INPUT', 'Atlas tileSize is 4, 8, 16, 32 or 64.');
-  return {strategy, tileSize, maxEntries: whole(options.maxEntries ?? 256, 1, 4096, 'Atlas maxEntries'),
-    maxPixels: whole(options.maxPixels ?? 262144, 16, 1048576, 'Atlas maxPixels'),
-    minUses: whole(options.minUses ?? 2, 2, 65536, 'Atlas minUses')};
+  if (!['auto', 'glyphs', 'tiles'].includes(strategy)) throw fault('JXL_INPUT', 'strategy: auto, glyphs or tiles');
+  if (![4, 8, 16, 32, 64].includes(tileSize)) throw fault('JXL_INPUT', 'tileSize: 4, 8, 16, 32 or 64');
+  return {strategy, tileSize, maxEntries: whole(options.maxEntries ?? 256, 1, 4096, 'maxEntries'),
+    maxPixels: whole(options.maxPixels ?? 262144, 16, 1048576, 'maxPixels'),
+    minUses: whole(options.minUses ?? 2, 2, 65536, 'minUses')};
 }
 
 function equalRect(a, aw, ax, ay, b, bw, bx, by, width, height) {
@@ -131,32 +131,32 @@ export function* discoverAtlasSteps(animation, options) {
 
 export function validateAtlasPlan(animation, plan) {
   if (!plan || typeof plan !== 'object' || !plan.atlas || typeof plan.atlas !== 'object')
-    throw fault('JXL_INPUT', 'An animation atlas plan supplies atlas and patches.');
+    throw fault('JXL_INPUT', 'plan: {atlas, patches}');
   const {data, width, height} = plan.atlas;
   admitPixels(data, width, height);
-  if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray)) throw fault('JXL_INPUT', 'An animation atlas uses RGBA8 samples.');
-  if (width * height > 1048576) throw fault('JXL_SIZE', 'An animation atlas has at most 1,048,576 pixels.');
+  if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray)) throw fault('JXL_INPUT', 'atlas: RGBA8');
+  if (width * height > 1048576) throw fault('JXL_SIZE', 'atlas: max 1048576 pixels');
   if (!Array.isArray(plan.patches) || !plan.patches.length || plan.patches.length > 4096)
-    throw fault('JXL_INPUT', 'An animation atlas has 1 to 4096 source rectangles.');
+    throw fault('JXL_INPUT', 'patches: 1-4096 items');
   const byData = new Map(), budget = 4 * animation.width * animation.height * animation.frames.length;
   let total = 0, compared = 0;
   for (const entry of plan.patches) {
-    if (!entry || typeof entry !== 'object') throw fault('JXL_INPUT', 'An atlas patch is an object.');
-    const sx = whole(entry.sourceX, 0, width - 1, 'Atlas sourceX'), sy = whole(entry.sourceY, 0, height - 1, 'Atlas sourceY');
-    const w = whole(entry.width, 1, Math.min(width - sx, animation.width), 'Atlas patch width');
-    const h = whole(entry.height, 1, Math.min(height - sy, animation.height), 'Atlas patch height');
+    if (!entry || typeof entry !== 'object') throw fault('JXL_INPUT', 'patch: object');
+    const sx = whole(entry.sourceX, 0, width - 1, 'sourceX'), sy = whole(entry.sourceY, 0, height - 1, 'sourceY');
+    const w = whole(entry.width, 1, Math.min(width - sx, animation.width), 'patch width');
+    const h = whole(entry.height, 1, Math.min(height - sy, animation.height), 'patch height');
     if (!Array.isArray(entry.positions) || !entry.positions.length || entry.positions.length > MAX_POSITIONS - total)
-      throw fault('JXL_INPUT', 'Atlas positions: 1 to 262144.');
+      throw fault('JXL_INPUT', 'positions: 1-262144 items');
     total += entry.positions.length;
     compared += w * h * entry.positions.length;
-    if (compared > budget) throw fault('JXL_INPUT', 'Atlas positions cover over 4 times the animation; use fewer or smaller rectangles.');
+    if (compared > budget) throw fault('JXL_INPUT', 'positions: over 4x area');
     for (const position of entry.positions) {
-      if (!position || typeof position !== 'object') throw fault('JXL_INPUT', 'An atlas position supplies frame, x and y.');
-      const frame = whole(position.frame, 0, animation.frames.length - 1, 'Atlas frame');
-      const x = whole(position.x, 0, animation.width - w, 'Atlas x'), y = whole(position.y, 0, animation.height - h, 'Atlas y');
+      if (!position || typeof position !== 'object') throw fault('JXL_INPUT', 'position: {frame, x, y}');
+      const frame = whole(position.frame, 0, animation.frames.length - 1, 'frame');
+      const x = whole(position.x, 0, animation.width - w, 'x'), y = whole(position.y, 0, animation.height - h, 'y');
       const source = animation.frames[frame].data;
       if (!equalRect(source, animation.width, x, y, data, width, sx, sy, w, h))
-        throw fault('JXL_INPUT', 'An atlas placement differs from its source frame.');
+        throw fault('JXL_INPUT', 'placement: frame mismatch');
       const list = byData.get(source) ?? [];
       list.push({sx, sy, w, h, x, y}); byData.set(source, list);
     }
@@ -204,6 +204,6 @@ export function atlasCropPlan(plan, crop, width, height, job, alpha) {
 
 export function buildAnimationAtlas(animation, options) {
   const admitted = admitAnimation(animation, {}), search = atlasSearchOptions(options);
-  if (!admitted.samples.native8) throw fault('JXL_INPUT', 'Atlas discovery uses straight RGBA8 samples.');
+  if (!admitted.samples.native8) throw fault('JXL_INPUT', 'samples: straight RGBA8');
   return complete(discoverAtlasSteps(admitted, search));
 }

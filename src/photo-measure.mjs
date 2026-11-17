@@ -37,7 +37,7 @@ export function cpuMeasure(rgba, width, height, {reconstruct, bandedRGBA, rgbaOu
   const s2Of = want => {
     const arithmetic = want.arithmetic ?? 'binary64';
     if (arithmetic === 'binary64') return s2;
-    if (arithmetic !== 'libjxl') throw new Error('SSIMULACRA2 arithmetic is binary64 or libjxl.');
+    if (arithmetic !== 'libjxl') throw new Error('arithmetic: binary64 or libjxl');
     return s2libjxl ??= ssimulacra2Reference(rawReference, width, height, {cacheBytes: 0, immutable: true, arithmetic});
   };
   let cellRef = null;
@@ -52,7 +52,7 @@ export function cpuMeasure(rgba, width, height, {reconstruct, bandedRGBA, rgbaOu
   };
   const wants = want => {
     const wantMaps = want.p !== undefined || want.margin !== undefined;
-    if (want.butteraugli === true) throw fault('JXL_INTERNAL', 'This measurer has no Butteraugli.');
+    if (want.butteraugli === true) throw fault('JXL_INTERNAL', 'photo-measure:butteraugli');
     return {wantMaps};
   };
   const outputScore = (out, outputs, reference = s2) => {
@@ -62,8 +62,8 @@ export function cpuMeasure(rgba, width, height, {reconstruct, bandedRGBA, rgbaOu
   };
   const measure = (image, want = {}) => {
     const {ssimulacra2: wantS2 = false} = want, {wantMaps} = wants(want);
-    if (destroyed) throw fault('JXL_INTERNAL', 'CPU measurer is destroyed.');
-    if (busy) throw fault('JXL_INTERNAL', 'CPU measurer is already in use.');
+    if (destroyed) throw fault('JXL_INTERNAL', 'photo-measure:destroyed-1');
+    if (busy) throw fault('JXL_INTERNAL', 'photo-measure:busy-1');
     busy = true;
     let lin = null;
     try {
@@ -91,8 +91,8 @@ export function cpuMeasure(rgba, width, height, {reconstruct, bandedRGBA, rgbaOu
   };
   measure.banded = (image, want = {}) => {
     const {ssimulacra2: wantS2 = false} = want, {wantMaps} = wants(want);
-    if (destroyed) throw fault('JXL_INTERNAL', 'CPU measurer is destroyed.');
-    if (busy) throw fault('JXL_INTERNAL', 'CPU measurer is already in use.');
+    if (destroyed) throw fault('JXL_INTERNAL', 'photo-measure:destroyed-2');
+    if (busy) throw fault('JXL_INTERNAL', 'photo-measure:busy-2');
     busy = true;
     let lin = null;
     try {
@@ -109,8 +109,8 @@ export function cpuMeasure(rgba, width, height, {reconstruct, bandedRGBA, rgbaOu
     }
   };
   measure.withReference = consume => {
-    if (destroyed) throw fault('JXL_INTERNAL', 'CPU measurer is destroyed.');
-    if (busy) throw fault('JXL_INTERNAL', 'CPU measurer is already in use.');
+    if (destroyed) throw fault('JXL_INTERNAL', 'photo-measure:destroyed-3');
+    if (busy) throw fault('JXL_INTERNAL', 'photo-measure:busy-3');
     busy = true;
     try { return consume(rawReference()); }
     finally { currentReference = null; busy = false; }
@@ -122,7 +122,7 @@ export function cpuMeasure(rgba, width, height, {reconstruct, bandedRGBA, rgbaOu
     inputBytes: {get: () => inputBytes},
   });
   measure.destroy = () => {
-    if (busy) throw fault('JXL_INTERNAL', 'CPU measurer is already in use.');
+    if (busy) throw fault('JXL_INTERNAL', 'photo-measure:busy-4');
     s2?.release(); s2libjxl?.release(); s2libjxl = null;
     destroyed = true; cellRef = null; photo = null; inputBytes = 0; reference = null; currentReference = null; s2 = null;
     reconstruct = null; bandedRGBA = null; rgbaOutputs = null; streamedScores = null;
