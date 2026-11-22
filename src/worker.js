@@ -1,6 +1,6 @@
 // The rapier-jxl test page and its anonymous results. The page posts one record when a run is complete; GET reads them
 // back. Origin check, JSON only, size cap, schema validation, D1, rate limit. No IP address, name or account is stored.
-const MAX = 200000, LIMIT = 12;
+const MAX = 400000, LIMIT = 12;
 const headers = {'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff',
   'referrer-policy':'no-referrer'};
 const answer = (body,status=200) => new Response(JSON.stringify(body),{status,headers});
