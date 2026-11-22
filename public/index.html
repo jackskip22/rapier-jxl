@@ -23,6 +23,7 @@
 <p id="sent">Sent when it finishes: the facts above, timings and file fingerprints. Never a picture, a name or an account.</p>
 <form id="form">
   <button id="run" class="main" type="submit">Start</button>
+  <p><button id="cold" type="button">Cold and second encode (about 2 minutes)</button></p>
   <p><button id="gpu" type="button">GPU test only (about an hour, stop any time)</button></p>
 </form>
 <div id="running" hidden>
@@ -33,7 +34,7 @@
 <p><button id="retry" type="button" hidden>Try again</button><button id="download" type="button" hidden>Download results</button><button id="copy" type="button" hidden>Copy results</button></p>
 <pre id="view" hidden></pre>
 <script>
-const RELEASE = {"version":"8.4.1","modules":{"index":{"bytes":1683679,"sha256":"7ad60cde81e81eb7efa01b36baba70e3b6de1422086e89ad8e23297a02c80327"},"jpeg":{"bytes":580446,"sha256":"6d79978ebb2d50f414b3afa7efbfb11bc104b455af0a0756deb0e8194a5f3be5"},"decode":{"bytes":373949,"sha256":"f6d9ac32161f39fd5b8719f081896ced754b7b041e05430ee346347991662f48"},"verify":{"bytes":253392,"sha256":"56cd5f84d015d39cd81ca5c4c2df8d15b6c1f53880e913cf653733686fb18a59"}},"gpuPicture":{"id":"photo-1280","file":"photo-1280.png","width":1280,"height":960,"sha256":"b7edc36bb7056a10065112d089841eb357f7c76b31a57bdf66623b45c3cb931b","rgbaSha256":"42a839fff1db3cfb9094c2ea03a5908d5e7885814c24a4d8395813d6f06adfa4","source":"Reduced from camera-iphone16.jpg"},"selftest":{"version":"8.4.1","pictures":[{"id":"screenshot","file":"screenshot-mdn.png","kind":"png","width":1920,"height":1080,"sha256":"82cffc076e2219801170d63799974f5e5dfc56096a838ef492305560fc9affa6","rgbaSha256":"9592f20763f9d63414ed0141fab50e74f623b7417c8eb0d9d4005704411b6379","source":"Canvas API page of MDN Web Docs, captured in Chrome 155","sourceURL":"https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API","author":"Mozilla Contributors","license":"CC BY-SA 2.5","licenseURL":"https://creativecommons.org/licenses/by-sa/2.5/"},{"id":"photo","file":"photo-kodim23.png","kind":"png","width":768,"height":512,"sha256":"090880a1dbce96bb7d1db3f583fb830e98ef4de67542cbad2185a1111e04e928","rgbaSha256":"c3b1252504d7aaf3c6b6b12bc037aefae380ec4574b565fb84ce6d99e9158b36","source":"Kodak Lossless True Color Image Suite, kodim23","sourceURL":"https://r0k.us/graphics/kodak/","author":"Eastman Kodak","license":"Released by Eastman Kodak for unrestricted use","licenseURL":"https://r0k.us/graphics/kodak/"},{"id":"camera","file":"camera-iphone16.jpg","kind":"jpeg","width":4032,"height":3024,"sha256":"7166b35f92c1168221cf0211fa755c9495d1883a50b5d7dab8b6bd758da2c5af","source":"Juvenile Atlantic Ghost Crab along the beach in Kitty Hawk, North Carolina; iPhone 16 original","sourceURL":"https://commons.wikimedia.org/wiki/File:2026-09-10_0953_Juvenile_Atlantic_Ghost_Crab_along_the_beach_in_Kitty_Hawk,_North_Carolina.jpg","author":"TheDetroitGeographer","license":"CC0 1.0","licenseURL":"https://creativecommons.org/publicdomain/zero/1.0/"}],"expected":{"screenshot-exact-e1":"8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f","screenshot-exact-e3":"d8112da419eb84001d99385588bcb2db8e779ec32d31b5271b25c18d0edbfb62","screenshot-exact-e7":"94c52c56f288eff936bd46190f078045c645c1d1ec82d1696080379975ef2cc4","screenshot-lossy-e1":"8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f","screenshot-lossy-e3":"d8112da419eb84001d99385588bcb2db8e779ec32d31b5271b25c18d0edbfb62","screenshot-lossy-e7":"94c52c56f288eff936bd46190f078045c645c1d1ec82d1696080379975ef2cc4","photo-exact-e1":"6078d53ef2d1fed193c1439a2a4d7024f570b43cf8606ca39cd05440e3752f8f","photo-exact-e3":"7618cd16bf8dc70dacda68089a5914dc37168024098a858883aca426a4441ac9","photo-exact-e7":"d8aadaad21e33c59346b59efcf6e9c997481f3b5c441771595cc08d9f083066a","photo-lossy-e1":"f9d713cdc266049b15efa97000b6f2704d01591103b219ea99e87015b538174a","photo-lossy-e3":"f9d713cdc266049b15efa97000b6f2704d01591103b219ea99e87015b538174a","photo-lossy-e7":"d9716857a74ca0f7be27bbef8e0f7e27d8e84d1c11adf2933b5dc1f1577e7632","camera-recompress-e1":"cae0589ba93c15e26ccd4efa366c61d5aa5412bb1cb4fdf0c0039e34f81dc39e","camera-recompress-e3":"6c72c67d8a1aa9acb262dc560efd65f29d9fa3a559c629d00d0ff90cdb9d6b8d","camera-recompress-e7":"7f0f2aaa769e836d1695545dfef4e18ab2c061708c689e8f14a16869c5f03b89"}}};
+const RELEASE = {"version":"8.4.1","modules":{"index":{"bytes":1688085,"sha256":"2a93419529edcd2c7f5acf2a542cac27ef4233114bc329b14174c7a3fbc60134"},"jpeg":{"bytes":580550,"sha256":"a7243503f6f24ba746e27d96f40979b6ab46ee42291e6ad1570d61844df7340f"},"decode":{"bytes":373949,"sha256":"32c2d889838f8a6911ca249587a86fe68112d0fe4a82f59c1f49b3e4378b43a7"},"verify":{"bytes":253392,"sha256":"059efa7574efe59407b0513578e529c1ec98012317949f959c79e2ee3a3175f1"}},"gpuPicture":{"id":"photo-1280","file":"photo-1280.png","width":1280,"height":960,"sha256":"b7edc36bb7056a10065112d089841eb357f7c76b31a57bdf66623b45c3cb931b","rgbaSha256":"42a839fff1db3cfb9094c2ea03a5908d5e7885814c24a4d8395813d6f06adfa4","source":"Reduced from camera-iphone16.jpg"},"selftest":{"version":"8.4.1","pictures":[{"id":"screenshot","file":"screenshot-mdn.png","kind":"png","width":1920,"height":1080,"sha256":"82cffc076e2219801170d63799974f5e5dfc56096a838ef492305560fc9affa6","rgbaSha256":"9592f20763f9d63414ed0141fab50e74f623b7417c8eb0d9d4005704411b6379","source":"Canvas API page of MDN Web Docs, captured in Chrome 155","sourceURL":"https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API","author":"Mozilla Contributors","license":"CC BY-SA 2.5","licenseURL":"https://creativecommons.org/licenses/by-sa/2.5/"},{"id":"photo","file":"photo-kodim23.png","kind":"png","width":768,"height":512,"sha256":"090880a1dbce96bb7d1db3f583fb830e98ef4de67542cbad2185a1111e04e928","rgbaSha256":"c3b1252504d7aaf3c6b6b12bc037aefae380ec4574b565fb84ce6d99e9158b36","source":"Kodak Lossless True Color Image Suite, kodim23","sourceURL":"https://r0k.us/graphics/kodak/","author":"Eastman Kodak","license":"Released by Eastman Kodak for unrestricted use","licenseURL":"https://r0k.us/graphics/kodak/"},{"id":"camera","file":"camera-iphone16.jpg","kind":"jpeg","width":4032,"height":3024,"sha256":"7166b35f92c1168221cf0211fa755c9495d1883a50b5d7dab8b6bd758da2c5af","source":"Juvenile Atlantic Ghost Crab along the beach in Kitty Hawk, North Carolina; iPhone 16 original","sourceURL":"https://commons.wikimedia.org/wiki/File:2026-09-10_0953_Juvenile_Atlantic_Ghost_Crab_along_the_beach_in_Kitty_Hawk,_North_Carolina.jpg","author":"TheDetroitGeographer","license":"CC0 1.0","licenseURL":"https://creativecommons.org/publicdomain/zero/1.0/"}],"expected":{"screenshot-exact-e1":"8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f","screenshot-exact-e3":"d8112da419eb84001d99385588bcb2db8e779ec32d31b5271b25c18d0edbfb62","screenshot-exact-e7":"94c52c56f288eff936bd46190f078045c645c1d1ec82d1696080379975ef2cc4","screenshot-lossy-e1":"8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f","screenshot-lossy-e3":"d8112da419eb84001d99385588bcb2db8e779ec32d31b5271b25c18d0edbfb62","screenshot-lossy-e7":"94c52c56f288eff936bd46190f078045c645c1d1ec82d1696080379975ef2cc4","photo-exact-e1":"6078d53ef2d1fed193c1439a2a4d7024f570b43cf8606ca39cd05440e3752f8f","photo-exact-e3":"7618cd16bf8dc70dacda68089a5914dc37168024098a858883aca426a4441ac9","photo-exact-e7":"d8aadaad21e33c59346b59efcf6e9c997481f3b5c441771595cc08d9f083066a","photo-lossy-e1":"f9d713cdc266049b15efa97000b6f2704d01591103b219ea99e87015b538174a","photo-lossy-e3":"f9d713cdc266049b15efa97000b6f2704d01591103b219ea99e87015b538174a","photo-lossy-e7":"d9716857a74ca0f7be27bbef8e0f7e27d8e84d1c11adf2933b5dc1f1577e7632","camera-recompress-e1":"cae0589ba93c15e26ccd4efa366c61d5aa5412bb1cb4fdf0c0039e34f81dc39e","camera-recompress-e3":"6c72c67d8a1aa9acb262dc560efd65f29d9fa3a559c629d00d0ff90cdb9d6b8d","camera-recompress-e7":"7f0f2aaa769e836d1695545dfef4e18ab2c061708c689e8f14a16869c5f03b89"}}};
 function selftestCore() {
 // selftest.mjs begin
 // rapier-jxl self-test: encodes, decodes and verifies a fixed set of real pictures and returns one results record.
@@ -249,8 +250,8 @@ async function workerMain() {
     try {
       const manifest = build ? {...release.selftest, expected: {}} : release.selftest;
       const selftestTotal = gpuOnly ? 0 : selftestRows(manifest).reduce((sum, row) => sum + selftestCost(row.id), 0);
-      const GPU_VIEW = [['photo', [3, 4, 6]], ['camera', [CAMERA_COST, CAMERA_COST * 2, CAMERA_COST * 4]]];
-      const benchTotal = gpuOnly ? 1 + GPU_VIEW.reduce((sum, [, c]) => sum + 3 * c.reduce((a, b) => a + b, 0), 0) : 1 + 2 * 3 * 3 + 3 * CAMERA_COST;
+      const GPU_VIEW = gpuOnly === 'cold' ? [['photo', [3]]] : [['photo', [3, 4, 6]], ['camera', [CAMERA_COST, CAMERA_COST * 2, CAMERA_COST * 4]]];
+      const benchTotal = gpuOnly === 'cold' ? 8 : gpuOnly ? 1 + GPU_VIEW.reduce((sum, [, c]) => sum + 3 * c.reduce((a, b) => a + b, 0), 0) : 1 + 2 * 3 * 3 + 3 * CAMERA_COST;
       postMessage({type: 'plan', total: selftestTotal + benchTotal});
       const [{encode}, {recompress, restore}, {decode}, verifier] = gpuOnly ? [await load('index'), {}, {}, {}] : [await load('index'), await load('jpeg'), await load('decode'), await load('verify')];
       const native = !gpuOnly && typeof createImageBitmap === 'function' && typeof OffscreenCanvas === 'function' ? nativeDecode : undefined;
@@ -372,6 +373,19 @@ async function workerMain() {
             ...(errors[route] && {error: errors[route]})}});
         }
       }
+      if (gpuOnly === 'cold') {
+        // Cold: the first encode of this tab (the row above, default route). Second: the same call again in the same tab. Then required and off.
+        const ref = first.sha256;
+        for (const [id, route] of [['photo-second-encode', 'default'], ['photo-required', 'required'], ['photo-off', 'false']]) {
+          step(id, 1);
+          const row = {id: 'gpu-' + id, status: 'pass', width: gpuPic.width, height: gpuPic.height, effort: 7, quality: 80, webgpu: route === 'default' ? 'default' : route === 'false' ? false : 'required'};
+          try { const r = await timed(gpuImage, 7, route, 80); Object.assign(row, {bytes: r.bytes, sha256: r.sha256, medianMs: r.ms, runs: [r], gpuObserved: observed && r.gpuSubmissions > 0, softwareAdapter: software(), sameBytes: r.sha256 === ref}); if (row.sameBytes === false) row.status = 'fail'; }
+          catch (e) { row.status = e.code === 'JXL_WEBGPU' ? 'unavailable' : 'fail'; row.error = error(e); }
+          postMessage({type: 'row', row});
+        }
+        postMessage({type: 'done'});
+        return;
+      }
       if (gpuOnly) {
         // The GPU view: efforts 7, 8 and 9 at quality 80, each route once, on the 1,280 px photo and then the 12 MP camera photo.
         const GPU_ORDER = () => ['false', 'required', 'default'];
@@ -426,7 +440,7 @@ async function deviceFacts() {
   return facts;
 }
 const gpuName = facts => facts.webgpu?.available ? ([facts.webgpu.vendor, facts.webgpu.architecture, facts.webgpu.description].filter(Boolean).join(' ') || 'WebGPU adapter').slice(0, 160) : 'none';
-const BUILD = "7ad60cde81e8";
+const BUILD = "2a93419529ed";
 const ENDPOINT = '/api/jxl-results';
 let worker, workerURL, timer, report, reportStart, runId = 0, runUuid, wake, started, plan = 0, finishedUnits = 0, lastCost = 0, trace = [], facts, posted = false;
 const minutes = ms => { const m = Math.ceil(ms / 60000); return m <= 1 ? 'Less than a minute left' : `About ${m} minutes left`; };
@@ -449,10 +463,10 @@ function viewText() {
     `Adapters: ${(report.machine.gpuAdapters || []).map(a => [a.vendor, a.architecture, a.device, a.description].filter(Boolean).join(' ') + (a.isFallbackAdapter ? ' (software)' : '')).join(' | ') || gpuName(report.machine)}`];
   const named = (row, run) => { const t = trace.find(x => x.row === row.id && x.sha256 === run.sha256 && x.ms === run.ms); return t?.stages; };
   for (const row of report.rows.filter(r => r.id === 'photo-first-encode' || r.id.startsWith('gpu-'))) {
-    if (row.id === 'photo-first-encode') { lines.push('', `First encode (warm-up, 1,280 px e7 q80 default): ${row.error ? 'error ' + row.error.message : ms(row.ms) + ', GPU submits ' + row.gpuSubmissions}`); const g = row.gpuCalls; if (g) lines.push('  GPU calls: ' + stageLine(g)); continue; }
+    if (row.id === 'photo-first-encode') { lines.push('', `${report.mode === 'cold' ? 'COLD first encode in a fresh tab' : 'First encode (warm-up)'}, 1,280 px e7 q80 default: ${row.error ? 'error ' + row.error.message : ms(row.ms) + ', GPU submits ' + row.gpuSubmissions}`); const g = row.gpuCalls; if (g) lines.push('  GPU calls: ' + stageLine(g)); continue; }
     const route = row.webgpu === false ? 'WebGPU off' : row.webgpu === 'required' ? 'WebGPU required' : 'WebGPU default';
     const run = row.runs?.[0];
-    lines.push('', `${row.width}x${row.height} e${row.effort} q${row.quality} ${route}: ${row.error ? row.status + ' (' + (row.error.code || row.error.name) + ': ' + row.error.message + ')' : `${ms(row.medianMs)}, ${row.bytes?.toLocaleString('en-US')} bytes, ${row.status}`}`);
+    lines.push('', `${report.mode === 'cold' ? row.id.replace('gpu-', '') + ': ' : ''}${row.width}x${row.height} e${row.effort} q${row.quality} ${route}: ${row.error ? row.status + ' (' + (row.error.code || row.error.name) + ': ' + row.error.message + ')' : `${ms(row.medianMs)}, ${row.bytes?.toLocaleString('en-US')} bytes, ${row.status}`}`);
     if (row.sha256) lines.push(`  SHA-256 ${row.sha256}${row.sameBytes === false ? ' (DIFFERS from another route)' : ''}`);
     if (run) {
       lines.push(`  GPU used: ${row.gpuObserved ? 'yes, ' + run.gpuSubmissions + ' submits' : 'no'}${row.softwareAdapter ? ' (software adapter)' : ''}${row.speedup ? ', ' + row.speedup.toFixed(2) + 'x of CPU' : ''}`);
@@ -474,7 +488,7 @@ async function send() {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const response = await fetch(ENDPOINT, {method: 'POST', headers: {'content-type': 'application/json'}, body, credentials: 'omit', referrerPolicy: 'no-referrer'});
-      if (response.ok) { posted = true; $('run').hidden = true; $('gpu').hidden = true; $('progress').textContent = 'Done. Thank you: you can close this page.'; return; }
+      if (response.ok) { posted = true; $('run').hidden = true; $('gpu').hidden = true; $('cold').hidden = true; $('progress').textContent = 'Done. Thank you: you can close this page.'; return; }
       if (response.status === 429 || response.status >= 400 && response.status < 500) break;
     } catch {}
     await new Promise(resolve => setTimeout(resolve, 1500 * (attempt + 1)));
@@ -487,7 +501,7 @@ function finish(status, message, sendIt) {
   worker.terminate(); worker = null; clearTimeout(timer);
   URL.revokeObjectURL(workerURL); workerURL = null; releaseAwake();
   report.status = status; report.elapsedMs = performance.now() - reportStart; summarize();
-  $('running').hidden = true; $('run').hidden = false; $('gpu').hidden = false; $('run').textContent = 'Start again'; $('run').disabled = false;
+  $('running').hidden = true; $('run').hidden = false; $('gpu').hidden = false; $('cold').hidden = false; $('run').textContent = 'Start again'; $('run').disabled = false;
   $('progress').textContent = message; render();
   if (sendIt) send();
 }
@@ -505,10 +519,10 @@ $('form').addEventListener('submit', async event => {
   reportStart = performance.now(); started = reportStart; plan = 0; finishedUnits = 0; lastCost = 0; trace = []; posted = false;
   runUuid = crypto.randomUUID();
   facts = {...await deviceFacts()};
-  $('sent').hidden = true; $('facts').hidden = false; $('running').hidden = false; $('retry').hidden = true; $('download').hidden = true; $('copy').hidden = true; $('view').hidden = true; $('gpu').hidden = true;
+  $('sent').hidden = true; $('facts').hidden = false; $('running').hidden = false; $('retry').hidden = true; $('download').hidden = true; $('copy').hidden = true; $('view').hidden = true; $('gpu').hidden = true; $('cold').hidden = true;
   $('run').textContent = 'Stop'; $('progress').textContent = 'Starting.'; setBar(0);
   await keepAwake();
-  report = {schema: 1, kind: 'rapier-jxl-phone', ...(gpuMode && {mode: 'gpu'}), version: RELEASE.version, build: BUILD || 'release', status: 'running', machine: facts,
+  report = {schema: 1, kind: 'rapier-jxl-phone', ...(gpuMode && {mode: gpuMode === 'cold' ? 'cold' : 'gpu'}), version: RELEASE.version, build: BUILD || 'release', status: 'running', machine: facts,
     package: {name: 'rapier-jxl', version: RELEASE.version, modules: []}, rows: []};
   const url = URL.createObjectURL(new Blob([selftestCore.toString(), '\n(', workerMain.toString(), ')();'], {type: 'text/javascript'}));
   workerURL = url;
@@ -549,6 +563,7 @@ $('form').addEventListener('submit', async event => {
 $('retry').addEventListener('click', send);
 let nextGpu = false;
 $('gpu').addEventListener('click', () => { nextGpu = true; $('form').requestSubmit(); });
+$('cold').addEventListener('click', () => { nextGpu = 'cold'; $('form').requestSubmit(); });
 $('copy').addEventListener('click', async () => {
   const text = viewText() + '\n\n' + JSON.stringify({kind: report.kind, mode: report.mode || 'full', status: report.status, elapsedMs: Math.round(report.elapsedMs || 0), id: runUuid});
   try { await navigator.clipboard.writeText(text); $('progress').textContent = 'Copied. Paste it in the chat.'; }
