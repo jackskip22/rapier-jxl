@@ -30,10 +30,19 @@ export const sRGBWithIntent = ((typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefine
   const named = Object.keys(e).every(key => ['space', 'transferFunction', 'renderingIntent'].includes(key)) ? 'srgb'
     : lossy && e.space === 'rgb' && (e.whitePoint ?? 'd65') === 'd65' && Object.keys(e).every(key => ['space', 'whitePoint', 'primaries', 'transferFunction', 'renderingIntent'].includes(key))
       ? {srgb: 'srgb', 'display-p3': 'display-p3'}[e.primaries ?? 'srgb'] : undefined;
-  if (!named) return [picture, undefined];
+  const intent = typeof e.renderingIntent === 'number' ? INTENTS[e.renderingIntent] : e.renderingIntent;
+  if (!named || e.renderingIntent !== undefined && !INTENTS.includes(intent)) return [picture, undefined];
+  if (e.space === 'gray' && !graySamples(picture.data)) throw Object.assign(new Error('GRAY: R=G=B each pixel'), {code: 'JXL_INPUT'});
   const {colorEncoding: _named, ...rest} = picture;
-  return [{...rest, colorSpace: named, transferFunction: 'srgb'}, typeof e.renderingIntent === 'number' ? INTENTS[e.renderingIntent] : e.renderingIntent];
+  return [{...rest, colorSpace: named, transferFunction: 'srgb'}, intent];
 };
+function graySamples(data) {
+  if (!ArrayBuffer.isView(data) || data instanceof DataView) return true;
+  const words = data instanceof Float32Array ? new Uint32Array(data.buffer, data.byteOffset, data.length)
+    : typeof Float16Array === 'function' && data instanceof Float16Array ? new Uint16Array(data.buffer, data.byteOffset, data.length) : data;
+  for (let i = 0; i + 2 < words.length; i += 4) if (words[i] !== words[i + 1] || words[i] !== words[i + 2]) return false;
+  return true;
+}
 export function withRenderingIntent(bytes, intent, join) {
   if (!intent || intent === 'relative') return bytes;
   return bytes[0] === 0xff && bytes[1] === 0x0a ? codestream(bytes, intent, join) : boxed(bytes, intent);

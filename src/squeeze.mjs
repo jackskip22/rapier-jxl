@@ -2,33 +2,11 @@
 
 import {captureSqueezeStep} from './capture-kernels.mjs';
 
-const average = (a, b) => (a + b + (a > b ? 1 : 0)) >> 1;
-
-export function smoothTendency(B, a, n) {
-  const sign = B >= a && a >= n ? 1 : B <= a && a <= n ? -1 : 0;
-  if (!sign) return 0;
-  B *= sign; a *= sign; n *= sign;
-  let diff = ((4 * B - 3 * n - a + 6) / 12) | 0;
-  if (diff - (diff & 1) > 2 * (B - a)) diff = 2 * (B - a) + 1;
-  if (diff + (diff & 1) > 2 * (a - n)) diff = 2 * (a - n);
-  return sign * diff;
-}
-
 function squeeze(ch, horizontal) {
   const {w, h, data: p} = ch, n = horizontal ? w : h, low = (n + 1) >> 1, high = n - low;
   const ow = horizontal ? low : w, oh = horizontal ? h : low, rw = horizontal ? high : w, rh = horizontal ? h : high;
   const channel = (data, w, h) => ({w, h, hshift: ch.hshift + +horizontal, vshift: ch.vshift + !horizontal, data});
-  const kernel = captureSqueezeStep(p, w, h, horizontal);
-  if (kernel) return [channel(kernel[0], ow, oh), channel(kernel[1], rw, rh)];
-  const out = new Int16Array(ow * oh), res = new Int16Array(rw * rh), step = horizontal ? 1 : w;
-  for (let y = 0; y < oh; y++) for (let x = 0; x < ow; x++) {
-    const pos = horizontal ? x : y, at = horizontal ? y * w + 2 * x : 2 * y * w + x;
-    if (pos === high) { out[y * ow + x] = p[at]; continue; }
-    const A = p[at], B = p[at + step], avg = average(A, B);
-    const next = pos + 1 < high ? average(p[at + 2 * step], p[at + 3 * step]) : n & 1 ? p[at + 2 * step] : avg;
-    out[y * ow + x] = avg;
-    res[y * rw + x] = A - B - smoothTendency(pos ? p[at - step] : avg, avg, next);
-  }
+  const [out, res] = captureSqueezeStep(p, w, h, horizontal);
   return [channel(out, ow, oh), channel(res, rw, rh)];
 }
 

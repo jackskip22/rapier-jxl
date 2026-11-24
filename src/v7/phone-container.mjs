@@ -5,6 +5,7 @@ const SETS = /*#__PURE__*/ (() => ({
   b: new Set('heic heix hevc hevx heim heis hevm hevs mif1 msf1 avif avis'.split(' ')),
   s: new Set('hevc hevx heim hevm msf1 avis'.split(' ')),
 }))();
+const MAX_META_BYTES = 64 * 1024 * 1024;
 const bad = message => fail('JXL_INPUT', `phone ${message}`);
 const no = message => fail('JXL_UNSUPPORTED', `phone ${message}`);
 const txt = (b, a, n = 4) => String.fromCharCode(...b.subarray(a, a + n));
@@ -39,7 +40,11 @@ export async function inspectPhone(blob, head, {maxPixels, signal} = {}) {
     const need = Math.min(16, blob.size - at);
     if (at < wAt || at + need > wAt + win.length) { wAt = at; win = await read(at, Math.min(65536, blob.size - at)); }
     const bx = boxHdr(win.subarray(at - wAt, at - wAt + need), blob.size - at);
-    if (bx.t === 'meta') { if (meta) throw bad('metadata box: duplicate'); meta = await read(at + bx.h, bx.sz - bx.h); }
+    if (bx.t === 'meta') {
+      if (meta) throw bad('metadata box: duplicate');
+      if (bx.sz - bx.h > MAX_META_BYTES) throw fail('JXL_MEMORY', 'phone metadata box: exceeds 64 MiB; use host pixels');
+      meta = await read(at + bx.h, bx.sz - bx.h);
+    }
     if (bx.t === 'moov') tracks.push(at + 4);
     at += bx.sz;
   }
@@ -78,7 +83,9 @@ export async function inspectPhone(blob, head, {maxPixels, signal} = {}) {
   const spatial = id => {
     const ps = (assoc.get(id) ?? []).map(i => { if (!props[i]) throw bad('item property: missing'); return props[i]; }), szs = ps.filter(p => p.t === 'ispe');
     if (szs.length !== 1) throw bad('spatial extent: exactly one');
-    const r = rdr(szs[0].d); r.full([0]); const w = r.u(4), h = r.u(4); dimensions(w, h, maxPixels); return {w, h, ps};
+    const r = rdr(szs[0].d); r.full([0]); const w = r.u(4), h = r.u(4);
+    if (!w || !h) throw bad('spatial extent: empty');
+    dimensions(w, h, maxPixels); return {w, h, ps};
   };
   const vis = new Set(), act = new Set();
   const visit = (id, d = 0) => {
@@ -93,12 +100,18 @@ export async function inspectPhone(blob, head, {maxPixels, signal} = {}) {
   };
   visit(primary);
   const orig = spatial(primary); let width = orig.w, height = orig.h, transformed = false;
+  const seenTransforms = new Set();
   for (const {t, d} of orig.ps) {
+    if (t !== 'irot' && t !== 'imir' && t !== 'clap') continue;
+    if (seenTransforms.has(t)) throw bad('transformative property: duplicate');
+    seenTransforms.add(t);
     const r = rdr(d);
     if (t === 'irot') { const a = r.u(1); if (a > 3) throw bad('rotation property: 0-3'); if (a & 1) [width, height] = [height, width]; transformed = true; }
     else if (t === 'imir') { if (r.u(1) > 1) throw bad('mirror property: 0-1'); transformed = true; }
     else if (t === 'clap') {
-      const [wn,wd,hn,hd,xn,xd,yn,yd] = Array.from({length: 8}, () => r.u(4)), w = wn / wd, h = hn / hd, x = (xn | 0) / xd, y = (yn | 0) / yd;
+      const [wn,wd,hn,hd,xn,xd,yn,yd] = Array.from({length: 8}, () => r.u(4));
+      if (!wn || !hn || !wd || !hd || !xd || !yd) throw bad('clean aperture: invalid');
+      const w = wn / wd, h = hn / hd, x = (xn | 0) / xd, y = (yn | 0) / yd;
       if (!Number.isInteger(w) || !Number.isInteger(h) || !Number.isFinite(x) || !Number.isFinite(y)) throw no('clean aperture: use host pixels');
       dimensions(w, h, maxPixels); if (w + Math.abs(x) * 2 > width || h + Math.abs(y) * 2 > height) throw bad('clean aperture: out of bounds');
       width = w; height = h; transformed = true;

@@ -4,9 +4,11 @@ import {isVideo, videoFrame} from './video.mjs';
 import {SNAPSHOTS, withCost, HANDED, dimensions as ownDimensions, measure} from './ownership.mjs';
 import {readWebGL, readWebGLNow} from './webgl-read.mjs';
 import {isPlainRecord} from './records.mjs';
-import {DESCRIPTION, refuseDescription} from './describe.mjs';
-import {encodeFidelity, captureFidelity} from './fidelity.mjs';
-import {fail, object, dimensions, pixelLimit, webgpuSetting, lostBlank, proveRead, LOST, plainView, plainCopy, callers, snapshotOptions, abortable} from './primitives.mjs';
+import {DESCRIPTION, refuseDescription, isDecoded} from './describe.mjs';
+import {encodeFidelity, encodeEffort, captureFidelity, progressiveSetting} from './fidelity.mjs';
+import {fail, object, dimensions, pixelLimit, webgpuSetting, lostBlank, proveRead, LOST, plainView, typedName, plainCopy, callers, snapshotOptions, abortable, isBlob, gpuDrawn, unknownOption, rejectOptionSymbols} from './primitives.mjs';
+import {arrayBufferBytes} from './bytes.mjs';
+import {open2d, glGpuSpace, copy2d, read2d} from './canvas-2d.mjs';
 import {JPEG_SOURCE, JPEG_SOURCE_WIRE} from './jpeg-choice-policy.mjs';
 import {replyPreview, clearPreviewReply} from './preview-relay.mjs';
 import {outputSides} from './preparation-sides.mjs';
@@ -14,13 +16,12 @@ import {outputSides} from './preparation-sides.mjs';
 const isFn = v => typeof v === 'function', isObj = v => !!v && typeof v === 'object', isInt = Number.isSafeInteger, noop = () => {};
 const isTextureInput = v => isPlainRecord(v) && v.texture !== undefined && v.device !== undefined && v.data === undefined;
 const isRowSource = v => isPlainRecord(v) && isFn(v.rows) && v.data === undefined;
-const isDecoded = r => isObj(r) && Object.hasOwn(r, 'rgbaColorEncoding') && Object.hasOwn(r, 'format') && ArrayBuffer.isView(r.data);
 const sized = (w, h) => isInt(w) && isInt(h) && w > 0 && h > 0;
 const isSpace = s => s === 'srgb' || s === 'display-p3';
 const STILL_FIELDS = /* @__PURE__ */ new Set(['data', 'width', 'height', ...DESCRIPTION]);
 const ANIM_FIELDS = /* @__PURE__ */ new Set(['width', 'height', 'frames', 'loops', ...DESCRIPTION]);
 const ROW_FIELDS = /* @__PURE__ */ new Set(['width', 'height', 'rows', ...DESCRIPTION]);
-const ENCODE_KEYS = /* @__PURE__ */ new Set(['fidelity', 'effort', 'firstRegion', 'readAs', 'jpeg', 'webgpu', 'maxPixels', 'signal', 'onProgress', 'onPreview']);
+const ENCODE_KEYS = /* @__PURE__ */ new Set(['fidelity', 'effort', 'progressive', 'firstRegion', 'readAs', 'jpeg', 'webgpu', 'maxPixels', 'signal', 'onProgress', 'onPreview']);
 const CAP_KEYS = /* @__PURE__ */ new Set(['fidelity', 'effort', 'readAs', 'maxPixels', 'signal', 'onProgress', 'onPreview']);
 
 export let bitmapClones;
@@ -55,24 +56,34 @@ function checkReadAs(v) {
   if (v !== undefined && !isSpace(v)) throw fail('JXL_OPTIONS', "readAs: srgb|display-p3");
 }
 
-export function admitEncodeDoor(value) {
+const optLimit = opt => opt.maxPixels !== undefined ? pixelLimit(opt.maxPixels) : undefined;
+
+function admitDoorObject(value) {
   const opt = object(value);
+  rejectOptionSymbols(opt);
   if ('features' in opt) throw fail('JXL_OPTIONS', 'unknown option: features');
+  return opt;
+}
+
+export function admitEncodeDoor(value, ten = false) {
+  const opt = admitDoorObject(value);
   refuseDescription(opt);
-  for (const k of Object.keys(opt)) if (!ENCODE_KEYS.has(k))
-    throw fail('JXL_OPTIONS', `unknown option: ${k}`);
-  const fid = encodeFidelity(opt.fidelity), {effort = 7} = opt;
-  if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fail('JXL_OPTIONS', "effort: integer 1-9");
+  for (const k of Object.keys(opt)) if (!ENCODE_KEYS.has(k)) throw unknownOption(k, opt);
+  const {effort: requestedEffort = ten ? 10 : 7} = opt;
+  const fid = encodeFidelity(opt.fidelity), effort = encodeEffort(requestedEffort, fid, ten);
   checkReadAs(opt.readAs);
   if (opt.jpeg !== undefined && opt.jpeg !== 'pixels') throw fail('JXL_OPTIONS', "jpeg: pixels or omit");
+  progressiveSetting(opt.progressive, fid);
   webgpuSetting(opt.webgpu);
-  return {effort, target: fid.target !== undefined, maxPixels: opt.maxPixels !== undefined ? pixelLimit(opt.maxPixels) : undefined};
+  return {effort, target: fid.target !== undefined, maxPixels: optLimit(opt)};
 }
 
 export function admitUploadDoor(value) {
   const opt = object(value);
+  const {effort = 3} = opt;
   if ('webgpu' in opt) throw fail('JXL_OPTIONS', 'unknown option: webgpu');
-  const res = admitEncodeDoor({...opt, effort: opt.effort ?? 3});
+  if (effort === 10) throw fail('JXL_OPTIONS', "effort 10: import {encode} from 'jpegxl/max'");
+  const res = admitEncodeDoor({...opt, effort});
   if (res.effort > 3) throw fail('JXL_UNSUPPORTED', "effort 4-9: use jpegxl");
   if (res.target) throw fail('JXL_OPTIONS', "measured fidelity: use jpegxl");
   if (opt.firstRegion !== undefined) throw fail('JXL_UNSUPPORTED', "firstRegion: use jpegxl");
@@ -80,7 +91,9 @@ export function admitUploadDoor(value) {
 }
 
 export function admitFitDoor(value, checkEnc = admitEncodeDoor) {
-  const {maxBytes, fidelity = {quality: 90}, ...encode} = object(value);
+  const opt = object(value);
+  rejectOptionSymbols(opt);
+  const {maxBytes, fidelity = {quality: 90}, ...encode} = opt;
   if (!isInt(maxBytes) || maxBytes < 1) throw fail('JXL_OPTIONS', "maxBytes: positive safe integer");
   let maxQ = 100;
   if (fidelity !== 'exact') {
@@ -97,14 +110,19 @@ export function admitFitDoor(value, checkEnc = admitEncodeDoor) {
 }
 
 export function admitVariantsDoor(value, currentMax, checkEnc = admitEncodeDoor) {
-  const {outputs, ...shared} = object(value);
+  const opt = object(value);
+  rejectOptionSymbols(opt);
+  const {outputs, ...shared} = opt;
   const limit = checkEnc(shared).maxPixels, bound = limit !== undefined ? Math.min(currentMax, limit) : currentMax;
   if (!Array.isArray(outputs) || !outputs.length) throw fail('JXL_OPTIONS', "outputs: nonempty array");
   for (const out of outputs) {
-    const {width, height, firstRegion, ...settings} = object(out, 'An output');
+    const outObj = object(out, 'An output');
+    rejectOptionSymbols(outObj, 'output option');
+    const {width, height, upscale, firstRegion, ...settings} = outObj;
     outputSides(width, height, bound);
-    for (const k of Object.keys(settings)) if (k !== 'fidelity' && k !== 'effort' && k !== 'jpeg' && k !== 'maxBytes')
-      throw fail('JXL_OPTIONS', `unknown option: ${k}`);
+    if (upscale !== undefined && typeof upscale !== 'boolean') throw fail('JXL_OPTIONS', 'upscale: boolean');
+    for (const k of Object.keys(settings)) if (k !== 'fidelity' && k !== 'effort' && k !== 'progressive' && k !== 'jpeg' && k !== 'maxBytes')
+      throw unknownOption(k, settings);
     const merged = {...shared, ...settings, ...(firstRegion !== undefined && {firstRegion})};
     if (settings.maxBytes !== undefined) admitFitDoor(merged, checkEnc);
     else checkEnc(merged);
@@ -113,22 +131,27 @@ export function admitVariantsDoor(value, currentMax, checkEnc = admitEncodeDoor)
 }
 
 export function admitCaptureDoor(value, levels) {
-  const opt = object(value);
-  if ('features' in opt) throw fail('JXL_OPTIONS', 'unknown option: features');
+  const opt = admitDoorObject(value);
   if (opt.firstRegion !== undefined) throw fail('JXL_UNSUPPORTED', "firstRegion: use encode or omit");
   refuseDescription(opt);
-  for (const k of Object.keys(opt)) if (!CAP_KEYS.has(k) && k !== 'exactRects' && k !== 'photoRects')
-    throw fail('JXL_OPTIONS', `unknown option: ${k}`);
+  for (const k of Object.keys(opt)) if (!CAP_KEYS.has(k) && k !== 'exactRects' && k !== 'photoRects') throw unknownOption(k, opt);
   checkReadAs(opt.readAs);
-  const lim = opt.maxPixels !== undefined ? pixelLimit(opt.maxPixels) : undefined;
+  const lim = optLimit(opt);
   if (opt.effort !== undefined && (!Number.isInteger(opt.effort) || opt.effort < 1 || opt.effort > 9))
-    throw fail('JXL_OPTIONS', "effort: integer 1-9");
+    throw fail('JXL_OPTIONS', opt.effort === 10 ? "effort 10: import {encode} from 'jpegxl/max'" : "effort: integer 1-9");
   if (levels && opt.effort > levels.top)
     throw fail('JXL_UNSUPPORTED', `${shownEntry(levels.module)} effort: 1-${levels.top}, or use ${levels.next}`);
   captureFidelity(opt.fidelity);
   for (const name of ['exactRects', 'photoRects']) if (opt[name] !== undefined)
     throw fail('JXL_UNSUPPORTED', `${name}: use jpegxl/capture-complete`);
   return lim;
+}
+
+export function admitPhotoCaptureDoor(opt, spec) {
+  if (isObj(opt) && 'features' in opt) throw fail('JXL_OPTIONS', 'unknown option: features');
+  const {signal: _s, onProgress: _p, onPreview: _v, firstRegion, ...rest} = opt ?? {};
+  spec.captureAdmission(firstRegion === undefined ? rest : {...rest, features: {firstRegion}}, {module: spec.module, ...spec.captureLevels});
+  return optLimit(rest);
 }
 
 export function checkFrames(input, plans) {
@@ -151,21 +174,8 @@ export function checkFrames(input, plans) {
   }
 }
 
-function context2d(canvas) {
-  try { return canvas.getContext('2d', {willReadFrequently: true}); }
-  catch (cause) { throw Object.assign(fail('JXL_INPUT', "canvas: OffscreenCanvas or RGBA"), {cause}); }
-}
-
-function foreignSpace(canvas) {
-  for (const id of ['webgl2', 'webgl', 'webgpu']) {
-    let c; try { c = canvas.getContext(id); } catch {}
-    if (c?.isContextLost?.()) throw fail('JXL_INPUT', "canvas: context lost, redraw");
-    if (c) return c.drawingBufferColorSpace ?? c.getConfiguration?.()?.colorSpace ?? 'srgb';
-  }
-  throw fail('JXL_INPUT', "canvas: 2D|WebGL|WebGPU context");
-}
-
-const canvasReadFail = cause => { throw Object.assign(fail('JXL_INPUT', "canvas: redraw or RGBA"), {cause}); };
+const READ_FAIL = "canvas: redraw or RGBA";
+const canvasReadFail = cause => { throw Object.assign(fail('JXL_INPUT', READ_FAIL), {cause}); };
 
 function readOrTakeSurface(input, req, maxPixels, halfOk, maxBytes, checkShape, allowClone, banded) {
   const canvas = isFn(input?.getContext), frame = isFn(globalThis.VideoFrame) && input instanceof VideoFrame;
@@ -179,7 +189,7 @@ function readOrTakeSurface(input, req, maxPixels, halfOk, maxBytes, checkShape, 
     if (b > maxBytes) throw fail('JXL_MEMORY', "maxPendingBytes: raise or smaller image");
   };
   if (!over) admit(width * height * 4);
-  let ctx = canvas ? context2d(input) : null;
+  let ctx = canvas ? open2d(input, "canvas: OffscreenCanvas or RGBA") : null;
   const attributes = ctx?.getContextAttributes?.(), half = halfOk && attributes?.colorType === 'float16';
   if (!over && half) admit(width * height * 8);
   checkReadAs(req);
@@ -189,10 +199,10 @@ function readOrTakeSurface(input, req, maxPixels, halfOk, maxBytes, checkShape, 
       const lostAtStart = !!ctx?.isContextLost?.();
       if (lostAtStart && !over && lostBlank(ctx, ctx.getImageData(0, 0, width, height).data)) throw fail('JXL_INPUT', LOST);
       proveRead(ctx);
-      const own = bitmap ? 'srgb' : ctx ? ctx.getContextAttributes?.().colorSpace ?? 'srgb' : foreignSpace(input);
+      const own = bitmap ? 'srgb' : ctx ? ctx.getContextAttributes?.().colorSpace ?? 'srgb' : glGpuSpace(input, "canvas: context lost, redraw", "canvas: 2D|WebGL|WebGPU context");
       if (isSpace(own)) {
         if (over) return {banded: banded(input, width, height, own, req, ctx, lostAtStart)};
-        const cost = width * height * 4, px = !bitmap && !ctx && (req === undefined || req === own) ? readWebGL(input) : null;
+        const cost = width * height * 4, px = !bitmap && !ctx && (req === undefined || req === own) ? readWebGL(input)?.then(read => (gpuDrawn(read.data), read)) : null;
         if (px) return {handed: {t: px, c: cost}};
         if (frame) return {handed: {t: Promise.resolve(withCost(input.clone(), cost)), c: cost, r: req ?? own}};
         try { return {handed: {t: createImageBitmap(input).then(m => withCost(m, cost), canvasReadFail), c: cost, r: req ?? own}}; }
@@ -201,33 +211,19 @@ function readOrTakeSurface(input, req, maxPixels, halfOk, maxBytes, checkShape, 
     }
   }
   let copied;
-  const copy = (from, sp) => {
-    const c = isFn(globalThis.OffscreenCanvas) ? new OffscreenCanvas(width, height) : document.createElement('canvas');
-    copied = c; c.width = width; c.height = height;
-    const drawn = c.getContext('2d', {willReadFrequently: true, colorSpace: sp});
-    if (!drawn) throw fail('JXL_PLATFORM', 'no 2D canvas: pass RGBA pixels');
-    drawn.drawImage(from, 0, 0);
-    return {canvas: c, drawn};
-  };
+  const copy = (from, sp) => copy2d(from, width, height, sp, c => { copied = c; });
   try {
     const target = bitmap ? copy(input, req ?? 'srgb').canvas : input;
-    ctx ??= context2d(target);
+    ctx ??= open2d(target, "canvas: OffscreenCanvas or RGBA");
     if (!ctx) {
-      const own = foreignSpace(target);
+      const own = glGpuSpace(target, "canvas: context lost, redraw", "canvas: 2D|WebGL|WebGPU context");
       const direct = req === undefined || req === own ? readWebGLNow(target) : null;
-      if (direct) { withCost(direct.data, direct.data.byteLength); return {pixels: direct}; }
-      ctx = copy(target, req ?? own).drawn;
+      if (direct) { gpuDrawn(direct.data); withCost(direct.data, direct.data.byteLength); return {pixels: direct}; }
+      const read = read2d(copy(target, req ?? own).drawn, width, height, req, half, READ_FAIL);
+      gpuDrawn(read.data);
+      return {pixels: read};
     }
-    const colorSpace = req ?? ctx.getContextAttributes?.().colorSpace ?? 'srgb';
-    proveRead(ctx);
-    let px;
-    try { px = ctx.getImageData(0, 0, width, height, half ? {colorSpace, pixelFormat: 'rgba-float16'} : {colorSpace}); }
-    catch (cause) { canvasReadFail(cause); }
-    if (lostBlank(ctx, px.data)) throw fail('JXL_INPUT', LOST);
-    const isH = half && px.data.BYTES_PER_ELEMENT === 2;
-    const data = isH ? new Uint16Array(px.data.buffer, px.data.byteOffset, px.data.length) : px.data;
-    withCost(data, data.byteLength);
-    return {pixels: {data, width, height, colorSpace: px.colorSpace ?? 'srgb', ...(isH && {transferFunction: 'srgb', sampleFormat: 'float16'})}};
+    return {pixels: read2d(ctx, width, height, req, half, READ_FAIL)};
   } finally { if (copied) copied.width = copied.height = 0; }
 }
 
@@ -278,6 +274,8 @@ function openRowBridge(input, maxPixels) {
         const {data} = snap;
         if (!ArrayBuffer.isView(data) || data instanceof DataView || data.length !== input.width * count * 4)
           throw fail('JXL_INPUT', `band: ${input.width}x${count}x4 samples`);
+        if (arrayBufferBytes(data.buffer) === null)
+          throw fail('JXL_INPUT', data.buffer?.detached ? "band buffer: detached or too small" : "shared buffer: copy to ArrayBuffer");
         try { out = plainCopy(data); } catch { throw fail('JXL_INPUT', "band buffer: detached or too small"); }
       } else {
         const sp = desc.colorSpace ?? 'srgb';
@@ -310,14 +308,18 @@ function checkPlainBase(input, readAs) {
     throw fail('JXL_INPUT', "queue: plain data values");
 }
 
+function checkPlainFields(input, known) {
+  for (const k of Object.keys(input)) if (!known.has(k))
+    throw fail('JXL_INPUT', `unknown field: ${k}; {data,width,height}, ${DESCRIPTION.join(", ")}`);
+}
+
 export function admitCapturePlain(input, readAs) {
   checkPlainBase(input, readAs);
   if (isDecoded(input)) {
     if (input.format !== 'uint8') throw fail('JXL_INPUT', "format: RGBA8");
     return input;
   }
-  for (const k of Object.keys(input)) if (!STILL_FIELDS.has(k))
-    throw fail('JXL_INPUT', `unknown field: ${k}; {data,width,height}, ${DESCRIPTION.join(", ")}`);
+  checkPlainFields(input, STILL_FIELDS);
   const data = ArrayBuffer.isView(input.data) && !(input.data instanceof DataView) ? plainView(input.data) : input.data;
   if (sized(input.width, input.height) && ArrayBuffer.isView(data) && !(data instanceof DataView) &&
       (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray) || data.length !== input.width * input.height * 4))
@@ -328,22 +330,20 @@ export function admitCapturePlain(input, readAs) {
 export function admitEncodePlain(input, readAs) {
   checkPlainBase(input, readAs);
   if (isDecoded(input)) return input;
-  const anim = Array.isArray(input.frames), known = anim ? ANIM_FIELDS : STILL_FIELDS;
-  for (const k of Object.keys(input)) if (!known.has(k))
-    throw fail('JXL_INPUT', `unknown field: ${k}; {data,width,height}, ${DESCRIPTION.join(", ")}`);
+  const anim = Array.isArray(input.frames);
+  checkPlainFields(input, anim ? ANIM_FIELDS : STILL_FIELDS);
   const hasF16 = isFn(globalThis.Float16Array);
   if (anim) {
-    if (hasF16 && input.frames.some(f => f?.data instanceof Float16Array)) {
+    if (input.frames.some(f => typedName.call(f?.data) === 'Float16Array')) {
       if (input.sampleFormat !== undefined && input.sampleFormat !== 'float16') throw fail('JXL_INPUT', "sampleFormat: float16");
-      if (!input.frames.every(f => f?.data instanceof Float16Array)) throw fail('JXL_INPUT', "frames: same sample array type");
+      if (!input.frames.every(f => typedName.call(f?.data) === 'Float16Array')) throw fail('JXL_INPUT', "frames: same sample array type");
       return {...input, frames: input.frames.map(f => ({...f, data: new Uint16Array(f.data.buffer, f.data.byteOffset, f.data.length)})), sampleFormat: 'float16'};
     }
     return input;
   }
-  const halves = hasF16 && input.data instanceof Float16Array;
+  const given = plainView(input.data), halves = hasF16 && given instanceof Float16Array;
   if (halves && input.sampleFormat !== undefined && input.sampleFormat !== 'float16') throw fail('JXL_INPUT', "sampleFormat: float16");
-  const words = halves ? new Uint16Array(input.data.buffer, input.data.byteOffset, input.data.length) : input.data;
-  const data = ArrayBuffer.isView(words) && !(words instanceof DataView) ? plainView(words) : words;
+  const data = halves ? new Uint16Array(given.buffer, given.byteOffset, given.length) : given;
   if (sized(input.width, input.height) && ArrayBuffer.isView(data) && !(data instanceof DataView)) {
     const n = input.width * input.height;
     const packedOk = (data instanceof Float32Array || (halves || input.sampleFormat === 'float16') && data instanceof Uint16Array) && data.length === n * 3;
@@ -374,7 +374,7 @@ function submitAcquired(q, op, acquire, cost, opt, area = cost / 4) {
   return q.submit(op, withCost({}, cost), opt, (j, done, reserve) => {
     let yes, no;
     j.q = new Promise((y, n) => { yes = y; no = n; })
-      .then(v => { j.k = v; }, r => { j.e = r ?? fail('JXL_INPUT', "canvas: redraw or RGBA"); })
+      .then(v => { j.k = v; }, r => { j.e = r ?? fail('JXL_INPUT', READ_FAIL); })
       .then(() => { j.q = null; if (j.d) { try { j.k?.close?.(); } catch {} j.k = null; } done(); });
     try { yes(isFn(acquire) ? acquire(j.c, reserve) : acquire); } catch (r) { no(r); }
   }, op === 'encode' ? area : 0);
@@ -410,8 +410,8 @@ export function surfaceCall(door, name, rules) {
       const fixed = prep ? {...fix(opt), maxPixels} : fix(opt);
       const taking = rules.video?.(input, fixed, maxPixels);
       if (taking) {
-        const job = submitAcquired(q, name, taking.take, taking.cost, taking.options, 0);
-        return taking.finish ? job.then(taking.finish) : job;
+        const job = submitAcquired(q, name, taking.take, taking.cost, taking.options, 0), settled = taking.settle ? taking.settle(job) : job;
+        return taking.finish ? settled.then(taking.finish) : settled;
       }
       if (isVideo(input)) { const f = videoFrame(input); try { return run(f, fixed); } finally { f.close(); } }
       if (isTextureInput(input)) {
@@ -449,7 +449,7 @@ export function surfaceCall(door, name, rules) {
         px = surf?.pixels ?? input;
       }
       if (prep && ArrayBuffer.isView(px?.data)) dimensions(px.width, px.height, maxPixels);
-      const blob = isFn(globalThis.Blob) && px instanceof Blob;
+      const blob = isBlob(px);
       const fwd = prep || cap && rules.richCapture ? fixed : opt;
       const {readAs: _r, ...forward} = fwd ?? {};
       const moving = !transfer ? [] : ArrayBuffer.isView(px?.data) ? [px.data]
@@ -463,4 +463,3 @@ export function surfaceCall(door, name, rules) {
   };
   return run;
 }
-

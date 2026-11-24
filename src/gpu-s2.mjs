@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {GC_DS} from './gpu-arithmetic.mjs';
 import {S2_GROUPS} from './gpu-s2-score.mjs';
-import {gpuFloat as K, gpuDestroy, gpuComputeSet, gpuScoped, gpuWrite, gpuAlloc, gpuUpload, gpuUni, gpuBind, gpuStep} from './gpu-kit.mjs';
-
+import {gpuMap, gpuFloat as K, gpuDestroy, gpuComputeSet, gpuScoped, gpuWrite, gpuAlloc, gpuUpload, gpuUni, gpuBind, gpuStep} from './gpu-kit.mjs';
 
 
 export const XFMA = `
@@ -48,7 +47,7 @@ fn xfma(a: f32, b: f32, c: f32) -> vec2f {
 // The binary32 square root, correctly rounded (.y 1: not certified).
 fn xsqrt(v: f32) -> vec2f {
   var r = sqrt(v);
-  for (var k = 0; k < 3; k++) {
+  for (var k = i32(gcOne() < 0.0); k < 3; k++) {
     let p = tp(r, r); let e = ts(v, -p.x); let rem = gcO(e.x + gcO(e.y - p.y));
     if (rem == 0.0) { return vec2f(r, 0.0); }
     let bits = bitcast<u32>(r);
@@ -70,7 +69,7 @@ fn xdiv(a: f32, b: f32) -> vec2f {
     let quarterUlpB = gcO((bitcast<f32>(bitcast<u32>(aq0) & 0x7f800000u) * 1.4901161193847656e-8) * ab0);
     if (abs(e0.x) + abs(e0.y) + abs(p0.y) < quarterUlpB) { return vec2f(q, 0.0); }
   }
-  for (var k = 0; k < 4; k++) {
+  for (var k = i32(gcOne() < 0.0); k < 4; k++) {
     let p = tp(q, b); let e = ts(a, -p.x); let f = ts(e.y, -p.y); let g = ts(e.x, f.x);
     let ar = abs(q); let bits = bitcast<u32>(ar); let sR = sign(gcO(g.x + gcO(g.y + f.y))) * sign(b);
     if (sR == 0.0) { return vec2f(q, 0.0); }
@@ -106,7 +105,15 @@ struct U { one: f32, w: u32, h: u32, n: u32, w2: u32, h2: u32, n2: u32, c: u32, 
 @group(0) @binding(7) var<storage, read_write> F: array<atomic<u32>>;
 fn gcOne() -> f32 { return P.one; }
 fn bad() { atomicAdd(&F[0], 1u); }
-fn fm(a: f32, b: f32, c: f32) -> f32 { let r = xfma(a, b, c); if (r.y != 0.0) { bad(); } return r.x; }
+// The meter's fused step as the CPU makes it: binary32 mul then add, each correctly rounded (gcO keeps the compiler from
+// contracting them). A product or sum the device may have flushed (a subnormal, or zero from nonzero parts) is counted.
+fn fm(a: f32, b: f32, c: f32) -> f32 {
+  let p = gcO(a * b);
+  if ((p == 0.0 && a != 0.0 && b != 0.0) || (p != 0.0 && abs(p) < 1.1754943508222875e-38)) { bad(); }
+  let s = gcO(p + c);
+  if ((s == 0.0 && p != -c) || (s != 0.0 && abs(s) < 1.1754943508222875e-38)) { bad(); }
+  return s;
+}
 // A device that flushes a subnormal result is not the CPU: a nonzero value under binary32's least normal is counted.
 fn chk(v: f32) -> f32 { if (v != 0.0 && abs(v) < 1.1754943508222875e-38) { bad(); } return v; }
 // a / b exactly rounded; a zero numerator (identical pixels) is exactly 0.
@@ -146,7 +153,7 @@ fn cbr(x: f32) -> f32 {
   let u = bitcast<u32>(x);
   var r = bitcast<f32>(select(0x54800000u - (u >> 23u) * 0x002aaaaau, 0u, u == 0u));
   let third = ${K(1 / 3)}; let x3 = gcO(third * x);
-  for (var i = 0; i < 3; i++) { let r2 = gcO(r * r); r = fm(-x3, gcO(r2 * r2), gcO(${K(4 / 3)} * r)); }
+  for (var i = i32(gcOne() < 0.0); i < 3; i++) { let r2 = gcO(r * r); r = fm(-x3, gcO(r2 * r2), gcO(${K(4 / 3)} * r)); }
   var r2 = gcO(r * r);
   r = fm(third, fm(-x, gcO(r2 * r2), r), r);
   r2 = gcO(r * r);
@@ -155,23 +162,30 @@ fn cbr(x: f32) -> f32 {
 fn pv(x: f32) -> f32 { return select(x, 0.0, x <= 0.0); }
 fn xyb(r: f32, g: f32, b: f32) -> vec3f {
   let bias = ${K('.0037930732552754493')};
-  let l = cbr(pv(fm(${K('.30')}, r, fm(${K('.622')}, g, fm(${K('.078')}, b, bias)))));
-  let m = cbr(pv(fm(${K('.23')}, r, fm(${K('.692')}, g, fm(${K('.078')}, b, bias)))));
+  var l = 0.0; var m = 0.0; var s = 0.0;
+  for (var q = u32(gcOne() < 0.0); q < 3u; q++) {
+    let w0 = select(select(${K('.24342268924547819')}, ${K('.23')}, q == 1u), ${K('.30')}, q == 0u);
+    let w1 = select(select(${K('.20476744424496821')}, ${K('.692')}, q == 1u), ${K('.622')}, q == 0u);
+    let w2 = select(${K('.5518098665095536')}, ${K('.078')}, q < 2u);
+    let v = cbr(pv(fm(w0, r, fm(w1, g, fm(w2, b, bias)))));
+    if (q == 0u) { l = v; } else if (q == 1u) { m = v; } else { s = v; }
+  }
   let x = gcO(0.5 * gcO(l - m)); let y = gcO(0.5 * gcO(l + m));
-  let s = cbr(pv(fm(${K('.24342268924547819')}, r, fm(${K('.20476744424496821')}, g, fm(${K('.5518098665095536')}, b, bias)))));
   return vec3f(gcO(gcO(x * 14.0) + ${K('.42')}), gcO(y + ${K('.01')}), gcO(gcO(s - y) + ${K('.55')}));
 }
 // XYB in place (mode & 4: reference into B[rof..rof+3n); mode & 8: distorted B in place; else both A and B in place).
 @compute @workgroup_size(${WG})
 fn positive(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) nw: vec3u) {
   let i = idx(id, nw); if (i >= P.n) { return; }
-  if ((P.mode & 8u) == 0u) {
-    let a = xyb(A[i], A[P.n + i], A[2u * P.n + i]);
-    if ((P.mode & 4u) != 0u) { B[P.rof + i] = a.x; B[P.rof + P.n + i] = a.y; B[P.rof + 2u * P.n + i] = a.z; }
-    else { A[i] = a.x; A[P.n + i] = a.y; A[2u * P.n + i] = a.z; }
-  }
-  if ((P.mode & 4u) == 0u) {
-    let b = xyb(B[i], B[P.n + i], B[2u * P.n + i]); B[i] = b.x; B[P.n + i] = b.y; B[2u * P.n + i] = b.z;
+  for (var side = u32(gcOne() < 0.0); side < 2u; side++) {
+    if (side == 0u && (P.mode & 8u) != 0u) { continue; }
+    if (side == 1u && (P.mode & 4u) != 0u) { continue; }
+    let r = select(B[i], A[i], side == 0u);
+    let g = select(B[P.n + i], A[P.n + i], side == 0u);
+    let b = select(B[2u * P.n + i], A[2u * P.n + i], side == 0u);
+    let v = xyb(r, g, b);
+    if (side == 0u && (P.mode & 4u) == 0u) { A[i] = v.x; A[P.n + i] = v.y; A[2u * P.n + i] = v.z; }
+    else { let base = select(0u, P.rof, side == 0u); B[base + i] = v.x; B[base + P.n + i] = v.y; B[base + 2u * P.n + i] = v.z; }
   }
 }
 fn tap(k: u32) -> f32 { return G(k); }
@@ -276,7 +290,7 @@ var<workgroup> R: array<vec2f, ${WG * 6}>;
 @compute @workgroup_size(${WG})
 fn sums(@builtin(local_invocation_id) lid: vec3u, @builtin(workgroup_id) wid: vec3u) {
   var acc = array<vec2f, 6>(vec2f(0.0), vec2f(0.0), vec2f(0.0), vec2f(0.0), vec2f(0.0), vec2f(0.0));
-  let small = ${K('.0009')};
+  let small = ${K('.0009')}; let z0 = u32(gcOne() < 0.0);
   let g = wid.x * ${WG}u + lid.x; let lo = P.gofs + P.oy0 * P.w; let hi = P.gofs + P.oy1 * P.w; let keep = P.acc + (P.c * ${S2_GROUPS * WG}u + g) * 6u;
   if ((P.mode & 1u) == 0u) { for (var k = 0u; k < 6u; k++) { acc[k] = S[keep + k]; } }
   for (var gi = lo + (g + ${S2_GROUPS * WG}u - lo % ${S2_GROUPS * WG}u) % ${S2_GROUPS * WG}u; gi < hi; gi += ${S2_GROUPS * WG}u) {
@@ -303,7 +317,7 @@ fn sums(@builtin(local_invocation_id) lid: vec3u, @builtin(workgroup_id) wid: ve
   for (var k = 0u; k < 6u; k++) { R[k * ${WG}u + lid.x] = acc[k]; }
   workgroupBarrier();
   for (var half = ${WG / 2}u; half > 0u; half >>= 1u) {
-    if (lid.x < half) { for (var k = 0u; k < 6u; k++) { R[k * ${WG}u + lid.x] = dadd(R[k * ${WG}u + lid.x], R[k * ${WG}u + lid.x + half]); } }
+    if (lid.x < half) { for (var k = z0; k < 6u; k++) { R[k * ${WG}u + lid.x] = dadd(R[k * ${WG}u + lid.x], R[k * ${WG}u + lid.x + half]); } }
     workgroupBarrier();
   }
   if (lid.x < 6u) { S[(P.slot * 6u + lid.x) * ${S2_GROUPS}u + wid.x] = R[lid.x * ${WG}u]; }
@@ -311,15 +325,15 @@ fn sums(@builtin(local_invocation_id) lid: vec3u, @builtin(workgroup_id) wid: ve
 // One slot's six totals from its workgroups' partial sums: 16 a thread in order, then by halves, into S from P.tot.
 @compute @workgroup_size(${WG})
 fn total(@builtin(local_invocation_id) lid: vec3u, @builtin(workgroup_id) wid: vec3u) {
-  let slot = P.slot + wid.x;
-  for (var k = 0u; k < 6u; k++) {
+  let slot = P.slot + wid.x; let z0 = u32(gcOne() < 0.0);
+  for (var k = z0; k < 6u; k++) {
     var acc = vec2f(0.0);
-    for (var j = 0u; j < ${S2_GROUPS / WG}u; j++) { acc = dadd(acc, S[(slot * 6u + k) * ${S2_GROUPS}u + lid.x * ${S2_GROUPS / WG}u + j]); }
+    for (var j = z0; j < ${S2_GROUPS / WG}u; j++) { acc = dadd(acc, S[(slot * 6u + k) * ${S2_GROUPS}u + lid.x * ${S2_GROUPS / WG}u + j]); }
     R[k * ${WG}u + lid.x] = acc;
   }
   workgroupBarrier();
   for (var half = ${WG / 2}u; half > 0u; half >>= 1u) {
-    if (lid.x < half) { for (var k = 0u; k < 6u; k++) { R[k * ${WG}u + lid.x] = dadd(R[k * ${WG}u + lid.x], R[k * ${WG}u + lid.x + half]); } }
+    if (lid.x < half) { for (var k = z0; k < 6u; k++) { R[k * ${WG}u + lid.x] = dadd(R[k * ${WG}u + lid.x], R[k * ${WG}u + lid.x + half]); } }
     workgroupBarrier();
   }
   if (lid.x < 6u) { S[P.tot + slot * 6u + lid.x] = R[lid.x * ${WG}u]; }
@@ -381,92 +395,95 @@ function residentState(device, set, held, tables, reference, width, height, outp
     words = [0, 0, 0, 0];
     bands.forEach((list, s) => { for (const [y0, y1] of list) windowBytes(sizes[s].w, y1 - y0, Math.min(sizes[s].h, y1 + 4) - Math.max(0, y0 - 4), !s, sizes[s + 1]).forEach((b, k) => { words[k] = Math.max(words[k], b / 4); }); });
   }
-  const I = buf(words[0] * 4), A = buf(words[1] * 4), B = buf((cacheRef ? Math.max(3 * totalM, 3 * n) : words[1]) * 4);
-  const RA = cacheRef ? buf(3 * totalM * 4) : null, RL = cacheRef ? buf(6 * totalM * 4) : null;
-  const L = buf(words[2] * 4), N = buf((cacheRef ? 3 * n1 : words[3]) * 4), S = buf((acc + (bands ? 3 * S2_GROUPS * WG * 6 : 0)) * 8), F = buf(16);
-  const R = buf(sBytes + 16, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
-  gpuWrite(device, I, tables);
-  const named = {I, A, B, N, ...(cacheRef && {RA, RL})}, refBytes = new Uint8Array(reference.buffer, reference.byteOffset, n * 4);
-  if (bands) {
-    named.ref = gpuUpload(device, buf, refBytes, st);
-    for (let o = 0; o < outputs; o++) named['out' + o] = buf(n * 4);
-    for (let t = 0; t < 2; t++) for (let p = 0; p < 6; p++) named['P' + t + p] = buf(n1 * 4);
-  } else gpuWrite(device, I, refBytes, 512 * 4);
-  const uniform = (f, bA = A, bB = B, bN = N) => gpuBind(device, set.group, [gpuUni(device, buf, [0, f.w, f.h, f.n, f.w2, f.h2, f.n2, f.c, f.slot, f.rof, f.dof, tot, f.oy0, f.oy1, f.gofs, f.H, f.mode, acc, f.ny0, f.wy0], null, 0, 80), I, bA, bB, L, bN, S, F]);
-  const refPlan = [];
-  if (cacheRef) {
-    let off3 = 0, offRL = 0;
-    for (let s = 0; s < sizes.length; s++) {
-      const {w, h} = sizes[s], m = w * h, next = sizes[s + 1], w2 = next?.w ?? 0, n2 = next ? w2 * next.h : 0;
-      const baseF = {w, h, n: m, w2, h2: next?.h ?? 0, n2, rof: 512, dof: 0, oy0: 0, oy1: h, gofs: 0, H: h, mode: 3 | 4, ny0: 0, wy0: 0, c: 0, slot: 0};
-      if (s) refPlan.push({copy: [['N', 0, 'A', 0, 3 * m * 4]]});
-      if (!s) refPlan.push([set.lin0, uniform(baseF), m]);
-      if (next) refPlan.push([set.down, uniform(baseF), n2]);
-      refPlan.push([set.positive, uniform({...baseF, rof: off3}, A, RA, N), m]);
-      for (let c = 0; c < 3; c++) {
-        const fRef = {...baseF, rof: off3, dof: offRL + c * 2 * m, c};
-        refPlan.push([set.hblur, uniform(fRef, RA, B, RL), m]);
-        if (h > VB) refPlan.push([set.halo, uniform(fRef, RA, B, RL), haloFloats(w, h)]);
-        refPlan.push([set.vblur, uniform(fRef, RA, B, RL), w * Math.ceil(h / VB)]);
-      }
-      off3 += 3 * m; offRL += 6 * m;
-    }
-  }
-  const plan = [];
-  for (let o = 0; o < outputs; o++) {
-    const steps = [];
-    let off3 = 0, offRL = 0;
-    for (let s = 0; s < sizes.length; s++) {
-      const {w, h} = sizes[s], next = sizes[s + 1], w2 = next?.w ?? 0, list = bands ? bands[s] : [[0, h]];
-      if (cacheRef) {
-        const m = w * h, n2 = next ? w2 * next.h : 0;
-        const f = {w, h, n: m, w2, h2: next?.h ?? 0, n2, rof: off3, dof: 512 + (1 + o) * n, oy0: 0, oy1: h, gofs: 0, H: h, mode: 3 | 8, ny0: 0, wy0: 0, c: 0, slot: 0};
-        if (s) steps.push({copy: [['N', 0, 'B', 0, 3 * m * 4]]});
-        if (!s) steps.push([set.lin0, uniform(f, RA, B, N), m]);
-        if (next) steps.push([set.down, uniform(f, RA, B, N), n2]);
-        steps.push([set.positive, uniform(f, RA, B, N), m]);
+  try {
+    const I = buf(words[0] * 4), A = buf(words[1] * 4), B = buf((cacheRef ? Math.max(3 * totalM, 3 * n) : words[1]) * 4);
+    const RA = cacheRef ? buf(3 * totalM * 4) : null, RL = cacheRef ? buf(6 * totalM * 4) : null;
+    const L = buf(words[2] * 4), N = buf((cacheRef ? 3 * n1 : words[3]) * 4), S = buf((acc + (bands ? 3 * S2_GROUPS * WG * 6 : 0)) * 8), F = buf(16);
+    const R = buf(sBytes + 16, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
+    gpuWrite(device, I, tables);
+    const named = {I, A, B, N, ...(cacheRef && {RA, RL})}, refBytes = new Uint8Array(reference.buffer, reference.byteOffset, n * 4);
+    if (bands) {
+      named.ref = gpuUpload(device, buf, refBytes, st);
+      for (let o = 0; o < outputs; o++) named['out' + o] = buf(n * 4);
+      for (let t = 0; t < 2; t++) for (let p = 0; p < 6; p++) named['P' + t + p] = buf(n1 * 4);
+    } else gpuWrite(device, I, refBytes, 512 * 4);
+    const uniform = (f, bA = A, bB = B, bN = N) => gpuBind(device, set.group, [gpuUni(device, buf, [0, f.w, f.h, f.n, f.w2, f.h2, f.n2, f.c, f.slot, f.rof, f.dof, tot, f.oy0, f.oy1, f.gofs, f.H, f.mode, acc, f.ny0, f.wy0], null, 0, 80), I, bA, bB, L, bN, S, F]);
+    const refPlan = [];
+    if (cacheRef) {
+      let off3 = 0, offRL = 0;
+      for (let s = 0; s < sizes.length; s++) {
+        const {w, h} = sizes[s], m = w * h, next = sizes[s + 1], w2 = next?.w ?? 0, n2 = next ? w2 * next.h : 0;
+        const baseF = {w, h, n: m, w2, h2: next?.h ?? 0, n2, rof: 512, dof: 0, oy0: 0, oy1: h, gofs: 0, H: h, mode: 3 | 4, ny0: 0, wy0: 0, c: 0, slot: 0};
+        if (s) refPlan.push({copy: [['N', 0, 'A', 0, 3 * m * 4]]});
+        if (!s) refPlan.push([set.lin0, uniform(baseF), m]);
+        if (next) refPlan.push([set.down, uniform(baseF), n2]);
+        refPlan.push([set.positive, uniform({...baseF, rof: off3}, A, RA, N), m]);
         for (let c = 0; c < 3; c++) {
-          const fc = {...f, dof: offRL + c * 2 * m, c, slot: (o * sizes.length + s) * 3 + c};
-          const u = uniform(fc, RA, B, RL);
-          steps.push([set.hblur, u, m * 3]);
-          if (h > VB) steps.push([set.halo, u, haloFloats(w, h)]);
-          steps.push([set.vblur, u, w * 3 * Math.ceil(h / VB)], [set.sums, u, -1]);
+          const fRef = {...baseF, rof: off3, dof: offRL + c * 2 * m, c};
+          refPlan.push([set.hblur, uniform(fRef, RA, B, RL), m]);
+          if (h > VB) refPlan.push([set.halo, uniform(fRef, RA, B, RL), haloFloats(w, h)]);
+          refPlan.push([set.vblur, uniform(fRef, RA, B, RL), w * Math.ceil(h / VB)]);
         }
         off3 += 3 * m; offRL += 6 * m;
-        continue;
-      }
-      for (const [b, [y0, y1]] of list.entries()) {
-        const top = bands ? Math.max(0, y0 - 4) : 0, hW = (bands ? Math.min(h, y1 + 4) : h) - top, m = w * hW, out = y1 - y0;
-        const rowsN = next ? Math.min(next.h, Math.ceil(y1 / 2)) - y0 / 2 : 0;
-        const f = {w, h: hW, n: m, w2, h2: rowsN, n2: w2 * rowsN, rof: 0, dof: 512 + (bands ? m : (1 + o) * n), oy0: y0 - top, oy1: y1 - top,
-          gofs: top * w, H: h, mode: (b ? 0 : 1) | (b === list.length - 1 ? 2 : 0), ny0: y0 / 2, wy0: top, c: 0, slot: 0};
-        const u0 = uniform({...f, rof: 512});
-        if (!bands) { if (s) steps.push({copy: [['N', 0, 'A', 0, 3 * m * 4], ['N', 3 * m * 4, 'B', 0, 3 * m * 4]]}); }
-        else if (!s) steps.push({copy: [['ref', top * w * 4, 'I', 512 * 4, m * 4], ['out' + o, top * w * 4, 'I', (512 + m) * 4, m * 4]]});
-        else steps.push({copy: [0, 1, 2, 3, 4, 5].map(p => ['P' + (s & 1) + p, top * w * 4, p < 3 ? 'A' : 'B', (p % 3) * m * 4, m * 4])});
-        if (!s) steps.push([set.lin0, u0, m]);
-        if (next) steps.push([set.down, u0, w2 * rowsN]);
-        steps.push([set.positive, u0, m]);
-        for (let c = 0; c < 3; c++) {
-          const u = uniform({...f, rof: 0, c, slot: (o * sizes.length + s) * 3 + c});
-          steps.push([set.hblur, u, m * 4]);
-          if (out > VB) steps.push([set.halo, u, haloFloats(w, out)]);
-          steps.push([set.vblur, u, w * 4 * Math.ceil(out / VB)], [set.sums, u, -1]);
-        }
-        if (bands && next) steps.push({copy: [0, 1, 2, 3, 4, 5].map(p => ['N', p * w2 * rowsN * 4, 'P' + ((s + 1) & 1) + p, y0 / 2 * w2 * 4, w2 * rowsN * 4])});
       }
     }
-    steps.push([set.total, uniform({w: 0, h: 0, n: 0, w2: 0, h2: 0, n2: 0, c: 0, slot: o * sizes.length * 3, rof: 0, dof: 0, oy0: 0, oy1: 0, gofs: 0, H: 0, mode: 0, ny0: 0, wy0: 0}), -sizes.length * 3]);
-    plan.push(steps);
-  }
-  return held.state = {n, outputs, sizes, I, N, A, B, S, F, R, sBytes, tot, refPlan, refReady: !cacheRef, plan, named, banded: !!bands, release() { gpuDestroy(made); held.state = null; }};
+    const plan = [];
+    for (let o = 0; o < outputs; o++) {
+      const steps = [];
+      let off3 = 0, offRL = 0;
+      for (let s = 0; s < sizes.length; s++) {
+        const {w, h} = sizes[s], next = sizes[s + 1], w2 = next?.w ?? 0, list = bands ? bands[s] : [[0, h]];
+        if (cacheRef) {
+          const m = w * h, n2 = next ? w2 * next.h : 0;
+          const f = {w, h, n: m, w2, h2: next?.h ?? 0, n2, rof: off3, dof: 512 + (1 + o) * n, oy0: 0, oy1: h, gofs: 0, H: h, mode: 3 | 8, ny0: 0, wy0: 0, c: 0, slot: 0};
+          if (s) steps.push({copy: [['N', 0, 'B', 0, 3 * m * 4]]});
+          if (!s) steps.push([set.lin0, uniform(f, RA, B, N), m]);
+          if (next) steps.push([set.down, uniform(f, RA, B, N), n2]);
+          steps.push([set.positive, uniform(f, RA, B, N), m]);
+          for (let c = 0; c < 3; c++) {
+            const fc = {...f, dof: offRL + c * 2 * m, c, slot: (o * sizes.length + s) * 3 + c};
+            const u = uniform(fc, RA, B, RL);
+            steps.push([set.hblur, u, m * 3]);
+            if (h > VB) steps.push([set.halo, u, haloFloats(w, h)]);
+            steps.push([set.vblur, u, w * 3 * Math.ceil(h / VB)], [set.sums, u, -1]);
+          }
+          off3 += 3 * m; offRL += 6 * m;
+          continue;
+        }
+        for (const [b, [y0, y1]] of list.entries()) {
+          const top = bands ? Math.max(0, y0 - 4) : 0, hW = (bands ? Math.min(h, y1 + 4) : h) - top, m = w * hW, out = y1 - y0;
+          const rowsN = next ? Math.min(next.h, Math.ceil(y1 / 2)) - y0 / 2 : 0;
+          const f = {w, h: hW, n: m, w2, h2: rowsN, n2: w2 * rowsN, rof: 0, dof: 512 + (bands ? m : (1 + o) * n), oy0: y0 - top, oy1: y1 - top,
+            gofs: top * w, H: h, mode: (b ? 0 : 1) | (b === list.length - 1 ? 2 : 0), ny0: y0 / 2, wy0: top, c: 0, slot: 0};
+          const u0 = uniform({...f, rof: 512});
+          if (!bands) { if (s) steps.push({copy: [['N', 0, 'A', 0, 3 * m * 4], ['N', 3 * m * 4, 'B', 0, 3 * m * 4]]}); }
+          else if (!s) steps.push({copy: [['ref', top * w * 4, 'I', 512 * 4, m * 4], ['out' + o, top * w * 4, 'I', (512 + m) * 4, m * 4]]});
+          else steps.push({copy: [0, 1, 2, 3, 4, 5].map(p => ['P' + (s & 1) + p, top * w * 4, p < 3 ? 'A' : 'B', (p % 3) * m * 4, m * 4])});
+          if (!s) steps.push([set.lin0, u0, m]);
+          if (next) steps.push([set.down, u0, w2 * rowsN]);
+          steps.push([set.positive, u0, m]);
+          for (let c = 0; c < 3; c++) {
+            const u = uniform({...f, rof: 0, c, slot: (o * sizes.length + s) * 3 + c});
+            steps.push([set.hblur, u, m * 4]);
+            if (out > VB) steps.push([set.halo, u, haloFloats(w, out)]);
+            steps.push([set.vblur, u, w * 4 * Math.ceil(out / VB)], [set.sums, u, -1]);
+          }
+          if (bands && next) steps.push({copy: [0, 1, 2, 3, 4, 5].map(p => ['N', p * w2 * rowsN * 4, 'P' + ((s + 1) & 1) + p, y0 / 2 * w2 * 4, w2 * rowsN * 4])});
+        }
+      }
+      steps.push([set.total, uniform({w: 0, h: 0, n: 0, w2: 0, h2: 0, n2: 0, c: 0, slot: o * sizes.length * 3, rof: 0, dof: 0, oy0: 0, oy1: 0, gofs: 0, H: 0, mode: 0, ny0: 0, wy0: 0}), -sizes.length * 3]);
+      plan.push(steps);
+    }
+    return held.state = {n, outputs, sizes, I, N, A, B, S, F, R, sBytes, tot, refPlan, refReady: !cacheRef, plan, named, banded: !!bands, release() { gpuDestroy(made); held.state = null; }};
+  } catch (error) { gpuDestroy(made); throw error; }
 }
 
-export async function gpuS2Prepare(device, held, tables, reference, width, height, outputs = 2) {
+export async function gpuS2Prepare(device, held, tables, reference, width, height, outputs = 2, signal) {
   if (width < 8 || height < 8) return null;
   const bands = s2Bands(device.limits, width, height);
   if (bands === null) return null;
-  return residentState(device, await pipelines(device), held, tables, reference, width, height, outputs, bands);
+  const kernels = await pipelines(device);
+  return signal?.aborted ? null : residentState(device, kernels, held, tables, reference, width, height, outputs, bands);
 }
 
 export function gpuS2Record(device, encoder, state, outputs, dst = state.R, dstOffset = 0) {
@@ -510,16 +527,17 @@ export function gpuS2Decode(state, bytes, byteOffset = 0) {
   return {sums, sizes, flagged};
 }
 
-export async function gpuS2Sums(device, held, tables, reference, outputs, width, height) {
+export async function gpuS2Sums(device, held, tables, reference, outputs, width, height, signal) {
   let state = null;
   try {
-    return await gpuScoped(device, 's2', async () => {
-      state = await gpuS2Prepare(device, held, tables, reference, width, height);
+    return await gpuScoped(device, 's2', async seal => {
+      state = await gpuS2Prepare(device, held, tables, reference, width, height, 2, signal);
       if (!state) return null;
       const {R} = state, encoder = device.createCommandEncoder();
       gpuS2Record(device, encoder, state, outputs, R, 0);
       device.queue.submit([encoder.finish()]);
-      await R.mapAsync(GPUMapMode.READ);
+      seal();
+      await gpuMap(device, R);
       const bytes = R.getMappedRange().slice(0); R.unmap();
       return gpuS2Decode(state, bytes, 0);
     }, true, () => { state?.release(); return null; });

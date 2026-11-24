@@ -1,3 +1,4 @@
+import './engines.mjs';
 import {decodeJpegPixels, JPEG_PIXELS_SYMBOL} from '../jpeg-scaled-decode.mjs';
 import {resultOperation, resultReference, resultFacts} from './result-operation.mjs';
 import {ansTranscodeSteps} from '../jpeg-ans-effort.mjs';
@@ -11,15 +12,16 @@ import {wasmRequired} from '../capture-wasm-error.mjs';
 import {jpegDimensions, jpegBlobDimensions} from './input.mjs';
 import {LIMITS} from '../limits.mjs';
 import {copyBytes, encodedByteLength, viewBytes, admitSignature} from './bytes.mjs';
-import {bytes, check, fail, declared, snapshotOptions, dimensions, pixelLimit, NO_JPEG, progressOf, admitSignal, blobBytes, preparedAlone} from './primitives.mjs';
+import {bytes, check, fail, declared, snapshotOptions, dimensions, pixelLimit, NO_JPEG, admitKeys, callHooks, blobBytes, preparedAlone, isBlob} from './primitives.mjs';
 import {pictureSize} from './jpeg-size.mjs';
 import {recompressSteps, restoreSteps, STEPS, jpegSettings} from './jpeg-steps.mjs';
+import {withArenaLease} from '../call-scope.mjs';
 import './preparation-jpeg.mjs';
 
 const pixelBound = pixelLimit;
 const settle = run => run.catch(error => { throw declared(error); });
 async function kernels() {
-  if (!await prepareKernels() || !ensureKernels() || !kernelHooks.channel) throw wasmRequired();
+  if (!await prepareKernels() || !ensureKernels() || !kernelHooks.acGroup) throw wasmRequired();
 }
 const prepare = preparedAlone(async () => { try { await kernels(); } catch (error) { throw declared(error); } });
 export async function supported(feature) {
@@ -28,12 +30,6 @@ export async function supported(feature) {
   try { await kernels(); return true; } catch { return false; }
 }
 
-function hooks(options) {
-  const {signal, onProgress} = options;
-  admitSignal(signal);
-  if (onProgress !== undefined && typeof onProgress !== 'function') throw fail('JXL_OPTIONS', "onProgress: function");
-  return {signal, progress: progressOf(onProgress, signal) ?? (() => {})};
-}
 async function drain(steps, {signal, progress}) {
   let told = 0, turn = performance.now(), failed = false;
   try {
@@ -48,7 +44,7 @@ async function drain(steps, {signal, progress}) {
   finally { try { steps.return?.(); } catch (error) { if (!failed) throw error; } }
 }
 async function owned(input, signal, admit, maxPixels) {
-  if (typeof Blob !== 'undefined' && input instanceof Blob) {
+  if (isBlob(input)) {
     if (maxPixels !== undefined) await jpegBlobDimensions(input, maxPixels, signal, LIMITS.edge);
     const read = await blobBytes(input, signal); admit(bytes(read)); return read;
   }
@@ -62,22 +58,23 @@ Object.defineProperty(recompress, STEPS, {value: recompressSteps(kernels)});
 function recompressHere(input, options) {
   try {
     const settings = snapshotOptions(options);
-    for (const key of Object.keys(settings)) if (!['effort', 'maxPixels', 'gainMap', 'signal', 'onProgress'].includes(key))
-      throw fail('JXL_OPTIONS', `unknown option: ${key}`);
+    admitKeys(settings, ['effort', 'maxPixels', 'gainMap', 'signal', 'onProgress']);
     if (settings.gainMap !== undefined && typeof settings.gainMap !== 'boolean')
       throw fail('JXL_OPTIONS', 'gainMap: boolean');
-    const {signal} = settings, run = hooks(settings), effort = jpegSettings(settings), maxPixels = pixelBound(settings.maxPixels);
+    const {signal} = settings, run = callHooks(settings), effort = jpegSettings(settings), maxPixels = pixelBound(settings.maxPixels);
     let otherDecoders;
-    const coding = {effort, maxPixels, ...(settings.gainMap && {gainMap: promotedGainMap}), tails: longTail, outside: missing => { otherDecoders = {missing, reason: 'past-jbrd'}; }};
+    const coding = {effort, maxPixels, ...(settings.gainMap === true && {gainMap: promotedGainMap}), tails: longTail, outside: missing => { otherDecoders = {missing, reason: 'past-jbrd'}; }};
     check(signal);
     const pending = owned(input, signal, view => jpegDimensions(view, maxPixels, LIMITS.edge), maxPixels);
     return (async () => {
       const jpeg = await pending;
       resultReference(settings, jpeg);
       jpegDimensions(jpeg, maxPixels, LIMITS.edge);
-      await kernels();
-      check(signal);
-      const file = await drain(ansTranscodeSteps(jpeg, coding), run);
+      const file = await withArenaLease(signal, async () => {
+        await kernels();
+        check(signal);
+        return drain(ansTranscodeSteps(jpeg, coding), run);
+      });
       if (otherDecoders) resultFacts(settings, {otherDecoders});
       return file;
     })();
@@ -90,8 +87,8 @@ Object.defineProperty(restore, Symbol.for('rapier-jxl.verify.source'), {value: r
 Object.defineProperty(recompress, JPEG_PIXELS_SYMBOL, {value: decodeJpegPixels});
 async function restoreHere(input, options) {
   const settings = snapshotOptions(options);
-  for (const key of Object.keys(settings)) if (!['maxPixels', 'signal', 'onProgress'].includes(key)) throw fail('JXL_OPTIONS', `unknown option: ${key}`);
-  const {signal} = settings, run = hooks(settings), maxPixels = pixelBound(settings.maxPixels);
+  admitKeys(settings, ['maxPixels', 'signal', 'onProgress']);
+  const {signal} = settings, run = callHooks(settings), maxPixels = pixelBound(settings.maxPixels);
   check(signal);
   input = await owned(input, signal, view => {
     admitSignature(view, 'JXL_INPUT');
@@ -100,7 +97,7 @@ async function restoreHere(input, options) {
     if (view[0] === 255 && view[1] === 10) throw fail('JXL_RECONSTRUCTION', NO_JPEG);
   });
   resultReference(settings, input);
-  const result = restoreJPEG(input, brotliDictionary, {maxPixels});
+  const result = await withArenaLease(signal, () => restoreJPEG(input, brotliDictionary, {maxPixels}));
   if (!result) throw fail('JXL_RECONSTRUCTION', NO_JPEG);
   check(signal); run.progress(1); await run.progress.finish?.(); check(signal);
   return result;

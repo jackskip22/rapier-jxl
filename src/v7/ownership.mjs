@@ -1,6 +1,6 @@
-import {fail as error, unreadInput} from './primitives.mjs';
+import {fail as error, unreadInput, isBlob} from './primitives.mjs';
 import {EDGE, PIXELS} from '../limits.mjs';
-import {arrayBufferBytes, typedFields, typedName} from './bytes.mjs';
+import {arrayBufferBytes, liveView, typedName} from './bytes.mjs';
 import {plain} from './records.mjs';
 export const DEFAULT_INPUT_BYTES = Number.MAX_SAFE_INTEGER;
 export const hostPendingBytes = (host = globalThis) => {
@@ -18,15 +18,13 @@ export const RETAIN_INPUT = Symbol.for('rapier-jxl.retain-input');
 export const SNAPSHOTS = new WeakMap();
 export const withCost = (value, cost) => { SNAPSHOTS.set(value, cost); return value; };
 export const HANDED = new WeakSet();
-function blob(value) { return typeof Blob === 'function' && value instanceof Blob; }
-const viewFields = Object.fromEntries(['buffer', 'byteOffset', 'byteLength'].map(key => [key, Object.getOwnPropertyDescriptor(DataView.prototype, key).get]));
+function blob(value) { return isBlob(value); }
 const sliceBytes = Uint8Array.prototype.slice;
 const constructors = {Uint8Array, Uint8ClampedArray, Int8Array, Uint16Array, Int16Array, Uint32Array, Int32Array, ...(typeof Float16Array === 'function' && {Float16Array}), Float32Array, Float64Array, BigInt64Array, BigUint64Array, DataView};
 function view(value) {
-  let fields = typedFields, name;
-  try { name = typedName.call(value); typedFields.buffer.call(value); }
-  catch { fields = viewFields; name = 'DataView'; }
-  const buffer = fields.buffer.call(value), byteOffset = fields.byteOffset.call(value), byteLength = fields.byteLength.call(value);
+  const name = typedName.call(value) ?? 'DataView', fields = liveView(value);
+  if (!fields) throw error('JXL_INPUT', "ArrayBuffer: live and sized");
+  const [buffer, byteOffset, byteLength] = fields;
   if (arrayBufferBytes(buffer) === null) throw error('JXL_INPUT', "shared buffer: copy to ArrayBuffer");
   reach(buffer, byteOffset, byteLength);
   const Type = constructors[name];

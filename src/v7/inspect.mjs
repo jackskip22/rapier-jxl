@@ -6,8 +6,7 @@ import {SIGNATURE, FTYP, BRAND, CODESTREAM, PARTIAL, LEVEL, BROB, RECONSTRUCTION
 import {fail} from './primitives.mjs';
 
 export function header(bytes, options = {}) {
-  const maxBytes = options.maxInputBytes ?? Number.MAX_SAFE_INTEGER;
-  const maxBoxes = options.maxBoxes ?? Number.MAX_SAFE_INTEGER;
+  const {maxInputBytes: maxBytes = Number.MAX_SAFE_INTEGER, maxBoxes = Number.MAX_SAFE_INTEGER} = options;
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw fail('JXL_OPTIONS', "maxInputBytes: positive safe integer");
   if (!Number.isSafeInteger(maxBoxes) || maxBoxes < 1) throw fail('JXL_OPTIONS', "maxBoxes: positive safe integer");
   for (const key of ['maxPixels', 'maxDimension', 'maxMetadataBytes'])

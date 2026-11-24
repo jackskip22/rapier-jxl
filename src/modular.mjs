@@ -19,15 +19,15 @@ export function split(property, splitval, left, right) {
   return {property, splitval, left, right};
 }
 
-function propertyTree(items, property) {
+export function intervals(property, cuts, child) {
   const build = (lo, hi) => {
-    if (lo === hi) return property ? items[lo].tree : items[lo];
+    if (lo === hi) return child(lo);
     const mid = (lo + hi) >> 1;
-    return split(property, property ? items[mid].streamId : mid, build(mid + 1, hi), build(lo, mid));
+    return split(property, cuts[mid], build(mid + 1, hi), build(lo, mid));
   };
-  return build(0, items.length - 1);
+  return build(0, cuts.length);
 }
-export function channelTree(leaves) { return propertyTree(leaves, 0); }
+export function channelTree(leaves) { return intervals(0, Array.from({length: leaves.length - 1}, (_, k) => k), i => leaves[i]); }
 
 export function writeTree(w, root, separate = false) {
   const queue = [root], tokens = [], leaves = [];
@@ -128,14 +128,15 @@ export function writeTransform(w, transform) {
   } else throw fault('JXL_INTERNAL', 'modular:transform ' + transform.type);
 }
 
-export function writeModularHeader(w, {useGlobalTree = true, transforms = []} = {}) {
+export function writeModularHeader(w, {useGlobalTree = true, transforms = [], weighted = null} = {}) {
   w.write(1, useGlobalTree ? 1 : 0);
-  w.write(1, 1);
+  w.write(1, (typeof __RAPIER_JXL_EFFORT_TEN__ === 'undefined' || __RAPIER_JXL_EFFORT_TEN__ === true) && weighted ? 0 : 1);
+  if ((typeof __RAPIER_JXL_EFFORT_TEN__ === 'undefined' || __RAPIER_JXL_EFFORT_TEN__ === true) && weighted) weighted.forEach((value, i) => w.write(i < 7 ? 5 : 4, value));
   w.writeU32([[0, 0], [0, 1], [4, 2], [8, 18]], transforms.length);
   for (const transform of transforms) writeTransform(w, transform);
 }
 
-export function streamTree(sections) { return propertyTree(sections, 1); }
+export function streamTree(sections) { return intervals(1, sections.slice(0, -1).map(s => s.streamId), i => sections[i].tree); }
 
 export function writeChannelHistograms(w, orderedLeaves, freqs, histogramOf = leaf => leaf.context, configOf = () => RESIDUAL_CONFIG) {
   const contextMap = new Uint8Array(orderedLeaves.length + 1);

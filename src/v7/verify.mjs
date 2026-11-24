@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
+import './engines.mjs';
 import {configuredDecoder, DECODER_SNAPSHOT} from '../shown-picture.mjs';
 import {own} from './ownership.mjs';
-import {check, fail, declared, isCaller, object, snapshotOptions, dimensions, pixelLimit, PIXELS, admitSignal, progressOf} from './primitives.mjs';
+import {check, fail, declared, isCaller, object, snapshotOptions, dimensions, pixelLimit, PIXELS, admitSignal, progressOf, admitKeys} from './primitives.mjs';
 import {header} from './inspect.mjs';
 import {boxes, EXIF, XML, JUMBF, FTYP, LEVEL, CODESTREAM, PARTIAL} from '../container.mjs';
 import {encodeFidelity} from './fidelity.mjs';
@@ -11,7 +12,7 @@ import {digestBytes, identityOfSnapshot, isIdentity, isRows, snapshotSource, enc
 import {pixelResult, rowResult, referenceFromOriginal, searchedWithoutNoise} from './verify-pixels.mjs';
 import {isImageResult} from './result-shape.mjs';
 import {protectedScope} from './verify-protection.mjs';
-import {restoreFile, restoredByJbrd, jpegReader, jpegPixelReader, unreadBytes} from './verify-decode.mjs';
+import {restoreFile, restoredByJbrd, jpegReader, jpegPixelReader, unreadBytes, isJPEG, displaySize} from './verify-decode.mjs';
 import {comparison, comparisonContext, pictureICC, conversionProfile, sameBytes as sameProfileBytes, pixelEvidence, metricSamples, measurementTarget, opaque, composedOver} from './verify-compare.mjs';
 import {nativeGammaRGBA} from '../photo-output.mjs';
 import {protectionDomain, protectionEvidence, noiseUnread} from './verify-pixels.mjs';
@@ -31,8 +32,6 @@ export {configureDecoder} from '../shown-picture.mjs';
 const CLAIM_SLACK = 0.1, MAX_ERROR_SLACK = 1;
 const sameBytes = (a, b) => !!a && !!b && a.length === b.length && a.every((value, i) => value === b[i]);
 const sameIdentity = (a, b) => a.kind === b.kind && a.digest === b.digest;
-const displaySize = picture => picture.orientation >= 5 ? {width: picture.height, height: picture.width} : {width: picture.width, height: picture.height};
-const isJPEG = bytes => bytes?.[0] === 255 && bytes[1] === 216;
 const METADATA = new Map([[EXIF, 'Exif'], [XML, 'XMP'], [JUMBF, 'JUMBF']]);
 const STRUCTURE = new Set([FTYP, LEVEL, CODESTREAM, PARTIAL, 0x6a786c69]);
 const fourcc = type => String.fromCharCode(type >>> 24, type >>> 16 & 255, type >>> 8 & 255, type & 255);
@@ -61,7 +60,7 @@ async function foreignContent(candidate, source, options) {
 }
 function settingsOf(options, result) {
   const given = snapshotOptions(options);
-  for (const key of Object.keys(given)) if (!['signal', 'onProgress', 'maxPixels', 'protection'].includes(key)) throw fail('JXL_OPTIONS', `unknown option: ${key}`);
+  admitKeys(given, ['signal', 'onProgress', 'maxPixels', 'protection']);
   admitSignal(given.signal);
   if (given.onProgress !== undefined && typeof given.onProgress !== 'function') throw fail('JXL_OPTIONS', "onProgress: function");
   const kept = result && typeof result === 'object' ? Object.getOwnPropertyDescriptor(result, 'kept')?.value : undefined;

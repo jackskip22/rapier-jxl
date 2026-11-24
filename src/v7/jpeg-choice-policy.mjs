@@ -11,7 +11,7 @@ export function jpegChoiceMode(info, {quality, effort}, options = {}) {
 export function jpegWins(exact, pixels, facts = {}, maxBytes, maxIntent) {
   if (!exact || maxBytes !== undefined && exact.byteLength > maxBytes) return false;
   if (!pixels || facts.meetsTarget === false || facts.measurements?.some(value =>
-    value.score !== undefined && (value.floor !== undefined && value.score < value.floor ||
+    value.score !== undefined && (!Number.isFinite(value.score) || value.floor !== undefined && value.score < value.floor ||
       value.limit !== undefined && value.score > value.limit))) return true;
   if (maxBytes !== undefined && maxIntent !== undefined && facts.fidelity !== 'exact' &&
       !(facts.fidelity?.quality / 100 >= maxIntent)) return true;

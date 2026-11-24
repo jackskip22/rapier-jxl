@@ -8,5 +8,5 @@ export const S2_WEIGHTS = /* @__PURE__ */ (() => {
 export function finalCurve(sum) {
   let s = sum * 0.9562382616834844;
   s = 2.326765642916932 * s - 0.020884521182843837 * s * s + 6.248496625763138e-5 * s * s * s;
-  return s > 0 ? 100 - 10 * Math.pow(s, 0.6276336467831387) : 100;
+  return s <= 0 ? 100 : 100 - 10 * Math.pow(s, 0.6276336467831387);
 }

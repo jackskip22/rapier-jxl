@@ -27,9 +27,9 @@ fn soft(e: vec2f) -> vec2f { return ddiv(e, dadd(vec2f(1.0, 0.0), dmul(${dsLit(0
 fn main(@builtin(workgroup_id) g: vec3u, @builtin(local_invocation_index) lid: u32) {
   let index = (g.y * p.groupsX + g.x) * 64u + lid;
   if (index >= p.blocks) { return; }
-  let bx = index % p.stride; let by = p.by0 + index / p.stride; let W = p.W;
+  let bx = index % p.stride; let by = p.by0 + index / p.stride; let W = p.W; let z0 = u32(gcOne() < 0.0);
   var s = vec2f(0.0, 0.0); var size = 0.0;
-  for (var y = 0u; y < 7u; y++) { for (var x = 0u; x < 7u; x++) {
+  for (var y = z0; y < 7u; y++) { for (var x = z0; x < 7u; x++) {
     let i = (by * 8u + y - p.top) * W + bx * 8u + x;
     let dy1 = dsub(plY[i + 1u], plY[i]); let dy2 = dsub(plY[i + W], plY[i]); let dd = dsub(dsub(dadd(plY[i + W + 1u], plY[i]), plY[i + 1u]), plY[i + W]);
     let dx = dsub(plX[i + 1u], plX[i]); let db = dsub(plB[i + 1u], plB[i]);
@@ -44,11 +44,20 @@ fn main(@builtin(workgroup_id) g: vec3u, @builtin(local_invocation_index) lid: u
 }`;
 
 export function b16Blocks(input, weight) {
-  const {stride, rows, fine, cfl} = input, oTile = stride * rows * 2, tiles = cfl.x.length;
-  const blk = new Float32Array((oTile + tiles * 2) * 2);
-  for (let b = 0; b < stride * rows; b++) { b16Split(fine[b], blk, b * 4); b16Split(weight[b], blk, b * 4 + 2); }
+  const {stride, rows, fine, cfl, zones} = input, cells = stride * rows, oTile = cells * 3, tiles = cfl.x.length;
+  const oZone = zones ? oTile + tiles * 2 : 0;
+  const blk = new Float32Array((oTile + tiles * 2 + (zones ? zones.thresholds.length : 0)) * 2);
+  for (let b = 0; b < cells; b++) {
+    const f = fine[b];
+    b16Split(f, blk, b * 6);
+    if (f === 1) blk[b * 6 + 2] = 1;
+    else b16Split(1 / f, blk, b * 6 + 2);
+    if (zones) blk[b * 6 + 4] = zones.indices[b];
+    else if (weight) b16Split(weight[b], blk, b * 6 + 4);
+  }
   for (let k = 0; k < tiles; k++) { b16Split(cfl.x[k] / 84, blk, (oTile + k * 2) * 2); b16Split(cfl.b[k] / 84, blk, (oTile + k * 2 + 1) * 2); }
-  return {blk, oTile};
+  if (zones) b16Splits(zones.thresholds, blk, oZone * 2);
+  return {blk, oTile, oZone};
 }
 
 const b16Kernel = (device, ds) => gpuKernel(device, 'b16:energy', () => b16EnergyShader(ds), 64);
@@ -57,18 +66,21 @@ export const gpuBlocks16Stats = {costs: 0, levels: 0, flagged: 0, doubtful: 0, b
 
 export function b16Open(device, request, core, weight) {
   const {stride, rows} = request.input, W = stride * 8, H = rows * 8, cellRows = Math.ceil(rows / 2), made = [], alloc = gpuAlloc(device, made);
-  const {blk, oTile} = b16Blocks(request.input, weight ?? new Float64Array(stride * rows));
-  const blkBuf = gpuUpload(device, alloc, blk), planeBound = request.planeBound;
+  const {blk, oTile, oZone} = b16Blocks(request.input, weight ?? new Float64Array(stride * rows));
+  let blkBuf;
+  try { blkBuf = gpuUpload(device, alloc, blk); } catch (error) { gpuDestroy(made); throw error; }
+  const planeBound = request.planeBound;
   const budget = Math.min(64 << 20, device.limits.maxStorageBufferBindingSize);
   const bandCells = Math.max(1, Math.min(cellRows, request.devicePlanes ? 16 : cellRows, Math.floor(budget / (3 * W * 16 * 8))));
   const band = (encoder, c0, cells) => {
     const top = c0 * 16, bandPx = Math.min(H - top, cells * 16), before = made.length;
     const res = core.encodePlanes(encoder, alloc, request.data, request.width, request.height, top, top + bandPx, request.options);
     gpuBlocks16Stats.bands++;
-    const own = made.splice(before);
-    return [res.planes, top - res.row, () => gpuDestroy(own)];
+    const own = made.splice(before), release = () => gpuDestroy(own);
+    made.push({destroy: release});
+    return [res.planes, top - res.row, release];
   };
-  return [W, stride, rows, cellRows, bandCells, oTile, blkBuf, planeBound, alloc, made, band];
+  return [W, stride, rows, cellRows, bandCells, oTile, blkBuf, planeBound, alloc, made, band, oZone];
 }
 
 export async function gpuBlocks16EnergyHook(device, ds, width, height, planeBound) {
@@ -76,11 +88,12 @@ export async function gpuBlocks16EnergyHook(device, ds, width, height, planeBoun
   let bound = 0, done = 0;
   const each = new Float64Array(stride * rows);
   return {
-    band(encoder, set, {y, from, to}) {
+    band(encoder, set, {y, from, to}, owner) {
       const made = [], alloc = gpuAlloc(device, made), by0 = y / 8, by1 = to === height ? rows : (to - 64) / 8, blocks = (by1 - by0) * stride, gx = gpuGroupsX(blocks);
+      owner.push({destroy: () => gpuDestroy(made)});
       const out = alloc(blocks * 12), u = gpuUni(device, alloc, [set.W, stride, by0, blocks, from, gx], [[6, planeBound]], 12, 64);
       gpuStep(device, encoder, kernel, [u, ...set.planes, out], blocks);
-      const [map, take] = gpuStage(alloc, encoder, [[out, 0, blocks * 12]]);
+      const [map, take] = gpuStage(device, alloc, encoder, [[out, 0, blocks * 12]]);
       return async () => {
         try {
           await map();

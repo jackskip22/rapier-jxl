@@ -13,11 +13,11 @@ npx jpegxl add next
 
 `add next` copies four files into the project and changes two:
 
-- `package.json`: `"postbuild": "node rapier-jxl-next.mjs"`. After `next build`, it writes one JPEG XL file per width
+- `package.json`: `"postbuild": "node rapier-jxl-next.mjs"`. After `npm run build`, it writes one JPEG XL file per width
   next/image asks for, for every JPEG and PNG in `public/` and every image the app imports, under `public/_jxl/`.
-  sharp, which Next installs for its own images, decodes and resizes each width as Next does; rapier-jxl encodes it.
+  Rapier-jxl reads and resizes each width itself, in linear light. A full-size JPEG restores exactly.
 - `proxy.js` (Next 16) or `middleware.js` (Next 15): next/image's requests from a browser that sends
-  `Accept: image/jxl` get the JPEG XL file; every other request goes on to Next's optimizer, as before.
+  `Accept: image/jxl` get the JPEG XL file. Every other request goes on to Next's optimizer, as before.
 
 ```js
 // proxy.js
@@ -33,7 +33,7 @@ at effort 3, gives the look of Next's default WebP on the median photograph. At 
 
 - **`next start` (Node):** `proxy.js`. A picture with no JPEG XL file (one the step could not write, added later, or
   removed) goes on to Next.
-- **Edge middleware:** `middleware.js` works the same; with no file system it asks for the JPEG XL file with a `HEAD`
+- **Edge middleware:** `middleware.js` works the same. With no file system it asks for the JPEG XL file with a `HEAD`
   request first, so a picture without one goes on to Next there too.
 - **Static export (`output: 'export'`):** no server chooses by `Accept`. Use a `<picture>`:
 
@@ -52,7 +52,7 @@ Do not set `images.unoptimized` in `next.config` for this: it makes `getImagePro
 
 ## Limits
 
-- Remote pictures (`images.remotePatterns`) are not converted; they go to Next as before.
+- Remote pictures (`images.remotePatterns`) are not converted. They go to Next as before.
 - A picture added to `public/` after the build has no JPEG XL file until the next build.
 - Each build writes every width up to the picture's own: about 4 seconds per 5-megapixel photograph at effort 3.
   Next's optimizer instead spends 0.3 to 0.7 seconds on a WebP, 0.7 to 3.7 on an AVIF, at each width's first request.

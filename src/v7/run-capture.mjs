@@ -4,7 +4,7 @@ import {CAPTURE_TOOLS, CAPTURE_HELPERS, LEVELS, DEFAULT_EFFORT, captureExact, ma
 import {bandGroupSteps, bandFrameFile, frameBandRows} from '../capture-band-frame.mjs';
 import {GROUPS} from './groups.mjs';
 import {GPU_FROM} from './capture-levels.mjs';
-import {check, pixelLimit, PIXELS} from './primitives.mjs';
+import {check, pixelLimit, PIXELS, isBlob} from './primitives.mjs';
 import {WHOLE, BAND_PIXELS, bandRows} from './band-size.mjs';
 import {readBand, untilAborted} from './rows.mjs';
 import {turn as loopTurn, exclusive} from '../turn.mjs';
@@ -62,8 +62,11 @@ const helped = (coder, answer, groups, signal) => {
   if (!groups || !coder.steps) return answer;
   const pending = (typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) ? null : new Map();
   return Object.assign(value => {
-    if (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && pending.delete(value.await)) return value.await;
-    const request = value.groups ?? (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && Array.isArray(value.regions) && {regions: value.regions});
+    if (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true)) {
+      const held = pending.get(value.await);
+      if (held) { pending.delete(value.await); held.request.promoted = true; held.request.promote?.(); return value.await; }
+    }
+    const request = value.groups ?? (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && Array.isArray(value.regions) && {regions: value.regions, ...(value.ahead && {ahead: true})});
     if (!request) return answer ? answer(value) : null;
     if ((typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) || !value.ahead) return groups(request, signal);
     const controller = new AbortController(), stop = () => controller.abort(signal?.reason);
@@ -72,11 +75,11 @@ const helped = (coder, answer, groups, signal) => {
     try { promise = Promise.resolve(groups(request, controller.signal)); }
     catch (error) { signal?.removeEventListener?.('abort', stop); throw error; }
     promise = promise.finally(() => signal?.removeEventListener?.('abort', stop));
-    promise.catch(() => {}); pending.set(promise, controller); return promise;
+    promise.catch(() => {}); pending.set(promise, {controller, request}); return promise;
   }, {options: {...answer?.options, [CAPTURE_HELPERS]: true}, async retire() {
     let failed = false, failure;
     if (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true)) {
-      for (const controller of pending.values()) try { controller.abort(); }
+      for (const {controller} of pending.values()) try { controller.abort(); }
       catch (error) { if (!failed) { failed = true; failure = error; } }
       pending.clear();
     }
@@ -106,7 +109,7 @@ export async function runCaptureUsing(input, options, hooks, fidelity, coder) {
   if (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && capped) rest.effort = coder.effortCap;
   if (maxPixels !== undefined) hooks = {...hooks, maxPixels: Math.min(pixelLimit(maxPixels), hooks.maxPixels ?? Infinity)};
   const facts = {bands: 1};
-  fidelity = {...fidelity, [CAPTURE_FACTS]: facts};
+  fidelity = {...fidelity, [CAPTURE_FACTS]: facts, small: true};
   active++;
   try {
     const kernels = coder.ready();
@@ -116,10 +119,11 @@ export async function runCaptureUsing(input, options, hooks, fidelity, coder) {
       const {width, height} = input;
       resultReference(options, input);
       check(hooks.signal); await kernels;
-      const read = async (y, rows) => { const band = await readBand(input, y, rows, hooks.signal); captureDomain(band);
-        options[CAPTURE_PROTECTION]?.referenceRows(y, band); return band.data; };
       const coding = {...rest, ...fidelity, colorSpace: input.description.colorSpace, signal: hooks.signal};
-      const result = await exclusive(async () => {
+      const result = await exclusive(async outside => {
+        const unleased = hooks.outsideArena ?? (read => read());
+        const read = async (y, rows) => { const band = await outside(() => unleased(() => readBand(input, y, rows, hooks.signal))); captureDomain(band);
+          options[CAPTURE_PROTECTION]?.referenceRows(y, band); return band.data; };
         check(hooks.signal);
         const answer = helped(coder, await ((typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) ? undefined : coder.answerer?.(coding, width * height, ran)), groups, hooks.signal);
         return captureLarge(read, width, height, coding, hooks, coder, answer);
@@ -129,7 +133,7 @@ export async function runCaptureUsing(input, options, hooks, fidelity, coder) {
     }
     const picture = hooks.journal && isPlainPicture(input) ? input : await image(input, options, hooks);
     captureDomain(picture);
-    resultReference(options, picture, typeof Blob === 'function' && input instanceof Blob ? input : picture);
+    resultReference(options, picture, isBlob(input) ? input : picture);
     hooks.onPicture?.(picture);
     const {data, width, height, colorSpace} = picture;
     if (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && !known && coder.rectangles) Object.assign(rest, coder.rectangles(rest, width, height));

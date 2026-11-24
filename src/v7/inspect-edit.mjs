@@ -10,7 +10,7 @@ export async function inspect(input, options) {
 }
 const DETAILS = ['metadata', 'layout'];
 async function readHeader(input, options) {
-  const {details: asked = [], decompress, ...settings} = snapshotOptions(options), maxBytes = settings.maxInputBytes ?? Number.MAX_SAFE_INTEGER;
+  const {details: asked = [], decompress, ...settings} = snapshotOptions(options), {maxInputBytes: maxBytes = Number.MAX_SAFE_INTEGER} = settings;
   for (const key of Object.keys(settings)) if (!['maxPixels', 'maxDimension', 'maxMetadataBytes', 'maxInputBytes', 'maxBoxes'].includes(key))
     throw fail('JXL_OPTIONS', `unknown option: ${key}`);
   if (!Array.isArray(asked)) throw fail('JXL_OPTIONS', "details: metadata or layout");
@@ -22,7 +22,7 @@ async function readHeader(input, options) {
   if (encodedByteLength(input) > maxBytes) throw fail('JXL_LIMIT', 'maxInputBytes: exceeded');
   if (isSourceHeader(viewBytes(input))) {
     if (details.length) throw fail('JXL_OPTIONS', 'details: jxl only');
-    for (const key of ['maxPixels', 'maxDimension', 'maxMetadataBytes'])
+    for (const key of ['maxPixels', 'maxDimension', 'maxMetadataBytes', 'maxBoxes'])
       if (settings[key] !== undefined && !(Number.isSafeInteger(settings[key]) && settings[key] > 0)) throw fail('JXL_OPTIONS', `${key}: positive safe integer`);
     return inspectSource(viewBytes(input), settings);
   }
@@ -39,7 +39,10 @@ async function readHeader(input, options) {
 }
 export async function edit(input, changes) {
   let owned;
-  try { owned = ownEdit(input, changes); } catch (error) { throw declared(error); }
+  try {
+    if (changes === null) { admitSignature(viewBytes(input), 'JXL_INPUT'); return copyBytes(input); }
+    owned = ownEdit(input, changes);
+  } catch (error) { throw declared(error); }
   return editBoxes(owned.input, owned.changes);
 }
 function ownEdit(input, changes) {

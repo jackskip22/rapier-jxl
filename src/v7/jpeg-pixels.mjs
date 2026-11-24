@@ -11,8 +11,8 @@ export function jpegPixelsReady() {
   if (typeof createImageBitmap !== 'function' && !reader()) throw fail('JXL_PLATFORM', SETUP);
 }
 
-export async function jpegPixels(bytes, {maxPixels, signal} = {}) {
+export async function jpegPixels(bytes, {maxPixels, signal, bands} = {}) {
   const read = reader();
   if (!read) throw fail('JXL_PLATFORM', SETUP);
-  return read(bytes, {maxPixels, signal, scale: 8});
+  return read(bytes, {maxPixels, signal, scale: 8, ...(bands && {bands})});
 }

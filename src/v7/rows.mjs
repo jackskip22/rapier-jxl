@@ -1,4 +1,4 @@
-import {fail, check, dimensions, callers, plainCopy, snapshotOptions, abortable} from './primitives.mjs';
+import {fail, check, dimensions, callers, plainCopy, snapshotOptions, abortable, declared} from './primitives.mjs';
 import {isPlainRecord} from './records.mjs';
 import {DESCRIPTION, described} from './describe.mjs';
 import {surface} from './surface.mjs';
@@ -32,7 +32,12 @@ export async function readBand({width, rows, description}, y, count, signal) {
     if (!ArrayBuffer.isView(data) || data instanceof DataView || data.length !== width * count * 4)
       throw fail('JXL_INPUT', `band samples: ${width} x ${count} x 4`);
     const pixels = surface({...description, data, width, height: count});
-    try { pixels.data = plainCopy(pixels.data); } catch { throw fail('JXL_INPUT', 'band buffer: detached or short'); }
+    try { pixels.data = plainCopy(pixels.data); }
+    catch (error) {
+      error = declared(error);
+      if (error?.code === 'JXL_MEMORY') throw error;
+      throw fail('JXL_INPUT', 'band buffer: detached or short');
+    }
     return pixels;
   }
   const space = description.colorSpace ?? 'srgb';
@@ -43,9 +48,10 @@ export async function readBand({width, rows, description}, y, count, signal) {
   return {...description, data: read.data, width, height: count};
 }
 
+const DECLARED_ROW_CODE = /^JXL_(?:CLOSED|DECODE|DIMENSIONS|INPUT|INTERNAL|IO|JPEG|LIMIT|MEMORY|OPTIONS|PLATFORM|RECONSTRUCTION|SETUP|TARGET|UNSUPPORTED|WASM|WEBGPU|WORKER)$/;
 function rowFailure(error) {
   let code = 'JXL_INPUT', message = 'row source failed';
-  try { const value = error?.code; if (typeof value === 'string') code = value; } catch {}
+  try { const value = error?.code; if (typeof value === 'string' && DECLARED_ROW_CODE.test(value)) code = value; } catch {}
   try {
     const value = error?.message ?? error;
     if (value === null || typeof value !== 'object' && typeof value !== 'function') message = String(value);
@@ -82,8 +88,16 @@ export function rowBridge(source) {
 export function bridgedRows({rowsPort, ...record}) {
   let pending = Promise.resolve();
   const ask = (y, count) => new Promise((resolve, reject) => {
-    rowsPort.onmessage = ({data}) => data.error ? reject(Object.assign(new Error(data.error.message), {code: data.error.code ?? 'JXL_INPUT'})) : resolve({data: data.data});
+    rowsPort.onmessage = ({data}) => {
+      if (!data || typeof data !== 'object') { reject(fail('JXL_INPUT', 'row bridge: message object')); return; }
+      if (data.error) {
+        const code = typeof data.error?.code === 'string' && DECLARED_ROW_CODE.test(data.error.code) ? data.error.code : 'JXL_INPUT';
+        reject(fail(code, typeof data.error?.message === 'string' ? data.error.message : 'row source failed'));
+        return;
+      }
+      resolve({data: data.data});
+    };
     rowsPort.postMessage({y, count});
-  });
+  }).finally(() => { rowsPort.onmessage = null; });
   return {...record, rows: (y, count) => (pending = pending.then(() => ask(y, count), () => ask(y, count)))};
 }

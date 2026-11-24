@@ -20,11 +20,13 @@ const nativeRgb = picture => (picture.data instanceof Uint8Array || picture.data
   (picture.intensityTarget ?? 255) === 255;
 
 export const settledFacts = /* @__PURE__ */ new WeakMap();
+export const settledWideFacts = /* @__PURE__ */ new WeakMap();
 export const lowIntentEligible = picture => nativeRgb(picture) && (picture.colorSpace ?? 'srgb') === 'srgb';
+export const lowIntentWideEligible = picture => nativeRgb(picture) && picture.colorSpace === 'display-p3';
 
 export function lowIntentFacts(picture, {wide = false} = {}) {
-  if (!(wide ? nativeRgb(picture) && picture.colorSpace === 'display-p3' : lowIntentEligible(picture))) return {eligible: false};
-  const settled = settledFacts.get(picture.data);
+  if (!(wide ? lowIntentWideEligible(picture) : lowIntentEligible(picture))) return {eligible: false};
+  const settled = (wide ? settledWideFacts : settledFacts).get(picture.data);
   if (settled) return settled;
   const {data, width, height} = picture, carried = carriedFacts(data, width * height);
   const shape = carried ? shapeResult(structuredClone(carried.scan)) : inspectPixels(data, width, height);
@@ -56,40 +58,40 @@ function anchor(q, values) {
 }
 
 export function lowIntentDecision(q, picture, {exactAllowed = true, facts: suppliedFacts} = {}) {
-  if (!exactAllowed) return {quality: qualityForIntent(q, picture), route: 'existing', policyClass: 'featured'};
-  if (q >= 1) return {quality: qualityForIntent(q, picture), route: 'exact', policyClass: 'intent-one'};
+  if (!exactAllowed) return {quality: qualityForIntent(q, picture), route: 'existing'};
+  if (q >= 1) return {quality: qualityForIntent(q, picture), route: 'exact'};
   const facts = suppliedFacts ?? lowIntentFacts(picture);
-  if (!facts.eligible) return {quality: qualityForIntent(q, picture), route: 'existing', policyClass: 'other-description'};
+  if (!facts.eligible) return {quality: qualityForIntent(q, picture), route: 'existing'};
   const region = regionQuality(q, picture.data, picture.width, {x: 0, y: 0, width: picture.width, height: picture.height});
   const reading = photoReading(q, facts, region);
   if (facts.shorterSide < LOW_INTENT_CALIBRATION.smallestScored)
-    return {quality: 100, route: 'exact', policyClass: 'tiny-pixels', facts, reading};
+    return {quality: 100, route: 'exact', facts};
   if (facts.screenLike)
-    return {quality: 100, route: 'exact', policyClass: 'screen', facts, reading};
+    return {quality: 100, route: 'exact', facts};
   if (facts.palette && !facts.preferXYB)
-    return {quality: 100, route: 'exact', policyClass: 'non-photo-palette', facts, reading};
+    return {quality: 100, route: 'exact', facts};
   return photoDecision(q, facts, reading);
 }
 
 function photoReading(q, facts, region) {
   const old = qualityFor(q, facts.gradient), fixed = fixedQuality(q);
   const base = Math.max(LOW_INTENT_CALIBRATION.minimumQuality, Math.min(99.9, Math.max(old, fixed, region) + 1));
-  return {old, fixed, region, base};
+  return {base};
 }
 
 function photoDecision(q, facts, reading) {
   let floor = 0, policyClass = 'ordinary-photo';
   if (facts.shorterSide < 128) return {quality: Math.min(LOW_INTENT_CALIBRATION.maximumLossy, smallReading(q, facts.shorterSide)),
-    route: 'photo', policyClass: facts.shorterSide < 64 ? 'photo-below64' : 'photo-below128', facts, reading};
+    route: 'photo', facts};
   if (facts.palette && facts.preferXYB) {
     floor = anchor(q, LOW_INTENT_CALIBRATION.palettePhoto); policyClass = 'photographic-palette';
   } else if (facts.shorterSide < 256) {
     return {quality: Math.min(LOW_INTENT_CALIBRATION.maximumLossy, smallReading(q, facts.shorterSide, facts.gradient)),
-      route: 'photo', policyClass: 'photo-below256', facts, reading};
+      route: 'photo', facts};
   }
   const ceiling = policyClass === 'ordinary-photo' && facts.preferXYB && !facts.palette ? ceilingFor(q) : Infinity;
   return {quality: Math.min(LOW_INTENT_CALIBRATION.maximumLossy, ceiling, Math.max(reading.base, floor)),
-    route: 'photo', policyClass, facts, reading};
+    route: 'photo', facts};
 }
 
 export function lowPhotoReading(q, picture, baseQuality, sampling) {
@@ -101,16 +103,17 @@ export function lowPhotoReading(q, picture, baseQuality, sampling) {
   return Math.min(LOW_INTENT_CALIBRATION.maximumLossy, baseQuality + (p3 ? t : 0) + (chroma ? p3 ? 1 : t : 0));
 }
 
-const P3_STILL = Object.freeze({offset: -1, slope: 50, cap: Object.freeze({q: [0.8, 0.84, 0.88, 0.9, 0.92], over: [0.4, 0.6, 0.6, 0.5, 0]}),
+const P3_STILL = Object.freeze({offset: -0.3, slope: 50, cap: Object.freeze({q: [0.8, 0.84, 0.88, 0.9, 0.92], over: [0.4, 0.6, 0.6, 0.5, 0]}),
   large: Object.freeze({q: [0.5, 0.8, 0.88, 0.92], offset: [0.8, 1.4, 1.8, 0]})});
 const knots = (q, at, values) => {
   if (q <= at[0]) return values[0];
   for (let k = 1; k < at.length; k++) if (q <= at[k]) return values[k - 1] + (values[k] - values[k - 1]) * (q - at[k - 1]) / (at[k] - at[k - 1]);
   return values.at(-1);
 };
-export function p3StillQuality(q, reading, large = false) {
+export function p3StillQuality(q, reading, large = false, longSide = 1280) {
   const {cap, large: big} = P3_STILL, offset = large ? knots(q, big.q, big.offset) : P3_STILL.offset;
-  return Math.min(reading + offset, q * 100 + knots(q, cap.q, cap.over) + P3_STILL.slope * Math.max(0, cap.q[0] - q));
+  const small = 0.9 * Math.min(1, Math.max(0, Math.log2(1280 / Math.max(1, longSide))));
+  return Math.min(reading + offset, q * 100 + knots(q, cap.q, cap.over) + P3_STILL.slope * Math.max(0, cap.q[0] - q)) + small;
 }
 
 const BUMP_STEPS = [[100, 8, 4], [250, 6, 3], [Infinity, 3, 2]];

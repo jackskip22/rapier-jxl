@@ -55,10 +55,11 @@ export function cpuMeasure(rgba, width, height, {reconstruct, bandedRGBA, rgbaOu
     if (want.butteraugli === true) throw fault('JXL_INTERNAL', 'photo-measure:butteraugli');
     return {wantMaps};
   };
-  const outputScore = (out, outputs, reference = s2) => {
-    const scores = nativeOutputScores(outputs, null, width, height, {reference});
+  const bounded = (want, score) => want.minScore !== undefined && !(score >= want.minScore);
+  const outputScore = (out, outputs, reference = s2, want = {}) => {
+    const scores = nativeOutputScores(outputs, null, width, height, {reference, minScore: want.minScore});
     out.ssimulacra2 = scores.minimum;
-    if (scores.package !== null && scores.native !== null) out.nativeScores = scores;
+    if (scores.package !== null && scores.native !== null && !bounded(want, scores.minimum)) out.nativeScores = scores;
   };
   const measure = (image, want = {}) => {
     const {ssimulacra2: wantS2 = false} = want, {wantMaps} = wants(want);
@@ -77,7 +78,7 @@ export function cpuMeasure(rgba, width, height, {reconstruct, bandedRGBA, rgbaOu
             : {linear: lin, banded: false};
           const outputs = rgbaOutputs ? rgbaOutputs(image, output) : [captureLinearRGBA(lin, width, height)];
           if (!lazyOutput) lin = null;
-          outputScore(out, outputs, s2Of(want));
+          outputScore(out, outputs, s2Of(want), want);
         }
         else {
           const rounded = smallPicture(width, height) && (rgbaReference ?? !!rawReference().rgba);
@@ -97,9 +98,9 @@ export function cpuMeasure(rgba, width, height, {reconstruct, bandedRGBA, rgbaOu
     let lin = null;
     try {
       const out = {};
-      const streamed = wantS2 && native && (want.arithmetic ?? 'binary64') === 'binary64' ? streamedScores?.(image) ?? null : null;
-      if (streamed) { out.ssimulacra2 = streamed.minimum; out.nativeScores = streamed; }
-      else if (wantS2 && native) outputScore(out, rgbaOutputs ? rgbaOutputs(image, {banded: true}) : [bandedRGBA(image)], s2Of(want));
+      const streamed = wantS2 && native && (want.arithmetic ?? 'binary64') === 'binary64' ? streamedScores?.(image, want) ?? null : null;
+      if (streamed) { out.ssimulacra2 = streamed.minimum; if (!bounded(want, streamed.minimum)) out.nativeScores = streamed; }
+      else if (wantS2 && native) outputScore(out, rgbaOutputs ? rgbaOutputs(image, {banded: true}) : [bandedRGBA(image)], s2Of(want), want);
       else if (wantS2) { lin = s2Planes(reconstruct(image, {banded: true}), n); out.ssimulacra2 = ssimulacra2(s2Of(want), lin, width, height).score; }
       lin = null;
       if (wantMaps) cellMaps(out, bandedRGBA(image));

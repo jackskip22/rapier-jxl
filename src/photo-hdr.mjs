@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MIT
-import {photoXYBSteps, gaborishXYB, signedRoot, XYB_TABLES} from './photo-xyb.mjs';
+import {photoXYBSteps, gaborishPlanes, xybScanReading, XYB_TABLES} from './photo-xyb.mjs';
+import {kernelHooks, ensured, missing} from './kernel-hooks.mjs';
+import {fault} from './fault.mjs';
+import {BAND_PIXELS, ONE_PLANE_BYTES, retainsWhole} from './memory-device.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {V6, GABORISH} from './photo-v6-settings.mjs';
 import {float16Sample as half} from './sample-values.mjs';
@@ -8,15 +11,25 @@ import {reconstruct} from './reconstruct.mjs';
 import {ssimulacra2} from './ssimulacra2.mjs';
 import {qualityTarget, measuredLook} from './photo-quality-table.mjs';
 import {measuredTarget} from './photo-browser-margin.mjs';
-import {hdrSpace, hdrCurve, srgbLight, hdrNits, hdrViews, hdrDomain, pu21Levels} from './hdr-look.mjs';
+import {hdrSpace, srgbLight, hdrAlpha, hdrNits, hdrViews, hdrDomain, pu21Levels} from './hdr-look.mjs';
 import {toLinearSrgb, matrixTimes} from './xyb-space.mjs';
 import {flatSamples, CAPTURE_FLAT} from './screen-samples.mjs';
 import {captureDeepLeaves} from './capture-kernels.mjs';
 
 const {mix: MIX, bias: BIAS, rootBias: ROOT_BIAS} = XYB_TABLES;
-const spaceOf = hdrSpace, curveOf = hdrCurve;
+const spaceOf = hdrSpace;
+const CURVES = {};
+const curveOfBits = bits => CURVES[bits] ??= srgbLight(bits);
 
-export const hdrRoute = (data, samples, quality) => quality < 100 && hdrDomain(data, samples);
+export function hdrRoute(data, samples, quality) {
+  if (!(quality < 100) || (samples.colorChannels ?? 3) !== 3 || !hdrDomain(data, samples)) return false;
+  return !!samples.exponentBits || opaque(data, samples);
+}
+function opaque(data, samples) {
+  const value = (kernelHooks.opaque ?? ensured().opaque ?? missing())(data, samples);
+  if (value === undefined) throw fault('JXL_PLATFORM', 'opaque: declined');
+  return value;
+}
 
 export function* hdrSteps(data, width, height, quality, effort, samples, exact, report) {
   let facts = null;
@@ -67,6 +80,7 @@ function predictedQuality(quality, reading) {
   }
   return Math.max(1, Math.min(100, Math.round(at)));
 }
+
 const INTEGER = [[40, 70], [50, 75], [55, 77], [60, 78], [65, 80], [70, 82], [75, 84], [80, 88], [85, 91], [90, 95], [92, 97], [95, 98]];
 function integerQuality(quality) {
   const last = INTEGER.length - 1;
@@ -77,6 +91,7 @@ function integerQuality(quality) {
     return Math.round(c0 + (c1 - c0) * (quality - q0) / (q1 - q0));
   }
 }
+
 let WEIGHTS = null;
 function lumaWeights() {
   if (WEIGHTS) return WEIGHTS;
@@ -91,39 +106,24 @@ function lumaWeights() {
 }
 
 export function* hdrLossySteps(data, width, height, quality, effort, samples, note) {
-  const W = Math.ceil(width / 8) * 8, H = Math.ceil(height / 8) * 8, space = spaceOf(samples), toSrgb = toLinearSrgb(space), mix = matrixTimes(MIX, toSrgb);
-  const planes = [0, 1, 2].map(() => new Float64Array(W * H)), [X, Y, B] = planes;
-  const curve = samples.exponentBits ? null : srgbLight(samples.bitDepth);
-  const value = curve ? i => curve[data[i]] : samples.exponentBits === 5 ? i => half(data[i]) : i => data[i];
+  const space = spaceOf(samples), toSrgb = toLinearSrgb(space), mix = Float64Array.from(matrixTimes(MIX, toSrgb));
+  const target = samples.intensityTarget ?? 255, lift = target === 255 ? 1 : half(float16Bits(target)) / 255;
+  const curve = samples.exponentBits ? null : samples.bitDepth === 8 && lift !== 1 ? curveOfBits(8).map(v => v * lift) : curveOfBits(samples.bitDepth);
   const measuring = effort >= 6, measured = (measuring || width * height <= SMALL_PIXELS) && !!note;
   const nits = measured ? hdrNits(data, samples, width, height) : null;
-  const target = samples.intensityTarget ?? 255, lift = target === 255 ? 1 : half(float16Bits(target)) / 255;
-  let clear = false;
-  for (let i = 3; i < data.length; i += 4) if (value(i) !== 1) { clear = true; break; }
-  const words = clear ? (data instanceof Float32Array ? new Int32Array(data.buffer, data.byteOffset, data.length) : data) : null;
+  const isOpaque = opaque(data, samples);
+  const clear = !isOpaque;
   const weights = !measuring && !clear && samples.exponentBits ? lumaWeights() : null;
-  let reading = 0;
-  for (let y = 0; y < height; y++) {
-    const row = y * W;
-    for (let x = 0, at = y * width * 4; x < width; x++, at += 4) {
-      const r = value(at) * lift, g = value(at + 1) * lift, b = value(at + 2) * lift;
-      const l = signedRoot(mix[0] * r + mix[1] * g + mix[2] * b + BIAS) - ROOT_BIAS;
-      const m = signedRoot(mix[3] * r + mix[4] * g + mix[5] * b + BIAS) - ROOT_BIAS;
-      const s = signedRoot(mix[6] * r + mix[7] * g + mix[8] * b + BIAS) - ROOT_BIAS;
-      const luma = (l + m) * 127.5;
-      X[row + x] = (l - m) * 127.5; Y[row + x] = luma; B[row + x] = s * 255 - luma;
-      if (weights) reading += weights[luma <= 0 ? 0 : luma >= 1023 ? 1023 : Math.round(luma)];
-    }
-    for (const p of planes) p.fill(p[row + width - 1], row + width, row + W);
-    if ((y & 63) === 63) yield 0;
-  }
-  for (const p of planes) for (let y = height; y < H; y++) p.copyWithin(y * W, (height - 1) * W, height * W);
-  const options = {...V6, ...GABORISH, space: typeof space === 'string' ? space : 'srgb'};
-  options.pre = gaborishXYB(planes, W, H, options.gaborish);
+  const sampleSpec = {exponentBits: samples.exponentBits, bitDepth: samples.bitDepth, lift, curve, mix, weights, reading: 0};
+  const baseOptions = {...V6, ...(height > 1 ? GABORISH : null), space: typeof space === 'string' ? space : 'srgb', samples: sampleSpec, opaque: isOpaque};
+  const retainPre = (measured || weights) && (width * height <= BAND_PIXELS || retainsWhole(width * height, ONE_PLANE_BYTES));
+  const options = retainPre ? {...baseOptions, pre: gaborishPlanes(data, width, height, baseOptions)} : baseOptions;
+  if (weights && !retainPre) xybScanReading(data, width, height, sampleSpec);
+  const reading = sampleSpec.reading;
+  yield 0;
   const profile = {bitDepth: samples.bitDepth, exponentBits: samples.exponentBits, transferFunction: curve ? 'srgb' : 'linear', intensityTarget: target, ...(samples.colorEncoding ? {colorData: samples.colorData} : {colorSpace: samples.colorSpace ?? 'srgb'}), alphaPremultiplied: !!samples.alphaPremultiplied};
   const code = function* (q) {
-    const candidate = yield* photoXYBSteps(OPAQUE, width, height, q, options);
-    if (words) { candidate.alpha = words; candidate.alphaWords = true; }
+    const candidate = yield* photoXYBSteps(data, width, height, q, options);
     return candidate.components.some(({coeffs}) => coeffs.some(v => v === 32767 || v === -32768)) ? null : candidate;
   };
   const start = weights ? predictedQuality(quality, reading / (width * height))
@@ -141,7 +141,8 @@ export function* hdrLossySteps(data, width, height, quality, effort, samples, no
   let found = null;
   if (measured) {
     const floor = measuredLook(quality / 100), aim = measuredTarget(floor), count = width * height;
-    const opacity = clear ? Float32Array.from({length: count}, (_, i) => Math.min(1, value(i * 4 + 3))) : null;
+    const alpha = clear ? hdrAlpha(data, samples) : null;
+    const opacity = alpha ? Float32Array.from({length: count}, (_, i) => Math.min(1, alpha(i * 4 + 3))) : null;
     const premultiplied = !!samples.alphaPremultiplied, references = hdrViews(nits, count, opacity, 1, premultiplied);
     const scored = function* (q, candidate) {
       yield 0;
@@ -180,6 +181,5 @@ export function* hdrLossySteps(data, width, height, quality, effort, samples, no
   note?.(found);
   return yield* coefficientAnsSteps(image, effort);
 }
-const OPAQUE = new Uint8Array([0, 0, 0, 255]);
 
 export const HDR = Object.freeze({route: hdrRoute, steps: hdrSteps, lossy: hdrLossySteps});

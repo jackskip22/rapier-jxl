@@ -7,6 +7,7 @@ import {planeModel, weightedTrees, transformRanking} from './capture-trees.mjs';
 import {writeCaptureStream} from './capture-modular-stream.mjs';
 import {kernelHooks, ensured, missing} from './kernel-hooks.mjs';
 import {captureDistinct} from './capture-kernels.mjs';
+import {hostShort} from './fault.mjs';
 
 const SHIFT_PREDICTORS = Object.freeze([5, 4, 1, 2, 7, 8, 9]);
 const SHIFT_PROPERTIES = Object.freeze([10, 11, 12, 13, 14, 2, 3]);
@@ -72,7 +73,7 @@ function safeWriteCapture(w, models, ans, opts) {
   const snapAt = w.at, snapAcc = w.acc, snapPending = w.pending;
   try { return writeCaptureStream(w, models, ans, opts); }
   catch (err) {
-    if (err?.code !== 'JXL_MEMORY') throw err;
+    if (err?.code !== 'JXL_MEMORY' || hostShort(err)) throw err;
     w.at = snapAt; w.acc = snapAcc; w.pending = snapPending;
     return writeCaptureStream(w, models, null, opts);
   }

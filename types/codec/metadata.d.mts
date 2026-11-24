@@ -4,9 +4,9 @@ import type {Bytes} from './index.mjs';
 export interface MetadataOptions {
   /** Optional full encoded input-size limit, enforced before copying (JXL_SIZE on refusal). */
   maxBytes?: number;
-  /** Maximum accepted input boxes; none by default. */
+  /** Maximum accepted input boxes. None by default. */
   maxBoxes?: number;
-  /** Raw TIFF bytes, beginning with II or MM; no Exif\0\0 or JPEG APP1 header. */
+  /** Raw TIFF bytes, beginning with II or MM. No Exif\0\0 or JPEG APP1 header. */
   exif?: Uint8Array | null | undefined;
   /** XMP packet as a UTF-8 string or its original UTF-8 bytes. */
   xmp?: string | Uint8Array | null | undefined;
@@ -15,21 +15,21 @@ export interface MetadataOptions {
 }
 export type BrotliCodec = (bytes: Uint8Array, options: {maxOutputLength?: number}) => Uint8Array | Promise<Uint8Array>;
 export interface CompressedMetadataOptions extends MetadataOptions {
-  /** auto uses brob only when its full payload is smaller; brotli always compresses. Defaults to auto. */
+  /** auto uses brob only when its full payload is smaller. brotli always compresses. Defaults to auto. */
   compression?: 'auto' | 'brotli';
-  /** Optional codec. Node uses node:zlib; browsers use native Brotli streams or the portable LZ77/prefix writer. */
+  /** Optional codec. Node uses node:zlib. Browsers use native Brotli streams or the portable LZ77/prefix writer. */
   compress?: BrotliCodec | undefined;
 }
 export interface MetadataReadOptions {
   /** Optional full encoded input-size limit, enforced before copying (JXL_SIZE on refusal). */
   maxBytes?: number;
-  /** Maximum input boxes; none by default. */
+  /** Maximum input boxes. None by default. */
   maxBoxes?: number;
-  /** Optional positive safe-integer budget for combined decoded metadata; none by default. Beyond it the read is
+  /** Optional positive safe-integer budget for combined decoded metadata. None by default. Beyond it the read is
    * refused with JXL_SIZE. */
   maxDecodedBytes?: number;
   /** Optional full decoder. It must honor a supplied maxOutputLength before allocating output. Without native support,
-   * the built-in reader accepts the portable writer's subset; arbitrary external Brotli may need this hook. */
+   * the built-in reader accepts the portable writer's subset. Arbitrary external Brotli may need this hook. */
   decompress?: BrotliCodec | undefined;
 }
 export interface Metadata {
@@ -39,15 +39,15 @@ export interface Metadata {
   xmp: Bytes[];
   /** Original JUMBF superbox contents, in file order. */
   jumb: Bytes[];
-  /** Known metadata awaiting decompression. boxType is its unsigned four-byte box code; data is the Brotli stream. */
+  /** Known metadata awaiting decompression. boxType is its unsigned four-byte box code. data is the Brotli stream. */
   compressed: {boxType: number; data: Bytes}[];
 }
-/** Replace requested fields (null removes); omitted fields and all other boxes stay exact. Pixels, color encoding
+/** Replace requested fields (null removes). Omitted fields and all other boxes stay exact. Pixels, color encoding
  * and orientation are not rewritten. Metadata edits refuse JPEG reconstruction files. Output uses available memory. */
 export function withMetadata(bytes: Uint8Array, options?: MetadataOptions): Bytes;
 /** withMetadata with optional brob compression. Inputs are captured before the first asynchronous codec call. */
 export function withCompressedMetadata(bytes: Uint8Array, options?: CompressedMetadataOptions): Promise<Bytes>;
 /** Extract plain metadata with owned buffers, retaining known compressed metadata in compressed. */
 export function readMetadata(bytes: Uint8Array, options?: Pick<MetadataReadOptions, 'maxBytes' | 'maxBoxes' | 'maxDecodedBytes'>): Metadata;
-/** Extract plain and compressed metadata with owned buffers; compressed is empty on success. */
+/** Extract plain and compressed metadata with owned buffers. compressed is empty on success. */
 export function readMetadataAsync(bytes: Uint8Array, options?: MetadataReadOptions): Promise<Metadata>;

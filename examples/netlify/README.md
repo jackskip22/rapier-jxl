@@ -34,4 +34,4 @@ Each conversion is kept in Netlify's build cache, so a deploy encodes only new o
 ## Errors
 
 A picture the encoder refuses (such as a picture past the host's memory, `JXL_MEMORY`) is listed in the build log and left
-as it is; the deploy goes on. `hero.jpg` and `hero.png` in one folder would share `hero.jxl`: the first keeps it.
+as it is. The deploy goes on. `hero.jpg` and `hero.png` in one folder would share `hero.jxl`: the first keeps it.

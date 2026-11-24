@@ -40,7 +40,8 @@ export function progressivePasses(option) {
   return passesHeader(passes);
 }
 
-export const spectralPasses = () => passesHeader([1, 2, 4].map(d => ({downsample: 4 / d, shift: 0, scale: 1})));
+export const spectralPasses = () => passesHeader([{downsample: 4, shift: 3, scale: 8}, {downsample: 1, shift: 0, scale: 1}]);
+export const lfSplitPasses = () => passesHeader([{downsample: 8, shift: 0, scale: 1}, {downsample: 1, shift: 0, scale: 1}]);
 
 function passesHeader(passes) {
   const header = new BitWriter(32), hints = [];
@@ -65,17 +66,16 @@ function passesHeader(passes) {
 
 export function progressiveOrders(progression) {
   if (!progression) return null;
-  const natural = naturalOrder(1, 1), {passes} = progression;
-  const inside = (position, downsample) => position % 8 < 8 / downsample && position >> 3 < 8 / downsample;
-  let changed = false;
+  const nat = naturalOrder(1, 1), {passes} = progression, inBand = (k, d) => k % 8 < 8 / d && k >> 3 < 8 / d;
+  let any = false;
   const maps = passes.map((pass, p) => {
-    if (!passes.slice(0, p).some(earlier => earlier.shift === 0)) return {dct8: [null, null, null]};
-    const live = rank => inside(natural[rank], pass.downsample) &&
-      !passes.slice(0, p).some(earlier => earlier.shift === 0 && inside(natural[rank], earlier.downsample));
-    const ranks = Array.from({length: 63}, (_, i) => i + 1), order = [0, ...ranks.filter(live), ...ranks.filter(rank => !live(rank))];
-    if (order.every((rank, i) => rank === i)) return {dct8: [null, null, null]};
-    changed = true;
-    return {dct8: [order, order, order]};
+    const prev = passes.slice(0, p).filter(e => !e.shift);
+    if (!prev.length) return {dct8: [null, null, null]};
+    const live = r => inBand(nat[r], pass.downsample) && !prev.some(e => inBand(nat[r], e.downsample));
+    const ord = [0];
+    for (let r = 1; r < 64; r++) if (live(r)) ord.push(r);
+    for (let r = 1; r < 64; r++) if (!live(r)) ord.push(r);
+    return ord.every((r, i) => r === i) ? {dct8: [null, null, null]} : (any = true, {dct8: [ord, ord, ord]});
   });
-  return changed ? prepareCoefficientOrders({passes: maps}, passes.length) : null;
+  return any ? prepareCoefficientOrders({passes: maps}, passes.length) : null;
 }

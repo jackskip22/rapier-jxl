@@ -1,13 +1,24 @@
 // SPDX-License-Identifier: MIT
-import {kernelInstance, arenaHolder, takeArena, growArena} from './kernel-runtime.mjs';
+import {kernelFlat, kernelBuffer, arenaHolder, takeArena, growArena} from './kernel-runtime.mjs';
 
 const spec = (T, size, put, back = null) => ({T, size, bytes: size * T.BYTES_PER_ELEMENT, put, back});
 const zeroed = to => to.fill(0);
-export const into = (T, a, n = a.length, back) => spec(T, n, to => to.set(n === a.length ? a : a.subarray(0, n)), back ? n : null);
+export const into = (T, a, n = a.length, back) => {
+  const buf = kernelBuffer(), src = buf && a.buffer === buf ? a.slice(0, n) : n === a.length ? a : a.subarray(0, n);
+  return spec(T, n, to => to.set(src), back ? n : null);
+};
 export const both = (T, a, n) => into(T, a, n, 1);
-export const rect = (T, a, stride, x, y, w, h, size = 1) => spec(T, w * h * size, to => {
-  for (let row = 0; row < h; row++) to.set(a.subarray(((y + row) * stride + x) * size, ((y + row) * stride + x + w) * size), row * w * size);
-});
+export const rect = (T, a, stride, x, y, w, h, size = 1) => {
+  const buf = kernelBuffer();
+  if (buf && a.buffer === buf) {
+    const copy = new a.constructor(w * h * size);
+    for (let row = 0; row < h; row++) copy.set(a.subarray(((y + row) * stride + x) * size, ((y + row) * stride + x + w) * size), row * w * size);
+    return spec(T, w * h * size, to => to.set(copy));
+  }
+  return spec(T, w * h * size, to => {
+    for (let row = 0; row < h; row++) to.set(a.subarray(((y + row) * stride + x) * size, ((y + row) * stride + x + w) * size), row * w * size);
+  });
+};
 export const out = (T, n, zero) => spec(T, n, zero ? zeroed : null, n);
 export const outUpTo = (T, most, count, zero) => spec(T, most, zero ? zeroed : null, count);
 export const room = (n, zero) => spec(Uint8Array, n, zero ? zeroed : null);
@@ -44,11 +55,10 @@ export const bands = (call, most) => (pick, pixels, args) => {
 };
 
 const shared = /* @__PURE__ */ arenaHolder(() => {});
-let held;
 export const kernelCall = /* @__PURE__ */ kernelCaller(lay => {
-  const {memory, exports} = kernelInstance();
+  const k = kernelFlat();
   takeArena(shared);
   const at = lay(65536);
   growArena(at.end);
-  return {k: held ??= {...exports, memory}, at};
+  return {k, at};
 }, error => { throw error; });

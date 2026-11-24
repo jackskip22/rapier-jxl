@@ -1,4 +1,4 @@
-import {check, dimensions, fail, object} from './primitives.mjs';
+import {check, dimensions, fail, object, typedName, unknownOption} from './primitives.mjs';
 import {admitSamples} from './surface.mjs';
 import {drain} from './common.mjs';
 import {encodeFidelity} from './fidelity.mjs';
@@ -14,16 +14,16 @@ import {encodePhotoSteps} from '../photo-advanced.mjs';
 import {encodeProfileSteps} from '../icc.mjs';
 import {encodeAnimationAtlasSteps} from '../animation-atlas.mjs';
 
-const COMMON = ['fidelity', 'effort', 'level', 'iccCompression', 'toneMapping'];
+const COMMON = ['fidelity', 'effort', 'level', 'iccCompression'];
 const PLANES = [...COMMON, ...DESCRIPTION, 'preview'];
+const CHANNELS = [...PLANES, 'exponentBits', 'groupSize', 'predictor', 'transforms', 'squeeze', 'progressive', 'weightedPredictor', 'maxTransformBytes', 'upsampling', 'upsamplingWeights', 'intrinsicSize'];
 const TAKES = {
-  photo: ['fidelity', 'effort', 'level', 'toneMapping', 'upsampling', 'upsamplingWeights', 'transforms', 'quantization', 'coefficientOrders', 'progressive', 'noise', 'lfFrames'],
+  photo: ['fidelity', 'effort', 'level', 'upsampling', 'upsamplingWeights', 'transforms', 'quantization', 'coefficientOrders', 'progressive', 'noise', 'lfFrames'],
   graphics: [...COMMON, 'preset', 'maxColorError', 'paletteColors', 'preserveEdges', 'undither', 'protectedMask', 'deltaPredictor', 'maxPaletteColors', 'groupSize'],
   palette: [...COMMON, 'paletteMode', 'deltaPredictor', 'maxDeltaEntries', 'maxPaletteColors', 'groupSize'],
   patches: [...COMMON, 'atlas', 'patches', 'baseError'], splines: [...COMMON, 'splines', 'quantizationAdjustment'],
-  hybrid: [...COMMON, 'regions', 'progressive'], profile: COMMON,
-  channels: [...PLANES, 'groupSize', 'predictor', 'transforms', 'squeeze', 'progressive', 'weightedPredictor', 'maxTransformBytes', 'upsampling', 'upsamplingWeights', 'intrinsicSize'],
-  layers: [...PLANES, 'progressive'], 'patch-composition': PLANES, atlas: [...PLANES, 'atlas', 'atlasMode', 'atlasSearch'],
+  hybrid: [...COMMON, 'regions', 'progressive'], profile: [...COMMON, 'toneMapping'],
+  channels: CHANNELS, layers: CHANNELS, 'patch-composition': CHANNELS, atlas: [...PLANES, 'atlas', 'atlasMode', 'atlasSearch'],
 };
 const KINDS = ['channels', 'layers', 'patch-composition', 'patches', 'splines', 'graphics', 'hybrid', 'palette', 'photo', 'profile', 'atlas'];
 const PIXEL_KINDS = ['patches', 'splines', 'graphics', 'hybrid', 'palette', 'photo', 'profile'];
@@ -35,12 +35,13 @@ function refuseLost(kind, image) {
     throw fail('JXL_UNSUPPORTED', `${kind} extra channels: kind 'photo' or 'channels'`);
 }
 export function admitFormat(request, options) {
-  if (!request || typeof request !== 'object') throw fail('JXL_INPUT', "format request: {kind}");
+  if (!request || typeof request !== 'object' || Array.isArray(request)) throw fail('JXL_INPUT', "format request: {kind}");
   options = object(options);
   if (!KINDS.includes(request.kind)) throw fail('JXL_OPTIONS', "kind: 'photo', 'channels', 'layers' or 'atlas'");
-  for (const key of Object.keys(options)) if (!TAKES[request.kind].includes(key)) throw fail('JXL_OPTIONS', `unknown ${request.kind} option: ${key}`);
+  for (const key of Object.keys(options)) if (!TAKES[request.kind].includes(key)) throw unknownOption(key, options, `${request.kind} option`);
   if (PIXEL_KINDS.includes(request.kind)) { refuseDescription(options, `a ${request.kind} request's options`); admitSamples(request); }
-  if (options.effort !== undefined && (!Number.isInteger(options.effort) || options.effort < 1 || options.effort > 9)) throw fail('JXL_OPTIONS', "effort: integer 1-9");
+  if (options.effort !== undefined && (!Number.isInteger(options.effort) || options.effort < 1 || options.effort > 9))
+    throw fail('JXL_OPTIONS', options.effort === 10 ? "effort 10: import {encode} from 'jpegxl/max'" : 'effort: integer 1-9');
   if (options.fidelity === undefined) return;
   const read = encodeFidelity(options.fidelity);
   if (read.target !== undefined) throw fail('JXL_OPTIONS', "fidelity: 'exact' or {quality}");
@@ -50,7 +51,7 @@ export function admitFormat(request, options) {
     if (loss) throw fail('JXL_OPTIONS', `fidelity conflict: 'exact' or ${loss}`);
   }
 }
-const isFloat16 = value => typeof Float16Array === 'function' && value instanceof Float16Array;
+const isFloat16 = value => typedName.call(value) === 'Float16Array';
 function normalizeFloat16Picture(picture) {
   if (!picture || !isFloat16(picture.data)) return picture;
   if (picture.sampleFormat !== undefined && picture.sampleFormat !== 'float16') throw fail('JXL_INPUT', "Float16Array: sampleFormat float16");
@@ -59,6 +60,9 @@ function normalizeFloat16Picture(picture) {
 export async function author(request, options, hooks) {
   admitFormat(request, options);
   let image = request.image ?? request;
+  if (!image || typeof image !== 'object' || Array.isArray(image)) throw fail('JXL_INPUT', 'format image: object');
+  if (request.kind === 'patch-composition' && image.references !== undefined && !Array.isArray(image.references))
+    throw fail('JXL_INPUT', 'references: array');
   const sized = request.kind === 'patch-composition' ? [image.base, ...(image.references ?? [])].map(frame => frame?.image).filter(Boolean) : [image];
   for (const frame of sized) dimensions(frame.width, frame.height, hooks.maxPixels);
   const finish = iterator => drain(iterator, hooks);

@@ -125,7 +125,7 @@ export function createStrategySelector({options = {}, lambda = 1, stride, rows, 
   const best8 = (bx, by) => {
     if (force !== undefined) return candidate(VB_SMALL.has(force) ? force : 0, bx, by);
     let best = candidate(0, bx, by);
-    for (const id of [3, 12, 13]) if (allowed.has(id)) { const c = candidate(id, bx, by); if (beats(c, best)) best = c; }
+    if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) for (const id of [3, 12, 13]) if (allowed.has(id)) { const c = candidate(id, bx, by); if (beats(c, best)) best = c; }
     return best;
   };
   const largerFirst = bounded && !useMask && force === undefined && lambda >= 0 && [...allowed].every(id => id === 4 || id === 5);
@@ -166,7 +166,7 @@ export function createStrategySelector({options = {}, lambda = 1, stride, rows, 
       r.J += pen;
       r.Je += penDoubt(fb);
       if (beats(r, cur)) {
-        for (const b of list) if (!b.fallback) b.fallback = fb;
+        if (list.length === 1) for (const b of list) if (!b.fallback) b.fallback = fb;
         cur = r; best = list;
       }
     };
@@ -226,7 +226,7 @@ export function createStrategySelector({options = {}, lambda = 1, stride, rows, 
       const r = range(l);
       r.J += pen;
       if (beats(r, cur)) {
-        for (const b of l) if (!b.fallback) b.fallback = fb;
+        if (l.length === 1) l[0].fallback ??= fb;
         cur = r; list = l;
       }
     };

@@ -1,12 +1,11 @@
 // Rapier's JPEG XL encoder: a JPEG carried into a VarDCT frame. MIT (images/jxl/LICENSE).
 import {shown} from './photo-shown.mjs';
-import {applyProgressive} from './progressive-mode.mjs';
 import {varDCTField, varDCTDCSpec, copyVarDCTDCRows, copyVarDCTSharpness, copyVarDCTStrategies, copyVarDCTStrategyFields, copyVarDCTFieldRows, copyVarDCTCorrelation, copyVarDCTAlphaRows, copyVarDCTQuantRows, rawStepShift, varDCTLFGeometry, varDCTLFMetadataShape} from './vardct-planes.mjs';
 import {varDCTLayout, writeVarDCTHeader, writeVarDCTDCFields, writeVarDCTOrders, varDCTContextBuckets} from './vardct-header.mjs';
 import {writeQuantParams, photoDCT8Table} from './quantization-params.mjs';
 import {ORDER_STRATEGY_BUCKETS as ORDER_OF} from './coefficient-orders.mjs';
 import {countACRanks, emitACRanks, predictDCT8NonZero} from './vardct-ranks.mjs';
-import {blockContexts, contextsFromThresholds, acContexts, writeBlockContexts, DESIGNS} from './vardct-contexts.mjs';
+import {blockContexts, contextsFromThresholds, acContexts, writeBlockContexts, write3DBlockContexts, learn3DBlockContexts, DESIGNS} from './vardct-contexts.mjs';
 export {blockContexts, acContexts} from './vardct-contexts.mjs';
 import {kernelHooks, ensured, missing, declined} from './kernel-hooks.mjs';
 import {BitWriter, float16Bits, ceilLog2, complete} from './bits.mjs';
@@ -27,19 +26,22 @@ import {writeCapturePatches} from './capture-patches.mjs';
 
 const CAPTURE_PHOTO = typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true;
 
-const TYPED_ARRAY = Object.getPrototypeOf(Uint8Array.prototype);
-const TYPED_LENGTH = Object.getOwnPropertyDescriptor(TYPED_ARRAY, 'length').get;
-const TYPED_BUFFER = Object.getOwnPropertyDescriptor(TYPED_ARRAY, 'buffer').get;
-const BUFFER_LENGTH = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get;
+const TYPED_ARRAY = /* @__PURE__ */ (() => Object.getPrototypeOf(Uint8Array.prototype))();
+const TYPED_LENGTH = /* @__PURE__ */ (() => Object.getOwnPropertyDescriptor(TYPED_ARRAY, 'length').get)();
+const TYPED_BUFFER = /* @__PURE__ */ (() => Object.getOwnPropertyDescriptor(TYPED_ARRAY, 'buffer').get)();
+const BUFFER_LENGTH = /* @__PURE__ */ (() => Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get)();
 const VD_LF_SECTIONS = new WeakMap();
 const lfEntryOf = (jpeg, plan) => {
-  const key = {coder: plan.lfCoder, modularAns: plan.modularAns, epf: jpeg.epf, strategyData: jpeg.strategyData, quantFields: jpeg.quantFields, cfl: jpeg.cfl,
+  const key = {modularAns: plan.modularAns, epf: jpeg.epf, strategyData: jpeg.strategyData, quantFields: jpeg.quantFields, cfl: jpeg.cfl,
+    cflMaps: plan.cflMaps ?? null, cflGroups: plan.cflGroups > 64 ? plan.cflGroups : 64,
     auxiliary: jpeg.auxiliary, useDCFrame: jpeg.useDCFrame, sharpness: jpeg.sharpness, field: jpeg.quantFieldBase, alpha: jpeg.alpha, xyb: jpeg.xyb, ycbcr: jpeg.ycbcr,
     reconstruction: jpeg.jpegReconstruction, cflBase: jpeg.cflBase};
-  const hit = VD_LF_SECTIONS.get(jpeg.components);
+  let byCoder = VD_LF_SECTIONS.get(jpeg.components);
+  if (!byCoder) VD_LF_SECTIONS.set(jpeg.components, byCoder = new Map());
+  const coderKey = plan.lfCoder ?? null, hit = byCoder.get(coderKey);
   if (hit && Object.keys(key).every(k => hit[k] === key[k])) return hit;
   const entry = {...key, sections: [], wide: false};
-  VD_LF_SECTIONS.set(jpeg.components, entry);
+  byCoder.set(coderKey, entry);
   return entry;
 };
 export function vdLfGroupCount({width, height, components}) {
@@ -76,10 +78,15 @@ function tokenStore() {
   };
 }
 
+function targetDcIndex(source, target, i) {
+  if (target.numDc === 1) return 0;
+  if (target.numDc === source.numDc && (!target.thresholds?.length || target.thresholds.every((t, k) => t === source.thresholds[k]))) return i;
+  return target.bucketOf(i ? source.thresholds[i - 1] + 1 : source.thresholds[0]);
+}
 function contextRenaming(source, target, orders = ORDERS) {
   const into = new Int16Array(source.numCtxs).fill(-1);
   for (let row = 0; row < 3; row++) for (let ord = 0; ord < orders; ord++) for (let i = 0; i < source.numDc; i++) {
-    const from = source.map[(row * ORDERS + ord) * source.numDc + i], to = target.map[(row * ORDERS + ord) * target.numDc + (target.numDc === 1 ? 0 : i)];
+    const from = source.map[(row * ORDERS + ord) * source.numDc + i], to = target.map[(row * ORDERS + ord) * target.numDc + targetDcIndex(source, target, i)];
     if (into[from] >= 0 && into[from] !== to) return false;
     into[from] = to;
   }
@@ -93,10 +100,19 @@ function contextRenaming(source, target, orders = ORDERS) {
   return renaming;
 }
 
+function subsetThresholds(all, count) {
+  if (!count || !all?.length) return [];
+  if (count >= all.length) return all;
+  const aligned = all.filter((_, idx) => idx % 2 === 1);
+  if (count === 1 && aligned.length) return [aligned[aligned.length >> 1]];
+  if (count <= aligned.length) return aligned.slice(0, count);
+  return aligned;
+}
 function designShape(name, buckets, grey, lumaDc, thresholds = null) {
   const fastDefault = name === 'dcBuckets' && buckets === 0;
+  const chosenThresholds = Array.isArray(buckets) ? buckets : thresholds ? subsetThresholds(thresholds, buckets) : null;
   const candidate = fastDefault ? (grey ? FAST_CONTEXTS_GREY : FAST_CONTEXTS_RGB)
-    : thresholds ? contextsFromThresholds(buckets ? thresholds : [], grey, DESIGNS[name](grey)) : blockContexts(lumaDc, buckets, grey, DESIGNS[name](grey));
+    : chosenThresholds ? contextsFromThresholds(chosenThresholds, grey, DESIGNS[name](grey)) : blockContexts(lumaDc, buckets, grey, DESIGNS[name](grey));
   if (candidate.numCtxs > 16) return null;
   let header;
   if (fastDefault) header = grey ? FAST_HEADER_GREY : FAST_HEADER_RGB;
@@ -108,13 +124,25 @@ const writerData = w => ({bytes: w.bytes, at: w.at, pending: w.pending, acc: w.a
 const UNIT_GROUPS = 2;
 const savedWriter = w => ({...w, bytes: w.bytes.slice(0, w.at + 1)});
 const joinedSection = w => !w ? new Uint8Array(0) : w.pending ? journalJoin([sliceBytes(w.bytes, 0, w.at), Uint8Array.of(w.acc)]) : sliceBytes(w.bytes, 0, w.at);
+const MERGED_BY_COUNTS = new WeakMap();
+function mergedCountsCached(name, buckets, grey, countedMap, srcCounts, candidate, orders) {
+  let byDesign = MERGED_BY_COUNTS.get(srcCounts);
+  if (!byDesign) MERGED_BY_COUNTS.set(srcCounts, byDesign = new Map());
+  const key = `${name}:${(candidate.thresholds ?? []).join(',')}:${grey ? 1 : 0}:${orders}`;
+  const hit = byDesign.get(key);
+  if (hit && hit.countedMap === countedMap) return hit.merged;
+  const merged = mergedCounts(countedMap, srcCounts, candidate, orders);
+  byDesign.set(key, {countedMap, merged});
+  return merged;
+}
 function* designPriceSteps(name, buckets, grey, lumaDc, countedMap, counts, buildCoding, options, thresholds = null, orders = ORDERS) {
   const shape = designShape(name, buckets, grey, lumaDc, thresholds);
   if (!shape) return null;
   const {candidate} = shape, same = candidate === countedMap || (candidate.numCtxs === countedMap.numCtxs && candidate.numDc === countedMap.numDc && candidate.map.every((v, i) => v === countedMap.map[i]));
+  if (!same && (Array.isArray(buckets) || (thresholds && buckets > 0 && buckets < thresholds.length)) && !contextRenaming(countedMap, candidate, orders)) return null;
   const codings = [];
   for (let p = 0; p < counts.length; p++) {
-    const input = () => same ? counts[p] : mergedCounts(countedMap, counts[p], candidate, orders);
+    const input = () => same ? counts[p] : mergedCountsCached(name, buckets, grey, countedMap, counts[p], candidate, orders);
     codings.push(buildCoding.steps ? yield* buildCoding.steps(input, options) : buildCoding(input(), options));
   }
   return designWith(shape, codings);
@@ -127,7 +155,7 @@ export function designPriced(list, at, {counts, lumaDc, wanted, grey, clusters, 
 function mergedCounts(source, counts, target, orders) {
   const into = new Int16Array(source.numCtxs).fill(-1);
   for (let row = 0; row < 3; row++) for (let ord = 0; ord < orders; ord++) for (let i = 0; i < source.numDc; i++)
-    into[source.map[(row * ORDERS + ord) * source.numDc + i]] = target.map[(row * ORDERS + ord) * target.numDc + (target.numDc === 1 ? 0 : i)];
+    into[source.map[(row * ORDERS + ord) * source.numDc + i]] = target.map[(row * ORDERS + ord) * target.numDc + targetDcIndex(source, target, i)];
   const result = new TokenCounts(target.contexts);
   const add = (from, to) => {
     if (!counts.totals[from]) return;
@@ -211,22 +239,58 @@ function writeCachedQuantMatrices(ac, comps, shift = 0) {
 function fitCflRow(cs, bw, bh, gy, maps, row0) {
   const rows = Math.min(32, bh - gy * 32), tw = bw + 7 >> 3, start = (gy * 32 - row0) * cs[1].stride * 64;
   const n = rows * cs[1].stride * 64, from = gy * 4 * tw, tiles = (rows + 7 >> 3) * tw;
-  const kernels = (kernelHooks.entropy ?? ensured().entropy ?? missing())() ?? missing();
+  const kernels = (kernelHooks.entropy ?? ensured().entropy ?? missing())() ?? missing(), known = maps[3] || maps[2][gy];
   for (let i = 0; i < 2; i++) {
     const c = i * 2;
     kernels.fitCfl(cs[1].coeffs.subarray(start, start + n), cs[c].coeffs.subarray(start, start + n),
-      cs[1].quant, cs[c].quant, bw, rows, cs[1].stride, maps[i].subarray(from, from + tiles), maps[2][gy]);
+      cs[1].quant, cs[c].quant, bw, rows, cs[1].stride, maps[i].subarray(from, from + tiles), known);
   }
   maps[2][gy] = 1;
 }
-function fitJpegCfl(raw, bw, bh, gyCount) {
-  const tw = bw + 7 >> 3, th = bh + 7 >> 3, maps = [new Int8Array(tw * th), new Int8Array(tw * th), new Uint8Array(gyCount)];
+function fitJpegCfl(raw, bw, bh, gyCount, givenMaps = null) {
+  const tw = bw + 7 >> 3, th = bh + 7 >> 3;
+  const maps = givenMaps ? [givenMaps[0], givenMaps[1], new Uint8Array(gyCount), 1] : [new Int8Array(tw * th), new Int8Array(tw * th), new Uint8Array(gyCount)];
   const comps = [{...raw[0], coeffs: Int16Array.from(raw[0].coeffs)}, raw[1], {...raw[2], coeffs: Int16Array.from(raw[2].coeffs)}];
   for (let gy = 0; gy < gyCount; gy++) fitCflRow(comps, bw, bh, gy, maps, 0);
   return {comps, maps, tw};
 }
 export function encodeVarDCT(jpeg, plan) { return complete(varDCTSteps(jpeg, plan)); }
 
+
+export function coalescedColors(colors, cw, ch, x0, y0, rw, rh, blocks, luma, nonZero) {
+  const active = new Uint8Array(cw * ch);
+  if (blocks) {
+    for (const block of blocks) {
+      const plane = block.coeffs?.[1];
+      let any;
+      if (plane) {
+        any = false;
+        for (let k = 0; k < plane.length && !any; k++) any = plane[k] !== 0;
+      } else {
+        any = block.lumaAC;
+        if (any === undefined) return null;
+      }
+      if (any) active[((block.by - y0) >> 3) * cw + ((block.bx - x0) >> 3)] = 1;
+    }
+  } else {
+    const stride = luma?.stride, coeffs = luma?.row0 === undefined ? luma?.coeffs : null;
+    if (!stride || !(nonZero || coeffs?.length)) return null;
+    for (let by = 0; by < rh; by++) for (let bx = 0; bx < rw; bx++) {
+      const b = (y0 + by) * stride + x0 + bx, t = (by >> 3) * cw + (bx >> 3);
+      if (active[t]) continue;
+      if (nonZero) { if (nonZero[b]) active[t] = 1; continue; }
+      for (let k = 1; k < 64; k++) if (coeffs[b * 64 + k]) { active[t] = 1; break; }
+    }
+  }
+  if (active.every(Boolean)) return null;
+  const out = colors.map(c => c.slice());
+  let changed = false;
+  for (let t = 0; t < cw * ch; t++) if (!active[t]) {
+    const from = t % cw ? t - 1 : t - cw;
+    for (const c of out) { const v = from >= 0 ? c[from] : 0; changed ||= c[t] !== v; c[t] = v; }
+  }
+  return changed ? out : null;
+}
 
 export function strategyGroup(state, g, pass, coding, w) {
   if (!kernelHooks.strategyWrite) kernelHooks.ensure?.();
@@ -238,8 +302,8 @@ export function strategyGroup(state, g, pass, coding, w) {
 let sharedTokens = null;
 const tokenBuffer = () => sharedTokens ||= {ctxs: new Int32Array(GROUP_TOKENS), values: new Int32Array(GROUP_TOKENS)};
 export function* varDCTSteps(jpeg, plan = {}, shared) {
-  if ((typeof __RAPIER_JXL_PROGRESSIVE__ === 'undefined' || __RAPIER_JXL_PROGRESSIVE__ === true) && !jpeg.progression) jpeg = applyProgressive(jpeg);
-  if (shared && shared.jpeg !== jpeg) Object.assign(shared, {jpeg, cflFit: undefined, cflMaps: null, blockCounts: null, countedByOrder: null, tokensByOrder: null, tokenStore: null, dcSections: null, ansDcSections: null, lfSections: null, acSections: null, modularAns: null, lfCoder: null, modular16bit: true});
+  const cflInput = plan.cflMaps ?? (plan.cflGroups > 64 ? plan.cflGroups : null);
+  if (shared && (shared.jpeg !== jpeg || (shared.cflInput ?? null) !== cflInput)) Object.assign(shared, {jpeg, cflInput, cflFit: undefined, cflMaps: null, dc3dSigs: null, dc3dMaps: null, dc3dCounted: null, dc3dTokens: null, lastBucketTag: null, blockCounts: null, countedByOrder: null, fineCountedByOrder: null, tokensByOrder: null, fineTokensByOrder: null, chosenDesigns: null, tokenStore: null, dcSections: null, ansDcSections: null, lfSections: null, acSections: null, modularAns: null, lfCoder: null, modular16bit: true});
   let modular16bit = (shared?.modular16bit ?? true) && jpeg.modular16bit !== false;
   const {width, height, components, alpha, auxiliary, xyb, strategyData, splineBits, useDCFrame, authoredOrderPasses} = jpeg, grey = components.length === 1;
   const progression = (typeof __RAPIER_JXL_PROGRESSIVE__ === 'undefined' || __RAPIER_JXL_PROGRESSIVE__ === true) ? jpeg.progression : null;
@@ -251,14 +315,16 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   const {directRGB, numPasses, epf, quantScale, field, shift, ycbcr, map, comps: rawComps, hasOrders, orders,
     rawH, rawV, maxhs, maxvs, hshifts, vshifts, xsizeBlocks, ysizeBlocks, groupsX, groupsY, numGroups,
     dcGroupsX, dcGroupsY, numDcGroups, single, dcScale, dcLift} = layout;
-  const canCfl = !CAPTURE_PHOTO && !!(jpeg.jpegReconstruction && !grey && !maxhs && !maxvs && (!ycbcr || numGroups <= 64) && !strategyData && !progression && !jpeg.cfl && (jpeg.band || rawComps.every(c => c.coeffs)));
+  const givenCfl = !CAPTURE_PHOTO && (typeof __RAPIER_JXL_RECOMPRESS__ === "undefined" || __RAPIER_JXL_RECOMPRESS__ === true) && !(typeof __RAPIER_JXL_UPLOAD__ !== "undefined" && __RAPIER_JXL_UPLOAD__ === true) ? plan.cflMaps ?? null : null;
+  const cflGroups = !CAPTURE_PHOTO && (typeof __RAPIER_JXL_RECOMPRESS__ === "undefined" || __RAPIER_JXL_RECOMPRESS__ === true) && !(typeof __RAPIER_JXL_UPLOAD__ !== "undefined" && __RAPIER_JXL_UPLOAD__ === true) && plan.cflGroups > 64 ? plan.cflGroups : 64;
+  const canCfl = !CAPTURE_PHOTO && !!(jpeg.jpegReconstruction && !grey && !maxhs && !maxvs && (!ycbcr || numGroups <= cflGroups || givenCfl) && !strategyData && !progression && !jpeg.cfl && (jpeg.band || rawComps.every(c => c.coeffs)));
   let cflGy = -1;
   const cflFit = !canCfl ? null : jpeg.band ? (() => {
-    const tw = xsizeBlocks + 7 >> 3, th = ysizeBlocks + 7 >> 3, maps = shared?.cflMaps || [new Int8Array(tw * th), new Int8Array(tw * th), new Uint8Array(groupsY)];
-    if (shared) shared.cflMaps = maps;
+    const tw = xsizeBlocks + 7 >> 3, th = ysizeBlocks + 7 >> 3, maps = givenCfl ? [givenCfl[0], givenCfl[1], new Uint8Array(groupsY), 1] : shared?.cflMaps || [new Int8Array(tw * th), new Int8Array(tw * th), new Uint8Array(groupsY)];
+    if (shared && !givenCfl) shared.cflMaps = maps;
     const b0 = new Int16Array(32 * rawComps[0].stride * 64), b2 = new Int16Array(32 * rawComps[2].stride * 64);
     return {comps: [{...rawComps[0], coeffs: b0}, rawComps[1], {...rawComps[2], coeffs: b2}], maps, tw, b0, b2};
-  })() : (shared ? (shared.cflFit ||= fitJpegCfl(rawComps, xsizeBlocks, ysizeBlocks, groupsY)) : fitJpegCfl(rawComps, xsizeBlocks, ysizeBlocks, groupsY));
+  })() : (shared ? (shared.cflFit ||= fitJpegCfl(rawComps, xsizeBlocks, ysizeBlocks, groupsY, givenCfl)) : fitJpegCfl(rawComps, xsizeBlocks, ysizeBlocks, groupsY, givenCfl));
   const comps = cflFit ? cflFit.comps : rawComps;
   const bandOf = cflFit && jpeg.band ? gy => {
     if (gy === cflGy) return;
@@ -294,8 +360,12 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     auxiliary?.group(w, gx * 2048, gy * 2048, 2048, 3, Infinity);
     if (part === 0) return w;
     }
-    const regionBlocks = ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null) && ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null).blocks.filter(block => block.bx >= x0 && block.bx < x0 + rw && block.by >= y0 && block.by < y0 + rh)
-      .sort((a, b) => a.by - b.by || a.bx - b.bx);
+    const regionBlocks = ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null) && ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null).blocks.filter(block => block.bx >= x0 && block.bx < x0 + rw && block.by >= y0 && block.by < y0 + rh);
+    if (regionBlocks) {
+      let sorted = true;
+      for (let i = 1; i < regionBlocks.length; i++) if (regionBlocks[i].by < regionBlocks[i - 1].by || (regionBlocks[i].by === regionBlocks[i - 1].by && regionBlocks[i].bx < regionBlocks[i - 1].bx)) { sorted = false; break; }
+      if (!sorted) regionBlocks.sort((a, b) => a.by - b.by || a.bx - b.bx);
+    }
     const metadataPlain = !lfCoder || lfCoder.plainMetadata === true;
     const {count, uniformBlocks, uniformSharpness, sharpVal} = varDCTLFMetadataShape(jpeg, layout, geometry, regionBlocks?.length, metadataPlain);
     if (bits) w.write(bits, count - 1);
@@ -321,8 +391,15 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
       uniformBlocks ? {w: count, h: 2, rowValues: [0, field - 1]} : {w: count, h: 2, data: blocks},
       uniformSharpness ? {w: rw, h: rh, rowValues: new Int16Array(rh).fill(sharpVal)} : {w: rw, h: rh, data: !(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && epf ? sharpnessOf(x0, y0, rw, rh) : new Int16Array(rw * rh)},
     ];
-    const plainMetadata = target => writeSmallerModularStream(target, metadata, field > 1 ? GRADIENT_PREDICTOR : ZERO_PREDICTOR);
-    if (lfCoder?.metadataSteps) yield* lfCoder.metadataSteps(w, metadata, plainMetadata, kernels);
+    const plainMetadataOf = planes => target => writeSmallerModularStream(target, planes, field > 1 ? GRADIENT_PREDICTOR : ZERO_PREDICTOR);
+    const plainMetadata = plainMetadataOf(metadata);
+    const coalesced = lfCoder?.coalesceCfl && !cflFit && jpeg.cfl && xyb && (!strategyData || regionBlocks) ? coalescedColors(colors, cw, ch, x0, y0, rw, rh, regionBlocks, rawComps[1], jpeg.nonZero?.[map[1]]) : null;
+    if (coalesced && lfCoder.metadataSteps) {
+      const a = new BitWriter(256), b = new BitWriter(256), other = [{w: cw, h: ch, data: coalesced[0]}, {w: cw, h: ch, data: coalesced[1]}, metadata[2], metadata[3]];
+      yield* lfCoder.metadataSteps(a, metadata, plainMetadata, kernels);
+      yield* lfCoder.metadataSteps(b, other, plainMetadataOf(other), kernels);
+      w.append(b.bitLength < a.bitLength ? b : a);
+    } else if (lfCoder?.metadataSteps) yield* lfCoder.metadataSteps(w, metadata, plainMetadata, kernels);
     else if (lfCoder) lfCoder.metadata(w, metadata, plainMetadata, kernels); else plainMetadata(w);
     return w;
   };
@@ -338,12 +415,29 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     if (!lumaDc) { lumaDc = new Int32Array(fast ? 0 : lumaW * lumaH); if (!fast) copyVarDCTDCRows(varDCTDCSpec(jpeg, layout, 1, 0, 0, lumaW, lumaH), lumaDc); }
     return lumaDc;
   };
-  const wanted = varDCTContextBuckets(jpeg, layout, fast);
+  const baseWanted = varDCTContextBuckets(jpeg, layout, fast);
+  const fineDc = !!((typeof __RAPIER_JXL_RECOMPRESS__ === 'undefined' || __RAPIER_JXL_RECOMPRESS__ === true) && plan.fineDc && jpeg.jpegReconstruction && !fast && !strategyData && layout.xsizeBlocks * layout.ysizeBlocks >= 256);
+  const wanted = fineDc ? Math.max(baseWanted, plan.fineDc === true ? 7 : plan.fineDc) : baseWanted;
   const standard = jpeg.jpegReconstruction ? [] : ['standard'];
-  const designs = plan.countedMap ? ['dcBuckets'] : ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null) ? (plan.richContexts ? ['dcBuckets', 'sizes', 'sizesShared', 'sizes3', 'sizes3Shared', 'sizesDc', ...standard] : ['dcBuckets', 'sizes', 'sizesShared', ...standard]) : ['dcBuckets', ...standard];
+  const designs = plan.countedMap ? ['dcBuckets'] : ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null) ? (plan.richContexts ? ['dcBuckets', 'sizes', 'sizesShared', 'sizes3', 'sizes3Shared', 'sizesDc', ...standard] : ['dcBuckets', 'sizes', 'sizesShared', ...standard]) : (typeof __RAPIER_JXL_RECOMPRESS__ === 'undefined' || __RAPIER_JXL_RECOMPRESS__ === true) && fineDc && !grey ? ['dcBuckets', 'dcShared', ...(wanted > 7 ? ['dcChroma1', 'dcChroma2'] : []), ...standard] : ['dcBuckets', ...standard];
   const fixedContexts = !((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null) && wanted === 0, design = ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null) ? DESIGNS.fine(grey) : undefined;
   const fixed = () => grey ? FAST_CONTEXTS_GREY : FAST_CONTEXTS_RGB;
+  const dc3dSpec = !CAPTURE_PHOTO && (typeof __RAPIER_JXL_RECOMPRESS__ === "undefined" || __RAPIER_JXL_RECOMPRESS__ === true) && !(typeof __RAPIER_JXL_UPLOAD__ !== "undefined" && __RAPIER_JXL_UPLOAD__ === true) && Array.isArray(plan.dc3d) && jpeg.jpegReconstruction && !grey && !fast && !strategyData && !progression && hshifts[1] === 0 && vshifts[1] === 0 && (jpeg.band || comps.every(c => c.coeffs && c.row0 === undefined)) && layout.xsizeBlocks * layout.ysizeBlocks >= 256 ? plan.dc3d : null;
+  const dc3dKey = dc3dSpec ? dc3dSpec.join("x") : null;
   const counting = yield* unit('block-contexts', () => {
+    if (dc3dSpec) {
+      const cached3d = !journaling() ? shared?.dc3dMaps?.get(dc3dKey) : null;
+      if (cached3d) return cached3d;
+      const allDcs = [0, 1, 2].map(c => c === 1 ? lumaDcOf() : copyVarDCTDCRows(varDCTDCSpec(jpeg, layout, c, 0, 0, xsizeBlocks >> hshift(c), ysizeBlocks >> vshift(c)), new Int32Array((xsizeBlocks >> hshift(c)) * (ysizeBlocks >> vshift(c)))));
+      const loadBand = bandOf ? gy => { bandOf(gy); jpeg.unpackBand?.(); } : null;
+      const learned3d = learn3DBlockContexts(comps, allDcs, hshifts, vshifts, xsizeBlocks, ysizeBlocks, dc3dSpec, shared?.dc3dSigs ?? null, loadBand);
+      const saved3d = {thresholds: learned3d.thresholds, dcThresholds: learned3d.dcThresholds, numDc: learned3d.numDc, map: learned3d.map, numCtxs: learned3d.numCtxs, lumaBuckets: learned3d.lumaBuckets};
+      if (shared && !journaling()) {
+        shared.dc3dSigs ||= learned3d.sigs;
+        (shared.dc3dMaps ||= new Map()).set(dc3dKey, saved3d);
+      }
+      return saved3d;
+    }
     const luma = lumaDcOf(), contexts = fixedContexts ? fixed() : blockContexts(luma, wanted, grey, design);
     const lumaBuckets = new Uint8Array(luma.length), bucketOf = contexts.bucketOf;
     let low = 0, high = -1;
@@ -355,9 +449,10 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     } else for (let i = 0; i < luma.length; i++) lumaBuckets[i] = bucketOf(luma[i]);
     return {thresholds: fixedContexts ? null : contexts.thresholds, lumaBuckets};
   });
-  let contexts = fixedContexts ? fixed() : contextsFromThresholds(counting.thresholds, grey, design);
+  let contexts = counting.dcThresholds ? {thresholds: counting.thresholds, dcThresholds: counting.dcThresholds, numDc: counting.numDc, map: counting.map, numCtxs: counting.numCtxs, ...acContexts(counting.map, counting.numDc, counting.numCtxs)} : fixedContexts ? fixed() : contextsFromThresholds(counting.thresholds, grey, design);
   const {lumaBuckets} = counting;
-  let contextHeader = null;
+  let activeBuckets = lumaBuckets, contextHeader = null;
+  if (counting.dcThresholds) { contextHeader = new BitWriter(256); write3DBlockContexts(contextHeader, counting.dcThresholds, counting.map); }
 
   const nzeros = [0, 1, 2].map(() => new Int32Array(32 * 32));
   const fastBlockCounts = !progression && !grey && jpeg.nonZero ? map.map(i => jpeg.nonZero[i]) : null;
@@ -369,7 +464,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     return out;
   });
   const buffer = tokenBuffer();
-  const tokenState = () => ({authoredOrderPasses, groupsX, strategyData: ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null), map, progression, contexts, lumaBuckets, lumaW,
+  const tokenState = () => ({authoredOrderPasses, groupsX, strategyData: ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null), map, progression, contexts, lumaBuckets: activeBuckets, lumaW,
     nzeros, xsizeBlocks, ysizeBlocks, comps, grey, orders, counted, blockCounts, nonZero: jpeg.nonZero || ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && !((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null) && counted ? blockCounts : undefined), tokenBuffer: buffer,
     hshifts, vshifts});
   let passPicture = null;
@@ -391,7 +486,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
       comps: state.comps.map(c => ({...c, row0: 0})),
       blockCounts: blockCounts.map((counts, c) => counts?.subarray((by >> vshift(c)) * comps[c].stride, ((by + rows) >> vshift(c)) * comps[c].stride)),
       nonZero: jpeg.nonZero?.map((counts, c) => counts?.subarray((by >> vshift(c)) * comps[c].stride, ((by + rows) >> vshift(c)) * comps[c].stride)),
-      lumaBuckets: lumaBuckets.subarray((by >> vshift(1)) * lumaW, ((by + rows) >> vshift(1)) * lumaW)}};
+      lumaBuckets: activeBuckets.subarray((by >> vshift(1)) * lumaW, ((by + rows) >> vshift(1)) * lumaW)}};
   };
   let kept = null, renaming = null;
   const fill = (g, pass) => {
@@ -404,7 +499,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
       return [n, buffer.ctxs, buffer.values];
     }
     if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) return null;
-    const filled = kernels?.fill(state, local, pass, DCT8_DENSITY);
+    const filled = kernels?.fill(state.nonZero && state.counted ? {...state, nonZero: null} : state, local, pass, DCT8_DENSITY);
     if (!filled) throw declined('fill');
     return filled;
   };
@@ -443,15 +538,25 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     for (let i = 0; i < n; i++) ctxs[i] = renaming[group.ctxs[i]];
     coding.writeTokens(w, ctxs, group.values, n);
   };
+  const writeGroupTokens = (g, coding, w, pass) => {
+    if (writeTokens(g, coding, w, pass) !== 2 && coding.flush) coding.flush(w);
+  };
   const total = 2 * numGroups * numPasses + numDcGroups;
   let done = 0;
-  const countedByOrder = shared && !progression ? (shared.countedByOrder ||= new Map()) : null;
+  if ((typeof __RAPIER_JXL_RECOMPRESS__ === 'undefined' || __RAPIER_JXL_RECOMPRESS__ === true) && shared && fineDc) {
+    const key = counting.thresholds.join(',');
+    if (shared.fineDcKey !== key) { shared.fineCountedByOrder?.clear(); shared.fineTokensByOrder?.clear(); shared.fineDcKey = key; }
+  }
+  const bucketTag = dc3dKey || (fineDc ? "fine" : "plain");
+  const countedByOrder = shared && !progression ? (dc3dKey ? ((shared.dc3dCounted ||= new Map()).get(dc3dKey) || (() => { const m = new Map(); shared.dc3dCounted.set(dc3dKey, m); return m; })()) : fineDc ? (shared.fineCountedByOrder ||= new Map()) : (shared.countedByOrder ||= new Map())) : null;
   const orderKey = authoredOrderPasses || (hasOrders ? plan.orders : null);
-  const buildCoding = plan.coding || buildTokenCoding, reuse = countedByOrder?.get(orderKey);
+  const buildCoding = plan.coding || buildTokenCoding;
+  const rawReuse = countedByOrder?.get(orderKey);
+  const reuse = rawReuse && rawReuse.length === numPasses && rawReuse[0]?.contexts === contexts.contexts ? rawReuse : null;
   const counts = reuse || Array.from({length: numPasses}, () => new TokenCounts(contexts.contexts));
-  const tokensByOrder = buffer && countedByOrder && !jpeg.band ? (shared.tokensByOrder ||= new Map()) : null;
-  kept = tokensByOrder?.get(orderKey) || null;
-  if ((!reuse || !kept) && tokensByOrder) { tokensByOrder.clear(); (shared.tokenStore ||= tokenStore()).reset(); kept = []; tokensByOrder.set(orderKey, kept); }
+  const tokensByOrder = !CAPTURE_PHOTO && buffer && countedByOrder && !jpeg.band ? (dc3dKey ? ((shared.dc3dTokens ||= new Map()).get(dc3dKey) || (() => { const m = new Map(); shared.dc3dTokens.set(dc3dKey, m); return m; })()) : fineDc ? (shared.fineTokensByOrder ||= new Map()) : (shared.tokensByOrder ||= new Map())) : null;
+  kept = shared?.lastBucketTag === bucketTag ? tokensByOrder?.get(orderKey) || null : null;
+  if ((!reuse || !kept) && tokensByOrder) { shared.tokensByOrder?.clear(); shared.fineTokensByOrder?.clear(); shared.dc3dTokens?.forEach(cache => cache.clear()); shared.lastBucketTag = bucketTag; (shared.tokenStore ||= tokenStore()).reset(); kept = []; tokensByOrder.set(orderKey, kept); }
   if (!CAPTURE_PHOTO && plan.countGroups) {
     for (let g = plan.countGroups[0]; g < plan.countGroups[1]; g++) countTokens(g, counts[0], 0);
     return {counts: counts[0], blockCounts};
@@ -503,34 +608,70 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   let codings = null;
   const countedMap = contexts;
   const list = [];
-  for (const name of designs) for (const buckets of name === 'standard' ? [0] : plan.fast ? [wanted] : wanted > 0 && name === 'dcBuckets' ? [0, wanted] : wanted > 0 && name === 'sizesDc' ? [wanted] : [0]) list.push([name, buckets]);
+  const fineBuckets = (typeof __RAPIER_JXL_RECOMPRESS__ === 'undefined' || __RAPIER_JXL_RECOMPRESS__ === true) && fineDc && counting.thresholds?.length ? [...new Set([0, 1, baseWanted, counting.thresholds.length].filter(b => b <= counting.thresholds.length))] : null;
+  for (const name of designs) for (const buckets of name === 'standard' ? [0] : plan.fast ? [wanted] : fineBuckets && name.startsWith('dc') ? fineBuckets : wanted > 0 && name === 'dcBuckets' ? [0, wanted] : wanted > 0 && name === 'sizesDc' ? [wanted] : [0]) list.push([name, buckets]);
+  if (plan.designs) { const only = list.filter(([name, buckets]) => plan.designs.includes(`${name}:${buckets === wanted && wanted > 0 ? 'wanted' : buckets}`) || (wanted === 0 && plan.designs.includes(`${name}:wanted`))); if (only.length) list.splice(0, list.length, ...only); }
   const remote = !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && (plan.splitGroups && ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null) || plan.remoteDesigns) && list.length > 1 && counts.length === 1 && !plan.fast
     ? yield {kind: 'designs', list, counts: counts[0], lumaDc: lumaDcOf(), wanted, grey, fine: !!((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null), clusters: plan.clusters, coding: buildCoding} : null;
   const remoteTotals = Array.isArray(remote) ? remote : remote?.totals ?? null, remotePriced = remote?.priced ?? null;
-  let best = Infinity, bestAt = -1;
-  for (let i = 0; i < list.length; i++) {
-    const [name, buckets] = list[i];
-    if (remoteTotals) { if (remoteTotals[i] != null && (bestAt < 0 || remoteTotals[i] < best)) { best = remoteTotals[i]; bestAt = i; } continue; }
-    const priced = yield* designPriceSteps(name, buckets, grey, null, countedMap, counts, buildCoding, {...plan.clusters, smallestMap: true, kernels}, counting.thresholds ?? [], ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null) ? ORDERS : 1);
-    if (!priced) continue;
-    if (!codings || priced.total < codings.reduce((n, coding) => n + coding.bits, contextHeader.bitLength)) {
+  const dcCache = !journaling() && !remoteTotals && !progression && counts.length === 1 && shared?.acCoding === buildCoding ? buildCoding?.designCache : null;
+  let dcOrderMap = null, dcKey = null, dcHit = null;
+  if (dcCache) {
+    const byOrder = (shared.chosenDesigns ||= new Map());
+    dcOrderMap = byOrder.get(orderKey);
+    if (!dcOrderMap) byOrder.set(orderKey, dcOrderMap = new Map());
+    dcKey = `${dc3dKey ? 'dc3d:' + dc3dKey + ':' : fineDc ? 'fine:' : ''}${designs.join(',')}${plan.designs ? '/' + list.map(l => l.join(':')).join(',') : ''}|${(counting.thresholds ?? []).join(',')}|${grey ? 1 : 0}|${((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null) ? ORDERS : 1}|${dcCache.key({...plan.clusters, smallestMap: true, kernels})}`;
+    dcHit = dcOrderMap.get(dcKey) ?? null;
+  }
+  if (dcHit) {
+    codings = dcHit.parts.map(p => dcCache.from(p, kernels));
+    contexts = dcHit.candidate;
+    contextHeader = Object.assign(new BitWriter(0), dcHit.header);
+  } else if (counting.dcThresholds) {
+    const opts3d = {...plan.clusters, smallestMap: true, kernels};
+    codings = [];
+    for (let p = 0; p < counts.length; p++) {
+      const src = counts[p];
+      codings.push(buildCoding.steps ? yield* buildCoding.steps(() => src, opts3d) : buildCoding(src, opts3d));
+    }
+    if (dcOrderMap && codings.every(c => c?.model?.kind === 'ans')) {
+      dcOrderMap.set(dcKey, {parts: codings.map(dcCache.parts), candidate: contexts,
+        header: {bytes: contextHeader.bytes.slice(0, contextHeader.at + 1), at: contextHeader.at, pending: contextHeader.pending, acc: contextHeader.acc}});
+    }
+  } else {
+    let best = Infinity, bestAt = -1;
+    for (let i = 0; i < list.length; i++) {
+      const [name, buckets] = list[i];
+      if (remoteTotals) { if (remoteTotals[i] != null && (bestAt < 0 || remoteTotals[i] < best)) { best = remoteTotals[i]; bestAt = i; } continue; }
+      const priced = yield* designPriceSteps(name, buckets, grey, null, countedMap, counts, buildCoding, {...plan.clusters, smallestMap: true, kernels}, counting.thresholds ?? [], ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null) ? ORDERS : 1);
+      if (!priced) continue;
+      if (!codings || priced.total < codings.reduce((n, coding) => n + coding.bits, contextHeader.bitLength)) {
+        codings = priced.codings; contexts = priced.candidate; contextHeader = priced.header;
+      }
+    }
+    if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && remoteTotals && bestAt >= 0) {
+      const made = !remotePriced?.[bestAt] && remote.coding?.(bestAt), shape = made ? designShape(list[bestAt][0], list[bestAt][1], grey, lumaDcOf()) : null;
+      if (remotePriced?.[bestAt] || shape) globalThis.__jxlTrace?.push(['the kept design built as ' + (shape ? 'a helper priced it' : 'priced here'), performance.now()]);
+      const priced = remotePriced?.[bestAt] ?? (shape && designWith(shape, [made])) ?? designPrice(list[bestAt][0], list[bestAt][1], grey, lumaDcOf(), countedMap, counts, buildCoding, {...plan.clusters, smallestMap: true, kernels}, null, ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null) ? ORDERS : 1);
       codings = priced.codings; contexts = priced.candidate; contextHeader = priced.header;
     }
-  }
-  if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && remoteTotals && bestAt >= 0) {
-    const made = !remotePriced?.[bestAt] && remote.coding?.(bestAt), shape = made ? designShape(list[bestAt][0], list[bestAt][1], grey, lumaDcOf()) : null;
-    if (remotePriced?.[bestAt] || shape) globalThis.__jxlTrace?.push(['the kept design built as ' + (shape ? 'a helper priced it' : 'priced here'), performance.now()]);
-    const priced = remotePriced?.[bestAt] ?? (shape && designWith(shape, [made])) ?? designPrice(list[bestAt][0], list[bestAt][1], grey, lumaDcOf(), countedMap, counts, buildCoding, {...plan.clusters, smallestMap: true, kernels}, null, ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null) ? ORDERS : 1);
-    codings = priced.codings; contexts = priced.candidate; contextHeader = priced.header;
+    if (dcOrderMap && codings?.every(c => c?.model?.kind === 'ans')) {
+      dcOrderMap.set(dcKey, {parts: codings.map(dcCache.parts), candidate: contexts,
+        header: {bytes: contextHeader.bytes.slice(0, contextHeader.at + 1), at: contextHeader.at, pending: contextHeader.pending, acc: contextHeader.acc}});
+    }
   }
   const sameMap = contexts === countedMap || (contexts.numDc === countedMap.numDc && contexts.numCtxs === countedMap.numCtxs && contexts.map.every((v, i) => v === countedMap.map[i]));
-  if (kept) renaming = sameMap ? null : contextRenaming(countedMap, contexts, ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null) ? ORDERS : 1);
+  if ((typeof __RAPIER_JXL_RECOMPRESS__ === 'undefined' || __RAPIER_JXL_RECOMPRESS__ === true) && contexts.thresholds.length > 0 && (contexts.thresholds.length !== (counting.thresholds?.length ?? 0) || contexts.thresholds.some((t, i) => t !== counting.thresholds[i]))) {
+    const remap = Uint8Array.from({length: counting.thresholds.length + 1}, (_, b) => targetDcIndex(countedMap, contexts, b));
+    activeBuckets = new Uint8Array(lumaBuckets.length);
+    for (let i = 0; i < lumaBuckets.length; i++) activeBuckets[i] = remap[lumaBuckets[i]];
+  }
+  if (!CAPTURE_PHOTO && kept) renaming = sameMap ? null : contextRenaming(countedMap, contexts, ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null) ? ORDERS : 1);
   if (!CAPTURE_PHOTO && plan.writeGroups) {
     const coding = codings[0], written = [];
     for (let g = plan.writeGroups[0]; g < plan.writeGroups[1]; g++) {
       const w = new BitWriter(4096);
-      writeTokens(g, coding, w, 0);
-      if (coding.flush) coding.flush(w);
+      writeGroupTokens(g, coding, w, 0);
       written.push({bytes: w.bytes.slice(0, w.at + 1), at: w.at, pending: w.pending, acc: w.acc});
     }
     return written;
@@ -607,6 +748,8 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   }
 
   const ac = section(1 + numDcGroups);
+  const sampleCosts = !CAPTURE_PHOTO && !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && single && jpeg.seedSampleCosts;
+  const sampleStart = sampleCosts ? ac.bitLength : 0;
   ac.write(1, 0);
   for (let i = 0; i < 17; i++) {
     const table = ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null)?.tables[i];
@@ -640,6 +783,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   else writeHistograms(ac, {contextMap: coding.contextMap, histograms: coding.histograms});
   }
   checkSection(1 + numDcGroups);
+  const sampleHeader = sampleCosts ? ac.bitLength - sampleStart - 1 : 0;
   if (shared) shared.modular16bit = modular16bit;
   if (plan.estimate && codings.every(coding => coding.payloadBits !== undefined))
     return Math.ceil(sectionBytes + codings.reduce((n, coding) => n + coding.payloadBits, 0) / 8 + 4 * numGroups * numPasses);
@@ -648,11 +792,19 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   const acKey = reuseAC ? {global: ac.finish(), globalBits: ac.bitLength, contexts: contextHeader.finish(), contextBits: contextHeader.bitLength,
     coder: buildCoding, entropy: kernelHooks.entropy, group: kernelHooks.acGroup,
     alphaCoder: alphaChannel && !mask ? plan.lfCoder : undefined} : null;
-  let cachedAC = acKey && !journaling() && shared.acSections;
-  if (cachedAC && (cachedAC.coder !== acKey.coder || cachedAC.entropy !== acKey.entropy || cachedAC.group !== acKey.group || cachedAC.alphaCoder !== acKey.alphaCoder ||
-      cachedAC.globalBits !== acKey.globalBits || cachedAC.contextBits !== acKey.contextBits ||
-      !acKey.global.every((v, i) => v === cachedAC.global[i]) || !acKey.contexts.every((v, i) => v === cachedAC.contexts[i]))) cachedAC = null;
-  if (shared) shared.acSections = null;
+  const matchAC = entry => entry && entry.coder === acKey.coder && entry.entropy === acKey.entropy && entry.group === acKey.group && entry.alphaCoder === acKey.alphaCoder &&
+    entry.globalBits === acKey.globalBits && entry.contextBits === acKey.contextBits &&
+    acKey.global.length === entry.global.length && acKey.contexts.length === entry.contexts.length &&
+    acKey.global.every((v, i) => v === entry.global[i]) && acKey.contexts.every((v, i) => v === entry.contexts[i]);
+  const acList = acKey && !journaling() && Array.isArray(shared.acSections) ? shared.acSections : null;
+  let cachedAC = null;
+  if (acList) {
+    const acIdx = acList.findIndex(matchAC);
+    if (acIdx >= 0) {
+      cachedAC = acList[acIdx];
+      if (acIdx < acList.length - 1) { acList.splice(acIdx, 1); acList.push(cachedAC); }
+    }
+  }
 
   const groupSamples = values => values != null && (Object.getPrototypeOf(values) === Int16Array.prototype || Object.getPrototypeOf(values) === Int32Array.prototype);
   const boundedGroups = !jpeg.band && (plan.pooled || (!CAPTURE_PHOTO && (!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && offloading()))) && (((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null) ? ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null).blocks.every(block => block.coeffs.every(groupSamples)) : comps.every(comp => groupSamples(comp.coeffs)));
@@ -686,7 +838,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
       const buckets = new Uint8Array(lw * lh);
       for (let y = 0; y < lh; y++) {
         const from = ((by0 >> vshift(1)) + y) * lumaW + (bx0 >> hshift(1));
-        buckets.set(lumaBuckets.subarray(from, from + lw), y * lw);
+        buckets.set(activeBuckets.subarray(from, from + lw), y * lw);
       }
       const transfer = [buckets.buffer], data = {xsizeBlocks: bw, ysizeBlocks: bh, lumaW: lw, lumaBuckets: buckets};
       if (((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null)) {
@@ -716,11 +868,11 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
       return {data, transfer};
     };
     reply = yield {kind: 'ac-group', offload: plan.pooled ? undefined : 'groups', image: jpeg, plan, groups: numGroups, model, job,
-      ...(plan.splitGroups ? {lumaBuckets, lumaW} : {}),
+      ...(plan.splitGroups ? {lumaBuckets: activeBuckets, lumaW} : {}),
       local: (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? null : function local(g) {
         try {
           const w = new BitWriter(4096);
-          if (writeTokens(g, coding, w, 0) !== 2) coding.flush?.(w); return w;
+          writeGroupTokens(g, coding, w, 0); return w;
         } finally { coding.reset?.(); }
       },
       at: g => (done + g + 1) / total, stop: g => plan.abortable && g + 1 < numGroups};
@@ -747,7 +899,7 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
   if (!cachedAC && !reply) {
   const writeGroup = (g, p) => {
     const index = 2 + numDcGroups + p * numGroups + g, w = section(index), coding = codings[p];
-    if (writeTokens(g, coding, w, p) !== 2 && coding.flush) coding.flush(w);
+    writeGroupTokens(g, coding, w, p);
     if (auxiliary) {
       const bracket = progression?.brackets[p] ?? {minimum: 0, maximum: 2};
       auxiliary.group(w, g % groupsX * GROUP_DIM, Math.floor(g / groupsX) * GROUP_DIM, GROUP_DIM, bracket.minimum, bracket.maximum);
@@ -779,11 +931,15 @@ export function* varDCTSteps(jpeg, plan = {}, shared) {
     if (joined) bytes = assembleCodestream(header, writers.map(joinedSection), level, journalJoin);
     else { sections = finishSections(writers); bytes = assembleCodestream(header, sections, level); }
   }
-  if (acKey && !boundedHeader && !joined && bytes.length + acKey.global.length + acKey.contexts.length <= components.reduce((n, c) => n + (c.coeffs?.byteLength ?? 0), 0)) {
+  const coeffBytes = ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) ? strategyData : null) ? width * height * 2 : components.reduce((n, c) => n + (c.coeffs?.byteLength ?? 0), 0);
+  if (acKey && !cachedAC && sections && !boundedHeader && !joined && bytes.length + acKey.global.length + acKey.contexts.length <= coeffBytes) {
     const groups = [], first = 2 + numDcGroups;
     let at = bytes.length - sections.slice(first).reduce((n, section) => n + section.length, 0);
     for (let g = first; g < sections.length; g++) { groups.push(bytes.subarray(at, at + sections[g].length)); at += sections[g].length; }
-    shared.acSections = {...acKey, groups};
+    const list = Array.isArray(shared.acSections) ? shared.acSections : (shared.acSections = []);
+    if (list.length >= 12) list.shift();
+    list.push({...acKey, groups});
   }
-  return isFirstFrame && isLastFrame && !crop ? shown(bytes, jpeg) : bytes;
+  if (sampleCosts) sampleCosts.set(bytes, {header: sampleHeader, section: sectionSizes[0]});
+  return isFirstFrame && isLastFrame && !crop ? shown(bytes, jpeg, plan) : bytes;
 }

@@ -13,7 +13,7 @@ const FCOEFFS = 5897216, FCTXS = 6290432, FVALUES = 6683648;
 const JSCAN = 2637824, JCODES = 2638080, JZIGZAG = 2646304, JZEROS = 2646560, JPADS = 3170848, JBAND = 3236384, BAND_BLOCKS = 3072;
 const LHIST = 5853184, LBITS = 5951488, LALIVE = 5952000, LOWNER = 5952064;
 const DPARAMS = 1048576, DBAND = 1049600, DIN = 1261568, BAND_BYTES = DIN - DBAND;
-const CTAB = 7426048, CTAB_END = 9523200, CUNIQUE = 9523200, CLARGE = 10309632;
+const CTAB = 7426048, CTAB_END = 9523200;
 const DYNAMIC = 11882496;
 const GROUP_VALUES = 3 * 1024 * 64, WCOEFFS = DYNAMIC, WCTXS = WCOEFFS + GROUP_VALUES * 4, WVALUES = WCTXS + GROUP_VALUES * 2;
 const DECODE_CAP = 64 * 1048576;
@@ -35,12 +35,22 @@ export function jpegKernels(flushTokens) {
     views();
     const grow = end => {
       if (end > limit) throw fault('JXL_MEMORY', 'arena: too large');
-      memory.grow(Math.ceil((end - memory.buffer.byteLength) / 65536));
+      try { memory.grow(Math.ceil((end - memory.buffer.byteLength) / 65536)); }
+      catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'entropy arena: grow failed'), {cause}); }
     };
+    let fixedUsed = false, scratchLow = false;
     const reserve = end => {
+      fixedUsed = true;
       if (end > memory.buffer.byteLength) { grow(end); views(); }
     };
     let loaded = null, priceStamp = null, priceMore = null, lastFillWide = false;
+    let tableEnd = CTAB, listsEnd = CTAB;
+    const scratchAt = bytes => {
+      const low = !fixedUsed && CMAP + bytes <= CTAB;
+      if (low !== scratchLow) { priceStamp = null; priceMore = null; scratchLow = low; }
+      if (low) loaded = null;
+      return low ? CMAP : listsEnd;
+    };
     const append = (w, bytes) => {
       if (w.at + bytes + 8 >= w.bytes.length) w.grow(bytes + 8);
       w.bytes.set(u8.subarray(OUT, OUT + bytes), w.at); w.at += bytes;
@@ -49,23 +59,79 @@ export function jpegKernels(flushTokens) {
     exports.initTable();
     engine = {
       memoryBytes: (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? null : () => memory.buffer.byteLength,
-      ...!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && {fitCfl(y, c, qy, qc, width, rows, stride, map, known) {
+      ...((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? {} : {fitCfl(y, c, qy, qc, width, rows, stride, map, known) {
         priceStamp = null; priceMore = null;
-        const quant = DYNAMIC, scales = quant + 512, multiples = scales + 256, costs = multiples + 256;
+        const quant = scratchAt(1024 + 32769 * 8 + y.length * 2 + c.length * 2 + map.length), scales = quant + 512, multiples = scales + 256, costs = multiples + 256;
         const yp = costs + 32769 * 8, cp = yp + y.length * 2, mp = cp + c.length * 2;
-        reserve(mp + map.length);
+        if (mp + map.length > memory.buffer.byteLength) { grow(mp + map.length); views(); }
         u32.set(qy, quant >> 2); u32.set(qc, (quant >> 2) + 64);
         i16.set(y, yp >> 1); i16.set(c, cp >> 1); u8.set(new Uint8Array(map.buffer, map.byteOffset, map.length), mp);
         exports.fitCfl(yp, cp, quant, scales, multiples, costs, mp, width, rows, stride, known);
         c.set(i16.subarray(cp >> 1, (cp >> 1) + c.length));
         map.set(new Int8Array(memory.buffer, mp, map.length));
-      }},
+      }}),
+      ...((!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && (typeof __RAPIER_JXL_RECOMPRESS__ === 'undefined' || __RAPIER_JXL_RECOMPRESS__ === true)) ? {
+        cflHistogram(y, c, multiples, seeds, scan, width, rows, stride, nzHist, posHist, magHist) {
+          priceStamp = null; priceMore = null;
+          const size = multiples.byteLength + scan.byteLength + nzHist.byteLength + posHist.byteLength + magHist.byteLength + y.byteLength + c.byteLength + seeds.byteLength + 8;
+          const mp = (scratchAt(size) + 7) & ~7, sp = mp + multiples.byteLength, nz = sp + scan.byteLength;
+          const pos = nz + nzHist.byteLength, mag = pos + posHist.byteLength, yp = mag + magHist.byteLength;
+          const cp = yp + y.byteLength, seed = cp + c.byteLength, end = seed + seeds.byteLength;
+          if (end > memory.buffer.byteLength) { grow(end); views(); }
+          i32.set(multiples, mp >> 2); i32.set(scan, sp >> 2);
+          u32.set(nzHist, nz >> 2); u32.set(posHist, pos >> 2); u32.set(magHist, mag >> 2);
+          i16.set(y, yp >> 1); i16.set(c, cp >> 1); u8.set(new Uint8Array(seeds.buffer, seeds.byteOffset, seeds.byteLength), seed);
+          const total = exports.cflHistogram(yp, cp, mp, seed, sp, width, rows, stride, nz, pos, mag);
+          nzHist.set(u32.subarray(nz >> 2, (nz >> 2) + nzHist.length));
+          posHist.set(u32.subarray(pos >> 2, (pos >> 2) + posHist.length));
+          magHist.set(u32.subarray(mag >> 2, (mag >> 2) + magHist.length));
+          return total;
+        },
+        cflEobBand(y, c, model, visit) {
+          priceStamp = null; priceMore = null;
+          const {multiples, order, scales, nzBits, zeroCostByNz, nzBaseByNz, magBits, width, rows, stride} = model;
+          const size = multiples.byteLength + order.byteLength + scales.byteLength + nzBits.byteLength + zeroCostByNz.byteLength + nzBaseByNz.byteLength + magBits.byteLength + y.byteLength + c.byteLength + 32;
+          const mp = (scratchAt(size) + 7) & ~7, op = mp + multiples.byteLength, sc = op + order.byteLength;
+          const nz = sc + scales.byteLength, zero = nz + nzBits.byteLength, base = zero + zeroCostByNz.byteLength;
+          const mag = base + nzBaseByNz.byteLength, yp = mag + magBits.byteLength, cp = yp + y.byteLength;
+          const out = (cp + c.byteLength + 7) & ~7, end = out + 16;
+          if (end > memory.buffer.byteLength) { grow(end); views(); }
+          i32.set(multiples, mp >> 2); i32.set(order, op >> 2); i32.set(scales, sc >> 2);
+          const f32 = new Float32Array(memory.buffer);
+          f32.set(nzBits, nz >> 2); f32.set(zeroCostByNz, zero >> 2); f32.set(nzBaseByNz, base >> 2); f32.set(magBits, mag >> 2);
+          i16.set(y, yp >> 1); i16.set(c, cp >> 1);
+          return visit({
+            cost: (tx, fi) => exports.cflEobCost(yp, cp, mp, op, nz, zero, base, mag, width, rows, stride, tx, fi),
+            moments(tx) { exports.cflMoments(yp, cp, sc, op, width, rows, stride, tx, out); return [f64[out >> 3], f64[(out >> 3) + 1]]; }
+          });
+        },
+        jpegSignatureHistogram(coeffs, width, rows, stride, dcValues, plan) {
+          priceStamp = null; priceMore = null;
+          const {dim, buckets, low, histograms} = plan;
+          const size = coeffs.byteLength + dcValues.byteLength + buckets.byteLength + histograms.byteLength + 16;
+          const cp = (scratchAt(size) + 7) & ~7, dc = cp + coeffs.byteLength, bp = dc + dcValues.byteLength;
+          const out = (bp + buckets.byteLength + 7) & ~7, end = out + histograms.byteLength;
+          if (end > memory.buffer.byteLength) { grow(end); views(); }
+          i16.set(coeffs, cp >> 1); i32.set(dcValues, dc >> 2); u8.set(buckets, bp); f64.set(histograms, out >> 3);
+          exports.jpegSignatureHistogram(cp, width, rows, stride, dim, dc, bp, low, out);
+          histograms.set(f64.subarray(out >> 3, (out >> 3) + histograms.length));
+        },
+        jpegHistograms(coeffs, width, rows, stride, buckets, lumaWidth, hshift, vshift, histograms) {
+          priceStamp = null; priceMore = null;
+          const size = coeffs.byteLength + buckets.byteLength + histograms.byteLength + 16;
+          const cp = (scratchAt(size) + 7) & ~7, bp = cp + coeffs.byteLength, out = (bp + buckets.byteLength + 7) & ~7, end = out + histograms.byteLength;
+          if (end > memory.buffer.byteLength) { grow(end); views(); }
+          i16.set(coeffs, cp >> 1); u8.set(buckets, bp); f64.set(histograms, out >> 3);
+          exports.jpegHistograms(cp, width, rows, stride, bp, lumaWidth, hshift, vshift, out);
+          histograms.set(f64.subarray(out >> 3, (out >> 3) + histograms.length));
+        }
+      } : {}),
       clusters: 256, flatten: flattenSparse,
       row(i, freqs, bits) { u32.set(freqs, (ROWS >> 2) + i * 64); f64[(BITS >> 3) + i] = bits; exports.terms(i); },
-      own(freqs) { u32.set(freqs, OWN >> 2); },
+      own: (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? null : function own(freqs) { u32.set(freqs, OWN >> 2); },
       alive(i, live) { u8[ALIVE + i] = live ? 1 : 0; },
       priceConfigs(values, weights, candidates, {symbolBits, logLengths}) {
-        const n = values.length, c = candidates.length, bits = DYNAMIC, logs = bits + symbolBits.length * 8, cands = logs + 16;
+        const n = values.length, c = candidates.length, bits = scratchAt(symbolBits.length * 8 + c * 16 + n * 8 + 1328), logs = bits + symbolBits.length * 8, cands = logs + 16;
         const scratch = cands + c * 16, best = scratch + 768, out = best + 512, vals = out + 16, wts = vals + n * 4, end = wts + n * 4;
         if (end > memory.buffer.byteLength) { grow(end); views(); priceStamp = null; }
         priceMore = null;
@@ -78,10 +144,11 @@ export function jpegKernels(flushTokens) {
         const index = exports.priceConfigs(vals, wts, n, cands, c, bits, logs, scratch, best, out);
         return index < 0 ? null : {index, tokens: u32.slice(best >> 2, (best >> 2) + 128), raw: f64[out >> 3], cost: f64[(out >> 3) + 1]};
       },
-      ...!(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && {priceEvery(values, weights, candidates, more, largest, {symbolBits, logLengths}) {
-        const n = values.length, c = candidates.length, mc = more.length, bits = DYNAMIC, logs = bits + symbolBits.length * 8, cands = logs + 16;
+      ...((typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) ? {} : {priceEvery(values, weights, candidates, more, largest, {symbolBits, logLengths}) {
+        const n = values.length, c = candidates.length, mc = more.length, works = c * 528 + (c + mc) * 8 + 512 + mc * 1048 + (c + 6) * 12 + c + 6 + mc;
+        const bits = scratchAt((symbolBits.length * 8 + 16 + c * 16 + mc * 16 + n * 8 + 7 & ~7) + works + 7 + 5 * 24), logs = bits + symbolBits.length * 8, cands = logs + 16;
         const extra = cands + c * 16, vals = extra + mc * 16, wts = vals + n * 4, work = wts + n * 4 + 7 & ~7;
-        const out = work + (c * 528 + (c + mc) * 8 + 512 + mc * 1048 + (c + 6) * 12 + c + 6 + mc) + 7 & ~7, end = out + 5 * 24;
+        const out = work + works + 7 & ~7, end = out + 5 * 24;
         if (end > memory.buffer.byteLength) { grow(end); views(); priceStamp = null; }
         if (priceStamp !== candidates || priceMore !== more) {
           f64.set(symbolBits, bits >> 3); u8.set(logLengths, logs);
@@ -95,14 +162,15 @@ export function jpegKernels(flushTokens) {
           list.push({candidate: i < c ? candidates[i] : more[i - c], tokens: u32.slice(from, from + u32[at + 1]), raw: f64[(out >> 3) + k * 3 + 2]});
         }
         return list;
-      }},
-      seedBest(k, ownBits) { const best = exports.seedBest(k, ownBits); return [best, f64[SCRATCH >> 3]]; },
+      }}),
+      seedBest: (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? null : function seedBest(k, ownBits) { const best = exports.seedBest(k, ownBits); return [best, f64[SCRATCH >> 3]]; },
       seedAll(used, counts, tokenOf, seeds, threshold, prior = []) {
         priceStamp = null;
-        const n = used.length, small = DYNAMIC, tok = small + n * 256, loff = tok + 256, runs = loff + ((n + 1) * 4 + 7 & ~7);
-        const offs = runs + n * 512, assign = offs + ((n + 1) * 4 + 7 & ~7), larges = [];
+        const n = used.length;
         let pairs = 0;
         for (const ctx of used) if (counts.large[ctx]) for (const v of counts.large[ctx].keys()) pairs++;
+        const small = scratchAt(n * 772 + 256 + 2 * ((n + 1) * 4 + 7 & ~7) + pairs * 8), tok = small + n * 256, loff = tok + 256, runs = loff + ((n + 1) * 4 + 7 & ~7);
+        const offs = runs + n * 512, assign = offs + ((n + 1) * 4 + 7 & ~7), larges = [];
         const lpairs = assign + n * 4, end = lpairs + pairs * 8;
         if (end > memory.buffer.byteLength) { grow(end); views(); }
         for (let v = 0; v < 64; v++) u32[(tok >> 2) + v] = tokenOf(v);
@@ -131,7 +199,7 @@ export function jpegKernels(flushTokens) {
       assign(sparse, costs, switchCost) {
         priceStamp = null;
         const n = sparse.offsets.length - 1, k = costs.length;
-        const tables = DYNAMIC, best = tables + k * 512, next = best + k * 8, offsets = next + k * 8;
+        const tables = scratchAt(k * 528 + (n + 1) * 4 + sparse.pairs.length * 4 + (n * k * 2 + 7 & ~7)), best = tables + k * 512, next = best + k * 8, offsets = next + k * 8;
         const pairs = offsets + (n + 1) * 4, back = pairs + sparse.pairs.length * 4, end = back + ((n * k * 2 + 7) & ~7);
         if (end > memory.buffer.byteLength) { grow(end); views(); }
         for (let i = 0; i < k; i++) f64.set(costs[i], (tables >> 3) + i * 64);
@@ -183,7 +251,7 @@ export function jpegKernels(flushTokens) {
         return filled;
       },
       ...((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? {} : {
-      sequentialScan(out, entries, nx, ny, restart, zeros, pad, zigzag) {
+      sequentialScan(out, entries, nx, ny, restart, zeros, pad, zigzag, loadBand = null, per = 0) {
         const rowBlocks = entries.reduce((n, e) => n + e.v * e.stride, 0);
         if (entries.length > 4 || rowBlocks > BAND_BLOCKS || zeros.size > 65536 || (pad && pad.bits.length > 65536) || out.pending) return false;
         reserve(CTAB);
@@ -195,12 +263,15 @@ export function jpegKernels(flushTokens) {
         loaded = null;
         exports.scanStart(pad ? pad.at : 0);
         const band = Math.floor(BAND_BLOCKS / rowBlocks);
-        for (let y0 = 0; y0 < ny; y0 += band) {
-          const rows = Math.min(band, ny - y0);
+        for (let y0 = 0; y0 < ny;) {
+          const limitY = loadBand ? Math.min(ny, (Math.floor(y0 / per) + 1) * per) : ny;
+          const rows = Math.min(band, limitY - y0);
+          if (loadBand) loadBand(y0);
           i32.set([entries.length, nx, rows, restart, pad ? pad.bits.length : -1, 0, runs.length], JSCAN >> 2);
           let at = JBAND;
           entries.forEach((e, i) => {
-            const from = y0 * e.v * e.stride * 64, to = Math.min(e.co.length, (y0 + rows) * e.v * e.stride * 64);
+            const baseRow = y0 * e.v - (e.row0 || 0);
+            const from = baseRow * e.stride * 64, to = Math.min(e.co.length, (baseRow + rows * e.v) * e.stride * 64);
             i16.set(e.co.subarray(from, to), at >> 1);
             i32.set([e.h, e.v, e.stride, at, e.index], (JSCAN >> 2) + 8 + i * 8);
             at += rows * e.v * e.stride * 128;
@@ -208,6 +279,7 @@ export function jpegKernels(flushTokens) {
           const bytes = exports.scanBand();
           if (bytes < 0) return null;
           out.chunk(u8.subarray(OUT, OUT + bytes));
+          y0 += rows;
         }
         out.acc = u32[(JSCAN >> 2) + 56]; out.pending = u32[(JSCAN >> 2) + 57];
         if (pad) pad.at = u32[(JSCAN >> 2) + 7];
@@ -217,13 +289,28 @@ export function jpegKernels(flushTokens) {
         const single = scan.length === 1, first = scan[0].component, length = bytes.length - start;
         const tables = [], slot = table => { let i = tables.indexOf(table); if (i < 0) { i = tables.length; tables.push(table); } return i; };
         const entries = scan.map(s => ({c: s.component, h: single ? 1 : s.component.h, v: single ? 1 : s.component.v, dc: s.dc, ac: s.ac}));
-        if (scan.length > 4 || entries.some(e => !e.dc || !e.ac)) return null;
+        if (scan.length > 4 || entries.some(e => !e.dc || !e.ac) || tables.length > 8) return null;
         const slots = entries.map(e => [slot(e.dc), slot(e.ac)]);
-        const rowBlocks = entries.reduce((n, e) => n + e.v * e.c.stride, 0), rows = Math.floor(BAND_BYTES / 128 / rowBlocks);
-        if (tables.length > 8 || !rows) return null;
-        const zerosAt = (DIN + length + 15) & ~15, end = zerosAt + 65536 * 8;
+        if (tables.length > 8) return null;
+        const rowBlocks = entries.reduce((n, e) => n + e.v * e.c.stride, 0);
+        const total = single ? first.blocksW * first.blocksH : frame.mcusX * frame.mcusY, perRow = single ? first.blocksW : frame.mcusX;
+        const zerosAt = (DIN + length + 15) & ~15;
+        const banded = !!frame.bands;
+        if (banded && (frame.packed === false || !(frame.packedLimit > 0))) return null;
+        const bandRows = banded ? (single ? 32 * first.v : 32) / frame.vmax : Math.floor(BAND_BYTES / 128 / rowBlocks);
+        if (banded ? (!Number.isInteger(bandRows) || bandRows < 1) : !bandRows) return null;
+        const bandAt = banded ? ((zerosAt + 65536 * 8 + 15) & ~15) : DBAND;
+        const bandBytes = bandRows * rowBlocks * 128;
+        const maxCompBlocks = banded ? Math.max(...entries.map(e => bandRows * e.v * e.c.stride)) : 0;
+        const dcOut = banded ? ((bandAt + bandBytes + 15) & ~15) : 0;
+        const natAt = banded ? ((dcOut + maxCompBlocks * 2 + 15) & ~15) : 0;
+        const countsOut = banded ? ((natAt + entries.length * 256 + 15) & ~15) : 0;
+        const atOut = banded ? ((countsOut + maxCompBlocks + 15) & ~15) : 0;
+        const levelsOut = banded ? ((atOut + maxCompBlocks * 64 + 15) & ~15) : 0;
+        const end = banded ? (levelsOut + maxCompBlocks * 128) : (zerosAt + 65536 * 8);
         if (end > memory.buffer.byteLength) {
           if (end > DECODE_CAP) return null;
+          fixedUsed = true;
           try { grow(end); } catch { return null; }
           views();
         }
@@ -232,34 +319,78 @@ export function jpegKernels(flushTokens) {
           tables.forEach((table, i) => u16.set(table, i * 65536));
           u8.set(bytes.subarray(start), DIN);
           i32.set(zigzag, (DPARAMS + 256) >> 2);
-          const total = single ? first.blocksW * first.blocksH : frame.mcusX * frame.mcusY, perRow = single ? first.blocksW : frame.mcusX;
           i32.set([entries.length, frame.mcusX, total, restartInterval, single ? 1 : 0, length, first.blocksW, 0, zerosAt], DPARAMS >> 2);
           exports.decodeStart();
-          for (let row0 = 0; row0 * perRow < total; row0 += rows) {
-            i32[(DPARAMS >> 2) + 7] = row0;
-            let at = DBAND;
-            entries.forEach((e, i) => {
-              i32.set([e.h, e.v, e.c.stride, slots[i][0] * 131072, slots[i][1] * 131072, i, at], (DPARAMS >> 2) + 16 + i * 8);
-              at += rows * e.v * e.c.stride * 128;
-            });
-            if (!exports.decodeBand(Math.min(total, (row0 + rows) * perRow), at - DBAND)) return null;
-            at = DBAND;
-            for (const e of entries) {
-              const from = row0 * e.v * e.c.stride * 64, to = Math.min(e.c.coeffs.length, (row0 + rows) * e.v * e.c.stride * 64);
-              e.c.coeffs.set(i16.subarray(at >> 1, (at >> 1) + to - from), from);
-              at += rows * e.v * e.c.stride * 128;
+          if (!banded) {
+            for (let row0 = 0; row0 * perRow < total; row0 += bandRows) {
+              i32[(DPARAMS >> 2) + 7] = row0;
+              let at = DBAND;
+              entries.forEach((e, i) => {
+                i32.set([e.h, e.v, e.c.stride, slots[i][0] * 131072, slots[i][1] * 131072, i, at], (DPARAMS >> 2) + 16 + i * 8);
+                at += bandRows * e.v * e.c.stride * 128;
+              });
+              if (!exports.decodeBand(Math.min(total, (row0 + bandRows) * perRow), at - DBAND)) return null;
+              at = DBAND;
+              for (const e of entries) {
+                const from = row0 * e.v * e.c.stride * 64, to = Math.min(e.c.coeffs.length, (row0 + bandRows) * e.v * e.c.stride * 64);
+                e.c.coeffs.set(i16.subarray(at >> 1, (at >> 1) + to - from), from);
+                at += bandRows * e.v * e.c.stride * 128;
+              }
             }
+          } else {
+            const per = bandRows * perRow, points = [], packedComp = [];
+            const dcList = entries.map(e => Int16Array.from(e.c.dc));
+            entries.forEach((e, i) => u32.set(e.c.natural, (natAt + i * 256) >> 2));
+            let addedBytes = 0;
+            for (let row0 = 0, unit = 0; unit < total; row0 += bandRows, unit += per) {
+              const mcuRows = Math.min(bandRows, Math.ceil((total - unit) / perRow));
+              i32[(DPARAMS >> 2) + 7] = row0;
+              let at = bandAt;
+              const bases = [];
+              entries.forEach((e, i) => {
+                bases.push(at);
+                i32.set([e.h, e.v, e.c.stride, slots[i][0] * 131072, slots[i][1] * 131072, i, at], (DPARAMS >> 2) + 16 + i * 8);
+                at += mcuRows * e.v * e.c.stride * 128;
+              });
+              if (!exports.decodeBand(Math.min(total, unit + per), at - bandAt)) return null;
+              const compRows = [];
+              for (let i = 0; i < entries.length; i++) {
+                const e = entries[i], width = single ? e.c.blocksW : e.c.stride;
+                const eRows = single ? Math.min(bandRows, e.c.blocksH - row0) : mcuRows * e.v;
+                const cRow0 = single ? row0 : row0 * e.v;
+                u8.fill(0, dcOut, dcOut + eRows * e.c.stride * 2);
+                const nz = exports.packBand(bases[i], width, eRows, e.c.stride, dcOut, natAt + i * 256, countsOut, atOut, levelsOut);
+                dcList[i].set(i16.subarray(dcOut >> 1, (dcOut >> 1) + eRows * e.c.stride), cRow0 * e.c.stride);
+                addedBytes += width * eRows + nz * 3;
+                if ((frame.packedBytes || 0) + addedBytes > frame.packedLimit) return null;
+                compRows.push({
+                  width,
+                  rows: eRows,
+                  counts: u8.slice(countsOut, countsOut + width * eRows),
+                  at: u8.slice(atOut, atOut + nz),
+                  levels: i16.slice(levelsOut >> 1, (levelsOut >> 1) + nz),
+                });
+              }
+              points.push({unit});
+              packedComp.push(compRows);
+            }
+            entries.forEach((e, i) => {
+              e.c.dc.set(dcList[i]);
+              e.c.natural.set(u32.subarray((natAt + i * 256) >> 2, ((natAt + i * 256) >> 2) + 64));
+            });
+            frame.packedBytes = (frame.packedBytes || 0) + addedBytes;
+            frame.bands.push({scan, restartInterval, points, total, packed: null, packedComp});
           }
           entries.forEach((e, i) => { e.c.pred = i32[((DPARAMS + 224) >> 2) + i]; });
           const zeros = [];
           for (let i = 0, n = u32[(DPARAMS >> 2) + 11]; i < n; i++) zeros.push([u32[(zerosAt >> 2) + 2 * i], u32[(zerosAt >> 2) + 2 * i + 1]]);
-          return {pos: start + u32[(DPARAMS >> 2) + 10], zeros};
+          return {pos: start + u32[(DPARAMS >> 2) + 10], zeros, canonical: u32[(DPARAMS >> 2) + 12] === 0};
         } finally {
           exports.initTable();
-          if (end > CTAB) u8.fill(0, CTAB, Math.min(CTAB_END, end));
+          if (end > CTAB) { u8.fill(0, CTAB, Math.min(CTAB_END, end)); priceStamp = null; priceMore = null; }
         }
       },
-      ...((typeof __RAPIER_JXL_JPEG__ === 'undefined' || __RAPIER_JXL_JPEG__ === true) && {
+      ...((typeof __RAPIER_JXL_JPEG_PIXELS__ === 'undefined' || __RAPIER_JXL_JPEG_PIXELS__ === true) ? {
       scaledDecode(bytes, start, frame, scan, restartInterval, zigzag, plan, onBand, orient = 1) {
         const single = scan.length === 1, first = scan[0].component, length = bytes.length - start;
         const tables = [], slot = table => { let i = tables.indexOf(table); if (i < 0) { i = tables.length; tables.push(table); } return i; };
@@ -268,11 +399,14 @@ export function jpegKernels(flushTokens) {
         const slots = entries.map(e => [slot(e.dc), slot(e.ac)]);
         if (tables.length > 8) return null;
         const {mxY, myY, mxC, myC, outW, outH, mode, clampW, clampH, yBias, cBias} = plan;
-        const mcusX = frame.mcusX, mcusY = frame.mcusY;
+        const mcusX = frame.mcusX, colsY = single ? first.blocksW : mcusX * entries[0].h;
+        const total = single ? first.blocksW * first.blocksH : mcusX * frame.mcusY;
+        const perRow = single ? first.blocksW : mcusX;
+        const totalRows = single ? first.blocksH : frame.mcusY;
         const rowBlocks = entries.reduce((n, e) => n + e.v * e.c.stride, 0);
-        const bandMcus = Math.max(2, Math.min(mcusY, Math.min(16, Math.max(2, Math.floor(16384 / Math.max(1, rowBlocks))))));
+        const bandMcus = Math.max(2, Math.min(totalRows, Math.min(16, Math.max(2, Math.floor(16384 / Math.max(1, rowBlocks))))));
         const coeffBandBytes = bandMcus * rowBlocks * 128;
-        const yStride = (mcusX * entries[0].h * mxY + 15) & ~3;
+        const yStride = (colsY * mxY + 15) & ~3;
         const cStride = entries.length > 1 ? ((mcusX * entries[1].h * mxC + 15) & ~3) : 16;
         const maxYRows = bandMcus * entries[0].v * myY + 4;
         const maxCRows = entries.length > 1 ? (bandMcus * entries[1].v * myC + 4) : 4;
@@ -285,16 +419,18 @@ export function jpegKernels(flushTokens) {
         const vScratch = crPlane + (entries.length > 1 ? maxCRows * cStride * 4 : 64);
         const rgbaAt = (vScratch + (clampW + 32) * 8 + 63) & ~63;
         const rgbaBytes = maxYRows * outW * 4;
-        const useOrientWasm = orient > 1 && (rgbaAt + rgbaBytes + outW * outH * 4 <= DECODE_CAP);
+        const useOrientWasm = orient > 1 && (rgbaAt + 2 * rgbaBytes + 64 <= DECODE_CAP);
         const orientDst = useOrientWasm ? ((rgbaAt + rgbaBytes + 63) & ~63) : 0;
-        const end = useOrientWasm ? (orientDst + outW * outH * 4) : (rgbaAt + rgbaBytes);
+        const end = useOrientWasm ? (orientDst + rgbaBytes) : (rgbaAt + rgbaBytes);
         if (end > memory.buffer.byteLength) {
           if (end > DECODE_CAP) return null;
+          fixedUsed = true;
           try { grow(end); } catch { return null; }
           views();
         }
         loaded = null;
         const f32 = new Float32Array(memory.buffer);
+        const oriented = useOrientWasm ? new Uint8Array(outW * outH * 4) : null;
         try {
           tables.forEach((table, i) => u16.set(table, (huffAt >> 1) + i * 65536));
           u8.set(bytes.subarray(start), DIN);
@@ -303,9 +439,6 @@ export function jpegKernels(flushTokens) {
             const qBase = (quantAt + i * 256) >> 2;
             for (let k = 0; k < 64; k++) f32[qBase + k] = e.c.quant[k];
           });
-          const total = single ? first.blocksW * first.blocksH : mcusX * mcusY;
-          const perRow = single ? first.blocksW : mcusX;
-          const totalRows = single ? first.blocksH : mcusY;
           i32.set([entries.length, mcusX, total, restartInterval, single ? 1 : 0, length, first.blocksW, 0, 0], DPARAMS >> 2);
           exports.decodeStart();
           const needOverlap = mode === 2 || mode === 4;
@@ -339,7 +472,15 @@ export function jpegKernels(flushTokens) {
               exports.jpegRgbaRows(yPlane, cbPlane, crPlane, yStride, cStride, outW, emitRows, mode,
                 clampW, 0, emittedY, cRowBase, clampH, vScratch, rgbaAt);
               if (useOrientWasm) {
-                exports.orientBandRgba(rgbaAt, orientDst, outW, outH, emittedY, emitRows, orient);
+                exports.orientBandRgba(rgbaAt, orientDst, outW, emitRows, 0, emitRows, orient);
+                if (orient < 5) {
+                  const dstY = orient >= 3 ? outH - emittedY - emitRows : emittedY;
+                  oriented.set(u8.subarray(orientDst, orientDst + emitRows * outW * 4), dstY * outW * 4);
+                } else {
+                  const dstX = orient === 6 || orient === 7 ? outH - emittedY - emitRows : emittedY, stripBytes = emitRows * 4, outStride = outH * 4;
+                  for (let r = 0, s = orientDst, d = dstX * 4; r < outW; r++, s += stripBytes, d += outStride)
+                    oriented.set(u8.subarray(s, s + stripBytes), d);
+                }
               } else {
                 onBand(emittedY, emitRows, u8.subarray(rgbaAt, rgbaAt + emitRows * outW * 4));
               }
@@ -355,10 +496,9 @@ export function jpegKernels(flushTokens) {
               heldY = 0; heldC = 0;
             }
           }
-          const oriented = useOrientWasm ? u8.slice(orientDst, orientDst + outW * outH * 4) : null;
           return {pos: start + u32[(DPARAMS >> 2) + 10], oriented};
         } finally {
-          if (end > CTAB) u8.fill(0, CTAB, Math.min(CTAB_END, end));
+          if (end > CTAB) { u8.fill(0, CTAB, Math.min(CTAB_END, end)); priceStamp = null; priceMore = null; }
         }
       },
       async renderGeneralBands(parsed, onBand) {
@@ -486,10 +626,10 @@ export function jpegKernels(flushTokens) {
             }
           }
         } finally {
-          if (end > CTAB) u8.fill(0, CTAB, Math.min(CTAB_END, end));
+          if (end > CTAB) { u8.fill(0, CTAB, Math.min(CTAB_END, end)); priceStamp = null; priceMore = null; }
         }
       },
-      }),
+      } : {}),
       }),
       prefixFilled: (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? null : function prefixFilled(model) {
         const {contextMap, histograms} = model;
@@ -516,6 +656,19 @@ export function jpegKernels(flushTokens) {
         return (w, n) => { load(); exports.tokensIn(0, n); append(w, exports.prefixWrite(n, w.acc, w.pending)); };
       },
       ...((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? {} : {
+      brotliParse(data, start, end, windowBits, model) {
+        priceStamp = null; priceMore = null;
+        const reach = (1 << windowBits) - 16, origin = Math.max(0, start - reach), bytes = data.subarray(origin, end);
+        const n = end - start, base = 1 << (32 - Math.clz32(n)), input = DYNAMIC;
+        const heads = (input + bytes.length + 11) & -4, previous = heads + 262144, prefix = previous + bytes.length * 4;
+        const records = prefix + (n + 1) * 4, mins = records + (n + 1) * 16, copies = mins + base * 8;
+        const choices = copies + base * 32, prices = choices + 192, out = prices + model.length;
+        reserve(out + Math.ceil(n / 2) * 12 + 16);
+        u8.set(bytes, input); u8.fill(0, input + bytes.length, heads); u8.set(model, prices);
+        const words = exports.brotliParse(input, start - origin, n, reach, heads, previous, prefix, records,
+          mins, copies, base, prices, choices, out, origin);
+        return i32.slice(out >> 2, (out >> 2) + words);
+      },
       literalClusters(clusters) {
         const n = clusters.length;
         reserve(OUT + 131072);
@@ -529,68 +682,63 @@ export function jpegKernels(flushTokens) {
         for (let i = 0; i < n; i++) kept[rank[u32[(LOWNER >> 2) + i]]].contexts.push(...clusters[i].contexts);
         return kept;
       },
+      acLowerBound(parsed) {
+        if (!exports.acHist || parsed.progression || parsed.progressive || parsed.bandFrame) return 0;
+        const comps = parsed.components;
+        if (!comps || (comps.length !== 1 && comps.length !== 3) || comps.some(c => !(c.coeffs instanceof Int16Array))) return 0;
+        const maxH = Math.max(...comps.map(c => c.h)), maxV = Math.max(...comps.map(c => c.v));
+        const subsampled = comps.some(c => c.h !== maxH || c.v !== maxV);
+        const active = comps.length === 1 || subsampled ? comps : [parsed.colorSpace === 'rgb' ? comps[1] : comps[0]];
+        const histAt = SCRATCH, bufAt = SCRATCH + 8192, roomBytes = VALUES - bufAt;
+        u32.fill(0, histAt >> 2, (histAt >> 2) + 2048);
+        const totalW = Math.ceil(parsed.width / 8), totalH = Math.ceil(parsed.height / 8);
+        let maxTokens = 0;
+        for (const c of active) {
+          const bw = Math.ceil(totalW * c.h / maxH), bh = Math.ceil(totalH * c.v / maxV), stride = c.stride;
+          if (bw < 1 || bh < 1 || stride < bw) return 0;
+          const rowBytes = stride * 128, batch = Math.max(1, Math.floor(roomBytes / rowBytes));
+          if (rowBytes > roomBytes) reserve(bufAt + rowBytes);
+          for (let y = 0; y < bh; y += batch) {
+            const h = Math.min(batch, bh - y);
+            i16.set(c.coeffs.subarray(y * stride * 64, (y + h) * stride * 64), bufAt >> 1);
+            exports.acHist(bufAt, bw, h, stride, histAt);
+          }
+          maxTokens += bw * bh * 64;
+        }
+        let nPos = 0, sumHLogH = 0;
+        for (let v = 1; v < 2048; v++) {
+          const count = u32[(histAt >> 2) + v];
+          if (count > 0) { nPos += count; if (count > 1) sumHLogH += count * Math.log2(count); }
+        }
+        if (nPos <= 1) return 0;
+        const bits = nPos * Math.log2(nPos) - sumHLogH - maxTokens * 0.02273;
+        return bits > 0 ? Math.floor(bits / 8) : 0;
+      },
       }),
       countFilled: (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? null : function countFilled(into, n) {
         if (into.contexts > 8192 || lastFillWide) return false;
-        reserve(DYNAMIC);
-        const m = exports.countFilled(n), large = u32[SCRATCH >> 2], small = into.small, totals = into.totals;
+        const table = CTAB + into.contexts * 256;
+        if (table > tableEnd) { reserve(table); u8.fill(0, tableEnd, table); tableEnd = table; }
+        const unique = tableEnd, larges = unique + Math.min(n, into.contexts * 64) * 4, end = larges + n * 8 + 15 & ~15;
+        if (end > listsEnd || listsEnd < tableEnd) { listsEnd = Math.max(end, tableEnd); priceStamp = null; priceMore = null; }
+        reserve(end);
+        const m = exports.countFilled(n, unique, larges), large = u32[SCRATCH >> 2], small = into.small, totals = into.totals;
         for (let i = 0; i < m; i++) {
-          const at = u32[(CUNIQUE >> 2) + i], count = u32[(CTAB >> 2) + at];
+          const at = u32[(unique >> 2) + i], count = u32[(CTAB >> 2) + at];
           small[at] += count; totals[at >> 6] += count;
         }
-        exports.countClear(m);
-        for (let i = 0; i < large; i++) into.add(u32[(CLARGE >> 2) + 2 * i], u32[(CLARGE >> 2) + 2 * i + 1]);
+        exports.countClear(m, unique);
+        for (let i = 0; i < large; i++) into.add(u32[(larges >> 2) + 2 * i], u32[(larges >> 2) + 2 * i + 1]);
+        u32.fill(0, unique >> 2, (unique >> 2) + m); u32.fill(0, larges >> 2, (larges >> 2) + 2 * large);
         return true;
       },
-      modularAns(histograms) {
-        if (histograms.length > 255 || histograms.some(h => h.counts.length > 256)) return null;
-        let n = 0, lastPlans = null, lastBits = 0;
-        const load = plans => {
-          if (loaded !== histograms) {
-            reserve(HISTOGRAMS + histograms.length * TABLE_SIZE);
-            histograms.forEach((h, id) => {
-              const base = HISTOGRAMS + id * TABLE_SIZE;
-              u16.fill(0, base >> 1, (base >> 1) + 256);
-              u16.set(h.counts, base >> 1); u16.set(h.starts, (base + 512) >> 1); u16.set(h.reverse, (base + 1040) >> 1);
-            });
-            exports.recips(histograms.length);
-            loaded = histograms;
-            lastPlans = null;
-          }
-          if (lastPlans === plans) return lastBits;
-          priceStamp = null;
-          n = 0;
-          let maps = 0;
-          for (const plan of plans) { n += plan.used; maps += plan.histogramMap?.length ?? 0; }
-          const end = DYNAMIC + n * 10 + maps * 2;
-          if (end > memory.buffer.byteLength) { grow(end); views(); }
-          let at = DYNAMIC, map = DYNAMIC + n * 10, offset = histograms.length;
-          for (let c = plans.length - 1; c >= 0; c--) offset -= plans[c].freqs.length;
-          for (const plan of plans) {
-            const {tags, extra, histogramMap, used} = plan;
-            u32.set(tags.subarray(0, used), at >> 2); u32.set(extra.subarray(0, used), (at >> 2) + n);
-            if (histogramMap) u16.set(histogramMap, map >> 1);
-            exports.mtags(at, used, histogramMap ? map : 0, offset);
-            at += used * 4; map += (histogramMap?.length ?? 0) * 2; offset += plan.freqs.length;
-          }
-          lastPlans = plans;
-          return lastBits = exports.mbits(n, DYNAMIC, DYNAMIC + n * 8);
-        };
-        return {
-          bits: load,
-          write(w, plans) {
-            const bits = load(plans);
-            if (bits + w.pending + 64 > (CTAB - OUT) * 8) return false;
-            append(w, exports.mwrite(n, DYNAMIC, DYNAMIC + n * 4, DYNAMIC + n * 8, w.acc, w.pending));
-            return bits;
-          },
-        };
-      },
+
       ansWriter: (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? () => ({write: true, flush: true}) : function ansWriter(model) {
         const {contextMap, histograms} = model;
         if (histograms.length > 255 || contextMap.length > 8192 || histograms.some(h => h.counts.length > 256)) return null;
-        reserve(CTAB);
+        if (CMAP > memory.buffer.byteLength) { grow(CMAP); views(); }
         const load = () => {
+          reserve(CTAB);
           if (loaded === model) return;
           const slots = [0, 0, 0];
           u8.set(contextMap, CMAP);
@@ -635,6 +783,7 @@ export function capJpegKernels(bytes, flushTokens) {
   limit = bytes;
   return kernels;
 }
+export function retireJpegKernels() { if (limit === Infinity) engine = undefined; }
 export function releaseJpegKernels() { if ((typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) return; engine = undefined; limit = Infinity; }
 
 function flattenSparse(ordered) {

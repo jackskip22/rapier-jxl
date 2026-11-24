@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-import {check, dimensions, fail, PIXELS, callers, snapshotOptions, snapshotArray, blobBytes} from './primitives.mjs';
-import {arrayBufferBytes, copyBytes, typedName} from './bytes.mjs';
+import {check, dimensions, fail, PIXELS, callers, snapshotOptions, snapshotArray, blobBytes, isBlob} from './primitives.mjs';
+import {arrayBufferBytes, copyBytes, viewBytes, typedName} from './bytes.mjs';
 import {isPlainRecord} from './records.mjs';
 import {DESCRIPTION, described, fromDecoded, isDecoded} from './describe.mjs';
 import {pixels} from './input.mjs';
@@ -47,10 +47,11 @@ export function isIdentity(value) {
   catch (error) { throw callers(error); }
   return typeof digest === 'string' && /^sha256:[a-f0-9]{64}$/.test(digest);
 }
-export const isBlob = value => typeof Blob === 'function' && value instanceof Blob;
+export {isBlob};
+export const isEncoded = value => ArrayBuffer.isView(value) || arrayBufferBytes(value) !== null;
 export async function encodedSourceBytes(source) {
   if (isBlob(source)) return blobBytes(source);
-  return typedName.call(source) === 'Uint8Array' ? source : null;
+  return isEncoded(source) ? viewBytes(source) : null;
 }
 export const isRows = value => value && typeof value.rows === 'function' && value.data === undefined;
 
@@ -78,7 +79,7 @@ export function snapshotSource(source, options = {}) {
   }
   if (isIdentity(source)) return {...source};
   if (isBlob(source)) return source;
-  if (typedName.call(source) === 'Uint8Array') return copyBytes(source);
+  if (isEncoded(source)) return copyBytes(source);
   if (isRows(source)) {
     const admitted = source.description ? source : admitRows(source, maxPixels);
     dimensions(admitted.width, admitted.height, maxPixels);

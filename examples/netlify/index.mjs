@@ -43,7 +43,9 @@ export const onBuild = async ({constants, inputs = {}, utils}) => {
   const edgeDir = constants.INTERNAL_EDGE_FUNCTIONS_SRC;
   await mkdir(edgeDir, {recursive: true});
   const template = await readFile(new URL('./edge.mjs', import.meta.url), 'utf8');
-  await writeFile(join(edgeDir, EDGE), template.replace('/* paths */[]', JSON.stringify(paths)));
+  const accept = await readFile(new URL('../files/accept.mjs', import.meta.url), 'utf8');
+  const edge = template.replace("import {acceptsJxl} from '../files/accept.mjs';", () => accept.replace(/^export /gm, ''));
+  await writeFile(join(edgeDir, EDGE), edge.replace('/* paths */[]', JSON.stringify(paths)));
   if (utils?.cache) await utils.cache.save(cacheDir);
   const summary = `${paths.length} pictures have a JPEG XL copy, ${bytesIn} bytes to ${bytesOut} (${Math.round(performance.now() - started)} ms)${left ? `; ${left} left as they are` : ''}`;
   console.log('rapier-jxl: ' + summary);

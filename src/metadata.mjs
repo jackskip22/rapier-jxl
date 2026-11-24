@@ -2,7 +2,7 @@
 import {fault, guard, admitOutputSize} from './admit.mjs';
 import {SIGNATURE, FTYP, LEVEL, CODESTREAM, EXIF, XML, JUMBF, BROB, RECONSTRUCTION, boxes, fileHeader, boxHeader} from './container.mjs';
 import {compressBrotli, decompressBrotli} from './brotli.mjs';
-import {callers, isCaller} from './v7/primitives.mjs';
+import {callers, isCaller, typedName, plainView} from './v7/primitives.mjs';
 import {codestreamLevel} from './framing.mjs';
 
 const invalid = message => fault('JXL_INPUT', message);
@@ -160,17 +160,26 @@ async function codec(data, direction, provided, maximum) {
   } else if (direction === 'decompress' && nativeBrotliUnsafe(globalThis.process?.versions)) {
     try { result = decompressBrotli(data, {maxOutputLength: maximum}); }
     catch (error) {
-      if (error?.code === 'JXL_SIZE') throw error;
+      if (error?.code === 'JXL_SIZE' || error?.code === 'JXL_MEMORY') throw error;
       throw invalid('unsafe runtime Brotli: update Node 22.23.4, 24.22.1 or 26.12.1, or Bun 1.4.4, or pass decompress');
     }
   } else if (nodeZlib()) {
     const zlib = nodeZlib();
     const method = zlib.brotliDecompress;
+    const os = globalThis.process?.getBuiltinModule?.('node:os');
+    const constrained = globalThis.process?.constrainedMemory?.();
+    const hostMem = constrained > 0 && constrained < Number.MAX_SAFE_INTEGER ? constrained : os ? os.totalmem() : Infinity;
+    const memCap = 268435456;
+    const effective = Math.min(maximum, memCap);
     try {
-      const settings = maximum === Number.MAX_SAFE_INTEGER ? {} : {maxOutputLength: Math.max(1, maximum)};
-      result = await new Promise((resolve, reject) => method(data, settings, (error, output) => error ? reject(error) : resolve(output)));
+      const settings = {maxOutputLength: Math.max(1, effective)};
+      result = await new Promise((resolve, reject) => method(data, settings, (error, output) =>
+        error ? reject(error) : resolve(new Uint8Array(output.buffer, output.byteOffset, output.byteLength))));
     } catch (error) {
-      if (error.code === 'ERR_BUFFER_TOO_LARGE') throw fault('JXL_SIZE', 'decoded metadata: maxDecodedBytes exceeded');
+      if (error.code === 'ERR_BUFFER_TOO_LARGE')
+        throw maximum <= memCap
+          ? fault('JXL_SIZE', 'decoded metadata: maxDecodedBytes exceeded')
+          : fault('JXL_MEMORY', 'Brotli: output exceeds available memory; pass maxMetadataBytes or smaller metadata');
       throw invalid('Brotli: ' + error.message);
     }
   } else {
@@ -180,6 +189,10 @@ async function codec(data, direction, provided, maximum) {
     } catch {
       return decompressBrotli(data, {maxOutputLength: maximum});
     }
+    let gigabytes;
+    try { gigabytes = globalThis.navigator?.deviceMemory; } catch {}
+    const hostMem = gigabytes > 0 ? gigabytes * 2 ** 29 : Infinity;
+    const memCap = 268435456;
     const reader = new Blob([data]).stream().pipeThrough(stream).getReader(), chunks = [];
     let size = 0;
     try {
@@ -193,13 +206,18 @@ async function codec(data, direction, provided, maximum) {
           try { await reader.cancel(); } catch {}
           throw fault('JXL_SIZE', 'decoded metadata: maxDecodedBytes exceeded');
         }
+        if (size > memCap) {
+          try { await reader.cancel(); } catch {}
+          throw fault('JXL_MEMORY', 'Brotli: output exceeds available memory; pass maxMetadataBytes or smaller metadata');
+        }
         chunks.push(value);
       }
     } finally { reader.releaseLock(); }
     result = new Uint8Array(size); let at = 0;
     for (const chunk of chunks) { result.set(chunk, at); at += chunk.length; }
   }
-  if (!(result instanceof Uint8Array)) throw invalid('Brotli result: Uint8Array');
+  if (!(result instanceof Uint8Array) && typedName.call(result) !== 'Uint8Array') throw invalid('Brotli result: Uint8Array');
+  result = plainView(result);
   if (result.length > maximum) throw fault('JXL_SIZE', 'Brotli result: byte limit exceeded');
   return result;
 }

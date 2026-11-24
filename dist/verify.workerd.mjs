@@ -1,4 +1,4 @@
 import kernels from './kernels.wasm';
 import {provideWasm} from './wasm-modules.mjs';
 provideWasm({kernels});
-export * from './verify.mjs';
+export * from './verify.precompiled.mjs';

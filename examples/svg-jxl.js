@@ -4,6 +4,14 @@
 // Not a sanitizer: the SVG's own scripts, styles and links pass through unchanged. Sanitize an untrusted SVG yourself.
 // Each module is loaded on first use; in a browser each runs in its own worker.
 let jpeg, capture, still;
+// The codes the module itself refuses with (types.d.mts ErrorCode).
+const DECLARED = new Set(['JXL_OPTIONS', 'JXL_INPUT', 'JXL_DIMENSIONS', 'JXL_JPEG', 'JXL_DECODE', 'JXL_RECONSTRUCTION', 'JXL_TARGET',
+  'JXL_PLATFORM', 'JXL_MEMORY', 'JXL_LIMIT', 'JXL_WASM', 'JXL_WEBGPU', 'JXL_WORKER', 'JXL_CLOSED', 'JXL_UNSUPPORTED', 'JXL_INTERNAL',
+  'JXL_IO', 'JXL_SETUP']);
+const ownCode = value => {
+  try { const field = value !== null && typeof value === 'object' ? Object.getOwnPropertyDescriptor(value, 'code') : undefined; return field && 'value' in field ? field.value : undefined; }
+  catch { return undefined; }
+};
 // The browser's own cost, measured: drawing a 774 KB, 16,000 x 16,000 PNG to a canvas took Chrome 155 25.7 s and
 // 3.1 GB, before an encoder could refuse it. This example skips pictures over 40 MP.
 const MAX_PIXELS = 40_000_000;
@@ -41,9 +49,10 @@ export async function svgJxl(input, options = {}) {
   });
   const captureCall = async (input, options) => {
     try { return await (await captureCodec()).capture(input, options); }
-    // An app's codec refusing one picture with a code (JXL_INPUT for a file it cannot read) is that picture's answer, as
-    // the module's own refusal is; any other failure of the app's codec is the call's.
-    catch (reason) { if (codec && !(typeof reason?.code === 'string' && reason.code.startsWith('JXL_'))) callbackFault = {reason}; throw reason; }
+    // An app's codec refusing one picture with one of the module's declared codes (JXL_INPUT for a file it cannot read) is
+    // that picture's answer, as the module's own refusal is; any other failure of the app's codec is the call's, passed on
+    // unchanged. The code is read as data: a getter on the app's error is never run.
+    catch (reason) { if (codec && !DECLARED.has(ownCode(reason))) callbackFault = {reason}; throw reason; }
   };
   for (const p of found) if (p.bytes && !p.kept) p.route = p.kind === 'jpeg' ? 'jpeg' : p.kind === 'png' || decoder ? 'lossless' : (p.kept = 'no-decoder', undefined);
   const key = p => `${codecId(codec)} ${lossy ? quality : 'exact'} ${effort} ${webgpu} ${p.uri}`;

@@ -4,6 +4,7 @@ import {replyPreview, clearPreviewReply} from './v7/preview-relay.mjs';
 // SPDX-License-Identifier: MIT
 import {ARENA_BYTES} from './arena.mjs';
 import {fault} from './fault.mjs';
+import {scoreBandFits} from './band-geometry.mjs';
 
 export const canShare = () => typeof SharedArrayBuffer === 'function' && globalThis.crossOriginIsolated !== false;
 const mark = (...entry) => { globalThis.__helperMarks?.push(entry); };
@@ -91,6 +92,15 @@ export function workerPool(spawn, count) {
         const job = member.busy;
         if (!job || reply.id !== job.id) return;
         if (reply.progress !== undefined) { job.onProgress?.(reply.progress); return; }
+        if (reply.gpu !== undefined) {
+          const asked = job.onGpu ? Promise.resolve().then(() => job.onGpu(reply.gpu)).catch(() => null) : Promise.resolve(null);
+          asked.then(answer => {
+            if (member.dead) return;
+            try { member.worker.postMessage({id: job.id, ask: reply.ask, gpuAnswer: answer ?? null}); }
+            catch { if (member.busy === job) { drop(member); pump(); } }
+          });
+          return;
+        }
         if (reply.preview !== undefined) {
           if (job.onPreview) replyPreview(job, reply.preview, reply.previewSequence, job.onPreview, () => {
             if (!member.dead && member.busy === job) member.worker.postMessage({id: job.id, previewAck: reply.previewSequence});
@@ -157,7 +167,7 @@ export function workerPool(spawn, count) {
   const api = {
     count, limit: count, failure: null, broken: false, used: false,
     get waiting() { return pending.size; },
-    run(task, big, transfer = [], validate = null) {
+    run(task, big, transfer = [], validate = null, onGpu = null) {
       if (closed) return api.retired().then(() => undefined);
       const ins = [], message = {...task};
       for (const field of big) {
@@ -168,7 +178,7 @@ export function workerPool(spawn, count) {
       }
       let job;
       const promise = new Promise((resolve, reject) => {
-        job = {id: ++serial, task: message, inputs: ins, transfer, validate, resolve, reject};
+        job = {id: ++serial, task: message, inputs: ins, transfer, validate, onGpu, resolve, reject};
         pending.set(job.id, job); queue.push(job); pump();
       });
       promise.job = job;
@@ -269,30 +279,31 @@ async function ownerPool(owner, reservation, spawn) {
 export async function retireBandHelpers(owner, geometry) {
   const pool = helperPools.get(owner);
   if (pool?.failure) throw pool.failure;
-  if (pool?.bandBytes === undefined || pool.bandGeometry === geometry) return;
+  if (pool?.bandBytes === undefined || geometry !== undefined && scoreBandFits(pool.bandGeometry, geometry)) return;
   if (pool.busy || pool.jobs) throw fault('JXL_INTERNAL', 'helper-pool:busy');
   await pool.trim(0);
   pool.bandBytes = undefined;
   pool.bandGeometry = undefined;
   pool.used = false;
 }
-export async function helperPool(owner, reservation, pixels, helper, jobBytes, geometry) {
+export async function helperPool(owner, reservation, pixels, helper, jobBytes, geometry, floor) {
   if (jobBytes !== undefined && (typeof geometry !== 'string' || !geometry)) throw fault('JXL_INTERNAL', 'helper-pool:geometry');
-  let limit = reservedHelpers(reservation, pixels, jobBytes);
+  let limit = reservedHelpers(reservation, pixels, jobBytes, floor);
   const spawn = await spawnHelper(helper);
   let pool = await ownerPool(owner, reservation, spawn);
   if (pool.busy || pool.jobs) return Object.assign(workerPool(spawn, limit), {limit, once: true, bandBytes: jobBytes, bandGeometry: geometry});
-  const changed = (pool.bandBytes === undefined) !== (jobBytes === undefined) || jobBytes !== undefined && pool.bandGeometry !== geometry;
+  const fits = jobBytes !== undefined && pool.bandGeometry !== undefined && scoreBandFits(pool.bandGeometry, geometry);
+  const changed = (pool.bandBytes === undefined) !== (jobBytes === undefined) || jobBytes !== undefined && !fits;
   if (changed) {
     if (pool.used) { await pool.trim(0); pool.used = false; }
     pool.bandBytes = undefined;
   }
   if (jobBytes !== undefined) {
     jobBytes = Math.max(jobBytes, pool.bandBytes ?? 0);
-    limit = reservedHelpers(reservation, pixels, jobBytes);
+    limit = reservedHelpers(reservation, pixels, jobBytes, floor);
   }
   pool.bandBytes = jobBytes;
-  pool.bandGeometry = geometry;
+  if (!fits) pool.bandGeometry = geometry;
   pool.hold(true);
   pool.limit = limit;
   await pool.trim(limit);
@@ -343,6 +354,12 @@ const untilAborted = (promise, signal) => new Promise(resolve => {
   signal?.addEventListener('abort', done, {once: true});
   promise.then(done, done);
 });
+const splitFallback = async (pool, signal) => {
+  const retired = pool.retired();
+  await untilAborted(retired, signal);
+  if (signal?.aborted) throw signal.reason;
+  await retired;
+};
 export async function splitOnIdle(owner, reservation, request, signal, helper) {
   const spawn = await spawnHelper(helper);
   if (signal?.aborted) return undefined;
@@ -355,27 +372,28 @@ export async function splitOnIdle(owner, reservation, request, signal, helper) {
     try { await untilAborted(pool.loaded(), signal); }
     finally { pool.starting--; }
     leased = signal?.aborted ? [] : pool.lease();
-    if (!leased.length) { idle(pool); return undefined; }
   }
-  if (!leased.length) return undefined;
+  if (!leased.length) { idle(pool); return signal?.aborted ? undefined : splitFallback(pool, signal); }
   pool.hold(true); pool.jobs = (pool.jobs ?? 0) + 1;
   try {
     const arena = request.pixels > 0 && reservation?.memoryBytes >= 16 * request.pixels + leased.length * (helperBytes(request.pixels) + ARENA_BYTES);
     if (request.pixels > 0) mark('split-arena', arena, leased.length * ARENA_BYTES, reservation?.memoryBytes);
     return await request.run(leased, {signal, arena});
   }
-  catch (error) { if (signal?.aborted) throw error; return undefined; }
+  catch { if (signal?.aborted) throw signal.reason; return await splitFallback(pool, signal); }
   finally { pool.unlease(leased); pool.jobs--; idle(pool); }
 }
 
 export function idle(pool) { pool.idle(); }
 
-const helperBytes = pixels => 44 * 1048576 + 4 * pixels + (canShare() ? 0 : 26 * pixels);
+const HELPER_RUNTIME = 20 * 1048576;
+const HELPER_HEAP = 112 * 1048576;
+const helperBytes = pixels => HELPER_RUNTIME + 24 * 1048576 + 4 * pixels + (canShare() ? 0 : 26 * pixels);
 const helpersWithin = (budget, pixels) => Math.floor((budget - 16 * pixels) / helperBytes(pixels));
 
 const HELPER_PIXELS = 524288;
-export const reservedHelpers = (reservation, pixels, jobBytes) => reservation && pixels >= HELPER_PIXELS ? Math.max(0, Math.min(reservation.count,
-  jobBytes === undefined ? helpersWithin(reservation.memoryBytes, pixels) : Math.floor((reservation.memoryBytes - 16 * pixels) / (helperBytes(pixels) + jobBytes)))) : 0;
+export const reservedHelpers = (reservation, pixels, jobBytes, floor = HELPER_PIXELS) => reservation && pixels >= floor ? Math.max(0, Math.min(reservation.count,
+  jobBytes === undefined ? helpersWithin(reservation.memoryBytes, pixels) : Math.floor(reservation.memoryBytes / (HELPER_RUNTIME + HELPER_HEAP + jobBytes)))) : 0;
 
 export const nodeBuiltin = name => { try { return globalThis.process?.getBuiltinModule?.(name); } catch { return undefined; } };
 

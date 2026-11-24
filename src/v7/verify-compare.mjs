@@ -6,12 +6,12 @@ import {captureComposeOver} from '../capture-kernels.mjs';
 import {compileKernels} from '../kernel-runtime.mjs';
 import {linearFromTransform} from '../color-bytes.mjs';
 import {P3_TRANSFORM, REC2020_TRANSFORM, adaptedTransform} from '../color-transform.mjs';
-import {profileTransform} from '../icc-transform.mjs';
+import {profileTransform, encodingSpace} from '../icc-transform.mjs';
 import {lossyProfileEncoding} from './header-intent.mjs';
 import {admitSampleKind} from './verify-samples.mjs';
 import {admitSampleDomain} from '../sample-domain.mjs';
 import {hdrDomain, hdrLook} from '../hdr-look.mjs';
-import {isDecoded, decodedDescription} from './describe.mjs';
+import {isDecoded, decodedDescription, described} from './describe.mjs';
 
 export const sameBytes = (a, b) => !!a && !!b && a.byteLength === b.byteLength && a.every((value, i) => value === b[i]);
 const sameRecord = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -128,19 +128,25 @@ export function measurementTarget(fidelity, options = {}) {
 }
 const whiteKnown = white => white === 'd65' || white === 'e' || white === 'dci' ||
   Array.isArray(white) && white.length === 2 && white.every(v => Number.isFinite(v) && v > 0) && white[0] + white[1] < 1;
+const primariesKnown = primaries => ['srgb', 'display-p3', 'rec2020'].includes(primaries) ||
+  Array.isArray(primaries) && primaries.length === 3 &&
+  primaries.every(c => Array.isArray(c) && c.length === 2 && c.every(v => Number.isFinite(v) && v > 0) && c[0] + c[1] < 1);
+const NAMED = {'display-p3': P3_TRANSFORM, rec2020: REC2020_TRANSFORM};
+function sceneTransform(encoding) {
+  if (!encoding || encoding.icc || encoding.space !== 'rgb' || !primariesKnown(encoding.primaries) || !whiteKnown(encoding.whitePoint))
+    return undefined;
+  if (encoding.transferFunction === 'srgb' && encoding.gamma === undefined && typeof encoding.primaries === 'string')
+    return encoding.whitePoint === 'd65' ? NAMED[encoding.primaries] ?? null : adaptedTransform(encoding.primaries, encoding.whitePoint);
+  return encodingSpace(encoding, null)?.transform ?? undefined;
+}
 function sdrEncoding(picture, profile) {
   const description = sampleDescription(picture), encoding = color(picture);
   if (description.sampleFormat !== 'uint' || description.bitDepth !== 8 || description.alphaPremultiplied ||
       description.intensityTarget !== 255) return null;
   if (profile) return encoding;
-  const srgbGamma = encoding.transferFunction === 'gamma' && encoding.primaries === 'srgb' &&
-    typeof encoding.gamma === 'number' && Math.abs(encoding.gamma - 0.45455) <= 1e-4;
-  if (encoding.icc || encoding.space !== 'rgb' || (encoding.transferFunction !== 'srgb' && !srgbGamma) ||
-      !['srgb', 'display-p3', 'rec2020'].includes(encoding.primaries) || !whiteKnown(encoding.whitePoint)) return null;
-  return encoding;
+  if (grayFile(picture) && (encoding.whitePoint !== 'd65' || encoding.transferFunction !== 'srgb' || encoding.gamma !== undefined)) return null;
+  return sceneTransform(encoding) !== undefined ? encoding : null;
 }
-const NAMED = {'display-p3': P3_TRANSFORM, rec2020: REC2020_TRANSFORM};
-const sceneTransform = ({primaries, whitePoint}) => whitePoint === 'd65' ? NAMED[primaries] ?? null : adaptedTransform(primaries, whitePoint);
 const linearRGB = (picture, transform) => linearFromTransform(picture.data, picture.width * picture.height, transform);
 const unavailable = message => ({code: 'JXL_UNSUPPORTED', message});
 const missed = message => ({code: 'JXL_TARGET', message});
@@ -150,7 +156,7 @@ export function metricSamples(reference,decoded,profile,sourceEncoding) {
     original = linearFromTransform(reference.data,reference.width * reference.height,profile);
     if (!srgbRecord(color(decoded))) restored = linearFromTransform(decoded.data,decoded.width * decoded.height,profile);
   }
-  else if (sceneTransform(sourceEncoding)) { const transform = sceneTransform(sourceEncoding); original = linearRGB(reference, transform); restored = linearRGB(decoded, transform); }
+  else { const transform = sceneTransform(sourceEncoding); if (transform) { original = linearRGB(reference, transform); restored = linearRGB(decoded, transform); } }
   return [original,restored];
 }
 export const opaque = rgba => { for (let i = 3; i < rgba.length; i += 4) if (rgba[i] !== 255) return false; return true; };
@@ -215,6 +221,6 @@ export async function pixelEvidence(reference, decoded, fidelity, options = {}, 
 
 function hdrSamples(picture) {
   let samples;
-  try { samples = admitSampleDomain(picture.data, isDecoded(picture) ? decodedDescription(picture) : sampleDescription(picture)); } catch { return null; }
+  try { samples = admitSampleDomain(picture.data, isDecoded(picture) ? decodedDescription(picture) : described(picture)); } catch { return null; }
   return !picture.rgbaICC?.length && !picture.icc?.length && hdrDomain(picture.data, samples) ? {data: picture.data, samples} : null;
 }

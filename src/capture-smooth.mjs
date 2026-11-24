@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {captureSmoothCells} from './capture-kernels.mjs';
+import {captureSmoothCells, captureMaskComponents} from './capture-kernels.mjs';
 export function captureSmoothRegions(data, width, height, exactRects) {
   const exact = new Uint8Array(width * height);
   for (const r of exactRects) {
@@ -23,20 +23,9 @@ export function captureSmoothRegions(data, width, height, exactRects) {
     if (x) open(at - 1); if (x + 1 < cw) open(at + 1); if (y) open(at - cw); if (y + 1 < ch) open(at + cw);
   }
   for (let i = 0; i < closed.length; i++) if (!outside[i]) closed[i] = 1;
-  const seen = new Uint8Array(grid.length), regions = [];
-  for (let first = 0; first < closed.length; first++) {
-    if (!closed[first] || seen[first]) continue;
-    const todo = [first]; seen[first] = 1;
-    let x0 = first % cw, x1 = x0, y0 = first / cw | 0, y1 = y0, cells = 0;
-    while (todo.length) {
-      const at = todo.pop(), x = at % cw, y = at / cw | 0; cells++;
-      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        const xx = x + dx, yy = y + dy, next = yy * cw + xx;
-        if (xx >= 0 && xx < cw && yy >= 0 && yy < ch && closed[next] && !seen[next]) { seen[next] = 1; todo.push(next); }
-      }
-    }
-    const columns = x1 - x0 + 1, rows = y1 - y0 + 1;
+  const regions = [];
+  for (const {x: x0, y: y0, width: columns, height: rows, cells} of captureMaskComponents(closed, cw, ch, true)) {
+    const x1 = x0 + columns - 1, y1 = y0 + rows - 1;
     if (columns * 4 >= cw * 3 && rows * 4 >= ch * 3 && cells >= columns + rows) { regions.push({x: 0, y: 0, width, height}); continue; }
     if (Math.min(columns, rows) < 3 || Math.max(columns, rows) < 4 || cells < 12 || cells * 2 < columns * rows) continue;
     const x = Math.max(0, (x0 - 1) * 16), y = Math.max(0, (y0 - 1) * 16);

@@ -10,11 +10,12 @@ import {exifOrientation} from './exif-orientation.mjs';
 import {jpegYCbCr} from './jpeg-color.mjs';
 
 export {ZIGZAG, jpegError};
+export const CERTIFIED_SCANS = new WeakMap();
 
 
 
 
-function buildHuffman(counts, symbols) {
+export function buildHuffman(counts, symbols) {
   const lookup = new Uint16Array(65536);
   let code = 0, k = 0;
   for (let length = 1; length <= 16; length++) {
@@ -28,7 +29,7 @@ function buildHuffman(counts, symbols) {
   }
   return lookup;
 }
-function validateHuffman(counts) {
+export function validateHuffman(counts) {
   let code = 0;
   for (let length = 1; length <= 16; length++) {
     const n = counts[length - 1];
@@ -111,7 +112,7 @@ function* profileSpaceSteps(profile) {
 }
 
 export const parseJPEG = (bytes, retainScans, options, kernels) => complete(parseJPEGSteps(bytes, retainScans, options, kernels));
-export function* parseJPEGSteps(bytes, retainScans = false, {preserveICC = false, compression = 'auto', bands = false, maxPixels = LIMITS.pixels, allowFourComponents = false} = {}, kernels = true) {
+export function* parseJPEGSteps(bytes, retainScans = false, {preserveICC = false, compression = 'auto', bands = false, maxPixels = LIMITS.pixels, allowFourComponents = false, scalarMap = false} = {}, kernels = true) {
   bytes = sliceBytes(bytes);
   if (!(bytes.length > 4) || bytes[0] !== 0xFF || bytes[1] !== 0xD8) throw jpegError('invalid signature');
   const quant = [], huffman = [[], []], badDC = new Set(), icc = {count: 0, parts: []}, scanChoices = retainScans ? [] : null;
@@ -232,7 +233,7 @@ export function* parseJPEGSteps(bytes, retainScans = false, {preserveICC = false
     } else if (marker === 0xE0) {
       if (signatureAt(segment, 'JFIF')) jfif = true;
     } else if (marker === 0xE1) {
-      if (signatureAt(segment, 'Exif') && bytes[segment + 4] === 0) orientation ??= exifOrientation(bytes, segment + 6, end);
+      if (signatureAt(segment, 'Exif\0\0')) orientation ??= exifOrientation(bytes, segment + 6, end) ?? 1;
     } else if (marker === 0xE2) {
       if (length >= 16 && signatureAt(segment, 'ICC_PROFILE\0')) {
         const seq = bytes[segment + 12], count = bytes[segment + 13];
@@ -244,7 +245,7 @@ export function* parseJPEGSteps(bytes, retainScans = false, {preserveICC = false
     }
   }
   if (!frame || !frame.scans) throw jpegError('missing frame');
-  if (padding?.zero && padding.kernelScans) return yield* parseJPEGSteps(bytes, retainScans, {preserveICC, compression, bands, maxPixels, allowFourComponents}, false);
+  if (padding?.zero && padding.kernelScans) return yield* parseJPEGSteps(bytes, retainScans, {preserveICC, compression, bands, maxPixels, allowFourComponents, scalarMap}, false);
   for (const c of frame.components) {
     for (let k = 0; k < 64; k++) if (c.coverage[k] !== 0) throw jpegError(frame.progressive ? 'progressive scans: incomplete' : 'missing component scan');
   }
@@ -263,8 +264,8 @@ export function* parseJPEGSteps(bytes, retainScans = false, {preserveICC = false
       const declared = original.length >= 4 ? ((original[0] << 24) | (original[1] << 16) | (original[2] << 8) | original[3]) >>> 0 : 0;
       const color = declared >= 132 && declared < original.length ? sliceBytes(original, 0, declared) : original;
       try {
-        const channels = yield* inspectICCSteps(color, undefined, retainScans && !preserveICC && isoGain && expected === 'gray' ? undefined : expected);
-        if (channels !== frame.components.length) return {colorSpace: 'srgb', profile: undefined};
+        const channels = yield* inspectICCSteps(color, undefined, scalarMap || (retainScans && !preserveICC && isoGain && expected === 'gray') ? undefined : expected);
+        if (scalarMap || channels !== frame.components.length) return {colorSpace: 'srgb', profile: undefined};
         const named = yield* profileSpaceSteps(color);
         const keep = preserveICC || !named;
         return {colorSpace: named || 'srgb', profile: keep ? yield* prepareICCSteps(color, {compression, colorSpace: expected}) : undefined,
@@ -278,7 +279,7 @@ export function* parseJPEGSteps(bytes, retainScans = false, {preserveICC = false
   }
   const ycbcr = jpegYCbCr(frame.components, jfif, adobeTransform);
   const banded = frame.bands ? groupRows(bytes, frame) : {};
-  return {...banded, end: pos, width: frame.width, height: frame.height, components: frame.components, progressive: frame.progressive, ycbcr, adobeTransform, orientation: orientation ?? 1, colorSpace,
+  return {...banded, end: pos, width: frame.width, height: frame.height, components: frame.components, progressive: frame.progressive, ycbcr, adobeTransform, orientation: orientation ?? 1, ...(orientation !== null && {hasOrientation: true}), colorSpace,
     ...(renderingIntent && renderingIntent !== 'relative' && {renderingIntent}), ...(profile ? {profile, level: profile.level} : {}), ...(iccBytes ? {iccBytes} : {}), ...(scanChoices ? {scanChoices} : {}), ...(padding?.zero ? {padding: Uint8Array.from(padding.bits)} : {})};
 }
 
@@ -384,7 +385,7 @@ class ScanReader {
     if (this.eobrun > 0) throw jpegError('EOB run past interval');
     if (padding) {
       const bits = this.window() >>> (32 - padding), list = this.padding;
-      if (bits !== (1 << padding) - 1) { if (!list) throw jpegError('scan padding'); list.zero = true; }
+      if (list && bits !== (1 << padding) - 1) list.zero = true;
       if (list) for (let i = padding - 1; i >= 0; i--) list.bits.push((bits >>> i) & 1);
     }
     while (this.pos + 1 < bytes.length && bytes[this.pos] === 0xFF && bytes[this.pos + 1] === 0xFF) this.pos++;
@@ -510,22 +511,51 @@ export function groupRows(bytes, frame) {
     if (s.dc === undefined) s.dc = s.tables[0] && buildHuffman(s.tables[0].counts, s.tables[0].symbols);
     if (s.ac === undefined) s.ac = s.tables[1] && buildHuffman(s.tables[1].counts, s.tables[1].symbols);
   }
-  for (const c of components) c.band = new Int16Array(32 * c.v / frame.vmax * c.stride * 64);
+  const allPackedComp = !frame.progressive && frame.bands.length > 0 && frame.bands.every(b => b.packedComp);
+  for (const c of components) { c.band = new Int16Array(32 * c.v / frame.vmax * c.stride * 64); if (allPackedComp) c._dirty = []; }
   const sink = {bits: [], zero: false};
   let current = -1;
   const band = gy => {
     if (gy === current) return;
     if (frame.progressive) readAll(components.flatMap(c => c.parts.slice(gy * 32 / frame.vmax, Math.min(frame.mcusY, (gy + 1) * 32 / frame.vmax))));
     current = gy;
-    for (const c of components) { c.coeffs = c.band; c.row0 = gy * (32 * c.v / frame.vmax); c.band.fill(0); }
+    for (const c of components) {
+      c.coeffs = c.band; c.row0 = gy * (32 * c.v / frame.vmax);
+      if (allPackedComp) {
+        const coeffs = c.band, stride = c.stride;
+        for (const {width, rows, counts, at} of c._dirty) {
+          for (let r = 0, b = 0, p = 0; r < rows; r++) {
+            let base = r * stride * 64;
+            for (let x = 0; x < width; x++, base += 64) {
+              for (let n = counts[b++]; n > 0; n--, p++) coeffs[base + at[p]] = 0;
+            }
+          }
+        }
+        c._dirty.length = 0;
+      } else c.band.fill(0);
+    }
     if (frame.progressive) {
       for (const c of components) for (let row = gy * 32 / frame.vmax; row < Math.min(frame.mcusY, (gy + 1) * 32 / frame.vmax); row++)
         c.band.set(c.parts[row], (row * c.v - c.row0) * c.stride * 64);
       return;
     }
-    for (const {scan, restartInterval, points, total, packed} of frame.bands) {
+    for (const {scan, restartInterval, points, total, packed, packedComp} of frame.bands) {
       const point = points[gy], end = Math.min(total, point?.unit + bandUnits(frame, scan));
       if (!point) continue;
+      if (packedComp) {
+        const compRows = packedComp[gy];
+        for (let i = 0; i < scan.length; i++) {
+          const c = scan[i].component, row = compRows[i], {width, rows, counts, at, levels} = row, coeffs = c.coeffs, stride = c.stride;
+          for (let r = 0, b = 0, p = 0; r < rows; r++) {
+            let base = r * stride * 64;
+            for (let x = 0; x < width; x++, base += 64) {
+              for (let n = counts[b++]; n > 0; n--, p++) coeffs[base + at[p]] = levels[p];
+            }
+          }
+          if (allPackedComp) c._dirty.push(row);
+        }
+        continue;
+      }
       if (packed) {
         const {counts, at, levels} = packed[gy];
         let j = 0, p = 0;
@@ -550,11 +580,14 @@ function* decodeScan(bytes, start, frame, scan, ss, se, ah, al, restartInterval,
   if (frame.progressive && frame.bands) return yield* journalTool('jpegProgressive')(bytes, start, frame, scan, ss, se, ah, al, restartInterval, choices, padding, {ScanReader, readUnits, finishScan});
   const single = scan.length === 1, first = scan[0].component;
   const total = single ? first.blocksW * first.blocksH : frame.mcusX * frame.mcusY;
-  const decoded = frame.progressive || !kernels || frame.bands ? null : kernelHooks.entropy?.()?.sequentialDecode(bytes, start, frame, scan, restartInterval, ZIGZAG);
+  const decoded = frame.progressive || !kernels || (frame.bands && journaling()) ? null : kernelHooks.entropy?.()?.sequentialDecode(bytes, start, frame, scan, restartInterval, ZIGZAG);
   if (decoded) {
     if (padding) padding.kernelScans++;
     if (choices) for (const [block, count] of decoded.zeros) choices.zeros.push({block, count});
-    return finishScan(bytes, decoded.pos, total, restartInterval, choices);
+    const nextPos = finishScan(bytes, decoded.pos, total, restartInterval, choices);
+    if (choices && decoded.canonical && choices.finalRestart === undefined && ArrayBuffer.isView(bytes) && !journaling())
+      CERTIFIED_SCANS.set(choices, {buffer: bytes.buffer, byteOffset: bytes.byteOffset, start, end: nextPos, restart: restartInterval, tables: scan.map(s => s.tables)});
+    return nextPos;
   }
   const reader = new ScanReader(bytes, start, frame, scan, ss, se, ah, al, choices, padding);
   for (const s of scan) s.component.pred = 0;

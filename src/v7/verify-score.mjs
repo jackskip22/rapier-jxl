@@ -79,7 +79,7 @@ async function scoreOver(reference,decoded,profile,sourceEncoding,{journal,unit,
         const {value} = await unit(name + 'pyramid-' + scale,() => {
           const [left,right] = read(y,rows);
           const close = useReferenceArena(arena);
-          try { return [planeBytes(downsample(left,w,rows).planes),planeBytes(downsample(right,w,rows).planes)]; }
+          try { return [planeBytes(downsample(left,w,rows,null,libjxl).planes),planeBytes(downsample(right,w,rows,null,libjxl).planes)]; }
           finally { close(); }
         },{cold:true,alone:true});
         for (let c = 0; c < 3; c++) { before[c].push(value[0][c]); after[c].push(value[1][c]); }

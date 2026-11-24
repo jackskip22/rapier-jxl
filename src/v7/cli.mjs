@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: MIT
+import './cli-floor.mjs';
 import {readFile, writeFile, stat, readdir, mkdir, mkdtemp, link, rm, realpath, open} from 'node:fs/promises';
 import {basename, dirname, extname, join, relative, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -12,6 +13,7 @@ import {orientSamples} from '../sample-transforms.mjs';
 import {jpegInfo} from './input-native.mjs';
 import {JPEG_SOURCE, jpegChoiceMode, jpegWins} from './jpeg-choice-policy.mjs';
 import {COMMAND} from './package-name.mjs';
+import {belowFloor, FLOOR} from './node-floor.mjs';
 import {cliError, cliArgs} from './cli-error.mjs';
 import {isPlainRecord} from './records.mjs';
 import {typedFields, typedName} from './bytes.mjs';
@@ -21,9 +23,10 @@ import {ownName} from './package-name.mjs';
 const VERSION = typeof __RAPIER_JXL_VERSION__ !== 'undefined' ? __RAPIER_JXL_VERSION__ : '0.0.0-source';
 
 export const HELP_TEXT = `Usage: ${COMMAND} <file|folder...> [options]
-       ${COMMAND} add emdash | astro | vite | webpack | next | netlify | workers | r2 | agents | android | ios | flutter | expo | electron | tauri
+       ${COMMAND} add emdash | wordpress | payload | astro | vite | webpack | next | netlify | void | workers | r2 | agents | apache | nginx | caddy | android | ios | flutter | expo | capacitor | electron | tauri
        ${COMMAND} add                 lists every place, one line each
        ${COMMAND} remove <integration>
+       ${COMMAND} site <folder> [--dry-run]
        ${COMMAND} selftest
        ${COMMAND} verify <original|folder> <file.jxl|folder>
 
@@ -31,13 +34,14 @@ Encode images to JPEG XL (.jxl), or restore recompressed JPEGs.
 JPEGs are recompressed losslessly by default and restore exactly.
 
 Options:
-  -q, --quality <1-100>    Target quality (default: 90; JPEG default: exact)
-  -e, --effort <1-9>       Encoding effort, 1 fastest to 9 smallest (default: 7)
+  -q, --quality <1-100>    Target quality (default 90, and a JPEG without it stays exact)
+  -e, --effort <1-10>      Encoding effort, 1 fastest, 10 slowest (default: 7)
       --max-bytes <size>   Fit output under byte budget (e.g. 80KB, 1.5MB, 120000)
       --exact              Every pixel kept (default for JPEG)
       --jpeg-pixels        Re-encode JPEG pixels, retaining no JPEG reconstruction
   -o, --out <path>         Output file or directory
-  -j, --jobs <0-16>        Helper worker threads (default: 0)
+      --keep-extension     Keep the source extension in automatic .jxl names
+  -j, --jobs <count>       Nonnegative helper count (default: 0)
       --verify             Verify each output before writing it
       --json               One JSON line per file, then a summary
   -h, --help               Show this help
@@ -102,6 +106,7 @@ export function parseCliArgs(argv) {
     exact: false,
     jpegPixels: false,
     out: undefined,
+    keepExtension: false,
     jobs: 0,
     verify: false,
     json: false,
@@ -128,7 +133,8 @@ export function parseCliArgs(argv) {
       }
       if (i + 1 >= argv.length) throw cliError('JXL_OPTIONS', `${name}: value required`, `run: ${example}`);
       if (String(argv[i + 1]).startsWith('-'))
-        throw cliError('JXL_OPTIONS', `${name}: value "${argv[i + 1]}" needs =`, `use: ${name}=${argv[i + 1]} or ./${argv[i + 1]}`);
+        throw cliError('JXL_OPTIONS', name === '--out' ? `${name}: value "${argv[i + 1]}" needs =` : `${name}: value required`, name === '--out'
+          ? `use: ${name}=${argv[i + 1]} or ./${argv[i + 1]}` : `run: ${example}`);
       return String(argv[++i]);
     };
 
@@ -159,8 +165,8 @@ export function parseCliArgs(argv) {
     } else if (flag === '-e' || flag === '--effort') {
       const val = takeValue('--effort', `npx ${COMMAND} photo.png --effort 7`);
       const num = Number(val);
-      if (!Number.isInteger(num) || num < 1 || num > 9) {
-        throw cliError('JXL_OPTIONS', `--effort "${val}": integer 1-9`,
+      if (!Number.isInteger(num) || num < 1 || num > 10) {
+        throw cliError('JXL_OPTIONS', `--effort "${val}": integer 1-10`,
           `run: npx ${COMMAND} photo.png --effort 6`);
       }
       options.effort = num;
@@ -170,6 +176,9 @@ export function parseCliArgs(argv) {
       options.maxBytes = parseByteSize(val);
     } else if (flag === '-o' || flag === '--out') {
       options.out = takeValue('--out', `npx ${COMMAND} photo.png --out dist/photo.jxl`);
+    } else if (flag === '--keep-extension') {
+      if (inlineValue !== undefined) throw cliError('JXL_OPTIONS', `--keep-extension: no value "${arg}"`, 'use: --keep-extension');
+      options.keepExtension = true;
     } else if (flag === '-j' || flag === '--jobs') {
       const val = takeValue('--jobs', `npx ${COMMAND} photos/ --jobs 4`);
       const num = Number(val);
@@ -178,6 +187,8 @@ export function parseCliArgs(argv) {
           `run: npx ${COMMAND} photos/ --jobs 4`);
       }
       options.jobs = num;
+    } else if ((typeof __RAPIER_JXL_TEACH__ === 'undefined' || __RAPIER_JXL_TEACH__ === true) && flag === '--teach') {
+      options.teach = takeValue('--teach', `npx ${COMMAND} photo.png --effort 9 --teach taught.jsonl`);
     } else {
       throw cliError('JXL_OPTIONS', `unknown option: "${flag}"`,
         `run: npx ${COMMAND} --help`);
@@ -188,11 +199,15 @@ export function parseCliArgs(argv) {
     throw cliError('JXL_OPTIONS', `--exact: not with --quality ${options.quality}`,
       `remove: --exact or --quality ${options.quality}`);
   }
+  if (options.effort === 10 && options.maxBytes !== undefined)
+    throw cliError('JXL_OPTIONS', '--effort 10: not with --max-bytes', `remove: --max-bytes or use --effort 9`);
+  if ((typeof __RAPIER_JXL_TEACH__ === 'undefined' || __RAPIER_JXL_TEACH__ === true) && options.teach !== undefined && options.jobs > 0)
+    throw cliError('JXL_OPTIONS', `--teach: not with --jobs ${options.jobs}`, 'remove: --jobs');
   return {inputs, options};
 }
 
-let stillMod, jpegMod, decodeMod, animationMod, verifyMod;
-const getStill = () => (stillMod ||= import('./index.mjs'));
+let stillMod, maxMod, jpegMod, decodeMod, animationMod, verifyMod;
+const getStill = effort => effort === 10 ? (maxMod ||= import('./max.mjs')) : (stillMod ||= import('./index.mjs'));
 const getJpeg = () => (jpegMod ||= import('./jpeg.mjs'));
 const getDecode = () => (decodeMod ||= import('./decode.mjs'));
 const getAnimation = () => (animationMod ||= import('./animation.mjs'));
@@ -326,7 +341,7 @@ async function jpegPixels(raw, displayIn, effort, existing, refusal = null, keep
   const {recompress} = await getJpeg();
   try {
     if (refusal) throw refusal;
-    const exact = existing ?? (keep ? await recompress(raw, {effort}) : null);
+    const exact = existing ?? (keep ? await recompress(raw, {effort: Math.min(effort, 9)}) : null);
     return {exact, decoded: await recompress[Symbol.for('rapier-jxl.jpeg.pixels')](raw, {scale: 8})};
   }
   catch (error) {
@@ -440,7 +455,7 @@ async function encodeFile(raw, format, displayIn, options, runner) {
       qualityIntent: (options.quality ?? 90) / 100}, {jpeg: options.jpegPixels ? 'pixels' : undefined});
     if (mode === 'jpeg') {
       const {recompress} = await getJpeg();
-      try { exact = await recompress(raw, {effort: options.effort}); } catch (error) { if (error?.code !== 'JXL_JPEG') throw error; refusal = error; }
+      try { exact = await recompress(raw, {effort: Math.min(options.effort, 9)}); } catch (error) { if (error?.code !== 'JXL_JPEG') throw error; refusal = error; }
       if (exact && (options.maxBytes === undefined || exact.bytes.byteLength <= options.maxBytes)) return {result: exact, note: 'exact JPEG'};
       if (exact && fidelity === 'exact') return {result: await imageResult(null, {width: exact.width, height: exact.height}, {
         owned: true, fidelity, format: 'jxl', maxBytes: options.maxBytes, originalBytes: raw.byteLength,
@@ -459,7 +474,7 @@ async function encodeFile(raw, format, displayIn, options, runner) {
     try { return {result: await produce(new Blob([raw], {type: 'image/png'}))}; }
     catch (error) {
       if (error?.code !== 'JXL_PLATFORM') throw error;
-      return pixels(await orientSamples(await readPNG16(raw, {named: true}), {maxPixels: PIXELS}));
+      return pixels(await orientSamples(await readPNG16(raw), {maxPixels: PIXELS}));
     }
   }
   if (format === 'gif') {
@@ -508,8 +523,17 @@ async function processSingleTask(task, options, runner) {
   if (!format) throw cliError('JXL_INPUT', `"${displayIn}": unsupported format (expected PNG/JPEG/GIF/WebP/AVIF/JXL/EXR/HDR)`, `run: npx ${COMMAND} photo.png`);
   if (format === 'jxl' && options.maxBytes !== undefined)
     throw cliError('JXL_OPTIONS', `"${displayIn}": --max-bytes not with JXL`, `remove: --max-bytes`);
+  const taught = (typeof __RAPIER_JXL_TEACH__ === 'undefined' || __RAPIER_JXL_TEACH__ === true) && options.teach !== undefined && format !== 'jxl' ? [] : null;
+  if ((typeof __RAPIER_JXL_TEACH__ === 'undefined' || __RAPIER_JXL_TEACH__ === true) && taught) globalThis.__RAPIER_JXL_TEACH = record => { taught.push(record); };
   const made = format === 'jxl' ? await decodeFile(raw, displayIn, task.outputPath, named)
     : {...await encodeFile(raw, format, displayIn, options, runner), outputPath: task.outputPath};
+  if ((typeof __RAPIER_JXL_TEACH__ === 'undefined' || __RAPIER_JXL_TEACH__ === true) && taught) {
+    delete globalThis.__RAPIER_JXL_TEACH;
+    const {createHash} = await import('node:crypto'), {appendFile} = await import('node:fs/promises');
+    const head = {file: displayIn, sha256: createHash('sha256').update(raw).digest('hex'), effort: options.effort,
+      quality: options.quality ?? null, bytes: made.result.bytes?.byteLength ?? 0};
+    await appendFile(options.teach, [head, ...taught].map(r => JSON.stringify(r, (_, v) => ArrayBuffer.isView(v) ? Array.from(v) : v) + '\n').join(''));
+  }
   let verification;
   const record = (skipped, written) => ({result: made.result, inputPath, outputPath: made.outputPath,
     inputBytes: raw.byteLength, outputBytes: made.result.bytes?.byteLength ?? 0,
@@ -570,13 +594,18 @@ function formatFriendlyError(error) {
 const PLACES = ['android', 'ios', 'flutter', 'expo', 'capacitor', 'electron', 'tauri'];
 const INTEGRATIONS = {
   emdash: {line: 'An EmDash site: JPEG XL media, the optimizer and the upload filter.', load: () => import('./cli-emdash.mjs'), add: 'runAddEmdash', remove: 'runRemoveEmdash', reports: true},
+  wordpress: {line: 'A WordPress site: JPEG XL copies of uploads, with originals for other browsers.', load: () => import('./cli-places.mjs'), add: 'runAddWordpress', remove: 'runRemoveWordpress'},
+  payload: {line: 'A Payload CMS project: JPEG XL beside uploads and sizes, with <picture> and Vary: Accept.', load: () => import('./cli-payload.mjs'), add: 'runAddPayload', remove: 'runRemovePayload'},
   astro: {line: 'An Astro site: the image service that writes JPEG XL.', load: () => import('./cli-astro.mjs'), add: 'runAddAstro', remove: 'runRemoveAstro'},
   ...Object.fromEntries([['vite', 'A Vite project, SvelteKit or Nuxt: import hero from "./hero.jpg?jxl".'], ['webpack', 'A webpack 5 or Rspack project: import hero from "./hero.jpg?jxl".'],
-    ['next', 'A Next.js project: next/image answers with JPEG XL where the browser accepts it.'], ['netlify', 'A Netlify site: a .jxl beside each published JPEG and PNG.']]
+    ['next', 'A Next.js project: next/image answers with JPEG XL where the browser accepts it.'], ['netlify', 'A Netlify site: a .jxl beside each published JPEG and PNG.'],
+    ['void', 'A Void app: pictures stored as JPEG XL, served with the exact original.']]
     .map(([host, line]) => [host, {line, host, add: 'runAdd', remove: 'runRemove', load: () => import('./cli-add.mjs')}])),
   workers: {line: 'A Cloudflare Worker: serves JPEG XL to browsers that ask.', load: () => import('./cli-workers.mjs'), add: 'runAddWorkers', remove: 'runRemoveWorkers'},
   ...Object.fromEntries([['r2', 'A Cloudflare R2 bucket: a JPEG XL beside every JPEG and PNG put in it.'], ['agents', 'A Cloudflare Agents SDK project: JPEG XL tools for agents.']]
     .map(([host, line]) => [host, {line, host, add: 'runAddCloudflare', remove: 'runRemoveCloudflare', load: () => import('./cli-cloudflare.mjs')}])),
+  ...Object.fromEntries([['apache', 'An Apache or LiteSpeed folder: .htaccess serves .jxl by Accept with Vary: Accept.'], ['nginx', 'An nginx site: jpegxl.conf serves .jxl by Accept with try_files and Vary: Accept.'], ['caddy', 'A Caddy site: jpegxl.caddy serves .jxl by Accept with try_files and Vary: Accept.']]
+    .map(([host, line]) => [host, {line, host, add: 'runAddServer', remove: 'runRemoveServer', load: () => import('./cli-servers.mjs')}])),
   ...Object.fromEntries(PLACES.map(host => [host, {host, add: 'runAddPlace', remove: 'runRemovePlace', load: () => import('./cli-places.mjs')}])),
   ...Object.fromEntries(['sveltekit', 'nuxt'].map(as => [as, {host: 'vite', as, add: 'runAdd', remove: 'runRemove', load: () => import('./cli-add.mjs')}]))
 };
@@ -671,7 +700,7 @@ export async function runCli(argv = process.argv.slice(2), io = {}) {
   return result;
 }
 
-async function runCliHere(argv, io, caller) {
+async function runCliHere(argv, io, caller, extra = {}) {
   const cwd = io.cwd ? resolve(io.cwd) : process.cwd();
   const stdout = io.stdout ?? (line => process.stdout.write(line + '\n'));
   const stderr = io.stderr ?? (line => process.stderr.write(line + '\n'));
@@ -711,15 +740,37 @@ async function runCliHere(argv, io, caller) {
       return {exitCode: 0, files: []};
     } catch (error) { return refuse(error); }
   }
+  if (argv[0] === 'site') {
+    try {
+      const {runSite, SITE_HELP} = await import('./cli-site.mjs');
+      const done = await runSite(argv.slice(1), {
+        cwd, version: VERSION, stdout, stderr, checkFlags: parseCliArgs,
+        encodeImages: async (files, flags) => {
+          const lines = [];
+          const res = await runCliHere([...files, '--keep-extension', '--json', ...flags], {
+            cwd, stdout: l => lines.push(l), stderr: () => {},
+          }, caller, {inFolder: true});
+          return {...res, lines};
+        },
+      });
+      if (done.help) {
+        if (json) await emit({type: 'help', usage: SITE_HELP.trimEnd()});
+        else await stdout(SITE_HELP.trimEnd());
+        return {exitCode: 0, files: []};
+      }
+      return {exitCode: done.exitCode, files: []};
+    } catch (error) { return refuse(error); }
+  }
   if (argv[0] === 'verify') {
     try { return await verifyFiles(argv.slice(1), {cwd, json, emit, stdout, stderr}, caller); } catch (error) { return refuse(error); }
   }
   if (argv[0] === 'selftest') {
     try {
-      const {runSelftest} = await import('./cli-selftest.mjs');
+      const {runSelftest, SELFTEST_HELP} = await import('./cli-selftest.mjs');
       const {exitCode, record, out} = await runSelftest(argv.slice(1).filter(arg => String(arg) !== '--json'), {cwd, version: VERSION, stdout: json ? () => {} : stdout,
         modules: {still: getStill, jpeg: getJpeg, decode: getDecode, verify: getVerify}});
-      if (json && record) await emit({type: 'selftest', status: record.status, file: relative(cwd, out) || out, ...record.summary});
+      if (json) await emit(record ? {type: 'selftest', status: record.status, file: relative(cwd, out) || out, ...record.summary}
+        : {type: 'help', usage: SELFTEST_HELP.trimEnd()});
       return {exitCode, files: []};
     } catch (error) { return refuse(error); }
   }
@@ -756,22 +807,23 @@ async function runCliHere(argv, io, caller) {
       if (many && outInfo?.isFile()) throw cliError('JXL_OPTIONS', `--out "${options.out}": folder for multiple inputs`, 'use: --out dist/');
     }
     const tasks = [], show = path => relative(cwd, path) || basename(path);
+    const automaticName = (path, ext) => options.keepExtension && ext === '.jxl' ? path + ext : replaceExtension(path, ext);
     for (const {rawInput, fullInput, isDirectory} of found) {
       if (isDirectory) {
         const items = await collectDirectoryImages(fullInput, out);
         if (!items.length) throw cliError('JXL_INPUT', `"${rawInput}": no supported images`, 'use: picture or image folder');
         for (const item of items) {
-          const outputPath = replaceExtension(out ? join(out, item.relPath) : item.inputPath, '.jxl');
+          const outputPath = automaticName(out ? join(out, item.relPath) : item.inputPath, '.jxl');
           tasks.push({inputPath: item.inputPath, outputPath, displayIn: show(item.inputPath), displayOut: show(outputPath), named: false, inFolder: true});
         }
       } else {
         const ext = detectFormat(await firstBytes(fullInput)) === 'jxl' ? '.jpg' : '.jxl';
-        const outputPath = out ? (outIsDir ? join(out, replaceExtension(basename(fullInput), ext)) : out) : replaceExtension(fullInput, ext);
+        const outputPath = out ? (outIsDir ? join(out, automaticName(basename(fullInput), ext)) : out) : automaticName(fullInput, ext);
         const named = out !== null && !outIsDir, want = ext === '.jxl' ? ['.jxl'] : ['.jpg', '.jpeg', '.png'];
         if (named && !want.includes(extname(out).toLowerCase())) throw cliError('JXL_OPTIONS',
           `--out "${options.out}": need ${ext === '.jxl' ? '.jxl' : '.jpg/.jpeg/.png'}`,
           `use: ${want.map(e => `"${replaceExtension(options.out, e)}"`).join(' or ')}`);
-        tasks.push({inputPath: fullInput, outputPath, displayIn: show(fullInput), displayOut: show(outputPath), named: out !== null && !outIsDir});
+        tasks.push({inputPath: fullInput, outputPath, displayIn: show(fullInput), displayOut: show(outputPath), named: out !== null && !outIsDir, ...(extra.inFolder && {inFolder: true})});
       }
     }
     const counts = new Map();
@@ -795,12 +847,12 @@ async function runCliHere(argv, io, caller) {
 
     let runner;
     if (options.jobs > 0) {
-      configured = await getStill();
+      configured = await getStill(options.effort);
       configured.configure({helpers: {count: options.jobs, memoryBytes: Math.max(1, options.jobs) * 512 * 1024 * 1024}});
       runner = {encode: (picture, encodeOptions) => configured.encode(picture, encodeOptions),
         fit: (picture, fitOptions) => configured.fit(picture, fitOptions)};
-    } else runner = {encode: async (picture, encodeOptions) => (await getStill()).encode(picture, encodeOptions),
-      fit: async (picture, fitOptions) => (await getStill()).fit(picture, fitOptions)};
+    } else runner = {encode: async (picture, encodeOptions) => (await getStill(options.effort)).encode(picture, encodeOptions),
+      fit: async (picture, fitOptions) => (await getStill(options.effort)).fit(picture, fitOptions)};
 
     const results = [];
     let next = 0, failed = 0, unread = 0;
@@ -853,7 +905,13 @@ const isMain = await (async () => {
   if (!process.argv[1]) return false;
   try { return await realpath(process.argv[1]) === await realpath(fileURLToPath(import.meta.url)); } catch { return false; }
 })();
+export function nodeBelowFloor(version = process.versions.node) {
+  if (typeof version !== 'string') throw cliError('JXL_OPTIONS', 'version: string', 'version: 22.3.0');
+  return belowFloor(version) ? `${COMMAND}: JXL_PLATFORM: Node ${version} is too old. ${FLOOR}` : null;
+}
 if (isMain) {
+  const old = nodeBelowFloor();
+  if (old) { process.stderr.write(old + '\n'); process.exit(1); }
   const {exitCode} = await runCli(process.argv.slice(2));
   if (exitCode !== 0) process.exitCode = exitCode;
 }

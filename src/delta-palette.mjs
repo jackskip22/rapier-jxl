@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
-import {outOfMemory} from './fault.mjs';
 import {BitWriter, complete, part, packSigned, ceilLog2} from './bits.mjs';
 import {admitOptions, admitPixels, admitOutputSize, fault, job} from './admit.mjs';
 import {admitSampleFormat} from './admit-samples.mjs';
-import {inspectPixels, losslessSteps} from './lossless.mjs';
+import {inspectPixels, losslessSteps, planeFill} from './lossless.mjs';
 import {writeModularFrameHeader, groupLayout, groupRect, assembleCodestream} from './frame.mjs';
 import {writeImageHeader} from './icc-write.mjs';
 import {ALPHABET, leaf, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
@@ -14,6 +13,7 @@ import {paletteSteps} from './palette-search.mjs';
 import {localScreenSteps} from './screen-local.mjs';
 const SCREEN = Object.freeze({paletteSteps, localScreenSteps});
 import {codeWeighted} from './weighted.mjs';
+import {colourTransform} from './rct-search.mjs';
 
 import {DELTA_IMPLICIT} from './implicit-palette.mjs';
 
@@ -133,15 +133,11 @@ function* deltaFrameSteps(rgba, width, height, shape, options) {
     for (let i = 0; i < layout.dcGroupsX * layout.dcGroupsY + 1; i++) sections.push(new Uint8Array(0));
   }
   const predictors = deltaPredictor === 'auto' ? [5, 1, 2, 6, 3] : [DELTA_PREDICTORS.get(deltaPredictor)];
-  const implicit = deltaImplicitMaps(shape.channels);
+  const implicit = deltaImplicitMaps(shape.channels), fill = planeFill({...shape, palette: null}, colourTransform(0, shape.channels));
   for (let g = 0; g < groups; g++) {
     const [x0, y0, w, h] = groupRect(layout, width, height, g, dim);
     const planes = Array.from({length: shape.channels}, () => new Int16Array(w * h));
-    for (let c = 0; c < shape.channels; c++) {
-      const sourceChannel = shape.colour === 1 && c === 1 ? 3 : c;
-      for (let y = 0, i = 0; y < h; y++) for (let x = 0; x < w; x++, i++)
-        planes[c][i] = rgba[((y0 + y) * width + x0 + x) * 4 + sourceChannel];
-    }
+    fill(planes, rgba, width, x0, y0, w, h);
     let best;
     for (let p = 0; p < predictors.length; p++) {
       const predictor = predictors[p], residuals = deltaPlaneResiduals(planes, w, h, predictor);
@@ -196,13 +192,13 @@ function* deltaEncodeSteps(rgba, width, height, options) {
     try {
       const screen = yield* part(screenSteps(rgba, width, height, shape, options.colorSpace, {effort: options.screenEffort, deep: SCREEN}), 1, 3);
       if (screen && (!best || screen.length < best.length)) best = screen;
-    } catch (error) { if (error.code !== 'JXL_SIZE' && !outOfMemory(error)) throw error; }
+    } catch (error) { if (error.code !== 'JXL_SIZE') throw error; }
   }
   if ((yield 2 / 3) && best) return best;
   try {
     const delta = yield* part(deltaFrameSteps(rgba, width, height, shape, options), 2, 3);
     if (delta && (!best || delta.length < best.length)) best = delta;
-  } catch (error) { if (error.code !== 'JXL_SIZE' && !outOfMemory(error)) throw error; }
+  } catch (error) { if (error.code !== 'JXL_SIZE') throw error; }
   if (!best) throw oversized;
   return best;
 }

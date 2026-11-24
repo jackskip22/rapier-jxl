@@ -7,24 +7,20 @@ import {CAPTURE_TOOLS_LEAN} from '../capture-codec.mjs';
 import {qualityLooks} from '../photo-region-search.mjs';
 import {regionPhotoFrameSteps} from '../photo-rgb.mjs';
 import {fileStage} from '../capture-patched.mjs';
-import {planeSearchSteps} from '../photo-plane-search.mjs';
-import {planeMeasuredSteps} from '../photo-plane-measured.mjs';
-import {blockSearchOptions} from '../photo-v6.mjs';
-import {scoreSteps, AQ, CANDIDATES} from '../photo-search.mjs';
+import {SHARED_PHOTO_SEARCH as search} from '../photo-plane-measured.mjs';
 import {runPhotoLadder} from './capture-photo-ladder.mjs';
 import {wholePhotoOutputSteps} from './whole-photo.mjs';
-import {nativePhotoOutputMeasure} from './native-photo-output-measure.mjs';
+import {rebuiltPhotoOutputMeasure} from './rebuilt-photo-output-measure.mjs';
 import {MEASURED_EFFORT} from '../effort-level.mjs';
 import {measuredLook} from '../photo-quality-table.mjs';
 
-const search = {blocks: planeSearchSteps, options: blockSearchOptions, measured: planeMeasuredSteps,
-  score: scoreSteps, aq: AQ, candidates: CANDIDATES};
+
 const floorFrame = options => !!options.floorImage;
 const policy = {qualityLooks, regionPhotoFrameSteps: (rows, width, height, options) =>
   fileStage('photo-frame', () => regionPhotoFrameSteps(rows, width, height, {...options, photoSearch: search}), bytes => bytes,
     options.photoAdmission, floorFrame(options)), photoSearch: search};
 const wholePhoto = (data, width, height, options) =>
-  wholePhotoOutputSteps(data, width, height, {...options, maxPixels: width * height}, nativePhotoOutputMeasure);
+  wholePhotoOutputSteps(data, width, height, {...options, maxPixels: width * height}, rebuiltPhotoOutputMeasure);
 
 export function captureRunner(tools = CAPTURE_TOOLS_LEAN, backend = {}) {
   const measuredBackend = {...backend, answerer(coding, pixels, ran) {

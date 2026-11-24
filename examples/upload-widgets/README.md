@@ -17,8 +17,8 @@ FilePond.registerPlugin(jxl);
 FilePond.create(input, {imageJxlQuality: 70});
 ```
 
-Options: `allowImageJxl` (`true`), `imageJxlQuality` (`70`; `100` keeps a JPEG so it restores exactly), `imageJxlEffort` (`3`),
-`imageJxlRetainExif` (`false`). With a server, files are made smaller when their upload starts; for a form post,
+Options: `allowImageJxl` (`true`), `imageJxlQuality` (`70`, and `100` keeps a JPEG so it restores exactly), `imageJxlEffort` (`3`),
+`imageJxlRetainExif` (`false`). With a server, files are made smaller when their upload starts. For a form post,
 when they are added.
 
 A runnable example is in `filepond-example/`. In a folder with this package and `filepond` installed, run
@@ -56,4 +56,4 @@ const {file, code} = await shrink(picked); // file: the JPEG XL file, or the ori
 A Content Security Policy must allow `'wasm-unsafe-eval'`.
 
 The photo is turned upright by its Exif orientation, as the browser shows it. Exif is dropped unless kept by the
-option; color profiles such as Display P3 are converted to sRGB.
+option. Color profiles such as Display P3 are converted to sRGB.

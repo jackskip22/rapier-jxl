@@ -27,7 +27,7 @@ const PLANAR_PREDICTORS = Object.freeze([0, 1, 2, 3, 5]);
 const planarSampleHeight = (width, height) => Math.min(height, Math.max(1, Math.floor(4096 / width)));
 function planarPredictorCost(counts) {
   const code = buildCode(counts);
-  let bits = 0; for (let s = 0; s < counts.length; s++) bits += counts[s] * (code.lengths[s] + Math.max(0, s < 224 ? s - 1 : s - 236));
+  let bits = 0; for (let s = 0; s < counts.length; s++) if (counts[s]) bits += counts[s] * (code.lengths[s] + Math.max(0, s < 224 ? s - 1 : s - 236));
   return bits;
 }
 

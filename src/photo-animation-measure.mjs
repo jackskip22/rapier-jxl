@@ -3,6 +3,8 @@ import {pictureMeasure} from './photo-picture-measure.mjs';
 import {displayedAnimationFrames, animationTimelinePairs, animationTimelineFailure} from './animation-timeline.mjs';
 import {watchShown} from './photo-shown.mjs';
 import {nativeRGBA, nativeGammaRGBA} from './photo-output.mjs';
+import {xybToShown} from './photo-rebuild.mjs';
+import {xybAddRect, blendPaste} from './animation-diff.mjs';
 import {kernelHooks} from './kernel-hooks.mjs';
 import {wasmRequired} from './capture-wasm-error.mjs';
 import {fault} from './fault.mjs';
@@ -76,6 +78,14 @@ export function photoAnimationMeasure(source, {cacheBytes = 0, signal, maxPixels
             sourceIndex = pair.sourceIndex;
           }
           const scores = current.measure(picture, want);
+          if (want.libjxl) {
+            worst.libjxl ??= Infinity; worst.tool ??= [];
+            if (want.libjxl(scores.ssimulacra2)) {
+              const tool = current.measure({width: picture.width, height: picture.height, rgba: picture.native ?? picture.rgba},
+                {ssimulacra2: true, butteraugli: false, arithmetic: 'libjxl'}).ssimulacra2;
+              worst.libjxl = Math.min(worst.libjxl, tool); worst.tool.push([pair.sourceIndex, tool]);
+            }
+          }
           if (scores.ssimulacra2 !== undefined)
             worst.ssimulacra2 = worst.ssimulacra2 === undefined ? scores.ssimulacra2 : Math.min(worst.ssimulacra2, scores.ssimulacra2);
           step = pairs.next();
@@ -109,11 +119,11 @@ export function photoAnimationMeasure(source, {cacheBytes = 0, signal, maxPixels
       if (closed) throw internal('photo-animation-measure:closed-2');
       active?.destroy();
       let timeline = null, read = null, canvas = null, slots = [null, null, null, null], scope = null;
-      let pending = new Map(), rebuilt = new Map(), failed = false, retired = false, nextFrame = 0, opened = false, alpha = null, scratch = null;
+      let pending = new Map(), rebuilt = new Map(), failed = false, retired = false, nextFrame = 0, opened = false, alpha = null, scratch = null, additivePart = null;
       const lose = () => { pending?.clear(); rebuilt?.clear(); scope = null; };
       const release = () => {
         try { read?.destroy(); }
-        finally { lose(); read = canvas = slots = alpha = scratch = null; }
+        finally { lose(); read = canvas = slots = alpha = scratch = additivePart = null; }
       };
       const unavailable = () => { failed = true; release(); return false; };
       const usable = () => { check(signal); return !retired && !failed; };
@@ -140,8 +150,8 @@ export function photoAnimationMeasure(source, {cacheBytes = 0, signal, maxPixels
           if (timeline) throw internal('photo-animation-measure:restarted');
           if (description.width !== source.width || description.height !== source.height)
             throw fault('JXL_DIMENSIONS', 'shown animation: size mismatch');
-          const {width, height, loops, numerator, denominator, durations, patches, alpha} = description;
-          timeline = {width, height, loops, numerator, denominator, durations: durations.slice(), patches, alpha};
+          const {width, height, loops, numerator, denominator, durations, patches, alpha, additive} = description;
+          timeline = {width, height, loops, numerator, denominator, durations: durations.slice(), patches, alpha, additive: Boolean(additive)};
           read = stream(timeline, want);
           return true;
         },
@@ -155,7 +165,7 @@ export function photoAnimationMeasure(source, {cacheBytes = 0, signal, maxPixels
           });
           try { return steps.next(reply); } finally { stop(); }
         },
-        settlePart({scope: part, file, rect, saveSlot}) {
+        settlePart({scope: part, file, rect, saveSlot, masked = false}) {
           if (!usable()) return false;
           if (!timeline) throw internal('photo-animation-measure:timeline');
           const entry = scope === part ? pending.get(file) : null;
@@ -163,6 +173,11 @@ export function photoAnimationMeasure(source, {cacheBytes = 0, signal, maxPixels
           lose();
           if (entry.width !== rect[2] || entry.height !== rect[3])
             throw internal('photo-animation-measure:rect');
+          if (timeline.additive) {
+            if (!entry.xyb || rect[0] || rect[1] || rect[2] !== timeline.width || rect[3] !== timeline.height) return unavailable();
+            additivePart = entry; opened = true;
+            return true;
+          }
           if (saveSlot !== undefined && saveSlot !== null) {
             if (saveSlot !== 0 && saveSlot !== 3) throw internal('photo-animation-measure:slot');
             slots[saveSlot] = entry;
@@ -170,15 +185,53 @@ export function photoAnimationMeasure(source, {cacheBytes = 0, signal, maxPixels
             if (!hold(entry)) return unavailable();
             if (!opened && timeline.patches && slots[2] && !copyRect(canvas, slots[2], 0, 0, timeline.width, timeline.height)) return unavailable();
             opened = true;
-            if (!copyRect(canvas, entry, rect[0], rect[1], rect[2], rect[3])) return unavailable();
-            if (canvas.native) copyRect(canvas.native, {width: entry.width, height: entry.height, rgba: render(entry, rect[0], rect[1])},
-              rect[0], rect[1], rect[2], rect[3]);
+            if (masked) {
+              if (canvas.planes) return unavailable();
+              blendPaste(canvas.rgba, timeline.width, entry.rgba, rect[0], rect[1], rect[2], rect[3], true);
+              if (canvas.native) blendPaste(canvas.native.rgba, timeline.width, render(entry, rect[0], rect[1]), rect[0], rect[1], rect[2], rect[3], true);
+            } else {
+              if (!copyRect(canvas, entry, rect[0], rect[1], rect[2], rect[3])) return unavailable();
+              if (canvas.native) copyRect(canvas.native, {width: entry.width, height: entry.height, rgba: render(entry, rect[0], rect[1])},
+                rect[0], rect[1], rect[2], rect[3]);
+            }
           }
           return true;
         },
-        finishFrame(index, groups = null) {
+        finishFrame(index, groups = null, saveSlot = 0, shown = null) {
           if (!usable()) return false;
           if (!timeline || index !== nextFrame++) throw internal('photo-animation-measure:order-2');
+          if (timeline.additive) {
+            if (!additivePart) return unavailable();
+            const {width, height} = timeline, n = width * height;
+            let composed = additivePart;
+            additivePart = null; opened = false;
+            if (groups?.length && shown) {
+              const view = xybToShown(shown, width, height, true);
+              composed = {width, height, kind: 'linear', xyb: shown, planes: view.linear, rgba: view.rgba};
+            } else if (groups?.length) {
+              const xyb = [new Float32Array(n), new Float32Array(n), new Float32Array(n)];
+              xybAddRect(xyb, width, composed.xyb, width, 0, 0, width, height, 0, 0, 1);
+              for (const group of groups) {
+                const ref = slots[group.reference];
+                if (!ref?.xyb) return unavailable();
+                for (const position of group.positions) {
+                  const mode = position.blending?.length === 1 ? position.blending[0].mode : 0;
+                  if (mode !== 1 && mode !== 2) return unavailable();
+                  xybAddRect(xyb, width, ref.xyb, ref.width, position.x, position.y, group.w, group.h, group.sx, group.sy, mode);
+                }
+              }
+              const shown = xybToShown(xyb, width, height, true);
+              composed = {width, height, kind: 'linear', xyb, planes: shown.linear, rgba: shown.rgba};
+            }
+            const own = native ? render(composed) : null;
+            read.frame(index, {width, height, rgba: composed.rgba, ...(own && {native: own})});
+            if (saveSlot && !shown) {
+              if (saveSlot !== 2 && saveSlot !== 3) throw internal('photo-animation-measure:slot');
+              slots[saveSlot] = {width, height, xyb: composed.xyb};
+            }
+            lose();
+            return true;
+          }
           if (groups) {
             for (const group of groups) {
               const entry = slots[group.reference];

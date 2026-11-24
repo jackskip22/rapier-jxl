@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-import {withTail, admitTail, packTailSteps, isoGainMap, validIsoGainMap, gainMapOf, mpfImages, restoreJPEGSteps, MAX_NESTING} from './jpeg-reconstruction.mjs';
+import {withTail, admitTail, packTailSteps, isoGainMap, validIsoGainMap, gainMapOf, mpfImages, mpfScan, restoreJPEGSteps, MAX_NESTING} from './jpeg-reconstruction.mjs';
 import {fault} from './admit.mjs';
-import {carried, stage, PASSED, unread} from './step-journal.mjs';
+import {carried, stage, PASSED, unread, journaling} from './step-journal.mjs';
 
 const WINDOW = 131072;
 function* nextJPEG(jpeg, end, skip = 0) {
@@ -38,10 +38,10 @@ function* exactTail(jpeg, file, maxPixels) {
   });
 }
 
-export function* longTail(jpeg, end, file, depth, next, maxPixels, gainMap = null) {
+export function* longTail(jpeg, end, file, depth, next, maxPixels, gainMap = null, knownGainMap = null) {
   const tailLength = jpeg.length - end;
   let out = null, skip = 0;
-  const promoted = !depth && gainMap ? (yield* stage('tail-gain-map', function* () { return gainMap(jpeg, end); })) : null;
+  const promoted = !depth && gainMap ? (yield* stage('tail-gain-map', function* () { return knownGainMap || gainMap(jpeg, end); })) : null;
   let tryPromoted = promoted && promoted.start >= end && promoted.start + 2 < jpeg.length;
   for (let tries = 0; !out && tries < 5 && depth + 2 <= MAX_NESTING; tries++) {
     let soi;
@@ -59,10 +59,10 @@ export function* longTail(jpeg, end, file, depth, next, maxPixels, gainMap = nul
       const size = Uint8Array.of(packed.length >>> 24, (packed.length >>> 16) & 255, (packed.length >>> 8) & 255, packed.length & 255);
       const primaryIso = !depth ? isoGainMap(jpeg) : null;
       const declared = !depth && primaryIso?.length === 4 && primaryIso[0] === 0 && primaryIso[1] === 0 &&
-        mpfImages(jpeg).some(image => image.start === end + soi);
+        !mpfScan(jpeg).bad && mpfImages(jpeg).some(image => image.start === end + soi);
       const declaredMeta = declared ? isoGainMap(jpeg.subarray(end + soi)) : null;
       const metadata = declaredMeta && validIsoGainMap(declaredMeta) ? declaredMeta.slice()
-        : !declared && promoted?.start === end + soi ? promoted.metadata : null;
+        : promoted?.start === end + soi ? promoted.metadata : null;
       if (metadata && metadata.length > 4 && metadata.length < 65536) {
         const {bundle, rest} = gainMapOf(inner, metadata);
         out = withTail(file, 2, soi, [size, packed, rest], bundle);

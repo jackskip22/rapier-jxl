@@ -4,7 +4,7 @@ import {SAVED, PASSED, tiledBytes, readEach, journalNext, journalRequest} from '
 import {sha256Start, sha256Update, sha256Finish} from '../sha256.mjs';
 import {boundedHeaderSteps, firstFrameNoise} from './inspect.mjs';
 import {check, fail, PIXELS, dimensions, object, pixelLimit} from './primitives.mjs';
-import {decodeGroupFile, decodeWholeFile, decodeWithoutNoise, boundedWithoutNoise, needsSetup, readsWithoutNoise, restorationSteps, verificationImageSteps, ownJPEGReference, jpegReferenceSteps, nativeVerification, shown} from './verify-decode.mjs';
+import {decodeGroupFile, decodeWholeFile, decodeWithoutNoise, boundedWithoutNoise, needsSetup, readsWithoutNoise, restorationSteps, verificationImageSteps, ownJPEGReference, jpegReferenceSteps, nativeVerification, shown, verifyDecodeOptions as decodeOptions, displaySize} from './verify-decode.mjs';
 import {fromDecoded} from './describe.mjs';
 import {pngLayout, pngRows, pngPassRows, pngOrientationLocation, unfilterRow, pngRowKernels} from '../source.mjs';
 import {pngWalk, crc32} from '../png-chunks.mjs';
@@ -22,11 +22,6 @@ const GROUP = 256, HASH_BYTES = 1 << 20;
 const PROFILE_BYTES = 65536;
 const DECODE_FIELDS = ['format','extraChannels','colorEncoding','icc','rgbaColorEncoding','rgbaICC','alphaPremultiplied',
   'orientation','orientationApplied','animation','bitDepth','sampleFormat','colorSpace','transferFunction','header','colorScope'];
-const decodeOptions = options => ({colorSpace:'original',applyOrientation:false,unpremultiplyAlpha:false,
-  renderSpotColors:false,maxPixels:options.maxPixels,signal:options.signal,
-  ...(options && DECODER_SNAPSHOT in options && {[DECODER_SNAPSHOT]:options[DECODER_SNAPSHOT]})});
-const displaySize = picture => picture.orientation >= 5 ? {width:picture.height,height:picture.width}
-  : {width:picture.width,height:picture.height};
 const isJXL = head => head[0] === 255 && head[1] === 10 || head[0] === 0 && head[4] === 74 && head[5] === 88 && head[6] === 76;
 function fileBlob(bytes,BlobType = Blob) {
   const parts = [];
@@ -246,7 +241,7 @@ async function decodedGroups(bytes,options,{journal,unit,tools},hostOnly = false
     if (!(data instanceof Float32Array) || (channels !== 3 && channels !== 4)) return null;
     const planes = [new Float32Array(n),new Float32Array(n),new Float32Array(n)];
     for (let i = 0,at = 0; i < n; i++,at += channels) for (let c = 0; c < 3; c++) planes[c][i] = data[at + c];
-    const out = tools.nativeGammaRGBA(planes,width,height,{x,y});
+    const out = (await tools.compileKernels(), tools.nativeGammaRGBA(planes,width,height,{x,y}));
     for (let i = 0; i < n; i++) out[i * 4 + 3] = channels === 4 ? Math.round(Math.min(1,Math.max(0,data[i * 4 + 3])) * 255) : 255;
     return out;
   };
@@ -306,7 +301,7 @@ async function wholeDecoded(bytes,info,options,unit,tools = null,decodeAll = dec
     if (!(data instanceof Float32Array) || (channels !== 3 && channels !== 4) || float.width !== info.width || float.height !== info.height) return null;
     const planes = [new Float32Array(n),new Float32Array(n),new Float32Array(n)];
     for (let i = 0,at = 0; i < n; i++,at += channels) for (let c = 0; c < 3; c++) planes[c][i] = data[at + c];
-    const out = tools.nativeGammaRGBA(planes,info.width,info.height);
+    const out = (await tools.compileKernels(), tools.nativeGammaRGBA(planes,info.width,info.height));
     for (let i = 0; i < n; i++) out[i * 4 + 3] = channels === 4 ? Math.round(Math.min(1,Math.max(0,data[i * 4 + 3])) * 255) : 255;
     return out;
   },{cold:true,alone:true}));
@@ -337,7 +332,6 @@ async function referenceInSteps(original,options,context) {
     }
   }
   if (orient || options.transform) picture = await orientInSteps(picture,context);
-  if (options.transform?.resizer === 'browser') throw fail('JXL_UNSUPPORTED','resizer: use verify()');
   if (options.transform) picture = await resizeInSteps(picture,options.transform.width,options.transform.height,options,context);
   return picture;
 }

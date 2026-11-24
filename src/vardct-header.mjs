@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {float16Bits, ceilLog2} from './bits.mjs';
+import {BitWriter, float16Bits, ceilLog2} from './bits.mjs';
 import {writeHeaderFields, writeFrameHeaderEnd, GROUP_DIM} from './frame.mjs';
 import {writeHistograms, buildCode, uintConfig, countToken, writeHybrid} from './prefix.mjs';
 import {jpegError} from './jpeg-tables.mjs';
@@ -102,11 +102,13 @@ export function writeVarDCTOrders(writer, jpeg, layout, plan, pass) {
       while (end > 1 && !lehmer[end - 1]) end--;
       values.push(end - 1, ...lehmer.slice(1, end));
     }
-    const config = uintConfig(0), freqs = new Uint32Array(64);
+    const plain = new BitWriter(128), config = uintConfig(0), freqs = new Uint32Array(64);
     for (const value of values) countToken(config, value, freqs);
     const code = buildCode(freqs);
-    writeHistograms(writer, {contextMap: new Uint8Array(8), histograms: [{config, code}]});
-    for (const value of values) writeHybrid(writer, code, config, value);
+    writeHistograms(plain, {contextMap: new Uint8Array(8), histograms: [{config, code}]});
+    for (const value of values) writeHybrid(plain, code, config, value);
+    const better = (typeof __RAPIER_JXL_RECOMPRESS__ === 'undefined' || __RAPIER_JXL_RECOMPRESS__ === true) && plan?.orderWriter ? plan.orderWriter(plan.orders, map, plain.bitLength) : null;
+    writer.append(better && better.bitLength < plain.bitLength ? better : plain);
   } else writer.write(2, 2);
 }
 

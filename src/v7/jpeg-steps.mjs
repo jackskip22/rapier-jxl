@@ -13,7 +13,7 @@ export {restoreSteps};
 export const STEPS = Symbol.for('rapier-jxl.steps');
 
 export function jpegSettings({effort = 7}) {
-  if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fail('JXL_OPTIONS', "effort: integer 1-9");
+  if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fail('JXL_OPTIONS', effort === 10 ? "effort 10: import {encode} from 'jpegxl/max'" : "effort: integer 1-9");
   return effort;
 }
 
@@ -24,7 +24,7 @@ export function recompressSteps(kernels) {
       if (options?.gainMap !== undefined && typeof options.gainMap !== 'boolean')
         throw fail('JXL_OPTIONS', 'gainMap: boolean');
       const effort = jpegSettings(options), maxPixels = pixelLimit(options.maxPixels);
-      return {options: {...options}, effort, maxPixels, gainMap: !!options?.gainMap};
+      return {options: {...options}, effort, maxPixels, gainMap: options?.gainMap !== false};
     },
     *open(plan, jpeg, source, straight = false) {
       let shown = null, otherDecoders = null;

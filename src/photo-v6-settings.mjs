@@ -64,10 +64,11 @@ export function grainSample(data, width, height) {
   return grainShares(sums);
 }
 
+export const UPLOAD_HIGH = 85;
 const uploadTune = (c, k, q) => {
   const base = V6.tune(c, k);
   if (q <= 50) return base;
-  const kx = k & 7, ky = k >> 3, is90 = q >= 85;
+  const kx = k & 7, ky = k >> 3, is90 = q >= UPLOAD_HIGH;
   const [lx, ly, lb] = is90 ? [0.64, 0.60, 0.60] : [0.58, 0.58, 0.54];
   const b2 = is90 ? 0.78 : 0.68;
   const low = k && kx < 2 && ky < 2 ? [lx, ly, lb][c]
@@ -77,6 +78,14 @@ const uploadTune = (c, k, q) => {
   const hi = is90 && k && (kx >= 2 || ky >= 2) ? 1 + (c === 1 ? 0.04 : 0.06) * r : 1;
   return base * scale * hi;
 };
+const measuredTune = (c, k, q) => {
+  const kx = k & 7, ky = k >> 3, is90 = q >= UPLOAD_HIGH;
+  const [lx, ly, lb] = is90 ? [0.64, 0.60, 0.60] : [0.58, 0.58, 0.54];
+  const low = k && kx < 2 && ky < 2 ? [lx, ly, lb][c] : c === 2 && k && kx < 3 && ky < 3 ? (is90 ? 0.78 : 0.68) : 1;
+  const hi = is90 && k && (kx >= 2 || ky >= 2) ? 1 + (c === 1 ? 0.04 : 0.06) * Math.sqrt((kx * kx + ky * ky) / 98) : 1;
+  return V6.tune(c, k) * low * hi;
+};
+export const measuredUploadPicture = (picture, flat) => ({...picture, dcRamp: [1.88, 1.50, 1.88], ...(!flat && {tune: measuredTune})});
 const UPLOAD_DEADZONE = [0.68, 0.72, 0.455, 0.545, 0.50, 0.56];
 export const UPLOAD_GAB_90 = {...GABORISH.gaborish, iterations: 2, boost: 1.4,
   weights: [[0.075, 0.028], [0.075, 0.028], [0.075, 0.028]]};
@@ -86,8 +95,8 @@ export const UPLOAD_FLAT_PICTURE = {...UPLOAD_PICTURE, deadzone: V6.deadzone, cf
 export const uploadFlat = (data, width, height) => sharedFlatSamples(data, width, height) > 32;
 export const uploadBandPicture = (flat, grain, quality) => flat ? UPLOAD_FLAT_PICTURE : {
   ...UPLOAD_PICTURE, uploadGrain: !!grain,
-  epfScale: quality >= 85 ? (grain ? 1.0 : 1.5) : (grain ? 1.5 : 2.0),
-  gaborish: quality >= 85 ? UPLOAD_GAB_90 : UPLOAD_PICTURE.gaborish,
+  epfScale: quality >= UPLOAD_HIGH ? (grain ? 1.0 : 1.5) : (grain ? 1.5 : 2.0),
+  gaborish: quality >= UPLOAD_HIGH ? UPLOAD_GAB_90 : UPLOAD_PICTURE.gaborish,
 };
 export const uploadGrain = (data, width, height) => !uploadFlat(data, width, height) && !!grainRegime(data, width, height);
 export const uploadPicture = (data, width, height, quality) =>

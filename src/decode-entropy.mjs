@@ -5,24 +5,52 @@ import {ceilLog2, canonicalCodes, LOG_LENGTHS, LOG_CODES, reverseAlias, SCREEN_S
 
 const WINDOW = 1048576, MASK = WINDOW - 1;
 const HISTORY_POOL = [];
+const IDENTITY_OFFSETS = /* @__PURE__ */ Uint16Array.from({length: 4096}, (_, i) => i);
+const SINGLE_SYMBOLS = new Map();
+function singleSymbols(symbol) {
+  let table = SINGLE_SYMBOLS.get(symbol);
+  if (!table) {
+    table = new Uint8Array(4096).fill(symbol);
+    if (SINGLE_SYMBOLS.size < 64) SINGLE_SYMBOLS.set(symbol, table);
+  }
+  return table;
+}
 const LENGTH_ORDER = [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 const var8 = r => r.read(1) ? (n => (1 << n) + r.read(n))(r.read(3)) : 0;
 
 function prefixTable(lengths, explicit) {
   let max = 0, count = 0, only = 0, space = 0;
-  for (let i = 0; i < lengths.length; i++) if (lengths[i]) {
+  for (let i = 0; i < lengths.length; i++) {
     const n = lengths[i];
-    requireDecode(n <= 15, 'Invalid JPEG XL prefix length.');
-    max = Math.max(max, n); count++; only = i; space += 32768 >>> n;
+    if (n) {
+      requireDecode(n <= 15, 'Invalid JPEG XL prefix length.');
+      if (n > max) max = n;
+      count++; only = i; space += 32768 >>> n;
+    }
   }
   requireDecode(count > 0 && (count === 1 || space === 32768), 'Invalid JPEG XL prefix tree.');
   if (count === 1) return {single: only, bits: 0, mask: 0, table: null};
-  const codes = explicit || canonicalCodes(lengths), table = new Uint32Array(1 << max);
-  for (let i = 0; i < lengths.length; i++) if (lengths[i]) {
-    const n = lengths[i], entry = i * 32 + n;
-    for (let at = codes[i]; at < table.length; at += 1 << n) table[at] = entry;
+  const codes = explicit || canonicalCodes(lengths), size = 1 << max, table = new Uint32Array(size);
+  if (max <= 9) {
+    for (let i = 0; i < lengths.length; i++) {
+      const n = lengths[i];
+      if (n) { const entry = i * 32 + n, step = 1 << n; for (let at = codes[i]; at < size; at += step) table[at] = entry; }
+    }
+  } else {
+    let hasLong = false;
+    for (let i = 0; i < lengths.length; i++) {
+      const n = lengths[i];
+      if (!n) continue;
+      if (n <= 9) { const entry = i * 32 + n, step = 1 << n; for (let at = codes[i]; at < 512; at += step) table[at] = entry; }
+      else hasLong = true;
+    }
+    for (let span = 512; span < size; span <<= 1) table.copyWithin(span, 0, span);
+    if (hasLong) for (let i = 0; i < lengths.length; i++) {
+      const n = lengths[i];
+      if (n > 9) { const entry = i * 32 + n, step = 1 << n; for (let at = codes[i]; at < size; at += step) table[at] = entry; }
+    }
   }
-  return {single: -1, bits: max, mask: (1 << max) - 1, table};
+  return {single: -1, bits: max, mask: size - 1, table};
 }
 
 function prefixToken(r, code) {
@@ -176,16 +204,16 @@ function readDistribution(r, logAlphabet) {
     requireDecode(total < 4096, 'Invalid JPEG XL ANS population.', r);
     counts[omit] = 4096 - total;
   }
+  for (let s = 0; s < counts.length; s++) if (counts[s] === 4096)
+    return {counts, symbols: singleSymbols(s), offsets: IDENTITY_OFFSETS, single: s};
   const {starts, reverse} = reverseAlias(counts, logAlphabet);
   const symbols = new Uint8Array(4096), offsets = new Uint16Array(4096);
-  let single = -1;
   for (let s = 0; s < counts.length; s++) {
-    if (counts[s] === 4096) single = s;
     for (let i = 0; i < counts[s]; i++) {
       const at = reverse[starts[s] + i]; symbols[at] = s; offsets[at] = i;
     }
   }
-  return {counts, symbols, offsets, single};
+  return {counts, symbols, offsets, single: -1};
 }
 
 export function readContextMap(r, contexts, maxContexts = 268435457) {
@@ -337,6 +365,7 @@ class EntropyStream {
 }
 
 const BLOCK_BYTES = 128, BYTE_WINDOW = 0x0fffffff, SPECIAL = /* @__PURE__ */ Int8Array.from(SCREEN_SPECIAL_DISTANCES);
+const maxStreamBytes = stream => stream.remaining < 0x00ffffff ? stream.remaining * 16 + 64 : BYTE_WINDOW;
 export function modelSizes(m) {
   const clusters = m.codes.length;
   return [m.map.length, clusters * 16, m.prefix ? clusters * 16 : clusters * 12816, m.prefix ? m.codes.reduce((n, c) => n + (c.table ? c.table.byteLength : 0), 0) : 0, SPECIAL.length];
@@ -357,9 +386,9 @@ export function writeModel(kernels, m, at) {
   });
   return {map, configs, codes, special};
 }
-export const windowBytes = stream => Math.min(stream.reader.bytes.length - Math.floor(stream.reader.bit / 8), BYTE_WINDOW) + 16;
+export const windowBytes = stream => Math.min(stream.reader.bytes.length - Math.floor(stream.reader.bit / 8), maxStreamBytes(stream)) + 16;
 export function writeBlock(kernels, stream, block, bytes, model, history) {
-  const m = stream.model, r = stream.reader, start = Math.floor(r.bit / 8), length = Math.min(r.bytes.length - start, BYTE_WINDOW);
+  const m = stream.model, r = stream.reader, start = Math.floor(r.bit / 8), length = Math.min(r.bytes.length - start, maxStreamBytes(stream));
   const u8 = new Uint8Array(kernels.buffer), i32 = kernels.i32, f64 = kernels.f64, length32 = m.lengthConfig ?? {split: 0, msb: 0, lsb: 0};
   u8.set(r.bytes.subarray(start, start + length), bytes); u8.fill(0, bytes + length, bytes + length + 16);
   i32.set([bytes, length * 8, r.bit - start * 8, stream.state ?? 0], block / 4);

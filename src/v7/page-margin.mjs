@@ -1,2 +1,3 @@
 // SPDX-License-Identifier: MIT
-export const PAGE_MARGIN = Symbol('page margin');
+import {optionSymbol} from './primitives.mjs';
+export const PAGE_MARGIN = /* @__PURE__ */ optionSymbol('page margin');

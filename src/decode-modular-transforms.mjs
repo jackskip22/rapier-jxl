@@ -3,6 +3,7 @@ import {DELTA_IMPLICIT} from './implicit-palette.mjs';
 import {RECIPROCAL} from './decode-modular-weights.mjs';
 import {streamKernels} from './decode-kernels.mjs';
 
+const DELTA_IMPLICIT_FLAT = /* @__PURE__ */ Int32Array.from(DELTA_IMPLICIT.flat());
 const BEGIN = [[3, 0], [6, 8], [10, 72], [13, 1096]];
 const EMPTY_I32 = new Int32Array(0);
 const invalid = message => { throw Object.assign(new Error(message), {code: 'JXL_DECODE'}); };
@@ -110,8 +111,8 @@ function inversePalette(channels, t, bitDepth) {
   const table = channels.shift(), index = channels[t.begin];
   const result = t.original.map(c => ({width: c.width, height: c.height, hshift: c.hshift, vshift: c.vshift, data: new Int32Array(c.width * c.height), decoded: c.width * c.height, regions: null}));
   const depth = Math.min(bitDepth, 24), codes = index.data, n = codes.length, tw = table.width, kernels = streamKernels();
-  const tables = (at) => { view(kernels, at[0], table.data.length).set(table.data); view(kernels, at[1], DELTA_IMPLICIT.length * 3).set(DELTA_IMPLICIT.flat()); };
-  const fixed = [table.data.length * 4, DELTA_IMPLICIT.length * 12];
+  const tables = (at) => { view(kernels, at[0], table.data.length).set(table.data); view(kernels, at[1], DELTA_IMPLICIT_FLAT.length).set(DELTA_IMPLICIT_FLAT); };
+  const fixed = [table.data.length * 4, DELTA_IMPLICIT_FLAT.length * 4];
   if (t.predictor === 0) {
     const clamp = t.components === 1 && !t.deltas ? 1 : 0, chunk = Math.min(n, CHUNK), at = kernels.reserve([...fixed, chunk * 4, chunk * 4]);
     tables(at);

@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
-import {kernelInstance, arenaHolder, takeArena, growArena} from '../kernel-runtime.mjs';
+import {kernelFlat, arenaHolder, takeArena, growArena} from '../kernel-runtime.mjs';
 import {kernelCaller, out, outUpTo, rect, room} from '../kernel-call.mjs';
+import {wasmRequired} from '../capture-wasm-error.mjs';
 
 const inkHolder = arenaHolder(() => {}), INK_BASE = 131072, INK_OVERLAP = 256, INK_BOXES = 256;
-let held;
 const call = kernelCaller(lay => {
-  const {memory, exports} = kernelInstance();
+  const k = kernelFlat();
   takeArena(inkHolder);
   const at = lay(INK_BASE);
   growArena(at.end);
-  return {k: held ??= {...exports, memory}, at};
-}, error => { throw error; });
+  return {k, at};
+}, error => { throw error?.code ? error : wasmRequired(error); });
 const TILE_BYTES = 32 << 20, TILE_OVERLAP = 4 * 256 + 16, SAMPLE_BYTES = 13;
 function tiles(data, width, height, each) {
   const rows = Math.min(height, 2 * INK_OVERLAP);
@@ -36,18 +36,18 @@ export function lettersFound(data, width, height) {
 
 export function findText(data, width, height) {
   if (!rgba(data, width, height)) return null;
-  const mask = new Uint8Array(width * height), lines = [];
-  if (width < 3 || height < 3) return {mask, lines};
+  let mask = null;
+  const lines = [];
+  if (width < 3 || height < 3) return {mask: new Uint8Array(width * height), lines};
   tiles(data, width, height, (bh, tw, head, cuts, y0, x0) => {
     const [n, b, marks] = call(k => k.findText, [...head, outUpTo(Int32Array, INK_BOXES * 8, c => 8 * Math.max(0, Math.min(c, INK_BOXES))),
       INK_BOXES, ...cuts, out(Uint8Array, bh * tw, 1)], true);
+    if (n !== 0) mask ??= new Uint8Array(width * height);
     if (n < 0) { for (let r = 0; r < bh; r++) mask.fill(1, (y0 + r) * width + x0, (y0 + r) * width + x0 + tw); return false; }
     if (n === 0) return false;
-    if (tw === width) {
-      const at = y0 * width, shared = y0 > 0 ? Math.min(bh, INK_OVERLAP) * width : 0;
-      for (let i = 0; i < shared; i++) mask[at + i] |= marks[i];
-      mask.set(marks.subarray(shared), at + shared);
-    } else for (let r = 0; r < bh; r++) for (let c = 0, at = (y0 + r) * width + x0; c < tw; c++) mask[at + c] |= marks[r * tw + c];
+    const [, merged] = call(k => k.protectedCompose,
+      [{...rect(Uint8Array, mask, width, x0, y0, tw, bh), back: tw * bh}, tw, marks.byteOffset, 0, 0, tw, bh, 1], true);
+    for (let r = 0; r < bh; r++) mask.set(merged.subarray(r * tw, (r + 1) * tw), (y0 + r) * width + x0);
     for (let i = 0; i < b.length; i += 8) {
       const line = {x0: b[i] + x0, y0: b[i + 1] + y0, x1: b[i + 2] + x0, y1: b[i + 3] + y0, ink: b[i + 4] >>> 0, baseline: b[i + 5] + y0, strokes: b[i + 6], strokeRows: b[i + 7]};
       const same = (y0 > 0 || x0 > 0) && lines.find(l => l.ink === line.ink && l.baseline === line.baseline && l.x0 <= line.x1 && line.x0 <= l.x1);
@@ -57,5 +57,5 @@ export function findText(data, width, height) {
     }
     return false;
   });
-  return {mask, lines};
+  return {mask: mask ?? new Uint8Array(width * height), lines};
 }

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 import {readFile, stat} from 'node:fs/promises';
-import {readManifest} from './project-files.mjs';
+import {readManifest, readIfAny} from './project-files.mjs';
 import {writeProjectEdits, removeProjectEdits} from './project-edits.mjs';
 import {createHash} from 'node:crypto';
-import {join} from 'node:path';
+import {join, relative} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createRequire} from 'node:module';
 import {parseConfig, prologueEnd, spanEnd} from './config-parse.mjs';
@@ -136,9 +136,12 @@ export async function addAstro({cwd, version, name: own = 'rapier-jxl', dryRun =
   const manager = specs.length ? await packageManager(cwd) : null;
   const writes = [], kept = [];
   for (const file of FILES) {
-    const body = importsAs(await readFile(new URL(`${import.meta.url.includes('/dist/') ? '../' : './'}examples/astro/${file}`, import.meta.url), 'utf8'), own);
+    let rawBody;
+    try { rawBody = await readFile(new URL(`${import.meta.url.includes('/dist/') ? '../' : './'}examples/astro/${file}`, import.meta.url), 'utf8'); }
+    catch { throw refuse('package: incomplete', `reinstall: ${COMMAND}`); }
+    const body = importsAs(rawBody, own);
     const text = `// Written by npx ${COMMAND} add astro (rapier-jxl ${version}, ${digest(body)}). Edit freely: add astro then keeps this file.\n${body}`;
-    const target = join(cwd, DIR, file), now = await readFile(target, 'utf8').catch(() => null);
+    const target = join(cwd, DIR, file), now = await readIfAny(target, 'utf8', `${DIR}/${file}`);
     const norm = now?.replace(/\r\n/g, '\n') ?? null;
     if (norm === text) continue;
     const mark = norm?.match(HEADER);
@@ -147,7 +150,7 @@ export async function addAstro({cwd, version, name: own = 'rapier-jxl', dryRun =
   }
   const result = {config: found[0], changes: [...(specs.length ? [`install ${specs.join(' ')} with ${manager}`] : []),
     ...writes.map(w => w.change), ...changes.map(c => `${found[0]}: ${c}`)], kept, dryRun};
-  const planned = new Map(writes.map(({target, text}) => [target.slice(cwd.length + 1).replaceAll('\\', '/'), text]));
+  const planned = new Map(writes.map(({target, text}) => [relative(cwd, target).replaceAll('\\', '/'), text]));
   if (source !== before) planned.set(found[0], source);
   await writeProjectEdits(cwd, 'astro', version, planned, {dryRun, ...specs.length && {install: {
     files: ['package.json', 'package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock'],

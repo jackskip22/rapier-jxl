@@ -3,4 +3,4 @@ import jpeg from './jpeg.wasm?module';
 import rebuild from './rebuild.wasm?module';
 import {provideWasm} from './wasm-modules.mjs';
 provideWasm({kernels,jpeg,rebuild});
-export * from './upload.mjs';
+export * from './upload.precompiled.mjs';

@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 import {CAPTURE_PROTECTION} from '../capture-protection.mjs';
 import {sRGBWithIntent} from './header-intent.mjs';
-export const RESULT_REFERENCE = /* @__PURE__ */ Symbol('result reference');
+import {isBlob, OPTION_SYMBOLS, optionSymbol} from './primitives.mjs';
+OPTION_SYMBOLS.add(CAPTURE_PROTECTION);
+export const RESULT_REFERENCE = /* @__PURE__ */ optionSymbol('result reference');
 export const RAW_OPERATION = /* @__PURE__ */ Symbol('raw operation');
-export const DEVICE_RAN = /* @__PURE__ */ Symbol('device ran');
+export const DEVICE_RAN = /* @__PURE__ */ optionSymbol('device ran');
 export const FIT_BYTES = /* @__PURE__ */ Symbol.for('rapier-jxl.fit.bytes');
-export const PROFILE_NAMED = /* @__PURE__ */ Symbol('profile named');
-export const originalSize = source => typeof Blob !== 'undefined' && source instanceof Blob ? source.size
+export const PROFILE_NAMED = /* @__PURE__ */ optionSymbol('profile named');
+export const originalSize = source => isBlob(source) ? source.size
   : source instanceof Uint8Array ? source.byteLength : undefined;
 export function resultReference(options, reference, source = reference, facts) {
   if (reference !== undefined) options?.[CAPTURE_PROTECTION]?.bind(reference, source);

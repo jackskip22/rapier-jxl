@@ -6,13 +6,8 @@ import {fault, outOfMemory, hostWords} from './fault.mjs';
 
 export {fault};
 
-export function admitColorRoute(options) {
-  if (options.toneMapping !== undefined) throw fault('JXL_INPUT', 'toneMapping: unsupported');
-}
-
 export function admitOptions(options = {}, quality = 100) {
   if (options === null || typeof options !== 'object') throw fault('JXL_INPUT', 'options: object');
-  admitColorRoute(options);
   if (options.quality !== undefined) quality = options.quality;
   if (typeof quality !== 'number' || !Number.isFinite(quality) || quality < 1 || quality > 100) throw fault('JXL_INPUT', 'quality: number 1-100');
   const colorSpace = options.colorSpace === undefined ? 'srgb' : options.colorSpace;

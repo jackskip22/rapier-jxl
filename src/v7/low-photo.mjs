@@ -14,8 +14,9 @@ export {encodeLowSplit, makeLowUpload, finishLowUpload, closeLowUpload} from '..
 export const smoothDecides = ({quality}) => quality < 80;
 export const smoothPhoto = (data, width, height, facts = null) => (facts?.gradient ?? gradient({data, width, height})) < 8 ||
   grainSample(data, width, height).curvature > 1.25;
-export function lowPhotoSteps(data, width, height, options, route = lowPhotoRoute(data, width, height, options)) {
-  return route === 'xyb' || route === 'xyb-smooth' ? lowPhotoPictureSteps(data, width, height, {...options, screen: false, smooth: route === 'xyb-smooth'})
+export function lowPhotoSteps(data, width, height, options, route = lowPhotoRoute(data, width, height, options), lexer = null) {
+  return route === 'xyb' || route === 'xyb-smooth' ? lowPhotoPictureSteps(data, width, height, {...options, screen: false, smooth: route === 'xyb-smooth',
+      ...((lexer?.lfGroup && options.effort >= 3) && {chooseLfGroup: () => lexer.lfGroup(data, width, height, options.lowIntent)})})
     : route === 'other' ? lowOtherPhotoSteps(data, width, height, options) : null;
 }
 export function lowPhotoRoute(data, width, height, options, facts = null) {

@@ -77,8 +77,8 @@ export function fillPatches(plane, width, patches) {
   }
 }
 
-export function writeCapturePatches(w, patches, alpha) {
-  if (!(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) && patches.peel && !patches.ordered) {
+export function writeCapturePatches(w, patches, alpha, slot = PATCH_SLOT) {
+  if (!(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && patches.peel && !patches.ordered) {
     patches.ordered = true;
     const raster = patches.groups.map(g => g.positions), walked = patches.groups.map(g => {
       const n = g.positions.length >> 1;
@@ -105,13 +105,13 @@ export function writeCapturePatches(w, patches, alpha) {
     const walk = bits(walked) < bits(raster);
     patches.groups.forEach((g, k) => g.positions = walk ? walked[k] : raster[k]);
   }
-  dictionary(w, patches, alpha);
+  dictionary(w, patches, alpha, slot);
 }
-function dictionary(w, patches, alpha) {
+function dictionary(w, patches, alpha, slot) {
   const values = [], emit = (ctx, value) => values.push(ctx, value), at = w.bitLength;
   emit(0, patches.groups.length);
   for (const g of patches.groups) {
-    emit(1, PATCH_SLOT); emit(3, g.ax); emit(3, g.ay); emit(2, g.w - 1); emit(2, g.h - 1); emit(7, (g.positions.length >> 1) - 1);
+    emit(1, slot); emit(3, g.ax); emit(3, g.ay); emit(2, g.w - 1); emit(2, g.h - 1); emit(7, (g.positions.length >> 1) - 1);
     for (let i = 0, x = 0, y = 0; i < g.positions.length; i += 2) {
       const px = g.positions[i], py = g.positions[i + 1];
       emit(i ? 6 : 4, i ? packSigned(px - x) : px); emit(i ? 6 : 4, i ? packSigned(py - y) : py);
@@ -146,11 +146,11 @@ function dictionary(w, patches, alpha) {
   patches.dictionary = w.bitLength - at;
 }
 
-export function writeAtlasFrameHeader(w, alpha, width, height, shift = 3) {
+export function writeAtlasFrameHeader(w, alpha, width, height, shift = 3, slot = PATCH_SLOT) {
   const u = alpha ? 4 : 2;
   w.write(10 + u, 12 | shift << 7 + u | 1 << 9 + u);
   w.writeU32(FRAME_SIZE, width); w.writeU32(FRAME_SIZE, height);
-  w.write(13, PATCH_SLOT | 4);
+  w.write(13, slot | 4);
 }
 
 export function writePatchedFrameHeader(w, alpha, shift = 3, reference = 0) {

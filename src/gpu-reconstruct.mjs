@@ -3,19 +3,22 @@ import {ssimulacra2, ssimulacra2Reference} from './ssimulacra2.mjs';
 import {s2Dimensions, s2RGBA} from './ssimulacra2-input.mjs';
 import {GpuLinearPixels} from './gpu-metric-pixels.mjs';
 import {UniformRing} from './gpu-uniforms.mjs';
-import {coefficientPlanes, epfInverseSigma, inverseBasis, half, rcLlfFromDC, toRGBA} from './reconstruct.mjs';
+import {inverseBasis, half} from './reconstruct.mjs';
+import {coefficientPlanes, epfInverseSigma, rcLlfFromDC} from './gpu-dequant.mjs';
+import {captureLinearRGBA as toRGBA} from './capture-kernels.mjs';
 import {TRANSFORMS} from './vardct-strategies.mjs';
 import {gpuSetup} from './gpu-setup.mjs';
 import {gpuPipelineSet} from './gpu-pipelines.mjs';
+import {gpuWait} from './gpu-kit.mjs';
 import {fault} from './fault.mjs';
 
 const GR_WG = 128, GR_CORE = 1024, GR_MARGIN = 128;
 const grF = v => { const s = Math.fround(v).toString(); return /[.eE]/.test(s) ? s : s + '.0'; };
 const GR_GAB = [0.115169525, 0.061248592];
 const GR_ONE = [1 - 0.05465007330715401, 1 - 0.07005449891748593, 1 - 0.049935103337343655];
-const GR_BIAS = 0.0037930732552754493, GR_ROOT_BIAS = Math.cbrt(GR_BIAS);
+const GR_BIAS = 0.0037930732552754493, GR_ROOT_BIAS = /* @__PURE__ */ Math.cbrt(GR_BIAS);
 const GR_M = [0.3, 0.622, 0.078, 0.23, 0.692, 0.078, 0.24342268924547819, 0.20476744424496821, 0.5518098665095536];
-const GR_INV = (() => {
+const GR_INV = /* @__PURE__ */ (() => {
   const [a, b, c, d, e, g, h, i, j] = GR_M, det = a * (e * j - g * i) - b * (d * j - g * h) + c * (d * i - e * h);
   return [(e * j - g * i) / det, (c * i - b * j) / det, (b * g - c * e) / det, (g * h - d * j) / det, (a * j - c * h) / det,
     (c * d - a * g) / det, (d * i - e * h) / det, (b * h - a * i) / det, (a * e - b * d) / det];
@@ -42,7 +45,7 @@ const grBlockOf = `
   let ow = select(select(select(1344u, 320u, bw == 32u), 64u, bw == 16u), 0u, bw == 8u);
   let oh = select(select(select(1344u, 320u, bh == 32u), 64u, bh == 16u), 0u, bh == 8u);`;
 
-const GR_SHADERS = {
+const GR_SHADERS = /* @__PURE__ */ (() => ({
   rows: grShader([['cells', 'read', 'array<u32>'], ...GR_R('basis', 'coef'), ...GR_W('tmp')], `${grBlockOf}
     var s = 0.0; let lx = x - x0;
     for (var u = 0u; u < bw; u++) { s += coef[y * P.w + x0 + u] * basis[ow + u * bw + lx]; }
@@ -126,9 +129,9 @@ fn recon(q: i32, c: u32) -> f32 {
   if (q == 0) { return 0.0; } if (q == 1) { return consts[195u + c]; } if (q == -1) { return -consts[195u + c]; }
   let v = f32(q); return v - 0.145 / v;
 }`),
-};
+}))();
 
-const grPipelines = gpuPipelineSet(GR_SHADERS);
+const grPipelines = /* @__PURE__ */ gpuPipelineSet(GR_SHADERS);
 
 export class GpuMeasure {
   static async create(device, rgba, width, height, {tile = GR_CORE, signal} = {}) {
@@ -146,12 +149,12 @@ export class GpuMeasure {
         const pixels = await GpuLinearPixels.create(device, width, height);
         if (self.destroyed) { pixels.destroy(); throw Object.assign(new Error('owner destroyed'), {code: 'JXL_GPU'}); }
         self.pixels = pixels;
-        remaining--; const memory = await device.popErrorScope();
-        remaining--; const validation = await device.popErrorScope();
+        remaining--; const memory = await gpuWait(device, device.popErrorScope());
+        remaining--; const validation = await gpuWait(device, device.popErrorScope());
         if (self.lost || memory || validation) throw Object.assign(new Error('creation failed'), {code: 'JXL_GPU', cause: memory ?? validation ?? self.lost});
         return self;
       } catch (error) { self.destroy(); throw error; }
-      finally { while (remaining-- > 0) await device.popErrorScope().catch(() => null); }
+      finally { while (remaining-- > 0) await gpuWait(device, device.popErrorScope()).catch(() => null); }
     }, {signal, dispose: () => self.destroy()});
   }
 
@@ -302,8 +305,8 @@ export class GpuMeasure {
     let remaining = 2;
     try {
       const out = await this.measureImage(image, want);
-      remaining--; const memory = await device.popErrorScope();
-      remaining--; const validation = await device.popErrorScope();
+      remaining--; const memory = await gpuWait(device, device.popErrorScope());
+      remaining--; const validation = await gpuWait(device, device.popErrorScope());
       if (this.lost || memory || validation) throw Object.assign(new Error('calculation failed'), {code: 'JXL_GPU', cause: memory ?? validation ?? this.lost});
       for (const key of ['ssimulacra2', 'ssimulacra2Native'])
         if (out[key] !== undefined && !Number.isFinite(out[key])) throw Object.assign(new Error('nonfinite result'), {code: 'JXL_GPU'});
@@ -311,7 +314,7 @@ export class GpuMeasure {
       return out;
     } catch (error) { this.stats.failures++; throw error; }
     finally {
-      while (remaining-- > 0) await device.popErrorScope().catch(() => null);
+      while (remaining-- > 0) await gpuWait(device, device.popErrorScope()).catch(() => null);
       this.measuring = false;
     }
   }

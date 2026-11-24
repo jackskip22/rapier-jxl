@@ -1,22 +1,24 @@
 // SPDX-License-Identifier: MIT
+import './engines.mjs';
 import {restoreJPEG} from '../jpeg-reconstruction.mjs';
-import {jpegReconstruction} from '../container.mjs';
 import {brotliDictionary} from '../brotli-dictionary.mjs';
-import {copyBytes, encodedByteLength} from './bytes.mjs';
-import {bytes, check, fail, declared, object, snapshotOptions, callers, abortable, dimensions, admitSignal, pixelLimit, blobBytes} from './primitives.mjs';
+import {arrayBufferBytes, copyBytes, encodedByteLength} from './bytes.mjs';
+import {bytes, check, fail, declared, object, snapshotOptions, callers, abortable, dimensions, admitSignal, pixelLimit, blobBytes, isBlob, rejectOptionSymbols} from './primitives.mjs';
 const NO_SERVE = 'No JPEG reconstruction data: serve it as image/jxl, or make it with recompress().';
 import {isPlainRecord} from './records.mjs';
 import {boundedHeader} from './inspect.mjs';
 import {sha256Start, sha256Update, sha256Finish} from '../sha256.mjs';
 import {slice} from '../progressive-slice.mjs';
+import {acceptWeights, normalizeType} from './examples/files/accept.mjs';
+export {acceptsJxl} from './examples/files/accept.mjs';
 
 const DEFAULT_CACHE_CONTROL = 'private, no-cache';
-const SERVE_KEYS = new Set(['cacheControl', 'etag', 'maxPixels', 'width', 'maxBytes', 'responsive', 'signal']);
+const SERVE_KEYS = new Set(['cacheControl', 'etag', 'maxPixels', 'width', 'maxBytes', 'responsive', 'fallback', 'signal']);
 const MAX_HINT_WIDTH = 1073741824;
 const pixelBound = pixelLimit;
 
 async function owned(input, signal) {
-  if (typeof Blob !== 'undefined' && input instanceof Blob) {
+  if (isBlob(input)) {
     return bytes(await blobBytes(input, signal));
   }
   encodedByteLength(input);
@@ -70,49 +72,6 @@ function refuseAccessors(record) {
     throw fail('JXL_OPTIONS', "Options contain accessors; pass plain data values.");
 }
 
-function headerParts(text, separator) {
-  const parts = [];
-  let start = 0, quoted = false, escaped = false;
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-    if (escaped) { escaped = false; continue; }
-    if (quoted && char === '\\') { escaped = true; continue; }
-    if (char === '"') { quoted = !quoted; continue; }
-    if (!quoted && char === separator) { parts.push(text.slice(start, i)); start = i + 1; }
-  }
-  if (quoted || escaped) return [];
-  parts.push(text.slice(start));
-  return parts;
-}
-export function acceptsJxl(acceptHeader, alternative = 'image/jpeg') {
-  if (typeof acceptHeader !== 'string') return false;
-  if (typeof alternative !== 'string') throw fail('JXL_OPTIONS', 'Invalid alternative media type; pass a MIME type string.');
-  alternative = alternative.split(';', 1)[0].trim().toLowerCase();
-  if (!/^[!#$%&'*+\-.^_`|~0-9a-z]+\/[!#$%&'*+\-.^_`|~0-9a-z]+$/.test(alternative) || alternative.startsWith('*/') || alternative.endsWith('/*'))
-    throw fail('JXL_OPTIONS', 'Invalid alternative media type; pass a concrete type/subtype MIME string.');
-  const q = Object.create(null);
-  for (const part of headerParts(acceptHeader, ',')) {
-    const [type, ...params] = headerParts(part, ';').map(text => text.trim());
-    const range = type.toLowerCase();
-    if (!['image/jxl', alternative, 'image/*', '*/*'].includes(range)) continue;
-    let weight = 1, seenQ = false, mediaParams = false;
-    for (const param of params) {
-      if (!param) continue;
-      const at = param.indexOf('='), key = (at < 0 ? param : param.slice(0, at)).trim(), value = at < 0 ? '' : param.slice(at + 1).trim();
-      if (!seenQ && key.toLowerCase() === 'q') {
-        seenQ = true;
-        weight = /^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/.test(value) ? Number(value) : NaN;
-      } else mediaParams = true;
-    }
-    if (range === 'image/jxl' && mediaParams) continue;
-    if (mediaParams && weight === 0) continue;
-    if (!Number.isNaN(weight)) q[range] = Math.max(q[range] ?? 0, weight);
-    else if (range !== 'image/jxl') q[range] = Math.max(q[range] ?? 0, 1);
-  }
-  const other = q[alternative] ?? q['image/*'] ?? q['*/*'] ?? 0;
-  return (q['image/jxl'] ?? 0) > 0 && q['image/jxl'] >= other;
-}
-
 const TAGS = new WeakMap();
 async function computeEntityHash(data) {
   if (!globalThis.crypto?.subtle) return sha256Finish(sha256Update(sha256Start(), data)).slice(0, 32);
@@ -163,10 +122,13 @@ function parseCall(request, second, third) {
   const serverResponse = isResponseLike(second) ? second : null, rawOptions = serverResponse ? third : second;
   if (serverResponse === null && third !== undefined) throw fail('JXL_OPTIONS', "Invalid response; pass a node:http response as the third argument.");
   const options = rawOptions === undefined ? {} : (object(rawOptions), refuseAccessors(rawOptions), {...rawOptions});
+  rejectOptionSymbols(options, 'serve option');
   for (const key of Object.keys(options)) if (!SERVE_KEYS.has(key)) throw fail('JXL_OPTIONS', `Unknown serve option ${key}; remove it.`);
-  const method = field(request, 'method'), rawMethod = typeof method === 'string' ? method.toUpperCase() : 'GET';
+  const method = field(request, 'method');
+  if (method !== undefined && typeof method !== 'string') throw fail('JXL_OPTIONS', "Request method is unsupported; use GET or HEAD.");
+  const rawMethod = method !== undefined ? method.toUpperCase() : 'GET';
   if (rawMethod !== 'GET' && rawMethod !== 'HEAD') throw fail('JXL_OPTIONS', "Request method is unsupported; use GET or HEAD.");
-  const cacheControl = options.cacheControl ?? DEFAULT_CACHE_CONTROL;
+  const {cacheControl = DEFAULT_CACHE_CONTROL} = options;
   if (typeof cacheControl !== 'string' || !cacheControl.trim() || /[^\t\x20-\x7e\x80-\xff]/.test(cacheControl))
     throw fail('JXL_OPTIONS', "Invalid cacheControl; pass a nonempty header string.");
   if (options.etag !== undefined) {
@@ -184,6 +146,18 @@ function parseCall(request, second, third) {
     throw fail('JXL_OPTIONS', 'Invalid maxBytes; pass a positive safe integer.');
   if (options.responsive !== undefined && typeof options.responsive !== 'boolean')
     throw fail('JXL_OPTIONS', 'Invalid responsive; pass true or false.');
+  let fallback;
+  if (options.fallback !== undefined) {
+    const {type, bytes, ...rest} = snapshotOptions(options.fallback, 'fallback', [], true);
+    if (Object.keys(rest).length || typeof type !== 'string' || !/^[a-z]+\/[a-z0-9.+-]+$/i.test(type) || type.toLowerCase() === 'image/jxl')
+      throw fail('JXL_OPTIONS', 'Invalid fallback; pass {type: "image/webp", bytes} with a media type other than image/jxl.');
+    if (typeof bytes !== 'function' && !isBlob(bytes)) {
+      if (!ArrayBuffer.isView(bytes) && arrayBufferBytes(bytes) === null)
+        throw fail('JXL_OPTIONS', 'Invalid fallback bytes; pass a Uint8Array, a Blob or a function returning one.');
+      encodedByteLength(bytes);
+    }
+    fallback = {type: normalizeType(type), bytes, of: options.fallback};
+  }
   admitSignal(options.signal);
   const maxPixels = pixelBound(options.maxPixels);
   const useHints = !!options.responsive && options.width === undefined;
@@ -199,7 +173,7 @@ function parseCall(request, second, third) {
     }
   }
   return {maxPixels, accept: readHeaderField(request, 'accept') ?? '', ifNoneMatch: readHeaderField(request, 'if-none-match') ?? '', method: rawMethod,
-    cacheControl, etag: options.etag, width: options.width ?? hintWidth, maxBytes: options.maxBytes, responsive: useHints, signal: options.signal, serverResponse};
+    cacheControl, etag: options.etag, width: options.width ?? hintWidth, maxBytes: options.maxBytes, responsive: useHints, fallback, signal: options.signal, serverResponse};
 }
 
 const cut = (bytes, maxWidth, maxBytes) => {
@@ -239,12 +213,18 @@ export function serve(input, request, second, third) {
   } catch (error) {
     let response = null;
     try { response = isResponseLike(second) ? second : null; } catch {  }
-    answerFault(response, parsed?.signal ?? (response && third?.signal instanceof AbortSignal ? third.signal : undefined));
+    let sig = parsed?.signal;
+    if (!sig && response && third && typeof third === 'object') {
+      try { const d = Object.getOwnPropertyDescriptor(third, 'signal'); if (d && 'value' in d && typeof d.value?.aborted === 'boolean') sig = d.value; } catch {}
+    }
+    answerFault(response, sig);
     return Promise.reject(declared(error));
   }
-  const {accept, ifNoneMatch, method, cacheControl, etag: customEtag, width, maxBytes, responsive, signal, serverResponse, maxPixels} = parsed;
-  let pending;
+  const {accept, ifNoneMatch, method, cacheControl, etag: customEtag, width, maxBytes, responsive, fallback, signal, serverResponse, maxPixels} = parsed;
+  let pending, heldFallback;
   try {
+    if (isBlob(input) && fallback && typeof fallback.bytes !== 'function' && !isBlob(fallback.bytes))
+      heldFallback = copyBytes(fallback.bytes);
     pending = owned(input, signal);
   } catch (error) {
     answerFault(serverResponse, signal);
@@ -258,19 +238,38 @@ export function serve(input, request, second, third) {
     const size = boundedHeader(jxlBytes);
     dimensions(size.width, size.height, maxPixels);
 
-    const wantsJxl = acceptsJxl(accept);
-    const contentType = wantsJxl ? 'image/jxl' : 'image/jpeg';
+    const [weightJxl, weightJpeg, weightFallback] = typeof accept === 'string'
+      ? acceptWeights(accept, fallback ? ['image/jpeg', fallback.type] : ['image/jpeg']) : [0, 0, 0];
+    let wantsJxl = weightJxl > 0 && weightJxl >= weightJpeg && weightJxl >= (fallback ? weightFallback : 0);
+    let restoredJpeg;
+    if (!wantsJxl && (!fallback || weightJpeg >= weightFallback)) {
+      if (disconnected()) return undefined;
+      try { restoredJpeg = restoreJPEG(jxlBytes, brotliDictionary, {maxPixels}); }
+      catch (error) { const named = declared(error); if (named?.code === 'JXL_MEMORY' || named?.code === 'JXL_DIMENSIONS' || (!fallback && !(weightJxl > 0))) throw named; }
+    }
+    if (!wantsJxl && !restoredJpeg) {
+      wantsJxl = weightJxl > 0 && (!fallback || weightJxl >= weightFallback);
+      if (!wantsJxl && !fallback) throw fail('JXL_RECONSTRUCTION', NO_SERVE);
+    }
+    const noJpeg = !wantsJxl && !restoredJpeg;
+    const contentType = wantsJxl ? 'image/jxl' : noJpeg ? fallback.type : 'image/jpeg';
     const sliced = wantsJxl && (width !== undefined || maxBytes !== undefined) ? cut(jxlBytes, width, maxBytes) : null;
     if (wantsJxl && !sliced && maxBytes !== undefined && jxlBytes.byteLength > maxBytes)
       throw fail('JXL_LIMIT', `Stored JPEG XL file (${jxlBytes.byteLength} B) exceeds maxBytes (${maxBytes}).`);
-    const suffix = wantsJxl ? (sliced && sliced.scale > 1 ? 'jxl-s' + sliced.scale : 'jxl') : 'jpeg';
+    const suffix = wantsJxl ? (sliced && sliced.scale > 1 ? 'jxl-s' + sliced.scale : 'jxl') : noJpeg ? 'fallback' : 'jpeg';
     const varyHeader = responsive ? 'Accept, Sec-CH-Viewport-Width, Viewport-Width, Sec-CH-DPR, DPR' : 'Accept';
-    const baseTag = customEtag ?? `"${TAGS.get(input) ?? (TAGS.set(input, await computeEntityHash(jxlBytes)), TAGS.get(input))}"`;
-    const etag = formatRepresentationEtag(baseTag, suffix);
-
-    if (!wantsJxl && (jxlBytes[0] === 255 && jxlBytes[1] === 10 || !jpegReconstruction(jxlBytes))) {
-      throw fail('JXL_RECONSTRUCTION', NO_SERVE);
+    let fallbackBytes;
+    if (noJpeg) {
+      if (heldFallback) fallbackBytes = heldFallback;
+      else {
+        const supplied = typeof fallback.bytes === 'function' ? await abortable(Promise.resolve().then(() => fallback.bytes.call(fallback.of)).catch(error => { throw callers(error); }), signal) : fallback.bytes;
+        check(signal);
+        fallbackBytes = await owned(supplied, signal);
+      }
     }
+    const baseTag = noJpeg ? `"${await computeEntityHash(new TextEncoder().encode(fallback.type + '\0' + await computeEntityHash(fallbackBytes)))}"`
+      : customEtag ?? `"${TAGS.get(input) ?? (TAGS.set(input, await computeEntityHash(jxlBytes)), TAGS.get(input))}"`;
+    const etag = formatRepresentationEtag(baseTag, suffix);
 
     if (matchesIfNoneMatch(ifNoneMatch, etag)) {
       check(signal);
@@ -288,11 +287,10 @@ export function serve(input, request, second, third) {
     let bodyBytes;
     if (wantsJxl) {
       bodyBytes = sliced ? sliced.bytes : jxlBytes;
+    } else if (noJpeg) {
+      bodyBytes = fallbackBytes;
     } else {
-      if (disconnected()) return undefined;
-      const restored = restoreJPEG(jxlBytes, brotliDictionary, {maxPixels});
-      if (!restored) throw fail('JXL_RECONSTRUCTION', NO_SERVE);
-      bodyBytes = restored;
+      bodyBytes = restoredJpeg;
     }
     check(signal);
     const headers200 = {

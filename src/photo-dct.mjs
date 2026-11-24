@@ -5,6 +5,9 @@ import {calibration} from './quality-calibration.mjs';
 import {float16Bits} from './bits.mjs';
 import {quantFieldValue, quantFieldBase} from './vardct-planes.mjs';
 import {grayTiles} from './screen-photo-kernels.mjs';
+import {bandScratch} from './band-scratch.mjs';
+
+export const bandCoefficients = (options, c, length) => options?.bandScratch ? bandScratch(Int16Array, 'band-coeffs' + c, length).fill(0) : new Int16Array(length);
 
 const COSINES = Float64Array.of(0.3535533905932738, 0.3535533905932738, 0.3535533905932738, 0.3535533905932738,
   0.3535533905932738, 0.3535533905932738, 0.3535533905932738, 0.3535533905932738, 0.4903926402016152,
@@ -40,35 +43,6 @@ export function transformDCT8Blocks(blocks, count) {
 
 const FAST_S = /* @__PURE__ */ Float64Array.of(1, 0.7209598223816907, 0.7653668647301796, 0.8504300941521988, 1, 1.2727585826345942, 1.8477590650225744, 3.6245097377961106);
 export const FAST_SCALE = /* @__PURE__ */ Float64Array.from({length: 64}, (_, k) => FAST_S[k & 7] * FAST_S[k >> 3] / 8);
-export function transformDCT8BlocksFast(blocks, count) {
-  const x = blocks;
-  for (let n = 0; n < count; n++) {
-    let o = n * 192;
-    for (let c = 0; c < 3; c++, o += 64) {
-      for (let pass = 0; pass < 2; pass++) {
-        const stride = pass ? 8 : 1, step = pass ? 1 : 8;
-        for (let i = 0; i < 8; i++) {
-          const p = o + i * step;
-          const x0 = x[p], x1 = x[p + stride], x2 = x[p + 2 * stride], x3 = x[p + 3 * stride];
-          const x4 = x[p + 4 * stride], x5 = x[p + 5 * stride], x6 = x[p + 6 * stride], x7 = x[p + 7 * stride];
-          const tmp0 = x0 + x7, tmp7 = x0 - x7, tmp1 = x1 + x6, tmp6 = x1 - x6;
-          const tmp2 = x2 + x5, tmp5 = x2 - x5, tmp3 = x3 + x4, tmp4 = x3 - x4;
-          const tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3, tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
-          x[p] = tmp10 + tmp11; x[p + 4 * stride] = tmp10 - tmp11;
-          const z1 = (tmp12 + tmp13) * 0.7071067811865476;
-          x[p + 2 * stride] = tmp13 + z1; x[p + 6 * stride] = tmp13 - z1;
-          const t10 = tmp4 + tmp5, t11 = tmp5 + tmp6, t12 = tmp6 + tmp7;
-          const z5 = (t10 - t12) * 0.3826834333650898;
-          const z2 = 0.5411961001461969 * t10 + z5, z4 = 1.3065629648763766 * t12 + z5, z3 = t11 * 0.7071067811865476;
-          const z11 = tmp7 + z3, z13 = tmp7 - z3;
-          x[p + 5 * stride] = z13 + z2; x[p + 3 * stride] = z13 - z2;
-          x[p + stride] = z11 + z4; x[p + 7 * stride] = z11 - z4;
-        }
-      }
-      for (let k = 0; k < 64; k++) x[o + k] *= FAST_SCALE[k];
-    }
-  }
-}
 
 const TABLE_FIELD = 2;
 export const AREA_FIELD = 16;
@@ -136,7 +110,7 @@ export function* photoCoefficientSteps(data, width, height, quality, colorSpace,
   const {fields, qualities, areaQualities} = options.fieldPlan ?? areaFields(perBlock ? areas : null, quality, kind, stride, rows, FIELD);
   const components = (gray ? [0] : [0, 1, 2]).map(c => ({h: 1, v: 1, stride, rows,
     quant: Int32Array.from(QUANT_SHAPE, (shape, k) => Math.max(1, Math.round(quantScale * distance * stepScale * (c ? 18 : 10) * (k ? shape : 0.25)))),
-    coeffs: new Int16Array(stride * rows * 64)}));
+    coeffs: bandCoefficients(options, c, stride * rows * 64)}));
   let quantTable = null;
   if (table && !gray) quantTable = components.map((component, c) => {
     const {first: ratio, bits, shape, dc} = REGION_TABLE[c], base = quantScale * distance * stepScale, first = float16Bits(8 * 255 * quantScale / (FIELD * base * ratio) / 64);
@@ -224,8 +198,9 @@ export function* photoCoefficientSteps(data, width, height, quality, colorSpace,
     };
     for (let by = 0; by < rows; by += 32) { band(by, Math.min(rows, by + 32)); yield Math.min(rows, by + 32) / rows; }
   }
-  let alpha = null;
-  for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) { alpha = data; break; }
+  const opaque = (kernelHooks.opaque ?? ensured().opaque ?? missing())(data);
+  if (opaque === undefined) throw fault('JXL_PLATFORM', 'opaque: declined');
+  const alpha = opaque ? null : Uint8Array.from(data);
   return {width, height, components, quantScale, ycbcr: true, orientation: 1, alpha, colorSpace, ...quantTable && {quantTable, quantFieldBase: FIELD, cfl, nonZero}, ...perBlock && {quantFields: fields}};
 }
 

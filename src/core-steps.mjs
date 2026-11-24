@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {outOfMemory} from './fault.mjs';
+import {hostShort} from './fault.mjs';
 import {exactSignal, signalSpace} from './color-signal.mjs';
 import {inspectPixels, losslessSteps, nativeSteps, iccShape, inspectPixelsSteps} from './lossless.mjs';
 import {lossySteps} from './lossy.mjs';
@@ -56,7 +56,7 @@ function* pixelSteps(data, width, height, quality, colorSpace, photo, filter, gp
   }
   let bytes;
   try { bytes = yield* part(lossySteps(data, width, height, {quality, shape, colorSpace}), 1, 2); }
-  catch (error) { if (error.code !== 'JXL_SIZE' && error.code !== 'JXL_MEMORY' && !outOfMemory(error)) throw error; bytes = exact; }
+  catch (error) { if (error.code !== 'JXL_SIZE' && error.code !== 'JXL_MEMORY' || hostShort(error)) throw error; bytes = exact; }
   let best = exact.length <= bytes.length ? exact : bytes;
   if (photo && typeof colorSpace !== 'object' && !journaling() && softPicture(data, width, height)) {
     const file = yield* photoSteps(data, width, height, quality, colorSpace, 1, coefficients => varDCTSteps(coefficients, {fast: true}), filter, undefined, gpu);

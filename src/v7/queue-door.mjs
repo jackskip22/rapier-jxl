@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: MIT
 import {shownEntry} from './entry-name.mjs';
 import {hostPendingBytes, record, measure, snapshot} from './ownership.mjs';
-import {fail, declared, callers, isCaller, PIXELS, abortError, progressOf, abortable, pixelLimit} from './primitives.mjs';
+import {fail, declared, callers, isCaller, PIXELS, abortError, progressOf, abortable, pixelLimit, dimensions, object, snapshotOptions, admitSignal, check, isBlob} from './primitives.mjs';
+import {open2d, read2d} from './canvas-2d.mjs';
+import {isPlainRecord} from './records.mjs';
+import {setDecoder} from '../decoder-setting.mjs';
 import {WORKER_PROTOCOL} from './protocol.mjs';
 import {BUILD_VERSION} from '../build-version.mjs';
 import {INTERFACES} from '../wasm-interfaces.mjs';
 import {elsewhere, program, relocatable} from './worker-start.mjs';
 import {simd} from './simd-probe.mjs';
 
-const SETTINGS = /* @__PURE__ */ new Set(['helpers', 'webgpu', 'maxPixels', 'maxPendingBytes', 'maxPendingJobs', 'workerFactory', 'workerStartupTimeout']);
-const IN_PLACE = /* @__PURE__ */ new Set(['helpers', 'webgpu', 'maxPixels', 'workerFactory', 'workerStartupTimeout', 'maxPendingBytes', 'maxPendingJobs']);
+const S_KEYS = ['helpers', 'webgpu', 'maxPixels', 'maxPendingBytes', 'maxPendingJobs', 'workerFactory', 'workerStartupTimeout'];
+const SETTINGS = /* @__PURE__ */ new Set(S_KEYS);
+const IN_PLACE = /* @__PURE__ */ new Set([...S_KEYS.slice(0, 3), ...S_KEYS.slice(5), ...S_KEYS.slice(3, 5)]);
 const WASM_KEY = /* @__PURE__ */ Symbol.for('rapier-jxl/' + BUILD_VERSION + ' wasm ' + Object.entries(INTERFACES).map(([k, v]) => k + ':' + v).join(';'));
 const REPLACED = /* @__PURE__ */ Symbol();
 const isFn = v => typeof v === 'function', isObj = v => !!v && typeof v === 'object', isInt = Number.isSafeInteger, noop = () => {};
@@ -25,7 +29,7 @@ export const isResult = v => isObj(v) && isInt(v.width) && v.width > 0 && isInt(
     v.bytes === null && v.kept === null && v.meetsTarget === false && isObj(v.reason));
 
 function transfers(v, out = new Set(), seen = new Set()) {
-  if (!isObj(v) || seen.has(v) || isFn(globalThis.Blob) && v instanceof Blob || isBitmap(v)) return out;
+  if (!isObj(v) || seen.has(v) || isBlob(v) || isBitmap(v)) return out;
   seen.add(v);
   if (v instanceof ArrayBuffer || isFn(globalThis.MessagePort) && v instanceof MessagePort) out.add(v);
   else if (ArrayBuffer.isView(v)) out.add(v.buffer);
@@ -92,7 +96,7 @@ function browserWorker(spec) {
 }
 
 function checkKeys(cfg, allowed, suffix = '') {
-  if (!isObj(cfg) || Array.isArray(cfg)) throw optErr("config: object");
+  object(cfg, 'config');
   const bad = Object.keys(cfg).filter(k => !allowed.has(k));
   if (bad.length) throw optErr('unknown options: ' + bad.join(', ') + ';' + suffix + ' allowed: ' + [...allowed].join(', '));
 }
@@ -101,74 +105,159 @@ const checkSupported = async (f, gpu, needW) => f === 'webgpu' ? (gpu ? gpu() : 
   : f !== undefined ? Promise.reject(optErr("feature: use supported()|supported('webgpu')"))
   : simd() && (!needW || isFn(globalThis.Worker));
 
-function validateSettings(cfg, caps) {
-  checkKeys(cfg, SETTINGS);
+function validateSettings(cfg, caps, inPlace = false) {
+  checkKeys(cfg, inPlace ? IN_PLACE : SETTINGS, inPlace ? ' in a worker the module runs in place:' : '');
   const {workerFactory: wf, helpers: rawH, webgpu: gpu} = cfg;
   if (wf !== undefined && !isFn(wf)) throw optErr("workerFactory: function");
-  if (rawH !== undefined && !caps.helpers) throw optErr("helpers: unsupported module");
-  const helpers = caps.helpers && rawH !== undefined ? caps.helpers(rawH) : undefined;
-  if (gpu !== undefined && !caps.gpu) throw optErr("webgpu: unsupported module");
-  if (gpu !== undefined && gpu !== 'required' && gpu !== false) throw optErr("webgpu: required|false|omit");
-  const maxBytes = positive(cfg.maxPendingBytes, hostPendingBytes(), 'maxPendingBytes');
-  const maxPixels = positive(cfg.maxPixels, PIXELS, 'maxPixels');
-  if (maxPixels > PIXELS) throw optErr('maxPixels: <= ' + PIXELS);
+  let helpers;
+  const hg = () => {
+    if (rawH !== undefined && !caps.helpers) throw optErr("helpers: unsupported module");
+    helpers = rawH !== undefined ? caps.helpers(rawH) : undefined;
+    if (gpu !== undefined && !caps.gpu) throw optErr("webgpu: unsupported module");
+    if (gpu !== undefined && gpu !== 'required' && gpu !== false) throw optErr("webgpu: required|false|omit");
+  };
+  if (!inPlace) hg();
+  const maxBytes = positive(cfg.maxPendingBytes, inPlace ? 1 : hostPendingBytes(), 'maxPendingBytes');
+  let maxPixels;
+  if (!inPlace) {
+    maxPixels = positive(cfg.maxPixels, PIXELS, 'maxPixels');
+    if (maxPixels > PIXELS) throw optErr('maxPixels: <= ' + PIXELS);
+  }
   const maxJobs = positive(cfg.maxPendingJobs, 32, 'maxPendingJobs');
   const startupMs = positive(cfg.workerStartupTimeout, 15000, 'workerStartupTimeout');
   if (startupMs > 2147483647) throw optErr("workerStartupTimeout: <=2147483647 ms");
-  if (!wf && !isFn(globalThis.Worker)) throw workErr("workers: page/worker or workerFactory");
+  if (inPlace) { hg(); maxPixels = pixelLimit(cfg.maxPixels); }
+  else if (!wf && !isFn(globalThis.Worker)) throw workErr("workers: page/worker or workerFactory");
   return [wf, helpers, gpu, maxBytes, maxPixels, maxJobs, startupMs];
 }
 
+const LIVE = new Set(['signal', 'onProgress', 'onPreview', 'onEncoded', 'onFrame']);
+const isCanvas = v => isFn(globalThis.OffscreenCanvas) && v instanceof OffscreenCanvas || isFn(globalThis.HTMLCanvasElement) && v instanceof HTMLCanvasElement;
+const dropBitmaps = made => made.forEach(v => v.then(b => { try { if (isFn(globalThis.ImageBitmap) && b instanceof ImageBitmap) b.close(); } catch {} }, noop));
+function holdArgs(args, budget, maxPixels, half, reserve, made) {
+  let left = budget;
+  const taken = isObj(args[1]) ? Object.getOwnPropertyDescriptor(args[1], 'transfer') : undefined;
+  if (taken && (!('value' in taken) || taken.value !== true)) throw optErr('transfer: true');
+  const options = snapshotOptions(args[1], 'Options', [...LIVE]);
+  if (args.length > 1) args[1] = options;
+  const {signal, transfer, readAs} = options;
+  admitSignal(signal); check(signal);
+  if (options.maxPixels !== undefined) maxPixels = Math.min(maxPixels, pixelLimit(options.maxPixels));
+  let read = false;
+  const charge = need => { overBytes(need, budget, budget - left); left -= need; };
+  const copies = args.map((arg, i) => {
+    if (isCanvas(arg)) {
+      dimensions(arg.width, arg.height, maxPixels);
+      const context = isFn(arg.getContext) && open2d(arg);
+      const bytes = arg.width * arg.height * (half && context?.getContextAttributes?.().colorType === 'float16' ? 8 : 4);
+      charge(bytes);
+      if (context) {
+        read = true;
+        return () => {
+          const {width, height} = arg;
+          dimensions(width, height, maxPixels);
+          const isHalf = half && context.getContextAttributes?.().colorType === 'float16';
+          if (width * height * (isHalf ? 8 : 4) > bytes) throw memErr("image: raise maxPendingBytes");
+          if (readAs !== undefined && readAs !== 'srgb' && readAs !== 'display-p3') throw optErr("readAs: srgb or display-p3");
+          return read2d(context, width, height, readAs, isHalf);
+        };
+      }
+      return () => {
+        if (isFn(globalThis.createImageBitmap)) { try { const bitmap = createImageBitmap(arg).catch(() => arg); made.push(bitmap); return bitmap; } catch {} }
+        return arg;
+      };
+    }
+    try {
+      let plain = arg, live;
+      if (isPlainRecord(arg)) {
+        plain = {}; live = {};
+        for (const [key, d] of record(arg)) (LIVE.has(key) ? live : plain)[key] = d.value;
+      }
+      const plans = new Map();
+      charge(measure(plain, maxPixels, plans, left));
+      return transfer && i === 0 ? () => arg : () => {
+        const copy = snapshot(plain, plans);
+        return live ? {...copy, ...live} : copy;
+      };
+    } catch (error) { if (error?.code === 'JXL_MEMORY' || error?.code === 'JXL_DIMENSIONS') throw error; return () => arg; }
+  });
+  check(signal);
+  reserve(budget - left);
+  const held = copies.map(copy => copy());
+  if (read && isObj(held[1])) delete held[1].readAs;
+  return {held, signal};
+}
+
 function inPlaceDoor(spec, caps) {
-  let own = null, loading = null, settings = null, dec = null, closing = null;
+  let own = null, loading = null, settings = null, closing = null, gen = 0, retained = 0;
+  const pending = new Set();
+  const cold = () => [...pending].some(call => call.cold);
+  const idleCfg = () => {
+    if (closing) throw optErr("The module is closing; await close() before configuring it.");
+    if (loading || cold()) throw optErr("active call: settle or close()");
+  };
+  const release = call => {
+    if (!pending.delete(call)) return;
+    retained -= call.bytes;
+    call.clear?.();
+    dropBitmaps(call.made);
+    call.made.length = 0;
+  };
   const shut = () => fail('JXL_CLOSED', "The module is closing; call again once close() has resolved.");
   const load = () => own ? Promise.resolve(own) : loading ??= spec.load().then(m => {
     if (settings) m.configure(settings);
-    if (dec) m.configureDecoder(...dec);
     return own = m;
   }).finally(() => { loading = null; });
   return Object.freeze({
     inPlace: true,
     configure(cfg = {}) {
-      if (closing) throw optErr("The module is closing; await close() before configuring it.");
-      if (loading) throw optErr("active call: settle or close()");
-      checkKeys(cfg, IN_PLACE, ' in a worker the module runs in place:');
-      if (cfg.workerFactory !== undefined && !isFn(cfg.workerFactory)) throw optErr("workerFactory: function");
-      positive(cfg.maxPendingBytes, 1, 'maxPendingBytes'); positive(cfg.maxPendingJobs, 32, 'maxPendingJobs');
-      if (positive(cfg.workerStartupTimeout, 15000, 'workerStartupTimeout') > 2147483647) throw optErr("workerStartupTimeout: <=2147483647 ms");
-      if (cfg.helpers !== undefined && !caps.helpers) throw optErr("helpers: unsupported module");
-      if (cfg.helpers !== undefined) caps.helpers(cfg.helpers);
-      if (cfg.webgpu !== undefined && !caps.gpu) throw optErr("webgpu: unsupported module");
-      if (cfg.webgpu !== undefined && cfg.webgpu !== 'required' && cfg.webgpu !== false) throw optErr("webgpu: required|false|omit");
-      if (cfg.maxPixels !== undefined) pixelLimit(cfg.maxPixels);
+      idleCfg();
+      validateSettings(cfg, caps, true);
       if (own) own.configure(cfg);
       settings = Object.keys(cfg).length ? {...cfg} : null;
     },
     call: name => (...args) => {
       if (closing) return Promise.reject(shut());
-      if (own) { try { return Promise.resolve(own[name](...args)); } catch (error) { return Promise.reject(error); } }
-      return load().then(m => {
-        if (closing) throw shut();
-        return m[name](...args);
-      });
+      if (pending.size >= (settings?.maxPendingJobs ?? Infinity)) return Promise.reject(memErr('Calls at maxPendingJobs; wait or raise it.'));
+      const call = {cold: !own, bytes: 0, made: []};
+      pending.add(call);
+      try {
+        if (own) return Promise.resolve(own[name](...args)).finally(() => release(call));
+        let held, signal;
+        call.clear = () => { held = null; };
+        const born = gen, live = () => { check(signal); if (born !== gen) throw shut(); };
+        const canceled = new Promise((_, reject) => { call.cancel = () => { try { check(signal); throw shut(); } catch (error) { reject(error); } }; });
+        canceled.catch(noop);
+        ({held, signal} = holdArgs(args, (settings?.maxPendingBytes ?? hostPendingBytes()) - retained, settings?.maxPixels ?? PIXELS,
+          name === 'fit' || name === 'variants' || name === 'encode' && spec.module !== 'rapier-jxl/animation',
+          bytes => {
+            if (born !== gen) throw shut();
+            overBytes(bytes, settings?.maxPendingBytes ?? hostPendingBytes(), retained);
+            call.bytes = bytes; retained += bytes;
+          }, call.made));
+        live();
+        const ready = Promise.all([load(), ...held.map((value, i) => Promise.resolve(value).then(value => { if (held) held[i] = value; }))]);
+        return abortable(Promise.race([ready, canceled]), signal).then(([m]) => {
+          live(); call.cold = false;
+          const values = held; held = null;
+          return m[name](...values);
+        }).finally(() => release(call));
+      } catch (error) { release(call); return Promise.reject(error); }
     },
     close() {
       if (closing) return closing;
-      if (!own && !loading) return Promise.resolve();
-      const pending = loading ?? Promise.resolve(own);
-      return closing = pending.then(m => m.close(), () => {}).finally(() => { closing = null; });
+      if (!own && !loading && !pending.size) return Promise.resolve();
+      const loaded = loading ?? Promise.resolve(own);
+      gen++;
+      for (const call of pending) if (call.cold) call.cancel?.();
+      return closing = loaded.then(m => m?.close(), () => {}).finally(() => { closing = null; });
     },
     supported: f => checkSupported(f, caps.gpu, false),
-    decoder(...args) {
-      if (closing) throw optErr("The module is closing; await close() before configuring it.");
-      if (loading) throw optErr("active call: settle or close()");
-      if (own) return own.configureDecoder(...args);
-      dec = args;
-    },
+    decoder: idleCfg,
   });
 }
 
-export const decoderOf = door => door.inPlace ? (...args) => door.decoder(...args) : () => {
+export const decoderOf = door => door.inPlace ? (...args) => { door.decoder(); setDecoder(...args); } : () => {
   throw fail('JXL_UNSUPPORTED', "configureDecoder: Node|Deno|Bun|edge only");
 };
 
@@ -235,15 +324,25 @@ function makeQueue([userFactory, helpers, webgpu, maxBytes, maxPixels, maxJobs, 
     queueMicrotask(() => { scheduled = false; pump(); });
   };
 
+  let deviceWorker = false, watching = false;
+  const hidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
+  const idle = () => !closed && !stopping && !preparing && !queue.length && !running.size && !held.size;
+  const retire = () => { if (idle()) { deviceWorker = false; stopThread(); } };
+  const onVisibility = () => { if (hidden() && deviceWorker && thread) { clearTimeout(idleTimer); retire(); } };
+  const deviceHeld = on => {
+    deviceWorker = on;
+    if (on && !watching && typeof document !== 'undefined' && isFn(document.addEventListener)) { watching = true; document.addEventListener('visibilitychange', onVisibility); }
+  };
   const rest = () => {
     clearTimeout(idleTimer);
-    if (thread) (idleTimer = setTimeout(() => { if (!closed && !stopping && !preparing && !queue.length && !running.size && !held.size) stopThread(); }, 60000)).unref?.();
+    if (thread) (idleTimer = setTimeout(retire, !deviceWorker ? 60000 : hidden() ? 0 : 300000)).unref?.();
   };
 
   const release = j => {
     if (j.l || j.q) return;
     j.l = true; retained -= j.b; j.x = j.p = null;
     if (j.v) { replies?.clear(j); j.v = null; }
+    j.F = j.G = null;
     running.delete(j.i); lanes?.free(j);
     schedule(); rest();
   };
@@ -281,11 +380,16 @@ function makeQueue([userFactory, helpers, webgpu, maxBytes, maxPixels, maxJobs, 
     catch (r) { cancel(j, r); }
   };
 
+  const frame = (j, value, index, ack) => {
+    if (j.d || !j.F) return;
+    j.G = Promise.resolve(j.G).then(async () => { if (j.d) return; await j.F(value, index); ack?.(); }).catch(r => { cancel(j, r); });
+  };
+
   const complete = async (j, ok, val) => {
     if (j.f) return;
     j.f = true;
     try {
-      if (ok) { progress(j, 1); await j.w?.finish(); if (j.z) await abortable(j.z, j.c.signal); }
+      if (ok) { progress(j, 1); await j.w?.finish(); if (j.z) await abortable(j.z, j.c.signal); if (j.G) await abortable(j.G, j.c.signal); }
       settle(j, ok, val);
     } catch (r) { settle(j, false, r, true); }
     finally { release(j); }
@@ -319,7 +423,7 @@ function makeQueue([userFactory, helpers, webgpu, maxBytes, maxPixels, maxJobs, 
   function send(cur, j) {
     if (!cur.r() || !j.t || j.m || j.d || thread !== cur || running.get(j.i) !== j) return;
     try {
-      cur.w.postMessage({id: j.i, operation: j.o, input: j.x, options: j.p, ...(isBitmap(j.x) && {bitmap: true}), ...(j.v && {preview: true}), maxPixels, helpers, webgpu, lane: j.L, alone: j.A}, [...transfers([j.x, j.p])]);
+      cur.w.postMessage({id: j.i, operation: j.o, input: j.x, options: j.p, ...(isBitmap(j.x) && {bitmap: true}), ...(j.v && {preview: true}), ...(j.F && {frames: true}), maxPixels, helpers, webgpu, lane: j.L, alone: j.A}, [...transfers([j.x, j.p])]);
       j.m = true; j.x = j.p = null;
     } catch (r) { try { complete(j, false, r); } finally { stopThread(); } }
   }
@@ -377,9 +481,11 @@ function makeQueue([userFactory, helpers, webgpu, maxBytes, maxPixels, maxJobs, 
         if (!j) return;
         if (caps.expand && 'inputBytes' in data) return caps.expand(j, data, maxBytes, () => retained, n => { retained += n; }, r => crash(cur, r), m => w.postMessage(m));
         if ('progress' in data) return progress(j, data.progress);
+        if ('frame' in data) { frame(j, data.frame, data.frameIndex, () => { if (thread === cur && running.get(j.i) === j && !j.d) w.postMessage({id: j.i, frameAck: data.frameSequence}); }); return; }
         if (replies && 'preview' in data) {
           return replies.handle(j, data, r => cancel(j, r), () => { if (thread === cur && running.get(j.i) === j && !j.d) w.postMessage({id: j.i, previewAck: data.previewSequence}); });
         }
+        if (data.ok === true || data.ok === false) deviceHeld(data.device === true);
         if (data.ok === true) {
           const ok = !checkResult || checkResult(data.value, j.o);
           complete(j, ok, ok ? data.value : workErr("worker result: invalid"));
@@ -427,24 +533,25 @@ function makeQueue([userFactory, helpers, webgpu, maxBytes, maxPixels, maxJobs, 
     let fields;
     try { fields = record(options); }
     catch (r) { throw !r?.code || r.code === 'JXL_INPUT' ? optErr("options: plain data fields") : r; }
-    const {signal, onProgress, onPreview, ...params} = Object.fromEntries(fields.map(([k, d]) => [k, d.value]));
-    if (signal !== undefined && (!signal || !isFn(signal.addEventListener) || !isFn(signal.removeEventListener) || typeof signal.aborted !== 'boolean'))
-      throw optErr("signal: AbortSignal");
+    const {signal, onProgress, onPreview, onFrame, ...params} = Object.fromEntries(fields.map(([k, d]) => [k, d.value]));
+    if (admitSignal(signal) && !isFn(signal.removeEventListener)) throw optErr("signal: AbortSignal");
     if (onProgress !== undefined && !isFn(onProgress)) throw optErr("onProgress: function");
     if (onPreview !== undefined && !isFn(onPreview)) throw optErr("onPreview: function");
-    if (signal?.aborted) throw aborted(signal);
+    if (onFrame !== undefined && !isFn(onFrame)) throw optErr("onFrame: function");
+    check(signal);
     if (queue.length + running.size + held.size >= maxJobs) throw memErr("maxPendingJobs: queue full");
     const optPlans = new Map();
     let optBytes;
     try { optBytes = measure(params, Number.MAX_SAFE_INTEGER, optPlans); }
-    catch (r) { throw r?.code === 'JXL_INPUT' ? optErr("callbacks: onProgress|onPreview") : r; }
+    catch (r) { throw r?.code === 'JXL_INPUT' ? optErr("callbacks: onProgress|onPreview|onFrame") : r; }
     overBytes(inBytes + optBytes, maxBytes, retained);
-    return [signal, onProgress, onPreview, params, optBytes, optPlans];
+    return [signal, onProgress, onPreview, params, optBytes, optPlans, onFrame];
   }
 
   function submit(op, input, options = {}, acquire = null, area = 0) {
     try {
-      const [signal, onProgress, onPreview, params, optBytes, optPlans] = admit(options);
+      const [signal, onProgress, onPreview, params, optBytes, optPlans, onFrame] = admit(options);
+      if (onFrame !== undefined && op !== 'decode') throw optErr("onFrame: decode only");
       if (onPreview !== undefined && !replies?.ops.has(op)) throw optErr("onPreview: unsupported operation");
       spec.admitInput?.(op, input);
       const inPlans = new Map(), bytes = measure(input, maxPixels, inPlans) + optBytes;
@@ -453,7 +560,7 @@ function makeQueue([userFactory, helpers, webgpu, maxBytes, maxPixels, maxJobs, 
       const moved = new Map(), ownIn = snapshot(input, inPlans, undefined, moved), ownOpt = snapshot(params, optPlans, undefined, moved);
       return new Promise((resolve, reject) => {
         const px = lanes && op === 'encode' && ArrayBuffer.isView(ownIn?.data) ? ownIn.width * ownIn.height : 0;
-        const j = {i: ++nextId, o: op, x: ownIn, p: ownOpt, b: bytes, n: px, a: px || area, s: signal, g: onProgress, v: onPreview, y: resolve, r: reject, d: false, l: false, u: -1, c: new AbortController()};
+        const j = {i: ++nextId, o: op, x: ownIn, p: ownOpt, b: bytes, n: px, a: px || area, s: signal, g: onProgress, v: onPreview, F: onFrame, y: resolve, r: reject, d: false, l: false, u: -1, c: new AbortController()};
         j.h = () => cancel(j, aborted(signal));
         retained += bytes; queue.push(j);
         acquire?.(j, () => { held.delete(j); if (j.d) release(j); else if (running.get(j.i) === j && !j.t) begin(j); }, inputBytes => {
@@ -500,6 +607,7 @@ function makeQueue([userFactory, helpers, webgpu, maxBytes, maxPixels, maxJobs, 
     close() {
       if (closing) return closing;
       closed = true; clearTimeout(idleTimer);
+      if (watching) { watching = false; document.removeEventListener('visibilitychange', onVisibility); }
       const reason = closedErr(), taking = [...queue, ...running.values(), ...held].map(j => j.q).filter(Boolean);
       for (const j of [...queue]) cancel(j, reason, false);
       for (const j of [...running.values()]) cancel(j, reason, false);
@@ -545,4 +653,3 @@ export function queueDoor(spec, caps = {}) {
     supported: f => checkSupported(f, caps.gpu, true),
   });
 }
-

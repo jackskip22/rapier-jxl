@@ -67,10 +67,10 @@ function geometryWindow(bytes, previous) {
       if (!state.width || !state.height) throw fail('JXL_JPEG', 'JPEG deferred height: use host pixels');
     }
     if (marker === 225 && state.orientation === null && end - body >= 6 &&
-        [69,120,105,102,0].every((value, i) => byte(body + i) === value))
+        [69,120,105,102,0,0].every((value, i) => byte(body + i) === value))
       state.orientation = exifOrientation(window, body + 6 - start, end - start, (at, big) => {
         state.orientationAt = start + at; state.orientationBig = big;
-      });
+      }) ?? 1;
     state.at = end;
     if (marker === 218) state.phase = 'entropy';
   }

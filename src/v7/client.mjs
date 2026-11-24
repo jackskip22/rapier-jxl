@@ -1,12 +1,13 @@
 
 import {hostPendingBytes, SNAPSHOTS, withCost, record, dimensions, measure, snapshot} from './ownership.mjs';
-import {fail as error, declared, callers, isCaller, PIXELS, abortError, progressOf, abortable} from './primitives.mjs';
+import {fail as error, declared, callers, isCaller, PIXELS, abortError, progressOf, abortable, snapshotOptions} from './primitives.mjs';
 import {createTransport, REPLACED} from './transport.mjs';
 import {elsewhere, program, relocatable} from './worker-start.mjs';
 import {admitFrames} from './surface.mjs';
 const DEFAULT_JOBS = 32;
 const HELPER_BYTES = 46137344, PIXEL_BYTES = 56;
 const IDLE = 60000;
+const IDLE_DEVICE = 300000;
 
 function admittedFrames(input, plans) {
   const fields = value => plans.get(value)?.fields ?? [];
@@ -87,6 +88,7 @@ import {helperReservation} from './helper-reservation.mjs';
 
 export function createCodec(config = {}, spec, replies) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) throw error('JXL_OPTIONS', "config: object");
+  config = snapshotOptions(config, 'config', [], true);
   for (const key of Object.keys(config)) if (!['workerFactory', 'workerStartupTimeout', 'maxPendingBytes', 'maxPixels', 'maxPendingJobs', 'helpers', 'webgpu'].includes(key))
     throw error('JXL_OPTIONS', `unknown option: ${key}`);
   if (config.workerFactory !== undefined && typeof config.workerFactory !== 'function') throw error('JXL_OPTIONS', "workerFactory: function");
@@ -105,7 +107,7 @@ export function createCodec(config = {}, spec, replies) {
   if (!spec.runtime && !config.workerFactory && typeof Worker !== 'function') throw error('JXL_WORKER', NO_WORKER);
   const factory = config.workerFactory || (!spec.runtime || typeof document !== 'undefined' && typeof Worker === 'function' ? () => browserWorker(spec) : null);
   let closed = false, nextId = 0, retainedBytes = 0, here = null, wide = null, scheduled = false, stopping = null, transport = null, closing = null, runtimeLoaded = false;
-  let idleTimer, preparing = 0, retiring = null;
+  let idleTimer, preparing = 0, retiring = null, deviceWorker = false;
   const queue = [], running = new Map(), held = new Set(), preparations = new Set();
   const runningBytes = () => [...running.values()].reduce((sum, job) => sum + job.bytes, 0);
   function lane(job) {
@@ -120,9 +122,9 @@ export function createCodec(config = {}, spec, replies) {
 
   const widens = job => {
     if (!helpers || job.operation === 'fit' || job.operation === 'variants') return true;
-    const {effort = spec.defaultEffort ?? 7, fidelity} = job.operation === 'encode' && job.options || {};
-    const exact = fidelity === 'exact' || (fidelity !== null && typeof fidelity === 'object' && fidelity.quality === 100);
-    return job.operation === 'encode' && job.area >= 500000 && effort >= 7 && !exact;
+    const {effort = spec.defaultEffort ?? 7} = job.operation === 'encode' && job.options || {};
+    if (effort === 10) return job.operation === 'encode';
+    return job.operation === 'encode' && job.area >= 500000 && effort >= 7;
   };
   function schedule() {
     if (scheduled || closed || stopping || !queue.length || lane(queue[0]) < 0) return;
@@ -143,6 +145,7 @@ export function createCodec(config = {}, spec, replies) {
     retainedBytes -= job.bytes;
     job.input = job.options = null;
     if (job.onPreview) { replies.clear(job); job.onPreview = null; }
+    job.onFrame = job.framing = null;
     running.delete(job.id);
     if (here === job) here = null;
     if (wide === job) wide = null;
@@ -152,11 +155,11 @@ export function createCodec(config = {}, spec, replies) {
   const idle = () => !closed && !stopping && !retiring && !preparing && !queue.length && !running.size && !held.size;
   function rest() {
     clearTimeout(idleTimer);
-    if (factory ? transport : owner && runtimeLoaded) (idleTimer = setTimeout(retire, IDLE)).unref?.();
+    if (factory ? transport : owner && runtimeLoaded) (idleTimer = setTimeout(retire, !factory || !deviceWorker ? IDLE : hidden() ? 0 : IDLE_DEVICE)).unref?.();
   }
   function retire() {
     if (!idle()) return;
-    if (factory) transport.stop();
+    if (factory) { deviceWorker = false; transport.stop(); }
     else retiring = Promise.resolve(releaseHelpers()).finally(() => { retiring = null; schedule(); });
   }
   function settle(job, ok, value, caller = false) {
@@ -202,16 +205,29 @@ export function createCodec(config = {}, spec, replies) {
     try { return job.observing = Promise.resolve(observer?.(record)).catch(reason => { cancel(job, reason); }); }
     catch (reason) { cancel(job, reason); }
   }
+  function frame(job, value, index, ack) {
+    if (job.settled || !job.onFrame) return;
+    job.framing = Promise.resolve(job.framing).then(async () => { if (job.settled) return; await job.onFrame(value, index); ack?.(); }).catch(reason => { cancel(job, reason); });
+  }
   async function complete(job, ok, value) {
     if (job.finished) return;
     job.finished = true;
     try {
-      if (ok) { progress(job, 1); await job.report?.finish(); await abortable(job.observing, job.controller.signal); }
+      if (ok) { progress(job, 1); await job.report?.finish(); await abortable(job.observing, job.controller.signal); await abortable(job.framing, job.controller.signal); }
       settle(job, ok, value);
     } catch (reason) { settle(job, false, reason, true); }
     finally { release(job); }
   }
-  const host = {factory, module: spec.module, file: (() => { try { return spec.url?.().pathname.split('/').pop(); } catch { return undefined; } })(), maxPixels, helpers, retainInput, webgpu, workerStartupTimeout, complete, progress, preview, replyPreview: replies?.reply, schedule, running,
+  const hidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
+  const onVisibility = () => { if (hidden() && deviceWorker && idle()) { clearTimeout(idleTimer); retire(); } };
+  let watching = false;
+  const deviceHeld = on => {
+    deviceWorker = on;
+    if (on && !watching && factory && typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      watching = true; document.addEventListener('visibilitychange', onVisibility);
+    }
+  };
+  const host = {frame, deviceHeld, factory, module: spec.module, file: (() => { try { return spec.url?.().pathname.split('/').pop(); } catch { return undefined; } })(), maxPixels, helpers, retainInput, webgpu, workerStartupTimeout, complete, progress, preview, replyPreview: replies?.reply, schedule, running,
     get stopping() { return stopping; }, set stopping(value) { stopping = value; }};
   function pump() {
     while (!closed && !stopping && queue.length) {
@@ -255,7 +271,7 @@ export function createCodec(config = {}, spec, replies) {
         transport.send(current, job);
       } catch (reason) { transport.stop(); complete(job, false, reason); }
     } else {
-      Promise.resolve(retiring).then(() => spec.runtime()).then(({run}) => { runtimeLoaded = true; return run(job.operation, job.input, job.options, {signal: job.controller.signal, onProgress: fraction => progress(job, fraction), ...(job.onPreview && {onPreview: record => preview(job, record)}), maxPixels, retainInput: bytes => retainInput(job, bytes), helpers, webgpu, owner, lane: job.lane, alone: job.alone}); })
+      Promise.resolve(retiring).then(() => spec.runtime()).then(({run}) => { runtimeLoaded = true; return run(job.operation, job.input, job.options, {signal: job.controller.signal, onProgress: fraction => progress(job, fraction), ...(job.onFrame && {onFrame: (value, index) => job.onFrame(value, index)}), ...(job.onPreview && {onPreview: record => preview(job, record)}), maxPixels, retainInput: bytes => retainInput(job, bytes), helpers, webgpu, owner, lane: job.lane, alone: job.alone}); })
         .then(value => complete(job, true, value), reason => complete(job, false, coded(reason, job)));
     }
   }
@@ -266,22 +282,24 @@ export function createCodec(config = {}, spec, replies) {
     try { fields = record(options); }
     catch (reason) { throw !reason?.code || reason.code === 'JXL_INPUT' ? error('JXL_OPTIONS', "options: plain data fields") : reason; }
     if (Array.isArray(options)) throw error('JXL_OPTIONS', "options: object");
-    const {signal, onProgress, onPreview, ...parameters} = Object.fromEntries(fields.map(([key, descriptor]) => [key, descriptor.value]));
+    const {signal, onProgress, onPreview, onFrame, ...parameters} = Object.fromEntries(fields.map(([key, descriptor]) => [key, descriptor.value]));
     if (signal !== undefined && (!signal || typeof signal.addEventListener !== 'function' || typeof signal.removeEventListener !== 'function' || typeof signal.aborted !== 'boolean')) throw error('JXL_OPTIONS', "signal: AbortSignal");
     if (onProgress !== undefined && typeof onProgress !== 'function') throw error('JXL_OPTIONS', "onProgress: function");
     if (onPreview !== undefined && typeof onPreview !== 'function') throw error('JXL_OPTIONS', "onPreview: function");
+    if (onFrame !== undefined && typeof onFrame !== 'function') throw error('JXL_OPTIONS', "onFrame: function");
     if (signal?.aborted) throw aborted(signal);
     if (queue.length + running.size + held.size >= maxPendingJobs) throw error('JXL_MEMORY', "maxPendingJobs: queue full");
     const optionPlans = new Map();
     let optionBytes;
     try { optionBytes = measure(parameters, Number.MAX_SAFE_INTEGER, optionPlans); }
-    catch (reason) { throw reason?.code === 'JXL_INPUT' ? error('JXL_OPTIONS', "callbacks: onProgress|onPreview") : reason; }
+    catch (reason) { throw reason?.code === 'JXL_INPUT' ? error('JXL_OPTIONS', "callbacks: onProgress|onPreview|onFrame") : reason; }
     if (inputBytes + optionBytes > maxPendingBytes - retainedBytes) throw error('JXL_MEMORY', `maxPendingBytes ${maxPendingBytes}: needs ${inputBytes + optionBytes} B`);
-    return {signal, onProgress, onPreview, parameters, optionBytes, optionPlans};
+    return {signal, onProgress, onPreview, onFrame, parameters, optionBytes, optionPlans};
   }
   function submit(operation, input, options = {}, acquire = null, acquiredArea = 0) {
     try {
-      const {signal, onProgress, onPreview, parameters, optionBytes, optionPlans} = admit(options);
+      const {signal, onProgress, onPreview, onFrame, parameters, optionBytes, optionPlans} = admit(options);
+      if (onFrame !== undefined && operation !== 'decode') throw error('JXL_OPTIONS', "onFrame: decode only");
       if (onPreview !== undefined && (!replies || !['encode', 'capture', 'fit', 'variants'].includes(operation))) throw error('JXL_OPTIONS', "onPreview: unsupported operation");
       spec.admitInput?.(operation, input);
       const inputPlans = new Map(), bytes = measure(input, maxPixels, inputPlans) + optionBytes;
@@ -291,7 +309,7 @@ export function createCodec(config = {}, spec, replies) {
       return new Promise((resolve, reject) => {
         const pixels = operation === 'encode' && ArrayBuffer.isView(ownedInput?.data) ? ownedInput.width * ownedInput.height : 0;
         const area = pixels || (operation === 'encode' ? acquiredArea || (SNAPSHOTS.has(input) ? SNAPSHOTS.get(input) / 4 : 0) : 0);
-        const job = {id: ++nextId, operation, input: ownedInput, options: ownedOptions, bytes, pixels, area, signal, onProgress, onPreview, resolve, reject, settled: false, released: false, progress: -1, controller: new AbortController()};
+        const job = {id: ++nextId, operation, input: ownedInput, options: ownedOptions, bytes, pixels, area, signal, onProgress, onPreview, onFrame, resolve, reject, settled: false, released: false, progress: -1, controller: new AbortController()};
         job.abort = () => cancel(job, aborted(signal));
         retainedBytes += bytes;
         queue.push(job);
@@ -349,6 +367,7 @@ export function createCodec(config = {}, spec, replies) {
     if (closing) return closing;
     closed = true;
     clearTimeout(idleTimer);
+    if (watching) { watching = false; document.removeEventListener('visibilitychange', onVisibility); }
     const reason = error('JXL_CLOSED', "closed");
     const taking = [...queue, ...running.values(), ...held].map(job => job.acquiring).filter(Boolean);
     for (const job of [...queue]) cancel(job, reason, false);

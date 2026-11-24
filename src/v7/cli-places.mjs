@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
-import {readFile, mkdir, rm, readdir, cp, mkdtemp, rmdir, stat} from 'node:fs/promises';
+import {readFile, mkdir, rm, readdir, cp, mkdtemp, rmdir, stat, lstat, realpath, access} from 'node:fs/promises';
+import {constants} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {dirname, isAbsolute, join, relative, sep} from 'node:path';
+import {dirname, isAbsolute, join, relative, resolve, sep, delimiter} from 'node:path';
 import {createHash} from 'node:crypto';
 import {pathToFileURL, fileURLToPath} from 'node:url';
-import {atomicWrite, insideProject, readManifest} from './project-files.mjs';
+import {atomicWrite, insideProject, readManifest, readIfAny, refuseReadOnly, refuseLinks} from './project-files.mjs';
+import {writeProjectEdits, removeProjectEdits} from './project-edits.mjs';
 import {COMMAND} from './package-name.mjs';
 import {cliError as fail, cliArgs} from './cli-error.mjs';
 
@@ -15,15 +17,120 @@ function matchesDigest(bytes, digest) {
   if (bytes.includes(0)) return false;
   return sha(Buffer.from(bytes.toString('utf8').replace(/\r\n/g, '\n'), 'utf8')) === digest;
 }
-const read = path => readFile(path).catch(error => { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null; throw error; });
+const read = path => readIfAny(path);
 const present = async path => (await stat(path).catch(() => null)) !== null;
 const posix = path => path.split(sep).join('/');
 const setup = (message, fix) => fail('JXL_SETUP', message, fix);
 
-async function examples() {
+async function examples(place = 'android') {
   for (const url of [new URL('../examples/', import.meta.url), new URL('./examples/', import.meta.url)])
-    if (await present(join(fileURLToPath(url), 'android'))) return fileURLToPath(url);
+    if (await present(join(fileURLToPath(url), place))) return fileURLToPath(url);
   throw setup('package: incomplete', `reinstall: ${COMMAND}`);
+}
+
+const WORDPRESS_HELP = `Usage: ${COMMAND} add wordpress [--path <dir>] [--dry-run] [--json]
+       ${COMMAND} remove wordpress [--path <dir>] [--dry-run] [--json]
+
+Run in the WordPress folder with wp-config.php, or name it with --path.
+Copy the packaged plug-in to wp-content/plugins/jpegxl. A rerun refuses files you edited after installation.
+remove restores the original files and permissions. Local extras stay as they are.
+--dry-run lists the copies without writing. Activate "JPEG XL Images" in Plugins afterward.`;
+
+async function wordpressCli(cwd) {
+  const windows = process.platform === 'win32';
+  const suffixes = windows ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';') : [''];
+  for (const dir of process.env.PATH?.split(delimiter) ?? []) for (const suffix of suffixes) {
+    const path = resolve(cwd, dir.replace(/^"(.*)"$/, '$1'), 'wp' + suffix);
+    try {
+      if ((await stat(path)).isFile()) {
+        await access(path, windows ? constants.F_OK : constants.X_OK);
+        return true;
+      }
+    } catch {}
+  }
+  return false;
+}
+
+function wordpressFlags(verb, args) {
+  args = cliArgs(args);
+  if (args.length === 1 && ['--help', '-h'].includes(args[0])) return {help: true};
+  let path, dryRun = false, json = false;
+  const fix = `run: npx ${COMMAND} ${verb} wordpress --help`;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--dry-run') dryRun = true;
+    else if (arg === '--json') json = true;
+    else if (arg === '--path' && path === undefined) {
+      path = args[++i];
+      if (!path || path.startsWith('-') || path.includes('\0')) throw fail('JXL_OPTIONS', '--path: folder required', fix);
+    } else throw fail('JXL_OPTIONS', `${verb} wordpress: unknown or repeated option ${arg}`, fix);
+  }
+  return {path, dryRun, json};
+}
+
+async function wordpressFiles() {
+  const source = join(await examples('wordpress'), 'wordpress'), files = new Map();
+  const collect = async (dir, prefix = '') => {
+    const entries = (await readdir(dir, {withFileTypes: true})).sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      const name = prefix + entry.name, from = join(dir, entry.name);
+      if (entry.isDirectory()) await collect(from, name + '/');
+      else if (entry.isFile()) files.set('wp-content/plugins/jpegxl/' + name, await readFile(from));
+      else throw setup(`WordPress package: unsupported file ${name}`, `reinstall: ${COMMAND}`);
+    }
+  };
+  await collect(source);
+  if (!files.has('wp-content/plugins/jpegxl/rapier-jxl.php')) throw setup('WordPress package: rapier-jxl.php missing', `reinstall: ${COMMAND}`);
+  return files;
+}
+
+export async function runAddWordpress(args, {cwd, version, stdout}) {
+  const given = wordpressFlags('add', args);
+  if (given.help) { stdout(WORDPRESS_HELP); return; }
+  const {path, dryRun, json} = given, folder = resolve(cwd, path ?? '.');
+  let config;
+  try { config = await stat(join(folder, 'wp-config.php')); }
+  catch (error) { if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error; }
+  if (!config?.isFile()) throw setup('WordPress folder: need wp-config.php', `run: npx ${COMMAND} add wordpress --path <WordPress folder>`);
+  const root = await realpath(folder), files = await wordpressFiles();
+  await refuseLinks(root, ['wp-config.php'], setup);
+  const targets = new Map([['.', true]]), existing = new Set();
+  for (const name of files.keys()) {
+    const parts = name.split('/');
+    for (let i = 1; i < parts.length; i++) targets.set(parts.slice(0, i).join('/'), true);
+    targets.set(name, false);
+  }
+  for (const [name, directory] of targets) {
+    const to = join(root, name);
+    let info;
+    try { info = await lstat(to); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (!info) continue;
+    if (info.isSymbolicLink() || (directory ? !info.isDirectory() : !info.isFile()))
+      throw setup(`${name}: need a plain ${directory ? 'folder' : 'file'}`, 'replace the link or conflicting path, then run add again');
+    if (!directory) await refuseReadOnly(to, name);
+    existing.add(name);
+  }
+  const writable = new Set();
+  for (const [name, directory] of targets) if (name !== '.' && (!directory || !existing.has(name))) writable.add(dirname(name));
+  for (const name of writable) if (existing.has(name)) await refuseReadOnly(join(root, name), name);
+  const names = [...files.keys()];
+  await insideProject(root, names, setup);
+  const changes = names.map(file => ({file, action: existing.has(file) ? 'updated' : 'created'}));
+  const next = [`Activate "JPEG XL Images" in Plugins${await wordpressCli(cwd) ? ' or run wp plugin activate jpegxl from the WordPress folder' : ''}.`];
+  await writeProjectEdits(root, 'wordpress', version, files, {dryRun, allowedFiles: names});
+  if (json) { stdout(JSON.stringify({type: 'add', place: 'wordpress', dryRun, changes, next})); return; }
+  if (dryRun) for (const file of names) stdout(`would copy examples/wordpress/${file.slice('wp-content/plugins/jpegxl/'.length)} -> ${file}`);
+  else stdout(next[0]);
+}
+
+export async function runRemoveWordpress(args, {cwd, stdout}) {
+  const given = wordpressFlags('remove', args);
+  if (given.help) { stdout(WORDPRESS_HELP); return; }
+  const {path, dryRun, json} = given, root = await realpath(resolve(cwd, path ?? '.'));
+  const files = await wordpressFiles();
+  await removeProjectEdits('wordpress', [...dryRun ? ['--dry-run'] : [], ...json ? ['--json'] : []],
+    {cwd: root, stdout, allowedFiles: [...files.keys()]});
 }
 
 const SOURCES = {
@@ -157,7 +264,7 @@ const PLACES = {
       return out;
     },
     config: 'pubspec.yaml',
-    next: () => ['the web view serves its page on 127.0.0.1: Android needs android.permission.INTERNET and a network security config that allows cleartext to 127.0.0.1 only; iOS needs NSAppTransportSecurity with NSAllowsLocalNetworking; macOS needs the com.apple.security.network.server and network.client entitlements (examples/flutter/ci/platform.sh in the package applies all three)',
+    next: () => ['the web view serves its page on 127.0.0.1: Android needs android.permission.INTERNET and a network security config that allows cleartext to 127.0.0.1 only; iOS needs NSAppTransportSecurity with NSAllowsLocalNetworking; macOS needs the com.apple.security.network.server and network.client entitlements',
       "flutter pub get; then import 'package:rapier_jxl/rapier_jxl.dart'; and call await JXLCodec().encode(photoBytes)"]
   },
   expo: {
@@ -195,7 +302,8 @@ const PLACES = {
     },
     async next({base}, _, cwd) {
       const manifest = (await readManifest(cwd, setup)).manifest, deps = {...manifest.dependencies, ...manifest.devDependencies};
-      const major = deps['@capacitor/core'].match(/\d+/)?.[0];
+      const coreVer = deps['@capacitor/core'];
+      const major = typeof coreVer === 'string' ? coreVer.match(/\d+/)?.[0] : undefined;
       return [...deps['@capacitor/filesystem'] ? [] : [`npm install @capacitor/filesystem${major ? '@' + major : ''}`],
         `in a file beside the rapier-jxl folder: import {encode} from './rapier-jxl/upload.browser.mjs' and {saveJxl} from './rapier-jxl/save.mjs'; then saveJxl(new Blob([(await encode(photo)).bytes]), 'photo.jxl') writes the file and returns its uri`,
         'npx cap sync'];
@@ -317,6 +425,7 @@ export async function runAddPlace(place, args, {cwd, version, stdout, packageDir
     if (!await present(join(cwd, dir))) dirs.add(posix(dir));
   const ordered = [[recordPath, Buffer.from(JSON.stringify({place, version, files, dirs: [...dirs].sort(), ...config && {config}}, null, 2) + '\n')], ...writes];
   const lands = await insideProject(cwd, ordered.map(([path]) => path), setup);
+  for (const [i, [path]] of ordered.entries()) await refuseReadOnly(lands[i], path);
   if (!dryRun) for (const [i, [, bytes]] of ordered.entries()) await atomicWrite(lands[i], bytes);
   next.push(...await spec.next(found, root, cwd));
   if (json) { stdout(JSON.stringify({type: 'add', place, dryRun, changes, next})); return; }

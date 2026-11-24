@@ -5,7 +5,7 @@ import type {ColorEncoding, ICCCompression} from './icc.mjs';
 export interface ContainerBounds {
   /** Optional positive safe-integer budget for complete input and output. Defaults to available memory. */
   maxBytes?: number;
-  /** Maximum accepted or authored container boxes; none by default (each box takes at least 8 bytes). */
+  /** Maximum accepted or authored container boxes. None by default (each box takes at least 8 bytes). */
   maxBoxes?: number;
 }
 export interface ContainerWriteOptions extends ContainerBounds {
@@ -51,7 +51,7 @@ export interface ReframeOptions extends ContainerWriteOptions {
   frameStarts?: readonly number[];
   /** Default false also keeps the fragment immediately before each frame start in order. Chrome 155 rejects
    * some animated version 1 files whose preceding fragment comes from its reorder buffer. True admits those
-   * format-valid layouts; libjxl 0.12.0 decodes them. Oxide 0.12.6 rejects all out-of-order delivery. */
+   * format-valid layouts. Libjxl 0.12.0 decodes them. Oxide 0.12.6 rejects all out-of-order delivery. */
   allowBufferedFrameEnds?: boolean;
   /** Prepared ICC payload bit length, when the automatic frame parser reads an ICC-bearing image. */
   iccBitLength?: number;
@@ -71,16 +71,16 @@ export interface FrameIndexEntry {
   framesToNext: IndexInteger;
 }
 export interface FrameIndex {
-  /** One tick lasts tickNumerator / tickDenominator seconds. Both are unsigned 32-bit; denominator is nonzero. */
+  /** One tick lasts tickNumerator / tickDenominator seconds. Both are unsigned 32-bit. Denominator is nonzero. */
   tickNumerator: number;
   tickDenominator: number;
-  /** First displayed frame is indexed; all entries must be independently decodable keyframes. The author
+  /** First displayed frame is indexed. All entries must be independently decodable keyframes. The author
    * supplies offsets and durations. Hidden compositing frames do not count toward framesToNext. */
   frames: readonly FrameIndexEntry[];
 }
 /** Serialize jxli contents with exact unsigned 63-bit integers. Unsafe Numbers must be supplied as bigint. */
 export function frameIndexPayload(index: FrameIndex, options?: ContainerBounds): Bytes;
-/** Replace/add the one jxli box, or remove it with null. Offset bounds are checked; keyframe independence
+/** Replace/add the one jxli box, or remove it with null. Offset bounds are checked. Keyframe independence
  * and correspondence with actual frame headers are the author's responsibility. */
 export function withFrameIndex(bytes: Uint8Array, index: FrameIndex | null, options?: ContainerWriteOptions): Bytes;
 /** Return owned index records, using bigint only when a decoded value exceeds Number.MAX_SAFE_INTEGER. */
@@ -95,7 +95,7 @@ export interface GainMapBundle {
   alternativeColorEncoding?: ColorEncoding;
   /** Exact serialized ColorEncoding bundle, as returned by readGainMap. Exclusive with structured encoding. */
   alternativeColorEncodingBytes?: Uint8Array;
-  /** Original alternate-rendering ICC profile; compressed with JPEG XL's ICC coding. */
+  /** Original alternate-rendering ICC profile. Compressed with JPEG XL's ICC coding. */
   alternativeICC?: Uint8Array;
   iccCompression?: ICCCompression;
   /** Already compressed alternate ICC, as returned by readGainMap. Exclusive with original ICC. */
@@ -108,8 +108,8 @@ export interface ReadGainMapBundle {
   alternativeColorEncodingBytes: Bytes;
   alternativeICCCompressed: Bytes;
 }
-/** Serialize the version 0 jhgm bundle from ISO/IEC 18181-2 edition 3 (2026). This writes supplied gain maps;
- * it does not derive gain-map samples, interpret ISO 21496-1 metadata or apply HDR rendering. */
+/** Serialize the version 0 jhgm bundle from ISO/IEC 18181-2 edition 3 (2026). This writes supplied gain maps.
+ * It does not derive gain-map samples, interpret ISO 21496-1 metadata or apply HDR rendering. */
 export function gainMapPayload(bundle: GainMapBundle, options?: ContainerWriteOptions): Bytes;
 /** Replace/add jhgm, or remove with null. Preserves the base codestream, metadata and JPEG reconstruction. */
 export function withGainMap(bytes: Uint8Array, bundle: GainMapBundle | null, options?: ContainerWriteOptions): Bytes;

@@ -82,3 +82,13 @@ export function relocatable(start, url, {fetcher, base = import.meta.url, versio
     terminate() { ended = true; held = null; return worker?.terminate(); },
   });
 }
+
+export async function importFile(url, {fetcher, base = import.meta.url, version} = {}) {
+  let href = url.href;
+  if (DEPS.test(url.pathname) && /[?&]v=/.test(base)) {
+    const folder = await packageFolder(url, {fetcher, base, ...version !== undefined && {version}});
+    if (!folder) throw Object.assign(new Error(VITE_EXCLUDE), {code: 'JXL_WORKER'});
+    href = new URL(url.pathname.slice(url.pathname.lastIndexOf('/') + 1), folder).href;
+  }
+  return import(/* webpackIgnore: true */ /* @vite-ignore */ href);
+}

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-import {outOfMemory} from './fault.mjs';
 import {BitWriter, packSigned, scaled} from './bits.mjs';
 import {fault} from './admit.mjs';
 import {buildCode, uintConfig, countToken, writeHistograms, writeHybrid} from './prefix.mjs';
@@ -71,7 +70,7 @@ export function* authoredPatchFrame(data, width, height, options, {reference = f
       } } finally { if (!step?.done) steps.return?.(); }
       if (step.value && (!best || step.value.length < best.length)) best = step.value;
     } catch (error) {
-      if (error.code !== 'JXL_SIZE' && !outOfMemory(error)) throw error;
+      if (error.code !== 'JXL_SIZE') throw error;
       failure = error;
     }
   }

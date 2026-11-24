@@ -30,6 +30,7 @@ export async function measuredFileSearch(target, probe, measure, {start = 90, pr
         const candidate = request.measure;
         candidate.scores ??= candidate.shown ? measure(candidate.shown, request.want) : null;
         if (!candidate.scores) break;
+        if (!Number.isFinite(candidate.scores.ssimulacra2)) throw fail('JXL_INPUT', 'score: finite number');
         preview?.(candidate.bytes, {width, height, measurements: photoOutputMeasurements(target, candidate.scores, domain)});
         reply = candidate.scores;
         if (preferredPhotoOutput(best, candidate, target)) best = candidate;

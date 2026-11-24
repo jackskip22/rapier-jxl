@@ -31,8 +31,12 @@ export function serveHelper(load, port = helperPort()) {
     } catch (error) { port.postMessage({id, error: described(error)}); }
     finally { releaseEntropy(); preview?.close(); previews?.delete(id); }
   }
+  const asked = new Map();
+  let asks = 0;
+  const relayOf = id => request => new Promise(resolve => { const ask = ++asks; asked.set(ask, resolve); port.postMessage({id, gpu: request, ask}); });
   const serve = data => {
     if (data?.previewAck !== undefined) { previews?.get(data.id)?.ack(data.previewAck); return; }
+    if (data?.gpuAnswer !== undefined) { const resolve = asked.get(data.ask); asked.delete(data.ask); resolve?.(data.gpuAnswer); return; }
     if (data?.kernels !== undefined && data.input === undefined && data.task === undefined) {
       next(() => { if (data.wasmModules) configureModules(data.wasmModules); ensureKernels(); });
       return;
@@ -47,10 +51,10 @@ export function serveHelper(load, port = helperPort()) {
       });
       return;
     }
-    next(({serveParallel}) => {
+    next(async ({serveParallel}) => {
       let reply;
       if (!serveParallel) { if (data?.task === undefined) return; reply = [{id: data?.id, error: described(Object.assign(new Error('helper-runtime:task'), {code: 'JXL_INTERNAL'}))}, []]; }
-      else try { reply = serveParallel(data); } catch (error) { reply = [{id: data?.id, error: described(error)}, []]; }
+      else try { reply = serveParallel(data, relayOf(data?.id)); if (reply?.then) reply = await reply; } catch (error) { reply = [{id: data?.id, error: described(error)}, []]; }
       if (reply) post(reply[0], reply[1], error => ({id: data?.id, error: described(error)}));
     });
   };

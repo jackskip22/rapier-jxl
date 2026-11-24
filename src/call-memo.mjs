@@ -19,7 +19,7 @@ export function* recall(data, key, steps) {
 export const spaceKey = colorSpace => colorSpace === undefined || typeof colorSpace === 'string' ? String(colorSpace) : null;
 
 export function* capture(request) {
-  const {data, width, height, colorSpace, effort, patchEffort, instant, ...rest} = request, space = spaceKey(colorSpace);
-  const key = space !== null && !Object.keys(rest).length ? `capture:${width}x${height}:${space}:${effort ?? ''}:${patchEffort ?? ''}:${instant ? 1 : 0}` : null;
+  const {data, width, height, colorSpace, effort, ...rest} = request, space = spaceKey(colorSpace);
+  const key = space !== null && !Object.keys(rest).length ? `capture:${width}x${height}:${space}:${effort ?? ''}` : null;
   return yield* recall(data, key, function* () { return yield {capture: request}; });
 }

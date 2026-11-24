@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-import {outOfMemory} from './fault.mjs';
 import {BitWriter} from './bits.mjs';
 import {writeModularFrameHeader, groupLayout, groupRect, assembleCodestream} from './frame.mjs';
 import {writeImageHeader} from './icc-write.mjs';
@@ -98,7 +97,7 @@ function* localScreenCandidate(rgba, width, height, shape, colorSpace,
 export function* localScreenSteps(rgba, width, height, shape, colorSpace, options) {
   try { return yield* localScreenCandidate(rgba, width, height, shape, colorSpace, options); }
   catch (error) {
-    if (error.code === 'JXL_SIZE' || outOfMemory(error)) return null;
+    if (error.code === 'JXL_SIZE') return null;
     throw error;
   }
 }

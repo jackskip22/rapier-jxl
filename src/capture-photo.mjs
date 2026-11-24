@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: MIT
 import {complete} from './bits.mjs';
+import {GRADIENT} from './screen-gradient-regions.mjs';
 import {captureSmoothRegions} from './capture-smooth.mjs';
 import {smoothQuantize} from './capture-smooth-quantize.mjs';
+import {pagePalette} from './capture-page-palette.mjs';
+import {gradientPageLayers} from './capture-gradient-page.mjs';
+const PAGE_PALETTES=new WeakMap();
 import {admitOptions, admitPixels, admitOutputSize, fault} from './admit.mjs';
-import {encodeCaptureSteps, encodeCaptureBytes, captureBandSteps, captureAnswerLevel, captureExact, CAPTURE_BASE, CAPTURE_FLOOR, CAPTURE_PATCHES, CAPTURE_TOOLS, CAPTURE_TRACE, CAPTURE_HELPERS, CAPTURE_GPU, DEFAULT_EFFORT} from './capture-codec.mjs';
+import {encodeCaptureSteps, encodeCaptureBytes, captureBandSteps, captureCompareLevel, captureExact, markCaptureExact, CAPTURE_LEVEL, CAPTURE_BASE, CAPTURE_FLOOR, CAPTURE_SMALL_FLOOR, CAPTURE_PATCHES, CAPTURE_TOOLS, CAPTURE_TRACE, CAPTURE_HELPERS, CAPTURE_GPU, DEFAULT_EFFORT} from './capture-codec.mjs';
 import {photoKernels, captureMergePhotoHints, captureBoxBound, captureFillUnder, captureTextDiff, captureUnionExact, captureProtectedBoxes} from './capture-kernels.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
 import {writeImage} from './photo-image-write.mjs';
@@ -11,7 +15,7 @@ import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {lowWholePhotoSteps} from './photo-low.mjs';
 import {flatSamples} from './screen-samples.mjs';
 import {viewPixels} from './screen-crop.mjs';
-import {screenPhotoRegions, screenPhotoTiles, photoCells, photoCellText} from './screen-photo-regions.mjs';
+import {screenPhotoRegions, screenPhotoTiles, drawnRegion, photoCells, photoCellText} from './screen-photo-regions.mjs';
 import {hiddenColor, paletteKind, flattenGutter} from './screen-photo-kernels.mjs';
 import {expandPhotoRegions} from './screen-photo-borders.mjs';
 import {photoMasks, releasePhotoMasks, fillHoles, maskComponents} from './screen-photo-mask.mjs';
@@ -40,9 +44,7 @@ function* within(steps,from,span){
     return step.value;
   }finally{steps.return?.();}
 }
-function drain(steps){
-  try{let step;while(!(step=steps.next()).done);return step.value;}finally{steps.return();}
-}
+
 const covers = (regions,width,height) => regions.length===1&&regions[0].width*regions[0].height>=WHOLE*width*height;
 const STRIPS = 8, dense = (bytes,pixels) => bytes*8>=pixels*6;
 function* stripBytes(data,width,height,options,from){
@@ -116,6 +118,7 @@ export function captureGraphicRegions(data,width,height,hints,exactRects=[],text
       }
       if(edgeText(data,width,height,r))continue;
     }
+    if(kind===0&&drawnRegion(data,width,r,cells??=photoCells(data,width,height)))continue;
     if(kind>=0)boxes.push({...r,palette:kind===1,parts:[r]});
   }
   for(let a=0;a<boxes.length;a++)for(let b=a+1;b<boxes.length;b++)if(meets(boxes[a],boxes[b])){
@@ -179,7 +182,7 @@ function trimToPhotograph(data,width,r,exactRects,cells){
   for(const c of cut)if(c.width>=32&&c.height>=32&&flatSamples(data,c.width,c.height,0,width,c.x,c.y)<128)return r;
   return {x:x0,y:y0,width:x1-x0,height:y1-y0};
 }
-export function capturePhotoRegions(data,width,height,hints=[],exactRects=[],textComplete=false){
+export function capturePhotoRegions(data,width,height,hints=[],exactRects=[],textComplete=false,gradient=false){
   const kept=[],cells=hints.length?photoCells(data,width,height):null,trimmed=hints.slice();
   for(let hi=0;hi<hints.length;hi++){
     let r=meet({x:0,y:0,width,height},hints[hi]);
@@ -189,13 +192,14 @@ export function capturePhotoRegions(data,width,height,hints=[],exactRects=[],tex
     const bars=share>=HINT||share>=0.1&&flat<96;
     if(!(bars||textComplete&&flat<192))continue;
     if((typeof __RAPIER_JXL_PAGE_RECTS__==='undefined'||__RAPIER_JXL_PAGE_RECTS__===true)&&textComplete){const t=trimToPhotograph(data,width,r,exactRects,cells);if(t!==r)r=trimmed[hi]=t;}
+    if(drawnRegion(data,width,r,cells))continue;
     if((typeof __RAPIER_JXL_PAGE_RECTS__==='undefined'||__RAPIER_JXL_PAGE_RECTS__===true)&&bars&&textComplete){
       const bare=screenPhotoTiles(data,width,height,r,exactRects,cells,false);
       if(!(bare>=HINT||bare>=0.1&&flat<96))r.rescued=true;
     }
     kept.push(r);
   }
-  const seeds=screenPhotoRegions(data,width,height,true,kept,cells);
+  const seeds=screenPhotoRegions(data,width,height,true,kept,cells,hints,gradient);
   if(!validPhotoRegions(data,width,height,seeds))return [];
   const expanded=expandPhotoRegions(data,width,height,seeds,true);
   if(!validPhotoRegions(data,width,height,expanded))return [];
@@ -266,7 +270,8 @@ function flattenGutterBlocks(rgba,w,h,exact){
   flattenGutter(rgba,w,h,exact,r,g,b);
 }
 export const regionFrameBytes=job=>photoFrameBytes(job);
-function photoFrameBytes({pixels,width,height,quality,areas,photoCrops,colorSpace,effort=7,placement,graphic,sections,exact,union}){
+function photoFrameBytes({pixels:given,source,stride,cropRect,width,height,quality,areas,photoCrops,colorSpace,effort=7,placement,graphic,sections,exact,union}){
+  const pixels=given??crop(source,stride,cropRect);
   if(exact)fillHoles(pixels,width,height,exact);
   if(union)flattenGutterBlocks(pixels,width,height,exact);
   if(graphic)return lossyModularFrame(pixels,width,height,quality,placement,sections);
@@ -285,14 +290,14 @@ function* photoBlockRegionSteps(job, photoBlocks, photoBlockEffort, readingInten
     check(signal);
     return photoAdmission.record(bytes, false);
   }
-  const {pixels,width,height,quality,areas,photoCrops,colorSpace,placement,exact,union} = job;
+  const {pixels:given,source,stride,cropRect,width,height,quality,areas,photoCrops,colorSpace,placement,exact,union} = job;
   const memoKey = pageData && regionMemo && job.photoCropsComplete !== false ? `${placement?.crop?.x},${placement?.crop?.y},${width}x${height}:${placement?.isLastFrame?1:0}:${placement?.mask?1:0}:${quality}:${areas?areas.map(a=>`${a.x},${a.y},${a.width},${a.height},${a.quality}`).join(';'):'-'}:${photoBlockEffort}:${writerEffort}:${readingIntent}:${readingLook}` : null;
   const memoed = memoKey ? regionMemo.get(memoKey) : null, hit = memoed?.data === pageData ? memoed : null;
   if (hit) {
     check(signal);
     return photoAdmission ? photoAdmission.record(hit.bytes, hit.passed, hit.scored) : hit.bytes;
   }
-  const reference = pixels.slice();
+  const pixels = given ?? crop(source, stride, cropRect), reference = pixels.slice();
   if (exact) fillHoles(pixels,width,height,exact);
   if (union) flattenGutterBlocks(pixels,width,height,exact);
   const rows = (top,count) => pixels.subarray(top*width*4,(top+count)*width*4);
@@ -319,7 +324,7 @@ function keepsPieces(kept,pieces,top=0){
   return true;
 }
 
-export const composeCapturePhoto=(...args)=>drain(composeCapturePhotoSteps(...args));
+export const composeCapturePhoto=(...args)=>complete(composeCapturePhotoSteps(...args));
 export function* composeCapturePhotoSteps(data,width,height,quality,colorSpace,regions,{signal,band,effort,baseEffort,baseMemo,regionMemo,tools,trace,asks={},exactRects=[],graphics=[],from=0,regionQuality,photos=[],unhintedBase=false,unionCap=UNION_CAP,photoBlocks=null,photoBlockEffort,readingIntent,readingLook,photoAdmission,reading,textComplete=false,[CAPTURE_PROTECTION]:protection}={}){
   if(regions.length&&!validPhotoRegions(data,width,height,regions)||!validPhotoRegions(data,width,height,[...regions,...graphics]))return null;
   check(signal);
@@ -429,15 +434,14 @@ export function* composeCapturePhotoSteps(data,width,height,quality,colorSpace,r
     if(reading.requirePieces&&!reading.exact){check(signal);return null;}
   }
   const masked=kept.some(k=>k.masked),alpha=band?band.shape.alpha:masked||!photoKernels().opaque(data,width,0,0,width,height);
-  const level={effort,[CAPTURE_TOOLS]:tools,[CAPTURE_TRACE]:trace,...asks};
+  const level={effort,[CAPTURE_TOOLS]:tools,[CAPTURE_TRACE]:trace,...asks,...captureCompareLevel(effort)};
   const span=(1-from)/2,top=band?.y??0,ends=!band||top+height===band.imageHeight;
   const cropSubjects=r=>{
     const hinted=photos.filter(p=>meets(p,r));
-    const covered=f=>hinted.length>1&&hinted.reduce((s,p)=>{const w=Math.min(f.x+f.width,p.x+p.width)-Math.max(f.x,p.x),h=Math.min(f.y+f.height,p.y+p.height)-Math.max(f.y,p.y);return s+(w>0&&h>0?w*h:0);},0)*2>=f.width*f.height;
+    const covered=f=>hinted.length>1&&hinted.reduce((s,p)=>{const m=meet(f,p);return s+(m.width>0&&m.height>0?m.width*m.height:0);},0)*2>=f.width*f.height;
     const inside=found.filter(f=>!((f.mergedHints&&hinted.length)||covered(f))&&f.x>=r.x&&f.y>=r.y&&f.x+f.width<=r.x+r.width&&f.y+f.height<=r.y+r.height);
     return [...(inside.length?inside:hinted.length?[]:[r]),...hinted].map(f=>{
-      const x=Math.max(f.x,r.x),y=Math.max(f.y,r.y);
-      return {source:f,crop:{x:x-r.x,y:y-r.y,width:Math.min(f.x+f.width,r.x+r.width)-x,height:Math.min(f.y+f.height,r.y+r.height)-y}};
+      const m=meet(f,r);return {source:f,crop:{...m,x:m.x-r.x,y:m.y-r.y}};
     });
   };
   const own=(subjects,offGrid=false,r)=>{
@@ -462,11 +466,11 @@ export function* composeCapturePhotoSteps(data,width,height,quality,colorSpace,r
     return least===most&&!multi?{quality:least,most,photoCrops}:{quality,areas,most,photoCrops};
   };
   const jobs=kept.map(({r,exact,masked,graphic,sections,union,offGrid},i)=>{
-    const pixels=crop(data,width,r),last=ends&&i+1===kept.length,subjects=cropSubjects(r);
+    const last=ends&&i+1===kept.length,subjects=cropSubjects(r);
     const modular=graphic&&r.palette;
     const placement={...(modular?{}:{isFirstFrame:false}),isLastFrame:last,saveAsReference:last?0:1,imageWidth:width,imageHeight:band?.imageHeight??height,crop:{...r,y:r.y+top},alphaChannel:alpha,mask:masked};
     const read=regionQuality?graphic?{quality:own(subjects,false,r).most}:own(subjects,!!offGrid,r):{quality};
-    return {pixels,width:r.width,height:r.height,quality:read.quality,...(read.areas&&{areas:read.areas}),
+    return {source:data,stride:width,cropRect:r,width:r.width,height:r.height,quality:read.quality,...(read.areas&&{areas:read.areas}),
       photoCrops:read.photoCrops??subjects.map(s=>s.crop),colorSpace,effort,placement,graphic:!!modular,...(modular&&!masked&&!alpha&&sections&&read.quality===quality&&{sections}),...(masked&&{exact}),...(union&&{union:true})};
   });
   const completeCrops=photoAdmission?jobs.map((j,i)=>j.photoCropsComplete=completePhotoCrops(photos,kept[i].r,width,band?.imageHeight??height,top)):null;
@@ -565,8 +569,9 @@ function layeredMask(data,width,height,exactRects,withoutText){
   return mask;
 }
 function* photoSteps(data,width,height,options,band,large=false,reading=options.captureReading){
-  const {colorSpace,quality,effort,tools,trace,asks,level,exactRects:rects}=admitted(data,width,height,options,large?BANDED_LIMITS:undefined),{signal,photoAdmission}=options;
-  const exactFile=(from,answer=false)=>within(band?captureBandSteps(data,width,height,{...band,...level,colorSpace,maxError:0,signal}):encodeCaptureSteps(data,width,height,{...level,...(answer&&captureAnswerLevel(effort,width*height)),colorSpace,maxError:0,signal}),from,1-from);
+  const {colorSpace,quality,effort,tools,trace,asks,level:admittedLevel,exactRects:rects}=admitted(data,width,height,options,large?BANDED_LIMITS:undefined),{signal,photoAdmission}=options;
+  const level=quality<100?{...admittedLevel,...captureCompareLevel(effort)}:admittedLevel;
+  const exactFile=(from,answer=false)=>within(band?captureBandSteps(data,width,height,{...band,...level,colorSpace,maxError:0,signal}):encodeCaptureSteps(data,width,height,{...level,...(answer&&{[CAPTURE_LEVEL]:undefined}),small:options.small,[CAPTURE_SMALL_FLOOR]:options[CAPTURE_SMALL_FLOOR],colorSpace,maxError:0,signal}),from,1-from);
   if(quality===100)return yield* exactFile(0);
   const top=band?.y??0,given=rects.filter(e=>e.edge!==true).map(e=>({...e,y:e.y-top})).filter(e=>e.y<height&&e.y+e.height>0);
   const derived=(typeof __RAPIER_JXL_PAGE_RECTS__==='undefined'||__RAPIER_JXL_PAGE_RECTS__===true)&&options.withoutText&&!rects.length&&!options.withoutText.rects?(yield* unit('text-boxes',()=>textBoxes(data,options.withoutText.data.subarray(top*width*4,(top+height)*width*4),width,height))):[];
@@ -583,7 +588,7 @@ function* photoSteps(data,width,height,options,band,large=false,reading=options.
   const asked=(typeof __RAPIER_JXL_PAGE_RECTS__==='undefined'||__RAPIER_JXL_PAGE_RECTS__===true)?options.photoRects??[]:[],photos=asked.length>MERGE_HINTS?captureMergePhotoHints(asked):asked,subjects=options.photoSubjects??(photos===asked?asked:photos);
   const photoRects=top?photos.map(e=>({...e,y:e.y-top})):photos,askedRects=photos===asked?photoRects:top?asked.map(e=>({...e,y:e.y-top})):asked;
   const photoSubjects=subjects===photos?photoRects:top?subjects.map(e=>({...e,y:e.y-top})):subjects;
-  let regions=options.regions??(yield* unit('photo-regions',()=>capturePhotoRegions(data,width,height,photoRects,exactRects,(typeof __RAPIER_JXL_PAGE_RECTS__==='undefined'||__RAPIER_JXL_PAGE_RECTS__===true)&&options.textComplete===true))),exact=null;
+  let regions=options.regions??(yield* unit('photo-regions',()=>capturePhotoRegions(data,width,height,photoRects,exactRects,(typeof __RAPIER_JXL_PAGE_RECTS__==='undefined'||__RAPIER_JXL_PAGE_RECTS__===true)&&options.textComplete===true,options[GRADIENT]===true))),exact=null;
   check(signal);
   const readQuality=options.regionQuality,high=options.readingIntent===undefined||options.readingIntent>=0.9;
   let tap=null;
@@ -671,8 +676,50 @@ function* photoSteps(data,width,height,options,band,large=false,reading=options.
       }
     }
   }
+  const gradientInstead=function*(incumbent){
+    if(band||large||colorSpace!=='srgb'||exactRects.length||photoRects.length||regions.length||graphics.length||withoutText||options.readingIntent===undefined||options.textComplete===true||reading||options[CAPTURE_PROTECTION])return incumbent;
+    const actualEffort=((UPLOAD?undefined:options.wholePhotoRoute)?.effort??options.photoBlockEffort??effort)??3;
+    const measured=actualEffort>=MEASURED_EFFORT;
+    const layered=yield* unit('gradient-page',()=>gradientPageLayers(data,width,height,options.readingIntent,actualEffort,tools,signal,{measured,libjxl:!UPLOAD,memo:UPLOAD?undefined:options.baseMemo}));
+    check(signal);
+    if(!layered||!(layered.bytes.length<incumbent.length))return incumbent;
+    if(!(actualEffort===1&&captureExact(incumbent))&&layered.bytes.length*4>=incumbent.length*3){
+      const quick=markCaptureExact((yield* within(encodeCaptureSteps(data,width,height,{...level,effort:1,colorSpace,maxError:0,signal}),0.9,0)).slice());
+      if(quick.length<=layered.bytes.length)return actualEffort===1?quick:captureExact(incumbent)?incumbent:(yield* exactFile(0.9));
+    }
+    return photoAdmission?photoAdmission.record(layered.bytes.slice(),true,[{metric:'ssimulacra2',score:layered.score,floor:layered.floor,domain:'encoder-reconstruction'}]):layered.bytes.slice();
+  };
+  if(effort>=3&&!band&&!large&&colorSpace==='srgb'&&!exactRects.length&&!photoRects.length&&!regions.length&&!graphics.length&&!withoutText&&options.readingIntent!==undefined&&options.textComplete!==true){
+    const measured=((UPLOAD?undefined:options.wholePhotoRoute)?.effort??options.photoBlockEffort??effort)>=MEASURED_EFFORT;
+    const memo=measured||width*height<=2.5e6?PAGE_PALETTES.get(data)??new Map():null,key=`${options.readingIntent}|${measured}|${effort}`;
+    if(memo){
+      PAGE_PALETTES.set(data,memo);
+      let made=memo.get(key);
+      if(made===undefined){
+        const paletted=yield* unit('page-palette',()=>pagePalette(data,width,height,options.readingIntent,signal,measured,!UPLOAD));
+        made=null;
+        if(paletted){
+          const bytes=(yield* within(encodeCaptureSteps(paletted.pixels,width,height,{...level,colorSpace,maxError:0,signal}),0,0.9)).slice();
+          if(effort<=3){
+            const exactBytes=(yield* exactFile(0.9)).slice();
+            made=exactBytes.length<=bytes.length?{exact:exactBytes}:{bytes,score:paletted.score,floor:paletted.floor};
+          }else{
+            const quick=(yield* within(encodeCaptureSteps(data,width,height,{...level,effort:3,colorSpace,maxError:0,signal}),0.9,0)).slice();
+            made=quick.length<=bytes.length?false:{bytes,score:paletted.score,floor:paletted.floor};
+          }
+        }
+        memo.set(key,made);
+      }
+      if(made===false)return yield* gradientInstead(yield* exactFile(0.9));
+      if(made?.exact)return yield* gradientInstead(markCaptureExact(made.exact.slice()));
+      if(made){
+        const palBytes=photoAdmission?photoAdmission.record(made.bytes.slice(),true,[{metric:'ssimulacra2',score:made.score,floor:made.floor,domain:'encoder-reconstruction'}]):made.bytes.slice();
+        return yield* gradientInstead(palBytes);
+      }
+    }
+  }
   if(graphics.length){
-    const covered=r=>graphics.reduce((s,g)=>{if(!g.palette)return s;const w=Math.min(r.x+r.width,g.x+g.width)-Math.max(r.x,g.x),h=Math.min(r.y+r.height,g.y+g.height)-Math.max(r.y,g.y);return s+(w>0&&h>0?w*h:0);},0)>=HINTED*r.width*r.height;
+    const covered=r=>graphics.reduce((s,g)=>{if(!g.palette)return s;const m=meet(r,g);return s+(m.width>0&&m.height>0?m.width*m.height:0);},0)>=HINTED*r.width*r.height;
     regions=regions.filter(r=>!covered(r));graphics=graphics.filter(g=>!regions.some(r=>meets(g,r)));
   }
   if((typeof __RAPIER_JXL_PAGE_RECTS__==='undefined'||__RAPIER_JXL_PAGE_RECTS__===true)&&!band&&exactRects.length&&(regions.length||graphics.length)&&(yield* unit('opaque',()=>photoKernels().opaque(data,width,0,0,width,height)))){
@@ -724,12 +771,12 @@ function* photoSteps(data,width,height,options,band,large=false,reading=options.
   const result=!mixed||exact&&(exact.length<=mixed.length||photoAdmission&&!photoAdmission.accepts(mixed))?yield* layeredInstead(exact??(yield* exactFile(at,!regions.length&&!graphics.length))):mixed;
   releasePhotoMasks(data);
   if(reading&&result===mixed)reading.exact&&=mixedReading.exact;
-  return result;
+  return yield* gradientInstead(result);
 }
 export const encodeCapturePhotoSteps=(data,width,height,options={})=>photoSteps(data,width,height,options);
-export const encodeCapturePhotoBytes=(data,width,height,options={})=>drain(photoSteps(data,width,height,options));
+export const encodeCapturePhotoBytes=(data,width,height,options={})=>complete(photoSteps(data,width,height,options));
 export const capturePatchedLargeSteps=(data,width,height,options={})=>photoSteps(data,width,height,options,undefined,true);
 export const capturePhotoBandSteps=(data,width,height,options)=>photoSteps(data,width,height,options,
   {y:options.y,imageHeight:options.imageHeight,shape:options.quality===100?options.shape:{...options.shape,colour:3}});
-export const capturePhotoBand=(data,width,height,options)=>drain(capturePhotoBandSteps(data,width,height,options));
+export const capturePhotoBand=(data,width,height,options)=>complete(capturePhotoBandSteps(data,width,height,options));
 

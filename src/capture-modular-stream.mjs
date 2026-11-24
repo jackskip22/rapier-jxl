@@ -3,9 +3,11 @@ import {BitWriter} from './bits.mjs';
 import {fault} from './fault.mjs';
 import {SCREEN_INTEGER_CONFIGS, screenDistanceMap} from './screen-codes.mjs';
 import {writeCaptureModularHeader} from './capture-headers.mjs';
-import {LZ77, split, writeTree, writeModularHeader as generalModular} from './modular.mjs';
+import {LZ77, intervals, writeTree, writeModularHeader as generalModular} from './modular.mjs';
+export {intervals};
 import {LOG_MANTISSA, captureCopies, captureKeyCounts, capturePieceCounts, capturePrices, captureTokens} from './capture-kernels.mjs';
-import {canonicalCodes, compactCode, hybridToken, prefixCodeBits, uintConfig, writeHistograms, writeUintConfig} from './prefix.mjs';
+import {canonicalCodes, compactCode, hybridToken, prefixCodeBits, uintConfig, writeHistograms, writeUintConfig, smallCoding} from './prefix.mjs';
+const smallOn = () => !(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && smallCoding();
 
 const writeModularHeader = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true ? writeCaptureModularHeader : generalModular;
 let L = {prices: 4};
@@ -15,16 +17,9 @@ export const setStreamProbe = p => { probe = p; };
 const timed = (stage, work) => typeof __RAPIER_JXL_PROBES__ !== 'undefined' || !probe ? work() : probe.timed(stage, work);
 
 export const upTo = n => Array.from({length: n}, (_, k) => k);
-export function intervals(property, cuts, child) {
-  const build = (lo, hi) => {
-    if (lo === hi) return child(lo);
-    const mid = (lo + hi) >> 1;
-    return split(property, cuts[mid], build(mid + 1, hi), build(lo, mid));
-  };
-  return build(0, cuts.length);
-}
 
-const SPATIAL = new Map();
+
+const SPATIAL = /* @__PURE__ */ new Map();
 export function spatialLookup(width) {
   let entry = SPATIAL.get(width);
   if (!entry) {
@@ -79,7 +74,24 @@ function countKeys(keys, histograms, field) {
   for (let h = 0; h < histograms.length; h++) if (starts[h + 1] > starts[h])
     histograms[h][field] = {values: values.subarray(starts[h], starts[h + 1]), counts: counts.subarray(starts[h], starts[h + 1])};
 }
-function mergeCounts(a, b) {
+export function sharedHistograms(models, contexts) {
+  const histograms = Array.from({length: contexts}, () => ({small: new Uint32Array(SMALL), large: NO_COUNTS, lengths: NO_COUNTS, literals: 0, copies: 0, constant: false}));
+  const keys = [];
+  for (const model of models) {
+    const counted = capturePieceCounts(model, SMALL, model.base);
+    for (let c = 0; c < model.classes; c++) {
+      const h = histograms[model.base + c], small = counted.counts.subarray(c * SMALL, (c + 1) * SMALL);
+      for (let v = 0; v < SMALL; v++) h.small[v] += small[v];
+      h.literals += counted.literals[c];
+    }
+    if (counted.larges.length) keys.push(Uint32Array.from(counted.larges));
+  }
+  const all = new Uint32Array(keys.reduce((n, k) => n + k.length, 0));
+  keys.reduce((at, k) => { all.set(k, at); return at + k.length; }, 0);
+  countKeys(all, histograms, 'large');
+  return histograms;
+}
+export function mergeCounts(a, b) {
   if (!b.values.length) return a;
   if (!a.values.length) return b;
   const values = [], counts = [];
@@ -135,7 +147,7 @@ export function countTokens(freqs, h, config, lengthConfig, at, top) {
   for (let i = 0; i < h.lengths.values.length; i++) add(lengthConfig, h.lengths.values[i], h.lengths.counts[i], at);
   return freqs;
 }
-function clusterHistograms(live, limit = Infinity) {
+export function clusterHistograms(live, limit = Infinity) {
   const n = live.length, freqs = live.map(h => countTokens(new Uint32Array(CLUSTER_TOKENS), h, CLUSTER_CONFIG, CLUSTER_CONFIG, 64, 63));
   const cost = freqs.map(clusterCost), alive = new Uint8Array(n).fill(1), parent = Int32Array.from({length: n}, (_, i) => i);
   const took = new Int32Array(n).fill(-1), near = new Int32Array(n).fill(-1), nearGain = new Float64Array(n), masks = freqs.map(f => {
@@ -216,43 +228,14 @@ export function writeChannels(writer, models, trace, ansTools = null, own = fals
   let live = histograms.filter(h => h.literals + h.copies);
   const index = new Int32Array(histograms.length);
   for (let i = 0, next = 0; i < histograms.length; i++) index[i] = histograms[i].literals + histograms[i].copies ? next++ : 0;
-  if (!(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && live.length > 1 && (live.length > 255 || models.some(model => model.kind === 'index' && !model.group))) {
+  const isStripProbe = own && !ansTools && models.length === 1 && models[0].height === 8;
+  const mustCluster = !(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && live.length > 1 && (live.length > 255 || models.some(model => model.kind === 'index' && !model.group));
+  if (mustCluster) {
     const {groups, of} = clusterHistograms(live, 255 - (distanceValues.length ? 1 : 0));
     for (let i = 0; i < histograms.length; i++) index[i] = of[index[i]];
     live = groups;
   }
   const token = [0, 0, 0], minSymbol = models.some(model => model.kind === 'index') && models[0].width <= 2048 ? 224 : 512;
-  const configs = live.map(h => {
-    const literals = valueCounts(h.small, h.large);
-    if (!h.literals) return {config: LITERAL_CONFIGS[0], top: 0};
-    let largest = 0, best, wide = false;
-    for (const v of literals.values) if (v > largest) largest = v;
-    const candidates = [];
-    for (const config of LITERAL_CONFIGS) {
-      if (distanceValues.length) { hybridToken(config, largest, token); if (token[0] >= minSymbol) continue; }
-      if (config.splitToken > largest) { if (wide) continue; wide = true; }
-      candidates.push(config);
-    }
-    const prices = capturePrices(candidates, literals);
-    for (let c = 0; c < candidates.length; c++) {
-      const config = candidates[c], option = {config, bits: prices[c * 2], top: prices[c * 2 + 1]};
-      if (!best || option.bits < best.bits) best = option;
-    }
-    return best;
-  });
-  let length = {config: LZ77.lengthConfig, bits: 0};
-  if (distanceValues.length) {
-    length = null;
-    const costs = new Float64Array(SCREEN_INTEGER_CONFIGS.length);
-    for (const h of live) if (h.copies) {
-      const prices = capturePrices(SCREEN_INTEGER_CONFIGS, h.lengths);
-      for (let c = 0; c < costs.length; c++) costs[c] += prices[c * 2];
-    }
-    for (let c = 0; c < costs.length; c++) if (!length || costs[c] < length.bits)
-      length = {config: SCREEN_INTEGER_CONFIGS[c], bits: costs[c]};
-  }
-  const codes = live.map((h, m) => sortedCode(countTokens(new Uint32Array(h.copies ? minSymbol + 1024 : configs[m].top + 1),
-    h, configs[m].config, length.config, minSymbol, Infinity)));
   if (typeof __RAPIER_JXL_PROBES__ === 'undefined' && probe?.timing()) probe.timing().pieces = (probe.timing().pieces || 0) + pieces;
   let distance, sCodes = null;
   if (distanceValues.length) timed('distance', () => {
@@ -268,46 +251,150 @@ export function writeChannels(writer, models, trace, ansTools = null, own = fals
       for (let c = 0; c < DISTANCE_CONFIGS.length; c++) ranked.push({config: DISTANCE_CONFIGS[c], kind, values, estimate: prices[c * 2]});
     }
     ranked.sort((a, b) => a.estimate - b.estimate);
-    for (const {config, kind, values} of ranked.slice(0, L.prices)) {
-      const bits = distancePrice(config, values);
+    const small = smallOn(), distLimit = !small ? L.prices : isStripProbe ? L.prices : Math.max(L.prices, pieces <= 65536 ? 8 : 0);
+    for (let r = 0; r < Math.min(ranked.length, distLimit); r++) {
+      const {config, kind, values} = ranked[r];
+      let bits = distancePrice(config, values);
+      if (!Number.isFinite(bits)) continue;
+      if (small && !isStripProbe) {
+        const dc = distanceCode(config, values), sz = dc.alphabetSize - 1;
+        bits += sz ? 5 + (31 - Math.clz32(sz)) : 1;
+      }
       if (!distance || bits < distance.bits) distance = {bits, config, spatial: kind, values};
     }
     distance.code = distanceCode(distance.config, distance.values);
     distance.code.codes = canonicalCodes(distance.code.lengths);
   });
-  const offset = distance ? 1 : 0, contextMap = new Uint8Array(ordered.length + offset);
-  if (live.length + offset > 256) throw fault('JXL_INTERNAL', 'capture-modular-stream:histograms');
-  for (const model of models) for (const node of model.leaves) contextMap[node.context] = index[model.base + node.local] + offset;
-  const lz77 = distance ? {minSymbol: minSymbol, minLength: copyMinimum, lengthConfig: length.config} : null;
-  const copy = distance ? {lengthConfig: length.config, distanceConfig: distance.config, code: distance.code, minSymbol, spatial: distance.spatial, sCodes} : null;
-  const prefixHeader = new BitWriter(1024);
-  writeHistograms(prefixHeader, {lz77, contextMap,
-    histograms: [...(distance ? [{config: distance.config, code: distance.code}] : []),
-      ...codes.map((code, m) => ({config: configs[m].config, code}))]
-  });
-  let ans = null;
-  if ((typeof __RAPIER_JXL_CAPTURE_LEAN__ === 'undefined' || !__RAPIER_JXL_CAPTURE_LEAN__) && ansTools) timed('ans', () => {
-    const ansCopy = copy && {...copy, distanceConfig: ansTools.distanceConfig(distance.values), lengthConfig: ansTools.lengthConfig(live, 256 - minSymbol)};
-    if (copy && !(ansCopy.distanceConfig && ansCopy.lengthConfig)) return;
-    const retry = !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && !own;
-    const fitted = () => live.map((h, m) => {
-      if (!h.literals) return configs[m].config;
+  const offset = distance ? 1 : 0;
+  const exactHistPrice = (h, cfg, lenCfg, top) => {
+    const freqs = countTokens(new Uint32Array(h.copies ? minSymbol + 1024 : top + 1), h, cfg, lenCfg, minSymbol, Infinity);
+    const used = [];
+    for (let i = 0; i < freqs.length; i++) if (freqs[i]) used.push(i);
+    const hw = new BitWriter(32);
+    writeUintConfig(hw, cfg, 15);
+    const size = used.length ? used[used.length - 1] : 0;
+    if (!size) hw.write(1, 0);
+    else { const n = 31 - Math.clz32(size); hw.write(1, 1); hw.write(4, n); hw.write(n, size - (1 << n)); }
+    let raw = 0;
+    for (let v = 0; v < SMALL; v++) if (h.small[v]) { hybridToken(cfg, v, token); raw += h.small[v] * token[1]; }
+    for (let i = 0; i < h.large.values.length; i++) { hybridToken(cfg, h.large.values[i], token); raw += h.large.counts[i] * token[1]; }
+    for (let i = 0; i < h.lengths.values.length; i++) { hybridToken(lenCfg, h.lengths.values[i], token); raw += h.lengths.counts[i] * token[1]; }
+    return hw.bitLength + raw + prefixCodeBits(freqs, used);
+  };
+  const buildBundle = (curLive, curIndex, useExact) => {
+    let curLength = {config: LZ77.lengthConfig, bits: 0};
+    if (distanceValues.length) {
+      curLength = null;
+      const costs = new Float64Array(SCREEN_INTEGER_CONFIGS.length);
+      for (const h of curLive) if (h.copies) {
+        const prices = capturePrices(SCREEN_INTEGER_CONFIGS, h.lengths);
+        for (let c = 0; c < costs.length; c++) costs[c] += prices[c * 2];
+      }
+      for (let c = 0; c < costs.length; c++) if (!curLength || costs[c] < curLength.bits)
+        curLength = {config: SCREEN_INTEGER_CONFIGS[c], bits: costs[c]};
+    }
+    const curConfigs = curLive.map(h => {
       const literals = valueCounts(h.small, h.large);
-      let best = null, bits = Infinity, largest = 0;
-      const room = Math.min(copy ? minSymbol : Infinity, retry ? 256 : Infinity);
-      if (room < Infinity) for (const v of literals.values) if (v > largest) largest = v;
-      for (let at = 0; at < ANS_FIT.length; at += 64) {
-        const some = ANS_FIT.slice(at, at + 64), prices = capturePrices(some, literals);
-        for (let c = 0; c < some.length; c++) if (prices[c * 2] < bits && !(room < Infinity && (hybridToken(some[c], largest, token), token[0] >= room))) { bits = prices[c * 2]; best = some[c]; }
+      if (!h.literals) return {config: LITERAL_CONFIGS[0], top: 0};
+      let largest = 0, best, wide = false;
+      for (const v of literals.values) if (v > largest) largest = v;
+      const candidates = [];
+      for (const config of LITERAL_CONFIGS) {
+        if (distanceValues.length) { hybridToken(config, largest, token); if (token[0] >= minSymbol) continue; }
+        if (config.splitToken > largest) { if (wide) continue; wide = true; }
+        candidates.push(config);
+      }
+      const prices = capturePrices(candidates, literals);
+      if (useExact && pieces <= 65536 && candidates.length > 1) {
+        const order = candidates.map((config, c) => ({config, est: prices[c * 2], top: prices[c * 2 + 1]})).sort((a, b) => a.est - b.est);
+        for (const cand of order.slice(0, 4)) {
+          const exact = exactHistPrice(h, cand.config, curLength.config, cand.top);
+          if (!best || exact < best.bits) best = {config: cand.config, bits: exact, top: cand.top};
+        }
+        return best;
+      }
+      for (let c = 0; c < candidates.length; c++) {
+        const config = candidates[c], option = {config, bits: prices[c * 2], top: prices[c * 2 + 1]};
+        if (!best || option.bits < best.bits) best = option;
       }
       return best;
     });
-    const ansConfigs = own || retry ? fitted() : configs.map(c => c.config);
-    const tokens = ansTools.tokens(models, index, ansConfigs, ansCopy, codes.length, pieces + copies);
-    if (!tokens) return;
-    const header = new BitWriter(1024), data = new BitWriter(tokens.n + 64);
-    const all = [...(distance ? [ansCopy.distanceConfig] : []), ...ansConfigs];
-    if (ansTools.write(header, data, {lz77: lz77 && {...lz77, lengthConfig: ansCopy.lengthConfig}, contextMap, configs: all}, tokens)) ans = {header, data};
+    const curCodes = curLive.map((h, m) => sortedCode(countTokens(new Uint32Array(h.copies ? minSymbol + 1024 : curConfigs[m].top + 1),
+      h, curConfigs[m].config, curLength.config, minSymbol, Infinity)));
+    const curMap = new Uint8Array(ordered.length + offset);
+    if (curLive.length + offset > 256) throw fault('JXL_INTERNAL', 'capture-modular-stream:histograms');
+    for (const model of models) for (const node of model.leaves) curMap[node.context] = curIndex[model.base + node.local] + offset;
+    const curLz77 = distance ? {minSymbol: minSymbol, minLength: copyMinimum, lengthConfig: curLength.config} : null;
+    const curHeader = new BitWriter(1024);
+    writeHistograms(curHeader, {lz77: curLz77, contextMap: curMap,
+      histograms: [...(distance ? [{config: distance.config, code: distance.code}] : []),
+        ...curCodes.map((code, m) => ({config: curConfigs[m].config, code}))]
+    });
+    let payload = null;
+    if (trySmall) {
+      payload = 0;
+      for (let m = 0; m < curLive.length; m++) {
+        const h = curLive[m], code = curCodes[m], config = curConfigs[m].config;
+        for (let v = 0; v < SMALL; v++) if (h.small[v]) { hybridToken(config, v, token); payload += h.small[v] * (code.lengths[token[0]] + token[1]); }
+        for (let i = 0; i < h.large.values.length; i++) { hybridToken(config, h.large.values[i], token); payload += h.large.counts[i] * (code.lengths[token[0]] + token[1]); }
+        for (let i = 0; i < h.lengths.values.length; i++) { hybridToken(curLength.config, h.lengths.values[i], token); payload += h.lengths.counts[i] * (code.lengths[minSymbol + token[0]] + token[1]); }
+      }
+      if (distance) for (let i = 0, {values, counts} = distance.values; i < values.length; i++) { hybridToken(distance.config, values[i], token); payload += counts[i] * (distance.code.lengths[token[0]] + token[1]); }
+    }
+    return {live: curLive, index: curIndex.slice(), length: curLength, configs: curConfigs, codes: curCodes, contextMap: curMap, lz77: curLz77, prefixHeader: curHeader, payloadBits: payload, totalBits: payload === null ? 0 : curHeader.bitLength + payload};
+  };
+  const tryCluster = smallOn() && !isStripProbe && !mustCluster && live.length > 1 && live.length <= 64 && pieces <= 131072;
+  const trySmall = (smallOn() && !isStripProbe && pieces <= 65536) || tryCluster;
+  const baseBundle = buildBundle(live, index, false);
+  let chosen = baseBundle;
+  if (smallOn() && !isStripProbe && pieces <= 65536) {
+    const exactChosen = buildBundle(live, index, true);
+    if (exactChosen.totalBits < chosen.totalBits) chosen = exactChosen;
+  }
+  if (tryCluster) {
+    const cloned = live.map(h => ({...h, small: h.small.slice()}));
+    const {groups, of} = clusterHistograms(cloned, 255 - offset);
+    if (groups.length < live.length) {
+      const mappedIdx = Int32Array.from(index, k => of[k]);
+      const alt = buildBundle(groups, mappedIdx, true);
+      if (alt.totalBits < chosen.totalBits) chosen = alt;
+    }
+  }
+  live = chosen.live;
+  for (let i = 0; i < histograms.length; i++) index[i] = chosen.index[i];
+  const {length, configs, codes, contextMap, lz77, prefixHeader} = chosen;
+  const copy = distance ? {lengthConfig: length.config, distanceConfig: distance.config, code: distance.code, minSymbol, spatial: distance.spatial, sCodes} : null;
+  let ans = null;
+  if ((typeof __RAPIER_JXL_CAPTURE_LEAN__ === 'undefined' || !__RAPIER_JXL_CAPTURE_LEAN__) && ansTools) timed('ans', () => {
+    const retry = !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && !own;
+    const tryAns = (bnd, hdrAware) => {
+      const aCopy = copy && {...copy, distanceConfig: ansTools.distanceConfig(distance.values), lengthConfig: ansTools.lengthConfig(bnd.live, 256 - minSymbol)};
+      if (copy && !(aCopy.distanceConfig && aCopy.lengthConfig)) return null;
+      const fitted = () => bnd.live.map((h, m) => {
+        if (!h.literals) return bnd.configs[m].config;
+        const literals = valueCounts(h.small, h.large);
+        let best = null, bits = Infinity, largest = 0;
+        const room = Math.min(copy ? minSymbol : Infinity, retry ? 256 : Infinity);
+        if (room < Infinity) for (const v of literals.values) if (v > largest) largest = v;
+        for (let at = 0; at < ANS_FIT.length; at += 64) {
+          const some = ANS_FIT.slice(at, at + 64), prices = capturePrices(some, literals);
+          for (let c = 0; c < some.length; c++) if (prices[c * 2] < bits && !(room < Infinity && (hybridToken(some[c], largest, token), token[0] >= room))) { bits = prices[c * 2]; best = some[c]; }
+        }
+        return best;
+      });
+      const aConfigs = own || retry ? fitted() : bnd.configs.map(c => c.config);
+      const tokens = ansTools.tokens(models, bnd.index, aConfigs, aCopy, bnd.codes.length, pieces + copies);
+      if (!tokens) return null;
+      const header = new BitWriter(1024), data = new BitWriter(tokens.n + 64);
+      const all = [...(distance ? [aCopy.distanceConfig] : []), ...aConfigs];
+      return ansTools.write(header, data, {lz77: bnd.lz77 && {...bnd.lz77, lengthConfig: aCopy.lengthConfig}, contextMap: bnd.contextMap, configs: all, headerAware: hdrAware}, tokens)
+        ? {header, data} : null;
+    };
+    ans = tryAns(baseBundle, false);
+    if (smallOn() && pieces <= 65536) {
+      const altAns = tryAns(chosen, true);
+      if (altAns && (!ans || altAns.header.bitLength + altAns.data.bitLength < ans.header.bitLength + ans.data.bitLength)) ans = altAns;
+    }
   });
   let fastLen = null, fastBits = null;
   const prefixWrite = target => {
@@ -325,7 +412,7 @@ export function writeChannels(writer, models, trace, ansTools = null, own = fals
     }
     return captureTokens(target, models, index, codes, configs.map(c => c.config), fastBits, fastLen, copy);
   };
-  let prefixSize = null;
+  let prefixSize = chosen.payloadBits;
   const prefixBits = () => {
     if (prefixSize !== null) return prefixSize;
     let bits = 0;
@@ -338,8 +425,14 @@ export function writeChannels(writer, models, trace, ansTools = null, own = fals
     if (distance) for (let i = 0, {values, counts} = distance.values; i < values.length; i++) { hybridToken(distance.config, values[i], token); bits += counts[i] * (distance.code.lengths[token[0]] + token[1]); }
     return prefixSize = bits;
   };
+  const extraAns = ansTools?.extra ?? ((typeof __RAPIER_JXL_EFFORT_TEN__ === 'undefined' || __RAPIER_JXL_EFFORT_TEN__ === true) ? L.ansExtra : null);
+  if ((typeof __RAPIER_JXL_CAPTURE_LEAN__ === 'undefined' || !__RAPIER_JXL_CAPTURE_LEAN__) && ansTools && extraAns && !copies) {
+    const extra = extraAns(models, live, index, contextMap, pieces);
+    if (extra && extra.header.bitLength + extra.data.bitLength < Math.min(prefixHeader.bitLength + prefixBits(),
+      ans ? ans.header.bitLength + ans.data.bitLength : Infinity)) ans = extra;
+  }
   if ((typeof __RAPIER_JXL_CAPTURE_LEAN__ === 'undefined' || !__RAPIER_JXL_CAPTURE_LEAN__) && ans) {
-    if (ans.header.bitLength + ans.data.bitLength > (own || !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) ? 1 : 0.99) * (prefixHeader.bitLength + prefixBits())) ans = null;
+    if (ans.header.bitLength + ans.data.bitLength - (smallOn() ? 0 : 1e-9) >= (own || !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) ? 1 : 0.99) * (prefixHeader.bitLength + prefixBits())) ans = null;
   }
   writer.append(ans ? ans.header : prefixHeader);
   if (typeof __RAPIER_JXL_PROBES__ === 'undefined' && trace) {
@@ -362,11 +455,16 @@ export function writeChannels(writer, models, trace, ansTools = null, own = fals
 
 export const runModels = models => models.some(model => model.pieceValue.some(v => v > 65535)) ? null
   : models.map(model => model.count > 1 && model.width <= 16384 && model.count <= 1 << 20 ? learnedRuns(model, model.width, model.height) : model);
-export function writeCaptureStream(writer, models, ans = null, {transforms = [], global = false, runs = false} = {}) {
+export const writeCaptureStreamExtra = (typeof __RAPIER_JXL_EFFORT_TEN__ === 'undefined' || __RAPIER_JXL_EFFORT_TEN__ === true) ? function writeCaptureStreamExtra(ansExtra, writer, models, ans) {
+  const prev = L;
+  L = {...L, ansExtra};
+  try { writeCaptureStream(writer, models, ans); } finally { L = prev; }
+} : null;
+export function writeCaptureStream(writer, models, ans = null, {transforms = [], global = false, runs = false, weighted = null} = {}) {
   const write = (target, chosen) => {
-    if (typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true || !global) writeModularHeader(target, {useGlobalTree: false, transforms});
+    if (typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true || !global) writeModularHeader(target, {useGlobalTree: false, transforms, weighted});
     const data = writeChannels(target, chosen, null, ans, true);
-    if (!(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && global) writeModularHeader(target, {transforms});
+    if (!(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && global) writeModularHeader(target, {transforms, weighted});
     data();
   };
   const withRuns = !(typeof __RAPIER_JXL_JPEG__ !== 'undefined' && __RAPIER_JXL_JPEG__ === true) && !(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) && runs && runModels(models);

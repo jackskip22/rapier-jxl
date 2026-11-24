@@ -39,11 +39,14 @@ function jpegHeader(bytes, limits) {
   const parts = [];
   let iccBytes = 0;
   for (let at = 2; ;) {
-    if (at + 4 > end) cut();
+    if (at + 2 > end) cut();
     if (bytes[at] !== 255) refuse('JXL_INPUT', "jpeg marker");
-    while (bytes[at + 1] === 255 && at + 5 <= end) at++;
+    while (at + 1 < end && bytes[at + 1] === 255) at++;
+    if (at + 2 > end) cut();
     const marker = bytes[at + 1];
-    if (!marker || marker === 216 || marker === 217 || marker === 1 || marker >= 208 && marker <= 215) refuse('JXL_INPUT', "jpeg header");
+    if (marker === 1) { at += 2; continue; }
+    if (at + 4 > end) cut();
+    if (!marker || marker === 216 || marker === 217 || marker >= 208 && marker <= 215) refuse('JXL_INPUT', "jpeg header");
     const size = bytes[at + 2] * 256 + bytes[at + 3], body = at + 4, next = at + 2 + size;
     if (size < 2) refuse('JXL_INPUT', "jpeg segment length");
     if (next > end) cut();
@@ -74,7 +77,7 @@ function jpegHeader(bytes, limits) {
         frame.ids.add(bytes[p]);
       }
     } else if (marker === 225 && orientation === null && size >= 8 && [69, 120, 105, 102, 0, 0].every((value, i) => bytes[body + i] === value)) {
-      orientation = exifOrientation(bytes, body + 6, next);
+      orientation = exifOrientation(bytes, body + 6, next) ?? 1;
     } else if (marker === 238 && size >= 14 && [...'Adobe'].every((c, i) => bytes[body + i] === c.charCodeAt(0))) {
       const transform = bytes[body + 11];
       if (transform > 2 || adobe !== null && adobe !== transform) refuse('JXL_INPUT', "jpeg Adobe transform");
@@ -114,11 +117,15 @@ function jpegHeader(bytes, limits) {
 
 async function pngHeader(bytes, limits) {
   const maxMetadataBytes = limits?.maxMetadataBytes ?? Number.MAX_SAFE_INTEGER;
-  const end = bytes.length;
+  const end = bytes.length, dataView = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let at = 8;
-  while (at + 8 <= end && String.fromCharCode(...bytes.subarray(at + 4, at + 8)) !== 'IDAT')
-    at += 12 + (bytes[at] << 24 >>> 0) + (bytes[at + 1] << 16) + (bytes[at + 2] << 8) + bytes[at + 3];
-  if (at + 8 > end) refuse('JXL_INPUT', "png header: incomplete");
+  for (;;) {
+    if (at + 12 > end) refuse('JXL_INPUT', "png header: incomplete");
+    const len = dataView.getUint32(at);
+    if (len > 0x7fffffff || at + 12 + len > end) refuse('JXL_INPUT', "png header: incomplete");
+    if (String.fromCharCode(...bytes.subarray(at + 4, at + 8)) === 'IDAT') break;
+    at += 12 + len;
+  }
   const walk = pngWalk(null, bytes.subarray(0, at + 8), 0, bytes.length, {edge: Infinity, pixels: Infinity});
   if (!walk.chunks.has('IHDR') || walk.least) refuse('JXL_INPUT', "png header");
   const ihdr = walk.chunks.get('IHDR'), view = new DataView(ihdr.buffer, ihdr.byteOffset, ihdr.byteLength), colourType = ihdr[9];

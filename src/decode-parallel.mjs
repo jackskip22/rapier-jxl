@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {decodeImage, decodeOptions, outputFormat} from './decode-image.mjs';
+import {decodeImage, decodeImageSteps, decodeOptions, outputFormat} from './decode-image.mjs';
 import {decodeFrameSections, jpegShifts, restoreFrame} from './decode-frame.mjs';
 import {frameFeatures} from './decode-parts.mjs';
 import {transformColor, nativeEncoding, sameEncoding, targetEncoding} from './decode-color.mjs';
@@ -9,10 +9,12 @@ import {plainFrame} from './decode-region.mjs';
 
 const groupRows = f => Math.ceil(f.height / 256);
 const rgbaArray = (format, length) => new (format === 'float32' ? Float32Array : format === 'uint16' ? Uint16Array : Uint8Array)(length);
+const canReference = f => !f.isLast && (f.duration === 0 || f.saveAsReference !== 0);
 
 function bandable(h, f, options) {
-  return !!f && !h.preview && !h.animation && windowable(h, f, options.borrowed && options.withoutNoise) && f.isLast && f.blending[0].mode === 0 && !f.x0 && !f.y0 && f.width === h.width &&
-    f.height === h.height && directColor(h, options);
+  return !!f && !h.preview && windowable(h, f, options.borrowed && options.withoutNoise) &&
+    (f.isLast || f.duration !== 0) && !canReference(f) && f.blending[0].mode === 0 &&
+    !f.x0 && !f.y0 && f.width === h.width && f.height === h.height && directColor(h, options);
 }
 function directColor(h, options) {
   if (options.applyOrientation && h.orientation !== 1) return false;
@@ -139,8 +141,19 @@ const banding = (options, render) => Object.assign(render, {bandable: (h, f) => 
 export function decodeBands(bytes, options, opened = null) {
   try { return decodeBands1(bytes, options, opened); } finally { trimDecodeKernels(); }
 }
+export async function decodeBandsAsync(bytes, options, opened = null) {
+  const steps = decodeBandsSteps(bytes, options, opened);
+  try {
+    for (;;) { const step = steps.next(); if (step.done) return step.value; await options.onFrame(...step.value); }
+  } finally { try { steps.return?.(); } finally { trimDecodeKernels(); } }
+}
 function decodeBands1(bytes, options, opened) {
-  return decodeImage(bytes, options, banding(options, (readers, h, f, codestream, area) => {
+  return decodeImage(bytes, options, bandRenderer(options), opened);
+}
+function decodeBandsSteps(bytes, options, opened) {
+  return decodeImageSteps(bytes, options, bandRenderer(options), opened);
+}
+const bandRenderer = options => banding(options, (readers, h, f, codestream, area) => {
     if (area && f.modular) return regionModular(readers, h, f, options, area);
     if (area && f.ycbcr && f.jpegUpsampling.some(Boolean) && !h.extraChannels.length && !f.filter.gaborish && !f.filter.epf.iters &&
         plainFrame({...f, jpegUpsampling: [0, 0, 0]})) return regionFrame(readers, h, f, options, area, true);
@@ -149,5 +162,4 @@ function decodeBands1(bytes, options, opened) {
     if (area) return regionBand(readers, h, f, options, area);
     const {planes, data, format} = renderBand(readers, h, f, options, 0, groupRows(f));
     return bandFrame(h, f, planes ?? [0, 1, 2].map(() => new Float32Array(0)), data, format);
-  }), opened);
-}
+  });

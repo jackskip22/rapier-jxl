@@ -9,8 +9,8 @@ import {captureColumnsUnlike, captureCropEdges, captureLowestInk, captureRowsUnl
 const writeModularFrameHeader = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true ? writeCaptureFrameHeader : generalFrame;
 const writeModularHeader = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true ? writeCaptureModularHeader : generalModular;
 export function pixelKeys(rgba) {
-  if (LITTLE_ENDIAN && !(rgba.byteOffset & 3)) return new Uint32Array(rgba.buffer, rgba.byteOffset, rgba.length >> 2);
-  const keys = new Uint32Array(rgba.length >> 2);
+  if (LITTLE_ENDIAN && !(rgba.byteOffset & 3)) return new Uint32Array(rgba.buffer, rgba.byteOffset, rgba.length / 4);
+  const keys = new Uint32Array(rgba.length / 4);
   for (let i = 0; i < keys.length; i++) keys[i] = (rgba[4 * i] | rgba[4 * i + 1] << 8 | rgba[4 * i + 2] << 16 | rgba[4 * i + 3] << 24) >>> 0;
   return keys;
 }

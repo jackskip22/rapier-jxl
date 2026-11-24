@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
+import './engines.mjs';
 import {createJournalStepper} from '../resumable-journal.mjs';
 import {encodeData, decodeData} from '../resumable-data.mjs';
 import {verbSteps, fileSize} from './verb-steps-driver.mjs';
 import {tools} from './resumable-tools.mjs';
 import {sha256Start, sha256Update, sha256Finish} from '../sha256.mjs';
 import {BUILD_VERSION} from '../build-version.mjs';
-import {fail, declared, admitSignal, check, snapshotOptions, callers} from './primitives.mjs';
+import {fail, declared, admitSignal, check, snapshotOptions, snapshotArray, callers, pixelLimit} from './primitives.mjs';
 import {sourceColor} from './header-intent.mjs';
 import {viewBytes} from './bytes.mjs';
 import {storedIdentity} from './identity-record.mjs';
@@ -103,25 +104,48 @@ const host = (checkpoint, input, io, extra) => ({source: input, expectedRevision
 
 function takes(params, name, keys) {
   params = snapshotOptions(params, `${name} options`);
-  if (keys) for (const key of Object.keys(params)) if (!keys.includes(key)) throw fail('JXL_OPTIONS', `unknown option: ${name}.${key}`);
+  if (keys) for (const key of Reflect.ownKeys(params)) if (!keys.includes(key)) throw fail('JXL_OPTIONS', `unknown option: ${name}.${String(key)}`);
   return params;
+}
+function plainOptions(value, depth = 0) {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw fail('JXL_OPTIONS', 'resumable options: finite numbers');
+    return value;
+  }
+  if (depth > 8 || typeof value !== 'object') throw fail('JXL_OPTIONS', 'resumable options: plain data');
+  if (Array.isArray(value)) return snapshotArray(value, 'options', undefined, 'JXL_OPTIONS').map(item => plainOptions(item, depth + 1));
+  let proto, descriptors;
+  try { proto = Object.getPrototypeOf(value); descriptors = Object.getOwnPropertyDescriptors(value); }
+  catch (error) { throw callers(error); }
+  if (proto !== Object.prototype && proto !== null) throw fail('JXL_OPTIONS', 'resumable options: plain data');
+  const out = {};
+  for (const key of Reflect.ownKeys(descriptors)) {
+    const d = descriptors[key];
+    if (!d.enumerable) continue;
+    if (typeof key === 'symbol') throw fail('JXL_OPTIONS', `unknown option: ${String(key)}`);
+    if (!('value' in d)) throw fail('JXL_OPTIONS', 'resumable options: plain data');
+    out[key] = plainOptions(d.value, depth + 1);
+  }
+  return out;
 }
 export async function start(params) {
   const decoder = configuredDecoder();
   try {
-    const {operation, input, options = {}, store, verify, memoryBytes} = takes(params, 'start', ['operation', 'input', 'options', 'store', 'verify', 'memoryBytes']);
+    const {operation, input, options: rawOptions = {}, store, verify, memoryBytes} = takes(params, 'start', ['operation', 'input', 'options', 'store', 'verify', 'memoryBytes']);
     if (verify !== undefined && !verifierOf(verify)) throw fail('JXL_OPTIONS', "verify: pass verify from jpegxl/verify");
     const {steps, stepper} = stepsOf(operation), io = storeOf(store);
     if (steps.id === 'verify' && verify) throw fail('JXL_OPTIONS','verify: omit for verify operation');
+    const options = steps.id === 'verify' ? rawOptions : plainOptions(rawOptions);
     if (verify && !boundedVerification({[DECODER_SNAPSHOT]: decoder})) throw fail('JXL_PLATFORM', BOUNDED_SETUP);
     const admit = memoryAdmission(steps, io, memoryBytes);
     const {checkpoint, parts} = await stepper.start({source: input, options, verify: !!verify, admit});
     if (checkpoint.source.kind === 'decode' && !decoder?.decode) throw fail('JXL_PLATFORM', "decoder: configureDecoder(decode) with decode from jpegxl/decode");
-    const fidelity = options.fidelity;
+    const planOptions = checkpoint.plan.options ?? options, fidelity = planOptions.fidelity;
     const canReadJpegPixels = (typeof createImageBitmap === 'function' && typeof OffscreenCanvas === 'function') ||
       typeof decoder?.recompress?.[Symbol.for('rapier-jxl.jpeg.pixels')] === 'function';
     if (checkpoint.source.kind === 'file' && /^(encode|fit|variants):/.test(steps.id) &&
-        (fidelity !== 'exact' && fidelity?.quality !== 100 || options.jpeg === 'pixels') && !canReadJpegPixels) {
+        (fidelity !== 'exact' && fidelity?.quality !== 100 || planOptions.jpeg === 'pixels') && !canReadJpegPixels) {
       const head = await io.readSource(0, Math.min(2, checkpoint.source.byteLength));
       if (head?.[0] === 0xff && head[1] === 0xd8)
         throw fail('JXL_PLATFORM', "JPEG: use jpegxl/jpeg or RGBA8");
@@ -192,10 +216,12 @@ export async function finish(checkpoint, params) {
 
 export function workerAdmission(params) {
   try {
-    const {operation, options = {}, width, height, kind} = takes(params, 'workerAdmission', ['operation', 'options', 'width', 'height', 'kind']);
+    const {operation, options: given = {}, width, height, kind} = takes(params, 'workerAdmission', ['operation', 'options', 'width', 'height', 'kind']);
     const {steps} = stepsOf(operation);
+    const options = steps.id === 'verify' ? takes(given, 'workerAdmission.options', ['result', 'parts', 'maxPixels']) : plainOptions(given);
     if (kind !== undefined && kind !== 'pixels' && kind !== 'file' && kind !== 'decode') throw fail('JXL_OPTIONS', "source kind: pixels|file|decode");
     if (steps.id !== 'verify') steps.normalize?.(options, {kind: kind ?? 'pixels', width: 1, height: 1, byteLength: 4});
+    else pixelLimit(options.maxPixels);
     if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1)
       throw fail('JXL_OPTIONS', "dimensions: positive integer pixels");
     return admission(steps, options, width, height, false, kind);

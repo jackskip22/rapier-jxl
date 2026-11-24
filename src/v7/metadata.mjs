@@ -1,3 +1,4 @@
+import './engines.mjs';
 import {check, declared, callers, fail, snapshotOptions, admitSignal} from './primitives.mjs';
 import {header as readHeader} from './inspect.mjs';
 import {headerFields} from './header-fields.mjs';
@@ -20,6 +21,7 @@ export function header(input, options) {
 }
 
 export {inspect, edit} from './inspect-edit.mjs';
+export {sourceMetadata} from './source-metadata.mjs';
 export function placeholder(input, options) {
   try { return rawPlaceholder(input, options); } catch (error) { throw declared(error); }
 }

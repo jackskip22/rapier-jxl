@@ -1,17 +1,26 @@
 // SPDX-License-Identifier: MIT
 import {fault} from './fault.mjs';
-export const SCORE_BAND_ROWS = 256;
-const bandSourceRows = (y0, y1, height) => [Math.max(0, Math.floor(y0 / 64) * 64 - 192), Math.min(height, Math.ceil(y1 / 64) * 64 + 192)];
+import {RECON_MARGIN, SCORE_RECON_ROWS, SCORE_BAND_ROWS} from './band-geometry.mjs';
+export {SCORE_BAND_ROWS};
+export const scoreBandEdge = (k, height) => Math.min(height, k ? k * SCORE_BAND_ROWS + RECON_MARGIN : 0);
+export const scoreBandCount = height => Math.max(1, Math.ceil((height - RECON_MARGIN) / SCORE_BAND_ROWS));
+const SOURCE_ABOVE = 144, SOURCE_BELOW = 144, SOURCE_ROWS = SCORE_BAND_ROWS + SOURCE_ABOVE + SOURCE_BELOW;
+const bandSourceRows = (y0, height) => {
+  const start = Math.floor(y0 / SCORE_BAND_ROWS) * SCORE_BAND_ROWS;
+  return [Math.max(0, start - SOURCE_ABOVE), Math.min(height, start + SCORE_BAND_ROWS + SOURCE_BELOW)];
+};
 
-function capacity(width, height) {
-  const w = Math.ceil(width / 8) * 8, h = Math.min(Math.ceil(height / 8) * 8, 384), p = w * h, blocks = p / 64;
-  const tiles = Math.ceil(w / 64) * Math.ceil(h / 64), sourceBytes = 4 * width * Math.min(height, 640);
-  return {sourceBytes, inputBytes: sourceBytes + 4 * p + 76 * blocks + 8 * tiles + 65536,
-    outputBytes: 4 * width * Math.min(height, SCORE_BAND_ROWS)};
+export function scoreBandCapacity(width, height, alpha = false) {
+  const w = Math.ceil(width / 8) * 8, h = Math.min(Math.ceil(height / 8) * 8, SCORE_RECON_ROWS), p = w * h, blocks = p / 64;
+  const tiles = Math.ceil(w / 64) * Math.ceil(h / 64), sourceBytes = 4 * width * Math.min(height, SOURCE_ROWS);
+  return {sourceBytes, inputBytes: sourceBytes + (alpha ? 4 * p : 0) + 40 * blocks + 8 * tiles + 65536,
+    outputBytes: 4 * width * scoreBandEdge(1, height)};
 }
 
-function activeBytes({width, height, y0, y1}) {
-  if (!Number.isSafeInteger(y0) || y0 < 0 || y0 >= height || y0 % SCORE_BAND_ROWS || y1 !== Math.min(height, y0 + SCORE_BAND_ROWS))
+function activeBytes({width, height, y0, y1, rated}) {
+  const k = Math.floor(y0 / SCORE_BAND_ROWS);
+  const edge = rated ? i => Math.min(height, i * SCORE_BAND_ROWS) : i => scoreBandEdge(i, height);
+  if (!Number.isSafeInteger(y0) || y0 < 0 || y0 >= height || y0 !== edge(k) || y1 !== edge(k + 1))
     throw fault('JXL_INTERNAL', 'photo-band-storage:band');
   return 4 * width * (y1 - y0);
 }
@@ -21,31 +30,33 @@ const byteView = (view, length, bytes) => view instanceof Uint8Array && view.byt
 
 export function scoreBandReply(task, result) {
   if (!result) return false;
-  const {inputBytes, outputBytes} = capacity(task.width, task.height), bytes = activeBytes(task);
+  const {inputBytes, outputBytes} = scoreBandCapacity(task.width, task.height, !!task.alpha), bytes = activeBytes(task);
   const {input, pack, own} = result;
   return input instanceof ArrayBuffer && input.byteLength === inputBytes && byteView(pack, bytes, outputBytes) &&
     byteView(own, bytes, outputBytes) && pack.buffer !== own.buffer && pack.buffer !== input && own.buffer !== input;
 }
 
 export function scoreBandTransfers(task) {
-  const {input, rows, into, width, height, y0, y1} = task, {inputBytes, outputBytes} = capacity(width, height);
-  const [top, end] = bandSourceRows(y0, y1, height), bytes = activeBytes(task);
+  const {input, rows, into, width, height, y0, y1, recipe} = task, {inputBytes, outputBytes} = scoreBandCapacity(width, height, !!task.alpha);
+  const [top, end] = bandSourceRows(y0, height), bytes = activeBytes(task);
+  const expectRows = recipe?.sharedDct || recipe?.sharedPlanes ? 0 : (end - top) * width * 4;
   if (!(input instanceof ArrayBuffer) || input.byteLength !== inputBytes || task.top !== top ||
-      !byteView(rows, (end - top) * width * 4, inputBytes) || rows.buffer !== input ||
+      !byteView(rows, expectRows, inputBytes) || rows.buffer !== input ||
       !byteView(into?.package, bytes, outputBytes) || !byteView(into?.native, bytes, outputBytes) ||
       into.package.buffer === into.native.buffer || into.package.buffer === input || into.native.buffer === input)
     throw fault('JXL_INTERNAL', 'photo-band-storage:slabs');
   const check = value => {
     if (ArrayBuffer.isView(value)) {
-      if (value.buffer !== input) throw fault('JXL_INTERNAL', 'photo-band-storage:view');
+      if (value.buffer !== input && !(typeof SharedArrayBuffer === 'function' && value.buffer instanceof SharedArrayBuffer))
+        throw fault('JXL_INTERNAL', 'photo-band-storage:view');
     } else if (value && typeof value === 'object') for (const child of Object.values(value)) check(child);
   };
-  check(task.recipe);
+  check(recipe);
   return [input, into.package.buffer, into.native.buffer];
 }
 
-export function scoreBandStorage(width, height, count, recipeAt) {
-  const {sourceBytes, inputBytes, outputBytes} = capacity(width, height);
+export function scoreBandStorage(width, height, count, recipeAt, alpha = false) {
+  const {sourceBytes, inputBytes, outputBytes} = scoreBandCapacity(width, height, alpha);
   if (![width, height, count, inputBytes, outputBytes].every(n => Number.isSafeInteger(n) && n > 0) || count > Math.ceil(height / SCORE_BAND_ROWS))
     throw fault('JXL_INTERNAL', 'photo-band-storage:geometry');
   const inputs = Array.from({length: count}, () => new ArrayBuffer(inputBytes));
@@ -67,14 +78,15 @@ export function scoreBandStorage(width, height, count, recipeAt) {
     held.set(result, pair);
     return result;
   };
-  return {count, inputBytes, outputBytes,
-    take({data, recipe, look, y0, y1}) {
+  return {count, alpha, inputBytes, outputBytes,
+    take({data, recipe, look, y0, y1, rated = false}) {
       open();
-      const bytes = activeBytes({width, height, y0, y1});
+      const bytes = activeBytes({width, height, y0, y1, rated});
       if (!inputs.length || !outputs.length) throw fault('JXL_INTERNAL', 'photo-band-storage:slots');
       const input = inputs.pop(), pair = outputs.pop();
       try {
-        let at = sourceBytes;
+        const canShare = typeof SharedArrayBuffer === 'function' && (recipe.base?.dctPack?.planes?.[0]?.buffer instanceof SharedArrayBuffer || recipe.base?.planes?.[0]?.buffer instanceof SharedArrayBuffer);
+        let at = canShare ? 0 : sourceBytes;
         const allocate = (Type, length) => {
           const size = Type.BYTES_PER_ELEMENT;
           if (!Number.isSafeInteger(length) || length < 0 || ![1, 2, 4, 8].includes(size))
@@ -85,9 +97,11 @@ export function scoreBandStorage(width, height, count, recipeAt) {
           const out = new Type(input, at, length); at = end;
           return out;
         };
-        const [top, end] = bandSourceRows(y0, y1, height), rows = new Uint8Array(input, 0, (end - top) * width * 4);
-        rows.set(data.subarray(top * width * 4, end * width * 4));
-        const task = {kind: 'score-band', look, input, rows, recipe: recipeAt(recipe, y0, y1, allocate), top, width, height, y0, y1,
+        const [top, end] = bandSourceRows(y0, height), builtRecipe = recipeAt(recipe, y0, y1, allocate);
+        const needRows = !(builtRecipe.sharedDct || builtRecipe.sharedPlanes);
+        const rows = new Uint8Array(input, 0, needRows ? (end - top) * width * 4 : 0);
+        if (needRows) rows.set(data.subarray(top * width * 4, end * width * 4));
+        const task = {kind: 'score-band', look, ...(rated && {rated}), ...(alpha && {alpha: true}), input, rows, recipe: builtRecipe, top, width, height, y0, y1,
           into: {package: new Uint8Array(pair.pack, 0, bytes), native: new Uint8Array(pair.own, 0, bytes)}};
         pending.set(task, pair);
         return task;

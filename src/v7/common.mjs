@@ -1,12 +1,13 @@
-import {fail, check, object} from './primitives.mjs';
+import {fail, check, object, abortable} from './primitives.mjs';
 import {captureRefused} from '../fault.mjs';
-import {encodeCaptureSteps, compileCaptureKernels, captureBusy, CAPTURE_TOOLS, CAPTURE_SIZES, CAPTURE_FLOOR, CAPTURE_PATCHES, CAPTURE_PATCH_EFFORT, CAPTURE_LEVEL, INSTANT} from '../capture-codec.mjs';
+import {encodeCaptureSteps, compileCaptureKernels, captureBusy, CAPTURE_TOOLS, CAPTURE_SIZES, CAPTURE_FLOOR, frameCapture, CAPTURE_LIMIT} from '../capture-codec.mjs';
 import {screenPhotoSteps} from '../screen-photo-mixed.mjs';
 export {encodeOptions, callOptions} from './encode-options.mjs';
 import {gpuQueue} from '../gpu-queue.mjs';
 import {exclusive, exclusiveActive, turn} from '../turn.mjs';
 import {journalNext} from '../step-journal.mjs';
 import {deviceTrials} from '../device-trial.mjs';
+import {deferRetirement} from '../call-scope.mjs';
 export function targetSource(data, ...descriptions) {
   if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray))
     throw fail('JXL_INPUT', 'measured fidelity: 8-bit straight sRGB RGBA, or use exact');
@@ -22,18 +23,22 @@ export async function drain(iterator, hooks = {}, gpuAnswer) {
   const {signal, onProgress, journal} = hooks;
   check(signal);
   let last = 0, told = 0, reply, lastTurn = performance.now(), failed = false;
-  const gpu = gpuAnswer ? gpuQueue(gpuAnswer) : () => null;
+  let gpu = gpuAnswer ? gpuQueue(gpuAnswer) : null;
   try {
+    const warm = gpuAnswer?.warm?.();
+    if (warm !== undefined) await abortable(warm, signal);
     for (;;) {
       check(signal);
-      deviceTrials(gpu.trials, gpu.generation);
+      deviceTrials(gpu?.trials, gpu?.generation, gpu?.phoneRequired);
       const step = await (journal ? journalNext(iterator, reply, journal) : iterator.next(reply));
+      const asked = !step.done ? step.value?.await : undefined;
+      const pending = typeof asked?.then === 'function' ? (gpu ??= gpuQueue(() => null)).watch(asked) : asked;
       check(signal);
       if (step.done) { onProgress?.(1); check(signal); return step.value ?? iterator.bytes; }
       if (journal && (step.value?.unit !== undefined || step.value?.unitDone !== undefined || step.value?.unitFailed !== undefined)) { reply = await journal(step.value); continue; }
-      if (step.value?.gpu) { reply = step.value.later ? gpu(step.value.gpu) : await gpu(step.value.gpu); continue; }
-      if (step.value?.await !== undefined) { reply = await step.value.await; continue; }
-      if (step.value?.capture) { const {data, width, height, colorSpace, effort, patchEffort, tools, sizes, floor, frame, instant} = step.value.capture; await compileCaptureKernels(); reply = await exclusive(() => drain(encodeCaptureSteps(data, width, height, {colorSpace, effort, [CAPTURE_TOOLS]: tools, [CAPTURE_SIZES]: sizes, [CAPTURE_FLOOR]: floor, [CAPTURE_PATCHES]: frame ? false : undefined, [CAPTURE_PATCH_EFFORT]: instant ? 1 : patchEffort, ...(instant && {[CAPTURE_LEVEL]: INSTANT})}), {signal, journal}), signal); continue; }
+      if (step.value?.gpu) { const answer = gpuAnswer ? gpu(step.value.gpu) : null; reply = step.value.later ? answer : await abortable(answer, signal); continue; }
+      if (asked !== undefined) { reply = await abortable(pending, signal); continue; }
+      if (step.value?.capture) { const {data, width, height, colorSpace, effort, tools, sizes, floor, frame, limit, small} = step.value.capture; await compileCaptureKernels(); reply = await exclusive(() => drain(encodeCaptureSteps(data, width, height, {colorSpace, effort, small, [CAPTURE_TOOLS]: tools, [CAPTURE_SIZES]: sizes, [CAPTURE_FLOOR]: floor, ...frameCapture(frame, floor), [CAPTURE_LIMIT]: limit}), {signal, journal}), signal); continue; }
       if (step.value?.screenPhoto) {
         try {
           await compileCaptureKernels();
@@ -61,11 +66,13 @@ export async function drain(iterator, hooks = {}, gpuAnswer) {
     }
   } catch (reason) { failed = true; throw reason; }
   finally {
-    try { await iterator.return?.(); } catch (reason) { if (!failed) throw reason; }
+    try { await deferRetirement(gpu?.end(), () => iterator.return?.()); } catch (reason) { if (!failed) throw reason; }
   }
 }
-export async function driveSteps(steps, hooks, gpu, pixels, helpers, parallelJob, stage = null, jobBytes, geometry) {
-  const pool = parallelJob && helpers?.pool ? await helpers.pool(pixels, jobBytes, geometry) : null;
+export async function driveSteps(steps, hooks, gpu, pixels, helpers, parallelJob, stage = null, jobBytes, geometry, floor) {
+  check(hooks.signal);
+  await abortable(gpu?.warm?.(), hooks.signal);
+  const pool = parallelJob && helpers?.pool ? await helpers.pool(pixels, jobBytes, geometry, floor) : null;
   if (pool) return drain(parallelJob(steps, {kept: pool, signal: hooks.signal, gpu, stage}), hooks);
   return drain(steps, helpers?.split ? {...hooks, split: helpers.split} : hooks, gpu);
 }

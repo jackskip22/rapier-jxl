@@ -1,23 +1,18 @@
 // SPDX-License-Identifier: MIT
-import {check, dimensions, fail, blobBytes, unreadInput} from './primitives.mjs';
+import {check, dimensions, fail, blobBytes, unreadInput, isBlob, filePassed, abortable} from './primitives.mjs';
 import {surface} from './surface.mjs';
 import {jpegYCbCr} from '../jpeg-color.mjs';
-import {browserRead} from './browser-resize.mjs';
 
 export async function image(input, options, hooks = {}, readBlob = nativeBlob) {
   check(hooks.signal);
-  if (typeof Blob !== 'undefined' && input instanceof Blob) {
+  if (isBlob(input)) {
     const head = await blobBytes(input, hooks.signal, 0, 32);
     check(hooks.signal);
-    const png = [137, 80, 78, 71, 13, 10, 26, 10].every((byte, i) => head[i] === byte);
+    const png = pngHeader(head, hooks.maxPixels);
     if (png) {
-      if (head.length < 29 || head[12] !== 73 || head[13] !== 72 || head[14] !== 68 || head[15] !== 82)
-        throw fail('JXL_INPUT', "PNG header: incomplete");
-      const view = new DataView(head.buffer);
-      dimensions(view.getUint32(16), view.getUint32(20), hooks.maxPixels);
       const chunks = await pngChunks(input, hooks.signal) ?? await pngChunks(input, hooks.signal, Infinity);
-      if (chunks.names.has('acTL')) throw animated('PNG');
-    } else if (head.length >= 16 && String.fromCharCode(...head.subarray(0, 4)) === 'RIFF' && String.fromCharCode(...head.subarray(8, 12)) === 'WEBP')
+      if (chunks.names.has('acTL') || chunks.names.has('fcTL')) throw animated('PNG');
+    } else if (head.length >= 12 && String.fromCharCode(...head.subarray(0, 4)) === 'RIFF' && String.fromCharCode(...head.subarray(8, 12)) === 'WEBP')
       riffDimensions(head, hooks.maxPixels);
     else if (head[0] === 255 && head[1] === 216) await jpegBlobDimensions(input, hooks.maxPixels, hooks.signal);
     else if (head[0] === 71 && head[1] === 73 && head[2] === 70) await gifBlobDimensions(input, head, hooks.maxPixels, hooks.signal);
@@ -27,17 +22,35 @@ export async function image(input, options, hooks = {}, readBlob = nativeBlob) {
   return pixels(input, options, hooks.maxPixels);
 }
 
+export function pngHeader(head, maxPixels) {
+  if (![137, 80, 78, 71, 13, 10, 26, 10].every((byte, i) => head[i] === byte)) return false;
+  if (head.length < 29 || head[12] !== 73 || head[13] !== 72 || head[14] !== 68 || head[15] !== 82)
+    throw fail('JXL_INPUT', "PNG header: incomplete");
+  const view = new DataView(head.buffer);
+  dimensions(view.getUint32(16), view.getUint32(20), maxPixels);
+  return true;
+}
+
 const animated = kind => fail('JXL_UNSUPPORTED', `animated ${kind}: use jpegxl/animation`);
 function riffDimensions(head, maxPixels) {
+  if (head.length < 20) throw fail('JXL_INPUT', 'RIFF header: incomplete; pass a complete image file');
   const kind = String.fromCharCode(...head.subarray(12, 16)), u24 = i => head[i] | head[i + 1] << 8 | head[i + 2] << 16;
+  const chunkSize = (head[16] | head[17] << 8 | head[18] << 16 | head[19] << 24) >>> 0;
   if (kind === 'VP8X') {
     if (head.length >= 21 && head[20] & 2) throw animated('WebP');
-    if (head.length >= 30) dimensions(1 + u24(24), 1 + u24(27), maxPixels);
-  } else if (kind === 'VP8L' && head.length >= 25 && head[20] === 0x2f) {
+    if (head.length < 30 || chunkSize !== 10) throw fail('JXL_INPUT', 'VP8X header: invalid; pass a complete image file');
+    dimensions(1 + u24(24), 1 + u24(27), maxPixels);
+  } else if (kind === 'VP8L') {
+    if (head.length < 25 || chunkSize < 5 || head[20] !== 0x2f) throw fail('JXL_INPUT', 'VP8L header: invalid; pass a complete image file');
     const bits = head[21] | head[22] << 8 | head[23] << 16 | head[24] << 24;
     dimensions(1 + (bits & 0x3fff), 1 + (bits >>> 14 & 0x3fff), maxPixels);
-  } else if (kind === 'VP8 ' && head.length >= 30 && !(head[20] & 1) && head[23] === 0x9d && head[24] === 0x01 && head[25] === 0x2a)
-    dimensions(head[26] | (head[27] & 0x3f) << 8 || 1, head[28] | (head[29] & 0x3f) << 8 || 1, maxPixels);
+  } else if (kind === 'VP8 ') {
+    if (head.length < 30 || chunkSize < 10 || (head[20] & 1) || head[23] !== 0x9d || head[24] !== 0x01 || head[25] !== 0x2a)
+      throw fail('JXL_INPUT', 'VP8 frame header: invalid; pass a complete image file');
+    const width = head[26] | (head[27] & 0x3f) << 8, height = head[28] | (head[29] & 0x3f) << 8;
+    if (!width || !height) throw fail('JXL_INPUT', 'VP8 dimensions: invalid; pass a non-empty image');
+    dimensions(width, height, maxPixels);
+  } else throw fail('JXL_INPUT', 'RIFF image chunk: invalid; pass a valid image file');
 }
 
 export async function pngChunks(blob, signal, limit = 64) {
@@ -48,12 +61,14 @@ export async function pngChunks(blob, signal, limit = 64) {
     const head = new DataView((await blobBytes(blob, signal, offset, offset + 12)).buffer);
     check(signal);
     if (head.byteLength < 8) return {names, intent, cicp};
+    const len = head.getUint32(0);
     const name = String.fromCharCode(head.getUint8(4), head.getUint8(5), head.getUint8(6), head.getUint8(7));
     if (name === 'IDAT' || name === 'IEND') return {names, intent, cicp};
+    if (len > 0x7fffffff || offset + 12 + len > blob.size) return {names, intent, cicp};
     names.add(name);
-    if (name === 'sRGB') intent = head.byteLength < 9 ? undefined : head.getUint8(8);
-    if (name === 'cICP') cicp = head.byteLength < 12 ? undefined : [8, 9, 10, 11].map(i => head.getUint8(i));
-    offset += 12 + head.getUint32(0);
+    if (name === 'sRGB') intent = len === 1 && head.byteLength >= 9 ? head.getUint8(8) : undefined;
+    if (name === 'cICP') cicp = len === 4 && head.byteLength >= 12 ? [8, 9, 10, 11].map(i => head.getUint8(i)) : undefined;
+    offset += 12 + len;
   }
   return null;
 }
@@ -96,7 +111,9 @@ export const blobProfile = ((typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' 
   parts.sort((a, b) => a.seq - b.seq);
   if (parts.some((part, i) => part.seq !== i + 1 || part.count !== parts.length) ||
       parts.reduce((sum, part) => sum + part.end - part.start, 0) > ICC_BYTES) return UNREAD;
-  const icc = await blobBytes(new Blob(parts.map(part => blob.slice(part.start, part.end))), signal);
+  const read = await blobBytes(new Blob(parts.map(part => blob.slice(part.start, part.end))), signal);
+  const declared = read.length >= 4 ? new DataView(read.buffer, read.byteOffset).getUint32(0) : 0;
+  const icc = declared >= 132 && declared < read.length ? read.subarray(0, declared) : read;
   const kept = [];
   let from = 0;
   for (const [start, end] of cuts) { kept.push(blob.slice(from, start)); from = end; }
@@ -121,58 +138,90 @@ export async function nativeBitmap(input, options, hooks, policy) {
   let bitmap;
   try {
     const source = policy?.blob?.(prepared) ?? input, region = policy?.region;
-    bitmap = region ? await createImageBitmap(source, region.x, region.y, region.width, region.height, {imageOrientation: 'from-image'})
-      : await createImageBitmap(source, {imageOrientation: 'from-image'});
+    bitmap = await abortable(region ? createImageBitmap(source, region.x, region.y, region.width, region.height, {imageOrientation: 'from-image'})
+      : createImageBitmap(source, {imageOrientation: 'from-image'}), hooks.signal, value => value.close());
   }
   catch (cause) { check(hooks.signal); throw Object.assign(fail('JXL_INPUT', policy?.failure?.(prepared) ?? 'image decode: complete file or RGBA pixels'), {cause}); }
   try {
     check(hooks.signal); dimensions(bitmap.width, bitmap.height, hooks.maxPixels);
     policy?.admit?.(bitmap, prepared);
     const picture = surface(bitmap, {maxPixels: hooks.maxPixels, readAs: options?.readAs});
-    if (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== "undefined" && __RAPIER_JXL_CAPTURE_LEAN__ === true)) browserRead(picture.data);
     return picture;
   } finally { bitmap.close(); }
 }
 
-function scanGif(b, width, height, maxPixels) {
-  const le16 = i => b[i] | b[i + 1] << 8;
-  let p = 13 + (b[10] & 0x80 ? 3 << ((b[10] & 7) + 1) : 0), images = 0, complete = false;
-  while (p < b.length) {
-    const tag = b[p++];
-    if (tag === 0x3B) { complete = true; break; }
-    if (tag === 0x21) { p++; while (p < b.length && b[p]) p += b[p] + 1; p++; continue; }
-    if (tag !== 0x2C || p + 8 >= b.length) { complete = tag !== 0x2C; break; }
-    if (images++) throw fail('JXL_UNSUPPORTED', "animated GIF: use jpegxl/animation");
-    width = Math.max(width, le16(p) + le16(p + 4)); height = Math.max(height, le16(p + 2) + le16(p + 6));
-    dimensions(width || 1, height || 1, maxPixels);
-    p += 9 + (b[p + 8] & 0x80 ? 3 << ((b[p + 8] & 7) + 1) : 0) + 1;
-    while (p < b.length && b[p]) p += b[p] + 1;
-    p++;
-  }
-  return {width, height, complete};
-}
 async function gifBlobDimensions(input, head, maxPixels, signal) {
-  const b = await blobBytes(input, signal, 0, 65536);
-  check(signal);
-  const {width, height, complete} = scanGif(b, head[6] | head[7] << 8, head[8] | head[9] << 8, maxPixels);
-  dimensions(width || 1, height || 1, maxPixels);
-  if (!complete && input.size > b.length) { const all = await blobBytes(input, signal); scanGif(all, width, height, maxPixels); }
+  if (head.length < 13 || head[3] !== 56 || (head[4] !== 55 && head[4] !== 57) || head[5] !== 97)
+    throw fail('JXL_INPUT', 'GIF header: invalid; pass a GIF87a or GIF89a file');
+  let width = head[6] | head[7] << 8, height = head[8] | head[9] << 8;
+  if (width && height) dimensions(width, height, maxPixels);
+  let start = 0, win = new Uint8Array(0);
+  const ensure = async (at, need) => {
+    if (at >= start && at + Math.min(need, input.size - at) <= start + win.length) return;
+    start = at; win = await blobBytes(input, signal, at, at + 65536);
+    check(signal);
+  };
+  const byte = at => win[at - start];
+  let p = 13 + (head[10] & 0x80 ? 3 << ((head[10] & 7) + 1) : 0), images = 0;
+  while (p < input.size) {
+    await ensure(p, 11);
+    if (p >= start + win.length) break;
+    const tag = byte(p++);
+    if (tag === 0x3B) break;
+    if (tag === 0x21) {
+      p++;
+      while (p < input.size) {
+        await ensure(p, 1);
+        if (p >= start + win.length) break;
+        const sz = byte(p++);
+        if (!sz) break;
+        p += sz;
+      }
+      continue;
+    }
+    if (tag !== 0x2C || p + 9 > input.size) break;
+    await ensure(p, 9);
+    if (p + 9 > start + win.length) break;
+    if (images++) throw fail('JXL_UNSUPPORTED', "animated GIF: use jpegxl/animation");
+    const le16 = i => byte(i) | byte(i + 1) << 8;
+    width = Math.max(width, le16(p) + le16(p + 4));
+    height = Math.max(height, le16(p + 2) + le16(p + 6));
+    if (!width || !height) throw fail('JXL_INPUT', 'GIF dimensions: invalid; pass a non-empty GIF');
+    dimensions(width, height, maxPixels);
+    const fpack = byte(p + 8);
+    p += 9 + (fpack & 0x80 ? 3 << ((fpack & 7) + 1) : 0) + 1;
+    while (p < input.size) {
+      await ensure(p, 1);
+      if (p >= start + win.length) break;
+      const sz = byte(p++);
+      if (!sz) break;
+      p += sz;
+    }
+  }
+  if (!width || !height) throw fail('JXL_INPUT', 'GIF dimensions: invalid; pass a non-empty GIF');
+  dimensions(width, height, maxPixels);
 }
+const BMP_DIB_SIZES = new Set([12, 16, 40, 52, 56, 64, 108, 124]);
 function bmpDimensions(head, maxPixels) {
-  if (head.length < 26) return;
-  const view = new DataView(head.buffer, head.byteOffset, head.byteLength), core = view.getUint32(14, true) === 12;
-  const width = core ? view.getUint16(18, true) : Math.abs(view.getInt32(18, true));
-  const height = core ? view.getUint16(20, true) : Math.abs(view.getInt32(22, true));
-  dimensions(width || 1, height || 1, maxPixels);
+  if (head.length < 22) throw fail('JXL_INPUT', 'BMP header: incomplete; pass a complete BMP file');
+  const view = new DataView(head.buffer, head.byteOffset, head.byteLength), hdrSize = view.getUint32(14, true), core = hdrSize === 12;
+  if (!BMP_DIB_SIZES.has(hdrSize) || !core && head.length < 26)
+    throw fail('JXL_INPUT', 'BMP header: invalid; pass a valid BMP file');
+  if (core) {
+    const width = view.getUint16(18, true), height = view.getUint16(20, true);
+    if (!width || !height) throw fail('JXL_INPUT', 'BMP dimensions: invalid');
+    dimensions(width, height, maxPixels);
+    return;
+  }
+  const rawW = view.getInt32(18, true), rawH = view.getInt32(22, true);
+  if (rawW <= 0 || rawH === 0 || rawH === -2147483648) throw fail('JXL_INPUT', 'BMP dimensions: invalid');
+  dimensions(rawW, Math.abs(rawH), maxPixels);
 }
 
-const FILES = [[[0x89, 0x50, 0x4e, 0x47], 'PNG'], [[0xff, 0xd8, 0xff], 'JPEG'], [[0x47, 0x49, 0x46, 0x38], 'GIF'], [[0x52, 0x49, 0x46, 0x46], 'WebP']];
 function inputHint(input) {
   if ((input instanceof ArrayBuffer ? input : ArrayBuffer.isView(input) ? input.buffer : null)?.detached) return 'The ArrayBuffer is detached; pass a live one.';
-  const bytes = ArrayBuffer.isView(input) ? new Uint8Array(input.buffer, input.byteOffset, Math.min(input.byteLength, 4))
-    : input instanceof ArrayBuffer ? new Uint8Array(input, 0, Math.min(input.byteLength, 4)) : null;
-  const kind = bytes && FILES.find(([magic]) => magic.every((byte, i) => bytes[i] === byte))?.[1];
-  if (kind) return `These are ${kind} file bytes; pass new Blob([bytes]).`;
+  const passed = filePassed(input);
+  if (passed) return passed;
   return unreadInput(input);
 }
 
@@ -180,8 +229,9 @@ export function pixels(input, options, maxPixels, half = false) {
   const result = surface(input, {maxPixels, readAs: options?.readAs, half});
   if (!result || !ArrayBuffer.isView(result.data) || result.data instanceof DataView)
     throw fail('JXL_INPUT', inputHint(input));
-  for (const side of ['width', 'height']) if (result[side] === undefined)
-    throw fail('JXL_INPUT', `${side}: {data, width, height}`);
+  for (const side of ['width', 'height']) if (result[side] === undefined) {
+    throw fail('JXL_INPUT', filePassed(result.data) ?? `${side}: {data, width, height}`);
+  }
   dimensions(result.width, result.height, maxPixels);
   return result;
 }
@@ -254,7 +304,6 @@ function* frameScan(length, maxPixels) {
   let input = yield 0;
   if (input(0) !== 255 || input(1) !== 216) throw fail('JXL_JPEG', NOT_JPEG);
   let frame = null, jfif = false, adobeTransform = -1, hasICC = false;
-  const tables = [];
   for (let at = 2; at < length;) {
     input = yield at;
     if (input(at++) !== 255) throw fail('JXL_JPEG', BAD_MARKER);
@@ -273,7 +322,7 @@ function* frameScan(length, maxPixels) {
         new Set(ids).size === ids.length && frame.components.every(c => ids.includes(c.id));
       const sequential = [192, 193].includes(frame.marker) && allComponentsInFirstScan &&
         input(at + size - 3) === 0 && input(at + size - 2) === 63 && input(at + size - 1) === 0;
-      return jpegSummary(frame, tables, length, {firstScanComponents: count, allComponentsInFirstScan, sequential}, jfif, adobeTransform, hasICC);
+      return jpegSummary(frame, length, {firstScanComponents: count, allComponentsInFirstScan, sequential}, jfif, adobeTransform, hasICC);
     }
     if (marker === 1 || marker >= 208 && marker <= 215) continue;
     if (at + 2 > length) break;
@@ -300,16 +349,11 @@ function* frameScan(length, maxPixels) {
         const kind = input(p++), precision = kind >> 4, id = kind & 15;
         if (precision > 1 || id > 3 || p + 64 * (precision + 1) > end)
           throw fail('JXL_JPEG', "quantization table");
-        let sum = 0, low = 0, dc;
         for (let k = 0; k < 64; k++, p += precision + 1) {
           if ((k & 7) === 0) input = yield p;
           const value = precision ? input(p) * 256 + input(p + 1) : input(p);
           if (!(value > 0)) throw fail('JXL_JPEG', "quantization value: nonzero");
-          if (k === 0) dc = value;
-          else if (k <= 9) low += value;
-          sum += value;
         }
-        tables[id] = {dc, mean: sum / 64, low: low / 9, bits: precision ? 16 : 8};
       }
     }
     if (SOF.includes(marker)) {
@@ -323,7 +367,7 @@ function* frameScan(length, maxPixels) {
       for (let p = at + 8; p < at + size; p += 3) {
         input = yield p;
         const hv = input(p + 1);
-        components.push({id: input(p), h: hv >> 4, v: hv & 15, table: input(p + 2)});
+        components.push({id: input(p), h: hv >> 4, v: hv & 15});
       }
       frame = {width, height, precision, components, marker};
     }
@@ -332,17 +376,12 @@ function* frameScan(length, maxPixels) {
   throw fail('JXL_JPEG', NO_SIZE);
 }
 
-function jpegSummary({width, height, precision, components, marker}, tables, sourceBytes, scan, jfif, adobeTransform, hasICC) {
+function jpegSummary({width, height, precision, components, marker}, sourceBytes, scan, jfif, adobeTransform, hasICC) {
   const [y, cb, cr] = components, sameChroma = components.length === 3 && cb.h === cr.h && cb.v === cr.v;
   const subsampling = components.length === 1 ? 'gray' : !sameChroma ? 'other'
     : y.h === cb.h && y.v === cb.v ? '444' : y.h === cb.h * 2 && y.v === cb.v * 2 ? '420'
     : y.h === cb.h * 2 && y.v === cb.v ? '422' : 'other';
   const ycbcr = components.length === 3 && jpegYCbCr(components, jfif, adobeTransform) &&
     components.every((c, i) => c.id === i + 1) && (adobeTransform < 0 || adobeTransform === 1);
-  const frame = {width, height, precision, components: components.length, subsampling, progressive: marker === 194, sourceBytes, ycbcr, hasICC, ...scan};
-  if (![192, 193, 194].includes(marker) || ![1, 3].includes(components.length) ||
-      components.some(c => !c.h || !c.v || !tables[c.table])) return frame;
-  const luma = tables[y.table], chroma = cb ? (tables[cb.table].mean + tables[cr.table].mean) / 2 : luma.mean;
-  return {...frame, yDC: luma.dc, yLow: luma.low, yMean: luma.mean, cMean: chroma,
-    tableBits: Math.max(...components.map(c => tables[c.table].bits))};
+  return {width, height, precision, components: components.length, subsampling, progressive: marker === 194, sourceBytes, ycbcr, hasICC, ...scan};
 }

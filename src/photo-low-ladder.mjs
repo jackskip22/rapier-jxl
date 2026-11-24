@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {outOfMemory} from './fault.mjs';
+import {hostShort} from './fault.mjs';
 import {part} from './bits.mjs';
 import {coefficientAnsSteps, BUDGETS} from './coefficient-ans.mjs';
 import {candidateSteps} from './coefficient-effort.mjs';
@@ -16,8 +16,7 @@ export const fastBudgets = (effort, filter, pixels) => {
     : filter ? SMALL_BUDGET : BUDGETS.slice(0, effort - 1);
 };
 export const choose = (incumbent, bytes) => !incumbent || bytes.length < incumbent.length ? bytes : incumbent;
-export const sizeFailure = error => error?.code === 'JXL_SIZE' || error?.code === 'JXL_MEMORY' ||
-  outOfMemory(error);
+export const sizeFailure = error => (error?.code === 'JXL_SIZE' || error?.code === 'JXL_MEMORY') && !hostShort(error);
 
 export function* retainedSteps(steps, best, control = {hurried: false}) {
   let step, reply, failed = false;

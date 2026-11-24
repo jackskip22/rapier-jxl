@@ -14,6 +14,7 @@ import {photoTarget} from './photo-quality-search.mjs';
 import {explicitShownMargin} from './photo-whole-policy.mjs';
 import {nativeRGBA} from './photo-output.mjs';
 import {bandedOutputs} from './photo-reconstruct-bands.mjs';
+import {GpuMeasure, attachVarblocks} from './gpu-measure.mjs';
 
 export {LIMITS};
 
@@ -25,7 +26,7 @@ function admitScore(data, width, height, options) {
   const allowLossless = options?.allowLossless === undefined ? true : options.allowLossless, maxBytes = options?.maxBytes ?? Number.MAX_SAFE_INTEGER;
   if (typeof allowLossless !== 'boolean') throw fault('JXL_INPUT', 'allowLossless: boolean');
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || options?.maxBytes === null) throw fault('JXL_INPUT', 'maxBytes: positive integer');
-  return {target: photoTarget(options?.target), effort: admitEffort(options ?? {}, BALANCED_EFFORT), candidates, allowLossless, maxBytes};
+  return {target: photoTarget(options?.target), effort: admitEffort(options ?? {}, BALANCED_EFFORT, true), candidates, allowLossless, maxBytes};
 }
 
 function scoreMemory(data, width, height, options, exact) {
@@ -71,6 +72,13 @@ function* finishScore(result, data, width, height, {target, effort, allowLossles
 export function* encodeToScoreSteps(data, width, height, options) {
   checkSignal(options?.signal);
   const settings = admitScore(data, width, height, options), {target, effort, candidates} = settings;
+  if ((typeof __RAPIER_JXL_EFFORT_TEN__ === 'undefined' || __RAPIER_JXL_EFFORT_TEN__ === true) && effort === 10) {
+    const nine = yield* encodeToScoreSteps(data, width, height, {...options, effort: 9});
+    if (!nine?.pass || nine.quality === 100) return nine;
+    const raised = target.ssimulacra2 !== undefined && Number.isFinite(nine.ssimulacra2) ? {...target, ssimulacra2: Math.max(target.ssimulacra2, nine.ssimulacra2)} : target;
+    const ten = yield* encodeToScoreSteps(data, width, height, {...options, effort: 9, target: raised, _writerEffort: 10});
+    return ten?.pass && ten.bytes.length < nine.bytes.length ? ten : nine;
+  }
   if (options?.preview) settings.preview = options.preview;
   const {memory, plan} = scoreMemory(data, width, height, options, target.ssimulacra2 !== undefined);
   let whole = null, steps = null;
@@ -95,7 +103,7 @@ export function* encodeToScoreSteps(data, width, height, options) {
         return {...out, ssimulacra2: out.ssimulacra2 - explicitShownMargin(out.ssimulacra2, width, height)};
       return out;
     };
-    steps = scoreSteps(prepareV6(data, width, height, {}, memory), target, {candidates, effort, exactSize: true, preview: settings.preview});
+    steps = scoreSteps(prepareV6(data, width, height, {}, memory), target, {candidates, effort: options?._writerEffort ?? effort, exactSize: true, preview: settings.preview});
     let step, reply, n = 0;
     while (!(step = steps.next(reply)).done) {
       checkSignal(options?.signal);
@@ -152,7 +160,6 @@ export async function encodeToScore(data, width, height, options) {
     metricRgba = new Uint8Array(width * height * 4); metricRgba.set(data.subarray(0, metricRgba.length));
     cpuOnce = cpuMeasure(metricRgba, width, height, {cacheBytes: plan.cacheBytes, immutable: true});
     try {
-      const {GpuMeasure, attachVarblocks} = await import('./gpu-measure.mjs');
       measurer = await GpuMeasure.create(gpu, metricRgba, width, height, {signal: options?.signal});
       await attachVarblocks(measurer, gpu, {signal: options?.signal});
     } catch (error) { gpuFailure = error; gpuFailed = true; throw error; }

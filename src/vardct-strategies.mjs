@@ -7,8 +7,9 @@ import {ceilLog2} from './bits.mjs';
 import {QUANT_SHAPE} from './photo-dct.mjs';
 import {AFV_BASIS} from './afv-basis.mjs';
 import {prepareQuantParams, quantParamSteps} from './quantization-params.mjs';
+import {opaquePixels} from './lossless.mjs';
 
-import {NAMES, WIDTHS, HEIGHTS, TABLES, TRANSFORMS, cosine, basis, basisT, fillScaledDCTBasis, transposeScaledDCTBasis, inverseScaledDCT} from './vardct-bases.mjs';
+import {NAMES, WIDTHS, HEIGHTS, TABLES, TRANSFORMS, cosine, basis, basisT, fillScaledDCTBasis, transposeScaledDCTBasis, inverseScaledDCT, inverseScaledDCTInto} from './vardct-bases.mjs';
 export {TRANSFORMS, fillScaledDCTBasis, transposeScaledDCTBasis, inverseScaledDCT};
 
 const dctRows = new Map();
@@ -80,7 +81,7 @@ export function scaledDCTAt(pixels, width, height, positions) {
 }
 
 
-const SMALL_ROWS = new Float64Array(32);
+const SMALL_ROWS = /* @__PURE__ */ new Float64Array(32);
 function smallDCT(pixels, x0, y0, w, h, out) {
   const bw = basis(w), bh = basis(h), tall = h >= w;
   for (let y = 0; y < h; y++) for (let j = 0; j < w; j++) {
@@ -95,7 +96,7 @@ function smallDCT(pixels, x0, y0, w, h, out) {
   }
   return out;
 }
-const SMALL_PIECE = new Float64Array(32);
+const SMALL_PIECE = /* @__PURE__ */ new Float64Array(32);
 export function smallTransform(pixels, id, out = new Float64Array(64)) {
   const cut = (x0, y0, w, h) => Float64Array.from({length: w * h}, (_, i) => pixels[(y0 + Math.floor(i / w)) * 8 + x0 + i % w]);
   const combineFour = () => {
@@ -155,7 +156,7 @@ export function smallTransform(pixels, id, out = new Float64Array(64)) {
   return out;
 }
 
-const INV_SMALL_WORK = new Float64Array(64), INV_SMALL_SCRATCH = new Float64Array(64), INV_SMALL_PART = new Float64Array(32);
+const INV_SMALL_WORK = /* @__PURE__ */ new Float64Array(64), INV_SMALL_SCRATCH = /* @__PURE__ */ new Float64Array(64), INV_SMALL_PART = /* @__PURE__ */ new Float64Array(32);
 export function inverseSmallTransform(coefficients, id, out = new Float64Array(64)) {
   if (![1, 2, 3, 12, 13, 14, 15, 16, 17].includes(id) || coefficients.length < 64 || out.length < 64)
     throw fault('JXL_INTERNAL', 'vardct-strategies:small');
@@ -231,11 +232,32 @@ function lowScale(blocks) {
   }
   return scales;
 }
+const lowTables = new Map();
+export function lowFrequencyTable(widthBlocks, heightBlocks) {
+  const key = widthBlocks * 64 + heightBlocks;
+  let table = lowTables.get(key);
+  if (!table) {
+    const w = Math.max(widthBlocks, heightBlocks), h = Math.min(widthBlocks, heightBlocks);
+    table = new Float64Array(w + h + widthBlocks * widthBlocks + heightBlocks * heightBlocks);
+    table.set(lowScale(w), 0); table.set(lowScale(h), w); table.set(basis(widthBlocks), w + h); table.set(basis(heightBlocks), w + h + widthBlocks * widthBlocks);
+    lowTables.set(key, table);
+  }
+  return table;
+}
 export function lowFrequencies(coeffs, widthBlocks, heightBlocks) {
   const w = Math.max(widthBlocks, heightBlocks), h = Math.min(widthBlocks, heightBlocks), low = new Float64Array(w * h);
   const sx = lowScale(w), sy = lowScale(h);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) low[y * w + x] = coeffs[y * w * 8 + x] * sx[x] * sy[y];
   return inverseScaledDCT(low, widthBlocks, heightBlocks);
+}
+const lowArrays = new Map();
+export function lowFrequenciesScratch(coeffs, widthBlocks, heightBlocks) {
+  const w = Math.max(widthBlocks, heightBlocks), h = Math.min(widthBlocks, heightBlocks), n = w * h;
+  let arrays = lowArrays.get(n);
+  if (!arrays) lowArrays.set(n, arrays = [new Float64Array(n), new Float64Array(n), new Float64Array(n)]);
+  const [low, tmp, out] = arrays, sx = lowScale(w), sy = lowScale(h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) low[y * w + x] = coeffs[y * w * 8 + x] * sx[x] * sy[y];
+  return inverseScaledDCTInto(low, widthBlocks, heightBlocks, tmp, out);
 }
 
 function radialShape(x, y, width, height) {
@@ -385,8 +407,7 @@ export function* strategyCoefficientSteps(data, width, height, quality, colorSpa
   }
   const used = new Set(blocks.map(block => TABLES[block.id]));
   for (const id of tables.keys()) if (!used.has(id)) tables.delete(id);
-  let alpha = null;
-  for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) { alpha = data; break; }
+  const alpha = opaquePixels(data) ? null : data;
   return {width, height, components, quantScale, ycbcr: true, orientation: options.orientation || 1, alpha, colorSpace,
     wideCoefficients, strategyData: {groups, blocks, at, tables: strategyTableList(tables), stride}};
 }

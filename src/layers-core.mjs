@@ -7,7 +7,7 @@ import {readStill, writeStillFrame, writeStillImageHeader, copyBits, composition
 import {fileHeader, boxHeader, CODESTREAM} from './container.mjs';
 
 export {LIMITS};
-export const LAYER_BLEND_MODES = Object.freeze({replace: 0, add: 1, blend: 2, muladd: 3, multiply: 4});
+export const LAYER_BLEND_MODES = /* @__PURE__ */ Object.freeze({replace: 0, add: 1, blend: 2, muladd: 3, multiply: 4});
 const layerModes = new Map(Object.entries(LAYER_BLEND_MODES));
 function layerInteger(value, low, high, label) {
   if (!Number.isInteger(value) || value < low || value > high) throw fault('JXL_INPUT', label + ': integer ' + low + '-' + high);

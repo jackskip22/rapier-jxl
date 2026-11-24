@@ -18,7 +18,7 @@ export function featureless(options) {
 export function takeFirstRegion(given) {
   const options = featureless(given), requested = options?.features?.firstRegion;
   if (requested === undefined) return {options, region: undefined};
-  const region = requested && typeof requested === 'object' ? snapshotOptions(requested, 'firstRegion', KEYS) : requested;
+  const region = requested && typeof requested === 'object' ? snapshotOptions(requested, 'firstRegion', KEYS, true) : requested;
   if (!region || typeof region !== 'object' || KEYS.some(key => !Number.isSafeInteger(region[key]) || region[key] < (key === 'x' || key === 'y' ? 0 : 1)) ||
       Object.keys(requested).some(key => !KEYS.includes(key)))
     throw fail('JXL_OPTIONS', 'firstRegion: {x, y, width, height} in picture');

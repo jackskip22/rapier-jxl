@@ -5,7 +5,7 @@ import {unit, stage, journaling, journalTool, sliceBytes} from './step-journal.m
 import {canonicalCodes} from './prefix.mjs';
 import {LOG_LENGTHS, LOG_CODES, reverseAlias} from './ans-core.mjs';
 import {ZIGZAG} from './jpeg-tables.mjs';
-import {zeroDensityContext} from './vardct.mjs';
+import {zeroDensityContext} from './dct8-contexts.mjs';
 import {fault} from './admit.mjs';
 import {SCREEN_SPECIAL_DISTANCES as SPECIAL} from './screen-codes.mjs';
 import {JxlBits, readSize, requireJPEG, invalidJPEGData} from './jxl-size.mjs';
@@ -209,10 +209,11 @@ function entropyReader(model, r, values, multiplier = 0) {
   requireJPEG(Number.isSafeInteger(values) && values >= 0);
   const {contexts, lz, minimum, minLength, lengthConfig, map, prefix, configs, decoders, aliases, byteHistory} = model;
   let remaining = values, state = null, left = 0, position = 0, distance = 1;
-  const history = byteHistory ? new Uint8Array(1048576) : lz ? new Int32Array(1048576) : null;
+  const history = !lz ? null : byteHistory ? new Uint8Array(1048576) : new Int32Array(1048576);
   const direct = Int32Array.from(configs, c => 1 << c.split), tables = prefix && decoders.map(d => d.table), widths = prefix && Int32Array.from(decoders, d => d.bits);
   const remember = value => {
-    if (history) { requireJPEG(!byteHistory || value < 256); history[position++ & 1048575] = value; }
+    if (byteHistory) requireJPEG(value < 256);
+    if (history) history[position++ & 1048575] = value;
     return value;
   };
   const token = h => {
@@ -227,7 +228,7 @@ function entropyReader(model, r, values, multiplier = 0) {
     if (state < 65536) state = state * 65536 + r.read(16);
     return s;
   };
-  const plain = lz || history ? null : prefix ? ctx => {
+  const plain = lz || byteHistory ? null : prefix ? ctx => {
     requireJPEG(ctx >= 0 && ctx < contexts && remaining > 0); remaining--;
     const h = map[ctx], bit = r.bit, bytes = r.window(bit >>> 3), at = (bit >>> 3) - r.offset;
     const entry = lookup(tables[h], (bytes[at] | bytes[at + 1] << 8 | bytes[at + 2] << 16 | bytes[at + 3] << 24) >>> (bit & 7), widths[h]);

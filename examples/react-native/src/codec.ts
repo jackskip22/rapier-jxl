@@ -7,15 +7,18 @@ export interface CallOptions {
   /** Aborting rejects the call with `JXL_CANCELED`; the next call runs normally. */
   signal?: AbortSignal;
 }
+type Effort = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 export interface StillOptions extends CallOptions {
   /** 1 to 100. Default 80. */
   quality?: number;
-  /** 1 to 7. Default 3. */
-  effort?: number;
+  /** 1 to 3. Default 3. */
+  effort?: 1 | 2 | 3;
   /** The input's type. Default: read from its first bytes. */
   mime?: string;
 }
-export interface AnimationOptions extends StillOptions {
+export interface AnimationOptions extends Omit<StillOptions, 'effort'> {
+  /** 1 to 9. Default 3. */
+  effort?: Effort;
   /** 0 to 1, as frames are read and encoded. */
   onProgress?: (fraction: number) => void;
 }
@@ -25,7 +28,7 @@ export interface JXLCodec {
   /** The same, keeping every pixel. */
   encodeExact(photo: Bytes, options?: StillOptions): Promise<Uint8Array>;
   /** A JPEG's own bytes, smaller. `restore` gives the same JPEG back. */
-  recompress(jpeg: Bytes, options?: CallOptions & {effort?: number}): Promise<Uint8Array>;
+  recompress(jpeg: Bytes, options?: CallOptions & {effort?: Effort}): Promise<Uint8Array>;
   /** The JPEG a `recompress` call made, exactly. */
   restore(jxl: Bytes, options?: CallOptions): Promise<Uint8Array>;
   /** A video (every frame, each with its time) or a GIF in, an animated JPEG XL out. */
@@ -90,7 +93,7 @@ export function createCodec(send: (message: object) => void, loadModule: (name: 
     await job.done;
   }
 
-  function call(op: Op, input: Bytes, options: StillOptions & AnimationOptions & {effort?: number} = {}): Promise<Uint8Array> {
+  function call(op: Op, input: Bytes, options: AnimationOptions = {}): Promise<Uint8Array> {
     const {signal} = options;
     const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
     return new Promise<Uint8Array>((resolve, reject) => {

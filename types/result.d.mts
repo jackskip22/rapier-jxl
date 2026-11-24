@@ -1,5 +1,6 @@
-import type {Bytes, EncodeOptions, ErrorCode, Fidelity, FitFidelity, FitOptions, JPEGOptions, JobOptions, ReadAs, VariantsOptions} from './types.mjs';
+import type {Bytes, EncodeOptions, ErrorCode, Fidelity, FitFidelity, FitOptions, JobOptions, ReadAs, VariantsOptions} from './types.mjs';
 import type {CaptureCompleteOptions} from './capture-complete.mjs';
+import type {RecompressOptions} from './jpeg.mjs';
 
 /** An ordinary image operation. The original is supplied separately to the chosen execution host. */
 export type ImageJob =
@@ -7,13 +8,13 @@ export type ImageJob =
   | {readonly verb: 'capture'; readonly options?: CaptureCompleteOptions}
   | {readonly verb: 'fit'; readonly options: FitOptions}
   | {readonly verb: 'variants'; readonly options: VariantsOptions}
-  | {readonly verb: 'recompress'; readonly options?: JPEGOptions}
+  | {readonly verb: 'recompress'; readonly options?: RecompressOptions}
   | {readonly verb: 'restore'; readonly options?: JobOptions};
 /** The call that made a result: encode, fit, variants, capture, recompress, restore or another verb. */
 export type ImageVerb = ImageJob['verb'];
 
 /** A result retains the requested fitting range when no file meets the byte target. Result error bounds may be
- * fractional finite nonnegative values (for example, decoded PNG samples); capture inputs keep their integer bounds. */
+ * fractional finite nonnegative values (for example, decoded PNG samples). Capture inputs keep their integer bounds. */
 type OutputFidelity = Fidelity | ({readonly maxError: number} &
   {readonly [K in 'quality' | 'ssimulacra2']?: never});
 /** The fidelity the file was made at, or for a fit the range it was searched in. */
@@ -31,12 +32,10 @@ export interface ResultReason {
   readonly code: ErrorCode;
   readonly message: string;
 }
-/** The transform applied to the original for this output. resizer 'browser': the browser's high-quality resize, through
- * each of via in order, then to width and height; verify repeats it in a browser. */
-export interface ResultTransform {readonly width: number; readonly height: number; readonly frame?: number;
-  readonly resizer?: 'browser'; readonly via?: readonly {readonly width: number; readonly height: number}[];}
+/** The transform applied to the original for this output: our area average in linear light to width and height. */
+export interface ResultTransform {readonly width: number; readonly height: number; readonly frame?: number;}
 /** Measurements already made by the encoder, or attached by an independent verifier. The domain names
- * what was measured; 'predicted' is not a measurement: the target a lossy effort 1-5 file aimed at, as its floor, with no
+ * what was measured. 'predicted' is not a measurement: the target a lossy effort 1-5 file aimed at, as its floor, with no
  * score (no meter ran), at every depth and quality. A lower bound uses floor and an upper bound uses limit. Explicit S2 targets at efforts 1–5
  * report a guarded reconstruction score: a lower bound for the browser-decoded picture. */
 export type ResultMeasurement = ({
@@ -56,7 +55,7 @@ interface ResultDescription<F = ResultFidelity> {
   readonly height: number;
   /** The file's format: 'jxl', or 'jpeg' for a restored JPEG, or 'png'. */
   readonly format: 'jxl' | 'jpeg' | 'png';
-  /** A canonical execution identity when already supplied; ordinary calls do not hash their input. */
+  /** A canonical execution identity when already supplied. Ordinary calls do not hash their input. */
   readonly source: ResultSource | null;
   readonly fidelity: F;
   readonly measurements: readonly ResultMeasurement[];
@@ -64,22 +63,26 @@ interface ResultDescription<F = ResultFidelity> {
   readonly readAs?: ReadAs;
   /** Original encoded input size when known, retained even when no output file meets the target. */
   readonly originalBytes?: number;
-  /** True exactly when the returned file exceeds originalBytes; omitted when no file was returned. */
+  /** True exactly when the returned file exceeds originalBytes. Omitted when no file was returned. */
   readonly largerThanOriginal?: boolean;
-  /** jpegxl/jpeg's recompress, when another decoder returns less than the whole JPEG. */
+  /** Present on an exact JPEG result when another decoder returns less than the whole JPEG: with an Ultra HDR gain map
+   * in jhgm (the default), djxl and other decoders restore the primary JPEG alone, and restore returns the whole file. */
   readonly otherDecoders?: ResultOtherDecoders;
   /** An animation's durations: 'rounded' when one was rounded to the file's tick (each frame still ends within half a tick). */
   readonly timing?: 'exact' | 'rounded';
-  /** A capture: 'skipped' where the page held more marks of ink than the reader takes; the caller's boxes and the
+  /** A capture: 'skipped' where the page held more marks of ink than the reader takes. The caller's boxes and the
    * repeated marks stayed exact, and unboxed text was not looked for. */
   readonly textMarks?: 'skipped';
+  /** An animation: the frames (each its first input frame) that needed a final quality-floor repair, and what was done:
+   * 'raised' (coded at the top lossy quality and read over it) or 'exact file' (the animation's exact file returned). */
+  readonly unproved?: readonly {readonly frame: number; readonly done: 'raised' | 'exact file'}[];
   /** From the entries that can run stages on WebGPU (jpegxl's encode, fit and variants, animation, format's encode,
    * capture-complete): true when a stage of this call ran on the device. The file is the same either way. */
   readonly usedWebGPU?: boolean;
 }
-/** Another decoder (libjxl's djxl) returns this JPEG without its last `missing` bytes; jpegxl/jpeg's restore returns
+/** Another decoder (libjxl's djxl) returns this JPEG without its last `missing` bytes. Jpegxl/jpeg's restore returns
  * all of it. 'past-jbrd': data after the JPEG's end travels outside the reconstruction box. This happens for tails
- * longer than the 4,260,096 bytes the box holds, or when gainMap: true keeps the gain map in a jhgm bundle. */
+ * longer than the 4,260,096 bytes the box holds, or when an Ultra HDR gain map is kept in a jhgm bundle. */
 export interface ResultOtherDecoders {
   readonly missing: number;
   readonly reason: 'past-jbrd';

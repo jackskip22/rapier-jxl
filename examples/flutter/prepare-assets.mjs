@@ -22,7 +22,7 @@ export async function prepareAssets({example = here, packageDir = process.env.JX
       throw Object.assign(new Error(`${pkg} has no browser file for ./${name.replace('.browser', '')}.`), {code: 'JXL_PACKAGE'});
     await copyFile(join(pkg, `dist/${name}.mjs`), join(out, `${name}.mjs`));
   }
-  await copyFile(join(pkg, 'LICENSE'), join(out, 'LICENSE'));
+  for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES']) await copyFile(join(pkg, name), join(out, name));
   // The tests read an animation back with the package's decoder in the page, and its .wasm names what a host says when it
   // refuses the decoder; the app carries neither.
   if (manifest.exports?.['./decode']?.import !== './dist/decode.mjs') throw Object.assign(new Error(`${pkg} has no ./decode.`), {code: 'JXL_PACKAGE'});

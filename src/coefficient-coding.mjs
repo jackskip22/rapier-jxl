@@ -4,7 +4,7 @@ import {BitWriter} from './bits.mjs';
 import {buildTokenCoding} from './entropy.mjs';
 import {buildCode, uintConfig, hybridToken, writeHybrid, writeHistograms} from './prefix.mjs';
 
-const COEFFICIENT_CONFIGS = [uintConfig(0), uintConfig(1), uintConfig(2), uintConfig(3), uintConfig(4), uintConfig(4, 1, 1), uintConfig(5, 1, 1), uintConfig(2, 0, 1), uintConfig(3, 0, 1)];
+const COEFFICIENT_CONFIGS = [/* @__PURE__ */ uintConfig(0), /* @__PURE__ */ uintConfig(1), /* @__PURE__ */ uintConfig(2), /* @__PURE__ */ uintConfig(3), /* @__PURE__ */ uintConfig(4), /* @__PURE__ */ uintConfig(4, 1, 1), /* @__PURE__ */ uintConfig(5, 1, 1), /* @__PURE__ */ uintConfig(2, 0, 1), /* @__PURE__ */ uintConfig(3, 0, 1)];
 const COEFFICIENT_ALPHABET = 128;
 
 function eachCoefficientValue(counts, ctx, visit) {

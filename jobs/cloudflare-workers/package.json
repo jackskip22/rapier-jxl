@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "jpegxl": "8.4.1"
+    "jpegxl": "8.5.0"
   },
   "devDependencies": {
     "wrangler": "4.152.0"

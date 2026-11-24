@@ -4,7 +4,7 @@ import {writeModularFrameHeader, groupLayout, groupRect, groupPass, assembleCode
 import {writeImageHeader} from './icc-write.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
 import {writeModularAnsHistograms} from './ans.mjs';
-import {ALPHABET, LZ77, RESIDUAL_CONFIG, leaf, split, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
+import {ALPHABET, LZ77, RESIDUAL_CONFIG, leaf, intervals, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {codeWeighted} from './weighted.mjs';
 import {admitOutputSize} from './admit.mjs';
 import {planeFill} from './lossless.mjs';
@@ -54,12 +54,7 @@ function intervalPlan(values, properties, predictor, property, cuts) {
     for (let k = start; k < end; k++) { mapping[k] = index; for (let s = 0; s < ALPHABET; s++) freq[s] += coded.freqs[k][s]; }
     return freq;
   });
-  const tree = (lo, hi) => {
-    if (lo === hi) return leaves[lo];
-    const mid = (lo + hi) >> 1;
-    return split(property, cuts[spans[mid][1] - 1], tree(mid + 1, hi), tree(lo, mid));
-  };
-  return {leaves, tree: tree(0, spans.length - 1), freqs, values, properties, cuts, mapping};
+  return {leaves, tree: intervals(property, spans.slice(0, -1).map(s => cuts[s[1] - 1]), i => leaves[i]), freqs, values, properties, cuts, mapping};
 }
 
 const WEIGHTED_LOCAL_CUTS = [-127, -31, -7, -1, 0, 1, 7, 31, 127];

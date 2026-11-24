@@ -4,7 +4,7 @@ import {fault} from './admit.mjs';
 
 const LAYOUT_SIZE = [[9, 1], [13, 1], [18, 1], [30, 1]];
 const LAYOUT_PREVIEW_SIZE = [[6, 1], [8, 65], [10, 321], [12, 1345]];
-export const EXTRA_CHANNEL_TYPES = Object.freeze({alpha: 0, depth: 1, spot: 2, selection: 3, black: 4, cfa: 5, thermal: 6, optional: 16});
+export const EXTRA_CHANNEL_TYPES = /* @__PURE__ */ Object.freeze({alpha: 0, depth: 1, spot: 2, selection: 3, black: 4, cfa: 5, thermal: 6, optional: 16});
 const extraTypes = new Map(Object.entries(EXTRA_CHANNEL_TYPES));
 export const checkInteger = (value, min, max, name) => {
   if (!Number.isInteger(value) || value < min || value > max) throw fault('JXL_INPUT', name + ': integer ' + min + '-' + max);

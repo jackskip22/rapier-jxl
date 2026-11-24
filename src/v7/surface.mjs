@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: MIT
 import {readWebGLNow} from './webgl-read.mjs';
 import {isVideo, videoFrame} from './video.mjs';
-import {dimensions, fail, plainView, lostBlank, proveRead, LOST, PIXELS} from './primitives.mjs';
+import {dimensions, fail, filePassed, gpuDrawn, plainView, typedName, PIXELS} from './primitives.mjs';
 import {isPlainRecord} from './records.mjs';
 import {withCost, DEFAULT_INPUT_BYTES} from './ownership.mjs';
 import {DESCRIPTION, described, isDecoded, fromDecoded} from './describe.mjs';
+import {open2d, glGpuSpace, copy2d, read2d} from './canvas-2d.mjs';
 const STILL_FIELDS = /* @__PURE__ */ new Set(['data', 'width', 'height', 'parts', ...DESCRIPTION]);
 const ANIMATION_FIELDS = /* @__PURE__ */ new Set(['width', 'height', 'frames', 'loops', ...DESCRIPTION]);
+const halfWords = view => {
+  try { return new Uint16Array(view.buffer, view.byteOffset, view.length); }
+  catch { throw fail('JXL_INPUT', "ArrayBuffer: live and sized"); }
+};
 
 function opaque(data, width, height, half, defer) {
   const count = Number.isSafeInteger(width) && Number.isSafeInteger(height) && width > 0 && height > 0 ? width * height : 0;
@@ -19,10 +24,15 @@ function opaque(data, width, height, half, defer) {
 
 const RGBA = "Wrong pixel data length; pass width * height * 4 straight RGBA samples.";
 const sized = (width, height) => Number.isSafeInteger(width) && Number.isSafeInteger(height) && width > 0 && height > 0;
-const samples = (data, width, height) => { if (sized(width, height) && ArrayBuffer.isView(data) && !(data instanceof DataView) && data.length !== width * height * 4) throw fail('JXL_INPUT', RGBA); };
+const samples = (data, width, height) => {
+  if (!sized(width, height) || !ArrayBuffer.isView(data) || data instanceof DataView || data.length === width * height * 4) return;
+  throw fail('JXL_INPUT', filePassed(data) ?? RGBA);
+};
 export const admitSamples = ({data, width, height}) => samples(data, width, height);
 export function admitFrames({width, height, frames}) {
   if (sized(width, height)) for (const frame of frames) {
+    if (frame && typeof frame === 'object' && ((frame.width !== undefined && frame.width !== width) || (frame.height !== undefined && frame.height !== height)))
+      throw fail('JXL_INPUT', `frame dimensions: match ${width} x ${height}; pass matching frame width and height`);
     samples(frame?.data, width, height);
     if (frame && typeof frame === 'object' && (typeof frame.duration !== 'number' || !Number.isFinite(frame.duration) || frame.duration < 0 || frame.duration > 0xFFFFFFFF))
       throw fail('JXL_INPUT', "frame duration: finite ms >=0");
@@ -31,7 +41,9 @@ export function admitFrames({width, height, frames}) {
 export function surface(input, options = {}) {
   if (isVideo(input)) { const frame = videoFrame(input); try { return surface(frame, options); } finally { frame.close(); } }
   const {maxPixels = PIXELS, maxPendingBytes = DEFAULT_INPUT_BYTES, retainedBytes = 0, admitSurface, readAs: requested, half: halfAllowed = false, deferPacked = false} = options;
-  const typed = typeof ImageData === 'function' && input instanceof ImageData;
+  const proto = input && typeof input === 'object' ? Object.getPrototypeOf(input) : null;
+  const typed = typeof ImageData === 'function' && input instanceof ImageData ||
+    !!proto && proto !== Object.prototype && Object.getOwnPropertyDescriptor(proto, Symbol.toStringTag)?.value === 'ImageData';
   if ((typed || isPlainRecord(input)) && requested !== undefined)
     throw fail('JXL_OPTIONS', "readAs: raw pixels use colorSpace");
   if (isPlainRecord(input) && Object.values(Object.getOwnPropertyDescriptors(input)).some(field => !('value' in field)))
@@ -43,13 +55,13 @@ export function surface(input, options = {}) {
       throw fail('JXL_INPUT', `picture.${key}: {data, width, height}, ${DESCRIPTION.join(", ")}`);
     if (animation) {
       if (input.parts !== undefined && (!Number.isSafeInteger(input.parts) || input.parts < 1))
-      throw fail('JXL_INPUT', 'Invalid picture parts count; use a positive integer.');
-    const description = described(input);
-      if (typeof Float16Array === 'function' && input.frames.some(frame => frame?.data instanceof Float16Array)) {
+        throw fail('JXL_INPUT', 'Invalid picture parts count; use a positive integer.');
+      const description = described(input);
+      if (input.frames.some(frame => typedName.call(frame?.data) === 'Float16Array')) {
         if (description.sampleFormat !== undefined && description.sampleFormat !== 'float16') throw fail('JXL_INPUT', "sampleFormat: float16 for Float16Array");
-        if (!input.frames.every(frame => frame?.data instanceof Float16Array)) throw fail('JXL_INPUT', "frames: matching sample array types");
+        if (!input.frames.every(frame => typedName.call(frame?.data) === 'Float16Array')) throw fail('JXL_INPUT', "frames: matching sample array types");
         return {width: input.width, height: input.height, ...(input.loops !== undefined && {loops: input.loops}),
-          frames: input.frames.map(frame => ({...frame, data: new Uint16Array(frame.data.buffer, frame.data.byteOffset, frame.data.length)})),
+          frames: input.frames.map(frame => ({...frame, data: halfWords(frame.data)})),
           ...description, sampleFormat: 'float16'};
       }
       return {width: input.width, height: input.height, ...(input.loops !== undefined && {loops: input.loops}), frames: input.frames, ...description};
@@ -57,9 +69,9 @@ export function surface(input, options = {}) {
     if (input.parts !== undefined && (!Number.isSafeInteger(input.parts) || input.parts < 1))
       throw fail('JXL_INPUT', 'Invalid picture parts count; use a positive integer.');
     const description = described(input);
-    const halves = typeof Float16Array === 'function' && input.data instanceof Float16Array;
+    const given = plainView(input.data), halves = typeof Float16Array === 'function' && given instanceof Float16Array;
     if (halves && description.sampleFormat !== undefined && description.sampleFormat !== 'float16') throw fail('JXL_INPUT', "sampleFormat: float16 for Float16Array");
-    const words = halves ? new Uint16Array(input.data.buffer, input.data.byteOffset, input.data.length) : input.data;
+    const words = halves ? halfWords(given) : given;
     const floats = opaque(words, input.width, input.height, halves || description.sampleFormat === 'float16', deferPacked);
     const data = floats ?? (ArrayBuffer.isView(words) && !(words instanceof DataView) ? plainView(words) : words);
     if (!deferPacked || floats === null) samples(data, input.width, input.height);
@@ -68,10 +80,12 @@ export function surface(input, options = {}) {
   if (typed) {
     const {data, width, height, colorSpace = 'srgb'} = input;
     dimensions(width, height, maxPixels);
+    if (!ArrayBuffer.isView(data) || data instanceof DataView) throw fail('JXL_INPUT', RGBA);
+    samples(data, width, height);
     admitSurface?.({width, height, byteLength: data.byteLength, colorSpace});
-    return typeof Float16Array === 'function' && data instanceof Float16Array
-      ? {data: new Uint16Array(data.buffer, data.byteOffset, data.length), width, height, colorSpace, sampleFormat: 'float16'}
-      : {data, width, height, colorSpace};
+    return typedName.call(data) === 'Float16Array'
+      ? {data: halfWords(data), width, height, colorSpace, sampleFormat: 'float16'}
+      : {data: plainView(data), width, height, colorSpace};
   }
   const canvas = input && typeof input.getContext === 'function';
   const frame = typeof VideoFrame === 'function' && input instanceof VideoFrame;
@@ -90,50 +104,23 @@ export function surface(input, options = {}) {
   if (requested !== undefined && requested !== 'srgb' && requested !== 'display-p3')
     throw fail('JXL_OPTIONS', "readAs: srgb or display-p3");
   let copied;
-  const copy = (from, space) => {
-    const canvas = typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(width, height) : document.createElement('canvas');
-    copied = canvas;
-    canvas.width = width; canvas.height = height;
-    const drawn = canvas.getContext('2d', {willReadFrequently: true, colorSpace: space});
-    if (!drawn) throw fail('JXL_PLATFORM', 'no 2D canvas: pass RGBA pixels');
-    drawn.drawImage(from, 0, 0);
-    return {canvas, drawn};
-  };
+  const copy = (from, space) => copy2d(from, width, height, space, c => { copied = c; });
   try {
-    let target = input;
-    if (bitmap) target = copy(input, requested ?? 'srgb').canvas;
+    const target = bitmap ? copy(input, requested ?? 'srgb').canvas : input;
     context ??= context2d(target);
     if (!context) {
       const own = foreignSpace(target);
       const direct = requested === undefined || requested === own ? readWebGLNow(target) : null;
-      if (direct) { withCost(direct.data, direct.data.byteLength); return direct; }
-      context = copy(target, requested ?? own).drawn;
+      if (direct) { gpuDrawn(direct.data); withCost(direct.data, direct.data.byteLength); return direct; }
+      const read = read2d(copy(target, requested ?? own).drawn, width, height, requested, half);
+      gpuDrawn(read.data);
+      return read;
     }
-    const colorSpace = requested ?? context.getContextAttributes?.().colorSpace ?? 'srgb';
-    proveRead(context);
-    let pixels;
-    try { pixels = context.getImageData(0, 0, width, height, half ? {colorSpace, pixelFormat: 'rgba-float16'} : {colorSpace}); }
-    catch (cause) { throw Object.assign(fail('JXL_INPUT', "canvas read: redraw or RGBA pixels"), {cause}); }
-    if (lostBlank(context, pixels.data)) throw fail('JXL_INPUT', LOST);
-    const halfRead = half && pixels.data.BYTES_PER_ELEMENT === 2;
-    const data = halfRead ? new Uint16Array(pixels.data.buffer, pixels.data.byteOffset, pixels.data.length) : pixels.data;
-    withCost(data, data.byteLength);
-    return {data, width, height, colorSpace: pixels.colorSpace ?? 'srgb', ...(halfRead && {transferFunction: 'srgb', sampleFormat: 'float16'})};
+    return read2d(context, width, height, requested, half);
   } finally {
     if (copied) copied.width = copied.height = 0;
   }
 }
 
-export function foreignSpace(canvas) {
-  for (const id of ['webgl2', 'webgl', 'webgpu']) {
-    let c; try { c = canvas.getContext(id); } catch {}
-    if (c?.isContextLost?.()) throw fail('JXL_INPUT', "canvas lost: redraw");
-    if (c) return c.drawingBufferColorSpace ?? c.getConfiguration?.()?.colorSpace ?? 'srgb';
-  }
-  throw fail('JXL_INPUT', "canvas context: 2D, WebGL or WebGPU");
-}
-
-export function context2d(canvas) {
-  try { return canvas.getContext('2d', {willReadFrequently: true}); }
-  catch (cause) { throw Object.assign(fail('JXL_INPUT', "canvas 2D: OffscreenCanvas or RGBA pixels"), {cause}); }
-}
+export const foreignSpace = canvas => glGpuSpace(canvas);
+export const context2d = canvas => open2d(canvas);

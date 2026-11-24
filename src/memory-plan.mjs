@@ -10,7 +10,7 @@ export const PROCESS_BYTES = Object.freeze({
 });
 export const WORKER_SCRATCH_BYTES = 3 * 32 * 32 * 64 * 7 + 3 * 32 * 32 * 4;
 const MEMORY_BAND_ROWS = [128, 64, 32, 16, 8], UNKNOWN_WHOLE_PIXELS = 524288;
-export const MEMORY_RECON_MARGIN = 8;
+export {MAX_RECON_MARGIN as MEMORY_RECON_MARGIN} from './band-geometry.mjs';
 const RECON_SCRATCH = 2 * 256 * 256 * 8;
 
 export function reconstructionBytes(width, padded, blocks) {
@@ -71,10 +71,8 @@ export function memoryPlan(pixels, options = {}) {
   if (requestedWorkers > 0 && workerReady && memorySum(workerInput, mul(2, workerOutput), WORKER_SCRATCH_BYTES) > workerJob)
     throw fault('JXL_INTERNAL', 'memory-plan:workerJobBytes');
   const known = unknown.length === 0;
-  if (!g) return {known: false, fits: false, used: 0, budgetBytes, unknown, dct: false, workers: 0,
-    poolBytes: 0, cacheBytes: 0, banded: options.banded !== false, bandRows: 8, stages: {}, reservations: reserve,
-    workerReservation: Object.freeze({count: 0, runtimeBytes: 0, jobBytes: 0, inputBytes: 0, outputBytes: 0,
-      scratchBytes: WORKER_SCRATCH_BYTES, totalBytes: 0})};
+  if (!g) return {known: false, fits: false, used: 0, budgetBytes, dct: false, workers: 0,
+    cacheBytes: 0, banded: options.banded !== false, stages: {}, reservations: reserve};
   const {width, height, padded, blocks, tiles} = g;
   const input = integer(options.inputBytes ?? mul(4, pixels), 'inputBytes');
   if (input < mul(4, pixels)) throw fault('JXL_INTERNAL', 'memory-plan:inputBytes');
@@ -138,16 +136,11 @@ export function memoryPlan(pixels, options = {}) {
     cacheBytes = lower;
     stages = stagesFor(banded, bandRows, dct, workers, cacheBytes); used = maximum(stages);
   }
-  return Object.freeze({known, fits: known && used <= budgetBytes, used, budgetBytes, unknown: Object.freeze(unknown),
-    dct, dctBytes: dct ? dctBytes : 0, workers, poolBytes: mul(workers, memorySum(workerRuntime, workerJob)),
-    workerRuntimeBytes: workerRuntime, workerJobBytes: workerJob, cacheBytes, banded, bandRows, route: routeOf(banded),
-    workerCropPixels: 224 * 224, workerBlockPixels: 320 * 320,
-    workerReservation: Object.freeze({count: workers, runtimeBytes: workerRuntime, jobBytes: workerJob,
-      inputBytes: workerInput, outputBytes: workerOutput, scratchBytes: WORKER_SCRATCH_BYTES,
-      totalBytes: mul(workers, memorySum(workerRuntime, workerJob))}),
-    stages: Object.freeze(stages), geometry: Object.freeze(g), reservations: Object.freeze({...reserve,
-      inputBytes: input, metricInputBytes: metricInput, referenceBytes: extraReference}),
-    scope: "the process's measured peak by route, and the live-allocation stages of a measured search"});
+  mul(workers, memorySum(workerRuntime, workerJob));
+  routeOf(banded);
+  return Object.freeze({known, fits: known && used <= budgetBytes, used, budgetBytes,
+    dct, workers, cacheBytes, banded, stages: Object.freeze(stages), reservations: Object.freeze({...reserve,
+      inputBytes: input, metricInputBytes: metricInput, referenceBytes: extraReference})});
 }
 
 export function bandsExact(pixels, options = {}) { return memoryPlan(pixels, options).banded; }

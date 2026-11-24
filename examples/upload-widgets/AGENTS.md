@@ -7,7 +7,7 @@ Photographs become JPEG XL on the person's device before FilePond uploads them.
 1. Copy `shrink.mjs` and `filepond.mjs` from this folder into the app (for example `src/rapier-jxl/`), with
    `rapier-jxl` installed.
 2. Where the app creates the widget: `import jxl from './rapier-jxl/filepond.mjs'` and `FilePond.registerPlugin(jxl)`.
-   Leave `filepond-plugin-image-transform` out unless the app crops or resizes; with it, rapier-jxl encodes its output.
+   Leave `filepond-plugin-image-transform` out unless the app crops or resizes. With it, rapier-jxl encodes its output.
 3. The page's Content Security Policy must allow `'wasm-unsafe-eval'` and workers from the app's own origin.
 
 ## Check it worked

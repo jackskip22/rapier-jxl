@@ -24,8 +24,8 @@ export function* textFloorCapture(bytes, data, width, height, colorSpace) {
       const part = yield* recall(data, spaceKey(colorSpace) && `floor:${x}:${y}:${spaceKey(colorSpace)}`, function* () { return yield {capture: {data: tile(data, width, x, y), width: TILE, height: TILE, colorSpace}}; });
       if (!(part instanceof Uint8Array)) return null;
       sum += part.length;
+      if (sum * width * height / (4 * TILE * TILE) >= OVER * bytes.length) return null;
     }
-    if (sum * width * height / (4 * TILE * TILE) >= OVER * bytes.length) return null;
   }
   const captured = yield* capture({data, width, height, colorSpace});
   return captured instanceof Uint8Array && captured.length < bytes.length ? captured : null;

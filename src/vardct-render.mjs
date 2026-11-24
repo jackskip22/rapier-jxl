@@ -29,6 +29,35 @@ export function renderVarBlock(ctx, block, targets, tops) {
   const transpose = !(id === 1 || id === 2 || id === 3 || id >= 12 && id <= 17) && shape.height >= shape.width;
   const held = block.coefficients, K = ctx.weights, arena = block.arena?.byteOffset, table = shape.table;
   const wide = Math.max(shape.width, shape.height), coefficients = ctx.blockPlanes, i32 = kernels.i32, tiles = ctx.blocks.tables;
+  if (kernels.varBlock && cflBlock && area > 1 && (id >= 4 && id <= 11 || id >= 18) &&
+      held[0] != null && held[1] != null && held[2] != null &&
+      hshift[0] === 0 && hshift[1] === 0 && hshift[2] === 0 && vshift[0] === 0 && vshift[1] === 0 && vshift[2] === 0 &&
+      qmScale[0] === 1 && qmScale[1] === 1 && qmScale[2] === 1 && tops[0] === tops[1] && tops[1] === tops[2] &&
+      (block.x >> 3) === ((block.x + bw - 1) >> 3) && (block.y >> 3) === ((block.y + bh - 1) >> 3)) {
+    const qOff = K.offsets[table];
+    if (!K.loaded[table]) { for (let k = 0; k < 3; k++) new Float32Array(kernels.buffer, qOff + k * size * 4, size).set(quant[k]); K.loaded[table] = true; }
+    const tile = ((block.y >> 3) - (group.by >> 3)) * group.width + (block.x >> 3) - (group.bx >> 3);
+    const corrx = global.correlation.baseX + group.xFromY[tile] / global.correlation.factor;
+    const corrb = global.correlation.baseB + group.bFromY[tile] / global.correlation.factor;
+    const bx = block.x - ox, by = block.y, x0 = bx * 8, y0 = by * 8, w = widths[0];
+    const xs = Math.min(shape.width, w - x0), ys = Math.min(shape.height, heights[0] - y0), dstOff = ((y0 - tops[0]) * w + x0) * 4;
+    const wMax = Math.max(bw, bh), hMin = Math.min(bw, bh);
+    const bt = blockTable(ctx, 'T' + bw, () => basisT(bw)), bb = blockTable(ctx, 'B' + bh, () => basis(bh));
+    const div = blockTable(ctx, 'D' + wMax + 'x' + hMin, () => llfDivisors(wMax, hMin));
+    const basisW = kernels.basis(shape.width, () => scaledBasis(shape.width)), basisH = kernels.basis(shape.height, () => scaledBasis(shape.height));
+    const ga = kernels.args >> 2;
+    i32[ga] = arena + held[0] * 4; i32[ga + 1] = arena + held[1] * 4; i32[ga + 2] = arena + held[2] * 4; i32[ga + 3] = size;
+    i32[ga + 4] = qOff; i32[ga + 5] = qOff + size * 4; i32[ga + 6] = qOff + size * 8;
+    i32[ga + 7] = lf[0].byteOffset; i32[ga + 8] = lf[1].byteOffset; i32[ga + 9] = lf[2].byteOffset;
+    i32[ga + 10] = dcWidth[0]; i32[ga + 11] = bx; i32[ga + 12] = by; i32[ga + 13] = bw; i32[ga + 14] = bh;
+    i32[ga + 15] = bt; i32[ga + 16] = bb; i32[ga + 17] = div; i32[ga + 18] = wide; i32[ga + 19] = tiles + 65536;
+    i32[ga + 20] = shape.width; i32[ga + 21] = shape.height; i32[ga + 22] = basisW; i32[ga + 23] = basisH;
+    i32[ga + 24] = targets[0].byteOffset + dstOff; i32[ga + 25] = targets[1].byteOffset + dstOff; i32[ga + 26] = targets[2].byteOffset + dstOff;
+    i32[ga + 27] = w * 4; i32[ga + 28] = xs; i32[ga + 29] = ys;
+    kernels.varBlock(kernels.args, 65536 / (global.globalScale * multiplier), bias[0], bias[1], bias[2], numerator, corrx, corrb);
+    block.coefficients = block.arena = null;
+    return;
+  }
   coefficients[0] = coefficients[1] = coefficients[2] = null;
   if (cflBlock) {
     const columns = size / wide;

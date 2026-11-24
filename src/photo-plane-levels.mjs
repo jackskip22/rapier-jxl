@@ -38,6 +38,6 @@ export function* planeLevelsSteps(base, width, height, layout, options, signal) 
   return levels?.exact ?? null;
 }
 export function* planeLayoutSteps(base, width, height, layout, options, signal) {
-  const exact = options.deadzoneMap ? null : yield* planeLevelsSteps(base, width, height, layout, options, signal);
+  const exact = options.deadzoneMap && !options.gpuDeadzone ? null : yield* planeLevelsSteps(base, width, height, layout, options, signal);
   return fixedStrategyImage(base, width, height, {...options, layout, ...(exact ? {exact} : {})}).image;
 }

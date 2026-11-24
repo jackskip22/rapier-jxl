@@ -4,16 +4,16 @@ import {S2_WEIGHTS, finalCurve} from './ssimulacra2-weights.mjs';
 export const S2_GROUPS = 1024;
 
 function assemble(sums, sizes) {
-  let total = 0, i = 0;
+  let total = 0;
   const norms = sizes.map(({w, h}, s) => {
     const inverse = 1 / (w * h), mean = v => inverse * v, root = v => Math.sqrt(Math.sqrt(mean(v)));
     return sums[s].map(t => [mean(t[0]), root(t[1]), mean(t[2]), root(t[3]), mean(t[4]), root(t[5])]);
   });
   for (let c = 0; c < 3; c++) for (let s = 0; s < sizes.length; s++) for (let k = 0; k < 2; k++) {
     const t = norms[s][c];
-    total += S2_WEIGHTS[i++] * Math.abs(t[k]);
-    total += S2_WEIGHTS[i++] * Math.abs(t[2 + k]);
-    total += S2_WEIGHTS[i++] * Math.abs(t[4 + k]);
+    total += S2_WEIGHTS[c * 36 + s * 6 + 3 * k] * Math.abs(t[k]);
+    total += S2_WEIGHTS[c * 36 + s * 6 + 3 * k + 1] * Math.abs(t[2 + k]);
+    total += S2_WEIGHTS[c * 36 + s * 6 + 3 * k + 2] * Math.abs(t[4 + k]);
   }
   return total;
 }

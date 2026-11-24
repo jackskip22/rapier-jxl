@@ -6,6 +6,7 @@ import {v6For} from './photo-v6-settings.mjs';
 import {fixedStrategyImage, lazyStrategyImage, materialize} from './varblock-core.mjs';
 import {estimateBytes} from './coefficient-ans.mjs';
 import {writeImageSteps} from './photo-image-write.mjs';
+import {spannedSteps} from './photo-measured-steps.mjs';
 import {journaling} from './step-journal.mjs';
 export {S2_MARGIN} from './photo-whole-policy.mjs';
 
@@ -33,13 +34,4 @@ export function stillPhotoProvider(prepared) {
   };
 }
 
-function* quietWriteSteps(image, effort) {
-  const steps = writeImageSteps(image, effort);
-  let step, reply;
-  try {
-    while (!(step = steps.next(reply)).done) {
-      if (typeof step.value === 'number') { yield 0; reply = undefined; } else reply = yield step.value;
-    }
-  } finally { if (!step?.done) steps.return?.(); }
-  return step.value;
-}
+const quietWriteSteps = (image, effort) => spannedSteps(writeImageSteps(image, effort));

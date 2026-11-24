@@ -1,4 +1,5 @@
 import {serve, acceptsJxl as accepts} from 'jpegxl/serve';
+import {isSharePreviewRequest} from './space-saver.mjs';
 
 const FILE = /^\/_emdash\/api\/media\/file\/([0-9A-HJKMNP-TV-Z]{26}(?:\.[0-9A-HJKMNP-TV-Z]{26})*\.(?:jpe?g|jpe|jfif|png|webp|avif))$/i;
 const REPLACE = /^\/_emdash\/api\/media\/[0-9A-HJKMNP-TV-Z]{26}\/replace$/i;
@@ -9,6 +10,8 @@ const ALLOWED_PARAMS = new Set(['href', 'w', 'h', 'f', 'q', 'fit', 'pos', 'posit
 const CENTERED_POSITION = new Set(['center', 'centre', '50%', '50% 50%', 'center center', 'centre centre']);
 const BOUNDING_FITS = new Set(['contain', 'inside', 'scale-down']);
 const EXACT_BOX_FITS = new Set([null, 'cover', 'fill', 'outside']);
+// The widest stored copy that still costs no more than EmDash's WebP for a slot, as a multiple of the slot's width.
+export const NEAR_WIDTH = 1.06;
 const SANDBOX = "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'";
 export const mediaKey = url => FILE.exec(new URL(url).pathname)?.[1] ?? null;
 
@@ -51,9 +54,9 @@ export async function serveMedia({request, storage}) {
   if (!key) return null;
   const type = /\.(?:jpe?g|jpe|jfif)$/i.test(key) ? 'image/jpeg' : /\.png$/i.test(key) ? 'image/png' :
     /\.avif$/i.test(key) ? 'image/avif' : 'image/webp';
-  if (!acceptsJxl(request.headers.get('accept'), type)) return null;
+  if (isSharePreviewRequest(request) || !acceptsJxl(request.headers.get('accept'), type)) return null;
   const result = await storage.sidecar(key, {signal: request.signal});
-  // The copy's stored SHA-256 is already checked by the storage read; it names the tag, so the body is hashed once, not twice.
+  // The copy's stored SHA-256 is already checked by the storage read, so the body is hashed once, not twice.
   return result ? secure(await serve(result.bytes, requestForJxl(request), {maxPixels: storage.maxPixels, signal: request.signal,
     ...(typeof result.etag === 'string' && {etag: result.etag})})) : null;
 }
@@ -63,8 +66,11 @@ export async function serveWidth({request, storage, endpoint = '/_image'}) {
   if (url.pathname !== endpoint || !['GET', 'HEAD'].includes(request.method) || request.headers.has('range') ||
       (typeof storage?.variants !== 'function' && typeof storage?.sidecar !== 'function')) return null;
   if ([...url.searchParams.keys()].some(k => !ALLOWED_PARAMS.has(k)) || !centeredPosition(url)) return null;
-  const format = url.searchParams.get('f'), alternative = WIDTH_FORMATS.get(format);
-  if (!alternative || !acceptsJxl(request.headers.get('accept'), alternative)) return null;
+  // `f=jxl` comes from a <source type="image/jxl">: the browser chose JPEG XL itself, so the URL alone decides,
+  // and the answer is the same for every browser, so no cache keeps one copy per Accept string.
+  const format = url.searchParams.get('f'), alternative = WIDTH_FORMATS.get(format), named = format === 'jxl';
+  if (!named && (!alternative || isSharePreviewRequest(request) || !acceptsJxl(request.headers.get('accept'), alternative))) return null;
+  const answer = named ? response => (secure(response).headers.delete('vary'), response) : secure;
   const requestedQuality = askedQuality(url.searchParams.get('q'));
   if (requestedQuality === undefined) return null;
   const fit = url.searchParams.get('fit');
@@ -90,14 +96,14 @@ export async function serveWidth({request, storage, endpoint = '/_image'}) {
   };
 
   if (BOUNDING_FITS.has(fit)) {
-    // Bounding-box fits (contain, inside, scale-down) never crop; resolve the proportional target from the full rendition.
+    // Bounding-box fits (contain, inside, scale-down) never crop and resolve the proportional target from the full rendition.
     const full = await readMain();
     if (!full || !Number.isSafeInteger(full.width) || !Number.isSafeInteger(full.height)) {
       if (!hasW) return null;
       const direct = list.find(v => v.width === width && (!hasH || v.result.height === height));
       if (!direct || !matchesQuality(direct.result, format, requestedQuality)) return null;
       const bytes = await storage.readVariant(direct, {signal: request.signal});
-      return bytes ? secure(await serve(bytes, requestForJxl(request), {maxPixels: storage.maxPixels, signal: request.signal,
+      return bytes ? answer(await serve(bytes, requestForJxl(request), {maxPixels: storage.maxPixels, signal: request.signal,
         ...(typeof direct.sha256 === 'string' && {etag: direct.sha256.slice(0, 32)})})) : null;
     }
     const scaleW = hasW ? width / full.width : 1, scaleH = hasH ? height / full.height : 1;
@@ -112,26 +118,28 @@ export async function serveWidth({request, storage, endpoint = '/_image'}) {
     targetW = Math.max(1, Math.round(full.width * height / full.height));
     targetH = height;
   }
-
-  if (targetW !== null) {
-    const file = list.find(v => v.width === targetW);
-    if (file && (targetH === null || targetH === file.result.height) && matchesQuality(file.result, format, requestedQuality)) {
-      const bytes = await storage.readVariant(file, {signal: request.signal});
-      if (bytes) return secure(await serve(bytes, requestForJxl(request), {maxPixels: storage.maxPixels, signal: request.signal,
-        ...(typeof file.sha256 === 'string' && {etag: file.sha256.slice(0, 32)})}));
-    }
-  }
-
-  // Full-size hits (intrinsic width in responsive srcset, 2x density at source width, scale-down clamp, or bare href)
-  // use the verified main rendition when its displayed width and height match the uncropped request.
+  // No stored copy at this width: the smallest one at least as wide serves it while it costs the visitor no more bytes than
+  // EmDash's WebP for the slot (NEAR_WIDTH, measured), and has the same shape (width and height scale together, so nothing is cropped).
+  const near = (w, h) => targetW !== null && w >= targetW && w <= targetW * NEAR_WIDTH &&
+    (targetH === null || Math.abs(h * targetW / w - targetH) <= 1);
+  const fileFor = file => file && matchesQuality(file.result, format, requestedQuality) && near(file.width, file.result.height);
+  const file = targetW === null ? undefined : list.filter(v => v.width >= targetW).sort((a, b) => a.width - b.width).find(fileFor);
   const full = await readMain();
-  if (!full || (targetW !== null && full.width !== targetW) || (targetH !== null && full.height !== targetH) ||
-      !matchesQuality(full, format, requestedQuality)) return null;
-  return secure(await serve(full.bytes, requestForJxl(request), {maxPixels: storage.maxPixels, signal: request.signal,
+  const fullFits = full && Number.isSafeInteger(full.width) && Number.isSafeInteger(full.height) && matchesQuality(full, format, requestedQuality) &&
+    (targetW === null ? targetH === null || full.height === targetH : near(full.width, full.height));
+  if (file && !(fullFits && full.width < file.width)) {
+    const bytes = await storage.readVariant(file, {signal: request.signal});
+    if (bytes) return answer(await serve(bytes, requestForJxl(request), {maxPixels: storage.maxPixels, signal: request.signal,
+      ...(typeof file.sha256 === 'string' && {etag: file.sha256.slice(0, 32)})}));
+  }
+  // Full-size hits (intrinsic width in responsive srcset, 2x density at source width, scale-down clamp, or bare href)
+  // use the verified main rendition when it is the slot's width or the nearest one above it.
+  if (!fullFits) return null;
+  return answer(await serve(full.bytes, requestForJxl(request), {maxPixels: storage.maxPixels, signal: request.signal,
     ...(typeof full.etag === 'string' && {etag: full.etag})}));
 }
 
-// EmDash fires media:afterUpload only after signed and plug-in uploads; its admin uploads and replaces on R2 bindings
+// EmDash fires media:afterUpload only after signed and plug-in uploads. Its admin uploads and replaces on R2 bindings
 // and local storage directly, so the plug-in's hook gets those writes here, and no other plug-in's.
 export async function announceUpload(hooks, response, id = 'rapier-media') {
   if (![200, 201].includes(response.status) || typeof hooks?.getTypedHooks !== 'function' || typeof hooks.getContext !== 'function') return;
@@ -146,6 +154,31 @@ export async function announceUpload(hooks, response, id = 'rapier-media') {
 // metadata. That storage is the process's one cached adapter, so the last full request's live route-metadata reader is
 // kept on it: a plug-in disabled since then reads disabled at once, and before any full request the host answers.
 const activation = new WeakMap();
+
+// serve() already sets Vary: Accept. EmDash 1.6 and later cache media in the route cache under one tag per storage key. A JPEG XL answer joins that tag, so replacing
+// or deleting the image purges it too. Older EmDash versions export nothing here, and then nothing is tagged.
+const MEMORY_LIMIT = 10 * 1024 * 1024;
+let cacheHelper;
+const loadCacheHelper = () => cacheHelper ??= import('emdash/media/image-endpoint').then(
+  module => typeof module.cacheMediaResponse === 'function' ? module : null, () => null);
+export const useCacheHelper = module => { cacheHelper = module === undefined ? undefined : Promise.resolve(module); };
+
+function storageKeyOf(url) {
+  if (url.pathname === '/_image') {
+    try { return mediaKey(new URL(url.searchParams.get('href') ?? '', url)); } catch { return null; }
+  }
+  return mediaKey(url);
+}
+
+async function tagOwn(response, url, cache) {
+  const key = storageKeyOf(url), helper = key && cache?.enabled ? await loadCacheHelper() : null;
+  if (helper) {
+    const size = Number(response.headers.get('content-length'));
+    helper.cacheMediaResponse(cache, key, Number.isFinite(size) && size > 0 ? size : undefined,
+      helper.MEMORY_ROUTE_CACHE_MAX_MEDIA_BYTES ?? MEMORY_LIMIT);
+  }
+  return response;
+}
 export async function onRequest(context, next) {
   const emdash = context.locals.emdash, storage = emdash?.storage, request = context.request;
   // Native storage remains configured when a plugin is disabled. Its public route metadata follows activation
@@ -157,7 +190,7 @@ export async function onRequest(context, next) {
     : owned ? activation.get(storage) : undefined;
   const enabled = typeof meta === 'function' && meta('rapier-media', 'available')?.public === true;
   const rendition = enabled ? await serveMedia({request, storage}) ?? await serveWidth({request, storage}) : null;
-  if (rendition) return rendition;
+  if (rendition) return tagOwn(rendition, new URL(request.url), context.cache);
   const response = await next(), url = new URL(request.url);
   const directWrite = request.method === 'POST' && url.pathname === '/_emdash/api/media' && response.status === 201 ||
     request.method === 'PUT' && REPLACE.test(url.pathname) && response.status === 200;
@@ -166,7 +199,8 @@ export async function onRequest(context, next) {
     context.locals.cfContext?.waitUntil?.(work);
     return response;
   }
-  if (!['GET', 'HEAD'].includes(request.method) || !mediaKey(url) && url.pathname !== '/_image') return response;
+  if (!['GET', 'HEAD'].includes(request.method) || !mediaKey(url) && url.pathname !== '/_image' ||
+      url.searchParams.get('f') === 'jxl') return response;
   // Both representations vary: a cached original must not hide a later negotiated rendition.
   const headers = new Headers(response.headers), vary = headers.get('vary');
   if (!vary?.split(',').some(value => ['*', 'accept'].includes(value.trim().toLowerCase())))

@@ -155,7 +155,7 @@ export async function pngPixels(journal, file, {readAs, deep = true, orient = fa
   } while (!walk?.done);
   if (metadata) return (await unit(journal,'png-geometry',() => pngOrientationLocation(walk))).value;
   const {value: s} = await unit(journal, 'png-structure', async () => {
-    const {width, height, depth, colourType, channels, interlace, expected, palette, paletteAlpha, transparent, colour, orientation, parts} = await pngLayout(walk, false);
+    const {width, height, depth, colourType, channels, interlace, expected, palette, paletteAlpha, transparent, colour, orientation, parts} = await pngLayout(walk);
     const stream = parts.reduce((n, [, length]) => n + length, 0), [cmf, flg] = parts.length ? file.subarray(parts[0][0], parts[0][0] + 2) : [];
     const taken = (!shapeScan || depth <= 8 && !interlace) && (orient || !(orientation > 1)) && parts[0]?.[1] >= 2 &&
       (cmf & 15) === 8 && cmf >>> 4 <= 7 && !((cmf * 256 + flg) % 31) && !(flg & 32);

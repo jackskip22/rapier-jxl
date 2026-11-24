@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 import {LIMITS} from './limits.mjs';
-import {ZIGZAG, jpegError, parseJPEG, profileSpace, profileIntent, namedEncoding} from './jfif.mjs';
+import {ZIGZAG, jpegError, parseJPEG, profileSpace, profileIntent, namedEncoding, buildHuffman, validateHuffman} from './jfif.mjs';
 import {inspectICC} from './icc-profile.mjs';
 import {exifOrientation} from './exif-orientation.mjs';
 import {jpegYCbCr} from './jpeg-color.mjs';
-import {jpegKernels} from './jpeg-kernels.mjs';
+import {jpegKernels, retireJpegKernels} from './jpeg-kernels.mjs';
 import {orientSamples} from './sample-transforms.mjs';
 import {prepareKernels, ensureKernels} from './kernels.mjs';
 import {wasmRequired} from './capture-wasm-error.mjs';
@@ -19,49 +19,6 @@ function iccHash(bytes) {
   let h = 2166136261;
   for (let i = 0; i < bytes.length; i++) h = Math.imul(h ^ bytes[i], 16777619);
   return `${bytes.length}:${h >>> 0}`;
-}
-
-function buildHuffman(counts, symbols) {
-  const lookup = new Uint16Array(65536);
-  let code = 0, k = 0;
-  for (let length = 1; length <= 16; length++) {
-    for (let i = 0; i < counts[length - 1]; i++) {
-      const symbol = symbols[k++], start = code << (16 - length), n = 1 << (16 - length);
-      if (start + n >= 65536) throw jpegError('Huffman table');
-      lookup.fill((length << 8) | symbol, start, start + n);
-      code++;
-    }
-    code <<= 1;
-  }
-  return lookup;
-}
-
-function validateHuffman(counts) {
-  let code = 0;
-  for (let length = 1; length <= 16; length++) {
-    const n = counts[length - 1];
-    if (n && (code + n) * (1 << (16 - length)) >= 65536) throw jpegError('Huffman table');
-    code = (code + n) * 2;
-  }
-}
-
-export function chooseJpegIdctScale(trueWidth, trueHeight, outputs) {
-  if (!Array.isArray(outputs) || !outputs.length) return 8;
-  let maxW = 0, maxH = 0;
-  for (const req of outputs) {
-    if (!req || (req.width === undefined && req.height === undefined)) return 8;
-    const w = req.width ?? Math.max(1, Math.round(req.height * trueWidth / trueHeight));
-    const h = req.height ?? Math.max(1, Math.round(req.width * trueHeight / trueWidth));
-    if (w > maxW) maxW = w;
-    if (h > maxH) maxH = h;
-  }
-  if (maxW >= trueWidth && maxH >= trueHeight) return 8;
-  for (const [n, guard] of [[1, 4.0], [2, 2.0], [4, 1.25], [6, 1.15]]) {
-    const decW = Math.max(1, Math.ceil(trueWidth * n / 8));
-    const decH = Math.max(1, Math.ceil(trueHeight * n / 8));
-    if (decW >= maxW * guard && decH >= maxH * guard) return n;
-  }
-  return 8;
 }
 
 function makeSubsamplingPlan(width, height, components, ycbcr, scale) {
@@ -154,8 +111,8 @@ function finishAfterScan(bytes, pos, total, restartInterval, orientation) {
     if (pos + 2 > bytes.length) return null;
     const len = (bytes[pos] << 8) | bytes[pos + 1], seg = pos + 2, end = pos + len;
     if (len < 2 || end > bytes.length) return null;
-    if (marker === 0xE1 && end - seg >= 6 && bytes[seg] === 0x45 && bytes[seg + 1] === 0x78 && bytes[seg + 2] === 0x69 && bytes[seg + 3] === 0x66 && bytes[seg + 4] === 0)
-      orientation ??= exifOrientation(bytes, seg + 6, end);
+    if (marker === 0xE1 && end - seg >= 6 && bytes[seg] === 0x45 && bytes[seg + 1] === 0x78 && bytes[seg + 2] === 0x69 && bytes[seg + 3] === 0x66 && bytes[seg + 4] === 0 && bytes[seg + 5] === 0)
+      orientation ??= exifOrientation(bytes, seg + 6, end) ?? 1;
     else if (marker === 0xE2 && len >= 16 && bytes[seg] === 0x49 && bytes[seg + 1] === 0x43 && bytes[seg + 2] === 0x43)
       return null;
     pos = end;
@@ -163,7 +120,7 @@ function finishAfterScan(bytes, pos, total, restartInterval, orientation) {
   return {orientation: orientation ?? 1};
 }
 
-function trySequentialScaled(bytes, maxPixels, outputs, onBandOut) {
+function trySequentialScaled(bytes, maxPixels, scale, sized) {
   if (!(bytes.length > 4) || bytes[0] !== 0xFF || bytes[1] !== 0xD8) throw jpegError('invalid signature');
   const quant = [], huffman = [[], []], badDC = new Set(), icc = {count: 0, parts: []};
   const lookup = (kind, slot) => { const t = huffman[kind][slot]; return t && (t.lookup ??= buildHuffman(t.counts, t.symbols)); };
@@ -270,12 +227,9 @@ function trySequentialScaled(bytes, maxPixels, outputs, onBandOut) {
       if (ss !== 0 || se !== 63 || ah !== 0 || al !== 0) throw jpegError('spectral selection');
       if ((bytes.length - end) * 8 < frame.components.reduce((sum, c) => sum + c.blocksW * c.blocksH, 0)) throw jpegError('scan: incomplete');
 
-      const prelimOrient = orientation ?? 1;
-      if (onBandOut && prelimOrient > 1) return null;
-      const transpose = prelimOrient >= 5;
-      const prelimTrueW = transpose ? frame.height : frame.width;
-      const prelimTrueH = transpose ? frame.width : frame.height;
-      const scale = typeof outputs === 'number' ? outputs : chooseJpegIdctScale(prelimTrueW, prelimTrueH, outputs);
+      const prelimOrient = orientation ?? 1, transpose = prelimOrient >= 5;
+      const feed = sized && scale === 8 ? sized(frame.width, frame.height, prelimOrient,
+        () => resolveIcc(icc.parts, icc.count, frame.components.length, isoGain)) : null;
       const ycbcr = jpegYCbCr(frame.components, jfif, adobeTransform);
       const plan = makeSubsamplingPlan(frame.width, frame.height, frame.components, ycbcr, scale);
       if (!plan) return null;
@@ -283,22 +237,20 @@ function trySequentialScaled(bytes, maxPixels, outputs, onBandOut) {
       if (!kernels?.scaledDecode) return null;
 
       let rgba = null;
-      const bandSink = onBandOut
-        ? (y, rows, view) => onBandOut(y, rows, view, plan)
-        : (y, rows, view) => {
-            rgba ??= new Uint8Array(plan.outW * plan.outH * 4);
-            rgba.set(view, y * plan.outW * 4);
-          };
-      const decoded = kernels.scaledDecode(bytes, end, frame, scan, restartInterval, ZIGZAG, plan, bandSink, prelimOrient);
+      const bandSink = feed ?? ((y, rows, view) => {
+        rgba ??= new Uint8Array(plan.outW * plan.outH * 4);
+        rgba.set(view, y * plan.outW * 4);
+      });
+      const decoded = kernels.scaledDecode(bytes, end, frame, scan, restartInterval, ZIGZAG, plan, bandSink, feed ? 1 : prelimOrient);
       if (!decoded) return null;
       const total = n === 1 ? frame.components[0].blocksW * frame.components[0].blocksH : frame.mcusX * frame.mcusY;
       const tail = finishAfterScan(bytes, decoded.pos, total, restartInterval, orientation);
       if (!tail) return null;
-      if (tail.orientation !== prelimOrient && (scale < 8 || decoded.oriented)) return null;
+      if (tail.orientation !== prelimOrient && (scale < 8 || decoded.oriented || feed)) return null;
       const color = resolveIcc(icc.parts, icc.count, frame.components.length, isoGain);
       const alreadyOriented = !!decoded.oriented;
       return {
-        data: decoded.oriented ?? rgba,
+        data: feed ? null : decoded.oriented ?? rgba,
         width: alreadyOriented && transpose ? plan.outH : plan.outW,
         height: alreadyOriented && transpose ? plan.outW : plan.outH,
         origWidth: frame.width, origHeight: frame.height,
@@ -308,7 +260,7 @@ function trySequentialScaled(bytes, maxPixels, outputs, onBandOut) {
     } else if (marker === 0xE0) {
       if (sig(segment, 'JFIF')) jfif = true;
     } else if (marker === 0xE1) {
-      if (sig(segment, 'Exif') && bytes[segment + 4] === 0) orientation ??= exifOrientation(bytes, segment + 6, end);
+      if (end - segment >= 6 && sig(segment, 'Exif\0\0')) orientation ??= exifOrientation(bytes, segment + 6, end) ?? 1;
     } else if (marker === 0xE2) {
       if (length >= 16 && sig(segment, 'ICC_PROFILE\0')) {
         const seq = bytes[segment + 12], count = bytes[segment + 13];
@@ -321,20 +273,48 @@ function trySequentialScaled(bytes, maxPixels, outputs, onBandOut) {
   }
 }
 
-export async function decodeJpegPixels(bytes, {maxPixels, signal, outputs, scale: forcedScale} = {}) {
+const described = ({colorSpace, icc, renderingIntent}) => icc ? {icc} : renderingIntent && renderingIntent !== 'relative'
+  ? {colorEncoding: namedEncoding(colorSpace, renderingIntent)} : {colorSpace};
+
+export async function decodeJpegPixels(bytes, {maxPixels, signal, scale = 8, bands} = {}) {
   check(signal);
   if (!await prepareKernels() || !ensureKernels() || !jpegKernels()) throw wasmRequired();
   check(signal);
   bytes = sliceBytes(bytes);
+  const sized = bands && ((width, height, orientation, color) => {
+    let known;
+    try { known = described(color()); } catch { return null; }
+    return bands({width, height, orientation, ...known});
+  });
 
-  let decoded = trySequentialScaled(bytes, maxPixels, forcedScale ?? outputs, null);
+  let decoded;
+  try { decoded = await readScaled(bytes, maxPixels, scale, sized, signal); }
+  finally { retireJpegKernels(); }
+  check(signal);
+  const transpose = decoded.orientation >= 5;
+  const trueWidth = transpose ? decoded.origHeight : decoded.origWidth;
+  const trueHeight = transpose ? decoded.origWidth : decoded.origHeight;
+  dimensions(trueWidth, trueHeight, maxPixels ?? 40000000);
+  const description = described(decoded);
+  if (decoded.data === null) return {width: decoded.origWidth, height: decoded.origHeight, orientation: decoded.orientation, ...description};
+
+  let picture = {data: decoded.data, width: decoded.width, height: decoded.height, ...description};
+  if (decoded.orientation > 1 && !decoded.alreadyOriented) {
+    picture = await orientSamples({...picture, orientation: decoded.orientation}, {signal, maxPixels});
+  }
+  if (picture.width !== trueWidth || picture.height !== trueHeight) {
+    Object.defineProperty(picture, JPEG_GEOMETRY_SYMBOL, {value: {width: trueWidth, height: trueHeight}, configurable: true});
+  }
+  return picture;
+}
+
+async function readScaled(bytes, maxPixels, scale, sized, signal) {
+  let decoded = trySequentialScaled(bytes, maxPixels, scale, sized);
   if (!decoded) {
     const parsed = parseJPEG(bytes, false, {maxPixels: maxPixels ?? LIMITS.pixels, preserveICC: false, allowFourComponents: true});
     check(signal);
-    const transpose = parsed.orientation >= 5;
-    const trueW = transpose ? parsed.height : parsed.width;
-    const trueH = transpose ? parsed.width : parsed.height;
-    let scale = forcedScale ?? chooseJpegIdctScale(trueW, trueH, outputs);
+    const feed = sized && scale === 8 ? sized(parsed.width, parsed.height, parsed.orientation, () => ({
+      colorSpace: parsed.colorSpace, icc: parsed.iccBytes, renderingIntent: parsed.renderingIntent})) : null;
     let plan = makeSubsamplingPlan(parsed.width, parsed.height, parsed.components, parsed.ycbcr, scale);
     if (!plan) {
       scale = 8;
@@ -348,46 +328,18 @@ export async function decodeJpegPixels(bytes, {maxPixels, signal, outputs, scale
         ? 'CMYK/YCCK without APP14: pass RGBA pixels'
         : 'CMYK/YCCK APP14: pass RGBA pixels', 'JXL_UNSUPPORTED');
     }
-    let rgba, outW = parsed.width, outH = parsed.height;
-    if (plan) {
-      outW = plan.outW; outH = plan.outH;
-      rgba = new Uint8Array(outW * outH * 4);
-      jpegKernels().renderParsedBands(parsed, plan, (y, rows, view) => {
-        rgba.set(view, y * outW * 4);
-      });
-    } else {
-      scale = 8;
-      rgba = new Uint8Array(outW * outH * 4);
-      await jpegKernels().renderGeneralBands(parsed, (y, rows, view) => {
-        rgba.set(view, y * outW * 4);
-      });
-    }
+    let rgba = null, outW = parsed.width, outH = parsed.height;
+    if (plan) { outW = plan.outW; outH = plan.outH; }
+    else scale = 8;
+    const band = feed ?? (rgba = new Uint8Array(outW * outH * 4), (y, rows, view) => { rgba.set(view, y * outW * 4); });
+    if (plan) jpegKernels().renderParsedBands(parsed, plan, band);
+    else await jpegKernels().renderGeneralBands(parsed, band);
     decoded = {
-      data: rgba, width: outW, height: outH,
+      data: feed ? null : rgba, width: outW, height: outH,
       origWidth: parsed.width, origHeight: parsed.height,
       orientation: parsed.orientation, alreadyOriented: false,
       colorSpace: parsed.colorSpace, icc: parsed.iccBytes, renderingIntent: parsed.renderingIntent, scale,
     };
   }
-
-  check(signal);
-  const transpose = decoded.orientation >= 5;
-  const trueWidth = transpose ? decoded.origHeight : decoded.origWidth;
-  const trueHeight = transpose ? decoded.origWidth : decoded.origHeight;
-  dimensions(trueWidth, trueHeight, maxPixels ?? 40000000);
-
-  let picture = {
-    data: decoded.data,
-    width: decoded.width,
-    height: decoded.height,
-    ...(decoded.icc ? {icc: decoded.icc} : decoded.renderingIntent && decoded.renderingIntent !== 'relative'
-      ? {colorEncoding: namedEncoding(decoded.colorSpace, decoded.renderingIntent)} : {colorSpace: decoded.colorSpace}),
-  };
-  if (decoded.orientation > 1 && !decoded.alreadyOriented) {
-    picture = await orientSamples({...picture, orientation: decoded.orientation}, {signal, maxPixels});
-  }
-  if (picture.width !== trueWidth || picture.height !== trueHeight) {
-    Object.defineProperty(picture, JPEG_GEOMETRY_SYMBOL, {value: {width: trueWidth, height: trueHeight}, configurable: true});
-  }
-  return picture;
+  return decoded;
 }

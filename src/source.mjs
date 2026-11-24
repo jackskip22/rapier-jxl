@@ -3,7 +3,6 @@ import {outOfMemory, hostWords} from './fault.mjs';
 import {fault} from './admit.mjs';
 import {inspectICC} from './color-info.mjs';
 import {exifOrientation} from './exif-orientation.mjs';
-import {sRGBWithIntent} from './v7/header-intent.mjs';
 import {prepareKernels, ensureKernels, pngRow} from './kernels.mjs';
 import {wasmRequired} from './capture-wasm-error.mjs';
 import {PNG_CHANNELS, pngWalk, pngColourStatement, inflate} from './png-chunks.mjs';
@@ -36,14 +35,13 @@ export function pngOrientationLocation({chunks, exifAt}) {
     ...(orientationAt !== undefined && {exifAt,exifLength:exif.length})};
 }
 
-export async function pngLayout({chunks, parts, ended}, named) {
+export async function pngLayout({chunks, parts, ended}) {
   if (!ended) refuse('PNG: truncated');
   const header = chunks.get('IHDR'), width = view(header).getUint32(0), height = view(header).getUint32(4), depth = header[8],
     colourType = header[9], channels = PNG_CHANNELS[colourType], interlace = header[12];
   const palette = chunks.get('PLTE');
   if (colourType === 3 && !palette) refuse('palette PNG: missing PLTE');
   const colour = await pngColour(chunks, colourType);
-  if (named && colour.colorEncoding && sRGBWithIntent(colour)[0] === colour) throw fault('JXL_UNSUPPORTED', 'PNG color chunks: use encode');
   const passes = interlace ? pngPasses : [[0, 0, 1, 1]], bitsPerPixel = channels * depth;
   let expected = 0;
   for (const [x, y, dx, dy] of passes) {
@@ -56,8 +54,8 @@ export async function pngLayout({chunks, parts, ended}, named) {
     transparent, colour, orientation, parts};
 }
 
-export async function pngStructure(bytes, named, maxPixels) {
-  const layout = await pngLayout(pngWalk(null, bytes, 0, bytes.length, maxPixels), named);
+export async function pngStructure(bytes, maxPixels) {
+  const layout = await pngLayout(pngWalk(null, bytes, 0, bytes.length, maxPixels));
   return {...layout, packed: layout.parts.map(([at, length]) => bytes.subarray(at, at + length))};
 }
 export function pngRows({width, depth, colourType, channels, palette, paletteAlpha, transparent}, result, row0 = 0) {
@@ -96,9 +94,9 @@ export function pngPassRows({width, height, depth, channels, interlace}) {
   }).filter(p => p[4] && p[5]);
 }
 
-async function png(bytes, named, maxPixels) {
+async function png(bytes, maxPixels) {
   await pngRowKernels();
-  const structure = await pngStructure(bytes, named, maxPixels), {width, height, depth, channels, expected, packed, colour, orientation} = structure;
+  const structure = await pngStructure(bytes, maxPixels), {width, height, depth, channels, expected, packed, colour, orientation} = structure;
   const raw = await inflate(packed, expected), wide = depth === 16, bytesPerPixel = Math.max(1, (channels * depth) >> 3);
   const result = wide ? new Uint16Array(width * height * 4) : new Uint8Array(width * height * 4), write = pngRows(structure, result);
   let cursor = 0;
@@ -129,10 +127,10 @@ async function read(input, reader) {
 const isPNG = bytes => bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((value, i) => bytes[i] === value);
 export function readSource(input, {maxPixels} = {}) {
   return read(input, bytes => {
-    if (isPNG(bytes)) return png(bytes, false, maxPixels);
+    if (isPNG(bytes)) return png(bytes, maxPixels);
     refuse('not PNG: use jpegxl/hdr for EXR or HDR');
   });
 }
-export function readPNG16(input, {named = false, maxPixels} = {}) {
-  return read(input, bytes => { if (isPNG(bytes)) return png(bytes, named, maxPixels); refuse('not PNG'); });
+export function readPNG16(input, {maxPixels} = {}) {
+  return read(input, bytes => { if (isPNG(bytes)) return png(bytes, maxPixels); refuse('not PNG'); });
 }

@@ -10,7 +10,7 @@ export const engineAnswerer = (captureEngine, gpu) => async (coding, pixels, ran
   const exact = (coding.effort ?? 3) >= GPU_FROM && (pixels >= gpu.pixels || coding.webgpu === 'required');
   const photo = (coding.photoBlockEffort ?? 0) >= GPU_FROM || (coding.wholePhotoRoute?.effort ?? 0) >= GPU_FROM;
   if (!exact && !photo) return null;
-  const engine = exact ? await untilAborted(captureEngine(coding.webgpu), coding.signal) : null;
+  const engine = exact ? await untilAborted(captureEngine(coding.webgpu, undefined, {signal: coding.signal}), coding.signal) : null;
   if (!engine && !photo) return null;
   const required = coding.webgpu === 'required', signal = coding.signal;
   const noted = reply => { if (reply) ran?.(); return reply; };

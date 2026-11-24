@@ -17,12 +17,12 @@ again changes nothing. No page changes: the same picture addresses serve JPEG XL
 
 - `npx netlify build` (or a deploy log) shows `rapier-jxl: N pictures have a JPEG XL copy` and an edge function named
   `rapier-jxl`.
-- `curl -H 'Accept: image/jxl' -I https://<site>/<picture>.jpg` answers `content-type: image/jxl`; without that header,
+- `curl -H 'Accept: image/jxl' -I https://<site>/<picture>.jpg` answers `content-type: image/jxl`. Without that header,
   `image/jpeg`.
 - For a JPEG, `djxl hero.jxl out.jpg` gives a file identical to the original (`cmp`).
 
 ## Do not
 
 - Do not add `_redirects` rules for `.jxl`: redirects cannot read `Accept`, and would send every browser the JPEG XL file.
-- Do not edit the copied files to change options; set `[plugins.inputs]` in `netlify.toml`.
+- Do not edit the copied files to change options. Set `[plugins.inputs]` in `netlify.toml`.
 - Do not link `.jxl` files from pages directly: Edge and older browsers show nothing.

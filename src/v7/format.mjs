@@ -1,9 +1,11 @@
+import './engines.mjs';
 import {author, admitFormat} from './author.mjs';
 import {admitFormatRequest} from '../splines-bound.mjs';
-import {snapshotOptions, admitSignal, fail, declared, pixelLimit, progressOf} from './primitives.mjs';
-import {own, DEFAULT_INPUT_BYTES} from './ownership.mjs';
+import {snapshotOptions, admitSignal, check, fail, declared, callers, pixelLimit, progressOf} from './primitives.mjs';
+import {own, record, DEFAULT_INPUT_BYTES} from './ownership.mjs';
+import {withArenaLease} from '../call-scope.mjs';
 import {acceleration} from './acceleration.mjs';
-import {prepare as prepareStill, encode as encodeStill} from './still.mjs';
+import {prepare as prepareStill} from './still.mjs';
 import {ENCODE_FEATURES} from './encode-options.mjs';
 import {imageResult} from './result.mjs';
 import {readImageSize, codestreamOf} from '../framing.mjs';
@@ -14,22 +16,33 @@ const prepare = (operation = 'format') => operation === 'format' ? acceleration(
 prepare.operations = ['format', 'encode'];
 
 const format = (input, options) => formatHere(input, options).catch(error => { throw declared(error); });
-const PHOTO_SETTINGS = ['level', 'upsampling', 'upsamplingWeights', 'transforms', 'quantization', 'coefficientOrders', 'progressive', 'noise', 'lfFrames', 'toneMapping'];
+const PHOTO_SETTINGS = ['level', 'upsampling', 'upsamplingWeights', 'transforms', 'quantization', 'coefficientOrders', 'progressive', 'noise', 'lfFrames'];
 function photoKind(input, options, webgpu) {
   const {signal, onProgress, maxPixels, ...rest} = options;
   admitFormat(input, rest);
   const {kind: _kind, ...picture} = input, {fidelity, effort = 1} = rest, settings = {};
   for (const key of PHOTO_SETTINGS) if (rest[key] !== undefined) settings[key] = rest[key];
-  return encodeStill(picture, {...(fidelity !== undefined && {fidelity}), effort, ...(signal !== undefined && {signal}),
+  return encode(picture, {...(fidelity !== undefined && {fidelity}), effort, ...(signal !== undefined && {signal}),
     ...(onProgress !== undefined && {onProgress}), ...(maxPixels !== undefined && {maxPixels}),
     ...(webgpu !== undefined && {webgpu}),
     ...(Object.keys(settings).length && {[ENCODE_FEATURES]: settings})});
+}
+function plainRequest(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw fail('JXL_INPUT', "format request: {kind}");
+  let entries;
+  try { entries = record(input); }
+  catch (error) {
+    if (error?.code === 'JXL_INPUT') throw error;
+    throw callers(error);
+  }
+  return Object.fromEntries(entries.map(([key, descriptor]) => [key, descriptor.value]));
 }
 async function formatHere(input, given = {}) {
   const webgpu = given !== null && typeof given === 'object' ? given[CONFIGURED_WEBGPU] : undefined;
   let options = snapshotOptions(given);
   if (webgpu !== undefined) { const {[CONFIGURED_WEBGPU]: _w, ...clean} = options; options = clean; }
-  if (input && typeof input === 'object' && input.kind === 'photo') return photoKind(input, options, webgpu);
+  input = plainRequest(input);
+  if (input.kind === 'photo') return photoKind(input, options, webgpu);
   const {signal, onProgress, maxPixels: limit, ...rest} = options, maxPixels = pixelLimit(limit);
   admitSignal(signal);
   if (onProgress !== undefined && typeof onProgress !== 'function') throw fail('JXL_OPTIONS', "onProgress: function");
@@ -38,9 +51,13 @@ async function formatHere(input, given = {}) {
   const budget = Math.max(DEFAULT_INPUT_BYTES, maxPixels * 16);
   const request = own(input, maxPixels, budget), owned = own(rest, maxPixels, budget);
   const report = progressOf(onProgress, signal);
-  await acceleration(webgpu ?? false, 0, 0, owned.effort ?? 7, `authored ${request.kind}`);
+  check(signal);
+  const bytes = await withArenaLease(signal, async () => {
+    await acceleration(webgpu ?? false, 0, 0, owned.effort ?? 7, `authored ${request.kind}`);
+    const hooks = {signal: signal ?? new AbortController().signal, onProgress: report, maxPixels};
+    return author(request, owned, hooks);
+  });
   const hooks = {signal: signal ?? new AbortController().signal, onProgress: report, maxPixels};
-  const bytes = await author(request, owned, hooks);
   const result = await imageResult(bytes, readImageSize(codestreamOf(bytes).codestream), {...formatFidelity(request.kind, owned), signal: hooks.signal, owned: true});
   report?.(1); await report?.finish();
   return result;

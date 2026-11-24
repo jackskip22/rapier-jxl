@@ -2,7 +2,7 @@ import {readAll} from './read-all.mjs';
 import {restore} from 'jpegxl/jpeg';
 import * as resumable from 'jpegxl/resumable';
 import {verify} from 'jpegxl/verify';
-import {digest} from './digest.mjs';
+import {digest, isRetirableJpegKey, cachedOriginalBytes} from './space-saver.mjs';
 import {ENVELOPE_BYTES, ENVELOPE_PREFIX_BYTES, envelopeIdentity, wrapOriginal, unwrapOriginal} from './original-envelope.mjs';
 
 const ROOT = '__rapier_jxl__/', OWNER = 'rapier-jxl/emdash';
@@ -13,8 +13,7 @@ const MAX_JSON = 32 * 1024, MAX_PART = 1024 * 1024, direct = action => action();
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024 - ENVELOPE_BYTES;
 const utf8 = value => new TextEncoder().encode(value), uuid = () => crypto.randomUUID().replaceAll('-', '');
 const fail = (code, message, cause) => Object.assign(new Error(message, cause ? {cause} : undefined), {code});
-const jpeg = key => typeof key === 'string' && /\.(?:jpe?g|jpe|jfif)$/i.test(key) && !key.startsWith(ROOT) &&
-  !key.includes('\\') && !key.includes('\0') && !key.split('/').some(part => !part || part === '.' || part === '..');
+const jpeg = key => isRetirableJpegKey(key) && !key.startsWith(ROOT);
 const cancel = body => { try { Promise.resolve(body?.cancel?.()).catch(() => {}); } catch {} };
 const errorValue = (error, key) => ({code: error?.code ?? 'JXL_INTERNAL', message: String(error?.message ?? error), key});
 const generation = file => typeof file?.version === 'string' && file.version ? digest(utf8(file.version)) : null;
@@ -195,9 +194,8 @@ export function originalStorage(inner, {platform, scope, create, compareAndSet, 
   const restoreKey = record => RESTORES + record.id + '.json';
   const restoreParts = (record, run = '') => RESTORES + record.id + '.' + (run ? run + '.' : '');
   const cacheKey = record => `${record.generation}.${record.sourceSha256}`;
-  async function cachedOriginal(record, options) {
-    const bytes = await cache?.get(cacheKey(record), {signal: options.signal});
-    return bytes instanceof Uint8Array && bytes.length === record.originalBytes && await digest(bytes) === record.sourceSha256 ? bytes : null;
+  function cachedOriginal(record, options) {
+    return cachedOriginalBytes(cache, cacheKey(record), {sha256: record.sourceSha256, byteLength: record.originalBytes, signal: options.signal});
   }
   async function restoreState(record, options) {
     const saved = await json(restoreKey(record), options), value = saved?.value;

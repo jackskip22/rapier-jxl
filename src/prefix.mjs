@@ -85,7 +85,9 @@ export function buildCode(freqs) {
 export function priceCode(freqs, used) {
   if (!used) { used = []; for (let i = 0; i < freqs.length; i++) if (freqs[i] > 0) used.push(i); } else used = [...used];
   const count = used.length, alphabetSize = used[count - 1] + 1 || 1;
-  const lengths = count <= 4 ? new Uint8Array(alphabetSize) : codeLengths(freqs, 15, used, alphabetSize);
+  const lengths = count <= 4 ? new Uint8Array(alphabetSize)
+    : (typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true)
+      ? (used.sort((a, b) => a - b), usedLengths(freqs, used, alphabetSize, 15)) : codeLengths(freqs, 15, used, alphabetSize);
   let treeSelect = 0;
   if (count <= 4) {
     used.sort((a, b) => freqs[b] - freqs[a] || a - b);
@@ -99,8 +101,10 @@ export function priceCode(freqs, used) {
 
 let compactFreqs = /* @__PURE__ */ new Uint32Array(1024), sortScratch = /* @__PURE__ */ new Uint32Array(0), huffWeights = /* @__PURE__ */ new Float64Array(0), huffParents = /* @__PURE__ */ new Int32Array(0);
 const sortBins = /* @__PURE__ */ new Int32Array(256);
-function compactLengths(freqs, count) {
+function compactLengths(freqs, count, limit = 15) {
   const lengths = new Uint8Array(count);
+  if (!count) return lengths;
+  if (count === 1) { lengths[0] = 1; return lengths; }
   if (sortScratch.length < 4 * count) { sortScratch = new Uint32Array(4 * count); huffWeights = new Float64Array(2 * count); huffParents = new Int32Array(2 * count); }
   let w = sortScratch.subarray(0, count), s = sortScratch.subarray(count, 2 * count), w2 = sortScratch.subarray(2 * count, 3 * count), s2 = sortScratch.subarray(3 * count, 4 * count);
   const weights = huffWeights, parents = huffParents;
@@ -115,25 +119,32 @@ function compactLengths(freqs, count) {
       let t = w; w = w2; w2 = t; t = s; s = s2; s2 = t;
     }
     for (let i = 0; i < count; i++) weights[i] = w[i];
-    if (treeDepths(weights, parents, count, lengths, s, 15)) return lengths;
+    if (treeDepths(weights, parents, count, lengths, s, limit)) return lengths;
   }
+}
+
+function usedLengths(freqs, used, size, limit) {
+  const count = used.length, lengths = new Uint8Array(size);
+  if (!count) return lengths;
+  if (count === 1) { lengths[used[0]] = 1; return lengths; }
+  if (compactFreqs.length < count) compactFreqs = new Uint32Array(Math.max(count, 2 * compactFreqs.length));
+  for (let i = 0; i < count; i++) compactFreqs[i] = freqs[used[i]];
+  const compact = compactLengths(compactFreqs, count, limit);
+  for (let i = 0; i < count; i++) lengths[used[i]] = compact[i];
+  return lengths;
 }
 
 export function compactCode(freqs, used) {
   const count = used.length;
   if (count <= 4) return priceCode(freqs, used);
-  if (compactFreqs.length < count) compactFreqs = new Uint32Array(Math.max(count, 2 * compactFreqs.length));
-  for (let i = 0; i < count; i++) compactFreqs[i] = freqs[used[i]];
-  const alphabetSize = used[count - 1] + 1, lengths = new Uint8Array(alphabetSize), compact = compactLengths(compactFreqs, count);
-  for (let i = 0; i < count; i++) lengths[used[i]] = compact[i];
-  return {alphabetSize, lengths, codes: null, simple: null, treeSelect: 0};
+  return {alphabetSize: used[count - 1] + 1, lengths: usedLengths(freqs, used, used[count - 1] + 1, 15), codes: null, simple: null, treeSelect: 0};
 }
 
 function clclLengths(freqs, first) {
-  let distinct = 0;
-  for (const f of freqs) if (f) distinct++;
-  if (distinct === 1) freqs[first ? 0 : 1] = freqs[first];
-  const clcl = codeLengths(freqs, 5);
+  const used = [];
+  for (let i = 0; i < freqs.length; i++) if (freqs[i]) used.push(i);
+  if (used.length === 1) { const fill = first ? 0 : 1; freqs[fill] = freqs[first]; if (fill < first) used.unshift(fill); else used.push(fill); }
+  const clcl = (typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) ? usedLengths(freqs, used, freqs.length, 5) : codeLengths(freqs, 5, used, freqs.length);
   let count = 18;
   while (count > 0 && !clcl[CODE_LENGTH_ORDER[count - 1]]) count--;
   return [clcl, count];
@@ -255,9 +266,19 @@ const CODED_MAP_FREQ = /* @__PURE__ */ new Uint32Array(257);
 let CODED_PIECE_IDX = /* @__PURE__ */ new Uint16Array(4096);
 let CODED_PIECE_COPY = /* @__PURE__ */ new Uint32Array(4096);
 
+let SMALL_CODING = false;
+export const smallCoding = () => SMALL_CODING;
+export const setSmallCoding = on => { SMALL_CODING = on; };
+let SMALL_MAP = null;
+export const setSmallMap = fn => { SMALL_MAP = fn; };
+let JOB_SMALL = false;
+export const jobSmall = () => JOB_SMALL;
+export const setJobSmall = on => { JOB_SMALL = on; };
+
 export function writeContextMap(w, contextMap) {
   let widest = 0;
   for (let i = 0; i < contextMap.length; i++) if (contextMap[i] > widest) widest = contextMap[i];
+  if (SMALL_CODING && SMALL_MAP) return SMALL_MAP(w, contextMap, widest);
   const bits = widest ? ceilLog2(widest + 1) : 0;
   if (bits <= 3) {
     if (bits && contextMap.length >= 64) {
@@ -272,10 +293,10 @@ export function writeContextMap(w, contextMap) {
   writeCodedContextMap(w, contextMap, widest);
 }
 
-function writeCodedContextMap(w, contextMap, widest) {
-  w.write(1, 0); w.write(1, 0);
-  const config = CODED_MAP_LITERAL, length = CODED_MAP_LENGTH, minLength = 7, minSymbol = 224;
-  const runs = contextMap.length >= 64 && widest < minSymbol, fLen = runs ? minSymbol + 33 : widest + 1;
+export function writeCodedContextMap(w, contextMap, widest, mtf = false, allowRuns = contextMap.length >= 64, minLength = 7) {
+  w.write(1, 0); w.write(1, mtf ? 1 : 0);
+  const config = CODED_MAP_LITERAL, length = CODED_MAP_LENGTH, minSymbol = 224;
+  const runs = allowRuns && widest < minSymbol, fLen = runs ? minSymbol + 33 : widest + 1;
   const freqs = fLen <= 257 ? CODED_MAP_FREQ.subarray(0, fLen) : new Uint32Array(fLen);
   freqs.fill(0);
   if (CODED_PIECE_IDX.length < contextMap.length) {

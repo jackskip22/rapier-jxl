@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-import {snapshotOptions, blobBytes, declared, fail as refuse} from './primitives.mjs';
+import './engines.mjs';
+import {snapshotOptions, blobBytes, declared, fail as refuse, isBlob} from './primitives.mjs';
 import {copyBytes, arrayBufferBytes} from './bytes.mjs';
 import {outOfMemory} from '../fault.mjs';
 
@@ -126,6 +127,7 @@ function parseHeader(bytes) {
       const num = Number(val);
       if (!Number.isFinite(num) || num <= 0) throw fail('HDR_MALFORMED', 'EXPOSURE: positive finite');
       exposure *= num;
+      if (!Number.isFinite(exposure) || exposure <= 0) throw fail('HDR_MALFORMED', 'EXPOSURE: positive finite');
       exposureSeen = true;
     } else if (key === 'PIXASPECT') {
       const num = Number(val);
@@ -136,6 +138,7 @@ function parseHeader(bytes) {
         throw fail('HDR_MALFORMED', 'COLORCORR: 3 positive numbers');
       }
       colorCorr = [colorCorr[0] * parts[0], colorCorr[1] * parts[1], colorCorr[2] * parts[2]];
+      if (colorCorr.some(v => !Number.isFinite(v) || v <= 0)) throw fail('HDR_MALFORMED', 'COLORCORR: 3 positive numbers');
     } else if (key === 'PRIMARIES') {
       const parts = val.split(/\s+/).filter(Boolean).map(Number);
       if (parts.length !== 8 || parts.some(v => !Number.isFinite(v))) {
@@ -225,6 +228,7 @@ function decodeScanlines(bytes, cursor, scanWidth, scanCount) {
     }
     all.set(rowRgbe, s * scanWidth * 4);
   }
+  if (cursor !== bytes.length) throw fail('HDR_MALFORMED', 'Radiance picture: trailing bytes');
   return all;
 }
 
@@ -239,9 +243,27 @@ const PRESETS = [
   ['rec2020', [0.708, 0.292, 0.170, 0.797, 0.131, 0.046, 0.3127, 0.3290]],
 ];
 const near = (a, b, tolerance) => a.every((v, i) => Math.abs(v - b[i]) <= tolerance);
-function colour(vals, tolerance) {
+function admitChromaticities(vals, label) {
+  const scaled = vals.map(v => {
+    if (!Number.isFinite(v)) throw fail('HDR_MALFORMED', `${label}: finite`);
+    const s = Math.round(v * 1000000);
+    if (s < -2097152 || s > 2097151) throw fail('HDR_MALFORMED', `${label}: out of range`);
+    return s;
+  });
+  if (!scaled[1] || !scaled[3] || !scaled[5] || scaled[7] <= 0)
+    throw fail('HDR_MALFORMED', `${label}: positive white and nonzero y`);
+  if ((scaled[0] - scaled[4]) * (scaled[3] - scaled[5]) === (scaled[2] - scaled[4]) * (scaled[1] - scaled[5]))
+    throw fail('HDR_MALFORMED', `${label}: collinear primaries`);
+}
+function colour(vals, tolerance, label = 'EXR chromaticities') {
+  admitChromaticities(vals, label);
   const preset = PRESETS.find(([, ref]) => near(vals, ref, tolerance));
   if (preset) return {colorSpace: preset[0]};
+  const q = vals.map(v => Math.round(v * 1000000));
+  if (q.some(v => !Number.isFinite(v) || v < -2097152 || v > 2097151) || !q[1] || !q[3] || !q[5] || !q[7])
+    throw fail('HDR_MALFORMED', 'PRIMARIES: invalid chromaticity');
+  if ((q[0] - q[4]) * (q[3] - q[5]) === (q[2] - q[4]) * (q[1] - q[5]))
+    throw fail('HDR_MALFORMED', 'PRIMARIES: collinear color triangle');
   const white = near(vals.slice(6), [0.3127, 0.3290], tolerance) ? 'd65' : near(vals.slice(6), [1 / 3, 1 / 3], tolerance) ? 'e' : [vals[6], vals[7]];
   return {colorEncoding: {space: 'rgb', whitePoint: white, primaries: [[vals[0], vals[1]], [vals[2], vals[3]], [vals[4], vals[5]]]}};
 }
@@ -419,7 +441,7 @@ function piz(packed, chunk, channels, expected) {
   if (p + 4 > packed.length) throw malformed();
   const length = packed[p] | packed[p + 1] << 8 | packed[p + 2] << 16 | packed[p + 3] << 24;
   p += 4;
-  if (length < 0 || p + length > packed.length) throw malformed();
+  if (!values || length < 0 || p + length !== packed.length) throw malformed();
   const words = huffman(packed.subarray(p, p + length), expected / 2);
   for (let c = 0, at = 0; c < channels.length; c++) {
     const size = channels[c].sampleBytes >> 1;
@@ -427,7 +449,10 @@ function piz(packed, chunk, channels, expected) {
     for (let j = 0; j < size; j++) unwavelet(words, at + j, nx, size, ny, nx * size, values - 1);
     at += nx * ny * size;
   }
-  for (let i = 0; i < words.length; i++) words[i] = lut[words[i]];
+  for (let i = 0; i < words.length; i++) {
+    if (words[i] >= values) throw malformed();
+    words[i] = lut[words[i]];
+  }
   return interleave(wordsToBytes(words), chunk, channels, expected);
 }
 
@@ -584,12 +609,20 @@ async function dwa(packed, chunk, channels, expected) {
     const ruleSize = dv.getUint16(p, true), end = p + ruleSize;
     if (ruleSize < 2 || end > packed.length) throw malformed();
     let q = p + 2; rules = [];
-    while (q < end) { let s = ''; while (q < end && packed[q] !== 0) s += String.fromCharCode(packed[q++]); q++; if (q + 2 > end) break; const value = packed[q++], type = packed[q++]; rules.push([s, (value >> 2) & 3, type, (value >> 4) - 1, value & 1]); }
+    while (q < end) {
+      let s = '';
+      while (q < end && packed[q] !== 0) s += String.fromCharCode(packed[q++]);
+      if (q >= end || q + 3 > end) throw malformed();
+      q++;
+      const value = packed[q++], type = packed[q++], rsch = (value >> 2) & 3, rcsc = (value >> 4) - 1;
+      if (rsch > 2 || rcsc > 2 || type > 2 || rcsc >= 0 && rsch !== 1) throw malformed();
+      rules.push([s, rsch, type, rcsc, value & 1]);
+    }
     p = end;
   }
   const [, unkUnc, unkC, acC, dcC, rleC, rleUnc, rleRaw, acCnt, dcCnt, acComp] = sz;
   let off = p; const unkOff = off; off += unkC; const acOff = off; off += acC; const dcOff = off; off += dcC; const rleOff = off; off += rleC;
-  if (off > packed.length) throw malformed();
+  if (off !== packed.length) throw malformed();
   if (acComp > 1) throw malformed();
   if (unkUnc > expected || rleRaw > expected || rleUnc > 2 * rleRaw || acCnt > expected || dcCnt > expected) throw fail('HDR_LIMIT', 'EXR DWA: too large');
   const suffix = n => { const i = n.lastIndexOf('.'); return i < 0 ? n : n.slice(i + 1); };
@@ -599,10 +632,21 @@ async function dwa(packed, chunk, channels, expected) {
     const suf = suffix(ch.name);
     for (const [rs, rsch, rtype, rcsc, rcase] of rules) {
       if (rtype !== ch.kind) continue;
-      if (rcase ? suf.toLowerCase() === rs.toLowerCase() : suf === rs) { scheme[c] = rsch; if (rcsc >= 0) { const pf = prefix(ch.name); if (!cscMap.has(pf)) cscMap.set(pf, [-1, -1, -1]); cscMap.get(pf)[rcsc] = c; } }
+      if (rcase ? suf.toLowerCase() === rs.toLowerCase() : suf === rs) {
+        scheme[c] = rsch;
+        if (rcsc >= 0) {
+          const pf = prefix(ch.name);
+          if (!cscMap.has(pf)) cscMap.set(pf, [-1, -1, -1]);
+          const set = cscMap.get(pf);
+          if (set[rcsc] >= 0) throw malformed();
+          set[rcsc] = c;
+        }
+        break;
+      }
     }
   });
-  const cscSets = []; for (const [, idx] of cscMap) if (idx[0] >= 0 && idx[1] >= 0 && idx[2] >= 0) cscSets.push(idx);
+  const cscSets = [];
+  for (const [, idx] of cscMap) if (idx[0] >= 0 && idx[1] >= 0 && idx[2] >= 0) cscSets.push(idx);
   const unknown = unkC > 0 ? await inflateExact(packed.subarray(unkOff, unkOff + unkC), unkUnc) : new Uint8Array(0);
   let ac = new Uint16Array(0);
   if (acC > 0) { if (acComp === 0) ac = huffman(packed.subarray(acOff, acOff + acC), acCnt); else { const b = await inflateExact(packed.subarray(acOff, acOff + acC), acCnt * 2); ac = new Uint16Array(b.buffer, b.byteOffset, acCnt); } }
@@ -666,6 +710,7 @@ async function dwa(packed, chunk, channels, expected) {
       unkPos += n * ps; processed[c] = true;
     }
   }
+  if (acPos !== ac.length || dcPos !== dc.length || rlePos !== rle.length || unkPos !== unknown.length) throw malformed();
   return interleave(planes, chunk, channels, expected);
 }
 
@@ -680,7 +725,7 @@ function luminanceWeights(c) {
   const sg = fr(fr(fr(fr(X * fr(ry - by)) + fr(rx * fr(fr(1 * fr(by - 1)) + fr(by * XZ)))) - fr(bx * fr(fr(1 * fr(ry - 1)) + fr(ry * XZ)))) / d);
   const sb = fr(fr(fr(fr(X * fr(gy - ry)) - fr(rx * fr(fr(1 * fr(gy - 1)) + fr(gy * XZ)))) + fr(gx * fr(fr(1 * fr(ry - 1)) + fr(ry * XZ)))) / d);
   const m = [fr(sr * ry), fr(sg * gy), fr(sb * by)], sum = fr(fr(m[0] + m[1]) + m[2]);
-  if (!Number.isFinite(sum) || sum === 0) throw fail('HDR_MALFORMED', 'EXR chromaticities: no luminance');
+  if (!Number.isFinite(sum) || sum <= 0 || m.some(v => !(v > 0))) throw fail('HDR_MALFORMED', 'EXR chromaticities: no luminance');
   return m.map(v => fr(v / sum));
 }
 function lumaChromaToRgba(Y, RY, BY, A, W, H, minY, yw) {
@@ -888,7 +933,7 @@ async function readExr(bytes, windowMode, maxPixels) {
   const white = attribute('whiteLuminance', 'float', 4, false);
   if (white) {
     const value = dv.getFloat32(white.start, true);
-    if (!Number.isFinite(value) || value <= 0) throw fail('HDR_MALFORMED', 'EXR whiteLuminance: positive finite');
+    if (!Number.isFinite(value) || value <= 0 || value > 1e6) throw fail('HDR_MALFORMED', 'EXR whiteLuminance: positive, at most 1,000,000 nits');
     intensityTarget = value;
   }
 
@@ -977,12 +1022,12 @@ async function readExr(bytes, windowMode, maxPixels) {
   const planes = () => lc ??= {Y: new Uint16Array(W * H), RY: new Uint16Array(W * H / 4), BY: new Uint16Array(W * H / 4), A: new Uint16Array(W * H).fill(0x3c00)};
   const halfAt = (rv, channel, at) => channel.kind === 1 ? rv.getUint16(at, true) : floatToHalfBits(rv.getFloat32(at, true));
   const place = async chunk => {
-    const x0 = Math.max(chunk.x, outWin.minX), x1 = Math.min(chunk.x + chunk.width - 1, outWin.maxX);
-    const y0 = Math.max(chunk.y, outWin.minY), y1 = Math.min(chunk.y + chunk.rows - 1, outWin.maxY);
-    if (!lumaChroma && (x0 > x1 || y0 > y1)) return;
     chunk.geo = layout(chunk, channels);
     const packed = bytes.subarray(chunk.offset + chunk.header, chunk.offset + chunk.header + chunk.size);
     const raw = await decompressBlock(packed, compression, chunk, channels);
+    const x0 = Math.max(chunk.x, outWin.minX), x1 = Math.min(chunk.x + chunk.width - 1, outWin.maxX);
+    const y0 = Math.max(chunk.y, outWin.minY), y1 = Math.min(chunk.y + chunk.rows - 1, outWin.maxY);
+    if (!lumaChroma && (x0 > x1 || y0 > y1)) return;
     const out = lumaChroma ? null : canvas(), lc = lumaChroma ? planes() : null;
     const aligned = raw.byteOffset % 4 === 0 ? raw : raw.slice(), rv = new DataView(aligned.buffer, aligned.byteOffset, aligned.byteLength);
     const {rowAt, nx} = chunk.geo;
@@ -1101,12 +1146,12 @@ export async function read(input, options = {}) {
   const settings = snapshotOptions(options);
   for (const key of Object.keys(settings)) if (key !== 'window' && key !== 'maxPixels')
     throw refuse('JXL_OPTIONS', `unknown option: ${key}`);
-  const window = settings.window ?? 'data', maxPixels = settings.maxPixels;
+  const {window = 'data', maxPixels} = settings;
   if (window !== 'data' && window !== 'display') throw refuse('JXL_OPTIONS', "window: data or display");
   if (maxPixels !== undefined && (!Number.isSafeInteger(maxPixels) || maxPixels < 1))
     throw refuse('JXL_OPTIONS', "maxPixels: positive safe integer");
   let bytes;
-  if (typeof Blob === 'function' && input instanceof Blob) bytes = await blobBytes(input);
+  if (isBlob(input)) bytes = await blobBytes(input);
   else {
     if (arrayBufferBytes(input) !== null) {
       try { input = new Uint8Array(input); }

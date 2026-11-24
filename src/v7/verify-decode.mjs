@@ -148,3 +148,9 @@ export async function decodeGroupFile(bytes,options,opened,withoutNoise = false)
   return admittedPicture(await decodeWith(region,bytes,bounded,opened),options);
 }
 export const unreadBytes = (bytes, options) => host('decode', options)?.[Symbol.for('rapier-jxl.verify.unread')]?.(bytes, {maxPixels: options?.maxPixels}) ?? null;
+
+export const isJPEG = bytes => bytes?.[0] === 255 && bytes[1] === 216;
+export const displaySize = picture => picture.orientation >= 5 ? {width: picture.height, height: picture.width} : {width: picture.width, height: picture.height};
+export const verifyDecodeOptions = options => ({colorSpace: 'original', applyOrientation: false, unpremultiplyAlpha: false,
+  renderSpotColors: false, maxPixels: options.maxPixels, signal: options.signal,
+  ...(options && DECODER_SNAPSHOT in options && {[DECODER_SNAPSHOT]: options[DECODER_SNAPSHOT]})});

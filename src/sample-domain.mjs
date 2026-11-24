@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT
-import {admitColorRoute, fault} from './admit.mjs';
+import {fault} from './admit.mjs';
 import {inspectICC} from './icc-profile.mjs';
 import {prepareColorEncoding} from './color-info.mjs';
 
 export function admitSampleDomain(data, options = {}) {
   if (options.colorEncoding?.transferFunction === undefined && options.colorEncoding !== undefined && options.transferFunction !== undefined && options.icc === undefined && options.colorSpace === undefined)
     options = {...options, colorEncoding: {...options.colorEncoding, transferFunction: options.transferFunction}, transferFunction: undefined};
-  admitColorRoute(options);
   const float16 = typeof Float16Array === 'function' && data instanceof Float16Array;
   const float32 = data instanceof Float32Array, wide = data instanceof Uint16Array || float16;
   const sampleFormat = options.sampleFormat ?? (float32 ? 'float32' : float16 ? 'float16' : 'uint');

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {kernelHooks, declined} from './kernel-hooks.mjs';
+import {declined} from './kernel-hooks.mjs';
 import {BitWriter} from './bits.mjs';
 import {countToken, writeHybrid} from './prefix.mjs';
 import {MIN_RUN_SYMBOL, MIN_RUN_LENGTH, RUN_CONFIG, RESIDUAL_CONFIG, GRADIENT_PREDICTOR, ALPHABET, leaf, channelTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
@@ -10,7 +10,7 @@ const CHANNEL_CONFIGS = {residual: RESIDUAL_CONFIG, run: RUN_CONFIG, minSymbol: 
 
 export function codeChannel(w, target, plane, width, height, leaf, raw = false, residuals, beginY = 0) {
   if (!width || !height) return;
-  if (!residuals && kernelHooks.channel?.(w, target, plane, width, height, leaf, raw)) return;
+
   if (!captureChannelCode(w, target, plane, width, height, leaf, raw, residuals, beginY, CHANNEL_CONFIGS)) throw declined('channel');
 }
 

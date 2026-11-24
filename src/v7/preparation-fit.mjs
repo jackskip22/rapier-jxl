@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {fitSearch} from '../target-search.mjs';
+import {wholePhotoTarget} from '../photo-whole-policy.mjs';
 import {ordinaryStillDecision} from './ordinary-still-policy.mjs';
 import {lowIntentFacts} from './low-intent-quality.mjs';
 import {fitOptions} from './preparation-options.mjs';
@@ -33,6 +34,23 @@ export function knownFitProbe(policy) {
 }
 
 export async function fitPrepared(encode, picture, policy, capabilities = {}) {
+  const main = await fitPreparedAt(encode, picture, policy, capabilities);
+  const effort = policy.encode.effort ?? (capabilities.admitEncode ?? encodeOptions)({}).effort;
+  const look = result => result?.measurements?.find(m => m.metric === 'ssimulacra2' && Number.isFinite(m.score))?.score;
+  if ((effort !== 6 && effort !== 7) || !main.meetsTarget || !picture?.data || policy.encode[JPEG_SOURCE] !== undefined || look(main) === undefined) return main;
+  let five;
+  try {
+    five = await fitPreparedAt(encode, picture, {...policy, probed: undefined, spentProbes: 0, encode: {...policy.encode, effort: 5, onProgress: undefined}}, capabilities);
+  } catch (error) { if (isCaller(error)) throw error; return main; }
+  if (!(five.meetsTarget && five.bytes.length <= policy.maxBytes && look(five) > look(main) + 0.3)) return main;
+  const cap = policy.search?.maxQuality ?? 90, target = q => wholePhotoTarget(0, q / 100), have = look(five);
+  let low = 1, high = cap;
+  if (target(high) <= have) low = high;
+  else for (let i = 0; i < 40; i++) { const mid = (low + high) / 2; if (target(mid) <= have) low = mid; else high = mid; }
+  return {...five, fidelity: {...five.fidelity, quality: low}};
+}
+
+async function fitPreparedAt(encode, picture, policy, capabilities = {}) {
   const {maxBytes, search, encode: options} = policy, {signal, onProgress: report, ...rest} = options;
   const probed = knownFitProbe(policy);
   let previous = -1;
@@ -131,7 +149,8 @@ export async function fitWith(encode, input, options, hooks = {}) {
       journal: hooks.journal, preserve: original?.preserve !== false,
       carry: (original, effort, carryHooks) => encode(new Blob([original], {type: 'image/jpeg'}), {
         fidelity: 'exact', effort, maxPixels: carryHooks.maxPixels, signal: carryHooks.signal,
-        onProgress: carryHooks.onProgress})}, pixels) : await pixels();
+        onProgress: carryHooks.onProgress,
+        [RESULT_REFERENCE]: (_picture, _input, facts) => { if (facts?.otherDecoders) carryHooks.outside?.(facts.otherDecoders.missing); }})}, pixels) : await pixels();
   const result = bytes ? {...preparedResult(bytes, selected.fidelity ?? fitted?.fidelity ?? 'exact', picture,
     selected.kept === 'jpeg-bytes' ? 'jpeg' : undefined), ...fitted, ...selected, bytes} : fitted;
   const originalBytes = selected.originalBytes ?? originalSize(input);

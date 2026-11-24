@@ -27,7 +27,11 @@ export async function prepareAssets({example = here, packageDir = process.env.JX
     files.push({name, bytes: Buffer.byteLength(text), sha256: createHash('sha256').update(text).digest('hex')});
     await writeFile(join(out, `${names[name]}.ts`), `// ${path} of ${manifest.name} ${manifest.version}, unchanged. Written by prepare-assets.mjs.\nexport default ${JSON.stringify(text)};\n`);
   }
-  await copyFile(join(pkg, 'LICENSE'), join(out, 'LICENSE'));
+  for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES']) {
+    const bytes = await readFile(join(pkg, name));
+    await copyFile(join(pkg, name), join(out, name));
+    files.push({name, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex')});
+  }
   const worker = await readFile(join(here, 'web/worker.js'), 'utf8');
   const script = (await readFile(join(here, 'web/page.js'), 'utf8')).replace('WORKER_SOURCE', JSON.stringify(worker));
   const csp = [`default-src 'none'`, `script-src 'sha256-${createHash('sha256').update(script).digest('base64')}' blob: 'wasm-unsafe-eval'`,

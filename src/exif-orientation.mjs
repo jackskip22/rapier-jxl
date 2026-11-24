@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 export function exifOrientation(bytes, start, end, found) {
+  end = Math.min(end, bytes.length);
   const little = bytes[start] === 73 && bytes[start + 1] === 73;
   if (!little && !(bytes[start] === 77 && bytes[start + 1] === 77)) return null;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

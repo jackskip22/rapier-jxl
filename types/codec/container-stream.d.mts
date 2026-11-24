@@ -2,13 +2,13 @@
 import type {Bytes} from './index.mjs';
 
 export interface ContainerOptions {
-  /** Encoded bytes per jxlp box; defaults to 65536; a positive safe integer. */
+  /** Encoded bytes per jxlp box. Defaults to 65536. A positive safe integer. */
   chunkSize?: number;
   /** Optional positive safe-integer budget for total container bytes. Defaults to available memory. */
   maxBytes?: number;
-  /** Maximum input and authored output boxes, including ftyp and level; none by default. */
+  /** Maximum input and authored output boxes, including ftyp and level. None by default. */
   maxBoxes?: number;
-  /** Aborts the call; it throws the signal's reason. */
+  /** Aborts the call. It throws the signal's reason. */
   signal?: AbortSignal | undefined;
 }
 export interface ContainerStreamOptions extends ContainerOptions {

@@ -5,11 +5,11 @@ The second action recompresses a JPEG, restores it, and compares the original an
 The third turns videos into animated JPEG XL: every frame the WebView plays, each with its own time.
 
 One activity. A hidden WebView runs the encoder in a worker. No NDK, native libraries, analytics, or Internet permission.
-Native code is faster; rapier-jxl needs none.
+Native code is faster. Rapier-jxl needs none.
 
 ## Run
 
-Use Android Studio with SDK 37, JDK 17, and Node installed. Gradle downloads build dependencies once; the app runs offline.
+Use Android Studio with SDK 37, JDK 17, and Node installed. Gradle downloads build dependencies once. The app runs offline.
 From this folder:
 
 ```sh
@@ -21,7 +21,7 @@ Open this folder in Android Studio and run on a phone. The APK is `app/build/out
 For a local package build, set `JXL_PACKAGE` to its directory containing `package.json` and `dist/` before Gradle runs.
 
 Android 8.0 (API 26) or newer. Binary messages need [WebView 116 or newer](https://developer.android.com/jetpack/androidx/releases/webkit#1.8.0-alpha01)
-and `WEB_MESSAGE_ARRAY_BUFFER`; the app checks the feature and shows `JXL_WEBVIEW_BINARY_UNAVAILABLE` when absent.
+and `WEB_MESSAGE_ARRAY_BUFFER`. The app checks the feature and shows `JXL_WEBVIEW_BINARY_UNAVAILABLE` when absent.
 The WebView version, not the Android version alone, determines support. No base64 crosses this bridge.
 
 ## Three files
@@ -45,8 +45,8 @@ Uncompressed APK assets, measured on Linux x64 with Node 24 and an 8.4.0 package
 | Page, worker, headers, and license | 6,567 |
 | Total | 3,283,977 |
 
-These are asset bytes, not the APK download size;
-Android code, WebKit, and ZIP overhead are excluded. Run `node prepare-assets.mjs` to measure your package;
+These are asset bytes, not the APK download size.
+Android code, WebKit, and ZIP overhead are excluded. Run `node prepare-assets.mjs` to measure your package.
 `build/encoder-assets.json` records every full hash and byte count.
 
 ## Check

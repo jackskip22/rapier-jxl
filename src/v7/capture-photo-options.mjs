@@ -22,7 +22,7 @@ function admitWithoutText(value) {
 export function captureRectangles(options, width, height) {
   const clipped = {}, budget = width * height * 8;
   if (options.withoutText !== undefined && (options.withoutText.width !== width || options.withoutText.height !== height))
-    throw fail('JXL_OPTIONS', `withoutText: ${options.withoutText.width}x${options.withoutText.height}, expected ${width}x${height}`);
+    throw fail('JXL_OPTIONS', `withoutText: ${String(options.withoutText.width)}x${String(options.withoutText.height)}, expected ${width}x${height}`);
   let work = 0;
   for (const name of ['exactRects', 'photoRects']) {
     if (options[name] === undefined) continue;

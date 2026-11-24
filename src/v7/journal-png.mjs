@@ -26,11 +26,13 @@ const OWN_READING = new Set(['tRNS', 'gAMA', 'cHRM', 'iCCP', 'cICP']);
 function ownReadingChunk(file) {
   for (let offset = 8, n = 0; n < 64; n++) {
     if (offset + 8 > file.length) return false;
-    const name = String.fromCharCode(file[offset + 4], file[offset + 5], file[offset + 6], file[offset + 7]);
+    const head = file.subarray(offset, Math.min(file.length, offset + 9));
+    if (head.length < 8) return false;
+    const name = String.fromCharCode(head[4], head[5], head[6], head[7]);
     if (OWN_READING.has(name)) return true;
-    if (name === 'sRGB' && (offset + 9 > file.length || file[offset + 8] !== 1)) return true;
+    if (name === 'sRGB' && (head.length < 9 || head[8] !== 1)) return true;
     if (name === 'IDAT' || name === 'IEND') return false;
-    offset += 12 + (file[offset] << 24 >>> 0) + (file[offset + 1] << 16) + (file[offset + 2] << 8) + file[offset + 3];
+    offset += 12 + (head[0] << 24 >>> 0) + (head[1] << 16) + (head[2] << 8) + head[3];
   }
   return true;
 }

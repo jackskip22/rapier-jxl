@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-import {DECODER_SNAPSHOT} from '../shown-picture.mjs';
-import {decodeFile, decodeWholeFile, decodeWithoutNoise, needsSetup} from './verify-decode.mjs';
+import {decodeFile, decodeWholeFile, decodeWithoutNoise, needsSetup, verifyDecodeOptions as decodeOptions, isJPEG, displaySize} from './verify-decode.mjs';
 import {nativeGammaRGBA} from '../photo-output.mjs';
+import {compileKernels} from '../kernel-runtime.mjs';
 import {header, firstFrameNoise} from './inspect.mjs';
 import {image} from './input.mjs';
 import {fromDecoded, described} from './describe.mjs';
@@ -10,23 +10,16 @@ import {readGifBytes} from './gif-source.mjs';
 import {animationTimelinePairs} from '../animation-timeline.mjs';
 import {readPNG16} from '../source.mjs';
 import {orientSamples, resizeSamples} from '../sample-transforms.mjs';
-import {browserReference} from './browser-resize.mjs';
 import {bandRows} from './band-size.mjs';
 import {identityOfSnapshot, isBlob, isIdentity, isRows, rowsIdentity, encodedSourceBytes as rawBytes} from './result-identity.mjs';
 import {comparison, measurementTarget, pixelEvidence} from './verify-compare.mjs';
 import {jpegPixels} from './jpeg-pixels.mjs';
 const PNG = [137,80,78,71,13,10,26,10], JXL = [0,0,0,12,74,88,76,32,13,10,135,10];
 const starts = (bytes, signature) => signature.every((value, i) => bytes[i] === value);
-const isJPEG = bytes => bytes?.[0] === 255 && bytes[1] === 216;
 const isJXL = bytes => bytes?.[0] === 255 && bytes[1] === 10 || bytes && starts(bytes, JXL);
-const decodeOptions = options => ({colorSpace: 'original', applyOrientation: false, unpremultiplyAlpha: false,
-  renderSpotColors: false, maxPixels: options.maxPixels, signal: options.signal,
-  ...(options && DECODER_SNAPSHOT in options && {[DECODER_SNAPSHOT]: options[DECODER_SNAPSHOT]})});
 const unsupported = message => ({code: 'JXL_UNSUPPORTED', message});
 const targetMiss = message => ({code: 'JXL_TARGET', message});
 const proofKind = fidelity => fidelity === 'exact' ? 'pixels' : measurementTarget(fidelity).kind;
-const displaySize = picture => picture.orientation >= 5 ? {width: picture.height, height: picture.width}
-  : {width: picture.width, height: picture.height};
 export function protectionDomain(scope, reference, decoded) {
   if (reference.frames || decoded.animation) throw fail('JXL_UNSUPPORTED', 'protected frames: still only');
   const orientation = picture => picture.orientationApplied ? 1 : picture.orientation ?? picture.description?.orientation ?? 1;
@@ -63,6 +56,7 @@ async function djxlSamples(bytes, decoded, options, read = decodeWholeFile) {
   if (width !== decoded.width || height !== decoded.height || !(data instanceof Float32Array) || (channels !== 3 && channels !== 4)) return null;
   const planes = [new Float32Array(n), new Float32Array(n), new Float32Array(n)];
   for (let i = 0, at = 0; i < n; i++, at += channels) for (let c = 0; c < 3; c++) planes[c][i] = data[at + c];
+  await compileKernels();
   const out = nativeGammaRGBA(planes, width, height);
   for (let at = 3; at < out.length; at += 4) out[at] = decoded.data[at];
   return out;
@@ -160,7 +154,7 @@ async function transformed(picture, options) {
   }
   if (picture.frames || isRows(picture)) throw fail('JXL_UNSUPPORTED', "reference transform: complete still picture");
   picture = await orientSamples(picture, options);
-  return transform.resizer === 'browser' ? browserReference(picture, transform) : resizeSamples(picture, transform.width, transform.height, options);
+  return resizeSamples(picture, transform.width, transform.height, options);
 }
 async function nativeReference(original, options) {
   const blob = isBlob(original) ? original : new Blob([original]);

@@ -6,7 +6,7 @@ export const NAMES = ['dct8', 'identity', 'dct2', 'dct4', 'dct16', 'dct32', 'dct
 export const WIDTHS = [1, 1, 1, 1, 2, 4, 1, 2, 1, 4, 2, 4, 1, 1, 1, 1, 1, 1, 8, 4, 8, 16, 8, 16, 32, 16, 32];
 export const HEIGHTS = [1, 1, 1, 1, 2, 4, 2, 1, 4, 1, 4, 2, 1, 1, 1, 1, 1, 1, 8, 8, 4, 16, 16, 8, 32, 32, 16];
 export const TABLES = [0, 1, 2, 3, 4, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 10, 10, 11, 12, 12, 13, 14, 14, 15, 16, 16];
-export const TRANSFORMS = Object.freeze(NAMES.map((name, id) => Object.freeze({name, id, width: WIDTHS[id] * 8,
+export const TRANSFORMS = /* @__PURE__ */ Object.freeze(NAMES.map((name, id) => /* @__PURE__ */ Object.freeze({name, id, width: WIDTHS[id] * 8,
   height: HEIGHTS[id] * 8, table: TABLES[id]})));
 const dctBases = new Map();
 export function cosine(numerator, denominator) {
@@ -44,7 +44,11 @@ export function basisT(size) {
   return t;
 }
 export function inverseScaledDCT(coeffs, width, height) {
-  const bx = basis(width), by = basis(height), tmp = new Float64Array(width * height), out = new Float64Array(tmp.length);
+  const tmp = new Float64Array(width * height);
+  return inverseScaledDCTInto(coeffs, width, height, tmp, new Float64Array(tmp.length));
+}
+export function inverseScaledDCTInto(coeffs, width, height, tmp, out) {
+  const bx = basis(width), by = basis(height);
   for (let v = 0; v < height; v++) for (let x = 0; x < width; x++) {
     let sum = 0;
     for (let u = 0; u < width; u++) sum += coeffs[height >= width ? u * height + v : v * width + u] * bx[u * width + x] * width;

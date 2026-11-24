@@ -5,18 +5,18 @@ export interface DeltaPaletteOptions {
   /** Source primaries, without converting sample values. Defaults to srgb. */
   colorSpace?: 'srgb' | 'display-p3' | undefined;
   /** Auto compares the existing core and screen encodings with implicit delta palettes.
-   * Explicit and hybrid also use custom difference tables, decoded by libjxl 0.12.0 and Chrome 155;
+   * Explicit and hybrid also use custom difference tables, decoded by libjxl 0.12.0 and Chrome 155.
    * jxl-oxide 0.12.6 does not decode explicit difference tables correctly. Defaults to auto. */
   paletteMode?: 'auto' | 'implicit' | 'explicit' | 'hybrid' | undefined;
-  /** Predictor of reconstructed color and alpha samples; auto tries all five. */
+  /** Predictor of reconstructed color and alpha samples. auto tries all five. */
   deltaPredictor?: 'auto' | 'left' | 'top' | 'average' | 'gradient' | 'weighted' | undefined;
-  /** Maximum custom difference entries per group, 1–4096. Explicit/hybrid only; default 256. */
+  /** Maximum custom difference entries per group, 1–4096. Explicit/hybrid only. Default 256. */
   maxDeltaEntries?: number | undefined;
-  /** Maximum explicit absolute-color entries per group, 1–65536; default 4096. */
+  /** Maximum explicit absolute-color entries per group, 1–65536. Default 4096. */
   maxPaletteColors?: number | undefined;
-  /** Maximum group edge; default 1024. Smaller groups bound scratch and allow local palettes. */
+  /** Maximum group edge. Default 1024. Smaller groups bound scratch and allow local palettes. */
   groupSize?: 128 | 256 | 512 | 1024 | undefined;
-  /** Existing screen search to include in auto: 1–2 use the core floor, 3–9 search screens; default 5. */
+  /** Existing screen search to include in auto: 1–2 use the core floor, 3–9 search screens. Default 5. */
   screenEffort?: number | undefined;
 }
 

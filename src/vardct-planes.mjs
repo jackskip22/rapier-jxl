@@ -94,7 +94,7 @@ export function fitRawSteps(quants) {
   let top = 0;
   for (const quant of quants) for (const value of quant) top = Math.max(top, value);
   if (top <= RAW_TOP) return quants;
-  const unit = 2 ** Math.ceil(Math.log2(top / RAW_TOP));
+  const unit = 2 ** ceilLog2(Math.ceil(top / RAW_TOP));
   for (const quant of quants) for (let i = 0; i < quant.length; i++) quant[i] = Math.max(unit, Math.round(quant[i] / unit) * unit);
   return quants;
 }
@@ -102,7 +102,7 @@ export function rawStepShift(quants) {
   let top = 0, common = 0;
   for (const quant of quants) for (const value of quant) { top = Math.max(top, value); common |= value; }
   if (top <= RAW_TOP) return 0;
-  const shift = Math.ceil(Math.log2(top / RAW_TOP));
+  const shift = ceilLog2(Math.ceil(top / RAW_TOP));
   return common & (2 ** shift - 1) ? 0 : shift;
 }
 export function copyVarDCTQuantRows(quant, data, from = 0, to = 8) {

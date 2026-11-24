@@ -3,15 +3,15 @@ import type {Animation, AnimationOptions, AnimationJob} from './animation.mjs';
 import type {Bytes} from './index.mjs';
 
 export interface AtlasSearchOptions {
-  /** Auto combines connected glyphs with aligned tiles; default auto. */
+  /** Auto combines connected glyphs with aligned tiles. Default auto. */
   strategy?: 'auto' | 'glyphs' | 'tiles';
-  /** Tile edge in pixels; default 16. */
+  /** Tile edge in pixels. Default 16. */
   tileSize?: 4 | 8 | 16 | 32 | 64;
-  /** Maximum retained source rectangles, 1..4096; default 256. */
+  /** Maximum retained source rectangles, 1..4096. Default 256. */
   maxEntries?: number;
-  /** Maximum packed atlas pixels, 16..1048576; default 262144. */
+  /** Maximum packed atlas pixels, 16..1048576. Default 262144. */
   maxPixels?: number;
-  /** Useful repeated placements required per rectangle, 2..65536; default 2. */
+  /** Useful repeated placements required per rectangle, 2..65536. Default 2. */
   minUses?: number;
 }
 export interface AnimationAtlasPlan {
@@ -29,7 +29,7 @@ export interface AnimationAtlasPlan {
 export interface AnimationAtlasOptions extends AnimationOptions {
   /** Authored or previously discovered plan. Omit to discover repeated glyphs and tiles. */
   atlas?: AnimationAtlasPlan;
-  /** Auto retains an atlas only when the complete animation is smaller; force requires a usable atlas.
+  /** Auto retains an atlas only when the complete animation is smaller. force requires a usable atlas.
    * Off returns the ordinary animation bytes. Default auto. */
   atlasMode?: 'auto' | 'force' | 'off';
   atlasSearch?: AtlasSearchOptions;
@@ -44,7 +44,7 @@ export function buildAnimationAtlas(animation: Animation, options?: AtlasSearchO
  * animation encoder. Auto returns its exact original bytes outside straight RGBA8 quality 100 or without a saving.
  * Keep all source and supplied atlas buffers unchanged while a stepped call is active. */
 export function encodeAnimationAtlas(animation: Animation, options?: AnimationAtlasOptions): Bytes;
-/** Same result as encodeAnimationAtlas. Exhaust to set bytes; cancellation leaves bytes null.
- * Hurry reuses the completed baseline at planning boundaries and reduces active searches; a started candidate
+/** Same result as encodeAnimationAtlas. Exhaust to set bytes. Cancellation leaves bytes null.
+ * Hurry reuses the completed baseline at planning boundaries and reduces active searches. A started candidate
  * may finish. Force always completes the authored candidate. */
 export function encodeAnimationAtlasSteps(animation: Animation, options?: AnimationAtlasOptions): AnimationJob;

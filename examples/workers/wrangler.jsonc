@@ -5,10 +5,13 @@
   // In front of the site: every request on these routes passes through the Worker.
   "routes": [{"pattern": "example.com/*", "zone_name": "example.com"}]
   // Workers Free (this file): the Worker serves the JPEG XL files made before the site was deployed
-  // (`npx jpegxl <folder>` writes photo.jxl beside photo.jpg), and the original otherwise. No image work.
+  // (`npx jpegxl <folder> --keep-extension` writes photo.jpg.jxl beside photo.jpg), and the original otherwise. No image work.
   //
   // Workers Paid, to convert in the Worker, add (or run `npx jpegxl add workers --paid`):
   //   "r2_buckets": [{"binding": "JXL", "bucket_name": "jxl"}],
   //   "vars": {"JXL_CONVERT": "on", "JXL_CPU_MS": "30000"},
   //   "limits": {"cpu_ms": 30000}
+  //
+  // Opt-in space saver on Workers Paid (`npx jpegxl add workers --paid --space-saver`):
+  //   "vars": {"JXL_CONVERT": "on", "JXL_CPU_MS": "30000", "JXL_SPACE_SAVER": "on"}
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {wideLevels} from './color-bytes.mjs';
-import {kernelModule, compileKernels, kernelsSupported, kernelInstance, arenaHolder, heldExports, growArena, takeArena} from './kernel-runtime.mjs';
-import {fault} from './fault.mjs';
+import {kernelModule, compileKernels, kernelsSupported, kernelInstance, arenaHolder, heldExports, growArena, tryGrowArena, takeArena, SHAPE_END} from './kernel-runtime.mjs';
+import {fault, outOfMemory} from './fault.mjs';
 import {BitWriter} from './bits.mjs';
 import {wasmRefused, wasmRequired} from './capture-wasm-error.mjs';
 import {weightedTables} from './weighted-policy.mjs';
@@ -13,8 +13,8 @@ const outside = () => { throw fault('JXL_INTERNAL', 'capture-kernels:outside-bou
 const copyOut = (T, buffer, at, n) => new T(buffer.slice(at, at + n * T.BYTES_PER_ELEMENT));
 
 export const WEIGHTED_BANDS = [-200, -100, -50, -25, -12, -6, -3, -1, 0, 2, 4, 7, 13, 26, 51, 101, 201];
-export const WEIGHTED_CONTEXT = Uint8Array.from({length: 511}, (_, i) => WEIGHTED_BANDS.filter(cut => cut < i - 255).length);
-export const LOG_MANTISSA = Uint8Array.of(0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 22, 23, 24, 25, 26, 27, 27, 28, 29, 30, 31, 31);
+export const WEIGHTED_CONTEXT = /* @__PURE__ */ Uint8Array.from({length: 511}, (_, i) => WEIGHTED_BANDS.filter(cut => cut < i - 255).length);
+export const LOG_MANTISSA = /* @__PURE__ */ Uint8Array.of(0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 22, 23, 24, 25, 26, 27, 27, 28, 29, 30, 31, 31);
 
 const MEMORY_PAGES = 640;
 const P = 65536, DIV = 16, WEIGHTS = 272, BANDS = 32768, CONTEXTS = 33280, LOG = 33792, HEADS = 262144, SCRATCH = 832;
@@ -40,7 +40,7 @@ export function prepareCaptureKernels() {
 }
 
 export function captureWeighted(w, targets, plane, width, height, offset, contextOf, residuals, properties, keep = false, y0 = 0) {
-  if (w || !(plane instanceof Int16Array) || width < 1 || height < 1 || width > 16384 || width * height > 1048576 || plane.length < width * height ||
+  if (w || !(plane instanceof Int16Array || !keep && plane instanceof Int32Array) || width < 1 || height < 1 || width > 16384 || width * height > 1048576 || plane.length < width * height ||
       Math.abs(offset) > 32768 || !keep && (!(residuals instanceof Uint32Array) ||
       residuals.length < width * height || properties && (!(properties instanceof Int32Array) || properties.length < width * height))) return false;
   if (!prepareCaptureKernels()) return false;
@@ -68,7 +68,7 @@ export function captureWeighted(w, targets, plane, width, height, offset, contex
     residuals.set(i32.subarray(residual >> 2, (residual >> 2) + n));
     if (properties) properties.set(i32.subarray(property >> 2, (property >> 2) + n));
     return true;
-  } catch { return false; }
+  } catch (error) { if (error?.code === 'JXL_MEMORY') throw error; return false; }
 }
 
 export function captureStripMargin(plane, width, height, keep = 2) {
@@ -157,7 +157,7 @@ function ready() {
   if (!engine) {
     const {memory, exports} = kernelInstance();
     tables(memory);
-    holder = arenaHolder(captureRelease, null, () => tables(memory));
+    holder ??= arenaHolder(captureRelease, null, () => tables(engine.memory), () => { engine = null; });
     engine = {...heldExports(exports, holder), memory};
   }
   takeArena(holder);
@@ -286,6 +286,17 @@ export function captureRowsBits(values, distances, contexts, count, classes, cop
     copies ? 1 : 0, room(classes * 2048), LOG])[0];
 }
 
+export function capturePageGroupStats(words, stride, x, y, width, height, rowStep = 32) {
+  if (!(words instanceof Uint32Array) || ![stride, x, y, width, height, rowStep].every(Number.isInteger) ||
+      x < 0 || y < 0 || width < 1 || height < 1 || width > 1024 || height > 1024 ||
+      x + width > stride || (y + height - 1) * stride + x + width > words.length || rowStep < 1 || rowStep > 32) outside();
+  const at = heldAt(words), direct = at >= 0 && base + 32832 <= MEMORY_BYTES;
+  const pixels = direct ? at + 4 * (y * stride + x)
+    : made(Uint32Array, width * height, to => rowsInto(to, words, stride, x, y, width, height, 0));
+  return (direct ? call : callFit)(k => k.pageGroupStats,
+    [pixels, direct ? stride : width, width, height, room(32768), out(Uint32Array, 12), rowStep])[1];
+}
+
 export function captureBlockHashes(words, width, height) {
   if (width < 8 || height < 8 || words.length < width * height)
     outside();
@@ -304,31 +315,39 @@ export function captureKeyCounts(keys, hn) {
   return {values, counts, starts};
 }
 
-const ANS_WINDOW = 1 << 18;
+const ANS_WINDOW = 1 << 16;
 export function captureAnsTokens(models, index, configs, copy, histograms, most) {
   const offset = copy ? 1 : 0, sLen = copy?.spatial ? copy.sCodes.length : 0, hn = histograms + offset;
   let window = 1;
   for (const model of models) window = Math.max(window, Math.min(ANS_WINDOW, model.count));
-  const [tokens, freqs] = call(k => (hmap, cfg, lengthConfig, distanceConfig, sCodes, values, distances, contexts, tags, bits, freqs) => {
-    const buffer = k.memory.buffer, i32 = new Int32Array(buffer), u8 = new Uint8Array(buffer);
-    const outTags = new Uint32Array(most), outBits = new Uint32Array(most);
-    let at = 0;
+  requireCaptureKernels(); ready();
+  const [tokens] = call(k => (hmap, cfg, lengthConfig, distanceConfig, sCodes, values, distances, contexts, freqs, cursor) => {
+    const region = captureAnsRegion(hn, most, Math.max(SHAPE_END, cursor + 16), 0);
+    reserve(region.bits + 16);
+    let i32 = new Int32Array(k.memory.buffer), u8 = new Uint8Array(k.memory.buffer), at = 0;
+    i32[cursor >> 2] = region.bits;
     for (const model of models) {
       for (let from = 0; from < model.count; from += window) {
         const to = Math.min(model.count, from + window);
+        if (i32[cursor >> 2] + (to - from) * 8 > k.memory.buffer.byteLength) {
+          reserve(i32[cursor >> 2] + (to - from) * 8);
+          i32 = new Int32Array(k.memory.buffer); u8 = new Uint8Array(k.memory.buffer);
+        }
         i32.set(model.pieceValue.subarray(from, to), values >> 2); i32.set(model.pieceDistance.subarray(from, to), distances >> 2);
         u8.set(model.pieceContext.subarray(from, to), contexts);
         const written = k.ansTokens(values, distances, contexts, to - from, hmap + model.base * 4, cfg, offset, copy ? Math.min(copy.minSymbol, 256) : 256, lengthConfig,
-          distanceConfig, copy ? copy.minSymbol : 0, copy?.spatial ? 1 : 0, sLen, sCodes, tags, bits, 0, freqs);
+          distanceConfig, copy ? copy.minSymbol : 0, copy?.spatial ? 1 : 0, sLen, sCodes, region.tags + at * 4, cursor, 0, freqs);
         if (written < 0) return null;
-        outTags.set(new Uint32Array(buffer, tags, written), at); outBits.set(new Uint32Array(buffer, bits, written), at);
-        at += written;
+        if ((at += written) > most) outside();
       }
     }
-    return {tags: outTags, bits: outBits, n: at};
+    const counts = new Uint32Array(k.memory.buffer, freqs, hn * 256).slice();
+    return {n: at, region: {...region, end: i32[cursor >> 2] + 15 & ~15}, counts};
   }, [into(Int32Array, index), configRows(configs, histograms), copy ? config(copy.lengthConfig) : room(16), copy ? config(copy.distanceConfig) : room(16), sLen ? into(Int16Array, copy.sCodes, sLen) : room(0),
-    room(window * 4), room(window * 4), room(window), room(window * 8), room(window * 8), out(Uint32Array, hn * 256, 1)]);
-  return tokens && {...tokens, freqs: Array.from({length: hn}, (_, h) => freqs.subarray(h * 256, h * 256 + 256))};
+    room(window * 4), room(window * 4), room(window), room(hn * 256 * 4, 1), room(16)]);
+  if (!tokens) return null;
+  const {counts, ...rest} = tokens;
+  return {...rest, freqs: Array.from({length: hn}, (_, h) => counts.subarray(h * 256, h * 256 + 256))};
 }
 
 const localPlane = (plane, w, h) => {
@@ -437,30 +456,59 @@ export function captureWordsOr(words, n, colour, alpha, channels, float) {
   return {or: or.slice(0, channels), nonNegative};
 }
 
+function captureAnsRegion(histograms, most, above = 0, raws = most) {
+  const tabs = base + 15 & ~15, tags = Math.max(tabs + histograms * 9232, above) + 15 & ~15, bits = tags + most * 4;
+  return {tabs, tags, bits, end: bits + raws * 4 + 15 & ~15, most, histograms};
+}
+
 export function captureModularAnsWrite(w, tags, extras, n, shapes, offset) {
-  if (w && !(w instanceof BitWriter && w.write === BitWriter.prototype.write && w.grow === BitWriter.prototype.grow) || n < 0 ||
-      tags.length < n || extras.length < n || offset < 0 || offset > shapes.length) return false;
+  if (n < 0 || tags.length < n || extras.length < n) return false;
   return run(() => {
-    const tabs = base, at = tabs + shapes.length * 9232, words = at + n * 4, raw = words + (n * 2 + 3 & ~3), out = raw + n * 4;
-    reserve(w ? out + 64 : raw + n * 4);
-    let buffer = engine.memory.buffer;
-    const u16 = new Uint16Array(buffer), i32 = new Int32Array(buffer);
-    shapes.forEach((h, k) => {
-      const first = (tabs + k * 9232) >> 1;
-      u16.fill(0, first, first + 520); u16.set(h.counts, first); u16.set(h.starts, first + 256); u16.set(h.reverse, first + 520);
-    });
-    i32.set(tags.subarray(0, n), at >> 2); i32.set(extras.subarray(0, n), raw >> 2);
-    const bits = engine.tokAnsBack(at, n, tabs + offset * 9232, words);
-    if (!w) return bits;
-    const end = out + ((bits + w.pending) >> 3) + 16;
-    reserve(end);
-    buffer = engine.memory.buffer;
-    const written = engine.tokAnsWrite(at, raw, n, words, w.acc, w.pending, out), whole = written >> 3, rest = written & 7, u8 = new Uint8Array(buffer);
-    if (w.at + whole + 8 >= w.bytes.length) w.grow(whole + 8);
-    w.bytes.set(u8.subarray(out, out + whole), w.at); w.at += whole;
-    w.acc = rest ? u8[out + whole] & (1 << rest) - 1 : 0; w.pending = rest;
-    return bits;
+    const region = captureAnsRegion(shapes.length, n, 0, w ? n : 0);
+    reserve(region.end);
+    const i32 = new Int32Array(engine.memory.buffer);
+    i32.set(tags.subarray(0, n), region.tags >> 2);
+    if (w) for (let i = 0, at = region.bits >> 2; i < n; i++) if (tags[i] >>> 9 & 63) i32[at++] = extras[i];
+    return ansWrite(w, region, n, shapes, offset, n);
   });
+}
+function wordsBound(freqs, shapes, n) {
+  let grown = 5 + 0.1 * n;
+  for (let h = 0; h < freqs.length && h < shapes.length; h++) {
+    const counts = freqs[h], shape = shapes[h].counts;
+    for (let s = 0; s < counts.length; s++) if (counts[s]) grown += counts[s] * (shape[s] ? 12 - (31 - Math.clz32(shape[s])) : 12);
+  }
+  return Math.min(n, Math.ceil(grown / 16) + 2);
+}
+export const captureAnsWrite = (w, {region, n, freqs}, shapes) => run(() => ansWrite(w, region, n, shapes, 0, wordsBound(freqs, shapes, n)));
+function ansWrite(w, region, n, shapes, offset, most) {
+  if (w && !(w instanceof BitWriter && w.write === BitWriter.prototype.write && w.grow === BitWriter.prototype.grow) ||
+      offset < 0 || offset > shapes.length || shapes.length > region.histograms || n > region.most) return false;
+  const {tabs, tags, bits: raw, end: floor} = region;
+  let top = floor + most * 2 + 15 & ~15, out = top + 16;
+  reserve(w ? out + 64 : out);
+  let buffer = engine.memory.buffer;
+  const u16 = new Uint16Array(buffer);
+  shapes.forEach((h, k) => {
+    const first = (tabs + k * 9232) >> 1;
+    u16.fill(0, first, first + 520); u16.set(h.counts, first); u16.set(h.starts, first + 256); u16.set(h.reverse, first + 520);
+  });
+  let bits = engine.tokAnsBack(tags, n, tabs + offset * 9232, top, floor);
+  if (bits < 0) {
+    top = floor + n * 2 + 15 & ~15; out = top + 16;
+    reserve(w ? out + 64 : out);
+    bits = engine.tokAnsBack(tags, n, tabs + offset * 9232, top, floor);
+  }
+  if (!w) return bits;
+  const end = out + ((bits + w.pending) >> 3) + 16;
+  reserve(end);
+  buffer = engine.memory.buffer;
+  const words = new Uint32Array(buffer)[top >> 2];
+  const written = engine.tokAnsWrite(tags, raw, n, words, w.acc, w.pending, out), whole = written >> 3, rest = written & 7, u8 = new Uint8Array(buffer);
+  if (w.at + whole + 8 >= w.bytes.length) w.grow(whole + 8);
+  w.bytes.set(u8.subarray(out, out + whole), w.at); w.at += whole;
+  w.acc = rest ? u8[out + whole] & (1 << rest) - 1 : 0; w.pending = rest;
+  return bits;
 }
 
 const DISTINCT_SLOTS = 1 << 18, DISTINCT_BAND = 1 << 20;
@@ -508,7 +556,7 @@ export function captureWeightedPieces(plane, width, height, minimum, y0 = 0) {
     return {count, value: copyOut(Int32Array, buffer, residual, count), distance: copyOut(Int32Array, buffer, property, count),
       context: copyOut(Uint8Array, buffer, context, count)};
   } catch (error) {
-    throw kernelFail(error);
+    throw error?.code === 'JXL_MEMORY' ? error : kernelFail(error);
   }
 }
 
@@ -586,42 +634,78 @@ export function captureColumnsUnlike(words, width, height, stride, origin, y0, y
 }
 
 let pageIndices = null;
+export function captureScanColours(rgba, width, height, limit) {
+  if (!(rgba instanceof Uint8Array || rgba instanceof Uint8ClampedArray) || width < 1 || height < 1 ||
+      rgba.length < width * height * 4 || limit < 1 || limit > 16384 || !prepareCaptureKernels()) return undefined;
+  let size = 1024;
+  while (size < limit * 2) size <<= 1;
+  const total = width * height, rowMode = width <= SCAN_WORDS;
+  const w = rowMode ? width : Math.min(total, SCAN_WORDS), h = rowMode ? height : 1;
+  const maxBand = rowMode ? Math.min(h, Math.floor(SCAN_WORDS / w)) : 1;
+  const firstBand = rowMode ? Math.min(h, Math.max(1, Math.floor(65536 / w))) : Math.min(total, 65536);
+  return callOr(k => (keys, colours, staged, indices) => {
+    const buffer = k.memory.buffer, u8 = new Uint8Array(buffer);
+    let count = 0;
+    if (rowMode) {
+      for (let y = 0; y < h;) {
+        const rows = y === 0 ? firstBand : Math.min(maxBand, h - y), bytes = w * rows * 4;
+        u8.set(rgba.subarray(y * w * 4, y * w * 4 + bytes), staged);
+        count = k.scan(staged, w, 0, w, rows, limit, 0, keys, keys + size * 4, size - 1, Math.clz32(size) + 1, colours, indices, 0, 0, count, y);
+        if (count < 0) return null;
+        y += rows;
+      }
+    } else {
+      for (let at = 0; at < total;) {
+        const n = at === 0 ? firstBand : Math.min(SCAN_WORDS, total - at);
+        u8.set(rgba.subarray(at * 4, (at + n) * 4), staged);
+        count = k.scan(staged, n, 0, n, 1, limit, 0, keys, keys + size * 4, size - 1, Math.clz32(size) + 1, colours, indices, 0, 0, count, 0);
+        if (count < 0) return null;
+        at += n;
+      }
+    }
+    return copyOut(Uint32Array, buffer, colours, count);
+  }, [room(size * 6, 1), room(limit * 4), room(w * maxBand * 4), room(w * maxBand * 2 + 3 & ~3)])?.[0];
+}
+
 export function captureScan(words, stride, x0, y0, w, h, limit, rows, blank = null) {
   if (!(words instanceof Uint32Array) || w < 1 || h < 1 ||
-      x0 < 0 || y0 < 0 || x0 + w > stride || stride > SCAN_WORDS || (y0 + h) * stride > words.length ||
+      x0 < 0 || y0 < 0 || x0 + w > stride || (y0 + h) * stride > words.length ||
       limit < 1 || limit > 16384 || !prepareCaptureKernels()) return undefined;
   let size = 1024;
   while (size < limit * 2) size <<= 1;
-  const rowsAt = blank ? -1 : heldAt(words.subarray(y0 * stride, (y0 + h) * stride)), across = rowsAt < 0 ? w : stride,
-    bandRows = Math.min(h, Math.floor(SCAN_WORDS / across)), n = w * h;
+  const rowsAt = blank ? -1 : heldAt(words.subarray(y0 * stride, (y0 + h) * stride)), across = rowsAt < 0 ? Math.min(w, SCAN_WORDS) : stride,
+    bandRows = Math.min(h, Math.max(1, Math.floor(SCAN_WORDS / across))), n = w * h;
   return callOr(k => (keys, colours, first, last, staged, indices) => {
     const buffer = k.memory.buffer, at = rowsAt < 0 ? staged : rowsAt;
     let plane, count = 0;
     for (let y = 0; y < h; y += bandRows) {
       const height = Math.min(bandRows, h - y);
-      if (rowsAt < 0) {
-        const band = new Uint32Array(buffer, at, w * height), top = y0 + y;
-        if (w === stride) band.set(words.subarray(top * stride + x0, (top + height) * stride + x0));
-        else for (let row = 0, from = top * stride + x0; row < height; row++, from += stride) band.set(words.subarray(from, from + w), row * w);
-        if (blank) for (const r of blank) for (let row = Math.max(r.y, top); row < Math.min(r.y + r.height, top + height); row++) {
-          const a = Math.max(r.x, x0), b = Math.min(r.x + r.width, x0 + w);
-          if (a < b) band.fill(r.fill, (row - top) * w + a - x0, (row - top) * w + b - x0);
+      for (let x = 0; x < w; x += across) {
+        const width = Math.min(across, w - x), left = x0 + x;
+        if (rowsAt < 0) {
+          const band = new Uint32Array(buffer, at, width * height), top = y0 + y;
+          if (width === stride) band.set(words.subarray(top * stride + left, (top + height) * stride + left));
+          else for (let row = 0, from = top * stride + left; row < height; row++, from += stride) band.set(words.subarray(from, from + width), row * width);
+          if (blank) for (const r of blank) for (let row = Math.max(r.y, top); row < Math.min(r.y + r.height, top + height); row++) {
+            const a = Math.max(r.x, left), b = Math.min(r.x + r.width, left + width);
+            if (a < b) band.fill(r.fill, (row - top) * width + a - left, (row - top) * width + b - left);
+          }
         }
+        count = k.scan(rowsAt < 0 ? at : at + y * stride * 4, rowsAt < 0 ? width : stride, rowsAt < 0 ? 0 : left, width, height, limit, rows ? 1 : 0,
+          keys, keys + size * 4, size - 1, Math.clz32(size) + 1, colours, indices, first, last, count, y);
+        if (count < 0) return null;
+        if (!plane) {
+          if (rows && n <= SCAN_WORDS) {
+            if (!pageIndices || pageIndices.length < n) pageIndices = new Uint16Array(Math.max(n, 1 << 20));
+            plane = pageIndices.subarray(0, n);
+          } else plane = new Uint16Array(n);
+        }
+        plane.set(new Uint16Array(buffer, indices, width * height), y * w + x);
       }
-      count = k.scan(rowsAt < 0 ? at : at + y * stride * 4, across, rowsAt < 0 ? 0 : x0, w, height, limit, rows ? 1 : 0,
-        keys, keys + size * 4, size - 1, Math.clz32(size) + 1, colours, indices, first, last, count, y);
-      if (count < 0) return null;
-      if (!plane) {
-        if (rows && n <= SCAN_WORDS) {
-          if (!pageIndices || pageIndices.length < n) pageIndices = new Uint16Array(Math.max(n, 1 << 20));
-          plane = pageIndices.subarray(0, n);
-        } else plane = new Uint16Array(n);
-      }
-      plane.set(new Uint16Array(buffer, indices, w * height), y * w);
     }
     return {colours: copyOut(Uint32Array, buffer, colours, count), indices: plane,
       first: rows ? copyOut(Int32Array, buffer, first, count) : undefined, last: rows ? copyOut(Int32Array, buffer, last, count) : undefined};
-  }, [room(size * 6, 1), room(limit * 4), room(limit * 4), room(limit * 4), room(rowsAt < 0 ? across * bandRows * 4 : 0), room(w * bandRows * 2 + 3 & ~3)])?.[0];
+  }, [room(size * 6, 1), room(limit * 4), room(limit * 4), room(limit * 4), room(rowsAt < 0 ? across * bandRows * 4 : 0), room(Math.min(w, across) * bandRows * 2 + 3 & ~3)])?.[0];
 }
 
 const TEXT_DELTA_SLOTS = 65536, TEXT_DELTA_LIMIT = 16384;
@@ -704,13 +788,15 @@ export function capturePieceCounts(model, small, key) {
       !(pieceValue instanceof Int32Array) || !(pieceDistance instanceof Int32Array) || !(pieceContext instanceof Uint8Array) ||
       pieceValue.length < count || pieceDistance.length < count || pieceContext.length < count || small < 1 || small > 4096 || classes * small > 1 << 21 || !prepareCaptureKernels())
     outside();
+  let copies = 0;
+  for (let i = 0; i < count; i++) if (pieceDistance[i]) copies++;
   const [, counts, larges, lengths, distances] = call(k => (values, distances, contexts, table, larges, lengths, dists, state) => {
     k.pieces(values, distances, contexts, count, small, table, table + classes * small * 4, table + classes * (small + 1) * 4, key, larges, lengths, dists, state);
     const at = new Int32Array(k.memory.buffer, state, 2);
     return [at[0], at[1]];
   }, [into(Int32Array, pieceValue, count), into(Int32Array, pieceDistance, count), into(Uint8Array, pieceContext, count),
-    out(Uint32Array, classes * (small + 2), 1), outUpTo(Uint32Array, count, n => n[0]), outUpTo(Uint32Array, count, n => n[1]), outUpTo(Uint32Array, count, n => n[1]), room(8)], true);
-  return {counts: counts.slice(), literals: counts.subarray(classes * small, classes * (small + 1)), copies: counts.subarray(classes * (small + 1)), larges, lengths, distances};
+    out(Uint32Array, classes * (small + 2), 1), outUpTo(Uint32Array, count, n => n[0]), outUpTo(Uint32Array, copies, n => n[1]), outUpTo(Uint32Array, copies, n => n[1]), room(8)]);
+  return {counts, literals: counts.subarray(classes * small, classes * (small + 1)), copies: counts.subarray(classes * (small + 1)), larges, lengths, distances};
 }
 
 const TOKEN_OUT = 1 << 18;
@@ -917,40 +1003,130 @@ export function captureResiduals(plane, width, height, residuals, properties) {
     throw kernelFail();
 }
 
-export function captureTreeSample(plane, width, height, positions, properties, predictors, residuals, wp, references) {
+export function capturePlaneHash(plane) {
+  if ((typeof __RAPIER_JXL_JPEG__ === 'undefined' || !__RAPIER_JXL_JPEG__) && !(plane instanceof Int16Array)) {
+    const [, d] = callFit(k => k.treeNumbersHash, [into(Float64Array, plane), plane.length, out(Uint32Array, 2)], true);
+    return `${d[0]}:${d[1]}`;
+  }
+  const [, d] = callFit(k => k.treePlaneHash, [into(Int16Array, plane), plane.length, out(Uint32Array, 4)], true);
+  return `${d[0]}:${d[1]}:${d[2]}:${d[3]}`;
+}
+
+export function capturePlanesEqual(a, b) {
+  const n = a.length;
+  if (n !== b.length) return false;
+  if ((typeof __RAPIER_JXL_JPEG__ === 'undefined' || !__RAPIER_JXL_JPEG__) && (!(a instanceof Int16Array) || !(b instanceof Int16Array))) {
+    return Boolean(callFit(k => k.treeNumbersEqual, [into(Float64Array, a), into(Float64Array, b), n], true)[0]);
+  }
+  if (n & 1 && a[n - 1] !== b[n - 1]) return false;
+  const words = Math.floor(n / 2);
+  if (!words) return true;
+  const av = new Uint8Array(a.buffer, a.byteOffset, words * 4), bv = new Uint8Array(b.buffer, b.byteOffset, words * 4);
+  return Boolean(callFit(k => k.peelEqual, [into(Uint8Array, av), into(Uint8Array, bv), words], true)[0]);
+}
+
+function treeQuantiles(kernel, values, length, bins, counts, span, map, cuts, indices) {
+  const size = kernel.treeQuantize(values, length, bins, counts, span, map, cuts, indices);
+  const buffer = kernel.memory.buffer;
+  return {cuts: Array.from(new Int32Array(buffer, cuts, size)), indices: indices ? copyOut(Uint8Array, buffer, indices, length) : null};
+}
+
+export function captureQuantize(values, bins, weightedCuts = false) {
+  const m = values.length;
+  if (!m) return {cuts: [], indices: weightedCuts ? null : new Uint8Array(0)};
+  const maxSpan = Math.min(65536, Math.max(256, m * 4));
+  let answer;
+  callFit(k => (vals, cuts, indices, counts, map) => {
+    answer = treeQuantiles(k, vals, m, bins, counts, maxSpan, map, cuts, indices);
+  }, [into(Int32Array, values), room(bins * 4), weightedCuts ? 0 : room(m), room(Math.max(m, maxSpan) * 4), weightedCuts ? 0 : room(maxSpan)], true);
+  return answer;
+}
+
+export function captureTreeSample(plane, width, height, positions, properties, predictors, residuals, wp, references, bins = 0) {
   const m = positions.length, P = properties.length, K = predictors.length;
   requireCaptureKernels(); ready();
   const R = references.length, align = bytes => bytes + 15 & ~15;
-  const batchCap = Math.min(m, 65536);
-  const start = base + align(batchCap * 4) + align(P * 4) + align(K * 4) + align(P * batchCap * 4) + align(K * batchCap);
   const perRow = width * (2 + 2 * R + 8), halo = width * (4 + 2 * R) + 16 * (R + 6);
-  const rows = Math.min(height, Math.floor((MEMORY_BYTES - start - halo) / perRow));
-  if (rows < 1) throw kernelFail();
-  const columns = Array.from({length: P}, (_, p) => ({property: properties[p], values: new Int32Array(m)}));
+  const strideOf = cap => cap + 16;
+  const startOf = cap => align(base) + align(cap * 4) + align(Math.max(1, P) * 4) + align(Math.max(1, K) * 4)
+    + align(Math.max(1, P * strideOf(cap) * 4)) + align(Math.max(1, K * strideOf(cap)));
+  const quantHeader = align(bins * 4) + align(m) + 64;
+  const quantBytes = quantHeader + Math.max(65536 * 5, m * 4);
+  function layout(budget) {
+    let batchCap = bins > 0 && m <= 262144 ? m : Math.min(m, 131072);
+    const rowsFor = cap => Math.min(height, Math.floor((budget - startOf(cap) - halo) / perRow));
+    if (batchCap > 131072 && rowsFor(batchCap) < Math.min(height, 64)) batchCap = 131072;
+    if (batchCap > 65536 && rowsFor(batchCap) < Math.min(height, 64)) batchCap = 65536;
+    while (batchCap > 1 && rowsFor(batchCap) < 1) batchCap = Math.ceil(batchCap / 2);
+    const start = startOf(batchCap), rows = rowsFor(batchCap);
+    if (rows < 1) return null;
+    const singleQuant = bins > 0 && batchCap === m && P > 0 && start + quantBytes <= budget;
+    const window = align((2 + rows) * width * 2) + align(R * (1 + rows) * width * 2) + rows * width * 8 + 16;
+    const quant = singleQuant ? Math.min(budget - start, Math.max(quantBytes, quantHeader + Math.max(256, m * 4) * 5)) : 0;
+    const room16 = Math.max(window, quant);
+    return {batchCap, rows, singleQuant, room16, end: start + room16};
+  }
+  let planned = layout(MEMORY_BYTES);
+  if (!planned) throw fault('JXL_MEMORY', 'capture tree sample: row too wide');
+  if (!tryGrowArena(planned.end)) {
+    growArena(startOf(Math.min(m, 1)) + halo + perRow);
+    planned = layout(engine.memory.buffer.byteLength);
+  }
+  const {batchCap, rows, singleQuant, room16} = planned;
+  const columns = singleQuant ? null : Array.from({length: P}, (_, p) => ({property: properties[p], values: new Int32Array(m)}));
+  const quantized = singleQuant ? new Array(P) : null;
   const symbolSets = Array.from({length: K}, () => new Uint8Array(m));
-  const room16 = align((2 + rows) * width * 2) + align(R * (1 + rows) * width * 2) + rows * width * 8 + 16;
-  for (let b0 = 0; b0 < m; b0 += batchCap) {
-    const b1 = Math.min(m, b0 + batchCap), bm = b1 - b0;
-    const [, vals, syms] = call(k => (posAt, propsAt, predsAt, valsAt, symsAt, start) => {
+  call(k => (posAt, propsAt, predsAt, valsAt, symsAt, winAt) => {
+    const buf = k.memory.buffer;
+    let loadedAll = false;
+    for (let b0 = 0; b0 < m; b0 += batchCap) {
+      const b1 = Math.min(m, b0 + batchCap), bm = b1 - b0;
+      new Uint32Array(buf, posAt, bm).set(positions.subarray(b0, b1));
       for (let s0 = 0; s0 < bm;) {
-        const y0 = (positions[b0 + s0] / width) | 0, y1 = Math.min(height, y0 + rows), endPos = y1 * width;
-        let s1 = s0 + 1;
+        const y0 = rows === height ? 0 : (positions[b0 + s0] / width) | 0, y1 = Math.min(height, y0 + rows), endPos = y1 * width;
+        let s1 = rows === height ? bm : s0 + 1;
         while (s1 < bm && positions[b0 + s1] < endPos) s1++;
         const count = (y1 - y0) * width, above = Math.min(y0, 2), refAbove = Math.min(y0, 1);
-        const refAt = start + align((above + y1 - y0) * width * 2), span = (refAbove + y1 - y0) * width, resAt = refAt + align(R * span * 2), wpAt = resAt + count * 4;
-        const buf = k.memory.buffer;
-        new Int16Array(buf, start, (above + y1 - y0) * width).set(plane.subarray((y0 - above) * width, y1 * width));
-        references.forEach((r, q) => new Int16Array(buf, refAt + q * span * 2, span).set(r.subarray((y0 - refAbove) * width, y1 * width)));
-        new Uint32Array(buf, resAt, count).set(residuals.subarray(y0 * width, y1 * width));
-        new Int32Array(buf, wpAt, count).set(wp.subarray(y0 * width, y1 * width));
-        k.treeSample(start + above * width * 2, width, y0, posAt, s0, s1, bm, resAt, wpAt, refAt + refAbove * width * 2, span, propsAt, P, predsAt, K, valsAt, symsAt);
+        const refAt = winAt + align((above + y1 - y0) * width * 2), span = (refAbove + y1 - y0) * width, resAt = refAt + align(R * span * 2), wpAt = resAt + count * 4;
+        if (!loadedAll) {
+          new Int16Array(buf, winAt, (above + y1 - y0) * width).set(plane.subarray((y0 - above) * width, y1 * width));
+          for (let q = 0; q < R; q++) new Int16Array(buf, refAt + q * span * 2, span).set(references[q].subarray((y0 - refAbove) * width, y1 * width));
+          new Uint32Array(buf, resAt, count).set(residuals.subarray(y0 * width, y1 * width));
+          new Int32Array(buf, wpAt, count).set(wp.subarray(y0 * width, y1 * width));
+          if (rows === height) loadedAll = true;
+        }
+        const colStride = strideOf(bm); k.treeSample(winAt + above * width * 2, width, y0, posAt, s0, s1, colStride, resAt, wpAt, refAt + refAbove * width * 2, span, propsAt, P, predsAt, K, valsAt, symsAt);
         s0 = s1;
       }
-    }, [into(Uint32Array, positions.subarray(b0, b1)), properties, predictors, out(Int32Array, P * bm), out(Uint8Array, K * bm), room(room16)], true);
-    for (let k = 0; k < K; k++) symbolSets[k].set(syms.subarray(k * bm, (k + 1) * bm), b0);
-    for (let p = 0; p < P; p++) columns[p].values.set(vals.subarray(p * bm, (p + 1) * bm), b0);
+      const colStride = strideOf(bm);
+      if (K) {
+        const syms = new Uint8Array(buf, symsAt, K * colStride);
+        for (let c = 0; c < K; c++) symbolSets[c].set(syms.subarray(c * colStride, c * colStride + bm), b0);
+      }
+      if (!singleQuant && P) {
+        const vals = new Int32Array(buf, valsAt, P * colStride);
+        for (let p = 0; p < P; p++) columns[p].values.set(vals.subarray(p * colStride, p * colStride + bm), b0);
+      }
+    }
+    if (singleQuant) {
+      const cutsAt = winAt, idxAt = cutsAt + align(bins * 4), countsAt = idxAt + align(m);
+      const maxSpan = Math.floor((winAt + room16 - countsAt - 16) / 5) & ~15;
+      const mapAt = countsAt + maxSpan * 4;
+      for (let p = 0; p < P; p++) {
+        const colAt = valsAt + p * strideOf(m) * 4;
+        quantized[p] = {property: properties[p], ...treeQuantiles(k, colAt, m, bins, countsAt, maxSpan, mapAt, cutsAt, idxAt)};
+      }
+    }
+  }, [room(batchCap * 4), P ? properties : new Int32Array(1), K ? predictors : new Int32Array(1), room(Math.max(1, P * strideOf(batchCap) * 4)), room(Math.max(1, K * strideOf(batchCap))), room(room16)], true);
+  if (bins > 0 && !singleQuant) {
+    const qCols = new Array(P);
+    for (let p = 0; p < P; p++) {
+      qCols[p] = {property: columns[p].property, ...captureQuantize(columns[p].values, bins)};
+      columns[p] = null;
+    }
+    return {quantized: qCols, symbolSets};
   }
-  return {columns, symbolSets};
+  return singleQuant ? {quantized, symbolSets} : {columns, symbolSets};
 }
 
 export function captureTreeWalk(nodes, plane, width, height, residuals, wp, references) {
@@ -959,20 +1135,68 @@ export function captureTreeWalk(nodes, plane, width, height, residuals, wp, refe
       residuals.length < n || wp.length < n || references.some(r => r.length < n) || !sixteen(plane) || !references.every(sixteen))
     outside();
   requireCaptureKernels(); ready();
-  const R = references.length, align = bytes => bytes + 15 & ~15, start = base + align(nodes.length * 4);
-  const perRow = width * (2 + 2 * R + 13), halo = width * (4 + 2 * R) + 16 * (R + 6);
-  const rows = Math.min(height, Math.floor((MEMORY_BYTES - start - halo) / perRow));
+  const R = references.length, align = bytes => bytes + 15 & ~15, start = base + align(nodes.length * 4) + 64;
+  const perRow = width * (2 + 2 * R + 13), halo = width * (4 + 2 * R) + 16 * (R + 8);
+  const have = Math.min(MEMORY_BYTES, Math.max(engine.memory.buffer.byteLength, start + halo + perRow * 128));
+  const rows = Math.min(height, Math.floor((have - start - halo) / perRow));
   if (rows < 1) throw kernelFail();
   const values = new Int32Array(n), contexts = new Uint8Array(n);
-  for (let y0 = 0; y0 < height; y0 += rows) {
-    const y1 = Math.min(height, y0 + rows), m = (y1 - y0) * width, above = Math.min(y0, 2), refAbove = Math.min(y0, 1), span = (refAbove + y1 - y0) * width;
-    const [, v, c] = call(k => (tree, p, refs, res, props, coded, ctx) => k.treeWalk(p + above * width * 2, width, y0, y1 - y0, tree, res, props,
-      refs + refAbove * width * 2, span, coded, ctx), [into(Int32Array, nodes), into(Int16Array, plane.subarray((y0 - above) * width, y1 * width)),
-      made(Int16Array, R * span, to => references.forEach((r, q) => to.set(r.subarray((y0 - refAbove) * width, y1 * width), q * span))),
-      into(Uint32Array, residuals.subarray(y0 * width, y1 * width)), into(Int32Array, wp.subarray(y0 * width, y1 * width)), out(Int32Array, m), out(Uint8Array, m)], true);
-    values.set(v, y0 * width); contexts.set(c, y0 * width);
-  }
+  const maxM = rows * width, maxSpan = (Math.min(height, 1) + rows) * width;
+  const winBytes = align((2 + rows) * width * 2) + align(R * maxSpan * 2) + align(maxM * 4) + align(maxM * 4) + align(maxM * 4) + align(maxM) + 64;
+  call(k => (tree, scratch, winAt) => {
+    const buf = k.memory.buffer;
+    for (let y0 = 0; y0 < height; y0 += rows) {
+      const y1 = Math.min(height, y0 + rows), bandRows = y1 - y0, m = bandRows * width;
+      const above = Math.min(y0, 2), refAbove = Math.min(y0, 1), span = (refAbove + bandRows) * width;
+      const pAt = winAt, refsAt = pAt + align((above + bandRows) * width * 2);
+      const resAt = refsAt + align(R * span * 2), propsAt = resAt + align(m * 4), codedAt = propsAt + align(m * 4), ctxAt = codedAt + align(m * 4);
+      new Int16Array(buf, pAt, (above + bandRows) * width).set(plane.subarray((y0 - above) * width, y1 * width));
+      for (let q = 0; q < R; q++) new Int16Array(buf, refsAt + q * span * 2, span).set(references[q].subarray((y0 - refAbove) * width, y1 * width));
+      new Uint32Array(buf, resAt, m).set(residuals.subarray(y0 * width, y1 * width));
+      new Int32Array(buf, propsAt, m).set(wp.subarray(y0 * width, y1 * width));
+      k.treeWalk(pAt + above * width * 2, width, y0, bandRows, tree, resAt, propsAt, refsAt + refAbove * width * 2, span, codedAt, ctxAt, scratch);
+      values.set(new Int32Array(buf, codedAt, m), y0 * width);
+      contexts.set(new Uint8Array(buf, ctxAt, m), y0 * width);
+    }
+  }, [into(Int32Array, nodes), room(64), room(winBytes)], true);
   return {values, contexts};
+}
+
+export function captureTreeWalkHist(nodes, numLeaves, plane, width, height, residuals, wp, references, hSmall, hLarge) {
+  const n = width * height, sixteen = a => a instanceof Int16Array || a.every(v => v >= -32768 && v <= 32767);
+  if (width < 1 || height < 1 || numLeaves < 1 || numLeaves > 65536 || plane.length < n ||
+      hSmall.length < numLeaves * 256 || residuals.length < n || wp.length < n ||
+      references.some(r => r.length < n) || !sixteen(plane) || !references.every(sixteen))
+    outside();
+  requireCaptureKernels(); ready();
+  const R = references.length, align = bytes => bytes + 15 & ~15;
+  const histsBytes = numLeaves * 1024;
+  const bandRowsMax = Math.min(height, Math.max(16, Math.min(256, Math.floor((8 << 20) / Math.max(1, width * (18 + 2 * R))))));
+  const maxM = bandRowsMax * width, maxSpan = (Math.min(height, 1) + bandRowsMax) * width;
+  const winBytes = align((2 + bandRowsMax) * width * 2) + align(R * maxSpan * 2) + align(maxM * 4) + align(maxM * 4) + align(maxM * 8) + 64;
+  callFit(k => (tree, scratch, histsAt, winAt) => {
+    const buf = k.memory.buffer;
+    new Uint32Array(buf, histsAt, numLeaves * 256).set(hSmall.subarray(0, numLeaves * 256));
+    for (let y0 = 0; y0 < height; y0 += bandRowsMax) {
+      const y1 = Math.min(height, y0 + bandRowsMax), bandRows = y1 - y0, m = bandRows * width;
+      const above = Math.min(y0, 2), refAbove = Math.min(y0, 1), span = (refAbove + bandRows) * width;
+      const pAt = winAt, refsAt = pAt + align((above + bandRows) * width * 2);
+      const resAt = refsAt + align(R * span * 2), propsAt = resAt + align(m * 4), overAt = propsAt + align(m * 4);
+      new Int16Array(buf, pAt, (above + bandRows) * width).set(plane.subarray((y0 - above) * width, y1 * width));
+      for (let q = 0; q < R; q++) new Int16Array(buf, refsAt + q * span * 2, span).set(references[q].subarray((y0 - refAbove) * width, y1 * width));
+      new Uint32Array(buf, resAt, m).set(residuals.subarray(y0 * width, y1 * width));
+      new Int32Array(buf, propsAt, m).set(wp.subarray(y0 * width, y1 * width));
+      const overCount = k.treeWalkHist16(pAt + above * width * 2, width, y0, bandRows, tree, resAt, propsAt, refsAt + refAbove * width * 2, span, histsAt, overAt, scratch);
+      if (overCount > 0) {
+        const pairs = new Int32Array(buf, overAt, overCount * 2);
+        for (let j = 0; j < overCount * 2; j += 2) {
+          const lid = pairs[j], rv = pairs[j + 1] >>> 0, mp = hLarge[lid];
+          mp.set(rv, (mp.get(rv) ?? 0) + 1);
+        }
+      }
+    }
+    hSmall.set(new Uint32Array(buf, histsAt, numLeaves * 256));
+  }, [into(Int32Array, nodes), room(64), room(histsBytes), room(winBytes)], true);
 }
 
 export function captureDenseTiles(words, stride, x, y, width, height) {
@@ -1039,16 +1263,27 @@ export function captureMergePhotoHints(rects) {
   return ordered.filter(Boolean);
 }
 
+let largeMask = null;
+export function releaseMaskArena() { largeMask = null; }
 function maskArena(layout) {
   requireCaptureKernels();
   const shared = layout(base + 15 & ~15);
   if (shared.end <= MEMORY_BYTES) { ready(); reserve(shared.end); return {k: engine, at: shared}; }
   const at = layout(P), pages = Math.ceil(at.end / 65536);
-  if (pages > 65536) throw kernelFail();
+  if (pages > 65536) throw fault('JXL_MEMORY', 'capture mask arena: too large');
   try {
-    const memory = new WebAssembly.Memory({initial: pages, maximum: pages});
-    return {k: {...new WebAssembly.Instance(compiled ??= kernelModule(), {env: {memory}}).exports, memory}, at};
-  } catch (cause) { throw kernelFail(cause); }
+    boxLinesCopy++;
+    if (!largeMask) {
+      const memory = new WebAssembly.Memory({initial: pages});
+      largeMask = {k: {...new WebAssembly.Instance(compiled ??= kernelModule(), {env: {memory}}).exports, memory}, pages};
+    } else if (pages > largeMask.pages) {
+      largeMask.k.memory.grow(pages - largeMask.pages);
+      largeMask.pages = pages;
+    }
+    return {k: largeMask.k, at};
+  } catch (cause) {
+    throw outOfMemory(cause) ? Object.assign(fault('JXL_MEMORY', 'capture mask arena: grow failed'), {cause}) : kernelFail(cause);
+  }
 }
 const fail = error => { throw error?.code ? error : kernelFail(error); };
 function run(work) { requireCaptureKernels(); try { ready(); return work(); } catch (error) { fail(error); } }
@@ -1069,7 +1304,7 @@ const stateIn = (buffer, state, w) => { new BigInt64Array(buffer, state, 1)[0] =
 const stateOut = (buffer, state, w) => { w.acc = Number(new BigInt64Array(buffer, state, 1)[0]); w.pending = new Int32Array(buffer)[(state >> 2) + 2]; };
 export const call = /* @__PURE__ */ kernelCaller(shared, fail);
 const callFit = /* @__PURE__ */ kernelCaller(maskArena, fail),
-  callOr = /* @__PURE__ */ kernelCaller(shared, () => undefined);
+  callOr = /* @__PURE__ */ kernelCaller(shared, error => { if (error?.code === 'JXL_MEMORY') throw error; return undefined; });
 const spaceFit = (args, work) => callFit(k => (...at) => work(k, at, k.memory.buffer), args)[0],
   inSpace = (args, work) => call(k => (...at) => work(k, at, k.memory.buffer), args)[0];
 const rowsInto = (bytes, source, stride, X, Y, w, h, at, size = 1) => {
@@ -1146,7 +1381,7 @@ export function captureInkKeep(data, width, {x: X, y: Y, w, h}, ground) {
   return kept ? {c: out3[0], strong: out3[2] === 1, keep} : null;
 }
 
-const LOG2_1P = Float64Array.from({length: 256}, (_, r) => Math.log2(1 + r));
+const LOG2_1P = /* @__PURE__ */ Float64Array.from({length: 256}, (_, r) => Math.log2(1 + r));
 export function captureInkBits(data, width, {x: X, y: Y, w, h}, parts) {
   const boxes = new Int32Array(parts.length * 4);
   parts.forEach((r, q) => {
@@ -1219,12 +1454,18 @@ export function captureMarkStrokes(data, width, height, y0, h, marks) {
     });
 }
 
-export function captureMaskComponents(mask, w, h) {
-  const n = w * h, parts = limit => callFit(k => k.components, [into(Uint8Array, mask, n), w, h, room(limit * 20 + 16), limit, outUpTo(Int32Array, limit * 4, c => Math.max(0, c) * 4)], true);
-  let [count, boxes] = parts((n >> 5) + 16);
-  if (count < 0) [count, boxes] = parts(-1 - count);
-  const out = new Array(count);
-  for (let q = 0; q < count; q++) out[q] = {x: boxes[4 * q], y: boxes[4 * q + 1], width: boxes[4 * q + 2], height: boxes[4 * q + 3]};
+export function captureMaskComponents(mask, w, h, counts = false) {
+  const n = w * h, parts = limit => callFit(k => k.components, [
+    into(Uint8Array, mask, n), w, h, room(limit * 20 + 16), limit,
+    outUpTo(Int32Array, limit * 4, c => Math.max(0, c) * 4),
+    counts ? outUpTo(Int32Array, limit, c => Math.max(0, c)) : 0,
+  ], true);
+  let res = parts((n >> 5) + 16);
+  if (res[0] < 0) res = parts(-1 - res[0]);
+  const [count, boxes, cells] = res, out = new Array(count);
+  for (let q = 0; q < count; q++) out[q] = counts
+    ? {x: boxes[4 * q], y: boxes[4 * q + 1], width: boxes[4 * q + 2], height: boxes[4 * q + 3], cells: cells[q]}
+    : {x: boxes[4 * q], y: boxes[4 * q + 1], width: boxes[4 * q + 2], height: boxes[4 * q + 3]};
   return out;
 }
 
@@ -1258,7 +1499,8 @@ export function captureTextDiff(data, under, n) {
 export function captureMarkFacts(data, width, y0, h, boxed, marks) {
   const count = marks.length, list = new Int32Array(count * 4);
   marks.forEach((m, q) => list.set([m.x, m.y, m.w, m.h], 4 * q));
-  const [, o] = callFit(k => k.markFacts, [into(Uint8Array, data.subarray(y0 * width * 4, (y0 + h) * width * 4)), into(Uint8Array, boxed.subarray(y0 * width, (y0 + h) * width)),
+  const stripBoxed = boxed.length === h * width ? boxed : boxed.subarray(y0 * width, (y0 + h) * width);
+  const [, o] = callFit(k => k.markFacts, [into(Uint8Array, data.subarray(y0 * width * 4, (y0 + h) * width * 4)), into(Uint8Array, stripBoxed),
     width, y0, list, count, out(Int32Array, count * 7)], true);
   const facts = marks.map((m, q) => ({open: o[7 * q] === 1, lo: [o[7 * q + 1], o[7 * q + 2], o[7 * q + 3]], hi: [o[7 * q + 4], o[7 * q + 5], o[7 * q + 6]]}));
   return {facts, grounded: ({x, y, w, h: mh}) => groundedIn(data, width, y0, h, x, y, w, mh)};
@@ -1321,6 +1563,13 @@ export function captureLinearRGBA(planes, width, height) {
   return callFit(k => k.rgbaLinear, [...planes.slice(0, 3).map(p => into(T, p, n)), n, wide, into(Float64Array, levels, 256),
     steps ? into(Uint8Array, steps, 65536) : room(65536), out(Uint8ClampedArray, n * 4)])[1];
 }
+export function captureLinearRGBAInto(linear, from, count, outBuf, at) {
+  for (let i = 0; i < count; i += 16384) {
+    const m = Math.min(16384, count - i);
+    outBuf.set(captureLinearRGBA([linear[0].subarray(from + i, from + i + m), linear[1].subarray(from + i, from + i + m), linear[2].subarray(from + i, from + i + m)], m, 1), (at + i) * 4);
+  }
+  return outBuf;
+}
 
 export function captureFrameRows({colours, indices, stride, x = 0, y = 0}, w, h) {
   stride ??= w;
@@ -1332,11 +1581,36 @@ export function captureFrameRows({colours, indices, stride, x = 0, y = 0}, w, h)
   };
 }
 
-export function captureSqueezeStep(data, w, h, horizontal) {
-  if (typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true || typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) return undefined;
-  const n = horizontal ? w : h, low = (n + 1) >> 1, high = n - low, ow = horizontal ? low : w, oh = horizontal ? h : low, rw = horizontal ? high : w, rh = horizontal ? h : high;
-  if (base + (w * h + ow * oh + rw * rh) * 2 + 48 > MEMORY_BYTES) return undefined;
-  return callOr(k => k.squeezeStep, [into(Int16Array, data, w * h), w, h, horizontal ? 1 : 0, out(Int16Array, ow * oh), out(Int16Array, rw * rh)])?.slice(1);
+let auxArena;
+function getAuxArena(endBytes) {
+  requireCaptureKernels();
+  try {
+    if (!auxArena) {
+      const memory = new WebAssembly.Memory({initial: 4});
+      auxArena = {memory, k: new WebAssembly.Instance(compiled ??= kernelModule(), {env: {memory}}).exports};
+    }
+  } catch (cause) { throw kernelFail(cause); }
+  if (endBytes > auxArena.memory.buffer.byteLength) {
+    try { auxArena.memory.grow(Math.ceil((endBytes - auxArena.memory.buffer.byteLength) / 65536)); }
+    catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'auxiliary arena: grow failed'), {cause}); }
+  }
+  return auxArena;
+}
+
+function squeezeOn(data, w, h, horizontal, View, step) {
+  const n = horizontal ? w : h, low = (n + 1) >> 1, size = View.BYTES_PER_ELEMENT;
+  const averages = horizontal ? low * h : w * low, residuals = w * h - averages;
+  const outAt = (w * h * size + 15) & ~15, resAt = (outAt + averages * size + 15) & ~15;
+  const {memory, k} = getAuxArena(resAt + residuals * size), buf = memory.buffer;
+  new View(buf, 0, w * h).set(data.length === w * h ? data : data.subarray(0, w * h));
+  const status = step(k)(0, w, h, horizontal ? 1 : 0, outAt, resAt);
+  return [new View(buf.slice(outAt, outAt + averages * size)), new View(buf.slice(resAt, resAt + residuals * size)), status];
+}
+export const captureSqueezeStep = (data, w, h, horizontal) => squeezeOn(data, w, h, horizontal, Int16Array, k => k.squeezeStep);
+export function capturePlanarSqueezeStep(data, w, h, horizontal) {
+  const [averages, residuals, status] = squeezeOn(data, w, h, horizontal, Int32Array, k => k.squeezeStep32);
+  if (status < 0) throw fault('JXL_INPUT', 'squeeze: 32-bit range; disable');
+  return {averages, residuals, wide: status === 1};
 }
 
 export function captureFillHoles(rgba, w, h, exact) {
@@ -1420,7 +1694,42 @@ export function captureColourGroup(words, stride, x, y, width, height, rct = -1,
   });
 }
 
-export function captureLetGo() { pageIndices = null; }
+export function captureColourChain(words, stride, x, y, width, height, chain) {
+  const n = width * height;
+  if (!(words instanceof Uint32Array) || !Array.isArray(chain) || chain.length < 1 || chain.length > 4 ||
+      width < 1 || height < 1 || n > 1048576 || stride < width || x < 0 || y < 0 ||
+      x + width > stride || (y + height - 1) * stride + x + width > words.length ||
+      chain.some(r => !Number.isInteger(r) || r < 0 || r > 41))
+    outside();
+  return run(() => {
+    const heldPtr = heldAt(words), align = bytes => bytes + 15 & ~15, staging = align(n * 4);
+    const wordsPtr = heldPtr < 0 ? base : heldPtr, after = base + (heldPtr < 0 ? staging : 0);
+    const planeBytes = align(n * 2 + 16), p0 = after, p1 = p0 + planeBytes, p2 = p1 + planeBytes;
+    if (p2 + planeBytes > MEMORY_BYTES) throw kernelFail();
+    reserve(p2 + planeBytes);
+    const buffer = engine.memory.buffer;
+    if (heldPtr < 0) {
+      const dst = new Uint32Array(buffer, wordsPtr, n);
+      if (stride === width && x === 0) dst.set(words.subarray(y * stride, y * stride + n));
+      else for (let row = 0, at = y * stride + x; row < height; row++, at += stride) dst.set(words.subarray(at, at + width), row * width);
+    }
+    const mask0 = engine.rctUnpack(wordsPtr, heldPtr < 0 ? width : stride, heldPtr < 0 ? 0 : x, heldPtr < 0 ? 0 : y, width, height, chain[0], p0, p1, p2);
+    for (let s = 1; s < chain.length; s++) engine.rctStep16(p0, p1, p2, n, chain[s]);
+    const planes = [p0, p1, p2].map(at => copyOut(Int16Array, buffer, at, n));
+    if (chain.length === 1) {
+      for (let c = 0; c < 3; c++) Object.defineProperty(planes[c], "constant", {value: Boolean(mask0 & 1 << c)});
+    } else {
+      for (const plane of planes) {
+        let same = true;
+        for (let i = 1; i < n && same; i++) same = plane[i] === plane[0];
+        Object.defineProperty(plane, "constant", {value: same});
+      }
+    }
+    return planes;
+  });
+}
+
+export function captureLetGo() { pageIndices = null; largeMask = null; }
 
 export function captureDeepLeaves(data, width, height) {
   const row = data.byteLength / height;
@@ -1446,4 +1755,30 @@ export function captureWindowVulnerability(data, width, x, y, w, h, overlaps) {
   }
   const [sum, hits] = call(k => k.windowVulnerability, [rect(Uint8Array, data, width, x, y, w, h, 4), w, h, rects, count, out(Uint32Array, 1, 1)]);
   return {sum, hits: hits[0]};
+}
+
+export function captureCustomWeighted(plane, width, height, parameters) {
+  if (!(plane instanceof Int16Array) || width < 1 || height < 1 || width * height > 1048576 || plane.length < width * height || parameters.length !== 11)
+    outside();
+  const n = width * height;
+  const [, residuals, properties] = call(k => (p, par, state, res, prop) => {
+    k.customWeighted(p, width, 0, 0, 0, height, par, DIV, state, res, prop);
+  }, [into(Int16Array, plane, n), into(Int32Array, Int32Array.from(parameters), 11), room((width + 2) * 40), out(Uint32Array, n), out(Int32Array, n)], true);
+  return {residuals: residuals.slice(), properties: properties.slice()};
+}
+const WP_SCORE_CUTS = /* @__PURE__ */ Int32Array.of(-160, -80, -40, -20, -10, -4, 0, 4, 10, 20, 40, 80, 160);
+export function captureCustomWeightedBins(plane, width, height, parameters, strips, scoreCuts = WP_SCORE_CUTS) {
+  let rows = 0, most = 1, raw = 0;
+  for (const [y0, y1] of strips) { rows = Math.max(rows, y1 - Math.max(0, y0 - 4)); most = Math.max(most, (y1 - y0) * width); }
+  const [, bins] = call(k => (par, cuts, state, p, res, prop, hist) => {
+    const memory = k.memory.buffer;
+    for (const [y0, y1] of strips) {
+      const warm = y0 ? Math.max(0, y0 - 2) : 0, row0 = Math.max(0, warm - 2);
+      new Int16Array(memory, p, (y1 - row0) * width).set(plane.subarray(row0 * width, y1 * width));
+      k.customWeighted(p, width, row0, warm, y0, y1, par, DIV, state, res, prop);
+      raw += k.wpStripBins(res, prop, (y1 - y0) * width, cuts, hist);
+    }
+  }, [into(Int32Array, Int32Array.from(parameters), 11), into(Int32Array, scoreCuts, 13), room((width + 2) * 40),
+    room(rows * width * 2), room(most * 4), room(most * 4), out(Uint32Array, 14 * 48, 1)], true);
+  return {bins: bins.slice(), raw};
 }

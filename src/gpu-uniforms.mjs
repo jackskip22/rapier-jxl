@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 const GU_SLOT = 256, GU_SLOTS = 4096, GU_GROUPS = 16384;
-const guIds = new WeakMap();
+const guIds = /* @__PURE__ */ new WeakMap();
 let guNext = 1;
 const guId = buffer => { let id = guIds.get(buffer); if (!id) guIds.set(buffer, id = guNext++); return id; };
 

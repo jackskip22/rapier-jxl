@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {fault} from './fault.mjs';
-import {gpuDestroy, gpuKernel, gpuAbort, gpuWrite, gpuAlloc, gpuUpload, gpuBind, gpuStep} from './gpu-kit.mjs';
+import {gpuMap, gpuDestroy, gpuKernel, gpuAbort, gpuWrite, gpuAlloc, gpuUpload, gpuBind, gpuStep} from './gpu-kit.mjs';
 
 const WEIGHTED_WGSL =  `
 struct Job { offset: u32, width: u32, height: u32, total: u32 }
@@ -125,7 +125,7 @@ export function weightedOnDevice(device, planes, {passSamples = 1 << 21, signal}
         gpuStep(device, encoder, kernel, bind, pass.length, 1);
         encoder.copyBufferToBuffer(outB, 0, readB, 0, total * 8);
         device.queue.submit([encoder.finish()]);
-        const mapped = readB.mapAsync(GPUMapMode.READ, 0, total * 8);
+        const mapped = gpuMap(device, readB, 0, total * 8);
         mapped.catch(() => {});
         if (pending) await collect(pending);
         pending = [readB, pass, total, mapped];

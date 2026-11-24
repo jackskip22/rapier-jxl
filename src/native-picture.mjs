@@ -18,7 +18,7 @@ const route = image => bytes => (makeBitmap, BlobType) => {
   const blob = new BlobType([bytes], {type: 'image/jxl'});
   return image ? () => imageOf(blob) : () => bitmapOf(makeBitmap, blob);
 };
-const byBitmap = route(false), byImage = route(true);
+const byBitmap = /* @__PURE__ */ route(false), byImage = /* @__PURE__ */ route(true);
 export function nativePicture(bytes, options = {}) {
   return nativePictureWith(bytes,options,(makeBitmap,BlobType) => {
     const blob = new BlobType([bytes],{type:'image/jxl'});
@@ -139,7 +139,7 @@ export async function nativePictureWith(bytes, options, prepare) {
   return result;
 }
 
-const KNOWN = Uint8Array.of(255, 10, 0, 0, 0, 128, 160, 184, 17, 8, 2, 1, 0, 52, 0, 75, 24, 139, 13, 81, 2, 86, 128, 112, 18, 35, 7, 0);
+const KNOWN = /* @__PURE__ */ Uint8Array.of(255, 10, 0, 0, 0, 128, 160, 184, 17, 8, 2, 1, 0, 52, 0, 75, 24, 139, 13, 81, 2, 86, 128, 112, 18, 35, 7, 0);
 let support = null;
 export function decodesJXL() {
   const api = globalThis.createImageBitmap;
@@ -151,11 +151,11 @@ export function decodesJXL() {
   return support.reads;
 }
 
-const KNOWN_ALPHA = Uint8Array.of(255, 10, 0, 0, 0, 128, 149, 8, 24, 16, 0, 92, 0, 75, 56, 65, 118, 224, 226, 160, 140, 44, 65, 1,
+const KNOWN_ALPHA = /* @__PURE__ */ Uint8Array.of(255, 10, 0, 0, 0, 128, 149, 8, 24, 16, 0, 92, 0, 75, 56, 65, 118, 224, 226, 160, 140, 44, 65, 1,
   224, 72, 120, 36, 20, 146, 40, 1, 123, 1, 130, 56);
-const KNOWN_P3 = Uint8Array.of(255, 10, 0, 0, 0, 128, 128, 76, 110, 4, 8, 6, 1, 0, 80, 0, 75, 56, 65, 110, 224, 244, 68, 14, 79, 18, 20, 9,
+const KNOWN_P3 = /* @__PURE__ */ Uint8Array.of(255, 10, 0, 0, 0, 128, 128, 76, 110, 4, 8, 6, 1, 0, 80, 0, 75, 56, 65, 110, 224, 244, 68, 14, 79, 18, 20, 9,
   131, 36, 74, 192, 46, 64, 16, 7);
-const NOTHING = Object.freeze({alpha: false, displayP3: false, image: false});
+const NOTHING = /* @__PURE__ */ Object.freeze({alpha: false, displayP3: false, image: false});
 async function keeps(read, image) {
   const holds = (bytes, colorSpace, a) => nativePictureWith(bytes, {width: 1, height: 1, colorSpace}, read(bytes))
     .then(({data}) => data[0] === 200 && data[1] === 100 && data[2] === 50 && data[3] === a);

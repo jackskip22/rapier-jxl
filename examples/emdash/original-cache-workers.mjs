@@ -1,12 +1,14 @@
 import {digest} from './digest.mjs';
 
-// Cache API entries are local to the serving data centre and may be evicted. Await each
-// request's own cache work; never share an in-flight I/O promise between Worker invocations.
+// Cache API entries are local to the serving data center and may be evicted. Await each
+// request's own cache work and never share an in-flight I/O promise between Worker invocations.
 export function originalWorkerCache(scope) {
   let namespace;
   async function request(key) {
     namespace ??= await digest(new TextEncoder().encode(scope));
-    return new Request(`https://rapier-original-cache.invalid/${namespace}/${key}`);
+    // An ETag or path can contain '#'. The Cache API ignores fragments, so hash the entire identity before making a URL.
+    const identity = await digest(new TextEncoder().encode(key));
+    return new Request(`https://rapier-original-cache.invalid/${namespace}/${identity}`);
   }
   return {
     async get(key, {signal} = {}) {

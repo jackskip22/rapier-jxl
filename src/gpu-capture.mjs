@@ -5,8 +5,8 @@ import {gpuCached} from './gpu-kit.mjs';
 import {weightedOnDevice} from './gpu-weighted.mjs';
 import {compileCaptureKernels, captureWeighted} from './capture-kernels.mjs';
 
-export async function captureDevice(webgpu) {
-  const device = webgpu === false ? null : await gpuDevice();
+export async function captureDevice(webgpu, signal) {
+  const device = webgpu === false ? null : await gpuDevice(signal);
   if (!device && webgpu === 'required') throw fault('JXL_WEBGPU', 'no WebGPU device: omit webgpu');
   return device;
 }
@@ -34,9 +34,10 @@ export const WEIGHTED = Object.freeze({
 });
 
 const refused = new WeakSet(), tested = new WeakMap();
-export async function captureEngine(webgpu, kinds = [WEIGHTED], {note = () => {}} = {}) {
-  const device = await captureDevice(webgpu);
+export async function captureEngine(webgpu, kinds = [WEIGHTED], {note = () => {}, signal} = {}) {
+  const device = await captureDevice(webgpu, signal);
   if (!device) { note('unavailable'); return null; }
+  if (signal?.aborted) return null;
   const answers = await Promise.all(kinds.map(kind => gpuCached(tested, device, kind.name, () => Promise.resolve().then(() => kind.selfTest(device))))).catch(() => null);
   if (refused.has(device) || !answers?.every(Boolean)) {
     if (answers) refused.add(device);

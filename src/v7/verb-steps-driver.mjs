@@ -2,7 +2,7 @@
 import {JOURNAL, JOURNAL_FILE, JOIN, SAVED, journaled, journalFact} from '../step-journal.mjs';
 import {configuredDecoder, DECODER_SNAPSHOT} from '../shown-picture.mjs';
 import {sha256Start, sha256Update, sha256Finish} from '../sha256.mjs';
-import {fail, dimensions, pixelLimit, PIXELS} from './primitives.mjs';
+import {fail, unknownOption, dimensions, pixelLimit, PIXELS} from './primitives.mjs';
 import {sourceColor} from './header-intent.mjs';
 
 export function fileSize(bytes) {
@@ -33,7 +33,7 @@ const encoded = value => JSON.stringify(value, (key, item) => item === undefined
   ? Object.fromEntries(Object.keys(item).sort().map(k => [k, item[k]])) : item);
 async function rebuilt(imageResult, bytes, facts, original) {
   if (!record(facts)) throw fail('JXL_INPUT', "finished record: job result record");
-  const {width, height, format = 'jxl', fidelity, kept, measurements, transform, readAs, originalBytes, usedWebGPU} = facts, shown = transform ?? {width, height};
+  const {width, height, format = 'jxl', fidelity, kept, measurements, transform, readAs, originalBytes, usedWebGPU, otherDecoders} = facts, shown = transform ?? {width, height};
   if (originalBytes !== undefined && original.kind === 'file' && originalBytes !== original.byteLength)
     throw fail('JXL_INPUT', "finished record: original size required");
   if (bytes && format === 'jxl') {
@@ -45,7 +45,7 @@ async function rebuilt(imageResult, bytes, facts, original) {
   try {
     made = await imageResult(bytes, {width, height}, {fidelity, measurements, format, ...(bytes && kept !== undefined && {kept}),
       ...(transform !== undefined && {transform}), ...(readAs !== undefined && {readAs}), ...(originalBytes !== undefined && {originalBytes}),
-      ...(usedWebGPU !== undefined && {usedWebGPU}), owned: true});
+      ...(usedWebGPU !== undefined && {usedWebGPU}), ...(bytes && otherDecoders !== undefined && {otherDecoders}), owned: true});
   } catch { throw fail('JXL_INPUT', "finished record: job result record"); }
   for (const key of new Set([...Object.keys(facts), ...Object.keys(made)])) if (key !== 'bytes' && key !== 'source' && encoded(made[key]) !== encoded(facts[key]))
     throw fail('JXL_INPUT', "finished record: file mismatch");
@@ -66,15 +66,15 @@ async function decoded(bytes, snap) {
   const {decode, restore} = (snap !== undefined ? snap : configuredDecoder()) ?? {};
   if (!decode) throw fail('JXL_PLATFORM', "decoder: configureDecoder(decode) with decode from jpegxl/decode");
   const picture = await decode(bytes);
-  if (picture.format !== 'uint8' || typeof picture.colorSpace !== 'string')
-    throw fail('JXL_UNSUPPORTED', 'decoded pixels: 8-bit named colorSpace');
+  if (picture.format !== 'uint8' || typeof picture.colorSpace !== 'string' && !picture.rgbaICC)
+    throw fail('JXL_UNSUPPORTED', 'decoded pixels: 8-bit, a named colorSpace or rgbaICC');
   let source;
   if (restore && picture.header?.reconstruction) {
     const jpeg = (await restore(bytes)).bytes;
     source = 'sha256:' + sha256Finish(sha256Update(sha256Start(), jpeg));
   }
   return {data: new Uint8Array(picture.data.buffer, picture.data.byteOffset, picture.data.length), width: picture.width, height: picture.height,
-    ...(picture.colorEncoding?.renderingIntent === 0 || picture.colorEncoding?.renderingIntent > 1 ? {colorEncoding: picture.colorEncoding} : {colorSpace: picture.colorSpace}), ...(source && {source})};
+    ...(picture.rgbaICC ? {icc: picture.rgbaICC} : picture.colorEncoding?.renderingIntent === 0 || picture.colorEncoding?.renderingIntent > 1 ? {colorEncoding: picture.colorEncoding} : {colorSpace: picture.colorSpace}), ...(source && {source})};
 }
 const named = async (source, pending) => {
   const made = await pending;
@@ -122,7 +122,7 @@ export function verbSteps({id, verb, taken, admit = () => {}, rows = false, file
     normalize(options, source) {
       if (!record(options) || !plain(options)) throw fail('JXL_OPTIONS', "resumable options: plain data");
       const unknown = Object.keys(options).find(key => !taken.includes(key));
-      if (unknown) throw fail('JXL_OPTIONS', `unknown option: ${unknown}; use ${taken.join(', ')}`);
+      if (unknown) throw unknownOption(unknown, options, 'option', `; use ${taken.join(', ')}`);
       const kind = source.kind ?? 'pixels';
       if (kind === 'pixels') {
         const {width, height} = source;

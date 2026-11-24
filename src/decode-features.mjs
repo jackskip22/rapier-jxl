@@ -59,9 +59,26 @@ export function readPatches(r, imageHeader, frameHeader) {
 export function applyPatches(frame, patches, references, imageHeader) {
   if (!patches) return frame;
   const metadata = imageHeader.extraChannels, colorCount = frame.planes.length;
-  const channels = [...frame.planes, ...frame.extraChannels.map(c => c.data)];
+  const channels = [...frame.planes, ...frame.extraChannels.map(c => c.data)], channelCount = channels.length;
   const hasAlpha = metadata.some(c => c.type === 0);
-  const {groups, xy, blend, stride} = patches;
+  const {groups, xy, blend, stride} = patches, fw = frame.width, fh = frame.height;
+  let addScratch = null;
+  const addPatch = (c, dst, src, rw, sx, sy, px, py, width, height) => {
+    const n = width * height;
+    if (!addScratch || addScratch.cap < n) {
+      const kernels = decodeKernels(), cap = Math.max(n, 4096), [specAt, outAt, bgAt, fgAt] = kernels.reserve([32, cap * 4, cap * 4, cap * 4]);
+      kernels.i32.set([outAt, bgAt, fgAt, bgAt, fgAt, 2, 0], specAt >> 2);
+      addScratch = {kernels, cap, specAt, out: new Float32Array(kernels.buffer, outAt, cap), bg: new Float32Array(kernels.buffer, bgAt, cap), fg: new Float32Array(kernels.buffer, fgAt, cap)};
+    }
+    const {kernels, specAt, out, bg, fg} = addScratch;
+    for (let y = 0; y < height; y++) {
+      const dOff = (py + y) * fw + px, sOff = (sy + y) * rw + sx;
+      bg.set(dst.subarray(dOff, dOff + width), y * width);
+      fg.set(src.subarray(sOff, sOff + width), y * width);
+    }
+    kernels.blend(n, specAt, 1);
+    for (let y = 0; y < height; y++) dst.set(out.subarray(y * width, (y + 1) * width), (py + y) * fw + px);
+  };
   for (let g = 0; g < patches.count; g++) {
     const at = g * PATCH_FIELDS, ref = groups[at], sx = groups[at + 1], sy = groups[at + 2], w = groups[at + 3], h = groups[at + 4];
     const first = groups[at + 5], n = groups[at + 6];
@@ -69,28 +86,52 @@ export function applyPatches(frame, patches, references, imageHeader) {
     requireDecode(reference && reference.saveBeforeColorTransform !== false, 'JPEG XL patch requires a saved pre-color reference.');
     requireDecode(sx <= reference.width - w && sy <= reference.height - h, 'JPEG XL patch is outside its reference.');
     requireDecode(reference.planes.length === colorCount && reference.extraChannels.length === metadata.length &&
-      frame.extraChannels.every(c => c.width === frame.width && c.height === frame.height) &&
+      frame.extraChannels.every(c => c.width === fw && c.height === fh) &&
       reference.extraChannels.every(c => c.width === reference.width && c.height === reference.height),
     'JPEG XL patch channel dimensions do not agree.');
-    const source = [...reference.planes, ...reference.extraChannels.map(c => c.data)];
+    const source = [...reference.planes, ...reference.extraChannels.map(c => c.data)], rw = reference.width;
     for (let p = first; p < first + n; p++) {
       const px = xy[p * 2], py = xy[p * 2 + 1];
       requireDecode(px >= 0 && py >= 0 && px + w <= patches.width && py + h <= patches.height, 'JPEG XL patch is outside the destination.');
-      const height = Math.min(h, frame.height - py), width = Math.min(w, frame.width - px);
-      const mode = c => blend[p * stride + 3 * c], alphaOf = c => blend[p * stride + 3 * c + 1], clampOf = c => !!blend[p * stride + 3 * c + 2];
+      const height = Math.min(h, fh - py), width = Math.min(w, fw - px);
+      if (height <= 0 || width <= 0) continue;
+      const bBase = p * stride, colorMode = blend[bBase];
+      let alphaUsed = hasAlpha && (colorMode === 4 || colorMode === 5);
+      if (!alphaUsed && hasAlpha) {
+        for (let b = 0; b <= metadata.length; b++) if (blend[bBase + 3 * b] >= 4 && (b > 0 || hasAlpha)) { alphaUsed = true; break; }
+      }
+      if (!alphaUsed) {
+        let general = false;
+        for (let b = 0; b <= metadata.length; b++) { const m = blend[bBase + 3 * b]; if (m === 3) { general = true; break; } }
+        if (!general) {
+          for (let c = 0; c < channelCount; c++) {
+            const b = c < colorCount ? 0 : c - colorCount + 1, raw = blend[bBase + 3 * b];
+            const m = raw < 4 ? raw : raw < 6 ? 1 : 2;
+            if (m === 0) continue;
+            const dst = channels[c], src = source[c];
+            if (m === 1) {
+              if (sx === 0 && px === 0 && width === rw && width === fw) dst.set(src.subarray(sy * rw, (sy + height) * rw), py * fw);
+              else for (let y = 0; y < height; y++) { const sOff = (sy + y) * rw + sx; dst.set(src.subarray(sOff, sOff + width), (py + y) * fw + px); }
+            } else {
+              addPatch(c, dst, src, rw, sx, sy, px, py, width, height);
+            }
+          }
+          continue;
+        }
+      }
+      const mode = c => blend[bBase + 3 * c], alphaOf = c => blend[bBase + 3 * c + 1], clampOf = c => !!blend[bBase + 3 * c + 2];
       const blended = new Map();
       const add = (c, m, clamp, a = -1, associated = false) => blended.set(c, {mode: m, clamp, associated, isAlpha: c === a,
         fill(role, y, run) {
-          const k = role & 1 ? source[role < 2 ? c : a] : channels[role < 2 ? c : a], from = role & 1 ? (sy + y) * reference.width + sx : (py + y) * frame.width + px;
+          const k = role & 1 ? source[role < 2 ? c : a] : channels[role < 2 ? c : a], from = role & 1 ? (sy + y) * rw + sx : (py + y) * fw + px;
           if (role < 2 || a >= 0) run.set(k.subarray(from, from + width));
         },
-        write(y, run) { channels[c].set(run, (py + y) * frame.width + px); }});
-      for (let c = 0; c < channels.length; c++) {
+        write(y, run) { channels[c].set(run, (py + y) * fw + px); }});
+      for (let c = 0; c < channelCount; c++) {
         const b = c < colorCount ? 0 : c - colorCount + 1, m = mode(b);
         if (m < 4 || c < colorCount && !hasAlpha) add(c, m < 4 ? m : m < 6 ? 1 : 2, clampOf(b));
         else add(c, m, clampOf(b), colorCount + alphaOf(b), metadata[alphaOf(b)].associated);
       }
-      const colorMode = mode(0);
       if (hasAlpha && (colorMode === 4 || colorMode === 5)) {
         const a = colorCount + alphaOf(0); add(a, colorMode, clampOf(0), a);
       }

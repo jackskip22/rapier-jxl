@@ -58,3 +58,20 @@ export function flatSurround(rgba, width, height) {
   return flat >= 192;
 }
 
+const TILE = 256;
+export function tilesFit(data, width, height) {
+  if (data.BYTES_PER_ELEMENT !== 1 || data.length !== width * height * 4) return false;
+  const words = new Uint32Array(data.buffer, data.byteOffset, data.byteLength >> 2), across = Math.ceil(width / TILE), tiles = across * Math.ceil(height / TILE);
+  const seen = new Set();
+  let fit = 0;
+  for (let t = 0; t < tiles; t++) {
+    const tx = t % across * TILE, ty = (t / across | 0) * TILE, w = Math.min(TILE, width - tx), h = Math.min(TILE, height - ty), limit = w * h / 20 | 0;
+    seen.clear();
+    let fits = true;
+    for (let y = ty; y < ty + h && fits; y++) for (let i = y * width + tx, end = i + w; i < end; i++) if (seen.add(words[i]).size > limit) { fits = false; break; }
+    if (fits) fit++;
+    if (5 * fit >= 4 * tiles) return true;
+    if (5 * (fit + tiles - t - 1) < 4 * tiles) return false;
+  }
+  return false;
+}

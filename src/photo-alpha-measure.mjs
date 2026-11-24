@@ -6,9 +6,10 @@ import {linearFromTransform, codedBytesFromLinear} from './color-bytes.mjs';
 import {materialize} from './varblock-core.mjs';
 import {reconstruct} from './reconstruct.mjs';
 import {nativeRGBA} from './photo-output.mjs';
-import {selectedYCbCrRGBA, selectedYCbCrLinear} from './photo-whole-rebuild.mjs';
+import {wholeRebuildMeasure, selectedYCbCrRGBA, selectedYCbCrLinear} from './photo-whole-rebuild.mjs';
 import {captureComposeOver} from './capture-kernels.mjs';
 import {fault} from './fault.mjs';
+import {offloading, offloadWorkers} from './offload.mjs';
 
 const ROWS = 256, BACKGROUNDS = [255, 0];
 
@@ -35,7 +36,7 @@ export function alphaRebuildMeasure(data, width, height, color, signal, plan) {
   const rgbaOf = image => transform ? codedBytesFromLinear(image.ycbcr ? selectedYCbCrLinear(image, color, signal) : reconstruct(materialize(image)), n, transform)
     : image.ycbcr ? selectedYCbCrRGBA(image, color, signal) : bandedRGBA(image, ROWS);
   const linear = rgba => transform ? linearFromTransform(rgba, n, transform) : linearFromRGBA(rgba, n);
-  let shared = null;
+  let shared = null, zoneReader = null;
   const once = (image, key, make) => {
     if (shared?.image !== image) shared = {image};
     return shared[key] ??= make();
@@ -64,6 +65,11 @@ export function alphaRebuildMeasure(data, width, height, color, signal, plan) {
   return {
     measure,
     *measureSteps(image, want) { return measure(image, want); },
-    destroy() { shared = null; for (const look of looks) look.destroy(); },
+    *zoneSteps(image) {
+      if (transform || !offloading('score-band') || offloadWorkers() < 2) return null;
+      zoneReader ??= wholeRebuildMeasure(data, width, height, color, signal, plan);
+      return yield* zoneReader.zoneSteps(image);
+    },
+    destroy() { shared = null; zoneReader?.destroy(); for (const look of looks) look.destroy(); },
   };
 }

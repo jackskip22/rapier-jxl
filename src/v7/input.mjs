@@ -29,8 +29,10 @@ async function readBlob(input, options, hooks, head, png) {
     }
   }
   if (!png && head[0] === 255 && head[1] === 216 && typeof createImageBitmap !== 'function' && hooks.jpegPixels && options?.readAs === undefined) {
-    const picture = await hooks.jpegPixels(new Uint8Array(await input.arrayBuffer()), {maxPixels: hooks.maxPixels, signal: hooks.signal});
+    const picture = await hooks.jpegPixels(await blobBytes(input, hooks.signal), {maxPixels: hooks.maxPixels, signal: hooks.signal});
     check(hooks.signal);
+    if (picture.data) withCost(picture.data, picture.data.byteLength);
+    if (picture.icc) withCost(picture.icc, picture.icc.byteLength);
     return picture;
   }
   const own = hooks.deep && typeof createImageBitmap === 'function' ? await ownProfile(input, head, hooks.signal) : null;

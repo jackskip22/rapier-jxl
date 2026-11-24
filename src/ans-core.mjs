@@ -185,3 +185,19 @@ export function writeAnsHistograms(w, contextMap, logAlphabet, configs, histogra
   for (const config of configs) writeUintConfig(w, config, logAlphabet);
   for (const h of histograms) writeDistribution(w, h.counts, true, h.shift, h.omit);
 }
+
+export function writeModularAnsHeader(w, lz77, contextMap, logAlphabet, configs, histograms, mapWriter = writeContextMap) {
+  w.write(1, lz77 ? 1 : 0);
+  if (lz77) {
+    w.writeU32([[0, 224], [0, 512], [0, 4096], [15, 8]], lz77.minSymbol);
+    w.writeU32([[0, 3], [0, 4], [2, 5], [8, 9]], lz77.minLength);
+    writeUintConfig(w, lz77.lengthConfig, 8);
+  }
+  writeAnsHistograms(w, contextMap, logAlphabet, configs, histograms, mapWriter);
+}
+
+export function writeAnsDistributionBundle(w, histograms, logAlphabet) {
+  w.write(1, 0); w.write(2, logAlphabet - 5);
+  for (const histogram of histograms) writeUintConfig(w, histogram.config, logAlphabet);
+  for (const histogram of histograms) writeDistribution(w, histogram.counts, true, histogram.shift, histogram.omit);
+}

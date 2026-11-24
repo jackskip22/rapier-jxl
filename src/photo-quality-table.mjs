@@ -60,7 +60,10 @@ export function measuredLook(q) {
 
 export const worstRegionFloor = floor => floor >= 100 ? 100 : floor - (0.8 + 0.20 * Math.max(0, 100 - floor));
 
-export const usesRegionalCalibration = intent => intent >= 0.7 && intent <= 0.9;
+export const landsAtEffort = effort => effort >= 4 && effort <= 5;
+export const landSteps = effort => !landsAtEffort(effort) ? 0 : effort >= 3 ? 2 : 1;
+export const LAND_KEEP = 0.15;
+export const usesRegionalCalibration = (intent, effort) => intent >= 0.7 - 1e-9 && intent <= (landsAtEffort(effort) ? 0.98 : 0.9) + 1e-9;
 
 export const SMALL_SIDE = 128;
 export const smallPicture = (width, height) => Math.min(width, height) < SMALL_SIDE;

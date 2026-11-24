@@ -3,25 +3,21 @@ import {rgbCoefficientSteps} from './photo-dct.mjs';
 import {complete} from './bits.mjs';
 import {reconstructDCT8RGB} from './color-band.mjs';
 import {dct8Band} from './dct8-band.mjs';
-import {toRGBA} from './rgb8-output.mjs';
+import {captureLinearRGBA as toRGBA} from './capture-kernels.mjs';
 import {ssimulacra2Reference} from './ssimulacra2.mjs';
 import {photoNativeScores} from './photo-native-scores.mjs';
 import {P3_TRANSFORM, linearFromTransformPlanes} from './color-transform.mjs';
 import {photoReference} from './photo-reference.mjs';
-import {gammaRGBA, nativeRGBA, nativeGammaRGBA} from './photo-output.mjs';
-import {PHOTO_PAD_SIDE, padPhotoCrop, photoRegionTarget} from './photo-region-score.mjs';
+import {nativeRGBA, nativeGammaRGBA} from './photo-output.mjs';
+import {colorPixels} from './color-band.mjs';
+import {PHOTO_PAD_SIDE, padPhotoCrop, photoRegionTarget, clipPhotoRect, cutPhotoRGBA} from './photo-region-score.mjs';
 import {fault} from './fault.mjs';
 
 const SLOPE = 1, MARGIN = 1;
 export const SMALLEST = 64;
 
-const cut = (src, sw, x0, y0, w, h) => {
-  const out = new Uint8Array(w * h * 4);
-  for (let y = 0; y < h; y++) out.set(src.subarray(((y0 + y) * sw + x0) * 4, ((y0 + y) * sw + x0 + w) * 4), y * w * 4);
-  return out;
-};
 const cutReplicated = (src, sw, x0, y0, w, h) => {
-  if (x0 >= 0 && y0 >= 0) return cut(src, sw, x0, y0, w, h);
+  if (x0 >= 0 && y0 >= 0) return cutPhotoRGBA(src, sw, x0, y0, w, h);
   const out = new Uint8Array(w * h * 4);
   for (let y = 0; y < h; y++) {
     const sy = Math.max(0, y0 + y);
@@ -35,14 +31,14 @@ export function prepareCropScores(data, width, r, crops = [r], dx = 0, dy = 0, e
   if (!Number.isSafeInteger(cacheBytes) || cacheBytes < 0 || cacheBytes > (16 << 20))
     throw fault('JXL_INTERNAL', 'photo-region-quality:cacheBytes');
   const height = data.length / 4 / width, rx1 = r.x + r.width, ry1 = r.y + r.height;
-  const parts = crops.map(c => { const x = Math.max(c.x, r.x), y = Math.max(c.y, r.y); return {x, y, width: Math.min(c.x + c.width, rx1) - x, height: Math.min(c.y + c.height, ry1) - y}; })
+  const parts = crops.map(c => clipPhotoRect(c, rx1, ry1, r.x, r.y))
     .filter(c => c.width >= SMALLEST && c.height >= SMALLEST);
   let pixels = data, left = cacheBytes, destroyed = false;
   data = null;
   let references = parts.map(c => {
     const pw = Math.max(PHOTO_PAD_SIDE, c.width), ph = Math.max(PHOTO_PAD_SIDE, c.height);
     const reference = () => {
-      const source = padPhotoCrop(cut(pixels, width, c.x, c.y, c.width, c.height), c.width, c.height);
+      const source = padPhotoCrop(cutPhotoRGBA(pixels, width, c.x, c.y, c.width, c.height), c.width, c.height);
       return photoReference(source.rgba, source.width, source.height, colorSpace === 'display-p3' ? P3_TRANSFORM : null);
     };
     const prepared = ssimulacra2Reference(reference, pw, ph, {immutable: true, cacheBytes: left});
@@ -71,10 +67,10 @@ export function prepareCropScores(data, width, r, crops = [r], dx = 0, dy = 0, e
     return parts.map((c, i) => {
       const pw = Math.max(PHOTO_PAD_SIDE, c.width), ph = Math.max(PHOTO_PAD_SIDE, c.height);
       return photoNativeScores({outputs: function* () {
-        coded[0] ??= linear ? toRGBA(linear, w, h) : gammaRGBA(gamma, w, h);
-        yield {kind: 'package', rgba: padPhotoCrop(cut(coded[0], w, c.x - x0, c.y - y0, c.width, c.height), c.width, c.height).rgba};
+        coded[0] ??= linear ? toRGBA(linear, w, h) : colorPixels(gamma, w, h, w, 0);
+        yield {kind: 'package', rgba: padPhotoCrop(cutPhotoRGBA(coded[0], w, c.x - x0, c.y - y0, c.width, c.height), c.width, c.height).rgba};
         coded[1] ??= linear ? nativeRGBA(linear, w, h, {x: x0, y: y0}) : nativeGammaRGBA(gamma, w, h, {x: x0, y: y0});
-        yield {kind: 'native', rgba: padPhotoCrop(cut(coded[1], w, c.x - x0, c.y - y0, c.width, c.height), c.width, c.height).rgba};
+        yield {kind: 'native', rgba: padPhotoCrop(cutPhotoRGBA(coded[1], w, c.x - x0, c.y - y0, c.width, c.height), c.width, c.height).rgba};
       }}, null, pw, ph, {reference: references[i]}).minimum;
     });
   };
@@ -109,6 +105,7 @@ export function lookQuality(data, width, r, reading, intent, dx = 0, dy = 0, exa
 
 export function lookFromScores(reading, intent, scores, {slope = SLOPE, margin = MARGIN, side = PHOTO_PAD_SIDE, sides = null, measured = false} = {}) {
   if (!scores.length) return reading;
+  if (scores.some(score => !Number.isFinite(score))) throw fault('JXL_INPUT', 'score: finite number');
   const room = Math.min(...scores.map((s, i) => s - photoRegionTarget(intent, sides?.[i] ?? side, measured))), step = Math.floor((room - margin) / slope);
   return Math.max(1, Math.min(99, reading - (step < 0 && room >= 0 ? 0 : step)));
 }

@@ -24,12 +24,12 @@ export async function prepareAssets({example = here, packageDir = process.env.JX
       throw Object.assign(new Error(`${pkg} has no browser file for ./${name.replace('.browser', '')}.`), {code: 'JXL_PACKAGE'});
     await copyFile(join(pkg, `dist/${name}.mjs`), join(out, `${name}.mjs`));
   }
-  await copyFile(join(pkg, 'LICENSE'), join(out, 'LICENSE'));
+  for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES']) await copyFile(join(pkg, name), join(out, name));
   // The tests read an animation back with the package's decoder in the page; the app does not carry it.
   if (manifest.exports?.['./decode']?.import !== './dist/decode.mjs') throw Object.assign(new Error(`${pkg} has no ./decode.`), {code: 'JXL_PACKAGE'});
   await copyFile(join(pkg, 'dist/decode.mjs'), join(example, 'Tests/RapierJXLTests/Fixtures/decode.mjs'));
   const files = [];
-  for (const path of ['encoder.html', 'page.mjs', 'encoder.mjs', 'headers.json', ...[...modules, ...browserFiles].map(n => `jpegxl/${n}.mjs`), 'jpegxl/LICENSE']) {
+  for (const path of ['encoder.html', 'page.mjs', 'encoder.mjs', 'headers.json', ...[...modules, ...browserFiles].map(n => `jpegxl/${n}.mjs`), 'jpegxl/LICENSE', 'jpegxl/THIRD_PARTY_NOTICES']) {
     const bytes = await readFile(join(web, path));
     files.push({path, bytes: bytes.length, sha256: digest(bytes)});
   }

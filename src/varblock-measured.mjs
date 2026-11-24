@@ -87,14 +87,34 @@ export function* closedLoopStrategySteps(base, width, height, options = {}) {
     }));
     return {layout, image: lazyStrategyImage(base, width, height, build, layout)};
   }
-  for (const id of [0, ...ids]) {
-    let forced = {...options, force: id, maps: null, rates, ...(costs ? {costs} : {})};
-    if (costs?.has(id)) {
+  if (!costs) {
+    const pending = [];
+    for (const id of [0, ...ids]) {
+      const forced = {...options, force: id, maps: null, rates};
+      const image = lazy ? lazyStrategyImage(base, width, height, build, xybStrategies(base, width, height, {...forced, chooseOnly: true, priceOnly: true}).layout)
+        : xybStrategies(base, width, height, forced).image;
+      const initial = id === 0 && p === 3 && options.initial?.scores.cells && !options.initial.scores.doubt?.cells
+        && sameDct8Image(options.initial.image, image) ? options.initial.scores : null;
+      if (initial) maps[id] = Float64Array.from(initial.cells);
+      else pending.push({id, image});
+    }
+    if (pending.length === 1) {
+      const reply = yield {measure: pending[0].image, want: {p}};
+      maps[pending[0].id] = reply.cells; mapDoubt = Math.max(mapDoubt, reply.doubt?.cells ?? 0);
+    } else if (pending.length > 1) {
+      const replies = yield {measureMany: pending.map(e => e.image), want: {p}};
+      for (let k = 0; k < pending.length; k++) {
+        maps[pending[k].id] = replies[k].cells;
+        mapDoubt = Math.max(mapDoubt, replies[k].doubt?.cells ?? 0);
+      }
+    }
+  } else for (const id of [0, ...ids]) {
+    let forced = {...options, force: id, maps: null, rates, costs};
+    if (costs.has(id)) {
       const certified = yield {varblocks: {kind: 'exact', layout: xybStrategies(base, width, height, {...forced, chooseOnly: true}).layout}};
       if (certified) forced = {...forced, exact: certified};
     }
-    const image = lazy ? lazyStrategyImage(base, width, height, build, xybStrategies(base, width, height, {...forced, chooseOnly: true, priceOnly: true}).layout)
-      : xybStrategies(base, width, height, forced).image;
+    const image = xybStrategies(base, width, height, forced).image;
     const initial = id === 0 && p === 3 && options.initial?.scores.cells && !options.initial.scores.doubt?.cells
       && sameDct8Image(options.initial.image, image) ? options.initial.scores : null;
     const reply = initial || (yield {measure: image, want: {p}});

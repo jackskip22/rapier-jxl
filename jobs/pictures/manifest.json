@@ -1,5 +1,5 @@
 {
-  "version": "8.4.1",
+  "version": "8.5.0",
   "pictures": [
     {
       "id": "screenshot",
@@ -44,20 +44,20 @@
     }
   ],
   "expected": {
-    "screenshot-exact-e1": "8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f",
-    "screenshot-exact-e3": "d8112da419eb84001d99385588bcb2db8e779ec32d31b5271b25c18d0edbfb62",
+    "screenshot-exact-e1": "1dea4f8888f6296ff0ef07eee94b7515ef8731d5eed51caa891d505829cac582",
+    "screenshot-exact-e3": "1dea4f8888f6296ff0ef07eee94b7515ef8731d5eed51caa891d505829cac582",
     "screenshot-exact-e7": "94c52c56f288eff936bd46190f078045c645c1d1ec82d1696080379975ef2cc4",
-    "screenshot-lossy-e1": "8fa91c24b3e8474f2cd1b3e1b30cb95381ed04d6eefd066509b248c9f9e9282f",
-    "screenshot-lossy-e3": "d8112da419eb84001d99385588bcb2db8e779ec32d31b5271b25c18d0edbfb62",
+    "screenshot-lossy-e1": "1dea4f8888f6296ff0ef07eee94b7515ef8731d5eed51caa891d505829cac582",
+    "screenshot-lossy-e3": "1dea4f8888f6296ff0ef07eee94b7515ef8731d5eed51caa891d505829cac582",
     "screenshot-lossy-e7": "94c52c56f288eff936bd46190f078045c645c1d1ec82d1696080379975ef2cc4",
     "photo-exact-e1": "b9811bb065243410011eb7df49a8dfe0b6d9e64ed79a5f0289f5261c4af93315",
     "photo-exact-e3": "7618cd16bf8dc70dacda68089a5914dc37168024098a858883aca426a4441ac9",
     "photo-exact-e7": "d8aadaad21e33c59346b59efcf6e9c997481f3b5c441771595cc08d9f083066a",
-    "photo-lossy-e1": "f9d713cdc266049b15efa97000b6f2704d01591103b219ea99e87015b538174a",
-    "photo-lossy-e3": "aee4f9813790ffac8d9b231678587e01baa32d92feab0ad15c7445f7309fc45e",
-    "photo-lossy-e7": "d9716857a74ca0f7be27bbef8e0f7e27d8e84d1c11adf2933b5dc1f1577e7632",
-    "camera-recompress-e1": "cae0589ba93c15e26ccd4efa366c61d5aa5412bb1cb4fdf0c0039e34f81dc39e",
-    "camera-recompress-e3": "6c72c67d8a1aa9acb262dc560efd65f29d9fa3a559c629d00d0ff90cdb9d6b8d",
-    "camera-recompress-e7": "eecaded57b29a5db22ab5c8e7e4205003c45a9d5c47ed639507fdbd3fe91186d"
+    "photo-lossy-e1": "c4084eb07a4674172731aacd02df7f5076b8db96b1de88cbf33c3f3fb2177061",
+    "photo-lossy-e3": "c4084eb07a4674172731aacd02df7f5076b8db96b1de88cbf33c3f3fb2177061",
+    "photo-lossy-e7": "e9c494d368601f9c70eebe5ffe76681126692e3b40c5126f9d0b729675b6cdcc",
+    "camera-recompress-e1": "8944f70975b04e84bb1fa1cd3857ab0fbbd773039b2a98eea5bf99fa4cfa4c37",
+    "camera-recompress-e3": "7127fe0c659d6f99929211b58619a500a201a4e98076251fea3b1a4b679c54b8",
+    "camera-recompress-e7": "4cfbab00bb3f823f53135a98343e5c09b330c640f05d225e30aea09f59edc48b"
   }
 }

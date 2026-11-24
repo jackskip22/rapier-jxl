@@ -24,11 +24,11 @@ adds `"postbuild": "node rapier-jxl-next.mjs"` to `package.json`, and writes `pr
 
 - `npm run build` ends with `rapier-jxl: N pictures, M JPEG XL files in public/_jxl`.
 - With `npx next start`: `curl -H 'Accept: image/jxl' -I 'localhost:3000/_next/image?url=/<picture>.jpg&w=640&q=75'`
-  answers `content-type: image/jxl`; with `Accept: image/webp`, `image/webp` as before.
+  answers `content-type: image/jxl`. With `Accept: image/webp`, `image/webp` as before.
 
 ## Do not
 
 - Do not set `images.loader` or `images.unoptimized` for this: the proxy works with Next's own loader.
 - Do not commit `public/_jxl/`: the build writes it (`add next` puts it in `.gitignore`).
 - Do not put `export const config` in a re-export line: Next reads a proxy's `config` only where it is declared.
-- Do not edit the copied files to change options; pass them in the postbuild script: `node rapier-jxl-next.mjs --quality 80 --effort 5`.
+- Do not edit the copied files to change options. Pass them in the postbuild script: `node rapier-jxl-next.mjs --quality 80 --effort 5`.

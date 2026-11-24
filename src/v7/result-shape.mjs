@@ -41,16 +41,14 @@ export function isImageResultShape(value) {
       !isResultFidelity(value.fidelity, value.bytes === null) ||
       !Array.isArray(value.measurements) || !value.measurements.every(measurement)) return false;
   if (value.transform !== undefined && (!positive(value.transform?.width) || !positive(value.transform?.height) ||
-      value.transform.frame !== undefined && (!Number.isSafeInteger(value.transform.frame) || value.transform.frame < 0) ||
-      value.transform.resizer !== undefined && value.transform.resizer !== 'browser' ||
-      value.transform.via !== undefined && (value.transform.resizer !== 'browser' || !Array.isArray(value.transform.via) ||
-        !value.transform.via.length || !value.transform.via.every(step => positive(step?.width) && positive(step?.height))))) return false;
+      value.transform.frame !== undefined && (!Number.isSafeInteger(value.transform.frame) || value.transform.frame < 0))) return false;
   if (value.readAs !== undefined && !['srgb', 'display-p3'].includes(value.readAs)) return false;
   if (value.timing !== undefined && !['exact', 'rounded'].includes(value.timing)) return false;
   if (value.usedWebGPU !== undefined && typeof value.usedWebGPU !== 'boolean') return false;
+  if (value.lexer !== undefined && (typeof value.lexer !== 'string' || !value.lexer.length)) return false;
   if (value.originalBytes !== undefined && !positive(value.originalBytes)) return false;
   if (value.originalBytes === undefined && value.largerThanOriginal !== undefined) return false;
-  if (value.bytes === null) return value.kept === null && value.meetsTarget === false &&
+  if (value.bytes === null) return value.lexer === undefined && value.kept === null && value.meetsTarget === false &&
     value.largerThanOriginal === undefined && reason(value.reason) && value.reason.code === 'JXL_TARGET';
   if (Object.prototype.toString.call(value.bytes) !== '[object Uint8Array]' || !value.bytes.byteLength ||
       !['jpeg-bytes', 'pixels', 'lossy'].includes(value.kept)) return false;

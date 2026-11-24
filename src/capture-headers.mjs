@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {fault} from './fault.mjs';
 import {FRAME_SIZE, packSigned} from './bits.mjs';
-import {writeTOC, fullFrame} from './frame.mjs';
-import {admitOutputSize} from './admit.mjs';
+import {fullFrame, assembleByteSections} from './frame.mjs';
 
 export function writeCaptureHeaderFields(w, width, height, colour, alpha, {colorSpace} = {}) {
   const size = [[9, 1], [13, 1], [18, 1], [30, 1]];
@@ -52,11 +51,4 @@ export function writeCaptureModularHeader(w, {useGlobalTree = true, transforms =
   }
 }
 
-export function assembleCaptureCodestream(header, sections) {
-  writeTOC(header, sections.map(section => section.length));
-  const head = header.finish(), length = head.length + sections.reduce((sum, section) => sum + section.length, 0);
-  admitOutputSize(length);
-  const bytes = new Uint8Array(length); bytes.set(head);
-  for (let i = 0, at = head.length; i < sections.length; at += sections[i++].length) bytes.set(sections[i], at);
-  return bytes;
-}
+export {assembleByteSections as assembleCaptureCodestream};

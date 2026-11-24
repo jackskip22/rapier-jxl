@@ -20,9 +20,9 @@ export async function prepare({web, packageDir = process.env.JXL_PACKAGE && reso
     await copyFile(join(pkg, 'dist', file), join(web, 'jpegxl', file));
     files.push(`jpegxl/${file}`);
   }
-  await copyFile(join(pkg, 'LICENSE'), join(web, 'jpegxl/LICENSE'));
+  for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES']) await copyFile(join(pkg, name), join(web, 'jpegxl', name));
   const sizes = [];
-  for (const path of ['index.html', 'app.mjs', ...files, 'jpegxl/LICENSE']) {
+  for (const path of ['index.html', 'app.mjs', ...files, 'jpegxl/LICENSE', 'jpegxl/THIRD_PARTY_NOTICES']) {
     const bytes = await readFile(join(web, path));
     sizes.push({path, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex')});
   }

@@ -54,8 +54,8 @@ export function requestBudget(host, scheduled = false) {
 }
 
 // A retained JPEG never depends on a cold restore request. Unknown Worker allowances are not proof of Paid.
-export const canRetireJpeg = host => host?.platform === 'node' && host.cpuLimitMs === null ||
-  ['node', 'cloudflare'].includes(host?.platform) && host.cpuLimitMs >= 30000;
+import {canRetireJpeg} from './space-saver.mjs';
+export {canRetireJpeg};
 
 // Only the explicitly recorded Workers Free allowance admits browser-verified delivery with structural checks.
 // A short Node limit, an unknown Worker, or a runtime resource error is not an account-plan selection.

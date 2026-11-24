@@ -1,46 +1,14 @@
 // SPDX-License-Identifier: MIT
+import {quantParamNumber, quantParamInterpolate, quantParamVector, quantParamTriplet, quantParamBands, quantParamWeight, quantParamExpandBands} from './quantization-math.mjs';
 import {fault} from './fault.mjs';
 export {naturalOrder} from './coefficient-layout.mjs';
 import {QUANT_PARAM_LIBRARY} from './decode-quant-defaults.mjs';
-import {float16Bits} from './decode-tables.mjs';
 
 export {TRANSFORMS, basis, basisT, inverseScaledDCT, llfDivisors} from './vardct-bases.mjs';
 const QUANT_PARAM_MODES = ['library', 'identity', 'dct2', 'dct4', 'dct4x8', 'afv', 'dct'];
 const QUANT_PARAM_AFV_FREQS = [0, 0, .8517778890324296, 5.37778436506804, 0, 0, 4.734747904497923,
   5.449245381693219, 1.6598270267479331, 4, 7.275749096817861, 10.423227632456525,
   2.662932286148962, 7.630657783650829, 8.962388608184032, 12.97166202570235];
-function quantParamHalfValue(bits) {
-  const sign = bits & 32768 ? -1 : 1, exponent = (bits >>> 10) & 31, mantissa = bits & 1023;
-  let value = exponent ? 1024 + mantissa : mantissa, shift = exponent ? exponent - 25 : -24;
-  while (shift < 0) { value /= 2; shift++; }
-  while (shift > 0) { value *= 2; shift--; }
-  return sign * value;
-}
-function quantParamNumber(value, divisor, positive, library) {
-  if (typeof value !== 'number' || !Number.isFinite(value) || positive && value <= 0)
-    throw fault('JXL_INPUT', 'quantization params: finite positive');
-  if (library) return value;
-  if (Math.abs(value / divisor) >= 65520) throw fault('JXL_INPUT', 'quantization param: overflows float16');
-  const decoded = quantParamHalfValue(float16Bits(value / divisor)) * divisor;
-  if (positive && decoded <= 0) throw fault('JXL_INPUT', 'quantization param: underflows float16');
-  return decoded;
-}
-function quantParamVector(value, count, convert) {
-  if ((!Array.isArray(value) && !ArrayBuffer.isView(value)) || value.length !== count)
-    throw fault('JXL_INPUT', 'quantization vector length');
-  return Array.from(value, convert);
-}
-function quantParamTriplet(value, count, convert) {
-  if (!Array.isArray(value) || value.length !== 3)
-    throw fault('JXL_INPUT', 'quantization params: 3 vectors');
-  return value.map(vector => quantParamVector(vector, count, convert));
-}
-function quantParamBands(value, library) {
-  const count = value?.[0]?.length;
-  if (!Number.isInteger(count) || count < 1 || count > 16)
-    throw fault('JXL_INPUT', 'bands: 1-16 per channel');
-  return quantParamTriplet(value, count, (v, i) => quantParamNumber(v, i ? 1 : 64, !i, library));
-}
 function quantParamAdmit(input, width, height, family) {
   if (!input || typeof input !== 'object' || Array.isArray(input) || ArrayBuffer.isView(input))
     throw fault('JXL_INPUT', 'quantization table: {mode}');
@@ -65,24 +33,6 @@ function quantParamAdmit(input, width, height, family) {
     table.bands4x4 = quantParamBands(source.bands4x4, library);
   } else table.bands = quantParamBands(source.bands, library);
   return table;
-}
-function quantParamWeight(value) {
-  if (!Number.isFinite(value) || value < 1e-8 || value >= 1e8)
-    throw fault('JXL_INPUT', 'weights: 1e-8 to 1e8');
-  return value;
-}
-function quantParamExpandBands(parameters) {
-  const bands = [quantParamWeight(parameters[0])];
-  for (let i = 1; i < parameters.length; i++) {
-    const delta = parameters[i];
-    bands.push(quantParamWeight(bands.at(-1) * (delta > 0 ? 1 + delta : 1 / (1 - delta))));
-  }
-  return bands;
-}
-function quantParamInterpolate(bands, position) {
-  if (bands.length === 1) return bands[0];
-  const index = Math.min(bands.length - 2, Math.floor(position)), a = bands[index], b = bands[index + 1];
-  return a * Math.pow(b / a, position - index);
 }
 function quantParamDCT(parameters, width, height) {
   const bands = quantParamExpandBands(parameters), scale = (bands.length - 1) / (1.4142135623730951 + .000001);

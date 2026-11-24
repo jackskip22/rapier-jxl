@@ -340,7 +340,7 @@ async function unchangedFile({path, info, source}, worker = false) {
 }
 
 async function manifest(path) {
-  try { return JSON.parse(await readFile(path, 'utf8')); }
+  try { return JSON.parse((await readFile(path, 'utf8')).replace(/^\ufeff/, '')); }
   catch (cause) { if (cause.code === 'ENOENT') return null; throw error(text('manifest', {file: basename(path), detail: cause.message}), CLI_WORDS.manifestFix); }
 }
 

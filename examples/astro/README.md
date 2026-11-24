@@ -27,7 +27,7 @@ import photo from '../assets/photo.jpg';
 <Picture src={photo} widths={[600, 1200]} formats={['jxl', 'avif']} fallbackFormat="webp" alt="" />
 ```
 
-`<Picture>` lists JPEG XL first; a browser that does not show JPEG XL takes the next format. Every other format is
+`<Picture>` lists JPEG XL first. A browser that does not show JPEG XL takes the next format. Every other format is
 Astro's own sharp service, unchanged.
 
 ## Options
@@ -36,7 +36,7 @@ Astro's own sharp service, unchanged.
 | --- | --- | --- |
 | `effort` | `3` | 1 (fastest) to 9 (smallest). |
 | `quality` | `72` | Used when the component asks none. 72 is at least the look of Astro's default WebP. |
-| `jpeg` | `'pixels'` | `'exact'`: a JPEG shown at its own size with no `quality` keeps every byte; the file restores the original JPEG. |
+| `jpeg` | `'pixels'` | `'exact'`: a JPEG shown at its own size with no `quality` keeps every byte. The file restores the original JPEG. |
 | `maxPixels` | `12600000` on Workers | The largest picture a Worker reads on demand. Larger ones are served as they are. |
 
 Astro's build cache keeps each file. A new rapier-jxl version or a changed option makes new files.
@@ -46,10 +46,10 @@ Astro's build cache keeps each file. A new rapier-jxl version or a changed optio
 With `@astrojs/cloudflare`, set `imageService: 'custom'` (`add astro` does it). Prerendered pages are made at build.
 On-demand pages make each picture inside the Worker:
 
-- a JPEG at its own size with `jpeg: 'exact'`, by recompression;
-- a resized JPEG, PNG or other format, through the Images binding (`"images": {"binding": "IMAGES"}` in the Wrangler
-  config);
-- without the binding, a PNG is resized by rapier-jxl itself.
+- a JPEG at its own size with `jpeg: 'exact'`, by recompression.
+- A resized JPEG, PNG or other format, through the Images binding (`"images": {"binding": "IMAGES"}` in the Wrangler
+  config).
+- Without the binding, a PNG is resized by rapier-jxl itself.
 
 Anything else, or any refusal, serves the original file. Each picture takes from about 0.2 s (1 MP) to 1.5 s (12 MP)
 of CPU time: on the Free plan's 10 ms, make pictures at build.
@@ -59,8 +59,8 @@ of CPU time: on the Free plan's 10 ms, make pictures at build.
 | Where | What happens |
 | --- | --- |
 | A config that is not plain JavaScript | `add astro` stops with `JXL_SETUP` and the two lines to add by hand. |
-| Cloudflare with another `imageService` | `add astro` keeps it and says so; `format="jxl"` then works on prerendered pages only. |
-| No `sharp` at build | Astro's own error; `add astro` installs it. |
+| Cloudflare with another `imageService` | `add astro` keeps it and says so. `format="jxl"` then works on prerendered pages only. |
+| No `sharp` at build | Astro's own error. `add astro` installs it. |
 | A Worker on the Free plan | The request exceeds 10 ms of CPU. |
 
 On 200 open photographs and screenshots, the files are 23% smaller than Astro's default WebP with at least its look, and the build takes 1.8 times as long. With `jpeg: 'exact'`, JPEGs are 17% smaller and restore exactly.

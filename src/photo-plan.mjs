@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-import {outOfMemory} from './fault.mjs';
 import {LIMITS} from './limits.mjs';
 import {targetSearch} from './target-search.mjs';
 import {complete, part, scaled} from './bits.mjs';
@@ -147,7 +146,7 @@ function* encodeRetainedSteps(retained, quality, settings) {
     }
     return finish(next.value.length < prefix.length ? next.value : prefix);
   } catch (error) {
-    if (!outOfMemory(error) && error.code !== 'JXL_SIZE') throw error;
+    if (error.code !== 'JXL_SIZE') throw error;
     return finish(prefix);
   }
 }

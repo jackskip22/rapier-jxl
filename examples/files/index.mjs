@@ -1,26 +1,33 @@
 // SPDX-License-Identifier: MIT
 // A picture file to JPEG XL bytes, cached by the source, the options (`read` by its code) and the package version: the one step the Vite,
-// webpack, Next.js and Netlify examples share. A JPEG with no `read` is kept exactly (Node has
-// no JPEG decoder of its own); a PNG, or any file `read` decodes, is encoded at `fidelity`, at `width` when given:
-// `read` is handed the width and may return pixels already at it; wider pixels are resized by rapier-jxl.
+// webpack, Next.js and Netlify examples share. A JPEG with no `read` is kept exactly; a PNG, or any file `read` decodes,
+// is encoded at `fidelity`, at `width` when given: `read` is handed the width and may return pixels already at it; wider
+// pixels are resized by rapier-jxl. A JPEG at a width with no `read` is read by rapier-jxl itself (Node has no JPEG
+// decoder of its own): kept exactly as JPEG XL, decoded, then resized.
 import {createHash, randomBytes} from 'node:crypto';
 import {mkdir, readFile, rename, rm, writeFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {join} from 'node:path';
-import {encode, variants} from 'jpegxl';
+import {encode, variants, configureDecoder} from 'jpegxl';
 import {recompress} from 'jpegxl/jpeg';
 
 export const IMAGE = /\.(jpe?g|png)$/i;
 export const JPEG = /\.jpe?g$/i;
 export const jxlName = name => name.replace(/\.[^./\\]+$/, '.jxl');
 const require = createRequire(import.meta.url), version = require('jpegxl/package.json').version;
+let jpegReader;
+const readJpegs = () => jpegReader ??= Promise.all([import('jpegxl/decode'), import('jpegxl/jpeg')])
+  .then(([{decode}, jpeg]) => configureDecoder(decode, jpeg.restore, jpeg.recompress));
 
 /** @param {import('./index.d.ts').JxlFilesOptions} [options] */
 export function jxlFiles({fidelity, effort = 3, read, cacheDir} = {}) {
   const pending = new Map(); // cache key -> encode in flight
   const look = fidelity === undefined ? {} : {fidelity};
   async function encodeBytes(source, file, width) {
-    if (JPEG.test(file) && !read) return recompress(source, {effort});
+    if (JPEG.test(file) && !read) {
+      if (!width) return recompress(source, {effort});
+      await readJpegs();
+    }
     const input = read ? await read(source, file, {width}) : new Blob([source]);
     if (!width || read && input.width <= width) return encode(input, {effort, ...look});
     const [result] = await variants(input, {outputs: [{width, effort, ...look}]});

@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
 import {textTiles, supportTiles} from './screen-photo-kernels.mjs';
+import {photoKernels} from './capture-kernels.mjs';
+import {gradientRegions} from './screen-gradient-regions.mjs';
 export {textTiles, supportTiles};
 const TILE = 32, MAX_RECTS = 256;
 
 function opaque(data, width, tx, ty, tw, th) {
-  for (let y = ty * TILE; y < (ty + th) * TILE; y++) for (let at = (y * width + tx * TILE) * 4 + 3, end = at + tw * TILE * 4; at < end; at += 4) if (data[at] < 255) return false;
-  return true;
+  const kernels = photoKernels();
+  kernels.ready();
+  return kernels.opaque(data, width, tx * TILE, ty * TILE, tw * TILE, th * TILE);
 }
 
 const CELLS = new WeakMap();
@@ -107,6 +110,34 @@ export function screenPhotoTiles(data, width, height, {x, y, width: w, height: h
   return text * 16 <= count ? found / count : 0;
 }
 
+function drawn(data, width, cols, support, minX, minY, maxX, maxY) {
+  const inner = maxX - minX > 1 && maxY - minY > 1, x0 = minX + inner, x1 = maxX - inner, y0 = minY + inner, y1 = maxY - inner;
+  let found = 0;
+  for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) found += support[ty * cols + tx] > 0;
+  const counts = new Map(), step = Math.ceil(found / 16);
+  let n = 0, k = 0;
+  for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) {
+    if (!support[ty * cols + tx] || k++ % step) continue;
+    for (let y = 0, row = (ty * TILE * width + tx * TILE) * 4; y < TILE; y++, row += width * 4)
+      for (let p = row, last = row + TILE * 4; p < last; p += 4) {
+        const key = (data[p] << 24 | data[p + 1] << 16 | data[p + 2] << 8 | data[p + 3]) >>> 0;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    n += TILE * TILE;
+  }
+  let a = 0, b = 0, c = 0;
+  for (const v of counts.values()) if (v > a) { c = b; b = a; a = v; } else if (v > b) { c = b; b = v; } else if (v > c) c = v;
+  const top = (a + b + c) * 256, colours = counts.size * 256;
+  return n > 0 && (colours <= n * 24 && top >= n * 40 || colours <= n * 52 && top >= n * 52);
+}
+
+export function drawnRegion(data, width, {x, y, width: w, height: h}, cells) {
+  const x0 = Math.ceil(x / TILE), y0 = Math.ceil(y / TILE), x1 = Math.floor((x + w) / TILE) - 1, y1 = Math.floor((y + h) / TILE) - 1;
+  if (x1 < x0 || y1 < y0) return false;
+  cacheKind(cells, x0, y0, x1, y1);
+  return drawn(data, width, cells.cols, cells.kind, x0, y0, x1, y1);
+}
+
 function mergeTouching(boxes) {
   let list = boxes;
   while (list.length > 1) {
@@ -136,10 +167,10 @@ function mergeTouching(boxes) {
   return list;
 }
 
-export function screenPhotoRegions(data, width, height, masked = false, extra = [], cells = null) {
+export function screenPhotoRegions(data, width, height, masked = false, extra = [], cells = null, hints = [], gradient = false) {
   const pixels = width * height;
   if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || data.length !== pixels * 4) return [...extra];
-  const cols = Math.floor(width / TILE), rows = Math.floor(height / TILE), tiles = cols >= 4 && rows >= 3 ? cols * rows : 0;
+  const cols = Math.floor(width / TILE), rows = Math.floor(height / TILE), tiles = cols >= 2 && rows >= 2 ? cols * rows : 0;
   const seeds = new Uint8Array(tiles), support = new Uint8Array(tiles);
   cells ??= photoCells(data, width, height);
   if (tiles) cacheKind(cells, 0, 0, cols - 1, rows - 1);
@@ -190,12 +221,15 @@ export function screenPhotoRegions(data, width, height, masked = false, extra = 
       }
       return n;
     };
-    if ((!(tw >= 4 && th >= 3) && !(tw >= 3 && th >= 5)) || strong < Math.min(20, area >> 3) || end * 4 < area ||
+    if (!(tw >= 4 && th >= 3) && !(tw >= 3 && th >= 5) && !(tw >= 2 && th >= 2 && tw <= 3 && th <= 3) || strong < Math.min(20, area >> 3) || end * 4 < area ||
         area < 32 && (strong * 2 < area && !(end === area && strong >= 2) || (masked ? componentText() || textOf(minX + 1, minY + 1, maxX - 1, maxY - 1) : textOf(minX, minY, maxX, maxY))) ||
         textOf(minX + 1, minY + 1, maxX - 1, maxY - 1) * 16 > Math.max(0, (tw - 2) * (th - 2)) ||
-        !masked && !opaque(data, width, minX, minY, tw, th)) continue;
+        !masked && !opaque(data, width, minX, minY, tw, th) ||
+        hints.length && !hints.some(h => meet(h, {x: minX * TILE, y: minY * TILE, width: tw * TILE, height: th * TILE})) ||
+        drawn(data, width, cols, support, minX, minY, maxX, maxY)) continue;
     regions.push({x: minX * TILE, y: minY * TILE, width: tw * TILE, height: th * TILE});
   }
+  if (masked && gradient) regions.push(...gradientRegions(data, width, height));
   regions.push(...extra);
   const kept = [];
   const candidates = masked ? mergeTouching(regions) : regions;

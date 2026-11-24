@@ -1,52 +1,33 @@
 // SPDX-License-Identifier: MIT
-import {spectralPasses, progressiveOrders} from './vardct-progressive.mjs';
+import {spectralPasses, lfSplitPasses} from './vardct-progressive.mjs';
 
-let active = false, cachedProgression = null, cachedOrders = undefined;
+let requested = null, cachedProgression = null, cachedLfSplit = null;
 
-export const progressiveActive = () => active;
+export const progressiveRequested = () => !!requested;
+export const progressiveWritten = () => requested;
+export const lfSplitProgression = () => cachedLfSplit ||= lfSplitPasses();
 
-export function spectralProgression() {
-  return cachedProgression ||= spectralPasses();
-}
-
-export function spectralOrders() {
-  if (cachedOrders === undefined) cachedOrders = progressiveOrders(spectralProgression());
-  return cachedOrders;
-}
-
-export function applyProgressive(jpeg) {
-  if (!active || !jpeg || jpeg.progression || jpeg.jpegReconstruction || jpeg.useDCFrame) return jpeg;
+export function progressiveImage(jpeg) {
+  if (!jpeg || jpeg.progression || jpeg.jpegReconstruction || jpeg.useDCFrame) return jpeg;
   const p = jpeg.placement;
   if (p && (p.isFirstFrame === false || p.isLastFrame === false || p.crop)) return jpeg;
-  return {
-    ...jpeg,
-    progression: spectralProgression(),
-    progressiveOrders: spectralOrders(),
-  };
+  return {...jpeg, progression: (cachedProgression ||= spectralPasses()), progressiveOrders: true};
 }
 
-export function* withProgressive(enabled, steps) {
-  if (!enabled) return yield* steps;
+export function* progressiveSearch(steps, written) {
   let step, reply, failed = false;
+  const run = fn => { const prev = requested; requested = written; try { return fn(); } finally { requested = prev; } };
   try {
     for (;;) {
-      const prev = active;
-      active = true;
-      try { step = steps.next(reply); } finally { active = prev; }
+      step = run(() => steps.next(reply));
       if (step.done) return step.value;
       reply = yield step.value;
     }
   } catch (error) {
     failed = true;
-    const prev = active;
-    active = true;
-    try { if (typeof steps.throw === 'function') return steps.throw(error); } finally { active = prev; }
+    if (typeof steps.throw === 'function') return run(() => steps.throw(error));
     throw error;
   } finally {
-    if (!failed && !step?.done) {
-      const prev = active;
-      active = true;
-      try { steps.return?.(); } finally { active = prev; }
-    }
+    if (!failed && !step?.done) run(() => steps.return?.());
   }
 }

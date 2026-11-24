@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import {admitSignal, check, callers, abortable} from './primitives.mjs';
-export const PREVIEW = Symbol('preview');
+import {optionSymbol} from './primitives.mjs';
+export const PREVIEW = /* @__PURE__ */ optionSymbol('preview');
 
 export function previewCall(options, geometry) {
   if (options.onPreview === undefined) return;

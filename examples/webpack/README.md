@@ -1,6 +1,6 @@
 # JPEG XL images for webpack and Rspack
 
-A webpack 5 and Rspack plug-in. An image import becomes a JPEG XL file at build; the original stays for browsers that
+A webpack 5 and Rspack plug-in. An image import becomes a JPEG XL file at build. The original stays for browsers that
 do not show JPEG XL.
 
 JPEGs come out about a fifth smaller and restore exactly. rapier-jxl is the encoder inside rapier.website, the free
@@ -33,7 +33,7 @@ element.innerHTML = `<picture>
 </picture>`;
 ```
 
-`hero` is the JPEG XL file's URL (with `output.publicPath`); `original` is the original's, through the build's own rule
+`hero` is the JPEG XL file's URL (with `output.publicPath`). `original` is the original's, through the build's own rule
 for images.
 
 ## Options
@@ -43,10 +43,10 @@ for images.
 | `fidelity` | `{quality: 90}` | As rapier-jxl's `encode`, for PNG files: `'exact'` or `{quality}` from 1 to 100. JPEGs without `read` stay exact. |
 | `effort` | `3` | 1 (fastest) to 9 (smallest). |
 | `beside` | `false` | `true` writes a `.jxl` beside every JPEG and PNG the build emits (`a1b2.jpg` gets `a1b2.jxl`), for a server that picks by `Accept: image/jxl`. A RegExp limits it to the names that match. |
-| `read` | none | `(bytes, file) => ({width, height, data})`: decodes any source; JPEGs are then encoded at `fidelity`. |
+| `read` | none | `(bytes, file) => ({width, height, data})`: decodes any source. JPEGs are then encoded at `fidelity`. |
 | `cache` | `true` | Keeps each file in `node_modules/.cache/rapier-jxl`, keyed by the source, these options and the rapier-jxl version. |
 
-Use either `beside` or `?jxl` for a given file; each writes its own copy.
+Use either `beside` or `?jxl` for a given file. Each writes its own copy.
 
 ## With image-minimizer-webpack-plugin
 
@@ -68,5 +68,5 @@ Then `import hero from './hero.jpg?as=jxl'` is the JPEG XL file's URL. `jxlGener
 A `?jxl` file the encoder refuses stops the build with the file's name, the code and the fix, such as `JXL_MEMORY`
 for a picture past the host's memory. A `beside` file that fails is left as it is, with a warning.
 
-A CommonJS config (`module.exports`) loads the plug-in with `require`, which needs Node 22.12 or later; on Node 20,
+A CommonJS config (`module.exports`) loads the plug-in with `require`, which needs Node 22.12 or later. On earlier supported Node versions,
 name the config `webpack.config.mjs`.

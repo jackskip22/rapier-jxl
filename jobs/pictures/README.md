@@ -8,4 +8,4 @@ The fixed pictures `npx jpegxl selftest`, [run.html](../run.html) and the [Cloud
 | `photo-kodim23.png` | [Kodak](https://r0k.us/graphics/kodak/) kodim23, 768 × 512 | Eastman Kodak | Released for unrestricted use |
 | `camera-iphone16.jpg` | [Juvenile Atlantic Ghost Crab, Kitty Hawk](https://commons.wikimedia.org/wiki/File:2026-09-10_0953_Juvenile_Atlantic_Ghost_Crab_along_the_beach_in_Kitty_Hawk,_North_Carolina.jpg), iPhone 16 original, 4032 × 3024 | TheDetroitGeographer | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) |
 
-The PNGs are 8-bit RGB with no color chunks; their pixels are the originals'. The JPEG is the camera's file, unchanged.
+The PNGs are 8-bit RGB with no color chunks. Their pixels are the originals'. The JPEG is the camera's file, unchanged.

@@ -22,6 +22,7 @@ export function preparedResult(bytes, fidelity, {width, height}, reconstruction)
 export function finishPrepared(result, reference, options) {
   const settings = {...options, originalBytes: result.originalBytes ?? options.originalBytes};
   return result.bytes ? imageResult(result.bytes, reference, {...settings, fidelity: result.fidelity,
-    kept: keptOf(result) ?? (result.reconstruction === 'jpeg' ? 'jpeg-bytes' : undefined), measurements: result.measurements, owned: true})
+    kept: keptOf(result) ?? (result.reconstruction === 'jpeg' ? 'jpeg-bytes' : undefined), measurements: result.measurements,
+    ...(result.otherDecoders && {otherDecoders: result.otherDecoders}), owned: true})
     : missedResult(reference, {...settings, owned: true});
 }

@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MIT
-const gpDevices = new WeakMap();
+import {gpuCheck, gpuWait} from './gpu-kit.mjs';
+
+const gpDevices = /* @__PURE__ */ new WeakMap();
 const gpLost = () => Object.assign(new Error('device unavailable'), {code: 'JXL_GPU'});
 
 export function gpuPipelineSet(shaders) {
   const sources = Object.entries(shaders);
   return device => {
+    try { gpuCheck(device); } catch (error) { return Promise.reject(error); }
     let state = gpDevices.get(device);
     if (!state) {
       state = {lost: false, sets: new Map()}; gpDevices.set(device, state);
@@ -14,13 +17,13 @@ export function gpuPipelineSet(shaders) {
     let pending = state.sets.get(sources);
     if (!pending) {
       pending = (async () => {
-        const pipelines = {};
-        for (const [name, code] of sources) {
+        const entries = await Promise.all(sources.map(([name, code]) => {
           if (state.lost) throw gpLost();
-          pipelines[name] = await device.createComputePipelineAsync({layout: 'auto', compute: {module: device.createShaderModule({code}), entryPoint: 'main'}});
-        }
+          return gpuWait(device, device.createComputePipelineAsync({layout: 'auto', compute: {module: device.createShaderModule({code}), entryPoint: 'main'}}))
+            .then(pipeline => [name, pipeline]);
+        }));
         if (state.lost) throw gpLost();
-        return Object.freeze(pipelines);
+        return Object.freeze(Object.fromEntries(entries));
       })().catch(error => {
         if (state.sets.get(sources) === pending) state.sets.delete(sources);
         throw error;

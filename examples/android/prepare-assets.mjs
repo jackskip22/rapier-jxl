@@ -20,7 +20,7 @@ export async function prepareAssets({example = here, packageDir = process.env.JX
   if (manifest.exports?.['./animation']?.browser !== './dist/animation.browser.mjs' || manifest.exports['./animation'].import !== './dist/animation.mjs')
     throw Object.assign(new Error(`${pkg} is not a built package with ./animation.`), {code: 'JXL_PACKAGE'});
   for (const name of ['animation', 'animation.browser']) await copyFile(join(pkg, `dist/${name}.mjs`), join(generated, 'jpegxl', `${name}.mjs`));
-  await copyFile(join(pkg, 'LICENSE'), join(generated, 'jpegxl/LICENSE'));
+  for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES']) await copyFile(join(pkg, name), join(generated, 'jpegxl', name));
   const page = await readFile(join(source, 'encoder.html'), 'utf8');
   const script = page.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];
   if (!script) throw new Error('JXL_ASSETS: The encoder page has no module.');
@@ -32,7 +32,7 @@ export async function prepareAssets({example = here, packageDir = process.env.JX
   };
   await writeFile(join(generated, 'headers.json'), JSON.stringify(headers, null, 2) + '\n');
   const files = [];
-  for (const [root, paths] of [[source, ['encoder.html', 'encoder.mjs']], [generated, ['jpegxl/upload.mjs', 'jpegxl/jpeg.mjs', 'jpegxl/animation.mjs', 'jpegxl/animation.browser.mjs', 'jpegxl/LICENSE', 'headers.json']]]) {
+  for (const [root, paths] of [[source, ['encoder.html', 'encoder.mjs']], [generated, ['jpegxl/upload.mjs', 'jpegxl/jpeg.mjs', 'jpegxl/animation.mjs', 'jpegxl/animation.browser.mjs', 'jpegxl/LICENSE', 'jpegxl/THIRD_PARTY_NOTICES', 'headers.json']]]) {
     for (const path of paths) {
       const bytes = await readFile(join(root, path));
       files.push({path, bytes: bytes.length, sha256: digest(bytes)});

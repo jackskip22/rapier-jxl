@@ -10,10 +10,15 @@ import {cpuMeasure} from './photo-measure.mjs';
 import {linearFromRGBA} from './ssimulacra2.mjs';
 import {compileKernels} from './kernel-runtime.mjs';
 import {djxlResidual} from './photo-browser-margin.mjs';
-import {padPhotoCrop, photoRegionTarget} from './photo-region-score.mjs';
+import {padPhotoCrop, photoRegionTarget, clipPhotoRect, cutPhotoRGBA} from './photo-region-score.mjs';
 import {measuredLook} from './photo-quality-table.mjs';
 
 const check = signal => { if (signal?.aborted) throw signal.reason; };
+const readScore = (metric, picture, want) => {
+  const scores = metric(picture, want);
+  if (want?.ssimulacra2 && !Number.isFinite(scores?.ssimulacra2)) throw fault('JXL_INPUT', 'score: finite number');
+  return scores;
+};
 export const prepareCapturePictureMeasure = () => compileKernels();
 
 export function capturePictureMeasure(source, {cacheBytes = 0, signal, maxPixels, crops = []} = {}) {
@@ -33,11 +38,9 @@ export function capturePictureMeasure(source, {cacheBytes = 0, signal, maxPixels
     reconstruct: image => linear(image.data),
     rgbaOutputs: native ? image => [{kind: 'native', rgba: image.data}] : null,
   });
-  const cut = (rgba, r) => { const out = new Uint8Array(r.width * r.height * 4);
-    for (let y = 0; y < r.height; y++) out.set(rgba.subarray(((r.y + y) * width + r.x) * 4, ((r.y + y) * width + r.x + r.width) * 4), y * r.width * 4);
-    return out; };
+  const cut = (rgba, r) => cutPhotoRGBA(rgba, width, r.x, r.y, r.width, r.height);
   const seen = new Set();
-  const parts = crops.map(c => { const x = Math.max(0, c.x), y = Math.max(0, c.y); return {x, y, width: Math.min(width, c.x + c.width) - x, height: Math.min(height, c.y + c.height) - y, look: c.look}; })
+  const parts = crops.map(c => ({...clipPhotoRect(c, width, height), look: c.look}))
     .filter(r => r.width >= 8 && r.height >= 8 && (r.width < width || r.height < height) && !seen.has(`${r.x},${r.y},${r.width},${r.height}`) && seen.add(`${r.x},${r.y},${r.width},${r.height}`))
     .map(r => {
       const pad = r.look !== undefined, lift = pad ? photoRegionTarget(r.look, Math.min(r.width, r.height), true) - measuredLook(r.look) : 0;
@@ -65,10 +68,10 @@ export function capturePictureMeasure(source, {cacheBytes = 0, signal, maxPixels
           if (referencePixels[at] !== data[at])
             throw fault('JXL_PLATFORM', 'readback: alpha mismatch');
       }
-      let scores = measure({data}, want); check(signal);
+      let scores = readScore(measure, {data}, want); check(signal);
       const nat = picture.native && native && Number.isFinite(scores?.ssimulacra2) ? s2RGBA(picture.native, pixels, true) : null;
       if (nat) {
-        const djxl = measure({data: nat}, want); check(signal);
+        const djxl = readScore(measure, {data: nat}, want); check(signal);
         const shown = djxl.ssimulacra2 - djxlResidual(djxl.ssimulacra2, width * height);
         if (shown < scores.ssimulacra2) scores = {...djxl, ssimulacra2: shown};
       }
@@ -76,9 +79,9 @@ export function capturePictureMeasure(source, {cacheBytes = 0, signal, maxPixels
       let least = scores.ssimulacra2;
       for (const part of parts) {
         const only = {ssimulacra2: true, butteraugli: false};
-        let own = part.measure({data: part.padded(cut(data, part.r)).rgba}, only).ssimulacra2; check(signal);
+        let own = readScore(part.measure, {data: part.padded(cut(data, part.r)).rgba}, only).ssimulacra2; check(signal);
         if (nat) {
-          const read = part.measure({data: part.padded(cut(nat, part.r)).rgba}, only).ssimulacra2; check(signal);
+          const read = readScore(part.measure, {data: part.padded(cut(nat, part.r)).rgba}, only).ssimulacra2; check(signal);
           const shown = read - djxlResidual(read, part.r.width * part.r.height);
           if (shown < own) own = shown;
         }

@@ -38,6 +38,53 @@ function xybConstants(h,transform) {
   const f=Math.fround,{inverseMatrix,opsinBiases}=h.opsinInverseMatrix;
   return xybKernelConstants(transform===IDENTITY3?inverseMatrix.map(f):multiply3(transform,inverseMatrix.map(f)).map(f),opsinBiases,h.toneMapping.intensityTarget);
 }
+export function xybSrgbConstants(h,encoding=nativeEncoding(h)) {
+  let transform=IDENTITY3;
+  if(encoding.primaries!=='srgb'||encoding.whitePoint!=='d65')
+    transform=multiply3(inverse3(floatColorMatrix(encoding.primaries,encoding.whitePoint).pcs).map(Math.fround),floatColorMatrix().pcs).map(Math.fround);
+  return xybConstants(h,transform);
+}
+export function xybToRGBA8(planes,srcWidth,sx0,sy0,width,height,h,dst,dstWidth,dx0,dy0,constants=xybSrgbConstants(h)) {
+  if(width<=0||height<=0)return dst;
+  const kernels=decodeKernels(),contiguous=sx0===0&&width===srcWidth&&dx0===0&&width===dstWidth;
+  if(contiguous) {
+    const total=width*height,chunk=Math.min(total,65536),at=kernels.reserve([chunk*4,chunk*4,chunk*4,chunk*4]);
+    const kx=new Float32Array(kernels.buffer,at[0],chunk),ky=new Float32Array(kernels.buffer,at[1],chunk),kb=new Float32Array(kernels.buffer,at[2],chunk);
+    const out=new Uint8Array(kernels.buffer,at[3],chunk*4),sBase=sy0*srcWidth,dBase=dy0*dstWidth*4;
+    for(let i=0;i<total;i+=chunk) {
+      const m=Math.min(chunk,total-i);
+      kx.set(planes[0].subarray(sBase+i,sBase+i+m));
+      ky.set(planes[1].subarray(sBase+i,sBase+i+m));
+      kb.set(planes[2].subarray(sBase+i,sBase+i+m));
+      kernels.xyb(m,kx.subarray(0,m),ky.subarray(0,m),kb.subarray(0,m),constants,out.subarray(0,m*4));
+      dst.set(out.subarray(0,m*4),dBase+i*4);
+    }
+    return dst;
+  }
+  const rowsPerChunk=Math.max(1,Math.min(height,Math.floor(65536/width))),maxSamples=rowsPerChunk*width;
+  const at=kernels.reserve([maxSamples*4,maxSamples*4,maxSamples*4,maxSamples*4]);
+  const kx=new Float32Array(kernels.buffer,at[0],maxSamples),ky=new Float32Array(kernels.buffer,at[1],maxSamples),kb=new Float32Array(kernels.buffer,at[2],maxSamples);
+  const out=new Uint8Array(kernels.buffer,at[3],maxSamples*4);
+  for(let y=0;y<height;y+=rowsPerChunk) {
+    const rows=Math.min(rowsPerChunk,height-y),m=rows*width;
+    for(let r=0;r<rows;r++) {
+      const sOff=(sy0+y+r)*srcWidth+sx0,kOff=r*width;
+      kx.set(planes[0].subarray(sOff,sOff+width),kOff);
+      ky.set(planes[1].subarray(sOff,sOff+width),kOff);
+      kb.set(planes[2].subarray(sOff,sOff+width),kOff);
+    }
+    kernels.xyb(m,kx.subarray(0,m),ky.subarray(0,m),kb.subarray(0,m),constants,out.subarray(0,m*4));
+    for(let r=0;r<rows;r++)dst.set(out.subarray(r*width*4,(r+1)*width*4),((dy0+y+r)*dstWidth+dx0)*4);
+  }
+  return dst;
+}
+export function materializePostColor(ref,h) {
+  if(ref&&!ref.planes&&ref.xybPlanes) {
+    ref.planes=xybToEnum({width:ref.width,height:ref.height,planes:ref.xybPlanes,extraChannels:ref.extraChannels},h,ref.colorEncoding,true).planes;
+    ref.xybPlanes=null;ref.rgba8=null;
+  }
+  return ref;
+}
 function xybInverse(h,transform=IDENTITY3) {
   const {bias,root,m}=xybConstants(h,transform);
   return {op:OP.xybInverse,data:Float64Array.of(...bias,...root,...m)};

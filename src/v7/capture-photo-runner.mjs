@@ -7,6 +7,8 @@ import {encodeCapturePhotoBytes, encodeCapturePhotoSteps, capturePhotoBand, capt
   capturePhotoRegions, capturePatchedLargeSteps} from '../capture-photo.mjs';
 import {CAPTURE_TOOLS_LEAN} from '../capture-codec.mjs';
 import {kernelsReady} from './kernels-ready.mjs';
+import {compileJpegKernels} from '../jpeg-kernels.mjs';
+import {wasmRequired} from '../capture-wasm-error.mjs';
 import {intentCoding, smallReading} from './intent-quality.mjs';
 import {smallPicture} from '../photo-v6-settings.mjs';
 import {lowCaptureReading} from './low-intent-quality.mjs';
@@ -15,7 +17,8 @@ import {MEASURED_EFFORT} from '../effort-level.mjs';
 import {captureRectangles} from './capture-photo-options.mjs';
 import {planCapturePhotoBands} from './capture-photo-bands.mjs';
 
-async function ready() { await Promise.all([prepareCapture(), kernelsReady()]); }
+const jpegReady = async () => { if (!await compileJpegKernels()) throw wasmRequired(); };
+async function ready() { await Promise.all([prepareCapture(), kernelsReady(), jpegReady()]); }
 
 const wholeSmall = (intent, region) => (data, width, rect, offGrid, colorSpace, ...rest) => {
   if (colorSpace === 'srgb' && !rect.x && !rect.y && rect.width === width && data.length === width * rect.height * 4 &&
@@ -33,7 +36,7 @@ const photoCoder = {ready, whole: encodeCapturePhotoBytes, band: capturePhotoBan
 export const prepareCapturePhoto = ready;
 
 export function capturePhotoRunner(tools, {device = null, answerer = null}, runPhoto = null) {
-  const exact = {...exactCoderWith(tools), device, answerer};
+  const exact = {...exactCoderWith(tools), device, answerer, rectangles: captureRectangles};
   const photo = {...photoCoder, tools, device, answerer, effortCap: 4};
   return async (input, options, hooks) => {
     const fidelity = options.fidelity;

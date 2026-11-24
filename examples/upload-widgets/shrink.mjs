@@ -14,7 +14,7 @@ const STILL = /^image\/(jpeg|png|webp|heic|heif)$/;
 export function shrinker({helpers = true, maxPixels, ...preset} = {}) {
   let configured = false;
   const encoder = () => {
-    if (!configured) { configure({...(helpers && {helpers}), ...(maxPixels && {maxPixels})}); configured = true; }
+    if (!configured) { configure({...(helpers !== false && {helpers}), ...(maxPixels !== undefined && {maxPixels})}); configured = true; }
     return {encode};
   };
   // {file, result, code}: result is rapier-jxl's record when a JPEG XL file was made; code says why the original

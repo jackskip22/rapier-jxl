@@ -7,6 +7,7 @@ import {expandPhotoRegions} from './screen-photo-borders.mjs';
 import {photoCoefficientSteps} from './photo-dct.mjs';
 import {coefficientAnsSteps} from './coefficient-ans.mjs';
 import {encodeLayersSteps} from './layers-core.mjs';
+import {opaquePixels} from './lossless.mjs';
 
 function crop(data, width, region) {
   const {x, y, width: w, height: h} = region, out = new Uint8Array(w * h * 4);
@@ -30,8 +31,7 @@ export function* screenPhotoSteps({data, width, height, quality, regions: rawReg
       base[p] = data[corner]; base[p + 1] = data[corner + 1]; base[p + 2] = data[corner + 2];
     }
   }
-  let alpha = false;
-  for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) { alpha = true; break; }
+  const alpha = !opaquePixels(data);
   const exact = encodeCaptureBytes(base, width, height, {colorSpace: 'srgb', [CAPTURE_BASE]: true});
   yield 0.2;
   const coded = [], layers = [{bytes: exact}];

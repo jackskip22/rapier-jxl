@@ -3,6 +3,25 @@ import {outOfMemory, hostWords, abortError} from '../fault.mjs';
 export {abortError};
 export {PIXELS};
 export const fail = (code, message) => Object.assign(new Error(message), {code});
+const FILES = [[[0x89, 0x50, 0x4e, 0x47], 'PNG'], [[0xff, 0xd8, 0xff], 'JPEG'], [[0x47, 0x49, 0x46, 0x38], 'GIF'], [[0x52, 0x49, 0x46, 0x46], 'WebP']];
+export const filePassed = view => {
+  if (typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) return null;
+  if ((view instanceof ArrayBuffer ? view : ArrayBuffer.isView(view) ? view.buffer : null)?.detached) return null;
+  let bytes;
+  try {
+    bytes = ArrayBuffer.isView(view) ? new Uint8Array(view.buffer, view.byteOffset, Math.min(view.byteLength, 4))
+      : view instanceof ArrayBuffer ? new Uint8Array(view, 0, Math.min(view.byteLength, 4)) : null;
+  } catch { return null; }
+  const kind = bytes && FILES.find(([magic]) => magic.every((byte, i) => bytes[i] === byte))?.[1];
+  return kind ? `These are ${kind} file bytes, not pixels; pass new Blob([bytes]).` : null;
+};
+const shownQuality = options => {
+  const q = options?.quality;
+  return typeof q === 'number' || typeof q === 'string' || typeof q === 'boolean' ? `{quality: ${q}}` : '{quality}';
+};
+export const unknownOption = (key, options, what = 'option', after = '') => fail('JXL_OPTIONS', `unknown ${what}: ${String(key)}${
+  typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true ? '' : key === 'quality'
+  ? `; write fidelity: ${shownQuality(options)}` : key === 'lossless' ? "; write fidelity: 'exact'" : ''}${after}`);
 const PASS = 'pass pixels {data, width, height}, ImageData, a canvas, a bitmap, or an image file as a Blob.';
 export const unreadInput = input => {
   let element = false;
@@ -17,6 +36,11 @@ export const lostBlank = (context, data) => {
   return true;
 };
 export const LOST = "canvas lost: redraw";
+export const gpuDrawn = data => {
+  if (typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) return data;
+  if (new Uint8Array(data.buffer, data.byteOffset, data.byteLength).some(Boolean)) return data;
+  throw fail('JXL_INPUT', 'GPU canvas blank: read it in the task that draws it, or set preserveDrawingBuffer: true');
+};
 export function proveRead(context) {
   if (context?.isContextLost?.() || typeof context?.putImageData !== 'function' || typeof context.createImageData !== 'function') return;
   const half = context.getContextAttributes?.().colorType === 'float16';
@@ -34,9 +58,27 @@ export function proveRead(context) {
   finally { context.putImageData(saved, 0, 0); }
   if (!kept) throw fail('JXL_INPUT', LOST);
 }
-const KINDS = [Uint8Array, Uint8ClampedArray, Int8Array, Uint16Array, Int16Array, Uint32Array, Int32Array, Float32Array, Float64Array];
-const kindOf = view => typeof Float16Array === 'function' && view instanceof Float16Array ? Float16Array : KINDS.find(kind => view instanceof kind);
-export const plainView = view => { const kind = kindOf(view); return !kind || view.constructor === kind ? view : new kind(view.buffer, view.byteOffset, view.length); };
+const bufferLength = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get;
+let blobSize;
+export function isBlob(value) {
+  if (value === null || typeof value !== 'object') return false;
+  if (blobSize === undefined) { if (typeof Blob !== 'function') return false; blobSize = Object.getOwnPropertyDescriptor(Blob.prototype, 'size')?.get ?? null; }
+  if (!blobSize) return false;
+  try { blobSize.call(value); return true; } catch { return false; }
+}
+export function arrayBufferBytes(value) {
+  if (ArrayBuffer.isView(value)) return null;
+  try { return bufferLength.call(value); } catch { return null; }
+}
+const typed = Object.getPrototypeOf(Uint8Array.prototype), field = key => Object.getOwnPropertyDescriptor(typed, key).get;
+export const typedName = field(Symbol.toStringTag), typedFields = Object.fromEntries(['buffer', 'byteOffset', 'byteLength', 'length'].map(key => [key, field(key)]));
+const kindOf = view => { const name = typedName.call(view), kind = name && globalThis[name]; return typeof kind === 'function' ? kind : undefined; };
+export const plainView = view => {
+  const kind = kindOf(view);
+  if (!kind || view.constructor === kind) return view;
+  try { return new kind(typedFields.buffer.call(view), typedFields.byteOffset.call(view), typedFields.length.call(view)); }
+  catch { throw fail('JXL_INPUT', "ArrayBuffer: live and sized"); }
+};
 export const plainCopy = view => new (kindOf(view) ?? view.constructor)(view);
 const DECLARED = new Set(['JXL_OPTIONS', 'JXL_INPUT', 'JXL_DIMENSIONS', 'JXL_JPEG', 'JXL_DECODE', 'JXL_RECONSTRUCTION', 'JXL_TARGET',
   'JXL_PLATFORM', 'JXL_MEMORY', 'JXL_LIMIT', 'JXL_WASM', 'JXL_WEBGPU', 'JXL_WORKER',
@@ -100,7 +142,7 @@ async function blobRead(blob, signal, start, end) {
     if (stopped) read.catch(() => {});
     const buffer = await (stopped ? Promise.race([read, stopped]) : read);
     check(signal);
-    if (!(buffer instanceof ArrayBuffer) || buffer.byteLength !== part.size) throw fail('JXL_INPUT', "file changed: reselect");
+    if (arrayBufferBytes(buffer) !== part.size) throw fail('JXL_INPUT', "file changed: reselect");
     return new Uint8Array(buffer);
   } catch (cause) {
     if (isCaller(cause) || (typeof cause?.code === 'string' && cause.code.startsWith('JXL_'))) throw cause;
@@ -160,15 +202,35 @@ export function progressOf(onProgress, signal, onRejected) {
 export function object(value, name = 'Options') {
   if (value === undefined) return {};
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw fail('JXL_OPTIONS', `${name}: object`);
+  const tag = Object.prototype.toString.call(value).slice(8, -1);
+  if (tag !== 'Object') throw fail('JXL_OPTIONS', `${name}: an options object, not a ${tag}`);
   return value;
 }
-export function snapshotOptions(value, name, fields = []) {
+export const OPTION_SYMBOLS = /* @__PURE__ */ new Set([
+  Symbol.for('rapier-jxl.fit.bytes'),
+  Symbol.for('rapier-jxl.retain-input'),
+  Symbol.for('rapier-jxl.jpeg-source'),
+  Symbol.for('rapier-jxl.journal'),
+  Symbol.for('rapier-jxl.decoder.snapshot'),
+  Symbol.for('rapier-jxl.configured-webgpu'),
+  Symbol.for('rapier-jxl.groups'),
+]);
+export const optionSymbol = description => { const s = Symbol(description); OPTION_SYMBOLS.add(s); return s; };
+export function rejectOptionSymbols(value, what = 'option') {
+  for (const key of Object.getOwnPropertySymbols(value)) {
+    if (!Object.prototype.propertyIsEnumerable.call(value, key) || OPTION_SYMBOLS.has(key)) continue;
+    throw fail('JXL_OPTIONS', `unknown ${what}: ${String(key)}`);
+  }
+}
+export function snapshotOptions(value, name, fields = [], checkSymbols = name === undefined || name === 'Options' || name === 'options') {
   const supplied = object(value, name);
+  let options;
   try {
-    const options = {...supplied};
+    options = {...supplied};
     for (const key of fields) if (!Object.hasOwn(options, key) && key in supplied) options[key] = supplied[key];
-    return options;
   } catch (error) { throw callers(error); }
+  if (checkSymbols) rejectOptionSymbols(options);
+  return options;
 }
 export function snapshotArray(value, name = 'The list', exactLength, code = 'JXL_OPTIONS') {
   if (!Array.isArray(value)) throw fail(code, `${name}: array`);
@@ -209,4 +271,14 @@ export function webgpuSetting(value) {
   if (value !== undefined && value !== 'required' && value !== false)
     throw fail('JXL_OPTIONS', "webgpu: 'required', false or omitted");
   return value;
+}
+
+export function admitKeys(settings, allowed) {
+  for (const key of Object.keys(settings)) if (!allowed.includes(key)) throw fail('JXL_OPTIONS', 'unknown option: ' + key);
+}
+export function callHooks(options) {
+  const {signal, onProgress} = options;
+  admitSignal(signal);
+  if (onProgress !== undefined && typeof onProgress !== 'function') throw fail('JXL_OPTIONS', 'onProgress: function');
+  return {signal, progress: progressOf(onProgress, signal) ?? (() => {})};
 }

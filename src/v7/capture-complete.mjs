@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import './engines.mjs';
 import {capture, prepare} from './capture-complete-module.mjs';
 export {supported} from './capture-complete-module.mjs';
 export {configureDecoder} from '../shown-picture.mjs';

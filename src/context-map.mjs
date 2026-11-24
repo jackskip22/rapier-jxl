@@ -6,7 +6,7 @@ const MAP_LITERAL = uintConfig(8), MAP_LENGTH = uintConfig(4), MAP_DISTANCE = ui
 const ONE_HIST_MAP = new Uint8Array(1), TWO_HIST_MAP = new Uint8Array([1, 0]);
 const MTF_LIST = new Uint8Array(256);
 
-function mapMoveToFront(map) {
+export function mapMoveToFront(map) {
   const list = MTF_LIST, out = new Uint8Array(map.length);
   for (let i = 0; i < 256; i++) list[i] = i;
   for (let i = 0; i < map.length; i++) {

@@ -4,17 +4,25 @@ import {imageResult} from './result.mjs';
 import {DRIVE} from './drive.mjs';
 import {check, fail, snapshotOptions, progressOf, declared} from './primitives.mjs';
 import {own} from './ownership.mjs';
+import {isPlainRecord} from './records.mjs';
 import {CAPTURE_RECORD} from './capture-facts.mjs';
 import {publicVocabulary} from './encode-options.mjs';
 
 import {RESULT_REFERENCE, RAW_OPERATION, PROFILE_NAMED, DEVICE_RAN, keptOf} from './result-reference.mjs';
 export {RESULT_REFERENCE, RAW_OPERATION, resultReference, resultFacts} from './result-reference.mjs';
 
-const CALL_FIELDS = ['fidelity', 'effort', 'firstRegion', 'readAs', 'jpeg', 'webgpu', 'maxPixels', 'maxBytes', 'icc',
+const CALL_FIELDS = ['fidelity', 'effort', 'progressive', 'firstRegion', 'readAs', 'jpeg', 'webgpu', 'maxPixels', 'maxBytes', 'icc',
   'signal', 'onProgress', 'onPreview', 'exactRects', 'photoRects', 'textComplete', 'withoutText', 'outputs'];
+function snapshotFidelity(value) {
+  if (!isPlainRecord(value)) return value;
+  const fid = snapshotOptions(value, 'fidelity', [], true);
+  if (isPlainRecord(fid.quality)) fid.quality = snapshotOptions(fid.quality, 'quality', [], true);
+  return fid;
+}
 export function completionOptions(given, capture = false) {
   let options = snapshotOptions(given, undefined, [...CALL_FIELDS, 'features']);
   if ('features' in options) throw fail('JXL_OPTIONS', 'unknown option: features');
+  if ('fidelity' in options) options.fidelity = snapshotFidelity(options.fidelity);
   options = publicVocabulary(options);
   const {signal, onProgress, onPreview} = options;
   if (onProgress !== undefined && typeof onProgress !== 'function') throw fail('JXL_OPTIONS', 'onProgress: function');
@@ -30,11 +38,10 @@ export function completionOptions(given, capture = false) {
   }};
 }
 
-export const resultOperation = (raw, options) => resultOperationWith(imageResult, raw, options);
+export const resultOperation = (typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ === true) ? null : (raw, options) => resultOperationWith(imageResult, raw, options);
 export function resultOperationWith(record, raw, {format = 'jxl', fidelity: defaultFidelity = {quality: 90}, kept, capture = false, preview: previewCall, device = false} = {}) {
   const invoke = async (input, completion, helpers) => {
-    const options = completion.options;
-    const fidelity = own(options.fidelity ?? defaultFidelity), readAs = options.readAs;
+    const options = completion.options, readAs = options.readAs;
     let reference, readSpace;
     const facts = {...(kept && {kept}), ...(device && {usedWebGPU: false})};
     const preview = previewCall?.(options, () => { const {width, height, orientation} = reference ?? {}; return {width, height, orientation}; });
@@ -50,6 +57,7 @@ export function resultOperationWith(record, raw, {format = 'jxl', fidelity: defa
     try {
       const run = helpers && raw[DRIVE];
       const bytes = await (run ? run(input, options, helpers) : raw(input, options));
+      const fidelity = own(options.fidelity ?? defaultFidelity);
       check(options.signal);
       if (!reference) throw fail('JXL_INTERNAL', 'result-operation:dimensions');
       if (capture) {

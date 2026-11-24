@@ -6,8 +6,9 @@ import {screenModel} from './screen-lz77.mjs';
 import {admitOutputSize} from './admit.mjs';
 import {ALPHABET, leaf, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {writeCaptureStream} from './capture-modular-stream.mjs';
+import {planeFill} from './lossless.mjs';
 
-export {CAPTURE_FLAT, flatSamples, sharedFlatSamples, flatSampleAt, flatSampleX, flatSampleY, FLAT, screenLike, flatSurround} from './screen-samples.mjs';
+export {CAPTURE_FLAT, flatSamples, sharedFlatSamples, flatSampleAt, flatSampleX, flatSampleY, FLAT, screenLike, flatSurround, tilesFit} from './screen-samples.mjs';
 
 const screenValueAt = (rgba, i, c, shape) => rgba[i + (shape.colour === 1 && c === 1 ? 3 : c)];
 const screenPacked = (rgba, i) => (rgba[i] + rgba[i + 1] * 256 + rgba[i + 2] * 65536 + rgba[i + 3] * 16777216) >>> 0;
@@ -52,22 +53,14 @@ export function lookupPalette(table, key) {
 
 function screenFill(setup) {
   const {mode, channels, colour, index, maps} = setup;
+  if (mode === 'direct') return planeFill(setup);
+  if (mode === 'global' || mode === 'frequency') return planeFill({channels: 4, alpha: true, palette: index.colours});
   return (planes, rgba, stride, x0, y0, w, h) => {
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       const p = ((y0 + y) * stride + x0 + x) * 4, at = y * w + x;
-      if (mode === 'global' || mode === 'frequency') planes[0][at] = lookupPalette(index, screenPacked(rgba, p));
-      else if (mode === 'scalar') {
-        for (let c = 0; c < channels; c++) {
-          const value = rgba[p + (colour === 1 && c === 1 ? 3 : c)];
-          planes[c][at] = maps[c] ? maps[c][value] : value;
-        }
-      } else if (channels >= 3) {
-        const co = rgba[p] - rgba[p + 2], tmp = rgba[p + 2] + (co >> 1), cg = rgba[p + 1] - tmp;
-        planes[0][at] = tmp + (cg >> 1); planes[1][at] = co; planes[2][at] = cg;
-        if (channels === 4) planes[3][at] = rgba[p + 3];
-      } else {
-        planes[0][at] = rgba[p];
-        if (channels === 2) planes[1][at] = rgba[p + 3];
+      for (let c = 0; c < channels; c++) {
+        const value = rgba[p + (colour === 1 && c === 1 ? 3 : c)];
+        planes[c][at] = maps[c] ? maps[c][value] : value;
       }
     }
   };

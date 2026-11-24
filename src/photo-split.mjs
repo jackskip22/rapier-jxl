@@ -7,19 +7,24 @@ import {photoXYBBand, PHOTO_BAND_MARGIN} from './photo-bands.mjs';
 import {V6, SMALL_V6, smallPicture, GABORISH, uploadFlat, uploadGrain, uploadBandPicture, SMALL_PIXELS, SMALL_CLUSTERS, UPLOAD_CLUSTERS} from './photo-v6-settings.mjs';
 import {screenLike} from './screen-samples.mjs';
 import {varDCTSteps, blockContexts, acContexts, DCT8_DENSITY, seedLfSections, vdLfGroupCount} from './vardct.mjs';
-import {lfCoderFor} from './lf-coding.mjs';
+import {lfCoder, lfCoderFor} from './lf-coding.mjs';
 import {kernelHooks, ensured, missing, declined} from './kernel-hooks.mjs';
+import {arenaKernels, releaseArena} from './kernels.mjs';
+import {ARENA_BYTES} from './arena.mjs';
 import {ordersFromCounts} from './coefficient-effort.mjs';
 import {buildAnsCoding, ansGroupWriter, writeModularAnsHistograms} from './ans.mjs';
 import {TokenCounts, prefixGroupWriter, tokenCountsData, tokenCountsFrom} from './entropy.mjs';
 import {SCAN} from './dct8-contexts.mjs';
 import {GROUP_DIM} from './frame.mjs';
-import {fault, outOfMemory} from './fault.mjs';
-import {progressiveActive} from './progressive-mode.mjs';
+import {fault, outOfMemory, hostShort} from './fault.mjs';
+import {progressiveRequested} from './progressive-mode.mjs';
+import {keepsSplitTokens} from './memory-device.mjs';
+import {timed, timedSteps} from './stage-trace.mjs';
+import {shown, hasShownWatchers} from './photo-shown.mjs';
 
 const trace = label => { const t = globalThis.__jxlTrace; if (t) t.push([label, performance.now()]); };
 export const SPLIT_MIN_PIXELS = 512 * 512 + 1;
-export const splitRoute = (width, height) => width * height > 64 * 64 && !((typeof __RAPIER_JXL_PROGRESSIVE__ === 'undefined' || __RAPIER_JXL_PROGRESSIVE__ === true) && progressiveActive());
+export const splitRoute = (width, height) => width * height > 64 * 64 && !((typeof __RAPIER_JXL_PROGRESSIVE__ === 'undefined' || __RAPIER_JXL_PROGRESSIVE__ === true) && progressiveRequested());
 
 export function splitBands(height, parts, unit = GROUP_DIM) {
   const rows = Math.ceil(height / unit), count = Math.max(1, Math.min(parts, rows)), bands = [];
@@ -38,9 +43,10 @@ let splitScratch = [];
 function bandStep(message) {
   const {key, width, height, quality, data, screen, gaborish, offset, color} = message;
   const v6 = message.small ? SMALL_V6 : V6;
-  const picture = message.full && !message.upload ? {...v6, ...GABORISH} : uploadBandPicture(!!message.uploadFlat, !!message.grain, quality);
-  const image = message.image?.() ?? (gaborish ? photoXYBBand(data, width, height, quality, message.pack ? {...picture, packed: true} : picture, offset)
-    : complete(photoXYBSteps(data, width, height, quality, color ? {...v6, fast: true, ...color} : screen ? {...v6, fast: true, calibrationRow: 'screen'} : {...v6, fast: true, fastBand: true, packed: !!message.pack})));
+  const basePicture = message.full && !message.upload ? {...v6, ...GABORISH} : uploadBandPicture(!!message.uploadFlat, !!message.grain, quality);
+  const picture = gaborish && color ? {...v6, ...GABORISH, tune: basePicture.tune, calibrationRow: basePicture.calibrationRow, ...color} : basePicture;
+  const image = timed('colour-transform', () => message.image?.() ?? (gaborish ? photoXYBBand(data, width, height, quality, message.pack ? {...picture, packed: true} : picture, offset)
+    : complete(photoXYBSteps(data, width, height, quality, color ? {...v6, fast: true, ...color} : screen ? {...v6, fast: true, calibrationRow: 'screen'} : {...v6, fast: true, fastBand: true, packed: !!message.pack}))));
   const orderCounts = image.components.map(() => new Uint32Array(64));
   const dc = image.components.map(c => c.packed ? c.packed.dc : new Int16Array(c.coeffs.length / 64));
   const natural = new Uint32Array(64);
@@ -86,6 +92,7 @@ function countStep(message, into = null) {
   const state = countState(band, orders, contexts);
   const counts = into ?? new TokenCounts(contexts.contexts);
   band.tokens = []; band.state = state; band.groups = groups;
+  if (message.keep) kernelHooks.keptScope?.('enter');
   band.kept = message.keep ? [] : null;
   for (let g = 0; g < groups; g++) {
     const sink = {counts, coding: null, w: null, defer: true, keep: !!message.keep};
@@ -107,11 +114,12 @@ function countStep(message, into = null) {
 
 function writeStep(message) {
   const {key, frame} = message, band = held.get(key), model = frame ? frame.coding : message.model, sections = [], transfer = [];
+  const bare = (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true);
   let groupWriter = null;
-  const writer = () => groupWriter ||= model.kind === 'prefix' ? prefixGroupWriter(model) : ansGroupWriter(model);
-  const coding = {model, write: (w, ctx, value) => writer().write(w, ctx, value), writeTokens: (w, ctxs, tokens, n) => writer().writeTokens(w, ctxs, tokens, n),
+  const writer = bare ? null : () => groupWriter ||= model.kind === 'prefix' ? prefixGroupWriter(model) : ansGroupWriter(model);
+  const coding = bare ? {model, flush: model.kind !== 'prefix'} : {model, write: (w, ctx, value) => writer().write(w, ctx, value), writeTokens: (w, ctxs, tokens, n) => writer().writeTokens(w, ctxs, tokens, n),
     flush: model.kind === 'prefix' ? undefined : w => writer().flush(w), reset: () => groupWriter?.reset?.()};
-  if (frame) {
+  if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && frame) {
     const contexts = splitContexts(frame.contexts), {image, width, height} = band;
     band.state = {groupsX: Math.ceil(width / GROUP_DIM), contexts, ...splitBuckets(band, contexts), nzeros: [0, 1, 2].map(() => new Int32Array(32 * 32)),
       xsizeBlocks: Math.ceil(width / 8), ysizeBlocks: Math.ceil(height / 8), comps: image.components, grey: false, orders: frame.orders,
@@ -134,6 +142,7 @@ function writeStep(message) {
           const bytes = written.bytes.slice(0, written.at + 8);
           sections.push({bytes, at: written.at, pending: written.pending, acc: written.acc}); transfer.push(bytes.buffer);
         }
+        if (!message.keep && band.kept) { band.kept[g] = null; if (done === 2) band.kept[g + 1] = null; }
         if (done === 2) g++;
         continue;
       }
@@ -141,21 +150,63 @@ function writeStep(message) {
     try {
       const byKernels = (kernelHooks.acGroup ?? ensured().acGroup ?? missing())(band.state, g, 0, {counts: null, coding, w, kept: band.kept?.[g]}, DCT8_DENSITY);
       if (byKernels === 2) {}
-      else if (byKernels) coding.flush?.(w);
+      else if (!bare && byKernels) coding.flush?.(w);
       else throw declined('acGroup');
     } finally { coding.reset?.(); }
+    if (!message.keep && band.kept) band.kept[g] = null;
     const bytes = w.bytes.slice(0, w.at + 8);
     sections.push({bytes, at: w.at, pending: w.pending, acc: w.acc}); transfer.push(bytes.buffer);
   }
   if (band.image) packedOnly(band.image);
   if (frame && !message.keep) band.image = null;
+  if (!message.keep) {
+    band.kept = null;
+    if (!held.size) kernelHooks.keptScope?.('rewind');
+  }
   return [{split: 'write', key, sections}, transfer];
 }
 
 let dcStandIn = null;
 export const dcStep = message => complete(dcSteps(message));
-function* dcSteps({key, image, groups, lf = 3, ans = true}) {
-  const count = vdLfGroupCount(image), lfCoder = lf ? lfCoderFor(lf) : undefined, mine = groups ?? Array.from({length: count}, (_, g) => g);
+function selectedDcCoder(effort, rung, ordinary = true) {
+  const incumbent = lfCoderFor(effort), challenger = lfCoder(rung);
+  const dcSteps = function* (w, planes, plain, kernels) {
+    const base = new BitWriter(256);
+    let shared;
+    const once = dst => {
+      if (!shared) { shared = new BitWriter(256); plain(shared); }
+      dst.append(shared);
+    };
+    if (ordinary) yield* incumbent.dcSteps(base, planes, once, kernels);
+    else once(base);
+    let best = base;
+    try {
+      const learned = new BitWriter(256);
+      yield* challenger.dcSteps(learned, planes, once, kernels);
+      if (learned.bitLength < base.bitLength) best = learned;
+    } catch (error) { if (!candidateSizeFailure(error)) throw error; }
+    w.append(best);
+  };
+  return {...incumbent, dcSteps, dc: (...args) => complete(dcSteps(...args))};
+}
+let raisedLf, selectedLf, selectedPlain;
+export const raisedPlanLf = () => raisedLf ??= selectedDcCoder(6, 'rich');
+function* dcSteps({key, image, groups, lf = 3, ans = true, lfGroup = -1}) {
+  const count = vdLfGroupCount(image), mine = groups ?? Array.from({length: count}, (_, g) => g);
+  const enabled = !(typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) &&
+    !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) &&
+    (lf === 3 || lf === null);
+  const picked = enabled && Array.isArray(lfGroup) ? mine.filter(g => lfGroup.includes(g)) : null;
+  const chosen = enabled && (picked ? picked.length > 0 : lfGroup >= 0 && mine.includes(lfGroup));
+  if (chosen && mine.length > (picked?.length ?? 1)) {
+    const selected = picked ?? [lfGroup];
+    const rest = yield* dcSteps({key, image, groups: mine.filter(g => !selected.includes(g)), lf, ans});
+    const kept = yield* dcSteps({key, image, groups: selected, lf, ans, lfGroup});
+    return {...rest, sections: [...rest.sections, ...kept.sections], modular16bit: rest.modular16bit && kept.modular16bit};
+  }
+  if (chosen && lf === 3) selectedLf ??= selectedDcCoder(3, 'quick');
+  else if (chosen) selectedPlain ??= selectedDcCoder(3, 'quick', false);
+  const lfCoder = chosen ? (lf ? selectedLf : selectedPlain) : lf ? lfCoderFor(lf) : undefined;
   const plan = {coding: () => ({bits: 0}), ...(ans ? {modularAns: writeModularAnsHistograms} : {}), ...(lfCoder ? {lfCoder} : {}), fast: true};
   const sectionKey = lfCoder ? 'lfSections' : ans ? 'ansDcSections' : 'dcSections';
   dcStandIn ??= new TokenCounts(blockContexts(new Int32Array(0), 0, false).contexts);
@@ -175,12 +226,12 @@ function* dcSteps({key, image, groups, lf = 3, ans = true}) {
 }
 
 const arenaDcStep = function arenaDcStep(message) {
-  const kernels = message.arena && !kernelHooks.entropy ? kernelHooks.arena?.lend() : null;
+  const kernels = message.arena && !kernelHooks.entropy ? arenaKernels?.(ARENA_BYTES) : null;
   if (!kernels) return dcStep(message);
   kernelHooks.entropy = () => kernels;
   try { return dcStep(message); }
   catch (error) { if (!outOfMemory(error) && error?.code !== 'JXL_MEMORY') throw error; }
-  finally { kernelHooks.entropy = null; kernelHooks.arena.release(); }
+  finally { kernelHooks.entropy = null; releaseArena?.(); }
   return dcStep(message);
 };
 
@@ -201,7 +252,7 @@ function serveOne(message) {
     if (message.split === 'count') return countStep(message);
     if (message.split === 'write') return writeStep(message);
     if (message.split === 'dc') { const reply = arenaDcStep(message); return [reply, reply.sections.map(s => s.bytes.buffer)]; }
-    if (message.split === 'drop') { held.delete(message.key); return [{split: 'drop', key: message.key}, []]; }
+    if (message.split === 'drop') { held.delete(message.key); if (!held.size) kernelHooks.keptScope?.('drop'); return [{split: 'drop', key: message.key}, []]; }
     throw fault('JXL_INTERNAL', 'photo-split:message');
   } catch (error) {
     held.delete(message?.key);
@@ -277,8 +328,10 @@ function splitFrame(image, orders, counts, coding, dcGroups, {lf, clusters}) {
 }
 
 const SPLIT_BAND_BYTES = 8 << 20, SPLIT_KEEP_PIXELS = 5 << 20;
-export function* photoSplitSteps(data, width, height, quality, {gaborish = false, uploadFlat: flat, grain} = {}) {
+export function* photoSplitSteps(data, width, height, quality, {gaborish = false, uploadFlat: flat, grain, color, screen} = {}) {
   const split = splitStart(width, height, flat, grain);
+  split.color = color;
+  if (screen !== undefined) split.screen = screen;
   try {
     for (let k = 0; k < split.bands.length; k++) { splitBand(split, data, quality, gaborish, k); trace('split: band ' + k); yield (k + 1) / split.parts; }
     return yield* splitRest(split, data);
@@ -313,19 +366,20 @@ function* splitRest(split, data) {
   const {width, height, bands, keys, parts} = split;
   if (!data && split.done.some(reply => reply.meta.alpha)) throw fault('JXL_INTERNAL', 'photo-split:alpha-1');
   const {image, orders} = splitImage(split.done, width, height, data);
+  const picture = hasShownWatchers() ? observedImage(split, image) : null;
   trace('split: image');
   split.done = [];
   const counts = new TokenCounts(blockContexts(new Int32Array(0), 0, false).contexts);
-  const keep = width * height <= SPLIT_KEEP_PIXELS;
-  for (let k = 0; k < bands.length; k++) { countStep({key: keys[k], orders, keep}, counts); trace('split: count ' + k); yield (bands.length + k + 1) / parts; }
-  const shape = splitShape(width, height), coding = splitCoding(counts, shape);
+  const keep = !journaling() && keepsSplitTokens(width * height, 0, SPLIT_KEEP_PIXELS);
+  for (let k = 0; k < bands.length; k++) { timed('coefficient-search', () => countStep({key: keys[k], orders, keep}, counts)); trace('split: count ' + k); yield (bands.length + k + 1) / parts; }
+  const shape = splitShape(width, height), coding = timed('coefficient-search', () => splitCoding(counts, shape));
   trace('split: coding');
-  const reply = dcStep({image, lf: shape.lf});
+  const reply = timed('writer', () => dcStep({image, lf: shape.lf}));
   trace('split: dc');
   const dcGroups = {sections: [], modular16bit: reply.modular16bit};
   for (const {g, ...section} of reply.sections) dcGroups.sections[g] = section;
   const results = [];
-  for (let k = 0; k < bands.length; k++) { results.push(...writeStep({key: keys[k], model: coding.model})[0].sections); trace('split: write ' + k); yield (2 * bands.length + k + 1) / parts; }
+  for (let k = 0; k < bands.length; k++) { results.push(...timed('writer', () => writeStep({key: keys[k], model: coding.model})[0].sections)); trace('split: write ' + k); yield (2 * bands.length + k + 1) / parts; }
   splitScratch = [];
   const steps = splitFrame(image, orders, counts, coding, dcGroups, shape);
   let step, answer, answered = false;
@@ -337,11 +391,11 @@ function* splitRest(split, data) {
   }
   if (!answered) throw fault('JXL_INTERNAL', 'photo-split:ac-1');
   trace('split: frame');
-  return step.value;
+  return shown(step.value, picture);
 }
-export function splitEnd(split) { for (const key of split.keys) held.delete(key); split.done = []; splitScratch = []; }
+export function splitEnd(split) { for (const key of split.keys) held.delete(key); if (!held.size) kernelHooks.keptScope?.('rewind'); split.done = []; splitScratch = []; }
 
-export function* photoSplitCandidates(data, width, height, quality, clusters, {gaborish = false, uploadFlat: flat, grain, observe = null, screen, color} = {}) {
+export function* photoSplitCandidates(data, width, height, quality, clusters, {gaborish = false, uploadFlat: flat, grain, observe = null, screen, color, lfGroup} = {}) {
   const split = splitStart(width, height, flat, grain), plans = clusters.map(plan => ({...plan}));
   split.color = color;
   split.parts += plans.length * split.bands.length;
@@ -354,7 +408,7 @@ export function* photoSplitCandidates(data, width, height, quality, clusters, {g
       });
     else [split.screen, split.uploadFlat, split.grain] = [screen, split.uploadFlat ?? false, split.grain ?? false];
     for (let k = 0; k < split.bands.length; k++) {
-      const image = !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && split.color ? yield* tileRows(split, data, quality, k) : undefined;
+      const image = !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && split.color && !gaborish ? yield* tileRows(split, data, quality, k) : undefined;
       split.done[k] = yield* unit('band', () => { splitBand(split, data, quality, gaborish, k, image); return split.done[k]; });
       held.set(split.keys[k], yield* unit('band-levels', () => {
         if (!held.has(split.keys[k])) { const done = split.done; split.done = []; try { splitBand(split, data, quality, gaborish, k, image); } finally { split.done = done; } }
@@ -362,7 +416,7 @@ export function* photoSplitCandidates(data, width, height, quality, clusters, {g
       }, undefined, true, true));
       const reply = yield (k + 1) / split.parts; hurry ||= !!reply;
     }
-    return yield* splitCandidateRest(split, data, plans, hurry, observe);
+    return yield* splitCandidateRest(split, data, plans, hurry, observe, lfGroup);
   } finally { splitEnd(split); }
 }
 
@@ -445,20 +499,21 @@ function observedImage(split, image) {
   }};
 }
 
-function* splitCandidateRest(split, data, clusters, hurry = false, observe = null) {
+function* splitCandidateRest(split, data, clusters, hurry = false, observe = null, lfGroup) {
   const {width, height, bands, keys, parts} = split;
   const {image, orders} = yield* unit('split-image', () => {
     if (!data && split.done.some(reply => reply.meta.alpha)) throw fault('JXL_INTERNAL', 'photo-split:alpha-2');
     return splitImage(split.done, width, height, data);
   });
-  if (observe) observe(observedImage(split, image));
+  const picture = observe || hasShownWatchers() ? observedImage(split, image) : null;
+  observe?.(picture);
   split.done = [];
   let counts = new TokenCounts(blockContexts(new Int32Array(0), 0, false).contexts);
-  const keepTokens = width * height <= SPLIT_KEEP_PIXELS;
+  const keepTokens = !journaling() && keepsSplitTokens(width * height, 0, SPLIT_KEEP_PIXELS);
   const saved = yield* stage('split-counts', function* () {
     let last = null;
     for (let k = 0; k < bands.length; k++) {
-      const row = yield* carried('count', () => { if (last) { counts = tokenCountsFrom(last); last = null; } countStep({key: keys[k], orders, keep: keepTokens}, counts); return null; },
+      const row = yield* carried('count', () => { if (last) { counts = tokenCountsFrom(last); last = null; } timed('coefficient-search', () => countStep({key: keys[k], orders, keep: keepTokens}, counts)); return null; },
         () => tokenCountsData(counts));
       if (row !== null && row !== PASSED) last = row;
       const reply = yield (bands.length + k + 1) / parts; hurry ||= !!reply;
@@ -474,7 +529,7 @@ function* splitCandidateRest(split, data, clusters, hurry = false, observe = nul
   }
   const dcGroups = {sections: [], modular16bit: true};
   for (let g = 0, count = vdLfGroupCount(image); g < count; g++) {
-    const reply = yield* stage('split-dc', () => dcSteps({image: {...image, components: image.components.map(c => ({...c}))}, groups: [g], lf: shape.lf}));
+    const reply = yield* stage('split-dc', () => timedSteps('writer', dcSteps({image: {...image, components: image.components.map(c => ({...c}))}, groups: [g], lf: shape.lf, lfGroup})));
     dcGroups.modular16bit &&= reply.modular16bit;
     for (const {g: at, ...section} of reply.sections) dcGroups.sections[at] = section;
   }
@@ -493,9 +548,9 @@ function* splitCandidateRest(split, data, clusters, hurry = false, observe = nul
       }
       const dc = plans[p].lf === 3 ? dcLf3 : dcGroups;
       const reused = ac; ac = null;
-      const coding = reused ? reused.coding : yield* (mapFallback ? mapCodingSteps(counts, plans[p], mapFallback) : buildAnsCoding.steps(counts, splitOptions(plans[p]))), written = reused ? reused.written : [];
+      const coding = reused ? reused.coding : yield* timedSteps('coefficient-search', mapFallback ? mapCodingSteps(counts, plans[p], mapFallback) : buildAnsCoding.steps(counts, splitOptions(plans[p]))), written = reused ? reused.written : [];
       for (let k = 0; !reused && k < bands.length; k++) {
-        written.push(yield* unit('write', () => writeStep({key: keys[k], model: coding.model, keep: furtherAc(plans, p), orders})[0].sections, undefined, false, true));
+        written.push(yield* unit('write', () => timed('writer', () => writeStep({key: keys[k], model: coding.model, keep: furtherAc(plans, p), orders})[0].sections), undefined, false, true));
         atYield = true;
         const reply = yield ((2 + p) * bands.length + k + 1) / parts;
         atYield = false; hurry ||= !!reply;
@@ -509,17 +564,49 @@ function* splitCandidateRest(split, data, clusters, hurry = false, observe = nul
       if (!best || bytes.length < best.length) best = bytes;
       if (reuseNext) ac = {coding, written};
     } catch (error) {
-      if (!atYield && best && candidateSizeFailure(error)) return best;
+      if (!atYield && best && candidateSizeFailure(error)) return shown(best, picture);
       throw error;
     }
-    if (hurry) return best;
+    if (hurry) return shown(best, picture);
   }
-  return best;
+  return shown(best, picture);
 }
-const candidateSizeFailure = error => error?.code === 'JXL_SIZE' || error?.code === 'JXL_MEMORY' ||
-  outOfMemory(error);
+const candidateSizeFailure = error => (error?.code === 'JXL_SIZE' || error?.code === 'JXL_MEMORY') && !hostShort(error);
 
 let serial = 0, tickets = 0;
+const SAMPLE_ROWS = 32;
+export const plainSampleSmaller = (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) ? null : (data, width, height, quality, filteredQuality) => {
+  const flat = uploadFlat(data, width, height), grain = !flat && uploadGrain(data, width, height), stride = Math.ceil(width / 8);
+  const zig = v => v < 0 ? -2 * v - 1 : 2 * v;
+  const price = (q, gaborish) => {
+    const margin = gaborish ? PHOTO_BAND_MARGIN : 0, keys = [], done = [], sums = [0, 1, 2].map(() => new Uint32Array(64));
+    try {
+      for (const at of [1 / 6, 1 / 2, 5 / 6]) {
+        const top = Math.max(0, Math.min(height - SAMPLE_ROWS, Math.round((height * at - SAMPLE_ROWS / 2) / 8) * 8));
+        const from = Math.max(0, top - margin), to = Math.min(height, top + SAMPLE_ROWS + margin), key = ++serial + ':s';
+        keys.push(key);
+        const r = bandStep({key, width, height: SAMPLE_ROWS, quality: q, data: data.subarray(from * width * 4, to * width * 4),
+          offset: top - from, screen: false, gaborish, uploadFlat: flat, grain, pack: true, small: false})[0];
+        done.push(r);
+        sums.forEach((s, c) => { for (let k = 1; k < 64; k++) s[k] += r.orderCounts[c][k]; });
+      }
+      const orders = ordersFromCounts(sums, 8, true, stride * 12), side = new TokenCounts(4);
+      const counts = new TokenCounts((dcStandIn ??= new TokenCounts(blockContexts(new Int32Array(0), 0, false).contexts)).contexts);
+      for (const key of keys) countStep({key, orders}, counts);
+      for (const {dc, cfl} of done) {
+        dc.forEach((p, c) => {
+          for (let r = 0, i = 0; r < 4; r++) for (let x = 0; x < stride; x++, i++)
+            side.add(c, zig(p[i] - (r && x ? p[i - 1] + p[i - stride] >> 1 : x ? p[i - 1] : r ? p[i - stride] : 0)));
+        });
+        for (const a of [cfl.x, cfl.b]) for (const v of a) side.add(3, zig(v));
+      }
+      let bits = 0;
+      for (const s of [counts, side]) for (let c = 0; c < s.contexts; c++) if (s.totals[c]) bits += s.cost([c]);
+      return bits;
+    } finally { kernelHooks.acDeferred?.(); for (const key of keys) held.delete(key); }
+  };
+  return price(quality, false) <= price(filteredQuality, true);
+};
 export const splitIds = () => ({id: ++serial, ticket: () => ++tickets});
 export const splitAsker = (helpers, serve, issued) => (w, message, key, transfer = []) => {
   if (key !== undefined) message.key = key;
@@ -559,7 +646,7 @@ export function encodeSplitCandidates(data, width, height, quality, helpers, clu
     return encodeSplitUsing(pixels, width, height, quality, helpers, options, clusters.map(plan => ({...plan})));
   }
 }
-async function encodeSplitUsing(data, width, height, quality, helpers, {signal, gaborish = false, screen: known, uploadFlat: knownFlat, grain: knownGrain, opaque = false, arena = false} = {}, extraClusters = []) {
+async function encodeSplitUsing(data, width, height, quality, helpers, {signal, gaborish = false, color, screen: known, uploadFlat: knownFlat, grain: knownGrain, opaque = false, arena = false, lfGroup} = {}, extraClusters = []) {
   const bands = splitBands(height, helpers.length + 1), id = ++serial;
   const screen = known ?? screenLike(data, width, height);
   const flat = gaborish && (knownFlat ?? uploadFlat(data, width, height));
@@ -579,20 +666,21 @@ async function encodeSplitUsing(data, width, height, quality, helpers, {signal, 
     const first = bands.map((band, k) => {
       if (!k) return null;
       const {pixels: view, offset} = rows(band), pixels = shared ? view : bandCopy(view);
-      const reply = ask(k, {split: 'band', width, height: band.height, quality, data: pixels, offset, screen, gaborish, uploadFlat: flat, grain, pack: true, giveBack: !shared, small: smallPicture(width, height)}, shared ? [] : [pixels.buffer])
+      const reply = ask(k, {split: 'band', width, height: band.height, quality, data: pixels, offset, screen, gaborish, color, uploadFlat: flat, grain, pack: true, giveBack: !shared, small: smallPicture(width, height)}, shared ? [] : [pixels.buffer])
         .then(answer => { bandReturned(answer); return answer; });
       reply.catch(() => {});
       return reply;
     });
     const own = rows(bands[0]);
-    first[0] = ask(0, {split: 'band', width, height: bands[0].height, quality, data: own.pixels, offset: own.offset, screen, gaborish, uploadFlat: flat, grain, pack: true, small: smallPicture(width, height)});
+    first[0] = ask(0, {split: 'band', width, height: bands[0].height, quality, data: own.pixels, offset: own.offset, screen, gaborish, color, uploadFlat: flat, grain, pack: true, small: smallPicture(width, height)});
     mark('own band');
     const done = await Promise.all(first);
     mark('bands');
     signal?.throwIfAborted();
     if (opaque && done.some(reply => reply.meta.alpha)) throw Object.assign(new Error('band: alpha'), {alpha: true});
     const {image, orders} = splitImage(done, width, height, data);
-    const second = bands.map((_, k) => k ? ask(k, {split: 'count', orders}) : null);
+    const keepTokens = keepsSplitTokens(width * height, helpers.length, SPLIT_KEEP_PIXELS);
+    const second = bands.map((_, k) => k ? ask(k, {split: 'count', orders, keep: keepTokens}) : null);
     let shape = splitShape(width, height), mapFallback = null;
     if (extraClusters.length === 1 && shape.clusters.mapLz === false && extraClusters[0].mapLz === true && sameClusters(shape.clusters, {...extraClusters[0], mapLz: false})) {
       mapFallback = shape; shape = {...shape, clusters: {...shape.clusters, mapLz: true}}; extraClusters = [];
@@ -601,9 +689,9 @@ async function encodeSplitUsing(data, width, height, quality, helpers, {signal, 
       dcCount = vdLfGroupCount(image), writers = Math.max(1, bands.length - 1), dcImage = {...image, alpha: null};
     const dcOf = slot => Array.from({length: dcCount}, (_, g) => g).filter(g => g % (writers + 1) === slot), dcHere = bands.length > 1 ? dcOf(writers) : [];
     const dcWriters = bands.length > 1
-      ? Array.from({length: writers}, (_, h) => dcOf(h)).flatMap((groups, h) => groups.length ? [ask(h + 1, {split: 'dc', image: dcImage, groups, lf: shape.lf, arena})] : [])
-      : [Promise.resolve(dcStep({image, lf: shape.lf}))];
-    second[0] = ask(0, {split: 'count', orders});
+      ? Array.from({length: writers}, (_, h) => dcOf(h)).flatMap((groups, h) => groups.length ? [ask(h + 1, {split: 'dc', image: dcImage, groups, lf: shape.lf, arena, lfGroup})] : [])
+      : [Promise.resolve(dcStep({image, lf: shape.lf, lfGroup}))];
+    second[0] = ask(0, {split: 'count', orders, keep: keepTokens});
     mark('own count');
     const counted = await Promise.all(second);
     mark('counts');
@@ -618,7 +706,7 @@ async function encodeSplitUsing(data, width, height, quality, helpers, {signal, 
     third[0] = ask(0, {split: 'write', model: coding.model, keep});
     mark('own write');
     if (dcHere.length) globalThis.__jxlTrace?.push(['split: ' + dcHere.length + ' DC groups here', performance.now()]);
-    if (dcHere.length) dcWriters.push(Promise.resolve(dcStep({image: {...dcImage, components: dcImage.components.map(c => ({...c}))}, groups: dcHere, lf: shape.lf})));
+    if (dcHere.length) dcWriters.push(Promise.resolve(dcStep({image: {...dcImage, components: dcImage.components.map(c => ({...c}))}, groups: dcHere, lf: shape.lf, lfGroup})));
     const dcReplies = await Promise.all(dcWriters), dcGroups = {sections: [], modular16bit: dcReplies.every(reply => reply.modular16bit)};
     for (const reply of dcReplies) for (const {g, ...section} of reply.sections) dcGroups.sections[g] = section;
     mark('dc');
@@ -683,4 +771,3 @@ async function encodeSplitUsing(data, width, height, quality, helpers, {signal, 
     throw error;
   }
 }
-

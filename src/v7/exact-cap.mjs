@@ -37,7 +37,7 @@ export async function smallExactBeside(bytes, input, effort, exactAt) {
   let best = first.length < bytes.length ? first : null;
   if (effort > 1 && first.length <= bytes.length * SMALL_GATE) {
     const asked = await exactAt(effort);
-    if (asked.length < (best ?? bytes).length) best = asked;
+    if (asked.length < bytes.length && asked.length <= (best ?? bytes).length) best = asked;
   }
   return best;
 }

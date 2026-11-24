@@ -1,5 +1,4 @@
 // Rapier's JPEG XL encoder: lossless pictures. MIT (images/jxl/LICENSE).
-import {outOfMemory} from './fault.mjs';
 import {kernelHooks, ensured, missing, declined} from './kernel-hooks.mjs';
 import {wasmRequired} from './capture-wasm-error.mjs';
 import {BitWriter, complete, part} from './bits.mjs';
@@ -8,7 +7,7 @@ import {writeImageHeader} from './icc-write.mjs';
 import {buildCode, writePrefixCode} from './prefix.mjs';
 import {AVERAGE_PREDICTOR, GRADIENT_PREDICTOR, ALPHABET, RESIDUAL_CONFIG, leaf, channelTree, streamTree, writeTree, writeModularHeader, writeChannelHistograms} from './modular.mjs';
 import {codeChannel} from './modular-channel.mjs';
-import {captureNativeFill, captureDistinctWords, captureNativeShape, captureWordsOr, INTEGER_WORDS} from './capture-kernels.mjs';
+import {captureNativeFill, captureDistinctWords, captureNativeShape, captureWordsOr, captureScanColours, INTEGER_WORDS} from './capture-kernels.mjs';
 import {losslessCoding, losslessPayloadBits} from './lossless-coding.mjs';
 import {admitSampleFormat} from './admit-samples.mjs';
 import {halfWords} from './half-samples.mjs';
@@ -39,7 +38,54 @@ export function inspectPixels(rgba, width, height, {palette: wantPalette = true,
     if (!samples && (rgba instanceof Uint16Array || rgba instanceof Float32Array)) samples = admitSampleFormat(rgba, options);
     if (samples) return inspectNativePixels(rgba, width, height, samples, wantPalette);
   }
-  const pixels = width * height, scan = shapeScan(pixels, {palette: wantPalette, opacity}, shapeFloors.get(rgba));
+  const pixels = width * height, floor = shapeFloors.get(rgba);
+  if (pixels > 0 && wantPalette && (rgba instanceof Uint8Array || rgba instanceof Uint8ClampedArray) && rgba.length >= pixels * 4) {
+    const colours = captureScanColours(rgba, width, height, MAX_PALETTE + 1);
+    if (colours !== undefined) {
+      if (colours === null) {
+        const allOpaque = opaquePixels(rgba, 0, pixels * 4);
+        if (allOpaque) {
+          const opaque = !floor?.alpha, alpha = !opaque;
+          return {colour: 3, alpha, channels: 3 + (alpha ? 1 : 0), palette: null};
+        }
+        if (opacity) {
+          let grey = floor?.colour !== 3;
+          for (let i = 0, end = pixels * 4; grey && i < end; i += 4)
+            if (rgba[i] !== rgba[i + 1] || rgba[i] !== rgba[i + 2]) grey = false;
+          const colour = grey ? 1 : 3;
+          return {colour, alpha: true, channels: colour + 1, palette: null};
+        }
+      } else {
+        let allOpaque = true, allGrey = true;
+        for (let i = 0; i < colours.length; i++) {
+          const w = colours[i];
+          if ((w >>> 24) !== 255) allOpaque = false;
+          if ((w & 255) !== ((w >>> 8) & 255) || (w & 255) !== ((w >>> 16) & 255)) allGrey = false;
+        }
+        let grey, opaque;
+        if (opacity || allOpaque || allGrey || floor?.colour === 3) {
+          grey = floor?.colour !== 3 && allGrey;
+          opaque = !floor?.alpha && allOpaque;
+        } else {
+          const s = shapeScan(pixels, {palette: false, opacity: false}, floor);
+          colourPass(s, rgba, 0, pixels);
+          grey = s.grey; opaque = s.opaque;
+        }
+        const alpha = !opaque, entries = [], dedup = !allOpaque && opaque ? new Set() : null;
+        let tooMany = false;
+        for (let i = 0; i < colours.length; i++) {
+          const w = colours[i];
+          const k = grey ? (alpha ? (w & 255) + ((w >>> 24) << 8) : w & 255) : (alpha ? w >>> 0 : w & 0xffffff);
+          if (k === 0 || dedup?.has(k)) continue;
+          dedup?.add(k);
+          entries.push(k);
+          if (entries.length >= MAX_PALETTE) { tooMany = true; break; }
+        }
+        return shapeResult({grey, opaque, wantPalette: true, tooMany, entries});
+      }
+    }
+  }
+  const scan = shapeScan(pixels, {palette: wantPalette, opacity}, floor);
   shapeScanPixels(scan, rgba, 0, pixels);
   return shapeResult(scan);
 }
@@ -207,8 +253,9 @@ export function* losslessSteps(rgba, width, height, options = {}) {
   if (lattice && (lattice.rctType !== 0 && samples.exponentBits || lattice.shifts.some(Boolean))) candidates.push({...shape, lattice});
   for (let i = 0; i < candidates.length; i++) {
     try {
-      const bytes = yield* part(planSteps(rgba, width, height, candidates[i], colorSpace, rct, samples, analysis, options.units && journaling()), i, candidates.length);
-      if (!best || bytes.length < best.length) best = bytes;
+      const lim = best ? Math.min(options.limit || Infinity, best.length) : options.limit;
+      const bytes = yield* part(planSteps(rgba, width, height, candidates[i], colorSpace, rct, samples, analysis, options.units && journaling(), lim), i, candidates.length);
+      if (bytes && (!best || bytes.length < best.length)) best = bytes;
     } catch (error) { if (error.code !== 'JXL_SIZE') throw error; oversized = error; }
   }
   if (chan && best && options.deep && options.effort >= 3) {
@@ -217,12 +264,12 @@ export function* losslessSteps(rgba, width, height, options = {}) {
       if (candidate && candidate.length < best.length) best = candidate;
     }
   }
-  if (!best) throw oversized;
+  if (!best) { if (options.limit > 0 && !oversized) return null; throw oversized; }
   return best;
 }
 
 const UNIT_GROUPS = 2;
-function* planSteps(rgba, width, height, shape, colorSpace, rct, samples, analysis, units = false) {
+function* planSteps(rgba, width, height, shape, colorSpace, rct, samples, analysis, units = false, limit = 0) {
   const {channels, alpha, palette, chan, lattice} = shape;
   const layout = groupLayout(width, height), groups = layout.groupsX * layout.groupsY;
   const tabled = chan ? chan.flatMap((table, c) => table ? [c] : []) : [], metaCount = tabled.length;
@@ -401,6 +448,7 @@ function* planSteps(rgba, width, height, shape, colorSpace, rct, samples, analys
       const candidate = prepare(modelFreqs[i], leaves), bytes = size(candidate, grouped[i]);
       if (bytes < least) { plan = candidate; least = bytes; }
     });
+    if (limit > 0 && least >= limit) return null;
   } else plan = prepare(freqs, leaves);
   const {header, global, written} = plan, write = planGroup(written, rct);
   if (analysis && plan.direct) analysis.direct = plan.direct;
@@ -429,7 +477,7 @@ export function* nativeSteps(data, width, height, {samples, quality = 100, effor
   if (half) { if (floor) shapeFloors.set(half, floor); data = half; samples = {...samples, sampleFormat: 'float16', bitDepth: 16, exponentBits: 5}; }
   const choices = [{samples, effort, deep}];
   if (effort >= 2 && !samples.exponentBits) choices.push({samples, effort, deep, rct: {type: 0}});
-  if (quality < 100) {
+  if (quality < 100 && !(samples.alphaPremultiplied && !samples.exponentBits)) {
     const precision = samples.exponentBits ? samples.bitDepth - samples.exponentBits - 1 : samples.bitDepth - 1;
     const drop = Math.floor((100 - quality) * precision / 100);
     if (drop) {
@@ -452,7 +500,7 @@ export function* nativeSteps(data, width, height, {samples, quality = 100, effor
       if (!best || step.value.length < best.length) { best = step.value; winner = i; }
       if (hurried) { if (quality < 100) report?.({kept: choices[winner].samples.drop ? 'lossy' : 'pixels', measurements: []}); return best; }
     } catch (error) {
-      if (error.code !== 'JXL_SIZE' && !outOfMemory(error)) throw error;
+      if (error.code !== 'JXL_SIZE') throw error;
       failure = error;
     }
   }

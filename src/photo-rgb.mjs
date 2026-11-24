@@ -5,7 +5,7 @@ import {rgbCoefficientSteps, photoCoefficientSteps, photoQualityStep, areaFieldB
 import {quantFieldValue, quantFieldBase} from './vardct-planes.mjs';
 import {fixedStrategyImage} from './varblock-core.mjs';
 import {plainLayout, planeLayoutSteps as layoutImage} from './photo-plane-levels.mjs';
-import {photoMeasuredSteps} from './photo-measured-steps.mjs';
+import {photoMeasuredSteps, spannedSteps} from './photo-measured-steps.mjs';
 import {gcPlaneBound} from './gpu-arithmetic.mjs';
 import {qualitySteps} from './photo-quality-search.mjs';
 import {cpuMeasure} from './photo-measure.mjs';
@@ -271,9 +271,6 @@ export function* regionPhotoFrameSteps(rows, width, height, options) {
   check(signal);
   if (step.done && guard.complete()) { photoAdmission?.record(step.value, true, guard.measurements()); return step.value; }
   const fallbackGuard = newGuard();
-  const fallback = pageFrameSteps(rows, width, height, {...frame, ycbcr, crops: photoCrops, observeBand: observe(fallbackGuard)});
-  try {
-    while (!(step = fallback.next(reply)).done) reply = yield typeof step.value === 'number' ? 0.95 + step.value * 0.05 : step.value;
-    check(signal); photoAdmission?.record(step.value, fallbackGuard.complete(), fallbackGuard.measurements()); return step.value;
-  } finally { fallback.return?.(); }
+  const bytes = yield* spannedSteps(pageFrameSteps(rows, width, height, {...frame, ycbcr, crops: photoCrops, observeBand: observe(fallbackGuard)}), 0.95, 1);
+  check(signal); photoAdmission?.record(bytes, fallbackGuard.complete(), fallbackGuard.measurements()); return bytes;
 }

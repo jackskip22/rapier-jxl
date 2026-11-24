@@ -202,3 +202,209 @@ export function iccInverse(requireValue, limit) {
   }
   return {decode, owner: {start, part, require: requireValue}};
 }
+
+const ICC_PART = 65536;
+function iccVarint(out, value) {
+  do { const byte = value % 128; value = Math.floor(value / 128); out.push(byte + (value ? 128 : 0)); } while (value);
+}
+function iccWord(read, at, width = 4) {
+  let value = 0;
+  for (let b = 0; b < width; b++) value = value * 256 + read(at + b);
+  return value;
+}
+function iccPlan(size, commands, header, runs) {
+  const preamble = [];
+  iccVarint(preamble, size); iccVarint(preamble, commands.length);
+  const prefix = new Uint8Array(preamble.length + commands.length + header.length);
+  prefix.set(preamble); prefix.set(commands, preamble.length); prefix.set(header, preamble.length + commands.length);
+  return {prefix, runs, length: prefix.length + runs.reduce((n, run) => n + run.length, 0)};
+}
+function rawICCPlan(size, header) {
+  const commands = [0, 1]; iccVarint(commands, size - 128);
+  return iccPlan(size, commands, header, [{at: 128, length: size - 128, width: 1, order: -1}]);
+}
+const iccResidualCost = value => value === 0 ? 1 : value === 1 || value === 255 ? 3 : value < 16 || value > 240 ? 6 : 9;
+function iccCurveOrder(read, at, length) {
+  const scores = [0, 0, 0];
+  let a = iccWord(read, at - 2, 2), b = iccWord(read, at - 4, 2), c = iccWord(read, at - 6, 2);
+  for (let i = 0; i < length; i += 2) {
+    const value = iccWord(read, at + i, 2);
+    for (let order = 0; order < 3; order++) {
+      const prediction = order === 0 ? a : order === 1 ? 2 * a - b : 3 * (a - b) + c;
+      scores[order] += iccResidualCost(((value >>> 8) - (prediction >>> 8)) & 255) + iccResidualCost((value - prediction) & 255);
+    }
+    c = b; b = a; a = value;
+  }
+  let order = 1;
+  if (scores[2] < scores[order]) order = 2;
+  if (scores[0] < scores[order]) order = 0;
+  return order;
+}
+
+function iccNumericOrder(read, at, length, width, stride) {
+  const scores = [0, 0, 0];
+  for (let i = 0; i < length; i += width) {
+    const pos = at + i, value = iccWord(read, pos, width);
+    const a = iccWord(read, pos - stride, width), b = iccWord(read, pos - stride * 2, width), c = iccWord(read, pos - stride * 3, width);
+    for (let order = 0; order < 3; order++) {
+      const prediction = (order === 0 ? a : order === 1 ? 2 * a - b : 3 * (a - b) + c) >>> 0;
+      for (let j = 0; j < width; j++) {
+        const shift = 8 * (width - 1 - j);
+        scores[order] += iccResidualCost(((value >>> shift) - (prediction >>> shift)) & 255);
+      }
+    }
+  }
+  let order = 1;
+  if (scores[2] < scores[order]) order = 2;
+  if (scores[0] < scores[order]) order = 0;
+  return order;
+}
+function iccLutSpans(read, at, end, width) {
+  const header = width === 2 ? 52 : 48;
+  if (end - at < header) return null;
+  const inputs = read(at + 8), outputs = read(at + 9), grid = read(at + 10);
+  if (!inputs || inputs > 15 || !outputs || outputs > 15 || grid < 2) return null;
+  const inputEntries = width === 2 ? iccWord(read, at + 48, 2) : 256;
+  const outputEntries = width === 2 ? iccWord(read, at + 50, 2) : 256;
+  if (!inputEntries || !outputEntries) return null;
+  const inputBytes = width * inputs * inputEntries, outputBytes = width * outputs * outputEntries;
+  const limit = Math.floor((end - at - header - inputBytes - outputBytes) / (width * outputs));
+  let points = 1;
+  for (let i = 0; i < inputs; i++) { if (points > Math.floor(limit / grid)) return null; points *= grid; }
+  const tableBytes = points * outputs * width, start = at + header;
+  return [{at: start, length: inputBytes, stride: width},
+    {at: start + inputBytes, length: tableBytes, stride: width * outputs},
+    {at: start + inputBytes + tableBytes, length: outputBytes, stride: width}];
+}
+
+export function predictICCPlan(profile, structured = true, tables = false) {
+  const size = profile.length, read = windowBytes(profile), prediction = new Uint8Array(128), header = new Uint8Array(Math.min(size, 128));
+  prediction[0] = size >>> 24; prediction[1] = size >>> 16; prediction[2] = size >>> 8; prediction[3] = size;
+  prediction[8] = 4;
+  prediction.set(Uint8Array.from('mntrRGB XYZ ', c => c.charCodeAt(0)), 12);
+  prediction.set(Uint8Array.from('acsp', c => c.charCodeAt(0)), 36);
+  prediction.set([0, 0, 246, 214, 0, 1, 0, 0, 0, 0, 211, 45], 68);
+  for (let at = 0; at < header.length; at++) {
+    if (at === 8) for (let b = 0; b < 4; b++) prediction[80 + b] = read(4 + b);
+    if (at === 41 && (read(40) === 65 || read(40) === 77)) prediction.set(read(40) === 65 ? [80, 80, 76] : [83, 70, 84], 41);
+    if (at === 42 && read(40) === 83 && (read(41) === 71 || read(41) === 85)) prediction.set(read(41) === 71 ? [73, 32] : [78, 87], 42);
+    header[at] = (read(at) - prediction[at]) & 255;
+  }
+  const raw = () => rawICCPlan(size, header);
+  if (!structured || size <= 132) return raw();
+  const count = iccWord(read, 128), bodyStart = 132 + count * 12;
+  if (count > 4096 || bodyStart > size) return raw();
+  const sig = at => String.fromCharCode(read(at), read(at + 1), read(at + 2), read(at + 3));
+  const commands = [], data = new Uint8Array(128 + count * 4), entries = [], runs = [];
+  data.set(header); let dataAt = header.length;
+  for (let i = 0; i < count; i++) {
+    const at = 132 + i * 12;
+    entries.push({name: sig(at), offset: iccWord(read, at + 4), length: iccWord(read, at + 8)});
+  }
+  iccVarint(commands, count + 1);
+  let prevStart = 128 + count * 12, prevSize = 0;
+  for (let i = 0; i < count; i++) {
+    const {name, offset, length} = entries[i];
+    let tag = 0, step = 1;
+    if (i + 2 < count && name === 'rTRC' && entries[i + 1].name === 'gTRC' && entries[i + 2].name === 'bTRC' &&
+        entries[i + 1].offset === offset && entries[i + 1].length === length && entries[i + 2].offset === offset && entries[i + 2].length === length) {
+      tag = 2; step = 3;
+    } else if (i + 2 < count && name === 'rXYZ' && entries[i + 1].name === 'gXYZ' && entries[i + 2].name === 'bXYZ' &&
+        entries[i + 1].length === length && entries[i + 2].length === length &&
+        entries[i + 1].offset === offset + length && entries[i + 2].offset === offset + 2 * length && offset + 2 * length <= 0xffffffff) {
+      tag = 3; step = 3;
+    } else {
+      const idx = TAGS.indexOf(name, 2);
+      if (idx >= 2) tag = idx + 2;
+      else { tag = 1; for (let k = 0; k < 4; k++) data[dataAt++] = name.charCodeAt(k); }
+    }
+    const offBit = offset !== prevStart + prevSize ? 64 : 0;
+    const lenBit = length !== (XYZ_TAGS.has(name) ? 20 : prevSize) ? 128 : 0;
+    commands.push(tag | offBit | lenBit);
+    if (offBit) iccVarint(commands, offset);
+    if (lenBit) iccVarint(commands, length);
+    prevStart = offset; prevSize = length; i += step - 1;
+  }
+  commands.push(0);
+  const spans = entries.map(e => [e.offset, Math.min(size, e.offset + e.length)])
+    .filter(([s, e]) => s >= bodyStart && e - s >= 8)
+    .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+  let cursor = bodyStart, rawStart = bodyStart;
+  const span = (at, length, width = 1, order = -1, stride = width) => runs.push({at, length, width, order, stride});
+  const flushRaw = to => {
+    if (to <= rawStart) return;
+    commands.push(1); iccVarint(commands, to - rawStart); span(rawStart, to - rawStart); rawStart = to;
+  };
+  const shuffle = (at, length, width) => {
+    commands.push(width === 2 ? 2 : 3); iccVarint(commands, length); span(at, length, width); rawStart = at + length;
+  };
+  for (const [s, e] of spans) {
+    if (s < cursor || e > size) continue;
+    cursor = e;
+    const typeSig = sig(s), reserved = iccWord(read, s + 4);
+    if (typeSig === 'XYZ ' && reserved === 0 && e - s === 20) {
+      flushRaw(s); commands.push(10); span(s + 8, 12); rawStart = s + 20; continue;
+    }
+    if (tables && reserved === 0 && (typeSig === 'mft1' || typeSig === 'mft2')) {
+      const width = typeSig === 'mft2' ? 2 : 1, tables = iccLutSpans(read, s, e, width);
+      if (tables) for (const {at, length, stride} of tables) {
+        if (length < 8 * width || at <= stride * 4) continue;
+        flushRaw(at);
+        const order = iccNumericOrder(read, at, length, width, stride);
+        commands.push(4, (width - 1) | (order << 2) | (stride !== width ? 16 : 0));
+        if (stride !== width) iccVarint(commands, stride);
+        iccVarint(commands, length); span(at, length, width, order, stride); rawStart = at + length;
+      }
+      continue;
+    }
+    const tIdx = reserved === 0 ? TYPES.indexOf(typeSig) : -1;
+    if (tIdx < 0) continue;
+    flushRaw(s); commands.push(16 + tIdx); rawStart = s + 8;
+    if (typeSig === 'curv' && e - s >= 28) {
+      const n = iccWord(read, s + 8);
+      if (n >= 8 && 12 + 2 * n <= e - s && ((s + 18 - 1) >>> 2) >= 2) {
+        flushRaw(s + 18);
+        const at = s + 18, length = (n - 3) * 2, order = iccCurveOrder(read, at, length);
+        commands.push(4, 1 | (order << 2)); iccVarint(commands, length); span(at, length, 2, order); rawStart = at + length;
+      }
+    } else if (typeSig === 'mluc' && e - s >= 28) {
+      const numNames = iccWord(read, s + 8), recSize = iccWord(read, s + 12), hdrEnd = s + 16 + numNames * recSize;
+      const strLen = (e - hdrEnd) & ~1;
+      if (recSize === 12 && hdrEnd <= e && strLen >= 8) { flushRaw(hdrEnd); shuffle(hdrEnd, strLen, 2); }
+    } else if (typeSig === 'sf32' && e - (s + 8) >= 16) {
+      const arrLen = (e - (s + 8)) & ~3;
+      if (arrLen >= 16) { flushRaw(s + 8); shuffle(s + 8, arrLen, 4); }
+    }
+  }
+  flushRaw(size);
+  return iccPlan(size, commands, data.subarray(0, dataAt), runs);
+}
+export function predictICCPart(profile, run, from = 0, count = Math.min(ICC_PART, run.length - from)) {
+  count = Math.min(count, ICC_PART, run.length - from);
+  if (run.width === 1 && run.order < 0) return profile.subarray(run.at + from, run.at + from + count);
+  const out = new Uint8Array(count), read = windowBytes(profile), {at, length, width, order} = run;
+  const height = Math.ceil(length / width), rows = Math.floor(length / height), remainder = length % height;
+  for (let n = 0; n < count; n++) {
+    const slot = from + n, column = slot % height, i = rows * column + Math.min(column, remainder) + Math.floor(slot / height);
+    let predicted = 0;
+    if (order >= 0) {
+      const pos = at + i - i % width, stride = run.stride ?? width, a = iccWord(read, pos - stride, width);
+      const b = order >= 1 ? iccWord(read, pos - stride * 2, width) : 0, c = order === 2 ? iccWord(read, pos - stride * 3, width) : 0;
+      const value = (order === 0 ? a : order === 1 ? 2 * a - b : 3 * (a - b) + c) >>> 0;
+      predicted = value >>> (8 * (width - 1 - i % width));
+    }
+    out[n] = read(at + i) - predicted;
+  }
+  return out;
+}
+export function* predictICCParts(profile, plan = predictICCPlan(profile)) {
+  for (let from = 0; from < plan.prefix.length; from += ICC_PART) yield plan.prefix.subarray(from, from + ICC_PART);
+  for (const run of plan.runs) for (let from = 0; from < run.length; from += ICC_PART)
+    yield predictICCPart(profile, run, from);
+}
+export function predictICC(profile, tables = false) {
+  const plan = predictICCPlan(profile, true, tables), out = new Uint8Array(plan.length);
+  let at = 0;
+  for (const part of predictICCParts(profile, plan)) { out.set(part, at); at += part.length; }
+  return out;
+}

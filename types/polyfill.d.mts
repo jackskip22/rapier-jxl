@@ -1,25 +1,25 @@
 import type {Bytes, WorkerLike, DecodeOptions, DecodedImage} from './types.mjs';
-/** Options for install(); all are optional. */
+/** Options for install(). All are optional. */
 export interface PolyfillOptions {
-  /** The document to patch; default the global one. */
+  /** The document to patch. Default the global one. */
   document?: Document;
-  /** Where to look for images: a document, element or shadow root; default the document. */
+  /** Where to look for images: a document, element or shadow root. Default the document. */
   root?: Document | Element | ShadowRoot;
-  /** A JPEG XL data or image URL the native test loads; default a built-in one. */
+  /** A JPEG XL data or image URL the native test loads. Default a built-in one. */
   probeURL?: string;
-  /** true decodes every image here, even where the browser shows JPEG XL itself; default false. */
+  /** true decodes every image here, even where the browser shows JPEG XL itself. Default false. */
   force?: boolean;
-  /** Images decoded at once, 1 to 4; default 2. */
+  /** Images decoded at once, 1 to 4. Default 2. */
   workers?: 1 | 2 | 3 | 4;
   /** Bytes for decoded images, none by default: when set, each decode, one per worker at once, is bounded by it alone,
    * and the images shown together stay under it. A decode holds about 32 bytes a pixel. A larger picture fails with
    * JXL_DIMENSIONS, naming its size and this limit. */
   maxDecodedBytes?: number;
-  /** Largest file fetched, in bytes; none by default. A larger one fails with JXL_LIMIT. */
+  /** Largest file fetched, in bytes. None by default. A larger one fails with JXL_LIMIT. */
   maxInputBytes?: number;
-  /** How far off screen an image starts decoding, in pixels or percent; default '1000px'. */
+  /** How far off screen an image starts decoding, in pixels or percent. Default '1000px'. */
   rootMargin?: string;
-  /** Makes the decode worker; for a bundler or a Content Security Policy that needs your own URL. */
+  /** Makes the decode worker. For a bundler or a Content Security Policy that needs your own URL. */
   workerFactory?: (() => WorkerLike) | undefined;
   /** Your own decoder in place of the package's (a native or a server-side one): it receives owned bytes and may
    * return the decoded image directly or asynchronously. */
@@ -36,12 +36,17 @@ export interface PolyfillController {
   disconnect(): void;
 }
 /** null means policy or a timeout prevented detection, not lack of native support.
- * A document unable to create images, or a non-string probeURL, refuses JXL_OPTIONS. */
+ * A document unable to create images, or a non-string probeURL, refuses JXL_OPTIONS.
+ * @example if (!await supportsJXL()) await install(); */
 export function supportsJXL(document?: Document, probeURL?: string): Promise<boolean | null>;
+/** Whether the browser plays animated JPEG XL: `false` where it shows stills only (Safari), `null` where that is not known.
+ * @example if (await supportsAnimatedJXL() === false) await install(); */
+export function supportsAnimatedJXL(document?: Document): Promise<boolean | null>;
 /** Shows JPEG XL images where the browser does not: those on the page and those added later. Importing installs
  * nothing. One installation a document: a later call returns it until disconnect(). refresh() rereads the page at once.
- * Options are read once, at the call; invalid ones reject with JXL_OPTIONS and leave any earlier installation connected. */
+ * Options are read once, at the call. Invalid ones reject with JXL_OPTIONS and leave any earlier installation connected.
+ * @example const polyfill = await install(); */
 export function install(options?: PolyfillOptions): Promise<PolyfillController>;
 
-/** Every refusal: a coded Error. */
+/** Codes for refusals raised by rapier-jxl. Caller callback errors and abort reasons pass through unchanged. */
 export type {CodecError, ErrorCode} from './types.mjs';

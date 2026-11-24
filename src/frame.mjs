@@ -178,3 +178,12 @@ export function codestreamFromParts(head, sections, level = 5, join = null) {
   for (const section of sections) { out.set(section, at); at += section.length; }
   return out;
 }
+
+export function assembleByteSections(header, sections) {
+  writeTOC(header, sections.map(section => section.length));
+  const head = header.finish(), length = head.length + sections.reduce((sum, section) => sum + section.length, 0);
+  admitOutputSize(length);
+  const bytes = new Uint8Array(length); bytes.set(head);
+  for (let i = 0, at = head.length; i < sections.length; at += sections[i++].length) bytes.set(sections[i], at);
+  return bytes;
+}

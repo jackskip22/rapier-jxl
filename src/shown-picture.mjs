@@ -3,7 +3,7 @@ import {nativePicture, decodesJXL} from './native-picture.mjs';
 import {fault} from './fault.mjs';
 import {callers, check, snapshotOptions} from './v7/primitives.mjs';
 import {nativeGammaRGBA} from './photo-output.mjs';
-import {DECODER_KEY, configuredDecoder} from './decoder-setting.mjs';
+import {configuredDecoder, setDecoder} from './decoder-setting.mjs';
 
 const NEEDS = 'no JPEG XL decoder: call configureDecoder(decode) with decode from jpegxl/decode';
 const BROWSER_NEEDS = 'no browser JPEG XL decode: use effort 1-5';
@@ -13,18 +13,10 @@ const unsupported = error => {
   catch { return false; }
 };
 
-export function configureDecoder(decode, restore, recompress) {
-  if (decode !== null && typeof decode !== 'function')
-    throw fault('JXL_INPUT', 'decode: function or null');
-  if (restore !== undefined && restore !== null && typeof restore !== 'function')
-    throw fault('JXL_INPUT', 'restore: function or null');
-  if (recompress !== undefined && recompress !== null && typeof recompress !== 'function')
-    throw fault('JXL_INPUT', 'recompress: function or null');
-  globalThis[DECODER_KEY] = decode === null && !restore && !recompress ? null : Object.freeze({...(decode && {decode}), ...(restore && {restore}), ...(recompress && {recompress})});
-}
+export const configureDecoder = setDecoder;
 
 export {configuredDecoder};
-export const DECODER_SNAPSHOT = Symbol.for('rapier-jxl.decoder.snapshot');
+export const DECODER_SNAPSHOT = /* @__PURE__ */ Symbol.for('rapier-jxl.decoder.snapshot');
 
 async function hostPicture(decode, bytes, {width, height, colorSpace, signal}) {
   check(signal);

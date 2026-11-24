@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-import {outOfMemory} from './fault.mjs';
 import {LIMITS} from './limits.mjs';
 import {complete, part} from './bits.mjs';
 import {GABORISH, v6For} from './photo-v6-settings.mjs';
@@ -127,7 +126,7 @@ function* stepsAt(data, width, height, {quality, colorSpace, effort, samples, op
     }
     return done(step.value.length < prefix.length ? step.value : prefix, image);
   } catch (error) {
-    if (!outOfMemory(error) && error.code !== 'JXL_SIZE') throw error;
+    if (error.code !== 'JXL_SIZE') throw error;
     return done(prefix, image);
   }
 }

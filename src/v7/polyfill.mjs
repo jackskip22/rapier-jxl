@@ -1,10 +1,11 @@
 import {snapshotOptions} from './primitives.mjs';
 const PROBE = 'data:image/jxl;base64,/woYAAaASAgCAQBkAEsYkw5wiBJQIwEA4eShY0EWAPoFIgDov58=';
+const ANIMATED = '/woYAAYISgBATAgGAQBAAEs4aQjJDQjg/kQJ2AUI4gAIBrMEAAAEAEAASzhpCMkN9ycARAnYBQjiAA==';
 const probes = new WeakMap(), installations = new WeakMap();
 export function supportsJXL(document = globalThis.document, probeURL = PROBE) {
-  if (!document) return Promise.resolve(false);
-  if (!isDocument(document)) return Promise.reject(refuse('document: images and events required'));
   if (typeof probeURL !== 'string') return Promise.reject(refuse("probeURL: image URL string"));
+  if (document === undefined) return Promise.resolve(false);
+  if (!isDocument(document)) return Promise.reject(refuse('document: images and events required'));
   const key = probeURL, baseURI = document.baseURI;
   if (baseURI !== undefined && typeof baseURI !== 'string') return Promise.reject(refuse('document.baseURI: string'));
   let resolvedKey = key;
@@ -33,6 +34,14 @@ export function supportsJXL(document = globalThis.document, probeURL = PROBE) {
   }));
   return cache.get(key);
 }
+export async function supportsAnimatedJXL(document = globalThis.document) {
+  const Decoder = document?.defaultView?.ImageDecoder ?? globalThis.ImageDecoder;
+  if (typeof Decoder !== 'function') return null;
+  try {
+    const decoder = new Decoder({data: Uint8Array.from(atob(ANIMATED), c => c.charCodeAt(0)), type: 'image/jxl'});
+    try { await decoder.tracks.ready; return (decoder.tracks.selectedTrack?.frameCount ?? 1) > 1; } finally { decoder.close(); }
+  } catch { return null; }
+}
 const refuse = message => Object.assign(new TypeError(message), {code: 'JXL_OPTIONS'});
 const object = value => value !== null && (typeof value === 'object' || typeof value === 'function');
 const isDocument = value => object(value) && ['createElement', 'addEventListener', 'removeEventListener'].every(name => typeof value[name] === 'function');
@@ -40,8 +49,8 @@ const KEYS = ['document', 'root', 'probeURL', 'force', 'workers', 'maxDecodedByt
 function admit(options) {
   const own = snapshotOptions(options, 'install options'), {document, root, probeURL, force, workers, maxDecodedBytes, maxInputBytes, rootMargin} = own;
   for (const key of Object.keys(own)) if (!KEYS.includes(key)) throw refuse(`unknown option: ${key}`);
-  if (document != null && !isDocument(document)) throw refuse('document: images and events required');
-  if (root != null) {
+  if (document !== undefined && !isDocument(document)) throw refuse('document: images and events required');
+  if (root !== undefined) {
     if (!(object(root) && [1, 9, 11].includes(root.nodeType) && typeof root.contains === 'function')) throw refuse("root: Document|Element|ShadowRoot");
     const Watcher = (document ?? globalThis.document)?.defaultView?.MutationObserver ?? globalThis.MutationObserver;
     if (typeof Watcher === 'function') {
@@ -79,11 +88,13 @@ export function install(options) {
     const native = own.force ? false : await supportsJXL(document, own.probeURL);
     if (!current()) return;
     let controller;
-    if (native !== false) controller = {status: native ? 'native' : 'probe-blocked', disconnect() { this.status = 'closed'; }, refresh() {}};
+    const still = native === true && !own.force && await supportsAnimatedJXL(document) === false;
+    if (!current()) return;
+    if (native !== false && !still) controller = {status: native ? 'native' : 'probe-blocked', disconnect() { this.status = 'closed'; }, refresh() {}};
     else {
       const {installFallback} = await import('./polyfill-runtime.mjs');
       if (!current()) return;
-      controller = installFallback(document, own);
+      controller = installFallback(document, still ? {...own, animatedOnly: true} : own);
     }
     if (!current()) { controller.disconnect(); return; }
     const close = controller.disconnect;

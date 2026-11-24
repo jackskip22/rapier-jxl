@@ -3,8 +3,8 @@ import {complete} from '../bits.mjs';
 import {call, captureWindowVulnerability as windowVulnerability} from '../capture-kernels.mjs';
 import {into, out} from '../kernel-call.mjs';
 import {AREA_FIELD, areaFieldQuality, areaFieldValue, photoCoefficientSteps, photoQualityStep, rgbCoefficientSteps, strengthOf} from '../photo-dct.mjs';
-import {gammaPicture, padPhotoCrop, photoRegionTarget} from '../photo-region-score.mjs';
-import {gammaRGBA} from '../photo-output.mjs';
+import {gammaPicture, padPhotoCrop, photoRegionTarget, clipPhotoRect, cutPhotoRGBA} from '../photo-region-score.mjs';
+import {colorPixels} from '../color-band.mjs';
 import {ssimulacra2} from '../ssimulacra2.mjs';
 import {MEASURED_EFFORT} from '../effort-level.mjs';
 import {usesRegionalCalibration} from '../photo-quality-table.mjs';
@@ -47,8 +47,7 @@ function probeSpectrum(image, coder, gx, gy, w, h) {
 }
 
 function cut(data, width, height, r, exactRects) {
-  const x0 = Math.max(0, r.x), y0 = Math.max(0, r.y);
-  const clipW = Math.min(width, r.x + r.width) - x0, clipH = Math.min(height, r.y + r.height) - y0;
+  const {x: x0, y: y0, width: clipW, height: clipH} = clipPhotoRect(r, width, height);
   if (clipW <= 0 || clipH <= 0) return null;
   const overlaps = exactRects?.filter(e => e.x < x0 + clipW && e.x + e.width > x0 && e.y < y0 + clipH && e.y + e.height > y0);
   const activeOverlaps = overlaps?.length ? overlaps : null;
@@ -76,14 +75,13 @@ function cut(data, width, height, r, exactRects) {
     }
     w = ww; h = wh;
   }
-  const out = new Uint8Array(w * h * 4);
-  for (let row = 0; row < h; row++) out.set(data.subarray(((y + row) * width + x) * 4, ((y + row) * width + x + w) * 4), row * w * 4);
+  const out = cutPhotoRGBA(data, width, x, y, w, h);
   const windowOverlaps = activeOverlaps?.filter(e => e.x < x + w && e.x + e.width > x && e.y < y + h && e.y + e.height > y) ?? null;
   return {pixels: out, x, y, width: w, height: h, full: w === clipW && h === clipH, replacing: windowOverlaps?.length ? windowOverlaps : null};
 }
 
 export function photoWindow(data, width, height, r = {x: 0, y: 0, width, height}, dx = 0, dy = 0, vulnerable = true, side = WINDOW) {
-  const x0 = Math.max(0, r.x), y0 = Math.max(0, r.y), w = Math.min(width, r.x + r.width) - x0, h = Math.min(height, r.y + r.height) - y0;
+  const {x: x0, y: y0, width: w, height: h} = clipPhotoRect(r, width, height);
   if (w <= side || h <= side) return null;
   const n = side / TILE, out = new Uint8Array(side * side * 4);
   const at = (o, span, i, d, f = 0.5) => Math.min(o + span - TILE, Math.max(o, ((o + Math.round((span - TILE) * (i + f) / n) + d + 4) & ~7) - d));
@@ -96,7 +94,7 @@ export function photoWindow(data, width, height, r = {x: 0, y: 0, width, height}
         if (v > most) { most = v; tx = cx; ty = cy; }
       }
     }
-    for (let y = 0; y < TILE; y++) out.set(data.subarray(((ty + y) * width + tx) * 4, ((ty + y) * width + tx + TILE) * 4), ((j * TILE + y) * side + i * TILE) * 4);
+    cutPhotoRGBA(data, width, tx, ty, TILE, TILE, out, i * TILE, j * TILE, side);
   }
   return {pixels: out, x: x0, y: y0, width: side, height: side, full: false, mosaic: true, replacing: null};
 }
@@ -156,12 +154,7 @@ function frameImage(src, pw, ph, gx, gy, w, h, reading, colorSpace, frame, tiled
     : complete(rgbCoefficientSteps(src, pw, ph, frame.frameQuality, colorSpace, areas));
 }
 
-function subCrop(rgba, pw, gx, gy, w, h) {
-  if (!gx && !gy && rgba.length === w * h * 4) return rgba;
-  const out = new Uint8Array(w * h * 4);
-  for (let y = 0; y < h; y++) out.set(rgba.subarray(((gy + y) * pw + gx) * 4, ((gy + y) * pw + gx + w) * 4), y * w * 4);
-  return out;
-}
+const subCrop = (rgba, pw, gx, gy, w, h) => !gx && !gy && rgba.length === w * h * 4 ? rgba : cutPhotoRGBA(rgba, pw, gx, gy, w, h);
 
 function scoredCrop(crop, data, width, pageH, quality, colorSpace, frame, pad) {
   const {pixels, width: w, height: h} = crop;
@@ -177,15 +170,12 @@ function scoredCrop(crop, data, width, pageH, quality, colorSpace, frame, pad) {
       for (let ch = 0; ch < 3; ch++) gamma[ch][into] = data[from + ch] / 255;
     }
   }
-  const pkgCrop = padPhotoCrop(subCrop(gammaRGBA(gamma, c.w, c.h), c.w, c.gx, c.gy, w, h), w, h, pad);
+  const pkgCrop = padPhotoCrop(subCrop(colorPixels(gamma, c.w, c.h, c.w, 0), c.w, c.gx, c.gy, w, h), w, h, pad);
   return {c, m: ssimulacra2({rgba: refPad.rgba}, {rgba: pkgCrop.rgba}, refPad.width, refPad.height)};
 }
 
 function wholeCrop(data, width, pageH, r, exactRects) {
-  const x = Math.max(0, r.x), y = Math.max(0, r.y);
-  const w = Math.min(width, r.x + r.width) - x, h = Math.min(pageH, r.y + r.height) - y;
-  const pixels = new Uint8Array(w * h * 4);
-  for (let row = 0; row < h; row++) pixels.set(data.subarray(((y + row) * width + x) * 4, ((y + row) * width + x + w) * 4), row * w * 4);
+  const {x, y, width: w, height: h} = clipPhotoRect(r, width, pageH), pixels = cutPhotoRGBA(data, width, x, y, w, h);
   const replacing = exactRects?.filter(e => e.x < x + w && e.x + e.width > x && e.y < y + h && e.y + e.height > y);
   return {pixels, x, y, width: w, height: h, full: true, replacing: replacing?.length ? replacing : null};
 }

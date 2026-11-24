@@ -24,6 +24,7 @@ export function pu21Planes(planes, count, scale = 1) {
 export function hdrSpace(samples) {
   const encoding = samples.colorEncoding;
   if (!encoding) return samples.iccGiven ? undefined : samples.colorSpace ?? 'srgb';
+  if (encoding.space === 'gray') return (encoding.whitePoint ?? 'd65') === 'd65' ? 'srgb' : undefined;
   if (encoding.space !== 'rgb' || samples.colorChannels === 1) return undefined;
   const primaries = encoding.primaries ?? samples.colorSpace ?? 'srgb';
   if (typeof primaries === 'string') return ['srgb', 'display-p3', 'rec2020'].includes(primaries) && (encoding.whitePoint ?? 'd65') === 'd65' ? primaries : undefined;
@@ -32,8 +33,8 @@ export function hdrSpace(samples) {
 export function hdrDomain(data, samples) {
   if (samples.native8 || samples.icc || hdrSpace(samples) === undefined) return false;
   if (!samples.exponentBits) {
-    if (hdrCurve(samples) !== 'srgb' || samples.alphaPremultiplied || samples.bitDepth > 16 || (samples.colorChannels ?? 3) !== 3) return false;
-    for (let i = 3; i < data.length; i += 4) if (data[i] !== 2 ** samples.bitDepth - 1) return false;
+    const ch = samples.colorChannels ?? 3;
+    if (hdrCurve(samples) !== 'srgb' || samples.alphaPremultiplied || samples.bitDepth > 16 || (ch !== 3 && ch !== 1)) return false;
     return true;
   }
   if (hdrCurve(samples) !== 'linear') return false;
@@ -52,6 +53,10 @@ export function srgbLight(bits) {
 export function hdrValue(data, samples) {
   const curve = samples.exponentBits ? null : srgbLight(samples.bitDepth);
   return curve ? i => curve[data[i]] : samples.exponentBits === 5 ? i => half(data[i]) : i => data[i];
+}
+export function hdrAlpha(data, samples) {
+  if (!samples.exponentBits) { const top = 2 ** samples.bitDepth - 1; return i => data[i] / top; }
+  return samples.exponentBits === 5 ? i => half(data[i]) : i => data[i];
 }
 export function hdrNits(data, samples, width, height) {
   const toSrgb = toLinearSrgb(hdrSpace(samples)), value = hdrValue(data, samples), target = samples.intensityTarget ?? 255;
@@ -72,7 +77,7 @@ export function hdrViews(planes, count, opacity, scale = 1, premultiplied = fals
   }), count, 1));
 }
 export function hdrLook(source, output, width, height) {
-  const count = width * height, alpha = hdrValue(source.data, source.samples);
+  const count = width * height, alpha = hdrAlpha(source.data, source.samples);
   let opacity = null;
   for (let i = 0; i < count; i++) if (alpha(i * 4 + 3) !== 1) { opacity = Float32Array.from({length: count}, (_, k) => Math.min(1, alpha(k * 4 + 3))); break; }
   const references = hdrViews(hdrNits(source.data, source.samples, width, height), count, opacity, 1, !!source.samples.alphaPremultiplied);

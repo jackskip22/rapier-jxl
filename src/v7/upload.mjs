@@ -1,3 +1,4 @@
+import './engines.mjs';
 import {previewCall} from './preview.mjs';
 import {smallExactBeside, exactCandidate} from './exact-cap.mjs';
 import {resultOperation, resultReference, resultFacts, RESULT_REFERENCE} from './result-operation.mjs';
@@ -10,14 +11,16 @@ import {withRenderingIntent} from './header-intent.mjs';
 import {namedPicture} from './result-reference.mjs';
 import {orientSamples} from '../sample-transforms.mjs';
 import {coreSteps} from './instant.mjs';
-import {check, fail, declared, callers, progressOf, dimensions} from './primitives.mjs';
+import {HDR} from '../photo-hdr.mjs';
+import {check, fail, declared, callers, progressOf, dimensions, isBlob} from './primitives.mjs';
 import {drain, driveSteps, callOptions} from './common.mjs';
 import {uploadOptions} from './upload-options.mjs';
 import {ordinaryStillReader, predictedFacts} from './ordinary-still-policy.mjs';
 import {lowPhotoSteps, lowPhotoRoute, encodeLowSplit, makeLowUpload, finishLowUpload, closeLowUpload, smoothPhoto, smoothDecides} from './low-photo.mjs';
-import {lowIntentFacts, settledFacts, lowIntentEligible} from './low-intent-quality.mjs';
+import {lowIntentFacts, settledFacts, settledWideFacts, lowIntentEligible, lowIntentWideEligible} from './low-intent-quality.mjs';
 import {settleScans} from './settle-scans.mjs';
 import {preparationUpload} from './preparation-upload.mjs';
+import {withVariantsHelpers} from './preparation-with.mjs';
 import {fitOptions, variantsOptions} from './preparation-options.mjs';
 import {DRIVE} from './drive.mjs';
 import {image, pixels} from './input.mjs';
@@ -25,6 +28,7 @@ import {jpegPixels} from './jpeg-pixels.mjs';
 import {JPEG_SOURCE, jpegSource, chooseJpeg} from './jpeg-choice.mjs';
 import {inspectPhone} from './phone-container.mjs';
 import {own, measure, DEFAULT_INPUT_BYTES} from './ownership.mjs';
+import {arenaLeased, withArenaLease} from '../call-scope.mjs';
 import {encodeBands, WHOLE} from './bands.mjs';
 import {recodeBand} from './band-recode.mjs';
 import {isRowSource, admitRows, readBand} from './rows.mjs';
@@ -37,6 +41,7 @@ import {preferXYB} from '../photo-xyb.mjs';
 import {screenLike} from '../screen.mjs';
 import {photoSplitBands, splitSteps, splitEnd, splitHasAlpha, splitRoute, encodeSplit} from '../photo-split.mjs';
 import {v6Trace} from '../photo-v6.mjs';
+import {traced, tracing} from '../stage-trace.mjs';
 import {isPlainRecord} from './records.mjs';
 import {isDecoded, fromDecoded} from './describe.mjs';
 import {kernelsReady} from './kernels-ready.mjs';
@@ -47,7 +52,7 @@ import {lowCaptureRunner, prepareCapturePhoto} from './capture-photo-runner.mjs'
 import {pagePicture, pageFile, exactCodec, unletteredFile, letteredSteps, lettersRead} from './page-route.mjs';
 import {captureExact} from '../capture-codec.mjs';
 import {textFloorEligible, textFloorSteps} from '../text-floor.mjs';
-import {withProgressive} from '../progressive-mode.mjs';
+import {withProgressive} from '../coefficient-ans.mjs';
 import {CAPTURE_UPLOAD, carriedBy} from './capture-levels.mjs';
 const carried = carriedBy('rapier-jxl/upload', CAPTURE_UPLOAD);
 const runCapture = lowCaptureRunner();
@@ -80,7 +85,7 @@ prepare.operations = ['encode', 'capture'];
 const encodeBytes = (input, options) => encodeHere(input, options).catch(error => { throw declared(error); });
 encodeBytes[DRIVE] = (input, options, helpers) => encodeHere(input, options, helpers).catch(error => { throw declared(error); });
 const encode = resultOperation(encodeBytes, {preview: previewCall});
-const {fit, variants} = preparationUpload(encodeBytes, {jpegPixels, deep: async () => ({readSource: (bytes, options) => readPNG16(bytes, {...options, named: true}), orient: orientSamples})});
+const {fit, variants} = preparationUpload(encodeBytes, {jpegPixels, deep: async () => ({readSource: readPNG16, orient: orientSamples})});
 const TAKEN = ['fidelity', 'effort', 'progressive', 'jpeg', 'readAs', 'maxPixels'];
 Object.defineProperty(encode, STEPS, {value: verbSteps('encode:rapier-jxl/upload', encode, {taken: TAKEN, admit: options => { uploadOptions(options); }, rows: true, files: true})});
 Object.defineProperty(fit, STEPS, {value: verbSteps('fit:rapier-jxl/upload', fit, {taken: ['maxBytes', ...TAKEN], admit: options => { fitOptions(options, uploadOptions); }, rows: true, files: true})});
@@ -109,7 +114,7 @@ async function encodeOwned(input, options, helpers, codec, maxPixels, reader, jo
   let decoded = null;
   if (journal !== undefined && input?.[JOURNAL_FILE] !== undefined) {
     const file = input[JOURNAL_FILE];
-    decoded = await journalPNG(file, readAs, maxPixels, journal);
+    decoded = await withArenaLease(options.signal, () => journalPNG(file, readAs, maxPixels, journal));
     if (!decoded) input = new Blob([file.subarray(0, file.length)]);
   }
   if (isPlainRecord(input) && isDecoded(input)) input = fromDecoded(input);
@@ -120,6 +125,7 @@ async function encodeOwned(input, options, helpers, codec, maxPixels, reader, jo
     source.description = own(source.description, maxPixels);
     resultReference(options, source);
     const hooks = {signal: options.signal ?? new AbortController().signal, maxPixels, onProgress: progressOf(report, options.signal), journal};
+    const run = fn => withArenaLease(options.signal, fn);
     await kernelsReady();
     let exact = true;
     const settle = async band => {
@@ -128,17 +134,19 @@ async function encodeOwned(input, options, helpers, codec, maxPixels, reader, jo
     };
     const bytes = await encodeBands({width: source.width, height: source.height, read: (y, rows) => readBand(source, y, rows, hooks.signal)},
       async (band, bandHooks) => encodePicture(band, await settle(band), bandHooks, helpers), async function* (band, shared) {
-        return yield* recodeBand(band, await settle(band), shared);
-      }, drain, hooks);
+        return yield* recodeBand(band, await settle(band), shared, HDR);
+      }, drain, hooks, run);
     if (exact) resultFacts(options, {kept: 'pixels', measurements: []});
     return bytes;
   }
   if (isPlainRecord(input) && input.texture !== undefined && input.device !== undefined) throw fail('JXL_UNSUPPORTED', 'texture: use jpegxl');
-  const blob = decoded !== null || typeof Blob !== 'undefined' && input instanceof Blob;
+  const blob = decoded !== null || isBlob(input);
   let borrowed = blob ? null : journal ? admitPicture(journalPixels(input, maxPixels)) : admitPicture(pixels(input, {readAs}, maxPixels, true));
   if (borrowed) [borrowed, intended.intent] = namedPicture(options, borrowed, codec.quality < 100);
-  const read = blob ? null : {input: borrowed, codec: kernelHooks.opaque || kernelHooks.ensure?.() ? reader.read(codec, borrowed, {jpeg}) : null};
-  const direct = read?.codec && !(codec.qualityIntent !== undefined && kernelHooks.channel &&
+  if (borrowed && !journal && arenaLeased()) borrowed = own(borrowed, maxPixels, Math.max(DEFAULT_INPUT_BYTES, maxPixels * 16));
+  return withArenaLease(options.signal, async () => {
+  const read = blob || journal ? null : {input: borrowed, codec: kernelHooks.opaque || kernelHooks.ensure?.() ? reader.read(codec, borrowed, {jpeg}) : null};
+  const direct = read?.codec && !(codec.qualityIntent !== undefined && kernelHooks.acGroup &&
     pagePicture(read.input.data, read.input.width, read.input.height, {...read.input, ...read.codec})) ? directRoute(read, maxPixels) : null;
   if (direct) {
     check(options.signal);
@@ -146,7 +154,7 @@ async function encodeOwned(input, options, helpers, codec, maxPixels, reader, jo
   }
   if (direct && helpers?.split) return splitHere(read, direct, helpers, options, maxPixels);
   const low = direct?.lowIntent !== undefined && makeLowUpload(read.input.data, read.input.width, read.input.height, direct.quality, direct.effort,
-    smoothDecides(direct) && smoothPhoto(read.input.data, read.input.width, read.input.height), direct.lowFilteredQuality);
+    smoothDecides(direct) && smoothPhoto(read.input.data, read.input.width, read.input.height), direct.lowFilteredQuality, direct.lowFilteredOther, direct.lowBoth);
   const split = low ? low.split : direct && photoSplitBands(read.input.data, read.input.width, read.input.height, direct.quality, {gaborish: direct.gaborish});
   if (split && splitHasAlpha(split)) splitEnd(split);
   else if (split || low?.incumbent) {
@@ -160,22 +168,42 @@ async function encodeOwned(input, options, helpers, codec, maxPixels, reader, jo
     } finally { if (low) closeLowUpload(low); else splitEnd(split); }
   }
   const budget = Math.max(DEFAULT_INPUT_BYTES, maxPixels * 16);
-  let captured = blob ? null : journal ? {input: read.input, ...own({codec: read.codec}, maxPixels, budget)} : own(read, maxPixels, budget);
+  let captured = blob ? null : journal ? {input: borrowed, ...own({codec}, maxPixels, budget)} : own(read, maxPixels, budget);
   if (captured) resultReference(options, captured.input);
   const report = options.onProgress, onProgress = progressOf(report, options.signal);
   const hooks = {signal: options.signal ?? new AbortController().signal, onProgress, maxPixels, journal};
-  if (captured && captured.codec === null) { await kernelsReady(); check(hooks.signal); captured.codec = await reader.project(codec, captured.input, {jpeg}); }
+  if (captured && journal) {
+    if (lowIntentEligible(captured.input))
+      settledFacts.set(captured.input.data, await journal.tools.settleFacts(journal, settleScans, captured.input.data, captured.input.width, captured.input.height));
+    captured.codec = await journaled(journal, 'settle', async () => reader.read(codec, captured.input, {jpeg}) ?? await reader.project(codec, captured.input, {jpeg}));
+  } else if (captured) {
+    if (codec.qualityIntent !== undefined) {
+      if (lowIntentEligible(captured.input)) settledFacts.set(captured.input.data, lowIntentFacts(captured.input));
+      else if (lowIntentWideEligible(captured.input)) settledWideFacts.set(captured.input.data, lowIntentFacts(captured.input, {wide: true}));
+    }
+    if (captured.codec === null) { await kernelsReady(); check(hooks.signal); captured.codec = await reader.project(codec, captured.input, {jpeg}); }
+  }
   if (blob) {
     let picture = decoded;
-    if (!picture) picture = await journaled(journal, 'decode', () => image(input, {readAs, exact: !(codec.quality < 100)}, {...hooks, phone: inspectPhone, jpegPixels, deep: async () => ({readSource: readPNG16, orient: orientSamples})}));
+    if (!picture) {
+      const t0 = tracing() ? performance.now() : 0;
+      picture = await journaled(journal, 'decode', () => image(input, {readAs, exact: !(codec.quality < 100)}, {...hooks, phone: inspectPhone, jpegPixels, deep: async () => ({readSource: readPNG16, orient: orientSamples})}));
+      if (t0) traced('jpeg-read', performance.now() - t0);
+    }
     [picture, intended.intent] = namedPicture(options, picture, codec.quality < 100);
     captured = decoded ? {input: admitPicture(picture), ...own({codec}, maxPixels, budget)} : own({input: admitPicture(picture), codec}, maxPixels, budget);
     resultReference(options, captured.input, input);
     if (decoded && lowIntentEligible(captured.input))
       settledFacts.set(captured.input.data, await journal.tools.settleFacts(journal, settleScans, captured.input.data, captured.input.width, captured.input.height));
-    else if (!journal && codec.qualityIntent !== undefined && lowIntentEligible(captured.input))
-      settledFacts.set(captured.input.data, lowIntentFacts(captured.input));
-    captured.codec = await journaled(journal, 'settle', async () => reader.read(codec, captured.input, {jpeg}) ?? await reader.project(codec, captured.input, {jpeg}));
+    else if (!journal && codec.qualityIntent !== undefined) {
+      if (lowIntentEligible(captured.input)) settledFacts.set(captured.input.data, lowIntentFacts(captured.input));
+      else if (lowIntentWideEligible(captured.input)) settledWideFacts.set(captured.input.data, lowIntentFacts(captured.input, {wide: true}));
+    }
+    {
+      const t0 = tracing() ? performance.now() : 0;
+      captured.codec = await journaled(journal, 'settle', async () => reader.read(codec, captured.input, {jpeg}) ?? await reader.project(codec, captured.input, {jpeg}));
+      if (t0) traced('scorer', performance.now() - t0);
+    }
   }
   const {data, width, height, ...source} = captured.input;
   if (captured.codec.quality === 100) resultFacts(options, {kept: 'pixels', measurements: []});
@@ -184,7 +212,7 @@ async function encodeOwned(input, options, helpers, codec, maxPixels, reader, jo
   await kernelsReady();
   check(hooks.signal);
   if (width * height > WHOLE) return encodeBands({width, height, read: (y, rows) => ({...source, data: data.subarray(y * width * 4, (y + rows) * width * 4), width, height: rows})},
-    (band, bandHooks) => encodePicture(band, captured.codec, bandHooks, helpers), (band, target) => recodeBand(band, captured.codec, target), drain, hooks);
+    (band, bandHooks) => encodePicture(band, captured.codec, bandHooks, helpers), (band, target) => recodeBand(band, captured.codec, target, HDR), drain, hooks);
   const route = {page: false};
   const bytes = await encodePicture(captured.input, captured.codec, hooks, helpers, codec.qualityIntent, facts => resultFacts(options, facts), route);
   if (!(codec.qualityIntent !== undefined && codec.quality < 100)) return bytes;
@@ -193,8 +221,11 @@ async function encodeOwned(input, options, helpers, codec, maxPixels, reader, jo
   if (exact) { resultFacts(options, {kept: 'pixels', measurements: []}); return exact; }
   if (!(captured.codec.quality === 100 || captureExact(bytes) || route.page)) return bytes;
   if (captured.codec.quality < 100 && captureExact(bytes)) resultFacts(options, {kept: 'pixels', measurements: []});
+  if (captured.codec.quality < 100 && captureExact(bytes) && captured.codec.lowIntent !== undefined) return bytes;
   const picture = captured.input;
-  const answer = await unletteredFile(picture, bytes, async () => reader.read(codec, picture, {jpeg, exactAllowed: false}) ?? await reader.project(codec, picture, {jpeg}),
+  const answer = await unletteredFile(picture, bytes, async () =>
+    route.page && captured.codec.quality < 100 ? captured.codec
+      : reader.read(codec, picture, {jpeg, exactAllowed: false}) ?? await reader.project(codec, picture, {jpeg}),
     async lossy => {
       const {data: _data, width: _width, height: _height, ...description} = picture;
       let facts = predictedFacts({...description, ...lossy});
@@ -204,11 +235,12 @@ async function encodeOwned(input, options, helpers, codec, maxPixels, reader, jo
   if (!answer) return bytes;
   resultFacts(options, answer.facts ?? {kept: 'lossy', measurements: []});
   return answer.bytes;
+  });
 }
 
-function journalPixels({data, width, height, colorSpace, colorEncoding}, maxPixels) {
+function journalPixels({data, width, height, colorSpace, colorEncoding, icc}, maxPixels) {
   dimensions(width, height, maxPixels);
-  return {data, width, height, ...(colorSpace && {colorSpace}), ...(colorEncoding && {colorEncoding})};
+  return {data, width, height, ...(colorSpace && {colorSpace}), ...(colorEncoding && {colorEncoding}), ...(icc && {icc})};
 }
 
 function admitPicture(picture) {
@@ -225,15 +257,16 @@ async function encodePicture({data, width, height, ...source}, codec, hooks, hel
     return pageFile(runCapture, {data, width, height}, {qualityIntent: intent}, settings.effort, hooks, selected, undefined,
       () => encodePicture({data, width, height, ...source}, exactCodec(codec), hooks, helpers));
   }
+  const hdr = selected ? {...HDR, report: selected} : HDR;
   const lettered = intent !== undefined && await lettersRead(hooks.journal, {data, width, height, ...source}, settings) ? letteredSteps({data, width, height, ...source}, settings, intent,
-    () => settings.effort === 1 ? coreSteps(data, width, height, exactCodec(settings))
-      : effortJob(data, width, height, exactCodec(settings), false), selected) : null;
+    () => settings.effort === 1 ? coreSteps(data, width, height, exactCodec(settings), HDR)
+      : effortJob(data, width, height, exactCodec(settings), false, undefined, undefined, undefined, null, HDR), selected) : null;
   const low = lettered ? null : lowPhotoSteps(data, width, height, settings, await journaled(hooks.journal, 'low-route', () => lowPhotoRoute(data, width, height, settings, settledFacts.get(data))));
-  const coded = lettered ?? low ?? (settings.effort === 1 ? coreSteps(data, width, height, settings) : effortJob(data, width, height, settings, false));
+  const coded = lettered ?? low ?? (settings.effort === 1 ? coreSteps(data, width, height, settings, hdr) : effortJob(data, width, height, settings, false, undefined, undefined, undefined, null, hdr));
   const floored = settings.quality < 100 && await journaled(hooks.journal, 'text-floor', () => textFloorEligible(data, width, height, settings, settledFacts.get(data)));
   const baseSteps = floored ? textFloorSteps(coded, data, width, height, settings.colorSpace) : coded;
-  const steps = settings.progressive ? withProgressive(true, baseSteps) : baseSteps;
-  return helpers && !lettered && (low || settings.effort !== 1) ? driveSteps(steps, hooks, undefined, width * height, helpers, null) : drain(steps, hooks);
+  const steps = settings.progressive ? withProgressive(true, baseSteps, settings.effort) : baseSteps;
+  return helpers && !lettered && (low || settings.effort !== 1 || splitRoute(width, height)) ? driveSteps(steps, hooks, undefined, width * height, helpers, null) : drain(steps, hooks);
 }
 
 async function splitHere(read, direct, helpers, options, maxPixels) {
@@ -257,15 +290,15 @@ async function splitHere(read, direct, helpers, options, maxPixels) {
   if (direct.lowIntent !== undefined) return encodePicture(captured.input, captured.codec, hooks, helpers);
   return driveSteps(effortJob(owned, width, height, {...source, ...captured.codec}, false), hooks, undefined, width * height, helpers, null);
 }
-function* splitAsk(data, width, height, {quality, gaborish, lowIntent, effort, lowFilteredQuality}) {
+function* splitAsk(data, width, height, {quality, gaborish, lowIntent, effort, lowFilteredQuality, lowFilteredOther, lowBoth}) {
   if (lowIntent !== undefined) return (yield {split: {pixels: width * height,
-    run: (helpers, options) => encodeLowSplit(data, width, height, quality, effort, helpers, {...options, smooth: smoothDecides({effort, quality}) && smoothPhoto(data, width, height), lowFilteredQuality})}}) ?? null;
+    run: (helpers, options) => encodeLowSplit(data, width, height, quality, effort, helpers, {...options, smooth: smoothDecides({effort, quality}) && smoothPhoto(data, width, height), lowFilteredQuality, lowFilteredOther, lowBoth})}}) ?? null;
   return (yield {split: {pixels: width * height, run: (helpers, options) =>
     encodeSplit(data, width, height, quality, helpers, {...options, gaborish, screen: false, opaque: true})}}) ?? null;
 }
 
 function directRoute(read, maxPixels) {
-  if (typeof document !== 'undefined' || !kernelHooks.gabBand || !kernelHooks.acGroup || !kernelHooks.channel) return null;
+  if (typeof document !== 'undefined' || !kernelHooks.gabBand || !kernelHooks.acGroup) return null;
   const {data, width, height, ...source} = read.input, settings = {...source, ...read.codec};
   if (settings.progressive || source.orientation !== undefined || source.extraChannels !== undefined || settings.photo === false || !(settings.effort >= 1 && settings.effort <= 3)) return null;
   if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray) || !splitRoute(width, height)) return null;
@@ -282,7 +315,8 @@ function directRoute(read, maxPixels) {
   for (let p = 0, step = Math.max(1, Math.floor(width * height / 16384)); p < width * height; p += step) if (data[p * 4 + 3] !== 255) return null;
   const shape = inspectPixels(data, width, height, {opacity: false});
   if (shape.palette || shape.alpha || !preferXYB(data, width, height) || screenLike(data, width, height)) return null;
-  return {quality, gaborish: settings.effort === 3, effort: settings.effort, lowIntent: settings.lowIntent, lowFilteredQuality: settings.lowFilteredQuality};
+  if (textFloorEligible(data, width, height, settings, {screenLike: false})) return null;
+  return {quality, gaborish: settings.effort === 3, effort: settings.effort, lowIntent: settings.lowIntent, lowFilteredQuality: settings.lowFilteredQuality, lowFilteredOther: settings.lowFilteredOther, lowBoth: settings.lowBoth};
 }
 
 import * as self from './upload.mjs';
@@ -296,14 +330,22 @@ import {WORKER_PROTOCOL} from './protocol.mjs';
 import {serveSplit} from '../photo-split.mjs';
 const NAME = 'rapier-jxl/upload';
 serveRole(NAME, {
-  worker: () => install(workerPort(), [], moduleRuntime(self, {name: NAME, helpers: async () => pool, helper: ownFile(roleName(NAME, 'helper'))}), previewHub),
+  worker: () => {
+    const file = ownFile(roleName(NAME, 'helper'));
+    install(workerPort(), [], withVariantsHelpers(moduleRuntime(self, {name: NAME, helpers: async () => pool, helper: file}), pool, NAME, file), previewHub);
+  },
   helper: () => {
     const runtime = moduleRuntime(self, {name: NAME});
     serveHelper(() => ({name: NAME, protocol: WORKER_PROTOCOL, run: (...call) => runtime.run(...call), serveSplit}));
   }});
 
 import {inPlace} from './module-roles.mjs';
-const here = inPlace('rapier-jxl/upload', {encode, fit, variants, capture, prepare}, {pool, url: () => new URL(import.meta.url), prepareOp: 'encode'});
+const raw = {encode, fit, variants, capture, prepare}, selfUrl = () => new URL(import.meta.url);
+const here = inPlace(NAME, raw, {pool, url: selfUrl, prepareOp: 'encode',
+  runtime: ready => {
+    const file = ownFile(roleName(NAME, 'helper'), selfUrl);
+    return withVariantsHelpers(moduleRuntime(raw, {name: NAME, ready, helpers: async () => pool, helper: file}), pool, NAME, file, ready);
+  }});
 const encodeIn = here.wrap('encode'), fitIn = here.wrap('fit'), variantsIn = here.wrap('variants'), captureIn = here.wrap('capture'), prepareIn = here.wrap('prepare');
 export {encodeIn as encode, fitIn as fit, variantsIn as variants, captureIn as capture, prepareIn as prepare};
 export const {configure, close} = here;

@@ -27,14 +27,14 @@ export async function photoOutputOperation(source, {cacheBytes = 0, signal, maxP
   if (!metric) { destroy(); return null; }
   return {
     domain: metric.domain,
-    async measure(bytes, want) {
+    async measure(bytes, want, image) {
       check(signal); check(operationSignal);
       if (!metric || busy) throw fail('JXL_INTERNAL', 'photo-output-operation:measure-2');
       if (!(bytes instanceof Uint8Array)) throw fail('JXL_INTERNAL', 'photo-output-operation:measure-3');
       busy = true;
       let restored = null;
       try {
-        restored = await read(bytes, {...readOptions, format: metric.format});
+        restored = await read(bytes, {...readOptions, format: metric.format}, image);
         check(signal); check(operationSignal);
         if (!metric) throw fail('JXL_INTERNAL', 'photo-output-operation:measure-4');
         if (!animation && restored.animation) throw fail('JXL_INTERNAL', 'photo-output-operation:measure-5');

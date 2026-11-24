@@ -5,6 +5,7 @@ import {prepareExtraChannels} from './format-fields.mjs';
 import {channelPiece, writePlanarPlanes} from './planar-planes.mjs';
 import {writeModularHeader} from './modular.mjs';
 import {encodeChannelsSteps} from './channels.mjs';
+import {opaquePixels} from './lossless.mjs';
 
 export function exactPhotoExtraSteps(data, width, height, options, samples) {
   if (!Array.isArray(options.extraChannels)) throw fault('JXL_INPUT', 'extraChannels: array');
@@ -32,8 +33,7 @@ export function admitPhotoExtras(data, layout, options) {
   if (!channels.length) return null;
   if (!(data instanceof Uint8Array || data instanceof Uint8ClampedArray))
     throw fault('JXL_INPUT', 'extraChannels: RGBA8 only, or use encodeChannels');
-  let alpha = false;
-  for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) { alpha = true; break; }
+  const alpha = !opaquePixels(data);
   if (alpha) {
     if (channels.length === 256) throw fault('JXL_INPUT', 'extraChannels: max 256');
     const plane = Uint8Array.from({length: data.length / 4}, (_, i) => data[i * 4 + 3]);

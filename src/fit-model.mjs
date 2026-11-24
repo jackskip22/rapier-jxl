@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
-import {QUANT_SHAPE, transformDCT8BlocksFast} from './photo-dct.mjs';
+import {QUANT_SHAPE, FAST_SCALE} from './photo-dct.mjs';
+import {kernelHooks, ensured, missing} from './kernel-hooks.mjs';
+import {fault} from './fault.mjs';
 import {V6} from './photo-v6-settings.mjs';
 import {calibration} from './quality-calibration.mjs';
 import {screenLike} from './screen.mjs';
@@ -63,7 +65,8 @@ export function extractFitStats(picture) {
       adjDc[idx * 3] = sx * 0.125; adjDc[idx * 3 + 1] = sy * 0.125; adjDc[idx * 3 + 2] = sb * 0.125;
     }
   }
-  transformDCT8BlocksFast(scratchTile, N);
+  if (!(kernelHooks.dctFast ?? ensured().dctFast ?? missing())(scratchTile, N, FAST_SCALE))
+    throw fault('JXL_PLATFORM', 'dctFast: declined');
   const acHist = new Float64Array(BINS), dcHist = new Float64Array(BINS), blkMaxHist = new Float64Array(BINS);
   for (let n = 0; n < N; n++) {
     const at = n * 192;
@@ -119,9 +122,9 @@ export function predictFitBytes(stats, quality, effort = 3) {
   const {dist, hdr, terms} = fitTerms(stats, quality, effort);
   if (!stats) {
     const varBytes = 1000 * Math.pow(dist, -0.78);
-    return {hdr: 100, varBytes, total: 100 + varBytes};
+    return {total: 100 + varBytes};
   }
   const c = COEFFICIENTS;
   const varBytes = c[0] * terms[0] + c[1] * terms[1] + c[2] * terms[2] + c[3] * terms[3] + c[4] * terms[4];
-  return {hdr, varBytes, total: hdr + varBytes};
+  return {total: hdr + varBytes};
 }

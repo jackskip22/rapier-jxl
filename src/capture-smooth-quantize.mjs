@@ -20,8 +20,9 @@ export function smoothColors(source, exact) {
   }
   return {
     size: used,
-    remap(step) {
+    remap(step, keep = Infinity) {
       const [, table] = call(k => k.smoothPalette, [words, counts, used, step, out(Uint32Array, used), room(used * 4), room(used * 4), room(1024)]);
+      if (keep !== Infinity) for (let i = 0; i < used; i++) if (counts[i] >= keep) table[i] = words[i];
       let candidate;
       try { candidate = new Uint8Array(source.length); }
       catch (cause) { throw Object.assign(fault('JXL_MEMORY', 'smooth field: out of memory'), {cause}); }
@@ -107,7 +108,9 @@ export function smoothQuantize(data, width, height, regions, rectangles, intent,
     let active = null;
     const scorePiece = (candidate, index) => {
       const ref = refs[index];
-      return ssimulacra2(ref.reference, {rgba: cropOf(candidate, r.width, ref.p, r.x, r.y)}, ref.p.width, ref.p.height).score;
+      const score = ssimulacra2(ref.reference, {rgba: cropOf(candidate, r.width, ref.p, r.x, r.y)}, ref.p.width, ref.p.height).score;
+      if (!Number.isFinite(score)) throw fault('JXL_INPUT', 'score: finite number');
+      return score;
     };
     const scoreField = candidate => {
       let score = Infinity;

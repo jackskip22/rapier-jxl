@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
-import {pixelLimit, PIXELS, fail, object, admitSignal} from './primitives.mjs';
-import {encodeFidelity} from './fidelity.mjs';
+import {pixelLimit, PIXELS, fail, object, admitSignal, unknownOption, optionSymbol} from './primitives.mjs';
+import {encodeFidelity, encodeEffort, progressiveSetting} from './fidelity.mjs';
 import {refuseDescription} from './describe.mjs';
 import {featureless} from './first-region-option.mjs';
 import {RESULT_REFERENCE, DEVICE_RAN} from './result-reference.mjs';
 import {PREVIEW} from './preview.mjs';
 import {RETAIN_INPUT} from './ownership.mjs';
 const rawKeys = /* @__PURE__ */ new Set(['fidelity','effort','progressive','features','readAs','jpeg','webgpu','maxPixels','signal','onProgress','onPreview']);
-export const ENCODE_FEATURES = /* @__PURE__ */ Symbol('encode features');
+export const ENCODE_FEATURES = /* @__PURE__ */ optionSymbol('encode features');
 export function publicVocabulary(options) {
   if (!options || typeof options !== 'object' || Array.isArray(options)) return options;
   if ('features' in options) throw fail('JXL_OPTIONS', 'unknown option: features');
@@ -17,24 +17,20 @@ export function publicVocabulary(options) {
   const features = inner !== undefined ? {...inner, ...(region !== undefined && {firstRegion: region})} : region !== undefined ? {firstRegion: region} : undefined;
   return features === undefined ? rest : {...rest, features};
 }
-export function encodeOptions(value) {
+export function encodeOptions(value, ten = false, full = false) {
   const options = featureless(object(value));
   refuseDescription(options);
-  for (const key of Object.keys(options)) if (!rawKeys.has(key))
-    throw fail('JXL_OPTIONS', `unknown option: ${key}`);
+  for (const key of Object.keys(options)) if (!rawKeys.has(key)) throw unknownOption(key, options);
   if (options.onProgress !== undefined && typeof options.onProgress !== 'function') throw fail('JXL_OPTIONS', "onProgress: function");
   if (options.onPreview !== undefined && typeof options.onPreview !== 'function') throw fail('JXL_OPTIONS', "onPreview: function");
   admitSignal(options.signal);
-  const fidelity = encodeFidelity(options.fidelity), {effort = 7} = options;
-  if (!Number.isInteger(effort) || effort < 1 || effort > 9) throw fail('JXL_OPTIONS', "effort: integer 1-9");
+  const {effort: requestedEffort = ten ? 10 : 7} = options;
+  const fidelity = encodeFidelity(options.fidelity), effort = encodeEffort(requestedEffort, fidelity, ten);
   if (options.readAs !== undefined && options.readAs !== 'srgb' && options.readAs !== 'display-p3')
     throw fail('JXL_OPTIONS', "readAs: srgb or display-p3");
   if (options.jpeg !== undefined && options.jpeg !== 'pixels')
     throw fail('JXL_OPTIONS', "jpeg: 'pixels' or omitted");
-  if (options.progressive !== undefined && typeof options.progressive !== 'boolean')
-    throw fail('JXL_OPTIONS', 'progressive: boolean');
-  if (options.progressive === true && fidelity.quality === 100)
-    throw fail('JXL_OPTIONS', 'progressive: not with exact');
+  progressiveSetting(options.progressive, fidelity);
   if (options.webgpu !== undefined && options.webgpu !== 'required' && options.webgpu !== false)
     throw fail('JXL_OPTIONS', "webgpu: 'required', false or omitted");
   if (options.maxPixels !== undefined) pixelLimit(options.maxPixels);
@@ -49,7 +45,7 @@ export function encodeOptions(value) {
     if (options.features.upsampling !== undefined && fidelity.quality === 100)
       throw fail('JXL_OPTIONS', "upsampling: not with exact");
   }
-  const {[RESULT_REFERENCE]: _reference, [PREVIEW]: _preview, [RETAIN_INPUT]: _retain, [DEVICE_RAN]: _ran, fidelity: _fidelity, signal, onProgress, onPreview, features, readAs, jpeg, webgpu, maxPixels, ...codec} = options;
+  const {[RESULT_REFERENCE]: _reference, [PREVIEW]: _preview, [RETAIN_INPUT]: _retain, [DEVICE_RAN]: _ran, fidelity: _fidelity, signal, onProgress, onPreview, features, readAs, jpeg, webgpu, maxPixels, lexer: _lexer, ...codec} = options;
   return {...codec, ...fidelity, effort, webgpu, maxPixels};
 }
 

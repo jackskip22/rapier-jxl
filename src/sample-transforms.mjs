@@ -81,6 +81,11 @@ function lumaOf(primaries, white = 'd65') {
   return [det(w, g, b) / all, det(r, w, b) / all, det(r, g, w) / all];
 }
 export async function sampleResizeConfig(picture, {signal} = {}) {
+  if (!await prepareKernels() || !ensureKernels()) throw wasmRequired();
+  check(signal);
+  return resizeConfig(picture);
+}
+function resizeConfig(picture) {
   if (picture.orientation !== undefined && picture.orientation !== 1)
     throw fail('JXL_INPUT', 'orientation: orient before resize');
   if (picture.extraChannels !== undefined)
@@ -100,8 +105,6 @@ export async function sampleResizeConfig(picture, {signal} = {}) {
     : primaries === 'display-p3' ? [.228974564, .691738522, .079286914] : [.212639006, .715168679, .072192315];
   const gamma = tf === 3 ? 1.2 * Math.pow(1.111, Math.log(samples.intensityTarget / 1000) / Math.LN2) : 1;
   const config = [format, maximum, tf, +samples.alphaPremultiplied, gamma, ...luma];
-  if (!await prepareKernels() || !ensureKernels()) throw wasmRequired();
-  check(signal);
   const table = format < 2 && !samples.alphaPremultiplied ? sampleTable(maximum, tf) : null;
   const levels = !!table && maximum <= 4095 && gamma === 1;
   return {config,table,levels};
@@ -113,16 +116,17 @@ export function sampleResizeRows(sourceHeight,height,y) {
   }
   return {first:Math.floor(y * sourceHeight / height),end:Math.ceil((y + 1) * sourceHeight / height)};
 }
-export function sampleResizeStep(bands, data, sourceHeight, height, state, out, outY = state.y, limit = bands.outRows) {
+export function sampleResizeStep(bands, data, sourceHeight, height, state, out, outY = state.y, limit = bands.outRows, avail = sourceHeight, base = 0) {
   const {y} = state, first = state.row ?? sampleResizeRows(sourceHeight,height,y).first;
-  const most = Math.min(sourceHeight,first + bands.sourceRows);
+  const most = Math.min(sourceHeight,first + bands.sourceRows,avail);
+  if (most <= first) return {state,written:0};
   let y1 = y;
   while (y1 < height && y1 - y < limit && sampleResizeRows(sourceHeight,height,y1).end <= most) y1++;
   if (y1 === y) {
-    const sum = bands.run(data, first, most, y, y + 1, out, outY, state.sum, true);
+    const sum = bands.run(data, first, most, y, y + 1, out, outY, state.sum, true, base);
     return {state:{y,row:most,sum},written:0};
   }
-  bands.run(data, first, sampleResizeRows(sourceHeight,height,y1 - 1).end, y, y1, out, outY, state.sum, false);
+  bands.run(data, first, sampleResizeRows(sourceHeight,height,y1 - 1).end, y, y1, out, outY, state.sum, false, base);
   return {state:{y:y1,row:null,sum:null},written:y1 - y};
 }
 
@@ -138,4 +142,61 @@ export async function resizeSamples(picture, width, height, {signal, maxPixels =
     await pause();
   }
   check(signal); return {...picture, data: out, width, height};
+}
+
+export function resizeBands(picture, targets) {
+  const {width, height} = picture, {config, table, levels} = resizeConfig({...picture, data: new Uint8Array(0)});
+  const rowBytes = width * 4, runs = targets.map(({width: w, height: h}) => {
+    const bands = sampleBands(width, height, w, h, config, table, levels, 1);
+    return {w, h, out: new Uint8Array(w * h * 3), scratch: new Uint8Array(w * bands.outRows * 4), bands, state: {y: 0, row: null, sum: null}};
+  });
+  let window = new Uint8Array(0), base = 0, held = 0;
+  return {
+    feed(y, rows, view) {
+      if (y !== base + held) throw fail('JXL_INTERNAL', 'resize-bands:order');
+      const keep = Math.min(...runs.map(({h, state}) => state.y < h ? state.row ?? sampleResizeRows(height, h, state.y).first : y));
+      const kept = held - (keep - base), need = (kept + rows) * rowBytes;
+      if (need > window.length) { const grown = new Uint8Array(need); grown.set(window.subarray((keep - base) * rowBytes, held * rowBytes)); window = grown; }
+      else window.copyWithin(0, (keep - base) * rowBytes, held * rowBytes);
+      window.set(view.subarray(0, rows * rowBytes), kept * rowBytes);
+      base = keep; held = kept + rows;
+      for (const run of runs) for (let step; run.state.y < run.h && (step = sampleResizeStep(run.bands, window, height, run.h,
+        run.state, run.scratch, 0, run.bands.outRows, base + held, base)).state !== run.state;) {
+        if (step.written) packRGB(run.scratch, run.out, run.state.y * run.w * 3, step.written * run.w);
+        run.state = step.state;
+      }
+    },
+    finish() {
+      if (runs.some(({h, state}) => state.y < h)) throw fail('JXL_INTERNAL', 'resize-bands:rows');
+      return runs.map(({out}, i) => ({...picture, rgb: out, width: targets[i].width, height: targets[i].height}));
+    },
+  };
+}
+
+function packRGB(rgba, rgb, at, n) {
+  let alpha = 0xFF000000, i = 0;
+  if (at % 4 === 0 && rgba.byteOffset % 4 === 0 && rgb.byteOffset % 4 === 0) {
+    const src = new Uint32Array(rgba.buffer, rgba.byteOffset, n), dst = new Uint32Array(rgb.buffer, rgb.byteOffset + at, (n * 3) >> 2);
+    for (let o = 0; i + 4 <= n; i += 4, o += 3) {
+      const p0 = src[i], p1 = src[i + 1], p2 = src[i + 2], p3 = src[i + 3];
+      alpha &= p0 & p1 & p2 & p3;
+      dst[o] = p0 & 0xFFFFFF | p1 << 24; dst[o + 1] = (p1 >>> 8 & 0xFFFF) | p2 << 16; dst[o + 2] = (p2 >>> 16 & 0xFF) | p3 << 8;
+    }
+  }
+  for (let o = at + i * 3, k = i * 4; i < n; i++, k += 4, o += 3) { rgb[o] = rgba[k]; rgb[o + 1] = rgba[k + 1]; rgb[o + 2] = rgba[k + 2]; alpha &= rgba[k + 3] << 24 | 0xFFFFFF; }
+  if (alpha >>> 24 !== 255) throw fail('JXL_INTERNAL', 'resize-bands:alpha');
+}
+
+export function expandRGB(rgb) {
+  const n = rgb.length / 3, rgba = new Uint8Array(n * 4), dst = new Uint32Array(rgba.buffer);
+  let i = 0;
+  if (rgb.byteOffset % 4 === 0) {
+    const src = new Uint32Array(rgb.buffer, rgb.byteOffset, (n * 3) >> 2);
+    for (let j = 0; i + 4 <= n; i += 4, j += 3) {
+      const a = src[j], b = src[j + 1], c = src[j + 2];
+      dst[i] = a | 0xFF000000; dst[i + 1] = a >>> 24 | b << 8 | 0xFF000000; dst[i + 2] = b >>> 16 | c << 16 | 0xFF000000; dst[i + 3] = c >>> 8 | 0xFF000000;
+    }
+  }
+  for (let k = i * 3; i < n; i++, k += 3) dst[i] = rgb[k] | rgb[k + 1] << 8 | rgb[k + 2] << 16 | 0xFF000000;
+  return rgba;
 }

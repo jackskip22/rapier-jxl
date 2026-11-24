@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {encodePhotoSteps} from '../photo-advanced.mjs';
-import {withProgressive} from '../progressive-mode.mjs';
+import {withProgressive} from '../coefficient-ans.mjs';
 import {pictureMeasure, preparePictureMeasure} from '../photo-picture-measure.mjs';
 import {rebuildShown, rebuildable, rebuildableUpsampled} from '../photo-rebuild.mjs';
 import {upsampleOn} from '../upsample-plane.mjs';
@@ -28,7 +28,7 @@ export async function measuredFeatures(picture, features, settings, qualityInten
   const probe = async (quality, onProgress, effort = coding.effort) => {
     const seen = new Map();
     const rawSteps = encodePhotoSteps(coded, width, height, {...coding, ...features, quality, effort});
-    const steps = coding.progressive && !features.progressive ? withProgressive(true, rawSteps) : rawSteps;
+    const steps = coding.progressive && !features.progressive ? withProgressive(true, rawSteps, effort) : rawSteps;
     const bytes = await withAnnounced(() => drain(steps, {...hooks, onProgress}),
       (file, image) => { seen.set(file, image); });
     const announced = seen.get(bytes), image = announced?.noiseLut ? {...announced, noiseLut: null} : announced;

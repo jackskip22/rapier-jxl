@@ -16,9 +16,51 @@ function kernelSamples(runs, convert) {
   }
   return out;
 }
-function channelSamples(data, depth) {
-  const kernels = decodeKernels();
-  return kernelSamples([data], (n, [at]) => kernels.samples(n, at, depth.float ? 1 : 0, depth.float ? 0 : power2(depth.bits) - 1, depth.bits, depth.exponentBits ?? 0))[0];
+function channelSamples(channel, depth) {
+  const data = channel.data, kernels = decodeKernels();
+  const isFloat = depth.float ? 1 : 0, denom = depth.float ? 0 : power2(depth.bits) - 1, bits = depth.bits, expBits = depth.exponentBits ?? 0;
+  if (channel.constant !== undefined && data.length > 0) {
+    const [at] = kernels.reserve([4]);
+    kernels.i32[at / 4] = channel.constant;
+    kernels.samples(1, at, isFloat, denom, bits, expBits);
+    const out = new Float32Array(data.buffer, data.byteOffset, data.length), v = new Float32Array(kernels.buffer, at, 1)[0];
+    if (v !== 0 || Object.is(v, -0)) out.fill(v);
+    else if (channel.constant !== 0 && data[0] !== 0) out.fill(0);
+    return out;
+  }
+  return kernelSamples([data], (n, [at]) => kernels.samples(n, at, isFloat, denom, bits, expBits))[0];
+}
+function channelsSamples(channels, depth) {
+  if (channels.length <= 1) return channels.map(c => channelSamples(c, depth));
+  let batchTotal = 0, batchCount = 0;
+  for (let i = 0; i < channels.length; i++) {
+    if (channels[i].constant === undefined && channels[i].data.length > 0) {
+      batchTotal += channels[i].data.length;
+      batchCount++;
+    }
+  }
+  if (batchCount <= 1 || batchTotal > 1048576) return channels.map(c => channelSamples(c, depth));
+  const kernels = decodeKernels(), [at] = kernels.reserve([batchTotal * 4]);
+  const isFloat = depth.float ? 1 : 0, denom = depth.float ? 0 : power2(depth.bits) - 1, bits = depth.bits, expBits = depth.exponentBits ?? 0;
+  const stagedI32 = new Int32Array(kernels.buffer, at, batchTotal);
+  let offset = 0;
+  for (let i = 0; i < channels.length; i++) {
+    const c = channels[i];
+    if (c.constant === undefined && c.data.length > 0) {
+      stagedI32.set(c.data, offset);
+      offset += c.data.length;
+    }
+  }
+  kernels.samples(batchTotal, at, isFloat, denom, bits, expBits);
+  const stagedF32 = new Float32Array(kernels.buffer, at, batchTotal);
+  offset = 0;
+  return channels.map(c => {
+    if (c.constant !== undefined || c.data.length === 0) return channelSamples(c, depth);
+    const len = c.data.length, out = new Float32Array(c.data.buffer, c.data.byteOffset, len);
+    out.set(stagedF32.subarray(offset, offset + len));
+    offset += len;
+    return out;
+  });
 }
 export function jpegShifts(sample) {
   const hs=sample.map(v=>v===1||v===2?1:0),vs=sample.map(v=>v===1||v===3?1:0),mh=Math.max(...hs),mv=Math.max(...vs);
@@ -49,7 +91,7 @@ export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, m
   const maxTreeNodes = Math.min(1048576, 1024 + sampleBudget);
   const global = f.modular ? null : readVarDCTGlobal(r);
   const globalTree = r.read(1) ? readMATree(r, {maxNodes: maxTreeNodes}) : null;
-  const modular=createModular(r,channels,{globalTree,groupDim:f.groupDim,bitDepth:h.bitDepth.bits,maxModularWork,region,...(maxSamples===undefined?{}:{maxSamples})});
+  const modular=createModular(r,channels,{globalTree,groupDim:f.groupDim,bitDepth:h.bitDepth.bits,maxModularWork,region,deferConstantFill:true,...(maxSamples===undefined?{}:{maxSamples})});
   if(region&&!modular.region)return null;
   modular.decodeGlobal(r,0);
   const dct=f.modular?null:createVarDCT({width:f.encodedWidth,height:f.encodedHeight,header:f,global,lfDequant,bitDepth:h.bitDepth.bits,globalTree,imageHeader:h,maxModularWork,modularWork:modular.modularWork,band,lfOnly,maxSection:Math.max(...readers.map(x=>x?x.bytes.length:0))});
@@ -70,7 +112,7 @@ export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, m
     if(hint>=0)minimum=31-Math.clz32(f.passes.downsample[hint]);
     if(pass===f.passes.count-1)minimum=0;
     for(let g=0;g<f.numGroups;g++) {
-      if(band&&(Math.floor(g/dct.groupsX)<band.first||Math.floor(g/dct.groupsX)>=band.end||g%dct.groupsX<(band.left??0)||g%dct.groupsX>=(band.right??dct.groupsX)))continue;
+      if(band&&(Math.floor(g/dct.groupsX)<band.first||Math.floor(g/dct.groupsX)>=band.end||g%dct.groupsX<(band?.left??0)||g%dct.groupsX>=(band?.right??dct.groupsX)))continue;
       if(region){const x=g%f.groupsX*f.groupDim,y=Math.floor(g/f.groupsX)*f.groupDim;if(x+f.groupDim<=region.x||y+f.groupDim<=region.y||x>=region.x+region.width||y>=region.y+region.height)continue;}
       const rr=single?r:readers[2+f.numLFGroups+pass*f.numGroups+g];
       if(partial&&!rr)continue;
@@ -85,13 +127,33 @@ export function decodeFrameSections(readers, h, f, {readFeatures, lfReference, m
   if(band)return {dct,features};
   const decoded=modular.finish(),colorCount=f.modular?f.encodedColorChannels:0;
   const rendered=dct?.render({lfReference,partial});
-  const extraChannels=decoded.slice(colorCount).map((c,i)=>({...h.extraChannels[i],width:c.width,height:c.height,data:channelSamples(c.data,h.extraChannels[i].bitDepth)}));
+  const sameDepth=!dct&&!h.xyb&&h.extraChannels.length>0&&h.extraChannels.every(e=>e.bitDepth.bits===h.bitDepth.bits&&!!e.bitDepth.float===!!h.bitDepth.float&&(e.bitDepth.exponentBits??0)===(h.bitDepth.exponentBits??0));
+  if(sameDepth) {
+    const converted=channelsSamples(decoded,h.bitDepth);
+    const planes=converted.slice(0,colorCount);
+    const extraChannels=decoded.slice(colorCount).map((c,i)=>({...h.extraChannels[i],width:c.width,height:c.height,data:converted[colorCount+i]}));
+    const widths=decoded.slice(0,colorCount).map(c=>c.width),heights=decoded.slice(0,colorCount).map(c=>c.height);
+    return {planes,widths,heights,width:region?.width??f.encodedWidth,height:region?.height??f.encodedHeight,extraChannels,features,global,lfDequant,filtersApplied:false};
+  }
+  const extraChannels=decoded.slice(colorCount).map((c,i)=>({...h.extraChannels[i],width:c.width,height:c.height,data:channelSamples(c,h.extraChannels[i].bitDepth)}));
   if(dct) return {...rendered,width:f.encodedWidth,height:f.encodedHeight,extraChannels,features,global,lfDequant};
   let planes;
   if(h.xyb) {
     const [y,x,b]=decoded,kernels=decodeKernels();
-    planes=kernelSamples([x.data,y.data,b.data],(n,[ax,ay,ab])=>kernels.xybSamples(n,ax,ay,ab,lfDequant[0],lfDequant[1],lfDequant[2]));
-  } else planes=decoded.slice(0,colorCount).map(c=>channelSamples(c.data,h.bitDepth));
+    if (x.constant !== undefined && y.constant !== undefined && b.constant !== undefined && x.data.length > 0) {
+      const [ax, ay, ab] = kernels.reserve([4, 4, 4]);
+      kernels.i32[ax / 4] = x.constant; kernels.i32[ay / 4] = y.constant; kernels.i32[ab / 4] = b.constant;
+      kernels.xybSamples(1, ax, ay, ab, lfDequant[0], lfDequant[1], lfDequant[2]);
+      planes = [[x, ax], [y, ay], [b, ab]].map(([ch, off]) => {
+        const out = new Float32Array(ch.data.buffer, ch.data.byteOffset, ch.data.length), v = new Float32Array(kernels.buffer, off, 1)[0];
+        if (v !== 0 || Object.is(v, -0)) out.fill(v);
+        return out;
+      });
+    } else {
+      for (const ch of [x, y, b]) if (ch.constant) ch.data.fill(ch.constant);
+      planes=kernelSamples([x.data,y.data,b.data],(n,[ax,ay,ab])=>kernels.xybSamples(n,ax,ay,ab,lfDequant[0],lfDequant[1],lfDequant[2]));
+    }
+  } else planes=channelsSamples(decoded.slice(0,colorCount),h.bitDepth);
   const widths=decoded.slice(0,colorCount).map(c=>c.width),heights=decoded.slice(0,colorCount).map(c=>c.height);
   return {planes,widths,heights,width:region?.width??f.encodedWidth,height:region?.height??f.encodedHeight,extraChannels,features,global,lfDequant,filtersApplied:false};
 }

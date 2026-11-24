@@ -394,7 +394,7 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
                 answered++; const lazy = lazyValue(entry.kind, () => miss(path)); paths.set(lazy, path); return {[SAVED]: lazy};
               }
               const {meta, bytes} = valueOf(entry, raw);
-              const borrowed = !!entry.borrowed && !value.answer;
+              const borrowed = !!(entry.borrowed || entry.cold && meta.v?.t === 0 && !meta.v.r) && !value.answer;
               const given = bytes && !borrowed ? unchanged(path) : null;
               if (bytes && !borrowed && !given && lastHeld + bytes.length > holdLimit) holding(bytes.length);
               const d0 = now(), arrayOnly = borrowed && meta.v?.t !== undefined && !meta.v.r;
@@ -482,7 +482,7 @@ export function createJournalStepper({id, build, normalize, open, run, verify, e
           if (path === undefined) return;
           if (used) { touched.add(path); finished.delete(path); return; }
           touched.delete(path);
-          if (journal[path]?.borrowed && !pendingOf.has(journal[path])) {
+          if ((journal[path]?.borrowed || journal[path]?.cold && journal[path].meta?.v?.t === 0 && !journal[path].meta.v.r) && !pendingOf.has(journal[path])) {
             finished.add(path); missed.delete(path);
             loaded.delete(path); kept.delete(path); owned.delete(path);
             for (const [buffer,ref] of refs) if (ref[0] === path) { refs.delete(buffer); sums.delete(buffer); }

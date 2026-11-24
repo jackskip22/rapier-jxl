@@ -3,11 +3,12 @@ import {complete} from './bits.mjs';
 import {captureRefused} from './fault.mjs';
 import {turn, exclusive} from './turn.mjs';
 import {screenPhotoRegions} from './screen-photo-regions.mjs';
-export async function captureAnswer({data, width, height, colorSpace, effort, patchEffort, tools, sizes, floor, frame, instant}, signal) {
-  const {encodeCaptureBytes, encodeCaptureSteps, compileCaptureKernels, CAPTURE_TOOLS, CAPTURE_SIZES, CAPTURE_FLOOR, CAPTURE_PATCHES, CAPTURE_PATCH_EFFORT, CAPTURE_LEVEL, INSTANT} = await import('./capture-codec.mjs');
+import {encodeCaptureBytes, encodeCaptureSteps, compileCaptureKernels, CAPTURE_TOOLS, CAPTURE_SIZES, CAPTURE_FLOOR, frameCapture, CAPTURE_LIMIT} from './capture-codec.mjs';
+import {screenPhotoSteps, compileJpegKernels} from './screen-photo-mixed.mjs';
+export async function captureAnswer({data, width, height, colorSpace, effort, tools, sizes, floor, frame, limit, small}, signal) {
   await compileCaptureKernels();
-  const options = {colorSpace, effort, [CAPTURE_TOOLS]: tools, [CAPTURE_SIZES]: sizes, [CAPTURE_FLOOR]: floor,
-    [CAPTURE_PATCHES]: frame ? false : undefined, [CAPTURE_PATCH_EFFORT]: instant ? 1 : patchEffort, ...(instant && {[CAPTURE_LEVEL]: INSTANT})};
+  const options = {colorSpace, effort, small, [CAPTURE_TOOLS]: tools, [CAPTURE_SIZES]: sizes, [CAPTURE_FLOOR]: floor,
+    ...frameCapture(frame, floor), [CAPTURE_LIMIT]: limit};
   return exclusive(async () => {
     if (!signal) return encodeCaptureBytes(data, width, height, options);
     if (signal.aborted) throw signal.reason;
@@ -24,7 +25,6 @@ export async function captureAnswer({data, width, height, colorSpace, effort, pa
 }
 
 export async function screenPhotoAnswer(request, signal) {
-  const {screenPhotoSteps, compileCaptureKernels, compileJpegKernels} = await import('./screen-photo-mixed.mjs');
   await compileCaptureKernels(); await compileJpegKernels().catch(() => false);
   try { return await exclusive(() => complete(screenPhotoSteps({...request,
     regions: request.regions ?? screenPhotoRegions(request.data, request.width, request.height)})), signal); }

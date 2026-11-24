@@ -9,7 +9,8 @@ export function admitSampleFormat(data, options = {}) {
   if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && options.icc !== undefined) {
     const profile = prepareICC(options.icc, {level: options.level, compression: options.iccCompression});
     Object.assign(samples, profile);
-    if (samples.bitDepth === 8 && !samples.exponentBits && !samples.alphaPremultiplied &&
+    const space = String.fromCharCode(...options.icc.subarray(16, 20));
+    if ((space === 'RGB ' || space === 'GRAY') && samples.bitDepth === 8 && !samples.exponentBits && !samples.alphaPremultiplied &&
         samples.intensityTarget === 255 && profile.level === 5 && options.level !== 10)
       samples.iccSpace = iccSpace(options.icc, {level: 5, compression: options.iccCompression}, profile);
   }

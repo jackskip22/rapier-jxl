@@ -4,12 +4,12 @@ export type {Pixels, Bytes, ColorSpace, SampleFormat, TransferFunction, Limits, 
 /** Limits: 268,435,456 pixels and 65,535 pixels per side. Output uses available memory. */
 export const LIMITS: Limits;
 export interface PhotoOptions extends Omit<EncodeOptions, 'photo'> {
-  /** Integer from 1 to 9; default 1. Higher efforts search for smaller photographic streams. */
+  /** Integer from 1 to 9. Default 1. Higher efforts search for smaller photographic streams. */
   effort?: number | undefined;
 }
-/** Encode 8-bit photographs with DCT8 and exact alpha. Quality defaults to 90; 100 preserves all samples.
+/** Encode 8-bit photographs with DCT8 and exact alpha. Quality defaults to 90. 100 preserves all samples.
  * Native precision and HDR use modular coding with source-domain quantization.
- * For DCT8, effort 3 adds clustering; 4 adds a learned coefficient order; 5 through 9 also try ANS coding.
+ * For DCT8, effort 3 adds clustering. 4 adds a learned coefficient order. 5 through 9 also try ANS coding.
  * These entropy searches preserve the coefficients and reconstructed pixels.
  * Candidates replace the preceding stream only when smaller. Searches exceeding their memory estimate retain
  * the preceding stream. Input limits do not depend on effort. */

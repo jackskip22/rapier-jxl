@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT
 export function displayedAnimationFrames(reference) {
-  const last = reference.frames.length - 1, ends = (reference.loops ?? 0) > 0;
-  const frames = reference.frames.filter((frame, i) => frame.duration > 0 || ends && i === last);
-  return frames.length ? frames : reference.frames.slice(-1);
+  return displayedFrameIndices(reference).map(i => reference.frames[i]);
+}
+export function displayedFrameIndices(reference) {
+  const last = reference.frames.length - 1, ends = (reference.loops ?? 0) > 0, shown = [];
+  reference.frames.forEach((frame, i) => { if (frame.duration > 0 || ends && i === last) shown.push(i); });
+  return shown.length ? shown : [last];
 }
 
 export const VIDEO_RATES = [[24, 1], [25, 1], [30, 1], [24000, 1001], [30000, 1001], [48, 1], [50, 1], [60, 1], [60000, 1001], [120, 1], [240, 1], [100, 1]];

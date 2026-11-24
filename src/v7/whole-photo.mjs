@@ -20,8 +20,8 @@ export function* wholePhotoOutputSteps(data, width, height, options, outputMeasu
     prepared.catch(() => {});
     yield {await: prepared, photoOutput: true};
     if (!output) return options.retainFloor ? yield* options.retainFloor(null) : null;
-    const measureOutput = function* (bytes, want) {
-      const measured = output.measure(bytes, want); measured.catch(() => {});
+    const measureOutput = function* (bytes, want, image) {
+      const measured = output.measure(bytes, want, image); measured.catch(() => {});
       return yield {await: measured, photoOutput: true};
     };
     return yield* wholePhotoSteps(data, width, height, {...options, measureOutput});

@@ -10,7 +10,7 @@ import {JxlBits, requireDecode, unpackSigned} from './decode-bits.mjs';
 import {readDecodeImageHeader, readDecodeFrameHeader, readDecodeTOC} from './decode-header.mjs';
 import {TRANSFORMS} from './vardct-bases.mjs';
 import {viewBytes, copyBytes} from './v7/bytes.mjs';
-import {fail, snapshotOptions} from './v7/primitives.mjs';
+import {fail, declared, snapshotOptions} from './v7/primitives.mjs';
 
 const INDEX = 0x6a786c69, GAIN = 0x6a68676d;
 const TOC_ENTRY = [[10, 0], [14, 1024], [22, 17408], [30, 4211712]];
@@ -111,6 +111,15 @@ function unpackSource(bytes, allowCut) {
       }
       if (!cut && KEEP_AUX.has(decoded)) (full || fragments ? suffixBoxes : prefixBoxes).push(bytes.subarray(at, end));
     } else if (!cut && KEEP_AUX.has(type)) {
+      if (type === 0x45786966) {
+        if (dataLen < 4) throw fail('JXL_INPUT', 'Exif: TIFF offset missing');
+        const tiffOff = 4 + view.getUint32(body);
+        if (tiffOff + 8 > dataLen) throw fail('JXL_INPUT', 'Exif: invalid TIFF offset or header');
+        const t0 = body + tiffOff;
+        if (!(bytes[t0] === 73 && bytes[t0 + 1] === 73 && bytes[t0 + 2] === 42 && bytes[t0 + 3] === 0 ||
+              bytes[t0] === 77 && bytes[t0 + 1] === 77 && bytes[t0 + 2] === 0 && bytes[t0 + 3] === 42))
+          throw fail('JXL_INPUT', 'Exif: invalid TIFF offset or header');
+      }
       (full || fragments ? suffixBoxes : prefixBoxes).push(bytes.subarray(at, end));
     }
     if (decoded === INDEX && ++indexBoxes > 1 || decoded === GAIN && ++gainBoxes > 1)
@@ -442,10 +451,13 @@ function admitLFSections(opened) {
 }
 
 export function placeholder(input, options) {
+  try { return placeholderInner(input, options); } catch (error) { throw declared(error); }
+}
+function placeholderInner(input, options) {
   const settings = snapshotOptions(options);
   for (const key of Object.keys(settings)) if (key !== 'format')
     throw fail('JXL_OPTIONS', `unknown option: ${key}`);
-  const format = settings.format ?? 'jxl';
+  const {format = 'jxl'} = settings;
   if (format !== 'jxl' && format !== 'dataUrl')
     throw fail('JXL_OPTIONS', "format: jxl|dataUrl");
   const raw = viewBytes(input);
@@ -520,6 +532,9 @@ function buildScaleCandidate(raw, unpacked, opened, targetScale) {
 }
 
 export function slice(input, options) {
+  try { return sliceInner(input, options); } catch (error) { throw declared(error); }
+}
+function sliceInner(input, options) {
   const settings = snapshotOptions(options);
   for (const key of Object.keys(settings)) if (!['scale', 'maxWidth', 'maxBytes'].includes(key))
     throw fail('JXL_OPTIONS', `unknown option: ${key}`);

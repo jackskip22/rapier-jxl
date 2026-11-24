@@ -1,5 +1,6 @@
+import './engines.mjs';
 import {wasmBytes} from '../wasm-text.mjs';
-import {decodeBands} from '../decode-parallel.mjs';
+import {decodeBands, decodeBandsAsync} from '../decode-parallel.mjs';
 import {decodeOptions, openImageSteps, admitContainer, unreadAfterLastFrame} from '../decode-image.mjs';
 import {PUBLIC_DECODE_LIMITS, decodeLimits} from './decode-limits.mjs';
 import {addPart} from '../decode-parts.mjs';
@@ -14,9 +15,9 @@ import {compileWasm, wasmFailure} from '../wasm-modules.mjs';
 import {DECODE_KERNELS} from '../decode-kernels-bytes.mjs';
 import {wasmRequired} from '../capture-wasm-error.mjs';
 import {decodedFields} from './describe.mjs';
-import {bytes, check, fail, declared, snapshotOptions, snapshotArray, pixelLimit, PIXELS, admitSignal, progressOf, blobBytes, preparedAlone} from './primitives.mjs';
+import {bytes, check, fail, declared, callers, snapshotOptions, snapshotArray, pixelLimit, PIXELS, admitSignal, progressOf, blobBytes, preparedAlone, isBlob} from './primitives.mjs';
 import {header} from './inspect.mjs';
-import {publicDecoded} from './header-fields.mjs';
+import {publicDecoded, publicFrameFields} from './header-fields.mjs';
 import {copyBytes, encodedByteLength, viewBytes, admitSignature} from './bytes.mjs';
 import {admitRegion} from './region.mjs';
 
@@ -36,7 +37,7 @@ export async function supported(feature) {
 }
 const HDR = ['pq', 'hlg'];
 const FLAGS = ['applyOrientation', 'unpremultiplyAlpha', 'renderSpotColors', 'planes', 'partial'];
-const KEYS = new Set([...PUBLIC_DECODE_LIMITS, ...FLAGS, 'format', 'colorSpace', 'region', 'signal', 'onProgress']);
+const KEYS = new Set([...PUBLIC_DECODE_LIMITS, ...FLAGS, 'format', 'colorSpace', 'region', 'signal', 'onProgress', 'onFrame']);
 const NAMED_SPACES = ['original', 'srgb', 'linear-srgb', 'display-p3', 'rec2020', 'xyb'];
 const TARGET = {space: ['rgb', 'gray', 'xyb'], whitePoint: ['d65', 'dci', 'e', 'd50'], primaries: ['srgb', 'display-p3', 'rec2020'],
   transferFunction: ['srgb', 'linear', 'bt709', 'dci', 'pq', 'hlg', 'gamma']};
@@ -89,6 +90,10 @@ function admitDecode(options) {
   if (given.colorSpace !== undefined) given.colorSpace = colorTarget(given.colorSpace);
   if (given.region !== undefined) given.region = admitRegion(given.region);
   if (given.partial && given.region) throw fail('JXL_OPTIONS', 'partial: not with region');
+  if (given.onFrame !== undefined) {
+    if (typeof given.onFrame !== 'function') throw fail('JXL_OPTIONS', 'onFrame: function');
+    if (given.region || given.partial) throw fail('JXL_OPTIONS', 'onFrame: not with region or partial');
+  }
   return given;
 }
 const decode = (input, options) => decodeHere(input, options).catch(error => { throw declared(error); });
@@ -114,19 +119,28 @@ decode[Symbol.for('rapier-jxl.verify.unread')] = (input, options) => {
 decode[Symbol.for('rapier-jxl.verify.without-noise')] = (input, options) =>
   decodeHere(input, options, null, true).catch(error => { throw declared(error); });
 async function decodeHere(input, options, opened = null, withoutNoise = false) {
-  const {signal, onProgress, ...bounds} = admitDecode(options);
+  const admitted = admitDecode(options), {signal, onProgress, onFrame, ...bounds} = admitted;
   check(signal);
   if (onProgress !== undefined && typeof onProgress !== 'function') throw fail('JXL_OPTIONS', 'onProgress: function');
-  const limits = limitsOf(bounds);
+  const limits = limitsOf(onFrame ? {...bounds, onFrame} : bounds);
+  if (bounds.maxTotalSamples !== undefined) limits.callerTotalSamples = true;
+  if (onFrame) limits.onFrame = async (frame, index) => {
+    publicFrameFields(frame);
+    if (frame.data instanceof Uint8Array) frame.data = new Uint8ClampedArray(frame.data.buffer, frame.data.byteOffset, frame.data.length);
+    check(signal);
+    try { await onFrame(frame, index); } catch (error) { throw callers(error); }
+    check(signal);
+  };
   const borrowed = opened !== null;
   if (borrowed) limits.borrowed = true;
+  else limits.ownedInput = true;
   if (withoutNoise) limits.withoutNoise = true;
   let owned;
   if (borrowed) {
     bytes(input);
     if (input.length > limits.maxInputBytes) throw fail('JXL_LIMIT', 'maxInputBytes: exceeded');
     owned = input;
-  } else if (typeof Blob !== 'undefined' && input instanceof Blob) {
+  } else if (isBlob(input)) {
     if (input.size > limits.maxInputBytes) throw fail('JXL_LIMIT', 'maxInputBytes: exceeded');
     owned = await blobBytes(input, signal);
   } else {
@@ -146,7 +160,7 @@ async function decodeHere(input, options, opened = null, withoutNoise = false) {
   }
   await prepare();
   check(signal);
-  const result = decodeBands(owned, limits, opened);
+  const result = onFrame ? await decodeBandsAsync(owned, limits, opened) : decodeBands(owned, limits, opened);
   if (limits.region) result.region = {...limits.region};
   Object.assign(result, decodedFields(result));
   publicDecoded(result);

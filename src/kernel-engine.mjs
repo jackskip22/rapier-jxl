@@ -25,7 +25,7 @@ export function createKernelEngine(module) {
       const memoryError = message => Object.assign(new RangeError(message), {code: 'JXL_MEMORY'});
       if (!(at <= 0x80000000)) throw memoryError('kernel memory: over 2 GiB');
       if (at > memory.buffer.byteLength) {
-        try { memory.grow(Math.ceil((at - memory.buffer.byteLength) / 65536)); } catch { throw memoryError('kernel memory allocation failed'); }
+        try { memory.grow(Math.ceil((at - memory.buffer.byteLength) / 65536)); } catch (cause) { throw Object.assign(memoryError('kernel memory grow failed'), {cause}); }
         engine.views();
       }
       return offsets;

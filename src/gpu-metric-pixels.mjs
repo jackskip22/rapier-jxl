@@ -2,12 +2,13 @@
 import {s2Dimensions} from './ssimulacra2-input.mjs';
 import {UniformRing} from './gpu-uniforms.mjs';
 import {gpuPipelineSet} from './gpu-pipelines.mjs';
+import {gpuCheck, gpuMap} from './gpu-kit.mjs';
 
 const METRIC_PLACE_WG = 128;
 const unavailable = () => Object.assign(new Error('owner unavailable'), {code: 'JXL_GPU'});
 
 export function metricPlaceShader(bindings, body, extra = '') {
-  return `struct Params { w: u32, h: u32, stride: u32, width: u32, source: u32, target: u32, z: u32, k: u32 }
+  return `struct Params { w: u32, h: u32, stride: u32, width: u32, source: u32, dest: u32, z: u32, k: u32 }
 @group(0) @binding(0) var<uniform> P: Params;
 ${bindings.map(([name, access, type = 'f32'], i) => `@group(0) @binding(${i + 1}) var<storage, ${access}> ${name}: array<${type}>;`).join('\n')}
 ${extra}
@@ -17,12 +18,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (i >= P.w * P.h) { return; }
   let x = i % P.w; let y = i / P.w;
   let k = (y + (P.source >> 16u)) * P.stride + x + (P.source & 65535u);
-  let o = (y + (P.target >> 16u)) * P.width + x + (P.target & 65535u);
+  let o = (y + (P.dest >> 16u)) * P.width + x + (P.dest & 65535u);
   ${body}
 }`;
 }
 
-const linearPipelines = gpuPipelineSet({place: metricPlaceShader([
+const linearPipelines = /* @__PURE__ */ gpuPipelineSet({place: /* @__PURE__ */ metricPlaceShader([
   ['r', 'read'], ['g', 'read'], ['b', 'read'], ['dr', 'read_write'], ['dg', 'read_write'], ['db', 'read_write'],
 ], 'dr[o] = r[k]; dg[o] = g[k]; db[o] = b[k];')});
 
@@ -59,18 +60,19 @@ class MetricReadback {
 
   async pixels(buffers, Type) {
     if (this.destroyed) throw unavailable();
+    gpuCheck(this.device);
     const bytes = this.width * this.height * 4, encoder = this.device.createCommandEncoder();
     while (this.read.length < buffers.length) this.read.push(this.buffer(bytes, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST));
     const reads = this.read.slice(0,buffers.length);
     for (let c = 0; c < buffers.length; c++) encoder.copyBufferToBuffer(buffers[c], 0, reads[c], 0, bytes);
     this.ring.flush(); this.device.queue.submit([encoder.finish()]);
-    const mapped = await Promise.allSettled(reads.map(b => b.mapAsync(GPUMapMode.READ, 0, bytes)));
+    const mapped = await Promise.allSettled(reads.map(b => gpuMap(this.device, b, 0, bytes)));
     try {
       if (this.destroyed) throw unavailable();
       for (const result of mapped) if (result.status === 'rejected') throw result.reason;
       return buffers.map((_, c) => new Type(reads[c].getMappedRange(0, bytes).slice(0)));
     } finally {
-      for (let c = 0; c < buffers.length; c++) if (mapped[c].status === 'fulfilled' && reads[c].mapState === 'mapped') reads[c].unmap();
+      for (let c = 0; c < buffers.length; c++) if (reads[c].mapState === 'mapped' || reads[c].mapState === 'pending') reads[c].unmap();
       if (!this.destroyed) this.ring.reset();
     }
   }

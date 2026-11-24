@@ -65,7 +65,7 @@ const refuse = (code, message) => Object.assign(new TypeError(message), { code }
 function admitElement(element, options) {
   if (!object(element) || typeof element.getBoundingClientRect !== 'function') throw refuse('JXL_INPUT', "element: DOM Element");
   admitOptions(options, 'measure', ['edges', 'keep']);
-  if (options.keep != null && typeof options.keep.has !== 'function') throw refuse('JXL_OPTIONS', "keep: Set");
+  if (options.keep !== undefined && typeof options.keep?.has !== 'function') throw refuse('JXL_OPTIONS', "keep: Set");
 }
 function admitOptions(options, name, keys) {
   if (!object(options)) throw refuse('JXL_OPTIONS', `${name}: {${keys.join(', ')}}`);
@@ -366,10 +366,26 @@ function edgeParts(root, clip = clipper(root)) {
     };
     strips(r.left, r.top, r.right, r.bottom, t, rt, b, l);
     if (ow) strips(r.left - oo, r.top - oo, r.right + oo, r.bottom + oo, ow, ow, ow, ow);
-    const radius = Math.max(...['TopLeft', 'TopRight', 'BottomLeft', 'BottomRight'].map(c => parseFloat(s[`border${c}Radius`]) || 0));
-    if (radius && (t || rt || b || l)) {
-      const k = radius + Math.max(t, rt, b, l);
-      for (const [x, y] of [[r.left, r.top], [r.right - k, r.top], [r.left, r.bottom - k], [r.right - k, r.bottom - k]]) parts.push({ left: x, top: y, right: x + k, bottom: y + k });
+    if (t || rt || b || l) {
+      const len = (tok, span) => !tok ? 0 : Math.max(0, tok.endsWith('%') ? (parseFloat(tok) || 0) * span / 100 : parseFloat(tok) || 0);
+      const corners = ['TopLeft', 'TopRight', 'BottomLeft', 'BottomRight'].map(c => {
+        const [hx, hy = hx] = (s[`border${c}Radius`] || '').trim().split(/\s+/);
+        return [len(hx, r.width), len(hy, r.height)];
+      });
+      if (corners.some(([rx, ry]) => rx > 0 && ry > 0)) {
+        const f = Math.min(1, r.width / ((corners[0][0] + corners[1][0]) || 1), r.width / ((corners[2][0] + corners[3][0]) || 1),
+          r.height / ((corners[0][1] + corners[2][1]) || 1), r.height / ((corners[1][1] + corners[3][1]) || 1));
+        const places = [[0, l, t, rx => [r.left, r.left + rx], ry => [r.top, r.top + ry]],
+          [1, rt, t, rx => [r.right - rx, r.right], ry => [r.top, r.top + ry]],
+          [2, l, b, rx => [r.left, r.left + rx], ry => [r.bottom - ry, r.bottom]],
+          [3, rt, b, rx => [r.right - rx, r.right], ry => [r.bottom - ry, r.bottom]]];
+        for (const [i, bx, by, spanX, spanY] of places) {
+          const rx = corners[i][0] * f, ry = corners[i][1] * f;
+          if (!(rx > 0 && ry > 0 && (bx || by))) continue;
+          const [x0, x1] = spanX(Math.min(r.width, rx + bx)), [y0, y1] = spanY(Math.min(r.height, ry + by));
+          parts.push({ left: x0, top: y0, right: x1, bottom: y1 });
+        }
+      }
     }
   }
   return found;

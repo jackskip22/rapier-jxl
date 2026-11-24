@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 import {kernelHooks} from './kernel-hooks.mjs';
+import {ownedPixels, tupleLength, tupleMatches, packTuple} from './photo-quality-cache.mjs';
 
 const PACKED_BYTES = 2 << 20, FRAMES = 32, FAMILIES = 128, RESULTS = 512;
-const STOP = {}, closedError = () => new Error('Photo score memo is destroyed.');
+const closedError = () => new Error('Photo score memo is destroyed.');
 const color = value => value === 'srgb' ? 0 : value === 'display-p3' ? 1 : NaN;
 const numberList = (values, put) => { put(values?.length ?? -1); if (values) for (const value of values) put(value); };
 function rectangles(rects, put, quality = false) {
@@ -22,23 +23,7 @@ function parameters(p, put) {
   for (const value of [p.sourceWidth, p.sourceHeight, p.width, p.height, p.x, p.y, p.quality, color(p.colorSpace), +p.mask, +p.alpha]) put(value);
   rectangles(p.areas, put, true); rectangles(p.crops, put);
 }
-function matches(key, walk, end = key?.length) {
-  if (!key) return false;
-  let at = 0;
-  try { walk(value => { if (at >= end || !Object.is(key[at++], value)) throw STOP; }); }
-  catch (error) { if (error !== STOP) throw error; return false; }
-  return at === end;
-}
-function lengthOf(walk, remaining) {
-  let length = 0;
-  try { walk(value => { if (!Number.isFinite(value) || ++length * 8 > remaining) throw STOP; }); }
-  catch (error) { if (error !== STOP) throw error; return null; }
-  return length;
-}
-function packed(walk, length) {
-  const result = new Float64Array(length); let at = 0;
-  walk(value => { result[at++] = value; }); return result;
-}
+
 const sameFields = (saved, fields) => saved.length === fields.length && saved.every((value, i) => value === fields[i]);
 const copyScore = saved => ({ssimulacra2: saved[0], nativeScores: {package: saved[1], native: saved[2], minimum: saved[3]}});
 
@@ -77,9 +62,7 @@ function imageFamily(image, deadzone, top, put) {
 }
 
 export function photoScoreMemo(owned) {
-  let pixels = owned && !(typeof Blob === 'function' && owned instanceof Blob) && typeof owned.rows !== 'function'
-    && (owned.data instanceof Uint8Array || owned.data instanceof Uint8ClampedArray) && owned.data.buffer instanceof ArrayBuffer
-    && owned.data.length === owned.width * owned.height * 4 ? owned.data : null;
+  let pixels = ownedPixels(owned);
   const sourceWidth = owned?.width, sourceHeight = owned?.height;
   owned = null;
   let readers = new WeakMap(), bytes = 0, families = 0, results = 0, closed = false;
@@ -93,13 +76,13 @@ export function photoScoreMemo(owned) {
       const p = {sourceWidth: width, sourceHeight: height, width: width + dx, height: height + dy, x: dx || dy ? -dx : 0, y: dx || dy ? -dy : 0,
         quality, colorSpace, areas, crops, mask: false, alpha: false};
       const head = put => parameters(p, put), walk = put => { head(put); pieces(masks, put, true); pieces(placedBoxes, put, false); pieces(exactPieces, put, true); };
-      let entry = frames.find(frame => matches(frame.key, walk));
+      let entry = frames.find(frame => tupleMatches(frame.key, walk));
       if (!entry) {
         if (frames.length >= FRAMES) return;
-        const length = lengthOf(walk, PACKED_BYTES - bytes); if (length === null) return;
-        entry = {key: packed(walk, length), bands: []}; frames.push(entry); bytes += length * 8;
+        const length = tupleLength(walk, PACKED_BYTES - bytes); if (length === null) return;
+        entry = {key: packTuple(walk, length), bands: []}; frames.push(entry); bytes += length * 8;
       }
-      const headLength = lengthOf(head, PACKED_BYTES);
+      const headLength = tupleLength(head, PACKED_BYTES);
       readers.set(callbacks.rows, {entry, headLength, referenceRows: callbacks.referenceRows, exactRows: callbacks.exactRows, project: callbacks.project});
     },
     frame(rows, width, height, options) {
@@ -110,7 +93,7 @@ export function photoScoreMemo(owned) {
       const p = {sourceWidth: placement.imageWidth ?? width, sourceHeight: placement.imageHeight ?? height, width, height,
         x: crop?.x ?? 0, y: crop?.y ?? 0, quality: options.quality, colorSpace: options.colorSpace, areas: options.areas,
         crops: options.photoCrops, mask: placement.mask === true, alpha: placement.alphaChannel === true};
-      if (!matches(binding.entry.key, put => parameters(p, put), binding.headLength)) return null;
+      if (!tupleMatches(binding.entry.key, put => parameters(p, put), binding.headLength)) return null;
       const entry = binding.entry;
       return {
         band(top, w, h) {
@@ -127,7 +110,7 @@ export function photoScoreMemo(owned) {
               const built = made.get(image);
               if (!built || want?.ssimulacra2 !== true || want?.butteraugli !== false || !fixedDct8(image, w, h)) return measure(image, want);
               const walk = put => imageFamily(image, built.deadzone, top, put);
-              let family = entry.bands.find(item => item.kernel === built.kernel && matches(item.key, walk));
+              let family = entry.bands.find(item => item.kernel === built.kernel && tupleMatches(item.key, walk));
               const known = family?.probes.find(item => sameFields(item.fields, image.quantFields));
               if (known) return copyScore(known.score);
               const value = measure(image, want), native = value.nativeScores;
@@ -138,8 +121,8 @@ export function photoScoreMemo(owned) {
               const fieldBytes = image.quantFields.byteLength;
               if (!family) {
                 if (families >= FAMILIES) return value;
-                const length = lengthOf(walk, PACKED_BYTES - bytes - fieldBytes); if (length === null) return value;
-                family = {key: packed(walk, length), kernel: built.kernel, probes: []};
+                const length = tupleLength(walk, PACKED_BYTES - bytes - fieldBytes); if (length === null) return value;
+                family = {key: packTuple(walk, length), kernel: built.kernel, probes: []};
                 entry.bands.push(family); families++; bytes += length * 8;
               } else if (bytes + fieldBytes > PACKED_BYTES) return value;
               family.probes.push({fields: image.quantFields.slice(), score: [value.ssimulacra2, native.package, native.native, native.minimum]});

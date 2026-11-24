@@ -56,7 +56,9 @@ export function readWebGLNow(canvas) {
   const {width, height} = canvas, rows = new Uint8Array(width * height * 4), data = new Uint8Array(rows.length);
   packed(gl, null, () => gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, rows));
   if (gl.isContextLost()) throw lost();
-  place(data, rows, 0, height, width, height, gl.getContextAttributes());
+  const attrs = gl.getContextAttributes();
+  if (!attrs) throw lost();
+  place(data, rows, 0, height, width, height, attrs);
   return {data, width, height, colorSpace: space(gl)};
 }
 
@@ -70,6 +72,7 @@ export function readWebGL(canvas) {
   }
   const {width, height} = canvas, line = width * 4, slice = Math.max(1, Math.floor(2097152 / line));
   const colorSpace = space(gl), attrs = gl.getContextAttributes();
+  if (!attrs) throw lost();
   const data = new Uint8Array(width * height * 4), part = new Uint8Array(Math.min(height, slice) * line);
   let buffer = null, fence = null;
   const done = () => { try { if (fence) gl.deleteSync(fence); if (buffer) gl.deleteBuffer(buffer); } catch {} };

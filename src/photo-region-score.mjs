@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
-import {reconstructRGB, reconstructYCbCr, toRGBA} from './reconstruct-planes.mjs';
+import {reconstructRGB, reconstructYCbCr} from './reconstruct-planes.mjs';
+import {captureLinearRGBA as toRGBA} from './capture-kernels.mjs';
 import {ssimulacra2Reference} from './ssimulacra2.mjs';
 import {captureLinearPlanes} from './capture-kernels.mjs';
 import {photoNativeScores} from './photo-native-scores.mjs';
 import {P3_TRANSFORM, linearFromTransformPlanes} from './color-transform.mjs';
 import {photoReference} from './photo-reference.mjs';
-import {gammaRGBA, nativeRGBA, nativeGammaRGBA} from './photo-output.mjs';
+import {nativeRGBA, nativeGammaRGBA} from './photo-output.mjs';
+import {colorPixels} from './color-band.mjs';
 import {measuredTarget, djxlResidual} from './photo-browser-margin.mjs';
 import {askedLook, measuredLook} from './photo-quality-table.mjs';
 import {fault} from './fault.mjs';
@@ -74,17 +76,21 @@ export function* pictureOutputs(image, options, origin, gamma = null) {
     yield {kind: 'native', rgba: nativeRGBA(linear, image.width, image.height, origin)};
   } else {
     const planes = gamma ?? gammaPicture(image, options);
-    yield {kind: 'package', rgba: gammaRGBA(planes, image.width, image.height)};
+    yield {kind: 'package', rgba: colorPixels(planes, image.width, image.height, image.width, 0)};
     yield {kind: 'native', rgba: nativeGammaRGBA(planes, image.width, image.height, origin)};
   }
 }
-const clip = (r, width, height) => {
-  const x = Math.max(0, r.x), y = Math.max(0, r.y);
+export const clipPhotoRect = (r, width, height, x0 = 0, y0 = 0) => {
+  const x = Math.max(x0, r.x), y = Math.max(y0, r.y);
   return {x, y, width: Math.min(width, r.x + r.width) - x, height: Math.min(height, r.y + r.height) - y};
+};
+export const cutPhotoRGBA = (src, sw, x0, y0, w, h, dst = new Uint8Array(w * h * 4), dx = 0, dy = 0, dw = w) => {
+  for (let y = 0; y < h; y++) dst.set(src.subarray(((y0 + y) * sw + x0) * 4, ((y0 + y) * sw + x0 + w) * 4), ((dy + y) * dw + dx) * 4);
+  return dst;
 };
 export function cropGuard(width, height, crops, intent, mask, project, signal, colorSpace, origin = {x: 0, y: 0}, look = undefined, readingArithmetic) {
   const seen = new Set(), measured = [];
-  const checks = (crops?.length ? crops : [{x: 0, y: 0, width, height}]).map(r => clip(r, width, height))
+  const checks = (crops?.length ? crops : [{x: 0, y: 0, width, height}]).map(r => clipPhotoRect(r, width, height))
     .filter(r => {
       if (r.width < 8 || r.height < 8) return false;
       const key = [r.x, r.y, r.width, r.height].join(',');
@@ -113,10 +119,7 @@ export function cropGuard(width, height, crops, intent, mask, project, signal, c
       for (const r of current) {
         check(signal);
         const y0 = Math.max(top, r.y), y1 = Math.min(top + image.height, r.y + r.height);
-        for (let y = y0; y < y1; y++) {
-          const from = ((y - top) * width + r.x) * 4, to = ((y - r.y) * r.width) * 4;
-          r.data[index].set(rgba.subarray(from, from + r.width * 4), to);
-        }
+        if (y1 > y0) cutPhotoRGBA(rgba, width, r.x, y0 - top, r.width, y1 - y0, r.data[index], 0, y0 - r.y, r.width);
       }
     };
     copy(reference, 0);
@@ -184,7 +187,12 @@ export function qualifyPhotoImage(image, {rows, referenceRows = rows, exactRows 
   for (let top = 0; top < height && guard.passed(); top += 256) {
     check(signal);
     const count = Math.min(256, height - top), sub = dct8Band(image, top, count);
-    guard.add(rows(top, count), sub, sub, top, referenceRows(top, count), exactRows?.(top, count));
+    let bandRows = rows(top, count);
+    if (referenceRows !== rows || exactRows && exactRows !== rows) bandRows = Uint8Array.from(bandRows);
+    let refRows = referenceRows === rows ? bandRows : referenceRows(top, count);
+    if (exactRows && exactRows !== referenceRows && exactRows !== rows) refRows = Uint8Array.from(refRows);
+    const exRows = exactRows ? exactRows === rows ? bandRows : exactRows === referenceRows ? refRows : exactRows(top, count) : undefined;
+    guard.add(bandRows, sub, sub, top, refRows, exRows);
   }
   return {passed: guard.complete(), measurements: guard.measurements()};
 }

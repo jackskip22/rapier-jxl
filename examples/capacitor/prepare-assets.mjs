@@ -14,7 +14,7 @@ export async function copyModules({packageDir, to}) {
     throw Object.assign(new Error(`${packageDir} is not a built package with ./${name}.`), {code: 'JXL_PACKAGE'});
   await mkdir(to, {recursive: true});
   for (const name of MODULES) await copyFile(join(packageDir, 'dist', name), join(to, name));
-  await copyFile(join(packageDir, 'LICENSE'), join(to, 'LICENSE'));
+  for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES']) await copyFile(join(packageDir, name), join(to, name));
 }
 
 export async function prepareAssets({example = here, packageDir = process.env.JXL_PACKAGE && resolve(process.env.JXL_PACKAGE)} = {}) {

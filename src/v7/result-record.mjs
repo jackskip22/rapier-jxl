@@ -57,9 +57,11 @@ export async function imageResultRecord(bytes, reference, options = {}, describe
     throw fail('JXL_INTERNAL', 'result-record:image-2');
   const source = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ ? null : sourceOf(options.source);
   const originalBytes = typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__ ? undefined : settings.originalBytes;
+  if (settings.lexer !== undefined && (typeof settings.lexer !== 'string' || !settings.lexer.length))
+    throw fail('JXL_INTERNAL', 'result-record:lexer');
   const description = {...size, format, source, fidelity,
     ...originalByteFacts(originalBytes, missed ? null : bytes),
-    ...(!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__) && settings.transform && {transform: {...settings.transform, ...(settings.transform.via && {via: settings.transform.via.map(({width, height}) => ({width, height}))})}}),
+    ...(!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__) && settings.transform && {transform: {...settings.transform}}),
     ...(settings.readAs && {readAs: settings.readAs})};
   if (!(typeof __RAPIER_JXL_CAPTURE_LEAN__ !== 'undefined' && __RAPIER_JXL_CAPTURE_LEAN__) && missed)
     return {bytes: null, ...description, kept: null, meetsTarget: false, measurements: [], ...(typeof settings.usedWebGPU === 'boolean' && {usedWebGPU: settings.usedWebGPU}), reason: targetMiss(missWords(fidelity))};
@@ -74,7 +76,9 @@ export async function imageResultRecord(bytes, reference, options = {}, describe
   return {bytes: output, ...description, kept, meetsTarget: !reason, measurements,
     ...(reason && {reason}), ...(settings.otherDecoders && {otherDecoders: settings.otherDecoders}),
     ...(settings.timing && {timing: settings.timing}), ...(settings.textMarks && {textMarks: settings.textMarks}),
-    ...(typeof settings.usedWebGPU === 'boolean' && {usedWebGPU: settings.usedWebGPU})};
+    ...(settings.unproved && {unproved: settings.unproved.map(entry => ({...entry}))}),
+    ...(typeof settings.usedWebGPU === 'boolean' && {usedWebGPU: settings.usedWebGPU}),
+    ...(typeof settings.lexer === 'string' && {lexer: settings.lexer})};
 }
 
 function noMeasurements(settings) {

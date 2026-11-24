@@ -1,6 +1,6 @@
 # JPEG XL Converter
 
-Convert and compress PNG, JPEG, WebP and GIF files to JPEG XL from the Explorer. Offline; nothing leaves your machine.
+Convert and compress PNG, JPEG, WebP and GIF files to JPEG XL from the Explorer. Offline. Nothing leaves your machine.
 
 JPEG XL (`.jxl`) is a modern image format. Chrome and Firefox show it by default since October 2026, and Safari since 17.
 It is good for three things today:

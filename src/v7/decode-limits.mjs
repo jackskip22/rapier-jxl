@@ -9,7 +9,8 @@ export function decodeLimits(given) {
   for (const key of PUBLIC_DECODE_LIMITS) if (given[key] !== undefined) limits[key] = given[key];
   if (given.maxPixels !== undefined && given.maxPixels < PIXELS) {
     const counters = pictureCounters(given.maxPixels);
-    for (const key of COUNTERS) if (given[key] === undefined) limits[key] = counters[key];
+    for (const key of COUNTERS) if (given[key] === undefined && !(key === 'maxTotalSamples' && given.onFrame !== undefined))
+      limits[key] = counters[key];
   }
   if (given.maxTotalSamples !== undefined)
     limits.maxRetainedSamples = Math.min(limits.maxRetainedSamples ?? DECODE_LIMITS.maxRetainedSamples, given.maxTotalSamples);

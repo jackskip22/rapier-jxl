@@ -2,9 +2,9 @@
 import {authoredPatchEntropy} from './patch-code.mjs';
 import {LIMITS} from './limits.mjs';
 import {fault} from './fault.mjs';
-import {frameSpans, blockStats, voteShifts2D, forgetFrame, unchangedShare} from './animation-diff.mjs';
+import {frameSpans, blockStats, voteShifts2D, forgetFrame, unchangedShare, xybShiftL1} from './animation-diff.mjs';
 
-const TILE = 16, MAX_COPIES = 64, PATCH_REPLACE = 1, PATCH_BLEND_ABOVE = 4;
+const TILE = 16, MAX_COPIES = 64, PATCH_REPLACE = 1, PATCH_ADD = 2, PATCH_BLEND_ABOVE = 4;
 export const CANVAS = 2, BACKGROUND = 3;
 const KEPT_COST = 256;
 export const MASK_SHARE = 0.25;
@@ -502,7 +502,7 @@ function* planTallScroll(shown, width, height, {tolerance, changes, lossyChanges
     }
     start = end + 1;
   }
-  return plainArea - codedArea >= 768 * (shown.length - 1) ? {frames: plans, sparedPixels: plainArea - codedArea, tall: true} : null;
+  return plainArea - codedArea >= 768 * (shown.length - 1) ? {frames: plans, tall: true} : null;
 }
 
 function movedResidual(predicted, after, width, height) {
@@ -555,7 +555,7 @@ export function* planAnimationPatches(shown, width, height, {tolerance, changes,
     if (maySearch) {
       const occupied = occupancy(width, height), candidates = voteShifts2D(canvas, after, width, height, unresolved, Boolean(tolerance));
       const room = () => MAX_COPIES - copies.length - kept.length;
-      let probed = !(k > 1 && foundCopies);
+      let probed = !(k > 1);
       const probe = () => {
         if (!probed && room() && unresolved.includes(1))
           kept = shiftedCopies(background, after, width, height, 0, 0, unresolved, occupied, movingTolerance, room(), BACKGROUND);
@@ -571,6 +571,8 @@ export function* planAnimationPatches(shown, width, height, {tolerance, changes,
       if (copies.length || kept.length) { foundCopies = true; misses = 0; }
       else misses++;
       if (misses === 2 && !foundCopies) return null;
+    } else if (k > 1 && foundCopies && plainAreas[k] >= (tolerance ? 512 : 192)) {
+      kept = shiftedCopies(background, after, width, height, 0, 0, unresolved, occupancy(width, height), movingTolerance, MAX_COPIES, BACKGROUND);
     }
     let chosen = residualOf([...copies, ...kept]);
     if (kept.length) {
@@ -598,7 +600,7 @@ export function* planAnimationPatches(shown, width, height, {tolerance, changes,
     yield 0.01;
   }
   return foundCopies && plainArea - codedArea >= 768 * (shown.length - 1)
-    ? {frames: plans, sparedPixels: plainArea - codedArea} : null;
+    ? {frames: plans, ...(LOOSE && {codedArea, plainArea})} : null;
 }
 
 export function frameViewGroups({width, height, first, copies, parts}, extraChannels) {
@@ -618,4 +620,106 @@ export function frameViewGroups({width, height, first, copies, parts}, extraChan
 
 export function* encodeFrameView(groups, extraChannels) {
   return yield* authoredPatchEntropy({groups, extraChannels, tokens: 1 + groups.length * (6 + 3 * (1 + extraChannels))});
+}
+
+export {fewColours as additiveDithered};
+
+export const buildAdditiveGroups = (typeof __RAPIER_JXL_FORMAT__ !== 'undefined' && __RAPIER_JXL_FORMAT__ === true) ? null : function buildAdditiveGroups(slot, width, height, dx, dy, extraChannels = 0) {
+  const blending = () => Array.from({length: 1 + extraChannels}, () => ({mode: PATCH_ADD, alpha: 0, clamp: false}));
+  const group = (sx, sy, w, h, x, y) => ({reference: slot, sx, sy, w, h, positions: [{x, y, blending: blending()}]});
+  if (dx === 0 && dy === 0) return [group(0, 0, width, height, 0, 0)];
+  const x0 = Math.max(0, -dx), y0 = Math.max(0, -dy);
+  const x1 = Math.min(width, width - dx), y1 = Math.min(height, height - dy);
+  const iw = x1 - x0, ih = y1 - y0, sx0 = x0 + dx, sy0 = y0 + dy;
+  const groups = [group(sx0, sy0, iw, ih, x0, y0)];
+  if (x0 > 0) groups.push(group(0, sy0, x0, ih, 0, y0));
+  if (x1 < width) groups.push(group(x1, sy0, width - x1, ih, x1, y0));
+  if (y0 > 0) groups.push(group(0, 0, width, y0, 0, 0));
+  if (y1 < height) groups.push(group(0, y1, width, height - y1, 0, y1));
+  return groups;
+}
+
+const shiftBias = (typeof __RAPIER_JXL_FORMAT__ !== 'undefined' && __RAPIER_JXL_FORMAT__ === true) ? null : function shiftBias(before, after, width, height, dx, dy) {
+  const x0 = Math.max(0, -dx), y0 = Math.max(0, -dy);
+  const x1 = Math.floor(Math.min(width, width - dx) / 8) * 8, y1 = Math.floor(Math.min(height, height - dy) / 8) * 8;
+  if (x1 - x0 < 64 || y1 - y0 < 64) return Infinity;
+  const {stats} = blockStats(before, after, width, height, {dx, dy, x0, x1, y0, y1, held: true});
+  let sum = 0;
+  for (let at = 3; at < stats.length; at += 4) sum += stats[at];
+  return sum / (stats.length / 4);
+}
+
+const coarseBlockMeanShift = (typeof __RAPIER_JXL_FORMAT__ !== 'undefined' && __RAPIER_JXL_FORMAT__ === true) ? null : function coarseBlockMeanShift(before, after, width, height) {
+  let best = {dx: 0, dy: 0, bias: Infinity};
+  const at = (dx, dy) => { const bias = shiftBias(before, after, width, height, dx, dy); if (bias < best.bias) best = {dx, dy, bias}; };
+  for (let dy = -16; dy <= 16; dy += 8) for (let dx = -16; dx <= 16; dx += 8) at(dx, dy);
+  const {dx: cx, dy: cy} = best;
+  for (let dy = cy - 4; dy <= cy + 4; dy += 4) for (let dx = cx - 4; dx <= cx + 4; dx += 4)
+    if ((dx !== cx || dy !== cy) && Math.abs(dx) <= 16 && Math.abs(dy) <= 16) at(dx, dy);
+  return best;
+}
+
+const PAIR_SHIFTS = /* @__PURE__ */ new WeakMap();
+const pairShiftCandidates = (typeof __RAPIER_JXL_FORMAT__ !== 'undefined' && __RAPIER_JXL_FORMAT__ === true) ? null : function pairShiftCandidates(before, after, width, height, dithered) {
+  let byBefore = PAIR_SHIFTS.get(after);
+  if (!byBefore) PAIR_SHIFTS.set(after, byBefore = new WeakMap());
+  let cached = byBefore.get(before);
+  if (cached) return cached;
+  const fullMask = new Uint8Array(Math.ceil(width / TILE) * Math.ceil(height / TILE)).fill(1);
+  const votes = voteShifts2D(before, after, width, height, fullMask, true);
+  const list = [[0, 0]];
+  for (const {dx, dy} of votes) {
+    for (const [ox, oy] of [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]]) list.push([dx + ox, dy + oy]);
+    list.push([Math.round(dx / 4) * 4, Math.round(dy / 4) * 4]);
+  }
+  if (dithered || !votes.length) {
+    const step4 = coarseBlockMeanShift(before, after, width, height);
+    for (const [ox, oy] of [[0, 0], [-4, 0], [4, 0], [0, -4], [0, 4], [-1, 0], [1, 0], [0, -1], [0, 1]])
+      list.push([step4.dx + ox, step4.dy + oy]);
+  }
+  forgetFrame();
+  byBefore.set(before, list);
+  return list;
+}
+
+export const planAdditiveFrame = (typeof __RAPIER_JXL_FORMAT__ !== 'undefined' && __RAPIER_JXL_FORMAT__ === true) ? null : function planAdditiveFrame({previous, background, current, prevXYB, bgXYB, targetPlanes, width, height, frameIndex, dithered, extraChannels = 0}) {
+  const prevSlot = frameIndex === 1 ? BACKGROUND : CANVAS;
+  if (current === previous)
+    return {slot: prevSlot, dx: 0, dy: 0, score: 0, groups: buildAdditiveGroups(prevSlot, width, height, 0, 0, extraChannels), hold: true};
+  const wPad = Math.ceil(width / 8) * 8;
+  const maxShiftX = width >> 2, maxShiftY = height >> 2;
+  const cands = [];
+  const addCand = (slot, ref, dx, dy) => {
+    if (Math.abs(dx) <= maxShiftX && Math.abs(dy) <= maxShiftY) cands.push({slot, ref, dx, dy});
+  };
+  for (const [dx, dy] of pairShiftCandidates(previous, current, width, height, dithered))
+    addCand(prevSlot, prevXYB, dx, dy);
+  if (frameIndex >= 2) {
+    for (const [dx, dy] of pairShiftCandidates(background, current, width, height, dithered))
+      addCand(BACKGROUND, bgXYB, dx, dy);
+  }
+
+  const seen = new Set();
+  let best = cands[0], bestScore = Infinity;
+  for (const cand of cands) {
+    const key = `${cand.slot}:${cand.dx}:${cand.dy}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const x0 = Math.max(0, -cand.dx), y0 = Math.max(0, -cand.dy);
+    const x1 = Math.min(width, width - cand.dx), y1 = Math.min(height, height - cand.dy);
+    const rw = x1 - x0, rh = y1 - y0;
+    if (rw < (width >> 1) || rh < (height >> 1)) continue;
+    const meanL1 = xybShiftL1(targetPlanes[1], wPad, cand.ref[1], width, x0, y0, rw, rh, cand.dx, cand.dy, 4);
+    const cover = (rw * rh) / (width * height);
+    const score = meanL1 + (1 - cover) * 40;
+    if (score < bestScore) { bestScore = score; best = cand; }
+  }
+  return {
+    slot: best.slot,
+    dx: best.dx,
+    dy: best.dy,
+    score: bestScore,
+    groups: buildAdditiveGroups(best.slot, width, height, best.dx, best.dy, extraChannels),
+    hold: false,
+  };
 }

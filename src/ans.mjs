@@ -9,7 +9,7 @@ import {GROUP_TOKENS} from './frame.mjs';
 import {fault} from './fault.mjs';
 import {captureModularAnsWrite} from './capture-kernels.mjs';
 import {writeAnsTokens} from './kernels.mjs';
-import {LOG_CODES, LOG_LENGTHS, SYMBOL_BITS, distributionLength, expectedDataBits, normalise, reverseAlias, shapeHistogram, writeDistribution, writeAnsHistograms} from './ans-core.mjs';
+import {LOG_CODES, LOG_LENGTHS, SYMBOL_BITS, distributionLength, expectedDataBits, normalise, reverseAlias, shapeHistogram, writeDistribution, writeAnsHistograms, writeModularAnsHeader, writeAnsDistributionBundle} from './ans-core.mjs';
 export {LOG_LENGTHS, LOG_CODES, shapeHistogram, reverseAlias};
 
 class BitCount {
@@ -51,12 +51,12 @@ function ansFlush(g, w) {
   g.length = 0;
 }
 
-const BUILT = new Map(), BUILT_KEEP = 64;
+const BUILT = new Map(), BUILT_KEEP = 256, BUILT_WEAK = new WeakMap();
 const RESTORED_PARTS = new WeakMap();
-let builtScopes = 0;
+let builtScopes = 0, builtEpoch = 0;
 export function ansCodingsKept(open) {
   builtScopes += open ? 1 : -1;
-  if (!builtScopes) BUILT.clear();
+  if (!builtScopes) { BUILT.clear(); builtEpoch++; }
 }
 const countsHash = counts => {
   let h = counts.contexts | 0;
@@ -66,21 +66,39 @@ const countsHash = counts => {
   return h >>> 0;
 };
 function countsCopy({contexts, totals, small, large}) {
-  const s = [], t = [], l = [];
-  for (let i = 0; i < small.length; i++) if (small[i]) s.push(i, small[i]);
-  for (let i = 0; i < totals.length; i++) if (totals[i]) t.push(i, totals[i]);
+  let ns = 0, nt = 0;
+  for (let c = 0; c < totals.length; c++) {
+    if (!totals[c]) continue;
+    nt += 2;
+    const base = c << 6;
+    for (let i = base; i < base + 64; i++) if (small[i]) ns += 2;
+  }
+  const s = new Uint32Array(ns), t = new Float64Array(nt), l = [];
+  for (let c = 0, ks = 0, kt = 0; c < totals.length; c++) {
+    if (!totals[c]) continue;
+    t[kt++] = c; t[kt++] = totals[c];
+    const base = c << 6;
+    for (let i = base; i < base + 64; i++) if (small[i]) { s[ks++] = i; s[ks++] = small[i]; }
+  }
   for (let c = 0; c < large.length; c++) if (large[c]) { l.push(c, large[c].size); for (const [v, n] of large[c]) l.push(v, n); }
-  return {contexts, totalsLength: totals.length, smallLength: small.length, small: Uint32Array.from(s), totals: Float64Array.from(t), large: l};
+  return {contexts, totalsLength: totals.length, smallLength: small.length, small: s, totals: t, large: l};
 }
 function sameCounts(copy, {contexts, totals, small, large}) {
   if (copy.contexts !== contexts || copy.totalsLength !== totals.length || copy.smallLength !== small.length) return false;
+  let ks = 0, kt = 0;
+  for (let c = 0; c < totals.length; c++) {
+    const tot = totals[c];
+    if (!tot) continue;
+    if (copy.totals[kt] !== c || copy.totals[kt + 1] !== tot) return false;
+    kt += 2;
+    const base = c << 6;
+    for (let i = base; i < base + 64; i++) if (small[i]) {
+      if (copy.small[ks] !== i || copy.small[ks + 1] !== small[i]) return false;
+      ks += 2;
+    }
+  }
+  if (kt !== copy.totals.length || ks !== copy.small.length) return false;
   let k = 0;
-  for (let i = 0; i < small.length; i++) if (small[i]) { if (copy.small[k] !== i || copy.small[k + 1] !== small[i]) return false; k += 2; }
-  if (k !== copy.small.length) return false;
-  k = 0;
-  for (let i = 0; i < totals.length; i++) if (totals[i]) { if (copy.totals[k] !== i || copy.totals[k + 1] !== totals[i]) return false; k += 2; }
-  if (k !== copy.totals.length) return false;
-  k = 0;
   const l = copy.large;
   for (let c = 0; c < large.length; c++) if (large[c]) {
     if (l[k] !== c || l[k + 1] !== large[c].size) return false;
@@ -90,7 +108,7 @@ function sameCounts(copy, {contexts, totals, small, large}) {
   return k === l.length;
 }
 const codingKey = options => !options ? '' : [options.maxClusters, options.newClusterCost, options.seeds, options.passes, options.switchCost,
-  !!options.everyConfig, !!options.kernels, options.mapLz, !!options.smallestMap, !!options.headerAware, !!options.shapedMerge, !!options.jpeg].join();
+  !!options.everyConfig, !!options.kernels, options.mapLz, !!options.smallestMap, !!options.headerAware, !!options.shapedMerge, !!options.jpeg, options.postMerge ?? 0].join();
 export function buildAnsCoding(counts, options) { return complete(buildAnsCodingSteps(counts, options)); }
 function* buildAnsCodingSteps(input, options) {
   const made = yield* stage('coding', function* () {
@@ -117,16 +135,32 @@ function* buildAnsCodingSteps(input, options) {
     Object.defineProperty(result, key, {get: () => ready()[key]});
   return result;
 }
+const countsTotalSum = totals => { let s = 0; for (let i = 0; i < totals.length; i++) s += totals[i]; return s; };
 function* buildAnsCodingCached(counts, options) {
   if (!builtScopes || !(counts instanceof TokenCounts)) return yield* buildAnsCodingOnce(counts, options);
-  const key = countsHash(counts) + '|' + codingKey(options), hit = BUILT.get(key);
-  if (hit && sameCounts(hit.copy, counts)) { BUILT.delete(key); BUILT.set(key, hit); return ansCodingFrom(hit.parts, options?.kernels); }
+  const optKey = codingKey(options), tSum = countsTotalSum(counts.totals);
+  let wEntry = BUILT_WEAK.get(counts);
+  if (wEntry && wEntry.epoch === builtEpoch && wEntry.tSum === tSum) {
+    const wParts = wEntry.byOpt.get(optKey);
+    if (wParts) return ansCodingFrom(wParts, options?.kernels);
+  }
+  const key = countsHash(counts) + '|' + optKey, hit = BUILT.get(key);
+  if (hit && sameCounts(hit.copy, counts)) {
+    BUILT.delete(key); BUILT.set(key, hit);
+    if (!wEntry || wEntry.epoch !== builtEpoch || wEntry.tSum !== tSum) BUILT_WEAK.set(counts, wEntry = {epoch: builtEpoch, tSum, byOpt: new Map()});
+    wEntry.byOpt.set(optKey, hit.parts);
+    return ansCodingFrom(hit.parts, options?.kernels);
+  }
   const coding = yield* buildAnsCodingOnce(counts, options);
-  BUILT.delete(key); BUILT.set(key, {copy: countsCopy(counts), parts: ansCodingParts(coding)});
+  const parts = ansCodingParts(coding);
+  BUILT.delete(key); BUILT.set(key, {copy: countsCopy(counts), parts});
   if (BUILT.size > BUILT_KEEP) BUILT.delete(BUILT.keys().next().value);
+  if (!wEntry || wEntry.epoch !== builtEpoch || wEntry.tSum !== tSum) BUILT_WEAK.set(counts, wEntry = {epoch: builtEpoch, tSum, byOpt: new Map()});
+  wEntry.byOpt.set(optKey, parts);
   return coding;
 }
 buildAnsCoding.steps = buildAnsCodingSteps;
+buildAnsCoding.designCache = {key: codingKey, parts: ansCodingParts, from: ansCodingFrom};
 function* buildAnsCodingOnce(counts, options) {
   const shaped = new WeakMap();
   const headerAware = options?.seeds === 128 || !!options?.headerAware;
@@ -159,9 +193,7 @@ function* buildAnsCodingOnce(counts, options) {
     }, w => ({...w, bytes: w.bytes.slice(0, w.at + 1)}));
     header.append(Object.assign(new BitWriter(0), map));
   }
-  header.write(1, 0); header.write(2, logAlphabet - 5);
-  for (const histogram of histograms) writeUintConfig(header, histogram.config, logAlphabet);
-  for (const histogram of histograms) writeDistribution(header, histogram.counts, true, histogram.shift, histogram.omit);
+  writeAnsDistributionBundle(header, histograms, logAlphabet);
 
   const model = {kind: 'ans', contextMap: clustered.contextMap,
     histograms: histograms.map(({config, counts, starts, reverse}) => ({config, counts, starts, reverse}))};
@@ -204,11 +236,7 @@ export function writeModularAnsHistograms(w, orderedLeaves, freqs, histogramOf =
     if (!aliases.has(logAlphabet)) aliases.set(logAlphabet, reverseAlias(shape.counts, logAlphabet));
     return {...shape, ...aliases.get(logAlphabet)};
   });
-  w.write(1, 1);
-  w.writeU32([[0, 224], [0, 512], [0, 4096], [15, 8]], LZ77.minSymbol);
-  w.writeU32([[0, 3], [0, 4], [2, 5], [8, 9]], LZ77.minLength);
-  writeUintConfig(w, LZ77.lengthConfig, 8);
-  writeAnsHistograms(w, contextMap, logAlphabet, histograms.map((_, i) => i ? configOf(i - 1) : RESIDUAL_CONFIG), histograms, writeSmallestContextMap);
+  writeModularAnsHeader(w, LZ77, contextMap, logAlphabet, histograms.map((_, i) => i ? configOf(i - 1) : RESIDUAL_CONFIG), histograms, writeSmallestContextMap);
   const pack = plans => {
     if (plans.length === 1 && !plans[0].histogramMap) {
       const plan = plans[0];
@@ -228,7 +256,6 @@ export function writeModularAnsHistograms(w, orderedLeaves, freqs, histogramOf =
     }
     return {tags, extras, n, offset: 0};
   };
-  const kernel = kernels?.modularAns(histograms);
   let measured = null;
   const prepare = plans => {
     const packed = pack(plans),
@@ -237,17 +264,12 @@ export function writeModularAnsHistograms(w, orderedLeaves, freqs, histogramOf =
     return {plans, packed, bits};
   };
   const write = plans => {
-    const written = kernel?.write(w, plans);
-    if (written != null && written !== false) { measured = null; return written; }
     const {packed} = measured?.plans === plans ? measured : prepare(plans);
     measured = null;
     const bits = captureModularAnsWrite(w, packed.tags, packed.extras, packed.n, histograms, packed.offset);
     if (bits === false) throw fault('JXL_INTERNAL', 'ans:writer');
     return bits;
   };
-  write.measure = plans => {
-    const bits = kernel?.bits(plans);
-    return bits != null && bits !== false ? bits : (measured = prepare(plans)).bits;
-  };
+  write.measure = plans => (measured = prepare(plans)).bits;
   return write;
 }

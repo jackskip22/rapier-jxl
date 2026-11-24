@@ -9,7 +9,7 @@ import {uploadOptions} from './upload-options.mjs';
 import {fitOptions, variantsOptions} from './preparation-options.mjs';
 import {outputSides} from './preparation-sides.mjs';
 import {admitCapture} from './capture-options.mjs';
-import {fail, pixelLimit, dimensions, PIXELS, lostBlank, proveRead, LOST} from './primitives.mjs';
+import {fail, object, pixelLimit, dimensions, PIXELS, lostBlank, proveRead, LOST, isBlob} from './primitives.mjs';
 import {WHOLE} from '../memory-device.mjs';
 import {JPEG_SOURCE, JPEG_SOURCE_WIRE} from './jpeg-choice-policy.mjs';
 
@@ -44,8 +44,9 @@ export function encoder(client, config = {}, operations, spec = {}) {
           originalJpeg = source.value;
         }
         if (taken || source) {
-          if (taken && (!('value' in taken) || taken.value !== true)) throw fail('JXL_OPTIONS', "transfer: true or omit");
-          transfer = !!taken;
+          object(given);
+          if (taken && (!('value' in taken) || taken.value !== true && taken.value !== undefined)) throw fail('JXL_OPTIONS', "transfer: true or omit");
+          transfer = taken?.value === true;
           options = Object.create(proto);
           for (const key of Reflect.ownKeys(descriptors)) if (key !== 'transfer' && key !== JPEG_SOURCE) Object.defineProperty(options, key, descriptors[key]);
         }
@@ -63,7 +64,7 @@ export function encoder(client, config = {}, operations, spec = {}) {
         if (name === 'variants') for (const request of read.requests) outputSides(request.width, request.height, maxPixels);
       } else if (name === 'encode') {
         const {signal: _signal, onProgress: _onProgress, onPreview: _onPreview, ...rest} = words ?? {};
-        const read = upload ? uploadOptions(rest) : encodeOptions(rest);
+        const read = upload ? uploadOptions(rest) : encodeOptions(rest, spec.module === 'rapier-jxl/max', spec.module === 'rapier-jxl' || spec.module === 'rapier-jxl/max');
         if (read.maxPixels !== undefined) maxPixels = Math.min(maxPixels, read.maxPixels);
       } else {
         const {signal: _signal, onProgress: _onProgress, onPreview: _onPreview, ...rest} = words ?? {};
@@ -101,7 +102,7 @@ export function encoder(client, config = {}, operations, spec = {}) {
       }
       let pixels = surface(input, {...config, maxPixels, half, deferPacked: transfer && name !== 'capture', readAs: options?.readAs, admitSurface: shape => client.admitSurface(shape, options)});
       if (preparation && ArrayBuffer.isView(pixels?.data)) dimensions(pixels.width, pixels.height, maxPixels);
-      const blob = typeof Blob !== 'undefined' && pixels instanceof Blob;
+      const blob = isBlob(pixels);
       const forwarded = preparation || richCapture ? fixed : options;
       const {readAs: _readAs, ...forward} = forwarded ?? {};
       const moving = !transfer ? [] : ArrayBuffer.isView(pixels?.data) ? [pixels.data]

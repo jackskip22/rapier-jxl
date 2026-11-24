@@ -3,6 +3,7 @@ import {complete} from './bits.mjs';
 import {photoXYBSteps} from './photo-xyb.mjs';
 import {offloading, offloadWorkers, sharing, shareable} from './offload.mjs';
 import {journaling, unit} from './step-journal.mjs';
+import {opaquePixels} from './lossless.mjs';
 
 const CAPTURE_PHOTO = typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true;
 
@@ -74,8 +75,8 @@ export function* photoXYBBands(data, width, height, quality, options, color) {
     bands.push({kind: 'band', data, width, h, quality, color, fast: !!options.fastGaborish, uploadProfile: options.calibrationRow === 'upload', uploadFlat: options.calibrationRow === false, uploadGrain: !!options.uploadGrain, small: !!options.smallFloor, from: Math.max(0, y - PHOTO_BAND_MARGIN), to: Math.min(height, y + h + PHOTO_BAND_MARGIN), y, target});
   }
   if (color) yield {offload: 'prefetch', tasks: bands, at: done => done};
-  let image, opaque = true, counted = true;
-  if (target) for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) { opaque = false; break; }
+  const opaque = !target || opaquePixels(data);
+  let image, counted = true;
   for (const band of bands) {
     const {h, from, to, y} = band, remote = color && (yield {offload: 'run', task: band, at: () => y / height});
     const made = () => photoXYBBand(data.subarray(from * width * 4, to * width * 4), width, h, quality, options, y - from);

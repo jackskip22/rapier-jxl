@@ -4,9 +4,10 @@ import {strategyInputs} from './varblocks.mjs';
 import {COEFF_FREQ_CONTEXT, COEFF_NUM_NONZERO_CONTEXT} from './vardct.mjs';
 import {gpuSetup} from './gpu-setup.mjs';
 import {gpuPipelineSet} from './gpu-pipelines.mjs';
+import {gpuMap, gpuWait} from './gpu-kit.mjs';
 
 const QS = 256, ZD = 458, NZ = 37;
-const SHADER =  `
+const makeShader = () =>  `
 struct P { w: u32, h: u32, bw: u32, bh: u32, W: u32, stride: u32, rows: u32, cflW: u32, area: u32, size: u32, hasDead: u32, tall: u32,
   oBasisW: u32, oBasisH: u32, oSteps: u32, oZd: u32, oNz: u32, oConst: u32, oOrder: u32, oHigh: u32, oCtx: u32, oFine: u32, oCfl: u32, gridW: u32, mode: u32, oLow: u32, gy0: u32, count: u32, oPos: u32, pad0: u32, pad1: u32, pad2: u32 }
 @group(0) @binding(0) var<uniform> p: P;
@@ -202,7 +203,7 @@ fn main(@builtin(workgroup_id) g: vec3<u32>, @builtin(local_invocation_index) li
   if (lid == 0u && p.mode == 2u) { out[(g.y * p.gridW + g.x) * (3u * size + 3u * area + 1u) + 3u * size + 3u * area] = f32(atomicLoad(&uncertain)); }
 }`;
 
-export const GPU_VARBLOCKS_SHADER = SHADER;
+export const GPU_VARBLOCKS_SHADER = /* @__PURE__ */ makeShader();
 
 function gpuBasis(size) {
   const b = new Float32Array(size * size);
@@ -266,15 +267,15 @@ class GpuVarblockSession {
       pass.setPipeline(owner.pipeline); pass.setBindGroup(0, bind); pass.dispatchWorkgroups(gridW, gridH); pass.end();
       encoder.copyBufferToBuffer(outBuffer, 0, readBuffer, 0, bytes);
       device.queue.submit([encoder.finish()]);
-      const failed = Promise.all([device.popErrorScope(), device.popErrorScope()]); scopes = 0;
-      const [errors] = await Promise.all([failed, readBuffer.mapAsync(GPUMapMode.READ)]);
+      const failed = Promise.all([gpuWait(device, device.popErrorScope()), gpuWait(device, device.popErrorScope())]); scopes = 0;
+      const [errors] = await Promise.all([failed, gpuMap(device, readBuffer)]);
       owner.assertOpen();
       if (errors.some(Boolean)) throw fault('JXL_WEBGPU', 'varblocks: ' + errors.find(Boolean).message);
       const values = new Float32Array(readBuffer.getMappedRange().slice(0));
       readBuffer.unmap();
       return {values, gridW, gridH, t, size, area, per};
     } finally {
-      while (scopes-- > 0) await device.popErrorScope().catch(() => null);
+      while (scopes-- > 0) await gpuWait(device, device.popErrorScope()).catch(() => null);
       owner.free(readBuffer); owner.free(outBuffer); for (const b of temporary) owner.free(b);
     }
   }
@@ -332,7 +333,7 @@ class GpuVarblockSession {
   release() { this.owner.free(this.blk); this.input = null; }
 }
 
-const vbPipelines = gpuPipelineSet({main: SHADER});
+const vbPipelines = /* @__PURE__ */ gpuPipelineSet({main: GPU_VARBLOCKS_SHADER});
 export class GpuVarblockCosts {
   static async create(device) {
     const self = new GpuVarblockCosts();

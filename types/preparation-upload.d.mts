@@ -5,11 +5,11 @@ import type {UploadInput, UploadOptions, FitOptions, FitFidelity, PixelFidelity,
 export type UploadPreparationInput = Exclude<PreparationInput, TextureInput>;
 /** fit's options with upload's efforts 1-3, and no firstRegion. */
 export type UploadFitOptions = Omit<FitOptions, 'effort' | 'firstRegion' | 'webgpu'> & {
-  /** 1 (fastest) to 3 (smallest file); default 3. */
+  /** 1 (fastest) to 3 (smallest file). Default 3. */
   effort?: 1 | 2 | 3;
   firstRegion?: never; webgpu?: never};
-/** One output of upload's variants: its size, and its own effort (1-3), JPEG policy, maxBytes or fidelity. */
-export type UploadVariantRequest = OutputSize & {effort?: 1 | 2 | 3; /** As encode's JPEG policy. */ jpeg?: 'pixels'} & (
+/** One output of upload's variants: its size, and its own effort (1-3), progressive, JPEG policy, maxBytes or fidelity. */
+export type UploadVariantRequest = OutputSize & {effort?: 1 | 2 | 3; /** As encode's progressive. */ progressive?: boolean; /** As encode's JPEG policy. */ jpeg?: 'pixels'; /** true: a side past the source's enlarges. By default it gives the source's. */ upscale?: boolean} & (
   {maxBytes: number; fidelity?: FitFidelity} |
   {maxBytes?: never; fidelity?: PixelFidelity}
 );
@@ -22,5 +22,5 @@ export interface UploadPreparation {
   fit(input: UploadPreparationInput, options: UploadFitOptions): Promise<ImageResult>;
   variants(input: UploadPreparationInput, options: UploadVariantsOptions): Promise<ImageResult[]>;
 }
-/** Internal entry composition: the supplied encoder writes every file; hooks are entry-owned implementation wiring. */
+/** Internal entry composition: the supplied encoder writes every file. Hooks are entry-owned implementation wiring. */
 export function preparationUpload(encode: (input: UploadInput, options?: UploadOptions) => Promise<Bytes>, hooks?: object): UploadPreparation;

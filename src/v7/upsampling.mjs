@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {resizeSamples} from '../sample-transforms.mjs';
 import {fail} from './primitives.mjs';
-import {browserResizable, browserResized} from './browser-resize.mjs';
 
 export async function upsampledSamples({data, width, height, ...source}, features, {signal, maxPixels} = {}) {
   const factor = features?.upsampling ?? 1;
@@ -25,6 +24,5 @@ export async function upsampledSamples({data, width, height, ...source}, feature
     ...(source.icc === undefined && transferFunction !== undefined && {transferFunction}),
     ...(bitDepth !== undefined && {bitDepth}), ...(sampleFormat !== undefined && {sampleFormat}),
     ...(alphaPremultiplied !== undefined && {alphaPremultiplied})};
-  if (browserResizable({...source, data, width, height})) return (await browserResized(picture, w, h)).data;
   return (await resizeSamples(picture, w, h, {signal, maxPixels: Math.max(maxPixels ?? 0, W * H)})).data;
 }

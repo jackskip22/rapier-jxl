@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {fail} from './primitives.mjs';
+import {fail, callers} from './primitives.mjs';
 
 export const DESCRIPTION = ['colorSpace','colorEncoding','transferFunction','bitDepth','sampleFormat','intensityTarget','alphaPremultiplied',
   'icc','orientation','extraChannels'];
@@ -30,12 +30,13 @@ export function described(record) {
 
 const FORMATS = {uint8: {bitDepth: 8, sampleFormat: 'uint'}, uint16: {bitDepth: 16, sampleFormat: 'uint'},
   float32: {bitDepth: 32, sampleFormat: 'float32'}};
+const formatOf = decoded => { try { return decoded.format; } catch (error) { throw callers(error); } };
 const SPACES = ['srgb', 'display-p3', 'rec2020'], TRANSFERS = ['srgb', 'linear', 'pq', 'hlg'];
 export const isDecoded = record => !!record && typeof record === 'object' && Object.hasOwn(record, 'rgbaColorEncoding') &&
   Object.hasOwn(record, 'format') && ArrayBuffer.isView(record.data);
 
 export function decodedFields(decoded) {
-  const out = {...FORMATS[decoded.format]};
+  const out = {...FORMATS[formatOf(decoded)]};
   if (decoded.rgbaICC) return out;
   const encoding = decoded.rgbaColorEncoding ?? {};
   const white = encoding.whitePoint === undefined || encoding.whitePoint === 'd65';
@@ -48,7 +49,7 @@ export function decodedFields(decoded) {
 const RETAGGABLE = ['colorSpace', 'transferFunction', 'bitDepth', 'sampleFormat', 'intensityTarget'];
 const same = (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b);
 export function decodedDescription(decoded) {
-  if (!Object.hasOwn(FORMATS, decoded.format)) throw fail('JXL_INPUT', "decoded format: uint8, uint16, float32");
+  if (!Object.hasOwn(FORMATS, formatOf(decoded))) throw fail('JXL_INPUT', "decoded format: uint8, uint16, float32");
   const out = decodedFields(decoded), header = decoded.header;
   const intensity = header?.toneMapping?.intensityTarget;
   if (typeof intensity === 'number') out.intensityTarget = intensity;

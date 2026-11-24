@@ -15,6 +15,7 @@ import {LIMITS} from '../limits.mjs';
 import {fail} from './primitives.mjs';
 import {photoTarget} from '../photo-quality-search.mjs';
 import {guard, answer} from '../admit.mjs';
+import {withProgressive, progressiveProbe, progressiveLayout} from '../coefficient-ans.mjs';
 
 function* exactTargetSteps(data, width, height, effort, preview) {
   const exact = effortJob(data, width, height, {quality: 100, effort}, false,
@@ -28,7 +29,8 @@ function* exactTargetSteps(data, width, height, effort, preview) {
   } finally { if (!step?.done || effort > 5) exact.return?.(); }
 }
 
-async function lowScoreTarget(data, width, height, effort, target, hooks) {
+async function lowScoreTarget(data, width, height, effort, target, hooks, progressive) {
+  const written = new WeakMap(), passes = steps => progressive ? progressiveProbe(steps, written) : steps;
   let metric = null;
   const exact = onProgress => {
     metric?.destroy(); metric = null;
@@ -39,7 +41,7 @@ async function lowScoreTarget(data, width, height, effort, target, hooks) {
   metric = wholeRebuildMeasure(data, width, height, producer.color, hooks.signal, plan);
   const probe = async (quality, onProgress) => {
     let picture;
-    const bytes = await drain(producer.steps({quality, effort, observe: image => { picture = image; }}), {...hooks, onProgress});
+    const bytes = await drain(passes(producer.steps({quality, effort, observe: image => { picture = image; }})), {...hooks, onProgress});
     if (!picture) throw fail('JXL_INTERNAL', 'score-target:result');
     let scores = metric.measure(picture, {ssimulacra2: true, butteraugli: false});
     if (typeof scores?.next === 'function') scores = await drain(scores, {signal: hooks.signal});
@@ -49,7 +51,8 @@ async function lowScoreTarget(data, width, height, effort, target, hooks) {
   try {
     const found = await measuredFileSearch(target, probe, null, {...hooks, exact, width, height,
       domain: 'encoder-reconstruction'});
-    return {bytes: found.bytes, facts: {kept: found.exact ? 'pixels' : 'lossy', measurements: found.measurements}};
+    const bytes = progressive && !found.exact ? await drain(progressiveLayout(found.bytes, written, effort), hooks) : found.bytes;
+    return {bytes, facts: {kept: found.exact ? 'pixels' : 'lossy', measurements: found.measurements}};
   } finally { metric?.destroy(); }
 }
 
@@ -62,9 +65,9 @@ export async function scoreTarget(data, width, height, source, settings, target,
     return {bytes, facts: {kept: 'pixels', measurements: []}};
   }
   if (settings.effort <= 5 && Object.keys(target).length === 1 && target.ssimulacra2 !== undefined)
-    return lowScoreTarget(data, width, height, settings.effort, target, hooks);
-  const answer = await drain(encodeToScoreSteps(data, width, height, {target, effort: settings.effort, signal: hooks.signal, preview: hooks.preview,
-    shownBound: target.ssimulacra2 !== undefined}), hooks);
+    return lowScoreTarget(data, width, height, settings.effort, target, hooks, settings.progressive);
+  const answer = await drain(withProgressive(settings.progressive, encodeToScoreSteps(data, width, height, {target, effort: settings.effort, signal: hooks.signal, preview: hooks.preview,
+    shownBound: target.ssimulacra2 !== undefined}), settings.effort), hooks);
   return {bytes: answer.bytes, facts: answer.quality === 100 ? {kept: 'pixels', measurements: []}
     : {kept: 'lossy', measurements: photoOutputMeasurements(target, answer, 'encoder-reconstruction')}};
 }

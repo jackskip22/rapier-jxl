@@ -5,6 +5,7 @@ import {drain} from './common.mjs';
 import {check, isCaller} from './primitives.mjs';
 import {encodeFidelity} from './fidelity.mjs';
 import {ordinaryStillReader} from './ordinary-still-policy.mjs';
+import {hostShort} from '../fault.mjs';
 
 export function retainedFit(picture, policy) {
   const features = policy.encode.features;
@@ -27,7 +28,7 @@ export function retainedFit(picture, policy) {
           {...hooks, onProgress: fraction => hooks.onProgress?.(fraction / 4)});
         } catch (error) {
           check(hooks.signal);
-          if (isCaller(error) || error?.code !== 'JXL_MEMORY') throw error;
+          if (isCaller(error) || error?.code !== 'JXL_MEMORY' || hostShort(error)) throw error;
         }
       }
       if (!plan) return null;

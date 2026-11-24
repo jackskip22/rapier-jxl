@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 export const WEIGHTED_PREDICTOR = 6, WEIGHTED_PROPERTY = 15;
-const magnitudes = [];
-for (let value = 1, i = 0; i < 16; i++) {
-  magnitudes.push(value);
-  const square = 2 * value * value;
-  do { value++; } while (value * value < square);
-}
-export const WEIGHTED_CUTS = [...magnitudes.slice().reverse().map(value => -value), 0, ...magnitudes];
+export const WEIGHTED_CUTS = /* @__PURE__ */ (() => {
+  const magnitudes = [];
+  for (let value = 1, i = 0; i < 16; i++) {
+    magnitudes.push(value);
+    const square = 2 * value * value;
+    do { value++; } while (value * value < square);
+  }
+  return [...magnitudes.slice().reverse().map(value => -value), 0, ...magnitudes];
+})();
 export const WEIGHTED_BUCKET = /* @__PURE__ */ Int8Array.from({length: 1003}, (_, i) => WEIGHTED_CUTS.filter(cut => cut < i - 501).length);
 
 export function weightedTables(i32, div, weights) {

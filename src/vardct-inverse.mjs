@@ -70,17 +70,23 @@ function restorationRegions(kernels, at, from, width, height, filter, rows) {
   return {source: planes(from, held), scratch, next: k + 8};
 }
 
-export const RESTORE_ROWS = 128;
-export function restorePlanes(kernels, planes, width, height, filter, sigma = null, into = null, from = undefined) {
+export const RESTORE_ROWS = 32;
+export const SLICE_ROWS = 128;
+export function restorePlanes(kernels, planes, width, height, filter, sigma = null, into = null, from = undefined, yStart = 0, yEnd = height, top = 0, outTop = 0) {
   if (!filter || !restorationStages(filter).length) return planes;
-  const rows = RESTORE_ROWS, radius = restorationStages(filter).reduce((n, s) => n + s.radius, 0);
+  const span = Math.max(1, yEnd - yStart), rows = Math.min(into === 'final' ? SLICE_ROWS : RESTORE_ROWS, span), radius = restorationStages(filter).reduce((n, s) => n + s.radius, 0);
   const at = kernels.reserve(restorationSizes(width, height, filter, rows), from), {source, scratch} = restorationRegions(kernels, at, 0, width, height, filter, rows);
+  const intoFinal = into === 'final' && span <= rows;
+  const output = intoFinal ? scratch.kernel.final : into ?? planes.map(p => new Float32Array(p.length));
   if (sigma) new Float32Array(kernels.buffer, scratch.kernel.sigma, sigma.length).set(sigma);
-  const output = into ?? planes.map(p => new Float32Array(p.length));
-  for (let a = 0; a < height; a += rows) {
-    const b = Math.min(height, a + rows), lo = Math.max(0, a - radius), hi = Math.min(height, b + radius);
-    for (let c = 0; c < 3; c++) source[c].set(planes[c].subarray(lo * width, hi * width));
-    restoreRows(source, lo, width, height, filter, sigma, output, 0, a, b, scratch, kernels);
+  const direct = planes.every(p => p.buffer === kernels.buffer) && (intoFinal || output.every((o, c) => o.buffer !== kernels.buffer || o.byteOffset !== planes[c].byteOffset));
+  for (let a = yStart; a < yEnd; a += rows) {
+    const b = Math.min(yEnd, a + rows), lo = Math.max(0, a - radius), hi = Math.min(height, b + radius);
+    if (direct) restoreRows(planes, top, width, height, filter, sigma, output, intoFinal ? a : outTop, a, b, scratch, kernels);
+    else {
+      for (let c = 0; c < 3; c++) source[c].set(planes[c].subarray((lo - top) * width, (hi - top) * width));
+      restoreRows(source, lo, width, height, filter, sigma, output, intoFinal ? a : outTop, a, b, scratch, kernels);
+    }
   }
   return output;
 }

@@ -67,7 +67,7 @@ const captureBlockPlanes = (device, request, signal) => {
 export async function captureBlockRequest(webgpu, request, signal) {
   check(signal);
   if (webgpu === false) return null;
-  const device = await gpuDevice();
+  const device = await gpuDevice(signal);
   check(signal);
   if (!device || refused.has(device)) return unavailable(webgpu, device ? 'prior audit failed' : 'no device');
   const qualified = await gpuCoreQualified(device).catch(() => false);

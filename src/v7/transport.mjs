@@ -1,14 +1,14 @@
 import {shownEntry} from './entry-name.mjs';
 import {suppliedWasm} from '../wasm-modules.mjs';
 import {WORKER_PROTOCOL} from './protocol.mjs';
-import {fail as error, callers} from './primitives.mjs';
+import {fail as error, callers, isBlob} from './primitives.mjs';
 import {isImageResult} from './result-shape.mjs';
 import {failure} from './worker-runtime.mjs';
 export const REPLACED = Symbol('replaced');
 const workerUnloaded = file => `The JPEG XL worker did not load. Copy ${file ?? "the module's own file"} from the package's dist folder beside the bundle, or pass workerFactory.`;
 const IMAGE_OPERATIONS = new Set(['encode', 'capture', 'recompress', 'restore', 'fit', 'format']);
 
-function blob(value) { return typeof Blob === 'function' && value instanceof Blob; }
+function blob(value) { return isBlob(value); }
 const isBitmap = value => typeof ImageBitmap === 'function' && value instanceof ImageBitmap || typeof VideoFrame === 'function' && value instanceof VideoFrame;
 function transfers(value, buffers = new Set(), seen = new Set()) {
   if (!value || typeof value !== 'object' || seen.has(value) || blob(value) || isBitmap(value)) return buffers;
@@ -69,7 +69,7 @@ export function createTransport(host) {
     if (!current.ready || !job.started || job.sent || job.settled || thread !== current || running.get(job.id) !== job) return;
     const bitmap = isBitmap(job.input);
     try {
-      current.worker.postMessage({id: job.id, operation: job.operation, input: job.input, options: job.options, ...(bitmap && {bitmap: true}), ...(job.onPreview && {preview: true}), maxPixels, helpers, webgpu, lane: job.lane, alone: job.alone}, [...transfers([job.input, job.options])]);
+      current.worker.postMessage({id: job.id, operation: job.operation, input: job.input, options: job.options, ...(bitmap && {bitmap: true}), ...(job.onPreview && {preview: true}), ...(job.onFrame && {frames: true}), maxPixels, helpers, webgpu, lane: job.lane, alone: job.alone}, [...transfers([job.input, job.options])]);
       job.sent = true;
       job.input = job.options = null;
     } catch (reason) { try { complete(job, false, reason); } finally { stopThread(); } }
@@ -130,12 +130,19 @@ export function createTransport(host) {
           return;
         }
         if ('progress' in data) { progress(job, data.progress); return; }
+        if ('frame' in data) {
+          if (job.onFrame && !job.settled) host.frame(job, data.frame, data.frameIndex, () => {
+            if (thread === current && running.get(job.id) === job && !job.settled) current.worker.postMessage({id: job.id, frameAck: data.frameSequence});
+          });
+          return;
+        }
         if ('preview' in data) {
           if (job.onPreview && !job.settled) replyPreview(job, data.preview, data.previewSequence, value => preview(job, value), () => {
             if (thread === current && running.get(job.id) === job && !job.settled) current.worker.postMessage({id: job.id, previewAck: data.previewSequence});
           });
           return;
         }
+        if (data.ok === true || data.ok === false) host.deviceHeld?.(data.device === true);
         if (data.ok === true) {
           if (IMAGE_OPERATIONS.has(job.operation) && !isImageResult(data.value) ||
               job.operation === 'variants' && (!Array.isArray(data.value) || !data.value.length || !data.value.every(isImageResult)))

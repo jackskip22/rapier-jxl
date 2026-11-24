@@ -18,14 +18,16 @@ export function jxl(options = {}) {
 
 const plugins = new Map(), byCodec = new WeakMap();
 
-function create(module, codec, preset, webgpu) {
+function create(name, codec, preset, webgpu) {
+  // A module is named as the app imports it: jpegxl/... (npm) or rapier-jxl/... (the source tree), as createCodec takes it.
+  const module = typeof name === 'string' ? name.replace(/^jpegxl\//, 'rapier-jxl/') : name;
   const exactOnly = module === 'rapier-jxl/capture';
   // Edges are measured with the page, for any export effort from 4 (a scan of about 0.1 ms on
   // SnapDOM's demo pages): measuring the page again at export could see it changed.
   const edges = module !== 'rapier-jxl/upload';
   if (!MODULES.includes(module)) throw new Error(`The jxl plugin's module is ${MODULES.join(', ')} or left out.`);
-  if (webgpu !== undefined && module !== COMPLETE) throw new Error(`jxl({module: '${module}'}) runs on WebAssembly; remove webgpu.`);
-  if (!codec && module !== COMPLETE) throw new Error(`jxl({module: '${module}'}) needs its codec: import * as codec from '${module}' and pass {codec}.`);
+  if (webgpu !== undefined && module !== COMPLETE) throw new Error(`jxl({module: '${name}'}) runs on WebAssembly; remove webgpu.`);
+  if (!codec && module !== COMPLETE) throw new Error(`jxl({module: '${name}'}) needs its codec: import * as codec from '${name}' and pass {codec}.`);
   // Start loading now, so the first export does not wait on the network.
   if (!codec) door().catch(() => {});
   return {
@@ -83,7 +85,7 @@ function create(module, codec, preset, webgpu) {
           // The canvas shows the capture's viewBox: the measurement moves into it the way SnapDOM
           // drew the root (its outer shadow, transform and clip window), or, where it cannot, the
           // whole capture stays exact.
-          const both = o => Number.isFinite(o.width) && Number.isFinite(o.height);
+          const both = o => Number.isFinite(o?.width) && o.width > 0 && Number.isFinite(o?.height) && o.height > 0;
           const fitted = both(context) && !safari(), exported = both(options) && firefox() && options;
           const shot = inView(context[SNAPSHOT], context.meta, fitted, exported, options.crop);
           // WebKit draws a clip window's positioned boxes as if the window began at the element's corner
@@ -323,7 +325,7 @@ function scaleSkew({ a, b, c, d }) {
 // An export's crop is a window of the viewBox, drawn 1:1 (SnapDOM's cropSvgText), never a downscale: the box is the
 // window; over a fitted capture or a fitted export the capture stays exact.
 function inView(shot, meta, fitted, exported, crop) {
-  if (!shot?.frame || !meta || !Number.isFinite(meta.vbW)) return null;
+  if (!shot?.frame || !meta || !(Number.isFinite(meta.vbW) && meta.vbW > 0 && Number.isFinite(meta.vbH) && meta.vbH > 0)) return null;
   const { contentX = 0, contentY = 0, vbW, vbH, clip, targetW, targetH } = meta, { toDrawn } = shot.frame;
   let width = vbW, height = vbH, left = 0, top = 0;
   const fit = (w, h) => { const k = Math.min(w / width, h / height); width = w / k; height = h / k; };
@@ -333,7 +335,7 @@ function inView(shot, meta, fitted, exported, crop) {
     width = Math.min(vbW, crop.x + crop.width) - left; height = Math.min(vbH, crop.y + crop.height) - top;
     if (!(width > 0 && height > 0)) return null;
   } else {
-    if (fitted && targetW && targetH) fit(targetW, targetH);
+    if (fitted && Number.isFinite(targetW) && targetW > 0 && Number.isFinite(targetH) && targetH > 0) fit(targetW, targetH);
     if (exported) fit(exported.width, exported.height);
   }
   const dx = contentX - (clip?.x ?? 0) - left + (crop ? 0 : (width - vbW) / 2), dy = contentY - (clip?.y ?? 0) - top + (crop ? 0 : (height - vbH) / 2);

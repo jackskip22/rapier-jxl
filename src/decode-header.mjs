@@ -217,7 +217,7 @@ export function readDecodeFrameHeader(r, h, limits = {}) {
   for (let i=0;i<h.extraChannels.length;i++) requireDecode(f.extraUpsampling[i]*power2(h.extraChannels[i].dimShift) <= 8, 'extra channel sampling: max 8', r);
   return f;
 }
-export function readDecodeTOC(r, f, partial = false) {
+export function readDecodeTOC(r, f, partial = false, readers = true) {
   const count = f.numGroups === 1 && f.passes.count === 1 ? 1 : 2 + f.numLFGroups + f.numGroups*f.passes.count;
   requireDecode(count <= 1000000, 'TOC: max 1000000', r);
   let order = null;
@@ -231,5 +231,5 @@ export function readDecodeTOC(r, f, partial = false) {
   }
   const sections = order ? Array.from(order, i => physical[i]) : physical;
   f.end = offset; f.sections = sections; r.bit = Math.min(offset, r.bytes.length)*8;
-  return sections.map(s => s.cut ? null : r.borrowed ? new JxlBits(sliceBytes(r.bytes,s.offset,s.offset+s.length),true) : new JxlBits(r.bytes.subarray(s.offset,s.offset+s.length)));
+  return readers ? sections.map(s => s.cut ? null : new JxlBits(r.borrowed ? sliceBytes(r.bytes,s.offset,s.offset+s.length) : r.bytes.subarray(s.offset,s.offset+s.length), true)) : null;
 }

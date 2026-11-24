@@ -15,13 +15,13 @@ export function* inspectICC(profile, level, expectedColorSpace, owner) {
   });
 }
 
-function* matched(data, owner) {
+function* matched(data, owner, minLength = 7, depth = 4) {
   return yield* stage('icc-matches', function* () {
     const parts = []; let state = null, done = false;
     while (!done) {
       const part = yield* stage('icc-match-part', function* () {
         const pairs = [];
-        state = owner.matches(data, (value, length, distance) => pairs.push(length || value, distance), 4, 7, state, MATCH_WORK);
+        state = owner.matches(data, (value, length, distance) => pairs.push(length || value, distance), depth, minLength, state, MATCH_WORK);
         const bytes = new Uint8Array(pairs.length * 4), view = new DataView(bytes.buffer);
         pairs.forEach((value, i) => view.setUint32(i * 4, value, true));
         return {bytes, done: state.i === data.length};
@@ -34,28 +34,35 @@ function* matched(data, owner) {
   });
 }
 
-function tokenBand(data, tokens, owner, state, end, emit) {
+function tokenBand(data, tokens, owner, state, end, emit, minLength = 7) {
   while (state.position < end) {
     const bytes = tokens.subarray(state.index, state.index + 8), view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const value = view.getUint32(0, true), distance = view.getUint32(4, true), length = distance ? value : 0, count = length || 1;
     const n = Math.min(count - state.within, data.length > 65536 ? VALUES : count);
-    owner.match(data, emit, state.position, length ? 0 : value, length ? n : 0, distance);
+    let position = state.position;
+    owner.match(data, (value, length, distance) => {
+      emit(value, length, distance, position); position += length || 1;
+    }, state.position, length ? 0 : value, length ? n : 0, distance, minLength);
     state.position += n; state.within += n;
     if (state.within === count) { state.index += 8; state.within = 0; }
   }
 }
 
-function* payload(data, tokens, owner) {
+function* payload(data, tokens, owner, clustered = false, minLength = 7, shared = false) {
   const lz = !!tokens;
   return yield* stage(lz ? 'icc-lz' : 'icc-prefix', function* () {
     const frequencies = yield* stage('icc-frequencies', function* () {
-      let state = {position: 0, within: 0, index: 0, frequencies: new Uint32Array(lz ? 320 : 256),
-        ...(lz && {distances: new Uint32Array(64)})};
+      let state = {position: 0, within: 0, index: 0, ...owner.counts(lz, clustered, minLength, shared)};
       for (let from = 0; from < data.length; from += VALUES) {
         const end = Math.min(data.length, from + VALUES);
         const saved = yield* carried('icc-count', () => {
-          if (lz) tokenBand(data, tokens, owner, state, end, (value, length, distance) => owner.symbol(null, state, value, length, distance));
-          else for (const value of data.subarray(from, end)) state.frequencies[value]++;
+          const emit = (value, length, distance, position) => owner.symbol(null, state, value, length, distance,
+            clustered ? owner.context(data, position) : 0);
+          if (lz) tokenBand(data, tokens, owner, state, end, emit, minLength);
+          else {
+            let position = from;
+            for (const value of data.subarray(from, end)) emit(value, 0, 0, position++);
+          }
           return state;
         });
         state = take(saved, state);
@@ -63,7 +70,7 @@ function* payload(data, tokens, owner) {
       return {frequencies: state.frequencies, distances: state.distances};
     });
     const model = yield* unit('icc-code', () => {
-      const model = owner.model(data.length, frequencies.frequencies, frequencies.distances);
+      const model = (shared ? owner.sharedModel : clustered ? owner.contextModel : owner.model)(data.length, frequencies.frequencies, frequencies.distances, minLength);
       return {...model, writer: bits(model.writer)};
     });
     const parts = []; let state = {position: 0, within: 0, index: 0}, acc = 0, pending = 0, at = 0;
@@ -72,9 +79,17 @@ function* payload(data, tokens, owner) {
       const part = yield* stage('icc-write-part', function* () {
         const writer = new owner.BitWriter(65536);
         if (!from) writer.append(model.writer); else { writer.acc = acc; writer.pending = pending; }
-        const emit = (value, length, distance) => owner.symbol(writer, model, value, length, distance);
-        if (lz) tokenBand(data, tokens, owner, state, end, emit);
-        else for (const value of data.subarray(from, end)) emit(value, 0, 0);
+        const emit = (value, length, distance, position) => {
+          const count = length || 1;
+          if ((clustered || shared) && data.length > 65536) owner.progress(at * 8 + writer.bitLength, position);
+          owner.symbol(writer, model, value, length, distance, clustered ? owner.context(data, position) : 0);
+          if ((clustered || shared) && data.length > 65536 && count > 1) owner.progress(at * 8 + writer.bitLength, position + 1, count - 1);
+        };
+        if (lz) tokenBand(data, tokens, owner, state, end, emit, minLength);
+        else {
+          let position = from;
+          for (const value of data.subarray(from, end)) emit(value, 0, 0, position++);
+        }
         return bits(writer);
       }, undefined, false, true);
       parts.push(part.bytes); at += part.at; acc = part.acc; pending = part.pending;
@@ -84,6 +99,16 @@ function* payload(data, tokens, owner) {
       }
     }
     return {bytes: journalJoin(parts), at, acc, pending, bitLength: at * 8 + pending};
+  });
+}
+
+function* predictedICC(profile, owner) {
+  return yield* stage('icc-predicted', function* () {
+    const plan = yield* unit('icc-prediction-plan', () => owner.predict(profile)), parts = [];
+    for (let from = 0; from < plan.prefix.length; from += 65536) parts.push(sliceBytes(plan.prefix, from, from + 65536));
+    for (const run of plan.runs) for (let from = 0; from < run.length; from += 65536)
+      parts.push(yield* unit('icc-prediction-part', () => owner.predictPart(profile, run, from)));
+    return journalJoin(parts);
   });
 }
 
@@ -108,6 +133,14 @@ export function* prepareICC(profile, options, owner) {
       } catch (error) { if (!iccData || error.code !== 'JXL_SIZE') throw error; }
     }
     if (!iccData) throw capacityError;
+    const predicted = yield* predictedICC(profile, owner);
+    for (const [minLength, shared, depth] of owner.candidates(compression)) {
+      try {
+        const tokens = minLength ? yield* matched(predicted, owner, minLength, depth) : null;
+        const candidate = yield* payload(predicted, tokens, owner, !shared, minLength, shared);
+        if (candidate.bitLength < iccData.bitLength) iccData = candidate;
+      } catch (error) { if (error.code !== 'JXL_SIZE') throw error; }
+    }
     return {...fields, iccData};
   });
 }

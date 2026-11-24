@@ -10,7 +10,7 @@ not be described as a drop-in for one.
 
 For media already copied into EmDash local/R2 storage **with ready media records**
 (an imported site's included), the Media page's **Convert N older images** discovers
-them from the native paginated media catalog; the upload hook is not required.
+them from the native paginated media catalog. The upload hook is not required.
 Confirm source binding and preserved source bytes before conversion.
 
 When plugin MCP tools are enabled in EmDash (`mcp:tools` or `mcp:tools:rapier-media`),
@@ -18,10 +18,12 @@ AI agents can run the integration directly over `/_emdash/api/mcp`:
 - `rapier-media__convertLibrary` (`media:upload`): start, pause, resume, advance, or cancel converting ready JPEG and PNG media to JPEG XL.
 - `rapier-media__libraryProgress` (`media:read`): read library conversion counts, active image job state, and originals policy progress.
 - `rapier-media__bytesSaved` (`media:read`): inspect original bytes, delivered JPEG XL bytes, bytes saved, and physical storage bytes.
-- `rapier-media__keepOriginalJpegs` (`media:upload`, `destructive: true`): read or update **Keep original JPEG files**; turning it off needs `confirm: true` and the policy ID just read.
+- `rapier-media__keepOriginalJpegs` (`media:upload`, `destructive: true`): read or update **Keep original JPEG files**. Turning it off needs `confirm: true` and the policy ID just read.
 
 JPEG originals may be archived reversibly only under a verified host policy. Worker
-operations go through the single measured `workerAdmission` reader; rows or sizes
+operations go through the single measured `workerAdmission` reader. Rows or sizes
 not certified are browser work. Never infer Paid/Free from errors or bypass the
 **Keep original JPEG files** physical custody switch. The public registry listing is
 owner-controlled and is not the migration-agent description.
+
+Delivery varies on `Accept` and joins EmDash's media cache tag through `cacheMediaResponse` when EmDash exports it. Keep both on every response the middleware builds itself.

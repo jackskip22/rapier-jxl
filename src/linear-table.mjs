@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: MIT
 import {s2RGBA} from './ssimulacra2-input.mjs';
-import {kernelModule} from './kernel-runtime.mjs';
+import {s2LinearTable} from './ssimulacra2-arithmetic.mjs';
+import {linearFromTransform} from './color-bytes.mjs';
 
-const AT = 131072;
-export function linearTable() {
-  const memory = new WebAssembly.Memory({initial: 3, maximum: 3});
-  new WebAssembly.Instance(kernelModule(), {env: {memory}}).exports.s2MetricInit(AT);
-  return new Float32Array(memory.buffer, AT, 256).slice();
-}
+export {s2LinearTable as linearTable};
+let METRIC_TRANSFORM = null;
 export function linearFromRGBA(rgba, pixels) {
-  const input = s2RGBA(rgba, pixels), table = linearTable();
-  const planes = [0, 1, 2].map(() => new Float32Array(pixels));
-  for (let i = 0; i < pixels; i++) for (let c = 0; c < 3; c++) planes[c][i] = table[input[i * 4 + c]];
-  return planes;
+  const input = s2RGBA(rgba, pixels), planes = [0, 1, 2].map(() => new Float32Array(pixels));
+  if (pixels === 0) return planes;
+  if (!METRIC_TRANSFORM) { const table = s2LinearTable(); METRIC_TRANSFORM = {lms: null, tables: [table, table, table]}; }
+  return linearFromTransform(new Uint8Array(input.buffer, input.byteOffset, pixels * 4), pixels, METRIC_TRANSFORM, planes);
 }

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {quantParamHalfValue, quantParamNumber, quantParamInterpolate, quantParamVector, quantParamTriplet, quantParamBands, quantParamWeight, quantParamExpandBands} from './quantization-math.mjs';
 import {float16Bits} from './bits.mjs';
 import {fault} from './admit.mjs';
 import {QUANT_PARAM_LIBRARY} from './quantization-defaults.mjs';
@@ -9,42 +10,10 @@ const QUANT_PARAM_AFV_FREQS = [0, 0, .8517778890324296, 5.37778436506804, 0, 0, 
   5.449245381693219, 1.6598270267479331, 4, 7.275749096817861, 10.423227632456525,
   2.662932286148962, 7.630657783650829, 8.962388608184032, 12.97166202570235];
 
-function quantParamHalfValue(bits) {
-  const sign = bits & 32768 ? -1 : 1, exponent = (bits >>> 10) & 31, mantissa = bits & 1023;
-  let value = exponent ? 1024 + mantissa : mantissa, shift = exponent ? exponent - 25 : -24;
-  while (shift < 0) { value /= 2; shift++; }
-  while (shift > 0) { value *= 2; shift--; }
-  return sign * value;
-}
 
-function quantParamNumber(value, divisor, positive, library) {
-  if (typeof value !== 'number' || !Number.isFinite(value) || positive && value <= 0)
-    throw fault('JXL_INPUT', 'quantization params: finite positive');
-  if (library) return value;
-  if (Math.abs(value / divisor) >= 65520) throw fault('JXL_INPUT', 'quantization param: overflows float16');
-  const decoded = quantParamHalfValue(float16Bits(value / divisor)) * divisor;
-  if (positive && decoded <= 0) throw fault('JXL_INPUT', 'quantization param: underflows float16');
-  return decoded;
-}
 
-function quantParamVector(value, count, convert) {
-  if ((!Array.isArray(value) && !ArrayBuffer.isView(value)) || value.length !== count)
-    throw fault('JXL_INPUT', 'quantization vector length');
-  return Array.from(value, convert);
-}
 
-function quantParamTriplet(value, count, convert) {
-  if (!Array.isArray(value) || value.length !== 3)
-    throw fault('JXL_INPUT', 'quantization params: 3 vectors');
-  return value.map(vector => quantParamVector(vector, count, convert));
-}
 
-function quantParamBands(value, library) {
-  const count = value?.[0]?.length;
-  if (!Number.isInteger(count) || count < 1 || count > 16)
-    throw fault('JXL_INPUT', 'bands: 1-16 per channel');
-  return quantParamTriplet(value, count, (v, i) => quantParamNumber(v, i ? 1 : 64, !i, library));
-}
 
 function quantParamAdmit(input, width, height, family) {
   if (!input || typeof input !== 'object' || Array.isArray(input) || ArrayBuffer.isView(input))
@@ -53,18 +22,18 @@ function quantParamAdmit(input, width, height, family) {
   if (mode < 0) throw fault('JXL_INPUT', 'mode: library, identity, dct2, dct4, dct4x8, afv or dct');
   if (mode > 0 && mode < 6 && width * height !== 64)
     throw fault('JXL_INPUT', 'compact mode: 8x8 family required');
-  const source = !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && library ? QUANT_PARAM_LIBRARY[family] : input;
+  const source = library ? QUANT_PARAM_LIBRARY[family] : input;
   if (!source) throw fault('JXL_INPUT', 'unknown quantization family');
   const kind = QUANT_PARAM_MODES.indexOf(source.mode), table = {mode, kind, library};
   const positive = (v, divisor = 1) => quantParamNumber(v, divisor, true, library);
-  if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && (kind === 1 || kind === 2))) table.weights = quantParamTriplet(source.weights, kind === 1 ? 3 : 6, v => positive(v, 64));
-  else if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && (kind === 3)) {
+  if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && (kind === 1 || kind === 2)) table.weights = quantParamTriplet(source.weights, kind === 1 ? 3 : 6, v => positive(v, 64));
+  else if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && kind === 3) {
     table.multipliers = quantParamTriplet(source.multipliers, 2, v => positive(v));
     table.bands = quantParamBands(source.bands, library);
-  } else if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && (kind === 4)) {
+  } else if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && kind === 4) {
     table.multipliers = quantParamVector(source.multipliers, 3, v => positive(v));
     table.bands = quantParamBands(source.bands, library);
-  } else if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && kind === 5)) {
+  } else if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && kind === 5) {
     table.weights = quantParamTriplet(source.weights, 9, (v, i) => quantParamNumber(v, i < 6 ? 64 : 1, i < 6, library));
     table.bands4x8 = quantParamBands(source.bands4x8, library);
     table.bands4x4 = quantParamBands(source.bands4x4, library);
@@ -72,27 +41,9 @@ function quantParamAdmit(input, width, height, family) {
   return table;
 }
 
-function quantParamWeight(value) {
-  if (!Number.isFinite(value) || value < 1e-8 || value >= 1e8)
-    throw fault('JXL_INPUT', 'weights: 1e-8 to 1e8');
-  return value;
-}
-
-function quantParamExpandBands(parameters) {
-  const bands = [quantParamWeight(parameters[0])];
-  for (let i = 1; i < parameters.length; i++) {
-    const delta = parameters[i];
-    bands.push(quantParamWeight(bands.at(-1) * (delta > 0 ? 1 + delta : 1 / (1 - delta))));
-  }
-  return bands;
-}
 
 
-function quantParamInterpolate(bands, position) {
-  if (bands.length === 1) return bands[0];
-  const index = Math.min(bands.length - 2, Math.floor(position)), a = bands[index], b = bands[index + 1];
-  return a * Math.pow(b / a, position - index);
-}
+
 
 export function fillQuantParamDCT(parameters, width, height, out, from = 0, to = width * height, origin = 0) {
   const bands = quantParamExpandBands(parameters), scale = (bands.length - 1) / (1.4142135623730951 + .000001);
@@ -110,9 +61,9 @@ export function quantParamMatrix(table, channel, width, height) {
   const {kind} = table;
   if ((typeof __RAPIER_JXL_UPLOAD__ !== 'undefined' && __RAPIER_JXL_UPLOAD__ === true) || kind === 6) return quantParamDCT(table.bands[channel], width, height);
   const plane = new Float64Array(64), weights = table.weights?.[channel];
-  if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && kind === 1) {
+  if (kind === 1) {
     plane.fill(weights[0]); plane[1] = plane[8] = weights[1]; plane[9] = weights[2];
-  } else if (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && kind === 2) {
+  } else if (kind === 2) {
     plane[0] = 1;
     for (let i = 0; i < 6; i++) {
       const size = 1 << Math.floor(i / 2);
@@ -125,7 +76,7 @@ export function quantParamMatrix(table, channel, width, height) {
     const small = quantParamDCT(table.bands[channel], 4, 4);
     for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) plane[y * 8 + x] = small[Math.floor(y / 2) * 4 + Math.floor(x / 2)];
     plane[1] /= table.multipliers[channel][0]; plane[8] /= table.multipliers[channel][0]; plane[9] /= table.multipliers[channel][1];
-  } else if (kind === 4 || (typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true)) {
+  } else if (kind === 4) {
     const small = quantParamDCT(table.bands[channel], 8, 4);
     for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) plane[y * 8 + x] = small[Math.floor(y / 2) * 8 + x];
     plane[8] /= table.multipliers[channel];
@@ -153,7 +104,7 @@ export function writeQuantParams(writer, table, order) {
   if (table.library) return;
   const {kind} = table;
   if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && (kind === 1 || kind === 2))) for (const channel of order) for (const value of table.weights[channel]) writer.write(16, float16Bits(value / 64));
-  else if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && (kind === 3 || kind === 4)) {
+  else if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && !(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && (kind === 3 || kind === 4)) {
     for (const channel of order) for (const value of kind === 3 ? table.multipliers[channel] : [table.multipliers[channel]]) writer.write(16, float16Bits(value));
     quantParamWriteBands(writer, table.bands, order);
   } else if ((typeof __RAPIER_JXL_UPLOAD__ === 'undefined' || __RAPIER_JXL_UPLOAD__ !== true) && (!(typeof __RAPIER_JXL_CAPTURE_PHOTO__ !== 'undefined' && __RAPIER_JXL_CAPTURE_PHOTO__ === true) && kind === 5)) {

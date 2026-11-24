@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
-import {captureExact, markCaptureExact, holdCaptureMemory} from '../capture-codec.mjs';
+import {captureExact, markCaptureExact, holdCaptureMemory, CAPTURE_SMALL_FLOOR} from '../capture-codec.mjs';
 import {journaled} from '../step-journal.mjs';
 import {resultFacts, resultReference} from './result-reference.mjs';
 import {LOW_INTENT_CALIBRATION} from './low-intent-quality.mjs';
 import {measuredLevel} from '../effort-level.mjs';
 import {exactCouldWin} from './exact-cap.mjs';
+import {PHOTO_RAISES as RAISES} from '../photo-quality-search.mjs';
+import {fault} from '../fault.mjs';
 
 const key = r => `${r.x},${r.y},${r.width},${r.height}`;
 export function photoAdmission() {
@@ -12,11 +14,13 @@ export function photoAdmission() {
   const accepts = bytes => captureExact(bytes) || records.get(bytes)?.passed === true;
   const measurements = bytes => captureExact(bytes) ? [] : records.get(bytes)?.measurements ?? [];
   const record = (bytes, passed, measured = []) => {
+    if (measured.some(m => m.score !== undefined && !Number.isFinite(m.score))) throw fault('JXL_INPUT', 'score: finite number');
     records.set(bytes, {passed: passed === true, measurements: passed === true ? measured : [], scored: measured}); return bytes;
   };
   let notes = null;
   const parts = new WeakMap();
   const combine = (into, k, v) => {
+    if (v.score !== undefined && !Number.isFinite(v.score)) throw fault('JXL_INPUT', 'score: finite number');
     const was = into.get(k), low = v.score !== undefined && !(was?.score <= v.score) ? v : was?.score !== undefined ? was : null;
     into.set(k, {pass: was?.pass !== false && v.pass, ...(low && {score: low.score, floor: low.floor})});
   };
@@ -58,7 +62,7 @@ export function photoAdmission() {
   }
 }
 
-const RAISES = [0.15, 0.5, 1], CEILING = LOW_INTENT_CALIBRATION.maximumLossy;
+const CEILING = LOW_INTENT_CALIBRATION.maximumLossy;
 const ROUNDS = 5, AIM = 0.3, CLOSE = 0.75, STEP_DOWN = 1.2, STEP_UP = 0.6, DOWN = 32;
 function nextQuality(s) {
   if (s.hi !== null && s.sHi !== undefined && s.sHi - s.floor < CLOSE) return null;
@@ -81,6 +85,7 @@ function raised(coding, t) {
 export async function keepSmaller({input, options, hooks, coding, photo, runCaptureUsing, finished, wholePhotoRoute}, candidates, exact = null) {
   const admission = exact && photoAdmission(), n = candidates.length + (admission ? ROUNDS + 2 * RAISES.length + 1 + 3 : 0), span = 1 / n;
   let best = null, record = null, picture = null;
+  const exactFloor = hooks.journal ? undefined : {};
   let slot = 0;
   if (hooks.journal) resultReference(options, input);
   const run = async (candidate, coder = photo, ownOptions = options) => {
@@ -89,7 +94,7 @@ export async function keepSmaller({input, options, hooks, coding, photo, runCapt
       let got = null;
       const asked = new Map(), read = candidate.regionQuality;
       if (admission && coder === photo) admission.watch();
-      const bytes = await runCaptureUsing(input, ownOptions, {
+      const bytes = await runCaptureUsing(input, {...ownOptions, [CAPTURE_SMALL_FLOOR]: exactFloor}, {
         ...hooks,
         onProgress: hooks.onProgress && (f => { if (f < 1) hooks.onProgress(from + f * span); }),
         onEncoded: r => { got = r; },
@@ -149,18 +154,18 @@ export async function keepSmaller({input, options, hooks, coding, photo, runCapt
     if (!held || [...state].some(([k, s]) => held.get(k) !== settled(k, s))) await write(settled);
     return searched;
   };
+  const runExact = opts => run({maxError: 0}, exact, opts);
   let searched = null;
   for (let i = 0; i < candidates.length; i++) {
     const made = await run({...coding, ...candidates[i], ...(admission && {photoAdmission: admission}), ...(searched && {regionQuality: searched})});
     if (admission && i === 0 && coding.regionQuality) searched = await searchRegions(made, coding.regionQuality);
     if (admission && i === 0) for (const t of RAISES) if (!best) await run(raised({...coding, ...candidates[0], photoAdmission: admission}, t));
-    if (admission && i === 0 && !best) await run({maxError: 0}, exact, {...options, effort: photo.effortCap});
+    if (admission && i === 0 && !best) await runExact({...options, effort: photo.effortCap});
     if (wholePhotoRoute?.complete) break;
   }
   if (admission && best && coding.lowerRegionQuality && !wholePhotoRoute?.complete) await run({...coding, ...candidates[0], photoAdmission: admission, regionQuality: coding.lowerRegionQuality});
-  if (admission && !best) await run({maxError: 0}, exact, {...options, effort: photo.effortCap});
-  if (admission && best && captureExact(best) && (options.effort ?? 3) > photo.effortCap) await run({maxError: 0}, exact, options);
-  else if (admission && best && exactCouldWin(best, picture ?? input, options.effort ?? 3)) await run({maxError: 0}, exact, options);
+  if (admission && !best) await runExact({...options, effort: photo.effortCap});
+  if (admission && best && ((captureExact(best) && (options.effort ?? 3) > photo.effortCap) || exactCouldWin(best, picture ?? input, options.effort ?? 3))) await runExact(options);
   const measurements = admission?.measurements(best);
   if (measurements) resultFacts(options, {measurements});
   return finished(best, hooks, {bands: record?.bands ?? 1, ...(measurements && {measurements})});

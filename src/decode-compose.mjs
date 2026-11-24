@@ -20,6 +20,76 @@ export function blendRows(channels,rows,span) {
   }
 }
 
+function blendCanvas(items,alphaGroups,x0,x1,y0,y1,width,f) {
+  const count=items.length,rows=y1-y0,span=x1-x0;
+  if(!count||rows<=0||span<=0)return;
+  const kernels=decodeKernels(),bufCount=alphaGroups.length*2+count*2;
+  const chunk=Math.max(1,Math.min(rows,Math.floor(2097152/(Math.max(1,bufCount)*span)))),n=chunk*span;
+  const sizes=[count*32];
+  for(const ag of alphaGroups){ag.baSlot=sizes.length;sizes.push(n*4);ag.faSlot=sizes.length;sizes.push(n*4);}
+  for(const it of items) {
+    if(it.ag&&it.plane===it.ag.ba){it.bgSlot=it.ag.baSlot;it.ownBg=false;it.outSlot=sizes.length;sizes.push(n*4);}
+    else{it.bgSlot=sizes.length;sizes.push(n*4);it.ownBg=true;it.outSlot=it.bgSlot;}
+    if(it.ag&&it.src===it.ag.fa){it.fgSlot=it.ag.faSlot;it.ownFg=false;}
+    else{it.fgSlot=sizes.length;sizes.push(n*4);it.ownFg=true;}
+  }
+  const at=kernels.reserve(sizes),specsAt=at[0],fw=frameWidth(f,items);
+  for(const ag of alphaGroups){
+    ag.baAt=at[ag.baSlot];ag.faAt=at[ag.faSlot];
+    ag.baView=new Float32Array(kernels.buffer,ag.baAt,n);ag.faView=new Float32Array(kernels.buffer,ag.faAt,n);
+  }
+  for(let i=0;i<count;i++) {
+    const it=items[i],bgAt=at[it.bgSlot],fgAt=at[it.fgSlot],outAt=at[it.outSlot];
+    const baAt=it.ag?it.ag.baAt:bgAt,faAt=it.ag?it.ag.faAt:bgAt;
+    kernels.i32.set([outAt,bgAt,fgAt,baAt,faAt,it.mode,it.flags],(specsAt>>2)+i*8);
+    if(it.ownBg)it.bgView=new Float32Array(kernels.buffer,bgAt,n);
+    if(it.ownFg)it.fgView=new Float32Array(kernels.buffer,fgAt,n);
+    it.outView=new Float32Array(kernels.buffer,outAt,n);
+  }
+  const dx=x0-f.x0;
+  for(let cy=0;cy<rows;cy+=chunk) {
+    const m=Math.min(chunk,rows-cy),samples=m*span,sy=y0+cy-f.y0;
+    for(let g=0;g<alphaGroups.length;g++) {
+      const ag=alphaGroups[g];
+      if(span===fw){const off=sy*fw+dx;ag.faView.set(ag.fa.subarray(off,off+samples));}
+      else for(let r=0;r<m;r++){const off=(sy+r)*fw+dx;ag.faView.set(ag.fa.subarray(off,off+span),r*span);}
+      const ref=ag.reference;
+      if(ref&&ag.rx0<=x0&&ag.rx0+ref.width>=x1&&ag.ry0<=y0+cy&&ag.ry0+ref.height>=y0+cy+m) {
+        const rw=ref.width,rdx=x0-ag.rx0,rsy=y0+cy-ag.ry0;
+        if(span===rw){const off=rsy*rw+rdx;ag.baView.set(ag.ba.subarray(off,off+samples));}
+        else for(let r=0;r<m;r++){const off=(rsy+r)*rw+rdx;ag.baView.set(ag.ba.subarray(off,off+span),r*span);}
+      } else {
+        ag.baView.fill(0,0,samples);
+        if(ref) {
+          const a0=Math.max(x0,ag.rx0),a1=Math.min(x1,ag.rx0+ref.width),rw=ref.width;
+          if(a1>a0)for(let r=0;r<m;r++){
+            const ry=y0+cy+r-ag.ry0;
+            if(ry>=0&&ry<ref.height)ag.baView.set(ag.ba.subarray(ry*rw+a0-ag.rx0,ry*rw+a1-ag.rx0),r*span+a0-x0);
+          }
+        }
+      }
+    }
+    for(let i=0;i<count;i++) {
+      const it=items[i];
+      if(it.ownBg) {
+        if(span===width){const off=(y0+cy)*width+x0;it.bgView.set(it.plane.subarray(off,off+samples));}
+        else for(let r=0;r<m;r++){const off=(y0+cy+r)*width+x0;it.bgView.set(it.plane.subarray(off,off+span),r*span);}
+      }
+      if(it.ownFg) {
+        if(span===fw){const off=sy*fw+dx;it.fgView.set(it.src.subarray(off,off+samples));}
+        else for(let r=0;r<m;r++){const off=(sy+r)*fw+dx;it.fgView.set(it.src.subarray(off,off+span),r*span);}
+      }
+    }
+    kernels.blend(samples,specsAt,count);
+    for(let i=0;i<count;i++) {
+      const it=items[i];
+      if(span===width)it.plane.set(it.outView.subarray(0,samples),(y0+cy)*width+x0);
+      else for(let r=0;r<m;r++)it.plane.set(it.outView.subarray(r*span,(r+1)*span),(y0+cy+r)*width+x0);
+    }
+  }
+}
+const frameWidth=(f,items)=>f._fw;
+
 export function composeFrame(frame,h,f,references,inPlace=false,owned=false) {
   const colors=frame.planes.length, source=channels(frame), count=source.length;
   const width=h.width,height=h.height,exact=f.x0===0&&f.y0===0&&frame.width===width&&frame.height===height;
@@ -62,30 +132,29 @@ export function composeFrame(frame,h,f,references,inPlace=false,owned=false) {
       for(let y=y0;y<y1;y++)dst.set(src.subarray((y-fy0)*fw+x0-fx0,(y-fy0)*fw+x1-fx0),y*width+x0);
     }
   }
-  const span=x1-x0,blended=[];
-  for(let c=0;c<count;c++) {
-    if(replace(c))continue;
-    const blend=f.blending[c<colors?0:c-colors+1];let mode=modes[blend.mode];
-    const useAlpha=alphaCount>0&&(c>=colors||hasAlpha)&&(blend.mode===2||blend.mode===3);
-    if(!useAlpha&&mode>=4)mode=mode===4?1:2;
-    const a=blend.alpha,reference=useAlpha?references[blend.source]:null,fa=useAlpha?frame.extraChannels[a].data:null;
-    const ba=reference?.extraChannels[a].data,rx0=reference?.x0??0,ry0=reference?.y0??0;
-    blended.push({mode,clamp:blend.clamp,associated:useAlpha&&h.extraChannels[a].associated,isAlpha:useAlpha&&c===colors+a,
-      fill(role,row,run) {
-        const y=y0+row,from=(y-f.y0)*frame.width+x0-f.x0;
-        if(role===0)run.set(planes[c].subarray(y*width+x0,y*width+x1));
-        else if(role===1)run.set(source[c].subarray(from,from+span));
-        else if(!useAlpha)return;
-        else if(role===3)run.set(fa.subarray(from,from+span));
-        else {
-          run.fill(0);
-          const ry=y-ry0,a0=Math.max(x0,rx0),a1=Math.min(x1,rx0+(reference?.width??0));
-          if(reference&&ry>=0&&ry<reference.height&&a1>a0)run.set(ba.subarray(ry*reference.width+a0-rx0,ry*reference.width+a1-rx0),a0-x0);
+  if(x1>x0&&y1>y0) {
+    const items=[],alphaGroups=[],alphaMap=new Map();
+    for(let c=0;c<count;c++) {
+      if(replace(c))continue;
+      const blend=f.blending[c<colors?0:c-colors+1];let mode=modes[blend.mode];
+      const useAlpha=alphaCount>0&&(c>=colors||hasAlpha)&&(blend.mode===2||blend.mode===3);
+      if(!useAlpha&&mode>=4)mode=mode===4?1:2;
+      const a=blend.alpha;
+      let ag=null;
+      if(useAlpha) {
+        const key=blend.source*65536+a;
+        ag=alphaMap.get(key);
+        if(!ag) {
+          const reference=references[blend.source];
+          ag={reference,fa:frame.extraChannels[a].data,ba:reference?.extraChannels[a].data,rx0:reference?.x0??0,ry0:reference?.y0??0};
+          alphaMap.set(key,ag);alphaGroups.push(ag);
         }
-      },
-      write(row,run){planes[c].set(run,(y0+row)*width+x0);}});
+      }
+      const flags=(blend.clamp?1:0)|(useAlpha&&h.extraChannels[a].associated?2:0)|(useAlpha&&c===colors+a?4:0);
+      items.push({plane:planes[c],src:source[c],mode,flags,ag});
+    }
+    if(items.length)blendCanvas(items,alphaGroups,x0,x1,y0,y1,width,{x0:f.x0,y0:f.y0,_fw:frame.width});
   }
-  if(span>0)blendRows(blended,y1-y0,span);
   return {...frame,width,height,widths:frame.planes.map(()=>width),heights:frame.planes.map(()=>height),x0:0,y0:0,
     planes:planes.slice(0,colors),extraChannels:frame.extraChannels.map((e,c)=>({...e,width,height,data:planes[colors+c]})),saveBeforeColorTransform:false};
 }
@@ -146,4 +215,55 @@ export function rgbaPixels(frame,format,unpremultiplyAlpha=false,renderSpotColor
     data.set(out.subarray(0,n*4),start*4);
   }
   return data;
+}
+
+export function rgbaPixelsRects(frame,rects,dst) {
+  if(!rects.length)return dst;
+  const fw=frame.width,fh=frame.height;
+  if(rects.length===1&&rects[0][0]===0&&rects[0][2]===fw&&rects[0][1]===0&&rects[0][3]===fh)return rgbaPixels(frame,'uint8',false,false,dst);
+  const alpha=frame.extraChannels.find(e=>e.type===0),gray=frame.planes.length===1,kernels=decodeKernels();
+  const planes=[frame.planes[0],frame.planes[gray?0:1],frame.planes[gray?0:2],...(alpha?[alpha.data]:[])],pCount=planes.length;
+  let total=0;
+  for(let i=0;i<rects.length;i++)total+=rects[i][2]*rects[i][3];
+  if(!total)return dst;
+  const cap=Math.min(RGBA_CHUNK,Math.max(fw,total));
+  const at=kernels.reserve([...planes.map(()=>cap*4),cap*4]);
+  const staged=planes.map((_,k)=>new Float32Array(kernels.buffer,at[k],cap)),out=new Uint8Array(kernels.buffer,at.at(-1),cap*4);
+  const g=kernels.args/4,spans=[];
+  let filled=0;
+  const flush=()=>{
+    if(!filled)return;
+    kernels.i32.set([filled,0,staged[0].byteOffset,staged[1].byteOffset,staged[2].byteOffset,alpha?staged[3].byteOffset:0,out.byteOffset,0,0,0],g);
+    kernels.rgba(kernels.args);
+    for(let i=0;i<spans.length;i+=3)dst.set(out.subarray(spans[i]*4,(spans[i]+spans[i+1])*4),spans[i+2]*4);
+    spans.length=0;filled=0;
+  };
+  for(let i=0;i<rects.length;i++) {
+    const [x0,y0,width,height]=rects[i];
+    if(width<=0||height<=0)continue;
+    if(x0===0&&width===fw) {
+      let row=0;
+      while(row<height) {
+        const take=Math.min(height-row,Math.floor((cap-filled)/fw));
+        if(!take){flush();continue;}
+        const n=take*fw,sOff=(y0+row)*fw;
+        for(let k=0;k<pCount;k++)staged[k].set(planes[k].subarray(sOff,sOff+n),filled);
+        spans.push(filled,n,sOff);
+        filled+=n;row+=take;
+      }
+    } else {
+      for(let r=0;r<height;r++) {
+        if(filled+width>cap)flush();
+        const sOff=(y0+r)*fw+x0;
+        for(let k=0;k<pCount;k++)staged[k].set(planes[k].subarray(sOff,sOff+width),filled);
+        spans.push(filled,width,sOff);
+        filled+=width;
+      }
+    }
+  }
+  flush();
+  return dst;
+}
+export function rgbaPixelsRect(frame,x0,y0,width,height,dst) {
+  return width>0&&height>0?rgbaPixelsRects(frame,[[x0,y0,width,height]],dst):dst;
 }

@@ -219,7 +219,7 @@ function readFrame(r, image, animation, tocPermutation) {
       if (mode !== REPLACE || !full) blend.source = r.u32(SOURCE);
       frame.blending.push(blend);
     }
-    if (animation) { frame.duration = r.u32(DURATION); if (animation.timecodes) r.read(32); }
+    if (animation) { frame.durationAt = r.pos; frame.duration = r.u32(DURATION); if (animation.timecodes) r.read(32); }
   }
   frame.last = (frame.type === REGULAR || frame.type === SKIP_PROGRESSIVE) && r.bool();
   frame.reference = 0;
@@ -488,6 +488,43 @@ export function writeAnimatedFrame(w, still, frame, placement) {
   for (const section of sections) w.writeU32(TOC_ENTRY, section.length);
   w.zeroPadToByte();
   for (const section of sections) w.append({bytes: section, at: section.length, pending: 0, acc: 0});
+}
+
+export function writeRetimedHeader(w, codestream, image, {numerator, denominator, loops}, modular16) {
+  copyBits(w, codestream, 0, image.animationAt);
+  w.write(1, 1);
+  w.writeU32(TPS_NUMERATOR, numerator);
+  w.writeU32(TPS_DENOMINATOR, denominator);
+  w.writeU32(LOOPS, loops);
+  w.write(1, 0);
+  copyBits(w, codestream, image.depthAt, image.modular16At);
+  const hint = w.bitLength;
+  w.write(1, modular16 ? 1 : 0);
+  copyBits(w, codestream, image.modular16At + 1, image.payloadEnd);
+  w.zeroPadToByte();
+  return hint;
+}
+
+export function writeRetimedFrame(w, codestream, frame, image, {duration, last}) {
+  if (frame.durationAt === undefined) {
+    if (frame.last) throw framingFault('last frame: no duration');
+    w.append({bytes: codestream.subarray(frame.start, frame.end), at: frame.end - frame.start, pending: 0, acc: 0});
+    return;
+  }
+  if (frame.permutation) throw framingFault('retimed frame: permuted TOC');
+  copyBits(w, codestream, frame.start * 8, frame.durationAt);
+  w.writeU32(DURATION, duration);
+  w.write(1, last ? 1 : 0);
+  const reference = last ? 0 : frame.reference;
+  if (!last) w.write(2, reference);
+  const full = frame.x0 <= 0 && frame.y0 <= 0 && frame.x0 + frame.width >= image.width && frame.y0 + frame.height >= image.height;
+  if (full && frame.mode === REPLACE && !last && (duration === 0 || reference !== 0)) w.write(1, frame.beforeColorTransform ? 1 : 0);
+  copyBits(w, codestream, frame.nameAt, frame.tocAt);
+  w.write(1, 0);
+  w.zeroPadToByte();
+  for (const size of frame.sizes) w.writeU32(TOC_ENTRY, size);
+  w.zeroPadToByte();
+  w.append({bytes: codestream.subarray(frame.sectionsAt, frame.end), at: frame.end - frame.sectionsAt, pending: 0, acc: 0});
 }
 
 export function metadataKey(still) {

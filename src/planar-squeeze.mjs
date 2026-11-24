@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {fault} from './admit.mjs';
+import {capturePlanarSqueezeStep} from './capture-kernels.mjs';
 
 const PLANAR_SQUEEZE_POWERS = [1]; for (let i = 1; i <= 32; i++) PLANAR_SQUEEZE_POWERS.push(PLANAR_SQUEEZE_POWERS[i - 1] * 2);
 const squeezeInteger = (value, minimum, maximum, name) => {
@@ -72,51 +73,14 @@ export function admitPlanarSqueeze(value, channels, groupSize, memoryLimit = Num
   return {steps, transforms, count: planned.length, memoryLimit, metaCount};
 }
 
-function planarTendency(previous, average, next) {
-  const sign = previous >= average && average >= next ? 1 : previous <= average && average <= next ? -1 : 0;
-  if (!sign) return 0;
-  previous *= sign; average *= sign; next *= sign;
-  let value = Math.trunc((4 * previous - 3 * next - average + 6) / 12);
-  if (value - (value & 1) > 2 * (previous - average)) value = 2 * (previous - average) + 1;
-  if (value + (value & 1) > 2 * (average - next)) value = 2 * (average - next);
-  return sign * value;
-}
-function planarTendency32(previous, average, next) {
-  const descending = previous >= average && average >= next, ascending = previous <= average && average <= next;
-  if (!descending && !ascending) return 0;
-  let value = Math.trunc(((Math.imul(4, previous) - Math.imul(3, next) - average + (descending ? 6 : -6)) | 0) / 12);
-  const first = (2 * (previous - average)) | 0, second = (2 * (average - next)) | 0;
-  if (descending) {
-    if (value - (value & 1) > first) value = (first + 1) | 0;
-    if (value + (value & 1) > second) value = second;
-  } else {
-    if (value + (value & 1) < first) value = (first - 1) | 0;
-    if (value - (value & 1) < second) value = second;
-  }
-  return value;
-}
-const planarAverage = (a, b) => Math.floor((a + b + (a > b ? 1 : 0)) / 2);
 function squeezePlanarChannel(channel, horizontal) {
   const {width, height, data} = channel, count = horizontal ? width : height, low = Math.ceil(count / 2), high = count - low;
   const lowWidth = horizontal ? low : width, lowHeight = horizontal ? height : low;
   const residualWidth = horizontal ? high : width, residualHeight = horizontal ? height : high;
-  const averages = new Int32Array(lowWidth * lowHeight), residuals = new Int32Array(residualWidth * residualHeight), stride = horizontal ? 1 : width;
-  for (let y = 0; y < lowHeight; y++) for (let x = 0; x < lowWidth; x++) {
-    const axis = horizontal ? x : y, at = horizontal ? y * width + x * 2 : y * width * 2 + x;
-    const a = data[at] | 0;
-    if (axis === high) { averages[y * lowWidth + x] = a; continue; }
-    const b = data[at + stride] | 0, average = planarAverage(a, b), difference = a - b;
-    const next = axis + 1 < high ? planarAverage(data[at + stride * 2] | 0, data[at + stride * 3] | 0) : count & 1 ? data[at + stride * 2] | 0 : average;
-    const previous = axis ? data[at - stride] | 0 : average, tendency = planarTendency(previous, average, next), residual = difference - tendency;
-    if (tendency !== planarTendency32(previous, average, next))
-      throw fault('JXL_INPUT', 'squeeze: 32-bit range; disable');
-    if (difference < -2147483648 || difference > 2147483647 || residual < -2147483648 || residual > 2147483647)
-      throw fault('JXL_INPUT', 'squeeze: 32-bit range; disable');
-    averages[y * lowWidth + x] = average; residuals[y * residualWidth + x] = residual;
-  }
+  const {averages, residuals, wide} = capturePlanarSqueezeStep(data, width, height, horizontal);
   const hs = channel.hshift ?? channel.shift, vs = channel.vshift ?? channel.shift;
   const shape = {...channel, hshift: hs < 0 ? hs : hs + Number(horizontal), vshift: vs < 0 ? vs : vs + Number(!horizontal)};
-  return [{...shape, width: lowWidth, height: lowHeight, data: averages}, {...shape, width: residualWidth, height: residualHeight, data: residuals}];
+  return [{...shape, width: lowWidth, height: lowHeight, data: averages}, {...shape, width: residualWidth, height: residualHeight, data: residuals}, wide];
 }
 export function* applyPlanarSqueeze(channels, plan) {
   const result = channels.map(channel => ({...channel, ...squeezeShape(channel)}));
@@ -124,8 +88,8 @@ export function* applyPlanarSqueeze(channels, plan) {
   for (let i = 0; i < plan.steps.length; i++) {
     const step = plan.steps[i], offset = step.inPlace ? step.beginC + step.numC : result.length;
     for (let c = step.beginC; c < step.beginC + step.numC; c++) {
-      const [low, residual] = squeezePlanarChannel(result[c], step.horizontal);
-      for (const channel of [low, residual]) for (const value of channel.data) if (value < -32768 || value > 32767) wide = true;
+      const [low, residual, stepWide] = squeezePlanarChannel(result[c], step.horizontal);
+      if (stepWide) wide = true;
       result[c] = low; result.splice(offset + c - step.beginC, 0, residual);
     }
     yield (i + 1) / plan.steps.length;
