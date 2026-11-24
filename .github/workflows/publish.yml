@@ -104,5 +104,10 @@ jobs:
           if [ "${{ steps.vsix.outputs.marketplace }}" != "true" ]; then
             echo "${{ steps.vsix.outputs.id }}@${{ steps.vsix.outputs.version }} is already on the Marketplace: nothing to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
           fi
-          npx --yes @vscode/vsce@4.1.0 publish --oidc --no-dependencies --packagePath "${{ steps.vsix.outputs.vsix }}"
+          # The Marketplace lists a version some minutes after it takes it. A second run inside that time finds it taken: not a failure.
+          if ! npx --yes @vscode/vsce@4.1.0 publish --oidc --no-dependencies --packagePath "${{ steps.vsix.outputs.vsix }}" 2> "$RUNNER_TEMP/vsce.err"; then
+            cat "$RUNNER_TEMP/vsce.err" >&2
+            if grep -qi 'already exists' "$RUNNER_TEMP/vsce.err"; then echo "${{ steps.vsix.outputs.id }}@${{ steps.vsix.outputs.version }} is already with the Marketplace: nothing to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
+            exit 1
+          fi
           echo "published ${{ steps.vsix.outputs.id }}@${{ steps.vsix.outputs.version }} to the Marketplace" | tee -a "$GITHUB_STEP_SUMMARY"
