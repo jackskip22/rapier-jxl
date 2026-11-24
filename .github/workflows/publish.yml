@@ -62,6 +62,17 @@ jobs:
           fi
           gh release create "$tag" --verify-tag --title "$version" --notes-file "$notes_file" --latest
           echo "tagged $tag at $release and released $version" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: attach the WordPress plug-in zip to this version's release, unless it is there (cut from the tagged tree)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag="v$(node -p "require('./package.json').version")"
+          if ! git cat-file -e "$tag:examples/wordpress" 2>/dev/null; then echo "$tag has no WordPress plug-in" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
+          if gh release view "$tag" --json assets --jq '.assets[].name' | grep -qxF jpegxl-wordpress.zip; then echo "$tag already has jpegxl-wordpress.zip" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
+          git archive --format=zip --prefix=jpegxl/ -o "$RUNNER_TEMP/jpegxl-wordpress.zip" "$tag:examples/wordpress"
+          gh release upload "$tag" "$RUNNER_TEMP/jpegxl-wordpress.zip"
+          echo "attached jpegxl-wordpress.zip to $tag" | tee -a "$GITHUB_STEP_SUMMARY"
   vscode:
     needs: publish
     runs-on: ubuntu-latest
